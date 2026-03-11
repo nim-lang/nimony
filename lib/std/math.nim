@@ -583,7 +583,8 @@ func `^`*[T: SomeNumber and Arithmetic](x: T; y: Natural): T =
       y = y shr 1
       if y == 0:
         break
-      x *= x
+      let z = x
+      x *= z
 
 func isPowerOfTwo*(x: int): bool =
   ## Returns `true`, if `x` is a power of two, `false` otherwise.

@@ -58,6 +58,7 @@ type
     inlineVars: Table[SymId, Cursor] # var -> to its init expression
     knownTrueCfVars: IteTracker[SymId]  # cfvars set to true by (jtrue ...)
     writeSets: WriteSets               # per-ite write-set implications (TokenBuf-based)
+    falseCfvars: seq[SymId]            # cfvars currently known false (from `(ite (not cf) ...)` nesting)
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
     activeBorrows: seq[BorrowInfo]
 
@@ -648,8 +649,12 @@ proc isDirectlyInitialized(c: var NjvlContext; symId: SymId): bool =
   return false
 
 proc isEffectivelyInitialized(c: var NjvlContext; symId: SymId): bool =
+  ## True if symId is known initialized (directly, via writesTo, or via cfvar implication).
   if isDirectlyInitialized(c, symId) or symId in c.writesTo:
     return true
+  for cf in c.falseCfvars:
+    if symId in c.writeSets.impliedWhenFalse(cf, c.knownCfVars):
+      return true
   return false
 
 proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
@@ -906,8 +911,12 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   if condFacts == 1:
     condFactsList.add c.facts[c.facts.len - 1]
 
-  # Then branch
+  # Then branch: when condition is `(not cf)`, cf is false inside this branch.
+  if condCf != NoSymId:
+    c.falseCfvars.add condCf
   traverseStmt c, n
+  if condCf != NoSymId:
+    discard c.falseCfvars.pop()
   let thenFacts = c.facts
   c.writesTo.thenDone(writesSp)
   c.knownTrueCfVars.thenDone(cfSp)
@@ -1096,6 +1105,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   let oldWritesTo = move c.writesTo
   let oldKnownTrueCfVars = move c.knownTrueCfVars
   let savedWriteSetsScopeIdx = c.writeSets.pushScope()
+  let oldFalseCfvars = move c.falseCfvars
   let oldKnownCfVars = move c.knownCfVars
   let oldResultSym = c.resultSym
   let oldInlineVars = move c.inlineVars
@@ -1147,6 +1157,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   c.writesTo = oldWritesTo
   c.knownTrueCfVars = oldKnownTrueCfVars
   c.writeSets.popScope(savedWriteSetsScopeIdx)
+  c.falseCfvars = oldFalseCfvars
   c.knownCfVars = oldKnownCfVars
   c.resultSym = oldResultSym
   c.inlineVars = ensureMove oldInlineVars
