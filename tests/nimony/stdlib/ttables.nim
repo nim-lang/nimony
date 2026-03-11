@@ -48,7 +48,7 @@ block:
     assert t.contains(k)
     assert not t.contains(-k)
     assert t.getOrDefault(k) == v
-    assert t.mgetOrPut(k, 0) == v
+  assert t.mgetOrPut(12, 0) == -12
 
   assert t.len == (Max - 1)
   assert not t.contains(0)

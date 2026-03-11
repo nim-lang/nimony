@@ -36,8 +36,9 @@ import writesets
 type
   BorrowableCheck = enum
     IsBorrowable       ## simple path: symbols, dots, array access
-    NotBorrowable      ## deref in middle of path or function call
+    IsBorrowableFromConst
     HasAddr            ## path contains explicit `addr` — unsafe escape hatch
+    NotBorrowable      ## deref in middle of path or function call
 
   BorrowInfo = object
     borrower: SymId   ## variable holding the borrow; upon `(kill borrower)` the borrow ends
@@ -163,12 +164,16 @@ proc extractBorrowPath(c: NjvlContext; n: Cursor; result: var BorrowInfo; follow
       inc r
       skip r # fn
       extractBorrowPath(c, r, result, followInlineVars)
+    elif ek in {AconstrX, SetconstrX, TupconstrX, OconstrX, NilX, TrueX, FalseX}:
+      result.mode = IsBorrowableFromConst
     elif n.njvlKind == EtupatV:
       var r = n
       inc r
       extractBorrowPath(c, r, result, followInlineVars)
     elif n.njvlKind == VV:
       extractBorrowPath(c, n.firstSon, result, followInlineVars)
+  elif n.kind in {IntLit, UIntLit, CharLit, FloatLit, StringLit}:
+    result.mode = IsBorrowableFromConst
   elif n.kind == Symbol:
     let s = n.symId
     if followInlineVars and s in c.inlineVars:
