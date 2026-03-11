@@ -34,6 +34,17 @@ import nimony_model, programs, decls, typenav, sembasics, reporters,
 import writesets
 
 type
+  BorrowableCheck = enum
+    IsBorrowable       ## simple path: symbols, dots, array access
+    NotBorrowable      ## deref in middle of path or function call
+    HasAddr            ## path contains explicit `addr` — unsafe escape hatch
+
+  BorrowInfo = object
+    borrower: SymId   ## variable holding the borrow; upon `(kill borrower)` the borrow ends
+    mode: BorrowableCheck
+    path: seq[SymId]  ## root :: field1 :: field2 :: ...
+    info: PackedLineInfo
+
   NjvlContext = object
     facts: Facts           # From inferle.nim - tracks le/notnil facts
     typeCache: TypeCache
@@ -49,12 +60,6 @@ type
     writeSets: WriteSets               # per-ite write-set implications (TokenBuf-based)
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
     activeBorrows: seq[BorrowInfo]
-
-  BorrowPath = seq[SymId]  ## root :: field1 :: field2 :: ...
-  BorrowInfo = object
-    path: BorrowPath
-    borrower: SymId        ## variable holding the borrow; upon `(kill borrower)` the borrow ends
-    info: PackedLineInfo
 
 proc buildErr(c: var NjvlContext; info: PackedLineInfo; msg: string) =
   when defined(debug):
@@ -106,19 +111,32 @@ proc skipSymbol(r: var Cursor): SymId {.inline.} =
 
 # --- Borrow checking ---
 
-proc extractBorrowPath(c: NjvlContext; n: Cursor; result: var BorrowPath) =
+proc extractBorrowPath(c: NjvlContext; n: Cursor; result: var BorrowInfo) =
   ## Extract a path (root :: field1 :: field2 :: ...) from an expression,
   ## expanding inline variables.
   if n.kind == ParLe:
     let ek = n.exprKind
     if ek in {DotX, DdotX}:
+      if ek == DdotX and result.mode != HasAddr:
+        result.mode = NotBorrowable
       var r = n
       inc r
       extractBorrowPath(c, r, result)
       skip r # skip object subtree
       if r.kind == Symbol:
-        result.add r.symId
-    elif ek in {HaddrX, HderefX, AddrX, DerefX}:
+        result.path.add r.symId
+    elif ek == AddrX:
+      result.mode = HasAddr
+      var r = n
+      inc r
+      extractBorrowPath(c, r, result)
+    elif ek == DerefX:
+      if result.mode != HasAddr:
+        result.mode = NotBorrowable
+      var r = n
+      inc r
+      extractBorrowPath(c, r, result)
+    elif ek in {HaddrX, HderefX}:
       var r = n
       inc r
       extractBorrowPath(c, r, result)
@@ -138,91 +156,45 @@ proc extractBorrowPath(c: NjvlContext; n: Cursor; result: var BorrowPath) =
       skip r # type
       skip r # intlit
       extractBorrowPath(c, r, result)
+    elif ek in CallKinds:
+      # we borrow from the first argument of the call:
+      var r = n
+      inc r
+      skip r # fn
+      extractBorrowPath(c, r, result)
     elif n.njvlKind == EtupatV:
       var r = n
       inc r
       extractBorrowPath(c, r, result)
     elif n.njvlKind == VV:
-      let s = n.firstSon.symId
-      if s in c.inlineVars:
-        extractBorrowPath(c, c.inlineVars[s], result)
-      else:
-        result.add s
+      extractBorrowPath(c, n.firstSon, result)
   elif n.kind == Symbol:
     let s = n.symId
     if s in c.inlineVars:
       extractBorrowPath(c, c.inlineVars[s], result)
     else:
-      result.add s
+      if result.mode != HasAddr:
+        result.mode = IsBorrowable
+      result.path.add s
 
-proc extractPath(c: NjvlContext; n: Cursor): BorrowPath =
-  result = @[]
+proc extractPath(c: NjvlContext; n: Cursor): BorrowInfo =
+  result = BorrowInfo(path: @[], mode: NotBorrowable, info: n.info)
   extractBorrowPath(c, n, result)
 
-type
-  BorrowableCheck = enum
-    IsBorrowable       ## simple path: symbols, dots, array access
-    NotBorrowable      ## deref in middle of path or function call
-    HasAddr            ## path contains explicit `addr` — unsafe escape hatch
-
-proc checkBorrowable(n: Cursor; seenFieldAccess: bool): BorrowableCheck =
-  ## Walk the path expression inward. `seenFieldAccess` tracks whether we've
-  ## already seen a dot/array access outside the current position.
-  ## A deref after a field access means "deref in the middle" → not borrowable.
-  if n.kind == ParLe:
-    let ek = n.exprKind
-    if ek == AddrX:
-      return HasAddr
-    elif ek in {DotX, DdotX, TupatX, ArrAtX, AtX, PatX}:
-      var r = n
-      inc r
-      return checkBorrowable(r, true)
-    elif ek in {HderefX, DerefX}:
-      if seenFieldAccess:
-        return NotBorrowable # deref in middle of path
-      var r = n
-      inc r
-      return checkBorrowable(r, false)
-    elif ek == HaddrX:
-      var r = n
-      inc r
-      return checkBorrowable(r, seenFieldAccess)
-    elif ek in ConvKinds:
-      var r = n
-      inc r
-      skip r # type
-      return checkBorrowable(r, seenFieldAccess)
-    elif ek == BaseobjX:
-      var r = n
-      inc r
-      skip r # type
-      skip r # intlit
-      return checkBorrowable(r, seenFieldAccess)
-    elif ek in CallKinds:
-      return NotBorrowable # function call in path
-    elif n.njvlKind in {VV, EtupatV}:
-      return IsBorrowable
-    else:
-      return NotBorrowable
-  elif n.kind == Symbol:
-    return IsBorrowable
-  else:
-    return NotBorrowable
-
-proc pathsOverlap(a, b: BorrowPath): bool =
+proc pathsOverlap(a, b: BorrowInfo): bool =
   ## Two paths overlap if one is a prefix of the other (or they are equal).
   ## Disjoint siblings (e.g. a.b vs a.c) do not overlap.
-  if a.len == 0 or b.len == 0: return false
-  let minLen = min(a.len, b.len)
+  if a.path.len == 0 or b.path.len == 0: return false
+  let minLen = min(a.path.len, b.path.len)
   for i in 0 ..< minLen:
-    if a[i] != b[i]:
+    if a.path[i] != b.path[i]:
       return false
   result = true
 
-proc checkBorrowConflict(c: var NjvlContext; mutPath: BorrowPath; info: PackedLineInfo) =
+proc checkBorrowConflict(c: var NjvlContext; mutPath: BorrowInfo; info: PackedLineInfo) =
   for b in c.activeBorrows:
-    if pathsOverlap(mutPath, b.path):
-      buildErr c, info, "'" & pool.syms[mutPath[0]] & "' is borrowed and cannot be mutated"
+    if pathsOverlap(mutPath, b):
+      buildErr c, info, "'" & pool.syms[mutPath.path[0]] & "' is borrowed and cannot be mutated"
       return
 
 proc endBorrow(c: var NjvlContext; sym: SymId) =
@@ -732,6 +704,39 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
         inc pc
     if nested == 0: break
 
+proc borrowCheckForCall(c: var NjvlContext; args: Cursor) =
+  var mutPaths: seq[BorrowInfo] = @[]
+  var immPaths: seq[BorrowInfo] = @[]
+  var n = args
+  while n.kind != ParRi:
+    let argInfo = n.info
+    let isMut = n.exprKind == HaddrX
+    # Validate borrowable path for haddr arguments (call-scoped borrows)
+    if isMut:
+      let inner = n.firstSon
+      let m = extractPath(c, inner)
+      if m.mode == NotBorrowable:
+        buildErr c, n.info, "cannot borrow from '" & asNimCode(inner) &
+          "': path is not borrowable; use 'addr' to override or a temporary move"
+      else:
+        mutPaths.add m
+    else:
+      let m = extractPath(c, n)
+      if m.mode == IsBorrowable:
+        immPaths.add m
+    skip n
+  # Check aliasing: a mutable argument must not overlap with any other argument:
+  for i in 0 ..< mutPaths.len:
+    for j in 0 ..< immPaths.len:
+      if pathsOverlap(mutPaths[i], immPaths[j]):
+        buildErr c, mutPaths[i].info, "mutable argument aliases with immutable parameter"
+        break
+  # Mutable argument must not overlap with any other mutable argument:
+  for i in 0 ..< mutPaths.len:
+    for j in 0 ..< mutPaths.len:
+      if i != j and pathsOverlap(mutPaths[i], mutPaths[j]):
+        buildErr c, mutPaths[i].info, "mutable argument aliases with mutable parameter"
+        break
 
 proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
   let callCursor = n
@@ -744,7 +749,8 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
   inc fnType
   var paramMap = initTable[SymId, int]()
   # Collect argument paths for aliasing check
-  var argPaths: seq[tuple[path: BorrowPath, isMut: bool, info: PackedLineInfo]] = @[]
+  let args = n
+  var needsBorrowCheck = false
   while n.kind != ParRi:
     let previousFormalParam = fnType
     assert fnType.kind != ParRi
@@ -758,12 +764,7 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
     if isMut:
       var inner = n
       inc inner # skip haddr tag
-      let bc = checkBorrowable(inner, false)
-      if bc == NotBorrowable:
-        buildErr c, n.info, "cannot borrow from '" & asNimCode(inner) &
-          "': path is not borrowable; use 'addr' to override or a temporary move"
-    let argPath = extractPath(c, n)
-    argPaths.add (argPath, isMut, argInfo)
+      needsBorrowCheck = true
     if pk == OutT:
       let s = extractSymId(n)
       if s != NoSymId:
@@ -772,14 +773,8 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
       fnType = previousFormalParam
     checkNilMatch c, n, param.typ
     traverseExpr c, n
-  # Check aliasing: a mutable argument must not overlap with any other argument
-  for i in 0 ..< argPaths.len:
-    if argPaths[i].isMut and argPaths[i].path.len > 0:
-      for j in 0 ..< argPaths.len:
-        if i != j and argPaths[j].path.len > 0:
-          if pathsOverlap(argPaths[i].path, argPaths[j].path):
-            buildErr c, argPaths[j].info, "argument aliases with mutable parameter"
-            break
+  if needsBorrowCheck:
+    borrowCheckForCall c, args
   while fnType.kind != ParRi: skip fnType
   inc fnType # skip ParRi
   skip fnType # skip return type
@@ -819,7 +814,7 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
 
   # Check borrow conflicts for the destination
   let destMutPath = extractPath(c, n)
-  if destMutPath.len > 0:
+  if destMutPath.mode == IsBorrowable:
     checkBorrowConflict(c, destMutPath, n.info)
 
   # Now handle the destination (Symbol or NJVL versioned variable (v symId version))
@@ -1009,14 +1004,13 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
   if n.kind == ParLe and n.exprKind == HaddrX:
     var inner = n
     inc inner # skip haddr tag
-    let bc = checkBorrowable(inner, false)
-    if bc == NotBorrowable:
+    var path = extractPath(c, inner)
+    if path.mode == IsBorrowable:
+      path.borrower = name
+      c.activeBorrows.add path
+    elif path.mode == NotBorrowable:
       buildErr c, n.info, "cannot borrow from '" & asNimCode(inner) &
         "': path is not borrowable; use 'addr' to override or a temporary move"
-    else:
-      let path = extractPath(c, inner)
-      if path.len > 0:
-        c.activeBorrows.add BorrowInfo(path: path, borrower: name, info: n.info)
   traverseExpr c, n
   skipParRi n
 
@@ -1190,7 +1184,7 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     # Check borrow conflicts: passing a borrowed path to a var param is a mutation.
     inc n
     let unknownPath = extractPath(c, n)
-    if unknownPath.len > 0:
+    if unknownPath.mode == IsBorrowable:
       checkBorrowConflict(c, unknownPath, n.info)
     skip n # the unknown location
     skipParRi n
