@@ -34,6 +34,17 @@ import nimony_model, programs, decls, typenav, sembasics, reporters,
 import writesets
 
 type
+  BorrowableCheck = enum
+    IsBorrowable       ## simple path: symbols, dots, array access
+    NotBorrowable      ## deref in middle of path or function call
+    HasAddr            ## path contains explicit `addr` — unsafe escape hatch
+
+  BorrowInfo = object
+    borrower: SymId   ## variable holding the borrow; upon `(kill borrower)` the borrow ends
+    mode: BorrowableCheck
+    path: seq[SymId]  ## root :: field1 :: field2 :: ...
+    info: PackedLineInfo
+
   NjvlContext = object
     facts: Facts           # From inferle.nim - tracks le/notnil facts
     typeCache: TypeCache
@@ -44,10 +55,12 @@ type
     moduleSuffix: string
     nestedProcs: int
     knownCfVars: HashSet[SymId]
+    inlineVars: Table[SymId, Cursor] # var -> to its init expression
     knownTrueCfVars: IteTracker[SymId]  # cfvars set to true by (jtrue ...)
     writeSets: WriteSets               # per-ite write-set implications (TokenBuf-based)
     falseCfvars: seq[SymId]            # cfvars currently known false (from `(ite (not cf) ...)` nesting)
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
+    activeBorrows: seq[BorrowInfo]
 
 proc buildErr(c: var NjvlContext; info: PackedLineInfo; msg: string) =
   when defined(debug):
@@ -96,6 +109,108 @@ proc skipSymbol(r: var Cursor): SymId {.inline.} =
   result = extractSymId(r)
   if result != NoSymId:
     skip r
+
+# --- Borrow checking ---
+
+proc extractBorrowPath(c: NjvlContext; n: Cursor; result: var BorrowInfo; followInlineVars=true) =
+  ## Extract a path (root :: field1 :: field2 :: ...) from an expression,
+  ## expanding inline variables.
+  if n.kind == ParLe:
+    let ek = n.exprKind
+    if ek in {DotX, DdotX}:
+      if ek == DdotX and result.mode != HasAddr:
+        result.mode = NotBorrowable
+      var r = n
+      inc r
+      extractBorrowPath(c, r, result, followInlineVars)
+      skip r # skip object subtree
+      if r.kind == Symbol:
+        result.path.add r.symId
+    elif ek == AddrX:
+      result.mode = HasAddr
+      var r = n
+      inc r
+      extractBorrowPath(c, r, result, followInlineVars)
+    elif ek == DerefX:
+      if result.mode != HasAddr:
+        result.mode = NotBorrowable
+      var r = n
+      inc r
+      extractBorrowPath(c, r, result, followInlineVars)
+    elif ek in {HaddrX, HderefX}:
+      var r = n
+      inc r
+      extractBorrowPath(c, r, result, followInlineVars)
+    elif ek in {TupatX, ArrAtX, AtX, PatX}:
+      # Array/tuple access: recurse into container, don't distinguish indices
+      var r = n
+      inc r
+      extractBorrowPath(c, r, result, followInlineVars)
+    elif ek in ConvKinds:
+      var r = n
+      inc r
+      skip r # type
+      extractBorrowPath(c, r, result, followInlineVars)
+    elif ek == BaseobjX:
+      var r = n
+      inc r
+      skip r # type
+      skip r # intlit
+      extractBorrowPath(c, r, result, followInlineVars)
+    elif ek in CallKinds:
+      # we borrow from the first argument of the call:
+      var r = n
+      inc r
+      skip r # fn
+      extractBorrowPath(c, r, result, followInlineVars)
+    elif n.njvlKind == EtupatV:
+      var r = n
+      inc r
+      extractBorrowPath(c, r, result, followInlineVars)
+    elif n.njvlKind == VV:
+      extractBorrowPath(c, n.firstSon, result, followInlineVars)
+  elif n.kind == Symbol:
+    let s = n.symId
+    if followInlineVars and s in c.inlineVars:
+      extractBorrowPath(c, c.inlineVars[s], result, followInlineVars)
+    else:
+      if result.mode != HasAddr:
+        result.mode = IsBorrowable
+      result.path.add s
+
+proc extractPath(c: NjvlContext; n: Cursor; followInlineVars=true): BorrowInfo =
+  result = BorrowInfo(path: @[], mode: NotBorrowable, info: n.info)
+  extractBorrowPath(c, n, result, followInlineVars)
+
+proc `$`(b: BorrowInfo): string =
+  result = "BorrowInfo(mode: " & $b.mode & ", path: "
+  for i in 0 ..< b.path.len:
+    result.add " :: " & pool.syms[b.path[i]]
+  result.add ")"
+
+proc pathsOverlap(a, b: BorrowInfo): bool =
+  ## Two paths overlap if one is a prefix of the other (or they are equal).
+  ## Disjoint siblings (e.g. a.b vs a.c) do not overlap.
+  if a.path.len == 0 or b.path.len == 0: return false
+  let minLen = min(a.path.len, b.path.len)
+  for i in 0 ..< minLen:
+    if a.path[i] != b.path[i]:
+      return false
+  result = true
+
+proc checkBorrowConflict(c: var NjvlContext; mutPath: BorrowInfo; info: PackedLineInfo) =
+  for b in c.activeBorrows:
+    if pathsOverlap(mutPath, b):
+      buildErr c, info, "'" & pool.syms[mutPath.path[0]] & "' is borrowed and cannot be mutated"
+      return
+
+proc endBorrow(c: var NjvlContext; sym: SymId) =
+  var i = 0
+  while i < c.activeBorrows.len:
+    if c.activeBorrows[i].borrower == sym:
+      c.activeBorrows.delete(i)
+    else:
+      inc i
 
 proc conditionCfvarForNot(c: NjvlContext; n: Cursor): SymId =
   ## If condition is `(not cfvar)`, return the cfvar's SymId. Else NoSymId.
@@ -600,6 +715,45 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
         inc pc
     if nested == 0: break
 
+proc borrowCheckForCall(c: var NjvlContext; args: Cursor) =
+  var mutPaths: seq[BorrowInfo] = @[]
+  var immPaths: seq[BorrowInfo] = @[]
+  var n = args
+  while n.kind != ParRi:
+    let argInfo = n.info
+    let isMut = n.exprKind == HaddrX
+    # Validate borrowable path for haddr arguments (call-scoped borrows)
+    if isMut:
+      let inner = n.firstSon
+      let m = extractPath(c, inner)
+      if m.mode == NotBorrowable:
+        buildErr c, n.info, "cannot borrow from '" & asNimCode(inner) &
+          "': path is not borrowable; use 'addr' to override or a temporary move"
+      else:
+        mutPaths.add m
+    else:
+      let m = extractPath(c, n, followInlineVars = false)
+      if m.mode == IsBorrowable:
+        immPaths.add m
+    skip n
+  # Check aliasing: a mutable argument must not overlap with any other argument:
+  for i in 0 ..< mutPaths.len:
+    for j in 0 ..< immPaths.len:
+      if pathsOverlap(mutPaths[i], immPaths[j]):
+        when false:
+          echo "mutPaths[i]: ", mutPaths[i]
+          echo "immPaths[j]: ", immPaths[j]
+        buildErr c, mutPaths[i].info, "mutable argument aliases with immutable parameter"
+        break
+  # Mutable argument must not overlap with any other mutable argument:
+  for i in 0 ..< mutPaths.len:
+    for j in 0 ..< mutPaths.len:
+      if i != j and pathsOverlap(mutPaths[i], mutPaths[j]):
+        when false:
+          echo "mutPaths[i]: ", mutPaths[i]
+          echo "mutPaths[j]: ", mutPaths[j]
+        buildErr c, mutPaths[i].info, "mutable argument aliases with mutable parameter"
+        break
 
 proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
   let callCursor = n
@@ -611,12 +765,23 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
   assert fnType.isParamsTag
   inc fnType
   var paramMap = initTable[SymId, int]()
+  # Collect argument paths for aliasing check
+  let args = n
+  var needsBorrowCheck = false
   while n.kind != ParRi:
     let previousFormalParam = fnType
     assert fnType.kind != ParRi
     let param = takeLocal(fnType, SkipFinalParRi)
     paramMap[param.name.symId] = paramMap.len+1
     let pk = param.typ.typeKind
+    # Save arg info before traverseExpr advances n
+    let argInfo = n.info
+    let isMut = n.exprKind == HaddrX
+    # Validate borrowable path for haddr arguments (call-scoped borrows)
+    if isMut:
+      var inner = n
+      inc inner # skip haddr tag
+      needsBorrowCheck = true
     if pk == OutT:
       let s = extractSymId(n)
       if s != NoSymId:
@@ -625,6 +790,8 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
       fnType = previousFormalParam
     checkNilMatch c, n, param.typ
     traverseExpr c, n
+  if needsBorrowCheck:
+    borrowCheckForCall c, args
   while fnType.kind != ParRi: skip fnType
   inc fnType # skip ParRi
   skip fnType # skip return type
@@ -661,6 +828,11 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
   # First analyze the value (source)
   let valueStart = n
   traverseExpr c, n
+
+  # Check borrow conflicts for the destination
+  let destMutPath = extractPath(c, n)
+  if destMutPath.mode == IsBorrowable:
+    checkBorrowConflict(c, destMutPath, n.info)
 
   # Now handle the destination (Symbol or NJVL versioned variable (v symId version))
   let destSymId = extractSymIdForStore(n)
@@ -729,6 +901,7 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
 
   # Analyze condition and extract facts
   let savedFacts = save(c.facts)
+  let savedBorrowsLen = c.activeBorrows.len
   var writesSp = c.writesTo.split()
   var cfSp = c.knownTrueCfVars.split()
   let condFacts = analyseCondition(c, n)
@@ -747,6 +920,7 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   let thenFacts = c.facts
   c.writesTo.thenDone(writesSp)
   c.knownTrueCfVars.thenDone(cfSp)
+  c.activeBorrows.setLen(savedBorrowsLen)
 
   # Restore facts for else branch
   restore(c.facts, savedFacts)
@@ -760,6 +934,7 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     inc n # empty else
   else:
     traverseStmt c, n
+  c.activeBorrows.setLen(savedBorrowsLen)
 
   # Record implication for this ite: captures writes and jtrue'd cfvars from each branch.
   # `guard` is the cfvar from a `(not guard)` condition (condCf), if any.
@@ -773,7 +948,7 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
 
   # Conservative merge: only keep facts/writes/cfvars that hold in both branches.
   # Variables written in only one branch are tracked via writeSets and resolved
-  # through the falseCfvars + impliedWhenFalse mechanism inside guard ites.
+  # through the cfvar implication mechanism (impliedWhenFalse, impliedByIte).
   c.facts = merge(thenFacts, 0, c.facts, false)
   c.writesTo.join(writesSp)
   c.knownTrueCfVars.join(cfSp)
@@ -801,6 +976,7 @@ proc traverseLoop(c: var NjvlContext; n: var Cursor) =
   traverseStmt c, n
 
   # Analyze loop condition
+  let savedBorrowsLen = c.activeBorrows.len
   let savedFacts = save(c.facts)
   var condCursor = n
   var wasEquality = false
@@ -817,6 +993,7 @@ proc traverseLoop(c: var NjvlContext; n: var Cursor) =
   traverseStmt c, n
 
   # After loop, we know the condition is false (if we exited normally)
+  c.activeBorrows.setLen(savedBorrowsLen)
   restore(c.facts, savedFacts)
   if condFact.isValid:
     var negated = condFact
@@ -832,6 +1009,7 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
   skip n # name
   skip n # export marker
   let skipInitCheck = hasPragma(n, NoinitP)
+  let isInline = hasPragma(n, InlineP)
   skip n # pragmas
   c.typeCache.registerLocal(name, kind, n)
   skip n # type
@@ -839,6 +1017,21 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
     c.directlyInitialized[^1].incl name
   if kind == ResultY:
     c.resultSym = name
+  if isInline:
+    c.inlineVars[name] = n
+  # Detect borrow: (haddr X) as init expression starts a borrow.
+  # Validate that the path is borrowable (no deref in the middle, no calls).
+  # Explicit `addr` in the path is an escape hatch ("unchecked").
+  if n.kind == ParLe and n.exprKind == HaddrX:
+    var inner = n
+    inc inner # skip haddr tag
+    var path = extractPath(c, inner)
+    if path.mode == IsBorrowable:
+      path.borrower = name
+      c.activeBorrows.add path
+    elif path.mode == NotBorrowable:
+      buildErr c, n.info, "cannot borrow from '" & asNimCode(inner) &
+        "': path is not borrowable; use 'addr' to override or a temporary move"
   traverseExpr c, n
   skipParRi n
 
@@ -894,17 +1087,13 @@ proc traverseAssert(c: var NjvlContext; n: var Cursor) =
 
 proc isInitializedAtProcEnd(c: var NjvlContext; symId: SymId): bool =
   ## Checks if `symId` is provably initialized at the end of a proc.
-  ## At proc end, falseCfvars is empty, so we check writeSets implications directly.
-  ## We check both directions: impliedWhenFalse (sym written when cfvar is false,
-  ## e.g. result set via `result = expr` in guard-wrapped code) and impliedWhenTrue
-  ## (sym written in the same branch as a jtrue, e.g. result set via `return expr`
-  ## where the return also jtrue's the return guard).
+  ## Uses `impliedByIte`: if a cfvar cf appears anywhere in a writeSets record
+  ## (as guard, in then-set, or in else-set), then all non-cfvar vars from both
+  ## branches of that record are provably initialized.
   let eff = isEffectivelyInitialized(c, symId)
   if eff: return true
   for cf in c.knownCfVars:
-    if symId in c.writeSets.impliedWhenFalse(cf, c.knownCfVars):
-      return true
-    if symId in c.writeSets.impliedWhenTrue(cf, c.knownCfVars):
+    if symId in c.writeSets.impliedByIte(cf, c.knownCfVars):
       return true
   return false
 
@@ -919,6 +1108,8 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   let oldFalseCfvars = move c.falseCfvars
   let oldKnownCfVars = move c.knownCfVars
   let oldResultSym = c.resultSym
+  let oldInlineVars = move c.inlineVars
+  let oldBorrows = move c.activeBorrows
   c.resultSym = NoSymId
   inc n
   let symId = n.symId
@@ -949,10 +1140,9 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
     let info = decl.info
     # Emulate a "use result" / "use outParam" check at proc end.
     # In-body writes are wrapped in (ite (not ´r.0) ...) guards, so they appear in
-    # writeSets.impliedWhenFalse but not in writesTo after the join.
-    # We check all declared cfvars: result is provably set if it is in
-    # impliedWhenFalse(cf) for any cf in knownCfVars (the same check the
-    # in-body "use x" path exercises when falseCfvars is non-empty).
+    # writeSets but not in writesTo after the conservative join.
+    # We check all declared cfvars: result is provably set if cf appears
+    # anywhere in a writeSets record that also mentions result.
     # Skip importc/importcpp procs: they have no Nim body and satisfy their
     # out-params / result contract at the C level.
     if not isExternProc:
@@ -970,6 +1160,8 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   c.falseCfvars = oldFalseCfvars
   c.knownCfVars = oldKnownCfVars
   c.resultSym = oldResultSym
+  c.inlineVars = ensureMove oldInlineVars
+  c.activeBorrows = ensureMove oldBorrows
   discard c.directlyInitialized.pop()
 
 proc traverseStmt(c: var NjvlContext; n: var Cursor) =
@@ -1002,11 +1194,21 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
       inc n
     inc n  # ParRi
   of KillV:
-    # Variable going out of scope - skip
-    skip n
-  of UnknownV:
-    # Unknown instruction - skip value, analyze rest
+    # Variable going out of scope - end any active borrows
     inc n
+    while n.kind != ParRi:
+      let s = extractSymId(n)
+      if s != NoSymId:
+        endBorrow(c, s)
+      skip n
+    inc n # ParRi
+  of UnknownV:
+    # Unknown instruction - variable's contents become unknown after a call.
+    # Check borrow conflicts: passing a borrowed path to a var param is a mutation.
+    inc n
+    let unknownPath = extractPath(c, n)
+    if unknownPath.mode == IsBorrowable:
+      checkBorrowConflict(c, unknownPath, n.info)
     skip n # the unknown location
     skipParRi n
   of ContinueV:

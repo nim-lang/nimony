@@ -16,8 +16,8 @@ proc foobar(x: var VarId, y: var VarId): var VarId {.borrow.}
 var x: VarId
 
 x = x + x
-
-let m = foobar(x, x)
+var z = x
+let m = foobar(x, z)
 
 let y = int8(x)
 

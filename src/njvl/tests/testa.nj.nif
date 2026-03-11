@@ -54,7 +54,9 @@
    (kill ´g.0)
    (continue .)))
  (call echo.0 "after loop")
- (let :`x.1 . .
+ (let :`x.1 .
+  (pragmas
+   (inline))
   (i +32)
   (call echo.1 "abc"))
  (call echo.0 `x.1)
