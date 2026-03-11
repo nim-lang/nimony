@@ -71,7 +71,6 @@ type
     nameToId*: Table[string, int]
     maxDepth*: int    # maximum depth in the DAG
     commands*: seq[Command]  # bidirectional mapping of commands
-    timestampCache*: Table[string, Time]  # Cache for file modification times
     baseDir*: string
 
   CliCommand = enum
@@ -217,24 +216,10 @@ proc findDependencies(dag: var Dag; nodeId: int) =
       if depId != nodeId and depId notin node.deps:
         node.deps.add(depId)
 
-proc getFileTime(dag: var Dag; filename: string): Time =
-  ## Get file modification time with caching
-  if filename in dag.timestampCache:
-    result = dag.timestampCache[filename]
-  else:
-    if fileExists(filename):
-      result = getLastModificationTime(filename)
-      dag.timestampCache[filename] = result
-    else:
-      result = getTime()  # Use current time for non-existent files
-      dag.timestampCache[filename] = result
-
-proc removeOutdatedArtifacts(dag: var Dag; node: Node; opt: set[CliOption]) =
+proc removeOutdatedArtifacts(node: Node; opt: set[CliOption]) =
   ## Remove outdated build artifacts for a node. Only used with --force;
   ## removing before normal incremental builds breaks tools that use OnlyIfChanged.
   for output in node.outputs:
-    # Remove its cached timestamp as it is no longer valid
-    dag.timestampCache.del output
     if fileExists(output):
       try:
         removeFile(output)
@@ -243,7 +228,7 @@ proc removeOutdatedArtifacts(dag: var Dag; node: Node; opt: set[CliOption]) =
       except:
         stderr.writeLine "Warning: Could not remove outdated artifact: ", output
 
-proc needsRebuild(dag: var Dag; node: Node): bool =
+proc needsRebuild(node: Node): bool =
   ## Check if a node needs to be rebuilt
   result = false
 
@@ -260,13 +245,13 @@ proc needsRebuild(dag: var Dag; node: Node): bool =
   # Check if any input is newer than any output
   var oldestOutput = getTime()
   for output in node.outputs:
-    let outputTime = dag.getFileTime(output)
+    let outputTime = getLastModificationTime(output)
     if outputTime < oldestOutput:
       oldestOutput = outputTime
 
   for input in node.inputs:
     if fileExists(input):
-      let inputTime = dag.getFileTime(input)
+      let inputTime = getLastModificationTime(input)
       if inputTime >= oldestOutput:
         return true
 
@@ -347,9 +332,9 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil): 
       # Collect all commands at the current depth
       while i < sortedNodes.len and dag.nodes[sortedNodes[i]].depth == currentDepth:
         let node = addr dag.nodes[sortedNodes[i]]
-        if Force in opt or dag.needsRebuild(node[]):
+        if Force in opt or needsRebuild(node[]):
           if Force in opt:
-            dag.removeOutdatedArtifacts(node[], opt)
+            removeOutdatedArtifacts(node[], opt)
           if Verbose in opt:
             echo "Building: ", node.outputs.join(", ")
           let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs, node.args, dag.baseDir)
@@ -385,17 +370,13 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil): 
             if p == Running:
               failed commands[i]
           return false
-        for nId in nodeIds:
-          let node = addr dag.nodes[nId]
-          for o in node.outputs:
-            dag.timestampCache[o] = getLastModificationTime(o)
   else:
     # Sequential execution
     for nodeId in sortedNodes:
       let node = addr dag.nodes[nodeId]
-      if Force in opt or dag.needsRebuild(node[]):
+      if Force in opt or needsRebuild(node[]):
         if Force in opt:
-          dag.removeOutdatedArtifacts(node[], opt)
+          removeOutdatedArtifacts(node[], opt)
         if Verbose in opt:
           echo "Building: ", node.outputs.join(", ")
         let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs, node.args, dag.baseDir)
@@ -408,8 +389,6 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil): 
             profile[].recordCmdTime(cmdName, toSeconds(getMonoTime() - start))
           failed expandedCmd
           return false
-        for o in node.outputs:
-          dag.timestampCache[o] = getLastModificationTime(o)
         if profile != nil:
           let sec = toSeconds(getMonoTime() - start)
           profile[].recordCmdTime(cmdName, sec)
@@ -555,7 +534,7 @@ proc parseDoRule(n: var Cursor; dag: var Dag) =
 
 proc parseNifFile(filename: string; baseDir: sink string): Dag =
   ## Parse a .nif file and build the DAG
-  result = Dag(timestampCache: initTable[string, Time](), baseDir: baseDir)
+  result = Dag(baseDir: baseDir)
 
   if not fileExists(filename):
     quit "File not found: " & filename
