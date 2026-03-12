@@ -61,6 +61,92 @@ proc genIf(c: var GeneratedCode; n: var Cursor) =
     error c.m, "`if` expects `elif` or `else` but got: ", first
   c.inToplevel = oldInToplevel
 
+proc getVirtualGuard(c: var GeneratedCode; n: Cursor): (SymId, int) =
+  result = (SymId(0), -1)
+  var n = n
+  if n.exprKind == NotC:
+    inc n
+    if n.kind == Symbol:
+      let prevPos = c.currentProc.vflags.getOrDefault(n.symId, -1)
+      if prevPos >= 0:
+        result = (n.symId, prevPos)
+
+proc genIte(c: var GeneratedCode; n: var Cursor) =
+  inc n
+  let oldInToplevel = c.inToplevel
+  c.inToplevel = false
+  let (vflag, prevPos) = getVirtualGuard(c, n)
+  if vflag != SymId(0):
+    #[
+       vflag x = false
+       ...
+       jtrue x
+       ...
+       if not x:
+         actions
+
+       -->
+         actions
+    ]#
+    skip n
+    c.genStmt n # then-part is always taken
+    # emit the label:
+    if prevPos > 0:
+      # previous label is obsolete now, mark it as such:
+      c.code[prevPos] = Token EmptyToken
+      c.code[prevPos + 1] = Token EmptyToken
+      c.code[prevPos + 2] = Token EmptyToken
+    c.currentProc.vflags[vflag] = c.code.len
+    c.add mangleToC(pool.syms[vflag])
+    c.add Colon
+    c.add Semicolon
+    skip n      # else-part is always ignored
+  else:
+    c.add IfKeyword
+    c.add Space
+    c.genCond n
+    c.add Space
+    c.add CurlyLe
+    c.genStmt n
+    c.add CurlyRi
+    if n.kind != DotToken:
+      c.add ElseKeyword
+      c.add CurlyLe
+      genStmt c, n
+      c.add CurlyRi
+    else:
+      inc n
+  skipParRi n
+  c.inToplevel = oldInToplevel
+  c.add Semicolon
+
+proc genLoop(c: var GeneratedCode; n: var Cursor) =
+  let oldInToplevel = c.inToplevel
+  c.inToplevel = false
+  inc n
+  c.add WhileKeyword
+  c.add Space
+  c.add ParLe
+  c.add "NIM_TRUE"
+  c.add ParRi
+  c.add Space
+  c.add CurlyLe
+  c.genStmt n # pre condition statements
+  c.add IfKeyword
+  c.add Space
+  c.add ParLe
+  c.add "!"
+  c.add ParLe
+  c.genx n # loop condition
+  c.add ParRi
+  c.add ParRi
+  c.add BreakKeyword
+  c.add Semicolon
+  c.genStmt n # loop body
+  c.add CurlyRi
+  skipParRi n
+  c.inToplevel = oldInToplevel
+
 proc genWhile(c: var GeneratedCode; n: var Cursor) =
   let oldInToplevel = c.inToplevel
   c.inToplevel = false
@@ -275,10 +361,56 @@ proc genSwitch(c: var GeneratedCode; n: var Cursor) =
   skipParRi n
   c.inToplevel = oldInToplevel
 
+proc genMflagDecl(c: var GeneratedCode; n: var Cursor) =
+  genCLineDir(c, n.info)
+  inc n
+  if n.kind == SymbolDef:
+    let s = n.symId
+    c.m.registerLocal(s, createIntegralType(c.m, "(bool)"))
+    c.add "NB8"
+    c.add Space
+    c.add mangleToC(pool.syms[s])
+    c.add Semicolon
+    inc n
+  else:
+    error c.m, "expected SymbolDef but got: ", n
+  skipParRi n
+
+proc genVflagDecl(c: var GeneratedCode; n: var Cursor) =
+  genCLineDir(c, n.info)
+  inc n
+  if n.kind == SymbolDef:
+    let s = n.symId
+    c.m.registerLocal(s, createIntegralType(c.m, "(bool)"))
+    c.currentProc.vflags[s] = 0
+    inc n
+  else:
+    error c.m, "expected SymbolDef but got: ", n
+  skipParRi n
+
+proc genJtrue(c: var GeneratedCode; n: var Cursor) =
+  inc n
+  while n.kind != ParRi:
+    if n.kind == Symbol:
+      let s = n.symId
+      if not c.currentProc.vflags.contains(s):
+        error c.m, "virtual flag not declared: ", n
+      inc n
+      if n.kind == ParRi:
+        # last symbol becomes a target goto:
+        c.add GotoKeyword
+        c.add mangleToC(pool.syms[s])
+        c.add Semicolon
+    else:
+      error c.m, "expected Symbol but got: ", n
+  skipParRi n
+
 proc genVar(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false; useStatic = false) =
   case vk
   of IsLocal:
     genVarDecl c, n, IsLocal, toExtern
+  of IsMflag:
+    genMflagDecl c, n
   of IsGlobal:
     moveToDataSection:
       genVarDecl c, n, IsGlobal, toExtern
@@ -383,6 +515,10 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
     genVar c, n, IsGlobal
   of TvarS:
     genVar c, n, IsThreadlocal
+  of MflagS:
+    genMflagDecl c, n
+  of VflagS:
+    genVflagDecl c, n
   of ConstS:
     genVar c, n, IsConst, useStatic = true
   of EmitS:
@@ -396,12 +532,15 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
     c.add Semicolon
     skipParRi n
   of IfS: genIf c, n
+  of IteS, ItecS: genIte c, n
   of WhileS: genWhile c, n
+  of LoopS: genLoop c, n
   of BreakS:
     inc n
     c.add BreakKeyword
     c.add Semicolon
     skipParRi n
+  of JtrueS: genJtrue c, n
   of CaseS: genSwitch c, n
   of LabS: genLabel c, n
   of JmpS: genGoto c, n
