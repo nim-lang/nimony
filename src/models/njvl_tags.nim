@@ -14,11 +14,12 @@ type
     EtupatV = (ord(EtupatTagId), "etupat")  ## tupat expression for error handling
     UnknownV = (ord(UnknownTagId), "unknown")  ## location's contents is unknown at this point
     JtrueV = (ord(JtrueTagId), "jtrue")  ## set variables v1, v2, ... to `(true)`; hint this should become a jump
-    CfvarV = (ord(CfvarTagId), "cfvar")  ## declare a new control flow variable `D` of type `bool` initialized to `false`
+    MflagV = (ord(MflagTagId), "mflag")  ## declare a new **materialized** control flow flag `D` of type `bool` initialized to `false`
+    VflagV = (ord(VflagTagId), "vflag")  ## declare a new **virtual** control flow flag `D` of type `bool` initialized to `false`
     KillV = (ord(KillTagId), "kill")  ## some.var is about to disappear (scope exit)
     AssumeV = (ord(AssumeTagId), "assume")  ## `assume` pragma/annotation
     AssertV = (ord(AssertTagId), "assert")  ## `assert` pragma/annotation
 
 proc rawTagIsNjvlKind*(raw: TagEnum): bool {.inline.} =
-  raw in {StoreTagId, ContinueTagId, IteTagId, ItecTagId, LoopTagId, VTagId, EtupatTagId, UnknownTagId, JtrueTagId, CfvarTagId, KillTagId, AssumeTagId, AssertTagId}
+  raw in {StoreTagId, ContinueTagId, IteTagId, ItecTagId, LoopTagId, VTagId, EtupatTagId, UnknownTagId, JtrueTagId, MflagTagId, VflagTagId, KillTagId, AssumeTagId, AssertTagId}
 

@@ -78,7 +78,7 @@ proc thenDone*[T](t: var IteTracker[T]; s: var SplitPoint[T]) =
 proc join*[T](t: var IteTracker[T]; s: SplitPoint[T]) =
   ## Call after the else-branch: conservative merge keeping only the intersection.
   ## Items written in only one branch are tracked via writeSets and resolved
-  ## through the cfvar implication mechanism inside guard ites.
+  ## through the mflag implication mechanism inside guard ites.
   var elseData: seq[T] = @[]
   for item in t.since(s.cp): elseData.add item
   t.rollback(s.cp)

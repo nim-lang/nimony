@@ -5,7 +5,7 @@
   ))
 
   (proc :test1.0 . . . (params) . . . (stmts
-    (cfvar :´r.0)
+    (mflag :´r.0)
     (var :a.0 .. (bool) (false))
     (while (true) (stmts
       (if (elif a.0 (stmts
@@ -16,7 +16,7 @@
   ))
 
   (proc :test2.0 . . . (params) . . . (stmts
-    (cfvar :´r.0)
+    (mflag :´r.0)
     (var :a.0 .. (bool) (false))
     (while (true) (stmts
       (if (elif a.0 (stmts
@@ -30,7 +30,7 @@
   ))
 
   (proc :test3.0 . . . (params) . . . (stmts
-    (cfvar :´r.0)
+    (mflag :´r.0)
     (var :a.0 .. (bool) (false))
     (var :b.0 .. (bool) (true))
     (while (true) (stmts
@@ -45,7 +45,7 @@
   ))
 
   (proc :test4.0 . . . (params) . . . (stmts
-    (cfvar :´r.0)
+    (mflag :´r.0)
     (var :a.0 .. (bool) (false))
     (var :b.0 .. (bool) (true))
     (var :c.0 .. (bool) (false))
@@ -64,7 +64,7 @@
   ))
 
   (proc :test5.0 . . . (params) . . . (stmts
-    (cfvar :´r.0)
+    (mflag :´r.0)
     (var :a.0 .. (bool) (false))
     (if (elif a.0 (stmts
       (ret .)
@@ -73,7 +73,7 @@
   ))
 
   (proc :test6.0 . . . (params) . . . (stmts
-    (cfvar :´r.0)
+    (mflag :´r.0)
     (var :a.0 .. (bool) (false))
     (while (true) (stmts
       (if (elif a.0 (stmts
@@ -86,7 +86,7 @@
   ))
 
   (proc :test7.0 . . . (params) . . . (stmts
-    (cfvar :´r.0)
+    (mflag :´r.0)
     (var :a.0 .. (bool) (false))
     (var :b.0 .. (bool) (true))
     (while (true) (stmts
@@ -104,7 +104,7 @@
   ))
 
   (proc :test8.0 . . . (params) . . . (stmts
-    (cfvar :´r.0)
+    (mflag :´r.0)
     (var :a.0 .. (bool) (false))
     (block . (stmts
       (if (elif a.0 (stmts
@@ -115,7 +115,7 @@
   ))
 
   (proc :test9.0 . . . (params) . . . (stmts
-    (cfvar :´r.0)
+    (mflag :´r.0)
     (var :a.0 .. (bool) (false))
     (var :b.0 .. (bool) (true))
     (while (true) (stmts
@@ -131,7 +131,7 @@
   ))
 
   (proc :test10.0 . . . (params) . . . (stmts
-    (cfvar :´r.0)
+    (mflag :´r.0)
     (var :a.0 .. (bool) (false))
     (var :b.0 .. (bool) (true))
     (var :c.0 .. (bool) (false))

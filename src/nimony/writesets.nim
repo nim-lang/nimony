@@ -9,7 +9,7 @@
 ##
 ## Each implication record is encoded in a ``TokenBuf`` history as:
 ##   ``(stmts guardOrDot (stmts thenSym1 ...) (stmts elseSym1 ...) )``
-## where ``guardOrDot`` is a Symbol for the guard cfvar, or '.' if none.
+## where ``guardOrDot`` is a Symbol for the guard mflag, or '.' if none.
 ##
 ## Records are appended sequentially; nested procs are isolated via pushScope/popScope.
 
@@ -70,7 +70,7 @@ proc closeRecord*(ws: var WriteSets) =
   ws.history.addParRi()  # close outer record
 
 proc impliedWhenFalse*(ws: WriteSets; cf: SymId; knownCfVars: HashSet[SymId]): HashSet[SymId] =
-  ## Returns the set of syms known initialized when cfvar ``cf`` is false.
+  ## Returns the set of syms known initialized when mflag ``cf`` is false.
   ## Logic per record:
   ##   - ``guard == cf`` or ``cf`` in else-set  →  then-set vars are safe
   ##   - ``cf`` in then-set                     →  else-set vars are safe
@@ -119,7 +119,7 @@ proc impliedWhenFalse*(ws: WriteSets; cf: SymId; knownCfVars: HashSet[SymId]): H
 proc impliedByIte*(ws: WriteSets; cf: SymId; knownCfVars: HashSet[SymId]): HashSet[SymId] =
   ## Returns the set of syms provably initialized regardless of ``cf``'s value.
   ## If ``cf`` appears anywhere in a record (as guard, in then-set, or in else-set),
-  ## then all non-cfvar syms from *both* branches are implied. This is sound because
+  ## then all non-mflag syms from *both* branches are implied. This is sound because
   ## cf must be either true or false, and the union of impliedWhenFalse ∪ impliedWhenTrue
   ## simplifies to this single condition.
   result = initHashSet[SymId]()

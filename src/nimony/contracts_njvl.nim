@@ -218,7 +218,7 @@ proc endBorrow(c: var NjvlContext; sym: SymId) =
       inc i
 
 proc conditionCfvarForNot(c: NjvlContext; n: Cursor): SymId =
-  ## If condition is `(not cfvar)`, return the cfvar's SymId. Else NoSymId.
+  ## If condition is `(not mflag)`, return the mflag's SymId. Else NoSymId.
   var r = n
   if r.exprKind == NotX:
     inc r
@@ -229,13 +229,13 @@ proc conditionCfvarForNot(c: NjvlContext; n: Cursor): SymId =
     result = NoSymId
 
 proc conditionCfvarDirect(c: NjvlContext; n: Cursor): SymId =
-  ## If condition is directly a cfvar (not negated), return its SymId. Else NoSymId.
+  ## If condition is directly a mflag (not negated), return its SymId. Else NoSymId.
   result = extractSymId(n)
   if result != NoSymId and result notin c.knownCfVars:
     result = NoSymId
 
 proc cfCondKnownValue(c: NjvlContext; n: Cursor): int =
-  ## Returns +1 if the condition is a cfvar known to be true,
+  ## Returns +1 if the condition is a mflag known to be true,
   ## -1 if it is `(not cf)` where cf is known true, 0 otherwise.
   ## After vl.nim, cfvars appear as `(v sym N)` so we use extractSymId.
   let s = extractSymId(n)
@@ -654,7 +654,7 @@ proc isDirectlyInitialized(c: var NjvlContext; symId: SymId): bool =
   return false
 
 proc isEffectivelyInitialized(c: var NjvlContext; symId: SymId): bool =
-  ## True if symId is known initialized (directly, via writesTo, or via cfvar implication).
+  ## True if symId is known initialized (directly, via writesTo, or via mflag implication).
   if isDirectlyInitialized(c, symId) or symId in c.writesTo:
     return true
   for cf in c.falseCfvars:
@@ -880,11 +880,11 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   ## Handle (ite cond then else [join])
   inc n # skip ite/itec tag
 
-  # Fast path: if the condition's truth value is known from cfvar state,
+  # Fast path: if the condition's truth value is known from mflag state,
   # only traverse the live branch and skip the dead one.
   let knownVal = cfCondKnownValue(c, n)
   if knownVal == 1:
-    # condition is a cfvar known to be true: only then-branch runs
+    # condition is a mflag known to be true: only then-branch runs
     skip n  # skip condition
     traverseStmt c, n  # then branch
     skip n  # skip else
@@ -900,7 +900,7 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     skipParRi n
     return
 
-  # Condition may be (not cfvar) or directly a cfvar - capture before analyseCondition consumes it
+  # Condition may be (not mflag) or directly a mflag - capture before analyseCondition consumes it
   let condCf = conditionCfvarForNot(c, n)
   let condDirectCf = conditionCfvarDirect(c, n)
 
@@ -942,7 +942,7 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   c.activeBorrows.setLen(savedBorrowsLen)
 
   # Record implication for this ite: captures writes and jtrue'd cfvars from each branch.
-  # `guard` is the cfvar from a `(not guard)` condition (condCf), if any.
+  # `guard` is the mflag from a `(not guard)` condition (condCf), if any.
   c.writeSets.openRecord(condCf)
   for item in writesSp.thenData: c.writeSets.emitThen(item)
   for cf in cfSp.thenData: c.writeSets.emitThen(cf)
@@ -953,14 +953,14 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
 
   # Conservative merge: only keep facts/writes/cfvars that hold in both branches.
   # Variables written in only one branch are tracked via writeSets and resolved
-  # through the cfvar implication mechanism (impliedWhenFalse, impliedByIte).
+  # through the mflag implication mechanism (impliedWhenFalse, impliedByIte).
   c.facts = merge(thenFacts, 0, c.facts, false)
   c.writesTo.join(writesSp)
   c.knownTrueCfVars.join(cfSp)
 
-  # If the condition was a direct cfvar and the then-branch activated cfvars via jtrue
+  # If the condition was a direct mflag and the then-branch activated cfvars via jtrue
   # (a leaving path), sequential code past this ite can only be reached when the
-  # cfvar was false. Query implications to find vars now known initialized.
+  # mflag was false. Query implications to find vars now known initialized.
   # Example: `(ite ´g.0 (stmts quit jtrue ´r.0) .)` — after this, ´g.0 must be false,
   # so variables initialized only when ´g.0=false are now known initialized.
   if condDirectCf != NoSymId and cfSp.thenData.len > 0:
@@ -1092,8 +1092,8 @@ proc traverseAssert(c: var NjvlContext; n: var Cursor) =
 
 proc isInitializedAtProcEnd(c: var NjvlContext; symId: SymId): bool =
   ## Checks if `symId` is provably initialized at the end of a proc.
-  ## Uses `impliedByIte`: if a cfvar cf appears anywhere in a writeSets record
-  ## (as guard, in then-set, or in else-set), then all non-cfvar vars from both
+  ## Uses `impliedByIte`: if a mflag cf appears anywhere in a writeSets record
+  ## (as guard, in then-set, or in else-set), then all non-mflag vars from both
   ## branches of that record are provably initialized.
   let eff = isEffectivelyInitialized(c, symId)
   if eff: return true
@@ -1181,7 +1181,7 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     traverseAssume c, n
   of AssertV:
     traverseAssert c, n
-  of CfvarV:
+  of MflagV, VflagV:
     # Control flow variable declaration
     inc n
     c.knownCfVars.incl n.symId
@@ -1190,7 +1190,7 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
   of JtrueV:
     # (jtrue cf1 cf2 ...) - cfvars listed here are now known true on this path.
     # NJ emits jtrue after noreturn calls and leaving paths (return/break/raise).
-    # The cfvar information is used at join points to determine which branches are
+    # The mflag information is used at join points to determine which branches are
     # leaving paths, enabling the writeSets implication mechanism.
     inc n
     while n.kind != ParRi:
