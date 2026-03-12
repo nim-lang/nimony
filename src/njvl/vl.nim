@@ -277,7 +277,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trKill c, dest, n
   of StoreV:
     trStore c, dest, n
-  of CfvarV:
+  of MflagV, VflagV:
     trCfvar c, dest, n
   of UnknownV:
     trUnknown c, dest, n

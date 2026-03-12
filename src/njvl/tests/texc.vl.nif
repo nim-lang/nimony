@@ -1,5 +1,5 @@
 (stmts
- (cfvar :´r.0.main)
+ (mflag :´r.0.main)
  (proc :echo.0 . . .
   (params
    (param :cond.0 . .
@@ -11,15 +11,15 @@
     (result :`result.1 . . ErrorCode.0.sysvq0asl .)
     (store Success.0.sysvq0asl
      (v `result.1 +1))
-    (cfvar :´r.0)
+    (mflag :´r.0)
     (kill ´r.0))))
  (proc :test . . .
   (params) . . .
   (stmts
    (stmts
-    (cfvar :´r.0)
+    (mflag :´r.0)
     (var :´err.2 . . ErrorCode.0.sysvq0asl Success.0.sysvq0asl)
-    (cfvar :´g.1)
+    (mflag :´g.1)
     (let :`g.3 . . ErrorCode.0.sysvq0asl
      (call echo.0 "abc"))
     (ite

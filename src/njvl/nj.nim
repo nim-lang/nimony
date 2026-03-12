@@ -213,7 +213,7 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc declareCfVar(c: var Context; dest: var TokenBuf; s: SymId) =
-  dest.add tagToken("cfvar", NoLineInfo)
+  dest.add tagToken("mflag", NoLineInfo)
   dest.addSymDef s, NoLineInfo
   dest.addParRi()
   c.typeCache.registerLocal(s, VarY, c.typeCache.builtins.boolType)
@@ -1273,7 +1273,7 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
   of CallKindsS:
     trStmtCall c, b, dest, n
   else:
-    if n.njvlKind == CfVarV:
+    if n.njvlKind in {MflagV, VflagV}:
       trCfVarDecl c, dest, n
     elif n.exprKind == PragmaxX:
       copyInto(dest, n):
@@ -1301,7 +1301,7 @@ proc eliminateJumps*(pass: var Pass) =
   pass.dest.add n
   inc n
   # Add a top-level return guard so that noreturn calls at module level
-  # have a cfvar to set via jtrue, enabling the cfvar-based init tracking:
+  # have a mflag to set via jtrue, enabling the mflag-based init tracking:
   let topFlag = pool.syms.getOrIncl("´r.0." & c.thisModuleSuffix)
   c.current.guards.add Guard(cond: topFlag, active: false)
   declareCfVar c, pass.dest, topFlag

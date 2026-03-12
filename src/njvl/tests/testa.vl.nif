@@ -1,12 +1,12 @@
 (stmts
- (cfvar :´r.0.main)
+ (mflag :´r.0.main)
  (proc :echo.0 . . .
   (params
    (param :cond.0 . .
     (bool) .)) . . .
   (stmts
    (stmts
-    (cfvar :´r.0)
+    (mflag :´r.0)
     (kill ´r.0))))
  (proc :echo.1 . . .
   (params
@@ -15,7 +15,7 @@
   (i +32) . .
   (stmts
    (stmts
-    (cfvar :´r.0)
+    (mflag :´r.0)
     (kill ´r.0))))
  (let :a.0 . .
   (bool)
@@ -23,7 +23,7 @@
  (var :b.0 . .
   (bool)
   (true))
- (cfvar :`j.0.main)
+ (mflag :`j.0.main)
  (ite
   (v a.0 +0)
   (stmts
@@ -46,7 +46,7 @@
   (v b.0 +1))
  (loop
   (stmts
-   (cfvar :´g.0))
+   (mflag :´g.0))
   (not
    (v ´g.0 +0))
   (stmts

@@ -164,7 +164,8 @@
 | `(etupat X INT_LIT)` | NjvlKind | tupat expression for error handling |
 | `(unknown X)` | NjvlKind | location's contents is unknown at this point |
 | `(jtrue Y+)` | NjvlKind | set variables v1, v2, ... to `(true)`; hint this should become a jump |
-| `(cfvar D)` | NjvlKind | declare a new control flow variable `D` of type `bool` initialized to `false` |
+| `(mflag D)` | NjvlKind | declare a new **materialized** control flow flag `D` of type `bool` initialized to `false` |
+| `(vflag D)` | NjvlKind | declare a new **virtual** control flow flag `D` of type `bool` initialized to `false` |
 | `(either Y INT_LIT+)` | NimonyOther | `either` construct to combine location versions |
 | `(join Y INT_LIT INT_LIT INT_LIT)` | NimonyOther | `join` construct inside `ite` |
 | `(graph Y)` | ControlFlowKind | disjoint subgraph annotation |
