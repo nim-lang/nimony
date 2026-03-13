@@ -18,7 +18,7 @@ multiple different steps.
 - Iterator inlining.
 - Lambda lifting.
 - Inject dups.
-- Lower control flow expressions to control flow statements (elminate the expr/nkStmtListExpr construct).
+- Lower control flow expressions to control flow statements (eliminate the expr/nkStmtListExpr construct).
 - Inject destructors.
 - Map builtins like `new` and `+` to "compiler procs".
 - Translate exception handling.
@@ -59,6 +59,7 @@ Command:
 
 Options:
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
+  --outdir:DIR              (d only) write .c.nif outputs to DIR
   --flags:FLAGS             undocumented flags
   --version                 show the version
   --help                    show this help
@@ -71,6 +72,7 @@ proc handleCmdLine*() =
   var files: seq[string] = @[]
   var bits = sizeof(int) * 8
   var flags = DefaultSettings
+  var outdir = ""
   var action = ""
   for kind, key, val in getopt():
     case kind
@@ -87,6 +89,8 @@ proc handleCmdLine*() =
         of "32": bits = 32
         of "16": bits = 16
         else: quit "invalid value for --bits"
+      of "outdir":
+        outdir = val
       of "flags":
         flags = parseFlags(val)
       of "help", "h": writeHelp()
@@ -102,7 +106,7 @@ proc handleCmdLine*() =
     of "c":
       expand files[0], bits, flags
     of "d":
-      deadCodeElimination files
+      deadCodeElimination(files, outdir)
     else:
       writeHelp()
 

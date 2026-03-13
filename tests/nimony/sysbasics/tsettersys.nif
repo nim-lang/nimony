@@ -1,0 +1,30 @@
+(.nif26)
+(.indexat +657             )
+0,1,tests/nimony/sysbasics/tsettersys.nim(stmts 9
+ (type ~4 :Foo.0. . .
+  (pragmas) 2
+  (object .)) ,2
+ (proc 5 :bar=.0. . . . 11
+  (params 1
+   (param :x.0 . . 3 Foo.0. .) 9
+   (param :y.0 . . 3
+    (i -1) .)) . . . 30
+  (stmts
+   (discard .))) ,3
+ (proc 5 :\5B\5D=.0. . . . 10
+  (params 1
+   (param :x.1 . . 3 Foo.0. .) 9
+   (param :y.1 . . 3
+    (i -1) .) 17
+   (param :z.0 . . 3
+    (i -1) .)) . . . 37
+  (stmts
+   (discard .))) 4,5
+ (gvar :foo.0. . . 5 Foo.0. .) ,6
+ (call bar=.0. foo.0. 10 +123) ,7
+ (call \5B\5D=.0. foo.0. 4 +123 11 +456) 23,2
+ (comment int.0.sysvq0asl ~1,1 int.0.sysvq0asl 7,1 int.0.sysvq0asl))0,1,tests/nimony/sysbasics/tsettersys.nim(.index 9
+ (h Foo.0. +87) ,2
+ (h bar=.0. +53) ,3
+ (h \5B\5D=.0. +146) 4,5
+ (h foo.0. +188))

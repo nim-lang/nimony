@@ -45,6 +45,19 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
         if n.kind == SymbolDef:
           if isInstantiation(symName):
             a.offers.incl(n.symId)
+      elif n.substructureKind == PragmasU:
+        # Check if this pragma section contains exportc
+        # If so, mark the owner as a root (exportc symbols are entry points)
+        inc n
+        var hasExportc = false
+        while n.kind != ParRi:
+          if n.kind == ParLe and n.pragmaKind == ExportcP:
+            hasExportc = true
+          tr n, a, owner
+        inc n
+        if hasExportc and owner != SymId(0):
+          a.roots.incl(owner)
+        return
       else:
         inc n
       while n.kind != ParRi:
@@ -66,7 +79,7 @@ const
   offerName = "offers"
   rootName = "roots"
 
-proc prepDce(outputFilename: string; n: Cursor) =
+proc prepDce(outputFilename: string; n: Cursor; dottedSuffix: string) =
   var n = n
   var a = ModuleAnalysis()
   tr n, a, SymId(0)
@@ -75,15 +88,15 @@ proc prepDce(outputFilename: string; n: Cursor) =
   b.withTree "stmts":
     b.withTree rootName:
       for root in a.roots:
-        b.addSymbol pool.syms[root]
+        b.addSymbol pool.syms[root], dottedSuffix
     for owner, uses in mpairs(a.uses):
       b.withTree depName:
-        b.addSymbol pool.syms[owner]
+        b.addSymbol pool.syms[owner], dottedSuffix
         for dep in uses:
-          b.addSymbol pool.syms[dep]
+          b.addSymbol pool.syms[dep], dottedSuffix
     b.withTree offerName:
       for offer in a.offers:
-        b.addSymbol pool.syms[offer]
+        b.addSymbol pool.syms[offer], dottedSuffix
   b.close()
 
 proc readModuleAnalysis*(infile: string): ModuleAnalysis =
@@ -130,9 +143,9 @@ proc readModuleAnalysis*(infile: string): ModuleAnalysis =
       else:
         raiseAssert infile & ": expected ParLe"
 
-proc writeDceOutput*(buf: var TokenBuf; outfile: string) =
+proc writeDceOutput*(buf: var TokenBuf; outfile, dottedSuffix: string) =
   ## Direct overload that works on an already-parsed token buffer,
   ## avoiding the file read + parse step.
   let n = beginRead(buf)
-  prepDce(outfile, n)
+  prepDce(outfile, n, dottedSuffix)
   endRead(buf)

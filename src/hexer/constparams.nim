@@ -24,7 +24,7 @@ import std / [sets, assertions]
 include nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, typeprops, builtintypes]
 import ".." / models / tags
-import duplifier, eraiser
+import duplifier, eraiser, passes
 
 type
   Context = object
@@ -399,6 +399,23 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tr c, dest, n
       tr c, dest, n
 
+proc trObjConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  dest.takeToken n
+  takeTree dest, n # type
+  while n.kind != ParRi:
+    if n.substructureKind == KvU:
+      takeToken dest, n
+      takeTree dest, n # key
+      tr c, dest, n
+      if n.kind != ParRi:
+        # optional inheritance
+        takeTree dest, n
+      takeParRi dest, n
+    else:
+      # V-Table:
+      takeTree dest, n
+  takeParRi dest, n
+
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var nested = 0
   while true:
@@ -432,6 +449,14 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.add n
           inc n
           inc nested
+      of DotX:
+        dest.takeToken n
+        tr c, dest, n
+        while n.kind != ParRi:
+          dest.takeTree n
+        dest.takeParRi n
+      of OconstrX:
+        trObjConstr c, dest, n
       of FailedX:
         trFailed c, dest, n
       else:
@@ -464,13 +489,12 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dec nested
     if nested == 0: break
 
-proc injectConstParamDerefs*(n: Cursor; ptrSize: int; needsXelim: var bool): TokenBuf =
+proc injectConstParamDerefs*(pass: var Pass; ptrSize: int; needsXelim: var bool) =
+  var n = pass.n  # Extract cursor locally
   var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(), needsXelim: needsXelim,
     tupleVars: localsThatBecomeTuples(n))
   c.retType = c.typeCache.builtins.voidType
   c.typeCache.openScope()
-  result = createTokenBuf(300)
-  var n = n
-  tr(c, result, n)
+  tr(c, pass.dest, n)  # Write to pass.dest
   c.typeCache.closeScope()
   needsXelim = c.needsXelim

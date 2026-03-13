@@ -1,1 +1,1 @@
-tests/nimony/sysbasics/tletreassign.nim(18, 3) Error: invalid reassignment to `let` variable
+tests/nimony/sysbasics/tletreassign.nim(18, 5) Error: invalid reassignment to `let` variable

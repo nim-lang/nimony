@@ -60,3 +60,52 @@ block:
   const p = n * o
   assert p == {'2', '3'} # {'1', '2', '3'} * {'2', '3', '4'} == {'2', '3'}
 
+block enumsets:
+  type
+    TEnum = enum A, B, C
+  const cset = {A} + {B}
+
+  const s1 = A in cset
+  const s2 = B in cset
+  const s3 = C notin cset
+  assert s1
+  assert s2
+  assert s3
+
+  assert A in cset
+  assert B in cset
+  assert C notin cset
+
+block:
+  const cset = {1'i8, 2'i8, 6'i8..12'i8}
+
+  const s1 = 1'i8 in cset
+  assert s1
+
+  const s2 = 3'i8 in cset
+  assert not s2
+
+  const s3 = 6'i8 in cset
+  assert s3
+
+  const s4 = 12'i8 in cset
+  assert s4
+
+  const s5 = 8'i8 in cset
+  assert s5
+
+  const s6 = 13'i8 in cset
+  assert not s6
+
+block:
+  const
+    Whitespace = {' ', '\t', '\n', '\r'}
+
+    s1 = card(Whitespace)
+
+    Data = {1'i8, 2, 3, 4, 5}
+    s2 = len(Data)
+
+
+  assert s1 == 4
+  assert s2 == 5

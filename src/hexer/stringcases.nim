@@ -75,9 +75,6 @@ proc getSimpleStringLit(c: var EContext; n: var Cursor): StrId =
       bug "not a string literal"
 
 proc transformStringCase*(c: var EContext; n: var Cursor) =
-  c.demand pool.syms.getOrIncl(EqStringsOp)
-  c.demand pool.syms.getOrIncl(StrAtLeOp)
-
   # Prepare the list of (key, value) pairs:
   var pairs: seq[Key] = @[]
   var nb = n
@@ -89,7 +86,6 @@ proc transformStringCase*(c: var EContext; n: var Cursor) =
   let selectorType = getType(c.typeCache, selectorNode)
   if selectorType.typeKind == CstringT:
     # the other overload of `borrowCStringUnsafe`
-    c.demand pool.syms.getOrIncl(BorrowCStringUnsafeOp)
     selector = pool.syms.getOrIncl("`tc." & $c.getTmpId)
     c.dest.copyIntoUnchecked "var", sinfo:
       c.dest.add symdefToken(selector, sinfo)

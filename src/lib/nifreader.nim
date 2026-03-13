@@ -6,7 +6,7 @@
 
 ## High performance ("zero copies") NIF file reader.
 
-import std / [memfiles, tables, parseutils, assertions, hashes]
+import std / [memfiles, parseutils, assertions]
 import stringviews
 when defined(nimony):
   import std/syncio
@@ -28,49 +28,39 @@ type
     col*, line*: int32
 
   TokenFlag = enum
-    TokenHasEscapes, FilenameHasEscapes
+    TokenHasEscapes, FilenameHasEscapes, TokenHasModuleSuffixExpansion
 
-  Token* = object
+  ExpandedToken* = object
     tk*: NifKind
     flags: set[TokenFlag]
     kind*: uint16   # for clients to fill in ("known node kinds")
-    s*: StringView
+    data*: StringView
     pos*: FilePos
     filename*: StringView
-
-  MetaInfo* = object
-    dialect*: StringView
-    vendor*: StringView
-    platform*: StringView
-    config*: StringView
 
   Reader* = object
     p: pchar
     eof: pointer # so that <= uses the correct comparison, not the cstring crap
     f: MemFile
     buf: string
+    thisModule*: string
     line*: int32 # file position within the NIF file, not affected by line annotations
-    trackDefs*: bool
-    isubs, ksubs: Table[StringView, (NifKind, StringView)]
-    defs: Table[string, pchar]
-    meta: MetaInfo
+    indexAt: int  # position of the index
+    unusedNameHint: StringView
 
-proc `$`*(t: Token): string =
+proc `$`*(t: ExpandedToken): string =
   case t.tk
   of UnknownToken: result = "<unknown token>"
   of EofToken: result = "<eof>"
-  of ParLe: result = "(" & $t.s
+  of ParLe: result = "(" & $t.data
   of ParRi: result = ")"
   of DotToken: result = "."
   of Ident, Symbol, SymbolDef,
      StringLit, CharLit, IntLit, UIntLit, FloatLit:
-    result = $t.tk & ":" & $t.s
+    result = $t.tk & ":" & $t.data
 
 template inc(p: pchar; diff = 1) =
   p = cast[pchar](cast[int](p) + diff)
-
-template dec(p: pchar; diff = 1) =
-  p = cast[pchar](cast[int](p) - diff)
 
 template `+!`(p: pchar; diff: int): pchar =
   cast[pchar](cast[int](p) + diff)
@@ -80,26 +70,9 @@ template `-!`(a, b: pchar): int = cast[int](a) - cast[int](b)
 template `^`(p: pchar): char = p[0]
 
 when not defined(nimony):
-  proc rawData*(s: var string): ptr UncheckedArray[char] {.inline.} =
+  proc rawData*(s: string): ptr UncheckedArray[char] {.inline.} =
     assert s.len > 0
     cast[ptr UncheckedArray[char]](addr s[0])
-
-proc open*(filename: string): Reader =
-  let f = try:
-      memfiles.open(filename)
-    except:
-      when defined(debug) and not defined(nimony): writeStackTrace()
-      quit "[Error] cannot open: " & filename
-  result = Reader(f: f, p: nil)
-  result.p = cast[pchar](result.f.mem)
-  result.eof = result.p +! result.f.size
-
-proc openFromBuffer*(buf: sink string): Reader =
-  result = Reader(f: default(MemFile), buf: ensureMove buf)
-  result.p = rawData result.buf
-  result.eof = result.p +! result.buf.len
-  result.f.mem = result.p
-  result.f.size = result.buf.len
 
 proc close*(r: var Reader) =
   try:
@@ -157,19 +130,19 @@ proc handleHex(p: pchar): char =
   else: discard
   result = char(output)
 
-proc decodeChar*(t: Token): char =
+proc decodeChar*(t: ExpandedToken): char =
   assert t.tk == CharLit
-  result = ^t.s.p
+  result = ^t.data.p
   if result == '\\':
-    var p = t.s.p
+    var p = t.data.p
     inc p
     result = handleHex(p)
 
-proc decodeStr*(t: Token): string =
+proc decodeStr*(r: Reader; t: ExpandedToken): string =
   if TokenHasEscapes in t.flags:
     result = ""
-    var p = t.s.p
-    let sentinel = p +! t.s.len
+    var p = t.data.p
+    let sentinel = p +! t.data.len
     while p < sentinel:
       if ^p == '\\':
         inc p
@@ -178,12 +151,22 @@ proc decodeStr*(t: Token): string =
       else:
         result.add ^p
         inc p
+    # Handle module suffix expansion after decoding escapes
+    if TokenHasModuleSuffixExpansion in t.flags:
+      assert r.thisModule.len > 0
+      result.add r.thisModule
+  elif TokenHasModuleSuffixExpansion in t.flags:
+    assert r.thisModule.len > 0
+    result = newString(t.data.len + r.thisModule.len)
+    if t.data.len > 0:
+      copyMem(rawData result, t.data.p, t.data.len)
+      copyMem(rawData(result) +! t.data.len, rawData(r.thisModule), r.thisModule.len)
   else:
-    result = newString(t.s.len)
-    if t.s.len > 0:
-      copyMem(rawData result, t.s.p, t.s.len)
+    result = newString(t.data.len)
+    if t.data.len > 0:
+      copyMem(rawData result, t.data.p, t.data.len)
 
-proc decodeFilename*(t: Token): string =
+proc decodeFilename*(t: ExpandedToken): string =
   if FilenameHasEscapes in t.flags:
     result = ""
     var p = t.filename.p
@@ -200,58 +183,58 @@ proc decodeFilename*(t: Token): string =
     result = newString(t.filename.len)
     copyMem(rawData result, t.filename.p, t.filename.len)
 
-proc decodeFloat*(t: Token): BiggestFloat =
+proc decodeFloat*(t: ExpandedToken): BiggestFloat =
   result = 0.0
   assert t.tk == FloatLit
-  let res = parseutils.parseBiggestFloat(toOpenArray(t.s.p, 0, t.s.len-1), result)
-  assert res == t.s.len
+  let res = parseutils.parseBiggestFloat(toOpenArray(t.data.p, 0, t.data.len-1), result)
+  assert res == t.data.len
 
-proc decodeUInt*(t: Token): BiggestUInt =
+proc decodeUInt*(t: ExpandedToken): BiggestUInt =
   result = 0
   assert t.tk == UIntLit
-  let res = parseutils.parseBiggestUInt(toOpenArray(t.s.p, 0, t.s.len-1), result)
-  assert res == t.s.len
+  let res = parseutils.parseBiggestUInt(toOpenArray(t.data.p, 0, t.data.len-1), result)
+  assert res == t.data.len
 
-proc decodeInt*(t: Token): BiggestInt =
+proc decodeInt*(t: ExpandedToken): BiggestInt =
   result = 0
   assert t.tk == IntLit
-  let res = parseutils.parseBiggestInt(toOpenArray(t.s.p, 0, t.s.len-1), result)
-  assert res == t.s.len
+  let res = parseutils.parseBiggestInt(toOpenArray(t.data.p, 0, t.data.len-1), result)
+  assert res == t.data.len
 
-proc handleNumber(r: var Reader; result: var Token) =
+proc handleNumber(r: var Reader; result: var ExpandedToken) =
   useCpuRegisters:
     if p < eof and ^p in Digits:
       result.tk = IntLit # overwritten if we detect a float or unsigned
       while p < eof and ^p in Digits:
         inc p
-        inc result.s.len
+        inc result.data.len
 
       if p < eof and ^p == '.':
         result.tk = FloatLit
         inc p
-        inc result.s.len
+        inc result.data.len
         while p < eof and ^p in Digits:
           inc p
-          inc result.s.len
+          inc result.data.len
 
       if p < eof and ^p == 'E':
         result.tk = FloatLit
         inc p
-        inc result.s.len
+        inc result.data.len
         if p < eof:
           if ^p == '-' or ^p == '+':
             inc p
-            inc result.s.len
+            inc result.data.len
         while p < eof and ^p in Digits:
           inc p
-          inc result.s.len
+          inc result.data.len
 
       if p < eof and ^p == 'u':
         result.tk = UIntLit
         inc p
         # ignore the suffix 'u'
 
-proc handleLineInfo(r: var Reader; result: var Token) =
+proc handleLineInfo(r: var Reader; result: var ExpandedToken) =
   proc integerOutOfRangeError() {.noinline, noreturn.} =
     quit "Parsed integer outside of valid range"
 
@@ -309,10 +292,8 @@ proc handleLineInfo(r: var Reader; result: var Token) =
         inc result.filename.len
         inc p
 
-proc next*(r: var Reader): Token =
-  # Returning a new Token is somewhat unusual but lets clients
-  # create implicit trees on the stack.
-  result = default(Token)
+proc next*(r: var Reader; result: var ExpandedToken) =
+  result = default(ExpandedToken)
   skipWhitespace r
   if r.p >= r.eof:
     result.tk = EofToken
@@ -332,32 +313,28 @@ proc next*(r: var Reader): Token =
       result.tk = ParLe
       useCpuRegisters:
         inc p
-        result.s.p = p
-        result.s.len = 0
+        result.data.p = p
+        result.data.len = 0
         while p < eof and ^p notin ControlCharsOrWhite:
-          inc result.s.len
+          inc result.data.len
           inc p
-      if r.ksubs.len > 0:
-        let repl = r.ksubs.getOrDefault(result.s)
-        if repl[0] != UnknownToken:
-          result.s = repl[1]
 
     of ')':
       result.tk = ParRi
-      result.s.p = r.p
-      inc result.s.len
+      result.data.p = r.p
+      inc result.data.len
       inc r.p
     of '.':
       result.tk = DotToken
-      result.s.p = r.p
-      inc result.s.len
+      result.data.p = r.p
+      inc result.data.len
       inc r.p
     of '"':
       useCpuRegisters:
         inc p
         result.tk = StringLit
-        result.s.p = p
-        result.s.len = 0
+        result.data.p = p
+        result.data.len = 0
         while p < eof:
           let ch = ^p
           if ch == '"':
@@ -367,11 +344,11 @@ proc next*(r: var Reader): Token =
             result.flags.incl TokenHasEscapes
           elif ch == '\n':
             inc r.line
-          inc result.s.len
+          inc result.data.len
           inc p
     of '\'':
       inc r.p
-      result.s.p = r.p
+      result.data.p = r.p
       if ^r.p == '\\':
         result.flags.incl TokenHasEscapes
         inc r.p
@@ -390,108 +367,44 @@ proc next*(r: var Reader): Token =
 
     of ':':
       useCpuRegisters:
-        var start = p
         inc p
-        result.s.p = p
+        result.data.p = p
         while p < eof and ^p notin ControlCharsOrWhite:
           if ^p == '\\': result.flags.incl TokenHasEscapes
-          inc result.s.len
+          inc result.data.len
           inc p
-      if result.s.len > 0:
+      if result.data.len > 0:
         result.tk = SymbolDef
-        if r.isubs.len > 0:
-          let repl = r.isubs.getOrDefault(result.s)
-          if repl[0] == Symbol:
-            result.s = repl[1]
-          else:
-            result.tk = UnknownToken # error
-        if r.trackDefs:
-          while start != r.f.mem:
-            if ^start == '(':
-              r.defs[decodeStr result] = start
-              break
-            dec start
+        if result.data[result.data.len-1] == '.':
+          result.flags.incl TokenHasModuleSuffixExpansion
 
     of '-', '+':
-      result.s.p = r.p
+      result.data.p = r.p
       inc r.p
-      inc result.s.len
+      inc result.data.len
       handleNumber r, result
 
     else:
       useCpuRegisters:
-        result.s.p = p
+        result.data.p = p
         var hasDot = false
         while p < eof and ^p notin ControlCharsOrWhite:
           if ^p == '\\': result.flags.incl TokenHasEscapes
           elif ^p == '.': hasDot = true
-          inc result.s.len
+          inc result.data.len
           inc p
 
-      if result.s.len > 0:
-        result.tk = if hasDot: Symbol else: Ident
-        if r.isubs.len > 0:
-          let repl = r.isubs.getOrDefault(result.s)
-          if repl[0] != UnknownToken:
-            result.tk = repl[0]
-            result.s = repl[1]
-  #if result.tk == UnknownToken:
-  #  for i in 0 .. 100:
-  #    stdout.write r.p[i]
-  #  writeStackTrace()
-  #  quit "huh? "
+      if result.data.len > 0:
+        if hasDot:
+          result.tk = Symbol
+          if result.data[result.data.len-1] == '.':
+            result.flags.incl TokenHasModuleSuffixExpansion
+        else:
+          result.tk = Ident
 
-type
-  RestorePoint* = object
-    p: pchar
-    line: int32
-
-proc success*(r: RestorePoint): bool {.inline.} = r.p != nil
-
-proc restore*(r: var Reader; rp: RestorePoint) {.inline.} =
-  r.p = rp.p
-  r.line = rp.line
-
-proc savePos*(r: Reader): RestorePoint {.inline.} =
-  result = RestorePoint(p: r.p, line: r.line)
-
-proc jumpTo*(r: var Reader; def: string): RestorePoint =
-  assert def.len > 0
-  assert r.trackDefs
-  #assert def[0] != ':' # not correct, could be an escaped ':'
-  var p = r.defs.getOrDefault(def)
-  result = RestorePoint(p: r.p, line: r.line)
-  if p != nil:
-    r.p = p
-    r.line = -1'i32 # unknown
-  else:
-    while true:
-      let t = next(r)
-      if t.tk == SymbolDef:
-        p = r.defs.getOrDefault(def)
-        if p != nil:
-          r.p = p
-          r.line = -1'i32 # unknown
-          return result
-      elif t.tk == EofToken:
-        break
-    # not found, reset position:
-    r.p = result.p
-    r.line = result.line
-    result.p = nil # not found
-
-when false:
-  proc setPosition*(r: var Reader; s: StringView) {.inline.} =
-    assert r.p >= cast[pchar](r.f.mem) and r.p < r.eof
-    r.p = s.p +! s.len
-    r.line = -1'i32 # unknown
-
-  proc span*(r: Reader; offset: int; s: StringView): int {.inline.} =
-    assert s.p >= cast[pchar](r.f.mem) and s.p < r.eof
-    result = (s.p -! cast[pchar](r.f.mem)) - offset
-
-const
-  Cookie = "(.nif24)"
+proc next*(r: var Reader): ExpandedToken {.deprecated: "use the other next instead".} =
+  result = default(ExpandedToken)
+  next r, result
 
 type
   DirectivesResult* = enum
@@ -508,58 +421,68 @@ proc startsWith*(r: Reader; prefix: string): bool =
     inc i
   return false
 
-proc processDirectives*(r: var Reader): DirectivesResult =
-  template handleSubstitutionPair(r: var Reader; valid: set[NifKind]; subs: Table[StringView, (NifKind, StringView)]) =
-    if r.p < r.eof and ^r.p in ControlCharsOrWhite:
-      let key = next(r)
-      if key.tk == Ident:
-        let val = next(r)
-        let closingPar = next(r)
-        if closingPar.tk == ParRi and val.tk in valid:
-          subs[key.s] = (val.tk, val.s)
-
-  template handleMeta(r: var Reader; field: untyped) =
-    let value = next(r)
-    if value.tk == StringLit:
-      field = value.s
+proc readDirectives(r: var Reader) =
+  var tok = default(ExpandedToken)
+  while true:
+    skipWhitespace r
+    if r.startsWith("(."):
+      next(r, tok)
+      assert tok.tk == ParLe
+      if tok.data == ".indexat":
+        next(r, tok)
+        if tok.tk == IntLit:
+          r.indexAt = int decodeInt tok
+      elif tok.data == ".unusedname":
+        next(r, tok)
+        if tok.tk == Symbol:
+          r.unusedNameHint = tok.data
+      # skip the rest of the directive:
+      var nested = 0
+      while true:
+        next(r, tok)
+        case tok.tk
+        of ParLe: inc nested
+        of ParRi:
+          if nested == 0: break
+          dec nested
+        of EofToken: break
+        else: discard
     else:
-      result = WrongMeta
-    while true:
-      var closePar = next(r)
-      if closePar.tk in {ParRi, EofToken}: break
+      break
 
-  if r.startsWith(Cookie):
-    result = Success
-    inc r.p, Cookie.len
-    while true:
-      skipWhitespace r
-      if r.startsWith("(.k"):
-        inc r.p, len("(.k")
-        # extension: let node kinds have dots! `(atomic.inc ...)`
-        handleSubstitutionPair r, {Ident, Symbol}, r.ksubs
-      elif r.startsWith("(.i"):
-        inc r.p, len("(.i")
-        handleSubstitutionPair r, {Ident, Symbol, StringLit, CharLit, IntLit, UIntLit, FloatLit}, r.isubs
-      elif r.startsWith("(."):
-        let directive = next(r)
-        assert directive.tk == ParLe
-        if directive.s == ".vendor":
-          handleMeta r, r.meta.vendor
-        elif directive.s == ".platform":
-          handleMeta r, r.meta.platform
-        elif directive.s == ".dialect":
-          handleMeta r, r.meta.dialect
-        elif directive.s == ".config":
-          handleMeta r, r.meta.config
-        else:
-          # skip unknown directive
-          while true:
-            var closePar = next(r)
-            if closePar.tk in {ParRi, EofToken}: break
-      else:
-        break
-  else:
-    result = WrongHeader
+proc extractModuleSuffix*(filename: string): string =
+  result = ""
+  var skip = false
+  for c in filename:
+    if c == '/' or c == '\\':
+      result.setLen 0
+      skip = false
+    elif c == '.':
+      skip = true
+    elif not skip:
+      result.add c
+
+proc open*(filename: string): Reader =
+  let f = try:
+      memfiles.open(filename)
+    except:
+      when defined(debug) and not defined(nimony): writeStackTrace()
+      quit "[Error] cannot open: " & filename
+  result = Reader(f: f, p: nil, thisModule: extractModuleSuffix(filename))
+  result.p = cast[pchar](result.f.mem)
+  result.eof = result.p +! result.f.size
+  readDirectives result
+
+proc openFromBuffer*(buf: sink string; thisModule: sink string): Reader =
+  result = Reader(f: default(MemFile), buf: ensureMove buf, thisModule: ensureMove thisModule)
+  result.p = rawData result.buf
+  result.eof = result.p +! result.buf.len
+  result.f.mem = result.p
+  result.f.size = result.buf.len
+  readDirectives result
+
+proc processDirectives*(r: var Reader): DirectivesResult =
+  result = Success
 
 proc fileSize*(r: var Reader): int {.inline.} =
   r.f.size
@@ -569,11 +492,17 @@ proc offset*(r: var Reader): int {.inline.} =
 
 proc jumpTo*(r: var Reader; offset: int) {.inline.} =
   r.p = cast[pchar](r.f.mem) +! offset
+  assert cast[pointer](r.p) >= r.f.mem and r.p < r.eof
+
+proc indexStartsAt*(r: Reader): int =
+  r.indexAt
 
 when isMainModule:
-  const test = r"(.nif24)(stmts :\5B\5D=)"
-  var r = openFromBuffer(test)
+  #const test = r"(.nif24)(stmts :\5B\5D=)"
+  const test = "nimcache/sysvq0asl.s.nif"
+  var r = open(test)
+  var tok = default(ExpandedToken)
   while true:
-    let tk = r.next()
-    if tk.tk == EofToken: break
-    echo decodeStr tk, " ", tk
+    r.next(tok)
+    if tok.tk == EofToken: break
+    echo r.decodeStr tok, " ", tok

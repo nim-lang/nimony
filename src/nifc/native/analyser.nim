@@ -172,7 +172,7 @@ proc analyseVarUsages(c: var Context; n: var Cursor) =
       analyseVarUsages(c, n)
       dec c.inAsgnTarget
       skipParRi n
-    of ProcS, TypeS, BreakS, ImpS, InclS, LabS, JmpS:
+    of ProcS, TypeS, BreakS, LabS, JmpS:
       skip n
     of WhileS:
       inc n

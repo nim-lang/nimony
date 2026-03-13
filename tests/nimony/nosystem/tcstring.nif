@@ -1,22 +1,23 @@
-(.nif24)
+(.nif26)
+(.indexat +1328            )
 0,2,tests/nimony/nosystem/tcstring.nim(stmts 2,1
- (type :int.0.tcsj45p9m
+ (type :int.0.
   (i -1) . 5
   (pragmas 2
    (magic 7 Int)) .) 2,2
- (type :bool.0.tcsj45p9m
+ (type :bool.0.
   (bool) . 6
   (pragmas 2
    (magic 7 Bool)) .) 2,4
- (type :cstring.0.tcsj45p9m
+ (type :cstring.0.
   (cstring) . 9
   (pragmas 2
    (magic 7 Cstring)) .) 2,5
- (type :pointer.0.tcsj45p9m
+ (type :pointer.0.
   (pointer) . 9
   (pragmas 2
    (magic 7 Pointer)) .) ,8
- (proc 5 :\2B.0.tcsj45p9m
+ (proc 5 :\2B.0.
   (add -3) . . 9
   (params 1
    (param :x.0 . . 6
@@ -26,7 +27,7 @@
   (i -1) 26
   (pragmas 2
    (magic 7 "AddI")) . .) ,9
- (proc 5 :\2D.0.tcsj45p9m
+ (proc 5 :\2D.0.
   (sub -3) . . 9
   (params 1
    (param :x.1 . . 6
@@ -36,7 +37,7 @@
   (i -1) 26
   (pragmas 2
    (magic 7 "SubI")) . .) ,11
- (proc 5 :<=.0.tcsj45p9m
+ (proc 5 :<=.0.
   (le -3) . . 10
   (params 1
    (param :x.2 . . 6
@@ -46,18 +47,29 @@
   (bool) 28
   (pragmas 2
    (magic 7 "LeI")) . .) 4,13
- (gvar :x.0.tcsj45p9m . . 12,~5
+ (gvar :x.0. . . 12,~5
   (i -1) 4
   (cast 5
    (i -1) 10 +55)) 4,15
- (gvar :y.0.tcsj45p9m . . 3
+ (gvar :y.0. . . 3
   (pointer) 13
   (nil)) 2,18
- (const :myconst.0.tcsj45p9m . . 10
+ (const :myconst.0. . . 10
   (cstring) 17
   (suf "abc" "C")) 4,20
- (gvar :zz.0.tcsj45p9m . . 8,~2
+ (gvar :zz.0. . . 8,~2
   (cstring) 14
   (hconv ~6,~2
    (cstring) "xzy")) 16,8
- (comment int.0.tcsj45p9m int.0.tcsj45p9m ~3 int.0.tcsj45p9m ,1 int.0.tcsj45p9m ,1 int.0.tcsj45p9m ~3,1 int.0.tcsj45p9m 1,3 int.0.tcsj45p9m 1,3 int.0.tcsj45p9m ~3,3 bool.0.tcsj45p9m ~4,10 cstring.0.tcsj45p9m ~3,5 int.0.tcsj45p9m ~9,7 pointer.0.tcsj45p9m ~8,12 cstring.0.tcsj45p9m))
+ (comment int.0. int.0. ~3 int.0. ,1 int.0. ,1 int.0. ~3,1 int.0. 1,3 int.0. 1,3 int.0. ~3,3 bool.0. ~4,10 cstring.0. ~3,5 int.0. ~9,7 pointer.0. ~8,12 cstring.0.))0,2,tests/nimony/nosystem/tcstring.nim(.index 2,1
+ (x int.0. +86) 2,2
+ (x bool.0. +66) 2,4
+ (x cstring.0. +68) 2,5
+ (x pointer.0. +77) ,8
+ (x \2B.0. +76) ,9
+ (x \2D.0. +176) ,11
+ (x <=.0. +177) 4,13
+ (h x.0. +176) 4,15
+ (h y.0. +68) 2,18
+ (h myconst.0. +48) 4,20
+ (h zz.0. +66))

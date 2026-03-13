@@ -136,7 +136,9 @@ proc usages*(files: openArray[string]; config: NifConfig) =
       var s = nifstreams.open(file)
       try:
         discard processDirectives(s.r)
+        let indexStart = s.r.indexStartsAt()
         while true:
+          if indexStart > 0 and s.r.offset() >= indexStart: break
           let tok = next(s)
           case tok.kind
           of Symbol:

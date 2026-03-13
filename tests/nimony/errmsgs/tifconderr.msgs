@@ -1,7 +1,7 @@
 tests/nimony/errmsgs/tifconderr.nim(17, 22) Error: undeclared identifier: 'compare'
 tests/nimony/errmsgs/tifconderr.nim(18, 12) Error: Type mismatch at [position]
 c < 0
-[1] expected: string but got: auto (declared in lib/std/system/stringimpl.nim(273, 1))
+[1] expected: string but got: auto (declared in lib/std/system/stringimpl.nim(276, 1))
 [1] expected: int64 but got: auto (declared in lib/std/system/comparisons.nim(79, 1))
 [1] expected: uint16 but got: auto (declared in lib/std/system/comparisons.nim(87, 1))
 [1] expected: pointer but got: auto (declared in lib/std/system/comparisons.nim(64, 1))

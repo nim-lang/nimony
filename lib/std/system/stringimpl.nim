@@ -90,7 +90,10 @@ func strlen(a: cstring): csize_t {.importc: "strlen", header: "<string.h>".}
 func len*(a: cstring): int {.inline.} =
   ## Assume `a` is a zero terminated string and
   ## return the lenth of `a` excluding terminating zero
-  a.strlen.int
+  if a == nil:
+    result = 0
+  else:
+    result = a.strlen.int
 
 proc borrowCStringUnsafe*(s: cstring; len: int): string =
   ## Creates a Nim string from a `cstring` by borrowing the
@@ -286,6 +289,10 @@ proc prepareMutation*(s: var string) =
       oomHandler len
       s.i = EmptyI
     s.a = a # also do this for `a == nil`
+
+proc prepareMutationAt*(s: var string; i: int): var char {.requires: (i < len(s) and i >= 0), inline.} =
+  prepareMutation(s)
+  result = s.a[i]
 
 proc newString*(len: int): string =
   let a = cast[StrData](alloc(len))

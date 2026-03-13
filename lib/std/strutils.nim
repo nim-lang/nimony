@@ -134,10 +134,13 @@ proc endsWith*(s: string; c: char): bool {.inline.} =
 proc strlen*(x: cstring): int {.importc: "strlen", header: "<string.h>".}
 
 proc `$`*(x: cstring): string =
-  let L = int strlen(x)
-  result = newString(L)
-  for i in 0..<result.len:
-    result[i] = x[i]
+  if x == nil:
+    result = ""
+  else:
+    let L = int strlen(x)
+    result = newString(L)
+    for i in 0..<result.len:
+      result[i] = x[i]
 
 proc `$`*(x: char): string =
   result = newString(1)
@@ -1099,3 +1102,17 @@ func formatSize*(bytes: int64; decimalSep = '.'; prefix = bpIEC; includeSpace = 
     result.add ' '
   result.add prefixes[matchedIndex]
   result.add 'B'
+
+func contains*(s, sub: string): bool =
+  ## Same as `find(s, sub) >= 0`.
+  ##
+  ## See also:
+  ## * `find func<#find,string,string,Natural,int>`_
+  return find(s, sub) >= 0
+
+func contains*(s: string, chars: set[char]): bool =
+  ## Same as `find(s, chars) >= 0`.
+  ##
+  ## See also:
+  ## * `find func<#find,string,set[char],Natural,int>`_
+  return find(s, chars) >= 0

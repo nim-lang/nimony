@@ -15,30 +15,30 @@
 ##
 ## This pass tries to “collapse” NJVL control-flow variables (cfvars) back into
 ## explicit jumps. In NJVL, structured control flow is expressed by:
-## - Declaring a `cfvar` (starts as `false`, can only become `true`).
+## - Declaring a `mflag` (starts as `false`, can only become `true`).
 ## - Setting it via `(jtrue cf)` inside conditions/branches.
 ## - Guarding execution with `if cf: ...` (or, more generally, `ite`/`loop`).
 ##
 ## The guiding rule (from the spec) is: converting `jtrue x` into a jump is only
-## valid if no interim statements occur between the place that sets the cfvar and
-## the point where control must transfer. Otherwise the cfvar must be
+## valid if no interim statements occur between the place that sets the mflag and
+## the point where control must transfer. Otherwise the mflag must be
 ## materialized as data (`store true into cf`) and the control remains
 ## structured.
 ##
 ## - It traces `jtrue` sites and records whether they can be turned into `jmp`.
 ## - It tracks a simple per-symbol state `state[sym] = (value, activeCount)`:
-##   - `value` reflects our current knowledge about the cfvar (starts `false`,
+##   - `value` reflects our current knowledge about the mflag (starts `false`,
 ##     becomes `true` after a seen `jtrue`).
 ##   - `activeCount` is incremented/decremented while traversing `ite`
-##     conditions to model “this branch is protected by cfvar X == true”. While
+##     conditions to model “this branch is protected by mflag X == true”. While
 ##     protection is active, side effects within the protected region do not
-##     invalidate the potential jump for that cfvar.
-## - If a side effect is encountered at a time when a cfvar is not “actively
+##     invalidate the potential jump for that mflag.
+## - If a side effect is encountered at a time when a mflag is not “actively
 ##   guarding” the current code (`activeCount == 0`), we conservatively mark the
-##   cfvar as `mustMaterialize` (cannot be rewritten to a jump).
+##   mflag as `mustMaterialize` (cannot be rewritten to a jump).
 ## - In the emission phase, `(jtrue x, y, ...)` becomes either materialized
 ##   stores (keep cfvars as data) or a single `jmp <label>` if the last listed
-##   cfvar can be a jump target (mirrors return/break lowering patterns).
+##   mflag can be a jump target (mirrors return/break lowering patterns).
 
 import std / [tables, sets, assertions]
 include ".." / lib / nifprelude
@@ -63,7 +63,7 @@ type
 
   CfvarState = object
     s: Cfvar
-    value: bool # we always know the value of the cfvar
+    value: bool # we always know the value of the mflag
                 # (they start out as false and can only become
                 # true and then stay true)
 
@@ -83,9 +83,9 @@ proc computeCfvarMask(c: var Context; n: var Cursor; mask: var CfvarMask) =
   of ParLe:
     if n.njvlKind == VV:
       inc n
-      let cfvar = getCfvar(n)
-      if c.state.hasKey(cfvar):
-        mask.add CfvarState(s: cfvar, value: c.state[cfvar][0])
+      let mflag = getCfvar(n)
+      if c.state.hasKey(mflag):
+        mask.add CfvarState(s: mflag, value: c.state[mflag][0])
     else:
       case n.exprKind
       of NotX:
@@ -230,12 +230,12 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     inc n
     var label = (NoSymId, 0)
     while n.kind != ParRi:
-      let cfvar = n
+      let mflag = n
       let s = getCfvar(n)
       if c.mustMaterialize.contains(s):
         dest.copyIntoKind StoreV, info:
           dest.addParPair TrueX, info
-          dest.copyTree cfvar
+          dest.copyTree mflag
       else:
         # see `ret` construction, etc. the last label counts
         label = s

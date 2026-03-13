@@ -56,7 +56,7 @@ proc typedUnOp(c: var GeneratedCode; n: var Cursor; opr: string) =
 proc genCall(c: var GeneratedCode; n: var Cursor) =
   genCLineDir(c, info(n))
   inc n
-  let isCfn = isImportC(n)
+  let isCfn = isImportC(c.m, n)
   genx c, n
   c.add ParLe
   var i = 0
@@ -73,7 +73,7 @@ proc genCallCanRaise(c: var GeneratedCode; n: var Cursor) =
   genCLineDir(c, info(n))
   inc n
   skip n # skip error action
-  let isCfn = isImportC(n)
+  let isCfn = isImportC(c.m, n)
   genx c, n
   c.add ParLe
   var i = 0
@@ -99,22 +99,55 @@ proc genDeref(c: var GeneratedCode; n: var Cursor) =
     skip n
   skipParRi n
 
+proc genField(c: var GeneratedCode; fld: Cursor; objBody: Cursor; objTypeIsImported: bool) =
+  if fld.kind == Symbol:
+    let s = fld.symId
+    var t = objBody
+    let pragmas = typeOfField(c.m, t, s, FieldPragmas)
+    if not cursorIsNil(pragmas) and pragmas.kind == ParLe:
+      var p = pragmas.firstSon
+      while p.kind != ParRi:
+        case p.pragmaKind
+        of ImportcP, ImportcppP, ExportcP:
+          let litId = externName(s, p)
+          c.add pool.strings[litId]
+          return
+        else:
+          discard
+        skip p
+    var x = pool.syms[s]
+    if objTypeIsImported:
+      extractBasename x
+      c.add x
+    else:
+      c.add mangleToC(x)
+  else:
+    error c.m, "expected field name but got: ", fld
+
+proc isImportedArray(c: var GeneratedCode; n: Cursor): bool =
+  if n.exprKind == DotC:
+    let nn = n.firstSon
+    var objType = getNominalType(c.m, nn)
+    result = c.m.isImportC(objType)
+  else:
+    result = false
+
 proc genLvalue(c: var GeneratedCode; n: var Cursor) =
   case n.exprKind
   of NoExpr:
     if n.kind == Symbol:
-      let name = mangle(pool.syms[n.symId])
+      c.requestedSyms.incl n.symId
+      let name = mangleSym(c, n.symId)
       c.add name
-      c.requestedSyms.incl name
       inc n
     else:
       error c.m, "expected expression but got: ", n
   of DerefC: genDeref c, n
   of AtC:
     inc n
-    let arrType = getType(c.m, n)
+    let needsAwrapper = not isImportedArray(c, n)
     genx c, n
-    if not (c.m.isImportC(arrType) or arrType.typeKind == NoType):
+    if needsAwrapper:
       c.add Dot
       c.add "a"
     c.add BracketLe
@@ -130,6 +163,8 @@ proc genLvalue(c: var GeneratedCode; n: var Cursor) =
     skipParRi n
   of DotC:
     inc n
+    let objType = getNominalType(c.m, n)
+    let objBody = navigateToObjectBody(c.m, objType)
     genx c, n
     var fld = n
     skip n
@@ -140,7 +175,7 @@ proc genLvalue(c: var GeneratedCode; n: var Cursor) =
         c.add ".Q"
         dec inh
     c.add Dot
-    genx c, fld
+    genField c, fld, objBody, c.m.isImportC(objType)
     skipParRi n
   of ErrvC:
     if {gfMainModule, gfHasError} * c.flags == {}:
@@ -209,13 +244,13 @@ proc genAddr(c: var GeneratedCode; n: var Cursor) =
   # If we take the address of an array expression, add the `.a` field access.
   let inCallImportC = gfInCallImportC in c.flags
   inc n
+  let needsAwrapper = not isImportedArray(c, n)
   let arrType = getType(c.m, n)
   c.add ParLe
   let ampAt = c.code.len
   c.add "&"
   genx c, n
-  if arrType.typeKind == ArrayT and not (c.m.isImportC(arrType) or arrType.typeKind == NoType) and
-        inCallImportC:
+  if arrType.typeKind == ArrayT and needsAwrapper and inCallImportC:
     c.add ".a[0]"
   c.add ParRi
   if n.kind != ParRi and n.typeQual == CppRefQ:
@@ -304,6 +339,8 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
     skipParRi n
   of OconstrC:
     inc n
+    let objType = n
+    let objBody = navigateToObjectBody(c.m, n)
     c.objConstrType(n)
     c.add CurlyLe
     var i = 0
@@ -322,7 +359,8 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
           for _ in 0 ..< d:
             c.add "Q"
             c.add Dot
-        c.genx n
+        c.genField n, objBody, c.m.isImportC(objType)
+        inc n
         c.add AsgnOpr
         c.genx n
         if n.kind != ParRi: skip n
@@ -377,7 +415,7 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
     c.add ParLe
     genType c, n
     c.add Comma
-    let name = mangle(pool.syms[n.symId])
+    let name = mangleSym(c, n.symId)
     inc n
     c.add name
     c.add ParRi

@@ -17,23 +17,6 @@ import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls,
 import hexer_context, pipeline, dce1, lifter
 import  ".." / lib / [stringtrees, treemangler]
 
-
-proc setOwner(c: var EContext; newOwner: SymId): SymId =
-  result = c.currentOwner
-  c.currentOwner = newOwner
-
-proc demand(c: var EContext; s: SymId) =
-  if not c.declared.contains(s):
-    #if pool.syms[s] == "=wasmoved_SX50ath0pat4k2dls.0.tem6twvye1":
-    #  writeStackTrace()
-    #  echo "YES, DEMANDED! ", int(s), " ", c.declared.len
-    #  quit "wtf"
-    c.requires.add s
-
-proc offer(c: var EContext; s: SymId) =
-  c.declared.incl s
-
-
 proc skipExportMarker(c: var EContext; n: var Cursor) =
   if n.kind == DotToken:
     inc n
@@ -71,10 +54,36 @@ proc expectIntLit(c: var EContext; n: var Cursor) =
   if n.kind != IntLit:
     error c, "expected int literal, but got: ", n
 
-
-
 proc add(c: var EContext; tag: string; info: PackedLineInfo) =
   c.dest.add tagToken(tag, info)
+
+type
+  GenPragmas = object
+    opened: bool
+
+proc openGenPragmas(): GenPragmas = GenPragmas(opened: false)
+
+proc maybeOpen(c: var EContext; g: var GenPragmas; info: PackedLineInfo) {.inline.} =
+  if not g.opened:
+    g.opened = true
+    c.dest.add tagToken("pragmas", info)
+
+proc addKey(c: var EContext; g: var GenPragmas; key: string; info: PackedLineInfo) =
+  maybeOpen c, g, info
+  c.dest.add tagToken(key, info)
+  c.dest.addParRi()
+
+proc addKeyVal(c: var EContext; g: var GenPragmas; key: string; val: PackedToken; info: PackedLineInfo) =
+  maybeOpen c, g, info
+  c.dest.add tagToken(key, info)
+  c.dest.add val
+  c.dest.addParRi()
+
+proc closeGenPragmas(c: var EContext; g: GenPragmas) =
+  if g.opened:
+    c.dest.addParRi()
+  else:
+    c.dest.addDotToken()
 
 type
   TraverseMode = enum
@@ -91,12 +100,13 @@ type
     IsNodecl
     IsInheritable
     IsUnion
+    IsImportExternal
 
 proc trType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {})
 
 type
   CollectedPragmas = object
-    externName: string
+    extern: StrId
     flags: set[PragmaKind]
     align, bits: IntId
     header: StrId
@@ -105,9 +115,27 @@ type
 
 proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas
 
-proc toExtern(c: var EContext; s: SymId; externName: string; isInline=false): string {.inline.} =
-  let m = extractModule(pool.syms[s])
-  result = toExtern(externName, if m.len == 0 or isInline: c.main else: m)
+proc externKind*(p: CollectedPragmas): string =
+  if ImportcP in p.flags:
+    result = "importc"
+  elif ImportcppP in p.flags:
+    result = "importcpp"
+  elif ExportcP in p.flags:
+    result = "exportc"
+  else:
+    result = ""
+
+proc externPragmas(c: var EContext; genPragmas: var GenPragmas; prag: CollectedPragmas; pinfo: PackedLineInfo) =
+  let extKind = externKind(prag)
+  if extKind.len != 0:
+    if prag.extern != StrId(0):
+      c.addKeyVal genPragmas, extKind, strToken(prag.extern, pinfo), pinfo
+    else:
+      c.addKey genPragmas, extKind, pinfo
+  if NodeclP in prag.flags:
+    c.addKey genPragmas, "nodecl", pinfo
+  if prag.header != StrId(0):
+    c.addKeyVal genPragmas, "header", strToken(prag.header, pinfo), pinfo
 
 proc trField(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
   c.dest.add n # fld
@@ -116,16 +144,20 @@ proc trField(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
   expectSymdef(c, n)
   let (s, sinfo) = getSymDef(c, n)
   c.dest.add symdefToken(s, sinfo)
-  c.offer s
 
   skipExportMarker c, n
 
+  let pinfo = n.info
   let prag = parsePragmas(c, n)
 
-  c.dest.addDotToken() # adds pragmas
+  var genPragmas = openGenPragmas()
+  externPragmas c, genPragmas, prag, pinfo
 
-  if prag.externName.len > 0:
-    c.registerMangle(s, c.toExtern(s, prag.externName))
+  if prag.align != IntId(0):
+    c.addKeyVal genPragmas, "align", intToken(prag.align, pinfo), pinfo
+  if prag.bits != IntId(0):
+    c.addKeyVal genPragmas, "bits", intToken(prag.bits, pinfo), pinfo
+  closeGenPragmas c, genPragmas
 
   trType c, n, flags
 
@@ -141,7 +173,6 @@ proc genTupleField(c: var EContext; typ: var Cursor; counter: int) =
   c.dest.add tagToken("fld", typ.info)
   let name = ithTupleField(c, counter, typ)
   c.dest.add symdefToken(name, typ.info)
-  c.offer name
   c.dest.addDotToken() # pragmas
   c.trType(typ, {})
   c.dest.addParRi() # "fld"
@@ -153,7 +184,6 @@ proc trEnumField(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
   expectSymdef(c, n)
   let (s, sinfo) = getSymDef(c, n)
   c.dest.add symdefToken(s, sinfo)
-  c.offer s
 
   skipExportMarker c, n
 
@@ -173,7 +203,6 @@ proc genStringType(c: var EContext; info: PackedLineInfo) {.used.} =
   let s = pool.syms.getOrIncl(StringName)
   c.dest.add tagToken("type", info)
   c.dest.add symdefToken(s, info)
-  c.offer s
 
   c.dest.addDotToken()
   c.dest.add tagToken("object", info)
@@ -182,7 +211,6 @@ proc genStringType(c: var EContext; info: PackedLineInfo) {.used.} =
   c.dest.add tagToken("fld", info)
   let strField = pool.syms.getOrIncl(StringAField)
   c.dest.add symdefToken(strField, info)
-  c.offer strField
   c.dest.addDotToken()
   c.dest.add tagToken("ptr", info)
   c.dest.add tagToken("c", info)
@@ -194,7 +222,6 @@ proc genStringType(c: var EContext; info: PackedLineInfo) {.used.} =
   c.dest.add tagToken("fld", info)
   let lenField = pool.syms.getOrIncl(StringIField)
   c.dest.add symdefToken(lenField, info)
-  c.offer lenField
   c.dest.addDotToken()
   c.dest.add tagToken("i", info)
   c.dest.addIntLit(-1, info)
@@ -207,7 +234,6 @@ proc genStringType(c: var EContext; info: PackedLineInfo) {.used.} =
 proc useStringType(c: var EContext; info: PackedLineInfo) =
   let s = pool.syms.getOrIncl(StringName)
   c.dest.add symToken(s, info)
-  c.demand s
 
 proc trTupleBody(c: var EContext; n: var Cursor) =
   let info = n.info
@@ -245,34 +271,6 @@ proc trArrayBody(c: var EContext; n: var Cursor) =
     # should not be possible, but assume length anyway
     trExpr c, n
   takeParRi c, n
-
-type
-  GenPragmas = object
-    opened: bool
-
-proc openGenPragmas(): GenPragmas = GenPragmas(opened: false)
-
-proc maybeOpen(c: var EContext; g: var GenPragmas; info: PackedLineInfo) {.inline.} =
-  if not g.opened:
-    g.opened = true
-    c.dest.add tagToken("pragmas", info)
-
-proc addKey(c: var EContext; g: var GenPragmas; key: string; info: PackedLineInfo) =
-  maybeOpen c, g, info
-  c.dest.add tagToken(key, info)
-  c.dest.addParRi()
-
-proc addKeyVal(c: var EContext; g: var GenPragmas; key: string; val: PackedToken; info: PackedLineInfo) =
-  maybeOpen c, g, info
-  c.dest.add tagToken(key, info)
-  c.dest.add val
-  c.dest.addParRi()
-
-proc closeGenPragmas(c: var EContext; g: GenPragmas) =
-  if g.opened:
-    c.dest.addParRi()
-  else:
-    c.dest.addDotToken()
 
 proc trParams(c: var EContext; n: var Cursor)
 
@@ -318,7 +316,6 @@ proc trRefBody(c: var EContext; n: var Cursor; key: string) =
   c.dest.add tagToken("fld", info)
   let rcField = pool.syms.getOrIncl(RcField)
   c.dest.add symdefToken(rcField, info)
-  c.offer rcField
   c.dest.addDotToken() # pragmas
   c.dest.add tagToken("i", info)
   c.dest.addIntLit(-1, info)
@@ -328,7 +325,6 @@ proc trRefBody(c: var EContext; n: var Cursor; key: string) =
   let dataField = pool.syms.getOrIncl(DataField)
   c.dest.add tagToken("fld", info)
   c.dest.add symdefToken(dataField, info)
-  c.offer dataField
   c.dest.addDotToken() # pragmas
   c.trType(n, {})
   c.dest.addParRi() # "fld"
@@ -383,7 +379,6 @@ proc trAsNamedType(c: var EContext; n: var Cursor) =
 
     c.dest.add tagToken("type", info)
     c.dest.add symdefToken(val, info)
-    c.offer val
 
     c.dest.addDotToken()
     case k
@@ -418,7 +413,8 @@ proc addRttiField(c: var EContext; info: PackedLineInfo) =
   c.dest.add symdefToken(pool.syms.getOrIncl(VTableField), info)
   c.dest.addEmpty() # pragmas
   c.dest.addParLe PtrT, info
-  c.dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), info
+  let rttiSym = pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix)
+  c.dest.addSymUse rttiSym, info
   c.dest.addParRi() # "ptr"
   c.dest.addParRi() # "fld"
 
@@ -477,11 +473,6 @@ proc trType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
     inc n
   of Symbol:
     let s = n.symId
-    let ext = maybeMangle(c, s)
-    if ext.len != 0:
-      c.dest.addSymUse pool.syms.getOrIncl(ext), n.info
-      inc n
-      return
     let res = tryLoadSym(s)
     if res.status == LacksNothing:
       var typeDecl = asTypeDecl(res.decl)
@@ -494,11 +485,9 @@ proc trType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
           trType(c, body, flags)
           inc n
         else:
-          c.demand s
           c.dest.add n
           inc n
       else:
-        c.demand s
         c.dest.add n
         inc n
     else:
@@ -507,32 +496,8 @@ proc trType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
     case n.typeKind
     of NoType, ErrT, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypeKindT, OrdinalT:
       error c, "type expected but got: ", n
-    of IntT, UintT, FloatT, CharT:
-      let start = c.dest.len
-      c.dest.add n
-      inc n
-      c.dest.add n
-      inc n
-      if n.kind != ParRi and n.pragmaKind in {ImportcP, ImportcppP}:
-        c.dest.shrink start
-        inc n
-        c.dest.addSymUse pool.syms.getOrIncl(toExtern(pool.strings[n.litId], c.main)), n.info
-        inc n
-        skipParRi c, n
-        if n.kind != ParRi and n.pragmaKind == HeaderP:
-          inc n
-          c.headers.incl n.litId
-          inc n
-          skipParRi c, n
-        while n.kind != ParRi and n.pragmaKind in {ImportcP, ImportcppP, HeaderP}:
-          skip n
-        skipParRi c, n
-      else:
-        takeParRi c, n
-    of BoolT, AutoT, SymKindT:
-      c.loop n:
-        c.dest.add n
-        inc n
+    of IntT, UintT, FloatT, CharT, BoolT, AutoT, SymKindT, VarargsT:
+      takeTree c.dest, n
     of MutT, LentT:
       c.dest.add tagToken("ptr", n.info)
       inc n
@@ -611,7 +576,6 @@ proc trType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
           let (s, sinfo) = getSym(c, n)
           if isPtr: skipParRi c, n
           c.dest.add symToken(s, sinfo)
-          c.demand s
 
         if IsInheritable in flags:
           addRttiField c, n.info
@@ -658,7 +622,7 @@ proc trType(c: var EContext; n: var Cursor; flags: set[TypeFlag] = {}) =
           trAsNamedType(c, arrCursor)
       skip n
       skipParRi c, n
-    of VoidT, VarargsT, NiltT, ConceptT, InvokeT, ItertypeT:
+    of VoidT, NiltT, ConceptT, InvokeT, ItertypeT:
       error c, "unimplemented type: ", n
   else:
     error c, "type expected but got: ", n
@@ -737,68 +701,78 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
         of NoPragma:
           let cc = n.callConvKind
           if cc == NoCallConv:
-            error c, "unknown pragma: ", n
+            if hookKind(n.tagId) != NoHook:
+              skip n
+            else:
+              error c, "unknown pragma: ", n
           else:
             result.callConv = cc
-          inc n
+            inc n
+            skipParRi c, n
         of MagicP:
           inc n
           if n.kind notin {StringLit, Ident}:
             error c, "expected string literal or ident, but got: ", n
-          result.flags.incl NodeclP
+          result.flags.incl MagicP
           inc n
+          skipParRi c, n
         of ImportcP, ImportcppP:
           inc n
           expectStrLit c, n
-          result.externName = pool.strings[n.litId]
+          result.extern = n.litId
           result.flags.incl pk
           inc n
+          skipParRi c, n
         of ExportcP:
           inc n
           expectStrLit c, n
-          result.externName = pool.strings[n.litId]
+          result.extern = n.litId
+          result.flags.incl pk
           inc n
+          skipParRi c, n
         of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoReturnP,
            VarargsP, NoSideEffectP, NoDestroyP, ByCopyP, ByRefP,
            InlineP, NoinlineP, NoInitP, InjectP, GensymP, UntypedP, ViewP,
            InheritableP, PureP, ClosureP, PackedP, UnionP, IncompleteStructP:
           result.flags.incl pk
           inc n
+          skipParRi c, n
         of BorrowP:
           result.flags.incl InlineP
           result.flags.incl pk
           inc n
+          skipParRi c, n
         of HeaderP:
           inc n
           expectStrLit c, n
           result.header = n.litId
-          result.flags.incl NodeclP
           inc n
+          skipParRi c, n
         of DynlibP:
           inc n
           expectStrLit c, n
           result.dynlib = n.litId
           result.flags.incl DynlibP
-          result.flags.incl NodeclP
           inc n
+          skipParRi c, n
         of AlignP:
           inc n
           expectIntLit c, n
           result.align = n.intId
           inc n
+          skipParRi c, n
         of BitsP:
           inc n
           expectIntLit c, n
           result.bits = n.intId
           inc n
+          skipParRi c, n
         of RequiresP, EnsuresP, StringP, RaisesP, ErrorP, AssumeP, AssertP, ReportP,
            TagsP, DeprecatedP, SideEffectP, KeepOverflowFlagP, SemanticsP,
-           BaseP, FinalP, PragmaP, CursorP, PassiveP, PluginP:
+           BaseP, FinalP, PragmaP, CursorP, PassiveP, PluginP, MethodsP:
           skip n
-          continue
         of BuildP, EmitP, PushP, PopP, PassLP, PassCP:
           bug "unreachable"
-        skipParRi c, n
       else:
         error c, "unknown pragma: ", n
   else:
@@ -842,13 +816,9 @@ proc makeLocalDeclName(c: var EContext; s: SymId): string =
   result.add "."
   result.add c.main
 
-proc makeLocalSymId(c: var EContext; s: SymId; registerParentScope: bool): SymId =
+proc makeLocalSymId(c: var EContext; s: SymId): SymId =
   let newName = makeLocalDeclName(c, s)
   result = pool.syms.getOrIncl(newName)
-  if registerParentScope:
-    registerMangleInParent(c, s, newName)
-  else:
-    registerMangle(c, s, newName)
 
 proc buildProcType(c: var EContext; thisProc: Cursor): SymId =
   var thisProc = asRoutine(thisProc)
@@ -873,7 +843,7 @@ proc buildProcType(c: var EContext; thisProc: Cursor): SymId =
 
 proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
   let thisProc = n
-  c.openMangleScope()
+  c.typeCache.openScope()
   var dst = createTokenBuf(50)
   swap c.dest, dst
   #let toPatch = c.dest.len
@@ -885,17 +855,8 @@ proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
   inc n
   let (s, sinfo) = getSymDef(c, n)
 
-  let newSym: SymId
-
-  if mode == TraverseInner:
-    # namePos
-    newSym = makeLocalSymId(c, s, true)
-    c.dest.add symdefToken(newSym, sinfo)
-  else:
-    # namePos
-    newSym = s
-    c.dest.add symdefToken(s, sinfo)
-  c.offer s
+  let newSym = s
+  c.dest.add symdefToken(s, sinfo)
 
   var isGeneric = false
   if n.kind == ParLe:
@@ -912,7 +873,6 @@ proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
       assert n.symKind == TypevarY
       inc n
       let (typevar, _) = getSymDef(c, n)
-      c.offer typevar
       skipToEnd n
     inc n
   else:
@@ -925,7 +885,6 @@ proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
       assert n.symKind == ParamY
       inc n
       let (param, _) = getSymDef(c, n)
-      c.offer param
       skipToEnd n
     inc n
     skip n # skip return type
@@ -935,18 +894,15 @@ proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
   let pinfo = n.info
   let prag = parsePragmas(c, n)
 
-  let oldOwner = setOwner(c, s)
-
   var genPragmas = openGenPragmas()
+
+  externPragmas c, genPragmas, prag, pinfo
   if prag.callConv != NoCallConv:
     let name = $prag.callConv
     c.addKey genPragmas, name, pinfo
   if InlineP in prag.flags:
     c.addKey genPragmas, "inline", pinfo
 
-  if prag.externName.len > 0:
-    c.registerMangleInParent(newSym, c.toExtern(s, prag.externName, InlineP in prag.flags))
-    c.addKeyVal genPragmas, "was", symToken(s, pinfo), pinfo
   if SelectanyP in prag.flags:
     c.addKey genPragmas, "selectany", pinfo
 
@@ -964,27 +920,17 @@ proc trProc(c: var EContext; n: var Cursor; mode: TraverseMode) =
     skip n
   takeParRi c, n
   swap dst, c.dest
-  if NodeclP in prag.flags or isGeneric:
+  if prag.flags * {MagicP, DynlibP} != {} or isGeneric:
     discard "do not add to c.dest"
-  elif prag.flags * {ImportcP, ImportcppP} != {} and c.inImpSection == 0:
-    c.dest.add tagToken("imp", n.info)
-    c.dest.add dst
-    c.dest.addParRi()
   else:
     c.dest.add dst
-  if prag.header != StrId(0):
-    c.headers.incl prag.header
 
   if prag.dynlib != StrId(0):
     let typeSym = buildProcType(c, thisProc)
 
-    c.dynlibs.mgetOrPut(prag.dynlib, @[]).add (pool.strings.getOrIncl(prag.externName), typeSym)
+    c.dynlibs.mgetOrPut(prag.dynlib, @[]).add (newSym, prag.extern, typeSym)
 
-    var dynlibName = "Dl." & prag.externName & "." & c.main
-    c.registerMangleInParent(newSym, dynlibName)
-
-  discard setOwner(c, oldOwner)
-  c.closeMangleScope()
+  c.typeCache.closeScope()
   c.resultSym = oldResultSym
 
 proc trTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
@@ -997,17 +943,9 @@ proc trTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
   c.add "type", vinfo
   inc n
   let (s, sinfo) = getSymDef(c, n)
-  let oldOwner = setOwner(c, s)
 
-  let newSym: SymId
-
-  if mode == TraverseInner and not isDistinct:
-    newSym = makeLocalSymId(c, s, false)
-    c.dest.add symdefToken(newSym, sinfo)
-  else:
-    newSym = s
-    c.dest.add symdefToken(s, sinfo)
-  c.offer s
+  let newSym = s
+  c.dest.add symdefToken(s, sinfo)
 
   var isGeneric = n.kind == ParLe
   skipExportMarker c, n
@@ -1019,22 +957,20 @@ proc trTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
       assert n.symKind == TypevarY
       inc n
       let (typevar, _) = getSymDef(c, n)
-      c.offer typevar
       skipToEnd n
     inc n
   else:
     skip n # generic parameters
 
+  let pinfo = n.info
   let prag = parsePragmas(c, n)
+  var genPragmas = openGenPragmas()
 
+  externPragmas c, genPragmas, prag, pinfo
   if PackedP in prag.flags:
-    c.dest.copyIntoKind(PragmasU, NoLineInfo):
-      c.dest.copyIntoKind(PackedP, NoLineInfo): discard
-  else:
-    c.dest.addDotToken() # pragmas
+    c.addKey genPragmas, "packed", pinfo
+  closeGenPragmas c, genPragmas
 
-  if prag.externName.len > 0:
-    c.registerMangle(newSym, c.toExtern(s, prag.externName))
   if n.typeKind in TypeclassKinds:
     isGeneric = true
   if isGeneric:
@@ -1046,16 +982,15 @@ proc trTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
       flags.incl IsInheritable
     if UnionP in prag.flags:
       flags.incl IsUnion
+    if {ImportcP, ImportcppP} * prag.flags != {}:
+      flags.incl IsImportExternal
     trType c, n, flags
   takeParRi c, n
   swap dst, c.dest
-  if NodeclP in prag.flags or isGeneric:
+  if isGeneric:
     discard "do not add to c.dest"
   else:
     c.dest.add dst
-  if prag.header != StrId(0):
-    c.headers.incl prag.header
-  discard setOwner(c, oldOwner)
 
 proc genStringLit(c: var EContext; s: string; info: PackedLineInfo) =
   when false:
@@ -1068,7 +1003,6 @@ proc genStringLit(c: var EContext; s: string; info: PackedLineInfo) =
       c.strLits[s] = strName
       c.pending.add tagToken("const", info)
       c.pending.add symdefToken(strName, info)
-      c.offer strName
 
       c.pending.add tagToken("pragmas", info)
       c.pending.add tagToken("static", info)
@@ -1227,8 +1161,7 @@ proc isSimpleLiteral(nb: var Cursor): bool =
       result = false
 
 proc getCompilerProc(c: var EContext; name: string; isInline=false): string =
-  c.demand pool.syms.getOrIncl(name & ".0." & SystemModuleSuffix)
-  result = toExtern(name, if isInline: c.main else: SystemModuleSuffix)
+  result = name & ".0." & SystemModuleSuffix
 
 proc trArrAt(c: var EContext; n: var Cursor) =
   c.dest.add parLeToken(AtX, n.info) # NIFC uses the `at` token for array indexing
@@ -1278,11 +1211,7 @@ proc trArrAt(c: var EContext; n: var Cursor) =
 
 proc trFieldname(c: var EContext; n: var Cursor) =
   if n.kind == Symbol:
-    let ext = maybeMangle(c, n.symId)
-    if ext.len != 0:
-      c.dest.addSymUse pool.syms.getOrIncl(ext), n.info
-    else:
-      c.dest.add n
+    c.dest.add n
     inc n
   else:
     trExpr c, n
@@ -1359,7 +1288,7 @@ proc trExpr(c: var EContext; n: var Cursor) =
       inc n # skip tag
       trExpr c, n # tuple
       expectIntLit c, n
-      c.dest.add symToken(ithTupleField(c, pool.integers[n.intId], fieldType), n.info)
+      c.dest.add symToken(ithTupleField(c, int pool.integers[n.intId], fieldType), n.info)
       inc n # skip index
       c.dest.addIntLit(0, n.info) # inheritance
       takeParRi c, n
@@ -1469,7 +1398,6 @@ proc trExpr(c: var EContext; n: var Cursor) =
       trType c, n
   of SymbolDef:
     c.dest.add n
-    c.offer n.symId
     inc n
   of Symbol:
     var inlineValue = getInitValue(c.typeCache, n.symId)
@@ -1477,12 +1405,7 @@ proc trExpr(c: var EContext; n: var Cursor) =
     if not cursorIsNil(inlineValue) and inlineValue.kind != DotToken and isSimpleLiteral(inlineValueCopy):
       trExpr(c, inlineValue)
     else:
-      let ext = maybeMangle(c, n.symId)
-      if ext.len != 0:
-        c.dest.addSymUse pool.syms.getOrIncl(ext), n.info
-      else:
-        c.dest.add n
-      c.demand n.symId
+      c.dest.add n
     inc n
   of StringLit:
     genStringLit c, n
@@ -1506,13 +1429,10 @@ proc trLocal(c: var EContext; n: var Cursor; tag: SymKind; mode: TraverseMode) =
   let prag = parsePragmas(c, n)
 
   c.dest.add symdefToken(s, sinfo)
-  c.offer s
 
   var genPragmas = openGenPragmas()
-
-  if prag.externName.len > 0:
-    c.registerMangle(s, c.toExtern(s, prag.externName))
-    c.addKeyVal genPragmas, "was", symToken(s, pinfo), pinfo
+  if tag != ParamY:
+    externPragmas c, genPragmas, prag, pinfo
 
   if ThreadvarP in prag.flags:
     c.dest[toPatch] = tagToken("tvar", vinfo)
@@ -1527,13 +1447,8 @@ proc trLocal(c: var EContext; n: var Cursor; tag: SymKind; mode: TraverseMode) =
     c.addKeyVal genPragmas, "bits", intToken(prag.bits, pinfo), pinfo
   closeGenPragmas c, genPragmas
 
-  var nodecl = prag.flags.contains(NodeclP)
   c.typeCache.registerLocal(s, symKind, n)
-  if tag == ParamY and typeKind(n) == VarargsT:
-    skip n
-    nodecl = true
-  else:
-    trType c, n
+  trType c, n
 
   if mode == TraverseSig:
     if localDecl.substructureKind == ParamU:
@@ -1546,10 +1461,6 @@ proc trLocal(c: var EContext; n: var Cursor; tag: SymKind; mode: TraverseMode) =
   else:
     trExpr c, n
   takeParRi c, n
-  if nodecl:
-    c.dest.shrink toPatch
-  if prag.header != StrId(0):
-    c.headers.incl prag.header
 
 proc trWhile(c: var EContext; n: var Cursor) =
   let info = n.info
@@ -1563,7 +1474,6 @@ proc trWhile(c: var EContext; n: var Cursor) =
   if lab != SymId(0):
     c.dest.add tagToken("lab", info)
     c.dest.add symdefToken(lab, info)
-    c.offer lab
     c.dest.addParRi()
   discard c.nestedIn.pop()
 
@@ -1583,7 +1493,6 @@ proc trBlock(c: var EContext; n: var Cursor) =
   if lab != SymId(0):
     c.dest.add tagToken("lab", info)
     c.dest.add symdefToken(lab, info)
-    c.offer lab
     c.dest.addParRi()
   discard c.nestedIn.pop()
 
@@ -1750,6 +1659,11 @@ proc trStmt(c: var EContext; n: var Cursor; mode = TraverseInner) =
         trKeepovf c, n
       else:
         error c, "unknown statement: ", n
+    of PragmaxS:
+      inc n
+      skip n
+      trStmt c, n, mode
+      skipParRi n
     of StmtsS:
       if mode == TraverseTopLevel:
         inc n
@@ -1762,7 +1676,7 @@ proc trStmt(c: var EContext; n: var Cursor; mode = TraverseInner) =
         c.loop n:
           trStmt c, n, mode
     of ScopeS:
-      c.openMangleScope()
+      c.typeCache.openScope()
       if mode == TraverseTopLevel:
         inc n
         while n.kind notin {EofToken, ParRi}:
@@ -1773,7 +1687,7 @@ proc trStmt(c: var EContext; n: var Cursor; mode = TraverseInner) =
         inc n
         c.loop n:
           trStmt c, n, mode
-      c.closeMangleScope()
+      c.typeCache.closeScope()
     of VarS, LetS, CursorS:
       trLocal c, n, VarY, mode
     of ResultS:
@@ -1856,7 +1770,7 @@ proc transformInlineRoutines(c: var EContext; n: var Cursor) =
   toTransform.copyIntoKind StmtsS, n.info:
     takeTree(toTransform, n)
   var t = beginRead(toTransform)
-  var dest = transform(c, t, c.main)
+  var dest = transform(c, t, c.main, c.bits)
   var d = beginRead(dest)
 
   inc d # skips (stmts
@@ -1864,83 +1778,13 @@ proc transformInlineRoutines(c: var EContext; n: var Cursor) =
   swap c.dest, swapped
 
   trStmt c, d, TraverseSig
-  let oldInImpSection = c.inImpSection
-  c.inImpSection = 0
   while d.kind != ParRi:
     trStmt c, d, TraverseAll
-  c.inImpSection = oldInImpSection
-
-proc importSymbol(c: var EContext; s: SymId) =
-  let res = tryLoadSym(s)
-  if res.status == LacksNothing:
-    var n = res.decl
-    let kind = n.symKind
-    case kind
-    of TypeY:
-      trTypeDecl c, n, TraverseSig
-    of EfldY:
-      # import full enum type:
-      let typ = asLocal(n).typ
-      assert typ.kind == Symbol
-      c.demand typ.symId
-    else:
-      let isR = isRoutine(kind)
-      if isR or isLocal(kind):
-        var pragmas = if isR:
-                        asRoutine(n).pragmas
-                      else:
-                        asLocal(n).pragmas
-        let prag = parsePragmas(c, pragmas)
-        if isR:
-          if {InlineP, DynlibP} * prag.flags != {}:
-            # rewrite the inline routine, it belongs to the current module now that
-            # we duplicated it!
-            if prag.externName.len > 0:
-              c.registerMangle(s, toExtern(prag.externName, c.main))
-            else:
-              let newName = makeLocalDeclName(c, s)
-              c.registerMangle(s, newName)
-            transformInlineRoutines(c, n)
-            return
-
-        if NodeclP in prag.flags:
-          if prag.externName.len > 0:
-            c.registerMangle(s, c.toExtern(s, prag.externName))
-          if prag.header != StrId(0):
-            c.headers.incl prag.header
-          return
-
-      # XXX This is a stupid hack to avoid producing (imp (imp ...))
-      inc c.inImpSection
-      c.dest.add tagToken("imp", n.info)
-      if pool.syms[s] == "=wasmoved_SX50ath0pat4k2dls.0.tem6twvye1":
-        writeStackTrace()
-        echo "IMPORTING ", pool.syms[s]
-      trStmt c, n, TraverseSig
-      c.dest.addParRi()
-      dec c.inImpSection
-  else:
-    error c, "could not find symbol: " & pool.syms[s]
 
 proc writeOutput(c: var EContext, rootInfo: PackedLineInfo; destfileName: string): TokenBuf =
-  # Prepass: patch symbols that need mangling in c.dest
-  for i in 0 ..< c.dest.len:
-    let tok = c.dest[i]
-    if tok.kind in {Symbol, SymbolDef}:
-      let mangledName = c.maybeMangle(tok.symId)
-      if mangledName.len > 0:
-        let mangledSym = pool.syms.getOrIncl(mangledName)
-        c.dest[i].setSymId(mangledSym)
-
   # Build the final output with stmts wrapper and includes
   result = createTokenBuf()
   result.add tagToken("stmts", rootInfo)
-
-  # Add include statements for headers
-  for h in c.headers:
-    result.add tagToken("incl", rootInfo)
-    result.add strToken(h, rootInfo)
-    result.addParRi()
 
   # Add all the generated content
   result.add c.dest
@@ -1948,11 +1792,7 @@ proc writeOutput(c: var EContext, rootInfo: PackedLineInfo; destfileName: string
   # Close the stmts wrapper
   result.addParRi()
 
-  # Write with vendor/dialect metadata
-  var b = nifbuilder.open(destfileName)
-  b.addHeader "hexer", "nifc"
-  b.addRaw toString(result)
-  b.close()
+  writeFile result, destfileName, OnlyIfChanged
 
 proc initDynlib(c: var EContext, rootInfo: PackedLineInfo) =
   # dynlib init:
@@ -1963,7 +1803,6 @@ proc initDynlib(c: var EContext, rootInfo: PackedLineInfo) =
     # nimLoadLibrary
     c.dest.add tagToken("gvar", rootInfo)
     c.dest.add symdefToken(tmp, rootInfo)
-    c.offer tmp
     c.dest.addDotToken()
     c.dest.add tagToken("ptr", rootInfo)
     c.dest.add tagToken("void", rootInfo)
@@ -1977,12 +1816,10 @@ proc initDynlib(c: var EContext, rootInfo: PackedLineInfo) =
     c.dest.addParRi()
 
     # nimGetProcAddr
-    for (val, typeSym) in vals:
+    for (varName, val, typeSym) in vals:
       let procName = pool.strings[val]
-      let varName = pool.syms.getOrIncl "Dl." & pool.strings[val] & "." & c.main
       c.dest.add tagToken("gvar", rootInfo)
       c.dest.add symdefToken(varName, rootInfo)
-      c.offer varName
       c.dest.addDotToken()
       c.dest.add symToken(typeSym, rootInfo)
 
@@ -2009,10 +1846,12 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
     activeChecks: flags,
     liftingCtx: createLiftingCtx(mp.name, bits)
     )
-  c.openMangleScope()
+  c.typeCache.openScope()
 
-  var c0 = setupProgram(infile, infile.changeModuleExt ".x.nif", true)
-  var dest = transform(c, c0, mp.name)
+  var owningBuf = createTokenBuf(300)
+
+  var c0 = setupProgram(infile, infile.changeModuleExt ".x.nif", owningBuf, true)
+  var dest = transform(c, c0, mp.name, c.bits)
 
   var n = beginRead(dest)
   let rootInfo = n.info
@@ -2028,23 +1867,7 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
     error c, "expected (stmts) but got: ", n
   swap c.dest, toplevels
 
-
-  # fix point expansion:
-  while true:
-    let batch = c.requires.move
-    if batch.len == 0: break
-    for imp in batch:
-      if not c.declared.contains(imp):
-        importSymbol(c, imp)
-
   initDynlib(c, rootInfo)
-
-  if c.dynlibs.len > 0:
-    let loadLibrary = pool.syms.getOrIncl("nimLoadLibrary.0." & SystemModuleSuffix)
-    let getProcAddr = pool.syms.getOrIncl("nimGetProcAddr.0." & SystemModuleSuffix)
-    if not c.declared.contains(loadLibrary):
-      importSymbol(c, loadLibrary)
-      importSymbol(c, getProcAddr)
 
   c.dest.add toplevels
   c.dest.add c.pending
@@ -2052,7 +1875,7 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
   let destfileName = c.dir / c.main & ".x.nif"
 
   var outputBuf = writeOutput(c, rootInfo, destfileName)
-  c.closeMangleScope()
+  c.typeCache.closeScope()
 
   # Use the in-memory buffer to avoid re-reading the file we just wrote
-  writeDceOutput outputBuf, c.dir / c.main & ".dce.nif"
+  writeDceOutput outputBuf, c.dir / c.main & ".dce.nif", "." & c.main

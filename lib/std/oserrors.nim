@@ -16,7 +16,7 @@ when defined(windows):
 else:
   import "../../vendor/errorcodes/src" / errorcodes_posix
 
-proc raiseOSError*(errorCode: OSErrorCode, additionalInfo = "") {.noinline, raises.} =
+proc raiseOSError*(errorCode: OSErrorCode, additionalInfo = "") {.noinline, raises, noreturn.} =
   ## Raises an `OSError exception <system.html#OSError>`_.
   ##
   ## Read the description of the `newOSError proc`_ to learn

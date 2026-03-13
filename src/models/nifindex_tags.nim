@@ -28,16 +28,8 @@ type
     FromexportIdx = (ord(FromexportTagId), "fromexport")  ## specific exported symbols from a module
     ExportexceptIdx = (ord(ExportexceptTagId), "exportexcept")  ## `exportexcept` statement
     BuildIdx = (ord(BuildTagId), "build")  ## `build` pragma
-    DestroyIdx = (ord(DestroyTagId), "destroy")
-    DupIdx = (ord(DupTagId), "dup")
-    CopyIdx = (ord(CopyTagId), "copy")
-    WasmovedIdx = (ord(WasmovedTagId), "wasmoved")
-    SinkhIdx = (ord(SinkhTagId), "sinkh")
-    TraceIdx = (ord(TraceTagId), "trace")
     IndexIdx = (ord(IndexTagId), "index")  ## index section
-    PublicIdx = (ord(PublicTagId), "public")  ## public section
-    PrivateIdx = (ord(PrivateTagId), "private")  ## private section
 
 proc rawTagIsNifIndexKind*(raw: TagEnum): bool {.inline.} =
-  raw in {KvTagId, VvTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, GletTagId, TletTagId, LetTagId, CursorTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, InlineTagId, ExportTagId, FromexportTagId, ExportexceptTagId, BuildTagId, DestroyTagId, DupTagId, CopyTagId, WasmovedTagId, SinkhTagId, TraceTagId, IndexTagId, PublicTagId, PrivateTagId}
+  raw in {KvTagId, VvTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, GletTagId, TletTagId, LetTagId, CursorTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, InlineTagId, ExportTagId, FromexportTagId, ExportexceptTagId, BuildTagId, IndexTagId}
 

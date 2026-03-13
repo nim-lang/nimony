@@ -120,6 +120,8 @@ proc p(cond: bool) =
 
 ## VL - "Versioned Locations"
 
+The VL pass adds version information to all locations. The current implementation uses **SSA (Static Single Assignment)** where versions track writes. Since versioning is separate from control flow analysis, we can also attach an **SSU (Static Single Use)** mechanism instead or alongside SSA. See [njvl-ssu-ideas.md](njvl-ssu-ideas.md) for details on how SSU could be implemented.
+
 ### `v` (version)
 
 The `v` tag is used to represent the version of a variable. For example:

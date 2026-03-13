@@ -12,8 +12,8 @@ import nimony_model, semdata, semos
 
 import ".." / gear2 / modnames
 
-proc handleTypePlugins*(c: var SemContext) =
-  var inp = move c.dest
+proc handleTypePlugins*(c: var SemContext; dest: var TokenBuf) =
+  var inp = move dest
 
   for k, (v, info) in c.pendingTypePlugins:
     c.pluginBlacklist.incl(v)
@@ -23,17 +23,17 @@ proc handleTypePlugins*(c: var SemContext) =
     types.addSymUse k, NoLineInfo
     types.addParRi()
 
-    var dest = createTokenBuf(3000)
-    runPlugin(c, dest, info, pool.strings[v], inp.toString, types.toString)
-    inp = ensureMove dest
+    var destB = createTokenBuf(3000)
+    runPlugin(c, destB, info, pool.strings[v], inp.toString, types.toString)
+    inp = ensureMove destB
 
   for (k, info) in c.pendingModulePlugins:
     c.pluginBlacklist.incl(k)
-    var dest = createTokenBuf(3000)
-    runPlugin(c, dest, info, pool.strings[k], inp.toString)
-    inp = ensureMove dest
+    var destB = createTokenBuf(3000)
+    runPlugin(c, destB, info, pool.strings[k], inp.toString)
+    inp = ensureMove destB
 
   c.pendingTypePlugins.clear()
   c.pendingModulePlugins.shrink(0)
 
-  c.dest = ensureMove inp
+  dest = ensureMove inp

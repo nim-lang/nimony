@@ -9,7 +9,7 @@
 import std / [tables, sets, os, syncio, formatfloat, assertions]
 include ".." / lib / nifprelude
 import ".." / lib / [symparser, nifindexes]
-import nimony_model, symtabs, builtintypes, decls, programs, magics, reporters, nifconfig, xints
+import nimony_model, symtabs, builtintypes, decls, programs, magics, reporters, nifconfig, xints, langmodes
 
 import ".." / gear2 / modnames
 
@@ -21,6 +21,7 @@ type
     inGeneric*, inLoop*, inBlock*, inInst*: int
     returnType*: TypeCursor
     pragmas*: set[PragmaKind]
+    raisesType*: TypeCursor  # Type from .raises pragma (e.g., ErrorCode, MyError)
     resId*: SymId
     parent*: SemRoutine
 
@@ -60,25 +61,28 @@ type
     exported*: bool
     rootOwner*: SymId # generic root of owner type
 
-  SemPhase* = enum
-    SemcheckTopLevelSyms,
-    SemcheckSignatures,
-    SemcheckBodies
+  # SemPhase and ToplevelEntry are now in programs.nim
 
   MetaInfo* = object
     includedFiles*: seq[string] # will become part of the index file
     importedFiles*: seq[string] # likewise
 
-  ModuleFlag* = enum
-    IsSystem, IsMain, SkipSystem
-
   SemExecutor* = proc (c: var SemContext; routine: Routine; result: var TokenBuf; call: Cursor; info: PackedLineInfo): string {.nimcall.}
   SemStmtCallback* = proc (c: var SemContext; dest: var TokenBuf; n: Cursor) {.nimcall.}
   SemGetSize* = proc(c: var SemContext; n: Cursor; strict=false): xint {.nimcall.}
+  ForceInstantiate* = proc (c: var SemContext; dest: var TokenBuf) {.nimcall.}
 
+  MethodIndexEntry* = object
+    fn*: SymId
+    signature*: StrId
+
+  ClassEntry* = object
+    methods*: seq[MethodIndexEntry]
+
+  Classes* = Table[SymId, ClassEntry]
 
   SemContext* = object
-    dest*: TokenBuf
+    #dest*: TokenBuf
     routine*: SemRoutine
     currentScope*: Scope
     g*: ProgramContext
@@ -108,11 +112,11 @@ type
                              # to forward command line args properly.
     #fieldsCache: Table[SymId, Table[StrId, ObjField]]
     meta*: MetaInfo
-    hookIndexLog*: array[AttachedOp, seq[HookIndexEntry]] # only a log, used for index generation, but is not read from.
+    #hookIndexLog*: array[AttachedOp, seq[HookIndexEntry]] # only a log, used for index generation, but is not read from.
+    typeHooks*: Table[SymId, HooksPerType] # hooks per type, for embedding in type declarations
     converters*: Table[SymId, seq[SymId]]
     converterIndexMap*: seq[(SymId, SymId)]
-    methods*: Table[SymId, seq[SymId]]
-    classIndexMap*: seq[ClassIndexEntry]
+    classes*: Classes # class entries with methods for vtables
     exports*: OrderedTable[SymId, ImportFilter] # module syms to export filter
     freshSyms*: HashSet[SymId] ## symdefs that should count as new for semchecking
     toBuild*: TokenBuf
@@ -129,10 +133,14 @@ type
     executeCall*: SemExecutor
     semStmtCallback*: SemStmtCallback
     semGetSize*: SemGetSize
+    forceInstantiate*: ForceInstantiate
     passL*: seq[string]
     passC*: seq[string]
+    importSnippets*: TokenBuf ## NIF snippets for import statements (with absolute paths), for use by exprexec
     genericInnerProcs*: HashSet[SymId] # these are special in that they must be instantiated in specific places
     expanded*: TokenBuf
+    forwardDecls*: Table[StrId, seq[SymId]] # forward declaration candidates by name
+    deferredCyclicImports*: seq[(string, SymId)] # (module suffix, module sym) for cyclic imports to resolve after phase1
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""
@@ -176,9 +184,6 @@ proc typeToCursor*(c: var SemContext; buf: TokenBuf; start: int): TypeCursor =
     #if newBuf.len == 0: newBuf.add dotToken(NoLineInfo)
     result = cursorAt(newBuf, 0)
     c.typeMem[key] = newBuf
-
-proc typeToCursor*(c: var SemContext; start: int): TypeCursor =
-  typeToCursor(c, c.dest, start)
 
 template emptyNode*(c: var SemContext): Cursor =
   # XXX find a better solution for this

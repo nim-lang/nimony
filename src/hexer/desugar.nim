@@ -4,7 +4,7 @@ import std / [assertions]
 include nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
   builtintypes, langmodes, renderer, reporters]
-import hexer_context
+import hexer_context, passes
 
 type
   Context = object
@@ -71,9 +71,22 @@ proc skipParRi(n: var Cursor) =
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false)
 
 proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
-  copyInto dest, n:
+  if n.substructureKind == KvU:
+    dest.takeToken n
+    dest.takeTree n # key
     while n.kind != ParRi:
       tr(c, dest, n, isTopScope)
+    dest.takeParRi n
+  elif n.exprKind in {DotX, DdotX}:
+    dest.takeToken n
+    tr(c, dest, n, isTopScope)
+    while n.kind != ParRi:
+      dest.takeTree n
+    dest.takeParRi n
+  else:
+    copyInto dest, n:
+      while n.kind != ParRi:
+        tr(c, dest, n, isTopScope)
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
@@ -160,7 +173,7 @@ proc trSetType(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if err:
     error "invalid set element type: ", n
   else:
-    addSetType dest, size, info
+    addSetType dest, int size, info
   skip n
   skipParRi n
 
@@ -263,7 +276,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
     a = aOrig
     b = bOrig
   var err = false
-  let size = asSigned(bitsetSizeInBytes(baseType), err)
+  let size = int asSigned(bitsetSizeInBytes(baseType), err)
   assert not err
   case size
   of 1, 2, 4, 8:
@@ -505,7 +518,7 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var elemTyp = typ
   inc elemTyp
   var err = false
-  let size = asSigned(bitsetSizeInBytes(elemTyp), err)
+  let size = int asSigned(bitsetSizeInBytes(elemTyp), err)
   assert not err
   var typBuf = createTokenBuf(16)
   addSetType typBuf, size, info
@@ -778,17 +791,16 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   of ParRi:
     bug "unexpected ')' inside"
 
-proc desugar*(n: Cursor; moduleSuffix: string; activeChecks: set[CheckMode]): TokenBuf =
-  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix, activeChecks: activeChecks, pending: createTokenBuf())
+proc desugar*(pass: var Pass; activeChecks: set[CheckMode]) =
+  var n = pass.n  # Extract cursor locally
+  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix, activeChecks: activeChecks, pending: createTokenBuf())
   c.typeCache.openScope()
-  result = createTokenBuf(300)
-  var n = n
-  tr c, result, n, isTopScope = true
+  tr c, pass.dest, n, isTopScope = true
 
-  assert result[result.len-1].kind == ParRi
-  shrink(result, result.len-1)
+  assert pass.dest[pass.dest.len-1].kind == ParRi
+  shrink(pass.dest, pass.dest.len-1)
 
-  result.add c.pending
-  result.addParRi()
+  pass.dest.add c.pending
+  pass.dest.addParRi()
 
   c.typeCache.closeScope()

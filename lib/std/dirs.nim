@@ -163,6 +163,9 @@ when defined(posix):
           result = pcDir
         else:
           result = pcFile
+      else:
+        # XXX Better error handling
+        result = pcFile
     elif dType == DT_DIR:
       result = pcDir
     else:

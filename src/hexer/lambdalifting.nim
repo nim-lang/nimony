@@ -42,7 +42,7 @@ include ".." / lib / nifprelude
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
   builtintypes, langmodes, renderer, reporters]
-import hexer_context
+import hexer_context, passes
 
 type
   EnvMode = enum
@@ -575,6 +575,12 @@ proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
     while n.kind != ParRi: skip n
     skipParRi n
 
+proc treKv(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  copyInto dest, n:
+    dest.takeTree n # key
+    while n.kind != ParRi:
+      tre(c, dest, n)
+
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of Symbol:
@@ -622,6 +628,12 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       case n.exprKind
       of CallKinds:
         genCall(c, dest, n)
+      of DotX:
+        takeToken dest, n
+        tre c, dest, n
+        takeTree dest, n # don't look up field names here
+        if n.kind != ParRi: takeTree dest, n # optional inheritance depth
+        takeParRi dest, n
       of EnvpX:
         let info = n.info
         inc n
@@ -639,6 +651,8 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       else:
         if n.typeKind in RoutineTypes:
           treProcType(c, dest, n)
+        elif n.substructureKind == KvU:
+          treKv(c, dest, n)
         else:
           treSons(c, dest, n)
   of ParRi:
@@ -670,30 +684,29 @@ proc genObjectTypes(c: var Context; dest: var TokenBuf) =
           programs.publish(field.field, dest, beforeField)
     programs.publish(objType, dest, beforeType)
 
-proc elimLambdas*(n: Cursor; moduleSuffix: string): TokenBuf =
-  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix)
+proc elimLambdas*(pass: var Pass) =
+  var n = pass.n  # Extract cursor locally
+  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix)
   c.typeCache.openScope()
-  result = createTokenBuf(300)
-  var n = n
-  tr c, result, n
+  tr c, pass.dest, n
   c.typeCache.closeScope()
 
   # second pass: generate environments
   if c.localToEnv.len > 0:
     # some closure usage has been found, so we need to generate environments
     c.typeCache.openScope()
-    let cap = result.len
-    var oldResult = move result
-    result = createTokenBuf(cap)
-    var n = beginRead(oldResult)
-    assert n.stmtKind == StmtsS
-    result.add n # stmts
-    inc n
-    genObjectTypes(c, result)
-    while n.kind != ParRi:
-      tre(c, result, n)
-    result.takeParRi n
-    endRead(oldResult)
+    let cap = pass.dest.len
+    var oldDest = move pass.dest
+    pass.dest = createTokenBuf(cap)
+    var n2 = beginRead(oldDest)
+    assert n2.stmtKind == StmtsS
+    pass.dest.add n2 # stmts
+    inc n2
+    genObjectTypes(c, pass.dest)
+    while n2.kind != ParRi:
+      tre(c, pass.dest, n2)
+    pass.dest.takeParRi n2
+    endRead(oldDest)
     c.typeCache.closeScope()
 
-  #echo "PRODUCED ", toString(result, false)
+  #echo "PRODUCED ", toString(pass.dest, false)

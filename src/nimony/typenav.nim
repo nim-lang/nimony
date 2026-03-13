@@ -14,15 +14,16 @@ include ".." / lib / nifprelude
 
 import std/tables
 from std/strutils import endsWith
-import nimony_model, builtintypes, decls, programs
+import ".." / njvl / njvl_model
+import nimony_model, builtintypes, decls, programs, typeprops
 
 const
-  RcField* = "r.0"
-  DataField* = "d.0"
-  VTableField* = "`vt.0"
-  DisplayLenField* = "dl.0."
-  DisplayField* = "dy.0."
-  MethodsField* = "mt.0."
+  RcField* = "r.00"
+  DataField* = "d.00"
+  VTableField* = "vt.00"
+  DisplayLenField* = "dl.0"
+  DisplayField* = "dy.0"
+  MethodsField* = "mt.0"
 
 type
   LocalInfo* = object
@@ -185,6 +186,103 @@ type
     BeStrict
     SkipAliases
 
+proc skipToObjectBody(n: Cursor): Cursor =
+  var counter = 20
+  result = n
+  if result.typeKind in {PtrT, RefT}:
+    inc result
+  while counter > 0 and result.kind == Symbol:
+    dec counter
+    let d = getTypeSection(result.symId)
+    if d.kind == TypeY:
+      result = d.body
+      if result.typeKind in {PtrT, RefT}:
+        inc result
+    else:
+      break
+
+proc typeOfField(c: var TypeCache; n: var Cursor; fld: SymId): Cursor =
+  if n.substructureKind == FldU:
+    let decl = takeLocal(n, SkipFinalParRi)
+    if decl.name.kind == SymbolDef and decl.name.symId == fld:
+      result = decl.typ
+    else:
+      result = default(Cursor)
+  elif n.substructureKind == StmtsU:
+    inc n
+    while n.kind != ParRi:
+      result = typeOfField(c, n, fld)
+      if not cursorIsNil(result): return result
+    skipParRi n
+    result = default(Cursor)
+  elif n.substructureKind == CaseU:
+    inc n
+    result = typeOfField(c, n, fld) # selector field
+    if not cursorIsNil(result): return result
+    while n.kind != ParRi:
+      case n.substructureKind
+      of OfU:
+        inc n
+        skip n # ranges
+        inc n # stmts
+        while n.kind != ParRi:
+          result = typeOfField(c, n, fld)
+          if not cursorIsNil(result): return result
+        skipParRi n # stmts
+        skipParRi n # of
+      of ElseU:
+        inc n
+        inc n # stmts
+        while n.kind != ParRi:
+          result = typeOfField(c, n, fld)
+          if not cursorIsNil(result): return result
+        skipParRi n # stmts
+        skipParRi n # else
+      else:
+        skip n
+    skipParRi n
+    result = default(Cursor)
+  else:
+    result = default(Cursor)
+    let tk = n.typeKind
+    if tk in {ObjectT, TupleT}:
+      inc n
+      var baseObj = default(Cursor)
+      if tk == ObjectT:
+        baseObj = n
+        skip n # inheritance
+      while n.kind != ParRi:
+        result = typeOfField(c, n, fld)
+        if not cursorIsNil(result): return result
+      inc n
+      if not cursorIsNil(baseObj):
+        var b = skipToObjectBody baseObj
+        result = typeOfField(c, b, fld)
+
+proc lookupField*(c: var TypeCache; typ: Cursor; fld: SymId): Cursor =
+  var body = skipToObjectBody(typ)
+  result = typeOfField(c, body, fld)
+
+proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor
+
+proc tupatType(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
+  result = c.builtins.autoType # to indicate error
+  var n = n
+  inc n # into tuple
+  var tupType = getTypeImpl(c, n, flags)
+  tupType = skipModifier(tupType)
+  if tupType.typeKind == TupleT:
+    skip n # skip tuple expression
+    if n.kind == IntLit:
+      var idx = pool.integers[n.intId]
+      inc tupType # into the tuple type
+      while idx > 0:
+        skip tupType
+        dec idx
+      result = getTupleFieldType(tupType)
+  elif BeStrict in flags:
+    assert false, "wanted tuple type but got: " & toString(tupType, false)
+
 proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   result = c.builtins.autoType # to indicate error
   case exprKind(n)
@@ -230,8 +328,15 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         inc n
         skip n # label or DotToken
         result = getTypeImpl(c, n, flags)
+      of StmtsS, RetS:
+        result = c.builtins.voidType
       else:
-        discard
+        case njvlKind(n)
+        of VV:
+          result = getTypeImpl(c, n.firstSon, flags)
+        of EtupatV:
+          result = tupatType(c, n, flags)
+        else: discard
     else:
       case n.substructureKind
       of RangesU, RangeU:
@@ -303,30 +408,52 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of NilX:
     result = c.builtins.nilType
   of DotX, DdotX:
-    result = n
-    inc result # skip "dot"
-    var obj = result
-    skip result # obj
-    # typeof(obj.field) == typeof field
-    if result.kind == Symbol:
-      let s = result.symId
-      result = lookupSymbol(c, s)
-      if cursorIsNil(result):
-        if pool.syms[s] == DataField and
+    var n = n
+    inc n # skip "dot"
+    var obj = n
+    skip n # object expression
+    let fld = n.symId
+
+    var objType = skipToObjectBody skipModifier getTypeImpl(c, obj, flags)
+
+    result = typeOfField(c, objType, fld)
+    if cursorIsNil(result):
+      if pool.syms[fld] == VTableField:
+        # VTableField is a magic internal field for RTTI - treat as pointer type
+        result = c.builtins.cstringType
+      elif pool.syms[fld] == DataField and
             obj.exprKind in {DerefX, HderefX}:
-          inc obj
-          let typ = getTypeImpl(c, obj, flags)
-          if typ.typeKind == RefT:
-            result = typ
-            inc result
-        if cursorIsNil(result):
-          when defined(debug):
-            writeStackTrace()
-          quit "could not find symbol: " & pool.syms[s]
-    else:
-      result = getTypeImpl(c, result, flags)
+        inc obj
+        var t = getTypeImpl(c, obj, flags)
+        if t.kind == Symbol:
+          var counter = 20
+          while counter > 0 and t.kind == Symbol:
+            dec counter
+            let res = tryLoadSym(t.symId)
+            if res.status == LacksNothing and res.decl.stmtKind == TypeS:
+              let decl = asTypeDecl(res.decl)
+              t = decl.body
+            else:
+              break
+        if t.typeKind == RefT:
+          result = t
+          inc result
+      else:
+        result = c.builtins.autoType
+
   of DerefX, HderefX:
     result = getTypeImpl(c, n.firstSon, flags)
+    if typeKind(result) == SinkT:
+      inc result
+
+    var counter = 20
+    while counter > 0 and result.kind == Symbol:
+      dec counter
+      let d = getTypeSection(result.symId)
+      if d.kind == TypeY:
+        result = d.body
+      else:
+        break
     if typeKind(result) in {RefT, PtrT, MutT, OutT, LentT}:
       inc result
     else:
@@ -369,20 +496,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     c.mem.add buf
     result = cursorAt(c.mem[c.mem.len-1], 0)
   of TupatX:
-    var n = n
-    inc n # into tuple
-    var tupType = getTypeImpl(c, n, flags)
-    if tupType.typeKind == TupleT:
-      skip n # skip tuple expression
-      if n.kind == IntLit:
-        var idx = pool.integers[n.intId]
-        inc tupType # into the tuple type
-        while idx > 0:
-          skip tupType
-          dec idx
-        result = getTupleFieldType(tupType)
-    elif BeStrict in flags:
-      assert false, "wanted tuple type but got: " & toString(tupType, false)
+    result = tupatType(c, n, flags)
   of BracketX:
     # should not be encountered but keep this code for now
     let elemType = getTypeImpl(c, n.firstSon, flags)
