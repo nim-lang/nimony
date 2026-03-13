@@ -113,7 +113,7 @@ proc skipSymbol(r: var Cursor): SymId {.inline.} =
 
 # --- Borrow checking ---
 
-proc extractBorrowPath(c: NjvlContext; n: Cursor; result: var BorrowInfo; followInlineVars=true) =
+proc extractBorrowPath(c: var NjvlContext; n: Cursor; result: var BorrowInfo; followInlineVars=true) =
   ## Extract a path (root :: field1 :: field2 :: ...) from an expression,
   ## expanding inline variables.
   if n.kind == ParLe:
@@ -176,14 +176,14 @@ proc extractBorrowPath(c: NjvlContext; n: Cursor; result: var BorrowInfo; follow
     result.mode = IsBorrowableFromConst
   elif n.kind == Symbol:
     let s = n.symId
-    if followInlineVars and s in c.inlineVars:
+    if (followInlineVars or getType(c.typeCache, n).typeKind in {MutT, OutT, LentT}) and s in c.inlineVars:
       extractBorrowPath(c, c.inlineVars[s], result, followInlineVars)
     else:
       if result.mode != HasAddr:
         result.mode = IsBorrowable
       result.path.add s
 
-proc extractPath(c: NjvlContext; n: Cursor; followInlineVars=true): BorrowInfo =
+proc extractPath(c: var NjvlContext; n: Cursor; followInlineVars=true): BorrowInfo =
   result = BorrowInfo(path: @[], mode: NotBorrowable, info: n.info)
   extractBorrowPath(c, n, result, followInlineVars)
 
