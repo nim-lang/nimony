@@ -157,15 +157,15 @@
 | `(raises)` | NifcPragma, NimonyPragma | proc annotation |
 | `(errs)` | NifcPragma | proc annotation |
 | `(static T)`; `(static)` | NifcPragma, NimonyType, NiflerKind | `static` type or annotation |
-| `(ite X S S S STR_LIT?)` | ControlFlowKind, NjvlKind | if-then-else followed by `join` information followed by an optional label |
-| `(itec X S S)` | NjvlKind | if-then-else (that was a `case`) |
-| `(loop S X S S)` | NjvlKind | `loop` components are (before-cond, cond, loop-body, after) |
+| `(ite X S S S STR_LIT?)` | ControlFlowKind, NjvlKind, NifcStmt | if-then-else followed by `join` information followed by an optional label |
+| `(itec X S S)` | NjvlKind, NifcStmt | if-then-else (that was a `case`) |
+| `(loop S X S S)` | NjvlKind, NifcStmt | `loop` components are (before-cond, cond, loop-body, after) |
 | `(v X INT_LIT)` | NjvlKind | `versioned` locations |
 | `(etupat X INT_LIT)` | NjvlKind | tupat expression for error handling |
 | `(unknown X)` | NjvlKind | location's contents is unknown at this point |
-| `(jtrue Y+)` | NjvlKind | set variables v1, v2, ... to `(true)`; hint this should become a jump |
-| `(mflag D)` | NjvlKind | declare a new **materialized** control flow flag `D` of type `bool` initialized to `false` |
-| `(vflag D)` | NjvlKind | declare a new **virtual** control flow flag `D` of type `bool` initialized to `false` |
+| `(jtrue Y+)` | NjvlKind, NifcStmt | set variables v1, v2, ... to `(true)`; hint this should become a jump |
+| `(mflag D)` | NjvlKind, NifcStmt, NifcSym | declare a new **materialized** control flow flag `D` of type `bool` initialized to `false` |
+| `(vflag D)` | NjvlKind, NifcStmt, NifcSym | declare a new **virtual** control flow flag `D` of type `bool` initialized to `false` |
 | `(either Y INT_LIT+)` | NimonyOther | `either` construct to combine location versions |
 | `(join Y INT_LIT INT_LIT INT_LIT)` | NimonyOther | `join` construct inside `ite` |
 | `(graph Y)` | ControlFlowKind | disjoint subgraph annotation |

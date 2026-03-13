@@ -87,6 +87,7 @@ type
   CurrentProc* = object
     needsOverflowFlag: bool
     nextTemp: int
+    vflags: HashSet[SymId] # name and label token's position in the produced code
 
   GeneratedCode* = object
     m: MainModule
@@ -420,7 +421,7 @@ include genexprs
 
 type
   VarKind = enum
-    IsLocal, IsGlobal, IsThreadlocal, IsConst
+    IsLocal, IsGlobal, IsThreadlocal, IsConst, IsMflag
 
 proc isLiteral(n: var Cursor): bool =
   case n.kind

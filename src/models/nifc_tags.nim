@@ -78,9 +78,15 @@ type
     TryS = (ord(TryTagId), "try")  ## `try` statement
     RaiseS = (ord(RaiseTagId), "raise")  ## `raise` statement
     OnerrS = (ord(OnerrTagId), "onerr")  ## error handling statement
+    IteS = (ord(IteTagId), "ite")  ## if-then-else followed by `join` information followed by an optional label
+    ItecS = (ord(ItecTagId), "itec")  ## if-then-else (that was a `case`)
+    LoopS = (ord(LoopTagId), "loop")  ## `loop` components are (before-cond, cond, loop-body, after)
+    JtrueS = (ord(JtrueTagId), "jtrue")  ## set variables v1, v2, ... to `(true)`; hint this should become a jump
+    MflagS = (ord(MflagTagId), "mflag")  ## declare a new **materialized** control flow flag `D` of type `bool` initialized to `false`
+    VflagS = (ord(VflagTagId), "vflag")  ## declare a new **virtual** control flow flag `D` of type `bool` initialized to `false`
 
 proc rawTagIsNifcStmt*(raw: TagEnum): bool {.inline.} =
-  raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, KeepovfTagId, ScopeTagId, IfTagId, BreakTagId, WhileTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId}
+  raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, KeepovfTagId, ScopeTagId, IfTagId, BreakTagId, WhileTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId, IteTagId, ItecTagId, LoopTagId, JtrueTagId, MflagTagId, VflagTagId}
 
 type
   NifcType* = enum
@@ -171,7 +177,9 @@ type
     ProcY = (ord(ProcTagId), "proc")  ## proc declaration
     TypeY = (ord(TypeTagId), "type")  ## type declaration
     LabY = (ord(LabTagId), "lab")  ## label, target of a `jmp` instruction
+    MflagY = (ord(MflagTagId), "mflag")  ## declare a new **materialized** control flow flag `D` of type `bool` initialized to `false`
+    VflagY = (ord(VflagTagId), "vflag")  ## declare a new **virtual** control flow flag `D` of type `bool` initialized to `false`
 
 proc rawTagIsNifcSym*(raw: TagEnum): bool {.inline.} =
-  raw in {GvarTagId, TvarTagId, VarTagId, ParamTagId, ConstTagId, EfldTagId, FldTagId, ProcTagId, TypeTagId, LabTagId}
+  raw in {GvarTagId, TvarTagId, VarTagId, ParamTagId, ConstTagId, EfldTagId, FldTagId, ProcTagId, TypeTagId, LabTagId, MflagTagId, VflagTagId}
 
