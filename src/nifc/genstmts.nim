@@ -61,21 +61,26 @@ proc genIf(c: var GeneratedCode; n: var Cursor) =
     error c.m, "`if` expects `elif` or `else` but got: ", first
   c.inToplevel = oldInToplevel
 
-proc getVirtualGuard(c: var GeneratedCode; n: Cursor): (SymId, int) =
-  result = (SymId(0), -1)
+proc getVirtualGuard(c: var GeneratedCode; n: Cursor): (SymId, bool) =
+  result = (SymId(0), false)
   var n = n
+  # NIFC requirement: The last usage of a virtual flag
+  # must be annotated with (lab).
   if n.exprKind == NotC:
     inc n
-    if n.kind == Symbol:
-      let prevPos = c.currentProc.vflags.getOrDefault(n.symId, -1)
-      if prevPos >= 0:
-        result = (n.symId, prevPos)
+    var isLast = false
+    if n.stmtKind == LabS:
+      isLast = true
+      inc n
+    elif n.kind == Symbol:
+      if c.currentProc.vflags.contains(n.symId):
+        result = (n.symId, isLast)
 
 proc genIte(c: var GeneratedCode; n: var Cursor) =
   inc n
   let oldInToplevel = c.inToplevel
   c.inToplevel = false
-  let (vflag, prevPos) = getVirtualGuard(c, n)
+  let (vflag, isLast) = getVirtualGuard(c, n)
   if vflag != SymId(0):
     #[
        vflag x = false
@@ -91,15 +96,10 @@ proc genIte(c: var GeneratedCode; n: var Cursor) =
     skip n
     c.genStmt n # then-part is always taken
     # emit the label:
-    if prevPos > 0:
-      # previous label is obsolete now, mark it as such:
-      c.code[prevPos] = Token EmptyToken
-      c.code[prevPos + 1] = Token EmptyToken
-      c.code[prevPos + 2] = Token EmptyToken
-    c.currentProc.vflags[vflag] = c.code.len
-    c.add mangleToC(pool.syms[vflag])
-    c.add Colon
-    c.add Semicolon
+    if isLast:
+      c.add mangleToC(pool.syms[vflag])
+      c.add Colon
+      c.add Semicolon
     skip n      # else-part is always ignored
   else:
     c.add IfKeyword
@@ -382,7 +382,7 @@ proc genVflagDecl(c: var GeneratedCode; n: var Cursor) =
   if n.kind == SymbolDef:
     let s = n.symId
     c.m.registerLocal(s, createIntegralType(c.m, "(bool)"))
-    c.currentProc.vflags[s] = 0
+    c.currentProc.vflags.incl(s)
     inc n
   else:
     error c.m, "expected SymbolDef but got: ", n

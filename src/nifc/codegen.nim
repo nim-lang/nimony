@@ -87,7 +87,7 @@ type
   CurrentProc* = object
     needsOverflowFlag: bool
     nextTemp: int
-    vflags: Table[SymId, int] # name and label token's position in the produced code
+    vflags: HashSet[SymId] # name and label token's position in the produced code
 
   GeneratedCode* = object
     m: MainModule
