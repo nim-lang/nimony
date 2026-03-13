@@ -134,6 +134,7 @@ type
     resultSym: SymId
     upcomingState: int
     counter: int
+    subProcs: int  ## number of sub-state procs opened so far
     kind: RoutineKind
 
   Context = object
@@ -144,6 +145,8 @@ type
     procStack: seq[SymId]
     currentProc: ProcContext
     continuationProcImpl: Cursor
+    inlineContState: int   ## >= 0 when trIte detected a split inside a branch
+    inlineContCursor: Cursor ## cursor to rest-of-branch code after the split point
 
 proc coroTypeForProc(c: Context; procId: SymId): SymId =
   let s = extractVersionedBasename(pool.syms[procId])
@@ -183,7 +186,10 @@ proc contNextState(c: var Context; dest: var TokenBuf; state: int; info: PackedL
         dest.addSymUse stateToProcName(c, c.procStack[^1], state), info
     dest.copyIntoKind KvU, info:
       dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
-      dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+      dest.copyIntoKind CastX, info:
+        dest.copyIntoKind PtrT, info:
+          dest.addSymUse pool.syms.getOrIncl(RootObjName), info
+        dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
 
 proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId; target: Cursor;
                    inhibitComplete = false) =
@@ -510,11 +516,10 @@ proc escapingLocals(c: var Context; n: Cursor) =
   var n = n
   var nested = 0
   while true:
-    if nested <= 1:
-      let pos = cursorToPosition(c.currentProc.cf, n)
-      let state = c.currentProc.labels.getOrDefault(pos, -1)
-      if state != -1:
-        currentState = state
+    let pos = cursorToPosition(c.currentProc.cf, n)
+    let stateAtPos = c.currentProc.labels.getOrDefault(pos, -1)
+    if stateAtPos != -1:
+      currentState = stateAtPos
 
     let sk = n.stmtKind
     case sk
@@ -609,43 +614,167 @@ proc trJtrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addParRi()
   inc n  # skip ParRi
 
+proc compileStmtSeq(c: var Context; dest: var TokenBuf; n: var Cursor; continueState: int)
+
 proc trLoop(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## Convert NJ `(loop stmts_before cond stmts_body)` to a while loop.
-  ## mflag/vflag declarations in stmts_before are hoisted before the while.
+  ## Translate NJ `(loop stmts_before cond stmts_body)`.
+  ## If the loop has suspension points, it becomes a state-machine loop:
+  ##   the loop head gets its own state, and `(continue .)` jumps back to it.
+  ## Otherwise it's converted to a simple `(while cond body)`.
+  let loopPos = cursorToPosition(c.currentProc.cf, n)
+  let loopState = c.currentProc.labels.getOrDefault(loopPos, -1)
   let info = n.info
   inc n  # skip loop tag
-  # Process stmts_before: hoist mflag/vflag decls to dest (outside while)
-  var beforeBuf = createTokenBuf(32)
-  assert n.stmtKind == StmtsS
-  inc n  # enter stmts_before
+
+  if loopState == -1:
+    # No suspension points inside this loop → simple while loop
+    var beforeBuf = createTokenBuf(32)
+    assert n.stmtKind == StmtsS
+    inc n  # enter stmts_before
+    while n.kind != ParRi:
+      if n.njvlKind in {MflagV, VflagV}:
+        trMflag c, dest, n   # hoisted outside while
+      else:
+        tr c, beforeBuf, n
+    inc n  # skip stmts_before ParRi
+    var condBuf = createTokenBuf(16)
+    tr c, condBuf, n
+    var bodyBuf = createTokenBuf(64)
+    assert n.stmtKind == StmtsS
+    inc n  # enter stmts_body
+    while n.kind != ParRi:
+      if n.stmtKind == ContinueS:
+        skip n
+      else:
+        tr c, bodyBuf, n
+    inc n  # skip stmts_body ParRi
+    skipParRi n  # skip loop ParRi
+    dest.addParLe WhileS, info
+    dest.add condBuf
+    dest.addParLe StmtsS, info
+    dest.add beforeBuf
+    dest.add bodyBuf
+    dest.addParRi()
+    dest.addParRi()
+  else:
+    # Loop has suspension points → compile as state machine.
+    # compileStmtSeq already opened the loop head state proc (loopState).
+    # We generate: stmts_before inline, condition check, then stmts_body with splits.
+
+    # stmts_before: mflag decls become local vars in the loop head proc
+    assert n.stmtKind == StmtsS
+    inc n  # enter stmts_before
+    while n.kind != ParRi:
+      if n.njvlKind in {MflagV, VflagV}:
+        trMflag c, dest, n
+      else:
+        tr c, dest, n
+    inc n  # skip stmts_before ParRi
+
+    # Condition: (not :g) means loop runs while guard is false.
+    # Find the after-loop state to jump to when the loop exits.
+    var afterLoopCursor = n
+    skip afterLoopCursor  # skip condition
+    # afterLoopCursor is now at stmts_body
+    skip afterLoopCursor  # skip stmts_body
+    # afterLoopCursor is now at loop's ParRi
+    let afterLoopParRiPos = cursorToPosition(c.currentProc.cf, afterLoopCursor)
+    let afterLoopState = c.currentProc.labels.getOrDefault(afterLoopParRiPos + 1, -1)
+
+    # Emit condition check: the loop condition is (not :g).
+    # The loop exits when (not :g) is false = when :g is true.
+    # Translate the condition cursor to get the guard sym.
+    var condBuf = createTokenBuf(16)
+    tr c, condBuf, n  # translates (not :g) into condBuf
+
+    # Emit: if NOT (loop condition): exit loop
+    # NOT (not :g) = :g. We emit: if NOT condBuf: exit
+    dest.copyIntoKind IfS, info:
+      dest.copyIntoKind ElifU, info:
+        dest.copyIntoKind NotX, info:
+          dest.add condBuf
+        dest.copyIntoKind StmtsS, info:
+          if afterLoopState != -1:
+            gotoNextState c, dest, afterLoopState, info
+          else:
+            # Loop is the last statement; end iterator/passive proc
+            dest.copyIntoKind RetS, info:
+              dest.copyIntoKind DotX, info:
+                dest.copyIntoKind DerefX, info:
+                  dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+                dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
+                dest.addIntLit 1, info
+
+    # stmts_body: compile with state splits, passing loopState as continueState
+    assert n.stmtKind == StmtsS
+    inc n  # enter stmts_body (past StmtsS tag)
+    compileStmtSeq c, dest, n, loopState
+    # n is now at the ParRi of stmts_body
+    inc n  # skip stmts_body ParRi
+    skipParRi n  # skip loop ParRi
+
+proc emitTailStmts(c: var Context; dest: var TokenBuf; n: var Cursor; continueState: int) =
+  ## Emit statements from n up to ParRi (or a labeled split boundary),
+  ## handling continue-as-goto. Updates n. Used to duplicate tail code.
   while n.kind != ParRi:
-    if n.njvlKind in {MflagV, VflagV}:
-      trMflag c, dest, n   # hoisted outside while
-    else:
-      tr c, beforeBuf, n
-  inc n  # skip stmts_before ParRi
-  # Condition (process it)
-  var condBuf = createTokenBuf(16)
-  tr c, condBuf, n
-  # Process stmts_body: skip the trailing NJ `(continue .)`
-  var bodyBuf = createTokenBuf(64)
-  assert n.stmtKind == StmtsS
-  inc n  # enter stmts_body
-  while n.kind != ParRi:
+    let p = cursorToPosition(c.currentProc.cf, n)
+    if c.currentProc.labels.getOrDefault(p, -1) >= 0: break
     if n.stmtKind == ContinueS:
-      skip n  # skip NJ's loop-continue marker
+      if continueState != -1: gotoNextState c, dest, continueState, n.info
+      skip n
     else:
-      tr c, bodyBuf, n
-  inc n  # skip stmts_body ParRi
-  skipParRi n  # skip loop ParRi
-  # Emit: (while cond (stmts before_rest body))
-  dest.addParLe WhileS, info
-  dest.add condBuf
-  dest.addParLe StmtsS, info
-  dest.add beforeBuf
-  dest.add bodyBuf
-  dest.addParRi()  # stmts
-  dest.addParRi()  # while
+      c.inlineContState = -1
+      tr c, dest, n
+      c.inlineContState = -1  # ignore nested splits in tail (handled separately)
+
+proc compileStmtSeq(c: var Context; dest: var TokenBuf; n: var Cursor; continueState: int) =
+  ## Process a sequence of statements (n is already past the StmtsS opening tag,
+  ## stopping when n.kind == ParRi). Handles state splits at label positions and
+  ## translates (continue .) to gotoNextState(continueState) when inside a loop.
+  let sym = c.procStack[^1]
+  while n.kind != ParRi:
+    let p = cursorToPosition(c.currentProc.cf, n)
+    let state = c.currentProc.labels.getOrDefault(p, -1)
+    if state != -1:
+      if c.currentProc.subProcs == 0:
+        gotoNextState(c, dest, state, n.info)
+      dest.addParRi() # close stmts
+      dest.addParRi() # close proc decl
+      newLocalProc c, dest, state, sym
+      inc c.currentProc.subProcs
+    # Handle (continue .) as a loop back-edge
+    if n.stmtKind == ContinueS:
+      if continueState != -1:
+        gotoNextState c, dest, continueState, n.info
+      skip n
+    else:
+      c.inlineContState = -1
+      tr c, dest, n
+      if c.inlineContState >= 0:
+        # A passive call split happened inside a nested ite branch:
+        # c.inlineContState = the new continuation state
+        # c.inlineContCursor = cursor to rest-of-then code in the branch
+        let splitState = c.inlineContState
+        let restOfThen = c.inlineContCursor
+        c.inlineContState = -1
+        # Emit tail stmts (after-ite code) into the current proc (s1 else-path)
+        let tailStart = n
+        emitTailStmts c, dest, n, continueState
+        # Close current proc and open the split continuation state
+        dest.addParRi() # close stmts
+        dest.addParRi() # close proc decl
+        newLocalProc c, dest, splitState, sym
+        inc c.currentProc.subProcs
+        # Emit rest-of-then into new state proc
+        var thenN = restOfThen
+        while thenN.kind != ParRi:
+          tr c, dest, thenN
+        # Emit tail again into new state proc
+        var tailN = tailStart
+        emitTailStmts c, dest, tailN, continueState
+        # Advance n past the tail (already emitted above)
+        n = tailN
+        break
 
 proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: Cursor; sym: SymId) =
   # Transform the proc body via the NJ pass to get structured code without
@@ -685,17 +814,27 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   c.currentProc.yieldConts = initTable[int, int]()
   var nextLabel = 0
   block gather:
-    var cur = beginRead(c.currentProc.cf)
-    # Now scan the body subtree and record labels after YldS and passive calls
-    var scan = cur
+    type LoopEntry = object
+      pos: int          ## position of the (loop ...) token
+      depth: int        ## depth when the loop was entered (after inc depth)
+      containsSusp: bool
+
+    var loopStack: seq[LoopEntry] = @[]
+    var scan = beginRead(c.currentProc.cf)
     var depth = 0
     while true:
       let pos = cursorToPosition(c.currentProc.cf, scan)
       if scan.kind == ParLe:
         inc depth
+        let nk = scan.njvlKind
+        if nk == LoopV:
+          loopStack.add(LoopEntry(pos: pos, depth: depth))
         let sk = scan.stmtKind
         let ek = scan.exprKind
         if sk == YldS or (ek in CallKinds and isPassiveCall(c, c.currentProc.cf[pos+1])):
+          # Mark all enclosing loops as containing a suspension point
+          for i in 0..<loopStack.len:
+            loopStack[i].containsSusp = true
           # Record mapping from the start of this construct to its continuation state
           c.currentProc.yieldConts[pos] = nextLabel
           # Skip to matching ParRi to find the "after statement" label position
@@ -713,6 +852,17 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
             inc nextLabel
         inc scan
       elif scan.kind == ParRi:
+        # Check if we're exiting a loop (depth about to drop to below loop's entry depth)
+        if loopStack.len > 0 and depth == loopStack[^1].depth:
+          let loop = loopStack.pop()
+          if loop.containsSusp:
+            # Assign a state for the loop head
+            c.currentProc.labels[loop.pos] = nextLabel
+            let loopState = nextLabel
+            inc nextLabel
+            # Assign a state for the code after the loop (position after this ParRi)
+            c.currentProc.labels[pos + 1] = nextLabel
+            inc nextLabel
         dec depth
         if depth == 0: break gather
         inc scan
@@ -728,18 +878,7 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   dest.takeToken n
   dest.add init
   declareContinuationResult c, dest, NoLineInfo
-  var subProcs = 0
-  while n.kind != ParRi:
-    let p = cursorToPosition(c.currentProc.cf, n)
-    let state = c.currentProc.labels.getOrDefault(p, -1)
-    if state != -1:
-      if subProcs == 0:
-        gotoNextState(c, dest, state, n.info)
-      dest.addParRi() # stmts
-      dest.addParRi() # proc decl
-      newLocalProc c, dest, state, sym
-      inc subProcs
-    tr c, dest, n
+  compileStmtSeq c, dest, n, -1
 
 proc generateCoroutineType(c: var Context; dest: var TokenBuf; sym: SymId) =
   const info = NoLineInfo
@@ -902,16 +1041,48 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
     generateCoroutineType(c, dest, sym)
   swap(c.currentProc, currentProc)
 
+proc trIteStmts(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## Process a stmts sequence inside an ite branch.
+  ## Detects label splits (from passive calls) and sets c.inlineContState/Cursor.
+  assert n.stmtKind == StmtsS
+  inc n  # enter stmts
+  while n.kind != ParRi:
+    let p = cursorToPosition(c.currentProc.cf, n)
+    let state = c.currentProc.labels.getOrDefault(p, -1)
+    if state != -1:
+      # split inside branch — save position and stop emitting into this branch
+      c.inlineContState = state
+      c.inlineContCursor = n
+      while n.kind != ParRi: skip n  # skip rest of branch
+      break
+    tr c, dest, n
+  inc n  # skip stmts ParRi
+
 proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   inc n
+  var condBuf = createTokenBuf(16)
+  tr c, condBuf, n  # condition
+  var thenBuf = createTokenBuf(64)
+  trIteStmts c, thenBuf, n  # then-branch (may set c.inlineContState)
+  let splitState = c.inlineContState
+  let splitCursor = c.inlineContCursor
+  c.inlineContState = -1
+  var elseBuf = createTokenBuf(32)
+  trIteStmts c, elseBuf, n  # else-branch
+  skipParRi n  # skip ite ParRi
   dest.copyIntoKind IfS, info:
     dest.copyIntoKind ElifU, info:
-      tr c, dest, n
-      tr c, dest, n
+      dest.add condBuf
+      dest.copyIntoKind StmtsS, info:
+        dest.add thenBuf
     dest.copyIntoKind ElseU, info:
-      tr c, dest, n
-  skipParRi n
+      dest.copyIntoKind StmtsS, info:
+        dest.add elseBuf
+  # If a split was detected inside the then-branch, signal it to the caller
+  if splitState >= 0:
+    c.inlineContState = splitState
+    c.inlineContCursor = splitCursor
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
@@ -989,6 +1160,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
             skip n  # NJ bookkeeping, not needed in CPS output
           of LoopV:
             trLoop c, dest, n
+          of ItecV:
+            trIte c, dest, n  # same structure as ite
           else:
             trSons(c, dest, n)
   of ParRi:
@@ -1008,7 +1181,8 @@ proc transformToCps*(pass: var Pass) =
   var c = Context(thisModuleSuffix: pass.moduleSuffix,
     typeCache: createTypeCache(),
     afterYieldSym: pool.syms.getOrIncl("afterYield.0." & SystemModuleSuffix),
-    continuationProcImpl: generateContinuationProcImpl())
+    continuationProcImpl: generateContinuationProcImpl(),
+    inlineContState: -1)
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS
   pass.dest.takeToken n
