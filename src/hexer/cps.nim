@@ -68,7 +68,7 @@ include ".." / lib / nifprelude
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
   builtintypes, langmodes, renderer, reporters, typeprops]
-import ".." / njvl / nj
+import ".." / njvl / [nj, njvl_model]
 import hexer_context, passes
 
 # TODO:
@@ -580,11 +580,77 @@ proc findDelayX(c: var Context; n: Cursor): Cursor =
     inc n
   return default(Cursor)
 
+proc trMflag(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## Convert NJ `(mflag symdef)` / `(vflag symdef)` to a bool var initialized to false.
+  ## The var is emitted to `dest` (caller is responsible for hoisting outside loops).
+  let info = n.info
+  inc n  # skip mflag/vflag tag
+  let symDef = n
+  inc n  # skip symdef
+  inc n  # skip ParRi
+  dest.addParLe VarS, info
+  dest.add symDef
+  dest.addDotToken()  # exported
+  dest.addDotToken()  # pragmas
+  dest.copyTree c.typeCache.builtins.boolType
+  dest.addParPair FalseX, info  # initialized to false
+  dest.addParRi()
+
+proc trJtrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## Convert NJ `(jtrue sym...)` to `(asgn sym true)` for each symbol.
+  let info = n.info
+  inc n  # skip jtrue tag
+  while n.kind != ParRi:
+    let sym = n
+    inc n
+    dest.addParLe AsgnS, info
+    dest.add sym
+    dest.addParPair TrueX, info
+    dest.addParRi()
+  inc n  # skip ParRi
+
+proc trLoop(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## Convert NJ `(loop stmts_before cond stmts_body)` to a while loop.
+  ## mflag/vflag declarations in stmts_before are hoisted before the while.
+  let info = n.info
+  inc n  # skip loop tag
+  # Process stmts_before: hoist mflag/vflag decls to dest (outside while)
+  var beforeBuf = createTokenBuf(32)
+  assert n.stmtKind == StmtsS
+  inc n  # enter stmts_before
+  while n.kind != ParRi:
+    if n.njvlKind in {MflagV, VflagV}:
+      trMflag c, dest, n   # hoisted outside while
+    else:
+      tr c, beforeBuf, n
+  inc n  # skip stmts_before ParRi
+  # Condition (process it)
+  var condBuf = createTokenBuf(16)
+  tr c, condBuf, n
+  # Process stmts_body: skip the trailing NJ `(continue .)`
+  var bodyBuf = createTokenBuf(64)
+  assert n.stmtKind == StmtsS
+  inc n  # enter stmts_body
+  while n.kind != ParRi:
+    if n.stmtKind == ContinueS:
+      skip n  # skip NJ's loop-continue marker
+    else:
+      tr c, bodyBuf, n
+  inc n  # skip stmts_body ParRi
+  skipParRi n  # skip loop ParRi
+  # Emit: (while cond (stmts before_rest body))
+  dest.addParLe WhileS, info
+  dest.add condBuf
+  dest.addParLe StmtsS, info
+  dest.add beforeBuf
+  dest.add bodyBuf
+  dest.addParRi()  # stmts
+  dest.addParRi()  # while
 
 proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: Cursor; sym: SymId) =
-  # Instead of lowering to a CFG, work on a copy of the original tree and
-  # derive suspension points directly from structured constructs.
-  # Transform the iterator/proc via the NJ pass to structured NJVL without jumps.
+  # Transform the proc body via the NJ pass to get structured code without
+  # break/continue/goto, then store just the body (without NJ bookkeeping
+  # variables like mflag/jtrue/kill) in c.currentProc.cf.
   # Wrap the single proc into a temporary `(stmts ...)` so NJ can process it:
   var wrapper = createTokenBuf(10)
   wrapper.addParLe StmtsS, NoLineInfo
@@ -592,7 +658,27 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   wrapper.addParRi()
   var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "eliminateJumps", 0)
   eliminateJumps(pass)
-  c.currentProc.cf = ensureMove(pass.dest)
+  #echo "NJ OUTPUT: ", pass.dest.toString(false)
+  # pass.dest is (stmts cfvar_decls... (proc header body_stmts) ...).
+  # Navigate into the proc body; then copy it while stripping NJ bookkeeping
+  # (mflag/vflag/jtrue/kill) so c.currentProc.cf has no versionized variables.
+  block extractBody:
+    var wholeResult = ensureMove(pass.dest)
+    var nExt = beginRead(wholeResult)
+    inc nExt  # skip outer StmtsS, now at first child
+    # Skip cfvar decls and other non-proc statements until we find the proc
+    let procKind = iter.stmtKind
+    while nExt.kind != ParRi and nExt.stmtKind != procKind:
+      skip nExt
+    # Now at the proc node
+    inc nExt  # skip ProcS/IteratorS tag, now at first header subtree
+    for i in 0..<BodyPos:
+      skip nExt  # skip each of the BodyPos header subtrees
+    # nExt now points to the body (stmts ...) with NJ-transformed code
+    # Copy the body as-is; tr handles NJ constructs (mflag→var, jtrue→asgn, loop→while, etc.)
+    var bodyBuf = createTokenBuf(wholeResult.len)
+    bodyBuf.copyTree nExt
+    c.currentProc.cf = ensureMove bodyBuf
 
   # Compute suspension points (labels) and mapping from suspension sites to next state.
   c.currentProc.labels = initTable[int, int]()
@@ -602,10 +688,11 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
     var cur = beginRead(c.currentProc.cf)
     # Now scan the body subtree and record labels after YldS and passive calls
     var scan = cur
-    var depth = 1
+    var depth = 0
     while true:
       let pos = cursorToPosition(c.currentProc.cf, scan)
       if scan.kind == ParLe:
+        inc depth
         let sk = scan.stmtKind
         let ek = scan.exprKind
         if sk == YldS or (ek in CallKinds and isPassiveCall(c, c.currentProc.cf[pos+1])):
@@ -893,7 +980,17 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         if n.cfKind == IteF:
           trIte c, dest, n
         else:
-          trSons(c, dest, n)
+          case n.njvlKind
+          of MflagV, VflagV:
+            trMflag c, dest, n
+          of JtrueV:
+            trJtrue c, dest, n
+          of KillV, UnknownV:
+            skip n  # NJ bookkeeping, not needed in CPS output
+          of LoopV:
+            trLoop c, dest, n
+          else:
+            trSons(c, dest, n)
   of ParRi:
     bug "unexpected ')' inside"
 
@@ -909,6 +1006,7 @@ proc generateContinuationProcImpl(): Cursor =
 proc transformToCps*(pass: var Pass) =
   var n = pass.n  # Extract cursor locally
   var c = Context(thisModuleSuffix: pass.moduleSuffix,
+    typeCache: createTypeCache(),
     afterYieldSym: pool.syms.getOrIncl("afterYield.0." & SystemModuleSuffix),
     continuationProcImpl: generateContinuationProcImpl())
   c.typeCache.openScope()
