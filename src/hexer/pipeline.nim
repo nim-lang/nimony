@@ -48,10 +48,6 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   # Pass 1: Desugar
   desugar(pass, c.activeChecks)
 
-  # Pass 2: CPS Transformation
-  pass.prepareForNext("cps")
-  transformToCps(pass)
-
   # Pass 3: Lambda Lifting
   pass.prepareForNext("lambdalift")
   elimLambdas(pass)
@@ -90,6 +86,9 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
 
   pass.dest.add move(c.liftingCtx[].dest)
   pass.dest.addParRi()
+
+  pass.prepareForNext("cps")
+  transformToCps(pass)
 
   # Pass 9: Transform VTables (Virtual Table Backend)
   var needsXelimAgain = false

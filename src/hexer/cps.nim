@@ -316,7 +316,6 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
 proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
   inc n
   skip n # skip type; it is `Continuation` and uninteresting here
-  const nested = 1
 
   if n.exprKind in CallKinds and n.firstSon.kind == Symbol:
     let fn = n.firstSon.symId
@@ -325,8 +324,7 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.copyIntoKind ErrT, n.info:
       dest.addStrLit "`delay` takes a call expression"
     skip n
-  for i in 0..<nested:
-    skipParRi n
+  skipParRi n
 
 proc passiveCallFn(c: var Context; n: Cursor): SymId =
   if n.exprKind notin CallKinds: return SymId(0)
@@ -462,7 +460,8 @@ proc returnValue(c: var Context; dest: var TokenBuf; n: var Cursor; info: Packed
   inc n # yield/return
   if n.kind == DotToken or (n.kind == Symbol and n.symId == c.currentProc.resultSym):
     inc n
-  elif isVoidType(getType(c.typeCache, n)):
+  elif isVoidType(getType(c.typeCache, n)) and n.kind != Symbol:
+    # void type for Symbol can happen for `raise` statements:
     tr c, dest, n
   else:
     dest.copyIntoKind AsgnS, info:
@@ -491,17 +490,19 @@ proc trYield(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.currentProc.upcomingState = oldState
 
 proc trReturn(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  # return x -->
+  # return/raise x -->
   # this.res[] = x
-  # return this.caller
-  let info = n.info
+  # return/raise this.caller
+  let head = n.load()
+  let info = head.info
   returnValue(c, dest, n, info)
-  dest.copyIntoKind RetS, info:
-    dest.copyIntoKind DotX, info:
-      dest.copyIntoKind DerefX, info:
-        dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
-      dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
-      dest.addIntLit 1, info # field is in superclass
+  dest.add head
+  dest.copyIntoKind DotX, info:
+    dest.copyIntoKind DerefX, info:
+      dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+    dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
+    dest.addIntLit 1, info # field is in superclass
+  dest.addParRi()
 
 proc escapingLocals(c: var Context; n: Cursor) =
   if n.kind == DotToken: return
@@ -559,6 +560,27 @@ proc isPassiveCall(c: var Context; n: PackedToken): bool =
       return true
   return false
 
+proc findDelayX(c: var Context; n: Cursor): Cursor =
+  var nested = 0
+  var n = n
+  while true:
+    case n.kind
+    of ParLe:
+      if n.exprKind == DelayX:
+        inc n
+        skip n # type
+        return n
+      inc nested
+    of ParRi:
+      dec nested
+    else:
+      discard
+    if nested == 0:
+      break
+    inc n
+  return default(Cursor)
+
+
 proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: Cursor; sym: SymId) =
   # Instead of lowering to a CFG, work on a copy of the original tree and
   # derive suspension points directly from structured constructs.
@@ -568,7 +590,7 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   wrapper.addParLe StmtsS, NoLineInfo
   wrapper.copyTree iter
   wrapper.addParRi()
-  var pass = initPass(move wrapper, c.thisModuleSuffix, "eliminateJumps", 0)
+  var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "eliminateJumps", 0)
   eliminateJumps(pass)
   c.currentProc.cf = ensureMove(pass.dest)
 
@@ -578,10 +600,6 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   var nextLabel = 0
   block gather:
     var cur = beginRead(c.currentProc.cf)
-    # Walk to the body first
-    inc cur # ProcS
-    for _ in 0..<BodyPos:
-      skip cur
     # Now scan the body subtree and record labels after YldS and passive calls
     var scan = cur
     var depth = 1
@@ -616,8 +634,6 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
 
   # Analyze which locals escape across suspension points using the same label map
   var n = beginRead(c.currentProc.cf)
-  inc n # ProcS
-  for i in 0..<BodyPos: skip n
   escapingLocals(c, n)
 
   # Compile the state machine by splitting at label positions
@@ -854,8 +870,11 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeTree dest, n
     of YldS:
       trYield c, dest, n
-    of RetS:
-      trReturn c, dest, n
+    of RetS, RaiseS:
+      if c.currentProc.kind == IsNormal:
+        trSons(c, dest, n)
+      else:
+        trReturn c, dest, n
     of AsgnS:
       trAsgn c, dest, n
     of ScopeS:
