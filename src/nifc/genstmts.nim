@@ -489,6 +489,16 @@ proc genKeepOverflow(c: var GeneratedCode; n: var Cursor) =
   c.add CurlyRi
   skipParRi n
 
+proc genStore(c: var GeneratedCode; n: var Cursor) =
+  inc n
+  var rhs = n
+  skip n
+  genLvalue c, n
+  c.add AsgnOpr
+  genx c, rhs
+  c.add Semicolon
+  skipParRi n
+
 proc genStmt(c: var GeneratedCode; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
@@ -531,6 +541,7 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
     genx c, n
     c.add Semicolon
     skipParRi n
+  of StoreS: genStore c, n
   of IfS: genIf c, n
   of IteS, ItecS: genIte c, n
   of WhileS: genWhile c, n
