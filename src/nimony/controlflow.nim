@@ -600,7 +600,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
        IsMainModuleX, DefaultObjX, DefaultTupX, DefaultDistinctX, PlusSetX, MinusSetX,
        MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX, EmoveX,
        DestroyX, DupX, CopyX, WasMovedX, SinkhX, TraceX,
-       BracketX, CurlyX, TupX, OvfX, InstanceofX, ProccallX, InternalFieldPairsX,
+       BracketX, CurlyX, TupX, OvfX, InstanceofX, InternalFieldPairsX,
        FailedX, IsX, EnvpX:
       trExprLoop c, n, tar
     of DelayX:

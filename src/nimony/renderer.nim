@@ -1503,7 +1503,16 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       gcallsystem(g, n, $n.exprKind)
 
     of ProccallX:
-      gcallsystem(g, n, "procCall")
+      # New flat format: (proccall fn args...) -> render as procCall(fn(args...))
+      inc n  # skip (proccall
+      put(g, tkSymbol, "procCall")
+      put(g, tkParLe, "(")
+      gsub(g, n)  # fn
+      put(g, tkParLe, "(")
+      gcallComma(g, n)  # args
+      put(g, tkParRi, ")")
+      put(g, tkParRi, ")")
+      skipParRi(n)
 
     of NewrefX:
       inc n

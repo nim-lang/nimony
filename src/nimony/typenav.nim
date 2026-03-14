@@ -385,7 +385,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       registerLocals(c, n)
       if n.kind == ParRi:
         result = getTypeImpl(c, prev, flags)
-  of CallX, CallStrLitX, InfixX, PrefixX, CmdX, HcallX:
+  of CallX, CallStrLitX, InfixX, PrefixX, CmdX, HcallX, ProccallX:
     result = getTypeImpl(c, n.firstSon, flags)
     if result.typeKind in RoutineTypes:
       skipToReturnType result
@@ -403,7 +403,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
      CastX, ConvX, HconvX, DconvX, BaseobjX,
      OconstrX, NewobjX, AconstrX, SetConstrX, TupConstrX, NewrefX, DelayX:
     result = n.firstSon
-  of ParX, EmoveX, ProccallX:
+  of ParX, EmoveX:
     result = getTypeImpl(c, n.firstSon, flags)
   of NilX:
     result = c.builtins.nilType
