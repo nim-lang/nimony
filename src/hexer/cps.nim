@@ -534,11 +534,10 @@ proc escapingLocals(c: var Context; n: Cursor) =
     let nk = n.njvlKind
     case sk
     of LocalDecls:
-      if sk == ResultS:
-        c.currentProc.resultSym = n.symId
-
       inc n
       let mine = n.symId
+      if sk == ResultS:
+        c.currentProc.resultSym = mine
       skip n # name
       skip n # exported
       let pragmas = n
@@ -871,7 +870,7 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   # Compute suspension points (labels) and mapping from suspension sites to next state.
   c.currentProc.labels = initTable[int, int]()
   c.currentProc.yieldConts = initTable[int, int]()
-  var nextLabel = 0
+  var nextLabel = 1  # 0 is the entry function, state labels start at 1
   block gather:
     type LoopEntry = object
       pos: int          ## position of the (loop ...) token
@@ -896,7 +895,9 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
             loopStack[i].containsSusp = true
           # Record mapping from the start of this construct to its continuation state
           c.currentProc.yieldConts[pos] = nextLabel
-          # Skip to matching ParRi to find the "after statement" label position
+          # Skip to matching ParRi to find the "after statement" label position.
+          # If the call is nested inside a local declaration (let/var/result),
+          # we need to skip past the enclosing declaration, not just the call.
           var nested = 1
           var j = pos + 1
           while j < c.currentProc.cf.len and nested > 0:
@@ -905,7 +906,12 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
             of ParRi: dec nested
             else: discard
             inc j
-          # j now points to the token after the matching ParRi
+          # j now points to the token after the call's matching ParRi.
+          # If the call was nested inside a local decl (let/var/result),
+          # j is still inside the parent stmt. Skip trailing tokens + ParRi
+          # to reach the position after the enclosing statement.
+          if j < c.currentProc.cf.len and c.currentProc.cf[j].kind == ParRi:
+            inc j  # skip the enclosing statement's ParRi
           if j <= c.currentProc.cf.len:
             c.currentProc.labels[j] = nextLabel
             inc nextLabel
@@ -1104,6 +1110,10 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
 proc trIteStmts(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Process a stmts sequence inside an ite branch.
   ## Detects label splits (from passive calls) and sets c.inlineContState/Cursor.
+  if n.kind == DotToken:
+    # Empty else-branch (no stmts, just a dot token)
+    inc n
+    return
   assert n.stmtKind == StmtsS
   inc n  # enter stmts
   while n.kind != ParRi:
@@ -1216,6 +1226,16 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
             trMflag c, dest, n
           of JtrueV:
             trJtrue c, dest, n
+          of StoreV:
+            # (store value dest) -> (asgn dest value)
+            let info = n.info
+            inc n # skip 'store' tag
+            var valueBuf = createTokenBuf(16)
+            tr c, valueBuf, n # value (first operand)
+            dest.copyIntoKind AsgnS, info:
+              tr c, dest, n   # dest (second operand)
+              dest.add valueBuf
+            skipParRi n
           of KillV, UnknownV:
             skip n  # NJ bookkeeping, not needed in CPS output
           of LoopV:
