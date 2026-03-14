@@ -278,9 +278,7 @@ proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
 proc callDestroy(c: var Context; destroyProc: SymId; arg: TokenBuf; typ: Cursor) =
   let info = arg[0].info
   let staticCall = typ.typeKind notin {RefT, PtrT}
-  if staticCall:
-    c.dest.addParLe ProcCallX, info
-  copyIntoKind c.dest, CallS, info:
+  template emitArgs =
     copyIntoSymUse c.dest, destroyProc, info
     if isMutFirstParam(destroyProc):
       copyIntoKind c.dest, HaddrX, info:
@@ -288,17 +286,20 @@ proc callDestroy(c: var Context; destroyProc: SymId; arg: TokenBuf; typ: Cursor)
     else:
       copyTree c.dest, arg
   if staticCall:
-    c.dest.addParRi()
+    copyIntoKind c.dest, ProccallX, info: emitArgs
+  else:
+    copyIntoKind c.dest, CallS, info: emitArgs
 
 proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId; info: PackedLineInfo; typ: Cursor) =
   let staticCall = typ.typeKind notin {RefT, PtrT}
   if staticCall:
-    c.dest.addParLe ProcCallX, info
-  copyIntoKind c.dest, CallS, info:
-    copyIntoSymUse c.dest, destroyProc, info
-    copyIntoSymUse c.dest, arg, info
-  if staticCall:
-    c.dest.addParRi()
+    copyIntoKind c.dest, ProccallX, info:
+      copyIntoSymUse c.dest, destroyProc, info
+      copyIntoSymUse c.dest, arg, info
+  else:
+    copyIntoKind c.dest, CallS, info:
+      copyIntoSymUse c.dest, destroyProc, info
+      copyIntoSymUse c.dest, arg, info
 
 proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
   var n = n
@@ -996,7 +997,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trNewobj c, n, e, NewrefX
     of DotX, AtX, ArrAtX, PatX, TupatX:
       trLocation c, n, e
-    of ParX, ProccallX:
+    of ParX:
       trSons c, n, e
     of ExprX:
       trStmtListExpr c, n, e

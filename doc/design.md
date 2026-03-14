@@ -53,6 +53,26 @@ While NIF is almost a classical Lisp, it innovates in these aspects:
 4. There is an additional format called Nif-index that allows for the lazy on-demand loading of symbols. This is most essential for incremental compilations.
 
 
+### NIF as foundation for compile-time eval and plugins
+
+NIF is not only the format between compiler phases; it is the foundation for the compile-time evaluation engine and for compiler plugins. Both use the same idea: **compile code to machine code and run it with NIF as input/output**.
+
+- **Compile-time evaluation:** When the compiler needs to run code at compile time (e.g. constant folding, template expansion that runs code), it does not use a separate interpreter. It turns the snippet into NIF (e.g. a `.p.nif`), runs it through the full pipeline (nimsem, hexer, nifc, cc, link) to produce a native executable, runs that executable, and consumes the result. So CT eval is “real” compilation and execution; the only special part is that the “program” is a small snippet and its I/O can be NIF or the normal run’s stdout. The same pipeline and the same NIF representation are reused.
+
+- **Compiler plugins:** Plugins work the same way. A plugin is Nim source marked with `{.plugin.}`. The compiler compiles that source to a standalone executable (with `-d:nimonyPlugin`). When the plugin is invoked, the compiler writes the input to a `.in.nif` file, runs the plugin executable (with paths to the input and optional extra NIF files), and the plugin writes its result to a `.out.nif` file. The compiler then parses that NIF back into the main compilation. So plugins are first-class: they are compiled to native code and communicate purely via NIF. No separate plugin API or interpreter is required.
+
+
+### CPS and `.passive` procs
+
+The Hexer performs a continuation-passing style (CPS) transform (see `src/hexer/cps.nim`). This transform is used for both iterators and for **`.passive` procs**: procedures marked with the `{.passive.}` pragma.
+
+A passive proc is one that can “pause” and be resumed later. The CPS pass turns passive procs (and iterators) into state machines that work with a small runtime in `system`: `Continuation` (a function pointer plus an environment), `delay` (which defers execution of a passive call and returns a continuation), and `advance` / a configurable scheduler to step through continuations.
+
+By default, calling a passive proc from normal code **does** run it to completion: execution is driven by a trampoline that repeatedly runs the current continuation until it is done. So from the caller's perspective the call is synchronous. A scheduler can override the trampoline, however, giving fine-grained control over when to run which continuation—enabling runtimes with millions of picothreads (or whatever you call these lightweight cooperative threads). Passive procs can call other passive procs; the CPS transform introduces the necessary continuation state and labels so that control flow, including across call boundaries, is explicit.
+
+This gives a single, unified model for pausable/resumable execution (coroutines, async-like patterns, iterators) that is implemented by a single CPS pass over NIF and a minimal runtime. The implementation is currently not fully documented elsewhere; the main logic lives in Hexer’s CPS pass and in `lib/std/system.nim` (`delay`, `Continuation`, `advance`, `setScheduler`).
+
+
 ## Nifler
 
 The Nifler tool encapsulates the initial Nim-to-NIF translation step and is generally useful for other tools that want to process Nim code without importing the Nim compiler as a library.

@@ -330,12 +330,13 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; forceStaticCall: 
     takeParRi dest, n
 
 proc trProcCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  inc n # (procCall)
-  if n.exprKind in CallKinds:
-    trCall c, dest, n, true
-  else:
+  # (proccall fn args...) - static call, convert to regular call bypassing vtable
+  let info = n.info
+  inc n  # skip (proccall
+  dest.addParLe(CallS, info)
+  while n.kind != ParRi:
     tr c, dest, n
-  skipParRi n
+  takeParRi dest, n
 
 proc classData(typ: Cursor): (int, UHash) =
   var n = typ
@@ -605,9 +606,9 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of ParLe:
       let ek = n.exprKind
       case ek
-      of CallKinds:
+      of CallKinds - {ProccallX}:
         trCall c, dest, n, false
-      of ProcCallX:
+      of ProccallX:
         trProcCall c, dest, n
       of OconstrX:
         trObjConstr c, dest, n

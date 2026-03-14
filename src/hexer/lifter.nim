@@ -182,11 +182,10 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
 # Phase 2: Do the lifting
 
 proc genCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf; forceStatic = false) =
-  # proccall wraps a call: (proccall (call fn args...))
-  # forceStatic=true generates static dispatch for parent hook calls
-  if forceStatic:
-    c.dest.addParLe ProccallX, c.info
-  copyIntoKind c.dest, CallX, c.info:
+  # forceStatic=true generates (proccall fn args...) for static dispatch;
+  # otherwise generates (call fn args...)
+  let callKind = if forceStatic: ProccallX else: CallX
+  copyIntoKind c.dest, callKind, c.info:
     copyIntoSymUse c.dest, s, c.info
     case c.op
     of attachedWasMoved:
@@ -207,8 +206,6 @@ proc genCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf; forceSta
     of attachedCopy, attachedTrace, attachedSink:
       copyTree c.dest, paramA
       copyTree c.dest, paramB
-  if forceStatic:
-    c.dest.addParRi()
 
 proc genTrivialOp(c: var LiftingCtx; paramA, paramB: TokenBuf) =
   case c.op
