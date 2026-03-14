@@ -64,6 +64,7 @@ type
     TypeS = (ord(TypeTagId), "type")  ## type declaration
     EmitS = (ord(EmitTagId), "emit")  ## emit statement
     AsgnS = (ord(AsgnTagId), "asgn")  ## assignment statement
+    StoreS = (ord(StoreTagId), "store")  ## `asgn` with reversed operands that reflects evaluation order
     KeepovfS = (ord(KeepovfTagId), "keepovf")  ## keep overflow flag statement
     ScopeS = (ord(ScopeTagId), "scope")  ## explicit scope annotation, like `stmts`
     IfS = (ord(IfTagId), "if")  ## if statement header
@@ -86,7 +87,7 @@ type
     VflagS = (ord(VflagTagId), "vflag")  ## declare a new **virtual** control flow flag `D` of type `bool` initialized to `false`
 
 proc rawTagIsNifcStmt*(raw: TagEnum): bool {.inline.} =
-  raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, KeepovfTagId, ScopeTagId, IfTagId, BreakTagId, WhileTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId, IteTagId, ItecTagId, LoopTagId, JtrueTagId, MflagTagId, VflagTagId}
+  raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, StoreTagId, KeepovfTagId, ScopeTagId, IfTagId, BreakTagId, WhileTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId, IteTagId, ItecTagId, LoopTagId, JtrueTagId, MflagTagId, VflagTagId}
 
 type
   NifcType* = enum
