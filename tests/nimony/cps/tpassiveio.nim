@@ -1,9 +1,8 @@
 ## Test: passive procs with result types and nested passive calls.
 ## Exercises CPS transform for readLine-style IO primitives.
+import std / [syncio]
 
 when defined(posix):
-  import std / [syncio]
-
   proc posixRead(fd: cint; buf: pointer; count: uint): int {.importc: "read", header: "<unistd.h>".}
   proc posixWrite(fd: cint; buf: pointer; count: uint): int {.importc: "write", header: "<unistd.h>".}
   proc pipe(fds: var array[2, cint]): cint {.importc: "pipe", header: "<unistd.h>".}
