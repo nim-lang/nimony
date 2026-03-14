@@ -673,17 +673,19 @@ proc trBreak(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
 
   var entries = 0 # only care about the inner most
   inc n
-  if n.kind != ParRi:
-    if n.kind == DotToken:
-      inc n
+  if n.kind == ParRi:
+    # bare `(break)` with no arguments — break innermost loop
+    entries = 1
+  elif n.kind == DotToken:
+    inc n
+    inc entries
+  elif n.kind == Symbol:
+    for i in countdown(c.current.guards.len - 1, 0):
       inc entries
-    elif n.kind == Symbol:
-      for i in countdown(c.current.guards.len - 1, 0):
-        inc entries
-        if c.current.guards[i].blockName == n.symId: break
-      inc n
-    else:
-      bug "invalid `break` structure"
+      if c.current.guards[i].blockName == n.symId: break
+    inc n
+  else:
+    bug "invalid `break` structure"
 
   b.leavesWith = c.current.guards.len-1
   dest.add tagToken("jtrue", n.info)
