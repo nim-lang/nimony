@@ -495,6 +495,15 @@ proc trYield(c: var Context; dest: var TokenBuf; n: var Cursor) =
     contNextState(c, dest, state, info)
   c.currentProc.upcomingState = oldState
 
+proc emitReturnCaller(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
+  ## Emit `return this.caller` — returns the caller continuation.
+  dest.copyIntoKind RetS, info:
+    dest.copyIntoKind DotX, info:
+      dest.copyIntoKind DerefX, info:
+        dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+      dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
+      dest.addIntLit 1, info # field is in superclass
+
 proc trReturn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # return/raise x -->
   # this.res[] = x
@@ -522,6 +531,7 @@ proc escapingLocals(c: var Context; n: Cursor) =
       currentState = stateAtPos
 
     let sk = n.stmtKind
+    let nk = n.njvlKind
     case sk
     of LocalDecls:
       if sk == ResultS:
@@ -543,6 +553,19 @@ proc escapingLocals(c: var Context; n: Cursor) =
       skip n # type
       inc nested
     else:
+     if nk in {MflagV, VflagV}:
+      # NJ guard flags are bool variables that may cross state boundaries
+      inc n # skip mflag/vflag tag
+      let mine = n.symId
+      c.currentProc.localToEnv[mine] = EnvField(
+        objType: coroTypeForProc(c, c.procStack[^1]),
+        field: localToFieldname(c, mine),
+        typ: c.typeCache.builtins.boolType,
+        def: currentState,
+        use: currentState)
+      skip n # symdef
+      inc n # ParRi
+     else:
       case n.kind
       of ParRi:
         dec nested
@@ -587,31 +610,51 @@ proc findDelayX(c: var Context; n: Cursor): Cursor =
 
 proc trMflag(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Convert NJ `(mflag symdef)` / `(vflag symdef)` to a bool var initialized to false.
-  ## The var is emitted to `dest` (caller is responsible for hoisting outside loops).
+  ## If the flag is lifted to the environment, emit an assignment to the env field instead.
   let info = n.info
   inc n  # skip mflag/vflag tag
   let symDef = n
+  let symId = n.symId
   inc n  # skip symdef
   inc n  # skip ParRi
-  dest.addParLe VarS, info
-  dest.add symDef
-  dest.addDotToken()  # exported
-  dest.addDotToken()  # pragmas
-  dest.copyTree c.typeCache.builtins.boolType
-  dest.addParPair FalseX, info  # initialized to false
-  dest.addParRi()
+  let field = c.currentProc.localToEnv.getOrDefault(symId)
+  if field.def != field.use:
+    # Lifted to environment: assign false to the env field
+    dest.copyIntoKind AsgnS, info:
+      dest.copyIntoKind DotX, info:
+        dest.copyIntoKind DerefX, info:
+          dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+        dest.addSymUse field.field, info
+      dest.addParPair FalseX, info
+  else:
+    # Local: emit a regular var declaration
+    dest.addParLe VarS, info
+    dest.add symDef
+    dest.addDotToken()  # exported
+    dest.addDotToken()  # pragmas
+    dest.copyTree c.typeCache.builtins.boolType
+    dest.addParPair FalseX, info  # initialized to false
+    dest.addParRi()
 
 proc trJtrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Convert NJ `(jtrue sym...)` to `(asgn sym true)` for each symbol.
+  ## If the symbol is lifted to the environment, assign to the env field.
   let info = n.info
   inc n  # skip jtrue tag
   while n.kind != ParRi:
-    let sym = n
-    inc n
+    let symId = n.symId
+    let field = c.currentProc.localToEnv.getOrDefault(symId)
     dest.addParLe AsgnS, info
-    dest.add sym
+    if field.def != field.use:
+      dest.copyIntoKind DotX, info:
+        dest.copyIntoKind DerefX, info:
+          dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+        dest.addSymUse field.field, info
+    else:
+      dest.add n
     dest.addParPair TrueX, info
     dest.addParRi()
+    inc n
   inc n  # skip ParRi
 
 proc compileStmtSeq(c: var Context; dest: var TokenBuf; n: var Cursor; continueState: int)
@@ -661,12 +704,23 @@ proc trLoop(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # compileStmtSeq already opened the loop head state proc (loopState).
     # We generate: stmts_before inline, condition check, then stmts_body with splits.
 
-    # stmts_before: mflag decls become local vars in the loop head proc
+    # stmts_before: mflag decls. Lifted mflags (def != use) must NOT be
+    # initialized here — this state is re-entered on loop-back and would
+    # reset the guard after jtrue set it to true. The aggregate zero-init
+    # in the entry function already sets them to false.
     assert n.stmtKind == StmtsS
     inc n  # enter stmts_before
     while n.kind != ParRi:
       if n.njvlKind in {MflagV, VflagV}:
-        trMflag c, dest, n
+        var flagSym = n
+        inc flagSym  # peek past mflag/vflag tag to symdef
+        let symId = flagSym.symId
+        let field = c.currentProc.localToEnv.getOrDefault(symId)
+        if field.def != field.use:
+          # Lifted: skip init here; zero-init in entry function handles it
+          skip n
+        else:
+          trMflag c, dest, n
       else:
         tr c, dest, n
     inc n  # skip stmts_before ParRi
@@ -738,6 +792,9 @@ proc compileStmtSeq(c: var Context; dest: var TokenBuf; n: var Cursor; continueS
     if state != -1:
       if c.currentProc.subProcs == 0:
         gotoNextState(c, dest, state, n.info)
+      else:
+        # State procs that fall through to the next state need a return caller
+        emitReturnCaller(c, dest, n.info)
       dest.addParRi() # close stmts
       dest.addParRi() # close proc decl
       newLocalProc c, dest, state, sym
@@ -761,6 +818,7 @@ proc compileStmtSeq(c: var Context; dest: var TokenBuf; n: var Cursor; continueS
         let tailStart = n
         emitTailStmts c, dest, n, continueState
         # Close current proc and open the split continuation state
+        emitReturnCaller(c, dest, n.info)
         dest.addParRi() # close stmts
         dest.addParRi() # close proc decl
         newLocalProc c, dest, splitState, sym
@@ -787,7 +845,8 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   wrapper.addParRi()
   var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "eliminateJumps", 0)
   eliminateJumps(pass)
-  #echo "NJ OUTPUT: ", pass.dest.toString(false)
+  when defined(logPasses):
+    echo "NJ OUTPUT: ", pass.dest.toString(false)
   # pass.dest is (stmts cfvar_decls... (proc header body_stmts) ...).
   # Navigate into the proc body; then copy it while stripping NJ bookkeeping
   # (mflag/vflag/jtrue/kill) so c.currentProc.cf has no versionized variables.
@@ -1030,7 +1089,8 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
   if isConcrete and isCoroutine:
     treIteratorBody(c, dest, init, iter, sym)
     skip n # we used the body from the control flow graph
-    # treIteratorBody already added the required 2 ParRi tokens
+    # Emit implicit return of caller continuation at the end of the entry proc
+    emitReturnCaller(c, dest, NoLineInfo)
     dest.addParRi() # stmts
   else:
     takeTree dest, n
