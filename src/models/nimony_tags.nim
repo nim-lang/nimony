@@ -78,7 +78,7 @@ type
     DefinedX = (ord(DefinedTagId), "defined")
     AstToStrX = (ord(AstToStrTagId), "astToStr")  ## converts AST to string
     InstanceofX = (ord(InstanceofTagId), "instanceof")  ## only-fans operator for object privilege checking
-    ProccallX = (ord(ProccallTagId), "proccall")  ## turns method call into a proc call aka a "static" call
+    ProccallX = (ord(ProccallTagId), "proccall")  ## like the `call` tag but always a static call (no dynamic method) dispatch
     HighX = (ord(HighTagId), "high")
     LowX = (ord(LowTagId), "low")
     TypeofX = (ord(TypeofTagId), "typeof")  ## `typeof` operation for accessing the type of an expression

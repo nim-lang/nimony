@@ -247,7 +247,7 @@
 | `(defined X)` | NimonyExpr | |
 | `(astToStr X)` | NimonyExpr | converts AST to string |
 | `(instanceof X T)` | NimonyExpr | only-fans operator for object privilege checking |
-| `(proccall X)` | NimonyExpr | turns method call into a proc call aka a "static" call |
+| `(proccall  X X*)` | NimonyExpr | like the `call` tag but always a static call (no dynamic method) dispatch |
 | `(high X)` | NimonyExpr | |
 | `(low X)` | NimonyExpr | |
 | `(typeof X X)` | NimonyExpr, NiflerKind | `typeof` operation for accessing the type of an expression |
