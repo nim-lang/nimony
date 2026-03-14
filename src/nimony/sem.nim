@@ -4725,9 +4725,23 @@ proc semInstanceof(c: var SemContext; dest: var TokenBuf; it: var Item) =
   commonType c, dest, it, beforeExpr, expected
 
 proc semProccall(c: var SemContext; dest: var TokenBuf; it: var Item) =
-  dest.takeToken(it.n)
-  semExpr c, dest, it
-  dest.takeParRi(it.n)
+  # Input: (proccall (call fn args...) )
+  # Build (proccall fn args...) and call semCall directly so the flat format
+  # is emitted without any intermediate nested representation.
+  let info = it.n.info
+  inc it.n  # skip (proccall
+  assert it.n.exprKind in CallKinds - {ProccallX}
+  inc it.n  # skip inner (call
+  var callBuf = createTokenBuf(16)
+  callBuf.addParLe(ProccallX, info)
+  while it.n.kind != ParRi:
+    takeTree callBuf, it.n
+  callBuf.addParRi()
+  skipParRi it.n  # skip inner call's )
+  skipParRi it.n  # skip outer proccall's )
+  var call = Item(n: cursorAt(callBuf, 0), typ: it.typ)
+  semCall c, dest, call, {}
+  it.typ = call.typ
 
 proc semInternalTypeName(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeExpr = dest.len

@@ -891,21 +891,9 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
     takeToken c, n
   of ParLe:
     case n.exprKind
-    of CallKinds - {ProccallX}:
+    of CallKinds:
       var disallowDangerous = true
       trCall c, n, e, disallowDangerous
-    of ProccallX:
-      # Input from sem.nim: (proccall (call fn args...))
-      # Flatten to (proccall fn args...) so downstream passes handle it as a call.
-      takeToken c, n  # emit (proccall
-      assert n.exprKind in CallKinds
-      let fnType = skipProcTypeToParams(getType(c.typeCache, n))
-      assert fnType.isParamsTag
-      inc n  # skip inner (call without emitting
-      tr c, n, WantT  # fn
-      trCallArgs c, n, fnType
-      skipParRi n  # skip inner call's )
-      takeParRi c, n  # emit proccall's )
     of DotX, DdotX, AtX, ArrAtX, TupatX, PatX:
       trLocation c, n, e
     of OconstrX, NewobjX:
