@@ -223,24 +223,10 @@ Every `while` loop is transformed into a `loop` construct. The structure of `loo
   <before cond statements>
   <cond>
   <body> # statements that should be executed if the condition is true; afterwards goto the loop start!
-  <after> # everything that comes after the loop! The loop is over at this point!
 )
 ```
 
-So a `loop` has always 4 sections.
-
-The `after` section is logical but uncommon for compiler IRs. The idea is to capture most naturally occurring information like:
-
-```nim
-  var i = 0
-  while i < 10:
-    body
-  weKnowThat: i >= 10
-```
-
-This also means that an entire block like `(stmts ... (while cond actions) afterwards...)` is translated into a single `loop` construct.
-
-This implies that a `loop` is always the last construct in a statement list!
+So a `loop` has always 3 sections.
 
 ### `either`
 
