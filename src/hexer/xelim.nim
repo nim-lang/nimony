@@ -20,6 +20,7 @@ type
   Goal* = enum
     ElimExprs   # normal mode: eliminate expressions
     TowardsNjvl # goal mode: prepare for transformation into njvl
+    LowerCasts  # lower cast expressions: bind both source and result to variables
 
 proc isComplex(n: Cursor; goal: Goal): bool =
   var nested = 0
@@ -701,6 +702,62 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
       trOr c, dest, n, tar
     of CallKinds:
       trExprCall c, dest, n, tar
+    of CastX:
+      if c.goal == LowerCasts:
+        # Bind both the source and the result of the cast to variables
+        # so that NIFC can produce memcpy in statement position.
+        let info = n.info
+        let castType = getType(c, n)
+
+        inc n # skip "cast" tag
+        var destTypeBuf = createTokenBuf(8)
+        takeTree destTypeBuf, n # copy dest type, n now at srcExpr
+        let destType = beginRead(destTypeBuf)
+
+        # Process source expression
+        let srcType = getType(c, n)
+        var srcTarget = Target(m: IsEmpty)
+        trExpr c, dest, n, srcTarget
+        skipParRi n
+
+        # Ensure source is a variable
+        var srcSym: SymId
+        var srcCur = beginRead(srcTarget.t)
+        if srcCur.kind == Symbol:
+          srcSym = srcCur.symId
+        else:
+          srcSym = pool.syms.getOrIncl(tempSymName(c))
+          copyIntoKind dest, VarS, info:
+            dest.addSymDef srcSym, info
+            dest.addDotToken() # export marker
+            dest.copyIntoKind PragmasS, info:
+              dest.copyIntoKind InlineP, info: discard
+            copyTree dest, srcType
+            dest.add srcTarget # value
+
+        if tar.m in {IsAppend, IsEmpty}:
+          # Extract whole cast to a temp
+          let tmp = pool.syms.getOrIncl(tempSymName(c))
+          copyIntoKind dest, VarS, info:
+            dest.addSymDef tmp, info
+            dest.addDotToken() # export marker
+            dest.copyIntoKind PragmasS, info:
+              dest.copyIntoKind InlineP, info: discard
+            copyTree dest, castType
+            # value: (cast DstType srcSym)
+            dest.addParLe CastX, info
+            dest.addSubtree destType
+            dest.addSymUse srcSym, info
+            dest.addParRi()
+          tar.t.addSymUse tmp, info
+        else:
+          # IsBound - keep cast as value
+          tar.t.addParLe CastX, info
+          tar.t.addSubtree destType
+          tar.t.addSymUse srcSym, info
+          tar.t.addParRi()
+      else:
+        trExprLoop c, dest, n, tar
     else:
       case n.stmtKind
       of IfS:
@@ -732,5 +789,6 @@ proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
 when isMainModule:
   var owningBuf = createTokenBuf(300)
   let n = setupProgram("debug.txt", "debug.out", owningBuf)
-  let r = lowerExprs(n, "main")
-  echo r.toString(false)
+  var pass = initPass(move owningBuf, "main", "xelim", 64)
+  lowerExprs(pass)
+  echo pass.dest.toString(false)

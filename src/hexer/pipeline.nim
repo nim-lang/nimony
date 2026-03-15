@@ -99,9 +99,10 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   pass.prepareForNext("constparams")
   injectConstParamDerefs(pass, c.bits div 8, needsXelimAgain)
 
-  # Pass 11 (Conditional): Final Lower Expressions if needed
-  if needsXelimAgain:
-    pass.prepareForNext("xelim_final")
-    lowerExprs(pass)
+  # Final pass: Lower expressions and casts.
+  # LowerCasts mode also lowers expressions, so this replaces
+  # the previously conditional xelim_final pass.
+  pass.prepareForNext("xelim_final")
+  lowerExprs(pass, LowerCasts)
 
   result = ensureMove(pass.dest)
