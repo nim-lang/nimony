@@ -530,12 +530,21 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
     let beforeInit = c.code.len
 
     var value = d.value
-    let mustMoveToInit = (vk == IsGlobal and not isLiteral(value))
+    var mustMoveToInit = (vk == IsGlobal and not isLiteral(value))
     if toExtern:
       c.add Semicolon
     elif d.value.exprKind == CastC:
       c.add Semicolon
-      genCastVarInit c, d.value, name
+      if mustMoveToInit:
+        # Generate memcpy directly into init section for global vars
+        let savedCode = c.code.len
+        genCastVarInit c, d.value, name
+        for i in savedCode ..< c.code.len:
+          c.init.add c.code[i]
+        setLen c.code, savedCode
+        mustMoveToInit = false
+      else:
+        genCastVarInit c, d.value, name
     else:
       if vk != IsLocal and not mustMoveToInit: c.objConstrNeedsType = false
       genVarInitValue c, d.value
