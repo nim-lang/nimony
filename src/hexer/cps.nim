@@ -375,9 +375,6 @@ proc passiveCallFn(c: var Context; n: Cursor): SymId =
   return SymId(0)
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  if n.exprKind == DelayX:
-    trDelay c, dest, n
-    return
   let fn = n.firstSon
   if fn.kind == Symbol:
     let sym = fn.symId
@@ -1224,8 +1221,10 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.typeCache.closeScope()
     else:
       case n.exprKind
-      of CallKinds:
+      of CallKinds - {DelayX}:
         trCall c, dest, n
+      of DelayX:
+        trDelay c, dest, n
       of TypeofX:
         takeTree dest, n
       else:
