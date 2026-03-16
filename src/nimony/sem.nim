@@ -2814,14 +2814,33 @@ proc semTypedUnaryArithmetic(c: var SemContext; dest: var TokenBuf; it: var Item
   commonType c, dest, it, beforeExpr, typ
 
 proc semDelay(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  # delay() no-arg -> (delay0)
+  # delay(call fn args) -> (delay fn args)  [flatten by stripping the call wrapper]
+  # The type is always `Continuation`; typenav returns it for both DelayX and Delay0X.
   let beforeExpr = dest.len
-  takeToken dest, it.n
-  let typeStart = dest.len
-  semLocalTypeImpl c, dest, it.n, InLocalDecl
-  let typ = typeToCursor(c, dest, typeStart)
-  semStmt c, dest, it.n, false
-  takeParRi dest, it.n
-  commonType c, dest, it, beforeExpr, typ
+  let expected = it.typ
+  let info = it.n.info
+  inc it.n  # skip (delay tag (always DelayX from addFn)
+  if it.n.kind == ParRi:
+    # delay() no-arg form: produces (delay0)
+    dest.addParLe(Delay0X, info)
+    dest.addParRi()
+    inc it.n
+  elif it.n.exprKind in CallKinds:
+    # delay(call) form: produce (delay fn args)
+    dest.addParLe(DelayX, info)
+    inc it.n  # skip inner call tag
+    while it.n.kind != ParRi:
+      takeTree dest, it.n  # copy fn and args verbatim (already semchecked)
+    skipParRi it.n  # skip inner call's )
+    dest.addParRi()
+    skipParRi it.n  # skip outer delay's )
+  else:
+    buildErr c, dest, it.n.info, "`delay` takes a call expression or no argument"
+    skip it.n
+    skipParRi it.n
+  it.typ = c.types.continuationType
+  commonType c, dest, it, beforeExpr, expected
 
 type ArrayConstrContext = object
   firstKeyType: TypeCursor
@@ -5089,7 +5108,7 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       semShift c, dest, it
     of BitnotX, NegX:
       semTypedUnaryArithmetic c, dest, it
-    of DelayX:
+    of DelayX, Delay0X:
       semDelay c, dest, it
     of InSetX:
       semInSet c, dest, it

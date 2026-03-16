@@ -70,8 +70,8 @@
     (stmts))
    (kill ´g.0)
    (continue
-    (join `j.0.main +4 +3 +2)
-    (join b.0 +2 +1 +0))))
+    (join b.0 +2 +1 +0)
+    (join `j.0.main +4 +3 +2))))
  (call echo.0 "after loop")
  (let :`x.1 .
   (pragmas
@@ -80,4 +80,4 @@
   (call echo.1 "abc"))
  (call echo.0
   (v `x.1 +0))
- (kill ´r.0.main a.0 b.0 `j.0.main `x.1))
+ (kill a.0 `x.1 b.0 ´r.0.main `j.0.main))

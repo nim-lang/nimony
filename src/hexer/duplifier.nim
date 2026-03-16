@@ -1012,7 +1012,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
        EqX, NeqX, LeX, LtX, InfX, NegInfX, NanX, CompilesX, DeclaredX,
        DefinedX, AstToStrX, HighX, LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, QuotedX,
        AddrX, HaddrX, AlignofX, OffsetofX, ErrX, OvfX, InstanceofX, InternalTypeNameX,
-       InternalFieldPairsX, IsX, DelayX:
+       InternalFieldPairsX, IsX:
       trSons c, n, WantNonOwner
     of DerefX, HderefX:
       trDeref c, n
@@ -1022,7 +1022,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       bug "envp should have been eliminated in lambdalifting.nim"
     of DefaultobjX, DefaulttupX, DefaultdistinctX, BracketX, CurlyX, TupX:
       bug "nodekind should have been eliminated in sem.nim"
-    of PragmaxX, CurlyatX, TabconstrX, DoX, FailedX:
+    of PragmaxX, CurlyatX, TabconstrX, DoX, FailedX, Delay0X:
       trSons c, n, e
     of NoExpr:
       let k = n.stmtKind

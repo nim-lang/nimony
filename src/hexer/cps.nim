@@ -138,7 +138,6 @@ type
     kind: RoutineKind
 
   Context = object
-    afterYieldSym: SymId
     counter: int
     typeCache: TypeCache
     thisModuleSuffix: string
@@ -319,18 +318,58 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
       copyIntoKind dest, RetS, info:
         dest.addSymUse contVar, info
 
-proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  inc n
-  skip n # skip type; it is `Continuation` and uninteresting here
+proc trDelay0(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  # Handles (delay0) — no-arg form: capture continuation for the code that follows.
+  let info = n.info
+  let pos = cursorToPosition(c.currentProc.cf, n)  # position of (delay0 token
+  inc n      # skip delay0 tag
+  let state = c.currentProc.yieldConts.getOrDefault(pos, -1)
+  assert state != -1, "delay() no-arg must be a suspension point"
+  contNextState(c, dest, state, info)
+  skipParRi n  # skip ParRi of delay0
 
-  if n.exprKind in CallKinds and n.firstSon.kind == Symbol:
-    let fn = n.firstSon.symId
-    trPassiveCall c, dest, n, fn, default(Cursor), inhibitComplete = true
+proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  # Handles (delay fn args) — fn-args form; typenav returns Continuation for DelayX.
+  let info = n.info
+  inc n      # skip delay tag
+  if n.kind == Symbol:
+    let sym = n.symId
+    inc n    # skip fn symbol
+    # Create a child coroutine and return it as a Continuation without yielding.
+    # Always use the IsNormal+inhibitComplete strategy regardless of proc kind.
+    dest.addParLe ExprX, info
+    dest.addParLe StmtsS, info
+    let coroVar = pool.syms.getOrIncl("`coroVar." & $c.currentProc.counter)
+    inc c.currentProc.counter
+    copyIntoKind dest, VarS, info:
+      dest.addSymDef coroVar, info
+      dest.addDotToken()  # exported
+      dest.addDotToken()  # pragmas
+      dest.addSymUse coroTypeForProc(c, sym), info
+      dest.addDotToken()  # default value
+    dest.addParRi()  # StmtsS
+    copyIntoKind dest, CallS, info:
+      dest.addSymUse sym, info
+      dest.copyIntoKind AddrX, info:
+        dest.addSymUse coroVar, info
+      while n.kind != ParRi:
+        tr(c, dest, n)
+      # Pass StopContinuation as the caller so the child doesn't resume anyone on finish.
+      dest.copyIntoKind OconstrX, info:
+        dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+        dest.copyIntoKind KvU, info:
+          dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
+          dest.addParPair NilX, info
+        dest.copyIntoKind KvU, info:
+          dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
+          dest.addParPair NilX, info
+    dest.addParRi()  # ExprX
+    skipParRi n  # skip ParRi of delay
   else:
-    dest.copyIntoKind ErrT, n.info:
-      dest.addStrLit "`delay` takes a call expression"
-    skip n
-  skipParRi n
+    dest.copyIntoKind ErrT, info:
+      dest.addStrLit "`delay` expects a call expression"
+    skip n   # skip rest
+    skipParRi n
 
 proc passiveCallFn(c: var Context; n: Cursor): SymId =
   if n.exprKind notin CallKinds: return SymId(0)
@@ -345,15 +384,11 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let fn = n.firstSon
   if fn.kind == Symbol:
     let sym = fn.symId
-    if sym == c.afterYieldSym:
-      contNextState(c, dest, c.currentProc.upcomingState, n.info)
-      skip n
+    let typ = c.typeCache.getType(fn, {SkipAliases})
+    if procHasPragma(typ, PassiveP):
+      trPassiveCall(c, dest, n, sym, default(Cursor))
     else:
-      let typ = c.typeCache.getType(fn, {SkipAliases})
-      if procHasPragma(typ, PassiveP):
-        trPassiveCall(c, dest, n, sym, default(Cursor))
-      else:
-        trSons(c, dest, n)
+      trSons(c, dest, n)
   else:
     trSons(c, dest, n)
 
@@ -587,25 +622,6 @@ proc isPassiveCall(c: var Context; n: PackedToken): bool =
       return true
   return false
 
-proc findDelayX(c: var Context; n: Cursor): Cursor =
-  var nested = 0
-  var n = n
-  while true:
-    case n.kind
-    of ParLe:
-      if n.exprKind == DelayX:
-        inc n
-        skip n # type
-        return n
-      inc nested
-    of ParRi:
-      dec nested
-    else:
-      discard
-    if nested == 0:
-      break
-    inc n
-  return default(Cursor)
 
 proc trMflag(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Convert NJ `(mflag symdef)` / `(vflag symdef)` to a bool var initialized to false.
@@ -889,7 +905,8 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
           loopStack.add(LoopEntry(pos: pos, depth: depth))
         let sk = scan.stmtKind
         let ek = scan.exprKind
-        if sk == YldS or (ek in CallKinds and isPassiveCall(c, c.currentProc.cf[pos+1])):
+        if sk == YldS or (ek in CallKinds and isPassiveCall(c, c.currentProc.cf[pos+1])) or
+            ek == Delay0X:
           # Mark all enclosing loops as containing a suspension point
           for i in 0..<loopStack.len:
             loopStack[i].containsSusp = true
@@ -1211,12 +1228,14 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.typeCache.closeScope()
     else:
       case n.exprKind
-      of CallKinds:
+      of CallKinds - {DelayX}:
         trCall c, dest, n
-      of TypeofX:
-        takeTree dest, n
       of DelayX:
         trDelay c, dest, n
+      of Delay0X:
+        trDelay0 c, dest, n
+      of TypeofX:
+        takeTree dest, n
       else:
         if n.cfKind == IteF:
           trIte c, dest, n
@@ -1260,7 +1279,6 @@ proc transformToCps*(pass: var Pass) =
   var n = pass.n  # Extract cursor locally
   var c = Context(thisModuleSuffix: pass.moduleSuffix,
     typeCache: createTypeCache(),
-    afterYieldSym: pool.syms.getOrIncl("afterYield.0." & SystemModuleSuffix),
     continuationProcImpl: generateContinuationProcImpl(),
     inlineContState: -1)
   c.typeCache.openScope()
