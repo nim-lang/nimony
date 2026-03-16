@@ -495,23 +495,30 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
 
-    var name: PNode
-    var visibility: PNode = nil
-    if n[0].kind == nkPostfix:
-      visibility = n[0][0]
-      name = n[0][1]
+    if n.kind == nkIteratorDef and n[0].kind == nkEmpty:
+      # Anonymous proc/iterator expression
+      c.b.addEmpty # name placeholder
+      for i in 0..<n.len:
+        toNif(n[i], n, c, allowEmpty = true)
+      c.b.endTree()
     else:
-      name = n[0]
+      var name: PNode
+      var visibility: PNode = nil
+      if n[0].kind == nkPostfix:
+        visibility = n[0][0]
+        name = n[0][1]
+      else:
+        name = n[0]
 
-    toNif(name, n, c)
-    if visibility != nil:
-      c.b.addRaw " x"
-    else:
-      c.b.addEmpty
+      toNif(name, n, c)
+      if visibility != nil:
+        c.b.addRaw " x"
+      else:
+        c.b.addEmpty
 
-    for i in 1..<n.len:
-      toNif(n[i], n, c, allowEmpty = true)
-    c.b.endTree()
+      for i in 1..<n.len:
+        toNif(n[i], n, c, allowEmpty = true)
+      c.b.endTree()
 
   of nkVarTuple:
     relLineInfo(n, parent, c)

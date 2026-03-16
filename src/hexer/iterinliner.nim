@@ -609,6 +609,13 @@ proc transformStmt(e: var EContext; c: var Cursor) =
       takeParRi(e, c)
       if hasCursorPragma:
         e.dest[before] = parLeToken(CursorS, e.dest[before].info)
+    of GvarS, GletS, TvarS, TletS, ConstS:
+      e.dest.add c
+      inc c
+      for i in 0..<LocalValuePos:
+        takeTree(e, c)
+      transformStmt(e, c)
+      takeParRi(e, c)
     of WhileS:
       transformWhileStmt(e, c)
     of BreakS:
