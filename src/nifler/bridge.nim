@@ -496,7 +496,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     c.b.addTree(nodeKindTranslation(n.kind))
 
     if n.kind == nkIteratorDef and n[0].kind == nkEmpty:
-      # Anonymous proc/iterator expression
+      # Anonymous iterator expression
       c.b.addEmpty # name placeholder
       for i in 0..<n.len:
         toNif(n[i], n, c, allowEmpty = true)
