@@ -138,7 +138,6 @@ type
     kind: RoutineKind
 
   Context = object
-    afterYieldSym: SymId
     counter: int
     typeCache: TypeCache
     thisModuleSuffix: string
@@ -322,8 +321,10 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
 proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
   inc n
   skip n # skip type; it is `Continuation` and uninteresting here
-
-  if n.exprKind in CallKinds and n.firstSon.kind == Symbol:
+  if n.kind == ParRi:
+    # `delay()` without any argument:
+    contNextState(c, dest, c.currentProc.upcomingState, n.info)
+  elif n.exprKind in CallKinds and n.firstSon.kind == Symbol:
     let fn = n.firstSon.symId
     trPassiveCall c, dest, n, fn, default(Cursor), inhibitComplete = true
   else:
@@ -345,15 +346,11 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let fn = n.firstSon
   if fn.kind == Symbol:
     let sym = fn.symId
-    if sym == c.afterYieldSym:
-      contNextState(c, dest, c.currentProc.upcomingState, n.info)
-      skip n
+    let typ = c.typeCache.getType(fn, {SkipAliases})
+    if procHasPragma(typ, PassiveP):
+      trPassiveCall(c, dest, n, sym, default(Cursor))
     else:
-      let typ = c.typeCache.getType(fn, {SkipAliases})
-      if procHasPragma(typ, PassiveP):
-        trPassiveCall(c, dest, n, sym, default(Cursor))
-      else:
-        trSons(c, dest, n)
+      trSons(c, dest, n)
   else:
     trSons(c, dest, n)
 
@@ -1260,7 +1257,6 @@ proc transformToCps*(pass: var Pass) =
   var n = pass.n  # Extract cursor locally
   var c = Context(thisModuleSuffix: pass.moduleSuffix,
     typeCache: createTypeCache(),
-    afterYieldSym: pool.syms.getOrIncl("afterYield.0." & SystemModuleSuffix),
     continuationProcImpl: generateContinuationProcImpl(),
     inlineContState: -1)
   c.typeCache.openScope()

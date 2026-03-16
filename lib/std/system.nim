@@ -230,10 +230,10 @@ type
 method cancel*(coro: ptr CoroutineBase) =
   discard "to override"
 
-proc afterYield*(): Continuation {.semantics: "afterYield".} =
-  ## Special builtin that returns the next continuation within a `yield` statement.
-  ## Do not use unless you know what you are doing.
-  result = Continuation(fn: nil, env: nil)
+proc delay*(): Continuation {.magic: "Delay".}
+  ## Creates a continuation for the current coroutine's own continuation from this point
+  ## forward. Think of it as a reification of the "semicolon": To split up `a; b` use
+  ## `a; let cont = delay(); b`.
 
 proc delay*(x: typed): Continuation {.magic: "Delay".}
   ## Delays the execution of a `.passive` proc and returns a continuation representation

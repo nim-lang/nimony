@@ -137,26 +137,26 @@ The scheduler bridges passive procs to the OS event loop:
 This model means a single thread can handle thousands of concurrent connections with
 each handler written as a simple sequential loop.
 
-## Primitives: `delay`, `afterYield`, `advance`
+## Primitives: `delay`, `advance`
 
 - `delay(passiveCall())` captures a passive call as a `Continuation` without running it.
   Think of it as `toTask` for coroutines.
-- `afterYield()` captures the **current coroutine's own continuation** from this point
+- `delay()` without any argument captures the **current coroutine's own continuation** from this point
   forward — "the rest of me" as a `Continuation`. The CPS transform replaces it with
   `Continuation(fn: s_next, env: this)` pointing at the next state function.
 - `advance(c)` single-steps through one state transition. Useful for interleaving
   coroutines manually.
 
-## Spawn: Fork Semantics via `delay` + `afterYield`
+## Spawn: Fork Semantics via `delay`
 
-`delay` and `afterYield` combine to give real fork semantics. `delay` captures a child
-task, `afterYield` captures the parent's continuation. Both are handed to the scheduler
+`delay(call)` and `delay()` combine to give real fork semantics. `delay(call)` captures a child
+task, `delay()` captures the parent's continuation. Both are handed to the scheduler
 and neither runs until the scheduler picks them up:
 
 ```nim
 template spawn(call: typed) =
   let taskA = delay(call)     # child coroutine's continuation
-  let taskB = afterYield()    # MY OWN continuation (code after this point)
+  let taskB = delay()         # MY OWN continuation (code after this point)
   scheduler.run taskA
   scheduler.run taskB
 ```
@@ -192,7 +192,7 @@ only runs when the scheduler resumes it. This means:
 
 - **No colored functions**: Passive procs can call regular procs freely. Regular procs
   can also call passive procs — the compiler inserts `complete()` automatically so the
-  call blocks until the passive proc finishes. `delay()` is the explicit override when
+  call blocks until the passive proc finishes. `delay(call)` is the explicit override when
   you want the continuation without running it.
 - **Zero-overhead when not used**: If a program has no `.passive` procs, no CPS transform
   runs and no runtime types are involved.
