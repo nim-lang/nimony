@@ -680,11 +680,21 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       while n.kind != ParRi:
         trStmt c, dest, n
 
-proc needsBitCast(destType: Cursor): bool =
-  ## Returns true if the cast destination type is a value type that requires
-  ## memcpy for bit reinterpretation. Pointer casts can use a plain C cast.
-  let tk = typeKind(destType)
-  result = tk in {IntT, UIntT, FloatT, CharT, BoolT}
+proc isIntLike(tk: TypeKind): bool {.inline.} =
+  tk in {IntT, UIntT, CharT, BoolT}
+
+proc needsBitCast(destType: Cursor; srcType: Cursor): bool =
+  ## Returns true when the cast requires memcpy for bit reinterpretation.
+  ## Integer-to-integer and float-to-float casts can use a plain C cast.
+  ## Integer-to-float (and vice versa) needs memcpy.
+  let dtk = typeKind(destType)
+  let stk = typeKind(srcType)
+  if dtk == FloatT and stk == FloatT: return false
+  if isIntLike(dtk) and isIntLike(stk): return false
+  # One is float, the other is integer-like (or both are value types of
+  # different families): need memcpy for correct bit reinterpretation.
+  result = dtk in {IntT, UIntT, FloatT, CharT, BoolT} and
+           stk in {IntT, UIntT, FloatT, CharT, BoolT}
 
 proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   let info = n.info
@@ -694,8 +704,9 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   takeTree destTypeBuf, n # copy dest type, n now at srcExpr
   let destType = beginRead(destTypeBuf)
 
-  if not needsBitCast(destType):
-    # Pointer casts etc. - pass through, NIFC handles as a plain C cast
+  let dtk = typeKind(destType)
+  # Quick check: if dest is not a value type, skip getType on source entirely
+  if dtk notin {IntT, UIntT, FloatT, CharT, BoolT}:
     var srcTarget = Target(m: IsEmpty)
     trExpr c, dest, n, srcTarget
     skipParRi n
@@ -705,8 +716,20 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
     tar.t.addParRi()
     return
 
-  # Value type cast: lower to copyMem(addr dest, addr src, sizeof(DstType))
   let srcType = getType(c, n)
+  if not needsBitCast(destType, srcType):
+    # Same-family cast (e.g. int-to-int) - use plain C cast
+    var srcTarget = Target(m: IsEmpty)
+    trExpr c, dest, n, srcTarget
+    skipParRi n
+    tar.t.addParLe CastX, info
+    tar.t.addSubtree destType
+    tar.t.add srcTarget
+    tar.t.addParRi()
+    return
+
+  # Cross-family value type cast (e.g. int↔float):
+  # lower to copyMem(addr dest, addr src, sizeof(DstType))
   var srcTarget = Target(m: IsEmpty)
   trExpr c, dest, n, srcTarget
   skipParRi n
