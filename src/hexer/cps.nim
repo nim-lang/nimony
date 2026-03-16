@@ -372,7 +372,7 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skipParRi n
 
 proc passiveCallFn(c: var Context; n: Cursor): SymId =
-  if n.exprKind notin CallKinds: return SymId(0)
+  if n.exprKind notin CallKinds - {DelayX}: return SymId(0)
   let fn = n.firstSon
   if fn.kind == Symbol:
     let typ = c.typeCache.getType(fn, {SkipAliases})
