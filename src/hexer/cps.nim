@@ -372,7 +372,7 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skipParRi n
 
 proc passiveCallFn(c: var Context; n: Cursor): SymId =
-  if n.exprKind notin CallKinds: return SymId(0)
+  if n.exprKind notin CallKinds - {DelayX}: return SymId(0)
   let fn = n.firstSon
   if fn.kind == Symbol:
     let typ = c.typeCache.getType(fn, {SkipAliases})
@@ -975,7 +975,7 @@ proc generateCoroutineType(c: var Context; dest: var TokenBuf; sym: SymId) =
       # we inherit from CoroutineBase:
       dest.addSymUse pool.syms.getOrIncl(RootObjName), info
       for key, value in c.currentProc.localToEnv.pairs:
-        if value.def != value.use:
+        if value.def != value.use or key == c.currentProc.resultSym:
           let beforeField = dest.len
           copyIntoKind dest, FldU, info:
             dest.addSymDef value.field, info
@@ -1178,7 +1178,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     takeTree dest, n
   of Symbol:
     let field = c.currentProc.localToEnv.getOrDefault(n.symId)
-    if field.def != field.use:
+    if field.def != field.use or n.symId == c.currentProc.resultSym:
       let info = n.info
       let isResult = n.symId == c.currentProc.resultSym
       if isResult:
