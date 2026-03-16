@@ -13,13 +13,14 @@
 
 import std / [assertions]
 include ".." / lib / nifprelude
-import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops]
+import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes]
 import passes
 
 type
   Goal* = enum
     ElimExprs   # normal mode: eliminate expressions
     TowardsNjvl # goal mode: prepare for transformation into njvl
+    LowerCasts  # lower cast expressions: bind both source and result to variables
 
 proc isComplex(n: Cursor; goal: Goal): bool =
   var nested = 0
@@ -679,6 +680,98 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       while n.kind != ParRi:
         trStmt c, dest, n
 
+proc isIntLike(tk: TypeKind): bool {.inline.} =
+  tk in {IntT, UIntT, CharT, BoolT}
+
+proc needsBitCast(destType: Cursor; srcType: Cursor): bool =
+  ## Returns true when the cast requires memcpy for bit reinterpretation.
+  ## Integer-to-integer and float-to-float casts can use a plain C cast.
+  ## Integer-to-float (and vice versa) needs memcpy.
+  let dtk = typeKind(destType)
+  let stk = typeKind(srcType)
+  if dtk == FloatT and stk == FloatT: return false
+  if isIntLike(dtk) and isIntLike(stk): return false
+  # One is float, the other is integer-like (or both are value types of
+  # different families): need memcpy for correct bit reinterpretation.
+  result = dtk in {IntT, UIntT, FloatT, CharT, BoolT} and
+           stk in {IntT, UIntT, FloatT, CharT, BoolT}
+
+proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
+  let info = n.info
+  inc n # skip "cast" tag
+
+  var destTypeBuf = createTokenBuf(8)
+  takeTree destTypeBuf, n # copy dest type, n now at srcExpr
+  let destType = beginRead(destTypeBuf)
+
+  let dtk = typeKind(destType)
+  # Quick check: if dest is not a value type, skip getType on source entirely
+  if dtk notin {IntT, UIntT, FloatT, CharT, BoolT}:
+    var srcTarget = Target(m: IsEmpty)
+    trExpr c, dest, n, srcTarget
+    skipParRi n
+    tar.t.addParLe CastX, info
+    tar.t.addSubtree destType
+    tar.t.add srcTarget
+    tar.t.addParRi()
+    return
+
+  let srcType = getType(c, n)
+  if not needsBitCast(destType, srcType):
+    # Same-family cast (e.g. int-to-int) - use plain C cast
+    var srcTarget = Target(m: IsEmpty)
+    trExpr c, dest, n, srcTarget
+    skipParRi n
+    tar.t.addParLe CastX, info
+    tar.t.addSubtree destType
+    tar.t.add srcTarget
+    tar.t.addParRi()
+    return
+
+  # Cross-family value type cast (e.g. int↔float):
+  # lower to copyMem(addr dest, addr src, sizeof(DstType))
+  var srcTarget = Target(m: IsEmpty)
+  trExpr c, dest, n, srcTarget
+  skipParRi n
+
+  # Ensure source is a variable
+  var srcSym: SymId
+  var srcCur = beginRead(srcTarget.t)
+  if srcCur.kind == Symbol:
+    srcSym = srcCur.symId
+  else:
+    srcSym = pool.syms.getOrIncl(tempSymName(c))
+    copyIntoKind dest, VarS, info:
+      dest.addSymDef srcSym, info
+      dest.addDotToken() # export marker
+      dest.copyIntoKind PragmasS, info:
+        dest.copyIntoKind InlineP, info: discard
+      copyTree dest, srcType
+      dest.add srcTarget # value
+
+  # Create dest variable (uninitialized)
+  let dstSym = pool.syms.getOrIncl(tempSymName(c))
+  copyIntoKind dest, VarS, info:
+    dest.addSymDef dstSym, info
+    dest.addDotToken() # export marker
+    dest.copyIntoKind PragmasS, info:
+      dest.copyIntoKind InlineP, info: discard
+    dest.addSubtree destType
+    dest.addDotToken() # no initializer
+
+  # Emit: copyMem(addr dstSym, addr srcSym, sizeof(DstType))
+  let copyMemSym = pool.syms.getOrIncl("copyMem.0." & SystemModuleSuffix)
+  copyIntoKind dest, CallX, info:
+    dest.addSymUse copyMemSym, info
+    dest.copyIntoKind AddrX, info:
+      dest.addSymUse dstSym, info
+    dest.copyIntoKind AddrX, info:
+      dest.addSymUse srcSym, info
+    dest.copyIntoKind SizeofX, info:
+      dest.addSubtree destType
+
+  tar.t.addSymUse dstSym, info
+
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   # can have the dangerous `Expr` node which is the whole
   # reason for xelim's existence.
@@ -701,6 +794,11 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
       trOr c, dest, n, tar
     of CallKinds:
       trExprCall c, dest, n, tar
+    of CastX:
+      if c.goal == LowerCasts:
+        trCast c, dest, n, tar
+      else:
+        trExprLoop c, dest, n, tar
     else:
       case n.stmtKind
       of IfS:
@@ -732,5 +830,6 @@ proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
 when isMainModule:
   var owningBuf = createTokenBuf(300)
   let n = setupProgram("debug.txt", "debug.out", owningBuf)
-  let r = lowerExprs(n, "main")
-  echo r.toString(false)
+  var pass = initPass(move owningBuf, "main", "xelim", 64)
+  lowerExprs(pass)
+  echo pass.dest.toString(false)

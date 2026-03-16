@@ -149,11 +149,18 @@ AsgnStmt ::= (asgn Lvalue Expr)
 KeepOverflowStmt ::= (keepovf ArithExpr Lvalue)
 IfStmt ::= (if (elif Expr StmtList)+ (else StmtList)? )
 WhileStmt ::= (while Expr StmtList)
+LoopStmt ::= (loop StmtList Expr StmtList) # pre-condition stmts, condition, body
 CaseStmt ::= (case Expr (of BranchRanges StmtList)* (else StmtList)?)
 LabelStmt ::= (lab SymbolDef)
 JumpStmt ::= (jmp Symbol)
 ScopeStmt ::= (scope StmtList)
 DiscardStmt ::= (discard Expr)
+StoreStmt ::= (store Expr Lvalue) # like AsgnStmt but with reversed operands
+IteStmt ::= (ite Expr StmtList [Empty | StmtList]) # if-then-else
+ItecStmt ::= (itec Expr StmtList [Empty | StmtList]) # same as ite
+MflagDecl ::= (mflag SymbolDef) # materialized control flow flag (bool)
+VflagDecl ::= (vflag SymbolDef) # virtual control flow flag (bool)
+JtrueStmt ::= (jtrue Symbol+) # set flags to true; last flag becomes a goto target
 
 Stmt ::= Call |
          CallCanRaise |
@@ -163,14 +170,21 @@ Stmt ::= Call |
          TryStmt |
          RaiseStmt |
          AsgnStmt |
+         StoreStmt |
          KeepOverflowStmt |
          IfStmt |
+         IteStmt |
+         ItecStmt |
          WhileStmt |
+         LoopStmt |
          (break) |
          CaseStmt |
          LabelStmt |
          JumpStmt |
          ScopeStmt |
+         MflagDecl |
+         VflagDecl |
+         JtrueStmt |
          (ret [Empty | Expr]) | # return statement
          DiscardStmt
 
@@ -274,10 +288,9 @@ Notes:
   It is used for generic procs so that only one generic instances remains in the
   final executable file.
 - `attr "abc"` annotates a symbol with `__attribute__(abc)`.
-- `cast` might be mapped to a type prunning operation via a `union` as C's aliasing
-  rules are broken.
-- `conv` is a value preserving type conversion between numeric types, `cast` is a bit
-  preserving type cast.
+- `cast` is mapped to a C type cast. Bit reinterpretation casts (e.g. `int` to `float`)
+  are lowered to `copyMem` calls before reaching NIFC.
+- `conv` is a value preserving type conversion between numeric types.
 - `array` is mapped to a struct with an array inside so that arrays gain value semantics.
   Hence arrays can only be used within a `type` environment and are nominal types.
   A NIFC code generator has to ensure that e.g. `(type :MyArray.T . (array T 4))` is only
@@ -374,3 +387,65 @@ The `(ovf)` flag is an lvalue and can be set to `(false)` to reset the flag:
 ```
 
 This is not optional! It is required for reliable native code generation.
+
+
+NJ instructions
+---------------
+
+NIFC has grown support for NJ ("No Jumps") instructions. These are lower-level control flow
+primitives that can be more efficient than structured `if`/`while` statements.
+
+### store
+
+`(store Expr Lvalue)` is like `(asgn Lvalue Expr)` but with reversed operand order.
+The RHS is listed first so that the evaluation order matches the textual order, which
+is important when the RHS has side effects.
+
+### ite and itec
+
+`(ite Expr StmtList [Empty | StmtList])` is a simplified if-then-else. Unlike `(if)` which
+supports multiple `elif` branches, `ite` has exactly one condition, one then-branch and an
+optional else-branch.
+
+`(itec)` has the same structure and semantics as `(ite)`.
+
+### loop
+
+`(loop StmtList Expr StmtList)` is a loop with a pre-condition block. The first `StmtList`
+runs before the condition is tested. If the condition is false, the loop breaks. Then the
+body `StmtList` runs.
+
+### mflag and vflag
+
+`(mflag SymbolDef)` declares a **materialized** control flow flag. It is a boolean variable
+initialized to `false`. Its value is observable at runtime and generates a real C variable
+of type `NB8`.
+
+`(vflag SymbolDef)` declares a **virtual** control flow flag. It is also a boolean initialized
+to `false`, but the code generator can optimize it away entirely. When `(ite (not vflagSym) ...)`
+is used with a vflag, the code generator knows the condition is always true and emits only the
+then-branch, eliminating the `if` statement.
+
+### jtrue
+
+`(jtrue Symbol+)` sets the listed flag symbols to `true`. The last symbol in the list is
+special: it becomes a `goto` target. This allows the code generator to turn a flag-set
+followed by a conditional check into a direct jump.
+
+### The (lab) marker in ite
+
+The last usage of a virtual flag in an `(ite)` condition must be annotated with `(lab)`.
+This tells the code generator that the virtual flag's elimination is complete and a label
+should be emitted at this point. This label serves as the target for the `goto` generated
+by `(jtrue)`.
+
+Example:
+
+```
+(vflag :x.0)
+(jtrue x.0)           ;; becomes: goto x_0;
+;; ...
+(ite (not (lab) x.0)  ;; (lab) marks last usage, emits label x_0:
+  (stmts ...)         ;; then-branch is always taken
+  .)                  ;; else-branch is ignored
+```
