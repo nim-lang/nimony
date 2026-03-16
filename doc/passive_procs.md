@@ -20,6 +20,11 @@ A `Continuation` is a pair of (function pointer, environment pointer). When `fn`
 the coroutine is finished. The `caller` field links back to the calling coroutine so that
 when a passive proc completes, execution returns to its caller.
 
+Not all continuations are freely movable across threads. Continuations produced by
+`delay(call)` may be scheduled on another thread, subject to sendability checks for the
+captured environment. Continuations produced by `delay()` capture the current coroutine's
+own remainder and are thread-affine: they are expected to resume on the same thread.
+
 ## How It Works
 
 ### Writing passive procs
@@ -69,6 +74,12 @@ proc complete*(c: Continuation) =
 Each call to `scheduler(c)` executes one state transition. The default scheduler is
 `trivialTick` which simply calls `c.fn(c.env)`.
 
+This matters for calls from regular, non-passive code: the compiler drives the passive
+call to completion via the trampoline. In other words, the call is mediated by the active
+scheduler rather than by a direct stack call. With the default scheduler this behaves like
+ordinary synchronous execution. With a custom scheduler it can also make progress on other
+runnable continuations or IO work according to that scheduler's policy.
+
 ### Custom schedulers
 
 The scheduler is a pluggable function:
@@ -81,6 +92,28 @@ proc setScheduler*(handler: Scheduler)
 
 A custom scheduler can interleave multiple coroutines, integrate with a thread pool,
 or bridge to an IO event loop.
+
+## Language vs Scheduler Boundary
+
+Passive procs define the language-level suspension and continuation mechanism. The active
+scheduler decides how runnable continuations are interleaved and how external events resume
+them.
+
+Language-level semantics:
+
+- Calls to passive procs are suspension points for passive callers.
+- `delay(call)` captures a child continuation and may require sendability checks.
+- `delay()` captures the current coroutine's own remainder and keeps thread affinity.
+- Regular procs can call passive procs; the compiler drives them to completion through
+  the active scheduler.
+
+Scheduler/runtime policy:
+
+- Fairness and run-queue strategy.
+- Thread-pool work stealing and placement.
+- IO backend details (`epoll`, `kqueue`, `io_uring`, etc.).
+- Timeouts, retries, registration strategy, and wakeup policy.
+- Integration with a reactor, executor, or custom runtime.
 
 ## IO Integration
 
@@ -140,10 +173,14 @@ each handler written as a simple sequential loop.
 ## Primitives: `delay`, `advance`
 
 - `delay(passiveCall())` captures a passive call as a `Continuation` without running it.
-  Think of it as `toTask` for coroutines.
+  Think of it as `toTask` for coroutines. Because this continuation may be handed to another
+  thread, the compiler checks that the captured environment is sendable (for example, unique
+  or atomically reference-counted).
 - `delay()` without any argument captures the **current coroutine's own continuation** from this point
   forward — "the rest of me" as a `Continuation`. The CPS transform replaces it with
-  `Continuation(fn: s_next, env: this)` pointing at the next state function.
+  `Continuation(fn: s_next, env: this)` pointing at the next state function. This form is
+  thread-affine: it assumes the continuation will later resume on the same thread that
+  captured it.
 - `advance(c)` single-steps through one state transition. Useful for interleaving
   coroutines manually.
 
@@ -181,8 +218,9 @@ The CPS transform splits `main` at the spawn point into two states. The code bef
 spawn runs immediately; the code after spawn becomes a separate state function that
 only runs when the scheduler resumes it. This means:
 
-- **True concurrency**: The child and parent are independent continuations. A thread-pool
-  scheduler can run them on different threads.
+- **Controlled concurrency**: The child and parent are independent continuations. A thread-pool
+  scheduler may run the child on another thread if its captured environment is sendable,
+  while the parent's own continuation remains thread-affine because it comes from `delay()`.
 - **No implicit ordering**: Unlike async/await where the parent continues until it hits
   an await, here the parent yields immediately. The scheduler has full control.
 - **Composable with IO**: A spawned task can call `ioWait`, `readLine`, etc. The scheduler
@@ -192,13 +230,19 @@ only runs when the scheduler resumes it. This means:
 
 - **No colored functions**: Passive procs can call regular procs freely. Regular procs
   can also call passive procs — the compiler inserts `complete()` automatically so the
-  call blocks until the passive proc finishes. `delay(call)` is the explicit override when
-  you want the continuation without running it.
+  call is driven to completion through the active scheduler. With the default scheduler
+  this is synchronous; custom schedulers may also make progress on other work while
+  completing the passive call. `delay(call)` is the explicit override when you want the
+  continuation without running it.
 - **Zero-overhead when not used**: If a program has no `.passive` procs, no CPS transform
   runs and no runtime types are involved.
 - **Composable**: Passive procs call other passive procs with ordinary call syntax.
   The compiler chains the continuations automatically.
-- **Cancellation**: `CoroutineBase` has a virtual `cancel` method that can be overridden
-  per coroutine type.
+- **Destructor safety**: Destructors are injected before CPS lowering. After lifting locals
+  into the coroutine environment, destroying them at scope exit remains ordinary transformed
+  code rather than a special case invented by the CPS pass.
+- **Cancellation**: Cancellation semantics are intentionally left unspecified for now.
+  Different schedulers may choose different policies; the language mechanism only needs the
+  ability to stop rescheduling a continuation and eventually destroy its environment safely.
 - **Stack safety**: The trampoline loop means no deep recursion. Each state function
   returns to the trampoline rather than calling the next state directly.

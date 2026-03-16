@@ -553,21 +553,6 @@ proc trIfCaseTryBlockExpr(c: var ControlFlow; n: var Cursor; kind: ControlFlowAs
       trBlock c, n, aa
     tar.t.addSymUse temp, info
 
-proc trDelay(c: var ControlFlow; n: var Cursor; tar: var Target) =
-  if tar.m == IsEmpty:
-    tar.m = IsAppend
-  else:
-    assert tar.m == IsAppend, toString(n, false) & " " & $tar.m
-  tar.t.takeToken n # the `delay` tag
-  tar.t.takeTree n # the type
-  assert n.exprKind in CallKinds, toString(n, false)
-  # do not perform `trCall` here:
-  tar.t.takeToken n
-  while n.kind != ParRi:
-    trExpr c, n, tar
-  tar.t.addParRi()
-  tar.t.addParRi()
-
 proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
   case n.kind
   of Symbol, SymbolDef, IntLit, UIntLit, FloatLit, StringLit, CharLit,
@@ -603,8 +588,6 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
        BracketX, CurlyX, TupX, OvfX, InstanceofX, InternalFieldPairsX,
        FailedX, IsX, EnvpX:
       trExprLoop c, n, tar
-    of DelayX:
-      trDelay c, n, tar
     of PragmaxX:
       bug "pragmax should be handled in trStmt"
     of CompilesX, DeclaredX, DefinedX, AstToStrX, HighX, LowX, TypeofX, SizeofX, AlignofX, OffsetofX, InternalTypeNameX:

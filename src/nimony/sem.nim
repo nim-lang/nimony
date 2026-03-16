@@ -2814,14 +2814,27 @@ proc semTypedUnaryArithmetic(c: var SemContext; dest: var TokenBuf; it: var Item
   commonType c, dest, it, beforeExpr, typ
 
 proc semDelay(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  # Flatten (delay (call fn args)) -> (delay fn args).
+  # The type of `delay(...)` is always `Continuation`; typenav returns it for DelayX.
   let beforeExpr = dest.len
-  takeToken dest, it.n
-  let typeStart = dest.len
-  semLocalTypeImpl c, dest, it.n, InLocalDecl
-  let typ = typeToCursor(c, dest, typeStart)
-  semStmt c, dest, it.n, false
-  takeParRi dest, it.n
-  commonType c, dest, it, beforeExpr, typ
+  let expected = it.typ
+  takeToken dest, it.n  # copy (delay tag
+  if it.n.kind == ParRi:
+    # delay() form: captures the current coroutine's own continuation
+    takeParRi dest, it.n
+  elif it.n.exprKind in CallKinds:
+    # delay(call) form: flatten by stripping the call wrapper
+    inc it.n  # skip inner call tag
+    while it.n.kind != ParRi:
+      takeTree dest, it.n  # copy fn and args verbatim (already semchecked)
+    skipParRi it.n  # skip inner call's )
+    takeParRi dest, it.n  # take outer delay's )
+  else:
+    buildErr c, dest, it.n.info, "`delay` takes a call expression or no argument"
+    skip it.n
+    takeParRi dest, it.n
+  it.typ = c.types.continuationType
+  commonType c, dest, it, beforeExpr, expected
 
 type ArrayConstrContext = object
   firstKeyType: TypeCursor

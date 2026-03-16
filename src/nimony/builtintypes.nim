@@ -19,6 +19,7 @@ type
     untypedType*: Cursor
     cstringType*: Cursor
     vtableType*: Cursor # UncheckedArray[pointer]
+    continuationType*: Cursor
 
 proc tagToken(tag: string; info: PackedLineInfo = NoLineInfo): PackedToken {.inline.} =
   parLeToken(pool.tags.getOrIncl(tag), info)
@@ -30,6 +31,7 @@ const
   StringIField* = "i.0"
   ErrorCodeName* = "ErrorCode.0." & SystemModuleSuffix
   SuccessName* = "Success.0." & SystemModuleSuffix
+  ContinuationName* = "Continuation.0." & SystemModuleSuffix
 
 proc createBuiltinTypes*(): BuiltinTypes =
   result = BuiltinTypes(mem: createTokenBuf(30))
@@ -105,6 +107,8 @@ proc createBuiltinTypes*(): BuiltinTypes =
   result.mem.addParRi() # 61 close ptr
   result.mem.addParRi() # 62 close uarray
 
+  result.mem.add symToken(pool.syms.getOrIncl(ContinuationName), NoLineInfo) # 63
+
   result.mem.freeze()
 
   result.autoType = result.mem.cursorAt(0)
@@ -130,6 +134,7 @@ proc createBuiltinTypes*(): BuiltinTypes =
   result.untypedType = result.mem.cursorAt(53)
   result.cstringType = result.mem.cursorAt(55)
   result.vtableType = result.mem.cursorAt(57)
+  result.continuationType = result.mem.cursorAt(63)
 
 proc isStringType*(a: Cursor): bool {.inline.} =
   result = a.kind == Symbol and a.symId == pool.syms.getOrIncl(StringName)

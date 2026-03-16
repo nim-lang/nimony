@@ -319,19 +319,51 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
         dest.addSymUse contVar, info
 
 proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  inc n
-  skip n # skip type; it is `Continuation` and uninteresting here
+  # Handles (delay fn args) — no embedded type; typenav returns Continuation for DelayX.
+  let info = n.info
+  inc n      # skip delay tag
   if n.kind == ParRi:
-    # `delay()` without any argument:
-    contNextState(c, dest, c.currentProc.upcomingState, n.info)
-  elif n.exprKind in CallKinds and n.firstSon.kind == Symbol:
-    let fn = n.firstSon.symId
-    trPassiveCall c, dest, n, fn, default(Cursor), inhibitComplete = true
+    # `delay()` without any argument: capture current coroutine's own continuation.
+    contNextState(c, dest, c.currentProc.upcomingState, info)
+    inc n    # skip ParRi of delay
+  elif n.kind == Symbol:
+    let sym = n.symId
+    inc n    # skip fn symbol
+    # Create a child coroutine and return it as a Continuation without yielding.
+    # Always use the IsNormal+inhibitComplete strategy regardless of proc kind.
+    dest.addParLe ExprX, info
+    dest.addParLe StmtsS, info
+    let coroVar = pool.syms.getOrIncl("`coroVar." & $c.currentProc.counter)
+    inc c.currentProc.counter
+    copyIntoKind dest, VarS, info:
+      dest.addSymDef coroVar, info
+      dest.addDotToken()  # exported
+      dest.addDotToken()  # pragmas
+      dest.addSymUse coroTypeForProc(c, sym), info
+      dest.addDotToken()  # default value
+    dest.addParRi()  # StmtsS
+    copyIntoKind dest, CallS, info:
+      dest.addSymUse sym, info
+      dest.copyIntoKind AddrX, info:
+        dest.addSymUse coroVar, info
+      while n.kind != ParRi:
+        tr(c, dest, n)
+      # Pass StopContinuation as the caller so the child doesn't resume anyone on finish.
+      dest.copyIntoKind OconstrX, info:
+        dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+        dest.copyIntoKind KvU, info:
+          dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
+          dest.addParPair NilX, info
+        dest.copyIntoKind KvU, info:
+          dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
+          dest.addParPair NilX, info
+    dest.addParRi()  # ExprX
+    inc n    # skip ParRi of delay
   else:
-    dest.copyIntoKind ErrT, n.info:
-      dest.addStrLit "`delay` takes a call expression"
-    skip n
-  skipParRi n
+    dest.copyIntoKind ErrT, info:
+      dest.addStrLit "`delay` expects a call or no argument"
+    skip n   # skip rest
+    skipParRi n
 
 proc passiveCallFn(c: var Context; n: Cursor): SymId =
   if n.exprKind notin CallKinds: return SymId(0)
@@ -343,6 +375,9 @@ proc passiveCallFn(c: var Context; n: Cursor): SymId =
   return SymId(0)
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  if n.exprKind == DelayX:
+    trDelay c, dest, n
+    return
   let fn = n.firstSon
   if fn.kind == Symbol:
     let sym = fn.symId
@@ -584,25 +619,6 @@ proc isPassiveCall(c: var Context; n: PackedToken): bool =
       return true
   return false
 
-proc findDelayX(c: var Context; n: Cursor): Cursor =
-  var nested = 0
-  var n = n
-  while true:
-    case n.kind
-    of ParLe:
-      if n.exprKind == DelayX:
-        inc n
-        skip n # type
-        return n
-      inc nested
-    of ParRi:
-      dec nested
-    else:
-      discard
-    if nested == 0:
-      break
-    inc n
-  return default(Cursor)
 
 proc trMflag(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Convert NJ `(mflag symdef)` / `(vflag symdef)` to a bool var initialized to false.
@@ -1212,8 +1228,6 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trCall c, dest, n
       of TypeofX:
         takeTree dest, n
-      of DelayX:
-        trDelay c, dest, n
       else:
         if n.cfKind == IteF:
           trIte c, dest, n
