@@ -209,7 +209,7 @@
      (jtrue ´g.1))
     (stmts
      (call echo.0 "after block break")))
-   (kill ´g.1 ´r.0 a.0)))
+   (kill ´r.0 a.0 ´g.1)))
  (proc :test9.0 . . .
   (params) . . .
   (stmts

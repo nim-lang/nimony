@@ -398,7 +398,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     result = c.builtins.stringType
   of SizeofX, CardX, AlignofX, OffsetofX:
     result = c.builtins.intType
-  of DelayX:
+  of DelayX, Delay0X:
     result = c.builtins.continuationType
   of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
      PlusSetX, MinusSetX, MulSetX, XorSetX,

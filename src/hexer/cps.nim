@@ -318,15 +318,21 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
       copyIntoKind dest, RetS, info:
         dest.addSymUse contVar, info
 
+proc trDelay0(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  # Handles (delay0) — no-arg form: capture continuation for the code that follows.
+  let info = n.info
+  let pos = cursorToPosition(c.currentProc.cf, n)  # position of (delay0 token
+  inc n      # skip delay0 tag
+  let state = c.currentProc.yieldConts.getOrDefault(pos, -1)
+  assert state != -1, "delay() no-arg must be a suspension point"
+  contNextState(c, dest, state, info)
+  skipParRi n  # skip ParRi of delay0
+
 proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  # Handles (delay fn args) — no embedded type; typenav returns Continuation for DelayX.
+  # Handles (delay fn args) — fn-args form; typenav returns Continuation for DelayX.
   let info = n.info
   inc n      # skip delay tag
-  if n.kind == ParRi:
-    # `delay()` without any argument: capture current coroutine's own continuation.
-    contNextState(c, dest, c.currentProc.upcomingState, info)
-    inc n    # skip ParRi of delay
-  elif n.kind == Symbol:
+  if n.kind == Symbol:
     let sym = n.symId
     inc n    # skip fn symbol
     # Create a child coroutine and return it as a Continuation without yielding.
@@ -358,10 +364,10 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
           dest.addParPair NilX, info
     dest.addParRi()  # ExprX
-    inc n    # skip ParRi of delay
+    skipParRi n  # skip ParRi of delay
   else:
     dest.copyIntoKind ErrT, info:
-      dest.addStrLit "`delay` expects a call or no argument"
+      dest.addStrLit "`delay` expects a call expression"
     skip n   # skip rest
     skipParRi n
 
@@ -899,7 +905,8 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
           loopStack.add(LoopEntry(pos: pos, depth: depth))
         let sk = scan.stmtKind
         let ek = scan.exprKind
-        if sk == YldS or (ek in CallKinds and isPassiveCall(c, c.currentProc.cf[pos+1])):
+        if sk == YldS or (ek in CallKinds and isPassiveCall(c, c.currentProc.cf[pos+1])) or
+            ek == Delay0X:
           # Mark all enclosing loops as containing a suspension point
           for i in 0..<loopStack.len:
             loopStack[i].containsSusp = true
@@ -1225,6 +1232,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trCall c, dest, n
       of DelayX:
         trDelay c, dest, n
+      of Delay0X:
+        trDelay0 c, dest, n
       of TypeofX:
         takeTree dest, n
       else:

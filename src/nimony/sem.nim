@@ -2814,25 +2814,31 @@ proc semTypedUnaryArithmetic(c: var SemContext; dest: var TokenBuf; it: var Item
   commonType c, dest, it, beforeExpr, typ
 
 proc semDelay(c: var SemContext; dest: var TokenBuf; it: var Item) =
-  # Flatten (delay (call fn args)) -> (delay fn args).
-  # The type of `delay(...)` is always `Continuation`; typenav returns it for DelayX.
+  # delay() no-arg -> (delay0)
+  # delay(call fn args) -> (delay fn args)  [flatten by stripping the call wrapper]
+  # The type is always `Continuation`; typenav returns it for both DelayX and Delay0X.
   let beforeExpr = dest.len
   let expected = it.typ
-  takeToken dest, it.n  # copy (delay tag
+  let info = it.n.info
+  inc it.n  # skip (delay tag (always DelayX from addFn)
   if it.n.kind == ParRi:
-    # delay() form: captures the current coroutine's own continuation
-    takeParRi dest, it.n
+    # delay() no-arg form: produces (delay0)
+    dest.addParLe(Delay0X, info)
+    dest.addParRi()
+    inc it.n
   elif it.n.exprKind in CallKinds:
-    # delay(call) form: flatten by stripping the call wrapper
+    # delay(call) form: produce (delay fn args)
+    dest.addParLe(DelayX, info)
     inc it.n  # skip inner call tag
     while it.n.kind != ParRi:
       takeTree dest, it.n  # copy fn and args verbatim (already semchecked)
     skipParRi it.n  # skip inner call's )
-    takeParRi dest, it.n  # take outer delay's )
+    dest.addParRi()
+    skipParRi it.n  # skip outer delay's )
   else:
     buildErr c, dest, it.n.info, "`delay` takes a call expression or no argument"
     skip it.n
-    takeParRi dest, it.n
+    skipParRi it.n
   it.typ = c.types.continuationType
   commonType c, dest, it, beforeExpr, expected
 
@@ -5102,7 +5108,7 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       semShift c, dest, it
     of BitnotX, NegX:
       semTypedUnaryArithmetic c, dest, it
-    of DelayX:
+    of DelayX, Delay0X:
       semDelay c, dest, it
     of InSetX:
       semInSet c, dest, it

@@ -1475,11 +1475,22 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       skipParRi(n)
 
     of DelayX:
-      inc n
-      skip n # don't render the type `Continuation` here
+      # (delay fn args...) -> delay(fn(args...))
+      inc n  # skip (delay
       put(g, tkSymbol, "delay")
       put(g, tkParLe, "(")
-      gsub(g, n)
+      gsub(g, n)  # fn
+      put(g, tkParLe, "(")
+      gcallComma(g, n)  # args
+      put(g, tkParRi, ")")
+      put(g, tkParRi, ")")
+      skipParRi(n)
+
+    of Delay0X:
+      # (delay0) -> delay()
+      inc n  # skip (delay0
+      put(g, tkSymbol, "delay")
+      put(g, tkParLe, "(")
       put(g, tkParRi, ")")
       skipParRi(n)
 

@@ -351,6 +351,7 @@ type
     info: PackedLineInfo
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
+  let info = n.info
   var fnType = skipProcTypeToParams(getType(c.typeCache, n.firstSon))
   assert isParamsTag(fnType)
   var pragmas = fnType
@@ -360,7 +361,6 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
   let canRaise = hasPragma(pragmas, RaisesP)
   let isNoReturn = hasPragma(pragmas, NoreturnP)
 
-  let info = n.info
   result = CallInfo(isNoReturn: isNoReturn, mode:
     if canRaise:
       (if isVoidType(retType): VoidRaise else: TupleRaise)

@@ -1022,7 +1022,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       bug "envp should have been eliminated in lambdalifting.nim"
     of DefaultobjX, DefaulttupX, DefaultdistinctX, BracketX, CurlyX, TupX:
       bug "nodekind should have been eliminated in sem.nim"
-    of PragmaxX, CurlyatX, TabconstrX, DoX, FailedX:
+    of PragmaxX, CurlyatX, TabconstrX, DoX, FailedX, Delay0X:
       trSons c, n, e
     of NoExpr:
       let k = n.stmtKind
