@@ -3,6 +3,8 @@
 
 import std/assertions
 
+# --- Runtime casts ---
+
 # cast[float](42) must NOT produce 42.0 (that would be a C-level conversion).
 # It must reinterpret the bits of the int as a float.
 var x: int = 42
@@ -19,3 +21,26 @@ let fzero = cast[float](zero)
 assert fzero == 0.0
 let izero = cast[int](fzero)
 assert izero == 0
+
+# --- Compile-time casts ---
+
+const cf = cast[float](42)
+assert cf != 42.0
+
+const crt = cast[int](cf)
+assert crt == 42
+
+const cf0 = cast[float](0)
+assert cf0 == 0.0
+
+const ci0 = cast[int](cf0)
+assert ci0 == 0
+
+# Compile-time and runtime must agree
+var rx: int = 42
+assert cast[float](rx) == cf
+assert cast[int](cast[float](rx)) == crt
+
+# cast[ptr int](nil) should work at compile time
+const np = cast[ptr int](nil)
+assert np == nil

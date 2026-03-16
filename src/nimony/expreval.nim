@@ -546,6 +546,62 @@ proc evalSetOp(c: var EvalContext; n: var Cursor; op: ExprKind): Cursor =
   c.values[valPos].bitSetToTokens(setRes, elementTyp, info)
   result = cursorAt(c.values[valPos], 0)
 
+proc evalCast(c: var EvalContext; typ, val, nOrig: Cursor): Cursor =
+  let dtk = typ.typeKind
+  if dtk == FloatT:
+    if val.kind == FloatLit:
+      result = val
+    elif val.kind == IntLit:
+      result = floatValue(c, cast[float64](pool.integers[val.intId]), nOrig.info)
+    elif val.kind == UIntLit:
+      result = floatValue(c, cast[float64](pool.uintegers[val.uintId]), nOrig.info)
+    else:
+      cannotEval nOrig
+  elif dtk in {IntT, UIntT}:
+    if val.kind == FloatLit:
+      if dtk == IntT:
+        result = intValue(c, cast[int64](pool.floats[val.floatId]), nOrig.info)
+      else:
+        result = uintValue(c, cast[uint64](pool.floats[val.floatId]), nOrig.info)
+    else:
+      let x = getConstOrdinalValue(val)
+      if isNaN(x):
+        cannotEval nOrig
+      else:
+        var err = false
+        if dtk == IntT:
+          let i = asSigned(x, err)
+          if err: cannotEval nOrig
+          else: result = intValue(c, i, nOrig.info)
+        else:
+          let u = asUnsigned(x, err)
+          if err: cannotEval nOrig
+          else: result = uintValue(c, u, nOrig.info)
+  elif dtk == CharT:
+    let x = getConstOrdinalValue(val)
+    if isNaN(x):
+      cannotEval nOrig
+    else:
+      var err = false
+      let ch = asUnsigned(x, err)
+      if err or ch >= 256u:
+        cannotEval nOrig
+      else:
+        result = charValue(c, char(ch), nOrig.info)
+  elif dtk == BoolT:
+    let x = getConstOrdinalValue(val)
+    if isNaN(x):
+      cannotEval nOrig
+    else:
+      result = boolValue(c, x != zero())
+  elif dtk in {PointerT, PtrT, RefT, CstringT}:
+    if val.exprKind == NilX:
+      result = val
+    else:
+      cannotEval nOrig
+  else:
+    cannotEval nOrig
+
 proc eval*(c: var EvalContext; n: var Cursor): Cursor =
   template propagateError(r: Cursor): Cursor =
     let val = r
@@ -675,6 +731,14 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       else:
         # other conversions not implemented
         cannotEval nOrig
+    of CastX:
+      let nOrig = n
+      inc n
+      let typ = n
+      skip n
+      let val = propagateError eval(c, n)
+      skipParRi n
+      result = evalCast(c, typ, val, nOrig)
     of DconvX:
       inc n # tag
       skip n # type
