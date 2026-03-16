@@ -41,12 +41,10 @@ caller into states around each such call. The programmer does not need to think 
 ### Compilation pipeline
 
 1. **NJ (control flow graph)**: The proc body is lowered to NJ IR with structured control flow
-   (`loop`, `ite`, `mflag`/`vflag` guards, `jtrue`, `break`, `continue`).
+   (`loop`, `ite`, `mflag`/`vflag` guards).
 2. **CPS transform** (`src/hexer/cps.nim`): The NJ graph is split at suspension points
    (calls to other passive procs) into state functions. Local variables are lifted into
    a heap-allocated coroutine environment object.
-3. **Lambda lifting**: The state functions become top-level procs that take a `ptr CoroutineBase`
-   and return a `Continuation`.
 
 ### Entry and state functions
 
