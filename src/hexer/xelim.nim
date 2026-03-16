@@ -13,7 +13,7 @@
 
 import std / [assertions]
 include ".." / lib / nifprelude
-import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops]
+import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes]
 import passes
 
 type
@@ -680,18 +680,32 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       while n.kind != ParRi:
         trStmt c, dest, n
 
-proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
-  # Bind both the source and the result of the cast to variables
-  # so that NIFC can produce memcpy in statement position.
-  let info = n.info
-  let castType = getType(c, n)
+proc needsBitCast(destType: Cursor): bool =
+  ## Returns true if the cast destination type is a value type that requires
+  ## memcpy for bit reinterpretation. Pointer casts can use a plain C cast.
+  let tk = typeKind(destType)
+  result = tk in {IntT, UIntT, FloatT, CharT, BoolT}
 
+proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
+  let info = n.info
   inc n # skip "cast" tag
+
   var destTypeBuf = createTokenBuf(8)
   takeTree destTypeBuf, n # copy dest type, n now at srcExpr
   let destType = beginRead(destTypeBuf)
 
-  # Process source expression
+  if not needsBitCast(destType):
+    # Pointer casts etc. - pass through, NIFC handles as a plain C cast
+    var srcTarget = Target(m: IsEmpty)
+    trExpr c, dest, n, srcTarget
+    skipParRi n
+    tar.t.addParLe CastX, info
+    tar.t.addSubtree destType
+    tar.t.add srcTarget
+    tar.t.addParRi()
+    return
+
+  # Value type cast: lower to copyMem(addr dest, addr src, sizeof(DstType))
   let srcType = getType(c, n)
   var srcTarget = Target(m: IsEmpty)
   trExpr c, dest, n, srcTarget
@@ -712,27 +726,28 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
       copyTree dest, srcType
       dest.add srcTarget # value
 
-  if tar.m in {IsAppend, IsEmpty}:
-    # Extract whole cast to a temp
-    let tmp = pool.syms.getOrIncl(tempSymName(c))
-    copyIntoKind dest, VarS, info:
-      dest.addSymDef tmp, info
-      dest.addDotToken() # export marker
-      dest.copyIntoKind PragmasS, info:
-        dest.copyIntoKind InlineP, info: discard
-      copyTree dest, castType
-      # value: (cast DstType srcSym)
-      dest.addParLe CastX, info
-      dest.addSubtree destType
+  # Create dest variable (uninitialized)
+  let dstSym = pool.syms.getOrIncl(tempSymName(c))
+  copyIntoKind dest, VarS, info:
+    dest.addSymDef dstSym, info
+    dest.addDotToken() # export marker
+    dest.copyIntoKind PragmasS, info:
+      dest.copyIntoKind InlineP, info: discard
+    dest.addSubtree destType
+    dest.addDotToken() # no initializer
+
+  # Emit: copyMem(addr dstSym, addr srcSym, sizeof(DstType))
+  let copyMemSym = pool.syms.getOrIncl("copyMem.0." & SystemModuleSuffix)
+  copyIntoKind dest, CallX, info:
+    dest.addSymUse copyMemSym, info
+    dest.copyIntoKind AddrX, info:
+      dest.addSymUse dstSym, info
+    dest.copyIntoKind AddrX, info:
       dest.addSymUse srcSym, info
-      dest.addParRi()
-    tar.t.addSymUse tmp, info
-  else:
-    # IsBound - keep cast as value
-    tar.t.addParLe CastX, info
-    tar.t.addSubtree destType
-    tar.t.addSymUse srcSym, info
-    tar.t.addParRi()
+    dest.copyIntoKind SizeofX, info:
+      dest.addSubtree destType
+
+  tar.t.addSymUse dstSym, info
 
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   # can have the dangerous `Expr` node which is the whole

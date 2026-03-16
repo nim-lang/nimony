@@ -419,8 +419,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     result = typeOfField(c, objType, fld)
     if cursorIsNil(result):
       if pool.syms[fld] == VTableField:
-        # VTableField is a magic internal field for RTTI - treat as pointer type
-        result = c.builtins.cstringType
+        # VTableField is a magic internal field for RTTI
+        result = c.builtins.vtableType
       elif pool.syms[fld] == DataField and
             obj.exprKind in {DerefX, HderefX}:
         inc obj
@@ -456,6 +456,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         break
     if typeKind(result) in {RefT, PtrT, MutT, OutT, LentT}:
       inc result
+    elif typeKind(result) == CstringT:
+      result = c.builtins.charType
     else:
       assert false, "cannot deref type: " & toString(result, false)
       result = c.builtins.autoType # still an error

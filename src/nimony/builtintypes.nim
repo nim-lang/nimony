@@ -18,6 +18,7 @@ type
     emptyTupleType*: Cursor
     untypedType*: Cursor
     cstringType*: Cursor
+    vtableType*: Cursor # UncheckedArray[pointer]
 
 proc tagToken(tag: string; info: PackedLineInfo = NoLineInfo): PackedToken {.inline.} =
   parLeToken(pool.tags.getOrIncl(tag), info)
@@ -96,6 +97,14 @@ proc createBuiltinTypes*(): BuiltinTypes =
   result.mem.add tagToken"cstring" # 55
   result.mem.addParRi() # 56
 
+  # UncheckedArray[pointer] = (uarray (ptr (void)))
+  result.mem.add tagToken"uarray" # 57
+  result.mem.add tagToken"ptr" # 58
+  result.mem.add tagToken"void" # 59
+  result.mem.addParRi() # 60 close void
+  result.mem.addParRi() # 61 close ptr
+  result.mem.addParRi() # 62 close uarray
+
   result.mem.freeze()
 
   result.autoType = result.mem.cursorAt(0)
@@ -120,6 +129,7 @@ proc createBuiltinTypes*(): BuiltinTypes =
   result.emptyTupleType = result.mem.cursorAt(51)
   result.untypedType = result.mem.cursorAt(53)
   result.cstringType = result.mem.cursorAt(55)
+  result.vtableType = result.mem.cursorAt(57)
 
 proc isStringType*(a: Cursor): bool {.inline.} =
   result = a.kind == Symbol and a.symId == pool.syms.getOrIncl(StringName)

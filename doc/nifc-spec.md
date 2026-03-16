@@ -288,10 +288,8 @@ Notes:
   It is used for generic procs so that only one generic instances remains in the
   final executable file.
 - `attr "abc"` annotates a symbol with `__attribute__(abc)`.
-- `cast` is a bit preserving type cast implemented via `memcpy`. It must only be used
-  in a `var` statement's initializer, e.g. `(var :x . (f +64) (cast (f +64) srcSym))`.
-  Later versions will enforce this restriction. The source operand must be a symbol,
-  not a complex expression.
+- `cast` is mapped to a C type cast. Bit reinterpretation casts (e.g. `int` to `float`)
+  are lowered to `copyMem` calls before reaching NIFC.
 - `conv` is a value preserving type conversion between numeric types.
 - `array` is mapped to a struct with an array inside so that arrays gain value semantics.
   Hence arrays can only be used within a `type` environment and are nominal types.

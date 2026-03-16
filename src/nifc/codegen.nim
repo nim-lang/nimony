@@ -481,33 +481,6 @@ proc genVarInitValue(c: var GeneratedCode; n: var Cursor) =
     genx c, n
     c.add Semicolon
 
-proc genCastVarInit(c: var GeneratedCode; castNode: var Cursor; varName: string) =
-  ## Generate memcpy for: (var x DstType (cast DstType srcSym))
-  ## Produces: memcpy(&x, &srcSym, sizeof(DstType));
-  ## xelim's LowerCasts mode ensures srcSym is always a Symbol.
-  inclHeader c, pool.strings.getOrIncl("<string.h>")
-  inc castNode # skip "cast"
-  var destType = castNode
-  skip castNode # skip dest type
-  let srcName = mangleSym(c, castNode.symId)
-  inc castNode
-  skipParRi castNode
-  c.add "memcpy"
-  c.add ParLe
-  c.add Amp
-  c.add varName
-  c.add Comma
-  c.add Amp
-  c.add srcName
-  c.add Comma
-  c.add "sizeof"
-  c.add ParLe
-  var dt = destType
-  genType c, dt
-  c.add ParRi
-  c.add ParRi
-  c.add Semicolon
-
 proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false; useStatic = false) =
   genCLineDir(c, info(n))
   var d = takeVarDecl(n)
@@ -530,21 +503,9 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
     let beforeInit = c.code.len
 
     var value = d.value
-    var mustMoveToInit = (vk == IsGlobal and not isLiteral(value))
+    let mustMoveToInit = (vk == IsGlobal and not isLiteral(value))
     if toExtern:
       c.add Semicolon
-    elif d.value.exprKind == CastC:
-      c.add Semicolon
-      if mustMoveToInit:
-        # Generate memcpy directly into init section for global vars
-        let savedCode = c.code.len
-        genCastVarInit c, d.value, name
-        for i in savedCode ..< c.code.len:
-          c.init.add c.code[i]
-        setLen c.code, savedCode
-        mustMoveToInit = false
-      else:
-        genCastVarInit c, d.value, name
     else:
       if vk != IsLocal and not mustMoveToInit: c.objConstrNeedsType = false
       genVarInitValue c, d.value
