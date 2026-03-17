@@ -882,11 +882,14 @@ proc compileStmtSeq(c: var Context; dest: var TokenBuf; n: var Cursor; continueS
         dest.addParRi() # close proc decl
         newLocalProc c, dest, splitState, sym
         inc c.currentProc.subProcs
-        # Emit rest-of-then into new state proc
+        # Emit rest-of-then into new state proc.
+        # The label at restOfThen's starting position equals splitState (already consumed
+        # by newLocalProc above). Delete it so the recursive compileStmtSeq call doesn't
+        # re-open the same state proc.
         var thenN = restOfThen
-        while thenN.kind != ParRi:
-          tr c, dest, thenN
-        # Emit tail again into new state proc
+        c.currentProc.labels.del(cursorToPosition(c.currentProc.cf, thenN))
+        compileStmtSeq c, dest, thenN, continueState
+        # Emit tail again into the last state proc opened during thenN processing
         var tailN = tailStart
         emitTailStmts c, dest, tailN, continueState
         # Advance n past the tail (already emitted above)
