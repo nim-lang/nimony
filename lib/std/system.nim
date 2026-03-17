@@ -226,6 +226,7 @@ type
     env*: ptr CoroutineBase
   CoroutineBase* = object of RootObj
     caller*: Continuation
+    callee*: ptr CoroutineBase
 
 method cancel*(coro: ptr CoroutineBase) =
   discard "to override"
@@ -410,3 +411,14 @@ type
 
 proc typeof*(x: untyped; mode = typeOfIter): typedesc {.magic: TypeOf.}
   ## Builtin `typeof` operation for accessing the type of an expression.
+
+proc allocFrame*(size: int): ptr CoroutineBase =
+  ## Allocates a new coroutine frame of the given size on the heap.
+  result = cast[ptr CoroutineBase](alloc(size))
+
+proc deallocFrame*(frame: ptr CoroutineBase) =
+  ## Frees a coroutine frame previously allocated by `allocFrame`.
+  ## Stack-allocated frames (called from non-passive context with nil caller)
+  ## have `callee == nil` or `caller.fn == nil` and are not freed.
+  if frame.callee != nil and frame.caller.fn != nil:
+    dealloc(frame)

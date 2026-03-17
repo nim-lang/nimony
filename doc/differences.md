@@ -46,8 +46,6 @@ The first pre-release of Nimony misses lots of things but might be useful for yo
 Nimony currently lacks these features:
 
 - Builtin pattern matching.
-- `.passive` procs that are based on continuations.
-- Cyclic module dependencies have not been implemented.
 - An exception handling system that is compatible with Nim's. Instead Nimony uses its own based on an `ErrorCode` enum.
 - Nimony does not check `range` subtypes and treats a `range` type like its underlying base type. For example `range[0..10]` is treated as `int`.
 - Nim's effect system:
@@ -60,7 +58,5 @@ Nimony currently lacks these features:
 # Open questions (the ugly)
 
 Nimony is case sensitive. It is unclear at this point if Nim 3 should keep Nim 2's partial case sensitivity as in my experience this feature didn't pull its weight: Libraries can still use wildly different styles like routines using UpperCase and partial case sensitivity doesn't help. Enforcing the style via the compiler seems to work better.
-
-Like Nim 2, Nimony compiles the code via a C compiler. An LLVM based backend is in development but it's unclear which path to embrace officially.
 
 Implicit generics where routines can leave out the `[T]` section but instead are generic as they use a type class such as `SomeInt` are not supported in Nimony and it is unclear if they should be supported by Nim 3.
