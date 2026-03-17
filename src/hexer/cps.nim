@@ -35,6 +35,9 @@ into:
     this[] = ItCoroutine(x: x, i: 0, dest: dest, caller: caller)
     return itStart(this)
 
+Callee frames are heap-allocated via `allocFrame(sizeof(ItCoroutine))` and freed by the
+callee via `deallocFrame` before returning. This supports recursion since each call gets
+its own heap frame rather than being inlined into the caller's frame.
 
 1. Compile the AST/NIF to a CFG with goto instructions (src/nimony/controlflow does that already). Pay special
    attention that no implicit fall-through remains for code like (if cond: a); b().
@@ -53,13 +56,10 @@ Becomes:
   const StopContinuation = Continuation(fn: nil, env: nil)
 
   var forLoopVar: int
-  var itCoroutine: ItCoroutine
-  var it = createItCoroutine(addr itCoroutine, 10, addr forLoopVar, StopContinuation)
+  var it = createItCoroutine(cast[ptr ItCoroutine](allocFrame(sizeof(ItCoroutine))), 10, addr forLoopVar, StopContinuation)
   while it.fn != nil:
-    if it.env == addr itCoroutine:
-      echo forLoopVar
+    echo forLoopVar
     it = scheduler.tick it
-    #it.fn(it.env)
 
 ]##
 
@@ -110,9 +110,12 @@ const
   FnFieldName = "fn.0"
   EnvFieldName = "env.0"
   CallerFieldName = "caller.0"
+  CalleeFieldName = "callee.0"
   ResultParamName = "`result.0"
   ResultFieldName = "`result.0"
   CallerParamName = "`caller.0"
+  AllocFrameProcName = "allocFrame.0." & SystemModuleSuffix
+  DeallocFrameProcName = "deallocFrame.0." & SystemModuleSuffix
 
 type
   EnvField = object
@@ -190,6 +193,55 @@ proc contNextState(c: var Context; dest: var TokenBuf; state: int; info: PackedL
           dest.addSymUse pool.syms.getOrIncl(RootObjName), info
         dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
 
+proc emitAllocFrame(c: var Context; dest: var TokenBuf; calleeSym: SymId; info: PackedLineInfo) =
+  ## Emit: cast[ptr CalleeCoroutine](allocFrame(sizeof(CalleeCoroutine)))
+  dest.copyIntoKind CastX, info:
+    dest.copyIntoKind PtrT, info:
+      dest.addSymUse coroTypeForProc(c, calleeSym), info
+    dest.copyIntoKind CallX, info:
+      dest.addSymUse pool.syms.getOrIncl(AllocFrameProcName), info
+      dest.copyIntoKind SizeofX, info:
+        dest.addSymUse coroTypeForProc(c, calleeSym), info
+
+proc emitDeallocFrame(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
+  ## Emit: deallocFrame(cast[ptr CoroutineBase](this))
+  dest.copyIntoKind CallS, info:
+    dest.addSymUse pool.syms.getOrIncl(DeallocFrameProcName), info
+    dest.copyIntoKind CastX, info:
+      dest.copyIntoKind PtrT, info:
+        dest.addSymUse pool.syms.getOrIncl(RootObjName), info
+      dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+
+proc emitFinalReturn(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
+  ## Emit: save caller, deallocFrame, return saved caller.
+  ## Used when the coroutine completes (not for intermediate state transitions).
+  let tmpVar = pool.syms.getOrIncl("`tmpCaller." & $c.currentProc.counter)
+  inc c.currentProc.counter
+  dest.copyIntoKind VarS, info:
+    dest.addSymDef tmpVar, info
+    dest.addDotToken() # exported
+    dest.addDotToken() # pragmas
+    dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+    dest.copyIntoKind DotX, info:
+      dest.copyIntoKind DerefX, info:
+        dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+      dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
+      dest.addIntLit 1, info # field is in superclass
+  emitDeallocFrame(c, dest, info)
+  dest.copyIntoKind RetS, info:
+    dest.addSymUse tmpVar, info
+
+proc emitStackFrameTag(c: var Context; dest: var TokenBuf; coroVar: SymId; info: PackedLineInfo) =
+  ## Emit: coroVar.callee = nil
+  ## Marks the frame as stack-allocated so deallocFrame is a nop.
+  ## (The constructor sets callee = this; overriding it to nil signals "don't free".)
+  dest.copyIntoKind AsgnS, info:
+    dest.copyIntoKind DotX, info:
+      dest.addSymUse coroVar, info
+      dest.addSymUse pool.syms.getOrIncl(CalleeFieldName), info
+      dest.addIntLit 1, info # field is in superclass
+    dest.addParPair NilX, info
+
 proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId; target: Cursor;
                    inhibitComplete = false) =
   let retType = getType(c.typeCache, n)
@@ -199,60 +251,83 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
   case c.currentProc.kind
   of IsNormal:
     # passive call from within a normal proc:
-    #[
-    var res: int
-    var itCoroutine: ItCoroutine
-    complete createItCoroutine(addr itCoroutine, 10, addr res, StopContinuation)
-    # we know afterwards the result is available
-    ]#
     let info = n.info
     if inhibitComplete:
+      # Use heap allocation (callee deallocates):
       dest.addParLe ExprX, info
       dest.addParLe StmtsS, info
-    # declare coroutine variable:
-    let coroVar = pool.syms.getOrIncl("`coroVar." & $c.currentProc.counter)
-    inc c.currentProc.counter
-    copyIntoKind dest, VarS, info:
-      dest.addSymDef coroVar, info
-      dest.addDotToken() # exported
-      dest.addDotToken() # pragmas
-      dest.addSymUse coroTypeForProc(c, sym), info
-      dest.addDotToken() # default value
-
-    if inhibitComplete:
       dest.addParRi() # StmtsS
+      copyIntoKind dest, CallS, info:
+        dest.addSymUse sym, info
+        emitAllocFrame(c, dest, sym, info)
+        inc n
+        skip n # fn already handled
+        while n.kind != ParRi:
+          tr(c, dest, n)
+        inc n
+        if hasResult:
+          dest.copyIntoKind AddrX, info:
+            dest.copyTree target
+        # add StopContinuation:
+        dest.copyIntoKind OconstrX, info:
+          dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+          dest.copyIntoKind KvU, info:
+            dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
+            dest.addParPair NilX, info
+          dest.copyIntoKind KvU, info:
+            dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
+            dest.addParPair NilX, info
+      dest.addParRi() # ExprX
     else:
-      dest.addParLe CallS, info
-      dest.addSymUse pool.syms.getOrIncl("complete.0." & SystemModuleSuffix), info
-
-    # emit constructor call:
-    copyIntoKind dest, CallS, info:
-      dest.addSymUse sym, info
-      dest.copyIntoKind AddrX, info:
-        dest.addSymUse coroVar, info
-      inc n
-      skip n # fn already handled
-      while n.kind != ParRi:
-        tr(c, dest, n)
-      inc n
-      if hasResult:
-        dest.copyIntoKind AddrX, info:
-          dest.copyTree target
-      # add StopContinuation:
-      dest.copyIntoKind OconstrX, info:
+      # Stack-allocate the callee's frame (statically known callee).
+      # Tag callee.callee with bit 0 so deallocFrame is a nop.
+      let coroVar = pool.syms.getOrIncl("`coroVar." & $c.currentProc.counter)
+      inc c.currentProc.counter
+      copyIntoKind dest, VarS, info:
+        dest.addSymDef coroVar, info
+        dest.addDotToken() # exported
+        dest.addDotToken() # pragmas
+        dest.addSymUse coroTypeForProc(c, sym), info
+        dest.addDotToken() # default value
+      let contVar = pool.syms.getOrIncl("`contVar." & $c.currentProc.counter)
+      inc c.currentProc.counter
+      copyIntoKind dest, VarS, info:
+        dest.addSymDef contVar, info
+        dest.addDotToken() # exported
+        dest.addDotToken() # pragmas
         dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
-        dest.copyIntoKind KvU, info:
-          dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
-          dest.addParPair NilX, info
-        dest.copyIntoKind KvU, info:
-          dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
-          dest.addParPair NilX, info
-    dest.addParRi() # ExprX or CallS
+        # constructor call as initializer:
+        copyIntoKind dest, CallS, info:
+          dest.addSymUse sym, info
+          dest.copyIntoKind AddrX, info:
+            dest.addSymUse coroVar, info
+          inc n
+          skip n # fn already handled
+          while n.kind != ParRi:
+            tr(c, dest, n)
+          inc n
+          if hasResult:
+            dest.copyIntoKind AddrX, info:
+              dest.copyTree target
+          # add StopContinuation:
+          dest.copyIntoKind OconstrX, info:
+            dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+            dest.copyIntoKind KvU, info:
+              dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
+              dest.addParPair NilX, info
+            dest.copyIntoKind KvU, info:
+              dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
+              dest.addParPair NilX, info
+      # Tag as stack-allocated:
+      emitStackFrameTag(c, dest, coroVar, info)
+      # complete(contVar):
+      dest.copyIntoKind CallS, info:
+        dest.addSymUse pool.syms.getOrIncl("complete.0." & SystemModuleSuffix), info
+        dest.addSymUse contVar, info
   of IsIterator, IsPassive:
     # passive call from within a passive proc:
-    # We use a single stackframe variable that acts as a union storage
-    # for all the different passive calls that might happen.
-    # We need to generate code that is very close to a `yield` statement:
+    # The callee's frame is heap-allocated via allocFrame; the callee
+    # frees it via deallocFrame before returning. This supports recursion.
     # target = call fn, args
     # -->
     # return fnConstructor(addr this.frame, args, addr target, Continuation(nextState, this))
@@ -260,23 +335,6 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
     let state = c.currentProc.yieldConts.getOrDefault(pos, -1)
     assert state != -1
     let info = n.info
-
-    let field: SymId
-    # We use the caller `fn` as the key here so that at least the storage is
-    # shared between all passive calls to the same function.
-    # TODO: We should use some untyped storage here!
-    if not c.currentProc.localToEnv.hasKey(sym):
-      let coroVar = pool.syms.getOrIncl("`coroVar." & $c.currentProc.counter)
-      inc c.currentProc.counter
-      field = localToFieldname(c, coroVar)
-      c.currentProc.localToEnv[sym] = EnvField(
-        objType: coroTypeForProc(c, c.procStack[^1]),
-        field: field,
-        typeAsSym: coroTypeForProc(c, sym),
-        def: -1,
-        use: 0)
-    else:
-      field = c.currentProc.localToEnv[sym].field
 
     var contVar = SymId(0)
     if not inhibitComplete:
@@ -292,15 +350,10 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
       dest.addDotToken() # pragmas
       dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
 
-    # value: emit constructor call:
+    # value: emit constructor call with heap-allocated frame:
     copyIntoKind dest, CallS, info:
       dest.addSymUse sym, info
-
-      dest.copyIntoKind AddrX, info:
-        dest.copyIntoKind DotX, info:
-          dest.copyIntoKind DerefX, info:
-            dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
-          dest.addSymUse field, info
+      emitAllocFrame(c, dest, sym, info)
 
       inc n
       skip n # fn already handled
@@ -336,22 +389,10 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let sym = n.symId
     inc n    # skip fn symbol
     # Create a child coroutine and return it as a Continuation without yielding.
-    # Always use the IsNormal+inhibitComplete strategy regardless of proc kind.
-    dest.addParLe ExprX, info
-    dest.addParLe StmtsS, info
-    let coroVar = pool.syms.getOrIncl("`coroVar." & $c.currentProc.counter)
-    inc c.currentProc.counter
-    copyIntoKind dest, VarS, info:
-      dest.addSymDef coroVar, info
-      dest.addDotToken()  # exported
-      dest.addDotToken()  # pragmas
-      dest.addSymUse coroTypeForProc(c, sym), info
-      dest.addDotToken()  # default value
-    dest.addParRi()  # StmtsS
+    # The callee's frame is heap-allocated via allocFrame.
     copyIntoKind dest, CallS, info:
       dest.addSymUse sym, info
-      dest.copyIntoKind AddrX, info:
-        dest.addSymUse coroVar, info
+      emitAllocFrame(c, dest, sym, info)
       while n.kind != ParRi:
         tr(c, dest, n)
       # Pass StopContinuation as the caller so the child doesn't resume anyone on finish.
@@ -363,7 +404,6 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.copyIntoKind KvU, info:
           dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
           dest.addParPair NilX, info
-    dest.addParRi()  # ExprX
     skipParRi n  # skip ParRi of delay
   else:
     dest.copyIntoKind ErrT, info:
@@ -542,16 +582,25 @@ proc emitReturnCaller(c: var Context; dest: var TokenBuf; info: PackedLineInfo) 
 proc trReturn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # return/raise x -->
   # this.res[] = x
-  # return/raise this.caller
+  # var tmpCaller = this.caller; deallocFrame(this); return/raise tmpCaller
   let head = n.load()
   let info = head.info
   returnValue(c, dest, n, info)
+  let tmpVar = pool.syms.getOrIncl("`tmpCaller." & $c.currentProc.counter)
+  inc c.currentProc.counter
+  dest.copyIntoKind VarS, info:
+    dest.addSymDef tmpVar, info
+    dest.addDotToken() # exported
+    dest.addDotToken() # pragmas
+    dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+    dest.copyIntoKind DotX, info:
+      dest.copyIntoKind DerefX, info:
+        dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+      dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
+      dest.addIntLit 1, info # field is in superclass
+  emitDeallocFrame(c, dest, info)
   dest.add head
-  dest.copyIntoKind DotX, info:
-    dest.copyIntoKind DerefX, info:
-      dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
-    dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
-    dest.addIntLit 1, info # field is in superclass
+  dest.addSymUse tmpVar, info
   dest.addParRi()
 
 proc escapingLocals(c: var Context; n: Cursor) =
@@ -767,12 +816,7 @@ proc trLoop(c: var Context; dest: var TokenBuf; n: var Cursor) =
             gotoNextState c, dest, afterLoopState, info
           else:
             # Loop is the last statement; end iterator/passive proc
-            dest.copyIntoKind RetS, info:
-              dest.copyIntoKind DotX, info:
-                dest.copyIntoKind DerefX, info:
-                  dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
-                dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
-                dest.addIntLit 1, info
+            emitReturnCaller(c, dest, info)
 
     # stmts_body: compile with state splits, passing loopState as continueState
     assert n.stmtKind == StmtsS
@@ -1072,6 +1116,15 @@ proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId;
       init.addSymUse pool.syms.getOrIncl(CallerFieldName), info
       init.addSymUse pool.syms.getOrIncl(CallerParamName), info
       init.addIntLit 1, info # field is in superclass
+    # Set callee = this so deallocFrame knows this is a heap-allocated frame.
+    # Stack-allocated frames override this to nil after construction.
+    init.copyIntoKind KvU, info:
+      init.addSymUse pool.syms.getOrIncl(CalleeFieldName), info
+      init.copyIntoKind CastX, info:
+        init.copyIntoKind PtrT, info:
+          init.addSymUse pool.syms.getOrIncl(RootObjName), info
+        init.addSymUse thisParam, info
+      init.addIntLit 1, info # field is in superclass
 
   init.addParRi() # object constructor
   init.addParRi() # assignment
@@ -1112,8 +1165,8 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
   if isConcrete and isCoroutine:
     treIteratorBody(c, dest, init, iter, sym)
     skip n # we used the body from the control flow graph
-    # Emit implicit return of caller continuation at the end of the entry proc
-    emitReturnCaller(c, dest, NoLineInfo)
+    # Emit implicit final return: deallocFrame + return caller
+    emitFinalReturn(c, dest, NoLineInfo)
     dest.addParRi() # stmts
   else:
     takeTree dest, n
