@@ -949,7 +949,7 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
           loopStack.add(LoopEntry(pos: pos, depth: depth))
         let sk = scan.stmtKind
         let ek = scan.exprKind
-        if sk == YldS or (ek in CallKinds and isPassiveCall(c, c.currentProc.cf[pos+1])) or
+        if sk == YldS or (ek in CallKinds - {DelayX} and isPassiveCall(c, c.currentProc.cf[pos+1])) or
             ek == Delay0X:
           # Mark all enclosing loops as containing a suspension point
           for i in 0..<loopStack.len:

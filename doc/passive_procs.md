@@ -226,6 +226,104 @@ only runs when the scheduler resumes it. This means:
 - **Composable with IO**: A spawned task can call `ioWait`, `readLine`, etc. The scheduler
   manages both compute tasks and IO-blocked tasks uniformly.
 
+
+## Frame Lifetime and Heap vs Stack Allocation
+
+Every passive proc's coroutine environment (`FooCoroutine`) is either heap-allocated or
+stack-allocated depending on the calling context.
+
+### Passive-to-passive calls (heap)
+
+When a passive proc calls another passive proc, the callee's environment is allocated with
+`allocFrame` (heap). The generated init function stores a self-pointer in the `callee` field
+of `CoroutineBase` during initialization. When the callee finishes its final state function,
+it calls `deallocFrame`:
+
+```nim
+proc deallocFrame*(frame: ptr CoroutineBase) =
+  if frame.callee != nil and frame.caller.fn != nil:
+    dealloc(frame)
+```
+
+Both conditions must hold:
+- `callee != nil` — the frame is heap-allocated (set to `self` during init).
+- `caller.fn != nil` — the frame was invoked with a real continuation (passive-to-passive),
+  not from a non-passive caller with a nil stop-continuation.
+
+### Non-passive calls (stack)
+
+When non-passive code calls a passive proc, the compiler generates a local stack variable for
+the environment, passes its address to the init function, and then drives the passive call to
+completion via `complete()`:
+
+```nim
+var coroVar: FooCoroutine   # on the caller's C stack
+let contVar = foo(addr coroVar, args, stopContinuation)
+complete(contVar)
+```
+
+The `stopContinuation` passed as `caller` has `fn == nil`. When the passive proc eventually
+reaches `deallocFrame`, the `caller.fn != nil` check is false — so the stack frame is left
+alone, as it must be.
+
+This means:
+- A passive proc that runs to completion entirely inside its init function (no suspension
+  points) calls `deallocFrame` inline. The nil-caller check makes this a no-op for the
+  stack-allocated frame — no double-free or invalid-free.
+- A passive proc that suspends returns to the trampoline before reaching `deallocFrame`.
+  The `complete()` loop eventually calls the final state function, which calls `deallocFrame`
+  — again a no-op for the stack frame (the nil-caller check still holds).
+
+### The `callee` field
+
+`CoroutineBase.callee` serves two purposes: it is a self-pointer in heap-allocated frames
+(enabling `deallocFrame` to detect them), and it is reserved for future cancellation support
+to walk the chain of active coroutines.
+
+## Return Values
+
+Non-void passive procs pass their return value through a pointer parameter. The caller
+allocates a field for the result in its own coroutine environment and passes `addr` to that
+field when invoking the callee.
+
+For example, `proc io2(): int {.passive.}` is compiled as:
+
+```nim
+# Generated init function for io2
+proc io2_0(this: ptr Io2Coro; result: ptr int; caller: Continuation): Continuation =
+  this[] = Io2Coro(vt: addr io2Vt, resultPtr: result,
+                   caller: caller, callee: cast[ptr CoroutineBase](this))
+  this.resultPtr[] = 0   # return 0
+  let tmpCaller = this.caller
+  deallocFrame(cast[ptr CoroutineBase](this))
+  return tmpCaller
+```
+
+The `result` pointer is stored in the coro struct so that state functions generated for
+suspension points can also write to it. On the calling side, `main2` stores the return value
+in a lifted field of its own coro struct and reads it after the callee completes:
+
+```nim
+# Generated init function for main2
+proc main2_0(this: ptr Main2Coro; caller: Continuation): Continuation =
+  # ...
+  let contVar = io2_0(
+    cast[ptr Io2Coro](allocFrame(sizeof Io2Coro)),
+    addr this.x,                              # result pointer into main2's coro struct
+    Continuation(fn: main2_s1, env: cast[ptr CoroutineBase](this)))  # resume when done
+  return contVar
+
+# State function: runs after io2 completes
+proc main2_s1(this: ptr Main2Coro): Continuation =
+  # this.x is now populated by io2
+  echo this.x
+  # ...
+```
+
+This eliminates any need for dynamic allocation to return values across suspension points.
+The result lives in the caller's already-heap-allocated environment and is valid as long as
+the caller is alive.
+
 ## Design Properties
 
 - **No colored functions**: Passive procs can call regular procs freely. Regular procs

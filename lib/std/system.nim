@@ -418,6 +418,7 @@ proc allocFrame*(size: int): ptr CoroutineBase =
 
 proc deallocFrame*(frame: ptr CoroutineBase) =
   ## Frees a coroutine frame previously allocated by `allocFrame`.
-  ## Stack-allocated frames have `callee == nil` and are not freed.
-  if frame.callee != nil:
+  ## Stack-allocated frames (called from non-passive context with nil caller)
+  ## have `callee == nil` or `caller.fn == nil` and are not freed.
+  if frame.callee != nil and frame.caller.fn != nil:
     dealloc(frame)
