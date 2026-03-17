@@ -7,15 +7,15 @@
 #    distribution, for details about the copyright.
 #
 
-import std / [hashes, os, tables, sets, assertions]
+import std / [hashes, os, tables, assertions]
 
 include nifprelude
 import symparser
 import ".." / models / tags
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof,
-  typeprops, langmodes, typekeys, sigmatch]
+  typeprops, langmodes, typekeys]
 import hexer_context, pipeline, dce1, lifter
-import  ".." / lib / [stringtrees, treemangler]
+import  ".." / lib / [stringtrees]
 
 proc skipExportMarker(c: var EContext; n: var Cursor) =
   if n.kind == DotToken:
@@ -331,43 +331,12 @@ proc trRefBody(c: var EContext; n: var Cursor; key: string) =
 
   c.dest.addParRi() # "object"
 
-proc takeMangleProctype(c: var EContext; n: var Cursor): string =
-  inc n
-  # name, export marker, pattern, type vars:
-  for i in 0..<ParamsPos: skip n
-
-  var b = createMangler(60)
-  if n.kind != DotToken:
-    inc n # params tag
-    while n.kind != ParRi:
-      let pa = takeLocal(n, SkipFinalParRi)
-      assert pa.kind == ParamY
-      mangle b, pa.typ, Backend
-  inc n # DotToken or ParRi
-  # also add return type:
-  mangle b, n, Backend
-  skip n
-  # handle pragmas:
-  let props = extractProcProps(n)
-  b.addKeyw $props.cc
-  b.addKeyw $props.usesRaises
-  b.addKeyw $props.usesClosure
-  result = b.extract()
-  if n.kind != ParRi:
-    skip n # effects
-    if n.kind != ParRi:
-      skip n # body
-  skipParRi c, n
-
 proc trAsNamedType(c: var EContext; n: var Cursor) =
   let info = n.info
   var body = n
   let k = body.typeKind
   let key: string
-  if k in RoutineTypes:
-    key = takeMangleProctype(c, n)
-  else:
-    key = takeMangle(n, Backend, c.bits)
+  key = takeMangle(n, Backend, c.bits)
 
   var val = c.newTypes.getOrDefault(key)
   if val == SymId(0):
