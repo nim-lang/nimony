@@ -513,7 +513,6 @@ proc trLocal(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
   takeTree dest, n # export marker
   takeTree dest, n # pragmas
   c.typeCache.registerLocal(symId, kind, n)
-  let localType = n # save cursor at the type position before advancing
   takeTree dest, n # type
 
   # Record first argument of call inits for borrow tracking (used by trFor):
@@ -529,17 +528,9 @@ proc trLocal(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
   let info = n.info
   let callInfo = trBoundExpr(c, dest, n)
   skipParRi n
-  # After eraiser, void+raises calls are wrapped as
-  #   (cursor :canRaise.0 ErrorCode (call voidRaisesProc ...))
-  # with an explicit `if (failed canRaise.0) raise` following.
-  # The ErrorCode return type makes callInfo.mode look like TupleRaise, but it's
-  # not a tuple — eraiser already injected the check. Use NoRaise in that case.
-  let effectiveMode =
-    if c.raisesResolved and localType.kind == Symbol and
-        localType.symId == pool.syms.getOrIncl(ErrorCodeName):
-      NoRaise
-    else:
-      callInfo.mode
+  # After eraiser, every raiseable local init already has an explicit
+  # `if (failed x): raise x` injected after it, so NJ must not add another check.
+  let effectiveMode = if c.raisesResolved: NoRaise else: callInfo.mode
   case effectiveMode
   of NoRaise:
     dest.addParRi()
