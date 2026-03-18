@@ -906,7 +906,7 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   wrapper.copyTree iter
   wrapper.addParRi()
   var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "eliminateJumps", 0)
-  eliminateJumps(pass)
+  eliminateJumps(pass, raisesResolved = true)
   when defined(logPasses):
     echo "NJ OUTPUT: ", pass.dest.toString(false)
   # pass.dest is (stmts cfvar_decls... (proc header body_stmts) ...).

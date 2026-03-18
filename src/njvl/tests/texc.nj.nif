@@ -38,8 +38,7 @@
     (stmts
      (jtrue ´g.1))
     (stmts))
-   (ite
-    (neq ´err.2 Success.0.sysvq0asl)
+   (ite ´err.2
     (stmts
      (jtrue ´g.1)) .)
    (kill ´r.0 ´g.1)))
