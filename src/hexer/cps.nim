@@ -139,6 +139,7 @@ type
     counter: int
     subProcs: int  ## number of sub-state procs opened so far
     kind: RoutineKind
+    lastStmtReturns: bool  ## true if the last statement generated a return (e.g., suspend)
 
   Context = object
     counter: int
@@ -404,6 +405,7 @@ proc trSuspend(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.copyIntoKind KvU, info:
         dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
         dest.addParPair NilX, info
+  c.currentProc.lastStmtReturns = true
 
 proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Handles (delay fn args) — fn-args form; typenav returns Continuation for DelayX.
@@ -873,11 +875,15 @@ proc compileStmtSeq(c: var Context; dest: var TokenBuf; n: var Cursor; continueS
     let p = cursorToPosition(c.currentProc.cf, n)
     let state = c.currentProc.labels.getOrDefault(p, -1)
     if state != -1:
-      if c.currentProc.subProcs == 0:
-        gotoNextState(c, dest, state, n.info)
-      else:
-        # State procs that fall through to the next state need a return caller
-        emitReturnCaller(c, dest, n.info)
+      # Skip adding goto/return if the previous statement already returned (e.g., suspend).
+      # The suspend's return Continuation(nil, nil) is the terminal return for this state.
+      if not c.currentProc.lastStmtReturns:
+        if c.currentProc.subProcs == 0:
+          gotoNextState(c, dest, state, n.info)
+        else:
+          # State procs that fall through to the next state need a return caller
+          emitReturnCaller(c, dest, n.info)
+      c.currentProc.lastStmtReturns = false
       dest.addParRi() # close stmts
       dest.addParRi() # close proc decl
       newLocalProc c, dest, state, sym
@@ -890,6 +896,9 @@ proc compileStmtSeq(c: var Context; dest: var TokenBuf; n: var Cursor; continueS
     else:
       c.inlineContState = -1
       tr c, dest, n
+      # Reset the flag after processing a statement (unless it was a suspend which sets it)
+      if not c.currentProc.lastStmtReturns:
+        discard
       if c.inlineContState >= 0:
         # A passive call split happened inside a nested ite branch:
         # c.inlineContState = the new continuation state
