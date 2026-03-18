@@ -221,7 +221,7 @@ proc tryCloseDir*(w: var DirWalker): ErrorCode =
 
 iterator walkDir*(dir: Path,
                   relative = false,
-                  checkDir = false): tuple[kind: PathComponent, path: Path] {.raises.} =
+                  checkDir = false): tuple[kind: PathComponent, path: Path] {.raises, sideEffect.} =
   ## Walks over all entries in the directory `dir`.
   ##
   ## Yields tuples of `(kind, path)` where `kind` is one of:

@@ -5,9 +5,9 @@ type
     a: ptr UncheckedArray[T]
     len: int
 
-proc `[]`*[T](x: openArray[T]; idx: int): var T {.inline, requires: idx >= 0 and idx < x.len.} = x.a[idx]
+func `[]`*[T](x: openArray[T]; idx: int): var T {.inline, requires: idx >= 0 and idx < x.len.} = x.a[idx]
 
-proc `[]=`*[T](x: var openArray[T]; i: int; elem: sink T) {.inline, requires: i >= 0 and i < x.len.} =
+func `[]=`*[T](x: var openArray[T]; i: int; elem: sink T) {.inline, requires: i >= 0 and i < x.len.} =
   (x[i]) = elem
 
 # special cased in compiler as "toOpenArray.0.<system suffix>" for empty array type inference:
@@ -30,7 +30,7 @@ func len*[T](a: openArray[T]): int {.inline.} = a.len
 
 type
   Equatable* = concept
-    proc `==`(a, b: Self): bool
+    func `==`(a, b: Self): bool
 
 func find*[T: Equatable](a: openArray[T]; elem: T): int =
   var i = 0
@@ -48,16 +48,16 @@ iterator items*[T](a: openArray[T]): var T =
     yield a[i]
     inc i
 
-proc `==`*[T: Equatable](a, b: openArray[T]): bool =
+func `==`*[T: Equatable](a, b: openArray[T]): bool =
   if a.len == b.len:
     for i in 0..<a.len:
       if a[i] != b[i]: return false
     return true
   return false
 
-proc toOpenArray*[T](x: ptr UncheckedArray[T]; first, last: int): openArray[T] =
+func toOpenArray*[T](x: ptr UncheckedArray[T]; first, last: int): openArray[T] =
   openArray[T](a: cast[ptr UncheckedArray[T]](cast[uint](x) + uint(first * sizeof(T))), len: last - first + 1)
 
-proc toOpenArray*[T](x: openArray[T]; first, last: int): openArray[T] =
+func toOpenArray*[T](x: openArray[T]; first, last: int): openArray[T] =
   openArray[T](a: cast[ptr UncheckedArray[T]](cast[uint](x.a) + uint(first * sizeof(T))), len: last - first + 1)
 

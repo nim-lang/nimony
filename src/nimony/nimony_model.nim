@@ -319,6 +319,9 @@ type
 proc whichEffect*(k: StmtKind; pragmas: Cursor): Effect =
   if k in {FuncS, IteratorS, ConverterS}:
     result = HasNoSideEffect
+    if hasPragma(pragmas, SideEffectP):
+      # explict override?
+      result = HasSideEffect
   elif hasPragma(pragmas, NoSideEffectP):
     result = HasNoSideEffect
   else:

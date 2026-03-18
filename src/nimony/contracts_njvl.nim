@@ -733,23 +733,26 @@ proc borrowCheckForCall(c: var NjvlContext; args: Cursor; effect: Effect) =
   while n.kind != ParRi:
     let isMut = n.exprKind == HaddrX
     # Validate borrowable path for haddr arguments (call-scoped borrows)
+    var inner = n
+    var b = NotBorrowable
     if isMut:
-      let inner = n.firstSon
+      inner = n.firstSon
       let m = extractPath(c, inner)
       if m.mode == NotBorrowable:
         buildErr c, n.info, "cannot borrow from '" & asNimCode(inner) &
           "': path is not borrowable; use 'addr' to override or a temporary move"
       else:
         mutPaths.add m
+        b = m.mode
     else:
       let m = extractPath(c, n, followInlineVars = false)
-      if m.mode == IsBorrowable:
+      if m.mode in {IsBorrowable, IsBorrowableFromGlobal}:
+        b = m.mode
         immPaths.add m
-      elif m.mode == IsBorrowableFromGlobal and effect == HasNoSideEffect:
-        immPaths.add m
-      else:
-        buildErr c, n.info, "cannot borrow from global or thread-local variable '" & asNimCode(n) &
-          "': use a '.noSideEffect' context or 'addr' or a temporary move to override"
+    if b == IsBorrowableFromGlobal and effect != HasNoSideEffect:
+      buildErr c, n.info, "cannot borrow from global or thread-local variable '" & asNimCode(inner) &
+        "': use a '.noSideEffect' context or 'addr' to override"
+
     skip n
   # Check aliasing: a mutable argument must not overlap with any other argument:
   for i in 0 ..< mutPaths.len:

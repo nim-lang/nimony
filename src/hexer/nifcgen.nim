@@ -738,7 +738,7 @@ proc parsePragmas(c: var EContext; n: var Cursor): CollectedPragmas =
           skipParRi c, n
         of RequiresP, EnsuresP, StringP, RaisesP, ErrorP, AssumeP, AssertP, ReportP,
            TagsP, DeprecatedP, SideEffectP, KeepOverflowFlagP, SemanticsP,
-           BaseP, FinalP, PragmaP, CursorP, PassiveP, PluginP, MethodsP:
+           BaseP, FinalP, PragmaP, CursorP, PassiveP, PluginP, MethodsP, CastP:
           skip n
         of BuildP, EmitP, PushP, PopP, PassLP, PassCP:
           bug "unreachable"

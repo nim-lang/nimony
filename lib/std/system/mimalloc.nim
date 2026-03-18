@@ -27,31 +27,31 @@ type
     # Note: the real C struct continues with counters and more fields, we falsely declare it as .completeStruct
     # for sizeof(MiStatsPrefix) to work.
 
-proc mi_malloc(size: csize_t): pointer {.importc: "mi_malloc", cdecl.}
-proc mi_calloc(nmemb: csize_t, size: csize_t): pointer {.importc: "mi_calloc", cdecl.}
-proc mi_realloc(pt: pointer, size: csize_t): pointer {.importc: "mi_realloc", cdecl.}
-proc mi_free(p: pointer) {.importc: "mi_free", cdecl.}
+func mi_malloc(size: csize_t): pointer {.importc: "mi_malloc", cdecl.}
+func mi_calloc(nmemb: csize_t, size: csize_t): pointer {.importc: "mi_calloc", cdecl.}
+func mi_realloc(pt: pointer, size: csize_t): pointer {.importc: "mi_realloc", cdecl.}
+func mi_free(p: pointer) {.importc: "mi_free", cdecl.}
 
-proc mi_usable_size(p: pointer): csize_t {.importc: "mi_usable_size", cdecl.}
+func mi_usable_size(p: pointer): csize_t {.importc: "mi_usable_size", cdecl.}
 
 proc mi_stats_merge() {.importc: "mi_stats_merge", cdecl.}
-proc mi_stats_get(stats_size: csize_t; stats: ptr MiStatsPrefix) {.importc: "mi_stats_get", cdecl.}
+func mi_stats_get(stats_size: csize_t; stats: ptr MiStatsPrefix) {.importc: "mi_stats_get", cdecl.}
 
 # Optional: OS-level process info (independent of MI_STAT), not used here but handy:
 # proc mi_process_info(elapsed_msecs, user_msecs, system_msecs,
 #                      current_rss, peak_rss, current_commit, peak_commit,
 #                      page_faults: ptr csize_t) {.importc: "mi_process_info", cdecl.}
 
-proc alloc*(size: int): pointer =
+func alloc*(size: int): pointer =
   result = mi_malloc(size.csize_t)
 
-proc realloc*(p: pointer; size: int): pointer =
+func realloc*(p: pointer; size: int): pointer =
   result = mi_realloc(p, size.csize_t)
 
-proc dealloc*(p: pointer) =
+func dealloc*(p: pointer) =
   mi_free(p)
 
-proc allocatedSize*(p: pointer): int =
+func allocatedSize*(p: pointer): int =
   result = int mi_usable_size(p)
 
 proc readStats(): MiStatsPrefix =

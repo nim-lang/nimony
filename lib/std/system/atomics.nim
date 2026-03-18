@@ -23,15 +23,17 @@ var ATOMIC_SEQ_CST* {.importc: "__ATOMIC_SEQ_CST", nodecl.}: AtomMemModel
   ## with acquire loads
   ## and release stores in all threads.
 
-proc atomicAddFetch*[T](p: ptr T, val: T, mem: AtomMemModel): T {.
+func atomicAddFetch*[T](p: ptr T, val: T, mem: AtomMemModel): T {.
   importc: "__atomic_add_fetch", nodecl.}
-proc atomicSubFetch*[T](p: ptr T, val: T, mem: AtomMemModel): T {.
+func atomicSubFetch*[T](p: ptr T, val: T, mem: AtomMemModel): T {.
   importc: "__atomic_sub_fetch", nodecl.}
 
-proc arcInc*(memLoc: var int) {.inline.} =
+func arcInc*(memLoc: var int) {.inline.} =
   ## Atomically increments the integer by some `x`.
-  discard atomicAddFetch(memLoc.addr, 1, ATOMIC_SEQ_CST)
+  {.cast(noSideEffect).}:
+    discard atomicAddFetch(memLoc.addr, 1, ATOMIC_SEQ_CST)
 
-proc arcDec*(memLoc: var int): bool {.inline.} =
+func arcDec*(memLoc: var int): bool {.inline.} =
   ## Atomically decrements the integer by some `x`. It returns the new value.
-  result = atomicSubFetch(memLoc.addr, 1, ATOMIC_SEQ_CST) < 0
+  {.cast(noSideEffect).}:
+    result = atomicSubFetch(memLoc.addr, 1, ATOMIC_SEQ_CST) < 0

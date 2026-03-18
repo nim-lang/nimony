@@ -1506,6 +1506,14 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     else:
       buildErr c, dest, n.info, "expected tags/raises list"
     dest.addParRi()
+  of CastP:
+    dest.add parLeToken(pk, n.info)
+    inc n
+    if hasParRi and n.kind != ParRi:
+      takeTree dest, n
+    else:
+      buildErr c, dest, n.info, "expected `cast` pragma expression"
+    dest.addParRi()
   of RaisesP:
     crucial.flags.incl pk
     let oldLen = dest.len
@@ -4524,6 +4532,14 @@ proc semPragmaLine(c: var SemContext; dest: var TokenBuf; it: var Item; isPragma
       dest.add parLeToken(KeepOverflowFlagP, it.n.info)
       dest.addParRi()
     skip it.n
+  of CastP:
+    if not isPragmaBlock:
+      buildErr c, dest, it.n.info, "`cast` pragma must be used in a pragma block"
+      skip it.n
+    else:
+      dest.add parLeToken(CastP, it.n.info)
+      dest.takeTree it.n
+      dest.addParRi()
   of PluginP:
     dest.add parLeToken(PragmasS, it.n.info)
     dest.add parLeToken(PluginP, it.n.info)

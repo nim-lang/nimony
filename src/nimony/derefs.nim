@@ -475,6 +475,24 @@ proc cannotPassToVar(dest: var TokenBuf; info: PackedLineInfo; arg: Cursor) =
     dest.addSubtree arg
     dest.add strToken(pool.strings.getOrIncl(msg), info)
 
+proc trPragmaBlock(c: var Context; n: var Cursor) =
+  c.dest.takeToken n # pragmax
+  c.dest.takeToken n # pragmas
+  if n.pragmaKind == KeepOverflowFlagP:
+    c.dest.takeTree n # keepOverflowFlag
+    c.dest.takeParRi n # pragmas
+    tr(c, n, WantT)
+  elif n.pragmaKind == CastP:
+    c.dest.takeTree n # cast pragma
+    c.dest.takeParRi n # pragmas
+    let oldNoSideEffect = c.r.isNoSideEffect
+    c.r.isNoSideEffect = false
+    tr(c, n, WantT)
+    c.r.isNoSideEffect = oldNoSideEffect
+  else:
+    bug "unknown pragma block: " & toString(n, false)
+  c.dest.takeParRi n # pragmax
+
 proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   let info = n.info
   let callExpr = n
@@ -488,7 +506,6 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   let calleeKind = tt.stmtKind
   let fnType = skipProcTypeToParams(tt)
   assert fnType.isParamsTag
-  tr c, n, WantT # `fn` part of the call
   var retType = fnType
   skip retType
   var pragmas = retType
@@ -502,6 +519,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
       return
 
   c.dest.add head # (call)
+  tr c, n, WantT # `fn` part of the call
 
   var needHderef = false
   if retType.typeKind in {MutT, LentT}:
@@ -910,6 +928,8 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
     of CallKinds:
       var disallowDangerous = true
       trCall c, n, e, disallowDangerous
+    of PragmaxX:
+      trPragmaBlock c, n
     of DotX, DdotX, AtX, ArrAtX, TupatX, PatX:
       trLocation c, n, e
     of OconstrX, NewobjX:
