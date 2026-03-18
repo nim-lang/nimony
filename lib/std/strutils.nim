@@ -128,12 +128,12 @@ func isEmptyOrWhitespace*(s: string): bool {.inline.} =
   ## Checks if `s` is empty or consists entirely of whitespace characters.
   result = s.allCharsInSet(Whitespace)
 
-proc endsWith*(s: string; c: char): bool {.inline.} =
+func endsWith*(s: string; c: char): bool {.inline.} =
   if s.len > 0: s[s.len-1] == c else: false
 
-proc strlen*(x: cstring): int {.importc: "strlen", header: "<string.h>".}
+func strlen*(x: cstring): int {.importc: "strlen", header: "<string.h>".}
 
-proc `$`*(x: cstring): string =
+func `$`*(x: cstring): string =
   if x == nil:
     result = ""
   else:
@@ -142,7 +142,7 @@ proc `$`*(x: cstring): string =
     for i in 0..<result.len:
       result[i] = x[i]
 
-proc `$`*(x: char): string =
+func `$`*(x: char): string =
   result = newString(1)
   result[0] = x
 
@@ -291,7 +291,7 @@ func endsWith*(s, suffix: string): bool =
     return false
   continuesWith s, suffix, s.len - suffix.len
 
-proc toLowerAscii*(c: char): char {.inline.} =
+func toLowerAscii*(c: char): char {.inline.} =
   ## Returns the lower case version of character `c`.
   ##
   ## This works only for the letters `A-Z`. See `unicode.toLower
@@ -733,7 +733,7 @@ func escape*(s: string, prefix = "\"", suffix = "\""): string =
   ## Both may be empty strings.
   ##
   ## See also:
-  ## * `addEscapedChar proc<system.html#addEscapedChar,string,char>`_
+  ## * `addEscapedChar func<system.html#addEscapedChar,string,char>`_
   ## * `unescape func<#unescape,string,string,string>`_ for the opposite
   ##   operation
   result = newStringOfCap(s.len + s.len shr 2)
@@ -872,7 +872,7 @@ func findNormalized(x: string, inArray: openArray[string]): int =
               # security hole...
   return -1
 
-proc invalidFormatString(formatstr: string) {.noinline, raises.} =
+func invalidFormatString(formatstr: string) {.noinline, raises.} =
   # TODO: Uncomment when exceptions are implemented.
   #raise newException(SyntaxError, "invalid format string: " & formatstr)
   raise SyntaxError

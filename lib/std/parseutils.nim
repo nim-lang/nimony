@@ -11,7 +11,7 @@ const
   IdentStartChars = {'a'..'z', 'A'..'Z', '_'}
     ## copied from strutils
 
-proc toLower(c: char): char {.inline.} =
+func toLower(c: char): char {.inline.} =
   result = if c in {'A'..'Z'}: chr(ord(c)-ord('A')+ord('a')) else: c
 
 proc integerOutOfRangeError() {.noinline, noreturn.} =
@@ -372,7 +372,7 @@ proc parseBiggestFloat*(s: openArray[char]; number: var BiggestFloat): int {.
   t[ti] = '\0'
   number = c_strtod(cast[cstring](addr t), nil)
 
-proc skipIgnoreCase*(s, token: openArray[char]): int =
+func skipIgnoreCase*(s, token: openArray[char]): int =
   ## Same as `skip` but case is ignored for token matching.
   runnableExamples:
     doAssert skipIgnoreCase("CAPlow", "CAP", 0) == 3

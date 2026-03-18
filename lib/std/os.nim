@@ -4,7 +4,7 @@ import posix/posix
 proc c_system(cmd: cstring): cint {.
     importc: "system", header: "<stdlib.h>".}
 
-proc quoteShellWindows*(s: string): string {.noSideEffect.} =
+func quoteShellWindows*(s: string): string {.noSideEffect.} =
   ## Quote `s`, so it can be safely passed to Windows API.
   ##
   ## Based on Python's `subprocess.list2cmdline`.
@@ -37,7 +37,7 @@ proc quoteShellWindows*(s: string): string {.noSideEffect.} =
     result.add("\"")
 
 
-proc quoteShellPosix*(s: string): string {.noSideEffect.} =
+func quoteShellPosix*(s: string): string {.noSideEffect.} =
   ## Quote ``s``, so it can be safely passed to POSIX shell.
   const safeUnixChars = {'%', '+', '-', '.', '/', '_', ':', '=', '@',
                          '0'..'9', 'A'..'Z', 'a'..'z'}
@@ -49,17 +49,17 @@ proc quoteShellPosix*(s: string): string {.noSideEffect.} =
     result = "'" & s.replace("'", "'\"'\"'") & "'"
 
 when defined(windows) or defined(posix) or defined(nintendoswitch):
-  proc quoteShell*(s: string): string {.noSideEffect.} =
+  func quoteShell*(s: string): string {.noSideEffect.} =
     ## Quote ``s``, so it can be safely passed to shell.
     ##
-    ## When on Windows, it calls `quoteShellWindows proc`_.
-    ## Otherwise, calls `quoteShellPosix proc`_.
+    ## When on Windows, it calls `quoteShellWindows func`_.
+    ## Otherwise, calls `quoteShellPosix func`_.
     when defined(windows):
       result = quoteShellWindows(s)
     else:
       result = quoteShellPosix(s)
 
-  proc quoteShellCommand*(args: openArray[string]): string =
+  func quoteShellCommand*(args: openArray[string]): string =
     ## Concatenates and quotes shell arguments `args`.
     runnableExamples:
       when defined(posix):
@@ -73,7 +73,7 @@ when defined(windows) or defined(posix) or defined(nintendoswitch):
       if i > 0: result.add " "
       result.add quoteShell(args[i])
 
-proc exitStatusLikeShell*(status: cint): cint =
+func exitStatusLikeShell*(status: cint): cint =
   ## Converts exit code from `c_system` into a shell exit code.
   when defined(posix):
     if WIFSIGNALED(status):
