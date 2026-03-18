@@ -372,13 +372,11 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
         dest.addSymUse contVar, info
 
 proc trDelay0(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  # Handles (delay0) — no-arg form: capture continuation for the code that follows.
-  # Returns continuation to the NEXT suspension point, not the current one.
+  # Handles (delay0) — no-arg form: to the NEXT suspension point.
   let info = n.info
   let pos = cursorToPosition(c.currentProc.cf, n)  # position of (delay0 token
   inc n      # skip delay0 tag
-  var state = c.currentProc.yieldConts.getOrDefault(pos, -1)
-  assert state != -1, "delay() no-arg must be a suspension point"
+  var state = -1
   # Find the next suspension point (if any) - delay captures continuation to resume, not stop
   var searchPos = pos + 1
   while searchPos < c.currentProc.cf.len:
@@ -387,6 +385,7 @@ proc trDelay0(c: var Context; dest: var TokenBuf; n: var Cursor) =
       state = nextState
       break
     inc searchPos
+  assert state != -1, "delay() no-arg must precede suspension point"
   contNextState(c, dest, state, info)
   skipParRi n  # skip ParRi of delay0
 
@@ -978,7 +977,7 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
         let sk = scan.stmtKind
         let ek = scan.exprKind
         if sk == YldS or (ek in CallKinds - {DelayX} and isPassiveCall(c, c.currentProc.cf[pos+1])) or
-            ek == Delay0X or ek == SuspendX:
+            ek == SuspendX:
           # Mark all enclosing loops as containing a suspension point
           for i in 0..<loopStack.len:
             loopStack[i].containsSusp = true
