@@ -1,0 +1,7 @@
+calling suspendingProc
+1. before suspend
+2. between delay and suspend
+4. after main
+5. after suspend (resumed)
+3. back in main
+6. done

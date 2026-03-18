@@ -1494,6 +1494,14 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       put(g, tkParRi, ")")
       skipParRi(n)
 
+    of SuspendX:
+      # (suspend) -> suspend()
+      inc n  # skip (suspend
+      put(g, tkSymbol, "suspend")
+      put(g, tkParLe, "(")
+      put(g, tkParRi, ")")
+      skipParRi(n)
+
     of EmoveX:
       inc n
       put(g, tkSymbol, "ensureMove")

@@ -240,6 +240,9 @@ proc delay*(x: typed): Continuation {.magic: "Delay".}
   ## Delays the execution of a `.passive` proc and returns a continuation representation
   ## this call. Think of it as a `toTask` builtin.
 
+proc suspend*() {.magic: "Suspend".}
+  ## Suspends the current coroutine. In CPS, this inserts `return Continuation(fn: nil, env: nil)`.
+
 proc trivialTick(c: Continuation): Continuation =
   result = c.fn(c.env)
 

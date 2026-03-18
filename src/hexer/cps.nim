@@ -139,6 +139,7 @@ type
     counter: int
     subProcs: int  ## number of sub-state procs opened so far
     kind: RoutineKind
+    lastStmtReturns: bool  ## true if the last statement generated a return (e.g., suspend)
 
   Context = object
     counter: int
@@ -372,14 +373,39 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
         dest.addSymUse contVar, info
 
 proc trDelay0(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  # Handles (delay0) — no-arg form: capture continuation for the code that follows.
+  # Handles (delay0) — no-arg form: to the NEXT suspension point.
   let info = n.info
   let pos = cursorToPosition(c.currentProc.cf, n)  # position of (delay0 token
   inc n      # skip delay0 tag
-  let state = c.currentProc.yieldConts.getOrDefault(pos, -1)
-  assert state != -1, "delay() no-arg must be a suspension point"
+  var state = -1
+  # Find the next suspension point (if any) - delay captures continuation to resume, not stop
+  var searchPos = pos + 1
+  while searchPos < c.currentProc.cf.len:
+    let nextState = c.currentProc.yieldConts.getOrDefault(searchPos, -1)
+    if nextState != -1 and nextState != state:
+      state = nextState
+      break
+    inc searchPos
+  assert state != -1, "delay() no-arg must precede suspension point"
   contNextState(c, dest, state, info)
   skipParRi n  # skip ParRi of delay0
+
+proc trSuspend(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  # Handles (suspend) — suspends the coroutine by returning Continuation(nil, nil).
+  # This stops the trampoline. To resume, use delay() to capture the continuation.
+  let info = n.info
+  inc n      # skip suspend tag
+  skipParRi n  # skip ParRi of suspend
+  dest.copyIntoKind RetS, info:
+    dest.copyIntoKind OconstrX, info:
+      dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+      dest.copyIntoKind KvU, info:
+        dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
+        dest.addParPair NilX, info
+      dest.copyIntoKind KvU, info:
+        dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
+        dest.addParPair NilX, info
+  c.currentProc.lastStmtReturns = true
 
 proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Handles (delay fn args) — fn-args form; typenav returns Continuation for DelayX.
@@ -849,11 +875,15 @@ proc compileStmtSeq(c: var Context; dest: var TokenBuf; n: var Cursor; continueS
     let p = cursorToPosition(c.currentProc.cf, n)
     let state = c.currentProc.labels.getOrDefault(p, -1)
     if state != -1:
-      if c.currentProc.subProcs == 0:
-        gotoNextState(c, dest, state, n.info)
-      else:
-        # State procs that fall through to the next state need a return caller
-        emitReturnCaller(c, dest, n.info)
+      # Skip adding goto/return if the previous statement already returned (e.g., suspend).
+      # The suspend's return Continuation(nil, nil) is the terminal return for this state.
+      if not c.currentProc.lastStmtReturns:
+        if c.currentProc.subProcs == 0:
+          gotoNextState(c, dest, state, n.info)
+        else:
+          # State procs that fall through to the next state need a return caller
+          emitReturnCaller(c, dest, n.info)
+      c.currentProc.lastStmtReturns = false
       dest.addParRi() # close stmts
       dest.addParRi() # close proc decl
       newLocalProc c, dest, state, sym
@@ -866,6 +896,9 @@ proc compileStmtSeq(c: var Context; dest: var TokenBuf; n: var Cursor; continueS
     else:
       c.inlineContState = -1
       tr c, dest, n
+      # Reset the flag after processing a statement (unless it was a suspend which sets it)
+      if not c.currentProc.lastStmtReturns:
+        discard
       if c.inlineContState >= 0:
         # A passive call split happened inside a nested ite branch:
         # c.inlineContState = the new continuation state
@@ -953,7 +986,7 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
         let sk = scan.stmtKind
         let ek = scan.exprKind
         if sk == YldS or (ek in CallKinds - {DelayX} and isPassiveCall(c, c.currentProc.cf[pos+1])) or
-            ek == Delay0X:
+            ek == SuspendX:
           # Mark all enclosing loops as containing a suspension point
           for i in 0..<loopStack.len:
             loopStack[i].containsSusp = true
@@ -1290,6 +1323,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trDelay c, dest, n
       of Delay0X:
         trDelay0 c, dest, n
+      of SuspendX:
+        trSuspend c, dest, n
       of TypeofX:
         takeTree dest, n
       else:

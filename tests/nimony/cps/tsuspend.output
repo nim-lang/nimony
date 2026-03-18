@@ -1,0 +1,11 @@
+before io
+io operation
+after delay
+start
+1
+before loop
+loop 0
+before branch
+before branch
+x != 0
+after branch
