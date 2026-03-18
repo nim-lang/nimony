@@ -707,7 +707,7 @@ proc trTry(c: var Context; n: var Cursor) =
   var nn = n
   skip nn
   let oldCanRaise = c.r.canRaise
-  if nn.substructureKind == ExceptU:
+  if nn.substructureKind == ExceptU or nn.substructureKind == FinU:
     c.r.canRaise = true
   # now can raise in the `try` block:
   tr c, n, WantT

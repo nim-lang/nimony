@@ -143,6 +143,7 @@ type
     typeCache: TypeCache
     counter: int
     thisModuleSuffix: string
+    raisesResolved: bool  ## True when eraiser has already run; prevents double-injecting raise checks
     current: CurrentProc
     callFirstArgs: Table[SymId, TokenBuf] ## Maps local syms to the first argument of their init call (for borrow tracking)
 
@@ -512,6 +513,7 @@ proc trLocal(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
   takeTree dest, n # export marker
   takeTree dest, n # pragmas
   c.typeCache.registerLocal(symId, kind, n)
+  let localType = n # save cursor at the type position before advancing
   takeTree dest, n # type
 
   # Record first argument of call inits for borrow tracking (used by trFor):
@@ -527,15 +529,24 @@ proc trLocal(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
   let info = n.info
   let callInfo = trBoundExpr(c, dest, n)
   skipParRi n
-  # the `raise` statement must follow the var declaration!
-  case callInfo.mode
+  # After eraiser, void+raises calls are wrapped as
+  #   (cursor :canRaise.0 ErrorCode (call voidRaisesProc ...))
+  # with an explicit `if (failed canRaise.0) raise` following.
+  # The ErrorCode return type makes callInfo.mode look like TupleRaise, but it's
+  # not a tuple — eraiser already injected the check. Use NoRaise in that case.
+  let effectiveMode =
+    if c.raisesResolved and localType.kind == Symbol and
+        localType.symId == pool.syms.getOrIncl(ErrorCodeName):
+      NoRaise
+    else:
+      callInfo.mode
+  case effectiveMode
   of NoRaise:
     dest.addParRi()
     callIsOver(c, dest, callInfo)
   of VoidRaise:
     dest.addParRi()
     callIsOver(c, dest, callInfo)
-    bug "value should have been discarded"
   of TupleRaise:
     # we also need to patch the type!
     dest.addParRi()
@@ -1148,9 +1159,7 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
     # Re-raise any unhandled error after finally block executes
     # Check the error tracker, not the guard (guards are monotonic and can't be reset)
     dest.copyIntoKind IteV, info:
-      dest.copyIntoKind NeqX, info:
-        useErrorTracker(c, dest, tracker, info)
-        dest.addSymUse pool.syms.getOrIncl(SuccessName), info
+      useErrorTracker(c, dest, tracker, info)
       dest.copyIntoKind StmtsS, info:
         raiseGuards(c, dest, info)
       dest.addDotToken() # no else
@@ -1290,9 +1299,10 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
   if takeThisParRi:
     dest.addParRi()
 
-proc eliminateJumps*(pass: var Pass) =
+proc eliminateJumps*(pass: var Pass; raisesResolved = false) =
   var c = Context(counter: 0, typeCache: createTypeCache(),
-                  thisModuleSuffix: pass.moduleSuffix)
+                  thisModuleSuffix: pass.moduleSuffix,
+                  raisesResolved: raisesResolved)
   c.openScope()
   lowerExprs(pass, TowardsNjvl)
   pass.prepareForNext("elimjumps")
