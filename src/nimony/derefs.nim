@@ -475,19 +475,6 @@ proc cannotPassToVar(dest: var TokenBuf; info: PackedLineInfo; arg: Cursor) =
     dest.addSubtree arg
     dest.add strToken(pool.strings.getOrIncl(msg), info)
 
-type
-  Effect* = enum
-    HasNoSideEffect
-    HasSideEffect
-
-proc whichEffect*(k: StmtKind; pragmas: Cursor): Effect =
-  if k in {FuncS, IteratorS, ConverterS}:
-    result = HasNoSideEffect
-  elif hasPragma(pragmas, NoSideEffectP):
-    result = HasNoSideEffect
-  else:
-    result = HasSideEffect
-
 proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   let info = n.info
   let callExpr = n

@@ -37,6 +37,7 @@ type
   BorrowableCheck = enum
     IsBorrowable       ## simple path: symbols, dots, array access
     IsBorrowableFromConst
+    IsBorrowableFromGlobal
     HasAddr            ## path contains explicit `addr` — unsafe escape hatch
     NotBorrowable      ## deref in middle of path or function call
 
@@ -181,6 +182,11 @@ proc extractBorrowPath(c: var NjvlContext; n: Cursor; result: var BorrowInfo; fo
     else:
       if result.mode != HasAddr:
         result.mode = IsBorrowable
+        let res = tryLoadSym(s)
+        if res.status == LacksNothing:
+          let local = asLocal(res.decl)
+          if local.kind in {GvarY, TvarY}:
+            result.mode = IsBorrowableFromGlobal
       result.path.add s
 
 proc extractPath(c: var NjvlContext; n: Cursor; followInlineVars=true): BorrowInfo =
@@ -720,12 +726,11 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
         inc pc
     if nested == 0: break
 
-proc borrowCheckForCall(c: var NjvlContext; args: Cursor) =
+proc borrowCheckForCall(c: var NjvlContext; args: Cursor; effect: Effect) =
   var mutPaths: seq[BorrowInfo] = @[]
   var immPaths: seq[BorrowInfo] = @[]
   var n = args
   while n.kind != ParRi:
-    let argInfo = n.info
     let isMut = n.exprKind == HaddrX
     # Validate borrowable path for haddr arguments (call-scoped borrows)
     if isMut:
@@ -740,6 +745,11 @@ proc borrowCheckForCall(c: var NjvlContext; args: Cursor) =
       let m = extractPath(c, n, followInlineVars = false)
       if m.mode == IsBorrowable:
         immPaths.add m
+      elif m.mode == IsBorrowableFromGlobal and effect == HasNoSideEffect:
+        immPaths.add m
+      else:
+        buildErr c, n.info, "cannot borrow from global or thread-local variable '" & asNimCode(n) &
+          "': use a '.noSideEffect' context or 'addr' or a temporary move to override"
     skip n
   # Check aliasing: a mutable argument must not overlap with any other argument:
   for i in 0 ..< mutPaths.len:
@@ -762,10 +772,13 @@ proc borrowCheckForCall(c: var NjvlContext; args: Cursor) =
 
 proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
   let callCursor = n
-  var fnType = skipProcTypeToParams(getType(c.typeCache, n))
+  let tt = getType(c.typeCache, n)
+  let calleeKind = tt.stmtKind
+  var fnType = skipProcTypeToParams(tt)
   var fnPragmas = fnType
   skip fnPragmas # params
   skip fnPragmas # return type
+  let effect = whichEffect(calleeKind, fnPragmas)
   traverseExpr c, n # the `fn` itself
   assert fnType.isParamsTag
   inc fnType
@@ -774,13 +787,18 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
   let args = n
   var needsBorrowCheck = false
   while n.kind != ParRi:
+    if fnType.kind == ParRi:
+      # All formal params consumed but args remain (e.g. varargs that were
+      # consumed without a matching VarargsT param, or similar edge cases).
+      # Traverse remaining args for their side effects.
+      while n.kind != ParRi:
+        traverseExpr c, n
+      break
     let previousFormalParam = fnType
-    assert fnType.kind != ParRi
     let param = takeLocal(fnType, SkipFinalParRi)
     paramMap[param.name.symId] = paramMap.len+1
     let pk = param.typ.typeKind
     # Save arg info before traverseExpr advances n
-    let argInfo = n.info
     let isMut = n.exprKind == HaddrX
     # Validate borrowable path for haddr arguments (call-scoped borrows)
     if isMut:
@@ -796,7 +814,7 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
     checkNilMatch c, n, param.typ
     traverseExpr c, n
   if needsBorrowCheck:
-    borrowCheckForCall c, args
+    borrowCheckForCall c, args, effect
   while fnType.kind != ParRi: skip fnType
   inc fnType # skip ParRi
   skip fnType # skip return type
@@ -836,7 +854,7 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
 
   # Check borrow conflicts for the destination
   let destMutPath = extractPath(c, n)
-  if destMutPath.mode == IsBorrowable:
+  if destMutPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
     checkBorrowConflict(c, destMutPath, n.info)
 
   # Now handle the destination (Symbol or NJVL versioned variable (v symId version))
@@ -1031,7 +1049,7 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
     var inner = n
     inc inner # skip haddr tag
     var path = extractPath(c, inner)
-    if path.mode == IsBorrowable:
+    if path.mode in {IsBorrowable, IsBorrowableFromGlobal}:
       path.borrower = name
       c.activeBorrows.add path
     elif path.mode == NotBorrowable:
@@ -1212,7 +1230,7 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     # Check borrow conflicts: passing a borrowed path to a var param is a mutation.
     inc n
     let unknownPath = extractPath(c, n)
-    if unknownPath.mode == IsBorrowable:
+    if unknownPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
       checkBorrowConflict(c, unknownPath, n.info)
     skip n # the unknown location
     skipParRi n

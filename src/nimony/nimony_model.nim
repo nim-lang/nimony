@@ -310,3 +310,16 @@ proc procHasPragma*(typ: Cursor; kind: PragmaKind): bool =
     result = hasPragma(typ, kind)
   else:
     result = false
+
+type
+  Effect* = enum
+    HasNoSideEffect
+    HasSideEffect
+
+proc whichEffect*(k: StmtKind; pragmas: Cursor): Effect =
+  if k in {FuncS, IteratorS, ConverterS}:
+    result = HasNoSideEffect
+  elif hasPragma(pragmas, NoSideEffectP):
+    result = HasNoSideEffect
+  else:
+    result = HasSideEffect
