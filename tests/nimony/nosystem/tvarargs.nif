@@ -45,7 +45,7 @@
      (stmts
       (ret "typeOfIter"))))
    (ret result.0))) ,11
- (proc 5 :typeof.0.
+ (func 5 :typeof.0.
   (typeof) . . 11
   (params 1
    (param :x.0 . . 3
@@ -56,7 +56,7 @@
   (pragmas 2
    (magic 7 TypeOf)) . .) 10,14
  (type ~8 :string.0. x . . string.0.sysvq0asl) ,16
- (proc 5 :\2B.0.
+ (func 5 :\2B.0.
   (add -3) . . 9
   (params 1
    (param :x.1 . . 6
@@ -66,7 +66,7 @@
   (i -1) 26
   (pragmas 2
    (magic 7 "AddI")) . .) ,17
- (proc 5 :\2D.0.
+ (func 5 :\2D.0.
   (sub -3) . . 9
   (params 1
    (param :x.2 . . 6
@@ -76,7 +76,7 @@
   (i -1) 26
   (pragmas 2
    (magic 7 "SubI")) . .) ,19
- (proc 5 :<=.0.
+ (func 5 :<=.0.
   (le -3) . . 10
   (params 1
    (param :x.3 . . 6
