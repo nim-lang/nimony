@@ -271,8 +271,9 @@ when doslikeFileSystem:
     ## Detail of Windows path formats:
     ## https://docs.microsoft.com/en-us/dotnet/standard/io/file-path-formats
 
-    assert(isAbsolute(path1))
-    assert(isAbsolute(path2))
+    {.cast(noSideEffect).}:
+      assert(isAbsolute(path1))
+      assert(isAbsolute(path2))
 
     if isAbsFromCurrentDrive(path1) and isAbsFromCurrentDrive(path2):
       result = true
