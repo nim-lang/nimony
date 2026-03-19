@@ -25,10 +25,10 @@ iterator mixedPairs*[K, V](t: Table[K, V]): (K, var V) =
   for i in 0 ..< t.data.len:
     yield (t.data[i][0], t.data[i][1])
 
-proc add*[K, V](t: var Table[K, V]; k: sink K; v: sink V) =
+func add*[K, V](t: var Table[K, V]; k: sink K; v: sink V) =
   t.data.add((k, v))
 
-proc initTable*[K, V](): Table[K, V] =
+func initTable*[K, V](): Table[K, V] =
   Table[K, V](data: @[])
 
 var t = initTable[int, int]()

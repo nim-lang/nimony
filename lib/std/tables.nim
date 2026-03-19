@@ -69,7 +69,8 @@ func getOrDefault*[K: Keyable, V: HasDefault](t: Table[K, V]; k: K): V =
 func getOrQuit*[K: Keyable, V](t: Table[K, V]; k: K): var V =
   ## Quits if the key is not found.
   let idx = rawGet(t, k, hash(k))
-  assert idx >= 0
+  {.cast(noSideEffect).}:
+    assert idx >= 0
   t.data[idx][1]
 
 when defined(nimony):
