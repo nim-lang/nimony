@@ -73,7 +73,7 @@ when defined(windows) or defined(posix) or defined(nintendoswitch):
       if i > 0: result.add " "
       result.add quoteShell(args[i])
 
-func exitStatusLikeShell*(status: cint): cint =
+proc exitStatusLikeShell*(status: cint): cint =
   ## Converts exit code from `c_system` into a shell exit code.
   when defined(posix):
     if WIFSIGNALED(status):

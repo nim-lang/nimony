@@ -337,7 +337,7 @@ template ceilDivUint[T: SomeUnsignedInt and Arithmetic](x, y: T): T =
 template ceilDivSigned[T: SomeInteger](x, y: T; U: untyped): T {.untyped.} =
   T(ceilDivUint(x.U, y.U))
 
-func ceilDiv*[T: SomeInteger and Arithmetic](x, y: T): T {.inline.} =
+func ceilDiv*[T: SomeInteger and Arithmetic](x, y: T): T {.inline, raises.} =
   ## Ceil division is conceptually defined as `ceil(x / y)`.
   ##
   ## Assumes `x >= 0` and `y > 0` (and `x + y - 1 <= high(T)` if T is SomeUnsignedInt).
@@ -359,9 +359,15 @@ func ceilDiv*[T: SomeInteger and Arithmetic](x, y: T): T {.inline.} =
     assert ceilDiv(12, 3) ==  4
     assert ceilDiv(13, 3) ==  5
 
-  assert x >= T(0) and y > T(0)
+  if x >= T(0) and y > T(0):
+    discard
+  else:
+    raise RangeError
   when T is SomeUnsignedInt:
-    assert x + y - T(1) >= x
+    if x + y - T(1) >= x:
+      discard
+    else:
+      raise RangeError
 
   result =  when T is int:
               ceilDivSigned(x, y, uint)
@@ -816,7 +822,7 @@ func fac*(n: int): int =
     assert fac(4) == 24
     assert fac(10) == 3628800
 
-  assert n >= 0, "argument of fac must not be negative"
+  #assert n >= 0, "argument of fac must not be negative"
 
   result = 1
   for i in 1 .. n:
