@@ -14,10 +14,10 @@ const
 func toLower(c: char): char {.inline.} =
   result = if c in {'A'..'Z'}: chr(ord(c)-ord('A')+ord('a')) else: c
 
-proc integerOutOfRangeError() {.noinline, noreturn.} =
+func integerOutOfRangeError() {.noinline, noreturn.} =
   # TODO: Uncomment when exception is implemented.
   #raise newException(ValueError, "Parsed integer outside of valid range")
-  quit "Parsed integer outside of valid range"
+  {.cast(noSideEffect).}: quit "Parsed integer outside of valid range"
 
 func parseHex*[T: SomeInteger](s: openArray[char], number: var T, maxLen = 0): int {.untyped.} =
   ## Parses a hexadecimal number and stores its value in ``number``.
@@ -107,7 +107,7 @@ func parseHex*[T: SomeInteger](s: string, number: var T, start = 0,
     assert num64 == 86216859871725
   parseHex(s.toOpenArray(start, s.high), number, maxLen)
 
-proc rawParseInt(s: openArray[char], b: var BiggestInt): int =
+func rawParseInt(s: openArray[char], b: var BiggestInt): int =
   var
     sign: BiggestInt = -1
     i = 0
@@ -134,7 +134,7 @@ proc rawParseInt(s: openArray[char], b: var BiggestInt): int =
   else:
     result = 0
 
-proc parseBiggestInt*(s: openArray[char], number: var BiggestInt): int {.
+func parseBiggestInt*(s: openArray[char], number: var BiggestInt): int {.
   noSideEffect.} =
   ## Parses an integer and stores the value into `number`.
   ## Result is the number of processed chars or 0 if there is no integer.
@@ -152,7 +152,7 @@ proc parseBiggestInt*(s: openArray[char], number: var BiggestInt): int {.
   if result != 0:
     number = res
 
-proc rawParseUInt(s: openArray[char], b: var BiggestUInt): int =
+func rawParseUInt(s: openArray[char], b: var BiggestUInt): int =
   var
     res = 0.BiggestUInt
     i = 0
@@ -176,7 +176,7 @@ proc rawParseUInt(s: openArray[char], b: var BiggestUInt): int =
   else:
     result = 0
 
-proc parseBiggestUInt*(s: openArray[char], number: var BiggestUInt): int {.
+func parseBiggestUInt*(s: openArray[char], number: var BiggestUInt): int {.
   noSideEffect.} =
   ## Parses an unsigned integer and stores the value
   ## into `number`.
@@ -196,10 +196,10 @@ proc parseBiggestUInt*(s: openArray[char], number: var BiggestUInt): int {.
 
 # Following parseBiggestFloat code is copied from `lib/system/strmantle.nim` in Nim 2.
 
-proc c_strtod(buf: cstring, endptr: ptr cstring): float64 {.
+func c_strtod(buf: cstring, endptr: ptr cstring): float64 {.
   importc: "strtod", header: "<stdlib.h>", noSideEffect.}
 
-proc parseBiggestFloat*(s: openArray[char]; number: var BiggestFloat): int {.
+func parseBiggestFloat*(s: openArray[char]; number: var BiggestFloat): int {.
   noSideEffect.} =
   ## Parses a float and stores the value into `number`.
   ## Result is the number of processed chars or 0 if a parsing error

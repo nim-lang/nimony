@@ -679,7 +679,7 @@ func isCombining*(c: Rune): bool =
     (c >= 0xfe20 and c <= 0xfe2f))
 
 
-func runeCheck(s: openArray[char], runeProc: func (c: Rune): bool {.noSideEffect, nimcall.}): bool =
+func runeCheck(s: openArray[char], runeProc: proc (c: Rune): bool {.noSideEffect, nimcall.}): bool =
   ## Common code for isAlpha and isSpace.
   result = if len(s) == 0: false else: true
   var
@@ -709,7 +709,7 @@ func isSpace*(s: openArray[char]): bool {.noSideEffect.} =
   runeCheck(s, isWhiteSpace)
 
 
-func convertRune(s: openArray[char], runeProc: func (c: Rune): Rune {.noSideEffect, nimcall.}): string =
+func convertRune(s: openArray[char], runeProc: proc (c: Rune): Rune {.noSideEffect, nimcall.}): string =
   ## Convert runes in ``s`` using ``runeProc`` as the converter.
   result = newString(len(s))
   var
@@ -776,7 +776,7 @@ func capitalize*(s: openArray[char]): string {.noSideEffect.} =
 # when not defined(nimHasEffectsOf):
 #   {.pragma: effectsOf.}
 
-func translate*(s: openArray[char], replacements: func(key: string): string): string = #{.
+func translate*(s: openArray[char], replacements: proc(key: string): string {.noSideEffect.}): string = #{.
   #rtl, extern: "nuc$1", effectsOf: replacements.} =
   ## Translates words in a string using the ``replacements`` func to substitute
   ## words inside ``s`` with their replacements.
@@ -1374,7 +1374,7 @@ func capitalize*(s: string): string {.noSideEffect.} =
   capitalize(toOa(s))
 
 
-func translate*(s: string, replacements: func(key: string): string): string {.inline.} =
+func translate*(s: string, replacements: proc(key: string): string {.noSideEffect.}): string {.inline.} =
   ## Translates words in a string using the ``replacements`` func to substitute
   ## words inside ``s`` with their replacements.
   ##

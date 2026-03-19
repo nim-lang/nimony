@@ -230,7 +230,11 @@ func delete*(s: var string, slice: Slice[int]) =
     a.delete(1..0) # empty slice
     assert a == "ad"
   #when compileOption("boundChecks"):
-  assert slice.a < s.len and slice.a >= 0 and slice.b < s.len
+  if slice.a < s.len and slice.a >= 0 and slice.b < s.len:
+    discard
+  else:
+    # `return` here better than assert because it's no side effect
+    return
   if slice.b >= slice.a:
     var i = slice.a
     var j = slice.b + 1
@@ -1042,7 +1046,7 @@ func trimZeros*(x: var string; decimalSep = '.') =
       try:
         x.delete(pos..last)
       except:
-        assert false
+        discard
 
 type
   BinaryPrefixMode* = enum ## The different names for binary prefixes.
@@ -1069,7 +1073,7 @@ func formatSize*(bytes: int64; decimalSep = '.'; prefix = bpIEC; includeSpace = 
     assert formatSize(4096) == "4KiB"
     assert formatSize(5_378_934, prefix = bpColloquial, decimalSep = ',') == "5,129MB"
 
-  assert bytes >= 0
+  if bytes < 0: return "<negative amount of bytes>"
   # It doesn't needs Zi and larger units until we use int72 or larger ints.
   const iecPrefixes = ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei"]
   const collPrefixes = ["", "k", "M", "G", "T", "P", "E"]

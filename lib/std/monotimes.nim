@@ -107,7 +107,8 @@ proc getMonoTime*(): MonoTime {.tags: [TimeEffect].} =
     result = MonoTime(ticks: ticks)
   elif defined(posix):
     var ts: Timespec = default(Timespec)
-    discard clock_gettime(CLOCK_MONOTONIC, ts)
+    let monotonic = CLOCK_MONOTONIC
+    discard clock_gettime(monotonic, ts)
     result = MonoTime(ticks: ts.tv_sec.int64 * 1_000_000_000 +
       ts.tv_nsec.int64)
   elif defined(windows):
