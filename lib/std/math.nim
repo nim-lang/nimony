@@ -2,18 +2,18 @@ import std/[assertions, fenv]
 
 type
   Arithmetic = concept
-    proc `-`(x: Self): Self
-    proc `+`(x, y: Self): Self
-    proc `-`(x, y: Self): Self
-    proc inc(x: var Self, y: Self)
-    proc dec(x: var Self, y: Self)
-    proc `*`(x, y: Self): Self
-    proc `div`(x, y: Self): Self
-    proc `mod`(x, y: Self): Self
-    proc `/`(x, y: Self): Self
-    proc `==`(x, y: Self): bool
-    proc `<`(x, y: Self): bool
-    proc `>`(x, y: Self): bool
+    func `-`(x: Self): Self
+    func `+`(x, y: Self): Self
+    func `-`(x, y: Self): Self
+    func inc(x: var Self, y: Self)
+    func dec(x: var Self, y: Self)
+    func `*`(x, y: Self): Self
+    func `div`(x, y: Self): Self
+    func `mod`(x, y: Self): Self
+    func `/`(x, y: Self): Self
+    func `==`(x, y: Self): bool
+    func `<`(x, y: Self): bool
+    func `>`(x, y: Self): bool
 
 const
   PI* = 3.1415926535897932384626433          ## The circle constant PI (Ludolph's number).
@@ -40,9 +40,9 @@ const CMathHeader = "<math.h>"
 
 {.push header: CMathHeader.}
 # These are C macros and can take both float and double type values.
-proc c_signbit[T: SomeFloat](x: T): int {.importc: "signbit".}
-proc c_fpclassify[T: SomeFloat](x: T): int {.importc: "fpclassify".}
-proc c_isnan[T: SomeFloat](x: T): int {.importc: "isnan".}
+func c_signbit[T: SomeFloat](x: T): int {.importc: "signbit".}
+func c_fpclassify[T: SomeFloat](x: T): int {.importc: "fpclassify".}
+func c_isnan[T: SomeFloat](x: T): int {.importc: "isnan".}
 
 func c_frexp(x: float32; exponent: ptr cint): float32 {.importc: "frexpf".}
 func c_frexp(x: float64; exponent: ptr cint): float64 {.importc: "frexp".}
@@ -277,7 +277,7 @@ func floorDiv*[T: SomeInteger and Arithmetic](x, y: T): T {.inline.} =
   ## That is, `div` rounds towards `0` and `floorDiv` rounds down.
   ##
   ## **See also:**
-  ## * `system.div proc <system.html#div,int,int>`_ for integer division
+  ## * `system.div func <system.html#div,int,int>`_ for integer division
   ## * `floorMod func <#floorMod,T,T>`_ for Python-like (`%` operator) behavior
   runnableExamples:
     assert floorDiv( 13,  3) ==  4
@@ -337,7 +337,7 @@ template ceilDivUint[T: SomeUnsignedInt and Arithmetic](x, y: T): T =
 template ceilDivSigned[T: SomeInteger](x, y: T; U: untyped): T {.untyped.} =
   T(ceilDivUint(x.U, y.U))
 
-func ceilDiv*[T: SomeInteger and Arithmetic](x, y: T): T {.inline.} =
+func ceilDiv*[T: SomeInteger and Arithmetic](x, y: T): T {.inline, raises.} =
   ## Ceil division is conceptually defined as `ceil(x / y)`.
   ##
   ## Assumes `x >= 0` and `y > 0` (and `x + y - 1 <= high(T)` if T is SomeUnsignedInt).
@@ -353,15 +353,21 @@ func ceilDiv*[T: SomeInteger and Arithmetic](x, y: T): T {.inline.} =
   ## https://github.com/demotomohiro/divmath.
   ##
   ## **See also:**
-  ## * `system.div proc <system.html#div,int,int>`_ for integer division
+  ## * `system.div func <system.html#div,int,int>`_ for integer division
   ## * `floorDiv func <#floorDiv,T,T>`_ for integer division which rounds down.
   runnableExamples:
     assert ceilDiv(12, 3) ==  4
     assert ceilDiv(13, 3) ==  5
 
-  assert x >= T(0) and y > T(0)
+  if x >= T(0) and y > T(0):
+    discard
+  else:
+    raise RangeError
   when T is SomeUnsignedInt:
-    assert x + y - T(1) >= x
+    if x + y - T(1) >= x:
+      discard
+    else:
+      raise RangeError
 
   result =  when T is int:
               ceilDivSigned(x, y, uint)
@@ -437,8 +443,8 @@ func cumprod*[T: Arithmetic](x: var openArray[T]) =
   ## product.
   ##
   ## See also:
-  ## * `prod proc <#sum,openArray[T]>`_
-  ## * `cumproded proc <#cumproded,openArray[T]>`_ for a version which
+  ## * `prod func <#sum,openArray[T]>`_
+  ## * `cumproded func <#cumproded,openArray[T]>`_ for a version which
   ##   returns cumproded sequence
   runnableExamples:
     var a = [1, 2, 3, 4]
@@ -816,7 +822,7 @@ func fac*(n: int): int =
     assert fac(4) == 24
     assert fac(10) == 3628800
 
-  assert n >= 0, "argument of fac must not be negative"
+  #assert n >= 0, "argument of fac must not be negative"
 
   result = 1
   for i in 1 .. n:

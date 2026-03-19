@@ -4,7 +4,7 @@ include "system/basic_types"
 
 iterator unpack*(): untyped {.magic: Unpack.}
 
-proc unpackToCall(fn: untyped) {.magic: Unpack.}
+func unpackToCall(fn: untyped) {.magic: Unpack.}
 
 const
   isMainModule* {.magic: "IsMainModule".}: bool = false
@@ -17,10 +17,10 @@ const
     ## and expect a reasonable result - use the `isNaN` or `classify` procedure
     ## in the `math module <math.html>`_ for checking for NaN.
 
-proc `[]`*[T: tuple](x: T, i: int): untyped {.magic: "TupAt".}
-proc `[]`*[I, T](x: array[I, T], i: I): var T {.magic: "ArrAt".}
-proc `[]`*(x: cstring, i: int): var char {.magic: "Pat".}
-proc `[]`*[T](x: ptr UncheckedArray[T], i: int): var T {.magic: "Pat".}
+func `[]`*[T: tuple](x: T, i: int): untyped {.magic: "TupAt".}
+func `[]`*[I, T](x: array[I, T], i: I): var T {.magic: "ArrAt".}
+func `[]`*(x: cstring, i: int): var char {.magic: "Pat".}
+func `[]`*[T](x: ptr UncheckedArray[T], i: int): var T {.magic: "Pat".}
 template `[]=`*[T: tuple](x: T, i: int, elem: typed) =
   (x[i]) = elem
 template `[]=`*[I, T](x: array[I, T], i: I; elem: T) =
@@ -30,8 +30,8 @@ template `[]=`*(x: cstring, i: int; elem: char) =
 template `[]=`*[T](x: ptr UncheckedArray[T], i: int; elem: T) =
   (x[i]) = elem
 
-proc `[]`*[T](x: ptr T): var T {.magic: "Deref", noSideEffect.}
-proc `[]`*[T](x: ref T): var T {.magic: "Deref", noSideEffect.}
+func `[]`*[T](x: ptr T): var T {.magic: "Deref", noSideEffect.}
+func `[]`*[T](x: ref T): var T {.magic: "Deref", noSideEffect.}
 template `[]=`*[T](x: ptr T, val: T) =
   (x[]) = val
 template `[]=`*[T](x: ref T, val: T) =
@@ -41,8 +41,8 @@ include "system/arithmetics"
 
 include "system/comparisons"
 
-proc defined*(x: untyped): bool {.magic: Defined.}
-proc declared*(x: untyped): bool {.magic: Declared.}
+func defined*(x: untyped): bool {.magic: Defined.}
+func declared*(x: untyped): bool {.magic: Declared.}
 
 func astToStr*[T](x: T): string {.magic: AstToStr.}
   ## Converts the AST of `x` into a string representation. This is very useful
@@ -64,7 +64,7 @@ const
     "-0", "-1", "-2", "-3", "-4",
     "-5", "-6", "-7", "-8", "-9"]
 
-proc `$`*(x: uint64): string =
+func `$`*(x: uint64): string =
   result = ""
   if x < 10:
     result = NegTen[int x].substr(1, 1)
@@ -83,7 +83,7 @@ proc `$`*(x: uint64): string =
       result[last-i] = ch
       inc i
 
-proc `$`*(x: int64): string =
+func `$`*(x: int64): string =
   if x < 0:
     if x > -10:
       result = NegTen[int(-x)]
@@ -97,38 +97,38 @@ proc `$`*(x: int64): string =
   else:
     result = $cast[uint64](x)
 
-proc `$`*(x: int32): string =
+func `$`*(x: int32): string =
   $(int64(x))
 
-proc addInt*(s: var string; x: int64) {.inline.} =
+func addInt*(s: var string; x: int64) {.inline.} =
   s.add $x
 
-proc addInt*(s: var string; x: uint64) {.inline.} =
+func addInt*(s: var string; x: uint64) {.inline.} =
   s.add $x
 
-proc `$`*(b: bool): string =
+func `$`*(b: bool): string =
   if b: "true" else: "false"
 
-proc `$`*[T: enum](x: T): string {.magic: "EnumToStr", noSideEffect.}
+func `$`*[T: enum](x: T): string {.magic: "EnumToStr", noSideEffect.}
   ## Converts an enum value to a string.
 
-proc addr*[T](x: T): ptr T {.magic: "Addr", noSideEffect.}
+func addr*[T](x: T): ptr T {.magic: "Addr", noSideEffect.}
 
-proc sizeof*[T](x: typedesc[T]): int {.magic: "SizeOf", noSideEffect.}
+func sizeof*[T](x: typedesc[T]): int {.magic: "SizeOf", noSideEffect.}
 
 template sizeof*[T](_: T): int =
   sizeof(T)
 
-proc `=destroy`*[T](x: T) {.magic: "Destroy", noSideEffect.}
-proc `=dup`*[T](x: T): T {.magic: "Dup", noSideEffect.}
-proc `=copy`*[T](dest: var T; src: T) {.magic: "Copy", noSideEffect.}
-proc `=wasMoved`*[T](x: var T) {.magic: "WasMoved", noSideEffect.}
-proc `=sink`*[T](dest: var T; src: T) {.magic: "SinkHook", noSideEffect.}
-proc `=trace`*[T](x: var T; env: pointer) {.magic: "Trace", noSideEffect.}
+func `=destroy`*[T](x: T) {.magic: "Destroy", noSideEffect.}
+func `=dup`*[T](x: T): T {.magic: "Dup", noSideEffect.}
+func `=copy`*[T](dest: var T; src: T) {.magic: "Copy", noSideEffect.}
+func `=wasMoved`*[T](x: var T) {.magic: "WasMoved", noSideEffect.}
+func `=sink`*[T](dest: var T; src: T) {.magic: "SinkHook", noSideEffect.}
+func `=trace`*[T](x: var T; env: pointer) {.magic: "Trace", noSideEffect.}
 
-proc ensureMove*[T](x: T): T {.magic: "EnsureMove", noSideEffect.}
+func ensureMove*[T](x: T): T {.magic: "EnsureMove", noSideEffect.}
 
-proc move*[T](x: var T): T {.nodestroy, inline, noSideEffect.} =
+func move*[T](x: var T): T {.nodestroy, inline, noSideEffect.} =
   result = x
   `=wasMoved`(x)
 
@@ -141,7 +141,7 @@ template len*[I, T](x: array[I, T]): int =
   ## This is roughly the same as `high(T)-low(T)+1`.
   len(array[I, T])
 
-proc swap*[T](x, y: var T) {.inline, nodestroy.} =
+func swap*[T](x, y: var T) {.inline, nodestroy.} =
   let tmp = x
   x = y
   y = tmp
@@ -152,7 +152,7 @@ template `in`*(x, y: untyped): untyped =
 template `notin`*(x, y: untyped): untyped =
   not contains(y, x)
 
-proc `is`*[T, S](x: T, y: S): bool {.magic: "Is", noSideEffect.}
+func `is`*[T, S](x: T, y: S): bool {.magic: "Is", noSideEffect.}
 template `isnot`*(x, y: untyped): untyped =
   not (x is y)
 
@@ -171,20 +171,20 @@ include "system/openarrays"
 
 include "system/atomics"
 
-proc newConstr[T](t: typedesc[T]): T {.magic: "NewRef", nodecl.}
-proc new*[T: ref](x: out T) {.inline.} = x = newConstr(T)
+func newConstr[T](t: typedesc[T]): T {.magic: "NewRef", nodecl.}
+func new*[T: ref](x: out T) {.inline.} = x = newConstr(T)
 
 template runnableExamples*(body: untyped) {.untyped.} =
   discard "ignore runnable examples"
 
-proc overflowFlag*(): bool {.magic: "OverflowFlag".}
+func overflowFlag*(): bool {.magic: "OverflowFlag".}
 
 include "system/panics"
 
 include "system/dyncalls"
 
-proc `of`*[T, S](x: T; y: typedesc[S]): bool {.magic: "Of", noSideEffect.}
-proc procCall*[T](x: T): untyped {.magic: "ProcCall".}
+func `of`*[T, S](x: T; y: typedesc[S]): bool {.magic: "Of", noSideEffect.}
+func procCall*[T](x: T): untyped {.magic: "ProcCall".}
 
 type
   Rtti* = object
@@ -192,7 +192,7 @@ type
     dy: ptr UncheckedArray[uint32]
     mt: UncheckedArray[pointer]
 
-proc getRtti(dummy: pointer): ptr Rtti {.nodecl, noinit.} = discard "patched by vtables.nim"
+func getRtti(dummy: pointer): ptr Rtti {.nodecl, noinit.} = discard "patched by vtables.nim"
 
 func ord*[T: Ordinal|enum](x: T): int {.inline.} =
   ## Returns the internal `int` value of `x`, including for enum with holes
@@ -202,8 +202,8 @@ func ord*[T: Ordinal|enum](x: T): int {.inline.} =
 
 type
   ComparableAndNegatable = concept
-    proc `<`(x, y: Self): bool
-    proc `-`(x: Self): Self
+    func `<`(x, y: Self): bool
+    func `-`(x: Self): Self
 
 func abs*[T: ComparableAndNegatable](x: T): T {.inline.} =
   ## Returns the absolute value of `x`.
@@ -231,12 +231,12 @@ type
 method cancel*(coro: ptr CoroutineBase) =
   discard "to override"
 
-proc delay*(): Continuation {.magic: "Delay".}
+func delay*(): Continuation {.magic: "Delay".}
   ## Creates a continuation for the current coroutine's own continuation from the point
   ## of the call to `suspend` forward. Think of it as a reification of the "semicolon": To split up `a; b` use
   ## `a; let cont = delay(); suspend(); b`.
 
-proc delay*(x: typed): Continuation {.magic: "Delay".}
+func delay*(x: typed): Continuation {.magic: "Delay".}
   ## Delays the execution of a `.passive` proc and returns a continuation representation
   ## this call. Think of it as a `toTask` builtin.
 
@@ -289,7 +289,7 @@ func `==`*[T: Equatable](x, y: seq[T]): bool =
 
 const HexChars = "0123456789ABCDEF"
 
-proc addEscapedChar*(s: var string, c: char) {.noSideEffect, inline.} =
+func addEscapedChar*(s: var string, c: char) {.noSideEffect, inline.} =
   ## Adds a char to string `s` and applies the following escaping:
   ##
   ## * replaces any ``\`` by `\\`
@@ -330,7 +330,7 @@ proc addEscapedChar*(s: var string, c: char) {.noSideEffect, inline.} =
     s.add(HexChars[int((n and 0xF0) shr 4)])
     s.add(HexChars[int(n and 0xF)])
 
-proc addQuoted*[T](s: var string, x: T) =
+func addQuoted*[T](s: var string, x: T) =
   ## Appends `x` to string `s` in place, applying quoting and escaping
   ## if `x` is a string or char.
   ##

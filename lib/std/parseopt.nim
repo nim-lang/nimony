@@ -33,10 +33,10 @@ type
     key*, val*: string
     current: string
 
-proc initOptParser*(): OptParser =
+func initOptParser*(): OptParser =
   OptParser(pos: 0, inShortState: false, idx: 1, kind: cmdEnd, key: "", val: "", current: "")
 
-proc isKeySep(c: char): bool {.inline.} = c == ':' or c == '='
+func isKeySep(c: char): bool {.inline.} = c == ':' or c == '='
 
 proc next*(p: var OptParser) =
   if p.inShortState and p.pos < p.current.len:
@@ -94,7 +94,7 @@ proc next*(p: var OptParser) =
       p.key = move p.current
       p.val = ""
 
-iterator getopt*(): (CmdLineKind, string, string) =
+iterator getopt*(): (CmdLineKind, string, string) {.sideEffect.} =
   var p = initOptParser()
   while true:
     next(p)

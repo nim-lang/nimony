@@ -62,7 +62,7 @@ proc raiseEncodingError(msg: string) {.raises.} =
 
 when defined(windows):
   import std/[parseutils, strutils]
-  proc eqEncodingNames(a, b: string): bool =
+  func eqEncodingNames(a, b: string): bool =
     var i = 0
     var j = 0
     while i < a.len and j < b.len:
@@ -261,7 +261,7 @@ when defined(windows):
       yield a[i]
       inc i
 
-  proc nameToCodePage*(name: string): CodePage =
+  func nameToCodePage*(name: string): CodePage =
     var nameAsInt: int = 0
     if parseBiggestInt(name, nameAsInt) == 0: nameAsInt = -1
     for value in arrayIter(winEncodings):
@@ -269,7 +269,7 @@ when defined(windows):
       if no == nameAsInt or eqEncodingNames(na, name): return CodePage(no)
     result = CodePage(-1)
 
-  proc codePageToName*(c: CodePage): string =
+  func codePageToName*(c: CodePage): string =
     for value in arrayIter(winEncodings):
       let (no, na) = value
       if no == int(c):

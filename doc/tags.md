@@ -46,7 +46,7 @@
 | `(neq T X X)`          | NifcExpr, NimonyExpr | |
 | `(le T X X)`           | NifcExpr, NimonyExpr | |
 | `(lt T X X)`           | NifcExpr, NimonyExpr | |
-| `(cast T X)`           | NifcExpr, NimonyExpr, NiflerKind | `cast` operation |
+| `(cast T X)`           | NifcExpr, NimonyExpr, NimonyPragma, NiflerKind | `cast` operation |
 | `(conv T X)`           | NifcExpr, NimonyExpr | type conversion |
 | `(call X X*)`          | NifcExpr, NimonyExpr, NifcStmt, NimonyStmt, NiflerKind | call operation |
 | `(cmd X X*)`             | NimonyStmt, NimonyExpr, NiflerKind | command operation |

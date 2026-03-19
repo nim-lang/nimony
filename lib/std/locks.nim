@@ -28,7 +28,7 @@ type
 # {.push stackTrace: off.}
 
 
-proc `$`*(lock: Lock): string =
+func `$`*(lock: Lock): string =
   # workaround bug #14873
   result = "()"
 

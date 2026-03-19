@@ -1,6 +1,6 @@
 var globalX = 12
 
-iterator foo(x: int): (int, int) =
+iterator foo(x: int): (int, int) {.sideEffect.} =
   # yield (12, x)
   let ff = [(12, globalX)]
   yield ff[0]

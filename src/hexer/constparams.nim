@@ -318,6 +318,10 @@ proc trPragmaBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
     c.keepOverflowFlag = true
     tr(c, dest, n)
     c.keepOverflowFlag = oldKeepOverflowFlag
+  elif n.pragmaKind == CastP:
+    skip n # cast pragma
+    skipParRi n # pragmas
+    tr(c, dest, n)
   else:
     bug "unknown pragma block: " & toString(n, false)
   skipParRi n # pragmax

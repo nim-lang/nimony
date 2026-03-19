@@ -1,21 +1,21 @@
 include mimalloc
 
-proc allocFixed*(size: int): pointer =
+func allocFixed*(size: int): pointer =
   result = mi_malloc(size.csize_t)
 
-proc deallocFixed*(p: pointer) = mi_free(p)
+func deallocFixed*(p: pointer) = mi_free(p)
 
-proc c_memcpy(dest, src: pointer; size: csize_t) {.importc: "memcpy", header: "<string.h>".}
-proc c_memcmp(a, b: pointer; size: csize_t): cint {.importc: "memcmp", header: "<string.h>".}
-proc c_memset(dest: pointer; val: cint; size: csize_t) {.importc: "memset", header: "<string.h>".}
+func c_memcpy(dest, src: pointer; size: csize_t) {.importc: "memcpy", header: "<string.h>".}
+func c_memcmp(a, b: pointer; size: csize_t): cint {.importc: "memcmp", header: "<string.h>".}
+func c_memset(dest: pointer; val: cint; size: csize_t) {.importc: "memset", header: "<string.h>".}
 
-proc copyMem*(dest, src: pointer; size: int) {.inline.} =
+func copyMem*(dest, src: pointer; size: int) {.inline.} =
   c_memcpy(dest, src, csize_t size)
 
-proc cmpMem*(a, b: pointer; size: int): int {.inline.} =
+func cmpMem*(a, b: pointer; size: int): int {.inline.} =
   result = c_memcmp(a, b, csize_t size)
 
-proc zeroMem*(dest: pointer; size: int) {.inline.} =
+func zeroMem*(dest: pointer; size: int) {.inline.} =
   c_memset(dest, 0, csize_t size)
 
 var
