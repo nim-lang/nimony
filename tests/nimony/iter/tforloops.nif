@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +2372            )
+(.indexat +2403            )
 0,1,tests/nimony/iter/tforloops.nim(stmts 4
  (gvar :globalX.0. . .
   (i -1) 10 +12) ,2
@@ -9,7 +9,9 @@
     (i -1) .)) 10
   (tuple 1
    (i -1) 6
-   (i -1)) . . 2,2
+   (i -1)) 33
+  (pragmas 2
+   (sideEffect)) . 2,2
   (stmts 4
    (let :ff.0 . . 5
     (array ~1,~2
@@ -116,5 +118,5 @@
  (comment int.0.sysvq0asl ~5 int.0.sysvq0asl int.0.sysvq0asl 1,8 int.0.sysvq0asl ~6,8 int.0.sysvq0asl))0,1,tests/nimony/iter/tforloops.nim(.index 4
  (h globalX.0. +81) ,2
  (h foo.0. +43) ,10
- (h foo1.0. +734) ,27
+ (h foo1.0. +765) ,27
  (h bar.0. +812))
