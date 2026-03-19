@@ -2385,7 +2385,20 @@ The lifetime of captured variables extends beyond the scope where they were decl
 
 ## Func
 
-A `func` is currently simply a different spelling for a `proc`. This will be changed in the future. A `func` will be strict about what it can do.
+A `func` is a `proc` that is treated as `noSideEffect` by default. Likewise, `iterator` and `converter` are treated as `noSideEffect` by default. A plain `proc` is treated as having side effects by default.
+
+A routine is **side-effect free** when it does not access global or thread-local variables and does not call any routine that has side effects.
+
+There is no `noSideEffect` inference. The defaults can be overridden with explicit `.noSideEffect` and `.sideEffect` annotations:
+
+```nim
+proc pureComputation(x: int): int {.noSideEffect.} =
+  x * x
+
+func withSideEffect(x: int): int {.sideEffect.} =
+  echo x  # allowed because of the explicit .sideEffect annotation
+  x * x
+```
 
 
 
