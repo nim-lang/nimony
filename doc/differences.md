@@ -18,20 +18,25 @@
   3. It saves memory.
 - Macros are replaced by compiler plugins which will offer a different API. (We have no design for an API yet though.)
 - Multi-methods are gone for good, use single dispatch methods.
-- Cyclic module dependencies will be allowed if an explicit `cyclic` import statement is used: `import (path / module) {.cyclic.}`.
+- Cyclic module dependencies are allowed if an explicit `cyclic` import statement is used: `import (path / module) {.cyclic.}`.
+- The side-effect system works differently:
+  - `func`, `iterator` and `converter` are treated as `noSideEffect` by default.
+  - `proc` is treated as `sideEffect` by default.
+  - There is no `noSideEffect` inference.
+  - The defaults can be overridden with explicit `.noSideEffect` and `.sideEffect` annotations.
 - Overloading based on `var T` is gone as accessors become polymorphic instead: It is tracked if a write to a location like `a[i].x.z` is allowed. It is allowed if `a` is mutable. The builtin array indexing has always worked this way so this is a most natural extension. This means:
 
 ```nim
 # Nim 2 code
-proc `[]`(x: var Container): var Element
-proc `[]`(x: Container): lent Element
+func `[]`(x: var Container): var Element
+func `[]`(x: Container): lent Element
 ```
 
 is simplified to:
 
 ```nim
 # Nimony
-proc `[]`(x: Container): var Element # polymorphic accessor
+func `[]`(x: Container): var Element # polymorphic accessor
 ```
 
 It also means we know in the type system if a container access can resize the container or not as the resize would still require the var-ness for the parameter!
@@ -51,7 +56,6 @@ Nimony currently lacks these features:
 - Nim's effect system:
   - `tags` annotations are ignored. Tag mismatches should produce warnings in Nim 3 with the option to turn these warnings into errors.
   - `raises: []` is the new default and ignored. `raises: <list here>` is mapped to `.raises` (but this needs to be changed to an exception system compatible with Nim's).
-  - `noSideEffect` and `func` is ignored. In the future we will probably add `.noSideEffect` inference and `func` strictness.
   - `gcsafe` is ignored.
 
 
