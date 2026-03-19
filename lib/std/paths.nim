@@ -29,7 +29,7 @@ func path*(s: string): Path {.inline.} =
 func `$`*(x: Path): string {.inline.} =
   x.data
 
-func hash*(x: Path): Hash {.noSideEffect.} =
+proc hash*(x: Path): Hash =
   var s = x.data
   ospaths2.normalizePath(s)
   if FileSystemCaseSensitive:
