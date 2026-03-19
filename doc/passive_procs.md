@@ -22,8 +22,9 @@ when a passive proc completes, execution returns to its caller.
 
 Not all continuations are freely movable across threads. Continuations produced by
 `delay(call)` may be scheduled on another thread, subject to sendability checks for the
-captured environment. Continuations produced by `delay()` capture the current coroutine's
-own remainder and are thread-affine: they are expected to resume on the same thread.
+captured environment. Continuations produced by `delay()` capture the continuation for
+the code following the nearest `suspend()` and are thread-affine: they are expected to
+resume on the same thread.
 
 ## How It Works
 
@@ -103,7 +104,7 @@ Language-level semantics:
 
 - Calls to passive procs are suspension points for passive callers.
 - `delay(call)` captures a child continuation and may require sendability checks.
-- `delay()` captures the current coroutine's own remainder and keeps thread affinity.
+- `delay()` captures the continuation for the code following the nearest `suspend()` and keeps thread affinity.
 - Regular procs can call passive procs; the compiler drives them to completion through
   the active scheduler.
 
@@ -122,11 +123,9 @@ interest in a file descriptor:
 
 ```nim
 proc ioWait(fd: cint) {.passive.} =
-  # Real implementation:
-  # 1. Store the current continuation in the IoRing's fd slot
-  # 2. Return nil to suspend (the trampoline stops)
-  # 3. When the fd becomes ready, the IoRing resumes the continuation
-  discard
+  let c = delay()        # capture: continuation for code after suspend()
+  ioRing.store(fd, c)    # register with the event loop
+  suspend()              # stop the trampoline; ioRing resumes c when fd is ready
 ```
 
 Higher-level IO operations compose on top of `ioWait`:
@@ -170,17 +169,23 @@ The scheduler bridges passive procs to the OS event loop:
 This model means a single thread can handle thousands of concurrent connections with
 each handler written as a simple sequential loop.
 
-## Primitives: `delay`, `advance`
+## Primitives: `delay`, `suspend`, `advance`
 
 - `delay(passiveCall())` captures a passive call as a `Continuation` without running it.
   Think of it as `toTask` for coroutines. Because this continuation may be handed to another
   thread, the compiler checks that the captured environment is sendable (for example, unique
   or atomically reference-counted).
-- `delay()` without any argument captures the **current coroutine's own continuation** from this point
-  forward — "the rest of me" as a `Continuation`. The CPS transform replaces it with
-  `Continuation(fn: s_next, env: this)` pointing at the next state function. This form is
-  thread-affine: it assumes the continuation will later resume on the same thread that
-  captured it.
+- `delay()` without any argument captures the **continuation for the code following the
+  nearest `suspend()`** — "the rest of me from that point" as a `Continuation`. The CPS
+  transform replaces it with `Continuation(fn: s_next, env: this)` pointing at the state
+  function after the `suspend()`. This form is thread-affine: it assumes the continuation
+  will later resume on the same thread that captured it. Always used together with a
+  following `suspend()` call, with setup code (e.g. registering with an IO backend) in
+  between.
+- `suspend()` stops the trampoline by returning `Continuation(fn: nil, env: nil)`. Always
+  paired with a preceding `delay()` that captures the resume point first. The code between
+  `delay()` and `suspend()` is the **setup window** — it runs synchronously before
+  suspension and must not contain calls to other passive procs.
 - `advance(c)` single-steps through one state transition. Useful for interleaving
   coroutines manually.
 
@@ -193,9 +198,10 @@ and neither runs until the scheduler picks them up:
 ```nim
 template spawn(call: typed) =
   let taskA = delay(call)     # child coroutine's continuation
-  let taskB = delay()         # MY OWN continuation (code after this point)
+  let taskB = delay()         # MY OWN continuation (code after the `suspend` call)
   scheduler.run taskA
   scheduler.run taskB
+  suspend()
 ```
 
 After `spawn`, the current coroutine is suspended — it does not continue past the spawn

@@ -261,6 +261,7 @@
 | `(defaultdistinct T)` | NimonyExpr | |
 | `(delay X X*)` | NimonyExpr | `delay(fn args)` builtin for delayed continuation creation |
 | `(delay0)` | NimonyExpr | `delay()` no-arg: capture current coroutine's own continuation |
+| `(suspend)` | NimonyExpr | `suspend()` magic proc: suspends the coroutine and returns Continuation(nil, nil) |
 | `(expr S+ X)` | NimonyExpr, NiflerKind | |
 | `(do (params...)+ T X)` | NimonyExpr, NiflerKind | `do` expression |
 | `(arrat X X X? X?)` | NimonyExpr | two optional exprs: `high` boundary and the `low` boundary (if != 0) |

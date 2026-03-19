@@ -2850,6 +2850,24 @@ proc semDelay(c: var SemContext; dest: var TokenBuf; it: var Item) =
   it.typ = c.types.continuationType
   commonType c, dest, it, beforeExpr, expected
 
+proc semSuspend(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  # suspend() -> (suspend)
+  # Creates a suspension point and returns Continuation(nil, nil)
+  let beforeExpr = dest.len
+  let expected = it.typ
+  let info = it.n.info
+  inc it.n  # skip (suspend tag (always SuspendX from addFn)
+  if it.n.kind == ParRi:
+    dest.addParLe(SuspendX, info)
+    dest.addParRi()
+    inc it.n
+  else:
+    buildErr c, dest, it.n.info, "`suspend` takes no argument"
+    skip it.n
+    skipParRi it.n
+  it.typ = c.types.continuationType
+  commonType c, dest, it, beforeExpr, expected
+
 type ArrayConstrContext = object
   firstKeyType: TypeCursor
   currentIndex: xint
@@ -5126,6 +5144,8 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       semTypedUnaryArithmetic c, dest, it
     of DelayX, Delay0X:
       semDelay c, dest, it
+    of SuspendX:
+      semSuspend c, dest, it
     of InSetX:
       semInSet c, dest, it
     of CardX:

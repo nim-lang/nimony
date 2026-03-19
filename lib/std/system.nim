@@ -232,13 +232,16 @@ method cancel*(coro: ptr CoroutineBase) =
   discard "to override"
 
 func delay*(): Continuation {.magic: "Delay".}
-  ## Creates a continuation for the current coroutine's own continuation from this point
-  ## forward. Think of it as a reification of the "semicolon": To split up `a; b` use
-  ## `a; let cont = delay(); b`.
+  ## Creates a continuation for the current coroutine's own continuation from the point
+  ## of the call to `suspend` forward. Think of it as a reification of the "semicolon": To split up `a; b` use
+  ## `a; let cont = delay(); suspend(); b`.
 
 func delay*(x: typed): Continuation {.magic: "Delay".}
   ## Delays the execution of a `.passive` proc and returns a continuation representation
   ## this call. Think of it as a `toTask` builtin.
+
+proc suspend*() {.magic: "Suspend".}
+  ## Suspends the current coroutine. In CPS, this inserts `return Continuation(fn: nil, env: nil)`.
 
 proc trivialTick(c: Continuation): Continuation =
   result = c.fn(c.env)

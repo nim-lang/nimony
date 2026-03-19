@@ -586,7 +586,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
        MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX, EmoveX,
        DestroyX, DupX, CopyX, WasMovedX, SinkhX, TraceX,
        BracketX, CurlyX, TupX, OvfX, InstanceofX, InternalFieldPairsX,
-       FailedX, IsX, EnvpX, Delay0X:
+       FailedX, IsX, EnvpX, Delay0X, SuspendX:
       trExprLoop c, n, tar
     of PragmaxX:
       bug "pragmax should be handled in trStmt"
