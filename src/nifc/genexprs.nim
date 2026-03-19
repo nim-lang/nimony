@@ -296,7 +296,7 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
       c.add s
       inc n
     of StringLit:
-      if gfInCallImportC notin c.flags:
+      if gfInCallImportC notin c.flags and gfInFlexArray notin c.flags:
         c.add "(NC8*)"
       c.add makeCString(pool.strings[n.litId])
       inc n
@@ -359,10 +359,17 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
           for _ in 0 ..< d:
             c.add "Q"
             c.add Dot
+        let fldSym = if n.kind == Symbol: n.symId else: SymId(0)
         c.genField n, objBody, c.m.isImportC(objType)
         inc n
         c.add AsgnOpr
+        # For flexible array member fields, suppress the (NC8*) cast on string literals
+        var fldBody = objBody
+        let fldType = if fldSym != SymId(0): typeOfField(c.m, fldBody, fldSym) else: default(Cursor)
+        let isFlexArr = not cursorIsNil(fldType) and fldType.typeKind == FlexarrayT
+        if isFlexArr: c.flags.incl gfInFlexArray
         c.genx n
+        if isFlexArr: c.flags.excl gfInFlexArray
         if n.kind != ParRi: skip n
         skipParRi n
       elif n.exprKind == OconstrC:

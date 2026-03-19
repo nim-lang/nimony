@@ -24,6 +24,8 @@ type
     strLits*: Table[string, SymId]
     newTypes*: Table[string, SymId]
     pending*: TokenBuf
+    strLitBuf*: TokenBuf   ## static LongString const decls for SSO long literals
+    strLitCounter*: int    ## unique suffix for strLitBuf symbols
     typeCache*: TypeCache
     bits*: int
 

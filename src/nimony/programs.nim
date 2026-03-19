@@ -390,8 +390,9 @@ proc publishStringType*() =
   # This logic is not strictly necessary for "system.nim" itself, but
   # for modules that emulate system via --isSystem.
   let symId = pool.syms.getOrIncl(StringName)
-  let aId = pool.syms.getOrIncl(StringAField)
-  let iId = pool.syms.getOrIncl(StringIField)
+  let bytesId = pool.syms.getOrIncl(StringBytesField)
+  let moreId  = pool.syms.getOrIncl(StringMoreField)
+  let longStrSymId = pool.syms.getOrIncl(LongStringName)
   let exportMarker = pool.strings.getOrIncl("x")
   var str = createTokenBuf(10)
   str.copyIntoUnchecked "type", NoLineInfo:
@@ -402,22 +403,21 @@ proc publishStringType*() =
     str.copyIntoUnchecked "object", NoLineInfo:
       str.addDotToken() # inherits from nothing
       str.copyIntoUnchecked "fld", NoLineInfo:
-        str.add symdefToken(aId, NoLineInfo)
+        str.add symdefToken(bytesId, NoLineInfo)
         str.addDotToken() # export marker
         str.addDotToken() # pragmas
-        # type is `ptr UncheckedArray[char]`
-        str.copyIntoUnchecked "ptr", NoLineInfo:
-          str.copyIntoUnchecked "uarray", NoLineInfo:
-            str.copyIntoUnchecked "c", NoLineInfo:
-              str.add intToken(pool.integers.getOrIncl(8), NoLineInfo)
+        # type is `uint`
+        str.copyIntoUnchecked "u", NoLineInfo:
+          str.add intToken(pool.integers.getOrIncl(-1), NoLineInfo)
         str.addDotToken() # default value
 
       str.copyIntoUnchecked "fld", NoLineInfo:
-        str.add symdefToken(iId, NoLineInfo)
+        str.add symdefToken(moreId, NoLineInfo)
         str.addDotToken() # export marker
         str.addDotToken() # pragmas
-        str.copyIntoUnchecked "i", NoLineInfo:
-          str.add intToken(pool.integers.getOrIncl(-1), NoLineInfo)
+        # type is `ptr LongString`
+        str.copyIntoUnchecked "ptr", NoLineInfo:
+          str.add symToken(longStrSymId, NoLineInfo)
         str.addDotToken() # default value
 
   publish symId, str, SemcheckBodies
