@@ -371,6 +371,9 @@ proc trProcPragmas(c: var Context; n: var Cursor) =
       elif pk == NoSideEffectP:
         c.r.isNoSideEffect = true
         takeTree c.dest, n
+      elif pk == SideEffectP:
+        c.r.isNoSideEffect = false
+        takeTree c.dest, n
       else:
         takeTree c.dest, n
     takeParRi c, n
@@ -512,10 +515,10 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   skip pragmas
   if c.r.isNoSideEffect:
     if whichEffect(calleeKind, pragmas) == HasSideEffect:
+      swap c.dest, callBuf
       buildLocalErr c.dest, n.info, "cannot call a routine marked as `.noSideEffect` outside of a .noSideEffect context"
       n = callExpr
       skip n
-      swap c.dest, callBuf
       return
 
   c.dest.add head # (call)

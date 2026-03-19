@@ -21,10 +21,11 @@ func raiseOSError*(errorCode: OSErrorCode, additionalInfo = "") {.noinline, rais
   ##
   ## Read the description of the `newOSError proc`_ to learn
   ## how the exception object is created.
-  when defined(windows):
-    raise windowsToErrorCode(errorCode.int32)
-  else:
-    raise posixToErrorCode(errorCode.int32)
+  {.cast(noSideEffect).}:
+    when defined(windows):
+      raise windowsToErrorCode(errorCode.int32)
+    else:
+      raise posixToErrorCode(errorCode.int32)
 
 #{.push stackTrace:off.}
 proc osLastError*(): OSErrorCode {.sideEffect.} =

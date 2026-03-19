@@ -94,11 +94,11 @@ when defined(windows):
   let INVALID_SET_FILE_POINTER*: DWORD = cast[DWORD](-1)
   let INVALID_FILE_SIZE*: DWORD = cast[DWORD](-1)
 
-  proc default*(x: typedesc[Handle]): Handle = Handle 0
-  proc `==`*(x, y: Handle): bool {.borrow.}
+  func default*(x: typedesc[Handle]): Handle = Handle 0
+  func `==`*(x, y: Handle): bool {.borrow.}
   func isNil*(x: Handle): bool = x == Handle 0
 
-  proc `==`(x, y: WINBOOL): bool {.borrow.}
+  func `==`(x, y: WINBOOL): bool {.borrow.}
 
   func isFail*(x: WINBOOL): bool {.inline.} =
     ## Returns true if `x != 0`. Windows uses a different convention than POSIX,
