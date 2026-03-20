@@ -133,8 +133,13 @@ func len*(a: cstring): int {.inline.} =
 # ---- cstring view ----
 
 func nimStrToCString*(s {.byref.}: string): cstring {.inline, exportc: "nimStrToCString".} =
-  ## Zero-cost cstring view. SSO strings are always null-terminated.
-  if ssLen(s) > PayloadSize:
+  ## Returns a null-terminated cstring. For heap strings, writes the null
+  ## terminator on demand (opt-in). Static/literal strings already have one.
+  let sl = ssLen(s)
+  if sl > PayloadSize:
+    if sl == HeapSlen:
+      let p = s.more
+      p.data[p.fullLen] = '\0'
     result = cast[cstring](addr s.more.data[0])
   else:
     result = cast[cstring](inlinePtr(s))
@@ -161,7 +166,7 @@ func ensureUniqueLong(s: var string; oldLen, newLen: int) =
       p.fullLen = newLen
       p.capImpl = newCap
       let old = s.more
-      copyMem(addr p.data[0], addr old.data[0], min(oldLen, newCap) + 1)
+      copyMem(addr p.data[0], addr old.data[0], min(oldLen, newCap))
       if isHeap and atomicSubFetch(old.rc, 1) == 0:
         dealloc(old)
       s.more = p
@@ -247,7 +252,6 @@ func add*(s: var string; c: char) =
     let l = s.more.fullLen
     if sl == HeapSlen and s.more.rc == 1 and l < s.more.capImpl:
       s.more.data[l] = c
-      s.more.data[l + 1] = '\0'
       s.more.fullLen = l + 1
       if l < AlwaysAvail:
         inlinePtrV(s)[l] = c
@@ -256,7 +260,6 @@ func add*(s: var string; c: char) =
       ensureUniqueLong(s, oldLen, oldLen + 1)
       if ssLen(s) == HeapSlen:
         s.more.data[oldLen] = c
-        s.more.data[oldLen + 1] = '\0'
         if oldLen < AlwaysAvail:
           inlinePtrV(s)[oldLen] = c
   else:
@@ -264,7 +267,6 @@ func add*(s: var string; c: char) =
     transitionToLong(s, sl, sl + 1)
     if ssLen(s) == HeapSlen:
       s.more.data[sl] = c
-      s.more.data[sl + 1] = '\0'
 
 func add*(s: var string; part: string) =
   let partLen = part.len
@@ -282,7 +284,6 @@ func add*(s: var string; part: string) =
       transitionToLong(s, sLen, newLen)
       if ssLen(s) == HeapSlen:
         copyMem(cast[pointer](cast[uint](addr s.more.data[0]) + uint(sLen)), partData, partLen)
-        s.more.data[newLen] = '\0'
         copyMem(inlinePtrV(s), addr s.more.data[0], AlwaysAvail)
   else:
     let sLen = s.more.fullLen
@@ -290,9 +291,18 @@ func add*(s: var string; part: string) =
     ensureUniqueLong(s, sLen, newLen)
     if ssLen(s) == HeapSlen:
       copyMem(cast[pointer](cast[uint](addr s.more.data[0]) + uint(sLen)), partData, partLen)
-      s.more.data[newLen] = '\0'
       if sLen < AlwaysAvail:
         copyMem(inlinePtrV(s), addr s.more.data[0], AlwaysAvail)
+
+# ---- zero-padding helper for inline shrink ----
+
+template zeroSwarPad(s: var string; newLen: int) =
+  ## Clears stale char bytes above newLen in `bytes`, sets slen = newLen.
+  ## Required for SWAR correctness: bytes above slen must be 0.
+  let keepBits = uint((newLen + 1) * 8)
+  let mask = if keepBits >= uint(sizeof(uint) * 8): not 0'u
+             else: (uint(1) shl keepBits) - 1'u
+  s.bytes = (s.bytes and (mask and not 0xFF'u)) or uint(newLen)
 
 # ---- setLen / shrink ----
 
@@ -313,27 +323,31 @@ func setLen*(s: var string; newLen: int) =
         inl[newLen] = '\0'
         setSSLen(s, newLen)
       else:
-        inl[newLen] = '\0'
-        setSSLen(s, newLen)
+        if newLen <= AlwaysAvail:
+          zeroSwarPad(s, newLen)  # clears stale chars for SWAR; also sets slen
+        else:
+          inl[newLen] = '\0'
+          setSSLen(s, newLen)
     else:
       transitionToLong(s, curLen, newLen)
       if ssLen(s) == HeapSlen:
         zeroMem(cast[pointer](cast[uint](addr s.more.data[0]) + uint(curLen)), newLen - curLen)
-        s.more.data[newLen] = '\0'
   else:
     if newLen <= PayloadSize:
       let old = s.more
       copyMem(inlinePtrV(s), addr old.data[0], newLen)
-      inlinePtrV(s)[newLen] = '\0'
       if sl == HeapSlen and atomicSubFetch(old.rc, 1) == 0:
         dealloc(old)
-      setSSLen(s, newLen)
+      if newLen <= AlwaysAvail:
+        zeroSwarPad(s, newLen)  # clear stale prefix bytes for SWAR; sets slen
+      else:
+        inlinePtrV(s)[newLen] = '\0'
+        setSSLen(s, newLen)
     else:
       ensureUniqueLong(s, curLen, newLen)
       if ssLen(s) == HeapSlen:
         if newLen > curLen:
           zeroMem(cast[pointer](cast[uint](addr s.more.data[0]) + uint(curLen)), newLen - curLen)
-        s.more.data[newLen] = '\0'
 
 func shrink*(s: var string; newLen: int) =
   if newLen <= 0:
@@ -343,12 +357,13 @@ func shrink*(s: var string; newLen: int) =
   elif newLen < s.len:
     let sl = ssLen(s)
     if sl <= PayloadSize:
-      inlinePtrV(s)[newLen] = '\0'
-      setSSLen(s, newLen)
+      if newLen <= AlwaysAvail:
+        zeroSwarPad(s, newLen)  # clear stale bytes for SWAR; sets slen
+      else:
+        inlinePtrV(s)[newLen] = '\0'
+        setSSLen(s, newLen)
     else:
       ensureUniqueLong(s, s.more.fullLen, newLen)
-      if ssLen(s) == HeapSlen:
-        s.more.data[newLen] = '\0'
 
 # ---- indexing ----
 
@@ -396,11 +411,31 @@ func substr*(s: string; first, last: int): string =
 func substr*(s: string; first = 0): string =
   result = substr(s, first, high(s))
 
+# ---- SWAR helpers (SIMD Within A Register) ----
+# For short strings (slen <= AlwaysAvail), the `bytes` word encodes both
+# slen (byte0) and chars (bytes1..slen). SWAR comparison puts char[0] in the
+# MSB so that a plain integer compare is lexicographic.
+# Assumes little-endian 64-bit (the common case; BE support can be added later).
+
+func bswap(x: uint): uint {.importc: "__builtin_bswap64", nodecl, noSideEffect.}
+
+func swarKey(x: uint): uint {.inline.} =
+  ## On LE: shift out slen byte (low byte), bswap → char[0] lands in MSB.
+  ## Integer compare on swarKey results = lexicographic char order.
+  result = bswap(x shr 8)
+
 # ---- comparison ----
 
 func equalStrings(a, b: string): bool {.inline.} =
-  let la = a.len
-  let lb = b.len
+  let abytes = a.bytes
+  let bbytes = b.bytes
+  let aslen = int(cast[ptr byte](unsafeAddr abytes)[])
+  let bslen = int(cast[ptr byte](unsafeAddr bbytes)[])
+  if aslen <= AlwaysAvail and bslen <= AlwaysAvail:
+    # Both short: `bytes` encodes slen + chars, one-word compare suffices.
+    return abytes == bbytes
+  let la = if aslen > PayloadSize: a.more.fullLen else: aslen
+  let lb = if bslen > PayloadSize: b.more.fullLen else: bslen
   if la != lb: return false
   if la == 0: return true
   cmpMem(rawData(a), rawData(b), la) == 0
@@ -412,8 +447,19 @@ func nimStrAtLe(s: string; idx: int; ch: char): bool {.inline.} =
   result = idx < s.len and s[idx] <= ch
 
 func cmpStrings(a, b: string): int =
-  let la = a.len
-  let lb = b.len
+  let abytes = a.bytes
+  let bbytes = b.bytes
+  let aslen = int(cast[ptr byte](unsafeAddr abytes)[])
+  let bslen = int(cast[ptr byte](unsafeAddr bbytes)[])
+  if aslen <= AlwaysAvail and bslen <= AlwaysAvail:
+    # SWAR fast path: both short, one-word lexicographic compare.
+    let aw = swarKey(abytes)
+    let bw = swarKey(bbytes)
+    if aw < bw: return -1
+    if aw > bw: return 1
+    return aslen - bslen
+  let la = if aslen > PayloadSize: a.more.fullLen else: aslen
+  let lb = if bslen > PayloadSize: b.more.fullLen else: bslen
   let minLen = min(la, lb)
   if minLen > 0:
     result = cmpMem(rawData(a), rawData(b), minLen)
@@ -509,7 +555,7 @@ func terminatingZero*(s: string): string =
 
 # ---- cstring conversions ----
 
-func borrowCStringUnsafe(s: cstring; l: int): string =
+func borrowCStringUnsafe*(s: cstring; l: int): string =
   ## Creates a Nim string from a cstring by copying up to `l` chars.
   result = string(bytes: 0'u, more: nil)
   if l <= 0: return
@@ -534,12 +580,16 @@ func borrowCStringUnsafe*(s: cstring): string {.exportc: "nimBorrowCStringUnsafe
   borrowCStringUnsafe(s, len(s))
 
 func ensureTerminatingZero*(s: var string) =
-  ## SSO strings are always null-terminated. This is a no-op.
-  discard
+  ## Writes a null terminator after the string's data if needed.
+  ## Inline/medium strings always maintain a zero; heap strings do not unless
+  ## this (or nimStrToCString) is called explicitly.
+  ## Static strings already have a terminator from their C string literal.
+  if ssLen(s) == HeapSlen:
+    s.more.data[s.more.fullLen] = '\0'
 
 func toCString*(s: var string): cstring =
   ## Returns a null-terminated cstring pointer.
-  ## SSO strings are always null-terminated, so this is zero-cost.
+  ensureTerminatingZero(s)
   result = cast[cstring](rawData(s))
 
 func fromCString*(s: cstring): string =
