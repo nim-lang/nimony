@@ -371,6 +371,8 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
 
       copyIntoKind dest, RetS, info:
         dest.addSymUse contVar, info
+    
+    c.currentProc.lastStmtReturns = true
 
 proc trDelay0(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Handles (delay0) — no-arg form: to the NEXT suspension point.
