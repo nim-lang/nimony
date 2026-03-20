@@ -561,7 +561,9 @@ proc newLocalProc(c: var Context; dest: var TokenBuf; state: int; sym: SymId) =
 proc gotoNextState(c: var Context; dest: var TokenBuf; state: int; info: PackedLineInfo) =
   # generate: `return state(this)`
   dest.copyIntoKind RetS, info:
-    contNextState(c, dest, state, info)
+    dest.copyIntoKind CallS, info:
+      dest.addSymUse stateToProcName(c, c.procStack[^1], state), info
+      dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
 
 proc returnValue(c: var Context; dest: var TokenBuf; n: var Cursor; info: PackedLineInfo) =
   inc n # yield/return
@@ -1040,7 +1042,8 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   dest.takeToken n
   dest.add init
   declareContinuationResult c, dest, NoLineInfo
-  gotoNextState(c, dest, 0, n.info)
+  dest.copyIntoKind RetS, n.info:
+    contNextState(c, dest, 0, n.info)
   dest.addParRi() # close stmts
   dest.addParRi() # close proc decl
   newLocalProc c, dest, 0, c.procStack[^1]
