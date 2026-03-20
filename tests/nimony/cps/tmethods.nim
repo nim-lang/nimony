@@ -22,10 +22,12 @@ method sus(x: MyObject) {.passive.} =
   cont = delay()
   suspend()
   echo "continued"
+  cont = delay x.io()
 
 var q = MyObject2()
 cast[MyObject](q).a()
 q.a()
 q.inherited()
 q.sus()
+cont.complete()
 cont.complete()
