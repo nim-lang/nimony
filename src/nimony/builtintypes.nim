@@ -25,7 +25,7 @@ proc tagToken(tag: string; info: PackedLineInfo = NoLineInfo): PackedToken {.inl
   parLeToken(pool.tags.getOrIncl(tag), info)
 
 const
-  sso* = false ## set to true to enable SSO string implementation
+  sso* = true ## set to true to enable SSO string implementation
 
 const
   SystemModuleSuffix* = "sysvq0asl" # "sys9azlf"

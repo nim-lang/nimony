@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +25613           )
+(.indexat +25615           )
 0,1,tests/nimony/iter/tforloops1.nim(stmts ,2
  (iterator 9 :powers.0. . . . 15
   (params 1
@@ -313,10 +313,10 @@
       (cmd write.7.syn1lfpjv 6 stdout.0.syn1lfpjv 14 '\0A')))))) ,98
  (block 6 :tbreak.0 2,1
   (stmts 2,1
-   (var :x.3 . . 12,36,lib/std/system/basic_types.nim
+   (var :x.3 . . 12,43,lib/std/system/basic_types.nim
     (bool) 4
     (false)) 2,2
-   (var :run.0 . . 22,36,lib/std/system/basic_types.nim
+   (var :run.0 . . 22,43,lib/std/system/basic_types.nim
     (bool) 6
     (true)) ,4
    (while 6 run.0 2,1
@@ -407,7 +407,7 @@
        (call ~5 items.1.
         (hcall toOpenArray.2.
          (aconstr
-          (array 22,36,lib/std/system/basic_types.nim
+          (array 22,43,lib/std/system/basic_types.nim
            (bool)
            (rangetype
             (i -1) +0 +1)) 1
@@ -415,7 +415,7 @@
           (false)))))
       (unpackflat
        (let :x.7 . . 19,45,lib/std/system/openarrays.nim
-        (mut 22,36,lib/std/system/basic_types.nim
+        (mut 22,43,lib/std/system/basic_types.nim
          (bool)) .)) ~2,1
       (stmts 4
        (for 5
@@ -423,7 +423,7 @@
          (call ~5 items.1.
           (hcall toOpenArray.2.
            (aconstr ~2,~1
-            (array 22,36,lib/std/system/basic_types.nim
+            (array 22,43,lib/std/system/basic_types.nim
              (bool)
              (rangetype
               (i -1) +0 +1)) 1
@@ -431,7 +431,7 @@
             (false)))))
         (unpackflat
          (let :y.1 . . 19,45,lib/std/system/openarrays.nim
-          (mut 22,36,lib/std/system/basic_types.nim
+          (mut 22,43,lib/std/system/basic_types.nim
            (bool)) .)) ~2,1
         (stmts 2,122,lib/std/syncio.nim
          (stmts 2,1
@@ -566,13 +566,13 @@
              (i -1) 14,95,tests/nimony/iter/tforloops1.nim +0))) 2 +1))) 3 +0) ~1,1
       (expr 12
        (oconstr 21,~2 openArray.0.Inff8aa1. 2
-        (kv ~1 a.1 2
+        (kv ~1 a.0 2
          (nil)) 12
         (kv ~3 len.7 2 +0)))) ,2
      (else 2,1
       (expr 12
        (oconstr 21,~4 openArray.0.Inff8aa1. 2
-        (kv ~1 a.1 2
+        (kv ~1 a.0 2
          (cast 5
           (ptr 18
            (uarray
@@ -672,13 +672,13 @@
              (i -1) 15,116,tests/nimony/iter/tforloops1.nim +0))) 2 +1))) 3 +0) ~1,1
       (expr 12
        (oconstr 21,~2 openArray.0.Inff8aa1. 2
-        (kv ~1 a.1 2
+        (kv ~1 a.0 2
          (nil)) 12
         (kv ~3 len.7 2 +0)))) ,2
      (else 2,1
       (expr 12
        (oconstr 21,~4 openArray.0.Inff8aa1. 2
-        (kv ~1 a.1 2
+        (kv ~1 a.0 2
          (cast 5
           (ptr 18
            (uarray
@@ -703,13 +703,13 @@
  (converter :toOpenArray.2. . 0,14,lib/std/system/openarrays.nim .
   (at toOpenArray.0.sysvq0asl
    (rangetype
-    (i -1) +0 +1) 22,36,lib/std/system/basic_types.nim
+    (i -1) +0 +1) 22,43,lib/std/system/basic_types.nim
    (bool)) 28,14,lib/std/system/openarrays.nim
   (params 3
    (param ~2 :x.12 .
     (pragmas 2
      (byref)) 16
-    (array 22,36,lib/std/system/basic_types.nim
+    (array 22,43,lib/std/system/basic_types.nim
      (bool) 13,131,tests/nimony/iter/tforloops1.nim
      (rangetype
       (i -1) +0 +1)) .)) 37,14,lib/std/system/openarrays.nim openArray.0.Ijejnmx1. 69,14,lib/std/system/openarrays.nim
@@ -738,16 +738,16 @@
              (i -1) 13,131,tests/nimony/iter/tforloops1.nim +0))) 2 +1))) 3 +0) ~1,1
       (expr 12
        (oconstr 21,~2 openArray.0.Ijejnmx1. 2
-        (kv ~1 a.1 2
+        (kv ~1 a.0 2
          (nil)) 12
         (kv ~3 len.7 2 +0)))) ,2
      (else 2,1
       (expr 12
        (oconstr 21,~4 openArray.0.Ijejnmx1. 2
-        (kv ~1 a.1 2
+        (kv ~1 a.0 2
          (cast 5
           (ptr 18
-           (uarray 22,36,lib/std/system/basic_types.nim
+           (uarray 22,43,lib/std/system/basic_types.nim
             (bool))) 32
           (addr 1 x.12))) 45
         (kv ~3 len.7 2,144,lib/std/system.nim
@@ -767,11 +767,11 @@
                (i -1) 13,131,tests/nimony/iter/tforloops1.nim +0))) 2 +1))))))))) ~2,~1
    (ret result.2))) 13,130
  (iterator :items.1. . 0,45,lib/std/system/openarrays.nim .
-  (at items.1.sysvq0asl 22,36,lib/std/system/basic_types.nim
+  (at items.1.sysvq0asl 22,43,lib/std/system/basic_types.nim
    (bool)) 18,45,lib/std/system/openarrays.nim
   (params 1
    (param :a.14 . . 12 openArray.0.Ijejnmx1. .)) 19,45,lib/std/system/openarrays.nim
-  (mut 22,36,lib/std/system/basic_types.nim
+  (mut 22,43,lib/std/system/basic_types.nim
    (bool)) 0,45,lib/std/system/openarrays.nim . 0,45,lib/std/system/openarrays.nim . 2,46,lib/std/system/openarrays.nim
   (stmts 4
    (var :i.16 . . 19,3,tests/nimony/iter/tforloops1.nim
@@ -794,7 +794,7 @@
   (pragmas 2
    (inline)) ~15,~18 . 33,~18
   (stmts 1
-   (result :result.3 . . 7,32,lib/std/system/basic_types.nim
+   (result :result.3 . . 13,31,lib/std/system/basic_types.nim
     (i -1) .) 1
    (asgn result.3
     (dot ~1 a.16 len.7 +0)) ~48
@@ -825,10 +825,10 @@
    (asgn result.4 ~2
     (haddr
      (pat
-      (dot ~1 x.14 a.1 +0) 3 idx.2))) ~97
+      (dot ~1 x.14 a.0 +0) 3 idx.2))) ~97
    (ret result.4))) 15,47,lib/std/system/openarrays.nim
  (func :len.1. . ~15,~18 .
-  (at len.8.sysvq0asl 22,36,lib/std/system/basic_types.nim
+  (at len.8.sysvq0asl 22,43,lib/std/system/basic_types.nim
    (bool)) ~3,~18
   (params 1
    (param :a.17 . . 12 openArray.0.Ijejnmx1. .)) 4,~18
@@ -836,19 +836,19 @@
   (pragmas 2
    (inline)) ~15,~18 . 33,~18
   (stmts 1
-   (result :result.5 . . 7,32,lib/std/system/basic_types.nim
+   (result :result.5 . . 13,31,lib/std/system/basic_types.nim
     (i -1) .) 1
    (asgn result.5
     (dot ~1 a.17 len.7 +0)) ~48
    (ret result.5))) 10,48,lib/std/system/openarrays.nim
  (func :\5B\5D.1. . ~10,~40 .
-  (at \5B\5D.10.sysvq0asl 22,36,lib/std/system/basic_types.nim
+  (at \5B\5D.10.sysvq0asl 22,43,lib/std/system/basic_types.nim
    (bool)) 3,~40
   (params 1
    (param :x.15 . . 12 openArray.0.Ijejnmx1. .) 18
    (param :idx.3 . . 5
     (i -1) .)) 19,~40
-  (mut 22,36,lib/std/system/basic_types.nim
+  (mut 22,43,lib/std/system/basic_types.nim
    (bool)) 38,~40
   (pragmas 2
    (inline) 10
@@ -862,12 +862,12 @@
       (dot ~1 x.15 len.7 +0))))) ~10,~40 . 87,~40
   (stmts 3
    (result :result.6 . . ~71
-    (mut 22,36,lib/std/system/basic_types.nim
+    (mut 22,43,lib/std/system/basic_types.nim
      (bool)) .) 3
    (asgn result.6 ~2
     (haddr
      (pat
-      (dot ~1 x.15 a.1 +0) 3 idx.3))) ~97
+      (dot ~1 x.15 a.0 +0) 3 idx.3))) ~97
    (ret result.6))) 37,14,lib/std/system/openarrays.nim
  (type :openArray.0.Inff8aa1. .
   (at openArray.0.sysvq0asl
@@ -875,21 +875,21 @@
   (pragmas 2
    (view)) ~10,~10
   (object . ~23,1
-   (fld :a.1 . . 3
+   (fld :a.0 . . 3
     (ptr 18
      (uarray
       (i -1))) .) ~23,2
    (fld :len.7 . . 5
     (i -1) .))) 37,14,lib/std/system/openarrays.nim
  (type :openArray.0.Ijejnmx1. .
-  (at openArray.0.sysvq0asl 22,36,lib/std/system/basic_types.nim
+  (at openArray.0.sysvq0asl 22,43,lib/std/system/basic_types.nim
    (bool)) ~21,~10
   (pragmas 2
    (view)) ~10,~10
   (object . ~23,1
-   (fld :a.1 . . 3
+   (fld :a.0 . . 3
     (ptr 18
-     (uarray 22,36,lib/std/system/basic_types.nim
+     (uarray 22,43,lib/std/system/basic_types.nim
       (bool))) .) ~23,2
    (fld :len.7 . . 5
     (i -1) .))))0,1,tests/nimony/iter/tforloops1.nim(.index ,2
@@ -915,8 +915,8 @@
  (h toOpenArray.2. +2021) 13,130
  (h items.1. +2132) 15,47,lib/std/system/openarrays.nim
  (h len.0. +734) 10,48,lib/std/system/openarrays.nim
- (h \5B\5D.0. +387) 15,47,lib/std/system/openarrays.nim
+ (h \5B\5D.0. +388) 15,47,lib/std/system/openarrays.nim
  (h len.1. +710) 10,48,lib/std/system/openarrays.nim
- (h \5B\5D.1. +424) 37,14,lib/std/system/openarrays.nim
+ (h \5B\5D.1. +425) 37,14,lib/std/system/openarrays.nim
  (h openArray.0.Inff8aa1. +821) 37,14,lib/std/system/openarrays.nim
  (h openArray.0.Ijejnmx1. +270))

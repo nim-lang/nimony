@@ -499,7 +499,7 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
       c.add "__thread "
     genType c, d.typ, name, isConst = vk == IsConst
     let flags = genVarPragmas(c, d.pragmas)
-    if StaticP in flags or useStatic:
+    if not toExtern and (StaticP in flags or useStatic):
       c.code.insert(Token(StaticKeyword), beforeDecl)
     let beforeInit = c.code.len
 

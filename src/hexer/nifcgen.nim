@@ -1028,10 +1028,7 @@ proc genStringLit(c: var EContext; s: string; info: PackedLineInfo) =
 
       c.strLitBuf.add tagToken("const", info)
       c.strLitBuf.add symdefToken(litName, info)
-      c.strLitBuf.add tagToken("pragmas", info)
-      c.strLitBuf.add tagToken("static", info)
-      c.strLitBuf.addParRi() # "static"
-      c.strLitBuf.addParRi() # "pragmas"
+      c.strLitBuf.addDotToken() # no pragmas
       # type: LongString
       c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringName), info)
       # value: (oconstr LongStringName (kv fullLen len) (kv rc 0) (kv capImpl 0) (kv data "s"))
