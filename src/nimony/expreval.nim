@@ -840,18 +840,14 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       result = evalCall(c, n)
       skip n
     of SizeofX:
-      if c.c.g.config.compat:
-        var orig = n
-        inc n
-        let s = c.c.semGetSize(c.c[], n)
-        var err = false
-        let value = asSigned(s, err)
-        if err:
-          cannotEval orig
-        else:
-          result = intValue(c, value, orig.info)
-      else:
+      let s = c.c.semGetSize(c.c[], n.firstSon)
+      var err = false
+      let value = asSigned(s, err)
+      if err:
         cannotEval n
+      else:
+        result = intValue(c, value, n.info)
+      skip n
     of PlusSetX, MinusSetX, XorSetX, MulSetX:
       result = evalSetOp(c, n, n.exprKind)
     of InSetX:

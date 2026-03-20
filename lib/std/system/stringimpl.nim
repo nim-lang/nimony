@@ -22,15 +22,15 @@ proc atomicSubFetch(p: var int; v: int): int {.inline.} =
 
 template ssLen*(s: string): int =
   ## Reads slen from byte 0 of `bytes` (valid on LE and BE).
-  int(cast[ptr byte](unsafeAddr s.bytes)[])
+  int(cast[ptr byte](addr s.bytes)[])
 
 template setSSLen*(s: var string; v: int) =
   ## Writes slen to byte 0 of `bytes`.
   cast[ptr byte](addr s.bytes)[] = cast[byte](v)
 
 template inlinePtr*(s: string): ptr UncheckedArray[char] =
-  ## Pointer to the inline char storage (offset +1 from `bytes`). Takes unsafeAddr.
-  cast[ptr UncheckedArray[char]](cast[uint](unsafeAddr s.bytes) + 1'u)
+  ## Pointer to the inline char storage (offset +1 from `bytes`). Takes addr.
+  cast[ptr UncheckedArray[char]](cast[uint](addr s.bytes) + 1'u)
 
 template inlinePtrV*(s: var string): ptr UncheckedArray[char] =
   ## Same as inlinePtr but for a var string (uses addr).
@@ -48,7 +48,7 @@ func low*(s: string): int {.inline.} = 0
 
 # ---- data pointer ----
 
-func rawData*(s: lent string): ptr UncheckedArray[char] {.inline.} =
+func rawData*(s {.byref.}: string): ptr UncheckedArray[char] {.inline.} =
   ## Returns a pointer into s's char data. For inline strings the pointer
   ## is into s's bytes field; s must remain alive while the pointer is used.
   if ssLen(s) > PayloadSize:
@@ -58,7 +58,7 @@ func rawData*(s: lent string): ptr UncheckedArray[char] {.inline.} =
 
 # ---- cstring view ----
 
-func nimStrToCString*(s: lent string): cstring {.inline, exportc: "nimStrToCString".} =
+func nimStrToCString*(s {.byref.}: string): cstring {.inline, exportc: "nimStrToCString".} =
   ## Zero-cost cstring view. SSO strings are always null-terminated.
   if ssLen(s) > PayloadSize:
     cast[cstring](addr s.more.data[0])
@@ -84,23 +84,23 @@ func `=copy`*(dest: var string; src: string) {.exportc: "nimStrCopy", inline, no
     if sdest == HeapSlen:
       if atomicSubFetch(dest.more.rc, 1) == 0:
         dealloc(dest.more)
-    copyMem(addr dest.bytes, unsafeAddr src.bytes, sizeof(string))
+    copyMem(addr dest.bytes, addr src.bytes, sizeof(string))
   else:
     # long: COW share
-    if addr dest == unsafeAddr src: return
+    if addr(dest) == addr(src): return
     let sdest = ssLen(dest)
     if sdest == HeapSlen:
       if atomicSubFetch(dest.more.rc, 1) == 0:
         dealloc(dest.more)
     if ssrc == HeapSlen:
       discard atomicAddFetch(src.more.rc, 1)
-    copyMem(addr dest.bytes, unsafeAddr src.bytes, sizeof(string))
+    copyMem(addr dest.bytes, addr src.bytes, sizeof(string))
 
 func `=dup`*(s: string): string {.exportc: "nimStrDup", inline, nodestroy.} =
   let sl = ssLen(s)
   if sl == HeapSlen:
     discard atomicAddFetch(s.more.rc, 1)
-  copyMem(addr result.bytes, unsafeAddr s.bytes, sizeof(string))
+  copyMem(addr result.bytes, addr s.bytes, sizeof(string))
 
 # ---- internal growth helpers ----
 
