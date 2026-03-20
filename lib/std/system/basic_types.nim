@@ -10,6 +10,7 @@ type
   uint16* {.magic: UInt16.}   ## Unsigned 16 bit integer type.
   uint32* {.magic: UInt32.}   ## Unsigned 32 bit integer type.
   uint64* {.magic: UInt64.}   ## Unsigned 64 bit integer type.
+  byte* {.magic: UInt8.}      ## Alias for uint8.
 
 type
   float* {.magic: Float.}     ## Default floating point type.

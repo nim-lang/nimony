@@ -21,6 +21,7 @@ func `[]`*[T: tuple](x: T, i: int): untyped {.magic: "TupAt".}
 func `[]`*[I, T](x: array[I, T], i: I): var T {.magic: "ArrAt".}
 func `[]`*(x: cstring, i: int): var char {.magic: "Pat".}
 func `[]`*[T](x: ptr UncheckedArray[T], i: int): var T {.magic: "Pat".}
+func `[]`*[T](x: UncheckedArray[T], i: int): var T {.magic: "Pat".}
 template `[]=`*[T: tuple](x: T, i: int, elem: typed) =
   (x[i]) = elem
 template `[]=`*[I, T](x: array[I, T], i: I; elem: T) =
@@ -28,6 +29,8 @@ template `[]=`*[I, T](x: array[I, T], i: I; elem: T) =
 template `[]=`*(x: cstring, i: int; elem: char) =
   (x[i]) = elem
 template `[]=`*[T](x: ptr UncheckedArray[T], i: int; elem: T) =
+  (x[i]) = elem
+template `[]=`*[T](x: UncheckedArray[T], i: int; elem: T) =
   (x[i]) = elem
 
 func `[]`*[T](x: ptr T): var T {.magic: "Deref", noSideEffect.}
