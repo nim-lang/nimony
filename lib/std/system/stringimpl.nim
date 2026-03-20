@@ -30,8 +30,21 @@ template isAllocated(s: string): bool = (s.i and IsAllocatedBit) != 0
 func capacity*(s: string): int =
   result = if isAllocated(s): s.cap else: 0
 
-func rawData*(s: string): ptr UncheckedArray[char] {.inline.} =
-  result = s.a
+func beginStore*(s: var string; ensuredLen: int; start = 0): ptr UncheckedArray[char]
+    {.inline, noSideEffect, raises: [], tags: [].} =
+  ## Returns a pointer for a bulk write into `s` starting at `start`.
+  ## `s` must already have sufficient length allocated (via newString/setLen).
+  ## Call endStore(s) after writing to sync any implementation caches.
+  result = cast[ptr UncheckedArray[char]](cast[uint](s.a) + uint(start))
+
+func endStore*(s: var string) {.inline, noSideEffect, raises: [], tags: [].} =
+  ## Syncs implementation caches after a bulk write via beginStore. No-op here.
+  discard
+
+func readRawData*(s: string; start = 0): ptr UncheckedArray[char]
+    {.inline, noSideEffect, raises: [], tags: [].} =
+  ## Returns a read-only pointer to s's char data at `start`.
+  result = cast[ptr UncheckedArray[char]](cast[uint](s.a) + uint(start))
 
 # --- string destructor hooks ---
 

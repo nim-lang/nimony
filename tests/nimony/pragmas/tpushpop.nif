@@ -42,7 +42,7 @@
   (typevars 1
    (typevar :T.0. .
     (pragmas ~11,~5
-     (header 8 "<math.h>")) 28,53,lib/std/system/basic_types.nim
+     (header 8 "<math.h>")) 28,54,lib/std/system/basic_types.nim
     (or ~13
      (f +64) ~7
      (f +32) 1
