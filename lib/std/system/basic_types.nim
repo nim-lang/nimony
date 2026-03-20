@@ -10,7 +10,6 @@ type
   uint16* {.magic: UInt16.}   ## Unsigned 16 bit integer type.
   uint32* {.magic: UInt32.}   ## Unsigned 32 bit integer type.
   uint64* {.magic: UInt64.}   ## Unsigned 64 bit integer type.
-  byte* {.magic: UInt8.}      ## Alias for uint8.
 
 type
   float* {.magic: Float.}     ## Default floating point type.
@@ -27,20 +26,9 @@ type
   UncheckedArray*[T] {.magic: UncheckedArray.} ## Built-in unchecked array type.
 
 type
-  LongString = object ## Internal type for SSO long/static string data.
-    fullLen: int
-    rc: int      ## reference count; 1 = unique owner; 0 = static literal (never freed)
-    capImpl: int ## raw capacity; 0 for static literals
-    data: UncheckedArray[char]
-
-type
   string* = object ## Built-in string type.
-    bytes: uint
-      ## Layout: byte 0 = slen; bytes 1..AlwaysAvail = inline chars 0..AlwaysAvail-1.
-      ## When slen == 255 (HeapSlen), `more` is a heap-owned LongString.
-      ## When slen == 254 (StaticSlen), `more` points to a static LongString literal.
-      ## When AlwaysAvail < slen <= PayloadSize, `more` holds inline chars AlwaysAvail..PayloadSize-1.
-    more: ptr LongString
+    a: ptr UncheckedArray[char]
+    i: int
 
 type # we need to start a new type section here, so that ``0`` can have a type
   bool* {.magic: "Bool".} = enum ## Built-in boolean type.

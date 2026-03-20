@@ -209,23 +209,44 @@ proc genStringType(c: var EContext; info: PackedLineInfo) {.used.} =
   c.dest.add tagToken("object", info)
   c.dest.addDotToken()
 
-  c.dest.add tagToken("fld", info)
-  let bytesField = pool.syms.getOrIncl(StringBytesField)
-  c.dest.add symdefToken(bytesField, info)
-  c.dest.addDotToken()
-  c.dest.add tagToken("u", info)
-  c.dest.addIntLit(-1, info)
-  c.dest.addParRi() # "u"
-  c.dest.addParRi() # "fld"
+  when sso:
+    c.dest.add tagToken("fld", info)
+    let bytesField = pool.syms.getOrIncl(StringBytesField)
+    c.dest.add symdefToken(bytesField, info)
+    c.dest.addDotToken()
+    c.dest.add tagToken("u", info)
+    c.dest.addIntLit(-1, info)
+    c.dest.addParRi() # "u"
+    c.dest.addParRi() # "fld"
 
-  c.dest.add tagToken("fld", info)
-  let moreField = pool.syms.getOrIncl(StringMoreField)
-  c.dest.add symdefToken(moreField, info)
-  c.dest.addDotToken()
-  c.dest.add tagToken("ptr", info)
-  c.dest.add symToken(pool.syms.getOrIncl(LongStringName), info)
-  c.dest.addParRi() # "ptr"
-  c.dest.addParRi() # "fld"
+    c.dest.add tagToken("fld", info)
+    let moreField = pool.syms.getOrIncl(StringMoreField)
+    c.dest.add symdefToken(moreField, info)
+    c.dest.addDotToken()
+    c.dest.add tagToken("ptr", info)
+    c.dest.add symToken(pool.syms.getOrIncl(LongStringName), info)
+    c.dest.addParRi() # "ptr"
+    c.dest.addParRi() # "fld"
+  else:
+    c.dest.add tagToken("fld", info)
+    let strField = pool.syms.getOrIncl(StringAField)
+    c.dest.add symdefToken(strField, info)
+    c.dest.addDotToken()
+    c.dest.add tagToken("ptr", info)
+    c.dest.add tagToken("c", info)
+    c.dest.addIntLit(8, info)
+    c.dest.addParRi() # "c"
+    c.dest.addParRi() # "ptr"
+    c.dest.addParRi() # "fld"
+
+    c.dest.add tagToken("fld", info)
+    let lenField = pool.syms.getOrIncl(StringIField)
+    c.dest.add symdefToken(lenField, info)
+    c.dest.addDotToken()
+    c.dest.add tagToken("i", info)
+    c.dest.addIntLit(-1, info)
+    c.dest.addParRi() # "i"
+    c.dest.addParRi() # "fld"
 
   c.dest.addParRi() # "object"
   c.dest.addParRi() # "type"
@@ -961,91 +982,110 @@ proc trTypeDecl(c: var EContext; n: var Cursor; mode: TraverseMode) =
     c.dest.add dst
 
 proc genStringLit(c: var EContext; s: string; info: PackedLineInfo) =
-  ## Generate an SSO string literal as an oconstr expression.
-  ## Short strings (len <= AlwaysAvail) pack all data inline in `bytes`.
-  ## Long strings (len > AlwaysAvail) use StaticSlen sentinel in `bytes`
-  ## and emit a static LongString const to strLitBuf, referencing it via addr.
-  let alwaysAvail = c.bits div 8 - 1 # 7 on 64-bit, 3 on 32-bit
-  let staticSlen = 254'u # StaticSlen sentinel
+  when sso:
+    ## Generate an SSO string literal as an oconstr expression.
+    ## Short strings (len <= AlwaysAvail) pack all data inline in `bytes`.
+    ## Long strings (len > AlwaysAvail) use StaticSlen sentinel in `bytes`
+    ## and emit a static LongString const to strLitBuf, referencing it via addr.
+    let alwaysAvail = c.bits div 8 - 1 # 7 on 64-bit, 3 on 32-bit
+    let staticSlen = 254'u # StaticSlen sentinel
 
-  let bytesField = pool.syms.getOrIncl(StringBytesField)
-  let moreField  = pool.syms.getOrIncl(StringMoreField)
+    let bytesField = pool.syms.getOrIncl(StringBytesField)
+    let moreField  = pool.syms.getOrIncl(StringMoreField)
 
-  # Pack up to alwaysAvail chars into bytes 1..alwaysAvail of the uint
-  var bytesVal: uint = 0
-  if s.len <= alwaysAvail:
-    # Short string: slen in byte 0, chars in bytes 1..slen
-    bytesVal = uint(s.len)
-    for i in 0 ..< s.len:
-      bytesVal = bytesVal or (uint(cast[uint8](s[i])) shl uint((i + 1) * 8))
-  else:
-    # Long string: StaticSlen in byte 0, first alwaysAvail chars in bytes 1..
-    bytesVal = staticSlen
-    for i in 0 ..< alwaysAvail:
-      if i < s.len:
+    # Pack up to alwaysAvail chars into bytes 1..alwaysAvail of the uint
+    var bytesVal: uint = 0
+    if s.len <= alwaysAvail:
+      # Short string: slen in byte 0, chars in bytes 1..slen
+      bytesVal = uint(s.len)
+      for i in 0 ..< s.len:
         bytesVal = bytesVal or (uint(cast[uint8](s[i])) shl uint((i + 1) * 8))
+    else:
+      # Long string: StaticSlen in byte 0, first alwaysAvail chars in bytes 1..
+      bytesVal = staticSlen
+      for i in 0 ..< alwaysAvail:
+        if i < s.len:
+          bytesVal = bytesVal or (uint(cast[uint8](s[i])) shl uint((i + 1) * 8))
 
-  c.dest.add tagToken("oconstr", info)
-  useStringType c, info
+    c.dest.add tagToken("oconstr", info)
+    useStringType c, info
 
-  # (kv bytes <bytesVal>)
-  c.dest.add parLeToken(KvU, info)
-  c.dest.add symToken(bytesField, info)
-  c.dest.addUIntLit(bytesVal, info)
-  c.dest.addParRi() # "kv"
+    # (kv bytes <bytesVal>)
+    c.dest.add parLeToken(KvU, info)
+    c.dest.add symToken(bytesField, info)
+    c.dest.addUIntLit(bytesVal, info)
+    c.dest.addParRi() # "kv"
 
-  # (kv more nil-or-addr)
-  c.dest.add parLeToken(KvU, info)
-  c.dest.add symToken(moreField, info)
-  if s.len <= alwaysAvail:
-    c.dest.addParPair(NilX, info)
+    # (kv more nil-or-addr)
+    c.dest.add parLeToken(KvU, info)
+    c.dest.add symToken(moreField, info)
+    if s.len <= alwaysAvail:
+      c.dest.addParPair(NilX, info)
+    else:
+      # Emit a static LongString const to strLitBuf
+      let litName = pool.syms.getOrIncl("strlit." & $c.strLitCounter & "." & c.main)
+      inc c.strLitCounter
+
+      c.strLitBuf.add tagToken("const", info)
+      c.strLitBuf.add symdefToken(litName, info)
+      c.strLitBuf.add tagToken("pragmas", info)
+      c.strLitBuf.add tagToken("static", info)
+      c.strLitBuf.addParRi() # "static"
+      c.strLitBuf.addParRi() # "pragmas"
+      # type: LongString
+      c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringName), info)
+      # value: (oconstr LongStringName (kv fullLen len) (kv rc 0) (kv capImpl 0) (kv data "s"))
+      c.strLitBuf.add tagToken("oconstr", info)
+      c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringName), info)
+
+      c.strLitBuf.add parLeToken(KvU, info)
+      c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringFullLenField), info)
+      c.strLitBuf.addIntLit(s.len, info)
+      c.strLitBuf.addParRi() # "kv"
+
+      c.strLitBuf.add parLeToken(KvU, info)
+      c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringRcField), info)
+      c.strLitBuf.addIntLit(0, info)
+      c.strLitBuf.addParRi() # "kv"
+
+      c.strLitBuf.add parLeToken(KvU, info)
+      c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringCapImplField), info)
+      c.strLitBuf.addIntLit(0, info)
+      c.strLitBuf.addParRi() # "kv"
+
+      c.strLitBuf.add parLeToken(KvU, info)
+      c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringDataField), info)
+      c.strLitBuf.addStrLit(s)
+      c.strLitBuf.addParRi() # "kv"
+
+      c.strLitBuf.addParRi() # "oconstr"
+      c.strLitBuf.addParRi() # "const"
+
+      # Reference the LongString via addr
+      c.dest.add tagToken("addr", info)
+      c.dest.add symToken(litName, info)
+      c.dest.addParRi() # "addr"
+    c.dest.addParRi() # "kv" (more)
+
+    c.dest.addParRi() # "oconstr"
   else:
-    # Emit a static LongString const to strLitBuf
-    let litName = pool.syms.getOrIncl("strlit." & $c.strLitCounter & "." & c.main)
-    inc c.strLitCounter
+    c.dest.add tagToken("oconstr", info)
+    useStringType c, info
 
-    c.strLitBuf.add tagToken("const", info)
-    c.strLitBuf.add symdefToken(litName, info)
-    c.strLitBuf.add tagToken("pragmas", info)
-    c.strLitBuf.add tagToken("static", info)
-    c.strLitBuf.addParRi() # "static"
-    c.strLitBuf.addParRi() # "pragmas"
-    # type: LongString
-    c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringName), info)
-    # value: (oconstr LongStringName (kv fullLen len) (kv rc 0) (kv capImpl 0) (kv data "s"))
-    c.strLitBuf.add tagToken("oconstr", info)
-    c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringName), info)
+    c.dest.add parLeToken(KvU, info)
+    let strField = pool.syms.getOrIncl(StringAField)
+    c.dest.add symToken(strField, info)
+    c.dest.addStrLit(s)
+    c.dest.addParRi() # "kv"
 
-    c.strLitBuf.add parLeToken(KvU, info)
-    c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringFullLenField), info)
-    c.strLitBuf.addIntLit(s.len, info)
-    c.strLitBuf.addParRi() # "kv"
+    c.dest.add parLeToken(KvU, info)
+    let lenField = pool.syms.getOrIncl(StringIField)
+    c.dest.add symToken(lenField, info)
+    # length also contains the "isConst" flag:
+    c.dest.addIntLit(s.len * 2, info)
+    c.dest.addParRi() # "kv"
 
-    c.strLitBuf.add parLeToken(KvU, info)
-    c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringRcField), info)
-    c.strLitBuf.addIntLit(0, info)
-    c.strLitBuf.addParRi() # "kv"
-
-    c.strLitBuf.add parLeToken(KvU, info)
-    c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringCapImplField), info)
-    c.strLitBuf.addIntLit(0, info)
-    c.strLitBuf.addParRi() # "kv"
-
-    c.strLitBuf.add parLeToken(KvU, info)
-    c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringDataField), info)
-    c.strLitBuf.addStrLit(s)
-    c.strLitBuf.addParRi() # "kv"
-
-    c.strLitBuf.addParRi() # "oconstr"
-    c.strLitBuf.addParRi() # "const"
-
-    # Reference the LongString via addr
-    c.dest.add tagToken("addr", info)
-    c.dest.add symToken(litName, info)
-    c.dest.addParRi() # "addr"
-  c.dest.addParRi() # "kv" (more)
-
-  c.dest.addParRi() # "oconstr"
+    c.dest.addParRi() # "oconstr"
 
 proc genStringLit(c: var EContext; n: Cursor) =
   assert n.kind == StringLit
@@ -1121,17 +1161,26 @@ proc trConv(c: var EContext; n: var Cursor) =
         skipParRi c, n
       skipParRi c, n
     else:
-      # SSO: delegate to nimStrToCString which handles short/medium/long cases
-      c.dest.shrink beforeConv
-      let nimStrToCStr = pool.syms.getOrIncl(getCompilerProc(c, "nimStrToCString", false))
-      c.dest.add tagToken("call", info)
-      c.dest.add symToken(nimStrToCStr, info)
-      trExpr(c, n)
-      if isSuffix:
-        skip n  # skip suffix name
-        skipParRi c, n  # close SufX
-      c.dest.addParRi() # "call"
-      takeParRi c, n
+      when sso:
+        # SSO: delegate to nimStrToCString which handles short/medium/long cases
+        c.dest.shrink beforeConv
+        let nimStrToCStr = pool.syms.getOrIncl(getCompilerProc(c, "nimStrToCString", false))
+        c.dest.add tagToken("call", info)
+        c.dest.add symToken(nimStrToCStr, info)
+        trExpr(c, n)
+        if isSuffix:
+          skip n  # skip suffix name
+          skipParRi c, n  # close SufX
+        c.dest.addParRi() # "call"
+        takeParRi c, n
+      else:
+        let strField = pool.syms.getOrIncl(StringAField)
+        c.dest.add tagToken("dot", info)
+        trExpr(c, n)
+        c.dest.add symToken(strField, info)
+        c.dest.addIntLit(0, info)
+        c.dest.addParRi()
+        takeParRi c, n
   else:
     trExpr(c, n)
     takeParRi c, n
@@ -1871,7 +1920,8 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
 
   initDynlib(c, rootInfo)
 
-  c.dest.add c.strLitBuf
+  when sso:
+    c.dest.add c.strLitBuf
   c.dest.add toplevels
   c.dest.add c.pending
   skipParRi c, n
