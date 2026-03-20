@@ -70,7 +70,7 @@ template `-!`(a, b: pchar): int = cast[int](a) - cast[int](b)
 template `^`(p: pchar): char = p[0]
 
 when not defined(nimony):
-  proc rawData*(s: string): ptr UncheckedArray[char] {.inline.} =
+  proc readRawData*(s: string): ptr UncheckedArray[char] {.inline.} =
     assert s.len > 0
     cast[ptr UncheckedArray[char]](addr s[0])
 
@@ -159,12 +159,14 @@ proc decodeStr*(r: Reader; t: ExpandedToken): string =
     assert r.thisModule.len > 0
     result = newString(t.data.len + r.thisModule.len)
     if t.data.len > 0:
-      copyMem(rawData result, t.data.p, t.data.len)
-      copyMem(rawData(result) +! t.data.len, rawData(r.thisModule), r.thisModule.len)
+      copyMem(beginStore(result, result.len), t.data.p, t.data.len)
+      copyMem(beginStore(result, result.len, t.data.len), r.thisModule.readRawData, r.thisModule.len)
+      endStore(result)
   else:
     result = newString(t.data.len)
     if t.data.len > 0:
-      copyMem(rawData result, t.data.p, t.data.len)
+      copyMem(beginStore(result, result.len), t.data.p, t.data.len)
+      endStore(result)
 
 proc decodeFilename*(t: ExpandedToken): string =
   if FilenameHasEscapes in t.flags:
@@ -181,7 +183,8 @@ proc decodeFilename*(t: ExpandedToken): string =
         inc p
   else:
     result = newString(t.filename.len)
-    copyMem(rawData result, t.filename.p, t.filename.len)
+    copyMem(beginStore(result, result.len), t.filename.p, t.filename.len)
+    endStore(result)
 
 proc decodeFloat*(t: ExpandedToken): BiggestFloat =
   result = 0.0
@@ -475,7 +478,7 @@ proc open*(filename: string): Reader =
 
 proc openFromBuffer*(buf: sink string; thisModule: sink string): Reader =
   result = Reader(f: default(MemFile), buf: ensureMove buf, thisModule: ensureMove thisModule)
-  result.p = rawData result.buf
+  result.p = readRawData result.buf
   result.eof = result.p +! result.buf.len
   result.f.mem = result.p
   result.f.size = result.buf.len

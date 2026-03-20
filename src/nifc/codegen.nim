@@ -82,7 +82,8 @@ type
     gfMainModule # isMainModule
     gfHasError   # already generated the error variable
     gfProducesMainProc # needs main proc
-    gfInCallImportC # in importC call context
+    gfInCallImportC  # in importC call context
+    gfInFlexArray    # initializing a flexible-array-member field (suppress NC8* cast)
 
   CurrentProc* = object
     needsOverflowFlag: bool

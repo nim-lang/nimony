@@ -48,7 +48,7 @@ printf(abc)
 
 let nimHello = fromCString(hello)
 assert len(nimHello) == strlen(hello).int
-assert cast[cstring](nimHello.rawData) != hello
+assert cast[cstring](nimHello.readRawData) != hello
 
 var s = default(string)
 s.add "nim string "
@@ -56,10 +56,10 @@ s.add nimHello
 printf(s.toCString)
 
 var zerotext = mytext.terminatingZero()
-let ctext0 = cast[cstring](zerotext.rawData)
+let ctext0 = cast[cstring](zerotext.readRawData)
 let ctext1 = zerotext.toCString()
 # check redundant copy when already has zero terminated
-assert ctext0 == ctext1 
+assert ctext0 == ctext1
 assert zerotext.len == strlen(ctext0).int
 assert zerotext.len == mytext.len
 printf("%s\n", ctext0)

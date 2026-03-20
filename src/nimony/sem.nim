@@ -914,6 +914,7 @@ proc semCast(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let destType = semLocalType(c, dest, it.n)
   var x = Item(n: it.n, typ: c.types.autoType)
   # XXX Add hderef here somehow
+  let beforeArg = dest.len
   semExpr c, dest, x
   it.n = x.n
   takeParRi dest, it.n
@@ -925,7 +926,10 @@ proc semCast(c: var SemContext; dest: var TokenBuf; it: var Item) =
   # also skips to type body for symbols:
   let destBase = skipDistinct(destType, isDistinct)
   let srcBase = skipDistinct(srcType, isDistinct)
-  if sameTrees(destBase, srcBase):
+  if dest[beforeArg].exprKind == ErrX:
+    # already produced an error, continue with the destination type:
+    it.typ = destType
+  elif sameTrees(destBase, srcBase):
     commonType c, dest, it, beforeExpr, destType
   elif destBase.isCastableType and srcBase.isCastableType:
     commonType c, dest, it, beforeExpr, destType

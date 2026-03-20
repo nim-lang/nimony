@@ -366,6 +366,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         inc result
       else:
         result = c.builtins.autoType # still an error
+    of UarrayT:
+      inc result # element type
     of CstringT:
       result = c.builtins.charType
     else:
