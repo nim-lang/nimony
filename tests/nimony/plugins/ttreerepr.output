@@ -1,0 +1,9 @@
+stmts
+  stmts
+    discard
+      IntLit 1
+(stmts (stmts (discard +1)))
+(stmts
+ (stmts
+  (discard
+   +1)))
