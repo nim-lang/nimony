@@ -540,6 +540,45 @@ func cmp*(a, b: string): int {.inline.} =
 func `<=`*(a, b: string): bool {.inline.} = cmp(a, b) <= 0
 func `<`*(a, b: string): bool {.inline.} = cmp(a, b) < 0
 
+# ---- startsWith ----
+
+func startsWithImpl*(s, prefix: string): bool {.inline.} =
+  ## Returns true if `s` begins with `prefix`.
+  ##
+  ## Always opens with a register-only masked comparison of the first
+  ## min(prefix.len, AlwaysAvail) chars — no branch needed to decide whether
+  ## the prefix fits in registers, because by SWAR design the `bytes` word
+  ## always carries valid (zero-padded) chars for all three tiers.
+  let pbytes = prefix.bytes
+  let pslen = ssLenOf(pbytes)
+  let sbytes = s.bytes
+  let sslen = ssLenOf(sbytes)
+
+  # Mask to min(pslen, AlwaysAvail) char-bytes (bits 8..8+n*8-1 of `bytes`).
+  # charBits ≤ 56 so the shift never overflows a 64-bit uint.
+  let charBits = min(pslen, AlwaysAvail) * 8
+  let charMask = ((1'u shl charBits) - 1'u) shl 8
+  if (sbytes and charMask) != (pbytes and charMask): return false
+
+  # Resolve actual lengths (register for short/medium; one load for long).
+  let sLen = if sslen > PayloadSize: s.more.fullLen else: sslen
+  let pLen = if pslen > PayloadSize: prefix.more.fullLen else: pslen
+  if sLen < pLen: return false
+  if pLen <= AlwaysAvail: return true  # short prefix fully covered above
+
+  # Compare tail bytes (chars AlwaysAvail..pLen-1).
+  let sTail =
+    if sslen > PayloadSize:
+      cast[ptr UncheckedArray[char]](cast[uint](addr s.more.data[0]) + uint(AlwaysAvail))
+    else:
+      tailPtrOf(unsafeAddr s)
+  let pTail =
+    if pslen > PayloadSize:
+      cast[ptr UncheckedArray[char]](cast[uint](addr prefix.more.data[0]) + uint(AlwaysAvail))
+    else:
+      tailPtrOf(unsafeAddr prefix)
+  cmpMem(sTail, pTail, pLen - AlwaysAvail) == 0
+
 # ---- newString / newStringOfCap ----
 
 func newString*(len: int): string =

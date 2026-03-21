@@ -276,7 +276,7 @@ func startsWith*(s, prefix: string): bool =
     let a = "abracadabra"
     assert a.startsWith("abra") == true
     assert a.startsWith("bra") == false
-  continuesWith s, prefix, 0
+  startsWithImpl s, prefix
 
 func endsWith*(s, suffix: string): bool =
   ## Returns true if `s` ends with `suffix`.
