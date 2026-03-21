@@ -353,6 +353,7 @@ func setLen*(s: var string; newLen: int) =
       if ssLen(s) == HeapSlen:
         if newLen > curLen:
           zeroMem(cast[pointer](cast[uint](addr s.more.data[0]) + uint(curLen)), newLen - curLen)
+        copyMem(inlinePtrV(s), addr s.more.data[0], AlwaysAvail)
 
 func shrink*(s: var string; newLen: int) =
   if newLen <= 0:
