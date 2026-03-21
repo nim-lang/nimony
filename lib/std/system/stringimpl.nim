@@ -28,8 +28,15 @@ func atomicSubFetch(p: var int; v: int): int {.inline.} =
 
 # ---- low-level byte accessors ----
 
+template ssLenOf(bytes: uint): int =
+  ## Extracts slen from an already-loaded `bytes` word. Pure register op (no memory access).
+  ## Use when `bytes` is already in a register (e.g. loaded for SWAR comparison).
+  ## Assumes little-endian: slen is the low byte of `bytes`.
+  int(bytes and 0xFF'u)
+
 template ssLen(s: string): int =
-  ## Reads slen from byte 0 of `bytes`.
+  ## Reads slen via a byte load at offset 0. Keeps slen access visibly distinct
+  ## from char writes at offsets 1+ so the C compiler can cache slen across loops.
   int(cast[ptr byte](addr s.bytes)[])
 
 template setSSLen(s: var string; v: int) =
@@ -91,8 +98,7 @@ func `=wasMoved`*(s: var string) {.exportc: "nimStrWasMoved", inline.} =
   s.bytes = 0
 
 func `=destroy`*(s: string) {.exportc: "nimStrDestroy", inline.} =
-  let sl = ssLen(s)
-  if sl == HeapSlen:
+  if ssLen(s) == HeapSlen:
     if atomicSubFetch(s.more.rc, 1) == 0:
       dealloc(s.more)
 
@@ -117,8 +123,7 @@ func `=copy`*(dest: var string; src: string) {.exportc: "nimStrCopy", inline, no
     copyMem(addr dest.bytes, addr src.bytes, sizeof(string))
 
 func `=dup`*(s: string): string {.exportc: "nimStrDup", inline, nodestroy.} =
-  let sl = ssLen(s)
-  if sl == HeapSlen:
+  if ssLen(s) == HeapSlen:
     discard atomicAddFetch(s.more.rc, 1)
   result = string(bytes: s.bytes, more: s.more)
 
@@ -411,34 +416,109 @@ func substr*(s: string; first, last: int): string =
 func substr*(s: string; first = 0): string =
   result = substr(s, first, high(s))
 
-# ---- SWAR helpers (SIMD Within A Register) ----
-# For short strings (slen <= AlwaysAvail), the `bytes` word encodes both
-# slen (byte0) and chars (bytes1..slen). SWAR comparison puts char[0] in the
-# MSB so that a plain integer compare is lexicographic.
+# ---- SWAR / comparison helpers ----
 # Assumes little-endian 64-bit (the common case; BE support can be added later).
 
 func bswap(x: uint): uint {.importc: "__builtin_bswap64", nodecl, noSideEffect.}
 
+func ctzImpl(x: uint): int {.inline.} =
+  func ctz64(x: uint64): int32 {.importc: "__builtin_ctzll", nodecl, noSideEffect.}
+  int(ctz64(uint64(x)))
+
 func swarKey(x: uint): uint {.inline.} =
-  ## On LE: shift out slen byte (low byte), bswap → char[0] lands in MSB.
+  ## On LE: shift out slen byte, bswap → char[0] lands in MSB.
   ## Integer compare on swarKey results = lexicographic char order.
   result = bswap(x shr 8)
+
+template inlinePtrOf(p: ptr string): ptr UncheckedArray[char] =
+  ## Inline char pointer from a ptr string — avoids unsafeAddr dance.
+  cast[ptr UncheckedArray[char]](cast[uint](p) + 1'u)
+
+template tailPtrOf(p: ptr string): ptr UncheckedArray[char] =
+  ## Pointer to the medium-string tail bytes (chars AlwaysAvail..PayloadSize-1)
+  ## which live in the `more` field, at offset AlwaysAvail+1 from struct start.
+  cast[ptr UncheckedArray[char]](cast[uint](p) + 1'u + uint(AlwaysAvail))
+
+func cmpInlineBytes(a, b: ptr UncheckedArray[char]; n: int): int {.inline.} =
+  result = 0
+  for i in 0..<n:
+    let ac = a[i]; let bc = b[i]
+    if ac < bc: return -1
+    if ac > bc: return 1
+
+func cmpShortInline(abytes, bbytes: uint; aslen, bslen: int): int {.inline.} =
+  ## Compare two short strings (both slen <= AlwaysAvail) using CTZ to find
+  ## the first differing byte without a loop.
+  let minLen = min(aslen, bslen)
+  if minLen > 0:
+    # LE: char bytes are at bits 8..63. Mask to minLen chars, find lowest diff.
+    let diffMask = (1'u shl (minLen * 8)) - 1'u
+    let diff = ((abytes xor bbytes) shr 8) and diffMask
+    if diff != 0:
+      let byteShift = (ctzImpl(diff) shr 3) * 8 + 8
+      let ac = (abytes shr byteShift) and 0xFF'u
+      let bc = (bbytes shr byteShift) and 0xFF'u
+      if ac < bc: return -1
+      return 1
+  aslen - bslen
+
+func cmpStringPtrs(a, b: ptr string): int {.inline.} =
+  ## Compare via pointers to avoid struct copies in the hot path.
+  let abytes = a.bytes
+  let bbytes = b.bytes
+  let aslen = ssLenOf(abytes)
+  let bslen = ssLenOf(bbytes)
+  if aslen <= AlwaysAvail and bslen <= AlwaysAvail:
+    return cmpShortInline(abytes, bbytes, aslen, bslen)
+  if aslen <= PayloadSize and bslen <= PayloadSize:
+    # Both medium: all data is inline, no heap access needed.
+    let minLen = min(aslen, bslen)
+    let pfxLen = min(minLen, AlwaysAvail)
+    result = cmpInlineBytes(inlinePtrOf(a), inlinePtrOf(b), pfxLen)
+    if result != 0: return
+    if minLen > AlwaysAvail:
+      result = cmpInlineBytes(tailPtrOf(a), tailPtrOf(b), minLen - AlwaysAvail)
+    if result == 0: result = aslen - bslen
+    return
+  # At least one long. Hot prefix (bytes 1..AlwaysAvail) mirrors heap data.
+  let pfxLen = min(min(aslen, bslen), AlwaysAvail)
+  result = cmpInlineBytes(inlinePtrOf(a), inlinePtrOf(b), pfxLen)
+  if result != 0: return
+  let la = if aslen > PayloadSize: a.more.fullLen else: aslen
+  let lb = if bslen > PayloadSize: b.more.fullLen else: bslen
+  let minLen = min(la, lb)
+  if minLen <= AlwaysAvail:
+    result = la - lb
+    return
+  # Skip the AlwaysAvail prefix (already compared via inline cache above).
+  let ap = if aslen > PayloadSize: cast[ptr UncheckedArray[char]](cast[uint](addr a.more.data[0]) + uint(AlwaysAvail))
+           else: tailPtrOf(a)
+  let bp = if bslen > PayloadSize: cast[ptr UncheckedArray[char]](cast[uint](addr b.more.data[0]) + uint(AlwaysAvail))
+           else: tailPtrOf(b)
+  result = cmpMem(ap, bp, minLen - AlwaysAvail)
+  if result == 0: result = la - lb
 
 # ---- comparison ----
 
 func equalStrings(a, b: string): bool {.inline.} =
   let abytes = a.bytes
   let bbytes = b.bytes
-  let aslen = int(cast[ptr byte](unsafeAddr abytes)[])
-  let bslen = int(cast[ptr byte](unsafeAddr bbytes)[])
+  let aslen = ssLenOf(abytes)
+  let bslen = ssLenOf(bbytes)
   if aslen <= AlwaysAvail and bslen <= AlwaysAvail:
-    # Both short: `bytes` encodes slen + chars, one-word compare suffices.
-    return abytes == bbytes
+    return abytes == bbytes  # SWAR: one word covers slen + all chars
   let la = if aslen > PayloadSize: a.more.fullLen else: aslen
   let lb = if bslen > PayloadSize: b.more.fullLen else: bslen
   if la != lb: return false
   if la == 0: return true
-  cmpMem(rawData(a), rawData(b), la) == 0
+  if aslen <= PayloadSize and bslen <= PayloadSize:
+    # Both medium: compare bytes word first (slen + chars 0-6 in one op),
+    # then the tail stored in the `more` overlay.
+    if abytes != bbytes: return false
+    return cmpMem(tailPtrOf(unsafeAddr a), tailPtrOf(unsafeAddr b),
+                  la - AlwaysAvail) == 0
+  # At least one long: delegate to cmpStringPtrs
+  cmpStringPtrs(unsafeAddr a, unsafeAddr b) == 0
 
 func `==`*(a, b: string): bool {.inline, semantics: "string.==".} =
   equalStrings(a, b)
@@ -446,26 +526,14 @@ func `==`*(a, b: string): bool {.inline, semantics: "string.==".} =
 func nimStrAtLe(s: string; idx: int; ch: char): bool {.inline.} =
   result = idx < s.len and s[idx] <= ch
 
-func cmpStrings(a, b: string): int =
+func cmpStrings(a, b: string): int {.inline.} =
   let abytes = a.bytes
   let bbytes = b.bytes
-  let aslen = int(cast[ptr byte](unsafeAddr abytes)[])
-  let bslen = int(cast[ptr byte](unsafeAddr bbytes)[])
+  let aslen = ssLenOf(abytes)
+  let bslen = ssLenOf(bbytes)
   if aslen <= AlwaysAvail and bslen <= AlwaysAvail:
-    # SWAR fast path: both short, one-word lexicographic compare.
-    let aw = swarKey(abytes)
-    let bw = swarKey(bbytes)
-    if aw < bw: return -1
-    if aw > bw: return 1
-    return aslen - bslen
-  let la = if aslen > PayloadSize: a.more.fullLen else: aslen
-  let lb = if bslen > PayloadSize: b.more.fullLen else: bslen
-  let minLen = min(la, lb)
-  if minLen > 0:
-    result = cmpMem(rawData(a), rawData(b), minLen)
-    if result == 0: result = la - lb
-  else:
-    result = la - lb
+    return cmpShortInline(abytes, bbytes, aslen, bslen)
+  cmpStringPtrs(unsafeAddr a, unsafeAddr b)
 
 func `<=`*(a, b: string): bool {.inline.} = cmpStrings(a, b) <= 0
 func `<`*(a, b: string): bool {.inline.} = cmpStrings(a, b) < 0
