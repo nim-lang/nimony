@@ -452,6 +452,7 @@ func cmpIgnoreStyle*(a, b: string): int =
     # the characters are identical:
     inc i
     inc j
+  return 0
 
 func find*(s: string; sub: char; start: Natural = 0; last = -1): int =
   ## Searches for `sub` in `s` inside range `start..last` (both ends included).

@@ -188,6 +188,7 @@ proc tryNextDir*(w: var DirWalker; e: var DirEntry): bool =
     if result:
       fillDirEntry(w, e)
   else:
+    result = false
     while w.status == Success:
       let entry = readdir(w.pimpl)
       if entry == nil:
