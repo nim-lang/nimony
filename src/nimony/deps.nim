@@ -224,8 +224,10 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   var x = it
   skip it
   inc x # skip the `import`
-  # ignore conditional imports:
-  if x.stmtKind == WhenS: return
+  # Conditional imports carry a (when) marker child; skip it and still add the
+  # file to the dependency graph so cross-compilation (e.g. --os:windows) sees
+  # all potential dependencies. importSingleFile already ignores missing files.
+  if x.stmtKind == WhenS: skip x
   while x.kind != ParRi:
     var isCyclic = false
     if x.kind == ParLe and x.exprKind == PragmaxX:
@@ -265,8 +267,7 @@ proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
   var x = it
   skip it
   inc x # skip the tag
-  # ignore conditional imports:
-  if x.stmtKind == WhenS: return
+  if x.stmtKind == WhenS: skip x  # skip conditional marker, same as processImport
   var files: seq[ImportedFilename] = @[]
   var hasError = false
   filenameVal(x, files, hasError, allowAs = true)
