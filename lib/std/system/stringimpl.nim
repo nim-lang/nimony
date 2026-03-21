@@ -163,6 +163,8 @@ func ensureUniqueLong(s: var string; oldLen, newLen: int) =
   let cap = if isHeap: s.more.capImpl else: 0
   if isHeap and s.more.rc == 1 and newLen <= cap:
     s.more.fullLen = newLen
+    # Sync inline cache even on fast path (use oldLen since new data may not exist yet)
+    copyMem(inlinePtrV(s), addr s.more.data[0], min(oldLen, AlwaysAvail))
   else:
     let newCap = if newLen > cap: max(newLen, ssResize(cap)) else: cap
     let p = cast[ptr LongString](alloc(LongStringDataOffset + newCap + 1))
@@ -176,6 +178,8 @@ func ensureUniqueLong(s: var string; oldLen, newLen: int) =
         dealloc(old)
       s.more = p
       setSSLen(s, HeapSlen)
+      # Sync inline cache after creating new block (use oldLen since new data may not exist yet)
+      copyMem(inlinePtrV(s), addr p.data[0], min(oldLen, AlwaysAvail))
     else:
       {.cast(noSideEffect).}: oomHandler LongStringDataOffset + newCap + 1
       s.bytes = 0
@@ -314,7 +318,11 @@ template zeroSwarPad(s: var string; newLen: int) =
 func setLen*(s: var string; newLen: int) =
   let sl = ssLen(s)
   let curLen = if sl > PayloadSize: s.more.fullLen else: sl
-  if newLen == curLen: return
+  if newLen == curLen:
+    # BUG FIX: Sync inline cache even when length doesn't change
+    if sl == HeapSlen:
+      copyMem(inlinePtrV(s), addr s.more.data[0], min(newLen, AlwaysAvail))
+    return
   if newLen <= 0:
     if sl == HeapSlen:
       if atomicSubFetch(s.more.rc, 1) == 0: dealloc(s.more)
