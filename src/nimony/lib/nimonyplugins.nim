@@ -7,7 +7,7 @@ import ".." / ".." / "lib" / [bitabs, nifcursors, nifstreams, lineinfos, nifread
 import ".." / [nimony_model]
 export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther
 
-export NoLineInfo, inc, skip, typeKind, stmtKind, exprKind, info
+export NoLineInfo, inc, skip, toString, typeKind, stmtKind, exprKind, info
 
 type
   Tree* = object
@@ -56,12 +56,6 @@ proc loadTree*(filename = paramStr(1)): Tree =
 proc beginRead*(tree: var Tree): Node {.inline.} =
   result = beginRead(tree.buf)
 
-proc canonicalNodeRepr(n: Node): string =
-  if n.kind == ParLe:
-    result = pool.tags[n.tagId]
-  else:
-    result = toString(n, false)
-
 proc descriptiveNodeRepr(n: Node): string =
   case n.kind
   of ParLe:
@@ -91,54 +85,28 @@ proc descriptiveNodeRepr(n: Node): string =
   of ParRi:
     result = "ParRi"
 
-proc treeTraverse(n: Node; res: var string; level: int; isLisp, indented: bool;
-    descriptiveAtoms: bool) =
+proc treeTraverse(n: Node; res: var string; level: int) =
   if level > 0:
-    if indented:
-      res.add '\n'
-      for _ in 0..<level:
-        if isLisp:
-          res.add ' '
-        else:
-          res.add "  "
-    else:
-      res.add ' '
+    res.add '\n'
+    for _ in 0..<level:
+      res.add "  "
 
-  if isLisp and n.kind == ParLe:
-    res.add '('
-
-  if descriptiveAtoms:
-    res.add descriptiveNodeRepr(n)
-  else:
-    res.add canonicalNodeRepr(n)
+  res.add descriptiveNodeRepr(n)
 
   if n.kind == ParLe:
     var child = n
     inc child
     while child.kind != ParRi:
-      treeTraverse(child, res, level + 1, isLisp, indented, descriptiveAtoms)
+      treeTraverse(child, res, level + 1)
       skip child
-
-  if isLisp and n.kind == ParLe:
-    res.add ')'
 
 proc treeRepr*(n: Node): string =
   result = ""
-  treeTraverse(n, result, 0, isLisp = false, indented = true,
-    descriptiveAtoms = true)
-
-proc lispRepr*(n: Node; indented = false): string =
-  result = ""
-  treeTraverse(n, result, 0, isLisp = true, indented = indented,
-    descriptiveAtoms = false)
+  treeTraverse(n, result, 0)
 
 proc treeRepr*(tree: var Tree): string =
   var n = tree.beginRead()
   result = n.treeRepr
-
-proc lispRepr*(tree: var Tree; indented = false): string =
-  var n = tree.beginRead()
-  result = n.lispRepr(indented = indented)
 
 proc saveTree*(tree: Tree) =
   writeFile paramStr(2), toString(tree.buf)
