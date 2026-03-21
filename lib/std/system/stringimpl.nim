@@ -377,7 +377,10 @@ func shrink*(s: var string; newLen: int) =
         inlinePtrV(s)[newLen] = '\0'
         setSSLen(s, newLen)
     else:
-      ensureUniqueLong(s, s.more.fullLen, newLen)
+      # Heap string: just update length, don't reallocate
+      # (capacity is preserved for efficiency)
+      s.more.fullLen = newLen
+      copyMem(inlinePtrV(s), addr s.more.data[0], min(newLen, AlwaysAvail))
 
 # ---- indexing ----
 
@@ -613,10 +616,10 @@ func newStringOfCap*(len: int): string =
   if len <= PayloadSize: return  # inline capacity always available
   let p = cast[ptr LongString](alloc(LongStringDataOffset + len + 1))
   if p != nil:
+    zeroMem(p, LongStringDataOffset + len + 1)
     p.rc = 1
     p.fullLen = 0
     p.capImpl = len
-    p.data[0] = '\0'
     result.more = p
     setSSLen(result, HeapSlen)
   else:
@@ -697,12 +700,14 @@ func borrowCStringUnsafe*(s: cstring): string {.exportc: "nimBorrowCStringUnsafe
   borrowCStringUnsafe(s, len(s))
 
 func ensureTerminatingZero*(s: var string) =
-  ## Writes a null terminator after the string's data if needed.
+  ## Ensures the string ends with a null terminator for C compatibility.
   ## Inline/medium strings always maintain a zero; heap strings do not unless
-  ## this (or nimStrToCString) is called explicitly.
+  ## this (or toCString) is called explicitly.
   ## Static strings already have a terminator from their C string literal.
-  if ssLen(s) == HeapSlen:
-    s.more.data[s.more.fullLen] = '\0'
+  if s.len == 0 or s[s.len-1] != '\0':
+    let oldLen = s.len
+    setLen(s, oldLen + 1)
+    s[oldLen] = '\0'
 
 func toCString*(s: var string): cstring =
   ## Returns a null-terminated cstring pointer.
