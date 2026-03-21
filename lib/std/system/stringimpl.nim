@@ -527,7 +527,8 @@ func `==`*(a, b: string): bool {.inline, semantics: "string.==".} =
 func nimStrAtLe(s: string; idx: int; ch: char): bool {.inline.} =
   result = idx < s.len and s[idx] <= ch
 
-func cmpStrings(a, b: string): int {.inline.} =
+func cmp*(a, b: string): int {.inline.} =
+  ## Specialized comparison for strings.
   let abytes = a.bytes
   let bbytes = b.bytes
   let aslen = ssLenOf(abytes)
@@ -536,8 +537,8 @@ func cmpStrings(a, b: string): int {.inline.} =
     return cmpShortInline(abytes, bbytes, aslen, bslen)
   cmpStringPtrs(unsafeAddr a, unsafeAddr b)
 
-func `<=`*(a, b: string): bool {.inline.} = cmpStrings(a, b) <= 0
-func `<`*(a, b: string): bool {.inline.} = cmpStrings(a, b) < 0
+func `<=`*(a, b: string): bool {.inline.} = cmp(a, b) <= 0
+func `<`*(a, b: string): bool {.inline.} = cmp(a, b) < 0
 
 # ---- newString / newStringOfCap ----
 
