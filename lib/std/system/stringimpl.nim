@@ -125,21 +125,6 @@ func len*(a: cstring): int {.inline.} =
   if a == nil: 0
   else: a.strlen.int
 
-# ---- cstring view ----
-
-func nimStrToCString*(s {.byref.}: string): cstring {.inline, exportc: "nimStrToCString".} =
-  ## Returns a null-terminated cstring. For heap strings, writes the null
-  ## terminator on demand (opt-in). Static/literal strings already have one.
-  let sl = ssLen(s)
-  if sl > PayloadSize:
-    if sl == HeapSlen:
-      let p = s.more
-      # XXX This is wrong!
-      p.data[p.fullLen] = '\0'
-    result = cast[cstring](addr s.more.data[0])
-  else:
-    result = cast[cstring](inlinePtr(s))
-
 # ---- internal growth helpers ----
 
 func ssResize(old: int): int {.inline.} =
@@ -212,16 +197,6 @@ func prepareMutation*(s: var string) {.inline.} =
     else:
       {.cast(noSideEffect).}: oomHandler LongStringDataOffset + oldLen
       s.bytes = 0
-
-func prepareMutationAt*(s: var string; i: int): var char {.requires: (i < len(s) and i >= 0), inline.} =
-  ## Ensures s is uniquely owned and returns a mutable reference to s[i].
-  ## Note: may transition short/medium strings to heap for borrowing.
-  prepareMutation(s)
-  let sl = ssLen(s)
-  if sl <= PayloadSize:
-    # Transition inline string to heap so we have a borrowable .data field.
-    transitionToLong(s, sl, sl)
-  result = s.more.data[i]
 
 # ---- beginStore / endStore for bulk writes ----
 

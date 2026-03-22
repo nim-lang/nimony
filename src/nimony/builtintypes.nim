@@ -40,7 +40,6 @@ when sso:
     LongStringRcField* = "rc.0"
     LongStringCapImplField* = "capImpl.0"
     LongStringDataField* = "data.0"
-    NimStrToCStringName* = "nimStrToCString.0." & SystemModuleSuffix
 else:
   const
     StringAField* = "a.0"

@@ -1159,18 +1159,7 @@ proc trConv(c: var EContext; n: var Cursor) =
       skipParRi c, n
     else:
       when sso:
-        # SSO: delegate to nimStrToCString which handles short/medium/long cases
-        c.dest.shrink beforeConv
-        let nimStrToCStr = pool.syms.getOrIncl(getCompilerProc(c, "nimStrToCString", false))
-        c.dest.add tagToken("call", info)
-        c.dest.add symToken(nimStrToCStr, info)
-        trExpr(c, n)
-        if isSuffix:
-          skip n  # skip suffix name
-          skipParRi c, n  # close SufX
-        c.dest.addParRi() # "call"
-        takeParRi c, n
-        quit "cannot convert a string to cstring at runtime"
+        bug "cannot convert a string to cstring at runtime"
       else:
         let strField = pool.syms.getOrIncl(StringAField)
         c.dest.add tagToken("dot", info)

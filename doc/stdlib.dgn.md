@@ -327,11 +327,6 @@ Converts a Nim string to a C string.
 
 Prepares a string for mutation. String literals are "copy on write", so you need to call `prepareMutation` before modifying strings via `addr`.
 
-####prepareMutationAt
-
-Prepares the given string for mutation and returns an addressable
-reference to the character at index `i`.
-
 ####&
 
 Concatenates two strings. Prefer to use `concat` instead as it is much more efficient.
