@@ -18,6 +18,9 @@ when not (defined(cpu16) or defined(cpu8)):
       #else:
         dealloc(a.data)
 
+  func `=wasMoved`(a: var WideCStringObj) =
+    a.data = nil
+
   func `=copy`(a: var WideCStringObj; b: WideCStringObj) {.error.}
 
   func `=sink`(a: var WideCStringObj; b: WideCStringObj) =
