@@ -1,5 +1,21 @@
 import std/[assertions, math, parseutils]
 
+block:
+  var parts: seq[tuple[kind: InterpolatedKind, value: string]] = @[]
+  try:
+    for kind, value in interpolatedFragments("  $this is ${an  example}  $$"):
+      parts.add (kind: kind, value: value)
+  except ErrorCode as e:
+    assert false
+  assert parts == @[
+    (kind: ikStr, value: "  "),
+    (kind: ikVar, value: "this"),
+    (kind: ikStr, value: " is "),
+    (kind: ikExpr, value: "an  example"),
+    (kind: ikStr, value: "  "),
+    (kind: ikDollar, value: "$")
+  ]
+
 block: # parseHex
   var num: int = 0
   assert parseHex("", num) == 0

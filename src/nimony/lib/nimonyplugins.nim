@@ -1,7 +1,6 @@
 ## API for plugins.
 
 import std / syncio
-import std / macros
 import std / parseutils
 from std / os import paramStr
 import ".." / ".." / "lib" / [nifcursors, nifstreams, lineinfos, nifbuilder]
@@ -70,8 +69,17 @@ proc saveTree*(tree: Tree; filename: string) =
 type
   NifIdent* = distinct string
 
+  NifSnippet* = distinct string
+
+  NifBinding* = object
+    name: string
+    value: string
+
 proc ident*(s: string): NifIdent =
   NifIdent(s)
+
+proc nif*(s: string): NifSnippet =
+  NifSnippet(s)
 
 proc parseNifFragment(text: string): Tree =
   var buf = parseFromBuffer(text, "")
@@ -131,35 +139,41 @@ template toNifFragment(src: untyped): string =
   else:
     {.error: "unsupported nif interpolation type".}
 
-macro nif*(spec: untyped): untyped =
-  if spec.kind notin {nnkStrLit, nnkTripleStrLit}:
-    error("nif expects a string literal", spec)
+proc nifBind*[T](name: string; value: T): NifBinding =
+  NifBinding(name: name, value: toNifFragment(value))
 
-  let parseNifFragmentSym = bindSym"parseNifFragment"
-  let toNifFragmentSym = bindSym"toNifFragment"
+proc `=>`*[T](name: string; value: T): NifBinding =
+  nifBind(name, value)
 
-  let text = spec.strVal
-  var pieces: seq[NimNode] = @[]
-  try:
-    for kind, value in interpolatedFragments(text):
-      case kind
-      of ikStr:
-        if value.len > 0:
-          pieces.add newLit(value)
-      of ikDollar:
-        pieces.add newLit(value)
-      of ikVar:
-        pieces.add newCall(toNifFragmentSym, newIdentNode(value))
-      of ikExpr:
-        pieces.add newCall(toNifFragmentSym, parseExpr(value))
-  except ValueError as exc:
-    error(exc.msg, spec)
+proc tree*(spec: NifSnippet): Tree =
+  parseNifFragment(string(spec))
 
-  if pieces.len == 0:
-    pieces.add newLit("")
+converter toTree*(spec: NifSnippet): Tree =
+  tree(spec)
 
-  var joined = pieces[0]
-  for k in 1..<pieces.len:
-    joined = newTree(nnkInfix, newIdentNode("&"), joined, pieces[k])
+proc lookupBinding(bindings: openArray[NifBinding]; name: string): string =
+  var i = bindings.len - 1
+  while i >= 0:
+    if bindings[i].name == name:
+      return bindings[i].value
+    dec i
+  quit "missing nif substitution: " & name
 
-  result = newCall(parseNifFragmentSym, joined)
+proc expandNifSnippet(spec: NifSnippet; bindings: openArray[NifBinding]): string =
+  result = newStringOfCap(string(spec).len + bindings.len * 8)
+  for kind, value in interpolatedFragments(string(spec)):
+    case kind
+    of ikStr:
+      result.add value
+    of ikDollar:
+      result.add '$'
+    of ikVar:
+      result.add lookupBinding(bindings, value)
+    of ikExpr:
+      quit "nif runtime substitution does not support ${expr}; use $name bindings"
+
+proc subst*(spec: NifSnippet; bindings: varargs[NifBinding]): Tree =
+  parseNifFragment(expandNifSnippet(spec, bindings))
+
+proc `%`*(spec: NifSnippet; bindings: openArray[NifBinding]): Tree =
+  parseNifFragment(expandNifSnippet(spec, bindings))

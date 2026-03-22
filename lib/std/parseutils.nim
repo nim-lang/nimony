@@ -199,6 +199,70 @@ func parseBiggestUInt*(s: openArray[char], number: var BiggestUInt): int {.
 func c_strtod(buf: cstring, endptr: ptr cstring): float64 {.
   importc: "strtod", header: "<stdlib.h>", noSideEffect.}
 
+func copySlice(s: openArray[char]; first, last: int): string =
+  if last < first:
+    return ""
+  result = newStringOfCap(last - first + 1)
+  var i = first
+  while i <= last:
+    result.add s[i]
+    inc i
+
+type
+  InterpolatedKind* = enum
+    ikStr,
+    ikDollar,
+    ikVar,
+    ikExpr
+
+iterator interpolatedFragments*(s: openArray[char]): tuple[kind: InterpolatedKind,
+    value: string] {.raises.} =
+  var i = 0
+  while true:
+    var kind = ikStr
+    var j = i
+    if j < s.len and s[j] == '$':
+      if j+1 < s.len and s[j+1] == '{':
+        inc j, 2
+        var nesting = 0
+        block curlies:
+          while j < s.len:
+            case s[j]
+            of '{':
+              inc nesting
+            of '}':
+              if nesting == 0:
+                inc j
+                break curlies
+              dec nesting
+            else:
+              discard
+            inc j
+          raise ValueError
+        inc i, 2
+        kind = ikExpr
+      elif j+1 < s.len and s[j+1] in IdentStartChars:
+        inc j, 2
+        while j < s.len and s[j] in IdentChars:
+          inc j
+        inc i
+        kind = ikVar
+      elif j+1 < s.len and s[j+1] == '$':
+        inc j, 2
+        inc i
+        kind = ikDollar
+      else:
+        raise ValueError
+    else:
+      while j < s.len and s[j] != '$':
+        inc j
+      kind = ikStr
+    if j > i:
+      yield (kind, copySlice(s, i, j - 1 - ord(kind == ikExpr)))
+    else:
+      break
+    i = j
+
 func parseBiggestFloat*(s: openArray[char]; number: var BiggestFloat): int {.
   noSideEffect.} =
   ## Parses a float and stores the value into `number`.
