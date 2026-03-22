@@ -152,7 +152,7 @@ func ensureUniqueLong(s: var string; oldLen, newLen: int) =
   let sl = ssLen(s)
   let isHeap = sl == HeapSlen
   let cap = if isHeap: s.more.capImpl else: 0
-  if isHeap and s.more.rc == 1 and newLen <= cap:
+  if isHeap and arcIsUnique(s.more.rc) and newLen <= cap:
     s.more.fullLen = newLen
     # Sync inline cache even on fast path (use oldLen since new data may not exist yet)
     copyMem(inlinePtrV(s), addr s.more.data[0], min(oldLen, AlwaysAvail))
@@ -196,7 +196,7 @@ func transitionToLong(s: var string; sl: int; newLen: int) =
 func prepareMutation*(s: var string) {.inline.} =
   ## Ensures s's data is uniquely owned (not shared with another string or static).
   let sl = ssLen(s)
-  if sl == StaticSlen or (sl == HeapSlen and s.more.rc > 1):
+  if sl == StaticSlen or (sl == HeapSlen and not arcIsUnique(s.more.rc)):
     if sl == HeapSlen:
       discard arcDec(s.more.rc)
     let old = s.more
@@ -251,7 +251,7 @@ func add*(s: var string; c: char) =
     setSSLen(s, newLen)
   elif sl > PayloadSize:
     let l = s.more.fullLen
-    if sl == HeapSlen and s.more.rc == 1 and l < s.more.capImpl:
+    if sl == HeapSlen and arcIsUnique(s.more.rc) and l < s.more.capImpl:
       s.more.data[l] = c
       s.more.fullLen = l + 1
       if l < AlwaysAvail:
