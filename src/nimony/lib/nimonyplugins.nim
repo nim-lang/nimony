@@ -68,7 +68,9 @@ proc saveTree*(tree: Tree; filename: string) =
 type
   NifIdent* = distinct string
 
-  NifBinding = tuple[name: string, value: string]
+  NifNode* = distinct string
+
+  NifBinding = tuple[name: string, value: NifNode]
 
 proc ident*(s: string): NifIdent =
   NifIdent(s)
@@ -85,60 +87,69 @@ template buildNifText(sizeHint: int; body: untyped): string =
     body
     b.extract()
 
-template toNifFragment(src: untyped): string =
+template buildNifNode(sizeHint: int; body: untyped): NifNode =
+  block:
+    let s = buildNifText(sizeHint):
+      body
+    NifNode(s)
+
+template toNifNode(src: untyped): NifNode =
   when src is Cursor:
-    toString(src, false)
+    NifNode(toString(src, false))
   elif src is TokenBuf:
-    toString(src, false)
+    NifNode(toString(src, false))
   elif src is Tree:
-    toString(src.buf, false)
+    NifNode(toString(src.buf, false))
   elif src is PackedToken:
-    nifstreams.toString([src], false)
+    NifNode(nifstreams.toString([src], false))
   elif src is string:
-    buildNifText(src.len + 4):
+    buildNifNode(src.len + 4):
       b.addStrLit(src)
   elif src is NifIdent:
     let s = string(src)
-    buildNifText(s.len + 4):
+    buildNifNode(s.len + 4):
       b.addIdent(s)
   elif src is char:
-    buildNifText(8):
+    buildNifNode(8):
       b.addCharLit(src)
   elif src is BiggestInt:
-    buildNifText(24):
+    buildNifNode(24):
       b.addIntLit(src)
   elif src is BiggestUInt:
-    buildNifText(24):
+    buildNifNode(24):
       b.addUIntLit(src)
   elif src is BiggestFloat:
-    buildNifText(32):
+    buildNifNode(32):
       b.addFloatLit(src)
   elif src is SymId:
-    buildNifText(32):
+    buildNifNode(32):
       b.addSymbol(pool.syms[src])
   elif src is SomeSignedInt:
-    buildNifText(24):
+    buildNifNode(24):
       b.addIntLit(BiggestInt(src))
   elif src is SomeUnsignedInt:
-    buildNifText(24):
+    buildNifNode(24):
       b.addUIntLit(BiggestUInt(src))
   elif src is SomeFloat:
-    buildNifText(32):
+    buildNifNode(32):
       b.addFloatLit(BiggestFloat(src))
   elif src is bool:
-    buildNifText(8):
+    buildNifNode(8):
       b.addKeyw(if src: "true" else: "false")
   else:
     {.error: "unsupported nif interpolation type".}
 
-proc nifBind[T](name: string; value: T): NifBinding =
-  (name: name, value: toNifFragment(value))
+template `%`*(src: untyped): NifNode =
+  toNifNode(src)
+
+proc nifBind(name: string; value: NifNode): NifBinding =
+  (name: name, value: value)
 
 proc lookupBinding(bindings: openArray[NifBinding]; name: string): string =
   var i = bindings.len - 1
   while i >= 0:
     if bindings[i].name == name:
-      return bindings[i].value
+      return string(bindings[i].value)
     dec i
   quit "missing nif substitution: " & name
 
@@ -171,11 +182,11 @@ proc expandNifSnippet(spec: string; bindings: openArray[NifBinding]): string =
     else:
       quit "invalid nif substitution syntax"
 
-proc nif*[T](spec: string; bindings: openArray[(string, T)]): Tree =
+proc nif*(spec: string; bindings: openArray[(string, NifNode)]): Tree =
   var converted = newSeqOfCap[NifBinding](bindings.len)
   for entry in bindings:
     converted.add nifBind(entry[0], entry[1])
   parseNifFragment(expandNifSnippet(spec, converted))
 
-proc nif*(spec: string; bindings: array[0, (string, int)]): Tree =
+proc nif*(spec: string; bindings: array[0, (string, NifNode)]): Tree =
   parseNifFragment(spec)
