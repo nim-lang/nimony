@@ -139,7 +139,7 @@ template toNifNode(src: untyped): NifNode =
   else:
     {.error: "unsupported nif interpolation type".}
 
-template `%`*(src: untyped): NifNode =
+template `~`*(src: untyped): NifNode =
   toNifNode(src)
 
 proc nifBind(name: string; value: NifNode): NifBinding =
