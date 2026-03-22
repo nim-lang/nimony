@@ -150,6 +150,7 @@ type
     continuationProcImpl: Cursor
     inlineContState: int   ## >= 0 when trIte detected a split inside a branch
     inlineContCursor: Cursor ## cursor to rest-of-branch code after the split point
+    shouldPublish: seq[tuple[pos: int, sym: SymId]]
 
 proc coroTypeForProc(c: Context; procId: SymId): SymId =
   let s = extractVersionedBasename(pool.syms[procId])
@@ -260,12 +261,12 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
       dest.addParRi() # StmtsS
       copyIntoKind dest, CallS, info:
         dest.addSymUse sym, info
-        emitAllocFrame(c, dest, sym, info)
         inc n
         skip n # fn already handled
         while n.kind != ParRi:
           tr(c, dest, n)
         inc n
+        emitAllocFrame(c, dest, sym, info)
         if hasResult:
           dest.copyIntoKind AddrX, info:
             dest.copyTree target
@@ -300,13 +301,13 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
         # constructor call as initializer:
         copyIntoKind dest, CallS, info:
           dest.addSymUse sym, info
-          dest.copyIntoKind AddrX, info:
-            dest.addSymUse coroVar, info
           inc n
           skip n # fn already handled
           while n.kind != ParRi:
             tr(c, dest, n)
           inc n
+          dest.copyIntoKind AddrX, info:
+            dest.addSymUse coroVar, info
           if hasResult:
             dest.copyIntoKind AddrX, info:
               dest.copyTree target
@@ -354,13 +355,14 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
     # value: emit constructor call with heap-allocated frame:
     copyIntoKind dest, CallS, info:
       dest.addSymUse sym, info
-      emitAllocFrame(c, dest, sym, info)
 
       inc n
       skip n # fn already handled
       while n.kind != ParRi:
         tr(c, dest, n)
       inc n
+      emitAllocFrame(c, dest, sym, info)
+
       if hasResult:
         dest.copyIntoKind AddrX, info:
           dest.copyTree target
@@ -420,9 +422,9 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # The callee's frame is heap-allocated via allocFrame.
     copyIntoKind dest, CallS, info:
       dest.addSymUse sym, info
-      emitAllocFrame(c, dest, sym, info)
       while n.kind != ParRi:
         tr(c, dest, n)
+      emitAllocFrame(c, dest, sym, info)
       # Pass StopContinuation as the caller so the child doesn't resume anyone on finish.
       dest.copyIntoKind OconstrX, info:
         dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
@@ -1091,23 +1093,14 @@ proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId;
   dest.shrink paramsBegin
   let thisParam = pool.syms.getOrIncl(EnvParamName)
   dest.copyIntoKind ParamsU, info:
-    # first parameter is always the `this` pointer:
-    dest.copyIntoKind ParamU, info:
-      dest.addSymDef thisParam, info
-      dest.addDotToken() # export
-      dest.addDotToken() # pragmas
-      dest.copyIntoKind PtrT, info:
-        dest.addSymUse coroTypeForProc(c, sym), info
-      dest.addDotToken() # default value
     # generate `this[] = ObjConstructor(params)`:
     init.addParLe AsgnS, info
     init.copyIntoKind DerefX, info:
       init.addSymUse thisParam, info
     init.addParLe OconstrX, info
     init.addSymUse coroTypeForProc(c, sym), info
-
+    # First: copy original parameters (these come from the caller, before coro-addr):
     var n = origParams
-    # copy original parameters:
     if n.kind != DotToken:
       inc n
       while n.kind != ParRi:
@@ -1134,6 +1127,15 @@ proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId;
         init.copyIntoKind KvU, info:
           init.addSymUse field, info
           init.addSymUse paramSym, info
+
+    # Second: `this` pointer (coroutine type - comes after original args):
+    dest.copyIntoKind ParamU, info:
+      dest.addSymDef thisParam, info
+      dest.addDotToken() # export
+      dest.addDotToken() # pragmas
+      dest.copyIntoKind PtrT, info:
+        dest.addSymUse coroTypeForProc(c, sym), info
+      dest.addDotToken() # default value
 
     # return type becomes a ptr parameter:
     n = beginRead(retType)
@@ -1185,6 +1187,7 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
   var paramsBegin = -1
   var origParams = default(Cursor)
   dest.takeToken n # ProcS etc.
+  let procStart = dest.len - 1
   var isConcrete = true # assume it is concrete
   let sym = n.symId
   c.procStack.add(sym)
@@ -1217,6 +1220,7 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
   discard c.procStack.pop()
   c.typeCache.closeScope()
   if isCoroutine:
+    c.shouldPublish.add (procStart, sym)
     generateCoroutineType(c, dest, sym)
   swap(c.currentProc, currentProc)
 
@@ -1384,6 +1388,8 @@ proc transformToCps*(pass: var Pass) =
   pass.dest.takeToken n
   while n.kind != ParRi:
     tr(c, pass.dest, n)
+  for (procStart, sym) in c.shouldPublish:
+    publishSignature pass.dest, sym, procStart
   pass.dest.takeToken n # ParRi
   c.typeCache.closeScope()
 
