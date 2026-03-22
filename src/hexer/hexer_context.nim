@@ -28,6 +28,7 @@ type
     strLitCounter*: int    ## unique suffix for strLitBuf symbols
     typeCache*: TypeCache
     bits*: int
+    bigEndian*: bool
 
     breaks*: seq[SymId] # how to translate `break`
     continues*: seq[SymId] # how to translate `continue`

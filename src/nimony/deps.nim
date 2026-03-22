@@ -401,12 +401,14 @@ proc defineNiflerCmd(b: var Builder; nifler: string) =
     b.addKeyw "input"
     b.addKeyw "output"
 
-proc defineHexerCmds(b: var Builder; hexer: string; bits: int) =
+proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool) =
+  let cpuFlag = if bigEndian: "--cpu:be" else: "--cpu:le"
   b.withTree "cmd":
     b.addSymbolDef "hexer"
     b.addStrLit hexer
     b.addStrLit "c"
     b.addStrLit "--bits:" & $bits
+    b.addStrLit cpuFlag
     b.withTree "input":
       b.addIntLit 0
 
@@ -415,6 +417,7 @@ proc defineHexerCmds(b: var Builder; hexer: string; bits: int) =
     b.addStrLit hexer
     b.addStrLit "d"
     b.addStrLit "--bits:" & $bits
+    b.addStrLit cpuFlag
     b.addKeyw "args"
     b.withTree "input":
       b.addIntLit 0
@@ -446,7 +449,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       b.addKeyw "input"
 
     # Command for hexer
-    defineHexerCmds(b, hexer, c.config.bits)
+    defineHexerCmds(b, hexer, c.config.bits, platform.CPU[c.config.targetCPU].endian == bigEndian)
 
     # Command for C compiler (object files)
     b.withTree "cmd":
@@ -804,7 +807,7 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
       b.addKeyw "args"
       b.addKeyw "input"
 
-    defineHexerCmds(b, findTool("hexer"), config.bits)
+    defineHexerCmds(b, findTool("hexer"), config.bits, platform.CPU[config.targetCPU].endian == bigEndian)
 
     b.withTree "cmd":
       b.addSymbolDef "cc"

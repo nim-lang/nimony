@@ -993,19 +993,32 @@ proc genStringLit(c: var EContext; s: string; info: PackedLineInfo) =
     let bytesField = pool.syms.getOrIncl(StringBytesField)
     let moreField  = pool.syms.getOrIncl(StringMoreField)
 
-    # Pack up to alwaysAvail chars into bytes 1..alwaysAvail of the uint
+    # Pack up to alwaysAvail chars into the `bytes` uint alongside slen.
+    # LE layout: slen at bits 0..7 (LSB/byte0), chars at bits 8, 16, ...
+    # BE layout: slen at bits (bits-8)..(bits-1) (MSB/byte0), chars at bits (bits-16), ...
     var bytesVal: uint = 0
-    if s.len <= alwaysAvail:
-      # Short string: slen in byte 0, chars in bytes 1..slen
-      bytesVal = uint(s.len)
-      for i in 0 ..< s.len:
-        bytesVal = bytesVal or (uint(cast[uint8](s[i])) shl uint((i + 1) * 8))
+    if c.bigEndian:
+      if s.len <= alwaysAvail:
+        bytesVal = uint(s.len) shl uint(alwaysAvail * 8)
+        for i in 0 ..< s.len:
+          bytesVal = bytesVal or (uint(cast[uint8](s[i])) shl uint((alwaysAvail - 1 - i) * 8))
+      else:
+        bytesVal = staticSlen shl uint(alwaysAvail * 8)
+        for i in 0 ..< alwaysAvail:
+          if i < s.len:
+            bytesVal = bytesVal or (uint(cast[uint8](s[i])) shl uint((alwaysAvail - 1 - i) * 8))
     else:
-      # Long string: StaticSlen in byte 0, first alwaysAvail chars in bytes 1..
-      bytesVal = staticSlen
-      for i in 0 ..< alwaysAvail:
-        if i < s.len:
+      if s.len <= alwaysAvail:
+        # Short string: slen in byte 0, chars in bytes 1..slen
+        bytesVal = uint(s.len)
+        for i in 0 ..< s.len:
           bytesVal = bytesVal or (uint(cast[uint8](s[i])) shl uint((i + 1) * 8))
+      else:
+        # Long string: StaticSlen in byte 0, first alwaysAvail chars in bytes 1..
+        bytesVal = staticSlen
+        for i in 0 ..< alwaysAvail:
+          if i < s.len:
+            bytesVal = bytesVal or (uint(cast[uint8](s[i])) shl uint((i + 1) * 8))
 
     c.dest.add tagToken("oconstr", info)
     useStringType c, info
@@ -1871,7 +1884,7 @@ proc initDynlib(c: var EContext, rootInfo: PackedLineInfo) =
 
       c.dest.addParRi()
 
-proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
+proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]) =
   let mp = splitModulePath(infile)
   var c = EContext(dir: (if mp.dir.len == 0: getCurrentDir() else: mp.dir), ext: mp.ext, main: mp.name,
     dest: createTokenBuf(),
@@ -1880,6 +1893,7 @@ proc expand*(infile: string; bits: int; flags: set[CheckMode]) =
     pending: createTokenBuf(),
     strLitBuf: createTokenBuf(),
     bits: bits,
+    bigEndian: bigEndian,
     localDeclCounters: 1000,
     activeChecks: flags,
     liftingCtx: createLiftingCtx(mp.name, bits)
