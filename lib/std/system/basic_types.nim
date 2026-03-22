@@ -27,9 +27,16 @@ type
   UncheckedArray*[T] {.magic: UncheckedArray.} ## Built-in unchecked array type.
 
 type
+  LongString* = object ## Internal heap block for long SSO strings. Not for direct use.
+    fullLen: int
+    rc: int
+    capImpl: int
+    data: UncheckedArray[char]
+
+type
   string* = object ## Built-in string type.
-    a: ptr UncheckedArray[char]
-    i: int
+    bytes: uint
+    more: ptr LongString
 
 type # we need to start a new type section here, so that ``0`` can have a type
   bool* {.magic: "Bool".} = enum ## Built-in boolean type.

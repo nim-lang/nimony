@@ -146,8 +146,10 @@ block: # issue #1444
 
 block:
   var s = "12234"
-  var m = prepareMutationAt(s, 1)
-  assert m == '2'
+  var m = s
+  m[1] = '9'
+  assert m == "19234"
+  assert s == "12234"
 
 
 block:

@@ -247,8 +247,8 @@ else:
     if indx >= 0:
       when defined(windows) and not defined(nimscript):
         var key = key
-        var k = newWideCString(key.toCString(), key.len).toWideCString()
-        if setEnvironmentVariableW(k, nil) == 0'i32:
+        var k = newWideCString(key)
+        if setEnvironmentVariableW(k.toWideCString(), nil) == 0'i32:
           raiseOSError(osLastError())
       else:
         var key = key

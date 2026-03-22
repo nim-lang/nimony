@@ -464,8 +464,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     elif typeKind(result) == CstringT:
       result = c.builtins.charType
     else:
-      assert false, "cannot deref type: " & toString(result, false)
-      result = c.builtins.autoType # still an error
+      discard "byref param access: type is already the Nim-level type"
   of QuotedX, OchoiceX, CchoiceX, UnpackX, FieldsX, FieldpairsX, TypeofX, LowX, HighX,
      InternalFieldPairsX:
     discard "keep the error type"

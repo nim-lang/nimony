@@ -425,17 +425,27 @@ N_INLINE(NB8, _Qnifc_mod_ul_overflow)(unsigned long int a, unsigned long int b, 
 }
 NIM_THREADVAR NB8 NIFC_ERR_;
 #include <stdio.h>
+typedef struct LongString_0_sysvq0asl LongString_0_sysvq0asl;
 typedef struct __attribute__ ((__packed__)) Foo_0_tpakvxko41{
   NC8 c_0;
   NI x_0;}
 Foo_0_tpakvxko41;
+typedef struct LongString_0_sysvq0asl{
+  NI fullLen_0;
+  NI rc_0;
+  NI capImpl_0;
+  NC8 data_0[];}
+LongString_0_sysvq0asl;
 typedef struct string_0_sysvq0asl{
-  NC8* a_0;
-  NI i_0;}
+  NU bytes_0;
+  LongString_0_sysvq0asl* more_0;}
 string_0_sysvq0asl;
 extern void write_0_syn1lfpjv(FILE* f_4, string_0_sysvq0asl s_0);
 extern void write_7_syn1lfpjv(FILE* f_11, NC8 c_1);
 extern void quit_0_syn1lfpjv(NI value_1);
+LongString_0_sysvq0asl const strlit_0_tpakvxko41 = {
+  .fullLen_0 = IL64(20), .rc_0 = IL64(0), .capImpl_0 = IL64(0), .data_0 = "[Assertion Failure] "}
+;
 Foo_0_tpakvxko41 x_1_tpakvxko41;
 int cmdCount;
 NC8 **cmdLine;
@@ -447,10 +457,10 @@ x_1_tpakvxko41 = (Foo_0_tpakvxko41){
 ;
 if ((!((x_1_tpakvxko41.c_0 == (NC8)'a') && (x_1_tpakvxko41.x_0 == IL64(123))))){
   write_0_syn1lfpjv(stdout, (string_0_sysvq0asl){
-    .a_0 = (NC8*)"[Assertion Failure] ", .i_0 = IL64(40)}
+    .bytes_0 = 8390880602273963006ull, .more_0 = (&strlit_0_tpakvxko41)}
   );
   write_0_syn1lfpjv(stdout, (string_0_sysvq0asl){
-    .a_0 = (NC8*)"", .i_0 = IL64(0)}
+    .bytes_0 = 0ull, .more_0 = NIM_NIL}
   );
   write_7_syn1lfpjv(stdout, (NC8)'\012');
   quit_0_syn1lfpjv(IL64(1));}

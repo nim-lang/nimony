@@ -1,341 +1,632 @@
-## String implementation.
-
-type
-  StrData = ptr UncheckedArray[char]
+## SSO string implementation.
+##
+## Three tiers:
+##   short  (slen <= AlwaysAvail=7):  all data inline in `bytes`
+##   medium (8 <= slen <= PayloadSize=14): all data inline in `bytes` + `more` (reinterpreted)
+##   long   (slen == HeapSlen=255):   data on heap via `more: ptr LongString`
+##   static (slen == StaticSlen=254): data in a static `LongString` (never freed)
+##
+## `bytes` layout (LE): byte0=slen, bytes1..AlwaysAvail=inline chars, bytes for more ptr reused
 
 const
-  EmptyI = 0 # length==0 and not allocated
-  LenShift = 1
-  IsAllocatedBit = 1
+  HeapSlen   = 255  ## slen sentinel: heap-allocated long string
+  StaticSlen = 254  ## slen sentinel: static/literal long string (capImpl=0, never freed)
+  AlwaysAvail = sizeof(uint) - 1          ## inline chars that fit alongside slen in `bytes`
+  PayloadSize = AlwaysAvail + sizeof(pointer) - 1  ## total inline capacity (short+medium)
 
-func sumLen(a, b: int): int =
-  {.keepOverflowFlag.}:
-    result = a + b
-    if overflowFlag():
-      # When required length is overflowed, cause out of memory.
-      result = high(int)
+const LongStringDataOffset = 3 * sizeof(int)  ## byte offset of LongString.data from start
 
-# --- string attributes ---
+# ---- low-level byte accessors ----
+
+func ssLenOf(bytes: uint): int {.inline.} =
+  ## Extracts slen from an already-loaded `bytes` word. Pure register op (no memory access).
+  ## LE: slen is the low byte. BE: slen is the high byte (first byte in memory).
+  when defined(bigEndian):
+    int(bytes shr ((sizeof(uint) - 1) * 8))
+  else:
+    int(bytes and 0xFF'u)
+
+template ssLen(s: string): int =
+  ## Reads slen via a byte load at offset 0. Keeps slen access visibly distinct
+  ## from char writes at offsets 1+ so the C compiler can cache slen across loops.
+  int(cast[ptr byte](addr s.bytes)[])
+
+template setSSLen(s: var string; v: int) =
+  ## Writes slen to byte 0 of `bytes`.
+  cast[ptr byte](addr s.bytes)[] = cast[byte](v)
+
+template inlinePtr(s: string): ptr UncheckedArray[char] =
+  ## Read-only pointer to the inline char storage (offset +1 from `bytes`).
+  cast[ptr UncheckedArray[char]](cast[uint](addr s.bytes) + 1'u)
+
+template inlinePtrV(s: var string): ptr UncheckedArray[char] =
+  ## Mutable pointer to the inline char storage (offset +1 from `bytes`).
+  cast[ptr UncheckedArray[char]](cast[uint](addr s.bytes) + 1'u)
+
+template inlinePtrAt(s: var string; offset: int): pointer =
+  ## Mutable pointer to inline char at `offset` (avoids addr-of-template-index issues).
+  cast[pointer](cast[uint](addr s.bytes) + 1'u + uint(offset))
+
+# ---- raw data pointer ----
+
+func rawData(s {.byref.}: string): ptr UncheckedArray[char] {.inline.} =
+  ## Returns a pointer into s's char data.
+  if ssLen(s) > PayloadSize:
+    result = cast[ptr UncheckedArray[char]](addr s.more.data[0])
+  else:
+    result = inlinePtr(s)
+
+# ---- length ----
 
 func len*(s: string): int {.inline, semantics: "string.len", ensures: (0 <= result).} =
-  result = s.i shr LenShift
+  result = ssLen(s)
+  if result > PayloadSize:
+    result = s.more.fullLen
 
-func high*(s: string): int {.inline.} = len(s)-1
+func high*(s: string): int {.inline.} = len(s) - 1
 func low*(s: string): int {.inline.} = 0
 
-func cap(s: string): int {.inline.} = allocatedSize(s.a)
-
-template isAllocated(s: string): bool = (s.i and IsAllocatedBit) != 0
-
 func capacity*(s: string): int =
-  result = if isAllocated(s): s.cap else: 0
+  let sl = ssLen(s)
+  if sl == HeapSlen: s.more.capImpl
+  elif sl == StaticSlen: s.more.fullLen
+  else: PayloadSize
 
-func beginStore*(s: var string; ensuredLen: int; start = 0): ptr UncheckedArray[char]
+# ---- read-only raw data API (public, safe for external callers) ----
+
+func readRawData*(s {.byref.}: string; start = 0): ptr UncheckedArray[char]
     {.inline, noSideEffect, raises: [], tags: [].} =
-  ## Returns a pointer for a bulk write into `s` starting at `start`.
-  ## `s` must already have sufficient length allocated (via newString/setLen).
-  ## Call endStore(s) after writing to sync any implementation caches.
-  result = cast[ptr UncheckedArray[char]](cast[uint](s.a) + uint(start))
+  ## Returns a read-only pointer to s[start].
+  ## For inline strings, the pointer is into s's inline storage;
+  ## s must remain alive while the pointer is used.
+  if ssLen(s) > PayloadSize:
+    result = cast[ptr UncheckedArray[char]](cast[uint](addr s.more.data[0]) + uint(start))
+  else:
+    result = cast[ptr UncheckedArray[char]](cast[uint](inlinePtr(s)) + uint(start))
 
-func endStore*(s: var string) {.inline, noSideEffect, raises: [], tags: [].} =
-  ## Syncs implementation caches after a bulk write via beginStore. No-op here.
-  discard
-
-func readRawData*(s: string; start = 0): ptr UncheckedArray[char]
-    {.inline, noSideEffect, raises: [], tags: [].} =
-  ## Returns a read-only pointer to s's char data at `start`.
-  result = cast[ptr UncheckedArray[char]](cast[uint](s.a) + uint(start))
-
-# --- string destructor hooks ---
+# ---- lifecycle hooks ----
 
 func `=wasMoved`*(s: var string) {.exportc: "nimStrWasMoved", inline.} =
-  s.i = EmptyI
+  s.bytes = 0
 
 func `=destroy`*(s: string) {.exportc: "nimStrDestroy", inline.} =
-  if isAllocated(s): dealloc(s.a)
-
-template safeCopyMem(dest: var string; src: string; len, allocated: int) =
-  if dest.a != nil:
-    copyMem dest.a, src.a, len
-    dest.i = (len shl LenShift) or IsAllocatedBit
-  else:
-    {.cast(noSideEffect).}:
-      oomHandler allocated
-    dest.i = EmptyI
+  if ssLen(s) == HeapSlen:
+    if arcDec(s.more.rc):
+      dealloc(s.more)
 
 func `=copy`*(dest: var string; src: string) {.exportc: "nimStrCopy", inline, nodestroy.} =
-  if dest.a == src.a:
-    return
-  let len = src.len
-  if isAllocated(dest):
-    let cap = dest.cap
-    if cap >= len:
-      copyMem(dest.a, src.a, len)
-      dest.i = (len shl LenShift) or IsAllocatedBit
-    else:
-      let newCap = max(len, cap + (cap shr 1))
-      dealloc dest.a
-      dest.a = cast[StrData](alloc(newCap))
-      # `alloc` here because `realloc` would copy the memory but that
-      # is not required as it is overwritten anyway here:
-      safeCopyMem(dest, src, len, newCap)
-  elif isAllocated(src):
-    dest.a = cast[StrData](alloc(len))
-    safeCopyMem(dest, src, len, len)
+  let ssrc = ssLen(src)
+  if ssrc <= PayloadSize:
+    # short/medium: destroy dest heap block if any, then bitcopy
+    let sdest = ssLen(dest)
+    if sdest == HeapSlen:
+      if arcDec(dest.more.rc):
+        dealloc(dest.more)
+    copyMem(addr dest.bytes, addr src.bytes, sizeof(string))
   else:
-    dest = src
+    # long or static: COW share
+    if addr(dest) == addr(src): return
+    let sdest = ssLen(dest)
+    if sdest == HeapSlen:
+      if arcDec(dest.more.rc):
+        dealloc(dest.more)
+    if ssrc == HeapSlen:
+      arcInc(src.more.rc)
+    copyMem(addr dest.bytes, addr src.bytes, sizeof(string))
 
 func `=dup`*(s: string): string {.exportc: "nimStrDup", inline, nodestroy.} =
-  if isAllocated(s):
-    let len = s.len
-    result = string(a: cast[StrData](alloc(len)), i: s.i)
-    if result.a != nil:
-      copyMem result.a, s.a, len
-    else:
-      {.cast(noSideEffect).}:
-        oomHandler len
-      result.i = EmptyI
-  else:
-    result = s
+  if ssLen(s) == HeapSlen:
+    arcInc(s.more.rc)
+  result = string(bytes: s.bytes, more: s.more)
 
-# --- string/cstring conversions ---
+# ---- cstring length ----
 
 func strlen(a: cstring): csize_t {.importc: "strlen", header: "<string.h>".}
 
 func len*(a: cstring): int {.inline.} =
-  ## Assume `a` is a zero terminated string and
-  ## return the lenth of `a` excluding terminating zero
-  if a == nil:
-    result = 0
+  if a == nil: 0
+  else: a.strlen.int
+
+# ---- internal growth helpers ----
+
+func ssResize(old: int): int {.inline.} =
+  if old <= 0: 4
+  elif old <= 32767: old * 2
+  else: old div 2 + old
+
+func ensureUniqueLong(s: var string; oldLen, newLen: int) =
+  ## Ensures s.more is a unique writable heap block with capacity >= newLen.
+  let sl = ssLen(s)
+  let isHeap = sl == HeapSlen
+  let cap = if isHeap: s.more.capImpl else: 0
+  if isHeap and arcIsUnique(s.more.rc) and newLen <= cap:
+    s.more.fullLen = newLen
+    # Sync inline cache even on fast path (use oldLen since new data may not exist yet)
+    copyMem(inlinePtrV(s), addr s.more.data[0], min(oldLen, AlwaysAvail))
   else:
-    result = a.strlen.int
-
-func borrowCStringUnsafe*(s: cstring; len: int): string =
-  ## Creates a Nim string from a `cstring` by borrowing the
-  ## underlying storage. You have to ensure the `cstring` lives
-  ## long enough for this to be safe! If in doubt,
-  ## use `fromCString` instead.
-  string(a: cast[StrData](s), i: (len shl LenShift))
-
-func borrowCStringUnsafe*(s: cstring): string {.exportc: "nimBorrowCStringUnsafe".} =
-  ## Creates a Nim string from a `cstring` by borrowing the
-  ## underlying storage. You have to ensure the `cstring` lives
-  ## long enough for this to be safe! If in doubt,
-  ## use `fromCString` instead.
-  string(a: cast[StrData](s), i: (int(strlen(s)) shl LenShift))
-
-func ensureTerminatingZero*(s: var string) =
-  let len = s.len
-  if isAllocated(s):
-    let cap = s.cap
-    if cap > len:
-      s.a[len] = '\0'
+    let newCap = if newLen > cap: max(newLen, ssResize(cap)) else: cap
+    let p = cast[ptr LongString](alloc(LongStringDataOffset + newCap))
+    if p != nil:
+      p.rc = 1
+      p.fullLen = newLen
+      p.capImpl = newCap
+      let old = s.more
+      copyMem(addr p.data[0], addr old.data[0], min(oldLen, newCap))
+      if isHeap and arcDec(old.rc):
+        dealloc(old)
+      s.more = p
+      setSSLen(s, HeapSlen)
+      # Sync inline cache after creating new block (use oldLen since new data may not exist yet)
+      copyMem(inlinePtrV(s), addr p.data[0], min(oldLen, AlwaysAvail))
     else:
-      let newCap = sumLen(len, 1)
-      let a = cast[StrData](realloc(s.a, newCap))
-      if a != nil:
-        a[len] = '\0'
-        s.a = a
-      else:
-        {.cast(noSideEffect).}:
-          oomHandler newCap
-        # ensure zero termination anyway:
-        s.a = cast[StrData](cstring"")
-        s.i = EmptyI
+      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + newCap
+      s.bytes = 0
+
+func transitionToLong(s: var string; sl: int; newLen: int) =
+  let newCap = max(newLen, ssResize(newLen))
+  let p = cast[ptr LongString](alloc(LongStringDataOffset + newCap))
+  if p != nil:
+    p.rc = 1
+    p.fullLen = newLen
+    p.capImpl = newCap
+    copyMem(addr p.data[0], inlinePtrV(s), sl)
+    s.more = p
+    setSSLen(s, HeapSlen)
+    # Sync inline cache after creating new block
+    copyMem(inlinePtrV(s), addr p.data[0], min(sl, AlwaysAvail))
   else:
-    let newCap = sumLen(len, 1)
-    let a = cast[StrData](alloc(newCap))
-    if a != nil:
-      copyMem a, s.a, len
-      a[len] = '\0'
-      s.a = a
-      s.i = s.i or IsAllocatedBit
+    {.cast(noSideEffect).}: oomHandler LongStringDataOffset + newCap
+    s.bytes = 0
+
+# ---- mutation helpers ----
+
+func prepareMutation*(s: var string) {.inline.} =
+  ## Ensures s's data is uniquely owned (not shared with another string or static).
+  let sl = ssLen(s)
+  if sl == StaticSlen or (sl == HeapSlen and not arcIsUnique(s.more.rc)):
+    if sl == HeapSlen:
+      discard arcDec(s.more.rc)
+    let old = s.more
+    let oldLen = old.fullLen
+    let p = cast[ptr LongString](alloc(LongStringDataOffset + oldLen))
+    if p != nil:
+      p.rc = 1
+      p.fullLen = oldLen
+      p.capImpl = oldLen
+      copyMem(addr p.data[0], addr old.data[0], oldLen)
+      s.more = p
+      setSSLen(s, HeapSlen)
     else:
-      {.cast(noSideEffect).}:
-        oomHandler newCap
-      # ensure zero termination anyway:
-      s.a = cast[StrData](cstring"")
-      s.i = EmptyI
+      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + oldLen
+      s.bytes = 0
 
-func toCString*(s: var string): cstring =
-  ## Creates a `cstring` from a Nim string.
-  ## You have to ensure the string lives long enough
-  ## than the returned `cstring` for this to be safe!
-  ensureTerminatingZero(s)
-  result = cast[cstring](s.a)
+# ---- beginStore / endStore for bulk writes ----
 
-# --- string allocation & append ---
-
-func growImpl(s: var string; newLen: int) =
-  let cap = s.cap
-  if newLen > cap:
-    let newCap = max(newLen, cap + (cap shr 1))
-    s.a = cast[StrData](realloc(s.a, newCap))
-    if s.a != nil:
-      s.i = (newLen shl LenShift) or IsAllocatedBit
-    else:
-      {.cast(noSideEffect).}:
-        oomHandler newCap
-      s.i = EmptyI
+func beginStore*(s: var string; ensuredLen: int; start = 0): ptr UncheckedArray[char]
+    {.inline, noSideEffect, raises: [], tags: [].} =
+  ## Prepares s for a bulk write. s.len must be >= ensuredLen beforehand.
+  ## Call endStore(s) afterwards to sync the hot prefix cache.
+  if ssLen(s) > PayloadSize:
+    ensureUniqueLong(s, s.more.fullLen, s.more.fullLen)
+    result = cast[ptr UncheckedArray[char]](cast[uint](addr s.more.data[0]) + uint(start))
   else:
-    s.i = (newLen shl LenShift) or (s.i and IsAllocatedBit)
+    result = cast[ptr UncheckedArray[char]](cast[uint](inlinePtrV(s)) + uint(start))
 
-func makeAllocated(s: var string; newLen: int) =
-  let len = s.len
-  let newCap = max(newLen, len + (len shr 1))
-  let existing = s.a
-  s.a = cast[StrData](alloc(newCap))
-  if s.a != nil:
-    s.i = (newLen shl LenShift) or IsAllocatedBit
-    if len > 0:
-      copyMem addr(s.a[0]), existing, len
-  else:
-    {.cast(noSideEffect).}:
-      oomHandler newCap
-    s.i = EmptyI
+func endStore*(s: var string) {.inline, noSideEffect, raises: [], tags: [].} =
+  ## Syncs the hot prefix cache after a bulk write via beginStore.
+  ## No-op for short/medium strings.
+  if ssLen(s) > PayloadSize:
+    copyMem(inlinePtrV(s), addr s.more.data[0], AlwaysAvail)
 
-func add*(s: var string; part: string) =
-  let len = s.len
-  var newLen = sumLen(len, part.len)
-  if not isAllocated(s):
-    makeAllocated s, newLen
-  else:
-    growImpl s, newLen
-  if s.a != nil and part.len > 0:
-    copyMem addr(s.a[len]), part.a, part.len
+# ---- add char / string ----
 
 func add*(s: var string; c: char) =
-  let newLen = s.len+1
-  if not isAllocated(s):
-    makeAllocated s, newLen
-  else:
-    growImpl s, newLen
-  if s.a != nil:
-    s.a[newLen-1] = c
-
-func setLen*(s: var string; newLen: int) =
-  let len = s.len
-  if newLen < len:
-    s.i = newLen shl LenShift or (s.i and IsAllocatedBit)
-  elif newLen > len:
-    if not isAllocated(s):
-      makeAllocated s, newLen
+  let sl = ssLen(s)
+  if sl < PayloadSize:
+    let newLen = sl + 1
+    inlinePtrV(s)[sl] = c
+    setSSLen(s, newLen)
+  elif sl > PayloadSize:
+    let l = s.more.fullLen
+    if sl == HeapSlen and arcIsUnique(s.more.rc) and l < s.more.capImpl:
+      s.more.data[l] = c
+      s.more.fullLen = l + 1
+      if l < AlwaysAvail:
+        inlinePtrV(s)[l] = c
     else:
-      growImpl s, newLen
+      let oldLen = s.more.fullLen
+      ensureUniqueLong(s, oldLen, oldLen + 1)
+      if ssLen(s) == HeapSlen:
+        s.more.data[oldLen] = c
+        if oldLen < AlwaysAvail:
+          inlinePtrV(s)[oldLen] = c
+  else:
+    # sl == PayloadSize → transition to long
+    transitionToLong(s, sl, sl + 1)
+    if ssLen(s) == HeapSlen:
+      s.more.data[sl] = c
+
+func add*(s: var string; part: string) =
+  let partLen = part.len
+  if partLen == 0: return
+  let partData = rawData(part)  # fetch before any mutation (safe: part is local copy)
+  let sl = ssLen(s)
+  if sl <= PayloadSize:
+    let sLen = sl
+    let newLen = sLen + partLen
+    if newLen <= PayloadSize:
+      copyMem(inlinePtrAt(s, sLen), partData, partLen)
+      setSSLen(s, newLen)
+    else:
+      transitionToLong(s, sLen, newLen)
+      if ssLen(s) == HeapSlen:
+        copyMem(cast[pointer](cast[uint](addr s.more.data[0]) + uint(sLen)), partData, partLen)
+        copyMem(inlinePtrV(s), addr s.more.data[0], AlwaysAvail)
+  else:
+    let sLen = s.more.fullLen
+    let newLen = sLen + partLen
+    ensureUniqueLong(s, sLen, newLen)
+    if ssLen(s) == HeapSlen:
+      copyMem(cast[pointer](cast[uint](addr s.more.data[0]) + uint(sLen)), partData, partLen)
+      if sLen < AlwaysAvail:
+        copyMem(inlinePtrV(s), addr s.more.data[0], AlwaysAvail)
+
+# ---- zero-padding helper for inline shrink ----
+
+func zeroSwarPadImplBE(bytes: uint; newLen: int): uint {.inline.} =
+  let charKeepMask =
+    if newLen == 0: 0'u
+    else: (not 0'u shr 8) and (not 0'u shl uint((AlwaysAvail - newLen) * 8))
+  (bytes and charKeepMask) or (uint(newLen) shl uint((sizeof(uint) - 1) * 8))
+
+func zeroSwarPadImplLE(bytes: uint; newLen: int): uint {.inline.} =
+  let keepBits = uint((newLen + 1) * 8)
+  let mask = if keepBits >= uint(sizeof(uint) * 8): not 0'u
+             else: (uint(1) shl keepBits) - 1'u
+  (bytes and (mask and not 0xFF'u)) or uint(newLen)
+
+func zeroSwarPadImpl(bytes: uint; newLen: int): uint {.inline.} =
+  ## Returns updated `bytes` with stale chars above newLen zeroed and slen set to newLen.
+  ## LE: slen at LSB, chars in bytes above it. BE: slen at MSB, chars in bytes below it.
+  when defined(bigEndian): zeroSwarPadImplBE(bytes, newLen)
+  else: zeroSwarPadImplLE(bytes, newLen)
+
+template zeroSwarPad(s: var string; newLen: int) =
+  s.bytes = zeroSwarPadImpl(s.bytes, newLen)
+
+# ---- setLen / shrink ----
 
 func shrink*(s: var string; newLen: int) =
-  if newLen < 0:
-    s.i = s.i and IsAllocatedBit
-  elif newLen < s.len:
-    s.i = newLen shl LenShift or (s.i and IsAllocatedBit)
+  if newLen <= s.len:
+    let sl = ssLen(s)
+    if sl <= PayloadSize:
+      if newLen <= AlwaysAvail:
+        zeroSwarPad(s, newLen)  # clear stale bytes for SWAR; sets slen
+      else:
+        setSSLen(s, newLen)
+    else:
+      if newLen <= PayloadSize:
+        # Transition from long/static to inline
+        let old = s.more
+        if newLen > 0:
+          copyMem(inlinePtrV(s), addr old.data[0], newLen)
+        if newLen <= AlwaysAvail:
+          zeroSwarPad(s, newLen)
+        else:
+          setSSLen(s, newLen)
+      else:
+        # Stays long: ensure unique before mutating
+        prepareMutation(s)
+        s.more.fullLen = newLen
+        copyMem(inlinePtrV(s), addr s.more.data[0], min(newLen, AlwaysAvail))
 
-# --- string indexing & slicing ---
+func setLen*(s: var string; newLen: int) =
+  if newLen <= s.len:
+    shrink(s, newLen)
+    return
+  let sl = ssLen(s)
+  if sl <= PayloadSize:
+    let curLen = s.len
+    if newLen <= PayloadSize:
+      let inl = inlinePtrV(s)
+      if newLen > curLen:
+        zeroMem(inlinePtrAt(s, curLen), newLen - curLen)
+        setSSLen(s, newLen)
+      else:
+        if newLen <= AlwaysAvail:
+          zeroSwarPad(s, newLen)  # clears stale chars for SWAR; also sets slen
+        else:
+          setSSLen(s, newLen)
+    else:
+      transitionToLong(s, curLen, newLen)
+      if ssLen(s) == HeapSlen:
+        zeroMem(cast[pointer](cast[uint](addr s.more.data[0]) + uint(curLen)), newLen - curLen)
+  else:
+    if newLen <= PayloadSize:
+      let old = s.more
+      copyMem(inlinePtrV(s), addr old.data[0], newLen)
+      if newLen <= AlwaysAvail:
+        zeroSwarPad(s, newLen)  # clear stale prefix bytes for SWAR; sets slen
+      else:
+        setSSLen(s, newLen)
+    else:
+      let curLen = s.len
+      ensureUniqueLong(s, curLen, newLen)
+      if ssLen(s) == HeapSlen:
+        if newLen > curLen:
+          zeroMem(cast[pointer](cast[uint](addr s.more.data[0]) + uint(curLen)), newLen - curLen)
+        copyMem(inlinePtrV(s), addr s.more.data[0], AlwaysAvail)
+
+# ---- indexing ----
+
+func `[]`*(s: string; i: int): char {.requires: (i < len(s) and i >= 0), inline.} =
+  if ssLen(s) > PayloadSize: s.more.data[i]
+  else: inlinePtr(s)[i]
 
 func `[]=`*(s: var string; i: int; c: char) {.requires: (i < len(s) and i >= 0), inline.} =
-  if not isAllocated(s):
-    makeAllocated s, s.len
-  s.a[i] = c
+  prepareMutation(s)
+  if ssLen(s) > PayloadSize:
+    s.more.data[i] = c
+    if i < AlwaysAvail: inlinePtrV(s)[i] = c
+  else:
+    inlinePtrV(s)[i] = c
 
-func `[]`*(s: string; i: int): char {.requires: (i < len(s) and i >= 0), inline.} = s.a[i]
+# ---- substr / slicing ----
 
 func substr*(s: string; first, last: int): string =
-  let len = s.len
+  result = string(bytes: 0'u, more: nil)
+  let sLen = s.len
   let f = max(first, 0)
-  let l = min(last, len - 1) + 1
-  if l <= f:
-    result = string(a: cast[StrData](cstring""), i: EmptyI)
+  let l = min(last, sLen - 1) + 1
+  if l <= f: return
+  let newLen = l - f
+  let src = rawData(s)
+  if newLen <= PayloadSize:
+    setSSLen(result, newLen)
+    copyMem(inlinePtrV(result), cast[pointer](cast[uint](src) + uint(f)), newLen)
   else:
-    let newLen = l - f
-    if isAllocated(s):
-      result = string(a: cast[StrData](alloc(newLen)), i: (newLen shl LenShift) or IsAllocatedBit)
-      if result.a != nil:
-        copyMem result.a, addr s.a[f], newLen
-      else:
-        {.cast(noSideEffect).}:
-          oomHandler newLen
-        result.i = EmptyI
+    let p = cast[ptr LongString](alloc(LongStringDataOffset + newLen))
+    if p != nil:
+      p.rc = 1
+      p.fullLen = newLen
+      p.capImpl = newLen
+      copyMem(addr p.data[0], cast[pointer](cast[uint](src) + uint(f)), newLen)
+      result.more = p
+      setSSLen(result, HeapSlen)
+      copyMem(inlinePtrV(result), addr p.data[0], AlwaysAvail)
     else:
-      # slices into data we don't own anyway can be done without copy:
-      result = string(a: cast[StrData](addr s.a[f]), i: newLen shl LenShift)
+      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + newLen
+      result.bytes = 0
 
 func substr*(s: string; first = 0): string =
   result = substr(s, first, high(s))
 
-# --- string compare ---
+# ---- SWAR / comparison helpers ----
 
-# used by string case:
-func equalStrings(a, b: string): bool {.inline.} =
-  if a.len == b.len:
-    if a.len > 0:
-      result = cmpMem(a.a, b.a, a.len) == 0
-    else:
-      result = true
+func bswap64(x: uint64): uint64 {.importc: "__builtin_bswap64", nodecl, noSideEffect.}
+func ctz64(x: uint64): int32  {.importc: "__builtin_ctzll",   nodecl, noSideEffect.}
+func clz64(x: uint64): int32  {.importc: "__builtin_clzll",   nodecl, noSideEffect.}
+
+func bswap(x: uint): uint {.inline.} = uint(bswap64(uint64(x)))
+func ctzImpl(x: uint): int {.inline.} = int(ctz64(uint64(x)))
+func clzImpl(x: uint): int {.inline.} = int(clz64(uint64(x)))
+
+## swarKey: value whose integer ordering equals lexicographic char order.
+## LE: shift out slen (LSB), bswap → char[0] at MSB.
+## BE: shift out slen (MSB) left → chars already in MSB-first order.
+func swarKey(x: uint): uint {.inline.} =
+  when defined(bigEndian): x shl 8
+  else: bswap(x shr 8)
+
+## swarCharMask: mask covering the first n char-bytes inside the `bytes` word.
+## LE: chars at bits 8..63 (above slen LSB).  BE: chars at bits 0..55 (below slen MSB).
+func swarCharMask(n: int): uint {.inline.} =
+  when defined(bigEndian):
+    if n == 0: 0'u
+    else: (not 0'u shr 8) and (not 0'u shl uint((AlwaysAvail - n) * 8))
   else:
-    result = false
+    ((1'u shl uint(n * 8)) - 1'u) shl 8
+
+template inlinePtrOf(p: ptr string): ptr UncheckedArray[char] =
+  ## Inline char pointer from a ptr string — avoids unsafeAddr dance.
+  cast[ptr UncheckedArray[char]](cast[uint](p) + 1'u)
+
+template tailPtrOf(p: ptr string): ptr UncheckedArray[char] =
+  ## Pointer to the medium-string tail bytes (chars AlwaysAvail..PayloadSize-1)
+  ## which live in the `more` field, at offset AlwaysAvail+1 from struct start.
+  cast[ptr UncheckedArray[char]](cast[uint](p) + 1'u + uint(AlwaysAvail))
+
+func cmpInlineBytes(a, b: ptr UncheckedArray[char]; n: int): int {.inline.} =
+  result = 0
+  for i in 0..<n:
+    let ac = a[i]; let bc = b[i]
+    if ac < bc: return -1
+    if ac > bc: return 1
+
+func cmpShortInlineBE(abytes, bbytes: uint; aslen, bslen: int): int {.inline.} =
+  ## BE: shl 8 removes slen (MSB); CLZ finds first differing byte.
+  let minLen = min(aslen, bslen)
+  if minLen > 0:
+    let shifted = (abytes xor bbytes) shl 8
+    let keepMask = not 0'u shl uint((sizeof(uint) - minLen) * 8)
+    let diff = shifted and keepMask
+    if diff != 0:
+      let byteFromMSB = clzImpl(diff) shr 3
+      let charShift = uint((sizeof(uint) - 2 - byteFromMSB) * 8)
+      let ac = (abytes shr charShift) and 0xFF'u
+      let bc = (bbytes shr charShift) and 0xFF'u
+      if ac < bc: return -1
+      return 1
+  aslen - bslen
+
+func cmpShortInlineLE(abytes, bbytes: uint; aslen, bslen: int): int {.inline.} =
+  ## LE: shr 8 removes slen (LSB); CTZ finds first differing byte.
+  let minLen = min(aslen, bslen)
+  if minLen > 0:
+    let diffMask = (1'u shl (minLen * 8)) - 1'u
+    let diff = ((abytes xor bbytes) shr 8) and diffMask
+    if diff != 0:
+      let byteShift = (ctzImpl(diff) shr 3) * 8 + 8
+      let ac = (abytes shr byteShift) and 0xFF'u
+      let bc = (bbytes shr byteShift) and 0xFF'u
+      if ac < bc: return -1
+      return 1
+  aslen - bslen
+
+func cmpShortInline(abytes, bbytes: uint; aslen, bslen: int): int {.inline.} =
+  when defined(bigEndian): cmpShortInlineBE(abytes, bbytes, aslen, bslen)
+  else: cmpShortInlineLE(abytes, bbytes, aslen, bslen)
+
+func cmpStringPtrs(a, b: ptr string): int {.inline.} =
+  ## Compare via pointers to avoid struct copies in the hot path.
+  let abytes = a.bytes
+  let bbytes = b.bytes
+  let aslen = ssLenOf(abytes)
+  let bslen = ssLenOf(bbytes)
+  if aslen <= AlwaysAvail and bslen <= AlwaysAvail:
+    return cmpShortInline(abytes, bbytes, aslen, bslen)
+  if aslen <= PayloadSize and bslen <= PayloadSize:
+    # Both medium: all data is inline, no heap access needed.
+    let minLen = min(aslen, bslen)
+    let pfxLen = min(minLen, AlwaysAvail)
+    result = cmpInlineBytes(inlinePtrOf(a), inlinePtrOf(b), pfxLen)
+    if result != 0: return
+    if minLen > AlwaysAvail:
+      result = cmpInlineBytes(tailPtrOf(a), tailPtrOf(b), minLen - AlwaysAvail)
+    if result == 0: result = aslen - bslen
+    return
+  # At least one long. Hot prefix (bytes 1..AlwaysAvail) mirrors heap data.
+  let pfxLen = min(min(aslen, bslen), AlwaysAvail)
+  result = cmpInlineBytes(inlinePtrOf(a), inlinePtrOf(b), pfxLen)
+  if result != 0: return
+  let la = if aslen > PayloadSize: a.more.fullLen else: aslen
+  let lb = if bslen > PayloadSize: b.more.fullLen else: bslen
+  let minLen = min(la, lb)
+  if minLen <= AlwaysAvail:
+    result = la - lb
+    return
+  # Skip the AlwaysAvail prefix (already compared via inline cache above).
+  let ap = if aslen > PayloadSize: cast[ptr UncheckedArray[char]](cast[uint](addr a.more.data[0]) + uint(AlwaysAvail))
+           else: tailPtrOf(a)
+  let bp = if bslen > PayloadSize: cast[ptr UncheckedArray[char]](cast[uint](addr b.more.data[0]) + uint(AlwaysAvail))
+           else: tailPtrOf(b)
+  result = cmpMem(ap, bp, minLen - AlwaysAvail)
+  if result == 0: result = la - lb
+
+# ---- comparison ----
+
+func equalStrings(a, b: string): bool {.inline.} =
+  let abytes = a.bytes
+  let bbytes = b.bytes
+  let aslen = ssLenOf(abytes)
+  let bslen = ssLenOf(bbytes)
+  if aslen <= AlwaysAvail and bslen <= AlwaysAvail:
+    return abytes == bbytes  # SWAR: one word covers slen + all chars
+  let la = if aslen > PayloadSize: a.more.fullLen else: aslen
+  let lb = if bslen > PayloadSize: b.more.fullLen else: bslen
+  if la != lb: return false
+  if la == 0: return true
+  if aslen <= PayloadSize and bslen <= PayloadSize:
+    # Both medium: compare bytes word first (slen + chars 0-6 in one op),
+    # then the tail stored in the `more` overlay.
+    if abytes != bbytes: return false
+    return cmpMem(tailPtrOf(unsafeAddr a), tailPtrOf(unsafeAddr b),
+                  la - AlwaysAvail) == 0
+  # At least one long: delegate to cmpStringPtrs
+  cmpStringPtrs(unsafeAddr a, unsafeAddr b) == 0
 
 func `==`*(a, b: string): bool {.inline, semantics: "string.==".} =
-  result = equalStrings(a, b)
+  equalStrings(a, b)
 
 func nimStrAtLe(s: string; idx: int; ch: char): bool {.inline.} =
   result = idx < s.len and s[idx] <= ch
 
-func cmpStrings(a, b: string): int =
-  let alen = a.len
-  let blen = b.len
-  let minlen = min(alen, blen)
-  if minlen > 0:
-    result = cmpMem(a.a, b.a, minlen)
-    if result == 0:
-      result = alen - blen
-  else:
-    result = alen - blen
+func cmp*(a, b: string): int {.inline.} =
+  ## Specialized comparison for strings.
+  let abytes = a.bytes
+  let bbytes = b.bytes
+  let aslen = ssLenOf(abytes)
+  let bslen = ssLenOf(bbytes)
+  if aslen <= AlwaysAvail and bslen <= AlwaysAvail:
+    return cmpShortInline(abytes, bbytes, aslen, bslen)
+  cmpStringPtrs(unsafeAddr a, unsafeAddr b)
 
-func `<=`*(a, b: string): bool {.inline.} =
-  cmpStrings(a, b) <= 0
+func `<=`*(a, b: string): bool {.inline.} = cmp(a, b) <= 0
+func `<`*(a, b: string): bool {.inline.} = cmp(a, b) < 0
 
-func `<`*(a, b: string): bool {.inline.} =
-  cmpStrings(a, b) < 0
+# ---- startsWith ----
 
-# --- string creation & concat ---
+func startsWithImpl*(s, prefix: string): bool {.inline.} =
+  ## Returns true if `s` begins with `prefix`.
+  ##
+  ## Always opens with a register-only masked comparison of the first
+  ## min(prefix.len, AlwaysAvail) chars — no branch needed to decide whether
+  ## the prefix fits in registers, because by SWAR design the `bytes` word
+  ## always carries valid (zero-padded) chars for all three tiers.
+  let pbytes = prefix.bytes
+  let pslen = ssLenOf(pbytes)
+  let sbytes = s.bytes
+  let sslen = ssLenOf(sbytes)
 
-func prepareMutation*(s: var string) =
-  if not isAllocated(s):
-    let len = s.len
-    let a = cast[StrData](alloc(len))
-    if a != nil:
-      copyMem a, s.a, len
-      s.i = (len shl LenShift) or IsAllocatedBit
+  # Mask to min(pslen, AlwaysAvail) char-bytes inside the `bytes` word (see swarCharMask).
+  let charMask = swarCharMask(min(pslen, AlwaysAvail))
+  if (sbytes and charMask) != (pbytes and charMask): return false
+
+  # Resolve actual lengths (register for short/medium; one load for long).
+  let sLen = if sslen > PayloadSize: s.more.fullLen else: sslen
+  let pLen = if pslen > PayloadSize: prefix.more.fullLen else: pslen
+  if sLen < pLen: return false
+  if pLen <= AlwaysAvail: return true  # short prefix fully covered above
+
+  # Compare tail bytes (chars AlwaysAvail..pLen-1).
+  let sTail =
+    if sslen > PayloadSize:
+      cast[ptr UncheckedArray[char]](cast[uint](addr s.more.data[0]) + uint(AlwaysAvail))
     else:
-      {.cast(noSideEffect).}:
-        oomHandler len
-      s.i = EmptyI
-    s.a = a # also do this for `a == nil`
+      tailPtrOf(unsafeAddr s)
+  let pTail =
+    if pslen > PayloadSize:
+      cast[ptr UncheckedArray[char]](cast[uint](addr prefix.more.data[0]) + uint(AlwaysAvail))
+    else:
+      tailPtrOf(unsafeAddr prefix)
+  cmpMem(sTail, pTail, pLen - AlwaysAvail) == 0
 
-func prepareMutationAt*(s: var string; i: int): var char {.requires: (i < len(s) and i >= 0), inline.} =
-  prepareMutation(s)
-  result = s.a[i]
+# ---- newString / newStringOfCap ----
 
 func newString*(len: int): string =
-  let a = cast[StrData](alloc(len))
-  if a != nil:
-    result = string(a: a, i: (len shl LenShift) or IsAllocatedBit)
+  result = string(bytes: 0'u, more: nil)
+  if len <= 0: return
+  if len <= PayloadSize:
+    setSSLen(result, len)
+    zeroMem(inlinePtrV(result), len)
   else:
-    {.cast(noSideEffect).}:
-      oomHandler len
-    result = string(a: nil, i: EmptyI)
+    let p = cast[ptr LongString](alloc(LongStringDataOffset + len))
+    if p != nil:
+      zeroMem(p, LongStringDataOffset + len)
+      p.rc = 1
+      p.fullLen = len
+      p.capImpl = len
+      result.more = p
+      setSSLen(result, HeapSlen)
+    else:
+      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + len
 
 func newStringOfCap*(len: int): string =
-  ## Returns a new string of length `0` but with capacity `cap`.
-  ##
-  ## This procedure exists only for optimization purposes; the same effect can
-  ## be achieved with the `&` operator or with `add`.
-  let a = cast[StrData](alloc(len))
-  if a != nil:
-    result = string(a: a, i: IsAllocatedBit)
+  ## Returns a new empty string with capacity reserved for `len` chars.
+  result = string(bytes: 0'u, more: nil)
+  if len <= PayloadSize: return  # inline capacity always available
+  let p = cast[ptr LongString](alloc(LongStringDataOffset + len))
+  if p != nil:
+    zeroMem(p, LongStringDataOffset + len)
+    p.rc = 1
+    p.fullLen = 0
+    p.capImpl = len
+    result.more = p
+    setSSLen(result, HeapSlen)
   else:
-    {.cast(noSideEffect).}:
-      oomHandler len
-    result = string(a: nil, i: EmptyI)
+    {.cast(noSideEffect).}: oomHandler LongStringDataOffset + len
+
+# ---- concat / & ----
 
 template concat*(): string {.varargs.} =
   var res = ""
@@ -344,39 +635,99 @@ template concat*(): string {.varargs.} =
   res
 
 func `&`*(a, b: string): string {.semantics: "string.&".} =
-  let rlen = sumLen(a.len, b.len)
-  let r = cast[StrData](alloc(rlen))
-  if r != nil:
-    result = string(a: r, i: (rlen shl LenShift) or IsAllocatedBit)
-    if a.len > 0:
-      copyMem r, a.a, a.len
-    if b.len > 0:
-      copyMem addr r[a.len], b.a, b.len
+  result = string(bytes: 0'u, more: nil)
+  let rlen = a.len + b.len
+  if rlen == 0: return
+  if rlen <= PayloadSize:
+    let al = a.len
+    setSSLen(result, rlen)
+    if al > 0: copyMem(inlinePtrV(result), rawData(a), al)
+    if b.len > 0: copyMem(inlinePtrAt(result, al), rawData(b), b.len)
   else:
-    {.cast(noSideEffect).}:
-      oomHandler rlen
-    # ensure an empty string
-    result = string(i: EmptyI)
-    result.a = cast[StrData](cstring"")
+    let p = cast[ptr LongString](alloc(LongStringDataOffset + rlen))
+    if p != nil:
+      p.rc = 1
+      p.fullLen = rlen
+      p.capImpl = rlen
+      let al = a.len
+      if al > 0: copyMem(addr p.data[0], rawData(a), al)
+      if b.len > 0:
+        copyMem(cast[pointer](cast[uint](addr p.data[0]) + uint(al)), rawData(b), b.len)
+      result.more = p
+      setSSLen(result, HeapSlen)
+      copyMem(inlinePtrV(result), addr p.data[0], AlwaysAvail)
+    else:
+      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + rlen
 
 func charToString(c: char): string =
-  result = newString(1)
-  result[0] = c
+  result = string(bytes: 0'u, more: nil)
+  setSSLen(result, 1)
+  inlinePtrV(result)[0] = c
 
-func `&`*(x: string, y: char): string {.inline.} =
-  result = x & charToString(y)
-
-func `&`*(x: char, y: string): string {.inline.} =
-  result = charToString(x) & y
+func `&`*(x: string; y: char): string {.inline.} = result = x & charToString(y)
+func `&`*(x: char; y: string): string {.inline.} = result = charToString(x) & y
 
 func terminatingZero*(s: string): string =
   result = s & "\0"
   result.shrink s.len
 
+# ---- cstring conversions ----
+
+func borrowCStringUnsafe*(s: cstring; l: int): string =
+  ## Creates a Nim string from a cstring by copying up to `l` chars.
+  result = string(bytes: 0'u, more: nil)
+  if l <= 0: return
+  if l <= PayloadSize:
+    setSSLen(result, l)
+    copyMem(inlinePtrV(result), s, l)
+  else:
+    let p = cast[ptr LongString](alloc(LongStringDataOffset + l))
+    if p != nil:
+      p.rc = 1
+      p.fullLen = l
+      p.capImpl = l
+      copyMem(addr p.data[0], s, l)
+      result.more = p
+      setSSLen(result, HeapSlen)
+      copyMem(inlinePtrV(result), addr p.data[0], AlwaysAvail)
+    else:
+      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + l
+
+func borrowCStringUnsafe*(s: cstring): string {.exportc: "nimBorrowCStringUnsafe".} =
+  borrowCStringUnsafe(s, len(s))
+
+func ensureTerminatingZero*(s: var string) =
+  ## Appends '\0' at position s.len then shrinks back, so the null sits just
+  ## past the data without changing the logical length — same as terminatingZero
+  ## but in-place.
+  let oldLen = s.len
+  s.add '\0'
+  s.shrink oldLen
+
+func toCString*(s: var string): cstring =
+  ## Returns a null-terminated cstring pointer.
+  ensureTerminatingZero(s)
+  result = cast[cstring](rawData(s))
+
 func fromCString*(s: cstring): string =
-  ## Creates a Nim string from a `cstring`
-  ## by copying the underlying storage.
-  let aux = borrowCStringUnsafe(s)
-  result = aux.terminatingZero()
+  ## Creates a Nim string from a `cstring` by copying the underlying storage.
+  result = string(bytes: 0'u, more: nil)
+  let l = len(s)
+  if l == 0: return
+  if l <= PayloadSize:
+    setSSLen(result, l)
+    copyMem(inlinePtrV(result), s, l)
+  else:
+    let p = cast[ptr LongString](alloc(LongStringDataOffset + l))
+    if p != nil:
+      p.rc = 1
+      p.fullLen = l
+      p.capImpl = l
+      copyMem(addr p.data[0], s, l)
+      result.more = p
+      setSSLen(result, HeapSlen)
+      copyMem(inlinePtrV(result), addr p.data[0], AlwaysAvail)
+    else:
+      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + l
 
 template `$`*(x: string): string = x
