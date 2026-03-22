@@ -188,5 +188,5 @@ proc nif*(spec: string; bindings: openArray[(string, NifNode)]): Tree =
     converted.add nifBind(entry[0], entry[1])
   parseNifFragment(expandNifSnippet(spec, converted))
 
-proc nif*(spec: string; bindings: array[0, (string, NifNode)]): Tree =
+proc nif*(spec: string): Tree =
   parseNifFragment(spec)
