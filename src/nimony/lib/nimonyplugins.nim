@@ -111,11 +111,6 @@ proc floatLitNode(f: BiggestFloat): NifNode =
   b.addFloatLit(f)
   result = NifNode(b.extract())
 
-proc symbolNode(s: SymId): NifNode =
-  var b = nifbuilder.open(32)
-  b.addSymbol(pool.syms[s])
-  result = NifNode(b.extract())
-
 proc boolNode(v: bool): NifNode =
   var b = nifbuilder.open(8)
   b.addKeyw(if v: "true" else: "false")
@@ -180,9 +175,6 @@ proc `~`*(src: float32): NifNode =
 
 proc `~`*(src: float64): NifNode =
   floatLitNode(BiggestFloat(src))
-
-proc `~`*(src: SymId): NifNode =
-  symbolNode(src)
 
 proc `~`*(src: bool): NifNode =
   boolNode(src)
