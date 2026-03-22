@@ -31,3 +31,18 @@ q.inherited()
 q.sus()
 cont.complete()
 cont.complete()
+
+type
+  Base = ref object of RootObj
+  Derived = ref object of Base
+
+method mysupermethod(x: Base) =
+  echo "base"
+method mysupermethod(x: Derived) =
+  echo "derived"
+
+var q: Base = Derived()
+var b = Base()
+var x: seq[Base] = @[q, b]
+for i in x:
+  i.mysupermethod()
