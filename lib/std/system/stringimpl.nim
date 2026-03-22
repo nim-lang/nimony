@@ -144,6 +144,7 @@ func nimStrToCString*(s {.byref.}: string): cstring {.inline, exportc: "nimStrTo
   if sl > PayloadSize:
     if sl == HeapSlen:
       let p = s.more
+      # XXX This is wrong!
       p.data[p.fullLen] = '\0'
     result = cast[cstring](addr s.more.data[0])
   else:
@@ -194,6 +195,8 @@ func transitionToLong(s: var string; sl: int; newLen: int) =
     copyMem(addr p.data[0], inlinePtrV(s), sl)
     s.more = p
     setSSLen(s, HeapSlen)
+    # Sync inline cache after creating new block
+    copyMem(inlinePtrV(s), addr p.data[0], min(sl, AlwaysAvail))
   else:
     {.cast(noSideEffect).}: oomHandler LongStringDataOffset + newCap + 1
     s.bytes = 0
@@ -255,7 +258,6 @@ func add*(s: var string; c: char) =
   if sl < PayloadSize:
     let newLen = sl + 1
     inlinePtrV(s)[sl] = c
-    inlinePtrV(s)[newLen] = '\0'
     setSSLen(s, newLen)
   elif sl > PayloadSize:
     let l = s.more.fullLen
@@ -287,7 +289,6 @@ func add*(s: var string; part: string) =
     let newLen = sLen + partLen
     if newLen <= PayloadSize:
       copyMem(inlinePtrAt(s, sLen), partData, partLen)
-      inlinePtrV(s)[newLen] = '\0'
       setSSLen(s, newLen)
     else:
       transitionToLong(s, sLen, newLen)
@@ -315,31 +316,36 @@ template zeroSwarPad(s: var string; newLen: int) =
 
 # ---- setLen / shrink ----
 
-func setLen*(s: var string; newLen: int) =
-  let sl = ssLen(s)
-  let curLen = if sl > PayloadSize: s.more.fullLen else: sl
-  if newLen == curLen:
-    # BUG FIX: Sync inline cache even when length doesn't change
-    if sl == HeapSlen:
+func shrink*(s: var string; newLen: int) =
+  if newLen <= s.len:
+    let sl = ssLen(s)
+    if sl <= PayloadSize:
+      if newLen <= AlwaysAvail:
+        zeroSwarPad(s, newLen)  # clear stale bytes for SWAR; sets slen
+      else:
+        setSSLen(s, newLen)
+    else:
+      # Heap string: just update length, don't reallocate
+      # (capacity is preserved for efficiency)
+      s.more.fullLen = newLen
       copyMem(inlinePtrV(s), addr s.more.data[0], min(newLen, AlwaysAvail))
+
+func setLen*(s: var string; newLen: int) =
+  if newLen <= s.len:
+    shrink(s, newLen)
     return
-  if newLen <= 0:
-    if sl == HeapSlen:
-      if atomicSubFetch(s.more.rc, 1) == 0: dealloc(s.more)
-    s.bytes = 0
-    return
+  let sl = ssLen(s)
   if sl <= PayloadSize:
+    let curLen = s.len
     if newLen <= PayloadSize:
       let inl = inlinePtrV(s)
       if newLen > curLen:
         zeroMem(inlinePtrAt(s, curLen), newLen - curLen)
-        inl[newLen] = '\0'
         setSSLen(s, newLen)
       else:
         if newLen <= AlwaysAvail:
           zeroSwarPad(s, newLen)  # clears stale chars for SWAR; also sets slen
         else:
-          inl[newLen] = '\0'
           setSSLen(s, newLen)
     else:
       transitionToLong(s, curLen, newLen)
@@ -354,33 +360,14 @@ func setLen*(s: var string; newLen: int) =
       if newLen <= AlwaysAvail:
         zeroSwarPad(s, newLen)  # clear stale prefix bytes for SWAR; sets slen
       else:
-        inlinePtrV(s)[newLen] = '\0'
         setSSLen(s, newLen)
     else:
+      let curLen = s.len
       ensureUniqueLong(s, curLen, newLen)
       if ssLen(s) == HeapSlen:
         if newLen > curLen:
           zeroMem(cast[pointer](cast[uint](addr s.more.data[0]) + uint(curLen)), newLen - curLen)
         copyMem(inlinePtrV(s), addr s.more.data[0], AlwaysAvail)
-
-func shrink*(s: var string; newLen: int) =
-  if newLen <= 0:
-    if ssLen(s) == HeapSlen:
-      if atomicSubFetch(s.more.rc, 1) == 0: dealloc(s.more)
-    s.bytes = 0
-  elif newLen < s.len:
-    let sl = ssLen(s)
-    if sl <= PayloadSize:
-      if newLen <= AlwaysAvail:
-        zeroSwarPad(s, newLen)  # clear stale bytes for SWAR; sets slen
-      else:
-        inlinePtrV(s)[newLen] = '\0'
-        setSSLen(s, newLen)
-    else:
-      # Heap string: just update length, don't reallocate
-      # (capacity is preserved for efficiency)
-      s.more.fullLen = newLen
-      copyMem(inlinePtrV(s), addr s.more.data[0], min(newLen, AlwaysAvail))
 
 # ---- indexing ----
 
@@ -409,7 +396,6 @@ func substr*(s: string; first, last: int): string =
   if newLen <= PayloadSize:
     setSSLen(result, newLen)
     copyMem(inlinePtrV(result), cast[pointer](cast[uint](src) + uint(f)), newLen)
-    inlinePtrV(result)[newLen] = '\0'
   else:
     let p = cast[ptr LongString](alloc(LongStringDataOffset + newLen + 1))
     if p != nil:
@@ -417,7 +403,6 @@ func substr*(s: string; first, last: int): string =
       p.fullLen = newLen
       p.capImpl = newLen
       copyMem(addr p.data[0], cast[pointer](cast[uint](src) + uint(f)), newLen)
-      p.data[newLen] = '\0'
       result.more = p
       setSSLen(result, HeapSlen)
       copyMem(inlinePtrV(result), addr p.data[0], AlwaysAvail)
@@ -642,7 +627,6 @@ func `&`*(a, b: string): string {.semantics: "string.&".} =
     setSSLen(result, rlen)
     if al > 0: copyMem(inlinePtrV(result), rawData(a), al)
     if b.len > 0: copyMem(inlinePtrAt(result, al), rawData(b), b.len)
-    inlinePtrV(result)[rlen] = '\0'
   else:
     let p = cast[ptr LongString](alloc(LongStringDataOffset + rlen + 1))
     if p != nil:
@@ -653,7 +637,6 @@ func `&`*(a, b: string): string {.semantics: "string.&".} =
       if al > 0: copyMem(addr p.data[0], rawData(a), al)
       if b.len > 0:
         copyMem(cast[pointer](cast[uint](addr p.data[0]) + uint(al)), rawData(b), b.len)
-      p.data[rlen] = '\0'
       result.more = p
       setSSLen(result, HeapSlen)
       copyMem(inlinePtrV(result), addr p.data[0], AlwaysAvail)
@@ -664,7 +647,6 @@ func charToString(c: char): string =
   result = string(bytes: 0'u, more: nil)
   setSSLen(result, 1)
   inlinePtrV(result)[0] = c
-  inlinePtrV(result)[1] = '\0'
 
 func `&`*(x: string; y: char): string {.inline.} = result = x & charToString(y)
 func `&`*(x: char; y: string): string {.inline.} = result = charToString(x) & y
@@ -682,7 +664,6 @@ func borrowCStringUnsafe*(s: cstring; l: int): string =
   if l <= PayloadSize:
     setSSLen(result, l)
     copyMem(inlinePtrV(result), s, l)
-    inlinePtrV(result)[l] = '\0'
   else:
     let p = cast[ptr LongString](alloc(LongStringDataOffset + l + 1))
     if p != nil:
@@ -722,7 +703,6 @@ func fromCString*(s: cstring): string =
   if l <= PayloadSize:
     setSSLen(result, l)
     copyMem(inlinePtrV(result), s, l)
-    inlinePtrV(result)[l] = '\0'
   else:
     let p = cast[ptr LongString](alloc(LongStringDataOffset + l + 1))
     if p != nil:

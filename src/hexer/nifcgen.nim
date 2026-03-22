@@ -1170,6 +1170,7 @@ proc trConv(c: var EContext; n: var Cursor) =
           skipParRi c, n  # close SufX
         c.dest.addParRi() # "call"
         takeParRi c, n
+        quit "cannot convert a string to cstring at runtime"
       else:
         let strField = pool.syms.getOrIncl(StringAField)
         c.dest.add tagToken("dot", info)
