@@ -81,9 +81,9 @@
    (nodestroy)) .
   (stmts
    (call =destroy_ArefSX4eodeX4fbj0tbio5lb5x.0.
-    (dot dest.0 left.0 +0))
+    (dot dest.0 right.0 +0))
    (call =destroy_ArefSX4eodeX4fbj0tbio5lb5x.0.
-    (dot dest.0 right.0 +0)))) 7,6
+    (dot dest.0 left.0 +0)))) 7,6
  (proc :=wasmoved_SX4eodeX4fbj0tbio5lb5x.0. . . .
   (params
    (param :dest.0 . .

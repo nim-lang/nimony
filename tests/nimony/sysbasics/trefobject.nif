@@ -520,9 +520,9 @@
    (nodestroy)) .
   (stmts
    (call =destroy_ArefSX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0.
-    (dot dest.0 left.2 +0))
+    (dot dest.0 right.2 +0))
    (call =destroy_ArefSX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0.
-    (dot dest.0 right.2 +0)))) 24,16
+    (dot dest.0 left.2 +0)))) 24,16
  (proc :=wasmoved_SX46orwardX4eode2X4fbj0X49kl0rjvtre8amq6m.0. . . .
   (params
    (param :dest.0 . .
@@ -712,9 +712,9 @@
    (nodestroy)) .
   (stmts
    (call =destroy_ArefSX4eodeX4fbj0X49iz3k2p1tre8amq6m.0.
-    (dot dest.0 left.0 +0))
+    (dot dest.0 right.0 +0))
    (call =destroy_ArefSX4eodeX4fbj0X49iz3k2p1tre8amq6m.0.
-    (dot dest.0 right.0 +0)))) 24,16
+    (dot dest.0 left.0 +0)))) 24,16
  (proc :=wasmoved_SX4eodeX4fbj0X49iz3k2p1tre8amq6m.0. . . .
   (params
    (param :dest.0 . .
@@ -904,9 +904,9 @@
    (nodestroy)) .
   (stmts
    (call =destroy_ArefSX46orwardX4eode1X4fbj0X4993upextre8amq6m.0.
-    (dot dest.0 left.1 +0))
+    (dot dest.0 right.1 +0))
    (call =destroy_ArefSX46orwardX4eode1X4fbj0X4993upextre8amq6m.0.
-    (dot dest.0 right.1 +0)))) 24,16
+    (dot dest.0 left.1 +0)))) 24,16
  (proc :=wasmoved_SX46orwardX4eode1X4fbj0X4993upextre8amq6m.0. . . .
   (params
    (param :dest.0 . .
