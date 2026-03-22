@@ -18,11 +18,13 @@ const LongStringDataOffset = 3 * sizeof(int)  ## byte offset of LongString.data 
 
 # ---- low-level byte accessors ----
 
-template ssLenOf(bytes: uint): int =
+func ssLenOf(bytes: uint): int {.inline.} =
   ## Extracts slen from an already-loaded `bytes` word. Pure register op (no memory access).
-  ## Use when `bytes` is already in a register (e.g. loaded for SWAR comparison).
-  ## Assumes little-endian: slen is the low byte of `bytes`.
-  int(bytes and 0xFF'u)
+  ## LE: slen is the low byte. BE: slen is the high byte (first byte in memory).
+  when defined(bigEndian):
+    int(bytes shr ((sizeof(uint) - 1) * 8))
+  else:
+    int(bytes and 0xFF'u)
 
 template ssLen(s: string): int =
   ## Reads slen via a byte load at offset 0. Keeps slen access visibly distinct
@@ -271,13 +273,26 @@ func add*(s: var string; part: string) =
 
 # ---- zero-padding helper for inline shrink ----
 
-template zeroSwarPad(s: var string; newLen: int) =
-  ## Clears stale char bytes above newLen in `bytes`, sets slen = newLen.
-  ## Required for SWAR correctness: bytes above slen must be 0.
+func zeroSwarPadImplBE(bytes: uint; newLen: int): uint {.inline.} =
+  let charKeepMask =
+    if newLen == 0: 0'u
+    else: (not 0'u shr 8) and (not 0'u shl uint((AlwaysAvail - newLen) * 8))
+  (bytes and charKeepMask) or (uint(newLen) shl uint((sizeof(uint) - 1) * 8))
+
+func zeroSwarPadImplLE(bytes: uint; newLen: int): uint {.inline.} =
   let keepBits = uint((newLen + 1) * 8)
   let mask = if keepBits >= uint(sizeof(uint) * 8): not 0'u
              else: (uint(1) shl keepBits) - 1'u
-  s.bytes = (s.bytes and (mask and not 0xFF'u)) or uint(newLen)
+  (bytes and (mask and not 0xFF'u)) or uint(newLen)
+
+func zeroSwarPadImpl(bytes: uint; newLen: int): uint {.inline.} =
+  ## Returns updated `bytes` with stale chars above newLen zeroed and slen set to newLen.
+  ## LE: slen at LSB, chars in bytes above it. BE: slen at MSB, chars in bytes below it.
+  when defined(bigEndian): zeroSwarPadImplBE(bytes, newLen)
+  else: zeroSwarPadImplLE(bytes, newLen)
+
+template zeroSwarPad(s: var string; newLen: int) =
+  s.bytes = zeroSwarPadImpl(s.bytes, newLen)
 
 # ---- setLen / shrink ----
 
@@ -387,18 +402,30 @@ func substr*(s: string; first = 0): string =
   result = substr(s, first, high(s))
 
 # ---- SWAR / comparison helpers ----
-# Assumes little-endian 64-bit (the common case; BE support can be added later).
 
-func bswap(x: uint): uint {.importc: "__builtin_bswap64", nodecl, noSideEffect.}
+func bswap64(x: uint64): uint64 {.importc: "__builtin_bswap64", nodecl, noSideEffect.}
+func ctz64(x: uint64): int32  {.importc: "__builtin_ctzll",   nodecl, noSideEffect.}
+func clz64(x: uint64): int32  {.importc: "__builtin_clzll",   nodecl, noSideEffect.}
 
-func ctzImpl(x: uint): int {.inline.} =
-  func ctz64(x: uint64): int32 {.importc: "__builtin_ctzll", nodecl, noSideEffect.}
-  int(ctz64(uint64(x)))
+func bswap(x: uint): uint {.inline.} = uint(bswap64(uint64(x)))
+func ctzImpl(x: uint): int {.inline.} = int(ctz64(uint64(x)))
+func clzImpl(x: uint): int {.inline.} = int(clz64(uint64(x)))
 
+## swarKey: value whose integer ordering equals lexicographic char order.
+## LE: shift out slen (LSB), bswap → char[0] at MSB.
+## BE: shift out slen (MSB) left → chars already in MSB-first order.
 func swarKey(x: uint): uint {.inline.} =
-  ## On LE: shift out slen byte, bswap → char[0] lands in MSB.
-  ## Integer compare on swarKey results = lexicographic char order.
-  result = bswap(x shr 8)
+  when defined(bigEndian): x shl 8
+  else: bswap(x shr 8)
+
+## swarCharMask: mask covering the first n char-bytes inside the `bytes` word.
+## LE: chars at bits 8..63 (above slen LSB).  BE: chars at bits 0..55 (below slen MSB).
+func swarCharMask(n: int): uint {.inline.} =
+  when defined(bigEndian):
+    if n == 0: 0'u
+    else: (not 0'u shr 8) and (not 0'u shl uint((AlwaysAvail - n) * 8))
+  else:
+    ((1'u shl uint(n * 8)) - 1'u) shl 8
 
 template inlinePtrOf(p: ptr string): ptr UncheckedArray[char] =
   ## Inline char pointer from a ptr string — avoids unsafeAddr dance.
@@ -416,12 +443,26 @@ func cmpInlineBytes(a, b: ptr UncheckedArray[char]; n: int): int {.inline.} =
     if ac < bc: return -1
     if ac > bc: return 1
 
-func cmpShortInline(abytes, bbytes: uint; aslen, bslen: int): int {.inline.} =
-  ## Compare two short strings (both slen <= AlwaysAvail) using CTZ to find
-  ## the first differing byte without a loop.
+func cmpShortInlineBE(abytes, bbytes: uint; aslen, bslen: int): int {.inline.} =
+  ## BE: shl 8 removes slen (MSB); CLZ finds first differing byte.
   let minLen = min(aslen, bslen)
   if minLen > 0:
-    # LE: char bytes are at bits 8..63. Mask to minLen chars, find lowest diff.
+    let shifted = (abytes xor bbytes) shl 8
+    let keepMask = not 0'u shl uint((sizeof(uint) - minLen) * 8)
+    let diff = shifted and keepMask
+    if diff != 0:
+      let byteFromMSB = clzImpl(diff) shr 3
+      let charShift = uint((sizeof(uint) - 2 - byteFromMSB) * 8)
+      let ac = (abytes shr charShift) and 0xFF'u
+      let bc = (bbytes shr charShift) and 0xFF'u
+      if ac < bc: return -1
+      return 1
+  aslen - bslen
+
+func cmpShortInlineLE(abytes, bbytes: uint; aslen, bslen: int): int {.inline.} =
+  ## LE: shr 8 removes slen (LSB); CTZ finds first differing byte.
+  let minLen = min(aslen, bslen)
+  if minLen > 0:
     let diffMask = (1'u shl (minLen * 8)) - 1'u
     let diff = ((abytes xor bbytes) shr 8) and diffMask
     if diff != 0:
@@ -431,6 +472,10 @@ func cmpShortInline(abytes, bbytes: uint; aslen, bslen: int): int {.inline.} =
       if ac < bc: return -1
       return 1
   aslen - bslen
+
+func cmpShortInline(abytes, bbytes: uint; aslen, bslen: int): int {.inline.} =
+  when defined(bigEndian): cmpShortInlineBE(abytes, bbytes, aslen, bslen)
+  else: cmpShortInlineLE(abytes, bbytes, aslen, bslen)
 
 func cmpStringPtrs(a, b: ptr string): int {.inline.} =
   ## Compare via pointers to avoid struct copies in the hot path.
@@ -523,10 +568,8 @@ func startsWithImpl*(s, prefix: string): bool {.inline.} =
   let sbytes = s.bytes
   let sslen = ssLenOf(sbytes)
 
-  # Mask to min(pslen, AlwaysAvail) char-bytes (bits 8..8+n*8-1 of `bytes`).
-  # charBits ≤ 56 so the shift never overflows a 64-bit uint.
-  let charBits = min(pslen, AlwaysAvail) * 8
-  let charMask = ((1'u shl charBits) - 1'u) shl 8
+  # Mask to min(pslen, AlwaysAvail) char-bytes inside the `bytes` word (see swarCharMask).
+  let charMask = swarCharMask(min(pslen, AlwaysAvail))
   if (sbytes and charMask) != (pbytes and charMask): return false
 
   # Resolve actual lengths (register for short/medium; one load for long).
