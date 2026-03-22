@@ -1,7 +1,6 @@
 ## API for plugins.
 
 import std / syncio
-import std / parseutils
 from std / os import paramStr
 import ".." / ".." / "lib" / [nifcursors, nifstreams, lineinfos, nifbuilder]
 
@@ -143,18 +142,34 @@ proc lookupBinding(bindings: openArray[NifBinding]; name: string): string =
     dec i
   quit "missing nif substitution: " & name
 
+proc isNifIdentStart(c: char): bool {.inline.} =
+  c in {'a'..'z', 'A'..'Z', '_'}
+
+proc isNifIdentChar(c: char): bool {.inline.} =
+  c in {'a'..'z', 'A'..'Z', '0'..'9', '_'}
+
 proc expandNifSnippet(spec: string; bindings: openArray[NifBinding]): string =
   result = newStringOfCap(spec.len + bindings.len * 8)
-  for kind, value in interpolatedFragments(spec):
-    case kind
-    of ikStr:
-      result.add value
-    of ikDollar:
+  var i = 0
+  while i < spec.len:
+    if spec[i] != '$':
+      result.add spec[i]
+      inc i
+    elif i + 1 >= spec.len:
+      quit "invalid nif substitution syntax"
+    elif spec[i + 1] == '$':
       result.add '$'
-    of ikVar:
-      result.add lookupBinding(bindings, value)
-    of ikExpr:
+      inc i, 2
+    elif spec[i + 1] == '{':
       quit "nif runtime substitution does not support ${expr}; use $name bindings"
+    elif isNifIdentStart(spec[i + 1]):
+      let start = i + 1
+      i = start + 1
+      while i < spec.len and isNifIdentChar(spec[i]):
+        inc i
+      result.add lookupBinding(bindings, substr(spec, start, i - 1))
+    else:
+      quit "invalid nif substitution syntax"
 
 proc nif*[T](spec: string; bindings: openArray[(string, T)]): Tree =
   var converted = newSeqOfCap[NifBinding](bindings.len)
