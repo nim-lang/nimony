@@ -16,16 +16,6 @@ const
 
 const LongStringDataOffset = 3 * sizeof(int)  ## byte offset of LongString.data from start
 
-# ---- atomic helpers (non-atomic for now) ----
-
-func atomicAddFetch(p: var int; v: int): int {.inline.} =
-  result = p + v
-  p = result
-
-func atomicSubFetch(p: var int; v: int): int {.inline.} =
-  result = p - v
-  p = result
-
 # ---- low-level byte accessors ----
 
 template ssLenOf(bytes: uint): int =
@@ -99,7 +89,7 @@ func `=wasMoved`*(s: var string) {.exportc: "nimStrWasMoved", inline.} =
 
 func `=destroy`*(s: string) {.exportc: "nimStrDestroy", inline.} =
   if ssLen(s) == HeapSlen:
-    if atomicSubFetch(s.more.rc, 1) == 0:
+    if arcDec(s.more.rc):
       dealloc(s.more)
 
 func `=copy`*(dest: var string; src: string) {.exportc: "nimStrCopy", inline, nodestroy.} =
@@ -108,7 +98,7 @@ func `=copy`*(dest: var string; src: string) {.exportc: "nimStrCopy", inline, no
     # short/medium: destroy dest heap block if any, then bitcopy
     let sdest = ssLen(dest)
     if sdest == HeapSlen:
-      if atomicSubFetch(dest.more.rc, 1) == 0:
+      if arcDec(dest.more.rc):
         dealloc(dest.more)
     copyMem(addr dest.bytes, addr src.bytes, sizeof(string))
   else:
@@ -116,15 +106,15 @@ func `=copy`*(dest: var string; src: string) {.exportc: "nimStrCopy", inline, no
     if addr(dest) == addr(src): return
     let sdest = ssLen(dest)
     if sdest == HeapSlen:
-      if atomicSubFetch(dest.more.rc, 1) == 0:
+      if arcDec(dest.more.rc):
         dealloc(dest.more)
     if ssrc == HeapSlen:
-      discard atomicAddFetch(src.more.rc, 1)
+      arcInc(src.more.rc)
     copyMem(addr dest.bytes, addr src.bytes, sizeof(string))
 
 func `=dup`*(s: string): string {.exportc: "nimStrDup", inline, nodestroy.} =
   if ssLen(s) == HeapSlen:
-    discard atomicAddFetch(s.more.rc, 1)
+    arcInc(s.more.rc)
   result = string(bytes: s.bytes, more: s.more)
 
 # ---- cstring length ----
@@ -175,7 +165,7 @@ func ensureUniqueLong(s: var string; oldLen, newLen: int) =
       p.capImpl = newCap
       let old = s.more
       copyMem(addr p.data[0], addr old.data[0], min(oldLen, newCap))
-      if isHeap and atomicSubFetch(old.rc, 1) == 0:
+      if isHeap and arcDec(old.rc):
         dealloc(old)
       s.more = p
       setSSLen(s, HeapSlen)
@@ -208,7 +198,7 @@ func prepareMutation*(s: var string) {.inline.} =
   let sl = ssLen(s)
   if sl == StaticSlen or (sl == HeapSlen and s.more.rc > 1):
     if sl == HeapSlen:
-      discard atomicSubFetch(s.more.rc, 1)
+      discard arcDec(s.more.rc)
     let old = s.more
     let oldLen = old.fullLen
     let p = cast[ptr LongString](alloc(LongStringDataOffset + oldLen + 1))
