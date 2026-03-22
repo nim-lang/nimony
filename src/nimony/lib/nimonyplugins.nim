@@ -69,17 +69,10 @@ proc saveTree*(tree: Tree; filename: string) =
 type
   NifIdent* = distinct string
 
-  NifSnippet* = distinct string
-
-  NifBinding* = object
-    name: string
-    value: string
+  NifBinding = tuple[name: string, value: string]
 
 proc ident*(s: string): NifIdent =
   NifIdent(s)
-
-proc nif*(s: string): NifSnippet =
-  NifSnippet(s)
 
 proc parseNifFragment(text: string): Tree =
   var buf = parseFromBuffer(text, "")
@@ -139,17 +132,8 @@ template toNifFragment(src: untyped): string =
   else:
     {.error: "unsupported nif interpolation type".}
 
-proc nifBind*[T](name: string; value: T): NifBinding =
-  NifBinding(name: name, value: toNifFragment(value))
-
-proc `=>`*[T](name: string; value: T): NifBinding =
-  nifBind(name, value)
-
-proc tree*(spec: NifSnippet): Tree =
-  parseNifFragment(string(spec))
-
-converter toTree*(spec: NifSnippet): Tree =
-  tree(spec)
+proc nifBind[T](name: string; value: T): NifBinding =
+  (name: name, value: toNifFragment(value))
 
 proc lookupBinding(bindings: openArray[NifBinding]; name: string): string =
   var i = bindings.len - 1
@@ -159,9 +143,9 @@ proc lookupBinding(bindings: openArray[NifBinding]; name: string): string =
     dec i
   quit "missing nif substitution: " & name
 
-proc expandNifSnippet(spec: NifSnippet; bindings: openArray[NifBinding]): string =
-  result = newStringOfCap(string(spec).len + bindings.len * 8)
-  for kind, value in interpolatedFragments(string(spec)):
+proc expandNifSnippet(spec: string; bindings: openArray[NifBinding]): string =
+  result = newStringOfCap(spec.len + bindings.len * 8)
+  for kind, value in interpolatedFragments(spec):
     case kind
     of ikStr:
       result.add value
@@ -172,8 +156,11 @@ proc expandNifSnippet(spec: NifSnippet; bindings: openArray[NifBinding]): string
     of ikExpr:
       quit "nif runtime substitution does not support ${expr}; use $name bindings"
 
-proc subst*(spec: NifSnippet; bindings: varargs[NifBinding]): Tree =
-  parseNifFragment(expandNifSnippet(spec, bindings))
+proc nif*[T](spec: string; bindings: openArray[(string, T)]): Tree =
+  var converted = newSeqOfCap[NifBinding](bindings.len)
+  for entry in bindings:
+    converted.add nifBind(entry[0], entry[1])
+  parseNifFragment(expandNifSnippet(spec, converted))
 
-proc `%`*(spec: NifSnippet; bindings: openArray[NifBinding]): Tree =
-  parseNifFragment(expandNifSnippet(spec, bindings))
+proc nif*(spec: string; bindings: array[0, (string, int)]): Tree =
+  parseNifFragment(spec)
