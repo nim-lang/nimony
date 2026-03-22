@@ -158,7 +158,7 @@ func ensureUniqueLong(s: var string; oldLen, newLen: int) =
     copyMem(inlinePtrV(s), addr s.more.data[0], min(oldLen, AlwaysAvail))
   else:
     let newCap = if newLen > cap: max(newLen, ssResize(cap)) else: cap
-    let p = cast[ptr LongString](alloc(LongStringDataOffset + newCap + 1))
+    let p = cast[ptr LongString](alloc(LongStringDataOffset + newCap))
     if p != nil:
       p.rc = 1
       p.fullLen = newLen
@@ -172,12 +172,12 @@ func ensureUniqueLong(s: var string; oldLen, newLen: int) =
       # Sync inline cache after creating new block (use oldLen since new data may not exist yet)
       copyMem(inlinePtrV(s), addr p.data[0], min(oldLen, AlwaysAvail))
     else:
-      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + newCap + 1
+      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + newCap
       s.bytes = 0
 
 func transitionToLong(s: var string; sl: int; newLen: int) =
   let newCap = max(newLen, ssResize(newLen))
-  let p = cast[ptr LongString](alloc(LongStringDataOffset + newCap + 1))
+  let p = cast[ptr LongString](alloc(LongStringDataOffset + newCap))
   if p != nil:
     p.rc = 1
     p.fullLen = newLen
@@ -188,7 +188,7 @@ func transitionToLong(s: var string; sl: int; newLen: int) =
     # Sync inline cache after creating new block
     copyMem(inlinePtrV(s), addr p.data[0], min(sl, AlwaysAvail))
   else:
-    {.cast(noSideEffect).}: oomHandler LongStringDataOffset + newCap + 1
+    {.cast(noSideEffect).}: oomHandler LongStringDataOffset + newCap
     s.bytes = 0
 
 # ---- mutation helpers ----
@@ -201,16 +201,16 @@ func prepareMutation*(s: var string) {.inline.} =
       discard arcDec(s.more.rc)
     let old = s.more
     let oldLen = old.fullLen
-    let p = cast[ptr LongString](alloc(LongStringDataOffset + oldLen + 1))
+    let p = cast[ptr LongString](alloc(LongStringDataOffset + oldLen))
     if p != nil:
       p.rc = 1
       p.fullLen = oldLen
       p.capImpl = oldLen
-      copyMem(addr p.data[0], addr old.data[0], oldLen + 1)
+      copyMem(addr p.data[0], addr old.data[0], oldLen)
       s.more = p
       setSSLen(s, HeapSlen)
     else:
-      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + oldLen + 1
+      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + oldLen
       s.bytes = 0
 
 func prepareMutationAt*(s: var string; i: int): var char {.requires: (i < len(s) and i >= 0), inline.} =
@@ -395,7 +395,7 @@ func substr*(s: string; first, last: int): string =
     setSSLen(result, newLen)
     copyMem(inlinePtrV(result), cast[pointer](cast[uint](src) + uint(f)), newLen)
   else:
-    let p = cast[ptr LongString](alloc(LongStringDataOffset + newLen + 1))
+    let p = cast[ptr LongString](alloc(LongStringDataOffset + newLen))
     if p != nil:
       p.rc = 1
       p.fullLen = newLen
@@ -405,7 +405,7 @@ func substr*(s: string; first, last: int): string =
       setSSLen(result, HeapSlen)
       copyMem(inlinePtrV(result), addr p.data[0], AlwaysAvail)
     else:
-      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + newLen + 1
+      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + newLen
       result.bytes = 0
 
 func substr*(s: string; first = 0): string =
@@ -580,33 +580,33 @@ func newString*(len: int): string =
   if len <= 0: return
   if len <= PayloadSize:
     setSSLen(result, len)
-    zeroMem(inlinePtrV(result), len + 1)
+    zeroMem(inlinePtrV(result), len)
   else:
-    let p = cast[ptr LongString](alloc(LongStringDataOffset + len + 1))
+    let p = cast[ptr LongString](alloc(LongStringDataOffset + len))
     if p != nil:
-      zeroMem(p, LongStringDataOffset + len + 1)
+      zeroMem(p, LongStringDataOffset + len)
       p.rc = 1
       p.fullLen = len
       p.capImpl = len
       result.more = p
       setSSLen(result, HeapSlen)
     else:
-      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + len + 1
+      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + len
 
 func newStringOfCap*(len: int): string =
   ## Returns a new empty string with capacity reserved for `len` chars.
   result = string(bytes: 0'u, more: nil)
   if len <= PayloadSize: return  # inline capacity always available
-  let p = cast[ptr LongString](alloc(LongStringDataOffset + len + 1))
+  let p = cast[ptr LongString](alloc(LongStringDataOffset + len))
   if p != nil:
-    zeroMem(p, LongStringDataOffset + len + 1)
+    zeroMem(p, LongStringDataOffset + len)
     p.rc = 1
     p.fullLen = 0
     p.capImpl = len
     result.more = p
     setSSLen(result, HeapSlen)
   else:
-    {.cast(noSideEffect).}: oomHandler LongStringDataOffset + len + 1
+    {.cast(noSideEffect).}: oomHandler LongStringDataOffset + len
 
 # ---- concat / & ----
 
@@ -626,7 +626,7 @@ func `&`*(a, b: string): string {.semantics: "string.&".} =
     if al > 0: copyMem(inlinePtrV(result), rawData(a), al)
     if b.len > 0: copyMem(inlinePtrAt(result, al), rawData(b), b.len)
   else:
-    let p = cast[ptr LongString](alloc(LongStringDataOffset + rlen + 1))
+    let p = cast[ptr LongString](alloc(LongStringDataOffset + rlen))
     if p != nil:
       p.rc = 1
       p.fullLen = rlen
@@ -639,7 +639,7 @@ func `&`*(a, b: string): string {.semantics: "string.&".} =
       setSSLen(result, HeapSlen)
       copyMem(inlinePtrV(result), addr p.data[0], AlwaysAvail)
     else:
-      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + rlen + 1
+      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + rlen
 
 func charToString(c: char): string =
   result = string(bytes: 0'u, more: nil)
@@ -663,30 +663,28 @@ func borrowCStringUnsafe*(s: cstring; l: int): string =
     setSSLen(result, l)
     copyMem(inlinePtrV(result), s, l)
   else:
-    let p = cast[ptr LongString](alloc(LongStringDataOffset + l + 1))
+    let p = cast[ptr LongString](alloc(LongStringDataOffset + l))
     if p != nil:
       p.rc = 1
       p.fullLen = l
       p.capImpl = l
-      copyMem(addr p.data[0], s, l + 1)
+      copyMem(addr p.data[0], s, l)
       result.more = p
       setSSLen(result, HeapSlen)
       copyMem(inlinePtrV(result), addr p.data[0], AlwaysAvail)
     else:
-      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + l + 1
+      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + l
 
 func borrowCStringUnsafe*(s: cstring): string {.exportc: "nimBorrowCStringUnsafe".} =
   borrowCStringUnsafe(s, len(s))
 
 func ensureTerminatingZero*(s: var string) =
-  ## Ensures the string ends with a null terminator for C compatibility.
-  ## Inline/medium strings always maintain a zero; heap strings do not unless
-  ## this (or toCString) is called explicitly.
-  ## Static strings already have a terminator from their C string literal.
-  if s.len == 0 or s[s.len-1] != '\0':
-    let oldLen = s.len
-    setLen(s, oldLen + 1)
-    s[oldLen] = '\0'
+  ## Appends '\0' at position s.len then shrinks back, so the null sits just
+  ## past the data without changing the logical length — same as terminatingZero
+  ## but in-place.
+  let oldLen = s.len
+  s.add '\0'
+  s.shrink oldLen
 
 func toCString*(s: var string): cstring =
   ## Returns a null-terminated cstring pointer.
@@ -702,16 +700,16 @@ func fromCString*(s: cstring): string =
     setSSLen(result, l)
     copyMem(inlinePtrV(result), s, l)
   else:
-    let p = cast[ptr LongString](alloc(LongStringDataOffset + l + 1))
+    let p = cast[ptr LongString](alloc(LongStringDataOffset + l))
     if p != nil:
       p.rc = 1
       p.fullLen = l
       p.capImpl = l
-      copyMem(addr p.data[0], s, l + 1)
+      copyMem(addr p.data[0], s, l)
       result.more = p
       setSSLen(result, HeapSlen)
       copyMem(inlinePtrV(result), addr p.data[0], AlwaysAvail)
     else:
-      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + l + 1
+      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + l
 
 template `$`*(x: string): string = x
