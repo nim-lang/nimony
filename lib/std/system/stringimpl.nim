@@ -325,10 +325,20 @@ func shrink*(s: var string; newLen: int) =
       else:
         setSSLen(s, newLen)
     else:
-      # Heap string: just update length, don't reallocate
-      # (capacity is preserved for efficiency)
-      s.more.fullLen = newLen
-      copyMem(inlinePtrV(s), addr s.more.data[0], min(newLen, AlwaysAvail))
+      if newLen <= PayloadSize:
+        # Transition from long/static to inline
+        let old = s.more
+        if newLen > 0:
+          copyMem(inlinePtrV(s), addr old.data[0], newLen)
+        if newLen <= AlwaysAvail:
+          zeroSwarPad(s, newLen)
+        else:
+          setSSLen(s, newLen)
+      else:
+        # Stays long: ensure unique before mutating
+        prepareMutation(s)
+        s.more.fullLen = newLen
+        copyMem(inlinePtrV(s), addr s.more.data[0], min(newLen, AlwaysAvail))
 
 func setLen*(s: var string; newLen: int) =
   if newLen <= s.len:
@@ -355,8 +365,6 @@ func setLen*(s: var string; newLen: int) =
     if newLen <= PayloadSize:
       let old = s.more
       copyMem(inlinePtrV(s), addr old.data[0], newLen)
-      if sl == HeapSlen and atomicSubFetch(old.rc, 1) == 0:
-        dealloc(old)
       if newLen <= AlwaysAvail:
         zeroSwarPad(s, newLen)  # clear stale prefix bytes for SWAR; sets slen
       else:
