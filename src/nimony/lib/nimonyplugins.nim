@@ -47,13 +47,7 @@ proc otherKind*(n: Node): NimonyOther {.inline.} =
 proc createTree*(): Tree =
   createTree(createTokenBuf())
 
-proc freeze*(tree: sink Tree): Node
 proc renderNode(n: Node): string
-
-proc snapshot*(tree: Tree): Node =
-  var buf = createTokenBuf(tree.buf.len)
-  buf.add tree.buf
-  result = freeze(createTree(buf))
 
 proc freeze*(tree: sink Tree): Node =
   let owner = tree
@@ -103,13 +97,6 @@ proc loadTree*(filename = paramStr(1)): Node =
     result = freeze(createTree(fromStream(inp)))
   finally:
     close(inp)
-
-proc beginRead*(tree: Tree): Node {.inline.} =
-  let owner = tree
-  result = Node(owner: owner, cursor: beginRead(owner.buf))
-
-proc beginRead*(n: Node): Node {.inline.} =
-  n
 
 proc saveTree*(tree: Tree) =
   writeFile paramStr(2), toString(tree.buf)
@@ -185,9 +172,6 @@ proc `~`*(src: Cursor): Node =
 
 proc `~`*(src: TokenBuf): Node =
   createNode(toString(src, false))
-
-proc `~`*(src: Tree): Node =
-  beginRead(src)
 
 proc `~`*(src: PackedToken): Node =
   createNode(nifstreams.toString([src], false))

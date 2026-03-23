@@ -120,5 +120,5 @@ proc tr(n: Node): TokenBuf =
 var inp = loadTree()
 var inpTypes = loadTree(paramStr(3))
 
-typesTr(beginRead inpTypes)
-writeFile os.paramStr(2), toString tr(beginRead inp)
+typesTr(inpTypes)
+writeFile os.paramStr(2), toString tr(inp)

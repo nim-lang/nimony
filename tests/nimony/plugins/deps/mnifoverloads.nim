@@ -29,4 +29,4 @@ proc tr(n: Node): Node =
   })
 
 var inp = loadTree()
-saveTree tr(beginRead inp)
+saveTree tr(inp)

@@ -14,4 +14,4 @@ proc tr(n: Node): Node =
     {"first": ~first, "second": ~second, "third": ~third, "tail": ~tail})
 
 var inp = loadTree()
-saveTree tr(beginRead inp)
+saveTree tr(inp)

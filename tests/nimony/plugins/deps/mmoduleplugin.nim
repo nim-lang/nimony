@@ -20,4 +20,4 @@ proc tr(n: Node): Tree =
         result.takeTree n
 
 var inp = loadTree()
-saveTree tr(beginRead inp)
+saveTree tr(inp)
