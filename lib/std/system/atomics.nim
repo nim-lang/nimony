@@ -41,6 +41,6 @@ func arcDec*(memLoc: var int): bool {.inline.} =
     result = atomicSubFetch(memLoc.addr, 1, ATOMIC_SEQ_CST) < 0
 
 func arcIsUnique*(memLoc: var int): bool {.inline.} =
-  ## Atomically loads the reference count and returns true if it equals 1.
+  ## Atomically loads the reference count and returns true if it equals 0 (no extra references).
   {.cast(noSideEffect).}:
-    result = atomicLoadN(memLoc.addr, ATOMIC_ACQUIRE) == 1
+    result = atomicLoadN(memLoc.addr, ATOMIC_ACQUIRE) == 0

@@ -203,7 +203,15 @@ proc genCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf; forceSta
         copyTree c.dest, paramA
     of attachedDup:
       copyTree c.dest, paramB
-    of attachedCopy, attachedTrace, attachedSink:
+    of attachedTrace:
+      if paramA[0].kind == Symbol:
+        # &*param cancel out to `param`:
+        copyTree c.dest, paramA
+      else:
+        copyIntoKind c.dest, HaddrX, c.info:
+          copyTree c.dest, paramA
+      copyTree c.dest, paramB
+    of attachedCopy, attachedSink:
       copyTree c.dest, paramA
       copyTree c.dest, paramB
 
