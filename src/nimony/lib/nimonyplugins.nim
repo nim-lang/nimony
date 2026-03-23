@@ -16,32 +16,27 @@ type
   Tree* = object
     storage: TreeStorage
 
+  ReadLeaseObj = object
+    storage: TreeStorage
+
+  ReadLease = ref ReadLeaseObj
+
   LineInfo* = PackedLineInfo
 
   Node* = object
-    storage: TreeStorage
+    lease: ReadLease
     cursor: Cursor
-    remaining: int
-    spanLen: int
 
 converter toCursor*(n: Node): Cursor {.inline.} =
   n.cursor
 
-proc rawSpan(n: Node): int {.inline.} =
-  if n.remaining == 0:
-    result = 0
-  else:
-    result = n.spanLen
-
-proc refreshSpan(n: var Node) {.inline.} =
-  if n.remaining == 0:
-    n.spanLen = 0
-  else:
-    n.spanLen = span(n.cursor)
-
 proc createStorage(buf: sink TokenBuf): TreeStorage =
   new(result)
   result.buf = buf
+
+proc `=destroy`(x: var ReadLeaseObj) =
+  if x.storage != nil:
+    endRead(x.storage.buf)
 
 proc otherKind*(n: Node): NimonyOther {.inline.} =
   n.substructureKind
@@ -58,14 +53,7 @@ template withTree*(t: var Tree; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOth
   t.storage.buf.addParRi()
 
 proc takeTree*(t: var Tree; n: var Node) =
-  let count = n.rawSpan
-  var cursor = n.cursor
-  for _ in 0..<count:
-    t.storage.buf.add cursor.load
-    inc cursor
-  n.cursor = cursor
-  n.remaining -= count
-  n.refreshSpan()
+  t.storage.buf.takeTree(n.cursor)
 
 proc addDotToken*(t: var Tree) =
   t.storage.buf.addDotToken()
@@ -86,25 +74,13 @@ proc add*(t: var TokenBuf; n: Node) =
   t.add n.cursor.load
 
 proc takeTree*(t: var TokenBuf; n: var Node) =
-  let count = n.rawSpan
-  var cursor = n.cursor
-  for _ in 0..<count:
-    t.add cursor.load
-    inc cursor
-  n.cursor = cursor
-  n.remaining -= count
-  n.refreshSpan()
+  t.takeTree(n.cursor)
 
 proc inc*(n: var Node) =
   inc n.cursor
-  dec n.remaining
-  n.refreshSpan()
 
 proc skip*(n: var Node) =
-  let count = n.rawSpan
   skip n.cursor
-  n.remaining -= count
-  n.refreshSpan()
 
 proc setInfo*(n: var Node; info: PackedLineInfo) {.inline.} =
   n.cursor.setInfo(info)
@@ -117,11 +93,10 @@ proc loadTree*(filename = paramStr(1)): Tree =
     close(inp)
 
 proc beginRead*(tree: Tree): Node {.inline.} =
-  result = Node(
-    storage: tree.storage,
-    cursor: beginRead(tree.storage.buf),
-    remaining: tree.storage.buf.len,
-    spanLen: tree.storage.buf.len)
+  result = default(Node)
+  new(result.lease)
+  result.lease.storage = tree.storage
+  result.cursor = beginRead(tree.storage.buf)
 
 proc saveTree*(tree: Tree) =
   writeFile paramStr(2), toString(tree.storage.buf)
@@ -146,16 +121,7 @@ proc createNode(text: string): Node =
   result = beginRead(parseNifFragment(text))
 
 proc renderNode(n: Node): string =
-  let count = n.rawSpan
-  if count == 0:
-    result = ""
-  else:
-    var buf = createTokenBuf(count)
-    var cursor = n.cursor
-    for _ in 0..<count:
-      buf.add cursor.load
-      inc cursor
-    result = toString(buf, false)
+  result = toString(n.cursor, false)
 
 proc strLitNode(s: string): Node =
   var b = nifbuilder.open(s.len + 8)
