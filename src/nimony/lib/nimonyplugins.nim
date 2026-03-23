@@ -25,24 +25,27 @@ type
     owner: Tree
     cursor: Cursor
 
-proc createTree(buf: sink TokenBuf): Tree =
-  result = Tree(buf: buf)
+template sameReader(a, b: Node): bool =
+  a.owner == b.owner and (a.owner == nil or toUniqueId(a.cursor) == toUniqueId(b.cursor))
 
-proc hasOwner(n: Node): bool {.inline.} =
-  n.owner != nil
-
-proc `=destroy`(n: var Node) =
-  if hasOwner(n):
+proc `=destroy`*(n: Node) =
+  if n.owner != nil:
     endRead(n.owner.buf)
 
-proc `=copy`(dest: var Node; src: Node) =
-  if cast[pointer](addr dest) == cast[pointer](addr src):
-    return
-  `=destroy`(dest)
-  wasMoved(dest)
-  if hasOwner(src):
-    dest.owner = src.owner
-    dest.cursor = shareRead(dest.owner.buf, src.cursor)
+proc `=wasMoved`*(n: var Node) =
+  n.owner = nil
+  n.cursor = default(Cursor)
+
+proc `=copy`*(dest: var Node; src: Node) =
+  if not sameReader(dest, src):
+    `=destroy`(dest)
+    `=wasMoved`(dest)
+    if src.owner != nil:
+      dest.owner = src.owner
+      dest.cursor = shareRead(dest.owner.buf, src.cursor)
+
+proc createTree(buf: sink TokenBuf): Tree =
+  result = Tree(buf: buf)
 
 proc kind*(n: Node): NifKind {.inline.} =
   ## Returns the raw NIF token kind at the current position.
