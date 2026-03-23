@@ -251,7 +251,7 @@
 | `(high X)` | NimonyExpr | |
 | `(low X)` | NimonyExpr | |
 | `(typeof X X)` | NimonyExpr, NiflerKind | `typeof` operation for accessing the type of an expression |
-| `(unpack)` | NimonyExpr | |
+| `(unpack)` | NimonyExpr | magic varargs expansion — see *Tuple Unpacking* section below |
 | `(fields T X X?)` | NimonyExpr | fields iterator |
 | `(fieldpairs T X X?)` | NimonyExpr | fieldPairs iterator |
 | `(enumtostr X)` | NimonyExpr | |

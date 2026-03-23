@@ -136,7 +136,11 @@ proc genTags(inp: File) =
     var parts = line.split("|")
     if parts.len == 0: continue
     if parts.len != 5:
-      quit "WRONG LINE: " & line
+      # Non-table lines (markdown prose, headings, code blocks) are silently skipped,
+      # allowing documentation sections to follow the table in tags.md.
+      continue
+    if parts[1].strip().startsWith('-'):
+      continue # table separator row e.g. |---|---|---|
     let tagName = extractTagName parts[1]
     if knownTags.containsOrIncl(tagName):
       quit "DUPLICATE TAG: " & tagName
