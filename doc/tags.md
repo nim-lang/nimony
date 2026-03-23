@@ -316,3 +316,37 @@
 | `(passL X)`  | NimonyPragma | `passL` pragma adds options to the backend linker |
 | `(passC X)`  | NimonyPragma | `passC` pragma adds options to the backend compiler |
 | `(methods (kv STR Y)+)`  | NimonyPragma | `methods` pragma lists vtable methods for a type |
+
+### unpackflat, unpacktup, unpackdecl
+
+Tuple unpacking in Nim can appear in two contexts: variable declarations and `for` loop variables. NIF uses three distinct tags to encode these.
+
+**`(unpackdecl VALUE (unpacktup DECL+))`** — a `var`/`let`/`const` statement that destructures a tuple:
+
+```nim
+let (a, b) = someTuple
+```
+
+becomes:
+
+```
+(unpackdecl (call ...) (unpacktup
+  (let a.0 ... ...)
+  (let b.0 ... ...)))
+```
+
+`VALUE` is the tuple expression evaluated once. Each `DECL` inside `unpacktup` is an ordinary variable declaration whose initializer is synthesized as a field access into `VALUE`.
+
+**`(unpackflat VAR+)`** — a flat list of loop variables in a `for` statement that unpacks a tuple-yielding iterator:
+
+```nim
+for a, b in items(pairSeq):
+```
+
+becomes:
+
+```
+(for (unpackflat a.0 b.0) (call ...) ...)
+```
+
+The variables inside `unpackflat` are plain symbol references, not full declarations. The for-loop body receives `a` and `b` as separate locals bound to successive tuple fields.

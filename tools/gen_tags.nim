@@ -130,15 +130,16 @@ proc genTags(inp: File) =
   var enumDecls = default EnumImpls
   var tags: seq[(string, int)] = @[]
   var knownTags = initHashSet[string]()
+  var inTable = false
   for line in lines(inp):
     inc i
     if i <= 0: continue # skip header
-    var parts = line.split("|")
-    if parts.len == 0: continue
-    if parts.len != 5:
-      # Non-table lines (markdown prose, headings, code blocks) are silently skipped,
-      # allowing documentation sections to follow the table in tags.md.
+    if not line.startsWith('|'):
+      if inTable: break # table ended, stop processing
       continue
+    inTable = true
+    var parts = line.split("|")
+    if parts.len != 5: continue
     if parts[1].strip().startsWith('-'):
       continue # table separator row e.g. |---|---|---|
     let tagName = extractTagName parts[1]

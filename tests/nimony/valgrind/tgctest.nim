@@ -66,7 +66,7 @@ proc buildTree(depth = 1): PNode =
   inc(id)
 
 proc returnTree(): PNode =
-  writeLine(stdout, "creating id: " & $id)
+  if id mod 10 == 0: writeLine(stdout, "creating id: " & $id)
   new(result)
   result.data = $id
   new(result.le)
@@ -83,7 +83,7 @@ proc printTree(t: PNode) =
   printTree(t.ri)
 
 proc unsureNew(result: var PNode) =
-  writeLine(stdout, "creating unsure id: " & $id)
+  if id mod 10 == 0: writeLine(stdout, "creating unsure id: " & $id)
   new(result)
   result.data = $id
   new(result.le)
@@ -103,7 +103,7 @@ proc buildBTree(father: var TBNode) =
   father.other = nil
   father.sons = @[]
   for i in 1..10:
-    write(stdout, "next iteration!\n")
+    if i mod 5 == 0: write(stdout, "next iteration!\n")
     var n = TBNode()
     n.other = returnTree()
     n.data = "B node: " & $i
