@@ -7,12 +7,26 @@ import ".." / ".." / "lib" / [nifcursors, nifstreams, lineinfos, nifbuilder]
 import ".." / [nimony_model]
 export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther
 
+export NifKind, StrId, SymId, IntId, UIntId, FloatId, TagId
 export NoLineInfo
 
+const
+  HeapTreeLen = -1
+  InlineTreeCap = 8
+
 type
-  Tree* = ref object ## Mutable NIF builder used by plugins to assemble output
-                     ## before freezing it into a `Node`.
+  TreeData = object
+    rc: int
     buf: TokenBuf
+  TreeDataPtr = ptr TreeData
+
+  Tree* = object ## Mutable NIF builder used by plugins to assemble output
+                 ## before freezing it into a `Node`.
+                 ## Small trees stay inline inside the value. Larger or frozen
+                 ## trees use a shared heap payload with copy-on-write.
+    tlen: int
+    inl: array[InlineTreeCap, PackedToken]
+    data: TreeDataPtr
 
   LineInfo* = PackedLineInfo ## Packed source location metadata attached to NIF
                              ## tokens. Use `NoLineInfo` for synthetic output.
@@ -22,8 +36,85 @@ type
                  ## subtree. Copying a `Node` retains the underlying tree
                  ## automatically; the tree is released when the last `Node`
                  ## that references it is destroyed.
-    owner: Tree
+    owner: TreeDataPtr
     cursor: Cursor
+
+proc destroyTreeData(data: TreeDataPtr) =
+  `=destroy`(data.buf)
+  dealloc(data)
+
+template incRef(data: TreeDataPtr) =
+  if data != nil:
+    inc data.rc
+
+template isUnique(data: TreeDataPtr): bool =
+  data != nil and data.rc == 1
+
+proc decRef(data: TreeDataPtr) =
+  if data != nil:
+    dec data.rc
+    if data.rc == 0:
+      destroyTreeData(data)
+
+template wasMovedTokenBuf(buf: var TokenBuf) =
+  zeroMem(addr buf, sizeof(TokenBuf))
+
+proc createTreeData(buf: sink TokenBuf): TreeDataPtr =
+  result = cast[TreeDataPtr](alloc(sizeof(TreeData)))
+  result.rc = 1
+  copyMem(addr result.buf, addr buf, sizeof(TokenBuf))
+  wasMovedTokenBuf(buf)
+
+proc cloneTreeData(data: TreeDataPtr): TreeDataPtr =
+  var buf = createTokenBuf(data.buf.len)
+  buf.add data.buf
+  result = createTreeData(move(buf))
+
+template isHeap(t: Tree): bool =
+  t.tlen == HeapTreeLen
+
+template inlineLen(t: Tree): int =
+  t.tlen
+
+template setInlineLen(t: var Tree; v: int) =
+  t.tlen = v
+
+template setHeapTag(t: var Tree) =
+  t.tlen = HeapTreeLen
+
+proc inlineToTokenBuf(t: Tree): TokenBuf =
+  result = createTokenBuf(max(inlineLen(t), 4))
+  for i in 0 ..< inlineLen(t):
+    result.add t.inl[i]
+
+proc promoteToHeap(t: var Tree) =
+  var buf = inlineToTokenBuf(t)
+  t.data = createTreeData(move(buf))
+  t.setHeapTag()
+
+proc `=destroy`*(t: Tree) =
+  if isHeap(t):
+    decRef(t.data)
+
+proc `=wasMoved`*(t: var Tree) =
+  t.setInlineLen(0)
+  t.data = nil
+
+proc `=copy`*(dest: var Tree; src: Tree) =
+  if isHeap(src) and isHeap(dest) and dest.data == src.data:
+    discard
+  else:
+    `=destroy`(dest)
+    `=wasMoved`(dest)
+    if isHeap(src):
+      incRef(src.data)
+    copyMem(addr dest, unsafeAddr src, sizeof(Tree))
+
+proc `=dup`*(t: Tree): Tree {.nodestroy.} =
+  result = Tree(tlen: 0, data: nil)
+  copyMem(addr result, unsafeAddr t, sizeof(Tree))
+  if isHeap(t):
+    incRef(t.data)
 
 template sameReader(a, b: Node): bool =
   a.owner == b.owner and (a.owner == nil or toUniqueId(a.cursor) == toUniqueId(b.cursor))
@@ -31,21 +122,85 @@ template sameReader(a, b: Node): bool =
 proc `=destroy`*(n: Node) =
   if n.owner != nil:
     endRead(n.owner.buf)
+    decRef(n.owner)
 
 proc `=wasMoved`*(n: var Node) =
   n.owner = nil
-  n.cursor = default(Cursor)
 
 proc `=copy`*(dest: var Node; src: Node) =
   if not sameReader(dest, src):
     `=destroy`(dest)
     `=wasMoved`(dest)
     if src.owner != nil:
+      incRef(src.owner)
       dest.owner = src.owner
       dest.cursor = shareRead(dest.owner.buf, src.cursor)
 
+proc `=dup`*(n: Node): Node {.nodestroy.} =
+  result = Node(owner: nil, cursor: default(Cursor))
+  if n.owner != nil:
+    incRef(n.owner)
+    result.owner = n.owner
+    result.cursor = shareRead(result.owner.buf, n.cursor)
+
 proc createTree(buf: sink TokenBuf): Tree =
-  result = Tree(buf: buf)
+  if buf.len <= InlineTreeCap:
+    result = Tree(tlen: buf.len, data: nil)
+    for i in 0 ..< buf.len:
+      result.inl[i] = buf[i]
+  else:
+    result = Tree(tlen: HeapTreeLen, data: createTreeData(move(buf)))
+
+proc prepareMutation(t: var Tree) =
+  if isHeap(t) and (not isUnique(t.data) or t.data.buf.hasReaders):
+    let old = t.data
+    t.data = cloneTreeData(old)
+    decRef(old)
+
+proc addToken(t: var Tree; tok: PackedToken) =
+  if not isHeap(t):
+    if inlineLen(t) < InlineTreeCap:
+      t.inl[inlineLen(t)] = tok
+      t.setInlineLen(inlineLen(t) + 1)
+    else:
+      promoteToHeap(t)
+      t.data.buf.add tok
+  else:
+    prepareMutation(t)
+    t.data.buf.add tok
+
+proc takeCursorTree(t: var Tree; n: var Cursor) =
+  let count = span(n)
+  if not isHeap(t) and inlineLen(t) + count <= InlineTreeCap:
+    if n.kind != ParLe:
+      t.inl[inlineLen(t)] = n.load
+      t.setInlineLen(inlineLen(t) + 1)
+      inc n
+    else:
+      var nested = 0
+      while true:
+        let tok = n.load
+        t.inl[inlineLen(t)] = tok
+        t.setInlineLen(inlineLen(t) + 1)
+        case tok.kind
+        of ParLe:
+          inc nested
+          inc n
+        of ParRi:
+          dec nested
+          inc n
+          if nested == 0:
+            break
+        of EofToken:
+          raiseAssert "expected ')', but EOF reached"
+        else:
+          inc n
+  else:
+    if not isHeap(t):
+      promoteToHeap(t)
+    else:
+      prepareMutation(t)
+    t.data.buf.takeTree(n)
 
 proc kind*(n: Node): NifKind {.inline.} =
   ## Returns the raw NIF token kind at the current position.
@@ -55,12 +210,12 @@ proc info*(n: Node): PackedLineInfo {.inline.} =
   ## Returns the packed line info stored on the current token.
   n.cursor.info
 
-proc symId*(n: Node): SymId {.inline.} =
+proc symId*(n: Node): nifstreams.SymId {.inline.} =
   ## Returns the symbol id of the current token.
   ## The current token must be a `Symbol` or `SymbolDef`.
   n.cursor.symId
 
-proc litId*(n: Node): StrId {.inline.} =
+proc litId*(n: Node): nifstreams.StrId {.inline.} =
   ## Returns the literal/string-table id of the current token.
   ## The current token must be an `Ident` or `StringLit`.
   n.cursor.litId
@@ -69,24 +224,24 @@ proc charLit*(n: Node): char {.inline.} =
   ## Returns the character stored in the current `CharLit` token.
   n.cursor.charLit
 
-proc intId*(n: Node): IntId {.inline.} =
+proc intId*(n: Node): nifstreams.IntId {.inline.} =
   ## Returns the integer-pool id of the current `IntLit` token.
   n.cursor.intId
 
-proc uintId*(n: Node): UIntId {.inline.} =
+proc uintId*(n: Node): nifstreams.UIntId {.inline.} =
   ## Returns the unsigned-integer-pool id of the current `UIntLit` token.
   n.cursor.uintId
 
-proc floatId*(n: Node): FloatId {.inline.} =
+proc floatId*(n: Node): nifstreams.FloatId {.inline.} =
   ## Returns the float-pool id of the current `FloatLit` token.
   n.cursor.floatId
 
-proc tagId*(n: Node): TagId {.inline.} =
+proc tagId*(n: Node): nifstreams.TagId {.inline.} =
   ## Returns the raw tag id of the current token.
   ## The current token must be a `ParLe`.
   n.cursor.tagId
 
-proc tag*(n: Node): TagId {.inline.} =
+proc tag*(n: Node): nifstreams.TagId {.inline.} =
   ## Returns the raw tag id for the current tree node, or `ErrT` if the current
   ## token is not a `ParLe`.
   n.cursor.tag
@@ -113,49 +268,66 @@ proc otherKind*(n: Node): NimonyOther {.inline.} =
 
 proc createTree*(): Tree =
   ## Creates an empty mutable `Tree`.
-  createTree(createTokenBuf())
+  result = Tree(tlen: 0, data: nil)
 
 proc renderNode(n: Node): string
 
 proc freeze*(tree: sink Tree): Node =
   ## Freezes a mutable `Tree` and returns a root `Node` for reading it.
   ##
-  ## The returned `Node` keeps the underlying tree alive automatically. After
-  ## freezing, the tree should be treated as no longer writable.
-  let owner = tree
-  result = Node(owner: owner, cursor: beginRead(owner.buf))
+  ## The returned `Node` keeps the underlying payload alive automatically. If
+  ## another alias of the same `Tree` is mutated while readers exist, the tree
+  ## detaches to a fresh mutable payload.
+  if isHeap(tree):
+    let owner = tree.data
+    incRef(owner)
+    result = Node(owner: owner, cursor: beginRead(owner.buf))
+  elif inlineLen(tree) == 0:
+    let owner = createTreeData(createTokenBuf())
+    result = Node(owner: owner, cursor: beginRead(owner.buf))
+  else:
+    let owner = createTreeData(inlineToTokenBuf(tree))
+    result = Node(owner: owner, cursor: beginRead(owner.buf))
 
 template withTree*(t: var Tree; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma; info: LineInfo; body: untyped) =
   ## Appends a tree node of `kind` to `t`, runs `body` to emit its children, and
   ## closes the node afterwards.
-  t.buf.addParLe(kind, info)
+  addToken(t, parLeToken(TagId(kind), info))
   body
-  t.buf.addParRi()
+  addToken(t, parRiToken(NoLineInfo))
 
 proc takeTree*(t: var Tree; n: var Node) =
   ## Copies the current token or subtree from `n` into `t` and advances `n`
   ## past the copied fragment.
-  t.buf.takeTree(n.cursor)
+  takeCursorTree(t, n.cursor)
 
 proc addDotToken*(t: var Tree) =
   ## Appends a dot placeholder token (`.`) to `t`.
-  t.buf.addDotToken()
+  addToken(t, dotToken(NoLineInfo))
 
 proc addStrLit*(t: var Tree; s: string) =
   ## Appends a string literal atom to `t`.
-  t.buf.addStrLit(s)
+  var buf = createTokenBuf(1)
+  buf.addStrLit(s)
+  addToken(t, buf[0])
 
 proc addIntLit*(t: var Tree; i: BiggestInt) =
   ## Appends a signed integer literal atom to `t`.
-  t.buf.addIntLit(i)
+  var buf = createTokenBuf(1)
+  buf.addIntLit(i)
+  addToken(t, buf[0])
 
 proc addUIntLit*(t: var Tree; i: BiggestUInt) =
   ## Appends an unsigned integer literal atom to `t`.
-  t.buf.addUIntLit(i)
+  var buf = createTokenBuf(1)
+  buf.addUIntLit(i)
+  addToken(t, buf[0])
 
 proc addIdent*(t: var Tree; ident: string) =
   ## Appends an identifier atom to `t`.
-  t.buf.addIdent(ident)
+  var buf = createTokenBuf(1)
+  buf.addIdent(ident)
+  addToken(t, buf[0])
 
 proc add*(t: var TokenBuf; n: Node) =
   ## Appends only the current token from `n` to `t`.
@@ -184,17 +356,28 @@ proc loadTree*(filename = paramStr(1)): Node =
   ## fragment.
   var inp = nifstreams.open(filename)
   try:
-    result = freeze(createTree(fromStream(inp)))
+    var buf = fromStream(inp)
+    result = freeze(createTree(move(buf)))
   finally:
     close(inp)
 
 proc saveTree*(tree: Tree) =
   ## Writes the complete contents of a mutable `Tree` to `paramStr(2)`.
-  writeFile paramStr(2), toString(tree.buf)
+  if isHeap(tree):
+    writeFile paramStr(2), toString(tree.data.buf)
+  elif inlineLen(tree) == 0:
+    writeFile paramStr(2), ""
+  else:
+    writeFile paramStr(2), nifstreams.toString(toOpenArray(tree.inl, 0, inlineLen(tree)-1))
 
 proc saveTree*(tree: Tree; filename: string) =
   ## Writes the complete contents of a mutable `Tree` to `filename`.
-  writeFile filename, toString(tree.buf)
+  if isHeap(tree):
+    writeFile filename, toString(tree.data.buf)
+  elif inlineLen(tree) == 0:
+    writeFile filename, ""
+  else:
+    writeFile filename, nifstreams.toString(toOpenArray(tree.inl, 0, inlineLen(tree)-1))
 
 proc saveTree*(tree: Node) =
   ## Writes the current token or subtree addressed by `tree` to `paramStr(2)`.
@@ -219,7 +402,7 @@ proc parseNifFragment(text: string): Node =
   var buf = parseFromBuffer(text, "")
   if buf.len > 0 and buf[buf.len-1].kind == EofToken:
     buf.shrink(buf.len-1)
-  result = freeze(createTree(buf))
+  result = freeze(createTree(move(buf)))
 
 proc createNode(text: string): Node =
   result = parseNifFragment(text)

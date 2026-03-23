@@ -156,6 +156,9 @@ proc add*(b: var TokenBuf; item: PackedToken) {.inline.} =
 
 proc len*(b: TokenBuf): int {.inline.} = b.len
 
+proc hasReaders*(b: TokenBuf): bool {.inline.} =
+  b.readers != 0
+
 proc `[]`*(b: TokenBuf; i: int): PackedToken {.inline.} =
   assert i >= 0 and i < b.len
   result = b.data[i]
