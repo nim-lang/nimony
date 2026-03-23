@@ -147,7 +147,7 @@ func ensureUniqueLong(s: var string; oldLen, newLen: int) =
     let newCap = if newLen > cap: max(newLen, ssResize(cap)) else: cap
     let p = cast[ptr LongString](alloc(LongStringDataOffset + newCap))
     if p != nil:
-      p.rc = 1
+      p.rc = 0
       p.fullLen = newLen
       p.capImpl = newCap
       let old = s.more
@@ -166,7 +166,7 @@ func transitionToLong(s: var string; sl: int; newLen: int) =
   let newCap = max(newLen, ssResize(newLen))
   let p = cast[ptr LongString](alloc(LongStringDataOffset + newCap))
   if p != nil:
-    p.rc = 1
+    p.rc = 0
     p.fullLen = newLen
     p.capImpl = newCap
     copyMem(addr p.data[0], inlinePtrV(s), sl)
@@ -190,7 +190,7 @@ func prepareMutation*(s: var string) {.inline.} =
     let oldLen = old.fullLen
     let p = cast[ptr LongString](alloc(LongStringDataOffset + oldLen))
     if p != nil:
-      p.rc = 1
+      p.rc = 0
       p.fullLen = oldLen
       p.capImpl = oldLen
       copyMem(addr p.data[0], addr old.data[0], oldLen)
@@ -387,7 +387,7 @@ func substr*(s: string; first, last: int): string =
   else:
     let p = cast[ptr LongString](alloc(LongStringDataOffset + newLen))
     if p != nil:
-      p.rc = 1
+      p.rc = 0
       p.fullLen = newLen
       p.capImpl = newLen
       copyMem(addr p.data[0], cast[pointer](cast[uint](src) + uint(f)), newLen)
@@ -603,7 +603,7 @@ func newString*(len: int): string =
     let p = cast[ptr LongString](alloc(LongStringDataOffset + len))
     if p != nil:
       zeroMem(p, LongStringDataOffset + len)
-      p.rc = 1
+      p.rc = 0
       p.fullLen = len
       p.capImpl = len
       result.more = p
@@ -618,7 +618,7 @@ func newStringOfCap*(len: int): string =
   let p = cast[ptr LongString](alloc(LongStringDataOffset + len))
   if p != nil:
     zeroMem(p, LongStringDataOffset + len)
-    p.rc = 1
+    p.rc = 0
     p.fullLen = 0
     p.capImpl = len
     result.more = p
@@ -646,7 +646,7 @@ func `&`*(a, b: string): string {.semantics: "string.&".} =
   else:
     let p = cast[ptr LongString](alloc(LongStringDataOffset + rlen))
     if p != nil:
-      p.rc = 1
+      p.rc = 0
       p.fullLen = rlen
       p.capImpl = rlen
       let al = a.len
@@ -683,7 +683,7 @@ func borrowCStringUnsafe*(s: cstring; l: int): string =
   else:
     let p = cast[ptr LongString](alloc(LongStringDataOffset + l))
     if p != nil:
-      p.rc = 1
+      p.rc = 0
       p.fullLen = l
       p.capImpl = l
       copyMem(addr p.data[0], s, l)
@@ -720,7 +720,7 @@ func fromCString*(s: cstring): string =
   else:
     let p = cast[ptr LongString](alloc(LongStringDataOffset + l))
     if p != nil:
-      p.rc = 1
+      p.rc = 0
       p.fullLen = l
       p.capImpl = l
       copyMem(addr p.data[0], s, l)

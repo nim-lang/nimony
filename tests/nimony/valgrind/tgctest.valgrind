@@ -1,0 +1,471 @@
+==35149== Memcheck, a memory error detector
+==35149== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.
+==35149== Using Valgrind-3.25.1 and LibVEX; rerun with -h for copyright info
+==35149== Command: nimcache/tgc1yly3d1/tgctest
+==35149== 
+==35149== Warning: set address range perms: large range [0x20000000000, 0x20040000000) (defined)
+next iteration!
+next iteration!
+creating id: 10
+next iteration!
+creating id: 80
+next iteration!
+starting main...
+next iteration!
+creating id: 90
+next iteration!
+next iteration!
+creating id: 100
+next iteration!
+next iteration!
+creating id: 110
+next iteration!
+next iteration!
+creating id: 120
+next iteration!
+next iteration!
+creating id: 130
+next iteration!
+next iteration!
+creating id: 140
+next iteration!
+next iteration!
+creating id: 150
+next iteration!
+next iteration!
+creating id: 160
+next iteration!
+next iteration!
+creating id: 170
+next iteration!
+next iteration!
+creating id: 180
+next iteration!
+next iteration!
+creating id: 190
+next iteration!
+next iteration!
+creating id: 200
+next iteration!
+next iteration!
+creating id: 210
+next iteration!
+next iteration!
+creating id: 220
+next iteration!
+next iteration!
+creating id: 230
+next iteration!
+next iteration!
+creating id: 240
+next iteration!
+next iteration!
+creating id: 250
+next iteration!
+next iteration!
+creating id: 260
+next iteration!
+next iteration!
+creating id: 270
+next iteration!
+next iteration!
+creating id: 280
+next iteration!
+next iteration!
+creating id: 290
+next iteration!
+next iteration!
+creating id: 300
+next iteration!
+next iteration!
+creating id: 310
+next iteration!
+next iteration!
+creating id: 320
+next iteration!
+next iteration!
+creating id: 330
+next iteration!
+next iteration!
+creating id: 340
+next iteration!
+next iteration!
+creating id: 350
+next iteration!
+next iteration!
+creating id: 360
+next iteration!
+next iteration!
+creating id: 370
+next iteration!
+next iteration!
+creating id: 380
+next iteration!
+next iteration!
+creating id: 390
+next iteration!
+next iteration!
+creating id: 400
+next iteration!
+next iteration!
+creating id: 410
+next iteration!
+next iteration!
+creating id: 420
+next iteration!
+next iteration!
+creating id: 430
+next iteration!
+next iteration!
+creating id: 440
+next iteration!
+next iteration!
+creating id: 450
+next iteration!
+next iteration!
+creating id: 460
+next iteration!
+next iteration!
+creating id: 470
+next iteration!
+next iteration!
+creating id: 480
+next iteration!
+next iteration!
+creating id: 490
+next iteration!
+next iteration!
+creating id: 500
+next iteration!
+next iteration!
+creating id: 510
+next iteration!
+next iteration!
+creating id: 520
+next iteration!
+next iteration!
+creating id: 530
+next iteration!
+next iteration!
+creating id: 540
+next iteration!
+next iteration!
+creating id: 550
+next iteration!
+next iteration!
+creating id: 560
+next iteration!
+next iteration!
+creating id: 570
+next iteration!
+next iteration!
+creating id: 580
+next iteration!
+next iteration!
+creating id: 590
+next iteration!
+next iteration!
+creating id: 600
+next iteration!
+next iteration!
+creating id: 610
+next iteration!
+next iteration!
+creating id: 620
+next iteration!
+next iteration!
+creating id: 630
+next iteration!
+next iteration!
+creating id: 640
+next iteration!
+next iteration!
+creating id: 650
+next iteration!
+next iteration!
+creating id: 660
+next iteration!
+next iteration!
+creating id: 670
+next iteration!
+next iteration!
+creating id: 680
+next iteration!
+next iteration!
+creating id: 690
+next iteration!
+next iteration!
+creating id: 700
+next iteration!
+next iteration!
+creating id: 710
+next iteration!
+next iteration!
+creating id: 720
+next iteration!
+next iteration!
+creating id: 730
+next iteration!
+next iteration!
+creating id: 740
+next iteration!
+next iteration!
+creating id: 750
+next iteration!
+next iteration!
+creating id: 760
+next iteration!
+next iteration!
+creating id: 770
+next iteration!
+next iteration!
+creating id: 780
+next iteration!
+next iteration!
+creating id: 790
+next iteration!
+next iteration!
+creating id: 800
+next iteration!
+next iteration!
+creating id: 810
+next iteration!
+next iteration!
+creating id: 820
+next iteration!
+next iteration!
+creating id: 830
+next iteration!
+next iteration!
+creating id: 840
+next iteration!
+next iteration!
+creating id: 850
+next iteration!
+next iteration!
+creating id: 860
+next iteration!
+next iteration!
+creating id: 870
+next iteration!
+next iteration!
+creating id: 880
+next iteration!
+next iteration!
+creating id: 890
+next iteration!
+next iteration!
+creating id: 900
+next iteration!
+next iteration!
+creating id: 910
+next iteration!
+next iteration!
+creating id: 920
+next iteration!
+next iteration!
+creating id: 930
+next iteration!
+next iteration!
+creating id: 940
+next iteration!
+next iteration!
+creating id: 950
+next iteration!
+next iteration!
+creating id: 960
+next iteration!
+next iteration!
+creating id: 970
+next iteration!
+next iteration!
+creating id: 980
+next iteration!
+next iteration!
+creating id: 990
+next iteration!
+next iteration!
+creating id: 1000
+next iteration!
+next iteration!
+creating id: 1010
+next iteration!
+next iteration!
+creating id: 1020
+next iteration!
+next iteration!
+creating id: 1030
+next iteration!
+next iteration!
+creating id: 1040
+next iteration!
+next iteration!
+creating id: 1050
+next iteration!
+next iteration!
+creating id: 1060
+next iteration!
+next iteration!
+creating id: 1070
+next iteration!
+next iteration!
+creating id: 1080
+next iteration!
+creating id: 1090
+creating id: 1100
+creating id: 1110
+creating id: 1120
+creating id: 1130
+creating id: 1140
+creating id: 1150
+creating id: 1160
+creating id: 1170
+creating id: 1180
+creating id: 1190
+creating id: 1200
+creating id: 1210
+creating id: 1220
+creating id: 1230
+creating id: 1240
+creating id: 1250
+creating id: 1260
+creating id: 1270
+creating id: 1280
+now building bigger trees: printing
+7583
+printing
+7551
+printing
+7535
+printing
+7527
+printing
+7523
+printing
+7521
+printing
+7522
+printing
+7526
+printing
+7524
+printing
+7525
+printing
+7534
+printing
+7530
+printing
+7528
+printing
+7529
+printing
+7533
+printing
+7531
+printing
+7532
+printing
+7550
+printing
+7542
+printing
+7538
+printing
+7536
+printing
+7537
+printing
+7541
+printing
+7539
+printing
+7540
+printing
+7549
+printing
+7545
+printing
+7543
+printing
+7544
+printing
+7548
+printing
+7546
+printing
+7547
+printing
+7582
+printing
+7566
+printing
+7558
+printing
+7554
+printing
+7552
+printing
+7553
+printing
+7557
+printing
+7555
+printing
+7556
+printing
+7565
+printing
+7561
+printing
+7559
+printing
+7560
+printing
+7564
+printing
+7562
+printing
+7563
+printing
+7581
+printing
+7573
+printing
+7569
+printing
+7567
+printing
+7568
+printing
+7572
+printing
+7570
+printing
+7571
+printing
+7580
+printing
+7576
+printing
+7574
+printing
+7575
+printing
+7579
+printing
+7577
+printing
+7578
+now test sequences of strings:hohoho
+done!
+finished
+==35149== 
+==35149== HEAP SUMMARY:
+==35149==     in use at exit: 0 bytes in 0 blocks
+==35149==   total heap usage: 11,926 allocs, 11,926 frees, 762,274 bytes allocated
+==35149== 
+==35149== All heap blocks were freed -- no leaks are possible
+==35149== 
+==35149== For lists of detected and suppressed errors, rerun with: -s
+==35149== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)
