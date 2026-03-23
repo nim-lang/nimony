@@ -207,7 +207,11 @@ proc commonType(c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: i
 
   var arg = Item(n: cursorAt(dest, argBegin), typ: it.typ)
   var done = false
-  if typeKind(arg.typ) == VoidT and isNoReturn(arg.n):
+  if arg.n.exprKind == ErrX:
+    # already produced an error, continue with the destination type:
+    it.typ = expected
+    done = true
+  elif typeKind(arg.typ) == VoidT and isNoReturn(arg.n):
     # noreturn allowed in expression context
     # maybe use sem flags to restrict this to statement branches
     done = true
@@ -2103,8 +2107,12 @@ proc semAsgn(c: var SemContext; dest: var TokenBuf; it: var Item) =
   else:
     dest.addParLe(AsgnS, info)
     var a = Item(n: it.n, typ: c.types.autoType)
+    let beforeLhs = dest.len
     semExpr c, dest, a # infers type of `left-hand-side`
-    removeModifier(a.typ) # remove `var` for rhs
+    if dest[beforeLhs].exprKind == ErrX:
+      a.typ = c.types.autoType
+    else:
+      removeModifier(a.typ) # remove `var` for rhs
     semExpr c, dest, a # ensures type compatibility with `left-hand-side`
     it.n = a.n
     takeParRi dest, it.n
@@ -2583,7 +2591,9 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
   semExpr c, dest, iterCall, {PreferIterators, KeepMagics}
   it.n = iterCall.n
   var isMacroLike = false
-  if isIteratorCall(c, dest, beforeCall):
+  if dest[beforeCall].exprKind == ErrX:
+    discard "already produced an error"
+  elif isIteratorCall(c, dest, beforeCall):
     discard "fine"
   elif dest[beforeCall].kind == ParLe and
       (dest[beforeCall].tagId == TagId(FieldsTagId) or
@@ -2770,9 +2780,10 @@ proc semShift(c: var SemContext; dest: var TokenBuf; it: var Item) =
   semExpr c, dest, it
   var shift = Item(n: it.n, typ: c.types.autoType)
   let shiftInfo = shift.n.info
+  let beforeShift = dest.len
   semExpr c, dest, shift
   it.n = shift.n
-  if shift.typ.typeKind notin {IntT, UIntT}:
+  if dest[beforeShift].exprKind != ErrX and shift.typ.typeKind notin {IntT, UIntT}:
     c.buildErr dest, shiftInfo, "expected integer for shift operand"
   takeParRi dest, it.n
   commonType c, dest, it, beforeExpr, typ
