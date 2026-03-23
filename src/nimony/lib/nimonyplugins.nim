@@ -10,66 +10,127 @@ export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther
 export NoLineInfo, inc, skip, typeKind, stmtKind, exprKind, info
 
 type
-  Tree* = object
+  TreeStorage = ref object
     buf: TokenBuf
+
+  Tree* = object
+    storage: TreeStorage
 
   LineInfo* = PackedLineInfo
 
-  Node* = Cursor
+  Node* = object
+    storage: TreeStorage
+    cursor: Cursor
+    remaining: int
+    spanLen: int
+
+converter toCursor*(n: Node): Cursor {.inline.} =
+  n.cursor
+
+proc rawSpan(n: Node): int {.inline.} =
+  if n.remaining == 0:
+    result = 0
+  else:
+    result = n.spanLen
+
+proc refreshSpan(n: var Node) {.inline.} =
+  if n.remaining == 0:
+    n.spanLen = 0
+  else:
+    n.spanLen = span(n.cursor)
+
+proc createStorage(buf: sink TokenBuf): TreeStorage =
+  new(result)
+  result.buf = buf
 
 proc otherKind*(n: Node): NimonyOther {.inline.} =
   n.substructureKind
 
 proc createTree*(): Tree =
-  Tree(buf: createTokenBuf())
+  Tree(storage: createStorage(createTokenBuf()))
 
 proc createTree(buf: sink TokenBuf): Tree =
-  Tree(buf: buf)
+  Tree(storage: createStorage(buf))
 
 template withTree*(t: var Tree; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma; info: LineInfo; body: untyped) =
-  t.buf.addParLe(kind, info)
+  t.storage.buf.addParLe(kind, info)
   body
-  t.buf.addParRi()
+  t.storage.buf.addParRi()
 
 proc takeTree*(t: var Tree; n: var Node) =
-  t.buf.takeTree(n)
+  let count = n.rawSpan
+  var cursor = n.cursor
+  for _ in 0..<count:
+    t.storage.buf.add cursor.load
+    inc cursor
+  n.cursor = cursor
+  n.remaining -= count
+  n.refreshSpan()
 
 proc addDotToken*(t: var Tree) =
-  t.buf.addDotToken()
+  t.storage.buf.addDotToken()
 
 proc addStrLit*(t: var Tree; s: string) =
-  t.buf.addStrLit(s)
+  t.storage.buf.addStrLit(s)
 
 proc addIntLit*(t: var Tree; i: BiggestInt) =
-  t.buf.addIntLit(i)
+  t.storage.buf.addIntLit(i)
 
 proc addUIntLit*(t: var Tree; i: BiggestUInt) =
-  t.buf.addUIntLit(i)
+  t.storage.buf.addUIntLit(i)
 
 proc addIdent*(t: var Tree; ident: string) =
-  t.buf.addIdent(ident)
+  t.storage.buf.addIdent(ident)
+
+proc add*(t: var TokenBuf; n: Node) =
+  t.add n.cursor.load
+
+proc takeTree*(t: var TokenBuf; n: var Node) =
+  let count = n.rawSpan
+  var cursor = n.cursor
+  for _ in 0..<count:
+    t.add cursor.load
+    inc cursor
+  n.cursor = cursor
+  n.remaining -= count
+  n.refreshSpan()
+
+proc inc*(n: var Node) =
+  inc n.cursor
+  dec n.remaining
+  n.refreshSpan()
+
+proc skip*(n: var Node) =
+  let count = n.rawSpan
+  skip n.cursor
+  n.remaining -= count
+  n.refreshSpan()
+
+proc setInfo*(n: var Node; info: PackedLineInfo) {.inline.} =
+  n.cursor.setInfo(info)
 
 proc loadTree*(filename = paramStr(1)): Tree =
   var inp = nifstreams.open(filename)
   try:
-    result = Tree(buf: fromStream(inp))
+    result = createTree(fromStream(inp))
   finally:
     close(inp)
 
-proc beginRead*(tree: var Tree): Node {.inline.} =
-  result = beginRead(tree.buf)
+proc beginRead*(tree: Tree): Node {.inline.} =
+  result = Node(
+    storage: tree.storage,
+    cursor: beginRead(tree.storage.buf),
+    remaining: tree.storage.buf.len,
+    spanLen: tree.storage.buf.len)
 
 proc saveTree*(tree: Tree) =
-  writeFile paramStr(2), toString(tree.buf)
+  writeFile paramStr(2), toString(tree.storage.buf)
 
 proc saveTree*(tree: Tree; filename: string) =
-  writeFile filename, toString(tree.buf)
+  writeFile filename, toString(tree.storage.buf)
 
 type
   NifIdent* = distinct string
-
-  NifNode* = distinct string
-
   NifBinding = tuple[name: string, value: string]
 
 proc ident*(s: string): NifIdent =
@@ -81,102 +142,117 @@ proc parseNifFragment(text: string): Tree =
     buf.shrink(buf.len-1)
   result = createTree(buf)
 
-proc strLitNode(s: string): NifNode =
-  var b = nifbuilder.open(s.len + 4)
+proc createNode(text: string): Node =
+  result = beginRead(parseNifFragment(text))
+
+proc renderNode(n: Node): string =
+  let count = n.rawSpan
+  if count == 0:
+    result = ""
+  else:
+    var buf = createTokenBuf(count)
+    var cursor = n.cursor
+    for _ in 0..<count:
+      buf.add cursor.load
+      inc cursor
+    result = toString(buf, false)
+
+proc strLitNode(s: string): Node =
+  var b = nifbuilder.open(s.len + 8)
   b.addStrLit(s)
-  result = NifNode(b.extract())
+  result = createNode(b.extract())
 
-proc identNode(s: string): NifNode =
-  var b = nifbuilder.open(s.len + 4)
+proc identNode(s: string): Node =
+  var b = nifbuilder.open(s.len + 6)
   b.addIdent(s)
-  result = NifNode(b.extract())
+  result = createNode(b.extract())
 
-proc charLitNode(c: char): NifNode =
+proc charLitNode(c: char): Node =
   var b = nifbuilder.open(8)
   b.addCharLit(c)
-  result = NifNode(b.extract())
+  result = createNode(b.extract())
 
-proc intLitNode(i: BiggestInt): NifNode =
+proc intLitNode(i: BiggestInt): Node =
   var b = nifbuilder.open(24)
   b.addIntLit(i)
-  result = NifNode(b.extract())
+  result = createNode(b.extract())
 
-proc uintLitNode(u: BiggestUInt): NifNode =
+proc uintLitNode(u: BiggestUInt): Node =
   var b = nifbuilder.open(24)
   b.addUIntLit(u)
-  result = NifNode(b.extract())
+  result = createNode(b.extract())
 
-proc floatLitNode(f: BiggestFloat): NifNode =
+proc floatLitNode(f: BiggestFloat): Node =
   var b = nifbuilder.open(32)
   b.addFloatLit(f)
-  result = NifNode(b.extract())
+  result = createNode(b.extract())
 
-proc boolNode(v: bool): NifNode =
+proc boolNode(v: bool): Node =
   var b = nifbuilder.open(8)
   b.addKeyw(if v: "true" else: "false")
-  result = NifNode(b.extract())
+  result = createNode(b.extract())
 
-proc `~`*(src: NifNode): NifNode {.inline.} =
+proc `~`*(src: Node): Node {.inline.} =
   src
 
-proc `~`*(src: Cursor): NifNode =
-  NifNode(toString(src, false))
+proc `~`*(src: Cursor): Node =
+  createNode(toString(src, false))
 
-proc `~`*(src: TokenBuf): NifNode =
-  NifNode(toString(src, false))
+proc `~`*(src: TokenBuf): Node =
+  createNode(toString(src, false))
 
-proc `~`*(src: Tree): NifNode =
-  NifNode(toString(src.buf, false))
+proc `~`*(src: Tree): Node =
+  createNode(toString(src.storage.buf, false))
 
-proc `~`*(src: PackedToken): NifNode =
-  NifNode(nifstreams.toString([src], false))
+proc `~`*(src: PackedToken): Node =
+  createNode(nifstreams.toString([src], false))
 
-proc `~`*(src: string): NifNode =
+proc `~`*(src: string): Node =
   strLitNode(src)
 
-proc `~`*(src: NifIdent): NifNode =
+proc `~`*(src: NifIdent): Node =
   identNode(string(src))
 
-proc `~`*(src: char): NifNode =
+proc `~`*(src: char): Node =
   charLitNode(src)
 
-proc `~`*(src: int): NifNode =
+proc `~`*(src: int): Node =
   intLitNode(BiggestInt(src))
 
-proc `~`*(src: int8): NifNode =
+proc `~`*(src: int8): Node =
   intLitNode(BiggestInt(src))
 
-proc `~`*(src: int16): NifNode =
+proc `~`*(src: int16): Node =
   intLitNode(BiggestInt(src))
 
-proc `~`*(src: int32): NifNode =
+proc `~`*(src: int32): Node =
   intLitNode(BiggestInt(src))
 
-proc `~`*(src: int64): NifNode =
+proc `~`*(src: int64): Node =
   intLitNode(BiggestInt(src))
 
-proc `~`*(src: uint): NifNode =
+proc `~`*(src: uint): Node =
   uintLitNode(BiggestUInt(src))
 
-proc `~`*(src: uint8): NifNode =
+proc `~`*(src: uint8): Node =
   uintLitNode(BiggestUInt(src))
 
-proc `~`*(src: uint16): NifNode =
+proc `~`*(src: uint16): Node =
   uintLitNode(BiggestUInt(src))
 
-proc `~`*(src: uint32): NifNode =
+proc `~`*(src: uint32): Node =
   uintLitNode(BiggestUInt(src))
 
-proc `~`*(src: uint64): NifNode =
+proc `~`*(src: uint64): Node =
   uintLitNode(BiggestUInt(src))
 
-proc `~`*(src: float32): NifNode =
+proc `~`*(src: float32): Node =
   floatLitNode(BiggestFloat(src))
 
-proc `~`*(src: float64): NifNode =
+proc `~`*(src: float64): Node =
   floatLitNode(BiggestFloat(src))
 
-proc `~`*(src: bool): NifNode =
+proc `~`*(src: bool): Node =
   boolNode(src)
 
 proc lookupBinding(bindings: openArray[NifBinding]; name: string): string =
@@ -216,10 +292,10 @@ proc expandNifSnippet(spec: string; bindings: openArray[NifBinding]): string =
     else:
       quit "invalid nif substitution syntax"
 
-proc nif*(spec: string; bindings: openArray[(string, NifNode)]): Tree =
+proc nif*(spec: string; bindings: openArray[(string, Node)]): Tree =
   var converted = newSeqOfCap[NifBinding](bindings.len)
   for entry in bindings:
-    converted.add (name: entry[0], value: string(entry[1]))
+    converted.add (name: entry[0], value: renderNode(entry[1]))
   parseNifFragment(expandNifSnippet(spec, converted))
 
 proc nif*(spec: string): Tree =
