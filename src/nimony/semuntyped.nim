@@ -322,7 +322,7 @@ proc semTemplTypeDecl(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
   takeTree dest, n # name
   addDecl(c, dest, decl.name, decl.pragmas, TypeY, nameStart, declStart)
   takeTree dest, n # exported
-  let isGeneric = n.kind != DotToken
+  let isGeneric = n.substructureKind == TypevarsU
   if isGeneric:
     openScope c
     semTemplGenericParams c, dest, n
@@ -348,8 +348,42 @@ proc semTemplLocal(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor; k: SymK
   takeParRi dest, n
 
 proc semTemplRoutineDecl(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor; k: SymKind) =
-  # XXX todo
-  raiseAssert("unimplemented")
+  let orig = n
+  let routine = asRoutine(orig)
+  let declStart = dest.len
+  takeToken dest, n # proc/func/etc tag
+  let nameStart = dest.len
+  takeTree dest, n # name
+  addDecl(c, dest, routine.name, routine.pragmas, k, nameStart, declStart)
+  takeTree dest, n # exported
+  semTemplBody c, dest, n # pattern
+  let isGeneric = n.substructureKind == TypevarsU
+  if isGeneric:
+    openScope c
+    semTemplGenericParams c, dest, n
+  else:
+    takeToken dest, n
+  # params open a scope
+  openScope c
+  inc c.inNestedRoutine
+  inc c.inTemplateHeader
+  if n.substructureKind == ParamsU:
+    takeToken dest, n
+    while n.kind != ParRi:
+      semTemplLocal(c, dest, n, ParamY)
+    takeParRi dest, n
+  else:
+    takeToken dest, n # dot
+  dec c.inTemplateHeader
+  semTemplType c, dest, n # return type
+  semTemplPragmas c, dest, n # pragmas
+  semTemplBody c, dest, n # effects
+  semTemplBody c, dest, n # body
+  dec c.inNestedRoutine
+  closeScope c
+  if isGeneric:
+    closeScope c
+  takeParRi dest, n
 
 proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
   case n.kind
