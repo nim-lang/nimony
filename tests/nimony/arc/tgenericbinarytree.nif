@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +11102           )
+(.indexat +11130           )
 0,1,tests/nimony/arc/tgenericbinarytree.nim(stmts 5
  (type :int.0.
   (i -1) . 5
@@ -240,9 +240,9 @@
    (nodestroy)) .
   (stmts
    (call =destroy_ArefSX4eodeX4fbj0X49hirja6tge84fu91.0.
-    (dot dest.0 left.0 +0))
+    (dot dest.0 right.0 +0))
    (call =destroy_ArefSX4eodeX4fbj0X49hirja6tge84fu91.0.
-    (dot dest.0 right.0 +0)))) 23,3
+    (dot dest.0 left.0 +0)))) 23,3
  (proc :=wasmoved_SX4eodeX4fbj0X49hirja6tge84fu91.0. . . .
   (params
    (param :dest.0 . .
@@ -329,11 +329,13 @@
    (nodestroy)) .
   (stmts
    (call =trace_ArefSX4eodeX4fbj0X49hirja6tge84fu91.0.
-    (dot
-     (hderef dest.0) left.0 +0) src.0)
+    (haddr
+     (dot
+      (hderef dest.0) left.0 +0)) src.0)
    (call =trace_ArefSX4eodeX4fbj0X49hirja6tge84fu91.0.
-    (dot
-     (hderef dest.0) right.0 +0) src.0))) 23,3
+    (haddr
+     (dot
+      (hderef dest.0) right.0 +0)) src.0))) 23,3
  (proc :=destroy_ArefSX4eodeX4fbj0X49hirja6tge84fu91.0. . . .
   (params
    (param :dest.0 . . ~11
@@ -460,7 +462,7 @@
  (h =copy_SX4eodeX4fbj0X49hirja6tge84fu91.0. +562) 23,3
  (h =sinkh_SX4eodeX4fbj0X49hirja6tge84fu91.0. +533) 23,3
  (h =trace_SX4eodeX4fbj0X49hirja6tge84fu91.0. +536) 23,3
- (h =destroy_ArefSX4eodeX4fbj0X49hirja6tge84fu91.0. +413) 23,3
+ (h =destroy_ArefSX4eodeX4fbj0X49hirja6tge84fu91.0. +441) 23,3
  (h =wasmoved_ArefSX4eodeX4fbj0X49hirja6tge84fu91.0. +519) 23,3
  (h =dup_ArefSX4eodeX4fbj0X49hirja6tge84fu91.0. +232) 23,3
  (h =copy_ArefSX4eodeX4fbj0X49hirja6tge84fu91.0. +464) 23,3

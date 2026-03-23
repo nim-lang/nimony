@@ -24,8 +24,11 @@ type
     strLits*: Table[string, SymId]
     newTypes*: Table[string, SymId]
     pending*: TokenBuf
+    strLitBuf*: TokenBuf   ## static LongString const decls for SSO long literals
+    strLitCounter*: int    ## unique suffix for strLitBuf symbols
     typeCache*: TypeCache
     bits*: int
+    bigEndian*: bool
 
     breaks*: seq[SymId] # how to translate `break`
     continues*: seq[SymId] # how to translate `continue`

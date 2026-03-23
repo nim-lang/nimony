@@ -71,6 +71,7 @@ proc writeVersion() = quit(Version & "\n", QuitSuccess)
 proc handleCmdLine*() =
   var files: seq[string] = @[]
   var bits = sizeof(int) * 8
+  var bigEndian = false
   var flags = DefaultSettings
   var outdir = ""
   var action = ""
@@ -89,6 +90,11 @@ proc handleCmdLine*() =
         of "32": bits = 32
         of "16": bits = 16
         else: quit "invalid value for --bits"
+      of "cpu":
+        case val
+        of "be": bigEndian = true
+        of "le": bigEndian = false
+        else: quit "invalid value for --cpu; expected 'be' or 'le'"
       of "outdir":
         outdir = val
       of "flags":
@@ -104,7 +110,7 @@ proc handleCmdLine*() =
   else:
     case action
     of "c":
-      expand files[0], bits, flags
+      expand files[0], bits, bigEndian, flags
     of "d":
       deadCodeElimination(files, outdir)
     else:

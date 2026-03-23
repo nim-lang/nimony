@@ -21,8 +21,8 @@ converter toOpenArray*[I, T](x {.byref.}: array[I, T]): openArray[T] {.inline.} 
 converter toOpenArray*[T](s: seq[T]): openArray[T] {.inline.} =
   openArray[T](a: rawData(s), len: s.len)
 
-converter toOpenArray*(s: string): openArray[char] {.inline.} =
-  openArray[char](a: rawData(s), len: s.len)
+converter toOpenArray*(s {.byref.}: string): openArray[char] {.inline.} =
+  openArray[char](a: readRawData(s), len: s.len)
 
 func high*[T](a: openArray[T]): int {.inline.} = a.len - 1
 func low*[T](a: openArray[T]): int {.inline.} = 0

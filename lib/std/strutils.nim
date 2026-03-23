@@ -276,7 +276,7 @@ func startsWith*(s, prefix: string): bool =
     let a = "abracadabra"
     assert a.startsWith("abra") == true
     assert a.startsWith("bra") == false
-  continuesWith s, prefix, 0
+  startsWithImpl s, prefix
 
 func endsWith*(s, suffix: string): bool =
   ## Returns true if `s` ends with `suffix`.
@@ -452,6 +452,7 @@ func cmpIgnoreStyle*(a, b: string): int =
     # the characters are identical:
     inc i
     inc j
+  return 0
 
 func find*(s: string; sub: char; start: Natural = 0; last = -1): int =
   ## Searches for `sub` in `s` inside range `start..last` (both ends included).

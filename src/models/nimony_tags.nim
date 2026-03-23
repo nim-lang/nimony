@@ -82,7 +82,7 @@ type
     HighX = (ord(HighTagId), "high")
     LowX = (ord(LowTagId), "low")
     TypeofX = (ord(TypeofTagId), "typeof")  ## `typeof` operation for accessing the type of an expression
-    UnpackX = (ord(UnpackTagId), "unpack")
+    UnpackX = (ord(UnpackTagId), "unpack")  ## magic varargs expansion — see *Tuple Unpacking* section below
     FieldsX = (ord(FieldsTagId), "fields")  ## fields iterator
     FieldpairsX = (ord(FieldpairsTagId), "fieldpairs")  ## fieldPairs iterator
     EnumtostrX = (ord(EnumtostrTagId), "enumtostr")

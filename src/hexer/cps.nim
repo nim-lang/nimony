@@ -371,6 +371,8 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
 
       copyIntoKind dest, RetS, info:
         dest.addSymUse contVar, info
+    
+    c.currentProc.lastStmtReturns = true
 
 proc trDelay0(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Handles (delay0) — no-arg form: to the NEXT suspension point.
@@ -1040,6 +1042,11 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   dest.takeToken n
   dest.add init
   declareContinuationResult c, dest, NoLineInfo
+  dest.copyIntoKind RetS, n.info:
+    contNextState(c, dest, 0, n.info)
+  dest.addParRi() # close stmts
+  dest.addParRi() # close proc decl
+  newLocalProc c, dest, 0, c.procStack[^1]
   compileStmtSeq c, dest, n, -1
 
 proc generateCoroutineType(c: var Context; dest: var TokenBuf; sym: SymId) =

@@ -855,6 +855,8 @@ when not defined(nimscript) and supportedSystem:
     elif defined(js):
       raiseAssert "use -d:nodejs to have `getCurrentDir` defined"
     elif defined(windows):
+      # XXX init checking bug:
+      result = ""
       var bufsize = MAX_PATH.int32
       var res = newWideCString(bufsize).toWideCString()
       while true:

@@ -21,6 +21,7 @@ func `[]`*[T: tuple](x: T, i: int): untyped {.magic: "TupAt".}
 func `[]`*[I, T](x: array[I, T], i: I): var T {.magic: "ArrAt".}
 func `[]`*(x: cstring, i: int): var char {.magic: "Pat".}
 func `[]`*[T](x: ptr UncheckedArray[T], i: int): var T {.magic: "Pat".}
+func `[]`*[T](x: UncheckedArray[T], i: int): var T {.magic: "Pat".}
 template `[]=`*[T: tuple](x: T, i: int, elem: typed) =
   (x[i]) = elem
 template `[]=`*[I, T](x: array[I, T], i: I; elem: T) =
@@ -28,6 +29,8 @@ template `[]=`*[I, T](x: array[I, T], i: I; elem: T) =
 template `[]=`*(x: cstring, i: int; elem: char) =
   (x[i]) = elem
 template `[]=`*[T](x: ptr UncheckedArray[T], i: int; elem: T) =
+  (x[i]) = elem
+template `[]=`*[T](x: UncheckedArray[T], i: int; elem: T) =
   (x[i]) = elem
 
 func `[]`*[T](x: ptr T): var T {.magic: "Deref", noSideEffect.}
@@ -113,6 +116,7 @@ func `$`*[T: enum](x: T): string {.magic: "EnumToStr", noSideEffect.}
   ## Converts an enum value to a string.
 
 func addr*[T](x: T): ptr T {.magic: "Addr", noSideEffect.}
+func unsafeAddr*[T](x: T): ptr T {.magic: "Addr", noSideEffect.}
 
 func sizeof*[T](x: typedesc[T]): int {.magic: "SizeOf", noSideEffect.}
 
@@ -197,7 +201,6 @@ func getRtti(dummy: pointer): ptr Rtti {.nodecl, noinit.} = discard "patched by 
 func ord*[T: Ordinal|enum](x: T): int {.inline.} =
   ## Returns the internal `int` value of `x`, including for enum with holes
   ## and distinct ordinal types.
-
   int(x)
 
 type
