@@ -322,7 +322,7 @@ proc unravelObjField(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf;
     let b = accessObjField(c, paramB, r.name, 1, depth = depth)
     unravel c, fieldType, a, b
 
-proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf; depth: int) =
+proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf; depth: int) =
   while n.kind != ParRi:
     case n.substructureKind
     of CaseU:
@@ -332,7 +332,7 @@ proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf
         var nCopy = n
         let prevOp = c.op
         c.op = attachedDestroy
-        unravelObjFields(c, nCopy, paramA, paramB, depth)
+        unravelObjFieldsForward(c, nCopy, paramA, paramB, depth)
         c.op = prevOp
       let info = n.info
       inc n
@@ -354,14 +354,14 @@ proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf
           c.dest.takeTree(n)
           assert n.stmtKind == StmtsS
           c.dest.takeToken(n)
-          unravelObjFields c, n, paramA, paramB, depth
+          unravelObjFieldsForward c, n, paramA, paramB, depth
           takeParRi(c.dest, n)
           takeParRi(c.dest, n)
         of ElseU:
           c.dest.takeToken(n)
           assert n.stmtKind == StmtsS
           c.dest.takeToken(n)
-          unravelObjFields c, n, paramA, paramB, depth
+          unravelObjFieldsForward c, n, paramA, paramB, depth
           takeParRi(c.dest, n)
           takeParRi(c.dest, n)
         else:
@@ -379,6 +379,34 @@ proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf
     else:
       error "illformed AST inside object: ", n
 
+proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf; depth: int) =
+  if c.op != attachedDestroy:
+    unravelObjFieldsForward c, n, paramA, paramB, depth
+  else:
+    # For destruction, process fields in reverse declaration order.
+    # Collect field cursor positions first, then process in reverse.
+    var fieldPositions: seq[Cursor] = @[]
+    var scan = n
+    while scan.kind != ParRi:
+      case scan.substructureKind
+      of CaseU, FldU:
+        fieldPositions.add scan
+        skip scan
+      of NilU:
+        skip scan
+      else:
+        error "illformed AST inside object: ", scan
+    for i in countdown(fieldPositions.high, 0):
+      var cur = fieldPositions[i]
+      case cur.substructureKind
+      of CaseU:
+        unravelObjFieldsForward c, cur, paramA, paramB, depth
+      of FldU:
+        unravelObjField c, cur, paramA, paramB, depth
+      else:
+        discard
+    n = scan
+
 proc baseobjOf(c: var LiftingCtx; typ: Cursor; x: TokenBuf): TokenBuf =
   result = createTokenBuf(6)
   copyIntoKind result, BaseobjX, c.info:
@@ -393,10 +421,13 @@ proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf; depth: i
   assert n.typeKind == ObjectT
   inc n
   # recurse for the inherited object type, if any:
-  if n.kind != DotToken:
-    var parent = n
+  var parent = n
+  var hasParent = n.kind != DotToken
+  if hasParent:
     if parent.typeKind in {RefT, PtrT}:
       inc parent
+
+  if hasParent and c.op != attachedDestroy:
     if c.op == attachedWasMoved:
       # this ensures we don't touch the RTTI field and overwrite it
       # with the wrong v-table pointer!
@@ -408,6 +439,11 @@ proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf; depth: i
 
   skip n # inheritance is gone
   unravelObjFields c, n, paramA, paramB, depth
+
+  if hasParent and c.op == attachedDestroy:
+    # For destruction, destroy derived fields first, then the base class.
+    let fn = lift(c, parent)
+    maybeCallHook c, fn, baseobjOf(c, parent, paramA), baseobjOf(c, parent, paramB), forceStatic = true
 
 proc unravelTuple(c: var LiftingCtx;
                   n: Cursor; paramA, paramB: TokenBuf) =
