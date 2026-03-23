@@ -179,12 +179,15 @@ proc readonlyCursorAt*(b: TokenBuf; i: int): Cursor {.inline.} =
   assert(not isMutable(b))
   result = Cursor(p: addr b.data[i], rem: b.len-i)
 
-proc beginReadonly*(b: TokenBuf): Cursor {.inline.} =
-  assert(not isMutable(b))
-  if b.len == 0:
-    result = Cursor(p: cast[ptr PackedToken](b.data), rem: 0)
-  else:
-    result = readonlyCursorAt(b, 0)
+proc shareRead*(b: var TokenBuf; c: Cursor): Cursor =
+  let pos = (cast[int](c.p) - cast[int](b.data)) div sizeof(PackedToken)
+  if b.readers == 0:
+    freeze(b)
+  inc b.readers
+  result = Cursor(
+    p: cast[ptr PackedToken](
+      cast[uint](b.data) + pos.uint * sizeof(PackedToken).uint),
+    rem: c.rem)
 
 proc cursorToPosition*(b: TokenBuf; c: Cursor): int {.inline.} =
   result = (cast[int](c.p) - cast[int](b.data)) div sizeof(PackedToken)

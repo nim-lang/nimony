@@ -10,69 +10,77 @@ export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther
 export NoLineInfo, inc, skip, typeKind, stmtKind, exprKind, info
 
 type
-  TreeStorage = ref object
+  Tree* = ref object
     buf: TokenBuf
-
-  Tree* = distinct TreeStorage
-  FrozenTree* = distinct TreeStorage
 
   LineInfo* = PackedLineInfo
 
   Node* = object
-    owner: FrozenTree
+    owner: Tree
     cursor: Cursor
 
 converter toCursor*(n: Node): Cursor {.inline.} =
   n.cursor
 
-proc storage(tree: Tree): TreeStorage {.inline.} =
-  TreeStorage(tree)
+proc createTree(buf: sink TokenBuf): Tree =
+  result = Tree(buf: buf)
 
-proc storage(tree: FrozenTree): TreeStorage {.inline.} =
-  TreeStorage(tree)
+proc hasOwner(n: Node): bool {.inline.} =
+  n.owner != nil
 
-proc createStorage(buf: sink TokenBuf; frozen: bool): TreeStorage =
-  new(result)
-  result.buf = buf
-  if frozen:
-    freeze(result.buf)
+proc `=destroy`(n: var Node) =
+  if hasOwner(n):
+    endRead(n.owner.buf)
+
+proc `=copy`(dest: var Node; src: Node) =
+  if cast[pointer](addr dest) == cast[pointer](unsafeAddr src):
+    return
+  `=destroy`(dest)
+  wasMoved(dest)
+  if hasOwner(src):
+    dest.owner = src.owner
+    dest.cursor = shareRead(dest.owner.buf, src.cursor)
 
 proc otherKind*(n: Node): NimonyOther {.inline.} =
   n.substructureKind
 
 proc createTree*(): Tree =
-  Tree(createStorage(createTokenBuf(), frozen = false))
+  createTree(createTokenBuf())
 
-proc createFrozenTree(buf: sink TokenBuf): FrozenTree =
-  FrozenTree(createStorage(buf, frozen = true))
+proc freeze*(tree: sink Tree): Node
+proc renderNode(n: Node): string
 
-proc snapshot*(tree: Tree): FrozenTree =
-  var buf = createTokenBuf(storage(tree).buf.len)
-  buf.add storage(tree).buf
-  result = createFrozenTree(buf)
+proc snapshot*(tree: Tree): Node =
+  var buf = createTokenBuf(tree.buf.len)
+  buf.add tree.buf
+  result = freeze(createTree(buf))
+
+proc freeze*(tree: sink Tree): Node =
+  let owner = tree
+  result = Node(owner: owner, cursor: beginRead(owner.buf))
 
 template withTree*(t: var Tree; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma; info: LineInfo; body: untyped) =
-  storage(t).buf.addParLe(kind, info)
+  t.buf.addParLe(kind, info)
   body
-  storage(t).buf.addParRi()
+  t.buf.addParRi()
 
 proc takeTree*(t: var Tree; n: var Node) =
-  storage(t).buf.takeTree(n.cursor)
+  t.buf.takeTree(n.cursor)
 
 proc addDotToken*(t: var Tree) =
-  storage(t).buf.addDotToken()
+  t.buf.addDotToken()
 
 proc addStrLit*(t: var Tree; s: string) =
-  storage(t).buf.addStrLit(s)
+  t.buf.addStrLit(s)
 
 proc addIntLit*(t: var Tree; i: BiggestInt) =
-  storage(t).buf.addIntLit(i)
+  t.buf.addIntLit(i)
 
 proc addUIntLit*(t: var Tree; i: BiggestUInt) =
-  storage(t).buf.addUIntLit(i)
+  t.buf.addUIntLit(i)
 
 proc addIdent*(t: var Tree; ident: string) =
-  storage(t).buf.addIdent(ident)
+  t.buf.addIdent(ident)
 
 proc add*(t: var TokenBuf; n: Node) =
   t.add n.cursor.load
@@ -89,30 +97,31 @@ proc skip*(n: var Node) =
 proc setInfo*(n: var Node; info: PackedLineInfo) {.inline.} =
   n.cursor.setInfo(info)
 
-proc loadTree*(filename = paramStr(1)): FrozenTree =
+proc loadTree*(filename = paramStr(1)): Node =
   var inp = nifstreams.open(filename)
   try:
-    result = createFrozenTree(fromStream(inp))
+    result = freeze(createTree(fromStream(inp)))
   finally:
     close(inp)
 
-proc beginRead*(tree: FrozenTree): Node {.inline.} =
-  result = Node(owner: tree, cursor: beginReadonly(storage(tree).buf))
-
 proc beginRead*(tree: Tree): Node {.inline.} =
-  result = beginRead(snapshot(tree))
+  let owner = tree
+  result = Node(owner: owner, cursor: beginRead(owner.buf))
+
+proc beginRead*(n: Node): Node {.inline.} =
+  n
 
 proc saveTree*(tree: Tree) =
-  writeFile paramStr(2), toString(storage(tree).buf)
+  writeFile paramStr(2), toString(tree.buf)
 
 proc saveTree*(tree: Tree; filename: string) =
-  writeFile filename, toString(storage(tree).buf)
+  writeFile filename, toString(tree.buf)
 
-proc saveTree*(tree: FrozenTree) =
-  writeFile paramStr(2), toString(storage(tree).buf)
+proc saveTree*(tree: Node) =
+  writeFile paramStr(2), renderNode(tree)
 
-proc saveTree*(tree: FrozenTree; filename: string) =
-  writeFile filename, toString(storage(tree).buf)
+proc saveTree*(tree: Node; filename: string) =
+  writeFile filename, renderNode(tree)
 
 type
   NifIdent* = distinct string
@@ -121,14 +130,14 @@ type
 proc ident*(s: string): NifIdent =
   NifIdent(s)
 
-proc parseNifFragment(text: string): FrozenTree =
+proc parseNifFragment(text: string): Node =
   var buf = parseFromBuffer(text, "")
   if buf.len > 0 and buf[buf.len-1].kind == EofToken:
     buf.shrink(buf.len-1)
-  result = createFrozenTree(buf)
+  result = freeze(createTree(buf))
 
 proc createNode(text: string): Node =
-  result = beginRead(parseNifFragment(text))
+  result = parseNifFragment(text)
 
 proc renderNode(n: Node): string =
   result = toString(n.cursor, false)
@@ -178,9 +187,6 @@ proc `~`*(src: TokenBuf): Node =
   createNode(toString(src, false))
 
 proc `~`*(src: Tree): Node =
-  beginRead(snapshot(src))
-
-proc `~`*(src: FrozenTree): Node =
   beginRead(src)
 
 proc `~`*(src: PackedToken): Node =
@@ -260,8 +266,6 @@ proc expandNifSnippet(spec: string; bindings: openArray[NifBinding]): string =
     elif spec[i + 1] == '$':
       result.add '$'
       inc i, 2
-    elif spec[i + 1] == '{':
-      quit "nif runtime substitution does not support ${expr}; use $name bindings"
     elif isNifIdentStart(spec[i + 1]):
       let start = i + 1
       i = start + 1
@@ -271,11 +275,11 @@ proc expandNifSnippet(spec: string; bindings: openArray[NifBinding]): string =
     else:
       quit "invalid nif substitution syntax"
 
-proc nif*(spec: string; bindings: openArray[(string, Node)]): FrozenTree =
+proc nif*(spec: string; bindings: openArray[(string, Node)]): Node =
   var converted = newSeqOfCap[NifBinding](bindings.len)
   for entry in bindings:
     converted.add (name: entry[0], value: renderNode(entry[1]))
   parseNifFragment(expandNifSnippet(spec, converted))
 
-proc nif*(spec: string): FrozenTree =
+proc nif*(spec: string): Node =
   parseNifFragment(spec)

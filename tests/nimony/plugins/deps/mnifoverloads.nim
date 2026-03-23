@@ -1,6 +1,6 @@
 import nimonyplugins
 
-proc tr(n: Node): FrozenTree =
+proc tr(n: Node): Node =
   var arg = n
   if arg.stmtKind == StmtsS:
     inc arg
