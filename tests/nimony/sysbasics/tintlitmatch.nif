@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +2084            )
+(.indexat +2088            )
 0,1,tests/nimony/sysbasics/tintlitmatch.nim(stmts
  (import sysvq0asl)
  (proc 5 :foo.0. . . . 8
@@ -29,14 +29,14 @@
  (proc 5 :baz.1. . . . 8
   (params 1
    (param :x.3 . . 3
-    (i -1) .)) . . . 19
+    (i +64) .)) . . . 19
   (stmts
    (discard .))) 3,6
  (call ~3 baz.1. 1 +123) 4,9
  (gvar :x.0. . . 3
   (i +32) .) 4,10
  (gvar :y.0. . . 3
-  (i -1) .) ,13
+  (i +64) .) ,13
  (discard 10
   (eq
    (i +64) ~2
@@ -60,9 +60,9 @@
   (eq
    (i +64) ~5
    (conv 1
-    (i -1) ~3 +123) 6
+    (i +64) ~3 +123) 6
    (conv ~10
-    (i -1) ~3 +123))) ,17
+    (i +64) ~3 +123))) ,17
  (discard 18
   (eq
    (i +32) ~7
@@ -94,5 +94,5 @@
  (h bar.0. +112) ,4
  (h baz.0. +222) ,5
  (h baz.1. +112) 4,9
- (h x.0. +141) 4,10
+ (h x.0. +142) 4,10
  (h y.0. +37))

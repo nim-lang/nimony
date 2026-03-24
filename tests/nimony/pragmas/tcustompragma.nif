@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +496             )
+(.indexat +498             )
 0,1,tests/nimony/pragmas/tcustompragma.nim(stmts 2
  (pragmas
   (pragma 6 customPragma) 22 noinit 30 discardable 47
@@ -7,7 +7,7 @@
    (bracket))) ,2
  (proc 5 :foo.0. . . . 8
   (params) 4
-  (i -1) 16
+  (i +64) 16
   (pragmas 8,~2
    (noinit) 16,~2
    (discardable) 29,~2
@@ -17,7 +17,7 @@
    (result :result.0 .
     (pragmas
      (noinit)) ~31
-    (i -1) .)
+    (i +64) .)
    (discard .) ~35
    (ret result.0))) 3,4
  (call ~3 foo.0.) 4,2

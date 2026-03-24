@@ -42,8 +42,8 @@ type
     mem: seq[TokenBuf]
     current: TypeScope
 
-proc createTypeCache*(): TypeCache =
-  TypeCache(builtins: createBuiltinTypes())
+proc createTypeCache*(bits: int = 64): TypeCache =
+  TypeCache(builtins: createBuiltinTypes(bits))
 
 proc registerLocal*(c: var TypeCache; s: SymId; kind: SymKind; typ: Cursor) =
   c.current.locals[s] = LocalInfo(kind: kind, typ: typ)

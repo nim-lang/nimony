@@ -133,6 +133,8 @@ func initTable*[K, V](): Table[K, V] =
   Table[K, V](data: @[], hashes: @[])
 
 when isMainModule:
+  import std/syncio
+
   var tab: Table[string, int] = initTable[string, int]()
   for i in 0..<1000:
     tab[$i] = i
