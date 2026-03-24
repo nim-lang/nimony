@@ -302,6 +302,12 @@ proc addUIntLit*(dest: var TokenBuf; i: BiggestUInt; info = NoLineInfo) =
 proc addIdent*(dest: var TokenBuf; s: string; info = NoLineInfo) =
   dest.add identToken(pool.strings.getOrIncl(s), info)
 
+proc addCharLit*(dest: var TokenBuf; c: char; info = NoLineInfo) =
+  dest.add charToken(c, info)
+
+proc addFloatLit*(dest: var TokenBuf; f: BiggestFloat; info = NoLineInfo) =
+  dest.add floatToken(pool.floats.getOrIncl(f), info)
+
 proc span*(c: Cursor): int =
   result = 0
   var c = c

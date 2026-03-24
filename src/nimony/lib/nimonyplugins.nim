@@ -2,7 +2,7 @@
 
 import std / syncio
 from std / os import paramStr
-import ".." / ".." / "lib" / [nifcursors, nifstreams, lineinfos, bitabs]
+import ".." / ".." / "lib" / [nifcursors, nifstreams, lineinfos]
 
 import ".." / [nimony_model]
 export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther
@@ -157,6 +157,14 @@ proc addIdent*(t: Tree; ident: string) =
   ## Appends an identifier atom to `t`.
   t.buf.addIdent(ident)
 
+proc addCharLit*(t: Tree; c: char) =
+  ## Appends a character literal atom to `t`.
+  t.buf.addCharLit(c)
+
+proc addFloatLit*(t: Tree; f: BiggestFloat) =
+  ## Appends a floating-point literal atom to `t`.
+  t.buf.addFloatLit(f)
+
 proc add*(t: var TokenBuf; n: Node) =
   ## Appends only the current token from `n` to `t`.
   ## This does not copy an entire subtree.
@@ -231,7 +239,7 @@ proc identNode(s: string): Node =
 
 proc charLitNode(c: char): Node =
   var buf = createTokenBuf(1)
-  buf.add charToken(c, NoLineInfo)
+  buf.addCharLit(c)
   result = createNode(buf)
 
 proc intLitNode(i: BiggestInt): Node =
@@ -246,7 +254,7 @@ proc uintLitNode(u: BiggestUInt): Node =
 
 proc floatLitNode(f: BiggestFloat): Node =
   var buf = createTokenBuf(1)
-  buf.add floatToken(pool.floats.getOrIncl(f), NoLineInfo)
+  buf.addFloatLit(f)
   result = createNode(buf)
 
 proc boolNode(v: bool): Node =
