@@ -1,6 +1,7 @@
 (.nif26)
-(.indexat +316             )
+(.indexat +336             )
 0,1,tests/nimony/sysbasics/tresultnoinit.nim(stmts
+ (import sysvq0asl)
  (proc 5 :foo.0. . . . 8
   (params) 4
   (i -1) 16
@@ -14,4 +15,4 @@
    (discard .) ~29
    (ret result.0))) 4
  (comment int.0.sysvq0asl))0,1,tests/nimony/sysbasics/tresultnoinit.nim(.index
- (h foo.0. +88))
+ (h foo.0. +108))

@@ -1797,7 +1797,15 @@ proc trStmt(c: var EContext; n: var Cursor; mode = TraverseInner) =
     of FuncS, ProcS, ConverterS, MethodS:
       moveToTopLevel(c, mode):
         trProc c, n, mode
-    of MacroS, TemplateS, IncludeS, ImportS, FromimportS, ImportExceptS, ExportS, CommentS, IteratorS,
+    of ImportS:
+      # Collect module suffixes for init proc generation:
+      inc n
+      while n.kind != ParRi:
+        if n.kind == Ident:
+          c.importedModuleSuffixes.add pool.strings[n.litId]
+        skip n
+      inc n # skip ParRi
+    of MacroS, TemplateS, IncludeS, FromimportS, ImportExceptS, ExportS, CommentS, IteratorS,
        ImportasS, ExportexceptS, BindS, MixinS, UsingS, StaticstmtS:
       # pure compile-time construct, ignore:
       skip n
@@ -1884,6 +1892,78 @@ proc initDynlib(c: var EContext, rootInfo: PackedLineInfo) =
 
       c.dest.addParRi()
 
+proc initProcName(moduleSuffix: string): string =
+  "Init.0." & moduleSuffix
+
+proc genInitProc(c: var EContext; rootInfo: PackedLineInfo; importedSuffixes: seq[string]) =
+  ## Generate an explicit init proc for this module that:
+  ## 1. Guards against double-initialization
+  ## 2. Calls imported modules' init procs in order
+  ## 3. Contains this module's top-level executable code (via a call from NIFC's init section)
+  let initSym = pool.syms.getOrIncl(initProcName(c.main))
+  let guardSym = pool.syms.getOrIncl("InitGuard.0." & c.main)
+
+  # Emit the guard variable: (gvar :InitGuard.suffix . (bool) .)
+  c.dest.add tagToken("gvar", rootInfo)
+  c.dest.add symdefToken(guardSym, rootInfo)
+  c.dest.addDotToken()
+  c.dest.add tagToken("bool", rootInfo)
+  c.dest.addParRi()
+  c.dest.addDotToken()
+  c.dest.addParRi()
+
+  # Emit the init proc declaration: (proc NAME (params) RETTYPE PRAGMAS BODY)
+  c.dest.add tagToken("proc", rootInfo)
+  c.dest.add symdefToken(initSym, rootInfo)
+  # params: empty
+  c.dest.add tagToken("params", rootInfo)
+  c.dest.addParRi()
+  # return type: void
+  c.dest.addDotToken()
+  # pragmas:
+  c.dest.addDotToken()
+  # body:
+  c.dest.add tagToken("stmts", rootInfo)
+
+  # Guard: if InitGuard.suffix: return
+  c.dest.add tagToken("if", rootInfo)
+  c.dest.add tagToken("elif", rootInfo)
+  c.dest.add symToken(guardSym, rootInfo)
+  c.dest.add tagToken("stmts", rootInfo)
+  c.dest.add tagToken("ret", rootInfo)
+  c.dest.addDotToken()
+  c.dest.addParRi() # ret
+  c.dest.addParRi() # stmts
+  c.dest.addParRi() # elif
+  c.dest.addParRi() # if
+
+  # Set guard: (asgn InitGuard.suffix (true))
+  c.dest.add tagToken("asgn", rootInfo)
+  c.dest.add symToken(guardSym, rootInfo)
+  c.dest.add tagToken("true", rootInfo)
+  c.dest.addParRi() # true
+  c.dest.addParRi() # asgn
+
+  # Call each imported module's init proc:
+  for suffix in importedSuffixes:
+    let importInitSym = pool.syms.getOrIncl(initProcName(suffix))
+    c.dest.add tagToken("call", rootInfo)
+    c.dest.add symToken(importInitSym, rootInfo)
+    c.dest.addParRi()
+
+proc genInitProcEnd(c: var EContext; rootInfo: PackedLineInfo) =
+  # Close: stmts, proc
+  c.dest.addParRi() # stmts (body)
+  c.dest.addParRi() # proc
+
+proc genInitCall(c: var EContext; rootInfo: PackedLineInfo) =
+  ## Emit a top-level call to this module's init proc.
+  ## NIFC will place this in the init section (constructor or main).
+  let initSym = pool.syms.getOrIncl(initProcName(c.main))
+  c.dest.add tagToken("call", rootInfo)
+  c.dest.add symToken(initSym, rootInfo)
+  c.dest.addParRi()
+
 proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]) =
   let mp = splitModulePath(infile)
   var c = EContext(dir: (if mp.dir.len == 0: getCurrentDir() else: mp.dir), ext: mp.ext, main: mp.name,
@@ -1909,14 +1989,33 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]) 
   let rootInfo = n.info
 
   var toplevels = createTokenBuf()
+  c.initBody = createTokenBuf()
+
   swap c.dest, toplevels
   if stmtKind(n) == StmtsS:
     inc n
-    #genStringType c, n.info
     while n.kind != ParRi:
-      trStmt c, n, TraverseTopLevel
+      let sk = n.stmtKind
+      if sk in {ProcS, FuncS, ConverterS, MethodS, TypeS, MacroS, TemplateS,
+                IncludeS, ImportS, FromimportS, ImportExceptS, ExportS,
+                ImportasS, ExportexceptS, CommentS, IteratorS,
+                BindS, MixinS, UsingS, StaticstmtS,
+                ConstS, PragmasS, AssumeS, AssertS}:
+        # Pure declarations and compile-time constructs stay at top level:
+        trStmt c, n, TraverseTopLevel
+      else:
+        # Executable code goes into the init proc body:
+        swap c.dest, c.initBody
+        trStmt c, n, TraverseAll
+        swap c.dest, c.initBody
   else:
     error c, "expected (stmts) but got: ", n
+
+  genInitProc(c, rootInfo, c.importedModuleSuffixes)
+  c.dest.add c.initBody
+  genInitProcEnd(c, rootInfo)
+  genInitCall(c, rootInfo)
+
   swap c.dest, toplevels
 
   initDynlib(c, rootInfo)
@@ -1925,6 +2024,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]) 
     c.dest.add c.strLitBuf
   c.dest.add toplevels
   c.dest.add c.pending
+
   skipParRi c, n
   let destfileName = c.dir / c.main & ".x.nif"
 

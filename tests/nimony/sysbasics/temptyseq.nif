@@ -1,6 +1,7 @@
 (.nif26)
-(.indexat +28964           )
+(.indexat +28984           )
 0,1,tests/nimony/sysbasics/temptyseq.nim(stmts
+ (import sysvq0asl)
  (proc 5 :foo.0. . . . 8
   (params 1
    (param :x.0 . . 6 seq.0.Ipe57hg. .)) . . . 24
@@ -1074,7 +1075,7 @@
      (else 6
       (expr +0)))) ~2,~1
    (ret result.11))))0,1,tests/nimony/sysbasics/temptyseq.nim(.index
- (h foo.0. +84) ,4
+ (h foo.0. +104) ,4
  (h bar.0. +218) 9,4
  (h T.0. +37) 4,8
  (h s.0. +284) 58,167,lib/std/system/seqimpl.nim

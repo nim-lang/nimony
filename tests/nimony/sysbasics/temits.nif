@@ -1,6 +1,7 @@
 (.nif26)
-(.indexat +269             )
-0,1,tests/nimony/sysbasics/temits.nim(stmts 2
+(.indexat +289             )
+0,1,tests/nimony/sysbasics/temits.nim(stmts
+ (import sysvq0asl) 2
  (emit 6 "int s = 12;") ,2
  (proc 5 :foo.0. . . . 9
   (params) . . . 2,1
@@ -9,4 +10,4 @@
     (i -1) 4 +12) 2,1
    (emit 7 s.0 10 " = " 17 +3 20 ";"))) 3,6
  (call ~3 foo.0.))0,1,tests/nimony/sysbasics/temits.nim(.index ,2
- (h foo.0. +110))
+ (h foo.0. +130))
