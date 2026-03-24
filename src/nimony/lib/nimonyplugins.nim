@@ -2,7 +2,7 @@
 
 import std / syncio
 from std / os import paramStr
-import ".." / ".." / "lib" / [nifcursors, nifstreams, lineinfos, nifbuilder]
+import ".." / ".." / "lib" / [nifcursors, nifstreams, lineinfos, bitabs]
 
 import ".." / [nimony_model]
 export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther
@@ -221,63 +221,51 @@ proc parseNifFragment(text: string): Node =
     buf.shrink(buf.len-1)
   result = freeze(createTree(buf))
 
-proc createNode(text: string): Node =
-  result = parseNifFragment(text)
+proc createNode(buf: sink TokenBuf): Node =
+  result = freeze(createTree(buf))
 
 proc renderNode(n: Node): string =
   result = toString(n.cursor, false)
 
 proc strLitNode(s: string): Node =
-  var b = nifbuilder.open(s.len + 8)
-  b.addStrLit(s)
-  result = createNode(b.extract())
+  var buf = createTokenBuf(1)
+  buf.addStrLit(s)
+  result = createNode(buf)
 
 proc identNode(s: string): Node =
-  var b = nifbuilder.open(s.len + 6)
-  b.addIdent(s)
-  result = createNode(b.extract())
+  var buf = createTokenBuf(1)
+  buf.addIdent(s)
+  result = createNode(buf)
 
 proc charLitNode(c: char): Node =
-  var b = nifbuilder.open(8)
-  b.addCharLit(c)
-  result = createNode(b.extract())
+  var buf = createTokenBuf(1)
+  buf.add charToken(c, NoLineInfo)
+  result = createNode(buf)
 
 proc intLitNode(i: BiggestInt): Node =
-  var b = nifbuilder.open(24)
-  b.addIntLit(i)
-  result = createNode(b.extract())
+  var buf = createTokenBuf(1)
+  buf.addIntLit(i)
+  result = createNode(buf)
 
 proc uintLitNode(u: BiggestUInt): Node =
-  var b = nifbuilder.open(24)
-  b.addUIntLit(u)
-  result = createNode(b.extract())
+  var buf = createTokenBuf(1)
+  buf.addUIntLit(u)
+  result = createNode(buf)
 
 proc floatLitNode(f: BiggestFloat): Node =
-  var b = nifbuilder.open(32)
-  b.addFloatLit(f)
-  result = createNode(b.extract())
+  var buf = createTokenBuf(1)
+  buf.add floatToken(pool.floats.getOrIncl(f), NoLineInfo)
+  result = createNode(buf)
 
 proc boolNode(v: bool): Node =
-  var b = nifbuilder.open(8)
-  b.addKeyw(if v: "true" else: "false")
-  result = createNode(b.extract())
+  var buf = createTokenBuf(2)
+  buf.addParLe(if v: TrueX else: FalseX)
+  buf.addParRi()
+  result = createNode(buf)
 
 template `~`*(src: Node): Node =
   ## Returns `src` unchanged.
   src
-
-proc `~`*(src: Cursor): Node =
-  ## Copies the current token or subtree from `src` into a new owned `Node`.
-  createNode(toString(src, false))
-
-proc `~`*(src: TokenBuf): Node =
-  ## Parses the contents of `src` into a new owned `Node`.
-  ## Intended for buffers that contain one NIF fragment.
-  createNode(toString(src, false))
-
-proc `~`*(src: PackedToken): Node =
-  ## Turns a single packed token into a new owned `Node`.
-  createNode(nifstreams.toString([src], false))
 
 proc `~`*(src: string): Node =
   ## Converts `src` into a string literal node.
