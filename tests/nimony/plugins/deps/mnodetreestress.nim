@@ -1,11 +1,11 @@
 import nimonyplugins
 
-proc addEcho(t: var Tree; info: LineInfo; value: string) =
+proc addEcho(t: Tree; info: LineInfo; value: string) =
   t.withTree CallS, info:
     t.addIdent "echo"
     t.addStrLit value
 
-proc addEcho(t: var Tree; info: LineInfo; value: Node) =
+proc addEcho(t: Tree; info: LineInfo; value: Node) =
   t.withTree CallS, info:
     t.addIdent "echo"
     var copy = value

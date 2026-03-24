@@ -125,35 +125,35 @@ proc freeze*(tree: sink Tree): Node =
   let owner = tree
   result = Node(owner: owner, cursor: beginRead(owner.buf))
 
-template withTree*(t: var Tree; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma; info: LineInfo; body: untyped) =
+template withTree*(t: Tree; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma; info: LineInfo; body: untyped) =
   ## Appends a tree node of `kind` to `t`, runs `body` to emit its children, and
   ## closes the node afterwards.
   t.buf.addParLe(kind, info)
   body
   t.buf.addParRi()
 
-proc takeTree*(t: var Tree; n: var Node) =
+proc takeTree*(t: Tree; n: var Node) =
   ## Copies the current token or subtree from `n` into `t` and advances `n`
   ## past the copied fragment.
   t.buf.takeTree(n.cursor)
 
-proc addDotToken*(t: var Tree) =
+proc addDotToken*(t: Tree) =
   ## Appends a dot placeholder token (`.`) to `t`.
   t.buf.addDotToken()
 
-proc addStrLit*(t: var Tree; s: string) =
+proc addStrLit*(t: Tree; s: string) =
   ## Appends a string literal atom to `t`.
   t.buf.addStrLit(s)
 
-proc addIntLit*(t: var Tree; i: BiggestInt) =
+proc addIntLit*(t: Tree; i: BiggestInt) =
   ## Appends a signed integer literal atom to `t`.
   t.buf.addIntLit(i)
 
-proc addUIntLit*(t: var Tree; i: BiggestUInt) =
+proc addUIntLit*(t: Tree; i: BiggestUInt) =
   ## Appends an unsigned integer literal atom to `t`.
   t.buf.addUIntLit(i)
 
-proc addIdent*(t: var Tree; ident: string) =
+proc addIdent*(t: Tree; ident: string) =
   ## Appends an identifier atom to `t`.
   t.buf.addIdent(ident)
 
@@ -262,7 +262,7 @@ proc boolNode(v: bool): Node =
   b.addKeyw(if v: "true" else: "false")
   result = createNode(b.extract())
 
-proc `~`*(src: Node): Node {.inline.} =
+template `~`*(src: Node): Node =
   ## Returns `src` unchanged.
   src
 
