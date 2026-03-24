@@ -150,7 +150,6 @@ type
     continuationProcImpl: Cursor
     inlineContState: int   ## >= 0 when trIte detected a split inside a branch
     inlineContCursor: Cursor ## cursor to rest-of-branch code after the split point
-    shouldPublish: seq[tuple[pos: int, sym: SymId]]
 
 proc coroTypeForProc(c: Context; procId: SymId): SymId =
   let s = extractVersionedBasename(pool.syms[procId])
@@ -1084,6 +1083,81 @@ proc generateCoroutineType(c: var Context; dest: var TokenBuf; sym: SymId) =
           programs.publish(value.field, dest, beforeField)
   programs.publish(objType, dest, beforeType)
 
+proc generateCoroutineHelpers(c: var Context; dest: var TokenBuf; sym: SymId; iter: Cursor) =
+  let info = iter.info
+  var hasResult = false
+  var n: Cursor = iter
+  var params: Cursor
+
+  var start = dest.len
+
+  dest.takeToken n # ProcS
+  dest.takeTree n # SymId
+  dest.takeTree n # 
+  dest.takeTree n # 
+  dest.takeTree n # TypevarsU
+
+  dest.copyIntoKind ParamsU, info:
+    params = n
+    if n.kind != DotToken:
+      inc n
+      while n.kind != ParRi:
+        assert n.substructureKind == ParamU
+        dest.takeToken n
+        dest.takeTree n # name
+        dest.takeTree n # exported
+        dest.takeTree n # pragmas
+        dest.takeTree n # type
+        dest.takeTree n # default value
+        dest.takeParRi n # ParRi
+    inc n
+    # return type becomes a ptr parameter:
+    hasResult = not isVoidType(n)
+    if hasResult:
+      dest.copyIntoKind ParamU, info:
+        dest.addSymDef pool.syms.getOrIncl(ResultParamName), info
+        dest.addDotToken() # export
+        dest.addDotToken() # pragmas
+        dest.copyIntoKind PtrT, info:
+          dest.takeTree n
+        dest.addDotToken() # default value
+      # final parameter is always the `caller` continuation:
+    else:
+      skip n
+    dest.copyIntoKind ParamU, info:
+      dest.addSymDef pool.syms.getOrIncl(CallerParamName), info
+      dest.addDotToken() # export
+      dest.addDotToken() # pragmas
+      dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+      dest.addDotToken() # default value
+  # the return type is always `Continuation` too:
+  dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+  dest.takeTree n
+  dest.takeTree n
+
+  publishSignature dest, sym, start
+
+  dest.copyIntoKind StmtsS, info:
+    dest.copyIntoKind RetS, info:
+      dest.copyIntoKind CallS, info:
+        dest.addSymUse sym, info
+        if params.kind != DotToken:
+          inc params
+          while params.kind != ParRi:
+            assert params.substructureKind == ParamU
+            inc params
+            dest.takeTree params # name
+            skip params # exported
+            skip params # pragmas
+            skip params # type
+            skip params # default value
+            inc params # ParRi
+        emitAllocFrame(c, dest, sym, info)
+        if hasResult:
+          dest.addSymUse pool.syms.getOrIncl(ResultParamName), info
+        dest.addSymUse pool.syms.getOrIncl(CallerParamName), info
+  dest.addParRi() # ProcS
+
 proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId;
                     paramsBegin, paramsEnd: int; origParams: Cursor) =
   let info = dest[paramsBegin].info
@@ -1209,6 +1283,7 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
     takeTree dest, n
 
   if isConcrete and isCoroutine:
+    publishSignature dest, sym, procStart
     treIteratorBody(c, dest, init, iter, sym)
     skip n # we used the body from the control flow graph
     # Emit implicit final return: deallocFrame + return caller
@@ -1220,8 +1295,8 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
   discard c.procStack.pop()
   c.typeCache.closeScope()
   if isCoroutine:
-    c.shouldPublish.add (procStart, sym)
     generateCoroutineType(c, dest, sym)
+    generateCoroutineHelpers(c, dest, sym, iter)
   swap(c.currentProc, currentProc)
 
 proc trIteStmts(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -1388,8 +1463,6 @@ proc transformToCps*(pass: var Pass) =
   pass.dest.takeToken n
   while n.kind != ParRi:
     tr(c, pass.dest, n)
-  for (procStart, sym) in c.shouldPublish:
-    publishSignature pass.dest, sym, procStart
   pass.dest.takeToken n # ParRi
   c.typeCache.closeScope()
 
