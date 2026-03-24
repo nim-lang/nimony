@@ -19,7 +19,7 @@ proc makeProgram(info: LineInfo): Node =
     tree.addEcho(info, "gamma")
   result = freeze(tree)
 
-proc tr(n: Node): Node =
+proc tr(n: Node): Tree =
   var input = n
   if input.stmtKind == StmtsS:
     inc input
@@ -77,7 +77,7 @@ proc tr(n: Node): Node =
     resultTree.takeTree(it)
     resultTree.takeTree(it)
     resultTree.takeTree(scratch)
-  result = freeze(resultTree)
+  result = resultTree
 
 var inp = loadTree()
 saveTree tr(inp)

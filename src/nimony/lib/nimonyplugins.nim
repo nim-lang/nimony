@@ -132,6 +132,14 @@ template withTree*(t: Tree; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|N
   body
   t.buf.addParRi()
 
+proc addParLe*(t: Tree; tag: TagId; info: LineInfo = NoLineInfo) =
+  ## Appends a raw opening tree token with tag `tag` to `t`.
+  t.buf.addParLe(tag, info)
+
+proc addParRi*(t: Tree) =
+  ## Appends a closing tree token (`)`) to `t`.
+  t.buf.addParRi()
+
 proc takeTree*(t: Tree; n: var Node) =
   ## Copies the current token or subtree from `n` into `t` and advances `n`
   ## past the copied fragment.
@@ -165,15 +173,9 @@ proc addFloatLit*(t: Tree; f: BiggestFloat) =
   ## Appends a floating-point literal atom to `t`.
   t.buf.addFloatLit(f)
 
-proc add*(t: var TokenBuf; n: Node) =
-  ## Appends only the current token from `n` to `t`.
-  ## This does not copy an entire subtree.
-  t.add n.cursor.load
-
-proc takeTree*(t: var TokenBuf; n: var Node) =
-  ## Copies the current token or subtree from `n` into `t` and advances `n`
-  ## past the copied fragment.
-  t.takeTree(n.cursor)
+proc addSymUse*(t: Tree; s: SymId; info: LineInfo = NoLineInfo) =
+  ## Appends a symbol-use atom to `t`.
+  t.buf.addSymUse(s, info)
 
 proc inc*(n: var Node) =
   ## Advances `n` by one token.
