@@ -1,6 +1,7 @@
+import std / [os, syncio]
 import nimonyplugins
 
-proc tr(n: Node): Tree =
+proc tr(n: Node): Node =
   var arg = n
   if arg.stmtKind == StmtsS:
     inc arg
@@ -17,7 +18,7 @@ proc tr(n: Node): Tree =
   let byPrepared = nif("""(call echo $msg)""", {"msg": ~prepared})
   let byNode = nif("""(call echo $msg)""", {"msg": ~arg})
 
-  let generated = nif("""(stmts $a $b $c $d $e $f $g $h)""", {
+  result = nif("""(stmts $a $b $c $d $e $f $g $h)""", {
     "a": ~byIdent,
     "b": ~byBool,
     "c": ~byChar,
@@ -27,9 +28,6 @@ proc tr(n: Node): Tree =
     "g": ~byPrepared,
     "h": ~byNode
   })
-  result = createTree()
-  var copy = generated
-  result.takeTree(copy)
 
 var inp = loadTree()
-saveTree tr(inp)
+writeFile os.paramStr(2), renderNode(tr(inp))

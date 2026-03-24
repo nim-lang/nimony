@@ -2,7 +2,7 @@
 
 import std / syncio
 from std / os import paramStr
-import ".." / ".." / "lib" / [nifcursors, nifstreams, lineinfos]
+import ".." / ".." / "lib" / [nifcursors, nifstreams, lineinfos, bitabs]
 
 import ".." / [nimony_model]
 export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther
@@ -60,36 +60,29 @@ proc symId*(n: Node): SymId {.inline.} =
   ## The current token must be a `Symbol` or `SymbolDef`.
   n.cursor.symId
 
-proc litId*(n: Node): StrId {.inline.} =
-  ## Returns the literal/string-table id of the current token.
-  ## The current token must be an `Ident` or `StringLit`.
-  n.cursor.litId
+proc identText*(n: Node): string {.inline.} =
+  ## Returns the identifier text of the current `Ident` token.
+  pool.strings[n.cursor.litId]
+
+proc stringValue*(n: Node): string {.inline.} =
+  ## Returns the string contents of the current `StringLit` token.
+  pool.strings[n.cursor.litId]
 
 proc charLit*(n: Node): char {.inline.} =
   ## Returns the character stored in the current `CharLit` token.
   n.cursor.charLit
 
-proc intId*(n: Node): IntId {.inline.} =
-  ## Returns the integer-pool id of the current `IntLit` token.
-  n.cursor.intId
+proc intValue*(n: Node): BiggestInt {.inline.} =
+  ## Returns the integer value stored in the current `IntLit` token.
+  pool.integers[n.cursor.intId]
 
-proc uintId*(n: Node): UIntId {.inline.} =
-  ## Returns the unsigned-integer-pool id of the current `UIntLit` token.
-  n.cursor.uintId
+proc uintValue*(n: Node): BiggestUInt {.inline.} =
+  ## Returns the unsigned integer value stored in the current `UIntLit` token.
+  pool.uintegers[n.cursor.uintId]
 
-proc floatId*(n: Node): FloatId {.inline.} =
-  ## Returns the float-pool id of the current `FloatLit` token.
-  n.cursor.floatId
-
-proc tagId*(n: Node): TagId {.inline.} =
-  ## Returns the raw tag id of the current token.
-  ## The current token must be a `ParLe`.
-  n.cursor.tagId
-
-proc tag*(n: Node): TagId {.inline.} =
-  ## Returns the raw tag id for the current tree node, or `ErrT` if the current
-  ## token is not a `ParLe`.
-  n.cursor.tag
+proc floatValue*(n: Node): BiggestFloat {.inline.} =
+  ## Returns the floating-point value stored in the current `FloatLit` token.
+  pool.floats[n.cursor.floatId]
 
 proc stmtKind*(n: Node): NimonyStmt {.inline.} =
   ## Returns the current statement kind, or `NoStmt` when the current token is
@@ -131,6 +124,16 @@ template withTree*(t: Tree; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|N
   t.buf.addParLe(kind, info)
   body
   t.buf.addParRi()
+
+proc tagId*(n: Node): TagId {.inline.} =
+  ## Returns the raw tag id of the current token.
+  ## The current token must be a `ParLe`.
+  n.cursor.tagId
+
+proc tag*(n: Node): TagId {.inline.} =
+  ## Returns the raw tag id for the current tree node, or `ErrT` if the current
+  ## token is not a `ParLe`.
+  n.cursor.tag
 
 proc addParLe*(t: Tree; tag: TagId; info: LineInfo = NoLineInfo) =
   ## Appends a raw opening tree token with tag `tag` to `t`.

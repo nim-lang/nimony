@@ -15,9 +15,8 @@ proc skip*(n: var Node, count: int) =
   for _ in 0..<count:
     skip n
 
-
-var knownInstances: Table[SymId, SymId]  # name -> type
 var knownTypes: seq[SymId]
+var knownInstances: Table[SymId, SymId]  # name -> type
 var knownOnChanged: Table[SymId, SymId]  # type -> `onChanged` template sym
 
 
@@ -40,9 +39,7 @@ proc trAsgn(n: var Node, o: Tree) =
     inc n
     if n.kind == ParLe and n.exprKind == DotX:
       traverse n:
-        var accessTree = createTree()
-        accessTree.takeTree(n)
-        access = freeze(accessTree)
+        access = n
       inc n
       if n.kind == Symbol and n.symId in knownInstances and knownInstances[n.symId] in knownOnChanged:
         instance = n
