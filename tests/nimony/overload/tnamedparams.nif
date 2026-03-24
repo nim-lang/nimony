@@ -1,12 +1,12 @@
 (.nif26)
-(.indexat +771             )
+(.indexat +773             )
 0,2,tests/nimony/overload/tnamedparams.nim(stmts
  (proc 5 :callme.0. . . . 11
   (params 1
    (param :x.0 . . 6
-    (i -1) .) 4
+    (i +64) .) 4
    (param :y.0 . . 3
-    (i -1) .) 12
+    (i +64) .) 12
    (param :s.0 . . 3 string.0.sysvq0asl 12 "") 28
    (param :c.0 . . 3
     (c +8) .) 37

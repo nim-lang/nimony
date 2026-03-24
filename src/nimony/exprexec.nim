@@ -325,7 +325,7 @@ proc accessArrayAt(c: var SynthesizeSerializerCtx; arr: TokenBuf; indexVar: SymI
 proc indexVarLowerThanArrayLen(c: var SynthesizeSerializerCtx; indexVar: SymId; arrayLen: xint) =
   copyIntoKind c.dest, LtX, c.info:
     copyIntoKind c.dest, IntT, c.info:
-      c.dest.add intToken(pool.integers.getOrIncl(-1), c.info)
+      c.dest.add intToken(pool.integers.getOrIncl(c.bits), c.info)
     copyIntoSymUse c.dest, indexVar, c.info
     var err = false
     let alen = asSigned(arrayLen, err)
@@ -339,7 +339,7 @@ proc indexVarLowerThanArrayLen(c: var SynthesizeSerializerCtx; indexVar: SymId; 
 
 proc addIntType(c: var SynthesizeSerializerCtx) =
   copyIntoKind c.dest, IntT, c.info:
-    c.dest.add intToken(pool.integers.getOrIncl(-1), c.info)
+    c.dest.add intToken(pool.integers.getOrIncl(c.bits), c.info)
 
 proc incIndexVar(c: var SynthesizeSerializerCtx; indexVar: SymId) =
   copyIntoKind c.dest, AsgnS, c.info:

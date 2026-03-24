@@ -1,8 +1,8 @@
 (.nif26)
-(.indexat +3274            )
+(.indexat +3291            )
 0,2,tests/nimony/nosystem/tfib2.nim(stmts 2,1
  (type :int.0.
-  (i -1) . 5
+  (i +64) . 5
   (pragmas 2
    (magic 7 Int)) .) 2,2
  (type :bool.0.
@@ -17,29 +17,29 @@
   (add -3) . . 9
   (params 1
    (param :x.0 . . 6
-    (i -1) .) 4
+    (i +64) .) 4
    (param :y.0 . . 3
-    (i -1) .)) 13
-  (i -1) 26
+    (i +64) .)) 13
+  (i +64) 26
   (pragmas 2
    (magic 7 "AddI")) . .) ,6
  (proc 5 :\2D.0.
   (sub -3) . . 9
   (params 1
    (param :x.1 . . 6
-    (i -1) .) 4
+    (i +64) .) 4
    (param :y.1 . . 3
-    (i -1) .)) 13
-  (i -1) 26
+    (i +64) .)) 13
+  (i +64) 26
   (pragmas 2
    (magic 7 "SubI")) . .) ,8
  (proc 5 :<=.0.
   (le -3) . . 10
   (params 1
    (param :x.2 . . 6
-    (i -1) .) 4
+    (i +64) .) 4
    (param :y.2 . . 3
-    (i -1) .)) 13
+    (i +64) .)) 13
   (bool) 28
   (pragmas 2
    (magic 7 "LeI")) . .) ,10
@@ -118,39 +118,39 @@
  (comment int.0. int.0. ~3 int.0. ,1 int.0. ,1 int.0. ~3,1 int.0. 1,3 int.0. 1,3 int.0. ~3,3 bool.0. ,5 float.0. ,5 float.0. ~1,5 float.0. ,6 float.0. ,6 float.0. ~1,6 float.0. 1,8 float.0. 1,8 float.0. ~1,8 bool.0. 2,13 bool.0. ~4,24 int.0.) 11,28
  (proc :fib.1. . ~11,~6 .
   (at fib.0.
-   (i -1)) 9,~6
+   (i +64)) 9,~6
   (params 1
    (param :a.3 . .
-    (i -1) .))
-  (i -1) ~11,~6 . ~11,~6 . ~9,~5
+    (i +64) .))
+  (i +64) ~11,~6 . ~11,~6 . ~9,~5
   (stmts
    (result :result.1 . .
-    (i -1) .)
+    (i +64) .)
    (if 3
     (elif 2
      (le
-      (i -1) ~2 a.3 3 +2) ~1,1
+      (i +64) ~2 a.3 3 +2) ~1,1
      (stmts 7
       (asgn ~7 result.1 2 +1))) ,2
     (else 2,1
      (stmts 7
       (asgn ~7 result.1 11
        (add
-        (i -1) ~6
+        (i +64) ~6
         (call ~3 fib.1. 2
          (sub
-          (i -1) ~1 a.3 1 +1)) 5
+          (i +64) ~1 a.3 1 +1)) 5
         (call ~3 fib.1. 2
          (sub
-          (i -1) ~1 a.3 1 +2))))))) ~2,~1
+          (i +64) ~1 a.3 1 +2))))))) ~2,~1
    (ret result.1))))0,2,tests/nimony/nosystem/tfib2.nim(.index 2,1
  (x int.0. +83) 2,2
- (x bool.0. +66) 2,3
+ (x bool.0. +67) 2,3
  (x float.0. +68) ,5
  (x \2B.0. +70) ,6
- (x \2D.0. +176) ,8
- (x <=.0. +176) ,10
- (x \2B.1. +175) ,11
+ (x \2D.0. +179) ,8
+ (x <=.0. +179) ,10
+ (x \2B.1. +177) ,11
  (x \2D.1. +182) ,13
  (x <=.1. +182) 10,17
  (h Fibable.0. +181) 12,17
