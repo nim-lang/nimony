@@ -1408,7 +1408,7 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
         buildErr c, dest, n.info, "unknown `magic`"
       else:
         crucial.magic = magicWord
-        crucial.bits = bits
+        crucial.bits = if bits == -1: c.g.config.bits else: bits
       takeToken dest, n
     elif n.exprKind == ErrX:
       dest.addSubtree n
@@ -4203,12 +4203,8 @@ proc buildLowValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pac
     of IntT:
       var bitsCursor = typ
       inc bitsCursor # skip int tag
-      let rawBits = typebits(bitsCursor.load)
-      var bits = rawBits
-      if rawBits != -1:
-        dest.addParLe(SufX, info)
-      else:
-        bits = c.g.config.bits
+      let bits = typebits(c.g.config, bitsCursor.load)
+      dest.addParLe(SufX, info)
       let value =
         case bits
         of 8: low(int8).int64
@@ -4216,23 +4212,17 @@ proc buildLowValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pac
         of 32: low(int32).int64
         else: low(int64)
       dest.add intToken(pool.integers.getOrIncl(value), info)
-      if rawBits != -1:
-        dest.add strToken(pool.strings.getOrIncl("i" & $rawBits), info)
-        dest.addParRi()
+      dest.add strToken(pool.strings.getOrIncl("i" & $bits), info)
+      dest.addParRi()
     of UIntT:
       var bitsCursor = typ
       inc bitsCursor # skip uint tag
-      let rawBits = typebits(bitsCursor.load)
-      var bits = rawBits
-      if rawBits != -1:
-        dest.addParLe(SufX, info)
-      else:
-        bits = c.g.config.bits
+      let bits = typebits(c.g.config, bitsCursor.load)
+      dest.addParLe(SufX, info)
       let value = 0'u64
       dest.add uintToken(pool.uintegers.getOrIncl(value), info)
-      if rawBits != -1:
-        dest.add strToken(pool.strings.getOrIncl("u" & $rawBits), info)
-        dest.addParRi()
+      dest.add strToken(pool.strings.getOrIncl("u" & $bits), info)
+      dest.addParRi()
     of CharT:
       dest.add charToken('\0', info)
     of RangetypeT:
@@ -4286,12 +4276,8 @@ proc buildHighValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pa
     of IntT:
       var bitsCursor = typ
       inc bitsCursor # skip int tag
-      let rawBits = typebits(bitsCursor.load)
-      var bits = rawBits
-      if rawBits != -1:
-        dest.addParLe(SufX, info)
-      else:
-        bits = c.g.config.bits
+      let bits = typebits(c.g.config, bitsCursor.load)
+      dest.addParLe(SufX, info)
       let value =
         case bits
         of 8: high(int8).int64
@@ -4299,18 +4285,13 @@ proc buildHighValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pa
         of 32: high(int32).int64
         else: high(int64)
       dest.add intToken(pool.integers.getOrIncl(value), info)
-      if rawBits != -1:
-        dest.add strToken(pool.strings.getOrIncl("i" & $rawBits), info)
-        dest.addParRi()
+      dest.add strToken(pool.strings.getOrIncl("i" & $bits), info)
+      dest.addParRi()
     of UIntT:
       var bitsCursor = typ
       inc bitsCursor # skip uint tag
-      let rawBits = typebits(bitsCursor.load)
-      var bits = rawBits
-      if rawBits != -1:
-        dest.addParLe(SufX, info)
-      else:
-        bits = c.g.config.bits
+      let bits = typebits(c.g.config, bitsCursor.load)
+      dest.addParLe(SufX, info)
       let value =
         case bits
         of 8: high(uint8).uint64
@@ -4318,9 +4299,8 @@ proc buildHighValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pa
         of 32: high(uint32).uint64
         else: high(uint64)
       dest.add uintToken(pool.uintegers.getOrIncl(value), info)
-      if rawBits != -1:
-        dest.add strToken(pool.strings.getOrIncl("u" & $rawBits), info)
-        dest.addParRi()
+      dest.add strToken(pool.strings.getOrIncl("u" & $bits), info)
+      dest.addParRi()
     of CharT:
       dest.add charToken(high(char), info)
     of RangetypeT:
@@ -5699,7 +5679,7 @@ proc resolveCyclicImports(c: var SemContext) =
 proc initSemContext(suffix: string; config: ProgramContext; moduleFlags: set[ModuleFlag];
                     commandLineArgs: string; canSelfExec: bool): SemContext =
   result = SemContext(
-    types: createBuiltinTypes(),
+    types: createBuiltinTypes(config.config.bits),
     thisModuleSuffix: suffix,
     moduleFlags: moduleFlags,
     g: config,
