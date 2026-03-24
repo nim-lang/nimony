@@ -115,7 +115,7 @@ proc createTree*(): Tree =
   ## Creates an empty mutable `Tree`.
   createTree(createTokenBuf())
 
-proc renderNode(n: Node): string
+proc renderNode*(n: Node): string
 
 proc freeze*(tree: sink Tree): Node =
   ## Freezes a mutable `Tree` and returns a root `Node` for reading it.
@@ -196,14 +196,6 @@ proc saveTree*(tree: Tree; filename: string) =
   ## Writes the complete contents of a mutable `Tree` to `filename`.
   writeFile filename, toString(tree.buf)
 
-proc saveTree*(tree: Node) =
-  ## Writes the current token or subtree addressed by `tree` to `paramStr(2)`.
-  writeFile paramStr(2), renderNode(tree)
-
-proc saveTree*(tree: Node; filename: string) =
-  ## Writes the current token or subtree addressed by `tree` to `filename`.
-  writeFile filename, renderNode(tree)
-
 type
   NifIdent* = distinct string ## Marker type used with `~` to request an
                               ## identifier node instead of a string literal
@@ -224,7 +216,7 @@ proc parseNifFragment(text: string): Node =
 proc createNode(buf: sink TokenBuf): Node =
   result = freeze(createTree(buf))
 
-proc renderNode(n: Node): string =
+proc renderNode*(n: Node): string =
   result = toString(n.cursor, false)
 
 proc strLitNode(s: string): Node =
