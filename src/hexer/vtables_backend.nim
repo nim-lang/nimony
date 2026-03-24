@@ -659,7 +659,6 @@ proc processMethod(c: var Context; m: MethodDecl; methodName: string) =
     if methodIndex != -1:
       # register as override:
       c.vtables[m.cls].methods[methodIndex] = m.name
-      c.vtables[m.cls].signatureToIndex[sig] = methodIndex
       return
   # not an override, register as a new base method:
   let idx = c.vtables[m.cls].methods.len

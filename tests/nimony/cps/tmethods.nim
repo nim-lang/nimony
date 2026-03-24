@@ -36,13 +36,13 @@ type
   Base = ref object of RootObj
   Derived = ref object of Base
 
-method mysupermethod(x: Base) =
+method mysupermethod(x: Base) {.passive.}  =
   echo "base"
-method mysupermethod(x: Derived) =
+method mysupermethod(x: Derived) {.passive.}  =
   echo "derived"
 
-var q: Base = Derived()
+var d: Base = Derived()
 var b = Base()
-var x: seq[Base] = @[q, b]
+var x: seq[Base] = @[d, b]
 for i in x:
   i.mysupermethod()
