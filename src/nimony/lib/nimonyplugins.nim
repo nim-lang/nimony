@@ -278,6 +278,10 @@ proc freeze*(tree: sink Tree): Node =
   ## The returned `Node` keeps the underlying payload alive automatically. If
   ## another alias of the same `Tree` is mutated while readers exist, the tree
   ## detaches to a fresh mutable payload.
+  ##
+  ## Even inline trees are materialized into a full `TokenBuf` here: a `Node`
+  ## can be advanced with `inc`/`skip` into following tokens, so a frozen
+  ## reader cannot safely point into `Tree.inl`.
   if isHeap(tree):
     let owner = tree.data
     incRef(owner)
