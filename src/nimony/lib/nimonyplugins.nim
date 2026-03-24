@@ -213,21 +213,72 @@ type
   NifIdent* = distinct string ## Marker type used with `~` to request an
                               ## identifier node instead of a string literal
                               ## node.
-  NifBinding = tuple[name: string, value: string]
+  NifBinding* = tuple[name: string, value: Node]
 
 proc ident*(s: string): NifIdent =
   ## Marks `s` so that `~s` produces an identifier node rather than a string
   ## literal node.
   NifIdent(s)
 
-proc parseNifFragment(text: string): Node =
-  var buf = parseFromBuffer(text, "")
-  if buf.len > 0 and buf[buf.len-1].kind == EofToken:
-    buf.shrink(buf.len-1)
-  result = freeze(createTree(buf))
+proc isNifIdentStart(c: char): bool =
+  c in {'a'..'z', 'A'..'Z', '_'}
+
+proc isNifIdentChar(c: char): bool =
+  c in {'a'..'z', 'A'..'Z', '0'..'9', '_'}
 
 proc createNode(buf: sink TokenBuf): Node =
   result = freeze(createTree(buf))
+
+proc parseNifBuffer(text: string): TokenBuf =
+  result = parseFromBuffer(text, "")
+  if result.len > 0 and result[result.len-1].kind == EofToken:
+    result.shrink(result.len-1)
+
+proc parseNifFragment(text: string): Node =
+  result = createNode(parseNifBuffer(text))
+
+proc lookupBinding(bindings: openArray[NifBinding]; name: string): int =
+  var i = bindings.len - 1
+  while i >= 0:
+    if bindings[i].name == name:
+      return i
+    dec i
+  quit "missing nif substitution: " & name
+
+proc appendParsedText(dest: var TokenBuf; text: string) =
+  if text.len > 0:
+    dest.add parseNifBuffer(text)
+
+proc appendNode(dest: var TokenBuf; n: Node) =
+  var c = n.cursor
+  dest.takeTree(c)
+
+proc parseNifTemplate(spec: string; bindings: openArray[NifBinding]): Node =
+  var buf = createTokenBuf(spec.len + bindings.len * 4)
+  var literal = newStringOfCap(spec.len)
+  var i = 0
+  while i < spec.len:
+    if spec[i] != '$':
+      literal.add spec[i]
+      inc i
+    elif i + 1 >= spec.len:
+      quit "invalid nif substitution syntax"
+    elif spec[i + 1] == '$':
+      literal.add '$'
+      inc i, 2
+    elif isNifIdentStart(spec[i + 1]):
+      let start = i + 1
+      i = start + 1
+      while i < spec.len and isNifIdentChar(spec[i]):
+        inc i
+      appendParsedText(buf, literal)
+      setLen(literal, 0)
+      appendNode(buf, bindings[lookupBinding(bindings, substr(spec, start, i - 1))].value)
+    else:
+      quit "invalid nif substitution syntax"
+
+  appendParsedText(buf, literal)
+  result = createNode(buf)
 
 proc renderNode*(n: Node): string =
   result = toString(n.cursor, false)
@@ -336,50 +387,12 @@ proc `~`*(src: bool): Node =
   ## Converts `src` into a `true` or `false` keyword node.
   boolNode(src)
 
-proc lookupBinding(bindings: openArray[NifBinding]; name: string): string =
-  var i = bindings.len - 1
-  while i >= 0:
-    if bindings[i].name == name:
-      return bindings[i].value
-    dec i
-  quit "missing nif substitution: " & name
-
-proc isNifIdentStart(c: char): bool {.inline.} =
-  c in {'a'..'z', 'A'..'Z', '_'}
-
-proc isNifIdentChar(c: char): bool {.inline.} =
-  c in {'a'..'z', 'A'..'Z', '0'..'9', '_'}
-
-proc expandNifSnippet(spec: string; bindings: openArray[NifBinding]): string =
-  result = newStringOfCap(spec.len + bindings.len * 8)
-  var i = 0
-  while i < spec.len:
-    if spec[i] != '$':
-      result.add spec[i]
-      inc i
-    elif i + 1 >= spec.len:
-      quit "invalid nif substitution syntax"
-    elif spec[i + 1] == '$':
-      result.add '$'
-      inc i, 2
-    elif isNifIdentStart(spec[i + 1]):
-      let start = i + 1
-      i = start + 1
-      while i < spec.len and isNifIdentChar(spec[i]):
-        inc i
-      result.add lookupBinding(bindings, substr(spec, start, i - 1))
-    else:
-      quit "invalid nif substitution syntax"
-
-proc nif*(spec: string; bindings: openArray[(string, Node)]): Node =
+proc nif*(spec: string; bindings: openArray[NifBinding]): Node =
   ## Parses `spec` as a NIF fragment after expanding `$name` placeholders with
-  ## the rendered nodes from `bindings`.
+  ## the corresponding nodes from `bindings`.
   ##
   ## Use `$$` for a literal dollar sign. `${...}` syntax is not supported.
-  var converted = newSeqOfCap[NifBinding](bindings.len)
-  for entry in bindings:
-    converted.add (name: entry[0], value: renderNode(entry[1]))
-  parseNifFragment(expandNifSnippet(spec, converted))
+  parseNifTemplate(spec, bindings)
 
 proc nif*(spec: string): Node =
   ## Parses `spec` as a literal NIF fragment and returns it as an owned `Node`.
