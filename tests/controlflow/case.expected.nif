@@ -2,7 +2,7 @@
  (let :other.var . .
   (i -1) +12)
  (var :`cf.0 . .
-  (i -1) .)
+  (i +64) .)
  (ite
   (eq
    (i -1) other.var +0)
