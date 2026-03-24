@@ -1403,12 +1403,12 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     dest.add parLeToken(MagicP, n.info)
     inc n
     if hasParRi and n.kind in {StringLit, Ident}:
-      let (magicWord, bits) = magicToTag(pool.strings[n.litId])
+      let (magicWord, bits) = magicToTag(pool.strings[n.litId], c.g.config.bits)
       if magicWord == "":
         buildErr c, dest, n.info, "unknown `magic`"
       else:
         crucial.magic = magicWord
-        crucial.bits = if bits == -1: c.g.config.bits else: bits
+        crucial.bits = bits
       takeToken dest, n
     elif n.exprKind == ErrX:
       dest.addSubtree n
