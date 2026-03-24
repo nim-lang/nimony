@@ -117,7 +117,7 @@ proc `=dup`*(t: Tree): Tree {.nodestroy.} =
     incRef(t.data)
 
 template sameReader(a, b: Node): bool =
-  a.owner == b.owner and (a.owner == nil or toUniqueId(a.cursor) == toUniqueId(b.cursor))
+  a.owner == b.owner and (toUniqueId(a.cursor) == toUniqueId(b.cursor))
 
 proc `=destroy`*(n: Node) =
   if n.owner != nil:
@@ -126,6 +126,7 @@ proc `=destroy`*(n: Node) =
 
 proc `=wasMoved`*(n: var Node) =
   n.owner = nil
+  n.cursor = default(Cursor)
 
 proc `=copy`*(dest: var Node; src: Node) =
   if not sameReader(dest, src):
