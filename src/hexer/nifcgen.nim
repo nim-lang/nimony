@@ -2003,6 +2003,28 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]) 
                 ConstS, PragmasS, AssumeS, AssertS}:
         # Pure declarations and compile-time constructs stay at top level:
         trStmt c, n, TraverseTopLevel
+      elif sk in {GvarS, GletS}:
+        # Module-level global var/let: split into declaration (no init) at top level
+        # and an explicit assignment inside the init proc body.
+        # This ensures temp variables used in the initializer remain accessible
+        # within the init proc scope.
+        let savedN = n
+        # Emit gvar declaration without init to toplevels (c.dest is toplevels):
+        trLocal c, n, GvarY, TraverseSig
+        # Now emit the init assignment to c.initBody if init is non-trivial:
+        var initN = savedN
+        inc initN  # past gvar/glet tag -> at SymbolDef
+        let (initSym, initInfo) = getSymDef(c, initN)
+        skipExportMarker c, initN
+        skip initN  # past pragmas -> at type
+        skip initN  # past type -> at init value
+        if initN.kind != DotToken:
+          swap c.dest, c.initBody
+          c.dest.addParLe AsgnS, initInfo
+          c.dest.add symToken(initSym, initInfo)
+          trExpr c, initN
+          c.dest.addParRi()
+          swap c.dest, c.initBody
       else:
         # Executable code goes into the init proc body:
         swap c.dest, c.initBody
