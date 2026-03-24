@@ -428,21 +428,21 @@ NIM_THREADVAR NB8 NIFC_ERR_;
 typedef struct LongString_0_sysvq0asl LongString_0_sysvq0asl;
 typedef struct __attribute__ ((__packed__)) Foo_0_tpakvxko41{
   NC8 c_0;
-  NI x_0;}
+  NI64 x_0;}
 Foo_0_tpakvxko41;
 typedef struct LongString_0_sysvq0asl{
-  NI fullLen_0;
-  NI rc_0;
-  NI capImpl_0;
+  NI64 fullLen_0;
+  NI64 rc_0;
+  NI64 capImpl_0;
   NC8 data_0[];}
 LongString_0_sysvq0asl;
 typedef struct string_0_sysvq0asl{
-  NU bytes_0;
+  NU64 bytes_0;
   LongString_0_sysvq0asl* more_0;}
 string_0_sysvq0asl;
 extern void write_0_syn1lfpjv(FILE* f_4, string_0_sysvq0asl s_0);
 extern void write_7_syn1lfpjv(FILE* f_11, NC8 c_1);
-extern void quit_0_syn1lfpjv(NI value_1);
+extern void quit_0_syn1lfpjv(NI64 value_1);
 LongString_0_sysvq0asl const strlit_0_tpakvxko41 = {
   .fullLen_0 = IL64(20), .rc_0 = IL64(0), .capImpl_0 = IL64(0), .data_0 = "[Assertion Failure] "}
 ;
