@@ -156,6 +156,7 @@ proc start =
   father.t.data = @["ha", "lets", "stress", "it"]
   father.t.data = @["ha", "lets", "stress", "it"]
   var t = buildTree()
+  var tg = buildTree()
   buildBTree(father)
 
   write(stdout, "starting main...\n")
@@ -164,6 +165,5 @@ proc start =
   write(stdout, "finished\n")
 
 fatherAsGlobal.t.data = @["ha", "lets", "stress", "it"]
-var tg = buildTree()
 buildBTree(fatherAsGlobal)
 start()

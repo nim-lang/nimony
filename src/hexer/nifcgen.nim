@@ -1967,25 +1967,60 @@ proc isTopLevelDecl(n: Cursor): bool {.inline.} =
     BindS, MixinS, UsingS, StaticstmtS,
     ConstS, PragmasS, EmitS}
 
+proc initHasCall(n: Cursor): bool =
+  ## Returns true if the init expression of a global var/let decl contains any
+  ## function call or local variable reference. Such inits cannot be emitted
+  ## inline by NIFC at C file scope.
+  var n = n
+  inc n    # skip the gvar/glet/tvar/tlet tag
+  skip n   # skip SymbolDef
+  skip n   # skip export marker
+  skip n   # skip pragmas
+  skip n   # skip type
+  # Now at the init value; scan its subtree for any call node or local sym
+  var nested = 0
+  while true:
+    case n.kind
+    of ParRi:
+      if nested == 0: break
+      dec nested
+      inc n
+    of EofToken: break
+    of ParLe:
+      if n.stmtKind in CallKindsS:
+        return true
+      inc nested
+      inc n
+    of Symbol:
+      if isLocalName(pool.syms[n.symId]):
+        return true  # references a pass-generated temp → must be in Init proc
+      inc n
+    else:
+      inc n
+  result = false
+
 proc trToplevel(c: var EContext; n: var Cursor) =
   inc n
   while n.kind != ParRi:
     let sk = n.stmtKind
     if sk in {GvarS, GletS, TvarS, TletS}:
-      # Module-level global/threadlocal var/let: split into declaration (no init)
-      # at top level and an explicit assignment inside the init proc body.
-      let savedN = n
       let tag = if sk in {TvarS, TletS}: TvarY else: GvarY
-      # Emit declaration without init to toplevels (c.dest is toplevels):
-      trLocal c, n, tag, TraverseSig
-      # Now emit the init assignment to c.initBody if init is non-trivial:
-      var initN = savedN
-      inc initN  # past gvar/glet tag -> at SymbolDef
-      let (initSym, initInfo) = getSymDef(c, initN)
-      skipExportMarker c, initN
-      skip initN  # past pragmas -> at type
-      skip initN  # past type -> at init value
-      if initN.kind != DotToken:
+      if not initHasCall(n):
+        # Simple init (literal, nil, etc.): keep at top level.
+        # NIFC can emit "Type var = value;" at C file scope directly.
+        trLocal c, n, tag, TraverseAll
+      else:
+        # Complex init with function calls: emit a no-init declaration at top
+        # level and place the actual init as an assignment inside the Init proc
+        # body so that any temp variables created by to_stmts remain in scope.
+        let savedN = n
+        trLocal c, n, tag, TraverseSig
+        var initN = savedN
+        inc initN  # past gvar/glet tag -> at SymbolDef
+        let (initSym, initInfo) = getSymDef(c, initN)
+        skipExportMarker c, initN
+        skip initN  # past pragmas -> at type
+        skip initN  # past type -> at init value
         swap c.dest, c.initBody
         c.dest.addParLe AsgnS, initInfo
         c.dest.add symToken(initSym, initInfo)
