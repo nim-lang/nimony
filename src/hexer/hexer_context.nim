@@ -40,6 +40,8 @@ type
     localDeclCounters*: int
     activeChecks*: set[CheckMode]
     liftingCtx*: ref LiftingCtx
+    importedModuleSuffixes*: seq[string]
+    initBody*: TokenBuf
 
 proc getTmpId*(e: var EContext): int {.inline.} =
   result = e.tmpId

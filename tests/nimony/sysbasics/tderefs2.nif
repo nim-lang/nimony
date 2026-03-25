@@ -1,6 +1,7 @@
 (.nif26)
-(.indexat +3647            )
+(.indexat +3667            )
 0,1,tests/nimony/sysbasics/tderefs2.nim(stmts
+ (import sysvq0asl)
  (proc 5 :g.0. . . . 6
   (params 1
    (param :x.0 . . 3
@@ -164,7 +165,7 @@
      (i +64)) .) 7
    (asgn ~7 result.7 2 x.14) ~2,~1
    (ret result.7))))0,1,tests/nimony/sysbasics/tderefs2.nim(.index
- (h g.0. +83) ,3
+ (h g.0. +103) ,3
  (h foo.0. +245) ,10
  (h g1.0. +215) ,13
  (h g2.0. +248) ,16

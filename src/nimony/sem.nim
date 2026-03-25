@@ -5316,11 +5316,17 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
   let depsFile = changeModuleExt(outfile, ".s.deps.nif")
   writeFile(deps, depsFile, OnlyIfChanged)
 
-proc writeOutput(c: var SemContext; dest: TokenBuf; outfile: string) =
-  #var b = nifbuilder.open(outfile)
-  #b.addHeader "nimony", "nim-sem"
-  #b.addRaw toString(dest)
-  #b.close()
+proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
+  # Insert (import suffix1 suffix2 ...) at the beginning of the (stmts ...)
+  # so the hexer sees it before any executable code:
+  if c.importedModules.len != 0:
+    var importBuf = createTokenBuf(c.importedModules.len + 2)
+    importBuf.addParLe ImportS, NoLineInfo
+    for _, i in c.importedModules:
+      if i.fromPlugin.len == 0:
+        importBuf.addIdent moduleSuffix(i.path.toAbsolutePath, c.g.config.paths)
+    importBuf.addParRi()
+    dest.insert importBuf, 1 # after the (stmts tag
   writeFile(dest, outfile, OnlyIfChanged)
   let root = dest[0].info
   createIndex outfile, root, true,

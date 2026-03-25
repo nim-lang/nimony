@@ -1,6 +1,7 @@
 (.nif26)
-(.indexat +38105           )
-0,1,tests/nimony/sysbasics/trefobject.nim(stmts 9
+(.indexat +38125           )
+0,1,tests/nimony/sysbasics/trefobject.nim(stmts
+ (import sysvq0asl) 9
  (type ~4 :Foo.0. . .
   (pragmas
    (destroy =destroy_SX46oo0tre8amq6m.0.)
@@ -1410,7 +1411,7 @@
   (pragmas
    (nodestroy)) .
   (stmts)))0,1,tests/nimony/sysbasics/trefobject.nim(.index 9
- (h Foo.0. +87) 9
+ (h Foo.0. +107) 9
  (h Foo.Obj.0. +292) 4,4
  (h foo.0. +419) 10,7
  (h Node.0. +53) 7,7

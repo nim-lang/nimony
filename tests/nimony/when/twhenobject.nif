@@ -1,6 +1,7 @@
 (.nif26)
-(.indexat +1690            )
-0,1,tests/nimony/when/twhenobject.nim(stmts 6,1
+(.indexat +1710            )
+0,1,tests/nimony/when/twhenobject.nim(stmts
+ (import sysvq0asl) 6,1
  (type ~4 :Foo.0. . .
   (pragmas
    (destroy =destroy_SX46oo0twh699we9.0.)
@@ -73,7 +74,7 @@
     (dot
      (hderef dest.0) a.0 +0)
     (dot src.0 a.0 +0)))))0,1,tests/nimony/when/twhenobject.nim(.index 6,1
- (h Foo.0. +85) 6,1
+ (h Foo.0. +105) 6,1
  (h =destroy_SX46oo0twh699we9.0. +386) 6,1
  (h =wasmoved_SX46oo0twh699we9.0. +187) 6,1
  (h =dup_SX46oo0twh699we9.0. +227) 6,1

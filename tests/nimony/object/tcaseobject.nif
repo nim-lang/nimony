@@ -1,6 +1,7 @@
 (.nif26)
-(.indexat +15335           )
-0,1,tests/nimony/object/tcaseobject.nim(stmts 9,3
+(.indexat +15375           )
+0,1,tests/nimony/object/tcaseobject.nim(stmts
+ (import sysvq0asl syn1lfpjv assy765wm) 9,3
  (type ~4 :Foo.0. . .
   (pragmas
    (destroy =destroy_SX46oo0tcauiaoif.0.)
@@ -572,7 +573,7 @@
        (dot
         (hderef dest.0) d.1 +0)
        (dot src.0 d.1 +0))))))))0,1,tests/nimony/object/tcaseobject.nim(.index 9,3
- (h Foo.0. +87) 9,11
+ (h Foo.0. +127) 9,11
  (h Bar.0. +506) 4,15
  (h foo.0. +193) 4,17
  (h a.0. +315) 4,19

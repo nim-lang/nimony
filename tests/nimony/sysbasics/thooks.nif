@@ -1,6 +1,7 @@
 (.nif26)
-(.indexat +7208            )
-0,1,tests/nimony/sysbasics/thooks.nim(stmts 15,1
+(.indexat +7228            )
+0,1,tests/nimony/sysbasics/thooks.nim(stmts
+ (import sysvq0asl) 15,1
  (type ~13 :MyObjectBase.0. . .
   (pragmas
    (destroy =destroy.0.)
@@ -276,7 +277,7 @@
    (param :y.14 . . 11 MyObject.0.I9jqtor. .)) . . . 2,1
   (stmts
    (discard .))))0,1,tests/nimony/sysbasics/thooks.nim(.index 15,1
- (h MyObjectBase.0. +86) 17,4
+ (h MyObjectBase.0. +106) 17,4
  (h MyObject.0. +257) 11,4
  (h T.0. +43) 14,4
  (h Y.0. +29) ,7

@@ -16,7 +16,7 @@ type
     pending: TokenBuf
 
 proc declareTemp(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo): SymId =
-  let s = "`desugar." & $c.counter & "." & c.thisModuleSuffix
+  let s = "`desugar." & $c.counter
   inc c.counter
   result = pool.syms.getOrIncl(s)
   dest.add tagToken("var", info)

@@ -1,6 +1,7 @@
 (.nif26)
-(.indexat +2440            )
-0,1,tests/nimony/iter/tforloops.nim(stmts 4
+(.indexat +2460            )
+0,1,tests/nimony/iter/tforloops.nim(stmts
+ (import sysvq0asl) 4
  (gvar :globalX.0. . .
   (i +64) 10 +12) ,2
  (iterator 9 :foo.0. . . . 12
@@ -116,7 +117,7 @@
       (i +64) 4 j.3))))) 3,36
  (call ~3 bar.0.) 16,2
  (comment int.0.sysvq0asl ~5 int.0.sysvq0asl int.0.sysvq0asl 1,8 int.0.sysvq0asl ~6,8 int.0.sysvq0asl))0,1,tests/nimony/iter/tforloops.nim(.index 4
- (h globalX.0. +81) ,2
+ (h globalX.0. +101) ,2
  (h foo.0. +44) ,10
  (h foo1.0. +780) ,27
  (h bar.0. +825))

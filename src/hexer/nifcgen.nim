@@ -1797,7 +1797,15 @@ proc trStmt(c: var EContext; n: var Cursor; mode = TraverseInner) =
     of FuncS, ProcS, ConverterS, MethodS:
       moveToTopLevel(c, mode):
         trProc c, n, mode
-    of MacroS, TemplateS, IncludeS, ImportS, FromimportS, ImportExceptS, ExportS, CommentS, IteratorS,
+    of ImportS:
+      # Collect module suffixes for init proc generation:
+      inc n
+      while n.kind != ParRi:
+        if n.kind == Ident:
+          c.importedModuleSuffixes.add pool.strings[n.litId]
+        skip n
+      inc n # skip ParRi
+    of MacroS, TemplateS, IncludeS, FromimportS, ImportExceptS, ExportS, CommentS, IteratorS,
        ImportasS, ExportexceptS, BindS, MixinS, UsingS, StaticstmtS:
       # pure compile-time construct, ignore:
       skip n
@@ -1884,9 +1892,161 @@ proc initDynlib(c: var EContext, rootInfo: PackedLineInfo) =
 
       c.dest.addParRi()
 
-proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]) =
+proc initProcName(moduleSuffix: string): string =
+  "`ini.0." & moduleSuffix
+
+proc genInitProc(c: var EContext; rootInfo: PackedLineInfo; importedSuffixes: seq[string]) =
+  ## Generate an explicit init proc for this module that:
+  ## 1. Guards against double-initialization
+  ## 2. Calls imported modules' init procs in order
+  ## 3. Contains this module's top-level executable code (via a call from NIFC's init section)
+  let initSym = pool.syms.getOrIncl(initProcName(c.main))
+  let guardSym = pool.syms.getOrIncl("`iniGuard.0." & c.main)
+
+  # Emit the guard variable: (gvar :InitGuard.suffix . (bool) .)
+  c.dest.add tagToken("gvar", rootInfo)
+  c.dest.add symdefToken(guardSym, rootInfo)
+  c.dest.addDotToken()
+  c.dest.add tagToken("bool", rootInfo)
+  c.dest.addParRi()
+  c.dest.addDotToken()
+  c.dest.addParRi()
+
+  # Emit the init proc declaration: (proc NAME (params) RETTYPE PRAGMAS BODY)
+  c.dest.add tagToken("proc", rootInfo)
+  c.dest.add symdefToken(initSym, rootInfo)
+  # params: empty
+  c.dest.add tagToken("params", rootInfo)
+  c.dest.addParRi()
+  # return type: void
+  c.dest.addDotToken()
+  # pragmas:
+  c.dest.addDotToken()
+  # body:
+  c.dest.add tagToken("stmts", rootInfo)
+
+  # Guard: if InitGuard.suffix: return
+  c.dest.add tagToken("if", rootInfo)
+  c.dest.add tagToken("elif", rootInfo)
+  c.dest.add symToken(guardSym, rootInfo)
+  c.dest.add tagToken("stmts", rootInfo)
+  c.dest.add tagToken("ret", rootInfo)
+  c.dest.addDotToken()
+  c.dest.addParRi() # ret
+  c.dest.addParRi() # stmts
+  c.dest.addParRi() # elif
+  c.dest.addParRi() # if
+
+  # Set guard: (asgn InitGuard.suffix (true))
+  c.dest.add tagToken("asgn", rootInfo)
+  c.dest.add symToken(guardSym, rootInfo)
+  c.dest.add tagToken("true", rootInfo)
+  c.dest.addParRi() # true
+  c.dest.addParRi() # asgn
+
+  # Call each imported module's init proc:
+  for suffix in importedSuffixes:
+    let importInitSym = pool.syms.getOrIncl(initProcName(suffix))
+    c.dest.add tagToken("call", rootInfo)
+    c.dest.add symToken(importInitSym, rootInfo)
+    c.dest.addParRi()
+
+proc genInitProcEnd(c: var EContext; rootInfo: PackedLineInfo) =
+  # Close: stmts, proc
+  c.dest.addParRi() # stmts (body)
+  c.dest.addParRi() # proc
+
+
+proc isTopLevelDecl(n: Cursor): bool {.inline.} =
+  ## Returns true for declarations that should stay at the top level
+  ## (outside the init proc). Everything else is executable code or
+  ## local state that belongs inside the init proc.
+  n.stmtKind in {ProcS, FuncS, ConverterS, MethodS, TypeS,
+    IncludeS, ImportS, FromimportS, ImportExceptS, ExportS,
+    ImportasS, ExportexceptS, CommentS, IteratorS,
+    BindS, MixinS, UsingS, StaticstmtS,
+    ConstS, PragmasS, EmitS}
+
+const RuntimeVarKinds = {VarY, LetY, ResultY, CursorY, GvarY, GletY, TvarY, TletY}
+
+proc initHasCall(c: var EContext; n: Cursor): bool =
+  ## Returns true if the init expression of a global var/let decl contains any
+  ## function call or runtime variable reference. Such inits cannot be emitted
+  ## inline by NIFC at C file scope (only literals and compile-time constants
+  ## are valid C file-scope initializers).
+  var n = n
+  inc n    # skip the gvar/glet/tvar/tlet tag
+  skip n   # skip SymbolDef
+  skip n   # skip export marker
+  skip n   # skip pragmas
+  skip n   # skip type
+  # Now at the init value; scan its subtree
+  var nested = 0
+  while true:
+    case n.kind
+    of ParRi:
+      if nested == 0: break
+      dec nested
+      inc n
+    of EofToken: break
+    of ParLe:
+      if n.stmtKind in CallKindsS:
+        return true
+      inc nested
+      inc n
+    of Symbol:
+      if c.typeCache.fetchSymKind(n.symId) in RuntimeVarKinds:
+        return true  # runtime variable → value not available at C file scope
+      inc n
+    else:
+      inc n
+  result = false
+
+proc trToplevel(c: var EContext; n: var Cursor) =
+  inc n
+  while n.kind != ParRi:
+    let sk = n.stmtKind
+    if sk in {GvarS, GletS, TvarS, TletS}:
+      let tag = if sk in {TvarS, TletS}: TvarY else: GvarY
+      if not initHasCall(c, n):
+        # Simple init (literal, nil, etc.): keep at top level.
+        # NIFC can emit "Type var = value;" at C file scope directly.
+        trLocal c, n, tag, TraverseAll
+      else:
+        # Complex init with function calls: emit a no-init declaration at top
+        # level and place the actual init as an assignment inside the Init proc
+        # body so that any temp variables created by to_stmts remain in scope.
+        let savedN = n
+        trLocal c, n, tag, TraverseSig
+        var initN = savedN
+        inc initN  # past gvar/glet tag -> at SymbolDef
+        let (initSym, initInfo) = getSymDef(c, initN)
+        skipExportMarker c, initN
+        skip initN  # past pragmas -> at type
+        skip initN  # past type -> at init value
+        swap c.dest, c.initBody
+        c.dest.addParLe AsgnS, initInfo
+        c.dest.add symToken(initSym, initInfo)
+        trExpr c, initN
+        c.dest.addParRi()
+        swap c.dest, c.initBody
+    elif sk == StmtsS:
+      # Nested stmts block: recurse to handle mixed decls and executable code
+      trToplevel c, n
+      skipParRi c, n
+    elif isTopLevelDecl(n):
+      # Pure declarations and compile-time constructs stay at top level:
+      trStmt c, n, TraverseTopLevel
+    else:
+      # Executable code and local vars go into the init proc body:
+      swap c.dest, c.initBody
+      trStmt c, n, TraverseAll
+      swap c.dest, c.initBody
+
+proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string) =
   let mp = splitModulePath(infile)
-  var c = EContext(dir: (if mp.dir.len == 0: getCurrentDir() else: mp.dir), ext: mp.ext, main: mp.name,
+  let dir = if outdir.len > 0: outdir elif mp.dir.len == 0: getCurrentDir() else: mp.dir
+  var c = EContext(dir: dir, ext: mp.ext, main: mp.name,
     dest: createTokenBuf(),
     nestedIn: @[(StmtsS, SymId(0))],
     typeCache: createTypeCache(),
@@ -1909,12 +2069,10 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]) 
   let rootInfo = n.info
 
   var toplevels = createTokenBuf()
+  c.initBody = createTokenBuf()
   swap c.dest, toplevels
   if stmtKind(n) == StmtsS:
-    inc n
-    #genStringType c, n.info
-    while n.kind != ParRi:
-      trStmt c, n, TraverseTopLevel
+    trToplevel c, n
   else:
     error c, "expected (stmts) but got: ", n
   swap c.dest, toplevels
@@ -1923,8 +2081,23 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]) 
 
   when sso:
     c.dest.add c.strLitBuf
+
   c.dest.add toplevels
   c.dest.add c.pending
+
+  # Generate the init proc after all other code so NIFC places it last
+  # in the C file, after all function definitions it may call.
+  genInitProc(c, rootInfo, c.importedModuleSuffixes)
+  c.dest.add c.initBody
+  genInitProcEnd(c, rootInfo)
+
+  if isMain:
+    # Emit a top-level call so that DCE sees it as a root and NIFC places it in main():
+    let initSym = pool.syms.getOrIncl(initProcName(c.main))
+    c.dest.add tagToken("call", rootInfo)
+    c.dest.add symToken(initSym, rootInfo)
+    c.dest.addParRi()
+
   skipParRi c, n
   let destfileName = c.dir / c.main & ".x.nif"
 
