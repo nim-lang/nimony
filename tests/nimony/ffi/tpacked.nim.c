@@ -448,7 +448,9 @@ extern void quit_0_syn1lfpjv(NI64 value_1);
 LongString_0_sysvq0asl const strlit_0_tpakvxko41 = {
   .fullLen_0 = IL64(20), .rc_0 = IL64(0), .capImpl_0 = IL64(0), .data_0 = "[Assertion Failure] "}
 ;
-Foo_0_tpakvxko41 x_1_tpakvxko41;
+Foo_0_tpakvxko41 x_1_tpakvxko41 = {
+  .c_0 = (NC8)'a', .x_0 = IL64(123)}
+;
 NB8 X60QiniGuard_0_tpakvxko41;
 void X60Qini_0_tpakvxko41(void){
   if (X60QiniGuard_0_tpakvxko41){
@@ -456,9 +458,6 @@ void X60Qini_0_tpakvxko41(void){
   X60QiniGuard_0_tpakvxko41 = NIM_TRUE;
   X60Qini_0_sysvq0asl();
   X60Qini_0_assy765wm();
-  x_1_tpakvxko41 = (Foo_0_tpakvxko41){
-    .c_0 = (NC8)'a', .x_0 = IL64(123)}
-  ;
   if ((!((x_1_tpakvxko41.c_0 == (NC8)'a') && (x_1_tpakvxko41.x_0 == IL64(123))))){
     write_0_syn1lfpjv(stdout, (string_0_sysvq0asl){
       .bytes_0 = 8390880602273963006ull, .more_0 = (&strlit_0_tpakvxko41)}

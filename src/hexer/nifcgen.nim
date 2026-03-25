@@ -1967,17 +1967,20 @@ proc isTopLevelDecl(n: Cursor): bool {.inline.} =
     BindS, MixinS, UsingS, StaticstmtS,
     ConstS, PragmasS, EmitS}
 
-proc initHasCall(n: Cursor): bool =
+const RuntimeVarKinds = {VarY, LetY, ResultY, CursorY, GvarY, GletY, TvarY, TletY}
+
+proc initHasCall(c: var EContext; n: Cursor): bool =
   ## Returns true if the init expression of a global var/let decl contains any
-  ## function call or local variable reference. Such inits cannot be emitted
-  ## inline by NIFC at C file scope.
+  ## function call or runtime variable reference. Such inits cannot be emitted
+  ## inline by NIFC at C file scope (only literals and compile-time constants
+  ## are valid C file-scope initializers).
   var n = n
   inc n    # skip the gvar/glet/tvar/tlet tag
   skip n   # skip SymbolDef
   skip n   # skip export marker
   skip n   # skip pragmas
   skip n   # skip type
-  # Now at the init value; scan its subtree for any call node or local sym
+  # Now at the init value; scan its subtree
   var nested = 0
   while true:
     case n.kind
@@ -1992,8 +1995,8 @@ proc initHasCall(n: Cursor): bool =
       inc nested
       inc n
     of Symbol:
-      if isLocalName(pool.syms[n.symId]):
-        return true  # references a pass-generated temp → must be in Init proc
+      if c.typeCache.fetchSymKind(n.symId) in RuntimeVarKinds:
+        return true  # runtime variable → value not available at C file scope
       inc n
     else:
       inc n
@@ -2005,7 +2008,7 @@ proc trToplevel(c: var EContext; n: var Cursor) =
     let sk = n.stmtKind
     if sk in {GvarS, GletS, TvarS, TletS}:
       let tag = if sk in {TvarS, TletS}: TvarY else: GvarY
-      if not initHasCall(n):
+      if not initHasCall(c, n):
         # Simple init (literal, nil, etc.): keep at top level.
         # NIFC can emit "Type var = value;" at C file scope directly.
         trLocal c, n, tag, TraverseAll
