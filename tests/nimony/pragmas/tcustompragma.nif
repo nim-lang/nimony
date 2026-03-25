@@ -1,6 +1,7 @@
 (.nif26)
-(.indexat +498             )
-0,1,tests/nimony/pragmas/tcustompragma.nim(stmts 2
+(.indexat +518             )
+0,1,tests/nimony/pragmas/tcustompragma.nim(stmts
+ (import sysvq0asl) 2
  (pragmas
   (pragma 6 customPragma) 22 noinit 30 discardable 47
   (kv ~4 tags 2
@@ -22,4 +23,4 @@
    (ret result.0))) 3,4
  (call ~3 foo.0.) 4,2
  (comment int.0.sysvq0asl))0,1,tests/nimony/pragmas/tcustompragma.nim(.index ,2
- (h foo.0. +186))
+ (h foo.0. +206))

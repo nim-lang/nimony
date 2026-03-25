@@ -1,6 +1,7 @@
 (.nif26)
-(.indexat +821             )
-0,1,tests/nimony/nosystem/timportfromexcept.nim(stmts 4,4
+(.indexat +860             )
+0,1,tests/nimony/nosystem/timportfromexcept.nim(stmts
+ (import modvx9hpf mde75jr5h modepjal) 4,4
  (glet :allImported.0. . . 14
   (array 11,2,tests/nimony/nosystem/deps/modexcept.nim
    (i +64)
@@ -37,6 +38,6 @@
    (true) 27
    (false) 44
    (true))))0,1,tests/nimony/nosystem/timportfromexcept.nim(.index 4,4
- (h allImported.0. +95) 4,5
+ (h allImported.0. +134) 4,5
  (h exceptDeclared.0. +316) 4,6
  (h fromDeclared.0. +204))

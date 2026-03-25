@@ -1,6 +1,7 @@
 (.nif26)
-(.indexat +9986            )
-0,3,tests/nimony/generics/ttuplecache.nim(stmts 9,1
+(.indexat +10006           )
+0,3,tests/nimony/generics/ttuplecache.nim(stmts
+ (import sysvq0asl) 9,1
  (type ~7 :Foo.0. . ~4
   (typevars 1
    (typevar :T.0. . . . .)) . 2
@@ -411,7 +412,7 @@
     (tupat
      (hderef dest.0) +1)
     (tupat src.0 +1)))))0,3,tests/nimony/generics/ttuplecache.nim(.index 9,1
- (h Foo.0. +89) 6,1
+ (h Foo.0. +109) 6,1
  (h T.0. +37) ,5
  (h initFooInt.0. +84) ,8
  (h initFooTup.0. +244) ,12

@@ -1,6 +1,7 @@
 (.nif26)
-(.indexat +3053            )
-0,1,tests/nimony/pragmas/tpushpop.nim(stmts 41,4
+(.indexat +3083            )
+0,1,tests/nimony/pragmas/tpushpop.nim(stmts
+ (import sysvq0asl assy765wm) 41,4
  (type ~39 :TestStruct1.0. . . ~27
   (pragmas 2
    (importc 9 "TestStruct1") ~7,~2
@@ -111,7 +112,7 @@
   (pragmas 2
    (importc 9 "fpclassify") ~36,~5
    (header 8 "<math.h>")) ~19,~4 . ~19,~4 .))0,1,tests/nimony/pragmas/tpushpop.nim(.index 41,4
- (h TestStruct1.0. +86) 4,8
+ (h TestStruct1.0. +116) 4,8
  (h tests1.0. +266) ,11
  (h cos.0. +46) ,13
  (h sin.0. +330) ,15

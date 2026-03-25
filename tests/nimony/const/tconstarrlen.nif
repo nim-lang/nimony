@@ -1,6 +1,7 @@
 (.nif26)
-(.indexat +1029            )
-0,1,tests/nimony/const/tconstarrlen.nim(stmts 6
+(.indexat +1049            )
+0,1,tests/nimony/const/tconstarrlen.nim(stmts
+ (import sysvq0asl) 6
  (const :Len.0. . .
   (i +64) 6
   (suf +100 "i64")) 4,1
@@ -40,7 +41,7 @@
    (stmts
     (discard .)))) 13,4
  (comment array.0.sysvq0asl 11 int.0.sysvq0asl ~6,~3 array.0.sysvq0asl 5,~3 int.0.sysvq0asl ~9,3 len.1.sysvq0asl))0,1,tests/nimony/const/tconstarrlen.nim(.index 6
- (h Len.0. +85) 4,1
+ (h Len.0. +105) 4,1
  (h a.0. +56) 11,4
  (h FooArray.0. +84) 4,6
  (h b.0. +93))

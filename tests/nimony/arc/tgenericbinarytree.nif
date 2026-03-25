@@ -1,6 +1,7 @@
 (.nif26)
-(.indexat +11229           )
-0,1,tests/nimony/arc/tgenericbinarytree.nim(stmts 5
+(.indexat +11249           )
+0,1,tests/nimony/arc/tgenericbinarytree.nim(stmts
+ (import sysvq0asl) 5
  (type :int.0.
   (i +64) . 5
   (pragmas 2
@@ -437,7 +438,7 @@
   (pragmas
    (nodestroy)) .
   (stmts)))0,1,tests/nimony/arc/tgenericbinarytree.nim(.index 5
- (x int.0. +89) 10,3
+ (x int.0. +109) 10,3
  (h Node.0. +68) 7,3
  (h T.0. +38) 13,4
  (h NodeObj.0. +78) 10,4
