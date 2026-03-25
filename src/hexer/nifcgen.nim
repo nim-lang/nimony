@@ -1893,7 +1893,7 @@ proc initDynlib(c: var EContext, rootInfo: PackedLineInfo) =
       c.dest.addParRi()
 
 proc initProcName(moduleSuffix: string): string =
-  "Init.0." & moduleSuffix
+  "`ini.0." & moduleSuffix
 
 proc genInitProc(c: var EContext; rootInfo: PackedLineInfo; importedSuffixes: seq[string]) =
   ## Generate an explicit init proc for this module that:
@@ -1901,7 +1901,7 @@ proc genInitProc(c: var EContext; rootInfo: PackedLineInfo; importedSuffixes: se
   ## 2. Calls imported modules' init procs in order
   ## 3. Contains this module's top-level executable code (via a call from NIFC's init section)
   let initSym = pool.syms.getOrIncl(initProcName(c.main))
-  let guardSym = pool.syms.getOrIncl("InitGuard.0." & c.main)
+  let guardSym = pool.syms.getOrIncl("`iniGuard.0." & c.main)
 
   # Emit the guard variable: (gvar :InitGuard.suffix . (bool) .)
   c.dest.add tagToken("gvar", rootInfo)
@@ -1956,13 +1956,49 @@ proc genInitProcEnd(c: var EContext; rootInfo: PackedLineInfo) =
   c.dest.addParRi() # stmts (body)
   c.dest.addParRi() # proc
 
-proc genInitCall(c: var EContext; rootInfo: PackedLineInfo) =
-  ## Emit a top-level call to this module's init proc.
-  ## NIFC will place this in the init section (constructor or main).
-  let initSym = pool.syms.getOrIncl(initProcName(c.main))
-  c.dest.add tagToken("call", rootInfo)
-  c.dest.add symToken(initSym, rootInfo)
-  c.dest.addParRi()
+
+proc isExecutable(n: Cursor): bool {.inline.} =
+  if n.exprKind in CallKinds:
+    result = true
+  else:
+    result = n.stmtKind in {AsgnS, AssertS,
+      TryS, RaiseS, AssumeS, DiscardS, IfS, WhileS, CaseS, BlockS,
+      InclS, ExclS}
+
+proc trToplevel(c: var EContext; n: var Cursor) =
+  inc n
+  while n.kind != ParRi:
+    let sk = n.stmtKind
+    if sk in {GvarS, GletS}:
+      # Module-level global var/let: split into declaration (no init) at top level
+      # and an explicit assignment inside the init proc body.
+      # This ensures temp variables used in the initializer remain accessible
+      # within the init proc scope.
+      let savedN = n
+      # Emit gvar declaration without init to toplevels (c.dest is toplevels):
+      trLocal c, n, GvarY, TraverseSig
+      # Now emit the init assignment to c.initBody if init is non-trivial:
+      var initN = savedN
+      inc initN  # past gvar/glet tag -> at SymbolDef
+      let (initSym, initInfo) = getSymDef(c, initN)
+      skipExportMarker c, initN
+      skip initN  # past pragmas -> at type
+      skip initN  # past type -> at init value
+      if initN.kind != DotToken:
+        swap c.dest, c.initBody
+        c.dest.addParLe AsgnS, initInfo
+        c.dest.add symToken(initSym, initInfo)
+        trExpr c, initN
+        c.dest.addParRi()
+        swap c.dest, c.initBody
+    elif not isExecutable(n):
+      # Pure declarations and compile-time constructs stay at top level:
+      trStmt c, n, TraverseTopLevel
+    else:
+      # Executable code goes into the init proc body:
+      swap c.dest, c.initBody
+      trStmt c, n, TraverseAll
+      swap c.dest, c.initBody
 
 proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]) =
   let mp = splitModulePath(infile)
@@ -1989,63 +2025,25 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]) 
   let rootInfo = n.info
 
   var toplevels = createTokenBuf()
-  c.initBody = createTokenBuf()
-
   swap c.dest, toplevels
   if stmtKind(n) == StmtsS:
-    inc n
-    while n.kind != ParRi:
-      let sk = n.stmtKind
-      if sk in {ProcS, FuncS, ConverterS, MethodS, TypeS, MacroS, TemplateS,
-                IncludeS, ImportS, FromimportS, ImportExceptS, ExportS,
-                ImportasS, ExportexceptS, CommentS, IteratorS,
-                BindS, MixinS, UsingS, StaticstmtS,
-                ConstS, PragmasS, AssumeS, AssertS}:
-        # Pure declarations and compile-time constructs stay at top level:
-        trStmt c, n, TraverseTopLevel
-      elif sk in {GvarS, GletS}:
-        # Module-level global var/let: split into declaration (no init) at top level
-        # and an explicit assignment inside the init proc body.
-        # This ensures temp variables used in the initializer remain accessible
-        # within the init proc scope.
-        let savedN = n
-        # Emit gvar declaration without init to toplevels (c.dest is toplevels):
-        trLocal c, n, GvarY, TraverseSig
-        # Now emit the init assignment to c.initBody if init is non-trivial:
-        var initN = savedN
-        inc initN  # past gvar/glet tag -> at SymbolDef
-        let (initSym, initInfo) = getSymDef(c, initN)
-        skipExportMarker c, initN
-        skip initN  # past pragmas -> at type
-        skip initN  # past type -> at init value
-        if initN.kind != DotToken:
-          swap c.dest, c.initBody
-          c.dest.addParLe AsgnS, initInfo
-          c.dest.add symToken(initSym, initInfo)
-          trExpr c, initN
-          c.dest.addParRi()
-          swap c.dest, c.initBody
-      else:
-        # Executable code goes into the init proc body:
-        swap c.dest, c.initBody
-        trStmt c, n, TraverseAll
-        swap c.dest, c.initBody
+    trToplevel c, n
   else:
     error c, "expected (stmts) but got: ", n
-
-  genInitProc(c, rootInfo, c.importedModuleSuffixes)
-  c.dest.add c.initBody
-  genInitProcEnd(c, rootInfo)
-  genInitCall(c, rootInfo)
-
   swap c.dest, toplevels
 
   initDynlib(c, rootInfo)
 
   when sso:
     c.dest.add c.strLitBuf
+
   c.dest.add toplevels
   c.dest.add c.pending
+
+  # Generate the init proc after all other code so NIFC places it last
+  # in the C file, after all function definitions it may call.
+  genInitProc(c, rootInfo, c.importedModuleSuffixes)
+  genInitProcEnd(c, rootInfo)
 
   skipParRi c, n
   let destfileName = c.dir / c.main & ".x.nif"
