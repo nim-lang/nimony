@@ -428,12 +428,20 @@ typedef union Foo_0_tun261nex{
   NI64 x_0;
   NC8 c_0;}
 Foo_0_tun261nex;
+extern void X60Qini_0_sysvq0asl(void);
 Foo_0_tun261nex x_1_tun261nex;
+NB8 X60QiniGuard_0_tun261nex;
+void X60Qini_0_tun261nex(void){
+  if (X60QiniGuard_0_tun261nex){
+    return;}
+  X60QiniGuard_0_tun261nex = NIM_TRUE;
+  X60Qini_0_sysvq0asl();
+  x_1_tun261nex.c_0 = (NC8)'a';}
 int cmdCount;
 NC8 **cmdLine;
 int main(int argc, char **argv) {
   cmdCount = argc;
   cmdLine = (NC8**)argv;
-x_1_tun261nex.c_0 = (NC8)'a';
+X60Qini_0_tun261nex();
 }
 

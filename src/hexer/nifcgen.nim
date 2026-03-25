@@ -1957,26 +1957,27 @@ proc genInitProcEnd(c: var EContext; rootInfo: PackedLineInfo) =
   c.dest.addParRi() # proc
 
 
-proc isExecutable(n: Cursor): bool {.inline.} =
-  if n.exprKind in CallKinds:
-    result = true
-  else:
-    result = n.stmtKind in {AsgnS, AssertS,
-      TryS, RaiseS, AssumeS, DiscardS, IfS, WhileS, CaseS, BlockS,
-      InclS, ExclS}
+proc isTopLevelDecl(n: Cursor): bool {.inline.} =
+  ## Returns true for declarations that should stay at the top level
+  ## (outside the init proc). Everything else is executable code or
+  ## local state that belongs inside the init proc.
+  n.stmtKind in {ProcS, FuncS, ConverterS, MethodS, TypeS,
+    IncludeS, ImportS, FromimportS, ImportExceptS, ExportS,
+    ImportasS, ExportexceptS, CommentS, IteratorS,
+    BindS, MixinS, UsingS, StaticstmtS,
+    ConstS, PragmasS, EmitS}
 
 proc trToplevel(c: var EContext; n: var Cursor) =
   inc n
   while n.kind != ParRi:
     let sk = n.stmtKind
-    if sk in {GvarS, GletS}:
-      # Module-level global var/let: split into declaration (no init) at top level
-      # and an explicit assignment inside the init proc body.
-      # This ensures temp variables used in the initializer remain accessible
-      # within the init proc scope.
+    if sk in {GvarS, GletS, TvarS, TletS}:
+      # Module-level global/threadlocal var/let: split into declaration (no init)
+      # at top level and an explicit assignment inside the init proc body.
       let savedN = n
-      # Emit gvar declaration without init to toplevels (c.dest is toplevels):
-      trLocal c, n, GvarY, TraverseSig
+      let tag = if sk in {TvarS, TletS}: TvarY else: GvarY
+      # Emit declaration without init to toplevels (c.dest is toplevels):
+      trLocal c, n, tag, TraverseSig
       # Now emit the init assignment to c.initBody if init is non-trivial:
       var initN = savedN
       inc initN  # past gvar/glet tag -> at SymbolDef
@@ -1991,16 +1992,20 @@ proc trToplevel(c: var EContext; n: var Cursor) =
         trExpr c, initN
         c.dest.addParRi()
         swap c.dest, c.initBody
-    elif not isExecutable(n):
+    elif sk == StmtsS:
+      # Nested stmts block: recurse to handle mixed decls and executable code
+      trToplevel c, n
+      skipParRi c, n
+    elif isTopLevelDecl(n):
       # Pure declarations and compile-time constructs stay at top level:
       trStmt c, n, TraverseTopLevel
     else:
-      # Executable code goes into the init proc body:
+      # Executable code and local vars go into the init proc body:
       swap c.dest, c.initBody
       trStmt c, n, TraverseAll
       swap c.dest, c.initBody
 
-proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]) =
+proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool) =
   let mp = splitModulePath(infile)
   var c = EContext(dir: (if mp.dir.len == 0: getCurrentDir() else: mp.dir), ext: mp.ext, main: mp.name,
     dest: createTokenBuf(),
@@ -2025,6 +2030,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]) 
   let rootInfo = n.info
 
   var toplevels = createTokenBuf()
+  c.initBody = createTokenBuf()
   swap c.dest, toplevels
   if stmtKind(n) == StmtsS:
     trToplevel c, n
@@ -2043,7 +2049,15 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]) 
   # Generate the init proc after all other code so NIFC places it last
   # in the C file, after all function definitions it may call.
   genInitProc(c, rootInfo, c.importedModuleSuffixes)
+  c.dest.add c.initBody
   genInitProcEnd(c, rootInfo)
+
+  if isMain:
+    # Emit a top-level call so that DCE sees it as a root and NIFC places it in main():
+    let initSym = pool.syms.getOrIncl(initProcName(c.main))
+    c.dest.add tagToken("call", rootInfo)
+    c.dest.add symToken(initSym, rootInfo)
+    c.dest.addParRi()
 
   skipParRi c, n
   let destfileName = c.dir / c.main & ".x.nif"

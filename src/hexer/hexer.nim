@@ -60,6 +60,7 @@ Command:
 Options:
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
   --outdir:DIR              (d only) write .c.nif outputs to DIR
+  --isMain                  mark the file as the main module
   --flags:FLAGS             undocumented flags
   --version                 show the version
   --help                    show this help
@@ -75,6 +76,7 @@ proc handleCmdLine*() =
   var flags = DefaultSettings
   var outdir = ""
   var action = ""
+  var isMain = false
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -97,6 +99,8 @@ proc handleCmdLine*() =
         else: quit "invalid value for --cpu; expected 'be' or 'le'"
       of "outdir":
         outdir = val
+      of "ismain":
+        isMain = true
       of "flags":
         flags = parseFlags(val)
       of "help", "h": writeHelp()
@@ -110,7 +114,7 @@ proc handleCmdLine*() =
   else:
     case action
     of "c":
-      expand files[0], bits, bigEndian, flags
+      expand files[0], bits, bigEndian, flags, isMain
     of "d":
       deadCodeElimination(files, outdir)
     else:

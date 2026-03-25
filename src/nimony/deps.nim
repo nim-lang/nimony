@@ -410,6 +410,7 @@ proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool) 
     b.addStrLit "c"
     b.addStrLit "--bits:" & $bits
     b.addStrLit cpuFlag
+    b.addKeyw "args"
     b.withTree "input":
       b.addIntLit 0
 
@@ -597,6 +598,9 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
         # Build .c.nif files from .s.nif files (hexer output shared, not backend)
         b.withTree "do":
           b.addIdent "hexer"
+          if i == 0:
+            b.withTree "args":
+              b.addStrLit "--isMain"
           b.withTree "input":
             b.addStrLit c.config.semmedFile(v.files[0], v.plugin)
           b.withTree "input":
@@ -893,6 +897,8 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
     # Process main .nif file with hexer first
     b.withTree "do":
       b.addIdent "hexer"
+      b.withTree "args":
+        b.addStrLit "--isMain"
       b.withTree "input":
         b.addStrLit mainNifFile
       b.withTree "output":
