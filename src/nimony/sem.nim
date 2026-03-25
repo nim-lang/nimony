@@ -207,7 +207,11 @@ proc commonType(c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: i
 
   var arg = Item(n: cursorAt(dest, argBegin), typ: it.typ)
   var done = false
-  if typeKind(arg.typ) == VoidT and isNoReturn(arg.n):
+  if arg.n.exprKind == ErrX:
+    # already produced an error, continue with the destination type:
+    it.typ = expected
+    done = true
+  elif typeKind(arg.typ) == VoidT and isNoReturn(arg.n):
     # noreturn allowed in expression context
     # maybe use sem flags to restrict this to statement branches
     done = true
@@ -1399,7 +1403,7 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     dest.add parLeToken(MagicP, n.info)
     inc n
     if hasParRi and n.kind in {StringLit, Ident}:
-      let (magicWord, bits) = magicToTag(pool.strings[n.litId])
+      let (magicWord, bits) = magicToTag(pool.strings[n.litId], c.g.config.bits)
       if magicWord == "":
         buildErr c, dest, n.info, "unknown `magic`"
       else:
@@ -2103,8 +2107,12 @@ proc semAsgn(c: var SemContext; dest: var TokenBuf; it: var Item) =
   else:
     dest.addParLe(AsgnS, info)
     var a = Item(n: it.n, typ: c.types.autoType)
+    let beforeLhs = dest.len
     semExpr c, dest, a # infers type of `left-hand-side`
-    removeModifier(a.typ) # remove `var` for rhs
+    if dest[beforeLhs].exprKind == ErrX:
+      a.typ = c.types.autoType
+    else:
+      removeModifier(a.typ) # remove `var` for rhs
     semExpr c, dest, a # ensures type compatibility with `left-hand-side`
     it.n = a.n
     takeParRi dest, it.n
@@ -2583,7 +2591,9 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
   semExpr c, dest, iterCall, {PreferIterators, KeepMagics}
   it.n = iterCall.n
   var isMacroLike = false
-  if isIteratorCall(c, dest, beforeCall):
+  if dest[beforeCall].exprKind == ErrX:
+    discard "already produced an error"
+  elif isIteratorCall(c, dest, beforeCall):
     discard "fine"
   elif dest[beforeCall].kind == ParLe and
       (dest[beforeCall].tagId == TagId(FieldsTagId) or
@@ -2770,9 +2780,10 @@ proc semShift(c: var SemContext; dest: var TokenBuf; it: var Item) =
   semExpr c, dest, it
   var shift = Item(n: it.n, typ: c.types.autoType)
   let shiftInfo = shift.n.info
+  let beforeShift = dest.len
   semExpr c, dest, shift
   it.n = shift.n
-  if shift.typ.typeKind notin {IntT, UIntT}:
+  if dest[beforeShift].exprKind != ErrX and shift.typ.typeKind notin {IntT, UIntT}:
     c.buildErr dest, shiftInfo, "expected integer for shift operand"
   takeParRi dest, it.n
   commonType c, dest, it, beforeExpr, typ
@@ -4192,12 +4203,8 @@ proc buildLowValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pac
     of IntT:
       var bitsCursor = typ
       inc bitsCursor # skip int tag
-      let rawBits = typebits(bitsCursor.load)
-      var bits = rawBits
-      if rawBits != -1:
-        dest.addParLe(SufX, info)
-      else:
-        bits = c.g.config.bits
+      let bits = typebits(c.g.config, bitsCursor.load)
+      dest.addParLe(SufX, info)
       let value =
         case bits
         of 8: low(int8).int64
@@ -4205,23 +4212,17 @@ proc buildLowValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pac
         of 32: low(int32).int64
         else: low(int64)
       dest.add intToken(pool.integers.getOrIncl(value), info)
-      if rawBits != -1:
-        dest.add strToken(pool.strings.getOrIncl("i" & $rawBits), info)
-        dest.addParRi()
+      dest.add strToken(pool.strings.getOrIncl("i" & $bits), info)
+      dest.addParRi()
     of UIntT:
       var bitsCursor = typ
       inc bitsCursor # skip uint tag
-      let rawBits = typebits(bitsCursor.load)
-      var bits = rawBits
-      if rawBits != -1:
-        dest.addParLe(SufX, info)
-      else:
-        bits = c.g.config.bits
+      let bits = typebits(c.g.config, bitsCursor.load)
+      dest.addParLe(SufX, info)
       let value = 0'u64
       dest.add uintToken(pool.uintegers.getOrIncl(value), info)
-      if rawBits != -1:
-        dest.add strToken(pool.strings.getOrIncl("u" & $rawBits), info)
-        dest.addParRi()
+      dest.add strToken(pool.strings.getOrIncl("u" & $bits), info)
+      dest.addParRi()
     of CharT:
       dest.add charToken('\0', info)
     of RangetypeT:
@@ -4275,12 +4276,8 @@ proc buildHighValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pa
     of IntT:
       var bitsCursor = typ
       inc bitsCursor # skip int tag
-      let rawBits = typebits(bitsCursor.load)
-      var bits = rawBits
-      if rawBits != -1:
-        dest.addParLe(SufX, info)
-      else:
-        bits = c.g.config.bits
+      let bits = typebits(c.g.config, bitsCursor.load)
+      dest.addParLe(SufX, info)
       let value =
         case bits
         of 8: high(int8).int64
@@ -4288,18 +4285,13 @@ proc buildHighValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pa
         of 32: high(int32).int64
         else: high(int64)
       dest.add intToken(pool.integers.getOrIncl(value), info)
-      if rawBits != -1:
-        dest.add strToken(pool.strings.getOrIncl("i" & $rawBits), info)
-        dest.addParRi()
+      dest.add strToken(pool.strings.getOrIncl("i" & $bits), info)
+      dest.addParRi()
     of UIntT:
       var bitsCursor = typ
       inc bitsCursor # skip uint tag
-      let rawBits = typebits(bitsCursor.load)
-      var bits = rawBits
-      if rawBits != -1:
-        dest.addParLe(SufX, info)
-      else:
-        bits = c.g.config.bits
+      let bits = typebits(c.g.config, bitsCursor.load)
+      dest.addParLe(SufX, info)
       let value =
         case bits
         of 8: high(uint8).uint64
@@ -4307,9 +4299,8 @@ proc buildHighValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pa
         of 32: high(uint32).uint64
         else: high(uint64)
       dest.add uintToken(pool.uintegers.getOrIncl(value), info)
-      if rawBits != -1:
-        dest.add strToken(pool.strings.getOrIncl("u" & $rawBits), info)
-        dest.addParRi()
+      dest.add strToken(pool.strings.getOrIncl("u" & $bits), info)
+      dest.addParRi()
     of CharT:
       dest.add charToken(high(char), info)
     of RangetypeT:
@@ -5688,7 +5679,7 @@ proc resolveCyclicImports(c: var SemContext) =
 proc initSemContext(suffix: string; config: ProgramContext; moduleFlags: set[ModuleFlag];
                     commandLineArgs: string; canSelfExec: bool): SemContext =
   result = SemContext(
-    types: createBuiltinTypes(),
+    types: createBuiltinTypes(config.config.bits),
     thisModuleSuffix: suffix,
     moduleFlags: moduleFlags,
     g: config,

@@ -224,8 +224,10 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   var x = it
   skip it
   inc x # skip the `import`
-  # ignore conditional imports:
-  if x.stmtKind == WhenS: return
+  # Conditional imports carry a (when) marker child; skip it and still add the
+  # file to the dependency graph so cross-compilation (e.g. --os:windows) sees
+  # all potential dependencies. importSingleFile already ignores missing files.
+  if x.stmtKind == WhenS: skip x
   while x.kind != ParRi:
     var isCyclic = false
     if x.kind == ParLe and x.exprKind == PragmaxX:
@@ -265,8 +267,7 @@ proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
   var x = it
   skip it
   inc x # skip the tag
-  # ignore conditional imports:
-  if x.stmtKind == WhenS: return
+  if x.stmtKind == WhenS: skip x  # skip conditional marker, same as processImport
   var files: seq[ImportedFilename] = @[]
   var hasError = false
   filenameVal(x, files, hasError, allowAs = true)
@@ -401,12 +402,14 @@ proc defineNiflerCmd(b: var Builder; nifler: string) =
     b.addKeyw "input"
     b.addKeyw "output"
 
-proc defineHexerCmds(b: var Builder; hexer: string; bits: int) =
+proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool) =
+  let cpuFlag = if bigEndian: "--cpu:be" else: "--cpu:le"
   b.withTree "cmd":
     b.addSymbolDef "hexer"
     b.addStrLit hexer
     b.addStrLit "c"
     b.addStrLit "--bits:" & $bits
+    b.addStrLit cpuFlag
     b.withTree "input":
       b.addIntLit 0
 
@@ -415,6 +418,7 @@ proc defineHexerCmds(b: var Builder; hexer: string; bits: int) =
     b.addStrLit hexer
     b.addStrLit "d"
     b.addStrLit "--bits:" & $bits
+    b.addStrLit cpuFlag
     b.addKeyw "args"
     b.withTree "input":
       b.addIntLit 0
@@ -446,7 +450,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       b.addKeyw "input"
 
     # Command for hexer
-    defineHexerCmds(b, hexer, c.config.bits)
+    defineHexerCmds(b, hexer, c.config.bits, platform.CPU[c.config.targetCPU].endian == bigEndian)
 
     # Command for C compiler (object files)
     b.withTree "cmd":
@@ -804,7 +808,7 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
       b.addKeyw "args"
       b.addKeyw "input"
 
-    defineHexerCmds(b, findTool("hexer"), config.bits)
+    defineHexerCmds(b, findTool("hexer"), config.bits, platform.CPU[config.targetCPU].endian == bigEndian)
 
     b.withTree "cmd":
       b.addSymbolDef "cc"

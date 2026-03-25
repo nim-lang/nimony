@@ -7,7 +7,7 @@ import ".." / ".." / "lib" / [bitabs, nifcursors, nifstreams, lineinfos, nifread
 import ".." / [nimony_model]
 export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther
 
-export NoLineInfo, inc, skip, typeKind, stmtKind, exprKind, info
+export NoLineInfo, inc, skip, toString, typeKind, stmtKind, exprKind, info
 
 type
   Tree* = object

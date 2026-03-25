@@ -1,4 +1,7 @@
-{.build("C", "${path}/../../../vendor/mimalloc/src/static.c", "-DMI_STATS=1 -I${path}/../../../vendor/mimalloc/include").}
+when defined(linux):
+  {.build("C", "${path}/../../../vendor/mimalloc/src/static.c", "-DMI_STATS=1 -DMI_TRACK_VALGRIND=1 -I${path}/../../../vendor/mimalloc/include").}
+else:
+  {.build("C", "${path}/../../../vendor/mimalloc/src/static.c", "-DMI_STATS=1 -I${path}/../../../vendor/mimalloc/include").}
 when defined(arm):
   {.passL:"-latomic".}
 

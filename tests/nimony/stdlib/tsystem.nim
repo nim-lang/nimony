@@ -35,8 +35,8 @@ let guten = astToStr:
 
 assert guten == """
 
-let s: int = 12
-let m: int = 23"""
+let s: int64 = 12
+let m: int64 = 23"""
 
 assert not compiles(3 + "1" + 4)
 assert compiles(3 + 4)

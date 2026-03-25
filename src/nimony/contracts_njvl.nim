@@ -1009,8 +1009,23 @@ proc traverseLoop(c: var NjvlContext; n: var Cursor) =
     if wasEquality:
       c.facts.add condFact.geXplusC
 
-  # Loop body
+  # Loop body: the loop may execute 0 times, so writes inside the body
+  # must not be assumed to have occurred after the loop exits.
+  var writesSp = c.writesTo.split()
+  var cfSp = c.knownTrueCfVars.split()
+  let savedLoopWriteSetsScopeIdx = c.writeSets.pushScope()
   traverseStmt c, n
+  # Discard loop-body writes: join with the empty "loop didn't run" path.
+  # The conservative join keeps only the intersection; since the "else" side
+  # (loop not entered) has no writes, nothing from the loop body survives.
+  c.writesTo.thenDone(writesSp)
+  c.knownTrueCfVars.thenDone(cfSp)
+  c.writesTo.join(writesSp)
+  c.knownTrueCfVars.join(cfSp)
+  # Remove writeSets records from inside the loop: loop-local ite implications
+  # are only valid when the loop body actually executed, so they must not be
+  # visible to isInitializedAtProcEnd.
+  c.writeSets.popScope(savedLoopWriteSetsScopeIdx)
 
   # After loop, we know the condition is false (if we exited normally)
   c.activeBorrows.setLen(savedBorrowsLen)

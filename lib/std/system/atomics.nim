@@ -27,13 +27,20 @@ func atomicAddFetch*[T](p: ptr T, val: T, mem: AtomMemModel): T {.
   importc: "__atomic_add_fetch", nodecl.}
 func atomicSubFetch*[T](p: ptr T, val: T, mem: AtomMemModel): T {.
   importc: "__atomic_sub_fetch", nodecl.}
+func atomicLoadN*[T](p: ptr T, mem: AtomMemModel): T {.
+  importc: "__atomic_load_n", nodecl.}
 
 func arcInc*(memLoc: var int) {.inline.} =
-  ## Atomically increments the integer by some `x`.
+  ## Atomically increments the reference count.
   {.cast(noSideEffect).}:
     discard atomicAddFetch(memLoc.addr, 1, ATOMIC_SEQ_CST)
 
 func arcDec*(memLoc: var int): bool {.inline.} =
-  ## Atomically decrements the integer by some `x`. It returns the new value.
+  ## Atomically decrements the reference count. Returns true when it reaches zero.
   {.cast(noSideEffect).}:
     result = atomicSubFetch(memLoc.addr, 1, ATOMIC_SEQ_CST) < 0
+
+func arcIsUnique*(memLoc: var int): bool {.inline.} =
+  ## Atomically loads the reference count and returns true if it equals 0 (no extra references).
+  {.cast(noSideEffect).}:
+    result = atomicLoadN(memLoc.addr, ATOMIC_ACQUIRE) == 0

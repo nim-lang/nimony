@@ -42,8 +42,8 @@ type
     mem: seq[TokenBuf]
     current: TypeScope
 
-proc createTypeCache*(): TypeCache =
-  TypeCache(builtins: createBuiltinTypes())
+proc createTypeCache*(bits: int = 64): TypeCache =
+  TypeCache(builtins: createBuiltinTypes(bits))
 
 proc registerLocal*(c: var TypeCache; s: SymId; kind: SymKind; typ: Cursor) =
   c.current.locals[s] = LocalInfo(kind: kind, typ: typ)
@@ -464,8 +464,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     elif typeKind(result) == CstringT:
       result = c.builtins.charType
     else:
-      assert false, "cannot deref type: " & toString(result, false)
-      result = c.builtins.autoType # still an error
+      discard "byref param access: type is already the Nim-level type"
   of QuotedX, OchoiceX, CchoiceX, UnpackX, FieldsX, FieldpairsX, TypeofX, LowX, HighX,
      InternalFieldPairsX:
     discard "keep the error type"

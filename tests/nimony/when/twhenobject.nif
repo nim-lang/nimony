@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +1688            )
+(.indexat +1690            )
 0,1,tests/nimony/when/twhenobject.nim(stmts 6,1
  (type ~4 :Foo.0. . .
   (pragmas
@@ -9,9 +9,9 @@
    (copy =copy_SX46oo0twh699we9.0.)) 2
   (object . ~2,4
    (fld :y.0 . . 3
-    (i -1) .) ~4,5
+    (i +64) .) ~4,5
    (fld :z.0 . . 3
-    (i -1) .) ~2,7
+    (i +64) .) ~2,7
    (fld :a.0 . . 3 string.0.sysvq0asl .))) 9,5
  (comment int.0.sysvq0asl ~2,1 int.0.sysvq0asl) 6,1
  (proc :=destroy_SX46oo0twh699we9.0. . . .
@@ -74,7 +74,7 @@
      (hderef dest.0) a.0 +0)
     (dot src.0 a.0 +0)))))0,1,tests/nimony/when/twhenobject.nim(.index 6,1
  (h Foo.0. +85) 6,1
- (h =destroy_SX46oo0twh699we9.0. +384) 6,1
+ (h =destroy_SX46oo0twh699we9.0. +386) 6,1
  (h =wasmoved_SX46oo0twh699we9.0. +187) 6,1
  (h =dup_SX46oo0twh699we9.0. +227) 6,1
  (h =copy_SX46oo0twh699we9.0. +407))
