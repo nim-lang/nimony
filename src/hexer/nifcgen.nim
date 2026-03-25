@@ -2043,9 +2043,10 @@ proc trToplevel(c: var EContext; n: var Cursor) =
       trStmt c, n, TraverseAll
       swap c.dest, c.initBody
 
-proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool) =
+proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string) =
   let mp = splitModulePath(infile)
-  var c = EContext(dir: (if mp.dir.len == 0: getCurrentDir() else: mp.dir), ext: mp.ext, main: mp.name,
+  let dir = if outdir.len > 0: outdir elif mp.dir.len == 0: getCurrentDir() else: mp.dir
+  var c = EContext(dir: dir, ext: mp.ext, main: mp.name,
     dest: createTokenBuf(),
     nestedIn: @[(StmtsS, SymId(0))],
     typeCache: createTypeCache(),

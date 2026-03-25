@@ -534,9 +534,15 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
         b.addIdent "dce"
         b.withTree "args":
           b.addStrLit "--outdir:" & backendDir
-        for n in c.nodes:
+        for i, n in pairs c.nodes:
           b.withTree "input":
-            b.addStrLit c.config.hexedFile(n.files[0])
+            # The root module's .x.nif is backend-specific (generated with --isMain),
+            # so it does not collide with the shared .x.nif produced when this module
+            # is compiled as a non-main dependency of another program.
+            if i == 0:
+              b.addStrLit backendDir / n.files[0].modname & ".x.nif"
+            else:
+              b.addStrLit c.config.hexedFile(n.files[0])
           b.withTree "output":
             b.addStrLit c.config.nifcFile(n.files[0], backend)
 
@@ -595,18 +601,26 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
           b.withTree "output":
             b.addStrLit c.config.cFile(v.files[0], backend)
 
-        # Build .c.nif files from .s.nif files (hexer output shared, not backend)
+        # Build .x.nif files from .s.nif files via hexer.
+        # For the root module (i==0) the output is backend-specific so that
+        # its --isMain version does not overwrite the shared .x.nif that other
+        # compilations produce when this module is a non-main dependency.
         b.withTree "do":
           b.addIdent "hexer"
           if i == 0:
             b.withTree "args":
               b.addStrLit "--isMain"
+            b.withTree "args":
+              b.addStrLit "--outdir:" & backendDir
           b.withTree "input":
             b.addStrLit c.config.semmedFile(v.files[0], v.plugin)
           b.withTree "input":
             b.addStrLit c.config.indexFile(v.files[0], v.plugin)
           b.withTree "output":
-            b.addStrLit c.config.hexedFile(v.files[0])
+            if i == 0:
+              b.addStrLit backendDir / v.files[0].modname & ".x.nif"
+            else:
+              b.addStrLit c.config.hexedFile(v.files[0])
 
 proc cachedConfigFile(config: NifConfig): string =
   config.nifcachePath / "cachedconfigfile.txt"

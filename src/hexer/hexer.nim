@@ -114,7 +114,7 @@ proc handleCmdLine*() =
   else:
     case action
     of "c":
-      expand files[0], bits, bigEndian, flags, isMain
+      expand files[0], bits, bigEndian, flags, isMain, outdir
     of "d":
       deadCodeElimination(files, outdir)
     else:
