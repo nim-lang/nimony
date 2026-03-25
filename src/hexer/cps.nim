@@ -1187,7 +1187,7 @@ proc generateCoroutineHelpers(c: var Context; dest: var TokenBuf; sym: SymId; it
 
   dest.copyIntoKind StmtsS, info:
     dest.copyIntoKind RetS, info:
-      dest.copyIntoKind CallS, info:
+      dest.copyIntoKind ProccallX, info:
         dest.addSymUse sym, info
         if params.kind != DotToken:
           inc params
