@@ -1,3 +1,3 @@
 import std / syncio
-import minitorder_b, minitorder_a
+import minitorder_a, minitorder_b
 echo "sub"
