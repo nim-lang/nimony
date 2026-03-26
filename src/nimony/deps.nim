@@ -611,6 +611,8 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
             b.withTree "args":
               b.addStrLit "--isMain"
             b.withTree "args":
+              b.addStrLit "--app:" & $c.config.appType
+            b.withTree "args":
               b.addStrLit "--outdir:" & backendDir
           b.withTree "input":
             b.addStrLit c.config.semmedFile(v.files[0], v.plugin)
@@ -913,6 +915,8 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
       b.addIdent "hexer"
       b.withTree "args":
         b.addStrLit "--isMain"
+      b.withTree "args":
+        b.addStrLit "--app:" & $config.appType
       b.withTree "input":
         b.addStrLit mainNifFile
       b.withTree "output":
@@ -934,7 +938,6 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
         if i == 0:
           b.withTree "args":
             b.addStrLit "--isMain"
-
         b.withTree "input":
           b.addStrLit config.nifcachePath / nifFile & ".c.nif"
         b.withTree "output":

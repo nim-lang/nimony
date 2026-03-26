@@ -81,7 +81,6 @@ type
   GenFlag* = enum
     gfMainModule # isMainModule
     gfHasError   # already generated the error variable
-    gfProducesMainProc # needs main proc
     gfInCallImportC  # in importC call context
     gfInFlexArray    # initializing a flexible-array-member field (suppress NC8* cast)
 
@@ -731,16 +730,7 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
   writeTokenSeq f, c.data, c
   writeTokenSeq f, realCode, c
 
-  if gfProducesMainProc in c.flags:
-    f.write "int cmdCount;\n"
-    f.write "NC8 **cmdLine;\n"
-    # Changing argv type other than `char**` results in compile error in clang.
-    f.write "int main(int argc, char **argv) {\n"
-    f.write "  cmdCount = argc;\n"
-    f.write "  cmdLine = (NC8**)argv;\n"
-    writeTokenSeq f, c.init, c
-    f.write "}\n\n"
-  elif c.init.len > 0:
+  if c.init.len > 0:
     f.write "static void __attribute__((constructor)) init(void) {"
     if c.currentProc.needsOverflowFlag:
       addOverflowDecl c, c.init, 0
