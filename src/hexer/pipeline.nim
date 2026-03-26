@@ -39,8 +39,9 @@ proc publishHooks*(n: var Cursor) =
 proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): TokenBuf =
   # Prepare initial buffer from elimForLoops
   var n = n
-  elimForLoops(c, n)
-  var initialBuf = move c.dest
+  var dest = createTokenBuf(300)
+  elimForLoops(c, dest, n)
+  var initialBuf = move dest
 
   # Initialize the Pass pipeline
   var pass = initPass(initialBuf, moduleSuffix, "desugar", bits)
