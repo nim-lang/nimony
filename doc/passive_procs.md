@@ -57,7 +57,11 @@ caller into states around each such call. The programmer does not need to think 
 For a passive proc `foo(x: int)`, the compiler generates:
 
 - A coroutine type: `FooCoroutine = object of CoroutineBase` containing lifted locals.
-- An entry function that allocates/initializes the environment and runs the first state.
+- A **wrapper function** (`foo_init`) that allocates the coroutine frame via `allocFrame` and
+  delegates to the entry function. The wrapper signature is `foo_init(x: int, result: ptr int, caller: Continuation)`.
+  This wrapper is essential for method calls where the concrete type is unknown at compile time.
+- An **entry function** (`foo`) that takes the pre-allocated frame, initializes the environment
+  (`this[] = FooCoroutine(...)`), and runs the first state.
 - State functions `s0`, `s1`, ... that each execute code up to the next suspension point
   and return a `Continuation` pointing to the next state (or to `caller` when done).
 
@@ -264,7 +268,7 @@ completion via `complete()`:
 
 ```nim
 var coroVar: FooCoroutine   # on the caller's C stack
-let contVar = foo(addr coroVar, args, stopContinuation)
+let contVar = `foo_init`(args, stopContinuation)
 complete(contVar)
 ```
 
@@ -286,6 +290,41 @@ This means:
 (enabling `deallocFrame` to detect them), and it is reserved for future cancellation support
 to walk the chain of active coroutines.
 
+### Passive methods
+
+Passive procs can be declared as methods:
+
+```nim
+type
+  MyObject = ref object of RootObj
+  MyObject2 = ref object of MyObject
+
+method greet(x: MyObject) {.passive.} =
+  echo "hello"
+
+method greet(x: MyObject2) {.passive.} =
+  echo "hello from derived"
+```
+
+When calling a passive method from a regular (non-passive) proc, the compiler uses dynamic
+dispatch. It calls the wrapper function (`greet_init`) which internally performs the
+virtual method lookup and returns a continuation that will execute the appropriate
+implementation. The continuation is then driven to completion via `complete()`:
+
+```nim
+var obj: MyObject = MyObject2()
+obj.greet()  # compiles to: complete(greet_init(obj))
+```
+
+Within a passive proc, calls to passive methods behave like regular passive calls—they
+become suspension points and the caller is split into states around the call. The method
+dispatch still resolves at runtime through the vtable, but the continuation chaining works
+identically to non-method passive calls.
+
+The wrapper function (`foo_init`) is necessary because the compiler cannot know at
+compile time which concrete method implementation will be invoked. It allocates the
+coroutine frame and lets the vtable dispatch resolve the actual implementation.
+
 ## Return Values
 
 Non-void passive procs pass their return value through a pointer parameter. The caller
@@ -295,26 +334,35 @@ field when invoking the callee.
 For example, `proc io2(): int {.passive.}` is compiled as:
 
 ```nim
-# Generated init function for io2
-proc io2_0(this: ptr Io2Coro; result: ptr int; caller: Continuation): Continuation =
-  this[] = Io2Coro(vt: addr io2Vt, resultPtr: result,
-                   caller: caller, callee: cast[ptr CoroutineBase](this))
+# Generated wrapper for io2 (allocates frame, delegates to entry)
+proc io2_init(result: ptr int; caller: Continuation): Continuation =
+  let this = cast[ptr Io2Coro](allocFrame(sizeof(Io2Coro)))
+  return io2(this, result, caller)
+
+# Entry function (takes pre-allocated frame, initializes environment)
+proc io2(this: ptr Io2Coro; result: ptr int; caller: Continuation): Continuation =
+  this[] = Io2Coro(resultPtr: result, caller: caller, callee: cast[ptr CoroutineBase](this))
+  return io2_s0(this)
+
+# State s0: runs to completion (no suspension points in this example)
+proc io2_s0(this: ptr Io2Coro): Continuation =
   this.resultPtr[] = 0   # return 0
   let tmpCaller = this.caller
   deallocFrame(cast[ptr CoroutineBase](this))
   return tmpCaller
 ```
 
-The `result` pointer is stored in the coro struct so that state functions generated for
-suspension points can also write to it. On the calling side, `main2` stores the return value
-in a lifted field of its own coro struct and reads it after the callee completes:
+The wrapper signature is `foo_init(...args, result: ptr int, caller: Continuation)` for non-void,
+or `foo_init(...args, caller: Continuation)` for void. It allocates the frame and delegates to
+`foo(...args, this, ...)`.
+
+On the calling side, `main2` stores the return value in a lifted field of its own coro struct and reads it after the callee completes:
 
 ```nim
-# Generated init function for main2
-proc main2_0(this: ptr Main2Coro; caller: Continuation): Continuation =
+# Generated state for main2
+proc main2_s0(caller: Continuation): Continuation =
   # ...
-  let contVar = io2_0(
-    cast[ptr Io2Coro](allocFrame(sizeof Io2Coro)),
+  let contVar = io2_init(
     addr this.x,                              # result pointer into main2's coro struct
     Continuation(fn: main2_s1, env: cast[ptr CoroutineBase](this)))  # resume when done
   return contVar
