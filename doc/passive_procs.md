@@ -268,7 +268,7 @@ completion via `complete()`:
 
 ```nim
 var coroVar: FooCoroutine   # on the caller's C stack
-let contVar = `foo_init`(args, stopContinuation)
+let contVar = `foo`(args, addr coroVar, stopContinuation)
 complete(contVar)
 ```
 
@@ -284,46 +284,15 @@ This means:
   The `complete()` loop eventually calls the final state function, which calls `deallocFrame`
   — again a no-op for the stack frame (the nil-caller check still holds).
 
+Note: This optimization only applies to regular procedure calls. For
+passive methods, dynamic dispatch prevents the inlining strategy above,
+so we must still call via the wrapper and allocate on heap.
+
 ### The `callee` field
 
 `CoroutineBase.callee` serves two purposes: it is a self-pointer in heap-allocated frames
 (enabling `deallocFrame` to detect them), and it is reserved for future cancellation support
 to walk the chain of active coroutines.
-
-### Passive methods
-
-Passive procs can be declared as methods:
-
-```nim
-type
-  MyObject = ref object of RootObj
-  MyObject2 = ref object of MyObject
-
-method greet(x: MyObject) {.passive.} =
-  echo "hello"
-
-method greet(x: MyObject2) {.passive.} =
-  echo "hello from derived"
-```
-
-When calling a passive method from a regular (non-passive) proc, the compiler uses dynamic
-dispatch. It calls the wrapper function (`greet_init`) which internally performs the
-virtual method lookup and returns a continuation that will execute the appropriate
-implementation. The continuation is then driven to completion via `complete()`:
-
-```nim
-var obj: MyObject = MyObject2()
-obj.greet()  # compiles to: complete(greet_init(obj))
-```
-
-Within a passive proc, calls to passive methods behave like regular passive calls—they
-become suspension points and the caller is split into states around the call. The method
-dispatch still resolves at runtime through the vtable, but the continuation chaining works
-identically to non-method passive calls.
-
-The wrapper function (`foo_init`) is necessary because the compiler cannot know at
-compile time which concrete method implementation will be invoked. It allocates the
-coroutine frame and lets the vtable dispatch resolve the actual implementation.
 
 ## Return Values
 
