@@ -14,6 +14,12 @@ We need to transform:
     for i in 0..<x:
       yield i
 
+or:
+
+  proc foo(x: int) {.passive.} =
+    bar()
+    baz()
+
 into:
 
   type
@@ -60,6 +66,40 @@ Becomes:
   while it.fn != nil:
     echo forLoopVar
     it = scheduler.tick it
+
+For a passive proc:
+
+  proc foo(x: int) {.passive.} =
+    bar()
+    baz()
+
+The transformation produces:
+
+  type
+    FooCoroutine* = object of CoroutineBase
+      x: int
+
+  # Helper that allocates frame and delegates to entry
+  proc foo_init(x: int; result: ptr int; caller: Continuation): Continuation =
+    let this = cast[ptr FooCoroutine](allocFrame(sizeof(FooCoroutine)))
+    return foo(x, this, result, caller)
+
+  # Entry: takes pre-allocated frame, initializes environment, runs first state
+  proc foo(x, this: ptr FooCoroutine; result: ptr int; caller: Continuation): Continuation =
+    this[] = FooCoroutine(x: x, caller: caller, callee: cast[ptr CoroutineBase](this))
+    return foo_s0(this)
+
+  # State s0: runs up to first suspension point
+  proc foo_s0(this: ptr FooCoroutine): Continuation =
+    bar()        # suspension point -> state transition
+    return foo_s1(this)
+
+  # State s1: runs until completion
+  proc foo_s1(this: ptr FooCoroutine): Continuation =
+    baz()
+    let tmpCaller = this.caller
+    deallocFrame(cast[ptr CoroutineBase](this))
+    return tmpCaller  # return to caller
 
 ]##
 
