@@ -13,7 +13,7 @@ include nifprelude
 import symparser
 import ".." / models / tags
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof,
-  typeprops, langmodes, typekeys]
+  typeprops, langmodes, typekeys, nifconfig]
 import hexer_context, pipeline, dce1, lifter
 import  ".." / lib / [stringtrees]
 
@@ -1956,6 +1956,136 @@ proc genInitProcEnd(c: var EContext; rootInfo: PackedLineInfo) =
   c.dest.addParRi() # stmts (body)
   c.dest.addParRi() # proc
 
+proc genMainProc(c: var EContext; rootInfo: PackedLineInfo) =
+  ## Generate cmdCount/cmdLine globals and a C main() wrapper for the main module.
+  ## The gvars get exportc pragmas so NIFC defines them with the expected C names.
+  ## Symbol names must contain dots to be recognized as Symbol tokens (not Ident) in NIF.
+  let initSym = pool.syms.getOrIncl(initProcName(c.main))
+
+  # Declare a nodecl importc "char" type alias so argv/cmdLine use plain C `char`
+  # instead of NC8 (unsigned char). The C standard requires char** for main's argv.
+  let ccharSym = pool.syms.getOrIncl("`cchar.0." & c.main)
+  c.dest.add tagToken("type", rootInfo)
+  c.dest.add symdefToken(ccharSym, rootInfo)
+  c.dest.add tagToken("pragmas", rootInfo)
+  c.dest.add tagToken("importc", rootInfo)
+  c.dest.addStrLit("char", rootInfo)
+  c.dest.addParRi() # importc
+  c.dest.add tagToken("nodecl", rootInfo)
+  c.dest.addParRi() # nodecl
+  c.dest.addParRi() # pragmas
+  c.dest.add tagToken("i", rootInfo) # body: (i 8)
+  c.dest.addIntLit(8, rootInfo)
+  c.dest.addParRi() # i
+  c.dest.addParRi() # type
+
+  # (gvar :cmdCount (pragmas (exportc "cmdCount")) (i 32) .)
+  let cmdCountSym = pool.syms.getOrIncl("`cmdCount.0." & c.main)
+  c.dest.add tagToken("gvar", rootInfo)
+  c.dest.add symdefToken(cmdCountSym, rootInfo)
+  c.dest.add tagToken("pragmas", rootInfo)
+  c.dest.add tagToken("exportc", rootInfo)
+  c.dest.addStrLit("cmdCount", rootInfo)
+  c.dest.addParRi() # exportc
+  c.dest.addParRi() # pragmas
+  c.dest.add tagToken("i", rootInfo)
+  c.dest.addIntLit(32, rootInfo)
+  c.dest.addParRi() # i
+  c.dest.addDotToken() # no init value
+  c.dest.addParRi() # gvar
+
+  # (gvar :cmdLine (pragmas (exportc "cmdLine")) (ptr (ptr cchar)) .)
+  let cmdLineSym = pool.syms.getOrIncl("`cmdLine.0." & c.main)
+  c.dest.add tagToken("gvar", rootInfo)
+  c.dest.add symdefToken(cmdLineSym, rootInfo)
+  c.dest.add tagToken("pragmas", rootInfo)
+  c.dest.add tagToken("exportc", rootInfo)
+  c.dest.addStrLit("cmdLine", rootInfo)
+  c.dest.addParRi() # exportc
+  c.dest.addParRi() # pragmas
+  c.dest.add tagToken("ptr", rootInfo)
+  c.dest.add tagToken("ptr", rootInfo)
+
+  c.dest.add tagToken("c", rootInfo)
+  c.dest.addIntLit(8, rootInfo)
+  c.dest.addParRi() # c 8
+
+  c.dest.addParRi() # inner ptr
+  c.dest.addParRi() # outer ptr
+  c.dest.addDotToken() # no init value
+  c.dest.addParRi() # gvar
+
+  # Generate: (proc :main (params (param :argc . (i 32)) (param :argv . (ptr (ptr cchar)))) (i 32) (pragmas (exportc "main")) (stmts ...))
+  let mainSym = pool.syms.getOrIncl("`main.0." & c.main)
+  let argcSym = pool.syms.getOrIncl("`argc.0." & c.main)
+  let argvSym = pool.syms.getOrIncl("`argv.0." & c.main)
+  c.dest.add tagToken("proc", rootInfo)
+  c.dest.add symdefToken(mainSym, rootInfo)
+  # params
+  c.dest.add tagToken("params", rootInfo)
+  # (param :argc . (i 32))
+  c.dest.add tagToken("param", rootInfo)
+  c.dest.add symdefToken(argcSym, rootInfo)
+  c.dest.addDotToken()
+  c.dest.add tagToken("i", rootInfo)
+  c.dest.addIntLit(32, rootInfo)
+  c.dest.addParRi() # i
+  c.dest.addParRi() # param
+  # (param :argv . (ptr (ptr cchar)))
+  c.dest.add tagToken("param", rootInfo)
+  c.dest.add symdefToken(argvSym, rootInfo)
+  c.dest.addDotToken()
+  c.dest.add tagToken("ptr", rootInfo)
+  c.dest.add tagToken("ptr", rootInfo)
+  c.dest.add symToken(ccharSym, rootInfo)
+  c.dest.addParRi() # inner ptr
+  c.dest.addParRi() # outer ptr
+  c.dest.addParRi() # param
+  c.dest.addParRi() # params
+  # return type: (i 32)
+  c.dest.add tagToken("i", rootInfo)
+  c.dest.addIntLit(32, rootInfo)
+  c.dest.addParRi() # i
+  # pragmas: (pragmas (exportc "main"))
+  c.dest.add tagToken("pragmas", rootInfo)
+  c.dest.add tagToken("exportc", rootInfo)
+  c.dest.addStrLit("main", rootInfo)
+  c.dest.addParRi() # exportc
+  c.dest.addParRi() # pragmas
+  # body
+  c.dest.add tagToken("stmts", rootInfo)
+  # (asgn cmdCount argc)
+  c.dest.add tagToken("asgn", rootInfo)
+  c.dest.add symToken(cmdCountSym, rootInfo)
+  c.dest.add symToken(argcSym, rootInfo)
+  c.dest.addParRi() # asgn
+  # (asgn cmdLine argv)
+  c.dest.add tagToken("asgn", rootInfo)
+  c.dest.add symToken(cmdLineSym, rootInfo)
+
+  c.dest.add tagToken("cast", rootInfo)
+  c.dest.add tagToken("ptr", rootInfo)
+  c.dest.add tagToken("ptr", rootInfo)
+  c.dest.add tagToken("c", rootInfo)
+  c.dest.addIntLit(8, rootInfo)
+  c.dest.addParRi() # c 8
+  c.dest.addParRi() # inner ptr
+  c.dest.addParRi() # outer ptr
+
+  c.dest.add symToken(argvSym, rootInfo)
+  c.dest.addParRi() # asgn
+
+  c.dest.addParRi() # asgn
+  # (call ini.0.modname)
+  c.dest.add tagToken("call", rootInfo)
+  c.dest.add symToken(initSym, rootInfo)
+  c.dest.addParRi() # call
+  # (ret 0)
+  c.dest.add tagToken("ret", rootInfo)
+  c.dest.addIntLit(0, rootInfo)
+  c.dest.addParRi() # ret
+  c.dest.addParRi() # stmts
+  c.dest.addParRi() # proc
 
 proc isTopLevelDecl(n: Cursor): bool {.inline.} =
   ## Returns true for declarations that should stay at the top level
@@ -2043,7 +2173,7 @@ proc trToplevel(c: var EContext; n: var Cursor) =
       trStmt c, n, TraverseAll
       swap c.dest, c.initBody
 
-proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string) =
+proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string; appType = appConsole) =
   let mp = splitModulePath(infile)
   let dir = if outdir.len > 0: outdir elif mp.dir.len == 0: getCurrentDir() else: mp.dir
   var c = EContext(dir: dir, ext: mp.ext, main: mp.name,
@@ -2091,12 +2221,8 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
   c.dest.add c.initBody
   genInitProcEnd(c, rootInfo)
 
-  if isMain:
-    # Emit a top-level call so that DCE sees it as a root and NIFC places it in main():
-    let initSym = pool.syms.getOrIncl(initProcName(c.main))
-    c.dest.add tagToken("call", rootInfo)
-    c.dest.add symToken(initSym, rootInfo)
-    c.dest.addParRi()
+  if isMain and appType in {appConsole, appGui}:
+    genMainProc(c, rootInfo)
 
   skipParRi c, n
   let destfileName = c.dir / c.main & ".x.nif"

@@ -452,6 +452,8 @@ Foo_0_tpakvxko41 x_1_tpakvxko41 = {
   .c_0 = (NC8)'a', .x_0 = IL64(123)}
 ;
 NB8 X60QiniGuard_0_tpakvxko41;
+NI32 cmdCount;
+NC8** cmdLine;
 void X60Qini_0_tpakvxko41(void){
   if (X60QiniGuard_0_tpakvxko41){
     return;}
@@ -467,11 +469,8 @@ void X60Qini_0_tpakvxko41(void){
     );
     write_7_syn1lfpjv(stdout, (NC8)'\012');
     quit_0_syn1lfpjv(IL64(1));}}
-int cmdCount;
-NC8 **cmdLine;
-int main(int argc, char **argv) {
-  cmdCount = argc;
-  cmdLine = (NC8**)argv;
-X60Qini_0_tpakvxko41();
-}
-
+NI32 main(NI32 X60Qargc_0_tpakvxko41, char** X60Qargv_0_tpakvxko41){
+  cmdCount = X60Qargc_0_tpakvxko41;
+  cmdLine = ((NC8**)X60Qargv_0_tpakvxko41);
+  X60Qini_0_tpakvxko41();
+  return IL64(0);}
