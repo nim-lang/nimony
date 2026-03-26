@@ -19,6 +19,7 @@ type
     pos*: Cursor # points into MainModule.src
     kind*: NifcSym
     extern*: StrId # extracted from the pragmas and store here as it is so frequently queried
+    isImport*: bool # true for importc/importcpp, false for exportc-only
     buf: TokenBuf # can be empty for symbols that are in the main module
 
   NifProgram* = object # a NIF program is a set of NIF modules
@@ -59,8 +60,9 @@ proc externName*(s: SymId; n: Cursor): StrId =
     extractBasename base
     result = pool.strings.getOrIncl(base)
 
-proc extractExtern(n: var Cursor; pragmasAt: int): StrId =
+proc extractExtern(n: var Cursor; pragmasAt: int; isImport: var bool): StrId =
   result = StrId(0)
+  isImport = false
   inc n
   if n.kind != SymbolDef:
     raiseAssert "Expected SymbolDef after toplevel declaration"
@@ -71,8 +73,11 @@ proc extractExtern(n: var Cursor; pragmasAt: int): StrId =
     if n.substructureKind == PragmasU:
       inc n
       while n.kind != ParRi:
-        if n.pragmaKind in {ImportcP, ImportcppP, ExportcP}:
+        let pk = n.pragmaKind
+        if pk in {ImportcP, ImportcppP, ExportcP}:
           result = externName(symId, n)
+          if pk in {ImportcP, ImportcppP}:
+            isImport = true
         skip n
       inc n
     elif n.kind == DotToken:
@@ -109,17 +114,18 @@ proc getDeclOrNil*(c: var MainModule; s: SymId): ptr Definition =
     if pos.firstSon.kind == SymbolDef:
       let sk = pos.symKind
       var extern = StrId(0)
+      var isImport = false
       var n = pos
       case sk
       of TypeY:
         c.types.add pos
-        extern = extractExtern(n, 1)
+        extern = extractExtern(n, 1, isImport)
       of ProcY:
-        extern = extractExtern(n, 3)
+        extern = extractExtern(n, 3, isImport)
       of VarY, ConstY, GvarY, TvarY:
-        extern = extractExtern(n, 1)
+        extern = extractExtern(n, 1, isImport)
       else: discard
-      c.defs[s] = Definition(pos: pos, kind: sk, extern: extern, buf: ensureMove(buf))
+      c.defs[s] = Definition(pos: pos, kind: sk, extern: extern, isImport: isImport, buf: ensureMove(buf))
       c.requestedForeignSyms.add pos
     else:
       raiseAssert "Expected SymbolDef after toplevel declaration"
@@ -191,8 +197,9 @@ proc parse*(r: var Reader; m: var MainModule; parentInfo: PackedLineInfo): bool 
 proc processToplevelDecl(m: var MainModule; n: var Cursor; kind: NifcSym; pragmasAt: int) =
   let decl = n
   let s = decl.firstSon.symId
-  let extern = extractExtern(n, pragmasAt)
-  m.defs[s] = Definition(pos: decl, kind: kind, extern: extern)
+  var isImport = false
+  let extern = extractExtern(n, pragmasAt, isImport)
+  m.defs[s] = Definition(pos: decl, kind: kind, extern: extern, isImport: isImport)
 
 proc detectToplevelDecls(m: var MainModule) =
   var n = cursorAt(m.src, 0)
