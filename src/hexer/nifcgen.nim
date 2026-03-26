@@ -1962,6 +1962,23 @@ proc genMainProc(c: var EContext; rootInfo: PackedLineInfo) =
   ## Symbol names must contain dots to be recognized as Symbol tokens (not Ident) in NIF.
   let initSym = pool.syms.getOrIncl(initProcName(c.main))
 
+  # Declare a nodecl importc "char" type alias so argv/cmdLine use plain C `char`
+  # instead of NC8 (unsigned char). The C standard requires char** for main's argv.
+  let ccharSym = pool.syms.getOrIncl("`cchar.0." & c.main)
+  c.dest.add tagToken("type", rootInfo)
+  c.dest.add symdefToken(ccharSym, rootInfo)
+  c.dest.add tagToken("pragmas", rootInfo)
+  c.dest.add tagToken("importc", rootInfo)
+  c.dest.addStrLit("char", rootInfo)
+  c.dest.addParRi() # importc
+  c.dest.add tagToken("nodecl", rootInfo)
+  c.dest.addParRi() # nodecl
+  c.dest.addParRi() # pragmas
+  c.dest.add tagToken("i", rootInfo) # body: (i 8)
+  c.dest.addIntLit(8, rootInfo)
+  c.dest.addParRi() # i
+  c.dest.addParRi() # type
+
   # (gvar :cmdCount (pragmas (exportc "cmdCount")) (i 32) .)
   let cmdCountSym = pool.syms.getOrIncl("`cmdCount.0." & c.main)
   c.dest.add tagToken("gvar", rootInfo)
@@ -1977,7 +1994,7 @@ proc genMainProc(c: var EContext; rootInfo: PackedLineInfo) =
   c.dest.addDotToken() # no init value
   c.dest.addParRi() # gvar
 
-  # (gvar :cmdLine (pragmas (exportc "cmdLine")) (ptr (ptr (c 8))) .)
+  # (gvar :cmdLine (pragmas (exportc "cmdLine")) (ptr (ptr cchar)) .)
   let cmdLineSym = pool.syms.getOrIncl("`cmdLine.0." & c.main)
   c.dest.add tagToken("gvar", rootInfo)
   c.dest.add symdefToken(cmdLineSym, rootInfo)
@@ -1988,15 +2005,13 @@ proc genMainProc(c: var EContext; rootInfo: PackedLineInfo) =
   c.dest.addParRi() # pragmas
   c.dest.add tagToken("ptr", rootInfo)
   c.dest.add tagToken("ptr", rootInfo)
-  c.dest.add tagToken("c", rootInfo)
-  c.dest.addIntLit(8, rootInfo)
-  c.dest.addParRi() # c 8
+  c.dest.add symToken(ccharSym, rootInfo)
   c.dest.addParRi() # inner ptr
   c.dest.addParRi() # outer ptr
   c.dest.addDotToken() # no init value
   c.dest.addParRi() # gvar
 
-  # Generate: (proc :main (params (param :argc . (i 32)) (param :argv . (ptr (ptr (c 8))))) (i 32) (pragmas (exportc "main")) (stmts ...))
+  # Generate: (proc :main (params (param :argc . (i 32)) (param :argv . (ptr (ptr cchar)))) (i 32) (pragmas (exportc "main")) (stmts ...))
   let mainSym = pool.syms.getOrIncl("`main.0." & c.main)
   let argcSym = pool.syms.getOrIncl("`argc.0." & c.main)
   let argvSym = pool.syms.getOrIncl("`argv.0." & c.main)
@@ -2012,15 +2027,13 @@ proc genMainProc(c: var EContext; rootInfo: PackedLineInfo) =
   c.dest.addIntLit(32, rootInfo)
   c.dest.addParRi() # i
   c.dest.addParRi() # param
-  # (param :argv . (ptr (ptr (c 8))))
+  # (param :argv . (ptr (ptr cchar)))
   c.dest.add tagToken("param", rootInfo)
   c.dest.add symdefToken(argvSym, rootInfo)
   c.dest.addDotToken()
   c.dest.add tagToken("ptr", rootInfo)
   c.dest.add tagToken("ptr", rootInfo)
-  c.dest.add tagToken("c", rootInfo)
-  c.dest.addIntLit(8, rootInfo)
-  c.dest.addParRi() # c 8
+  c.dest.add symToken(ccharSym, rootInfo)
   c.dest.addParRi() # inner ptr
   c.dest.addParRi() # outer ptr
   c.dest.addParRi() # param
