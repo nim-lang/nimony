@@ -431,17 +431,16 @@ Foo_0_tun261nex;
 extern void X60Qini_0_sysvq0asl(void);
 Foo_0_tun261nex x_1_tun261nex;
 NB8 X60QiniGuard_0_tun261nex;
+NI32 cmdCount;
+NC8** cmdLine;
 void X60Qini_0_tun261nex(void){
   if (X60QiniGuard_0_tun261nex){
     return;}
   X60QiniGuard_0_tun261nex = NIM_TRUE;
   X60Qini_0_sysvq0asl();
   x_1_tun261nex.c_0 = (NC8)'a';}
-int cmdCount;
-NC8 **cmdLine;
-int main(int argc, char **argv) {
-  cmdCount = argc;
-  cmdLine = (NC8**)argv;
-X60Qini_0_tun261nex();
-}
-
+NI32 main(NI32 X60Qargc_0_tun261nex, NC8** X60Qargv_0_tun261nex){
+  cmdCount = X60Qargc_0_tun261nex;
+  cmdLine = X60Qargv_0_tun261nex;
+  X60Qini_0_tun261nex();
+  return IL64(0);}

@@ -12,7 +12,11 @@ include "../lib" / nifprelude
 import nifc_model, nifmodules
 
 proc isImportC*(m: var MainModule; n: Cursor): bool =
-  result = n.kind in {Symbol, SymbolDef} and m.getExtern(n.symId) != StrId(0)
+  if n.kind in {Symbol, SymbolDef}:
+    let d = m.getDeclOrNil(n.symId)
+    result = d != nil and d.isImport
+  else:
+    result = false
 
 proc createIntegralType*(m: var MainModule; name: string): Cursor =
   result = m.builtinTypes.getOrDefault(name)
