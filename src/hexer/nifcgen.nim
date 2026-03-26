@@ -2005,7 +2005,11 @@ proc genMainProc(c: var EContext; rootInfo: PackedLineInfo) =
   c.dest.addParRi() # pragmas
   c.dest.add tagToken("ptr", rootInfo)
   c.dest.add tagToken("ptr", rootInfo)
-  c.dest.add symToken(ccharSym, rootInfo)
+
+  c.dest.add tagToken("c", rootInfo)
+  c.dest.addIntLit(8, rootInfo)
+  c.dest.addParRi() # c 8
+
   c.dest.addParRi() # inner ptr
   c.dest.addParRi() # outer ptr
   c.dest.addDotToken() # no init value
@@ -2058,7 +2062,19 @@ proc genMainProc(c: var EContext; rootInfo: PackedLineInfo) =
   # (asgn cmdLine argv)
   c.dest.add tagToken("asgn", rootInfo)
   c.dest.add symToken(cmdLineSym, rootInfo)
+
+  c.dest.add tagToken("cast", rootInfo)
+  c.dest.add tagToken("ptr", rootInfo)
+  c.dest.add tagToken("ptr", rootInfo)
+  c.dest.add tagToken("c", rootInfo)
+  c.dest.addIntLit(8, rootInfo)
+  c.dest.addParRi() # c 8
+  c.dest.addParRi() # inner ptr
+  c.dest.addParRi() # outer ptr
+
   c.dest.add symToken(argvSym, rootInfo)
+  c.dest.addParRi() # asgn
+
   c.dest.addParRi() # asgn
   # (call ini.0.modname)
   c.dest.add tagToken("call", rootInfo)
