@@ -37,8 +37,11 @@ assert words.getOrDefault("the") == 2
 assert words.getOrDefault("cat") == 1
 
 # --- Iteration ---
-# `pairs` yields (key, value) tuples.
-# NOTE: currently triggers a compiler bug in hexer/lifter
-# for lent tuple hooks, so omitted here for now.
+
+# `pairs` yields (key, value):
+var total = 0
+for fruit, count in pairs(counts):
+  total += count
+assert total == 15
 
 echo "tables: OK"
