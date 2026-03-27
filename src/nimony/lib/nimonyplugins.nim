@@ -6,6 +6,7 @@ import ".." / ".." / "lib" / [nifcursors, nifstreams, lineinfos, bitabs]
 
 import ".." / [nimony_model]
 export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther
+export NifKind
 
 export NoLineInfo
 
@@ -43,7 +44,6 @@ proc `=wasMoved`*(x: var Tree) =
 proc `=copy`*(dest: var Tree; src: Tree) =
   if dest.p != src.p:
     `=destroy`(dest)
-    `=wasMoved`(dest)
     if src.p != nil:
       inc src.p.counter
     dest.p = src.p
@@ -123,6 +123,10 @@ proc symId*(n: Node): SymId {.inline.} =
   ## The current token must be a `Symbol` or `SymbolDef`.
   n.cursor.symId
 
+proc symText*(n: Node): string {.inline.} =
+  ## Returns the symbol text of the current `Symbol` or `SymbolDef` token.
+  pool.syms[n.cursor.symId]
+
 proc identText*(n: Node): string {.inline.} =
   ## Returns the identifier text of the current `Ident` token.
   pool.strings[n.cursor.litId]
@@ -166,6 +170,10 @@ proc otherKind*(n: Node): NimonyOther {.inline.} =
   ## Returns the current "other/substructure" kind, or `NoSub` for non-matching
   ## nodes.
   n.cursor.substructureKind
+
+proc pragmaKind*(n: Node): NimonyPragma {.inline.} =
+  ## Returns the current pragma kind, or `NoPragma` for non-matching nodes.
+  n.cursor.pragmaKind
 
 proc createTree*(): Tree =
   ## Creates an empty mutable `Tree`.
@@ -253,6 +261,39 @@ proc addSymUse*(t: var Tree; s: SymId; info: LineInfo = NoLineInfo) =
   prepareMutation(t)
   t.p[].buf.addSymUse(s, info)
 
+proc addEmptyNode*(t: var Tree; info: LineInfo = NoLineInfo) =
+  ## Appends a single empty placeholder node (`.`) to `t`.
+  prepareMutation(t)
+  t.p[].buf.addEmpty(info)
+
+proc addEmptyNode2*(t: var Tree; info: LineInfo = NoLineInfo) =
+  ## Appends two empty placeholder nodes (`. .`) to `t`.
+  prepareMutation(t)
+  t.p[].buf.addEmpty2(info)
+
+proc addEmptyNode3*(t: var Tree; info: LineInfo = NoLineInfo) =
+  ## Appends three empty placeholder nodes (`. . .`) to `t`.
+  prepareMutation(t)
+  t.p[].buf.addEmpty3(info)
+
+proc addEmptyNode4*(t: var Tree; info: LineInfo = NoLineInfo) =
+  ## Appends four empty placeholder nodes (`. . . .`) to `t`.
+  prepareMutation(t)
+  t.p[].buf.addEmpty3(info)
+  t.p[].buf.addEmpty(info)
+
+proc add*(t: var Tree; child: Node): Tree {.discardable.} =
+  ## Appends `child` to `t` without advancing the caller's `Node`.
+  var copy = child
+  t.takeTree(copy)
+  result = t
+
+proc add*(t: var Tree; children: varargs[Node]): Tree {.discardable.} =
+  ## Appends every child in `children` to `t`.
+  for child in children:
+    discard t.add(child)
+  result = t
+
 proc inc*(n: var Node) =
   ## Advances `n` by one token.
   inc n.cursor
@@ -265,6 +306,113 @@ proc setInfo*(n: var Node; info: PackedLineInfo) {.inline.} =
   ## Rewrites the line info of the current token in place.
   prepareMutation(n)
   n.cursor.setInfo(info)
+
+proc len*(n: Node): int =
+  ## Returns the number of immediate children of the current node.
+  result = 0
+  if n.owner.p != nil and hasCurrentToken(n.cursor) and n.kind == ParLe:
+    var it = n
+    inc it
+    while it.kind != ParRi:
+      inc result
+      skip it
+
+proc infoToStr(info: PackedLineInfo): string =
+  let rawInfo = unpack(pool.man, info)
+  if not info.isValid or not rawInfo.file.isValid:
+    result = "???"
+  else:
+    result = pool.files[rawInfo.file]
+    result.add "("
+    result.addInt rawInfo.line
+    result.add ", "
+    result.addInt rawInfo.col + 1
+    result.add ")"
+
+proc currentInfo(n: Node): PackedLineInfo =
+  if n.owner.p != nil and hasCurrentToken(n.cursor):
+    result = n.info
+  else:
+    result = NoLineInfo
+
+proc writeDiagnostic(level, msg: string; info: PackedLineInfo) =
+  stdout.writeLine infoToStr(info) & " " & level & msg
+
+proc warning*(msg: string; n: Node = default(Node)) =
+  ## Emits a warning tied to `n`'s line information.
+  writeDiagnostic("Warning: ", msg, currentInfo(n))
+
+proc error*(msg: string; n: Node = default(Node)) =
+  ## Emits an error tied to `n`'s line information and aborts the plugin.
+  writeDiagnostic("Error: ", msg, currentInfo(n))
+  quit 1
+
+proc expectKind*(n: Node; k: NifKind) =
+  ## Checks that `n` has raw token kind `k`.
+  if n.kind != k:
+    error("Expected a node of kind " & $k & ", got " & $n.kind, n)
+
+proc expectKind*(n: Node; kinds: set[NifKind]) =
+  ## Checks that `n` has a raw token kind in `kinds`.
+  if n.kind notin kinds:
+    error("Expected a node of one of the kinds " & $kinds & ", got " & $n.kind, n)
+
+proc expectKind*(n: Node; k: NimonyType) =
+  ## Checks that `n` is a type node of kind `k`.
+  if n.typeKind != k:
+    error("Expected a node of kind " & $k & ", got " & $n.typeKind, n)
+
+proc expectKind*(n: Node; k: NimonyExpr) =
+  ## Checks that `n` is an expression node of kind `k`.
+  if n.exprKind != k:
+    error("Expected a node of kind " & $k & ", got " & $n.exprKind, n)
+
+proc expectKind*(n: Node; k: NimonyStmt) =
+  ## Checks that `n` is a statement node of kind `k`.
+  if n.stmtKind != k:
+    error("Expected a node of kind " & $k & ", got " & $n.stmtKind, n)
+
+proc expectKind*(n: Node; k: NimonyOther) =
+  ## Checks that `n` is an "other/substructure" node of kind `k`.
+  if n.otherKind != k:
+    error("Expected a node of kind " & $k & ", got " & $n.otherKind, n)
+
+proc expectKind*(n: Node; k: NimonyPragma) =
+  ## Checks that `n` is a pragma node of kind `k`.
+  if n.pragmaKind != k:
+    error("Expected a node of kind " & $k & ", got " & $n.pragmaKind, n)
+
+proc expectMinLen*(n: Node; min: int) =
+  ## Checks that `n` has at least `min` children.
+  if n.len < min:
+    error("Expected a node with at least " & $min & " children, got " & $n.len, n)
+
+proc expectLen*(n: Node; len: int) =
+  ## Checks that `n` has exactly `len` children.
+  if n.len != len:
+    error("Expected a node with " & $len & " children, got " & $n.len, n)
+
+proc expectLen*(n: Node; min, max: int) =
+  ## Checks that `n` has a number of children in the range `min..max`.
+  let actual = n.len
+  if actual < min or actual > max:
+    error("Expected a node with " & $min & ".." & $max &
+      " children, got " & $actual, n)
+
+proc eqIdent*(n: Node; name: string): bool =
+  ## Returns true when `n` matches `name` exactly.
+  case n.kind
+  of Ident:
+    result = n.identText == name
+  of Symbol, SymbolDef:
+    result = n.symText == name
+  else:
+    result = false
+
+proc expectIdent*(n: Node; name: string) =
+  ## Checks that `eqIdent(n, name)` holds.
+  if not eqIdent(n, name):
+    error("Expected identifier to be `" & name & "` here", n)
 
 proc loadNode*(filename = paramStr(1)): Node =
   ## Loads a NIF file and returns a root `Node` for reading it.
@@ -311,6 +459,22 @@ proc parseNifBuffer(text: string): TokenBuf =
 
 proc parseNifFragment(text: string): Node =
   result = createNode(parseNifBuffer(text))
+
+proc add*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
+    kind: K; children: varargs[Node]): Node =
+  ## Produces a new tree node of `kind` containing `children`.
+  var tree = createTree()
+  tree.withTree kind, NoLineInfo:
+    discard tree.add(children)
+  result = snapshot(tree)
+
+proc add*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
+    kind: K; info: LineInfo; children: varargs[Node]): Node =
+  ## Produces a new tree node of `kind` and line info `info` containing `children`.
+  var tree = createTree()
+  tree.withTree kind, info:
+    discard tree.add(children)
+  result = snapshot(tree)
 
 proc lookupBinding(bindings: openArray[NifBinding]; name: string): int =
   var i = bindings.len - 1
