@@ -1248,6 +1248,21 @@ proc generateCoroutineHelpers(c: var Context; dest: var TokenBuf; sym: SymId; it
 
   c.typeCache.closeScope()
 
+proc registerParamsInTypecache(c: var Context; sym: SymId; origParams: Cursor) =
+  var n = origParams
+  if n.kind != DotToken:
+    inc n
+    while n.kind != ParRi:
+      assert n.substructureKind == ParamU
+      inc n
+      let paramSym = n.symId
+      c.typeCache.registerLocal(paramSym, ParamY, n)
+      skip n # exported
+      skip n # pragmas
+      skip n # type
+      skip n # default value
+      inc n # ParRi
+
 proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId;
                     paramsBegin, paramsEnd: int; origParams: Cursor) =
   let info = dest[paramsBegin].info
@@ -1380,6 +1395,7 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
     emitFinalReturn(c, dest, NoLineInfo)
     dest.addParRi() # stmts
   elif isConcrete:
+    registerParamsInTypecache(c, sym, origParams)
     if n.kind != ParLe:
       dest.add n
       inc n
