@@ -186,12 +186,15 @@ proc createTree*(): Tree =
   createTree(createTokenBuf())
 
 proc snapshot*(tree: Tree): Node =
-  ## Returns a read-only snapshot of `tree` as a root `Node`.
+  ## Returns a read-only snapshot positioned at the first top-level token of
+  ## `tree`.
   ##
   ## The returned `Node` keeps the underlying tree alive automatically. The
   ## original tree remains writable and detaches on the next mutation.
-  let owner = if tree.p == nil: createTree() else: tree
-  result = Node(owner: owner, cursor: default(Cursor))
+  ##
+  ## `tree` must not be empty.
+  assert tree.p != nil and tree.p[].buf.len > 0, "cannot snapshot empty Tree"
+  result = Node(owner: tree, cursor: default(Cursor))
   result.cursor = beginRead(result.owner.p[].buf)
 
 template withTree*(t: var Tree; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma; info: LineInfo; body: untyped) =
