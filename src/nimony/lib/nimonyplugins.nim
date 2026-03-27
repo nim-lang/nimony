@@ -436,10 +436,12 @@ proc loadNode*(filename = paramStr(1)): Node =
 
 proc saveTree*(tree: Tree) =
   ## Writes the complete contents of a mutable `Tree` to `paramStr(2)`.
+  ## This preserves line info because it is intended for `.nif` output.
   writeFile paramStr(2), toString(tree.p[].buf)
 
 proc saveTree*(tree: Tree; filename: string) =
   ## Writes the complete contents of a mutable `Tree` to `filename`.
+  ## This preserves line info because it is intended for `.nif` output.
   writeFile filename, toString(tree.p[].buf)
 
 type
@@ -691,7 +693,18 @@ proc parseNifTemplate(spec: string; bindings: openArray[NifBinding]): Node =
   result = createNode(buf)
   validateConstructedNode(result)
 
+proc renderTree*(tree: Tree): string =
+  ## Renders the complete contents of `tree` as raw NIF text for debugging.
+  ## Unlike `saveTree`, this omits line info and may contain multiple
+  ## top-level fragments when the tree is still under construction.
+  if tree.p == nil:
+    result = ""
+  else:
+    result = toString(tree.p[].buf, false)
+
 proc renderNode*(n: Node): string =
+  ## Renders the current token or subtree as raw NIF text for debugging.
+  ## This omits line info and only covers the subtree rooted at `n`.
   result = toString(n.cursor, false)
 
 proc strLitNode(s: string): Node =
