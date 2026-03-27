@@ -464,8 +464,146 @@ proc parseNifBuffer(text: string): TokenBuf =
   if result.len > 0 and result[result.len-1].kind == EofToken:
     result.shrink(result.len-1)
 
+type
+  ChildShape = enum
+    AnyChild, ExprChild, StmtChild, TypeChild, OtherChild, SymUseChild,
+    SymDefChild, IntLitChild, StringLitChild, CharLitChild
+
+template isSupportedTag(n: Node): bool =
+  let raw = tagEnum(n.cursor)
+  rawTagIsNimonyExpr(raw) or
+  rawTagIsNimonyStmt(raw) or
+  rawTagIsNimonyType(raw) or
+  rawTagIsNimonyOther(raw) or
+  rawTagIsNimonyPragma(raw) or
+  rawTagIsNimonySym(raw) or
+  rawTagIsControlFlowKind(raw) or
+  rawTagIsCallConv(raw)
+
+proc describeShape(shape: ChildShape): string =
+  case shape
+  of AnyChild: "node"
+  of ExprChild: "expression"
+  of StmtChild: "statement"
+  of TypeChild: "type"
+  of OtherChild: "sub-node"
+  of SymUseChild: "symbol use"
+  of SymDefChild: "symbol definition"
+  of IntLitChild: "integer literal"
+  of StringLitChild: "string literal"
+  of CharLitChild: "character literal"
+
+proc matchesShape(n: Node; shape: ChildShape): bool =
+  case shape
+  of AnyChild:
+    result = true
+  of ExprChild:
+    case n.kind
+    of ParLe:
+      result = rawTagIsNimonyExpr(tagEnum(n.cursor))
+    of Symbol, Ident, IntLit, UIntLit, FloatLit, StringLit, CharLit:
+      result = true
+    else:
+      result = false
+  of StmtChild:
+    result = n.kind == ParLe and
+      (rawTagIsNimonyStmt(tagEnum(n.cursor)) or rawTagIsControlFlowKind(tagEnum(n.cursor)))
+  of TypeChild:
+    result = n.kind == DotToken or
+      (n.kind == ParLe and rawTagIsNimonyType(tagEnum(n.cursor)))
+  of OtherChild:
+    result = n.kind == ParLe and rawTagIsNimonyOther(tagEnum(n.cursor))
+  of SymUseChild:
+    result = n.kind in {Symbol, Ident}
+  of SymDefChild:
+    result = n.kind in {SymbolDef, Symbol, Ident}
+  of IntLitChild:
+    result = n.kind in {IntLit, UIntLit}
+  of StringLitChild:
+    result = n.kind == StringLit
+  of CharLitChild:
+    result = n.kind == CharLit
+
+proc childCount(n: Node): int =
+  result = 0
+  var it = n
+  inc it
+  while it.kind != ParRi:
+    inc result
+    skip it
+
+proc expectChildren(n: Node; shapes: openArray[ChildShape]; allowMore = false) =
+  let actual = childCount(n)
+  if actual < shapes.len:
+    error("missing child " & $(actual + 1) & " for '" & pool.tags[n.tagId] &
+      "': expected " & describeShape(shapes[actual]), n)
+  if not allowMore and actual > shapes.len:
+    error("'" & pool.tags[n.tagId] & "' takes " & $shapes.len &
+      " children, got " & $actual, n)
+
+  var child = n
+  inc child
+  for i in 0 ..< shapes.len:
+    if not matchesShape(child, shapes[i]):
+      error("invalid child " & $(i + 1) & " for '" & pool.tags[n.tagId] &
+        "': expected " & describeShape(shapes[i]), child)
+    skip child
+
+proc validateConstructedNode(n: Node)
+
+proc validateShape(n: Node) =
+  case pool.tags[n.tagId]
+  of "add", "sub", "mul", "div", "mod", "shr", "shl", "bitand", "bitor",
+     "bitxor", "eq", "neq", "le", "lt", "ashr", "eqset", "leset",
+     "ltset", "inset":
+    expectChildren(n, [TypeChild, ExprChild, ExprChild])
+  of "bitnot", "cast", "conv", "hconv", "dconv", "card":
+    expectChildren(n, [TypeChild, ExprChild])
+  of "at", "pat", "and", "or", "xor", "range", "curlyat", "copy", "sinkh",
+     "trace", "is":
+    expectChildren(n, [ExprChild, ExprChild])
+  of "not", "neg", "deref", "addr", "par", "emove", "destroy", "dup",
+     "wasmoved", "compiles", "declared", "defined", "astToStr", "high",
+     "low", "enumtostr", "internalTypeName", "failed":
+    expectChildren(n, [ExprChild])
+  of "sizeof", "alignof", "newref", "defaultobj", "defaulttup":
+    expectChildren(n, [TypeChild])
+  of "offsetof", "instanceof", "envp":
+    expectChildren(n, [TypeChild, ExprChild])
+  of "array", "rangetype":
+    expectChildren(n, [TypeChild, ExprChild, ExprChild])
+  of "ptr", "ref", "mut", "out", "lent", "sink", "distinct", "typedesc",
+     "uarray", "set":
+    expectChildren(n, [TypeChild])
+  of "proc", "func", "iterator", "converter", "method", "macro", "template",
+     "var", "let", "const", "gvar", "tvar", "glet", "tlet", "cursor",
+     "param", "type", "typevar", "fld", "efld", "result", "pragma":
+    expectChildren(n, [SymDefChild], allowMore = true)
+  of "block":
+    expectChildren(n, [AnyChild, StmtChild])
+  of "object":
+    expectChildren(n, [TypeChild], allowMore = true)
+  of "typeof", "fields", "fieldpairs":
+    expectChildren(n, [TypeChild, ExprChild], allowMore = true)
+  of "call", "cmd", "hcall", "proccall", "callstrlit":
+    expectChildren(n, [ExprChild], allowMore = true)
+  else:
+    discard
+
+proc validateConstructedNode(n: Node) =
+  if n.kind == ParLe:
+    if not isSupportedTag(n):
+      error("unsupported NIF tag '" & pool.tags[n.tagId] & "'", n)
+    validateShape(n)
+    var child = n
+    inc child
+    while child.kind != ParRi:
+      validateConstructedNode(child)
+      skip child
+
 proc parseNifFragment(text: string): Node =
   result = createNode(parseNifBuffer(text))
+  validateConstructedNode(result)
 
 proc add*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
     kind: K; children: varargs[Node]): Node =
@@ -525,6 +663,7 @@ proc parseNifTemplate(spec: string; bindings: openArray[NifBinding]): Node =
 
   appendParsedText(buf, literal)
   result = createNode(buf)
+  validateConstructedNode(result)
 
 proc renderNode*(n: Node): string =
   result = toString(n.cursor, false)
