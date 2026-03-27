@@ -1,6 +1,7 @@
 # nimony
 
-Nimony is a new Nim implementation that is in heavy development. See the [manual](https://nim-lang.github.io/nimony-website/) for up to date documentation. See [design.md](https://github.com/nim-lang/nimony/blob/master/doc/design.md) for lots of implementation details.
+Nimony is a new Nim implementation that is in heavy development. See the [manual](doc/manual.md) for up to date documentation.
+
 There is a [blog post](https://nim-lang.org/araq/nimony.html) about its design principles.
 
 The current focus is on developing a compiler for a Nim dialect that offers:
@@ -40,3 +41,10 @@ import std / syncio
 
 echo "hi"
 ```
+
+
+## Documentation
+
+- [**Standard Library Guide**](doc/stdlib.md) — covers the non-obvious parts of the stdlib: behavioral contracts, performance guidance, gotchas, and design decisions that aren't apparent from the type signatures alone.
+- [**Examples**](examples/) — runnable Nim files that serve as both usage examples and tests. Run them with `hastur examples`.
+- **Source code** — Nim is readable by design. The [lib/std/](lib/std/) directory contains the stdlib source; the guide links to it directly.

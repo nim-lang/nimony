@@ -84,4 +84,27 @@ let name = "world"
 let msg = concat("hello, ", name, "!")
 assert msg == "hello, world!"
 
+# --- Bulk writes with beginStore / endStore ---
+
+# When you need to write into a string through a pointer
+# (e.g. filling from a C API, copying bytes), use
+# beginStore/endStore instead of raw pointer access.
+#
+# Nim strings use Small String Optimization: long strings
+# cache the first bytes inline for fast access. A bulk write
+# through the heap pointer makes this cache stale.
+# endStore syncs it back. Forgetting it means s[0..6] returns
+# wrong data after a write.
+
+var target = newString(10)
+let p = beginStore(target, 5)   # get mutable pointer, ensure unique
+p[0] = 'H'
+p[1] = 'e'
+p[2] = 'l'
+p[3] = 'l'
+p[4] = 'o'
+endStore(target)                 # sync inline cache — required!
+assert target[0] == 'H'
+assert target[4] == 'o'
+
 echo "seqs_and_strings: OK"
