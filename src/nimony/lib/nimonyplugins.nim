@@ -548,43 +548,73 @@ proc expectChildren(n: Node; shapes: openArray[ChildShape]; allowMore = false) =
 proc validateConstructedNode(n: Node)
 
 proc validateShape(n: Node) =
-  case n.tagText
-  of "add", "sub", "mul", "div", "mod", "shr", "shl", "bitand", "bitor",
-     "bitxor", "eq", "neq", "le", "lt", "ashr", "eqset", "leset",
-     "ltset", "inset":
-    expectChildren(n, [TypeChild, ExprChild, ExprChild])
-  of "bitnot", "cast", "conv", "hconv", "dconv", "card":
-    expectChildren(n, [TypeChild, ExprChild])
-  of "at", "pat", "and", "or", "xor", "range", "curlyat", "copy", "sinkh",
-     "trace", "is":
-    expectChildren(n, [ExprChild, ExprChild])
-  of "not", "neg", "deref", "addr", "par", "emove", "destroy", "dup",
-     "wasmoved", "compiles", "declared", "defined", "astToStr", "high",
-     "low", "enumtostr", "internalTypeName", "failed":
-    expectChildren(n, [ExprChild])
-  of "sizeof", "alignof", "newref", "defaultobj", "defaulttup":
-    expectChildren(n, [TypeChild])
-  of "offsetof", "instanceof", "envp":
-    expectChildren(n, [TypeChild, ExprChild])
-  of "array", "rangetype":
-    expectChildren(n, [TypeChild, ExprChild, ExprChild])
-  of "ptr", "ref", "mut", "out", "lent", "sink", "distinct", "typedesc",
-     "uarray", "set":
-    expectChildren(n, [TypeChild])
-  of "proc", "func", "iterator", "converter", "method", "macro", "template",
-     "var", "let", "const", "gvar", "tvar", "glet", "tlet", "cursor",
-     "param", "type", "typevar", "fld", "efld", "result", "pragma":
-    expectChildren(n, [SymDefChild], allowMore = true)
-  of "block":
-    expectChildren(n, [AnyChild, StmtChild])
-  of "object":
-    expectChildren(n, [TypeChild], allowMore = true)
-  of "typeof", "fields", "fieldpairs":
-    expectChildren(n, [TypeChild, ExprChild], allowMore = true)
-  of "call", "cmd", "hcall", "proccall", "callstrlit":
-    expectChildren(n, [ExprChild], allowMore = true)
+  let expr = n.exprKind
+  if expr != NoExpr:
+    case expr
+    of AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
+        EqX, NeqX, LeX, LtX, AshrX, EqsetX, LesetX, LtsetX, InsetX:
+      expectChildren(n, [TypeChild, ExprChild, ExprChild])
+    of BitnotX, CastX, ConvX, HconvX, DconvX, CardX:
+      expectChildren(n, [TypeChild, ExprChild])
+    of AtX, PatX, AndX, OrX, XorX, CurlyatX, CopyX, SinkhX, TraceX, IsX:
+      expectChildren(n, [ExprChild, ExprChild])
+    of NotX, NegX, DerefX, AddrX, ParX, EmoveX, DestroyX, DupX, WasmovedX,
+        CompilesX, DeclaredX, DefinedX, AstToStrX, HighX, LowX, EnumtostrX,
+        InternalTypeNameX, FailedX:
+      expectChildren(n, [ExprChild])
+    of SizeofX, AlignofX, NewrefX, DefaultobjX, DefaulttupX:
+      expectChildren(n, [TypeChild])
+    of OffsetofX, InstanceofX, EnvpX:
+      expectChildren(n, [TypeChild, ExprChild])
+    of TypeofX, FieldsX, FieldpairsX:
+      expectChildren(n, [TypeChild, ExprChild], allowMore = true)
+    of CallX, CmdX, HcallX, ProccallX, CallstrlitX:
+      expectChildren(n, [ExprChild], allowMore = true)
+    else:
+      discard
   else:
-    discard
+    let stmt = n.stmtKind
+    if stmt != NoStmt:
+      case stmt
+      of VarS, LetS, ConstS, GvarS, TvarS, GletS, TletS, CursorS, ProcS,
+          FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
+          ResultS:
+        expectChildren(n, [SymDefChild], allowMore = true)
+      of BlockS:
+        expectChildren(n, [AnyChild, StmtChild])
+      else:
+        discard
+    else:
+      let typ = n.typeKind
+      if typ != NoType:
+        case typ
+        of ArrayT, RangetypeT:
+          expectChildren(n, [TypeChild, ExprChild, ExprChild])
+        of PtrT, RefT, MutT, OutT, LentT, SinkT, DistinctT, TypedescT,
+            UarrayT, SetT:
+          expectChildren(n, [TypeChild])
+        of ObjectT:
+          expectChildren(n, [TypeChild], allowMore = true)
+        else:
+          discard
+      else:
+        let other = n.otherKind
+        if other != NoSub:
+          case other
+          of RangeU:
+            expectChildren(n, [ExprChild, ExprChild])
+          of ParamU, TypevarU, FldU, EfldU:
+            expectChildren(n, [SymDefChild], allowMore = true)
+          else:
+            discard
+        else:
+          let pragma = n.pragmaKind
+          if pragma != NoPragma:
+            case pragma
+            of PragmaP:
+              expectChildren(n, [SymDefChild], allowMore = true)
+            else:
+              discard
 
 proc validateConstructedNode(n: Node) =
   if n.kind == ParLe:
