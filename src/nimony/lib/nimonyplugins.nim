@@ -108,6 +108,14 @@ proc prepareMutation(t: var Tree) =
     t.p = initPayload(copyBuffer(oldP.buf))
     dec oldP.counter
 
+proc isEmpty*(tree: Tree): bool {.inline.} =
+  ## Returns true when `tree` does not currently contain any tokens.
+  tree.p == nil or tree.p[].buf.len == 0
+
+proc hasToken*(n: Node): bool {.inline.} =
+  ## Returns true when `n` currently points at a real token.
+  n.owner.p != nil and hasCurrentToken(n.cursor)
+
 proc kind*(n: Node): NifKind {.inline.} =
   ## Returns the raw NIF token kind at the current position.
   n.cursor.kind
@@ -192,8 +200,8 @@ proc snapshot*(tree: Tree): Node =
   ## The returned `Node` keeps the underlying tree alive automatically. The
   ## original tree remains writable and detaches on the next mutation.
   ##
-  ## `tree` must not be empty.
-  assert tree.p != nil and tree.p[].buf.len > 0, "cannot snapshot empty Tree"
+  ## `tree` must not be empty; use `isEmpty` first when that is expected.
+  assert not tree.isEmpty, "cannot snapshot empty Tree"
   result = Node(owner: tree, cursor: default(Cursor))
   result.cursor = beginRead(result.owner.p[].buf)
 
@@ -324,7 +332,7 @@ proc setInfo*(n: var Node; info: PackedLineInfo) {.inline.} =
 proc len*(n: Node): int =
   ## Returns the number of immediate children of the current node.
   result = 0
-  if n.owner.p != nil and hasCurrentToken(n.cursor) and n.kind == ParLe:
+  if n.hasToken and n.kind == ParLe:
     var it = n.cursor
     inc it
     while it.kind != ParRi:
@@ -344,7 +352,7 @@ proc infoToStr(info: PackedLineInfo): string =
     result.add ")"
 
 proc currentInfo(n: Node): PackedLineInfo =
-  if n.owner.p != nil and hasCurrentToken(n.cursor):
+  if n.hasToken:
     result = n.info
   else:
     result = NoLineInfo
@@ -712,7 +720,7 @@ proc parseNifTemplate(spec: string; bindings: openArray[NifBinding]): Node =
 proc renderNode*(n: Node): string =
   ## Renders the current token or subtree as raw NIF text for debugging.
   ## This omits line info and only covers the subtree rooted at `n`.
-  if n.owner.p == nil or not hasCurrentToken(n.cursor):
+  if not n.hasToken:
     result = ""
   else:
     result = toString(n.cursor, false)
