@@ -33,20 +33,20 @@ proc makeProgram(): Tree =
 proc verifyHooks() =
   block:
     var tree = makeProgram()
-    var frozen = freeze(tree)
+    var baseline = snapshot(tree)
 
-    doAssert payload(frozen) == 10
+    doAssert payload(baseline) == 10
 
-    var rootCopy = frozen
+    var rootCopy = baseline
     rootCopy.setInfo(toPayload(20))
     doAssert payload(rootCopy) == 20
-    doAssert payload(frozen) == 10
+    doAssert payload(baseline) == 10
 
     rootCopy.setInfo(toPayload(22))
     doAssert payload(rootCopy) == 22
-    doAssert payload(frozen) == 10
+    doAssert payload(baseline) == 10
 
-    var first = frozen
+    var first = baseline
     inc first
     doAssert payload(first) == 11
 
@@ -55,7 +55,7 @@ proc verifyHooks() =
     doAssert payload(first) == 21
     doAssert payload(sibling) == 11
 
-    var freshFirst = frozen
+    var freshFirst = baseline
     inc freshFirst
     doAssert payload(freshFirst) == 11
 
@@ -67,12 +67,12 @@ proc verifyHooks() =
       builder.addIdent "echo"
       builder.addStrLit "before"
 
-    var beforeBuilderMutation = freeze(builder)
+    var beforeBuilderMutation = snapshot(builder)
     builder.withTree CallS, toPayload(51):
       builder.addIdent "echo"
       builder.addStrLit "after"
 
-    var afterBuilderMutation = freeze(builder)
+    var afterBuilderMutation = snapshot(builder)
 
     doAssert echoedString(beforeBuilderMutation) == "before"
 
@@ -92,5 +92,5 @@ proc tr(n: Node): Tree =
       result.addIdent "echo"
       result.addStrLit "ok"
 
-var inp = loadTree()
+var inp = loadNode()
 saveTree tr(inp)

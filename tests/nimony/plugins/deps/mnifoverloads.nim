@@ -29,5 +29,5 @@ proc tr(n: Node): Node =
     "h": ~byNode
   })
 
-var inp = loadTree()
+var inp = loadNode()
 writeFile os.paramStr(2), renderNode(tr(inp))

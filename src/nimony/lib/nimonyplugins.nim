@@ -171,8 +171,8 @@ proc createTree*(): Tree =
   ## Creates an empty mutable `Tree`.
   createTree(createTokenBuf())
 
-proc freeze*(tree: Tree): Node =
-  ## Snapshots a mutable `Tree` and returns a root `Node` for reading it.
+proc snapshot*(tree: Tree): Node =
+  ## Returns a read-only snapshot of `tree` as a root `Node`.
   ##
   ## The returned `Node` keeps the underlying tree alive automatically. The
   ## original tree remains writable and detaches on the next mutation.
@@ -266,13 +266,12 @@ proc setInfo*(n: var Node; info: PackedLineInfo) {.inline.} =
   prepareMutation(n)
   n.cursor.setInfo(info)
 
-proc loadTree*(filename = paramStr(1)): Node =
-  ## Loads a NIF file and returns a `Node` positioned at its first top-level
-  ## fragment.
+proc loadNode*(filename = paramStr(1)): Node =
+  ## Loads a NIF file and returns a root `Node` for reading it.
   var inp = nifstreams.open(filename)
   try:
     var tree = createTree(fromStream(inp))
-    result = freeze(tree)
+    result = snapshot(tree)
   finally:
     close(inp)
 
@@ -295,15 +294,15 @@ proc ident*(s: string): NifIdent =
   ## literal node.
   NifIdent(s)
 
-proc isNifIdentStart(c: char): bool =
+proc isNifIdentStart(c: char): bool {.inline.} =
   c in {'a'..'z', 'A'..'Z', '_'}
 
-proc isNifIdentChar(c: char): bool =
+proc isNifIdentChar(c: char): bool {.inline.} =
   c in {'a'..'z', 'A'..'Z', '0'..'9', '_'}
 
 proc createNode(buf: sink TokenBuf): Node =
   var tree = createTree(buf)
-  result = freeze(tree)
+  result = snapshot(tree)
 
 proc parseNifBuffer(text: string): TokenBuf =
   result = parseFromBuffer(text, "")

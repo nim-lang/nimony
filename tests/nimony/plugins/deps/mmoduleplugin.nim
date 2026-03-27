@@ -19,5 +19,5 @@ proc tr(n: Node): Tree =
       else:
         result.takeTree n
 
-var inp = loadTree()
+var inp = loadNode()
 saveTree tr(inp)

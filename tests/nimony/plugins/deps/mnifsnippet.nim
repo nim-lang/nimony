@@ -14,5 +14,5 @@ proc tr(n: Node): Node =
   result = nif("""(stmts $first $second $third $tail)""",
     {"first": ~first, "second": ~second, "third": ~third, "tail": ~tail})
 
-var inp = loadTree()
+var inp = loadNode()
 writeFile os.paramStr(2), renderNode(tr(inp))

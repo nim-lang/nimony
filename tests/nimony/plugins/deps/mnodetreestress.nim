@@ -17,7 +17,7 @@ proc makeProgram(info: LineInfo): Node =
     tree.addEcho(info, "alpha")
     tree.addEcho(info, "beta")
     tree.addEcho(info, "gamma")
-  result = freeze(tree)
+  result = snapshot(tree)
 
 proc tr(n: Node): Tree =
   var input = n
@@ -53,23 +53,23 @@ proc tr(n: Node): Tree =
     copiedTree.takeTree(empty)
     copiedTree.takeTree(second)
 
-  var copied = freeze(copiedTree)
+  var copied = snapshot(copiedTree)
 
   var scratchTree = createTree()
   scratchTree.withTree StmtsS, info:
     scratchTree.addEcho(info, "delta")
 
-  var scratch = freeze(scratchTree)
+  var scratch = snapshot(scratchTree)
   inc scratch
 
   var reusableTree = createTree()
   reusableTree.addEcho(info, "epsilon")
 
-  var frozenEcho = freeze(reusableTree)
+  var earlierEcho = snapshot(reusableTree)
   reusableTree.addEcho(info, "zeta")
 
-  var liveEcho = freeze(reusableTree)
-  skip liveEcho
+  var laterEcho = snapshot(reusableTree)
+  skip laterEcho
 
   var resultTree = createTree()
   resultTree.withTree StmtsS, info:
@@ -80,9 +80,9 @@ proc tr(n: Node): Tree =
     resultTree.takeTree(it)
     resultTree.takeTree(it)
     resultTree.takeTree(scratch)
-    resultTree.takeTree(frozenEcho)
-    resultTree.takeTree(liveEcho)
+    resultTree.takeTree(earlierEcho)
+    resultTree.takeTree(laterEcho)
   result = resultTree
 
-var inp = loadTree()
+var inp = loadNode()
 saveTree tr(inp)
