@@ -1280,7 +1280,11 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
     elif n.exprKind == PragmaxX:
       copyInto(dest, n):
         takeTree dest, n  # pragmas
-        trGuardedStmts c, b, dest, n, false  # body
+        var innerB = BasicBlock(openElseBranches: 0, hasParLe: false, leavesWith: -1)
+        trGuardedStmts c, innerB, dest, n, false  # body
+        closeBasicBlock c, innerB, dest
+        if innerB.leavesWith >= 0:
+          b.leavesWith = innerB.leavesWith
     elif n.exprKind == ProccallX:
       trStmtCall c, b, dest, n
     else:
