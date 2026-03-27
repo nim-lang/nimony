@@ -114,6 +114,12 @@ type
     len, cap, readers: int
 
 proc `=copy`(dest: var TokenBuf; src: TokenBuf) {.error.}
+proc `=wasMoved`(dest: var TokenBuf) {.inline.} =
+  dest.data = nil
+  dest.len = 0
+  dest.cap = 0
+  dest.readers = 0
+
 when defined(nimAllowNonVarDestructor) and defined(gcDestructors):
   proc `=destroy`(dest: TokenBuf) {.inline.} =
     #assert dest.readers == 0, "TokenBuf still in use by some reader"

@@ -29,7 +29,7 @@ proc typesTr(n: Node) =
   inc n
 
 
-proc trAsgn(n: var Node, o: Tree) =
+proc trAsgn(n: var Node, o: var Tree) =
   var
     fieldName = ""
     access = Node()
@@ -60,7 +60,7 @@ proc trAsgn(n: var Node, o: Tree) =
       o.addStrLit fieldName
 
 
-proc trGvar(n: var Node, o: Tree) =
+proc trGvar(n: var Node, o: var Tree) =
   traverse n:
     inc n
     let nameSym = n.symId
@@ -70,7 +70,7 @@ proc trGvar(n: var Node, o: Tree) =
   o.takeTree(n)
 
 
-proc trTemplate(n: var Node, o: Tree) =
+proc trTemplate(n: var Node, o: var Tree) =
   traverse n:
     inc n
     let nameSym = n.symId
@@ -87,7 +87,7 @@ proc trTemplate(n: var Node, o: Tree) =
   o.takeTree(n)
 
 
-proc trAux(n: var Node, o: Tree) =
+proc trAux(n: var Node, o: var Tree) =
   case n.kind
   of ParLe:
     if n.stmtKind == AsgnS:

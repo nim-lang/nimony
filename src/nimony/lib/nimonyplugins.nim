@@ -10,9 +10,14 @@ export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther
 export NoLineInfo
 
 type
-  Tree* = ref object ## Mutable NIF builder used by plugins to assemble output
-                     ## before freezing it into a `Node`.
+  TreePayload = object
+    counter: int
     buf: TokenBuf
+
+  Tree* = object ## Mutable NIF builder used by plugins to assemble output.
+                 ## Copying a tree shares the underlying payload until the next
+                 ## mutation detaches it.
+    p: ptr TreePayload
 
   LineInfo* = PackedLineInfo ## Packed source location metadata attached to NIF
                              ## tokens. Use `NoLineInfo` for synthetic output.
@@ -20,32 +25,94 @@ type
   Node* = object ## Read handle into a frozen NIF tree.
                  ## A `Node` behaves like a cursor positioned at one token or
                  ## subtree. Copying a `Node` retains the underlying tree
-                 ## automatically; the tree is released when the last `Node`
-                 ## that references it is destroyed.
+                 ## snapshot automatically.
     owner: Tree
     cursor: Cursor
 
 template sameReader(a, b: Node): bool =
-  a.owner == b.owner and toUniqueId(a.cursor) == toUniqueId(b.cursor)
+  a.owner.p == b.owner.p and toUniqueId(a.cursor) == toUniqueId(b.cursor)
+
+template frees(x) =
+  dealloc(x.p)
+
+template dups(dest, src) =
+  if src.p != nil:
+    inc src.p.counter
+  dest.p = src.p
+
+proc `=destroy`*(x: Tree) =
+  if x.p != nil:
+    if x.p.counter == 0:
+      `=destroy`(x.p[].buf)
+      frees(x)
+    else:
+      dec x.p.counter
+
+proc `=wasMoved`*(x: var Tree) =
+  x.p = nil
+
+proc `=copy`*(dest: var Tree; src: Tree) =
+  if dest.p != src.p:
+    `=destroy`(dest)
+    `=wasMoved`(dest)
+    dups(dest, src)
+
+proc `=dup`*(x: Tree): Tree {.nodestroy.} =
+  result = default(Tree)
+  result.p = x.p
+  if result.p != nil:
+    inc result.p.counter
 
 proc `=destroy`*(n: Node) =
-  if n.owner != nil:
-    endRead(n.owner.buf)
+  if n.owner.p != nil:
+    endRead(n.owner.p[].buf)
+  `=destroy`(n.owner)
 
 proc `=wasMoved`*(n: var Node) =
-  n.owner = nil
+  `=wasMoved`(n.owner)
   n.cursor = default(Cursor)
 
 proc `=copy`*(dest: var Node; src: Node) =
   if not sameReader(dest, src):
     `=destroy`(dest)
     `=wasMoved`(dest)
-    if src.owner != nil:
+    if src.owner.p != nil:
       dest.owner = src.owner
-      dest.cursor = shareRead(dest.owner.buf, src.cursor)
+      dest.cursor = shareRead(dest.owner.p[].buf, src.cursor)
+
+proc `=dup`*(src: Node): Node =
+  result = Node(owner: default(Tree), cursor: default(Cursor))
+  if src.owner.p != nil:
+    result.owner = src.owner
+    result.cursor = shareRead(result.owner.p[].buf, src.cursor)
+
+proc initPayload(buf: sink TokenBuf): ptr TreePayload =
+  result = cast[ptr TreePayload](alloc0(sizeof(TreePayload)))
+  result.counter = 0
+  result.buf = move(buf)
+
+proc copyBuffer(buf: TokenBuf): TokenBuf =
+  result = createTokenBuf(max(buf.len, 4))
+  result.add buf
+
+proc prepareMutation(t: var Tree)
+
+proc prepareMutation(n: var Node) =
+  let pos = cursorToPosition(n.owner.p[].buf, n.cursor)
+  endRead(n.owner.p[].buf)
+  prepareMutation(n.owner)
+  n.cursor = cursorAt(n.owner.p[].buf, pos)
 
 proc createTree(buf: sink TokenBuf): Tree =
-  result = Tree(buf: buf)
+  result = Tree(p: initPayload(buf))
+
+proc prepareMutation(t: var Tree) =
+  if t.p == nil:
+    t = createTree(createTokenBuf())
+  elif t.p.counter > 0:
+    let oldP = t.p
+    t.p = initPayload(copyBuffer(oldP.buf))
+    dec oldP.counter
 
 proc kind*(n: Node): NifKind {.inline.} =
   ## Returns the raw NIF token kind at the current position.
@@ -110,20 +177,21 @@ proc createTree*(): Tree =
 
 proc renderNode*(n: Node): string
 
-proc freeze*(tree: sink Tree): Node =
-  ## Freezes a mutable `Tree` and returns a root `Node` for reading it.
+proc freeze*(tree: Tree): Node =
+  ## Snapshots a mutable `Tree` and returns a root `Node` for reading it.
   ##
-  ## The returned `Node` keeps the underlying tree alive automatically. After
-  ## freezing, the tree should be treated as no longer writable.
-  let owner = tree
-  result = Node(owner: owner, cursor: beginRead(owner.buf))
+  ## The returned `Node` keeps the underlying tree alive automatically. The
+  ## original tree remains writable and detaches on the next mutation.
+  result = Node(owner: tree, cursor: default(Cursor))
+  result.cursor = beginRead(result.owner.p[].buf)
 
-template withTree*(t: Tree; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma; info: LineInfo; body: untyped) =
+template withTree*(t: var Tree; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma; info: LineInfo; body: untyped) =
   ## Appends a tree node of `kind` to `t`, runs `body` to emit its children, and
   ## closes the node afterwards.
-  t.buf.addParLe(kind, info)
+  prepareMutation(t)
+  t.p[].buf.addParLe(kind, info)
   body
-  t.buf.addParRi()
+  t.p[].buf.addParRi()
 
 proc tagId*(n: Node): TagId {.inline.} =
   ## Returns the raw tag id of the current token.
@@ -135,50 +203,61 @@ proc tag*(n: Node): TagId {.inline.} =
   ## token is not a `ParLe`.
   n.cursor.tag
 
-proc addParLe*(t: Tree; tag: TagId; info: LineInfo = NoLineInfo) =
+proc addParLe*(t: var Tree; tag: TagId; info: LineInfo = NoLineInfo) =
   ## Appends a raw opening tree token with tag `tag` to `t`.
-  t.buf.addParLe(tag, info)
+  prepareMutation(t)
+  t.p[].buf.addParLe(tag, info)
 
-proc addParRi*(t: Tree) =
+proc addParRi*(t: var Tree) =
   ## Appends a closing tree token (`)`) to `t`.
-  t.buf.addParRi()
+  prepareMutation(t)
+  t.p[].buf.addParRi()
 
-proc takeTree*(t: Tree; n: var Node) =
+proc takeTree*(t: var Tree; n: var Node) =
   ## Copies the current token or subtree from `n` into `t` and advances `n`
   ## past the copied fragment.
-  t.buf.takeTree(n.cursor)
+  prepareMutation(t)
+  t.p[].buf.takeTree(n.cursor)
 
-proc addDotToken*(t: Tree) =
+proc addDotToken*(t: var Tree) =
   ## Appends a dot placeholder token (`.`) to `t`.
-  t.buf.addDotToken()
+  prepareMutation(t)
+  t.p[].buf.addDotToken()
 
-proc addStrLit*(t: Tree; s: string) =
+proc addStrLit*(t: var Tree; s: string) =
   ## Appends a string literal atom to `t`.
-  t.buf.addStrLit(s)
+  prepareMutation(t)
+  t.p[].buf.addStrLit(s)
 
-proc addIntLit*(t: Tree; i: BiggestInt) =
+proc addIntLit*(t: var Tree; i: BiggestInt) =
   ## Appends a signed integer literal atom to `t`.
-  t.buf.addIntLit(i)
+  prepareMutation(t)
+  t.p[].buf.addIntLit(i)
 
-proc addUIntLit*(t: Tree; i: BiggestUInt) =
+proc addUIntLit*(t: var Tree; i: BiggestUInt) =
   ## Appends an unsigned integer literal atom to `t`.
-  t.buf.addUIntLit(i)
+  prepareMutation(t)
+  t.p[].buf.addUIntLit(i)
 
-proc addIdent*(t: Tree; ident: string) =
+proc addIdent*(t: var Tree; ident: string) =
   ## Appends an identifier atom to `t`.
-  t.buf.addIdent(ident)
+  prepareMutation(t)
+  t.p[].buf.addIdent(ident)
 
-proc addCharLit*(t: Tree; c: char) =
+proc addCharLit*(t: var Tree; c: char) =
   ## Appends a character literal atom to `t`.
-  t.buf.addCharLit(c)
+  prepareMutation(t)
+  t.p[].buf.addCharLit(c)
 
-proc addFloatLit*(t: Tree; f: BiggestFloat) =
+proc addFloatLit*(t: var Tree; f: BiggestFloat) =
   ## Appends a floating-point literal atom to `t`.
-  t.buf.addFloatLit(f)
+  prepareMutation(t)
+  t.p[].buf.addFloatLit(f)
 
-proc addSymUse*(t: Tree; s: SymId; info: LineInfo = NoLineInfo) =
+proc addSymUse*(t: var Tree; s: SymId; info: LineInfo = NoLineInfo) =
   ## Appends a symbol-use atom to `t`.
-  t.buf.addSymUse(s, info)
+  prepareMutation(t)
+  t.p[].buf.addSymUse(s, info)
 
 proc inc*(n: var Node) =
   ## Advances `n` by one token.
@@ -190,6 +269,7 @@ proc skip*(n: var Node) =
 
 proc setInfo*(n: var Node; info: PackedLineInfo) {.inline.} =
   ## Rewrites the line info of the current token in place.
+  prepareMutation(n)
   n.cursor.setInfo(info)
 
 proc loadTree*(filename = paramStr(1)): Node =
@@ -197,17 +277,18 @@ proc loadTree*(filename = paramStr(1)): Node =
   ## fragment.
   var inp = nifstreams.open(filename)
   try:
-    result = freeze(createTree(fromStream(inp)))
+    var tree = createTree(fromStream(inp))
+    result = freeze(tree)
   finally:
     close(inp)
 
 proc saveTree*(tree: Tree) =
   ## Writes the complete contents of a mutable `Tree` to `paramStr(2)`.
-  writeFile paramStr(2), toString(tree.buf)
+  writeFile paramStr(2), toString(tree.p[].buf)
 
 proc saveTree*(tree: Tree; filename: string) =
   ## Writes the complete contents of a mutable `Tree` to `filename`.
-  writeFile filename, toString(tree.buf)
+  writeFile filename, toString(tree.p[].buf)
 
 type
   NifIdent* = distinct string ## Marker type used with `~` to request an
@@ -227,7 +308,8 @@ proc isNifIdentChar(c: char): bool =
   c in {'a'..'z', 'A'..'Z', '0'..'9', '_'}
 
 proc createNode(buf: sink TokenBuf): Node =
-  result = freeze(createTree(buf))
+  var tree = createTree(buf)
+  result = freeze(tree)
 
 proc parseNifBuffer(text: string): TokenBuf =
   result = parseFromBuffer(text, "")

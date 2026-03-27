@@ -1,11 +1,11 @@
 import nimonyplugins
 
-proc addEcho(t: Tree; info: LineInfo; value: string) =
+proc addEcho(t: var Tree; info: LineInfo; value: string) =
   t.withTree CallS, info:
     t.addIdent "echo"
     t.addStrLit value
 
-proc addEcho(t: Tree; info: LineInfo; value: Node) =
+proc addEcho(t: var Tree; info: LineInfo; value: Node) =
   t.withTree CallS, info:
     t.addIdent "echo"
     var copy = value
@@ -68,6 +68,15 @@ proc tr(n: Node): Tree =
   inc scratch
   scratch = scratch
 
+  var reusableTree = createTree()
+  reusableTree.addEcho(info, "epsilon")
+
+  var frozenEcho = freeze(reusableTree)
+  reusableTree.addEcho(info, "zeta")
+
+  var liveEcho = freeze(reusableTree)
+  skip liveEcho
+
   var resultTree = createTree()
   resultTree.withTree StmtsS, info:
     var it = copied
@@ -77,6 +86,8 @@ proc tr(n: Node): Tree =
     resultTree.takeTree(it)
     resultTree.takeTree(it)
     resultTree.takeTree(scratch)
+    resultTree.takeTree(frozenEcho)
+    resultTree.takeTree(liveEcho)
   result = resultTree
 
 var inp = loadTree()
