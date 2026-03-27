@@ -1,6 +1,6 @@
 ## API for plugins.
 
-import std / syncio
+import std / [syncio, assertions]
 from std / os import paramStr
 import ".." / ".." / "lib" / [nifcursors, nifstreams, lineinfos, bitabs]
 
@@ -29,22 +29,11 @@ type
     owner: Tree
     cursor: Cursor
 
-template sameReader(a, b: Node): bool =
-  a.owner.p == b.owner.p and toUniqueId(a.cursor) == toUniqueId(b.cursor)
-
-template frees(x) =
-  dealloc(x.p)
-
-template dups(dest, src) =
-  if src.p != nil:
-    inc src.p.counter
-  dest.p = src.p
-
 proc `=destroy`*(x: Tree) =
   if x.p != nil:
     if x.p.counter == 0:
       `=destroy`(x.p[].buf)
-      frees(x)
+      dealloc(x.p)
     else:
       dec x.p.counter
 
@@ -55,7 +44,9 @@ proc `=copy`*(dest: var Tree; src: Tree) =
   if dest.p != src.p:
     `=destroy`(dest)
     `=wasMoved`(dest)
-    dups(dest, src)
+    if src.p != nil:
+      inc src.p.counter
+    dest.p = src.p
 
 proc `=dup`*(x: Tree): Tree {.nodestroy.} =
   result = default(Tree)
@@ -71,6 +62,9 @@ proc `=destroy`*(n: Node) =
 proc `=wasMoved`*(n: var Node) =
   `=wasMoved`(n.owner)
   n.cursor = default(Cursor)
+
+template sameReader(a, b: Node): bool =
+  a.owner.p == b.owner.p and toUniqueId(a.cursor) == toUniqueId(b.cursor)
 
 proc `=copy`*(dest: var Node; src: Node) =
   if not sameReader(dest, src):
@@ -98,6 +92,8 @@ proc copyBuffer(buf: TokenBuf): TokenBuf =
 proc prepareMutation(t: var Tree)
 
 proc prepareMutation(n: var Node) =
+  assert n.owner.p != nil, "cannot mutate default Node"
+  assert hasCurrentToken(n.cursor), "cannot mutate exhausted Node"
   let pos = cursorToPosition(n.owner.p[].buf, n.cursor)
   endRead(n.owner.p[].buf)
   prepareMutation(n.owner)

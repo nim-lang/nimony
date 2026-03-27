@@ -71,6 +71,9 @@ proc `+!`*(c: Cursor; diff: int): Cursor {.inline.} =
 proc cursorIsNil*(c: Cursor): bool {.inline.} =
   result = c.p == nil
 
+proc hasCurrentToken*(c: Cursor): bool {.inline.} =
+  result = c.p != nil and c.rem > 0
+
 proc skip*(c: var Cursor) =
   if c.kind == ParLe:
     var nested = 0

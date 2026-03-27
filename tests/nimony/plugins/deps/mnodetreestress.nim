@@ -23,32 +23,28 @@ proc tr(n: Node): Tree =
   var input = n
   if input.stmtKind == StmtsS:
     inc input
-  input = input
 
   let info = input.info
   var source = makeProgram(info)
 
   var first = source
   inc first
-  first = first
 
   var second = source
   inc second
   skip second
 
   var beta = second
-  beta = beta
 
   var empty: Node
-  empty = empty
   empty = beta
 
   var third = source
   inc third
   skip third
   skip third
+  # Reassigning an existing reader should release the old lease and acquire the new one.
   second = third
-  third = third
 
   var copiedTree = createTree()
   copiedTree.withTree StmtsS, info:
@@ -58,7 +54,6 @@ proc tr(n: Node): Tree =
     copiedTree.takeTree(second)
 
   var copied = freeze(copiedTree)
-  copied = copied
 
   var scratchTree = createTree()
   scratchTree.withTree StmtsS, info:
@@ -66,7 +61,6 @@ proc tr(n: Node): Tree =
 
   var scratch = freeze(scratchTree)
   inc scratch
-  scratch = scratch
 
   var reusableTree = createTree()
   reusableTree.addEcho(info, "epsilon")
