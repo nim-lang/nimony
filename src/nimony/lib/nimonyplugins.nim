@@ -116,6 +116,14 @@ proc info*(n: Node): PackedLineInfo {.inline.} =
   ## Returns the packed line info stored on the current token.
   n.cursor.info
 
+proc filePath*(info: LineInfo): string =
+  ## Returns the source path stored in `info`, or `""` when unavailable.
+  let rawInfo = unpack(pool.man, info)
+  if info.isValid and rawInfo.file.isValid:
+    result = pool.files[rawInfo.file]
+  else:
+    result = ""
+
 proc symId*(n: Node): SymId {.inline.} =
   ## Returns the symbol id of the current token.
   ## The current token must be a `Symbol` or `SymbolDef`.
@@ -313,14 +321,14 @@ proc len*(n: Node): int =
     inc it
     while it.kind != ParRi:
       inc result
-      skip it
+      it = it +! span(it)
 
 proc infoToStr(info: PackedLineInfo): string =
   let rawInfo = unpack(pool.man, info)
   if not info.isValid or not rawInfo.file.isValid:
     result = "???"
   else:
-    result = pool.files[rawInfo.file]
+    result = info.filePath
     result.add "("
     result.addInt rawInfo.line
     result.add ", "
@@ -382,13 +390,15 @@ proc expectKind*(n: Node; k: NimonyPragma) =
 
 proc expectMinLen*(n: Node; min: int) =
   ## Checks that `n` has at least `min` children.
-  if n.len < min:
-    error("Expected a node with at least " & $min & " children, got " & $n.len, n)
+  let actual = n.len
+  if actual < min:
+    error("Expected a node with at least " & $min & " children, got " & $actual, n)
 
 proc expectLen*(n: Node; len: int) =
   ## Checks that `n` has exactly `len` children.
-  if n.len != len:
-    error("Expected a node with " & $len & " children, got " & $n.len, n)
+  let actual = n.len
+  if actual != len:
+    error("Expected a node with " & $len & " children, got " & $actual, n)
 
 proc expectLen*(n: Node; min, max: int) =
   ## Checks that `n` has a number of children in the range `min..max`.
