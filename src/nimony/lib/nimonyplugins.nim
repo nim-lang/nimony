@@ -171,8 +171,6 @@ proc createTree*(): Tree =
   ## Creates an empty mutable `Tree`.
   createTree(createTokenBuf())
 
-proc renderNode*(n: Node): string
-
 proc freeze*(tree: Tree): Node =
   ## Snapshots a mutable `Tree` and returns a root `Node` for reading it.
   ##
@@ -469,7 +467,7 @@ proc nif*(spec: string; bindings: openArray[NifBinding]): Node =
   ## Parses `spec` as a NIF fragment after expanding `$name` placeholders with
   ## the corresponding nodes from `bindings`.
   ##
-  ## Use `$$` for a literal dollar sign. `${...}` syntax is not supported.
+  ## Use `$$` for a literal dollar sign.
   parseNifTemplate(spec, bindings)
 
 proc nif*(spec: string): Node =
