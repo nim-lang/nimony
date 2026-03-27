@@ -317,7 +317,7 @@ proc len*(n: Node): int =
   ## Returns the number of immediate children of the current node.
   result = 0
   if n.owner.p != nil and hasCurrentToken(n.cursor) and n.kind == ParLe:
-    var it = n
+    var it = n.cursor
     inc it
     while it.kind != ParRi:
       inc result
@@ -404,8 +404,7 @@ proc expectLen*(n: Node; min, max: int) =
   ## Checks that `n` has a number of children in the range `min..max`.
   let actual = n.len
   if actual < min or actual > max:
-    error("Expected a node with " & $min & ".." & $max &
-      " children, got " & $actual, n)
+    error("Expected a node with " & $min & ".." & $max & " children, got " & $actual, n)
 
 proc eqIdent*(n: Node; name: string): bool =
   ## Returns true when `n` matches `name` exactly.
