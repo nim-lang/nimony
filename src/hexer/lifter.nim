@@ -161,7 +161,9 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
     result = true
   of RefT:
     result = false
-  of SinkT, ArrayT, LentT:
+  of LentT:
+    result = true # lent types are borrowed; no hooks needed
+  of SinkT, ArrayT:
     result = isTrivial(c, typ.firstSon)
   of ObjectT:
     result = isTrivialObjectBody(c, typ)

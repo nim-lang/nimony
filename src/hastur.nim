@@ -25,6 +25,7 @@ Commands:
   build [all|nimony|nifler|hexer|nifc|nifmake|nj|vl]   build selected tools (default: all).
   all                  run all tests (also the default action).
   nimony               run Nimony tests.
+  examples             run examples (examples/ directory).
   nifc                 run NIFC tests.
   nj                   run NJ (Nimony Jump Elimination) tests.
   vl                   run VL (Versioned Locations) tests.
@@ -389,6 +390,18 @@ proc findCategory(path: string): Category =
       return cat
   return Normal
 
+proc exampletests(overwrite: bool; forward: string) =
+  ## Run all the examples in the examples/ directory.
+  const TestDir = "examples"
+  let t0 = epochTime()
+  var c = TestCounters(total: 0, failures: 0)
+  testDir c, TestDir, overwrite, Normal, forward
+  echo c.total - c.failures, " / ", c.total, " examples successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if c.failures > 0:
+    quit "FAILURE: Some examples failed."
+  else:
+    echo "SUCCESS."
+
 proc nimonytests(overwrite: bool; forward: string) =
   ## Run all the nimonytests in the test-suite.
   const TestDir = "tests/nimony"
@@ -743,6 +756,7 @@ proc handleCmdLine =
     buildHexer()
     buildNifmake()
     nimonytests(overwrite, forward)
+    exampletests(overwrite, forward)
     #nifctests(overwrite)
     #hexertests(overwrite)
     buildControlflow()
@@ -806,6 +820,9 @@ proc handleCmdLine =
   of "nimony":
     buildNimony()
     nimonytests(overwrite, forward)
+  of "examples":
+    buildNimony()
+    exampletests(overwrite, forward)
   of "nifc":
     buildNifc()
     nifctests(overwrite)
