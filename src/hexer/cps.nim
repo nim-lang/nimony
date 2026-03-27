@@ -1256,9 +1256,10 @@ proc registerParamsInTypecache(c: var Context; sym: SymId; origParams: Cursor) =
       assert n.substructureKind == ParamU
       inc n
       let paramSym = n.symId
-      c.typeCache.registerLocal(paramSym, ParamY, n)
+      skip n # name
       skip n # exported
       skip n # pragmas
+      c.typeCache.registerLocal(paramSym, ParamY, n)
       skip n # type
       skip n # default value
       inc n # ParRi
