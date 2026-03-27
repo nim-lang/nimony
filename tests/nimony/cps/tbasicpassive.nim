@@ -32,3 +32,7 @@ proc main3() {.passive.} =
   io3()
 
 main3()
+
+proc main4() =
+  io1()
+main4()

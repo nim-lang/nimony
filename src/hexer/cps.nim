@@ -1379,6 +1379,12 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
     # Emit implicit final return: deallocFrame + return caller
     emitFinalReturn(c, dest, NoLineInfo)
     dest.addParRi() # stmts
+  elif isConcrete:
+    if n.kind != ParLe:
+      dest.add n
+      inc n
+    else:
+      trSons(c, dest, n)
   else:
     takeTree dest, n
   dest.takeParRi n # ProcS
