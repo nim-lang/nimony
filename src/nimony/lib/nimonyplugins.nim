@@ -49,8 +49,7 @@ proc `=copy`*(dest: var Tree; src: Tree) =
     dest.p = src.p
 
 proc `=dup`*(x: Tree): Tree {.nodestroy.} =
-  result = default(Tree)
-  result.p = x.p
+  result = Tree(p: x.p)
   if result.p != nil:
     inc result.p.counter
 
@@ -69,13 +68,12 @@ template sameReader(a, b: Node): bool =
 proc `=copy`*(dest: var Node; src: Node) =
   if not sameReader(dest, src):
     `=destroy`(dest)
-    `=wasMoved`(dest)
     if src.owner.p != nil:
       dest.owner = src.owner
       dest.cursor = shareRead(dest.owner.p[].buf, src.cursor)
 
 proc `=dup`*(src: Node): Node =
-  result = Node(owner: default(Tree), cursor: default(Cursor))
+  result = default(Node)
   if src.owner.p != nil:
     result.owner = src.owner
     result.cursor = shareRead(result.owner.p[].buf, src.cursor)
