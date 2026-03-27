@@ -206,6 +206,10 @@ proc tagId*(n: Node): TagId {.inline.} =
   ## The current token must be a `ParLe`.
   n.cursor.tagId
 
+proc tagText*(n: Node): string {.inline.} =
+  ## Returns the tag text of the current `ParLe` token.
+  pool.tags[n.cursor.tagId]
+
 proc tag*(n: Node): TagId {.inline.} =
   ## Returns the raw tag id for the current tree node, or `ErrT` if the current
   ## token is not a `ParLe`.
@@ -320,8 +324,8 @@ proc len*(n: Node): int =
     var it = n.cursor
     inc it
     while it.kind != ParRi:
+      skip it
       inc result
-      it = it +! span(it)
 
 proc infoToStr(info: PackedLineInfo): string =
   let rawInfo = unpack(pool.man, info)
@@ -524,35 +528,27 @@ proc matchesShape(n: Node; shape: ChildShape): bool =
   of CharLitChild:
     result = n.kind == CharLit
 
-proc childCount(n: Node): int =
-  result = 0
-  var it = n
-  inc it
-  while it.kind != ParRi:
-    inc result
-    skip it
-
 proc expectChildren(n: Node; shapes: openArray[ChildShape]; allowMore = false) =
-  let actual = childCount(n)
+  let actual = n.len
   if actual < shapes.len:
-    error("missing child " & $(actual + 1) & " for '" & pool.tags[n.tagId] &
+    error("missing child " & $(actual + 1) & " for '" & n.tagText &
       "': expected " & describeShape(shapes[actual]), n)
   if not allowMore and actual > shapes.len:
-    error("'" & pool.tags[n.tagId] & "' takes " & $shapes.len &
+    error("'" & n.tagText & "' takes " & $shapes.len &
       " children, got " & $actual, n)
 
   var child = n
   inc child
   for i in 0 ..< shapes.len:
     if not matchesShape(child, shapes[i]):
-      error("invalid child " & $(i + 1) & " for '" & pool.tags[n.tagId] &
+      error("invalid child " & $(i + 1) & " for '" & n.tagText &
         "': expected " & describeShape(shapes[i]), child)
     skip child
 
 proc validateConstructedNode(n: Node)
 
 proc validateShape(n: Node) =
-  case pool.tags[n.tagId]
+  case n.tagText
   of "add", "sub", "mul", "div", "mod", "shr", "shl", "bitand", "bitor",
      "bitxor", "eq", "neq", "le", "lt", "ashr", "eqset", "leset",
      "ltset", "inset":
@@ -593,7 +589,7 @@ proc validateShape(n: Node) =
 proc validateConstructedNode(n: Node) =
   if n.kind == ParLe:
     if not isSupportedTag(n):
-      error("unsupported NIF tag '" & pool.tags[n.tagId] & "'", n)
+      error("unsupported NIF tag '" & n.tagText & "'", n)
     validateShape(n)
     var child = n
     inc child
