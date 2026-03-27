@@ -15,7 +15,7 @@ template res(t: ExprKind | StmtKind | TypeKind; bits = 0): (string, int) = ($t, 
 const
   TypedMagic* = -3
 
-proc magicToTag*(m: string): (string, int) =
+proc magicToTag*(m: string; bits: int): (string, int) =
   case m
   of "Defined": res DefinedX
   of "Declared": res DeclaredX
@@ -41,6 +41,7 @@ proc magicToTag*(m: string): (string, int) =
   of "BitnotI": res BitnotX, TypedMagic
   of "UnaryMinusI", "UnaryMinusF64": res NegX, TypedMagic
   of "Delay": res DelayX
+  of "Suspend": res SuspendX
   of "And": res AndX
   of "Or": res OrX
   of "Not": res NotX
@@ -67,12 +68,12 @@ proc magicToTag*(m: string): (string, int) =
   of "Tuple": res TupleT
   of "Ordinal": res OrdinalT
   of "IterableType": res IteratorT
-  of "Int": res IntT, -1
+  of "Int": res IntT, bits
   of "Int8": res IntT, 8
   of "Int16": res IntT, 16
   of "Int32": res IntT, 32
   of "Int64": res IntT, 64
-  of "UInt": res UIntT, -1
+  of "UInt": res UIntT, bits
   of "UInt8": res UIntT, 8
   of "UInt16": res UIntT, 16
   of "UInt32": res UIntT, 32

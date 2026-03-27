@@ -425,15 +425,22 @@ N_INLINE(NB8, _Qnifc_mod_ul_overflow)(unsigned long int a, unsigned long int b, 
 }
 NIM_THREADVAR NB8 NIFC_ERR_;
 typedef union Foo_0_tun261nex{
-  NI x_0;
+  NI64 x_0;
   NC8 c_0;}
 Foo_0_tun261nex;
+extern void X60Qini_0_sysvq0asl(void);
 Foo_0_tun261nex x_1_tun261nex;
-int cmdCount;
-NC8 **cmdLine;
-int main(int argc, char **argv) {
-  cmdCount = argc;
-  cmdLine = (NC8**)argv;
-x_1_tun261nex.c_0 = (NC8)'a';
-}
-
+NB8 X60QiniGuard_0_tun261nex;
+NI32 cmdCount;
+NC8** cmdLine;
+void X60Qini_0_tun261nex(void){
+  if (X60QiniGuard_0_tun261nex){
+    return;}
+  X60QiniGuard_0_tun261nex = NIM_TRUE;
+  X60Qini_0_sysvq0asl();
+  x_1_tun261nex.c_0 = (NC8)'a';}
+NI32 main(NI32 X60Qargc_0_tun261nex, char** X60Qargv_0_tun261nex){
+  cmdCount = X60Qargc_0_tun261nex;
+  cmdLine = ((NC8**)X60Qargv_0_tun261nex);
+  X60Qini_0_tun261nex();
+  return IL64(0);}

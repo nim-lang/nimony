@@ -1,6 +1,7 @@
 (.nif26)
-(.indexat +3047            )
-0,1,tests/nimony/pragmas/tpushpop.nim(stmts 41,4
+(.indexat +3083            )
+0,1,tests/nimony/pragmas/tpushpop.nim(stmts
+ (import sysvq0asl assy765wm) 41,4
  (type ~39 :TestStruct1.0. . . ~27
   (pragmas 2
    (importc 9 "TestStruct1") ~7,~2
@@ -42,7 +43,7 @@
   (typevars 1
    (typevar :T.0. .
     (pragmas ~11,~5
-     (header 8 "<math.h>")) 28,53,lib/std/system/basic_types.nim
+     (header 8 "<math.h>")) 28,61,lib/std/system/basic_types.nim
     (or ~13
      (f +64) ~7
      (f +32) 1
@@ -51,7 +52,7 @@
    (param :x.2 .
     (pragmas ~25,~5
      (header 8 "<math.h>")) 3 T.0. .)) 8
-  (i -1) 43
+  (i +64) 43
   (pragmas 2
    (importc 9 "fpclassify") ~36,~5
    (header 8 "<math.h>")) . .) 18,16
@@ -59,7 +60,7 @@
   (pragmas 2
    (importc 9 "FP_NORMAL") ~11,~6
    (header 8 "<math.h>")) 26
-  (i -1) .) 2,4,lib/std/assertions.nim
+  (i +64) .) 2,4,lib/std/assertions.nim
  (stmts
   (if 3
    (elif
@@ -80,13 +81,13 @@
    (param :x.3 .
     (pragmas ~2,~1
      (discardable)) 3
-    (i -1) .)) 10
-  (i -1)
+    (i +64) .)) 10
+  (i +64)
   (pragmas 7,~1
    (discardable)) . 24
   (stmts
    (result :result.0 . . ~16,~7
-    (i -1) .)
+    (i +64) .)
    (asgn result.0 x.3) ~24
    (ret result.0))) 3,25
  (call ~3 foo.0. 1 +1) ,30
@@ -107,17 +108,17 @@
     (pragmas ~25,~5
      (header 8 "<math.h>"))
     (f +64) .)) ~11,~4
-  (i -1) 24,~4
+  (i +64) 24,~4
   (pragmas 2
    (importc 9 "fpclassify") ~36,~5
    (header 8 "<math.h>")) ~19,~4 . ~19,~4 .))0,1,tests/nimony/pragmas/tpushpop.nim(.index 41,4
- (h TestStruct1.0. +86) 4,8
+ (h TestStruct1.0. +116) 4,8
  (h tests1.0. +266) ,11
  (h cos.0. +46) ,13
  (h sin.0. +330) ,15
  (h c_fpclassify.0. +334) 18,15
  (h T.0. +47) 18,16
- (h c_fpNormal.0. +356) ,22
- (h foo.0. +687) ,30
- (h getchar.0. +295) 19,19
+ (h c_fpNormal.0. +357) ,22
+ (h foo.0. +688) ,30
+ (h getchar.0. +298) 19,19
  (h c_fpclassify.1. +316))

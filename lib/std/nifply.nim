@@ -3,7 +3,7 @@ import ../../src/lib/[nifbuilder, nifreader]
 
 export close, extract
 
-proc internalTypeName*[T](x: typedesc[T]): string {.magic: "InternalTypeName", noSideEffect.}
+func internalTypeName*[T](x: typedesc[T]): string {.magic: "InternalTypeName", noSideEffect.}
 
 iterator internalFieldPairs*[T: tuple|object](x: T): tuple[key: string, val: untyped] {.
   magic: "InternalFieldPairs", noSideEffect.}
@@ -17,33 +17,40 @@ proc nifBuilderOpen*(filename: string; compact = false): Builder =
 proc nifBuilderOpen*(sizeHint: int; compact = false): Builder =
   nifbuilder.open(sizeHint, compact)
 
-proc toNif*(b: var NifBuilder; x: string) =
-  b.addStrLit x
+func toNif*(b: var NifBuilder; x: string) =
+  {.cast(noSideEffect).}:
+    b.addStrLit x
 
-proc toNif*(b: var NifBuilder; x: int) =
-  b.addIntLit x
+func toNif*(b: var NifBuilder; x: int) =
+  {.cast(noSideEffect).}:
+    b.addIntLit x
 
-proc toNif*(b: var NifBuilder; x: uint) =
-  b.addUIntLit x
+func toNif*(b: var NifBuilder; x: uint) =
+  {.cast(noSideEffect).}:
+    b.addUIntLit x
 
-proc toNif*(b: var NifBuilder; x: float) =
-  b.addFloatLit x
+func toNif*(b: var NifBuilder; x: float) =
+  {.cast(noSideEffect).}:
+    b.addFloatLit x
 
-proc toNif*(b: var NifBuilder; x: bool) =
-  b.addKeyw($x)
+func toNif*(b: var NifBuilder; x: bool) =
+  {.cast(noSideEffect).}:
+    b.addKeyw($x)
 
-proc toNif*[E: enum](b: var NifBuilder; x: E) =
-  b.withTree "conv":
-    b.addSymbol internalTypeName(E)
-    b.addUIntLit uint(x)
+func toNif*[E: enum](b: var NifBuilder; x: E) =
+  {.cast(noSideEffect).}:
+    b.withTree "conv":
+      b.addSymbol internalTypeName(E)
+      b.addUIntLit uint(x)
 
-proc toNif*[O: object](b: var NifBuilder; x: O) =
-  b.withTree "oconstr":
-    b.addSymbol internalTypeName(O)
-    for name, f in internalFieldPairs(x):
-      b.withTree "kv":
-        b.addSymbol name
-        toNif b, f
+func toNif*[O: object](b: var NifBuilder; x: O) =
+  {.cast(noSideEffect).}:
+    b.withTree "oconstr":
+      b.addSymbol internalTypeName(O)
+      for name, f in internalFieldPairs(x):
+        b.withTree "kv":
+          b.addSymbol name
+          toNif b, f
 
 type
   NifReader* = Reader
@@ -62,10 +69,11 @@ template expectTree(r: var NifReader; tag: string; body: untyped) =
   let t2 = r.next
   assert t2.tk == ParRi
 
-proc expectSymbol(r: var NifReader; sym: string) =
-  let t = r.next
-  assert t.tk == Symbol
-  assert t.data == sym
+func expectSymbol(r: var NifReader; sym: string) =
+  {.cast(noSideEffect).}:
+    let t = r.next
+    assert t.tk == Symbol
+    assert t.data == sym
 
 proc fromNif*[T: not typedesc](r: var NifReader; x: var T) {.untyped, inline.} =
   x = r.fromNif T

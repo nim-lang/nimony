@@ -17,22 +17,22 @@ type
   IntSet* = object
     t: Table[uint, Trunk]
 
-proc initIntSet*(): IntSet = IntSet(t: initTable[uint, Trunk]())
+func initIntSet*(): IntSet = IntSet(t: initTable[uint, Trunk]())
 
-proc split(x: uint): (uint, uint, int) {.inline.} =
+func split(x: uint): (uint, uint, int) {.inline.} =
   (x div BitsPerTrunk, (x mod BitsPerTrunk) div UIntSize, int(x mod UIntSize))
 
-proc incl*(s: var IntSet; x: int) =
+func incl*(s: var IntSet; x: int) =
   let (a, b, c) = split cast[uint](x)
   let tr = addr(s.t.mgetOrPut(a, default(Trunk)))
   tr.a[b] = tr.a[b] or (1'u shl c)
 
-proc excl*(s: var IntSet; x: int) =
+func excl*(s: var IntSet; x: int) =
   let (a, b, c) = split cast[uint](x)
   let tr = addr(s.t.mgetOrPut(a, default(Trunk)))
   tr.a[b] = tr.a[b] and not (1'u shl c)
 
-proc contains*(s: IntSet; x: int): bool =
+func contains*(s: IntSet; x: int): bool =
   let (a, b, c) = split cast[uint](x)
   if s.t.hasKey(a):
     #let tr = s.t.getOrDefault(a)
@@ -41,7 +41,7 @@ proc contains*(s: IntSet; x: int): bool =
   else:
     result = false
 
-proc containsOrIncl*(s: var IntSet; x: int): bool =
+func containsOrIncl*(s: var IntSet; x: int): bool =
   let (a, b, c) = split cast[uint](x)
   let tr = addr(s.t.mgetOrPut(a, default(Trunk)))
   result = (tr.a[b] and (1'u shl c)) != 0'u

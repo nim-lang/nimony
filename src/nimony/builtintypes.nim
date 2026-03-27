@@ -25,15 +25,32 @@ proc tagToken(tag: string; info: PackedLineInfo = NoLineInfo): PackedToken {.inl
   parLeToken(pool.tags.getOrIncl(tag), info)
 
 const
+  sso* = true ## set to true to enable SSO string implementation
+
+const
   SystemModuleSuffix* = "sysvq0asl" # "sys9azlf"
   StringName* = "string.0." & SystemModuleSuffix
-  StringAField* = "a.0"
-  StringIField* = "i.0"
+
+when sso:
+  const
+    LongStringName* = "LongString.0." & SystemModuleSuffix
+    StringBytesField* = "bytes.0"
+    StringMoreField* = "more.0"
+    LongStringFullLenField* = "fullLen.0"
+    LongStringRcField* = "rc.0"
+    LongStringCapImplField* = "capImpl.0"
+    LongStringDataField* = "data.0"
+else:
+  const
+    StringAField* = "a.0"
+    StringIField* = "i.0"
+
+const
   ErrorCodeName* = "ErrorCode.0." & SystemModuleSuffix
   SuccessName* = "Success.0." & SystemModuleSuffix
   ContinuationName* = "Continuation.0." & SystemModuleSuffix
 
-proc createBuiltinTypes*(): BuiltinTypes =
+proc createBuiltinTypes*(bits: int): BuiltinTypes =
   result = BuiltinTypes(mem: createTokenBuf(30))
 
   result.mem.add tagToken"auto" # 0
@@ -49,13 +66,13 @@ proc createBuiltinTypes*(): BuiltinTypes =
   result.mem.add tagToken"bool" # 4
   result.mem.addParRi() # 5
 
-  let minusOne = pool.integers.getOrIncl(-1)
+  let configBits = pool.integers.getOrIncl(bits)
   result.mem.add tagToken"i" # 6
-  result.mem.add intToken(minusOne, NoLineInfo) # 7
+  result.mem.add intToken(configBits, NoLineInfo) # 7
   result.mem.addParRi() # 8
 
   result.mem.add tagToken"u" # 9
-  result.mem.add intToken(minusOne, NoLineInfo) # 10
+  result.mem.add intToken(configBits, NoLineInfo) # 10
   result.mem.addParRi() # 11
 
   result.mem.add tagToken"f" # 12

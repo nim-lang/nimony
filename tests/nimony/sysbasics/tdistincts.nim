@@ -7,11 +7,11 @@ type
 
 proc `+`*(x, y: VarId): VarId {.borrow.}
 
-proc foobar(x: var int, y: var int): var int =
+func foobar(x: var int, y: var int): var int =
   x = y
   result = x
 
-proc foobar(x: var VarId, y: var VarId): var VarId {.borrow.}
+func foobar(x: var VarId, y: var VarId): var VarId {.borrow.}
 
 var x: VarId
 
@@ -25,7 +25,7 @@ let y = int8(x)
 type
   WINBOOL* = distinct int32
 
-proc `==`(x, y: WINBOOL): bool {.borrow.}
+func `==`(x, y: WINBOOL): bool {.borrow.}
 
 discard isFail(DInt(0))
 
@@ -33,7 +33,7 @@ discard isFail(DInt(0))
 type
   Bytes = distinct seq[int]
 
-proc add(x: var Bytes; b: int) {.borrow.}
+func add(x: var Bytes; b: int) {.borrow.}
 
 var x2 = Bytes(@[99])
 x2.add(42)

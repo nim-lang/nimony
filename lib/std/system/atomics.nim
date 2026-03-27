@@ -23,15 +23,24 @@ var ATOMIC_SEQ_CST* {.importc: "__ATOMIC_SEQ_CST", nodecl.}: AtomMemModel
   ## with acquire loads
   ## and release stores in all threads.
 
-proc atomicAddFetch*[T](p: ptr T, val: T, mem: AtomMemModel): T {.
+func atomicAddFetch*[T](p: ptr T, val: T, mem: AtomMemModel): T {.
   importc: "__atomic_add_fetch", nodecl.}
-proc atomicSubFetch*[T](p: ptr T, val: T, mem: AtomMemModel): T {.
+func atomicSubFetch*[T](p: ptr T, val: T, mem: AtomMemModel): T {.
   importc: "__atomic_sub_fetch", nodecl.}
+func atomicLoadN*[T](p: ptr T, mem: AtomMemModel): T {.
+  importc: "__atomic_load_n", nodecl.}
 
-proc arcInc*(memLoc: var int) {.inline.} =
-  ## Atomically increments the integer by some `x`.
-  discard atomicAddFetch(memLoc.addr, 1, ATOMIC_SEQ_CST)
+func arcInc*(memLoc: var int) {.inline.} =
+  ## Atomically increments the reference count.
+  {.cast(noSideEffect).}:
+    discard atomicAddFetch(memLoc.addr, 1, ATOMIC_SEQ_CST)
 
-proc arcDec*(memLoc: var int): bool {.inline.} =
-  ## Atomically decrements the integer by some `x`. It returns the new value.
-  result = atomicSubFetch(memLoc.addr, 1, ATOMIC_SEQ_CST) < 0
+func arcDec*(memLoc: var int): bool {.inline.} =
+  ## Atomically decrements the reference count. Returns true when it reaches zero.
+  {.cast(noSideEffect).}:
+    result = atomicSubFetch(memLoc.addr, 1, ATOMIC_SEQ_CST) < 0
+
+func arcIsUnique*(memLoc: var int): bool {.inline.} =
+  ## Atomically loads the reference count and returns true if it equals 0 (no extra references).
+  {.cast(noSideEffect).}:
+    result = atomicLoadN(memLoc.addr, ATOMIC_ACQUIRE) == 0

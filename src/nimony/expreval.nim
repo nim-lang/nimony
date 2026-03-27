@@ -314,7 +314,7 @@ template evalShiftOp(c0: var EvalContext; n: var Cursor; opr: untyped) {.dirty.}
   let orig = n
   inc n # tag
   let isSigned = n.typeKind == IntT
-  var bits = -1
+  var bits = c0.c.g.config.bits
   case n.typeKind
   of IntT, UintT:
     inc n
@@ -322,7 +322,6 @@ template evalShiftOp(c0: var EvalContext; n: var Cursor; opr: untyped) {.dirty.}
     skipToEnd n
   else:
     error "expected int or uint type for shift operation, got: " & typeToString(n), n.info
-  if bits < 0: bits = c0.c.g.config.bits
   let a = getConstOrdinalValue propagateError eval(c0, n)
   let b = getConstOrdinalValue propagateError eval(c0, n)
   skipParRi n
@@ -351,7 +350,7 @@ template evalBitnot(c0: var EvalContext; n: var Cursor) {.dirty.} =
   let orig = n
   inc n # tag
   let isSigned = n.typeKind == IntT
-  var bits = -1
+  var bits = c0.c.g.config.bits
   case n.typeKind
   of IntT, UintT:
     inc n
@@ -359,7 +358,6 @@ template evalBitnot(c0: var EvalContext; n: var Cursor) {.dirty.} =
     skipToEnd n
   else:
     error "expected int or uint type for shl, got: " & typeToString(n), n.info
-  if bits < 0: bits = c.c.g.config.bits
   let a = getConstOrdinalValue propagateError eval(c, n)
   skipParRi n
   if not isNaN(a):
@@ -840,18 +838,14 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       result = evalCall(c, n)
       skip n
     of SizeofX:
-      if c.c.g.config.compat:
-        var orig = n
-        inc n
-        let s = c.c.semGetSize(c.c[], n)
-        var err = false
-        let value = asSigned(s, err)
-        if err:
-          cannotEval orig
-        else:
-          result = intValue(c, value, orig.info)
-      else:
+      let s = c.c.semGetSize(c.c[], n.firstSon)
+      var err = false
+      let value = asSigned(s, err)
+      if err:
         cannotEval n
+      else:
+        result = intValue(c, value, n.info)
+      skip n
     of PlusSetX, MinusSetX, XorSetX, MulSetX:
       result = evalSetOp(c, n, n.exprKind)
     of InSetX:
@@ -907,42 +901,34 @@ proc annotateOrdinal(buf: var TokenBuf; typ: var Cursor; n: Cursor; err: var boo
   of IntT, UIntT, FloatT:
     inc typ
     let bits = typebits(typ.load)
-    if bits < 0 and
-        ((kind == IntT and n.kind == IntLit) or
-          (kind == UIntT and n.kind == UIntLit)):
-      buf.add n
-    else:
-      var tok: PackedToken
-      var suf: string
-      case kind
-      of IntT:
-        suf = "i"
-        let val = asSigned(ordinal, err)
-        if err: return
-        tok = intToken(pool.integers.getOrIncl(val), n.info)
-      of UIntT:
-        suf = "u"
-        let val = asUnsigned(ordinal, err)
-        if err: return
-        tok = uintToken(pool.uintegers.getOrIncl(val), n.info)
-      of FloatT:
-        suf = "f"
-        let negative = isNegative(ordinal)
-        if negative: negate(ordinal)
-        var val = float64(asUnsigned(ordinal, err))
-        if err: return
-        if negative:
-          val = -val
-        tok = floatToken(pool.floats.getOrIncl(val), n.info)
-      else: bug("unreachable")
-      if bits >= 0:
-        suf.addInt(bits)
-        buf.add parLeToken(SufX, n.info)
-        buf.add tok
-        buf.add strToken(pool.strings.getOrIncl(suf), n.info)
-        buf.addParRi()
-      else:
-        buf.add tok
+    var tok: PackedToken
+    var suf: string
+    case kind
+    of IntT:
+      suf = "i"
+      let val = asSigned(ordinal, err)
+      if err: return
+      tok = intToken(pool.integers.getOrIncl(val), n.info)
+    of UIntT:
+      suf = "u"
+      let val = asUnsigned(ordinal, err)
+      if err: return
+      tok = uintToken(pool.uintegers.getOrIncl(val), n.info)
+    of FloatT:
+      suf = "f"
+      let negative = isNegative(ordinal)
+      if negative: negate(ordinal)
+      var val = float64(asUnsigned(ordinal, err))
+      if err: return
+      if negative:
+        val = -val
+      tok = floatToken(pool.floats.getOrIncl(val), n.info)
+    else: bug("unreachable")
+    suf.addInt(bits)
+    buf.add parLeToken(SufX, n.info)
+    buf.add tok
+    buf.add strToken(pool.strings.getOrIncl(suf), n.info)
+    buf.addParRi()
   of BoolT:
     if n.exprKind in {TrueX, FalseX}:
       buf.addSubtree n
@@ -1011,7 +997,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
     if typ.typeKind == FloatT:
       inc typ
       let bits = typebits(typ.load)
-      if bits < 0 or bits == 64:
+      if bits == 64:
         buf.add n
       else:
         buf.add parLeToken(SufX, n.info)

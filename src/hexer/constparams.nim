@@ -253,7 +253,17 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
   copyInto dest, n:
     let symId = n.symId
-    let isTuple = c.tupleVars.contains(symId)
+    var isTuple = c.tupleVars.contains(symId)
+    # A void+raises call cursor: takeLocalHeader will change the void type to
+    # ErrorCode (scalar, not a tuple). Remove from tupleVars so that *uses*
+    # of this symbol are NOT transformed to (tupat sym 1) by tr().
+    if isTuple:
+      var peek = n
+      skip peek # name
+      skip peek # export marker
+      skip peek # pragmas
+      if isVoidType(peek):
+        c.tupleVars.excl(symId)
     c.typeCache.takeLocalHeader(dest, n, kind, isTuple)
     if n.exprKind in CallKinds:
       trCall c, dest, n, isTuple
@@ -308,6 +318,10 @@ proc trPragmaBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
     c.keepOverflowFlag = true
     tr(c, dest, n)
     c.keepOverflowFlag = oldKeepOverflowFlag
+  elif n.pragmaKind == CastP:
+    skip n # cast pragma
+    skipParRi n # pragmas
+    tr(c, dest, n)
   else:
     bug "unknown pragma block: " & toString(n, false)
   skipParRi n # pragmax

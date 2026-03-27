@@ -3,13 +3,13 @@ type
   Foo = object
     case x: bool
     of true:
-      a: int
-      b: int
+      a: int64
+      b: int64
       case y: bool
       of false:
-        m: int
+        m: int64
       else:
         s: float64
-        g: int
+        g: int64
     of false:
       c: float64

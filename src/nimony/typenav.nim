@@ -42,8 +42,8 @@ type
     mem: seq[TokenBuf]
     current: TypeScope
 
-proc createTypeCache*(): TypeCache =
-  TypeCache(builtins: createBuiltinTypes())
+proc createTypeCache*(bits: int = 64): TypeCache =
+  TypeCache(builtins: createBuiltinTypes(bits))
 
 proc registerLocal*(c: var TypeCache; s: SymId; kind: SymKind; typ: Cursor) =
   c.current.locals[s] = LocalInfo(kind: kind, typ: typ)
@@ -338,6 +338,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
           result = tupatType(c, n, flags)
         else: discard
     else:
+      # XXX FIXME This can never be true as we know n.kind != ParLe!
       case n.substructureKind
       of RangesU, RangeU:
         result = getTypeImpl(c, n.firstSon, flags)
@@ -365,6 +366,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         inc result
       else:
         result = c.builtins.autoType # still an error
+    of UarrayT:
+      inc result # element type
     of CstringT:
       result = c.builtins.charType
     else:
@@ -398,7 +401,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     result = c.builtins.stringType
   of SizeofX, CardX, AlignofX, OffsetofX:
     result = c.builtins.intType
-  of DelayX, Delay0X:
+  of DelayX, Delay0X, SuspendX:
     result = c.builtins.continuationType
   of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
      PlusSetX, MinusSetX, MulSetX, XorSetX,
@@ -461,11 +464,13 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     elif typeKind(result) == CstringT:
       result = c.builtins.charType
     else:
-      assert false, "cannot deref type: " & toString(result, false)
-      result = c.builtins.autoType # still an error
-  of QuotedX, OchoiceX, CchoiceX, UnpackX, FieldsX, FieldpairsX, TypeofX, LowX, HighX, ErrX,
+      discard "byref param access: type is already the Nim-level type"
+  of QuotedX, OchoiceX, CchoiceX, UnpackX, FieldsX, FieldpairsX, TypeofX, LowX, HighX,
      InternalFieldPairsX:
     discard "keep the error type"
+  of ErrX:
+    # determining the type of `(err)` is not an error by itself:
+    result = n
   of AddrX, HaddrX:
     let elemType = getTypeImpl(c, n.firstSon, flags)
     var buf = createTokenBuf(4)

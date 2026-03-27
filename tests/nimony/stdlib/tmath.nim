@@ -212,47 +212,55 @@ block: # euclDiv/euclMod
   assert euclDiv(-9, -3) == 3
   assert euclMod(-9, -3) == 0
 
-block: # ceilDiv
-  assert ceilDiv(8,  3) ==  3
-  assert ceilDiv(8,  4) ==  2
-  assert ceilDiv(8,  5) ==  2
-  assert ceilDiv(11, 3) ==  4
-  assert ceilDiv(12, 3) ==  4
-  assert ceilDiv(13, 3) ==  5
-  assert ceilDiv(41, 7) ==  6
-  assert ceilDiv(0,  1) ==  0
-  assert ceilDiv(1,  1) ==  1
-  assert ceilDiv(1,  2) ==  1
-  assert ceilDiv(2,  1) ==  2
-  assert ceilDiv(2,  2) ==  1
-  assert ceilDiv(0, high(int)) == 0
-  assert ceilDiv(1, high(int)) == 1
-  assert ceilDiv(0, high(int) - 1) == 0
-  assert ceilDiv(1, high(int) - 1) == 1
-  assert ceilDiv(high(int) div 2, high(int) div 2 + 1) == 1
-  assert ceilDiv(high(int) div 2, high(int) div 2 + 2) == 1
-  assert ceilDiv(high(int) div 2 + 1, high(int) div 2) == 2
-  assert ceilDiv(high(int) div 2 + 2, high(int) div 2) == 2
-  assert ceilDiv(high(int) div 2 + 1, high(int) div 2 + 1) == 1
-  assert ceilDiv(high(int), 1) == high(int)
-  assert ceilDiv(high(int) - 1, 1) == high(int) - 1
-  assert ceilDiv(high(int) - 1, 2) == high(int) div 2
-  assert ceilDiv(high(int) - 1, high(int)) == 1
-  assert ceilDiv(high(int) - 1, high(int) - 1) == 1
-  assert ceilDiv(high(int) - 1, high(int) - 2) == 2
-  assert ceilDiv(high(int), high(int)) == 1
-  assert ceilDiv(high(int), high(int) - 1) == 2
-  assert ceilDiv(255'u8,  1'u8) == 255'u8
-  assert ceilDiv(254'u8,  2'u8) == 127'u8
-  #[ doAssertRaises is not implemented yet
-  when not defined(danger):
-    doAssertRaises(AssertionDefect): discard ceilDiv(41,  0)
-    doAssertRaises(AssertionDefect): discard ceilDiv(41, -1)
-    doAssertRaises(AssertionDefect): discard ceilDiv(-1,  1)
-    doAssertRaises(AssertionDefect): discard ceilDiv(-1, -1)
-    doAssertRaises(AssertionDefect): discard ceilDiv(254'u8, 3'u8)
-    doAssertRaises(AssertionDefect): discard ceilDiv(255'u8, 2'u8)
-  ]#
+proc ceilDivMustFail[T](x: T, y: T) {.untyped.} =
+  var works = false
+  try:
+    discard ceilDiv(x, y)
+  except ErrorCode as e:
+    works = e == RangeError
+  assert works
+
+proc testCeilDiv() =
+  try:
+    assert ceilDiv(8,  3) ==  3
+    assert ceilDiv(8,  4) ==  2
+    assert ceilDiv(8,  5) ==  2
+    assert ceilDiv(11, 3) ==  4
+    assert ceilDiv(12, 3) ==  4
+    assert ceilDiv(13, 3) ==  5
+    assert ceilDiv(41, 7) ==  6
+    assert ceilDiv(0,  1) ==  0
+    assert ceilDiv(1,  1) ==  1
+    assert ceilDiv(1,  2) ==  1
+    assert ceilDiv(2,  1) ==  2
+    assert ceilDiv(2,  2) ==  1
+    assert ceilDiv(0, high(int)) == 0
+    assert ceilDiv(1, high(int)) == 1
+    assert ceilDiv(0, high(int) - 1) == 0
+    assert ceilDiv(1, high(int) - 1) == 1
+    assert ceilDiv(high(int) div 2, high(int) div 2 + 1) == 1
+    assert ceilDiv(high(int) div 2, high(int) div 2 + 2) == 1
+    assert ceilDiv(high(int) div 2 + 1, high(int) div 2) == 2
+    assert ceilDiv(high(int) div 2 + 2, high(int) div 2) == 2
+    assert ceilDiv(high(int) div 2 + 1, high(int) div 2 + 1) == 1
+    assert ceilDiv(high(int), 1) == high(int)
+    assert ceilDiv(high(int) - 1, 1) == high(int) - 1
+    assert ceilDiv(high(int) - 1, 2) == high(int) div 2
+    assert ceilDiv(high(int) - 1, high(int)) == 1
+    assert ceilDiv(high(int) - 1, high(int) - 1) == 1
+    assert ceilDiv(high(int) - 1, high(int) - 2) == 2
+    assert ceilDiv(high(int), high(int)) == 1
+    assert ceilDiv(high(int), high(int) - 1) == 2
+    assert ceilDiv(255'u8,  1'u8) == 255'u8
+    assert ceilDiv(254'u8,  2'u8) == 127'u8
+  except:
+    assert false, "testCeilDiv failed"
+  ceilDivMustFail(41, 0)
+  ceilDivMustFail(41, -1)
+  ceilDivMustFail(-1, 1)
+  ceilDivMustFail(-1, -1)
+  ceilDivMustFail(254'u8, 3'u8)
+  ceilDivMustFail(255'u8, 2'u8)
 
 block: # divmod
   assert divmod(int.high, 1) == (int.high, 0)

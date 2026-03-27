@@ -18,14 +18,16 @@ export RcField, DataField
 type
   EContext* = object
     dir*, main*, ext*: string
-    dest*: TokenBuf
     nestedIn*: seq[(StmtKind, SymId)]
     dynlibs*: Table[StrId, seq[(SymId, StrId, SymId)]]
     strLits*: Table[string, SymId]
     newTypes*: Table[string, SymId]
     pending*: TokenBuf
+    strLitBuf*: TokenBuf   ## static LongString const decls for SSO long literals
+    strLitCounter*: int    ## unique suffix for strLitBuf symbols
     typeCache*: TypeCache
     bits*: int
+    bigEndian*: bool
 
     breaks*: seq[SymId] # how to translate `break`
     continues*: seq[SymId] # how to translate `continue`
@@ -37,6 +39,8 @@ type
     localDeclCounters*: int
     activeChecks*: set[CheckMode]
     liftingCtx*: ref LiftingCtx
+    importedModuleSuffixes*: seq[string]
+    initBody*: TokenBuf
 
 proc getTmpId*(e: var EContext): int {.inline.} =
   result = e.tmpId
@@ -58,9 +62,9 @@ proc error*(e: var EContext; msg: string) {.noreturn.} =
   quit 1
 
 
-proc takeParRi*(e: var EContext; c: var Cursor) =
+proc takeParRi*(e: var EContext; dest: var TokenBuf; c: var Cursor) =
   if c.kind == ParRi:
-    e.dest.add c
+    dest.add c
     inc c
   else:
     error e, "expected ')', but got: ", c
@@ -71,17 +75,14 @@ proc skipParRi*(e: var EContext; c: var Cursor) =
   else:
     error e, "expected ')', but got: ", c
 
-template loop*(e: var EContext; c: var Cursor; body: untyped) =
+template loop*(e: var EContext; dest: var TokenBuf; c: var Cursor; body: untyped) =
   while true:
     case c.kind
     of ParRi:
-      e.dest.add c
+      dest.add c
       inc c
       break
     of EofToken:
       error e, "expected ')', but EOF reached"
     else: discard
     body
-
-proc takeTree*(e: var EContext; n: var Cursor) =
-  takeTree e.dest, n

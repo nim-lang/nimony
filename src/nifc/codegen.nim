@@ -81,8 +81,8 @@ type
   GenFlag* = enum
     gfMainModule # isMainModule
     gfHasError   # already generated the error variable
-    gfProducesMainProc # needs main proc
-    gfInCallImportC # in importC call context
+    gfInCallImportC  # in importC call context
+    gfInFlexArray    # initializing a flexible-array-member field (suppress NC8* cast)
 
   CurrentProc* = object
     needsOverflowFlag: bool
@@ -440,8 +440,8 @@ proc isLiteral(n: var Cursor): bool =
       while n.kind != ParRi:
         if n.substructureKind == KvU:
           inc n
-          if not isLiteral(n): return false
-          skip n # key
+          skip n # key (field name Symbol - not a value to check)
+          if not isLiteral(n): return false # check the value
           if n.kind != ParRi:
             # optional inheritance
             skip n
@@ -498,7 +498,7 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
       c.add "__thread "
     genType c, d.typ, name, isConst = vk == IsConst
     let flags = genVarPragmas(c, d.pragmas)
-    if StaticP in flags or useStatic:
+    if not toExtern and (StaticP in flags or useStatic):
       c.code.insert(Token(StaticKeyword), beforeDecl)
     let beforeInit = c.code.len
 
@@ -730,16 +730,7 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
   writeTokenSeq f, c.data, c
   writeTokenSeq f, realCode, c
 
-  if gfProducesMainProc in c.flags:
-    f.write "int cmdCount;\n"
-    f.write "NC8 **cmdLine;\n"
-    # Changing argv type other than `char**` results in compile error in clang.
-    f.write "int main(int argc, char **argv) {\n"
-    f.write "  cmdCount = argc;\n"
-    f.write "  cmdLine = (NC8**)argv;\n"
-    writeTokenSeq f, c.init, c
-    f.write "}\n\n"
-  elif c.init.len > 0:
+  if c.init.len > 0:
     f.write "static void __attribute__((constructor)) init(void) {"
     if c.currentProc.needsOverflowFlag:
       addOverflowDecl c, c.init, 0

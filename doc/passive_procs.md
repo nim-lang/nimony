@@ -22,8 +22,9 @@ when a passive proc completes, execution returns to its caller.
 
 Not all continuations are freely movable across threads. Continuations produced by
 `delay(call)` may be scheduled on another thread, subject to sendability checks for the
-captured environment. Continuations produced by `delay()` capture the current coroutine's
-own remainder and are thread-affine: they are expected to resume on the same thread.
+captured environment. Continuations produced by `delay()` capture the continuation for
+the code following the nearest `suspend()` and are thread-affine: they are expected to
+resume on the same thread.
 
 ## How It Works
 
@@ -56,7 +57,11 @@ caller into states around each such call. The programmer does not need to think 
 For a passive proc `foo(x: int)`, the compiler generates:
 
 - A coroutine type: `FooCoroutine = object of CoroutineBase` containing lifted locals.
-- An entry function that allocates/initializes the environment and runs the first state.
+- A **wrapper function** (`foo_init`) that allocates the coroutine frame via `allocFrame` and
+  delegates to the entry function. The wrapper signature is `foo_init(x: int, result: ptr int, caller: Continuation)`.
+  This wrapper is essential for method calls where the concrete type is unknown at compile time.
+- An **entry function** (`foo`) that takes the pre-allocated frame, initializes the environment
+  (`this[] = FooCoroutine(...)`), and runs the first state.
 - State functions `s0`, `s1`, ... that each execute code up to the next suspension point
   and return a `Continuation` pointing to the next state (or to `caller` when done).
 
@@ -103,7 +108,7 @@ Language-level semantics:
 
 - Calls to passive procs are suspension points for passive callers.
 - `delay(call)` captures a child continuation and may require sendability checks.
-- `delay()` captures the current coroutine's own remainder and keeps thread affinity.
+- `delay()` captures the continuation for the code following the nearest `suspend()` and keeps thread affinity.
 - Regular procs can call passive procs; the compiler drives them to completion through
   the active scheduler.
 
@@ -122,11 +127,9 @@ interest in a file descriptor:
 
 ```nim
 proc ioWait(fd: cint) {.passive.} =
-  # Real implementation:
-  # 1. Store the current continuation in the IoRing's fd slot
-  # 2. Return nil to suspend (the trampoline stops)
-  # 3. When the fd becomes ready, the IoRing resumes the continuation
-  discard
+  let c = delay()        # capture: continuation for code after suspend()
+  ioRing.store(fd, c)    # register with the event loop
+  suspend()              # stop the trampoline; ioRing resumes c when fd is ready
 ```
 
 Higher-level IO operations compose on top of `ioWait`:
@@ -170,17 +173,23 @@ The scheduler bridges passive procs to the OS event loop:
 This model means a single thread can handle thousands of concurrent connections with
 each handler written as a simple sequential loop.
 
-## Primitives: `delay`, `advance`
+## Primitives: `delay`, `suspend`, `advance`
 
 - `delay(passiveCall())` captures a passive call as a `Continuation` without running it.
   Think of it as `toTask` for coroutines. Because this continuation may be handed to another
   thread, the compiler checks that the captured environment is sendable (for example, unique
   or atomically reference-counted).
-- `delay()` without any argument captures the **current coroutine's own continuation** from this point
-  forward — "the rest of me" as a `Continuation`. The CPS transform replaces it with
-  `Continuation(fn: s_next, env: this)` pointing at the next state function. This form is
-  thread-affine: it assumes the continuation will later resume on the same thread that
-  captured it.
+- `delay()` without any argument captures the **continuation for the code following the
+  nearest `suspend()`** — "the rest of me from that point" as a `Continuation`. The CPS
+  transform replaces it with `Continuation(fn: s_next, env: this)` pointing at the state
+  function after the `suspend()`. This form is thread-affine: it assumes the continuation
+  will later resume on the same thread that captured it. Always used together with a
+  following `suspend()` call, with setup code (e.g. registering with an IO backend) in
+  between.
+- `suspend()` stops the trampoline by returning `Continuation(fn: nil, env: nil)`. Always
+  paired with a preceding `delay()` that captures the resume point first. The code between
+  `delay()` and `suspend()` is the **setup window** — it runs synchronously before
+  suspension and must not contain calls to other passive procs.
 - `advance(c)` single-steps through one state transition. Useful for interleaving
   coroutines manually.
 
@@ -193,9 +202,10 @@ and neither runs until the scheduler picks them up:
 ```nim
 template spawn(call: typed) =
   let taskA = delay(call)     # child coroutine's continuation
-  let taskB = delay()         # MY OWN continuation (code after this point)
+  let taskB = delay()         # MY OWN continuation (code after the `suspend` call)
   scheduler.run taskA
   scheduler.run taskB
+  suspend()
 ```
 
 After `spawn`, the current coroutine is suspended — it does not continue past the spawn
@@ -258,7 +268,7 @@ completion via `complete()`:
 
 ```nim
 var coroVar: FooCoroutine   # on the caller's C stack
-let contVar = foo(addr coroVar, args, stopContinuation)
+let contVar = `foo`(args, addr coroVar, stopContinuation)
 complete(contVar)
 ```
 
@@ -273,6 +283,10 @@ This means:
 - A passive proc that suspends returns to the trampoline before reaching `deallocFrame`.
   The `complete()` loop eventually calls the final state function, which calls `deallocFrame`
   — again a no-op for the stack frame (the nil-caller check still holds).
+
+Note: This optimization only applies to regular procedure calls. For
+passive methods, dynamic dispatch prevents the inlining strategy above,
+so we must still call via the wrapper and allocate on heap.
 
 ### The `callee` field
 
@@ -289,26 +303,35 @@ field when invoking the callee.
 For example, `proc io2(): int {.passive.}` is compiled as:
 
 ```nim
-# Generated init function for io2
-proc io2_0(this: ptr Io2Coro; result: ptr int; caller: Continuation): Continuation =
-  this[] = Io2Coro(vt: addr io2Vt, resultPtr: result,
-                   caller: caller, callee: cast[ptr CoroutineBase](this))
+# Generated wrapper for io2 (allocates frame, delegates to entry)
+proc io2_init(result: ptr int; caller: Continuation): Continuation =
+  let this = cast[ptr Io2Coro](allocFrame(sizeof(Io2Coro)))
+  return io2(this, result, caller)
+
+# Entry function (takes pre-allocated frame, initializes environment)
+proc io2(this: ptr Io2Coro; result: ptr int; caller: Continuation): Continuation =
+  this[] = Io2Coro(resultPtr: result, caller: caller, callee: cast[ptr CoroutineBase](this))
+  return io2_s0(this)
+
+# State s0: runs to completion (no suspension points in this example)
+proc io2_s0(this: ptr Io2Coro): Continuation =
   this.resultPtr[] = 0   # return 0
   let tmpCaller = this.caller
   deallocFrame(cast[ptr CoroutineBase](this))
   return tmpCaller
 ```
 
-The `result` pointer is stored in the coro struct so that state functions generated for
-suspension points can also write to it. On the calling side, `main2` stores the return value
-in a lifted field of its own coro struct and reads it after the callee completes:
+The wrapper signature is `foo_init(...args, result: ptr int, caller: Continuation)` for non-void,
+or `foo_init(...args, caller: Continuation)` for void. It allocates the frame and delegates to
+`foo(...args, this, ...)`.
+
+On the calling side, `main2` stores the return value in a lifted field of its own coro struct and reads it after the callee completes:
 
 ```nim
-# Generated init function for main2
-proc main2_0(this: ptr Main2Coro; caller: Continuation): Continuation =
+# Generated state for main2
+proc main2_s0(caller: Continuation): Continuation =
   # ...
-  let contVar = io2_0(
-    cast[ptr Io2Coro](allocFrame(sizeof Io2Coro)),
+  let contVar = io2_init(
     addr this.x,                              # result pointer into main2's coro struct
     Continuation(fn: main2_s1, env: cast[ptr CoroutineBase](this)))  # resume when done
   return contVar

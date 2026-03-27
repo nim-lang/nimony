@@ -23,7 +23,7 @@ func `-`*[T](x, y: set[T]): set[T] {.magic: "MinusSet".}
 
 func contains*[T](x: set[T], y: T): bool {.magic: "InSet".}
 
-proc cardSetImpl(s: ptr UncheckedArray[uint8], len: int): int {.inline.} =
+func cardSetImpl(s: ptr UncheckedArray[uint8], len: int): int {.inline.} =
   var i = 0
   result = 0
   var num = 0'u64
@@ -37,7 +37,7 @@ proc cardSetImpl(s: ptr UncheckedArray[uint8], len: int): int {.inline.} =
     inc(result, countBits32(uint32(s[i])))
     inc(i, 1)
 
-proc cardSet(s: ptr UncheckedArray[uint8], len: int): int {.inline.} =
+func cardSet(s: ptr UncheckedArray[uint8], len: int): int {.inline.} =
   result = cardSetImpl(s, len)
 
 iterator items*[T: Ordinal|enum](x: set[T]): T =

@@ -1,12 +1,13 @@
 (.nif26)
-(.indexat +28124           )
+(.indexat +29129           )
 0,1,tests/nimony/sysbasics/temptyseq.nim(stmts
+ (import sysvq0asl)
  (proc 5 :foo.0. . . . 8
   (params 1
-   (param :x.0 . . 6 seq.0.Ipe57hg. .)) . . . 24
+   (param :x.0 . . 6 seq.0.Iocgzyq1. .)) . . . 24
   (stmts
    (discard .))) 3,2
- (call ~3 foo.0. 43,162,lib/std/system/seqimpl.nim
+ (call ~3 foo.0. 43,167,lib/std/system/seqimpl.nim
   (expr 15
    (call ~15 newSeqUninit.0. 1 +0))) ,4
  (proc 5 :bar.0. . . 8
@@ -18,47 +19,47 @@
     (at ~3 seq.0.sysvq0asl 1 T.0.) .)) . . . 31
   (stmts
    (discard .))) 3,6
- (call ~3 bar.1. 1 +1.23 43,162,lib/std/system/seqimpl.nim
+ (call ~3 bar.1. 1 +1.23 43,167,lib/std/system/seqimpl.nim
   (expr 15
    (call ~15 newSeqUninit.1. 1 +0))) 4,8
- (gvar :s.0. . . 6 seq.0.Iq4ofkp1. 43,162,lib/std/system/seqimpl.nim
+ (gvar :s.0. . . 6 seq.0.Iq4ofkp1. 43,167,lib/std/system/seqimpl.nim
   (expr 15
    (call ~15 newSeqUninit.2. 1 +0))) 16
- (comment int.0.sysvq0asl ~12,2 @.1.sysvq0asl ~6,6 @.1.sysvq0asl ~5,8 uint8.0.sysvq0asl 4,8 @.1.sysvq0asl) 58,162,lib/std/system/seqimpl.nim
- (proc :newSeqUninit.0. . ~58,~102 .
+ (comment int.0.sysvq0asl ~12,2 @.1.sysvq0asl ~6,6 @.1.sysvq0asl ~5,8 uint8.0.sysvq0asl 4,8 @.1.sysvq0asl) 58,167,lib/std/system/seqimpl.nim
+ (func :newSeqUninit.0. . ~58,~105 .
   (at newSeqUninit.0.sysvq0asl 16,1,tests/nimony/sysbasics/temptyseq.nim
-   (i -1)) ~37,~102
+   (i +64)) ~37,~105
   (params 1
    (param :size.3 . . 6
-    (i -1) .)) ~42,~102 seq.0.Ipe57hg. ~17,~102
+    (i +64) .)) ~42,~105 seq.0.Iocgzyq1. ~17,~105
   (pragmas 2
    (nodestroy) 13
-   (inline)) ~58,~102 . ~56,~101
+   (inline)) ~58,~105 . ~56,~104
   (stmts
-   (result :result.0 . . 14,~1 seq.0.Ipe57hg. .)
+   (result :result.0 . . 14,~1 seq.0.Iocgzyq1. .)
    (if 3
     (elif 5
      (eq
       (i +64) ~5 size.3 3 +0) ~1,1
      (stmts 7
       (asgn ~7 result.0 8
-       (oconstr 15,1,tests/nimony/sysbasics/temptyseq.nim seq.0.Ipe57hg. 4
+       (oconstr 15,1,tests/nimony/sysbasics/temptyseq.nim seq.0.Iocgzyq1. 4
         (kv ~3 len.3 2 size.3) 16
-        (kv ~4 data.0 2
+        (kv ~4 data.1 2
          (nil)))))) ,2
     (else 2,1
      (stmts 4
-      (let :memSize.0 . . 1,~59
-       (i -1) 27
+      (let :memSize.0 . . 1,~61
+       (i +64) 27
        (call ~17 memSizeInBytes.0. 1 size.3)) 7,1
       (asgn ~7 result.0 8
-       (oconstr 15,1,tests/nimony/sysbasics/temptyseq.nim seq.0.Ipe57hg. 4
+       (oconstr 15,1,tests/nimony/sysbasics/temptyseq.nim seq.0.Iocgzyq1. 4
         (kv ~3 len.3 2 size.3) 16
-        (kv ~4 data.0 2
+        (kv ~4 data.1 2
          (cast 5
           (ptr 18
            (uarray 16,1,tests/nimony/sysbasics/temptyseq.nim
-            (i -1))) 33
+            (i +64))) 33
           (call ~5 alloc.0.sysvq0asl 1 memSize.0))))) ,2
       (if 3
        (elif 2,106,lib/std/system/comparisons.nim
@@ -67,8 +68,8 @@
           (eq
            (ptr
             (uarray 16,1,tests/nimony/sysbasics/temptyseq.nim
-             (i -1))) 13,66,lib/std/system/seqimpl.nim
-           (dot ~6 result.0 data.0 +0) 22,66,lib/std/system/seqimpl.nim
+             (i +64))) 13,68,lib/std/system/seqimpl.nim
+           (dot ~6 result.0 data.1 +0) 22,68,lib/std/system/seqimpl.nim
            (nil)))) ~1,1
         (stmts
          (discard 8 "leave uninitialized"))) ,2
@@ -76,17 +77,23 @@
         (stmts 11
          (asgn ~5
           (dot ~6 result.0 len.3 +0) 2 +0) ,1
-         (cmd oomHandler.0.sysvq0asl 11 memSize.0))))))) ~2,~1
-   (ret result.0))) 58,162,lib/std/system/seqimpl.nim
- (proc :newSeqUninit.1. . ~58,~102 .
+         (pragmax
+          (pragmas 2
+           (cast
+            (cast
+             (cast . 5 noSideEffect)))) 2,1
+          (stmts
+           (cmd oomHandler.0.sysvq0asl 11 memSize.0))))))))) ~2,~1
+   (ret result.0))) 58,167,lib/std/system/seqimpl.nim
+ (func :newSeqUninit.1. . ~58,~105 .
   (at newSeqUninit.0.sysvq0asl
-   (f +64)) ~37,~102
+   (f +64)) ~37,~105
   (params 1
    (param :size.5 . . 6
-    (i -1) .)) ~42,~102 seq.0.Iw9f2pq. ~17,~102
+    (i +64) .)) ~42,~105 seq.0.Iw9f2pq. ~17,~105
   (pragmas 2
    (nodestroy) 13
-   (inline)) ~58,~102 . ~56,~101
+   (inline)) ~58,~105 . ~56,~104
   (stmts
    (result :result.1 . . 14,~1 seq.0.Iw9f2pq. .)
    (if 3
@@ -97,17 +104,17 @@
       (asgn ~7 result.1 8
        (oconstr ~3,~2 seq.0.Iw9f2pq. 4
         (kv ~3 len.3 2 size.5) 16
-        (kv ~4 data.0 2
+        (kv ~4 data.1 2
          (nil)))))) ,2
     (else 2,1
      (stmts 4
-      (let :memSize.1 . . 1,~59
-       (i -1) 27
+      (let :memSize.1 . . 1,~61
+       (i +64) 27
        (call ~17 memSizeInBytes.1. 1 size.5)) 7,1
       (asgn ~7 result.1 8
        (oconstr ~3,~5 seq.0.Iw9f2pq. 4
         (kv ~3 len.3 2 size.5) 16
-        (kv ~4 data.0 2
+        (kv ~4 data.1 2
          (cast 5
           (ptr 18
            (uarray
@@ -120,8 +127,8 @@
           (eq
            (ptr
             (uarray
-             (f +64))) 13,66,lib/std/system/seqimpl.nim
-           (dot ~6 result.1 data.0 +0) 22,66,lib/std/system/seqimpl.nim
+             (f +64))) 13,68,lib/std/system/seqimpl.nim
+           (dot ~6 result.1 data.1 +0) 22,68,lib/std/system/seqimpl.nim
            (nil)))) ~1,1
         (stmts
          (discard 8 "leave uninitialized"))) ,2
@@ -129,7 +136,13 @@
         (stmts 11
          (asgn ~5
           (dot ~6 result.1 len.3 +0) 2 +0) ,1
-         (cmd oomHandler.0.sysvq0asl 11 memSize.1))))))) ~2,~1
+         (pragmax
+          (pragmas 2
+           (cast
+            (cast
+             (cast . 5 noSideEffect)))) 2,1
+          (stmts
+           (cmd oomHandler.0.sysvq0asl 11 memSize.1))))))))) ~2,~1
    (ret result.1))) 3,6
  (proc :bar.1. . ~3,~2 .
   (at bar.0.
@@ -139,16 +152,16 @@
     (f +64) .) 7
    (param :y.2 . . 6 seq.0.Iw9f2pq. .)) ~3,~2 . ~3,~2 . ~3,~2 . 28,~2
   (stmts
-   (discard .))) 58,162,lib/std/system/seqimpl.nim
- (proc :newSeqUninit.2. . ~58,~102 .
+   (discard .))) 58,167,lib/std/system/seqimpl.nim
+ (func :newSeqUninit.2. . ~58,~105 .
   (at newSeqUninit.0.sysvq0asl 11,9,tests/nimony/sysbasics/temptyseq.nim
-   (u +8)) ~37,~102
+   (u +8)) ~37,~105
   (params 1
    (param :size.7 . . 6
-    (i -1) .)) ~42,~102 seq.0.Iq4ofkp1. ~17,~102
+    (i +64) .)) ~42,~105 seq.0.Iq4ofkp1. ~17,~105
   (pragmas 2
    (nodestroy) 13
-   (inline)) ~58,~102 . ~56,~101
+   (inline)) ~58,~105 . ~56,~104
   (stmts
    (result :result.2 . . 14,~1 seq.0.Iq4ofkp1. .)
    (if 3
@@ -159,17 +172,17 @@
       (asgn ~7 result.2 8
        (oconstr 10,9,tests/nimony/sysbasics/temptyseq.nim seq.0.Iq4ofkp1. 4
         (kv ~3 len.3 2 size.7) 16
-        (kv ~4 data.0 2
+        (kv ~4 data.1 2
          (nil)))))) ,2
     (else 2,1
      (stmts 4
-      (let :memSize.2 . . 1,~59
-       (i -1) 27
+      (let :memSize.2 . . 1,~61
+       (i +64) 27
        (call ~17 memSizeInBytes.2. 1 size.7)) 7,1
       (asgn ~7 result.2 8
        (oconstr 10,9,tests/nimony/sysbasics/temptyseq.nim seq.0.Iq4ofkp1. 4
         (kv ~3 len.3 2 size.7) 16
-        (kv ~4 data.0 2
+        (kv ~4 data.1 2
          (cast 5
           (ptr 18
            (uarray 11,9,tests/nimony/sysbasics/temptyseq.nim
@@ -182,8 +195,8 @@
           (eq
            (ptr
             (uarray 11,9,tests/nimony/sysbasics/temptyseq.nim
-             (u +8))) 13,66,lib/std/system/seqimpl.nim
-           (dot ~6 result.2 data.0 +0) 22,66,lib/std/system/seqimpl.nim
+             (u +8))) 13,68,lib/std/system/seqimpl.nim
+           (dot ~6 result.2 data.1 +0) 22,68,lib/std/system/seqimpl.nim
            (nil)))) ~1,1
         (stmts
          (discard 8 "leave uninitialized"))) ,2
@@ -191,20 +204,26 @@
         (stmts 11
          (asgn ~5
           (dot ~6 result.2 len.3 +0) 2 +0) ,1
-         (cmd oomHandler.0.sysvq0asl 11 memSize.2))))))) ~2,~1
-   (ret result.2))) 35,64,lib/std/system/seqimpl.nim
- (proc :memSizeInBytes.0. . ~35,~41 .
+         (pragmax
+          (pragmas 2
+           (cast
+            (cast
+             (cast . 5 noSideEffect)))) 2,1
+          (stmts
+           (cmd oomHandler.0.sysvq0asl 11 memSize.2))))))))) ~2,~1
+   (ret result.2))) 35,66,lib/std/system/seqimpl.nim
+ (func :memSizeInBytes.0. . ~35,~43 .
   (at memSizeInBytes.0.sysvq0asl 16,1,tests/nimony/sysbasics/temptyseq.nim
-   (i -1)) ~13,~41
+   (i +64)) ~13,~43
   (params 1
    (param :size.9 . . 6
-    (i -1) .)) ~22,~41
-  (i -1) 4,~41
+    (i +64) .)) ~22,~43
+  (i +64) 4,~43
   (pragmas 2
-   (inline)) ~35,~41 . ~33,~40
+   (inline)) ~35,~43 . ~33,~42
   (stmts
-   (result :result.3 . . 7,31,lib/std/system/basic_types.nim
-    (i -1) .)
+   (result :result.3 . . 13,31,lib/std/system/basic_types.nim
+    (i +64) .)
    (pragmax
     (pragmas 2
      (keepOverflowFlag)) 2,1
@@ -213,25 +232,26 @@
       (mul
        (i +64) ~5 size.9 8
        (sizeof 16,1,tests/nimony/sysbasics/temptyseq.nim
-        (i -1)))) ,1
+        (i +64)))) ,1
      (if 3
       (elif 12
        (ovf) ~1,2
        (stmts 7
-        (asgn ~7 result.3 6 +9223372036854775807)))))) ~2,~1
-   (ret result.3))) 35,64,lib/std/system/seqimpl.nim
- (proc :memSizeInBytes.1. . ~35,~41 .
+        (asgn ~7 result.3 6
+         (suf +9223372036854775807 "i64"))))))) ~2,~1
+   (ret result.3))) 35,66,lib/std/system/seqimpl.nim
+ (func :memSizeInBytes.1. . ~35,~43 .
   (at memSizeInBytes.0.sysvq0asl
-   (f +64)) ~13,~41
+   (f +64)) ~13,~43
   (params 1
    (param :size.10 . . 6
-    (i -1) .)) ~22,~41
-  (i -1) 4,~41
+    (i +64) .)) ~22,~43
+  (i +64) 4,~43
   (pragmas 2
-   (inline)) ~35,~41 . ~33,~40
+   (inline)) ~35,~43 . ~33,~42
   (stmts
-   (result :result.4 . . 7,31,lib/std/system/basic_types.nim
-    (i -1) .)
+   (result :result.4 . . 13,31,lib/std/system/basic_types.nim
+    (i +64) .)
    (pragmax
     (pragmas 2
      (keepOverflowFlag)) 2,1
@@ -245,20 +265,21 @@
       (elif 12
        (ovf) ~1,2
        (stmts 7
-        (asgn ~7 result.4 6 +9223372036854775807)))))) ~2,~1
-   (ret result.4))) 35,64,lib/std/system/seqimpl.nim
- (proc :memSizeInBytes.2. . ~35,~41 .
+        (asgn ~7 result.4 6
+         (suf +9223372036854775807 "i64"))))))) ~2,~1
+   (ret result.4))) 35,66,lib/std/system/seqimpl.nim
+ (func :memSizeInBytes.2. . ~35,~43 .
   (at memSizeInBytes.0.sysvq0asl 11,9,tests/nimony/sysbasics/temptyseq.nim
-   (u +8)) ~13,~41
+   (u +8)) ~13,~43
   (params 1
    (param :size.11 . . 6
-    (i -1) .)) ~22,~41
-  (i -1) 4,~41
+    (i +64) .)) ~22,~43
+  (i +64) 4,~43
   (pragmas 2
-   (inline)) ~35,~41 . ~33,~40
+   (inline)) ~35,~43 . ~33,~42
   (stmts
-   (result :result.5 . . 7,31,lib/std/system/basic_types.nim
-    (i -1) .)
+   (result :result.5 . . 13,31,lib/std/system/basic_types.nim
+    (i +64) .)
    (pragmax
     (pragmas 2
      (keepOverflowFlag)) 2,1
@@ -272,11 +293,12 @@
       (elif 12
        (ovf) ~1,2
        (stmts 7
-        (asgn ~7 result.5 6 +9223372036854775807)))))) ~2,~1
+        (asgn ~7 result.5 6
+         (suf +9223372036854775807 "i64"))))))) ~2,~1
    (ret result.5))) 15
- (type :seq.0.Ipe57hg. .
+ (type :seq.0.Iocgzyq1. .
   (at seq.0.sysvq0asl 1
-   (i -1)) 10,4,lib/std/system/seqimpl.nim
+   (i +64)) 10,4,lib/std/system/seqimpl.nim
   (pragmas
    (destroy =destroy.0.)
    (wasmoved =wasMoved.0.)
@@ -284,23 +306,23 @@
    (copy =copy.0.)) 12,4,lib/std/system/seqimpl.nim
   (object . ~8,1
    (fld :len.3 . . 5
-    (i -1) .) ~8,2
-   (fld :data.0 . . 6
+    (i +64) .) ~8,2
+   (fld :data.1 . . 6
     (ptr 18
      (uarray 16,1,tests/nimony/sysbasics/temptyseq.nim
-      (i -1))) .))) 16,60,lib/std/system/seqimpl.nim
+      (i +64))) .))) 16,62,lib/std/system/seqimpl.nim
  (type :seq.0.Iw9f2pq. .
   (at seq.0.sysvq0asl
-   (f +64)) ~6,~56
+   (f +64)) ~6,~58
   (pragmas
    (destroy =destroy.1.)
    (wasmoved =wasMoved.1.)
    (dup =dup.1.)
-   (copy =copy.1.)) ~4,~56
+   (copy =copy.1.)) ~4,~58
   (object . ~8,1
    (fld :len.3 . . 5
-    (i -1) .) ~8,2
-   (fld :data.0 . . 6
+    (i +64) .) ~8,2
+   (fld :data.1 . . 6
     (ptr 18
      (uarray
       (f +64))) .))) 10,8
@@ -314,19 +336,19 @@
    (copy =copy.2.)) 12,4,lib/std/system/seqimpl.nim
   (object . ~8,1
    (fld :len.3 . . 5
-    (i -1) .) ~8,2
-   (fld :data.0 . . 6
+    (i +64) .) ~8,2
+   (fld :data.1 . . 6
     (ptr 18
      (uarray 11,9,tests/nimony/sysbasics/temptyseq.nim
       (u +8))) .))) 0,11,lib/std/system/seqimpl.nim
- (proc :=destroy.0. . .
+ (func :=destroy.0. . .
   (at =destroy.1.sysvq0asl 16,1,tests/nimony/sysbasics/temptyseq.nim
-   (i -1)) 19
+   (i +64)) 19
   (params 1
-   (param :s.6 . . 6 seq.0.Ipe57hg. .)) . . . 2,1
+   (param :s.6 . . 6 seq.0.Iocgzyq1. .)) . . . 2,1
   (stmts 4
    (var :i.0 . . 3,~7
-    (i -1) 4 +0) ,1
+    (i +64) 4 +0) ,1
    (while 8
     (lt
      (i +64) ~2 i.0 3
@@ -334,7 +356,7 @@
     (stmts 10
      (destroy 2
       (pat
-       (dot ~1 s.6 data.0 +0) 6 i.0)) ,1
+       (dot ~1 s.6 data.1 +0) 6 i.0)) ,1
      (cmd inc.0. 4
       (haddr i.0)))) ,4
    (if 3
@@ -344,22 +366,22 @@
        (eq
         (ptr
          (uarray 16,1,tests/nimony/sysbasics/temptyseq.nim
-          (i -1))) 6,16,lib/std/system/seqimpl.nim
-        (dot ~1 s.6 data.0 +0) 15,16,lib/std/system/seqimpl.nim
+          (i +64))) 6,16,lib/std/system/seqimpl.nim
+        (dot ~1 s.6 data.1 +0) 15,16,lib/std/system/seqimpl.nim
         (nil)))) ~1,1
      (stmts
       (cmd dealloc.0.sysvq0asl 9
-       (hconv 17,51,lib/std/system/mimalloc.nim
+       (hconv 17,54,lib/std/system/mimalloc.nim
         (pointer)
-        (hconv 13,45,lib/std/system/mimalloc.nim
+        (hconv 13,48,lib/std/system/mimalloc.nim
          (pointer)
-         (dot ~1 s.6 data.0 +0))))))))) 0,19,lib/std/system/seqimpl.nim
- (proc :=wasMoved.0. . .
+         (dot ~1 s.6 data.1 +0))))))))) 0,19,lib/std/system/seqimpl.nim
+ (func :=wasMoved.0. . .
   (at =wasMoved.1.sysvq0asl 16,1,tests/nimony/sysbasics/temptyseq.nim
-   (i -1)) 20
+   (i +64)) 20
   (params 1
    (param :s.7 . . 3
-    (mut 7 seq.0.Ipe57hg.) .)) . 36
+    (mut 7 seq.0.Iocgzyq1.) .)) . 36
   (pragmas 2
    (inline)) . 2,1
   (stmts 6
@@ -368,22 +390,22 @@
      (hderef s.7) len.3 +0) 2 +0) 7,1
    (asgn ~6
     (dot ~1
-     (hderef s.7) data.0 +0) 2
-    (nil)))) 0,74,lib/std/system/seqimpl.nim
- (proc :=dup.0. . .
+     (hderef s.7) data.1 +0) 2
+    (nil)))) 0,77,lib/std/system/seqimpl.nim
+ (func :=dup.0. . .
   (at =dup.1.sysvq0asl 16,1,tests/nimony/sysbasics/temptyseq.nim
-   (i -1)) 15
+   (i +64)) 15
   (params 1
-   (param :a.3 . . 6 seq.0.Ipe57hg. .)) 16 seq.0.Ipe57hg. 35
+   (param :a.3 . . 6 seq.0.Iocgzyq1. .)) 16 seq.0.Iocgzyq1. 35
   (pragmas 2
    (nodestroy)) . 2,1
   (stmts 7
-   (result :result.6 . . 13,~1 seq.0.Ipe57hg. .) 7
+   (result :result.6 . . 13,~1 seq.0.Iocgzyq1. .) 7
    (asgn ~7 result.6 17
     (call ~15 newSeqUninit.0. 2
      (dot ~1 a.3 len.3 +0))) 4,1
-   (var :i.1 . . 3,~71
-    (i -1) 4 +0) ,2
+   (var :i.1 . . 3,~74
+    (i +64) 4 +0) ,2
    (while 8
     (lt
      (i +64) ~2 i.1 3
@@ -391,20 +413,20 @@
     (stmts 17
      (asgn ~10
       (pat
-       (dot ~6 result.6 data.0 +0) 6 i.1) 8
+       (dot ~6 result.6 data.1 +0) 6 i.1) 8
       (dup 2
        (pat
-        (dot ~1 a.3 data.0 +0) 6 i.1))) ,1
+        (dot ~1 a.3 data.1 +0) 6 i.1))) ,1
      (cmd inc.0. 4
       (haddr i.1)))) ~2,~1
-   (ret result.6))) 0,105,lib/std/system/seqimpl.nim
- (proc :=copy.0. . .
+   (ret result.6))) 0,109,lib/std/system/seqimpl.nim
+ (func :=copy.0. . .
   (at =copy.1.sysvq0asl 16,1,tests/nimony/sysbasics/temptyseq.nim
-   (i -1)) 16
+   (i +64)) 16
   (params 1
    (param :dest.3 . . 6
-    (mut 7 seq.0.Ipe57hg.) .) 19
-   (param :src.3 . . 8 seq.0.Ipe57hg. .)) . 48
+    (mut 7 seq.0.Iocgzyq1.) .) 19
+   (param :src.3 . . 8 seq.0.Iocgzyq1. .)) . 48
   (pragmas 2
    (nodestroy)) . 2,1
   (stmts
@@ -413,10 +435,10 @@
      (eq
       (ptr
        (uarray 16,1,tests/nimony/sysbasics/temptyseq.nim
-        (i -1))) ~6
+        (i +64))) ~6
       (dot ~4
-       (hderef dest.3) data.0 +0) 6
-      (dot ~3 src.3 data.0 +0)) 23
+       (hderef dest.3) data.1 +0) 6
+      (dot ~3 src.3 data.1 +0)) 23
      (stmts
       (ret .)))) ,1
    (if 3
@@ -427,8 +449,8 @@
       (dot ~4
        (hderef dest.3) len.3 +0)) ~1,1
      (stmts 4
-      (var :i.2 . . 1,~103
-       (i -1) 7
+      (var :i.2 . . 1,~107
+       (i +64) 7
        (dot ~3 src.3 len.3 +0)) ,1
       (while 8
        (lt
@@ -439,7 +461,7 @@
         (destroy 5
          (pat
           (dot ~4
-           (hderef dest.3) data.0 +0) 6 i.2)) ,1
+           (hderef dest.3) data.1 +0) 6 i.2)) ,1
         (cmd inc.0. 4
          (haddr i.2)))))) 5,5
     (elif 16
@@ -451,84 +473,90 @@
        (i +64) ~5
        (dot ~3 src.3 len.3 +0) 8
        (sizeof 16,1,tests/nimony/sysbasics/temptyseq.nim
-        (i -1)))) ~3,1
+        (i +64)))) ~3,1
      (stmts 4
-      (let :oldCap.0 . . 2,~52
+      (let :oldCap.0 . . 1,~112
        (i +64) 25
        (div
         (i +64) ~12
         (call 1 capInBytes.0. ~4
          (hderef dest.3)) 10
         (sizeof 16,1,tests/nimony/sysbasics/temptyseq.nim
-         (i -1)))) 4,1
-      (let :newCap.0 . . 1,~109
-       (i -1) 18
+         (i +64)))) 4,1
+      (let :newCap.0 . . 1,~113
+       (i +64) 18
        (call ~9 recalcCap.0.sysvq0asl 1 oldCap.0 17
         (sub
          (i +64) ~5
          (dot ~3 src.3 len.3 +0) 2 oldCap.0))) 4,2
-      (let :memSize.3 . . 1,~110
-       (i -1) 27
+      (let :memSize.3 . . 1,~114
+       (i +64) 27
        (call ~17 memSizeInBytes.0. 1 newCap.0)) 10,3
       (asgn ~6
        (dot ~4
-        (hderef dest.3) data.0 +0) 2
+        (hderef dest.3) data.1 +0) 2
        (cast 5
         (ptr 18
          (uarray 16,1,tests/nimony/sysbasics/temptyseq.nim
-          (i -1))) 35
+          (i +64))) 35
         (call ~7 realloc.0.sysvq0asl 5
-         (hconv 17,48,lib/std/system/mimalloc.nim
+         (hconv 17,51,lib/std/system/mimalloc.nim
           (pointer)
-          (hconv 13,45,lib/std/system/mimalloc.nim
+          (hconv 13,48,lib/std/system/mimalloc.nim
            (pointer)
            (dot ~4
-            (hderef dest.3) data.0 +0))) 12 memSize.3))) ,4
+            (hderef dest.3) data.1 +0))) 12 memSize.3))) ,4
       (if 3
        (elif 10
         (eq
          (ptr
           (uarray 16,1,tests/nimony/sysbasics/temptyseq.nim
-           (i -1))) ~6
+           (i +64))) ~6
          (dot ~4
-          (hderef dest.3) data.0 +0) 3
+          (hderef dest.3) data.1 +0) 3
          (nil)) ~1,1
         (stmts 9
          (asgn ~5
           (dot ~4
            (hderef dest.3) len.3 +0) 2 +0) ,1
-         (cmd oomHandler.0.sysvq0asl 11 memSize.3) ,2
-         (ret .))))))) 9,15
+         (pragmax
+          (pragmas 2
+           (cast
+            (cast
+             (cast . 5 noSideEffect)))) 2,1
+          (stmts
+           (cmd oomHandler.0.sysvq0asl 11 memSize.3))) ,3
+         (ret .))))))) 9,16
    (asgn ~5
     (dot ~4
      (hderef dest.3) len.3 +0) 5
-    (dot ~3 src.3 len.3 +0)) 4,16
-   (var :i.3 . . 3,~117
-    (i -1) 4 +0) ,17
+    (dot ~3 src.3 len.3 +0)) 4,17
+   (var :i.3 . . 3,~122
+    (i +64) 4 +0) ,18
    (while 8
     (lt
      (i +64) ~2 i.3 6
      (dot ~4
       (hderef dest.3) len.3 +0)) 2,1
-    (stmts 2,31,lib/std/system.nim
+    (stmts 2,32,lib/std/system.nim
      (stmts 7
       (asgn ~6
-       (pat 8,124,lib/std/system/seqimpl.nim
+       (pat 8,129,lib/std/system/seqimpl.nim
         (dot ~4
-         (hderef dest.3) data.0 +0) 14,124,lib/std/system/seqimpl.nim i.3) 25,124,lib/std/system/seqimpl.nim
+         (hderef dest.3) data.1 +0) 14,129,lib/std/system/seqimpl.nim i.3) 25,129,lib/std/system/seqimpl.nim
        (dup 4
         (pat
-         (dot ~3 src.3 data.0 +0) 6 i.3)))) ,1
+         (dot ~3 src.3 data.1 +0) 6 i.3)))) ,1
      (cmd inc.0. 4
       (haddr i.3)))))) 0,11,lib/std/system/seqimpl.nim
- (proc :=destroy.1. . .
+ (func :=destroy.1. . .
   (at =destroy.1.sysvq0asl
    (f +64)) 19
   (params 1
    (param :s.9 . . 6 seq.0.Iw9f2pq. .)) . . . 2,1
   (stmts 4
    (var :i.4 . . 3,~7
-    (i -1) 4 +0) ,1
+    (i +64) 4 +0) ,1
    (while 8
     (lt
      (i +64) ~2 i.4 3
@@ -536,7 +564,7 @@
     (stmts 10
      (destroy 2
       (pat
-       (dot ~1 s.9 data.0 +0) 6 i.4)) ,1
+       (dot ~1 s.9 data.1 +0) 6 i.4)) ,1
      (cmd inc.0. 4
       (haddr i.4)))) ,4
    (if 3
@@ -547,16 +575,16 @@
         (ptr
          (uarray
           (f +64))) 6,16,lib/std/system/seqimpl.nim
-        (dot ~1 s.9 data.0 +0) 15,16,lib/std/system/seqimpl.nim
+        (dot ~1 s.9 data.1 +0) 15,16,lib/std/system/seqimpl.nim
         (nil)))) ~1,1
      (stmts
       (cmd dealloc.0.sysvq0asl 9
-       (hconv 17,51,lib/std/system/mimalloc.nim
+       (hconv 17,54,lib/std/system/mimalloc.nim
         (pointer)
-        (hconv 13,45,lib/std/system/mimalloc.nim
+        (hconv 13,48,lib/std/system/mimalloc.nim
          (pointer)
-         (dot ~1 s.9 data.0 +0))))))))) 0,19,lib/std/system/seqimpl.nim
- (proc :=wasMoved.1. . .
+         (dot ~1 s.9 data.1 +0))))))))) 0,19,lib/std/system/seqimpl.nim
+ (func :=wasMoved.1. . .
   (at =wasMoved.1.sysvq0asl
    (f +64)) 20
   (params 1
@@ -570,9 +598,9 @@
      (hderef s.10) len.3 +0) 2 +0) 7,1
    (asgn ~6
     (dot ~1
-     (hderef s.10) data.0 +0) 2
-    (nil)))) 0,74,lib/std/system/seqimpl.nim
- (proc :=dup.1. . .
+     (hderef s.10) data.1 +0) 2
+    (nil)))) 0,77,lib/std/system/seqimpl.nim
+ (func :=dup.1. . .
   (at =dup.1.sysvq0asl
    (f +64)) 15
   (params 1
@@ -584,8 +612,8 @@
    (asgn ~7 result.7 17
     (call ~15 newSeqUninit.1. 2
      (dot ~1 a.4 len.3 +0))) 4,1
-   (var :i.5 . . 3,~71
-    (i -1) 4 +0) ,2
+   (var :i.5 . . 3,~74
+    (i +64) 4 +0) ,2
    (while 8
     (lt
      (i +64) ~2 i.5 3
@@ -593,14 +621,14 @@
     (stmts 17
      (asgn ~10
       (pat
-       (dot ~6 result.7 data.0 +0) 6 i.5) 8
+       (dot ~6 result.7 data.1 +0) 6 i.5) 8
       (dup 2
        (pat
-        (dot ~1 a.4 data.0 +0) 6 i.5))) ,1
+        (dot ~1 a.4 data.1 +0) 6 i.5))) ,1
      (cmd inc.0. 4
       (haddr i.5)))) ~2,~1
-   (ret result.7))) 0,105,lib/std/system/seqimpl.nim
- (proc :=copy.1. . .
+   (ret result.7))) 0,109,lib/std/system/seqimpl.nim
+ (func :=copy.1. . .
   (at =copy.1.sysvq0asl
    (f +64)) 16
   (params 1
@@ -617,8 +645,8 @@
        (uarray
         (f +64))) ~6
       (dot ~4
-       (hderef dest.4) data.0 +0) 6
-      (dot ~3 src.4 data.0 +0)) 23
+       (hderef dest.4) data.1 +0) 6
+      (dot ~3 src.4 data.1 +0)) 23
      (stmts
       (ret .)))) ,1
    (if 3
@@ -629,8 +657,8 @@
       (dot ~4
        (hderef dest.4) len.3 +0)) ~1,1
      (stmts 4
-      (var :i.6 . . 1,~103
-       (i -1) 7
+      (var :i.6 . . 1,~107
+       (i +64) 7
        (dot ~3 src.4 len.3 +0)) ,1
       (while 8
        (lt
@@ -641,7 +669,7 @@
         (destroy 5
          (pat
           (dot ~4
-           (hderef dest.4) data.0 +0) 6 i.6)) ,1
+           (hderef dest.4) data.1 +0) 6 i.6)) ,1
         (cmd inc.0. 4
          (haddr i.6)))))) 5,5
     (elif 16
@@ -655,7 +683,7 @@
        (sizeof
         (f +64)))) ~3,1
      (stmts 4
-      (let :oldCap.1 . . 2,~52
+      (let :oldCap.1 . . 1,~112
        (i +64) 25
        (div
         (i +64) ~12
@@ -663,29 +691,29 @@
          (hderef dest.4)) 10
         (sizeof
          (f +64)))) 4,1
-      (let :newCap.1 . . 1,~109
-       (i -1) 18
+      (let :newCap.1 . . 1,~113
+       (i +64) 18
        (call ~9 recalcCap.0.sysvq0asl 1 oldCap.1 17
         (sub
          (i +64) ~5
          (dot ~3 src.4 len.3 +0) 2 oldCap.1))) 4,2
-      (let :memSize.4 . . 1,~110
-       (i -1) 27
+      (let :memSize.4 . . 1,~114
+       (i +64) 27
        (call ~17 memSizeInBytes.1. 1 newCap.1)) 10,3
       (asgn ~6
        (dot ~4
-        (hderef dest.4) data.0 +0) 2
+        (hderef dest.4) data.1 +0) 2
        (cast 5
         (ptr 18
          (uarray
           (f +64))) 35
         (call ~7 realloc.0.sysvq0asl 5
-         (hconv 17,48,lib/std/system/mimalloc.nim
+         (hconv 17,51,lib/std/system/mimalloc.nim
           (pointer)
-          (hconv 13,45,lib/std/system/mimalloc.nim
+          (hconv 13,48,lib/std/system/mimalloc.nim
            (pointer)
            (dot ~4
-            (hderef dest.4) data.0 +0))) 12 memSize.4))) ,4
+            (hderef dest.4) data.1 +0))) 12 memSize.4))) ,4
       (if 3
        (elif 10
         (eq
@@ -693,44 +721,50 @@
           (uarray
            (f +64))) ~6
          (dot ~4
-          (hderef dest.4) data.0 +0) 3
+          (hderef dest.4) data.1 +0) 3
          (nil)) ~1,1
         (stmts 9
          (asgn ~5
           (dot ~4
            (hderef dest.4) len.3 +0) 2 +0) ,1
-         (cmd oomHandler.0.sysvq0asl 11 memSize.4) ,2
-         (ret .))))))) 9,15
+         (pragmax
+          (pragmas 2
+           (cast
+            (cast
+             (cast . 5 noSideEffect)))) 2,1
+          (stmts
+           (cmd oomHandler.0.sysvq0asl 11 memSize.4))) ,3
+         (ret .))))))) 9,16
    (asgn ~5
     (dot ~4
      (hderef dest.4) len.3 +0) 5
-    (dot ~3 src.4 len.3 +0)) 4,16
-   (var :i.7 . . 3,~117
-    (i -1) 4 +0) ,17
+    (dot ~3 src.4 len.3 +0)) 4,17
+   (var :i.7 . . 3,~122
+    (i +64) 4 +0) ,18
    (while 8
     (lt
      (i +64) ~2 i.7 6
      (dot ~4
       (hderef dest.4) len.3 +0)) 2,1
-    (stmts 2,31,lib/std/system.nim
+    (stmts 2,32,lib/std/system.nim
      (stmts 7
       (asgn ~6
-       (pat 8,124,lib/std/system/seqimpl.nim
+       (pat 8,129,lib/std/system/seqimpl.nim
         (dot ~4
-         (hderef dest.4) data.0 +0) 14,124,lib/std/system/seqimpl.nim i.7) 25,124,lib/std/system/seqimpl.nim
+         (hderef dest.4) data.1 +0) 14,129,lib/std/system/seqimpl.nim i.7) 25,129,lib/std/system/seqimpl.nim
        (dup 4
         (pat
-         (dot ~3 src.4 data.0 +0) 6 i.7)))) ,1
+         (dot ~3 src.4 data.1 +0) 6 i.7)))) ,1
      (cmd inc.0. 4
       (haddr i.7)))))) 0,11,lib/std/system/seqimpl.nim
- (proc :=destroy.2. . .
+ (func :=destroy.2. . .
   (at =destroy.1.sysvq0asl 11,9,tests/nimony/sysbasics/temptyseq.nim
    (u +8)) 19
   (params 1
    (param :s.12 . . 6 seq.0.Iq4ofkp1. .)) . . . 2,1
   (stmts 4
    (var :i.8 . . 3,~7
-    (i -1) 4 +0) ,1
+    (i +64) 4 +0) ,1
    (while 8
     (lt
      (i +64) ~2 i.8 3
@@ -738,7 +772,7 @@
     (stmts 10
      (destroy 2
       (pat
-       (dot ~1 s.12 data.0 +0) 6 i.8)) ,1
+       (dot ~1 s.12 data.1 +0) 6 i.8)) ,1
      (cmd inc.0. 4
       (haddr i.8)))) ,4
    (if 3
@@ -749,16 +783,16 @@
         (ptr
          (uarray 11,9,tests/nimony/sysbasics/temptyseq.nim
           (u +8))) 6,16,lib/std/system/seqimpl.nim
-        (dot ~1 s.12 data.0 +0) 15,16,lib/std/system/seqimpl.nim
+        (dot ~1 s.12 data.1 +0) 15,16,lib/std/system/seqimpl.nim
         (nil)))) ~1,1
      (stmts
       (cmd dealloc.0.sysvq0asl 9
-       (hconv 17,51,lib/std/system/mimalloc.nim
+       (hconv 17,54,lib/std/system/mimalloc.nim
         (pointer)
-        (hconv 13,45,lib/std/system/mimalloc.nim
+        (hconv 13,48,lib/std/system/mimalloc.nim
          (pointer)
-         (dot ~1 s.12 data.0 +0))))))))) 0,19,lib/std/system/seqimpl.nim
- (proc :=wasMoved.2. . .
+         (dot ~1 s.12 data.1 +0))))))))) 0,19,lib/std/system/seqimpl.nim
+ (func :=wasMoved.2. . .
   (at =wasMoved.1.sysvq0asl 11,9,tests/nimony/sysbasics/temptyseq.nim
    (u +8)) 20
   (params 1
@@ -772,9 +806,9 @@
      (hderef s.13) len.3 +0) 2 +0) 7,1
    (asgn ~6
     (dot ~1
-     (hderef s.13) data.0 +0) 2
-    (nil)))) 0,74,lib/std/system/seqimpl.nim
- (proc :=dup.2. . .
+     (hderef s.13) data.1 +0) 2
+    (nil)))) 0,77,lib/std/system/seqimpl.nim
+ (func :=dup.2. . .
   (at =dup.1.sysvq0asl 11,9,tests/nimony/sysbasics/temptyseq.nim
    (u +8)) 15
   (params 1
@@ -786,8 +820,8 @@
    (asgn ~7 result.8 17
     (call ~15 newSeqUninit.2. 2
      (dot ~1 a.5 len.3 +0))) 4,1
-   (var :i.9 . . 3,~71
-    (i -1) 4 +0) ,2
+   (var :i.9 . . 3,~74
+    (i +64) 4 +0) ,2
    (while 8
     (lt
      (i +64) ~2 i.9 3
@@ -795,14 +829,14 @@
     (stmts 17
      (asgn ~10
       (pat
-       (dot ~6 result.8 data.0 +0) 6 i.9) 8
+       (dot ~6 result.8 data.1 +0) 6 i.9) 8
       (dup 2
        (pat
-        (dot ~1 a.5 data.0 +0) 6 i.9))) ,1
+        (dot ~1 a.5 data.1 +0) 6 i.9))) ,1
      (cmd inc.0. 4
       (haddr i.9)))) ~2,~1
-   (ret result.8))) 0,105,lib/std/system/seqimpl.nim
- (proc :=copy.2. . .
+   (ret result.8))) 0,109,lib/std/system/seqimpl.nim
+ (func :=copy.2. . .
   (at =copy.1.sysvq0asl 11,9,tests/nimony/sysbasics/temptyseq.nim
    (u +8)) 16
   (params 1
@@ -819,8 +853,8 @@
        (uarray 11,9,tests/nimony/sysbasics/temptyseq.nim
         (u +8))) ~6
       (dot ~4
-       (hderef dest.5) data.0 +0) 6
-      (dot ~3 src.5 data.0 +0)) 23
+       (hderef dest.5) data.1 +0) 6
+      (dot ~3 src.5 data.1 +0)) 23
      (stmts
       (ret .)))) ,1
    (if 3
@@ -831,8 +865,8 @@
       (dot ~4
        (hderef dest.5) len.3 +0)) ~1,1
      (stmts 4
-      (var :i.10 . . 1,~103
-       (i -1) 7
+      (var :i.10 . . 1,~107
+       (i +64) 7
        (dot ~3 src.5 len.3 +0)) ,1
       (while 8
        (lt
@@ -843,7 +877,7 @@
         (destroy 5
          (pat
           (dot ~4
-           (hderef dest.5) data.0 +0) 6 i.10)) ,1
+           (hderef dest.5) data.1 +0) 6 i.10)) ,1
         (cmd inc.0. 4
          (haddr i.10)))))) 5,5
     (elif 16
@@ -857,7 +891,7 @@
        (sizeof 11,9,tests/nimony/sysbasics/temptyseq.nim
         (u +8)))) ~3,1
      (stmts 4
-      (let :oldCap.2 . . 2,~52
+      (let :oldCap.2 . . 1,~112
        (i +64) 25
        (div
         (i +64) ~12
@@ -865,29 +899,29 @@
          (hderef dest.5)) 10
         (sizeof 11,9,tests/nimony/sysbasics/temptyseq.nim
          (u +8)))) 4,1
-      (let :newCap.2 . . 1,~109
-       (i -1) 18
+      (let :newCap.2 . . 1,~113
+       (i +64) 18
        (call ~9 recalcCap.0.sysvq0asl 1 oldCap.2 17
         (sub
          (i +64) ~5
          (dot ~3 src.5 len.3 +0) 2 oldCap.2))) 4,2
-      (let :memSize.5 . . 1,~110
-       (i -1) 27
+      (let :memSize.5 . . 1,~114
+       (i +64) 27
        (call ~17 memSizeInBytes.2. 1 newCap.2)) 10,3
       (asgn ~6
        (dot ~4
-        (hderef dest.5) data.0 +0) 2
+        (hderef dest.5) data.1 +0) 2
        (cast 5
         (ptr 18
          (uarray 11,9,tests/nimony/sysbasics/temptyseq.nim
           (u +8))) 35
         (call ~7 realloc.0.sysvq0asl 5
-         (hconv 17,48,lib/std/system/mimalloc.nim
+         (hconv 17,51,lib/std/system/mimalloc.nim
           (pointer)
-          (hconv 13,45,lib/std/system/mimalloc.nim
+          (hconv 13,48,lib/std/system/mimalloc.nim
            (pointer)
            (dot ~4
-            (hderef dest.5) data.0 +0))) 12 memSize.5))) ,4
+            (hderef dest.5) data.1 +0))) 12 memSize.5))) ,4
       (if 3
        (elif 10
         (eq
@@ -895,64 +929,70 @@
           (uarray 11,9,tests/nimony/sysbasics/temptyseq.nim
            (u +8))) ~6
          (dot ~4
-          (hderef dest.5) data.0 +0) 3
+          (hderef dest.5) data.1 +0) 3
          (nil)) ~1,1
         (stmts 9
          (asgn ~5
           (dot ~4
            (hderef dest.5) len.3 +0) 2 +0) ,1
-         (cmd oomHandler.0.sysvq0asl 11 memSize.5) ,2
-         (ret .))))))) 9,15
+         (pragmax
+          (pragmas 2
+           (cast
+            (cast
+             (cast . 5 noSideEffect)))) 2,1
+          (stmts
+           (cmd oomHandler.0.sysvq0asl 11 memSize.5))) ,3
+         (ret .))))))) 9,16
    (asgn ~5
     (dot ~4
      (hderef dest.5) len.3 +0) 5
-    (dot ~3 src.5 len.3 +0)) 4,16
-   (var :i.11 . . 3,~117
-    (i -1) 4 +0) ,17
+    (dot ~3 src.5 len.3 +0)) 4,17
+   (var :i.11 . . 3,~122
+    (i +64) 4 +0) ,18
    (while 8
     (lt
      (i +64) ~2 i.11 6
      (dot ~4
       (hderef dest.5) len.3 +0)) 2,1
-    (stmts 2,31,lib/std/system.nim
+    (stmts 2,32,lib/std/system.nim
      (stmts 7
       (asgn ~6
-       (pat 8,124,lib/std/system/seqimpl.nim
+       (pat 8,129,lib/std/system/seqimpl.nim
         (dot ~4
-         (hderef dest.5) data.0 +0) 14,124,lib/std/system/seqimpl.nim i.11) 25,124,lib/std/system/seqimpl.nim
+         (hderef dest.5) data.1 +0) 14,129,lib/std/system/seqimpl.nim i.11) 25,129,lib/std/system/seqimpl.nim
        (dup 4
         (pat
-         (dot ~3 src.5 data.0 +0) 6 i.11)))) ,1
+         (dot ~3 src.5 data.1 +0) 6 i.11)))) ,1
      (cmd inc.0. 4
       (haddr i.11)))))) 4,15,lib/std/system/seqimpl.nim
- (proc :inc.0. . 0,12,lib/std/system/arithmetics.nim .
+ (func :inc.0. . 0,12,lib/std/system/arithmetics.nim .
   (at inc.1.sysvq0asl 5,~10
-   (i -1)) 21,12,lib/std/system/arithmetics.nim
+   (i +64)) 21,12,lib/std/system/arithmetics.nim
   (params 1
    (param :x.5 . . 3
     (mut 9,5,lib/std/system/seqimpl.nim
-     (i -1)) .)) 0,12,lib/std/system/arithmetics.nim . 32,12,lib/std/system/arithmetics.nim
+     (i +64)) .)) 0,12,lib/std/system/arithmetics.nim . 32,12,lib/std/system/arithmetics.nim
   (pragmas 2
    (inline)) 0,12,lib/std/system/arithmetics.nim . 2,13,lib/std/system/arithmetics.nim
   (stmts 2,1
    (asgn ~2
     (hderef x.5) 6
     (add 9,5,lib/std/system/seqimpl.nim
-     (i -1) 1
+     (i +64) 1
      (hderef x.5) 30,~13
      (conv 9,5,lib/std/system/seqimpl.nim
-      (i -1) 1 +1))))) 11,112,lib/std/system/seqimpl.nim
- (proc :capInBytes.0. . ~11,~104 .
+      (i +64) 1 +1))))) 11,116,lib/std/system/seqimpl.nim
+ (func :capInBytes.0. . ~11,~108 .
   (at capInBytes.0.sysvq0asl 16,1,tests/nimony/sysbasics/temptyseq.nim
-   (i -1)) 7,~104
+   (i +64)) 7,~108
   (params 1
-   (param :s.15 . . 6 seq.0.Ipe57hg. .)) 2,~104
-  (i -1) 24,~104
+   (param :s.15 . . 6 seq.0.Iocgzyq1. .)) 2,~108
+  (i +64) 24,~108
   (pragmas 2
-   (inline)) ~11,~104 . ~9,~103
+   (inline)) ~11,~108 . ~9,~107
   (stmts 7
-   (result :result.9 . . 7,31,lib/std/system/basic_types.nim
-    (i -1) .) 7
+   (result :result.9 . . 13,31,lib/std/system/basic_types.nim
+    (i +64) .) 7
    (asgn ~7 result.9 2
     (if 3
      (elif 2,106,lib/std/system/comparisons.nim
@@ -961,30 +1001,30 @@
         (eq
          (ptr
           (uarray 16,1,tests/nimony/sysbasics/temptyseq.nim
-           (i -1))) 15,9,lib/std/system/seqimpl.nim
-         (dot ~1 s.15 data.0 +0) 24,9,lib/std/system/seqimpl.nim
+           (i +64))) 15,9,lib/std/system/seqimpl.nim
+         (dot ~1 s.15 data.1 +0) 24,9,lib/std/system/seqimpl.nim
          (nil)))) 15
       (expr 13
        (call ~13 allocatedSize.0.sysvq0asl 2
-        (hconv 23,54,lib/std/system/mimalloc.nim
+        (hconv 23,57,lib/std/system/mimalloc.nim
          (pointer)
-         (hconv 13,45,lib/std/system/mimalloc.nim
+         (hconv 13,48,lib/std/system/mimalloc.nim
           (pointer)
-          (dot ~1 s.15 data.0 +0)))))) 40
+          (dot ~1 s.15 data.1 +0)))))) 40
      (else 6
       (expr +0)))) ~2,~1
-   (ret result.9))) 11,112,lib/std/system/seqimpl.nim
- (proc :capInBytes.1. . ~11,~104 .
+   (ret result.9))) 11,116,lib/std/system/seqimpl.nim
+ (func :capInBytes.1. . ~11,~108 .
   (at capInBytes.0.sysvq0asl
-   (f +64)) 7,~104
+   (f +64)) 7,~108
   (params 1
-   (param :s.16 . . 6 seq.0.Iw9f2pq. .)) 2,~104
-  (i -1) 24,~104
+   (param :s.16 . . 6 seq.0.Iw9f2pq. .)) 2,~108
+  (i +64) 24,~108
   (pragmas 2
-   (inline)) ~11,~104 . ~9,~103
+   (inline)) ~11,~108 . ~9,~107
   (stmts 7
-   (result :result.10 . . 7,31,lib/std/system/basic_types.nim
-    (i -1) .) 7
+   (result :result.10 . . 13,31,lib/std/system/basic_types.nim
+    (i +64) .) 7
    (asgn ~7 result.10 2
     (if 3
      (elif 2,106,lib/std/system/comparisons.nim
@@ -994,29 +1034,29 @@
          (ptr
           (uarray
            (f +64))) 15,9,lib/std/system/seqimpl.nim
-         (dot ~1 s.16 data.0 +0) 24,9,lib/std/system/seqimpl.nim
+         (dot ~1 s.16 data.1 +0) 24,9,lib/std/system/seqimpl.nim
          (nil)))) 15
       (expr 13
        (call ~13 allocatedSize.0.sysvq0asl 2
-        (hconv 23,54,lib/std/system/mimalloc.nim
+        (hconv 23,57,lib/std/system/mimalloc.nim
          (pointer)
-         (hconv 13,45,lib/std/system/mimalloc.nim
+         (hconv 13,48,lib/std/system/mimalloc.nim
           (pointer)
-          (dot ~1 s.16 data.0 +0)))))) 40
+          (dot ~1 s.16 data.1 +0)))))) 40
      (else 6
       (expr +0)))) ~2,~1
-   (ret result.10))) 11,112,lib/std/system/seqimpl.nim
- (proc :capInBytes.2. . ~11,~104 .
+   (ret result.10))) 11,116,lib/std/system/seqimpl.nim
+ (func :capInBytes.2. . ~11,~108 .
   (at capInBytes.0.sysvq0asl 11,9,tests/nimony/sysbasics/temptyseq.nim
-   (u +8)) 7,~104
+   (u +8)) 7,~108
   (params 1
-   (param :s.17 . . 6 seq.0.Iq4ofkp1. .)) 2,~104
-  (i -1) 24,~104
+   (param :s.17 . . 6 seq.0.Iq4ofkp1. .)) 2,~108
+  (i +64) 24,~108
   (pragmas 2
-   (inline)) ~11,~104 . ~9,~103
+   (inline)) ~11,~108 . ~9,~107
   (stmts 7
-   (result :result.11 . . 7,31,lib/std/system/basic_types.nim
-    (i -1) .) 7
+   (result :result.11 . . 13,31,lib/std/system/basic_types.nim
+    (i +64) .) 7
    (asgn ~7 result.11 2
     (if 3
      (elif 2,106,lib/std/system/comparisons.nim
@@ -1026,45 +1066,45 @@
          (ptr
           (uarray 11,9,tests/nimony/sysbasics/temptyseq.nim
            (u +8))) 15,9,lib/std/system/seqimpl.nim
-         (dot ~1 s.17 data.0 +0) 24,9,lib/std/system/seqimpl.nim
+         (dot ~1 s.17 data.1 +0) 24,9,lib/std/system/seqimpl.nim
          (nil)))) 15
       (expr 13
        (call ~13 allocatedSize.0.sysvq0asl 2
-        (hconv 23,54,lib/std/system/mimalloc.nim
+        (hconv 23,57,lib/std/system/mimalloc.nim
          (pointer)
-         (hconv 13,45,lib/std/system/mimalloc.nim
+         (hconv 13,48,lib/std/system/mimalloc.nim
           (pointer)
-          (dot ~1 s.17 data.0 +0)))))) 40
+          (dot ~1 s.17 data.1 +0)))))) 40
      (else 6
       (expr +0)))) ~2,~1
    (ret result.11))))0,1,tests/nimony/sysbasics/temptyseq.nim(.index
- (h foo.0. +84) ,4
- (h bar.0. +218) 9,4
+ (h foo.0. +104) ,4
+ (h bar.0. +219) 9,4
  (h T.0. +37) 4,8
- (h s.0. +284) 58,162,lib/std/system/seqimpl.nim
- (h newSeqUninit.0. +261) 58,162,lib/std/system/seqimpl.nim
- (h newSeqUninit.1. +1678) 3,6
- (h bar.1. +1453) 58,162,lib/std/system/seqimpl.nim
- (h newSeqUninit.2. +233) 35,64,lib/std/system/seqimpl.nim
- (h memSizeInBytes.0. +1681) 35,64,lib/std/system/seqimpl.nim
- (h memSizeInBytes.1. +718) 35,64,lib/std/system/seqimpl.nim
- (h memSizeInBytes.2. +638) 15
- (h seq.0.Ipe57hg. +690) 16,60,lib/std/system/seqimpl.nim
- (h seq.0.Iw9f2pq. +423) 10,8
- (h seq.0.Iq4ofkp1. +303) 0,11,lib/std/system/seqimpl.nim
- (h =destroy.0. +423) 0,19,lib/std/system/seqimpl.nim
- (h =wasMoved.0. +975) 0,74,lib/std/system/seqimpl.nim
- (h =dup.0. +383) 0,105,lib/std/system/seqimpl.nim
- (h =copy.0. +726) 0,11,lib/std/system/seqimpl.nim
- (h =destroy.1. +3207) 0,19,lib/std/system/seqimpl.nim
- (h =wasMoved.1. +893) 0,74,lib/std/system/seqimpl.nim
- (h =dup.1. +345) 0,105,lib/std/system/seqimpl.nim
- (h =copy.1. +685) 0,11,lib/std/system/seqimpl.nim
- (h =destroy.2. +2961) 0,19,lib/std/system/seqimpl.nim
- (h =wasMoved.2. +981) 0,74,lib/std/system/seqimpl.nim
- (h =dup.2. +387) 0,105,lib/std/system/seqimpl.nim
- (h =copy.2. +729) 4,15,lib/std/system/seqimpl.nim
- (h inc.0. +3218) 11,112,lib/std/system/seqimpl.nim
- (h capInBytes.0. +618) 11,112,lib/std/system/seqimpl.nim
- (h capInBytes.1. +1000) 11,112,lib/std/system/seqimpl.nim
- (h capInBytes.2. +921))
+ (h s.0. +284) 58,167,lib/std/system/seqimpl.nim
+ (h newSeqUninit.0. +261) 58,167,lib/std/system/seqimpl.nim
+ (h newSeqUninit.1. +1826) 3,6
+ (h bar.1. +1594) 58,167,lib/std/system/seqimpl.nim
+ (h newSeqUninit.2. +233) 35,66,lib/std/system/seqimpl.nim
+ (h memSizeInBytes.0. +1822) 35,66,lib/std/system/seqimpl.nim
+ (h memSizeInBytes.1. +745) 35,66,lib/std/system/seqimpl.nim
+ (h memSizeInBytes.2. +663) 15
+ (h seq.0.Iocgzyq1. +715) 16,62,lib/std/system/seqimpl.nim
+ (h seq.0.Iw9f2pq. +427) 10,8
+ (h seq.0.Iq4ofkp1. +304) 0,11,lib/std/system/seqimpl.nim
+ (h =destroy.0. +424) 0,19,lib/std/system/seqimpl.nim
+ (h =wasMoved.0. +979) 0,77,lib/std/system/seqimpl.nim
+ (h =dup.0. +385) 0,109,lib/std/system/seqimpl.nim
+ (h =copy.0. +731) 0,11,lib/std/system/seqimpl.nim
+ (h =destroy.1. +3359) 0,19,lib/std/system/seqimpl.nim
+ (h =wasMoved.1. +894) 0,77,lib/std/system/seqimpl.nim
+ (h =dup.1. +345) 0,109,lib/std/system/seqimpl.nim
+ (h =copy.1. +686) 0,11,lib/std/system/seqimpl.nim
+ (h =destroy.2. +3105) 0,19,lib/std/system/seqimpl.nim
+ (h =wasMoved.2. +982) 0,77,lib/std/system/seqimpl.nim
+ (h =dup.2. +387) 0,109,lib/std/system/seqimpl.nim
+ (h =copy.2. +730) 4,15,lib/std/system/seqimpl.nim
+ (h inc.0. +3362) 11,116,lib/std/system/seqimpl.nim
+ (h capInBytes.0. +622) 11,116,lib/std/system/seqimpl.nim
+ (h capInBytes.1. +1006) 11,116,lib/std/system/seqimpl.nim
+ (h capInBytes.2. +924))

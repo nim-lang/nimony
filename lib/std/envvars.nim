@@ -21,7 +21,7 @@ when defined(nodejs):
     var key2 = key.cstring
     {.emit: "delete process.env[`key2`];".}
 
-  iterator envPairs*(): tuple[key, value: string] {.tags: [ReadEnvEffect].} =
+  iterator envPairs*(): tuple[key, value: string] {.tags: [ReadEnvEffect], sideEffect.} =
     var num: int
     var keys: RootObj
     {.emit: "`keys` = Object.keys(process.env); `num` = `keys`.length;".}
@@ -247,8 +247,8 @@ else:
     if indx >= 0:
       when defined(windows) and not defined(nimscript):
         var key = key
-        var k = newWideCString(key.toCString(), key.len).toWideCString()
-        if setEnvironmentVariableW(k, nil) == 0'i32:
+        var k = newWideCString(key)
+        if setEnvironmentVariableW(k.toWideCString(), nil) == 0'i32:
           raiseOSError(osLastError())
       else:
         var key = key
@@ -258,7 +258,7 @@ else:
     else:
       discard # Do nothing if the env var is not already set
 
-  iterator envPairs*(): tuple[key, value: string] {.tags: [ReadEnvEffect].} =
+  iterator envPairs*(): tuple[key, value: string] {.tags: [ReadEnvEffect], sideEffect.} =
     ## Iterate over all `environments variables`:idx:.
     ##
     ## In the first component of the tuple is the name of the current variable stored,

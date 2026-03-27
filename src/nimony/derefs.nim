@@ -25,6 +25,8 @@ Now also does some simple checks for `raise` statements:
 Also adds lifetime tracking hooks to type declarations so that Hexer can find them
 easily.
 
+Also enforces .noSideEffect contexts.
+
 ]##
 
 import std / [assertions, tables]
@@ -48,6 +50,7 @@ type
     returnExpects: Expects
     firstParamKind: TypeKind
     canRaise: bool
+    isNoSideEffect: bool # true for func, iterator, or .noSideEffect proc
     firstParam: SymId
     resultSym: SymId
     dangerousLocations: Table[SymId, PackedLineInfo]
@@ -365,6 +368,12 @@ proc trProcPragmas(c: var Context; n: var Cursor) =
       elif pk == RaisesP:
         c.r.canRaise = true
         takeTree c.dest, n
+      elif pk == NoSideEffectP:
+        c.r.isNoSideEffect = true
+        takeTree c.dest, n
+      elif pk == SideEffectP:
+        c.r.isNoSideEffect = false
+        takeTree c.dest, n
       else:
         takeTree c.dest, n
     takeParRi c, n
@@ -375,7 +384,8 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   takeToken c, n
   let symId = n.symId
   var isGeneric = false
-  var r = CurrentRoutine(returnExpects: WantT)
+  var r = CurrentRoutine(returnExpects: WantT,
+    isNoSideEffect: decl.stmtKind in {FuncS, IteratorS, ConverterS})
   swap c.r, r
   for i in 0..<BodyPos:
     if i == TypevarsPos:
@@ -468,6 +478,23 @@ proc cannotPassToVar(dest: var TokenBuf; info: PackedLineInfo; arg: Cursor) =
     dest.addSubtree arg
     dest.add strToken(pool.strings.getOrIncl(msg), info)
 
+proc trPragmaBlock(c: var Context; n: var Cursor) =
+  c.dest.takeToken n # pragmax
+  c.dest.takeToken n # pragmas
+  if n.pragmaKind == KeepOverflowFlagP:
+    c.dest.takeTree n # keepOverflowFlag
+    c.dest.takeParRi n # pragmas
+    tr(c, n, WantT)
+  elif n.pragmaKind == CastP:
+    c.dest.takeTree n # cast pragma
+    c.dest.takeParRi n # pragmas
+    let oldNoSideEffect = c.r.isNoSideEffect
+    c.r.isNoSideEffect = false
+    tr(c, n, WantT)
+    c.r.isNoSideEffect = oldNoSideEffect
+  else:
+    bug "unknown pragma block: " & toString(n, false)
+  c.dest.takeParRi n # pragmax
 
 proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   let info = n.info
@@ -476,12 +503,26 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   var callBuf = createTokenBuf()
 
   swap c.dest, callBuf
-  takeToken c, n
-  let fnType = skipProcTypeToParams(getType(c.typeCache, n))
+  let head = n.load()
+  inc n
+  let tt = getType(c.typeCache, n)
+  let calleeKind = tt.stmtKind
+  let fnType = skipProcTypeToParams(tt)
   assert fnType.isParamsTag
-  tr c, n, WantT # `fn` part of the call
   var retType = fnType
   skip retType
+  var pragmas = retType
+  skip pragmas
+  if c.r.isNoSideEffect:
+    if whichEffect(calleeKind, pragmas) == HasSideEffect:
+      swap c.dest, callBuf
+      buildLocalErr c.dest, n.info, "cannot call a routine marked as `.noSideEffect` outside of a .noSideEffect context"
+      n = callExpr
+      skip n
+      return
+
+  c.dest.add head # (call)
+  tr c, n, WantT # `fn` part of the call
 
   var needHderef = false
   if retType.typeKind in {MutT, LentT}:
@@ -707,7 +748,7 @@ proc trTry(c: var Context; n: var Cursor) =
   var nn = n
   skip nn
   let oldCanRaise = c.r.canRaise
-  if nn.substructureKind == ExceptU:
+  if nn.substructureKind == ExceptU or nn.substructureKind == FinU:
     c.r.canRaise = true
   # now can raise in the `try` block:
   tr c, n, WantT
@@ -867,19 +908,15 @@ proc trType(c: var Context; n: var Cursor) =
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   case n.kind
   of Symbol:
-    when false:
-      # Closures are now implemented
-      let localInfo = c.typeCache.getLocalInfo(n.symId)
-      if localInfo.crossedProc > 0 and localInfo.kind in {VarY, LetY, ParamY, ResultY}:
-        let info = n.info
-        c.dest.buildTree ErrT, info:
-          c.dest.addSubtree n
-          c.dest.add strToken(pool.strings.getOrIncl("cannot access local variable `" & asNimCode(n) & "` from another routine; closures are not supported"), info)
-        skip n
-      else:
-        trLocation c, n, e
-    else:
-      trLocation c, n, e
+    if c.r.isNoSideEffect:
+      let res = tryLoadSym(n.symId)
+      if res.status == LacksNothing:
+        let local = asLocal(res.decl)
+        if local.kind in {GvarY, TvarY}:
+          buildLocalErr c.dest, n.info, "use of global/thread-local variable '" & asNimCode(n) & "' in .noSideEffect context"
+          skip n
+          return
+    trLocation c, n, e
   of IntLit, UIntLit, FloatLit, CharLit, StringLit:
     if e.wantMutable:
       # Consider `fvar(returnsVar(someLet))`: We must not allow this.
@@ -894,6 +931,8 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
     of CallKinds:
       var disallowDangerous = true
       trCall c, n, e, disallowDangerous
+    of PragmaxX:
+      trPragmaBlock c, n
     of DotX, DdotX, AtX, ArrAtX, TupatX, PatX:
       trLocation c, n, e
     of OconstrX, NewobjX:

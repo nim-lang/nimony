@@ -1,6 +1,7 @@
 (.nif26)
-(.indexat +3484            )
-0,1,tests/nimony/types/tscopedtype.nim(stmts ,2
+(.indexat +3515            )
+0,1,tests/nimony/types/tscopedtype.nim(stmts
+ (import sysvq0asl syn1lfpjv) ,2
  (block . 2,1
   (stmts 6,1
    (type ~4 :Foo.0. . .
@@ -17,7 +18,7 @@
      (wasmoved =wasmoved_SX46ooX4fbj0tsca4az8i1.0.)) 6
     (object 10 RootObj.0.sysvq0asl ~8,1
      (fld :id.0 . . 4
-      (i -1) .))) 4,4
+      (i +64) .))) 4,4
    (var :s.0 . . 4,~3
     (ref 4 Foo.Obj.0.) 7
     (newobj ~3,~3
@@ -146,9 +147,9 @@
            (deref dest.0) r.00 +0)))
         (stmts
          (call deallocFixed.0.sysvq0asl dest.0))))))))))0,1,tests/nimony/types/tscopedtype.nim(.index 8,4
- (h Foo.0. +112) 8,4
+ (h Foo.0. +142) 8,4
  (h Foo.Obj.0. +318) 8,4
- (h =destroy_SX46oo0tsca4az8i1.0. +587) 8,4
+ (h =destroy_SX46oo0tsca4az8i1.0. +588) 8,4
  (h =wasmoved_SX46oo0tsca4az8i1.0. +361) 8,4
  (h =dup_SX46oo0tsca4az8i1.0. +183) 8,4
  (h =copy_SX46oo0tsca4az8i1.0. +360) 8,4

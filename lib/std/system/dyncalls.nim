@@ -31,7 +31,7 @@ when defined(windows):
   proc GetLastError(): int32 {.importc, header: "<windows.h>", nodecl.}
   const ERROR_BAD_EXE_FORMAT = 193
 
-  proc `%%`(x, y: int): int {.inline.} =
+  func `%%`(x, y: int): int {.inline.} =
     ## Treats `x` and `y` as unsigned and compute the modulo of `x` and `y`.
     ##
     ## The result is truncated to fit into the result.

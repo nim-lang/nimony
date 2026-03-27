@@ -224,8 +224,10 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   var x = it
   skip it
   inc x # skip the `import`
-  # ignore conditional imports:
-  if x.stmtKind == WhenS: return
+  # Conditional imports carry a (when) marker child; skip it and still add the
+  # file to the dependency graph so cross-compilation (e.g. --os:windows) sees
+  # all potential dependencies. importSingleFile already ignores missing files.
+  if x.stmtKind == WhenS: skip x
   while x.kind != ParRi:
     var isCyclic = false
     if x.kind == ParLe and x.exprKind == PragmaxX:
@@ -265,8 +267,7 @@ proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
   var x = it
   skip it
   inc x # skip the tag
-  # ignore conditional imports:
-  if x.stmtKind == WhenS: return
+  if x.stmtKind == WhenS: skip x  # skip conditional marker, same as processImport
   var files: seq[ImportedFilename] = @[]
   var hasError = false
   filenameVal(x, files, hasError, allowAs = true)
@@ -401,12 +402,15 @@ proc defineNiflerCmd(b: var Builder; nifler: string) =
     b.addKeyw "input"
     b.addKeyw "output"
 
-proc defineHexerCmds(b: var Builder; hexer: string; bits: int) =
+proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool) =
+  let cpuFlag = if bigEndian: "--cpu:be" else: "--cpu:le"
   b.withTree "cmd":
     b.addSymbolDef "hexer"
     b.addStrLit hexer
     b.addStrLit "c"
     b.addStrLit "--bits:" & $bits
+    b.addStrLit cpuFlag
+    b.addKeyw "args"
     b.withTree "input":
       b.addIntLit 0
 
@@ -415,6 +419,7 @@ proc defineHexerCmds(b: var Builder; hexer: string; bits: int) =
     b.addStrLit hexer
     b.addStrLit "d"
     b.addStrLit "--bits:" & $bits
+    b.addStrLit cpuFlag
     b.addKeyw "args"
     b.withTree "input":
       b.addIntLit 0
@@ -446,7 +451,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       b.addKeyw "input"
 
     # Command for hexer
-    defineHexerCmds(b, hexer, c.config.bits)
+    defineHexerCmds(b, hexer, c.config.bits, platform.CPU[c.config.targetCPU].endian == bigEndian)
 
     # Command for C compiler (object files)
     b.withTree "cmd":
@@ -529,9 +534,15 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
         b.addIdent "dce"
         b.withTree "args":
           b.addStrLit "--outdir:" & backendDir
-        for n in c.nodes:
+        for i, n in pairs c.nodes:
           b.withTree "input":
-            b.addStrLit c.config.hexedFile(n.files[0])
+            # The root module's .x.nif is backend-specific (generated with --isMain),
+            # so it does not collide with the shared .x.nif produced when this module
+            # is compiled as a non-main dependency of another program.
+            if i == 0:
+              b.addStrLit backendDir / n.files[0].modname & ".x.nif"
+            else:
+              b.addStrLit c.config.hexedFile(n.files[0])
           b.withTree "output":
             b.addStrLit c.config.nifcFile(n.files[0], backend)
 
@@ -590,15 +601,28 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
           b.withTree "output":
             b.addStrLit c.config.cFile(v.files[0], backend)
 
-        # Build .c.nif files from .s.nif files (hexer output shared, not backend)
+        # Build .x.nif files from .s.nif files via hexer.
+        # For the root module (i==0) the output is backend-specific so that
+        # its --isMain version does not overwrite the shared .x.nif that other
+        # compilations produce when this module is a non-main dependency.
         b.withTree "do":
           b.addIdent "hexer"
+          if i == 0:
+            b.withTree "args":
+              b.addStrLit "--isMain"
+            b.withTree "args":
+              b.addStrLit "--app:" & $c.config.appType
+            b.withTree "args":
+              b.addStrLit "--outdir:" & backendDir
           b.withTree "input":
             b.addStrLit c.config.semmedFile(v.files[0], v.plugin)
           b.withTree "input":
             b.addStrLit c.config.indexFile(v.files[0], v.plugin)
           b.withTree "output":
-            b.addStrLit c.config.hexedFile(v.files[0])
+            if i == 0:
+              b.addStrLit backendDir / v.files[0].modname & ".x.nif"
+            else:
+              b.addStrLit c.config.hexedFile(v.files[0])
 
 proc cachedConfigFile(config: NifConfig): string =
   config.nifcachePath / "cachedconfigfile.txt"
@@ -804,7 +828,7 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
       b.addKeyw "args"
       b.addKeyw "input"
 
-    defineHexerCmds(b, findTool("hexer"), config.bits)
+    defineHexerCmds(b, findTool("hexer"), config.bits, platform.CPU[config.targetCPU].endian == bigEndian)
 
     b.withTree "cmd":
       b.addSymbolDef "cc"
@@ -889,6 +913,10 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
     # Process main .nif file with hexer first
     b.withTree "do":
       b.addIdent "hexer"
+      b.withTree "args":
+        b.addStrLit "--isMain"
+      b.withTree "args":
+        b.addStrLit "--app:" & $config.appType
       b.withTree "input":
         b.addStrLit mainNifFile
       b.withTree "output":
@@ -910,7 +938,6 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
         if i == 0:
           b.withTree "args":
             b.addStrLit "--isMain"
-
         b.withTree "input":
           b.addStrLit config.nifcachePath / nifFile & ".c.nif"
         b.withTree "output":

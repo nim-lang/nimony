@@ -367,28 +367,43 @@ proc genBaseobj(c: var Context; dest: var TokenBuf; x: var Cursor; class: ClassI
 proc genVtableField(c: var Context; dest: var TokenBuf; x: Cursor; class: ClassInfo; info: PackedLineInfo) =
   # get vtable field of `x`, might need to get to root object
   copyIntoKind dest, DotX, info:
-    if class.ptrKind == RefT:
-      # past duplifier, so need to do the deref transform here
-      dest.addParLe(DotX, info)
-      dest.addParLe(DerefX, info)
-    elif class.ptrKind == PtrT:
-      dest.addParLe(DerefX, info)
-
     var x = x
-    if class.level == 0:
-      tr c, dest, x
-    else:
-      genBaseobj c, dest, x, class, info
-
     if class.ptrKind == RefT:
-      # past duplifier, so need to do the deref transform here
-      dest.addParRi()
+      # past duplifier, so need to do the deref transform here.
+      # Do NOT cast the outer IAref wrapper to the base IAref type: the two
+      # IAref structs can have different d.00 offsets on 32-bit ARM when the
+      # derived object has int64/float64 fields that require 8-byte alignment,
+      # introducing padding between r.00 and d.00 that the base IAref lacks.
+      # Instead, deref the original pointer, access d.00, then use BaseobjX
+      # to navigate up the inheritance chain via safe .Q field access.
       let dataField = pool.syms.getOrIncl(DataField)
-      dest.add symToken(dataField, info)
-      dest.addIntLit(0, info) # inheritance
-      dest.addParRi()
+      if class.level == 0:
+        copyIntoKind dest, DotX, info:
+          copyIntoKind dest, DerefX, info:
+            tr c, dest, x
+          dest.add symToken(dataField, info)
+          dest.addIntLit(0, info)
+      else:
+        copyIntoKind dest, BaseobjX, info:
+          dest.add symToken(class.root, info)
+          dest.addIntLit(class.level, info)
+          copyIntoKind dest, DotX, info:
+            copyIntoKind dest, DerefX, info:
+              tr c, dest, x
+            dest.add symToken(dataField, info)
+            dest.addIntLit(0, info)
     elif class.ptrKind == PtrT:
+      dest.addParLe(DerefX, info)
+      if class.level == 0:
+        tr c, dest, x
+      else:
+        genBaseobj c, dest, x, class, info
       dest.addParRi()
+    else:
+      if class.level == 0:
+        tr c, dest, x
+      else:
+        genBaseobj c, dest, x, class, info
 
     dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
     dest.addIntLit 0, info

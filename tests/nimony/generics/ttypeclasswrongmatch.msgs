@@ -1,6 +1,6 @@
 tests/nimony/generics/ttypeclasswrongmatch.nim(3, 5) Error: Type mismatch at [position]
 foo2(123)
-[1] int does not match constraint T (declared in tests/nimony/generics/deps/mtypeclassmatch.nim(19, 1))
+[1] int64 does not match constraint T (declared in tests/nimony/generics/deps/mtypeclassmatch.nim(19, 1))
 tests/nimony/generics/ttypeclasswrongmatch.nim(4, 5) Error: Type mismatch at [position]
 foo3(e0)
 [1] EnumA does not match constraint T (declared in tests/nimony/generics/deps/mtypeclassmatch.nim(26, 1))

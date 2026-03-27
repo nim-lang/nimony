@@ -51,8 +51,7 @@
      (stmts)
      (stmts))
     (ite
-     (neq
-      (v ´err.2 +0) Success.0.sysvq0asl)
+     (v ´err.2 +0)
      (stmts
       (jtrue ´g.1)) .
      (stmts))

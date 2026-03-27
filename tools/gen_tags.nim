@@ -130,13 +130,18 @@ proc genTags(inp: File) =
   var enumDecls = default EnumImpls
   var tags: seq[(string, int)] = @[]
   var knownTags = initHashSet[string]()
+  var inTable = false
   for line in lines(inp):
     inc i
     if i <= 0: continue # skip header
+    if not line.startsWith('|'):
+      if inTable: break # table ended, stop processing
+      continue
+    inTable = true
     var parts = line.split("|")
-    if parts.len == 0: continue
-    if parts.len != 5:
-      quit "WRONG LINE: " & line
+    if parts.len != 5: continue
+    if parts[1].strip().startsWith('-'):
+      continue # table separator row e.g. |---|---|---|
     let tagName = extractTagName parts[1]
     if knownTags.containsOrIncl(tagName):
       quit "DUPLICATE TAG: " & tagName

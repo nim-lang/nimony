@@ -48,12 +48,12 @@ var
          vx: 0'f64, vy: 0'f64, vz: 0'f64, mass: SolarMass)
   bodies = [sun, jupiter, saturn, uranus, neptune]
 
-proc offsetMomentum(body: var Body; px, py, pz: float64) =
+func offsetMomentum(body: var Body; px, py, pz: float64) =
   body.vx = -px / SolarMass
   body.vy = -py / SolarMass
   body.vz = -pz / SolarMass
 
-proc advance(bodies: var NBody, dt: float64) =
+func advance(bodies: var NBody, dt: float64) =
   for i in low(bodies)..high(bodies):
     for j in i+1..high(bodies):
       let
@@ -81,7 +81,7 @@ proc advance(bodies: var NBody, dt: float64) =
 
 
 
-proc energy(bodies: NBody): float64 =
+func energy(bodies: NBody): float64 =
   result = 0.0
   for i in low(bodies)..high(bodies):
     let (ix, iy, iz, ivx, ivy, ivz, imass) = bodies[i]

@@ -15,8 +15,6 @@ proc typebits*(config: NifConfig; n: PackedToken): int =
     result = n.soperand
   else:
     result = 0
-  if result == -1:
-    result = config.bits
 
 proc isOrdinalTypeKind*(kind: TypeKind): bool {.inline.} =
   result = kind in {EnumT, IntT, UIntT, CharT, BoolT, RangetypeT}
