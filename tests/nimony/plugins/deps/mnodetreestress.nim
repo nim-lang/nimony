@@ -8,8 +8,7 @@ proc addEcho(t: var Tree; info: LineInfo; value: string) =
 proc addEcho(t: var Tree; info: LineInfo; value: Node) =
   t.withTree CallS, info:
     t.addIdent "echo"
-    var copy = value
-    t.takeTree(copy)
+    t.addSubtree(value)
 
 proc makeProgram(info: LineInfo): Node =
   var tree = createTree()

@@ -231,11 +231,16 @@ proc takeTree*(t: var Tree; n: var Node) =
   prepareMutation(t)
   t.p[].buf.takeTree(n.cursor)
 
-proc takeTree*(t: var Tree; child: Tree) =
-  ## Copies the complete contents of `child` into `t`.
+proc addSubtree*(t: var Tree; n: Node) =
+  ## Copies the current token or subtree from `n` into `t` without advancing it.
+  prepareMutation(t)
+  t.p[].buf.addSubtree(n.cursor)
+
+proc addTree*(t: var Tree; child: Tree) =
+  ## Appends the complete contents of `child` to `t`.
   if not child.isEmpty:
-    var n = snapshot(child)
-    t.takeTree(n)
+    prepareMutation(t)
+    t.p[].buf.add child.p[].buf
 
 proc addDotToken*(t: var Tree) =
   ## Appends a dot placeholder token (`.`) to `t`.
@@ -605,7 +610,7 @@ proc createTree*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
   result = createTree()
   result.withTree kind, NoLineInfo:
     for child in children:
-      result.takeTree(child)
+      result.addTree(child)
   result = validateConstructedTree(result)
 
 proc createTree*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
@@ -614,7 +619,7 @@ proc createTree*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
   result = createTree()
   result.withTree kind, info:
     for child in children:
-      result.takeTree(child)
+      result.addTree(child)
   result = validateConstructedTree(result)
 
 proc lookupBinding(bindings: openArray[NifBinding]; name: string): int =
@@ -631,8 +636,7 @@ proc appendParsedText(dest: var TokenBuf; text: string) =
 
 proc appendTree(dest: var TokenBuf; tree: Tree) =
   if not tree.isEmpty:
-    var n = snapshot(tree)
-    dest.takeTree(n.cursor)
+    dest.add tree.p[].buf
 
 proc parseNifTemplate(spec: string; bindings: openArray[NifBinding]): Tree =
   var buf = createTokenBuf(spec.len + bindings.len * 4)
@@ -712,8 +716,7 @@ proc boolTree(v: bool): Tree =
 proc `~`*(src: Node): Tree =
   ## Copies the subtree rooted at `src` into a fresh `Tree`.
   result = createTree()
-  var n = src
-  result.takeTree(n)
+  result.addSubtree(src)
 
 template `~`*(src: Tree): Tree =
   ## Returns `src` unchanged.

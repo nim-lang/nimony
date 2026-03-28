@@ -53,10 +53,8 @@ proc trAsgn(n: var Node, o: var Tree) =
   if emitOnChanged:
     o.withTree CallS, info:
       o.addSymUse knownOnChanged[knownInstances[instance.symId]], info
-      var instanceCopy = instance
-      var accessCopy = access
-      o.takeTree(instanceCopy)
-      o.takeTree(accessCopy)
+      o.addSubtree(instance)
+      o.addSubtree(access)
       o.addStrLit fieldName
 
 
