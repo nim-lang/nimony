@@ -1234,7 +1234,8 @@ proc generateCoroutineHelpers(c: var Context; dest: var TokenBuf; sym: SymId; it
           while params.kind != ParRi:
             assert params.substructureKind == ParamU
             inc params
-            dest.addSymUse params.symId, info # name
+            dest.addSymUse params.symId, info
+            skip params # name
             skip params # exported
             skip params # pragmas
             skip params # type

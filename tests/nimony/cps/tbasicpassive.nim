@@ -36,3 +36,12 @@ main3()
 proc main4() =
   io1()
 main4()
+
+
+proc sum(a, b: int): int {.passive.} =
+  return a + b
+
+proc main5() {.passive.}=
+  var res = sum(1, 2)
+  echo "main5: ", res
+main5()
