@@ -4,6 +4,18 @@ type
   Foo = object
     id: int
 
+proc `=wasMoved`(x: var Foo) =
+  x.id = 0
+
+proc `=dup`(x: Foo): Foo =
+  Foo(id: x.id+1)
+
+proc `=sink`(dest: var Foo; source: Foo) =
+  dest.id = source.id
+
+proc `=copy`(dest: var Foo; source: Foo) =
+  dest.id = source.id + 1
+
 proc `=destroy`(x: var Foo) =
   if x.id != 0:
     echo "destroyed"

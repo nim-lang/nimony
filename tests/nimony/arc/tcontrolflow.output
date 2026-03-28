@@ -1,11 +1,11 @@
 begin A
 elif
-end A
 destroyed
+end A
 begin false
+destroyed
 if
 end false
-destroyed
 begin true
 if
 end true
