@@ -1,6 +1,6 @@
 ## API for plugins.
 
-import std / [syncio, assertions]
+import std / syncio
 from std / os import paramStr
 import ".." / ".." / "lib" / [nifcursors, nifstreams, lineinfos, bitabs]
 
@@ -89,14 +89,6 @@ proc copyBuffer(buf: TokenBuf): TokenBuf =
 
 proc prepareMutation(t: var Tree)
 
-proc prepareMutation(n: var Node) =
-  assert n.owner.p != nil, "cannot mutate default Node"
-  assert hasCurrentToken(n.cursor), "cannot mutate exhausted Node"
-  let pos = cursorToPosition(n.owner.p[].buf, n.cursor)
-  endRead(n.owner.p[].buf)
-  prepareMutation(n.owner)
-  n.cursor = cursorAt(n.owner.p[].buf, pos)
-
 proc createTree(buf: sink TokenBuf): Tree =
   result = Tree(p: initPayload(buf))
 
@@ -111,10 +103,6 @@ proc prepareMutation(t: var Tree) =
 proc isEmpty*(tree: Tree): bool {.inline.} =
   ## Returns true when `tree` does not currently contain any tokens.
   tree.p == nil or tree.p[].buf.len == 0
-
-proc hasToken*(n: Node): bool {.inline.} =
-  ## Returns true when `n` currently points at a real token.
-  n.owner.p != nil and hasCurrentToken(n.cursor)
 
 proc kind*(n: Node): NifKind {.inline.} =
   ## Returns the raw NIF token kind at the current position.
@@ -243,6 +231,12 @@ proc takeTree*(t: var Tree; n: var Node) =
   prepareMutation(t)
   t.p[].buf.takeTree(n.cursor)
 
+proc takeTree*(t: var Tree; child: Tree) =
+  ## Copies the complete contents of `child` into `t`.
+  if not child.isEmpty:
+    var n = snapshot(child)
+    t.takeTree(n)
+
 proc addDotToken*(t: var Tree) =
   ## Appends a dot placeholder token (`.`) to `t`.
   prepareMutation(t)
@@ -304,18 +298,6 @@ proc addEmptyNode4*(t: var Tree; info: LineInfo = NoLineInfo) =
   t.p[].buf.addEmpty3(info)
   t.p[].buf.addEmpty(info)
 
-proc add*(t: var Tree; child: Node): Tree {.discardable.} =
-  ## Appends `child` to `t` without advancing the caller's `Node`.
-  var copy = child
-  t.takeTree(copy)
-  result = t
-
-proc add*(t: var Tree; children: varargs[Node]): Tree {.discardable.} =
-  ## Appends every child in `children` to `t`.
-  for child in children:
-    discard t.add(child)
-  result = t
-
 proc inc*(n: var Node) =
   ## Advances `n` by one token.
   inc n.cursor
@@ -323,104 +305,6 @@ proc inc*(n: var Node) =
 proc skip*(n: var Node) =
   ## Skips the current token or, if positioned on `ParLe`, the entire subtree.
   skip n.cursor
-
-proc setInfo*(n: var Node; info: PackedLineInfo) {.inline.} =
-  ## Rewrites the line info of the current token in place.
-  prepareMutation(n)
-  n.cursor.setInfo(info)
-
-proc len*(n: Node): int =
-  ## Returns the number of immediate children of the current node.
-  result = 0
-  if n.hasToken and n.kind == ParLe:
-    var it = n.cursor
-    inc it
-    while it.kind != ParRi:
-      skip it
-      inc result
-
-proc infoToStr(info: PackedLineInfo): string =
-  let rawInfo = unpack(pool.man, info)
-  if not info.isValid or not rawInfo.file.isValid:
-    result = "???"
-  else:
-    result = info.filePath
-    result.add "("
-    result.addInt rawInfo.line
-    result.add ", "
-    result.addInt rawInfo.col + 1
-    result.add ")"
-
-proc currentInfo(n: Node): PackedLineInfo =
-  if n.hasToken:
-    result = n.info
-  else:
-    result = NoLineInfo
-
-proc writeDiagnostic(level, msg: string; info: PackedLineInfo) =
-  stdout.writeLine infoToStr(info) & " " & level & msg
-
-proc warning*(msg: string; n: Node = default(Node)) =
-  ## Emits a warning tied to `n`'s line information.
-  writeDiagnostic("Warning: ", msg, currentInfo(n))
-
-proc error*(msg: string; n: Node = default(Node)) =
-  ## Emits an error tied to `n`'s line information and aborts the plugin.
-  writeDiagnostic("Error: ", msg, currentInfo(n))
-  quit 1
-
-proc expectKind*(n: Node; k: NifKind) =
-  ## Checks that `n` has raw token kind `k`.
-  if n.kind != k:
-    error("Expected a node of kind " & $k & ", got " & $n.kind, n)
-
-proc expectKind*(n: Node; kinds: set[NifKind]) =
-  ## Checks that `n` has a raw token kind in `kinds`.
-  if n.kind notin kinds:
-    error("Expected a node of one of the kinds " & $kinds & ", got " & $n.kind, n)
-
-proc expectKind*(n: Node; k: NimonyType) =
-  ## Checks that `n` is a type node of kind `k`.
-  if n.typeKind != k:
-    error("Expected a node of kind " & $k & ", got " & $n.typeKind, n)
-
-proc expectKind*(n: Node; k: NimonyExpr) =
-  ## Checks that `n` is an expression node of kind `k`.
-  if n.exprKind != k:
-    error("Expected a node of kind " & $k & ", got " & $n.exprKind, n)
-
-proc expectKind*(n: Node; k: NimonyStmt) =
-  ## Checks that `n` is a statement node of kind `k`.
-  if n.stmtKind != k:
-    error("Expected a node of kind " & $k & ", got " & $n.stmtKind, n)
-
-proc expectKind*(n: Node; k: NimonyOther) =
-  ## Checks that `n` is an "other/substructure" node of kind `k`.
-  if n.otherKind != k:
-    error("Expected a node of kind " & $k & ", got " & $n.otherKind, n)
-
-proc expectKind*(n: Node; k: NimonyPragma) =
-  ## Checks that `n` is a pragma node of kind `k`.
-  if n.pragmaKind != k:
-    error("Expected a node of kind " & $k & ", got " & $n.pragmaKind, n)
-
-proc expectMinLen*(n: Node; min: int) =
-  ## Checks that `n` has at least `min` children.
-  let actual = n.len
-  if actual < min:
-    error("Expected a node with at least " & $min & " children, got " & $actual, n)
-
-proc expectLen*(n: Node; len: int) =
-  ## Checks that `n` has exactly `len` children.
-  let actual = n.len
-  if actual != len:
-    error("Expected a node with " & $len & " children, got " & $actual, n)
-
-proc expectLen*(n: Node; min, max: int) =
-  ## Checks that `n` has a number of children in the range `min..max`.
-  let actual = n.len
-  if actual < min or actual > max:
-    error("Expected a node with " & $min & ".." & $max & " children, got " & $actual, n)
 
 proc eqIdent*(n: Node; name: string): bool =
   ## Returns true when `n` matches `name` exactly.
@@ -432,12 +316,7 @@ proc eqIdent*(n: Node; name: string): bool =
   else:
     result = false
 
-proc expectIdent*(n: Node; name: string) =
-  ## Checks that `eqIdent(n, name)` holds.
-  if not eqIdent(n, name):
-    error("Expected identifier to be `" & name & "` here", n)
-
-proc loadNode*(filename = paramStr(1)): Node =
+proc loadPluginInput*(filename = paramStr(1)): Node =
   ## Loads a NIF file and returns a root `Node` for reading it.
   var inp = nifstreams.open(filename)
   try:
@@ -472,7 +351,7 @@ type
   NifIdent* = distinct string ## Marker type used with `~` to request an
                               ## identifier node instead of a string literal
                               ## node.
-  NifBinding* = tuple[name: string, value: Node]
+  NifBinding* = tuple[name: string, value: Tree]
 
 proc ident*(s: string): NifIdent =
   ## Marks `s` so that `~s` produces an identifier node rather than a string
@@ -485,9 +364,7 @@ proc isNifIdentStart(c: char): bool {.inline.} =
 proc isNifIdentChar(c: char): bool {.inline.} =
   c in {'a'..'z', 'A'..'Z', '0'..'9', '_'}
 
-proc createNode(buf: sink TokenBuf): Node =
-  var tree = createTree(buf)
-  result = snapshot(tree)
+proc validateConstructedTree(tree: Tree): Tree
 
 proc parseNifBuffer(text: string): TokenBuf =
   result = parseFromBuffer(text, "")
@@ -498,6 +375,39 @@ type
   ChildShape = enum
     AnyChild, ExprChild, StmtChild, TypeChild, OtherChild, SymUseChild,
     SymDefChild, IntLitChild, StringLitChild, CharLitChild
+
+  ValidationError = object
+    found: bool
+    info: PackedLineInfo
+    msg: string
+    orig: Cursor
+
+proc validationError(info: PackedLineInfo; msg: string; orig: Cursor): ValidationError =
+  ValidationError(found: true, info: info, msg: msg, orig: orig)
+
+proc createErrorTree(info: PackedLineInfo; msg: string; orig: Cursor): Tree =
+  var buf = createTokenBuf(8)
+  buf.buildTree ErrT, info:
+    buf.addSubtree(orig)
+    buf.addStrLit(msg, info)
+  result = createTree(buf)
+
+proc createErrorTree(info: PackedLineInfo; msg: string): Tree =
+  var orig = createTokenBuf(1)
+  orig.addDotToken()
+  result = createErrorTree(info, msg, cursorAt(orig, 0))
+
+proc errorTree*(msg: string): Tree =
+  ## Produces an `ErrT` tree with synthetic line info.
+  createErrorTree(NoLineInfo, msg)
+
+proc errorTree*(msg: string; at: Node): Tree =
+  ## Produces an `ErrT` tree located at `at` and embeds `at` as source.
+  createErrorTree(at.info, msg, at.cursor)
+
+proc errorTree*(msg: string; at, orig: Node): Tree =
+  ## Produces an `ErrT` tree located at `at` and embeds `orig` as source.
+  createErrorTree(at.info, msg, orig.cursor)
 
 template isSupportedTag(n: Node): bool =
   let raw = tagEnum(n.cursor)
@@ -524,6 +434,8 @@ proc describeShape(shape: ChildShape): string =
   of CharLitChild: "character literal"
 
 proc matchesShape(n: Node; shape: ChildShape): bool =
+  if n.kind == ParLe and n.tagId == ErrT:
+    return true
   case shape
   of AnyChild:
     result = true
@@ -554,124 +466,156 @@ proc matchesShape(n: Node; shape: ChildShape): bool =
   of CharLitChild:
     result = n.kind == CharLit
 
-proc expectChildren(n: Node; shapes: openArray[ChildShape]; allowMore = false) =
-  let actual = n.len
-  if actual < shapes.len:
-    error("missing child " & $(actual + 1) & " for '" & n.tagText &
-      "': expected " & describeShape(shapes[actual]), n)
-  if not allowMore and actual > shapes.len:
-    error("'" & n.tagText & "' takes " & $shapes.len &
-      " children, got " & $actual, n)
+proc validateConstructedNode(n: Node): ValidationError
 
+proc validateAllChildren(n: Node): ValidationError =
+  result = default(ValidationError)
+  var child = n
+  inc child
+  while child.kind != ParRi:
+    result = validateConstructedNode(child)
+    if result.found:
+      return
+    skip child
+
+proc validateChildren(n: Node; shapes: openArray[ChildShape]; allowMore = false): ValidationError =
+  result = default(ValidationError)
   var child = n
   inc child
   for i in 0 ..< shapes.len:
+    if child.kind == ParRi:
+      return validationError(n.info,
+        "missing child " & $(i + 1) & " for '" & n.tagText &
+        "': expected " & describeShape(shapes[i]),
+        n.cursor)
     if not matchesShape(child, shapes[i]):
-      error("invalid child " & $(i + 1) & " for '" & n.tagText &
-        "': expected " & describeShape(shapes[i]), child)
+      return validationError(child.info,
+        "invalid child " & $(i + 1) & " for '" & n.tagText &
+        "': expected " & describeShape(shapes[i]),
+        n.cursor)
+    result = validateConstructedNode(child)
+    if result.found:
+      return
     skip child
 
-proc validateConstructedNode(n: Node)
+  if not allowMore and child.kind != ParRi:
+    return validationError(child.info,
+      "unexpected child " & $(shapes.len + 1) & " for '" & n.tagText & "'",
+      n.cursor)
 
-proc validateShape(n: Node) =
+  while child.kind != ParRi:
+    result = validateConstructedNode(child)
+    if result.found:
+      return
+    skip child
+
+proc validateShape(n: Node): ValidationError =
+  result = default(ValidationError)
   let expr = n.exprKind
   if expr != NoExpr:
     case expr
     of AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
         EqX, NeqX, LeX, LtX, AshrX, EqsetX, LesetX, LtsetX, InsetX:
-      expectChildren(n, [TypeChild, ExprChild, ExprChild])
+      return validateChildren(n, [TypeChild, ExprChild, ExprChild])
     of BitnotX, CastX, ConvX, HconvX, DconvX, CardX:
-      expectChildren(n, [TypeChild, ExprChild])
+      return validateChildren(n, [TypeChild, ExprChild])
     of AtX, PatX, AndX, OrX, XorX, CurlyatX, CopyX, SinkhX, TraceX, IsX:
-      expectChildren(n, [ExprChild, ExprChild])
+      return validateChildren(n, [ExprChild, ExprChild])
     of NotX, NegX, DerefX, AddrX, ParX, EmoveX, DestroyX, DupX, WasmovedX,
         CompilesX, DeclaredX, DefinedX, AstToStrX, HighX, LowX, EnumtostrX,
         InternalTypeNameX, FailedX:
-      expectChildren(n, [ExprChild])
+      return validateChildren(n, [ExprChild])
     of SizeofX, AlignofX, NewrefX, DefaultobjX, DefaulttupX:
-      expectChildren(n, [TypeChild])
+      return validateChildren(n, [TypeChild])
     of OffsetofX, InstanceofX, EnvpX:
-      expectChildren(n, [TypeChild, ExprChild])
+      return validateChildren(n, [TypeChild, ExprChild])
     of TypeofX, FieldsX, FieldpairsX:
-      expectChildren(n, [TypeChild, ExprChild], allowMore = true)
+      return validateChildren(n, [TypeChild, ExprChild], allowMore = true)
     of CallX, CmdX, HcallX, ProccallX, CallstrlitX:
-      expectChildren(n, [ExprChild], allowMore = true)
+      return validateChildren(n, [ExprChild], allowMore = true)
     else:
-      discard
-  else:
-    let stmt = n.stmtKind
-    if stmt != NoStmt:
-      case stmt
-      of VarS, LetS, ConstS, GvarS, TvarS, GletS, TletS, CursorS, ProcS,
-          FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
-          ResultS:
-        expectChildren(n, [SymDefChild], allowMore = true)
-      of BlockS:
-        expectChildren(n, [AnyChild, StmtChild])
-      else:
-        discard
-    else:
-      let typ = n.typeKind
-      if typ != NoType:
-        case typ
-        of ArrayT, RangetypeT:
-          expectChildren(n, [TypeChild, ExprChild, ExprChild])
-        of PtrT, RefT, MutT, OutT, LentT, SinkT, DistinctT, TypedescT,
-            UarrayT, SetT:
-          expectChildren(n, [TypeChild])
-        of ObjectT:
-          expectChildren(n, [TypeChild], allowMore = true)
-        else:
-          discard
-      else:
-        let other = n.otherKind
-        if other != NoSub:
-          case other
-          of RangeU:
-            expectChildren(n, [ExprChild, ExprChild])
-          of ParamU, TypevarU, FldU, EfldU:
-            expectChildren(n, [SymDefChild], allowMore = true)
-          else:
-            discard
-        else:
-          let pragma = n.pragmaKind
-          if pragma != NoPragma:
-            case pragma
-            of PragmaP:
-              expectChildren(n, [SymDefChild], allowMore = true)
-            else:
-              discard
+      return validateAllChildren(n)
 
-proc validateConstructedNode(n: Node) =
-  if n.kind == ParLe:
+  let stmt = n.stmtKind
+  if stmt != NoStmt:
+    case stmt
+    of VarS, LetS, ConstS, GvarS, TvarS, GletS, TletS, CursorS, ProcS,
+        FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
+        ResultS:
+      return validateChildren(n, [SymDefChild], allowMore = true)
+    of BlockS:
+      return validateChildren(n, [AnyChild, StmtChild])
+    else:
+      return validateAllChildren(n)
+
+  let typ = n.typeKind
+  if typ != NoType:
+    case typ
+    of ArrayT, RangetypeT:
+      return validateChildren(n, [TypeChild, ExprChild, ExprChild])
+    of PtrT, RefT, MutT, OutT, LentT, SinkT, DistinctT, TypedescT,
+        UarrayT, SetT:
+      return validateChildren(n, [TypeChild])
+    of ObjectT:
+      return validateChildren(n, [TypeChild], allowMore = true)
+    else:
+      return validateAllChildren(n)
+
+  let other = n.otherKind
+  if other != NoSub:
+    case other
+    of RangeU:
+      return validateChildren(n, [ExprChild, ExprChild])
+    of ParamU, TypevarU, FldU, EfldU:
+      return validateChildren(n, [SymDefChild], allowMore = true)
+    else:
+      return validateAllChildren(n)
+
+  let pragma = n.pragmaKind
+  if pragma != NoPragma:
+    case pragma
+    of PragmaP:
+      return validateChildren(n, [SymDefChild], allowMore = true)
+    else:
+      return validateAllChildren(n)
+
+proc validateConstructedNode(n: Node): ValidationError =
+  result = default(ValidationError)
+  if n.kind == ParLe and n.tagId != ErrT:
     if not isSupportedTag(n):
-      error("unsupported NIF tag '" & n.tagText & "'", n)
-    validateShape(n)
-    var child = n
-    inc child
-    while child.kind != ParRi:
-      validateConstructedNode(child)
-      skip child
+      return validationError(n.info, "unsupported NIF tag '" & n.tagText & "'", n.cursor)
+    return validateShape(n)
 
-proc parseNifFragment(text: string): Node =
-  result = createNode(parseNifBuffer(text))
-  validateConstructedNode(result)
+proc validateConstructedTree(tree: Tree): Tree =
+  if tree.isEmpty:
+    return tree
+  let n = snapshot(tree)
+  let err = validateConstructedNode(n)
+  if err.found:
+    result = createErrorTree(err.info, err.msg, err.orig)
+  else:
+    result = tree
 
-proc add*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
-    kind: K; children: varargs[Node]): Node =
+proc parseNifFragment(text: string): Tree =
+  validateConstructedTree(createTree(parseNifBuffer(text)))
+
+proc createTree*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
+    kind: K; children: varargs[Tree]): Tree =
   ## Produces a new tree node of `kind` containing `children`.
-  var tree = createTree()
-  tree.withTree kind, NoLineInfo:
-    discard tree.add(children)
-  result = snapshot(tree)
+  result = createTree()
+  result.withTree kind, NoLineInfo:
+    for child in children:
+      result.takeTree(child)
+  result = validateConstructedTree(result)
 
-proc add*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
-    kind: K; info: LineInfo; children: varargs[Node]): Node =
+proc createTree*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
+    kind: K; info: LineInfo; children: varargs[Tree]): Tree =
   ## Produces a new tree node of `kind` and line info `info` containing `children`.
-  var tree = createTree()
-  tree.withTree kind, info:
-    discard tree.add(children)
-  result = snapshot(tree)
+  result = createTree()
+  result.withTree kind, info:
+    for child in children:
+      result.takeTree(child)
+  result = validateConstructedTree(result)
 
 proc lookupBinding(bindings: openArray[NifBinding]; name: string): int =
   var i = bindings.len - 1
@@ -679,17 +623,18 @@ proc lookupBinding(bindings: openArray[NifBinding]; name: string): int =
     if bindings[i].name == name:
       return i
     dec i
-  quit "missing nif substitution: " & name
+  result = -1
 
 proc appendParsedText(dest: var TokenBuf; text: string) =
   if text.len > 0:
     dest.add parseNifBuffer(text)
 
-proc appendNode(dest: var TokenBuf; n: Node) =
-  var c = n.cursor
-  dest.takeTree(c)
+proc appendTree(dest: var TokenBuf; tree: Tree) =
+  if not tree.isEmpty:
+    var n = snapshot(tree)
+    dest.takeTree(n.cursor)
 
-proc parseNifTemplate(spec: string; bindings: openArray[NifBinding]): Node =
+proc parseNifTemplate(spec: string; bindings: openArray[NifBinding]): Tree =
   var buf = createTokenBuf(spec.len + bindings.len * 4)
   var literal = newStringOfCap(spec.len)
   var i = 0
@@ -698,7 +643,7 @@ proc parseNifTemplate(spec: string; bindings: openArray[NifBinding]): Node =
       literal.add spec[i]
       inc i
     elif i + 1 >= spec.len:
-      quit "invalid nif substitution syntax"
+      return createErrorTree(NoLineInfo, "invalid nif substitution syntax")
     elif spec[i + 1] == '$':
       literal.add '$'
       inc i, 2
@@ -709,133 +654,142 @@ proc parseNifTemplate(spec: string; bindings: openArray[NifBinding]): Node =
         inc i
       appendParsedText(buf, literal)
       setLen(literal, 0)
-      appendNode(buf, bindings[lookupBinding(bindings, substr(spec, start, i - 1))].value)
+      let binding = lookupBinding(bindings, substr(spec, start, i - 1))
+      if binding < 0:
+        return createErrorTree(NoLineInfo,
+          "missing nif substitution: " & substr(spec, start, i - 1))
+      appendTree(buf, bindings[binding].value)
     else:
-      quit "invalid nif substitution syntax"
+      return createErrorTree(NoLineInfo, "invalid nif substitution syntax")
 
   appendParsedText(buf, literal)
-  result = createNode(buf)
-  validateConstructedNode(result)
+  result = validateConstructedTree(createTree(buf))
 
 proc renderNode*(n: Node): string =
   ## Renders the current token or subtree as raw NIF text for debugging.
   ## This omits line info and only covers the subtree rooted at `n`.
-  if not n.hasToken:
-    result = ""
+  if n.owner.p == nil or not hasCurrentToken(n.cursor) or n.cursor.kind == ParRi:
+    result = "<bug: empty>"
   else:
     result = toString(n.cursor, false)
 
-proc strLitNode(s: string): Node =
+proc strLitTree(s: string): Tree =
   var buf = createTokenBuf(1)
   buf.addStrLit(s)
-  result = createNode(buf)
+  result = createTree(buf)
 
-proc identNode(s: string): Node =
+proc identTree(s: string): Tree =
   var buf = createTokenBuf(1)
   buf.addIdent(s)
-  result = createNode(buf)
+  result = createTree(buf)
 
-proc charLitNode(c: char): Node =
+proc charLitTree(c: char): Tree =
   var buf = createTokenBuf(1)
   buf.addCharLit(c)
-  result = createNode(buf)
+  result = createTree(buf)
 
-proc intLitNode(i: BiggestInt): Node =
+proc intLitTree(i: BiggestInt): Tree =
   var buf = createTokenBuf(1)
   buf.addIntLit(i)
-  result = createNode(buf)
+  result = createTree(buf)
 
-proc uintLitNode(u: BiggestUInt): Node =
+proc uintLitTree(u: BiggestUInt): Tree =
   var buf = createTokenBuf(1)
   buf.addUIntLit(u)
-  result = createNode(buf)
+  result = createTree(buf)
 
-proc floatLitNode(f: BiggestFloat): Node =
+proc floatLitTree(f: BiggestFloat): Tree =
   var buf = createTokenBuf(1)
   buf.addFloatLit(f)
-  result = createNode(buf)
+  result = createTree(buf)
 
-proc boolNode(v: bool): Node =
+proc boolTree(v: bool): Tree =
   var buf = createTokenBuf(2)
   buf.addParLe(if v: TrueX else: FalseX)
   buf.addParRi()
-  result = createNode(buf)
+  result = createTree(buf)
 
-template `~`*(src: Node): Node =
+proc `~`*(src: Node): Tree =
+  ## Copies the subtree rooted at `src` into a fresh `Tree`.
+  result = createTree()
+  var n = src
+  result.takeTree(n)
+
+template `~`*(src: Tree): Tree =
   ## Returns `src` unchanged.
   src
 
-proc `~`*(src: string): Node =
-  ## Converts `src` into a string literal node.
-  strLitNode(src)
+proc `~`*(src: string): Tree =
+  ## Converts `src` into a string literal tree fragment.
+  strLitTree(src)
 
-proc `~`*(src: NifIdent): Node =
-  ## Converts `src` into an identifier node.
-  identNode(string(src))
+proc `~`*(src: NifIdent): Tree =
+  ## Converts `src` into an identifier tree fragment.
+  identTree(string(src))
 
-proc `~`*(src: char): Node =
-  ## Converts `src` into a character literal node.
-  charLitNode(src)
+proc `~`*(src: char): Tree =
+  ## Converts `src` into a character literal tree fragment.
+  charLitTree(src)
 
-proc `~`*(src: int): Node =
-  ## Converts `src` into a signed integer literal node.
-  intLitNode(BiggestInt(src))
+proc `~`*(src: int): Tree =
+  ## Converts `src` into a signed integer literal tree fragment.
+  intLitTree(BiggestInt(src))
 
-proc `~`*(src: int8): Node =
-  ## Converts `src` into a signed integer literal node.
-  intLitNode(BiggestInt(src))
+proc `~`*(src: int8): Tree =
+  ## Converts `src` into a signed integer literal tree fragment.
+  intLitTree(BiggestInt(src))
 
-proc `~`*(src: int16): Node =
-  ## Converts `src` into a signed integer literal node.
-  intLitNode(BiggestInt(src))
+proc `~`*(src: int16): Tree =
+  ## Converts `src` into a signed integer literal tree fragment.
+  intLitTree(BiggestInt(src))
 
-proc `~`*(src: int32): Node =
-  ## Converts `src` into a signed integer literal node.
-  intLitNode(BiggestInt(src))
+proc `~`*(src: int32): Tree =
+  ## Converts `src` into a signed integer literal tree fragment.
+  intLitTree(BiggestInt(src))
 
-proc `~`*(src: int64): Node =
-  ## Converts `src` into a signed integer literal node.
-  intLitNode(BiggestInt(src))
+proc `~`*(src: int64): Tree =
+  ## Converts `src` into a signed integer literal tree fragment.
+  intLitTree(BiggestInt(src))
 
-proc `~`*(src: uint): Node =
-  ## Converts `src` into an unsigned integer literal node.
-  uintLitNode(BiggestUInt(src))
+proc `~`*(src: uint): Tree =
+  ## Converts `src` into an unsigned integer literal tree fragment.
+  uintLitTree(BiggestUInt(src))
 
-proc `~`*(src: uint8): Node =
-  ## Converts `src` into an unsigned integer literal node.
-  uintLitNode(BiggestUInt(src))
+proc `~`*(src: uint8): Tree =
+  ## Converts `src` into an unsigned integer literal tree fragment.
+  uintLitTree(BiggestUInt(src))
 
-proc `~`*(src: uint16): Node =
-  ## Converts `src` into an unsigned integer literal node.
-  uintLitNode(BiggestUInt(src))
+proc `~`*(src: uint16): Tree =
+  ## Converts `src` into an unsigned integer literal tree fragment.
+  uintLitTree(BiggestUInt(src))
 
-proc `~`*(src: uint32): Node =
-  ## Converts `src` into an unsigned integer literal node.
-  uintLitNode(BiggestUInt(src))
+proc `~`*(src: uint32): Tree =
+  ## Converts `src` into an unsigned integer literal tree fragment.
+  uintLitTree(BiggestUInt(src))
 
-proc `~`*(src: uint64): Node =
-  ## Converts `src` into an unsigned integer literal node.
-  uintLitNode(BiggestUInt(src))
+proc `~`*(src: uint64): Tree =
+  ## Converts `src` into an unsigned integer literal tree fragment.
+  uintLitTree(BiggestUInt(src))
 
-proc `~`*(src: float32): Node =
-  ## Converts `src` into a floating-point literal node.
-  floatLitNode(BiggestFloat(src))
+proc `~`*(src: float32): Tree =
+  ## Converts `src` into a floating-point literal tree fragment.
+  floatLitTree(BiggestFloat(src))
 
-proc `~`*(src: float64): Node =
-  ## Converts `src` into a floating-point literal node.
-  floatLitNode(BiggestFloat(src))
+proc `~`*(src: float64): Tree =
+  ## Converts `src` into a floating-point literal tree fragment.
+  floatLitTree(BiggestFloat(src))
 
-proc `~`*(src: bool): Node =
-  ## Converts `src` into a `true` or `false` keyword node.
-  boolNode(src)
+proc `~`*(src: bool): Tree =
+  ## Converts `src` into a `true` or `false` keyword tree fragment.
+  boolTree(src)
 
-proc nif*(spec: string; bindings: openArray[NifBinding]): Node =
+proc nif*(spec: string; bindings: openArray[NifBinding]): Tree =
   ## Parses `spec` as a NIF fragment after expanding `$name` placeholders with
-  ## the corresponding nodes from `bindings`.
+  ## the corresponding tree fragments from `bindings`.
   ##
   ## Use `$$` for a literal dollar sign.
   parseNifTemplate(spec, bindings)
 
-proc nif*(spec: string): Node =
-  ## Parses `spec` as a literal NIF fragment and returns it as an owned `Node`.
+proc nif*(spec: string): Tree =
+  ## Parses `spec` as a literal NIF fragment and returns it as a `Tree`.
   parseNifFragment(spec)

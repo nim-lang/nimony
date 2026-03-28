@@ -11,5 +11,5 @@ proc tr(n: Node): Tree =
       result.addIdent "echo"
       result.takeTree n
 
-var inp = loadNode()
+var inp = loadPluginInput()
 saveTree tr(inp)

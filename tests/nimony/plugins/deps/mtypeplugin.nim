@@ -119,8 +119,8 @@ proc tr(n: Node): Tree =
       trAux(n, result)
 
 
-var inp = loadNode()
-var inpTypes = loadNode(paramStr(3))
+var inp = loadPluginInput()
+var inpTypes = loadPluginInput(paramStr(3))
 
 typesTr(inpTypes)
 saveTree tr(inp), os.paramStr(2)

@@ -84,5 +84,5 @@ proc tr(n: Node): Tree =
     resultTree.takeTree(laterEcho)
   result = resultTree
 
-var inp = loadNode()
+var inp = loadPluginInput()
 saveTree tr(inp)

@@ -1,7 +1,7 @@
 import std / [os, syncio]
 import nimonyplugins
 
-proc tr(n: Node): Node =
+proc tr(n: Node): Tree =
   var arg = n
   if arg.stmtKind == StmtsS:
     inc arg
@@ -29,5 +29,5 @@ proc tr(n: Node): Node =
     "h": ~byNode
   })
 
-var inp = loadNode()
-writeFile os.paramStr(2), renderNode(tr(inp))
+var inp = loadPluginInput()
+writeFile os.paramStr(2), renderTree(tr(inp))
