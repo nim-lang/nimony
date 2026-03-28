@@ -14,7 +14,7 @@ proc show(v: QWidget) =
 proc main() =
   let btn = QWidget()
 
-  let tmp = proc() =
+  let tmp = proc() {.closure.} =
     btn.show()
 
   tmp()
