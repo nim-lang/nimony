@@ -16,7 +16,7 @@
   1. Even in Nim 2 this was not completely bulletproof: People cast between `seq[char]` and `string` which can lose the termination zero.
   2. It allows us to provide faster string slice operations.
   3. It saves memory.
-- Macros are replaced by compiler plugins which will offer a different API. (We have no design for an API yet though.)
+- Macros are replaced by compiler plugins which will offer a different API.
 - Multi-methods are gone for good, use single dispatch methods.
 - Cyclic module dependencies are allowed if an explicit `cyclic` import statement is used: `import (path / module) {.cyclic.}`.
 - The side-effect system works differently:
