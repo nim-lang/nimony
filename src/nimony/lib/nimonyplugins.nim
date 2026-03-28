@@ -111,9 +111,13 @@ proc kind*(n: Node): NifKind {.inline.} =
   ## Returns the raw NIF token kind at the current position.
   n.cursor.kind
 
-proc info*(n: Node): PackedLineInfo {.inline.} =
+proc info*(n: Node): LineInfo {.inline.} =
   ## Returns the packed line info stored on the current token.
   n.cursor.info
+
+proc isValid*(info: LineInfo): bool {.inline.} =
+  ## Returns true when `info` refers to a real source location.
+  lineinfos.isValid(info)
 
 proc filePath*(info: LineInfo): string =
   ## Returns the source path stored in `info`, or `""` when unavailable.
@@ -122,6 +126,20 @@ proc filePath*(info: LineInfo): string =
     result = pool.files[rawInfo.file]
   else:
     result = ""
+
+proc line*(info: LineInfo): int =
+  ## Returns the 1-based line stored in `info`, or 0 when unavailable.
+  if info.isValid:
+    result = int(unpack(pool.man, info).line)
+  else:
+    result = 0
+
+proc col*(info: LineInfo): int =
+  ## Returns the 1-based column stored in `info`, or 0 when unavailable.
+  if info.isValid:
+    result = int(unpack(pool.man, info).col)
+  else:
+    result = 0
 
 proc symId*(n: Node): SymId {.inline.} =
   ## Returns the symbol id of the current token.
