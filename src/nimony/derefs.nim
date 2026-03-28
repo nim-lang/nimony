@@ -927,10 +927,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       let info = n.info
       c.dest.buildTree ErrT, info:
         c.dest.addSubtree n
-        c.dest.add strToken(pool.strings.getOrIncl("cannot access local variable `" & asNimCode(n) & "` from another routine; closures are not supported"), info)
-      skip n
-    else:
-      trLocation c, n, e
+        c.dest.add strToken(pool.strings.getOrIncl("cannot access local variable `" & asNimCode(n) & "` from another routine; mark the proc with `.closure`"), info)
 
     if IsNoSideEffect in c.r.props:
       let res = tryLoadSym(n.symId)
