@@ -26,6 +26,13 @@ Also adds lifetime tracking hooks to type declarations so that Hexer can find th
 easily.
 
 Also enforces .noSideEffect contexts.
+Also checks that accesses to locals that indicate a closure are within an explicit
+`.closure` proc. `.closure` is not inferred anymore by the compiler as it's fundamentally
+incompatible with Nim's type checking: Type checking influences template expansions which
+can lead to accessed locals which can lead to closures which we assumed not to exist for
+type checking purposes.
+
+We can then improve compat with Nim 2 by making all inner procs `.closure` by default.
 
 ]##
 
@@ -46,11 +53,13 @@ type
     WantMutableT  # `var openArray` does need derefs but mutable locations regardless
     WantForwarding
 
+  RoutineProp = enum
+    CanRaise, IsNoSideEffect, IsClosure
+
   CurrentRoutine = object
     returnExpects: Expects
     firstParamKind: TypeKind
-    canRaise: bool
-    isNoSideEffect: bool # true for func, iterator, or .noSideEffect proc
+    props: set[RoutineProp]
     firstParam: SymId
     resultSym: SymId
     dangerousLocations: Table[SymId, PackedLineInfo]
@@ -366,13 +375,16 @@ proc trProcPragmas(c: var Context; n: var Cursor) =
       if pk == RequiresP:
         tr c, n, WantT
       elif pk == RaisesP:
-        c.r.canRaise = true
+        c.r.props.incl CanRaise
         takeTree c.dest, n
       elif pk == NoSideEffectP:
-        c.r.isNoSideEffect = true
+        c.r.props.incl IsNoSideEffect
         takeTree c.dest, n
       elif pk == SideEffectP:
-        c.r.isNoSideEffect = false
+        c.r.props.excl IsNoSideEffect
+        takeTree c.dest, n
+      elif pk == ClosureP:
+        c.r.props.incl IsClosure
         takeTree c.dest, n
       else:
         takeTree c.dest, n
@@ -384,8 +396,8 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   takeToken c, n
   let symId = n.symId
   var isGeneric = false
-  var r = CurrentRoutine(returnExpects: WantT,
-    isNoSideEffect: decl.stmtKind in {FuncS, IteratorS, ConverterS})
+  let props = if decl.stmtKind in {FuncS, IteratorS, ConverterS}: {IsNoSideEffect} else: {}
+  var r = CurrentRoutine(returnExpects: WantT, props: props)
   swap c.r, r
   for i in 0..<BodyPos:
     if i == TypevarsPos:
@@ -422,8 +434,8 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   swap c.r, r
   c.typeCache.closeScope()
 
-proc callCanRaise(c: var Context; info: PackedLineInfo) =
-  if not c.r.canRaise:
+proc callCanRaise(c: var Context; info: PackedLineInfo) {.inline.} =
+  if CanRaise notin c.r.props:
     buildLocalErr c.dest, info, "cannot call a routine marked as `.raises` outside of a `try`..`except` block"
 
 proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
@@ -488,10 +500,10 @@ proc trPragmaBlock(c: var Context; n: var Cursor) =
   elif n.pragmaKind == CastP:
     c.dest.takeTree n # cast pragma
     c.dest.takeParRi n # pragmas
-    let oldNoSideEffect = c.r.isNoSideEffect
-    c.r.isNoSideEffect = false
+    let oldProps = c.r.props
+    c.r.props = {}
     tr(c, n, WantT)
-    c.r.isNoSideEffect = oldNoSideEffect
+    c.r.props = oldProps
   else:
     bug "unknown pragma block: " & toString(n, false)
   c.dest.takeParRi n # pragmax
@@ -513,7 +525,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   skip retType
   var pragmas = retType
   skip pragmas
-  if c.r.isNoSideEffect:
+  if IsNoSideEffect in c.r.props:
     if whichEffect(calleeKind, pragmas) == HasSideEffect:
       swap c.dest, callBuf
       buildLocalErr c.dest, n.info, "cannot call a routine marked as `.noSideEffect` outside of a .noSideEffect context"
@@ -747,12 +759,12 @@ proc trTry(c: var Context; n: var Cursor) =
   takeToken c, n
   var nn = n
   skip nn
-  let oldCanRaise = c.r.canRaise
+  let oldProps = c.r.props
   if nn.substructureKind == ExceptU or nn.substructureKind == FinU:
-    c.r.canRaise = true
+    c.r.props.incl CanRaise
   # now can raise in the `try` block:
   tr c, n, WantT
-  c.r.canRaise = oldCanRaise
+  c.r.props = oldProps
   while n.kind != ParRi:
     tr c, n, WantT
   takeParRi c, n
@@ -908,7 +920,19 @@ proc trType(c: var Context; n: var Cursor) =
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   case n.kind
   of Symbol:
-    if c.r.isNoSideEffect:
+    # Closures are now implemented
+    let localInfo = c.typeCache.getLocalInfo(n.symId)
+    if localInfo.crossedProc > 0 and localInfo.kind in {VarY, LetY, ParamY, ResultY} and
+        IsClosure notin c.r.props:
+      let info = n.info
+      c.dest.buildTree ErrT, info:
+        c.dest.addSubtree n
+        c.dest.add strToken(pool.strings.getOrIncl("cannot access local variable `" & asNimCode(n) & "` from another routine; closures are not supported"), info)
+      skip n
+    else:
+      trLocation c, n, e
+
+    if IsNoSideEffect in c.r.props:
       let res = tryLoadSym(n.symId)
       if res.status == LacksNothing:
         let local = asLocal(res.decl)
