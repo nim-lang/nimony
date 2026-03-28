@@ -15,9 +15,8 @@ proc skip*(n: var Node, count: int) =
   for _ in 0..<count:
     skip n
 
-
-var knownInstances: Table[SymId, SymId]  # name -> type
 var knownTypes: seq[SymId]
+var knownInstances: Table[SymId, SymId]  # name -> type
 var knownOnChanged: Table[SymId, SymId]  # type -> `onChanged` template sym
 
 
@@ -30,17 +29,17 @@ proc typesTr(n: Node) =
   inc n
 
 
-proc trAsgn(n: var Node, o: var TokenBuf) =
+proc trAsgn(n: var Node, o: var Tree) =
   var
     fieldName = ""
-    access = createTokenBuf(3)
+    access = Node()
     instance = Node()
     emitOnChanged = false
   traverse n:
     inc n
     if n.kind == ParLe and n.exprKind == DotX:
       traverse n:
-        takeTree access, n
+        access = n
       inc n
       if n.kind == Symbol and n.symId in knownInstances and knownInstances[n.symId] in knownOnChanged:
         instance = n
@@ -49,27 +48,27 @@ proc trAsgn(n: var Node, o: var TokenBuf) =
           fieldName = pool.syms[n.symId]
           fieldName.delete fieldName.find('.')..fieldName.high
           emitOnChanged = true
-  takeTree o, n
+  let info = n.info
+  o.takeTree(n)
   if emitOnChanged:
-    o.addParLe CallS
-    o.addSymUse knownOnChanged[knownInstances[instance.symId]], n.info
-    o.add instance
-    o.add access
-    o.addStrLit fieldName
-    o.addParRi()
+    o.withTree CallS, info:
+      o.addSymUse knownOnChanged[knownInstances[instance.symId]], info
+      o.addSubtree(instance)
+      o.addSubtree(access)
+      o.addStrLit fieldName
 
 
-proc trGvar(n: var Node, o: var TokenBuf) =
+proc trGvar(n: var Node, o: var Tree) =
   traverse n:
     inc n
     let nameSym = n.symId
     skip n, 3
     if n.kind == Symbol and n.symId in knownTypes:
       knownInstances[nameSym] = n.symId
-  takeTree o, n
+  o.takeTree(n)
 
 
-proc trTemplate(n: var Node, o: var TokenBuf) =
+proc trTemplate(n: var Node, o: var Tree) =
   traverse n:
     inc n
     let nameSym = n.symId
@@ -83,10 +82,10 @@ proc trTemplate(n: var Node, o: var TokenBuf) =
         inc n
       if n.kind == Symbol:
         knownOnChanged[n.symId] = nameSym
-  takeTree o, n
+  o.takeTree(n)
 
 
-proc trAux(n: var Node, o: var TokenBuf) =
+proc trAux(n: var Node, o: var Tree) =
   case n.kind
   of ParLe:
     if n.stmtKind == AsgnS:
@@ -96,29 +95,30 @@ proc trAux(n: var Node, o: var TokenBuf) =
     elif n.stmtKind == TemplateS:
       trTemplate n, o
     else:
-      o.add n
+      let info = n.info
+      let tag = n.tagId
+      o.addParLe(tag, info)
       inc n
       while n.kind != ParRi:
         trAux(n, o)
       o.addParRi()
       inc n
   else:
-    takeTree o, n
+    o.takeTree(n)
 
 
-proc tr(n: Node): TokenBuf =
-  result = createTokenBuf()
+proc tr(n: Node): Tree =
+  result = createTree()
   let info = n.info
   var n = n
   if n.stmtKind == StmtsS: inc n
-  result.addParLe StmtsS, info
-  while n.kind != ParRi:
-    trAux(n, result)
-  result.addParRi()
+  result.withTree StmtsS, info:
+    while n.kind != ParRi:
+      trAux(n, result)
 
 
-var inp = loadTree()
-var inpTypes = loadTree(paramStr(3))
+var inp = loadPluginInput()
+var inpTypes = loadPluginInput(paramStr(3))
 
-typesTr(beginRead inpTypes)
-writeFile os.paramStr(2), toString tr(beginRead inp)
+typesTr(inpTypes)
+saveTree tr(inp), os.paramStr(2)

@@ -71,6 +71,9 @@ proc `+!`*(c: Cursor; diff: int): Cursor {.inline.} =
 proc cursorIsNil*(c: Cursor): bool {.inline.} =
   result = c.p == nil
 
+proc hasCurrentToken*(c: Cursor): bool {.inline.} =
+  result = c.p != nil and c.rem > 0
+
 proc skip*(c: var Cursor) =
   if c.kind == ParLe:
     var nested = 0
@@ -114,6 +117,12 @@ type
     len, cap, readers: int
 
 proc `=copy`(dest: var TokenBuf; src: TokenBuf) {.error.}
+proc `=wasMoved`(dest: var TokenBuf) {.inline.} =
+  dest.data = nil
+  dest.len = 0
+  dest.cap = 0
+  dest.readers = 0
+
 when defined(nimAllowNonVarDestructor) and defined(gcDestructors):
   proc `=destroy`(dest: TokenBuf) {.inline.} =
     #assert dest.readers == 0, "TokenBuf still in use by some reader"
@@ -178,6 +187,16 @@ proc readonlyCursorAt*(b: TokenBuf; i: int): Cursor {.inline.} =
   assert i >= 0 and i < b.len
   assert(not isMutable(b))
   result = Cursor(p: addr b.data[i], rem: b.len-i)
+
+proc shareRead*(b: var TokenBuf; c: Cursor): Cursor =
+  let pos = (cast[int](c.p) - cast[int](b.data)) div sizeof(PackedToken)
+  if b.readers == 0:
+    freeze(b)
+  inc b.readers
+  result = Cursor(
+    p: cast[ptr PackedToken](
+      cast[uint](b.data) + pos.uint * sizeof(PackedToken).uint),
+    rem: c.rem)
 
 proc cursorToPosition*(b: TokenBuf; c: Cursor): int {.inline.} =
   result = (cast[int](c.p) - cast[int](b.data)) div sizeof(PackedToken)
@@ -291,6 +310,12 @@ proc addUIntLit*(dest: var TokenBuf; i: BiggestUInt; info = NoLineInfo) =
 
 proc addIdent*(dest: var TokenBuf; s: string; info = NoLineInfo) =
   dest.add identToken(pool.strings.getOrIncl(s), info)
+
+proc addCharLit*(dest: var TokenBuf; c: char; info = NoLineInfo) =
+  dest.add charToken(c, info)
+
+proc addFloatLit*(dest: var TokenBuf; f: BiggestFloat; info = NoLineInfo) =
+  dest.add floatToken(pool.floats.getOrIncl(f), info)
 
 proc span*(c: Cursor): int =
   result = 0
