@@ -1,0 +1,14 @@
+begin A
+elif
+destroyed
+end A
+begin false
+destroyed
+if
+end false
+begin true
+if
+end true
+7
+##index 2 not in 0 .. 1##
+true

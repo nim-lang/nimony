@@ -812,7 +812,8 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
     elif m[idx].inferred.len > 0:
       var matched = m[idx]
       let returnType: Cursor
-      if isMagic == NonMagicCall and c.routine.inGeneric == 0:
+      if isMagic == NonMagicCall and c.routine.inGeneric == 0 and
+          isGeneric(getProcDecl(finalFn.sym)):
         let inst = c.requestRoutineInstance(finalFn.sym, matched.typeArgs, matched.inferred, cs.callNode.info)
         dest[cs.beforeCall+1].setSymId inst.targetSym
         var instReturnType = createTokenBuf(16)
