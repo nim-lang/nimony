@@ -52,5 +52,5 @@ proc main6() =
 main6()
 
 proc main7() =
-  echo "main7:", sum(4, 5)
+  echo "main7: ", sum(4, 5)
 main7()

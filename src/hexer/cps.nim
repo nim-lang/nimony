@@ -538,7 +538,26 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let sym = fn.symId
     let typ = c.typeCache.getType(fn, {SkipAliases})
     if procHasPragma(typ, PassiveP):
-      trPassiveCall(c, dest, n, sym, default(Cursor))
+      var retType = getType(c.typeCache, n)
+      let hasResult = not isVoidType(retType)
+      if hasResult:
+        let info = n.info
+        var s = dest.len
+        dest.copyIntoKind ExprX, info:
+          let tmpVar = pool.syms.getOrIncl("`tmpCpsResult." & $c.currentProc.counter)
+          inc c.currentProc.counter
+          var target = createTokenBuf(1)
+          target.addSymUse tmpVar, info
+          dest.copyIntoKind VarS, info:
+            dest.addSymDef tmpVar, info
+            dest.addDotToken() # exported
+            dest.addDotToken() # pragmas
+            dest.takeTree retType
+            dest.addDotToken()
+          trPassiveCall(c, dest, n, sym, beginRead target)
+          dest.addSymUse tmpVar, info
+      else:
+        trPassiveCall(c, dest, n, sym, default(Cursor))
     else:
       trSons(c, dest, n)
   else:
