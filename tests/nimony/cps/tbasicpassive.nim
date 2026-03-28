@@ -50,3 +50,7 @@ proc main6() =
   var res = sum(1, 2)
   echo "main6: ", res
 main6()
+
+proc main7() =
+  echo "main7:", sum(4, 5)
+main7()
