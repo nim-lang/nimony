@@ -5,7 +5,8 @@ from std / os import paramStr
 import ".." / ".." / "lib" / [nifcursors, nifstreams, lineinfos, bitabs]
 
 import ".." / [nimony_model]
-export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther, NifKind, NoLineInfo
+export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther,
+  NifKind, SymId, TagId, NoLineInfo
 
 type
   TreePayload = object
@@ -78,13 +79,11 @@ proc `=dup`*(src: Node): Node =
 proc initPayload(buf: sink TokenBuf): ptr TreePayload =
   result = cast[ptr TreePayload](alloc0(sizeof(TreePayload)))
   result.counter = 0
-  result.buf = move(buf)
+  result.buf = ensureMove(buf)
 
 proc copyBuffer(buf: TokenBuf): TokenBuf =
   result = createTokenBuf(max(buf.len, 4))
   result.add buf
-
-proc prepareMutation(t: var Tree)
 
 proc hasSubtree(n: Node): bool {.inline.} =
   hasCurrentToken(n.cursor) and n.cursor.kind != ParRi
@@ -199,7 +198,7 @@ proc createTree*(): Tree =
   ## Creates an empty mutable `Tree`.
   createTree(createTokenBuf())
 
-proc snapshot*(tree: Tree): Node =
+proc snapshot*(tree: sink Tree): Node =
   ## Returns a read-only snapshot positioned at the first top-level token of
   ## `tree`.
   ##
@@ -208,7 +207,7 @@ proc snapshot*(tree: Tree): Node =
   ##
   ## `tree` must not be empty; use `isEmpty` first when that is expected.
   assert not tree.isEmpty, "cannot snapshot empty Tree"
-  result = Node(owner: tree, cursor: default(Cursor))
+  result = Node(owner: tree)
   result.cursor = beginRead(result.owner.p[].buf)
 
 template withTree*(t: var Tree; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma; info: LineInfo; body: untyped) =
