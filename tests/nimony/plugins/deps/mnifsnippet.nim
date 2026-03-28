@@ -2,16 +2,16 @@ import std / [os, syncio]
 import nimonyplugins
 
 proc tr(n: Node): Tree =
-  var arg = n
-  if arg.stmtKind == StmtsS:
-    inc arg
+  var n = n
+  if n.stmtKind == StmtsS:
+    inc n
 
-  let first = """(call echo $arg)""" ~$~ {"arg": ~arg}
-  let second = """(call echo $msg)""" ~$~ {"msg": ~"seen"}
-  let third = """(call echo $count)""" ~$~ {"count": ~17}
+  let first = """(call echo $arg)""" %~ {"arg": ~n}
+  let second = """(call echo $msg)""" %~ {"msg": ~"seen"}
+  let third = """(call echo $count)""" %~ {"count": ~17}
   let tail = nifFragment("""(call echo "done")""")
 
-  result = """(stmts $first $second $third $tail)""" ~$~
+  result = """(stmts $first $second $third $tail)""" %~
     {"first": ~first, "second": ~second, "third": ~third, "tail": ~tail}
 
 var inp = loadPluginInput()

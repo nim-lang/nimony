@@ -5,10 +5,7 @@ from std / os import paramStr
 import ".." / ".." / "lib" / [nifcursors, nifstreams, lineinfos, bitabs]
 
 import ".." / [nimony_model]
-export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther
-export NifKind
-
-export NoLineInfo
+export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther, NifKind, NoLineInfo
 
 type
   TreePayload = object
@@ -819,7 +816,7 @@ proc `~`*(src: bool): Tree =
   ## Converts `src` into a `true` or `false` keyword tree fragment.
   boolTree(src)
 
-proc `~$~`*(spec: string; bindings: openArray[NifBinding]): Tree =
+proc `%~`*(spec: string; bindings: openArray[NifBinding]): Tree =
   ## Parses `spec` as a NIF fragment after expanding `$name` placeholders with
   ## the corresponding tree fragments from `bindings`.
   ##
