@@ -89,6 +89,9 @@ proc copyBuffer(buf: TokenBuf): TokenBuf =
 
 proc prepareMutation(t: var Tree)
 
+proc hasSubtree(n: Node): bool {.inline.} =
+  n.owner.p != nil and hasCurrentToken(n.cursor) and n.cursor.kind != ParRi
+
 proc createTree(buf: sink TokenBuf): Tree =
   result = Tree(p: initPayload(buf))
 
@@ -236,7 +239,7 @@ proc addSubtree*(t: var Tree; n: Node) =
   prepareMutation(t)
   t.p[].buf.addSubtree(n.cursor)
 
-proc addTree*(t: var Tree; child: Tree) =
+proc add*(t: var Tree; child: Tree) =
   ## Appends the complete contents of `child` to `t`.
   if not child.isEmpty:
     prepareMutation(t)
@@ -402,17 +405,26 @@ proc createErrorTree(info: PackedLineInfo; msg: string): Tree =
   orig.addDotToken()
   result = createErrorTree(info, msg, cursorAt(orig, 0))
 
+proc errorInfo(n: Node): PackedLineInfo =
+  if hasSubtree(n): n.info else: NoLineInfo
+
 proc errorTree*(msg: string): Tree =
   ## Produces an `ErrT` tree with synthetic line info.
   createErrorTree(NoLineInfo, msg)
 
 proc errorTree*(msg: string; at: Node): Tree =
   ## Produces an `ErrT` tree located at `at` and embeds `at` as source.
-  createErrorTree(at.info, msg, at.cursor)
+  if hasSubtree(at):
+    createErrorTree(at.info, msg, at.cursor)
+  else:
+    createErrorTree(NoLineInfo, msg)
 
 proc errorTree*(msg: string; at, orig: Node): Tree =
   ## Produces an `ErrT` tree located at `at` and embeds `orig` as source.
-  createErrorTree(at.info, msg, orig.cursor)
+  if hasSubtree(orig):
+    createErrorTree(errorInfo(at), msg, orig.cursor)
+  else:
+    createErrorTree(errorInfo(at), msg)
 
 template isSupportedTag(n: Node): bool =
   let raw = tagEnum(n.cursor)
@@ -610,7 +622,7 @@ proc createTree*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
   result = createTree()
   result.withTree kind, NoLineInfo:
     for child in children:
-      result.addTree(child)
+      result.add(child)
   result = validateConstructedTree(result)
 
 proc createTree*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
@@ -619,7 +631,7 @@ proc createTree*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
   result = createTree()
   result.withTree kind, info:
     for child in children:
-      result.addTree(child)
+      result.add(child)
   result = validateConstructedTree(result)
 
 proc lookupBinding(bindings: openArray[NifBinding]; name: string): int =
@@ -672,7 +684,7 @@ proc parseNifTemplate(spec: string; bindings: openArray[NifBinding]): Tree =
 proc renderNode*(n: Node): string =
   ## Renders the current token or subtree as raw NIF text for debugging.
   ## This omits line info and only covers the subtree rooted at `n`.
-  if n.owner.p == nil or not hasCurrentToken(n.cursor) or n.cursor.kind == ParRi:
+  if not hasSubtree(n):
     result = "<bug: empty>"
   else:
     result = toString(n.cursor, false)
