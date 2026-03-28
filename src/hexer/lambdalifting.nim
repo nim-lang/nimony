@@ -341,7 +341,12 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
       copyIntoKind dest, RefT, info:
         dest.addSymUse pool.syms.getOrIncl(RootObjName), info
   else:
-    treSons(c, dest, n)
+    dest.takeToken n
+    for i in 0..<BodyPos:
+      tre c, dest, n
+    if n.kind != ParRi:
+      dest.takeTree n # don't transform the potential proc body here
+    dest.takeParRi n
 
 proc treType(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Like `tre` but prefer the type interpretation. (Matters for ProcS etc.)

@@ -80,7 +80,7 @@ block:
   proc foo =
     let a = 999
 
-    proc abend(): int =
+    proc abend(): int {.closure.} =
       return a
 
     let res = abend
