@@ -572,10 +572,10 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let sym = n.firstSon.symId
   let kind = n.symKind
+  let info = n.info
 
   let field = c.currentProc.localToEnv.getOrDefault(sym)
   if field.def != field.use:
-    let info = n.info
     inc n
     skip n # name
     skip n # exported
@@ -602,10 +602,13 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
       if pcall != SymId(0):
         callExpr = n
         dest.addDotToken()
+        skip n
       else:
         tr(c, dest, n)
     if pcall != SymId(0):
-      trPassiveCall c, dest, callExpr, pcall, target
+      var sym = createTokenBuf(1)
+      sym.addSymUse target.symId, info
+      trPassiveCall c, dest, callExpr, pcall, beginRead sym
 
 proc declareContinuationResult(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
   dest.copyIntoKind ResultS, info:

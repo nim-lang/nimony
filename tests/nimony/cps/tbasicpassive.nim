@@ -45,3 +45,8 @@ proc main5() {.passive.}=
   var res = sum(1, 2)
   echo "main5: ", res
 main5()
+
+proc main6() =
+  var res = sum(1, 2)
+  echo "main6: ", res
+main6()
