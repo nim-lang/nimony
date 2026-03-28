@@ -924,10 +924,9 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
     let localInfo = c.typeCache.getLocalInfo(n.symId)
     if localInfo.crossedProc > 0 and localInfo.kind in {VarY, LetY, ParamY, ResultY} and
         IsClosure notin c.r.props:
-      let info = n.info
-      c.dest.buildTree ErrT, info:
-        c.dest.addSubtree n
-        c.dest.add strToken(pool.strings.getOrIncl("cannot access local variable `" & asNimCode(n) & "` from another routine; mark the proc with `.closure`"), info)
+      buildLocalErr c.dest, n.info, "cannot access local variable `" & asNimCode(n) & "` from another routine; mark the proc with `.closure`"
+      skip n
+      return
 
     if IsNoSideEffect in c.r.props:
       let res = tryLoadSym(n.symId)
