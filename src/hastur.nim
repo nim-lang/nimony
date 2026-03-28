@@ -426,12 +426,13 @@ proc runNifToolTests(tool, testDir, inputExt, expectedExt: string; overwrite: bo
         failure c, t, tool & " exitcode 0", "exitcode " & $exitcode & "\n" & msgs
       let msgsFile = t.changeFileExt(".msgs")
       if msgsFile.fileExists():
+        let strippedMsgs = removeMakeErrors(msgs)
         if overwrite:
-          writeFile(msgsFile, msgs)
+          writeFile(msgsFile, strippedMsgs)
         else:
           let expectedOutput = readFile(msgsFile).strip
-          if expectedOutput != msgs.strip:
-            failure c, t, expectedOutput, msgs
+          if expectedOutput != strippedMsgs:
+            failure c, t, expectedOutput, strippedMsgs
       let expected = t.changeFileExt(expectedExt)
       if overwrite:
         if expected.fileExists():

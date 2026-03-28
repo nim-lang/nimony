@@ -90,7 +90,7 @@ proc copyBuffer(buf: TokenBuf): TokenBuf =
 proc prepareMutation(t: var Tree)
 
 proc hasSubtree(n: Node): bool {.inline.} =
-  n.owner.p != nil and hasCurrentToken(n.cursor) and n.cursor.kind != ParRi
+  hasCurrentToken(n.cursor) and n.cursor.kind != ParRi
 
 proc createTree(buf: sink TokenBuf): Tree =
   result = Tree(p: initPayload(buf))
@@ -406,7 +406,10 @@ proc createErrorTree(info: PackedLineInfo; msg: string): Tree =
   result = createErrorTree(info, msg, cursorAt(orig, 0))
 
 proc errorInfo(n: Node): PackedLineInfo =
-  if hasSubtree(n): n.info else: NoLineInfo
+  if hasSubtree(n):
+    n.info
+  else:
+    NoLineInfo
 
 proc errorTree*(msg: string): Tree =
   ## Produces an `ErrT` tree with synthetic line info.
@@ -798,13 +801,13 @@ proc `~`*(src: bool): Tree =
   ## Converts `src` into a `true` or `false` keyword tree fragment.
   boolTree(src)
 
-proc nif*(spec: string; bindings: openArray[NifBinding]): Tree =
+proc `~$~`*(spec: string; bindings: openArray[NifBinding]): Tree =
   ## Parses `spec` as a NIF fragment after expanding `$name` placeholders with
   ## the corresponding tree fragments from `bindings`.
   ##
   ## Use `$$` for a literal dollar sign.
   parseNifTemplate(spec, bindings)
 
-proc nif*(spec: string): Tree =
+proc nifFragment*(spec: string): Tree =
   ## Parses `spec` as a literal NIF fragment and returns it as a `Tree`.
   parseNifFragment(spec)
