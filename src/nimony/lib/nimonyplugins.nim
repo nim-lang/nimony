@@ -5,8 +5,7 @@ from std / os import paramStr
 import ".." / ".." / "lib" / [nifcursors, nifstreams, lineinfos, bitabs]
 
 import ".." / [nimony_model]
-export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther,
-  NifKind, NoLineInfo
+export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther, NifKind, NoLineInfo
 
 type
   TreePayload = object
@@ -581,55 +580,57 @@ proc validatePragma(n: var Cursor; parent: Cursor): ValidationError =
   else:
     consumeRemainingChildren(n)
 
-proc validateShape(n: var Cursor): ValidationError =
+proc validateShape(n: Cursor): ValidationError =
   let parent = n
-  inc n
+  var child = n
+  inc child
   if parent.exprKind != NoExpr:
-    result = validateExpr(n, parent)
+    result = validateExpr(child, parent)
   elif parent.stmtKind != NoStmt:
-    result = validateStmt(n, parent)
+    result = validateStmt(child, parent)
   elif parent.typeKind != NoType:
-    result = validateType(n, parent)
+    result = validateType(child, parent)
   elif parent.substructureKind != NoSub:
-    result = validateSubstructure(n, parent)
+    result = validateSubstructure(child, parent)
   elif parent.pragmaKind != NoPragma:
-    result = validatePragma(n, parent)
+    result = validatePragma(child, parent)
   else:
-    consumeRemainingChildren(n)
+    consumeRemainingChildren(child)
 
-proc validateConstructedNode(n: Cursor): ValidationError =
+proc validateConstructedNode(n: var Cursor): ValidationError =
   result = default(ValidationError)
-  if n.kind == ParLe and n.tagId != ErrT:
-    if not isSupportedTag(n):
-      result = validationError(n.info, "unsupported NIF tag '" & n.tagText & "'", n)
+  var nested = 0
+  while true:
+    case n.kind
+    of ParLe:
+      if n.tagId != ErrT:
+        if not isSupportedTag(n):
+          return validationError(n.info, "unsupported NIF tag '" & n.tagText & "'", n)
+        result = validateShape(n)
+        if result.found:
+          return
+      inc nested
+      inc n
+    of ParRi:
+      dec nested
+      inc n
+      if nested == 0:
+        break
     else:
-      var m = n
-      result = validateShape(m)
+      inc n
+      if nested == 0:
+        break
 
 proc validateConstructedTree(tree: sink Tree): Tree =
   if tree.isEmpty:
     return tree
   var n = snapshot(tree)
   var current = n.cursor
-  var nested = 0
-  while true:
-    case current.kind
-    of ParLe:
-      let err = validateConstructedNode(current)
-      if err.found:
-        return createErrorTree(err.info, err.msg, err.orig)
-      inc nested
-      inc current
-    of ParRi:
-      dec nested
-      inc current
-      if nested == 0:
-        break
-    else:
-      inc current
-      if nested == 0:
-        break
-  result = ensureMove(n.owner)
+  let err = validateConstructedNode(current)
+  if err.found:
+    result = createErrorTree(err.info, err.msg, err.orig)
+  else: 
+    result = ensureMove(n.owner)
 
 proc parseNifFragment(text: string): Tree =
   validateConstructedTree(createTree(parseNifBuffer(text)))
