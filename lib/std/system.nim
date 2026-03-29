@@ -173,7 +173,7 @@ include "system/seqimpl"
 include "system/stringimpl"
 include "system/openarrays"
 
-include "system/atomics"
+include "system/arcops"
 
 func newConstr[T](t: typedesc[T]): T {.magic: "NewRef", nodecl.}
 func new*[T: ref](x: out T) {.inline.} = x = newConstr(T)
