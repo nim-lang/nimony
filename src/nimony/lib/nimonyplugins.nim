@@ -518,92 +518,83 @@ proc validateChildren(n: var Cursor; parent: Cursor; shapes: openArray[ChildShap
 
   consumeRemainingChildren(n)
 
-proc validateShape(n: var Cursor): ValidationError =
-  result = default(ValidationError)
-  let parent = n
-  var consumed = false
-  inc n
-  let expr = parent.exprKind
-  if expr != NoExpr:
-    case expr
-    of AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
-        EqX, NeqX, LeX, LtX, AshrX, EqsetX, LesetX, LtsetX, InsetX:
-      result = validateChildren(n, parent, [TypeChild, ExprChild, ExprChild])
-      consumed = true
-    of BitnotX, CastX, ConvX, HconvX, DconvX, CardX:
-      result = validateChildren(n, parent, [TypeChild, ExprChild])
-      consumed = true
-    of AtX, PatX, AndX, OrX, XorX, CurlyatX, CopyX, SinkhX, TraceX, IsX:
-      result = validateChildren(n, parent, [ExprChild, ExprChild])
-      consumed = true
-    of NotX, NegX, DerefX, AddrX, ParX, EmoveX, DestroyX, DupX, WasmovedX,
-        CompilesX, DeclaredX, DefinedX, AstToStrX, HighX, LowX, EnumtostrX,
-        InternalTypeNameX, FailedX:
-      result = validateChildren(n, parent, [ExprChild])
-      consumed = true
-    of SizeofX, AlignofX, NewrefX, DefaultobjX, DefaulttupX:
-      result = validateChildren(n, parent, [TypeChild])
-      consumed = true
-    of OffsetofX, InstanceofX, EnvpX:
-      result = validateChildren(n, parent, [TypeChild, ExprChild])
-      consumed = true
-    of TypeofX, FieldsX, FieldpairsX:
-      result = validateChildren(n, parent, [TypeChild, ExprChild], allowMore = true)
-      consumed = true
-    of CallX, CmdX, HcallX, ProccallX, CallstrlitX:
-      result = validateChildren(n, parent, [ExprChild], allowMore = true)
-      consumed = true
-    else:
-      discard
-  elif parent.stmtKind != NoStmt:
-    let stmt = parent.stmtKind
-    case stmt
-    of VarS, LetS, ConstS, GvarS, TvarS, GletS, TletS, CursorS, ProcS,
-        FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
-        ResultS:
-      result = validateChildren(n, parent, [SymDefChild], allowMore = true)
-      consumed = true
-    of BlockS:
-      result = validateChildren(n, parent, [AnyChild, StmtChild])
-      consumed = true
-    else:
-      discard
-  elif parent.typeKind != NoType:
-    let typ = parent.typeKind
-    case typ
-    of ArrayT, RangetypeT:
-      result = validateChildren(n, parent, [TypeChild, ExprChild, ExprChild])
-      consumed = true
-    of PtrT, RefT, MutT, OutT, LentT, SinkT, DistinctT, TypedescT,
-        UarrayT, SetT:
-      result = validateChildren(n, parent, [TypeChild])
-      consumed = true
-    of ObjectT:
-      result = validateChildren(n, parent, [TypeChild], allowMore = true)
-      consumed = true
-    else:
-      discard
-  elif parent.substructureKind != NoSub:
-    let other = parent.substructureKind
-    case other
-    of RangeU:
-      result = validateChildren(n, parent, [ExprChild, ExprChild])
-      consumed = true
-    of ParamU, TypevarU, FldU, EfldU:
-      result = validateChildren(n, parent, [SymDefChild], allowMore = true)
-      consumed = true
-    else:
-      discard
-  elif parent.pragmaKind != NoPragma:
-    let pragma = parent.pragmaKind
-    case pragma
-    of PragmaP:
-      result = validateChildren(n, parent, [SymDefChild], allowMore = true)
-      consumed = true
-    else:
-      discard
+proc validateExpr(n: var Cursor; parent: Cursor): ValidationError =
+  case parent.exprKind
+  of AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
+      EqX, NeqX, LeX, LtX, AshrX, EqsetX, LesetX, LtsetX, InsetX:
+    result = validateChildren(n, parent, [TypeChild, ExprChild, ExprChild])
+  of BitnotX, CastX, ConvX, HconvX, DconvX, CardX:
+    result = validateChildren(n, parent, [TypeChild, ExprChild])
+  of AtX, PatX, AndX, OrX, XorX, CurlyatX, CopyX, SinkhX, TraceX, IsX:
+    result = validateChildren(n, parent, [ExprChild, ExprChild])
+  of NotX, NegX, DerefX, AddrX, ParX, EmoveX, DestroyX, DupX, WasmovedX,
+      CompilesX, DeclaredX, DefinedX, AstToStrX, HighX, LowX, EnumtostrX,
+      InternalTypeNameX, FailedX:
+    result = validateChildren(n, parent, [ExprChild])
+  of SizeofX, AlignofX, NewrefX, DefaultobjX, DefaulttupX:
+    result = validateChildren(n, parent, [TypeChild])
+  of OffsetofX, InstanceofX, EnvpX:
+    result = validateChildren(n, parent, [TypeChild, ExprChild])
+  of TypeofX, FieldsX, FieldpairsX:
+    result = validateChildren(n, parent, [TypeChild, ExprChild], allowMore = true)
+  of CallX, CmdX, HcallX, ProccallX, CallstrlitX:
+    result = validateChildren(n, parent, [ExprChild], allowMore = true)
+  else:
+    consumeRemainingChildren(n)
 
-  if not consumed and not result.found:
+proc validateStmt(n: var Cursor; parent: Cursor): ValidationError =
+  case parent.stmtKind
+  of VarS, LetS, ConstS, GvarS, TvarS, GletS, TletS, CursorS, ProcS,
+      FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
+      ResultS:
+    result = validateChildren(n, parent, [SymDefChild], allowMore = true)
+  of BlockS:
+    result = validateChildren(n, parent, [AnyChild, StmtChild])
+  else:
+    consumeRemainingChildren(n)
+
+proc validateType(n: var Cursor; parent: Cursor): ValidationError =
+  case parent.typeKind
+  of ArrayT, RangetypeT:
+    result = validateChildren(n, parent, [TypeChild, ExprChild, ExprChild])
+  of PtrT, RefT, MutT, OutT, LentT, SinkT, DistinctT, TypedescT,
+      UarrayT, SetT:
+    result = validateChildren(n, parent, [TypeChild])
+  of ObjectT:
+    result = validateChildren(n, parent, [TypeChild], allowMore = true)
+  else:
+    consumeRemainingChildren(n)
+
+proc validateSubstructure(n: var Cursor; parent: Cursor): ValidationError =
+  case parent.substructureKind
+  of RangeU:
+    result = validateChildren(n, parent, [ExprChild, ExprChild])
+  of ParamU, TypevarU, FldU, EfldU:
+    result = validateChildren(n, parent, [SymDefChild], allowMore = true)
+  else:
+    consumeRemainingChildren(n)
+
+proc validatePragma(n: var Cursor; parent: Cursor): ValidationError =
+  case parent.pragmaKind
+  of PragmaP:
+    result = validateChildren(n, parent, [SymDefChild], allowMore = true)
+  else:
+    consumeRemainingChildren(n)
+
+proc validateShape(n: var Cursor): ValidationError =
+  let parent = n
+  inc n
+  if parent.exprKind != NoExpr:
+    result = validateExpr(n, parent)
+  elif parent.stmtKind != NoStmt:
+    result = validateStmt(n, parent)
+  elif parent.typeKind != NoType:
+    result = validateType(n, parent)
+  elif parent.substructureKind != NoSub:
+    result = validateSubstructure(n, parent)
+  elif parent.pragmaKind != NoPragma:
+    result = validatePragma(n, parent)
+  else:
     consumeRemainingChildren(n)
 
 proc validateConstructedNode(n: Cursor): ValidationError =
