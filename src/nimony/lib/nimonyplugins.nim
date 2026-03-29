@@ -430,14 +430,10 @@ proc errorTree*(msg: string; at, orig: Node): Tree =
 
 template isSupportedTag(n: Node): bool =
   let raw = tagEnum(n.cursor)
-  rawTagIsNimonyExpr(raw) or
-  rawTagIsNimonyStmt(raw) or
-  rawTagIsNimonyType(raw) or
-  rawTagIsNimonyOther(raw) or
-  rawTagIsNimonyPragma(raw) or
-  rawTagIsNimonySym(raw) or
-  rawTagIsControlFlowKind(raw) or
-  rawTagIsCallConv(raw)
+  rawTagIsNimonyExpr(raw) or rawTagIsNimonyStmt(raw) or
+  rawTagIsNimonyType(raw) or rawTagIsNimonyOther(raw) or
+  rawTagIsNimonyPragma(raw) or rawTagIsNimonySym(raw) or
+  rawTagIsControlFlowKind(raw) or rawTagIsCallConv(raw)
 
 proc describeShape(shape: ChildShape): string =
   case shape
@@ -535,77 +531,74 @@ proc validateShape(n: Node): ValidationError =
     case expr
     of AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
         EqX, NeqX, LeX, LtX, AshrX, EqsetX, LesetX, LtsetX, InsetX:
-      return validateChildren(n, [TypeChild, ExprChild, ExprChild])
+      result = validateChildren(n, [TypeChild, ExprChild, ExprChild])
     of BitnotX, CastX, ConvX, HconvX, DconvX, CardX:
-      return validateChildren(n, [TypeChild, ExprChild])
+      result = validateChildren(n, [TypeChild, ExprChild])
     of AtX, PatX, AndX, OrX, XorX, CurlyatX, CopyX, SinkhX, TraceX, IsX:
-      return validateChildren(n, [ExprChild, ExprChild])
+      result = validateChildren(n, [ExprChild, ExprChild])
     of NotX, NegX, DerefX, AddrX, ParX, EmoveX, DestroyX, DupX, WasmovedX,
         CompilesX, DeclaredX, DefinedX, AstToStrX, HighX, LowX, EnumtostrX,
         InternalTypeNameX, FailedX:
-      return validateChildren(n, [ExprChild])
+      result = validateChildren(n, [ExprChild])
     of SizeofX, AlignofX, NewrefX, DefaultobjX, DefaulttupX:
-      return validateChildren(n, [TypeChild])
+      result = validateChildren(n, [TypeChild])
     of OffsetofX, InstanceofX, EnvpX:
-      return validateChildren(n, [TypeChild, ExprChild])
+      result = validateChildren(n, [TypeChild, ExprChild])
     of TypeofX, FieldsX, FieldpairsX:
-      return validateChildren(n, [TypeChild, ExprChild], allowMore = true)
+      result = validateChildren(n, [TypeChild, ExprChild], allowMore = true)
     of CallX, CmdX, HcallX, ProccallX, CallstrlitX:
-      return validateChildren(n, [ExprChild], allowMore = true)
+      result = validateChildren(n, [ExprChild], allowMore = true)
     else:
-      return validateAllChildren(n)
-
-  let stmt = n.stmtKind
-  if stmt != NoStmt:
+      result = validateAllChildren(n)
+  elif n.stmtKind != NoStmt:
+    let stmt = n.stmtKind
     case stmt
     of VarS, LetS, ConstS, GvarS, TvarS, GletS, TletS, CursorS, ProcS,
         FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
         ResultS:
-      return validateChildren(n, [SymDefChild], allowMore = true)
+      result = validateChildren(n, [SymDefChild], allowMore = true)
     of BlockS:
-      return validateChildren(n, [AnyChild, StmtChild])
+      result = validateChildren(n, [AnyChild, StmtChild])
     else:
-      return validateAllChildren(n)
-
-  let typ = n.typeKind
-  if typ != NoType:
+      result = validateAllChildren(n)
+  elif n.typeKind != NoType:
+    let typ = n.typeKind
     case typ
     of ArrayT, RangetypeT:
-      return validateChildren(n, [TypeChild, ExprChild, ExprChild])
+      result = validateChildren(n, [TypeChild, ExprChild, ExprChild])
     of PtrT, RefT, MutT, OutT, LentT, SinkT, DistinctT, TypedescT,
         UarrayT, SetT:
-      return validateChildren(n, [TypeChild])
+      result = validateChildren(n, [TypeChild])
     of ObjectT:
-      return validateChildren(n, [TypeChild], allowMore = true)
+      result = validateChildren(n, [TypeChild], allowMore = true)
     else:
-      return validateAllChildren(n)
-
-  let other = n.otherKind
-  if other != NoSub:
+      result = validateAllChildren(n)
+  elif n.otherKind != NoSub:
+    let other = n.otherKind
     case other
     of RangeU:
-      return validateChildren(n, [ExprChild, ExprChild])
+      result = validateChildren(n, [ExprChild, ExprChild])
     of ParamU, TypevarU, FldU, EfldU:
-      return validateChildren(n, [SymDefChild], allowMore = true)
+      result = validateChildren(n, [SymDefChild], allowMore = true)
     else:
-      return validateAllChildren(n)
-
-  let pragma = n.pragmaKind
-  if pragma != NoPragma:
+      result = validateAllChildren(n)
+  elif n.pragmaKind != NoPragma:
+    let pragma = n.pragmaKind
     case pragma
     of PragmaP:
-      return validateChildren(n, [SymDefChild], allowMore = true)
+      result = validateChildren(n, [SymDefChild], allowMore = true)
     else:
-      return validateAllChildren(n)
+      result = validateAllChildren(n)
 
 proc validateConstructedNode(n: Node): ValidationError =
   result = default(ValidationError)
   if n.kind == ParLe and n.cursor.tagId != ErrT:
     if not isSupportedTag(n):
-      return validationError(n.info, "unsupported NIF tag '" & n.tagText & "'", n.cursor)
-    return validateShape(n)
+      result = validationError(n.info, "unsupported NIF tag '" & n.tagText & "'", n.cursor)
+    else:
+      result = validateShape(n)
 
-proc validateConstructedTree(tree: Tree): Tree =
+proc validateConstructedTree(tree: sink Tree): Tree =
   if tree.isEmpty:
     return tree
   let n = snapshot(tree)
@@ -613,7 +606,7 @@ proc validateConstructedTree(tree: Tree): Tree =
   if err.found:
     result = createErrorTree(err.info, err.msg, err.orig)
   else:
-    result = tree
+    result = ensureMove n.tree
 
 proc parseNifFragment(text: string): Tree =
   validateConstructedTree(createTree(parseNifBuffer(text)))
