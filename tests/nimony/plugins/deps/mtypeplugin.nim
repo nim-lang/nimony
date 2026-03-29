@@ -1,8 +1,6 @@
 
 import std / [os, strutils, tables]
 
-include ".." / ".." / ".." / ".." / src / lib / nifprelude
-import ".." / ".." / ".." / ".." / src / nimony / nimony_model
 import nimonyplugins
 
 
@@ -45,7 +43,7 @@ proc trAsgn(n: var Node, o: var Tree) =
         instance = n
         inc n
         if n.kind == Symbol:
-          fieldName = pool.syms[n.symId]
+          fieldName = n.symText
           fieldName.delete fieldName.find('.')..fieldName.high
           emitOnChanged = true
   let info = n.info
@@ -72,7 +70,7 @@ proc trTemplate(n: var Node, o: var Tree) =
   traverse n:
     inc n
     let nameSym = n.symId
-    let name = pool.syms[n.symId]
+    let name = n.symText
     if name.startsWith("onChanged"):
       skip n, 4
       inc n  # params
@@ -118,7 +116,7 @@ proc tr(n: Node): Tree =
 
 
 var inp = loadPluginInput()
-var inpTypes = loadPluginInput(paramStr(3))
+var inpTypes = loadPluginInput(os.paramStr(3))
 
 typesTr(inpTypes)
 saveTree tr(inp), os.paramStr(2)

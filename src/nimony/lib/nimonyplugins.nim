@@ -1,6 +1,6 @@
 ## API for plugins.
 
-import std / syncio
+import std / [assertions, hashes, syncio]
 from std / os import paramStr
 import ".." / ".." / "lib" / [nifcursors, nifstreams, lineinfos, bitabs]
 
@@ -20,12 +20,26 @@ type
   LineInfo* = PackedLineInfo ## Packed source location metadata attached to NIF
                              ## tokens. Use `NoLineInfo` for synthetic output.
 
+  SourcePos* = object ## Decoded source position for plugin-facing APIs.
+    line*: int
+    col*: int
+
   Node* = object ## Read handle into a frozen NIF tree.
                  ## A `Node` behaves like a cursor positioned at one token or
                  ## subtree. Copying a `Node` retains the underlying tree
                  ## snapshot automatically.
     owner: Tree
     cursor: Cursor
+
+  SymId* = object ## Stable plugin-facing symbol handle.
+                  ## This intentionally avoids exposing the compiler's raw
+                  ## numeric symbol ids as plain integers.
+    raw: nifstreams.SymId
+
+  TagId* = nifstreams.TagId ## Raw plugin-facing tag id.
+                            ## Tag ids stay numeric because plugins read and
+                            ## write NIF as text; these ordinals never cross
+                            ## process boundaries.
 
 proc `=destroy`*(x: Tree) =
   if x.p != nil:
@@ -78,13 +92,11 @@ proc `=dup`*(src: Node): Node =
 proc initPayload(buf: sink TokenBuf): ptr TreePayload =
   result = cast[ptr TreePayload](alloc0(sizeof(TreePayload)))
   result.counter = 0
-  result.buf = move(buf)
+  result.buf = ensureMove(buf)
 
 proc copyBuffer(buf: TokenBuf): TokenBuf =
   result = createTokenBuf(max(buf.len, 4))
   result.add buf
-
-proc prepareMutation(t: var Tree)
 
 proc hasSubtree(n: Node): bool {.inline.} =
   hasCurrentToken(n.cursor) and n.cursor.kind != ParRi
@@ -118,30 +130,49 @@ proc isValid*(info: LineInfo): bool {.inline.} =
 
 proc filePath*(info: LineInfo): string =
   ## Returns the source path stored in `info`, or `""` when unavailable.
-  let rawInfo = unpack(pool.man, info)
-  if info.isValid and rawInfo.file.isValid:
-    result = pool.files[rawInfo.file]
+  if info.isValid:
+    let rawInfo = unpack(pool.man, info)
+    if rawInfo.file.isValid:
+      result = pool.files[rawInfo.file]
+    else:
+      result = ""
   else:
     result = ""
 
-proc line*(info: LineInfo): int =
-  ## Returns the 1-based line stored in `info`, or 0 when unavailable.
+proc lineCol*(info: LineInfo): SourcePos =
+  ## Returns the 1-based `(line, col)` stored in `info`, or `(0, 0)` when
+  ## unavailable.
   if info.isValid:
-    result = int(unpack(pool.man, info).line)
+    let rawInfo = unpack(pool.man, info)
+    result = SourcePos(line: int(rawInfo.line), col: int(rawInfo.col))
   else:
-    result = 0
+    result = SourcePos(line: 0, col: 0)
 
-proc col*(info: LineInfo): int =
-  ## Returns the 1-based column stored in `info`, or 0 when unavailable.
-  if info.isValid:
-    result = int(unpack(pool.man, info).col)
-  else:
-    result = 0
+proc `==`*(a, b: SymId): bool {.inline.} =
+  a.raw == b.raw
+
+proc hash*(x: SymId): Hash {.inline.} =
+  hash(x.raw)
+
+proc `$`*(x: SymId): string {.inline.} =
+  pool.syms[x.raw]
+
+proc `$`*(x: TagId): string {.inline.} =
+  ## Renders `x` as its textual NIF tag name.
+  pool.tags[x]
+
+proc symText*(s: SymId): string {.inline.} =
+  ## Returns the symbol text stored in the plugin-facing symbol handle.
+  pool.syms[s.raw]
+
+proc tagText*(t: TagId): string {.inline.} =
+  ## Returns the textual NIF tag name for `t`.
+  pool.tags[t]
 
 proc symId*(n: Node): SymId {.inline.} =
-  ## Returns the symbol id of the current token.
+  ## Returns the symbol id of the current token as an opaque handle.
   ## The current token must be a `Symbol` or `SymbolDef`.
-  n.cursor.symId
+  SymId(raw: n.cursor.symId)
 
 proc symText*(n: Node): string {.inline.} =
   ## Returns the symbol text of the current `Symbol` or `SymbolDef` token.
@@ -199,7 +230,7 @@ proc createTree*(): Tree =
   ## Creates an empty mutable `Tree`.
   createTree(createTokenBuf())
 
-proc snapshot*(tree: Tree): Node =
+proc snapshot*(tree: sink Tree): Node =
   ## Returns a read-only snapshot positioned at the first top-level token of
   ## `tree`.
   ##
@@ -208,7 +239,7 @@ proc snapshot*(tree: Tree): Node =
   ##
   ## `tree` must not be empty; use `isEmpty` first when that is expected.
   assert not tree.isEmpty, "cannot snapshot empty Tree"
-  result = Node(owner: tree, cursor: default(Cursor))
+  result = Node(owner: tree)
   result.cursor = beginRead(result.owner.p[].buf)
 
 template withTree*(t: var Tree; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma; info: LineInfo; body: untyped) =
@@ -229,14 +260,21 @@ proc tagText*(n: Node): string {.inline.} =
   pool.tags[n.cursor.tagId]
 
 proc tag*(n: Node): TagId {.inline.} =
-  ## Returns the raw tag id for the current tree node, or `ErrT` if the current
-  ## token is not a `ParLe`.
+  ## Returns the raw tag id for the current tree node, or `ErrT` if the
+  ## current token is not a `ParLe`.
   n.cursor.tag
 
 proc addParLe*(t: var Tree; tag: TagId; info: LineInfo = NoLineInfo) =
-  ## Appends a raw opening tree token with tag `tag` to `t`.
+  ## Appends an opening tree token with raw tag id `tag` to `t`.
+  ## Use `addParLe(tagText, ...)` when constructing nodes from textual tag
+  ## names instead of existing ids.
   prepareMutation(t)
   t.p[].buf.addParLe(tag, info)
+
+proc addParLe*(t: var Tree; tag: string; info: LineInfo = NoLineInfo) =
+  ## Appends an opening tree token with textual tag `tag` to `t`.
+  prepareMutation(t)
+  t.p[].buf.addParLe(pool.tags.getOrIncl(tag), info)
 
 proc addParRi*(t: var Tree) =
   ## Appends a closing tree token (`)`) to `t`.
@@ -296,9 +334,14 @@ proc addFloatLit*(t: var Tree; f: BiggestFloat) =
   t.p[].buf.addFloatLit(f)
 
 proc addSymUse*(t: var Tree; s: SymId; info: LineInfo = NoLineInfo) =
-  ## Appends a symbol-use atom to `t`.
+  ## Appends a symbol-use atom named by the opaque handle `s` to `t`.
   prepareMutation(t)
-  t.p[].buf.addSymUse(s, info)
+  t.p[].buf.addSymUse(s.raw, info)
+
+proc addSymUse*(t: var Tree; s: string; info: LineInfo = NoLineInfo) =
+  ## Appends a symbol-use atom named `s` to `t`.
+  prepareMutation(t)
+  t.p[].buf.addSymUse(pool.syms.getOrIncl(s), info)
 
 proc addEmptyNode*(t: var Tree; info: LineInfo = NoLineInfo) =
   ## Appends a single empty placeholder node (`.`) to `t`.
@@ -387,7 +430,7 @@ proc isNifIdentStart(c: char): bool {.inline.} =
 proc isNifIdentChar(c: char): bool {.inline.} =
   c in {'a'..'z', 'A'..'Z', '0'..'9', '_'}
 
-proc validateConstructedTree(tree: Tree): Tree
+proc validateConstructedTree(tree: sink Tree): Tree
 
 proc parseNifBuffer(text: string): TokenBuf =
   result = parseFromBuffer(text, "")
@@ -444,16 +487,12 @@ proc errorTree*(msg: string; at, orig: Node): Tree =
   else:
     createErrorTree(errorInfo(at), msg)
 
-template isSupportedTag(n: Node): bool =
-  let raw = tagEnum(n.cursor)
-  rawTagIsNimonyExpr(raw) or
-  rawTagIsNimonyStmt(raw) or
-  rawTagIsNimonyType(raw) or
-  rawTagIsNimonyOther(raw) or
-  rawTagIsNimonyPragma(raw) or
-  rawTagIsNimonySym(raw) or
-  rawTagIsControlFlowKind(raw) or
-  rawTagIsCallConv(raw)
+template isSupportedTag(n: Cursor): bool =
+  let raw = tagEnum(n)
+  rawTagIsNimonyExpr(raw) or rawTagIsNimonyStmt(raw) or
+  rawTagIsNimonyType(raw) or rawTagIsNimonyOther(raw) or
+  rawTagIsNimonyPragma(raw) or rawTagIsNimonySym(raw) or
+  rawTagIsControlFlowKind(raw) or rawTagIsCallConv(raw)
 
 proc describeShape(shape: ChildShape): string =
   case shape
@@ -468,7 +507,19 @@ proc describeShape(shape: ChildShape): string =
   of StringLitChild: "string literal"
   of CharLitChild: "character literal"
 
-proc matchesShape(n: Node; shape: ChildShape): bool =
+proc tagText(n: Cursor): string {.inline.} =
+  pool.tags[n.tagId]
+
+proc hasSubtree(n: Cursor): bool {.inline.} =
+  hasCurrentToken(n) and n.kind != ParRi
+
+proc errorInfo(n: Cursor): PackedLineInfo =
+  if hasSubtree(n):
+    n.info
+  else:
+    NoLineInfo
+
+proc matchesShape(n: Cursor; shape: ChildShape): bool =
   if n.kind == ParLe and n.tagId == ErrT:
     return true
   case shape
@@ -477,19 +528,18 @@ proc matchesShape(n: Node; shape: ChildShape): bool =
   of ExprChild:
     case n.kind
     of ParLe:
-      result = rawTagIsNimonyExpr(tagEnum(n.cursor))
+      result = rawTagIsNimonyExpr(tagEnum(n))
     of Symbol, Ident, IntLit, UIntLit, FloatLit, StringLit, CharLit:
       result = true
     else:
       result = false
   of StmtChild:
     result = n.kind == ParLe and
-      (rawTagIsNimonyStmt(tagEnum(n.cursor)) or rawTagIsControlFlowKind(tagEnum(n.cursor)))
+      (rawTagIsNimonyStmt(tagEnum(n)) or rawTagIsControlFlowKind(tagEnum(n)))
   of TypeChild:
-    result = n.kind == DotToken or
-      (n.kind == ParLe and rawTagIsNimonyType(tagEnum(n.cursor)))
+    result = n.kind == DotToken or (n.kind == ParLe and rawTagIsNimonyType(tagEnum(n)))
   of OtherChild:
-    result = n.kind == ParLe and rawTagIsNimonyOther(tagEnum(n.cursor))
+    result = n.kind == ParLe and rawTagIsNimonyOther(tagEnum(n))
   of SymUseChild:
     result = n.kind in {Symbol, Ident}
   of SymDefChild:
@@ -501,135 +551,151 @@ proc matchesShape(n: Node; shape: ChildShape): bool =
   of CharLitChild:
     result = n.kind == CharLit
 
-proc validateConstructedNode(n: Node): ValidationError
+proc consumeRemainingChildren(n: var Cursor) =
+  while n.kind != ParRi:
+    skip n
+  inc n
 
-proc validateAllChildren(n: Node): ValidationError =
+proc validateChildren(n: var Cursor; parent: Cursor; shapes: openArray[ChildShape];
+    allowMore = false): ValidationError =
   result = default(ValidationError)
-  var child = n
-  inc child
-  while child.kind != ParRi:
-    result = validateConstructedNode(child)
-    if result.found:
-      return
-    skip child
-
-proc validateChildren(n: Node; shapes: openArray[ChildShape]; allowMore = false): ValidationError =
-  result = default(ValidationError)
-  var child = n
-  inc child
   for i in 0 ..< shapes.len:
-    if child.kind == ParRi:
-      return validationError(n.info,
-        "missing child " & $(i + 1) & " for '" & n.tagText &
-        "': expected " & describeShape(shapes[i]),
-        n.cursor)
-    if not matchesShape(child, shapes[i]):
-      return validationError(child.info,
-        "invalid child " & $(i + 1) & " for '" & n.tagText &
-        "': expected " & describeShape(shapes[i]),
-        n.cursor)
-    result = validateConstructedNode(child)
-    if result.found:
-      return
-    skip child
+    if n.kind == ParRi:
+      return validationError(parent.info,
+        "missing child " & $(i + 1) & " for '" & parent.tagText &
+        "': expected " & describeShape(shapes[i]), parent)
+    if not matchesShape(n, shapes[i]):
+      return validationError(errorInfo(n),
+        "invalid child " & $(i + 1) & " for '" & parent.tagText &
+        "': expected " & describeShape(shapes[i]), parent)
+    skip n
 
-  if not allowMore and child.kind != ParRi:
-    return validationError(child.info,
-      "unexpected child " & $(shapes.len + 1) & " for '" & n.tagText & "'",
-      n.cursor)
+  if not allowMore and n.kind != ParRi:
+    return validationError(errorInfo(n),
+      "unexpected child " & $(shapes.len + 1) & " for '" & parent.tagText & "'", parent)
 
-  while child.kind != ParRi:
-    result = validateConstructedNode(child)
-    if result.found:
-      return
-    skip child
+  consumeRemainingChildren(n)
 
-proc validateShape(n: Node): ValidationError =
+proc validateExpr(n: var Cursor; parent: Cursor): ValidationError =
   result = default(ValidationError)
-  let expr = n.exprKind
-  if expr != NoExpr:
-    case expr
-    of AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
-        EqX, NeqX, LeX, LtX, AshrX, EqsetX, LesetX, LtsetX, InsetX:
-      return validateChildren(n, [TypeChild, ExprChild, ExprChild])
-    of BitnotX, CastX, ConvX, HconvX, DconvX, CardX:
-      return validateChildren(n, [TypeChild, ExprChild])
-    of AtX, PatX, AndX, OrX, XorX, CurlyatX, CopyX, SinkhX, TraceX, IsX:
-      return validateChildren(n, [ExprChild, ExprChild])
-    of NotX, NegX, DerefX, AddrX, ParX, EmoveX, DestroyX, DupX, WasmovedX,
-        CompilesX, DeclaredX, DefinedX, AstToStrX, HighX, LowX, EnumtostrX,
-        InternalTypeNameX, FailedX:
-      return validateChildren(n, [ExprChild])
-    of SizeofX, AlignofX, NewrefX, DefaultobjX, DefaulttupX:
-      return validateChildren(n, [TypeChild])
-    of OffsetofX, InstanceofX, EnvpX:
-      return validateChildren(n, [TypeChild, ExprChild])
-    of TypeofX, FieldsX, FieldpairsX:
-      return validateChildren(n, [TypeChild, ExprChild], allowMore = true)
-    of CallX, CmdX, HcallX, ProccallX, CallstrlitX:
-      return validateChildren(n, [ExprChild], allowMore = true)
-    else:
-      return validateAllChildren(n)
+  case parent.exprKind
+  of AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
+      EqX, NeqX, LeX, LtX, AshrX, EqsetX, LesetX, LtsetX, InsetX:
+    result = validateChildren(n, parent, [TypeChild, ExprChild, ExprChild])
+  of BitnotX, CastX, ConvX, HconvX, DconvX, CardX:
+    result = validateChildren(n, parent, [TypeChild, ExprChild])
+  of AtX, PatX, AndX, OrX, XorX, CurlyatX, CopyX, SinkhX, TraceX, IsX:
+    result = validateChildren(n, parent, [ExprChild, ExprChild])
+  of NotX, NegX, DerefX, AddrX, ParX, EmoveX, DestroyX, DupX, WasmovedX,
+      CompilesX, DeclaredX, DefinedX, AstToStrX, HighX, LowX, EnumtostrX,
+      InternalTypeNameX, FailedX:
+    result = validateChildren(n, parent, [ExprChild])
+  of SizeofX, AlignofX, NewrefX, DefaultobjX, DefaulttupX:
+    result = validateChildren(n, parent, [TypeChild])
+  of OffsetofX, InstanceofX, EnvpX:
+    result = validateChildren(n, parent, [TypeChild, ExprChild])
+  of TypeofX, FieldsX, FieldpairsX:
+    result = validateChildren(n, parent, [TypeChild, ExprChild], allowMore = true)
+  of CallX, CmdX, HcallX, ProccallX, CallstrlitX:
+    result = validateChildren(n, parent, [ExprChild], allowMore = true)
+  else:
+    consumeRemainingChildren(n)
 
-  let stmt = n.stmtKind
-  if stmt != NoStmt:
-    case stmt
-    of VarS, LetS, ConstS, GvarS, TvarS, GletS, TletS, CursorS, ProcS,
-        FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
-        ResultS:
-      return validateChildren(n, [SymDefChild], allowMore = true)
-    of BlockS:
-      return validateChildren(n, [AnyChild, StmtChild])
-    else:
-      return validateAllChildren(n)
-
-  let typ = n.typeKind
-  if typ != NoType:
-    case typ
-    of ArrayT, RangetypeT:
-      return validateChildren(n, [TypeChild, ExprChild, ExprChild])
-    of PtrT, RefT, MutT, OutT, LentT, SinkT, DistinctT, TypedescT,
-        UarrayT, SetT:
-      return validateChildren(n, [TypeChild])
-    of ObjectT:
-      return validateChildren(n, [TypeChild], allowMore = true)
-    else:
-      return validateAllChildren(n)
-
-  let other = n.otherKind
-  if other != NoSub:
-    case other
-    of RangeU:
-      return validateChildren(n, [ExprChild, ExprChild])
-    of ParamU, TypevarU, FldU, EfldU:
-      return validateChildren(n, [SymDefChild], allowMore = true)
-    else:
-      return validateAllChildren(n)
-
-  let pragma = n.pragmaKind
-  if pragma != NoPragma:
-    case pragma
-    of PragmaP:
-      return validateChildren(n, [SymDefChild], allowMore = true)
-    else:
-      return validateAllChildren(n)
-
-proc validateConstructedNode(n: Node): ValidationError =
+proc validateStmt(n: var Cursor; parent: Cursor): ValidationError =
   result = default(ValidationError)
-  if n.kind == ParLe and n.tagId != ErrT:
-    if not isSupportedTag(n):
-      return validationError(n.info, "unsupported NIF tag '" & n.tagText & "'", n.cursor)
-    return validateShape(n)
+  case parent.stmtKind
+  of VarS, LetS, ConstS, GvarS, TvarS, GletS, TletS, CursorS, ProcS,
+      FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
+      ResultS:
+    result = validateChildren(n, parent, [SymDefChild], allowMore = true)
+  of BlockS:
+    result = validateChildren(n, parent, [AnyChild, StmtChild])
+  else:
+    consumeRemainingChildren(n)
 
-proc validateConstructedTree(tree: Tree): Tree =
+proc validateType(n: var Cursor; parent: Cursor): ValidationError =
+  result = default(ValidationError)
+  case parent.typeKind
+  of ArrayT, RangetypeT:
+    result = validateChildren(n, parent, [TypeChild, ExprChild, ExprChild])
+  of PtrT, RefT, MutT, OutT, LentT, SinkT, DistinctT, TypedescT,
+      UarrayT, SetT:
+    result = validateChildren(n, parent, [TypeChild])
+  of ObjectT:
+    result = validateChildren(n, parent, [TypeChild], allowMore = true)
+  else:
+    consumeRemainingChildren(n)
+
+proc validateSubstructure(n: var Cursor; parent: Cursor): ValidationError =
+  result = default(ValidationError)
+  case parent.substructureKind
+  of RangeU:
+    result = validateChildren(n, parent, [ExprChild, ExprChild])
+  of ParamU, TypevarU, FldU, EfldU:
+    result = validateChildren(n, parent, [SymDefChild], allowMore = true)
+  else:
+    consumeRemainingChildren(n)
+
+proc validatePragma(n: var Cursor; parent: Cursor): ValidationError =
+  result = default(ValidationError)
+  case parent.pragmaKind
+  of PragmaP:
+    result = validateChildren(n, parent, [SymDefChild], allowMore = true)
+  else:
+    consumeRemainingChildren(n)
+
+proc validateShape(n: Cursor): ValidationError =
+  result = default(ValidationError)
+  let parent = n
+  var child = n
+  inc child
+  if parent.exprKind != NoExpr:
+    result = validateExpr(child, parent)
+  elif parent.stmtKind != NoStmt:
+    result = validateStmt(child, parent)
+  elif parent.typeKind != NoType:
+    result = validateType(child, parent)
+  elif parent.substructureKind != NoSub:
+    result = validateSubstructure(child, parent)
+  elif parent.pragmaKind != NoPragma:
+    result = validatePragma(child, parent)
+  else:
+    consumeRemainingChildren(child)
+
+proc validateConstructedNode(n: var Cursor): ValidationError =
+  result = default(ValidationError)
+  var nested = 0
+  while true:
+    case n.kind
+    of ParLe:
+      if n.tagId != ErrT:
+        if not isSupportedTag(n):
+          return validationError(n.info, "unsupported NIF tag '" & n.tagText & "'", n)
+        result = validateShape(n)
+        if result.found:
+          return
+      inc nested
+      inc n
+    of ParRi:
+      dec nested
+      inc n
+      if nested == 0:
+        break
+    else:
+      inc n
+      if nested == 0:
+        break
+
+proc validateConstructedTree(tree: sink Tree): Tree =
   if tree.isEmpty:
     return tree
-  let n = snapshot(tree)
-  let err = validateConstructedNode(n)
+  var n = snapshot(tree)
+  var current = n.cursor
+  let err = validateConstructedNode(current)
   if err.found:
     result = createErrorTree(err.info, err.msg, err.orig)
-  else:
-    result = tree
+  else: 
+    result = ensureMove(n.owner)
 
 proc parseNifFragment(text: string): Tree =
   validateConstructedTree(createTree(parseNifBuffer(text)))
