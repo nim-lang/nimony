@@ -36,9 +36,10 @@ type
                   ## numeric symbol ids as plain integers.
     raw: nifstreams.SymId
 
-  TagId* = object ## Stable plugin-facing tag handle backed by text.
-                  ## This intentionally avoids exposing ordinal tag ids.
-    raw: string
+  TagId* = nifstreams.TagId ## Raw plugin-facing tag id.
+                            ## Tag ids stay numeric because plugins read and
+                            ## write NIF as text; these ordinals never cross
+                            ## process boundaries.
 
 proc `=destroy`*(x: Tree) =
   if x.p != nil:
@@ -150,28 +151,23 @@ proc lineCol*(info: LineInfo): SourcePos =
 proc `==`*(a, b: SymId): bool {.inline.} =
   a.raw == b.raw
 
-proc `==`*(a, b: TagId): bool {.inline.} =
-  a.raw == b.raw
-
 proc hash*(x: SymId): Hash {.inline.} =
-  hash(x.raw)
-
-proc hash*(x: TagId): Hash {.inline.} =
   hash(x.raw)
 
 proc `$`*(x: SymId): string {.inline.} =
   pool.syms[x.raw]
 
 proc `$`*(x: TagId): string {.inline.} =
-  x.raw
+  ## Renders `x` as its textual NIF tag name.
+  pool.tags[x]
 
 proc symText*(s: SymId): string {.inline.} =
   ## Returns the symbol text stored in the plugin-facing symbol handle.
   pool.syms[s.raw]
 
 proc tagText*(t: TagId): string {.inline.} =
-  ## Returns the tag text stored in the plugin-facing tag handle.
-  t.raw
+  ## Returns the textual NIF tag name for `t`.
+  pool.tags[t]
 
 proc symId*(n: Node): SymId {.inline.} =
   ## Returns the symbol id of the current token as an opaque handle.
@@ -255,27 +251,25 @@ template withTree*(t: var Tree; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOth
   t.p[].buf.addParRi()
 
 proc tagId*(n: Node): TagId {.inline.} =
-  ## Returns the raw tag id of the current token as an opaque string-backed
-  ## handle.
+  ## Returns the raw tag id of the current token.
   ## The current token must be a `ParLe`.
-  TagId(raw: pool.tags[n.cursor.tagId])
+  n.cursor.tagId
 
 proc tagText*(n: Node): string {.inline.} =
   ## Returns the tag text of the current `ParLe` token.
   pool.tags[n.cursor.tagId]
 
 proc tag*(n: Node): TagId {.inline.} =
-  ## Returns the raw tag id for the current tree node, or the textual `err`
-  ## tag if the current token is not a `ParLe`.
-  if n.kind == ParLe:
-    result = n.tagId
-  else:
-    result = TagId(raw: "err")
+  ## Returns the raw tag id for the current tree node, or `ErrT` if the
+  ## current token is not a `ParLe`.
+  n.cursor.tag
 
 proc addParLe*(t: var Tree; tag: TagId; info: LineInfo = NoLineInfo) =
-  ## Appends an opening tree token with tag `tag` to `t`.
+  ## Appends an opening tree token with raw tag id `tag` to `t`.
+  ## Use `addParLe(tagText, ...)` when constructing nodes from textual tag
+  ## names instead of existing ids.
   prepareMutation(t)
-  t.p[].buf.addParLe(pool.tags.getOrIncl(tag.raw), info)
+  t.p[].buf.addParLe(tag, info)
 
 proc addParLe*(t: var Tree; tag: string; info: LineInfo = NoLineInfo) =
   ## Appends an opening tree token with textual tag `tag` to `t`.
