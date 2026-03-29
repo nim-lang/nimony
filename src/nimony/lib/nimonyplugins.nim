@@ -1,6 +1,6 @@
 ## API for plugins.
 
-import std / [assertions, syncio]
+import std / [assertions, hashes, syncio]
 from std / os import paramStr
 import ".." / ".." / "lib" / [nifcursors, nifstreams, lineinfos, bitabs]
 
@@ -30,6 +30,15 @@ type
                  ## snapshot automatically.
     owner: Tree
     cursor: Cursor
+
+  SymId* = object ## Stable plugin-facing symbol handle.
+                  ## This intentionally avoids exposing the compiler's raw
+                  ## numeric symbol ids as plain integers.
+    raw: nifstreams.SymId
+
+  TagId* = object ## Stable plugin-facing tag handle backed by text.
+                  ## This intentionally avoids exposing ordinal tag ids.
+    raw: string
 
 proc `=destroy`*(x: Tree) =
   if x.p != nil:
@@ -138,6 +147,37 @@ proc lineCol*(info: LineInfo): SourcePos =
   else:
     result = SourcePos(line: 0, col: 0)
 
+proc `==`*(a, b: SymId): bool {.inline.} =
+  a.raw == b.raw
+
+proc `==`*(a, b: TagId): bool {.inline.} =
+  a.raw == b.raw
+
+proc hash*(x: SymId): Hash {.inline.} =
+  hash(x.raw)
+
+proc hash*(x: TagId): Hash {.inline.} =
+  hash(x.raw)
+
+proc `$`*(x: SymId): string {.inline.} =
+  pool.syms[x.raw]
+
+proc `$`*(x: TagId): string {.inline.} =
+  x.raw
+
+proc symText*(s: SymId): string {.inline.} =
+  ## Returns the symbol text stored in the plugin-facing symbol handle.
+  pool.syms[s.raw]
+
+proc tagText*(t: TagId): string {.inline.} =
+  ## Returns the tag text stored in the plugin-facing tag handle.
+  t.raw
+
+proc symId*(n: Node): SymId {.inline.} =
+  ## Returns the symbol id of the current token as an opaque handle.
+  ## The current token must be a `Symbol` or `SymbolDef`.
+  SymId(raw: n.cursor.symId)
+
 proc symText*(n: Node): string {.inline.} =
   ## Returns the symbol text of the current `Symbol` or `SymbolDef` token.
   pool.syms[n.cursor.symId]
@@ -214,9 +254,28 @@ template withTree*(t: var Tree; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOth
   body
   t.p[].buf.addParRi()
 
+proc tagId*(n: Node): TagId {.inline.} =
+  ## Returns the raw tag id of the current token as an opaque string-backed
+  ## handle.
+  ## The current token must be a `ParLe`.
+  TagId(raw: pool.tags[n.cursor.tagId])
+
 proc tagText*(n: Node): string {.inline.} =
   ## Returns the tag text of the current `ParLe` token.
   pool.tags[n.cursor.tagId]
+
+proc tag*(n: Node): TagId {.inline.} =
+  ## Returns the raw tag id for the current tree node, or the textual `err`
+  ## tag if the current token is not a `ParLe`.
+  if n.kind == ParLe:
+    result = n.tagId
+  else:
+    result = TagId(raw: "err")
+
+proc addParLe*(t: var Tree; tag: TagId; info: LineInfo = NoLineInfo) =
+  ## Appends an opening tree token with tag `tag` to `t`.
+  prepareMutation(t)
+  t.p[].buf.addParLe(pool.tags.getOrIncl(tag.raw), info)
 
 proc addParLe*(t: var Tree; tag: string; info: LineInfo = NoLineInfo) =
   ## Appends an opening tree token with textual tag `tag` to `t`.
@@ -279,6 +338,11 @@ proc addFloatLit*(t: var Tree; f: BiggestFloat) =
   ## Appends a floating-point literal atom to `t`.
   prepareMutation(t)
   t.p[].buf.addFloatLit(f)
+
+proc addSymUse*(t: var Tree; s: SymId; info: LineInfo = NoLineInfo) =
+  ## Appends a symbol-use atom named by the opaque handle `s` to `t`.
+  prepareMutation(t)
+  t.p[].buf.addSymUse(s.raw, info)
 
 proc addSymUse*(t: var Tree; s: string; info: LineInfo = NoLineInfo) =
   ## Appends a symbol-use atom named `s` to `t`.
