@@ -20,6 +20,10 @@ type
   LineInfo* = PackedLineInfo ## Packed source location metadata attached to NIF
                              ## tokens. Use `NoLineInfo` for synthetic output.
 
+  SourcePos* = object ## Decoded source position for plugin-facing APIs.
+    line*: int
+    col*: int
+
   Node* = object ## Read handle into a frozen NIF tree.
                  ## A `Node` behaves like a cursor positioned at one token or
                  ## subtree. Copying a `Node` retains the underlying tree
@@ -125,14 +129,14 @@ proc filePath*(info: LineInfo): string =
   else:
     result = ""
 
-proc lineCol*(info: LineInfo): tuple[line, col: int] =
+proc lineCol*(info: LineInfo): SourcePos =
   ## Returns the 1-based `(line, col)` stored in `info`, or `(0, 0)` when
   ## unavailable.
   if info.isValid:
     let rawInfo = unpack(pool.man, info)
-    result = (line: int(rawInfo.line), col: int(rawInfo.col))
+    result = SourcePos(line: int(rawInfo.line), col: int(rawInfo.col))
   else:
-    result = (line: 0, col: 0)
+    result = SourcePos(line: 0, col: 0)
 
 proc symText*(n: Node): string {.inline.} =
   ## Returns the symbol text of the current `Symbol` or `SymbolDef` token.
