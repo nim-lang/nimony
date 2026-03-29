@@ -116,9 +116,12 @@ proc isValid*(info: LineInfo): bool {.inline.} =
 
 proc filePath*(info: LineInfo): string =
   ## Returns the source path stored in `info`, or `""` when unavailable.
-  let rawInfo = unpack(pool.man, info)
-  if info.isValid and rawInfo.file.isValid:
-    result = pool.files[rawInfo.file]
+  if info.isValid:
+    let rawInfo = unpack(pool.man, info)
+    if rawInfo.file.isValid:
+      result = pool.files[rawInfo.file]
+    else:
+      result = ""
   else:
     result = ""
 
@@ -126,8 +129,8 @@ proc lineCol*(info: LineInfo): tuple[line, col: int] =
   ## Returns the 1-based `(line, col)` stored in `info`, or `(0, 0)` when
   ## unavailable.
   if info.isValid:
-    let unpacked = unpack(pool.man, info)
-    result = (line: int(unpacked.line), col: int(unpacked.col))
+    let rawInfo = unpack(pool.man, info)
+    result = (line: int(rawInfo.line), col: int(rawInfo.col))
   else:
     result = (line: 0, col: 0)
 
