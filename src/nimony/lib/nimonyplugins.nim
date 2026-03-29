@@ -1,6 +1,6 @@
 ## API for plugins.
 
-import std / syncio
+import std / [assertions, syncio]
 from std / os import paramStr
 import ".." / ".." / "lib" / [nifcursors, nifstreams, lineinfos, bitabs]
 
@@ -512,6 +512,7 @@ proc validateChildren(n: var Cursor; parent: Cursor; shapes: openArray[ChildShap
   consumeRemainingChildren(n)
 
 proc validateExpr(n: var Cursor; parent: Cursor): ValidationError =
+  result = default(ValidationError)
   case parent.exprKind
   of AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
       EqX, NeqX, LeX, LtX, AshrX, EqsetX, LesetX, LtsetX, InsetX:
@@ -536,6 +537,7 @@ proc validateExpr(n: var Cursor; parent: Cursor): ValidationError =
     consumeRemainingChildren(n)
 
 proc validateStmt(n: var Cursor; parent: Cursor): ValidationError =
+  result = default(ValidationError)
   case parent.stmtKind
   of VarS, LetS, ConstS, GvarS, TvarS, GletS, TletS, CursorS, ProcS,
       FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
@@ -547,6 +549,7 @@ proc validateStmt(n: var Cursor; parent: Cursor): ValidationError =
     consumeRemainingChildren(n)
 
 proc validateType(n: var Cursor; parent: Cursor): ValidationError =
+  result = default(ValidationError)
   case parent.typeKind
   of ArrayT, RangetypeT:
     result = validateChildren(n, parent, [TypeChild, ExprChild, ExprChild])
@@ -559,6 +562,7 @@ proc validateType(n: var Cursor; parent: Cursor): ValidationError =
     consumeRemainingChildren(n)
 
 proc validateSubstructure(n: var Cursor; parent: Cursor): ValidationError =
+  result = default(ValidationError)
   case parent.substructureKind
   of RangeU:
     result = validateChildren(n, parent, [ExprChild, ExprChild])
@@ -568,6 +572,7 @@ proc validateSubstructure(n: var Cursor; parent: Cursor): ValidationError =
     consumeRemainingChildren(n)
 
 proc validatePragma(n: var Cursor; parent: Cursor): ValidationError =
+  result = default(ValidationError)
   case parent.pragmaKind
   of PragmaP:
     result = validateChildren(n, parent, [SymDefChild], allowMore = true)
@@ -575,6 +580,7 @@ proc validatePragma(n: var Cursor; parent: Cursor): ValidationError =
     consumeRemainingChildren(n)
 
 proc validateShape(n: Cursor): ValidationError =
+  result = default(ValidationError)
   let parent = n
   var child = n
   inc child
