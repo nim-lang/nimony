@@ -6,7 +6,7 @@ import ".." / ".." / "lib" / [nifcursors, nifstreams, lineinfos, bitabs]
 
 import ".." / [nimony_model]
 export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther,
-  NifKind, SymId, TagId, NoLineInfo
+  NifKind, NoLineInfo
 
 type
   TreePayload = object
@@ -137,11 +137,6 @@ proc col*(info: LineInfo): int =
   else:
     result = 0
 
-proc symId*(n: Node): SymId {.inline.} =
-  ## Returns the symbol id of the current token.
-  ## The current token must be a `Symbol` or `SymbolDef`.
-  n.cursor.symId
-
 proc symText*(n: Node): string {.inline.} =
   ## Returns the symbol text of the current `Symbol` or `SymbolDef` token.
   pool.syms[n.cursor.symId]
@@ -218,24 +213,14 @@ template withTree*(t: var Tree; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOth
   body
   t.p[].buf.addParRi()
 
-proc tagId*(n: Node): TagId {.inline.} =
-  ## Returns the raw tag id of the current token.
-  ## The current token must be a `ParLe`.
-  n.cursor.tagId
-
 proc tagText*(n: Node): string {.inline.} =
   ## Returns the tag text of the current `ParLe` token.
   pool.tags[n.cursor.tagId]
 
-proc tag*(n: Node): TagId {.inline.} =
-  ## Returns the raw tag id for the current tree node, or `ErrT` if the current
-  ## token is not a `ParLe`.
-  n.cursor.tag
-
-proc addParLe*(t: var Tree; tag: TagId; info: LineInfo = NoLineInfo) =
-  ## Appends a raw opening tree token with tag `tag` to `t`.
+proc addParLe*(t: var Tree; tag: string; info: LineInfo = NoLineInfo) =
+  ## Appends an opening tree token with textual tag `tag` to `t`.
   prepareMutation(t)
-  t.p[].buf.addParLe(tag, info)
+  t.p[].buf.addParLe(pool.tags.getOrIncl(tag), info)
 
 proc addParRi*(t: var Tree) =
   ## Appends a closing tree token (`)`) to `t`.
@@ -294,10 +279,10 @@ proc addFloatLit*(t: var Tree; f: BiggestFloat) =
   prepareMutation(t)
   t.p[].buf.addFloatLit(f)
 
-proc addSymUse*(t: var Tree; s: SymId; info: LineInfo = NoLineInfo) =
-  ## Appends a symbol-use atom to `t`.
+proc addSymUse*(t: var Tree; s: string; info: LineInfo = NoLineInfo) =
+  ## Appends a symbol-use atom named `s` to `t`.
   prepareMutation(t)
-  t.p[].buf.addSymUse(s, info)
+  t.p[].buf.addSymUse(pool.syms.getOrIncl(s), info)
 
 proc addEmptyNode*(t: var Tree; info: LineInfo = NoLineInfo) =
   ## Appends a single empty placeholder node (`.`) to `t`.
@@ -468,7 +453,7 @@ proc describeShape(shape: ChildShape): string =
   of CharLitChild: "character literal"
 
 proc matchesShape(n: Node; shape: ChildShape): bool =
-  if n.kind == ParLe and n.tagId == ErrT:
+  if n.kind == ParLe and n.cursor.tagId == ErrT:
     return true
   case shape
   of AnyChild:
@@ -615,7 +600,7 @@ proc validateShape(n: Node): ValidationError =
 
 proc validateConstructedNode(n: Node): ValidationError =
   result = default(ValidationError)
-  if n.kind == ParLe and n.tagId != ErrT:
+  if n.kind == ParLe and n.cursor.tagId != ErrT:
     if not isSupportedTag(n):
       return validationError(n.info, "unsupported NIF tag '" & n.tagText & "'", n.cursor)
     return validateShape(n)

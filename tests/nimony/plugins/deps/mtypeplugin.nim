@@ -15,16 +15,16 @@ proc skip*(n: var Node, count: int) =
   for _ in 0..<count:
     skip n
 
-var knownTypes: seq[SymId]
-var knownInstances: Table[SymId, SymId]  # name -> type
-var knownOnChanged: Table[SymId, SymId]  # type -> `onChanged` template sym
+var knownTypes: seq[string]
+var knownInstances: Table[string, string]  # name -> type
+var knownOnChanged: Table[string, string]  # type -> `onChanged` template sym
 
 
 proc typesTr(n: Node) =
   var n = n
   inc n
   while n.kind != ParRi:
-    knownTypes.add n.symId
+    knownTypes.add n.symText
     inc n
   inc n
 
@@ -41,18 +41,18 @@ proc trAsgn(n: var Node, o: var Tree) =
       traverse n:
         access = n
       inc n
-      if n.kind == Symbol and n.symId in knownInstances and knownInstances[n.symId] in knownOnChanged:
+      if n.kind == Symbol and n.symText in knownInstances and knownInstances[n.symText] in knownOnChanged:
         instance = n
         inc n
         if n.kind == Symbol:
-          fieldName = pool.syms[n.symId]
+          fieldName = n.symText
           fieldName.delete fieldName.find('.')..fieldName.high
           emitOnChanged = true
   let info = n.info
   o.takeTree(n)
   if emitOnChanged:
     o.withTree CallS, info:
-      o.addSymUse knownOnChanged[knownInstances[instance.symId]], info
+      o.addSymUse knownOnChanged[knownInstances[instance.symText]], info
       o.addSubtree(instance)
       o.addSubtree(access)
       o.addStrLit fieldName
@@ -61,18 +61,18 @@ proc trAsgn(n: var Node, o: var Tree) =
 proc trGvar(n: var Node, o: var Tree) =
   traverse n:
     inc n
-    let nameSym = n.symId
+    let nameSym = n.symText
     skip n, 3
-    if n.kind == Symbol and n.symId in knownTypes:
-      knownInstances[nameSym] = n.symId
+    if n.kind == Symbol and n.symText in knownTypes:
+      knownInstances[nameSym] = n.symText
   o.takeTree(n)
 
 
 proc trTemplate(n: var Node, o: var Tree) =
   traverse n:
     inc n
-    let nameSym = n.symId
-    let name = pool.syms[n.symId]
+    let nameSym = n.symText
+    let name = n.symText
     if name.startsWith("onChanged"):
       skip n, 4
       inc n  # params
@@ -81,7 +81,7 @@ proc trTemplate(n: var Node, o: var Tree) =
       if n.kind == ParLe and n.typeKind == MutT:
         inc n
       if n.kind == Symbol:
-        knownOnChanged[n.symId] = nameSym
+        knownOnChanged[n.symText] = nameSym
   o.takeTree(n)
 
 
@@ -96,7 +96,7 @@ proc trAux(n: var Node, o: var Tree) =
       trTemplate n, o
     else:
       let info = n.info
-      let tag = n.tagId
+      let tag = n.tagText
       o.addParLe(tag, info)
       inc n
       while n.kind != ParRi:
