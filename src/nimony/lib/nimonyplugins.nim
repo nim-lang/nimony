@@ -122,19 +122,14 @@ proc filePath*(info: LineInfo): string =
   else:
     result = ""
 
-proc line*(info: LineInfo): int =
-  ## Returns the 1-based line stored in `info`, or 0 when unavailable.
+proc lineCol*(info: LineInfo): tuple[line, col: int] =
+  ## Returns the 1-based `(line, col)` stored in `info`, or `(0, 0)` when
+  ## unavailable.
   if info.isValid:
-    result = int(unpack(pool.man, info).line)
+    let unpacked = unpack(pool.man, info)
+    result = (line: int(unpacked.line), col: int(unpacked.col))
   else:
-    result = 0
-
-proc col*(info: LineInfo): int =
-  ## Returns the 1-based column stored in `info`, or 0 when unavailable.
-  if info.isValid:
-    result = int(unpack(pool.man, info).col)
-  else:
-    result = 0
+    result = (line: 0, col: 0)
 
 proc symText*(n: Node): string {.inline.} =
   ## Returns the symbol text of the current `Symbol` or `SymbolDef` token.
@@ -512,8 +507,7 @@ proc validateChildren(n: var Cursor; parent: Cursor; shapes: openArray[ChildShap
 
   if not allowMore and n.kind != ParRi:
     return validationError(errorInfo(n),
-      "unexpected child " & $(shapes.len + 1) & " for '" & parent.tagText & "'",
-      parent)
+      "unexpected child " & $(shapes.len + 1) & " for '" & parent.tagText & "'", parent)
 
   consumeRemainingChildren(n)
 
