@@ -492,91 +492,119 @@ proc matchesShape(n: Cursor; shape: ChildShape): bool =
   of CharLitChild:
     result = n.kind == CharLit
 
-proc validateChildren(n: Cursor; shapes: openArray[ChildShape];
+proc consumeRemainingChildren(n: var Cursor) =
+  while n.kind != ParRi:
+    skip n
+  inc n
+
+proc validateChildren(n: var Cursor; parent: Cursor; shapes: openArray[ChildShape];
     allowMore = false): ValidationError =
   result = default(ValidationError)
-  var child = n
-  inc child
   for i in 0 ..< shapes.len:
-    if child.kind == ParRi:
-      return validationError(n.info,
-        "missing child " & $(i + 1) & " for '" & n.tagText &
-        "': expected " & describeShape(shapes[i]), n)
-    if not matchesShape(child, shapes[i]):
-      return validationError(errorInfo(child),
-        "invalid child " & $(i + 1) & " for '" & n.tagText &
-        "': expected " & describeShape(shapes[i]), n)
-    skip child
+    if n.kind == ParRi:
+      return validationError(parent.info,
+        "missing child " & $(i + 1) & " for '" & parent.tagText &
+        "': expected " & describeShape(shapes[i]), parent)
+    if not matchesShape(n, shapes[i]):
+      return validationError(errorInfo(n),
+        "invalid child " & $(i + 1) & " for '" & parent.tagText &
+        "': expected " & describeShape(shapes[i]), parent)
+    skip n
 
-  if not allowMore and child.kind != ParRi:
-    return validationError(errorInfo(child),
-      "unexpected child " & $(shapes.len + 1) & " for '" & n.tagText & "'", n)
+  if not allowMore and n.kind != ParRi:
+    return validationError(errorInfo(n),
+      "unexpected child " & $(shapes.len + 1) & " for '" & parent.tagText & "'",
+      parent)
 
-proc validateShape(n: Cursor): ValidationError =
+  consumeRemainingChildren(n)
+
+proc validateShape(n: var Cursor): ValidationError =
   result = default(ValidationError)
-  let expr = n.exprKind
+  let parent = n
+  var consumed = false
+  inc n
+  let expr = parent.exprKind
   if expr != NoExpr:
     case expr
     of AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
         EqX, NeqX, LeX, LtX, AshrX, EqsetX, LesetX, LtsetX, InsetX:
-      result = validateChildren(n, [TypeChild, ExprChild, ExprChild])
+      result = validateChildren(n, parent, [TypeChild, ExprChild, ExprChild])
+      consumed = true
     of BitnotX, CastX, ConvX, HconvX, DconvX, CardX:
-      result = validateChildren(n, [TypeChild, ExprChild])
+      result = validateChildren(n, parent, [TypeChild, ExprChild])
+      consumed = true
     of AtX, PatX, AndX, OrX, XorX, CurlyatX, CopyX, SinkhX, TraceX, IsX:
-      result = validateChildren(n, [ExprChild, ExprChild])
+      result = validateChildren(n, parent, [ExprChild, ExprChild])
+      consumed = true
     of NotX, NegX, DerefX, AddrX, ParX, EmoveX, DestroyX, DupX, WasmovedX,
         CompilesX, DeclaredX, DefinedX, AstToStrX, HighX, LowX, EnumtostrX,
         InternalTypeNameX, FailedX:
-      result = validateChildren(n, [ExprChild])
+      result = validateChildren(n, parent, [ExprChild])
+      consumed = true
     of SizeofX, AlignofX, NewrefX, DefaultobjX, DefaulttupX:
-      result = validateChildren(n, [TypeChild])
+      result = validateChildren(n, parent, [TypeChild])
+      consumed = true
     of OffsetofX, InstanceofX, EnvpX:
-      result = validateChildren(n, [TypeChild, ExprChild])
+      result = validateChildren(n, parent, [TypeChild, ExprChild])
+      consumed = true
     of TypeofX, FieldsX, FieldpairsX:
-      result = validateChildren(n, [TypeChild, ExprChild], allowMore = true)
+      result = validateChildren(n, parent, [TypeChild, ExprChild], allowMore = true)
+      consumed = true
     of CallX, CmdX, HcallX, ProccallX, CallstrlitX:
-      result = validateChildren(n, [ExprChild], allowMore = true)
+      result = validateChildren(n, parent, [ExprChild], allowMore = true)
+      consumed = true
     else:
       discard
-  elif n.stmtKind != NoStmt:
-    let stmt = n.stmtKind
+  elif parent.stmtKind != NoStmt:
+    let stmt = parent.stmtKind
     case stmt
     of VarS, LetS, ConstS, GvarS, TvarS, GletS, TletS, CursorS, ProcS,
         FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
         ResultS:
-      result = validateChildren(n, [SymDefChild], allowMore = true)
+      result = validateChildren(n, parent, [SymDefChild], allowMore = true)
+      consumed = true
     of BlockS:
-      result = validateChildren(n, [AnyChild, StmtChild])
+      result = validateChildren(n, parent, [AnyChild, StmtChild])
+      consumed = true
     else:
       discard
-  elif n.typeKind != NoType:
-    let typ = n.typeKind
+  elif parent.typeKind != NoType:
+    let typ = parent.typeKind
     case typ
     of ArrayT, RangetypeT:
-      result = validateChildren(n, [TypeChild, ExprChild, ExprChild])
+      result = validateChildren(n, parent, [TypeChild, ExprChild, ExprChild])
+      consumed = true
     of PtrT, RefT, MutT, OutT, LentT, SinkT, DistinctT, TypedescT,
         UarrayT, SetT:
-      result = validateChildren(n, [TypeChild])
+      result = validateChildren(n, parent, [TypeChild])
+      consumed = true
     of ObjectT:
-      result = validateChildren(n, [TypeChild], allowMore = true)
+      result = validateChildren(n, parent, [TypeChild], allowMore = true)
+      consumed = true
     else:
       discard
-  elif n.substructureKind != NoSub:
-    let other = n.substructureKind
+  elif parent.substructureKind != NoSub:
+    let other = parent.substructureKind
     case other
     of RangeU:
-      result = validateChildren(n, [ExprChild, ExprChild])
+      result = validateChildren(n, parent, [ExprChild, ExprChild])
+      consumed = true
     of ParamU, TypevarU, FldU, EfldU:
-      result = validateChildren(n, [SymDefChild], allowMore = true)
+      result = validateChildren(n, parent, [SymDefChild], allowMore = true)
+      consumed = true
     else:
       discard
-  elif n.pragmaKind != NoPragma:
-    let pragma = n.pragmaKind
+  elif parent.pragmaKind != NoPragma:
+    let pragma = parent.pragmaKind
     case pragma
     of PragmaP:
-      result = validateChildren(n, [SymDefChild], allowMore = true)
+      result = validateChildren(n, parent, [SymDefChild], allowMore = true)
+      consumed = true
     else:
       discard
+
+  if not consumed and not result.found:
+    consumeRemainingChildren(n)
 
 proc validateConstructedNode(n: Cursor): ValidationError =
   result = default(ValidationError)
@@ -584,7 +612,8 @@ proc validateConstructedNode(n: Cursor): ValidationError =
     if not isSupportedTag(n):
       result = validationError(n.info, "unsupported NIF tag '" & n.tagText & "'", n)
     else:
-      result = validateShape(n)
+      var m = n
+      result = validateShape(m)
 
 proc validateConstructedTree(tree: sink Tree): Tree =
   if tree.isEmpty:
