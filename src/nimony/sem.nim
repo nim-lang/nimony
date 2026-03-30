@@ -2668,8 +2668,9 @@ proc synthSumTypeDiscriminator(c: var SemContext; dest: var TokenBuf;
   typeBuf.addParRi()
   typeBuf.addParRi()
 
-  programs.publish oneofTypeSym, typeBuf, c.phase
-  c.typeInstDecls.add oneofTypeSym
+  let typeStart = c.pendingSumtypes.len
+  c.pendingSumtypes.add typeBuf
+  programs.publish oneofTypeSym, c.pendingSumtypes, typeStart, c.phase
 
   var rootScope = c.currentScope
   while rootScope.up != nil: rootScope = rootScope.up
@@ -5765,8 +5766,7 @@ proc phase3(c: var SemContext; buf: var TokenBuf; moduleLineInfo: PackedLineInfo
 proc requestHookInstance(c: var SemContext; decl: Cursor) =
   let decl = asTypeDecl(decl)
   var typevars = decl.typevars
-  if classifyType(c, typevars) != InvokeT:
-    return
+  assert classifyType(c, typevars) == InvokeT
   inc typevars
   assert typevars.kind == Symbol
 
@@ -5857,8 +5857,7 @@ proc instantiateMethodForType(c: var SemContext; dest: var TokenBuf; methodSym, 
 proc requestMethods(c: var SemContext; dest: var TokenBuf; s: SymId; decl: Cursor) =
   let decl = asTypeDecl(decl)
   var typevars = decl.typevars
-  if classifyType(c, typevars) != InvokeT:
-    return
+  assert classifyType(c, typevars) == InvokeT
   inc typevars
   assert typevars.kind == Symbol
 
@@ -5990,6 +5989,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
       requestHookInstance(c, res.decl)
       requestMethods(c, dest, val, res.decl)
       dest.copyTree res.decl
+  dest.add c.pendingSumtypes
   instantiateGenericHooks c, dest
   dest.addParRi()
 
@@ -6064,6 +6064,7 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
       requestHookInstance(c, res.decl)
       requestMethods(c, dest, val, res.decl)
       dest.copyTree res.decl
+  dest.add c.pendingSumtypes
   instantiateGenericHooks c, dest
   dest.addParRi()
 
