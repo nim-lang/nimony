@@ -231,7 +231,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
   of NoType, ErrT, VoidT, VarargsT, OrT, AndT, NotT,
      ConceptT, StaticT, InvokeT, UarrayT, ItertypeT,
      AutoT, SymKindT, TypeKindT, TypedescT, UntypedT, TypedT, OrdinalT:
-    bug "valid type kind for sizeof computation: " & $n.typeKind
+    c.overflow = true
 
 proc getSize*(n: Cursor; ptrSize: int; strict=false): xint =
   var c = createSizeofValue(strict)
