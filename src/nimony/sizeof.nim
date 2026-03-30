@@ -165,7 +165,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     update c, ptrSize, ptrSize
   of SinkT, DistinctT:
     getSize c, cache, n.firstSon, ptrSize
-  of EnumT, HoleyEnumT:
+  of EnumT, HoleyEnumT, OneofT:
     let b = enumBounds(n)
     if b.lo < 0:
       update c, 4, 4 # always int32

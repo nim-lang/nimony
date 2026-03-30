@@ -577,7 +577,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
         trObjFields(c, dest, n, flags)
 
       takeParRi dest, n
-    of EnumT, HoleyEnumT:
+    of EnumT, HoleyEnumT, OneofT:
       dest.add tagToken("enum", n.info)
       inc n
       trType c, dest, n, flags # base type

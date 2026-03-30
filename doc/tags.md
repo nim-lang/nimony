@@ -178,6 +178,7 @@
 | `(fin S)` | NimonyOther, NiflerKind | finally subsection |
 | `(tuple (fld ...)* <or> T*)` | NimonyType, NiflerKind | `tuple` type |
 | `(onum (efld...)*)` | NimonyType | enum with holes type |
+| `(oneof (efld...)*)` | NimonyType | sum type discriminator enum |
 | `(ref T)` | NimonyType, NiflerKind | `ref` type |
 | `(mut T)` | NimonyType, NiflerKind | `mut` type |
 | `(out T)` | NimonyType, NiflerKind | `out` type |

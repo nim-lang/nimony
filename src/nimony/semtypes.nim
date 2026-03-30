@@ -771,7 +771,7 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor; cont
         skip n
       else:
         semObjectType c, dest, n
-    of EnumT, HoleyEnumT:
+    of EnumT, HoleyEnumT, OneofT:
       if tryTypeClass(c, dest, n):
         discard
       else:

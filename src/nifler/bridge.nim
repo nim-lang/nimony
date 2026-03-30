@@ -332,7 +332,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       # flatten it further:
       let split = splitIdentDefName(n[i])
 
-      toNif(split.name, n[i], c) # name
+      toNif(split.name, n[i], c, allowEmpty = true) # name; empty for sum type discriminator
 
       if split.visibility != nil:
         c.b.addRaw " x"
