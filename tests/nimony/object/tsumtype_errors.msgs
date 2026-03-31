@@ -1,0 +1,3 @@
+tests/nimony/object/tsumtype_errors.nim(13, 3) Error: not all cases are covered; missing: {SubOpr}
+tests/nimony/object/tsumtype_errors.nim(28, 11) Error: value already handled
+tests/nimony/object/tsumtype_errors.nim(34, 15) Error: branches in set pattern must come from the same `of` declaration
