@@ -1,0 +1,1 @@
+tests/nimony/object/tsumtype_dup_emptycase.nim(8, 5) Error: only one empty `case` section is allowed in an object type

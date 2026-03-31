@@ -50,7 +50,6 @@ The first pre-release of Nimony misses lots of things but might be useful for yo
 
 Nimony currently lacks these features:
 
-- Builtin pattern matching.
 - An exception handling system that is compatible with Nim's. Instead Nimony uses its own based on an `ErrorCode` enum.
 - Nimony does not check `range` subtypes and treats a `range` type like its underlying base type. For example `range[0..10]` is treated as `int`.
 - Nim's effect system:
