@@ -202,7 +202,7 @@ proc isObjectType(n: Cursor): bool =
 proc isEnumType*(n: Cursor): bool =
   if n.kind == Symbol:
     let impl = getTypeSection(n.symId)
-    result = impl.kind == TypeY and impl.body.typeKind in {EnumT, HoleyEnumT, OneofT}
+    result = impl.kind == TypeY and impl.body.typeKind in {EnumT, HoleyEnumT, AnumT}
   else:
     result = false
 
@@ -873,7 +873,7 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
       if impl.kind == ParLe and impl.tagId == ErrT:
         m.error InvalidMatch, f, a
       else:
-        if impl.typeKind in {EnumT, HoleyEnumT, OneofT}:
+        if impl.typeKind in {EnumT, HoleyEnumT, AnumT}:
           if arg.n.exprKind == OchoiceX:
             let matchedSym = tryMatchEnumChoice(arg.n, fs)
             if matchedSym != SymId(0):
@@ -1189,7 +1189,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         procTypeMatch m, f, a
       else:
         m.error InvalidMatch, f, a
-    of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, OneofT, NiltT, OrT, AndT, NotT,
+    of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, AnumT, NiltT, OrT, AndT, NotT,
         ConceptT, DistinctT, StaticT, ItertypeT, AutoT, SymKindT, TypeKindT, OrdinalT:
       m.error UnhandledTypeBug, f, f
   else:

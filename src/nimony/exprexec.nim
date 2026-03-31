@@ -484,7 +484,7 @@ proc unravel(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) 
     unravelArray c, typ, param
   of IT, UT, FT, CT, BoolT, DistinctT, RangetypeT:
     entryPoint(c, typ, readOnlyCursorAt(param, 0))
-  of EnumT, OnumT, OneofT:
+  of EnumT, OnumT, AnumT:
     unravelEnum c, typ, param
   of SetT:
     unravelSet c, typ, param

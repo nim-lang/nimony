@@ -841,7 +841,7 @@ proc isStringLiteral(n: Cursor): bool =
 
 proc semConvArg(c: var SemContext; dest: var TokenBuf; destType: Cursor; arg: Item; info: PackedLineInfo; beforeExpr: int) =
   const
-    IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, EnumT, HoleyEnumT, OneofT}
+    IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, EnumT, HoleyEnumT, AnumT}
 
   var srcType = skipModifier(arg.typ)
 
@@ -852,7 +852,7 @@ proc semConvArg(c: var SemContext; dest: var TokenBuf; destType: Cursor; arg: It
     if destSym.kind == Symbol:
       let destSymId = destSym.symId
       let impl = typeImpl(destSymId)
-      if impl.typeKind in {EnumT, HoleyEnumT, OneofT}:
+      if impl.typeKind in {EnumT, HoleyEnumT, AnumT}:
         # Try to match the enum choice
         let matchedSym = tryMatchEnumChoice(arg.n, destSymId)
         if matchedSym != SymId(0):
@@ -909,7 +909,8 @@ proc semConvArg(c: var SemContext; dest: var TokenBuf; destType: Cursor; arg: It
         c.typeMismatch dest, info, arg.typ, destType
 
 proc isCastableType(t: TypeCursor): bool =
-  const IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, PointerT, CstringT, RefT, PtrT, NiltT, EnumT, HoleyEnumT, OneofT}
+  const IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, PointerT, CstringT,
+                         RefT, PtrT, NiltT, EnumT, HoleyEnumT, AnumT}
   result = t.typeKind in IntegralTypes or isEnumType(t)
 
 proc semCast(c: var SemContext; dest: var TokenBuf; it: var Item) =
@@ -1194,7 +1195,7 @@ proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Ite
         let decl = getTypeSection(tval.symId)
         if decl.kind == TypeY:
           tval = decl.body
-      if tval.typeKind in {EnumT, OnumT, OneofT}:
+      if tval.typeKind in {EnumT, OnumT, AnumT}:
         # check for qualified enum field i.e. Foo.Bar
         let field = findEnumField(asEnumDecl(tval), fieldName)
         if field != SymId(0):
@@ -1717,7 +1718,7 @@ proc semTypeSym(c: var SemContext; dest: var TokenBuf; s: Sym; info: PackedLineI
         let magic = cursorAt(dest, start).typeKind
         endRead(dest)
         # magic types that are just symbols and not in the syntax:
-        if magic in {ArrayT, SetT, RangetypeT, EnumT, HoleyEnumT, OneofT}:
+        if magic in {ArrayT, SetT, RangetypeT, EnumT, HoleyEnumT, AnumT}:
           var typeclassBuf = createTokenBuf(4)
           typeclassBuf.addParLe(TypeKindT, info)
           typeclassBuf.addParLe(magic, info)
@@ -2409,7 +2410,7 @@ proc checkExhaustiveness(c: var SemContext; dest: var TokenBuf; info: PackedLine
     dec counter
     if counter <= 0: break
     let impl = getTypeSection(typ.symId)
-    if impl.kind == TypeY and impl.body.typeKind in {EnumT, HoleyEnumT, OneofT}:
+    if impl.kind == TypeY and impl.body.typeKind in {EnumT, HoleyEnumT, AnumT}:
       typ = impl.body
       break
 
@@ -2418,7 +2419,7 @@ proc checkExhaustiveness(c: var SemContext; dest: var TokenBuf; info: PackedLine
     if total == lengthOrd(c, selectorType):
       return
 
-  if typ.typeKind in {EnumT, HoleyEnumT, OneofT}:
+  if typ.typeKind in {EnumT, HoleyEnumT, AnumT}:
     # check if all values are handled:
     var field = asEnumDecl(typ).firstField
     var missing = ""
@@ -2482,7 +2483,7 @@ proc findSumTypeInfo(selectorType: TypeCursor): SumTypeInfo =
     let typeRes = tryLoadSym(discrimType.symId)
     if typeRes.status == LacksNothing:
       let td = asTypeDecl(typeRes.decl)
-      if td.body.typeKind == OneofT:
+      if td.body.typeKind == AnumT:
         result = SumTypeInfo(valid: true, discrimSym: fld.name.symId,
                              discrimType: fld.typ, isRef: isRef,
                              objTypeSym: typeSym)
@@ -2559,14 +2560,14 @@ proc findOneofEfld(c: var SemContext; name: StrId): SymId =
   var scope = c.currentScope
   while scope != nil:
     for sym in scope.tab.getOrDefault(name):
-      if sym.kind == EfldY and isOneofEfld(sym.name):
+      if sym.kind == EfldY and isAnumEfld(sym.name):
         return sym.name
     scope = scope.up
   if name in c.importTab:
     for moduleSym in c.importTab[name]:
       let candidates = c.importedModules[moduleSym].iface.getOrDefault(name)
       for defId in candidates:
-        if isOneofEfld(defId):
+        if isAnumEfld(defId):
           return defId
 
 proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
@@ -2729,7 +2730,7 @@ proc synthSumTypeDiscriminator(c: var SemContext; dest: var TokenBuf;
   typeBuf.addDotToken()
   typeBuf.addDotToken()
   typeBuf.addDotToken()
-  typeBuf.addParLe(OneofT, info)
+  typeBuf.addParLe(AnumT, info)
   typeBuf.addSubtree c.types.uint8Type
   for i, b in branches:
     let sym = identToSym(c, pool.strings[b.name], EfldY)
@@ -4635,7 +4636,7 @@ proc buildLowValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pac
       return
     let decl = asTypeDecl(s.decl)
     case decl.body.typeKind
-    of EnumT, HoleyEnumT, OneofT:
+    of EnumT, HoleyEnumT, AnumT:
       # first field
       var field = asEnumDecl(decl.body).firstField
       let first = asLocal(field)
@@ -4704,7 +4705,7 @@ proc buildHighValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pa
       return
     let decl = asTypeDecl(s.decl)
     case decl.body.typeKind
-    of EnumT, HoleyEnumT, OneofT:
+    of EnumT, HoleyEnumT, AnumT:
       # last field
       var field = asEnumDecl(decl.body).firstField
       var lastField = field
@@ -5382,7 +5383,7 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
           skip it.n
         of ErrT:
           dest.takeTree it.n
-        of ObjectT, EnumT, HoleyEnumT, OneofT, DistinctT, ConceptT:
+        of ObjectT, EnumT, HoleyEnumT, AnumT, DistinctT, ConceptT:
           buildErr c, dest, it.n.info, "expression expected"
           skip it.n
         of IntT, FloatT, CharT, BoolT, UIntT, VoidT, NiltT, AutoT, SymKindT,

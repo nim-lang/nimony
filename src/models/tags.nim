@@ -182,7 +182,7 @@ type
     FinTagId
     TupleTagId
     OnumTagId
-    OneofTagId
+    AnumTagId
     RefTagId
     MutTagId
     OutTagId
@@ -503,7 +503,7 @@ const
     ("fin", 177),
     ("tuple", 178),
     ("onum", 179),
-    ("oneof", 180),
+    ("anum", 180),
     ("ref", 181),
     ("mut", 182),
     ("out", 183),

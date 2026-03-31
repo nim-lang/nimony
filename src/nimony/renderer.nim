@@ -943,8 +943,8 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
       put(g, tkSymbol, "HoleyEnum")
       skip n
 
-    of OneofT:
-      put(g, tkSymbol, "oneof")
+    of AnumT:
+      put(g, tkSymbol, "anum")
       skip n
 
     of ConceptT:

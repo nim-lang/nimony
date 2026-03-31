@@ -317,7 +317,7 @@ proc semObjConstrFromCall(c: var SemContext; dest: var TokenBuf; it: var Item; c
   semObjConstr c, dest, objConstr
   it.typ = objConstr.typ
 
-proc isOneofEfld(sym: SymId): bool =
+proc isAnumEfld(sym: SymId): bool =
   result = false
   let res = tryLoadSym(sym)
   if res.status == LacksNothing and res.decl.substructureKind == EfldU:
@@ -327,7 +327,7 @@ proc isOneofEfld(sym: SymId): bool =
       let typeRes = tryLoadSym(n.symId)
       if typeRes.status == LacksNothing:
         let typeDecl = asTypeDecl(typeRes.decl)
-        result = typeDecl.body.typeKind == OneofT
+        result = typeDecl.body.typeKind == AnumT
 
 proc semSumTypeConstrFromCall(c: var SemContext; dest: var TokenBuf;
                                it: var Item; cs: var CallState) =
@@ -726,7 +726,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
     closeArgsScope c, cs
     semObjConstrFromCall c, dest, it, cs
     return
-  elif cs.fnKind == EfldY and cs.fn.n.kind == Symbol and isOneofEfld(cs.fn.n.symId):
+  elif cs.fnKind == EfldY and cs.fn.n.kind == Symbol and isAnumEfld(cs.fn.n.symId):
     closeArgsScope c, cs
     semSumTypeConstrFromCall c, dest, it, cs
     return

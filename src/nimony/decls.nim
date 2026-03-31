@@ -264,7 +264,7 @@ proc asEnumDecl*(c: Cursor): EnumDecl =
   var c = c
   let kind = typeKind c
   result = EnumDecl(kind: kind)
-  if kind in {EnumT, OnumT, OneofT}:
+  if kind in {EnumT, OnumT, AnumT}:
     inc c
     result.baseType = c
     skip c

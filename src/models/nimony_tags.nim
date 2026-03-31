@@ -221,7 +221,7 @@ type
     StaticT = (ord(StaticTagId), "static")  ## `static` type or annotation
     TupleT = (ord(TupleTagId), "tuple")  ## `tuple` type
     OnumT = (ord(OnumTagId), "onum")  ## enum with holes type
-    OneofT = (ord(OneofTagId), "oneof")  ## sum type discriminator enum
+    AnumT = (ord(AnumTagId), "anum")  ## sum type discriminator enum ("auto enum")
     RefT = (ord(RefTagId), "ref")  ## `ref` type
     MutT = (ord(MutTagId), "mut")  ## `mut` type
     OutT = (ord(OutTagId), "out")  ## `out` type
@@ -245,7 +245,7 @@ type
     OrdinalT = (ord(OrdinalTagId), "ordinal")  ## `ordinal` type
 
 proc rawTagIsNimonyType*(raw: TagEnum): bool {.inline.} =
-  raw in {ErrTagId, AtTagId, AndTagId, OrTagId, NotTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, ObjectTagId, EnumTagId, ProctypeTagId, ITagId, UTagId, FTagId, CTagId, BoolTagId, VoidTagId, PtrTagId, ArrayTagId, VarargsTagId, StaticTagId, TupleTagId, OnumTagId, OneofTagId, RefTagId, MutTagId, OutTagId, LentTagId, SinkTagId, NiltTagId, ConceptTagId, DistinctTagId, ItertypeTagId, RangetypeTagId, UarrayTagId, SetTagId, AutoTagId, SymkindTagId, TypekindTagId, TypedescTagId, UntypedTagId, TypedTagId, CstringTagId, PointerTagId, OrdinalTagId}
+  raw in {ErrTagId, AtTagId, AndTagId, OrTagId, NotTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, ObjectTagId, EnumTagId, ProctypeTagId, ITagId, UTagId, FTagId, CTagId, BoolTagId, VoidTagId, PtrTagId, ArrayTagId, VarargsTagId, StaticTagId, TupleTagId, OnumTagId, AnumTagId, RefTagId, MutTagId, OutTagId, LentTagId, SinkTagId, NiltTagId, ConceptTagId, DistinctTagId, ItertypeTagId, RangetypeTagId, UarrayTagId, SetTagId, AutoTagId, SymkindTagId, TypekindTagId, TypedescTagId, UntypedTagId, TypedTagId, CstringTagId, PointerTagId, OrdinalTagId}
 
 type
   NimonyOther* = enum
