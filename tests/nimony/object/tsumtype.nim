@@ -36,4 +36,20 @@ let nested: Node = AddOpr(
 )
 assert eval(nested) == 35
 
+proc depth(n: Node): int =
+  case n
+  of Value(val):
+    result = 0
+  of {AddOpr, SubOpr}(a, b):
+    let da = depth(a)
+    let db = depth(b)
+    if da > db:
+      result = da + 1
+    else:
+      result = db + 1
+
+assert depth(v) == 0
+assert depth(add) == 1
+assert depth(nested) == 2
+
 echo "tsumtype: OK"

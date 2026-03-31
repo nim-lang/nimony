@@ -2610,6 +2610,49 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
           inc it.n
           inc fieldIdx
         inc it.n # skip call ParRi
+      elif it.n.exprKind == CurlyX:
+        inc it.n # skip curly tag
+        var firstEfld = SymId(0)
+        var firstBranchFields: seq[SumTypeBranchField] = @[]
+        while it.n.kind != ParRi:
+          if it.n.kind == Ident:
+            let branchName = it.n.litId
+            let efldSym = findOneofEfld(c, branchName)
+            if efldSym == SymId(0):
+              buildErr c, dest, it.n.info, "undeclared sum type branch: " & pool.strings[branchName]
+            else:
+              dest.add symToken(efldSym, it.n.info)
+              let ordVal = getEfldOrdinal(efldSym)
+              if not ordVal.isNaN:
+                if seen.containsOrIncl(ordVal):
+                  buildErr c, dest, it.n.info, "value already handled"
+              if firstEfld == SymId(0):
+                firstEfld = efldSym
+                firstBranchFields = findBranchFields(objTypeSym, efldSym)
+              else:
+                let otherFields = findBranchFields(objTypeSym, efldSym)
+                if otherFields.len != firstBranchFields.len:
+                  buildErr c, dest, it.n.info,
+                    "branches in set pattern must come from the same `of` declaration"
+          inc it.n
+        inc it.n # skip curly ParRi
+        if firstEfld != SymId(0):
+          var fieldIdx = 0
+          while it.n.kind != ParRi:
+            if it.n.kind == Ident and fieldIdx < firstBranchFields.len:
+              bindings.add SumTypeBinding(
+                ident: it.n.litId,
+                fieldSym: firstBranchFields[fieldIdx].sym,
+                fieldType: firstBranchFields[fieldIdx].typ,
+                info: it.n.info)
+            elif it.n.kind == Ident:
+              buildErr c, dest, it.n.info, "too many bindings for sum type branch"
+            inc it.n
+            inc fieldIdx
+        else:
+          while it.n.kind != ParRi:
+            inc it.n
+        inc it.n # skip call ParRi
       else:
         buildErr c, dest, info, "identifier expected for sum type branch name"
         skipToEnd it.n
