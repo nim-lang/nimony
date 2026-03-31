@@ -1,21 +1,22 @@
 # included in sem.nim
 
-proc semObjectComponent(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
+proc semObjectComponent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
+                        exported = false) =
   case n.substructureKind
   of FldU:
     semLocal(c, dest, n, FldY)
   of WhenU:
     var it = Item(n: n, typ: c.types.autoType)
-    semWhenImpl(c, dest, it, ObjectWhen)
+    semWhenImpl(c, dest, it, ObjectWhen, exported)
     n = it.n
   of CaseU:
     var it = Item(n: n, typ: c.types.autoType)
-    semCaseImpl(c, dest, it, ObjectCase)
+    semCaseImpl(c, dest, it, ObjectCase, exported)
     n = it.n
   of StmtsU:
     inc n
     while n.kind != ParRi:
-      semObjectComponent c, dest, n
+      semObjectComponent c, dest, n, exported
     skipParRi n
   of NilU:
     takeTree dest, n
@@ -23,7 +24,8 @@ proc semObjectComponent(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
     buildErr c, dest, n.info, "illformed AST inside object: " & asNimCode(n)
     skip n
 
-proc semObjectType(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
+proc semObjectType(c: var SemContext; dest: var TokenBuf; n: var Cursor;
+                   exported = false) =
   takeToken dest, n
   # inherits from?
   if n.kind == DotToken:
@@ -47,7 +49,7 @@ proc semObjectType(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
       # copy toplevel scope status for exported fields
       c.currentScope.kind = oldScopeKind
       while n.kind != ParRi:
-        semObjectComponent c, dest, n
+        semObjectComponent c, dest, n, exported
   takeParRi dest, n
 
 proc semTupleType(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
@@ -608,7 +610,8 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
       nn = n
       result = true
 
-proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor; context: TypeDeclContext) =
+proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
+                      context: TypeDeclContext; exported = false) =
   let info = n.info
   case n.kind
   of Ident:
@@ -770,7 +773,7 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor; cont
         c.buildErr dest, info, "`object` type must be defined in a `type` section"
         skip n
       else:
-        semObjectType c, dest, n
+        semObjectType c, dest, n, exported
     of EnumT, HoleyEnumT, OneofT:
       if tryTypeClass(c, dest, n):
         discard
