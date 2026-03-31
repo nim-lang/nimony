@@ -1754,19 +1754,24 @@ proc semTypeSym(c: var SemContext; dest: var TokenBuf; s: Sym; info: PackedLineI
 proc semParams(c: var SemContext; dest: var TokenBuf; n: var Cursor)
 proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKind)
 
-type WhenMode = enum
-  NormalWhen
-  ObjectWhen
+type
+  WhenMode = enum
+    NormalWhen
+    ObjectWhen
+
+  SemObjectState = object
+    isExported: bool
+    isAnum: bool
 
 proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: WhenMode;
-                 exported = false)
+                 state: var SemObjectState)
 
 type CaseMode = enum
   NormalCase
   ObjectCase
 
 proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: CaseMode;
-                 exported = false)
+                 state: var SemObjectState)
 
 proc semExprMissingPhases(c: var SemContext; dest: var TokenBuf; it: var Item; firstPhase: SemPhase) =
   # Only consider "real" phases, not InProgress markers
@@ -2254,7 +2259,7 @@ proc semTry(c: var SemContext; dest: var TokenBuf; it: var Item) =
     producesVoid c, dest, info, it.typ
 
 proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: WhenMode;
-                 exported = false) =
+                 state: var SemObjectState) =
   let start = dest.len
   let info = it.n.info
   takeToken dest, it.n
@@ -2276,7 +2281,7 @@ proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: When
           of NormalWhen:
             semExprMissingPhases c, dest, it, SemcheckSignatures
           of ObjectWhen:
-            semObjectComponent c, dest, it.n, exported
+            semObjectComponent c, dest, it.n, state
           skipParRi it.n # finish elif
           skipToEnd it.n
           return
@@ -2300,7 +2305,7 @@ proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: When
       of NormalWhen:
         semExprMissingPhases c, dest, it, SemcheckSignatures
       of ObjectWhen:
-        semObjectComponent c, dest, it.n, exported
+        semObjectComponent c, dest, it.n, state
       skipParRi it.n # finish else
       skipToEnd it.n
       return
@@ -2330,7 +2335,9 @@ proc semWhen(c: var SemContext; dest: var TokenBuf; it: var Item) =
     discard
 
   inc c.inWhen
-  semWhenImpl(c, dest, it, NormalWhen)
+  # dummy value, not used for when statements, only for object types:
+  var state = SemObjectState(isExported: false, isAnum: false)
+  semWhenImpl(c, dest, it, NormalWhen, state)
   dec c.inWhen
 
 proc semCaseOfValueImpl(c: var SemContext; dest: var TokenBuf; it: var Item; selectorType: TypeCursor;
@@ -2662,15 +2669,15 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
   takeParRi dest, it.n
 
 proc semObjectCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item;
-                         exported = false) =
+                         state: var SemObjectState) =
   if it.n.stmtKind == StmtsS:
     takeToken dest, it.n
     while it.n.kind != ParRi:
-      semObjectComponent c, dest, it.n, exported
+      semObjectComponent c, dest, it.n, state
     takeParRi dest, it.n
   else:
     dest.addParLe(StmtsS, it.n.info)
-    semObjectComponent c, dest, it.n, exported
+    semObjectComponent c, dest, it.n, state
     dest.addParRi()
 
 proc buildEfld(buf: var TokenBuf; sym: SymId; parentType: SymId;
@@ -2692,7 +2699,7 @@ proc buildEfld(buf: var TokenBuf; sym: SymId; parentType: SymId;
 
 proc synthSumTypeDiscriminator(c: var SemContext; dest: var TokenBuf;
                                 it: var Item; info: PackedLineInfo;
-                                exported: bool): TypeCursor =
+                                state: var SemObjectState): TypeCursor =
   skip it.n # skip the empty (fld . . . . .)
 
   type BranchInfo = object
@@ -2735,7 +2742,7 @@ proc synthSumTypeDiscriminator(c: var SemContext; dest: var TokenBuf;
   for i, b in branches:
     let sym = identToSym(c, pool.strings[b.name], EfldY)
     efldSyms.add (sym, b.name)
-    buildEfld(typeBuf, sym, oneofTypeSym, i, b.name, b.info, exported)
+    buildEfld(typeBuf, sym, oneofTypeSym, i, b.name, b.info, state.isExported)
   typeBuf.addParRi()
   typeBuf.addParRi()
 
@@ -2747,7 +2754,7 @@ proc synthSumTypeDiscriminator(c: var SemContext; dest: var TokenBuf;
   while rootScope.up != nil: rootScope = rootScope.up
   for i, (sym, name) in efldSyms:
     var efldBuf = createTokenBuf(10)
-    buildEfld(efldBuf, sym, oneofTypeSym, i, name, branches[i].info, exported)
+    buildEfld(efldBuf, sym, oneofTypeSym, i, name, branches[i].info, state.isExported)
     programs.publish sym, efldBuf, c.phase
     let s = Sym(kind: EfldY, name: sym, pos: ImportedPos)
     rootScope.addOverloadable(name, s)
@@ -2757,7 +2764,7 @@ proc synthSumTypeDiscriminator(c: var SemContext; dest: var TokenBuf;
   let fldSym = pool.syms.getOrIncl(fldNameStr)
   dest.addParLe(FldY, info)
   dest.add symdefToken(fldSym, info)
-  if exported:
+  if state.isExported:
     dest.add identToken(pool.strings.getOrIncl("x"), info)
   else:
     dest.addDotToken()
@@ -2770,7 +2777,7 @@ proc synthSumTypeDiscriminator(c: var SemContext; dest: var TokenBuf;
   result = typeToCursor(c, dest, typePos)
 
 proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: CaseMode;
-                 exported = false) =
+                 state: var SemObjectState) =
   let info = it.n.info
   takeToken dest, it.n
   var selectorType = default(Cursor)
@@ -2828,7 +2835,7 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
     inc probe
     if probe.kind == DotToken:
       selectorType = synthSumTypeDiscriminator(c, dest, it, info,
-        exported = exported)
+        state)
     else:
       let selectorStart = dest.len
       semLocal(c, dest, it.n, FldY)
@@ -2891,7 +2898,7 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
           withNewScope c:
             semStmtBranch c, dest, it, true
       of ObjectCase:
-        semObjectCaseBranch(c, dest, it, exported)
+        semObjectCaseBranch(c, dest, it, state)
       takeParRi dest, it.n
   else:
     buildErr c, dest, it.n.info, "illformed AST: `of` inside `case` expected"
@@ -2902,7 +2909,7 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
       withNewScope c:
         semStmtBranch c, dest, it, true
     of ObjectCase:
-      semObjectCaseBranch(c, dest, it, exported)
+      semObjectCaseBranch(c, dest, it, state)
     takeParRi dest, it.n
   elif not isString:
     checkExhaustiveness c, dest, it.n.info, selectorType, seen
@@ -2912,7 +2919,9 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
     producesVoid c, dest, info, it.typ
 
 proc semCase(c: var SemContext; dest: var TokenBuf; it: var Item) =
-  semCaseImpl(c, dest, it, NormalCase)
+  # dummy value, not used for case statements, only for object types:
+  var state = SemObjectState(isExported: false, isAnum: false)
+  semCaseImpl(c, dest, it, NormalCase, state)
 
 proc semForLoopVar(c: var SemContext; dest: var TokenBuf; it: var Item; loopvarType: TypeCursor; loopvarTypeMod = NoType) =
   if stmtKind(it.n) == LetS:

@@ -1,13 +1,13 @@
 # included in sem.nim
 
 proc semObjectComponent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
-                        exported = false) =
+                        state: var SemObjectState) =
   case n.substructureKind
   of FldU:
     semLocal(c, dest, n, FldY)
   of WhenU:
     var it = Item(n: n, typ: c.types.autoType)
-    semWhenImpl(c, dest, it, ObjectWhen, exported)
+    semWhenImpl(c, dest, it, ObjectWhen, state)
     n = it.n
   of CaseU:
     var probe = n
@@ -15,17 +15,17 @@ proc semObjectComponent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     if probe.substructureKind == FldU:
       inc probe
     if probe.kind == DotToken:
-      inc c.objectEmptyCaseCount
-      if c.objectEmptyCaseCount > 1:
+      if state.isAnum:
         c.buildErr dest, n.info,
           "only one empty `case` section is allowed in an object type"
+      state.isAnum = true
     var it = Item(n: n, typ: c.types.autoType)
-    semCaseImpl(c, dest, it, ObjectCase, exported)
+    semCaseImpl(c, dest, it, ObjectCase, state)
     n = it.n
   of StmtsU:
     inc n
     while n.kind != ParRi:
-      semObjectComponent c, dest, n, exported
+      semObjectComponent c, dest, n, state
     skipParRi n
   of NilU:
     takeTree dest, n
@@ -34,7 +34,7 @@ proc semObjectComponent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     skip n
 
 proc semObjectType(c: var SemContext; dest: var TokenBuf; n: var Cursor;
-                   exported = false) =
+                   state: var SemObjectState) =
   takeToken dest, n
   # inherits from?
   if n.kind == DotToken:
@@ -54,14 +54,11 @@ proc semObjectType(c: var SemContext; dest: var TokenBuf; n: var Cursor;
   else:
     # object fields:
     let oldScopeKind = c.currentScope.kind
-    let savedEmptyCase = c.objectEmptyCaseCount
-    c.objectEmptyCaseCount = 0
     withNewScope c:
       # copy toplevel scope status for exported fields
       c.currentScope.kind = oldScopeKind
       while n.kind != ParRi:
-        semObjectComponent c, dest, n, exported
-    c.objectEmptyCaseCount = savedEmptyCase
+        semObjectComponent c, dest, n, state
   takeParRi dest, n
 
 proc semTupleType(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
@@ -785,7 +782,8 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         c.buildErr dest, info, "`object` type must be defined in a `type` section"
         skip n
       else:
-        semObjectType c, dest, n, exported
+        var state = SemObjectState(isExported: exported, isAnum: false)
+        semObjectType c, dest, n, state
     of EnumT, HoleyEnumT, AnumT:
       if tryTypeClass(c, dest, n):
         discard
