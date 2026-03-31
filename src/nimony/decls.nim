@@ -46,7 +46,7 @@ proc isRoutine*(t: SymKind): bool {.inline.} =
   t in {ProcY, FuncY, IteratorY, MacroY, TemplateY, ConverterY, MethodY}
 
 proc isLocal*(t: SymKind): bool {.inline.} =
-  t in {LetY, VarY, ResultY, ConstY, ParamY, TypevarY, CursorY, FldY, EfldY, GletY, TletY, GvarY, TvarY}
+  t in {LetY, VarY, ResultY, ConstY, ParamY, TypevarY, CursorY, PatternvarY, FldY, EfldY, GletY, TletY, GvarY, TvarY}
 
 proc isNominal*(t: TypeKind): bool {.inline.} =
   ## type kinds that should stay as symbols, see sigmatch.matchSymbol
@@ -264,7 +264,7 @@ proc asEnumDecl*(c: Cursor): EnumDecl =
   var c = c
   let kind = typeKind c
   result = EnumDecl(kind: kind)
-  if kind in {EnumT, OnumT}:
+  if kind in {EnumT, OnumT, AnumT}:
     inc c
     result.baseType = c
     skip c

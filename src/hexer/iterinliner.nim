@@ -247,7 +247,7 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
         while c.kind != ParRi:
           inlineLoopBody(e, dest, c, mapping)
         takeParRi(dest, c)
-    of VarS, LetS, CursorS, ResultS:
+    of VarS, LetS, CursorS, PatternvarS, ResultS:
       dest.add c
       inc c
       let oldName = c.symId
@@ -341,7 +341,7 @@ proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations
     inc c
   of ParLe:
     case c.stmtKind
-    of VarS, LetS, CursorS:
+    of VarS, LetS, CursorS, PatternvarS:
       dest.add c
       inc c
       let oldName = c.symId
@@ -585,7 +585,7 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
         transformStmt(e, dest, c)
       e.tmpId = oldTmpId
       takeParRi(dest, c)
-    of VarS, LetS, CursorS, ResultS:
+    of VarS, LetS, CursorS, PatternvarS, ResultS:
       # We transform `var x {.cursor.} = y` into `cursor x = y` here because
       # this is the first step of the backend pipeline.
       let before = dest.len

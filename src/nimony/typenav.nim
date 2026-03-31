@@ -166,7 +166,7 @@ proc registerLocals(c: var TypeCache; n: var Cursor) =
       while n.kind != ParRi:
         registerLocals(c, n)
       inc n
-    of LetS, CursorS, VarS, TvarS, TletS, GvarS, GletS:
+    of LetS, CursorS, PatternvarS, VarS, TvarS, TletS, GvarS, GletS:
       inc n
       let name = n.symId
       inc n # name

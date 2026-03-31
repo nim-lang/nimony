@@ -176,7 +176,7 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
   of TypevarY:
     discard semLocalType(c, dest, n, InGenericConstraint)
     wantDot c, dest, n
-  of ParamY, LetY, VarY, ConstY, CursorY, ResultY, FldY, GletY, TletY, GvarY, TvarY:
+  of ParamY, LetY, VarY, ConstY, CursorY, PatternvarY, ResultY, FldY, GletY, TletY, GvarY, TvarY:
     beforeType = dest.len
     if n.kind == DotToken:
       # no explicit type given:
@@ -1016,7 +1016,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   # name, export marker, generic params, pragmas, body
   var delayed = handleSymDef(c, dest, n, TypeY) # 0
   let beforeExportMarker = dest.len
-  wantExportMarker c, dest, n # 1
+  let typeIsExported = handleExportMarker(c, dest, n) # 1
 
   var isEnumTypeDecl = false
   var isRefPtrObj = false
@@ -1066,9 +1066,9 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
           skip n
           takeParRi dest, n
         else:
-          semLocalTypeImpl c, dest, n, InTypeSection
+          semLocalTypeImpl c, dest, n, InTypeSection, typeIsExported
       else:
-        semLocalTypeImpl c, dest, n, InTypeSection
+        semLocalTypeImpl c, dest, n, InTypeSection, typeIsExported
       fitTypeToPragmas(c, dest, crucial, typeStart)
   else:
     if n.typeKind in {RefT, PtrT}:

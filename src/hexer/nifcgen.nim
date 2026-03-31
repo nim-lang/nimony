@@ -577,7 +577,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
         trObjFields(c, dest, n, flags)
 
       takeParRi dest, n
-    of EnumT, HoleyEnumT:
+    of EnumT, HoleyEnumT, AnumT:
       dest.add tagToken("enum", n.info)
       inc n
       trType c, dest, n, flags # base type
@@ -1739,7 +1739,7 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
         c.loop dest, n:
           trStmt c, dest, n, mode
       c.typeCache.closeScope()
-    of VarS, LetS, CursorS:
+    of VarS, LetS, CursorS, PatternvarS:
       trLocal c, dest, n, VarY, mode
     of ResultS:
       trLocal c, dest, n, ResultY, mode
@@ -2098,7 +2098,7 @@ proc isTopLevelDecl(n: Cursor): bool {.inline.} =
     BindS, MixinS, UsingS, StaticstmtS,
     ConstS, PragmasS, EmitS}
 
-const RuntimeVarKinds = {VarY, LetY, ResultY, CursorY, GvarY, GletY, TvarY, TletY}
+const RuntimeVarKinds = {VarY, LetY, ResultY, CursorY, PatternvarY, GvarY, GletY, TvarY, TletY}
 
 proc initHasCall(c: var EContext; n: Cursor): bool =
   ## Returns true if the init expression of a global var/let decl contains any

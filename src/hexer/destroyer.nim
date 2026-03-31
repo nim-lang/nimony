@@ -120,7 +120,7 @@ proc createFreshVars(c: var Context; n: Cursor): TokenBuf =
       inc n
     of ParLe:
       result.add n
-      let isLocalDecl = n.stmtKind in {VarS, LetS, CursorS}
+      let isLocalDecl = n.stmtKind in {VarS, LetS, CursorS, PatternvarS}
       inc n
       inc nested
       if isLocalDecl:
@@ -218,7 +218,7 @@ proc trLocal(c: var Context; n: var Cursor) =
   c.dest.addParRi()
 
   let destructor = getDestructor(c.lifter[], r.typ, info)
-  if destructor != NoSymId and r.kind notin {CursorY, ResultY, GvarY, TvarY, GletY, TletY, ConstY}:
+  if destructor != NoSymId and r.kind notin {CursorY, PatternvarY, ResultY, GvarY, TvarY, GletY, TletY, ConstY}:
     c.currentScope.destroyOps.add DestructorOp(destroyProc: destructor, arg: r.name.symId)
 
 proc trScope(c: var Context; body: var Cursor; kind = Other) =

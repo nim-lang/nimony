@@ -30,7 +30,7 @@ proc isComplex(n: Cursor; goal: Goal): bool =
     of IntLit, UIntLit, FloatLit, StringLit, CharLit, UnknownToken, EofToken, Ident, Symbol, SymbolDef, DotToken:
       inc n
     of ParLe:
-      if n.stmtKind in {IfS, CaseS, WhileS, AsgnS, LetS, VarS, CursorS, StmtsS, ResultS, GletS, TletS, GvarS, TvarS}:
+      if n.stmtKind in {IfS, CaseS, WhileS, AsgnS, LetS, VarS, CursorS, PatternvarS, StmtsS, ResultS, GletS, TletS, GvarS, TvarS}:
         return true
       elif n.exprKind == ExprX:
         inc n

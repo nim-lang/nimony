@@ -62,6 +62,7 @@
 | `(tlet D E P T X)` | NimonyStmt, NimonySym, NifIndexKind | thread local let variable declaration |
 | `(let D E P T X)` | NimonySym, NimonyStmt, NiflerKind, NifIndexKind | let variable declaration |
 | `(cursor D E P T X)` | NimonySym, NimonyStmt, NimonyPragma, NifIndexKind | cursor variable declaration |
+| `(patternvar D E P T X)` | NimonySym, NimonyStmt | pattern variable declaration |
 | `(typevar D E P T X)` | NimonySym, NifcOther, NimonyOther, NiflerKind | type variable declaration |
 | `(efld D E P T X)`; `(efld D X)` | NimonySym, NifcSym, NifcOther, NimonyOther, NiflerKind | enum field declaration |
 | `(fld D E P T X)`; `(fld D P T)` | NifcOther, NimonyOther, NimonySym, NifcSym, NiflerKind | field declaration |
@@ -178,6 +179,7 @@
 | `(fin S)` | NimonyOther, NiflerKind | finally subsection |
 | `(tuple (fld ...)* <or> T*)` | NimonyType, NiflerKind | `tuple` type |
 | `(onum (efld...)*)` | NimonyType | enum with holes type |
+| `(anum (efld...)*)` | NimonyType | sum type discriminator enum ("auto enum") |
 | `(ref T)` | NimonyType, NiflerKind | `ref` type |
 | `(mut T)` | NimonyType, NiflerKind | `mut` type |
 | `(out T)` | NimonyType, NiflerKind | `out` type |

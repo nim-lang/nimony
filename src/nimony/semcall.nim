@@ -317,6 +317,54 @@ proc semObjConstrFromCall(c: var SemContext; dest: var TokenBuf; it: var Item; c
   semObjConstr c, dest, objConstr
   it.typ = objConstr.typ
 
+proc isAnumEfld(sym: SymId): bool =
+  result = false
+  let res = tryLoadSym(sym)
+  if res.status == LacksNothing and res.decl.substructureKind == EfldU:
+    var n = res.decl
+    skipToLocalType n
+    if n.kind == Symbol:
+      let typeRes = tryLoadSym(n.symId)
+      if typeRes.status == LacksNothing:
+        let typeDecl = asTypeDecl(typeRes.decl)
+        result = typeDecl.body.typeKind == AnumT
+
+proc semSumTypeConstrFromCall(c: var SemContext; dest: var TokenBuf;
+                               it: var Item; cs: var CallState) =
+  skipParRi it.n
+  let info = cs.callNode.info
+  let expected = it.typ
+  if expected.typeKind == AutoT:
+    buildErr c, dest, info, "sum type constructor requires explicit type annotation"
+    return
+  assert cs.fn.n.kind == Symbol
+  let efldSym = cs.fn.n.symId
+  let kindName = pool.strings.getOrIncl("`kind")
+  var objBuf = createTokenBuf(32)
+  objBuf.add parLeToken(OconstrX, info)
+  objBuf.addSubtree expected
+  objBuf.addParLe(KvU, info)
+  objBuf.add identToken(kindName, info)
+  objBuf.add symToken(efldSym, info)
+  objBuf.addParRi()
+  for arg in cs.args:
+    let orig = arg.orig
+    if orig.substructureKind == VvU:
+      var scan = orig
+      inc scan
+      objBuf.addParLe(KvU, orig.info)
+      objBuf.addSubtree scan
+      skip scan
+      objBuf.addSubtree scan
+      objBuf.addParRi()
+    else:
+      buildErr c, dest, orig.info, "sum type constructor requires named arguments"
+      return
+  objBuf.addParRi()
+  var objConstr = Item(n: cursorAt(objBuf, 0), typ: it.typ)
+  semObjConstr c, dest, objConstr
+  it.typ = objConstr.typ
+
 proc buildCallSource(buf: var TokenBuf; cs: CallState) =
   case cs.source
   of RegularCall:
@@ -677,6 +725,10 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
   elif cs.fn.typ.typeKind == TypedescT and cs.args.len == 0:
     closeArgsScope c, cs
     semObjConstrFromCall c, dest, it, cs
+    return
+  elif cs.fnKind == EfldY and cs.fn.n.kind == Symbol and isAnumEfld(cs.fn.n.symId):
+    closeArgsScope c, cs
+    semSumTypeConstrFromCall c, dest, it, cs
     return
   else:
     # Keep in mind that proc vars are a thing:

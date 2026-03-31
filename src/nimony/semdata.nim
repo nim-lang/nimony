@@ -89,6 +89,8 @@ type
     procRequests*: seq[InstRequest]
     typeInstDecls*: seq[SymId]
       ## syms of type instantiations to add their declarations to module
+    pendingSumtypes*: TokenBuf
+      ## synthesized oneof type declarations to emit at module end
     includeStack*: seq[string]
     importedModules*: Table[SymId, ImportedModule]
     selfModuleSym*: SymId

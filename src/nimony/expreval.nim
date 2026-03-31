@@ -392,7 +392,7 @@ proc intToToken(result: var TokenBuf; x: int; typ: Cursor) =
       let sym = tryLoadSym(typ.symId)
       if sym.status == LacksNothing:
         var local = asTypeDecl(sym.decl)
-        if local.kind == TypeY and local.body.typeKind in {EnumT, HoleyEnumT}:
+        if local.kind == TypeY and local.body.typeKind in {EnumT, HoleyEnumT, AnumT}:
           hasError = false
           result.addIntLit x
     if hasError:
@@ -947,7 +947,7 @@ proc annotateOrdinal(buf: var TokenBuf; typ: var Cursor; n: Cursor; err: var boo
       err = err or val < 0 or val > uint64(char.high)
       if not err:
         buf.add charToken(char(val), n.info)
-  of EnumT, HoleyEnumT:
+  of EnumT, HoleyEnumT, AnumT:
     # finds the field sym but could also generate a conversion
     let decl = asEnumDecl(typ)
     var fields = decl.firstField
@@ -1175,7 +1175,7 @@ type
     lo*, hi*: xint
 
 proc enumBounds*(n: Cursor): Bounds =
-  assert n.typeKind in {EnumT, HoleyEnumT}
+  assert n.typeKind in {EnumT, HoleyEnumT, AnumT}
   var n = n
   inc n # EnumT
   skip n # Basetype
@@ -1205,7 +1205,7 @@ proc bitsetSizeInBytes*(baseType: Cursor): xint =
     result = createXint(256'i64 div 8'i64)
   of BoolT:
     result = createXint(1'i64)
-  of EnumT, HoleyEnumT:
+  of EnumT, HoleyEnumT, AnumT:
     let b = enumBounds(baseType)
     # XXX We don't use an offset != 0 anymore for set[MyEnum] construction
     # so we only consider the 'hi' value here:
@@ -1235,7 +1235,7 @@ proc countEnumValues*(n: Cursor): xint =
     let sym = tryLoadSym(n.symId)
     if sym.status == LacksNothing:
       var local = asTypeDecl(sym.decl)
-      if local.kind == TypeY and local.body.typeKind in {EnumT, HoleyEnumT}:
+      if local.kind == TypeY and local.body.typeKind in {EnumT, HoleyEnumT, AnumT}:
         let b = enumBounds(local.body)
         result = b.hi - b.lo + createXint(1'i64)
 
