@@ -604,7 +604,7 @@ proc validateExpr(n: var Cursor; parent: Cursor): ValidationError =
 proc validateStmt(n: var Cursor; parent: Cursor): ValidationError =
   result = default(ValidationError)
   case parent.stmtKind
-  of VarS, LetS, ConstS, GvarS, TvarS, GletS, TletS, CursorS, ProcS,
+  of VarS, LetS, ConstS, GvarS, TvarS, GletS, TletS, CursorS, PatternvarS, ProcS,
       FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
       ResultS:
     result = validateChildren(n, parent, [SymDefChild], allowMore = true)

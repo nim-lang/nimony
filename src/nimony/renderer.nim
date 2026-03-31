@@ -1240,11 +1240,11 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       case n.stmtKind
       of StmtsS:
         gstmts(g, n, c)
-      of VarS, LetS, CursorS, ConstS, GvarS, TvarS, GletS, TletS, ResultS:
+      of VarS, LetS, CursorS, PatternvarS, ConstS, GvarS, TvarS, GletS, TletS, ResultS:
         let descriptor: string
         let tk: TokType
         case n.stmtKind
-        of VarS, GvarS, TvarS, ResultS:
+        of VarS, GvarS, TvarS, ResultS, PatternvarS:
           descriptor = "var"
           tk = tkVar
         of CursorS, LetS, GletS, TletS:

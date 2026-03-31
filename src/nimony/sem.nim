@@ -2789,6 +2789,27 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
       for i in selectorStart ..< dest.len:
         savedSelector.add dest[i]
       dest.shrink selectorStart
+      var needsExprClose = false
+      if savedSelector.len != 1 or savedSelector[0].kind != Symbol:
+        dest.addParLe(ExprX, info)
+        needsExprClose = true
+        var tmpName = "`case"
+        c.makeLocalSym(tmpName)
+        let tmpSym = pool.syms.getOrIncl(tmpName)
+        let tmpDeclStart = dest.len
+        dest.addParLe(VarS, info)
+        dest.add symdefToken(tmpSym, info)
+        dest.addDotToken()
+        dest.addDotToken()
+        dest.addSubtree selectorType
+        for i in 0 ..< savedSelector.len:
+          dest.add savedSelector[i]
+        dest.addParRi()
+        publish c, dest, tmpSym, tmpDeclStart
+        let s = Sym(kind: VarY, name: tmpSym, pos: tmpDeclStart)
+        discard addNonOverloadable(c.currentScope, pool.strings.getOrIncl(tmpName), s)
+        savedSelector = createTokenBuf(1)
+        savedSelector.add symToken(tmpSym, info)
       if stInfo.isRef:
         dest.addParLe(DdotX, info)
       else:
@@ -2798,6 +2819,8 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
       dest.add symToken(stInfo.discrimSym, info)
       dest.addIntLit(0, info)
       dest.addParRi()
+      if needsExprClose:
+        dest.addParRi()
       selectorType = stInfo.discrimType
   of ObjectCase:
     var probe = it.n
@@ -2839,11 +2862,13 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
               c.makeLocalSym(bindName)
               let bindSym = pool.syms.getOrIncl(bindName)
               let declStart = dest.len
-              dest.addParLe(LetS, b.info)
+              dest.addParLe(PatternvarS, b.info)
               dest.add symdefToken(bindSym, b.info)
               dest.addDotToken()
               dest.addDotToken()
+              dest.addParLe(MutT, b.info)
               dest.addSubtree b.fieldType
+              dest.addParRi()
               if stInfo.isRef:
                 dest.addParLe(DdotX, b.info)
               else:
@@ -2855,7 +2880,7 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
               dest.addParRi()
               dest.addParRi()
               publish c, dest, bindSym, declStart
-              let s = Sym(kind: LetY, name: bindSym, pos: declStart)
+              let s = Sym(kind: PatternvarY, name: bindSym, pos: declStart)
               if addNonOverloadable(c.currentScope, b.ident, s) == Conflict:
                 buildErr c, dest, b.info, "attempt to redeclare: " & pool.strings[b.ident]
             while it.n.kind != ParRi:
@@ -5422,6 +5447,9 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       of CursorS:
         toplevelGuard c:
           semLocal c, dest, it, CursorY
+      of PatternvarS:
+        toplevelGuard c:
+          semLocal c, dest, it, PatternvarY
       of ResultS:
         toplevelGuard c:
           semLocal c, dest, it, ResultY

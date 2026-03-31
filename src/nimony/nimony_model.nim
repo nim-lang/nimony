@@ -286,7 +286,7 @@ proc skipModifier*(a: Cursor): Cursor =
   removeModifier(result)
 
 const
-  LocalDecls* = {VarS, LetS, ConstS, ResultS, CursorS, GvarS, TvarS, GletS, TletS}
+  LocalDecls* = {VarS, LetS, ConstS, ResultS, CursorS, PatternvarS, GvarS, TvarS, GletS, TletS}
 
 template skipToLocalType*(n) =
   inc n # skip ParLe

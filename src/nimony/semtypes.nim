@@ -10,6 +10,15 @@ proc semObjectComponent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     semWhenImpl(c, dest, it, ObjectWhen, exported)
     n = it.n
   of CaseU:
+    var probe = n
+    inc probe
+    if probe.substructureKind == FldU:
+      inc probe
+    if probe.kind == DotToken:
+      inc c.objectEmptyCaseCount
+      if c.objectEmptyCaseCount > 1:
+        c.buildErr dest, n.info,
+          "only one empty `case` section is allowed in an object type"
     var it = Item(n: n, typ: c.types.autoType)
     semCaseImpl(c, dest, it, ObjectCase, exported)
     n = it.n
@@ -45,11 +54,14 @@ proc semObjectType(c: var SemContext; dest: var TokenBuf; n: var Cursor;
   else:
     # object fields:
     let oldScopeKind = c.currentScope.kind
+    let savedEmptyCase = c.objectEmptyCaseCount
+    c.objectEmptyCaseCount = 0
     withNewScope c:
       # copy toplevel scope status for exported fields
       c.currentScope.kind = oldScopeKind
       while n.kind != ParRi:
         semObjectComponent c, dest, n, exported
+    c.objectEmptyCaseCount = savedEmptyCase
   takeParRi dest, n
 
 proc semTupleType(c: var SemContext; dest: var TokenBuf; n: var Cursor) =

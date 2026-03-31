@@ -143,6 +143,8 @@ type
     expanded*: TokenBuf
     forwardDecls*: Table[StrId, seq[SymId]] # forward declaration candidates by name
     deferredCyclicImports*: seq[(string, SymId)] # (module suffix, module sym) for cyclic imports to resolve after phase1
+    objectEmptyCaseCount*: int
+      ## while semchecking an `object` body: count of sum-type `case` sections (empty selector); at most one is allowed per object. Nested `object` types save/restore this.
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""

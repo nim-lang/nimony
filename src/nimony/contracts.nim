@@ -345,7 +345,7 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
     of Symbol:
       let symId = pc.symId
       let x = getLocalInfo(c.typeCache, symId)
-      if x.kind in {VarY, LetY, CursorY}:
+      if x.kind in {VarY, LetY, CursorY, PatternvarY}:
         if symId notin c.directlyInitialized and symId notin c.writesTo:
           buildErr(c, pc.info, "cannot prove that " & pool.syms[symId] & " has been initialized")
           # do not name the same variable twice:
@@ -930,7 +930,7 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
   of IfS, WhenS, WhileS, ForS, CaseS, TryS, YldS, RaiseS,
      UnpackDeclS, StaticstmtS, AsmS, DeferS,
      CallKindsS, GvarS, TvarS, VarS, ConstS, ResultS,
-     GletS, TletS, LetS, CursorS, BlockS, EmitS, AsgnS, ScopeS,
+     GletS, TletS, LetS, CursorS, PatternvarS, BlockS, EmitS, AsgnS, ScopeS,
      BreakS, ContinueS, RetS, InclS, ExclS, DiscardS, AssumeS, AssertS, NoStmt:
     c.toplevelStmts.takeTree n
 

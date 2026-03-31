@@ -136,6 +136,7 @@ type
     TletS = (ord(TletTagId), "tlet")  ## thread local let variable declaration
     LetS = (ord(LetTagId), "let")  ## let variable declaration
     CursorS = (ord(CursorTagId), "cursor")  ## cursor variable declaration
+    PatternvarS = (ord(PatternvarTagId), "patternvar")  ## pattern variable declaration
     ProcS = (ord(ProcTagId), "proc")  ## proc declaration
     FuncS = (ord(FuncTagId), "func")  ## function declaration
     IteratorS = (ord(IteratorTagId), "iterator")  ## iterator declaration
@@ -188,7 +189,7 @@ type
     DeferS = (ord(DeferTagId), "defer")  ## `defer` statement
 
 proc rawTagIsNimonyStmt*(raw: TagEnum): bool {.inline.} =
-  raw in {CallTagId, CmdTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ResultTagId, GletTagId, TletTagId, LetTagId, CursorTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, BlockTagId, EmitTagId, AsgnTagId, ScopeTagId, IfTagId, WhenTagId, BreakTagId, ContinueTagId, ForTagId, WhileTagId, CaseTagId, RetTagId, YldTagId, StmtsTagId, PragmasTagId, PragmaxTagId, InclTagId, ExclTagId, IncludeTagId, ImportTagId, ImportasTagId, FromimportTagId, ImportexceptTagId, ExportTagId, ExportexceptTagId, CommentTagId, DiscardTagId, TryTagId, RaiseTagId, UnpackdeclTagId, AssumeTagId, AssertTagId, CallstrlitTagId, InfixTagId, PrefixTagId, HcallTagId, StaticstmtTagId, BindTagId, MixinTagId, UsingTagId, AsmTagId, DeferTagId}
+  raw in {CallTagId, CmdTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ResultTagId, GletTagId, TletTagId, LetTagId, CursorTagId, PatternvarTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, BlockTagId, EmitTagId, AsgnTagId, ScopeTagId, IfTagId, WhenTagId, BreakTagId, ContinueTagId, ForTagId, WhileTagId, CaseTagId, RetTagId, YldTagId, StmtsTagId, PragmasTagId, PragmaxTagId, InclTagId, ExclTagId, IncludeTagId, ImportTagId, ImportasTagId, FromimportTagId, ImportexceptTagId, ExportTagId, ExportexceptTagId, CommentTagId, DiscardTagId, TryTagId, RaiseTagId, UnpackdeclTagId, AssumeTagId, AssertTagId, CallstrlitTagId, InfixTagId, PrefixTagId, HcallTagId, StaticstmtTagId, BindTagId, MixinTagId, UsingTagId, AsmTagId, DeferTagId}
 
 type
   NimonyType* = enum
@@ -358,6 +359,7 @@ type
     TletY = (ord(TletTagId), "tlet")  ## thread local let variable declaration
     LetY = (ord(LetTagId), "let")  ## let variable declaration
     CursorY = (ord(CursorTagId), "cursor")  ## cursor variable declaration
+    PatternvarY = (ord(PatternvarTagId), "patternvar")  ## pattern variable declaration
     TypevarY = (ord(TypevarTagId), "typevar")  ## type variable declaration
     EfldY = (ord(EfldTagId), "efld")  ## enum field declaration
     FldY = (ord(FldTagId), "fld")  ## field declaration

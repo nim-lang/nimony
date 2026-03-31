@@ -117,7 +117,7 @@ proc isAddressable*(n: Cursor): bool =
     let res = tryLoadSym(s)
     assert res.status == LacksNothing
     let local = asLocal(res.decl)
-    result = local.kind in {ParamY, LetY, ResultY, VarY, CursorY, ConstY, GletY, TletY, GvarY, TvarY}
+    result = local.kind in {ParamY, LetY, ResultY, VarY, CursorY, PatternvarY, ConstY, GletY, TletY, GvarY, TvarY}
     # Assignments to `ConstY` are prevented later.
   else:
     result = false
@@ -240,6 +240,8 @@ proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
           result = borrowsFromReadonly(c, local.val)
     of VarY, GvarY, TvarY:
       result = local.typ.typeKind == LentT
+    of PatternvarY:
+      result = borrowsFromReadonly(c, local.val)
     of ParamY:
       result = local.typ.typeKind notin {MutT, OutT, LentT, SinkT}
     else:
@@ -695,8 +697,13 @@ proc trLocal(c: var Context; n: var Cursor) =
   let typ = n
   takeTree c.dest, n
   c.typeCache.registerLocal(name.symId, kind, typ)
-  let e = if typ.typeKind in {OutT, MutT, LentT}: WantVarT else: WantT
-  trAsgnRhs c, name, n, e
+  if kind == PatternvarY:
+    c.dest.addParLe(HaddrX, n.info)
+    tr c, n, WantT
+    c.dest.addParRi()
+  else:
+    let e = if typ.typeKind in {OutT, MutT, LentT}: WantVarT else: WantT
+    trAsgnRhs c, name, n, e
   takeParRi c, n
 
 proc trStmtListExpr(c: var Context; n: var Cursor; outerE: Expects) =
