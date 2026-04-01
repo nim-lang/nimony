@@ -490,7 +490,7 @@ proc semLocalType(c: var SemContext; dest: var TokenBuf; n: var Cursor; context 
   assert dest.len > insertPos
   result = typeToCursor(c, dest, insertPos)
 
-proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor)
+proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerRefOwner = SymId(0))
 
 proc instantiateType(c: var SemContext; typ: Cursor; bindings: Table[SymId, Cursor]): Cursor =
   var destB = createTokenBuf(30)
@@ -2478,6 +2478,14 @@ proc findSumTypeInfo(selectorType: TypeCursor): SumTypeInfo =
   if body.typeKind in {RefT, PtrT}:
     isRef = true
     inc body
+    discard skipInvoke(body)
+    # Follow symbol to inner object type for ref/ptr objects:
+    if body.kind == Symbol:
+      let innerRes = tryLoadSym(body.symId)
+      if innerRes.status != LacksNothing: return
+      let innerDecl = asTypeDecl(innerRes.decl)
+      if innerDecl.kind != TypeY: return
+      body = innerDecl.body
   if body.typeKind != ObjectT: return
   let obj = asObjectDecl(body)
   var field = obj.firstField
@@ -2509,10 +2517,17 @@ proc findBranchFields(objTypeSym: SymId; efldSym: SymId): seq[SumTypeBranchField
   result = @[]
   let res = tryLoadSym(objTypeSym)
   if res.status != LacksNothing: return
-  let decl = asTypeDecl(res.decl)
+  var decl = asTypeDecl(res.decl)
   if decl.kind != TypeY: return
   var body = decl.body
-  if body.typeKind in {RefT, PtrT}: inc body
+  if body.typeKind in {RefT, PtrT}:
+    inc body
+    discard skipInvoke(body)
+    # Follow symbol to inner object type:
+    if body.kind == Symbol:
+      decl = asTypeDecl(tryLoadSym(body.symId).decl)
+      if decl.kind != TypeY: return
+      body = decl.body
   if body.typeKind != ObjectT: return
   let obj = asObjectDecl(body)
   var n = obj.firstField
