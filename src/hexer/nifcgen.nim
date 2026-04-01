@@ -578,9 +578,12 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
 
       takeParRi dest, n
     of EnumT, HoleyEnumT, AnumT:
+      let enumKind = n.typeKind
       dest.add tagToken("enum", n.info)
       inc n
       trType c, dest, n, flags # base type
+      if enumKind == AnumT:
+        skip n # owner object type sym
 
       while n.substructureKind == EfldU:
         trEnumField(c, dest, n, flags)

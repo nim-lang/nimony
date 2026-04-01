@@ -482,7 +482,7 @@ type
     InGenericConstraint, InInvokeHead
 
 proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
-                      context: TypeDeclContext; exported = false)
+                      context: TypeDeclContext; exported = false; ownerSym = SymId(0))
 
 proc semLocalType(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = InLocalDecl): TypeCursor =
   let insertPos = dest.len
@@ -1762,6 +1762,7 @@ type
   SemObjectState = object
     isExported: bool
     isAnum: bool
+    ownerSym: SymId
 
 proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: WhenMode;
                  state: var SemObjectState)
@@ -2739,6 +2740,12 @@ proc synthSumTypeDiscriminator(c: var SemContext; dest: var TokenBuf;
   typeBuf.addDotToken()
   typeBuf.addParLe(AnumT, info)
   typeBuf.addSubtree c.types.uint8Type
+  # Store the owning object type sym so that generic type inference
+  # can trace efld → anum → object type (works cross-module):
+  if state.ownerSym != SymId(0):
+    typeBuf.add symToken(state.ownerSym, info)
+  else:
+    typeBuf.addDotToken()
   for i, b in branches:
     let sym = identToSym(c, pool.strings[b.name], EfldY)
     efldSyms.add (sym, b.name)
@@ -2750,14 +2757,17 @@ proc synthSumTypeDiscriminator(c: var SemContext; dest: var TokenBuf;
   c.pendingSumtypes.add typeBuf
   programs.publish oneofTypeSym, c.pendingSumtypes, typeStart, c.phase
 
-  var rootScope = c.currentScope
-  while rootScope.up != nil: rootScope = rootScope.up
-  for i, (sym, name) in efldSyms:
-    var efldBuf = createTokenBuf(10)
-    buildEfld(efldBuf, sym, oneofTypeSym, i, name, branches[i].info, state.isExported)
-    programs.publish sym, efldBuf, c.phase
-    let s = Sym(kind: EfldY, name: sym, pos: ImportedPos)
-    rootScope.addOverloadable(name, s)
+  if c.inTypeInst == 0:
+    # Only inject constructors for the original generic definition,
+    # not for each instantiation (which would cause ambiguous names):
+    var rootScope = c.currentScope
+    while rootScope.up != nil: rootScope = rootScope.up
+    for i, (sym, name) in efldSyms:
+      var efldBuf = createTokenBuf(10)
+      buildEfld(efldBuf, sym, oneofTypeSym, i, name, branches[i].info, state.isExported)
+      programs.publish sym, efldBuf, c.phase
+      let s = Sym(kind: EfldY, name: sym, pos: ImportedPos)
+      rootScope.addOverloadable(name, s)
 
   var fldNameStr = "`kind"
   c.makeFieldSym(fldNameStr)
@@ -3965,6 +3975,111 @@ proc buildDefaultObjConstr(c: var SemContext; dest: var TokenBuf; typ: Cursor;
     buildObjConstrFields(c, dest, currentField, setFields, info, bindings)
   dest.addParRi()
 
+proc getAnumOwnerType(efldSym: SymId): SymId =
+  ## Given an efld symbol, trace efld → anum type → owning object type.
+  ## The owner is stored in the anum body after the base type.
+  let efldRes = tryLoadSym(efldSym)
+  if efldRes.status != LacksNothing or efldRes.decl.substructureKind != EfldU:
+    return SymId(0)
+  var n = efldRes.decl
+  skipToLocalType n
+  if n.kind != Symbol:
+    return SymId(0)
+  let anumSym = n.symId
+  let anumRes = tryLoadSym(anumSym)
+  if anumRes.status != LacksNothing:
+    return SymId(0)
+  let anumDecl = asTypeDecl(anumRes.decl)
+  if anumDecl.body.typeKind != AnumT:
+    return SymId(0)
+  # anum body layout: (anum basetype ownerSym efld1 ...)
+  var body = anumDecl.body
+  inc body # skip AnumT tag
+  skip body # skip base type
+  if body.kind == Symbol:
+    return body.symId
+  return SymId(0)
+
+proc inferTypevarFromTypes(formal, actual: Cursor; inferred: var Table[SymId, Cursor]) =
+  ## Walk formal and actual types in parallel, extracting typevar bindings.
+  var f = formal
+  var a = actual
+  if f.kind == Symbol:
+    let res = tryLoadSym(f.symId)
+    if res.status == LacksNothing and res.decl.tagEnum == TypevarTagId:
+      if f.symId notin inferred:
+        inferred[f.symId] = a
+      return
+  if f.kind == ParLe and a.kind == ParLe and f.tagId == a.tagId:
+    inc f; inc a
+    while f.kind != ParRi and a.kind != ParRi:
+      inferTypevarFromTypes(f, a, inferred)
+      skip f; skip a
+
+proc inferSumTypeFromFields(c: var SemContext; dest: var TokenBuf;
+                             efldSym: SymId; args: Cursor;
+                             info: PackedLineInfo): TypeCursor =
+  ## Given a sum type constructor like `Some(val: 4)` with AutoT expected type,
+  ## infer the generic type parameters from field values and return
+  ## the instantiated type. Returns default if inference fails.
+  let objTypeSym = getAnumOwnerType(efldSym)
+  if objTypeSym == SymId(0): return default(TypeCursor)
+
+  let decl = getTypeSection(objTypeSym)
+  if not decl.isGeneric: return default(TypeCursor)
+
+  let branchFields = findBranchFields(objTypeSym, efldSym)
+
+  # Build name → type map for branch fields
+  var fieldTypesByName = initTable[StrId, TypeCursor]()
+  for bf in branchFields:
+    let name = symToIdent(bf.sym)
+    fieldTypesByName[name] = bf.typ
+
+  # Scan provided arguments to infer type params
+  var inferred = initTable[SymId, Cursor]()
+  var scan = args
+  while scan.kind != ParRi:
+    if scan.substructureKind == KvU:
+      inc scan
+      let fieldName = takeIdent(scan)
+      if fieldName != StrId(0) and fieldName in fieldTypesByName:
+        # Semcheck the value with AutoT to get its natural type
+        var valBuf = createTokenBuf(16)
+        var val = Item(n: scan, typ: c.types.autoType)
+        semExpr c, valBuf, val
+        inferTypevarFromTypes(fieldTypesByName[fieldName], val.typ, inferred)
+        scan = val.n
+      else:
+        skip scan
+      if scan.kind == ParRi:
+        inc scan
+      else:
+        skip scan
+    else:
+      skip scan
+
+  # Build invoke type from inferred params
+  var typeBuf = createTokenBuf(16)
+  typeBuf.addParLe(InvokeT, info)
+  typeBuf.add symToken(objTypeSym, info)
+  var tv = decl.typevars
+  inc tv # skip TypevarsU tag
+  while tv.kind != ParRi:
+    let tvar = asLocal(tv)
+    let tvSym = tvar.name.symId
+    if tvSym in inferred:
+      typeBuf.addSubtree inferred[tvSym]
+    else:
+      return default(TypeCursor) # couldn't infer all params
+    skip tv
+  typeBuf.addParRi()
+
+  # Instantiate via semLocalType into a temp buffer
+  var instDest = createTokenBuf(16)
+  var instRead = cursorAt(typeBuf, 0)
+  result = semLocalType(c, instDest, instRead)
+
 proc semSumTypeObjConstr(c: var SemContext; dest: var TokenBuf; it: var Item;
                           efldSym: SymId; expected: TypeCursor; info: PackedLineInfo) =
   let branchInfo = it.n.info
@@ -3995,11 +4110,18 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
     block sumTypeCheck:
       let efldSym = findOneofEfld(c, it.n.litId)
       if efldSym != SymId(0):
+        var inferredExpected = expected
         if expected.typeKind == AutoT:
-          c.buildErr dest, info, "sum type constructor requires explicit type annotation"
-          skipToEnd it.n
-          return
-        semSumTypeObjConstr(c, dest, it, efldSym, expected, info)
+          # Try to infer generic type parameters from field values:
+          let savedN = it.n
+          inc it.n # skip constructor name ident
+          inferredExpected = inferSumTypeFromFields(c, dest, efldSym, it.n, info)
+          it.n = savedN # restore cursor for semSumTypeObjConstr
+          if inferredExpected == default(TypeCursor):
+            c.buildErr dest, info, "cannot infer generic type for sum type constructor"
+            skipToEnd it.n
+            return
+        semSumTypeObjConstr(c, dest, it, efldSym, inferredExpected, info)
         return
   it.typ = semLocalType(c, dest, it.n)
   dest.shrink exprStart

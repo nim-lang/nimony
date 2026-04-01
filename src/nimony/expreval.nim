@@ -1177,8 +1177,11 @@ type
 proc enumBounds*(n: Cursor): Bounds =
   assert n.typeKind in {EnumT, HoleyEnumT, AnumT}
   var n = n
+  let kind = n.typeKind
   inc n # EnumT
   skip n # Basetype
+  if kind == AnumT:
+    skip n # owner object type sym (or dot)
   result = Bounds(lo: createNan(), hi: createNaN())
   while n.kind != ParRi:
     let enumField = takeLocal(n, SkipFinalParRi)
