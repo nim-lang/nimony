@@ -24,4 +24,18 @@ let g: Either[int, string] = Right(b: "world")
 assert f.a == 42
 assert g.b == "world"
 
+# Generic object constructor inference (non-sum type):
+let p = Pair(first: 1, second: 2)
+assert p.first == 1
+assert p.second == 2
+
+let q = Pair(first: "x", second: "y")
+assert q.first == "x"
+assert q.second == "y"
+
+# Pattern matching in generic procs (cross-module):
+assert getOrDefault(a, 0) == 42
+assert getOrDefault(c, 99) == 99
+assert getOrDefault(d, 0) == 99
+
 echo "tsumtype_generic: OK"

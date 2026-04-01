@@ -12,3 +12,14 @@ type
       a*: A
     of Right:
       b*: B
+
+  Pair*[T] = object
+    first*: T
+    second*: T
+
+proc getOrDefault*[T](opt: Option[T]; default: T): T =
+  case opt
+  of Some(val):
+    result = val
+  of None():
+    result = default

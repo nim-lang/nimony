@@ -2458,6 +2458,7 @@ type
     discrimType: Cursor
     isRef: bool
     objTypeSym: SymId
+    invokeArgs: Cursor # non-default if the selector is a generic instantiation
 
 proc findSumTypeInfo(selectorType: TypeCursor): SumTypeInfo =
   result = SumTypeInfo(valid: false)
@@ -2466,7 +2467,7 @@ proc findSumTypeInfo(selectorType: TypeCursor): SumTypeInfo =
   if t.typeKind in {RefT, PtrT}:
     isRef = true
     inc t
-  discard skipInvoke(t)
+  let invokeArgs = skipInvoke(t)
   if t.kind != Symbol: return
   let typeSym = t.symId
   let res = tryLoadSym(typeSym)
@@ -2494,7 +2495,7 @@ proc findSumTypeInfo(selectorType: TypeCursor): SumTypeInfo =
       if td.body.typeKind == AnumT:
         result = SumTypeInfo(valid: true, discrimSym: fld.name.symId,
                              discrimType: fld.typ, isRef: isRef,
-                             objTypeSym: typeSym)
+                             objTypeSym: typeSym, invokeArgs: invokeArgs)
 
 type
   SumTypeBranchField = object
@@ -2502,6 +2503,9 @@ type
     typ: TypeCursor
 
 proc findBranchFields(objTypeSym: SymId; efldSym: SymId): seq[SumTypeBranchField] =
+  ## Find the fields belonging to the branch identified by `efldSym`.
+  ## Matches by name so it works across generic instantiations where
+  ## the efld syms differ from the original definition.
   result = @[]
   let res = tryLoadSym(objTypeSym)
   if res.status != LacksNothing: return
@@ -2517,6 +2521,7 @@ proc findBranchFields(objTypeSym: SymId; efldSym: SymId): seq[SumTypeBranchField
   if n.substructureKind != CaseU: return
   inc n
   skip n # skip discriminator fld
+  let efldName = symToIdent(efldSym)
   while n.kind != ParRi:
     if n.substructureKind == OfU:
       inc n
@@ -2525,7 +2530,7 @@ proc findBranchFields(objTypeSym: SymId; efldSym: SymId): seq[SumTypeBranchField
         var scan = n
         inc scan
         while scan.kind != ParRi:
-          if scan.kind == Symbol and scan.symId == efldSym:
+          if scan.kind == Symbol and sameIdent(scan.symId, efldName):
             found = true
             break
           skip scan
@@ -2873,6 +2878,11 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
       case mode
       of NormalCase:
         if isSumType and bindings.len > 0:
+          # For generic instantiations, build bindings to instantiate field types:
+          var typeBindings = initTable[SymId, Cursor]()
+          if stInfo.invokeArgs != default(Cursor):
+            let objDecl = getTypeSection(stInfo.objTypeSym)
+            typeBindings = bindInvokeArgs(objDecl, stInfo.invokeArgs)
           withNewScope c:
             takeToken dest, it.n
             for b in bindings:
@@ -2885,7 +2895,11 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
               dest.addDotToken()
               dest.addDotToken()
               dest.addParLe(MutT, b.info)
-              dest.addSubtree b.fieldType
+              if typeBindings.len > 0:
+                let concreteType = instantiateType(c, b.fieldType, typeBindings)
+                dest.addSubtree concreteType
+              else:
+                dest.addSubtree b.fieldType
               dest.addParRi()
               if stInfo.isRef:
                 dest.addParLe(DdotX, b.info)
@@ -4016,35 +4030,16 @@ proc inferTypevarFromTypes(formal, actual: Cursor; inferred: var Table[SymId, Cu
       inferTypevarFromTypes(f, a, inferred)
       skip f; skip a
 
-proc inferSumTypeFromFields(c: var SemContext; dest: var TokenBuf;
-                             efldSym: SymId; args: Cursor;
-                             info: PackedLineInfo): TypeCursor =
-  ## Given a sum type constructor like `Some(val: 4)` with AutoT expected type,
-  ## infer the generic type parameters from field values and return
-  ## the instantiated type. Returns default if inference fails.
-  let objTypeSym = getAnumOwnerType(efldSym)
-  if objTypeSym == SymId(0): return default(TypeCursor)
-
-  let decl = getTypeSection(objTypeSym)
-  if not decl.isGeneric: return default(TypeCursor)
-
-  let branchFields = findBranchFields(objTypeSym, efldSym)
-
-  # Build name → type map for branch fields
-  var fieldTypesByName = initTable[StrId, TypeCursor]()
-  for bf in branchFields:
-    let name = symToIdent(bf.sym)
-    fieldTypesByName[name] = bf.typ
-
-  # Scan provided arguments to infer type params
-  var inferred = initTable[SymId, Cursor]()
+proc inferFieldTypes(c: var SemContext; args: Cursor;
+                      fieldTypesByName: Table[StrId, TypeCursor];
+                      inferred: var Table[SymId, Cursor]) =
+  ## Scan KV argument pairs, semcheck values with AutoT, and infer typevars.
   var scan = args
   while scan.kind != ParRi:
     if scan.substructureKind == KvU:
       inc scan
       let fieldName = takeIdent(scan)
       if fieldName != StrId(0) and fieldName in fieldTypesByName:
-        # Semcheck the value with AutoT to get its natural type
         var valBuf = createTokenBuf(16)
         var val = Item(n: scan, typ: c.types.autoType)
         semExpr c, valBuf, val
@@ -4059,7 +4054,11 @@ proc inferSumTypeFromFields(c: var SemContext; dest: var TokenBuf;
     else:
       skip scan
 
-  # Build invoke type from inferred params
+proc buildInferredInvoke(c: var SemContext; objTypeSym: SymId;
+                          decl: TypeDecl; inferred: Table[SymId, Cursor];
+                          info: PackedLineInfo): TypeCursor =
+  ## Build an InvokeT from inferred type params and instantiate it.
+  ## Returns default if not all params were inferred.
   var typeBuf = createTokenBuf(16)
   typeBuf.addParLe(InvokeT, info)
   typeBuf.add symToken(objTypeSym, info)
@@ -4071,14 +4070,52 @@ proc inferSumTypeFromFields(c: var SemContext; dest: var TokenBuf;
     if tvSym in inferred:
       typeBuf.addSubtree inferred[tvSym]
     else:
-      return default(TypeCursor) # couldn't infer all params
+      return default(TypeCursor)
     skip tv
   typeBuf.addParRi()
-
-  # Instantiate via semLocalType into a temp buffer
   var instDest = createTokenBuf(16)
   var instRead = cursorAt(typeBuf, 0)
   result = semLocalType(c, instDest, instRead)
+
+proc fieldTypesByNameFromObj(decl: TypeDecl): Table[StrId, TypeCursor] =
+  ## Collect field name → type mappings from an object type declaration.
+  result = initTable[StrId, TypeCursor]()
+  let body = decl.objBody
+  if body.typeKind != ObjectT: return
+  var n = asObjectDecl(body).firstField
+  var iter = initObjFieldIter()
+  while nextField(iter, n):
+    let field = takeLocal(n, SkipFinalParRi)
+    let name = symToIdent(field.name.symId)
+    result[name] = field.typ
+
+proc inferSumTypeFromFields(c: var SemContext; dest: var TokenBuf;
+                             efldSym: SymId; args: Cursor;
+                             info: PackedLineInfo): TypeCursor =
+  ## Infer generic type for a sum type constructor like `Some(val: 4)`.
+  let objTypeSym = getAnumOwnerType(efldSym)
+  if objTypeSym == SymId(0): return default(TypeCursor)
+
+  let decl = getTypeSection(objTypeSym)
+  if not decl.isGeneric: return default(TypeCursor)
+
+  let branchFields = findBranchFields(objTypeSym, efldSym)
+  var fieldTypesByName = initTable[StrId, TypeCursor]()
+  for bf in branchFields:
+    fieldTypesByName[symToIdent(bf.sym)] = bf.typ
+
+  var inferred = initTable[SymId, Cursor]()
+  inferFieldTypes(c, args, fieldTypesByName, inferred)
+  result = buildInferredInvoke(c, objTypeSym, decl, inferred, info)
+
+proc inferObjTypeFromFields(c: var SemContext; objTypeSym: SymId;
+                             decl: TypeDecl; args: Cursor;
+                             info: PackedLineInfo): TypeCursor =
+  ## Infer generic type for an object constructor like `Foo(x: 4)`.
+  let fieldTypesByName = fieldTypesByNameFromObj(decl)
+  var inferred = initTable[SymId, Cursor]()
+  inferFieldTypes(c, args, fieldTypesByName, inferred)
+  result = buildInferredInvoke(c, objTypeSym, decl, inferred, info)
 
 proc semSumTypeObjConstr(c: var SemContext; dest: var TokenBuf; it: var Item;
                           efldSym: SymId; expected: TypeCursor; info: PackedLineInfo) =
@@ -4127,12 +4164,14 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
   dest.shrink exprStart
   var decl = default(TypeDecl)
   var objType = it.typ
-  let isGenericObj = containsGenericParams(objType)
+  var isGenericObj = containsGenericParams(objType)
   if objType.typeKind in {RefT, PtrT}:
     inc objType
-  let invokeArgs = skipInvoke(objType)
+  var invokeArgs = skipInvoke(objType)
+  var typeSym = SymId(0)
   if objType.kind == Symbol:
-    decl = getTypeSection(objType.symId)
+    typeSym = objType.symId
+    decl = getTypeSection(typeSym)
     if decl.kind != TypeY:
       # includes typevar case
       c.buildErr dest, info, "expected type for object constructor"
@@ -4147,6 +4186,22 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
     c.buildErr dest, info, "expected type symbol for object constructor"
     skipToEnd it.n
     return
+  if decl.isGeneric and invokeArgs == default(Cursor):
+    # Generic object without explicit type params — infer from field values:
+    let inferred = inferObjTypeFromFields(c, typeSym, decl, it.n, info)
+    if inferred == default(TypeCursor):
+      c.buildErr dest, info, "cannot infer generic type for object constructor"
+      skipToEnd it.n
+      return
+    it.typ = inferred
+    objType = it.typ
+    if objType.typeKind in {RefT, PtrT}:
+      inc objType
+    invokeArgs = skipInvoke(objType)
+    if objType.kind == Symbol:
+      decl = getTypeSection(objType.symId)
+      objType = decl.objBody
+    isGenericObj = false
   # build bindings for invoked object type to get proper types for fields:
   let bindings = bindInvokeArgs(decl, invokeArgs)
   var fieldBuf = createTokenBuf(16)

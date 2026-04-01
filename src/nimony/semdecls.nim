@@ -214,7 +214,8 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
         else:
           semLocalValue c, dest, it, crucial # 4
         n = it.n
-        patchType c, dest, it.typ, beforeType
+        if kind != PatternvarY:
+          patchType c, dest, it.typ, beforeType
   else:
     bug "semLocal"
 
