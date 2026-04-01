@@ -38,4 +38,52 @@ assert getOrDefault(a, 0) == 42
 assert getOrDefault(c, 99) == 99
 assert getOrDefault(d, 0) == 99
 
+# Pattern matching with concept constraints on value sum types:
+type
+  Addable = concept
+    proc `+`(a, b: Self): Self
+
+  Expr[T: Addable] = object
+    case
+    of Lit:
+      val: T
+    of Add:
+      lhs: T
+      rhs: T
+
+proc eval[T: Addable](e: Expr[T]): T =
+  case e
+  of Lit(val):
+    result = val
+  of Add(lhs, rhs):
+    result = lhs + rhs
+
+let expr1 = Add(lhs: 10, rhs: 20)
+assert eval(expr1) == 30
+assert eval(Lit(val: 42)) == 42
+
+# Pattern matching with concept constraints on ref sum types:
+type
+  Tree[T: Addable] = ref object
+    case
+    of Leaf:
+      val: T
+    of Branch:
+      left: Tree[T]
+      right: Tree[T]
+
+proc sum[T: Addable](t: Tree[T]): T =
+  case t
+  of Leaf(val):
+    result = val
+  of Branch(left, right):
+    result = sum(left) + sum(right)
+
+let t: Tree[int] = Branch(
+  left: Leaf(val: 10),
+  right: Leaf(val: 20))
+assert sum(t) == 30
+let leaf: Tree[int] = Leaf(val: 42)
+assert sum(leaf) == 42
+
 echo "tsumtype_generic: OK"
