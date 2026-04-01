@@ -334,19 +334,21 @@ proc semSumTypeConstrFromCall(c: var SemContext; dest: var TokenBuf;
   skipParRi it.n
   let info = cs.callNode.info
   let expected = it.typ
-  if expected.typeKind == AutoT:
-    buildErr c, dest, info, "sum type constructor requires explicit type annotation"
-    return
   assert cs.fn.n.kind == Symbol
   let efldSym = cs.fn.n.symId
-  let kindName = pool.strings.getOrIncl("`kind")
   var objBuf = createTokenBuf(32)
   objBuf.add parLeToken(OconstrX, info)
-  objBuf.addSubtree expected
-  objBuf.addParLe(KvU, info)
-  objBuf.add identToken(kindName, info)
-  objBuf.add symToken(efldSym, info)
-  objBuf.addParRi()
+  if expected.typeKind == AutoT:
+    # Use ident so semObjConstr can do generic type inference:
+    let efldName = symToIdent(efldSym)
+    objBuf.add identToken(efldName, info)
+  else:
+    objBuf.addSubtree expected
+    let kindName = pool.strings.getOrIncl("`kind")
+    objBuf.addParLe(KvU, info)
+    objBuf.add identToken(kindName, info)
+    objBuf.add symToken(efldSym, info)
+    objBuf.addParRi()
   for arg in cs.args:
     let orig = arg.orig
     if orig.substructureKind == VvU:

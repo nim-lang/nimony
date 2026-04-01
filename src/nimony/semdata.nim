@@ -143,6 +143,7 @@ type
     expanded*: TokenBuf
     forwardDecls*: Table[StrId, seq[SymId]] # forward declaration candidates by name
     deferredCyclicImports*: seq[(string, SymId)] # (module suffix, module sym) for cyclic imports to resolve after phase1
+    inTypeInst*: int # > 0 means we're inside a generic type instantiation
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""

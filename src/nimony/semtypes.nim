@@ -414,6 +414,7 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
       # move to top level scope:
       while c.currentScope.up != nil:
         c.currentScope = c.currentScope.up
+      inc c.inTypeInst
       var phase = SemcheckTopLevelSyms
       var topLevel = createTokenBuf(30)
       swap c.phase, phase
@@ -424,6 +425,7 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
       tn = beginRead(topLevel)
       semTypeSection c, instance, tn
       swap c.phase, phase
+      dec c.inTypeInst
       c.currentScope = oldScope
       publish targetSym, ensureMove instance
       dest.shrink typeStart
@@ -620,7 +622,7 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
       result = true
 
 proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
-                      context: TypeDeclContext; exported = false) =
+                      context: TypeDeclContext; exported = false; ownerSym = SymId(0)) =
   let info = n.info
   case n.kind
   of Ident:
@@ -782,7 +784,7 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         c.buildErr dest, info, "`object` type must be defined in a `type` section"
         skip n
       else:
-        var state = SemObjectState(isExported: exported, isAnum: false)
+        var state = SemObjectState(isExported: exported, isAnum: false, ownerSym: ownerSym)
         semObjectType c, dest, n, state
     of EnumT, HoleyEnumT, AnumT:
       if tryTypeClass(c, dest, n):

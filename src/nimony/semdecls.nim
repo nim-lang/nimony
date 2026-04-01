@@ -214,7 +214,8 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
         else:
           semLocalValue c, dest, it, crucial # 4
         n = it.n
-        patchType c, dest, it.typ, beforeType
+        if kind != PatternvarY:
+          patchType c, dest, it.typ, beforeType
   else:
     bug "semLocal"
 
@@ -1066,9 +1067,9 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
           skip n
           takeParRi dest, n
         else:
-          semLocalTypeImpl c, dest, n, InTypeSection, typeIsExported
+          semLocalTypeImpl c, dest, n, InTypeSection, typeIsExported, delayed.s.name
       else:
-        semLocalTypeImpl c, dest, n, InTypeSection, typeIsExported
+        semLocalTypeImpl c, dest, n, InTypeSection, typeIsExported, delayed.s.name
       fitTypeToPragmas(c, dest, crucial, typeStart)
   else:
     if n.typeKind in {RefT, PtrT}:

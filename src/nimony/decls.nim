@@ -50,7 +50,7 @@ proc isLocal*(t: SymKind): bool {.inline.} =
 
 proc isNominal*(t: TypeKind): bool {.inline.} =
   ## type kinds that should stay as symbols, see sigmatch.matchSymbol
-  t in {ObjectT, EnumT, OnumT, DistinctT, ConceptT}
+  t in {ObjectT, EnumT, OnumT, AnumT, DistinctT, ConceptT}
 
 proc skipProcTypeToParams*(t: Cursor): Cursor =
   result = t
@@ -268,6 +268,8 @@ proc asEnumDecl*(c: Cursor): EnumDecl =
     inc c
     result.baseType = c
     skip c
+    if kind == AnumT:
+      skip c # skip owner object type sym (or dot)
     result.firstField = c
 
 type
