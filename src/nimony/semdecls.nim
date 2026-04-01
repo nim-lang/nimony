@@ -1010,7 +1010,7 @@ proc invokeInnerObj(c: var SemContext; dest: var TokenBuf; genericsPos: int; obj
     endRead(dest)
     dest.add symToken(objSym, info)
 
-proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
+proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerRefOwner = SymId(0)) =
   let startCursor = n
   let declStart = dest.len
   takeToken dest, n
@@ -1021,6 +1021,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
 
   var isEnumTypeDecl = false
   var isRefPtrObj = false
+  var refOwner = SymId(0)
   var innerObjDecl = default(TokenBuf)
 
   let beforeGenerics = dest.len
@@ -1060,6 +1061,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
         inc obj
         if obj.typeKind == ObjectT:
           isRefPtrObj = true
+          refOwner = delayed.s.name # outer type sym before mutation
           var objSym = delayed.s.name
           innerObjDecl = buildInnerObjDecl(c, startCursor, objSym)
           takeToken dest, n # ref/ptr tag
@@ -1078,6 +1080,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
       if obj.typeKind == ObjectT:
         # handle these here too for better forward decls
         isRefPtrObj = true
+        refOwner = delayed.s.name
         var objSym = delayed.s.name
         innerObjDecl = buildInnerObjDecl(c, startCursor, objSym)
         takeToken dest, n # ref/ptr tag
@@ -1121,7 +1124,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
       var topLevelRead = beginRead(innerObjDecl)
       var phase = SemcheckTopLevelSyms
       swap c.phase, phase
-      semTypeSection c, topLevelDest, topLevelRead
+      semTypeSection c, topLevelDest, topLevelRead, refOwner
       swap c.phase, phase
       innerObjDecl = topLevelDest
     if c.phase > SemcheckSignatures:
@@ -1130,11 +1133,11 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
       var sigRead = beginRead(innerObjDecl)
       var phase = SemcheckSignatures
       swap c.phase, phase
-      semTypeSection c, sigDest, sigRead
+      semTypeSection c, sigDest, sigRead, refOwner
       swap c.phase, phase
       innerObjDecl = sigDest
     var decl = beginRead(innerObjDecl)
-    semTypeSection c, dest, decl
+    semTypeSection c, dest, decl, refOwner
 
 proc addTupleAccess(buf: var TokenBuf; lvalue: SymId; i: int; info: PackedLineInfo) =
   buf.add parLeToken(TupatX, info)
