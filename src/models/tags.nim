@@ -317,6 +317,7 @@ type
     PackedTagId
     PassiveTagId
     PushTagId
+    CallConvTagId
     PopTagId
     PassLTagId
     PassCTagId
@@ -638,8 +639,9 @@ const
     ("packed", 312),
     ("passive", 313),
     ("push", 314),
-    ("pop", 315),
-    ("passL", 316),
-    ("passC", 317),
-    ("methods", 318)
+    ("callConv", 315),
+    ("pop", 316),
+    ("passL", 317),
+    ("passC", 318),
+    ("methods", 319)
   ]

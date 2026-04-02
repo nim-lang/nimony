@@ -314,6 +314,7 @@
 | `(packed)`   | NifcPragma, NimonyPragma | `packed` pragma |
 | `(passive)`  | NimonyPragma | `passive` pragma |
 | `(push P)`   | NimonyPragma | `push` pragma |
+| `(callConv X)` | NimonyPragma | `callConv` pragma for setting calling convention |
 | `(pop)`      | NimonyPragma | `pop` pragma |
 | `(passL X)`  | NimonyPragma | `passL` pragma adds options to the backend linker |
 | `(passC X)`  | NimonyPragma | `passC` pragma adds options to the backend compiler |

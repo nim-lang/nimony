@@ -764,7 +764,7 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
            TagsP, DeprecatedP, SideEffectP, KeepOverflowFlagP, SemanticsP,
            BaseP, FinalP, PragmaP, CursorP, PassiveP, PluginP, MethodsP, CastP:
           skip n
-        of BuildP, EmitP, PushP, PopP, PassLP, PassCP:
+        of BuildP, EmitP, PushP, PopP, PassLP, PassCP, CallConvP:
           bug "unreachable"
       else:
         error c, "unknown pragma: ", n

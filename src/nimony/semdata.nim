@@ -131,7 +131,7 @@ type
     cachedTypeboundOps*: Table[(SymId, StrId), seq[SymId]]
     userPragmas*: Table[StrId, TokenBuf]
     usingStmtMap*: Table[StrId, TypeCursor] # mapping of identifiers to types declared in using statements
-    pragmaStack*: seq[Cursor] # used to implement {.push.} and {.pop.}
+    pragmaStack*: seq[TokenBuf] # used to implement {.push.} and {.pop.}
     executeCall*: SemExecutor
     semStmtCallback*: SemStmtCallback
     semGetSize*: SemGetSize

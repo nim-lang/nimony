@@ -1553,6 +1553,19 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
       dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), n.info
       crucial.raisesType = c.typeToCursor(dest, typeStart)
       dest.addParRi()
+  of CallConvP:
+    inc n
+    if hasParRi and n.kind == Ident:
+      let cc = callConvKind(n)
+      if cc != NoCallConv:
+        dest.addParLe(cc, n.info)
+        inc n
+        dest.addParRi()
+      else:
+        buildErr c, dest, n.info, "unknown calling convention"
+        inc n
+    else:
+      buildErr c, dest, n.info, "`callConv` pragma takes a calling convention identifier"
   of EmitP, BuildP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP, PassLP, PassCP:
     buildErr c, dest, n.info, "pragma not supported"
     inc n
@@ -1607,8 +1620,8 @@ proc semPragmas(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
             else:
               semPragma c, dest, n, crucial, kind
 
-      for ns in c.pragmaStack:
-        var n2 = ns
+      for i in 0 ..< c.pragmaStack.len:
+        var n2 = beginRead(c.pragmaStack[i])
         while n2.kind != ParRi:
           if checkedPragmas.isChecked(n2, kind):
             skip n2
@@ -5240,7 +5253,12 @@ proc semPragmaLine(c: var SemContext; dest: var TokenBuf; it: var Item; isPragma
     if n.kind == ParRi:
       discard "empty push"
     else:
-      c.pragmaStack.add n
+      var buf = createTokenBuf(16)
+      while n.kind != ParRi:
+        buf.addSubtree n
+        skip n
+      buf.addParRi() # sentinel to stop iteration
+      c.pragmaStack.add buf
     # semcheck push/pop pragmas in both SemcheckSignatures and SemcheckBodies phases
     # so that pushed pragmas works for both procs and variables
     if c.phase == SemcheckBodies:

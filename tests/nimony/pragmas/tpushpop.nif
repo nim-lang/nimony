@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +3083            )
+(.indexat +3382            )
 0,1,tests/nimony/pragmas/tpushpop.nim(stmts
  (import sysvq0asl assy765wm) 41,4
  (type ~39 :TestStruct1.0. . . ~27
@@ -98,13 +98,24 @@
   (pragmas 2
    (importc 9 "putchar") 22
    (header 8 "<stdio.h>") 43
-   (noconv)) . .) 8,15
+   (noconv)) . .) ,34
+ (proc 5 :testCallConv.0. . . . 17
+  (params 1
+   (param :x.4 . . 37,40,lib/std/system/ctypes.nim
+    (i +32
+     (importc "int")) .)) 37,40,lib/std/system/ctypes.nim
+  (i +32
+   (importc "int")) 33
+  (pragmas 2
+   (importc 9 "testCallConv") 27
+   (header 8 "<stdio.h>") ~16,~1
+   (cdecl)) . .) 8,15
  (comment int.0.sysvq0asl 4,7 int.0.sysvq0asl 2,7 int.0.sysvq0asl 36,1 int.0.sysvq0asl ~8,4 assert.0.assy765wm) 19,19
  (proc :c_fpclassify.1. . ~19,~4 .
   (at c_fpclassify.0.
    (f +64)) 12,~4
   (params 1
-   (param :x.5 .
+   (param :x.6 .
     (pragmas ~25,~5
      (header 8 "<math.h>"))
     (f +64) .)) ~11,~4
@@ -120,5 +131,6 @@
  (h T.0. +47) 18,16
  (h c_fpNormal.0. +357) ,22
  (h foo.0. +688) ,30
- (h getchar.0. +298) 19,19
- (h c_fpclassify.1. +316))
+ (h getchar.0. +298) ,34
+ (h testCallConv.0. +197) 19,19
+ (h c_fpclassify.1. +418))
