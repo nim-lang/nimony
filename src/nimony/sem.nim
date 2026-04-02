@@ -1553,6 +1553,19 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
       dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), n.info
       crucial.raisesType = c.typeToCursor(dest, typeStart)
       dest.addParRi()
+  of CallConvP:
+    inc n
+    if hasParRi and n.kind == Ident:
+      let cc = callConvKind(n)
+      if cc != NoCallConv:
+        dest.addParLe(cc, n.info)
+        inc n
+        dest.addParRi()
+      else:
+        buildErr c, dest, n.info, "unknown calling convention"
+        inc n
+    else:
+      buildErr c, dest, n.info, "`callConv` pragma takes a calling convention identifier"
   of EmitP, BuildP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP, PassLP, PassCP:
     buildErr c, dest, n.info, "pragma not supported"
     inc n
