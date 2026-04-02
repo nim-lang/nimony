@@ -1620,8 +1620,8 @@ proc semPragmas(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
             else:
               semPragma c, dest, n, crucial, kind
 
-      for ns in c.pragmaStack:
-        var n2 = ns
+      for i in 0 ..< c.pragmaStack.len:
+        var n2 = beginRead(c.pragmaStack[i])
         while n2.kind != ParRi:
           if checkedPragmas.isChecked(n2, kind):
             skip n2
@@ -5253,7 +5253,12 @@ proc semPragmaLine(c: var SemContext; dest: var TokenBuf; it: var Item; isPragma
     if n.kind == ParRi:
       discard "empty push"
     else:
-      c.pragmaStack.add n
+      var buf = createTokenBuf(16)
+      while n.kind != ParRi:
+        buf.addSubtree n
+        skip n
+      buf.addParRi() # sentinel to stop iteration
+      c.pragmaStack.add buf
     # semcheck push/pop pragmas in both SemcheckSignatures and SemcheckBodies phases
     # so that pushed pragmas works for both procs and variables
     if c.phase == SemcheckBodies:
