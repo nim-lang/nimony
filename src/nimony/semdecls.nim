@@ -1054,7 +1054,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerR
       let typeStart = dest.len
       case n.typeKind
       of EnumT, HoleyEnumT:
-        semEnumType(c, dest, n, delayed.s.name, beforeExportMarker)
+        semEnumType(c, dest, n, delayed.s.name, beforeExportMarker, crucial.size)
         isEnumTypeDecl = true
       of RefT, PtrT:
         var obj = n

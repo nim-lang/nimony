@@ -319,6 +319,7 @@
 | `(passL X)`  | NimonyPragma | `passL` pragma adds options to the backend linker |
 | `(passC X)`  | NimonyPragma | `passC` pragma adds options to the backend compiler |
 | `(methods (kv STR Y)+)`  | NimonyPragma | `methods` pragma lists vtable methods for a type |
+| `(size X)`  | NimonyPragma | `size` pragma for setting the byte size of a type |
 
 ### unpackflat, unpacktup, unpackdecl
 
