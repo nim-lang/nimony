@@ -17,7 +17,7 @@
 import std / [tables, sets, assertions]
 include ".." / lib / nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav]
-import ".." / hexer / [mover]
+import ".." / hexer / [mover, passes]
 
 import versiontabs, nj, njvl_model
 
@@ -81,12 +81,17 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
       if isLocalDecl(symId):
         c.typeCache.registerLocal(symId, r.kind, decl)
       c.typeCache.openScope()
+      # Fresh version table per procedure so params/history from other procs don't leak into joins.
+      # Save/restore parent vt so nested procs don't clobber the outer procedure's state.
+      let parentVt = move c.vt
+      c.vt = createVersionTab()
       trParams c, r.params
       let info = n.info
       setupProc c, n
       copyIntoKind dest, StmtsS, info:
         trStmt c, dest, n
       c.typeCache.closeScope()
+      c.vt = ensureMove parentVt
     else:
       takeTree dest, n
   c.current = ensureMove oldProc
@@ -105,10 +110,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # We can later push them around.
   dest.takeToken n
   while n.kind != ParRi:
-    if n.njvlKind == UnknownV:
-      trUnknown c, dest, n
-    else:
-      trExpr c, dest, n
+    trExpr c, dest, n
   dest.takeToken n
 
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -131,11 +133,29 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     case n.exprKind
     of CallKinds:
       trCall c, dest, n
+    of DotX, DdotX:
+      dest.takeToken n
+      trExpr c, dest, n
+      # field name:
+      dest.takeTree n
+      if n.kind != ParRi:
+        # inheritance depth:
+        takeTree dest, n
+      dest.takeParRi n
     else:
-      dest.takeToken n
-      while n.kind != ParRi:
+      if n.substructureKind == KvU:
+        dest.takeToken n
+        dest.takeTree n # key, don't versionize!
         trExpr c, dest, n
-      dest.takeToken n
+        if n.kind != ParRi:
+          # inheritance depth:
+          takeTree dest, n
+        takeParRi dest, n
+      else:
+        dest.takeToken n
+        while n.kind != ParRi:
+          trExpr c, dest, n
+        dest.takeToken n
   of ParRi: bug "Unmatched ParRi"
 
 proc trStore(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -163,7 +183,11 @@ proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
   closeSection c.vt
   openSection c.vt
   openScope c.typeCache
-  trStmt c, dest, n
+  if n.kind != ParRi:
+    trStmt c, dest, n
+  else:
+    # repair broken ite statements (missing else):
+    dest.addDotToken()
   closeScope c.typeCache
   closeSection c.vt
   # join information is optional here:
@@ -225,7 +249,13 @@ proc trLoop(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trKill(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Do not version the variables here!
-  dest.takeTree n
+  dest.takeToken n
+  while n.kind != ParRi:
+    assert n.kind == Symbol
+    let s = n.symId
+    killVar c.vt, s
+    dest.takeToken n
+  dest.takeParRi n
 
 proc trJtrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.takeToken n
@@ -247,15 +277,18 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trKill c, dest, n
   of StoreV:
     trStore c, dest, n
-  of CfvarV:
+  of MflagV, VflagV:
     trCfvar c, dest, n
   of UnknownV:
     trUnknown c, dest, n
   of JtrueV:
     trJtrue c, dest, n
-  of AssumeV, AssertV, ContinueV, VV:
+  of ContinueV:
+    # we produce a filled `continue` statement in trLoop
+    skip n
+  of AssumeV, AssertV, VV:
     takeTree dest, n
-  of NoVTag:
+  of NoVTag, EtupatV:
     case n.stmtKind
     of NoStmt:
       trExpr c, dest, n
@@ -263,8 +296,10 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trProcDecl c, dest, n
     of LocalDecls:
       trLocal c, dest, n
-    of AsgnS, IfS, WhileS, CaseS, TryS, BreakS, RaiseS, RetS:
+    of AsgnS, IfS, WhileS, CaseS, TryS, BreakS, RaiseS:
       bug "construct should have been eliminated: " & $n.stmtKind
+    of TemplateS, TypeS:
+      takeTree dest, n
     of ContinueS:
       skip n
     else:
@@ -277,7 +312,11 @@ proc toNjvl*(n: Cursor; moduleSuffix: string): TokenBuf =
   var c = Context(typeCache: createTypeCache(), vt: createVersionTab())
   c.typeCache.openScope()
   result = createTokenBuf(300)
-  var elimJumps = eliminateJumps(n, moduleSuffix)
+  var initialBuf = createTokenBuf(300)
+  initialBuf.addSubtree(n)
+  var pass = initPass(move initialBuf, moduleSuffix, "xelim_njvl", 0)
+  eliminateJumps(pass)
+  var elimJumps = ensureMove(pass.dest)
   var n = beginRead(elimJumps)
   assert n.stmtKind == StmtsS, $n.kind
   result.add n
@@ -293,7 +332,8 @@ when isMainModule:
   import std/syncio
   import ".." / lib / symparser
   let infile = paramStr(1)
-  let n = setupProgram(infile, infile.changeModuleExt".njvl.nif")
+  var owningBuf = createTokenBuf(300)
+  let n = setupProgram(infile, infile.changeModuleExt".njvl.nif", owningBuf)
   let r = toNjvl(n, "main")
   let output = r.toString(false)
   if paramCount() >= 2:

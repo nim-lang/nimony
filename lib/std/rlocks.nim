@@ -14,29 +14,30 @@ import std/private/syslocks
 type
   RLock* = SysLock ## Nim lock, re-entrant
 
-proc initRLock*(lock: var RLock) {.inline.} =
+func initRLock*(lock: var RLock) {.inline.} =
   ## Initializes the given lock.
   when defined(posix):
     var a: SysLockAttr = default(SysLockAttr)
     initSysLockAttr(a)
-    setSysLockType(a, SysLockType_Reentrant)
+    {.cast(noSideEffect).}:
+      setSysLockType(a, SysLockType_Reentrant)
     initSysLock(lock, a.addr)
   else:
     initSysLock(lock)
 
-proc deinitRLock*(lock: RLock) {.inline.} =
+func deinitRLock*(lock: RLock) {.inline.} =
   ## Frees the resources associated with the lock.
   deinitSys(lock)
 
-proc tryAcquire*(lock: var RLock): bool {.inline.} =
+func tryAcquire*(lock: var RLock): bool {.inline.} =
   ## Tries to acquire the given lock. Returns `true` on success.
   result = tryAcquireSys(lock)
 
-proc acquire*(lock: var RLock) {.inline.} =
+func acquire*(lock: var RLock) {.inline.} =
   ## Acquires the given lock.
   acquireSys(lock)
 
-proc release*(lock: var RLock) {.inline.} =
+func release*(lock: var RLock) {.inline.} =
   ## Releases the given lock.
   releaseSys(lock)
 

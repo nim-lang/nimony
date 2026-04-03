@@ -1850,7 +1850,7 @@ or a `for` loop variable is allowed:
 
   ```nim
   let t1 = "Hello"
-  var t2: pointer = addr(t2)
+  var t2: pointer = addr(t1)
   echo cast[ptr string](t2)[]
   ```
 
@@ -2385,7 +2385,20 @@ The lifetime of captured variables extends beyond the scope where they were decl
 
 ## Func
 
-A `func` is currently simply a different spelling for a `proc`. This will be changed in the future. A `func` will be strict about what it can do.
+A `func` is a `proc` that is treated as `noSideEffect` by default. Likewise, `iterator` and `converter` are treated as `noSideEffect` by default. A plain `proc` is treated as having side effects by default.
+
+A routine is **side-effect free** when it does not access global or thread-local variables and does not call any routine that has side effects.
+
+There is no `noSideEffect` inference. The defaults can be overridden with explicit `.noSideEffect` and `.sideEffect` annotations:
+
+```nim
+proc pureComputation(x: int): int {.noSideEffect.} =
+  x * x
+
+func withSideEffect(x: int): int {.sideEffect.} =
+  echo x  # allowed because of the explicit .sideEffect annotation
+  x * x
+```
 
 
 
@@ -3974,13 +3987,14 @@ proc tr(n: Node): Tree =
   result = createTree()
   let info = n.info
   var n = n
-  if n.stmtKind == StmtsS: inc n
+  if n.stmtKind == StmtsS:
+    inc n
   result.withTree CallS, info:
     result.addIdent "echo"
     result.takeTree n
 
-var inp = loadTree()
-saveTree tr(beginRead inp)
+var inp = loadPluginInput()
+saveTree tr(inp)
 ```
 
 **Note that plugins are compiled with Nim 2, not Nimony as Nimony is not considered stable enough.**

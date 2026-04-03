@@ -1,5 +1,5 @@
 import std/[os, strformat, tables, syncio]
-import noptions, mangler, symparser
+import noptions, symparser
 
 proc generateMakefileForFiles(s: State, files: seq[string],
       action: Action,

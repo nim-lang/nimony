@@ -6,19 +6,51 @@
 
 ## Helpers for declarative constructs like `let` statements or `proc` declarations.
 
-import std / assertions
-import ".." / lib / [nifstreams, nifcursors]
-import ".." / nimony / [nimony_model, programs]
+import std / [assertions, syncio]
+import ".." / lib / [nifstreams, nifcursors, lineinfos]
+import ".." / nimony / [nimony_model, reporters]
+
+template reportImpl(msg: string; c: Cursor; level: string) =
+  when defined(debug):
+    writeStackTrace()
+  write stdout, level
+  if isValid(c.info):
+    write stdout, infoToStr(c.info)
+    write stdout, " "
+  write stdout, msg
+  writeLine stdout, toString(c, false)
+  quit 1
+
+template reportImpl(msg: string; level: string) =
+  when defined(debug):
+    writeStackTrace()
+  write stdout, level
+  writeLine stdout, msg
+  quit 1
+
+proc error*(msg: string; c: Cursor) {.noreturn.} =
+  reportImpl(msg, c, "[Error] ")
+
+proc error*(msg: string) {.noreturn.} =
+  reportImpl(msg, "[Error] ")
+
+proc bug*(msg: string; c: Cursor) {.noreturn.} =
+  writeStackTrace()
+  reportImpl(msg, c, "[Bug] ")
+
+proc bug*(msg: string) {.noreturn.} =
+  writeStackTrace()
+  reportImpl(msg, "[Bug] ")
 
 proc isRoutine*(t: SymKind): bool {.inline.} =
   t in {ProcY, FuncY, IteratorY, MacroY, TemplateY, ConverterY, MethodY}
 
 proc isLocal*(t: SymKind): bool {.inline.} =
-  t in {LetY, VarY, ResultY, ConstY, ParamY, TypevarY, CursorY, FldY, EfldY, GletY, TletY, GvarY, TvarY}
+  t in {LetY, VarY, ResultY, ConstY, ParamY, TypevarY, CursorY, PatternvarY, FldY, EfldY, GletY, TletY, GvarY, TvarY}
 
 proc isNominal*(t: TypeKind): bool {.inline.} =
   ## type kinds that should stay as symbols, see sigmatch.matchSymbol
-  t in {ObjectT, EnumT, OnumT, DistinctT, ConceptT}
+  t in {ObjectT, EnumT, OnumT, AnumT, DistinctT, ConceptT}
 
 proc skipProcTypeToParams*(t: Cursor): Cursor =
   result = t
@@ -232,10 +264,12 @@ proc asEnumDecl*(c: Cursor): EnumDecl =
   var c = c
   let kind = typeKind c
   result = EnumDecl(kind: kind)
-  if kind in {EnumT, OnumT}:
+  if kind in {EnumT, OnumT, AnumT}:
     inc c
     result.baseType = c
     skip c
+    if kind == AnumT:
+      skip c # skip owner object type sym (or dot)
     result.firstField = c
 
 type
@@ -283,14 +317,3 @@ proc asForStmt*(c: Cursor): ForStmt =
     result.vars = c
     skip c
     result.body = c
-
-proc isMutFirstParam*(destroyProc: SymId): bool =
-  result = false
-  let res = tryLoadSym(destroyProc)
-  if res.status == LacksNothing:
-    let routine = asRoutine(res.decl)
-    var params = routine.params
-    inc params
-    let firstParam = asLocal(params)
-    if firstParam.typ.typeKind in {MutT, OutT}:
-      result = true

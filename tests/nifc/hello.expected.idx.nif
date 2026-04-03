@@ -1,16 +1,4 @@
 (.nif24)
 (index
-(public)
-(private
- (kv MyObject.ptr.flexarray +973)
- (kv MyObject.ptr.object +699)
- (kv MyObject.my.sequence +171)
- (kv MyObject.sequence.base +127))
-(destroy)
-(wasmoved)
-(dup)
-(copy)
-(sinkh)
-(trace)
 
 )

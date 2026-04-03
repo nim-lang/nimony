@@ -12,8 +12,10 @@ assert count == 5
 
 type HasSelfItems = concept
   iterator `items`(x: Self): Self
+  proc default(T: typedesc[Self]): Self
 
 proc foo[T: HasSelfItems](x: T): T =
+  result = default(T)
   for i in x:
     result = i
 

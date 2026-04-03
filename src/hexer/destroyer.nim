@@ -45,7 +45,7 @@ interprets this `=` as `=bitcopy`.
 
 import std / [assertions, tables]
 include nifprelude
-import nifindexes, symparser, treemangler
+import nifindexes, symparser, treemangler, passes
 import ".." / nimony / [nimony_model, programs, typenav, decls]
 import lifter
 
@@ -120,7 +120,7 @@ proc createFreshVars(c: var Context; n: Cursor): TokenBuf =
       inc n
     of ParLe:
       result.add n
-      let isLocalDecl = n.stmtKind in {VarS, LetS, CursorS}
+      let isLocalDecl = n.stmtKind in {VarS, LetS, CursorS, PatternvarS}
       inc n
       inc nested
       if isLocalDecl:
@@ -218,7 +218,7 @@ proc trLocal(c: var Context; n: var Cursor) =
   c.dest.addParRi()
 
   let destructor = getDestructor(c.lifter[], r.typ, info)
-  if destructor != NoSymId and r.kind notin {CursorY, ResultY, GvarY, TvarY, GletY, TletY, ConstY}:
+  if destructor != NoSymId and r.kind notin {CursorY, PatternvarY, ResultY, GvarY, TvarY, GletY, TletY, ConstY}:
     c.currentScope.destroyOps.add DestructorOp(destroyProc: destructor, arg: r.name.symId)
 
 proc trScope(c: var Context; body: var Cursor; kind = Other) =
@@ -383,11 +383,11 @@ proc tr(c: var Context; n: var Cursor) =
         c.dest.add n
         inc n
 
-proc injectDestructors*(n: Cursor; lifter: ref LiftingCtx): TokenBuf =
+proc injectDestructors*(pass: var Pass; lifter: ref LiftingCtx) =
+  var n = pass.n  # Extract cursor locally
   var c = Context(lifter: lifter, currentScope: createEntryScope(n.info),
     anonBlock: pool.syms.getOrIncl("`anonblock.0"),
-    dest: createTokenBuf(400))
-  var n = n
+    dest: move(pass.dest))
   assert n.stmtKind == StmtsS
   c.dest.add n
   inc n
@@ -397,4 +397,4 @@ proc injectDestructors*(n: Cursor; lifter: ref LiftingCtx): TokenBuf =
   leaveScope c, c.currentScope
   takeParRi(c.dest, n)
   genMissingHooks lifter[]
-  result = ensureMove c.dest
+  pass.dest = ensureMove c.dest

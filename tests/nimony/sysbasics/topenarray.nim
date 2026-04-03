@@ -38,3 +38,41 @@ proc foo(x: openArray[int]) =
   assert x.high == 2
 
 foo([1, 2, 3])
+
+proc empty1(args: openArray[int]) =
+  assert args.len == 0
+
+empty1([])
+empty1(@[])
+
+proc execProcess*(
+    args: openArray[int] = []) =
+  discard
+
+execProcess()
+
+proc execProcess2*(
+    args: openArray[int] = @[]) =
+  discard
+
+execProcess2()
+
+proc emptyGeneric[T](a: T, args: openArray[T]) =
+  assert args.len == 0
+
+emptyGeneric("abc", [])
+emptyGeneric("def", @[])
+
+proc execProcessGeneric*[T](
+    a: T,
+    args: openArray[T] = []) =
+  discard
+
+execProcessGeneric("abc")
+
+proc execProcessGeneric2*[T](
+    a: T,
+    args: openArray[T] = @[]) =
+  discard
+
+execProcessGeneric2("def")

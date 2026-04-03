@@ -16,15 +16,16 @@
 
 import std/[os, tables, sets, syncio, assertions, strutils, times]
 import semos, nifconfig, nimony_model, nifindexes, symparser
-import ".." / gear2 / modnames, semdata
-import ".." / lib / tooldirs
+import ".." / gear2 / modnames, semdata, langmodes
+import ".." / lib / [tooldirs, platform]
 import ".." / models / nifindex_tags
 
 include nifprelude
 
 type
   FilePair = object
-    nimFile: string
+    nimFile: string # can now also be a .nif file. This is used for the eval feature where Nimony
+                    # calls itself for an extracted code snippet that must run at compile time.
     modname: string
 
 proc indexFile(config: NifConfig; f: FilePair; bundle: string): string =
@@ -36,15 +37,38 @@ proc deps2File(config: NifConfig; f: FilePair): string = config.nifcachePath / f
 proc semmedFile(config: NifConfig; f: FilePair; bundle: string): string =
   config.nifcachePath / bundle / f.modname & ".s.nif"
 proc hexedFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".x.nif"
-proc nifcFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".c.nif"
+proc nifcFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
+  let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
+  base / f.modname & ".c.nif"
 
-proc cFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".c"
-proc objFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".o"
+proc cFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
+  let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
+  base / f.modname & ".c"
+proc objFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
+  let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
+  base / f.modname & ".o"
 
 # It turned out to be too annoying in practice to have the exe file in
 # the current directory per default so we now put it into the nifcache too:
-proc exeFile(config: NifConfig; f: FilePair): string =
-  config.nifcachePath / f.nimFile.splitFile.name.addFileExt(ExeExt)
+# DCE and everything after is main-specific (different DCE outcomes); use backendDir.
+proc exeFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
+  let baseName = f.nimFile.splitFile.name
+  let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
+  case config.appType
+  of appConsole, appGui:
+    base / baseName.addFileExt(ExeExt)
+  of appLib:
+    if config.targetOS == osWindows:
+      base / baseName.addFileExt("dll")
+    elif config.targetOS in {osMacosx, osIos}:
+      base / ("lib" & baseName & ".dylib")
+    else:
+      base / ("lib" & baseName & ".so")
+  of appStaticLib:
+    if config.targetOS == osWindows:
+      base / baseName.addFileExt("lib")
+    else:
+      base / ("lib" & baseName & ".a")
 
 proc resolveFileWrapper(paths: openArray[string]; origin: string; toResolve: string): string =
   result = resolveFile(paths, origin, toResolve)
@@ -59,6 +83,7 @@ type
     active: int
     isSystem: bool
     plugin: string
+    cyclicFiles: seq[int] ## indices into `files` that are cyclic module members (need separate outputs)
 
   Command* = enum
     DoCheck, # like `nim check`
@@ -86,7 +111,12 @@ type
     passC: seq[string]
 
 proc toPair(c: DepContext; f: string): FilePair =
-  FilePair(nimFile: f, modname: moduleSuffix(f, c.config.paths))
+  if f.endsWith(".nif"):
+    # For .p.nif files (e.g. from compile-time eval snippets), extract the
+    # module suffix directly from the filename rather than recomputing it:
+    FilePair(nimFile: f, modname: extractModuleSuffix(f))
+  else:
+    FilePair(nimFile: f, modname: moduleSuffix(f, c.config.paths))
 
 proc processDep(c: var DepContext; n: var Cursor; current: Node)
 proc traverseDeps(c: var DepContext; p: FilePair; current: Node)
@@ -170,14 +200,36 @@ proc processPluginImport(c: var DepContext; f: ImportedFilename; info: PackedLin
   else:
     current.deps.add existingNode
 
+proc importCyclicModule(c: var DepContext; f1: string; info: PackedLineInfo;
+                        current: Node) =
+  ## Merge a cyclic import target into the current node's cycle group.
+  let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1)
+  if not semos.fileExists(f2): return
+  let p = c.toPair(f2)
+  if c.processedModules.hasKey(p.modname):
+    return # already part of this or another node
+  # Add to current node as a cyclic group member:
+  let idx = current.files.len
+  current.files.add p
+  current.cyclicFiles.add idx
+  c.processedModules[p.modname] = current.id
+  # Traverse the cyclic module's deps as part of this node:
+  let oldActive = current.active
+  current.active = idx
+  traverseDeps c, p, current
+  current.active = oldActive
+
 proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   let info = it.info
   var x = it
   skip it
   inc x # skip the `import`
-  # ignore conditional imports:
-  if x.stmtKind == WhenS: return
+  # Conditional imports carry a (when) marker child; skip it and still add the
+  # file to the dependency graph so cross-compilation (e.g. --os:windows) sees
+  # all potential dependencies. importSingleFile already ignores missing files.
+  if x.stmtKind == WhenS: skip x
   while x.kind != ParRi:
+    var isCyclic = false
     if x.kind == ParLe and x.exprKind == PragmaxX:
       var y = x
       inc y
@@ -185,13 +237,23 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
       if y.substructureKind == PragmasU:
         inc y
         if y.kind == Ident and pool.strings[y.litId] == "cyclic":
-          continue
+          isCyclic = true
 
     var files: seq[ImportedFilename] = @[]
     var hasError = false
-    filenameVal(x, files, hasError, allowAs = true)
+    if isCyclic:
+      # Manually parse the pragmax: enter it, parse the inner filename, skip the pragma
+      inc x # enter PragmaxX
+      filenameVal(x, files, hasError, allowAs = false)
+      skip x # skip (pragmas cyclic)
+      inc x  # skip closing ParRi of PragmaxX
+    else:
+      filenameVal(x, files, hasError, allowAs = true)
     if hasError:
       discard "ignore wrong `import` statement"
+    elif isCyclic:
+      for f in files:
+        importCyclicModule c, f.path, info, current
     else:
       for f in files:
         if f.plugin.len == 0:
@@ -205,8 +267,7 @@ proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
   var x = it
   skip it
   inc x # skip the tag
-  # ignore conditional imports:
-  if x.stmtKind == WhenS: return
+  if x.stmtKind == WhenS: skip x  # skip conditional marker, same as processImport
   var files: seq[ImportedFilename] = @[]
   var hasError = false
   filenameVal(x, files, hasError, allowAs = true)
@@ -281,6 +342,9 @@ proc processDeps(c: var DepContext; n: Cursor; current: Node) =
       processDep c, n, current
 
 proc execNifler(c: var DepContext; f: FilePair) =
+  # File can be a .nif file, if so, we don't need to run nifler.
+  if f.nimFile.endsWith(".nif"):
+    return
   let output = c.config.parsedFile(f)
   let depsFile = c.config.depsFile(f)
   if not c.forceRebuild and semos.fileExists(output) and
@@ -338,12 +402,15 @@ proc defineNiflerCmd(b: var Builder; nifler: string) =
     b.addKeyw "input"
     b.addKeyw "output"
 
-proc defineHexerCmds(b: var Builder; hexer: string; bits: int) =
+proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool) =
+  let cpuFlag = if bigEndian: "--cpu:be" else: "--cpu:le"
   b.withTree "cmd":
     b.addSymbolDef "hexer"
     b.addStrLit hexer
     b.addStrLit "c"
     b.addStrLit "--bits:" & $bits
+    b.addStrLit cpuFlag
+    b.addKeyw "args"
     b.withTree "input":
       b.addIntLit 0
 
@@ -352,6 +419,8 @@ proc defineHexerCmds(b: var Builder; hexer: string; bits: int) =
     b.addStrLit hexer
     b.addStrLit "d"
     b.addStrLit "--bits:" & $bits
+    b.addStrLit cpuFlag
+    b.addKeyw "args"
     b.withTree "input":
       b.addIntLit 0
       b.addIntLit -1  # all inputs
@@ -382,13 +451,18 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       b.addKeyw "input"
 
     # Command for hexer
-    defineHexerCmds(b, hexer, c.config.bits)
+    defineHexerCmds(b, hexer, c.config.bits, platform.CPU[c.config.targetCPU].endian == bigEndian)
 
     # Command for C compiler (object files)
     b.withTree "cmd":
       b.addSymbolDef "cc"
       b.addStrLit c.config.cc
       b.addStrLit "-c"
+      # Suppress visibility-attribute warnings from mimalloc etc. (GCC/Clang)
+      b.addStrLit "-Wno-attributes"
+      # Add -fPIC for shared libraries
+      if c.config.appType == appLib:
+        b.addStrLit "-fPIC"
       if passC.len > 0:
         for arg in passC.split(' '):
           if arg.len > 0:
@@ -401,34 +475,76 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       b.addStrLit "-o"
       b.addKeyw "output"
 
-    # Command for linking
+    # Command for linking/archiving
     if c.cmd in {DoCompile, DoRun}:
-      b.withTree "cmd":
-        b.addSymbolDef "link"
-        b.addStrLit c.config.linker
-        b.addStrLit "-o"
-        b.addKeyw "output"
-        b.withTree "input":
-          b.addIntLit 0
-          b.addIntLit -1  # all inputs
-        b.withTree "argsext":
-          b.addStrLit ".linker.args"
-        if passL.len > 0:
-          for arg in passL.split(' '):
-            if arg.len > 0:
-              b.addStrLit arg
-        for i in c.passL:
-          b.addStrLit i
+      case c.config.appType
+      of appStaticLib:
+        # Static library: use ar to create archive
+        b.withTree "cmd":
+          b.addSymbolDef "link"
+          b.addStrLit "ar"
+          b.addStrLit "rcs"
+          b.addKeyw "output"
+          b.withTree "input":
+            b.addIntLit 0
+            b.addIntLit -1  # all inputs
+      of appLib:
+        # Dynamic library: use linker with -shared
+        b.withTree "cmd":
+          b.addSymbolDef "link"
+          b.addStrLit c.config.linker
+          b.addStrLit "-shared"
+          b.addStrLit "-o"
+          b.addKeyw "output"
+          b.withTree "input":
+            b.addIntLit 0
+            b.addIntLit -1  # all inputs
+          b.withTree "argsext":
+            b.addStrLit ".linker.args"
+          if passL.len > 0:
+            for arg in passL.split(' '):
+              if arg.len > 0:
+                b.addStrLit arg
+          for i in c.passL:
+            b.addStrLit i
+      of appConsole, appGui:
+        # Executable: use linker normally
+        b.withTree "cmd":
+          b.addSymbolDef "link"
+          b.addStrLit c.config.linker
+          b.addStrLit "-o"
+          b.addKeyw "output"
+          b.withTree "input":
+            b.addIntLit 0
+            b.addIntLit -1  # all inputs
+          b.withTree "argsext":
+            b.addStrLit ".linker.args"
+          if passL.len > 0:
+            for arg in passL.split(' '):
+              if arg.len > 0:
+                b.addStrLit arg
+          for i in c.passL:
+            b.addStrLit i
 
     # Build rules
     if c.cmd in {DoCompile, DoRun}:
+      let backend = c.rootNode.files[0].modname  # DCE and after are main-specific
+      let backendDir = c.config.nifcachePath / backend
       b.withTree "do":
         b.addIdent "dce"
-        for n in c.nodes:
+        b.withTree "args":
+          b.addStrLit "--outdir:" & backendDir
+        for i, n in pairs c.nodes:
           b.withTree "input":
-            b.addStrLit c.config.hexedFile(n.files[0])
+            # The root module's .x.nif is backend-specific (generated with --isMain),
+            # so it does not collide with the shared .x.nif produced when this module
+            # is compiled as a non-main dependency of another program.
+            if i == 0:
+              b.addStrLit backendDir / n.files[0].modname & ".x.nif"
+            else:
+              b.addStrLit c.config.hexedFile(n.files[0])
           b.withTree "output":
-            b.addStrLit c.config.nifcFile(n.files[0])
+            b.addStrLit c.config.nifcFile(n.files[0], backend)
 
       # Link executable
       b.withTree "do":
@@ -436,22 +552,22 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
         # Input: all object files
         var objFiles = initHashSet[string]()
         for cfile in c.toBuild:
-          let obj = c.config.nifcachePath / cfile.obj
+          let obj = c.config.nifcachePath / backend / cfile.obj
           if not objFiles.containsOrIncl(obj):
             b.withTree "input":
               b.addStrLit obj
         for v in c.nodes:
-          let obj = c.config.objFile(v.files[0])
+          let obj = c.config.objFile(v.files[0], backend)
           if not objFiles.containsOrIncl(obj):
             b.withTree "input":
               b.addStrLit obj
         b.withTree "output":
-          b.addStrLit c.config.exeFile(c.rootNode.files[0])
+          b.addStrLit c.config.exeFile(c.rootNode.files[0], backend)
 
       objFiles.clear()
       # Build object files from C files with custom args
       for cfile in c.toBuild:
-        let obj = c.config.nifcachePath / cfile.obj
+        let obj = c.config.nifcachePath / backend / cfile.obj
         if not objFiles.containsOrIncl(obj):
           b.withTree "do":
             b.addIdent "cc"
@@ -463,35 +579,50 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
               b.addStrLit obj
 
       for i, v in pairs c.nodes:
-        let obj = c.config.objFile(v.files[0])
+        let obj = c.config.objFile(v.files[0], backend)
         if not objFiles.containsOrIncl(obj):
           b.withTree "do":
             b.addIdent "cc"
             b.withTree "input":
-              b.addStrLit c.config.cFile(v.files[0])
+              b.addStrLit c.config.cFile(v.files[0], backend)
             b.withTree "output":
               b.addStrLit obj
 
         # Build C files from .c.nif files
         b.withTree "do":
           b.addIdent "nifc"
+          b.withTree "args":
+            b.addStrLit "--nimcache:" & backendDir
           if i == 0:
             b.withTree "args":
               b.addStrLit "--isMain"
           b.withTree "input":
-            b.addStrLit c.config.nifcFile(v.files[0])
+            b.addStrLit c.config.nifcFile(v.files[0], backend)
           b.withTree "output":
-            b.addStrLit c.config.cFile(v.files[0])
+            b.addStrLit c.config.cFile(v.files[0], backend)
 
-        # Build .c.nif files from .s.nif files
+        # Build .x.nif files from .s.nif files via hexer.
+        # For the root module (i==0) the output is backend-specific so that
+        # its --isMain version does not overwrite the shared .x.nif that other
+        # compilations produce when this module is a non-main dependency.
         b.withTree "do":
           b.addIdent "hexer"
+          if i == 0:
+            b.withTree "args":
+              b.addStrLit "--isMain"
+            b.withTree "args":
+              b.addStrLit "--app:" & $c.config.appType
+            b.withTree "args":
+              b.addStrLit "--outdir:" & backendDir
           b.withTree "input":
             b.addStrLit c.config.semmedFile(v.files[0], v.plugin)
           b.withTree "input":
             b.addStrLit c.config.indexFile(v.files[0], v.plugin)
           b.withTree "output":
-            b.addStrLit c.config.hexedFile(v.files[0])
+            if i == 0:
+              b.addStrLit backendDir / v.files[0].modname & ".x.nif"
+            else:
+              b.addStrLit c.config.hexedFile(v.files[0])
 
 proc cachedConfigFile(config: NifConfig): string =
   config.nifcachePath / "cachedconfigfile.txt"
@@ -504,6 +635,10 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
         b.addStrLit "--isSystem"
       elif isMain:
         b.addStrLit "--isMain"
+      # Module files are passed as args (primary first, then cyclic members)
+      b.addStrLit c.config.parsedFile(v.files[0])
+      for idx in v.cyclicFiles:
+        b.addStrLit c.config.parsedFile(v.files[idx])
     # Input: parsed file
     var seenDeps = initHashSet[string]()
     for f in v.files:
@@ -520,11 +655,17 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
     # Input: cached config file
     b.withTree "input":
       b.addStrLit c.config.cachedConfigFile()
-    # Outputs: semmed file and index file
+    # Outputs: semmed file and index file for primary module
     b.withTree "output":
       b.addStrLit c.config.semmedFile(v.files[0], v.plugin)
     b.withTree "output":
       b.addStrLit c.config.indexFile(v.files[0], v.plugin)
+    # Outputs for cyclic group members:
+    for idx in v.cyclicFiles:
+      b.withTree "output":
+        b.addStrLit c.config.semmedFile(v.files[idx], v.plugin)
+      b.withTree "output":
+        b.addStrLit c.config.indexFile(v.files[idx], v.plugin)
 
 proc generatePluginSemInstructions(c: DepContext; v: Node; b: var Builder) =
   #[ An import plugin fills `nimcache/<plugin>` for us. It is our job to
@@ -564,8 +705,7 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
             b.addStrLit arg
       b.addStrLit "m"
       b.addKeyw "args"
-      b.withTree "input":
-        b.addIntLit 0  # main parsed file
+      # Module files are passed via (args) in each (do nimsem) block
 
     if cmd == DoCheck:
       b.withTree "cmd":
@@ -614,6 +754,8 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
         let f = c.config.parsedFile(v.files[i])
         if not seenFiles.containsOrIncl(f):
           let nimFile = v.files[i].nimFile
+          if nimFile.endsWith(".nif"):
+            continue
           b.withTree "do":
             b.addIdent "nifler"
             b.withTree "input":
@@ -686,12 +828,13 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
       b.addKeyw "args"
       b.addKeyw "input"
 
-    defineHexerCmds(b, findTool("hexer"), config.bits)
+    defineHexerCmds(b, findTool("hexer"), config.bits, platform.CPU[config.targetCPU].endian == bigEndian)
 
     b.withTree "cmd":
       b.addSymbolDef "cc"
       b.addStrLit config.cc
       b.addStrLit "-c"
+      b.addStrLit "-Wno-attributes"
       if config.baseDir.len > 0:
         b.addStrLit "-I" & config.baseDir
       b.addKeyw "args"
@@ -744,8 +887,13 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
         b.withTree "output":
           b.addStrLit writenifHexedFile
 
+
+    let allRequiredStdlibModules = toHashSet(allNifFiles)
+
     for depNifFile in dependencyNifFiles:
       let depName = depNifFile.splitModulePath.name
+      if depName in allRequiredStdlibModules:
+        continue
       allNifFiles.add(depName)
       let depHexedFile = config.nifcachePath / depName & ".s.nif"
 
@@ -765,6 +913,10 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
     # Process main .nif file with hexer first
     b.withTree "do":
       b.addIdent "hexer"
+      b.withTree "args":
+        b.addStrLit "--isMain"
+      b.withTree "args":
+        b.addStrLit "--app:" & $config.appType
       b.withTree "input":
         b.addStrLit mainNifFile
       b.withTree "output":
@@ -786,7 +938,6 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
         if i == 0:
           b.withTree "args":
             b.addStrLit "--isMain"
-
         b.withTree "input":
           b.addStrLit config.nifcachePath / nifFile & ".c.nif"
         b.withTree "output":
@@ -820,7 +971,7 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
   exec(nifmakeCmd)
   exec(exeFile)
 
-proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake: bool;
+proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake, profile: bool;
     commandLineArgs, commandLineArgsNifc: string; moduleFlags: set[ModuleFlag]; cmd: Command;
     passC, passL: string, executableArgs: string) =
   let nifler = findTool("nifler")
@@ -841,6 +992,7 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
     putEnv("CXX", "g++")
   let nifmakeCommand = quoteShell(nifmake) &
     (if forceRebuild: " --force" else: "") &  # Use generic force flag
+    (if profile: " --profile" else: "") &
     " --base:" & quoteShell(config.baseDir) &
     " -j run "
   exec nifmakeCommand & quoteShell(buildFilename)
@@ -850,7 +1002,10 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
     # It is generated by nimsem and doesn't contains modules imported under `when false:`.
     # https://github.com/nim-lang/nimony/issues/985
     c = initDepContext(config, project, nifler, true, forceRebuild, moduleFlags, cmd)
+    let backend = c.config.nifcachePath / c.rootNode.files[0].modname
+    createDir(backend)
     let buildFinalFilename = generateFinalBuildFile(c, commandLineArgsNifc, passC, passL)
     exec nifmakeCommand & quoteShell(buildFinalFilename)
     if cmd == DoRun:
-      exec c.config.exeFile(c.rootNode.files[0]) & executableArgs
+      let backend = c.rootNode.files[0].modname
+      exec c.config.exeFile(c.rootNode.files[0], backend) & executableArgs

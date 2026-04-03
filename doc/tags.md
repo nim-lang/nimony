@@ -46,7 +46,7 @@
 | `(neq T X X)`          | NifcExpr, NimonyExpr | |
 | `(le T X X)`           | NifcExpr, NimonyExpr | |
 | `(lt T X X)`           | NifcExpr, NimonyExpr | |
-| `(cast T X)`           | NifcExpr, NimonyExpr, NiflerKind | `cast` operation |
+| `(cast T X)`           | NifcExpr, NimonyExpr, NimonyPragma, NiflerKind | `cast` operation |
 | `(conv T X)`           | NifcExpr, NimonyExpr | type conversion |
 | `(call X X*)`          | NifcExpr, NimonyExpr, NifcStmt, NimonyStmt, NiflerKind | call operation |
 | `(cmd X X*)`             | NimonyStmt, NimonyExpr, NiflerKind | command operation |
@@ -62,6 +62,7 @@
 | `(tlet D E P T X)` | NimonyStmt, NimonySym, NifIndexKind | thread local let variable declaration |
 | `(let D E P T X)` | NimonySym, NimonyStmt, NiflerKind, NifIndexKind | let variable declaration |
 | `(cursor D E P T X)` | NimonySym, NimonyStmt, NimonyPragma, NifIndexKind | cursor variable declaration |
+| `(patternvar D E P T X)` | NimonySym, NimonyStmt | pattern variable declaration |
 | `(typevar D E P T X)` | NimonySym, NifcOther, NimonyOther, NiflerKind | type variable declaration |
 | `(efld D E P T X)`; `(efld D X)` | NimonySym, NifcSym, NifcOther, NimonyOther, NiflerKind | enum field declaration |
 | `(fld D E P T X)`; `(fld D P T)` | NifcOther, NimonyOther, NimonySym, NifcSym, NiflerKind | field declaration |
@@ -72,14 +73,14 @@
 | `(method D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind, NifIndexKind | method declaration |
 | `(macro D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind, NifIndexKind | macro declaration |
 | `(template D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind, NifIndexKind | template declaration |
-| `(type D ...)` | NifcStmt, NimonyStmt, NimonySym, NiflerKind, NifIndexKind | type declaration |
+| `(type D ...)` | NifcStmt, NimonyStmt, NimonySym, NifcSym, NiflerKind, NifIndexKind | type declaration |
 | `(block .D X)` | NimonyStmt, NimonySym, NiflerKind | block declaration |
 | `(module)` | NimonySym | module declaration |
 | `(cchoice X X*)` | NimonyExpr, NimonySym | closed choice |
 | `(ochoice X X*)`| NimonyExpr | open choice |
 | `(emit X*)` | NifcStmt, NimonyStmt, NimonyPragma | emit statement |
 | `(asgn X X)` | NifcStmt, NimonyStmt, NiflerKind | assignment statement |
-| `(store X X)` | NjvlKind | `asgn` with reversed operands that reflects evaluation order |
+| `(store X X)` | NjvlKind, NifcStmt | `asgn` with reversed operands that reflects evaluation order |
 | `(keepovf X X)` | NifcStmt | keep overflow flag statement |
 | `(scope S*)` | NifcStmt, NimonyStmt | explicit scope annotation, like `stmts` |
 | `(if (elif X X)+ (else X)?)` | NifcStmt, NimonyStmt, NiflerKind | if statement header |
@@ -107,10 +108,10 @@
 | `(ro)` | NifcTypeQualifier | `readonly` (= `const`) type qualifier for NIFC |
 | `(restrict)` | NifcTypeQualifier | type qualifier for NIFC |
 | `(cppref)` | NifcTypeQualifier | type qualifier for NIFC that provides a C++ reference |
-| `(i INTLIT)` | NifcType, NimonyType | `int` builtin type |
-| `(u INTLIT)` | NifcType, NimonyType | `uint` builtin type |
-| `(f INTLIT)` | NifcType, NimonyType | `float` builtin type |
-| `(c INTLIT)` | NifcType, NimonyType | `char` builtin type |
+| `(i INTLIT (importc/importcpp STR)? (header STR)?)` | NifcType, NimonyType | `int` builtin type |
+| `(u INTLIT (importc/importcpp STR)? (header STR)?)` | NifcType, NimonyType | `uint` builtin type |
+| `(f INTLIT (importc/importcpp STR)? (header STR)?)` | NifcType, NimonyType | `float` builtin type |
+| `(c INTLIT (importc/importcpp STR)? (header STR)?)` | NifcType, NimonyType | `char` builtin type |
 | `(bool)` | NifcType, NimonyType | `bool` builtin type |
 | `(void)` | NifcType, NimonyType | `void` return type |
 | `(ptr T)` | NifcType, NimonyType, NiflerKind | `ptr` type contructor |
@@ -129,18 +130,17 @@
 | `(inline)` | NifcPragma, NimonyPragma, NifIndexKind | `inline` proc annotation |
 | `(noinline)` | NifcPragma, NimonyPragma | `noinline` proc annotation |
 | `(closure)` | NimonyPragma | `closure` proc annotation; not a calling convention anymore, simply annotates a proc as a closure |
-| `(attr STR)` | NifcPragma | general attribute annoation |
-| `(varargs)` | NifcPragma, NimonyPragma, NimonyType | `varargs` proc annotation |
+| `(attr STR)` | NifcPragma | general attribute annotation |
+| `(varargs)` | NimonyPragma, NimonyType, NifcType | `varargs` proc annotation |
 | `(was STR)` | NifcPragma | |
 | `(selectany)` | NifcPragma, NimonyPragma | |
 | `(pragmas (pragma ...)*)` | NifcOther, NimonyOther, NimonyStmt, NiflerKind | begin of pragma section |
-| `(pragmax X (pragmas ...))` | NimonyExpr, NiflerKind | pragma expressions |
+| `(pragmax X (pragmas ...))` | NimonyExpr, NimonyStmt, NiflerKind | pragma expressions |
 | `(align X)` | NifcPragma, NimonyPragma | |
 | `(bits X)`| NifcPragma, NimonyPragma | |
 | `(vector)` | NifcPragma | |
-| `(imp S)` | NifcStmt | import declaration |
 | `(nodecl)` | NifcPragma, NimonyPragma | `nodecl` annotation |
-| `(incl X X)`; `(incl STR)` | NifcStmt, NimonyStmt | `#include` statement or `incl` set operation |
+| `(incl X X)` | NimonyStmt | `incl` set operation |
 | `(excl X X)` | NimonyStmt | `excl` set operation |
 | `(include X+)` | NimonyStmt, NiflerKind | `include` statement |
 | `(import X+)` | NimonyStmt, NiflerKind | `import` statement |
@@ -158,13 +158,15 @@
 | `(raises)` | NifcPragma, NimonyPragma | proc annotation |
 | `(errs)` | NifcPragma | proc annotation |
 | `(static T)`; `(static)` | NifcPragma, NimonyType, NiflerKind | `static` type or annotation |
-| `(ite X S S S STR_LIT?)` | ControlFlowKind, NjvlKind | if-then-else followed by `join` information followed by an optional label |
-| `(itec X S S)` | NjvlKind | if-then-else (that was a `case`) |
-| `(loop S X S S)` | NjvlKind | `loop` components are (before-cond, cond, loop-body, after) |
+| `(ite X S S S STR_LIT?)` | ControlFlowKind, NjvlKind, NifcStmt | if-then-else followed by `join` information followed by an optional label |
+| `(itec X S S)` | NjvlKind, NifcStmt | if-then-else (that was a `case`) |
+| `(loop S X S S)` | NjvlKind, NifcStmt | `loop` components are (before-cond, cond, loop-body, after) |
 | `(v X INT_LIT)` | NjvlKind | `versioned` locations |
+| `(etupat X INT_LIT)` | NjvlKind | tupat expression for error handling |
 | `(unknown X)` | NjvlKind | location's contents is unknown at this point |
-| `(jtrue Y+)` | NjvlKind | set variables v1, v2, ... to `(true)`; hint this should become a jump |
-| `(cfvar D)` | NjvlKind | declare a new control flow variable `D` of type `bool` initialized to `false` |
+| `(jtrue Y+)` | NjvlKind, NifcStmt | set variables v1, v2, ... to `(true)`; hint this should become a jump |
+| `(mflag D)` | NjvlKind, NifcStmt, NifcSym | declare a new **materialized** control flow flag `D` of type `bool` initialized to `false` |
+| `(vflag D)` | NjvlKind, NifcStmt, NifcSym | declare a new **virtual** control flow flag `D` of type `bool` initialized to `false` |
 | `(either Y INT_LIT+)` | NimonyOther | `either` construct to combine location versions |
 | `(join Y INT_LIT INT_LIT INT_LIT)` | NimonyOther | `join` construct inside `ite` |
 | `(graph Y)` | ControlFlowKind | disjoint subgraph annotation |
@@ -177,6 +179,7 @@
 | `(fin S)` | NimonyOther, NiflerKind | finally subsection |
 | `(tuple (fld ...)* <or> T*)` | NimonyType, NiflerKind | `tuple` type |
 | `(onum (efld...)*)` | NimonyType | enum with holes type |
+| `(anum (efld...)*)` | NimonyType | sum type discriminator enum ("auto enum") |
 | `(ref T)` | NimonyType, NiflerKind | `ref` type |
 | `(mut T)` | NimonyType, NiflerKind | `mut` type |
 | `(out T)` | NimonyType, NiflerKind | `out` type |
@@ -199,11 +202,11 @@
 | `(pointer)` | NimonyType | `pointer` type |
 | `(ordinal)` | NimonyType | `ordinal` type |
 | `(magic STR)` | NimonyPragma | `magic` pragma |
-| `(importc X)` | NimonyPragma | `importc` pragma |
-| `(importcpp X)` | NimonyPragma | `importcpp` pragma |
+| `(importc X)` | NimonyPragma, NifcPragma | `importc` pragma |
+| `(importcpp X)` | NimonyPragma, NifcPragma | `importcpp` pragma |
 | `(dynlib X)` | NimonyPragma | `dynlib` pragma |
-| `(exportc X)` | NimonyPragma | `exportc` pragma |
-| `(header X)` | NimonyPragma | `header` pragma |
+| `(exportc X)` | NimonyPragma, NifcPragma | `exportc` pragma |
+| `(header X)` | NimonyPragma, NifcPragma | `header` pragma |
 | `(threadvar)` | NimonyPragma | `threadvar` pragma |
 | `(global)` | NimonyPragma | `global` pragma |
 | `(discardable)` | NimonyPragma | `discardable` pragma |
@@ -246,11 +249,11 @@
 | `(defined X)` | NimonyExpr | |
 | `(astToStr X)` | NimonyExpr | converts AST to string |
 | `(instanceof X T)` | NimonyExpr | only-fans operator for object privilege checking |
-| `(proccall X)` | NimonyExpr | turns method call into a proc call aka a "static" call |
+| `(proccall  X X*)` | NimonyExpr | like the `call` tag but always a static call (no dynamic method) dispatch |
 | `(high X)` | NimonyExpr | |
 | `(low X)` | NimonyExpr | |
 | `(typeof X X)` | NimonyExpr, NiflerKind | `typeof` operation for accessing the type of an expression |
-| `(unpack)` | NimonyExpr | |
+| `(unpack)` | NimonyExpr | magic varargs expansion — see *Tuple Unpacking* section below |
 | `(fields T X X?)` | NimonyExpr | fields iterator |
 | `(fieldpairs T X X?)` | NimonyExpr | fieldPairs iterator |
 | `(enumtostr X)` | NimonyExpr | |
@@ -258,7 +261,9 @@
 | `(defaultobj T)` | NimonyExpr | |
 | `(defaulttup T)` | NimonyExpr | |
 | `(defaultdistinct T)` | NimonyExpr | |
-| `(delay T X)` | NimonyExpr | `delay` builtin for delayed continuation creation |
+| `(delay X X*)` | NimonyExpr | `delay(fn args)` builtin for delayed continuation creation |
+| `(delay0)` | NimonyExpr | `delay()` no-arg: capture current coroutine's own continuation |
+| `(suspend)` | NimonyExpr | `suspend()` magic proc: suspends the coroutine and returns Continuation(nil, nil) |
 | `(expr S+ X)` | NimonyExpr, NiflerKind | |
 | `(do (params...)+ T X)` | NimonyExpr, NiflerKind | `do` expression |
 | `(arrat X X X? X?)` | NimonyExpr | two optional exprs: `high` boundary and the `low` boundary (if != 0) |
@@ -273,12 +278,12 @@
 | `(inset T X X)` | NimonyExpr | |
 | `(card T X)` | NimonyExpr | |
 | `(emove X)` | NimonyExpr | |
-| `(destroy X)` | NimonyExpr, NifIndexKind, HookKind | |
-| `(dup X)` | NimonyExpr, NifIndexKind, HookKind| |
-| `(copy X X)` | NimonyExpr, NifIndexKind, HookKind | |
-| `(wasmoved X)` | NimonyExpr, NifIndexKind, HookKind | |
-| `(sinkh X X)` | NimonyExpr, NifIndexKind, HookKind | |
-| `(trace X X)` | NimonyExpr, NifIndexKind, HookKind | |
+| `(destroy X)` | NimonyExpr, HookKind | |
+| `(dup X)` | NimonyExpr, HookKind| |
+| `(copy X X)` | NimonyExpr, HookKind | |
+| `(wasmoved X)` | NimonyExpr, HookKind | |
+| `(sinkh X X)` | NimonyExpr, HookKind | |
+| `(trace X X)` | NimonyExpr, HookKind | |
 | `(errv)` | NifcExpr | error flag for `NIFC` |
 | `(staticstmt S)` | NimonyStmt, NiflerKind | `static` statement |
 | `(bind Y+)` | NimonyStmt, NiflerKind | `bind` statement |
@@ -286,9 +291,7 @@
 | `(using (params...)+)` | NimonyStmt, NiflerKind | `using` statement |
 | `(asm X+)` | NimonyStmt, NiflerKind | `asm` statement |
 | `(defer X)` | NimonyStmt, NiflerKind | `defer` statement |
-| `(index (public ...) (private ...) (hooks ...) (converter ...) (method ...) (build ...))` | NifIndexKind | index section |
-| `(public (kv Y INTLIT*)` | NifIndexKind | public section |
-| `(private (kv Y INTLIT*))` | NifIndexKind | private section |
+| `(index (build ...))` | NifIndexKind | index section |
 | `(inject)` | NimonyPragma | `inject` pragma |
 | `(gensym)` | NimonyPragma | `gensym` pragma |
 | `(error X?)` | NimonyPragma | `error` pragma |
@@ -311,6 +314,43 @@
 | `(packed)`   | NifcPragma, NimonyPragma | `packed` pragma |
 | `(passive)`  | NimonyPragma | `passive` pragma |
 | `(push P)`   | NimonyPragma | `push` pragma |
+| `(callConv X)` | NimonyPragma | `callConv` pragma for setting calling convention |
 | `(pop)`      | NimonyPragma | `pop` pragma |
 | `(passL X)`  | NimonyPragma | `passL` pragma adds options to the backend linker |
 | `(passC X)`  | NimonyPragma | `passC` pragma adds options to the backend compiler |
+| `(methods (kv STR Y)+)`  | NimonyPragma | `methods` pragma lists vtable methods for a type |
+| `(size X)`  | NimonyPragma | `size` pragma for setting the byte size of a type |
+
+### unpackflat, unpacktup, unpackdecl
+
+Tuple unpacking in Nim can appear in two contexts: variable declarations and `for` loop variables. NIF uses three distinct tags to encode these.
+
+**`(unpackdecl VALUE (unpacktup DECL+))`** — a `var`/`let`/`const` statement that destructures a tuple:
+
+```nim
+let (a, b) = someTuple
+```
+
+becomes:
+
+```
+(unpackdecl (call ...) (unpacktup
+  (let a.0 ... ...)
+  (let b.0 ... ...)))
+```
+
+`VALUE` is the tuple expression evaluated once. Each `DECL` inside `unpacktup` is an ordinary variable declaration whose initializer is synthesized as a field access into `VALUE`.
+
+**`(unpackflat VAR+)`** — a flat list of loop variables in a `for` statement that unpacks a tuple-yielding iterator:
+
+```nim
+for a, b in items(pairSeq):
+```
+
+becomes:
+
+```
+(for (unpackflat a.0 b.0) (call ...) ...)
+```
+
+The variables inside `unpackflat` are plain symbol references, not full declarations. The for-loop body receives `a` and `b` as separate locals bound to successive tuple fields.

@@ -54,16 +54,15 @@ else:
       dest {.exportc.}, src {.exportc.}: CodePage
 
 
-proc raiseEncodingError(msg: string) =
+proc raiseEncodingError(msg: string) {.raises.} =
   ## Raises an `EncodingError` with the given `msg`.
   # raise newException(EncodingError, msg)
-  # TODO: use raises
-  quit("EncodingError: " & msg)
+  raise ValueError
 
 
 when defined(windows):
   import std/[parseutils, strutils]
-  proc eqEncodingNames(a, b: string): bool =
+  func eqEncodingNames(a, b: string): bool =
     var i = 0
     var j = 0
     while i < a.len and j < b.len:
@@ -262,7 +261,7 @@ when defined(windows):
       yield a[i]
       inc i
 
-  proc nameToCodePage*(name: string): CodePage =
+  func nameToCodePage*(name: string): CodePage =
     var nameAsInt: int = 0
     if parseBiggestInt(name, nameAsInt) == 0: nameAsInt = -1
     for value in arrayIter(winEncodings):
@@ -270,7 +269,7 @@ when defined(windows):
       if no == nameAsInt or eqEncodingNames(na, name): return CodePage(no)
     result = CodePage(-1)
 
-  proc codePageToName*(c: CodePage): string =
+  func codePageToName*(c: CodePage): string =
     for value in arrayIter(winEncodings):
       let (no, na) = value
       if no == int(c):
@@ -349,7 +348,7 @@ proc getCurrentEncoding*(uiApp = false): string =
   else:
     result = "UTF-8"
 
-proc open*(destEncoding = "UTF-8", srcEncoding = "CP1252"): EncodingConverter =
+proc open*(destEncoding = "UTF-8", srcEncoding = "CP1252"): EncodingConverter {.raises.} =
   ## Opens a converter that can convert from `srcEncoding` to `destEncoding`.
   ## Raises `EncodingError` if it cannot fulfill the request.
   when not defined(windows):
@@ -360,8 +359,9 @@ proc open*(destEncoding = "UTF-8", srcEncoding = "CP1252"): EncodingConverter =
       raiseEncodingError("cannot create encoding converter from " &
         srcEncoding & " to " & destEncoding)
   else:
-    result.dest = nameToCodePage(destEncoding)
-    result.src = nameToCodePage(srcEncoding)
+    result = EncodingConverter(
+      dest: nameToCodePage(destEncoding),
+      src: nameToCodePage(srcEncoding))
     if int(result.dest) == -1:
       raiseEncodingError("cannot find encoding " & destEncoding)
     if int(result.src) == -1:
@@ -475,8 +475,8 @@ else:
     result = newString(s.len)
     var inLen = csize_t len(s)
     var outLen = csize_t len(result)
-    var src = cast[cstring](s.rawData)
-    var dst = cast[cstring](result.rawData)
+    var src = cast[cstring](readRawData(s))
+    var dst = cast[cstring](beginStore(result, len(result)))
     var iconvres: csize_t = csize_t(0)
     while inLen > 0:
       iconvres = iconv(c, addr src, addr inLen, addr dst, addr outLen)
@@ -490,10 +490,10 @@ else:
           dec(inLen)
           dec(outLen)
         elif lerr == E2BIG:
-          var offset = cast[int](dst) - cast[int](cast[cstring](result.rawData))
+          var offset = cast[int](dst) - cast[int](cast[cstring](readRawData(result)))
           setLen(result, len(result) + inLen.int * 2 + 5)
           # 5 is minimally one utf-8 char
-          dst = cast[cstring](cast[int](cast[cstring](result.rawData)) + offset)
+          dst = cast[cstring](cast[int](cast[cstring](beginStore(result, len(result)))) + offset)
           outLen = csize_t(len(result) - offset)
         else:
           raiseOSError(lerr.OSErrorCode)
@@ -501,12 +501,13 @@ else:
     # not '\0'
     discard iconv(c, nil, nil, addr dst, addr outLen)
     if iconvres == high(csize_t) and errno == E2BIG:
-      var offset = cast[int](dst) - cast[int](cast[cstring](result.rawData))
+      var offset = cast[int](dst) - cast[int](cast[cstring](readRawData(result)))
       setLen(result, len(result) + inLen.int * 2 + 5)
       # 5 is minimally one utf-8 char
-      dst = cast[cstring](cast[int](cast[cstring](result.rawData)) + offset)
+      dst = cast[cstring](cast[int](cast[cstring](beginStore(result, len(result)))) + offset)
       outLen = csize_t(len(result) - offset)
       discard iconv(c, nil, nil, addr dst, addr outLen)
+    endStore(result)
     # trim output buffer
     setLen(result, len(result) - outLen.int)
 

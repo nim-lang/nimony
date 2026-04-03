@@ -6,12 +6,46 @@
 
 import std/assertions
 include nifprelude
-import ".." / nimony / nimony_model
+import ".." / nimony / [nimony_model, decls, sigmatch]
 import treemangler
 
 type
   MangleMode* = enum
     Backend, Frontend
+
+
+proc mangle*(b: var Mangler; c: Cursor; mm: MangleMode)
+
+proc mangleProctype(b: var Mangler; n: var Cursor; mm: MangleMode): string =
+  inc n
+  # name, export marker, pattern, type vars:
+  for i in 0..<ParamsPos: skip n
+
+  var b = createMangler(60)
+  if n.kind != DotToken:
+    inc n # params tag
+    while n.kind != ParRi:
+      let pa = takeLocal(n, SkipFinalParRi)
+      assert pa.kind == ParamY
+      mangle b, pa.typ, mm
+  inc n # DotToken or ParRi
+  # also add return type:
+  mangle b, n, Backend
+  skip n
+  # handle pragmas:
+  let props = extractProcProps(n)
+  b.addKeyw $props.cc
+  b.addKeyw $props.usesRaises
+  b.addKeyw $props.usesClosure
+  result = b.extract()
+  if n.kind != ParRi:
+    skip n # effects
+    if n.kind != ParRi:
+      skip n # body
+  if n.kind != ParRi:
+    bug "expected ')', but got: ", n
+  inc n
+
 
 proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
   var nested = 0
@@ -80,6 +114,8 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
         assert c.kind == ParRi
         b.endTree()
         inc c
+      elif mm == Backend and c.typeKind in RoutineTypes:
+        b.addRaw mangleProctype(b, c, mm)
       else:
         b.addTree(tag)
         inc nested

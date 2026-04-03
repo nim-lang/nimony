@@ -10,15 +10,15 @@ type
     typeOfProc,
     typeOfIter
 
-proc typeof(x: untyped; mode = typeOfIter): typedesc {.magic: TypeOf.}
+func typeof(x: untyped; mode = typeOfIter): typedesc {.magic: TypeOf.}
 
 type
   string* = typeof("")
 
-proc `+`*(x, y: int): int {.magic: "AddI".}
-proc `-`*(x, y: int): int {.magic: "SubI".}
+func `+`*(x, y: int): int {.magic: "AddI".}
+func `-`*(x, y: int): int {.magic: "SubI".}
 
-proc `<=`*(x, y: int): bool {.magic: "LeI".}
+func `<=`*(x, y: int): bool {.magic: "LeI".}
 
 type
   File* = object

@@ -22,6 +22,18 @@ There are 4 cases:
 Now also does some simple checks for `raise` statements:
 - Only a routine marked as `.raises` can call another routine marked as `.raises`.
 
+Also adds lifetime tracking hooks to type declarations so that Hexer can find them
+easily.
+
+Also enforces .noSideEffect contexts.
+Also checks that accesses to locals that indicate a closure are within an explicit
+`.closure` proc. `.closure` is not inferred anymore by the compiler as it's fundamentally
+incompatible with Nim's type checking: Type checking influences template expansions which
+can lead to accessed locals which can lead to closures which we assumed not to exist for
+type checking purposes.
+
+We can then improve compat with Nim 2 by making all inner procs `.closure` by default.
+
 ]##
 
 import std / [assertions, tables]
@@ -29,7 +41,8 @@ import std / [assertions, tables]
 include nifprelude
 
 import ".." / models / tags
-import nimony_model, programs, decls, typenav, sembasics, reporters, renderer, typeprops
+import ".." / hexer / lifter
+import nimony_model, programs, decls, typenav, sembasics, reporters, renderer, typeprops, vtables_frontend, semdata
 
 type
   Expects = enum
@@ -40,10 +53,13 @@ type
     WantMutableT  # `var openArray` does need derefs but mutable locations regardless
     WantForwarding
 
+  RoutineProp = enum
+    CanRaise, IsNoSideEffect, IsClosure
+
   CurrentRoutine = object
     returnExpects: Expects
     firstParamKind: TypeKind
-    canRaise: bool
+    props: set[RoutineProp]
     firstParam: SymId
     resultSym: SymId
     dangerousLocations: Table[SymId, PackedLineInfo]
@@ -52,6 +68,10 @@ type
     dest: TokenBuf
     r: CurrentRoutine
     typeCache: TypeCache
+    hooks: Table[SymId, HooksPerType]
+    classes: semdata.Classes # class entries with methods for vtables
+    lifter: ref LiftingCtx
+    typeSymBufs: seq[TokenBuf] # keeps Symbol cursors alive for lifter
 
 proc takeToken(c: var Context; n: var Cursor) {.inline.} =
   c.dest.add n
@@ -97,7 +117,7 @@ proc isAddressable*(n: Cursor): bool =
     let res = tryLoadSym(s)
     assert res.status == LacksNothing
     let local = asLocal(res.decl)
-    result = local.kind in {ParamY, LetY, ResultY, VarY, CursorY, ConstY, GletY, TletY, GvarY, TvarY}
+    result = local.kind in {ParamY, LetY, ResultY, VarY, CursorY, PatternvarY, ConstY, GletY, TletY, GvarY, TvarY}
     # Assignments to `ConstY` are prevented later.
   else:
     result = false
@@ -220,6 +240,8 @@ proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
           result = borrowsFromReadonly(c, local.val)
     of VarY, GvarY, TvarY:
       result = local.typ.typeKind == LentT
+    of PatternvarY:
+      result = borrowsFromReadonly(c, local.val)
     of ParamY:
       result = local.typ.typeKind notin {MutT, OutT, LentT, SinkT}
     else:
@@ -230,7 +252,14 @@ proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
   else:
     result = false
 
-proc checkTupleConstrBorrowing(c: var Context; n: Cursor) =
+type
+  LvalueStatus = enum
+    Valid
+    InvalidBorrow
+    LocationIsConst
+
+proc checkTupleConstrBorrowing(c: var Context; n: Cursor): LvalueStatus =
+  result = Valid
   var n = n
   inc n
 
@@ -248,6 +277,7 @@ proc checkTupleConstrBorrowing(c: var Context; n: Cursor) =
     if fieldType.typeKind in {MutT, LentT, OutT}:
       if not validBorrowsFrom(c, n):
         buildLocalErr(c.dest, n.info, "cannot borrow from " & asNimCode(n))
+        return InvalidBorrow
 
     skip n
 
@@ -264,13 +294,17 @@ proc trReturn(c: var Context; n: var Cursor) =
   if isResultUsage(c, n):
     takeTree c.dest, n
   else:
-    let err = c.r.returnExpects == WantVarTResult and not validBorrowsFrom(c, n)
+    var err = c.r.returnExpects == WantVarTResult and not validBorrowsFrom(c, n)
     if err:
       buildLocalErr(c.dest, n.info, "cannot borrow from " & asNimCode(n))
     else:
       if n.exprKind == TupConstrX:
-        checkTupleConstrBorrowing(c, n)
-      tr c, n, c.r.returnExpects
+        if checkTupleConstrBorrowing(c, n) != Valid:
+          err = true
+      if not err:
+        tr c, n, c.r.returnExpects
+      else:
+        skip n
   takeParRi c, n
 
 proc wantMutable(e: Expects): bool {.inline.} =
@@ -343,7 +377,16 @@ proc trProcPragmas(c: var Context; n: var Cursor) =
       if pk == RequiresP:
         tr c, n, WantT
       elif pk == RaisesP:
-        c.r.canRaise = true
+        c.r.props.incl CanRaise
+        takeTree c.dest, n
+      elif pk == NoSideEffectP:
+        c.r.props.incl IsNoSideEffect
+        takeTree c.dest, n
+      elif pk == SideEffectP:
+        c.r.props.excl IsNoSideEffect
+        takeTree c.dest, n
+      elif pk == ClosureP:
+        c.r.props.incl IsClosure
         takeTree c.dest, n
       else:
         takeTree c.dest, n
@@ -355,7 +398,8 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   takeToken c, n
   let symId = n.symId
   var isGeneric = false
-  var r = CurrentRoutine(returnExpects: WantT)
+  let props = if decl.stmtKind in {FuncS, IteratorS, ConverterS}: {IsNoSideEffect} else: {}
+  var r = CurrentRoutine(returnExpects: WantT, props: props)
   swap c.r, r
   for i in 0..<BodyPos:
     if i == TypevarsPos:
@@ -385,13 +429,15 @@ proc trProcDecl(c: var Context; n: var Cursor) =
     var body = n
     tr c, n, c.r.returnExpects
     if c.r.dangerousLocations.len > 0:
+      c.dest.shrink c.dest.len - 1
       checkForDangerousLocations c, body
+      c.dest.addParRi()
     takeParRi c, n
   swap c.r, r
   c.typeCache.closeScope()
 
-proc callCanRaise(c: var Context; info: PackedLineInfo) =
-  if not c.r.canRaise:
+proc callCanRaise(c: var Context; info: PackedLineInfo) {.inline.} =
+  if CanRaise notin c.r.props:
     buildLocalErr c.dest, info, "cannot call a routine marked as `.raises` outside of a `try`..`except` block"
 
 proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
@@ -446,6 +492,23 @@ proc cannotPassToVar(dest: var TokenBuf; info: PackedLineInfo; arg: Cursor) =
     dest.addSubtree arg
     dest.add strToken(pool.strings.getOrIncl(msg), info)
 
+proc trPragmaBlock(c: var Context; n: var Cursor) =
+  c.dest.takeToken n # pragmax
+  c.dest.takeToken n # pragmas
+  if n.pragmaKind == KeepOverflowFlagP:
+    c.dest.takeTree n # keepOverflowFlag
+    c.dest.takeParRi n # pragmas
+    tr(c, n, WantT)
+  elif n.pragmaKind == CastP:
+    c.dest.takeTree n # cast pragma
+    c.dest.takeParRi n # pragmas
+    let oldProps = c.r.props
+    c.r.props = {}
+    tr(c, n, WantT)
+    c.r.props = oldProps
+  else:
+    bug "unknown pragma block: " & toString(n, false)
+  c.dest.takeParRi n # pragmax
 
 proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   let info = n.info
@@ -454,12 +517,26 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   var callBuf = createTokenBuf()
 
   swap c.dest, callBuf
-  takeToken c, n
-  let fnType = skipProcTypeToParams(getType(c.typeCache, n))
+  let head = n.load()
+  inc n
+  let tt = getType(c.typeCache, n)
+  let calleeKind = tt.stmtKind
+  let fnType = skipProcTypeToParams(tt)
   assert fnType.isParamsTag
-  tr c, n, WantT # `fn` part of the call
   var retType = fnType
   skip retType
+  var pragmas = retType
+  skip pragmas
+  if IsNoSideEffect in c.r.props:
+    if whichEffect(calleeKind, pragmas) == HasSideEffect:
+      swap c.dest, callBuf
+      buildLocalErr c.dest, n.info, "cannot call a routine marked as `.noSideEffect` outside of a .noSideEffect context"
+      n = callExpr
+      skip n
+      return
+
+  c.dest.add head # (call)
+  tr c, n, WantT # `fn` part of the call
 
   var needHderef = false
   if retType.typeKind in {MutT, LentT}:
@@ -480,15 +557,21 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
       trCallArgs(c, n, fnType)
       takeParRi c, n
     else:
+      while n.kind != ParRi: skip n
+      inc n # skip ParRi without emitting into callBuf
+      swap c.dest, callBuf # restore original dest; discard partial callBuf
       cannotPassToVar c.dest, info, callExpr
-      skipToEnd n
+      return
   elif e.wantMutable:
     if isViewType(retType) and firstArgIsMutable(c, callExpr):
       trCallArgs(c, n, fnType)
       takeParRi c, n
     else:
+      while n.kind != ParRi: skip n
+      inc n # skip ParRi without emitting into callBuf
+      swap c.dest, callBuf # restore original dest; discard partial callBuf
       cannotPassToVar c.dest, info, callExpr
-      skipToEnd n
+      return
   else:
     trCallArgs(c, n, fnType)
     takeParRi c, n
@@ -512,12 +595,6 @@ proc trAsgnRhs(c: var Context; le: Cursor; ri: var Cursor; e: Expects) =
   else:
     tr c, ri, e
 
-type
-  LvalueStatus = enum
-    Valid
-    InvalidBorrow
-    LocationIsConst
-
 proc trAsgn(c: var Context; n: var Cursor) =
   takeToken c, n
   var e = WantT
@@ -532,7 +609,11 @@ proc trAsgn(c: var Context; n: var Cursor) =
     else:
       tr c, n, e
       if n.exprKind == TupConstrX:
-        checkTupleConstrBorrowing(c, n)
+        if checkTupleConstrBorrowing(c, n) != Valid:
+          # already emitted an error:
+          skip n
+          takeParRi c, n
+          return
   elif borrowsFromReadonly(c, n, allowLet=true):
     err = LocationIsConst
   else:
@@ -544,10 +625,26 @@ proc trAsgn(c: var Context; n: var Cursor) =
   of LocationIsConst:
     buildLocalErr c.dest, n.info, "cannot mutate expression " & asNimCode(n)
     tr c, n, e
-    tr c, n, e
+    skip n
+    #tr c, n, e
   else:
     trAsgnRhs c, le, n, e
   takeParRi c, n
+
+proc trSonsLocation(c: var Context; n: var Cursor; e: Expects) =
+  if n.kind != ParLe:
+    takeToken c, n
+  elif n.exprKind in {DotX, DdotX}:
+    takeToken c, n
+    tr c, n, e
+    while n.kind != ParRi:
+      takeTree c.dest, n
+    takeParRi c, n
+  else:
+    takeToken c, n
+    while n.kind != ParRi:
+      tr c, n, e
+    takeParRi c, n
 
 proc trLocation(c: var Context; n: var Cursor; e: Expects) =
   # Idea: A variable like `x` does not own its value as it can be read multiple times.
@@ -560,34 +657,34 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
         cannotPassToVar c.dest, n.info, n
         skip n
       else:
-        trSons c, n, WantT
+        trSonsLocation c, n, WantT
     else:
       if (k in {MutT, LentT} and not isViewType(typ.firstSon)) or k == OutT:
         if c.dest[c.dest.len-1].tag == TagId(HderefTagId):
-          trSons c, n, WantT
+          trSonsLocation c, n, WantT
         else:
           c.dest.addParLe(HderefX, n.info)
-          trSons c, n, WantT
+          trSonsLocation c, n, WantT
           c.dest.addParRi()
       else:
-        trSons c, n, WantT
+        trSonsLocation c, n, WantT
   elif e.wantMutable:
     if e == WantVarTResult:
       c.dest.addParLe(HaddrX, n.info)
       if n.kind == Symbol:
         takeToken c, n
       else:
-        trSons c, n, WantT
+        trSonsLocation c, n, WantT
       c.dest.addParRi()
     elif borrowsFromReadonly(c, n):
       cannotPassToVar c.dest, n.info, n
       skip n
     else:
       c.dest.addParLe(HaddrX, n.info)
-      trSons c, n, WantT
+      trSonsLocation c, n, WantT
       c.dest.addParRi()
   else:
-    trSons c, n, WantT
+    trSonsLocation c, n, WantT
 
 proc trLocal(c: var Context; n: var Cursor) =
   let kind = n.symKind
@@ -600,8 +697,13 @@ proc trLocal(c: var Context; n: var Cursor) =
   let typ = n
   takeTree c.dest, n
   c.typeCache.registerLocal(name.symId, kind, typ)
-  let e = if typ.typeKind in {OutT, MutT, LentT}: WantVarT else: WantT
-  trAsgnRhs c, name, n, e
+  if kind == PatternvarY:
+    c.dest.addParLe(HaddrX, n.info)
+    tr c, n, WantT
+    c.dest.addParRi()
+  else:
+    let e = if typ.typeKind in {OutT, MutT, LentT}: WantVarT else: WantT
+    trAsgnRhs c, name, n, e
   takeParRi c, n
 
 proc trStmtListExpr(c: var Context; n: var Cursor; outerE: Expects) =
@@ -664,12 +766,12 @@ proc trTry(c: var Context; n: var Cursor) =
   takeToken c, n
   var nn = n
   skip nn
-  let oldCanRaise = c.r.canRaise
-  if nn.substructureKind == ExceptU:
-    c.r.canRaise = true
+  let oldProps = c.r.props
+  if nn.substructureKind == ExceptU or nn.substructureKind == FinU:
+    c.r.props.incl CanRaise
   # now can raise in the `try` block:
   tr c, n, WantT
-  c.r.canRaise = oldCanRaise
+  c.r.props = oldProps
   while n.kind != ParRi:
     tr c, n, WantT
   takeParRi c, n
@@ -714,22 +816,134 @@ proc trFor(c: var Context; n: var Cursor) =
   else:
     bug "illformed for loop"
 
+proc addHookDecls(dest: var TokenBuf; hooks: HooksPerType) =
+  for op in low(AttachedOp)..high(AttachedOp):
+    let s = hooks.a[op]
+    if s != SymId(0):
+      dest.addParLe hookToTag(op), NoLineInfo
+      dest.addSymUse s, NoLineInfo
+      dest.addParRi()
+
+proc addMethodsDecl(dest: var TokenBuf; methods: seq[(string, SymId)]) =
+  if methods.len > 0:
+    dest.addParLe MethodsP, NoLineInfo
+    for (key, sym) in methods:
+      dest.addParLe KvU, NoLineInfo
+      dest.addStrLit key, NoLineInfo
+      dest.addSymUse sym, NoLineInfo
+      dest.addParRi()
+    dest.addParRi()
+
+proc trType(c: var Context; n: var Cursor) =
+  ## Processes type declarations, adding hook pragmas for nominal types.
+  ## For types with custom hooks (from sem), use those.
+  ## For non-generic nominal types (objects/distincts), generate hooks via lifter.
+  let info = n.info
+  takeToken c.dest, n # (type
+  var s = SymId(0)
+  if n.kind == SymbolDef:
+    s = n.symId
+  c.dest.takeTree n # the symbol definition
+  c.dest.takeTree n # exported
+  let isGeneric = n.substructureKind == TypevarsU
+  c.dest.takeTree n # typevars
+
+  # Check if this is a non-generic nominal type that needs hooks generated
+  var needsForgedHooks = false
+  if not isGeneric and s != SymId(0):
+    # Check if it's a nominal type (object, distinct)
+    var checkBody = n
+    skip checkBody # skip pragmas
+    let bk = checkBody.typeKind
+    needsForgedHooks = bk in {ObjectT, DistinctT, RefT}
+
+  # Check if type has methods (for vtables)
+  # Use the new c.classes table for method information
+  var hasMethods = false
+  var methodsToAdd: seq[(string, SymId)] = @[]
+  if s != SymId(0) and s in c.classes:
+    hasMethods = true
+    # Convert MethodIndexEntry to (string, SymId) format for addMethodsDecl
+    for entry in c.classes[s].methods:
+      let sig = pool.strings[entry.signature]
+      methodsToAdd.add (sig, entry.fn)
+
+  # pragmas:
+  if s != SymId(0) and (c.hooks.hasKey(s) or hasMethods):
+    # Type has custom hooks or methods from semantic analysis
+    if n.kind == DotToken:
+      c.dest.addParLe PragmasU, info
+      inc n
+    else:
+      c.dest.takeToken n # existing pragma tag
+      while n.kind != ParRi:
+        c.dest.takeTree n # existing individual pragmas
+      skipParRi n
+    if c.hooks.hasKey(s):
+      addHookDecls c.dest, c.hooks[s]
+    if hasMethods:
+      addMethodsDecl c.dest, methodsToAdd
+    c.dest.addParRi()
+  elif needsForgedHooks:
+    # Non-generic nominal type - generate hooks via lifter
+    if n.kind == DotToken:
+      c.dest.addParLe PragmasU, info
+      inc n
+    else:
+      c.dest.takeToken n # existing pragma tag
+      while n.kind != ParRi:
+        c.dest.takeTree n # existing individual pragmas
+      skipParRi n
+    # Generate hooks via lifter - create Symbol buffer that stays alive:
+    var buf = createTokenBuf(1)
+    buf.addSymUse s, info
+    let typeCursor = cursorAt(buf, 0)
+    c.typeSymBufs.add buf
+    # Collect methods for RTTI types (destroy/trace need to be methods)
+    let isRtti = hasRtti(s)
+    var rttiMethods = default seq[(string, SymId)]
+    for op in low(AttachedOp)..high(AttachedOp):
+      let hookProc = getHook(c.lifter[], op, typeCursor, info)
+      if hookProc != SymId(0):
+        c.dest.addParLe hookToTag(op), NoLineInfo
+        c.dest.addSymUse hookProc, NoLineInfo
+        c.dest.addParRi()
+        # For RTTI types, destroy/trace are methods - add them with known signature
+        if isRtti and op in {attachedDestroy, attachedTrace}:
+          let key = case op
+            of attachedDestroy: destroyMethodKey()
+            of attachedTrace: traceMethodKey()
+            else: ""
+          rttiMethods.add((key, hookProc))
+    # Emit methods pragma for RTTI types
+    if rttiMethods.len > 0:
+      addMethodsDecl c.dest, rttiMethods
+    c.dest.addParRi() # close pragmas
+  else:
+    c.dest.takeTree n # pragmas
+  c.dest.takeTree n # body
+  c.dest.takeParRi n
+
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   case n.kind
   of Symbol:
-    when false:
-      # Closures are now implemented
-      let localInfo = c.typeCache.getLocalInfo(n.symId)
-      if localInfo.crossedProc > 0 and localInfo.kind in {VarY, LetY, ParamY, ResultY}:
-        let info = n.info
-        c.dest.buildTree ErrT, info:
-          c.dest.addSubtree n
-          c.dest.add strToken(pool.strings.getOrIncl("cannot access local variable `" & asNimCode(n) & "` from another routine; closures are not supported"), info)
-        skip n
-      else:
-        trLocation c, n, e
-    else:
-      trLocation c, n, e
+    # Closures are now implemented
+    let localInfo = c.typeCache.getLocalInfo(n.symId)
+    if localInfo.crossedProc > 0 and localInfo.kind in {VarY, LetY, ParamY, ResultY} and
+        IsClosure notin c.r.props:
+      buildLocalErr c.dest, n.info, "cannot access local variable `" & asNimCode(n) & "` from another routine; mark the proc with `.closure`"
+      skip n
+      return
+
+    if IsNoSideEffect in c.r.props:
+      let res = tryLoadSym(n.symId)
+      if res.status == LacksNothing:
+        let local = asLocal(res.decl)
+        if local.kind in {GvarY, TvarY}:
+          buildLocalErr c.dest, n.info, "use of global/thread-local variable '" & asNimCode(n) & "' in .noSideEffect context"
+          skip n
+          return
+    trLocation c, n, e
   of IntLit, UIntLit, FloatLit, CharLit, StringLit:
     if e.wantMutable:
       # Consider `fvar(returnsVar(someLet))`: We must not allow this.
@@ -744,6 +958,8 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
     of CallKinds:
       var disallowDangerous = true
       trCall c, n, e, disallowDangerous
+    of PragmaxX:
+      trPragmaBlock c, n
     of DotX, DdotX, AtX, ArrAtX, TupatX, PatX:
       trLocation c, n, e
     of OconstrX, NewobjX:
@@ -808,15 +1024,24 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         c.typeCache.openScope()
         trSons c, n, WantT
         c.typeCache.closeScope()
+      of TypeS:
+        trType c, n
       else:
         if isDeclarative(n):
           takeTree c.dest, n
         else:
           trSons c, n, WantT
 
-proc injectDerefs*(n: Cursor): TokenBuf =
+proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
+                   classes: sink Classes;
+                   thisModuleSuffix: string; bits: int): TokenBuf =
   var c = Context(typeCache: createTypeCache(),
-    r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId), dest: TokenBuf())
+    r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId), dest: TokenBuf(),
+    hooks: ensureMove(hooks),
+    classes: ensureMove(classes),
+    lifter: nil) # set below after hooks is moved
+  # Pass address of hooks to lifter so it can look up hooks from current module
+  c.lifter = createLiftingCtx(thisModuleSuffix, bits, addr c.hooks)
   c.typeCache.openScope()
   var n2 = n
   var n3 = n
@@ -825,6 +1050,7 @@ proc injectDerefs*(n: Cursor): TokenBuf =
     # clean up dots that sem might have introduced for moving inner generic instances:
     if n2.kind == DotToken: inc n2
     else: tr(c, n2, WantT)
+  genMissingHooks c.lifter[], c.dest
   if c.r.dangerousLocations.len > 0:
     checkForDangerousLocations(c, n3)
   # Must close the `(stmts)` here **after** `checkForDangerousLocations`

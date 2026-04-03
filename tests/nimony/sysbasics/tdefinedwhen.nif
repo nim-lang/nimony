@@ -1,5 +1,7 @@
-(.nif24)
-0,1,tests/nimony/sysbasics/tdefinedwhen.nim(stmts 2,1
+(.nif26)
+(.indexat +246             )
+0,1,tests/nimony/sysbasics/tdefinedwhen.nim(stmts
+ (import sysvq0asl) 2,1
  (stmts
   (discard 8 "good")) 2,8
  (stmts
@@ -7,4 +9,4 @@
  (stmts
   (discard 8 "good")) 2,18
  (stmts
-  (discard 8 "good")))
+  (discard 8 "good")))0,1,tests/nimony/sysbasics/tdefinedwhen.nim(.index)

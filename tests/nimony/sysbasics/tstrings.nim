@@ -1,4 +1,4 @@
-import std/assertions
+import std/[assertions, strutils]
 
 proc main() =
   discard "abc" == "abc"
@@ -39,7 +39,7 @@ block:
 
 # --- cstring tests ---
 
-func strlen(a: cstring): csize_t {.importc: "strlen", header: "<string.h>".}
+# func strlen(a: cstring): csize_t {.importc: "strlen", header: "<string.h>".}
 proc printf(format: cstring) {.importc: "printf", varargs, header: "<stdio.h>", nodecl.}
 
 const abc = cstring "abc\n"
@@ -48,7 +48,7 @@ printf(abc)
 
 let nimHello = fromCString(hello)
 assert len(nimHello) == strlen(hello).int
-assert cast[cstring](nimHello.rawData) != hello
+assert cast[cstring](nimHello.readRawData) != hello
 
 var s = default(string)
 s.add "nim string "
@@ -56,10 +56,10 @@ s.add nimHello
 printf(s.toCString)
 
 var zerotext = mytext.terminatingZero()
-let ctext0 = cast[cstring](zerotext.rawData)
+let ctext0 = cast[cstring](zerotext.readRawData)
 let ctext1 = zerotext.toCString()
 # check redundant copy when already has zero terminated
-assert ctext0 == ctext1 
+assert ctext0 == ctext1
 assert zerotext.len == strlen(ctext0).int
 assert zerotext.len == mytext.len
 printf("%s\n", ctext0)
@@ -146,5 +146,15 @@ block: # issue #1444
 
 block:
   var s = "12234"
-  var m = prepareMutationAt(s, 1)
-  assert m == '2'
+  var m = s
+  m[1] = '9'
+  assert m == "19234"
+  assert s == "12234"
+
+
+block:
+  var cstr: cstring = nil
+
+  assert len(cstr) == 0
+  var newstr: string = $cstr
+  assert newstr == ""

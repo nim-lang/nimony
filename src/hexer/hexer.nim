@@ -18,7 +18,7 @@ multiple different steps.
 - Iterator inlining.
 - Lambda lifting.
 - Inject dups.
-- Lower control flow expressions to control flow statements (elminate the expr/nkStmtListExpr construct).
+- Lower control flow expressions to control flow statements (eliminate the expr/nkStmtListExpr construct).
 - Inject destructors.
 - Map builtins like `new` and `+` to "compiler procs".
 - Translate exception handling.
@@ -43,7 +43,7 @@ Hexer accepts Nimony's grammar.
 ]##
 
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
-import ".." / nimony / [langmodes]
+import ".." / nimony / [langmodes, nifconfig]
 import nifcgen, lifter, duplifier, destroyer, inliner, constparams, dce2
 
 const
@@ -59,6 +59,9 @@ Command:
 
 Options:
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
+  --outdir:DIR              (d only) write .c.nif outputs to DIR
+  --isMain                  mark the file as the main module
+  --app:TYPE                application type: console, gui, lib, staticlib (default: console)
   --flags:FLAGS             undocumented flags
   --version                 show the version
   --help                    show this help
@@ -70,8 +73,12 @@ proc writeVersion() = quit(Version & "\n", QuitSuccess)
 proc handleCmdLine*() =
   var files: seq[string] = @[]
   var bits = sizeof(int) * 8
+  var bigEndian = false
   var flags = DefaultSettings
+  var outdir = ""
   var action = ""
+  var isMain = false
+  var appType = appConsole
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -87,6 +94,22 @@ proc handleCmdLine*() =
         of "32": bits = 32
         of "16": bits = 16
         else: quit "invalid value for --bits"
+      of "cpu":
+        case val
+        of "be": bigEndian = true
+        of "le": bigEndian = false
+        else: quit "invalid value for --cpu; expected 'be' or 'le'"
+      of "outdir":
+        outdir = val
+      of "ismain":
+        isMain = true
+      of "app":
+        case normalize(val)
+        of "console": appType = appConsole
+        of "gui": appType = appGui
+        of "lib": appType = appLib
+        of "staticlib": appType = appStaticLib
+        else: quit "invalid value for --app; expected console, gui, lib, or staticlib"
       of "flags":
         flags = parseFlags(val)
       of "help", "h": writeHelp()
@@ -100,9 +123,9 @@ proc handleCmdLine*() =
   else:
     case action
     of "c":
-      expand files[0], bits, flags
+      expand files[0], bits, bigEndian, flags, isMain, outdir, appType
     of "d":
-      deadCodeElimination files
+      deadCodeElimination(files, outdir)
     else:
       writeHelp()
 

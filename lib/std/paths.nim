@@ -29,7 +29,7 @@ func path*(s: string): Path {.inline.} =
 func `$`*(x: Path): string {.inline.} =
   x.data
 
-func hash*(x: Path): Hash {.noSideEffect.} =
+proc hash*(x: Path): Hash =
   var s = x.data
   ospaths2.normalizePath(s)
   if FileSystemCaseSensitive:
@@ -156,7 +156,7 @@ func isRootDir*(path: Path): bool {.inline.} =
   ## Checks whether a given `path` is a root directory.
   result = isRootDir(path.data)
 
-iterator parentDirs*(path: Path, fromRoot=false, inclusive=true): Path =
+iterator parentDirs*(path: Path, fromRoot=false, inclusive=true): Path {.sideEffect.} =
   ## Walks over all parent directories of a given `path`.
   ##
   ## If `fromRoot` is true (default: false), the traversal will start from

@@ -1,0 +1,471 @@
+==76908== Memcheck, a memory error detector
+==76908== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.
+==76908== Using Valgrind-3.25.1 and LibVEX; rerun with -h for copyright info
+==76908== Command: nimcache/tgc1yly3d1/tgctest
+==76908== 
+==76908== Warning: set address range perms: large range [0x20000000000, 0x20040000000) (defined)
+next iteration!
+next iteration!
+creating id: 10
+creating id: 140
+next iteration!
+next iteration!
+starting main...
+creating id: 150
+next iteration!
+next iteration!
+creating id: 160
+next iteration!
+next iteration!
+creating id: 170
+next iteration!
+next iteration!
+creating id: 180
+next iteration!
+next iteration!
+creating id: 190
+next iteration!
+next iteration!
+creating id: 200
+next iteration!
+next iteration!
+creating id: 210
+next iteration!
+next iteration!
+creating id: 220
+next iteration!
+next iteration!
+creating id: 230
+next iteration!
+next iteration!
+creating id: 240
+next iteration!
+next iteration!
+creating id: 250
+next iteration!
+next iteration!
+creating id: 260
+next iteration!
+next iteration!
+creating id: 270
+next iteration!
+next iteration!
+creating id: 280
+next iteration!
+next iteration!
+creating id: 290
+next iteration!
+next iteration!
+creating id: 300
+next iteration!
+next iteration!
+creating id: 310
+next iteration!
+next iteration!
+creating id: 320
+next iteration!
+next iteration!
+creating id: 330
+next iteration!
+next iteration!
+creating id: 340
+next iteration!
+next iteration!
+creating id: 350
+next iteration!
+next iteration!
+creating id: 360
+next iteration!
+next iteration!
+creating id: 370
+next iteration!
+next iteration!
+creating id: 380
+next iteration!
+next iteration!
+creating id: 390
+next iteration!
+next iteration!
+creating id: 400
+next iteration!
+next iteration!
+creating id: 410
+next iteration!
+next iteration!
+creating id: 420
+next iteration!
+next iteration!
+creating id: 430
+next iteration!
+next iteration!
+creating id: 440
+next iteration!
+next iteration!
+creating id: 450
+next iteration!
+next iteration!
+creating id: 460
+next iteration!
+next iteration!
+creating id: 470
+next iteration!
+next iteration!
+creating id: 480
+next iteration!
+next iteration!
+creating id: 490
+next iteration!
+next iteration!
+creating id: 500
+next iteration!
+next iteration!
+creating id: 510
+next iteration!
+next iteration!
+creating id: 520
+next iteration!
+next iteration!
+creating id: 530
+next iteration!
+next iteration!
+creating id: 540
+next iteration!
+next iteration!
+creating id: 550
+next iteration!
+next iteration!
+creating id: 560
+next iteration!
+next iteration!
+creating id: 570
+next iteration!
+next iteration!
+creating id: 580
+next iteration!
+next iteration!
+creating id: 590
+next iteration!
+next iteration!
+creating id: 600
+next iteration!
+next iteration!
+creating id: 610
+next iteration!
+next iteration!
+creating id: 620
+next iteration!
+next iteration!
+creating id: 630
+next iteration!
+next iteration!
+creating id: 640
+next iteration!
+next iteration!
+creating id: 650
+next iteration!
+next iteration!
+creating id: 660
+next iteration!
+next iteration!
+creating id: 670
+next iteration!
+next iteration!
+creating id: 680
+next iteration!
+next iteration!
+creating id: 690
+next iteration!
+next iteration!
+creating id: 700
+next iteration!
+next iteration!
+creating id: 710
+next iteration!
+next iteration!
+creating id: 720
+next iteration!
+next iteration!
+creating id: 730
+next iteration!
+next iteration!
+creating id: 740
+next iteration!
+next iteration!
+creating id: 750
+next iteration!
+next iteration!
+creating id: 760
+next iteration!
+next iteration!
+creating id: 770
+next iteration!
+next iteration!
+creating id: 780
+next iteration!
+next iteration!
+creating id: 790
+next iteration!
+next iteration!
+creating id: 800
+next iteration!
+next iteration!
+creating id: 810
+next iteration!
+next iteration!
+creating id: 820
+next iteration!
+next iteration!
+creating id: 830
+next iteration!
+next iteration!
+creating id: 840
+next iteration!
+next iteration!
+creating id: 850
+next iteration!
+next iteration!
+creating id: 860
+next iteration!
+next iteration!
+creating id: 870
+next iteration!
+next iteration!
+creating id: 880
+next iteration!
+next iteration!
+creating id: 890
+next iteration!
+next iteration!
+creating id: 900
+next iteration!
+next iteration!
+creating id: 910
+next iteration!
+next iteration!
+creating id: 920
+next iteration!
+next iteration!
+creating id: 930
+next iteration!
+next iteration!
+creating id: 940
+next iteration!
+next iteration!
+creating id: 950
+next iteration!
+next iteration!
+creating id: 960
+next iteration!
+next iteration!
+creating id: 970
+next iteration!
+next iteration!
+creating id: 980
+next iteration!
+next iteration!
+creating id: 990
+next iteration!
+next iteration!
+creating id: 1000
+next iteration!
+next iteration!
+creating id: 1010
+next iteration!
+next iteration!
+creating id: 1020
+next iteration!
+next iteration!
+creating id: 1030
+next iteration!
+next iteration!
+creating id: 1040
+next iteration!
+next iteration!
+creating id: 1050
+next iteration!
+next iteration!
+creating id: 1060
+next iteration!
+next iteration!
+creating id: 1070
+next iteration!
+next iteration!
+creating id: 1080
+next iteration!
+next iteration!
+creating id: 1090
+next iteration!
+next iteration!
+creating id: 1100
+next iteration!
+next iteration!
+creating id: 1110
+next iteration!
+next iteration!
+creating id: 1120
+next iteration!
+next iteration!
+creating id: 1130
+next iteration!
+next iteration!
+creating id: 1140
+next iteration!
+next iteration!
+creating unsure id: 1150
+creating unsure id: 1160
+creating unsure id: 1170
+creating unsure id: 1180
+creating unsure id: 1190
+creating unsure id: 1200
+creating unsure id: 1210
+creating unsure id: 1220
+creating unsure id: 1230
+creating unsure id: 1240
+creating unsure id: 1250
+creating unsure id: 1260
+creating unsure id: 1270
+creating unsure id: 1280
+creating unsure id: 1290
+creating unsure id: 1300
+creating unsure id: 1310
+creating unsure id: 1320
+creating unsure id: 1330
+creating unsure id: 1340
+now building bigger trees: printing
+7646
+printing
+7614
+printing
+7598
+printing
+7590
+printing
+7586
+printing
+7584
+printing
+7585
+printing
+7589
+printing
+7587
+printing
+7588
+printing
+7597
+printing
+7593
+printing
+7591
+printing
+7592
+printing
+7596
+printing
+7594
+printing
+7595
+printing
+7613
+printing
+7605
+printing
+7601
+printing
+7599
+printing
+7600
+printing
+7604
+printing
+7602
+printing
+7603
+printing
+7612
+printing
+7608
+printing
+7606
+printing
+7607
+printing
+7611
+printing
+7609
+printing
+7610
+printing
+7645
+printing
+7629
+printing
+7621
+printing
+7617
+printing
+7615
+printing
+7616
+printing
+7620
+printing
+7618
+printing
+7619
+printing
+7628
+printing
+7624
+printing
+7622
+printing
+7623
+printing
+7627
+printing
+7625
+printing
+7626
+printing
+7644
+printing
+7636
+printing
+7632
+printing
+7630
+printing
+7631
+printing
+7635
+printing
+7633
+printing
+7634
+printing
+7643
+printing
+7639
+printing
+7637
+printing
+7638
+printing
+7642
+printing
+7640
+printing
+7641
+now test sequences of strings:hohoho
+done!
+finished
+==76908== 
+==76908== HEAP SUMMARY:
+==76908==     in use at exit: 0 bytes in 0 blocks
+==76908==   total heap usage: 11,989 allocs, 11,989 frees, 764,942 bytes allocated
+==76908== 
+==76908== All heap blocks were freed -- no leaks are possible
+==76908== 
+==76908== For lists of detected and suppressed errors, rerun with: -s
+==76908== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)

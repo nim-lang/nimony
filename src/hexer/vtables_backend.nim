@@ -17,7 +17,7 @@ import std/[assertions, tables]
 
 include nifprelude
 import ".." / lib / tinyhashes
-import nifindexes, symparser, treemangler
+import nifindexes, symparser, treemangler, passes
 import ".." / nimony / [nimony_model, decls, programs, typenav,
   renderer, builtintypes, typeprops, typekeys, vtables_frontend]
 from duplifier import constructsValue
@@ -150,7 +150,7 @@ proc loadVTable(c: var Context; cls: SymId) =
       loadVTable c, inh
 
   # now apply the diff:
-  let diff = programs.loadVTable(cls)
+  let diff = vtables_frontend.loadVTable(cls)
   var dest = VTable(display: @[], methods: @[], state: Others)
   if parent != SymId(0):
     dest.methods = c.vtables[parent].methods
@@ -255,7 +255,7 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
               root = parent
               inc level
             genVtableField c, dest, beginRead(tempUseBuf), ClassInfo(root: root, level: level, ptrKind: typ.typeKind), info
-          dest.addSymUse pool.syms.getOrIncl(MethodsField & SystemModuleSuffix), info
+          dest.addSymUse pool.syms.getOrIncl(MethodsField), info
           dest.addIntLit 0, info # this is getting stupid...
         let idx = getMethodIndex(c, cls, fn)
         dest.addIntLit idx, info
@@ -330,12 +330,13 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; forceStaticCall: 
     takeParRi dest, n
 
 proc trProcCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  inc n # (procCall)
-  if n.exprKind in CallKinds:
-    trCall c, dest, n, true
-  else:
+  # (proccall fn args...) - static call, convert to regular call bypassing vtable
+  let info = n.info
+  inc n  # skip (proccall
+  dest.addParLe(CallS, info)
+  while n.kind != ParRi:
     tr c, dest, n
-  skipParRi n
+  takeParRi dest, n
 
 proc classData(typ: Cursor): (int, UHash) =
   var n = typ
@@ -366,28 +367,43 @@ proc genBaseobj(c: var Context; dest: var TokenBuf; x: var Cursor; class: ClassI
 proc genVtableField(c: var Context; dest: var TokenBuf; x: Cursor; class: ClassInfo; info: PackedLineInfo) =
   # get vtable field of `x`, might need to get to root object
   copyIntoKind dest, DotX, info:
-    if class.ptrKind == RefT:
-      # past duplifier, so need to do the deref transform here
-      dest.addParLe(DotX, info)
-      dest.addParLe(DerefX, info)
-    elif class.ptrKind == PtrT:
-      dest.addParLe(DerefX, info)
-
     var x = x
-    if class.level == 0:
-      tr c, dest, x
-    else:
-      genBaseobj c, dest, x, class, info
-
     if class.ptrKind == RefT:
-      # past duplifier, so need to do the deref transform here
-      dest.addParRi()
+      # past duplifier, so need to do the deref transform here.
+      # Do NOT cast the outer IAref wrapper to the base IAref type: the two
+      # IAref structs can have different d.00 offsets on 32-bit ARM when the
+      # derived object has int64/float64 fields that require 8-byte alignment,
+      # introducing padding between r.00 and d.00 that the base IAref lacks.
+      # Instead, deref the original pointer, access d.00, then use BaseobjX
+      # to navigate up the inheritance chain via safe .Q field access.
       let dataField = pool.syms.getOrIncl(DataField)
-      dest.add symToken(dataField, info)
-      dest.addIntLit(0, info) # inheritance
-      dest.addParRi()
+      if class.level == 0:
+        copyIntoKind dest, DotX, info:
+          copyIntoKind dest, DerefX, info:
+            tr c, dest, x
+          dest.add symToken(dataField, info)
+          dest.addIntLit(0, info)
+      else:
+        copyIntoKind dest, BaseobjX, info:
+          dest.add symToken(class.root, info)
+          dest.addIntLit(class.level, info)
+          copyIntoKind dest, DotX, info:
+            copyIntoKind dest, DerefX, info:
+              tr c, dest, x
+            dest.add symToken(dataField, info)
+            dest.addIntLit(0, info)
     elif class.ptrKind == PtrT:
+      dest.addParLe(DerefX, info)
+      if class.level == 0:
+        tr c, dest, x
+      else:
+        genBaseobj c, dest, x, class, info
       dest.addParRi()
+    else:
+      if class.level == 0:
+        tr c, dest, x
+      else:
+        genBaseobj c, dest, x, class, info
 
     dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
     dest.addIntLit 0, info
@@ -414,7 +430,7 @@ proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: 
   var x2 = x
   let xTemp = evalOnce(c, dest, x2)
   if xk in {RefT, PtrT}:
-    # nil check, always false in old compiler
+    # nil check, always false in old compiler <- that is not true!
     dest.addParLe(IfS, info)
     copyIntoKind dest, ElifU, info:
       copyIntoKind dest, EqX, info:
@@ -424,7 +440,7 @@ proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: 
           useTemp dest, xTemp, info
         dest.addParPair(NilX, info)
       copyIntoKind dest, ExprX, info:
-        dest.addParPair(FalseX, info)
+        dest.addParPair(TrueX, info)
     dest.addParLe(ElseU, info)
   copyIntoKind dest, ExprX, info:
     copyIntoKind dest, StmtsS, info:
@@ -452,7 +468,7 @@ proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: 
         copyIntoKind dest, DotX, info:
           copyIntoKind dest, DerefX, info:
             dest.addSymUse vtabTempSym, info
-          dest.copyIntoSymUse pool.syms.getOrIncl(DisplayLenField & SystemModuleSuffix), info
+          dest.copyIntoSymUse pool.syms.getOrIncl(DisplayLenField), info
           dest.addIntLit 0, info
 
       # Second expression: vtab.display[level] == hash(T)
@@ -464,7 +480,7 @@ proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: 
           copyIntoKind dest, DotX, info:
             copyIntoKind dest, DerefX, info:
               dest.addSymUse vtabTempSym, info
-            dest.copyIntoSymUse pool.syms.getOrIncl(DisplayField & SystemModuleSuffix), info
+            dest.copyIntoSymUse pool.syms.getOrIncl(DisplayField), info
             dest.addIntLit 0, info
           dest.addIntLit level, info
 
@@ -605,9 +621,9 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of ParLe:
       let ek = n.exprKind
       case ek
-      of CallKinds:
+      of CallKinds - {ProccallX}:
         trCall c, dest, n, false
-      of ProcCallX:
+      of ProccallX:
         trProcCall c, dest, n
       of OconstrX:
         trObjConstr c, dest, n
@@ -669,6 +685,16 @@ proc processMethods(c: var Context) =
           var methodName = pool.syms[m.name]
           extractBasename methodName
           processMethod c, m, methodName
+      # Also load methods from the frontend pragmas (for imported generic instances)
+      let diff = vtables_frontend.loadVTable(cls)
+      for entry in diff:
+        let sig = pool.strings[entry.signature]
+        let idx = c.vtables[cls].signatureToIndex.getOrDefault(sig, -1)
+        if idx == -1:
+          c.vtables[cls].methods.add entry.fn
+          c.vtables[cls].signatureToIndex[sig] = c.vtables[cls].methods.len - 1
+        else:
+          c.vtables[cls].methods[idx] = entry.fn
 
 proc registerClass(c: var Context; cls: SymId; inThisModule: bool) =
   for i in 0 ..< c.classes.len:
@@ -769,12 +795,12 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
         dest.addSymUse pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix), NoLineInfo
 
         dest.addParLe KvU, NoLineInfo
-        dest.addSymUse pool.syms.getOrIncl(DisplayLenField & SystemModuleSuffix), NoLineInfo
+        dest.addSymUse pool.syms.getOrIncl(DisplayLenField), NoLineInfo
         dest.addIntLit vtab.display.len, NoLineInfo
         dest.addParRi() # KvU
 
         dest.addParLe KvU, NoLineInfo
-        dest.addSymUse pool.syms.getOrIncl(DisplayField & SystemModuleSuffix), NoLineInfo
+        dest.addSymUse pool.syms.getOrIncl(DisplayField), NoLineInfo
         if displayName != SymId(0):
           #dest.copyIntoKind AddrX, NoLineInfo:
           # cast to pointer type to remove `const` modifier in C
@@ -788,7 +814,7 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
         dest.addParRi() # KvU
 
         dest.addParLe KvU, NoLineInfo
-        dest.addSymUse pool.syms.getOrIncl(MethodsField & SystemModuleSuffix), NoLineInfo
+        dest.addSymUse pool.syms.getOrIncl(MethodsField), NoLineInfo
         if vtab.methods.len > 0:
           dest.addParLe AconstrX, NoLineInfo
           # array constructor also starts with a type, yuck:
@@ -806,32 +832,28 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
             dest.addParPair NilX, NoLineInfo
         dest.addParRi() # KvU
 
-proc transformVTables*(n: Cursor; moduleSuffix: string; needsXelim: var bool): TokenBuf =
+proc transformVTables*(pass: var Pass; needsXelim: var bool) =
+  var n = pass.n  # Extract cursor locally
   var c = Context(
     typeCache: createTypeCache(),
-    moduleSuffix: moduleSuffix,
+    moduleSuffix: pass.moduleSuffix,
     needsXelim: needsXelim,
     getRttiSym: pool.syms.getOrIncl("getRtti.0." & SystemModuleSuffix)
   )
   c.typeCache.openScope()
 
-  var dest = createTokenBuf(300)
-
   var n2 = n
   collectMethods c, n2
   processMethods c
 
-  var n = n
   assert n.stmtKind == StmtsS
-  dest.add n
+  pass.dest.add n
   inc n
 
-  emitVTables c, dest
+  emitVTables c, pass.dest
 
-  while n.kind != ParRi: tr c, dest, n
-  dest.addParRi()
+  while n.kind != ParRi: tr c, pass.dest, n
+  pass.dest.addParRi()
 
   c.typeCache.closeScope()
   needsXelim = c.needsXelim
-
-  result = ensureMove dest

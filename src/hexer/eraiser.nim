@@ -36,7 +36,7 @@ import std / [sets, assertions]
 include nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, typeprops]
 import ".." / models / tags
-import duplifier
+import duplifier, passes
 
 type
   Context = object
@@ -132,7 +132,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
     c.needsXelim = true
     let isVoid = retType.kind == DotToken or retType.typeKind == VoidT
     if not isVoid:
-       dest.addParLe(ExprX, info)
+      dest.addParLe(ExprX, info)
     copyIntoKind dest, StmtsS, info:
       let symId = pool.syms.getOrIncl("`canRaise." & $c.tmpCounter)
       inc c.tmpCounter
@@ -218,11 +218,10 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dec nested
     if nested == 0: break
 
-proc injectRaisingCalls*(n: Cursor; ptrSize: int; needsXelim: var bool): TokenBuf =
+proc injectRaisingCalls*(pass: var Pass; ptrSize: int; needsXelim: var bool) =
+  var n = pass.n  # Extract cursor locally
   var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(), needsXelim: needsXelim)
   c.typeCache.openScope()
-  result = createTokenBuf(300)
-  var n = n
-  tr(c, result, n)
+  tr(c, pass.dest, n)  # Write to pass.dest
   c.typeCache.closeScope()
   needsXelim = c.needsXelim

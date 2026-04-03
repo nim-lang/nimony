@@ -163,6 +163,9 @@ when defined(posix):
           result = pcDir
         else:
           result = pcFile
+      else:
+        # XXX Better error handling
+        result = pcFile
     elif dType == DT_DIR:
       result = pcDir
     else:
@@ -185,6 +188,7 @@ proc tryNextDir*(w: var DirWalker; e: var DirEntry): bool =
     if result:
       fillDirEntry(w, e)
   else:
+    result = false
     while w.status == Success:
       let entry = readdir(w.pimpl)
       if entry == nil:
@@ -218,7 +222,7 @@ proc tryCloseDir*(w: var DirWalker): ErrorCode =
 
 iterator walkDir*(dir: Path,
                   relative = false,
-                  checkDir = false): tuple[kind: PathComponent, path: Path] {.raises.} =
+                  checkDir = false): tuple[kind: PathComponent, path: Path] {.raises, sideEffect.} =
   ## Walks over all entries in the directory `dir`.
   ##
   ## Yields tuples of `(kind, path)` where `kind` is one of:

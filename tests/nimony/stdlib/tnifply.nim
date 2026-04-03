@@ -107,7 +107,7 @@ block:
   let testFooBar = FooBar(foo: Foo(fooFieldX: 4567), bar: Bar(barFieldX: "foobar", barFieldY: 2.625), en: teZ)
   b.toNif testFooBar
 
-  var r = nifReaderOpenFromBuffer(b.extract)
+  var r = nifReaderOpenFromBuffer(b.extract, "<invalid>")
   assert r.fromNif(string) == TestString
   assert r.fromNif(int) == TestInt
   assert r.fromNif(uint) == TestUint

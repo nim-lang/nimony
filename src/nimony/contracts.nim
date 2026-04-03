@@ -300,11 +300,14 @@ proc wantNotNilDeref(c: var Context; n: Cursor) =
 
 proc analyseOconstr(c: var Context; n: var Cursor) =
   inc n
+  let objType = n
   skip n # type
   while n.kind != ParRi:
     assert n.substructureKind == KvU
     inc n
-    let expected = getType(c.typeCache, n)
+    assert n.kind == Symbol
+    let expected = lookupField(c.typeCache, objType, n.symId)
+    assert not cursorIsNil(expected), "could not lookup type for " & pool.syms[n.symId]
     skip n # field name
     checkNilMatch c, n, expected
     skip n # value
@@ -342,7 +345,7 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
     of Symbol:
       let symId = pc.symId
       let x = getLocalInfo(c.typeCache, symId)
-      if x.kind in {VarY, LetY, CursorY}:
+      if x.kind in {VarY, LetY, CursorY, PatternvarY}:
         if symId notin c.directlyInitialized and symId notin c.writesTo:
           buildErr(c, pc.info, "cannot prove that " & pool.syms[symId] & " has been initialized")
           # do not name the same variable twice:
@@ -402,9 +405,11 @@ proc analyseCallArgs(c: var Context; n: var Cursor) =
     paramMap[param.name.symId] = paramMap.len+1
     let pk = param.typ.typeKind
     if pk == OutT:
-      if n.kind == Symbol:
+      var arg = n
+      if arg.exprKind == HaddrX: inc arg
+      if arg.kind == Symbol:
         # is now initialized:
-        c.writesTo.add n.symId
+        c.writesTo.add arg.symId
     elif pk == VarargsT:
       # do not advance formal parameter:
       fnType = previousFormalParam
@@ -729,6 +734,10 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
         of StmtsS, ScopeS, BlockS, ContinueS, BreakS:
           inc pc
           inc nested
+        of PragmaxS:
+          inc pc
+          skip pc # pragmas
+          inc nested
         of LocalDecls:
           inc pc
           let name = pc.symId
@@ -906,6 +915,11 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
       traverseToplevel(c, n)
     c.toplevelStmts.add n
     skipParRi n
+  of PragmaxS:
+    inc n
+    skip n
+    traverseToplevel(c, n)
+    skipParRi n
   of ProcS, FuncS, IteratorS, ConverterS, MethodS:
     traverseProc(c, n)
   of MacroS, TemplateS, TypeS, CommentS, PragmasS,
@@ -916,7 +930,7 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
   of IfS, WhenS, WhileS, ForS, CaseS, TryS, YldS, RaiseS,
      UnpackDeclS, StaticstmtS, AsmS, DeferS,
      CallKindsS, GvarS, TvarS, VarS, ConstS, ResultS,
-     GletS, TletS, LetS, CursorS, BlockS, EmitS, AsgnS, ScopeS,
+     GletS, TletS, LetS, CursorS, PatternvarS, BlockS, EmitS, AsgnS, ScopeS,
      BreakS, ContinueS, RetS, InclS, ExclS, DiscardS, AssumeS, AssertS, NoStmt:
     c.toplevelStmts.takeTree n
 

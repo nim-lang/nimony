@@ -943,6 +943,10 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
       put(g, tkSymbol, "HoleyEnum")
       skip n
 
+    of AnumT:
+      put(g, tkSymbol, "anum")
+      skip n
+
     of ConceptT:
       gconcept(g, n, c)
 
@@ -1236,11 +1240,11 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       case n.stmtKind
       of StmtsS:
         gstmts(g, n, c)
-      of VarS, LetS, CursorS, ConstS, GvarS, TvarS, GletS, TletS, ResultS:
+      of VarS, LetS, CursorS, PatternvarS, ConstS, GvarS, TvarS, GletS, TletS, ResultS:
         let descriptor: string
         let tk: TokType
         case n.stmtKind
-        of VarS, GvarS, TvarS, ResultS:
+        of VarS, GvarS, TvarS, ResultS, PatternvarS:
           descriptor = "var"
           tk = tkVar
         of CursorS, LetS, GletS, TletS:
@@ -1475,11 +1479,30 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       skipParRi(n)
 
     of DelayX:
-      inc n
-      skip n # don't render the type `Continuation` here
+      # (delay fn args...) -> delay(fn(args...))
+      inc n  # skip (delay
       put(g, tkSymbol, "delay")
       put(g, tkParLe, "(")
-      gsub(g, n)
+      gsub(g, n)  # fn
+      put(g, tkParLe, "(")
+      gcallComma(g, n)  # args
+      put(g, tkParRi, ")")
+      put(g, tkParRi, ")")
+      skipParRi(n)
+
+    of Delay0X:
+      # (delay0) -> delay()
+      inc n  # skip (delay0
+      put(g, tkSymbol, "delay")
+      put(g, tkParLe, "(")
+      put(g, tkParRi, ")")
+      skipParRi(n)
+
+    of SuspendX:
+      # (suspend) -> suspend()
+      inc n  # skip (suspend
+      put(g, tkSymbol, "suspend")
+      put(g, tkParLe, "(")
       put(g, tkParRi, ")")
       skipParRi(n)
 
@@ -1503,7 +1526,16 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       gcallsystem(g, n, $n.exprKind)
 
     of ProccallX:
-      gcallsystem(g, n, "procCall")
+      # New flat format: (proccall fn args...) -> render as procCall(fn(args...))
+      inc n  # skip (proccall
+      put(g, tkSymbol, "procCall")
+      put(g, tkParLe, "(")
+      gsub(g, n)  # fn
+      put(g, tkParLe, "(")
+      gcallComma(g, n)  # args
+      put(g, tkParRi, ")")
+      put(g, tkParRi, ")")
+      skipParRi(n)
 
     of NewrefX:
       inc n
@@ -1879,12 +1911,14 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
           else:
             afterFirst = true
 
-          assert n.substructureKind == KvU
-          inc n
-          gsub(g, n, c)
-          putWithSpace(g, tkColon, ":")
-          gsub(g, n, c)
-          skipParRi(n)
+          if n.substructureKind == KvU:
+            inc n
+            gsub(g, n, c)
+            putWithSpace(g, tkColon, ":")
+            gsub(g, n, c)
+            skipParRi(n)
+          else:
+            gsub(g, n, c)
       else:
         put(g, tkColon, ":")
 

@@ -128,18 +128,21 @@ func isEmptyOrWhitespace*(s: string): bool {.inline.} =
   ## Checks if `s` is empty or consists entirely of whitespace characters.
   result = s.allCharsInSet(Whitespace)
 
-proc endsWith*(s: string; c: char): bool {.inline.} =
+func endsWith*(s: string; c: char): bool {.inline.} =
   if s.len > 0: s[s.len-1] == c else: false
 
-proc strlen*(x: cstring): int {.importc: "strlen", header: "<string.h>".}
+func strlen*(x: cstring): int {.importc: "strlen", header: "<string.h>".}
 
-proc `$`*(x: cstring): string =
-  let L = int strlen(x)
-  result = newString(L)
-  for i in 0..<result.len:
-    result[i] = x[i]
+func `$`*(x: cstring): string =
+  if x == nil:
+    result = ""
+  else:
+    let L = int strlen(x)
+    result = newString(L)
+    for i in 0..<result.len:
+      result[i] = x[i]
 
-proc `$`*(x: char): string =
+func `$`*(x: char): string =
   result = newString(1)
   result[0] = x
 
@@ -227,7 +230,11 @@ func delete*(s: var string, slice: Slice[int]) =
     a.delete(1..0) # empty slice
     assert a == "ad"
   #when compileOption("boundChecks"):
-  assert slice.a < s.len and slice.a >= 0 and slice.b < s.len
+  if slice.a < s.len and slice.a >= 0 and slice.b < s.len:
+    discard
+  else:
+    # `return` here better than assert because it's no side effect
+    return
   if slice.b >= slice.a:
     var i = slice.a
     var j = slice.b + 1
@@ -269,7 +276,7 @@ func startsWith*(s, prefix: string): bool =
     let a = "abracadabra"
     assert a.startsWith("abra") == true
     assert a.startsWith("bra") == false
-  continuesWith s, prefix, 0
+  startsWithImpl s, prefix
 
 func endsWith*(s, suffix: string): bool =
   ## Returns true if `s` ends with `suffix`.
@@ -288,7 +295,7 @@ func endsWith*(s, suffix: string): bool =
     return false
   continuesWith s, suffix, s.len - suffix.len
 
-proc toLowerAscii*(c: char): char {.inline.} =
+func toLowerAscii*(c: char): char {.inline.} =
   ## Returns the lower case version of character `c`.
   ##
   ## This works only for the letters `A-Z`. See `unicode.toLower
@@ -445,6 +452,7 @@ func cmpIgnoreStyle*(a, b: string): int =
     # the characters are identical:
     inc i
     inc j
+  return 0
 
 func find*(s: string; sub: char; start: Natural = 0; last = -1): int =
   ## Searches for `sub` in `s` inside range `start..last` (both ends included).
@@ -730,7 +738,7 @@ func escape*(s: string, prefix = "\"", suffix = "\""): string =
   ## Both may be empty strings.
   ##
   ## See also:
-  ## * `addEscapedChar proc<system.html#addEscapedChar,string,char>`_
+  ## * `addEscapedChar func<system.html#addEscapedChar,string,char>`_
   ## * `unescape func<#unescape,string,string,string>`_ for the opposite
   ##   operation
   result = newStringOfCap(s.len + s.len shr 2)
@@ -869,7 +877,7 @@ func findNormalized(x: string, inArray: openArray[string]): int =
               # security hole...
   return -1
 
-proc invalidFormatString(formatstr: string) {.noinline, raises.} =
+func invalidFormatString(formatstr: string) {.noinline, raises.} =
   # TODO: Uncomment when exceptions are implemented.
   #raise newException(SyntaxError, "invalid format string: " & formatstr)
   raise SyntaxError
@@ -1039,7 +1047,7 @@ func trimZeros*(x: var string; decimalSep = '.') =
       try:
         x.delete(pos..last)
       except:
-        assert false
+        discard
 
 type
   BinaryPrefixMode* = enum ## The different names for binary prefixes.
@@ -1066,7 +1074,7 @@ func formatSize*(bytes: int64; decimalSep = '.'; prefix = bpIEC; includeSpace = 
     assert formatSize(4096) == "4KiB"
     assert formatSize(5_378_934, prefix = bpColloquial, decimalSep = ',') == "5,129MB"
 
-  assert bytes >= 0
+  if bytes < 0: return "<negative amount of bytes>"
   # It doesn't needs Zi and larger units until we use int72 or larger ints.
   const iecPrefixes = ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei"]
   const collPrefixes = ["", "k", "M", "G", "T", "P", "E"]

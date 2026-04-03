@@ -19,68 +19,62 @@ proc escape(result: var string; c: char) {.inline.} =
   result.add HexChars[n and 0xF]
   result.add 'Q'
 
-proc isImportC*(s: string): bool =
-  s.len > 2 and s[s.len-2] == '.' and s[s.len-1] == 'c'
-
-proc mangle*(s: string): string =
-  if s.isImportC:
-    result = substr(s, 0, s.len-3)
-  else:
-    var i = 0
-    result = newStringOfCap(s.len)
-    while i < s.len:
-      case s[i]
-      of 'A'..pred('Q'), succ('Q')..'Z', 'a'..'z', '0'..'9':
-        result.add s[i]
-      of 'Q': result.add "QQ"
-      of '_': result.add "Q_"
-      of '.': result.add '_'
-      of '[':
-        if i < s.len-1 and s[i+1] == ']':
-          if i < s.len-2 and s[i+2] == '=':
-            result.add "putQ"
-            inc i, 2
-          else:
-            result.add "getQ"
-            inc i
+proc mangleToC*(s: string): string =
+  var i = 0
+  result = newStringOfCap(s.len)
+  while i < s.len:
+    case s[i]
+    of 'A'..pred('Q'), succ('Q')..'Z', 'a'..'z', '0'..'9':
+      result.add s[i]
+    of 'Q': result.add "QQ"
+    of '_': result.add "Q_"
+    of '.': result.add '_'
+    of '[':
+      if i < s.len-1 and s[i+1] == ']':
+        if i < s.len-2 and s[i+2] == '=':
+          result.add "putQ"
+          inc i, 2
         else:
-          result.escape '['
-      of '=':
-        if i < s.len-1 and s[i+1] == '=':
-          result.add "eqQ"
+          result.add "getQ"
           inc i
-        else:
-          result.add "eQ"
-      of '<':
-        if i < s.len-1 and s[i+1] == '=':
-          result.add "leQ"
-          inc i
-        else:
-          result.add "ltQ"
-      of '>':
-        if i < s.len-1 and s[i+1] == '=':
-          result.add "geQ"
-          inc i
-        else:
-          result.add "gtQ"
-      of '$': result.add "dollarQ"
-      of '%': result.add "percentQ"
-      of '&': result.add "ampQ"
-      of '^': result.add "roofQ"
-      of '!': result.add "emarkQ"
-      of '?': result.add "qmarkQ"
-      of '*': result.add "starQ"
-      of '+': result.add "plusQ"
-      of '-': result.add "minusQ"
-      of '/': result.add "slashQ"
-      of '\\': result.add "bslashQ"
-      of '~': result.add "tildeQ"
-      of ':': result.add "colonQ"
-      of '@': result.add "atQ"
-      of '|': result.add "barQ"
       else:
-        result.escape s[i]
-      inc i
+        result.escape '['
+    of '=':
+      if i < s.len-1 and s[i+1] == '=':
+        result.add "eqQ"
+        inc i
+      else:
+        result.add "eQ"
+    of '<':
+      if i < s.len-1 and s[i+1] == '=':
+        result.add "leQ"
+        inc i
+      else:
+        result.add "ltQ"
+    of '>':
+      if i < s.len-1 and s[i+1] == '=':
+        result.add "geQ"
+        inc i
+      else:
+        result.add "gtQ"
+    of '$': result.add "dollarQ"
+    of '%': result.add "percentQ"
+    of '&': result.add "ampQ"
+    of '^': result.add "roofQ"
+    of '!': result.add "emarkQ"
+    of '?': result.add "qmarkQ"
+    of '*': result.add "starQ"
+    of '+': result.add "plusQ"
+    of '-': result.add "minusQ"
+    of '/': result.add "slashQ"
+    of '\\': result.add "bslashQ"
+    of '~': result.add "tildeQ"
+    of ':': result.add "colonQ"
+    of '@': result.add "atQ"
+    of '|': result.add "barQ"
+    else:
+      result.escape s[i]
+    inc i
 
 proc toCChar*(c: char; result: var string) {.inline.} =
   case c

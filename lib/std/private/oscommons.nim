@@ -51,7 +51,7 @@ when defined(windows) and not weirdTarget:
   # template getFilename*(f: untyped): untyped =
   #   $cast[WideCString](addr(f.cFileName[0]))
 
-  proc skipFindData*(f: WIN32_FIND_DATA): bool {.inline.} =
+  func skipFindData*(f: WIN32_FIND_DATA): bool {.inline.} =
     # Note - takes advantage of null delimiter in the cstring
     let dot = ord('.') # TODO: const
     result = f.cFileName[0].int == dot and (f.cFileName[1].int == 0 or
@@ -114,6 +114,7 @@ when supportedSystem:
     ## * `symlinkExists proc`_
     when defined(windows):
       var filename = filename
+      result = false
       wrapUnary(a, getFileAttributesW, filename):
         if a != -1'i32:
           result = (a and FILE_ATTRIBUTE_DIRECTORY) == 0'i32
@@ -132,6 +133,7 @@ when supportedSystem:
     ## * `fileExists proc`_
     ## * `symlinkExists proc`_
     when defined(windows):
+      result = false
       var dir = dir
       wrapUnary(a, getFileAttributesW, dir):
         if a != -1'i32:
@@ -151,6 +153,7 @@ when supportedSystem:
     ## * `fileExists proc`_
     ## * `dirExists proc`_
     when defined(windows):
+      result = false
       var link = link
       wrapUnary(a, getFileAttributesW, link):
         if a != -1'i32:

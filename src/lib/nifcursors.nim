@@ -71,6 +71,9 @@ proc `+!`*(c: Cursor; diff: int): Cursor {.inline.} =
 proc cursorIsNil*(c: Cursor): bool {.inline.} =
   result = c.p == nil
 
+proc hasCurrentToken*(c: Cursor): bool {.inline.} =
+  result = c.p != nil and c.rem > 0
+
 proc skip*(c: var Cursor) =
   if c.kind == ParLe:
     var nested = 0
@@ -114,6 +117,12 @@ type
     len, cap, readers: int
 
 proc `=copy`(dest: var TokenBuf; src: TokenBuf) {.error.}
+proc `=wasMoved`(dest: var TokenBuf) {.inline.} =
+  dest.data = nil
+  dest.len = 0
+  dest.cap = 0
+  dest.readers = 0
+
 when defined(nimAllowNonVarDestructor) and defined(gcDestructors):
   proc `=destroy`(dest: TokenBuf) {.inline.} =
     #assert dest.readers == 0, "TokenBuf still in use by some reader"
@@ -178,6 +187,16 @@ proc readonlyCursorAt*(b: TokenBuf; i: int): Cursor {.inline.} =
   assert i >= 0 and i < b.len
   assert(not isMutable(b))
   result = Cursor(p: addr b.data[i], rem: b.len-i)
+
+proc shareRead*(b: var TokenBuf; c: Cursor): Cursor =
+  let pos = (cast[int](c.p) - cast[int](b.data)) div sizeof(PackedToken)
+  if b.readers == 0:
+    freeze(b)
+  inc b.readers
+  result = Cursor(
+    p: cast[ptr PackedToken](
+      cast[uint](b.data) + pos.uint * sizeof(PackedToken).uint),
+    rem: c.rem)
 
 proc cursorToPosition*(b: TokenBuf; c: Cursor): int {.inline.} =
   result = (cast[int](c.p) - cast[int](b.data)) div sizeof(PackedToken)
@@ -292,6 +311,12 @@ proc addUIntLit*(dest: var TokenBuf; i: BiggestUInt; info = NoLineInfo) =
 proc addIdent*(dest: var TokenBuf; s: string; info = NoLineInfo) =
   dest.add identToken(pool.strings.getOrIncl(s), info)
 
+proc addCharLit*(dest: var TokenBuf; c: char; info = NoLineInfo) =
+  dest.add charToken(c, info)
+
+proc addFloatLit*(dest: var TokenBuf; f: BiggestFloat; info = NoLineInfo) =
+  dest.add floatToken(pool.floats.getOrIncl(f), info)
+
 proc span*(c: Cursor): int =
   result = 0
   var c = c
@@ -359,7 +384,7 @@ proc toString*(b: TokenBuf; produceLineInfo = true): string =
 proc toString*(b: TokenBuf; first: int; produceLineInfo = true): string =
   var last = first
   var nested = 0
-  while true:
+  while last < b.len:
     case b[last].kind
     of ParLe:
       inc nested
@@ -368,6 +393,7 @@ proc toString*(b: TokenBuf; first: int; produceLineInfo = true): string =
     else: discard
     if nested == 0: break
     inc last
+  if last == b.len: dec last
   result = nifstreams.toString(toOpenArray(b.data, first, last), produceLineInfo)
 
 proc toString*(b: Cursor; produceLineInfo = true): string =
@@ -384,7 +410,7 @@ type
     OnlyIfChanged
 
 proc writeFile*(b: TokenBuf; filename: string; mode: FileWriteMode = AlwaysWrite) =
-  let content = "(.nif24)\n" & toString(b)
+  let content = toModuleString(toOpenArray(b.data, 0, b.len-1), "." & extractModuleSuffix(filename))
   if mode == OnlyIfChanged:
     let existingContent = try: readFile(filename) except: ""
     if existingContent == content: return
@@ -423,8 +449,8 @@ proc parse*(r: var Stream; dest: var TokenBuf;
       dec nested
       if nested == 0: break
 
-proc parseFromBuffer*(input: string; sizeHint = 100): TokenBuf =
-  var r = nifstreams.openFromBuffer(input)
+proc parseFromBuffer*(input: string; thisModule: sink string; sizeHint = 100): TokenBuf =
+  var r = nifstreams.openFromBuffer(input, thisModule)
   result = createTokenBuf(sizeHint)
   parse(r, result, NoLineInfo)
 
@@ -438,6 +464,10 @@ proc isLastSon*(n: Cursor): bool =
   var n = n
   skip n
   result = n.kind == ParRi
+
+proc firstSon*(n: Cursor): Cursor {.inline.} =
+  result = n
+  inc result
 
 proc takeToken*(buf: var TokenBuf; n: var Cursor) {.inline.} =
   buf.add n

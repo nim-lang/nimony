@@ -1,7 +1,6 @@
 (.nif24)
 (stmts
   (proc :main.c . (i +32) . (stmts
-
     (var :x.mangled . (f +32) +1.2)
     (var :y.mangled . (f +64) +1.223)
     (var :z.mangled . (f +64) +4.6)

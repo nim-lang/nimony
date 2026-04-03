@@ -64,6 +64,7 @@ type
     TypeS = (ord(TypeTagId), "type")  ## type declaration
     EmitS = (ord(EmitTagId), "emit")  ## emit statement
     AsgnS = (ord(AsgnTagId), "asgn")  ## assignment statement
+    StoreS = (ord(StoreTagId), "store")  ## `asgn` with reversed operands that reflects evaluation order
     KeepovfS = (ord(KeepovfTagId), "keepovf")  ## keep overflow flag statement
     ScopeS = (ord(ScopeTagId), "scope")  ## explicit scope annotation, like `stmts`
     IfS = (ord(IfTagId), "if")  ## if statement header
@@ -74,15 +75,19 @@ type
     JmpS = (ord(JmpTagId), "jmp")  ## jump/goto instruction
     RetS = (ord(RetTagId), "ret")  ## `return` instruction
     StmtsS = (ord(StmtsTagId), "stmts")  ## list of statements
-    ImpS = (ord(ImpTagId), "imp")  ## import declaration
-    InclS = (ord(InclTagId), "incl")  ## `#include` statement or `incl` set operation
     DiscardS = (ord(DiscardTagId), "discard")  ## `discard` statement
     TryS = (ord(TryTagId), "try")  ## `try` statement
     RaiseS = (ord(RaiseTagId), "raise")  ## `raise` statement
     OnerrS = (ord(OnerrTagId), "onerr")  ## error handling statement
+    IteS = (ord(IteTagId), "ite")  ## if-then-else followed by `join` information followed by an optional label
+    ItecS = (ord(ItecTagId), "itec")  ## if-then-else (that was a `case`)
+    LoopS = (ord(LoopTagId), "loop")  ## `loop` components are (before-cond, cond, loop-body, after)
+    JtrueS = (ord(JtrueTagId), "jtrue")  ## set variables v1, v2, ... to `(true)`; hint this should become a jump
+    MflagS = (ord(MflagTagId), "mflag")  ## declare a new **materialized** control flow flag `D` of type `bool` initialized to `false`
+    VflagS = (ord(VflagTagId), "vflag")  ## declare a new **virtual** control flow flag `D` of type `bool` initialized to `false`
 
 proc rawTagIsNifcStmt*(raw: TagEnum): bool {.inline.} =
-  raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, KeepovfTagId, ScopeTagId, IfTagId, BreakTagId, WhileTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, ImpTagId, InclTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId}
+  raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, StoreTagId, KeepovfTagId, ScopeTagId, IfTagId, BreakTagId, WhileTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId, IteTagId, ItecTagId, LoopTagId, JtrueTagId, MflagTagId, VflagTagId}
 
 type
   NifcType* = enum
@@ -102,9 +107,10 @@ type
     ArrayT = (ord(ArrayTagId), "array")  ## `array` type constructor
     FlexarrayT = (ord(FlexarrayTagId), "flexarray")  ## `flexarray` type constructor
     AptrT = (ord(AptrTagId), "aptr")  ## "pointer to array of" type constructor
+    VarargsT = (ord(VarargsTagId), "varargs")  ## `varargs` proc annotation
 
 proc rawTagIsNifcType*(raw: TagEnum): bool {.inline.} =
-  raw in {ParamsTagId, UnionTagId, ObjectTagId, EnumTagId, ProctypeTagId, ITagId, UTagId, FTagId, CTagId, BoolTagId, VoidTagId, PtrTagId, ArrayTagId, FlexarrayTagId, AptrTagId}
+  raw in {ParamsTagId, UnionTagId, ObjectTagId, EnumTagId, ProctypeTagId, ITagId, UTagId, FTagId, CTagId, BoolTagId, VoidTagId, PtrTagId, ArrayTagId, FlexarrayTagId, AptrTagId, VarargsTagId}
 
 type
   NifcOther* = enum
@@ -129,8 +135,7 @@ type
     NoPragma
     InlineP = (ord(InlineTagId), "inline")  ## `inline` proc annotation
     NoinlineP = (ord(NoinlineTagId), "noinline")  ## `noinline` proc annotation
-    AttrP = (ord(AttrTagId), "attr")  ## general attribute annoation
-    VarargsP = (ord(VarargsTagId), "varargs")  ## `varargs` proc annotation
+    AttrP = (ord(AttrTagId), "attr")  ## general attribute annotation
     WasP = (ord(WasTagId), "was")
     SelectanyP = (ord(SelectanyTagId), "selectany")
     AlignP = (ord(AlignTagId), "align")
@@ -140,10 +145,14 @@ type
     RaisesP = (ord(RaisesTagId), "raises")  ## proc annotation
     ErrsP = (ord(ErrsTagId), "errs")  ## proc annotation
     StaticP = (ord(StaticTagId), "static")  ## `static` type or annotation
+    ImportcP = (ord(ImportcTagId), "importc")  ## `importc` pragma
+    ImportcppP = (ord(ImportcppTagId), "importcpp")  ## `importcpp` pragma
+    ExportcP = (ord(ExportcTagId), "exportc")  ## `exportc` pragma
+    HeaderP = (ord(HeaderTagId), "header")  ## `header` pragma
     PackedP = (ord(PackedTagId), "packed")  ## `packed` pragma
 
 proc rawTagIsNifcPragma*(raw: TagEnum): bool {.inline.} =
-  raw in {InlineTagId, NoinlineTagId, AttrTagId, VarargsTagId, WasTagId, SelectanyTagId, AlignTagId, BitsTagId, VectorTagId, NodeclTagId, RaisesTagId, ErrsTagId, StaticTagId, PackedTagId}
+  raw in {InlineTagId, NoinlineTagId, AttrTagId, WasTagId, SelectanyTagId, AlignTagId, BitsTagId, VectorTagId, NodeclTagId, RaisesTagId, ErrsTagId, StaticTagId, ImportcTagId, ImportcppTagId, ExportcTagId, HeaderTagId, PackedTagId}
 
 type
   NifcTypeQualifier* = enum
@@ -167,8 +176,11 @@ type
     EfldY = (ord(EfldTagId), "efld")  ## enum field declaration
     FldY = (ord(FldTagId), "fld")  ## field declaration
     ProcY = (ord(ProcTagId), "proc")  ## proc declaration
+    TypeY = (ord(TypeTagId), "type")  ## type declaration
     LabY = (ord(LabTagId), "lab")  ## label, target of a `jmp` instruction
+    MflagY = (ord(MflagTagId), "mflag")  ## declare a new **materialized** control flow flag `D` of type `bool` initialized to `false`
+    VflagY = (ord(VflagTagId), "vflag")  ## declare a new **virtual** control flow flag `D` of type `bool` initialized to `false`
 
 proc rawTagIsNifcSym*(raw: TagEnum): bool {.inline.} =
-  raw in {GvarTagId, TvarTagId, VarTagId, ParamTagId, ConstTagId, EfldTagId, FldTagId, ProcTagId, LabTagId}
+  raw in {GvarTagId, TvarTagId, VarTagId, ParamTagId, ConstTagId, EfldTagId, FldTagId, ProcTagId, TypeTagId, LabTagId, MflagTagId, VflagTagId}
 

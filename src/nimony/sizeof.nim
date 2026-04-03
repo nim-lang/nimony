@@ -165,7 +165,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     update c, ptrSize, ptrSize
   of SinkT, DistinctT:
     getSize c, cache, n.firstSon, ptrSize
-  of EnumT, HoleyEnumT:
+  of EnumT, HoleyEnumT, AnumT:
     let b = enumBounds(n)
     if b.lo < 0:
       update c, 4, 4 # always int32
@@ -231,7 +231,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
   of NoType, ErrT, VoidT, VarargsT, OrT, AndT, NotT,
      ConceptT, StaticT, InvokeT, UarrayT, ItertypeT,
      AutoT, SymKindT, TypeKindT, TypedescT, UntypedT, TypedT, OrdinalT:
-    bug "valid type kind for sizeof computation: " & $n.typeKind
+    c.overflow = true
 
 proc getSize*(n: Cursor; ptrSize: int; strict=false): xint =
   var c = createSizeofValue(strict)
@@ -263,7 +263,7 @@ proc typeSectionMode(n: Cursor): PragmaKind =
 
 proc passByConstRef*(typ, pragmas: Cursor; ptrSize: int): bool =
   let k = typ.typeKind
-  if k in {SinkT, MutT, OutT, TypeKindT, UntypedT, VarargsT, TypedescT, StaticT}:
+  if k in {SinkT, MutT, OutT, TypeKindT, UntypedT, TypedT, VarargsT, TypedescT, StaticT}:
     result = false
   elif typeIsBig(typ, ptrSize):
     result = not hasPragma(pragmas, BycopyP) and typeSectionMode(typ) != BycopyP
@@ -275,14 +275,14 @@ when isMainModule:
 
   proc testSizeof(srcNif: string; expectedSize: int) =
     let symId = block:
-      var srcBuf = parseFromBuffer srcNif
+      var srcBuf = parseFromBuffer(srcNif, "<invalid>")
       var n = beginRead srcBuf
       assert n.stmtKind == TypeS
       inc n
       assert n.kind == SymbolDef
       let result = n.symId
       endRead srcBuf
-      publish result, srcBuf
+      publish result, srcBuf, SemcheckBodies
       result
     var symBuf = createTokenBuf(1)
     symBuf.add symToken(symId, NoLineInfo)

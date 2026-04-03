@@ -425,34 +425,52 @@ N_INLINE(NB8, _Qnifc_mod_ul_overflow)(unsigned long int a, unsigned long int b, 
 }
 NIM_THREADVAR NB8 NIFC_ERR_;
 #include <stdio.h>
-typedef struct string_0_sysvq0asl{
-  NC8* a_0_sysvq0asl;
-  NI i_0_sysvq0asl;}
-string_0_sysvq0asl;
+typedef struct LongString_0_sysvq0asl LongString_0_sysvq0asl;
 typedef struct __attribute__ ((__packed__)) Foo_0_tpakvxko41{
-  NC8 c_0_tpakvxko41;
-  NI x_0_tpakvxko41;}
+  NC8 c_0;
+  NI64 x_0;}
 Foo_0_tpakvxko41;
+typedef struct LongString_0_sysvq0asl{
+  NI64 fullLen_0;
+  NI64 rc_0;
+  NI64 capImpl_0;
+  NC8 data_0[];}
+LongString_0_sysvq0asl;
+typedef struct string_0_sysvq0asl{
+  NU64 bytes_0;
+  LongString_0_sysvq0asl* more_0;}
+string_0_sysvq0asl;
+extern void X60Qini_0_sysvq0asl(void);
+extern void X60Qini_0_assy765wm(void);
 extern void write_0_syn1lfpjv(FILE* f_4, string_0_sysvq0asl s_0);
 extern void write_7_syn1lfpjv(FILE* f_11, NC8 c_1);
-extern void quit_0_syn1lfpjv(NI value_1);
-Foo_0_tpakvxko41 x_1_tpakvxko41;
-int cmdCount;
-NC8 **cmdLine;
-int main(int argc, char **argv) {
-  cmdCount = argc;
-  cmdLine = (NC8**)argv;
-x_1_tpakvxko41 = (Foo_0_tpakvxko41){
-  .c_0_tpakvxko41 = (NC8)'a', .x_0_tpakvxko41 = IL64(123)}
+extern void quit_0_syn1lfpjv(NI64 value_1);
+LongString_0_sysvq0asl const strlit_0_tpakvxko41 = {
+  .fullLen_0 = IL64(20), .rc_0 = IL64(0), .capImpl_0 = IL64(0), .data_0 = "[Assertion Failure] "}
 ;
-if ((!((x_1_tpakvxko41.c_0_tpakvxko41 == (NC8)'a') && (x_1_tpakvxko41.x_0_tpakvxko41 == IL64(123))))){
-  write_0_syn1lfpjv(stdout, (string_0_sysvq0asl){
-    .a_0_sysvq0asl = (NC8*)"[Assertion Failure] ", .i_0_sysvq0asl = IL64(40)}
-  );
-  write_0_syn1lfpjv(stdout, (string_0_sysvq0asl){
-    .a_0_sysvq0asl = (NC8*)"", .i_0_sysvq0asl = IL64(0)}
-  );
-  write_7_syn1lfpjv(stdout, (NC8)'\012');
-  quit_0_syn1lfpjv(IL64(1));}
-}
-
+Foo_0_tpakvxko41 x_1_tpakvxko41 = {
+  .c_0 = (NC8)'a', .x_0 = IL64(123)}
+;
+NB8 X60QiniGuard_0_tpakvxko41;
+NI32 cmdCount;
+NC8** cmdLine;
+void X60Qini_0_tpakvxko41(void){
+  if (X60QiniGuard_0_tpakvxko41){
+    return;}
+  X60QiniGuard_0_tpakvxko41 = NIM_TRUE;
+  X60Qini_0_sysvq0asl();
+  X60Qini_0_assy765wm();
+  if ((!((x_1_tpakvxko41.c_0 == (NC8)'a') && (x_1_tpakvxko41.x_0 == IL64(123))))){
+    write_0_syn1lfpjv(stdout, (string_0_sysvq0asl){
+      .bytes_0 = 8390880602273963006ull, .more_0 = (&strlit_0_tpakvxko41)}
+    );
+    write_0_syn1lfpjv(stdout, (string_0_sysvq0asl){
+      .bytes_0 = 0ull, .more_0 = NIM_NIL}
+    );
+    write_7_syn1lfpjv(stdout, (NC8)'\012');
+    quit_0_syn1lfpjv(IL64(1));}}
+NI32 main(NI32 X60Qargc_0_tpakvxko41, char** X60Qargv_0_tpakvxko41){
+  cmdCount = X60Qargc_0_tpakvxko41;
+  cmdLine = ((NC8**)X60Qargv_0_tpakvxko41);
+  X60Qini_0_tpakvxko41();
+  return IL64(0);}

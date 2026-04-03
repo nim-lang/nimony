@@ -14,11 +14,22 @@ to type `(T, T)`, etc.
 
 ]##
 
-import std/[assertions, tables]
+import std/[assertions, tables, strutils]
 
 include nifprelude
 import nifindexes, symparser, treemangler
 import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints, builtintypes, typekeys, typeprops]
+
+proc isMutFirstParam*(destroyProc: SymId): bool =
+  result = false
+  let res = tryLoadSym(destroyProc)
+  if res.status == LacksNothing:
+    let routine = asRoutine(res.decl)
+    var params = routine.params
+    inc params
+    let firstParam = asLocal(params)
+    if firstParam.typ.typeKind in {MutT, OutT}:
+      result = true
 
 type
   TypeCursor = Cursor
@@ -40,21 +51,45 @@ type
     hookNames: Table[string, int]
     thisModuleSuffix: string
     bits*: int
+    frontendHooks*: ptr Table[SymId, HooksPerType] # hooks from frontend, not yet in type pragmas
 
 # Phase 1: Determine if the =hook is trivial:
 
 when not defined(nimony):
   proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool
 
+proc isGenericHook(hookSym: SymId): bool =
+  ## Check if a hook is generic (has type parameters)
+  let res = tryLoadSym(hookSym)
+  if res.status == LacksNothing:
+    let r = asRoutine(res.decl)
+    result = r.typevars.substructureKind == TypevarsU
+  else:
+    result = false
+
 proc loadHook(c: var LiftingCtx; op: AttachedOp; s: SymId): SymId =
   result = c.nominalTypeToHook[op].getOrDefault(s)
   if result == SymId(0):
-    result = tryLoadHook(op, s, false)
+    # Check frontend hooks first (for current module during derefs pass)
+    if c.frontendHooks != nil and c.frontendHooks[].hasKey(s):
+      result = c.frontendHooks[][s].a[op]
+    if result == SymId(0):
+      result = tryLoadHook(op, s)
     if result != SymId(0):
-      c.nominalTypeToHook[op][s] = result
+      # Filter out generic hooks - they need instantiation first
+      if isGenericHook(result):
+        result = SymId(0)
+      else:
+        c.nominalTypeToHook[op][s] = result
 
 proc hasHook(c: var LiftingCtx; s: SymId): bool =
-  result = loadHook(c, c.op, s) != SymId(0)
+  result = c.nominalTypeToHook[c.op].hasKey(s)
+  if not result:
+    # Check frontend hooks first
+    if c.frontendHooks != nil and c.frontendHooks[].hasKey(s):
+      result = c.frontendHooks[][s].a[c.op] != SymId(0)
+    if not result:
+      result = tryLoadHook(c.op, s) != SymId(0)
 
 proc getCompilerProc(c: var LiftingCtx; name: string): SymId =
   result = pool.syms.getOrIncl(name & ".0." & SystemModuleSuffix)
@@ -119,14 +154,16 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
   case typ.typeKind
   of IntT, UIntT, FloatT, BoolT, CharT, PtrT,
      MutT, OutT, SetT,
-     EnumT, HoleyEnumT, VoidT, AutoT, SymKindT,
+     EnumT, HoleyEnumT, AnumT, VoidT, AutoT, SymKindT,
      CstringT, PointerT, OrdinalT,
      UarrayT, VarargsT, RangetypeT, TypedescT,
      RoutineTypes:
     result = true
   of RefT:
     result = false
-  of SinkT, ArrayT, LentT:
+  of LentT:
+    result = true # lent types are borrowed; no hooks needed
+  of SinkT, ArrayT:
     result = isTrivial(c, typ.firstSon)
   of ObjectT:
     result = isTrivialObjectBody(c, typ)
@@ -141,12 +178,16 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
     result = true
   of NoType, ErrT, NiltT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, InvokeT,
      TypeKindT, UntypedT, TypedT, ItertypeT:
-    bug "bug here"
+    echo "isTrivial: ", toString(typ, false)
+    bug "bug in isTrival computation"
 
 # Phase 2: Do the lifting
 
-proc genCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf) =
-  copyIntoKind c.dest, CallX, c.info:
+proc genCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf; forceStatic = false) =
+  # forceStatic=true generates (proccall fn args...) for static dispatch;
+  # otherwise generates (call fn args...)
+  let callKind = if forceStatic: ProccallX else: CallX
+  copyIntoKind c.dest, callKind, c.info:
     copyIntoSymUse c.dest, s, c.info
     case c.op
     of attachedWasMoved:
@@ -164,7 +205,15 @@ proc genCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf) =
         copyTree c.dest, paramA
     of attachedDup:
       copyTree c.dest, paramB
-    of attachedCopy, attachedTrace, attachedSink:
+    of attachedTrace:
+      if paramA[0].kind == Symbol:
+        # &*param cancel out to `param`:
+        copyTree c.dest, paramA
+      else:
+        copyIntoKind c.dest, HaddrX, c.info:
+          copyTree c.dest, paramA
+      copyTree c.dest, paramB
+    of attachedCopy, attachedSink:
       copyTree c.dest, paramA
       copyTree c.dest, paramB
 
@@ -197,10 +246,17 @@ proc requestLifting(c: var LiftingCtx; op: AttachedOp; t: TypeCursor): SymId =
   if result == SymId(0):
     let name = generateHookName(c, op, key)
     result = pool.syms.getOrIncl(name)
-    c.requests.add GenHookRequest(sym: result, typ: t, op: op)
-    c.structuralTypeToHook[op][key] = result
+    # Check if this hook already exists (e.g., generated by frontend)
+    let existing = tryLoadSym(result)
+    if existing.status == LacksNothing:
+      # Hook already exists, don't regenerate
+      c.structuralTypeToHook[op][key] = result
+    else:
+      c.requests.add GenHookRequest(sym: result, typ: t, op: op)
+      c.structuralTypeToHook[op][key] = result
 
-proc maybeCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf) =
+proc maybeCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf; forceStatic = false) =
+  ## forceStatic=true generates static dispatch for parent hook calls
   if s != NoSymId:
     let res = tryLoadSym(s)
     if res.status == LacksNothing:
@@ -210,9 +266,9 @@ proc maybeCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf) =
     if c.op == attachedDup:
       copyIntoKind c.dest, AsgnS, c.info:
         copyTree c.dest, paramA
-        genCallHook c, s, paramA, paramB
+        genCallHook c, s, paramA, paramB, forceStatic
     else:
-      genCallHook c, s, paramA, paramB
+      genCallHook c, s, paramA, paramB, forceStatic
 
 proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
   # Goal: We produce a call to some function. Maybe this function must be
@@ -276,7 +332,7 @@ proc unravelObjField(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf;
     let b = accessObjField(c, paramB, r.name, 1, depth = depth)
     unravel c, fieldType, a, b
 
-proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf; depth: int) =
+proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf; depth: int) =
   while n.kind != ParRi:
     case n.substructureKind
     of CaseU:
@@ -286,7 +342,7 @@ proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf
         var nCopy = n
         let prevOp = c.op
         c.op = attachedDestroy
-        unravelObjFields(c, nCopy, paramA, paramB, depth)
+        unravelObjFieldsForward(c, nCopy, paramA, paramB, depth)
         c.op = prevOp
       let info = n.info
       inc n
@@ -308,14 +364,14 @@ proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf
           c.dest.takeTree(n)
           assert n.stmtKind == StmtsS
           c.dest.takeToken(n)
-          unravelObjFields c, n, paramA, paramB, depth
+          unravelObjFieldsForward c, n, paramA, paramB, depth
           takeParRi(c.dest, n)
           takeParRi(c.dest, n)
         of ElseU:
           c.dest.takeToken(n)
           assert n.stmtKind == StmtsS
           c.dest.takeToken(n)
-          unravelObjFields c, n, paramA, paramB, depth
+          unravelObjFieldsForward c, n, paramA, paramB, depth
           takeParRi(c.dest, n)
           takeParRi(c.dest, n)
         else:
@@ -333,6 +389,40 @@ proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf
     else:
       error "illformed AST inside object: ", n
 
+proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf; depth: int) =
+  if c.op != attachedDestroy:
+    unravelObjFieldsForward c, n, paramA, paramB, depth
+  else:
+    # For destruction, process fields in reverse declaration order.
+    # Collect field cursor positions first, then process in reverse.
+    var fieldPositions: seq[Cursor] = @[]
+    var scan = n
+    while scan.kind != ParRi:
+      case scan.substructureKind
+      of CaseU, FldU:
+        fieldPositions.add scan
+        skip scan
+      of NilU:
+        skip scan
+      else:
+        error "illformed AST inside object: ", scan
+    for i in countdown(fieldPositions.high, 0):
+      var cur = fieldPositions[i]
+      case cur.substructureKind
+      of CaseU:
+        unravelObjFieldsForward c, cur, paramA, paramB, depth
+      of FldU:
+        unravelObjField c, cur, paramA, paramB, depth
+      else:
+        discard
+    n = scan
+
+proc baseobjOf(c: var LiftingCtx; typ: Cursor; x: TokenBuf): TokenBuf =
+  result = createTokenBuf(6)
+  copyIntoKind result, BaseobjX, c.info:
+    copyTree result, typ
+    result.add intToken(pool.integers.getOrIncl(+1), c.info)
+    copyTree result, x
 
 proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf; depth: int) =
   var n = n
@@ -341,13 +431,29 @@ proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf; depth: i
   assert n.typeKind == ObjectT
   inc n
   # recurse for the inherited object type, if any:
-  if n.kind != DotToken:
-    var parent = n
+  var parent = n
+  var hasParent = n.kind != DotToken
+  if hasParent:
     if parent.typeKind in {RefT, PtrT}:
       inc parent
-    unravelObj c, toTypeImpl(parent), paramA, paramB, depth+1
+
+  if hasParent and c.op != attachedDestroy:
+    if c.op == attachedWasMoved:
+      # this ensures we don't touch the RTTI field and overwrite it
+      # with the wrong v-table pointer!
+      unravelObj c, toTypeImpl(parent), paramA, paramB, depth+1
+    else:
+      let fn = lift(c, parent)
+      # Use static dispatch for parent calls to avoid infinite recursion with vtable dispatch
+      maybeCallHook c, fn, baseobjOf(c, parent, paramA), baseobjOf(c, parent, paramB), forceStatic = true
+
   skip n # inheritance is gone
   unravelObjFields c, n, paramA, paramB, depth
+
+  if hasParent and c.op == attachedDestroy:
+    # For destruction, destroy derived fields first, then the base class.
+    let fn = lift(c, parent)
+    maybeCallHook c, fn, baseobjOf(c, parent, paramA), baseobjOf(c, parent, paramB), forceStatic = true
 
 proc unravelTuple(c: var LiftingCtx;
                   n: Cursor; paramA, paramB: TokenBuf) =
@@ -575,27 +681,33 @@ proc unravelDispatch(c: var LiftingCtx; orig: TypeCursor; paramA, paramB: TokenB
     #let fn = lift(c, typ)
     #maybeCallHook c, fn, paramA, paramB
 
+proc addParamType(c: var LiftingCtx; typ: TypeCursor) =
+  copyTree c.dest, typ
+
 proc addParamWithModifier(c: var LiftingCtx; param: SymId; typ: TypeCursor; modifier: TypeKind) =
   copyIntoKind(c.dest, ParamY, c.info):
     addSymDef c.dest, param, c.info
     c.dest.addEmpty2 c.info # export marker, pragmas
     copyIntoKind(c.dest, modifier, c.info):
-      copyTree c.dest, typ
+      addParamType c, typ
     c.dest.addEmpty c.info # value
 
 proc addParam(c: var LiftingCtx; param: SymId; typ: TypeCursor) =
   copyIntoKind(c.dest, ParamY, c.info):
     addSymDef c.dest, param, c.info
     c.dest.addEmpty2 c.info # export marker, pragmas
-    copyTree c.dest, typ
+    addParamType c, typ
     c.dest.addEmpty c.info # value
 
 proc maybeAddResultDecl(c: var LiftingCtx; res: SymId; typ: TypeCursor) =
   if c.op == attachedDup:
-    copyIntoKind(c.dest, VarS, c.info):
+    copyIntoKind(c.dest, ResultS, c.info):
       addSymDef c.dest, res, c.info
-      c.dest.addEmpty2 c.info # export marker, pragmas
-      copyTree c.dest, typ
+      c.dest.addEmpty c.info # export marker
+      # pragmas
+      copyIntoKind c.dest, PragmasS, c.info:
+        copyIntoKind c.dest, NoinitP, c.info: discard
+      addParamType c, typ
       c.dest.addEmpty c.info # value
 
 proc maybeAddReturn(c: var LiftingCtx; res: SymId) =
@@ -640,7 +752,7 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
     of attachedDup:
       addParam c, paramB, typ
       c.dest.addParRi()
-      c.dest.copyTree typ
+      c.addParamType typ
     of attachedCopy, attachedSink:
       addParamWithModifier c, paramA, typ, MutT
       addParam c, paramB, typ
@@ -668,11 +780,15 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
       maybeAddResultDecl c, paramA, typ
       let beforeUnravel = c.dest.len
       if a.typeKind == RefT:
-        unravelRef(c, typ, paramTreeA, paramTreeB)
+        unravelRef(c, a, paramTreeA, paramTreeB)
       else:
         unravelDispatch(c, typ, paramTreeA, paramTreeB)
-      if c.dest.len == beforeUnravel:
-        assert false, "empty hook created"
+        if c.dest.len == beforeUnravel:
+          var t = typ
+          if t.kind in {Symbol, SymbolDef} and hasRtti(t.symId):
+            discard "empty hooks are valid for RTTI'ed types"
+          else:
+            assert false, "empty hook created for " & toString(typ, false)
       maybeAddReturn c, paramA
   # tell vtables.nim we need dynamic binding here:
   if c.routineKind == MethodY:
@@ -689,19 +805,33 @@ proc genMissingHooks*(c: var LiftingCtx) =
     let reqs = move(c.requests)
     for i in 0 ..< reqs.len:
       c.op = reqs[i].op
-      c.routineKind = ProcY
       c.calledErrorHook = NoLineInfo
+      # For RTTI types (inheritable objects), hooks need to be methods for vtable dispatch
+      let t = reqs[i].typ
+      if t.kind in {Symbol, SymbolDef} and hasRtti(t.symId) and reqs[i].op in {attachedDestroy, attachedTrace}:
+        c.routineKind = MethodY
+      else:
+        c.routineKind = ProcY
       genProcDecl(c, reqs[i].sym, reqs[i].typ)
 
-proc createLiftingCtx*(thisModuleSuffix: string, bits: int): ref LiftingCtx =
-  (ref LiftingCtx)(op: attachedDestroy, info: NoLineInfo, thisModuleSuffix: thisModuleSuffix, bits: bits, routineKind: ProcY)
+proc genMissingHooks*(c: var LiftingCtx; dest: var TokenBuf) =
+  genMissingHooks(c)
+  if c.dest.len > 0:
+    dest.add c.dest
+
+proc createLiftingCtx*(thisModuleSuffix: string, bits: int; frontendHooks: ptr Table[SymId, HooksPerType] = nil): ref LiftingCtx =
+  (ref LiftingCtx)(op: attachedDestroy, info: NoLineInfo, thisModuleSuffix: thisModuleSuffix, bits: bits, routineKind: ProcY, frontendHooks: frontendHooks)
 
 proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: PackedLineInfo): SymId =
   c.op = op
-  c.routineKind = ProcY
   c.calledErrorHook = NoLineInfo
   c.info = info
   let t = if typ.typeKind == SinkT: typ.firstSon else: typ
+  # For RTTI types (inheritable objects), hooks need to be methods for vtable dispatch
+  if t.kind in {Symbol, SymbolDef} and hasRtti(t.symId) and op in {attachedDestroy, attachedTrace}:
+    c.routineKind = MethodY
+  else:
+    c.routineKind = ProcY
   result = lift(c, t)
 
 proc getDestructor*(c: var LiftingCtx; typ: TypeCursor; info: PackedLineInfo): SymId =

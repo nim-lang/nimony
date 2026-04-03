@@ -155,10 +155,10 @@ proc max*[T: Orderable](x, y: T): T {.inline.} =
 
 type
   Comparable* = concept
-    proc `==`(x, y: Self): bool
-    proc `<`(x, y: Self): bool
+    func `==`(x, y: Self): bool
+    func `<`(x, y: Self): bool
 
-proc cmp*[T: Comparable](x, y: T): int =
+func cmp*[T: Comparable](x, y: T): int =
   ## Generic compare proc.
   ##
   ## Returns:
