@@ -59,3 +59,6 @@ type # these work for most platforms:
     ## This is the same as the type `unsigned int` in *C*.
   culonglong* {.importc: "unsigned long long", nodecl.} = uint64
     ## This is the same as the type `unsigned long long` in *C*.
+
+  cstringArray* = ptr UncheckedArray[cstring]
+    ## This is the same as the type `char**` in *C*.

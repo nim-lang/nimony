@@ -623,27 +623,36 @@ proc semConstStrExprIgnoreTopLevel(c: var SemContext; dest: var TokenBuf; n: var
     semConstStrExpr(c, dest, n)
 
 proc semConstIntExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
-  let start = dest.len
-  var it = Item(n: n, typ: c.types.autoType)
-  semExpr c, dest, it
-  n = it.n
-  let t = skipModifier(it.typ)
-  if classifyType(c, t) != IntT:
-    dest.shrink start
-    buildErr c, dest, it.n.info, "expected `int` but got: " & typeToString(t)
-  var e = cursorAt(dest, start)
-  var valueBuf = evalExpr(c, e)
-  endRead(dest)
-  let value = cursorAt(valueBuf, 0)
-  if not isConstIntValue(value):
-    if value.kind == ParLe and value.tagId == ErrT:
-      dest.add valueBuf
+  case c.phase
+  of SemcheckTopLevelSyms:
+    dest.takeTree n
+  of SemcheckSignaturesInProgress, SemcheckSignatures,
+     SemcheckBodiesInProgress, SemcheckBodies:
+    let start = dest.len
+    var it = Item(n: n, typ: c.types.autoType)
+    # Ensure calls are fully resolved (toplevelGuard skips calls in non-Body phases):
+    let savedPhase = c.phase
+    c.phase = SemcheckBodies
+    semExpr c, dest, it
+    c.phase = savedPhase
+    n = it.n
+    let t = skipModifier(it.typ)
+    if classifyType(c, t) != IntT:
+      dest.shrink start
+      buildErr c, dest, it.n.info, "expected `int` but got: " & typeToString(t)
+    var e = cursorAt(dest, start)
+    var valueBuf = evalExpr(c, e)
+    endRead(dest)
+    let value = cursorAt(valueBuf, 0)
+    if not isConstIntValue(value):
+      if value.kind == ParLe and value.tagId == ErrT:
+        dest.add valueBuf
+      else:
+        dest.shrink start
+        buildErr c, dest, it.n.info, "expected constant integer value but got: " & asNimCode(value)
     else:
       dest.shrink start
-      buildErr c, dest, it.n.info, "expected constant integer value but got: " & asNimCode(value)
-  else:
-    dest.shrink start
-    dest.add valueBuf
+      dest.add valueBuf
 
 proc semConstExpr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let start = dest.len
@@ -1924,11 +1933,19 @@ proc addXint(c: var SemContext; dest: var TokenBuf; x: xint; info: PackedLineInf
 proc evalConstExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; expected: TypeCursor): TokenBuf =
   let beforeExpr = dest.len
   var x = Item(n: n, typ: expected)
+  # Ensure calls are fully resolved (toplevelGuard skips calls in non-Body phases):
+  let savedPhase = c.phase
+  c.phase = SemcheckBodies
   semExpr c, dest, x
+  c.phase = savedPhase
   n = x.n
   var e = cursorAt(dest, beforeExpr)
   result = evalExpr(c, e)
   endRead(dest)
+  # Replace the semchecked expression with the evaluated result
+  # to keep the tree structure consistent across phases:
+  dest.shrink beforeExpr
+  dest.add result
 
 proc evalConstIntExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; expected: TypeCursor): xint =
   let info = n.info
