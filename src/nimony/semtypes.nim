@@ -92,7 +92,17 @@ type
 
 proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: var EnumTypeState)
 
-proc semEnumType(c: var SemContext; dest: var TokenBuf; n: var Cursor; enumType: SymId; beforeExportMarker: int) =
+proc sizeToBaseType(c: var SemContext; size: int): Cursor =
+  ## Maps a `{.size: X.}` value in bytes to the corresponding integer type.
+  ## Matches Nim's C codegen: 1 -> uint8, 2 -> uint16, 4 -> int32, 8 -> int64.
+  case size
+  of 1: result = c.types.uint8Type
+  of 2: result = c.types.uint16Type
+  of 4: result = c.types.int32Type
+  of 8: result = c.types.int64Type
+  else: result = c.types.uint8Type
+
+proc semEnumType(c: var SemContext; dest: var TokenBuf; n: var Cursor; enumType: SymId; beforeExportMarker: int; pragmaSize: int = 0) =
   let start = dest.len
   takeToken dest, n
   let baseTypeStart = dest.len
@@ -115,7 +125,9 @@ proc semEnumType(c: var SemContext; dest: var TokenBuf; n: var Cursor; enumType:
   if state.hasHole:
     dest[start] = parLeToken(HoleyEnumT, dest[start].info)
   var baseType: Cursor
-  if signed:
+  if pragmaSize > 0:
+    baseType = sizeToBaseType(c, pragmaSize)
+  elif signed:
     baseType = c.types.int32Type
   else:
     var err = false

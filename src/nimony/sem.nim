@@ -1363,6 +1363,7 @@ type
     sym: SymId
     magic, externName: string
     bits: int
+    size: int  ## value of `{.size: X.}` pragma in bytes; 0 if not set
     hasVarargs: PackedLineInfo
     flags: set[PragmaKind]
     raisesType: TypeCursor  # Type from .raises pragma
@@ -1467,6 +1468,17 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
       semConstIntExpr(c, dest, n)
     else:
       buildErr c, dest, n.info, "expected int literal"
+    dest.addParRi()
+  of SizeP:
+    dest.add parLeToken(pk, n.info)
+    inc n
+    let valueStart = dest.len
+    if hasParRi and n.kind != ParRi:
+      semConstIntExpr(c, dest, n)
+    else:
+      buildErr c, dest, n.info, "expected int literal"
+    if dest[valueStart].kind == IntLit:
+      crucial.size = int(pool.integers[dest[valueStart].intId])
     dest.addParRi()
   of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP, BorrowP,
      NoSideEffectP, NodestroyP, BycopyP, ByrefP, InlineP, NoinlineP, NoinitP,
