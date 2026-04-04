@@ -15,7 +15,8 @@ import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
   intervals, xints, typeprops,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
-  semuntyped, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec, langmodes
+  semuntyped, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec, langmodes,
+  features
 
 const
   useNj = true # disabled for now so that we can merge the work
@@ -1423,6 +1424,21 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
       dest.addSubtree n
     else:
       buildErr c, dest, n.info, "`magic` pragma takes a string literal"
+    dest.addParRi()
+  of FeatureP:
+    dest.add parLeToken(FeatureP, n.info)
+    inc n
+    if hasParRi and n.kind in {StringLit, Ident}:
+      let feature = parseFeature(pool.strings[n.litId])
+      if feature == InvalidFeature:
+        buildErr c, dest, n.info, "unknown `feature`"
+      else:
+        c.features.incl feature
+      takeToken dest, n
+    elif n.exprKind == ErrX:
+      dest.addSubtree n
+    else:
+      buildErr c, dest, n.info, "`feature` pragma takes a string literal"
     dest.addParRi()
   of ErrorP, ReportP, DeprecatedP:
     crucial.flags.incl pk
