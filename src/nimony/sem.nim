@@ -623,36 +623,30 @@ proc semConstStrExprIgnoreTopLevel(c: var SemContext; dest: var TokenBuf; n: var
     semConstStrExpr(c, dest, n)
 
 proc semConstIntExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
-  case c.phase
-  of SemcheckTopLevelSyms:
-    dest.takeTree n
-  of SemcheckSignaturesInProgress, SemcheckSignatures,
-     SemcheckBodiesInProgress, SemcheckBodies:
-    let start = dest.len
-    var it = Item(n: n, typ: c.types.autoType)
-    # Ensure calls are fully resolved (toplevelGuard skips calls in non-Body phases):
-    let savedPhase = c.phase
-    c.phase = SemcheckBodies
-    semExpr c, dest, it
-    c.phase = savedPhase
-    n = it.n
-    let t = skipModifier(it.typ)
-    if classifyType(c, t) != IntT:
-      dest.shrink start
-      buildErr c, dest, it.n.info, "expected `int` but got: " & typeToString(t)
-    var e = cursorAt(dest, start)
-    var valueBuf = evalExpr(c, e)
-    endRead(dest)
-    let value = cursorAt(valueBuf, 0)
-    if not isConstIntValue(value):
-      if value.kind == ParLe and value.tagId == ErrT:
-        dest.add valueBuf
-      else:
-        dest.shrink start
-        buildErr c, dest, it.n.info, "expected constant integer value but got: " & asNimCode(value)
+  let start = dest.len
+  var it = Item(n: n, typ: c.types.autoType)
+  var phase = SemcheckBodies
+  swap c.phase, phase
+  semExpr c, dest, it
+  swap c.phase, phase
+  n = it.n
+  let t = skipModifier(it.typ)
+  if classifyType(c, t) != IntT:
+    dest.shrink start
+    buildErr c, dest, it.n.info, "expected `int` but got: " & typeToString(t)
+  var e = cursorAt(dest, start)
+  var valueBuf = evalExpr(c, e)
+  endRead(dest)
+  let value = cursorAt(valueBuf, 0)
+  if not isConstIntValue(value):
+    if value.kind == ParLe and value.tagId == ErrT:
+      dest.add valueBuf
     else:
       dest.shrink start
-      dest.add valueBuf
+      buildErr c, dest, it.n.info, "expected constant integer value but got: " & asNimCode(value)
+  else:
+    dest.shrink start
+    dest.add valueBuf
 
 proc semConstExpr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let start = dest.len
@@ -1939,20 +1933,13 @@ proc evalConstExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; expecte
   result = evalExpr(c, e)
   endRead(dest)
 
-proc evalConstIntExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; expected: TypeCursor;
-                      allowFailure: bool = false): xint =
+proc evalConstIntExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; expected: TypeCursor): xint =
   let info = n.info
-  let beforeExpr = dest.len
   var valueBuf = evalConstExpr(c, dest, n, expected)
   let value = beginRead(valueBuf)
   result = getConstOrdinalValue(value)
   if result.isNaN:
-    if allowFailure:
-      # Replace semExpr output with a placeholder
-      # so the published tree has a consistent shape.
-      # The caller is responsible for writing the correct value.
-      dest.shrink beforeExpr
-    elif value.kind == ParLe and value.tagId == ErrT:
+    if value.kind == ParLe and value.tagId == ErrT:
       dest.add valueBuf
     else:
       buildErr c, dest, info, "expected constant integer value but got: " & asNimCode(value)

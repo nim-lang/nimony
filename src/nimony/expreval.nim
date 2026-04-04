@@ -572,10 +572,9 @@ proc evalCast(c: var EvalContext; typ, val, nOrig: Cursor): Cursor =
           if err: cannotEval nOrig
           else: result = intValue(c, i, nOrig.info)
         else:
-          # cast to unsigned: bitwise reinterpretation of negative values
-          let i = asSigned(x, err)
+          let u = asUnsigned(x, err)
           if err: cannotEval nOrig
-          else: result = uintValue(c, cast[uint64](i), nOrig.info)
+          else: result = uintValue(c, u, nOrig.info)
   elif dtk == CharT:
     let x = getConstOrdinalValue(val)
     if isNaN(x):
