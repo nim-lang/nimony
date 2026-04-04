@@ -1933,27 +1933,26 @@ proc addXint(c: var SemContext; dest: var TokenBuf; x: xint; info: PackedLineInf
 proc evalConstExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; expected: TypeCursor): TokenBuf =
   let beforeExpr = dest.len
   var x = Item(n: n, typ: expected)
-  # Ensure calls are fully resolved (toplevelGuard skips calls in non-Body phases):
-  let savedPhase = c.phase
-  c.phase = SemcheckBodies
   semExpr c, dest, x
-  c.phase = savedPhase
   n = x.n
   var e = cursorAt(dest, beforeExpr)
   result = evalExpr(c, e)
   endRead(dest)
-  # Replace the semchecked expression with the evaluated result
-  # to keep the tree structure consistent across phases:
-  dest.shrink beforeExpr
-  dest.add result
 
-proc evalConstIntExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; expected: TypeCursor): xint =
+proc evalConstIntExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; expected: TypeCursor;
+                      allowFailure: bool = false): xint =
   let info = n.info
+  let beforeExpr = dest.len
   var valueBuf = evalConstExpr(c, dest, n, expected)
   let value = beginRead(valueBuf)
   result = getConstOrdinalValue(value)
   if result.isNaN:
-    if value.kind == ParLe and value.tagId == ErrT:
+    if allowFailure:
+      # Replace semExpr output with a placeholder
+      # so the published tree has a consistent shape.
+      # The caller is responsible for writing the correct value.
+      dest.shrink beforeExpr
+    elif value.kind == ParLe and value.tagId == ErrT:
       dest.add valueBuf
     else:
       buildErr c, dest, info, "expected constant integer value but got: " & asNimCode(value)

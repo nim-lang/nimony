@@ -307,11 +307,16 @@ proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: v
     dest.addParRi()
     inc n
   else:
+    let allowFailure = c.phase < SemcheckBodies
     if n.kind == ParLe and n.exprKind == TupX:
       dest.add n
       inc n
-      let explicitValue = evalConstIntExpr(c, dest, n, c.types.autoType) # 4
-      if explicitValue != state.thisValue:
+      let explicitValue = evalConstIntExpr(c, dest, n, c.types.autoType, allowFailure) # 4
+      if explicitValue.isNaN:
+        state.needsReeval = true
+        # Write auto-increment value as placeholder:
+        c.addXint dest, state.thisValue, n.info
+      elif explicitValue != state.thisValue:
         state.hasHole = true
         state.thisValue = explicitValue
       dest.add evalExpr(c, n)
@@ -328,8 +333,12 @@ proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: v
         n = valueCursor
       else:
         dest.add parLeToken(TupX, n.info)
-        let explicitValue = evalConstIntExpr(c, dest, n, c.types.autoType) # 4
-        if explicitValue != state.thisValue:
+        let explicitValue = evalConstIntExpr(c, dest, n, c.types.autoType, allowFailure) # 4
+        if explicitValue.isNaN:
+          state.needsReeval = true
+          # Write auto-increment value as placeholder:
+          c.addXint dest, state.thisValue, n.info
+        elif explicitValue != state.thisValue:
           state.hasHole = true
           state.thisValue = explicitValue
         dest.add strToken(delayed.lit, n.info)
@@ -1054,8 +1063,10 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerR
       let typeStart = dest.len
       case n.typeKind
       of EnumT, HoleyEnumT:
-        semEnumType(c, dest, n, delayed.s.name, beforeExportMarker, crucial.size)
+        let needsReeval = semEnumType(c, dest, n, delayed.s.name, beforeExportMarker, crucial.size)
         isEnumTypeDecl = true
+        if needsReeval:
+          c.freshSyms.incl delayed.s.name
       of RefT, PtrT:
         var obj = n
         inc obj

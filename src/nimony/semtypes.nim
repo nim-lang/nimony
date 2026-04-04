@@ -85,6 +85,7 @@ type
   EnumTypeState = object
     isBoolType: bool # `bool` is a magic enum and needs special handling
     isExported: bool
+    needsReeval*: bool # enum has field values that couldn't be evaluated yet
     enumType: SymId
     thisValue: xint
     hasHole: bool
@@ -102,7 +103,7 @@ proc sizeToBaseType(c: var SemContext; size: int): Cursor =
   of 8: result = c.types.int64Type
   else: result = c.types.uint8Type
 
-proc semEnumType(c: var SemContext; dest: var TokenBuf; n: var Cursor; enumType: SymId; beforeExportMarker: int; pragmaSize: int = 0) =
+proc semEnumType(c: var SemContext; dest: var TokenBuf; n: var Cursor; enumType: SymId; beforeExportMarker: int; pragmaSize: int = 0): bool =
   let start = dest.len
   takeToken dest, n
   let baseTypeStart = dest.len
@@ -143,6 +144,7 @@ proc semEnumType(c: var SemContext; dest: var TokenBuf; n: var Cursor; enumType:
       baseType = c.types.int64Type # according to old codegen
   dest.replace baseType, baseTypeStart
   takeParRi dest, n
+  result = state.needsReeval
 
 proc declareConceptSelf(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo) =
   let name = pool.strings.getOrIncl("Self")
