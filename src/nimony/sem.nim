@@ -5577,6 +5577,27 @@ proc semDefer(c: var SemContext; dest: var TokenBuf; it: var Item) =
   takeParRi dest, it.n
   c.routine.hasDefer = true
 
+proc expandSymChoice(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  takeToken dest, n
+  assert n.kind == Symbol
+  var name = pool.syms[n.symId]
+  extractBasename(name)
+  var marker = initHashSet[SymId]()
+  while n.kind != ParRi:
+    assert n.kind == Symbol
+    marker.incl n.symId
+    takeToken dest, n
+  addSymChoiceSyms(c, dest, pool.strings.getOrIncl(name), marker, info)
+  takeParRi dest, n
+
+proc semSymChoice(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag] = {}) =
+  if it.n.exprKind == OchoiceX:
+    # could restrict to callees
+    expandSymChoice c, dest, it.n
+  else:
+    takeTree dest, it.n
+
 proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag] = {}) =
   case it.n.kind
   of IntLit:
@@ -5860,7 +5881,7 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     of FieldsX, FieldpairsX, InternalFieldPairsX:
       takeTree dest, it.n
     of OchoiceX, CchoiceX:
-      takeTree dest, it.n
+      semSymChoice c, dest, it
     of HaddrX, HderefX:
       takeToken dest, it.n
       # this is exactly what we need here as these operators have the same
