@@ -103,7 +103,7 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     config.baseDir = val
   of "nimcache":
     config.nifcachePath = val
-    forwardArgNifc = true
+    forwardArgNifc = false
   of "usages":
     if config.toTrack.mode == TrackNone:
       config.toTrack = parseTrack(val, TrackUsages)

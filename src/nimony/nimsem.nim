@@ -69,7 +69,8 @@ proc executeNif(files: seq[string]; config: sink NifConfig) =
     return
 
   # little hack: prepare our writenif dependency
-  exec quoteShell(findTool("nimony")) & " c " & quoteShell(stdlibFile("std/writenif.nim"))
+  exec quoteShell(findTool("nimony")) & " --nimcache:" & quoteShell(config.nifcachePath) &
+    " c " & quoteShell(stdlibFile("std/writenif.nim"))
 
   let dependencyFiles = files[1..^1]
 
