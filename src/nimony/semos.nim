@@ -303,7 +303,10 @@ proc selfExec*(c: var SemContext; file: string; moreArgs: string) =
 
 proc compilePlugin(c: var SemContext; info: PackedLineInfo; nf, exefile: string) =
   let pluginDir = nimonyDir() / "src/nimony/lib"
-  let cmd = "nim c -d:nimonyPlugin -o:" & quoteShell(exefile) & " -p:" & quoteShell(pluginDir) &
+  let pluginCache = exefile & "_d"
+  createDir(pluginCache)
+  let cmd = "nim c -d:nimonyPlugin --nimcache:" & quoteShell(pluginCache) &
+    " -o:" & quoteShell(exefile) & " -p:" & quoteShell(pluginDir) &
     " " & quoteShell(nf)
   exec cmd
 
@@ -344,10 +347,11 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; plu
   finally:
     close s
 
-proc runProgram(file: string; usedModules: HashSet[string]): tuple[output: string, exitCode: int] =
+proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]): tuple[output: string, exitCode: int] =
   # Use nimony s to compile and run the .p.nif file through the full pipeline
   let nimonyExe = findTool("nimony")
-  var cmd = quoteShell(nimonyExe) & " s -r " & quoteShell(file)
+  var cmd = quoteShell(nimonyExe) & " --nimcache:" & quoteShell(nimcachePath) &
+    " s -r " & quoteShell(file)
   result = execCmdEx(cmd)
 
 const
@@ -359,7 +363,8 @@ proc prepareEval*(c: var SemContext): string =
     if not fileExists(c.g.config.nifcachePath / writeNifModuleSuffix & ".s.nif"):
       # precompile the module
       let nimonyExe = findTool("nimony")
-      var cmd = quoteShell(nimonyExe) & " c " & quoteShell(stdlibFile("std/writenif.nim"))
+      var cmd = quoteShell(nimonyExe) & " --nimcache:" & quoteShell(c.g.config.nifcachePath) &
+        " c " & quoteShell(stdlibFile("std/writenif.nim"))
       let (output, exitCode) = execCmdEx(cmd)
       if exitCode != 0:
         return ensureMove(output)
@@ -379,7 +384,7 @@ proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: Token
     let depsFile = c.g.config.nifcachePath / srcName & ".p.deps.nif"
     writeFile deps, depsFile
 
-  let (output, exitCode) = runProgram(progfile, usedModules)
+  let (output, exitCode) = runProgram(progfile, c.g.config.nifcachePath, usedModules)
   if exitCode != 0:
     result = ensureMove(output)
   else:
