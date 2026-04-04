@@ -215,6 +215,59 @@ proc localToFieldname(c: var Context; local: SymId): SymId =
   result = pool.syms.getOrIncl(name)
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
+proc returnsToCallerDirectly(c: Context; pos: int): bool
+
+proc afterNode(cf: TokenBuf; pos: int): int =
+  if pos < cf.len and cf[pos].kind == ParLe:
+    var nested = 1
+    result = pos + 1
+    while result < cf.len and nested > 0:
+      case cf[result].kind
+      of ParLe: inc nested
+      of ParRi: dec nested
+      else: discard
+      inc result
+  else:
+    result = pos + 1
+
+proc continuationPos(c: Context; pos: int): int =
+  result = afterNode(c.currentProc.cf, pos)
+  while result < c.currentProc.cf.len and c.currentProc.cf[result].kind == ParRi:
+    inc result
+
+  var ancestors: seq[int] = @[]
+  var i = 0
+  while i <= pos and i < c.currentProc.cf.len:
+    case c.currentProc.cf[i].kind
+    of ParLe:
+      ancestors.add i
+    of ParRi:
+      if ancestors.len > 0:
+        discard ancestors.pop()
+    else:
+      discard
+    inc i
+
+  for k in countdown(ancestors.len - 1, 0):
+    let itePos = ancestors[k]
+    let tok = c.currentProc.cf[itePos]
+    if stmtKind(tok) == IfS:
+      let endPos = afterNode(c.currentProc.cf, itePos)
+      let nextBranchPos = afterNode(c.currentProc.cf, itePos + 1)
+      if result == nextBranchPos or result == endPos:
+        result = endPos
+        break
+    elif njvlKind(tok) == ItecV or tok.tag == TagId(ord(IteF)):
+      let condPos = itePos + 1
+      let thenPos = afterNode(c.currentProc.cf, condPos)
+      let elsePos = afterNode(c.currentProc.cf, thenPos)
+      let endPos = afterNode(c.currentProc.cf, itePos)
+      if result == elsePos or result == endPos:
+        result = endPos
+        break
+
+proc returnsToCallerDirectly(c: Context; pos: int): bool =
+  continuationPos(c, pos) >= c.currentProc.cf.len
 
 proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
@@ -420,6 +473,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
     let state = c.currentProc.yieldConts.getOrDefault(pos, -1)
     assert state != -1
     let info = n.info
+    let returnsToCaller = returnsToCallerDirectly(c, pos)
 
     var contVar = SymId(0)
     if not inhibitComplete:
@@ -448,7 +502,14 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
       if hasResult:
         dest.copyIntoKind AddrX, info:
           dest.copyTree target
-      contNextState c, dest, state, info
+      if returnsToCaller:
+        dest.copyIntoKind DotX, info:
+          dest.copyIntoKind DerefX, info:
+            dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+          dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
+          dest.addIntLit 1, info # field is in superclass
+      else:
+        contNextState c, dest, state, info
 
     if not inhibitComplete:
       dest.addParRi() # VarS
@@ -1098,28 +1159,15 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
           # Mark all enclosing loops as containing a suspension point
           for i in 0..<loopStack.len:
             loopStack[i].containsSusp = true
-          # Record mapping from the start of this construct to its continuation state
-          c.currentProc.yieldConts[pos] = nextLabel
-          # Skip to matching ParRi to find the "after statement" label position.
-          # If the call is nested inside a local declaration (let/var/result),
-          # we need to skip past the enclosing declaration, not just the call.
-          var nested = 1
-          var j = pos + 1
-          while j < c.currentProc.cf.len and nested > 0:
-            case c.currentProc.cf[j].kind
-            of ParLe: inc nested
-            of ParRi: dec nested
-            else: discard
-            inc j
-          # j now points to the token after the call's matching ParRi.
-          # If the call was nested inside a local decl (let/var/result),
-          # j is still inside the parent stmt. Skip trailing tokens + ParRi
-          # to reach the position after the enclosing statement.
-          if j < c.currentProc.cf.len and c.currentProc.cf[j].kind == ParRi:
-            inc j  # skip the enclosing statement's ParRi
+          let j = continuationPos(c, pos)
           if j <= c.currentProc.cf.len:
-            c.currentProc.labels[j] = nextLabel
-            inc nextLabel
+            let existing = c.currentProc.labels.getOrDefault(j, -1)
+            if existing >= 0:
+              c.currentProc.yieldConts[pos] = existing
+            else:
+              c.currentProc.yieldConts[pos] = nextLabel
+              c.currentProc.labels[j] = nextLabel
+              inc nextLabel
         inc scan
       elif scan.kind == ParRi:
         # Check if we're exiting a loop (depth about to drop to below loop's entry depth)
@@ -1454,6 +1502,12 @@ proc trIteStmts(c: var Context; dest: var TokenBuf; n: var Cursor) =
       while n.kind != ParRi: skip n  # skip rest of branch
       break
     tr c, dest, n
+    let afterState = c.currentProc.labels.getOrDefault(continuationPos(c, p), -1)
+    if afterState != -1:
+      c.inlineContState = afterState
+      c.inlineContCursor = n
+      while n.kind != ParRi: skip n
+      break
   inc n  # skip stmts ParRi
 
 proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
