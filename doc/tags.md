@@ -223,6 +223,7 @@
 | `(assume X)` | NimonyPragma, NimonyStmt, NjvlKind | `assume` pragma/annotation |
 | `(assert X)` | NimonyPragma, NimonyStmt, NjvlKind | `assert` pragma/annotation |
 | `(build X)`; `(build STR STR STR)` | NimonyPragma, NifIndexKind | `build` pragma |
+| `(feature STR)` | NimonyPragma | `feature` pragma |
 | `(string)` | NimonyPragma | `string` pragma |
 | `(view)` | NimonyPragma | `view` pragma |
 | `(incompleteStruct)` | NimonyPragma | `incompleteStruct` pragma |

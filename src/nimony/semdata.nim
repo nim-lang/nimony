@@ -9,7 +9,8 @@
 import std / [tables, sets, os, syncio, formatfloat, assertions]
 include ".." / lib / nifprelude
 import ".." / lib / [symparser, nifindexes]
-import nimony_model, symtabs, builtintypes, decls, programs, magics, reporters, nifconfig, xints, langmodes
+import nimony_model, symtabs, builtintypes, decls, programs, magics, reporters, nifconfig, xints,
+  langmodes, features
 
 import ".." / gear2 / modnames
 
@@ -103,6 +104,7 @@ type
     instantiatedProcs*: Table[(SymId, string), SymId]
     thisModuleSuffix*: string
     moduleFlags*: set[ModuleFlag]
+    features*: set[Feature]
     processedModules*: Table[string, SymId] # suffix to sym
     usedTypevars*: int
     phase*: SemPhase
