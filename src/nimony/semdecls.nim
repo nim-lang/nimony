@@ -540,7 +540,7 @@ proc hookToKind(name: string): HookKind =
 proc attachConverter(c: var SemContext; dest: var TokenBuf; symId: SymId;
                      declStart, beforeExportMarker, beforeGenericParams: int; info: PackedLineInfo) =
   let root = nominalRoot(c.routine.returnType)
-  if root == SymId(0) and not c.g.config.compat:
+  if root == SymId(0) and LenientConvertersFeature notin c.features:
     var errBuf = createTokenBuf(16)
     buildErr c, errBuf, info, "cannot attach converter to type " & typeToString(c.routine.returnType)
     dest.insert errBuf, declStart
@@ -647,6 +647,9 @@ proc attachSpecialProc(c: var SemContext; dest: var TokenBuf; kind: SymKind;
     dest[declStart] = parLeToken(MethodS, info)
     attachMethod c, dest, symId, declStart, beforeParams, beforeGenericParams, info
 
+proc untypedIsActive(c: SemContext; crucial: CrucialPragma): bool {.inline.} =
+  result = UntypedP in crucial.flags or UntypedFeature in c.features
+
 proc semBodyGenericInst(c: var SemContext; dest: var TokenBuf; it: var Item;
                         crucial: CrucialPragma; symId: SymId; beforeParams: int; hk: HookKind) =
   ## Process proc body for generic instantiation pass.
@@ -655,7 +658,7 @@ proc semBodyGenericInst(c: var SemContext; dest: var TokenBuf; it: var Item;
   c.openScope() # open body scope
   takeToken dest, it.n
   var resId = SymId(0)
-  if UntypedP in crucial.flags:
+  if untypedIsActive(c, crucial):
     # for untyped generic procs, need to add result symbol now
     resId = declareResult(c, dest, it.n.info)
   semProcBody c, dest, it
@@ -677,7 +680,7 @@ proc semBodyCheckBody(c: var SemContext; dest: var TokenBuf; it: var Item;
     bug "(stmts) expected, but got ", it.n
   c.openScope() # open body scope
   var resId = SymId(0)
-  if UntypedP in crucial.flags and c.routine.inGeneric > 0: # includes templates
+  if untypedIsActive(c, crucial) and c.routine.inGeneric > 0: # includes templates
     # should eventually be default for compat mode
     let mode = if kind == TemplateY: UntypedTemplate else: UntypedGeneric
     var ctx = createUntypedContext(addr c, mode)
