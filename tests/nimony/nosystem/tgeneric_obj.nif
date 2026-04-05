@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +6599            )
+(.indexat +6586            )
 0,2,tests/nimony/nosystem/tgeneric_obj.nim(stmts 2,1
  (type :int.0.
   (i +64) . 5
@@ -240,7 +240,7 @@
     (array ~3,~46
      (i +64) ~7,~46
      (rangetype
-      (i +64) +0 +2)) .)) ~3,~1 . ~3,~1 . ~3,~1 . 30,~1
+      (i +64) +0 +2)) .)) ~3,~1 . . ~3,~1 . 30,~1
   (stmts
    (discard .))) 17,73
  (proc :identity.1. . ~17,~2 .
@@ -257,7 +257,7 @@
   (array ~3,~49
    (i +64) ~7,~49
    (rangetype
-    (i +64) +0 +2)) ~17,~2 . ~17,~2 . ~15,~1
+    (i +64) +0 +2)) . ~17,~2 . ~15,~1
   (stmts 7
    (result :result.4 . . 19,~1
     (array ~8,~49
@@ -327,6 +327,6 @@
  (h I.1. +43) 17,71
  (h T.8. +29) 3,69
  (h foo.2. +629) 17,73
- (h identity.1. +278) 19,32
- (h MyGeneric.0.Id8udwb1. +508) 18,33
+ (h identity.1. +272) 19,32
+ (h MyGeneric.0.Id8udwb1. +501) 18,33
  (h MyGeneric.0.Iliphp3. +146))

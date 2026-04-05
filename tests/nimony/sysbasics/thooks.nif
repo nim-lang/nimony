@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +7228            )
+(.indexat +7221            )
 0,1,tests/nimony/sysbasics/thooks.nim(stmts
  (import sysvq0asl) 15,1
  (type ~13 :MyObjectBase.0. . .
@@ -164,7 +164,7 @@
    (i +64) 22,~17
    (f +64)) 11,~4
   (params 1
-   (param :x.13 . . 12 MyObject.0.Iy46h5n. .)) ~12,~4 . ~12,~4 . ~12,~4 . ~10,~3
+   (param :x.13 . . 12 MyObject.0.Iy46h5n. .)) ~12,~4 . . ~12,~4 . ~10,~3
   (stmts
    (discard .))) 20,36
  (type :MyObject.0.Iy46h5n. .
@@ -304,7 +304,7 @@
  (h Y.5. +29) 4,52
  (h obj.0. +148) 12,53
  (h =checkHook.1. +546) 20,36
- (h MyObject.0.Iy46h5n. +221) 21,38
+ (h MyObject.0.Iy46h5n. +214) 21,38
  (h MyObject.0.I9jqtor. +286) ,32
  (h =destroy.2. +284) ,22
  (h =wasMoved.2. +207) ,26

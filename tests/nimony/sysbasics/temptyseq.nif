@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +29129           )
+(.indexat +29123           )
 0,1,tests/nimony/sysbasics/temptyseq.nim(stmts
  (import sysvq0asl)
  (proc 5 :foo.0. . . . 8
@@ -150,7 +150,7 @@
   (params 1
    (param :x.3 . .
     (f +64) .) 7
-   (param :y.2 . . 6 seq.0.Iw9f2pq. .)) ~3,~2 . ~3,~2 . ~3,~2 . 28,~2
+   (param :y.2 . . 6 seq.0.Iw9f2pq. .)) ~3,~2 . . ~3,~2 . 28,~2
   (stmts
    (discard .))) 58,167,lib/std/system/seqimpl.nim
  (func :newSeqUninit.2. . ~58,~105 .
@@ -1085,7 +1085,7 @@
  (h newSeqUninit.0. +261) 58,167,lib/std/system/seqimpl.nim
  (h newSeqUninit.1. +1826) 3,6
  (h bar.1. +1594) 58,167,lib/std/system/seqimpl.nim
- (h newSeqUninit.2. +233) 35,66,lib/std/system/seqimpl.nim
+ (h newSeqUninit.2. +227) 35,66,lib/std/system/seqimpl.nim
  (h memSizeInBytes.0. +1822) 35,66,lib/std/system/seqimpl.nim
  (h memSizeInBytes.1. +745) 35,66,lib/std/system/seqimpl.nim
  (h memSizeInBytes.2. +663) 15
