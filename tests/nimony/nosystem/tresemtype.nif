@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +1889            )
+(.indexat +1877            )
 0,3,tests/nimony/nosystem/tresemtype.nim(stmts
  (proc 5 :foo.0. . . 8
   (typevars 1
@@ -50,7 +50,7 @@
    (i +64)) 8,~5
   (params 1
    (param :x.4 . .
-    (i +64) .)) ~3,~5 . ~3,~5 . ~3,~5 . ~1,~4
+    (i +64) .)) ~3,~5 . . ~3,~5 . ~1,~4
   (stmts 9
    (type ~4 :Foo.4. . .
     (pragmas) 2
@@ -63,7 +63,7 @@
  (proc :foo.2. . ~3,~6 .
   (at foo.0. string.0.sysvq0asl) 8,~6
   (params 1
-   (param :x.5 . . string.0.sysvq0asl .)) ~3,~6 . ~3,~6 . ~3,~6 . ~1,~5
+   (param :x.5 . . string.0.sysvq0asl .)) ~3,~6 . . ~3,~6 . ~1,~5
   (stmts 9
    (type ~4 :Foo.5. . .
     (pragmas) 2
@@ -81,6 +81,6 @@
  (h Foo.2. +182) 11,9
  (h Foo.3. +198) 3,5
  (h foo.1. +238) 11,1
- (h Foo.4. +143) 3,6
+ (h Foo.4. +137) 3,6
  (h foo.2. +191) 11,1
- (h Foo.5. +158))
+ (h Foo.5. +152))

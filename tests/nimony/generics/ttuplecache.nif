@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +10006           )
+(.indexat +9992            )
 0,3,tests/nimony/generics/ttuplecache.nim(stmts
  (import sysvq0asl) 9,1
  (type ~7 :Foo.0. . ~4
@@ -85,7 +85,7 @@
     (tuple
      (kv ~1 a
       (i +64)) 6
-     (kv ~1 b string.0.sysvq0asl)) .)) ~11,~3 Foo.0.Iknymgh1. ~22,~3 . ~22,~3 . ~20,~2
+     (kv ~1 b string.0.sysvq0asl)) .)) ~11,~3 Foo.0.Iknymgh1. . ~22,~3 . ~20,~2
   (stmts 6
    (result :result.3 . . 3,~1 Foo.0.Iknymgh1. .) 6
    (asgn result.3
@@ -103,7 +103,7 @@
     (tuple
      (kv ~1 x string.0.sysvq0asl) 10
      (kv ~1 y
-      (i +64))) .)) ~11,~7 Foo.0.Ia1ol4p. ~22,~7 . ~22,~7 . ~20,~6
+      (i +64))) .)) ~11,~7 Foo.0.Ia1ol4p. . ~22,~7 . ~20,~6
   (stmts 6
    (result :result.4 . . 3,~1 Foo.0.Ia1ol4p. .) 6
    (asgn result.4
@@ -425,8 +425,8 @@
  (h y1.0. +220) 4,21
  (h y2.0. +94) 22,15
  (h initFooGeneric.1. +260) 22,19
- (h initFooGeneric.2. +481) 7,5
- (h Foo.0.I3auohh1. +478) 7,8
+ (h initFooGeneric.2. +474) 7,5
+ (h Foo.0.I3auohh1. +471) 7,8
  (h Foo.0.Ic4xuqf1. +132) 11,12
  (h Foo.0.Iknymgh1. +192) 11,12
  (h Foo.0.Ia1ol4p. +466) 11,12

@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +25772           )
+(.indexat +25702           )
 0,1,tests/nimony/iter/tforloops1.nim(stmts
  (import sysvq0asl assy765wm syn1lfpjv) ,2
  (iterator 9 :powers.0. . . . 15
@@ -601,7 +601,7 @@
   (params 1
    (param :a.11 . . 12 openArray.0.I91ubrx1. .)) 19,45,lib/std/system/openarrays.nim
   (mut
-   (i +64)) 0,45,lib/std/system/openarrays.nim . 0,45,lib/std/system/openarrays.nim . 2,46,lib/std/system/openarrays.nim
+   (i +64)) . 0,45,lib/std/system/openarrays.nim . 2,46,lib/std/system/openarrays.nim
   (stmts 4
    (var :i.14 . . 19,3,tests/nimony/iter/tforloops1.nim
     (i +64) 4 +0) ,1
@@ -773,7 +773,7 @@
   (params 1
    (param :a.14 . . 12 openArray.0.Ijejnmx1. .)) 19,45,lib/std/system/openarrays.nim
   (mut 22,43,lib/std/system/basic_types.nim
-   (bool)) 0,45,lib/std/system/openarrays.nim . 0,45,lib/std/system/openarrays.nim . 2,46,lib/std/system/openarrays.nim
+   (bool)) . 0,45,lib/std/system/openarrays.nim . 2,46,lib/std/system/openarrays.nim
   (stmts 4
    (var :i.16 . . 19,3,tests/nimony/iter/tforloops1.nim
     (i +64) 4 +0) ,1
@@ -911,11 +911,11 @@
  (h \2E.<.0. +618) 17,95
  (h toOpenArray.0. +573) 16,95
  (h items.0. +2036) 15,114
- (h \2E..0. +634) 15,115
+ (h \2E..0. +599) 15,115
  (h toOpenArray.1. +572) 13,130
  (h toOpenArray.2. +2038) 13,130
  (h items.1. +2146) 15,47,lib/std/system/openarrays.nim
- (h len.0. +735) 10,48,lib/std/system/openarrays.nim
+ (h len.0. +700) 10,48,lib/std/system/openarrays.nim
  (h \5B\5D.0. +391) 15,47,lib/std/system/openarrays.nim
  (h len.1. +714) 10,48,lib/std/system/openarrays.nim
  (h \5B\5D.1. +427) 37,14,lib/std/system/openarrays.nim

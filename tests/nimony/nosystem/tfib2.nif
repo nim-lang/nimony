@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +3291            )
+(.indexat +3284            )
 0,2,tests/nimony/nosystem/tfib2.nim(stmts 2,1
  (type :int.0.
   (i +64) . 5
@@ -122,7 +122,7 @@
   (params 1
    (param :a.3 . .
     (i +64) .))
-  (i +64) ~11,~6 . ~11,~6 . ~9,~5
+  (i +64) . ~11,~6 . ~9,~5
   (stmts
    (result :result.1 . .
     (i +64) .)
