@@ -1613,47 +1613,55 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     skipParRi n
 
 proc semPragmas(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
+  var pragmaOpen = false
+  let info = n.info
   if n.kind == DotToken or n.substructureKind == PragmasU:
-    let hasPushedPragma = c.pragmaStack.len != 0
-    let emptyPragma = n.kind == DotToken
+    if AutoClosuresFeature in c.features and kind in {ProcY, MethodY, FuncY, ConverterY}:
+      var isAutoClosure = false
+      var it = c.routine.parent
+      while it != nil:
+        if it.kind in {ProcY, MethodY, FuncY, ConverterY}:
+          isAutoClosure = true
+          break
+        it = it.parent
+      if isAutoClosure:
+        crucial.flags.incl ClosureP
+        dest.add parLeToken(PragmasU, info)
+        dest.add parLeToken(ClosureP, info)
+        dest.addParRi()
+        pragmaOpen = true
 
-    if emptyPragma and not hasPushedPragma:
-      # there is no pragma
-      takeToken dest, n
-    else:
-      var pragmaAdded = false
-      var checkedPragmas = default(CheckedPragmas)
-      if n.substructureKind == PragmasU:
-        takeToken dest, n
-        pragmaAdded = true
-        while n.kind != ParRi:
-          if n.exprKind == ErrX:
-            takeTree dest, n
-          else:
-            if checkedPragmas.isChecked(n, kind):
-              skip n
-            else:
-              semPragma c, dest, n, crucial, kind
-
-      for i in 0 ..< c.pragmaStack.len:
-        var n2 = beginRead(c.pragmaStack[i])
-        while n2.kind != ParRi:
-          if checkedPragmas.isChecked(n2, kind):
-            skip n2
-          else:
-            if not pragmaAdded:
-              dest.addParLe PragmasU, n.info
-              pragmaAdded = true
-            semPragma c, dest, n2, crucial, kind
-
-      if emptyPragma:
-        if pragmaAdded:
-          inc n
-          dest.addParRi
+    var checkedPragmas = default(CheckedPragmas)
+    if n.kind == DotToken:
+      inc n
+    elif n.substructureKind == PragmasU:
+      if not pragmaOpen:
+        dest.add parLeToken(PragmasU, info)
+        pragmaOpen = true
+      inc n
+      while n.kind != ParRi:
+        if n.exprKind == ErrX:
+          takeTree dest, n
         else:
-          takeToken dest, n
-      else:
-        takeParRi dest, n
+          if checkedPragmas.isChecked(n, kind):
+            skip n
+          else:
+            semPragma c, dest, n, crucial, kind
+      skipParRi n
+    for i in 0 ..< c.pragmaStack.len:
+      var n2 = beginRead(c.pragmaStack[i])
+      while n2.kind != ParRi:
+        if checkedPragmas.isChecked(n2, kind):
+          skip n2
+        else:
+          if not pragmaOpen:
+            dest.addParLe PragmasU, info
+            pragmaOpen = true
+          semPragma c, dest, n2, crucial, kind
+    if pragmaOpen:
+      dest.addParRi()
+    else:
+      dest.addDotToken()
   else:
     buildErr c, dest, n.info, "expected '.' or 'pragmas'"
 

@@ -15,6 +15,7 @@ type
     LenientConvertersFeature
     NotnilFeature
     EarlyMagicsFeature
+    AutoClosuresFeature
 
 proc parseFeature*(s: string): Feature =
   case s
@@ -24,4 +25,5 @@ proc parseFeature*(s: string): Feature =
   of "canraise": CanRaiseFeature
   of "lenientconverters": LenientConvertersFeature
   of "earlymagics": EarlyMagicsFeature
+  of "autoclosures": AutoClosuresFeature
   else: InvalidFeature
