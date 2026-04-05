@@ -9,9 +9,11 @@ type
   Feature* = enum ## A feature is a language mode that is purely frontend-related.
                   ## A `CheckMode` is something Hexer needs to know about too.
     InvalidFeature
+    ResemChoiceFeature
     NotnilFeature
 
 proc parseFeature*(s: string): Feature =
   case s
   of "notnil": NotnilFeature
+  of "resemchoice": ResemChoiceFeature
   else: InvalidFeature

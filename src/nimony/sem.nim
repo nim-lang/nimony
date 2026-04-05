@@ -5897,7 +5897,10 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     of FieldsX, FieldpairsX, InternalFieldPairsX:
       takeTree dest, it.n
     of OchoiceX, CchoiceX:
-      semSymChoice c, dest, it
+      if ResemChoiceFeature in c.features:
+        semSymChoice c, dest, it
+      else:
+        takeTree dest, it.n
     of HaddrX, HderefX:
       takeToken dest, it.n
       # this is exactly what we need here as these operators have the same
