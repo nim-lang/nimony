@@ -85,6 +85,7 @@ type
   EnumTypeState = object
     isBoolType: bool # `bool` is a magic enum and needs special handling
     isExported: bool
+    needsReeval*: bool # enum has field values that couldn't be evaluated yet
     enumType: SymId
     thisValue: xint
     hasHole: bool

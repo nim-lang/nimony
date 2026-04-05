@@ -626,7 +626,10 @@ proc semConstStrExprIgnoreTopLevel(c: var SemContext; dest: var TokenBuf; n: var
 proc semConstIntExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   let start = dest.len
   var it = Item(n: n, typ: c.types.autoType)
+  var phase = SemcheckBodies
+  swap c.phase, phase
   semExpr c, dest, it
+  swap c.phase, phase
   n = it.n
   let t = skipModifier(it.typ)
   if classifyType(c, t) != IntT:
