@@ -568,9 +568,9 @@ proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, a
   ## sets `convMatch` to the match to the converter
   result = false
   let root = nominalRoot(f)
-  if root == SymId(0) and not c.g.config.compat: return
+  if root == SymId(0) and LenientConvertersFeature notin c.features: return
   var converters = c.converters.getOrDefault(root)
-  if root != SymId(0) and c.g.config.compat:
+  if root != SymId(0) and LenientConvertersFeature in c.features:
     converters.add c.converters.getOrDefault(SymId(0))
   var convMatches: seq[Match] = @[]
   for conv in items converters:
@@ -1064,7 +1064,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     semExpr(c, dest, cs.fn, {KeepMagics, AllowUndeclared, AllowOverloads})
     cs.fnName = getFnIdent(c, dest)
     it.n = cs.fn.n
-  if c.g.config.compat and cs.fnName in c.unoverloadableMagics:
+  if EarlyMagicsFeature in c.features and cs.fnName in c.unoverloadableMagics:
     # transform call early before semchecking arguments
     let syms = beginRead(dest)
     let magic = findMagicInSyms(syms)

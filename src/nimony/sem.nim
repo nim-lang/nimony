@@ -1425,21 +1425,6 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     else:
       buildErr c, dest, n.info, "`magic` pragma takes a string literal"
     dest.addParRi()
-  of FeatureP:
-    dest.add parLeToken(FeatureP, n.info)
-    inc n
-    if hasParRi and n.kind in {StringLit, Ident}:
-      let feature = parseFeature(pool.strings[n.litId])
-      if feature == InvalidFeature:
-        buildErr c, dest, n.info, "unknown `feature`"
-      else:
-        c.features.incl feature
-      takeToken dest, n
-    elif n.exprKind == ErrX:
-      dest.addSubtree n
-    else:
-      buildErr c, dest, n.info, "`feature` pragma takes a string literal"
-    dest.addParRi()
   of ErrorP, ReportP, DeprecatedP:
     crucial.flags.incl pk
     dest.add parLeToken(pk, n.info)
@@ -1612,6 +1597,8 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     else:
       buildErr c, dest, n.info, "`semantics` pragma takes a string literal"
     dest.addParRi()
+  of FeatureP:
+    buildErr c, dest, n.info, "`feature` pragma is only allowed as top level pragma"
   of MethodsP:
     dest.add parLeToken(pk, n.info)
     inc n
@@ -3219,7 +3206,7 @@ proc semRaise(c: var SemContext; dest: var TokenBuf; it: var Item) =
   takeToken dest, it.n
   if c.routine.kind == NoSym:
     buildErr c, dest, info, "`raise` only allowed within a routine"
-  elif not c.routine.pragmas.contains(RaisesP) and not c.g.config.compat:
+  elif not c.routine.pragmas.contains(RaisesP) and CanRaiseFeature notin c.features:
     buildErr c, dest, info, "`raise` only allowed within a routine with `raises` pragma"
   if it.n.kind == DotToken:
     takeToken dest, it.n
@@ -5324,6 +5311,23 @@ proc semPragmaLine(c: var SemContext; dest: var TokenBuf; it: var Item; isPragma
       dest.shrink start
       c.passC.add pool.strings[s]
     skipParRi it.n
+  of FeatureP:
+    inc it.n
+    let info = it.n.info
+    let start = dest.len
+    let s = evalConstStrExpr(c, dest, it.n, c.types.stringType)
+    if s != StrId(0):
+      dest.shrink start
+      let feature = parseFeature(pool.strings[s])
+      if feature == InvalidFeature:
+        skipUntilEnd it.n
+        buildErr c, dest, info, "unknown `feature`"
+      else:
+        c.features.incl feature
+        skipParRi it.n
+    else:
+      skipUntilEnd it.n
+      buildErr c, dest, info, "`feature` pragma takes a string literal"
   else:
     buildErr c, dest, it.n.info, "unsupported pragma", it.n
     skip it.n

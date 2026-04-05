@@ -10,10 +10,18 @@ type
                   ## A `CheckMode` is something Hexer needs to know about too.
     InvalidFeature
     ResemChoiceFeature
+    UntypedFeature
+    CanRaiseFeature
+    LenientConvertersFeature
     NotnilFeature
+    EarlyMagicsFeature
 
 proc parseFeature*(s: string): Feature =
   case s
   of "notnil": NotnilFeature
   of "resemchoice": ResemChoiceFeature
+  of "untyped": UntypedFeature
+  of "canraise": CanRaiseFeature
+  of "lenientconverters": LenientConvertersFeature
+  of "earlymagics": EarlyMagicsFeature
   else: InvalidFeature
