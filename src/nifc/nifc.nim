@@ -10,7 +10,7 @@
 ## NIFC driver program.
 
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
-import codegen, noptions, symparser
+import codegen, llvmcodegen, noptions, symparser
 
 when defined(windows):
   import bat
@@ -28,7 +28,7 @@ const
 Usage:
   nifc [options] [command] [arguments]
 Command:
-  c|cpp|n file.nif [file2.nif]    convert NIF files to C|C++|ASM
+  c|cpp|n|llvm file.nif [file2.nif]    convert NIF files to C|C++|ASM|LLVM IR
 
 Options:
   -r, --run                 run the makefile and the compiled program
@@ -68,6 +68,17 @@ proc generateBackend(s: var State; action: Action; files: seq[string]; flags: se
   let outp = s.config.nifcacheDir / splitModulePath(inp).name & destExt
   generateCode s, inp, outp, flags
 
+proc generateLLVMBackend(s: var State; files: seq[string]; flags: set[LLVMGenFlag]) =
+  if files.len == 0:
+    quit "command takes a filename"
+  for i in 0..<files.len-1:
+    let inp = files[i]
+    let outp = s.config.nifcacheDir / splitModulePath(inp).name & ".ll"
+    generateLLVMCode s, inp, outp, {}
+  let inp = files[^1]
+  let outp = s.config.nifcacheDir / splitModulePath(inp).name & ".ll"
+  generateLLVMCode s, inp, outp, flags
+
 proc handleCmdLine() =
   var toRun = false
   var compileOnly = false
@@ -100,6 +111,10 @@ proc handleCmdLine() =
         currentAction = atNative
         if not hasKey(actionTable, atNative):
           actionTable[atNative] = @[]
+      of "llvm":
+        currentAction = atLLVM
+        if not hasKey(actionTable, atLLVM):
+          actionTable[atLLVM] = @[]
       else:
         case currentAction
         of atC:
@@ -108,6 +123,8 @@ proc handleCmdLine() =
           actionTable[atCpp].add key
         of atNative:
           actionTable[atNative].add key
+        of atLLVM:
+          actionTable[atLLVM].add key
         of atNone:
           quit "invalid command: " & key
     of cmdLongOption, cmdShortOption:
@@ -174,7 +191,7 @@ proc handleCmdLine() =
       case action
       of atC, atCpp:
         let isLast = (if compileOnly: isMain else: currentAction == action)
-        let flags = if isLast: {gfMainModule} else: {}
+        let flags = if isLast: {codegen.gfMainModule} else: {}
         generateBackend(s, action, actionTable[action], flags)
       of atNative:
         let args = actionTable[action]
@@ -187,6 +204,10 @@ proc handleCmdLine() =
               generateAsm inp, s.config.nifcacheDir / outp
           else:
             quit "wasn't built with native target support"
+      of atLLVM:
+        let isLast = (if compileOnly: isMain else: currentAction == action)
+        let llvmFlags = if isLast: {llvmcodegen.gfMainModule} else: {}
+        generateLLVMBackend(s, actionTable[action], llvmFlags)
       of atNone:
         quit "targets are not specified"
 
