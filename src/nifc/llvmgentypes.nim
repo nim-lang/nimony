@@ -345,7 +345,6 @@ proc genTypeDefLLVM(c: var LLVMCode; body: var Cursor; name: string): string =
     result = "%" & name & " = type " & structBody & "\n"
   of ArrayT:
     inc body
-    var elemCursor = body
     let elemType = genTypeLLVM(c, body)
     # body now points to the array size
     var sizeStr: string
@@ -362,7 +361,6 @@ proc genTypeDefLLVM(c: var LLVMCode; body: var Cursor; name: string): string =
   of EnumT:
     # Enums are just their underlying integer type
     inc body
-    var baseCursor = body
     let baseType = genTypeLLVM(c, body)
     # Skip enum fields
     while body.kind != ParRi:

@@ -10,22 +10,124 @@
 # We produce LLVM IR as text (.ll files) so that we are not
 # dependent on LLVM's changing C++ API.
 
-import std / [assertions, syncio, tables, sets, intsets, formatfloat, packedsets, strutils, sequtils]
+import std / [assertions, syncio, sets, intsets, formatfloat, packedsets, strutils, sequtils]
 from std / os import changeFileExt, splitFile, extractFilename, fileExists
 
 include ".." / lib / nifprelude
 import mangler, nifc_model, noptions, typenav, symparser, nifmodules
 
 type
+  LToken = distinct uint32
+
+proc `==`(a, b: LToken): bool {.borrow.}
+
+type
+  PredefinedToken = enum
+    IgnoreMe = "<unused>"
+    EmptyToken = ""
+    NewLine = "\n"
+    Indent = "  "
+    Space = " "
+    Comma = ", "
+    ColonSpace = ": "
+    BrOpen = "{"
+    BrClose = "}"
+    ParOpen = "("
+    ParClose = ")"
+    SqOpen = "["
+    SqClose = "]"
+    Equals = " = "
+    AtSign = "@"
+    Percent = "%"
+    Zeroinit = "zeroinitializer"
+    Undef = "undef"
+    NullToken = "null"
+    VoidToken = "void"
+    PtrToken = "ptr"
+    I1Token = "i1"
+    I8Token = "i8"
+    I16Token = "i16"
+    I32Token = "i32"
+    I64Token = "i64"
+    FloatToken = "float"
+    DoubleToken = "double"
+    Fp128Token = "fp128"
+    LoadToken = "load "
+    StoreToken = "store "
+    AllocaToken = "alloca "
+    RetToken = "ret "
+    RetVoid = "ret void"
+    BrToken = "br "
+    BrI1Token = "br i1 "
+    LabelToken = "label %"
+    CallToken = "call "
+    DefineToken = "define "
+    DeclareToken = "declare "
+    GlobalToken = "global "
+    ConstantToken = "constant "
+    ExternalToken = "external "
+    PrivateToken = "private "
+    ThreadLocalToken = "thread_local "
+    TypeToken = " = type "
+    OpaqueToken = " = type opaque"
+    GepToken = "getelementptr inbounds "
+    GepTokenNI = "getelementptr "
+    IcmpToken = "icmp "
+    FcmpToken = "fcmp "
+    AddToken = "add "
+    SubToken = "sub "
+    MulToken = "mul "
+    SdivToken = "sdiv "
+    UdivToken = "udiv "
+    SremToken = "srem "
+    UremToken = "urem "
+    ShlToken = "shl "
+    AshrToken = "ashr "
+    LshrToken = "lshr "
+    AndToken = "and "
+    OrToken = "or "
+    XorToken = "xor "
+    ZextToken = "zext "
+    SextToken = "sext "
+    TruncToken = "trunc "
+    FpextToken = "fpext "
+    FptruncToken = "fptrunc "
+    SitofpToken = "sitofp "
+    FptosiToken = "fptosi "
+    BitcastToken = "bitcast "
+    InttoptrToken = "inttoptr "
+    PtrtointToken = "ptrtoint "
+    InsertvalToken = "insertvalue "
+    ExtractvalToken = "extractvalue "
+    AtomicrmwToken = "atomicrmw "
+    CmpxchgToken = "cmpxchg "
+    FenceToken = "fence "
+    SeqCstToken = "seq_cst"
+    AlwaysInline = " alwaysinline"
+    Noinline = " noinline"
+    ToToken = " to "
+    EntryLabel = "entry:\n"
+    CommaI32Zero = ", i32 0"
+    CommaI32 = ", i32 "
+    FalseI1 = "i1 false"
+    ErrGlobal = "@NIFC_ERR_"
+    OvfGlobal = "@NIFC_OVF_"
+
+proc fillTokenTable(tab: var BiTable[LToken, string]) =
+  for e in EmptyToken..high(PredefinedToken):
+    let id = tab.getOrIncl $e
+    assert id == LToken(e), $(id, " ", ord(e))
+
+type
   LLVMGenFlag* = enum
     gfMainModule
 
   LLValue* = object
-    name*: string  # e.g. "%t5", "@global", "42", "null"
-    typ*: string   # e.g. "i32", "ptr", "double", "void"
+    name*: LToken  # e.g. "%t5", "@global", "42", "null"
+    typ*: LToken   # e.g. "i32", "ptr", "double", "void"
 
   LLVMCurrentProc* = object
-    allocas*: seq[string]   # alloca instructions for the entry block
+    allocas*: seq[LToken]  # alloca instructions for the entry block
     nextTemp*: int
     nextLabel*: int
     vflags*: HashSet[SymId]
@@ -33,12 +135,13 @@ type
 
   LLVMCode* = object
     m: MainModule
-    types*: seq[string]       # type declarations
-    globals*: seq[string]     # global variable declarations
-    externs*: seq[string]     # external function declarations
-    funcBodies*: seq[string]  # function definitions
-    initBody*: seq[string]    # global constructor body
-    body*: seq[string]        # current function body being built
+    tokens: BiTable[LToken, string]
+    types*: seq[LToken]       # type declarations
+    globals*: seq[LToken]     # global variable declarations
+    externs*: seq[LToken]     # external function declarations
+    funcBodies*: seq[LToken]  # function definitions
+    initBody*: seq[LToken]    # global constructor body
+    body*: seq[LToken]        # current function body being built
     bits: int
     flags: set[LLVMGenFlag]
     generatedTypes*: HashSet[SymId]
@@ -49,7 +152,9 @@ type
     strLitCounter*: int       # global counter for string literal names
 
 proc initLLVMCode*(m: sink MainModule; flags: set[LLVMGenFlag]; bits: int): LLVMCode =
-  result = LLVMCode(m: m, flags: flags, bits: bits, inToplevel: true)
+  result = LLVMCode(m: m, flags: flags, bits: bits, inToplevel: true,
+                    tokens: initBiTable[LToken, string]())
+  fillTokenTable(result.tokens)
 
 proc error(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
   let info = n.info
@@ -65,22 +170,47 @@ proc error(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
     echo getStackTrace()
   quit 1
 
-proc emit(c: var LLVMCode; s: string) =
-  c.body.add s
+# ---- Token helpers ----
+
+proc tok(c: var LLVMCode; s: string): LToken {.inline.} =
+  ## Intern a string and return its token.
+  c.tokens.getOrIncl(s)
+
+proc str(c: LLVMCode; t: LToken): lent string {.inline.} =
+  ## Get the string for a token.
+  c.tokens[t]
+
+proc add(c: var LLVMCode; t: PredefinedToken) {.inline, used.} =
+  c.body.add LToken(t)
+
+proc add(c: var LLVMCode; t: LToken) {.inline, used.} =
+  c.body.add t
+
+proc add(c: var LLVMCode; s: string) {.inline, used.} =
+  c.body.add c.tokens.getOrIncl(s)
+
+proc addTo(c: var LLVMCode; dest: var seq[LToken]; t: PredefinedToken) {.inline, used.} =
+  dest.add LToken(t)
+
+proc addTo(c: var LLVMCode; dest: var seq[LToken]; s: string) {.inline.} =
+  dest.add c.tokens.getOrIncl(s)
+
+proc emit(c: var LLVMCode; s: string) {.used.} =
+  c.body.add c.tokens.getOrIncl(s)
 
 proc emitLine(c: var LLVMCode; s: string) =
-  c.body.add s & "\n"
+  c.body.add c.tokens.getOrIncl(s & "\n")
 
-proc temp(c: var LLVMCode): string =
-  result = "%t" & $c.currentProc.nextTemp
+proc temp(c: var LLVMCode): LToken =
+  result = c.tokens.getOrIncl("%t" & $c.currentProc.nextTemp)
   inc c.currentProc.nextTemp
 
-proc label(c: var LLVMCode): string =
-  result = "L" & $c.currentProc.nextLabel
+proc label(c: var LLVMCode): LToken =
+  result = c.tokens.getOrIncl("L" & $c.currentProc.nextLabel)
   inc c.currentProc.nextLabel
 
-proc addAlloca(c: var LLVMCode; name, typ: string) =
-  c.currentProc.allocas.add "  " & name & " = alloca " & typ & "\n"
+proc addAlloca(c: var LLVMCode; name, typ: LToken) =
+  c.currentProc.allocas.add c.tokens.getOrIncl("  " & c.str(name) & " = alloca " & c.str(typ) & "\n")
 
 proc mangleSym(c: var LLVMCode; s: SymId): string =
   let x = c.m.getDeclOrNil(s)
@@ -89,8 +219,21 @@ proc mangleSym(c: var LLVMCode; s: SymId): string =
   else:
     result = mangleToC(pool.syms[s])
 
-proc llvmValue(name, typ: string): LLValue =
-  LLValue(name: name, typ: typ)
+proc symTok(c: var LLVMCode; s: SymId): LToken {.used.} =
+  ## Mangle a symbol and return its token.
+  c.tok(mangleSym(c, s))
+
+proc localTok(c: var LLVMCode; s: SymId): LToken {.used.} =
+  ## Return token for a local variable reference: %name
+  c.tok("%" & mangleSym(c, s))
+
+proc globalTok(c: var LLVMCode; s: SymId): LToken {.used.} =
+  ## Return token for a global variable reference: @name
+  c.tok("@" & mangleSym(c, s))
+
+proc writeTokenSeq(f: var string; s: seq[LToken]; c: LLVMCode) =
+  for x in s:
+    f.add c.tokens[x]
 
 # ---- Type generation ----
 
@@ -170,17 +313,17 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
         let typ = genTypeLLVM(c, t)
         case extName
         of "__ATOMIC_RELAXED":
-          c.globals.add "@" & mangleToC(pool.syms[lit]) & " = private constant " & typ & " 0\n"
+          c.addTo(c.globals, "@" & mangleToC(pool.syms[lit]) & " = private constant " & typ & " 0\n")
         of "__ATOMIC_CONSUME":
-          c.globals.add "@" & mangleToC(pool.syms[lit]) & " = private constant " & typ & " 1\n"
+          c.addTo(c.globals, "@" & mangleToC(pool.syms[lit]) & " = private constant " & typ & " 1\n")
         of "__ATOMIC_ACQUIRE":
-          c.globals.add "@" & mangleToC(pool.syms[lit]) & " = private constant " & typ & " 2\n"
+          c.addTo(c.globals, "@" & mangleToC(pool.syms[lit]) & " = private constant " & typ & " 2\n")
         of "__ATOMIC_RELEASE":
-          c.globals.add "@" & mangleToC(pool.syms[lit]) & " = private constant " & typ & " 3\n"
+          c.addTo(c.globals, "@" & mangleToC(pool.syms[lit]) & " = private constant " & typ & " 3\n")
         of "__ATOMIC_ACQ_REL":
-          c.globals.add "@" & mangleToC(pool.syms[lit]) & " = private constant " & typ & " 4\n"
+          c.addTo(c.globals, "@" & mangleToC(pool.syms[lit]) & " = private constant " & typ & " 4\n")
         of "__ATOMIC_SEQ_CST":
-          c.globals.add "@" & mangleToC(pool.syms[lit]) & " = private constant " & typ & " 5\n"
+          c.addTo(c.globals, "@" & mangleToC(pool.syms[lit]) & " = private constant " & typ & " 5\n")
         else:
           discard "truly skip other nodecl imports"
       skip d.value
@@ -193,7 +336,7 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
     let typ = genTypeLLVM(c, t)
 
     if toExtern or isImport:
-      c.globals.add "@" & name & " = external global " & typ & "\n"
+      c.addTo(c.globals, "@" & name & " = external global " & typ & "\n")
     else:
       var initVal = "zeroinitializer"
       if d.value.kind != DotToken:
@@ -204,7 +347,7 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
 
       let linkage = if vk == IsConst: "constant" else: "global"
       let tls = if vk == IsThreadlocal: "thread_local " else: ""
-      c.globals.add "@" & name & " = " & tls & linkage & " " & typ & " " & initVal & "\n"
+      c.addTo(c.globals, "@" & name & " = " & tls & linkage & " " & typ & " " & initVal & "\n")
   else:
     error c.m, "expected SymbolDef but got: ", d.name
 
@@ -223,20 +366,20 @@ proc genLocalVarDeclLLVM(c: var LLVMCode; n: var Cursor) =
     var t = d.typ
     let typ = genTypeLLVM(c, t)
     let localName = "%" & name
-    c.addAlloca(localName, typ)
+    c.addAlloca(c.tok(localName), c.tok(typ))
 
     if d.value.kind != DotToken:
       if d.value.stmtKind == OnErrS:
         var onErr = d.value
         inc onErr
         var onErrAction = onErr
-        let val = genCallExprLLVM(c, d.value)
-        c.emitLine "  store " & val.typ & " " & val.name & ", ptr " & localName
+        var val = LLValue(); genCallExprLLVM(c, d.value, val)
+        c.emitLine "  store " & c.str(val.typ) & " " & c.str(val.name) & ", ptr " & localName
         if onErrAction.kind != DotToken:
           genOnErrorLLVM(c, onErrAction)
       else:
-        let val = genExprLLVM(c, d.value)
-        c.emitLine "  store " & val.typ & " " & val.name & ", ptr " & localName
+        var val = LLValue(); genExprLLVM(c, d.value, val)
+        c.emitLine "  store " & c.str(val.typ) & " " & c.str(val.name) & ", ptr " & localName
     else:
       inc d.value
       c.emitLine "  store " & typ & " zeroinitializer, ptr " & localName
@@ -401,7 +544,7 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
         if i > 0: decl.add ", "
         decl.add pt
       decl.add ")\n"
-      c.externs.add decl
+      c.addTo(c.externs, decl)
   else:
     # Function definition
     let ccStr = callingConvToLLVM(prag.callConv)
@@ -427,7 +570,7 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
     # Alloca for each parameter and store the param value
     for i, pn in paramNames:
       let allocaName = "%" & pn
-      c.addAlloca(allocaName, paramTypes[i])
+      c.addAlloca(c.tok(allocaName), c.tok(paramTypes[i]))
       c.emitLine "  store " & paramTypes[i] & " %" & pn & ".param, ptr " & allocaName
 
     # Generate body
@@ -442,14 +585,14 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
       else:
         c.emitLine "  ret " & retType & " zeroinitializer"
 
-    # Assemble function
-    var funcDef = funcHeader
+    # Assemble function: header string + alloca tokens + body tokens + closing
+    var funcDef: string = funcHeader
     for a in c.currentProc.allocas:
-      funcDef.add a
-    for line in c.body:
-      funcDef.add line
+      funcDef.add c.tokens[a]
+    for tok in c.body:
+      funcDef.add c.tokens[tok]
     funcDef.add "}\n\n"
-    c.funcBodies.add funcDef
+    c.addTo(c.funcBodies, funcDef)
 
   c.m.closeScope()
   c.inToplevel = true
@@ -543,12 +686,12 @@ proc generateLLVMTypes(c: var LLVMCode) =
       let name = mangleToC(pool.syms[decl.name.symId])
       if isForward:
         # Forward declaration - opaque named type
-        c.types.add "%" & name & " = type opaque\n"
+        c.addTo(c.types, "%" & name & " = type opaque\n")
       else:
         var body = decl.body
         let typeDef = genTypeDefLLVM(c, body, name)
         if typeDef != "":
-          c.types.add typeDef
+          c.addTo(c.types, typeDef)
 
 proc generateLLVMCode*(s: var State, inp, outp: string; flags: set[LLVMGenFlag]) =
   var m = load(inp)
@@ -574,37 +717,29 @@ proc generateLLVMCode*(s: var State, inp, outp: string; flags: set[LLVMGenFlag])
   f.add "\n"
 
   # Type declarations
-  for t in c.types:
-    f.add t
-  if c.types.len > 0:
-    f.add "\n"
+  writeTokenSeq f, c.types, c
+  if c.types.len > 0: f.add "\n"
 
   # External declarations
-  for e in c.externs:
-    f.add e
-  if c.externs.len > 0:
-    f.add "\n"
+  writeTokenSeq f, c.externs, c
+  if c.externs.len > 0: f.add "\n"
 
   # Global variables
-  for g in c.globals:
-    f.add g
-  if c.globals.len > 0:
-    f.add "\n"
+  writeTokenSeq f, c.globals, c
+  if c.globals.len > 0: f.add "\n"
 
   # Error flag for main module
   if gfMainModule in c.flags:
     f.add "@NIFC_ERR_ = thread_local global i8 0\n\n"
 
   # Function bodies
-  for fb in c.funcBodies:
-    f.add fb
+  writeTokenSeq f, c.funcBodies, c
 
   # Global constructor (init function)
   if c.initBody.len > 0:
     f.add "define internal void @nifc_init() {\n"
     f.add "entry:\n"
-    for line in c.initBody:
-      f.add line
+    writeTokenSeq f, c.initBody, c
     f.add "  ret void\n"
     f.add "}\n\n"
     # Register as global constructor
