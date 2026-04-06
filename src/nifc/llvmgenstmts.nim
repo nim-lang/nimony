@@ -137,7 +137,9 @@ proc genWhileLLVM(c: var LLVMCode; n: var Cursor) =
 
   c.emitLine c.str(bodyLabel) & ":"
   c.currentProc.needsTerminator = false
+  c.currentProc.breakStack.add endLabel
   genStmtLLVM c, n
+  discard c.currentProc.breakStack.pop()
 
   if not c.currentProc.needsTerminator:
     c.emitLine "  br label %" & c.str(condLabel)
@@ -165,7 +167,9 @@ proc genLoopLLVM(c: var LLVMCode; n: var Cursor) =
 
   c.emitLine c.str(bodyLabel) & ":"
   c.currentProc.needsTerminator = false
+  c.currentProc.breakStack.add endLabel
   genStmtLLVM c, n
+  discard c.currentProc.breakStack.pop()
 
   if not c.currentProc.needsTerminator:
     c.emitLine "  br label %" & c.str(headerLabel)
@@ -233,6 +237,7 @@ proc genSwitchLLVM(c: var LLVMCode; n: var Cursor) =
   # Now go back and generate the actual bodies
   n = savedPos
   var branchIdx = 0
+  c.currentProc.breakStack.add endLabel
   while n.kind != ParRi:
     case n.substructureKind
     of OfU:
@@ -255,6 +260,7 @@ proc genSwitchLLVM(c: var LLVMCode; n: var Cursor) =
       skipParRi n
     else:
       error c.m, "`case` expects `of` or `else` but got: ", n
+  discard c.currentProc.breakStack.pop()
 
   c.emitLine c.str(endLabel) & ":"
   c.currentProc.needsTerminator = false
@@ -491,10 +497,11 @@ proc genStmtLLVM(c: var LLVMCode; n: var Cursor) =
     genLoopLLVM c, n
   of BreakS:
     inc n
-    # Break out of the current loop - jump to the loop's end label
-    # In LLVM this needs structured handling; for now emit unreachable
-    # (the real solution is to track the loop's end label)
-    c.emitLine "  br label %break_target ; TODO: track loop end"
+    if c.currentProc.breakStack.len > 0:
+      let target = c.currentProc.breakStack[^1]
+      c.emitLine "  br label %" & c.str(target)
+    else:
+      c.emitLine "  unreachable ; break outside loop"
     c.currentProc.needsTerminator = true
     skipParRi n
   of JtrueS:

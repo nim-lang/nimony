@@ -132,6 +132,7 @@ type
     nextLabel*: int
     vflags*: HashSet[SymId]
     needsTerminator*: bool  # whether the current basic block needs a terminator
+    breakStack*: seq[LToken]  # stack of loop-end labels for `break`
 
   LLVMCode* = object
     m: MainModule
@@ -234,6 +235,54 @@ proc globalTok(c: var LLVMCode; s: SymId): LToken {.used.} =
 proc writeTokenSeq(f: var string; s: seq[LToken]; c: LLVMCode) =
   for x in s:
     f.add c.tokens[x]
+
+proc fieldIndex*(m: var MainModule; objBody: Cursor; fldSym: SymId): int =
+  ## Look up the index of field `fldSym` in object body `objBody`.
+  ## Returns the 0-based struct field index.
+  result = 0
+  if objBody.typeKind in {ObjectT, UnionT}:
+    var body = objBody
+    inc body
+    if objBody.typeKind == ObjectT:
+      if body.kind == Symbol:
+        inc body # skip base type symbol
+        result = 1 # base type occupies field 0
+      elif body.kind == DotToken:
+        inc body
+
+    var nested = 1
+    while nested > 0:
+      case body.kind
+      of ParRi:
+        dec nested
+        inc body
+      of ParLe:
+        if body.substructureKind == FldU:
+          let decl = takeFieldDecl(body)
+          if decl.name.kind == SymbolDef and decl.name.symId == fldSym:
+            return
+          inc result
+        elif body.typeKind in {ObjectT, UnionT}:
+          inc nested
+          if body.typeKind == ObjectT:
+            inc body
+            inc body # skip base
+          else:
+            inc body
+        else:
+          skip body
+      else:
+        inc body
+
+proc baseTypeOfObject*(m: var MainModule; objBody: Cursor): Cursor =
+  ## For an object type with inheritance, return the cursor to the base type symbol.
+  ## Returns a nil cursor if there's no base type.
+  result = default(Cursor)
+  if objBody.typeKind == ObjectT:
+    var body = objBody
+    inc body
+    if body.kind == Symbol:
+      result = body
 
 # ---- Type generation ----
 

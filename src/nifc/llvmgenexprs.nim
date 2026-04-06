@@ -381,55 +381,31 @@ proc genDotLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
 
   skipParRi n
 
-  # Navigate through inheritance to find field index
-  # For now, a simplified approach: look up the field index from the object body
-  let objBody = navigateToObjectBody(c.m, objType)
-  var fieldIndex = 0
-  var found = false
-
-  if objBody.typeKind in {ObjectT, UnionT}:
-    var body = objBody
-    inc body
-    if objBody.typeKind == ObjectT:
-      if body.kind == Symbol:
-        inc body # skip base type
-        fieldIndex = 1 # base type is field 0
-      elif body.kind == DotToken:
-        inc body
-
-    var nested = 1
-    while nested > 0:
-      case body.kind
-      of ParRi:
-        dec nested
-        inc body
-      of ParLe:
-        if body.substructureKind == FldU:
-          let decl = takeFieldDecl(body)
-          if decl.name.kind == SymbolDef and decl.name.symId == fldSym:
-            found = true
-            break
-          inc fieldIndex
-        else:
-          skip body
-      else:
-        inc body
-
-  # Generate GEP to access the field
-  let objTypeName = genTypeLLVMReadOnly(c, objType)
+  # Resolve to the final object body (after walking through inheritance)
+  # We walk inhDepth levels to get the actual object that contains the field.
+  var curType = objType
+  var curBody = navigateToObjectBody(c.m, curType)
+  let objTypeName = genTypeLLVMReadOnly(c, curType)
   var gepTarget = c.str(obj.name)
   var gepType = objTypeName
 
-  # Navigate through inheritance chain
+  # Navigate through inheritance chain via GEP field 0
   for i in 0 ..< inhDepth:
     let t = c.temp()
     c.emitLine "  " & c.str(t) & " = getelementptr inbounds " & gepType & ", ptr " & gepTarget & ", i32 0, i32 0"
     gepTarget = c.str(t)
-    # We'd need to resolve the base type here; simplification
-    gepType = gepType # TODO: track base type properly
+    # Resolve base type for next iteration
+    let baseTypeCursor = baseTypeOfObject(c.m, curBody)
+    if not cursorIsNil(baseTypeCursor):
+      curType = baseTypeCursor
+      curBody = navigateToObjectBody(c.m, curType)
+      gepType = genTypeLLVMReadOnly(c, curType)
+
+  # Look up the field index in the resolved object body
+  let fldIdx = fieldIndex(c.m, curBody, fldSym)
 
   let t = c.temp()
-  c.emitLine "  " & c.str(t) & " = getelementptr inbounds " & gepType & ", ptr " & gepTarget & ", i32 0, i32 " & $fieldIndex
+  c.emitLine "  " & c.str(t) & " = getelementptr inbounds " & gepType & ", ptr " & gepTarget & ", i32 0, i32 " & $fldIdx
   result = LLValue(name: t, typ: LToken(PtrToken))
 
 proc genAtLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
@@ -571,11 +547,12 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       c.emitLine "  " & c.str(t) & " = load " & typ & ", ptr " & prefix & name
       result = LLValue(name: t, typ: c.tok(typ))
     else:
+      let exprType = getType(c.m, n)
+      let typ = genTypeLLVMReadOnly(c, exprType)
       var lval = LLValue(); genLvalueLLVM(c, n, lval)
-      # Load the value
       let t = c.temp()
-      c.emitLine "  " & c.str(t) & " = load i64, ptr " & c.str(lval.name)  # fallback type
-      result = LLValue(name: t, typ: c.tok("i64"))
+      c.emitLine "  " & c.str(t) & " = load " & typ & ", ptr " & c.str(lval.name)
+      result = LLValue(name: t, typ: c.tok(typ))
   of FalseC:
     skip n
     result = LLValue(name: c.tok("0"), typ: LToken(I8Token))
@@ -671,51 +648,42 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   of CastC, ConvC:
     genConvOrCast(c, n, result)
   of CallC:
-    # For calls, we need to figure out the return type
-    # Parse the call to get the callee and look up its return type
-    var saved = n
-    inc saved
-    let calleeType = getType(c.m, saved)
-    var retType = "ptr" # fallback
-    if calleeType.typeKind == ProctypeT or calleeType.symKind == ProcY:
-      var ct = calleeType
-      if ct.typeKind == ProctypeT or ct.symKind == ProcY:
-        inc ct
-        skip ct # name
-      if ct.typeKind == ParamsT:
-        var params = ct
-        skip params # skip params to get return type
-        retType = genTypeLLVMReadOnly(c, params)
+    let retTypeCursor = getType(c.m, n)
+    let retType = genTypeLLVMReadOnly(c, retTypeCursor)
     genCallWithType(c, n, retType, result)
   of AddrC:
     genAddrLLVM(c, n, result)
   of DerefC:
     # Dereference a pointer: load from the pointer
+    let derefType = getType(c.m, n)
+    let loadType = genTypeLLVMReadOnly(c, derefType)
     inc n
     var ptrVal = LLValue(); genExprLLVM(c, n, ptrVal)
     if n.kind != ParRi and n.typeQual == CppRefQ:
       skip n
     skipParRi n
-    # We need the target type - use ptr as generic
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = load ptr, ptr " & c.str(ptrVal.name)
-    result = LLValue(name: t, typ: LToken(PtrToken))
+    c.emitLine "  " & c.str(t) & " = load " & loadType & ", ptr " & c.str(ptrVal.name)
+    result = LLValue(name: t, typ: c.tok(loadType))
   of AtC:
+    let elemType = getType(c.m, n)
+    let loadType = genTypeLLVMReadOnly(c, elemType)
     var lval = LLValue(); genAtLLVM(c, n, lval)
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = load i64, ptr " & c.str(lval.name) # TODO: proper element type
-    result = LLValue(name: t, typ: c.tok("i64"))
+    c.emitLine "  " & c.str(t) & " = load " & loadType & ", ptr " & c.str(lval.name)
+    result = LLValue(name: t, typ: c.tok(loadType))
   of PatC:
     var lval = LLValue(); genPatLLVM(c, n, lval)
     let t = c.temp()
     c.emitLine "  " & c.str(t) & " = load i8, ptr " & c.str(lval.name)
     result = LLValue(name: t, typ: LToken(I8Token))
   of DotC:
+    let fldType = getType(c.m, n)
+    let loadType = genTypeLLVMReadOnly(c, fldType)
     var lval = LLValue(); genDotLLVM(c, n, lval)
-    # Load from the field pointer
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = load i64, ptr " & c.str(lval.name) # TODO: proper field type
-    result = LLValue(name: t, typ: c.tok("i64"))
+    c.emitLine "  " & c.str(t) & " = load " & loadType & ", ptr " & c.str(lval.name)
+    result = LLValue(name: t, typ: c.tok(loadType))
   of SizeofC:
     genSizeofLLVM(c, n, result)
   of AlignofC:
@@ -723,14 +691,17 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     genSizeofLLVM(c, n, result)
   of OffsetofC:
     inc n
+    let typCursor = n
     let typ = genTypeLLVM(c, n)
-    inc n # skip field symbol
+    let fldSym = n.symId
+    inc n
     skipParRi n
-    # Use GEP from null to compute offset
+    # Resolve the field index from the type body
+    let objBody = navigateToObjectBody(c.m, typCursor)
+    let fldIdx = fieldIndex(c.m, objBody, fldSym)
     let t1 = c.temp()
     let t2 = c.temp()
-    # We'd need the field index - simplified to 0 for now
-    c.emitLine "  " & c.str(t1) & " = getelementptr " & typ & ", ptr null, i32 0, i32 0"
+    c.emitLine "  " & c.str(t1) & " = getelementptr " & typ & ", ptr null, i32 0, i32 " & $fldIdx
     c.emitLine "  " & c.str(t2) & " = ptrtoint ptr " & c.str(t1) & " to i" & $c.bits
     result = LLValue(name: t2, typ: c.tok("i" & $c.bits))
   of ParC:
@@ -824,20 +795,21 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     skipParRi n
     result = LLValue(name: c.tok(current), typ: c.tok(typ))
   of BaseobjC:
-    # Base object access with inheritance depth
+    # Base object access: (baseobj TargetType depth expr)
     inc n
-    skip n # type
+    let targetType = genTypeLLVM(c, n)
     var counter = pool.integers[n.intId]
     skip n
     var obj = LLValue(); genExprLLVM(c, n, obj)
     skipParRi n
-    # Navigate through inheritance chain with GEP
+    # Navigate through inheritance chain via GEP field 0 (base field)
     var current = c.str(obj.name)
+    var curTyp = c.str(obj.typ)
     for i in 0 ..< counter:
       let t = c.temp()
-      c.emitLine "  " & c.str(t) & " = extractvalue " & c.str(obj.typ) & " " & current & ", 0"
+      c.emitLine "  " & c.str(t) & " = getelementptr inbounds " & curTyp & ", ptr " & current & ", i32 0, i32 0"
       current = c.str(t)
-    result = LLValue(name: c.tok(current), typ: obj.typ) # approximate
+    result = LLValue(name: c.tok(current), typ: c.tok(targetType))
   of ErrvC, OvfC:
     var lval = LLValue(); genLvalueLLVM(c, n, lval)
     let t = c.temp()
