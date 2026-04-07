@@ -44,6 +44,13 @@ proc nifcFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
 proc cFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
   base / f.modname & ".c"
+proc llFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
+  let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
+  base / f.modname & ".ll"
+proc genFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
+  case config.backend
+  of backendC: config.cFile(f, backendDir)
+  of backendLLVM: config.llFile(f, backendDir)
 proc objFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
   base / f.modname & ".o"
@@ -436,11 +443,11 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
     let nifc = findTool("nifc")
     let hexer = findTool("hexer")
 
-    # Command for nifc (C code generation)
+    # Command for nifc (code generation)
     b.withTree "cmd":
       b.addSymbolDef "nifc"
       b.addStrLit nifc
-      b.addStrLit "c"
+      b.addStrLit $c.config.backend
       b.addStrLit "--compileOnly"
       b.addStrLit "--bits:" & $c.config.bits
       b.addKeyw "args"
@@ -453,10 +460,13 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
     # Command for hexer
     defineHexerCmds(b, hexer, c.config.bits, platform.CPU[c.config.targetCPU].endian == bigEndian)
 
-    # Command for C compiler (object files)
+    # Command for C/LLVM compiler (object files)
     b.withTree "cmd":
       b.addSymbolDef "cc"
-      b.addStrLit c.config.cc
+      if c.config.backend == backendLLVM:
+        b.addStrLit "clang"
+      else:
+        b.addStrLit c.config.cc
       b.addStrLit "-c"
       # Suppress visibility-attribute warnings from mimalloc etc. (GCC/Clang)
       b.addStrLit "-Wno-attributes"
@@ -469,7 +479,8 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
             b.addStrLit arg
       for i in c.passC:
         b.addStrLit i
-      b.addStrLit "-I" & rootPath(c)
+      if c.config.backend == backendC:
+        b.addStrLit "-I" & rootPath(c)
       b.addKeyw "args"
       b.addKeyw "input"
       b.addStrLit "-o"
@@ -584,11 +595,11 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
           b.withTree "do":
             b.addIdent "cc"
             b.withTree "input":
-              b.addStrLit c.config.cFile(v.files[0], backend)
+              b.addStrLit c.config.genFile(v.files[0], backend)
             b.withTree "output":
               b.addStrLit obj
 
-        # Build C files from .c.nif files
+        # Build C/LLVM IR files from .c.nif files
         b.withTree "do":
           b.addIdent "nifc"
           b.withTree "args":
@@ -599,7 +610,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
           b.withTree "input":
             b.addStrLit c.config.nifcFile(v.files[0], backend)
           b.withTree "output":
-            b.addStrLit c.config.cFile(v.files[0], backend)
+            b.addStrLit c.config.genFile(v.files[0], backend)
 
         # Build .x.nif files from .s.nif files via hexer.
         # For the root module (i==0) the output is backend-specific so that

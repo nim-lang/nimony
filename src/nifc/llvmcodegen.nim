@@ -387,7 +387,7 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
     if toExtern or isImport:
       c.addTo(c.globals, "@" & name & " = external global " & typ & "\n")
     else:
-      var initVal = "zeroinitializer"
+      var initVal = if typ == "ptr": "null" else: "zeroinitializer"
       if d.value.kind != DotToken:
         var v = d.value
         initVal = genConstantLLVM(c, v, typ)
@@ -431,7 +431,8 @@ proc genLocalVarDeclLLVM(c: var LLVMCode; n: var Cursor) =
         c.emitLine "  store " & c.str(val.typ) & " " & c.str(val.name) & ", ptr " & localName
     else:
       inc d.value
-      c.emitLine "  store " & typ & " zeroinitializer, ptr " & localName
+      let zeroVal = if typ == "ptr": "null" else: "zeroinitializer"
+      c.emitLine "  store " & typ & " " & zeroVal & ", ptr " & localName
   else:
     error c.m, "expected SymbolDef but got: ", d.name
 
@@ -632,7 +633,8 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
       if retType == "void":
         c.emitLine "  ret void"
       else:
-        c.emitLine "  ret " & retType & " zeroinitializer"
+        let zeroVal = if retType == "ptr": "null" else: "zeroinitializer"
+        c.emitLine "  ret " & retType & " " & zeroVal
 
     # Assemble function: header string + alloca tokens + body tokens + closing
     var funcDef: string = funcHeader

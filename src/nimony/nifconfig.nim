@@ -26,6 +26,10 @@ type
     appLib = "lib"           # dynamic library (dll/so/dylib)
     appStaticLib = "staticlib" # static library (.a/.lib)
 
+  Backend* = enum
+    backendC = "c"
+    backendLLVM = "llvm"
+
   NifConfig* = object
     defines*: seq[string]
     paths*, nimblePaths*: seq[string]
@@ -40,6 +44,7 @@ type
     linker*: string
     ccKey*: string
     appType*: AppType
+    backend*: Backend
 
 proc addDefine*(config: var NifConfig; symbol: string) =
   config.defines.addUnique symbol
