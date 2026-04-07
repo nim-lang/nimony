@@ -256,6 +256,12 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind
   semLocal c, dest, it.n, kind
   producesVoid c, dest, info, it.typ
 
+proc semEnumOrdinalValue(c: var SemContext; dest: var TokenBuf; n: var Cursor): xint =
+  let oldPhase = c.phase
+  c.phase = SemcheckBodies
+  result = evalConstIntExpr(c, dest, n, c.types.autoType)
+  c.phase = oldPhase
+
 proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: var EnumTypeState) =
   let declStart = dest.len
   takeToken dest, n
@@ -310,7 +316,7 @@ proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: v
     if n.kind == ParLe and n.exprKind == TupX:
       dest.add n
       inc n
-      let explicitValue = evalConstIntExpr(c, dest, n, c.types.autoType) # 4
+      let explicitValue = semEnumOrdinalValue(c, dest, n) # 4
       if explicitValue != state.thisValue:
         state.hasHole = true
         state.thisValue = explicitValue
@@ -328,7 +334,7 @@ proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: v
         n = valueCursor
       else:
         dest.add parLeToken(TupX, n.info)
-        let explicitValue = evalConstIntExpr(c, dest, n, c.types.autoType) # 4
+        let explicitValue = semEnumOrdinalValue(c, dest, n) # 4
         if explicitValue != state.thisValue:
           state.hasHole = true
           state.thisValue = explicitValue
