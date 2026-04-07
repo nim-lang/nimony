@@ -10,7 +10,7 @@
 # We produce LLVM IR as text (.ll files) so that we are not
 # dependent on LLVM's changing C++ API.
 
-import std / [assertions, syncio, sets, intsets, formatfloat, packedsets, strutils, sequtils]
+import std / [assertions, syncio, sets, intsets, formatfloat, packedsets, strutils, sequtils, tables]
 from std / os import changeFileExt, splitFile, extractFilename, fileExists
 
 include ".." / lib / nifprelude
@@ -133,6 +133,13 @@ type
     vflags*: HashSet[SymId]
     needsTerminator*: bool  # whether the current basic block needs a terminator
     breakStack*: seq[LToken]  # stack of loop-end labels for `break`
+    subprogramId*: int  # metadata ID of the current DISubprogram
+
+  DebugInfo* = object
+    nextMetadataId*: int
+    metadata*: seq[string]     # accumulated metadata nodes
+    fileIds*: Table[int, int]  # FileId (as int) -> DIFile metadata id
+    cuId*: int                 # DICompileUnit metadata id
 
   LLVMCode* = object
     m: MainModule
@@ -151,6 +158,7 @@ type
     inToplevel: bool
     currentProc: LLVMCurrentProc
     strLitCounter*: int       # global counter for string literal names
+    debug*: DebugInfo
 
 proc initLLVMCode*(m: sink MainModule; flags: set[LLVMGenFlag]; bits: int): LLVMCode =
   result = LLVMCode(m: m, flags: flags, bits: bits, inToplevel: true,
@@ -231,6 +239,103 @@ proc localTok(c: var LLVMCode; s: SymId): LToken {.used.} =
 proc globalTok(c: var LLVMCode; s: SymId): LToken {.used.} =
   ## Return token for a global variable reference: @name
   c.tok("@" & mangleSym(c, s))
+
+# ---- Debug info helpers ----
+
+proc addMetadata(c: var LLVMCode; node: string): int =
+  ## Add a metadata node, return its ID.
+  result = c.debug.nextMetadataId
+  c.debug.metadata.add node
+  inc c.debug.nextMetadataId
+
+proc initDebugInfo(c: var LLVMCode; filename: string) =
+  ## Initialize debug metadata: compile unit and primary file.
+  let (dir, name, ext) = splitFile(filename)
+  let fullName = name & ext
+  let directory = if dir == "": "." else: dir
+  let fileId = c.addMetadata("!DIFile(filename: \"" & fullName & "\", directory: \"" & directory & "\")")
+  let cuId = c.addMetadata("distinct !DICompileUnit(language: DW_LANG_C99, file: !" & $fileId &
+    ", producer: \"nifc\", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)")
+  c.debug.cuId = cuId
+
+proc getOrCreateDIFile(c: var LLVMCode; fid: FileId): int =
+  ## Get or create a DIFile metadata node for the given FileId.
+  let key = int(fid)
+  if key in c.debug.fileIds:
+    return c.debug.fileIds[key]
+  let path = pool.files[fid]
+  let (dir, name, ext) = splitFile(path)
+  let fullName = name & ext
+  let directory = if dir == "": "." else: dir
+  result = c.addMetadata("!DIFile(filename: \"" & fullName & "\", directory: \"" & directory & "\")")
+  c.debug.fileIds[key] = result
+
+proc dbgLocation(c: var LLVMCode; info: PackedLineInfo): string =
+  ## Return a `, !dbg !N` suffix for the given source location, or "" if invalid.
+  if not info.isValid: return ""
+  let rawInfo = unpack(pool.man, info)
+  if not rawInfo.file.isValid: return ""
+  let fileId = getOrCreateDIFile(c, rawInfo.file)
+  let locId = c.addMetadata("!DILocation(line: " & $rawInfo.line &
+    ", column: " & $(rawInfo.col + 1) &
+    ", scope: !" & $c.currentProc.subprogramId & ")")
+  result = ", !dbg !" & $locId
+
+proc createSubprogram(c: var LLVMCode; name: string; info: PackedLineInfo): int =
+  ## Create a DISubprogram metadata node for a function.
+  var fileId = 0
+  var line = 0
+  if info.isValid:
+    let rawInfo = unpack(pool.man, info)
+    if rawInfo.file.isValid:
+      fileId = getOrCreateDIFile(c, rawInfo.file)
+      line = rawInfo.line
+  let subroutineTypeId = c.addMetadata("!DISubroutineType(types: !{})")
+  result = c.addMetadata("distinct !DISubprogram(name: \"" & name &
+    "\", scope: !" & $fileId &
+    ", file: !" & $fileId &
+    ", line: " & $line &
+    ", type: !" & $subroutineTypeId &
+    ", scopeLine: " & $line &
+    ", spFlags: DISPFlagDefinition, unit: !" & $c.debug.cuId & ")")
+
+proc emitLineDbg(c: var LLVMCode; s: string; info: PackedLineInfo) =
+  ## Emit an instruction line with debug location metadata attached.
+  let dbg = dbgLocation(c, info)
+  c.body.add c.tokens.getOrIncl(s & dbg & "\n")
+
+proc extractWasPragma(n: Cursor): string =
+  ## Extract the original name from a (was "name") pragma, or return "".
+  result = ""
+  if n.substructureKind == PragmasU:
+    var p = n
+    inc p
+    while p.kind != ParRi:
+      if p.pragmaKind == WasP:
+        inc p # enter (was
+        if p.kind == StringLit:
+          result = pool.strings[p.litId]
+        elif p.kind == Ident:
+          result = pool.strings[p.litId]
+        return
+      skip p
+
+proc emitDbgDeclare(c: var LLVMCode; localName: string; wasName: string;
+                    info: PackedLineInfo) =
+  ## Emit a #dbg_declare for a local variable with its original name.
+  if wasName.len == 0: return
+  if not info.isValid: return
+  let rawInfo = unpack(pool.man, info)
+  if not rawInfo.file.isValid: return
+  let fileId = getOrCreateDIFile(c, rawInfo.file)
+  let varId = c.addMetadata("!DILocalVariable(name: \"" & wasName &
+    "\", scope: !" & $c.currentProc.subprogramId &
+    ", file: !" & $fileId &
+    ", line: " & $rawInfo.line & ")")
+  let locId = c.addMetadata("!DILocation(line: " & $rawInfo.line &
+    ", column: " & $(rawInfo.col + 1) &
+    ", scope: !" & $c.currentProc.subprogramId & ")")
+  c.emitLine "  #dbg_declare(ptr " & localName & ", !" & $varId & ", !DIExpression(), !" & $locId & ")"
 
 proc writeTokenSeq(f: var string; s: seq[LToken]; c: LLVMCode) =
   for x in s:
@@ -401,11 +506,13 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
     error c.m, "expected SymbolDef but got: ", d.name
 
 proc genLocalVarDeclLLVM(c: var LLVMCode; n: var Cursor) =
+  let varInfo = n.info
   var d = takeVarDecl(n)
   if d.name.kind == SymbolDef:
     let lit = d.name.symId
     c.m.registerLocal(lit, d.typ)
 
+    let wasName = extractWasPragma(d.pragmas)
     let flags = genVarPragmasLLVM(c, d.pragmas)
     if NodeclP in flags:
       skip d.value
@@ -417,22 +524,24 @@ proc genLocalVarDeclLLVM(c: var LLVMCode; n: var Cursor) =
     let localName = "%" & name
     c.addAlloca(c.tok(localName), c.tok(typ))
 
+    emitDbgDeclare(c, localName, wasName, varInfo)
+
     if d.value.kind != DotToken:
       if d.value.stmtKind == OnErrS:
         var onErr = d.value
         inc onErr
         var onErrAction = onErr
         var val = LLValue(); genCallExprLLVM(c, d.value, val)
-        c.emitLine "  store " & c.str(val.typ) & " " & c.str(val.name) & ", ptr " & localName
+        c.emitLineDbg "  store " & c.str(val.typ) & " " & c.str(val.name) & ", ptr " & localName, varInfo
         if onErrAction.kind != DotToken:
           genOnErrorLLVM(c, onErrAction)
       else:
         var val = LLValue(); genExprLLVM(c, d.value, val)
-        c.emitLine "  store " & c.str(val.typ) & " " & c.str(val.name) & ", ptr " & localName
+        c.emitLineDbg "  store " & c.str(val.typ) & " " & c.str(val.name) & ", ptr " & localName, varInfo
     else:
       inc d.value
       let zeroVal = if typ == "ptr": "null" else: "zeroinitializer"
-      c.emitLine "  store " & typ & " " & zeroVal & ", ptr " & localName
+      c.emitLineDbg "  store " & typ & " " & zeroVal & ", ptr " & localName, varInfo
   else:
     error c.m, "expected SymbolDef but got: ", d.name
 
@@ -447,6 +556,7 @@ type
     flags: set[NifcPragma]
     extern: StrId
     callConv: CallConv
+    wasName: string  # original proc name from (was ...) pragma
 
 proc parseProcPragmasLLVM(c: var LLVMCode; n: var Cursor): PragmaInfo =
   result = PragmaInfo()
@@ -485,7 +595,10 @@ proc parseProcPragmasLLVM(c: var LLVMCode; n: var Cursor): PragmaInfo =
         result.flags.incl pk
         skip n
       of WasP:
-        skip n  # ignore `was` pragma for LLVM
+        inc n
+        result.wasName = toString(n, false)
+        skip n
+        skipParRi n
       of ErrsP, RaisesP:
         skip n
       of InlineP:
@@ -546,6 +659,7 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
   let oldProc = c.currentProc
   c.currentProc = LLVMCurrentProc(nextTemp: 0, nextLabel: 0, needsTerminator: false)
 
+  let procInfo = n.info
   var prc = takeProcDecl(n)
   let prag = parseProcPragmasLLVM(c, prc.pragmas)
 
@@ -562,6 +676,7 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
   # Generate parameter list
   var paramTypes: seq[string] = @[]
   var paramNames: seq[string] = @[]
+  var paramWasNames: seq[string] = @[]
   if prc.params.kind != DotToken:
     var p = prc.params.firstSon
     while p.kind != ParRi:
@@ -575,6 +690,7 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
         paramTypes.add paramType
         let paramName = mangleToC(pool.syms[s])
         paramNames.add paramName
+        paramWasNames.add extractWasPragma(d.pragmas)
         genParamPragmasLLVM(c, d.pragmas)
       else:
         error c.m, "expected SymbolDef but got: ", d.name
@@ -597,6 +713,10 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
       c.addTo(c.externs, decl)
   else:
     # Function definition
+    let displayName = if prag.wasName.len > 0: prag.wasName else: name
+    let spId = createSubprogram(c, displayName, procInfo)
+    c.currentProc.subprogramId = spId
+
     let ccStr = callingConvToLLVM(prag.callConv)
     var funcHeader = "define "
     if ccStr != "":
@@ -610,6 +730,7 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
       funcHeader.add " alwaysinline"
     if NoinlineP in prag.flags:
       funcHeader.add " noinline"
+    funcHeader.add " !dbg !" & $spId
     funcHeader.add " {\n"
     funcHeader.add "entry:\n"
 
@@ -622,6 +743,7 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
       let allocaName = "%" & pn
       c.addAlloca(c.tok(allocaName), c.tok(paramTypes[i]))
       c.emitLine "  store " & paramTypes[i] & " %" & pn & ".param, ptr " & allocaName
+      emitDbgDeclare(c, allocaName, paramWasNames[i], procInfo)
 
     # Generate body
     genStmtLLVM c, prc.body
@@ -750,6 +872,9 @@ proc generateLLVMCode*(s: var State, inp, outp: string; flags: set[LLVMGenFlag])
   var c = initLLVMCode(m, flags, s.bits)
   c.m.openScope()
 
+  # Initialize debug info
+  initDebugInfo(c, inp)
+
   # First pass: traverse code to discover types and generate functions
   var n = beginRead(c.m.src)
   traverseCodeLLVM c, n
@@ -795,6 +920,16 @@ proc generateLLVMCode*(s: var State, inp, outp: string; flags: set[LLVMGenFlag])
     f.add "}\n\n"
     # Register as global constructor
     f.add "@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @nifc_init, ptr null }]\n"
+
+  # Debug metadata
+  if c.debug.metadata.len > 0:
+    let dwarfId = c.addMetadata("!{i32 7, !\"Dwarf Version\", i32 4}")
+    let diVersionId = c.addMetadata("!{i32 2, !\"Debug Info Version\", i32 3}")
+    f.add "\n"
+    f.add "!llvm.dbg.cu = !{!" & $c.debug.cuId & "}\n"
+    f.add "!llvm.module.flags = !{!" & $dwarfId & ", !" & $diVersionId & "}\n"
+    for i, md in c.debug.metadata:
+      f.add "!" & $i & " = " & md & "\n"
 
   if fileExists(outp) and readFile(outp) == f:
     discard "unchanged, keep mtime for incremental builds"

@@ -246,6 +246,7 @@ const
 proc genCallWithType(c: var LLVMCode; n: var Cursor; retType: string; result: var LLValue) =
   ## Generate a call where we know the return type from context.
   ## Intercepts special C functions and emits LLVM native instructions.
+  let callInfo = n.info
   inc n
 
   var calleeName: string
@@ -279,11 +280,11 @@ proc genCallWithType(c: var LLVMCode; n: var Cursor; retType: string; result: va
   let argStr = args.mapIt(c.str(it.typ) & " " & c.str(it.name)).join(", ")
 
   if retType == "void":
-    c.emitLine "  call void " & calleeName & "(" & argStr & ")"
+    c.emitLineDbg "  call void " & calleeName & "(" & argStr & ")", callInfo
     result = LLValue(name: LToken(EmptyToken), typ: LToken(VoidToken))
   else:
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = call " & retType & " " & calleeName & "(" & argStr & ")"
+    c.emitLineDbg "  " & c.str(t) & " = call " & retType & " " & calleeName & "(" & argStr & ")", callInfo
     result = LLValue(name: t, typ: c.tok(retType))
 
 proc genCallLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =

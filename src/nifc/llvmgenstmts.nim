@@ -342,12 +342,13 @@ proc genJtrueLLVM(c: var LLVMCode; n: var Cursor) =
 
 proc genStoreLLVM(c: var LLVMCode; n: var Cursor) =
   ## Store: (store value target) - reversed operand order for eval semantics
+  let storeInfo = n.info
   inc n
   var rhs = n
   skip n
   var target = LLValue(); genLvalueLLVM(c, n, target)
   var val = LLValue(); genExprLLVM(c, rhs, val)
-  c.emitLine "  store " & c.str(val.typ) & " " & c.str(val.name) & ", ptr " & c.str(target.name)
+  c.emitLineDbg "  store " & c.str(val.typ) & " " & c.str(val.name) & ", ptr " & c.str(target.name), storeInfo
   skipParRi n
 
 proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
@@ -480,10 +481,11 @@ proc genStmtLLVM(c: var LLVMCode; n: var Cursor) =
   of EmitS:
     genEmitStmtLLVM c, n
   of AsgnS:
+    let asgnInfo = n.info
     inc n
     var lval = LLValue(); genLvalueLLVM(c, n, lval)
     var rval = LLValue(); genExprLLVM(c, n, rval)
-    c.emitLine "  store " & c.str(rval.typ) & " " & c.str(rval.name) & ", ptr " & c.str(lval.name)
+    c.emitLineDbg "  store " & c.str(rval.typ) & " " & c.str(rval.name) & ", ptr " & c.str(lval.name), asgnInfo
     skipParRi n
   of StoreS:
     genStoreLLVM c, n
@@ -513,13 +515,14 @@ proc genStmtLLVM(c: var LLVMCode; n: var Cursor) =
   of JmpS:
     genGotoLLVM c, n
   of RetS:
+    let retInfo = n.info
     inc n
     if n.kind != DotToken:
       var val = LLValue(); genExprLLVM(c, n, val)
-      c.emitLine "  ret " & c.str(val.typ) & " " & c.str(val.name)
+      c.emitLineDbg "  ret " & c.str(val.typ) & " " & c.str(val.name), retInfo
     else:
       inc n
-      c.emitLine "  ret void"
+      c.emitLineDbg "  ret void", retInfo
     c.currentProc.needsTerminator = true
     skipParRi n
   of DiscardS:
