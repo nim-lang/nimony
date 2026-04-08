@@ -134,6 +134,8 @@ type
     needsTerminator*: bool  # whether the current basic block needs a terminator
     breakStack*: seq[LToken]  # stack of loop-end labels for `break`
     subprogramId*: int  # metadata ID of the current DISubprogram
+    retType*: LToken  # LLVM IR return type token
+    retTypeCursor*: Cursor  # NIF type cursor for the return type
 
   DebugInfo* = object
     nextMetadataId*: int
@@ -441,9 +443,9 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
     let lit = d.name.symId
     c.m.registerLocal(lit, d.typ)
 
-    var skipDecl = false
     var externName = StrId(0)
     var isImport = false
+    var isNodecl = false
     if d.pragmas.substructureKind == PragmasU:
       var p = d.pragmas.firstSon
       while p.kind != ParRi:
@@ -453,33 +455,35 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
           isImport = true
         of ExportcP:
           externName = nifmodules.externName(lit, p)
-        of NodeclP, HeaderP:
-          skipDecl = true
+        of NodeclP:
+          isNodecl = true
+        of HeaderP:
+          discard # ignored for LLVM backend
         else: discard
         skip p
 
     let flags = genVarPragmasLLVM(c, d.pragmas)
-    if skipDecl or NodeclP in flags:
-      # For nodecl imported constants like __ATOMIC_SEQ_CST, emit as LLVM constant
-      if isImport and externName != StrId(0):
-        let extName = pool.strings[externName]
-        var t = d.typ
-        let typ = genTypeLLVM(c, t)
-        case extName
-        of "__ATOMIC_RELAXED":
-          c.addTo(c.globals, "@" & mangleToC(pool.syms[lit]) & " = private constant " & typ & " 0\n")
-        of "__ATOMIC_CONSUME":
-          c.addTo(c.globals, "@" & mangleToC(pool.syms[lit]) & " = private constant " & typ & " 1\n")
-        of "__ATOMIC_ACQUIRE":
-          c.addTo(c.globals, "@" & mangleToC(pool.syms[lit]) & " = private constant " & typ & " 2\n")
-        of "__ATOMIC_RELEASE":
-          c.addTo(c.globals, "@" & mangleToC(pool.syms[lit]) & " = private constant " & typ & " 3\n")
-        of "__ATOMIC_ACQ_REL":
-          c.addTo(c.globals, "@" & mangleToC(pool.syms[lit]) & " = private constant " & typ & " 4\n")
-        of "__ATOMIC_SEQ_CST":
-          c.addTo(c.globals, "@" & mangleToC(pool.syms[lit]) & " = private constant " & typ & " 5\n")
-        else:
-          discard "truly skip other nodecl imports"
+    if isNodecl and isImport and externName != StrId(0):
+      # C preprocessor constants (e.g. __ATOMIC_*) don't exist as LLVM symbols;
+      # emit as private constants with known values
+      let extName = pool.strings[externName]
+      var t = d.typ
+      let typ = genTypeLLVM(c, t)
+      case extName
+      of "__ATOMIC_RELAXED":
+        c.addTo(c.globals, "@" & extName & " = private constant " & typ & " 0\n")
+      of "__ATOMIC_CONSUME":
+        c.addTo(c.globals, "@" & extName & " = private constant " & typ & " 1\n")
+      of "__ATOMIC_ACQUIRE":
+        c.addTo(c.globals, "@" & extName & " = private constant " & typ & " 2\n")
+      of "__ATOMIC_RELEASE":
+        c.addTo(c.globals, "@" & extName & " = private constant " & typ & " 3\n")
+      of "__ATOMIC_ACQ_REL":
+        c.addTo(c.globals, "@" & extName & " = private constant " & typ & " 4\n")
+      of "__ATOMIC_SEQ_CST":
+        c.addTo(c.globals, "@" & extName & " = private constant " & typ & " 5\n")
+      else:
+        discard
       skip d.value
       return
 
@@ -737,6 +741,8 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
     c.body = @[]
     c.currentProc.allocas = @[]
     c.currentProc.needsTerminator = false
+    c.currentProc.retType = c.tok(retType)
+    c.currentProc.retTypeCursor = prc.returnType
 
     # Alloca for each parameter and store the param value
     for i, pn in paramNames:

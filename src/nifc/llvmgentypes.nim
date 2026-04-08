@@ -76,7 +76,10 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): string =
     skipParRi n
   of NoType:
     if n.kind == Symbol:
-      let name = mangleSym(c, n.symId)
+      # Ensure the type definition is loaded for cross-module types
+      discard c.m.getDeclOrNil(n.symId)
+      # Use mangleToC for type references to match type definitions
+      let name = mangleToC(pool.syms[n.symId])
       result = "%" & name
       inc n
     elif n.kind == DotToken:
@@ -119,8 +122,13 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): string =
     skipParRi n
     result = "{ [" & sizeStr & " x " & elemType & "] }"
   of ObjectT, UnionT:
-    # Anonymous struct/union inline - return as ptr for simplicity
-    result = "ptr"
+    let typeDecl = tracebackTypeC(n)
+    let decl = asTypeDecl(typeDecl)
+    if decl.name.kind == SymbolDef:
+      discard c.m.getDeclOrNil(decl.name.symId)
+      result = "%" & mangleToC(pool.syms[decl.name.symId])
+    else:
+      result = "ptr"
     skip n
   of ParamsT:
     error c.m, "params type not allowed in expression context: ", n
@@ -387,6 +395,48 @@ proc genTypeDefLLVM(c: var LLVMCode; body: var Cursor; name: string): string =
   else:
     result = ""
 
+proc getStructFieldTypes(c: var LLVMCode; typeSym: Cursor): seq[LToken] =
+  ## Given a type symbol cursor, resolve the struct's field types as LTokens.
+  result = @[]
+  if typeSym.kind == Symbol:
+    let d = c.m.getDeclOrNil(typeSym.symId)
+    if d != nil and d.kind == TypeY:
+      let decl = asTypeDecl(d.pos)
+      var body = decl.body
+      if body.typeKind in {ObjectT, UnionT}:
+        let kind = body.typeKind
+        inc body
+        if kind == ObjectT:
+          if body.kind == Symbol:
+            let baseName = mangleToC(pool.syms[body.symId])
+            result.add c.tok("%" & baseName)
+            inc body
+          elif body.kind == DotToken:
+            inc body
+        var nested = 1
+        while true:
+          case body.kind
+          of ParRi:
+            dec nested
+            inc body
+            if nested == 0: break
+          of ParLe:
+            if body.substructureKind == FldU:
+              var fdecl = takeFieldDecl(body)
+              var t = fdecl.typ
+              result.add c.tok(genTypeLLVM(c, t))
+            elif body.typeKind in {ObjectT, UnionT}:
+              inc nested
+              if body.typeKind == ObjectT:
+                inc body
+                inc body # base
+              else:
+                inc body
+            else:
+              inc body
+          else:
+            inc body
+
 proc genConstantLLVM(c: var LLVMCode; n: var Cursor; expectedType: string): string =
   ## Generate a constant initializer for global variables.
   case n.kind
@@ -425,19 +475,27 @@ proc genConstantLLVM(c: var LLVMCode; n: var Cursor; expectedType: string): stri
       skip n
     of OconstrC:
       inc n
+      let fieldTypes = getStructFieldTypes(c, n)
       skip n # type
       var fields: seq[string] = @[]
+      var fieldIdx = 0
       while n.kind != ParRi:
         if n.substructureKind == KvU:
           inc n
           skip n # field name
-          fields.add genConstantLLVM(c, n, "")
+          let val = genConstantLLVM(c, n, "")
+          fields.add c.str(fieldTypes[fieldIdx]) & " " & val
           if n.kind != ParRi: skip n # optional inheritance depth
           skipParRi n
+          inc fieldIdx
         elif n.exprKind == OconstrC:
-          fields.add genConstantLLVM(c, n, "")
+          let val = genConstantLLVM(c, n, "")
+          fields.add c.str(fieldTypes[fieldIdx]) & " " & val
+          inc fieldIdx
         else:
-          fields.add genConstantLLVM(c, n, "")
+          let val = genConstantLLVM(c, n, "")
+          fields.add c.str(fieldTypes[fieldIdx]) & " " & val
+          inc fieldIdx
       skipParRi n
       result = "{ " & fields.join(", ") & " }"
     of AconstrC:

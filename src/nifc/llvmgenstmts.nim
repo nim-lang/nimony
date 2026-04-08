@@ -73,6 +73,8 @@ proc genIfLLVM(c: var LLVMCode; n: var Cursor) =
 
   skipParRi n
   if needsEnd:
+    if not c.currentProc.needsTerminator:
+      c.emitLine "  br label %" & c.str(endLabel)
     c.emitLine c.str(endLabel) & ":"
     c.currentProc.needsTerminator = false
 
@@ -519,7 +521,14 @@ proc genStmtLLVM(c: var LLVMCode; n: var Cursor) =
     inc n
     if n.kind != DotToken:
       var val = LLValue(); genExprLLVM(c, n, val)
-      c.emitLineDbg "  ret " & c.str(val.typ) & " " & c.str(val.name), retInfo
+      let retTK = c.currentProc.retTypeCursor.typeKind
+      if retTK in {IT, UT, CT, BoolT} and val.typ != c.currentProc.retType:
+        # Truncate integer to match return type (e.g. i64 literal to i32 return)
+        let trunced = c.temp()
+        c.emitLine "  " & c.str(trunced) & " = trunc " & c.str(val.typ) & " " & c.str(val.name) & " to " & c.str(c.currentProc.retType)
+        c.emitLineDbg "  ret " & c.str(c.currentProc.retType) & " " & c.str(trunced), retInfo
+      else:
+        c.emitLineDbg "  ret " & c.str(val.typ) & " " & c.str(val.name), retInfo
     else:
       inc n
       c.emitLineDbg "  ret void", retInfo

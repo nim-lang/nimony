@@ -368,7 +368,7 @@ proc genDotLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   ## Field access: (dot obj field inheritanceDepth?)
   inc n
   let objType = getNominalType(c.m, n)
-  var obj = LLValue(); genExprLLVM(c, n, obj) # should be a pointer
+  var obj = LLValue(); genLvalueLLVM(c, n, obj) # get address of object for GEP
 
   # Get field symbol
   let fldSym = n.symId
@@ -682,9 +682,13 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     let fldType = getType(c.m, n)
     let loadType = genTypeLLVMReadOnly(c, fldType)
     var lval = LLValue(); genDotLLVM(c, n, lval)
-    let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = load " & loadType & ", ptr " & c.str(lval.name)
-    result = LLValue(name: t, typ: c.tok(loadType))
+    if fldType.typeKind == FlexarrayT:
+      # Flexible array members can't be loaded; return the GEP pointer directly
+      result = LLValue(name: lval.name, typ: LToken(PtrToken))
+    else:
+      let t = c.temp()
+      c.emitLine "  " & c.str(t) & " = load " & loadType & ", ptr " & c.str(lval.name)
+      result = LLValue(name: t, typ: c.tok(loadType))
   of SizeofC:
     genSizeofLLVM(c, n, result)
   of AlignofC:
@@ -744,7 +748,12 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
           c.emitLine "  " & c.str(t) & " = sitofp " & c.str(val.typ) & " " & c.str(val.name) & " to " & targetType
         else:
           # Integer resize
-          c.emitLine "  " & c.str(t) & " = sext " & c.str(val.typ) & " " & c.str(val.name) & " to " & targetType
+          let srcBits = c.str(val.typ).replace("i", "").parseInt
+          let destBits = targetType.replace("i", "").parseInt
+          if srcBits < destBits:
+            c.emitLine "  " & c.str(t) & " = sext " & c.str(val.typ) & " " & c.str(val.name) & " to " & targetType
+          else:
+            c.emitLine "  " & c.str(t) & " = trunc " & c.str(val.typ) & " " & c.str(val.name) & " to " & targetType
         result = LLValue(name: t, typ: c.tok(targetType))
   of OconstrC:
     # Object constructor - build an aggregate value
