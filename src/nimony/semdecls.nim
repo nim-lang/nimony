@@ -257,9 +257,22 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind
   producesVoid c, dest, info, it.typ
 
 proc semEnumOrdinalValue(c: var SemContext; dest: var TokenBuf; n: var Cursor): xint =
+  let info = n.info
   let oldPhase = c.phase
   c.phase = SemcheckBodies
+  let before = dest.len
   result = evalConstIntExpr(c, dest, n, c.types.autoType)
+  if not isNan(result):
+    var err = false
+    let valI = asSigned(result, err)
+    if not err:
+      dest.shrink before
+      dest.addIntLit(valI, info)
+    else:
+      let valU = asUnsigned(result, err)
+      if not err:
+        dest.shrink before
+        dest.addUIntLit(valU, info)
   c.phase = oldPhase
 
 proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: var EnumTypeState) =
