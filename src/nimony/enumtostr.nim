@@ -8,7 +8,7 @@
 
 include nifprelude
 
-import decls, nimony_model, semdata, sembasics, symtabs
+import decls, nimony_model, semdata, sembasics, symtabs, programs
 
 proc tagToken(tag: string; info: PackedLineInfo): PackedToken {.inline.} =
   parLeToken(pool.tags.getOrIncl(tag), info)
@@ -24,27 +24,27 @@ proc genEnumToStrProcCase(c: var SemContext; dest: var TokenBuf; enumDecl: var C
 
     dest.add tagToken("ranges", enumDeclInfo)
 
-    inc enumDecl
+    inc enumDecl # into efld
     let symId = enumDecl.symId
     let symInfo = enumDecl.info
     inc enumDecl
-    skip enumDecl
-    skip enumDecl
-    skip enumDecl
+    skip enumDecl # enum field name
+    skip enumDecl # export marker
+    skip enumDecl # pragmas
 
-    inc enumDecl # skips tupleConstr
-    inc enumDecl # skips counter field
+    inc enumDecl # into tupleConstr
+    skip enumDecl # skips counter field
     var fieldValue = enumDecl
-    inc enumDecl # skips fieldValue
-    inc enumDecl # Skips ParRi
+    skip enumDecl # skips string value
+    skipParRi enumDecl
 
-    inc enumDecl # Skips ParRi
+    skipParRi enumDecl
 
     while enumDecl.kind == ParLe and enumDecl.tagId == ErrT:
       skip enumDecl
 
     dest.add symToken(symId, symInfo)
-    dest.addParRi() # set
+    dest.addParRi() # ranges
 
     dest.add tagToken("stmts", enumDeclInfo)
     dest.add tagToken("ret", enumDeclInfo)

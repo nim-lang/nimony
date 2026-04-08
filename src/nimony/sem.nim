@@ -623,10 +623,13 @@ proc semConstStrExprIgnoreTopLevel(c: var SemContext; dest: var TokenBuf; n: var
      SemcheckBodiesInProgress, SemcheckBodies:
     semConstStrExpr(c, dest, n)
 
-proc semConstIntExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
+proc semConstIntExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; phaseOverride: SemPhase) =
   let start = dest.len
   var it = Item(n: n, typ: c.types.autoType)
+  let oldPhase = c.phase
+  c.phase = phaseOverride
   semExpr c, dest, it
+  c.phase = oldPhase
   n = it.n
   let t = skipModifier(it.typ)
   if classifyType(c, t) != IntT:
@@ -1462,23 +1465,15 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
       crucial.headerFileTok = dest[idx]
     # Finalize expression
     dest.addParRi()
-  of AlignP, BitsP:
-    dest.add parLeToken(pk, n.info)
-    inc n
-    if hasParRi and n.kind != ParRi:
-      semConstIntExpr(c, dest, n)
-    else:
-      buildErr c, dest, n.info, "expected int literal"
-    dest.addParRi()
-  of SizeP:
+  of AlignP, BitsP, SizeP:
     dest.add parLeToken(pk, n.info)
     inc n
     let valueStart = dest.len
     if hasParRi and n.kind != ParRi:
-      semConstIntExpr(c, dest, n)
+      semConstIntExpr(c, dest, n, SemcheckBodies)
     else:
       buildErr c, dest, n.info, "expected int literal"
-    if dest[valueStart].kind == IntLit:
+    if pk == SizeP and dest[valueStart].kind == IntLit:
       crucial.size = int(pool.integers[dest[valueStart].intId])
     dest.addParRi()
   of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP, BorrowP,
@@ -2470,14 +2465,15 @@ proc checkExhaustiveness(c: var SemContext; dest: var TokenBuf; info: PackedLine
     while field.kind != ParRi:
       let f = takeLocal(field, SkipFinalParRi)
       let v: xint
-      let vnode = f.val.firstSon # skip tuple tag
+      var vnode = f.val.firstSon # skip tuple tag
       case vnode.kind
       of IntLit:
         v = createXint pool.integers[vnode.intId]
       of UIntLit:
         v = createXint pool.uintegers[vnode.uintId]
       else:
-        v = createNaN()
+        var dummyDest = createTokenBuf(4)
+        v = semEnumOrdinalValue(c, dummyDest, vnode)
       if not seen.contains(v):
         if missing.len > 0: missing.add ", "
         var isGlobal = false
@@ -4415,7 +4411,7 @@ proc semTupAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
   var idx = tup.n
   let idxStart = dest.len
   let idxInfo = idx.info
-  semConstIntExpr c, dest, idx
+  semConstIntExpr c, dest, idx, c.phase
   var idxValue = evalOrdinal(c, cursorAt(dest, idxStart))
   endRead(dest)
   it.n = idx
