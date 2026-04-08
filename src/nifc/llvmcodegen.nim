@@ -427,6 +427,16 @@ type
   VarKindLLVM = enum
     IsLocal, IsGlobal, IsThreadlocal, IsConst
 
+proc countAconstrElems(val: Cursor): int =
+  ## Count elements in an AconstrC node.
+  result = 0
+  var v = val
+  inc v # skip AconstrC
+  skip v # skip type
+  while v.kind != ParRi:
+    inc result
+    skip v
+
 proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExtern = false) =
   var d = takeVarDecl(n)
   if d.name.kind == SymbolDef:
@@ -482,22 +492,72 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
                else: mangleToC(pool.syms[lit])
 
     var t = d.typ
-    let typ = genTypeLLVM(c, t)
+    var typ = genTypeLLVM(c, t)
+
+    # For flexarray constants with concrete initializers, compute the actual element count
+    if d.typ.typeKind == FlexarrayT and d.value.exprKind == AconstrC:
+      var cnt = 0
+      var elem = d.value
+      inc elem # skip AconstrC
+      skip elem # skip type
+      while elem.kind != ParRi:
+        inc cnt
+        skip elem
+      var et = d.typ.firstSon
+      let elemType = genTypeLLVM(c, et)
+      typ = "[" & $cnt & " x " & elemType & "]"
 
     let alignSuffix = if alignVal > 0: ", align " & $alignVal else: ""
     let tls = if vk == IsThreadlocal: "thread_local " else: ""
     if toExtern or isImport:
       c.addTo(c.globals, "@" & name & " = external " & tls & "global " & typ & alignSuffix & "\n")
     else:
-      var initVal = if typ == "ptr": "null" else: "zeroinitializer"
+      var initVal = if d.typ.typeKind in {PtrT, APtrT, ProctypeT}: "null" else: "zeroinitializer"
+      var declTyp = typ
       if d.value.kind != DotToken:
+        # For OconstrC with flexarray fields, the declaration type must be an
+        # anonymous struct matching the actual element count, since the named type
+        # has [0 x T] but the constant has [N x T].
+        if d.value.exprKind == OconstrC and d.typ.kind == Symbol:
+          let fieldTypes = getStructFieldTypes(c, d.typ)
+          var adjustedTypes: seq[string] = @[]
+          var needsAdjust = false
+          var v = d.value
+          inc v # skip OconstrC
+          skip v # skip type
+          var fi = 0
+          while v.kind != ParRi:
+            if v.substructureKind == KvU:
+              var kv = v
+              inc kv
+              skip kv # field name
+              if kv.exprKind == AconstrC:
+                var ac = kv
+                inc ac
+                if ac.typeKind == FlexarrayT:
+                  let elemTyp = genTypeLLVMReadOnly(c, ac.firstSon)
+                  let cnt = countAconstrElems(kv)
+                  adjustedTypes.add "[" & $cnt & " x " & elemTyp & "]"
+                  needsAdjust = true
+                  inc fi
+                  skip v
+                  continue
+              adjustedTypes.add c.str(fieldTypes[fi])
+              inc fi
+            else:
+              if fi < fieldTypes.len:
+                adjustedTypes.add c.str(fieldTypes[fi])
+                inc fi
+            skip v
+          if needsAdjust:
+            declTyp = "{ " & adjustedTypes.join(", ") & " }"
         var v = d.value
-        initVal = genConstantLLVM(c, v, typ)
+        initVal = genConstantLLVM(c, v, declTyp)
       else:
         skip d.value
 
       let linkage = if vk == IsConst: "constant" else: "global"
-      c.addTo(c.globals, "@" & name & " = " & tls & linkage & " " & typ & " " & initVal & alignSuffix & "\n")
+      c.addTo(c.globals, "@" & name & " = " & tls & linkage & " " & declTyp & " " & initVal & alignSuffix & "\n")
   else:
     error c.m, "expected SymbolDef but got: ", d.name
 
@@ -537,7 +597,7 @@ proc genLocalVarDeclLLVM(c: var LLVMCode; n: var Cursor) =
         c.emitLineDbg "  store " & c.str(val.typ) & " " & c.str(val.name) & ", ptr " & localName, varInfo
     else:
       inc d.value
-      let zeroVal = if typ == "ptr": "null" else: "zeroinitializer"
+      let zeroVal = if d.typ.typeKind in {PtrT, APtrT, ProctypeT}: "null" else: "zeroinitializer"
       c.emitLineDbg "  store " & typ & " " & zeroVal & ", ptr " & localName, varInfo
   else:
     error c.m, "expected SymbolDef but got: ", d.name
@@ -751,10 +811,10 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
     if c.currentProc.needsTerminator:
       discard "block already terminated"
     else:
-      if retType == "void":
+      if prc.returnType.kind == DotToken:
         c.emitLine "  ret void"
       else:
-        let zeroVal = if retType == "ptr": "null" else: "zeroinitializer"
+        let zeroVal = if prc.returnType.typeKind in {PtrT, APtrT, ProctypeT}: "null" else: "zeroinitializer"
         c.emitLine "  ret " & retType & " " & zeroVal
 
     # Assemble function: header string + alloca tokens + body tokens + closing
@@ -905,9 +965,13 @@ proc generateLLVMCode*(s: var State, inp, outp: string; flags: set[LLVMGenFlag])
   writeTokenSeq f, c.globals, c
   if c.globals.len > 0: f.add "\n"
 
-  # Error flag for main module
+  # Error and overflow flags
   if gfMainModule in c.flags:
-    f.add "@NIFC_ERR_ = thread_local global i8 0\n\n"
+    f.add "@NIFC_ERR_ = thread_local global i8 0\n"
+    f.add "@NIFC_OVF_ = thread_local global i8 0\n\n"
+  else:
+    f.add "@NIFC_ERR_ = external thread_local global i8\n"
+    f.add "@NIFC_OVF_ = external thread_local global i8\n\n"
 
   # Function bodies
   writeTokenSeq f, c.funcBodies, c

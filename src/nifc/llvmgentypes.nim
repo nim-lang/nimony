@@ -77,7 +77,14 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): string =
   of NoType:
     if n.kind == Symbol:
       # Ensure the type definition is loaded for cross-module types
-      discard c.m.getDeclOrNil(n.symId)
+      let d = c.m.getDeclOrNil(n.symId)
+      if d != nil and d.kind == TypeY:
+        let decl = asTypeDecl(d.pos)
+        if decl.body.typeKind == ProctypeT:
+          # Function pointer types are just ptr in opaque pointer mode
+          result = "ptr"
+          inc n
+          return
       # Use mangleToC for type references to match type definitions
       let name = mangleToC(pool.syms[n.symId])
       result = "%" & name
@@ -120,7 +127,7 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): string =
       sizeStr = $pool.uintegers[n.uintId]
       skip n
     skipParRi n
-    result = "{ [" & sizeStr & " x " & elemType & "] }"
+    result = "[" & sizeStr & " x " & elemType & "]"
   of ObjectT, UnionT:
     let typeDecl = tracebackTypeC(n)
     let decl = asTypeDecl(typeDecl)
@@ -606,18 +613,38 @@ proc fieldIndex(c: var LLVMCode; objBody: Cursor; fldSym: SymId): int =
             if decl.name.kind == SymbolDef and decl.name.symId == fldSym:
               return
             inc result
-        elif body.typeKind in {ObjectT, UnionT}:
+        elif body.typeKind == UnionT:
+          if bitfieldAccum > 0:
+            inc result
+            bitfieldAccum = 0
+            bitfieldUnit = 0
+          # The union is one LLVM field. Check if fldSym is inside it.
+          let unionIdx = result
+          var unionBody = body
+          skip unionBody # skip past the entire union
+          # Search for fldSym inside the union
+          var search = body
+          inc search # skip UnionT tag
+          while search.kind != ParRi:
+            if search.substructureKind == FldU:
+              let fdecl = takeFieldDecl(search)
+              if fdecl.name.kind == SymbolDef and fdecl.name.symId == fldSym:
+                return unionIdx
+            elif search.typeKind == ObjectT:
+              inc search # skip ObjectT
+              inc search # skip base
+            else:
+              skip search
+          body = unionBody
+          inc result
+        elif body.typeKind == ObjectT:
           if bitfieldAccum > 0:
             inc result
             bitfieldAccum = 0
             bitfieldUnit = 0
           inc nested
-          if body.typeKind == ObjectT:
-            inc body
-            inc body
-          else:
-            inc body
-          inc result
+          inc body
+          inc body # skip base
         else:
           skip body
       else:
@@ -646,17 +673,15 @@ proc genTypeDefLLVM(c: var LLVMCode; body: var Cursor; name: string;
       sizeStr = "0"
     skip body
     skipParRi body
-    # Array is a wrapper struct containing the actual array
-    result = "%" & name & " = type { [" & sizeStr & " x " & elemType & "] }\n"
+    result = "%" & name & " = type [" & sizeStr & " x " & elemType & "]\n"
   of EnumT:
-    # Enums are just their underlying integer type
+    # Enums are just their underlying integer type, no struct wrapper
     inc body
     let baseType = genTypeLLVM(c, body)
-    # Skip enum fields
     while body.kind != ParRi:
       skip body
     inc body
-    result = "%" & name & " = type { " & baseType & " }\n"
+    result = "%" & name & " = type " & baseType & "\n"
   of ProctypeT:
     # Function types - generate the actual function type
     let procType = takeProcType(body)
@@ -805,8 +830,23 @@ proc genConstantLLVM(c: var LLVMCode; n: var Cursor; expectedType: string): stri
         if n.substructureKind == KvU:
           inc n
           skip n # field name
+          var ftyp = c.str(fieldTypes[fieldIdx])
+          # For flexarray fields with aconstr values, fix the element count
+          if n.exprKind == AconstrC:
+            var acType = n
+            inc acType # skip AconstrC tag
+            if acType.typeKind == FlexarrayT:
+              var elemTypeCur = acType.firstSon
+              let elemTypStr = genTypeLLVMReadOnly(c, elemTypeCur)
+              var cnt = 0
+              var elem = acType
+              skip elem # skip flexarray type
+              while elem.kind != ParRi:
+                inc cnt
+                skip elem
+              ftyp = "[" & $cnt & " x " & elemTypStr & "]"
           let val = genConstantLLVM(c, n, "")
-          fields.add c.str(fieldTypes[fieldIdx]) & " " & val
+          fields.add ftyp & " " & val
           if n.kind != ParRi: skip n # optional inheritance depth
           skipParRi n
           inc fieldIdx
@@ -825,10 +865,30 @@ proc genConstantLLVM(c: var LLVMCode; n: var Cursor; expectedType: string): stri
         result = "{ " & fields.join(", ") & " }"
     of AconstrC:
       inc n
+      var elemType = ""
+      # Extract element type from array type
+      if n.kind == Symbol:
+        let d = c.m.getDeclOrNil(n.symId)
+        if d != nil and d.kind == TypeY:
+          let tdecl = asTypeDecl(d.pos)
+          if tdecl.body.typeKind == ArrayT:
+            var at = tdecl.body
+            inc at
+            elemType = genTypeLLVMReadOnly(c, at)
+      elif n.typeKind == ArrayT:
+        var at = n
+        inc at
+        elemType = genTypeLLVMReadOnly(c, at)
+      elif n.typeKind == FlexarrayT:
+        elemType = genTypeLLVMReadOnly(c, n.firstSon)
       skip n # type
       var elems: seq[string] = @[]
       while n.kind != ParRi:
-        elems.add genConstantLLVM(c, n, "")
+        let val = genConstantLLVM(c, n, "")
+        if elemType.len > 0:
+          elems.add elemType & " " & val
+        else:
+          elems.add val
       skipParRi n
       result = "[ " & elems.join(", ") & " ]"
     of CastC, ConvC:

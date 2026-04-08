@@ -389,8 +389,9 @@ proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
 
   var lhs = LLValue(); genExprLLVM(c, n, lhs)
   var rhs = LLValue(); genExprLLVM(c, n, rhs)
+  skipParRi n # end of (add/sub/mul ...)
   var target = LLValue(); genLvalueLLVM(c, n, target)
-  skipParRi n
+  skipParRi n # end of (keepovf ...)
 
   # Call the intrinsic
   let result_struct = c.temp()
