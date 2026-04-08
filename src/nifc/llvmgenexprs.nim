@@ -363,7 +363,7 @@ proc genConvOrCast(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     let srcBits = typeSizeBits(c, srcTypeCursor)
     let destBits = typeSizeBits(c, destTypeCursor)
     if srcBits < destBits:
-      if isCast:
+      if isCast or srcTK in {UT, CT, BoolT}:
         c.emitLine "  " & c.str(t) & " = zext " & srcStr & " " & c.str(val.name) & " to " & destType
       else:
         c.emitLine "  " & c.str(t) & " = sext " & srcStr & " " & c.str(val.name) & " to " & destType
@@ -668,35 +668,59 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   of LeC: genBoolCmpOp(c, n, "sle", "ule", result)
   of LtC: genBoolCmpOp(c, n, "slt", "ult", result)
   of AndC:
-    # Short-circuit AND: (and lhs rhs)
+    # Short-circuit AND: (and lhs rhs) — rhs only evaluated if lhs is true
     inc n
+    let res = c.temp()
+    c.addAlloca(res, LToken(I8Token))
+    c.emitLine "  store i8 0, ptr " & c.str(res)
     var lhs = LLValue(); genExprLLVM(c, n, lhs)
+    let lhsBool = c.temp()
+    c.emitLine "  " & c.str(lhsBool) & " = icmp ne " & c.str(lhs.typ) & " " & c.str(lhs.name) & ", " & zeroVal(lhs.typ)
+    let rhsLabel = c.label()
+    let endLabel = c.label()
+    c.emitLine "  br i1 " & c.str(lhsBool) & ", label %" & c.str(rhsLabel) & ", label %" & c.str(endLabel)
+    c.emitLine c.str(rhsLabel) & ":"
+    c.currentProc.needsTerminator = false
     var rhs = LLValue(); genExprLLVM(c, n, rhs)
+    let rhsBool = c.temp()
+    c.emitLine "  " & c.str(rhsBool) & " = icmp ne " & c.str(rhs.typ) & " " & c.str(rhs.name) & ", " & zeroVal(rhs.typ)
+    let rhsExt = c.temp()
+    c.emitLine "  " & c.str(rhsExt) & " = zext i1 " & c.str(rhsBool) & " to i8"
+    c.emitLine "  store i8 " & c.str(rhsExt) & ", ptr " & c.str(res)
+    c.emitLine "  br label %" & c.str(endLabel)
+    c.emitLine c.str(endLabel) & ":"
+    c.currentProc.needsTerminator = false
+    let r = c.temp()
+    c.emitLine "  " & c.str(r) & " = load i8, ptr " & c.str(res)
     skipParRi n
-    # Convert both to i1 and AND
-    let t1 = c.temp()
-    let t2 = c.temp()
-    let t3 = c.temp()
-    let t4 = c.temp()
-    c.emitLine "  " & c.str(t1) & " = icmp ne " & c.str(lhs.typ) & " " & c.str(lhs.name) & ", " & zeroVal(lhs.typ)
-    c.emitLine "  " & c.str(t2) & " = icmp ne " & c.str(rhs.typ) & " " & c.str(rhs.name) & ", " & zeroVal(rhs.typ)
-    c.emitLine "  " & c.str(t3) & " = and i1 " & c.str(t1) & ", " & c.str(t2)
-    c.emitLine "  " & c.str(t4) & " = zext i1 " & c.str(t3) & " to i8"
-    result = LLValue(name: t4, typ: LToken(I8Token))
+    result = LLValue(name: r, typ: LToken(I8Token))
   of OrC:
+    # Short-circuit OR: (or lhs rhs) — rhs only evaluated if lhs is false
     inc n
+    let res = c.temp()
+    c.addAlloca(res, LToken(I8Token))
+    c.emitLine "  store i8 1, ptr " & c.str(res)
     var lhs = LLValue(); genExprLLVM(c, n, lhs)
+    let lhsBool = c.temp()
+    c.emitLine "  " & c.str(lhsBool) & " = icmp ne " & c.str(lhs.typ) & " " & c.str(lhs.name) & ", " & zeroVal(lhs.typ)
+    let rhsLabel = c.label()
+    let endLabel = c.label()
+    c.emitLine "  br i1 " & c.str(lhsBool) & ", label %" & c.str(endLabel) & ", label %" & c.str(rhsLabel)
+    c.emitLine c.str(rhsLabel) & ":"
+    c.currentProc.needsTerminator = false
     var rhs = LLValue(); genExprLLVM(c, n, rhs)
+    let rhsBool = c.temp()
+    c.emitLine "  " & c.str(rhsBool) & " = icmp ne " & c.str(rhs.typ) & " " & c.str(rhs.name) & ", " & zeroVal(rhs.typ)
+    let rhsExt = c.temp()
+    c.emitLine "  " & c.str(rhsExt) & " = zext i1 " & c.str(rhsBool) & " to i8"
+    c.emitLine "  store i8 " & c.str(rhsExt) & ", ptr " & c.str(res)
+    c.emitLine "  br label %" & c.str(endLabel)
+    c.emitLine c.str(endLabel) & ":"
+    c.currentProc.needsTerminator = false
+    let r = c.temp()
+    c.emitLine "  " & c.str(r) & " = load i8, ptr " & c.str(res)
     skipParRi n
-    let t1 = c.temp()
-    let t2 = c.temp()
-    let t3 = c.temp()
-    let t4 = c.temp()
-    c.emitLine "  " & c.str(t1) & " = icmp ne " & c.str(lhs.typ) & " " & c.str(lhs.name) & ", " & zeroVal(lhs.typ)
-    c.emitLine "  " & c.str(t2) & " = icmp ne " & c.str(rhs.typ) & " " & c.str(rhs.name) & ", " & zeroVal(rhs.typ)
-    c.emitLine "  " & c.str(t3) & " = or i1 " & c.str(t1) & ", " & c.str(t2)
-    c.emitLine "  " & c.str(t4) & " = zext i1 " & c.str(t3) & " to i8"
-    result = LLValue(name: t4, typ: LToken(I8Token))
+    result = LLValue(name: r, typ: LToken(I8Token))
   of NotC:
     inc n
     var val = LLValue(); genExprLLVM(c, n, val)
