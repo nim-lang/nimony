@@ -220,8 +220,12 @@ proc label(c: var LLVMCode): LToken =
   result = c.tokens.getOrIncl("L" & $c.currentProc.nextLabel)
   inc c.currentProc.nextLabel
 
-proc addAlloca(c: var LLVMCode; name, typ: LToken) =
-  c.currentProc.allocas.add c.tokens.getOrIncl("  " & c.str(name) & " = alloca " & c.str(typ) & "\n")
+proc addAlloca(c: var LLVMCode; name, typ: LToken; align: int64 = 0) =
+  var s = "  " & c.str(name) & " = alloca " & c.str(typ)
+  if align > 0:
+    s.add ", align " & $align
+  s.add "\n"
+  c.currentProc.allocas.add c.tokens.getOrIncl(s)
 
 proc mangleSym(c: var LLVMCode; s: SymId): string =
   let x = c.m.getDeclOrNil(s)
@@ -343,43 +347,29 @@ proc writeTokenSeq(f: var string; s: seq[LToken]; c: LLVMCode) =
   for x in s:
     f.add c.tokens[x]
 
-proc fieldIndex*(m: var MainModule; objBody: Cursor; fldSym: SymId): int =
-  ## Look up the index of field `fldSym` in object body `objBody`.
-  ## Returns the 0-based struct field index.
+proc extractAlignValue(pragmas: Cursor): int64 =
+  ## Extract the (align N) value from pragmas, or 0 if none.
   result = 0
-  if objBody.typeKind in {ObjectT, UnionT}:
-    var body = objBody
-    inc body
-    if objBody.typeKind == ObjectT:
-      if body.kind == Symbol:
-        inc body # skip base type symbol
-        result = 1 # base type occupies field 0
-      elif body.kind == DotToken:
-        inc body
+  if pragmas.substructureKind == PragmasU:
+    var p = pragmas.firstSon
+    while p.kind != ParRi:
+      if p.pragmaKind == AlignP:
+        inc p
+        result = pool.integers[p.intId]
+        return
+      skip p
 
-    var nested = 1
-    while nested > 0:
-      case body.kind
-      of ParRi:
-        dec nested
-        inc body
-      of ParLe:
-        if body.substructureKind == FldU:
-          let decl = takeFieldDecl(body)
-          if decl.name.kind == SymbolDef and decl.name.symId == fldSym:
-            return
-          inc result
-        elif body.typeKind in {ObjectT, UnionT}:
-          inc nested
-          if body.typeKind == ObjectT:
-            inc body
-            inc body # skip base
-          else:
-            inc body
-        else:
-          skip body
-      else:
-        inc body
+proc extractBitfieldBits(pragmas: Cursor): int64 =
+  ## Extract the (bits N) value from field pragmas, or 0 if none.
+  result = 0
+  if pragmas.substructureKind == PragmasU:
+    var p = pragmas.firstSon
+    while p.kind != ParRi:
+      if p.pragmaKind == BitsP:
+        inc p
+        result = pool.integers[p.intId]
+        return
+      skip p
 
 proc baseTypeOfObject*(m: var MainModule; objBody: Cursor): Cursor =
   ## For an object type with inheritance, return the cursor to the base type symbol.
@@ -446,6 +436,7 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
     var externName = StrId(0)
     var isImport = false
     var isNodecl = false
+    let alignVal = extractAlignValue(d.pragmas)
     if d.pragmas.substructureKind == PragmasU:
       var p = d.pragmas.firstSon
       while p.kind != ParRi:
@@ -493,8 +484,10 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
     var t = d.typ
     let typ = genTypeLLVM(c, t)
 
+    let alignSuffix = if alignVal > 0: ", align " & $alignVal else: ""
+    let tls = if vk == IsThreadlocal: "thread_local " else: ""
     if toExtern or isImport:
-      c.addTo(c.globals, "@" & name & " = external global " & typ & "\n")
+      c.addTo(c.globals, "@" & name & " = external " & tls & "global " & typ & alignSuffix & "\n")
     else:
       var initVal = if typ == "ptr": "null" else: "zeroinitializer"
       if d.value.kind != DotToken:
@@ -504,8 +497,7 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
         skip d.value
 
       let linkage = if vk == IsConst: "constant" else: "global"
-      let tls = if vk == IsThreadlocal: "thread_local " else: ""
-      c.addTo(c.globals, "@" & name & " = " & tls & linkage & " " & typ & " " & initVal & "\n")
+      c.addTo(c.globals, "@" & name & " = " & tls & linkage & " " & typ & " " & initVal & alignSuffix & "\n")
   else:
     error c.m, "expected SymbolDef but got: ", d.name
 
@@ -517,6 +509,7 @@ proc genLocalVarDeclLLVM(c: var LLVMCode; n: var Cursor) =
     c.m.registerLocal(lit, d.typ)
 
     let wasName = extractWasPragma(d.pragmas)
+    let alignVal = extractAlignValue(d.pragmas)
     let flags = genVarPragmasLLVM(c, d.pragmas)
     if NodeclP in flags:
       skip d.value
@@ -526,7 +519,7 @@ proc genLocalVarDeclLLVM(c: var LLVMCode; n: var Cursor) =
     var t = d.typ
     let typ = genTypeLLVM(c, t)
     let localName = "%" & name
-    c.addAlloca(c.tok(localName), c.tok(typ))
+    c.addAlloca(c.tok(localName), c.tok(typ), alignVal)
 
     emitDbgDeclare(c, localName, wasName, varInfo)
 
@@ -851,24 +844,26 @@ proc generateLLVMTypes(c: var LLVMCode) =
     let decl = takeTypeDecl(n)
     if not c.generatedTypes.containsOrIncl(decl.name.symId):
       var skipDecl = false
-      # Check for nodecl/header pragmas
+      var packed = false
+      # Check for nodecl/header/packed pragmas
       if decl.pragmas.substructureKind == PragmasU:
         var p = decl.pragmas.firstSon
         while p.kind != ParRi:
           case p.pragmaKind
           of NodeclP, HeaderP:
             skipDecl = true
+          of PackedP:
+            packed = true
           else: discard
           skip p
       if skipDecl: continue
 
       let name = mangleToC(pool.syms[decl.name.symId])
       if isForward:
-        # Forward declaration - opaque named type
         c.addTo(c.types, "%" & name & " = type opaque\n")
       else:
         var body = decl.body
-        let typeDef = genTypeDefLLVM(c, body, name)
+        let typeDef = genTypeDefLLVM(c, body, name, packed)
         if typeDef != "":
           c.addTo(c.types, typeDef)
 

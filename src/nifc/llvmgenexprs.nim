@@ -403,7 +403,7 @@ proc genDotLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       gepType = genTypeLLVMReadOnly(c, curType)
 
   # Look up the field index in the resolved object body
-  let fldIdx = fieldIndex(c.m, curBody, fldSym)
+  let fldIdx = fieldIndex(c, curBody, fldSym)
 
   let t = c.temp()
   c.emitLine "  " & c.str(t) & " = getelementptr inbounds " & gepType & ", ptr " & gepTarget & ", i32 0, i32 " & $fldIdx
@@ -703,7 +703,7 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     skipParRi n
     # Resolve the field index from the type body
     let objBody = navigateToObjectBody(c.m, typCursor)
-    let fldIdx = fieldIndex(c.m, objBody, fldSym)
+    let fldIdx = fieldIndex(c, objBody, fldSym)
     let t1 = c.temp()
     let t2 = c.temp()
     c.emitLine "  " & c.str(t1) & " = getelementptr " & typ & ", ptr null, i32 0, i32 " & $fldIdx
