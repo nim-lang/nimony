@@ -13,6 +13,8 @@
 
 proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue)
 proc genLvalueLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue)
+proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCursor: Cursor;
+                     isCast: bool; result: var LLValue)
 
 proc zeroVal(typ: LToken): string {.inline.} =
   ## Return the zero constant for a given LLVM type token.
@@ -40,26 +42,42 @@ proc genCallExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue)
 proc signedBinOp(c: var LLVMCode; n: var Cursor; op: string; result: var LLValue) =
   ## Typed binary op: (op type lhs rhs)
   inc n
+  let typCursor = n
   let typ = genTypeLLVM(c, n)
+  let srcLhs = getType(c.m, n)
   var lhs = LLValue(); genExprLLVM(c, n, lhs)
+  let srcRhs = getType(c.m, n)
   var rhs = LLValue(); genExprLLVM(c, n, rhs)
+  let typTok = c.tok(typ)
+  if lhs.typ != typTok:
+    coerceValueLLVM(c, lhs, srcLhs, typCursor, true, lhs)
+  if rhs.typ != typTok:
+    coerceValueLLVM(c, rhs, srcRhs, typCursor, true, rhs)
   let t = c.temp()
   c.emitLine "  " & c.str(t) & " = " & op & " " & typ & " " & c.str(lhs.name) & ", " & c.str(rhs.name)
   skipParRi n
-  result = LLValue(name: t, typ: c.tok(typ))
+  result = LLValue(name: t, typ: typTok)
 
 proc unsignedBinOp(c: var LLVMCode; n: var Cursor; signedOp, unsignedOp: string; result: var LLValue) =
   ## Binary op that differs for signed/unsigned: checks the NIF type tag.
   inc n
   let isUnsigned = n.typeKind == UT
+  let typCursor = n
   let typ = genTypeLLVM(c, n)
+  let srcLhs = getType(c.m, n)
   var lhs = LLValue(); genExprLLVM(c, n, lhs)
+  let srcRhs = getType(c.m, n)
   var rhs = LLValue(); genExprLLVM(c, n, rhs)
+  let typTok = c.tok(typ)
+  if lhs.typ != typTok:
+    coerceValueLLVM(c, lhs, srcLhs, typCursor, true, lhs)
+  if rhs.typ != typTok:
+    coerceValueLLVM(c, rhs, srcRhs, typCursor, true, rhs)
   let t = c.temp()
   let op = if isUnsigned: unsignedOp else: signedOp
   c.emitLine "  " & c.str(t) & " = " & op & " " & typ & " " & c.str(lhs.name) & ", " & c.str(rhs.name)
   skipParRi n
-  result = LLValue(name: t, typ: c.tok(typ))
+  result = LLValue(name: t, typ: typTok)
 
 proc cmpOp(c: var LLVMCode; n: var Cursor; signedPred, unsignedPred: string; result: var LLValue) =
   ## Comparison op: (op lhs rhs) → i1
