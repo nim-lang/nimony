@@ -427,16 +427,6 @@ type
   VarKindLLVM = enum
     IsLocal, IsGlobal, IsThreadlocal, IsConst
 
-proc countAconstrElems(val: Cursor): int =
-  ## Count elements in an AconstrC node.
-  result = 0
-  var v = val
-  inc v # skip AconstrC
-  skip v # skip type
-  while v.kind != ParRi:
-    inc result
-    skip v
-
 proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExtern = false) =
   var d = takeVarDecl(n)
   if d.name.kind == SymbolDef:
@@ -492,72 +482,23 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
                else: mangleToC(pool.syms[lit])
 
     var t = d.typ
-    var typ = genTypeLLVM(c, t)
-
-    # For flexarray constants with concrete initializers, compute the actual element count
-    if d.typ.typeKind == FlexarrayT and d.value.exprKind == AconstrC:
-      var cnt = 0
-      var elem = d.value
-      inc elem # skip AconstrC
-      skip elem # skip type
-      while elem.kind != ParRi:
-        inc cnt
-        skip elem
-      var et = d.typ.firstSon
-      let elemType = genTypeLLVM(c, et)
-      typ = "[" & $cnt & " x " & elemType & "]"
+    let typ = genTypeLLVM(c, t)
 
     let alignSuffix = if alignVal > 0: ", align " & $alignVal else: ""
     let tls = if vk == IsThreadlocal: "thread_local " else: ""
     if toExtern or isImport:
       c.addTo(c.globals, "@" & name & " = external " & tls & "global " & typ & alignSuffix & "\n")
     else:
-      var initVal = if d.typ.typeKind in {PtrT, APtrT, ProctypeT}: "null" else: "zeroinitializer"
-      var declTyp = typ
       if d.value.kind != DotToken:
-        # For OconstrC with flexarray fields, the declaration type must be an
-        # anonymous struct matching the actual element count, since the named type
-        # has [0 x T] but the constant has [N x T].
-        if d.value.exprKind == OconstrC and d.typ.kind == Symbol:
-          let fieldTypes = getStructFieldTypes(c, d.typ)
-          var adjustedTypes: seq[string] = @[]
-          var needsAdjust = false
-          var v = d.value
-          inc v # skip OconstrC
-          skip v # skip type
-          var fi = 0
-          while v.kind != ParRi:
-            if v.substructureKind == KvU:
-              var kv = v
-              inc kv
-              skip kv # field name
-              if kv.exprKind == AconstrC:
-                var ac = kv
-                inc ac
-                if ac.typeKind == FlexarrayT:
-                  let elemTyp = genTypeLLVMReadOnly(c, ac.firstSon)
-                  let cnt = countAconstrElems(kv)
-                  adjustedTypes.add "[" & $cnt & " x " & elemTyp & "]"
-                  needsAdjust = true
-                  inc fi
-                  skip v
-                  continue
-              adjustedTypes.add c.str(fieldTypes[fi])
-              inc fi
-            else:
-              if fi < fieldTypes.len:
-                adjustedTypes.add c.str(fieldTypes[fi])
-                inc fi
-            skip v
-          if needsAdjust:
-            declTyp = "{ " & adjustedTypes.join(", ") & " }"
         var v = d.value
-        initVal = genConstantLLVM(c, v, declTyp)
+        let tc = genGlobalConstr(c, v, d.typ)
+        let linkage = if vk == IsConst: "constant" else: "global"
+        c.addTo(c.globals, "@" & name & " = " & tls & linkage & " " & tc.typ & " " & tc.val & alignSuffix & "\n")
       else:
         skip d.value
-
-      let linkage = if vk == IsConst: "constant" else: "global"
-      c.addTo(c.globals, "@" & name & " = " & tls & linkage & " " & declTyp & " " & initVal & alignSuffix & "\n")
+        let zeroVal = if d.typ.typeKind in {PtrT, APtrT, ProctypeT}: "null" else: "zeroinitializer"
+        let linkage = if vk == IsConst: "constant" else: "global"
+        c.addTo(c.globals, "@" & name & " = " & tls & linkage & " " & typ & " " & zeroVal & alignSuffix & "\n")
   else:
     error c.m, "expected SymbolDef but got: ", d.name
 

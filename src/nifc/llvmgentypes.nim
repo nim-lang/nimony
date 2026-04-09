@@ -783,124 +783,206 @@ proc isPackedType(c: var LLVMCode; typeSym: Cursor): bool =
           if p.pragmaKind == PackedP: return true
           skip p
 
-proc genConstantLLVM(c: var LLVMCode; n: var Cursor; expectedType: string): string =
-  ## Generate a constant initializer for global variables.
+type
+  TypedConst = object
+    typ: string  # LLVM type (may differ from declared type for flexarrays)
+    val: string  # LLVM constant value
+
+proc genGlobalConstr(c: var LLVMCode; n: var Cursor; declaredType: Cursor): TypedConst =
+  ## Generate a constant value together with its actual LLVM type.
+  ## The actual type may differ from the declared type when flexarray fields
+  ## have concrete initializers (e.g. [0 x i8] becomes [16 x i8]).
   case n.kind
   of IntLit:
-    result = $pool.integers[n.intId]
+    let typ = genTypeLLVMReadOnly(c, declaredType)
+    result = TypedConst(typ: typ, val: $pool.integers[n.intId])
     inc n
   of UIntLit:
-    result = $pool.uintegers[n.uintId]
+    let typ = genTypeLLVMReadOnly(c, declaredType)
+    result = TypedConst(typ: typ, val: $pool.uintegers[n.uintId])
     inc n
   of FloatLit:
-    let f = pool.floats[n.floatId]
-    # LLVM requires hex notation for floating point constants to avoid precision loss
-    result = $f
+    let typ = genTypeLLVMReadOnly(c, declaredType)
+    result = TypedConst(typ: typ, val: $pool.floats[n.floatId])
     inc n
   of CharLit:
-    result = $ord(n.charLit)
+    let typ = genTypeLLVMReadOnly(c, declaredType)
+    result = TypedConst(typ: typ, val: $ord(n.charLit))
     inc n
   of StringLit:
-    # For string constants in global context, we need to create a global string
-    # and return a pointer to it
-    result = "zeroinitializer" # placeholder - string globals are complex
+    # String data for flexarray fields — actual byte content
+    let s = pool.strings[n.litId]
     inc n
+    if s.len == 0:
+      result = TypedConst(typ: "[0 x i8]", val: "zeroinitializer")
+    else:
+      var escaped = "c\""
+      for ch in s:
+        let o = ord(ch)
+        if o < 32 or o > 126 or ch == '"' or ch == '\\':
+          escaped.add '\\'
+          escaped.add "0123456789ABCDEF"[o shr 4]
+          escaped.add "0123456789ABCDEF"[o and 0xF]
+        else:
+          escaped.add ch
+      escaped.add '"'
+      result = TypedConst(typ: "[" & $s.len & " x i8]", val: escaped)
   of DotToken:
-    result = "zeroinitializer"
+    let typ = genTypeLLVMReadOnly(c, declaredType)
+    result = TypedConst(typ: typ, val: "zeroinitializer")
     inc n
   else:
     case n.exprKind
     of FalseC:
-      result = "0"
+      result = TypedConst(typ: "i8", val: "0")
       skip n
     of TrueC:
-      result = "1"
+      result = TypedConst(typ: "i8", val: "1")
       skip n
     of NilC:
-      result = "null"
+      result = TypedConst(typ: "ptr", val: "null")
       skip n
     of OconstrC:
       inc n
+      let typeSym = n
       let fieldTypes = getStructFieldTypes(c, n)
       let packed = isPackedType(c, n)
+      # Resolve the struct's field NIF types for recursive descent
+      var fieldNifTypes: seq[Cursor] = @[]
+      if n.kind == Symbol:
+        let d = c.m.getDeclOrNil(n.symId)
+        if d != nil and d.kind == TypeY:
+          let decl = asTypeDecl(d.pos)
+          var body = decl.body
+          if body.typeKind in {ObjectT, UnionT}:
+            inc body
+            if decl.body.typeKind == ObjectT:
+              if body.kind == Symbol:
+                fieldNifTypes.add body # base type
+                inc body
+              elif body.kind == DotToken:
+                inc body
+            while body.kind != ParRi:
+              if body.substructureKind == FldU:
+                var fdecl = takeFieldDecl(body)
+                fieldNifTypes.add fdecl.typ
+              else:
+                skip body
       skip n # type
-      var fields: seq[string] = @[]
+      var typeParts: seq[string] = @[]
+      var valParts: seq[string] = @[]
       var fieldIdx = 0
       while n.kind != ParRi:
         if n.substructureKind == KvU:
           inc n
           skip n # field name
-          var ftyp = c.str(fieldTypes[fieldIdx])
-          # For flexarray fields with aconstr values, fix the element count
-          if n.exprKind == AconstrC:
-            var acType = n
-            inc acType # skip AconstrC tag
-            if acType.typeKind == FlexarrayT:
-              var elemTypeCur = acType.firstSon
-              let elemTypStr = genTypeLLVMReadOnly(c, elemTypeCur)
-              var cnt = 0
-              var elem = acType
-              skip elem # skip flexarray type
-              while elem.kind != ParRi:
-                inc cnt
-                skip elem
-              ftyp = "[" & $cnt & " x " & elemTypStr & "]"
-          let val = genConstantLLVM(c, n, "")
-          fields.add ftyp & " " & val
+          let nifType = if fieldIdx < fieldNifTypes.len: fieldNifTypes[fieldIdx]
+                        else: declaredType # fallback
+          let tc = genGlobalConstr(c, n, nifType)
+          typeParts.add tc.typ
+          valParts.add tc.typ & " " & tc.val
           if n.kind != ParRi: skip n # optional inheritance depth
           skipParRi n
           inc fieldIdx
         elif n.exprKind == OconstrC:
-          let val = genConstantLLVM(c, n, "")
-          fields.add c.str(fieldTypes[fieldIdx]) & " " & val
+          let nifType = if fieldIdx < fieldNifTypes.len: fieldNifTypes[fieldIdx]
+                        else: declaredType
+          let tc = genGlobalConstr(c, n, nifType)
+          typeParts.add tc.typ
+          valParts.add tc.typ & " " & tc.val
           inc fieldIdx
         else:
-          let val = genConstantLLVM(c, n, "")
-          fields.add c.str(fieldTypes[fieldIdx]) & " " & val
+          let nifType = if fieldIdx < fieldNifTypes.len: fieldNifTypes[fieldIdx]
+                        else: declaredType
+          let tc = genGlobalConstr(c, n, nifType)
+          typeParts.add tc.typ
+          valParts.add tc.typ & " " & tc.val
           inc fieldIdx
       skipParRi n
-      if packed:
-        result = "<{ " & fields.join(", ") & " }>"
+      # Check if any field type differs from the declared struct field types
+      var needsAnon = false
+      for i in 0 ..< min(typeParts.len, fieldTypes.len):
+        if typeParts[i] != c.str(fieldTypes[i]):
+          needsAnon = true
+          break
+      let valStr = valParts.join(", ")
+      if needsAnon:
+        let anonTyp = "{ " & typeParts.join(", ") & " }"
+        if packed:
+          result = TypedConst(typ: "<" & anonTyp & ">", val: "<{ " & valStr & " }>")
+        else:
+          result = TypedConst(typ: anonTyp, val: "{ " & valStr & " }")
       else:
-        result = "{ " & fields.join(", ") & " }"
+        var dt = declaredType
+        let declTyp = genTypeLLVM(c, dt)
+        if packed:
+          result = TypedConst(typ: declTyp, val: "<{ " & valStr & " }>")
+        else:
+          result = TypedConst(typ: declTyp, val: "{ " & valStr & " }")
     of AconstrC:
       inc n
+      var elemTypeCursor = declaredType
       var elemType = ""
-      # Extract element type from array type
-      if n.kind == Symbol:
-        let d = c.m.getDeclOrNil(n.symId)
-        if d != nil and d.kind == TypeY:
-          let tdecl = asTypeDecl(d.pos)
-          if tdecl.body.typeKind == ArrayT:
-            var at = tdecl.body
-            inc at
-            elemType = genTypeLLVMReadOnly(c, at)
-      elif n.typeKind == ArrayT:
-        var at = n
+      # Get element type from the declared array/flexarray type
+      if declaredType.typeKind == FlexarrayT:
+        elemType = genTypeLLVMReadOnly(c, declaredType.firstSon)
+        elemTypeCursor = declaredType.firstSon
+      elif declaredType.typeKind == ArrayT:
+        var at = declaredType
         inc at
         elemType = genTypeLLVMReadOnly(c, at)
-      elif n.typeKind == FlexarrayT:
-        elemType = genTypeLLVMReadOnly(c, n.firstSon)
+        elemTypeCursor = at
+      else:
+        # Named array type
+        if n.typeKind == FlexarrayT:
+          elemType = genTypeLLVMReadOnly(c, n.firstSon)
+          elemTypeCursor = n.firstSon
+        elif n.typeKind == ArrayT:
+          var at = n
+          inc at
+          elemType = genTypeLLVMReadOnly(c, at)
+          elemTypeCursor = at
+        elif n.kind == Symbol:
+          let d = c.m.getDeclOrNil(n.symId)
+          if d != nil and d.kind == TypeY:
+            let tdecl = asTypeDecl(d.pos)
+            if tdecl.body.typeKind == ArrayT:
+              var at = tdecl.body
+              inc at
+              elemType = genTypeLLVMReadOnly(c, at)
+              elemTypeCursor = at
       skip n # type
       var elems: seq[string] = @[]
       while n.kind != ParRi:
-        let val = genConstantLLVM(c, n, "")
-        if elemType.len > 0:
-          elems.add elemType & " " & val
-        else:
-          elems.add val
+        let tc = genGlobalConstr(c, n, elemTypeCursor)
+        elems.add tc.typ & " " & tc.val
       skipParRi n
-      result = "[ " & elems.join(", ") & " ]"
+      let arrTyp = "[" & $elems.len & " x " & elemType & "]"
+      result = TypedConst(typ: arrTyp, val: "[ " & elems.join(", ") & " ]")
     of CastC, ConvC:
       inc n
       skip n # type
-      result = genConstantLLVM(c, n, expectedType)
+      result = genGlobalConstr(c, n, declaredType)
       skipParRi n
     of SufC:
       inc n
-      result = genConstantLLVM(c, n, "")
+      result = genGlobalConstr(c, n, declaredType)
       skip n # suffix
       skipParRi n
+    of AddrC:
+      # Address of a global symbol
+      inc n
+      if n.kind == Symbol:
+        let name = mangleSym(c, n.symId)
+        c.requestedSyms.incl n.symId
+        result = TypedConst(typ: "ptr", val: "@" & name)
+        inc n
+      else:
+        let typ = genTypeLLVMReadOnly(c, declaredType)
+        result = TypedConst(typ: typ, val: "zeroinitializer")
+        skip n
+      skipParRi n
     else:
-      result = "zeroinitializer"
+      let typ = genTypeLLVMReadOnly(c, declaredType)
+      result = TypedConst(typ: typ, val: "zeroinitializer")
       skip n

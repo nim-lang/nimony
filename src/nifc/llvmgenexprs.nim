@@ -450,13 +450,22 @@ proc genAtLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
 
 proc genPatLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   ## Pointer arithmetic indexing: (pat ptr index)
+  ## In NIF, pat does typed pointer arithmetic — the stride is determined by the
+  ## pointed-to element type (like C's ptr[i]).
   inc n
+  let baseType = getType(c.m, n)
   var base = LLValue(); genExprLLVM(c, n, base)
   var idx = LLValue(); genExprLLVM(c, n, idx)
   skipParRi n
 
+  # Determine the element type for GEP stride
+  var elemType = "i8" # fallback: byte-level
+  if baseType.typeKind in {PtrT, APtrT}:
+    let pointee = baseType.firstSon
+    elemType = genTypeLLVMReadOnly(c, pointee)
+
   let t = c.temp()
-  c.emitLine "  " & c.str(t) & " = getelementptr i8, ptr " & c.str(base.name) & ", " & c.str(idx.typ) & " " & c.str(idx.name)
+  c.emitLine "  " & c.str(t) & " = getelementptr " & elemType & ", ptr " & c.str(base.name) & ", " & c.str(idx.typ) & " " & c.str(idx.name)
   result = LLValue(name: t, typ: LToken(PtrToken))
 
 proc genSizeofLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
