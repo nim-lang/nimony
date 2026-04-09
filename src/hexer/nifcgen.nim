@@ -501,8 +501,9 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
     of PtrT, OutT:
       dest.add tagToken("ptr", n.info)
       inc n
-      c.loop dest, n:
-        trType c, dest, n, {IsPointerOf}
+      trType c, dest, n, {IsPointerOf}
+      skipNilAnnotation n
+      takeParRi dest, n
     of RefT:
       trAsNamedType c, dest, n
     of ArrayT, RoutineTypes:
@@ -532,6 +533,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
       dest.add tagToken("void", n.info)
       dest.addParRi()
       inc n
+      skipNilAnnotation n
       takeParRi dest, n
     of CstringT:
       dest.add tagToken("ptr", n.info)
@@ -539,6 +541,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
       dest.addIntLit(8, n.info)
       dest.addParRi()
       inc n
+      skipNilAnnotation n
       takeParRi dest, n
     of StaticT, SinkT, DistinctT:
       inc n
@@ -564,7 +567,9 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
           let isPtr = n.typeKind in {RefT, PtrT}
           if isPtr: inc n
           let (s, sinfo) = getSym(c, n)
-          if isPtr: skipParRi c, n
+          if isPtr:
+            skipNilAnnotation n
+            skipParRi c, n
           dest.add symToken(s, sinfo)
 
         if IsInheritable in flags:

@@ -1,6 +1,8 @@
 ## This module provides support for `memory mapped files`:idx:
 ## (Posix's `mmap`:idx:) on the different operating systems.
 
+{.feature: "lenientnils".}
+
 import assertions, syncio
 
 when defined(windows):

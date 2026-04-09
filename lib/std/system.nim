@@ -1,5 +1,7 @@
 ## System module for Nimony
 
+{.feature: "lenientnils".}
+
 include "system/basic_types"
 
 iterator unpack*(): untyped {.magic: Unpack.}

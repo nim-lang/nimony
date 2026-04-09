@@ -9,6 +9,8 @@
 
 # Low level system locks and condition vars.
 
+{.feature: "lenientnils".}
+
 # {.push stackTrace: off.}
 
 when defined(windows):

@@ -398,6 +398,16 @@ proc markedAs(t: Cursor; mark: NimonyOther): bool =
     # no base type
     if e.kind != ParRi and e.substructureKind == mark:
       result = true
+  of ProctypeT:
+    # for proctypes, the annotation is inside the pragmas section
+    var e = t.firstSon
+    for i in 0 ..< 6: skip e # skip name, export, pattern, generics, params, rettype
+    if e.substructureKind == PragmasU:
+      inc e
+      while e.kind != ParRi:
+        if e.substructureKind == mark:
+          return true
+        skip e
   else:
     discard
 

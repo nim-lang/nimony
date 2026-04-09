@@ -1,5 +1,7 @@
 # Thread module for Nimony
 
+{.feature: "lenientnils".}
+
 import std/oserrors
 
 const

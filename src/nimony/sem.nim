@@ -1637,6 +1637,8 @@ proc semPragmas(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       while n.kind != ParRi:
         if n.exprKind == ErrX:
           takeTree dest, n
+        elif n.substructureKind in {NotnilU, NilU, UncheckedU}:
+          takeTree dest, n # nil annotations, pass through
         else:
           if checkedPragmas.isChecked(n, kind):
             skip n
@@ -5797,7 +5799,34 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
         pragmaGuard c:
           semEmit c, dest, it
       of PragmasS:
-        pragmaGuard c:
+        if c.phase == SemcheckTopLevelSyms:
+          # Extract feature pragmas even in phase1 so that e.g. lenientnils
+          # is known before type declarations are processed:
+          var probe = it.n
+          inc probe # skip (pragmas
+          while probe.kind != ParRi:
+            if probe.substructureKind == KvU:
+              inc probe # skip (kv
+              if probe.pragmaKind == FeatureP:
+                inc probe # skip (feature
+                if probe.kind == StringLit:
+                  let feature = parseFeature(pool.strings[probe.litId])
+                  if feature != InvalidFeature:
+                    c.features.incl feature
+                break
+              else:
+                break
+            elif probe.pragmaKind == FeatureP:
+              inc probe # skip (feature
+              if probe.kind == StringLit:
+                let feature = parseFeature(pool.strings[probe.litId])
+                if feature != InvalidFeature:
+                  c.features.incl feature
+              break
+            else:
+              skip probe
+          dest.takeTree it.n
+        else:
           semPragmasLine c, dest, it
       of InclS, ExclS:
         toplevelGuard c:

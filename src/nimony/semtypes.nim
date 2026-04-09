@@ -551,6 +551,16 @@ proc isNotExpr(n: Cursor): bool =
     let name = takeIdent(n)
     result = name != StrId(0) and (pool.strings[name] == "not")
 
+proc stripNilAnnotation(dest: var TokenBuf; minPos: int) =
+  ## If the last two tokens in `dest` form a `(notnil)`, `(nil)`, or `(unchecked)` annotation pair,
+  ## remove them. This is needed because semLocalTypeImpl may add a default `(notnil)` annotation
+  ## that must be stripped before adding an explicit annotation.
+  let L = dest.len
+  if L >= minPos + 2 and dest[L-1].kind == ParRi and dest[L-2].kind == ParLe:
+    let t = dest[L-2].tag
+    if t == cast[TagId](NotnilU) or t == cast[TagId](NilU) or t == cast[TagId](UncheckedU):
+      dest.shrink L-2
+
 proc handleNotnilType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; context: TypeDeclContext): bool =
   result = false
   let info = nn.info
@@ -565,6 +575,7 @@ proc handleNotnilType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; con
       dest.endRead()
       # remove ParRi of the pointer
       dest.shrink dest.len-1
+      stripNilAnnotation dest, before
       dest.addParPair NotNilU, info
       dest.addParRi()
     elif containsGenericParams(nd):
@@ -618,6 +629,7 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
         dest.endRead()
         # remove ParRi of the pointer
         dest.shrink dest.len-1
+        stripNilAnnotation dest, before
         dest.addParPair NilX, info
         dest.addParRi()
       elif containsGenericParams(nd):
@@ -713,8 +725,15 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       else:
         semTypeExpr c, dest, n, context, info
     of IntT, FloatT, CharT, BoolT, UIntT, NiltT, AutoT,
-        SymKindT, UntypedT, TypedT, CstringT, PointerT, TypeKindT, OrdinalT:
+        SymKindT, UntypedT, TypedT, TypeKindT, OrdinalT:
       takeTree dest, n
+    of CstringT, PointerT:
+      takeToken dest, n # open tag
+      if n.kind != ParRi:
+        takeTree dest, n # existing notnil, nil, unchecked annotation
+      elif LenientNilsFeature notin c.features:
+        dest.addParPair NotnilU, info
+      takeParRi dest, n
     of VoidT:
       if context == InReturnTypeDecl:
         skip n
@@ -733,7 +752,9 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       else:
         semLocalTypeImpl c, dest, n, InLocalDecl
       if n.kind != ParRi:
-        takeTree dest, n # notnil, nil
+        takeTree dest, n # notnil, nil, unchecked
+      elif LenientNilsFeature notin c.features:
+        dest.addParPair NotnilU, info
       takeParRi dest, n
     of MutT, OutT, LentT, SinkT, NotT, UarrayT,
        StaticT, TypedescT:
@@ -823,6 +844,7 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     of RoutineTypes:
       if tryTypeClass(c, dest, n):
         return
+      let tk = typeKind(n)
       takeToken dest, n
       wantDot c, dest, n # name
       wantDot c, dest, n # export marker
@@ -834,6 +856,18 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       semLocalTypeImpl c, dest, n, InReturnTypeDecl
       var crucial = default CrucialPragma
       semPragmas c, dest, n, crucial, ProcY
+      if tk == ProctypeT and LenientNilsFeature notin c.features:
+        if dest[dest.len-1].kind == DotToken:
+          # replace dot with (pragmas (notnil))
+          dest.shrink dest.len-1
+          dest.addParLe PragmasU, info
+          dest.addParPair NotnilU, info
+          dest.addParRi()
+        elif dest[dest.len-1].kind == ParRi:
+          # insert (notnil) before closing ParRi of pragmas
+          dest.shrink dest.len-1
+          dest.addParPair NotnilU, info
+          dest.addParRi()
       wantDot c, dest, n # exceptions
       # make it robust against Nifler's output
       if n.kind == ParRi:

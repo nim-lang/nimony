@@ -1078,14 +1078,14 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
       if a.typeKind == NiltT:
         discard "ok"
         inc f
-        expectParRi m, f
+        expectPtrParRi m, f
       elif isStringType(a) and skipExpr(arg.n).kind == StringLit:
         m.args.addParLe HconvX, m.argInfo
         m.args.addSubtree f
         inc m.opened
         inc m.convCosts
         inc f
-        expectParRi m, f
+        expectPtrParRi m, f
       elif a.typeKind == CstringT:
         inc f
         inc a
@@ -1099,7 +1099,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
       of NiltT:
         discard "ok"
         inc f
-        expectParRi m, f
+        expectPtrParRi m, f
       of PtrT, CstringT, RoutineTypes:
         m.args.addParLe HconvX, m.argInfo
         m.args.addSubtree f

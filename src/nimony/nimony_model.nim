@@ -326,3 +326,12 @@ proc whichEffect*(k: StmtKind; pragmas: Cursor): Effect =
     result = HasNoSideEffect
   else:
     result = HasSideEffect
+
+proc isNilAnnotation*(n: Cursor): bool {.inline.} =
+  ## Returns true if `n` is a `(notnil)`, `(nil)`, or `(unchecked)` annotation.
+  n.kind == ParLe and n.substructureKind in {NotnilU, NilU, UncheckedU}
+
+proc skipNilAnnotation*(n: var Cursor) {.inline.} =
+  ## Skip a trailing nil annotation `(notnil)`, `(nil)`, or `(unchecked)` if present.
+  if n.kind == ParLe and n.substructureKind in {NotnilU, NilU, UncheckedU}:
+    skip n
