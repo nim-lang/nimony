@@ -990,6 +990,4 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor; declaredType: Cursor): Type
         skip n
       skipParRi n
     else:
-      let typ = genTypeLLVMReadOnly(c, declaredType)
-      result = TypedConst(typ: typ, val: "zeroinitializer")
-      skip n
+      error c.m, "unhandled expression in global constant: ", n
