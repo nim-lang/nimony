@@ -277,6 +277,74 @@ const
     "__atomic_thread_fence", "__atomic_signal_fence"
   ]
   MemIntrinsics = ["memcpy", "memmove", "memset", "memcmp"]
+  GccBuiltins = [
+    "__builtin_ctzll", "__builtin_ctz",
+    "__builtin_clzll", "__builtin_clz",
+    "__builtin_popcountll", "__builtin_popcount",
+    "__builtin_bswap16", "__builtin_bswap32", "__builtin_bswap64",
+    "__builtin_expect"
+  ]
+
+proc genGccBuiltinCall(c: var LLVMCode; externName: string; args: seq[LLValue]; retType: string; result: var LLValue) =
+  ## Translate GCC __builtin_* functions to LLVM intrinsics.
+  case externName
+  of "__builtin_ctzll":
+    # count trailing zeros i64 → llvm.cttz.i64(val, is_zero_poison=false)
+    let t = c.temp()
+    c.emitLine "  " & c.str(t) & " = call i64 @llvm.cttz.i64(i64 " & c.str(args[0].name) & ", i1 false)"
+    if retType == "i32":
+      let r = c.temp()
+      c.emitLine "  " & c.str(r) & " = trunc i64 " & c.str(t) & " to i32"
+      result = LLValue(name: r, typ: c.tok("i32"))
+    else:
+      result = LLValue(name: t, typ: c.tok("i64"))
+  of "__builtin_ctz":
+    let t = c.temp()
+    c.emitLine "  " & c.str(t) & " = call i32 @llvm.cttz.i32(i32 " & c.str(args[0].name) & ", i1 false)"
+    result = LLValue(name: t, typ: c.tok("i32"))
+  of "__builtin_clzll":
+    let t = c.temp()
+    c.emitLine "  " & c.str(t) & " = call i64 @llvm.ctlz.i64(i64 " & c.str(args[0].name) & ", i1 false)"
+    if retType == "i32":
+      let r = c.temp()
+      c.emitLine "  " & c.str(r) & " = trunc i64 " & c.str(t) & " to i32"
+      result = LLValue(name: r, typ: c.tok("i32"))
+    else:
+      result = LLValue(name: t, typ: c.tok("i64"))
+  of "__builtin_clz":
+    let t = c.temp()
+    c.emitLine "  " & c.str(t) & " = call i32 @llvm.ctlz.i32(i32 " & c.str(args[0].name) & ", i1 false)"
+    result = LLValue(name: t, typ: c.tok("i32"))
+  of "__builtin_popcountll":
+    let t = c.temp()
+    c.emitLine "  " & c.str(t) & " = call i64 @llvm.ctpop.i64(i64 " & c.str(args[0].name) & ")"
+    if retType == "i32":
+      let r = c.temp()
+      c.emitLine "  " & c.str(r) & " = trunc i64 " & c.str(t) & " to i32"
+      result = LLValue(name: r, typ: c.tok("i32"))
+    else:
+      result = LLValue(name: t, typ: c.tok("i64"))
+  of "__builtin_popcount":
+    let t = c.temp()
+    c.emitLine "  " & c.str(t) & " = call i32 @llvm.ctpop.i32(i32 " & c.str(args[0].name) & ")"
+    result = LLValue(name: t, typ: c.tok("i32"))
+  of "__builtin_bswap16":
+    let t = c.temp()
+    c.emitLine "  " & c.str(t) & " = call i16 @llvm.bswap.i16(i16 " & c.str(args[0].name) & ")"
+    result = LLValue(name: t, typ: c.tok("i16"))
+  of "__builtin_bswap32":
+    let t = c.temp()
+    c.emitLine "  " & c.str(t) & " = call i32 @llvm.bswap.i32(i32 " & c.str(args[0].name) & ")"
+    result = LLValue(name: t, typ: c.tok("i32"))
+  of "__builtin_bswap64":
+    let t = c.temp()
+    c.emitLine "  " & c.str(t) & " = call i64 @llvm.bswap.i64(i64 " & c.str(args[0].name) & ")"
+    result = LLValue(name: t, typ: c.tok("i64"))
+  of "__builtin_expect":
+    # __builtin_expect(val, expected) — just return val, it's a branch hint
+    result = args[0]
+  else:
+    discard
 
 proc genCallWithType(c: var LLVMCode; n: var Cursor; retType: string; result: var LLValue) =
   ## Generate a call where we know the return type from context.
@@ -310,6 +378,9 @@ proc genCallWithType(c: var LLVMCode; n: var Cursor; retType: string; result: va
       return
     if calleeExtern in MemIntrinsics:
       genMemIntrinsicCall(c, calleeExtern, args, retType, result)
+      return
+    if calleeExtern in GccBuiltins:
+      genGccBuiltinCall(c, calleeExtern, args, retType, result)
       return
 
   let argStr = args.mapIt(c.str(it.typ) & " " & c.str(it.name)).join(", ")
