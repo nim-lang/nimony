@@ -28,7 +28,8 @@ const
 Usage:
   nimony [options] [command]
 Command:
-  c project.nim               compile the full project
+  c project.nim               compile the full project via C backend
+  l project.nim               compile the full project via LLVM backend
   check project.nim           check the full project for errors; can be
                               combined with `--usages`, `--def` for
                               editor integration
@@ -80,11 +81,14 @@ type
   Command = enum
     None, SingleModule, FullProject, CheckProject, SemCheckNif
 
-proc dispatchBasicCommand(key: string): Command =
+proc dispatchBasicCommand(key: string; config: var NifConfig): Command =
   case key.normalize:
   of "m":
     SingleModule
   of "c":
+    FullProject
+  of "l":
+    config.backend = backendLLVM
     FullProject
   of "check":
     CheckProject
@@ -141,7 +145,7 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
     case kind
     of cmdArgument:
       if c.cmd == None:
-        c.cmd = dispatchBasicCommand(key)
+        c.cmd = dispatchBasicCommand(key, c.config)
       else:
         if c.forwardArgsToExecutable:
           c.executableArgs.add " " & quoteShell(key)
@@ -219,7 +223,10 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
     of cmdEnd: assert false, "cannot happen"
 
 proc compileProgram(c: var CmdOptions) =
-  if c.config.linker.len == 0 and c.config.cc.len > 0:
+  if c.config.backend == backendLLVM:
+    if c.config.linker.len == 0:
+      c.config.linker = "clang"
+  elif c.config.linker.len == 0 and c.config.cc.len > 0:
     c.config.linker = c.config.cc
   if c.args.len == 0:
     quit "too few command line arguments"
