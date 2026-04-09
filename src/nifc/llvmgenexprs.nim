@@ -20,6 +20,21 @@ proc zeroVal(typ: LToken): string {.inline.} =
 
 proc isFloatType(t: LToken): bool {.inline.} =
   t == LToken(FloatToken) or t == LToken(DoubleToken) or t == LToken(Fp128Token)
+
+proc scalarTypeKind(c: var LLVMCode; typ: Cursor): NifcType =
+  var t = navigateToObjectBody(c.m, typ)
+  if t.typeKind == EnumT:
+    inc t
+    t = navigateToObjectBody(c.m, t)
+  result = t.typeKind
+
+proc pointeeType(c: var LLVMCode; typ: Cursor): Cursor =
+  let t = navigateToObjectBody(c.m, typ)
+  if t.typeKind in {PtrT, APtrT, FlexarrayT}:
+    result = t.firstSon
+  else:
+    result = default(Cursor)
+
 proc genCallExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue)
 
 proc signedBinOp(c: var LLVMCode; n: var Cursor; op: string; result: var LLValue) =
@@ -49,6 +64,9 @@ proc unsignedBinOp(c: var LLVMCode; n: var Cursor; signedOp, unsignedOp: string;
 proc cmpOp(c: var LLVMCode; n: var Cursor; signedPred, unsignedPred: string; result: var LLValue) =
   ## Comparison op: (op lhs rhs) → i1
   inc n
+  let lhsExpr = n
+  let lhsType = getType(c.m, lhsExpr)
+  let lhsTK = scalarTypeKind(c, lhsType)
   var lhs = LLValue(); genExprLLVM(c, n, lhs)
   var rhs = LLValue(); genExprLLVM(c, n, rhs)
   let t = c.temp()
@@ -63,7 +81,7 @@ proc cmpOp(c: var LLVMCode; n: var Cursor; signedPred, unsignedPred: string; res
       else: signedPred
     c.emitLine "  " & c.str(t) & " = fcmp " & fpPred & " " & typ & " " & c.str(lhs.name) & ", " & c.str(rhs.name)
   else:
-    let pred = if unsignedPred != "" and typ.startsWith("u"):
+    let pred = if unsignedPred != "" and lhsTK in {UT, CT, BoolT}:
                  unsignedPred
                else:
                  signedPred
@@ -321,28 +339,22 @@ proc isNifcFloat(tk: NifcType): bool {.inline.} =
 proc isNifcPtr(tk: NifcType): bool {.inline.} =
   tk in {PtrT, APtrT, ProctypeT}
 
-proc genConvOrCast(c: var LLVMCode; n: var Cursor; result: var LLValue) =
-  ## Handle (conv type expr) and (cast type expr)
-  let isCast = n.exprKind == CastC
-  inc n
-  let destTypeCursor = n
-  let destTK = navigateToObjectBody(c.m, destTypeCursor).typeKind
-  let destType = genTypeLLVM(c, n)
+proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCursor: Cursor;
+                     isCast: bool; result: var LLValue) =
+  let destType = genTypeLLVMReadOnly(c, destTypeCursor)
   let destTok = c.tok(destType)
-  let srcTypeCursor = getType(c.m, n)
-  let srcTK = srcTypeCursor.typeKind
-  var val = LLValue(); genExprLLVM(c, n, val)
-  skipParRi n
-
   if val.typ == destTok:
     result = val
     return
 
+  let srcTK = scalarTypeKind(c, srcTypeCursor)
+  let destTK = scalarTypeKind(c, destTypeCursor)
   let t = c.temp()
   let srcStr = c.str(val.typ)
 
   if isNifcPtr(srcTK) and isNifcPtr(destTK):
-    result = val
+    # Opaque pointers collapse all pointee types to `ptr`.
+    result = LLValue(name: val.name, typ: destTok)
     return
   elif isNifcPtr(destTK) and isNifcInt(srcTK):
     c.emitLine "  " & c.str(t) & " = inttoptr " & srcStr & " " & c.str(val.name) & " to ptr"
@@ -370,13 +382,23 @@ proc genConvOrCast(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     elif srcBits > destBits:
       c.emitLine "  " & c.str(t) & " = trunc " & srcStr & " " & c.str(val.name) & " to " & destType
     else:
-      result = val
+      result = LLValue(name: val.name, typ: destTok)
       return
   else:
-    # Aggregate/struct cast — bitcast
     c.emitLine "  " & c.str(t) & " = bitcast " & srcStr & " " & c.str(val.name) & " to " & destType
 
   result = LLValue(name: t, typ: destTok)
+
+proc genConvOrCast(c: var LLVMCode; n: var Cursor; result: var LLValue) =
+  ## Handle (conv type expr) and (cast type expr)
+  let isCast = n.exprKind == CastC
+  inc n
+  let destTypeCursor = n
+  skip n # destination type
+  let srcTypeCursor = getType(c.m, n)
+  var val = LLValue(); genExprLLVM(c, n, val)
+  skipParRi n
+  coerceValueLLVM(c, val, srcTypeCursor, destTypeCursor, isCast, result)
 
 proc genAddrLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   inc n
@@ -459,10 +481,10 @@ proc genPatLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   skipParRi n
 
   # Determine the element type for GEP stride
-  var elemType = "i8" # fallback: byte-level
-  if baseType.typeKind in {PtrT, APtrT}:
-    let pointee = baseType.firstSon
-    elemType = genTypeLLVMReadOnly(c, pointee)
+  let elemCursor = pointeeType(c, baseType)
+  if cursorIsNil(elemCursor):
+    error c.m, "expected pointer type for `pat` but got: ", baseType
+  let elemType = genTypeLLVMReadOnly(c, elemCursor)
 
   let t = c.temp()
   c.emitLine "  " & c.str(t) & " = getelementptr " & elemType & ", ptr " & c.str(base.name) & ", " & c.str(idx.typ) & " " & c.str(idx.name)
@@ -582,6 +604,7 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       let name = mangleSym(c, s)
       # Look up the type from the scope before advancing
       let symType = getType(c.m, n)
+      let decl = c.m.getDeclOrNil(s)
       inc n
       # Check if this is an enum field — resolve to its integer constant
       if symType.typeKind == EnumT:
@@ -610,6 +633,10 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
           else:
             skip enumBody
         result = LLValue(name: c.tok("0"), typ: c.tok(baseTyp))
+        return
+      if decl != nil and decl.kind == ProcY:
+        let typ = genTypeLLVMReadOnly(c, symType)
+        result = LLValue(name: c.tok("@" & name), typ: c.tok(typ))
         return
       let typ = genTypeLLVMReadOnly(c, symType)
       let prefix = if isGlobalSym(c, s): "@" else: "%"
@@ -908,7 +935,9 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   of AconstrC:
     # Array constructor
     inc n
+    let arrayTypeCursor = n
     let typ = genTypeLLVM(c, n)
+    let expectedLen = fixedArrayLen(c, arrayTypeCursor)
 
     var current = "undef"
     var idx = 0
@@ -919,23 +948,15 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       current = c.str(t)
       inc idx
     skipParRi n
+    if expectedLen >= 0 and idx != expectedLen:
+      error c.m, "array literal element count does not match its declared length: ", arrayTypeCursor
     result = LLValue(name: c.tok(current), typ: c.tok(typ))
   of BaseobjC:
-    # Base object access: (baseobj TargetType depth expr)
-    inc n
-    let targetType = genTypeLLVM(c, n)
-    var counter = pool.integers[n.intId]
-    skip n
-    var obj = LLValue(); genExprLLVM(c, n, obj)
-    skipParRi n
-    # Navigate through inheritance chain via GEP field 0 (base field)
-    var current = c.str(obj.name)
-    var curTyp = c.str(obj.typ)
-    for i in 0 ..< counter:
-      let t = c.temp()
-      c.emitLine "  " & c.str(t) & " = getelementptr inbounds " & curTyp & ", ptr " & current & ", i32 0, i32 0"
-      current = c.str(t)
-    result = LLValue(name: c.tok(current), typ: c.tok(targetType))
+    let loadType = genTypeLLVMReadOnly(c, getType(c.m, n))
+    var lval = LLValue(); genLvalueLLVM(c, n, lval)
+    let t = c.temp()
+    c.emitLine "  " & c.str(t) & " = load " & loadType & ", ptr " & c.str(lval.name)
+    result = LLValue(name: t, typ: c.tok(loadType))
   of ErrvC, OvfC:
     var lval = LLValue(); genLvalueLLVM(c, n, lval)
     let t = c.temp()

@@ -521,15 +521,12 @@ proc genStmtLLVM(c: var LLVMCode; n: var Cursor) =
     let retInfo = n.info
     inc n
     if n.kind != DotToken:
+      let valueExpr = n
+      let valueType = getType(c.m, valueExpr)
       var val = LLValue(); genExprLLVM(c, n, val)
-      let retTK = c.currentProc.retTypeCursor.typeKind
-      if retTK in {IT, UT, CT, BoolT} and val.typ != c.currentProc.retType:
-        # Truncate integer to match return type (e.g. i64 literal to i32 return)
-        let trunced = c.temp()
-        c.emitLine "  " & c.str(trunced) & " = trunc " & c.str(val.typ) & " " & c.str(val.name) & " to " & c.str(c.currentProc.retType)
-        c.emitLineDbg "  ret " & c.str(c.currentProc.retType) & " " & c.str(trunced), retInfo
-      else:
-        c.emitLineDbg "  ret " & c.str(val.typ) & " " & c.str(val.name), retInfo
+      var coerced = LLValue()
+      coerceValueLLVM(c, val, valueType, c.currentProc.retTypeCursor, false, coerced)
+      c.emitLineDbg "  ret " & c.str(coerced.typ) & " " & c.str(coerced.name), retInfo
     else:
       inc n
       c.emitLineDbg "  ret void", retInfo

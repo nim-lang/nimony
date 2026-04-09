@@ -145,6 +145,18 @@ proc genTypeLLVMReadOnly(c: var LLVMCode; n: Cursor): string =
   var nn = n
   result = genTypeLLVM(c, nn)
 
+proc fixedArrayLen(c: var LLVMCode; n: Cursor): int =
+  ## Return the declared element count for a fixed-size array, or -1 otherwise.
+  result = -1
+  var t = navigateToObjectBody(c.m, n)
+  if t.typeKind == ArrayT:
+    inc t
+    skip t
+    if t.kind == IntLit:
+      result = int(pool.integers[t.intId])
+    elif t.kind == UIntLit:
+      result = int(pool.uintegers[t.uintId])
+
 proc typeSizeBits(c: var LLVMCode; n: Cursor): int =
   ## Estimate the size of a type in bits for union layout computation.
   case n.typeKind
@@ -928,6 +940,7 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor; declaredType: Cursor): Type
           result = TypedConst(typ: declTyp, val: "{ " & valStr & " }")
     of AconstrC:
       inc n
+      let arrayTypeCursor = declaredType
       var elemTypeCursor = declaredType
       var elemType = ""
       # Get element type from the declared array/flexarray type
@@ -985,9 +998,7 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor; declaredType: Cursor): Type
         result = TypedConst(typ: "ptr", val: "@" & name)
         inc n
       else:
-        let typ = genTypeLLVMReadOnly(c, declaredType)
-        result = TypedConst(typ: typ, val: "zeroinitializer")
-        skip n
+        error c.m, "unsupported address constant; only plain symbols are currently handled: ", n
       skipParRi n
     else:
       error c.m, "unhandled expression in global constant: ", n
