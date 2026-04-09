@@ -895,14 +895,12 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
         let fldPtr = c.temp()
         c.emitLine "  " & c.str(fldPtr) & " = getelementptr inbounds " & gepType & ", ptr " & gepTarget & ", i32 0, i32 " & $fldIdx
         c.emitLine "  store " & c.str(fieldVal.typ) & " " & c.str(fieldVal.name) & ", ptr " & c.str(fldPtr)
-      elif n.exprKind == OconstrC:
-        # Nested object constructor (inheritance) — store at field 0
-        var nested = LLValue(); genExprLLVM(c, n, nested)
+      else:
+        # Non-KV child: base object constructor or vtable pointer — store at field 0
+        var baseVal = LLValue(); genExprLLVM(c, n, baseVal)
         let basePtr = c.temp()
         c.emitLine "  " & c.str(basePtr) & " = getelementptr inbounds " & typ & ", ptr " & c.str(tmp) & ", i32 0, i32 0"
-        c.emitLine "  store " & c.str(nested.typ) & " " & c.str(nested.name) & ", ptr " & c.str(basePtr)
-      else:
-        skip n
+        c.emitLine "  store " & c.str(baseVal.typ) & " " & c.str(baseVal.name) & ", ptr " & c.str(basePtr)
     skipParRi n
     let loaded = c.temp()
     c.emitLine "  " & c.str(loaded) & " = load " & typ & ", ptr " & c.str(tmp)

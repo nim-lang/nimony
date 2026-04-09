@@ -827,6 +827,13 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor; declaredType: Cursor): Type
           escaped.add ch
       escaped.add '"'
       result = TypedConst(typ: "[" & $s.len & " x i8]", val: escaped)
+  of Symbol:
+    # Global symbol reference (e.g. proc address in vtable)
+    let name = mangleSym(c, n.symId)
+    c.requestedSyms.incl n.symId
+    let typ = genTypeLLVMReadOnly(c, declaredType)
+    result = TypedConst(typ: typ, val: "@" & name)
+    inc n
   of DotToken:
     let typ = genTypeLLVMReadOnly(c, declaredType)
     result = TypedConst(typ: typ, val: "zeroinitializer")
