@@ -1232,7 +1232,10 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
               inc nextLabel
             # set yield to the last statement of branch
             c.currentProc.yieldConts[nodeStart(c.currentProc.cf, elsePos-2)] = state
-            c.currentProc.yieldConts[nodeStart(c.currentProc.cf, endPos-3)] = state
+            var lastElseStmtPos = endPos-2
+            if c.currentProc.cf[elsePos].kind == ParLe:
+              lastElseStmtPos = endPos-3
+            c.currentProc.yieldConts[nodeStart(c.currentProc.cf, lastElseStmtPos)] = state
         dec depth
         if depth == 0: break gather
         inc scan
