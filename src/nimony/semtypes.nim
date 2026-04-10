@@ -593,6 +593,9 @@ proc handleNotnilType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; con
   else:
     dest.shrink before
 
+proc isPointerTypeClass(n: Cursor): bool {.inline.} =
+  result = n.typeKind == TypeKindT and n.firstSon.typeKind in {RefT, PtrT, PointerT, CstringT}
+
 proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; context: TypeDeclContext): bool =
   result = false
   if nn.exprKind == InfixX:
@@ -637,6 +640,10 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
         dest.endRead()
         dest.shrink before
         dest.addSubtree nn
+      elif nd.isPointerTypeClass:
+        dest.endRead()
+        dest.shrink before
+        dest.addSubtree nd
       else:
         dest.endRead()
         dest.shrink before

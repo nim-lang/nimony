@@ -18,9 +18,9 @@ template default*(x: typedesc[float64]): float64 = 0.0'f64
 template default*(x: typedesc[string]): string = ""
 template default*[T: enum](x: typedesc[T]): T = low(T)
 
-template default*[T: ptr](x: typedesc[T]): T = T(nil)
-template default*[T: ref](x: typedesc[T]): T = T(nil)
-template default*(x: typedesc[pointer]): pointer = nil
+template default*[T: nil (ptr)](x: typedesc[T]): T = T(nil)
+template default*[T: nil (ref)](x: typedesc[T]): T = T(nil)
+template default*(x: typedesc[nil pointer]): nil pointer = nil
 
 func default*[T: distinct](x: typedesc[T]): T {.magic: DefaultDistinct.}
 func default*[T: object](x: typedesc[T]): T {.magic: DefaultObj.}

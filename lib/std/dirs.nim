@@ -25,6 +25,7 @@ else:
   import "../../vendor/errorcodes/src" / errorcodes_posix
 
   var errno {.importc: "errno", header: "<errno.h>".}: cint
+{.feature: "lenientnils".}
 
 proc tryCreateFinalDir*(dir: Path): ErrorCode =
   ## Tries to create the final directory in a path.

@@ -604,9 +604,25 @@ proc addAsgnFact(c: var Context; fact: LeXplusC) =
     c.facts.add fact
     c.facts.add fact.geXplusC
 
+proc isNonNilExpr(n: Cursor): bool =
+  ## Check if an expression is trivially non-nil.
+  case n.exprKind
+  of AddrX:
+    result = true
+  of ConvKinds:
+    var inner = n
+    inc inner
+    skip inner # skip type part
+    result = isNonNilExpr(inner)
+  else:
+    if n.kind == StringLit:
+      result = true
+    else:
+      result = false
+
 proc cannotBeNil(c: var Context; n: Cursor): bool {.inline.} =
   let t = getType(c.typeCache, n)
-  result = markedAs(t, NotnilU)
+  result = markedAs(t, NotnilU) or isNonNilExpr(n)
 
 proc analyseAsgn(c: var Context; pc: var Cursor) =
   inc pc # skip asgn instruction

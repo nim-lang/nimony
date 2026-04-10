@@ -457,11 +457,13 @@ proc isNonNilExpr(c: var NjvlContext; n: Cursor): bool =
   else:
     if n.kind == StringLit:
       result = true
-    elif n.kind == Symbol:
-      let sk = fetchSymKind(c.typeCache, n.symId)
-      result = isRoutine(sk)
     else:
-      result = false
+      let s = extractSymId(n)
+      if s != NoSymId:
+        let sk = fetchSymKind(c.typeCache, s)
+        result = isRoutine(sk)
+      else:
+        result = false
 
 proc wantNotNil(c: var NjvlContext; n: Cursor) =
   case n.exprKind
@@ -475,6 +477,8 @@ proc wantNotNil(c: var NjvlContext; n: Cursor) =
       discard "fine, per type we know it is not nil"
     elif isNonNilExpr(c, n):
       discard "fine, expression is trivially not nil"
+    elif t.typeKind in RoutineTypes and not markedAs(t, NilU):
+      discard "fine, proc values are not nil unless explicitly marked nil"
     else:
       let r = analysableRoot(c, n)
       if r == NoSymId:
@@ -876,7 +880,7 @@ proc addAsgnFact(c: var NjvlContext; fact: LeXplusC) =
 
 proc cannotBeNil(c: var NjvlContext; n: Cursor): bool {.inline.} =
   let t = getType(c.typeCache, n)
-  result = markedAs(t, NotnilU)
+  result = markedAs(t, NotnilU) or isNonNilExpr(c, n)
 
 # --- NJVL-specific traversal ---
 
@@ -923,6 +927,11 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
     # Check if the rhs is known to be not nil
     if (valueStart.exprKind == NewobjX and c.procCanRaise) or cannotBeNil(c, valueStart):
       c.facts.add isNotNil(fact.a)
+    else:
+      # Also check: the destination type might have notnil (e.g. proctype)
+      if markedAs(expected, NotnilU):
+        # The nil-match check already passed, so the value IS non-nil
+        c.facts.add isNotNil(fact.a)
 
     skip n
   else:
@@ -1086,6 +1095,7 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
   let isInline = hasPragma(n, InlineP)
   skip n # pragmas
   c.typeCache.registerLocal(name, kind, n)
+  let localType = n
   skip n # type
   if n.kind != DotToken or skipInitCheck:
     c.directlyInitialized[^1].incl name
@@ -1106,6 +1116,8 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
     elif path.mode == NotBorrowable:
       buildErr c, n.info, "cannot borrow from '" & asNimCode(inner) &
         "': path is not borrowable; use 'addr' to override or a temporary move"
+  if n.kind != DotToken:
+    checkNilMatch c, n, localType
   traverseExpr c, n
   skipParRi n
 

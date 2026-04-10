@@ -122,9 +122,9 @@ when defined(posix):
       d_type* {.importc: "d_type".}: uint8
       d_name* {.importc: "d_name".}: array[256, char]
 
-  proc opendir*(name: cstring): ptr DIR {.importc, header: "<dirent.h>", sideEffect.}
-  proc closedir*(dirp: ptr DIR): cint {.importc, header: "<dirent.h>", sideEffect.}
-  proc readdir*(dirp: ptr DIR): ptr Dirent {.importc, header: "<dirent.h>", sideEffect.}
+  proc opendir*(name: cstring): nil ptr DIR {.importc, header: "<dirent.h>", sideEffect.}
+  proc closedir*(dirp: nil ptr DIR): cint {.importc, header: "<dirent.h>", sideEffect.}
+  proc readdir*(dirp: nil ptr DIR): nil ptr Dirent {.importc, header: "<dirent.h>", sideEffect.}
 
   proc mkdir*(path: cstring, mode: Mode): cint {.importc, header: "<sys/stat.h>", sideEffect.}
   proc rmdir*(path: cstring): cint {.importc, header: "<unistd.h>", sideEffect.}
