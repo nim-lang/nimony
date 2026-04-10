@@ -40,11 +40,14 @@ proc pragmaKind*(c: Cursor): NimonyPragma {.inline.} =
   else:
     result = NoPragma
 
-proc substructureKind*(c: Cursor): NimonyOther {.inline.} =
+proc substructureKind*(c: PackedToken): NimonyOther {.inline.} =
   if c.kind == ParLe and rawTagIsNimonyOther(tagEnum(c)):
     result = cast[NimonyOther](tag(c))
   else:
     result = NoSub
+
+proc substructureKind*(c: Cursor): NimonyOther {.inline.} =
+  result = substructureKind(c.load())
 
 proc typeKind*(c: Cursor): NimonyType {.inline.} =
   if c.kind == ParLe:

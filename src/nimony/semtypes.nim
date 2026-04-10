@@ -628,13 +628,31 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
       let before = dest.len
       semLocalTypeImpl c, dest, n, context
       let nd = cursorAt(dest, before)
-      if nd.typeKind in {RefT, PtrT, PointerT, CstringT, ProctypeT}:
+      if nd.typeKind in {RefT, PtrT, PointerT, CstringT}:
         dest.endRead()
         # remove ParRi of the pointer
         dest.shrink dest.len-1
         stripNilAnnotation dest, before
         dest.addParPair NilX, info
         dest.addParRi()
+      elif nd.typeKind == ProctypeT:
+        dest.endRead()
+        # For proctypes, replace (notnil) with (nil) inside the pragmas section.
+        # Find the (notnil) that was added by default and replace it:
+        let L = dest.len
+        # The proctype ends with: ... (pragmas (notnil)) effects body ParRi
+        # Walk backwards to find (notnil) inside pragmas
+        var found = false
+        for i in countdown(L-1, before):
+          if dest[i].kind == ParLe and dest[i].substructureKind == NotnilU:
+            dest[i] = parLeToken(NilU, info)
+            found = true
+            break
+        if not found:
+          # No notnil found (lenient mode) — add nil as direct child before closing ParRi
+          dest.shrink dest.len-1
+          dest.addParPair NilX, info
+          dest.addParRi()
       elif containsGenericParams(nd):
         # keep as is, will be checked later after generic instantiation:
         dest.endRead()

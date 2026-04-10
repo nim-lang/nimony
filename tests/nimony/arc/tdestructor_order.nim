@@ -1,5 +1,5 @@
 import std/syncio
-
+{.feature: "lenientnils".}
 type
   Aaaa {.inheritable.} = object
     vvvv: int
