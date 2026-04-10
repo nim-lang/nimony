@@ -109,7 +109,7 @@ proc skipSymbol(r: var Cursor): SymId {.inline.} =
   ## Consume a bare Symbol or (v sym version) node and return its SymId.
   ## Returns NoSymId (without advancing) if r is neither.
   var n = r
-  while n.exprKind in {HconvX, ConvX}:
+  while n.exprKind in {HconvX, ConvX, BaseobjX}:
     inc n
     skip n # type
   result = extractSymId(n)
