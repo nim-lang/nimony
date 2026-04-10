@@ -2022,6 +2022,8 @@ proc renderTree(n: Cursor, renderFlags: RenderFlags = {}, renderType = false): s
   else:
     gsub(g, n, isTopLevel = true)
   result = g.buf
+  if result.len == 0:
+    result = toString(n, false)
 
 proc asNimCode*(n: Cursor; renderFlags: RenderFlags = {}): string =
   var m0: PackedLineInfo = NoLineInfo

@@ -77,12 +77,12 @@ block:
   assert objs[1].y == 0
 
 block:
-  var p = default(pointer)
+  var p = default(nil pointer)
   assert p == nil
 
   type
     Foo = object
-      p: pointer
+      p: nil pointer
 
   var foo = default(Foo)
   assert foo.p == nil
@@ -99,3 +99,13 @@ block:
     assert des.int == 0
 
   foo()
+
+block:
+  type
+    R = nil ref int
+  var p2 = default(R)
+  assert p2 == nil
+  type
+    P = nil ptr int
+  var p3 = default(P)
+  assert p3 == nil

@@ -691,7 +691,12 @@ proc analyseTupConstr(c: var NjvlContext; n: var Cursor) =
   skip n # type
   while n.kind != ParRi:
     assert expected.kind != ParRi
-    checkNilMatch c, n, getTupleFieldType(expected)
+    let fieldType = getTupleFieldType(expected)
+    var val = n
+    if val.substructureKind == KvU:
+      inc val # skip kv tag
+      skip val # skip field name
+    checkNilMatch c, val, fieldType
     skip n
     skip expected # type of the next field
   skipParRi n
@@ -1116,7 +1121,7 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
     elif path.mode == NotBorrowable:
       buildErr c, n.info, "cannot borrow from '" & asNimCode(inner) &
         "': path is not borrowable; use 'addr' to override or a temporary move"
-  if n.kind != DotToken:
+  if n.kind != DotToken and localType.typeKind in {PtrT, RefT, CstringT, PointerT, ProctypeT}:
     checkNilMatch c, n, localType
   traverseExpr c, n
   skipParRi n
