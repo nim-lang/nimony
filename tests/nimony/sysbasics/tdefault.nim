@@ -77,7 +77,9 @@ block:
   assert objs[1].y == 0
 
 block:
-  var p = default(nil pointer)
+  type
+    NilPointer = nil pointer
+  var p = default(NilPointer)
   assert p == nil
 
   type
