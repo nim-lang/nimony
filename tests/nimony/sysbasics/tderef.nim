@@ -1,6 +1,6 @@
 func main =
-  var x: ptr int = nil
-  if false:
+  var x: (nil ptr int) = nil
+  if x != nil:
     discard x[]
     x[] = 123
 
