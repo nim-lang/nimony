@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +3515            )
+(.indexat +3544            )
 0,1,tests/nimony/types/tscopedtype.nim(stmts
  (import sysvq0asl syn1lfpjv) ,2
  (block . 2,1
@@ -20,10 +20,12 @@
      (fld :id.0 . . 4
       (i +64) .))) 4,4
    (var :s.0 . . 4,~3
-    (ref 4 Foo.Obj.0.) 7
+    (ref 4 Foo.Obj.0.
+     (notnil)) 7
     (newobj ~3,~3
-     (ref 4 Foo.Obj.0.) 3
-     (kv ~2 id.0 2 +12))) 2,122,lib/std/syncio.nim
+     (ref 4 Foo.Obj.0.
+      (notnil)) 3
+     (kv ~2 id.0 2 +12))) 2,123,lib/std/syncio.nim
    (stmts 2,1
     (stmts
      (cmd write.2.syn1lfpjv 6 stdout.0.syn1lfpjv 8,9,tests/nimony/types/tscopedtype.nim
@@ -149,7 +151,7 @@
          (call deallocFixed.0.sysvq0asl dest.0))))))))))0,1,tests/nimony/types/tscopedtype.nim(.index 8,4
  (h Foo.0. +142) 8,4
  (h Foo.Obj.0. +318) 8,4
- (h =destroy_SX46oo0tsca4az8i1.0. +588) 8,4
+ (h =destroy_SX46oo0tsca4az8i1.0. +617) 8,4
  (h =wasmoved_SX46oo0tsca4az8i1.0. +361) 8,4
  (h =dup_SX46oo0tsca4az8i1.0. +183) 8,4
  (h =copy_SX46oo0tsca4az8i1.0. +360) 8,4

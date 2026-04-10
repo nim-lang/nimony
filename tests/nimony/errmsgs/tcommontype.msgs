@@ -1,1 +1,1 @@
-tests/nimony/errmsgs/tcommontype.nim(6, 26) Error: type mismatch: got: ptr int64 but wanted: ptr UncheckedArray[T] not nil
+tests/nimony/errmsgs/tcommontype.nim(6, 26) Error: type mismatch: got: ptr int64 not nil but wanted: ptr UncheckedArray[T] not nil
