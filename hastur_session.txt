@@ -1,1 +1,0 @@
-nim c -r src/nifc/nifc.nim  c --compileOnly --bits:64 --nimcache:nimcache/teszpno6r1 --isMain nimcache/teszpno6r1/teszpno6r1.c.nif
