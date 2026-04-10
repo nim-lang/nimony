@@ -436,6 +436,29 @@ proc analysableRoot(c: var NjvlContext; n: Cursor): SymId =
   else:
     result = NoSymId
 
+proc isNonNilExpr(c: var NjvlContext; n: Cursor): bool =
+  ## Check if an expression is trivially non-nil without needing dataflow analysis.
+  case n.exprKind
+  of AddrX:
+    result = true
+  of ConvKinds:
+    # e.g. cstring("abc") — a conversion from a non-nil value is non-nil
+    var inner = n
+    inc inner
+    skip inner # skip type part
+    result = isNonNilExpr(c, inner)
+  of SufX:
+    # suffixed literal, e.g. (suf "abc" "R") — still a literal value
+    result = true
+  else:
+    if n.kind == StringLit:
+      result = true
+    elif n.kind == Symbol:
+      let sk = fetchSymKind(c.typeCache, n.symId)
+      result = isRoutine(sk)
+    else:
+      result = false
+
 proc wantNotNil(c: var NjvlContext; n: Cursor) =
   case n.exprKind
   of NilX:
@@ -446,6 +469,8 @@ proc wantNotNil(c: var NjvlContext; n: Cursor) =
     let t = getType(c.typeCache, n)
     if markedAs(t, NotnilU):
       discard "fine, per type we know it is not nil"
+    elif isNonNilExpr(c, n):
+      discard "fine, expression is trivially not nil"
     else:
       let r = analysableRoot(c, n)
       if r == NoSymId:
