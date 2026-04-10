@@ -1,6 +1,6 @@
 
 import std / [syncio, assertions]
-
+{.feature: "lenientnils".}
 proc effect(s: string): string =
   echo s
   result = s
