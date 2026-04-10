@@ -861,29 +861,23 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       var crucial = default CrucialPragma
       semPragmas c, dest, n, crucial, ProcY
       if tk == ProctypeT:
-        if LenientNilsFeature notin c.features:
-          if dest[dest.len-1].kind == DotToken:
-            # replace dot with (pragmas (notnil))
+        let annotation = if LenientNilsFeature notin c.features: NotnilU else: UncheckedU
+        if dest[dest.len-1].kind == DotToken:
+          # replace dot with (pragmas (annotation))
+          dest.shrink dest.len-1
+          dest.addParLe PragmasU, info
+          dest.addParPair annotation, info
+          dest.addParRi()
+        elif dest[dest.len-1].kind == ParRi:
+          # check if a nil annotation is already present before inserting
+          let hasNilAnnotation = dest.len >= 3 and
+            dest[dest.len-2].kind == ParRi and dest[dest.len-3].kind == ParLe and
+            (dest[dest.len-3].tag == cast[TagId](NotnilU) or
+             dest[dest.len-3].tag == cast[TagId](NilU) or
+             dest[dest.len-3].tag == cast[TagId](UncheckedU))
+          if not hasNilAnnotation:
             dest.shrink dest.len-1
-            dest.addParLe PragmasU, info
-            dest.addParPair NotnilU, info
-            dest.addParRi()
-          elif dest[dest.len-1].kind == ParRi:
-            # insert (notnil) before closing ParRi of pragmas
-            dest.shrink dest.len-1
-            dest.addParPair NotnilU, info
-            dest.addParRi()
-        else:
-          if dest[dest.len-1].kind == DotToken:
-            # replace dot with (pragmas (unchecked))
-            dest.shrink dest.len-1
-            dest.addParLe PragmasU, info
-            dest.addParPair UncheckedU, info
-            dest.addParRi()
-          elif dest[dest.len-1].kind == ParRi:
-            # insert (unchecked) before closing ParRi of pragmas
-            dest.shrink dest.len-1
-            dest.addParPair UncheckedU, info
+            dest.addParPair annotation, info
             dest.addParRi()
       wantDot c, dest, n # exceptions
       # make it robust against Nifler's output
