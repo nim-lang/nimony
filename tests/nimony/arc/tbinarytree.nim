@@ -1,5 +1,5 @@
 type int* {.magic: Int.}
-
+{.feature: "lenientnils".}
 type
   NodeObj = object
     data: int
