@@ -5,6 +5,7 @@
 # distribution, for details about the copyright.
 
 import ".." / lib / [bitabs, lineinfos, nifstreams, nifcursors, filelinecache, symparser]
+import ".." / njvl / njvl_model
 
 import nimony_model, decls
 
@@ -1429,6 +1430,11 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         else:
           if n.typeKind != NoType:
             gtype(g, n, c)
+          elif n.njvlKind == VV:
+            inc n
+            gsub g, n, c, fromStmtList, isTopLevel
+            skip n # version
+            skipParRi n
           else:
             skip n
         # raiseAssert "unreachable"
@@ -2001,6 +2007,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     discard "for illformed tokens"
   else:
     inc n
+    raiseAssert "unreachable"
 
 proc gsub(g: var SrcGen; n: var Cursor, fromStmtList = false, isTopLevel = false) =
   var c: Context = initContext()

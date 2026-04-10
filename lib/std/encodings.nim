@@ -335,8 +335,8 @@ else:
     importc: "iconv_open", importIconv.}
   proc iconvClose(c: EncodingConverter) {.
     importc: "iconv_close", importIconv.}
-  proc iconv(c: EncodingConverter, inbuf: ptr cstring, inbytesLeft: ptr csize_t,
-             outbuf: ptr cstring, outbytesLeft: ptr csize_t): csize_t {.
+  proc iconv(c: EncodingConverter, inbuf: nil ptr cstring, inbytesLeft: nil ptr csize_t,
+             outbuf: nil ptr cstring, outbytesLeft: nil ptr csize_t): csize_t {.
     importc: "iconv", importIconv.}
 
 proc getCurrentEncoding*(uiApp = false): string =

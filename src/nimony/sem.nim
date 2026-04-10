@@ -1758,6 +1758,11 @@ proc semTypeSym(c: var SemContext; dest: var TokenBuf; s: Sym; info: PackedLineI
           typeclassBuf.addParRi()
           typeclassBuf.addParRi()
           replace(dest, cursorAt(typeclassBuf, 0), start)
+        elif magic in {CstringT, PointerT} and LenientNilsFeature notin c.features:
+          # add default notnil for pointer-like magic types:
+          dest.shrink dest.len - 1 # remove ParRi
+          dest.addParPair NotnilU, info
+          dest.addParRi()
     elif res.status == LacksNothing:
       let typ = asTypeDecl(res.decl)
       if isGeneric(typ) or isNominal(typ.body.typeKind):
