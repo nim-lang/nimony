@@ -225,7 +225,7 @@ when defined(windows):
     importc: "GetCurrentDirectoryW", dynlib: "kernel32", stdcall, sideEffect.}
   proc setCurrentDirectoryW*(lpPathName: WideCString): int32 {.
     importc: "SetCurrentDirectoryW", dynlib: "kernel32", stdcall, sideEffect.}
-  proc createDirectoryW*(pathName: WideCString, security: pointer=nil): int32 {.
+  proc createDirectoryW*(pathName: WideCString, security: nil pointer=nil): int32 {.
     importc: "CreateDirectoryW", dynlib: "kernel32", stdcall, sideEffect.}
   proc removeDirectoryW*(lpPathName: WideCString): int32 {.
     importc: "RemoveDirectoryW", dynlib: "kernel32", stdcall, sideEffect.}
