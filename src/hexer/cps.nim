@@ -248,12 +248,17 @@ proc continuationPos(c: Context; pos: int): int =
       discard
     inc i
 
+  echo "DEBUG: continuationPos start pos=", pos, " result=", result, " ancestors.len=", ancestors.len
   for k in countdown(ancestors.len - 1, 0):
     let itePos = ancestors[k]
     let tok = c.currentProc.cf[itePos]
-    if stmtKind(tok) == IfS:
+    let sk = stmtKind(tok)
+    let nk = njvlKind(tok)
+    echo "DEBUG:   k=", k, " itePos=", itePos, " tokKind=", tok.kind, " sk=", sk, " nk=", nk
+    if sk == IfS:
       let endPos = afterNode(c.currentProc.cf, itePos)
       let nextBranchPos = afterNode(c.currentProc.cf, itePos + 1)
+      echo "DEBUG: IfS at ", itePos, " endPos=", endPos, " nextBranchPos=", nextBranchPos
       if result == nextBranchPos or result == endPos:
         result = endPos
         break
@@ -262,6 +267,7 @@ proc continuationPos(c: Context; pos: int): int =
       let thenPos = afterNode(c.currentProc.cf, condPos)
       let elsePos = afterNode(c.currentProc.cf, thenPos)
       let endPos = afterNode(c.currentProc.cf, itePos)
+      echo "DEBUG: ItecV at ", itePos, " endPos=", endPos, " elsePos=", elsePos
       if result == elsePos or result == endPos:
         result = endPos
         break
@@ -1043,6 +1049,7 @@ proc compileStmtSeq(c: var Context; dest: var TokenBuf; n: var Cursor; continueS
   while n.kind != ParRi:
     let p = cursorToPosition(c.currentProc.cf, n)
     let state = c.currentProc.labels.getOrDefault(p, -1)
+    echo "DEBUG compileStmtSeq: at p=", p, " state=", state
     if state != -1:
       # Skip adding goto/return if the previous statement already returned (e.g., suspend).
       # The suspend's return Continuation(nil, nil) is the terminal return for this state.
@@ -1065,10 +1072,12 @@ proc compileStmtSeq(c: var Context; dest: var TokenBuf; n: var Cursor; continueS
     else:
       c.inlineContState = -1
       tr c, dest, n
+      echo "DEBUG compileStmtSeq: after tr, inlineContState=", c.inlineContState
       # Reset the flag after processing a statement (unless it was a suspend which sets it)
       if not c.currentProc.lastStmtReturns:
         discard
       if c.inlineContState >= 0:
+        echo "DEBUG compileStmtSeq: handling split at inlineContState=", c.inlineContState
         # A passive call split happened inside a nested ite branch:
         # c.inlineContState = the new continuation state
         # c.inlineContCursor = cursor to rest-of-then code in the branch
@@ -1109,8 +1118,9 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   wrapper.addParRi()
   var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "eliminateJumps", 0)
   eliminateJumps(pass, raisesResolved = true)
-  when defined(logPasses):
-    echo "NJ OUTPUT: ", pass.dest.toString(false)
+  echo "===== NJ OUTPUT START ====="
+  echo pass.dest.toString(false)
+  echo "===== NJ OUTPUT END ====="
   # pass.dest is (stmts cfvar_decls... (proc header body_stmts) ...).
   # Navigate into the proc body; then copy it while stripping NJ bookkeeping
   # (mflag/vflag/jtrue/kill) so c.currentProc.cf has no versionized variables.
@@ -1160,11 +1170,14 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
           for i in 0..<loopStack.len:
             loopStack[i].containsSusp = true
           let j = continuationPos(c, pos)
+          echo "DEBUG gather: pos=", pos, " continuationPos=", j
           if j <= c.currentProc.cf.len:
             let existing = c.currentProc.labels.getOrDefault(j, -1)
             if existing >= 0:
+              echo "DEBUG gather: existing label at ", j, " = ", existing
               c.currentProc.yieldConts[pos] = existing
             else:
+              echo "DEBUG gather: assigning label ", nextLabel, " at ", j
               c.currentProc.yieldConts[pos] = nextLabel
               c.currentProc.labels[j] = nextLabel
               inc nextLabel
@@ -1192,6 +1205,11 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   escapingLocals(c, n)
 
   # Compile the state machine by splitting at label positions
+  echo "DEBUG: labels table: ", c.currentProc.labels
+  echo "DEBUG: yieldConts table: ", c.currentProc.yieldConts
+  echo "===== NJ OUTPUT WITH LABELS ====="
+  echo toString(c.currentProc.cf, c.currentProc.labels, c.currentProc.yieldConts)
+  echo "===== NJ OUTPUT WITH LABELS ====="
   assert n.stmtKind == StmtsS
   dest.takeToken n
   dest.add init
@@ -1495,6 +1513,7 @@ proc trIteStmts(c: var Context; dest: var TokenBuf; n: var Cursor) =
   while n.kind != ParRi:
     let p = cursorToPosition(c.currentProc.cf, n)
     let state = c.currentProc.labels.getOrDefault(p, -1)
+    echo "DEBUG trIteStmts: at p=", p, " state=", state
     if state != -1:
       # split inside branch — save position and stop emitting into this branch
       c.inlineContState = state
@@ -1502,7 +1521,9 @@ proc trIteStmts(c: var Context; dest: var TokenBuf; n: var Cursor) =
       while n.kind != ParRi: skip n  # skip rest of branch
       break
     tr c, dest, n
-    let afterState = c.currentProc.labels.getOrDefault(continuationPos(c, p), -1)
+    let afterP = continuationPos(c, p)
+    let afterState = c.currentProc.labels.getOrDefault(afterP, -1)
+    echo "DEBUG trIteStmts: after p=", p, " afterP=", afterP, " afterState=", afterState
     if afterState != -1:
       c.inlineContState = afterState
       c.inlineContCursor = n

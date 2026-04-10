@@ -324,6 +324,50 @@ proc toString*(tree: openArray[PackedToken]; produceLineInfo = true): string =
       b.addTree(pool.tags[tree[n].tagId])
       stack.add info
   result = b.extract()
+import std/tables
+proc toString*(tree: openArray[PackedToken]; labels, yieldConts: Table[int, int]): string =
+  var b = nifbuilder.open(tree.len * 20)
+  var stack: seq[PackedLineInfo] = @[]
+  for n in 0 ..< tree.len:
+    let info = tree[n].info
+    let k = tree[n].kind
+    case k
+    of DotToken:
+      b.addEmpty()
+    of Ident:
+      b.addIdent(pool.strings[tree[n].litId])
+    of Symbol:
+      b.addSymbol(pool.syms[tree[n].symId])
+    of IntLit:
+      b.addIntLit(pool.integers[tree[n].intId])
+    of UIntLit:
+      b.addUIntLit(pool.uintegers[tree[n].uintId])
+    of FloatLit:
+      b.addFloatLit(pool.floats[tree[n].floatId])
+    of SymbolDef:
+      b.addSymbolDef(pool.syms[tree[n].symId])
+    of CharLit:
+      b.addCharLit char(tree[n].uoperand)
+    of StringLit:
+      b.addStrLit(pool.strings[tree[n].litId])
+    of UnknownToken:
+      b.addIdent "<unknown token>"
+    of EofToken:
+      b.addIntLit tree[n].soperand
+    of ParRi:
+      if stack.len > 0:
+        discard stack.pop()
+      b.endTree()
+    of ParLe:
+      b.addTree(pool.tags[tree[n].tagId])
+      stack.add info
+    if labels.hasKey(n):
+      let state = labels[n]
+      b.put "<LABEL " & $state & ">"
+    if yieldConts.hasKey(n):
+      let state = yieldConts[n]
+      b.put "<YIELD " & $state & ">"
+  result = b.extract()
 
 proc toModuleString*(tree: openArray[PackedToken]; dottedSuffix = ""; produceLineInfo = true): string =
   ## Like `toString` but produces a full file including the header and an index.

@@ -62,7 +62,7 @@ proc drainPending(b: var Builder) =
     write b.f, b.buffer
     b.buffer.setLen 0
 
-proc put(b: var Builder; s: string) =
+proc put*(b: var Builder; s: string) =
   if b.mode == UsesFile:
     drainPending b
     write b.f, s
