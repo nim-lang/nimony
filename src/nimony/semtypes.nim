@@ -628,7 +628,7 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
       let before = dest.len
       semLocalTypeImpl c, dest, n, context
       let nd = cursorAt(dest, before)
-      if nd.typeKind in {RefT, PtrT, PointerT, CstringT}:
+      if nd.typeKind in {RefT, PtrT, PointerT, CstringT, ProctypeT}:
         dest.endRead()
         # remove ParRi of the pointer
         dest.shrink dest.len-1
@@ -867,8 +867,18 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       semLocalTypeImpl c, dest, n, InReturnTypeDecl
       var crucial = default CrucialPragma
       semPragmas c, dest, n, crucial, ProcY
+      var n2 = n
+      skip n2 # dot
+      if n2.kind != ParRi: skip n2 # maybe body
+      let hasNilSuffix = n2.exprKind == NilX
       if tk == ProctypeT:
-        let annotation = if LenientNilsFeature notin c.features: NotnilU else: UncheckedU
+        let annotation =
+          if hasNilSuffix:
+            NilU
+          elif LenientNilsFeature notin c.features:
+            NotnilU
+          else:
+            UncheckedU
         if dest[dest.len-1].kind == DotToken:
           # replace dot with (pragmas (annotation))
           dest.shrink dest.len-1
@@ -894,6 +904,8 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         wantDot c, dest, n # body
       # close it here so that pragmas like `requires` can refer to the params:
       c.closeScope()
+      if hasNilSuffix:
+        skip n
       takeParRi dest, n
       if crucial.hasVarargs.isValid:
         addVarargsParameter c, dest, beforeParams, crucial.hasVarargs
