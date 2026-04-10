@@ -19,7 +19,7 @@ when defined(windows):
 
     SysLock* {.importc: "CRITICAL_SECTION",
               header: "<windows.h>", final, pure, byref.} = object # CRITICAL_SECTION in WinApi
-      DebugInfo {.exportc.} : pointer
+      DebugInfo {.exportc.} : nil pointer
       LockCount {.exportc.} : int32
       RecursionCount {.exportc.} : int32
       OwningThread {.exportc.} : int

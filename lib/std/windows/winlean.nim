@@ -113,7 +113,7 @@ when defined(windows):
   proc getLastError*(): int32 {.
       importc: "GetLastError", stdcall, header: "<Windows.h>", sideEffect.}
   proc createFileW*(lpFileName: WideCString, dwDesiredAccess, dwShareMode: DWORD,
-                    lpSecurityAttributes: pointer,
+                    lpSecurityAttributes: nil pointer,
                     dwCreationDisposition, dwFlagsAndAttributes: DWORD,
                     hTemplateFile: Handle): Handle {.
       importc: "CreateFileW", stdcall, header: "<Windows.h>".}
@@ -138,15 +138,15 @@ when defined(windows):
   proc mapViewOfFileEx*(hFileMappingObject: Handle, dwDesiredAccess: DWORD,
                         dwFileOffsetHigh, dwFileOffsetLow: DWORD,
                         dwNumberOfBytesToMap: WinSizeT,
-                        lpBaseAddress: pointer): pointer{.
+                        lpBaseAddress: nil pointer): nil pointer{.
       importc: "MapViewOfFileEx", stdcall, header: "<Windows.h>".}
   proc createFileMappingW*(hFile: Handle,
-                           lpFileMappingAttributes: pointer,
+                           lpFileMappingAttributes: nil pointer,
                            flProtect, dwMaximumSizeHigh: DWORD,
                            dwMaximumSizeLow: DWORD,
-                           lpName: pointer): Handle {.
+                           lpName: nil pointer): Handle {.
       importc: "CreateFileMappingW", stdcall, header: "<Windows.h>".}
-  proc unmapViewOfFile*(lpBaseAddress: pointer): WINBOOL {.
+  proc unmapViewOfFile*(lpBaseAddress: nil pointer): WINBOOL {.
       importc: "UnmapViewOfFile", stdcall, header: "<Windows.h>".}
 
 

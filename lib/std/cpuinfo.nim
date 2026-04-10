@@ -35,9 +35,9 @@ else:
       SystemInfo = object
         u1: uint32
         dwPageSize: uint32
-        lpMinimumApplicationAddress: pointer
-        lpMaximumApplicationAddress: pointer
-        dwActiveProcessorMask: ptr uint32
+        lpMinimumApplicationAddress: nil pointer
+        lpMaximumApplicationAddress: nil pointer
+        dwActiveProcessorMask: nil ptr uint32
         dwNumberOfProcessors: uint32
         dwProcessorType: uint32
         dwAllocationGranularity: uint32
