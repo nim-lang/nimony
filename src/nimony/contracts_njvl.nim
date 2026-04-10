@@ -108,7 +108,11 @@ proc extractSymIdForStore(n: Cursor): SymId =
 proc skipSymbol(r: var Cursor): SymId {.inline.} =
   ## Consume a bare Symbol or (v sym version) node and return its SymId.
   ## Returns NoSymId (without advancing) if r is neither.
-  result = extractSymId(r)
+  var n = r
+  while n.exprKind in {HconvX, ConvX}:
+    inc n
+    skip n # type
+  result = extractSymId(n)
   if result != NoSymId:
     skip r
 
