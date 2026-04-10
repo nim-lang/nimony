@@ -230,6 +230,20 @@ proc afterNode(cf: TokenBuf; pos: int): int =
   else:
     result = pos + 1
 
+proc nodeStart(cf: TokenBuf; pos: int): int =
+  if pos < cf.len and cf[pos].kind == ParRi:
+    var nested = 1
+    result = pos - 1
+    while result > 0 and nested > 0:
+      case cf[result].kind
+      of ParLe: dec nested
+      of ParRi: inc nested
+      else: discard
+      dec result
+    inc result
+  else:
+    result = pos
+
 proc continuationPos(c: Context; pos: int): int =
   result = afterNode(c.currentProc.cf, pos)
   while result < c.currentProc.cf.len and c.currentProc.cf[result].kind == ParRi:
@@ -248,13 +262,12 @@ proc continuationPos(c: Context; pos: int): int =
       discard
     inc i
 
-  echo "DEBUG: continuationPos start pos=", pos, " result=", result, " ancestors.len=", ancestors.len
+  echo "===== continuationPos(", pos, ") ===="
   for k in countdown(ancestors.len - 1, 0):
     let itePos = ancestors[k]
     let tok = c.currentProc.cf[itePos]
     let sk = stmtKind(tok)
     let nk = njvlKind(tok)
-    echo "DEBUG:   k=", k, " itePos=", itePos, " tokKind=", tok.kind, " sk=", sk, " nk=", nk
     if sk == IfS:
       let endPos = afterNode(c.currentProc.cf, itePos)
       let nextBranchPos = afterNode(c.currentProc.cf, itePos + 1)
@@ -267,10 +280,14 @@ proc continuationPos(c: Context; pos: int): int =
       let thenPos = afterNode(c.currentProc.cf, condPos)
       let elsePos = afterNode(c.currentProc.cf, thenPos)
       let endPos = afterNode(c.currentProc.cf, itePos)
-      echo "DEBUG: ItecV at ", itePos, " endPos=", endPos, " elsePos=", elsePos
+      echo "DEBUG: ItecV at ", itePos, " endPos=", endPos, " elsePos=", elsePos, " result=", result
       if result == elsePos or result == endPos:
         result = endPos
-        break
+        while c.currentProc.cf[result].kind == ParRi:
+          inc result
+        # echo "NSFOASNFOIASMFOASF ", njvlKind(c.currentProc.cf[ancestors[k-1]-2])
+        # break
+  echo ""
 
 proc returnsToCallerDirectly(c: Context; pos: int): bool =
   continuationPos(c, pos) >= c.currentProc.cf.len
@@ -1147,12 +1164,13 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   c.currentProc.yieldConts = initTable[int, int]()
   var nextLabel = 1  # 0 is the entry function, state labels start at 1
   block gather:
-    type LoopEntry = object
-      pos: int          ## position of the (loop ...) token
+    type SuspEntry = object
+      pos: int          ## position of the (loop/ite ...) token
       depth: int        ## depth when the loop was entered (after inc depth)
       containsSusp: bool
 
-    var loopStack: seq[LoopEntry] = @[]
+    var loopStack: seq[SuspEntry] = @[]
+    var iteStack: seq[SuspEntry] = @[]
     var scan = beginRead(c.currentProc.cf)
     var depth = 0
     while true:
@@ -1161,7 +1179,10 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
         inc depth
         let nk = scan.njvlKind
         if nk == LoopV:
-          loopStack.add(LoopEntry(pos: pos, depth: depth))
+          loopStack.add(SuspEntry(pos: pos, depth: depth))
+        if nk == IteV:
+          iteStack.add(SuspEntry(pos: pos, depth: depth))
+        echo "DEBUG ParLe: pos=", pos, " nk=", nk
         let sk = scan.stmtKind
         let ek = scan.exprKind
         if sk == YldS or (ek in CallKinds - {DelayX} and isPassiveCall(c, c.currentProc.cf[pos+1])) or
@@ -1169,6 +1190,8 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
           # Mark all enclosing loops as containing a suspension point
           for i in 0..<loopStack.len:
             loopStack[i].containsSusp = true
+          if iteStack.len > 0:
+            iteStack[^1].containsSusp = true
           let j = continuationPos(c, pos)
           echo "DEBUG gather: pos=", pos, " continuationPos=", j
           if j <= c.currentProc.cf.len:
@@ -1194,6 +1217,21 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
             # Assign a state for the code after the loop (position after this ParRi)
             c.currentProc.labels[pos + 1] = nextLabel
             inc nextLabel
+        if iteStack.len > 0 and depth == iteStack[^1].depth:
+          let ite = iteStack.pop()
+          if ite.containsSusp:
+            let condPos = ite.pos + 1
+            let thenPos = afterNode(c.currentProc.cf, condPos)
+            let elsePos = afterNode(c.currentProc.cf, thenPos)
+            let endPos = afterNode(c.currentProc.cf, ite.pos)
+            var j = continuationPos(c, elsePos-1)
+            var state = c.currentProc.labels.getOrDefault(j, -1)
+            if state == -1:
+              state = nextLabel
+              c.currentProc.labels[j] = nextLabel
+              inc nextLabel
+            c.currentProc.yieldConts[nodeStart(c.currentProc.cf, elsePos-2)] = state
+            c.currentProc.yieldConts[nodeStart(c.currentProc.cf, endPos-2)] = state
         dec depth
         if depth == 0: break gather
         inc scan
@@ -1675,6 +1713,9 @@ proc transformToCps*(pass: var Pass) =
   while n.kind != ParRi:
     tr(c, pass.dest, n)
   pass.dest.takeToken n # ParRi
+  # if c.shouldPublish.len > 0:
+  #   echo "====== TOTAL CPS RESULT ====="
+  #   echo pass.dest.toString(false)
   for (sym, start) in c.shouldPublish:
     var buf = createTokenBuf(16)
     buf.copyTree pass.dest.cursorAt(start)
