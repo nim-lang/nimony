@@ -283,21 +283,21 @@ when defined(windows):
   proc multiByteToWideChar(
     codePage: CodePage,
     dwFlags: int32,
-    lpMultiByteStr: cstring,
+    lpMultiByteStr: nil cstring,
     cbMultiByte: cint,
-    lpWideCharStr: cstring,
+    lpWideCharStr: nil cstring,
     cchWideChar: cint): cint {.
       stdcall, importc: "MultiByteToWideChar", dynlib: "kernel32".}
 
   proc wideCharToMultiByte(
     codePage: CodePage,
     dwFlags: int32,
-    lpWideCharStr: cstring,
+    lpWideCharStr: nil cstring,
     cchWideChar: cint,
-    lpMultiByteStr: cstring,
+    lpMultiByteStr: nil cstring,
     cbMultiByte: cint,
-    lpDefaultChar: cstring = nil,
-    lpUsedDefaultChar: pointer = nil): cint {.
+    lpDefaultChar: nil cstring = nil,
+    lpUsedDefaultChar: nil pointer = nil): cint {.
       stdcall, importc: "WideCharToMultiByte", dynlib: "kernel32".}
 
 else:
@@ -354,7 +354,13 @@ proc open*(destEncoding = "UTF-8", srcEncoding = "CP1252"): EncodingConverter {.
   when not defined(windows):
     var destEncoding = destEncoding
     var srcEncoding = srcEncoding
-    result = iconvOpen(destEncoding.toCString, srcEncoding.toCString)
+    let dc = destEncoding.toCString
+    if dc.isNil:
+      raise OutOfMemError
+    let sc = srcEncoding.toCString
+    if sc.isNil:
+      raise OutOfMemError
+    result = iconvOpen(dc, sc)
     if result == cast[EncodingConverter](-1):
       raiseEncodingError("cannot create encoding converter from " &
         srcEncoding & " to " & destEncoding)
