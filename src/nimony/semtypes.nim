@@ -733,6 +733,8 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         takeTree dest, n # existing notnil, nil, unchecked annotation
       elif LenientNilsFeature notin c.features:
         dest.addParPair NotnilU, info
+      else:
+        dest.addParPair UncheckedU, info
       takeParRi dest, n
     of VoidT:
       if context == InReturnTypeDecl:
@@ -755,6 +757,8 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         takeTree dest, n # notnil, nil, unchecked
       elif LenientNilsFeature notin c.features:
         dest.addParPair NotnilU, info
+      else:
+        dest.addParPair UncheckedU, info
       takeParRi dest, n
     of MutT, OutT, LentT, SinkT, NotT, UarrayT,
        StaticT, TypedescT:
@@ -856,18 +860,31 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       semLocalTypeImpl c, dest, n, InReturnTypeDecl
       var crucial = default CrucialPragma
       semPragmas c, dest, n, crucial, ProcY
-      if tk == ProctypeT and LenientNilsFeature notin c.features:
-        if dest[dest.len-1].kind == DotToken:
-          # replace dot with (pragmas (notnil))
-          dest.shrink dest.len-1
-          dest.addParLe PragmasU, info
-          dest.addParPair NotnilU, info
-          dest.addParRi()
-        elif dest[dest.len-1].kind == ParRi:
-          # insert (notnil) before closing ParRi of pragmas
-          dest.shrink dest.len-1
-          dest.addParPair NotnilU, info
-          dest.addParRi()
+      if tk == ProctypeT:
+        if LenientNilsFeature notin c.features:
+          if dest[dest.len-1].kind == DotToken:
+            # replace dot with (pragmas (notnil))
+            dest.shrink dest.len-1
+            dest.addParLe PragmasU, info
+            dest.addParPair NotnilU, info
+            dest.addParRi()
+          elif dest[dest.len-1].kind == ParRi:
+            # insert (notnil) before closing ParRi of pragmas
+            dest.shrink dest.len-1
+            dest.addParPair NotnilU, info
+            dest.addParRi()
+        else:
+          if dest[dest.len-1].kind == DotToken:
+            # replace dot with (pragmas (unchecked))
+            dest.shrink dest.len-1
+            dest.addParLe PragmasU, info
+            dest.addParPair UncheckedU, info
+            dest.addParRi()
+          elif dest[dest.len-1].kind == ParRi:
+            # insert (unchecked) before closing ParRi of pragmas
+            dest.shrink dest.len-1
+            dest.addParPair UncheckedU, info
+            dest.addParRi()
       wantDot c, dest, n # exceptions
       # make it robust against Nifler's output
       if n.kind == ParRi:

@@ -701,6 +701,8 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
           if cc == NoCallConv:
             if hookKind(n.tagId) != NoHook:
               skip n
+            elif isNilAnnotation(n):
+              skip n
             else:
               error c, "unknown pragma: ", n
           else:

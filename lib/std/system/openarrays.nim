@@ -1,5 +1,7 @@
 ## Openarray implementation.
 
+{.feature: "lenientnils".}
+
 type
   openArray*[T] {.view.} = object
     a: ptr UncheckedArray[T]
