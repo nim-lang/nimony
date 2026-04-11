@@ -4144,7 +4144,12 @@ proc inferSumTypeFromFields(c: var SemContext; dest: var TokenBuf;
   if objTypeSym == SymId(0): return default(TypeCursor)
 
   let decl = getTypeSection(objTypeSym)
-  if not decl.isGeneric: return default(TypeCursor)
+  if not decl.isGeneric:
+    var typeBuf = createTokenBuf(1)
+    typeBuf.add symToken(objTypeSym, info)
+    var instDest = createTokenBuf(16)
+    var instRead = cursorAt(typeBuf, 0)
+    return semLocalType(c, instDest, instRead)
 
   let branchFields = findBranchFields(objTypeSym, efldSym)
   var fieldTypesByName = initTable[StrId, TypeCursor]()
