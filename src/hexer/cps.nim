@@ -1052,7 +1052,6 @@ proc compileStmtSeq(c: var Context; dest: var TokenBuf; n: var Cursor; continueS
   while n.kind != ParRi:
     let p = cursorToPosition(c.currentProc.cf, n)
     let state = c.currentProc.labels.getOrDefault(p, -1)
-    echo "DEBUG compileStmtSeq: at p=", p, " state=", state
     if state != -1:
       # Skip adding goto/return if the previous statement already returned (e.g., suspend).
       # The suspend's return Continuation(nil, nil) is the terminal return for this state.
@@ -1074,7 +1073,6 @@ proc compileStmtSeq(c: var Context; dest: var TokenBuf; n: var Cursor; continueS
         gotoNextState c, dest, continueState, n.info
       skip n
     else:
-      echo "DEBUG compileStmtSeq: tr next"
       tr c, dest, n
   while c.createNewLocalProc.len > 0:
     # A passive call split happened inside a nested ite branch:
@@ -1084,7 +1082,6 @@ proc compileStmtSeq(c: var Context; dest: var TokenBuf; n: var Cursor; continueS
     if c.createdStates.contains(splitState):
       continue
     c.createdStates.incl(splitState)
-    echo splitState
     # Close current proc and open the split continuation state
     emitReturnCaller(c, dest, n.info)
     dest.addParRi() # close stmts
@@ -1096,7 +1093,6 @@ proc compileStmtSeq(c: var Context; dest: var TokenBuf; n: var Cursor; continueS
     # by newLocalProc above). Delete it so the recursive compileStmtSeq call doesn't
     # re-open the same state proc.
     var thenN = restOfThen
-    echo "createNewLocalProc ", splitState, " ", cursorToPosition(c.currentProc.cf, restOfThen)
     c.currentProc.labels.del(cursorToPosition(c.currentProc.cf, restOfThen))
     compileStmtSeq c, dest, thenN, continueState
 
@@ -1111,9 +1107,8 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   wrapper.addParRi()
   var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "eliminateJumps", 0)
   eliminateJumps(pass, raisesResolved = true)
-  echo "===== NJ OUTPUT START ====="
-  echo pass.dest.toString(false)
-  echo "===== NJ OUTPUT END ====="
+  when defined(logPasses):
+    echo "NJ OUTPUT: ", pass.dest.toString(false)
   # pass.dest is (stmts cfvar_decls... (proc header body_stmts) ...).
   # Navigate into the proc body; then copy it while stripping NJ bookkeeping
   # (mflag/vflag/jtrue/kill) so c.currentProc.cf has no versionized variables.
@@ -1225,11 +1220,6 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   escapingLocals(c, n)
 
   # Compile the state machine by splitting at label positions
-  echo "DEBUG: labels table: ", c.currentProc.labels
-  echo "DEBUG: yieldConts table: ", c.currentProc.yieldConts
-  echo "===== NJ OUTPUT WITH LABELS ====="
-  echo toString(c.currentProc.cf, c.currentProc.labels, c.currentProc.yieldConts)
-  echo "===== NJ OUTPUT WITH LABELS ====="
   assert n.stmtKind == StmtsS
   dest.takeToken n
   dest.add init
@@ -1567,7 +1557,6 @@ proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.add elseBuf
   let p = cursorToPosition(c.currentProc.cf, n)
   let state = c.currentProc.labels.getOrDefault(p, -1)
-  echo "MASFPASMFOASIF p=", p, " state=", state
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
@@ -1687,9 +1676,6 @@ proc transformToCps*(pass: var Pass) =
   while n.kind != ParRi:
     tr(c, pass.dest, n)
   pass.dest.takeToken n # ParRi
-  if c.shouldPublish.len > 0:
-    echo "====== TOTAL CPS RESULT ====="
-    echo pass.dest.toString(false)
   for (sym, start) in c.shouldPublish:
     var buf = createTokenBuf(16)
     buf.copyTree pass.dest.cursorAt(start)
