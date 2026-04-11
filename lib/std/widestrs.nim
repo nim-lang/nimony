@@ -1,5 +1,7 @@
 ## Nim support for C/C++'s `wide strings`:idx:.
 
+{.feature: "lenientnils".}
+
 type
   Utf16Char* = distinct int16
 

@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +9016            )
+(.indexat +9167            )
 0,1,tests/nimony/sysbasics/tbasics.nim(stmts
  (import sysvq0asl assy765wm syn1lfpjv) 8,3
  (type ~6 :Array.0. . . . 7
@@ -107,16 +107,20 @@
  (proc 5 :foo3.0. . . . 9
   (params 1
    (param :x.0 . . 3
-    (pointer) .)) . . . 2,1
+    (pointer
+     (notnil)) .)) . . . 2,1
   (stmts 4
    (let :m.2 . . 7,~1
-    (pointer) 4 x.0) 4,1
+    (pointer
+     (notnil)) 4 x.0) 4,1
    (let :s2.0 . . 10
     (ptr 4
-     (i +64)) 5
+     (i +64)
+     (notnil)) 5
     (cast 5
      (ptr 4
-      (i +64)) 14 x.0)) 4,2
+      (i +64)
+      (notnil)) 14 x.0)) 4,2
    (let :s3.0 . . 14,~1
     (i +64) 5
     (deref s2.0)))) ,29
@@ -126,15 +130,19 @@
     (i +64) 4 +2) 4,1
    (let :m.3 . . 10,~5
     (ptr 4
-     (i +64)) 9
+     (i +64)
+     (notnil)) 9
     (addr s.2)) 4,2
    (call ~4 foo3.0. 1
     (hconv 6,~8
-     (pointer) m.3)) 4,3
+     (pointer
+      (notnil)) m.3)) 4,3
    (let :m2.0 . . 7,~9
-    (pointer) 5
+    (pointer
+     (notnil)) 5
     (cast 5
-     (pointer) 14 m.3)) 4,4
+     (pointer
+      (notnil)) 14 m.3)) 4,4
    (call ~4 foo3.0. 1 m2.0))) 10,37
  (type ~8 :Foo1314.0. . .
   (pragmas) 2
@@ -183,12 +191,14 @@
     (proctype . . . .
      (params) . 3
      (pragmas 2
-      (cdecl)) . .) .) 4,3
+      (cdecl) ~3
+      (notnil)) . .) .) 4,3
    (var :y.1 . . 8
     (proctype . . . .
      (params) . 3
      (pragmas 2
-      (nimcall)) . .) .))) 7,53
+      (nimcall) ~3
+      (notnil)) . .) .))) 7,53
  (call ~7 foo2233.0.) ,55
  (proc 5 :basictuple.0. . . . 15
   (params) . . . 2,1
@@ -233,7 +243,7 @@
  (proc 5 :classify1.0. . . . 14
   (params 1
    (param :s.0 . . 3 string.0.sysvq0asl .)) . . . 2,1
-  (stmts 2,122,lib/std/syncio.nim
+  (stmts 2,123,lib/std/syncio.nim
    (stmts 2,1
     (stmts
      (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 7,77,tests/nimony/sysbasics/tbasics.nim s.0)) ,2
@@ -244,7 +254,7 @@
    (proc 5 :classify.0. . . . 13
     (params 1
      (param :s.4 . . 3 string.0.sysvq0asl .)) . . . 2,1
-    (stmts 2,122,lib/std/syncio.nim
+    (stmts 2,123,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,84,tests/nimony/sysbasics/tbasics.nim s.4)) ,2
@@ -255,7 +265,7 @@
      (proc 5 :classify2.0. . . . 14
       (params 1
        (param :s.5 . . 3 string.0.sysvq0asl .)) . . . 2,1
-      (stmts 2,122,lib/std/syncio.nim
+      (stmts 2,123,lib/std/syncio.nim
        (stmts 2,1
         (stmts
          (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 11,89,tests/nimony/sysbasics/tbasics.nim s.5)) ,2
@@ -266,7 +276,7 @@
    (proc 5 :classify2.1. . . . 14
     (params 1
      (param :s.6 . . 3 string.0.sysvq0asl .)) . . . 2,1
-    (stmts 2,122,lib/std/syncio.nim
+    (stmts 2,123,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,95,tests/nimony/sysbasics/tbasics.nim s.6)) ,2
@@ -277,7 +287,7 @@
    (proc 5 :classify.1. . . . 13
     (params 1
      (param :s.7 . . 3 string.0.sysvq0asl .)) . . . 2,1
-    (stmts 2,122,lib/std/syncio.nim
+    (stmts 2,123,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,101,tests/nimony/sysbasics/tbasics.nim s.7)) ,2
@@ -290,7 +300,7 @@
      (proc 5 :classify.2. . . . 13
       (params 1
        (param :s.8 . . 3 string.0.sysvq0asl .)) . . . 2,1
-      (stmts 2,122,lib/std/syncio.nim
+      (stmts 2,123,lib/std/syncio.nim
        (stmts 2,1
         (stmts
          (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 11,108,tests/nimony/sysbasics/tbasics.nim s.8)) ,2
@@ -302,7 +312,7 @@
    (proc 5 :classify.3. . . . 13
     (params 1
      (param :s.9 . . 3 string.0.sysvq0asl .)) . . . 2,1
-    (stmts 2,122,lib/std/syncio.nim
+    (stmts 2,123,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,114,tests/nimony/sysbasics/tbasics.nim s.9)) ,2
@@ -324,7 +334,7 @@
     (not 13,123,tests/nimony/sysbasics/tbasics.nim
      (infix ==.20.sysvq0asl ~3
       (call ~3 bar.0.) 3 "1212334")) ~1,1
-    (stmts 2,122,lib/std/syncio.nim
+    (stmts 2,123,lib/std/syncio.nim
      (stmts 2,1
       (stmts
        (cmd write.0.syn1lfpjv 6 stdout.0.syn1lfpjv 9,5,lib/std/assertions.nim "\5BAssertion Failure\5D ")) 2,1
@@ -340,11 +350,11 @@
  (h foo.0. +192) ,15
  (h foo2.0. +465) ,24
  (h foo3.0. +867) 10,37
- (h Foo1314.0. +619) ,41
+ (h Foo1314.0. +734) ,41
  (h foo1314.0. +253) 4,44
  (h a.1. +168) ,47
  (h foo2233.0. +489) ,55
- (h basictuple.0. +325) ,75
+ (h basictuple.0. +361) ,75
  (h classify1.0. +813) 2,82
  (h classify.0. +384) 4,87
  (h classify2.0. +402) 2,93

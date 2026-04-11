@@ -100,4 +100,8 @@ proc execShellCmd*(command: string): int {.tags: [ExecIOEffect].} =
   ##   discard execShellCmd("ls -la")
   ##   ```
   var command = command
-  result = exitStatusLikeShell(c_system(command.toCString))
+  let cc = command.toCString()
+  if cc.isNil:
+    result = -202 # OOM
+  else:
+    result = exitStatusLikeShell(c_system(cc))

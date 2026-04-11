@@ -1,3 +1,4 @@
+{.feature: "lenientnils".}
 
 type
   CFile {.importc: "FILE", header: "<stdio.h>".} = object

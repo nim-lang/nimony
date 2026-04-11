@@ -704,10 +704,10 @@ func ensureTerminatingZero*(s: var string) =
   s.add '\0'
   s.shrink oldLen
 
-func toCString*(s: var string): cstring =
+func toCString*(s: var string): cstring not nil =
   ## Returns a null-terminated cstring pointer.
   ensureTerminatingZero(s)
-  result = cast[cstring](rawData(s))
+  result = cast[cstring not nil](rawData(s))
 
 func fromCString*(s: cstring): string =
   ## Creates a Nim string from a `cstring` by copying the underlying storage.

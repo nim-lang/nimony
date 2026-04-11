@@ -252,6 +252,7 @@ type
     NoSub
     NilU = (ord(NilTagId), "nil")  ## nil pointer value
     NotnilU = (ord(NotnilTagId), "notnil")  ## `not nil` pointer annotation
+    UncheckedU = (ord(UncheckedTagId), "unchecked")  ## `unchecked` pointer annotation (derefs do not require nil checking)
     KvU = (ord(KvTagId), "kv")  ## key-value pair
     VvU = (ord(VvTagId), "vv")  ## value-value pair (used for explicitly named arguments in function calls)
     RangeU = (ord(RangeTagId), "range")  ## `(range a b)` construct
@@ -277,7 +278,7 @@ type
     FinU = (ord(FinTagId), "fin")  ## finally subsection
 
 proc rawTagIsNimonyOther*(raw: TagEnum): bool {.inline.} =
-  raw in {NilTagId, NotnilTagId, KvTagId, VvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, EfldTagId, FldTagId, WhenTagId, ElifTagId, ElseTagId, TypevarsTagId, CaseTagId, OfTagId, StmtsTagId, ParamsTagId, PragmasTagId, EitherTagId, JoinTagId, UnpackflatTagId, UnpacktupTagId, ExceptTagId, FinTagId}
+  raw in {NilTagId, NotnilTagId, UncheckedTagId, KvTagId, VvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, EfldTagId, FldTagId, WhenTagId, ElifTagId, ElseTagId, TypevarsTagId, CaseTagId, OfTagId, StmtsTagId, ParamsTagId, PragmasTagId, EitherTagId, JoinTagId, UnpackflatTagId, UnpacktupTagId, ExceptTagId, FinTagId}
 
 type
   NimonyPragma* = enum

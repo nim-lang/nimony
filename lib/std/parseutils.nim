@@ -1,6 +1,8 @@
 ## This module contains helpers for parsing tokens, numbers, integers, floats,
 ## identifiers, etc.
 
+{.feature: "lenientnils".}
+
 # TODO: Replace `quit` with exceptions when it is implemented
 from std/syncio import quit
 import std/[assertions]

@@ -283,21 +283,21 @@ when defined(windows):
   proc multiByteToWideChar(
     codePage: CodePage,
     dwFlags: int32,
-    lpMultiByteStr: cstring,
+    lpMultiByteStr: nil cstring,
     cbMultiByte: cint,
-    lpWideCharStr: cstring,
+    lpWideCharStr: nil cstring,
     cchWideChar: cint): cint {.
       stdcall, importc: "MultiByteToWideChar", dynlib: "kernel32".}
 
   proc wideCharToMultiByte(
     codePage: CodePage,
     dwFlags: int32,
-    lpWideCharStr: cstring,
+    lpWideCharStr: nil cstring,
     cchWideChar: cint,
-    lpMultiByteStr: cstring,
+    lpMultiByteStr: nil cstring,
     cbMultiByte: cint,
-    lpDefaultChar: cstring = nil,
-    lpUsedDefaultChar: pointer = nil): cint {.
+    lpDefaultChar: nil cstring = nil,
+    lpUsedDefaultChar: nil pointer = nil): cint {.
       stdcall, importc: "WideCharToMultiByte", dynlib: "kernel32".}
 
 else:
@@ -335,8 +335,8 @@ else:
     importc: "iconv_open", importIconv.}
   proc iconvClose(c: EncodingConverter) {.
     importc: "iconv_close", importIconv.}
-  proc iconv(c: EncodingConverter, inbuf: ptr cstring, inbytesLeft: ptr csize_t,
-             outbuf: ptr cstring, outbytesLeft: ptr csize_t): csize_t {.
+  proc iconv(c: EncodingConverter, inbuf: nil ptr cstring, inbytesLeft: nil ptr csize_t,
+             outbuf: nil ptr cstring, outbytesLeft: nil ptr csize_t): csize_t {.
     importc: "iconv", importIconv.}
 
 proc getCurrentEncoding*(uiApp = false): string =
@@ -354,7 +354,13 @@ proc open*(destEncoding = "UTF-8", srcEncoding = "CP1252"): EncodingConverter {.
   when not defined(windows):
     var destEncoding = destEncoding
     var srcEncoding = srcEncoding
-    result = iconvOpen(destEncoding.toCString, srcEncoding.toCString)
+    let dc = destEncoding.toCString
+    if dc.isNil:
+      raise OutOfMemError
+    let sc = srcEncoding.toCString
+    if sc.isNil:
+      raise OutOfMemError
+    result = iconvOpen(dc, sc)
     if result == cast[EncodingConverter](-1):
       raiseEncodingError("cannot create encoding converter from " &
         srcEncoding & " to " & destEncoding)

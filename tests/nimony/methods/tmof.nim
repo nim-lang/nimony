@@ -1,6 +1,6 @@
 
 import std / [syncio, assertions]
-
+{.feature: "lenientnils".}
 type
   RootObj2 {.inheritable.} = object
 

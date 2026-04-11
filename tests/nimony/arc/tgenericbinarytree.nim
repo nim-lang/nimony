@@ -1,5 +1,5 @@
 type int* {.magic: Int.}
-
+{.feature: "lenientnils".}
 type
   Node[T] = ref NodeObj[T]
   NodeObj[T] = object

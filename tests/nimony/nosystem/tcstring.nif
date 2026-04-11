@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +1339            )
+(.indexat +1385            )
 0,2,tests/nimony/nosystem/tcstring.nim(stmts 2,1
  (type :int.0.
   (i +64) . 5
@@ -51,17 +51,21 @@
   (i +64) 4
   (cast 5
    (i +64) 10 +55)) 4,15
- (gvar :y.0. . . 3
-  (pointer) 13
+ (gvar :y.0. . . 7
+  (pointer
+   (nil)) 17
   (nil)) 2,18
  (const :myconst.0. . . 10
-  (cstring) 17
+  (cstring
+   (notnil)) 17
   (suf "abc" "C")) 4,20
  (gvar :zz.0. . . 8,~2
-  (cstring) 14
+  (cstring
+   (notnil)) 14
   (hconv ~6,~2
-   (cstring) "xzy")) 16,8
- (comment int.0. int.0. ~3 int.0. ,1 int.0. ,1 int.0. ~3,1 int.0. 1,3 int.0. 1,3 int.0. ~3,3 bool.0. ~4,10 cstring.0. ~3,5 int.0. ~9,7 pointer.0. ~8,12 cstring.0.))0,2,tests/nimony/nosystem/tcstring.nim(.index 2,1
+   (cstring
+    (notnil)) "xzy")) 16,8
+ (comment int.0. int.0. ~3 int.0. ,1 int.0. ,1 int.0. ~3,1 int.0. 1,3 int.0. 1,3 int.0. ~3,3 bool.0. ~4,10 cstring.0. ~3,5 int.0. ~5,7 pointer.0. ~8,12 cstring.0.))0,2,tests/nimony/nosystem/tcstring.nim(.index 2,1
  (x int.0. +86) 2,2
  (x bool.0. +67) 2,4
  (x cstring.0. +68) 2,5
@@ -71,5 +75,5 @@
  (x <=.0. +180) 4,13
  (h x.0. +178) 4,15
  (h y.0. +70) 2,18
- (h myconst.0. +48) 4,20
- (h zz.0. +66))
+ (h myconst.0. +57) 4,20
+ (h zz.0. +78))

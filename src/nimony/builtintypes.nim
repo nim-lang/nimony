@@ -114,17 +114,19 @@ proc createBuiltinTypes*(bits: int): BuiltinTypes =
   result.mem.addParRi() # 54
 
   result.mem.add tagToken"cstring" # 55
-  result.mem.addParRi() # 56
+  result.mem.add tagToken"notnil" # 56
+  result.mem.addParRi() # 57 close notnil
+  result.mem.addParRi() # 58 close cstring
 
   # UncheckedArray[pointer] = (uarray (ptr (void)))
-  result.mem.add tagToken"uarray" # 57
-  result.mem.add tagToken"ptr" # 58
-  result.mem.add tagToken"void" # 59
-  result.mem.addParRi() # 60 close void
-  result.mem.addParRi() # 61 close ptr
-  result.mem.addParRi() # 62 close uarray
+  result.mem.add tagToken"uarray" # 59
+  result.mem.add tagToken"ptr" # 60
+  result.mem.add tagToken"void" # 61
+  result.mem.addParRi() # 62 close void
+  result.mem.addParRi() # 63 close ptr
+  result.mem.addParRi() # 64 close uarray
 
-  result.mem.add symToken(pool.syms.getOrIncl(ContinuationName), NoLineInfo) # 63
+  result.mem.add symToken(pool.syms.getOrIncl(ContinuationName), NoLineInfo) # 65
 
   result.mem.freeze()
 
@@ -150,8 +152,8 @@ proc createBuiltinTypes*(bits: int): BuiltinTypes =
   result.emptyTupleType = result.mem.cursorAt(51)
   result.untypedType = result.mem.cursorAt(53)
   result.cstringType = result.mem.cursorAt(55)
-  result.vtableType = result.mem.cursorAt(57)
-  result.continuationType = result.mem.cursorAt(63)
+  result.vtableType = result.mem.cursorAt(59)
+  result.continuationType = result.mem.cursorAt(65)
 
 proc isStringType*(a: Cursor): bool {.inline.} =
   result = a.kind == Symbol and a.symId == pool.syms.getOrIncl(StringName)

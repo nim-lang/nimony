@@ -1,5 +1,7 @@
 ## System module for Nimony
 
+{.feature: "lenientnils".}
+
 include "system/basic_types"
 
 iterator unpack*(): untyped {.magic: Unpack.}
@@ -212,7 +214,7 @@ func abs*[T: ComparableAndNegatable](x: T): T {.inline.} =
   ## Returns the absolute value of `x`.
   if x < 0: -x else: x
 
-func isNil*(s: cstring): bool {.inline.} = s == nil
+template isNil*(s: cstring): bool = s == nil
 
 func chr*(u: range[0..255]): char {.inline.} =
   ## Converts `u` to a `char`, same as `char(u)`.

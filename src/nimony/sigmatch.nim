@@ -476,6 +476,32 @@ proc expectPtrParRi(m: var Match; f: var Cursor) =
   else:
     m.error FormalTypeNotAtEndBug, f, f
 
+proc matchNilAnnotations(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor) =
+  ## Match nil annotations on pointer-like types. `(unchecked)` is compatible
+  ## with any other annotation (or none). `(notnil)` and `(nil)` must match exactly.
+  let fHas = isNilAnnotation(f)
+  let aHas = isNilAnnotation(a)
+  if fHas and aHas:
+    if f.substructureKind == UncheckedU or a.substructureKind == UncheckedU:
+      # unchecked is compatible with anything
+      skip f
+      skip a
+    elif f.substructureKind == a.substructureKind:
+      skip f
+      skip a
+    else:
+      m.error(InvalidMatch, fOrig, aOrig)
+  elif fHas:
+    if f.substructureKind == UncheckedU:
+      skip f # unchecked is compatible with no annotation
+    else:
+      m.error(InvalidMatch, fOrig, aOrig)
+  elif aHas:
+    if a.substructureKind == UncheckedU:
+      skip a # unchecked is compatible with no annotation
+    else:
+      m.error(InvalidMatch, fOrig, aOrig)
+
 proc procTypeMatch(m: var Match; f, a: var Cursor)
 
 proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {}) =
@@ -560,6 +586,25 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
             # importc part
             while a.pragmaKind in {ImportcP, ImportcppP, HeaderP}:
               skip a
+          expectParRi m, f
+          expectParRi m, a
+        of CstringT, PointerT:
+          if a.typeKind != f.typeKind:
+            m.error(InvalidMatch, fOrig, aOrig)
+            break
+          inc f
+          inc a
+          matchNilAnnotations m, f, a, fOrig, aOrig
+          expectParRi m, f
+          expectParRi m, a
+        of PtrT, RefT:
+          if a.typeKind != f.typeKind:
+            m.error(InvalidMatch, fOrig, aOrig)
+            break
+          inc f
+          inc a
+          linearMatch m, f, a # match base type
+          matchNilAnnotations m, f, a, fOrig, aOrig
           expectParRi m, f
           expectParRi m, a
         else:
@@ -1078,14 +1123,14 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
       if a.typeKind == NiltT:
         discard "ok"
         inc f
-        expectParRi m, f
+        expectPtrParRi m, f
       elif isStringType(a) and skipExpr(arg.n).kind == StringLit:
         m.args.addParLe HconvX, m.argInfo
         m.args.addSubtree f
         inc m.opened
         inc m.convCosts
         inc f
-        expectParRi m, f
+        expectPtrParRi m, f
       elif a.typeKind == CstringT:
         inc f
         inc a
@@ -1099,7 +1144,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
       of NiltT:
         discard "ok"
         inc f
-        expectParRi m, f
+        expectPtrParRi m, f
       of PtrT, CstringT, RoutineTypes:
         m.args.addParLe HconvX, m.argInfo
         m.args.addSubtree f
