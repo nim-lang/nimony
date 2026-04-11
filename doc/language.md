@@ -2145,6 +2145,93 @@ location is derived from the second parameter (called
 'container' in this case).
 
 
+## Borrow checking
+
+Nimony enforces memory safety through borrow checking. The borrow checker prevents
+two classes of errors: **aliasing violations** at call sites and **resize operations during iteration**.
+
+### Call-site aliasing checks
+
+When calling a proc, the compiler checks that mutable (`var`) arguments do not
+overlap with other arguments to the same call:
+
+  ```nim
+  proc take(a: var int, b: int) =
+    a = b
+
+  proc swap(a: var int, b: var int) =
+    let tmp = a; a = b; b = tmp
+
+  var x = 5
+  take(x, x)   # Error: mutable argument aliases with immutable parameter
+  swap(x, x)   # Error: mutable argument aliases with mutable parameter
+  ```
+
+The check extends to field paths. A mutable argument to a field overlaps with
+an immutable argument to the parent object:
+
+  ```nim
+  type Obj = object
+    x, y: int
+
+  proc update(a: var int, b: Obj) =
+    a = b.x
+
+  var o = Obj(x: 1, y: 2)
+  update(o.x, o)   # Error: mutable argument aliases with immutable parameter
+  ```
+
+The classic gotcha this prevents is passing a container by `var` alongside an element
+from that container. When `T` is large, the compiler passes the element by a hidden
+pointer — but the proc can invalidate that pointer:
+
+  ```nim
+  proc gotcha[T](s: var seq[T]; elem: T) =
+    s.shrink 0  # frees the buffer
+    use elem    # elem is a dangling pointer!
+
+  gotcha(myseq, myseq[0])  # Error: mutable argument aliases with immutable parameter
+  ```
+
+Disjoint fields of the same object are fine:
+
+  ```nim
+  var o = Obj(x: 1, y: 2)
+  swap(o.x, o.y)   # OK: disjoint fields
+  ```
+
+### Mutation of borrowed paths
+
+When iterating over a collection, the compiler borrows from the underlying path.
+During the borrow, the borrowed path cannot be mutated:
+
+  ```nim
+  proc addItem(s: var seq[int]; val: int) =
+    s.add val
+
+  var s = @[1, 2, 3]
+  for x in s:
+    addItem(s, x)  # Error: 's' is borrowed and cannot be mutated
+  ```
+
+This prevents iterator invalidation: mutating a `seq` during iteration could
+reallocate the underlying buffer while references into it are still alive.
+
+The rule is based on **prefix exclusion**: if a path `a.b.c` is borrowed,
+neither `a`, `a.b`, nor `a.b.c` can be mutated until the borrow ends.
+Other fields at the same level (siblings) remain accessible:
+
+  ```nim
+  type Config = object
+    elements: seq[int]
+    name: string
+
+  var c = Config(elements: @[1, 2], name: "old")
+  for x in c.elements:
+    c.name = "new"      # OK: disjoint sibling field
+    # c.elements.add(x)    # Error: 'c.elements' is borrowed
+  ```
+
 
 ## `out` parameters
 
