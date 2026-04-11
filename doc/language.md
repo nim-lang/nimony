@@ -3963,6 +3963,35 @@ special `{.` and `.}` curly brackets.
 
 
 
+### Feature pragma
+
+The `feature` pragma enables or restores specific language features on a per-module basis:
+
+  ```nim
+  {.feature: "lenientnils".}
+  ```
+
+The term "feature" is deliberately neutral. A feature may start out as experimental,
+become the default, or eventually be deprecated as legacy — but the pragma name stays
+the same. The lifecycle stage (experimental, default, legacy) lives in the documentation
+of the individual feature, not in the pragma syntax. This means a feature changing status
+never requires renaming the pragma in source code.
+
+Features are scoped to the module they appear in and do not propagate to importers.
+
+The following features are available:
+
+| Feature | Description |
+|---------|-------------|
+| `"lenientnils"` | Makes `ref`, `ptr`, `pointer`, `cstring` and proc types nullable by default, matching Nim 2 behavior. See [lenientnils.md](lenientnils.md). |
+| `"autoclosures"` | Enables implicit conversion of expressions to closures at call sites. |
+| `"canraise"` | Allows procs without a `raises` annotation to raise exceptions. |
+| `"lenientconverters"` | Allows the definition of converters for basic types such as `int`. For compatibility with Nim 2. |
+| `"untyped"` | Treats templates and generic procs as `.untyped` by default. For compatibility with Nim 2. |
+| `"resemchoice"` | Re-resolves overloaded choice nodes during generic instantiation. |
+| `"earlymagics"` | Resolves magic procs before overload resolution. For compatibility with Nim 2. |
+
+
 ### noreturn pragma
 The `noreturn` pragma is used to mark a proc that never returns.
 
