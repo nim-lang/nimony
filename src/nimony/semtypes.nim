@@ -557,8 +557,8 @@ proc stripNilAnnotation(dest: var TokenBuf; minPos: int) =
   ## that must be stripped before adding an explicit annotation.
   let L = dest.len
   if L >= minPos + 2 and dest[L-1].kind == ParRi and dest[L-2].kind == ParLe:
-    let t = dest[L-2].tag
-    if t == cast[TagId](NotnilU) or t == cast[TagId](NilU) or t == cast[TagId](UncheckedU):
+    let t = dest[L-2].substructureKind
+    if t in {NotnilU, NilU, UncheckedU}:
       dest.shrink L-2
 
 proc handleNotnilType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; context: TypeDeclContext): bool =
