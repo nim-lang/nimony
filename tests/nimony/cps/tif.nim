@@ -13,3 +13,28 @@ proc io() {.passive.} =
 
 io()
 
+proc main2() {.passive.} =
+  echo "main2:"
+  if true:
+    if true:
+      a()
+      if true:
+        a()
+        if true:
+          a()
+    else:
+      a()
+      discard
+      discard
+    c()
+    discard
+    discard
+    echo "test"
+  elif true:
+    c()
+  if true:
+    discard
+  else:
+    discard
+
+main2()
