@@ -188,8 +188,8 @@ type
     procStack: seq[SymId]
     currentProc: ProcContext
     continuationProcImpl: Cursor
-    inlineContState: int   ## >= 0 when trIte detected a split inside a branch
-    inlineContCursor: Cursor ## cursor to rest-of-branch code after the split point
+    createNewLocalProc: seq[tuple[label: int, n: Cursor]]
+    createdStates: HashSet[int]
     shouldPublish: seq[tuple[sym: SymId, start: int]]
 
 proc coroTypeForProc(c: Context; procId: SymId): SymId =
@@ -262,32 +262,20 @@ proc continuationPos(c: Context; pos: int): int =
       discard
     inc i
 
-  echo "===== continuationPos(", pos, ") ===="
   for k in countdown(ancestors.len - 1, 0):
     let itePos = ancestors[k]
     let tok = c.currentProc.cf[itePos]
     let sk = stmtKind(tok)
     let nk = njvlKind(tok)
-    if sk == IfS:
-      let endPos = afterNode(c.currentProc.cf, itePos)
-      let nextBranchPos = afterNode(c.currentProc.cf, itePos + 1)
-      echo "DEBUG: IfS at ", itePos, " endPos=", endPos, " nextBranchPos=", nextBranchPos
-      if result == nextBranchPos or result == endPos:
-        result = endPos
-        break
-    elif njvlKind(tok) == ItecV or tok.tag == TagId(ord(IteF)):
+    if njvlKind(tok) == ItecV or tok.tag == TagId(ord(IteF)):
       let condPos = itePos + 1
       let thenPos = afterNode(c.currentProc.cf, condPos)
       let elsePos = afterNode(c.currentProc.cf, thenPos)
       let endPos = afterNode(c.currentProc.cf, itePos)
-      echo "DEBUG: ItecV at ", itePos, " endPos=", endPos, " elsePos=", elsePos, " result=", result
       if result == elsePos or result == endPos:
         result = endPos
         while c.currentProc.cf[result].kind == ParRi:
           inc result
-        # echo "NSFOASNFOIASMFOASF ", njvlKind(c.currentProc.cf[ancestors[k-1]-2])
-        # break
-  echo ""
 
 proc returnsToCallerDirectly(c: Context; pos: int): bool =
   continuationPos(c, pos) >= c.currentProc.cf.len
@@ -1054,9 +1042,7 @@ proc emitTailStmts(c: var Context; dest: var TokenBuf; n: var Cursor; continueSt
       if continueState != -1: gotoNextState c, dest, continueState, n.info
       skip n
     else:
-      c.inlineContState = -1
       tr c, dest, n
-      c.inlineContState = -1  # ignore nested splits in tail (handled separately)
 
 proc compileStmtSeq(c: var Context; dest: var TokenBuf; n: var Cursor; continueState: int) =
   ## Process a sequence of statements (n is already past the StmtsS opening tag,
@@ -1080,6 +1066,7 @@ proc compileStmtSeq(c: var Context; dest: var TokenBuf; n: var Cursor; continueS
       dest.addParRi() # close stmts
       dest.addParRi() # close proc decl
       newLocalProc c, dest, state, sym
+      c.createdStates.incl(state)
       inc c.currentProc.subProcs
     # Handle (continue .) as a loop back-edge
     if n.stmtKind == ContinueS:
@@ -1087,42 +1074,31 @@ proc compileStmtSeq(c: var Context; dest: var TokenBuf; n: var Cursor; continueS
         gotoNextState c, dest, continueState, n.info
       skip n
     else:
-      c.inlineContState = -1
+      echo "DEBUG compileStmtSeq: tr next"
       tr c, dest, n
-      echo "DEBUG compileStmtSeq: after tr, inlineContState=", c.inlineContState
-      # Reset the flag after processing a statement (unless it was a suspend which sets it)
-      if not c.currentProc.lastStmtReturns:
-        discard
-      if c.inlineContState >= 0:
-        echo "DEBUG compileStmtSeq: handling split at inlineContState=", c.inlineContState
-        # A passive call split happened inside a nested ite branch:
-        # c.inlineContState = the new continuation state
-        # c.inlineContCursor = cursor to rest-of-then code in the branch
-        let splitState = c.inlineContState
-        let restOfThen = c.inlineContCursor
-        c.inlineContState = -1
-        # Emit tail stmts (after-ite code) into the current proc (s1 else-path)
-        let tailStart = n
-        emitTailStmts c, dest, n, continueState
-        # Close current proc and open the split continuation state
-        emitReturnCaller(c, dest, n.info)
-        dest.addParRi() # close stmts
-        dest.addParRi() # close proc decl
-        newLocalProc c, dest, splitState, sym
-        inc c.currentProc.subProcs
-        # Emit rest-of-then into new state proc.
-        # The label at restOfThen's starting position equals splitState (already consumed
-        # by newLocalProc above). Delete it so the recursive compileStmtSeq call doesn't
-        # re-open the same state proc.
-        var thenN = restOfThen
-        c.currentProc.labels.del(cursorToPosition(c.currentProc.cf, thenN))
-        compileStmtSeq c, dest, thenN, continueState
-        # Emit tail again into the last state proc opened during thenN processing
-        var tailN = tailStart
-        emitTailStmts c, dest, tailN, continueState
-        # Advance n past the tail (already emitted above)
-        n = tailN
-        break
+  while c.createNewLocalProc.len > 0:
+    # A passive call split happened inside a nested ite branch:
+    # splitState = the new continuation state
+    # restOfThen = cursor to rest-of-then code in the branch
+    let (splitState, restOfThen) = c.createNewLocalProc.pop()
+    if c.createdStates.contains(splitState):
+      continue
+    c.createdStates.incl(splitState)
+    echo splitState
+    # Close current proc and open the split continuation state
+    emitReturnCaller(c, dest, n.info)
+    dest.addParRi() # close stmts
+    dest.addParRi() # close proc decl
+    newLocalProc c, dest, splitState, sym
+    inc c.currentProc.subProcs
+    # Emit rest-of-then into new state proc.
+    # The label at restOfThen's starting position equals splitState (already consumed
+    # by newLocalProc above). Delete it so the recursive compileStmtSeq call doesn't
+    # re-open the same state proc.
+    var thenN = restOfThen
+    echo "createNewLocalProc ", splitState, " ", cursorToPosition(c.currentProc.cf, restOfThen)
+    c.currentProc.labels.del(cursorToPosition(c.currentProc.cf, restOfThen))
+    compileStmtSeq c, dest, thenN, continueState
 
 proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: Cursor; sym: SymId) =
   # Transform the proc body via the NJ pass to get structured code without
@@ -1182,7 +1158,6 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
           loopStack.add(SuspEntry(pos: pos, depth: depth))
         if nk == IteV:
           iteStack.add(SuspEntry(pos: pos, depth: depth))
-        echo "DEBUG ParLe: pos=", pos, " nk=", nk
         let sk = scan.stmtKind
         let ek = scan.exprKind
         if sk == YldS or (ek in CallKinds - {DelayX} and isPassiveCall(c, c.currentProc.cf[pos+1])) or
@@ -1193,14 +1168,11 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
           if iteStack.len > 0:
             iteStack[^1].containsSusp = true
           let j = continuationPos(c, pos)
-          echo "DEBUG gather: pos=", pos, " continuationPos=", j
           if j <= c.currentProc.cf.len:
             let existing = c.currentProc.labels.getOrDefault(j, -1)
             if existing >= 0:
-              echo "DEBUG gather: existing label at ", j, " = ", existing
               c.currentProc.yieldConts[pos] = existing
             else:
-              echo "DEBUG gather: assigning label ", nextLabel, " at ", j
               c.currentProc.yieldConts[pos] = nextLabel
               c.currentProc.labels[j] = nextLabel
               inc nextLabel
@@ -1551,7 +1523,7 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
 
 proc trIteStmts(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Process a stmts sequence inside an ite branch.
-  ## Detects label splits (from passive calls) and sets c.inlineContState/Cursor.
+  ## Detects label splits (from passive calls) and sets createNewLocalProc.
   if n.kind == DotToken:
     # Empty else-branch (no stmts, just a dot token)
     inc n
@@ -1561,20 +1533,16 @@ proc trIteStmts(c: var Context; dest: var TokenBuf; n: var Cursor) =
   while n.kind != ParRi:
     let p = cursorToPosition(c.currentProc.cf, n)
     let state = c.currentProc.labels.getOrDefault(p, -1)
-    echo "DEBUG trIteStmts: at p=", p, " state=", state
     if state != -1:
       # split inside branch — save position and stop emitting into this branch
-      c.inlineContState = state
-      c.inlineContCursor = n
+      c.createNewLocalProc.add (state, n)
       while n.kind != ParRi: skip n  # skip rest of branch
       break
     tr c, dest, n
     let afterP = continuationPos(c, p)
     let afterState = c.currentProc.labels.getOrDefault(afterP, -1)
-    echo "DEBUG trIteStmts: after p=", p, " afterP=", afterP, " afterState=", afterState
     if afterState != -1:
-      c.inlineContState = afterState
-      c.inlineContCursor = n
+      c.createNewLocalProc.add (afterState, n)
       while n.kind != ParRi: skip n
       break
   inc n  # skip stmts ParRi
@@ -1585,10 +1553,7 @@ proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var condBuf = createTokenBuf(16)
   tr c, condBuf, n  # condition
   var thenBuf = createTokenBuf(64)
-  trIteStmts c, thenBuf, n  # then-branch (may set c.inlineContState)
-  let splitState = c.inlineContState
-  let splitCursor = c.inlineContCursor
-  c.inlineContState = -1
+  trIteStmts c, thenBuf, n  # then-branch
   var elseBuf = createTokenBuf(32)
   trIteStmts c, elseBuf, n  # else-branch
   skipParRi n  # skip ite ParRi
@@ -1600,10 +1565,9 @@ proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.copyIntoKind ElseU, info:
       dest.copyIntoKind StmtsS, info:
         dest.add elseBuf
-  # If a split was detected inside the then-branch, signal it to the caller
-  if splitState >= 0:
-    c.inlineContState = splitState
-    c.inlineContCursor = splitCursor
+  let p = cursorToPosition(c.currentProc.cf, n)
+  let state = c.currentProc.labels.getOrDefault(p, -1)
+  echo "MASFPASMFOASIF p=", p, " state=", state
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
@@ -1716,16 +1680,16 @@ proc transformToCps*(pass: var Pass) =
   var c = Context(thisModuleSuffix: pass.moduleSuffix,
     typeCache: createTypeCache(),
     continuationProcImpl: generateContinuationProcImpl(),
-    inlineContState: -1)
+    createNewLocalProc: @[], createdStates: initHashSet[int]())
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS
   pass.dest.takeToken n
   while n.kind != ParRi:
     tr(c, pass.dest, n)
   pass.dest.takeToken n # ParRi
-  # if c.shouldPublish.len > 0:
-  #   echo "====== TOTAL CPS RESULT ====="
-  #   echo pass.dest.toString(false)
+  if c.shouldPublish.len > 0:
+    echo "====== TOTAL CPS RESULT ====="
+    echo pass.dest.toString(false)
   for (sym, start) in c.shouldPublish:
     var buf = createTokenBuf(16)
     buf.copyTree pass.dest.cursorAt(start)
