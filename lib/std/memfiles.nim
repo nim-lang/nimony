@@ -1,7 +1,7 @@
 ## This module provides support for `memory mapped files`:idx:
 ## (Posix's `mmap`:idx:) on the different operating systems.
 
-{.feature: "lenientnils".}
+
 
 import assertions, syncio
 
@@ -22,10 +22,10 @@ when not defined(windows):
 
 type
   MemFile* = object      ## represents a memory mapped file
-    mem*: pointer        ## a pointer to the memory mapped file. The pointer
-                         ## can be used directly to change the contents of the
-                         ## file, if it was opened with write access.
-    size*: int           ## size of the memory mapped file
+    mem*: unchecked pointer ## a pointer to the memory mapped file. The pointer
+                            ## can be used directly to change the contents of the
+                            ## file, if it was opened with write access.
+    size*: int              ## size of the memory mapped file
 
     when defined(windows):
       fHandle*: Handle   ## **Caution**: Windows specific public field to allow
