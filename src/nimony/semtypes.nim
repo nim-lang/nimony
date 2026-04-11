@@ -618,12 +618,30 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
       takeParRi dest, n
       nn = n
       result = true
+    else:
+      let u = getIdent(n)
+      if ptrk != NoType and u != StrId(0) and pool.strings[u] == "unchecked":
+        skip n # skip `unchecked`
+        dest.addParLe ptrk, info
+        semLocalTypeImpl c, dest, n, context
+        dest.addParPair UncheckedU, info
+        takeParRi dest, n
+        nn = n
+        result = true
+
   elif nn.exprKind in {PrefixX, CmdX}:
     # `nil RootRef`
     var n = nn
     let info = n.info
     inc n
+    var annotation = NoSub
     if n.exprKind == NilX:
+      annotation = NilU
+    else:
+      let u = getIdent(n)
+      if u != StrId(0) and pool.strings[u] == "unchecked":
+        annotation = UncheckedU
+    if annotation != NoSub:
       skip n
       let before = dest.len
       semLocalTypeImpl c, dest, n, context
@@ -633,7 +651,7 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
         # remove ParRi of the pointer
         dest.shrink dest.len-1
         stripNilAnnotation dest, before
-        dest.addParPair NilX, info
+        dest.addParPair annotation, info
         dest.addParRi()
       elif nd.typeKind == ProctypeT:
         dest.endRead()
@@ -645,13 +663,13 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
         var found = false
         for i in countdown(L-1, before):
           if dest[i].kind == ParLe and dest[i].substructureKind == NotnilU:
-            dest[i] = parLeToken(NilU, info)
+            dest[i] = parLeToken(annotation, info)
             found = true
             break
         if not found:
           # No notnil found (lenient mode) — add nil as direct child before closing ParRi
           dest.shrink dest.len-1
-          dest.addParPair NilX, info
+          dest.addParPair annotation, info
           dest.addParRi()
       elif containsGenericParams(nd):
         # keep as is, will be checked later after generic instantiation:
