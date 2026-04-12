@@ -798,13 +798,11 @@ proc containsSuspensionPoint(c: var Context; n: Cursor): bool =
     let ek = n.exprKind
     if sk == YldS or (ek in CallKinds - {DelayX} and isPassiveCall(c, n.firstSon.load)) or ek == SuspendX:
       return true
-    if n.kind == ParLe:
-      inc nested
-    elif n.kind == ParRi:
-      if nested == 0:
-        break
-      dec nested
     inc n
+    if n.kind == ParRi:
+      if nested == 0: break
+      dec nested
+    elif n.kind == ParLe: inc nested
   return false
 
 proc trMflag(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -994,10 +992,10 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   wrapper.addParRi()
   var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "eliminateJumps", 0)
   eliminateJumps(pass, raisesResolved = true)
-  # when defined(logPasses):
-  echo ""
-  echo "========= NJ OUTPUT ======"
-  echo pass.dest.toString(false)
+  when defined(logPasses):
+    echo ""
+    echo "========= NJ OUTPUT ======"
+    echo pass.dest.toString(false)
   # pass.dest is (stmts cfvar_decls... (proc header body_stmts) ...).
   # Navigate into the proc body; then copy it while stripping NJ bookkeeping
   # (mflag/vflag/jtrue/kill) so c.currentProc.cf has no versionized variables.
@@ -1021,10 +1019,10 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   
   # Analyze which locals escape across suspension points using the same label map
   c.currentProc.cf = toGoto(c, beginRead(c.currentProc.cf))
-  # when defined(logPasses):
-  echo "========= GOTO ======="
-  echo c.currentProc.cf.toString(false)
-  echo ""
+  when defined(logPasses):
+    echo "========= GOTO ======="
+    echo c.currentProc.cf.toString(false)
+    echo ""
 
   var n = beginRead(c.currentProc.cf)
   escapingLocals(c, n)
