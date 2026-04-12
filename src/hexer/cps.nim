@@ -185,8 +185,6 @@ type
     procStack: seq[SymId]
     currentProc: ProcContext
     continuationProcImpl: Cursor
-    inlineContState: int   ## >= 0 when trIte detected a split inside a branch
-    inlineContCursor: Cursor ## cursor to rest-of-branch code after the split point
     shouldPublish: seq[tuple[sym: SymId, start: int]]
 
 proc coroTypeForProc(c: Context; procId: SymId): SymId =
@@ -212,59 +210,6 @@ proc localToFieldname(c: var Context; local: SymId): SymId =
   result = pool.syms.getOrIncl(name)
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
-proc returnsToCallerDirectly(c: Context; pos: int): bool
-
-proc afterNode(cf: TokenBuf; pos: int): int =
-  if pos < cf.len and cf[pos].kind == ParLe:
-    var nested = 1
-    result = pos + 1
-    while result < cf.len and nested > 0:
-      case cf[result].kind
-      of ParLe: inc nested
-      of ParRi: dec nested
-      else: discard
-      inc result
-  else:
-    result = pos + 1
-
-proc continuationPos(c: Context; pos: int): int =
-  result = afterNode(c.currentProc.cf, pos)
-  while result < c.currentProc.cf.len and c.currentProc.cf[result].kind == ParRi:
-    inc result
-
-  var ancestors: seq[int] = @[]
-  var i = 0
-  while i <= pos and i < c.currentProc.cf.len:
-    case c.currentProc.cf[i].kind
-    of ParLe:
-      ancestors.add i
-    of ParRi:
-      if ancestors.len > 0:
-        discard ancestors.pop()
-    else:
-      discard
-    inc i
-
-  for k in countdown(ancestors.len - 1, 0):
-    let itePos = ancestors[k]
-    let tok = c.currentProc.cf[itePos]
-    if stmtKind(tok) == IfS:
-      let endPos = afterNode(c.currentProc.cf, itePos)
-      let nextBranchPos = afterNode(c.currentProc.cf, itePos + 1)
-      if result == nextBranchPos or result == endPos:
-        result = endPos
-        break
-    elif njvlKind(tok) == ItecV or tok.tag == TagId(ord(IteF)):
-      let condPos = itePos + 1
-      let thenPos = afterNode(c.currentProc.cf, condPos)
-      let elsePos = afterNode(c.currentProc.cf, thenPos)
-      let endPos = afterNode(c.currentProc.cf, itePos)
-      if result == elsePos or result == endPos:
-        result = endPos
-        break
-
-proc returnsToCallerDirectly(c: Context; pos: int): bool =
-  continuationPos(c, pos) >= c.currentProc.cf.len
 
 proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
@@ -1421,8 +1366,7 @@ proc transformToCps*(pass: var Pass) =
   var n = pass.n  # Extract cursor locally
   var c = Context(thisModuleSuffix: pass.moduleSuffix,
     typeCache: createTypeCache(),
-    continuationProcImpl: generateContinuationProcImpl(),
-    inlineContState: -1)
+    continuationProcImpl: generateContinuationProcImpl())
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS
   pass.dest.takeToken n
