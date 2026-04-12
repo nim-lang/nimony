@@ -731,7 +731,7 @@ proc escapingLocals(c: var Context; n: Cursor) =
   var nested = 0
   while true:
     if pool.tags[n.tag] == "lab":
-      currentState = pool.integers[n.firstSon.intId]
+      currentState = int(pool.integers[n.firstSon.intId])
 
     let sk = n.stmtKind
     let nk = n.njvlKind
@@ -1452,14 +1452,14 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           case pool.tags[n.tagId]
           of "jmp":
             inc n
-            gotoNextState(c, dest, pool.integers[n.intId], n.info)
+            gotoNextState(c, dest, int(pool.integers[n.intId]), n.info)
             inc n
             skipParRi n
           of "lab":
             dest.addParRi() # close stmts
             dest.addParRi() # close proc decl
             inc n
-            newLocalProc c, dest, pool.integers[n.intId], c.procStack[^1]
+            newLocalProc c, dest, int(pool.integers[n.intId]), c.procStack[^1]
             inc n
             skipParRi n
           else:
