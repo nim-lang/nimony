@@ -866,6 +866,7 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
     inc c.currentProc.labelCounter
     var afterLoopState = c.currentProc.labelCounter
     inc c.currentProc.labelCounter
+    emitJump dest, beforeLoopState, info
     emitLabel dest, beforeLoopState, info
     dest.copyIntoKind IfS, info:
       dest.copyIntoKind ElifU, info:
@@ -947,7 +948,8 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "eliminateJumps", 0)
   eliminateJumps(pass, raisesResolved = true)
   when defined(logPasses):
-    echo "NJ OUTPUT: ", pass.dest.toString(false)
+    echo "========= NJ OUTPUT ======"
+    echo pass.dest.toString(false)
   # pass.dest is (stmts cfvar_decls... (proc header body_stmts) ...).
   # Navigate into the proc body; then copy it while stripping NJ bookkeeping
   # (mflag/vflag/jtrue/kill) so c.currentProc.cf has no versionized variables.
@@ -969,13 +971,11 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
     bodyBuf.copyTree nExt
     c.currentProc.cf = ensureMove bodyBuf
   
-  echo "========= NJ OUTPUT ======"
-  echo c.currentProc.cf.toString(false)
-  
   # Analyze which locals escape across suspension points using the same label map
-  echo "========= GOTO ======="
   c.currentProc.cf = toGoto(c, beginRead(c.currentProc.cf))
-  echo c.currentProc.cf.toString(false)
+  when defined(logPasses):
+    echo "========= GOTO ======="
+    echo c.currentProc.cf.toString(false)
 
   var n = beginRead(c.currentProc.cf)
   escapingLocals(c, n)
