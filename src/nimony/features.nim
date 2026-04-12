@@ -13,17 +13,17 @@ type
     UntypedFeature
     CanRaiseFeature
     LenientConvertersFeature
-    NotnilFeature
     EarlyMagicsFeature
     AutoClosuresFeature
+    LenientNilsFeature
 
 proc parseFeature*(s: string): Feature =
   case s
-  of "notnil": NotnilFeature
   of "resemchoice": ResemChoiceFeature
   of "untyped": UntypedFeature
   of "canraise": CanRaiseFeature
   of "lenientconverters": LenientConvertersFeature
   of "earlymagics": EarlyMagicsFeature
   of "autoclosures": AutoClosuresFeature
+  of "lenientnils": LenientNilsFeature
   else: InvalidFeature

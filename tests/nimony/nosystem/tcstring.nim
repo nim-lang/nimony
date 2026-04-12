@@ -14,7 +14,7 @@ proc `<=`*(x, y: int): bool {.magic: "LeI".}
 
 var x = cast[int](55)
 
-var y: pointer = nil
+var y: nil pointer = nil
 
 const
   myconst = cstring"abc"

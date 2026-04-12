@@ -11,6 +11,8 @@ import stringviews
 when defined(nimony):
   import std/syncio
 
+  {.feature: "lenientnils".}
+
 const
   ControlChars = {'(', ')', '[', ']', '{', '}', '~', '#', '\'', '"', ':'}
   ControlCharsOrWhite = ControlChars + {' ', '\n', '\t', '\r'}

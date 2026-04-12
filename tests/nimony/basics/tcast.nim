@@ -42,5 +42,5 @@ assert cast[float](rx) == cf
 assert cast[int](cast[float](rx)) == crt
 
 # cast[ptr int](nil) should work at compile time
-const np = cast[ptr int](nil)
+const np = cast[nil ptr int](nil)
 assert np == nil

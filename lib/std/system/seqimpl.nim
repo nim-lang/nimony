@@ -1,5 +1,7 @@
 # seq implementation.
 
+{.feature: "lenientnils".}
+
 type
   seq*[T] = object
     len: int
@@ -9,11 +11,11 @@ func capInBytes[T](s: seq[T]): int {.inline.} =
   result = if s.data != nil: allocatedSize(s.data) else: 0
 
 func `=destroy`*[T](s: seq[T]) =
-  var i = 0
-  while i < s.len:
-    `=destroy`(s.data[i])
-    inc i
   if s.data != nil:
+    var i = 0
+    while i < s.len:
+      `=destroy`(s.data[i])
+      inc i
     dealloc s.data
 
 func `=wasMoved`*[T](s: var seq[T]) {.inline.} =

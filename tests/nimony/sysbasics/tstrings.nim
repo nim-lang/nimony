@@ -153,7 +153,7 @@ block:
 
 
 block:
-  var cstr: cstring = nil
+  var cstr: nil cstring = nil
 
   assert len(cstr) == 0
   var newstr: string = $cstr

@@ -682,7 +682,17 @@ proc unravelDispatch(c: var LiftingCtx; orig: TypeCursor; paramA, paramB: TokenB
     #maybeCallHook c, fn, paramA, paramB
 
 proc addParamType(c: var LiftingCtx; typ: TypeCursor) =
-  copyTree c.dest, typ
+  var n = typ
+  if n.isAtom:
+    copyTree c.dest, typ
+  else:
+    c.dest.takeToken n
+    while n.kind != ParRi:
+      if isNilAnnotation(n):
+        skip n
+      else:
+        takeTree c.dest, n
+    c.dest.addParRi()
 
 proc addParamWithModifier(c: var LiftingCtx; param: SymId; typ: TypeCursor; modifier: TypeKind) =
   copyIntoKind(c.dest, ParamY, c.info):

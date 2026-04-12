@@ -1,5 +1,5 @@
 import std/[syncio, assertions]
-
+{.feature: "lenientnils".}
 block: # issue #24080
   var a = (s: "a")
   var b = "a"

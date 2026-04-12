@@ -1,3 +1,5 @@
+{.feature: "lenientnils".}
+
 import std/[assertions, parseutils]
 
 const

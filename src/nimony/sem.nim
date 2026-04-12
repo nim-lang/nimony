@@ -1637,6 +1637,8 @@ proc semPragmas(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       while n.kind != ParRi:
         if n.exprKind == ErrX:
           takeTree dest, n
+        elif n.substructureKind in {NotnilU, NilU, UncheckedU}:
+          takeTree dest, n # nil annotations, pass through
         else:
           if checkedPragmas.isChecked(n, kind):
             skip n
@@ -1756,6 +1758,11 @@ proc semTypeSym(c: var SemContext; dest: var TokenBuf; s: Sym; info: PackedLineI
           typeclassBuf.addParRi()
           typeclassBuf.addParRi()
           replace(dest, cursorAt(typeclassBuf, 0), start)
+        elif magic in {CstringT, PointerT} and LenientNilsFeature notin c.features:
+          # add default notnil for pointer-like magic types:
+          dest.shrink dest.len - 1 # remove ParRi
+          dest.addParPair NotnilU, info
+          dest.addParRi()
     elif res.status == LacksNothing:
       let typ = asTypeDecl(res.decl)
       if isGeneric(typ) or isNominal(typ.body.typeKind):
@@ -4144,7 +4151,12 @@ proc inferSumTypeFromFields(c: var SemContext; dest: var TokenBuf;
   if objTypeSym == SymId(0): return default(TypeCursor)
 
   let decl = getTypeSection(objTypeSym)
-  if not decl.isGeneric: return default(TypeCursor)
+  if not decl.isGeneric:
+    var typeBuf = createTokenBuf(1)
+    typeBuf.add symToken(objTypeSym, info)
+    var instDest = createTokenBuf(16)
+    var instRead = cursorAt(typeBuf, 0)
+    return semLocalType(c, instDest, instRead)
 
   let branchFields = findBranchFields(objTypeSym, efldSym)
   var fieldTypesByName = initTable[StrId, TypeCursor]()
@@ -5797,7 +5809,34 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
         pragmaGuard c:
           semEmit c, dest, it
       of PragmasS:
-        pragmaGuard c:
+        if c.phase == SemcheckTopLevelSyms:
+          # Extract feature pragmas even in phase1 so that e.g. lenientnils
+          # is known before type declarations are processed:
+          var probe = it.n
+          inc probe # skip (pragmas
+          while probe.kind != ParRi:
+            if probe.substructureKind == KvU:
+              inc probe # skip (kv
+              if probe.pragmaKind == FeatureP:
+                inc probe # skip (feature
+                if probe.kind == StringLit:
+                  let feature = parseFeature(pool.strings[probe.litId])
+                  if feature != InvalidFeature:
+                    c.features.incl feature
+                break
+              else:
+                break
+            elif probe.pragmaKind == FeatureP:
+              inc probe # skip (feature
+              if probe.kind == StringLit:
+                let feature = parseFeature(pool.strings[probe.litId])
+                if feature != InvalidFeature:
+                  c.features.incl feature
+              break
+            else:
+              skip probe
+          dest.takeTree it.n
+        else:
           semPragmasLine c, dest, it
       of InclS, ExclS:
         toplevelGuard c:

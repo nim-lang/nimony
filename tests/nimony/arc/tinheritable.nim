@@ -5,7 +5,7 @@ type
     le, ri: Node
     s: string
 
-proc traverse(root: Node) =
+proc traverse(root: nil Node) =
   var it = root
   while it != nil:
     if true:

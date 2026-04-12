@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +7221            )
+(.indexat +7235            )
 0,1,tests/nimony/sysbasics/thooks.nim(stmts
  (import sysvq0asl) 15,1
  (type ~13 :MyObjectBase.0. . .
@@ -33,7 +33,8 @@
    (param :x.0 . . 3
     (mut 4 MyObjectBase.0.) .) 22
    (param :p.0 . . 3
-    (pointer) .)) . . . 2,1
+    (pointer
+     (notnil)) .)) . . . 2,1
   (stmts
    (discard .))) ,10
  (proc 5 :=wasMoved.0. . . . 16
@@ -282,7 +283,7 @@
  (h T.0. +43) 14,4
  (h Y.0. +29) ,7
  (h =trace.0. +230) ,10
- (h =wasMoved.0. +175) ,13
+ (h =wasMoved.0. +189) ,13
  (h =copy.0. +137) ,16
  (h =sink.0. +176) ,19
  (h =destroy.0. +176) ,22

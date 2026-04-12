@@ -2,7 +2,7 @@
 
 *Nimony* is the name of the work-in-progress implementation for **Nim 3**. The differences between Nim 3 and Nim 2 are listed here, briefly:
 
-- Explicit `nil ref/ptr T` annotations, benefit: no more null pointer crashes at runtime.
+- Explicit `nil ref/ptr T` annotations, benefit: no more null pointer crashes at runtime. See [lenientnils.md](lenientnils.md) for details.
 - `proc mygeneric[T: <ConceptHere>](...) = ...`; benefit: increased compile-time checking.
 - `case` inside `object` gets a new syntax. Benefit: Enables builtin pattern matching.
 - Reworked `async` / `await` that is based on continuations. It mitigates the "what color is your function" problem:

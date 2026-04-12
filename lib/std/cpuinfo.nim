@@ -35,9 +35,9 @@ else:
       SystemInfo = object
         u1: uint32
         dwPageSize: uint32
-        lpMinimumApplicationAddress: pointer
-        lpMaximumApplicationAddress: pointer
-        dwActiveProcessorMask: ptr uint32
+        lpMinimumApplicationAddress: nil pointer
+        lpMaximumApplicationAddress: nil pointer
+        dwActiveProcessorMask: nil ptr uint32
         dwNumberOfProcessors: uint32
         dwProcessorType: uint32
         dwAllocationGranularity: uint32
@@ -62,13 +62,13 @@ else:
     when defined(macosx):
       proc sysctlbyname(name: cstring,
         oldp: pointer, oldlenp: var csize_t,
-        newp: pointer, newlen: csize_t): cint {.importc.}
+        newp: nil pointer, newlen: csize_t): cint {.importc.}
     let
       CTL_HW{.importc.}: cint
       HW_NCPU{.importc.}: cint
     proc sysctl[I](name: var array[I, cint], namelen: cuint,
       oldp: pointer, oldlenp: var csize_t,
-      newp: pointer, newlen: csize_t): cint {.importc.}
+      newp: nil pointer, newlen: csize_t): cint {.importc.}
     {.pop.}
 
   when defined(genode):

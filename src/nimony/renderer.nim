@@ -5,6 +5,7 @@
 # distribution, for details about the copyright.
 
 import ".." / lib / [bitabs, lineinfos, nifstreams, nifcursors, filelinecache, symparser]
+import ".." / njvl / njvl_model
 
 import nimony_model, decls
 
@@ -757,10 +758,24 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
     of CT:
       put(g, tkSymbol, "char")
       skip n
-    of BoolT, VoidT, CstringT, PointerT,
-          UntypedT, TypedT, AutoT:
+    of BoolT, VoidT, UntypedT, TypedT, AutoT:
       put(g, tkSymbol, $n.typeKind)
       skip n
+    of CstringT, PointerT:
+      put(g, tkSymbol, $n.typeKind)
+      inc n
+      if n.kind != ParRi and n.substructureKind == NotnilU:
+        put(g, tkSpaces, Space)
+        put(g, tkSymbol, "not")
+        put(g, tkSpaces, Space)
+        put(g, tkNil, "nil")
+        skip n
+      elif n.kind != ParRi and n.substructureKind == NilU:
+        # rendered as prefix: nil cstring
+        skip n
+      elif n.kind != ParRi:
+        skip n # unchecked or other annotation
+      skipParRi(n)
     of OrdinalT:
       put(g, tkSymbol, "Ordinal")
       inc n
@@ -784,9 +799,17 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
     of PtrT:
       put(g, tkPtr, "ptr")
       inc n
-      if n.kind != ParRi:
+      if n.kind != ParRi and n.substructureKind notin {NotnilU, NilU, UncheckedU}:
         put(g, tkSpaces, Space)
         gtype(g, n, c)
+      if n.kind != ParRi and n.substructureKind == NotnilU:
+        put(g, tkSpaces, Space)
+        put(g, tkSymbol, "not")
+        put(g, tkSpaces, Space)
+        put(g, tkNil, "nil")
+        skip n
+      elif n.kind != ParRi:
+        skip n # nil, unchecked annotation
       skipParRi(n)
 
     of SetT:
@@ -801,9 +824,17 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
     of RefT:
       put(g, tkRef, "ref")
       inc n
-      if n.kind != ParRi:
+      if n.kind != ParRi and n.substructureKind notin {NotnilU, NilU, UncheckedU}:
         put(g, tkSpaces, Space)
         gtype(g, n, c)
+      if n.kind != ParRi and n.substructureKind == NotnilU:
+        put(g, tkSpaces, Space)
+        put(g, tkSymbol, "not")
+        put(g, tkSpaces, Space)
+        put(g, tkNil, "nil")
+        skip n
+      elif n.kind != ParRi:
+        skip n # nil, unchecked annotation
       skipParRi(n)
     of MutT:
       putWithSpace(g, tkVar, "var")
@@ -1399,6 +1430,11 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         else:
           if n.typeKind != NoType:
             gtype(g, n, c)
+          elif n.njvlKind == VV:
+            inc n
+            gsub g, n, c, fromStmtList, isTopLevel
+            skip n # version
+            skipParRi n
           else:
             skip n
         # raiseAssert "unreachable"
@@ -1971,6 +2007,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     discard "for illformed tokens"
   else:
     inc n
+    raiseAssert "unreachable"
 
 proc gsub(g: var SrcGen; n: var Cursor, fromStmtList = false, isTopLevel = false) =
   var c: Context = initContext()
@@ -1985,6 +2022,8 @@ proc renderTree(n: Cursor, renderFlags: RenderFlags = {}, renderType = false): s
   else:
     gsub(g, n, isTopLevel = true)
   result = g.buf
+  if result.len == 0:
+    result = toString(n, false)
 
 proc asNimCode*(n: Cursor; renderFlags: RenderFlags = {}): string =
   var m0: PackedLineInfo = NoLineInfo

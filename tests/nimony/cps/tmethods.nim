@@ -1,5 +1,5 @@
 import std/syncio
-
+{.feature: "lenientnils".}
 type MyObject = ref object of RootObj
 type MyObject2 = ref object of MyObject
 
@@ -9,7 +9,7 @@ method a(x: MyObject) {.passive.} =
 method a(x: MyObject2) {.passive.} =
   echo "heh2"
 
-method inherited(x: MyObject) {.passive.} = 
+method inherited(x: MyObject) {.passive.} =
   echo "inherited"
 
 method io(x: MyObject) {.passive.} =

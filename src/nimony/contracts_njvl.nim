@@ -108,7 +108,11 @@ proc extractSymIdForStore(n: Cursor): SymId =
 proc skipSymbol(r: var Cursor): SymId {.inline.} =
   ## Consume a bare Symbol or (v sym version) node and return its SymId.
   ## Returns NoSymId (without advancing) if r is neither.
-  result = extractSymId(r)
+  var n = r
+  while n.exprKind in {HconvX, ConvX, BaseobjX}:
+    inc n
+    skip n # type
+  result = extractSymId(n)
   if result != NoSymId:
     skip r
 
@@ -398,6 +402,16 @@ proc markedAs(t: Cursor; mark: NimonyOther): bool =
     # no base type
     if e.kind != ParRi and e.substructureKind == mark:
       result = true
+  of ProctypeT:
+    # for proctypes, the annotation is inside the pragmas section
+    var e = t.firstSon
+    for i in 0 ..< 6: skip e # skip name, export, pattern, generics, params, rettype
+    if e.substructureKind == PragmasU:
+      inc e
+      while e.kind != ParRi:
+        if e.substructureKind == mark:
+          return true
+        skip e
   else:
     discard
 
@@ -426,6 +440,31 @@ proc analysableRoot(c: var NjvlContext; n: Cursor): SymId =
   else:
     result = NoSymId
 
+proc isNonNilExpr(c: var NjvlContext; n: Cursor): bool =
+  ## Check if an expression is trivially non-nil without needing dataflow analysis.
+  case n.exprKind
+  of AddrX:
+    result = true
+  of ConvKinds:
+    # e.g. cstring("abc") — a conversion from a non-nil value is non-nil
+    var inner = n
+    inc inner
+    skip inner # skip type part
+    result = isNonNilExpr(c, inner)
+  of SufX:
+    # suffixed literal, e.g. (suf "abc" "R") — still a literal value
+    result = true
+  else:
+    if n.kind == StringLit:
+      result = true
+    else:
+      let s = extractSymId(n)
+      if s != NoSymId:
+        let sk = fetchSymKind(c.typeCache, s)
+        result = isRoutine(sk)
+      else:
+        result = false
+
 proc wantNotNil(c: var NjvlContext; n: Cursor) =
   case n.exprKind
   of NilX:
@@ -436,6 +475,10 @@ proc wantNotNil(c: var NjvlContext; n: Cursor) =
     let t = getType(c.typeCache, n)
     if markedAs(t, NotnilU):
       discard "fine, per type we know it is not nil"
+    elif isNonNilExpr(c, n):
+      discard "fine, expression is trivially not nil"
+    elif t.typeKind in RoutineTypes and not markedAs(t, NilU):
+      discard "fine, proc values are not nil unless explicitly marked nil"
     else:
       let r = analysableRoot(c, n)
       if r == NoSymId:
@@ -648,7 +691,12 @@ proc analyseTupConstr(c: var NjvlContext; n: var Cursor) =
   skip n # type
   while n.kind != ParRi:
     assert expected.kind != ParRi
-    checkNilMatch c, n, getTupleFieldType(expected)
+    let fieldType = getTupleFieldType(expected)
+    var val = n
+    if val.substructureKind == KvU:
+      inc val # skip kv tag
+      skip val # skip field name
+    checkNilMatch c, val, fieldType
     skip n
     skip expected # type of the next field
   skipParRi n
@@ -837,7 +885,7 @@ proc addAsgnFact(c: var NjvlContext; fact: LeXplusC) =
 
 proc cannotBeNil(c: var NjvlContext; n: Cursor): bool {.inline.} =
   let t = getType(c.typeCache, n)
-  result = markedAs(t, NotnilU)
+  result = markedAs(t, NotnilU) or isNonNilExpr(c, n)
 
 # --- NJVL-specific traversal ---
 
@@ -884,6 +932,11 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
     # Check if the rhs is known to be not nil
     if (valueStart.exprKind == NewobjX and c.procCanRaise) or cannotBeNil(c, valueStart):
       c.facts.add isNotNil(fact.a)
+    else:
+      # Also check: the destination type might have notnil (e.g. proctype)
+      if markedAs(expected, NotnilU):
+        # The nil-match check already passed, so the value IS non-nil
+        c.facts.add isNotNil(fact.a)
 
     skip n
   else:
@@ -1047,6 +1100,7 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
   let isInline = hasPragma(n, InlineP)
   skip n # pragmas
   c.typeCache.registerLocal(name, kind, n)
+  let localType = n
   skip n # type
   if n.kind != DotToken or skipInitCheck:
     c.directlyInitialized[^1].incl name
@@ -1067,6 +1121,8 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
     elif path.mode == NotBorrowable:
       buildErr c, n.info, "cannot borrow from '" & asNimCode(inner) &
         "': path is not borrowable; use 'addr' to override or a temporary move"
+  if n.kind != DotToken and localType.typeKind in {PtrT, RefT, CstringT, PointerT, ProctypeT}:
+    checkNilMatch c, n, localType
   traverseExpr c, n
   skipParRi n
 

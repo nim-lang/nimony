@@ -9,5 +9,9 @@ method m(x: Parent) =
 method m(x: Child) =
   echo "child"
 
-var c = Child()
-procCall Parent(c).m()
+proc main =
+  var c = Child()
+  if c != nil:
+    procCall Parent(c).m()
+
+main()

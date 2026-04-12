@@ -40,11 +40,14 @@ proc pragmaKind*(c: Cursor): NimonyPragma {.inline.} =
   else:
     result = NoPragma
 
-proc substructureKind*(c: Cursor): NimonyOther {.inline.} =
+proc substructureKind*(c: PackedToken): NimonyOther {.inline.} =
   if c.kind == ParLe and rawTagIsNimonyOther(tagEnum(c)):
     result = cast[NimonyOther](tag(c))
   else:
     result = NoSub
+
+proc substructureKind*(c: Cursor): NimonyOther {.inline.} =
+  result = substructureKind(c.load())
 
 proc typeKind*(c: Cursor): NimonyType {.inline.} =
   if c.kind == ParLe:
@@ -326,3 +329,12 @@ proc whichEffect*(k: StmtKind; pragmas: Cursor): Effect =
     result = HasNoSideEffect
   else:
     result = HasSideEffect
+
+proc isNilAnnotation*(n: Cursor): bool {.inline.} =
+  ## Returns true if `n` is a `(notnil)`, `(nil)`, or `(unchecked)` annotation.
+  n.kind == ParLe and n.substructureKind in {NotnilU, NilU, UncheckedU}
+
+proc skipNilAnnotation*(n: var Cursor) {.inline.} =
+  ## Skip a trailing nil annotation `(notnil)`, `(nil)`, or `(unchecked)` if present.
+  if n.kind == ParLe and n.substructureKind in {NotnilU, NilU, UncheckedU}:
+    skip n

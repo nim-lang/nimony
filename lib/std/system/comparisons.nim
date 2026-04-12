@@ -8,7 +8,7 @@ proc `==`*[Enum: OrdinalEnum](x, y: Enum): bool {.magic: "EqEnum", noSideEffect.
   ## Checks whether values within the *same enum* have the same underlying value.
 proc `==`*[Enum: HoleyEnum](x, y: Enum): bool {.magic: "EqEnum", noSideEffect.}
 
-proc `==`*(x, y: pointer): bool {.magic: "EqRef", noSideEffect.}
+proc `==`*(x, y: nil pointer): bool {.magic: "EqRef", noSideEffect.}
   ## Checks for equality between two `pointer` variables.
 
 proc `==`*(x, y: char): bool {.magic: "EqCh", noSideEffect.}

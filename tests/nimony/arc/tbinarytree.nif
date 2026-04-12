@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +8628            )
+(.indexat +8771            )
 0,1,tests/nimony/arc/tbinarytree.nim(stmts
  (import sysvq0asl) 5
  (type :int.0.
@@ -18,9 +18,11 @@
    (fld :data.0 . . 6
     (i +64) .) ~8,2
    (fld :left.0 . . 5,1
-    (ref 4 NodeObj.0.) .) ~2,2
+    (ref 4 NodeObj.0.
+     (unchecked)) .) ~2,2
    (fld :right.0 . . ~1,1
-    (ref 4 NodeObj.0.) .))) 7,6
+    (ref 4 NodeObj.0.
+     (unchecked)) .))) 7,6
  (type ~5 :Node.0. . .
   (pragmas
    (destroy =destroy_SX4eode0tbio5lb5x.0.)
@@ -29,11 +31,14 @@
    (copy =copy_SX4eode0tbio5lb5x.0.)
    (sinkh =sinkh_SX4eode0tbio5lb5x.0.)
    (trace =trace_SX4eode0tbio5lb5x.0.)) 2
-  (ref 4 NodeObj.0.)) 4,8
+  (ref 4 NodeObj.0.
+   (unchecked))) 4,8
  (gvar :x.0. . . 5,~2
-  (ref 4 NodeObj.0.) 8
+  (ref 4 NodeObj.0.
+   (unchecked)) 8
   (newobj ~3,~2
-   (ref 4 NodeObj.0.) 5
+   (ref 4 NodeObj.0.
+    (unchecked)) 5
    (kv ~4 data.0 2 +123) 16
    (kv ~4 left.0 2
     (nil)) 28
@@ -44,7 +49,8 @@
  (asgn ~6
   (ddot ~1 x.0. left.0 +0) 6
   (newobj ~4,~4
-   (ref 4 NodeObj.0.) 5
+   (ref 4 NodeObj.0.
+    (unchecked)) 5
    (kv ~4 data.0 2 +123) 16
    (kv ~4 left.0 2
     (nil)) 28
@@ -58,9 +64,11 @@
    (ddot ~1 x.0. left.0 +0) right.0 +0) 2
   (nil)) 4,13
  (gvar :y.0. . . 5,~7
-  (ref 4 NodeObj.0.) 8
+  (ref 4 NodeObj.0.
+   (unchecked)) 8
   (newobj ~3,~7
-   (ref 4 NodeObj.0.) 5
+   (ref 4 NodeObj.0.
+    (unchecked)) 5
    (kv ~4 data.0 2 +987) 16
    (kv ~4 left.0 2
     (nil)) 28
@@ -70,7 +78,8 @@
   (ddot ~5
    (ddot ~1 x.0. left.0 +0) left.0 +0) 15
   (newobj ~18,~8
-   (ref 4 NodeObj.0.) 5
+   (ref 4 NodeObj.0.
+    (unchecked)) 5
    (kv ~4 data.0 2 -123) 17
    (kv ~4 left.0 2 y.0.) 27
    (kv ~5 right.0 2 y.0.))) 10,4
@@ -372,10 +381,10 @@
   (stmts)))0,1,tests/nimony/arc/tbinarytree.nim(.index 5
  (x int.0. +102) 10,3
  (h NodeObj.0. +68) 7,6
- (h Node.0. +480) 4,8
- (h x.0. +301) 4,13
- (h y.0. +543) 7,6
- (h =destroy_SX4eodeX4fbj0tbio5lb5x.0. +400) 7,6
+ (h Node.0. +514) 4,8
+ (h x.0. +316) 4,13
+ (h y.0. +590) 7,6
+ (h =destroy_SX4eodeX4fbj0tbio5lb5x.0. +447) 7,6
  (h =wasmoved_SX4eodeX4fbj0tbio5lb5x.0. +300) 7,6
  (h =dup_SX4eodeX4fbj0tbio5lb5x.0. +369) 7,6
  (h =copy_SX4eodeX4fbj0tbio5lb5x.0. +525) 7,6

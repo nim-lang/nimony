@@ -7,6 +7,8 @@
 ## A better stdlib would offer this...
 
 import std / hashes
+when defined(nimony):
+  {.feature: "lenientnils".}
 
 type
   pchar* = ptr UncheckedArray[char]

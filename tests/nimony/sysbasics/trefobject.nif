@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +38125           )
+(.indexat +38467           )
 0,1,tests/nimony/sysbasics/trefobject.nim(stmts
  (import sysvq0asl) 9
  (type ~4 :Foo.0. . .
@@ -10,7 +10,8 @@
    (copy =copy_SX46oo0tre8amq6m.0.)
    (sinkh =sinkh_SX46oo0tre8amq6m.0.)
    (trace =trace_SX46oo0tre8amq6m.0.)) 2
-  (ref 4 Foo.Obj.0.)) 9
+  (ref 4 Foo.Obj.0.
+   (notnil))) 9
  (type ~4 :Foo.Obj.0. . .
   (pragmas
    (destroy =destroy_SX46ooX4fbj0tre8amq6m.0.)
@@ -23,14 +24,17 @@
    (fld :x.0 . . 3
     (i +64) .) ~13,2
    (fld :parent.0 . . 9,~2
-    (ref 4 Foo.Obj.0.) .))) 4,4
+    (ref 4 Foo.Obj.0.
+     (notnil)) .))) 4,4
  (gvar :foo.0. . . 7,~4
-  (ref 4 Foo.Obj.0.) .) 10,7
+  (ref 4 Foo.Obj.0.
+   (notnil)) .) 10,7
  (type ~8 :Node.0. . ~4
   (typevars 1
    (typevar :T.0. . . . .)) . 2
   (ref 4
-   (at Node.Obj.0. ~9 T.0.))) 10,7
+   (at Node.Obj.0. ~9 T.0.)
+   (notnil))) 10,7
  (type ~8 :Node.Obj.0. . ~4
   (typevars 1
    (typevar :T.1. . . . .)) . 6
@@ -38,24 +42,29 @@
    (fld :val.0 . . 5 T.1. .) ~12,2
    (fld :left.0 . . 8,~2
     (ref 4
-     (at Node.Obj.0. 6,2 T.1.)) .) ~6,2
+     (at Node.Obj.0. 6,2 T.1.)
+     (notnil)) .) ~6,2
    (fld :right.0 . . 2,~2
     (ref 4
-     (at Node.Obj.0. 6,2 T.1.)) .))) 4,11
+     (at Node.Obj.0. 6,2 T.1.)
+     (notnil)) .))) 4,11
  (gvar :node.0. . . 8,~4
-  (ref 4 Node.Obj.0.Iw0xigr.) .) 14,14
+  (ref 4 Node.Obj.0.Iw0xigr.
+   (notnil)) .) 14,14
  (type ~12 :Forward1.0. . ~4
   (typevars 1
    (typevar :T.2. . . . .)) . 2
   (object . ~12,1
    (fld :x.1 . . 16,1
     (ref 4
-     (at ForwardNode1.Obj.0. ~4,~1 T.2.)) .))) 18,16
+     (at ForwardNode1.Obj.0. ~4,~1 T.2.)
+     (notnil)) .))) 18,16
  (type ~16 :ForwardNode1.0. . ~4
   (typevars 1
    (typevar :T.3. . . . .)) . 2
   (ref 4
-   (at ForwardNode1.Obj.0. ~9 T.3.))) 18,16
+   (at ForwardNode1.Obj.0. ~9 T.3.)
+   (notnil))) 18,16
  (type ~16 :ForwardNode1.Obj.0. . ~4
   (typevars 1
    (typevar :T.4. . . . .)) . 6
@@ -63,12 +72,15 @@
    (fld :val.1 . . 5 T.4. .) ~20,2
    (fld :left.1 . . 16,~2
     (ref 4
-     (at ForwardNode1.Obj.0. 6,2 T.4.)) .) ~14,2
+     (at ForwardNode1.Obj.0. 6,2 T.4.)
+     (notnil)) .) ~14,2
    (fld :right.1 . . 10,~2
     (ref 4
-     (at ForwardNode1.Obj.0. 6,2 T.4.)) .))) 4,20
+     (at ForwardNode1.Obj.0. 6,2 T.4.)
+     (notnil)) .))) 4,20
  (gvar :forwardNode1.0. . . 16,~4
-  (ref 4 ForwardNode1.Obj.0.Ini0n4k.) .) 11,23
+  (ref 4 ForwardNode1.Obj.0.Ini0n4k.
+   (notnil)) .) 11,23
  (type ~9 :Forward2.0. . .
   (pragmas
    (destroy =destroy_SX46orward20tre8amq6m.0.)
@@ -79,12 +91,14 @@
    (trace =trace_SX46orward20tre8amq6m.0.)) 2
   (object . ~9,1
    (fld :x.2 . . 16,1
-    (ref 4 ForwardNode2.Obj.0.I0jmkrn1.) .))) 18,25
+    (ref 4 ForwardNode2.Obj.0.I0jmkrn1.
+     (notnil)) .))) 18,25
  (type ~16 :ForwardNode2.0. . ~4
   (typevars 1
    (typevar :T.5. . . . .)) . 2
   (ref 4
-   (at ForwardNode2.Obj.0. ~9 T.5.))) 18,25
+   (at ForwardNode2.Obj.0. ~9 T.5.)
+   (notnil))) 18,25
  (type ~16 :ForwardNode2.Obj.0. . ~4
   (typevars 1
    (typevar :T.6. . . . .)) . 6
@@ -92,12 +106,15 @@
    (fld :val.3 . . 5 T.6. .) ~20,2
    (fld :left.3 . . 16,~2
     (ref 4
-     (at ForwardNode2.Obj.0. 6,2 T.6.)) .) ~14,2
+     (at ForwardNode2.Obj.0. 6,2 T.6.)
+     (notnil)) .) ~14,2
    (fld :right.3 . . 10,~2
     (ref 4
-     (at ForwardNode2.Obj.0. 6,2 T.6.)) .))) 4,29
+     (at ForwardNode2.Obj.0. 6,2 T.6.)
+     (notnil)) .))) 4,29
  (gvar :forwardNode2.0. . . 16,~4
-  (ref 4 ForwardNode2.Obj.0.I0jmkrn1.) .) 5,1
+  (ref 4 ForwardNode2.Obj.0.I0jmkrn1.
+   (notnil)) .) 5,1
  (comment int.0.sysvq0asl 15,23 int.0.sysvq0asl 10,10 int.0.sysvq0asl 26,19 int.0.sysvq0asl 26,28 int.0.sysvq0asl) 19,24
  (type :ForwardNode2.0.Ivwtkfc1. .
   (at ForwardNode2.0. 1
@@ -109,7 +126,8 @@
    (copy =copy_SX46orwardX4eode20X49vwtkfc1tre8amq6m.0.)
    (sinkh =sinkh_SX46orwardX4eode20X49vwtkfc1tre8amq6m.0.)
    (trace =trace_SX46orwardX4eode20X49vwtkfc1tre8amq6m.0.)) 1,1
-  (ref 4 ForwardNode2.Obj.0.I0jmkrn1.)) 24,25
+  (ref 4 ForwardNode2.Obj.0.I0jmkrn1.
+   (notnil))) 24,25
  (type :ForwardNode2.Obj.0.I0jmkrn1. .
   (at ForwardNode2.Obj.0. ~4,~1
    (i +64))
@@ -124,9 +142,11 @@
    (fld :val.2 . . 16,~2
     (i +64) .) ~20,2
    (fld :left.2 . . 16,~2
-    (ref 4 ForwardNode2.Obj.0.I0jmkrn1.) .) ~14,2
+    (ref 4 ForwardNode2.Obj.0.I0jmkrn1.
+     (notnil)) .) ~14,2
    (fld :right.2 . . 10,~2
-    (ref 4 ForwardNode2.Obj.0.I0jmkrn1.) .))) 14,11
+    (ref 4 ForwardNode2.Obj.0.I0jmkrn1.
+     (notnil)) .))) 14,11
  (type :Node.0.Iqr7vzo1. .
   (at Node.0. 1
    (i +64))
@@ -137,7 +157,8 @@
    (copy =copy_SX4eode0X49qr7vzo1tre8amq6m.0.)
    (sinkh =sinkh_SX4eode0X49qr7vzo1tre8amq6m.0.)
    (trace =trace_SX4eode0X49qr7vzo1tre8amq6m.0.)) ~2,~4
-  (ref 4 Node.Obj.0.Iw0xigr.)) 16,7
+  (ref 4 Node.Obj.0.Iw0xigr.
+   (notnil))) 16,7
  (type :Node.Obj.0.Iw0xigr. .
   (at Node.Obj.0. ~1,4
    (i +64))
@@ -152,9 +173,11 @@
    (fld :val.0 . . 11,3
     (i +64) .) ~12,2
    (fld :left.0 . . 8,~2
-    (ref 4 Node.Obj.0.Iw0xigr.) .) ~6,2
+    (ref 4 Node.Obj.0.Iw0xigr.
+     (notnil)) .) ~6,2
    (fld :right.0 . . 2,~2
-    (ref 4 Node.Obj.0.Iw0xigr.) .))) 30,20
+    (ref 4 Node.Obj.0.Iw0xigr.
+     (notnil)) .))) 30,20
  (type :ForwardNode1.0.I0yxp7s1. .
   (at ForwardNode1.0. 1
    (i +64))
@@ -165,7 +188,8 @@
    (copy =copy_SX46orwardX4eode10X490yxp7s1tre8amq6m.0.)
    (sinkh =sinkh_SX46orwardX4eode10X490yxp7s1tre8amq6m.0.)
    (trace =trace_SX46orwardX4eode10X490yxp7s1tre8amq6m.0.)) ~10,~4
-  (ref 4 ForwardNode1.Obj.0.Ini0n4k.)) 24,16
+  (ref 4 ForwardNode1.Obj.0.Ini0n4k.
+   (notnil))) 24,16
  (type :ForwardNode1.Obj.0.Ini0n4k. .
   (at ForwardNode1.Obj.0. 7,4
    (i +64))
@@ -180,9 +204,11 @@
    (fld :val.1 . . 27,3
     (i +64) .) ~20,2
    (fld :left.1 . . 16,~2
-    (ref 4 ForwardNode1.Obj.0.Ini0n4k.) .) ~14,2
+    (ref 4 ForwardNode1.Obj.0.Ini0n4k.
+     (notnil)) .) ~14,2
    (fld :right.1 . . 10,~2
-    (ref 4 ForwardNode1.Obj.0.Ini0n4k.) .))) 24,16
+    (ref 4 ForwardNode1.Obj.0.Ini0n4k.
+     (notnil)) .))) 24,16
  (proc :=destroy_SX46oo0tre8amq6m.0. . . .
   (params
    (param :dest.0 . . ~15,~16 Foo.0. .)) .
@@ -1412,33 +1438,33 @@
    (nodestroy)) .
   (stmts)))0,1,tests/nimony/sysbasics/trefobject.nim(.index 9
  (h Foo.0. +107) 9
- (h Foo.Obj.0. +292) 4,4
- (h foo.0. +419) 10,7
- (h Node.0. +53) 7,7
+ (h Foo.Obj.0. +304) 4,4
+ (h foo.0. +433) 10,7
+ (h Node.0. +65) 7,7
  (h T.0. +38) 10,7
- (h Node.Obj.0. +76) 7,7
+ (h Node.Obj.0. +88) 7,7
  (h T.1. +42) 4,11
- (h node.0. +240) 14,14
- (h Forward1.0. +64) 11,14
+ (h node.0. +268) 14,14
+ (h Forward1.0. +76) 11,14
  (h T.2. +43) 18,16
- (h ForwardNode1.0. +136) 15,16
+ (h ForwardNode1.0. +150) 15,16
  (h T.3. +47) 18,16
- (h ForwardNode1.Obj.0. +85) 15,16
+ (h ForwardNode1.Obj.0. +97) 15,16
  (h T.4. +51) 4,20
- (h forwardNode1.0. +259) 11,23
- (h Forward2.0. +81) 18,25
- (h ForwardNode2.0. +394) 15,25
+ (h forwardNode1.0. +287) 11,23
+ (h Forward2.0. +93) 18,25
+ (h ForwardNode2.0. +408) 15,25
  (h T.5. +47) 18,25
- (h ForwardNode2.Obj.0. +85) 15,25
+ (h ForwardNode2.Obj.0. +97) 15,25
  (h T.6. +51) 4,29
- (h forwardNode2.0. +259) 19,24
- (h ForwardNode2.0.Ivwtkfc1. +201) 24,25
- (h ForwardNode2.Obj.0.I0jmkrn1. +491) 14,11
- (h Node.0.Iqr7vzo1. +702) 16,7
- (h Node.Obj.0.Iw0xigr. +407) 30,20
- (h ForwardNode1.0.I0yxp7s1. +596) 24,16
- (h ForwardNode1.Obj.0.Ini0n4k. +493) 24,16
- (h =destroy_SX46oo0tre8amq6m.0. +690) 24,16
+ (h forwardNode2.0. +287) 19,24
+ (h ForwardNode2.0.Ivwtkfc1. +213) 24,25
+ (h ForwardNode2.Obj.0.I0jmkrn1. +503) 14,11
+ (h Node.0.Iqr7vzo1. +730) 16,7
+ (h Node.Obj.0.Iw0xigr. +419) 30,20
+ (h ForwardNode1.0.I0yxp7s1. +624) 24,16
+ (h ForwardNode1.Obj.0.Ini0n4k. +505) 24,16
+ (h =destroy_SX46oo0tre8amq6m.0. +718) 24,16
  (h =wasmoved_SX46oo0tre8amq6m.0. +470) 24,16
  (h =dup_SX46oo0tre8amq6m.0. +192) 24,16
  (h =copy_SX46oo0tre8amq6m.0. +385) 24,16

@@ -2,7 +2,7 @@
 # Threading, GC_fullCollect, GC_getStatistics and repr are omitted.
 
 import std / [syncio, strutils, assertions]
-
+{.feature: "lenientnils".}
 type
   PNode = ref TNode
   TNode {.final.} = object
