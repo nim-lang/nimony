@@ -291,7 +291,7 @@ proc isMethod*(c: var Context; s: SymId): bool =
     let info = getLocalInfo(c.typeCache, s)
     result = info.kind == MethodY
 
-proc getNextState(buf: TokenBuf; n: Cursor): int =
+proc getNextState(buf: TokenBuf; n: Cursor): int64 =
   var pos = cursorToPosition(buf, n)
   while pos < buf.len:
     if pool.tags[buf[pos].tag] == "lab":
