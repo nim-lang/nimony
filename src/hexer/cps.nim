@@ -291,11 +291,11 @@ proc isMethod*(c: var Context; s: SymId): bool =
     let info = getLocalInfo(c.typeCache, s)
     result = info.kind == MethodY
 
-proc getNextState(buf: TokenBuf; n: Cursor): int64 =
+proc getNextState(buf: TokenBuf; n: Cursor): int =
   var pos = cursorToPosition(buf, n)
   while pos < buf.len:
     if pool.tags[buf[pos].tag] == "lab":
-      return pool.integers[buf[pos+1].intId]
+      return int(pool.integers[buf[pos+1].intId])
     inc pos
   return -1
 
