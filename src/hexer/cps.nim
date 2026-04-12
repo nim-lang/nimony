@@ -853,8 +853,33 @@ proc emitLabel(dest: var TokenBuf; label: int; info: PackedLineInfo) =
 proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var info = n.info
   case n.njvlKind
+  of ContinueV:
+    skip n
   of LoopV:
-    discard
+    inc n
+    assert n.stmtKind == StmtsS
+    inc n # enter stmts_before
+    while n.kind != ParRi:
+      dest.takeTree n # copy all mflags, it will be handled later
+    inc n # skip stmts_before ParRi
+    var beforeLoopState = c.currentProc.labelCounter
+    inc c.currentProc.labelCounter
+    var afterLoopState = c.currentProc.labelCounter
+    inc c.currentProc.labelCounter
+    emitLabel dest, beforeLoopState, info
+    dest.copyIntoKind IfS, info:
+      dest.copyIntoKind ElifU, info:
+        dest.copyIntoKind NotX, info:
+          dest.takeTree n
+        dest.copyIntoKind StmtsS, info:
+          emitJump dest, afterLoopState, info
+    assert n.stmtKind == StmtsS
+    inc n  # enter stmts_body (past StmtsS tag)
+    while n.kind != ParRi:
+      trGoto c, dest, n
+    emitJump dest, beforeLoopState, info
+    emitLabel dest, afterLoopState, info
+    skipParRi n  # skip loop ParRi
   of IteV, ItecV:
     inc n
     var lthen = c.currentProc.labelCounter
@@ -1196,7 +1221,7 @@ proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId;
 
 
 proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKind) =
-  var currentProc = ProcContext(upcomingState: -1, kind: IsNormal)
+  var currentProc = ProcContext(kind: IsNormal)
   swap(c.currentProc, currentProc)
   var init = createTokenBuf(20)
   let iter = n
