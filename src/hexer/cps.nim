@@ -855,6 +855,15 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.njvlKind
   of ContinueV:
     skip n
+  of StoreV:
+    dest.takeToken n
+    var addLabel = n.exprKind in CallKinds and isPassiveCall(c, n.firstSon.load)
+    dest.takeTree n
+    dest.takeTree n
+    dest.takeParRi n
+    if addLabel:
+      emitLabel dest, c.currentProc.labelCounter, info
+      inc c.currentProc.labelCounter
   of LoopV:
     inc n
     assert n.stmtKind == StmtsS
@@ -923,10 +932,24 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       case n.kind
       of ParLe:
-        dest.takeToken n
-        while n.kind != ParRi:
-          trGoto c, dest, n
-        dest.takeToken n
+        case n.stmtKind
+        of LocalDecls - {ResultS}:
+          dest.takeToken n
+          dest.takeTree n
+          dest.takeTree n
+          dest.takeTree n
+          dest.takeTree n
+          var addLabel = n.exprKind in CallKinds and isPassiveCall(c, n.firstSon.load)
+          dest.takeTree n
+          dest.takeParRi n
+          if addLabel:
+            emitLabel dest, c.currentProc.labelCounter, info
+            inc c.currentProc.labelCounter
+        else:
+          dest.takeToken n
+          while n.kind != ParRi:
+            trGoto c, dest, n
+          dest.takeToken n
       else:
         dest.takeToken n
 
@@ -973,9 +996,9 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   
   # Analyze which locals escape across suspension points using the same label map
   c.currentProc.cf = toGoto(c, beginRead(c.currentProc.cf))
-  when defined(logPasses):
-    echo "========= GOTO ======="
-    echo c.currentProc.cf.toString(false)
+  # when defined(logPasses):
+  echo "========= GOTO ======="
+  echo c.currentProc.cf.toString(false)
 
   var n = beginRead(c.currentProc.cf)
   escapingLocals(c, n)
