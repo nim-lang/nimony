@@ -1392,6 +1392,38 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         takeTree dest, n
       else:
         case n.njvlKind
+        of LoopV:
+          # No suspension points inside this loop → simple while loop
+          var beforeBuf = createTokenBuf(32)
+          var info = n.info
+          inc n
+          assert n.stmtKind == StmtsS
+          inc n  # enter stmts_before
+          while n.kind != ParRi:
+            if n.njvlKind in {MflagV, VflagV}:
+              trMflag c, dest, n   # hoisted outside while
+            else:
+              tr c, beforeBuf, n
+          inc n  # skip stmts_before ParRi
+          var condBuf = createTokenBuf(16)
+          tr c, condBuf, n
+          var bodyBuf = createTokenBuf(64)
+          assert n.stmtKind == StmtsS
+          inc n  # enter stmts_body
+          while n.kind != ParRi:
+            if n.stmtKind == ContinueS:
+              skip n
+            else:
+              tr c, bodyBuf, n
+          inc n  # skip stmts_body ParRi
+          skipParRi n  # skip loop ParRi
+          dest.addParLe WhileS, info
+          dest.add condBuf
+          dest.addParLe StmtsS, info
+          dest.add beforeBuf
+          dest.add bodyBuf
+          dest.addParRi()
+          dest.addParRi()
         of IteV, ItecV:
           var info = n.info
           inc n
