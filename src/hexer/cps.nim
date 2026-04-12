@@ -790,6 +790,22 @@ proc isPassiveCall(c: var Context; n: PackedToken): bool =
       return true
   return false
 
+proc containsSuspensionPoint(c: var Context; n: Cursor): bool =
+  var nested = 0
+  var n = n
+  while true:
+    let sk = n.stmtKind
+    let ek = n.exprKind
+    if sk == YldS or (ek in CallKinds - {DelayX} and isPassiveCall(c, n.firstSon.load)) or ek == SuspendX:
+      return true
+    if n.kind == ParLe:
+      inc nested
+    elif n.kind == ParRi:
+      if nested == 0:
+        break
+      dec nested
+    inc n
+  return false
 
 proc trMflag(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Convert NJ `(mflag symdef)` / `(vflag symdef)` to a bool var initialized to false.
@@ -865,62 +881,70 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
       emitLabel dest, c.currentProc.labelCounter, info
       inc c.currentProc.labelCounter
   of LoopV:
-    inc n
-    assert n.stmtKind == StmtsS
-    inc n # enter stmts_before
-    while n.kind != ParRi:
-      dest.takeTree n # copy all mflags, it will be handled later
-    inc n # skip stmts_before ParRi
-    var beforeLoopState = c.currentProc.labelCounter
-    inc c.currentProc.labelCounter
-    var afterLoopState = c.currentProc.labelCounter
-    inc c.currentProc.labelCounter
-    emitJump dest, beforeLoopState, info
-    emitLabel dest, beforeLoopState, info
-    dest.copyIntoKind IfS, info:
-      dest.copyIntoKind ElifU, info:
-        dest.copyIntoKind NotX, info:
-          dest.takeTree n
-        dest.copyIntoKind StmtsS, info:
-          emitJump dest, afterLoopState, info
-    assert n.stmtKind == StmtsS
-    inc n  # enter stmts_body (past StmtsS tag)
-    while n.kind != ParRi:
-      trGoto c, dest, n
-    emitJump dest, beforeLoopState, info
-    emitLabel dest, afterLoopState, info
-    skipParRi n  # skip loop ParRi
+    let hasSuspension = containsSuspensionPoint(c, n)
+    if not hasSuspension:
+      dest.takeTree n
+    else:
+      inc n
+      assert n.stmtKind == StmtsS
+      inc n # enter stmts_before
+      while n.kind != ParRi:
+        dest.takeTree n # copy all mflags, it will be handled later
+      inc n # skip stmts_before ParRi
+      var beforeLoopState = c.currentProc.labelCounter
+      inc c.currentProc.labelCounter
+      var afterLoopState = c.currentProc.labelCounter
+      inc c.currentProc.labelCounter
+      emitJump dest, beforeLoopState, info
+      emitLabel dest, beforeLoopState, info
+      dest.copyIntoKind IfS, info:
+        dest.copyIntoKind ElifU, info:
+          dest.copyIntoKind NotX, info:
+            dest.takeTree n
+          dest.copyIntoKind StmtsS, info:
+            emitJump dest, afterLoopState, info
+      assert n.stmtKind == StmtsS
+      inc n  # enter stmts_body (past StmtsS tag)
+      while n.kind != ParRi:
+        trGoto c, dest, n
+      emitJump dest, beforeLoopState, info
+      emitLabel dest, afterLoopState, info
+      skipParRi n  # skip loop ParRi
   of IteV, ItecV:
-    inc n
-    var lthen = c.currentProc.labelCounter
-    inc c.currentProc.labelCounter
-    var lelse = c.currentProc.labelCounter
-    inc c.currentProc.labelCounter
-    var lend = c.currentProc.labelCounter
-    inc c.currentProc.labelCounter
-    dest.copyIntoKind IfS, info:
-      dest.copyIntoKind ElifU, info:
-        dest.takeTree n # cond
-        dest.copyIntoKind StmtsS, info:
-          emitJump dest, lthen, info
-    var thenCur = n
-    skip n
-    var elseCur = n
-    skip n
-    if elseCur.kind != DotToken:
-      emitJump dest, lelse, info
-      emitLabel dest, lelse, info
-      inc elseCur
-      while elseCur.kind != ParRi:
-        trGoto c, dest, elseCur
-    emitJump dest, lend, info
-    emitLabel dest, lthen, info
-    inc thenCur
-    while thenCur.kind != ParRi:
-      trGoto c, dest, thenCur
-    emitJump dest, lend, info
-    emitLabel dest, lend, info
-    skipParRi n
+    let hasSuspension = containsSuspensionPoint(c, n)
+    if not hasSuspension:
+      dest.takeTree n
+    else:
+      inc n
+      var lthen = c.currentProc.labelCounter
+      inc c.currentProc.labelCounter
+      var lelse = c.currentProc.labelCounter
+      inc c.currentProc.labelCounter
+      var lend = c.currentProc.labelCounter
+      inc c.currentProc.labelCounter
+      dest.copyIntoKind IfS, info:
+        dest.copyIntoKind ElifU, info:
+          dest.takeTree n # cond
+          dest.copyIntoKind StmtsS, info:
+            emitJump dest, lthen, info
+      var thenCur = n
+      skip n
+      var elseCur = n
+      skip n
+      if elseCur.kind != DotToken:
+        emitJump dest, lelse, info
+        emitLabel dest, lelse, info
+        inc elseCur
+        while elseCur.kind != ParRi:
+          trGoto c, dest, elseCur
+      emitJump dest, lend, info
+      emitLabel dest, lthen, info
+      inc thenCur
+      while thenCur.kind != ParRi:
+        trGoto c, dest, thenCur
+      emitJump dest, lend, info
+      emitLabel dest, lend, info
+      skipParRi n
   else:
     let sk = n.stmtKind
     let ek = n.exprKind
@@ -970,9 +994,10 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   wrapper.addParRi()
   var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "eliminateJumps", 0)
   eliminateJumps(pass, raisesResolved = true)
-  when defined(logPasses):
-    echo "========= NJ OUTPUT ======"
-    echo pass.dest.toString(false)
+  # when defined(logPasses):
+  echo ""
+  echo "========= NJ OUTPUT ======"
+  echo pass.dest.toString(false)
   # pass.dest is (stmts cfvar_decls... (proc header body_stmts) ...).
   # Navigate into the proc body; then copy it while stripping NJ bookkeeping
   # (mflag/vflag/jtrue/kill) so c.currentProc.cf has no versionized variables.
@@ -999,6 +1024,7 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   # when defined(logPasses):
   echo "========= GOTO ======="
   echo c.currentProc.cf.toString(false)
+  echo ""
 
   var n = beginRead(c.currentProc.cf)
   escapingLocals(c, n)
@@ -1366,6 +1392,16 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         takeTree dest, n
       else:
         case n.njvlKind
+        of IteV, ItecV:
+          var info = n.info
+          inc n
+          dest.copyIntoKind IfS, info:
+            dest.copyIntoKind ElifU, info:
+              tr c, dest, n
+              tr c, dest, n
+            dest.copyIntoKind ElseU, info:
+              tr c, dest, n
+          inc n
         of MflagV, VflagV:
           trMflag c, dest, n
         of JtrueV:
