@@ -871,7 +871,7 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skip n
   of StoreV:
     dest.takeToken n
-    var addLabel = n.exprKind in CallKinds and isPassiveCall(c, n.firstSon.load)
+    var addLabel = n.exprKind in CallKinds - {DelayX} and isPassiveCall(c, n.firstSon.load)
     dest.takeTree n
     dest.takeTree n
     dest.takeParRi n
