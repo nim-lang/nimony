@@ -292,6 +292,26 @@ proc isMethod*(c: var Context; s: SymId): bool =
     let info = getLocalInfo(c.typeCache, s)
     result = info.kind == MethodY
 
+proc isProc*(c: var Context; s: SymId): bool =
+  let res = tryLoadSym(s)
+  if res.status == LacksNothing:
+    result = res.decl.symKind == ProcY
+  else:
+    let info = getLocalInfo(c.typeCache, s)
+    result = info.kind == ProcY
+
+proc isClosure(c: var Context; s: SymId): bool =
+  let typ = c.typeCache.lookupSymbol(s)
+  if not cursorIsNil(typ) and procHasPragma(typ, ClosureP):
+    return true
+  return false
+
+proc isPassiveClosure(c: var Context; s: SymId): bool =
+  let typ = c.typeCache.lookupSymbol(s)
+  if not cursorIsNil(typ) and procHasPragma(typ, ClosureP) and procHasPragma(typ, PassiveP):
+    return true
+  return false
+
 proc getNextState(buf: TokenBuf; n: Cursor): int =
   var pos = cursorToPosition(buf, n)
   while pos < buf.len:
@@ -335,7 +355,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
             dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
             dest.addParPair NilX, info
       dest.addParRi() # ExprX
-    elif isMethod(c, sym):
+    elif isMethod(c, sym) or isClosure(c, sym):
       let contVar = pool.syms.getOrIncl("`contVar." & $c.currentProc.counter)
       inc c.currentProc.counter
       copyIntoKind dest, VarS, info:
@@ -345,7 +365,11 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
         dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
         # constructor call as initializer:
         copyIntoKind dest, CallS, info:
-          dest.addSymUse coroWrapperProc(c, sym), info
+          if isClosure(c, sym):
+            # use the variable name
+            dest.addSymUse sym, info
+          else:
+            dest.addSymUse coroWrapperProc(c, sym), info
           inc n
           skip n # fn already handled
           while n.kind != ParRi:
@@ -440,8 +464,11 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
 
     # value: emit constructor call with heap-allocated frame:
     copyIntoKind dest, CallS, info:
-      dest.addSymUse coroWrapperProc(c, sym), info
-
+      if isClosure(c, sym):
+        # use the variable name
+        dest.addSymUse sym, info
+      else:
+        dest.addSymUse coroWrapperProc(c, sym), info
       inc n
       skip n # fn already handled
       while n.kind != ParRi:
@@ -553,7 +580,43 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       trSons(c, dest, n)
   else:
-    trSons(c, dest, n)
+    let typ = c.typeCache.getType(fn, {SkipAliases})
+    if procHasPragma(typ, PassiveP):
+      var info = n.info
+      # var retType = getType(c.typeCache, n)
+      # let hasResult = not isVoidType(retType)
+      let contVar = pool.syms.getOrIncl("`contVar." & $c.currentProc.counter)
+      inc c.currentProc.counter
+      copyIntoKind dest, VarS, info:
+        dest.addSymDef contVar, info
+        dest.addDotToken() # exported
+        dest.addDotToken() # pragmas
+        dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+        # constructor call as initializer:
+        copyIntoKind dest, CallS, info:
+          inc n
+          dest.takeTree n
+          while n.kind != ParRi:
+            tr(c, dest, n)
+          inc n
+          # if hasResult:
+          #   dest.copyIntoKind AddrX, info:
+          #     dest.copyTree target
+          # add StopContinuation:
+          dest.copyIntoKind OconstrX, info:
+            dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+            dest.copyIntoKind KvU, info:
+              dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
+              dest.addParPair NilX, info
+            dest.copyIntoKind KvU, info:
+              dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
+              dest.addParPair NilX, info
+      # complete(contVar):
+      dest.copyIntoKind CallS, info:
+        dest.addSymUse pool.syms.getOrIncl("complete.0." & SystemModuleSuffix), info
+        dest.addSymUse contVar, info
+    else:
+      trSons(c, dest, n)
 
 proc trLocalValue(c: var Context; dest: var TokenBuf; n: var Cursor; lhs: Cursor) =
   let fn = passiveCallFn(c, n)
@@ -677,7 +740,11 @@ proc returnValue(c: var Context; dest: var TokenBuf; n: var Cursor; info: Packed
           dest.copyIntoKind DerefX, info:
             dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
           dest.addSymUse pool.syms.getOrIncl(ResultFieldName), info
-      tr c, dest, n
+      if n.kind == Symbol and isProc(c, n.symId) and isPassiveClosure(c, n.symId):
+        dest.addSymUse coroWrapperProc(c, n.symId), info
+        inc n
+      else:
+        tr c, dest, n
   skipParRi n
 
 proc trYield(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -1368,7 +1435,13 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trYield c, dest, n
     of RetS, RaiseS:
       if c.currentProc.kind == IsNormal:
-        trSons(c, dest, n)
+        if n.firstSon.kind == Symbol and isProc(c, n.firstSon.symId) and isPassiveClosure(c, n.firstSon.symId):
+          dest.takeToken n
+          dest.addSymUse coroWrapperProc(c, n.symId), n.info
+          inc n
+          dest.takeParRi n
+        else:
+          trSons(c, dest, n)
       else:
         trReturn c, dest, n
     of AsgnS:
@@ -1477,6 +1550,43 @@ proc generateContinuationProcImpl(): Cursor =
       return t.body
   return default(Cursor)
 
+proc updatePassiveClosureProcTypes(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  case n.kind
+  of ParLe:
+    case n.typeKind
+    of ProctypeT:
+      if procHasPragma(n, ClosureP) and procHasPragma(n, PassiveP):
+        var info = n.info
+        # add caller for init function to the params end
+        dest.takeToken n
+        dest.takeTree n
+        dest.takeTree n
+        dest.takeTree n
+        dest.takeTree n
+        dest.takeToken n
+        while n.kind != ParRi:
+          dest.takeTree n
+        # here we add caller param
+        dest.copyIntoKind ParamU, info:
+          dest.addSymDef pool.syms.getOrIncl(CallerParamName), info
+          dest.addDotToken() # export
+          dest.addDotToken() # pragmas
+          dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+          dest.addDotToken() # default value
+        dest.takeParRi n
+        dest.takeTree n
+        dest.takeTree n
+        dest.takeParRi n
+      else:
+        dest.takeTree n
+    else:
+      dest.takeToken n
+      while n.kind != ParRi:
+        updatePassiveClosureProcTypes(c, dest, n)
+      dest.takeParRi n
+  else:
+    dest.takeToken n
+
 proc transformToCps*(pass: var Pass) =
   var n = pass.n  # Extract cursor locally
   var c = Context(thisModuleSuffix: pass.moduleSuffix,
@@ -1495,6 +1605,15 @@ proc transformToCps*(pass: var Pass) =
   c.coroTypes.add pass.dest # concat coroTypes and other statements
   c.coroTypes.takeToken n # ParRi
   swap c.coroTypes, pass.dest
+  var pass2 = createTokenBuf(10)
+  n = beginRead(pass.dest)
+  updatePassiveClosureProcTypes(c, pass2, n)
+  swap pass2, pass.dest
+  if c.shouldPublish.len > 0:
+    echo "========== BEFORE ========"
+    echo pass.n
+    echo "========== AFTER ========"
+    echo pass.dest.toString(false)
   c.typeCache.closeScope()
 
 when isMainModule:
