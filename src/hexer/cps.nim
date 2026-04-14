@@ -185,6 +185,7 @@ type
     currentProc: ProcContext
     continuationProcImpl: Cursor
     shouldPublish: seq[tuple[sym: SymId, start: int]]
+    coroTypes: TokenBuf
 
 proc coroTypeForProc(c: Context; procId: SymId): SymId =
   let s = extractVersionedBasename(pool.syms[procId])
@@ -1320,7 +1321,7 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
   discard c.procStack.pop()
   c.typeCache.closeScope()
   if isCoroutine:
-    generateCoroutineType(c, dest, sym)
+    generateCoroutineType(c, c.coroTypes, sym)
     generateCoroutineHelpers(c, dest, sym, iter)
   swap(c.currentProc, currentProc)
 
@@ -1482,19 +1483,21 @@ proc generateContinuationProcImpl(): Cursor =
 proc transformToCps*(pass: var Pass) =
   var n = pass.n  # Extract cursor locally
   var c = Context(thisModuleSuffix: pass.moduleSuffix,
-    typeCache: createTypeCache(),
+    typeCache: createTypeCache(), coroTypes: createTokenBuf(10),
     continuationProcImpl: generateContinuationProcImpl())
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS
-  pass.dest.takeToken n
+  c.coroTypes.takeToken n
   while n.kind != ParRi:
     tr(c, pass.dest, n)
-  pass.dest.takeToken n # ParRi
   for (sym, start) in c.shouldPublish:
     var buf = createTokenBuf(16)
     buf.copyTree pass.dest.cursorAt(start)
     endRead(pass.dest)
     publishSignature buf, sym, 0
+  c.coroTypes.add pass.dest # concat coroTypes and other statements
+  c.coroTypes.takeToken n # ParRi
+  swap c.coroTypes, pass.dest
   c.typeCache.closeScope()
 
 when isMainModule:
