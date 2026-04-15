@@ -34,3 +34,18 @@ proc main3() =
     x(10)
 
 main3()
+
+proc a3(x: int): proc (q: int): int {.passive,closure.} =
+    var b = x;
+    return proc (q: int): int {.passive,closure.} =
+        b += q
+        return b
+
+proc main4() =
+    let x = a3(10)
+    var b = x(10)
+    echo "main4: ", b
+    b = x(10)
+    echo "main4: ", b
+
+main4()

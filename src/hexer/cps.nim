@@ -1632,6 +1632,17 @@ proc updatePassiveClosureProcTypes(c: var Context; dest: var TokenBuf; n: var Cu
         dest.takeToken n
         while n.kind != ParRi:
           dest.takeTree n
+        inc n
+        # return type becomes a ptr parameter:
+        if not isVoidType(n):
+          dest.copyIntoKind ParamU, info:
+            dest.addSymDef pool.syms.getOrIncl(ResultParamName), info
+            dest.addDotToken() # export
+            dest.addDotToken() # pragmas
+            dest.copyIntoKind PtrT, info:
+              dest.copyTree n
+            dest.addDotToken() # default value
+        skip n
         # here we add caller param
         dest.copyIntoKind ParamU, info:
           dest.addSymDef pool.syms.getOrIncl(CallerParamName), info
@@ -1639,10 +1650,8 @@ proc updatePassiveClosureProcTypes(c: var Context; dest: var TokenBuf; n: var Cu
           dest.addDotToken() # pragmas
           dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
           dest.addDotToken() # default value
-        dest.takeParRi n
-        skip n
+        dest.addParRi()
         dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
-        # dest.takeTree n
         dest.takeTree n
         dest.takeParRi n
       else:
