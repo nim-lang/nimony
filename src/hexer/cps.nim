@@ -365,11 +365,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
         dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
         # constructor call as initializer:
         copyIntoKind dest, CallS, info:
-          if isClosure(c, sym):
-            # use the variable name
-            dest.addSymUse sym, info
-          else:
-            dest.addSymUse coroWrapperProc(c, sym), info
+          dest.addSymUse coroWrapperProc(c, sym), info
           inc n
           skip n # fn already handled
           while n.kind != ParRi:
@@ -464,11 +460,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
 
     # value: emit constructor call with heap-allocated frame:
     copyIntoKind dest, CallS, info:
-      if isClosure(c, sym):
-        # use the variable name
-        dest.addSymUse sym, info
-      else:
-        dest.addSymUse coroWrapperProc(c, sym), info
+      dest.addSymUse coroWrapperProc(c, sym), info
       inc n
       skip n # fn already handled
       while n.kind != ParRi:
@@ -485,6 +477,96 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
 
       copyIntoKind dest, RetS, info:
         dest.addSymUse contVar, info
+
+proc trPassiveClosureCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cursor) =
+  let retType = getType(c.typeCache, n)
+  let hasResult = not isVoidType(retType)
+  if hasResult:
+    assert not cursorIsNil(target), "passive call without target"
+  case c.currentProc.kind
+  of IsNormal:
+    var info = n.info
+    # var retType = getType(c.typeCache, n)
+    # let hasResult = not isVoidType(retType)
+    let contVar = pool.syms.getOrIncl("`contVar." & $c.currentProc.counter)
+    inc c.currentProc.counter
+    copyIntoKind dest, VarS, info:
+      dest.addSymDef contVar, info
+      dest.addDotToken() # exported
+      dest.addDotToken() # pragmas
+      dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+      # constructor call as initializer:
+      copyIntoKind dest, CallS, info:
+        inc n
+        if n.kind == Symbol:
+          dest.addSymUse coroWrapperProc(c, n.symId), info
+          inc n
+        else:
+          dest.takeTree n
+        while n.kind != ParRi:
+          tr(c, dest, n)
+        inc n
+        if hasResult:
+          dest.copyIntoKind AddrX, info:
+            dest.copyTree target
+        # add StopContinuation:
+        dest.copyIntoKind OconstrX, info:
+          dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+          dest.copyIntoKind KvU, info:
+            dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
+            dest.addParPair NilX, info
+          dest.copyIntoKind KvU, info:
+            dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
+            dest.addParPair NilX, info
+    # complete(contVar):
+    dest.copyIntoKind CallS, info:
+      dest.addSymUse pool.syms.getOrIncl("complete.0." & SystemModuleSuffix), info
+      dest.addSymUse contVar, info
+  of IsIterator, IsPassive:
+    # passive call from within a passive proc:
+    # The callee's frame is heap-allocated via allocFrame; the callee
+    # frees it via deallocFrame before returning. This supports recursion.
+    # target = call fn, args
+    # -->
+    # return fnConstructor(addr this.frame, args, addr target, Continuation(nextState, this))
+    let state = getNextState(c.currentProc.cf, n)
+    assert state != -1
+    let info = n.info
+
+    var contVar = SymId(0)
+    # We cannot generate `return fnConstruct(args)` directly here because
+    # the rest of the pipeline already assumes code
+    # like `let tmp = fnConstruct(args); return tmp` so that is what we
+    # generate here:
+    contVar = pool.syms.getOrIncl("`contVar." & $c.currentProc.counter)
+    inc c.currentProc.counter
+    dest.addParLe VarS, info
+    dest.addSymDef contVar, info
+    dest.addDotToken() # exported
+    dest.addDotToken() # pragmas
+    dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+
+    # value: emit constructor call with heap-allocated frame:
+    copyIntoKind dest, CallS, info:
+      inc n
+      if n.kind == Symbol:
+        dest.addSymUse coroWrapperProc(c, n.symId), info
+        inc n
+      else:
+        dest.takeTree n
+      while n.kind != ParRi:
+        tr(c, dest, n)
+      inc n
+
+      if hasResult:
+        dest.copyIntoKind AddrX, info:
+          dest.copyTree target
+      contNextState c, dest, state, info
+
+    dest.addParRi() # VarS
+
+    copyIntoKind dest, RetS, info:
+      dest.addSymUse contVar, info
 
 proc trDelay0(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Handles (delay0) — no-arg form: to the NEXT suspension point.
@@ -582,39 +664,25 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     let typ = c.typeCache.getType(fn, {SkipAliases})
     if procHasPragma(typ, PassiveP):
-      var info = n.info
-      # var retType = getType(c.typeCache, n)
-      # let hasResult = not isVoidType(retType)
-      let contVar = pool.syms.getOrIncl("`contVar." & $c.currentProc.counter)
-      inc c.currentProc.counter
-      copyIntoKind dest, VarS, info:
-        dest.addSymDef contVar, info
-        dest.addDotToken() # exported
-        dest.addDotToken() # pragmas
-        dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
-        # constructor call as initializer:
-        copyIntoKind dest, CallS, info:
-          inc n
-          dest.takeTree n
-          while n.kind != ParRi:
-            tr(c, dest, n)
-          inc n
-          # if hasResult:
-          #   dest.copyIntoKind AddrX, info:
-          #     dest.copyTree target
-          # add StopContinuation:
-          dest.copyIntoKind OconstrX, info:
-            dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
-            dest.copyIntoKind KvU, info:
-              dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
-              dest.addParPair NilX, info
-            dest.copyIntoKind KvU, info:
-              dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
-              dest.addParPair NilX, info
-      # complete(contVar):
-      dest.copyIntoKind CallS, info:
-        dest.addSymUse pool.syms.getOrIncl("complete.0." & SystemModuleSuffix), info
-        dest.addSymUse contVar, info
+      var retType = getType(c.typeCache, n)
+      let hasResult = not isVoidType(retType)
+      if hasResult:
+        let info = n.info
+        dest.copyIntoKind ExprX, info:
+          let tmpVar = pool.syms.getOrIncl("`tmpCpsResult." & $c.currentProc.counter)
+          inc c.currentProc.counter
+          var target = createTokenBuf(1)
+          target.addSymUse tmpVar, info
+          dest.copyIntoKind VarS, info:
+            dest.addSymDef tmpVar, info
+            dest.addDotToken() # exported
+            dest.addDotToken() # pragmas
+            dest.takeTree retType
+            dest.addDotToken()
+          trPassiveClosureCall(c, dest, n, beginRead target)
+          dest.addSymUse tmpVar, info
+      else:
+        trPassiveClosureCall(c, dest, n, default(Cursor))
     else:
       trSons(c, dest, n)
 
@@ -1395,21 +1463,25 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
      IntLit, UIntLit, FloatLit, CharLit, StringLit:
     takeTree dest, n
   of Symbol:
-    let field = c.currentProc.localToEnv.getOrDefault(n.symId)
-    if field.def != field.use or n.symId == c.currentProc.resultSym:
-      let info = n.info
-      let isResult = n.symId == c.currentProc.resultSym
-      if isResult:
-        dest.addParLe DerefX, info
-      dest.copyIntoKind DotX, info:
-        dest.copyIntoKind DerefX, info:
-          dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
-        dest.addSymUse field.field, info
-      if isResult:
-        dest.addParRi()
+    if isProc(c, n.symId) and isPassiveClosure(c, n.symId):
+      dest.addSymUse coroWrapperProc(c, n.symId), n.info
       inc n
     else:
-      takeTree dest, n
+      let field = c.currentProc.localToEnv.getOrDefault(n.symId)
+      if field.def != field.use or n.symId == c.currentProc.resultSym:
+        let info = n.info
+        let isResult = n.symId == c.currentProc.resultSym
+        if isResult:
+          dest.addParLe DerefX, info
+        dest.copyIntoKind DotX, info:
+          dest.copyIntoKind DerefX, info:
+            dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+          dest.addSymUse field.field, info
+        if isResult:
+          dest.addParRi()
+        inc n
+      else:
+        takeTree dest, n
   of UnknownToken:
     # Pass through unknown tokens conservatively
     takeTree dest, n
@@ -1435,13 +1507,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trYield c, dest, n
     of RetS, RaiseS:
       if c.currentProc.kind == IsNormal:
-        if n.firstSon.kind == Symbol and isProc(c, n.firstSon.symId) and isPassiveClosure(c, n.firstSon.symId):
-          dest.takeToken n
-          dest.addSymUse coroWrapperProc(c, n.symId), n.info
-          inc n
-          dest.takeParRi n
-        else:
-          trSons(c, dest, n)
+        trSons(c, dest, n)
       else:
         trReturn c, dest, n
     of AsgnS:
@@ -1574,7 +1640,9 @@ proc updatePassiveClosureProcTypes(c: var Context; dest: var TokenBuf; n: var Cu
           dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
           dest.addDotToken() # default value
         dest.takeParRi n
-        dest.takeTree n
+        skip n
+        dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+        # dest.takeTree n
         dest.takeTree n
         dest.takeParRi n
       else:
@@ -1609,11 +1677,11 @@ proc transformToCps*(pass: var Pass) =
   n = beginRead(pass.dest)
   updatePassiveClosureProcTypes(c, pass2, n)
   swap pass2, pass.dest
-  if c.shouldPublish.len > 0:
-    echo "========== BEFORE ========"
-    echo pass.n
-    echo "========== AFTER ========"
-    echo pass.dest.toString(false)
+  # if c.shouldPublish.len > 0:
+  #   echo "========== BEFORE ========"
+  #   echo pass.n
+  #   echo "========== AFTER ========"
+  #   echo pass.dest.toString(false)
   c.typeCache.closeScope()
 
 when isMainModule:
