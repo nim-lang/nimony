@@ -49,3 +49,18 @@ proc main4() =
     echo "main4: ", b
 
 main4()
+
+
+proc a4(x: int) {.passive.} =
+    echo "a4: ", x
+
+proc a5(x: int) {.passive.} =
+    echo "a5: ", x
+
+proc main5() =
+    var x: (proc(x: int) {.passive.}) = a4
+    x(5)
+    x = a5
+    x(42)
+
+main5()

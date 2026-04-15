@@ -478,7 +478,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
       copyIntoKind dest, RetS, info:
         dest.addSymUse contVar, info
 
-proc trPassiveClosureCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cursor) =
+proc trPassiveClosureCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cursor; callSymbol = false) =
   let retType = getType(c.typeCache, n)
   let hasResult = not isVoidType(retType)
   if hasResult:
@@ -498,7 +498,7 @@ proc trPassiveClosureCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar
       # constructor call as initializer:
       copyIntoKind dest, CallS, info:
         inc n
-        if n.kind == Symbol:
+        if n.kind == Symbol and not callSymbol:
           dest.addSymUse coroWrapperProc(c, n.symId), info
           inc n
         else:
@@ -549,7 +549,7 @@ proc trPassiveClosureCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar
     # value: emit constructor call with heap-allocated frame:
     copyIntoKind dest, CallS, info:
       inc n
-      if n.kind == Symbol:
+      if n.kind == Symbol and not callSymbol:
         dest.addSymUse coroWrapperProc(c, n.symId), info
         inc n
       else:
@@ -633,12 +633,15 @@ proc passiveCallFn(c: var Context; n: Cursor): SymId =
       return fn.symId
   return SymId(0)
 
-proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; callSymbol = false) =
   let fn = n.firstSon
-  if fn.kind == Symbol:
-    let sym = fn.symId
+  if fn.kind == Symbol and not callSymbol:
+    var sym = fn.symId
     let typ = c.typeCache.getType(fn, {SkipAliases})
     if procHasPragma(typ, PassiveP):
+      if typ.firstSon.kind == DotToken:
+        trCall(c, dest, n, true)
+        return
       var retType = getType(c.typeCache, n)
       let hasResult = not isVoidType(retType)
       if hasResult:
@@ -679,10 +682,10 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
             dest.addDotToken() # pragmas
             dest.takeTree retType
             dest.addDotToken()
-          trPassiveClosureCall(c, dest, n, beginRead target)
+          trPassiveClosureCall(c, dest, n, beginRead target, callSymbol)
           dest.addSymUse tmpVar, info
       else:
-        trPassiveClosureCall(c, dest, n, default(Cursor))
+        trPassiveClosureCall(c, dest, n, default(Cursor), callSymbol)
     else:
       trSons(c, dest, n)
 
@@ -703,7 +706,11 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if fn == SymId(0):
     copyInto dest, n:
       tr c, dest, n
-      tr c, dest, n
+      if n.kind == Symbol and procHasPragma(getType(c.typeCache, n), PassiveP):
+        dest.addSymUse coroWrapperProc(c, n.symId), n.info
+        inc n
+      else:
+        tr c, dest, n
   else:
     var lhsTransformed = createTokenBuf(6)
     inc n
@@ -739,12 +746,20 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     var callExpr = default(Cursor)
     copyInto dest, n:
       let target = n
-      c.typeCache.takeLocalHeader(dest, n, kind)
+      takeTree dest, n # name
+      takeTree dest, n # export marker
+      takeTree dest, n # pragmas
+      c.typeCache.registerLocal(sym, kind, n)
+      let isPassive = procHasPragma(n, PassiveP)
+      takeTree dest, n # type
       pcall = passiveCallFn(c, n)
       if pcall != SymId(0):
         callExpr = n
         dest.addDotToken()
         skip n
+      elif isPassive:
+        dest.addSymUse coroWrapperProc(c, n.symId), info
+        inc n
       else:
         tr(c, dest, n)
     if pcall != SymId(0):
@@ -1621,7 +1636,7 @@ proc updatePassiveClosureProcTypes(c: var Context; dest: var TokenBuf; n: var Cu
   of ParLe:
     case n.typeKind
     of ProctypeT:
-      if procHasPragma(n, ClosureP) and procHasPragma(n, PassiveP):
+      if procHasPragma(n, PassiveP):
         var info = n.info
         # add caller for init function to the params end
         dest.takeToken n
@@ -1652,7 +1667,8 @@ proc updatePassiveClosureProcTypes(c: var Context; dest: var TokenBuf; n: var Cu
           dest.addDotToken() # default value
         dest.addParRi()
         dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
-        dest.takeTree n
+        while n.kind != ParRi:
+          dest.takeTree n
         dest.takeParRi n
       else:
         dest.takeTree n
