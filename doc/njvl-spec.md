@@ -20,9 +20,9 @@ NJVL is good for:
 - Vectorization, apparently.
 
 
-NJVL is subtle, but works for:
+NJVL is bad for:
 
-- Continuation passing style ("CPS"). The required labels are implied only but remain recoverable.
+- Continuation passing style ("CPS"). For simplicity it needs to be translated to labels and gotos first.
 
 
 **NJVL is a two-phase transformation, it does not work well as a single pass.**
