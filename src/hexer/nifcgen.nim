@@ -1309,12 +1309,39 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   of ParLe:
     case n.exprKind
     of EqX, NeqX, LeX, LtX:
+      # `(eq T X X)` in Nimony carries `T`, but NIFC comparisons are `(eq X X)` — see
+      # `cmpOp` in llvmgenexprs.nim. Walk `T` with `trType` for side effects, omit from dest.
       dest.add n
       inc n
       let beforeType = dest.len
       trType(c, dest, n)
       dest.shrink beforeType
       trExpr(c, dest, n)
+      trExpr(c, dest, n)
+      takeParRi dest, n
+    of AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX:
+      # `(op T X X)` — NIFC typed binops need the type (`signedBinOp` / `unsignedBinOp`).
+      dest.add n
+      inc n
+      trType(c, dest, n)
+      trExpr(c, dest, n)
+      trExpr(c, dest, n)
+      takeParRi dest, n
+    of BitnotX:
+      # `(bitnot T X)` — NIFC expects type + expr (see BitnotC in llvmgenexprs.nim).
+      dest.add n
+      inc n
+      trType(c, dest, n)
+      trExpr(c, dest, n)
+      takeParRi dest, n
+    of BaseobjX:
+      # `(baseobj T INTLIT X)` — keep `T` and depth for NIFC (BaseobjC).
+      dest.add n
+      inc n
+      trType(c, dest, n)
+      expectIntLit c, n
+      dest.add n
+      inc n
       trExpr(c, dest, n)
       takeParRi dest, n
     of CastX:
@@ -1459,9 +1486,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
        InstanceofX, ProccallX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX, DelayX, Delay0X, SuspendX:
       error c, "BUG: not eliminated: ", n
       #skip n
-    of AtX, PatX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX,
-       AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
-       BitandX, BitorX, BitxorX, BitnotX, BaseobjX, OvfX:
+    of AtX, PatX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX, OvfX:
       dest.add n
       inc n
       while n.kind != ParRi:
