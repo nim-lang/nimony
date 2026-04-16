@@ -345,7 +345,24 @@ proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; 
         trCondOr c, dest, n, tar
       else:
         trOr c, dest, n, tar
-    else:
+    of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
+       InfX, NeginfX, NanX, FalseX, TrueX, XorX, NotX, NegX,
+       SizeofX, AlignofX, OffsetofX, OconstrX, AconstrX, BracketX,
+       CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX,
+       ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX,
+       LeX, LtX, CastX, ConvX, CallX, CmdX, CchoiceX, OchoiceX,
+       PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX,
+       NewobjX, TupX, TupconstrX, SetconstrX, TabconstrX, AshrX,
+       BaseobjX, HconvX, DconvX, CallstrlitX, InfixX, PrefixX,
+       HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX,
+       InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
+       FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
+       DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
+       Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX, PlussetX,
+       MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
+       InsetX, CardX, EmoveX, DestroyX, DupX, CopyX, WasmovedX,
+       SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
+       FailedX, IsX, EnvpX, NoExpr:
       trExpr c, dest, n, tar
   else:
     trExpr c, dest, n, tar
@@ -398,7 +415,10 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       else:
         trStmt c, dest, n
       skipParRi n
-    else:
+    of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+       TypevarU, EfldU, FldU, WhenU, TypevarsU, CaseU, OfU,
+       StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
+       UnpacktupU, ExceptU, FinU, UncheckedU, NoSub:
       # Bug: just copy the thing around
       takeTree dest, n
   skipParRi n
@@ -439,7 +459,10 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
             trExprInto c, dest, n, tmp
         else:
           trStmt c, dest, n
-    else:
+    of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+       TypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
+       StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
+       UnpacktupU, ExceptU, FinU, UncheckedU, NoSub:
       # Bug: just copy the thing around
       takeTree dest, n
   takeParRi dest, n
@@ -474,7 +497,10 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
         # The `finally` section never produces a value!
         copyInto(dest, n):
           trStmt c, dest, n
-      else:
+      of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+         TypevarU, EfldU, FldU, WhenU, ElifU, ElseU, TypevarsU,
+         CaseU, OfU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
+         UnpackflatU, UnpacktupU, UncheckedU, NoSub:
         # Bug: just copy the thing around
         takeTree dest, n
   if tar.m != IsIgnored:
@@ -801,7 +827,23 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
         trCast c, dest, n, tar
       else:
         trExprLoop c, dest, n, tar
-    else:
+    of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
+       InfX, NeginfX, NanX, FalseX, TrueX, XorX, NotX, NegX,
+       SizeofX, AlignofX, OffsetofX, OconstrX, AconstrX,
+       BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, MulX,
+       DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
+       BitnotX, EqX, NeqX, LeX, LtX, ConvX, CchoiceX,
+       OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX,
+       NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
+       TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CompilesX,
+       DeclaredX, DefinedX, AstToStrX, InstanceofX, HighX, LowX,
+       TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
+       IsmainmoduleX, DefaultobjX, DefaulttupX,
+       DefaultdistinctX, Delay0X, SuspendX, DoX, ArratX, TupatX,
+       PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX,
+       LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX,
+       WasmovedX, SinkhX, TraceX, InternalTypeNameX,
+       InternalFieldPairsX, FailedX, IsX, EnvpX, NoExpr:
       case n.stmtKind
       of IfS:
         trIf c, dest, n, tar
@@ -811,7 +853,17 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
         trTry c, dest, n, tar
       of BlockS:
         trBlock c, dest, n, tar
-      else:
+      of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS,
+         GletS, TletS, LetS, CursorS, PatternvarS, ProcS, FuncS,
+         IteratorS, ConverterS, MethodS, MacroS, TemplateS,
+         TypeS, EmitS, AsgnS, ScopeS, WhenS, BreakS, ContinueS,
+         ForS, WhileS, RetS, YldS, StmtsS, PragmasS, PragmaxS,
+         InclS, ExclS, IncludeS, ImportS, ImportasS,
+         FromimportS, ImportexceptS, ExportS, ExportexceptS,
+         CommentS, DiscardS, RaiseS, UnpackdeclS, AssumeS,
+         AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
+         StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
+         NoStmt:
         trExprLoop c, dest, n, tar
   of ParRi:
     bug "unexpected ')' inside"

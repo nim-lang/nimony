@@ -26,3 +26,4 @@ proc wrongKind(dest: var TokenBuf; info: PackedLineInfo; s: SymId) =
   dest.copyIntoKind AsgnS, info:
     dest.addSymDef s, info  # BUG: SymDef where expr expected
     dest.addDotToken()      # BUG: DotToken where expr expected (no dot prefix)
+

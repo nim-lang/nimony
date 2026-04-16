@@ -65,6 +65,9 @@ type
     effect*: Effect  ## what it adds to dest
     annotated*: bool ## true if effect comes from ensuresNif annotation
     wrapsInput*: bool ## true if it does copyInto dest, n: (preserves tag)
+    destVar*: string  ## name of the output variable (e.g. "dest")
+    cursorVar*: string ## name of the input cursor variable (e.g. "n")
+    destIsParam*: bool ## true if dest is a direct parameter (not accessed via context field)
 
   SymContext* = Table[string, ChildKind]
     ## Maps identifiers (field names, variable names) to their NIF kind
@@ -185,7 +188,7 @@ proc extractDotCallName*(c: Cursor): string =
   if n.kind == Ident:
     result = pool.strings[n.litId]
 
-proc extractLastDotField(c: Cursor): string =
+proc extractLastDotField*(c: Cursor): string =
   ## From `(dot obj fieldName)`, extract the innermost field name.
   result = ""
   if c.kind != ParLe: return
@@ -195,6 +198,45 @@ proc extractLastDotField(c: Cursor): string =
   skip n # skip receiver
   if n.kind == Ident:
     result = pool.strings[n.litId]
+
+proc extractDotReceiver*(c: Cursor): string =
+  ## From `(dot receiver field)`, extract the receiver name.
+  ## For nested dots like `(dot (dot c dest) field)`, extracts
+  ## the last field of the inner dot ("dest").
+  result = ""
+  if c.kind != ParLe: return
+  var n = c
+  if pool.tags[n.tag] != "dot": return
+  inc n
+  if n.kind == Ident:
+    result = pool.strings[n.litId]
+  elif n.kind == ParLe:
+    result = extractLastDotField(n)
+
+proc callMentionsDest*(n: Cursor; destVar: string): bool =
+  ## Check if a call/cmd node writes to the tracked dest variable.
+  ## For method calls, checks the receiver. For all calls, scans arguments.
+  ## Returns true if destVar is empty (no tracking).
+  if destVar.len == 0: return true
+  var c = n
+  if c.kind != ParLe: return false
+  inc c
+  if c.kind == ParLe:
+    # Method call: (call (dot RECV callee) args...)
+    let recv = extractDotReceiver(c)
+    if recv == destVar: return true
+    skip c
+  elif c.kind == Ident:
+    # Function call: (call callee DEST args...)
+    inc c  # skip callee
+  # Scan remaining arguments
+  while c.kind != ParRi:
+    if c.kind == Ident:
+      if pool.strings[c.litId] == destVar: return true
+    elif c.kind == ParLe:
+      if extractLastDotField(c) == destVar: return true
+    skip c
+  return false
 
 proc extractCallInfo(n: Cursor): (string, string) =
   ## From a (cmd ...) or (call ...) node, extract callee name and first arg.
@@ -271,11 +313,11 @@ proc resolveConstRange(n: Cursor): int =
   else:
     return -1
 
-proc analyzeIfBranches*(graph: EffectGraph; n: Cursor): Effect
-proc analyzeWhileLoop*(graph: EffectGraph; n: Cursor): Effect
-proc analyzeForLoop*(graph: EffectGraph; n: Cursor): Effect
+proc analyzeIfBranches*(graph: EffectGraph; n: Cursor; destVar: string = ""): Effect
+proc analyzeWhileLoop*(graph: EffectGraph; n: Cursor; destVar: string = ""): Effect
+proc analyzeForLoop*(graph: EffectGraph; n: Cursor; destVar: string = ""): Effect
 
-proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor): Effect =
+proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor; destVar: string = ""): Effect =
   ## Analyze a (stmts ...) block that produces children in `dest`.
   ## This is the core analysis routine that replaces `classifyChildren`.
   var n = body
@@ -297,60 +339,72 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor): Effect =
     case stmtTag
     of "call", "cmd":
       let (callName, firstArg) = extractCallInfo(n)
+      let writesToDest = callMentionsDest(n, destVar)
 
       case callName
       of "addDotToken":
-        effects.add fixedEffect(ckDot)
+        if writesToDest: effects.add fixedEffect(ckDot)
       of "addSymDef":
-        effects.add fixedEffect(ckD)
+        if writesToDest: effects.add fixedEffect(ckD)
       of "addSymUse", "copyIntoSymUse":
-        # Try to classify via sym context (field type refinement or decl context)
-        if firstArg.len > 0 and firstArg in graph.symContext:
-          effects.add fixedEffect(graph.symContext[firstArg])
-        else:
-          effects.add fixedEffect(ckAny)
+        if writesToDest:
+          # Try to classify via sym context (field type refinement or decl context)
+          if firstArg.len > 0 and firstArg in graph.symContext:
+            effects.add fixedEffect(graph.symContext[firstArg])
+          else:
+            effects.add fixedEffect(ckAny)
       of "addIntLit", "addUIntLit", "addIntVal", "addStrLit",
          "addCharLit", "addFloatLit":
-        effects.add fixedEffect(ckLit)
+        if writesToDest: effects.add fixedEffect(ckLit)
       of "addParPair":
-        effects.add fixedEffect(enumSuffixToKind(firstArg))
+        if writesToDest: effects.add fixedEffect(enumSuffixToKind(firstArg))
       of "copyIntoKind", "copyIntoKinds", "buildTree":
-        effects.add fixedEffect(enumSuffixToKind(firstArg))
+        if writesToDest: effects.add fixedEffect(enumSuffixToKind(firstArg))
       of "copyInto":
-        effects.add fixedEffect(ckAny) # copies one node from input
+        if writesToDest: effects.add fixedEffect(ckAny) # copies one node from input
       of "takeTree", "takeToken", "copyTree", "addEmpty", "addToken",
          "addSubtree", "addTarget":
-        effects.add fixedEffect(ckAny)
+        if writesToDest: effects.add fixedEffect(ckAny)
       of "addParLe":
-        effects.add fixedEffect(ckAny) # manual node, paired with addParRi
-      of "addParRi":
+        if writesToDest: effects.add fixedEffect(ckAny) # manual node, paired with addParRi
+      of "addParRi", "takeParRi":
         discard # closing paren, not a child
       of "addEmpty2":
-        # addEmpty2 adds two DotTokens
-        effects.add fixedEffect(ckDot)
-        effects.add fixedEffect(ckDot)
+        if writesToDest:
+          # addEmpty2 adds two DotTokens
+          effects.add fixedEffect(ckDot)
+          effects.add fixedEffect(ckDot)
       of "addRootRef":
-        effects.add fixedEffect(ckT) # adds a type reference
+        if writesToDest: effects.add fixedEffect(ckT) # adds a type reference
+      of "addIdent":
+        if writesToDest: effects.add fixedEffect(ckAny)
       of "skip", "skipToEnd", "skipParRi", "inc", "swap",
          "endRead", "assert", "registerLocal", "registerLocalPtrOf",
          "openScope", "closeScope", "openProcScope", "registerParams",
          "publish", "mgetOrPut":
         discard # non-output operations
       of "genObjectTypes":
-        return unknownEffect()
+        if writesToDest: return unknownEffect()
       else:
         # Check if it's a known proc in the graph
         if callName in graph.procs:
           let pe = graph.procs[callName]
-          effects.add pe.effect
-        else:
-          # Unknown call
+          if writesToDest:
+            effects.add pe.effect
+          elif not pe.destIsParam:
+            # Proc accesses dest through context field (c.dest).
+            # The shared context carries dest, so always include.
+            effects.add pe.effect
+          # else: proc takes dest as parameter but call doesn't pass dest → skip
+        elif writesToDest:
+          # Unknown call that mentions dest
           return unknownEffect()
+        # else: call doesn't mention dest, skip it
       skip n
 
     of "if", "when":
       # Analyze all branches — they must produce the same effect
-      let ifEffect = analyzeIfBranches(graph, n)
+      let ifEffect = analyzeIfBranches(graph, n, destVar)
       if ifEffect.kind == ekUnknown:
         return unknownEffect()
       effects.add ifEffect
@@ -362,7 +416,7 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor): Effect =
 
     of "while":
       # while n.kind != ParRi: f(dest, n) → repeat
-      let loopEffect = analyzeWhileLoop(graph, n)
+      let loopEffect = analyzeWhileLoop(graph, n, destVar)
       if loopEffect.kind == ekUnknown:
         return unknownEffect()
       effects.add loopEffect
@@ -370,7 +424,7 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor): Effect =
 
     of "for":
       # for i in 0..<N: f(dest, n) → counted repeat
-      let forEffect = analyzeForLoop(graph, n)
+      let forEffect = analyzeForLoop(graph, n, destVar)
       if forEffect.kind == ekUnknown:
         return unknownEffect()
       effects.add forEffect
@@ -383,7 +437,7 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor): Effect =
 
   return seqEffect(effects)
 
-proc analyzeIfBranches*(graph: EffectGraph; n: Cursor): Effect =
+proc analyzeIfBranches*(graph: EffectGraph; n: Cursor; destVar: string = ""): Effect =
   ## Analyze an if/when statement. All branches must produce compatible effects.
   var c = n
   if c.kind != ParLe: return unknownEffect()
@@ -403,7 +457,7 @@ proc analyzeIfBranches*(graph: EffectGraph; n: Cursor): Effect =
       skip c # skip condition
       # The body is the second child — should be (stmts ...)
       if c.kind == ParLe and pool.tags[c.tag] == "stmts":
-        allEffects.add analyzeStmtsBody(graph, c)
+        allEffects.add analyzeStmtsBody(graph, c, destVar)
       else:
         return unknownEffect()
       skip c # skip body
@@ -412,7 +466,7 @@ proc analyzeIfBranches*(graph: EffectGraph; n: Cursor): Effect =
       hasElse = true
       inc c # skip (else
       if c.kind == ParLe and pool.tags[c.tag] == "stmts":
-        allEffects.add analyzeStmtsBody(graph, c)
+        allEffects.add analyzeStmtsBody(graph, c, destVar)
       else:
         return unknownEffect()
       skip c # skip body
@@ -433,7 +487,7 @@ proc analyzeIfBranches*(graph: EffectGraph; n: Cursor): Effect =
     combined = branchEffect(combined, allEffects[i])
   return combined
 
-proc analyzeWhileLoop*(graph: EffectGraph; n: Cursor): Effect =
+proc analyzeWhileLoop*(graph: EffectGraph; n: Cursor; destVar: string = ""): Effect =
   ## Analyze `while n.kind != ParRi: body` — produces 0+ children.
   var c = n
   if c.kind != ParLe: return unknownEffect()
@@ -441,7 +495,7 @@ proc analyzeWhileLoop*(graph: EffectGraph; n: Cursor): Effect =
   skip c # skip condition
   # body
   if c.kind == ParLe and pool.tags[c.tag] == "stmts":
-    let bodyEffect = analyzeStmtsBody(graph, c)
+    let bodyEffect = analyzeStmtsBody(graph, c, destVar)
     let flat = flatten(bodyEffect)
     if flat.ok and flat.children.len > 0:
       # The loop body produces these children per iteration
@@ -458,7 +512,7 @@ proc analyzeWhileLoop*(graph: EffectGraph; n: Cursor): Effect =
   else:
     return unknownEffect()
 
-proc analyzeForLoop*(graph: EffectGraph; n: Cursor): Effect =
+proc analyzeForLoop*(graph: EffectGraph; n: Cursor; destVar: string = ""): Effect =
   ## Analyze `for i in 0..<N: body` — produces N*bodyEffect children.
   var c = n
   if c.kind != ParLe: return unknownEffect()
@@ -474,7 +528,7 @@ proc analyzeForLoop*(graph: EffectGraph; n: Cursor): Effect =
 
   # Body
   if c.kind == ParLe and pool.tags[c.tag] == "stmts":
-    let bodyEffect = analyzeStmtsBody(graph, c)
+    let bodyEffect = analyzeStmtsBody(graph, c, destVar)
     if rangeCount >= 0:
       let flat = flatten(bodyEffect)
       if flat.ok:
@@ -670,12 +724,13 @@ proc predicateToKind(predName: string): ChildKind =
   of "addedNested": ckNested
   else: ckAny
 
-proc extractEnsuresNif(procCursor: Cursor): Effect =
+proc extractEnsuresNif(procCursor: Cursor): (Effect, string) =
   ## Scan a proc declaration for an `ensuresNif` pragma annotation.
-  ## Returns nil if no annotation found.
+  ## Returns (nil, "") if no annotation found.
+  ## Returns (effect, destVarName) where destVarName is the argument to the predicate.
   ## The proc structure is: (proc NAME ... (pragmas ... (kv ensuresNif (call PRED ARG))) ... (stmts ...))
   var c = procCursor
-  if c.kind != ParLe: return nil
+  if c.kind != ParLe: return (nil, "")
   inc c # skip (proc
   # Walk children looking for (pragmas ...)
   while c.kind != ParRi:
@@ -696,15 +751,184 @@ proc extractEnsuresNif(procCursor: Cursor): Effect =
               if call.kind == Ident:
                 let predName = pool.strings[call.litId]
                 if predName == "addedNothing":
-                  return emptyEffect()
+                  return (emptyEffect(), "")
                 else:
-                  return fixedEffect(predicateToKind(predName))
+                  inc call # skip predicate name, now at the argument
+                  var destName = ""
+                  if call.kind == Ident:
+                    destName = pool.strings[call.litId]
+                  elif call.kind == ParLe:
+                    destName = extractLastDotField(call)
+                  return (fixedEffect(predicateToKind(predName)), destName)
         skip p
       # No ensuresNif found in this pragmas block
       skip c
     else:
       skip c
-  return nil
+  return (nil, "")
+
+proc extractRequiresNif(procCursor: Cursor): (ChildKind, string) =
+  ## Scan a proc declaration for a `requiresNif` pragma annotation.
+  ## Returns (cursorKind, cursorVarName) or (ckAny, "") if no annotation.
+  var c = procCursor
+  if c.kind != ParLe: return (ckAny, "")
+  inc c # skip (proc
+  while c.kind != ParRi:
+    if c.kind == ParLe and pool.tags[c.tag] == "pragmas":
+      var p = c
+      inc p
+      while p.kind != ParRi:
+        if p.kind == ParLe and pool.tags[p.tag] == "kv":
+          var kv = p
+          inc kv
+          if kv.kind == Ident and pool.strings[kv.litId] == "requiresNif":
+            skip kv
+            if kv.kind == ParLe and pool.tags[kv.tag] == "call":
+              var call = kv
+              inc call
+              if call.kind == Ident:
+                let predName = pool.strings[call.litId]
+                let kind = case predName
+                  of "isExpr": ckX
+                  of "isType": ckT
+                  of "isStmt": ckS
+                  else: ckAny
+                inc call # skip predicate name
+                var cursorName = ""
+                if call.kind == Ident:
+                  cursorName = pool.strings[call.litId]
+                elif call.kind == ParLe:
+                  cursorName = extractLastDotField(call)
+                return (kind, cursorName)
+        skip p
+      skip c
+    else:
+      skip c
+  return (ckAny, "")
+
+proc detectDestIsParam*(body: Cursor; destVar: string): bool =
+  ## Check whether dest is accessed as a direct parameter (bare ident like `dest`)
+  ## or through a context field (dot expression like `c.dest`).
+  ## Returns true for direct parameter, false for context access.
+  ## This distinction matters: procs with dest as a parameter need it passed
+  ## explicitly at call sites; procs with context access share dest implicitly.
+  if destVar.len == 0: return true
+  # Deep scan: walk all nodes in the body looking for the first call that
+  # references dest, regardless of nesting depth.
+  var c = body
+  if c.kind != ParLe: return true
+  var nested = 0
+  inc nested
+  inc c
+  while nested > 0:
+    case c.kind
+    of ParLe:
+      let tag = pool.tags[c.tag]
+      if tag in ["call", "cmd"]:
+        var peek = c
+        inc peek
+        if peek.kind == ParLe:
+          # Method call: (call (dot RECV callee) args...)
+          if pool.tags[peek.tag] == "dot":
+            var dot = peek
+            inc dot # skip (dot
+            if dot.kind == Ident and pool.strings[dot.litId] == destVar:
+              return true  # dest.addXxx → direct parameter
+            elif dot.kind == ParLe:
+              if extractLastDotField(dot) == destVar:
+                return false  # c.dest.addXxx → context access
+        elif peek.kind == Ident:
+          inc peek  # skip callee
+          # Scan args for dest reference
+          while peek.kind != ParRi:
+            if peek.kind == Ident and pool.strings[peek.litId] == destVar:
+              return true  # addXxx ..., dest, ... → direct parameter
+            elif peek.kind == ParLe and extractLastDotField(peek) == destVar:
+              return false  # addXxx ..., c.dest, ... → context access
+            skip peek
+      inc nested
+      inc c
+    of ParRi:
+      dec nested
+      inc c
+    else:
+      inc c
+  return true  # default: assume parameter
+
+proc detectWrapsInput*(graph: EffectGraph; body: Cursor; destVar: string): bool =
+  ## Check if the proc body uses copyInto dest, n: at the top level,
+  ## indicating it preserves the input tag (the "preservation property").
+  var c = body
+  if c.kind != ParLe or pool.tags[c.tag] != "stmts": return false
+  inc c
+  while c.kind != ParRi:
+    if c.kind == ParLe:
+      let tag = pool.tags[c.tag]
+      if tag in ["call", "cmd"]:
+        let (callName, _) = extractCallInfo(c)
+        if callName == "copyInto" and callMentionsDest(c, destVar):
+          return true
+    skip c
+  return false
+
+proc detectCursorVar*(body: Cursor): string =
+  ## Deep-scan a proc body for cursor-advancing operations (inc, skip,
+  ## copyInto, takeTree, etc.) and return the cursor variable name.
+  ## Returns "" if no cursor operations found.
+  result = ""
+  var c = body
+  if c.kind != ParLe: return
+  var nested = 0
+  inc nested
+  inc c
+  while nested > 0:
+    case c.kind
+    of ParLe:
+      let tag = pool.tags[c.tag]
+      if tag in ["call", "cmd"]:
+        let (callName, _) = extractCallInfo(c)
+        if callName in ["inc", "skip", "skipParRi", "skipToEnd",
+                        "copyInto", "takeTree", "takeToken", "takeParRi"]:
+          # Extract the cursor argument
+          var peek = c
+          inc peek
+          if peek.kind == ParLe:
+            # Method call: (call (dot RECV callee) args...)
+            # For cursor ops, the receiver or first arg is the cursor
+            let recv = extractDotReceiver(peek)
+            if recv.len > 0 and recv != "dest" and recv notin ["c", "result"]:
+              return recv
+            skip peek
+            # Also check first arg after dot
+            if peek.kind == Ident:
+              let arg = pool.strings[peek.litId]
+              if arg notin ["dest", "c", "result", "info"]:
+                return arg
+          elif peek.kind == Ident:
+            let callee = pool.strings[peek.litId]
+            inc peek  # skip callee
+            # For non-method calls like `inc n` or `copyInto dest, n:`
+            # scan args for a cursor-like variable
+            if callee in ["inc", "skip", "skipParRi", "skipToEnd"]:
+              # First arg is the cursor
+              if peek.kind == Ident:
+                let arg = pool.strings[peek.litId]
+                if arg notin ["dest", "c", "result", "info", "nested"]:
+                  return arg
+            elif callee in ["copyInto", "takeTree", "takeToken", "takeParRi"]:
+              # Second arg (after dest) is the cursor
+              skip peek  # skip dest
+              if peek.kind == Ident:
+                let arg = pool.strings[peek.litId]
+                if arg notin ["dest", "c", "result", "info"]:
+                  return arg
+      inc nested
+      inc c
+    of ParRi:
+      dec nested
+      inc c
+    else:
+      inc c
 
 # ---- Building the full graph for a file ----
 
@@ -751,15 +975,22 @@ proc buildEffectGraph*(buf: var TokenBuf): EffectGraph =
   # filled in when their body is encountered.
   let procList = findProcBodies(buf)
 
-  # First, extract ensuresNif annotations.
+  # First, extract ensuresNif and requiresNif annotations.
   var annotations = initTable[string, Effect]()
+  var destVars = initTable[string, string]()   # procName -> destVar
+  var cursorVars = initTable[string, string]()  # procName -> cursorVar
   for (name, procCursor) in procList:
-    let annotEffect = extractEnsuresNif(procCursor)
+    let (annotEffect, destName) = extractEnsuresNif(procCursor)
     if annotEffect != nil:
       annotations[name] = annotEffect
+      let dv = if destName.len > 0: destName else: "dest"
+      destVars[name] = dv
       # Register the annotation as the proc's effect for call-site resolution
       result.procs[name] = ProcEffect(name: name, effect: annotEffect,
-                                       annotated: true)
+                                       annotated: true, destVar: dv)
+    let (_, cursorName) = extractRequiresNif(procCursor)
+    if cursorName.len > 0:
+      cursorVars[name] = cursorName
 
   # Then derive effects from bodies, iterating to resolve dependencies.
   const MaxIterations = 5
@@ -780,7 +1011,9 @@ proc buildEffectGraph*(buf: var TokenBuf): EffectGraph =
       if not foundStmts:
         continue # forward declaration or external proc
 
-      let effect = analyzeStmtsBody(result, lastStmts)
+      # Use annotated destVar if available, otherwise default to "dest"
+      let destVar = destVars.getOrDefault(name, "dest")
+      let effect = analyzeStmtsBody(result, lastStmts, destVar)
 
       if name in annotations:
         discard # annotation takes priority; cross-check done after all iterations
@@ -789,11 +1022,21 @@ proc buildEffectGraph*(buf: var TokenBuf): EffectGraph =
         let prev = result.procs.getOrDefault(name)
         if prev.effect == nil or prev.effect.kind == ekUnknown:
           if effect.kind != ekUnknown:
-            result.procs[name] = ProcEffect(name: name, effect: effect)
+            let wraps = detectWrapsInput(result, lastStmts, destVar)
+            let dip = detectDestIsParam(lastStmts, destVar)
+            let cv = cursorVars.getOrDefault(name, "")
+            result.procs[name] = ProcEffect(name: name, effect: effect,
+                                             destVar: destVar, cursorVar: cv,
+                                             wrapsInput: wraps, destIsParam: dip)
             changed = true
         elif prev.effect != effect:
           if effect.kind != ekUnknown:
-            result.procs[name] = ProcEffect(name: name, effect: effect)
+            let wraps = detectWrapsInput(result, lastStmts, destVar)
+            let dip = detectDestIsParam(lastStmts, destVar)
+            let cv = cursorVars.getOrDefault(name, "")
+            result.procs[name] = ProcEffect(name: name, effect: effect,
+                                             destVar: destVar, cursorVar: cv,
+                                             wrapsInput: wraps, destIsParam: dip)
             changed = true
 
     if not changed:
@@ -813,7 +1056,8 @@ proc buildEffectGraph*(buf: var TokenBuf): EffectGraph =
       skip c
     if not foundStmts: continue
 
-    let effect = analyzeStmtsBody(result, lastStmts)
+    let destVar = destVars.getOrDefault(name, "dest")
+    let effect = analyzeStmtsBody(result, lastStmts, destVar)
     if effect.kind == ekUnknown: continue
 
     let annot = annotations[name]
@@ -836,3 +1080,164 @@ proc buildEffectGraph*(buf: var TokenBuf): EffectGraph =
             result.mismatches.add AnnotationMismatch(
               procName: name, annotation: annot, derived: effect)
             break
+
+# ---- Cursor advancement analysis (preservation property) ----
+
+type
+  CursorState* = enum
+    csNotAdvanced  ## cursor hasn't been moved on this path
+    csAdvanced     ## cursor has been moved at least once
+    csUnknown      ## can't determine
+
+proc callIsNoReturn(callName: string): bool =
+  ## Check if a call is known to never return (error/assertion handlers).
+  callName in ["bug", "error", "quit", "raiseAssert", "doAssert", "assert"]
+
+proc callAdvancesCursor(n: Cursor; callName: string; cursorVar: string): bool =
+  ## Check if a call is a known cursor-advancing operation on cursorVar.
+  case callName
+  of "inc", "skip", "skipParRi", "skipToEnd",
+     "copyInto", "takeTree", "takeToken", "takeParRi", "copyTree":
+    return callMentionsDest(n, cursorVar)
+  else:
+    return false
+
+proc analyzeIfCursorPaths*(graph: EffectGraph; n: Cursor; cursorVar: string): CursorState
+proc analyzeCaseCursorPaths*(graph: EffectGraph; n: Cursor; cursorVar: string): CursorState
+
+proc analyzeCursorPath*(graph: EffectGraph; body: Cursor; cursorVar: string): CursorState =
+  ## Analyze whether the cursor is advanced on all paths through a (stmts ...) body.
+  ## Returns csAdvanced if every code path advances the cursor at least once,
+  ## or if the path terminates via a noreturn call.
+  if cursorVar.len == 0: return csUnknown
+  var n = body
+  if n.kind != ParLe: return csUnknown
+  if pool.tags[n.tag] != "stmts": return csUnknown
+  inc n
+
+  var advanced = false
+  while n.kind != ParRi:
+    if n.kind != ParLe:
+      skip n
+      continue
+    let tag = pool.tags[n.tag]
+    case tag
+    of "call", "cmd":
+      let (callName, _) = extractCallInfo(n)
+      if callAdvancesCursor(n, callName, cursorVar):
+        advanced = true
+      elif callIsNoReturn(callName):
+        advanced = true  # path terminates, no need to advance cursor
+      elif callName in graph.procs:
+        # Known proc that receives the cursor — assume it advances
+        if callMentionsDest(n, cursorVar):
+          advanced = true
+      skip n
+    of "if", "when":
+      let state = analyzeIfCursorPaths(graph, n, cursorVar)
+      if state == csAdvanced:
+        advanced = true
+      skip n
+    of "case":
+      let state = analyzeCaseCursorPaths(graph, n, cursorVar)
+      if state == csAdvanced:
+        advanced = true
+      skip n
+    of "while":
+      # Analyze the while body — cursor might be advanced inside the loop
+      var c = n
+      inc c  # skip (while
+      skip c  # skip condition
+      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
+        let state = analyzeCursorPath(graph, c, cursorVar)
+        if state == csAdvanced: advanced = true
+      skip n
+    of "for":
+      var c = n
+      inc c  # skip (for
+      skip c  # skip loop var
+      skip c  # skip range
+      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
+        let state = analyzeCursorPath(graph, c, cursorVar)
+        if state == csAdvanced: advanced = true
+      skip n
+    else:
+      skip n
+
+  if advanced: csAdvanced else: csNotAdvanced
+
+proc analyzeIfCursorPaths*(graph: EffectGraph; n: Cursor; cursorVar: string): CursorState =
+  ## Analyze an if/when — cursor must be advanced in ALL branches.
+  ## Missing else means there's a path without advancement.
+  var c = n
+  if c.kind != ParLe: return csUnknown
+  inc c  # skip (if
+
+  var allAdvanced = true
+  var hasElse = false
+  while c.kind != ParRi:
+    if c.kind != ParLe:
+      skip c
+      continue
+    let branchTag = pool.tags[c.tag]
+    case branchTag
+    of "elif":
+      inc c  # skip (elif
+      skip c  # skip condition
+      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
+        if analyzeCursorPath(graph, c, cursorVar) != csAdvanced:
+          allAdvanced = false
+      skip c  # skip body
+      if c.kind == ParRi: inc c  # close elif
+    of "else":
+      hasElse = true
+      inc c  # skip (else
+      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
+        if analyzeCursorPath(graph, c, cursorVar) != csAdvanced:
+          allAdvanced = false
+      skip c  # skip body
+      if c.kind == ParRi: inc c  # close else
+    else:
+      skip c
+
+  if not hasElse:
+    allAdvanced = false  # missing else = path without cursor advancement
+  if allAdvanced: csAdvanced else: csNotAdvanced
+
+proc analyzeCaseCursorPaths*(graph: EffectGraph; n: Cursor; cursorVar: string): CursorState =
+  ## Analyze a case — cursor must be advanced in ALL branches.
+  var c = n
+  if c.kind != ParLe: return csUnknown
+  inc c  # skip (case
+  skip c  # skip discriminator
+
+  var allAdvanced = true
+  var hasElse = false
+  while c.kind != ParRi:
+    if c.kind != ParLe:
+      skip c
+      continue
+    let branchTag = pool.tags[c.tag]
+    case branchTag
+    of "of":
+      inc c  # skip (of
+      skip c  # skip match values/ranges
+      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
+        if analyzeCursorPath(graph, c, cursorVar) != csAdvanced:
+          allAdvanced = false
+      skip c  # skip body
+      if c.kind == ParRi: inc c  # close of
+    of "else":
+      hasElse = true
+      inc c  # skip (else
+      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
+        if analyzeCursorPath(graph, c, cursorVar) != csAdvanced:
+          allAdvanced = false
+      skip c  # skip body
+      if c.kind == ParRi: inc c  # close else
+    else:
+      skip c
+
+  if not hasElse:
+    allAdvanced = false
+  if allAdvanced: csAdvanced else: csNotAdvanced

@@ -152,7 +152,12 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       while n.kind != ParRi:
         trStmt c, dest, n
       dest.takeParRi n
-    else:
+    of CallS, CmdS, GvarS, TvarS, VarS, ConstS, GletS, TletS, LetS, CursorS,
+       PatternvarS, EmitS, AsgnS, ScopeS, WhenS, BreakS, ContinueS, YldS,
+       StmtsS, PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
+       FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS,
+       RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS, PrefixS,
+       HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS, NoStmt:
       dest.takeToken n
       while n.kind != ParRi:
         trStmt c, dest, n

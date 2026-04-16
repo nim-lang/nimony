@@ -362,10 +362,12 @@ proc checkCopyIntoKind(ctx: var CheckContext; n: Cursor; info: PackedLineInfo) =
 
   var tagName = ""
   var bodyPos = c
+  var destName = "" # track which variable this writes to
 
   if c.kind == ParLe:
     let name = extractDotCallName(c)
     if name notin ["copyIntoKind", "buildTree"]: return
+    destName = extractDotReceiver(c)
     skip c
     if c.kind == Ident:
       tagName = pool.strings[c.litId]
@@ -382,6 +384,11 @@ proc checkCopyIntoKind(ctx: var CheckContext; n: Cursor; info: PackedLineInfo) =
     let name = pool.strings[c.litId]
     if name notin ["copyIntoKind", "buildTree"]: return
     inc c
+    # Extract dest variable before skipping it
+    if c.kind == Ident:
+      destName = pool.strings[c.litId]
+    elif c.kind == ParLe:
+      destName = extractLastDotField(c)
     skip c  # skip dest
     if c.kind == Ident:
       tagName = pool.strings[c.litId]
@@ -405,8 +412,8 @@ proc checkCopyIntoKind(ctx: var CheckContext; n: Cursor; info: PackedLineInfo) =
 
   let specs = ctx.grammar[mdTag]
 
-  # Use the effect graph to analyze the body
-  let effect = analyzeStmtsBody(ctx.effectGraph, bodyPos)
+  # Use the effect graph to analyze the body, tracking the dest variable
+  let effect = analyzeStmtsBody(ctx.effectGraph, bodyPos, destName)
   let flat = flatten(effect)
 
   if not flat.ok:
@@ -453,6 +460,50 @@ proc scanForCopyIntoKind(ctx: var CheckContext; buf: var TokenBuf) =
           found = pool.strings[peek.litId] in ["copyIntoKind", "buildTree"]
         if found:
           checkCopyIntoKind(ctx, n, n.info)
+      inc nested
+      inc n
+    of ParRi:
+      dec nested
+      inc n
+    else:
+      inc n
+
+# ---------------------------------------------------------------------------
+# Step 2b: Check that case n.stmtKind / n.exprKind / etc. have no `else`
+# ---------------------------------------------------------------------------
+
+const ExhaustiveDiscriminators = [
+  "stmtKind", "exprKind", "typeKind", "substructureKind", "symKind"]
+
+proc scanForNonExhaustiveCases(ctx: var CheckContext; buf: var TokenBuf) =
+  ## Find `case n.stmtKind` / `case n.exprKind` / etc. that have an `else`
+  ## branch. These must enumerate all values explicitly so that the Nim
+  ## compiler enforces exhaustive coverage when new tags are added.
+  var n = beginRead(buf)
+  var nested = 0
+  assert n.kind == ParLe
+  inc nested
+  inc n
+  while nested > 0:
+    case n.kind
+    of ParLe:
+      let tag = pool.tags[n.tag]
+      if tag == "case":
+        # Extract discriminator: (case (dot n stmtKind) ...)
+        var peek = n
+        inc peek  # skip (case
+        var discr = ""
+        if peek.kind == ParLe:
+          discr = extractLastDotField(peek)
+        if discr in ExhaustiveDiscriminators:
+          # Scan children for an `else` branch
+          skip peek  # skip discriminator
+          while peek.kind != ParRi:
+            if peek.kind == ParLe and pool.tags[peek.tag] == "else":
+              addViolation(ctx, n.info, "case " & discr,
+                "`else` branch not allowed; enumerate all values for exhaustive checking")
+              break
+            skip peek
       inc nested
       inc n
     of ParRi:
@@ -526,8 +577,43 @@ proc main() =
 
   var ctx = CheckContext(grammar: grammar, effectGraph: eg, filename: passFile)
   scanForCopyIntoKind(ctx, buf)
+  scanForNonExhaustiveCases(ctx, buf)
 
   echo "Checked ", ctx.checked, " call sites, skipped ", ctx.skipped, " (too complex)"
+
+  # Check preservation property: procs with wrapsInput or requiresNif
+  # annotations must advance the cursor on every code path.
+  var preservationWarnings: seq[string] = @[]
+  let procList = findProcBodies(buf)
+  for (name, procCursor) in procList:
+    if name notin eg.procs: continue
+    let pe = eg.procs[name]
+    # Only check procs explicitly marked via wrapsInput or requiresNif annotation
+    let cv = if pe.cursorVar.len > 0: pe.cursorVar
+             elif pe.wrapsInput: "n"
+             else: ""
+    if cv.len == 0: continue
+    # Find the body
+    var c = procCursor
+    inc c
+    var lastStmts = c
+    var foundStmts = false
+    while c.kind != ParRi:
+      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
+        lastStmts = c
+        foundStmts = true
+      skip c
+    if not foundStmts: continue
+    let state = analyzeCursorPath(eg, lastStmts, cv)
+    if state == csNotAdvanced:
+      preservationWarnings.add name & " — cursor `" & cv &
+        "` not advanced on every code path"
+
+  if preservationWarnings.len > 0:
+    echo preservationWarnings.len, " preservation warning(s):"
+    for w in preservationWarnings:
+      echo "  ", passFile, ": ", w
+
   var hasErrors = false
   if eg.mismatches.len > 0:
     hasErrors = true

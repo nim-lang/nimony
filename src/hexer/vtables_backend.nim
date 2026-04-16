@@ -635,7 +635,13 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           trScope c, dest, n
         of TemplateS, TypeS:
           takeTree dest, n
-        else:
+        of CallS, CmdS, IteratorS, BlockS, EmitS, AsgnS, IfS, WhenS,
+           BreakS, ContinueS, ForS, WhileS, CaseS, RetS, YldS, StmtsS,
+           PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
+           FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
+           DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
+           CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS, BindS,
+           MixinS, UsingS, AsmS, DeferS, NoStmt:
           dest.add n
           inc n
           inc nested
@@ -754,7 +760,15 @@ proc collectMethods(c: var Context; n: var Cursor) =
         error "method needs a first parameter of the class type: " & toString(orig, false)
   of TypeS:
     collectClass c, n
-  else:
+  of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS,
+     LetS, CursorS, PatternvarS, ProcS, FuncS, IteratorS, ConverterS,
+     MacroS, TemplateS, BlockS, EmitS, AsgnS, ScopeS, IfS, WhenS,
+     BreakS, ContinueS, ForS, WhileS, CaseS, RetS, YldS, PragmasS,
+     PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS,
+     ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS, TryS,
+     RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS,
+     PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS,
+     DeferS, NoStmt:
     skip n
 
 proc emitVTables(c: var Context; dest: var TokenBuf) =
@@ -772,13 +786,12 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
           dest.copyIntoKind UT, NoLineInfo:
             dest.addIntLit 32, NoLineInfo
           #dest.addIntLit vtab.display.len, NoLineInfo
-        dest.addParLe AconstrX, NoLineInfo
-        dest.copyIntoKind UarrayT, NoLineInfo:
-          dest.copyIntoKind UT, NoLineInfo:
-            dest.addIntLit 32, NoLineInfo
-        for d in vtab.display:
-          dest.addUIntLit uhash(pool.syms[d]), NoLineInfo
-        dest.addParRi() # AconstrX
+        dest.copyIntoKind AconstrX, NoLineInfo:
+          dest.copyIntoKind UarrayT, NoLineInfo:
+            dest.copyIntoKind UT, NoLineInfo:
+              dest.addIntLit 32, NoLineInfo
+          for d in vtab.display:
+            dest.addUIntLit uhash(pool.syms[d]), NoLineInfo
 
     dest.copyIntoKind ConstS, NoLineInfo:
       dest.addSymDef getVTableName(c, cls), NoLineInfo
