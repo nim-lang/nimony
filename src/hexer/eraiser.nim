@@ -37,6 +37,7 @@ include nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, typeprops]
 import ".." / models / tags
 import duplifier, passes
+include ".." / nimony / nif_annotations
 
 type
   Context = object
@@ -46,6 +47,7 @@ type
 
 when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
+    {.ensuresNif: addedAny(dest).}
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n

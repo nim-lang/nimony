@@ -110,6 +110,7 @@ import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval
   builtintypes, langmodes, renderer, reporters, typeprops]
 import ".." / njvl / [nj, njvl_model]
 import hexer_context, passes
+include ".." / nimony / nif_annotations
 
 # TODO:
 # - transform `for` loops into trampoline code
@@ -210,6 +211,7 @@ proc localToFieldname(c: var Context; local: SymId): SymId =
   result = pool.syms.getOrIncl(name)
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
+  {.ensuresNif: addedAny(dest).}
 
 proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:

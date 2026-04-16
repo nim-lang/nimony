@@ -3485,15 +3485,14 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
   let typeStart = dest.len
   dest.buildTree ArrayT, info:
     dest.addSubtree elem.typ
-    dest.addParLe(RangetypeT, info)
-    var idxType = c.types.intType
-    if ctx.firstKeyType.typeKind != AutoT:
-      idxType = ctx.firstKeyType
-    dest.addSubtree idxType
-    var serr = false
-    dest.addIntLit(asSigned(ctx.firstIdx, serr), info)
-    dest.addIntLit(asSigned(ctx.firstIdx + createXint(count.int64 - 1), serr), info)
-    dest.addParRi()
+    dest.buildTree RangetypeT, info:
+      var idxType = c.types.intType
+      if ctx.firstKeyType.typeKind != AutoT:
+        idxType = ctx.firstKeyType
+      dest.addSubtree idxType
+      var serr = false
+      dest.addIntLit(asSigned(ctx.firstIdx, serr), info)
+      dest.addIntLit(asSigned(ctx.firstIdx + createXint(count.int64 - 1), serr), info)
   let expected = it.typ
   it.typ = typeToCursor(c, dest, typeStart)
 

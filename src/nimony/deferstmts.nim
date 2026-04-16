@@ -9,6 +9,7 @@
 import std / [assertions]
 include nifprelude
 import nimony_model, programs
+include nif_annotations
 
 type
   ActionItem = object
@@ -20,6 +21,7 @@ type
     retSym: SymId
 
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor)
+  {.ensuresNif: addedAny(dest).}
 
 proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let beforeBody = dest.len+1
