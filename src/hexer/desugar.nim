@@ -5,6 +5,7 @@ include nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
   builtintypes, langmodes, renderer, reporters]
 import hexer_context, passes
+include ".." / nimony / nif_annotations
 
 type
   Context = object
@@ -69,6 +70,7 @@ proc skipParRi(n: var Cursor) =
     bug "expected ')', but got: ", n
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false)
+  {.ensuresNif: addedAny(dest).}
 
 proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   if n.substructureKind == KvU:

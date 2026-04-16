@@ -15,6 +15,7 @@ import std / [assertions]
 include ".." / lib / nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes]
 import passes
+include ".." / nimony / nif_annotations
 
 type
   Goal* = enum
@@ -69,6 +70,7 @@ type
 
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor)
+  {.ensuresNif: addedAny(dest).}
 
 proc tempSymName(c: var Context): string {.inline.} =
   result = "`x." & $c.counter

@@ -25,6 +25,7 @@ include nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, typeprops, builtintypes]
 import ".." / models / tags
 import duplifier, eraiser, passes
+include ".." / nimony / nif_annotations
 
 type
   Context = object
@@ -42,6 +43,7 @@ type
 
 when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
+    {.ensuresNif: addedAny(dest).}
 
 proc passByConstRef(c: var Context; typ, pragmas: Cursor): bool =
   result = sizeof.passByConstRef(typ, pragmas, c.ptrSize) or typeprops.isInheritable(typ, false)

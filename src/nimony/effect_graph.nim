@@ -63,9 +63,21 @@ type
   ProcEffect* = object
     name*: string
     effect*: Effect  ## what it adds to dest
+    annotated*: bool ## true if effect comes from ensuresNif annotation
     wrapsInput*: bool ## true if it does copyInto dest, n: (preserves tag)
 
+  SymContext* = Table[string, ChildKind]
+    ## Maps identifiers (field names, variable names) to their NIF kind
+    ## based on their declaration context or type refinement.
+
+  AnnotationMismatch* = object
+    procName*: string
+    annotation*: Effect
+    derived*: Effect
+
   EffectGraph* = object
+    symContext*: SymContext
+    mismatches*: seq[AnnotationMismatch]
     procs*: Table[string, ProcEffect]
 
 # Well-known constants from decls.nim
@@ -173,8 +185,20 @@ proc extractDotCallName*(c: Cursor): string =
   if n.kind == Ident:
     result = pool.strings[n.litId]
 
+proc extractLastDotField(c: Cursor): string =
+  ## From `(dot obj fieldName)`, extract the innermost field name.
+  result = ""
+  if c.kind != ParLe: return
+  var n = c
+  if pool.tags[n.tag] != "dot": return
+  inc n
+  skip n # skip receiver
+  if n.kind == Ident:
+    result = pool.strings[n.litId]
+
 proc extractCallInfo(n: Cursor): (string, string) =
   ## From a (cmd ...) or (call ...) node, extract callee name and first arg.
+  ## For first arg, handles both bare Idents and (dot obj field) → returns field name.
   var c = n
   if c.kind != ParLe: return ("", "")
   inc c
@@ -189,6 +213,9 @@ proc extractCallInfo(n: Cursor): (string, string) =
   var firstArg = ""
   if c.kind == Ident:
     firstArg = pool.strings[c.litId]
+  elif c.kind == ParLe:
+    # Could be (dot obj field) — extract the field name
+    firstArg = extractLastDotField(c)
   (callee, firstArg)
 
 proc enumSuffixToKind*(name: string): ChildKind =
@@ -277,7 +304,11 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor): Effect =
       of "addSymDef":
         effects.add fixedEffect(ckD)
       of "addSymUse", "copyIntoSymUse":
-        effects.add fixedEffect(ckAny) # sym refs are context-dependent
+        # Try to classify via sym context (field type refinement or decl context)
+        if firstArg.len > 0 and firstArg in graph.symContext:
+          effects.add fixedEffect(graph.symContext[firstArg])
+        else:
+          effects.add fixedEffect(ckAny)
       of "addIntLit", "addUIntLit", "addIntVal", "addStrLit",
          "addCharLit", "addFloatLit":
         effects.add fixedEffect(ckLit)
@@ -471,6 +502,210 @@ proc analyzeForLoop*(graph: EffectGraph; n: Cursor): Effect =
   else:
     return unknownEffect()
 
+# ---- Building the SymContext from declarations ----
+
+proc typeNameToKind(typeName: string): ChildKind =
+  ## Map known type names to NIF child kinds.
+  ## Distinct type names like ExprSymId/TypeSymId provide refinements.
+  case typeName
+  of "ExprSymId": ckX
+  of "TypeSymId": ckT
+  of "StmtSymId": ckS
+  of "FieldSymId": ckY
+  else: ckAny
+
+proc declKindToChildKind(tag: string): ChildKind =
+  ## Map a declaration construct to the kind of value its symbol represents.
+  ## Only returns a specific kind for declarations whose category is unambiguous.
+  ## For SymId-typed variables/fields, returns ckAny unless a distinct type provides refinement.
+  case tag
+  of "type": ckT
+  else: ckAny  # without distinct type refinement, we can't know the kind
+
+proc extractFieldType(n: Cursor): string =
+  ## From a field declaration `(fld NAME . . TYPE .)`, extract the TYPE name.
+  var c = n
+  if c.kind != ParLe: return ""
+  inc c # skip (fld
+  skip c # skip name
+  skip c # skip export
+  skip c # skip pragmas
+  # now at type
+  if c.kind == Ident:
+    return pool.strings[c.litId]
+  return ""
+
+proc tagToSymKind(tag: string): ChildKind =
+  ## When a Nim variable is used in `addSymDef` inside a `copyIntoKind TAG`,
+  ## the TAG tells us what kind of NIF symbol that variable holds.
+  case tag
+  of "VarS", "LetS", "CursorS", "ResultS", "GvarS", "TvarS",
+     "GletS", "TletS", "ConstS", "PatternvarS": ckX  # value bindings → expr
+  of "TypeS": ckT  # type declaration → type
+  of "ParamU": ckX  # parameter → expr
+  of "FldY": ckY  # field → sym reference
+  of "EfldY": ckY  # enum field → sym reference
+  else: ckAny
+
+proc findAddSymDefInBody(body: Cursor; tag: string; result: var SymContext) =
+  ## Scan a (stmts ...) body for addSymDef calls and record the variable name
+  ## with the kind determined by the enclosing tag.
+  let kind = tagToSymKind(tag)
+  if kind == ckAny: return
+  var n = body
+  if n.kind != ParLe: return
+  if pool.tags[n.tag] != "stmts": return
+  inc n
+  while n.kind != ParRi:
+    if n.kind == ParLe:
+      let stmtTag = pool.tags[n.tag]
+      if stmtTag in ["cmd", "call"]:
+        # Check if this is an addSymDef call
+        var peek = n
+        inc peek
+        var callee = ""
+        if peek.kind == ParLe:
+          callee = extractDotCallName(peek)
+          skip peek
+        elif peek.kind == Ident:
+          callee = pool.strings[peek.litId]
+          inc peek
+          skip peek  # skip dest
+        if callee == "addSymDef" and peek.kind == Ident:
+          let varName = pool.strings[peek.litId]
+          result[varName] = kind
+          # Only the first addSymDef in a declaration body is the defining name
+          return
+    skip n
+
+proc buildSymContext*(buf: var TokenBuf): SymContext =
+  ## Scan the nifled source to understand what kind of NIF symbol each
+  ## Nim variable represents, based on:
+  ##
+  ## 1. Field type refinements: `(fld name . . ExprSymId .)` → distinct type
+  ## 2. addSymDef context: `addSymDef VAR` inside `copyIntoKind TypeS` → VAR is a type sym
+  ## 3. Type declarations: `(type NAME ...)` → NAME is a type
+  result = initTable[string, ChildKind]()
+  var n = beginRead(buf)
+  var nested = 0
+  if n.kind != ParLe: return
+  inc nested
+  inc n
+  while nested > 0:
+    case n.kind
+    of ParLe:
+      let tag = pool.tags[n.tag]
+
+      # Field type refinements via distinct types
+      if tag == "fld":
+        let typeName = extractFieldType(n)
+        let refined = typeNameToKind(typeName)
+        if refined != ckAny:
+          var p = n
+          inc p
+          if p.kind == Ident:
+            result[pool.strings[p.litId]] = refined
+
+      # Type declarations
+      elif tag == "type":
+        var p = n
+        inc p
+        if p.kind == Ident:
+          result[pool.strings[p.litId]] = ckT
+
+      # copyIntoKind/buildTree calls — scan their body for addSymDef
+      elif tag in ["cmd", "call"]:
+        var peek = n
+        inc peek
+        var copyTag = ""
+        if peek.kind == ParLe:
+          let callee = extractDotCallName(peek)
+          if callee in ["copyIntoKind", "buildTree"]:
+            skip peek  # skip (dot ...)
+            if peek.kind == Ident:
+              copyTag = pool.strings[peek.litId]
+              skip peek  # skip tag
+              skip peek  # skip info
+              # Find the stmts body
+              while peek.kind != ParRi:
+                if peek.kind == ParLe and pool.tags[peek.tag] == "stmts":
+                  findAddSymDefInBody(peek, copyTag, result)
+                  break
+                skip peek
+        elif peek.kind == Ident:
+          let callee = pool.strings[peek.litId]
+          if callee in ["copyIntoKind", "buildTree"]:
+            inc peek
+            skip peek  # skip dest
+            if peek.kind == Ident:
+              copyTag = pool.strings[peek.litId]
+              skip peek  # skip tag
+              skip peek  # skip info
+              while peek.kind != ParRi:
+                if peek.kind == ParLe and pool.tags[peek.tag] == "stmts":
+                  findAddSymDefInBody(peek, copyTag, result)
+                  break
+                skip peek
+
+      inc nested
+      inc n
+    of ParRi:
+      dec nested
+      inc n
+    else:
+      inc n
+
+# ---- Parsing ensuresNif annotations ----
+
+proc predicateToKind(predName: string): ChildKind =
+  case predName
+  of "addedExpr": ckX
+  of "addedType": ckT
+  of "addedStmt": ckS
+  of "addedDef": ckD
+  of "addedSym": ckY
+  of "addedLit": ckLit
+  of "addedAny": ckAny
+  of "addedDot": ckDot
+  of "addedNested": ckNested
+  else: ckAny
+
+proc extractEnsuresNif(procCursor: Cursor): Effect =
+  ## Scan a proc declaration for an `ensuresNif` pragma annotation.
+  ## Returns nil if no annotation found.
+  ## The proc structure is: (proc NAME ... (pragmas ... (kv ensuresNif (call PRED ARG))) ... (stmts ...))
+  var c = procCursor
+  if c.kind != ParLe: return nil
+  inc c # skip (proc
+  # Walk children looking for (pragmas ...)
+  while c.kind != ParRi:
+    if c.kind == ParLe and pool.tags[c.tag] == "pragmas":
+      # Found pragmas — scan for (kv ensuresNif ...)
+      var p = c
+      inc p # skip (pragmas
+      while p.kind != ParRi:
+        if p.kind == ParLe and pool.tags[p.tag] == "kv":
+          var kv = p
+          inc kv # skip (kv
+          if kv.kind == Ident and pool.strings[kv.litId] == "ensuresNif":
+            skip kv # skip "ensuresNif"
+            # Next should be (call PREDICATE ARG)
+            if kv.kind == ParLe and pool.tags[kv.tag] == "call":
+              var call = kv
+              inc call # skip (call
+              if call.kind == Ident:
+                let predName = pool.strings[call.litId]
+                if predName == "addedNothing":
+                  return emptyEffect()
+                else:
+                  return fixedEffect(predicateToKind(predName))
+        skip p
+      # No ensuresNif found in this pragmas block
+      skip c
+    else:
+      skip c
+  return nil
+
 # ---- Building the full graph for a file ----
 
 proc findProcBodies*(buf: var TokenBuf): seq[(string, Cursor)] =
@@ -506,27 +741,35 @@ proc findProcBodies*(buf: var TokenBuf): seq[(string, Cursor)] =
 
 proc buildEffectGraph*(buf: var TokenBuf): EffectGraph =
   ## Build the effect graph for all procs in a nifled source file.
+  ## Also builds a SymContext from declarations for refined addSymUse classification.
   ## Each proc's effect describes what it adds to its `dest` parameter.
-  result = EffectGraph(procs: initTable[string, ProcEffect]())
+  result = EffectGraph(procs: initTable[string, ProcEffect](),
+                       symContext: buildSymContext(buf))
 
   # First pass: find all proc declarations
   # We process them in order so that forward-declared procs get
   # filled in when their body is encountered.
   let procList = findProcBodies(buf)
 
-  # For each proc, analyze its body to derive the effect.
-  # We iterate multiple times to resolve dependencies (proc A calls proc B).
-  # In practice 2-3 iterations suffice since call graphs are shallow.
+  # First, extract ensuresNif annotations.
+  var annotations = initTable[string, Effect]()
+  for (name, procCursor) in procList:
+    let annotEffect = extractEnsuresNif(procCursor)
+    if annotEffect != nil:
+      annotations[name] = annotEffect
+      # Register the annotation as the proc's effect for call-site resolution
+      result.procs[name] = ProcEffect(name: name, effect: annotEffect,
+                                       annotated: true)
+
+  # Then derive effects from bodies, iterating to resolve dependencies.
   const MaxIterations = 5
   for iteration in 0..<MaxIterations:
     var changed = false
     for (name, procCursor) in procList:
-      # Find the body of this proc — it's the last child before ParRi
-      # In nifled output: (proc NAME ... (stmts BODY))
+      # Find the body of this proc — it's the last (stmts ...) child
       var c = procCursor
       inc c # skip (proc
-      # Walk to find the last (stmts ...) child
-      var lastStmts = c  # placeholder
+      var lastStmts = c
       var foundStmts = false
       while c.kind != ParRi:
         if c.kind == ParLe and pool.tags[c.tag] == "stmts":
@@ -539,16 +782,57 @@ proc buildEffectGraph*(buf: var TokenBuf): EffectGraph =
 
       let effect = analyzeStmtsBody(result, lastStmts)
 
-      let prev = result.procs.getOrDefault(name)
-      if prev.effect == nil or prev.effect.kind == ekUnknown:
-        if effect.kind != ekUnknown:
-          result.procs[name] = ProcEffect(name: name, effect: effect)
-          changed = true
-      elif prev.effect != effect:
-        # Effect changed (maybe refined)
-        if effect.kind != ekUnknown:
-          result.procs[name] = ProcEffect(name: name, effect: effect)
-          changed = true
+      if name in annotations:
+        discard # annotation takes priority; cross-check done after all iterations
+      else:
+        # Non-annotated proc: use derived effect
+        let prev = result.procs.getOrDefault(name)
+        if prev.effect == nil or prev.effect.kind == ekUnknown:
+          if effect.kind != ekUnknown:
+            result.procs[name] = ProcEffect(name: name, effect: effect)
+            changed = true
+        elif prev.effect != effect:
+          if effect.kind != ekUnknown:
+            result.procs[name] = ProcEffect(name: name, effect: effect)
+            changed = true
 
     if not changed:
       break
+
+  # Cross-check: verify annotated procs' body effects match their annotations.
+  for (name, procCursor) in procList:
+    if name notin annotations: continue
+    var c = procCursor
+    inc c
+    var lastStmts = c
+    var foundStmts = false
+    while c.kind != ParRi:
+      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
+        lastStmts = c
+        foundStmts = true
+      skip c
+    if not foundStmts: continue
+
+    let effect = analyzeStmtsBody(result, lastStmts)
+    if effect.kind == ekUnknown: continue
+
+    let annot = annotations[name]
+    let annotFlat = flatten(annot)
+    let bodyFlat = flatten(effect)
+    if annotFlat.ok and bodyFlat.ok:
+      if annotFlat.children.len != bodyFlat.children.len:
+        result.mismatches.add AnnotationMismatch(
+          procName: name, annotation: annot, derived: effect)
+      else:
+        for i in 0..<annotFlat.children.len:
+          let a = annotFlat.children[i]
+          let b = bodyFlat.children[i]
+          # ckAny in annotation means "don't care". ckAny in body means
+          # "unknown" — if the annotation claims a specific kind, the body
+          # must provably produce that kind, not just "something".
+          if a == ckAny:
+            discard # annotation doesn't care
+          elif b == ckAny or a != b:
+            result.mismatches.add AnnotationMismatch(
+              procName: name, annotation: annot, derived: effect)
+            break

@@ -43,6 +43,7 @@ import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
   builtintypes, langmodes, renderer, reporters]
 import hexer_context, passes
+include ".." / nimony / nif_annotations
 
 type
   EnvMode = enum
@@ -68,6 +69,7 @@ type
     env: CurrentEnv
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
+  {.ensuresNif: addedAny(dest).}
 
 proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
@@ -239,7 +241,8 @@ const
   EnvParamName = "`ep.0"
   EnvLocalName = "`el.0"
 
-proc addRootRef(dest: var TokenBuf; info: PackedLineInfo) =
+proc addRootRef(dest: var TokenBuf; info: PackedLineInfo)
+  {.ensuresNif: addedType(dest).} =
   dest.copyIntoKind RefT, info:
     dest.addSymUse pool.syms.getOrIncl(RootObjName), info
 
@@ -247,7 +250,8 @@ type
   UntypedEnvMode = enum
     WantValue, WantAddr
 
-proc untypedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv; mode=WantValue) =
+proc untypedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv; mode=WantValue)
+  {.ensuresNif: addedExpr(dest).} =
   assert env.s != SymId(0)
   case env.mode
   of EnvIsLocal:
@@ -269,7 +273,8 @@ proc untypedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv; mode=
     else:
       dest.addSymUse env.s, info
 
-proc typedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv) =
+proc typedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv)
+  {.ensuresNif: addedExpr(dest).} =
   assert env.s != SymId(0)
   case env.mode
   of EnvIsLocal:
@@ -283,6 +288,7 @@ proc typedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv) =
       dest.addSymUse env.s, info
 
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor)
+  {.ensuresNif: addedAny(dest).}
 
 proc treSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
@@ -348,7 +354,8 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.takeTree n # don't transform the potential proc body here
     dest.takeParRi n
 
-proc treType(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc treType(c: var Context; dest: var TokenBuf; n: var Cursor)
+  {.ensuresNif: addedType(dest).} =
   # Like `tre` but prefer the type interpretation. (Matters for ProcS etc.)
   if n.typeKind in RoutineTypes:
     treProcType(c, dest, n)

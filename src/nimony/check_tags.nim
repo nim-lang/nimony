@@ -505,20 +505,40 @@ proc main() =
   echo "Parsed ", passFile, " (", buf.len, " tokens)"
 
   # Build the effect graph — derive each proc's effect from its body
-  let eg = buildEffectGraph(buf)
+  var eg = buildEffectGraph(buf)
   echo "Built effect graph: ", eg.procs.len, " procs analyzed"
+
+  # Report annotation mismatches (ensuresNif doesn't match derived body effect)
+  for m in eg.mismatches:
+    let af = flatten(m.annotation)
+    let df = flatten(m.derived)
+    var aDesc = "annotation: "
+    if af.ok:
+      for k in af.children: aDesc.add kindName(toSpecKind(k)) & " "
+    else:
+      aDesc.add "?"
+    var dDesc = "body: "
+    if df.ok:
+      for k in df.children: dDesc.add kindName(toSpecKind(k)) & " "
+    else:
+      dDesc.add "?"
+    echo "  WARNING: ", m.procName, " — ensuresNif mismatch: ", aDesc, "vs ", dDesc
 
   var ctx = CheckContext(grammar: grammar, effectGraph: eg, filename: passFile)
   scanForCopyIntoKind(ctx, buf)
 
   echo "Checked ", ctx.checked, " call sites, skipped ", ctx.skipped, " (too complex)"
-  if ctx.violations.len == 0:
+  var hasErrors = false
+  if eg.mismatches.len > 0:
+    hasErrors = true
+  if ctx.violations.len == 0 and not hasErrors:
     echo "OK: no violations found."
   else:
-    echo ctx.violations.len, " violation(s) found:"
-    for v in ctx.violations:
-      echo "  ", v.file, "(", v.line, ",", v.col, "): ", v.tag,
-           " [", v.msg, "]"
+    if ctx.violations.len > 0:
+      echo ctx.violations.len, " violation(s) found:"
+      for v in ctx.violations:
+        echo "  ", v.file, "(", v.line, ",", v.col, "): ", v.tag,
+             " [", v.msg, "]"
     quit 1
 
 main()
