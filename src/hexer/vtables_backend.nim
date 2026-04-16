@@ -772,13 +772,12 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
           dest.copyIntoKind UT, NoLineInfo:
             dest.addIntLit 32, NoLineInfo
           #dest.addIntLit vtab.display.len, NoLineInfo
-        dest.addParLe AconstrX, NoLineInfo
-        dest.copyIntoKind UarrayT, NoLineInfo:
-          dest.copyIntoKind UT, NoLineInfo:
-            dest.addIntLit 32, NoLineInfo
-        for d in vtab.display:
-          dest.addUIntLit uhash(pool.syms[d]), NoLineInfo
-        dest.addParRi() # AconstrX
+        dest.copyIntoKind AconstrX, NoLineInfo:
+          dest.copyIntoKind UarrayT, NoLineInfo:
+            dest.copyIntoKind UT, NoLineInfo:
+              dest.addIntLit 32, NoLineInfo
+          for d in vtab.display:
+            dest.addUIntLit uhash(pool.syms[d]), NoLineInfo
 
     dest.copyIntoKind ConstS, NoLineInfo:
       dest.addSymDef getVTableName(c, cls), NoLineInfo
