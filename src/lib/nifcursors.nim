@@ -214,6 +214,15 @@ proc toUniqueId*(c: Cursor): int {.inline.} =
 proc add*(result: var TokenBuf; c: Cursor) =
   result.add c.load
 
+proc addToken*(dest: var TokenBuf; t: PackedToken) {.inline.} =
+  ## Adds a single token to dest. Prefer this over `dest.add` in compiler
+  ## passes so that static analysis tools can track NIF construction.
+  dest.add t
+
+proc addToken*(dest: var TokenBuf; c: Cursor) {.inline.} =
+  ## Adds a single token (from cursor position) to dest.
+  dest.add c.load
+
 proc addSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) {.inline.} =
   dest.add symToken(s, info)
 

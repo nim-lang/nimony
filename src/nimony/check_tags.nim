@@ -18,11 +18,12 @@
 ##
 ## Usage: check_tags <passfile.nim> [tags.md]
 
-import std / [strutils, os, tables, sets, osproc, assertions, syncio]
+import std / [strutils, os, tables, sets, osproc, assertions, syncio, sequtils]
 include ".." / lib / nifprelude
 import ".." / lib / [tooldirs]
 import ".." / models / [tags, nimony_tags]
 import nimony_model
+import effect_graph
 
 # ---------------------------------------------------------------------------
 # Step 1: Parse tags.md to extract child specs
@@ -190,6 +191,18 @@ proc parseTagsMd(filename: string): TagGrammar =
 # Step 2: Analyse nifled pass source to find copyIntoKind call sites
 # ---------------------------------------------------------------------------
 
+proc toSpecKind(k: effect_graph.ChildKind): ChildKind =
+  case k
+  of effect_graph.ckDot: ckDot
+  of effect_graph.ckD: ckD
+  of effect_graph.ckT: ckT
+  of effect_graph.ckX: ckX
+  of effect_graph.ckS: ckS
+  of effect_graph.ckY: ckY
+  of effect_graph.ckLit: ckLit
+  of effect_graph.ckAny: ckAny
+  of effect_graph.ckNested: ckNested
+
 type
   Violation = object
     line: int
@@ -200,6 +213,7 @@ type
 
   CheckContext = object
     grammar: TagGrammar
+    effectGraph: EffectGraph
     violations: seq[Violation]
     filename: string
     checked: int
@@ -209,145 +223,6 @@ proc lineInfoStr(info: PackedLineInfo): (int, int) =
   let u = unpack(pool.man, info)
   (u.line.int, u.col.int)
 
-proc extractDotCallName(c: Cursor): string =
-  result = ""
-  if c.kind != ParLe: return
-  var n = c
-  if pool.tags[n.tag] != "dot": return
-  inc n
-  skip n # skip receiver
-  if n.kind == Ident:
-    result = pool.strings[n.litId]
-
-proc enumSuffixToKind(name: string): ChildKind =
-  ## Classify a Nim enum name like "VarS", "RefT", "AddX" by its suffix.
-  ## The suffix is determined by gen_tags.nim from the enum it belongs to.
-  if name.endsWith("Idx"): return ckAny
-  if name.len < 2: return ckAny
-  case name[^1]
-  of 'X': ckX  # NimonyExpr
-  of 'S': ckS  # NimonyStmt
-  of 'T': ckT  # NimonyType
-  of 'U': ckNested  # NimonyOther (substructure: params, elif, else, etc.)
-  of 'P': ckP  # NimonyPragma
-  of 'Y': ckD  # NimonySym (declarations produce SymDefs)
-  of 'H': ckX  # HookKind (destroy, dup, etc. are expression-like)
-  of 'F': ckS  # ControlFlowKind (statement-like)
-  of 'V': ckS  # NjvlKind
-  else: ckAny
-
-proc extractCalleeAndFirstArg(n: Cursor): (string, string) =
-  ## From a (cmd ...) or (call ...) node, extract the callee name
-  ## and the first non-receiver argument (for addParPair's tag argument).
-  var c = n
-  if c.kind != ParLe: return ("", "")
-  inc c  # skip (cmd or (call
-  var callee = ""
-  if c.kind == ParLe:
-    # method call: (dot receiver name)
-    callee = extractDotCallName(c)
-    skip c  # skip (dot ...)
-  elif c.kind == Ident:
-    callee = pool.strings[c.litId]
-    inc c
-    # For non-method call, skip the dest arg
-    skip c
-
-  var firstArg = ""
-  if c.kind == Ident:
-    firstArg = pool.strings[c.litId]
-  return (callee, firstArg)
-
-const
-  ChildProducers = ["addDotToken", "addSymDef", "addSymUse", "addParPair",
-     "addIntLit", "addStrLit", "addCharLit", "addIntVal",
-     "takeTree", "takeToken", "copyTree",
-     "addEmpty", "addUIntLit", "addFloatLit",
-     "copyIntoSymUse",
-     "copyIntoKind", "copyIntoKinds", "buildTree",
-     "copyInto",
-     "tr", "tre", "treType", "treLocal", "trLocal", "trProc",
-     "treSons", "trSons", "treParamsWithEnv", "treProcType",
-     "addParLe"]
-
-  NonProducers = ["addParRi", "skip", "skipToEnd", "skipParRi", "inc",
-     "swap", "endRead", "assert"]
-
-proc classifyChildren(body: Cursor): seq[ChildKind] =
-  ## Classify the NIF children produced by statements in a copyIntoKind body block.
-  ## Returns empty seq with a special sentinel if analysis fails.
-  var n = body
-  if n.kind != ParLe: return @[ckAny]  # sentinel: can't analyze
-  let bodyTag = pool.tags[n.tag]
-  if bodyTag != "stmts": return @[ckAny]
-  inc n # skip (stmts
-
-  result = @[]
-  while n.kind != ParRi:
-    if n.kind != ParLe:
-      if n.kind == Ident:
-        # An identifier in the body could be a template/closure invocation
-        return @[]  # empty = can't analyze
-      skip n
-      continue
-    let stmtTag = pool.tags[n.tag]
-    case stmtTag
-    of "call", "cmd":
-      let (callName, firstArg) = extractCalleeAndFirstArg(n)
-
-      case callName
-      of "addDotToken":
-        result.add ckDot
-      of "addSymDef":
-        result.add ckD
-      of "addSymUse", "copyIntoSymUse":
-        # A symbol reference can serve as type (T), expression (X), or name (Y)
-        # depending on context — treat as wildcard
-        result.add ckAny
-      of "addIntLit", "addUIntLit", "addIntVal":
-        result.add ckLit
-      of "addStrLit":
-        result.add ckLit
-      of "addCharLit":
-        result.add ckLit
-      of "addFloatLit":
-        result.add ckLit
-      of "addParPair":
-        # Classify by the tag argument's suffix: addParPair NilX → ckX
-        result.add enumSuffixToKind(firstArg)
-      of "copyIntoKind", "copyIntoKinds", "buildTree":
-        # Nested node construction — classify by the tag argument's suffix
-        result.add enumSuffixToKind(firstArg)
-      of "copyInto":
-        # Copies one node from input — unknown kind
-        result.add ckAny
-      of "takeTree", "takeToken", "copyTree", "addEmpty":
-        result.add ckAny
-      of "tr", "tre", "treType", "treLocal", "trLocal", "trProc",
-         "treSons", "trSons", "treParamsWithEnv", "treProcType":
-        result.add ckAny
-      of "addParLe":
-        # Manual open — paired with a later addParRi, counts as one child
-        result.add ckAny
-      of "addParRi":
-        discard
-      of "genObjectTypes":
-        return @[]  # can't analyze
-      of "skip", "skipToEnd", "skipParRi", "inc":
-        discard
-      of "swap", "endRead", "assert":
-        discard
-      else:
-        return @[]  # unknown call, can't analyze
-      skip n
-    of "if", "when", "case":
-      return @[]
-    of "while", "for":
-      return @[]
-    of "discard", "var", "let", "const", "asgn", "comment":
-      skip n
-    else:
-      return @[]
 
 proc kindName(k: ChildKind): string =
   case k
@@ -529,19 +404,16 @@ proc checkCopyIntoKind(ctx: var CheckContext; n: Cursor; info: PackedLineInfo) =
   if mdTag notin ctx.grammar: return
 
   let specs = ctx.grammar[mdTag]
-  let children = classifyChildren(bodyPos)
 
-  # Empty result from classifyChildren means "can't analyze"
-  if children.len == 0 and bodyPos.kind == ParLe:
-    # Check if the stmts block actually has content
-    var peek = bodyPos
-    inc peek
-    if peek.kind != ParRi:
-      # Non-empty body but couldn't classify
-      ctx.skipped += 1
-      return
-    # else: genuinely 0 children, check that
+  # Use the effect graph to analyze the body
+  let effect = analyzeStmtsBody(ctx.effectGraph, bodyPos)
+  let flat = flatten(effect)
 
+  if not flat.ok:
+    ctx.skipped += 1
+    return
+
+  let children = flat.children.mapIt(toSpecKind(it))
   ctx.checked += 1
 
   # Try each allowed spec form — if any matches fully, we're good
@@ -632,7 +504,11 @@ proc main() =
   var buf = parseFileViaNifler(passFile)
   echo "Parsed ", passFile, " (", buf.len, " tokens)"
 
-  var ctx = CheckContext(grammar: grammar, filename: passFile)
+  # Build the effect graph — derive each proc's effect from its body
+  let eg = buildEffectGraph(buf)
+  echo "Built effect graph: ", eg.procs.len, " procs analyzed"
+
+  var ctx = CheckContext(grammar: grammar, effectGraph: eg, filename: passFile)
   scanForCopyIntoKind(ctx, buf)
 
   echo "Checked ", ctx.checked, " call sites, skipped ", ctx.skipped, " (too complex)"

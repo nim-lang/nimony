@@ -527,9 +527,8 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tmp = n.symId
       copyIntoKind dest, TupatX, info:
         #tre c, dest, n
-        dest.add n
+        takeToken dest, n
         dest.addIntLit 0, info
-      inc n
     else:
       dest.addParLe(ExprX, info)
       copyIntoKind dest, StmtsS, info:

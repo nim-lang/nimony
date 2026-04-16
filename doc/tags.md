@@ -115,7 +115,7 @@
 | `(bool)` | NifcType, NimonyType | `bool` builtin type |
 | `(void)` | NifcType, NimonyType | `void` return type |
 | `(ptr T)` | NifcType, NimonyType, NiflerKind | `ptr` type contructor |
-| `(array T X)` | NifcType, NimonyType | `array` type constructor |
+| `(array T T)` | NifcType, NimonyType | `array` type constructor (element type, index type/range) |
 | `(flexarray T)` | NifcType | `flexarray` type constructor |
 | `(aptr T TQC*)` | NifcType | "pointer to array of" type constructor |
 | `(cdecl)` | CallConv | `cdecl` calling convention |

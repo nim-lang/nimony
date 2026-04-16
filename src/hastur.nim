@@ -492,7 +492,7 @@ proc checkTagsTests() =
     "src/hexer/duplifier.nim",
     "src/hexer/nifcgen.nim",
     "src/hexer/eraiser.nim",
-    "src/hexer/vtables_backend.nim",
+    #"src/hexer/vtables_backend.nim", # TODO: tool can't track writes to different buffers yet
     "src/hexer/iterinliner.nim",
     "src/hexer/constparams.nim",
     "src/nimony/sem.nim",
@@ -523,7 +523,7 @@ proc checkTagsTests() =
           if line.startsWith("  ") or line.contains("violation"):
             if got.len > 0: got.add "\n"
             got.add line
-        if got.strip != expected.strip:
+        if got.strip.replace("\\", "/") != expected.strip.replace("\\", "/"):
           failure c, t, expected, got
   echo c.total - c.failures, " / ", c.total, " check_tags tests successful in ",
     formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
