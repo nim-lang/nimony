@@ -64,3 +64,45 @@ proc main5() =
     x(42)
 
 main5()
+
+proc main6() {.passive.} =
+    let x = a3(10)
+    var b = x(10)
+    echo "main6: ", b
+    b = x(10)
+    echo "main6: ", b
+    b = x(10)
+    echo "main6: ", b
+
+main6()
+
+proc main7() {.passive.} =
+    var b = 0
+    let x = a()
+    x()
+    x()
+
+main7()
+
+# proc main8() {.passive.} =
+#     var b = 10
+#     proc a(x: int) {.closure,passive.} =
+#         echo "main8: ", b+x
+#     a(10)
+# main8()
+
+proc main9() {.passive.} =
+    var b = 0
+    let x = a2(10)
+    x(10)
+    x(10)
+
+main9()
+
+proc main10() {.passive.} =
+    var x: (proc(x: int) {.passive.}) = a4
+    x(5)
+    x = a5
+    x(42)
+
+main10()

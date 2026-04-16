@@ -305,6 +305,12 @@ proc isClosure(c: var Context; s: SymId): bool =
     return true
   return false
 
+proc isPassive(c: var Context; s: SymId): bool =
+  let typ = c.typeCache.lookupSymbol(s)
+  if not cursorIsNil(typ) and procHasPragma(typ, PassiveP):
+    return true
+  return false
+
 proc isPassiveClosure(c: var Context; s: SymId): bool =
   let typ = c.typeCache.lookupSymbol(s)
   if not cursorIsNil(typ) and procHasPragma(typ, ClosureP) and procHasPragma(typ, PassiveP):
@@ -552,7 +558,7 @@ proc trPassiveClosureCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar
         dest.addSymUse coroWrapperProc(c, n.symId), info
         inc n
       else:
-        dest.takeTree n
+        tr(c, dest, n)
       while n.kind != ParRi:
         tr(c, dest, n)
       inc n
@@ -623,6 +629,18 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skip n   # skip rest
     skipParRi n
 
+proc isPassiveCall(c: var Context; n: Cursor): bool =
+  if n.exprKind in CallKinds - {DelayX}:
+    let typ = c.typeCache.getType(n.firstSon, {SkipAliases})
+    return procHasPragma(typ, PassiveP)
+  return false
+
+proc isPassiveClosureCall(c: var Context; n: Cursor): bool =
+  if n.exprKind in CallKinds - {DelayX}:
+    let typ = c.typeCache.getType(n.firstSon, {SkipAliases})
+    return procHasPragma(typ, PassiveP) and procHasPragma(typ, ClosureP)
+  return false
+
 proc passiveCallFn(c: var Context; n: Cursor): SymId =
   if n.exprKind notin CallKinds - {DelayX}: return SymId(0)
   let fn = n.firstSon
@@ -692,10 +710,16 @@ proc trLocalValue(c: var Context; dest: var TokenBuf; n: var Cursor; lhs: Cursor
   let fn = passiveCallFn(c, n)
   if fn != SymId(0):
     trPassiveCall(c, dest, n, fn, lhs)
+  elif isPassiveCall(c, n):
+    trPassiveClosureCall(c, dest, n, lhs, true)
   else:
     dest.copyIntoKind AsgnS, n.info:
       dest.copyTree lhs
-      tr(c, dest, n)
+      if n.kind == Symbol and procHasPragma(getType(c.typeCache, n), PassiveP):
+        dest.addSymUse coroWrapperProc(c, n.symId), n.info
+        inc n
+      else:
+        tr c, dest, n
 
 
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -938,20 +962,13 @@ proc escapingLocals(c: var Context; n: Cursor) =
         discard
       inc n
 
-proc isPassiveCall(c: var Context; n: PackedToken): bool =
-  if n.kind == Symbol:
-    let typ = c.typeCache.lookupSymbol(n.symId)
-    if not cursorIsNil(typ) and procHasPragma(typ, PassiveP):
-      return true
-  return false
-
 proc containsSuspensionPoint(c: var Context; n: Cursor): bool =
   var nested = 0
   var n = n
   while true:
     let sk = n.stmtKind
     let ek = n.exprKind
-    if sk == YldS or (ek in CallKinds - {DelayX} and isPassiveCall(c, n.firstSon.load)) or ek == SuspendX:
+    if sk == YldS or isPassiveCall(c, n) or ek == SuspendX:
       return true
     inc n
     if n.kind == ParRi:
@@ -1026,7 +1043,7 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skip n
   of StoreV:
     dest.takeToken n
-    var addLabel = n.exprKind in CallKinds - {DelayX} and isPassiveCall(c, n.firstSon.load)
+    var addLabel = isPassiveCall(c, n)
     dest.takeTree n
     dest.takeTree n
     dest.takeParRi n
@@ -1100,8 +1117,7 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     let sk = n.stmtKind
     let ek = n.exprKind
-    if sk == YldS or (ek in CallKinds - {DelayX} and isPassiveCall(c, n.firstSon.load)) or
-        ek == SuspendX:
+    if sk == YldS or isPassiveCall(c, n) or ek == SuspendX:
       takeTree dest, n
       emitLabel dest, c.currentProc.labelCounter, info
       inc c.currentProc.labelCounter
@@ -1110,12 +1126,15 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of ParLe:
         case n.stmtKind
         of LocalDecls - {ResultS}:
+          let sym = n.firstSon.symId
+          let kind = n.symKind
           dest.takeToken n
           dest.takeTree n
           dest.takeTree n
           dest.takeTree n
+          c.typeCache.registerLocal(sym, kind, n)
           dest.takeTree n
-          var addLabel = n.exprKind in CallKinds - {DelayX} and isPassiveCall(c, n.firstSon.load)
+          var addLabel = isPassiveCall(c, n)
           dest.takeTree n
           dest.takeParRi n
           if addLabel:
@@ -1146,10 +1165,11 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   wrapper.addParRi()
   var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "eliminateJumps", 0)
   eliminateJumps(pass, raisesResolved = true)
-  when defined(logPasses):
-    echo ""
-    echo "========= NJ OUTPUT ======"
-    echo pass.dest.toString(false)
+  # when defined(logPasses):
+  #   echo ""
+  #   echo iter
+  #   echo "========= NJ OUTPUT ======"
+  #   echo pass.dest.toString(false)
   # pass.dest is (stmts cfvar_decls... (proc header body_stmts) ...).
   # Navigate into the proc body; then copy it while stripping NJ bookkeeping
   # (mflag/vflag/jtrue/kill) so c.currentProc.cf has no versionized variables.
@@ -1481,7 +1501,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
      IntLit, UIntLit, FloatLit, CharLit, StringLit:
     takeTree dest, n
   of Symbol:
-    if isProc(c, n.symId) and isPassiveClosure(c, n.symId):
+    if isProc(c, n.symId) and isPassive(c, n.symId):
       dest.addSymUse coroWrapperProc(c, n.symId), n.info
       inc n
     else:
@@ -1598,11 +1618,21 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           # (store value dest) -> (asgn dest value)
           let info = n.info
           inc n # skip 'store' tag
-          var valueBuf = createTokenBuf(16)
-          tr c, valueBuf, n # value (first operand)
-          dest.copyIntoKind AsgnS, info:
-            tr c, dest, n   # dest (second operand)
-            dest.add valueBuf
+          var value = n
+          if isPassiveCall(c, value):
+            skip n
+            var lhsTransformed = createTokenBuf(6)
+            tr c, lhsTransformed, n
+            if isPassiveClosureCall(c, value):
+              trPassiveClosureCall(c, dest, value, beginRead lhsTransformed, true)
+            else:
+              trPassiveCall(c, dest, value, value.firstSon.symId, beginRead lhsTransformed)
+          else:
+            var valueBuf = createTokenBuf(16)
+            tr c, valueBuf, n # value (first operand)
+            dest.copyIntoKind AsgnS, info:
+              tr c, dest, n   # dest (second operand)
+              dest.add valueBuf
           skipParRi n
         of KillV, UnknownV:
           skip n  # NJ bookkeeping, not needed in CPS output
