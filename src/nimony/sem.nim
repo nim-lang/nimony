@@ -28,6 +28,7 @@ else:
 
 import ".." / gear2 / modnames
 import ".." / models / [tags, nifindex_tags]
+import phase_validator
 
 proc semStmt(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: bool)
 proc semStmtBranch(c: var SemContext; dest: var TokenBuf; it: var Item; isNewScope: bool)
@@ -6580,6 +6581,20 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
   else:
     quit 1
 
+proc maybeValidatePostSem(dest: var TokenBuf; moduleName: string) =
+  ## When compiled with `-d:validatePasses`, validates that `dest`
+  ## conforms to the post-sem subset of `doc/tags.md`. Reports violations
+  ## on stderr. Does not abort — the goal is to surface spec drift without
+  ## blocking unrelated work while the spec is still converging.
+  when defined(validatePasses):
+    let phase = postSemPhase()
+    let violations = validate(dest, phase)
+    if violations.len > 0:
+      stderr.writeLine "[" & moduleName & "] post-sem validator found " &
+        $violations.len & " violation(s)" &
+        (if violations.len >= 200: " (truncated)" else: "") & ":"
+      discard reportViolations(phase.name, violations)
+
 type
   ModuleState = object
     owningBuf: TokenBuf
@@ -6651,6 +6666,7 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
   for i in 0..<modules.len:
     semcheckPostProcess modules[i].c, modules[i].dest
     if reportErrors(modules[i].dest) == 0:
+      maybeValidatePostSem modules[i].dest, modules[i].outfile
       writeOutput modules[i].c, modules[i].dest, modules[i].outfile
     else:
       quit 1
@@ -6686,6 +6702,7 @@ proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFla
     handleTypePlugins c, dest
 
   if reportErrors(dest) == 0:
+    maybeValidatePostSem dest, outfile
     writeOutput c, dest, outfile
   else:
     quit 1
