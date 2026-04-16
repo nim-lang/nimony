@@ -469,6 +469,50 @@ proc scanForCopyIntoKind(ctx: var CheckContext; buf: var TokenBuf) =
       inc n
 
 # ---------------------------------------------------------------------------
+# Step 2b: Check that case n.stmtKind / n.exprKind / etc. have no `else`
+# ---------------------------------------------------------------------------
+
+const ExhaustiveDiscriminators = [
+  "stmtKind", "exprKind", "typeKind", "substructureKind", "symKind"]
+
+proc scanForNonExhaustiveCases(ctx: var CheckContext; buf: var TokenBuf) =
+  ## Find `case n.stmtKind` / `case n.exprKind` / etc. that have an `else`
+  ## branch. These must enumerate all values explicitly so that the Nim
+  ## compiler enforces exhaustive coverage when new tags are added.
+  var n = beginRead(buf)
+  var nested = 0
+  assert n.kind == ParLe
+  inc nested
+  inc n
+  while nested > 0:
+    case n.kind
+    of ParLe:
+      let tag = pool.tags[n.tag]
+      if tag == "case":
+        # Extract discriminator: (case (dot n stmtKind) ...)
+        var peek = n
+        inc peek  # skip (case
+        var discr = ""
+        if peek.kind == ParLe:
+          discr = extractLastDotField(peek)
+        if discr in ExhaustiveDiscriminators:
+          # Scan children for an `else` branch
+          skip peek  # skip discriminator
+          while peek.kind != ParRi:
+            if peek.kind == ParLe and pool.tags[peek.tag] == "else":
+              addViolation(ctx, n.info, "case " & discr,
+                "`else` branch not allowed; enumerate all values for exhaustive checking")
+              break
+            skip peek
+      inc nested
+      inc n
+    of ParRi:
+      dec nested
+      inc n
+    else:
+      inc n
+
+# ---------------------------------------------------------------------------
 # Step 3: Main
 # ---------------------------------------------------------------------------
 
@@ -533,6 +577,7 @@ proc main() =
 
   var ctx = CheckContext(grammar: grammar, effectGraph: eg, filename: passFile)
   scanForCopyIntoKind(ctx, buf)
+  scanForNonExhaustiveCases(ctx, buf)
 
   echo "Checked ", ctx.checked, " call sites, skipped ", ctx.skipped, " (too complex)"
 

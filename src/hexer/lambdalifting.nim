@@ -214,7 +214,12 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.typeCache.openScope()
       trSons(c, dest, n)
       c.typeCache.closeScope()
-    else:
+    of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS, CaseS,
+      RetS, YldS, StmtsS, PragmaxS, InclS, ExclS, ImportasS,
+      ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
+      AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
+      StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
+      NoStmt:
       case n.exprKind
       of CallKinds:
         trCall c, dest, n
@@ -222,7 +227,24 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         takeTree dest, n
       of NilX:
         trNil c, dest, n
-      else:
+      of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX,
+        InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
+        NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
+        AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX,
+        SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX,
+        BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX,
+        CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, DdotX,
+        HaddrX, NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
+        TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CompilesX,
+        DeclaredX, DefinedX, AstToStrX, InstanceofX, HighX,
+        LowX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
+        IsmainmoduleX, DefaultobjX, DefaulttupX,
+        DefaultdistinctX, Delay0X, SuspendX, ExprX, DoX,
+        ArratX, TupatX, PlussetX, MinussetX, MulsetX, XorsetX,
+        EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
+        DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
+        InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
+        EnvpX, NoExpr:
         trSons(c, dest, n)
   of ParRi:
     bug "unexpected ')' inside"
@@ -634,7 +656,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       treLocal c, dest, n
     of ProcS, FuncS, MacroS, MethodS, ConverterS:
       treProc c, dest, n
-    of IteratorS, TemplateS, EmitS, BreakS, ContinueS,
+    of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
       ForS, IncludeS, ImportS, FromimportS, ImportExceptS,
       ExportS, CommentS,
       PragmasS:
@@ -643,7 +665,12 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.typeCache.openScope()
       treSons(c, dest, n)
       c.typeCache.closeScope()
-    else:
+    of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS, CaseS,
+      RetS, YldS, StmtsS, PragmaxS, InclS, ExclS, ImportasS,
+      ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
+      AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
+      StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
+      NoStmt:
       case n.exprKind
       of CallKinds:
         genCall(c, dest, n)
@@ -673,7 +700,24 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         skipParRi n
       of TypeofX:
         takeTree dest, n
-      else:
+      of ErrX, SufX, AtX, DerefX, PatX, ParX, AddrX, NilX,
+        InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
+        NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
+        AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX,
+        SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX,
+        BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CchoiceX,
+        OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX,
+        NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
+        TabconstrX, AshrX, BaseobjX, HconvX, DconvX,
+        CompilesX, DeclaredX, DefinedX, AstToStrX, InstanceofX,
+        HighX, LowX, UnpackX, FieldsX, FieldpairsX,
+        EnumtostrX, IsmainmoduleX, DefaultobjX, DefaulttupX,
+        DefaultdistinctX, Delay0X, SuspendX, ExprX, DoX,
+        ArratX, TupatX, PlussetX, MinussetX, MulsetX, XorsetX,
+        EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
+        DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
+        InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
+        NoExpr:
         if n.typeKind in RoutineTypes:
           treProcType(c, dest, n)
         elif n.substructureKind == KvU:

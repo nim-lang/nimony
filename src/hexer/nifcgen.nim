@@ -447,13 +447,20 @@ proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
             dest.addParRi # end of object
           skipParRi c, n
           skipParRi c, n
-        else:
+        of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+            TypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU,
+            CaseU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
+            UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU,
+            NoSub:
           error "expected `of` or `else` inside `case`"
       dest.addParRi # end of union
       skipParRi c, n
     of NilU:
       skip n
-    else:
+    of NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU,
+        EfldU, WhenU, ElifU, ElseU, TypevarsU, OfU, StmtsU,
+        ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
+        UnpacktupU, ExceptU, FinU, UncheckedU, NoSub:
       error "illformed AST inside object: ", n
 
 proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag] = {}) =
@@ -1219,7 +1226,24 @@ proc isSimpleLiteral(nb: var Cursor): bool =
       while nb.kind != ParRi:
         if not isSimpleLiteral(nb): return false
       skipParRi nb
-    else:
+    of ErrX, AtX, DerefX, DotX, PatX, ParX, AddrX, AndX, OrX,
+        XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX,
+        OconstrX, AconstrX, BracketX, CurlyX, CurlyatX, OvfX,
+        AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX,
+        BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CallX,
+        CmdX, CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX,
+        DdotX, HaddrX, NewrefX, NewobjX, TupX, TupconstrX,
+        SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX,
+        DconvX, CallstrlitX, InfixX, PrefixX, HcallX,
+        CompilesX, DeclaredX, DefinedX, AstToStrX,
+        InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
+        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
+        DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
+        Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
+        PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX,
+        LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX,
+        WasmovedX, SinkhX, TraceX, InternalTypeNameX,
+        InternalFieldPairsX, FailedX, IsX, EnvpX, NoExpr:
       result = false
 
 proc getCompilerProc(c: var EContext; name: string; isInline=false): string =
@@ -1634,7 +1658,11 @@ proc trCase(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       inc n
       trStmt c, dest, n
       takeParRi dest, n
-    else:
+    of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+        TypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
+        StmtsU, ParamsU, PragmasU, EitherU, JoinU,
+        UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU,
+        NoSub:
       error c, "expected (of) or (else) but got: ", n
   takeParRi dest, n
 

@@ -20,7 +20,16 @@ proc hasContinueStmt(c: Cursor): bool =
       of ContinueS:
         result = true
         break
-      else:
+      of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS,
+          GletS, TletS, LetS, CursorS, PatternvarS, ProcS, FuncS,
+          IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
+          BlockS, EmitS, AsgnS, ScopeS, IfS, WhenS, BreakS, ForS,
+          WhileS, CaseS, RetS, YldS, StmtsS, PragmasS, PragmaxS,
+          InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS,
+          ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS,
+          TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
+          InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS,
+          UsingS, AsmS, DeferS, NoStmt:
         inc nested
         inc c
     of ParRi:
@@ -265,7 +274,15 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
       # value:
       inlineLoopBody(e, dest, c, mapping)
       dest.takeParRi(c)
-    else:
+    of CallS, CmdS, GvarS, TvarS, ConstS, GletS, TletS, ProcS,
+        FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS,
+        TypeS, EmitS, AsgnS, ScopeS, IfS, WhenS, CaseS, RetS,
+        YldS, PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS,
+        ImportasS, FromimportS, ImportexceptS, ExportS,
+        ExportexceptS, CommentS, DiscardS, TryS, RaiseS,
+        UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS,
+        PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
+        AsmS, DeferS, NoStmt:
       if c.substructureKind == KvU:
         # In KvU: first element is field name, don't substitute it
         dest.add c
@@ -326,7 +343,16 @@ proc inlineIteratorBody(e: var EContext; dest: var TokenBuf;
       dest.addParRi()
       dest.addParRi()
       skipParRi(e, c)
-    else:
+    of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS, GletS,
+        TletS, LetS, CursorS, PatternvarS, ProcS, FuncS, IteratorS,
+        ConverterS, MethodS, MacroS, TemplateS, TypeS, BlockS,
+        EmitS, AsgnS, ScopeS, IfS, WhenS, BreakS, ContinueS, ForS,
+        WhileS, CaseS, RetS, PragmasS, PragmaxS, InclS, ExclS,
+        IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS,
+        ExportS, ExportexceptS, CommentS, DiscardS, TryS, RaiseS,
+        UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS,
+        PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
+        AsmS, DeferS, NoStmt:
       dest.add c
       inc c
       e.loop(dest, c):
@@ -352,7 +378,16 @@ proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations
       inc c
       e.loop(dest, c):
         replaceSymbol(e, dest, c, relations)
-    else:
+    of CallS, CmdS, GvarS, TvarS, ConstS, ResultS, GletS, TletS,
+        ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS,
+        TemplateS, TypeS, BlockS, EmitS, AsgnS, ScopeS, IfS,
+        WhenS, BreakS, ContinueS, ForS, WhileS, CaseS, RetS,
+        YldS, StmtsS, PragmasS, PragmaxS, InclS, ExclS, IncludeS,
+        ImportS, ImportasS, FromimportS, ImportexceptS, ExportS,
+        ExportexceptS, CommentS, DiscardS, TryS, RaiseS,
+        UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS,
+        PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
+        AsmS, DeferS, NoStmt:
       if c.substructureKind == KvU:
         # In KvU: first element is field name, don't substitute it
         dest.add c
@@ -628,7 +663,13 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
       transformStmt(e, dest, c)
       discard e.breaks.pop
       takeParRi(dest, c)
-    else:
+    of CallS, CmdS, MacroS, TypeS, EmitS, AsgnS, ScopeS, IfS,
+        WhenS, CaseS, RetS, YldS, PragmasS, PragmaxS, InclS,
+        ExclS, IncludeS, ImportS, ImportasS, FromimportS,
+        ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS,
+        TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
+        InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS,
+        UsingS, AsmS, DeferS, NoStmt:
       dest.add c
       inc c
       e.loop(dest, c):
