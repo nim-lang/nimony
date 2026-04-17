@@ -268,7 +268,7 @@ proc workerLoop(arg: pointer) {.nimcall.} =
     #    Non-blocking when busy; 1ms wait when idle.
     when hasEpoll:
       let timeout: cint = if busy: 0 else: 1
-      let n = epoll_wait(gIoFd, addr ioEvents[0], MaxIoEvents, timeout)
+      let n = epoll_wait(gIoFd, addr ioEvents[0], MaxIoEvents.cint, timeout)
       for i in 0 ..< n:
         let h = cast[ptr IoHandler](ioEvents[i].data.p)
         if h != nil:
