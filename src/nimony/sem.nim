@@ -5763,7 +5763,12 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
           discard
       of PragmaxS:
         semPragmaExpr c, dest, it
-      of ImportasS, StaticstmtS, BindS, MixinS, AsmS:
+      of MixinS, BindS:
+        # `mixin` / `bind` affect symbol resolution in untyped template/generic
+        # bodies (handled in `semuntyped`). In a fully-typed context they are
+        # effectively no-ops; keep the tree so later passes see the statement.
+        takeTree dest, it.n
+      of ImportasS, StaticstmtS, AsmS:
         buildErr c, dest, it.n.info, "unsupported statement: " & $stmtKind(it.n)
         skip it.n
       of DeferS:

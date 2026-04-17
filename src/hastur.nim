@@ -23,6 +23,7 @@ Usage:
 
 Commands:
   build [all|nimony|nifler|hexer|nifc|nifmake|nj|vl]   build selected tools (default: all).
+  bootstrap            compile every module on the bootstrap list with nimony.
   all                  run all tests (also the default action).
   nimony               run Nimony tests.
   examples             run examples (examples/ directory).
@@ -624,18 +625,28 @@ var release = false
 proc nimcPrefix(): string =
   (if release: "nim c -d:release " else: "nim c ")
 
+proc validatePassesFlag(): string =
+  ## Enable the phase-aware IR validator only when running on CI. GitHub Actions
+  ## (and most other CI providers) set `CI=true` in the environment, so we key
+  ## off that: locally the validator stays opt-in via `NIMONY_VALIDATE=1`, which
+  ## keeps iteration fast while guaranteeing the check on every PR.
+  if getEnv("CI").len > 0 or getEnv("NIMONY_VALIDATE").len > 0:
+    "-d:validatePasses "
+  else:
+    ""
+
 proc buildNifler(showProgress = false) =
   exec nimcPrefix() & "src/nifler/nifler.nim", showProgress
   let exe = "nifler".addFileExt(ExeExt)
   robustMoveFile "src/nifler/" & exe, binDir() / exe
 
 proc buildNimsem(showProgress = false) =
-  exec nimcPrefix() & "-d:validatePasses src/nimony/nimsem.nim", showProgress
+  exec nimcPrefix() & validatePassesFlag() & "src/nimony/nimsem.nim", showProgress
   let exe = "nimsem".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
 proc buildNimony(showProgress = false) =
-  exec nimcPrefix() & "-d:validatePasses src/nimony/nimony.nim", showProgress
+  exec nimcPrefix() & validatePassesFlag() & "src/nimony/nimony.nim", showProgress
   let exe = "nimony".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
@@ -678,6 +689,52 @@ proc buildCheckTags(showProgress = false) =
   exec nimcPrefix() & "src/nimony/check_tags.nim", showProgress
   let exe = "check_tags".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
+
+# ---------------------------------------------------------------------------
+# Bootstrapping progress (see https://github.com/nim-lang/nimony/issues/1788).
+#
+# Each module listed here is known to compile with the `nimony c` command.
+# New modules are added as tier-by-tier bootstrapping proceeds; the
+# `hastur bootstrap` target walks this list to catch regressions.
+# ---------------------------------------------------------------------------
+
+const BootstrapModules = [
+  # Tier 1 -- pure leaves (no project-internal imports):
+  "src/models/tags.nim",
+  "src/lib/stringviews.nim",
+  "src/lib/tinyhashes.nim",
+  "src/lib/symparser.nim",
+  "src/lib/bitabs.nim",
+  "src/lib/lineinfos.nim",
+  "src/lib/nifbuilder.nim",
+  "src/nimony/features.nim",
+  "src/nimony/intervals.nim",
+  "src/nimony/xints.nim",
+]
+
+proc bootstrapTests() =
+  ## Compile every module on `BootstrapModules` with `bin/nimony c`. Fails
+  ## fast on the first regression so the offending module is obvious.
+  let nimony = binDir() / "nimony".addFileExt(ExeExt)
+  if not fileExists(nimony):
+    quit "bootstrap: " & nimony & " not found; run `hastur build nimony` first"
+  let t0 = epochTime()
+  var failed: seq[string] = @[]
+  for m in BootstrapModules:
+    removeDir "nimcache"
+    let (output, ec) = execCmdEx(nimony.quoteShell & " c " & m.quoteShell)
+    if ec == 0:
+      echo "OK   ", m
+    else:
+      echo "FAIL ", m
+      echo output
+      failed.add m
+  echo failed.len, " / ", BootstrapModules.len, " bootstrap regressions in ",
+       formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if failed.len > 0:
+    quit "FAILURE: bootstrap regression(s): " & failed.join(", ")
+  else:
+    echo "SUCCESS."
 
 proc execNifc(cmd: string) =
   exec "nifc", cmd
@@ -829,10 +886,15 @@ proc handleCmdLine =
     vlTests(overwrite)
     buildCheckTags()
     checkTagsTests()
+    bootstrapTests()
 
   of "checktags":
     buildCheckTags()
     checkTagsTests()
+
+  of "bootstrap":
+    buildNimony()
+    bootstrapTests()
 
   of "controlflow", "cf":
     buildControlflow()

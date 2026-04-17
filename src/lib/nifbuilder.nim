@@ -360,7 +360,7 @@ proc offset*(b: Builder): int {.inline.} =
   ## the nifreader will skip the whitespace automatically, so no harm is done.
   result = b.offs
 
-when isMainModule:
+when isMainModule and not defined(nimony):
   proc test(b: sink Builder) =
     b.addHeader "tester", "niftest"
     b.withTree "stmts":
