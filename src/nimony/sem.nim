@@ -9,7 +9,7 @@
 ## type checking.
 
 import std / [tables, sets, syncio, formatfloat, assertions, strutils]
-from std/os import changeFileExt, getCurrentDir, isAbsolute, absolutePath, normalizedPath, getEnv
+from std/os import changeFileExt, getCurrentDir, isAbsolute, absolutePath, normalizedPath
 include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
@@ -6600,8 +6600,7 @@ proc maybeValidatePostSem(dest: var TokenBuf; moduleName: string) =
         $violations.len & " violation(s)" &
         (if violations.len >= 200: " (truncated)" else: "") & ":"
       discard reportViolations(phase.name, violations)
-      if getEnv("NIMONY_VALIDATE_SOFT") == "":
-        quit 1
+      quit 1
 
 type
   ModuleState = object
