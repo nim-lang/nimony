@@ -102,6 +102,10 @@ const
     "ordinal", "nilt", "static", "proctype", "itertype",
     # nullary type-kind markers for object/tuple/enum/ref concepts
     "object", "enum", "concept",
+    # `varargs` appears nullary as a type-kind marker (in the `(type)`
+    # declaration body of the builtin `varargs` type) and also as the
+    # proc-signature marker in `(param ... (varargs) .)`.
+    "varargs",
     # the `of` inheritance marker inside an object type
     "of",
     # generic operator kind markers appearing in compiler-builtin proc sigs
@@ -299,10 +303,18 @@ proc matchesTypeContext(tag: string; kinds: openArray[ChildKind]): bool =
       return false
   true
 
-proc matchesPragmaContext(tag: string; kinds: openArray[ChildKind]): bool =
+proc matchesPragmaContext(tag: string; kinds: openArray[ChildKind];
+                          isPragmaKind: bool): bool =
   ## Hook-in-pragma form: `(hook Y)`.
-  if tag notin pragmaCtxHooks: return false
-  kinds.len == 1 and kinds[0] in {ckY, ckLit, ckAny}
+  ## Also accepts a nullary form for any tag classified as a pragma: bare-word
+  ## annotations like `{.varargs.}` / `{.nodecl.}` are written as
+  ## `(varargs)` / `(nodecl)` with zero children.
+  if tag in pragmaCtxHooks and kinds.len == 1 and
+     kinds[0] in {ckY, ckLit, ckAny}:
+    return true
+  if isPragmaKind and kinds.len == 0:
+    return true
+  false
 
 proc addViolation(ctx: var ValidatorCtx; info: PackedLineInfo;
                   tag, msg: string) =
@@ -352,9 +364,10 @@ proc checkParLe(ctx: var ValidatorCtx; c: var Cursor;
 
   if not matched and inType and matchesTypeContext(tag, kinds):
     matched = true
-  if not matched and parentTag == "pragmas" and
-     matchesPragmaContext(tag, kinds):
-    matched = true
+  if not matched and parentTag == "pragmas":
+    let isPragmaKind = rawTagIsNimonyPragma(raw) or rawTagIsNifcPragma(raw)
+    if matchesPragmaContext(tag, kinds, isPragmaKind):
+      matched = true
   if not matched and tag in grammar:
     for form in grammar[tag]:
       let errs = tryMatchSpec(kinds, form)

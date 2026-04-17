@@ -9,7 +9,7 @@
 ## type checking.
 
 import std / [tables, sets, syncio, formatfloat, assertions, strutils]
-from std/os import changeFileExt, getCurrentDir, isAbsolute, absolutePath, normalizedPath
+from std/os import changeFileExt, getCurrentDir, isAbsolute, absolutePath, normalizedPath, getEnv
 include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
@@ -6584,8 +6584,9 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
 proc maybeValidatePostSem(dest: var TokenBuf; moduleName: string) =
   ## When compiled with `-d:validatePasses`, validates that `dest`
   ## conforms to the post-sem subset of `doc/tags.md`. Reports violations
-  ## on stderr. Does not abort — the goal is to surface spec drift without
-  ## blocking unrelated work while the spec is still converging.
+  ## on stderr and aborts with a non-zero exit status so that drift from
+  ## the spec is a hard error. Set `NIMONY_VALIDATE_SOFT=1` to downgrade
+  ## violations to warnings (useful while iterating on the grammar).
   when defined(validatePasses):
     let phase = postSemPhase()
     let violations = validate(dest, phase)
@@ -6594,6 +6595,8 @@ proc maybeValidatePostSem(dest: var TokenBuf; moduleName: string) =
         $violations.len & " violation(s)" &
         (if violations.len >= 200: " (truncated)" else: "") & ":"
       discard reportViolations(phase.name, violations)
+      if getEnv("NIMONY_VALIDATE_SOFT") == "":
+        quit 1
 
 type
   ModuleState = object

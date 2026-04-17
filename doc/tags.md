@@ -90,7 +90,7 @@
 | `(else X)` | NifcOther, NimonyOther, NiflerKind | `else` action |
 | `(typevars (typevar ...)*)` | NimonyOther, NiflerKind | type variable/generic parameters |
 | `(break .Y)`; `(break)` | NifcStmt, NimonyStmt, NiflerKind | `break` statement |
-| `(continue)` | NimonyStmt, NiflerKind, NjvlKind | `continue` statement |
+| `(continue .Y)`; `(continue)` | NimonyStmt, NiflerKind, NjvlKind | `continue` statement |
 | `(for X ... S)` | NimonyStmt, NiflerKind | for statement |
 | `(while X S)` | NifcStmt, NimonyStmt, NiflerKind| `while` statement |
 | `(case X (of (ranges...) S)+ (else X)?)` | NifcStmt, NimonyStmt, NimonyOther, NiflerKind | `case` statement |
@@ -132,7 +132,7 @@
 | `(noinline)` | NifcPragma, NimonyPragma | `noinline` proc annotation |
 | `(closure)` | NimonyPragma | `closure` proc annotation; not a calling convention anymore, simply annotates a proc as a closure |
 | `(attr STR)` | NifcPragma | general attribute annotation |
-| `(varargs)` | NimonyPragma, NimonyType, NifcType | `varargs` proc annotation |
+| `(varargs T)`; `(varargs T Y)` | NimonyPragma, NimonyType, NifcType | `varargs` type/proc annotation: Nimony carries the element type and an optional transformer symbol (e.g. `` `$` ``); NIFC keeps only the element type |
 | `(was STR)` | NifcPragma | |
 | `(selectany)` | NifcPragma, NimonyPragma | |
 | `(pragmas (pragma ...)*)` | NifcOther, NimonyOther, NimonyStmt, NiflerKind | begin of pragma section |
@@ -243,7 +243,7 @@
 | `(hconv T X)` | NimonyExpr | hidden basic type conversion |
 | `(dconv T X)` | NimonyExpr | conversion between `distinct` types |
 | `(callstrlit X+)` | NimonyExpr, NimonyStmt, NiflerKind | |
-| `(infix X X X)` | NimonyExpr, NimonyStmt, NiflerKind | infix call form kept verbatim inside unsem'd bodies: operator followed by two operands |
+| `(infix X X X ...)` | NimonyExpr, NimonyStmt, NiflerKind | infix call form kept verbatim inside unsem'd bodies: operator followed by two or more operands (extra args come from default parameters, e.g. `s $ 80` → `` `$`(s, 80, defaultReplacement) ``) |
 | `(prefix X X)` | NimonyExpr, NimonyStmt, NiflerKind | prefix call form kept verbatim inside unsem'd bodies: operator followed by single operand |
 | `(hcall X*)` | NimonyExpr, NimonyStmt | hidden converter call |
 | `(compiles X)` | NimonyExpr | |
