@@ -7,10 +7,14 @@
 ## A BiTable is a table that can be seen as an optimized pair
 ## of `(Table[Id, Val], Table[Val, Id])`.
 
-import std/hashes
+when defined(nimony):
+  {.feature: "untyped".}
+  import std/[hashes, assertions]
+else:
+  import std/hashes
 
-when defined(nimPreviewSlimSystem):
-  import std/assertions
+  when defined(nimPreviewSlimSystem):
+    import std/assertions
 
 type
   BiTable*[Id, T] = object # Id must be an int/uint or a distinct type thereof
@@ -64,7 +68,12 @@ proc getKeyId*[Id, T](t: BiTable[Id, T]; v: T): Id =
       h = nextTry(h, maxHash(t))
   return Id(0)
 
-template getOrInclImpl() {.dirty.} =
+when defined(nimony):
+  {.pragma: maybeDirty.}
+else:
+  {.pragma: maybeDirty, dirty.}
+
+template getOrInclImpl() {.maybeDirty.} =
   let origH = hash(v)
   var h = origH and maxHash(t)
   if t.keys.len != 0:
@@ -140,7 +149,7 @@ proc getOrIncl*[Id](t: var BiTableFloat[Id]; v: float64): Id {.inline .} =
 proc `[]`*[Id](t: BiTableFloat[Id]; litId: Id): float64 {.inline.} =
   cast[float64](BiTable[Id, uint64](t)[litId])
 
-when isMainModule:
+when isMainModule and not defined(nimony):
 
   var t: BiTable[uint32, string]
 
