@@ -274,8 +274,9 @@ proc untypedCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var Ca
   for a in cs.args:
     # XXX call semTemplBody for orig instead?
     dest.addSubtree a.n
-  # untyped propagates to the result type:
-  typeofCallIs c, dest, it, cs.beforeCall, c.types.untypedType
+  # `untyped` should propagate through the result without forcing an
+  # immediate common-type match.
+  it.typ = c.types.untypedType
   takeParRi dest, it.n
 
 proc semConvFromCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: CallState) =

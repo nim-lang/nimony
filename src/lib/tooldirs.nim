@@ -1,6 +1,6 @@
 ## This module provides functions to find tools in the Nimony bin directory.
 
-import std / [os, strutils]
+import std / os
 
 proc binDir*(): string =
   let appDir = getAppDir()
