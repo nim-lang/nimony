@@ -6,13 +6,13 @@ type
   NifcExpr* = enum
     NoExpr
     SufC = (ord(SufTagId), "suf")  ## literal with suffix annotation
-    AtC = (ord(AtTagId), "at")  ## array indexing operation
+    AtC = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped NIFC form)
     DerefC = (ord(DerefTagId), "deref")  ## pointer deref operation
-    DotC = (ord(DotTagId), "dot")  ## object field selection
+    DotC = (ord(DotTagId), "dot")  ## object field selection; optional integer is the inheritance depth of the field
     PatC = (ord(PatTagId), "pat")  ## pointer indexing operation
     ParC = (ord(ParTagId), "par")  ## syntactic parenthesis
     AddrC = (ord(AddrTagId), "addr")  ## address of operation
-    NilC = (ord(NilTagId), "nil")  ## nil pointer value
+    NilC = (ord(NilTagId), "nil")  ## nil pointer value; closure `nil` carries the proc type and a nil environment
     InfC = (ord(InfTagId), "inf")  ## positive infinity floating point value
     NeginfC = (ord(NeginfTagId), "neginf")  ## negative infinity floating point value
     NanC = (ord(NanTagId), "nan")  ## NaN floating point value
@@ -43,7 +43,7 @@ type
     NeqC = (ord(NeqTagId), "neq")
     LeC = (ord(LeTagId), "le")
     LtC = (ord(LtTagId), "lt")
-    CastC = (ord(CastTagId), "cast")  ## `cast` operation
+    CastC = (ord(CastTagId), "cast")  ## `cast` operation (typed cast expression, or `{.cast(pragma).}` pragma form)
     ConvC = (ord(ConvTagId), "conv")  ## type conversion
     CallC = (ord(CallTagId), "call")  ## call operation
     BaseobjC = (ord(BaseobjTagId), "baseobj")  ## object conversion to base type
@@ -58,7 +58,7 @@ type
     CallS = (ord(CallTagId), "call")  ## call operation
     GvarS = (ord(GvarTagId), "gvar")  ## global variable declaration
     TvarS = (ord(TvarTagId), "tvar")  ## thread local variable declaration
-    VarS = (ord(VarTagId), "var")  ## variable declaration
+    VarS = (ord(VarTagId), "var")  ## variable declaration; type slot may be omitted when inferred from initializer
     ConstS = (ord(ConstTagId), "const")  ## const variable declaration
     ProcS = (ord(ProcTagId), "proc")  ## proc declaration
     TypeS = (ord(TypeTagId), "type")  ## type declaration
@@ -75,7 +75,7 @@ type
     JmpS = (ord(JmpTagId), "jmp")  ## jump/goto instruction
     RetS = (ord(RetTagId), "ret")  ## `return` instruction
     StmtsS = (ord(StmtsTagId), "stmts")  ## list of statements
-    DiscardS = (ord(DiscardTagId), "discard")  ## `discard` statement
+    DiscardS = (ord(DiscardTagId), "discard")  ## `discard` statement; optional expression to discard
     TryS = (ord(TryTagId), "try")  ## `try` statement
     RaiseS = (ord(RaiseTagId), "raise")  ## `raise` statement
     OnerrS = (ord(OnerrTagId), "onerr")  ## error handling statement
@@ -96,18 +96,18 @@ type
     UnionT = (ord(UnionTagId), "union")  ## first one is Nifc union declaration, second one is Nimony union pragma
     ObjectT = (ord(ObjectTagId), "object")  ## object type declaration
     EnumT = (ord(EnumTagId), "enum")  ## enum type declaration
-    ProctypeT = (ord(ProctypeTagId), "proctype")  ## proc type declaration
+    ProctypeT = (ord(ProctypeTagId), "proctype")  ## proc type declaration; same shape as `(proc D ...)` but with anonymous name slot
     IT = (ord(ITagId), "i")  ## `int` builtin type
-    UT = (ord(UTagId), "u")  ## `uint` builtin type
+    UT = (ord(UTagId), "u")  ## `uint` builtin type; size in bits followed by optional attributes (`(importc ...)`, `(header ...)`, etc.)
     FT = (ord(FTagId), "f")  ## `float` builtin type
     CT = (ord(CTagId), "c")  ## `char` builtin type
     BoolT = (ord(BoolTagId), "bool")  ## `bool` builtin type
     VoidT = (ord(VoidTagId), "void")  ## `void` return type
-    PtrT = (ord(PtrTagId), "ptr")  ## `ptr` type contructor
-    ArrayT = (ord(ArrayTagId), "array")  ## `array` type constructor
+    PtrT = (ord(PtrTagId), "ptr")  ## `ptr` type contructor; the `(unchecked)` pragma relaxes nil checking on deref
+    ArrayT = (ord(ArrayTagId), "array")  ## `array` type constructor (element type, index type/range)
     FlexarrayT = (ord(FlexarrayTagId), "flexarray")  ## `flexarray` type constructor
     AptrT = (ord(AptrTagId), "aptr")  ## "pointer to array of" type constructor
-    VarargsT = (ord(VarargsTagId), "varargs")  ## `varargs` proc annotation
+    VarargsT = (ord(VarargsTagId), "varargs")  ## `varargs` type/proc annotation: Nimony carries the element type and an optional transformer symbol (e.g. `` `$` ``); NIFC keeps only the element type
 
 proc rawTagIsNifcType*(raw: TagEnum): bool {.inline.} =
   raw in {ParamsTagId, UnionTagId, ObjectTagId, EnumTagId, ProctypeTagId, ITagId, UTagId, FTagId, CTagId, BoolTagId, VoidTagId, PtrTagId, ArrayTagId, FlexarrayTagId, AptrTagId, VarargsTagId}
@@ -115,12 +115,12 @@ proc rawTagIsNifcType*(raw: TagEnum): bool {.inline.} =
 type
   NifcOther* = enum
     NoSub
-    KvU = (ord(KvTagId), "kv")  ## key-value pair
+    KvU = (ord(KvTagId), "kv")  ## key-value pair; optional INTLIT indicates field is in an inherited object
     RangeU = (ord(RangeTagId), "range")  ## `(range a b)` construct
     RangesU = (ord(RangesTagId), "ranges")
     ParamU = (ord(ParamTagId), "param")  ## parameter declaration
-    TypevarU = (ord(TypevarTagId), "typevar")  ## type variable declaration
-    EfldU = (ord(EfldTagId), "efld")  ## enum field declaration
+    TypevarU = (ord(TypevarTagId), "typevar")  ## type variable declaration; constraint `.T` is optional
+    EfldU = (ord(EfldTagId), "efld")  ## enum field declaration; slot 2 carries the export marker *or* the compile-time value (may be `.`)
     FldU = (ord(FldTagId), "fld")  ## field declaration
     ElifU = (ord(ElifTagId), "elif")  ## pair of (condition, action)
     ElseU = (ord(ElseTagId), "else")  ## `else` action
@@ -142,7 +142,7 @@ type
     BitsP = (ord(BitsTagId), "bits")
     VectorP = (ord(VectorTagId), "vector")
     NodeclP = (ord(NodeclTagId), "nodecl")  ## `nodecl` annotation
-    RaisesP = (ord(RaisesTagId), "raises")  ## proc annotation
+    RaisesP = (ord(RaisesTagId), "raises")  ## proc annotation; optional list of exception types the proc may raise
     ErrsP = (ord(ErrsTagId), "errs")  ## proc annotation
     StaticP = (ord(StaticTagId), "static")  ## `static` type or annotation
     ImportcP = (ord(ImportcTagId), "importc")  ## `importc` pragma
@@ -170,10 +170,10 @@ type
     NoSym
     GvarY = (ord(GvarTagId), "gvar")  ## global variable declaration
     TvarY = (ord(TvarTagId), "tvar")  ## thread local variable declaration
-    VarY = (ord(VarTagId), "var")  ## variable declaration
+    VarY = (ord(VarTagId), "var")  ## variable declaration; type slot may be omitted when inferred from initializer
     ParamY = (ord(ParamTagId), "param")  ## parameter declaration
     ConstY = (ord(ConstTagId), "const")  ## const variable declaration
-    EfldY = (ord(EfldTagId), "efld")  ## enum field declaration
+    EfldY = (ord(EfldTagId), "efld")  ## enum field declaration; slot 2 carries the export marker *or* the compile-time value (may be `.`)
     FldY = (ord(FldTagId), "fld")  ## field declaration
     ProcY = (ord(ProcTagId), "proc")  ## proc declaration
     TypeY = (ord(TypeTagId), "type")  ## type declaration
