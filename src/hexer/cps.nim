@@ -1730,12 +1730,19 @@ proc updatePassiveClosureProcTypes(c: var Context; dest: var TokenBuf; n: var Cu
         dest.takeParRi n
       else:
         dest.takeTree n
-    else:
+    of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT,
+        MacroT, TemplateT, ObjectT, EnumT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT,
+        VarargsT, StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT,
+        ConceptT, DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT,
+        TypekindT, TypedescT, UntypedT, TypedT, CstringT, PointerT, OrdinalT:
       dest.takeToken n
       while n.kind != ParRi:
         updatePassiveClosureProcTypes(c, dest, n)
       dest.takeParRi n
-  else:
+  of UnknownToken, EofToken,
+      DotToken, Ident, Symbol, SymbolDef,
+      StringLit, CharLit, IntLit, UIntLit, FloatLit,
+      ParRi:
     dest.takeToken n
 
 proc transformToCps*(pass: var Pass) =
