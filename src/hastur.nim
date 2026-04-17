@@ -713,6 +713,7 @@ const BootstrapModules = [
   "src/lib/lineinfos.nim",
   "src/lib/platform.nim",
   "src/lib/nifbuilder.nim",
+  "src/lib/stringtrees.nim",
   "src/nimony/features.nim",
   "src/nimony/intervals.nim",
   "src/nimony/xints.nim",

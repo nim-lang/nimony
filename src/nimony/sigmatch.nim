@@ -515,7 +515,10 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
       if m.concreteMatch:
         # generic param is from provided argument type
         # instead of considering inference, treat as a standalone value
-        if matchesConstraint(m, fs, a):
+        if a.kind == Symbol and sameSymbol(fs, a.symId):
+          inc f
+          skip a
+        elif matchesConstraint(m, fs, a):
           inc f
           skip a
         else:
