@@ -412,8 +412,18 @@ proc validate*(buf: var TokenBuf; phase: Phase;
   ## (conventionally `(stmts ...)`). Returns all violations found.
   var ctx = ValidatorCtx(phase: phase, maxViolations: maxViolations)
   var c = beginRead(buf)
+  let info = c.info
   if c.kind == ParLe:
     checkTree(ctx, c, "", 0, false)
+  # After the root subtree has been consumed, the cursor must be exhausted.
+  # Anything remaining is content that a pass walking the IR with nested
+  # counters / recursive descent would silently ignore — a spec-level bug the
+  # validator has a duty to surface. We use `hasCurrentToken` here (and only
+  # here) exactly for this purpose.
+  if hasCurrentToken(c):
+    ctx.addViolation info, "",
+      "trailing content after root subtree: " &
+      "the pass would silently drop these tokens"
   endRead(buf)
   result = move ctx.violations
 
