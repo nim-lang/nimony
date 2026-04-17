@@ -35,7 +35,7 @@ when hasEpoll:
 
   type
     EpollData {.importc: "epoll_data_t", header: "<sys/epoll.h>".} = object
-      `ptr`* {.importc: "ptr".}: pointer
+      p* {.importc: "ptr".}: pointer
 
     EpollEvent* {.importc: "struct epoll_event", header: "<sys/epoll.h>".} = object
       events*: uint32
@@ -177,7 +177,7 @@ proc registerFd*(fd: cint; handler: ptr IoHandler; events: uint32) =
     if (events and EvRead) != 0: mask = mask or EPOLLIN
     if (events and EvWrite) != 0: mask = mask or EPOLLOUT
     var ev = EpollEvent(events: mask)
-    ev.data.`ptr` = handler
+    ev.data.p = handler
     discard epoll_ctl(gIoFd, EPOLL_CTL_ADD, fd, addr ev)
   elif hasKqueue:
     var kevs = default array[2, KEvent]
@@ -204,7 +204,7 @@ proc rearmFd*(fd: cint; handler: ptr IoHandler; events: uint32) =
     if (events and EvRead) != 0: mask = mask or EPOLLIN
     if (events and EvWrite) != 0: mask = mask or EPOLLOUT
     var ev = EpollEvent(events: mask)
-    ev.data.`ptr` = handler
+    ev.data.p = handler
     discard epoll_ctl(gIoFd, EPOLL_CTL_MOD, fd, addr ev)
   elif hasKqueue:
     var kevs = default array[2, KEvent]
@@ -270,7 +270,7 @@ proc workerLoop(arg: pointer) {.nimcall.} =
       let timeout: cint = if busy: 0 else: 1
       let n = epoll_wait(gIoFd, addr ioEvents[0], MaxIoEvents, timeout)
       for i in 0 ..< n:
-        let h = cast[ptr IoHandler](ioEvents[i].data.`ptr`)
+        let h = cast[ptr IoHandler](ioEvents[i].data.p)
         if h != nil:
           h.cb(h, ioEvents[i].events)
     elif hasKqueue:
