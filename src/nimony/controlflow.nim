@@ -304,7 +304,21 @@ proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
     inc n
     trIte c, n, tjmp, fjmp
     skipParRi n
-  else:
+  of ErrX, SufX, AtX, DerefX, DotX, PatX, AddrX, NilX, InfX, NeginfX,
+     NanX, FalseX, TrueX, XorX, NegX, SizeofX, AlignofX, OffsetofX,
+     OconstrX, AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
+     MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX,
+     EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX, CchoiceX, OchoiceX,
+     PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
+     TupconstrX, SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX,
+     CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, DeclaredX, DefinedX,
+     AstToStrX, InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
+     FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX,
+     DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX,
+     DoX, ArratX, TupatX, PlussetX, MinussetX, MulsetX, XorsetX, EqsetX,
+     LesetX, LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX,
+     WasmovedX, SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
+     FailedX, IsX, EnvpX, NoExpr:
     # cannot exploit a special case here:
     let info = NoLineInfo # NoLineInfo is crucial here!
     var bb = Target(m: IsEmpty)
@@ -606,7 +620,14 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
         trIfCaseTryBlockExpr c, n, TryExpr, tar
       of BlockS:
         trIfCaseTryBlockExpr c, n, BlockExpr, tar
-      else:
+      of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS,
+         LetS, CursorS, PatternvarS, ProcS, FuncS, IteratorS, ConverterS,
+         MethodS, MacroS, TemplateS, TypeS, EmitS, AsgnS, ScopeS, WhenS,
+         BreakS, ContinueS, ForS, WhileS, RetS, YldS, StmtsS, PragmasS,
+         PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS,
+         ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS, RaiseS,
+         UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS, PrefixS,
+         HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS, NoStmt:
         trExprLoop c, n, tar
 
 proc trWhile(c: var ControlFlow; n: var Cursor) =

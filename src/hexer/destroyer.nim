@@ -310,7 +310,10 @@ proc trIf(c: var Context; n: var Cursor) =
       of ElseU:
         copyInto(c.dest, n):
           trNestedScope c, n
-      else:
+      of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+          TypevarU, EfldU, FldU, WhenU, TypevarsU, CaseU, OfU,
+          StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
+          UnpacktupU, ExceptU, FinU, UncheckedU, NoSub:
         takeTree c.dest, n
 
 proc trCase(c: var Context; n: var Cursor) =
@@ -325,7 +328,10 @@ proc trCase(c: var Context; n: var Cursor) =
       of ElseU:
         copyInto(c.dest, n):
           trNestedScope c, n
-      else:
+      of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+          TypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
+          StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
+          UnpacktupU, ExceptU, FinU, UncheckedU, NoSub:
         takeTree c.dest, n
 
 proc trTry(c: var Context; n: var Cursor) =
@@ -372,7 +378,13 @@ proc tr(c: var Context; n: var Cursor) =
       trTry c, n
     of ProcS, FuncS, MacroS, MethodS, ConverterS:
       trProcDecl c, n
-    else:
+    of CallS, CmdS, IteratorS, TemplateS, TypeS, EmitS, AsgnS,
+        ScopeS, WhenS, ContinueS, ForS, YldS, StmtsS, PragmasS,
+        PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
+        FromimportS, ImportexceptS, ExportS, ExportexceptS,
+        CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS,
+        CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS,
+        BindS, MixinS, UsingS, AsmS, DeferS, NoStmt:
       if n.kind == ParLe:
         c.dest.add n
         inc n

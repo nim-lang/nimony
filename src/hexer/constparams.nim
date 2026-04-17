@@ -25,6 +25,7 @@ include nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, typeprops, builtintypes]
 import ".." / models / tags
 import duplifier, eraiser, passes
+include ".." / nimony / nif_annotations
 
 type
   Context = object
@@ -42,6 +43,7 @@ type
 
 when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
+    {.ensuresNif: addedAny(dest).}
 
 proc passByConstRef(c: var Context; typ, pragmas: Cursor): bool =
   result = sizeof.passByConstRef(typ, pragmas, c.ptrSize) or typeprops.isInheritable(typ, false)
@@ -493,7 +495,13 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           trTry c, dest, n
         of TemplateS, TypeS:
           takeTree dest, n
-        else:
+        of CallS, CmdS, IteratorS, BlockS, EmitS, IfS, WhenS, BreakS,
+           ContinueS, ForS, WhileS, CaseS, YldS, StmtsS, PragmasS,
+           PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
+           FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
+           DiscardS, UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS,
+           PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS,
+           DeferS, NoStmt:
           dest.add n
           inc n
           inc nested

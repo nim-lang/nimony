@@ -101,7 +101,11 @@ proc handleTemplateReturnType(c: var SemContext; dest: var TokenBuf; it: var Ite
     discard "ok"
   of VoidT:
     typecheck(c, dest, lastSonInfo, it.typ, c.routine.returnType)
-  else:
+  of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
+     TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, PtrT, ArrayT, VarargsT,
+     StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+     DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
+     TypedT, CstringT, PointerT, OrdinalT:
     commonType c, dest, it, beforeLastSon, c.routine.returnType
 
 proc handleProcReturnType(c: var SemContext; dest: var TokenBuf; it: var Item;
@@ -1092,7 +1096,11 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerR
           takeParRi dest, n
         else:
           semLocalTypeImpl c, dest, n, InTypeSection, typeIsExported, delayed.s.name
-      else:
+      of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
+         TemplateT, ObjectT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, ArrayT, VarargsT,
+         StaticT, TupleT, AnumT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+         DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
+         UntypedT, TypedT, CstringT, PointerT, OrdinalT:
         semLocalTypeImpl c, dest, n, InTypeSection, typeIsExported, delayed.s.name
       fitTypeToPragmas(c, dest, crucial, typeStart)
   else:

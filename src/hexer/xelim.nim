@@ -15,6 +15,7 @@ import std / [assertions]
 include ".." / lib / nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes]
 import passes
+include ".." / nimony / nif_annotations
 
 type
   Goal* = enum
@@ -69,6 +70,7 @@ type
 
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor)
+  {.ensuresNif: addedAny(dest).}
 
 proc tempSymName(c: var Context): string {.inline.} =
   result = "`x." & $c.counter
@@ -100,7 +102,7 @@ proc declareTempBool(c: var Context; dest: var TokenBuf; info: PackedLineInfo): 
     copyTree dest, c.typeCache.builtins.boolType # type
     dest.addDotToken() # value
 
-proc add(dest: var TokenBuf; tar: Target) =
+proc addTarget(dest: var TokenBuf; tar: Target) =
   dest.copyTree tar.t
 
 proc trExprInto(c: var Context; dest: var TokenBuf; n: var Cursor; v: SymId) =
@@ -109,12 +111,12 @@ proc trExprInto(c: var Context; dest: var TokenBuf; n: var Cursor; v: SymId) =
   trExpr c, dest, n, tar
 
   if typ.typeKind in {VoidT, AutoT}:
-    dest.add tar
+    dest.addTarget tar
   else:
     let info = n.info
     copyIntoKind dest, AsgnS, info:
       dest.addSymUse v, info
-      dest.add tar
+      dest.addTarget tar
 
 proc skipParRi(n: var Cursor) =
   if n.kind == ParRi:
@@ -133,7 +135,7 @@ proc trOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     trExpr c, dest, n, aa
     copyIntoKind dest, IfS, info:
       copyIntoKind dest, ElifU, info:
-        dest.add aa                # if x
+        dest.addTarget aa                # if x
         copyIntoKind dest, StmtsS, info:
           copyIntoKind dest, AsgnS, info: # tmp = true
             dest.addSymUse tmp, info
@@ -159,7 +161,7 @@ proc trAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     trExpr c, dest, n, aa
     copyIntoKind dest, IfS, info:
       copyIntoKind dest, ElifU, info:
-        dest.add aa                # if x
+        dest.addTarget aa                # if x
         copyIntoKind dest, StmtsS, info:
           trExprInto c, dest, n, tmp # tmp = y
       copyIntoKind dest, ElseU, info:
@@ -225,7 +227,7 @@ proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
     dest.copyIntoKind PragmasS, info:
       dest.copyIntoKind InlineP, info: discard
     dest.copyTree typ
-    dest.add callTarget
+    dest.addTarget callTarget
     dest.addParRi()
 
     tar.t.addSymUse tmp, info
@@ -238,7 +240,7 @@ proc trStmtCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   tar.t.copyInto n:
     while n.kind != ParRi:
       trExpr c, dest, n, tar
-  dest.add tar
+  dest.addTarget tar
 
 proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; mustUseLabel: bool)
 
@@ -282,13 +284,13 @@ proc trCondAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targe
 
   copyIntoKind dest, IfS, info:
     copyIntoKind dest, ElifU, info:
-      dest.add aa                # if x
+      dest.addTarget aa                # if x
       copyIntoKind dest, StmtsS, info:
         var bb = Target(m: IsEmpty)
         trCond c, dest, n, bb, true
         copyIntoKind dest, IfS, info:
           copyIntoKind dest, ElifU, info:
-            dest.add bb                # if y
+            dest.addTarget bb                # if y
             copyIntoKind dest, StmtsS, info:
               useCfVar dest, cf, info
 
@@ -312,7 +314,7 @@ proc trCondOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target
 
   copyIntoKind dest, IfS, info:
     copyIntoKind dest, ElifU, info:
-      dest.add aa                # if x
+      dest.addTarget aa                # if x
       copyIntoKind dest, StmtsS, info:
         useCfVar dest, cf, info
     # Watch out, we cannot use an ELifU here directly because `bb` can
@@ -323,7 +325,7 @@ proc trCondOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target
         trCond c, dest, n, bb, true
         copyIntoKind dest, IfS, info:
           copyIntoKind dest, ElifU, info:
-            dest.add bb                # if y
+            dest.addTarget bb                # if y
             copyIntoKind dest, StmtsS, info:
               useCfVar dest, cf, info
 
@@ -343,7 +345,24 @@ proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; 
         trCondOr c, dest, n, tar
       else:
         trOr c, dest, n, tar
-    else:
+    of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
+       InfX, NeginfX, NanX, FalseX, TrueX, XorX, NotX, NegX,
+       SizeofX, AlignofX, OffsetofX, OconstrX, AconstrX, BracketX,
+       CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX,
+       ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX,
+       LeX, LtX, CastX, ConvX, CallX, CmdX, CchoiceX, OchoiceX,
+       PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX,
+       NewobjX, TupX, TupconstrX, SetconstrX, TabconstrX, AshrX,
+       BaseobjX, HconvX, DconvX, CallstrlitX, InfixX, PrefixX,
+       HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX,
+       InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
+       FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
+       DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
+       Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX, PlussetX,
+       MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
+       InsetX, CardX, EmoveX, DestroyX, DupX, CopyX, WasmovedX,
+       SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
+       FailedX, IsX, EnvpX, NoExpr:
       trExpr c, dest, n, tar
   else:
     trExpr c, dest, n, tar
@@ -380,7 +399,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       inc ifs
 
       copyIntoKind dest, ElifU, info:
-        dest.add t0
+        dest.addTarget t0
         #copyIntoKind dest, StmtsS, info:
         if tar.m != IsIgnored:
           copyIntoKind dest, StmtsS, info:
@@ -396,7 +415,10 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       else:
         trStmt c, dest, n
       skipParRi n
-    else:
+    of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+       TypevarU, EfldU, FldU, WhenU, TypevarsU, CaseU, OfU,
+       StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
+       UnpacktupU, ExceptU, FinU, UncheckedU, NoSub:
       # Bug: just copy the thing around
       takeTree dest, n
   skipParRi n
@@ -419,7 +441,7 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   inc n
   trExpr c, dest, n, t0
   dest.addParLe CaseS, info
-  dest.add t0
+  dest.addTarget t0
   while n.kind != ParRi:
     case n.substructureKind
     of OfU:
@@ -437,7 +459,10 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
             trExprInto c, dest, n, tmp
         else:
           trStmt c, dest, n
-    else:
+    of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+       TypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
+       StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
+       UnpacktupU, ExceptU, FinU, UncheckedU, NoSub:
       # Bug: just copy the thing around
       takeTree dest, n
   takeParRi dest, n
@@ -472,7 +497,10 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
         # The `finally` section never produces a value!
         copyInto(dest, n):
           trStmt c, dest, n
-      else:
+      of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+         TypevarU, EfldU, FldU, WhenU, ElifU, ElseU, TypevarsU,
+         CaseU, OfU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
+         UnpackflatU, UnpacktupU, UncheckedU, NoSub:
         # Bug: just copy the thing around
         takeTree dest, n
   if tar.m != IsIgnored:
@@ -488,7 +516,7 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trCond c, dest, n, tar, c.goal == TowardsNjvl
         dest.copyIntoKind IfS, info:
           dest.copyIntoKind ElifU, info:
-            dest.add tar
+            dest.addTarget tar
             trStmt c, dest, n
           dest.copyIntoKind ElseU, info:
             copyIntoKind dest, StmtsS, info:
@@ -497,7 +525,7 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       var tar = Target(m: IsEmpty)
       trExpr c, dest, n, tar
-      dest.add tar
+      dest.addTarget tar
       trStmt c, dest, n
 
 proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -507,7 +535,7 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var tar = Target(m: IsEmpty)
   trExpr c, dest, n, tar # iterator call
   dest.add head
-  dest.add tar
+  dest.addTarget tar
   takeTree dest, n # for loop variables
   trStmt c, dest, n
   dest.takeParRi n
@@ -524,7 +552,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     takeTree tmp, n # type
     var v = Target(m: IsBound)
     trExpr c, dest, n, v
-    tmp.add v
+    tmp.addTarget v
   dest.add tmp
 
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -566,7 +594,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       var tar = Target(m: IsEmpty)
       trExpr c, dest, n, tar
       if tar.m == IsAppend:
-        dest.add tar
+        dest.addTarget tar
     else:
       takeTree dest, n
   of PragmaxS:
@@ -589,7 +617,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     inc n
     trExpr c, dest, n, tar
     dest.add head
-    dest.add tar
+    dest.addTarget tar
     dest.addParRi()
     skipParRi n
 
@@ -610,7 +638,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addSymDef tmp, info
         dest.addEmpty2 info # no export marker, no pragmas
         dest.copyTree typ
-        dest.add tar
+        dest.addTarget tar
         dest.addParRi()
     else:
       var tar = Target(m: IsEmpty)
@@ -618,7 +646,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       inc n
       trExpr c, dest, n, tar
       dest.add head
-      dest.add tar
+      dest.addTarget tar
       dest.addParRi()
     skipParRi n
 
@@ -648,7 +676,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       else:
         tar.m = IsBound
         trExpr c, dest, n, tar
-    dest.add tar
+    dest.addTarget tar
 
   of AsmS, DeferS:
     # IMPORTANT: Stores into `tar` helper!
@@ -656,7 +684,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     tar.t.copyInto n:
       while n.kind != ParRi:
         trExpr c, dest, n, tar
-    dest.add tar
+    dest.addTarget tar
   of LocalDecls:
     trLocal c, dest, n
   of ProcS, FuncS, MacroS, MethodS, ConverterS, IteratorS:
@@ -712,7 +740,7 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
     skipParRi n
     tar.t.addParLe CastX, info
     tar.t.addSubtree destType
-    tar.t.add srcTarget
+    tar.t.addTarget srcTarget
     tar.t.addParRi()
     return
 
@@ -724,7 +752,7 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
     skipParRi n
     tar.t.addParLe CastX, info
     tar.t.addSubtree destType
-    tar.t.add srcTarget
+    tar.t.addTarget srcTarget
     tar.t.addParRi()
     return
 
@@ -747,7 +775,7 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
       dest.copyIntoKind PragmasS, info:
         dest.copyIntoKind InlineP, info: discard
       copyTree dest, srcType
-      dest.add srcTarget # value
+      dest.addTarget srcTarget # value
 
   # Create dest variable (uninitialized)
   let dstSym = pool.syms.getOrIncl(tempSymName(c))
@@ -799,7 +827,23 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
         trCast c, dest, n, tar
       else:
         trExprLoop c, dest, n, tar
-    else:
+    of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
+       InfX, NeginfX, NanX, FalseX, TrueX, XorX, NotX, NegX,
+       SizeofX, AlignofX, OffsetofX, OconstrX, AconstrX,
+       BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, MulX,
+       DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
+       BitnotX, EqX, NeqX, LeX, LtX, ConvX, CchoiceX,
+       OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX,
+       NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
+       TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CompilesX,
+       DeclaredX, DefinedX, AstToStrX, InstanceofX, HighX, LowX,
+       TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
+       IsmainmoduleX, DefaultobjX, DefaulttupX,
+       DefaultdistinctX, Delay0X, SuspendX, DoX, ArratX, TupatX,
+       PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX,
+       LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX,
+       WasmovedX, SinkhX, TraceX, InternalTypeNameX,
+       InternalFieldPairsX, FailedX, IsX, EnvpX, NoExpr:
       case n.stmtKind
       of IfS:
         trIf c, dest, n, tar
@@ -809,7 +853,17 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
         trTry c, dest, n, tar
       of BlockS:
         trBlock c, dest, n, tar
-      else:
+      of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS,
+         GletS, TletS, LetS, CursorS, PatternvarS, ProcS, FuncS,
+         IteratorS, ConverterS, MethodS, MacroS, TemplateS,
+         TypeS, EmitS, AsgnS, ScopeS, WhenS, BreakS, ContinueS,
+         ForS, WhileS, RetS, YldS, StmtsS, PragmasS, PragmaxS,
+         InclS, ExclS, IncludeS, ImportS, ImportasS,
+         FromimportS, ImportexceptS, ExportS, ExportexceptS,
+         CommentS, DiscardS, RaiseS, UnpackdeclS, AssumeS,
+         AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
+         StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
+         NoStmt:
         trExprLoop c, dest, n, tar
   of ParRi:
     bug "unexpected ')' inside"

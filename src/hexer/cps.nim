@@ -110,6 +110,7 @@ import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval
   builtintypes, langmodes, renderer, reporters, typeprops]
 import ".." / njvl / [nj, njvl_model]
 import hexer_context, passes
+include ".." / nimony / nif_annotations
 
 # TODO:
 # - transform `for` loops into trampoline code
@@ -210,6 +211,7 @@ proc localToFieldname(c: var Context; local: SymId): SymId =
   result = pool.syms.getOrIncl(name)
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
+  {.ensuresNif: addedAny(dest).}
 
 proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
@@ -1128,7 +1130,17 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
           if addLabel:
             emitLabel dest, c.currentProc.labelCounter, info
             inc c.currentProc.labelCounter
-        else:
+        of CallS, CmdS, ResultS, ProcS, FuncS, IteratorS,
+            ConverterS, MethodS, MacroS, TemplateS, TypeS,
+            BlockS, EmitS, AsgnS, ScopeS, IfS, WhenS,
+            BreakS, ContinueS, ForS, WhileS, CaseS, RetS,
+            YldS, StmtsS, PragmasS, PragmaxS, InclS, ExclS,
+            IncludeS, ImportS, ImportasS, FromimportS,
+            ImportexceptS, ExportS, ExportexceptS, CommentS,
+            DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS,
+            AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
+            StaticstmtS, BindS, MixinS, UsingS, AsmS,
+            DeferS, NoStmt:
           dest.takeToken n
           while n.kind != ParRi:
             trGoto c, dest, n
@@ -1542,7 +1554,12 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.typeCache.openScope()
       trSons(c, dest, n)
       c.typeCache.closeScope()
-    else:
+    of CallS, CmdS, BlockS, IfS, WhenS, WhileS, CaseS,
+        StmtsS, PragmaxS, InclS, ExclS, ImportasS,
+        ExportexceptS, DiscardS, TryS, UnpackdeclS,
+        AssumeS, AssertS, CallstrlitS, InfixS, PrefixS,
+        HcallS, StaticstmtS, BindS, MixinS, UsingS,
+        AsmS, DeferS, NoStmt:
       case n.exprKind
       of CallKinds - {DelayX}:
         trCall c, dest, n
@@ -1554,7 +1571,27 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trSuspend c, dest, n
       of TypeofX:
         takeTree dest, n
-      else:
+      of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX,
+          AddrX, NilX, InfX, NeginfX, NanX, FalseX,
+          TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX,
+          AlignofX, OffsetofX, OconstrX, AconstrX,
+          BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
+          MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX,
+          BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX,
+          ConvX, CchoiceX, OchoiceX, PragmaxX, QuotedX,
+          HderefX, DdotX, HaddrX, NewrefX, NewobjX,
+          TupX, TupconstrX, SetconstrX, TabconstrX,
+          AshrX, BaseobjX, HconvX, DconvX, CompilesX,
+          DeclaredX, DefinedX, AstToStrX, InstanceofX,
+          HighX, LowX, UnpackX, FieldsX, FieldpairsX,
+          EnumtostrX, IsmainmoduleX, DefaultobjX,
+          DefaulttupX, DefaultdistinctX, ExprX, DoX,
+          ArratX, TupatX, PlussetX, MinussetX, MulsetX,
+          XorsetX, EqsetX, LesetX, LtsetX, InsetX,
+          CardX, EmoveX, DestroyX, DupX, CopyX,
+          WasmovedX, SinkhX, TraceX,
+          InternalTypeNameX, InternalFieldPairsX,
+          FailedX, IsX, EnvpX, NoExpr:
         case n.njvlKind
         of LoopV:
           # No suspension points inside this loop → simple while loop

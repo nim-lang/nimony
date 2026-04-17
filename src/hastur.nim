@@ -477,6 +477,61 @@ proc vlTests(overwrite: bool) =
   ## Tests are .nif files in src/njvl/tests/ with expected output in .vl.nif files.
   runNifToolTests("vl", "src/njvl/tests", ".nif", ".vl.nif", overwrite)
 
+proc checkTagsTests() =
+  ## Run check_tags over compiler pass source files to verify NIF construction
+  ## conforms to the grammar in doc/tags.md.
+  ## Also runs fake_pass.nim which has deliberate errors and checks expected output.
+  let t0 = epochTime()
+  var c = TestCounters(total: 0, failures: 0)
+  const passFiles = [
+    "src/hexer/lambdalifting.nim",
+    "src/hexer/destroyer.nim",
+    "src/hexer/xelim.nim",
+    "src/hexer/desugar.nim",
+    "src/hexer/cps.nim",
+    "src/hexer/duplifier.nim",
+    "src/hexer/nifcgen.nim",
+    "src/hexer/eraiser.nim",
+    #"src/hexer/vtables_backend.nim", # TODO: tool can't track writes to different buffers yet
+    "src/hexer/iterinliner.nim",
+    "src/hexer/constparams.nim",
+    "src/nimony/sem.nim",
+    "src/nimony/semdecls.nim",
+    "src/nimony/controlflow.nim",
+    "src/nimony/deferstmts.nim"]
+  # Compiler passes must be violation-free
+  for f in passFiles:
+    inc c.total
+    let (msgs, exitcode) = execLocal("check_tags", os.quoteShell(f))
+    if exitcode != 0:
+      failure c, f, "check_tags: no violations", msgs
+  # fake_pass.nim must produce the expected violations
+  const fakePassDir = "tests/check_tags"
+  for x in walkDir(fakePassDir, relative = true):
+    if x.kind == pcFile and x.path.endsWith(".nim"):
+      inc c.total
+      let t = fakePassDir / x.path
+      let expectedFile = t.changeFileExt(".expected")
+      let (msgs, exitcode) = execLocal("check_tags", os.quoteShell(t))
+      if not expectedFile.fileExists():
+        failure c, t, "expected file " & expectedFile & " missing", ""
+      else:
+        let expected = readFile(expectedFile).strip
+        # Extract just the violation lines from the output
+        var got = ""
+        for line in msgs.splitLines:
+          if line.startsWith("  ") or line.contains("violation"):
+            if got.len > 0: got.add "\n"
+            got.add line
+        if got.strip.replace("\\", "/") != expected.strip.replace("\\", "/"):
+          failure c, t, expected, got
+  echo c.total - c.failures, " / ", c.total, " check_tags tests successful in ",
+    formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if c.failures > 0:
+    quit "FAILURE: Some check_tags tests failed."
+  else:
+    echo "SUCCESS."
+
 proc test(t: string; overwrite: bool; cat: Category; forward: string) =
   var c = TestCounters(total: 0, failures: 0)
   testFile c, t, overwrite, cat, forward
@@ -618,6 +673,11 @@ proc buildNifmake(showProgress = false) =
   exec nimcPrefix() & "src/nifmake/nifmake.nim", showProgress
   let exe = "nifmake".addFileExt(ExeExt)
   robustMoveFile "src/nifmake/" & exe, binDir() / exe
+
+proc buildCheckTags(showProgress = false) =
+  exec nimcPrefix() & "src/nimony/check_tags.nim", showProgress
+  let exe = "check_tags".addFileExt(ExeExt)
+  robustMoveFile "src/nimony/" & exe, binDir() / exe
 
 proc execNifc(cmd: string) =
   exec "nifc", cmd
@@ -767,6 +827,12 @@ proc handleCmdLine =
     njTests(overwrite)
     buildVl()
     vlTests(overwrite)
+    buildCheckTags()
+    checkTagsTests()
+
+  of "checktags":
+    buildCheckTags()
+    checkTagsTests()
 
   of "controlflow", "cf":
     buildControlflow()

@@ -447,13 +447,20 @@ proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
             dest.addParRi # end of object
           skipParRi c, n
           skipParRi c, n
-        else:
+        of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+            TypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU,
+            CaseU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
+            UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU,
+            NoSub:
           error "expected `of` or `else` inside `case`"
       dest.addParRi # end of union
       skipParRi c, n
     of NilU:
       skip n
-    else:
+    of NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU,
+        EfldU, WhenU, ElifU, ElseU, TypevarsU, OfU, StmtsU,
+        ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
+        UnpacktupU, ExceptU, FinU, UncheckedU, NoSub:
       error "illformed AST inside object: ", n
 
 proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag] = {}) =
@@ -1219,7 +1226,24 @@ proc isSimpleLiteral(nb: var Cursor): bool =
       while nb.kind != ParRi:
         if not isSimpleLiteral(nb): return false
       skipParRi nb
-    else:
+    of ErrX, AtX, DerefX, DotX, PatX, ParX, AddrX, AndX, OrX,
+        XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX,
+        OconstrX, AconstrX, BracketX, CurlyX, CurlyatX, OvfX,
+        AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX,
+        BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CallX,
+        CmdX, CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX,
+        DdotX, HaddrX, NewrefX, NewobjX, TupX, TupconstrX,
+        SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX,
+        DconvX, CallstrlitX, InfixX, PrefixX, HcallX,
+        CompilesX, DeclaredX, DefinedX, AstToStrX,
+        InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
+        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
+        DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
+        Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
+        PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX,
+        LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX,
+        WasmovedX, SinkhX, TraceX, InternalTypeNameX,
+        InternalFieldPairsX, FailedX, IsX, EnvpX, NoExpr:
       result = false
 
 proc getCompilerProc(c: var EContext; name: string; isInline=false): string =
@@ -1285,12 +1309,39 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   of ParLe:
     case n.exprKind
     of EqX, NeqX, LeX, LtX:
+      # `(eq T X X)` in Nimony carries `T`, but NIFC comparisons are `(eq X X)` — see
+      # `cmpOp` in llvmgenexprs.nim. Walk `T` with `trType` for side effects, omit from dest.
       dest.add n
       inc n
       let beforeType = dest.len
       trType(c, dest, n)
       dest.shrink beforeType
       trExpr(c, dest, n)
+      trExpr(c, dest, n)
+      takeParRi dest, n
+    of AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX:
+      # `(op T X X)` — NIFC typed binops need the type (`signedBinOp` / `unsignedBinOp`).
+      dest.add n
+      inc n
+      trType(c, dest, n)
+      trExpr(c, dest, n)
+      trExpr(c, dest, n)
+      takeParRi dest, n
+    of BitnotX:
+      # `(bitnot T X)` — NIFC expects type + expr (see BitnotC in llvmgenexprs.nim).
+      dest.add n
+      inc n
+      trType(c, dest, n)
+      trExpr(c, dest, n)
+      takeParRi dest, n
+    of BaseobjX:
+      # `(baseobj T INTLIT X)` — keep `T` and depth for NIFC (BaseobjC).
+      dest.add n
+      inc n
+      trType(c, dest, n)
+      expectIntLit c, n
+      dest.add n
+      inc n
       trExpr(c, dest, n)
       takeParRi dest, n
     of CastX:
@@ -1435,9 +1486,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
        InstanceofX, ProccallX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX, DelayX, Delay0X, SuspendX:
       error c, "BUG: not eliminated: ", n
       #skip n
-    of AtX, PatX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX,
-       AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
-       BitandX, BitorX, BitxorX, BitnotX, BaseobjX, OvfX:
+    of AtX, PatX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX, OvfX:
       dest.add n
       inc n
       while n.kind != ParRi:
@@ -1634,7 +1683,11 @@ proc trCase(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       inc n
       trStmt c, dest, n
       takeParRi dest, n
-    else:
+    of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+        TypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
+        StmtsU, ParamsU, PragmasU, EitherU, JoinU,
+        UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU,
+        NoSub:
       error c, "expected (of) or (else) but got: ", n
   takeParRi dest, n
 
