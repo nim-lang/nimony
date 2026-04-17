@@ -510,14 +510,6 @@ proc isPassiveCall(c: var Context; n: Cursor): bool =
     return procHasPragma(typ, PassiveP)
   return false
 
-proc passiveCallFn(c: var Context; n: Cursor): SymId =
-  if n.exprKind notin CallKinds - {DelayX}: return SymId(0)
-  let fn = n.firstSon
-  if fn.kind == Symbol:
-    let typ = c.typeCache.getType(fn, {SkipAliases})
-    if procHasPragma(typ, PassiveP):
-      return fn.symId
-  return SymId(0)
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let fn = n.firstSon
@@ -558,17 +550,16 @@ proc trLocalValue(c: var Context; dest: var TokenBuf; n: var Cursor; lhs: Cursor
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var rhs = n.firstSon
   skip rhs
-  let fn = passiveCallFn(c, rhs)
-  if fn == SymId(0):
-    copyInto dest, n:
-      tr c, dest, n
-      tr c, dest, n
-  else:
+  if isPassiveCall(c, rhs):
     var lhsTransformed = createTokenBuf(6)
     inc n
     tr c, lhsTransformed, n
-    trPassiveCall(c, dest, rhs, beginRead lhsTransformed)
+    trPassiveCall(c, dest, n, beginRead lhsTransformed)
     skipParRi n
+  else:
+    copyInto dest, n:
+      tr c, dest, n
+      tr c, dest, n    
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let sym = n.firstSon.symId
@@ -594,7 +585,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trLocalValue(c, dest, n, beginRead lhs)
     skipParRi n
   else:
-    var pcall = SymId(0)
+    var pcall = false
     var callExpr = default(Cursor)
     copyInto dest, n:
       let target = n
@@ -604,8 +595,8 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.typeCache.registerLocal(sym, kind, n)
       let isPassive = procHasPragma(n, PassiveP)
       takeTree dest, n # type
-      pcall = passiveCallFn(c, n)
-      if pcall != SymId(0):
+      pcall = isPassiveCall(c, n)
+      if pcall:
         callExpr = n
         dest.addDotToken()
         skip n
@@ -614,7 +605,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
         inc n
       else:
         tr(c, dest, n)
-    if pcall != SymId(0):
+    if pcall:
       var sym = createTokenBuf(1)
       sym.addSymUse target.symId, info
       trPassiveCall c, dest, callExpr, beginRead sym
