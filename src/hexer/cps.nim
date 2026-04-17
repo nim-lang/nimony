@@ -715,11 +715,7 @@ proc trLocalValue(c: var Context; dest: var TokenBuf; n: var Cursor; lhs: Cursor
   else:
     dest.copyIntoKind AsgnS, n.info:
       dest.copyTree lhs
-      if n.kind == Symbol and procHasPragma(getType(c.typeCache, n), PassiveP):
-        dest.addSymUse coroWrapperProc(c, n.symId), n.info
-        inc n
-      else:
-        tr c, dest, n
+      tr c, dest, n
 
 
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -729,11 +725,7 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if fn == SymId(0):
     copyInto dest, n:
       tr c, dest, n
-      if n.kind == Symbol and procHasPragma(getType(c.typeCache, n), PassiveP):
-        dest.addSymUse coroWrapperProc(c, n.symId), n.info
-        inc n
-      else:
-        tr c, dest, n
+      tr c, dest, n
   else:
     var lhsTransformed = createTokenBuf(6)
     inc n
@@ -851,11 +843,7 @@ proc returnValue(c: var Context; dest: var TokenBuf; n: var Cursor; info: Packed
           dest.copyIntoKind DerefX, info:
             dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
           dest.addSymUse pool.syms.getOrIncl(ResultFieldName), info
-      if n.kind == Symbol and isProc(c, n.symId) and isPassiveClosure(c, n.symId):
-        dest.addSymUse coroWrapperProc(c, n.symId), info
-        inc n
-      else:
-        tr c, dest, n
+      tr c, dest, n
   skipParRi n
 
 proc trYield(c: var Context; dest: var TokenBuf; n: var Cursor) =
