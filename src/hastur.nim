@@ -716,6 +716,7 @@ const BootstrapModules = [
   "src/nimony/features.nim",
   "src/nimony/intervals.nim",
   "src/nimony/xints.nim",
+  "src/nimony/langmodes.nim",
   # Tier 2 -- tag enums + simple deps on tier 1.
   "src/models/callconv_tags.nim",
   "src/models/njvl_tags.nim",
