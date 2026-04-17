@@ -249,9 +249,6 @@ proc readonlyCursorAt*(b: TokenBuf; i: int): Cursor {.inline.} =
     inc b.owner.rc
     result.owner = b.owner
 
-proc shareRead*(b: var TokenBuf; c: Cursor): Cursor =
-  result = c
-
 proc cursorToPosition*(b: TokenBuf; c: Cursor): int {.inline.} =
   result = (cast[int](c.p) - cast[int](b.data)) div sizeof(PackedToken)
 

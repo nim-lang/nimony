@@ -711,6 +711,7 @@ const BootstrapModules = [
   "src/lib/symparser.nim",
   "src/lib/bitabs.nim",
   "src/lib/lineinfos.nim",
+  "src/lib/platform.nim",
   "src/lib/nifbuilder.nim",
   "src/nimony/features.nim",
   "src/nimony/intervals.nim",
