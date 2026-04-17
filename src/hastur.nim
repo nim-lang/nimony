@@ -358,10 +358,15 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category;
       when defined(linux):
         testValgrind c, file, overwrite, cat, quoteShell exe
 
-    let ast = file.changeFileExt(".nif")
-    if ast.fileExists():
-      let nif = generatedFile(file, ".s.nif")
-      diffFiles c, file, ast, nif, overwrite
+    # Only diff `.nif` expected outputs for `nosystem` tests: these do not
+    # depend on `lib/std/system.nim` and so remain stable across system
+    # changes. With the phase validator in place, diffing NIF for normal
+    # tests causes noisy churn without meaningfully improving coverage.
+    if cat == Basics:
+      let ast = file.changeFileExt(".nif")
+      if ast.fileExists():
+        let nif = generatedFile(file, ".s.nif")
+        diffFiles c, file, ast, nif, overwrite
 
 proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category; forward: string) =
   var files: seq[string] = @[]
@@ -710,6 +715,14 @@ const BootstrapModules = [
   "src/nimony/features.nim",
   "src/nimony/intervals.nim",
   "src/nimony/xints.nim",
+  # Tier 2 -- tag enums + simple deps on tier 1.
+  "src/models/callconv_tags.nim",
+  "src/models/njvl_tags.nim",
+  "src/models/nifindex_tags.nim",
+  "src/models/nifc_tags.nim",
+  "src/models/nifler_tags.nim",
+  "src/models/nimony_tags.nim",
+  "src/lib/nifreader.nim",
 ]
 
 proc bootstrapTests() =
