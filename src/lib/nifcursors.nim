@@ -10,9 +10,48 @@ import std / [assertions, syncio]
 import nifreader, nifstreams, bitabs, lineinfos
 
 type
+  Storage = ptr UncheckedArray[PackedToken]
+  CursorOwner = ptr CursorOwnerObj
+  CursorOwnerObj = object
+    rc: int
+    data: Storage
+
   Cursor* = object
+    owner: CursorOwner
     p: ptr PackedToken
     rem: int
+
+when defined(nimAllowNonVarDestructor) and defined(gcDestructors):
+  proc `=destroy`*(c: Cursor) {.inline.} =
+    if c.owner != nil:
+      dec c.owner.rc
+      if c.owner.rc == 0:
+        if c.owner.data != nil: dealloc(c.owner.data)
+        dealloc(c.owner)
+else:
+  proc `=destroy`*(c: var Cursor) {.inline.} =
+    if c.owner != nil:
+      dec c.owner.rc
+      if c.owner.rc == 0:
+        if c.owner.data != nil: dealloc(c.owner.data)
+        dealloc(c.owner)
+
+proc `=wasMoved`*(c: var Cursor) {.inline.} =
+  c.owner = nil
+  c.p = nil
+  c.rem = 0
+
+proc `=copy`*(dest: var Cursor; src: Cursor) =
+  if dest.owner != src.owner or dest.p != src.p:
+    `=destroy`(dest)
+    if src.owner != nil: inc src.owner.rc
+    dest.owner = src.owner
+    dest.p = src.p
+    dest.rem = src.rem
+
+proc `=dup`*(src: Cursor): Cursor {.nodestroy.} =
+  result = Cursor(owner: src.owner, p: src.p, rem: src.rem)
+  if result.owner != nil: inc result.owner.rc
 
 const
   ErrToken = [parLeToken(ErrT, NoLineInfo),
@@ -64,9 +103,10 @@ proc unsafeDec*(c: var Cursor) {.inline.} =
 
 proc `+!`*(c: Cursor; diff: int): Cursor {.inline.} =
   assert diff <= c.rem
-  result = Cursor(
+  result = Cursor(owner: c.owner,
      p: cast[ptr PackedToken](cast[uint](c.p) + diff.uint * sizeof(PackedToken).uint),
      rem: c.rem - diff)
+  if result.owner != nil: inc result.owner.rc
 
 proc cursorIsNil*(c: Cursor): bool {.inline.} =
   result = c.p == nil
@@ -111,52 +151,68 @@ proc skipUntilEnd*(c: var Cursor) =
     inc c
 
 type
-  Storage = ptr UncheckedArray[PackedToken]
   TokenBuf* = object
     data: Storage
-    len, cap, readers: int
+    len, cap: int
+    owner: CursorOwner  # nil = unique, non-nil = data shared with cursors
 
 proc `=copy`(dest: var TokenBuf; src: TokenBuf) {.error.}
 proc `=wasMoved`(dest: var TokenBuf) {.inline.} =
   dest.data = nil
   dest.len = 0
   dest.cap = 0
-  dest.readers = 0
+  dest.owner = nil
 
 when defined(nimAllowNonVarDestructor) and defined(gcDestructors):
   proc `=destroy`(dest: TokenBuf) {.inline.} =
-    #assert dest.readers == 0, "TokenBuf still in use by some reader"
-    if dest.data != nil: dealloc(dest.data)
+    if dest.owner != nil:
+      dec dest.owner.rc
+      if dest.owner.rc == 0:
+        if dest.owner.data != nil: dealloc(dest.owner.data)
+        dealloc(dest.owner)
+    else:
+      if dest.data != nil: dealloc(dest.data)
 else:
   proc `=destroy`(dest: var TokenBuf) {.inline.} =
-    #assert dest.readers == 0, "TokenBuf still in use by some reader"
-    if dest.data != nil: dealloc(dest.data)
+    if dest.owner != nil:
+      dec dest.owner.rc
+      if dest.owner.rc == 0:
+        if dest.owner.data != nil: dealloc(dest.owner.data)
+        dealloc(dest.owner)
+    else:
+      if dest.data != nil: dealloc(dest.data)
 
 proc createTokenBuf*(cap = 100): TokenBuf =
   result = TokenBuf(data: cast[Storage](alloc(sizeof(PackedToken)*cap)), len: 0, cap: cap)
 
-proc isMutable(b: TokenBuf): bool {.inline.} = b.cap >= 0
+proc prepareMutation*(b: var TokenBuf) {.inline.} =
+  ## COW detach: if the buffer is shared with cursors, deep-copy the data
+  ## so we can mutate without invalidating existing cursors.
+  if b.owner != nil:
+    let newData = cast[Storage](alloc(sizeof(PackedToken) * b.cap))
+    copyMem(newData, b.data, sizeof(PackedToken) * b.len)
+    dec b.owner.rc
+    if b.owner.rc == 0:
+      # no cursors left, free the old shared ownership
+      dealloc(b.owner)
+    b.owner = nil
+    b.data = newData
 
-proc freeze*(b: var TokenBuf) {.inline.} =
-  if isMutable(b):
-    b.cap = -(b.cap+1)
-
-proc thaw*(b: var TokenBuf) =
-  if not isMutable(b):
-    b.cap = -(b.cap+1)
+proc freeze*(b: var TokenBuf) {.inline.} = discard
+proc thaw*(b: var TokenBuf) {.inline.} = discard
 
 proc beginRead*(b: var TokenBuf): Cursor =
-  if b.readers == 0: freeze(b)
-  inc b.readers
-  result = Cursor(p: addr(b.data[0]), rem: b.len)
+  if b.owner == nil:
+    b.owner = cast[CursorOwner](alloc0(sizeof(CursorOwnerObj)))
+    b.owner.rc = 1
+    b.owner.data = b.data
+  inc b.owner.rc
+  result = Cursor(owner: b.owner, p: addr(b.data[0]), rem: b.len)
 
-proc endRead*(b: var TokenBuf) =
-  assert b.readers > 0, "unpaired endRead"
-  dec b.readers
-  if b.readers == 0: thaw(b)
+proc endRead*(b: var TokenBuf) {.inline.} = discard
 
 proc add*(b: var TokenBuf; item: PackedToken) {.inline.} =
-  assert isMutable(b), "attempt to mutate frozen TokenBuf"
+  if b.owner != nil: prepareMutation(b)
   if b.len >= b.cap:
     b.cap = max(b.cap div 2 + b.cap, 8)
     b.data = cast[Storage](realloc(b.data, sizeof(PackedToken)*b.cap))
@@ -179,24 +235,22 @@ proc `[]=`*(b: TokenBuf; i: int; val: PackedToken) {.inline.} =
 
 proc cursorAt*(b: var TokenBuf; i: int): Cursor {.inline.} =
   assert i >= 0 and i < b.len
-  if b.readers == 0: freeze(b)
-  inc b.readers
-  result = Cursor(p: addr b.data[i], rem: b.len-i)
+  if b.owner == nil:
+    b.owner = cast[CursorOwner](alloc0(sizeof(CursorOwnerObj)))
+    b.owner.rc = 1
+    b.owner.data = b.data
+  inc b.owner.rc
+  result = Cursor(owner: b.owner, p: addr b.data[i], rem: b.len-i)
 
 proc readonlyCursorAt*(b: TokenBuf; i: int): Cursor {.inline.} =
   assert i >= 0 and i < b.len
-  assert(not isMutable(b))
   result = Cursor(p: addr b.data[i], rem: b.len-i)
+  if b.owner != nil:
+    inc b.owner.rc
+    result.owner = b.owner
 
 proc shareRead*(b: var TokenBuf; c: Cursor): Cursor =
-  let pos = (cast[int](c.p) - cast[int](b.data)) div sizeof(PackedToken)
-  if b.readers == 0:
-    freeze(b)
-  inc b.readers
-  result = Cursor(
-    p: cast[ptr PackedToken](
-      cast[uint](b.data) + pos.uint * sizeof(PackedToken).uint),
-    rem: c.rem)
+  result = c
 
 proc cursorToPosition*(b: TokenBuf; c: Cursor): int {.inline.} =
   result = (cast[int](c.p) - cast[int](b.data)) div sizeof(PackedToken)
@@ -274,20 +328,20 @@ proc add*(dest: var TokenBuf; src: TokenBuf) =
   for t in items(src): dest.add t
 
 proc fromCursor*(c: Cursor): TokenBuf =
-  result = TokenBuf(data: cast[Storage](alloc(sizeof(PackedToken)*4)), len: 0, cap: 4)
+  result = createTokenBuf(4)
   result.add c
 
 proc fromStream*(s: var Stream): TokenBuf =
-  result = TokenBuf(data: cast[Storage](alloc(sizeof(PackedToken)*4)), len: 0, cap: 4)
+  result = createTokenBuf(4)
   result.add s
 
 proc shrink*(b: var TokenBuf; newLen: int) =
-  assert isMutable(b), "attempt to mutate frozen TokenBuf"
+  if b.owner != nil: prepareMutation(b)
   assert newLen >= 0 and newLen <= b.len
   b.len = newLen
 
 proc grow(b: var TokenBuf; newLen: int) =
-  assert isMutable(b), "attempt to mutate frozen TokenBuf"
+  if b.owner != nil: prepareMutation(b)
   assert newLen > b.len
   if b.cap < newLen:
     b.cap = max(b.cap div 2 + b.cap, newLen)
@@ -365,6 +419,7 @@ proc insert*(dest: var TokenBuf; src: TokenBuf; pos: int) =
   insert dest, toOpenArray(src.data, 0, src.len-1), pos
 
 proc replace*(dest: var TokenBuf; by: Cursor; pos: int) =
+  if dest.owner != nil: prepareMutation(dest)
   let len = span(Cursor(p: addr dest.data[pos], rem: dest.len-pos))
   let actualLen = min(len, dest.len - pos)
   let byLen = span(by)
