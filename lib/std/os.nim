@@ -1,8 +1,40 @@
 import strutils
 import posix/posix
+import cmdline
+import envvars
+import private/[ospaths2, osappdirs, oscommons]
+
+export cmdline
+export ospaths2
+export osappdirs
+export oscommons
 
 proc c_system(cmd: cstring): cint {.
     importc: "system", header: "<stdlib.h>".}
+
+when defined(linux) or defined(aix):
+  const maxSymlinkLen = 1024
+
+  proc getApplAux(procPath: string): string =
+    result = newString(maxSymlinkLen)
+    var procPath = procPath
+    var len = readlink(procPath.toCString, result.toCString, maxSymlinkLen)
+    if len > maxSymlinkLen:
+      result = newString(len+1)
+      len = readlink(procPath.toCString, result.toCString, len)
+    if len < 0:
+      len = 0
+    setLen(result, len)
+
+when supportedSystem:
+  proc getAppFilename*(): string {.tags: [ReadIOEffect], raises: [].} =
+    when defined(linux) or defined(aix):
+      result = getApplAux("/proc/self/exe")
+    else:
+      result = paramStr(0)
+
+  proc getAppDir*(): string {.tags: [ReadIOEffect].} =
+    result = splitFile(getAppFilename()).dir
 
 func quoteShellWindows*(s: string): string {.noSideEffect.} =
   ## Quote `s`, so it can be safely passed to Windows API.

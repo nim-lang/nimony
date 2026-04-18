@@ -7,7 +7,7 @@
 ## Turn NIF trees into identifiers. See the spec section "NIF trees as identifiers"
 ## for the used algorithm.
 
-import std / [assertions, tables, formatfloat, strutils]
+import std / [assertions, hashes, tables, formatfloat, strutils]
 
 type
   Mangler* = object ## In the end `extract` must be called.
@@ -104,7 +104,7 @@ proc addIdent*(b: var Mangler; s: string) =
         b.put c
 
 proc addSymbolBody(b: var Mangler; s: string) =
-  for part in s.split('.'):
+  for part in s.split({'.'}):
     if not referencePrevious(b, part):
       for c in part:
         if c.needsEscape:
@@ -194,7 +194,7 @@ template withTree*(b: var Mangler; kind: string; body: untyped) =
   body
   endTree b
 
-when isMainModule:
+when isMainModule and not defined(nimony):
   proc test(b: sink Mangler) =
     b.withTree "stmts":
       b.withTree "call":

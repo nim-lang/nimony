@@ -714,6 +714,8 @@ const BootstrapModules = [
   "src/lib/nifbuilder.nim",
   "src/lib/platform.nim",
   "src/lib/stringtrees.nim",
+  "src/lib/tooldirs.nim",
+  "src/lib/treemangler.nim",
   "src/nimony/features.nim",
   "src/nimony/intervals.nim",
   "src/nimony/xints.nim",
@@ -726,6 +728,7 @@ const BootstrapModules = [
   "src/models/nifler_tags.nim",
   "src/models/nimony_tags.nim",
   "src/lib/nifreader.nim",
+  "src/gear2/modnames.nim",
 ]
 
 proc bootstrapTests() =

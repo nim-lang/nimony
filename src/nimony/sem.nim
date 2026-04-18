@@ -562,24 +562,38 @@ proc fetchSym(c: var SemContext; s: SymId): Sym =
   else:
     result = Sym(kind: NoSym, name: s, pos: InvalidPos)
 
+proc hasErrorSince(dest: TokenBuf; start: int): bool =
+  ## True when `dest[start..]` already contains an `(err ...)` node. Used to
+  ## avoid stacking a redundant follow-up error on top of one semExpr already
+  ## produced (e.g. `auto`-typed expression from an undeclared identifier).
+  let errTag = pool.tags.getOrIncl("err")
+  var i = start
+  result = false
+  while i < dest.len:
+    if dest[i].kind == ParLe and dest[i].tagId == errTag:
+      result = true
+      break
+    inc i
+
+proc semBoolExprBody(c: var SemContext; dest: var TokenBuf; n: var Cursor; start: int): Item =
+  ## Shared core of `semBoolExpr` / `semConstBoolExpr`: sems an expression and
+  ## appends a type-mismatch error iff no better error was produced already.
+  result = Item(n: n, typ: c.types.autoType)
+  semExpr c, dest, result
+  let t = skipModifier(result.typ)
+  if classifyType(c, t) != BoolT and not hasErrorSince(dest, start):
+    combineErr c, dest, start, result.n.info,
+      "expected `bool` but got: " & typeToString(t)
+
 proc semBoolExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   let start = dest.len
-  var it = Item(n: n, typ: c.types.autoType)
-  semExpr c, dest, it
-  let t = skipModifier(it.typ)
-  if classifyType(c, t) != BoolT:
-    combineErr c, dest, start, n.info, "expected `bool` but got: " & typeToString(t)
+  let it = semBoolExprBody(c, dest, n, start)
   n = it.n
 
 proc semConstBoolExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; allowUnresolved = false) =
   let start = dest.len
-  var it = Item(n: n, typ: c.types.autoType)
-  semExpr c, dest, it
+  let it = semBoolExprBody(c, dest, n, start)
   n = it.n
-  let t = skipModifier(it.typ)
-  if classifyType(c, t) != BoolT:
-    dest.shrink start
-    buildErr c, dest, it.n.info, "expected `bool` but got: " & typeToString(t)
   var e = cursorAt(dest, start)
   var valueBuf = evalExpr(c, e)
   endRead(dest)
