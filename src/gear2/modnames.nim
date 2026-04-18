@@ -7,10 +7,7 @@
 import ".." / lib / tinyhashes
 from std / os import splitFile, relativePath, isAbsolute, getCurrentDir, `/`
 
-when defined(nimony):
-  {.pragma: canRaise, raises.}
-else:
-  {.pragma: canRaise.}
+include ".." / lib / compat2
 
 proc extractModulename(x: string): string = splitFile(x).name
 

@@ -104,7 +104,7 @@ proc addIdent*(b: var Mangler; s: string) =
         b.put c
 
 proc addSymbolBody(b: var Mangler; s: string) =
-  for part in s.split({'.'}):
+  for part in s.split('.'):
     if not referencePrevious(b, part):
       for c in part:
         if c.needsEscape:
@@ -194,7 +194,9 @@ template withTree*(b: var Mangler; kind: string; body: untyped) =
   body
   endTree b
 
-when isMainModule and not defined(nimony):
+when isMainModule:
+  import std/syncio
+
   proc test(b: sink Mangler) =
     b.withTree "stmts":
       b.withTree "call":
@@ -217,7 +219,7 @@ when isMainModule and not defined(nimony):
         m.withTree "i":
           m.addIntLit 8
 
-    assert m.extract() == "AarrayArangeS0S9ZAK0AK1S0S4ZAiS8"
+    assert m.extract() == "AarrayArangeS0S9ZAR0AR6S0S4ZAiS8"
 
   proc main() =
     var b = createMangler(10)

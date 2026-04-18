@@ -424,7 +424,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
             copyIntoKind dest, ArrAtX, info:
               dest.addSubtree a
               dest.addSubtree i
-            if op == MinusSetX:
+            if kind == MinusSetX:
               addUIntTypedOp dest, BitnotX, 8, info:
                 copyIntoKind dest, ArrAtX, info:
                   dest.addSubtree b
