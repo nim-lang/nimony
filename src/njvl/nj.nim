@@ -125,6 +125,20 @@ type
     TupleRaise  # proc/call can raise, and has a return value so it becomes a tuple
 
   BasicBlock = object
+    ## Tracks the else-exploitation state within a statement list.
+    ##
+    ## Invariants:
+    ## - `openElseBranches` counts how many `(stmts` tokens have been emitted
+    ##   as else branches of ites that were left open for subsequent statements.
+    ##   `closeBasicBlock` must close exactly this many before leaving the block.
+    ## - `leavesWith` is set by break/return/raise to the innermost guard they
+    ##   activated. It tells the parent (e.g. trIf) that the then-branch ended
+    ##   with a leaving statement, enabling else exploitation for the no-else case.
+    ## - `reenableOnLeave` records guards that were deactivated during else
+    ##   exploitation and must be re-enabled when the basic block closes.
+    ##   Each entry `(idx, cond)` is validated: the guard at `idx` must still
+    ##   have `cond` as its condition (guards are a stack, so this can go stale
+    ##   if guards were removed).
     openElseBranches: int
     leavesWith: int # index to the innermost guard that we activated or -1
     hasParLe: bool
@@ -167,21 +181,36 @@ proc closeScope(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
   c.typeCache.closeScope()
 
 proc closeBasicBlock(c: var Context; b: var BasicBlock; dest: var TokenBuf) =
+  ## Close all else branches opened by else exploitation within this block.
+  ## Post-condition: openElseBranches == 0 and all borrowed guards are returned.
   while b.openElseBranches > 0:
-    dest.addParRi() # close `else` branch
+    dest.addParRi() # close `else` branch (stmts)
     dest.addParRi() # close ite
     dec b.openElseBranches
+  assert b.openElseBranches == 0
   for (idx, cond) in b.reenableOnLeave:
     if idx < c.current.guards.len and
         cond == c.current.guards[idx].cond:
-      # enable again as we are not under the guard anymore:
+      # Re-enable the guard that was deactivated during else exploitation.
+      # The guard was "borrowed" by openElseBranch — we return it here.
       c.current.guards[idx].active = true
 
 proc openElseBranch(b: var BasicBlock; dest: var TokenBuf; info: PackedLineInfo) =
+  ## Open an else branch on the current ite, deferring its closure to `closeBasicBlock`.
+  ## This is the core of else exploitation: subsequent statements in the same block
+  ## are emitted inside this else branch rather than after the ite.
+  ## Pre-condition: an ite's then-branch has just been emitted (ending with jtrue).
   dest.addParLe StmtsS, info # begin of else branch
   inc b.openElseBranches
 
 proc maybeEmitGuard(c: var Context; dest: var TokenBuf; info: PackedLineInfo): (int, SymId) =
+  ## If any guard is active, emit `(ite (not guard) (stmts` and temporarily
+  ## disable the guard. Returns `(index, sym)` of the disabled guard, or
+  ## `(-1, NoSymId)` if no guard was active.
+  ##
+  ## The guard is "borrowed": disabled here, re-enabled by `maybeCloseGuard`.
+  ## Between emit and close, nested code runs without seeing this guard,
+  ## preventing double-wrapping.
   result = (-1, NoSymId)
   for i in countdown(c.current.guards.len - 1, 0):
     let g = addr c.current.guards[i]
@@ -190,21 +219,24 @@ proc maybeEmitGuard(c: var Context; dest: var TokenBuf; info: PackedLineInfo): (
       dest.copyIntoKind NotX, info:
         dest.addSymUse g.cond, info
       result = (i, g.cond)
-      g.active = false # disable
+      g.active = false # borrow: disable until maybeCloseGuard returns it
       dest.addParLe StmtsS, info # then section
       break
 
 proc maybeCloseGuard(c: var Context; dest: var TokenBuf; g: (int, SymId); mustCloseScope: bool) =
+  ## Close the guard opened by `maybeEmitGuard`, re-enabling it.
+  ## Post-condition: if a guard was emitted (g[0] >= 0), it is active again.
   let idx = g[0]
   if idx >= 0:
     if mustCloseScope:
       closeScope c, dest, NoLineInfo
-    dest.addParRi() # then section of ite
+    dest.addParRi() # close then section (stmts)
     dest.addDotToken() # no else section
-    dest.addParRi() # "ite"
+    dest.addParRi() # close ite
     if idx < c.current.guards.len and
         g[1] == c.current.guards[idx].cond:
-      # enable again as we are not under the guard anymore:
+      # Return the borrowed guard. It may have been re-activated by raiseGuards
+      # or jtrue inside the child statement — that's expected and harmless.
       c.current.guards[idx].active = true
   else:
     if mustCloseScope:
@@ -625,7 +657,7 @@ proc countSons(dest: var TokenBuf; d: int): int =
   endRead(dest)
 
 proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cursor) =
-  # we assume here that xelim already produced a single elif-else construct here
+  # Precondition: xelim already produced a single elif-else construct here
   let info = n.info
   dest.add tagToken("ite", info)
   inc n
@@ -640,13 +672,17 @@ proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cur
   skipParRi n # end of `elif`
 
   if n.kind != ParRi:
-    # Has explicit else branch
+    # --- Case 1: Explicit else branch ---
     assert n.substructureKind == ElseU
     inc n
     openScope c
     var oldActive = false
     if b.leavesWith >= 0:
-      # disable the guard here in this `else` branch:
+      # The then-branch ended with a leaving statement (break/return/raise)
+      # that activated guard `b.leavesWith`. Disable it during else processing
+      # because the else branch only executes when the then-branch was NOT taken,
+      # so the jtrue didn't fire and the guard isn't set at runtime.
+      assert b.leavesWith < c.current.guards.len, "leavesWith out of range"
       oldActive = c.current.guards[b.leavesWith].active
       c.current.guards[b.leavesWith].active = false
 
@@ -657,26 +693,34 @@ proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cur
     dest.takeParRi n # "ite"
 
     if b.leavesWith >= 0:
+      # Restore the guard to its pre-else state.
       c.current.guards[b.leavesWith].active = oldActive
 
   elif b.leavesWith >= 0:
+    # --- Case 2: No else branch, then-branch ended with a leaving statement ---
+    # Else exploitation: the code AFTER this if becomes the else branch.
+    # This is correct because if the then-branch was taken, jtrue fired and
+    # subsequent guarded code is skipped. If the then-branch was NOT taken,
+    # we fall through to the else which runs the subsequent code.
     skipParRi n
+    assert b.leavesWith < c.current.guards.len, "leavesWith out of range"
     c.current.guards[b.leavesWith].active = false
     outerB.reenableOnLeave.add ((b.leavesWith, c.current.guards[b.leavesWith].cond))
-    # exploit the fact that we had no `else` and ended with a `break`-like statement:
     openElseBranch outerB, dest, info
   else:
-    # Normal completion:
+    # --- Case 3: No else branch, normal completion ---
     dest.addDotToken() # no else section
     dest.takeParRi n # "ite"
 
 proc trBreak(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor) =
-  assert c.current.guards.len > 0
+  ## Emit `(jtrue guard1 guard2 ...)` and activate the guards.
+  ## Sets `b.leavesWith` to the innermost guard so `trIf` knows the
+  ## then-branch ended with a leaving statement.
+  assert c.current.guards.len > 0, "break outside any guarded scope"
 
   var entries = 0 # only care about the inner most
   inc n
   if n.kind == ParRi:
-    # bare `(break)` with no arguments — break innermost loop
     entries = 1
   elif n.kind == DotToken:
     inc n
@@ -689,10 +733,12 @@ proc trBreak(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
   else:
     bug "invalid `break` structure"
 
+  assert entries > 0, "break resolved to zero guard entries"
   b.leavesWith = c.current.guards.len-1
   dest.add tagToken("jtrue", n.info)
   for i in 1..entries:
     let guardIdx = c.current.guards.len - i
+    assert guardIdx >= 0, "guard index underflow in break"
     let g = addr c.current.guards[guardIdx]
     dest.addSymUse g.cond, n.info
     g.active = true
@@ -1162,6 +1208,8 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
 
 
 proc trRet(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor) =
+  ## Emit the return value store and activate all return guards.
+  ## Sets `b.leavesWith` to signal that this block ends with a leaving statement.
   let info = n.info
   inc n
 
@@ -1181,10 +1229,12 @@ proc trRet(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor)
     skipParRi n
 
   emitReturnGuards(c, dest, info)
-
+  assert c.current.guards.len > 0, "return outside any guarded scope"
   b.leavesWith = c.current.guards.len-1
 
 proc trRaise(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor) =
+  ## Emit error tracker store and activate raise guards.
+  ## Sets `b.leavesWith` to signal that this block ends with a leaving statement.
   let info = n.info
   inc n
 
@@ -1199,6 +1249,7 @@ proc trRaise(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
       storeToErrorTracker(c, dest, n, info)
     skipParRi n
   raiseGuards(c, dest, info)
+  assert c.current.guards.len > 0, "raise outside any guarded scope"
   b.leavesWith = c.current.guards.len-1
 
 proc trCfVarDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -1210,37 +1261,39 @@ proc trCfVarDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.registerLocal(s, VarY, c.typeCache.builtins.boolType)
 
 proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor; mustCloseScope: bool) =
+  ## Process one statement, wrapping it in a guard ite if a guard is active.
+  ##
+  ## The guard protocol:
+  ## 1. `maybeEmitGuard` borrows the innermost active guard: emits `(ite (not g) (stmts`
+  ##    and disables g so nested statements don't double-wrap.
+  ## 2. The statement is processed (which may activate new guards via jtrue).
+  ## 3. `maybeCloseGuard` returns the borrowed guard: closes `) . )` and re-enables g.
+  ##
+  ## For StmtsS, the g2 mechanism merges consecutive statements under the same guard:
+  ## the guard is borrowed once (g2) and held open while all children are processed.
+  ## This turns `(ite (not g) a .)(ite (not g) b .)` into `(ite (not g) (a b) .)`.
   let g = maybeEmitGuard(c, dest, n.info)
 
   var takeThisParRi = false
   case n.stmtKind
   of StmtsS, ScopeS:
-    # Statement lists should introduce a guard scope like block statements
-    # This ensures guards activated by statements are checked for subsequent statements
-    # flat nested statements list:
+    # Flatten nested stmts when the output already has a (stmts open.
     if not b.hasParLe and g[0] < 0:
       dest.takeToken n
       b.hasParLe = true
       takeThisParRi = true
     else:
-      when false:
-        if g[0] >= 0 and not b.hasParLe:
-          # Guard was emitted, which added (stmts to output.
-          # Mark that we've conceptually consumed a ParLe.
-          b.hasParLe = true
       inc n
+    # g2 borrows the innermost active guard for the ENTIRE statement list.
+    # All children are emitted inside this single guard, achieving the merge.
     var g2 = (-1, NoSymId)
     while n.kind != ParRi:
-      # we need to figure out guards as long as we are still in the basic block
-      # so that we can merge `guard a; guard b;` into `guard (a; b)`
-      if g2[0] < 0: g2 = maybeEmitGuard(c, dest, n.info)
+      if g2[0] < 0:
+        g2 = maybeEmitGuard(c, dest, n.info)
       elif g2[0] < c.current.guards.len and g2[1] == c.current.guards[g2[0]].cond:
-        # Prevent redundant guard emission: a VoidRaise/TupleRaise call inside an
-        # if-body may re-activate the guard via raiseGuards without setting b.leavesWith
-        # (only explicit `raise`/`return`/`break` set leavesWith). This causes the
-        # per-statement `g` in the recursive trGuardedStmts call to emit a sibling
-        # `(ite cond a .)(ite cond d .)` instead of merging into `(ite cond (a d) .)`.
-        # Since we are already inside the g2 guard scope, deactivate the guard here.
+        # The guard may have been re-activated by raiseGuards inside a child
+        # (e.g. a VoidRaise call). Since we're still inside the g2 scope,
+        # suppress the re-activation to prevent sibling ites.
         c.current.guards[g2[0]].active = false
       trGuardedStmts(c, b, dest, n, false)
     inc n # ParRi
@@ -1284,6 +1337,9 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
         trGuardedStmts c, innerB, dest, n, false  # body
         closeBasicBlock c, innerB, dest
         if innerB.leavesWith >= 0:
+          # Propagate leaving status from the pragma body to the outer block.
+          assert innerB.leavesWith < c.current.guards.len,
+            "pragma body leavesWith out of range"
           b.leavesWith = innerB.leavesWith
     elif n.exprKind == ProccallX:
       trStmtCall c, b, dest, n
