@@ -924,9 +924,10 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       for i in 0..<m.len:
         errorMsg.add "\n"
         addErrorMsg errorMsg, m[i]
-        let res = tryLoadSym(m[i].fn.sym)
-        assert res.status == LacksNothing
-        errorMsg.add " (declared in " & res.decl.info.infoToStr & ")"
+        if m[i].fn.sym != NoSymId:
+          let res = tryLoadSym(m[i].fn.sym)
+          if res.status == LacksNothing:
+            errorMsg.add " (declared in " & res.decl.info.infoToStr & ")"
     else:
       errorMsg = "undeclared identifier: '"
       if cs.fnName != StrId(0):
