@@ -1559,76 +1559,6 @@ proc updatePassiveClosureProcTypes(c: var Context; dest: var TokenBuf; n: var Cu
       ParRi:
     dest.takeToken n
 
-proc liftedClosureProc(c: Context; procId: SymId, index: int): SymId =
-  let s = extractVersionedBasename(pool.syms[procId])
-  result = pool.syms.getOrIncl(s & ".lifted." & $index & "." & c.thisModuleSuffix)
-
-proc liftPassiveClosures(c: var Context; n: var Cursor): TokenBuf =
-  var dest = createTokenBuf(16)
-  var nested = 0
-  var needsLift: seq[tuple[n: Cursor, parent: int, name: SymId]] = @[]
-  var procStack: seq[tuple[pos: int, depth: int]] = @[]
-  var procRename = initTable[SymId, SymId]()
-  # search for nested passive procs
-  while true:
-    dest.add n
-    if n.kind == ParRi:
-      dec nested
-      if procStack.len > 0 and procStack[^1].depth == nested:
-        discard procStack.pop()
-      if nested == 0:
-        break
-    elif n.kind == ParLe:
-      if n.typeKind == ProcT and procHasPragma(n, PassiveP):
-        if procStack.len > 0:
-          var newSymId = liftedClosureProc(c, n.firstson.symId, needsLift.len)
-          procRename[n.firstson.symId] = newSymId
-          needsLift.add (n: n, parent: procStack[0].pos, name: newSymId)
-        procStack.add (pos: dest.len-1, depth: nested)
-      inc nested
-    inc n
-  # lift found passive procs to top level
-  for i in 1..needsLift.len:
-    var x = needsLift[^i]
-    dest.insert(x.n, x.parent)
-    dest[x.parent+1] = symdefToken(x.name, x.n.info)
-    publishSignature dest, x.name, x.parent
-  var dest2 = createTokenBuf(16)
-  n = beginRead(dest)
-  procStack = @[]
-  # replace new name usage
-  # remove inner passive procs
-  while true:
-    case n.kind
-    of Symbol, SymbolDef:
-      var sym = procRename.getOrDefault(n.symId, n.symId)
-      if n.kind == Symbol:
-        dest2.addSymUse sym, n.info
-      else:
-        dest2.addSymDef sym, n.info
-      inc n
-    of ParLe:
-      if n.typeKind == ProcT and procHasPragma(n, PassiveP):
-        if procStack.len > 0:
-          skip n
-        else:
-          procStack.add (pos: dest.len-1, depth: nested)
-          inc nested
-          dest2.takeToken n
-      else:
-        inc nested
-        dest2.takeToken n
-    of ParRi:
-      dest2.takeToken n
-      dec nested
-      if procStack.len > 0 and procStack[^1].depth == nested:
-        discard procStack.pop()
-      if nested == 0:
-        break
-    else:
-      dest2.takeToken n
-  return dest2
-
 proc transformToCps*(pass: var Pass) =
   var n = pass.n  # Extract cursor locally
   var c = Context(thisModuleSuffix: pass.moduleSuffix,
@@ -1636,8 +1566,6 @@ proc transformToCps*(pass: var Pass) =
     continuationProcImpl: generateContinuationProcImpl())
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS
-  var liftedPClosures = liftPassiveClosures(c, n)
-  n = beginRead(liftedPClosures)
   c.coroTypes.takeToken n
   while n.kind != ParRi:
     tr(c, pass.dest, n)

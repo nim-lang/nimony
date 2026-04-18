@@ -753,6 +753,61 @@ proc genObjectTypes(c: var Context; dest: var TokenBuf) =
           programs.publish(field.field, dest, beforeField)
     programs.publish(objType, dest, beforeType)
 
+proc liftProcs(c: var Context; n: Cursor): TokenBuf =
+  var n = n
+  var dest = createTokenBuf(16)
+  var nested = 0
+  var needsLift: seq[tuple[n: Cursor, parent: int]] = @[]
+  var procStack: seq[tuple[pos: int, depth: int]] = @[]
+  # search for nested passive procs
+  while true:
+    dest.add n
+    if n.kind == ParRi:
+      dec nested
+      if procStack.len > 0 and procStack[^1].depth == nested:
+        discard procStack.pop()
+      if nested == 0:
+        break
+    elif n.kind == ParLe:
+      if n.typeKind == ProcT:
+        if procStack.len > 0:
+          needsLift.add (n: n, parent: procStack[0].pos)
+        procStack.add (pos: dest.len-1, depth: nested)
+      inc nested
+    inc n
+  # lift found passive procs to top level
+  for i in 1..needsLift.len:
+    var x = needsLift[^i]
+    dest.insert(x.n, x.parent)
+  var dest2 = createTokenBuf(16)
+  n = beginRead(dest)
+  procStack = @[]
+  # replace new name usage
+  # remove inner passive procs
+  while true:
+    case n.kind
+    of ParLe:
+      if n.typeKind == ProcT:
+        if procStack.len > 0:
+          skip n
+        else:
+          procStack.add (pos: dest.len-1, depth: nested)
+          inc nested
+          dest2.takeToken n
+      else:
+        inc nested
+        dest2.takeToken n
+    of ParRi:
+      dest2.takeToken n
+      dec nested
+      if procStack.len > 0 and procStack[^1].depth == nested:
+        discard procStack.pop()
+      if nested == 0:
+        break
+    else:
+      dest2.takeToken n
+  return dest2
+
 proc elimLambdas*(pass: var Pass) =
   var n = pass.n  # Extract cursor locally
   var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix)
@@ -776,6 +831,7 @@ proc elimLambdas*(pass: var Pass) =
       tre(c, pass.dest, n2)
     pass.dest.takeParRi n2
     endRead(oldDest)
+    pass.dest = liftProcs(c, beginRead(pass.dest))
     c.typeCache.closeScope()
 
   #echo "PRODUCED ", toString(pass.dest, false)
