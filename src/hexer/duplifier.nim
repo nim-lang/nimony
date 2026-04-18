@@ -125,7 +125,7 @@ proc constructsValue*(n: Cursor; derefConstructs = true): bool =
         XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX,
-        NoExpr: break
+        KvX, NoExpr: break
   result = n.exprKind in ConstructingExprs or n.kind in {IntLit, FloatLit, StringLit, CharLit}
 
 proc lvalueRoot(n: Cursor; hdrefs: var bool): SymId =
@@ -152,7 +152,7 @@ proc lvalueRoot(n: Cursor; hdrefs: var bool): SymId =
         MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX,
         EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX,
-        NoExpr: break
+        KvX, NoExpr: break
   if n.kind == Symbol:
     result = n.symId
   else:
@@ -270,7 +270,7 @@ proc isSimpleExpression(n: var Cursor): bool =
         MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX,
         CardX, EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX,
         TraceX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
-        EnvpX, NoExpr:
+        EnvpX, KvX, NoExpr:
       result = false
       skip n
   of ParRi, SymbolDef, UnknownToken, EofToken:
@@ -662,7 +662,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
           Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX, PlussetX,
           MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
           InsetX, CardX, EmoveX, InternalTypeNameX,
-          InternalFieldPairsX, FailedX, IsX, EnvpX:
+          InternalFieldPairsX, FailedX, IsX, EnvpX, KvX:
         c.dest.add n
         inc n
         inc nested
@@ -1095,6 +1095,12 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       bug "nodekind should have been eliminated in sem.nim"
     of PragmaxX, CurlyatX, TabconstrX, DoX, FailedX, Delay0X, SuspendX:
       trSons c, n, e
+    of KvX:
+      copyInto c.dest, n:
+        takeTree c.dest, n
+        tr c, n, e
+        if n.kind != ParRi:
+          takeTree c.dest, n
     of NoExpr:
       let k = n.stmtKind
       case k

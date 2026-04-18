@@ -109,15 +109,21 @@ proc getOrInclFromView*[Id, T, View](t: var BiTable[Id, T]; v: View): Id =
   t.keys[h] = result
   t.vals.add $v
 
-proc `[]`*[Id, T](t: var BiTable[Id, T]; litId: Id): var T {.inline.} =
-  let idx = idToIdx litId
-  assert idx < t.vals.len
-  result = t.vals[idx]
+when defined(nimony):
+  proc `[]`*[Id, T](t: BiTable[Id, T]; litId: Id): var T {.inline.} =
+    let idx = idToIdx litId
+    assert idx < t.vals.len
+    result = t.vals[idx]
+else:
+  proc `[]`*[Id, T](t: var BiTable[Id, T]; litId: Id): var T {.inline.} =
+    let idx = idToIdx litId
+    assert idx < t.vals.len
+    result = t.vals[idx]
 
-proc `[]`*[Id, T](t: BiTable[Id, T]; litId: Id): lent T {.inline.} =
-  let idx = idToIdx litId
-  assert idx < t.vals.len
-  result = t.vals[idx]
+  proc `[]`*[Id, T](t: BiTable[Id, T]; litId: Id): lent T {.inline.} =
+    let idx = idToIdx litId
+    assert idx < t.vals.len
+    result = t.vals[idx]
 
 proc hash*[Id, T](t: BiTable[Id, T]): Hash =
   ## as the keys are hashes of the values, we simply use them instead

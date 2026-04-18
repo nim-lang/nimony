@@ -362,7 +362,7 @@ proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; 
        MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
        InsetX, CardX, EmoveX, DestroyX, DupX, CopyX, WasmovedX,
        SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
-       FailedX, IsX, EnvpX, NoExpr:
+       FailedX, IsX, EnvpX, KvX, NoExpr:
       trExpr c, dest, n, tar
   else:
     trExpr c, dest, n, tar
@@ -843,7 +843,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
        PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX,
        LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX,
        WasmovedX, SinkhX, TraceX, InternalTypeNameX,
-       InternalFieldPairsX, FailedX, IsX, EnvpX, NoExpr:
+       InternalFieldPairsX, FailedX, IsX, EnvpX, KvX, NoExpr:
       case n.stmtKind
       of IfS:
         trIf c, dest, n, tar

@@ -73,7 +73,7 @@ proc needsTemp(n: Cursor): bool =
         XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
-        EnvpX, NoExpr:
+        EnvpX, KvX, NoExpr:
       result = true
   else:
     result = true
@@ -834,7 +834,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         Delay0X, SuspendX, DoX, ArratX, TupatX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
-        EnvpX:
+        EnvpX, KvX:
       trSons(c, dest, n)
   of ParRi:
     bug "unexpected ')' inside"

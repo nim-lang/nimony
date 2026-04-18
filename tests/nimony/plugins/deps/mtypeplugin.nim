@@ -4,12 +4,12 @@ import std / [os, strutils, tables]
 import nimonyplugins
 
 
-template traverse*(n: var Node, body: untyped) =
+template traverse*(n: var NifCursor, body: untyped) =
   let n2 = n
   body
   n = n2
 
-proc skip*(n: var Node, count: int) =
+proc skip*(n: var NifCursor, count: int) =
   for _ in 0..<count:
     skip n
 
@@ -18,7 +18,7 @@ var knownInstances: Table[SymId, SymId]  # name -> type
 var knownOnChanged: Table[SymId, SymId]  # type -> `onChanged` template sym
 
 
-proc typesTr(n: Node) =
+proc typesTr(n: NifCursor) =
   var n = n
   inc n
   while n.kind != ParRi:
@@ -27,11 +27,11 @@ proc typesTr(n: Node) =
   inc n
 
 
-proc trAsgn(n: var Node, o: var Tree) =
+proc trAsgn(n: var NifCursor, o: var NifBuilder) =
   var
     fieldName = ""
-    access = Node()
-    instance = Node()
+    access = NifCursor()
+    instance = NifCursor()
     emitOnChanged = false
   traverse n:
     inc n
@@ -56,7 +56,7 @@ proc trAsgn(n: var Node, o: var Tree) =
       o.addStrLit fieldName
 
 
-proc trGvar(n: var Node, o: var Tree) =
+proc trGvar(n: var NifCursor, o: var NifBuilder) =
   traverse n:
     inc n
     let nameSym = n.symId
@@ -66,7 +66,7 @@ proc trGvar(n: var Node, o: var Tree) =
   o.takeTree(n)
 
 
-proc trTemplate(n: var Node, o: var Tree) =
+proc trTemplate(n: var NifCursor, o: var NifBuilder) =
   traverse n:
     inc n
     let nameSym = n.symId
@@ -83,7 +83,7 @@ proc trTemplate(n: var Node, o: var Tree) =
   o.takeTree(n)
 
 
-proc trAux(n: var Node, o: var Tree) =
+proc trAux(n: var NifCursor, o: var NifBuilder) =
   case n.kind
   of ParLe:
     if n.stmtKind == AsgnS:
@@ -105,7 +105,7 @@ proc trAux(n: var Node, o: var Tree) =
     o.takeTree(n)
 
 
-proc tr(n: Node): Tree =
+proc tr(n: NifCursor): NifBuilder =
   result = createTree()
   let info = n.info
   var n = n

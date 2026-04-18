@@ -244,7 +244,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
-        EnvpX, NoExpr:
+        EnvpX, KvX, NoExpr:
         trSons(c, dest, n)
   of ParRi:
     bug "unexpected ')' inside"
@@ -717,7 +717,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
-        NoExpr:
+        KvX, NoExpr:
         if n.typeKind in RoutineTypes:
           treProcType(c, dest, n)
         elif n.substructureKind == KvU:
