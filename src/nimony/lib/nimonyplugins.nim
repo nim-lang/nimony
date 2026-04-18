@@ -66,7 +66,7 @@ proc `=dup`*(x: NifBuilder): NifBuilder {.nodestroy.} =
 
 proc initNifBuilderObj(buf: sink TokenBuf): NifBuilderOwner =
   result = cast[NifBuilderOwner](alloc0(sizeof(NifBuilderObj)))
-  result.rc = 0
+  result.rc = 1
   result.buf = ensureMove(buf)
 
 proc copyBuffer(buf: TokenBuf): TokenBuf =
