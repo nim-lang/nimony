@@ -8,14 +8,16 @@ import ".." / [nimony_model]
 export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther, NifKind, NoLineInfo
 
 type
-  TreePayload = object
-    counter: int
+  NifBuilderObj = object
+    rc: int
     buf: TokenBuf
+
+  NifBuilderOwner = ptr NifBuilderObj
 
   NifBuilder* = object ## Mutable NIF builder used by plugins to assemble output.
                  ## Copying a tree shares the underlying payload until the next
                  ## mutation detaches it.
-    p: ptr TreePayload
+    p: NifBuilderOwner
 
   LineInfo* = PackedLineInfo ## Packed source location metadata attached to NIF
                              ## tokens. Use `NoLineInfo` for synthetic output.
@@ -28,7 +30,6 @@ type
                  ## A `NifCursor` behaves like a cursor positioned at one token or
                  ## subtree. Copying a `NifCursor` retains the underlying tree
                  ## snapshot automatically.
-    owner: NifBuilder
     cursor: Cursor
 
   SymId* = object ## Stable plugin-facing symbol handle.
@@ -36,18 +37,17 @@ type
                   ## numeric symbol ids as plain integers.
     raw: nifstreams.SymId
 
-  TagId* = nifstreams.TagId ## Raw plugin-facing tag id.
-                            ## Tag ids stay numeric because plugins read and
-                            ## write NIF as text; these ordinals never cross
-                            ## process boundaries.
+  TagId* = object ## Opaque plugin-facing tag handle.
+                  ## This intentionally avoids exposing the compiler's raw
+                  ## tag ids as plain integers.
+    raw: nifstreams.TagId
 
 proc `=destroy`*(x: NifBuilder) =
   if x.p != nil:
-    if x.p.counter == 0:
+    dec x.p.rc
+    if x.p.rc == 0:
       `=destroy`(x.p[].buf)
       dealloc(x.p)
-    else:
-      dec x.p.counter
 
 proc `=wasMoved`*(x: var NifBuilder) =
   x.p = nil
@@ -56,17 +56,17 @@ proc `=copy`*(dest: var NifBuilder; src: NifBuilder) =
   if dest.p != src.p:
     `=destroy`(dest)
     if src.p != nil:
-      inc src.p.counter
+      inc src.p.rc
     dest.p = src.p
 
 proc `=dup`*(x: NifBuilder): NifBuilder {.nodestroy.} =
   result = NifBuilder(p: x.p)
   if result.p != nil:
-    inc result.p.counter
+    inc result.p.rc
 
-proc initPayload(buf: sink TokenBuf): ptr TreePayload =
-  result = cast[ptr TreePayload](alloc0(sizeof(TreePayload)))
-  result.counter = 0
+proc initNifBuilderObj(buf: sink TokenBuf): NifBuilderOwner =
+  result = cast[NifBuilderOwner](alloc0(sizeof(NifBuilderObj)))
+  result.rc = 0
   result.buf = ensureMove(buf)
 
 proc copyBuffer(buf: TokenBuf): TokenBuf =
@@ -77,15 +77,15 @@ proc hasSubtree(n: NifCursor): bool {.inline.} =
   hasCurrentToken(n.cursor) and n.cursor.kind != ParRi
 
 proc createTree(buf: sink TokenBuf): NifBuilder =
-  result = NifBuilder(p: initPayload(buf))
+  result = NifBuilder(p: initNifBuilderObj(buf))
 
 proc prepareMutation(t: var NifBuilder) =
   if t.p == nil:
     t = createTree(createTokenBuf())
-  elif t.p.counter > 0:
+  elif t.p.rc > 0:
     let oldP = t.p
-    t.p = initPayload(copyBuffer(oldP.buf))
-    dec oldP.counter
+    t.p = initNifBuilderObj(copyBuffer(oldP.buf))
+    dec oldP.rc
 
 proc isEmpty*(tree: NifBuilder): bool {.inline.} =
   ## Returns true when `tree` does not currently contain any tokens.
@@ -134,7 +134,7 @@ proc `$`*(x: SymId): string {.inline.} =
 
 proc `$`*(x: TagId): string {.inline.} =
   ## Renders `x` as its textual NIF tag name.
-  pool.tags[x]
+  pool.tags[x.raw]
 
 proc symText*(s: SymId): string {.inline.} =
   ## Returns the symbol text stored in the plugin-facing symbol handle.
@@ -142,7 +142,7 @@ proc symText*(s: SymId): string {.inline.} =
 
 proc tagText*(t: TagId): string {.inline.} =
   ## Returns the textual NIF tag name for `t`.
-  pool.tags[t]
+  pool.tags[t.raw]
 
 proc symId*(n: NifCursor): SymId {.inline.} =
   ## Returns the symbol id of the current token as an opaque handle.
@@ -225,10 +225,18 @@ template withTree*(t: var NifBuilder; kind: NimonyType|NimonyExpr|NimonyStmt|Nim
   body
   t.p[].buf.addParRi()
 
+template withTree*(t: var NifBuilder; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma; body: untyped) =
+  ## Appends a tree node of `kind` to `t` with `NoLineInfo`, runs `body` to emit
+  ## its children, and closes the node afterwards.
+  prepareMutation(t)
+  t.p[].buf.addParLe(kind, NoLineInfo)
+  body
+  t.p[].buf.addParRi()
+
 proc tagId*(n: NifCursor): TagId {.inline.} =
   ## Returns the raw tag id of the current token.
   ## The current token must be a `ParLe`.
-  n.cursor.tagId
+  TagId(raw: n.cursor.tagId)
 
 proc tagText*(n: NifCursor): string {.inline.} =
   ## Returns the tag text of the current `ParLe` token.
@@ -237,14 +245,14 @@ proc tagText*(n: NifCursor): string {.inline.} =
 proc tag*(n: NifCursor): TagId {.inline.} =
   ## Returns the raw tag id for the current tree node, or `ErrT` if the
   ## current token is not a `ParLe`.
-  n.cursor.tag
+  TagId(raw: n.cursor.tag)
 
 proc addParLe*(t: var NifBuilder; tag: TagId; info: LineInfo = NoLineInfo) =
   ## Appends an opening tree token with raw tag id `tag` to `t`.
   ## Use `addParLe(tagText, ...)` when constructing nodes from textual tag
   ## names instead of existing ids.
   prepareMutation(t)
-  t.p[].buf.addParLe(tag, info)
+  t.p[].buf.addParLe(tag.raw, info)
 
 proc addParLe*(t: var NifBuilder; tag: string; info: LineInfo = NoLineInfo) =
   ## Appends an opening tree token with textual tag `tag` to `t`.
