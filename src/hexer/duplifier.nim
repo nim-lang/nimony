@@ -1113,7 +1113,14 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       of BreakS, ContinueS, IteratorS:
         takeTree c.dest, n
       else:
-        trSons c, n, WantNonOwner
+        if n.substructureKind == KvU:
+          copyInto c.dest, n:
+            takeTree c.dest, n
+            tr c, n, e
+            if n.kind != ParRi:
+              takeTree c.dest, n
+        else:
+          trSons c, n, WantNonOwner
 
 proc readableHookname(s: string): string =
   result = s
