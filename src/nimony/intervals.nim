@@ -8,6 +8,9 @@
 
 import std / [assertions]
 
+when defined(nimony):
+  {.feature: "untyped".}
+
 proc containsOrIncl*[T](s: var seq[(T, T)]; c: T): bool =
   mixin succ, pred
   var patched = false
@@ -78,7 +81,7 @@ proc excl*[T](s: var seq[(T, T)]; without: seq[(T, T)]) =
     let (x, y) = without[i]
     excl s, x, y
 
-when isMainModule:
+when isMainModule and not defined(nimony):
   var x = @[(1, 2), (5, 10)]
   #x.incl 4
   #echo x

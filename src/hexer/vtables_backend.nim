@@ -179,25 +179,22 @@ proc isLocalVar(c: var Context; n: Cursor): bool {.inline.} =
   n.kind == Symbol and getLocalInfo(c.typeCache, n.symId).kind in {VarY, LetY, ResultY, GvarY, GletY, TvarY, TletY}
 
 proc genProctype(c: var Context; dest: var TokenBuf; typ: Cursor) =
-  dest.addParLe ProctypeT, NoLineInfo
-  dest.addDotToken() # name
-  dest.addDotToken() # export marker
-  dest.addDotToken() # pattern
-  dest.addDotToken() # type vars
   var n = typ
-  # params:
-  dest.takeTree n
-  # return type:
-  dest.takeTree n
-  # calling convention is always nimcall for now:
-  dest.addParLe PragmasU, NoLineInfo
-  dest.addParPair Nimcall, NoLineInfo
-  dest.addParRi()
-
-  # ignore, effects and body:
-  dest.addDotToken() # effects
-  dest.addDotToken() # body
-  dest.addParRi()
+  dest.copyIntoKind ProctypeT, NoLineInfo:
+    dest.addDotToken() # name
+    dest.addDotToken() # export marker
+    dest.addDotToken() # pattern
+    dest.addDotToken() # type vars
+    # params:
+    dest.takeTree n
+    # return type:
+    dest.takeTree n
+    # calling convention is always nimcall for now:
+    dest.copyIntoKind PragmasU, NoLineInfo:
+      dest.addParPair Nimcall, NoLineInfo
+    # ignore, effects and body:
+    dest.addDotToken() # effects
+    dest.addDotToken() # body
 
 type ClassInfo = object
   root: SymId
@@ -351,18 +348,15 @@ proc classData(typ: Cursor): (int, UHash) =
 proc genBaseobj(c: var Context; dest: var TokenBuf; x: var Cursor; class: ClassInfo; info: PackedLineInfo) =
   if class.ptrKind != NoType:
     # cast is enough, see trBaseobj
-    dest.addParLe(CastX, info)
-    dest.addParLe(class.ptrKind, info)
-    dest.add symToken(class.root, info)
-    dest.addParRi()
-    tr c, dest, x
-    dest.addParRi()
+    copyIntoKind dest, CastX, info:
+      copyIntoKind dest, class.ptrKind, info:
+        dest.addSymUse class.root, info
+      tr c, dest, x
   else:
-    dest.addParLe(BaseobjX, info)
-    dest.add symToken(class.root, info)
-    dest.add intToken(pool.integers.getOrIncl(class.level), info)
-    tr c, dest, x
-    dest.addParRi()
+    copyIntoKind dest, BaseobjX, info:
+      dest.addSymUse class.root, info
+      dest.addToken intToken(pool.integers.getOrIncl(class.level), info)
+      tr c, dest, x
 
 proc genVtableField(c: var Context; dest: var TokenBuf; x: Cursor; class: ClassInfo; info: PackedLineInfo) =
   # get vtable field of `x`, might need to get to root object
@@ -641,7 +635,13 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           trScope c, dest, n
         of TemplateS, TypeS:
           takeTree dest, n
-        else:
+        of CallS, CmdS, IteratorS, BlockS, EmitS, AsgnS, IfS, WhenS,
+           BreakS, ContinueS, ForS, WhileS, CaseS, RetS, YldS, StmtsS,
+           PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
+           FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
+           DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
+           CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS, BindS,
+           MixinS, UsingS, AsmS, DeferS, NoStmt:
           dest.add n
           inc n
           inc nested
@@ -760,7 +760,15 @@ proc collectMethods(c: var Context; n: var Cursor) =
         error "method needs a first parameter of the class type: " & toString(orig, false)
   of TypeS:
     collectClass c, n
-  else:
+  of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS,
+     LetS, CursorS, PatternvarS, ProcS, FuncS, IteratorS, ConverterS,
+     MacroS, TemplateS, BlockS, EmitS, AsgnS, ScopeS, IfS, WhenS,
+     BreakS, ContinueS, ForS, WhileS, CaseS, RetS, YldS, PragmasS,
+     PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS,
+     ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS, TryS,
+     RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS,
+     PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS,
+     DeferS, NoStmt:
     skip n
 
 proc emitVTables(c: var Context; dest: var TokenBuf) =
@@ -778,13 +786,12 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
           dest.copyIntoKind UT, NoLineInfo:
             dest.addIntLit 32, NoLineInfo
           #dest.addIntLit vtab.display.len, NoLineInfo
-        dest.addParLe AconstrX, NoLineInfo
-        dest.copyIntoKind UarrayT, NoLineInfo:
-          dest.copyIntoKind UT, NoLineInfo:
-            dest.addIntLit 32, NoLineInfo
-        for d in vtab.display:
-          dest.addUIntLit uhash(pool.syms[d]), NoLineInfo
-        dest.addParRi() # AconstrX
+        dest.copyIntoKind AconstrX, NoLineInfo:
+          dest.copyIntoKind UarrayT, NoLineInfo:
+            dest.copyIntoKind UT, NoLineInfo:
+              dest.addIntLit 32, NoLineInfo
+          for d in vtab.display:
+            dest.addUIntLit uhash(pool.syms[d]), NoLineInfo
 
     dest.copyIntoKind ConstS, NoLineInfo:
       dest.addSymDef getVTableName(c, cls), NoLineInfo

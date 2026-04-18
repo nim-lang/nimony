@@ -23,6 +23,7 @@ Usage:
 
 Commands:
   build [all|nimony|nifler|hexer|nifc|nifmake|nj|vl]   build selected tools (default: all).
+  bootstrap            compile every module on the bootstrap list with nimony.
   all                  run all tests (also the default action).
   nimony               run Nimony tests.
   examples             run examples (examples/ directory).
@@ -357,10 +358,15 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category;
       when defined(linux):
         testValgrind c, file, overwrite, cat, quoteShell exe
 
-    let ast = file.changeFileExt(".nif")
-    if ast.fileExists():
-      let nif = generatedFile(file, ".s.nif")
-      diffFiles c, file, ast, nif, overwrite
+    # Only diff `.nif` expected outputs for `nosystem` tests: these do not
+    # depend on `lib/std/system.nim` and so remain stable across system
+    # changes. With the phase validator in place, diffing NIF for normal
+    # tests causes noisy churn without meaningfully improving coverage.
+    if cat == Basics:
+      let ast = file.changeFileExt(".nif")
+      if ast.fileExists():
+        let nif = generatedFile(file, ".s.nif")
+        diffFiles c, file, ast, nif, overwrite
 
 proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category; forward: string) =
   var files: seq[string] = @[]
@@ -477,6 +483,61 @@ proc vlTests(overwrite: bool) =
   ## Tests are .nif files in src/njvl/tests/ with expected output in .vl.nif files.
   runNifToolTests("vl", "src/njvl/tests", ".nif", ".vl.nif", overwrite)
 
+proc checkTagsTests() =
+  ## Run check_tags over compiler pass source files to verify NIF construction
+  ## conforms to the grammar in doc/tags.md.
+  ## Also runs fake_pass.nim which has deliberate errors and checks expected output.
+  let t0 = epochTime()
+  var c = TestCounters(total: 0, failures: 0)
+  const passFiles = [
+    "src/hexer/lambdalifting.nim",
+    "src/hexer/destroyer.nim",
+    "src/hexer/xelim.nim",
+    "src/hexer/desugar.nim",
+    "src/hexer/cps.nim",
+    "src/hexer/duplifier.nim",
+    "src/hexer/nifcgen.nim",
+    "src/hexer/eraiser.nim",
+    #"src/hexer/vtables_backend.nim", # TODO: tool can't track writes to different buffers yet
+    "src/hexer/iterinliner.nim",
+    "src/hexer/constparams.nim",
+    "src/nimony/sem.nim",
+    "src/nimony/semdecls.nim",
+    "src/nimony/controlflow.nim",
+    "src/nimony/deferstmts.nim"]
+  # Compiler passes must be violation-free
+  for f in passFiles:
+    inc c.total
+    let (msgs, exitcode) = execLocal("check_tags", os.quoteShell(f))
+    if exitcode != 0:
+      failure c, f, "check_tags: no violations", msgs
+  # fake_pass.nim must produce the expected violations
+  const fakePassDir = "tests/check_tags"
+  for x in walkDir(fakePassDir, relative = true):
+    if x.kind == pcFile and x.path.endsWith(".nim"):
+      inc c.total
+      let t = fakePassDir / x.path
+      let expectedFile = t.changeFileExt(".expected")
+      let (msgs, exitcode) = execLocal("check_tags", os.quoteShell(t))
+      if not expectedFile.fileExists():
+        failure c, t, "expected file " & expectedFile & " missing", ""
+      else:
+        let expected = readFile(expectedFile).strip
+        # Extract just the violation lines from the output
+        var got = ""
+        for line in msgs.splitLines:
+          if line.startsWith("  ") or line.contains("violation"):
+            if got.len > 0: got.add "\n"
+            got.add line
+        if got.strip.replace("\\", "/") != expected.strip.replace("\\", "/"):
+          failure c, t, expected, got
+  echo c.total - c.failures, " / ", c.total, " check_tags tests successful in ",
+    formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if c.failures > 0:
+    quit "FAILURE: Some check_tags tests failed."
+  else:
+    echo "SUCCESS."
+
 proc test(t: string; overwrite: bool; cat: Category; forward: string) =
   var c = TestCounters(total: 0, failures: 0)
   testFile c, t, overwrite, cat, forward
@@ -569,18 +630,28 @@ var release = false
 proc nimcPrefix(): string =
   (if release: "nim c -d:release " else: "nim c ")
 
+proc validatePassesFlag(): string =
+  ## Enable the phase-aware IR validator only when running on CI. GitHub Actions
+  ## (and most other CI providers) set `CI=true` in the environment, so we key
+  ## off that: locally the validator stays opt-in via `NIMONY_VALIDATE=1`, which
+  ## keeps iteration fast while guaranteeing the check on every PR.
+  if getEnv("CI").len > 0 or getEnv("NIMONY_VALIDATE").len > 0:
+    "-d:validatePasses "
+  else:
+    ""
+
 proc buildNifler(showProgress = false) =
   exec nimcPrefix() & "src/nifler/nifler.nim", showProgress
   let exe = "nifler".addFileExt(ExeExt)
   robustMoveFile "src/nifler/" & exe, binDir() / exe
 
 proc buildNimsem(showProgress = false) =
-  exec nimcPrefix() & "src/nimony/nimsem.nim", showProgress
+  exec nimcPrefix() & validatePassesFlag() & "src/nimony/nimsem.nim", showProgress
   let exe = "nimsem".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
 proc buildNimony(showProgress = false) =
-  exec nimcPrefix() & "src/nimony/nimony.nim", showProgress
+  exec nimcPrefix() & validatePassesFlag() & "src/nimony/nimony.nim", showProgress
   let exe = "nimony".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
@@ -618,6 +689,65 @@ proc buildNifmake(showProgress = false) =
   exec nimcPrefix() & "src/nifmake/nifmake.nim", showProgress
   let exe = "nifmake".addFileExt(ExeExt)
   robustMoveFile "src/nifmake/" & exe, binDir() / exe
+
+proc buildCheckTags(showProgress = false) =
+  exec nimcPrefix() & "src/nimony/check_tags.nim", showProgress
+  let exe = "check_tags".addFileExt(ExeExt)
+  robustMoveFile "src/nimony/" & exe, binDir() / exe
+
+# ---------------------------------------------------------------------------
+# Bootstrapping progress (see https://github.com/nim-lang/nimony/issues/1788).
+#
+# Each module listed here is known to compile with the `nimony c` command.
+# New modules are added as tier-by-tier bootstrapping proceeds; the
+# `hastur bootstrap` target walks this list to catch regressions.
+# ---------------------------------------------------------------------------
+
+const BootstrapModules = [
+  # Tier 1 -- pure leaves (no project-internal imports):
+  "src/models/tags.nim",
+  "src/lib/stringviews.nim",
+  "src/lib/tinyhashes.nim",
+  "src/lib/symparser.nim",
+  "src/lib/bitabs.nim",
+  "src/lib/lineinfos.nim",
+  "src/lib/nifbuilder.nim",
+  "src/nimony/features.nim",
+  "src/nimony/intervals.nim",
+  "src/nimony/xints.nim",
+  # Tier 2 -- tag enums + simple deps on tier 1.
+  "src/models/callconv_tags.nim",
+  "src/models/njvl_tags.nim",
+  "src/models/nifindex_tags.nim",
+  "src/models/nifc_tags.nim",
+  "src/models/nifler_tags.nim",
+  "src/models/nimony_tags.nim",
+  "src/lib/nifreader.nim",
+]
+
+proc bootstrapTests() =
+  ## Compile every module on `BootstrapModules` with `bin/nimony c`. Fails
+  ## fast on the first regression so the offending module is obvious.
+  let nimony = binDir() / "nimony".addFileExt(ExeExt)
+  if not fileExists(nimony):
+    quit "bootstrap: " & nimony & " not found; run `hastur build nimony` first"
+  let t0 = epochTime()
+  var failed: seq[string] = @[]
+  for m in BootstrapModules:
+    removeDir "nimcache"
+    let (output, ec) = execCmdEx(nimony.quoteShell & " c " & m.quoteShell)
+    if ec == 0:
+      echo "OK   ", m
+    else:
+      echo "FAIL ", m
+      echo output
+      failed.add m
+  echo failed.len, " / ", BootstrapModules.len, " bootstrap regressions in ",
+       formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if failed.len > 0:
+    quit "FAILURE: bootstrap regression(s): " & failed.join(", ")
+  else:
+    echo "SUCCESS."
 
 proc execNifc(cmd: string) =
   exec "nifc", cmd
@@ -767,6 +897,17 @@ proc handleCmdLine =
     njTests(overwrite)
     buildVl()
     vlTests(overwrite)
+    buildCheckTags()
+    checkTagsTests()
+    bootstrapTests()
+
+  of "checktags":
+    buildCheckTags()
+    checkTagsTests()
+
+  of "bootstrap":
+    buildNimony()
+    bootstrapTests()
 
   of "controlflow", "cf":
     buildControlflow()

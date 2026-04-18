@@ -110,6 +110,7 @@ import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval
   builtintypes, langmodes, renderer, reporters, typeprops]
 import ".." / njvl / [nj, njvl_model]
 import hexer_context, passes
+include ".." / nimony / nif_annotations
 
 # TODO:
 # - transform `for` loops into trampoline code
@@ -171,7 +172,6 @@ type
 
   ProcContext = object
     localToEnv: Table[SymId, EnvField]
-    labels: Table[int, int]
     cf: TokenBuf
     resultSym: SymId
     counter: int
@@ -186,6 +186,7 @@ type
     currentProc: ProcContext
     continuationProcImpl: Cursor
     shouldPublish: seq[tuple[sym: SymId, start: int]]
+    coroTypes: TokenBuf
 
 proc coroTypeForProc(c: Context; procId: SymId): SymId =
   let s = extractVersionedBasename(pool.syms[procId])
@@ -210,6 +211,7 @@ proc localToFieldname(c: var Context; local: SymId): SymId =
   result = pool.syms.getOrIncl(name)
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
+  {.ensuresNif: addedAny(dest).}
 
 proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
@@ -654,6 +656,11 @@ proc newLocalProc(c: var Context; dest: var TokenBuf; state: int; sym: SymId) =
 
   dest.addParLe StmtsS, info # body
   declareContinuationResult c, dest, info
+  when defined(cpsDebugStates):
+    dest.copyIntoKind CmdS, info:
+      dest.addSymUse pool.syms.getOrIncl("write.0.syn1lfpjv"), info
+      dest.addSymUse pool.syms.getOrIncl("stdout.0.syn1lfpjv"), info
+      dest.addStrLit extractVersionedBasename(pool.syms[sym]) & ".s" & $state & "\n"
 
 proc gotoNextState(c: var Context; dest: var TokenBuf; state: int; info: PackedLineInfo) =
   # generate: `return state(this)`
@@ -879,10 +886,7 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
       emitLabel dest, c.currentProc.labelCounter, info
       inc c.currentProc.labelCounter
   of LoopV:
-    let hasSuspension = containsSuspensionPoint(c, n)
-    if not hasSuspension:
-      dest.takeTree n
-    else:
+    if containsSuspensionPoint(c, n):
       inc n
       assert n.stmtKind == StmtsS
       inc n # enter stmts_before
@@ -905,14 +909,14 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
       inc n  # enter stmts_body (past StmtsS tag)
       while n.kind != ParRi:
         trGoto c, dest, n
+      inc n  # skip stmts_body ParRi
       emitJump dest, beforeLoopState, info
       emitLabel dest, afterLoopState, info
       skipParRi n  # skip loop ParRi
-  of IteV, ItecV:
-    let hasSuspension = containsSuspensionPoint(c, n)
-    if not hasSuspension:
-      dest.takeTree n
     else:
+      dest.takeTree n
+  of IteV, ItecV:
+    if containsSuspensionPoint(c, n):
       inc n
       var lthen = c.currentProc.labelCounter
       inc c.currentProc.labelCounter
@@ -943,6 +947,8 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
       emitJump dest, lend, info
       emitLabel dest, lend, info
       skipParRi n
+    else:
+      dest.takeTree n
   else:
     let sk = n.stmtKind
     let ek = n.exprKind
@@ -967,7 +973,17 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
           if addLabel:
             emitLabel dest, c.currentProc.labelCounter, info
             inc c.currentProc.labelCounter
-        else:
+        of CallS, CmdS, ResultS, ProcS, FuncS, IteratorS,
+            ConverterS, MethodS, MacroS, TemplateS, TypeS,
+            BlockS, EmitS, AsgnS, ScopeS, IfS, WhenS,
+            BreakS, ContinueS, ForS, WhileS, CaseS, RetS,
+            YldS, StmtsS, PragmasS, PragmaxS, InclS, ExclS,
+            IncludeS, ImportS, ImportasS, FromimportS,
+            ImportexceptS, ExportS, ExportexceptS, CommentS,
+            DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS,
+            AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
+            StaticstmtS, BindS, MixinS, UsingS, AsmS,
+            DeferS, NoStmt:
           dest.takeToken n
           while n.kind != ParRi:
             trGoto c, dest, n
@@ -1317,7 +1333,7 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
   discard c.procStack.pop()
   c.typeCache.closeScope()
   if isCoroutine:
-    generateCoroutineType(c, dest, sym)
+    generateCoroutineType(c, c.coroTypes, sym)
     generateCoroutineHelpers(c, dest, sym, iter)
   swap(c.currentProc, currentProc)
 
@@ -1376,7 +1392,12 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.typeCache.openScope()
       trSons(c, dest, n)
       c.typeCache.closeScope()
-    else:
+    of CallS, CmdS, BlockS, IfS, WhenS, WhileS, CaseS,
+        StmtsS, PragmaxS, InclS, ExclS, ImportasS,
+        ExportexceptS, DiscardS, TryS, UnpackdeclS,
+        AssumeS, AssertS, CallstrlitS, InfixS, PrefixS,
+        HcallS, StaticstmtS, BindS, MixinS, UsingS,
+        AsmS, DeferS, NoStmt:
       case n.exprKind
       of CallKinds - {DelayX}:
         trCall c, dest, n
@@ -1388,7 +1409,27 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trSuspend c, dest, n
       of TypeofX:
         takeTree dest, n
-      else:
+      of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX,
+          AddrX, NilX, InfX, NeginfX, NanX, FalseX,
+          TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX,
+          AlignofX, OffsetofX, OconstrX, AconstrX,
+          BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
+          MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX,
+          BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX,
+          ConvX, CchoiceX, OchoiceX, PragmaxX, QuotedX,
+          HderefX, DdotX, HaddrX, NewrefX, NewobjX,
+          TupX, TupconstrX, SetconstrX, TabconstrX,
+          AshrX, BaseobjX, HconvX, DconvX, CompilesX,
+          DeclaredX, DefinedX, AstToStrX, InstanceofX,
+          HighX, LowX, UnpackX, FieldsX, FieldpairsX,
+          EnumtostrX, IsmainmoduleX, DefaultobjX,
+          DefaulttupX, DefaultdistinctX, ExprX, DoX,
+          ArratX, TupatX, PlussetX, MinussetX, MulsetX,
+          XorsetX, EqsetX, LesetX, LtsetX, InsetX,
+          CardX, EmoveX, DestroyX, DupX, CopyX,
+          WasmovedX, SinkhX, TraceX,
+          InternalTypeNameX, InternalFieldPairsX,
+          FailedX, IsX, EnvpX, KvX, NoExpr:
         case n.njvlKind
         of LoopV:
           # No suspension points inside this loop → simple while loop
@@ -1479,19 +1520,21 @@ proc generateContinuationProcImpl(): Cursor =
 proc transformToCps*(pass: var Pass) =
   var n = pass.n  # Extract cursor locally
   var c = Context(thisModuleSuffix: pass.moduleSuffix,
-    typeCache: createTypeCache(),
+    typeCache: createTypeCache(), coroTypes: createTokenBuf(10),
     continuationProcImpl: generateContinuationProcImpl())
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS
-  pass.dest.takeToken n
+  c.coroTypes.takeToken n
   while n.kind != ParRi:
     tr(c, pass.dest, n)
-  pass.dest.takeToken n # ParRi
   for (sym, start) in c.shouldPublish:
     var buf = createTokenBuf(16)
     buf.copyTree pass.dest.cursorAt(start)
     endRead(pass.dest)
     publishSignature buf, sym, 0
+  c.coroTypes.add pass.dest # concat coroTypes and other statements
+  c.coroTypes.takeToken n # ParRi
+  swap c.coroTypes, pass.dest
   c.typeCache.closeScope()
 
 when isMainModule:

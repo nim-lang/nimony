@@ -64,31 +64,6 @@ proc `=dup`*(x: NifBuilder): NifBuilder {.nodestroy.} =
   if result.p != nil:
     inc result.p.counter
 
-proc `=destroy`*(n: NifCursor) =
-  if n.owner.p != nil:
-    endRead(n.owner.p[].buf)
-  `=destroy`(n.owner)
-
-proc `=wasMoved`*(n: var NifCursor) =
-  `=wasMoved`(n.owner)
-  n.cursor = default(Cursor)
-
-template sameReader(a, b: NifCursor): bool =
-  a.owner.p == b.owner.p and toUniqueId(a.cursor) == toUniqueId(b.cursor)
-
-proc `=copy`*(dest: var NifCursor; src: NifCursor) =
-  if not sameReader(dest, src):
-    `=destroy`(dest)
-    if src.owner.p != nil:
-      dest.owner = src.owner
-      dest.cursor = shareRead(dest.owner.p[].buf, src.cursor)
-
-proc `=dup`*(src: NifCursor): NifCursor =
-  result = default(NifCursor)
-  if src.owner.p != nil:
-    result.owner = src.owner
-    result.cursor = shareRead(result.owner.p[].buf, src.cursor)
-
 proc initPayload(buf: sink TokenBuf): ptr TreePayload =
   result = cast[ptr TreePayload](alloc0(sizeof(TreePayload)))
   result.counter = 0
@@ -230,17 +205,17 @@ proc createTree*(): NifBuilder =
   ## Creates an empty mutable `NifBuilder`.
   createTree(createTokenBuf())
 
-proc snapshot*(tree: sink NifBuilder): NifCursor =
+proc snapshot*(tree: var NifBuilder): NifCursor =
   ## Returns a read-only snapshot positioned at the first top-level token of
   ## `tree`.
   ##
-  ## The returned `NifCursor` keeps the underlying tree alive automatically. The
-  ## original tree remains writable and detaches on the next mutation.
+  ## The returned `NifCursor` keeps the underlying data alive automatically via
+  ## the Cursor's COW mechanism. The original tree remains writable and
+  ## detaches on the next mutation.
   ##
   ## `tree` must not be empty; use `isEmpty` first when that is expected.
   assert not tree.isEmpty, "cannot snapshot empty NifBuilder"
-  result = NifCursor(owner: tree)
-  result.cursor = beginRead(result.owner.p[].buf)
+  result = NifCursor(cursor: beginRead(tree.p[].buf))
 
 template withTree*(t: var NifBuilder; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma; info: LineInfo; body: untyped) =
   ## Appends a tree node of `kind` to `t`, runs `body` to emit its children, and
@@ -388,6 +363,7 @@ proc loadPluginInput*(filename = paramStr(1)): NifCursor =
   try:
     var tree = createTree(fromStream(inp))
     result = snapshot(tree)
+    # tree is destroyed here, but NifCursor's cursor keeps data alive via COW
   finally:
     close(inp)
 
@@ -689,13 +665,14 @@ proc validateConstructedNode(n: var Cursor): ValidationError =
 proc validateConstructedTree(tree: sink NifBuilder): NifBuilder =
   if tree.isEmpty:
     return tree
+  var tree = tree
   var n = snapshot(tree)
   var current = n.cursor
   let err = validateConstructedNode(current)
   if err.found:
     result = createErrorTree(err.info, err.msg, err.orig)
   else:
-    result = ensureMove(n.owner)
+    result = ensureMove(tree)
 
 proc parseNifFragment(text: string): NifBuilder =
   validateConstructedTree(createTree(parseNifBuffer(text)))

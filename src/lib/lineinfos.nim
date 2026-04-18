@@ -32,8 +32,9 @@ const
   LineMax = (1 shl LineBits) - 1
   ColMax = (1 shl ColBits) - 1
 
-static:
-  assert AsideBit + FileBits + LineBits + ColBits == 32
+when not defined(nimony):
+  static:
+    assert AsideBit + FileBits + LineBits + ColBits == 32
 
 type
   PackedLineInfo* = distinct uint32
@@ -97,7 +98,7 @@ proc getFileId*(m: LineInfoManager; i: PackedLineInfo): FileId =
 
 proc memSize*(m: LineInfoManager): int = m.aside.len
 
-when isMainModule:
+when isMainModule and not defined(nimony):
   var m = LineInfoManager(aside: @[])
   for i in 0'i32..<16388'i32:
     for col in 0'i32..<100'i32:

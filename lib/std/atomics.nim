@@ -125,6 +125,17 @@ proc atomicFence*(order: MemoryOrder) {.inline.} =
 proc atomicSignalFence*(order: MemoryOrder) {.inline.} =
   builtinSignalFence(toMem(order))
 
+# CPU pause hint for spin loops
+
+proc cpuRelax*() {.inline.} =
+  ## Hints the CPU that we are in a spin-wait loop.
+  ## Reduces power consumption and avoids memory-order violations
+  ## on hyper-threaded cores.
+  when defined(amd64) or defined(i386):
+    {.emit: "asm volatile(\"pause\");".}
+  elif defined(arm64) or defined(arm):
+    {.emit: "asm volatile(\"yield\");".}
+
 # Convenience
 
 proc atomicInc*[T: SomeInteger](location: var T; value: T = 1) {.inline.} =

@@ -1004,6 +1004,13 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       else:
         trSons c, n, WantT
 
+    of KvX:
+      if e.wantMutable:
+        cannotPassToVar c.dest, n.info, n
+        skip n
+      else:
+        trSons c, n, e
+
     else:
       case n.stmtKind
       of RetS:

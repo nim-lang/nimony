@@ -28,6 +28,7 @@ else:
 
 import ".." / gear2 / modnames
 import ".." / models / [tags, nifindex_tags]
+import phase_validator
 
 proc semStmt(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: bool)
 proc semStmtBranch(c: var SemContext; dest: var TokenBuf; it: var Item; isNewScope: bool)
@@ -103,7 +104,9 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
         checkBranch(it)
         skip it
         skipParRi it
-      else:
+      of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, EfldU, FldU,
+         WhenU, TypevarsU, CaseU, OfU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
+         UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU:
         error "illformed AST: `elif` or `else` inside `if` expected, got ", it
     # all branches are discardable
     result = true
@@ -128,7 +131,9 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
         checkBranch(it)
         skip it
         skipParRi it
-      else:
+      of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, EfldU, FldU,
+         WhenU, TypevarsU, CaseU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
+         UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU:
         error "illformed AST: `of`, `elif` or `else` inside `case` expected, got ", it
     # all branches are discardable
     result = true
@@ -1717,7 +1722,11 @@ proc exprToType(c: var SemContext; dest: var TokenBuf; exprType: Cursor; start: 
   of ErrT, AutoT:
     # propagate error
     discard
-  else:
+  of NoType, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT, TemplateT,
+     ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
+     StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+     DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, UntypedT, TypedT,
+     CstringT, PointerT, OrdinalT:
     # otherwise, is a static value
     if context != AllowValues:
       dest.shrink start
@@ -1971,7 +1980,18 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
     skip value
     var dummy = Item(n: value, typ: expected)
     semCaseOfValueImpl(c, dest, dummy, expected, seen)
-  else:
+  of NoExpr, ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX, InfX, NeginfX, NanX,
+     FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX, KvX, OconstrX,
+     AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
+     BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
+     CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
+     TupconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
+     PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, InstanceofX, ProccallX, HighX,
+     LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX,
+     DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
+     PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
+     DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
+     FailedX, IsX, EnvpX:
     let a = evalConstIntExpr(c, dest, orig, expected)
     if seen.containsOrIncl(a):
       buildErr c, dest, info, "value already handled"
@@ -2158,7 +2178,18 @@ proc semAsgn(c: var SemContext; dest: var TokenBuf; it: var Item) =
     semSubscriptAsgn c, dest, it, info
   of DotX, DdotX:
     semDotAsgn c, dest, it, info
-  else:
+  of NoExpr, ErrX, SufX, DerefX, PatX, ParX, AddrX, NilX, InfX, NeginfX, NanX,
+     FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX, KvX, OconstrX,
+     AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
+     BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
+     CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, HaddrX, NewrefX, NewobjX, TupX,
+     TupconstrX, SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
+     PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, InstanceofX, ProccallX, HighX,
+     LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX,
+     DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
+     PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
+     DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
+     FailedX, IsX, EnvpX:
     dest.addParLe(AsgnS, info)
     var a = Item(n: it.n, typ: c.types.autoType)
     let beforeLhs = dest.len
@@ -3442,7 +3473,11 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
     of ArrayT:
       dest.addSubtree it.typ
       takeParRi dest, it.n
-    else:
+    of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
+       TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, VarargsT,
+       StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+       DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, TypedescT,
+       UntypedT, TypedT, CstringT, PointerT, OrdinalT:
       # unknown expected type, give empty literal auto type, then match it
       dest.addSubtree c.types.autoType
       takeParRi dest, it.n
@@ -3461,7 +3496,11 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
     elem.typ = arr
     freshElemType = false
   of AutoT: discard
-  else:
+  of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
+     TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, VarargsT,
+     StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+     DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, TypedescT,
+     UntypedT, TypedT, CstringT, PointerT, OrdinalT:
     discard
 
   var ctx = ArrayConstrContext(
@@ -3485,22 +3524,25 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
   let typeStart = dest.len
   dest.buildTree ArrayT, info:
     dest.addSubtree elem.typ
-    dest.addParLe(RangetypeT, info)
-    var idxType = c.types.intType
-    if ctx.firstKeyType.typeKind != AutoT:
-      idxType = ctx.firstKeyType
-    dest.addSubtree idxType
-    var serr = false
-    dest.addIntLit(asSigned(ctx.firstIdx, serr), info)
-    dest.addIntLit(asSigned(ctx.firstIdx + createXint(count.int64 - 1), serr), info)
-    dest.addParRi()
+    dest.buildTree RangetypeT, info:
+      var idxType = c.types.intType
+      if ctx.firstKeyType.typeKind != AutoT:
+        idxType = ctx.firstKeyType
+      dest.addSubtree idxType
+      var serr = false
+      dest.addIntLit(asSigned(ctx.firstIdx, serr), info)
+      dest.addIntLit(asSigned(ctx.firstIdx + createXint(count.int64 - 1), serr), info)
   let expected = it.typ
   it.typ = typeToCursor(c, dest, typeStart)
 
   case expected.typeKind
   of AutoT, ArrayT:
     discard
-  else:
+  of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
+     TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, VarargsT,
+     StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+     DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, TypedescT,
+     UntypedT, TypedT, CstringT, PointerT, OrdinalT:
     var convMatch = default(Match)
     let convArg = CallArg(n: orig, typ: it.typ)
     if tryConverterMatch(c, convMatch, expected, convArg):
@@ -3530,7 +3572,11 @@ proc semCurly(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[Se
     of SetT:
       dest.addSubtree it.typ
       takeParRi dest, it.n
-    else:
+    of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
+       TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
+       StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+       DistinctT, ItertypeT, RangetypeT, UarrayT, SymkindT, TypekindT, TypedescT,
+       UntypedT, TypedT, CstringT, PointerT, OrdinalT:
       # unknown expected type, give empty literal auto type, then match it
       dest.addSubtree c.types.autoType
       takeParRi dest, it.n
@@ -3549,7 +3595,11 @@ proc semCurly(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[Se
     elem.typ = t
     freshElemType = false
   of AutoT: discard
-  else:
+  of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
+     TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
+     StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+     DistinctT, ItertypeT, RangetypeT, UarrayT, SymkindT, TypekindT, TypedescT,
+     UntypedT, TypedT, CstringT, PointerT, OrdinalT:
     buildErr c, dest, info, "invalid expected type for set constructor: " & typeToString(it.typ)
   var elemStart = dest.len
   var elemInfo = elem.n.info
@@ -3860,7 +3910,9 @@ proc caseBranchMatchesExpr(c: var SemContext; dest: var TokenBuf; branch, matche
       if value >= a and value <= b:
         return true
       skipParRi(branch)
-    else:
+    of NoSub, NilU, NotnilU, KvU, VvU, RangesU, ParamU, TypevarU, EfldU, FldU,
+       WhenU, ElifU, ElseU, TypevarsU, CaseU, OfU, StmtsU, ParamsU, PragmasU,
+       EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU:
       if sameTrees(branch, matched):
         return true
       skip branch
@@ -3936,7 +3988,9 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         else:
           skip n
         skipParRi n
-      else:
+      of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, EfldU, FldU,
+         WhenU, ElifU, TypevarsU, CaseU, StmtsU, ParamsU, PragmasU,
+         EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU:
         error "illformed AST inside case object: ", n
 
   if selectorSymId notin setFields:
@@ -4786,7 +4840,11 @@ proc semTypedAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
     it.typ = c.types.charType
   of SetT:
     it.typ = c.types.uint8Type
-  else:
+  of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
+     TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, VarargsT,
+     StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+     DistinctT, ItertypeT, RangetypeT, AutoT, SymkindT, TypekindT, TypedescT, UntypedT, TypedT,
+     PointerT, OrdinalT:
     c.buildErr dest, lhsInfo, "invalid lhs type for typed index: " & typeToString(typ)
   takeParRi dest, it.n
   commonType c, dest, it, beforeExpr, expected
@@ -4886,7 +4944,11 @@ proc buildLowValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pac
       var field = asEnumDecl(decl.body).firstField
       let first = asLocal(field)
       dest.add symToken(first.name.symId, info)
-    else:
+    of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
+       TemplateT, ObjectT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
+       StaticT, TupleT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+       DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
+       UntypedT, TypedT, CstringT, PointerT, OrdinalT:
       c.buildErr dest, info, "invalid type for low: " & typeToString(typ)
   of ParLe:
     case typ.typeKind
@@ -4935,7 +4997,11 @@ proc buildLowValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pac
     of FloatT:
       dest.addParLe(NegInfX, info)
       dest.addParRi()
-    else:
+    of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
+       TemplateT, ObjectT, EnumT, ProctypeT, VoidT, PtrT, VarargsT,
+       StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+       DistinctT, ItertypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
+       UntypedT, TypedT, CstringT, PointerT, OrdinalT:
       c.buildErr dest, info, "invalid type for low: " & typeToString(typ)
   else:
     c.buildErr dest, info, "invalid type for low: " & typeToString(typ)
@@ -4959,7 +5025,11 @@ proc buildHighValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pa
         skip field
       let last = asLocal(lastField)
       dest.add symToken(last.name.symId, info)
-    else:
+    of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
+       TemplateT, ObjectT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
+       StaticT, TupleT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+       DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
+       UntypedT, TypedT, CstringT, PointerT, OrdinalT:
       c.buildErr dest, info, "invalid type for high: " & typeToString(typ)
   of ParLe:
     case typ.typeKind
@@ -5014,7 +5084,11 @@ proc buildHighValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pa
     of FloatT:
       dest.addParLe(InfX, info)
       dest.addParRi()
-    else:
+    of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
+       TemplateT, ObjectT, EnumT, ProctypeT, VoidT, PtrT, VarargsT,
+       StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+       DistinctT, ItertypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
+       UntypedT, TypedT, CstringT, PointerT, OrdinalT:
       c.buildErr dest, info, "invalid type for high: " & typeToString(typ)
   else:
     c.buildErr dest, info, "invalid type for high: " & typeToString(typ)
@@ -5103,7 +5177,11 @@ proc semDeref(c: var SemContext; dest: var TokenBuf; it: var Item) =
   of RefT, PtrT:
     it.typ = t
     inc it.typ # get to base type
-  else:
+  of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
+     TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, ArrayT, VarargsT,
+     StaticT, TupleT, OnumT, AnumT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+     DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
+     UntypedT, TypedT, CstringT, PointerT, OrdinalT:
     c.buildErr dest, info, "invalid type for deref: " & typeToString(t)
   commonType c, dest, it, beforeExpr, expected
 
@@ -5685,7 +5763,12 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
           discard
       of PragmaxS:
         semPragmaExpr c, dest, it
-      of ImportasS, StaticstmtS, BindS, MixinS, AsmS:
+      of MixinS, BindS:
+        # `mixin` / `bind` affect symbol resolution in untyped template/generic
+        # bodies (handled in `semuntyped`). In a fully-typed context they are
+        # effectively no-ops; keep the tree so later passes see the statement.
+        takeTree dest, it.n
+      of ImportasS, StaticstmtS, AsmS:
         buildErr c, dest, it.n.info, "unsupported statement: " & $stmtKind(it.n)
         skip it.n
       of DeferS:
@@ -6012,6 +6095,18 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       takeParRi dest, it.n
     of EnvpX:
       bug "frontend should not encounter `envp`"
+    of KvX:
+      takeToken dest, it.n
+      var keyIt = Item(n: it.n, typ: c.types.autoType)
+      semExpr c, dest, keyIt
+      it.n = keyIt.n
+      var valIt = Item(n: it.n, typ: c.types.autoType)
+      semExpr c, dest, valIt
+      it.n = valIt.n
+      if it.n.kind != ParRi:
+        takeTree dest, it.n
+      takeParRi dest, it.n
+      it.typ = valIt.typ
 
   of ParRi, EofToken, SymbolDef, UnknownToken, DotToken:
     buildErr c, dest, it.n.info, "expression expected"
@@ -6503,6 +6598,22 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
   else:
     quit 1
 
+proc maybeValidatePostSem(dest: var TokenBuf; moduleName: string) =
+  ## When compiled with `-d:validatePasses`, validates that `dest`
+  ## conforms to the post-sem subset of `doc/tags.md`. Reports violations
+  ## on stderr and aborts with a non-zero exit status so that drift from
+  ## the spec is a hard error. Set `NIMONY_VALIDATE_SOFT=1` to downgrade
+  ## violations to warnings (useful while iterating on the grammar).
+  when defined(validatePasses):
+    let phase = postSemPhase()
+    let violations = validate(dest, phase)
+    if violations.len > 0:
+      stderr.writeLine "[" & moduleName & "] post-sem validator found " &
+        $violations.len & " violation(s)" &
+        (if violations.len >= 200: " (truncated)" else: "") & ":"
+      discard reportViolations(phase.name, violations)
+      quit 1
+
 type
   ModuleState = object
     owningBuf: TokenBuf
@@ -6574,6 +6685,7 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
   for i in 0..<modules.len:
     semcheckPostProcess modules[i].c, modules[i].dest
     if reportErrors(modules[i].dest) == 0:
+      maybeValidatePostSem modules[i].dest, modules[i].outfile
       writeOutput modules[i].c, modules[i].dest, modules[i].outfile
     else:
       quit 1
@@ -6609,6 +6721,7 @@ proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFla
     handleTypePlugins c, dest
 
   if reportErrors(dest) == 0:
+    maybeValidatePostSem dest, outfile
     writeOutput c, dest, outfile
   else:
     quit 1

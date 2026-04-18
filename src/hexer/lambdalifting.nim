@@ -43,6 +43,7 @@ import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
   builtintypes, langmodes, renderer, reporters]
 import hexer_context, passes
+include ".." / nimony / nif_annotations
 
 type
   EnvMode = enum
@@ -68,6 +69,7 @@ type
     env: CurrentEnv
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
+  {.ensuresNif: addedAny(dest).}
 
 proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
@@ -212,7 +214,12 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.typeCache.openScope()
       trSons(c, dest, n)
       c.typeCache.closeScope()
-    else:
+    of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS, CaseS,
+      RetS, YldS, StmtsS, PragmaxS, InclS, ExclS, ImportasS,
+      ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
+      AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
+      StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
+      NoStmt:
       case n.exprKind
       of CallKinds:
         trCall c, dest, n
@@ -220,7 +227,24 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         takeTree dest, n
       of NilX:
         trNil c, dest, n
-      else:
+      of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX,
+        InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
+        NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
+        AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX,
+        SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX,
+        BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX,
+        CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, DdotX,
+        HaddrX, NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
+        TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CompilesX,
+        DeclaredX, DefinedX, AstToStrX, InstanceofX, HighX,
+        LowX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
+        IsmainmoduleX, DefaultobjX, DefaulttupX,
+        DefaultdistinctX, Delay0X, SuspendX, ExprX, DoX,
+        ArratX, TupatX, PlussetX, MinussetX, MulsetX, XorsetX,
+        EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
+        DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
+        InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
+        EnvpX, KvX, NoExpr:
         trSons(c, dest, n)
   of ParRi:
     bug "unexpected ')' inside"
@@ -239,7 +263,8 @@ const
   EnvParamName = "`ep.0"
   EnvLocalName = "`el.0"
 
-proc addRootRef(dest: var TokenBuf; info: PackedLineInfo) =
+proc addRootRef(dest: var TokenBuf; info: PackedLineInfo)
+  {.ensuresNif: addedType(dest).} =
   dest.copyIntoKind RefT, info:
     dest.addSymUse pool.syms.getOrIncl(RootObjName), info
 
@@ -247,7 +272,8 @@ type
   UntypedEnvMode = enum
     WantValue, WantAddr
 
-proc untypedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv; mode=WantValue) =
+proc untypedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv; mode=WantValue)
+  {.ensuresNif: addedExpr(dest).} =
   assert env.s != SymId(0)
   case env.mode
   of EnvIsLocal:
@@ -269,7 +295,8 @@ proc untypedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv; mode=
     else:
       dest.addSymUse env.s, info
 
-proc typedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv) =
+proc typedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv)
+  {.ensuresNif: addedExpr(dest).} =
   assert env.s != SymId(0)
   case env.mode
   of EnvIsLocal:
@@ -283,6 +310,7 @@ proc typedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv) =
       dest.addSymUse env.s, info
 
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor)
+  {.ensuresNif: addedAny(dest).}
 
 proc treSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
@@ -348,7 +376,8 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.takeTree n # don't transform the potential proc body here
     dest.takeParRi n
 
-proc treType(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc treType(c: var Context; dest: var TokenBuf; n: var Cursor)
+  {.ensuresNif: addedType(dest).} =
   # Like `tre` but prefer the type interpretation. (Matters for ProcS etc.)
   if n.typeKind in RoutineTypes:
     treProcType(c, dest, n)
@@ -527,9 +556,8 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tmp = n.symId
       copyIntoKind dest, TupatX, info:
         #tre c, dest, n
-        dest.add n
+        takeToken dest, n
         dest.addIntLit 0, info
-      inc n
     else:
       dest.addParLe(ExprX, info)
       copyIntoKind dest, StmtsS, info:
@@ -628,7 +656,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       treLocal c, dest, n
     of ProcS, FuncS, MacroS, MethodS, ConverterS:
       treProc c, dest, n
-    of IteratorS, TemplateS, EmitS, BreakS, ContinueS,
+    of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
       ForS, IncludeS, ImportS, FromimportS, ImportExceptS,
       ExportS, CommentS,
       PragmasS:
@@ -637,7 +665,12 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.typeCache.openScope()
       treSons(c, dest, n)
       c.typeCache.closeScope()
-    else:
+    of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS, CaseS,
+      RetS, YldS, StmtsS, PragmaxS, InclS, ExclS, ImportasS,
+      ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
+      AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
+      StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
+      NoStmt:
       case n.exprKind
       of CallKinds:
         genCall(c, dest, n)
@@ -667,7 +700,24 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         skipParRi n
       of TypeofX:
         takeTree dest, n
-      else:
+      of ErrX, SufX, AtX, DerefX, PatX, ParX, AddrX, NilX,
+        InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
+        NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
+        AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX,
+        SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX,
+        BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CchoiceX,
+        OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX,
+        NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
+        TabconstrX, AshrX, BaseobjX, HconvX, DconvX,
+        CompilesX, DeclaredX, DefinedX, AstToStrX, InstanceofX,
+        HighX, LowX, UnpackX, FieldsX, FieldpairsX,
+        EnumtostrX, IsmainmoduleX, DefaultobjX, DefaulttupX,
+        DefaultdistinctX, Delay0X, SuspendX, ExprX, DoX,
+        ArratX, TupatX, PlussetX, MinussetX, MulsetX, XorsetX,
+        EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
+        DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
+        InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
+        KvX, NoExpr:
         if n.typeKind in RoutineTypes:
           treProcType(c, dest, n)
         elif n.substructureKind == KvU:

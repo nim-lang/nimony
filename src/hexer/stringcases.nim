@@ -71,6 +71,8 @@ proc getSimpleStringLit(c: var EContext; n: var Cursor): StrId =
       skip n
       result = getSimpleStringLit(c, n)
       skipParRi n
+    of KvX:
+      bug "not a string literal"
     else:
       bug "not a string literal"
 

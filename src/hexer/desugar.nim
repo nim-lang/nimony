@@ -5,6 +5,7 @@ include nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
   builtintypes, langmodes, renderer, reporters]
 import hexer_context, passes
+include ".." / nimony / nif_annotations
 
 type
   Context = object
@@ -57,7 +58,22 @@ proc needsTemp(n: Cursor): bool =
           return true
         skip n
       result = false
-    else:
+    of ErrX, DerefX, AndX, OrX, XorX, NotX, NegX, AlignofX,
+        OffsetofX, OconstrX, AconstrX, BracketX, CurlyX, CurlyatX,
+        OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX,
+        BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX,
+        ConvX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX, QuotedX,
+        HderefX, NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
+        TabconstrX, AshrX, BaseobjX, HconvX, CallstrlitX, InfixX,
+        PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX,
+        InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
+        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
+        DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
+        Delay0X, SuspendX, DoX, PlussetX, MinussetX, MulsetX,
+        XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
+        DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
+        InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
+        EnvpX, KvX, NoExpr:
       result = true
   else:
     result = true
@@ -69,6 +85,7 @@ proc skipParRi(n: var Cursor) =
     bug "expected ')', but got: ", n
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false)
+  {.ensuresNif: addedAny(dest).}
 
 proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   if n.substructureKind == KvU:
@@ -731,7 +748,14 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
           #trSetType(c, dest, n)
           # leave this to nifcgen
           trSons(c, dest, n)
-        else:
+        of ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT,
+            ConverterT, MethodT, MacroT, TemplateT, ObjectT,
+            EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT,
+            PtrT, ArrayT, VarargsT, StaticT, TupleT, OnumT,
+            AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT,
+            ConceptT, DistinctT, ItertypeT, RangetypeT, UarrayT,
+            AutoT, SymkindT, TypekindT, TypedescT, UntypedT,
+            TypedT, CstringT, PointerT, OrdinalT, NoType:
           trSons(c, dest, n)
       of InclS, ExclS:
         genInclExcl(c, dest, n)
@@ -743,7 +767,11 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
               copyInto dest, n:
                 takeTree dest, n # keep set constructor
                 tr(c, dest, n)
-            else:
+            of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+                TypevarU, EfldU, FldU, WhenU, ElifU, ElseU,
+                TypevarsU, CaseU, StmtsU, ParamsU, PragmasU,
+                EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU,
+                FinU, UncheckedU, NoSub:
               tr(c, dest, n)
       of LocalDecls:
         trLocal c, dest, n
@@ -765,7 +793,11 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         c.typeCache.closeScope()
       of StmtsS:
         trSons(c, dest, n, isTopScope = isTopScope)
-      else:
+      of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS, RetS,
+          YldS, PragmaxS, ImportasS, ExportexceptS, DiscardS,
+          TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
+          CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS,
+          BindS, MixinS, UsingS, AsmS, DeferS:
         trSons(c, dest, n)
     of SetConstrX:
       genSetConstr(c, dest, n)
@@ -786,7 +818,23 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
       takeParRi dest, n
     of ExprX:
       trExpr c, dest, n
-    else:
+    of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
+        InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
+        NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
+        AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
+        MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
+        BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX,
+        CmdX, CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX,
+        HaddrX, NewrefX, NewobjX, TupX, TupconstrX, TabconstrX,
+        AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
+        PrefixX, HcallX, CompilesX, DeclaredX, DefinedX,
+        AstToStrX, InstanceofX, ProccallX, HighX, LowX, UnpackX,
+        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
+        DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
+        Delay0X, SuspendX, DoX, ArratX, TupatX, EmoveX,
+        DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
+        InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
+        EnvpX, KvX:
       trSons(c, dest, n)
   of ParRi:
     bug "unexpected ')' inside"

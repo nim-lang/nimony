@@ -14,7 +14,6 @@ import nimony_model, decls, programs, xints, semdata, renderer, builtintypes, ty
 type
   EvalContext* = object
     c: ptr SemContext
-    values: seq[TokenBuf]
     trueValue, falseValue: Cursor
 
 proc isConstBoolValue*(n: Cursor): bool =
@@ -33,7 +32,7 @@ proc isConstCharValue*(n: Cursor): bool =
   n.kind == CharLit
 
 proc initEvalContext*(c: ptr SemContext): EvalContext =
-  result = EvalContext(c: c, values: @[])
+  result = EvalContext(c: c)
 
 proc skipParRi(n: var Cursor) =
   if n.kind == ParRi:
@@ -42,30 +41,27 @@ proc skipParRi(n: var Cursor) =
     error "expected ')', but got: ", n
 
 proc error(c: var EvalContext, msg: string, info: PackedLineInfo): Cursor =
-  let i = c.values.len
-  c.values.add createTokenBuf(4)
-  c.values[i].addParLe ErrT, info
-  c.values[i].addDotToken()
-  c.values[i].addStrLit msg
-  c.values[i].addParRi()
-  result = cursorAt(c.values[i], 0)
+  var buf = createTokenBuf(4)
+  buf.addParLe ErrT, info
+  buf.addDotToken()
+  buf.addStrLit msg
+  buf.addParRi()
+  result = cursorAt(buf, 0)
 
 proc getTrueValue(c: var EvalContext): Cursor =
   if c.trueValue == default(Cursor):
-    let i = c.values.len
-    c.values.add createTokenBuf(2)
-    c.values[i].addParLe(TrueX, NoLineInfo)
-    c.values[i].addParRi()
-    c.trueValue = cursorAt(c.values[i], 0)
+    var buf = createTokenBuf(2)
+    buf.addParLe(TrueX, NoLineInfo)
+    buf.addParRi()
+    c.trueValue = cursorAt(buf, 0)
   result = c.trueValue
 
 proc getFalseValue(c: var EvalContext): Cursor =
   if c.falseValue == default(Cursor):
-    let i = c.values.len
-    c.values.add createTokenBuf(2)
-    c.values[i].addParLe(FalseX, NoLineInfo)
-    c.values[i].addParRi()
-    c.falseValue = cursorAt(c.values[i], 0)
+    var buf = createTokenBuf(2)
+    buf.addParLe(FalseX, NoLineInfo)
+    buf.addParRi()
+    c.falseValue = cursorAt(buf, 0)
   result = c.falseValue
 
 proc getConstOrdinalValue*(val: Cursor): xint =
@@ -88,10 +84,9 @@ proc getConstOrdinalValue*(val: Cursor): xint =
     result = createNaN()
 
 proc singleToken*(c: var EvalContext; tok: PackedToken): Cursor =
-  let i = c.values.len
-  c.values.add createTokenBuf(1)
-  c.values[i].add tok
-  result = cursorAt(c.values[i], 0)
+  var buf = createTokenBuf(1)
+  buf.add tok
+  result = cursorAt(buf, 0)
 
 proc stringValue(c: var EvalContext; s: string; info: PackedLineInfo): Cursor {.inline.} =
   result = singleToken(c, strToken(pool.strings.getOrIncl(s), info))
@@ -185,12 +180,11 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
       evaluatedCall.addSubtree x
     evaluatedCall.addParRi()
 
-    let i = c.values.len
-    c.values.add createTokenBuf(12)
+    var resultBuf = createTokenBuf(12)
     assert c.c.executeCall != nil
-    let errorMsg = c.c.executeCall(c.c[], routine, c.values[i], cursorAt(evaluatedCall, 0), n.info)
+    let errorMsg = c.c.executeCall(c.c[], routine, resultBuf, cursorAt(evaluatedCall, 0), n.info)
     if errorMsg.len == 0:
-      result = cursorAt(c.values[i], 0)
+      result = cursorAt(resultBuf, 0)
     else:
       result = c.error("cannot evaluate expression at compile time: " & asNimCode(n) & "\n\n" & errorMsg, n.info)
 
@@ -539,10 +533,9 @@ proc evalSetOp(c: var EvalContext; n: var Cursor; op: ExprKind): Cursor =
   else:
     assert false, "unexpected operation: " & $op
 
-  let valPos = c.values.len
-  c.values.add createTokenBuf()
-  c.values[valPos].bitSetToTokens(setRes, elementTyp, info)
-  result = cursorAt(c.values[valPos], 0)
+  var buf = createTokenBuf()
+  buf.bitSetToTokens(setRes, elementTyp, info)
+  result = cursorAt(buf, 0)
 
 proc evalCast(c: var EvalContext; typ, val, nOrig: Cursor): Cursor =
   let dtk = typ.typeKind
@@ -804,36 +797,35 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         result = boolValue(c, val)
     of AconstrX, SetconstrX, TupconstrX,
         BracketX, CurlyX, TupX:
-      let valPos = c.values.len
-      c.values.add createTokenBuf(16)
-      c.values[valPos].add n
+      var buf = createTokenBuf(16)
+      buf.add n
       inc n
       if exprKind in {AconstrX, SetconstrX, TupconstrX}:
         # add type
-        takeTree c.values[valPos], n
+        takeTree buf, n
       while n.kind != ParRi:
         if (exprKind == SetConstrX and n.substructureKind == RangeU) or
            (exprKind == AconstrX and n.substructureKind == KvU):
-          c.values[valPos].takeToken n
+          buf.takeToken n
           var a = propagateError eval(c, n)
-          c.values[valPos].addSubtree a
+          buf.addSubtree a
           var b = propagateError eval(c, n)
-          c.values[valPos].addSubtree b
-          c.values[valPos].takeToken n
+          buf.addSubtree b
+          buf.takeToken n
         elif exprKind == TupconstrX:
           let isKv = n.substructureKind == KvU
           if isKv:
             inc n # tag
             skip n # key
           let elem = propagateError eval(c, n)
-          c.values[valPos].addSubtree elem
+          buf.addSubtree elem
           if isKv:
             inc n
         else:
           let elem = propagateError eval(c, n)
-          c.values[valPos].addSubtree elem
-      takeParRi c.values[valPos], n
-      result = cursorAt(c.values[valPos], 0)
+          buf.addSubtree elem
+      takeParRi buf, n
+      result = cursorAt(buf, 0)
     of CallKinds:
       result = evalCall(c, n)
       skip n

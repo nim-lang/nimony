@@ -342,12 +342,12 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       case n.substructureKind
       of RangesU, RangeU:
         result = getTypeImpl(c, n.firstSon, flags)
-      of KvU:
-        var n = n
-        inc n # skip "kv"
-        skip n # skip key
-        result = getTypeImpl(c, n, flags)
       else: discard
+  of KvX:
+    var m = n
+    inc m # skip "kv"
+    skip m # skip key
+    result = getTypeImpl(c, m, flags)
   of AtX, ArrAtX:
     result = getTypeImpl(c, n.firstSon, flags)
     case typeKind(result)

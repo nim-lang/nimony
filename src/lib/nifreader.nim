@@ -502,7 +502,7 @@ proc jumpTo*(r: var Reader; offset: int) {.inline.} =
 proc indexStartsAt*(r: Reader): int =
   r.indexAt
 
-when isMainModule:
+when isMainModule and not defined(nimony):
   #const test = r"(.nif24)(stmts :\5B\5D=)"
   const test = "nimcache/sysvq0asl.s.nif"
   var r = open(test)
