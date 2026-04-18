@@ -56,7 +56,7 @@ func rawGet[K: Keyable, V](t: Table[K, V]; k: K; kh: Hash): int =
 func contains*[K: Keyable, V](t: Table[K, V]; k: K): bool {.inline.} =
   rawGet(t, k, hash(k)) >= 0
 
-func hasKey*[K, V](t: Table[K, V]; k: K): bool {.inline.} =
+func hasKey*[K: Keyable, V](t: Table[K, V]; k: K): bool {.inline.} =
   contains(t, k)
 
 func getOrDefault*[K: Keyable, V: HasDefault](t: Table[K, V]; k: K): V =
@@ -93,7 +93,7 @@ else:
       raise KeyError
     t.data[idx][1]
 
-func rawPut[K, V](t: var Table[K, V]; k: sink K; v: sink V; h: Hash) =
+func rawPut[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V; h: Hash) =
   if t.data.len == HashThreshold:
     fillHashPart t
   elif mustRehash(t.hashes.len, t.data.len):

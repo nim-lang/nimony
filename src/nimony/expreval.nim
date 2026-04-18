@@ -538,7 +538,8 @@ proc evalSetOp(c: var EvalContext; n: var Cursor; op: ExprKind): Cursor =
   result = cursorAt(buf, 0)
 
 proc evalCast(c: var EvalContext; typ, val, nOrig: Cursor): Cursor =
-  let dtk = typ.typeKind
+  let targetType = toTypeImpl(typ)
+  let dtk = targetType.typeKind
   if dtk == FloatT:
     if val.kind == FloatLit:
       result = val
@@ -585,6 +586,12 @@ proc evalCast(c: var EvalContext; typ, val, nOrig: Cursor): Cursor =
       cannotEval nOrig
     else:
       result = boolValue(c, x != zero())
+  elif dtk in {EnumT, HoleyEnumT, AnumT}:
+    let x = getConstOrdinalValue(val)
+    if isNaN(x):
+      cannotEval nOrig
+    else:
+      result = val
   elif dtk in {PointerT, PtrT, RefT, CstringT}:
     if val.exprKind == NilX:
       result = val
@@ -682,12 +689,13 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       inc n
       var isDistinct = false
       var typ = skipDistinct(n, isDistinct)
+      let targetType = toTypeImpl(typ)
       skip n
       let val = propagateError eval(c, n)
       skipParRi n
-      if typ.typeKind == CstringT and val.kind == StringLit:
+      if targetType.typeKind == CstringT and val.kind == StringLit:
         result = val
-      elif typ.typeKind == FloatT:
+      elif targetType.typeKind == FloatT:
         if val.kind == FloatLit:
           result = val
         else:
@@ -695,7 +703,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
           let x = getConstOrdinalValue(val)
           let f = toFloat64(x)
           result = floatValue(c, f, nOrig.info)
-      elif typ.typeKind == UIntT:
+      elif targetType.typeKind == UIntT:
         let x = getConstOrdinalValue(val)
         var err = false
         let u = asUnsigned(x, err)
@@ -703,7 +711,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
           cannotEval nOrig
         else:
           result = uintValue(c, u, nOrig.info)
-      elif typ.typeKind == IntT:
+      elif targetType.typeKind == IntT:
         let x = getConstOrdinalValue(val)
         var err = false
         let i = asSigned(x, err)
@@ -711,7 +719,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
           cannotEval nOrig
         else:
           result = intValue(c, i, nOrig.info)
-      elif typ.typeKind == CharT:
+      elif targetType.typeKind == CharT:
         let x = getConstOrdinalValue(val)
         var err = false
         let ch = asUnsigned(x, err)
@@ -719,6 +727,12 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
           cannotEval nOrig
         else:
           result = charValue(c, char(ch), nOrig.info)
+      elif targetType.typeKind in {EnumT, HoleyEnumT, AnumT}:
+        let x = getConstOrdinalValue(val)
+        if isNaN(x):
+          cannotEval nOrig
+        else:
+          result = val
       else:
         # other conversions not implemented
         cannotEval nOrig

@@ -7,7 +7,7 @@
 ## Turn NIF trees into identifiers. See the spec section "NIF trees as identifiers"
 ## for the used algorithm.
 
-import std / [assertions, tables, formatfloat, strutils]
+import std / [assertions, hashes, tables, formatfloat, strutils]
 
 type
   Mangler* = object ## In the end `extract` must be called.
@@ -195,6 +195,8 @@ template withTree*(b: var Mangler; kind: string; body: untyped) =
   endTree b
 
 when isMainModule:
+  import std/syncio
+
   proc test(b: sink Mangler) =
     b.withTree "stmts":
       b.withTree "call":
@@ -217,7 +219,7 @@ when isMainModule:
         m.withTree "i":
           m.addIntLit 8
 
-    assert m.extract() == "AarrayArangeS0S9ZAK0AK1S0S4ZAiS8"
+    assert m.extract() == "AarrayArangeS0S9ZAR0AR6S0S4ZAiS8"
 
   proc main() =
     var b = createMangler(10)

@@ -7,6 +7,8 @@
 import ".." / lib / tinyhashes
 from std / os import splitFile, relativePath, isAbsolute, getCurrentDir, `/`
 
+include ".." / lib / compat2
+
 proc extractModulename(x: string): string = splitFile(x).name
 
 const
@@ -23,7 +25,7 @@ proc uhashBase36*(s: string): string =
     result.add Base36[int(id mod 36'u32)]
     id = id div 36'u32
 
-proc moduleSuffix*(path: string; searchPaths: openArray[string]): string =
+proc moduleSuffix*(path: string; searchPaths: openArray[string]): string {.canRaise.} =
   var f = relativePath(path, getCurrentDir(), '/')
   # Select the path that is shortest relative to the searchPath:
   for s in searchPaths:
@@ -40,7 +42,7 @@ proc moduleSuffix*(path: string; searchPaths: openArray[string]): string =
     result.add Base36[int(id mod 36'u32)]
     id = id div 36'u32
 
-when isMainModule:
+when isMainModule and not defined(nimony):
   #echo moduleSuffix("/Users/rumpf/projects/nim/lib/system.nim")
   #echo moduleSuffix("/Users/araq/projects/nim/lib/system.nim")
   echo moduleSuffix("/Users/rumpf/projects/nimony/lib/std/system.nim", [])
