@@ -185,6 +185,11 @@ template runnableExamples*(body: untyped) {.untyped.} =
 
 func overflowFlag*(): bool {.magic: "OverflowFlag".}
 
+template ord*[T: Ordinal|enum](x: T): int =
+  ## Returns the internal `int` value of `x`, including for enum with holes
+  ## and distinct ordinal types.
+  int(x)
+
 include "system/panics"
 
 include "system/dyncalls"
@@ -199,11 +204,6 @@ type
     mt: UncheckedArray[pointer]
 
 func getRtti(dummy: pointer): ptr Rtti {.nodecl, noinit.} = discard "patched by vtables.nim"
-
-func ord*[T: Ordinal|enum](x: T): int {.inline.} =
-  ## Returns the internal `int` value of `x`, including for enum with holes
-  ## and distinct ordinal types.
-  int(x)
 
 type
   ComparableAndNegatable = concept
@@ -411,6 +411,22 @@ func `..`*[T, U](a: sink T; b: sink U): HSlice[T, U] {.inline.} =
   ##   echo a[2 .. 3] # @[30, 40]
   ##   ```
   result = HSlice[T, U](a: a, b: b)
+
+type
+  BackwardsIndex* = distinct int ## Type constructed by `^` for reversed
+                                 ## array/string/seq access.
+
+template `^`*(x: int): BackwardsIndex = BackwardsIndex(x)
+  ## Builtin `roof`:idx: operator. `a[^x]` is a shortcut for `a[a.len - x]`.
+
+template `[]`*[T](s: seq[T]; i: BackwardsIndex): var T =
+  s[s.len - int(i)]
+
+template `[]`*[T](s: openArray[T]; i: BackwardsIndex): var T =
+  s[s.len - int(i)]
+
+template `[]`*(s: string; i: BackwardsIndex): var char =
+  s[s.len - int(i)]
 
 type
   TypeOfMode* = enum ## Possible modes of `typeof`.
