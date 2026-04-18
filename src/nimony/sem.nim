@@ -578,11 +578,12 @@ proc hasErrorSince(dest: TokenBuf; start: int): bool =
 proc semBoolExprBody(c: var SemContext; dest: var TokenBuf; n: var Cursor; start: int): Item =
   ## Shared core of `semBoolExpr` / `semConstBoolExpr`: sems an expression and
   ## appends a type-mismatch error iff no better error was produced already.
+  let origInfo = n.info
   result = Item(n: n, typ: c.types.autoType)
   semExpr c, dest, result
   let t = skipModifier(result.typ)
   if classifyType(c, t) != BoolT and not hasErrorSince(dest, start):
-    combineErr c, dest, start, result.n.info,
+    combineErr c, dest, start, origInfo,
       "expected `bool` but got: " & typeToString(t)
 
 proc semBoolExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
