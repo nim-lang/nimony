@@ -64,7 +64,8 @@ type
     typeCache: TypeCache
     thisModuleSuffix: string
     procStack: seq[SymId]
-    needsLift: seq[int]
+    needsLift: seq[seq[int]]
+    liftIndex: int
     closureProcs, createsEnv, escapes: HashSet[SymId]
     localToEnv: Table[SymId, EnvField]
     env: CurrentEnv
@@ -529,34 +530,28 @@ proc treProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
     discard c.procStack.pop()
   c.typeCache.closeScope()
 
-proc emitProcWithoutLambda(dest: var TokenBuf; n: var Cursor) =
-  case n.kind
-  of ParLe:
-    if n.typeKind == ProcT:
-      skip n
-    else:
-      dest.takeToken n
-      while n.kind != ParRi:
-        emitProcWithoutLambda(dest, n)
-      dest.takeParRi n
-  else:
-    dest.takeToken n
-
 proc treProcLift(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if c.procStack.len > 0:
-    c.needsLift.add dest.len
+    var index = c.needsLift.len
+    var liftIndex = c.liftIndex
+    c.liftIndex = index
+    c.needsLift.add @[dest.len]
+    c.needsLift[liftIndex].add dest.len
     treProc c, dest, n
+    c.liftIndex = liftIndex
+    c.needsLift[liftIndex].add dest.len
+    c.needsLift[index].add dest.len
   else:
-    c.needsLift = @[0]
+    c.needsLift = @[@[0]]
+    c.liftIndex = 0
     var procDest = createTokenBuf(16)
     treProc c, procDest, n
+    c.needsLift[0].add procDest.len
     for i in 1..c.needsLift.len:
-      var pos = c.needsLift[^i]
-      var cursor = procDest.cursorAt(pos)
-      dest.takeToken cursor
-      while cursor.kind != ParRi:
-        emitProcWithoutLambda(dest, cursor)
-      dest.takeParRi cursor
+      var x = c.needsLift[^i]
+      for j in 0..<(x.len div 2):
+        for k in x[j*2]..<x[j*2+1]:
+          dest.add procDest[k]
 
 proc isStaticCall(c: var Context;s: SymId): bool =
   let res = tryLoadSym(s)
