@@ -7,7 +7,7 @@
 ## Logic for mapping a (file, line, col) key to the file's content.
 
 import std / syncio
-import std/[tables, strutils]
+import std/[tables, hashes, strutils]
 
 type
   CachedFile* = object

@@ -151,6 +151,9 @@ func `$`*(x: char): string =
 template stringHasSep(s: string, index: int, seps: set[char]): bool =
   s[index] in seps
 
+template stringHasSep(s: string, index: int, sep: char): bool =
+  s[index] == sep
+
 template splitCommon(s, sep, maxsplit, sepLen) {.untyped.} =
   ## Common code for split procs
   var last = 0
@@ -216,6 +219,12 @@ iterator split*(s: string; seps: set[char] = Whitespace;
   ##  .. note:: Empty separator set results in returning an original string,
   ##   following the interpretation "split by no element".
   splitCommon(s, seps, maxsplit, 1)
+
+iterator split*(s: string; sep: char; maxsplit: int = -1): string =
+  ## Splits the string `s` into substrings using the separator `sep`.
+  ##
+  ## Substrings are separated by the character `sep`.
+  splitCommon(s, sep, maxsplit, 1)
 
 func delete*(s: var string, slice: Slice[int]) =
   ## Deletes the items `s[slice]`.
