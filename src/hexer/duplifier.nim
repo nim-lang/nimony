@@ -1102,13 +1102,14 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         if n.kind != ParRi:
           takeTree c.dest, n
     of NoExpr:
-      case n.stmtKind
+      let k = n.stmtKind
+      case k
       of RetS:
         trReturn c, n
       of AsgnS:
         trAsgn c, n
       of LocalDecls:
-        trLocal c, n, n.stmtKind
+        trLocal c, n, k
       of ProcS, FuncS, ConverterS, MethodS, MacroS:
         trProcDecl c, n
       of ScopeS:
