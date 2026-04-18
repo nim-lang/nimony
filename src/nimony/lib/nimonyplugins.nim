@@ -27,8 +27,7 @@ type
   Node* = object ## Read handle into a frozen NIF tree.
                  ## A `Node` behaves like a cursor positioned at one token or
                  ## subtree. Copying a `Node` retains the underlying tree
-                 ## snapshot automatically.
-    owner: Tree
+                 ## snapshot automatically via the Cursor's COW mechanism.
     cursor: Cursor
 
   SymId* = object ## Stable plugin-facing symbol handle.
@@ -63,31 +62,6 @@ proc `=dup`*(x: Tree): Tree {.nodestroy.} =
   result = Tree(p: x.p)
   if result.p != nil:
     inc result.p.counter
-
-proc `=destroy`*(n: Node) =
-  if n.owner.p != nil:
-    endRead(n.owner.p[].buf)
-  `=destroy`(n.owner)
-
-proc `=wasMoved`*(n: var Node) =
-  `=wasMoved`(n.owner)
-  n.cursor = default(Cursor)
-
-template sameReader(a, b: Node): bool =
-  a.owner.p == b.owner.p and toUniqueId(a.cursor) == toUniqueId(b.cursor)
-
-proc `=copy`*(dest: var Node; src: Node) =
-  if not sameReader(dest, src):
-    `=destroy`(dest)
-    if src.owner.p != nil:
-      dest.owner = src.owner
-      dest.cursor = shareRead(dest.owner.p[].buf, src.cursor)
-
-proc `=dup`*(src: Node): Node =
-  result = default(Node)
-  if src.owner.p != nil:
-    result.owner = src.owner
-    result.cursor = shareRead(result.owner.p[].buf, src.cursor)
 
 proc initPayload(buf: sink TokenBuf): ptr TreePayload =
   result = cast[ptr TreePayload](alloc0(sizeof(TreePayload)))
@@ -230,17 +204,17 @@ proc createTree*(): Tree =
   ## Creates an empty mutable `Tree`.
   createTree(createTokenBuf())
 
-proc snapshot*(tree: sink Tree): Node =
+proc snapshot*(tree: var Tree): Node =
   ## Returns a read-only snapshot positioned at the first top-level token of
   ## `tree`.
   ##
-  ## The returned `Node` keeps the underlying tree alive automatically. The
-  ## original tree remains writable and detaches on the next mutation.
+  ## The returned `Node` keeps the underlying data alive automatically via
+  ## the Cursor's COW mechanism. The original tree remains writable and
+  ## detaches on the next mutation.
   ##
   ## `tree` must not be empty; use `isEmpty` first when that is expected.
   assert not tree.isEmpty, "cannot snapshot empty Tree"
-  result = Node(owner: tree)
-  result.cursor = beginRead(result.owner.p[].buf)
+  result = Node(cursor: beginRead(tree.p[].buf))
 
 template withTree*(t: var Tree; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma; info: LineInfo; body: untyped) =
   ## Appends a tree node of `kind` to `t`, runs `body` to emit its children, and
@@ -388,6 +362,7 @@ proc loadPluginInput*(filename = paramStr(1)): Node =
   try:
     var tree = createTree(fromStream(inp))
     result = snapshot(tree)
+    # tree is destroyed here, but Node's cursor keeps data alive via COW
   finally:
     close(inp)
 
@@ -689,13 +664,14 @@ proc validateConstructedNode(n: var Cursor): ValidationError =
 proc validateConstructedTree(tree: sink Tree): Tree =
   if tree.isEmpty:
     return tree
+  var tree = tree
   var n = snapshot(tree)
   var current = n.cursor
   let err = validateConstructedNode(current)
   if err.found:
     result = createErrorTree(err.info, err.msg, err.orig)
-  else: 
-    result = ensureMove(n.owner)
+  else:
+    result = ensureMove(tree)
 
 proc parseNifFragment(text: string): Tree =
   validateConstructedTree(createTree(parseNifBuffer(text)))

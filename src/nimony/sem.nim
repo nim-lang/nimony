@@ -28,6 +28,7 @@ else:
 
 import ".." / gear2 / modnames
 import ".." / models / [tags, nifindex_tags]
+import phase_validator
 
 proc semStmt(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: bool)
 proc semStmtBranch(c: var SemContext; dest: var TokenBuf; it: var Item; isNewScope: bool)
@@ -5762,7 +5763,12 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
           discard
       of PragmaxS:
         semPragmaExpr c, dest, it
-      of ImportasS, StaticstmtS, BindS, MixinS, AsmS:
+      of MixinS, BindS:
+        # `mixin` / `bind` affect symbol resolution in untyped template/generic
+        # bodies (handled in `semuntyped`). In a fully-typed context they are
+        # effectively no-ops; keep the tree so later passes see the statement.
+        takeTree dest, it.n
+      of ImportasS, StaticstmtS, AsmS:
         buildErr c, dest, it.n.info, "unsupported statement: " & $stmtKind(it.n)
         skip it.n
       of DeferS:
@@ -6580,6 +6586,22 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
   else:
     quit 1
 
+proc maybeValidatePostSem(dest: var TokenBuf; moduleName: string) =
+  ## When compiled with `-d:validatePasses`, validates that `dest`
+  ## conforms to the post-sem subset of `doc/tags.md`. Reports violations
+  ## on stderr and aborts with a non-zero exit status so that drift from
+  ## the spec is a hard error. Set `NIMONY_VALIDATE_SOFT=1` to downgrade
+  ## violations to warnings (useful while iterating on the grammar).
+  when defined(validatePasses):
+    let phase = postSemPhase()
+    let violations = validate(dest, phase)
+    if violations.len > 0:
+      stderr.writeLine "[" & moduleName & "] post-sem validator found " &
+        $violations.len & " violation(s)" &
+        (if violations.len >= 200: " (truncated)" else: "") & ":"
+      discard reportViolations(phase.name, violations)
+      quit 1
+
 type
   ModuleState = object
     owningBuf: TokenBuf
@@ -6651,6 +6673,7 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
   for i in 0..<modules.len:
     semcheckPostProcess modules[i].c, modules[i].dest
     if reportErrors(modules[i].dest) == 0:
+      maybeValidatePostSem modules[i].dest, modules[i].outfile
       writeOutput modules[i].c, modules[i].dest, modules[i].outfile
     else:
       quit 1
@@ -6686,6 +6709,7 @@ proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFla
     handleTypePlugins c, dest
 
   if reportErrors(dest) == 0:
+    maybeValidatePostSem dest, outfile
     writeOutput c, dest, outfile
   else:
     quit 1

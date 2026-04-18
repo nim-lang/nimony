@@ -307,7 +307,7 @@ proc toFloat64*(x: xint): float64 =
   else:
     float64(x.val)
 
-when isMainModule:
+when isMainModule and not defined(nimony):
   var a = createXint(10'i64)
   var b = createXint(-5'i64)
   echo a + b   # Outputs: "5"

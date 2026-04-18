@@ -5,15 +5,15 @@ import tags
 type
   NifIndexKind* = enum
     NoIndexTag
-    KvIdx = (ord(KvTagId), "kv")  ## key-value pair
+    KvIdx = (ord(KvTagId), "kv")  ## key-value pair; optional INTLIT indicates field is in an inherited object
     VvIdx = (ord(VvTagId), "vv")  ## value-value pair (used for explicitly named arguments in function calls)
     GvarIdx = (ord(GvarTagId), "gvar")  ## global variable declaration
     TvarIdx = (ord(TvarTagId), "tvar")  ## thread local variable declaration
-    VarIdx = (ord(VarTagId), "var")  ## variable declaration
+    VarIdx = (ord(VarTagId), "var")  ## variable declaration; type slot may be omitted when inferred from initializer
     ConstIdx = (ord(ConstTagId), "const")  ## const variable declaration
     GletIdx = (ord(GletTagId), "glet")  ## global let variable declaration
     TletIdx = (ord(TletTagId), "tlet")  ## thread local let variable declaration
-    LetIdx = (ord(LetTagId), "let")  ## let variable declaration
+    LetIdx = (ord(LetTagId), "let")  ## let variable declaration; type is optional when used in `(unpackflat …)`
     CursorIdx = (ord(CursorTagId), "cursor")  ## cursor variable declaration
     ProcIdx = (ord(ProcTagId), "proc")  ## proc declaration
     FuncIdx = (ord(FuncTagId), "func")  ## function declaration
