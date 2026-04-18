@@ -1459,6 +1459,15 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       put(g, tkSymbol, "nil")
       skip n
 
+    of KvX:
+      inc n
+      gsub(g, n)
+      putWithSpace(g, tkColon, ":")
+      gsub(g, n)
+      if n.kind != ParRi:
+        skip n
+      skipParRi(n)
+
     of CastX:
       inc n
       put(g, tkCast, "cast")

@@ -1243,7 +1243,7 @@ proc isSimpleLiteral(nb: var Cursor): bool =
         PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX,
         LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX,
         WasmovedX, SinkhX, TraceX, InternalTypeNameX,
-        InternalFieldPairsX, FailedX, IsX, EnvpX, NoExpr:
+        InternalFieldPairsX, FailedX, IsX, EnvpX, KvX, NoExpr:
       result = false
 
 proc getCompilerProc(c: var EContext; name: string; isInline=false): string =
@@ -1504,6 +1504,14 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       inc n
       while n.kind != ParRi:
         trExpr c, dest, n
+      takeParRi dest, n
+    of KvX:
+      dest.add n
+      inc n
+      takeTree dest, n
+      trExpr c, dest, n
+      if n.kind != ParRi:
+        takeTree dest, n
       takeParRi dest, n
     of NoExpr:
       trType c, dest, n

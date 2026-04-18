@@ -1981,7 +1981,7 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
     var dummy = Item(n: value, typ: expected)
     semCaseOfValueImpl(c, dest, dummy, expected, seen)
   of NoExpr, ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX, InfX, NeginfX, NanX,
-     FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
+     FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX, KvX, OconstrX,
      AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
      BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
@@ -2179,7 +2179,7 @@ proc semAsgn(c: var SemContext; dest: var TokenBuf; it: var Item) =
   of DotX, DdotX:
     semDotAsgn c, dest, it, info
   of NoExpr, ErrX, SufX, DerefX, PatX, ParX, AddrX, NilX, InfX, NeginfX, NanX,
-     FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
+     FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX, KvX, OconstrX,
      AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
      BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, HaddrX, NewrefX, NewobjX, TupX,
@@ -6095,6 +6095,18 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       takeParRi dest, it.n
     of EnvpX:
       bug "frontend should not encounter `envp`"
+    of KvX:
+      takeToken dest, it.n
+      var keyIt = Item(n: it.n, typ: c.types.autoType)
+      semExpr c, dest, keyIt
+      it.n = keyIt.n
+      var valIt = Item(n: it.n, typ: c.types.autoType)
+      semExpr c, dest, valIt
+      it.n = valIt.n
+      if it.n.kind != ParRi:
+        takeTree dest, it.n
+      takeParRi dest, it.n
+      it.typ = valIt.typ
 
   of ParRi, EofToken, SymbolDef, UnknownToken, DotToken:
     buildErr c, dest, it.n.info, "expression expected"
