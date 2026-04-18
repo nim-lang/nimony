@@ -7,13 +7,14 @@ compiler through NIF files.
 
 ## Overview
 
-There are three kinds of plugins:
+There are four kinds of plugins:
 
 | Kind | Declaration | Scope |
 |------|-------------|-------|
 | **Template plugin** | `template foo(...) {.plugin: "path".}` | Invoked at each call site |
 | **Module plugin** | `{.plugin: "path".}` as statement | Transforms the entire module |
 | **Type plugin** | `type T {.plugin: "path".} = ...` | Invoked for every module that uses `T` |
+| **Import plugin** | `import (path/foo) {.plugin: "std/v2".}` | Imports the module `path/foo` **from the plugin** `std/v2` |
 
 All plugins share the same API (`nimonyplugins`) and execution model.
 
@@ -58,6 +59,12 @@ saveTree transform(inp)
 
 The plugin reads the template arguments as a NIF tree from `paramStr(1)`, transforms
 them, and writes the result to `paramStr(2)`.
+
+
+## NIF enum classes
+
+The supported enum classes are: NimonyStmt, NimonyExpr, NimonyType, NimonyPragma, NimonyOther
+The list of existing tags can be found [here](tags.md).
 
 
 ## How plugins are compiled and run
@@ -131,21 +138,6 @@ renderTree:
 
 Here the plugin receives the entire block as typed, semantically checked NIF.
 
-Plugins can be hidden inside imported modules so that callers don't see the
-`.plugin` pragma:
-
-```nim
-# deps/mhiddenplugin.nim
-template eraseToplevelBlocks* =
-  {.plugin: "mmoduleplugin".}
-```
-
-```nim
-# user.nim
-import deps/mhiddenplugin
-eraseToplevelBlocks()  # invokes the plugin
-```
-
 
 ## Module plugins
 
@@ -181,6 +173,21 @@ proc transform(n: Node): NifBuilder =
 
 var inp = loadPluginInput()
 saveTree transform(inp)
+```
+
+Plugins can be hidden inside imported modules so that callers don't see the
+`.plugin` pragma:
+
+```nim
+# deps/mhiddenplugin.nim
+template eraseToplevelBlocks* =
+  {.plugin: "mmoduleplugin".}
+```
+
+```nim
+# user.nim
+import deps/mhiddenplugin
+eraseToplevelBlocks()  # expands to {.plugin: "mmoduleplugin".} and thus invokes the plugin
 ```
 
 
