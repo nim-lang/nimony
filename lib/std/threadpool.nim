@@ -25,6 +25,12 @@ else:
 
 const hasIoPoll* = hasEpoll or hasKqueue
 
+when not hasIoPoll:
+  when defined(windows):
+    import windows/winlean
+  else:
+    proc usleepMicroseconds(usec: cuint): cint {.importc, header: "<unistd.h>".}
+
 # --- Epoll bindings ---
 
 when hasEpoll:
@@ -288,7 +294,10 @@ proc workerLoop(arg: pointer) {.nimcall.} =
           h.cb(h, evMask)
     else:
       if not busy:
-        sleep(1) # 1 ms idle sleep fallback
+        when defined(windows):
+          sleep(1'u32) # 1 ms; Win32 `Sleep` uses milliseconds
+        else:
+          discard usleepMicroseconds(1000'u32) # 1 ms
 
 # --- Lifecycle ---
 

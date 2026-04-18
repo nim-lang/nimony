@@ -18,6 +18,11 @@
 import std / [atomics, threadpool]
 export threadpool.initPool, threadpool.shutdownPool, threadpool.poolStopped
 
+when defined(windows):
+  import windows/winlean
+else:
+  proc sched_yield(): cint {.importc, header: "<sched.h>".}
+
 when defined(posix):
   proc posixRead(fd: cint; buf: pointer; count: csize_t): int {.
     importc: "read", header: "<unistd.h>".}
@@ -246,7 +251,10 @@ proc waitCompletions*(comps: var openArray[IoCompletion]): int =
   while true:
     result = pollCompletions(comps)
     if result > 0: return
-    sleep(0)
+    when defined(windows):
+      sleep(0'u32)
+    else:
+      discard sched_yield()
 
 # --- lifecycle ---
 

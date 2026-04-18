@@ -216,6 +216,8 @@ when defined(windows):
   proc getCommandLineW*(): WideCString {.importc: "GetCommandLineW",
     stdcall, dynlib: "kernel32", sideEffect.}
 
+  proc sleep*(dwMilliseconds: DWORD) {.importc: "Sleep", stdcall, dynlib: "kernel32", sideEffect.}
+
   proc getFileInformationByHandle*(hFile: Handle,
     lpFileInformation: ptr BY_HANDLE_FILE_INFORMATION): WINBOOL{.
       stdcall, dynlib: "kernel32", importc: "GetFileInformationByHandle", sideEffect.}
