@@ -185,6 +185,11 @@ template runnableExamples*(body: untyped) {.untyped.} =
 
 func overflowFlag*(): bool {.magic: "OverflowFlag".}
 
+template ord*[T: Ordinal|enum](x: T): int =
+  ## Returns the internal `int` value of `x`, including for enum with holes
+  ## and distinct ordinal types.
+  int(x)
+
 include "system/panics"
 
 include "system/dyncalls"
@@ -199,11 +204,6 @@ type
     mt: UncheckedArray[pointer]
 
 func getRtti(dummy: pointer): ptr Rtti {.nodecl, noinit.} = discard "patched by vtables.nim"
-
-template ord*[T: Ordinal|enum](x: T): int =
-  ## Returns the internal `int` value of `x`, including for enum with holes
-  ## and distinct ordinal types.
-  int(x)
 
 type
   ComparableAndNegatable = concept
