@@ -63,8 +63,83 @@ them, and writes the result to `paramStr(2)`.
 
 ## NIF enum classes
 
-The supported enum classes are: NimonyStmt, NimonyExpr, NimonyType, NimonyPragma, NimonyOther
-The list of existing tags can be found [here](tags.md).
+NIF identifies every compound node by a textual tag (`call`, `proc`, `object`, ...).
+For dispatching on nodes, plugins don't match on the raw text — they use one of five
+enum classes that partition tags by syntactic role:
+
+| Enum | Suffix | Sentinel | Role |
+|------|--------|----------|------|
+| `NimonyStmt` | `S` | `NoStmt` | Statements (`CallS`, `VarS`, `ProcS`, `StmtsS`, `BlockS`, ...) |
+| `NimonyExpr` | `X` | `NoExpr` | Expressions (`CallX`, `DotX`, `AddX`, `TrueX`, `NilX`, ...) |
+| `NimonyType` | `T` | `NoType` | Types (`ObjectT`, `ArrayT`, `IntT`, `RefT`, ...) |
+| `NimonyPragma` | `P` | `NoPragma` | Pragmas (`InlineP`, `MagicP`, `PluginP`, ...) |
+| `NimonyOther` | `U` | `NoSub` | Substructures that aren't stmts/exprs/types/pragmas (`ParamU`, `FldU`, `ElifU`, `OfU`, `StmtsU`, `PragmasU`, ...) |
+
+All five enums share one ordinal space (each value's ordinal equals the underlying
+`TagId`), so dispatch is an O(1) integer comparison and the enums are trivially
+convertible to `TagId`.
+
+The full list of tags and which class each belongs to can be found in
+[tags.md](tags.md).
+
+### Querying the current node
+
+Each class has a matching accessor on `NifCursor`:
+
+| Accessor | Returns | When it returns the sentinel |
+|----------|---------|------------------------------|
+| `n.stmtKind` | `NimonyStmt` | current token isn't a statement tag |
+| `n.exprKind` | `NimonyExpr` | current token isn't an expression tag |
+| `n.typeKind` | `NimonyType` | current token isn't a type tag |
+| `n.pragmaKind` | `NimonyPragma` | current token isn't a pragma tag |
+| `n.otherKind` | `NimonyOther` | current token isn't a substructure tag |
+
+A typical dispatch pattern:
+
+```nim
+case n.stmtKind
+of CallS:
+  # handle a call statement
+of VarS, LetS:
+  # handle a variable declaration
+of NoStmt:
+  # not a statement — try another class, or just copy the token through
+  result.takeTree n
+else:
+  result.takeTree n
+```
+
+### Same text, different class
+
+A handful of tags appear in more than one class because the same syntax serves
+different roles in different positions:
+
+- `nil` is `NilX` as an expression (a nil pointer value) and `NilU` as an annotation
+  on a pointer type.
+- `kv` is `KvX` as a key-value expression and `KvU` as a structural field.
+- `and`, `or`, `not` are `NimonyExpr` values in expressions and `NimonyType` values
+  inside concept constraints.
+
+If you need to discriminate between the two uses, dispatch first on the parent
+context (typically the enclosing tag tells you whether you are inside a type,
+an expression, or a substructure) and only then call the appropriate accessor.
+
+### Building with the enum classes
+
+`createTree` and `withTree` accept any of the five enum types directly:
+
+```nim
+result.withTree StmtsS, info:                 # NimonyStmt
+  result.withTree CallX, info:                # NimonyExpr
+    result.addIdent "echo"
+    result.addStrLit "hello"
+
+let t = createTree(ObjectT,                    # NimonyType
+  createTree(FldU, nameSym, intType))          # NimonyOther
+```
+
+Passing the enum rather than a raw string means a typo becomes a compile error
+in the plugin rather than a malformed NIF tree at runtime.
 
 
 ## How plugins are compiled and run
