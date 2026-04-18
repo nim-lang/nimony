@@ -225,14 +225,6 @@ template withTree*(t: var NifBuilder; kind: NimonyType|NimonyExpr|NimonyStmt|Nim
   body
   t.p[].buf.addParRi()
 
-template withTree*(t: var NifBuilder; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma; body: untyped) =
-  ## Appends a tree node of `kind` to `t` with `NoLineInfo`, runs `body` to emit
-  ## its children, and closes the node afterwards.
-  prepareMutation(t)
-  t.p[].buf.addParLe(kind, NoLineInfo)
-  body
-  t.p[].buf.addParRi()
-
 proc tagId*(n: NifCursor): TagId {.inline.} =
   ## Returns the raw tag id of the current token.
   ## The current token must be a `ParLe`.
