@@ -712,9 +712,12 @@ const BootstrapModules = [
   "src/lib/bitabs.nim",
   "src/lib/lineinfos.nim",
   "src/lib/nifbuilder.nim",
+  "src/lib/platform.nim",
+  "src/lib/stringtrees.nim",
   "src/nimony/features.nim",
   "src/nimony/intervals.nim",
   "src/nimony/xints.nim",
+  "src/nimony/langmodes.nim",
   # Tier 2 -- tag enums + simple deps on tier 1.
   "src/models/callconv_tags.nim",
   "src/models/njvl_tags.nim",

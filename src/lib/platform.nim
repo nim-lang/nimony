@@ -207,6 +207,8 @@ type
     cpuE2k, cpuLoongArch64
 
 type
+  Endianness* = enum
+    littleEndian, bigEndian
   TInfoCPU* = tuple[name: string, intSize: int, endian: Endianness,
                     floatSize, bit: int]
 
