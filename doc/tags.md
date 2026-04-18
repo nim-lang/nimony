@@ -29,7 +29,7 @@
 | `(bracket X*)`         | NimonyExpr, NiflerKind | untyped array constructor |
 | `(curly X*)`           | NimonyExpr, NiflerKind | untyped set constructor |
 | `(curlyat X X)`        | NimonyExpr, NiflerKind | curly expression `a{i}` |
-| `(kv Y X INTLIT?)`     | NimonyOther, NifcOther, NiflerKind, NifIndexKind | key-value pair; optional INTLIT indicates field is in an inherited object |
+| `(kv Y X INTLIT?)`     | NimonyExpr, NimonyOther, NifcOther, NiflerKind, NifIndexKind | key-value pair; optional INTLIT indicates field is in an inherited object |
 | `(vv X X)`             | NimonyOther, NiflerKind, NifIndexKind | value-value pair (used for explicitly named arguments in function calls) |
 | `(ovf)`                | NimonyExpr, NifcExpr | access overflow flag |
 | `(add T X X)`          | NifcExpr, NimonyExpr | |

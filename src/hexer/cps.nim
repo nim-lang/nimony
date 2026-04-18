@@ -1429,7 +1429,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           CardX, EmoveX, DestroyX, DupX, CopyX,
           WasmovedX, SinkhX, TraceX,
           InternalTypeNameX, InternalFieldPairsX,
-          FailedX, IsX, EnvpX, NoExpr:
+          FailedX, IsX, EnvpX, KvX, NoExpr:
         case n.njvlKind
         of LoopV:
           # No suspension points inside this loop → simple while loop
