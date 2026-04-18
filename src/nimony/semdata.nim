@@ -93,7 +93,7 @@ type
     pendingSumtypes*: TokenBuf
       ## synthesized oneof type declarations to emit at module end
     includeStack*: seq[string]
-    importedModules*: Table[SymId, ImportedModule]
+    importedModules*: OrderedTable[SymId, ImportedModule]
     selfModuleSym*: SymId
     instantiatedFrom*: seq[PackedLineInfo]
     importTab*: OrderedTable[StrId, seq[SymId]] ## mapping of identifiers to modules containing the identifier
