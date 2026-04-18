@@ -12,7 +12,7 @@ type
     counter: int
     buf: TokenBuf
 
-  Tree* = object ## Mutable NIF builder used by plugins to assemble output.
+  NifBuilder* = object ## Mutable NIF builder used by plugins to assemble output.
                  ## Copying a tree shares the underlying payload until the next
                  ## mutation detaches it.
     p: ptr TreePayload
@@ -24,11 +24,11 @@ type
     line*: int
     col*: int
 
-  Node* = object ## Read handle into a frozen NIF tree.
-                 ## A `Node` behaves like a cursor positioned at one token or
-                 ## subtree. Copying a `Node` retains the underlying tree
+  NifCursor* = object ## Read handle into a frozen NIF tree.
+                 ## A `NifCursor` behaves like a cursor positioned at one token or
+                 ## subtree. Copying a `NifCursor` retains the underlying tree
                  ## snapshot automatically.
-    owner: Tree
+    owner: NifBuilder
     cursor: Cursor
 
   SymId* = object ## Stable plugin-facing symbol handle.
@@ -41,7 +41,7 @@ type
                             ## write NIF as text; these ordinals never cross
                             ## process boundaries.
 
-proc `=destroy`*(x: Tree) =
+proc `=destroy`*(x: NifBuilder) =
   if x.p != nil:
     if x.p.counter == 0:
       `=destroy`(x.p[].buf)
@@ -49,42 +49,42 @@ proc `=destroy`*(x: Tree) =
     else:
       dec x.p.counter
 
-proc `=wasMoved`*(x: var Tree) =
+proc `=wasMoved`*(x: var NifBuilder) =
   x.p = nil
 
-proc `=copy`*(dest: var Tree; src: Tree) =
+proc `=copy`*(dest: var NifBuilder; src: NifBuilder) =
   if dest.p != src.p:
     `=destroy`(dest)
     if src.p != nil:
       inc src.p.counter
     dest.p = src.p
 
-proc `=dup`*(x: Tree): Tree {.nodestroy.} =
-  result = Tree(p: x.p)
+proc `=dup`*(x: NifBuilder): NifBuilder {.nodestroy.} =
+  result = NifBuilder(p: x.p)
   if result.p != nil:
     inc result.p.counter
 
-proc `=destroy`*(n: Node) =
+proc `=destroy`*(n: NifCursor) =
   if n.owner.p != nil:
     endRead(n.owner.p[].buf)
   `=destroy`(n.owner)
 
-proc `=wasMoved`*(n: var Node) =
+proc `=wasMoved`*(n: var NifCursor) =
   `=wasMoved`(n.owner)
   n.cursor = default(Cursor)
 
-template sameReader(a, b: Node): bool =
+template sameReader(a, b: NifCursor): bool =
   a.owner.p == b.owner.p and toUniqueId(a.cursor) == toUniqueId(b.cursor)
 
-proc `=copy`*(dest: var Node; src: Node) =
+proc `=copy`*(dest: var NifCursor; src: NifCursor) =
   if not sameReader(dest, src):
     `=destroy`(dest)
     if src.owner.p != nil:
       dest.owner = src.owner
       dest.cursor = shareRead(dest.owner.p[].buf, src.cursor)
 
-proc `=dup`*(src: Node): Node =
-  result = default(Node)
+proc `=dup`*(src: NifCursor): NifCursor =
+  result = default(NifCursor)
   if src.owner.p != nil:
     result.owner = src.owner
     result.cursor = shareRead(result.owner.p[].buf, src.cursor)
@@ -98,13 +98,13 @@ proc copyBuffer(buf: TokenBuf): TokenBuf =
   result = createTokenBuf(max(buf.len, 4))
   result.add buf
 
-proc hasSubtree(n: Node): bool {.inline.} =
+proc hasSubtree(n: NifCursor): bool {.inline.} =
   hasCurrentToken(n.cursor) and n.cursor.kind != ParRi
 
-proc createTree(buf: sink TokenBuf): Tree =
-  result = Tree(p: initPayload(buf))
+proc createTree(buf: sink TokenBuf): NifBuilder =
+  result = NifBuilder(p: initPayload(buf))
 
-proc prepareMutation(t: var Tree) =
+proc prepareMutation(t: var NifBuilder) =
   if t.p == nil:
     t = createTree(createTokenBuf())
   elif t.p.counter > 0:
@@ -112,15 +112,15 @@ proc prepareMutation(t: var Tree) =
     t.p = initPayload(copyBuffer(oldP.buf))
     dec oldP.counter
 
-proc isEmpty*(tree: Tree): bool {.inline.} =
+proc isEmpty*(tree: NifBuilder): bool {.inline.} =
   ## Returns true when `tree` does not currently contain any tokens.
   tree.p == nil or tree.p[].buf.len == 0
 
-proc kind*(n: Node): NifKind {.inline.} =
+proc kind*(n: NifCursor): NifKind {.inline.} =
   ## Returns the raw NIF token kind at the current position.
   n.cursor.kind
 
-proc info*(n: Node): LineInfo {.inline.} =
+proc info*(n: NifCursor): LineInfo {.inline.} =
   ## Returns the packed line info stored on the current token.
   n.cursor.info
 
@@ -169,80 +169,80 @@ proc tagText*(t: TagId): string {.inline.} =
   ## Returns the textual NIF tag name for `t`.
   pool.tags[t]
 
-proc symId*(n: Node): SymId {.inline.} =
+proc symId*(n: NifCursor): SymId {.inline.} =
   ## Returns the symbol id of the current token as an opaque handle.
   ## The current token must be a `Symbol` or `SymbolDef`.
   SymId(raw: n.cursor.symId)
 
-proc symText*(n: Node): string {.inline.} =
+proc symText*(n: NifCursor): string {.inline.} =
   ## Returns the symbol text of the current `Symbol` or `SymbolDef` token.
   pool.syms[n.cursor.symId]
 
-proc identText*(n: Node): string {.inline.} =
+proc identText*(n: NifCursor): string {.inline.} =
   ## Returns the identifier text of the current `Ident` token.
   pool.strings[n.cursor.litId]
 
-proc stringValue*(n: Node): string {.inline.} =
+proc stringValue*(n: NifCursor): string {.inline.} =
   ## Returns the string contents of the current `StringLit` token.
   pool.strings[n.cursor.litId]
 
-proc charLit*(n: Node): char {.inline.} =
+proc charLit*(n: NifCursor): char {.inline.} =
   ## Returns the character stored in the current `CharLit` token.
   n.cursor.charLit
 
-proc intValue*(n: Node): BiggestInt {.inline.} =
+proc intValue*(n: NifCursor): BiggestInt {.inline.} =
   ## Returns the integer value stored in the current `IntLit` token.
   pool.integers[n.cursor.intId]
 
-proc uintValue*(n: Node): BiggestUInt {.inline.} =
+proc uintValue*(n: NifCursor): BiggestUInt {.inline.} =
   ## Returns the unsigned integer value stored in the current `UIntLit` token.
   pool.uintegers[n.cursor.uintId]
 
-proc floatValue*(n: Node): BiggestFloat {.inline.} =
+proc floatValue*(n: NifCursor): BiggestFloat {.inline.} =
   ## Returns the floating-point value stored in the current `FloatLit` token.
   pool.floats[n.cursor.floatId]
 
-proc stmtKind*(n: Node): NimonyStmt {.inline.} =
+proc stmtKind*(n: NifCursor): NimonyStmt {.inline.} =
   ## Returns the current statement kind, or `NoStmt` when the current token is
   ## not a statement node.
   n.cursor.stmtKind
 
-proc exprKind*(n: Node): NimonyExpr {.inline.} =
+proc exprKind*(n: NifCursor): NimonyExpr {.inline.} =
   ## Returns the current expression kind, or `NoExpr` when the current token is
   ## not an expression node.
   n.cursor.exprKind
 
-proc typeKind*(n: Node): NimonyType {.inline.} =
+proc typeKind*(n: NifCursor): NimonyType {.inline.} =
   ## Returns the current type kind.
   ## `DotToken` is treated as `VoidT`; non-type nodes return `NoType`.
   n.cursor.typeKind
 
-proc otherKind*(n: Node): NimonyOther {.inline.} =
+proc otherKind*(n: NifCursor): NimonyOther {.inline.} =
   ## Returns the current "other/substructure" kind, or `NoSub` for non-matching
   ## nodes.
   n.cursor.substructureKind
 
-proc pragmaKind*(n: Node): NimonyPragma {.inline.} =
+proc pragmaKind*(n: NifCursor): NimonyPragma {.inline.} =
   ## Returns the current pragma kind, or `NoPragma` for non-matching nodes.
   n.cursor.pragmaKind
 
-proc createTree*(): Tree =
-  ## Creates an empty mutable `Tree`.
+proc createTree*(): NifBuilder =
+  ## Creates an empty mutable `NifBuilder`.
   createTree(createTokenBuf())
 
-proc snapshot*(tree: sink Tree): Node =
+proc snapshot*(tree: sink NifBuilder): NifCursor =
   ## Returns a read-only snapshot positioned at the first top-level token of
   ## `tree`.
   ##
-  ## The returned `Node` keeps the underlying tree alive automatically. The
+  ## The returned `NifCursor` keeps the underlying tree alive automatically. The
   ## original tree remains writable and detaches on the next mutation.
   ##
   ## `tree` must not be empty; use `isEmpty` first when that is expected.
-  assert not tree.isEmpty, "cannot snapshot empty Tree"
-  result = Node(owner: tree)
+  assert not tree.isEmpty, "cannot snapshot empty NifBuilder"
+  result = NifCursor(owner: tree)
   result.cursor = beginRead(result.owner.p[].buf)
 
-template withTree*(t: var Tree; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma; info: LineInfo; body: untyped) =
+template withTree*(t: var NifBuilder; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma; info: LineInfo; body: untyped) =
   ## Appends a tree node of `kind` to `t`, runs `body` to emit its children, and
   ## closes the node afterwards.
   prepareMutation(t)
@@ -250,129 +250,129 @@ template withTree*(t: var Tree; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOth
   body
   t.p[].buf.addParRi()
 
-proc tagId*(n: Node): TagId {.inline.} =
+proc tagId*(n: NifCursor): TagId {.inline.} =
   ## Returns the raw tag id of the current token.
   ## The current token must be a `ParLe`.
   n.cursor.tagId
 
-proc tagText*(n: Node): string {.inline.} =
+proc tagText*(n: NifCursor): string {.inline.} =
   ## Returns the tag text of the current `ParLe` token.
   pool.tags[n.cursor.tagId]
 
-proc tag*(n: Node): TagId {.inline.} =
+proc tag*(n: NifCursor): TagId {.inline.} =
   ## Returns the raw tag id for the current tree node, or `ErrT` if the
   ## current token is not a `ParLe`.
   n.cursor.tag
 
-proc addParLe*(t: var Tree; tag: TagId; info: LineInfo = NoLineInfo) =
+proc addParLe*(t: var NifBuilder; tag: TagId; info: LineInfo = NoLineInfo) =
   ## Appends an opening tree token with raw tag id `tag` to `t`.
   ## Use `addParLe(tagText, ...)` when constructing nodes from textual tag
   ## names instead of existing ids.
   prepareMutation(t)
   t.p[].buf.addParLe(tag, info)
 
-proc addParLe*(t: var Tree; tag: string; info: LineInfo = NoLineInfo) =
+proc addParLe*(t: var NifBuilder; tag: string; info: LineInfo = NoLineInfo) =
   ## Appends an opening tree token with textual tag `tag` to `t`.
   prepareMutation(t)
   t.p[].buf.addParLe(pool.tags.getOrIncl(tag), info)
 
-proc addParRi*(t: var Tree) =
+proc addParRi*(t: var NifBuilder) =
   ## Appends a closing tree token (`)`) to `t`.
   prepareMutation(t)
   t.p[].buf.addParRi()
 
-proc takeTree*(t: var Tree; n: var Node) =
+proc takeTree*(t: var NifBuilder; n: var NifCursor) =
   ## Copies the current token or subtree from `n` into `t` and advances `n`
   ## past the copied fragment.
   prepareMutation(t)
   t.p[].buf.takeTree(n.cursor)
 
-proc addSubtree*(t: var Tree; n: Node) =
+proc addSubtree*(t: var NifBuilder; n: NifCursor) =
   ## Copies the current token or subtree from `n` into `t` without advancing it.
   prepareMutation(t)
   t.p[].buf.addSubtree(n.cursor)
 
-proc add*(t: var Tree; child: Tree) =
+proc add*(t: var NifBuilder; child: NifBuilder) =
   ## Appends the complete contents of `child` to `t`.
   if not child.isEmpty:
     prepareMutation(t)
     t.p[].buf.add child.p[].buf
 
-proc addDotToken*(t: var Tree) =
+proc addDotToken*(t: var NifBuilder) =
   ## Appends a dot placeholder token (`.`) to `t`.
   prepareMutation(t)
   t.p[].buf.addDotToken()
 
-proc addStrLit*(t: var Tree; s: string) =
+proc addStrLit*(t: var NifBuilder; s: string) =
   ## Appends a string literal atom to `t`.
   prepareMutation(t)
   t.p[].buf.addStrLit(s)
 
-proc addIntLit*(t: var Tree; i: BiggestInt) =
+proc addIntLit*(t: var NifBuilder; i: BiggestInt) =
   ## Appends a signed integer literal atom to `t`.
   prepareMutation(t)
   t.p[].buf.addIntLit(i)
 
-proc addUIntLit*(t: var Tree; i: BiggestUInt) =
+proc addUIntLit*(t: var NifBuilder; i: BiggestUInt) =
   ## Appends an unsigned integer literal atom to `t`.
   prepareMutation(t)
   t.p[].buf.addUIntLit(i)
 
-proc addIdent*(t: var Tree; ident: string) =
+proc addIdent*(t: var NifBuilder; ident: string) =
   ## Appends an identifier atom to `t`.
   prepareMutation(t)
   t.p[].buf.addIdent(ident)
 
-proc addCharLit*(t: var Tree; c: char) =
+proc addCharLit*(t: var NifBuilder; c: char) =
   ## Appends a character literal atom to `t`.
   prepareMutation(t)
   t.p[].buf.addCharLit(c)
 
-proc addFloatLit*(t: var Tree; f: BiggestFloat) =
+proc addFloatLit*(t: var NifBuilder; f: BiggestFloat) =
   ## Appends a floating-point literal atom to `t`.
   prepareMutation(t)
   t.p[].buf.addFloatLit(f)
 
-proc addSymUse*(t: var Tree; s: SymId; info: LineInfo = NoLineInfo) =
+proc addSymUse*(t: var NifBuilder; s: SymId; info: LineInfo = NoLineInfo) =
   ## Appends a symbol-use atom named by the opaque handle `s` to `t`.
   prepareMutation(t)
   t.p[].buf.addSymUse(s.raw, info)
 
-proc addSymUse*(t: var Tree; s: string; info: LineInfo = NoLineInfo) =
+proc addSymUse*(t: var NifBuilder; s: string; info: LineInfo = NoLineInfo) =
   ## Appends a symbol-use atom named `s` to `t`.
   prepareMutation(t)
   t.p[].buf.addSymUse(pool.syms.getOrIncl(s), info)
 
-proc addEmptyNode*(t: var Tree; info: LineInfo = NoLineInfo) =
+proc addEmptyNode*(t: var NifBuilder; info: LineInfo = NoLineInfo) =
   ## Appends a single empty placeholder node (`.`) to `t`.
   prepareMutation(t)
   t.p[].buf.addEmpty(info)
 
-proc addEmptyNode2*(t: var Tree; info: LineInfo = NoLineInfo) =
+proc addEmptyNode2*(t: var NifBuilder; info: LineInfo = NoLineInfo) =
   ## Appends two empty placeholder nodes (`. .`) to `t`.
   prepareMutation(t)
   t.p[].buf.addEmpty2(info)
 
-proc addEmptyNode3*(t: var Tree; info: LineInfo = NoLineInfo) =
+proc addEmptyNode3*(t: var NifBuilder; info: LineInfo = NoLineInfo) =
   ## Appends three empty placeholder nodes (`. . .`) to `t`.
   prepareMutation(t)
   t.p[].buf.addEmpty3(info)
 
-proc addEmptyNode4*(t: var Tree; info: LineInfo = NoLineInfo) =
+proc addEmptyNode4*(t: var NifBuilder; info: LineInfo = NoLineInfo) =
   ## Appends four empty placeholder nodes (`. . . .`) to `t`.
   prepareMutation(t)
   t.p[].buf.addEmpty3(info)
   t.p[].buf.addEmpty(info)
 
-proc inc*(n: var Node) =
+proc inc*(n: var NifCursor) =
   ## Advances `n` by one token.
   inc n.cursor
 
-proc skip*(n: var Node) =
+proc skip*(n: var NifCursor) =
   ## Skips the current token or, if positioned on `ParLe`, the entire subtree.
   skip n.cursor
 
-proc eqIdent*(n: Node; name: string): bool =
+proc eqIdent*(n: NifCursor; name: string): bool =
   ## Returns true when `n` matches `name` exactly.
   case n.kind
   of Ident:
@@ -382,8 +382,8 @@ proc eqIdent*(n: Node; name: string): bool =
   else:
     result = false
 
-proc loadPluginInput*(filename = paramStr(1)): Node =
-  ## Loads a NIF file and returns a root `Node` for reading it.
+proc loadPluginInput*(filename = paramStr(1)): NifCursor =
+  ## Loads a NIF file and returns a root `NifCursor` for reading it.
   var inp = nifstreams.open(filename)
   try:
     var tree = createTree(fromStream(inp))
@@ -391,7 +391,7 @@ proc loadPluginInput*(filename = paramStr(1)): Node =
   finally:
     close(inp)
 
-proc renderTree*(tree: Tree): string =
+proc renderTree*(tree: NifBuilder): string =
   ## Renders the complete contents of `tree` as raw NIF text for debugging.
   ## Unlike `saveTree`, this omits line info and may contain multiple
   ## top-level fragments when the tree is still under construction.
@@ -400,16 +400,16 @@ proc renderTree*(tree: Tree): string =
   else:
     result = toString(tree.p[].buf, false)
 
-proc saveTree*(tree: Tree; filename: string) =
-  ## Writes the complete contents of a mutable `Tree` to `filename`.
+proc saveTree*(tree: NifBuilder; filename: string) =
+  ## Writes the complete contents of a mutable `NifBuilder` to `filename`.
   ## This preserves line info because it is intended for `.nif` output.
   if tree.p == nil:
     writeFile filename, ""
   else:
     writeFile filename, toString(tree.p[].buf)
 
-proc saveTree*(tree: Tree) =
-  ## Writes the complete contents of a mutable `Tree` to `paramStr(2)`.
+proc saveTree*(tree: NifBuilder) =
+  ## Writes the complete contents of a mutable `NifBuilder` to `paramStr(2)`.
   ## This preserves line info because it is intended for `.nif` output.
   saveTree(tree, paramStr(2))
 
@@ -417,7 +417,7 @@ type
   NifIdent* = distinct string ## Marker type used with `~` to request an
                               ## identifier node instead of a string literal
                               ## node.
-  NifBinding* = tuple[name: string, value: Tree]
+  NifBinding* = tuple[name: string, value: NifBuilder]
 
 proc ident*(s: string): NifIdent =
   ## Marks `s` so that `~s` produces an identifier node rather than a string
@@ -430,7 +430,7 @@ proc isNifIdentStart(c: char): bool {.inline.} =
 proc isNifIdentChar(c: char): bool {.inline.} =
   c in {'a'..'z', 'A'..'Z', '0'..'9', '_'}
 
-proc validateConstructedTree(tree: sink Tree): Tree
+proc validateConstructedTree(tree: sink NifBuilder): NifBuilder
 
 proc parseNifBuffer(text: string): TokenBuf =
   result = parseFromBuffer(text, "")
@@ -451,36 +451,36 @@ type
 proc validationError(info: PackedLineInfo; msg: string; orig: Cursor): ValidationError =
   ValidationError(found: true, info: info, msg: msg, orig: orig)
 
-proc createErrorTree(info: PackedLineInfo; msg: string; orig: Cursor): Tree =
+proc createErrorTree(info: PackedLineInfo; msg: string; orig: Cursor): NifBuilder =
   var buf = createTokenBuf(8)
   buf.buildTree ErrT, info:
     buf.addSubtree(orig)
     buf.addStrLit(msg, info)
   result = createTree(buf)
 
-proc createErrorTree(info: PackedLineInfo; msg: string): Tree =
+proc createErrorTree(info: PackedLineInfo; msg: string): NifBuilder =
   var orig = createTokenBuf(1)
   orig.addDotToken()
   result = createErrorTree(info, msg, cursorAt(orig, 0))
 
-proc errorInfo(n: Node): PackedLineInfo =
+proc errorInfo(n: NifCursor): PackedLineInfo =
   if hasSubtree(n):
     n.info
   else:
     NoLineInfo
 
-proc errorTree*(msg: string): Tree =
+proc errorTree*(msg: string): NifBuilder =
   ## Produces an `ErrT` tree with synthetic line info.
   createErrorTree(NoLineInfo, msg)
 
-proc errorTree*(msg: string; at: Node): Tree =
+proc errorTree*(msg: string; at: NifCursor): NifBuilder =
   ## Produces an `ErrT` tree located at `at` and embeds `at` as source.
   if hasSubtree(at):
     createErrorTree(at.info, msg, at.cursor)
   else:
     createErrorTree(NoLineInfo, msg)
 
-proc errorTree*(msg: string; at, orig: Node): Tree =
+proc errorTree*(msg: string; at, orig: NifCursor): NifBuilder =
   ## Produces an `ErrT` tree located at `at` and embeds `orig` as source.
   if hasSubtree(orig):
     createErrorTree(errorInfo(at), msg, orig.cursor)
@@ -686,7 +686,7 @@ proc validateConstructedNode(n: var Cursor): ValidationError =
       if nested == 0:
         break
 
-proc validateConstructedTree(tree: sink Tree): Tree =
+proc validateConstructedTree(tree: sink NifBuilder): NifBuilder =
   if tree.isEmpty:
     return tree
   var n = snapshot(tree)
@@ -694,14 +694,14 @@ proc validateConstructedTree(tree: sink Tree): Tree =
   let err = validateConstructedNode(current)
   if err.found:
     result = createErrorTree(err.info, err.msg, err.orig)
-  else: 
+  else:
     result = ensureMove(n.owner)
 
-proc parseNifFragment(text: string): Tree =
+proc parseNifFragment(text: string): NifBuilder =
   validateConstructedTree(createTree(parseNifBuffer(text)))
 
 proc createTree*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
-    kind: K; children: varargs[Tree]): Tree =
+    kind: K; children: varargs[NifBuilder]): NifBuilder =
   ## Produces a new tree node of `kind` containing `children`.
   result = createTree()
   result.withTree kind, NoLineInfo:
@@ -710,7 +710,7 @@ proc createTree*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
   result = validateConstructedTree(result)
 
 proc createTree*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
-    kind: K; info: LineInfo; children: varargs[Tree]): Tree =
+    kind: K; info: LineInfo; children: varargs[NifBuilder]): NifBuilder =
   ## Produces a new tree node of `kind` and line info `info` containing `children`.
   result = createTree()
   result.withTree kind, info:
@@ -730,11 +730,11 @@ proc appendParsedText(dest: var TokenBuf; text: string) =
   if text.len > 0:
     dest.add parseNifBuffer(text)
 
-proc appendTree(dest: var TokenBuf; tree: Tree) =
+proc appendTree(dest: var TokenBuf; tree: NifBuilder) =
   if not tree.isEmpty:
     dest.add tree.p[].buf
 
-proc parseNifTemplate(spec: string; bindings: openArray[NifBinding]): Tree =
+proc parseNifTemplate(spec: string; bindings: openArray[NifBinding]): NifBuilder =
   var buf = createTokenBuf(spec.len + bindings.len * 4)
   var literal = newStringOfCap(spec.len)
   var i = 0
@@ -765,7 +765,7 @@ proc parseNifTemplate(spec: string; bindings: openArray[NifBinding]): Tree =
   appendParsedText(buf, literal)
   result = validateConstructedTree(createTree(buf))
 
-proc renderNode*(n: Node): string =
+proc renderNode*(n: NifCursor): string =
   ## Renders the current token or subtree as raw NIF text for debugging.
   ## This omits line info and only covers the subtree rooted at `n`.
   if not hasSubtree(n):
@@ -773,122 +773,122 @@ proc renderNode*(n: Node): string =
   else:
     result = toString(n.cursor, false)
 
-proc strLitTree(s: string): Tree =
+proc strLitTree(s: string): NifBuilder =
   var buf = createTokenBuf(1)
   buf.addStrLit(s)
   result = createTree(buf)
 
-proc identTree(s: string): Tree =
+proc identTree(s: string): NifBuilder =
   var buf = createTokenBuf(1)
   buf.addIdent(s)
   result = createTree(buf)
 
-proc charLitTree(c: char): Tree =
+proc charLitTree(c: char): NifBuilder =
   var buf = createTokenBuf(1)
   buf.addCharLit(c)
   result = createTree(buf)
 
-proc intLitTree(i: BiggestInt): Tree =
+proc intLitTree(i: BiggestInt): NifBuilder =
   var buf = createTokenBuf(1)
   buf.addIntLit(i)
   result = createTree(buf)
 
-proc uintLitTree(u: BiggestUInt): Tree =
+proc uintLitTree(u: BiggestUInt): NifBuilder =
   var buf = createTokenBuf(1)
   buf.addUIntLit(u)
   result = createTree(buf)
 
-proc floatLitTree(f: BiggestFloat): Tree =
+proc floatLitTree(f: BiggestFloat): NifBuilder =
   var buf = createTokenBuf(1)
   buf.addFloatLit(f)
   result = createTree(buf)
 
-proc boolTree(v: bool): Tree =
+proc boolTree(v: bool): NifBuilder =
   var buf = createTokenBuf(2)
   buf.addParLe(if v: TrueX else: FalseX)
   buf.addParRi()
   result = createTree(buf)
 
-proc `~`*(src: Node): Tree =
-  ## Copies the subtree rooted at `src` into a fresh `Tree`.
+proc `~`*(src: NifCursor): NifBuilder =
+  ## Copies the subtree rooted at `src` into a fresh `NifBuilder`.
   result = createTree()
   result.addSubtree(src)
 
-template `~`*(src: Tree): Tree =
+template `~`*(src: NifBuilder): NifBuilder =
   ## Returns `src` unchanged.
   src
 
-proc `~`*(src: string): Tree =
+proc `~`*(src: string): NifBuilder =
   ## Converts `src` into a string literal tree fragment.
   strLitTree(src)
 
-proc `~`*(src: NifIdent): Tree =
+proc `~`*(src: NifIdent): NifBuilder =
   ## Converts `src` into an identifier tree fragment.
   identTree(string(src))
 
-proc `~`*(src: char): Tree =
+proc `~`*(src: char): NifBuilder =
   ## Converts `src` into a character literal tree fragment.
   charLitTree(src)
 
-proc `~`*(src: int): Tree =
+proc `~`*(src: int): NifBuilder =
   ## Converts `src` into a signed integer literal tree fragment.
   intLitTree(BiggestInt(src))
 
-proc `~`*(src: int8): Tree =
+proc `~`*(src: int8): NifBuilder =
   ## Converts `src` into a signed integer literal tree fragment.
   intLitTree(BiggestInt(src))
 
-proc `~`*(src: int16): Tree =
+proc `~`*(src: int16): NifBuilder =
   ## Converts `src` into a signed integer literal tree fragment.
   intLitTree(BiggestInt(src))
 
-proc `~`*(src: int32): Tree =
+proc `~`*(src: int32): NifBuilder =
   ## Converts `src` into a signed integer literal tree fragment.
   intLitTree(BiggestInt(src))
 
-proc `~`*(src: int64): Tree =
+proc `~`*(src: int64): NifBuilder =
   ## Converts `src` into a signed integer literal tree fragment.
   intLitTree(BiggestInt(src))
 
-proc `~`*(src: uint): Tree =
+proc `~`*(src: uint): NifBuilder =
   ## Converts `src` into an unsigned integer literal tree fragment.
   uintLitTree(BiggestUInt(src))
 
-proc `~`*(src: uint8): Tree =
+proc `~`*(src: uint8): NifBuilder =
   ## Converts `src` into an unsigned integer literal tree fragment.
   uintLitTree(BiggestUInt(src))
 
-proc `~`*(src: uint16): Tree =
+proc `~`*(src: uint16): NifBuilder =
   ## Converts `src` into an unsigned integer literal tree fragment.
   uintLitTree(BiggestUInt(src))
 
-proc `~`*(src: uint32): Tree =
+proc `~`*(src: uint32): NifBuilder =
   ## Converts `src` into an unsigned integer literal tree fragment.
   uintLitTree(BiggestUInt(src))
 
-proc `~`*(src: uint64): Tree =
+proc `~`*(src: uint64): NifBuilder =
   ## Converts `src` into an unsigned integer literal tree fragment.
   uintLitTree(BiggestUInt(src))
 
-proc `~`*(src: float32): Tree =
+proc `~`*(src: float32): NifBuilder =
   ## Converts `src` into a floating-point literal tree fragment.
   floatLitTree(BiggestFloat(src))
 
-proc `~`*(src: float64): Tree =
+proc `~`*(src: float64): NifBuilder =
   ## Converts `src` into a floating-point literal tree fragment.
   floatLitTree(BiggestFloat(src))
 
-proc `~`*(src: bool): Tree =
+proc `~`*(src: bool): NifBuilder =
   ## Converts `src` into a `true` or `false` keyword tree fragment.
   boolTree(src)
 
-proc `%~`*(spec: string; bindings: openArray[NifBinding]): Tree =
+proc `%~`*(spec: string; bindings: openArray[NifBinding]): NifBuilder =
   ## Parses `spec` as a NIF fragment after expanding `$name` placeholders with
   ## the corresponding tree fragments from `bindings`.
   ##
   ## Use `$$` for a literal dollar sign.
   parseNifTemplate(spec, bindings)
 
-proc nifFragment*(spec: string): Tree =
-  ## Parses `spec` as a literal NIF fragment and returns it as a `Tree`.
+proc nifFragment*(spec: string): NifBuilder =
+  ## Parses `spec` as a literal NIF fragment and returns it as a `NifBuilder`.
   parseNifFragment(spec)

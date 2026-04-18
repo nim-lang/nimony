@@ -1,7 +1,7 @@
 import std / [os, syncio]
 import nimonyplugins
 
-proc tr(n: Node): Tree =
+proc tr(n: NifCursor): NifBuilder =
   var n = n
   if n.stmtKind == StmtsS:
     inc n

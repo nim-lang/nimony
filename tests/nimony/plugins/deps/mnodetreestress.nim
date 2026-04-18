@@ -1,16 +1,16 @@
 import nimonyplugins
 
-proc addEcho(t: var Tree; info: LineInfo; value: string) =
+proc addEcho(t: var NifBuilder; info: LineInfo; value: string) =
   t.withTree CallS, info:
     t.addIdent "echo"
     t.addStrLit value
 
-proc addEcho(t: var Tree; info: LineInfo; value: Node) =
+proc addEcho(t: var NifBuilder; info: LineInfo; value: NifCursor) =
   t.withTree CallS, info:
     t.addIdent "echo"
     t.addSubtree(value)
 
-proc makeProgram(info: LineInfo): Node =
+proc makeProgram(info: LineInfo): NifCursor =
   var tree = createTree()
   tree.withTree StmtsS, info:
     tree.addEcho(info, "alpha")
@@ -18,7 +18,7 @@ proc makeProgram(info: LineInfo): Node =
     tree.addEcho(info, "gamma")
   result = snapshot(tree)
 
-proc tr(n: Node): Tree =
+proc tr(n: NifCursor): NifBuilder =
   var input = n
   if input.stmtKind == StmtsS:
     inc input
@@ -35,7 +35,7 @@ proc tr(n: Node): Tree =
 
   var beta = second
 
-  var empty: Node
+  var empty: NifCursor
   empty = beta
 
   var third = source

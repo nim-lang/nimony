@@ -42,7 +42,7 @@ And in `deps/mplugin1.nim`:
 ```nim
 import nimonyplugins
 
-proc transform(n: Node): Tree =
+proc transform(n: Node): NifBuilder =
   result = createTree()
   let info = n.info
   var n = n
@@ -167,7 +167,7 @@ For example, stripping all top-level `block` statements:
 ```nim
 import nimonyplugins
 
-proc transform(n: Node): Tree =
+proc transform(n: Node): NifBuilder =
   result = createTree()
   let info = n.info
   var n = n
@@ -300,9 +300,9 @@ A `Node` is a read-only cursor into a frozen NIF tree. It advances forward only.
 | `lineCol(info)` | `SourcePos(line, col)` (1-based), or `(0, 0)` |
 
 
-### Tree — building NIF output
+### NifBuilder — building NIF output
 
-A `Tree` is a mutable builder. Copy-on-write semantics: copying a tree shares
+A `NifBuilder` is a mutable builder. Copy-on-write semantics: copying a tree shares
 the buffer until the next mutation detaches it.
 
 **Creating trees:**
@@ -355,9 +355,9 @@ result.withTree StmtsS, info:
 ### Writing output
 
 ```nim
-proc saveTree*(tree: Tree)                  # writes to paramStr(2)
-proc saveTree*(tree: Tree; filename: string)
-proc renderTree*(tree: Tree): string        # debug rendering (no line info)
+proc saveTree*(tree: NifBuilder)                  # writes to paramStr(2)
+proc saveTree*(tree: NifBuilder; filename: string)
+proc renderTree*(tree: NifBuilder): string        # debug rendering (no line info)
 ```
 
 
@@ -375,7 +375,7 @@ operator converts Nim values to tree fragments:
 | Expression | Produces |
 |-----------|----------|
 | `~node` | Copy of `Node` subtree |
-| `~tree` | The `Tree` unchanged |
+| `~tree` | The `NifBuilder` unchanged |
 | `~"hello"` | String literal |
 | `~ident("foo")` | Identifier (not a string literal) |
 | `~42` | Integer literal |
@@ -404,9 +404,9 @@ let tail = nifFragment("""(call echo "done")""")
 ### Error reporting
 
 ```nim
-proc errorTree*(msg: string): Tree
-proc errorTree*(msg: string; at: Node): Tree
-proc errorTree*(msg: string; at, orig: Node): Tree
+proc errorTree*(msg: string): NifBuilder
+proc errorTree*(msg: string; at: Node): NifBuilder
+proc errorTree*(msg: string; at, orig: Node): NifBuilder
 ```
 
 Return an `ErrT` node that the compiler reports as a compile-time error. The `at`
@@ -428,7 +428,7 @@ Most plugins follow this pattern:
 ```nim
 import nimonyplugins
 
-proc transform(n: Node): Tree =
+proc transform(n: Node): NifBuilder =
   result = createTree()
   var n = n
   # Skip the StmtsS wrapper
