@@ -84,12 +84,12 @@ proc main7() {.passive.} =
 
 main7()
 
-# proc main8() {.passive.} =
-#     var b = 10
-#     proc a(x: int) {.closure,passive.} =
-#         echo "main8: ", b+x
-#     a(10)
-# main8()
+proc main8() {.passive.} =
+    var b = 10
+    proc a(x: int) {.closure,passive.} =
+        echo "main8: ", b+x
+    a(10)
+main8()
 
 proc main9() {.passive.} =
     var b = 0
