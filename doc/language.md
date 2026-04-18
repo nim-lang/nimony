@@ -4095,7 +4095,10 @@ be replicated at thread creation.)
 
 ## Plugins
 
-Plugins are a way to extend the language with new functionality. A plugin is a template that lacks a body. Instead it has a `{.plugin.}` pragma listing the Nim program that implements the plugin.
+Plugins are Nimony's metaprogramming mechanism, replacing Nim 2's macro system.
+A plugin is a template that lacks a body. Instead it has a `{.plugin.}` pragma
+listing the Nim program that implements the plugin.
+For the full plugin API reference, see [plugins.md](plugins.md).
 
 For example, rewriting the following template as a plugin:
 
@@ -4118,7 +4121,7 @@ In "deps/mplugin1.nim" there is the implementation:
 ```nim
 import nimonyplugins
 
-proc tr(n: Node): Tree =
+proc tr(n: NifCursor): NifBuilder =
   result = createTree()
   let info = n.info
   var n = n
