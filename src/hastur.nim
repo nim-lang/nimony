@@ -508,7 +508,7 @@ proc validatorTests() =
     "src/nimony/deferstmts.nim"]
   for f in passFiles:
     inc c.total
-    let (msgs, exitcode) = execLocal("validator", os.quoteShell(f))
+    let (msgs, exitcode) = execLocal("validator", "--strict " & os.quoteShell(f))
     if exitcode != 0:
       failure c, f, "validator: no violations", msgs
   # fake_pass.nim must produce the expected violations
@@ -518,7 +518,7 @@ proc validatorTests() =
       inc c.total
       let t = fakePassDir / x.path
       let expectedFile = t.changeFileExt(".expected")
-      let (msgs, exitcode) = execLocal("validator", os.quoteShell(t))
+      let (msgs, exitcode) = execLocal("validator", "--strict " & os.quoteShell(t))
       if not expectedFile.fileExists():
         failure c, t, "expected file " & expectedFile & " missing", ""
       else:

@@ -59,6 +59,7 @@ Options:
   --linker:LINKER           set the linker
   --app:console|gui|lib|staticlib
                             set the application type (default: console)
+  --novalidate              skip running the plugin validator on plugin sources
   --version                 show the version
   --help                    show this help
 """

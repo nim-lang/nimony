@@ -42,6 +42,7 @@ Options:
   --base:PATH               set the base directory for the configuration system
   --nimcache:PATH           set the path used for generated files
   --flags:FLAGS             undocumented flags
+  --novalidate              skip running the plugin validator on plugin sources
   --version                 show the version
   --help                    show this help
 """

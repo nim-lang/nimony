@@ -45,6 +45,7 @@ type
     ccKey*: string
     appType*: AppType
     backend*: Backend
+    noValidate*: bool # skip running the validator on plugin sources
 
 proc addDefine*(config: var NifConfig; symbol: string) =
   config.defines.addUnique symbol

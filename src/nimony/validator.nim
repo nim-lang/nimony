@@ -62,8 +62,8 @@ type
     types: Table[string, TypeInfo]
 
 const
-  CursorTypeNames = ["Cursor"]
-  TokenBufTypeNames = ["TokenBuf"]
+  CursorTypeNames = ["Cursor", "NifCursor"]
+  TokenBufTypeNames = ["TokenBuf", "NifBuilder"]
 
 proc classifyTypeName(name: string): TrackedKind =
   if name in CursorTypeNames: tkCursor
@@ -277,7 +277,7 @@ proc checkCopyIntoKind(ctx: var CheckContext; n: Cursor; info: PackedLineInfo) =
 
   if c.kind == ParLe:
     let name = extractDotCallName(c)
-    if name notin ["copyIntoKind", "buildTree"]: return
+    if name notin ["copyIntoKind", "buildTree", "withTree"]: return
     destName = extractDotReceiver(c)
     skip c
     if c.kind == Ident:
@@ -293,7 +293,7 @@ proc checkCopyIntoKind(ctx: var CheckContext; n: Cursor; info: PackedLineInfo) =
       skip c
   elif c.kind == Ident:
     let name = pool.strings[c.litId]
-    if name notin ["copyIntoKind", "buildTree"]: return
+    if name notin ["copyIntoKind", "buildTree", "withTree"]: return
     inc c
     # Extract dest variable before skipping it
     if c.kind == Ident:
@@ -366,9 +366,9 @@ proc scanForCopyIntoKind(ctx: var CheckContext; buf: var TokenBuf) =
         inc peek
         var found = false
         if peek.kind == ParLe:
-          found = extractDotCallName(peek) in ["copyIntoKind", "buildTree"]
+          found = extractDotCallName(peek) in ["copyIntoKind", "buildTree", "withTree"]
         elif peek.kind == Ident:
-          found = pool.strings[peek.litId] in ["copyIntoKind", "buildTree"]
+          found = pool.strings[peek.litId] in ["copyIntoKind", "buildTree", "withTree"]
         if found:
           checkCopyIntoKind(ctx, n, n.info)
       inc nested
@@ -432,7 +432,11 @@ const
   CursorConsumeProcs = ["skip", "takeTree", "takeToken", "takeParRi", "skipParRi", "inc"]
   ## Procs that emit to a buffer without consuming a cursor (must-fill)
   BufferEmitProcs = ["addParLe", "addParRi", "addDotToken", "addSymUse", "addSymDef",
-                     "addIntLit", "addStrLit", "addEmpty", "add"]
+                     "addIntLit", "addStrLit", "addEmpty", "add",
+                     # plugin API (nimonyplugins):
+                     "addIdent", "addUIntLit", "addCharLit", "addFloatLit",
+                     "addEmptyNode", "addEmptyNode2", "addEmptyNode3", "addEmptyNode4",
+                     "addSubtree"]
   ## Procs that skip the ParRi after a while-kind-ParRi loop
   ParRiSkipProcs = ["inc", "skipParRi", "takeParRi", "takeToken"]
 
@@ -598,7 +602,9 @@ const
   ## Templates/calls that wrap a cursor and handle its ParRi internally.
   ## If a while-ParRi loop is the last statement inside one of these calls'
   ## body, the ParRi is consumed by the template — no explicit skip needed.
-  CopyIntoProcs = ["copyInto", "copyIntoKind", "copyIntoKinds", "copyIntoUnchecked"]
+  CopyIntoProcs = ["copyInto", "copyIntoKind", "copyIntoKinds", "copyIntoUnchecked",
+    # plugin API (nimonyplugins):
+    "withTree"]
 
 const
   ## Procs that contribute to a dest buffer (write output).
@@ -607,7 +613,11 @@ const
     "copyIntoKind", "copyIntoKinds", "copyInto", "copyIntoUnchecked",
     "addParLe", "addParRi", "addDotToken", "addSymUse", "addSymDef",
     "addIntLit", "addStrLit", "addEmpty", "add", "addSubtree",
-    "trExpr", "trStmt", "trLocal", "trProcDecl", "tr"]
+    "trExpr", "trStmt", "trLocal", "trProcDecl", "tr",
+    # plugin API (nimonyplugins):
+    "addIdent", "addUIntLit", "addCharLit", "addFloatLit",
+    "addEmptyNode", "addEmptyNode2", "addEmptyNode3", "addEmptyNode4",
+    "withTree"]
 
 proc whileBodyContributesDest(whileNode: Cursor): bool =
   ## Check if the while loop body contains any call that writes to a dest buffer.
@@ -736,13 +746,29 @@ proc parseFileViaNifler(nimFile: string): TokenBuf =
 
 proc main() =
   if paramCount() < 1:
-    quit "Usage: validator <passfile.nim> [tags.md]"
+    quit "Usage: validator [--strict] <passfile.nim> [tags.md]"
 
-  let passFile = paramStr(1)
-  let tagsFile = if paramCount() >= 2: paramStr(2)
+  # --strict enables checks that only make sense for compiler-pass source
+  # (e.g. exhaustive-case on stmtKind). Plugins pass files without --strict
+  # because `else: takeTree n` pass-through is idiomatic for them.
+  var strict = false
+  var positional: seq[string] = @[]
+  for i in 1..paramCount():
+    let a = paramStr(i)
+    if a == "--strict": strict = true
+    else: positional.add a
+  if positional.len < 1:
+    quit "Usage: validator [--strict] <passfile.nim> [tags.md]"
+
+  let passFile = positional[0]
+  let tagsFile = if positional.len >= 2: positional[1]
                  else:
+                   # Candidates, in order: appDir/../doc/tags.md (bin in project root),
+                   # appDir/../../doc/tags.md (bin nested one deeper), cwd/doc/tags.md.
                    let appDir = getAppDir()
-                   var candidate = appDir / ".." / ".." / "doc" / "tags.md"
+                   var candidate = appDir / ".." / "doc" / "tags.md"
+                   if not fileExists(candidate):
+                     candidate = appDir / ".." / ".." / "doc" / "tags.md"
                    if not fileExists(candidate):
                      candidate = "doc/tags.md"
                    candidate
@@ -791,7 +817,12 @@ proc main() =
 
   var ctx = CheckContext(grammar: grammar, effectGraph: eg, filename: passFile)
   scanForCopyIntoKind(ctx, buf)
-  scanForNonExhaustiveCases(ctx, buf)
+  # Exhaustive-case on tag kinds is valuable for compiler passes (forces every
+  # pass to be reviewed when a new tag is added), but plugins legitimately use
+  # `else: takeTree n` as a pass-through for kinds they don't transform. Run
+  # the check only in --strict mode.
+  if strict:
+    scanForNonExhaustiveCases(ctx, buf)
 
   echo "Checked ", ctx.checked, " call sites, skipped ", ctx.skipped, " (too complex)"
 
