@@ -32,14 +32,12 @@ type
                  ## snapshot automatically.
     cursor: Cursor
 
-  SymId* = object ## Stable plugin-facing symbol handle.
-                  ## This intentionally avoids exposing the compiler's raw
-                  ## numeric symbol ids as plain integers.
+  SymId* = object ## Symbol identifier. Use with `addSymUse` / `addSymDef` to
+                  ## emit symbol references and definitions in the output.
     raw: nifstreams.SymId
 
-  TagId* = object ## Opaque plugin-facing tag handle.
-                  ## This intentionally avoids exposing the compiler's raw
-                  ## tag ids as plain integers.
+  TagId* = object ## Tag identifier for NIF tree nodes (e.g. `Stmt`, `Expr`).
+                  ## Use with `parLeToken` to open a tagged subtree.
     raw: nifstreams.TagId
 
 proc `=destroy`*(x: NifBuilder) =
