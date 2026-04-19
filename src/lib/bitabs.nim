@@ -157,34 +157,31 @@ when isMainModule:
     import std / syncio
   var t = initBiTable[uint32, string]()
 
-  echo getOrIncl(t, "hello")
+  assert getOrIncl(t, "hello") == 1
 
-  echo getOrIncl(t, "hello")
-  echo getOrIncl(t, "hello3")
-  echo getOrIncl(t, "hello4")
-  echo getOrIncl(t, "helloasfasdfdsa")
-  echo getOrIncl(t, "hello")
-  echo getKeyId(t, "hello")
-  echo getKeyId(t, "none")
+  assert getOrIncl(t, "hello") == 1
+  assert getOrIncl(t, "hello3") == 2
+  assert getOrIncl(t, "hello4") == 3
+  assert getOrIncl(t, "helloasfasdfdsa") == 4
+  assert getOrIncl(t, "hello") == 1
+  assert getKeyId(t, "hello") == 1
+  assert getKeyId(t, "none") == 0
 
   for i in 0 ..< 100_000:
     discard t.getOrIncl($i & "___" & $i)
 
   for i in 0 ..< 100_000:
     assert t.getOrIncl($i & "___" & $i).idToIdx == i + 4
-  echo "begin"
-  echo t.vals.len
+  assert t.vals.len == 100004
 
-  echo t.vals[0]
-  echo t.vals[1004]
-
-  echo "middle"
+  assert t.vals[0] == "hello"
+  assert t.vals[1004] == "1000___1000"
 
   var tf = initBiTable[uint32, float]()
 
   discard tf.getOrIncl(0.4)
   discard tf.getOrIncl(16.4)
   discard tf.getOrIncl(32.4)
-  echo getKeyId(tf, 32.4)
+  assert getKeyId(tf, 32.4) == 3
 
-  echo "end"
+  echo "success"
