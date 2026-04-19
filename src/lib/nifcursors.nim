@@ -13,28 +13,28 @@ type
   Storage = ptr UncheckedArray[PackedToken]
   CursorOwner = ptr CursorOwnerObj
   CursorOwnerObj = object
-    rc: int
-    data: Storage
+    rc: int          ## 1 (TokenBuf) + number of live Cursors sharing this control block
+    data: Storage    ## the shared backing storage; aliases TokenBuf.data when attached
 
   Cursor* = object
     owner: CursorOwner
     p: ptr PackedToken
     rem: int
 
+template decRcAndFree(owner: CursorOwner) =
+  dec owner.rc
+  if owner.rc == 0:
+    if owner.data != nil: dealloc(owner.data)
+    dealloc(owner)
+
 when defined(nimAllowNonVarDestructor) and defined(gcDestructors):
   proc `=destroy`*(c: Cursor) {.inline.} =
     if c.owner != nil:
-      dec c.owner.rc
-      if c.owner.rc == 0:
-        if c.owner.data != nil: dealloc(c.owner.data)
-        dealloc(c.owner)
+      decRcAndFree(c.owner)
 else:
   proc `=destroy`*(c: var Cursor) {.inline.} =
     if c.owner != nil:
-      dec c.owner.rc
-      if c.owner.rc == 0:
-        if c.owner.data != nil: dealloc(c.owner.data)
-        dealloc(c.owner)
+      decRcAndFree(c.owner)
 
 proc `=wasMoved`*(c: var Cursor) {.inline.} =
   c.owner = nil
@@ -154,7 +154,9 @@ type
   TokenBuf* = object
     data: Storage
     len, cap: int
-    owner: CursorOwner  # nil = unique, non-nil = data shared with cursors
+    owner: CursorOwner  ## nil = exclusive ownership of data.
+                        ## non-nil = data is shared via CursorOwner with Cursors;
+                        ## b.data aliases owner.data. TokenBuf holds one rc ref.
 
 proc `=copy`(dest: var TokenBuf; src: TokenBuf) {.error.}
 proc `=wasMoved`(dest: var TokenBuf) {.inline.} =
@@ -166,19 +168,13 @@ proc `=wasMoved`(dest: var TokenBuf) {.inline.} =
 when defined(nimAllowNonVarDestructor) and defined(gcDestructors):
   proc `=destroy`(dest: TokenBuf) {.inline.} =
     if dest.owner != nil:
-      dec dest.owner.rc
-      if dest.owner.rc == 0:
-        if dest.owner.data != nil: dealloc(dest.owner.data)
-        dealloc(dest.owner)
+      decRcAndFree(dest.owner)
     else:
       if dest.data != nil: dealloc(dest.data)
 else:
   proc `=destroy`(dest: var TokenBuf) {.inline.} =
     if dest.owner != nil:
-      dec dest.owner.rc
-      if dest.owner.rc == 0:
-        if dest.owner.data != nil: dealloc(dest.owner.data)
-        dealloc(dest.owner)
+      decRcAndFree(dest.owner)
     else:
       if dest.data != nil: dealloc(dest.data)
 
@@ -186,15 +182,13 @@ proc createTokenBuf*(cap = 100): TokenBuf =
   result = TokenBuf(data: cast[Storage](alloc(sizeof(PackedToken)*cap)), len: 0, cap: cap)
 
 proc prepareMutation*(b: var TokenBuf) {.inline.} =
-  ## COW detach: if the buffer is shared with cursors, deep-copy the data
-  ## so we can mutate without invalidating existing cursors.
+  ## COW detach: deep-copy the data so we can mutate without invalidating
+  ## existing cursors. Releases the TokenBuf's rc ref to the old owner;
+  ## if no cursors remain (rc was 1), cleans up the old owner entirely.
   if b.owner != nil:
     let newData = cast[Storage](alloc(sizeof(PackedToken) * b.cap))
     copyMem(newData, b.data, sizeof(PackedToken) * b.len)
-    dec b.owner.rc
-    if b.owner.rc == 0:
-      # no cursors left, free the old shared ownership
-      dealloc(b.owner)
+    decRcAndFree(b.owner)
     b.owner = nil
     b.data = newData
 
@@ -202,11 +196,13 @@ proc freeze*(b: var TokenBuf) {.inline.} = discard
 proc thaw*(b: var TokenBuf) {.inline.} = discard
 
 proc beginRead*(b: var TokenBuf): Cursor =
+  ## Returns a Cursor into the buffer. Creates a CursorOwner on first call
+  ## (rc=2: one for TokenBuf, one for the returned Cursor).
   if b.owner == nil:
     b.owner = cast[CursorOwner](alloc0(sizeof(CursorOwnerObj)))
-    b.owner.rc = 1
     b.owner.data = b.data
-  inc b.owner.rc
+    b.owner.rc = 1  # 1 for TokenBuf
+  inc b.owner.rc  # + 1 for the returned Cursor
   result = Cursor(owner: b.owner, p: addr(b.data[0]), rem: b.len)
 
 proc endRead*(b: var TokenBuf) {.inline.} = discard
@@ -237,9 +233,9 @@ proc cursorAt*(b: var TokenBuf; i: int): Cursor {.inline.} =
   assert i >= 0 and i < b.len
   if b.owner == nil:
     b.owner = cast[CursorOwner](alloc0(sizeof(CursorOwnerObj)))
-    b.owner.rc = 1
     b.owner.data = b.data
-  inc b.owner.rc
+    b.owner.rc = 1  # 1 for TokenBuf
+  inc b.owner.rc  # + 1 for the returned Cursor
   result = Cursor(owner: b.owner, p: addr b.data[i], rem: b.len-i)
 
 proc readonlyCursorAt*(b: TokenBuf; i: int): Cursor {.inline.} =

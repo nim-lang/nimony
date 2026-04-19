@@ -483,9 +483,10 @@ proc vlTests(overwrite: bool) =
   ## Tests are .nif files in src/njvl/tests/ with expected output in .vl.nif files.
   runNifToolTests("vl", "src/njvl/tests", ".nif", ".vl.nif", overwrite)
 
-proc checkTagsTests() =
-  ## Run check_tags over compiler pass source files to verify NIF construction
-  ## conforms to the grammar in doc/tags.md.
+proc validatorTests() =
+  ## Run the validator over compiler pass source files to verify NIF construction
+  ## conforms to the grammar in doc/tags.md, plus obligation tracking and
+  ## while-ParRi completion checks (the latter as warnings, not errors).
   ## Also runs fake_pass.nim which has deliberate errors and checks expected output.
   let t0 = epochTime()
   var c = TestCounters(total: 0, failures: 0)
@@ -505,12 +506,11 @@ proc checkTagsTests() =
     "src/nimony/semdecls.nim",
     "src/nimony/controlflow.nim",
     "src/nimony/deferstmts.nim"]
-  # Compiler passes must be violation-free
   for f in passFiles:
     inc c.total
-    let (msgs, exitcode) = execLocal("check_tags", os.quoteShell(f))
+    let (msgs, exitcode) = execLocal("validator", "--strict " & os.quoteShell(f))
     if exitcode != 0:
-      failure c, f, "check_tags: no violations", msgs
+      failure c, f, "validator: no violations", msgs
   # fake_pass.nim must produce the expected violations
   const fakePassDir = "tests/check_tags"
   for x in walkDir(fakePassDir, relative = true):
@@ -518,12 +518,11 @@ proc checkTagsTests() =
       inc c.total
       let t = fakePassDir / x.path
       let expectedFile = t.changeFileExt(".expected")
-      let (msgs, exitcode) = execLocal("check_tags", os.quoteShell(t))
+      let (msgs, exitcode) = execLocal("validator", "--strict " & os.quoteShell(t))
       if not expectedFile.fileExists():
         failure c, t, "expected file " & expectedFile & " missing", ""
       else:
         let expected = readFile(expectedFile).strip
-        # Extract just the violation lines from the output
         var got = ""
         for line in msgs.splitLines:
           if line.startsWith("  ") or line.contains("violation"):
@@ -531,10 +530,10 @@ proc checkTagsTests() =
             got.add line
         if got.strip.replace("\\", "/") != expected.strip.replace("\\", "/"):
           failure c, t, expected, got
-  echo c.total - c.failures, " / ", c.total, " check_tags tests successful in ",
+  echo c.total - c.failures, " / ", c.total, " validator tests successful in ",
     formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
-    quit "FAILURE: Some check_tags tests failed."
+    quit "FAILURE: Some validator tests failed."
   else:
     echo "SUCCESS."
 
@@ -690,9 +689,9 @@ proc buildNifmake(showProgress = false) =
   let exe = "nifmake".addFileExt(ExeExt)
   robustMoveFile "src/nifmake/" & exe, binDir() / exe
 
-proc buildCheckTags(showProgress = false) =
-  exec nimcPrefix() & "src/nimony/check_tags.nim", showProgress
-  let exe = "check_tags".addFileExt(ExeExt)
+proc buildValidator(showProgress = false) =
+  exec nimcPrefix() & "src/nimony/validator.nim", showProgress
+  let exe = "validator".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
 # ---------------------------------------------------------------------------
@@ -903,13 +902,13 @@ proc handleCmdLine =
     njTests(overwrite)
     buildVl()
     vlTests(overwrite)
-    buildCheckTags()
-    checkTagsTests()
+    buildValidator()
+    validatorTests()
     bootstrapTests()
 
-  of "checktags":
-    buildCheckTags()
-    checkTagsTests()
+  of "checktags", "validator":
+    buildValidator()
+    validatorTests()
 
   of "bootstrap":
     buildNimony()
