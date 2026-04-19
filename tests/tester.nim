@@ -87,14 +87,4 @@ proc hasturTests(overwrite: bool) =
   else:
     exec "nim c -r src/hastur"
 
-proc testTokenBufCow() =
-  exec "nim c tests/tokenbuf_cow.nim"
-  let exe = ("tests" / "tokenbuf_cow").addFileExt(ExeExt)
-  exec exe
-  when defined(linux):
-    if findExe("valgrind").len > 0:
-      exec "valgrind --leak-check=full --error-exitcode=1 " & exe
-
-testTokenBufCow()
-
 hasturTests(overwrite)

@@ -192,6 +192,10 @@ proc prepareMutation*(b: var TokenBuf) {.inline.} =
     let newData = cast[Storage](alloc(sizeof(PackedToken) * b.cap))
     copyMem(newData, b.data, sizeof(PackedToken) * b.len)
     dec b.owner.rc
+    if b.owner.rc == 0:
+      # no cursors still share the old storage, so release it completely
+      if b.owner.data != nil: dealloc(b.owner.data)
+      dealloc(b.owner)
     b.owner = nil
     b.data = newData
 
