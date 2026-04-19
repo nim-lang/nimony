@@ -64,8 +64,7 @@ type
     typeCache: TypeCache
     thisModuleSuffix: string
     procStack: seq[SymId]
-    needsLift: seq[seq[int]]
-    liftIndex: int
+    dest: TokenBuf
     closureProcs, createsEnv, escapes: HashSet[SymId]
     localToEnv: Table[SymId, EnvField]
     env: CurrentEnv
@@ -531,27 +530,13 @@ proc treProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.closeScope()
 
 proc treProcLift(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  if c.procStack.len > 0:
-    var index = c.needsLift.len
-    var liftIndex = c.liftIndex
-    c.liftIndex = index
-    c.needsLift.add @[dest.len]
-    c.needsLift[liftIndex].add dest.len
-    treProc c, dest, n
-    c.liftIndex = liftIndex
-    c.needsLift[liftIndex].add dest.len
-    c.needsLift[index].add dest.len
-  else:
-    c.needsLift = @[@[0]]
-    c.liftIndex = 0
-    var procDest = createTokenBuf(16)
-    treProc c, procDest, n
-    c.needsLift[0].add procDest.len
-    for i in 1..c.needsLift.len:
-      var x = c.needsLift[^i]
-      for j in 0..<(x.len div 2):
-        for k in x[j*2]..<x[j*2+1]:
-          dest.add procDest[k]
+  if c.procStack.len == 0:
+    swap c.dest, dest
+  var lift = createTokenBuf(16)
+  treProc c, lift, n
+  c.dest.add lift
+  if c.procStack.len == 0:
+    swap c.dest, dest
 
 proc isStaticCall(c: var Context;s: SymId): bool =
   let res = tryLoadSym(s)
