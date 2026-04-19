@@ -35,6 +35,7 @@ type
     CallConvMismatch
     RaisesMismatch
     ClosureMismatch
+    PassiveMismatch
     UnavailableSubtypeRelation
     NotImplementedConcept
     ImplicitConversionNotMutable
@@ -131,6 +132,8 @@ proc getErrorMsg*(m: Match): string =
     "`.raises` mismatch"
   of ClosureMismatch:
     "`.closure` mismatch"
+  of PassiveMismatch:
+    "`.passive` mismatch"
   of UnavailableSubtypeRelation:
     "subtype relation not available for `out` parameters"
   of NotImplementedConcept:
@@ -651,9 +654,10 @@ type
     usesRaises*: bool
     raisesType*: Cursor  # The actual exception type from .raises pragma
     usesClosure*: bool
+    usesPassive*: bool
 
 proc extractProcProps*(c: var Cursor): ProcProperties =
-  result = ProcProperties(cc: Nimcall, usesRaises: false, usesClosure: false)
+  result = ProcProperties(cc: Nimcall, usesRaises: false, usesClosure: false, usesPassive: false)
   if c.substructureKind == PragmasU:
     inc c
     while c.kind != ParRi:
@@ -669,6 +673,8 @@ proc extractProcProps*(c: var Cursor): ProcProperties =
           result.raisesType = raisesNode
       elif c.pragmaKind == ClosureP:
         result.usesClosure = true
+      elif c.pragmaKind == PassiveP:
+        result.usesPassive = true
       skip c
     inc c
   elif c.kind == DotToken:
@@ -735,6 +741,8 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
     m.error RaisesMismatch, f, a
   elif fcc.usesClosure != acc.usesClosure:
     m.error ClosureMismatch, f, a
+  elif fcc.usesPassive != acc.usesPassive:
+    m.error PassiveMismatch, f, a
   # XXX consider when f or a is (params):
   skip f # effects
   #skip a # effects
