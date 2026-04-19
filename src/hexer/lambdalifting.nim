@@ -64,6 +64,7 @@ type
     typeCache: TypeCache
     thisModuleSuffix: string
     procStack: seq[SymId]
+    dest: TokenBuf
     closureProcs, createsEnv, escapes: HashSet[SymId]
     localToEnv: Table[SymId, EnvField]
     env: CurrentEnv
@@ -528,6 +529,15 @@ proc treProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
     discard c.procStack.pop()
   c.typeCache.closeScope()
 
+proc treProcLift(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  if c.procStack.len == 0:
+    swap c.dest, dest
+  var lift = createTokenBuf(16)
+  treProc c, lift, n
+  c.dest.add lift
+  if c.procStack.len == 0:
+    swap c.dest, dest
+
 proc isStaticCall(c: var Context;s: SymId): bool =
   let res = tryLoadSym(s)
   if res.status == LacksNothing:
@@ -655,7 +665,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of LocalDecls:
       treLocal c, dest, n
     of ProcS, FuncS, MacroS, MethodS, ConverterS:
-      treProc c, dest, n
+      treProcLift c, dest, n
     of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
       ForS, IncludeS, ImportS, FromimportS, ImportExceptS,
       ExportS, CommentS,

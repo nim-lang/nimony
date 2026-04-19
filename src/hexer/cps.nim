@@ -285,13 +285,19 @@ proc emitStackFrameTag(c: var Context; dest: var TokenBuf; coroVar: SymId; info:
       dest.addIntLit 1, info # field is in superclass
     dest.addParPair NilX, info
 
-proc isMethod*(c: var Context; s: SymId): bool =
+proc isProc*(c: var Context; s: SymId): bool =
   let res = tryLoadSym(s)
   if res.status == LacksNothing:
-    result = res.decl.symKind == MethodY
+    result = res.decl.symKind == ProcY
   else:
     let info = getLocalInfo(c.typeCache, s)
-    result = info.kind == MethodY
+    result = info.kind == ProcY
+
+proc isPassive(c: var Context; s: SymId): bool =
+  let typ = c.typeCache.lookupSymbol(s)
+  if not cursorIsNil(typ) and procHasPragma(typ, PassiveP):
+    return true
+  return false
 
 proc getNextState(buf: TokenBuf; n: Cursor): int =
   var pos = cursorToPosition(buf, n)
@@ -301,8 +307,8 @@ proc getNextState(buf: TokenBuf; n: Cursor): int =
     inc pos
   return -1
 
-proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId; target: Cursor;
-                   inhibitComplete = false) =
+proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cursor) =
+  let typ = c.typeCache.getType(n.firstSon, {SkipAliases})
   let retType = getType(c.typeCache, n)
   let hasResult = not isVoidType(retType)
   if hasResult:
@@ -311,32 +317,10 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
   of IsNormal:
     # passive call from within a normal proc:
     let info = n.info
-    if inhibitComplete:
-      # Use heap allocation (callee deallocates):
-      dest.addParLe ExprX, info
-      dest.addParLe StmtsS, info
-      dest.addParRi() # StmtsS
-      copyIntoKind dest, CallS, info:
-        dest.addSymUse coroWrapperProc(c, sym), info
-        inc n
-        skip n # fn already handled
-        while n.kind != ParRi:
-          tr(c, dest, n)
-        inc n
-        if hasResult:
-          dest.copyIntoKind AddrX, info:
-            dest.copyTree target
-        # add StopContinuation:
-        dest.copyIntoKind OconstrX, info:
-          dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
-          dest.copyIntoKind KvU, info:
-            dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
-            dest.addParPair NilX, info
-          dest.copyIntoKind KvU, info:
-            dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
-            dest.addParPair NilX, info
-      dest.addParRi() # ExprX
-    elif isMethod(c, sym):
+    # fallback to init wrapper call for
+    # methods, closures, proctype calls
+    # because we cant restore its coroTypeForProc
+    if typ.typeKind == MethodT or procHasPragma(typ, ClosureP) or typ.firstson.kind == DotToken:
       let contVar = pool.syms.getOrIncl("`contVar." & $c.currentProc.counter)
       inc c.currentProc.counter
       copyIntoKind dest, VarS, info:
@@ -346,9 +330,12 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
         dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
         # constructor call as initializer:
         copyIntoKind dest, CallS, info:
-          dest.addSymUse coroWrapperProc(c, sym), info
           inc n
-          skip n # fn already handled
+          if n.kind == Symbol and typ.firstson.kind == SymbolDef:
+            dest.addSymUse coroWrapperProc(c, n.symId), info
+            inc n
+          else:
+            tr(c, dest, n)
           while n.kind != ParRi:
             tr(c, dest, n)
           inc n
@@ -373,6 +360,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
       # Tag callee.callee with bit 0 so deallocFrame is a nop.
       let coroVar = pool.syms.getOrIncl("`coroVar." & $c.currentProc.counter)
       inc c.currentProc.counter
+      var sym = n.firstson.symId
       copyIntoKind dest, VarS, info:
         dest.addSymDef coroVar, info
         dest.addDotToken() # exported
@@ -426,25 +414,26 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
     let info = n.info
 
     var contVar = SymId(0)
-    if not inhibitComplete:
-      # We cannot generate `return fnConstruct(args)` directly here because
-      # the rest of the pipeline already assumes code
-      # like `let tmp = fnConstruct(args); return tmp` so that is what we
-      # generate here:
-      contVar = pool.syms.getOrIncl("`contVar." & $c.currentProc.counter)
-      inc c.currentProc.counter
-      dest.addParLe VarS, info
-      dest.addSymDef contVar, info
-      dest.addDotToken() # exported
-      dest.addDotToken() # pragmas
-      dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+    # We cannot generate `return fnConstruct(args)` directly here because
+    # the rest of the pipeline already assumes code
+    # like `let tmp = fnConstruct(args); return tmp` so that is what we
+    # generate here:
+    contVar = pool.syms.getOrIncl("`contVar." & $c.currentProc.counter)
+    inc c.currentProc.counter
+    dest.addParLe VarS, info
+    dest.addSymDef contVar, info
+    dest.addDotToken() # exported
+    dest.addDotToken() # pragmas
+    dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
 
     # value: emit constructor call with heap-allocated frame:
     copyIntoKind dest, CallS, info:
-      dest.addSymUse coroWrapperProc(c, sym), info
-
       inc n
-      skip n # fn already handled
+      if n.kind == Symbol and typ.firstson.kind == SymbolDef:
+        dest.addSymUse coroWrapperProc(c, n.symId), info
+        inc n
+      else:
+        tr(c, dest, n)
       while n.kind != ParRi:
         tr(c, dest, n)
       inc n
@@ -454,11 +443,10 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; sym: SymId
           dest.copyTree target
       contNextState c, dest, state, info
 
-    if not inhibitComplete:
-      dest.addParRi() # VarS
+    dest.addParRi() # VarS
 
-      copyIntoKind dest, RetS, info:
-        dest.addSymUse contVar, info
+    copyIntoKind dest, RetS, info:
+      dest.addSymUse contVar, info
 
 proc trDelay0(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Handles (delay0) — no-arg form: to the NEXT suspension point.
@@ -516,70 +504,62 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skip n   # skip rest
     skipParRi n
 
-proc passiveCallFn(c: var Context; n: Cursor): SymId =
-  if n.exprKind notin CallKinds - {DelayX}: return SymId(0)
-  let fn = n.firstSon
-  if fn.kind == Symbol:
-    let typ = c.typeCache.getType(fn, {SkipAliases})
-    if procHasPragma(typ, PassiveP):
-      return fn.symId
-  return SymId(0)
+proc isPassiveCall(c: var Context; n: Cursor): bool =
+  if n.exprKind in CallKinds - {DelayX}:
+    let typ = c.typeCache.getType(n.firstSon, {SkipAliases})
+    return procHasPragma(typ, PassiveP)
+  return false
+
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let fn = n.firstSon
-  if fn.kind == Symbol:
-    let sym = fn.symId
-    let typ = c.typeCache.getType(fn, {SkipAliases})
-    if procHasPragma(typ, PassiveP):
-      var retType = getType(c.typeCache, n)
-      let hasResult = not isVoidType(retType)
-      if hasResult:
-        let info = n.info
-        var s = dest.len
-        dest.copyIntoKind ExprX, info:
-          let tmpVar = pool.syms.getOrIncl("`tmpCpsResult." & $c.currentProc.counter)
-          inc c.currentProc.counter
-          var target = createTokenBuf(1)
-          target.addSymUse tmpVar, info
-          dest.copyIntoKind VarS, info:
-            dest.addSymDef tmpVar, info
-            dest.addDotToken() # exported
-            dest.addDotToken() # pragmas
-            dest.takeTree retType
-            dest.addDotToken()
-          trPassiveCall(c, dest, n, sym, beginRead target)
-          dest.addSymUse tmpVar, info
-      else:
-        trPassiveCall(c, dest, n, sym, default(Cursor))
+  let typ = c.typeCache.getType(fn, {SkipAliases})
+  if procHasPragma(typ, PassiveP):
+    var retType = getType(c.typeCache, n)
+    let hasResult = not isVoidType(retType)
+    if hasResult:
+      let info = n.info
+      var s = dest.len
+      dest.copyIntoKind ExprX, info:
+        let tmpVar = pool.syms.getOrIncl("`tmpCpsResult." & $c.currentProc.counter)
+        inc c.currentProc.counter
+        var target = createTokenBuf(1)
+        target.addSymUse tmpVar, info
+        dest.copyIntoKind VarS, info:
+          dest.addSymDef tmpVar, info
+          dest.addDotToken() # exported
+          dest.addDotToken() # pragmas
+          tr c, dest, retType # type
+          dest.addDotToken()
+        trPassiveCall(c, dest, n, beginRead target)
+        dest.addSymUse tmpVar, info
     else:
-      trSons(c, dest, n)
+      trPassiveCall(c, dest, n, default(Cursor))
   else:
     trSons(c, dest, n)
 
 proc trLocalValue(c: var Context; dest: var TokenBuf; n: var Cursor; lhs: Cursor) =
-  let fn = passiveCallFn(c, n)
-  if fn != SymId(0):
-    trPassiveCall(c, dest, n, fn, lhs)
+  if isPassiveCall(c, n):
+    trPassiveCall(c, dest, n, lhs)
   else:
     dest.copyIntoKind AsgnS, n.info:
       dest.copyTree lhs
-      tr(c, dest, n)
+      tr c, dest, n
 
 
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var rhs = n.firstSon
   skip rhs
-  let fn = passiveCallFn(c, rhs)
-  if fn == SymId(0):
-    copyInto dest, n:
-      tr c, dest, n
-      tr c, dest, n
-  else:
+  if isPassiveCall(c, rhs):
     var lhsTransformed = createTokenBuf(6)
     inc n
     tr c, lhsTransformed, n
-    trPassiveCall(c, dest, rhs, fn, beginRead lhsTransformed)
+    trPassiveCall(c, dest, n, beginRead lhsTransformed)
     skipParRi n
+  else:
+    copyInto dest, n:
+      tr c, dest, n
+      tr c, dest, n    
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let sym = n.firstSon.symId
@@ -605,22 +585,30 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trLocalValue(c, dest, n, beginRead lhs)
     skipParRi n
   else:
-    var pcall = SymId(0)
+    var pcall = false
     var callExpr = default(Cursor)
     copyInto dest, n:
       let target = n
-      c.typeCache.takeLocalHeader(dest, n, kind)
-      pcall = passiveCallFn(c, n)
-      if pcall != SymId(0):
+      takeTree dest, n # name
+      takeTree dest, n # export marker
+      takeTree dest, n # pragmas
+      c.typeCache.registerLocal(sym, kind, n)
+      let isPassive = procHasPragma(n, PassiveP)
+      tr c, dest, n # type
+      pcall = isPassiveCall(c, n)
+      if pcall:
         callExpr = n
         dest.addDotToken()
         skip n
+      elif isPassive:
+        dest.addSymUse coroWrapperProc(c, n.symId), info
+        inc n
       else:
         tr(c, dest, n)
-    if pcall != SymId(0):
+    if pcall:
       var sym = createTokenBuf(1)
       sym.addSymUse target.symId, info
-      trPassiveCall c, dest, callExpr, pcall, beginRead sym
+      trPassiveCall c, dest, callExpr, beginRead sym
 
 proc declareContinuationResult(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
   dest.copyIntoKind ResultS, info:
@@ -697,15 +685,6 @@ proc trYield(c: var Context; dest: var TokenBuf; n: var Cursor) =
   returnValue(c, dest, n, info)
   dest.copyIntoKind RetS, info:
     contNextState(c, dest, state, info)
-
-proc emitReturnCaller(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
-  ## Emit `return this.caller` — returns the caller continuation.
-  dest.copyIntoKind RetS, info:
-    dest.copyIntoKind DotX, info:
-      dest.copyIntoKind DerefX, info:
-        dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
-      dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
-      dest.addIntLit 1, info # field is in superclass
 
 proc trReturn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # return/raise x -->
@@ -790,20 +769,13 @@ proc escapingLocals(c: var Context; n: Cursor) =
         discard
       inc n
 
-proc isPassiveCall(c: var Context; n: PackedToken): bool =
-  if n.kind == Symbol:
-    let typ = c.typeCache.lookupSymbol(n.symId)
-    if not cursorIsNil(typ) and procHasPragma(typ, PassiveP):
-      return true
-  return false
-
 proc containsSuspensionPoint(c: var Context; n: Cursor): bool =
   var nested = 0
   var n = n
   while true:
     let sk = n.stmtKind
     let ek = n.exprKind
-    if sk == YldS or (ek in CallKinds - {DelayX} and isPassiveCall(c, n.firstSon.load)) or ek == SuspendX:
+    if sk == YldS or isPassiveCall(c, n) or ek == SuspendX:
       return true
     inc n
     if n.kind == ParRi:
@@ -878,7 +850,7 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skip n
   of StoreV:
     dest.takeToken n
-    var addLabel = n.exprKind in CallKinds - {DelayX} and isPassiveCall(c, n.firstSon.load)
+    var addLabel = isPassiveCall(c, n)
     dest.takeTree n
     dest.takeTree n
     dest.takeParRi n
@@ -952,8 +924,7 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     let sk = n.stmtKind
     let ek = n.exprKind
-    if sk == YldS or (ek in CallKinds - {DelayX} and isPassiveCall(c, n.firstSon.load)) or
-        ek == SuspendX:
+    if sk == YldS or isPassiveCall(c, n) or ek == SuspendX:
       takeTree dest, n
       emitLabel dest, c.currentProc.labelCounter, info
       inc c.currentProc.labelCounter
@@ -962,12 +933,16 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of ParLe:
         case n.stmtKind
         of LocalDecls - {ResultS}:
+          let sym = n.firstSon.symId
+          let kind = n.symKind
           dest.takeToken n
           dest.takeTree n
           dest.takeTree n
           dest.takeTree n
+          c.typeCache.registerLocal(sym, kind, n)
+          # dont change type, tr will traverse it again later
           dest.takeTree n
-          var addLabel = n.exprKind in CallKinds - {DelayX} and isPassiveCall(c, n.firstSon.load)
+          var addLabel = isPassiveCall(c, n)
           dest.takeTree n
           dest.takeParRi n
           if addLabel:
@@ -1008,10 +983,11 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   wrapper.addParRi()
   var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "eliminateJumps", 0)
   eliminateJumps(pass, raisesResolved = true)
-  when defined(logPasses):
-    echo ""
-    echo "========= NJ OUTPUT ======"
-    echo pass.dest.toString(false)
+  # when defined(logPasses):
+  #   echo ""
+  #   echo iter
+  #   echo "========= NJ OUTPUT ======"
+  #   echo pass.dest.toString(false)
   # pass.dest is (stmts cfvar_decls... (proc header body_stmts) ...).
   # Navigate into the proc body; then copy it while stripping NJ bookkeeping
   # (mflag/vflag/jtrue/kill) so c.currentProc.cf has no versionized variables.
@@ -1075,17 +1051,18 @@ proc generateCoroutineType(c: var Context; dest: var TokenBuf; sym: SymId) =
           copyIntoKind dest, FldU, info:
             dest.addSymDef value.field, info
             dest.addDotToken() # exported
+            var typ = value.typ
             if cursorIsNil(value.pragmas):
               dest.addDotToken()
             else:
               dest.copyTree value.pragmas
             if key == c.currentProc.resultSym:
               dest.copyIntoKind PtrT, info:
-                dest.copyTree value.typ
+                tr c, dest, typ
             elif value.typeAsSym != SymId(0):
               dest.addSymUse value.typeAsSym, info
             else:
-              dest.copyTree value.typ
+              tr c, dest, typ
             dest.addDotToken() # default value
           programs.publish(value.field, dest, beforeField)
   programs.publish(objType, dest, beforeType)
@@ -1119,7 +1096,7 @@ proc generateCoroutineHelpers(c: var Context; dest: var TokenBuf; sym: SymId; it
         dest.takeTree n # exported
         dest.takeTree n # pragmas
         c.typeCache.registerLocal(paramSym, ParamY, n)
-        dest.takeTree n # type
+        tr c, dest, n # type
         dest.takeTree n # default value
         dest.takeParRi n # ParRi
     inc n
@@ -1282,6 +1259,49 @@ proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId;
   # the return type is always `Continuation` too:
   dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
 
+proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  if n.kind == ParLe:
+    if n.typeKind == ProctypeT and procHasPragma(n, PassiveP):
+      var info = n.info
+      # add caller for init function to the params end
+      dest.takeToken n
+      dest.takeTree n
+      dest.takeTree n
+      dest.takeTree n
+      dest.takeTree n
+      dest.takeToken n
+      while n.kind != ParRi:
+        trProctype(c, dest, n)
+      inc n
+      # return type becomes a ptr parameter:
+      if not isVoidType(n):
+        dest.copyIntoKind ParamU, info:
+          dest.addSymDef pool.syms.getOrIncl(ResultParamName), info
+          dest.addDotToken() # export
+          dest.addDotToken() # pragmas
+          dest.copyIntoKind PtrT, info:
+            trProctype(c, dest, n)
+          dest.addDotToken() # default value
+      else:
+        skip n
+      # here we add caller param
+      dest.copyIntoKind ParamU, info:
+        dest.addSymDef pool.syms.getOrIncl(CallerParamName), info
+        dest.addDotToken() # export
+        dest.addDotToken() # pragmas
+        dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+        dest.addDotToken() # default value
+      dest.addParRi()
+      dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+      while n.kind != ParRi:
+        trProctype(c, dest, n)
+      dest.takeParRi n
+    else:
+      copyInto dest, n:
+        while n.kind != ParRi:
+          trProctype(c, dest, n)
+  else:
+    dest.takeToken n
 
 proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKind) =
   var currentProc = ProcContext(kind: IsNormal)
@@ -1311,7 +1331,9 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
         patchParamList c, dest, init, sym, paramsBegin, paramsEnd, origParams
     elif i == TypevarsPos:
       isConcrete = n.substructureKind != TypevarsU
-    takeTree dest, n
+    # function declaration can have (delay) tag inside
+    # but it just needs to change proctypes
+    trProctype c, dest, n
 
   if isConcrete and isCoroutine:
     c.shouldPublish.add (sym: sym, start: procStart)
@@ -1343,21 +1365,25 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
      IntLit, UIntLit, FloatLit, CharLit, StringLit:
     takeTree dest, n
   of Symbol:
-    let field = c.currentProc.localToEnv.getOrDefault(n.symId)
-    if field.def != field.use or n.symId == c.currentProc.resultSym:
-      let info = n.info
-      let isResult = n.symId == c.currentProc.resultSym
-      if isResult:
-        dest.addParLe DerefX, info
-      dest.copyIntoKind DotX, info:
-        dest.copyIntoKind DerefX, info:
-          dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
-        dest.addSymUse field.field, info
-      if isResult:
-        dest.addParRi()
+    if isProc(c, n.symId) and isPassive(c, n.symId):
+      dest.addSymUse coroWrapperProc(c, n.symId), n.info
       inc n
     else:
-      takeTree dest, n
+      let field = c.currentProc.localToEnv.getOrDefault(n.symId)
+      if field.def != field.use or n.symId == c.currentProc.resultSym:
+        let info = n.info
+        let isResult = n.symId == c.currentProc.resultSym
+        if isResult:
+          dest.addParLe DerefX, info
+        dest.copyIntoKind DotX, info:
+          dest.copyIntoKind DerefX, info:
+            dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+          dest.addSymUse field.field, info
+        if isResult:
+          dest.addParRi()
+        inc n
+      else:
+        takeTree dest, n
   of UnknownToken:
     # Pass through unknown tokens conservatively
     takeTree dest, n
@@ -1481,30 +1507,40 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           # (store value dest) -> (asgn dest value)
           let info = n.info
           inc n # skip 'store' tag
-          var valueBuf = createTokenBuf(16)
-          tr c, valueBuf, n # value (first operand)
-          dest.copyIntoKind AsgnS, info:
-            tr c, dest, n   # dest (second operand)
-            dest.add valueBuf
+          var value = n
+          if isPassiveCall(c, value):
+            skip n
+            var lhsTransformed = createTokenBuf(6)
+            tr c, lhsTransformed, n
+            trPassiveCall(c, dest, value, beginRead lhsTransformed)
+          else:
+            var valueBuf = createTokenBuf(16)
+            tr c, valueBuf, n # value (first operand)
+            dest.copyIntoKind AsgnS, info:
+              tr c, dest, n   # dest (second operand)
+              dest.add valueBuf
           skipParRi n
         of KillV, UnknownV:
           skip n  # NJ bookkeeping, not needed in CPS output
         else:
-          case pool.tags[n.tagId]
-          of "jmp":
-            inc n
-            gotoNextState(c, dest, int(pool.integers[n.intId]), n.info)
-            inc n
-            skipParRi n
-          of "lab":
-            dest.addParRi() # close stmts
-            dest.addParRi() # close proc decl
-            inc n
-            newLocalProc c, dest, int(pool.integers[n.intId]), c.procStack[^1]
-            inc n
-            skipParRi n
+          if n.typeKind == ProctypeT:
+            trProctype c, dest, n
           else:
-            trSons(c, dest, n)
+            case pool.tags[n.tagId]
+            of "jmp":
+              inc n
+              gotoNextState(c, dest, int(pool.integers[n.intId]), n.info)
+              inc n
+              skipParRi n
+            of "lab":
+              dest.addParRi() # close stmts
+              dest.addParRi() # close proc decl
+              inc n
+              newLocalProc c, dest, int(pool.integers[n.intId]), c.procStack[^1]
+              inc n
+              skipParRi n
+            else:
+              trSons(c, dest, n)
   of ParRi:
     bug "unexpected ')' inside"
 
