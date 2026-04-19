@@ -1523,8 +1523,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         of KillV, UnknownV:
           skip n  # NJ bookkeeping, not needed in CPS output
         else:
-          case n.typeKind
-          of ProctypeT:
+          if n.typeKind == ProctypeT:
             trProctype c, dest, n
           else:
             case pool.tags[n.tagId]
