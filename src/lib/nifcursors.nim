@@ -193,7 +193,8 @@ proc prepareMutation*(b: var TokenBuf) {.inline.} =
     copyMem(newData, b.data, sizeof(PackedToken) * b.len)
     dec b.owner.rc
     if b.owner.rc == 0:
-      # no cursors left, free the old shared ownership
+      # no cursors still share the old storage, so release it completely
+      if b.owner.data != nil: dealloc(b.owner.data)
       dealloc(b.owner)
     b.owner = nil
     b.data = newData

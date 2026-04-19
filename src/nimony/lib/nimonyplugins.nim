@@ -82,7 +82,7 @@ proc createTree(buf: sink TokenBuf): NifBuilder =
 proc prepareMutation(t: var NifBuilder) =
   if t.p == nil:
     t = createTree(createTokenBuf())
-  elif t.p.rc > 0:
+  elif t.p.rc > 1:
     let oldP = t.p
     t.p = initNifBuilderObj(copyBuffer(oldP.buf))
     dec oldP.rc
