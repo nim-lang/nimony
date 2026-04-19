@@ -301,7 +301,21 @@ proc selfExec*(c: var SemContext; file: string; moreArgs: string) =
 
 # ------------------ plugin handling --------------------------
 
+proc runValidatorOnPlugin(c: var SemContext; nf: string) =
+  ## Run the plugin validator on `nf` before compiling it. Skipped when
+  ## --novalidate was passed or when the validator binary is not available
+  ## (a fresh clone before `hastur build validator` has run).
+  if c.g.config.noValidate: return
+  let v = findTool("validator")
+  if not fileExists(v):
+    echo "warning: validator binary not found at ", v,
+         "; skipping plugin validation (build it with `hastur build validator` ",
+         "or pass --novalidate to silence this)"
+    return
+  exec quoteShell(v) & " " & quoteShell(nf)
+
 proc compilePlugin(c: var SemContext; info: PackedLineInfo; nf, exefile: string) =
+  runValidatorOnPlugin(c, nf)
   let pluginDir = nimonyDir() / "src/nimony/lib"
   let pluginCache = exefile & "_d"
   createDir(pluginCache)

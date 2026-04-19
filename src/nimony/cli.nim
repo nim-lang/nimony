@@ -117,5 +117,7 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
   of "flags":
     # Flags are forwarded but not processed here
     discard
+  of "novalidate":
+    config.noValidate = true
   else:
     result = false
