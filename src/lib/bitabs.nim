@@ -27,7 +27,7 @@ proc initBiTable*[Id, T](): BiTable[Id, T] = BiTable[Id, T](vals: @[], keys: @[]
 proc nextTry(h, maxHash: Hash): Hash {.inline.} =
   result = (h + 1) and maxHash
 
-template maxHash(t): untyped = high(t.keys)
+template maxHash(t): untyped = high(t.keys).Hash
 template isFilled(x: untyped): bool = x.uint32 > 0'u32
 
 proc len*[Id, T](t: BiTable[Id, T]): int = t.vals.len
@@ -68,10 +68,7 @@ proc getKeyId*[Id, T](t: BiTable[Id, T]; v: T): Id =
       h = nextTry(h, maxHash(t))
   return Id(0)
 
-when defined(nimony):
-  {.pragma: maybeDirty.}
-else:
-  {.pragma: maybeDirty, dirty.}
+{.pragma: maybeDirty, dirty.}
 
 template getOrInclImpl() {.maybeDirty.} =
   let origH = hash(v)
@@ -155,9 +152,10 @@ proc getOrIncl*[Id](t: var BiTableFloat[Id]; v: float64): Id {.inline .} =
 proc `[]`*[Id](t: BiTableFloat[Id]; litId: Id): float64 {.inline.} =
   cast[float64](BiTable[Id, uint64](t)[litId])
 
-when isMainModule and not defined(nimony):
-
-  var t: BiTable[uint32, string]
+when isMainModule:
+  when defined(nimony):
+    import std / syncio
+  var t = initBiTable[uint32, string]()
 
   echo getOrIncl(t, "hello")
 
@@ -182,7 +180,7 @@ when isMainModule and not defined(nimony):
 
   echo "middle"
 
-  var tf: BiTable[uint32, float]
+  var tf = initBiTable[uint32, float]()
 
   discard tf.getOrIncl(0.4)
   discard tf.getOrIncl(16.4)
