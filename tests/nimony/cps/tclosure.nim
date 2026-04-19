@@ -58,7 +58,7 @@ proc a5(x: int) {.passive.} =
     echo "a5: ", x
 
 proc main5() =
-    var x: (proc(x: int) {.passive.}) = a4
+    var x = a4
     x(5)
     x = a5
     x(42)
@@ -100,7 +100,7 @@ proc main9() {.passive.} =
 main9()
 
 proc main10() {.passive.} =
-    var x: (proc(x: int) {.passive.}) = a4
+    var x = a4
     x(5)
     x = a5
     x(42)

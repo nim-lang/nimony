@@ -2081,8 +2081,20 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
       if s.kind.isLocal or s.kind == EfldY:
         skipToLocalType n
       elif s.kind.isRoutine:
-        #skipToParams n
-        discard "proc begin is also its type"
+        var thisProc = asRoutine(n)
+        var procTypeBuf = createTokenBuf()
+        procTypeBuf.addParLe ProctypeT
+        procTypeBuf.addDotToken() # name
+        procTypeBuf.addDotToken() # export marker
+        procTypeBuf.addDotToken() # pattern
+        procTypeBuf.addDotToken() # type vars
+        procTypeBuf.addSubtree thisProc.params
+        procTypeBuf.addSubtree thisProc.retType
+        procTypeBuf.addSubtree thisProc.pragmas
+        procTypeBuf.addDotToken() # effects
+        procTypeBuf.addDotToken() # body
+        procTypeBuf.addParRi() # end of proctype
+        n = beginRead(procTypeBuf)
       elif s.kind == ModuleY:
         if AllowModuleSym notin flags:
           c.buildErr dest, dest[start].info, "module symbol '" & pool.syms[s.name] & "' not allowed in this context"
