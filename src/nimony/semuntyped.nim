@@ -308,8 +308,13 @@ proc semTemplType(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
   of ItertypeT:
     semTemplBodySons c, dest, n
   of NoType:
-    if n.kind == Ident:
+    case n.kind
+    of Ident:
       semTemplBody c, dest, n
+    of Symbol, SymbolDef, DotToken:
+      # already resolved, e.g. when re-processing a concept body whose
+      # `Self` typevar was declared by an earlier pass.
+      takeToken dest, n
     else:
       bug("unreachable")
 

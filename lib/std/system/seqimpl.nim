@@ -201,6 +201,17 @@ func grow*[T](s: var seq[T]; newLen: int; val: T) {.nodestroy.} =
     (s.data[i]) = `=dup`(val)
     inc i
 
+func setLen*[T: HasDefault](s: var seq[T]; newLen: int) {.nodestroy.} =
+  if newLen < s.len:
+    shrink(s, newLen)
+  else:
+    var i = s.len
+    growUnsafe(s, newLen)
+    if s.data == nil: return
+    while i < newLen:
+      (s.data[i]) = default(T)
+      inc i
+
 func high*[T](s: seq[T]): int {.inline.} = s.len - 1
 func low*[T](s: seq[T]): int {.inline.} = 0
 
