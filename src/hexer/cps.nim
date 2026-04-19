@@ -529,7 +529,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.addSymDef tmpVar, info
           dest.addDotToken() # exported
           dest.addDotToken() # pragmas
-          dest.takeTree retType
+          tr c, dest, retType # type
           dest.addDotToken()
         trPassiveCall(c, dest, n, beginRead target)
         dest.addSymUse tmpVar, info
@@ -594,7 +594,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeTree dest, n # pragmas
       c.typeCache.registerLocal(sym, kind, n)
       let isPassive = procHasPragma(n, PassiveP)
-      takeTree dest, n # type
+      tr c, dest, n # type
       pcall = isPassiveCall(c, n)
       if pcall:
         callExpr = n
@@ -940,6 +940,7 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.takeTree n
           dest.takeTree n
           c.typeCache.registerLocal(sym, kind, n)
+          # dont change type, tr will traverse it again later
           dest.takeTree n
           var addLabel = isPassiveCall(c, n)
           dest.takeTree n
@@ -1050,17 +1051,18 @@ proc generateCoroutineType(c: var Context; dest: var TokenBuf; sym: SymId) =
           copyIntoKind dest, FldU, info:
             dest.addSymDef value.field, info
             dest.addDotToken() # exported
+            var typ = value.typ
             if cursorIsNil(value.pragmas):
               dest.addDotToken()
             else:
               dest.copyTree value.pragmas
             if key == c.currentProc.resultSym:
               dest.copyIntoKind PtrT, info:
-                dest.copyTree value.typ
+                tr c, dest, typ
             elif value.typeAsSym != SymId(0):
               dest.addSymUse value.typeAsSym, info
             else:
-              dest.copyTree value.typ
+              tr c, dest, typ
             dest.addDotToken() # default value
           programs.publish(value.field, dest, beforeField)
   programs.publish(objType, dest, beforeType)
@@ -1094,7 +1096,7 @@ proc generateCoroutineHelpers(c: var Context; dest: var TokenBuf; sym: SymId; it
         dest.takeTree n # exported
         dest.takeTree n # pragmas
         c.typeCache.registerLocal(paramSym, ParamY, n)
-        dest.takeTree n # type
+        tr c, dest, n # type
         dest.takeTree n # default value
         dest.takeParRi n # ParRi
     inc n
@@ -1257,6 +1259,49 @@ proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId;
   # the return type is always `Continuation` too:
   dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
 
+proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  if n.kind == ParLe:
+    if n.typeKind == ProctypeT and procHasPragma(n, PassiveP):
+      var info = n.info
+      # add caller for init function to the params end
+      dest.takeToken n
+      dest.takeTree n
+      dest.takeTree n
+      dest.takeTree n
+      dest.takeTree n
+      dest.takeToken n
+      while n.kind != ParRi:
+        trProctype(c, dest, n)
+      inc n
+      # return type becomes a ptr parameter:
+      if not isVoidType(n):
+        dest.copyIntoKind ParamU, info:
+          dest.addSymDef pool.syms.getOrIncl(ResultParamName), info
+          dest.addDotToken() # export
+          dest.addDotToken() # pragmas
+          dest.copyIntoKind PtrT, info:
+            trProctype(c, dest, n)
+          dest.addDotToken() # default value
+      else:
+        skip n
+      # here we add caller param
+      dest.copyIntoKind ParamU, info:
+        dest.addSymDef pool.syms.getOrIncl(CallerParamName), info
+        dest.addDotToken() # export
+        dest.addDotToken() # pragmas
+        dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+        dest.addDotToken() # default value
+      dest.addParRi()
+      dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+      while n.kind != ParRi:
+        trProctype(c, dest, n)
+      dest.takeParRi n
+    else:
+      copyInto dest, n:
+        while n.kind != ParRi:
+          trProctype(c, dest, n)
+  else:
+    dest.takeToken n
 
 proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKind) =
   var currentProc = ProcContext(kind: IsNormal)
@@ -1286,7 +1331,9 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
         patchParamList c, dest, init, sym, paramsBegin, paramsEnd, origParams
     elif i == TypevarsPos:
       isConcrete = n.substructureKind != TypevarsU
-    takeTree dest, n
+    # function declaration can have (delay) tag inside
+    # but it just needs to change proctypes
+    trProctype c, dest, n
 
   if isConcrete and isCoroutine:
     c.shouldPublish.add (sym: sym, start: procStart)
@@ -1476,21 +1523,25 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         of KillV, UnknownV:
           skip n  # NJ bookkeeping, not needed in CPS output
         else:
-          case pool.tags[n.tagId]
-          of "jmp":
-            inc n
-            gotoNextState(c, dest, int(pool.integers[n.intId]), n.info)
-            inc n
-            skipParRi n
-          of "lab":
-            dest.addParRi() # close stmts
-            dest.addParRi() # close proc decl
-            inc n
-            newLocalProc c, dest, int(pool.integers[n.intId]), c.procStack[^1]
-            inc n
-            skipParRi n
+          case n.typeKind
+          of ProctypeT:
+            trProctype c, dest, n
           else:
-            trSons(c, dest, n)
+            case pool.tags[n.tagId]
+            of "jmp":
+              inc n
+              gotoNextState(c, dest, int(pool.integers[n.intId]), n.info)
+              inc n
+              skipParRi n
+            of "lab":
+              dest.addParRi() # close stmts
+              dest.addParRi() # close proc decl
+              inc n
+              newLocalProc c, dest, int(pool.integers[n.intId]), c.procStack[^1]
+              inc n
+              skipParRi n
+            else:
+              trSons(c, dest, n)
   of ParRi:
     bug "unexpected ')' inside"
 
@@ -1502,62 +1553,6 @@ proc generateContinuationProcImpl(): Cursor =
     if t.kind == TypeY:
       return t.body
   return default(Cursor)
-
-proc updatePassiveClosureProcTypes(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  case n.kind
-  of ParLe:
-    case n.typeKind
-    of ProctypeT:
-      if procHasPragma(n, PassiveP):
-        var info = n.info
-        # add caller for init function to the params end
-        dest.takeToken n
-        dest.takeTree n
-        dest.takeTree n
-        dest.takeTree n
-        dest.takeTree n
-        dest.takeToken n
-        while n.kind != ParRi:
-          dest.takeTree n
-        inc n
-        # return type becomes a ptr parameter:
-        if not isVoidType(n):
-          dest.copyIntoKind ParamU, info:
-            dest.addSymDef pool.syms.getOrIncl(ResultParamName), info
-            dest.addDotToken() # export
-            dest.addDotToken() # pragmas
-            dest.copyIntoKind PtrT, info:
-              dest.copyTree n
-            dest.addDotToken() # default value
-        skip n
-        # here we add caller param
-        dest.copyIntoKind ParamU, info:
-          dest.addSymDef pool.syms.getOrIncl(CallerParamName), info
-          dest.addDotToken() # export
-          dest.addDotToken() # pragmas
-          dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
-          dest.addDotToken() # default value
-        dest.addParRi()
-        dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
-        while n.kind != ParRi:
-          dest.takeTree n
-        dest.takeParRi n
-      else:
-        dest.takeTree n
-    of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT,
-        MacroT, TemplateT, ObjectT, EnumT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT,
-        VarargsT, StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT,
-        ConceptT, DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT,
-        TypekindT, TypedescT, UntypedT, TypedT, CstringT, PointerT, OrdinalT:
-      dest.takeToken n
-      while n.kind != ParRi:
-        updatePassiveClosureProcTypes(c, dest, n)
-      dest.takeParRi n
-  of UnknownToken, EofToken,
-      DotToken, Ident, Symbol, SymbolDef,
-      StringLit, CharLit, IntLit, UIntLit, FloatLit,
-      ParRi:
-    dest.takeToken n
 
 proc transformToCps*(pass: var Pass) =
   var n = pass.n  # Extract cursor locally
@@ -1577,15 +1572,6 @@ proc transformToCps*(pass: var Pass) =
   c.coroTypes.add pass.dest # concat coroTypes and other statements
   c.coroTypes.takeToken n # ParRi
   swap c.coroTypes, pass.dest
-  var pass2 = createTokenBuf(10)
-  n = beginRead(pass.dest)
-  updatePassiveClosureProcTypes(c, pass2, n)
-  swap pass2, pass.dest
-  # if c.shouldPublish.len > 0:
-  #   echo "========== BEFORE ========"
-  #   echo pass.n
-  #   echo "========== AFTER ========"
-  #   echo pass.dest.toString(false)
   c.typeCache.closeScope()
 
 when isMainModule:
