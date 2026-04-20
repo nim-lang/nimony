@@ -793,6 +793,15 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
     semPragmas c, dest, it.n, crucial, kind
     c.routine.pragmas = crucial.flags
     c.routine.raisesType = crucial.raisesType
+    if kind == IteratorY and ClosureP in crucial.flags:
+      var wrapperRet = createTokenBuf(8)
+      wrapperRet.add parLeToken(TupleT, info)
+      wrapperRet.copyTree c.routine.returnType
+      wrapperRet.addSubtree c.types.continuationType
+      wrapperRet.addParRi()
+      let retTypePos = dest.len
+      dest.add wrapperRet
+      c.routine.returnType = typeToCursor(c, dest, retTypePos)
     if crucial.hasVarargs.isValid:
       addVarargsParameter c, dest, beforeParams, crucial.hasVarargs
     if crucial.magic.len > 0:
