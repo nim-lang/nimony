@@ -788,6 +788,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
       c.genericInnerProcs.incl(symId)
     let beforeParams = dest.len
     semParams c, dest, it.n
+    var retTypePos = dest.len
     c.routine.returnType = semReturnType(c, dest, it.n)
     var crucial = CrucialPragma(sym: symId)
     semPragmas c, dest, it.n, crucial, kind
@@ -799,8 +800,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
       wrapperRet.copyTree c.routine.returnType
       wrapperRet.addSubtree c.types.continuationType
       wrapperRet.addParRi()
-      let retTypePos = dest.len
-      dest.add wrapperRet
+      dest.replace(wrapperRet.beginRead(), retTypePos)
       c.routine.returnType = typeToCursor(c, dest, retTypePos)
     if crucial.hasVarargs.isValid:
       addVarargsParameter c, dest, beforeParams, crucial.hasVarargs
