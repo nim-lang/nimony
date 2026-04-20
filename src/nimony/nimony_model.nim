@@ -136,7 +136,7 @@ const
   CallKindsS* = {CallS, CallstrlitS, CmdS, PrefixS, InfixS, HcallS}
   ConvKinds* = {HconvX, ConvX, DconvX, CastX}
   TypeclassKinds* = {ConceptT, TypeKindT, OrdinalT, OrT, AndT, NotT}
-  RoutineTypes* = {ProcT, FuncT, IteratorT, TemplateT, MacroT, ConverterT, MethodT, ProctypeT}
+  RoutineTypes* = {ProcT, FuncT, IteratorT, TemplateT, MacroT, ConverterT, MethodT, ProctypeT, ItertypeT}
 
 proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|ControlFlowKind|CallConv|PragmaKind;
                info = NoLineInfo) =

@@ -1243,7 +1243,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
       else:
         m.error InvalidMatch, f, a
     of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, AnumT, NiltT, OrT, AndT, NotT,
-        ConceptT, DistinctT, StaticT, ItertypeT, AutoT, SymKindT, TypeKindT, OrdinalT:
+        ConceptT, DistinctT, StaticT, AutoT, SymKindT, TypeKindT, OrdinalT:
       m.error UnhandledTypeBug, f, f
   else:
     m.error MismatchBug, f, arg.typ

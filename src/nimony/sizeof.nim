@@ -229,8 +229,8 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
   of RangetypeT:
     getSize c, cache, n.firstSon, ptrSize
   of NoType, ErrT, VoidT, VarargsT, OrT, AndT, NotT,
-     ConceptT, StaticT, InvokeT, UarrayT, ItertypeT,
-     AutoT, SymKindT, TypeKindT, TypedescT, UntypedT, TypedT, OrdinalT:
+      ConceptT, StaticT, InvokeT, UarrayT,
+      AutoT, SymKindT, TypeKindT, TypedescT, UntypedT, TypedT, OrdinalT:
     c.overflow = true
 
 proc getSize*(n: Cursor; ptrSize: int; strict=false): xint =

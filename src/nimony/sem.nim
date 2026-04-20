@@ -5782,7 +5782,7 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
         of IntT, FloatT, CharT, BoolT, UIntT, VoidT, NiltT, AutoT, SymKindT,
             PtrT, RefT, MutT, OutT, LentT, SinkT, UarrayT, SetT, StaticT, TypedescT,
             TupleT, ArrayT, RangetypeT, VarargsT, UntypedT, TypedT,
-            CstringT, PointerT, TypeKindT, OrdinalT, RoutineTypes, ItertypeT:
+            CstringT, PointerT, TypeKindT, OrdinalT, RoutineTypes:
           # every valid local type expression
           semLocalTypeExpr c, dest, it
         of OrT, AndT, NotT, InvokeT:

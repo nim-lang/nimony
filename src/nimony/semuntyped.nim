@@ -307,8 +307,6 @@ proc semTemplType(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
     openScope(c)
     semTemplBodySons c, dest, n
     closeScope(c)
-  of ItertypeT:
-    semTemplBodySons c, dest, n
   of NoType:
     case n.kind
     of Ident:

@@ -949,9 +949,6 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       semInvoke c, dest, n
     of ErrT:
       takeTree dest, n
-    of ItertypeT:
-      c.buildErr dest, info, "itertype not supported"
-      skip n
   of DotToken:
     if context in {InReturnTypeDecl, InGenericConstraint}:
       takeToken dest, n

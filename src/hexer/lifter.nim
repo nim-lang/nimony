@@ -177,7 +177,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
       skip tup
     result = true
   of NoType, ErrT, NiltT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, InvokeT,
-     TypeKindT, UntypedT, TypedT, ItertypeT:
+     TypeKindT, UntypedT, TypedT:
     echo "isTrivial: ", toString(typ, false)
     bug "bug in isTrival computation"
 

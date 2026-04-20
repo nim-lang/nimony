@@ -627,7 +627,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
           trAsNamedType(c, dest, arrCursor)
       skip n
       skipParRi c, n
-    of VoidT, NiltT, ConceptT, InvokeT, ItertypeT:
+    of VoidT, NiltT, ConceptT, InvokeT:
       error c, "unimplemented type: ", n
   else:
     error c, "type expected but got: ", n
