@@ -900,9 +900,29 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       let beforeParams = dest.len
       c.openScope()
       semParams c, dest, n
+      var retTypePos = dest.len
       semLocalTypeImpl c, dest, n, InReturnTypeDecl
       var crucial = default CrucialPragma
       semPragmas c, dest, n, crucial, ProcY
+      if tk in {IteratorT, ItertypeT} and ClosureP in crucial.flags:
+        var cursor = dest.cursorAt(retTypePos)
+        var transformType = false
+        if cursor.typeKind != TupleT:
+          var secondArg = cursor
+          inc secondArg
+          skip secondArg
+          if secondArg != c.types.continuationType:
+            transformType = true
+        if transformType:
+          var wrapperRet = createTokenBuf(8)
+          wrapperRet.add parLeToken(TupleT, info)
+          wrapperRet.copyTree cursor
+          dest.endRead()
+          wrapperRet.addSubtree c.types.continuationType
+          wrapperRet.addParRi()
+          dest.replace(wrapperRet.beginRead(), retTypePos)
+        else:
+          dest.endRead()
       var n2 = n
       skip n2 # dot
       if n2.kind != ParRi: skip n2 # maybe body
