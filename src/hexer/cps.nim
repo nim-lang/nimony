@@ -671,20 +671,42 @@ proc returnValue(c: var Context; dest: var TokenBuf; n: var Cursor; info: Packed
           dest.copyIntoKind DerefX, info:
             dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
           dest.addSymUse pool.syms.getOrIncl(ResultFieldName), info
-      tr c, dest, n
+      if c.currentProc.kind == IsIterator:
+        let state = getNextState(c.currentProc.cf, n)
+        dest.copyIntoKind TupconstrX, info:
+          dest.copyIntoKind TupleT, info:
+            dest.copyTree getType(c.typeCache, n)
+            dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+          tr c, dest, n
+          if state == -1:
+            # Pass StopContinuation
+            dest.copyIntoKind OconstrX, info:
+              dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+              dest.copyIntoKind KvU, info:
+                dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
+                dest.addParPair NilX, info
+              dest.copyIntoKind KvU, info:
+                dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
+                dest.addParPair NilX, info
+          else:
+            contNextState(c, dest, state, info)
+      else:
+        tr c, dest, n
   skipParRi n
 
 proc trYield(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # yield ex
   # -->
-  # this.res[] = ex
-  # return Continuation(fn: stateToProcName(c, sym, nextState), env: this)
-  let state = getNextState(c.currentProc.cf, n)
-  assert state != -1
+  # this.res[] = (ex, Continuation(fn: stateToProcName(c, sym, nextState), env: this))
+  # return this.caller
   let info = n.info
   returnValue(c, dest, n, info)
   dest.copyIntoKind RetS, info:
-    contNextState(c, dest, state, info)
+    dest.copyIntoKind DotX, info:
+      dest.copyIntoKind DerefX, info:
+        dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+      dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
+      dest.addIntLit 1, info # field is in superclass
 
 proc trReturn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # return/raise x -->
@@ -1076,7 +1098,8 @@ proc generateCoroutineHelpers(c: var Context; dest: var TokenBuf; sym: SymId; it
 
   var start = dest.len
 
-  dest.takeToken n # ProcS
+  dest.addParLe ProcS, info
+  inc n
   skip n
   dest.addSymDef newSym, info
   dest.takeTree n # 
@@ -1261,7 +1284,8 @@ proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId;
 
 proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if n.kind == ParLe:
-    if n.typeKind == ProctypeT and procHasPragma(n, PassiveP):
+    var isIterator = n.typeKind == ItertypeT
+    if n.typeKind in {ProctypeT, ItertypeT} and procHasPragma(n, PassiveP):
       var info = n.info
       # add caller for init function to the params end
       dest.takeToken n
@@ -1328,6 +1352,8 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
       if (kind == IteratorY and hasPragma(n, ClosureP)) or hasPragma(n, PassiveP):
         isCoroutine = true
         c.currentProc.kind = (if kind == IteratorY: IsIterator else: IsPassive)
+        # replace iterator token to proc
+        dest[procStart] = parLeToken(ProcS, iter.info)
         patchParamList c, dest, init, sym, paramsBegin, paramsEnd, origParams
     elif i == TypevarsPos:
       isConcrete = n.substructureKind != TypevarsU
@@ -1523,7 +1549,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         of KillV, UnknownV:
           skip n  # NJ bookkeeping, not needed in CPS output
         else:
-          if n.typeKind == ProctypeT:
+          if n.typeKind in {ProctypeT, ItertypeT}:
             trProctype c, dest, n
           else:
             case pool.tags[n.tagId]
@@ -1571,6 +1597,7 @@ proc transformToCps*(pass: var Pass) =
   c.coroTypes.add pass.dest # concat coroTypes and other statements
   c.coroTypes.takeToken n # ParRi
   swap c.coroTypes, pass.dest
+  echo pass.dest.toString(false)
   c.typeCache.closeScope()
 
 when isMainModule:
