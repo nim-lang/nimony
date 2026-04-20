@@ -1,7 +1,7 @@
 import std/strtabs
 import std/assertions
 
-proc foo {.nodestroy.} = # TODO: bug #1561
+proc foo =
   var x = newStringTable(modeCaseSensitive)
   try:
     x["k"] = "v"
