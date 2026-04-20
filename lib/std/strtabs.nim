@@ -109,11 +109,14 @@ iterator values*(t: StringTableRef): string =
       yield t.data[h].val
 
 
-proc myhash(t: StringTableRef, key: string): Hash =
-  case t.mode
+proc myhash(mode: StringTableMode, key: string): Hash =
+  case mode
   of modeCaseSensitive: result = hashes.hash(key)
   of modeCaseInsensitive: result = hashes.hashIgnoreCase(key)
   of modeStyleInsensitive: result = hashes.hashIgnoreStyle(key)
+
+proc myhash(t: StringTableRef, key: string): Hash =
+  result = myhash(t.mode, key)
 
 proc myCmp(t: StringTableRef, a, b: string): bool =
   case t.mode
@@ -212,8 +215,8 @@ proc contains*(t: StringTableRef, key: string): bool =
     doAssert "occupation" notin t
   return hasKey(t, key)
 
-proc rawInsert(t: StringTableRef, data: var KeyValuePairSeq, key, val: string) =
-  var h: Hash = myhash(t, key) and Hash(high(data))
+proc rawInsert(mode: StringTableMode, data: var KeyValuePairSeq, key, val: string) =
+  var h: Hash = myhash(mode, key) and Hash(high(data))
   while data[h].hasValue:
     h = nextTry(h, high(data))
   data[h].key = key
@@ -223,7 +226,7 @@ proc rawInsert(t: StringTableRef, data: var KeyValuePairSeq, key, val: string) =
 proc enlarge(t: StringTableRef) =
   var n: KeyValuePairSeq = newSeq[KeyValuePair](len(t.data) * growthFactor)
   for i in 0..high(t.data):
-    if t.data[i].hasValue: rawInsert(t, n, move t.data[i].key, move t.data[i].val)
+    if t.data[i].hasValue: rawInsert(t.mode, n, move t.data[i].key, move t.data[i].val)
   swap(t.data, n)
 
 proc `[]=`*(t: StringTableRef, key, val: string) =
@@ -242,7 +245,7 @@ proc `[]=`*(t: StringTableRef, key, val: string) =
     t.data[index].val = val
   else:
     if mustRehash(len(t.data), t.counter): enlarge(t)
-    rawInsert(t, t.data, key, val)
+    rawInsert(t.mode, t.data, key, val)
     inc(t.counter)
 
 proc newStringTable*(mode: StringTableMode): StringTableRef {.noSideEffect.} =
