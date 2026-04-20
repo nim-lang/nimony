@@ -387,6 +387,7 @@ proc trProcPragmas(c: var Context; n: var Cursor) =
         takeTree c.dest, n
       elif pk == ClosureP:
         c.r.props.incl IsClosure
+        c.r.props.excl IsNoSideEffect
         takeTree c.dest, n
       else:
         takeTree c.dest, n
