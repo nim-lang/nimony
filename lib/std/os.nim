@@ -2,6 +2,7 @@ import strutils
 import posix/posix
 import cmdline
 import envvars
+import oserrors
 import private/[ospaths2, osappdirs, oscommons]
 
 export cmdline
@@ -11,6 +12,25 @@ export oscommons
 
 proc c_system(cmd: cstring): cint {.
     importc: "system", header: "<stdlib.h>".}
+
+when defined(posix):
+  proc expandFilename*(filename: string): string {.raises.} =
+    ## Returns the full (`absolute`) path of an existing file `filename`,
+    ## resolving symlinks. Raises `OSError` if `filename` does not exist.
+    const PATH_MAX = 4096
+    result = newString(PATH_MAX)
+    var filename = filename
+    let r = realpath(filename.toCString, result.toCString)
+    if r.isNil:
+      raiseOSError(osLastError(), filename)
+    else:
+      var L = 0
+      while L < PATH_MAX and result[L] != '\0':
+        inc L
+      setLen(result, L)
+else:
+  proc expandFilename*(filename: string): string {.raises.} =
+    result = absolutePath(filename)
 
 when defined(linux) or defined(aix):
   const maxSymlinkLen = 1024
