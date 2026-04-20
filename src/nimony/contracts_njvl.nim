@@ -31,7 +31,7 @@ import ".." / lib / symparser
 import ".." / njvl / [njvl_model, vl]
 import nimony_model, programs, decls, typenav, sembasics, reporters,
   renderer, typeprops, inferle, xints, builtintypes
-import writesets
+import implications
 
 type
   BorrowableCheck = enum
@@ -51,16 +51,25 @@ type
     facts: Facts           # From inferle.nim - tracks le/notnil facts
     typeCache: TypeCache
     directlyInitialized: seq[HashSet[SymId]]
-    writesTo: IteTracker[SymId]
     errors: TokenBuf
     procCanRaise: bool
     moduleSuffix: string
     nestedProcs: int
     knownCfVars: HashSet[SymId]
     inlineVars: Table[SymId, Cursor] # var -> to its init expression
-    knownTrueCfVars: IteTracker[SymId]  # cfvars set to true by (jtrue ...)
-    writeSets: WriteSets               # per-ite write-set implications (TokenBuf-based)
-    falseCfvars: seq[SymId]            # cfvars currently known false (from `(ite (not cf) ...)` nesting)
+    impls: Implications                # flow-sensitive init implications;
+                                        # subsumes both "writesTo" and
+                                        # "knownTrueCfVars" — a jtrue'd cfvar
+                                        # is just `Always cfvar` in `impls`.
+    nextCondId: int                    # counter for minting synthetic cond
+                                        # syms for complex ite conditions
+    falseCfvars: seq[SymId]            # cond syms (cfvars or synthetics)
+                                        # currently known false (from
+                                        # `(ite (not cf) ...)` nesting and
+                                        # from leaving-path asymmetries)
+    trueCfvars: seq[SymId]             # cond syms currently known true
+                                        # (from `(ite cf ...)` nesting and
+                                        # leaving-path asymmetries)
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
     activeBorrows: seq[BorrowInfo]
 
@@ -227,35 +236,42 @@ proc endBorrow(c: var NjvlContext; sym: SymId) =
     else:
       inc i
 
-proc conditionCfvarForNot(c: NjvlContext; n: Cursor): SymId =
-  ## If condition is `(not mflag)`, return the mflag's SymId. Else NoSymId.
-  var r = n
-  if r.exprKind == NotX:
+proc conditionCond(c: var NjvlContext; n: Cursor): PolarizedSym =
+  ## Classify an ite condition into a cond-sym with polarity.
+  ## When the condition is a cfvar (``(v cf …)`` or ``(not cf)``) the
+  ## cfvar itself is used as the cond sym, preserving transitive reasoning
+  ## across chained cfvar implications. For anything else (complex
+  ## expressions, tuple-pattern checks, …) a fresh synthetic sym is
+  ## minted so `combine` can still lift branch-local `Always` facts via
+  ## cond-polarity. Synthetic conds are never ``jtrue``'d, so they don't
+  ## appear in `c.knownCfVars`; they interact with the analysis purely
+  ## through the cond-polarity lift and the `c.falseCfvars` set.
+  if n.exprKind == NotX:
+    var r = n
     inc r
-    result = extractSymId(r)
-    if result != NoSymId and result notin c.knownCfVars:
-      result = NoSymId
-  else:
-    result = NoSymId
-
-proc conditionCfvarDirect(c: NjvlContext; n: Cursor): SymId =
-  ## If condition is directly a mflag (not negated), return its SymId. Else NoSymId.
-  result = extractSymId(n)
-  if result != NoSymId and result notin c.knownCfVars:
-    result = NoSymId
+    let s = extractSymId(r)
+    if s != NoSymId and s in c.knownCfVars:
+      return PolarizedSym(sym: s, negated: true)
+  let d = extractSymId(n)
+  if d != NoSymId and d in c.knownCfVars:
+    return PolarizedSym(sym: d, negated: false)
+  inc c.nextCondId
+  let synth = pool.syms.getOrIncl("´cond." & $c.nextCondId & "." & c.moduleSuffix)
+  result = PolarizedSym(sym: synth, negated: false)
 
 proc cfCondKnownValue(c: NjvlContext; n: Cursor): int =
   ## Returns +1 if the condition is a mflag known to be true,
   ## -1 if it is `(not cf)` where cf is known true, 0 otherwise.
   ## After vl.nim, cfvars appear as `(v sym N)` so we use extractSymId.
+  ## A cfvar is known true ⟺ it is `Always` written in `c.impls`.
   let s = extractSymId(n)
-  if s != NoSymId and s in c.knownTrueCfVars:
+  if s != NoSymId and c.impls.isAlwaysInit(s):
     result = 1
   elif n.exprKind == NotX:
     var inner = n
-    inc inner  # skip NotX tag
+    inc inner
     let s2 = extractSymId(inner)
-    if s2 != NoSymId and s2 in c.knownTrueCfVars:
+    if s2 != NoSymId and c.impls.isAlwaysInit(s2):
       result = -1
     else:
       result = 0
@@ -708,12 +724,15 @@ proc isDirectlyInitialized(c: var NjvlContext; symId: SymId): bool =
   return false
 
 proc isEffectivelyInitialized(c: var NjvlContext; symId: SymId): bool =
-  ## True if symId is known initialized (directly, via writesTo, or via mflag implication).
-  if isDirectlyInitialized(c, symId) or symId in c.writesTo:
-    return true
+  ## True if symId is known initialized (directly, always on every path via
+  ## `c.impls`, or via cond-based implication when a cond is known true or
+  ## known false at the current program point).
+  if isDirectlyInitialized(c, symId): return true
+  if c.impls.isAlwaysInit(symId): return true
   for cf in c.falseCfvars:
-    if symId in c.writeSets.impliedWhenFalse(cf, c.knownCfVars):
-      return true
+    if c.impls.isInitIfCondFalse(symId, cf): return true
+  for cf in c.trueCfvars:
+    if c.impls.isInitIfCondTrue(symId, cf): return true
   return false
 
 proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
@@ -726,7 +745,8 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
       if x.kind in {VarY, LetY, CursorY, PatternvarY, ResultY}:
         if not isEffectivelyInitialized(c, symId):
           buildErr(c, pc.info, "cannot prove that " & pool.syms[symId] & " has been initialized")
-          c.writesTo.add symId
+          # don't report the same symbol twice from later references
+          c.impls.add always(symId)
       inc pc
     of SymbolDef:
       bug "symbol definition in expression"
@@ -853,7 +873,7 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
     if pk == OutT:
       let s = extractSymId(n)
       if s != NoSymId:
-        c.writesTo.add s
+        c.impls.add always(s)
     elif pk == VarargsT:
       fnType = previousFormalParam
     checkNilMatch c, n, param.typ
@@ -908,11 +928,11 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
     let symId = destSymId
     let x = getLocalInfo(c.typeCache, symId)
     if x.kind in {LetY, GletY, TletY}:
-      if isDirectlyInitialized(c, symId) or symId in c.writesTo:
+      if isDirectlyInitialized(c, symId) or c.impls.isAlwaysInit(symId):
         c.buildErr n.info, "invalid reassignment to `let` variable"
 
     var fact = query(getVarId(c, symId), InvalidVarId, createXint(0'i32))
-    c.writesTo.add symId
+    c.impls.add always(symId)
 
     # Check for not-nil type match
     let expected = getType(c.typeCache, n)
@@ -968,15 +988,14 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     skipParRi n
     return
 
-  # Condition may be (not mflag) or directly a mflag - capture before analyseCondition consumes it
-  let condCf = conditionCfvarForNot(c, n)
-  let condDirectCf = conditionCfvarDirect(c, n)
+  # Classify the condition into a cond sym + polarity. Cfvars reuse their
+  # own sym; complex conditions get a freshly minted synthetic.
+  let cond = conditionCond(c, n)
 
-  # Analyze condition and extract facts
+  # Analyze condition and extract facts.
   let savedFacts = save(c.facts)
   let savedBorrowsLen = c.activeBorrows.len
-  var writesSp = c.writesTo.split()
-  var cfSp = c.knownTrueCfVars.split()
+  let implsCp = c.impls.checkpoint()
   let condFacts = analyseCondition(c, n)
 
   # Copy condition facts for else-branch negation (only single fact can be negated)
@@ -984,58 +1003,55 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   if condFacts == 1:
     condFactsList.add c.facts[c.facts.len - 1]
 
-  # Then branch: when condition is `(not cf)`, cf is false inside this branch.
-  if condCf != NoSymId:
-    c.falseCfvars.add condCf
+  # Then branch: `(not cf)` makes cf known false inside; a direct `(v cf …)`
+  # makes cf known true inside.
+  if cond.sym != NoSymId:
+    if cond.negated: c.falseCfvars.add cond.sym
+    else:            c.trueCfvars.add cond.sym
   traverseStmt c, n
-  if condCf != NoSymId:
-    discard c.falseCfvars.pop()
+  if cond.sym != NoSymId:
+    if cond.negated: discard c.falseCfvars.pop()
+    else:            discard c.trueCfvars.pop()
   let thenFacts = c.facts
-  c.writesTo.thenDone(writesSp)
-  c.knownTrueCfVars.thenDone(cfSp)
+  let thenImpls = c.impls.take(implsCp)
   c.activeBorrows.setLen(savedBorrowsLen)
 
-  # Restore facts for else branch
+  # Restore facts for else branch. Inside else, the cond's polarity flips.
   restore(c.facts, savedFacts)
   for f in condFactsList:
     var negated = f
     negateFact(negated)
     c.facts.add negated
 
-  # Else branch
+  if cond.sym != NoSymId:
+    if cond.negated: c.trueCfvars.add cond.sym
+    else:            c.falseCfvars.add cond.sym
   if n.kind == DotToken:
-    inc n # empty else
+    inc n
   else:
     traverseStmt c, n
+  if cond.sym != NoSymId:
+    if cond.negated: discard c.trueCfvars.pop()
+    else:            discard c.falseCfvars.pop()
   c.activeBorrows.setLen(savedBorrowsLen)
+  let elseImpls = c.impls.take(implsCp)
 
-  # Record implication for this ite: captures writes and jtrue'd cfvars from each branch.
-  # `guard` is the mflag from a `(not guard)` condition (condCf), if any.
-  c.writeSets.openRecord(condCf)
-  for item in writesSp.thenData: c.writeSets.emitThen(item)
-  for cf in cfSp.thenData: c.writeSets.emitThen(cf)
-  c.writeSets.separateRecord()
-  for item in c.writesTo.since(writesSp.cp): c.writeSets.emitElse(item)
-  for cf in c.knownTrueCfVars.since(cfSp.cp): c.writeSets.emitElse(cf)
-  c.writeSets.closeRecord()
-
-  # Conservative merge: only keep facts/writes/cfvars that hold in both branches.
-  # Variables written in only one branch are tracked via writeSets and resolved
-  # through the mflag implication mechanism (impliedWhenFalse, impliedByIte).
+  # Merge branch implications into the outer scope. Pass the ambient
+  # `falseCfvars` set so `combine` can promote branch-local `IfFalse cf s`
+  # facts to `Always s` when `cf` is already known false in the outer scope.
+  # `combine` returns any cond syms the leaving-path asymmetry proves are
+  # known-false / -true in sequential code past this ite.
   c.facts = merge(thenFacts, 0, c.facts, false)
-  c.writesTo.join(writesSp)
-  c.knownTrueCfVars.join(cfSp)
+  var knownFalse = initHashSet[SymId]()
+  for cf in c.falseCfvars: knownFalse.incl cf
+  var nowKnownFalse, nowKnownTrue: seq[SymId] = @[]
+  combine(c.impls, nowKnownFalse, nowKnownTrue, thenImpls, elseImpls, cond, c.knownCfVars, knownFalse)
+  for cf in nowKnownFalse:
+    if cf notin c.falseCfvars: c.falseCfvars.add cf
+  for cf in nowKnownTrue:
+    if cf notin c.trueCfvars: c.trueCfvars.add cf
 
-  # If the condition was a direct mflag and the then-branch activated cfvars via jtrue
-  # (a leaving path), sequential code past this ite can only be reached when the
-  # mflag was false. Query implications to find vars now known initialized.
-  # Example: `(ite ´g.0 (stmts quit jtrue ´r.0) .)` — after this, ´g.0 must be false,
-  # so variables initialized only when ´g.0=false are now known initialized.
-  if condDirectCf != NoSymId and cfSp.thenData.len > 0:
-    for sym in c.writeSets.impliedWhenFalse(condDirectCf, c.knownCfVars):
-      c.writesTo.add sym
-
-  # Skip optional join information
+  # Skip optional join information emitted by vl.nim.
   if n.kind == ParLe and n.stmtKind == StmtsS:
     skip n
 
@@ -1062,23 +1078,17 @@ proc traverseLoop(c: var NjvlContext; n: var Cursor) =
     if wasEquality:
       c.facts.add condFact.geXplusC
 
-  # Loop body: the loop may execute 0 times, so writes inside the body
-  # must not be assumed to have occurred after the loop exits.
-  var writesSp = c.writesTo.split()
-  var cfSp = c.knownTrueCfVars.split()
-  let savedLoopWriteSetsScopeIdx = c.writeSets.pushScope()
+  # Loop body: the loop may execute 0 times, so `Always` facts don't survive.
+  # However, cfvars are monotonic (only `jtrue` writes them), so an
+  # `IfTrue cf s` fact produced by any iteration stays valid outside the
+  # loop — if `cf=true` after the loop, the iteration that set it also
+  # wrote `s`. `IfFalse cf s` doesn't survive: `cf=false` after the loop is
+  # consistent with 0 iterations, where nothing was written.
+  let loopCp = c.impls.checkpoint()
   traverseStmt c, n
-  # Discard loop-body writes: join with the empty "loop didn't run" path.
-  # The conservative join keeps only the intersection; since the "else" side
-  # (loop not entered) has no writes, nothing from the loop body survives.
-  c.writesTo.thenDone(writesSp)
-  c.knownTrueCfVars.thenDone(cfSp)
-  c.writesTo.join(writesSp)
-  c.knownTrueCfVars.join(cfSp)
-  # Remove writeSets records from inside the loop: loop-local ite implications
-  # are only valid when the loop body actually executed, so they must not be
-  # visible to isInitializedAtProcEnd.
-  c.writeSets.popScope(savedLoopWriteSetsScopeIdx)
+  let bodyImpls = c.impls.take(loopCp)
+  for imp in bodyImpls:
+    if imp.kind == IfTrue: c.impls.add imp
 
   # After loop, we know the condition is false (if we exited normally)
   c.activeBorrows.setLen(savedBorrowsLen)
@@ -1177,26 +1187,25 @@ proc traverseAssert(c: var NjvlContext; n: var Cursor) =
   skipParRi n
 
 proc isInitializedAtProcEnd(c: var NjvlContext; symId: SymId): bool =
-  ## Checks if `symId` is provably initialized at the end of a proc.
-  ## Uses `impliedByIte`: if a mflag cf appears anywhere in a writeSets record
-  ## (as guard, in then-set, or in else-set), then all non-mflag vars from both
-  ## branches of that record are provably initialized.
-  let eff = isEffectivelyInitialized(c, symId)
-  if eff: return true
+  ## At the natural proc exit every cfvar Nimony emitted is a leaving-path
+  ## marker, so reaching here implies each such cfvar is still false
+  ## (otherwise we would already be on a raise/return path). We extend the
+  ## ambient `falseCfvars` with every `knownCfVars` entry for the duration
+  ## of this query and run the normal sound init check.
+  let savedLen = c.falseCfvars.len
   for cf in c.knownCfVars:
-    if symId in c.writeSets.impliedByIte(cf, c.knownCfVars):
-      return true
-  return false
+    if cf notin c.falseCfvars: c.falseCfvars.add cf
+  result = isEffectivelyInitialized(c, symId)
+  c.falseCfvars.setLen(savedLen)
 
 proc traverseProc(c: var NjvlContext; n: var Cursor) =
   let decl = n
   c.facts = createFacts()
   c.directlyInitialized.add initHashSet[SymId]()
   c.procCanRaise = false
-  let oldWritesTo = move c.writesTo
-  let oldKnownTrueCfVars = move c.knownTrueCfVars
-  let savedWriteSetsScopeIdx = c.writeSets.pushScope()
+  let savedImplsScope = c.impls.pushScope()
   let oldFalseCfvars = move c.falseCfvars
+  let oldTrueCfvars = move c.trueCfvars
   let oldKnownCfVars = move c.knownCfVars
   let oldResultSym = c.resultSym
   let oldInlineVars = move c.inlineVars
@@ -1229,13 +1238,11 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   if not isGeneric:
     traverseStmt c, n
     let info = decl.info
-    # Emulate a "use result" / "use outParam" check at proc end.
-    # In-body writes are wrapped in (ite (not ´r.0) ...) guards, so they appear in
-    # writeSets but not in writesTo after the conservative join.
-    # We check all declared cfvars: result is provably set if cf appears
-    # anywhere in a writeSets record that also mentions result.
-    # Skip importc/importcpp procs: they have no Nim body and satisfy their
-    # out-params / result contract at the C level.
+    # Check result / out-param init at proc end. In-body writes guarded by
+    # leaving-path cfvars still land in `c.impls` as conditional facts; if
+    # combine folded complementary conditionals into `Always`, we're fine.
+    # Skip importc/importcpp procs: they have no Nim body and satisfy the
+    # contract at the C level.
     if not isExternProc:
       if c.resultSym != NoSymId and not isInitializedAtProcEnd(c, c.resultSym):
         buildErr c, info, "cannot prove that " & pool.syms[c.resultSym] & " has been initialized"
@@ -1245,10 +1252,9 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   else:
     skip n
   skipParRi n
-  c.writesTo = oldWritesTo
-  c.knownTrueCfVars = oldKnownTrueCfVars
-  c.writeSets.popScope(savedWriteSetsScopeIdx)
+  c.impls.popScope(savedImplsScope)
   c.falseCfvars = oldFalseCfvars
+  c.trueCfvars = oldTrueCfvars
   c.knownCfVars = oldKnownCfVars
   c.resultSym = oldResultSym
   c.inlineVars = ensureMove oldInlineVars
@@ -1281,7 +1287,7 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     inc n
     while n.kind != ParRi:
       assert n.kind == Symbol
-      c.knownTrueCfVars.add n.symId
+      c.impls.add always(n.symId)
       inc n
     inc n  # ParRi
   of KillV:
@@ -1411,7 +1417,7 @@ proc analyzeContractsNjvl*(input: var TokenBuf; moduleSuffix: string): TokenBuf 
     typeCache: createTypeCache(),
     moduleSuffix: moduleSuffix,
     directlyInitialized: @[initHashSet[SymId]()],
-    writeSets: createWriteSets()
+    impls: createImplications()
   )
   c.typeCache.openScope()
 
