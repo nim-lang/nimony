@@ -1597,7 +1597,6 @@ proc transformToCps*(pass: var Pass) =
   c.coroTypes.add pass.dest # concat coroTypes and other statements
   c.coroTypes.takeToken n # ParRi
   swap c.coroTypes, pass.dest
-  echo pass.dest.toString(false)
   c.typeCache.closeScope()
 
 when isMainModule:
