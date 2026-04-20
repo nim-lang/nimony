@@ -98,9 +98,13 @@ proc resolveField(reg: TypeRegistry; typeName, fieldName: string): TrackedKind =
 proc resolveDotExpr(reg: TypeRegistry; st: SymbolTable; receiver, field: string): TrackedKind =
   ## Resolve `c.dest` — look up `c`'s type, then find `dest` in that type's fields.
   let v = st.getVar(receiver)
-  if v.trackedKind == tkUnknown:
-    # receiver might be a typed variable whose type has fields we know about
-    # Try all registered types to find one with this field
+  # If the receiver has a known type name, look up the field in that type
+  if v.typeName.len > 0 and v.typeName in reg.types:
+    for f in reg.types[v.typeName].fields:
+      if f.name == field:
+        return f.trackedKind
+  # Fallback: search all types for the field name
+  if v.trackedKind in {tkUnknown, tkOther}:
     for tname, tinfo in reg.types:
       for f in tinfo.fields:
         if f.name == field:
@@ -439,7 +443,7 @@ const
                      "addEmptyNode", "addEmptyNode2", "addEmptyNode3", "addEmptyNode4",
                      "addSubtree"]
   ## Procs that skip the ParRi after a while-kind-ParRi loop
-  ParRiSkipProcs = ["inc", "skipParRi", "takeParRi", "takeToken"]
+  ParRiSkipProcs = ["inc", "skip", "skipParRi", "takeParRi", "takeToken"]
 
 proc scanCallsForCursorArg(bc: Cursor; endNested: int; cursorParams: seq[string];
                            consumeCounts: var Table[string, int]) =
@@ -539,16 +543,17 @@ proc scanObligations(ctx: var CheckContext; reg: TypeRegistry; buf: var TokenBuf
 
 const
   ## Procs that advance cursor WITHOUT emitting (creates debt)
-  CursorOnlyProcs = ["skip", "skipParRi"]
+  ## Procs that advance cursor — debt if bare, balanced if called with reason string
+  CursorSkipProcs = ["skip", "inc"]
   ## Procs that advance cursor AND emit to buffer (balanced)
-  PairedProcs = ["takeTree", "takeToken", "takeParRi"]
+  PairedProcs = ["takeTree", "takeToken", "takeParRi", "skipParRi"]
   ## Procs that consume cursor structurally and return parsed fields for later emission
   StructuredReadProcs = ["takeLocal", "takeRoutine", "asLocal", "asRoutine",
                          "asForStmt", "takeLocalHeader", "takeRoutineHeader"]
   ## Procs that wrap: advance cursor tag, run body, close (balanced at tag level)
   WrapProcs = ["copyInto", "copyIntoKind", "copyIntoKinds", "copyIntoUnchecked"]
   ## Procs that emit to buffer WITHOUT consuming cursor (creates credit)
-  EmitOnlyProcs = ["addParLe", "addParRi", "addDotToken", "addSymUse", "addSymDef",
+  EmitOnlyProcs = ["add", "addParLe", "addParRi", "addDotToken", "addSymUse", "addSymDef",
                    "addIntLit", "addStrLit", "addEmpty", "addSubtree",
                    "copyIntoSymUse", "copyTree",
                    "addIdent", "addUIntLit", "addCharLit", "addFloatLit",
@@ -599,8 +604,16 @@ proc hasCursorArg(st: SymbolTable; reg: TypeRegistry; callNode: Cursor): bool =
 
 proc hasBufferArg(st: SymbolTable; reg: TypeRegistry; callNode: Cursor): bool =
   ## Check if any argument of the call is a buffer variable.
+  ## Also checks the receiver of dot-calls (e.g. `c.dest.add(n)` — `c.dest` is the buffer).
   var c = callNode
   inc c # skip (cmd/(call
+  # Check if the callee is a dot-call whose receiver is a buffer
+  if c.kind == ParLe and pool.tags[c.tag] == "dot":
+    var dotExpr = c
+    inc dotExpr # skip (dot
+    # The receiver is the first child of the dot
+    if classifyExpr(st, reg, dotExpr) == tkTokenBuf:
+      return true
   skip c # skip callee
   while c.kind != ParRi:
     if classifyExpr(st, reg, c) == tkTokenBuf:
@@ -608,75 +621,106 @@ proc hasBufferArg(st: SymbolTable; reg: TypeRegistry; callNode: Cursor): bool =
     skip c
   false
 
-type
-  BalanceCounters = object
-    cursorOnly: int   ## skip/skipParRi without emit (debt)
-    emitOnly: int     ## add*/copyTree without cursor consume (credit)
-    paired: int       ## takeTree/takeToken/takeParRi (balanced)
-    wrapped: int      ## copyInto/copyIntoKind (balanced at tag level)
-    delegated: int    ## calls to sub-procs with both cursor and buffer args
+proc hasStringArg(n: Cursor): bool =
+  ## Check if the call/cmd has a string literal argument (the justification reason).
+  var c = n
+  inc c # skip (cmd/(call
+  skip c # skip callee
+  while c.kind != ParRi:
+    if c.kind == StringLit:
+      return true
+    skip c
+  false
 
-proc scanBalance(st: SymbolTable; reg: TypeRegistry; bodyPos: Cursor): BalanceCounters =
-  ## Scan a proc body and classify each call/cmd as cursor-only, buffer-only,
-  ## paired, or delegated. Returns the counts.
-  result = BalanceCounters()
-  var n = bodyPos
-  var nested = 0
+proc classifyCall(st: SymbolTable; reg: TypeRegistry; n: Cursor): int =
+  ## Classify a call/cmd node and return its balance contribution.
+  ## Positive = cursor advanced without emit (debt).
+  ## Negative = emit without cursor advance (credit).
+  ## Zero = balanced (paired, wrapped, or delegated).
+  var peek = n
+  inc peek
+  var callName = ""
+  if peek.kind == Ident:
+    callName = pool.strings[peek.litId]
+  elif peek.kind == ParLe:
+    callName = extractDotCallName(peek)
+
+  if callName in CursorSkipProcs:
+    # skip/inc with a string reason argument = justified (balanced)
+    # skip/inc without = unjustified (debt)
+    if hasCursorArg(st, reg, n):
+      if hasStringArg(n): return 0  # justified
+      return 1  # unjustified debt
+  elif callName in StructuredReadProcs:
+    return 0
+  elif callName in PairedProcs:
+    return 0
+  elif callName in WrapProcs:
+    return 0
+  elif callName in EmitOnlyProcs:
+    if hasBufferArg(st, reg, n): return -1
+  else:
+    let hasCur = hasCursorArg(st, reg, n)
+    let hasBuf = hasBufferArg(st, reg, n)
+    if hasCur and hasBuf: return 0 # delegated
+    elif hasCur: return 1
+    elif hasBuf: return -1
+  return 0
+
+proc blockBalance(ctx: var CheckContext; st: SymbolTable; reg: TypeRegistry;
+                  n: Cursor; procName: string): int =
+  ## Recursively compute the cursor-buffer balance of a block.
+  ## Returns the net balance (positive = more skips than emits).
+  ## Reports warnings for branches with mismatched balance.
+  result = 0
+  var n = n
   if n.kind != ParLe: return
-  inc nested; inc n
-  while nested > 0:
-    case n.kind
-    of ParLe:
-      let tag = pool.tags[n.tag]
-      if tag in ["cmd", "call"]:
-        var peek = n
-        inc peek
-        var callName = ""
-        # Extract callee name — handle both plain ident and dot-call
-        if peek.kind == Ident:
-          callName = pool.strings[peek.litId]
-        elif peek.kind == ParLe:
-          # Dot call: (cmd (dot (dot c dest) addParRi))
-          # or: (call ~N name ...)
-          callName = extractDotCallName(peek)
+  let tag = pool.tags[n.tag]
 
-        if callName in CursorOnlyProcs:
-          if hasCursorArg(st, reg, n):
-            inc result.cursorOnly
-        elif callName in StructuredReadProcs:
-          # Structured reads consume cursor and return fields — treated as paired
-          inc result.paired
-        elif callName in PairedProcs:
-          inc result.paired
-        elif callName in WrapProcs:
-          inc result.wrapped
-        elif callName in EmitOnlyProcs:
-          if hasBufferArg(st, reg, n):
-            inc result.emitOnly
-        elif callName == "inc":
-          # `inc n` on a cursor is a cursor-only advance
-          if hasCursorArg(st, reg, n):
-            inc result.cursorOnly
-        else:
-          # Unknown proc — check if it takes both cursor and buffer args
-          let hasCur = hasCursorArg(st, reg, n)
-          let hasBuf = hasBufferArg(st, reg, n)
-          if hasCur and hasBuf:
-            inc result.delegated
-          elif hasCur:
-            inc result.cursorOnly
-          elif hasBuf:
-            inc result.emitOnly
-      inc nested; inc n
-    of ParRi:
-      dec nested; inc n
-    else:
-      inc n
+  if tag == "stmts":
+    # Sequential: balances add up
+    inc n
+    while n.kind != ParRi:
+      result += blockBalance(ctx, st, reg, n, procName)
+      skip n
+
+  elif tag in ["if", "case"]:
+    inc n
+    if tag == "case":
+      skip n # skip discriminator
+    while n.kind != ParRi:
+      if n.kind == ParLe:
+        let branchTag = pool.tags[n.tag]
+        if branchTag in ["elif", "else", "of"]:
+          var inner = n
+          inc inner
+          if branchTag == "elif":
+            skip inner # skip condition
+          elif branchTag == "of":
+            skip inner # skip ranges
+          let b = blockBalance(ctx, st, reg, inner, procName)
+          if b > 0:
+            addWarning(ctx, n.info, procName,
+              "branch advances cursor " & $b &
+              " more time(s) than it emits (possible dropped input)")
+      skip n
+    # if/case as a whole contributes 0 — each branch is self-contained
+    result = 0
+
+  elif tag in ["cmd", "call"]:
+    result = classifyCall(st, reg, n)
+
+  elif tag in ["while", "for", "block", "try"]:
+    # Recurse into bodies
+    inc n
+    while n.kind != ParRi:
+      if n.kind == ParLe:
+        discard blockBalance(ctx, st, reg, n, procName)
+      skip n
 
 proc scanCursorBufferBalance(ctx: var CheckContext; reg: TypeRegistry; buf: var TokenBuf) =
-  ## For each proc, check the balance between cursor consumption and buffer emission.
-  ## A proc with cursor-only ops (skip) but no buffer-only ops (add*) might be
-  ## dropping input. A proc where cursor-only greatly exceeds emit-only is suspicious.
+  ## For each proc with both cursor and buffer access, check per-block balance.
+  ## Reports warnings for if/case branches with mismatched cursor-buffer balance.
   let procList = findProcBodies(buf)
   for (name, procCursor) in procList:
     var c = procCursor
@@ -693,22 +737,18 @@ proc scanCursorBufferBalance(ctx: var CheckContext; reg: TypeRegistry; buf: var 
 
     let st = buildProcSymbolTable(paramsPos, reg)
 
-    # Only check procs that have both cursor and buffer access.
-    # Buffer access = direct TokenBuf param, or a param whose declared type
-    # has a TokenBuf field (e.g. Context with dest: TokenBuf).
     var hasCursor = false
     var hasBuffer = false
     for varName, info in st.vars:
       if info.trackedKind == tkCursor and info.isMut: hasCursor = true
       if info.trackedKind == tkTokenBuf: hasBuffer = true
     if not hasBuffer:
-      # Check if any param's declared type name matches a type with buffer fields
       var pc = paramsPos
       inc pc
       while pc.kind != ParRi:
         if pc.kind == ParLe and pool.tags[pc.tag] == "param":
           var p = pc
-          inc p; skip p; skip p; skip p # name, export, pragmas
+          inc p; skip p; skip p; skip p
           let typeName = extractTypeName(p)
           if typeName in reg.types:
             for f in reg.types[typeName].fields:
@@ -717,7 +757,6 @@ proc scanCursorBufferBalance(ctx: var CheckContext; reg: TypeRegistry; buf: var 
         skip pc
     if not hasCursor or not hasBuffer: continue
 
-    # Find the stmts body
     c = procCursor
     inc c
     var bodyPos = c
@@ -729,26 +768,115 @@ proc scanCursorBufferBalance(ctx: var CheckContext; reg: TypeRegistry; buf: var 
       skip c
     if not foundBody: continue
 
-    let bal = scanBalance(st, reg, bodyPos)
-
-    # Flag: cursor-only advances with zero emit-only or paired ops
-    # This means the proc skips input without producing any output
-    if bal.cursorOnly > 0 and bal.emitOnly == 0 and bal.paired == 0 and
-       bal.wrapped == 0 and bal.delegated == 0:
-      addWarning(ctx, procCursor.info, name,
-        "cursor advanced " & $bal.cursorOnly &
-        " time(s) but no output emitted (possible dropped input)")
-
-    # Flag: large imbalance — many more skips than emits
-    # (heuristic: cursor-only > 2x the emit-only, and both > 0)
-    if bal.cursorOnly > 0 and bal.emitOnly > 0 and
-       bal.cursorOnly > 2 * bal.emitOnly and bal.paired == 0 and bal.delegated == 0:
-      addWarning(ctx, procCursor.info, name,
-        "cursor-buffer imbalance: " & $bal.cursorOnly & " skip(s) vs " &
-        $bal.emitOnly & " emit(s) — possible dropped input")
+    discard blockBalance(ctx, st, reg, bodyPos, name)
 
 # ---------------------------------------------------------------------------
-# Step 4: while-ParRi completion — ensure ParRi is consumed after the loop
+# Step 4: Unsafe cursor ops — flag bare skip/inc on cursors in emitter procs
+# ---------------------------------------------------------------------------
+
+const
+  ## Cursor procs that need a string reason in emitter procs.
+  ## With a string argument = justified. Without = flagged.
+  ReasonRequiredProcs = ["skip", "inc"]
+
+proc scanUnsafeCursorOps(ctx: var CheckContext; reg: TypeRegistry; buf: var TokenBuf) =
+  ## In emitter procs (cursor + buffer access), flag every bare `skip n` and
+  ## `inc n` on a cursor variable. These should be replaced by:
+  ##   - `takeToken dest, n` (for inc that copies)
+  ##   - `skipUnsafe n, "reason"` (for skip that drops)
+  ##   - `skipParRi n` (for structural close)
+  let procList = findProcBodies(buf)
+  for (name, procCursor) in procList:
+    var c = procCursor
+    inc c
+    var paramsPos = c
+    var foundParams = false
+    while c.kind != ParRi:
+      if c.kind == ParLe and pool.tags[c.tag] == "params":
+        paramsPos = c
+        foundParams = true
+        break
+      skip c
+    if not foundParams: continue
+
+    let st = buildProcSymbolTable(paramsPos, reg)
+
+    # Only flag in emitter procs (have both cursor and buffer access)
+    var hasCursor = false
+    var hasBuffer = false
+    for varName, info in st.vars:
+      if info.trackedKind == tkCursor and info.isMut: hasCursor = true
+      if info.trackedKind == tkTokenBuf: hasBuffer = true
+    if not hasBuffer:
+      var pc = paramsPos
+      inc pc
+      while pc.kind != ParRi:
+        if pc.kind == ParLe and pool.tags[pc.tag] == "param":
+          var p = pc
+          inc p; skip p; skip p; skip p
+          let typeName = extractTypeName(p)
+          if typeName.len > 0 and typeHasBufferField(reg, typeName):
+            hasBuffer = true
+        skip pc
+    if not hasCursor or not hasBuffer: continue
+
+    # Collect cursor param names
+    var cursorNames: seq[string] = @[]
+    for varName, info in st.vars:
+      if info.trackedKind == tkCursor and info.isMut:
+        cursorNames.add varName
+
+    # Scan body for unsafe ops on cursor variables
+    c = procCursor
+    inc c
+    var bodyPos = c
+    var foundBody = false
+    while c.kind != ParRi:
+      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
+        bodyPos = c
+        foundBody = true
+      skip c
+    if not foundBody: continue
+
+    var bc = bodyPos
+    var nested = 0
+    if bc.kind != ParLe: continue
+    inc nested; inc bc
+    while nested > 0:
+      case bc.kind
+      of ParLe:
+        let tag = pool.tags[bc.tag]
+        if tag in ["cmd", "call"]:
+          var peek = bc
+          inc peek
+          var callName = ""
+          if peek.kind == Ident:
+            callName = pool.strings[peek.litId]
+          elif peek.kind == ParLe:
+            callName = extractDotCallName(peek)
+          if callName in ReasonRequiredProcs and not hasStringArg(bc):
+            # skip/inc without reason string in an emitter proc — flag it
+            if peek.kind == Ident:
+              skip peek
+            else:
+              skip peek
+            while peek.kind != ParRi:
+              if peek.kind == Ident:
+                let argName = pool.strings[peek.litId]
+                if argName in cursorNames:
+                  addWarning(ctx, bc.info, name,
+                    "`" & callName & " " & argName &
+                    "` needs a reason string in emitter proc")
+                  break
+              skip peek
+        inc nested; inc bc
+      of ParRi:
+        dec nested; inc bc
+      else:
+        inc bc
+
+# ---------------------------------------------------------------------------
+# Step 5: while-ParRi completion — ensure ParRi is consumed after the loop
 # ---------------------------------------------------------------------------
 
 proc extractWhileParRiVar(n: Cursor): string =
@@ -1077,6 +1205,9 @@ proc main() =
 
   # Cursor-buffer balance: tie traversal and emission together
   scanCursorBufferBalance(ctx, reg, buf)
+
+  # Unsafe cursor ops: flag bare skip/inc in emitter procs
+  scanUnsafeCursorOps(ctx, reg, buf)
 
   # While-ParRi completion: check ParRi is consumed after while-kind-ParRi loops
   scanWhileParRiCompletion(ctx, buf)

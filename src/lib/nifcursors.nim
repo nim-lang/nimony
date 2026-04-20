@@ -533,6 +533,19 @@ proc takeToken*(buf: var TokenBuf; n: var Cursor) {.inline.} =
   buf.add n
   inc n
 
+template skip*(c: var Cursor; reason: string) =
+  ## Skip a subtree with explicit justification. In emitter procs (procs that
+  ## write to a dest buffer), every `skip` must use this form to document why
+  ## the input is being dropped. Analyzers can use bare `skip` without reason.
+  skip(c)
+
+template inc*(c: var Cursor; reason: string) =
+  ## Advance one token with explicit justification. In emitter procs,
+  ## every `inc` must use this form to document why the token is being dropped
+  ## (typically: a tag being replaced by a different one). Analyzers can use
+  ## bare `inc` without reason.
+  inc c
+
 proc takeTree*(dest: var TokenBuf; n: var Cursor) =
   if n.kind != ParLe:
     dest.add n
