@@ -624,7 +624,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
           inc n
           c.typeCache.takeLocalHeader(c.dest, n, kind)
           inc nested
-        of ProcS, FuncS, ConverterS, MethodS, MacroS:
+        of ProcS, FuncS, ConverterS, MethodS, MacroS, IteratorS:
           trProcDecl c, n, parentNodestroy = true
         of ScopeS:
           c.typeCache.openScope()
@@ -634,7 +634,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
             trOnlyEssentials c, n
           takeParRi c.dest, n
           c.typeCache.closeScope()
-        of CallS, CmdS, IteratorS, TemplateS, TypeS, BlockS,
+        of CallS, CmdS, TemplateS, TypeS, BlockS,
             EmitS, AsgnS, IfS, WhenS, BreakS, ContinueS, ForS,
             WhileS, CaseS, RetS, YldS, StmtsS, PragmasS, PragmaxS,
             InclS, ExclS, IncludeS, ImportS, ImportasS,
@@ -1110,13 +1110,13 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         trAsgn c, n
       of LocalDecls:
         trLocal c, n, k
-      of ProcS, FuncS, ConverterS, MethodS, MacroS:
+      of ProcS, FuncS, ConverterS, MethodS, MacroS, IteratorS:
         trProcDecl c, n
       of ScopeS:
         c.typeCache.openScope()
         trSons c, n, WantNonOwner
         c.typeCache.closeScope()
-      of BreakS, ContinueS, IteratorS:
+      of BreakS, ContinueS:
         takeTree c.dest, n
       else:
         trSons c, n, WantNonOwner
