@@ -681,7 +681,10 @@ proc semBodyGenericInst(c: var SemContext; dest: var TokenBuf; it: var Item;
   c.openScope() # open body scope
   takeToken dest, it.n
   var resId = SymId(0)
-  if untypedIsActive(c, crucial):
+  # The body may already carry an explicit `(result ...)` declaration from a
+  # module that was not compiled in untyped mode. In that case we must not
+  # declare `result` a second time.
+  if untypedIsActive(c, crucial) and it.n.stmtKind != ResultS:
     # for untyped generic procs, need to add result symbol now
     resId = declareResult(c, dest, it.n.info)
   semProcBody c, dest, it
@@ -706,7 +709,8 @@ proc semBodyCheckBody(c: var SemContext; dest: var TokenBuf; it: var Item;
   if untypedIsActive(c, crucial) and c.routine.inGeneric > 0: # includes templates
     # should eventually be default for compat mode
     let mode = if kind == TemplateY: UntypedTemplate else: UntypedGeneric
-    var ctx = createUntypedContext(addr c, mode)
+    let dirty = kind == TemplateY and DirtyP in crucial.flags
+    var ctx = createUntypedContext(addr c, mode, dirty)
     addParams(ctx, dest, beforeGenericParams)
     addParams(ctx, dest, beforeParams)
     semTemplBody ctx, dest, it.n

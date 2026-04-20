@@ -30,6 +30,8 @@ func hash*(x: int64): Hash {.inline.} = cast[Hash](x)
 func hash*(x: int32): Hash {.inline.} = cast[Hash](int x)
 func hash*(x: char): Hash {.inline.} = Hash(x)
 func hash*(x: bool): Hash {.inline.} = Hash(x)
+func hash*(x: float64): Hash {.inline.} = cast[Hash](x + 0.0) # +0.0 normalizes -0.0
+func hash*(x: float32): Hash {.inline.} = hash(float64(x))
 func hash*[T: enum](x: T): Hash {.inline.} = Hash(x)
 
 #[

@@ -296,6 +296,7 @@
 | `(index (build ...))` | NifIndexKind | index section |
 | `(inject)` | NimonyPragma | `inject` pragma |
 | `(gensym)` | NimonyPragma | `gensym` pragma |
+| `(dirty)` | NimonyPragma | `dirty` pragma |
 | `(error X?)` | NimonyPragma | `error` pragma |
 | `(report X)` | NimonyPragma | `report` pragma |
 | `(tags X)` | NimonyPragma | `tags` effect annotation |

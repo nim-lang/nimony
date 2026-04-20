@@ -730,6 +730,11 @@ const BootstrapModules = [
   "src/gear2/modnames.nim",
 ]
 
+# Modules whose `isMainModule` block should also be executed after compilation.
+const RunnableBootstrapModules = [
+  "src/lib/bitabs.nim",
+]
+
 proc bootstrapTests() =
   ## Compile every module on `BootstrapModules` with `bin/nimony c`. Fails
   ## fast on the first regression so the offending module is obvious.
@@ -740,7 +745,8 @@ proc bootstrapTests() =
   var failed: seq[string] = @[]
   for m in BootstrapModules:
     removeDir "nimcache"
-    let (output, ec) = execCmdEx(nimony.quoteShell & " c " & m.quoteShell)
+    let subcmd = if m in RunnableBootstrapModules: " c -r " else: " c "
+    let (output, ec) = execCmdEx(nimony.quoteShell & subcmd & m.quoteShell)
     if ec == 0:
       echo "OK   ", m
     else:

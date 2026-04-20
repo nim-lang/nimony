@@ -71,6 +71,7 @@ type
   UntypedCtx* = object
     c: ptr SemContext
     mode: UntypedMode
+    dirty: bool
     toBind: HashSet[SymId]
     toMixin: HashSet[StrId]
     scopeIntroducedInjects: seq[HashSet[StrId]]
@@ -80,8 +81,8 @@ type
     noGenSym: int
     inTemplateHeader: int
 
-proc createUntypedContext*(c: ptr SemContext; mode: UntypedMode): UntypedCtx =
-  UntypedCtx(c: c, mode: mode)
+proc createUntypedContext*(c: ptr SemContext; mode: UntypedMode; dirty = false): UntypedCtx =
+  UntypedCtx(c: c, mode: mode, dirty: dirty)
 
 proc addParams*(c: var UntypedCtx; dest: var TokenBuf; paramsStart: int) =
   var read = cursorAt(dest, paramsStart)
@@ -166,9 +167,10 @@ proc symBinding(n: Cursor): TSymBinding =
 proc addDecl(c: var UntypedCtx; dest: var TokenBuf; name, pragmas: Cursor; k: SymKind; nameStart, declStart: int) =
   var name = name
   if c.mode == UntypedTemplate:
-    # locals default to 'gensym', fields default to 'inject':
+    # locals default to 'gensym', fields default to 'inject';
+    # `dirty` templates treat every non-param decl as inject:
     if (pragmas.kind != DotToken and symBinding(pragmas) == spInject) or
-        k == FldY:
+        k == FldY or (c.dirty and k != ParamY):
       # even if injected, don't produce a sym choice here:
       #n = semTemplBody(c, n)
       var newNameBuf = createTokenBuf(4)

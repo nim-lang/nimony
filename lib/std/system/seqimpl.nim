@@ -212,6 +212,9 @@ func setLen*[T: HasDefault](s: var seq[T]; newLen: int) {.nodestroy.} =
       (s.data[i]) = default(T)
       inc i
 
+proc newSeq*[T: HasDefault](s: out seq[T]; newLen: int) {.nodestroy, inline.} =
+  s = newSeq[T](newLen)
+
 func high*[T](s: seq[T]): int {.inline.} = s.len - 1
 func low*[T](s: seq[T]): int {.inline.} = 0
 
