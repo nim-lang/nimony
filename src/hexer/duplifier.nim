@@ -214,8 +214,10 @@ proc potentialAliasing(le, ri: Cursor): bool =
 
 when not defined(nimony):
   proc tr(c: var Context; n: var Cursor; e: Expects)
+    {.ensuresNif: addedAny(c.dest).}
 
-proc trSons(c: var Context; n: var Cursor; e: Expects) =
+proc trSons(c: var Context; n: var Cursor; e: Expects)
+    {.ensuresNif: addedAny(c.dest).} =
   assert n.kind == ParLe
   takeToken c.dest, n
   while n.kind != ParRi:
@@ -359,7 +361,8 @@ proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
     tr c, n, WillBeOwned
   c.typeCache.registerLocal(result, CursorY, typ)
 
-proc callDup(c: var Context; arg: var Cursor) =
+proc callDup(c: var Context; arg: var Cursor)
+    {.ensuresNif: addedAny(c.dest).} =
   let typ = getType(c.typeCache, arg)
   if typ.typeKind == NiltT:
     tr c, arg, DontCare
@@ -593,7 +596,8 @@ proc trExplicitTrace(c: var Context; n: var Cursor) =
 when not defined(nimony):
   proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false)
 
-proc trOnlyEssentials(c: var Context; n: var Cursor) =
+proc trOnlyEssentials(c: var Context; n: var Cursor)
+    {.ensuresNif: addedAny(c.dest).} =
   var nested = 0
   while true:
     case n.kind
@@ -734,7 +738,8 @@ proc finishOwningTemp(dest: var TokenBuf; ow: OwningTemp) =
     dest.copyIntoSymUse ow.s, ow.info
     dest.addParRi()  # finish the StmtListExpr
 
-proc trCall(c: var Context; n: var Cursor; e: Expects) =
+proc trCall(c: var Context; n: var Cursor; e: Expects)
+    {.ensuresNif: addedAny(c.dest).} =
   var ow = owningTempDefault()
   let retType = getType(c.typeCache, n)
   if hasDestructor(c, retType) and e == WantNonOwner:
@@ -763,7 +768,8 @@ proc trCall(c: var Context; n: var Cursor; e: Expects) =
   takeParRi c.dest, n
   finishOwningTemp c.dest, ow
 
-proc trRawConstructor(c: var Context; n: var Cursor; e: Expects) =
+proc trRawConstructor(c: var Context; n: var Cursor; e: Expects)
+    {.ensuresNif: addedAny(c.dest).} =
   # Idioms like `echo ["ab", myvar, "xyz"]` are important to translate well.
   let e2 = if e == WillBeOwned: WantOwner else: e
   takeToken c.dest, n
@@ -818,7 +824,8 @@ proc genOutOfMemCheck(c: var Context; ow: OwningTemp; info: PackedLineInfo) =
         copyIntoKind c.dest, RaiseS, info:
           c.dest.add symToken(pool.syms.getOrIncl("OutOfMemError.0." & SystemModuleSuffix), info)
 
-proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind) =
+proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
+    {.ensuresNif: addedAny(c.dest).} =
   let info = n.info
   inc n, "newobj tag replaced by alloc sequence"
   let refType = n
@@ -868,7 +875,8 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind) =
   c.dest.copyIntoSymUse ow.s, ow.info
   c.dest.addParRi()  # finish the StmtListExpr
 
-proc genLastRead(c: var Context; n: var Cursor; typ: Cursor) =
+proc genLastRead(c: var Context; n: var Cursor; typ: Cursor)
+    {.ensuresNif: addedAny(c.dest).} =
   let ex = n
   let info = n.info
   # translate it to: `(var tmp = location; wasMoved(location); tmp)`
@@ -902,7 +910,8 @@ proc trLocationNonOwner(c: var Context; n: var Cursor) =
       tr(c, n, DontCare)
     takeParRi c.dest, n
 
-proc trLocation(c: var Context; n: var Cursor; e: Expects) =
+proc trLocation(c: var Context; n: var Cursor; e: Expects)
+    {.ensuresNif: addedAny(c.dest).} =
   # `x` does not own its value as it can be read multiple times.
   let typ = getType(c.typeCache, n)
   if e == WantOwner and hasDestructor(c, typ):
@@ -970,7 +979,8 @@ proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
       trValue c, r.val, WillBeOwned
       c.dest.addParRi()
 
-proc trStmtListExpr(c: var Context; n: var Cursor; e: Expects) =
+proc trStmtListExpr(c: var Context; n: var Cursor; e: Expects)
+    {.ensuresNif: addedAny(c.dest).} =
   takeToken c.dest, n
   while n.kind != ParRi:
     if isLastSon(n):
@@ -979,7 +989,8 @@ proc trStmtListExpr(c: var Context; n: var Cursor; e: Expects) =
       tr(c, n, WantNonOwner)
   takeParRi c.dest, n
 
-proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
+proc trEnsureMove(c: var Context; n: var Cursor; e: Expects)
+    {.ensuresNif: addedAny(c.dest).} =
   let typ = getType(c.typeCache, n)
   let arg = n.firstSon
   let info = n.info
@@ -1006,7 +1017,8 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
       c.dest.add strToken(pool.strings.getOrIncl(m), info)
     skip n, "ensureMove input replaced by error node"
 
-proc trDeref(c: var Context; n: var Cursor) =
+proc trDeref(c: var Context; n: var Cursor)
+    {.ensuresNif: addedAny(c.dest).} =
   let info = n.info
   inc n, "deref tag replaced by deref+dot for ref types"
   var typ = getType(c.typeCache, n, {SkipAliases})

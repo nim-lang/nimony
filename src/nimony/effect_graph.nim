@@ -314,6 +314,7 @@ proc resolveConstRange(n: Cursor): int =
     return -1
 
 proc analyzeIfBranches*(graph: EffectGraph; n: Cursor; destVar: string = ""): Effect
+proc analyzeCaseBranches*(graph: EffectGraph; n: Cursor; destVar: string = ""): Effect
 proc analyzeWhileLoop*(graph: EffectGraph; n: Cursor; destVar: string = ""): Effect
 proc analyzeForLoop*(graph: EffectGraph; n: Cursor; destVar: string = ""): Effect
 
@@ -411,8 +412,11 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor; destVar: string = ""): 
       skip n
 
     of "case":
-      # Case statements in bodies — treat like if
-      return unknownEffect()
+      let caseEffect = analyzeCaseBranches(graph, n, destVar)
+      if caseEffect.kind == ekUnknown:
+        return unknownEffect()
+      effects.add caseEffect
+      skip n
 
     of "while":
       # while n.kind != ParRi: f(dest, n) → repeat
@@ -486,6 +490,55 @@ proc analyzeIfBranches*(graph: EffectGraph; n: Cursor; destVar: string = ""): Ef
   for i in 1..<allEffects.len:
     combined = branchEffect(combined, allEffects[i])
   return combined
+
+proc analyzeCaseBranches*(graph: EffectGraph; n: Cursor; destVar: string = ""): Effect =
+  ## Analyze a case statement. All branches must produce compatible effects.
+  var c = n
+  if c.kind != ParLe: return unknownEffect()
+  inc c # skip (case
+  skip c # skip discriminator
+
+  var allEffects: seq[Effect] = @[]
+  var hasElse = false
+
+  while c.kind != ParRi:
+    if c.kind != ParLe:
+      skip c
+      continue
+    let branchTag = pool.tags[c.tag]
+    case branchTag
+    of "of":
+      inc c # skip (of
+      skip c # skip ranges
+      # The body is the second child — should be (stmts ...)
+      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
+        allEffects.add analyzeStmtsBody(graph, c, destVar)
+      else:
+        return unknownEffect()
+      skip c # skip body
+      if c.kind == ParRi: inc c # close of
+    of "else":
+      hasElse = true
+      inc c # skip (else
+      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
+        allEffects.add analyzeStmtsBody(graph, c, destVar)
+      else:
+        return unknownEffect()
+      skip c # skip body
+      if c.kind == ParRi: inc c # close else
+    else:
+      skip c
+
+  if allEffects.len == 0:
+    return emptyEffect()
+
+  # If no else branch, the case might produce nothing on the unmatched path
+  if not hasElse:
+    allEffects.add emptyEffect()
+
+  result = allEffects[0]
+  for i in 1..<allEffects.len:
+    result = branchEffect(result, allEffects[i])
 
 proc analyzeWhileLoop*(graph: EffectGraph; n: Cursor; destVar: string = ""): Effect =
   ## Analyze `while n.kind != ParRi: body` — produces 0+ children.
