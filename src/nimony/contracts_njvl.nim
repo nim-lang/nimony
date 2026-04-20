@@ -67,6 +67,9 @@ type
                                         # currently known false (from
                                         # `(ite (not cf) ...)` nesting and
                                         # from leaving-path asymmetries)
+    trueCfvars: seq[SymId]             # cond syms currently known true
+                                        # (from `(ite cf ...)` nesting and
+                                        # leaving-path asymmetries)
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
     activeBorrows: seq[BorrowInfo]
 
@@ -722,11 +725,14 @@ proc isDirectlyInitialized(c: var NjvlContext; symId: SymId): bool =
 
 proc isEffectivelyInitialized(c: var NjvlContext; symId: SymId): bool =
   ## True if symId is known initialized (directly, always on every path via
-  ## `c.impls`, or via cond-based implication when a cond is known false).
+  ## `c.impls`, or via cond-based implication when a cond is known true or
+  ## known false at the current program point).
   if isDirectlyInitialized(c, symId): return true
   if c.impls.isAlwaysInit(symId): return true
   for cf in c.falseCfvars:
     if c.impls.isInitIfCondFalse(symId, cf): return true
+  for cf in c.trueCfvars:
+    if c.impls.isInitIfCondTrue(symId, cf): return true
   return false
 
 proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
@@ -997,43 +1003,53 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   if condFacts == 1:
     condFactsList.add c.facts[c.facts.len - 1]
 
-  # Then branch: when condition is `(not cf)`, cf is false inside this branch.
-  if cond.negated:
-    c.falseCfvars.add cond.sym
+  # Then branch: `(not cf)` makes cf known false inside; a direct `(v cf …)`
+  # makes cf known true inside.
+  if cond.sym != NoSymId:
+    if cond.negated: c.falseCfvars.add cond.sym
+    else:            c.trueCfvars.add cond.sym
   traverseStmt c, n
-  if cond.negated:
-    discard c.falseCfvars.pop()
+  if cond.sym != NoSymId:
+    if cond.negated: discard c.falseCfvars.pop()
+    else:            discard c.trueCfvars.pop()
   let thenFacts = c.facts
   let thenImpls = c.impls.take(implsCp)
   c.activeBorrows.setLen(savedBorrowsLen)
 
-  # Restore facts for else branch.
+  # Restore facts for else branch. Inside else, the cond's polarity flips.
   restore(c.facts, savedFacts)
   for f in condFactsList:
     var negated = f
     negateFact(negated)
     c.facts.add negated
 
-  # Else branch
+  if cond.sym != NoSymId:
+    if cond.negated: c.trueCfvars.add cond.sym
+    else:            c.falseCfvars.add cond.sym
   if n.kind == DotToken:
     inc n
   else:
     traverseStmt c, n
+  if cond.sym != NoSymId:
+    if cond.negated: discard c.trueCfvars.pop()
+    else:            discard c.falseCfvars.pop()
   c.activeBorrows.setLen(savedBorrowsLen)
   let elseImpls = c.impls.take(implsCp)
 
   # Merge branch implications into the outer scope. Pass the ambient
   # `falseCfvars` set so `combine` can promote branch-local `IfFalse cf s`
   # facts to `Always s` when `cf` is already known false in the outer scope.
-  # `combine` also returns any cfvars that must now be considered known-false
-  # in sequential code past this ite (leaving-path asymmetry).
+  # `combine` returns any cond syms the leaving-path asymmetry proves are
+  # known-false / -true in sequential code past this ite.
   c.facts = merge(thenFacts, 0, c.facts, false)
   var knownFalse = initHashSet[SymId]()
   for cf in c.falseCfvars: knownFalse.incl cf
-  var nowKnownFalse: seq[SymId] = @[]
-  combine(c.impls, nowKnownFalse, thenImpls, elseImpls, cond, c.knownCfVars, knownFalse)
+  var nowKnownFalse, nowKnownTrue: seq[SymId] = @[]
+  combine(c.impls, nowKnownFalse, nowKnownTrue, thenImpls, elseImpls, cond, c.knownCfVars, knownFalse)
   for cf in nowKnownFalse:
     if cf notin c.falseCfvars: c.falseCfvars.add cf
+  for cf in nowKnownTrue:
+    if cf notin c.trueCfvars: c.trueCfvars.add cf
 
   # Skip optional join information emitted by vl.nim.
   if n.kind == ParLe and n.stmtKind == StmtsS:
@@ -1171,19 +1187,16 @@ proc traverseAssert(c: var NjvlContext; n: var Cursor) =
   skipParRi n
 
 proc isInitializedAtProcEnd(c: var NjvlContext; symId: SymId): bool =
-  ## At proc end, `symId` is provably initialized if `c.impls` has an
-  ## `Always` fact for it, if some cfvar covers both branches, or — as a
-  ## pragmatic fallback — if it is init when some cfvar is false: paths
-  ## where that cfvar is true correspond to leaving the proc via
-  ## raise/return and the caller discards `result` there anyway.
-  if isEffectivelyInitialized(c, symId): return true
-  if c.impls.isAlwaysInit(symId): return true
+  ## At the natural proc exit every cfvar Nimony emitted is a leaving-path
+  ## marker, so reaching here implies each such cfvar is still false
+  ## (otherwise we would already be on a raise/return path). We extend the
+  ## ambient `falseCfvars` with every `knownCfVars` entry for the duration
+  ## of this query and run the normal sound init check.
+  let savedLen = c.falseCfvars.len
   for cf in c.knownCfVars:
-    if c.impls.isInitIfCondTrue(symId, cf) and c.impls.isInitIfCondFalse(symId, cf):
-      return true
-  for cf in c.knownCfVars:
-    if c.impls.isInitIfCondFalse(symId, cf): return true
-  return false
+    if cf notin c.falseCfvars: c.falseCfvars.add cf
+  result = isEffectivelyInitialized(c, symId)
+  c.falseCfvars.setLen(savedLen)
 
 proc traverseProc(c: var NjvlContext; n: var Cursor) =
   let decl = n
@@ -1192,6 +1205,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   c.procCanRaise = false
   let savedImplsScope = c.impls.pushScope()
   let oldFalseCfvars = move c.falseCfvars
+  let oldTrueCfvars = move c.trueCfvars
   let oldKnownCfVars = move c.knownCfVars
   let oldResultSym = c.resultSym
   let oldInlineVars = move c.inlineVars
@@ -1240,6 +1254,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   skipParRi n
   c.impls.popScope(savedImplsScope)
   c.falseCfvars = oldFalseCfvars
+  c.trueCfvars = oldTrueCfvars
   c.knownCfVars = oldKnownCfVars
   c.resultSym = oldResultSym
   c.inlineVars = ensureMove oldInlineVars

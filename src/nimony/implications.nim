@@ -200,7 +200,7 @@ proc liftAsymmetric(impls: var Implications;
     if imp.kind == IfFalse and imp.cond == cf: impls.add imp
 
 proc combine*(impls: var Implications;
-              nowKnownFalse: var seq[SymId];
+              nowKnownFalse, nowKnownTrue: var seq[SymId];
               thenImpls, elseImpls: openArray[Implication];
               cond: PolarizedSym;
               knownCfVars: HashSet[SymId];
@@ -247,41 +247,48 @@ proc combine*(impls: var Implications;
       if s notin thenAlways:
         liftAsymmetric(impls, s, elseAlways, thenAlways, elseImpls, thenImpls)
 
-  # (4) Propagate branch-local conditional facts through the combine.
-  #     Strictly only valid under the additional premise that the
-  #     originating branch ran — but queries combine them with the ambient
-  #     cfvar state (via `knownFalseConds`) to decide initialization.
+  # (4) Propagate conditional facts that appear in **both** branches. A
+  #     conditional that only one branch produces is not valid in the outer
+  #     scope (we can't encode "… AND that branch ran" without conjunctions),
+  #     so we drop it. Intersection is sound.
   for imp in thenImpls:
-    if imp.kind != Always: impls.add imp
-  for imp in elseImpls:
-    if imp.kind != Always: impls.add imp
+    if imp.kind == Always: continue
+    for other in elseImpls:
+      if imp == other:
+        impls.add imp
+        break
 
-  # (5) Leaving-path pragmatic promotion: if a branch unconditionally
-  #     `jtrue`'s a cfvar, sequential code past the ite is only reachable
-  #     via the other branch, so *that* branch's Always facts also hold as
-  #     Always outside the ite. Register the leaving cfvars as now-known-
-  #     false and — when the polarity is compatible — the ite's cond itself.
+  # (5) Leaving-path promotion: if a branch unconditionally `jtrue`s a
+  #     cfvar, sequential code past the ite is only reachable via the other
+  #     branch, so *that* branch's Always facts also hold as Always outside
+  #     the ite. We also register the leaving cfvars and the ite's cond
+  #     itself (with its correct polarity) as now-known-false / -true so
+  #     the caller can extend its ambient cfvar state.
   if thenLeaves and not elseLeaves:
     for s in elseAlways:
       if s notin thenAlways: impls.add always(s)
     for s in thenAlways:
       if s in knownCfVars: nowKnownFalse.add s
     # Sequential ran else-branch ⟹ actual cond was false.
-    # Only push cond.sym to `nowKnownFalse` when `not cond.negated`
-    # (otherwise cond.sym is known *true*, which this set cannot express).
-    if cond.sym != NoSymId and not cond.negated:
-      nowKnownFalse.add cond.sym
+    if cond.sym != NoSymId:
+      if cond.negated: nowKnownTrue.add cond.sym
+      else:            nowKnownFalse.add cond.sym
   elif elseLeaves and not thenLeaves:
     for s in thenAlways:
       if s notin elseAlways: impls.add always(s)
     for s in elseAlways:
       if s in knownCfVars: nowKnownFalse.add s
-    if cond.sym != NoSymId and cond.negated:
-      nowKnownFalse.add cond.sym
+    # Sequential ran then-branch ⟹ actual cond was true.
+    if cond.sym != NoSymId:
+      if cond.negated: nowKnownFalse.add cond.sym
+      else:            nowKnownTrue.add cond.sym
   elif thenLeaves and elseLeaves:
-    # Both branches leave — any sequential successor is already guarded by
-    # the cfvars they jtrue'd, so pragmatically keep each branch's Always
-    # facts (mirrors the old writesets leniency).
+    # Both branches leave. Every leaving path `jtrue`'s a cfvar that guards
+    # all post-ite sequential code (`(ite (not cf) …)` wraps). So *any*
+    # code that reads a sym here is inside a guard proving one of these
+    # cfvars false — but all of them are true on every branch that got us
+    # here, so no such code is reachable. Claims therefore hold vacuously;
+    # we keep each branch's Always facts for consistency.
     for s in thenAlways:
       if s notin elseAlways: impls.add always(s)
     for s in elseAlways:
