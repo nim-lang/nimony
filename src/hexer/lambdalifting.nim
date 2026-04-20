@@ -204,9 +204,9 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     case n.stmtKind
     of LocalDecls:
       trLocal c, dest, n
-    of ProcS, FuncS, MacroS, MethodS, ConverterS:
+    of ProcS, FuncS, MacroS, MethodS, ConverterS, IteratorS:
       trProc c, dest, n
-    of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
+    of TemplateS, TypeS, EmitS, BreakS, ContinueS,
       ForS, IncludeS, ImportS, FromimportS, ImportExceptS,
       ExportS, CommentS,
       PragmasS:
@@ -343,7 +343,7 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # type is really a tuple:
     let info = n.info
     copyIntoKind dest, TupleT, info:
-      copyIntoKind dest, ProctypeT, info:
+      copyIntoKind dest, n.typeKind, info:
         for i in 1..ParamsPos: dest.addDotToken()
         let usesWrapper = n.typeKind in RoutineTypes
         if usesWrapper:
@@ -606,7 +606,8 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
   var n = n
   let info = n.info
-  copyIntoKind dest, ProctypeT, info:
+  var typ = if n.stmtKind == IteratorS: ItertypeT else: ProctypeT
+  copyIntoKind dest, typ, info:
     inc n
     for i in 1..ParamsPos:
       dest.addDotToken()
@@ -664,9 +665,9 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
     case n.stmtKind
     of LocalDecls:
       treLocal c, dest, n
-    of ProcS, FuncS, MacroS, MethodS, ConverterS:
+    of ProcS, FuncS, MacroS, MethodS, ConverterS, IteratorS:
       treProcLift c, dest, n
-    of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
+    of TemplateS, TypeS, EmitS, BreakS, ContinueS,
       ForS, IncludeS, ImportS, FromimportS, ImportExceptS,
       ExportS, CommentS,
       PragmasS:

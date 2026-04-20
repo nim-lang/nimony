@@ -289,7 +289,8 @@ proc classifyType(c: var SemContext; n: Cursor): TypeKind =
   result = typeKind(n)
 
 proc declareResult(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo): SymId =
-  if c.routine.kind in {ProcY, FuncY, ConverterY, MethodY, MacroY} and
+  if (c.routine.kind in {ProcY, FuncY, ConverterY, MethodY, MacroY} or
+      (c.routine.kind == IteratorY and ClosureP in c.routine.pragmas)) and
       classifyType(c, c.routine.returnType) != VoidT:
     let name = pool.strings.getOrIncl("result")
     result = identToSym(c, name, ResultY)

@@ -577,6 +577,23 @@ proc transformWhileStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
   dest.addParRi() # stmts
   dest.addParRi() # block
 
+proc trProc(e: var EContext; dest: var TokenBuf; c: var Cursor) =
+  dest.takeToken c
+  takeTree(dest, c) # name
+  takeTree(dest, c) # exported
+  takeTree(dest, c) # pattern
+  let isGeneric = c.substructureKind == TypevarsU
+  for i in 3..<BodyPos:
+    takeTree(dest, c)
+  let oldTmpId = e.tmpId
+  e.tmpId = 0
+  if isGeneric:
+    takeTree(dest, c)
+  else:
+    transformStmt(e, dest, c)
+  e.tmpId = oldTmpId
+  takeParRi(dest, c)
+
 proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
   case c.kind
   of DotToken:
@@ -594,32 +611,20 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
       transformForStmt(e, dest, c)
     of IteratorS:
       var iter = c
-      inc iter
-      if isLocalDecl(iter.symId):
-        var buf = createTokenBuf()
-        takeTree(buf, c)
-        publish iter.symId, buf
+      if procHasPragma(iter, ClosureP):
+        trProc(e, dest, c)
       else:
-        skip(c)
+        inc iter
+        if isLocalDecl(iter.symId):
+          var buf = createTokenBuf()
+          takeTree(buf, c)
+          publish iter.symId, buf
+        else:
+          skip(c)
     of TemplateS:
       dest.takeTree c
     of FuncS, ProcS, ConverterS, MethodS:
-      dest.add c
-      inc c
-      takeTree(dest, c) # name
-      takeTree(dest, c) # exported
-      takeTree(dest, c) # pattern
-      let isGeneric = c.substructureKind == TypevarsU
-      for i in 3..<BodyPos:
-        takeTree(dest, c)
-      let oldTmpId = e.tmpId
-      e.tmpId = 0
-      if isGeneric:
-        takeTree(dest, c)
-      else:
-        transformStmt(e, dest, c)
-      e.tmpId = oldTmpId
-      takeParRi(dest, c)
+      trProc(e, dest, c)
     of VarS, LetS, CursorS, PatternvarS, ResultS:
       # We transform `var x {.cursor.} = y` into `cursor x = y` here because
       # this is the first step of the backend pipeline.

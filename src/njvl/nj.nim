@@ -338,7 +338,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # Iterators don't have a `result` variable (semdecls.declareResult skips them)
     # and their bodies are not tuple-transformed by eraiser/constparams.
     # Use VoidRaise so we create a synthetic error-tracking variable instead.
-    if isVoidType(r.retType) or r.kind == IteratorY:
+    if isVoidType(r.retType) or (r.kind == IteratorY and not hasPragma(r.pragmas, ClosureP)):
       c.current.mode = VoidRaise
     else:
       c.current.mode = TupleRaise
