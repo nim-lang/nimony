@@ -7,11 +7,17 @@ template noRaise(x: untyped): untyped {.untyped.} =
   except:
     assert false
 
-var fromGBK = open("utf-8", "gbk")
-var toGBK = open("gbk", "utf-8")
+proc openNoRaise(destEncoding = "UTF-8", srcEncoding = "CP1252"): EncodingConverter =
+  try:
+    result = open(destEncoding, srcEncoding)
+  except:
+    assert false
 
-var fromGB2312 = open("utf-8", "gb2312")
-var toGB2312 = open("gb2312", "utf-8")
+var fromGBK = openNoRaise("utf-8", "gbk")
+var toGBK = openNoRaise("gbk", "utf-8")
+
+var fromGB2312 = openNoRaise("utf-8", "gb2312")
+var toGB2312 = openNoRaise("gb2312", "utf-8")
 
 block:
   let data = "\215\237\186\243\178\187\214\170\204\236\212\218\203\174\163\172\194\250\180\178\208\199\195\206\209\185\208\199\186\211"
@@ -98,8 +104,8 @@ when defined(windows):
       assert(result == "")
 
 block:
-  var cp1252: string
-  var ibm850: string
+  var cp1252: string = ""
+  var ibm850: string = ""
   let orig = "öäüß"
   noRaise:
     cp1252 = convert(orig, "CP1252", "UTF-8")

@@ -16,7 +16,13 @@ type
     ccNone, ccGcc, ccCLang
 
   Action* = enum
-    atNone, atC, atCpp, atNative
+    atNone, atC, atCpp, atNative, atLLVM
+
+  AppType* = enum
+    appConsole = "console"   # executable with console
+    appGui = "gui"           # executable with GUI (no console on Windows)
+    appLib = "lib"           # dynamic library (dll/so/dylib)
+    appStaticLib = "staticlib" # static library (.a/.lib)
 
   ConfigRef* {.acyclic.} = ref object ## every global configuration
     cCompiler*: SystemCC
@@ -25,6 +31,7 @@ type
     optimizeLevel*: OptimizeLevel
     nifcacheDir*: string
     outputFile*: string
+    appType*: AppType
 
   State* = object
     selects*: seq[string] # names of modules with functions with selectany pragmas
@@ -54,5 +61,5 @@ template getCompilerConfig*(config: ConfigRef): (string, string) =
   else:
     quit "unreachable"
 
-const ExtAction*: array[Action, string] = ["", ".c", ".cpp", ".S"]
+const ExtAction*: array[Action, string] = ["", ".c", ".cpp", ".S", ".ll"]
 

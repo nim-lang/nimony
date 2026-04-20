@@ -30,3 +30,7 @@ foo(1)
 # This test uses C function without parameters as current implementation applies pushed header pragma to parameters.
 proc getchar(): cint {.importc: "putchar", header: "<stdio.h>", noconv.}
 {.pop.}
+
+{.push callConv: cdecl.}
+proc testCallConv(x: cint): cint {.importc: "testCallConv", header: "<stdio.h>".}
+{.pop.}

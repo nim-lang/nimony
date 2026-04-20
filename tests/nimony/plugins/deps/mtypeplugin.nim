@@ -1,27 +1,24 @@
 
 import std / [os, strutils, tables]
 
-include ".." / ".." / ".." / ".." / src / lib / nifprelude
-import ".." / ".." / ".." / ".." / src / nimony / nimony_model
 import nimonyplugins
 
 
-template traverse*(n: var Node, body: untyped) =
+template traverse*(n: var NifCursor, body: untyped) =
   let n2 = n
   body
   n = n2
 
-proc skip*(n: var Node, count: int) =
+proc skip*(n: var NifCursor, count: int) =
   for _ in 0..<count:
     skip n
 
-
-var knownInstances: Table[SymId, SymId]  # name -> type
 var knownTypes: seq[SymId]
+var knownInstances: Table[SymId, SymId]  # name -> type
 var knownOnChanged: Table[SymId, SymId]  # type -> `onChanged` template sym
 
 
-proc typesTr(n: Node) =
+proc typesTr(n: NifCursor) =
   var n = n
   inc n
   while n.kind != ParRi:
@@ -30,50 +27,50 @@ proc typesTr(n: Node) =
   inc n
 
 
-proc trAsgn(n: var Node, o: var TokenBuf) =
+proc trAsgn(n: var NifCursor, o: var NifBuilder) =
   var
     fieldName = ""
-    access = createTokenBuf(3)
-    instance = Node()
+    access = NifCursor()
+    instance = NifCursor()
     emitOnChanged = false
   traverse n:
     inc n
     if n.kind == ParLe and n.exprKind == DotX:
       traverse n:
-        takeTree access, n
+        access = n
       inc n
       if n.kind == Symbol and n.symId in knownInstances and knownInstances[n.symId] in knownOnChanged:
         instance = n
         inc n
         if n.kind == Symbol:
-          fieldName = pool.syms[n.symId]
+          fieldName = n.symText
           fieldName.delete fieldName.find('.')..fieldName.high
           emitOnChanged = true
-  takeTree o, n
+  let info = n.info
+  o.takeTree(n)
   if emitOnChanged:
-    o.addParLe CallS
-    o.addSymUse knownOnChanged[knownInstances[instance.symId]], n.info
-    o.add instance
-    o.add access
-    o.addStrLit fieldName
-    o.addParRi()
+    o.withTree CallS, info:
+      o.addSymUse knownOnChanged[knownInstances[instance.symId]], info
+      o.addSubtree(instance)
+      o.addSubtree(access)
+      o.addStrLit fieldName
 
 
-proc trGvar(n: var Node, o: var TokenBuf) =
+proc trGvar(n: var NifCursor, o: var NifBuilder) =
   traverse n:
     inc n
     let nameSym = n.symId
     skip n, 3
     if n.kind == Symbol and n.symId in knownTypes:
       knownInstances[nameSym] = n.symId
-  takeTree o, n
+  o.takeTree(n)
 
 
-proc trTemplate(n: var Node, o: var TokenBuf) =
+proc trTemplate(n: var NifCursor, o: var NifBuilder) =
   traverse n:
     inc n
     let nameSym = n.symId
-    let name = pool.syms[n.symId]
+    let name = n.symText
     if name.startsWith("onChanged"):
       skip n, 4
       inc n  # params
@@ -83,10 +80,10 @@ proc trTemplate(n: var Node, o: var TokenBuf) =
         inc n
       if n.kind == Symbol:
         knownOnChanged[n.symId] = nameSym
-  takeTree o, n
+  o.takeTree(n)
 
 
-proc trAux(n: var Node, o: var TokenBuf) =
+proc trAux(n: var NifCursor, o: var NifBuilder) =
   case n.kind
   of ParLe:
     if n.stmtKind == AsgnS:
@@ -96,29 +93,30 @@ proc trAux(n: var Node, o: var TokenBuf) =
     elif n.stmtKind == TemplateS:
       trTemplate n, o
     else:
-      o.add n
+      let info = n.info
+      let tag = n.tagId
+      o.addParLe(tag, info)
       inc n
       while n.kind != ParRi:
         trAux(n, o)
       o.addParRi()
       inc n
   else:
-    takeTree o, n
+    o.takeTree(n)
 
 
-proc tr(n: Node): TokenBuf =
-  result = createTokenBuf()
+proc tr(n: NifCursor): NifBuilder =
+  result = createTree()
   let info = n.info
   var n = n
   if n.stmtKind == StmtsS: inc n
-  result.addParLe StmtsS, info
-  while n.kind != ParRi:
-    trAux(n, result)
-  result.addParRi()
+  result.withTree StmtsS, info:
+    while n.kind != ParRi:
+      trAux(n, result)
 
 
-var inp = loadTree()
-var inpTypes = loadTree(paramStr(3))
+var inp = loadPluginInput()
+var inpTypes = loadPluginInput(os.paramStr(3))
 
-typesTr(beginRead inpTypes)
-writeFile os.paramStr(2), toString tr(beginRead inp)
+typesTr(inpTypes)
+saveTree tr(inp), os.paramStr(2)

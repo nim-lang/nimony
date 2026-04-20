@@ -143,6 +143,7 @@ proc `shl`*(a: xint, b: int): xint =
     result.nan = true
 
 proc `shr`*(a: xint, b: int): xint =
+  # keeps `neg` the same, so sign preserving (ashr)
   if a.nan or b < 0:
     return xint(nan: true)
 
@@ -176,7 +177,7 @@ proc `xor`*(a, b: xint): xint =
 proc `not`*(a: xint): xint =
   xint(
     nan: a.nan,
-    neg: not a.neg,
+    neg: a.neg,
     val: not a.val
   )
 
@@ -193,16 +194,21 @@ proc `mod`*(a, b: xint): xint =
   )
 
 # Mask operations
-proc mask*(a: xint, bits: int): xint =
+proc mask*(a: xint, bits: int, signed: bool = false): xint =
   # Create a mask with specified number of bits
   if a.nan or bits < 0 or bits > 64:
     return xint(nan: true)
 
-  xint(
+  let mask = if bits == 64: high(uint64) else: ((1'u64 shl bits) - 1)
+  result = xint(
     nan: false,
     neg: a.neg,
-    val: a.val and ((1'u64 shl bits) - 1)
+    val: a.val and mask
   )
+  if signed and result.val shr (bits - 1) != 0:
+    # two's complement
+    result.val = (not result.val and mask) + 1
+    result.neg = not result.neg
 
 # Additional helper for bit manipulation
 proc getBit*(a: xint, pos: int): xint =
@@ -301,7 +307,7 @@ proc toFloat64*(x: xint): float64 =
   else:
     float64(x.val)
 
-when isMainModule:
+when isMainModule and not defined(nimony):
   var a = createXint(10'i64)
   var b = createXint(-5'i64)
   echo a + b   # Outputs: "5"

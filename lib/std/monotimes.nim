@@ -107,7 +107,8 @@ proc getMonoTime*(): MonoTime {.tags: [TimeEffect].} =
     result = MonoTime(ticks: ticks)
   elif defined(posix):
     var ts: Timespec = default(Timespec)
-    discard clock_gettime(CLOCK_MONOTONIC, ts)
+    let monotonic = CLOCK_MONOTONIC
+    discard clock_gettime(monotonic, ts)
     result = MonoTime(ticks: ts.tv_sec.int64 * 1_000_000_000 +
       ts.tv_nsec.int64)
   elif defined(windows):
@@ -119,42 +120,42 @@ proc getMonoTime*(): MonoTime {.tags: [TimeEffect].} =
     let queryPerformanceCounterFreq = 1_000_000_000'u64 div freq
     result = MonoTime(ticks: (ticks * queryPerformanceCounterFreq).int64)
 
-proc ticks*(t: MonoTime): int64 =
+func ticks*(t: MonoTime): int64 =
   ## Returns the raw ticks value from a `MonoTime`. This value always uses
   ## nanosecond time resolution.
   t.ticks
 
-proc `$`*(t: MonoTime): string =
+func `$`*(t: MonoTime): string =
   $t.ticks
 
-# proc `-`*(a, b: MonoTime): Duration =
+# func `-`*(a, b: MonoTime): Duration =
 #   ## Returns the difference between two `MonoTime` timestamps as a `Duration`.
 #   initDuration(nanoseconds = (a.ticks - b.ticks))
 
-# proc `+`*(a: MonoTime, b: Duration): MonoTime =
+# func `+`*(a: MonoTime, b: Duration): MonoTime =
 #   ## Increases `a` by `b`.
 #   MonoTime(ticks: a.ticks + b.inNanoseconds)
 
-# proc `-`*(a: MonoTime, b: Duration): MonoTime =
+# func `-`*(a: MonoTime, b: Duration): MonoTime =
 #   ## Reduces `a` by `b`.
 #   MonoTime(ticks: a.ticks - b.inNanoseconds)
 
-proc `<`*(a, b: MonoTime): bool =
+func `<`*(a, b: MonoTime): bool =
   ## Returns true if `a` happened before `b`.
   a.ticks < b.ticks
 
-proc `<=`*(a, b: MonoTime): bool =
+func `<=`*(a, b: MonoTime): bool =
   ## Returns true if `a` happened before `b` or if they happened simultaneous.
   a.ticks <= b.ticks
 
-proc `==`*(a, b: MonoTime): bool =
+func `==`*(a, b: MonoTime): bool =
   ## Returns true if `a` and `b` happened simultaneous.
   a.ticks == b.ticks
 
-proc high*(typ: typedesc[MonoTime]): MonoTime =
+func high*(typ: typedesc[MonoTime]): MonoTime =
   ## Returns the highest representable `MonoTime`.
   MonoTime(ticks: high(int64))
 
-proc low*(typ: typedesc[MonoTime]): MonoTime =
+func low*(typ: typedesc[MonoTime]): MonoTime =
   ## Returns the lowest representable `MonoTime`.
   MonoTime(ticks: low(int64))

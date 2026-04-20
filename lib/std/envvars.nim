@@ -21,7 +21,7 @@ when defined(nodejs):
     var key2 = key.cstring
     {.emit: "delete process.env[`key2`];".}
 
-  iterator envPairs*(): tuple[key, value: string] {.tags: [ReadEnvEffect].} =
+  iterator envPairs*(): tuple[key, value: string] {.tags: [ReadEnvEffect], sideEffect.} =
     var num: int
     var keys: RootObj
     {.emit: "`keys` = Object.keys(process.env); `num` = `keys`.length;".}
@@ -174,12 +174,16 @@ else:
 
     var i = findEnvVar(key)
     if i >= 0:
-      return substr(environment[i], find(environment[i], '=')+1)
+      result = substr(environment[i], find(environment[i], '=')+1)
     else:
       var key = key
-      var env = c_getenv(key.toCString())
-      if env == nil: return default
-      result = $env
+      let kc = key.toCString()
+      if kc.isNil:
+        result = default
+      else:
+        var env = c_getenv(kc)
+        if env == nil: result = default
+        else: result = $env
 
   proc existsEnv*(key: string): bool {.tags: [ReadEnvEffect].} =
     ## Checks whether the environment variable named `key` exists.
@@ -194,8 +198,13 @@ else:
       assert not existsEnv("unknownEnv")
 
     var key = key
-    if c_getenv(key.toCString()) != nil: return true
-    else: return findEnvVar(key) >= 0
+    let kc = key.toCString()
+    if kc.isNil:
+      result = false
+    elif c_getenv(kc) != nil:
+      result = true
+    else:
+      result = findEnvVar(key) >= 0
 
   proc putEnv*(key, val: string) {.tags: [WriteEnvEffect], raises.} =
     ## Sets the value of the `environment variable`:idx: named `key` to `val`.
@@ -231,7 +240,13 @@ else:
       if c_putenv_s(key, val) != 0'i32:
         raiseOSError(osLastError())
     else:
-      if c_setenv(key.toCString(), val.toCString(), 1'i32) != 0'i32:
+      let kc = key.toCString()
+      let vc = val.toCString()
+      if kc.isNil:
+        raise OutOfMemError
+      if vc.isNil:
+        raise OutOfMemError
+      if c_setenv(kc, vc, 1'i32) != 0'i32:
         raiseOSError(osLastError())
 
   proc delEnv*(key: string) {.tags: [WriteEnvEffect], raises.} =
@@ -247,18 +262,21 @@ else:
     if indx >= 0:
       when defined(windows) and not defined(nimscript):
         var key = key
-        var k = newWideCString(key.toCString(), key.len).toWideCString()
-        if setEnvironmentVariableW(k, nil) == 0'i32:
+        var k = newWideCString(key)
+        if setEnvironmentVariableW(k.toWideCString(), nil) == 0'i32:
           raiseOSError(osLastError())
       else:
         var key = key
-        if c_unsetenv(key.toCString()) != 0'i32:
+        let kc = key.toCString()
+        if kc.isNil:
+          raise OutOfMemError
+        if c_unsetenv(kc) != 0'i32:
           raiseOSError(osLastError())
       environment.delete(indx)
     else:
       discard # Do nothing if the env var is not already set
 
-  iterator envPairs*(): tuple[key, value: string] {.tags: [ReadEnvEffect].} =
+  iterator envPairs*(): tuple[key, value: string] {.tags: [ReadEnvEffect], sideEffect.} =
     ## Iterate over all `environments variables`:idx:.
     ##
     ## In the first component of the tuple is the name of the current variable stored,

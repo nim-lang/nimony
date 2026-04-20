@@ -1,5 +1,5 @@
 import std/[assertions, syncio]
-
+{.feature: "lenientnils".}
 type
   TestObj = object of RootObj
     t: int

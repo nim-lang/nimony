@@ -9,12 +9,11 @@
 import std / assertions
 
 include ".." / lib / nifprelude
-import nimony_model, decls, programs, xints, semdata, renderer, builtintypes, typeprops
+import nimony_model, decls, programs, xints, semdata, renderer, builtintypes, typeprops, langmodes
 
 type
   EvalContext* = object
     c: ptr SemContext
-    values: seq[TokenBuf]
     trueValue, falseValue: Cursor
 
 proc isConstBoolValue*(n: Cursor): bool =
@@ -33,7 +32,7 @@ proc isConstCharValue*(n: Cursor): bool =
   n.kind == CharLit
 
 proc initEvalContext*(c: ptr SemContext): EvalContext =
-  result = EvalContext(c: c, values: @[])
+  result = EvalContext(c: c)
 
 proc skipParRi(n: var Cursor) =
   if n.kind == ParRi:
@@ -42,30 +41,27 @@ proc skipParRi(n: var Cursor) =
     error "expected ')', but got: ", n
 
 proc error(c: var EvalContext, msg: string, info: PackedLineInfo): Cursor =
-  let i = c.values.len
-  c.values.add createTokenBuf(4)
-  c.values[i].addParLe ErrT, info
-  c.values[i].addDotToken()
-  c.values[i].addStrLit msg
-  c.values[i].addParRi()
-  result = cursorAt(c.values[i], 0)
+  var buf = createTokenBuf(4)
+  buf.addParLe ErrT, info
+  buf.addDotToken()
+  buf.addStrLit msg
+  buf.addParRi()
+  result = cursorAt(buf, 0)
 
 proc getTrueValue(c: var EvalContext): Cursor =
   if c.trueValue == default(Cursor):
-    let i = c.values.len
-    c.values.add createTokenBuf(2)
-    c.values[i].addParLe(TrueX, NoLineInfo)
-    c.values[i].addParRi()
-    c.trueValue = cursorAt(c.values[i], 0)
+    var buf = createTokenBuf(2)
+    buf.addParLe(TrueX, NoLineInfo)
+    buf.addParRi()
+    c.trueValue = cursorAt(buf, 0)
   result = c.trueValue
 
 proc getFalseValue(c: var EvalContext): Cursor =
   if c.falseValue == default(Cursor):
-    let i = c.values.len
-    c.values.add createTokenBuf(2)
-    c.values[i].addParLe(FalseX, NoLineInfo)
-    c.values[i].addParRi()
-    c.falseValue = cursorAt(c.values[i], 0)
+    var buf = createTokenBuf(2)
+    buf.addParLe(FalseX, NoLineInfo)
+    buf.addParRi()
+    c.falseValue = cursorAt(buf, 0)
   result = c.falseValue
 
 proc getConstOrdinalValue*(val: Cursor): xint =
@@ -88,10 +84,9 @@ proc getConstOrdinalValue*(val: Cursor): xint =
     result = createNaN()
 
 proc singleToken*(c: var EvalContext; tok: PackedToken): Cursor =
-  let i = c.values.len
-  c.values.add createTokenBuf(1)
-  c.values[i].add tok
-  result = cursorAt(c.values[i], 0)
+  var buf = createTokenBuf(1)
+  buf.add tok
+  result = cursorAt(buf, 0)
 
 proc stringValue(c: var EvalContext; s: string; info: PackedLineInfo): Cursor {.inline.} =
   result = singleToken(c, strToken(pool.strings.getOrIncl(s), info))
@@ -185,12 +180,11 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
       evaluatedCall.addSubtree x
     evaluatedCall.addParRi()
 
-    let i = c.values.len
-    c.values.add createTokenBuf(12)
+    var resultBuf = createTokenBuf(12)
     assert c.c.executeCall != nil
-    let errorMsg = c.c.executeCall(c.c[], routine, c.values[i], cursorAt(evaluatedCall, 0), n.info)
+    let errorMsg = c.c.executeCall(c.c[], routine, resultBuf, cursorAt(evaluatedCall, 0), n.info)
     if errorMsg.len == 0:
-      result = cursorAt(c.values[i], 0)
+      result = cursorAt(resultBuf, 0)
     else:
       result = c.error("cannot evaluate expression at compile time: " & asNimCode(n) & "\n\n" & errorMsg, n.info)
 
@@ -265,6 +259,119 @@ template evalBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   else:
     evalOrdBinOp(c, n, opr)
 
+template evalOrdUnOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
+  let orig = n
+  inc n # tag
+  let isSigned = n.typeKind == IntT
+  skip n # type
+  let a = getConstOrdinalValue propagateError eval(c, n)
+  skipParRi n
+  if not isNaN(a):
+    let rx = opr(a)
+    var err = false
+    if isSigned:
+      let ri = asSigned(rx, err)
+      if err:
+        error "expression overflow at compile time: " & asNimCode(orig), orig.info
+      else:
+        result = intValue(c, ri, orig.info)
+    else:
+      let ru = asUnsigned(rx, err)
+      if err:
+        error "expression overflow at compile time: " & asNimCode(orig), orig.info
+      else:
+        result = uintValue(c, ru, orig.info)
+  else:
+    cannotEval orig
+
+template evalFloatUnOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
+  let orig = n
+  inc n # tag
+  skip n # type
+  let a = propagateError eval(c, n)
+  skipParRi n
+  if a.kind == FloatLit:
+    let rf = opr(pool.floats[a.floatId])
+    result = floatValue(c, rf, orig.info)
+  else:
+    cannotEval orig
+
+template evalUnOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
+  var t = n
+  inc t
+  if t.typeKind == FloatT:
+    evalFloatUnOp(c, n, opr)
+  else:
+    evalOrdUnOp(c, n, opr)
+
+template evalShiftOp(c0: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
+  let orig = n
+  inc n # tag
+  let isSigned = n.typeKind == IntT
+  var bits = c0.c.g.config.bits
+  case n.typeKind
+  of IntT, UintT:
+    inc n
+    bits = typebits(n.load)
+    skipToEnd n
+  else:
+    error "expected int or uint type for shift operation, got: " & typeToString(n), n.info
+  let a = getConstOrdinalValue propagateError eval(c0, n)
+  let b = getConstOrdinalValue propagateError eval(c0, n)
+  skipParRi n
+  if not isNaN(a) and not isNaN(b):
+    var err = false
+    var operand = asSigned(b, err)
+    if err or operand > high(int).int64:
+      error "expression overflow at compile time: " & asNimCode(orig), orig.info
+    let rx = mask(opr(a, operand.int), bits, isSigned)
+    if isSigned:
+      let ri = asSigned(rx, err)
+      if err:
+        error "expression overflow at compile time: " & asNimCode(orig), orig.info
+      else:
+        result = intValue(c0, ri, orig.info)
+    else:
+      let ru = asUnsigned(rx, err)
+      if err:
+        error "expression overflow at compile time: " & asNimCode(orig), orig.info
+      else:
+        result = uintValue(c0, ru, orig.info)
+  else:
+    cannotEval orig
+
+template evalBitnot(c0: var EvalContext; n: var Cursor) {.dirty.} =
+  let orig = n
+  inc n # tag
+  let isSigned = n.typeKind == IntT
+  var bits = c0.c.g.config.bits
+  case n.typeKind
+  of IntT, UintT:
+    inc n
+    bits = typebits(n.load)
+    skipToEnd n
+  else:
+    error "expected int or uint type for shl, got: " & typeToString(n), n.info
+  let a = getConstOrdinalValue propagateError eval(c, n)
+  skipParRi n
+  if not isNaN(a):
+    var err = false
+    let rx = mask(not a, bits, isSigned)
+    if isSigned:
+      let ri = asSigned(rx, err)
+      if err:
+        error "expression overflow at compile time: " & asNimCode(orig), orig.info
+      else:
+        result = intValue(c, ri, orig.info)
+    else:
+      let ru = asUnsigned(rx, err)
+      if err:
+        error "expression overflow at compile time: " & asNimCode(orig), orig.info
+      else:
+        result = uintValue(c, ru, orig.info)
+  else:
+    cannotEval orig
+
 proc intToToken(result: var TokenBuf; x: int; typ: Cursor) =
   case typ.typeKind
   of IT:
@@ -274,7 +381,16 @@ proc intToToken(result: var TokenBuf; x: int; typ: Cursor) =
   of CT:
     result.add charToken(char x, NoLineInfo)
   else:
-    assert false, "Got unexpected type: " & toString(typ)
+    var hasError = true
+    if typ.kind == Symbol:
+      let sym = tryLoadSym(typ.symId)
+      if sym.status == LacksNothing:
+        var local = asTypeDecl(sym.decl)
+        if local.kind == TypeY and local.body.typeKind in {EnumT, HoleyEnumT, AnumT}:
+          hasError = false
+          result.addIntLit x
+    if hasError:
+      assert false, "Got unexpected type: " & toString(typ)
 
 proc bitSetToTokens(result: var TokenBuf; x: seq[uint8]; elementTyp: Cursor; info: PackedLineInfo) =
   result.addParLe SetConstrX, info
@@ -304,7 +420,81 @@ proc bitSetToTokens(result: var TokenBuf; x: seq[uint8]; elementTyp: Cursor; inf
 
 proc evalBitSet*(n, typ: Cursor): seq[uint8]
 
+proc evalOrdinal(c: ptr SemContext, n: Cursor): xint
 
+proc evalInSet(c: var EvalContext; n: var Cursor): Cursor =
+  inc n # tag
+  assert n.typeKind == SetT
+  skip n # skip type
+  var a = eval(c, n)
+  var b = evalOrdinal(nil, n)
+  skip n # skips b
+  skipParRi n # skip last parRi
+  assert a.exprKind == SetConstrX, "got " & toString(a)
+  inc a # skip set tag
+  skip a # skip set type
+
+  var isInSet = false
+  while a.kind != ParRi:
+    if a.substructureKind == RangeU:
+      inc a
+      let xa = evalOrdinal(nil, a)
+      skip a
+      let xb = evalOrdinal(nil, a)
+      skip a
+      if b >= xa and b <= xb:
+        isInSet = true
+        break
+      skipParRi(a)
+    else:
+      let xa = evalOrdinal(nil, a)
+      if xa == b:
+        isInSet = true
+        break
+      skip a
+
+  result = boolValue(c, isInSet)
+
+# Number of set bits for all values of int8
+const populationCount: array[uint8, uint8] = block:
+    var arr: array[uint8, uint8]
+
+    proc countSetBits(x: uint8): uint8 =
+      return
+        ( x and 0b00000001'u8) +
+        ((x and 0b00000010'u8) shr 1) +
+        ((x and 0b00000100'u8) shr 2) +
+        ((x and 0b00001000'u8) shr 3) +
+        ((x and 0b00010000'u8) shr 4) +
+        ((x and 0b00100000'u8) shr 5) +
+        ((x and 0b01000000'u8) shr 6) +
+        ((x and 0b10000000'u8) shr 7)
+
+
+    for it in low(uint8)..high(uint8):
+      arr[it] = countSetBits(cast[uint8](it))
+
+    arr
+
+proc bitSetCard(x: seq[uint8]): BiggestInt =
+  result = 0
+  for it in x:
+    result.inc int(populationCount[it])
+
+proc evalCardSet(c: var EvalContext; n: var Cursor): Cursor =
+  let info = n.info
+  inc n # tag
+  assert n.typeKind == SetT
+  skip n # skip type
+  var a = eval(c, n)
+  skipParRi n # skip last parRi
+
+  assert a.exprKind == SetConstrX, "got " & toString(a)
+  var typeA = a
+  inc typeA
+
+  let setA = evalBitSet(a, typeA)
+  result = intValue(c, bitSetCard(setA), info)
 
 proc evalSetOp(c: var EvalContext; n: var Cursor; op: ExprKind): Cursor =
   let info = n.info
@@ -343,10 +533,72 @@ proc evalSetOp(c: var EvalContext; n: var Cursor; op: ExprKind): Cursor =
   else:
     assert false, "unexpected operation: " & $op
 
-  let valPos = c.values.len
-  c.values.add createTokenBuf()
-  c.values[valPos].bitSetToTokens(setRes, elementTyp, info)
-  result = cursorAt(c.values[valPos], 0)
+  var buf = createTokenBuf()
+  buf.bitSetToTokens(setRes, elementTyp, info)
+  result = cursorAt(buf, 0)
+
+proc evalCast(c: var EvalContext; typ, val, nOrig: Cursor): Cursor =
+  let targetType = toTypeImpl(typ)
+  let dtk = targetType.typeKind
+  if dtk == FloatT:
+    if val.kind == FloatLit:
+      result = val
+    elif val.kind == IntLit:
+      result = floatValue(c, cast[float64](pool.integers[val.intId]), nOrig.info)
+    elif val.kind == UIntLit:
+      result = floatValue(c, cast[float64](pool.uintegers[val.uintId]), nOrig.info)
+    else:
+      cannotEval nOrig
+  elif dtk in {IntT, UIntT}:
+    if val.kind == FloatLit:
+      if dtk == IntT:
+        result = intValue(c, cast[int64](pool.floats[val.floatId]), nOrig.info)
+      else:
+        result = uintValue(c, cast[uint64](pool.floats[val.floatId]), nOrig.info)
+    else:
+      let x = getConstOrdinalValue(val)
+      if isNaN(x):
+        cannotEval nOrig
+      else:
+        var err = false
+        if dtk == IntT:
+          let i = asSigned(x, err)
+          if err: cannotEval nOrig
+          else: result = intValue(c, i, nOrig.info)
+        else:
+          let u = asUnsigned(x, err)
+          if err: cannotEval nOrig
+          else: result = uintValue(c, u, nOrig.info)
+  elif dtk == CharT:
+    let x = getConstOrdinalValue(val)
+    if isNaN(x):
+      cannotEval nOrig
+    else:
+      var err = false
+      let ch = asUnsigned(x, err)
+      if err or ch >= 256u:
+        cannotEval nOrig
+      else:
+        result = charValue(c, char(ch), nOrig.info)
+  elif dtk == BoolT:
+    let x = getConstOrdinalValue(val)
+    if isNaN(x):
+      cannotEval nOrig
+    else:
+      result = boolValue(c, x != zero())
+  elif dtk in {EnumT, HoleyEnumT, AnumT}:
+    let x = getConstOrdinalValue(val)
+    if isNaN(x):
+      cannotEval nOrig
+    else:
+      result = val
+  elif dtk in {PointerT, PtrT, RefT, CstringT}:
+    if val.exprKind == NilX:
+      result = val
+    else:
+      cannotEval nOrig
+  else:
+    cannotEval nOrig
 
 proc eval*(c: var EvalContext; n: var Cursor): Cursor =
   template propagateError(r: Cursor): Cursor =
@@ -437,12 +689,21 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       inc n
       var isDistinct = false
       var typ = skipDistinct(n, isDistinct)
+      let targetType = toTypeImpl(typ)
       skip n
       let val = propagateError eval(c, n)
       skipParRi n
-      if typ.typeKind == CstringT and val.kind == StringLit:
+      if targetType.typeKind == CstringT and val.kind == StringLit:
         result = val
-      elif typ.typeKind == UIntT:
+      elif targetType.typeKind == FloatT:
+        if val.kind == FloatLit:
+          result = val
+        else:
+          # treats it as an ordinal value
+          let x = getConstOrdinalValue(val)
+          let f = toFloat64(x)
+          result = floatValue(c, f, nOrig.info)
+      elif targetType.typeKind == UIntT:
         let x = getConstOrdinalValue(val)
         var err = false
         let u = asUnsigned(x, err)
@@ -450,7 +711,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
           cannotEval nOrig
         else:
           result = uintValue(c, u, nOrig.info)
-      elif typ.typeKind == IntT:
+      elif targetType.typeKind == IntT:
         let x = getConstOrdinalValue(val)
         var err = false
         let i = asSigned(x, err)
@@ -458,7 +719,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
           cannotEval nOrig
         else:
           result = intValue(c, i, nOrig.info)
-      elif typ.typeKind == CharT:
+      elif targetType.typeKind == CharT:
         let x = getConstOrdinalValue(val)
         var err = false
         let ch = asUnsigned(x, err)
@@ -466,9 +727,23 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
           cannotEval nOrig
         else:
           result = charValue(c, char(ch), nOrig.info)
+      elif targetType.typeKind in {EnumT, HoleyEnumT, AnumT}:
+        let x = getConstOrdinalValue(val)
+        if isNaN(x):
+          cannotEval nOrig
+        else:
+          result = val
       else:
         # other conversions not implemented
         cannotEval nOrig
+    of CastX:
+      let nOrig = n
+      inc n
+      let typ = n
+      skip n
+      let val = propagateError eval(c, n)
+      skipParRi n
+      result = evalCast(c, typ, val, nOrig)
     of DconvX:
       inc n # tag
       skip n # type
@@ -483,6 +758,8 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       else:
         # was not a trivial ExprX, so we could not evaluate it
         cannotEval orig
+    of NegX:
+      evalUnOp(c, n, `-`)
     of MulX:
       evalBinOp(c, n, `*`)
     of AddX:
@@ -498,6 +775,26 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         evalOrdBinOp(c, n, `div`)
     of ModX:
       evalOrdBinOp(c, n, `mod`)
+    of BitorX:
+      evalOrdBinOp(c, n, `or`)
+    of BitandX:
+      evalOrdBinOp(c, n, `and`)
+    of BitxorX:
+      evalOrdBinOp(c, n, `xor`)
+    of BitnotX:
+      evalBitnot(c, n)
+    of ShlX:
+      evalShiftOp(c, n, `shl`)
+    of ShrX:
+      var typ = n
+      inc typ
+      if typ.typeKind == IntT:
+        error "logical right shift not implemented for signed integers", n.info
+      # for uints, ashr and shr are the same
+      evalShiftOp(c, n, `shr`)
+    of AshrX:
+      # xints.shr keeps the sign the same, so has ashr behavior for signed ints
+      evalShiftOp(c, n, `shr`)
     of EqX:
       evalCmpOp(c, n, `==`)
     of LeX:
@@ -514,44 +811,53 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         result = boolValue(c, val)
     of AconstrX, SetconstrX, TupconstrX,
         BracketX, CurlyX, TupX:
-      let valPos = c.values.len
-      c.values.add createTokenBuf(16)
-      c.values[valPos].add n
+      var buf = createTokenBuf(16)
+      buf.add n
       inc n
       if exprKind in {AconstrX, SetconstrX, TupconstrX}:
         # add type
-        takeTree c.values[valPos], n
+        takeTree buf, n
       while n.kind != ParRi:
-        if exprKind == SetConstrX and n.substructureKind == RangeU:
-          c.values[valPos].takeToken n
+        if (exprKind == SetConstrX and n.substructureKind == RangeU) or
+           (exprKind == AconstrX and n.substructureKind == KvU):
+          buf.takeToken n
           var a = propagateError eval(c, n)
-          c.values[valPos].addSubtree a
+          buf.addSubtree a
           var b = propagateError eval(c, n)
-          c.values[valPos].addSubtree b
-          c.values[valPos].takeToken n
+          buf.addSubtree b
+          buf.takeToken n
+        elif exprKind == TupconstrX:
+          let isKv = n.substructureKind == KvU
+          if isKv:
+            inc n # tag
+            skip n # key
+          let elem = propagateError eval(c, n)
+          buf.addSubtree elem
+          if isKv:
+            inc n
         else:
           let elem = propagateError eval(c, n)
-          c.values[valPos].addSubtree elem
-      takeParRi c.values[valPos], n
-      result = cursorAt(c.values[valPos], 0)
+          buf.addSubtree elem
+      takeParRi buf, n
+      result = cursorAt(buf, 0)
     of CallKinds:
       result = evalCall(c, n)
       skip n
     of SizeofX:
-      if c.c.g.config.compat:
-        var orig = n
-        inc n
-        let s = c.c.semGetSize(c.c[], n)
-        var err = false
-        let value = asSigned(s, err)
-        if err:
-          cannotEval orig
-        else:
-          result = intValue(c, value, orig.info)
-      else:
+      let s = c.c.semGetSize(c.c[], n.firstSon)
+      var err = false
+      let value = asSigned(s, err)
+      if err:
         cannotEval n
+      else:
+        result = intValue(c, value, n.info)
+      skip n
     of PlusSetX, MinusSetX, XorSetX, MulSetX:
       result = evalSetOp(c, n, n.exprKind)
+    of InSetX:
+      result = evalInSet(c, n)
+    of CardX:
+      result = evalCardSet(c, n)
     else:
       if n.tagId == ErrT:
         result = n
@@ -601,42 +907,34 @@ proc annotateOrdinal(buf: var TokenBuf; typ: var Cursor; n: Cursor; err: var boo
   of IntT, UIntT, FloatT:
     inc typ
     let bits = typebits(typ.load)
-    if bits < 0 and
-        ((kind == IntT and n.kind == IntLit) or
-          (kind == UIntT and n.kind == UIntLit)):
-      buf.add n
-    else:
-      var tok: PackedToken
-      var suf: string
-      case kind
-      of IntT:
-        suf = "i"
-        let val = asSigned(ordinal, err)
-        if err: return
-        tok = intToken(pool.integers.getOrIncl(val), n.info)
-      of UIntT:
-        suf = "u"
-        let val = asUnsigned(ordinal, err)
-        if err: return
-        tok = uintToken(pool.uintegers.getOrIncl(val), n.info)
-      of FloatT:
-        suf = "f"
-        let negative = isNegative(ordinal)
-        if negative: negate(ordinal)
-        var val = float64(asUnsigned(ordinal, err))
-        if err: return
-        if negative:
-          val = -val
-        tok = floatToken(pool.floats.getOrIncl(val), n.info)
-      else: bug("unreachable")
-      if bits >= 0:
-        suf.addInt(bits)
-        buf.add parLeToken(SufX, n.info)
-        buf.add tok
-        buf.add strToken(pool.strings.getOrIncl(suf), n.info)
-        buf.addParRi()
-      else:
-        buf.add tok
+    var tok: PackedToken
+    var suf: string
+    case kind
+    of IntT:
+      suf = "i"
+      let val = asSigned(ordinal, err)
+      if err: return
+      tok = intToken(pool.integers.getOrIncl(val), n.info)
+    of UIntT:
+      suf = "u"
+      let val = asUnsigned(ordinal, err)
+      if err: return
+      tok = uintToken(pool.uintegers.getOrIncl(val), n.info)
+    of FloatT:
+      suf = "f"
+      let negative = isNegative(ordinal)
+      if negative: negate(ordinal)
+      var val = float64(asUnsigned(ordinal, err))
+      if err: return
+      if negative:
+        val = -val
+      tok = floatToken(pool.floats.getOrIncl(val), n.info)
+    else: bug("unreachable")
+    suf.addInt(bits)
+    buf.add parLeToken(SufX, n.info)
+    buf.add tok
+    buf.add strToken(pool.strings.getOrIncl(suf), n.info)
+    buf.addParRi()
   of BoolT:
     if n.exprKind in {TrueX, FalseX}:
       buf.addSubtree n
@@ -655,7 +953,7 @@ proc annotateOrdinal(buf: var TokenBuf; typ: var Cursor; n: Cursor; err: var boo
       err = err or val < 0 or val > uint64(char.high)
       if not err:
         buf.add charToken(char(val), n.info)
-  of EnumT, HoleyEnumT:
+  of EnumT, HoleyEnumT, AnumT:
     # finds the field sym but could also generate a conversion
     let decl = asEnumDecl(typ)
     var fields = decl.firstField
@@ -705,7 +1003,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
     if typ.typeKind == FloatT:
       inc typ
       let bits = typebits(typ.load)
-      if bits < 0 or bits == 64:
+      if bits == 64:
         buf.add n
       else:
         buf.add parLeToken(SufX, n.info)
@@ -883,10 +1181,13 @@ type
     lo*, hi*: xint
 
 proc enumBounds*(n: Cursor): Bounds =
-  assert n.typeKind in {EnumT, HoleyEnumT}
+  assert n.typeKind in {EnumT, HoleyEnumT, AnumT}
   var n = n
+  let kind = n.typeKind
   inc n # EnumT
   skip n # Basetype
+  if kind == AnumT:
+    skip n # owner object type sym (or dot)
   result = Bounds(lo: createNan(), hi: createNaN())
   while n.kind != ParRi:
     let enumField = takeLocal(n, SkipFinalParRi)
@@ -913,7 +1214,7 @@ proc bitsetSizeInBytes*(baseType: Cursor): xint =
     result = createXint(256'i64 div 8'i64)
   of BoolT:
     result = createXint(1'i64)
-  of EnumT, HoleyEnumT:
+  of EnumT, HoleyEnumT, AnumT:
     let b = enumBounds(baseType)
     # XXX We don't use an offset != 0 anymore for set[MyEnum] construction
     # so we only consider the 'hi' value here:
@@ -943,7 +1244,7 @@ proc countEnumValues*(n: Cursor): xint =
     let sym = tryLoadSym(n.symId)
     if sym.status == LacksNothing:
       var local = asTypeDecl(sym.decl)
-      if local.kind == TypeY and local.body.typeKind in {EnumT, HoleyEnumT}:
+      if local.kind == TypeY and local.body.typeKind in {EnumT, HoleyEnumT, AnumT}:
         let b = enumBounds(local.body)
         result = b.hi - b.lo + createXint(1'i64)
 

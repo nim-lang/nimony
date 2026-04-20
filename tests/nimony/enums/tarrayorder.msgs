@@ -1,0 +1,2 @@
+tests/nimony/enums/tarrayorder.nim(7, 3) Error: invalid order in array constructor
+tests/nimony/enums/tarrayorder.nim(16, 3) Error: invalid order in array constructor

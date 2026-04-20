@@ -1,3 +1,4 @@
+{.feature: "lenientnils".}
 
 type
   CFile {.importc: "FILE", header: "<stdio.h>".} = object
@@ -35,7 +36,7 @@ proc c_fread(buf: pointer; size, n: uint; f: File): uint {.
 proc fprintf(f: File; fmt: cstring) {.varargs, importc: "fprintf", header: "<stdio.h>".}
 
 proc write*(f: File; s: string) =
-  discard c_fwrite(rawData(s), 1'u, s.len.uint, f)
+  discard c_fwrite(readRawData(s), 1'u, s.len.uint, f)
 
 proc write*(f: File; b: bool) =
   if b: write f, "true"
@@ -97,7 +98,7 @@ proc open*(f: out File; filename: string;
 
   # XXX: avoid a possible double copy when the string is allocated
   var tmpFilename = filename.terminatingZero()
-  let rawFilename = cast[cstring](tmpFilename.rawData)
+  let rawFilename = cast[cstring](readRawData(tmpFilename))
   f = fopen(rawFilename, m)
   if f != nil:
     result = true

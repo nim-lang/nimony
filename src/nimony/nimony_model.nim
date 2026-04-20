@@ -33,18 +33,21 @@ proc pragmaKind*(c: Cursor): NimonyPragma {.inline.} =
       result = NoPragma
   elif c.kind == Ident:
     let tagId = pool.tags.getOrIncl(pool.strings[c.litId])
-    if rawTagIsNimonyPragma(cast[TagEnum](tagId)):
+    if tagId.int >= 0 and tagId.int <= high(TagEnum).int and rawTagIsNimonyPragma(cast[TagEnum](tagId)):
       result = cast[NimonyPragma](tagId)
     else:
       result = NoPragma
   else:
     result = NoPragma
 
-proc substructureKind*(c: Cursor): NimonyOther {.inline.} =
+proc substructureKind*(c: PackedToken): NimonyOther {.inline.} =
   if c.kind == ParLe and rawTagIsNimonyOther(tagEnum(c)):
     result = cast[NimonyOther](tag(c))
   else:
     result = NoSub
+
+proc substructureKind*(c: Cursor): NimonyOther {.inline.} =
+  result = substructureKind(c.load())
 
 proc typeKind*(c: Cursor): NimonyType {.inline.} =
   if c.kind == ParLe:
@@ -102,6 +105,12 @@ proc cfKind*(c: Cursor): ControlFlowKind {.inline.} =
   else:
     result = NoControlFlow
 
+proc hookKind*(x: TagId): HookKind {.inline.} =
+  if rawTagIsHookKind(cast[TagEnum](x)):
+    result = cast[HookKind](x)
+  else:
+    result = NoHook
+
 template isParamsTag*(c: Cursor): bool = c.tagEnum == ParamsTagId
 
 # Outdated aliases:
@@ -123,13 +132,13 @@ const
 
 const
   RoutineKinds* = {ProcY, FuncY, IteratorY, TemplateY, MacroY, ConverterY, MethodY}
-  CallKinds* = {CallX, CallstrlitX, CmdX, PrefixX, InfixX, HcallX}
+  CallKinds* = {CallX, CallstrlitX, CmdX, PrefixX, InfixX, HcallX, ProccallX, DelayX}
   CallKindsS* = {CallS, CallstrlitS, CmdS, PrefixS, InfixS, HcallS}
   ConvKinds* = {HconvX, ConvX, DconvX, CastX}
   TypeclassKinds* = {ConceptT, TypeKindT, OrdinalT, OrT, AndT, NotT}
   RoutineTypes* = {ProcT, FuncT, IteratorT, TemplateT, MacroT, ConverterT, MethodT, ProctypeT}
 
-proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|ControlFlowKind|CallConv;
+proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|ControlFlowKind|CallConv|PragmaKind;
                info = NoLineInfo) =
   dest.add parLeToken(cast[TagId](kind), info)
 
@@ -237,10 +246,6 @@ proc isDeclarative*(n: Cursor): bool =
 proc isCompileTimeType*(n: Cursor): bool {.inline.} =
   n.typeKind in {TypeKindT, TypedescT, SymKindT, OrT, AndT, NotT, ConceptT, StaticT}
 
-proc firstSon*(n: Cursor): Cursor {.inline.} =
-  result = n
-  inc result
-
 proc hookName*(op: HookKind): string =
   case op
   of DestroyH: "destroy"
@@ -284,7 +289,7 @@ proc skipModifier*(a: Cursor): Cursor =
   removeModifier(result)
 
 const
-  LocalDecls* = {VarS, LetS, ConstS, ResultS, CursorS, GvarS, TvarS, GletS, TletS}
+  LocalDecls* = {VarS, LetS, ConstS, ResultS, CursorS, PatternvarS, GvarS, TvarS, GletS, TletS}
 
 template skipToLocalType*(n) =
   inc n # skip ParLe
@@ -308,3 +313,28 @@ proc procHasPragma*(typ: Cursor; kind: PragmaKind): bool =
     result = hasPragma(typ, kind)
   else:
     result = false
+
+type
+  Effect* = enum
+    HasNoSideEffect
+    HasSideEffect
+
+proc whichEffect*(k: StmtKind; pragmas: Cursor): Effect =
+  if k in {FuncS, IteratorS, ConverterS}:
+    result = HasNoSideEffect
+    if hasPragma(pragmas, SideEffectP):
+      # explict override?
+      result = HasSideEffect
+  elif hasPragma(pragmas, NoSideEffectP):
+    result = HasNoSideEffect
+  else:
+    result = HasSideEffect
+
+proc isNilAnnotation*(n: Cursor): bool {.inline.} =
+  ## Returns true if `n` is a `(notnil)`, `(nil)`, or `(unchecked)` annotation.
+  n.kind == ParLe and n.substructureKind in {NotnilU, NilU, UncheckedU}
+
+proc skipNilAnnotation*(n: var Cursor) {.inline.} =
+  ## Skip a trailing nil annotation `(notnil)`, `(nil)`, or `(unchecked)` if present.
+  if n.kind == ParLe and n.substructureKind in {NotnilU, NilU, UncheckedU}:
+    skip n

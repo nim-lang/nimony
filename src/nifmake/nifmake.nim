@@ -8,7 +8,7 @@
 ## and incremental compilation. Nifmake can run a dependency graph as specified
 ## by a .nif file or it can translate this file to a Makefile.
 
-import std/[assertions, os, strutils, sequtils, tables, hashes, times, sets, parseopt, syncio, osproc]
+import std/[assertions, os, strutils, sequtils, tables, hashes, times, monotimes, sets, parseopt, syncio, osproc, algorithm]
 import ".." / lib / [nifstreams, nifcursors, bitabs, lineinfos, nifreader, tooldirs, argsfinder]
 
 # Inspired by https://gittup.org/tup/build_system_rules_and_algorithms.pdf
@@ -71,14 +71,19 @@ type
     nameToId*: Table[string, int]
     maxDepth*: int    # maximum depth in the DAG
     commands*: seq[Command]  # bidirectional mapping of commands
-    timestampCache*: Table[string, Time]  # Cache for file modification times
     baseDir*: string
 
   CliCommand = enum
     cmdRun, cmdMakefile, cmdHelp, cmdVersion
 
   CliOption = enum
-    Parallel, Force, Verbose
+    Parallel, Force, Verbose, Profile
+
+  ProfileData* = object
+    parseTime: float
+    dagSetupTime: float
+    cmdTime: Table[string, tuple[sec: float, count: int]]
+    execWallTime: float
 
 proc skipParRi(n: var Cursor) =
   ## Helper to skip a closing parenthesis
@@ -211,23 +216,10 @@ proc findDependencies(dag: var Dag; nodeId: int) =
       if depId != nodeId and depId notin node.deps:
         node.deps.add(depId)
 
-proc getFileTime(dag: var Dag; filename: string): Time =
-  ## Get file modification time with caching
-  if filename in dag.timestampCache:
-    result = dag.timestampCache[filename]
-  else:
-    if fileExists(filename):
-      result = getLastModificationTime(filename)
-      dag.timestampCache[filename] = result
-    else:
-      result = getTime()  # Use current time for non-existent files
-      dag.timestampCache[filename] = result
-
-proc removeOutdatedArtifacts(dag: var Dag; node: Node; opt: set[CliOption]) =
-  ## Remove outdated build artifacts for a node
+proc removeOutdatedArtifacts(node: Node; opt: set[CliOption]) =
+  ## Remove outdated build artifacts for a node. Only used with --force;
+  ## removing before normal incremental builds breaks tools that use OnlyIfChanged.
   for output in node.outputs:
-    # Remove its cached timestamp as it is no longer valid
-    dag.timestampCache.del output
     if fileExists(output):
       try:
         removeFile(output)
@@ -236,9 +228,14 @@ proc removeOutdatedArtifacts(dag: var Dag; node: Node; opt: set[CliOption]) =
       except:
         stderr.writeLine "Warning: Could not remove outdated artifact: ", output
 
-proc needsRebuild(dag: var Dag; node: Node): bool =
+proc needsRebuild(node: Node): bool =
   ## Check if a node needs to be rebuilt
   result = false
+
+  # Nodes with no outputs are side-effectful (e.g. idetools printing to stdout);
+  # always run them.
+  if node.outputs.len == 0:
+    return true
 
   # Check if any output is missing
   for output in node.outputs:
@@ -248,13 +245,13 @@ proc needsRebuild(dag: var Dag; node: Node): bool =
   # Check if any input is newer than any output
   var oldestOutput = getTime()
   for output in node.outputs:
-    let outputTime = dag.getFileTime(output)
+    let outputTime = getLastModificationTime(output)
     if outputTime < oldestOutput:
       oldestOutput = outputTime
 
   for input in node.inputs:
     if fileExists(input):
-      let inputTime = dag.getFileTime(input)
+      let inputTime = getLastModificationTime(input)
       if inputTime >= oldestOutput:
         return true
 
@@ -298,17 +295,31 @@ proc executeCommand(command: string): bool =
     result = false
 
 proc failed(arg: string) =
-  stdout.write "make: "
+  stdout.write "nifmake: "
   stdout.writeLine arg
+
+proc toSeconds(d: Duration): float =
+  float(d.inNanoseconds) / 1e9
+
+proc recordCmdTime(profile: var ProfileData; cmdName: string; sec: float) =
+  if cmdName notin profile.cmdTime:
+    profile.cmdTime[cmdName] = (0.0, 0)
+  var e = profile.cmdTime[cmdName]
+  e.sec += sec
+  e.count += 1
+  profile.cmdTime[cmdName] = e
 
 type
   CmdStatus = enum
     Enqueued, Running, Finished
 
-proc runDag(dag: var Dag; opt: set[CliOption]): bool =
+proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil): bool =
   ## Execute the DAG in topological order
   result = true
+  let sortStart = if profile != nil: getMonoTime() else: MonoTime()
   let sortedNodes = topologicalSort(dag)
+  if profile != nil:
+    profile[].dagSetupTime = toSeconds(getMonoTime() - sortStart)
 
   if Parallel in opt:
     var i = 0
@@ -316,13 +327,14 @@ proc runDag(dag: var Dag; opt: set[CliOption]): bool =
       let currentDepth = dag.nodes[sortedNodes[i]].depth
       var commands: seq[string] = @[]
       var nodeIds: seq[int] = @[]
+      var cmdNames: seq[string] = @[]
 
       # Collect all commands at the current depth
       while i < sortedNodes.len and dag.nodes[sortedNodes[i]].depth == currentDepth:
         let node = addr dag.nodes[sortedNodes[i]]
-        if Force in opt or dag.needsRebuild(node[]):
-          # Remove outdated artifacts before rebuilding
-          dag.removeOutdatedArtifacts(node[], opt)
+        if Force in opt or needsRebuild(node[]):
+          if Force in opt:
+            removeOutdatedArtifacts(node[], opt)
           if Verbose in opt:
             echo "Building: ", node.outputs.join(", ")
           let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs, node.args, dag.baseDir)
@@ -330,15 +342,29 @@ proc runDag(dag: var Dag; opt: set[CliOption]): bool =
             echo "Command: ", expandedCmd
           commands.add(expandedCmd)
           nodeIds.add(sortedNodes[i])
+          cmdNames.add(dag.commands[node.cmdIdx].name)
         inc i
 
       # Execute all commands at this depth in parallel
       if commands.len > 0:
         var progress = newSeq[CmdStatus](commands.len)
-        proc beforeRunEvent(idx: int) = progress[idx] = Running
-        proc afterRunEvent(idx: int, p: Process) = progress[idx] = Finished
+        var startTimes = if profile != nil: newSeq[MonoTime](commands.len) else: @[]
+        if profile != nil: startTimes.setLen(commands.len)
+        let depthStart = if profile != nil: getMonoTime() else: MonoTime()
+
+        proc beforeRunEvent(idx: int) =
+          progress[idx] = Running
+          if profile != nil: startTimes[idx] = getMonoTime()
+
+        proc afterRunEvent(idx: int; p: Process) =
+          progress[idx] = Finished
+          if profile != nil:
+            let sec = toSeconds(getMonoTime() - startTimes[idx])
+            profile[].recordCmdTime(cmdNames[idx], sec)
 
         let maxExitCode = execProcesses(commands, beforeRunEvent = beforeRunEvent, afterRunEvent = afterRunEvent)
+        if profile != nil:
+          profile[].execWallTime += toSeconds(getMonoTime() - depthStart)
         if maxExitCode != 0:
           for i, p in pairs(progress):
             if p == Running:
@@ -348,17 +374,25 @@ proc runDag(dag: var Dag; opt: set[CliOption]): bool =
     # Sequential execution
     for nodeId in sortedNodes:
       let node = addr dag.nodes[nodeId]
-      if Force in opt or dag.needsRebuild(node[]):
-        # Remove outdated artifacts before rebuilding
-        dag.removeOutdatedArtifacts(node[], opt)
+      if Force in opt or needsRebuild(node[]):
+        if Force in opt:
+          removeOutdatedArtifacts(node[], opt)
         if Verbose in opt:
           echo "Building: ", node.outputs.join(", ")
         let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs, node.args, dag.baseDir)
         if Verbose in opt:
           echo "Command: ", expandedCmd
+        let cmdName = dag.commands[node.cmdIdx].name
+        let start = if profile != nil: getMonoTime() else: MonoTime()
         if not executeCommand(expandedCmd):
+          if profile != nil:
+            profile[].recordCmdTime(cmdName, toSeconds(getMonoTime() - start))
           failed expandedCmd
           return false
+        if profile != nil:
+          let sec = toSeconds(getMonoTime() - start)
+          profile[].recordCmdTime(cmdName, sec)
+          profile[].execWallTime += sec
       else:
         if Verbose in opt:
           echo "Up to date: ", node.outputs.join(", ")
@@ -500,7 +534,7 @@ proc parseDoRule(n: var Cursor; dag: var Dag) =
 
 proc parseNifFile(filename: string; baseDir: sink string): Dag =
   ## Parse a .nif file and build the DAG
-  result = Dag(timestampCache: initTable[string, Time](), baseDir: baseDir)
+  result = Dag(baseDir: baseDir)
 
   if not fileExists(filename):
     quit "File not found: " & filename
@@ -555,6 +589,7 @@ Options:
   --verbose             Show verbose output
   --base:<dir>          Use <dir> as base directory for `.args` files.
                         If not set, no `.args` files are processed.
+  --profile             Print timing profile of executed commands to stderr.
 
 Examples:
   nifmake run build.nif
@@ -566,6 +601,24 @@ Examples:
 proc writeVersion() =
   echo "nifmake 0.2.0"
   quit(0)
+
+proc printProfile(profile: ProfileData) =
+  stderr.writeLine "\n--- nifmake profile ---"
+  stderr.writeLine "  parse .nif:     ", profile.parseTime.formatFloat(ffDecimal, 3), "s"
+  stderr.writeLine "  DAG setup:      ", profile.dagSetupTime.formatFloat(ffDecimal, 3), "s"
+  stderr.writeLine "  executed commands:"
+  var entries = newSeq[(string, float, int)](profile.cmdTime.len)
+  var i = 0
+  for cmd, data in profile.cmdTime.pairs:
+    entries[i] = (cmd, data.sec, data.count)
+    inc i
+  entries.sort(proc(a, b: (string, float, int)): int = cmp(b[1], a[1]))
+  for (cmd, sec, count) in entries:
+    stderr.writeLine "    ", cmd.alignLeft(12), " ", sec.formatFloat(ffDecimal, 3).align(8), "s  (", count, " invocations)"
+  let execTotal = profile.cmdTime.values.toSeq.foldl(a + b.sec, 0.0)
+  stderr.writeLine "  exec total:     ", execTotal.formatFloat(ffDecimal, 3), "s"
+  stderr.writeLine "  wall time:      ", profile.execWallTime.formatFloat(ffDecimal, 3), "s"
+  stderr.writeLine "---"
 
 proc main() =
   var
@@ -598,6 +651,7 @@ proc main() =
       of "force": opt.incl Force
       of "verbose": opt.incl Verbose
       of "base": baseDir = val
+      of "profile": opt.incl Profile
       else:
         echo "Unknown option: --", key
         quit(1)
@@ -611,9 +665,20 @@ proc main() =
     if inputFile == "":
       quit "Input file required for 'run' command"
 
-    var dag = parseNifFile(inputFile, baseDir)
-    if not runDag(dag, opt):
-      quit 1
+    var profile: ProfileData
+    if Profile in opt:
+      profile = ProfileData(cmdTime: initTable[string, tuple[sec: float, count: int]]())
+      let parseStart = getMonoTime()
+      var dag = parseNifFile(inputFile, baseDir)
+      profile.parseTime = toSeconds(getMonoTime() - parseStart)
+      if not runDag(dag, opt, addr profile):
+        printProfile(profile)
+        quit 1
+      printProfile(profile)
+    else:
+      var dag = parseNifFile(inputFile, baseDir)
+      if not runDag(dag, opt):
+        quit 1
 
   of cmdMakefile:
     if inputFile == "":

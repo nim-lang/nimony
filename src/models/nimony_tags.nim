@@ -7,13 +7,13 @@ type
     NoExpr
     ErrX = (ord(ErrTagId), "err")  ## indicates an error
     SufX = (ord(SufTagId), "suf")  ## literal with suffix annotation
-    AtX = (ord(AtTagId), "at")  ## array indexing operation
+    AtX = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped NIFC form)
     DerefX = (ord(DerefTagId), "deref")  ## pointer deref operation
-    DotX = (ord(DotTagId), "dot")  ## object field selection
+    DotX = (ord(DotTagId), "dot")  ## object field selection; optional integer is the inheritance depth of the field
     PatX = (ord(PatTagId), "pat")  ## pointer indexing operation
     ParX = (ord(ParTagId), "par")  ## syntactic parenthesis
     AddrX = (ord(AddrTagId), "addr")  ## address of operation
-    NilX = (ord(NilTagId), "nil")  ## nil pointer value
+    NilX = (ord(NilTagId), "nil")  ## nil pointer value; closure `nil` carries the proc type and a nil environment
     InfX = (ord(InfTagId), "inf")  ## positive infinity floating point value
     NeginfX = (ord(NeginfTagId), "neginf")  ## negative infinity floating point value
     NanX = (ord(NanTagId), "nan")  ## NaN floating point value
@@ -32,6 +32,7 @@ type
     BracketX = (ord(BracketTagId), "bracket")  ## untyped array constructor
     CurlyX = (ord(CurlyTagId), "curly")  ## untyped set constructor
     CurlyatX = (ord(CurlyatTagId), "curlyat")  ## curly expression `a{i}`
+    KvX = (ord(KvTagId), "kv")  ## key-value pair; optional INTLIT indicates field is in an inherited object
     OvfX = (ord(OvfTagId), "ovf")  ## access overflow flag
     AddX = (ord(AddTagId), "add")
     SubX = (ord(SubTagId), "sub")
@@ -48,7 +49,7 @@ type
     NeqX = (ord(NeqTagId), "neq")
     LeX = (ord(LeTagId), "le")
     LtX = (ord(LtTagId), "lt")
-    CastX = (ord(CastTagId), "cast")  ## `cast` operation
+    CastX = (ord(CastTagId), "cast")  ## `cast` operation (typed cast expression, or `{.cast(pragma).}` pragma form)
     ConvX = (ord(ConvTagId), "conv")  ## type conversion
     CallX = (ord(CallTagId), "call")  ## call operation
     CmdX = (ord(CmdTagId), "cmd")  ## command operation
@@ -57,9 +58,9 @@ type
     PragmaxX = (ord(PragmaxTagId), "pragmax")  ## pragma expressions
     QuotedX = (ord(QuotedTagId), "quoted")  ## name in backticks
     HderefX = (ord(HderefTagId), "hderef")  ## hidden pointer deref operation
-    DdotX = (ord(DdotTagId), "ddot")  ## deref dot
+    DdotX = (ord(DdotTagId), "ddot")  ## deref dot: expression, field symbol, field index
     HaddrX = (ord(HaddrTagId), "haddr")  ## hidden address of operation
-    NewrefX = (ord(NewrefTagId), "newref")  ## Nim's `new` magic proc that allocates a `ref T`
+    NewrefX = (ord(NewrefTagId), "newref")  ## Nim's `new` magic proc that allocates a `ref T`; optional initializer expression
     NewobjX = (ord(NewobjTagId), "newobj")  ## new object constructor
     TupX = (ord(TupTagId), "tup")  ## untyped tuple constructor
     TupconstrX = (ord(TupconstrTagId), "tupconstr")  ## tuple constructor
@@ -70,19 +71,19 @@ type
     HconvX = (ord(HconvTagId), "hconv")  ## hidden basic type conversion
     DconvX = (ord(DconvTagId), "dconv")  ## conversion between `distinct` types
     CallstrlitX = (ord(CallstrlitTagId), "callstrlit")
-    InfixX = (ord(InfixTagId), "infix")
-    PrefixX = (ord(PrefixTagId), "prefix")
+    InfixX = (ord(InfixTagId), "infix")  ## infix call form kept verbatim inside unsem'd bodies: operator followed by two or more operands (extra args come from default parameters, e.g. `s $ 80` → `` `$`(s, 80, defaultReplacement) ``)
+    PrefixX = (ord(PrefixTagId), "prefix")  ## prefix call form kept verbatim inside unsem'd bodies: operator followed by single operand
     HcallX = (ord(HcallTagId), "hcall")  ## hidden converter call
     CompilesX = (ord(CompilesTagId), "compiles")
     DeclaredX = (ord(DeclaredTagId), "declared")
     DefinedX = (ord(DefinedTagId), "defined")
     AstToStrX = (ord(AstToStrTagId), "astToStr")  ## converts AST to string
     InstanceofX = (ord(InstanceofTagId), "instanceof")  ## only-fans operator for object privilege checking
-    ProccallX = (ord(ProccallTagId), "proccall")  ## turns method call into a proc call aka a "static" call
+    ProccallX = (ord(ProccallTagId), "proccall")  ## like the `call` tag but always a static call (no dynamic method) dispatch
     HighX = (ord(HighTagId), "high")
     LowX = (ord(LowTagId), "low")
     TypeofX = (ord(TypeofTagId), "typeof")  ## `typeof` operation for accessing the type of an expression
-    UnpackX = (ord(UnpackTagId), "unpack")
+    UnpackX = (ord(UnpackTagId), "unpack")  ## magic varargs expansion — see *Tuple Unpacking* section below
     FieldsX = (ord(FieldsTagId), "fields")  ## fields iterator
     FieldpairsX = (ord(FieldpairsTagId), "fieldpairs")  ## fieldPairs iterator
     EnumtostrX = (ord(EnumtostrTagId), "enumtostr")
@@ -90,7 +91,9 @@ type
     DefaultobjX = (ord(DefaultobjTagId), "defaultobj")
     DefaulttupX = (ord(DefaulttupTagId), "defaulttup")
     DefaultdistinctX = (ord(DefaultdistinctTagId), "defaultdistinct")
-    DelayX = (ord(DelayTagId), "delay")  ## `delay` builtin for delayed continuation creation
+    DelayX = (ord(DelayTagId), "delay")  ## `delay(fn args)` builtin for delayed continuation creation
+    Delay0X = (ord(Delay0TagId), "delay0")  ## `delay()` no-arg: capture current coroutine's own continuation
+    SuspendX = (ord(SuspendTagId), "suspend")  ## `suspend()` magic proc: suspends the coroutine and returns Continuation(nil, nil)
     ExprX = (ord(ExprTagId), "expr")
     DoX = (ord(DoTagId), "do")  ## `do` expression
     ArratX = (ord(ArratTagId), "arrat")  ## two optional exprs: `high` boundary and the `low` boundary (if != 0)
@@ -118,7 +121,7 @@ type
     EnvpX = (ord(EnvpTagId), "envp")  ## `envp.Y` field access to hidden `env` parameter which is of type `T`
 
 proc rawTagIsNimonyExpr*(raw: TagEnum): bool {.inline.} =
-  raw in {ErrTagId, SufTagId, AtTagId, DerefTagId, DotTagId, PatTagId, ParTagId, AddrTagId, NilTagId, InfTagId, NeginfTagId, NanTagId, FalseTagId, TrueTagId, AndTagId, OrTagId, XorTagId, NotTagId, NegTagId, SizeofTagId, AlignofTagId, OffsetofTagId, OconstrTagId, AconstrTagId, BracketTagId, CurlyTagId, CurlyatTagId, OvfTagId, AddTagId, SubTagId, MulTagId, DivTagId, ModTagId, ShrTagId, ShlTagId, BitandTagId, BitorTagId, BitxorTagId, BitnotTagId, EqTagId, NeqTagId, LeTagId, LtTagId, CastTagId, ConvTagId, CallTagId, CmdTagId, CchoiceTagId, OchoiceTagId, PragmaxTagId, QuotedTagId, HderefTagId, DdotTagId, HaddrTagId, NewrefTagId, NewobjTagId, TupTagId, TupconstrTagId, SetconstrTagId, TabconstrTagId, AshrTagId, BaseobjTagId, HconvTagId, DconvTagId, CallstrlitTagId, InfixTagId, PrefixTagId, HcallTagId, CompilesTagId, DeclaredTagId, DefinedTagId, AstToStrTagId, InstanceofTagId, ProccallTagId, HighTagId, LowTagId, TypeofTagId, UnpackTagId, FieldsTagId, FieldpairsTagId, EnumtostrTagId, IsmainmoduleTagId, DefaultobjTagId, DefaulttupTagId, DefaultdistinctTagId, DelayTagId, ExprTagId, DoTagId, ArratTagId, TupatTagId, PlussetTagId, MinussetTagId, MulsetTagId, XorsetTagId, EqsetTagId, LesetTagId, LtsetTagId, InsetTagId, CardTagId, EmoveTagId, DestroyTagId, DupTagId, CopyTagId, WasmovedTagId, SinkhTagId, TraceTagId, InternalTypeNameTagId, InternalFieldPairsTagId, FailedTagId, IsTagId, EnvpTagId}
+  raw in {ErrTagId, SufTagId, AtTagId, DerefTagId, DotTagId, PatTagId, ParTagId, AddrTagId, NilTagId, InfTagId, NeginfTagId, NanTagId, FalseTagId, TrueTagId, AndTagId, OrTagId, XorTagId, NotTagId, NegTagId, SizeofTagId, AlignofTagId, OffsetofTagId, OconstrTagId, AconstrTagId, BracketTagId, CurlyTagId, CurlyatTagId, KvTagId, OvfTagId, AddTagId, SubTagId, MulTagId, DivTagId, ModTagId, ShrTagId, ShlTagId, BitandTagId, BitorTagId, BitxorTagId, BitnotTagId, EqTagId, NeqTagId, LeTagId, LtTagId, CastTagId, ConvTagId, CallTagId, CmdTagId, CchoiceTagId, OchoiceTagId, PragmaxTagId, QuotedTagId, HderefTagId, DdotTagId, HaddrTagId, NewrefTagId, NewobjTagId, TupTagId, TupconstrTagId, SetconstrTagId, TabconstrTagId, AshrTagId, BaseobjTagId, HconvTagId, DconvTagId, CallstrlitTagId, InfixTagId, PrefixTagId, HcallTagId, CompilesTagId, DeclaredTagId, DefinedTagId, AstToStrTagId, InstanceofTagId, ProccallTagId, HighTagId, LowTagId, TypeofTagId, UnpackTagId, FieldsTagId, FieldpairsTagId, EnumtostrTagId, IsmainmoduleTagId, DefaultobjTagId, DefaulttupTagId, DefaultdistinctTagId, DelayTagId, Delay0TagId, SuspendTagId, ExprTagId, DoTagId, ArratTagId, TupatTagId, PlussetTagId, MinussetTagId, MulsetTagId, XorsetTagId, EqsetTagId, LesetTagId, LtsetTagId, InsetTagId, CardTagId, EmoveTagId, DestroyTagId, DupTagId, CopyTagId, WasmovedTagId, SinkhTagId, TraceTagId, InternalTypeNameTagId, InternalFieldPairsTagId, FailedTagId, IsTagId, EnvpTagId}
 
 type
   NimonyStmt* = enum
@@ -127,13 +130,14 @@ type
     CmdS = (ord(CmdTagId), "cmd")  ## command operation
     GvarS = (ord(GvarTagId), "gvar")  ## global variable declaration
     TvarS = (ord(TvarTagId), "tvar")  ## thread local variable declaration
-    VarS = (ord(VarTagId), "var")  ## variable declaration
+    VarS = (ord(VarTagId), "var")  ## variable declaration; type slot may be omitted when inferred from initializer
     ConstS = (ord(ConstTagId), "const")  ## const variable declaration
     ResultS = (ord(ResultTagId), "result")  ## result variable declaration
     GletS = (ord(GletTagId), "glet")  ## global let variable declaration
     TletS = (ord(TletTagId), "tlet")  ## thread local let variable declaration
-    LetS = (ord(LetTagId), "let")  ## let variable declaration
+    LetS = (ord(LetTagId), "let")  ## let variable declaration; type is optional when used in `(unpackflat …)`
     CursorS = (ord(CursorTagId), "cursor")  ## cursor variable declaration
+    PatternvarS = (ord(PatternvarTagId), "patternvar")  ## pattern variable declaration
     ProcS = (ord(ProcTagId), "proc")  ## proc declaration
     FuncS = (ord(FuncTagId), "func")  ## function declaration
     IteratorS = (ord(IteratorTagId), "iterator")  ## iterator declaration
@@ -157,8 +161,9 @@ type
     YldS = (ord(YldTagId), "yld")  ## yield statement
     StmtsS = (ord(StmtsTagId), "stmts")  ## list of statements
     PragmasS = (ord(PragmasTagId), "pragmas")  ## begin of pragma section
-    InclS = (ord(InclTagId), "incl")  ## `#include` statement or `incl` set operation
-    ExclS = (ord(ExclTagId), "excl")  ## `excl` set operation
+    PragmaxS = (ord(PragmaxTagId), "pragmax")  ## pragma expressions
+    InclS = (ord(InclTagId), "incl")  ## `incl` set operation; first child is the set's element type
+    ExclS = (ord(ExclTagId), "excl")  ## `excl` set operation; first child is the set's element type
     IncludeS = (ord(IncludeTagId), "include")  ## `include` statement
     ImportS = (ord(ImportTagId), "import")  ## `import` statement
     ImportasS = (ord(ImportasTagId), "importas")  ## `import as` statement
@@ -166,16 +171,16 @@ type
     ImportexceptS = (ord(ImportexceptTagId), "importexcept")  ## `importexcept` statement
     ExportS = (ord(ExportTagId), "export")  ## `export` statement
     ExportexceptS = (ord(ExportexceptTagId), "exportexcept")  ## `exportexcept` statement
-    CommentS = (ord(CommentTagId), "comment")  ## `comment` statement
-    DiscardS = (ord(DiscardTagId), "discard")  ## `discard` statement
+    CommentS = (ord(CommentTagId), "comment")  ## `comment` statement; also used as a variadic trailer for module metadata
+    DiscardS = (ord(DiscardTagId), "discard")  ## `discard` statement; optional expression to discard
     TryS = (ord(TryTagId), "try")  ## `try` statement
     RaiseS = (ord(RaiseTagId), "raise")  ## `raise` statement
     UnpackdeclS = (ord(UnpackdeclTagId), "unpackdecl")  ## unpack var/let/const declaration
     AssumeS = (ord(AssumeTagId), "assume")  ## `assume` pragma/annotation
     AssertS = (ord(AssertTagId), "assert")  ## `assert` pragma/annotation
     CallstrlitS = (ord(CallstrlitTagId), "callstrlit")
-    InfixS = (ord(InfixTagId), "infix")
-    PrefixS = (ord(PrefixTagId), "prefix")
+    InfixS = (ord(InfixTagId), "infix")  ## infix call form kept verbatim inside unsem'd bodies: operator followed by two or more operands (extra args come from default parameters, e.g. `s $ 80` → `` `$`(s, 80, defaultReplacement) ``)
+    PrefixS = (ord(PrefixTagId), "prefix")  ## prefix call form kept verbatim inside unsem'd bodies: operator followed by single operand
     HcallS = (ord(HcallTagId), "hcall")  ## hidden converter call
     StaticstmtS = (ord(StaticstmtTagId), "staticstmt")  ## `static` statement
     BindS = (ord(BindTagId), "bind")  ## `bind` statement
@@ -185,13 +190,13 @@ type
     DeferS = (ord(DeferTagId), "defer")  ## `defer` statement
 
 proc rawTagIsNimonyStmt*(raw: TagEnum): bool {.inline.} =
-  raw in {CallTagId, CmdTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ResultTagId, GletTagId, TletTagId, LetTagId, CursorTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, BlockTagId, EmitTagId, AsgnTagId, ScopeTagId, IfTagId, WhenTagId, BreakTagId, ContinueTagId, ForTagId, WhileTagId, CaseTagId, RetTagId, YldTagId, StmtsTagId, PragmasTagId, InclTagId, ExclTagId, IncludeTagId, ImportTagId, ImportasTagId, FromimportTagId, ImportexceptTagId, ExportTagId, ExportexceptTagId, CommentTagId, DiscardTagId, TryTagId, RaiseTagId, UnpackdeclTagId, AssumeTagId, AssertTagId, CallstrlitTagId, InfixTagId, PrefixTagId, HcallTagId, StaticstmtTagId, BindTagId, MixinTagId, UsingTagId, AsmTagId, DeferTagId}
+  raw in {CallTagId, CmdTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ResultTagId, GletTagId, TletTagId, LetTagId, CursorTagId, PatternvarTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, BlockTagId, EmitTagId, AsgnTagId, ScopeTagId, IfTagId, WhenTagId, BreakTagId, ContinueTagId, ForTagId, WhileTagId, CaseTagId, RetTagId, YldTagId, StmtsTagId, PragmasTagId, PragmaxTagId, InclTagId, ExclTagId, IncludeTagId, ImportTagId, ImportasTagId, FromimportTagId, ImportexceptTagId, ExportTagId, ExportexceptTagId, CommentTagId, DiscardTagId, TryTagId, RaiseTagId, UnpackdeclTagId, AssumeTagId, AssertTagId, CallstrlitTagId, InfixTagId, PrefixTagId, HcallTagId, StaticstmtTagId, BindTagId, MixinTagId, UsingTagId, AsmTagId, DeferTagId}
 
 type
   NimonyType* = enum
     NoType
     ErrT = (ord(ErrTagId), "err")  ## indicates an error
-    AtT = (ord(AtTagId), "at")  ## array indexing operation
+    AtT = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped NIFC form)
     AndT = (ord(AndTagId), "and")  ## boolean `and` operation
     OrT = (ord(OrTagId), "or")  ## boolean `or` operation
     NotT = (ord(NotTagId), "not")  ## boolean `not` operation
@@ -204,26 +209,27 @@ type
     TemplateT = (ord(TemplateTagId), "template")  ## template declaration
     ObjectT = (ord(ObjectTagId), "object")  ## object type declaration
     EnumT = (ord(EnumTagId), "enum")  ## enum type declaration
-    ProctypeT = (ord(ProctypeTagId), "proctype")  ## proc type declaration
+    ProctypeT = (ord(ProctypeTagId), "proctype")  ## proc type declaration; same shape as `(proc D ...)` but with anonymous name slot
     IT = (ord(ITagId), "i")  ## `int` builtin type
-    UT = (ord(UTagId), "u")  ## `uint` builtin type
+    UT = (ord(UTagId), "u")  ## `uint` builtin type; size in bits followed by optional attributes (`(importc ...)`, `(header ...)`, etc.)
     FT = (ord(FTagId), "f")  ## `float` builtin type
     CT = (ord(CTagId), "c")  ## `char` builtin type
     BoolT = (ord(BoolTagId), "bool")  ## `bool` builtin type
     VoidT = (ord(VoidTagId), "void")  ## `void` return type
-    PtrT = (ord(PtrTagId), "ptr")  ## `ptr` type contructor
-    ArrayT = (ord(ArrayTagId), "array")  ## `array` type constructor
-    VarargsT = (ord(VarargsTagId), "varargs")  ## `varargs` proc annotation
+    PtrT = (ord(PtrTagId), "ptr")  ## `ptr` type contructor; the `(unchecked)` pragma relaxes nil checking on deref
+    ArrayT = (ord(ArrayTagId), "array")  ## `array` type constructor (element type, index type/range)
+    VarargsT = (ord(VarargsTagId), "varargs")  ## `varargs` type/proc annotation: Nimony carries the element type and an optional transformer symbol (e.g. `` `$` ``); NIFC keeps only the element type
     StaticT = (ord(StaticTagId), "static")  ## `static` type or annotation
     TupleT = (ord(TupleTagId), "tuple")  ## `tuple` type
     OnumT = (ord(OnumTagId), "onum")  ## enum with holes type
-    RefT = (ord(RefTagId), "ref")  ## `ref` type
+    AnumT = (ord(AnumTagId), "anum")  ## sum type discriminator enum ("auto enum")
+    RefT = (ord(RefTagId), "ref")  ## `ref` type; the `(unchecked)` pragma relaxes nil checking on deref
     MutT = (ord(MutTagId), "mut")  ## `mut` type
     OutT = (ord(OutTagId), "out")  ## `out` type
     LentT = (ord(LentTagId), "lent")  ## `lent` type
     SinkT = (ord(SinkTagId), "sink")  ## `sink` type
     NiltT = (ord(NiltTagId), "nilt")  ## `nilt` type
-    ConceptT = (ord(ConceptTagId), "concept")  ## `concept` type
+    ConceptT = (ord(ConceptTagId), "concept")  ## `concept` type: two reserved slots, a typevar symbol and the concept body statements
     DistinctT = (ord(DistinctTagId), "distinct")  ## `distinct` type
     ItertypeT = (ord(ItertypeTagId), "itertype")  ## `itertype` type
     RangetypeT = (ord(RangetypeTagId), "rangetype")  ## `rangetype` type
@@ -235,25 +241,26 @@ type
     TypedescT = (ord(TypedescTagId), "typedesc")  ## `typedesc` type
     UntypedT = (ord(UntypedTagId), "untyped")  ## `untyped` type
     TypedT = (ord(TypedTagId), "typed")  ## `typed` type
-    CstringT = (ord(CstringTagId), "cstring")  ## `cstring` type
-    PointerT = (ord(PointerTagId), "pointer")  ## `pointer` type
+    CstringT = (ord(CstringTagId), "cstring")  ## `cstring` type; optional child is the string literal used in a `cstring"…"` generalized string
+    PointerT = (ord(PointerTagId), "pointer")  ## `pointer` type; the optional `(nil)` annotation marks a nilable pointer
     OrdinalT = (ord(OrdinalTagId), "ordinal")  ## `ordinal` type
 
 proc rawTagIsNimonyType*(raw: TagEnum): bool {.inline.} =
-  raw in {ErrTagId, AtTagId, AndTagId, OrTagId, NotTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, ObjectTagId, EnumTagId, ProctypeTagId, ITagId, UTagId, FTagId, CTagId, BoolTagId, VoidTagId, PtrTagId, ArrayTagId, VarargsTagId, StaticTagId, TupleTagId, OnumTagId, RefTagId, MutTagId, OutTagId, LentTagId, SinkTagId, NiltTagId, ConceptTagId, DistinctTagId, ItertypeTagId, RangetypeTagId, UarrayTagId, SetTagId, AutoTagId, SymkindTagId, TypekindTagId, TypedescTagId, UntypedTagId, TypedTagId, CstringTagId, PointerTagId, OrdinalTagId}
+  raw in {ErrTagId, AtTagId, AndTagId, OrTagId, NotTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, ObjectTagId, EnumTagId, ProctypeTagId, ITagId, UTagId, FTagId, CTagId, BoolTagId, VoidTagId, PtrTagId, ArrayTagId, VarargsTagId, StaticTagId, TupleTagId, OnumTagId, AnumTagId, RefTagId, MutTagId, OutTagId, LentTagId, SinkTagId, NiltTagId, ConceptTagId, DistinctTagId, ItertypeTagId, RangetypeTagId, UarrayTagId, SetTagId, AutoTagId, SymkindTagId, TypekindTagId, TypedescTagId, UntypedTagId, TypedTagId, CstringTagId, PointerTagId, OrdinalTagId}
 
 type
   NimonyOther* = enum
     NoSub
-    NilU = (ord(NilTagId), "nil")  ## nil pointer value
+    NilU = (ord(NilTagId), "nil")  ## nil pointer value; closure `nil` carries the proc type and a nil environment
     NotnilU = (ord(NotnilTagId), "notnil")  ## `not nil` pointer annotation
-    KvU = (ord(KvTagId), "kv")  ## key-value pair
+    UncheckedU = (ord(UncheckedTagId), "unchecked")  ## `unchecked` pointer annotation (derefs do not require nil checking)
+    KvU = (ord(KvTagId), "kv")  ## key-value pair; optional INTLIT indicates field is in an inherited object
     VvU = (ord(VvTagId), "vv")  ## value-value pair (used for explicitly named arguments in function calls)
     RangeU = (ord(RangeTagId), "range")  ## `(range a b)` construct
     RangesU = (ord(RangesTagId), "ranges")
     ParamU = (ord(ParamTagId), "param")  ## parameter declaration
-    TypevarU = (ord(TypevarTagId), "typevar")  ## type variable declaration
-    EfldU = (ord(EfldTagId), "efld")  ## enum field declaration
+    TypevarU = (ord(TypevarTagId), "typevar")  ## type variable declaration; constraint `.T` is optional
+    EfldU = (ord(EfldTagId), "efld")  ## enum field declaration; slot 2 carries the export marker *or* the compile-time value (may be `.`)
     FldU = (ord(FldTagId), "fld")  ## field declaration
     WhenU = (ord(WhenTagId), "when")  ## when statement header
     ElifU = (ord(ElifTagId), "elif")  ## pair of (condition, action)
@@ -272,25 +279,26 @@ type
     FinU = (ord(FinTagId), "fin")  ## finally subsection
 
 proc rawTagIsNimonyOther*(raw: TagEnum): bool {.inline.} =
-  raw in {NilTagId, NotnilTagId, KvTagId, VvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, EfldTagId, FldTagId, WhenTagId, ElifTagId, ElseTagId, TypevarsTagId, CaseTagId, OfTagId, StmtsTagId, ParamsTagId, PragmasTagId, EitherTagId, JoinTagId, UnpackflatTagId, UnpacktupTagId, ExceptTagId, FinTagId}
+  raw in {NilTagId, NotnilTagId, UncheckedTagId, KvTagId, VvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, EfldTagId, FldTagId, WhenTagId, ElifTagId, ElseTagId, TypevarsTagId, CaseTagId, OfTagId, StmtsTagId, ParamsTagId, PragmasTagId, EitherTagId, JoinTagId, UnpackflatTagId, UnpacktupTagId, ExceptTagId, FinTagId}
 
 type
   NimonyPragma* = enum
     NoPragma
+    CastP = (ord(CastTagId), "cast")  ## `cast` operation (typed cast expression, or `{.cast(pragma).}` pragma form)
     CursorP = (ord(CursorTagId), "cursor")  ## cursor variable declaration
     EmitP = (ord(EmitTagId), "emit")  ## emit statement
     UnionP = (ord(UnionTagId), "union")  ## first one is Nifc union declaration, second one is Nimony union pragma
     InlineP = (ord(InlineTagId), "inline")  ## `inline` proc annotation
     NoinlineP = (ord(NoinlineTagId), "noinline")  ## `noinline` proc annotation
     ClosureP = (ord(ClosureTagId), "closure")  ## `closure` proc annotation; not a calling convention anymore, simply annotates a proc as a closure
-    VarargsP = (ord(VarargsTagId), "varargs")  ## `varargs` proc annotation
+    VarargsP = (ord(VarargsTagId), "varargs")  ## `varargs` type/proc annotation: Nimony carries the element type and an optional transformer symbol (e.g. `` `$` ``); NIFC keeps only the element type
     SelectanyP = (ord(SelectanyTagId), "selectany")
     AlignP = (ord(AlignTagId), "align")
     BitsP = (ord(BitsTagId), "bits")
     NodeclP = (ord(NodeclTagId), "nodecl")  ## `nodecl` annotation
-    RaisesP = (ord(RaisesTagId), "raises")  ## proc annotation
+    RaisesP = (ord(RaisesTagId), "raises")  ## proc annotation; optional list of exception types the proc may raise
     UntypedP = (ord(UntypedTagId), "untyped")  ## `untyped` type
-    MagicP = (ord(MagicTagId), "magic")  ## `magic` pragma
+    MagicP = (ord(MagicTagId), "magic")  ## `magic` pragma; argument is the magic's name as string literal or ident (e.g. `"Bool"`, `HoleyEnum`)
     ImportcP = (ord(ImportcTagId), "importc")  ## `importc` pragma
     ImportcppP = (ord(ImportcppTagId), "importcpp")  ## `importcpp` pragma
     DynlibP = (ord(DynlibTagId), "dynlib")  ## `dynlib` pragma
@@ -312,11 +320,13 @@ type
     AssumeP = (ord(AssumeTagId), "assume")  ## `assume` pragma/annotation
     AssertP = (ord(AssertTagId), "assert")  ## `assert` pragma/annotation
     BuildP = (ord(BuildTagId), "build")  ## `build` pragma
+    FeatureP = (ord(FeatureTagId), "feature")  ## `feature` pragma
     StringP = (ord(StringTagId), "string")  ## `string` pragma
     ViewP = (ord(ViewTagId), "view")  ## `view` pragma
     IncompleteStructP = (ord(IncompleteStructTagId), "incompleteStruct")  ## `incompleteStruct` pragma
     InjectP = (ord(InjectTagId), "inject")  ## `inject` pragma
     GensymP = (ord(GensymTagId), "gensym")  ## `gensym` pragma
+    DirtyP = (ord(DirtyTagId), "dirty")  ## `dirty` pragma
     ErrorP = (ord(ErrorTagId), "error")  ## `error` pragma
     ReportP = (ord(ReportTagId), "report")  ## `report` pragma
     TagsP = (ord(TagsTagId), "tags")  ## `tags` effect annotation
@@ -332,28 +342,32 @@ type
     PackedP = (ord(PackedTagId), "packed")  ## `packed` pragma
     PassiveP = (ord(PassiveTagId), "passive")  ## `passive` pragma
     PushP = (ord(PushTagId), "push")  ## `push` pragma
+    CallConvP = (ord(CallConvTagId), "callConv")  ## `callConv` pragma for setting calling convention
     PopP = (ord(PopTagId), "pop")  ## `pop` pragma
     PassLP = (ord(PassLTagId), "passL")  ## `passL` pragma adds options to the backend linker
     PassCP = (ord(PassCTagId), "passC")  ## `passC` pragma adds options to the backend compiler
+    MethodsP = (ord(MethodsTagId), "methods")  ## `methods` pragma lists vtable methods for a type
+    SizeP = (ord(SizeTagId), "size")  ## `size` pragma for setting the byte size of a type
 
 proc rawTagIsNimonyPragma*(raw: TagEnum): bool {.inline.} =
-  raw in {CursorTagId, EmitTagId, UnionTagId, InlineTagId, NoinlineTagId, ClosureTagId, VarargsTagId, SelectanyTagId, AlignTagId, BitsTagId, NodeclTagId, RaisesTagId, UntypedTagId, MagicTagId, ImportcTagId, ImportcppTagId, DynlibTagId, ExportcTagId, HeaderTagId, ThreadvarTagId, GlobalTagId, DiscardableTagId, NoreturnTagId, BorrowTagId, NoSideEffectTagId, NodestroyTagId, PluginTagId, BycopyTagId, ByrefTagId, NoinitTagId, RequiresTagId, EnsuresTagId, AssumeTagId, AssertTagId, BuildTagId, StringTagId, ViewTagId, IncompleteStructTagId, InjectTagId, GensymTagId, ErrorTagId, ReportTagId, TagsTagId, DeprecatedTagId, SideEffectTagId, KeepOverflowFlagTagId, SemanticsTagId, InheritableTagId, BaseTagId, PureTagId, FinalTagId, PragmaTagId, PackedTagId, PassiveTagId, PushTagId, PopTagId, PassLTagId, PassCTagId}
+  raw in {CastTagId, CursorTagId, EmitTagId, UnionTagId, InlineTagId, NoinlineTagId, ClosureTagId, VarargsTagId, SelectanyTagId, AlignTagId, BitsTagId, NodeclTagId, RaisesTagId, UntypedTagId, MagicTagId, ImportcTagId, ImportcppTagId, DynlibTagId, ExportcTagId, HeaderTagId, ThreadvarTagId, GlobalTagId, DiscardableTagId, NoreturnTagId, BorrowTagId, NoSideEffectTagId, NodestroyTagId, PluginTagId, BycopyTagId, ByrefTagId, NoinitTagId, RequiresTagId, EnsuresTagId, AssumeTagId, AssertTagId, BuildTagId, FeatureTagId, StringTagId, ViewTagId, IncompleteStructTagId, InjectTagId, GensymTagId, DirtyTagId, ErrorTagId, ReportTagId, TagsTagId, DeprecatedTagId, SideEffectTagId, KeepOverflowFlagTagId, SemanticsTagId, InheritableTagId, BaseTagId, PureTagId, FinalTagId, PragmaTagId, PackedTagId, PassiveTagId, PushTagId, CallConvTagId, PopTagId, PassLTagId, PassCTagId, MethodsTagId, SizeTagId}
 
 type
   NimonySym* = enum
     NoSym
     GvarY = (ord(GvarTagId), "gvar")  ## global variable declaration
     TvarY = (ord(TvarTagId), "tvar")  ## thread local variable declaration
-    VarY = (ord(VarTagId), "var")  ## variable declaration
+    VarY = (ord(VarTagId), "var")  ## variable declaration; type slot may be omitted when inferred from initializer
     ParamY = (ord(ParamTagId), "param")  ## parameter declaration
     ConstY = (ord(ConstTagId), "const")  ## const variable declaration
     ResultY = (ord(ResultTagId), "result")  ## result variable declaration
     GletY = (ord(GletTagId), "glet")  ## global let variable declaration
     TletY = (ord(TletTagId), "tlet")  ## thread local let variable declaration
-    LetY = (ord(LetTagId), "let")  ## let variable declaration
+    LetY = (ord(LetTagId), "let")  ## let variable declaration; type is optional when used in `(unpackflat …)`
     CursorY = (ord(CursorTagId), "cursor")  ## cursor variable declaration
-    TypevarY = (ord(TypevarTagId), "typevar")  ## type variable declaration
-    EfldY = (ord(EfldTagId), "efld")  ## enum field declaration
+    PatternvarY = (ord(PatternvarTagId), "patternvar")  ## pattern variable declaration
+    TypevarY = (ord(TypevarTagId), "typevar")  ## type variable declaration; constraint `.T` is optional
+    EfldY = (ord(EfldTagId), "efld")  ## enum field declaration; slot 2 carries the export marker *or* the compile-time value (may be `.`)
     FldY = (ord(FldTagId), "fld")  ## field declaration
     ProcY = (ord(ProcTagId), "proc")  ## proc declaration
     FuncY = (ord(FuncTagId), "func")  ## function declaration

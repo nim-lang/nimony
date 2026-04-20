@@ -36,7 +36,8 @@ import std / [sets, assertions]
 include nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, typeprops]
 import ".." / models / tags
-import duplifier
+import duplifier, passes
+include ".." / nimony / nif_annotations
 
 type
   Context = object
@@ -46,6 +47,7 @@ type
 
 when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
+    {.ensuresNif: addedAny(dest).}
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n
@@ -132,7 +134,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
     c.needsXelim = true
     let isVoid = retType.kind == DotToken or retType.typeKind == VoidT
     if not isVoid:
-       dest.addParLe(ExprX, info)
+      dest.addParLe(ExprX, info)
     copyIntoKind dest, StmtsS, info:
       let symId = pool.syms.getOrIncl("`canRaise." & $c.tmpCounter)
       inc c.tmpCounter
@@ -208,7 +210,13 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           trScope c, dest, n
         of TemplateS, TypeS:
           takeTree dest, n
-        else:
+        of CallS, CmdS, IteratorS, BlockS, EmitS, IfS, WhenS, BreakS,
+           ContinueS, ForS, WhileS, CaseS, RetS, YldS, StmtsS, PragmasS,
+           PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS,
+           ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS, TryS,
+           RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS,
+           PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS,
+           DeferS, NoStmt:
           dest.add n
           inc n
           inc nested
@@ -218,11 +226,10 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dec nested
     if nested == 0: break
 
-proc injectRaisingCalls*(n: Cursor; ptrSize: int; needsXelim: var bool): TokenBuf =
+proc injectRaisingCalls*(pass: var Pass; ptrSize: int; needsXelim: var bool) =
+  var n = pass.n  # Extract cursor locally
   var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(), needsXelim: needsXelim)
   c.typeCache.openScope()
-  result = createTokenBuf(300)
-  var n = n
-  tr(c, result, n)
+  tr(c, pass.dest, n)  # Write to pass.dest
   c.typeCache.closeScope()
   needsXelim = c.needsXelim

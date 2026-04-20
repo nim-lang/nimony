@@ -6,12 +6,46 @@
 
 import std/assertions
 include nifprelude
-import ".." / nimony / nimony_model
+import ".." / nimony / [nimony_model, decls, sigmatch]
 import treemangler
 
 type
   MangleMode* = enum
     Backend, Frontend
+
+
+proc mangle*(b: var Mangler; c: Cursor; mm: MangleMode)
+
+proc mangleProctype(b: var Mangler; n: var Cursor; mm: MangleMode): string =
+  inc n
+  # name, export marker, pattern, type vars:
+  for i in 0..<ParamsPos: skip n
+
+  var b = createMangler(60)
+  if n.kind != DotToken:
+    inc n # params tag
+    while n.kind != ParRi:
+      let pa = takeLocal(n, SkipFinalParRi)
+      assert pa.kind == ParamY
+      mangle b, pa.typ, mm
+  inc n # DotToken or ParRi
+  # also add return type:
+  mangle b, n, Backend
+  skip n
+  # handle pragmas:
+  let props = extractProcProps(n)
+  b.addKeyw $props.cc
+  b.addKeyw $props.usesRaises
+  b.addKeyw $props.usesClosure
+  result = b.extract()
+  if n.kind != ParRi:
+    skip n # effects
+    if n.kind != ParRi:
+      skip n # body
+  if n.kind != ParRi:
+    bug "expected ')', but got: ", n
+  inc n
+
 
 proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
   var nested = 0
@@ -19,7 +53,7 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
     case c.kind
     of ParLe:
       let tag {.cursor.} = pool.tags[c.tagId]
-      if tag == "fld":
+      if c.substructureKind == FldU:
         inc c
         skip c # name
         skip c # export marker
@@ -27,7 +61,7 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
         mangleImpl b, c, mm # type is interesting
         skip c # value
         inc c # ParRi
-      elif tag == "array":
+      elif c.typeKind == ArrayT:
         b.addTree tag
         inc c
         mangleImpl b, c, mm # type is interesting
@@ -45,7 +79,7 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
         else:
           mangleImpl b, c, mm
         inc nested
-      elif tag == "tuple":
+      elif c.typeKind == TupleT:
         b.addTree(tag)
         inc c
         while c.kind != ParRi:
@@ -58,7 +92,7 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
             mangleImpl b, c, mm
         b.endTree()
         inc c # ParRi
-      elif tag == "u" or tag == "i" or tag == "f":
+      elif c.typeKind in {UintT, IntT, FloatT}:
         b.addTree(tag)
         inc c
         # normalize bits
@@ -70,16 +104,23 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
           b.addIntLit(bits)
         inc c
         inc nested
-      elif mm == Backend and tag in ["ref", "ptr"]:
+      elif mm == Backend and c.typeKind in {RefT, PtrT, CstringT, PointerT}:
         b.addTree(tag)
         inc c
-        mangleImpl b, c, mm
-        # skip optional not-nil markers:
-        if c.kind != ParRi:
-          skip c
+        # mangle children except nil annotations:
+        while c.kind != ParRi:
+          if isNilAnnotation(c):
+            skip c
+          else:
+            mangleImpl b, c, mm
         assert c.kind == ParRi
         b.endTree()
         inc c
+      elif mm == Backend and c.typeKind in RoutineTypes:
+        b.addRaw mangleProctype(b, c, mm)
+      elif isNilAnnotation(c):
+        # skip nil/notnil/unchecked annotations in type keys
+        skip c
       else:
         b.addTree(tag)
         inc nested

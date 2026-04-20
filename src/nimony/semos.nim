@@ -64,6 +64,8 @@ proc toRelativePath*(f: string, dir: string): string =
   if not f.isAbsolute: return f
   result = f.relativePath(dir)
 
+proc joinPath*(head, tail: string): string = head / tail
+
 proc exec*(cmd: string) =
   if execShellCmd(cmd) != 0: quit("FAILURE: " & cmd)
 
@@ -299,9 +301,26 @@ proc selfExec*(c: var SemContext; file: string; moreArgs: string) =
 
 # ------------------ plugin handling --------------------------
 
+proc runValidatorOnPlugin(c: var SemContext; nf: string) =
+  ## Run the plugin validator on `nf` before compiling it. Skipped when
+  ## --novalidate was passed or when the validator binary is not available
+  ## (a fresh clone before `hastur build validator` has run).
+  if c.g.config.noValidate: return
+  let v = findTool("validator")
+  if not fileExists(v):
+    echo "warning: validator binary not found at ", v,
+         "; skipping plugin validation (build it with `hastur build validator` ",
+         "or pass --novalidate to silence this)"
+    return
+  exec quoteShell(v) & " " & quoteShell(nf)
+
 proc compilePlugin(c: var SemContext; info: PackedLineInfo; nf, exefile: string) =
+  runValidatorOnPlugin(c, nf)
   let pluginDir = nimonyDir() / "src/nimony/lib"
-  let cmd = "nim c -d:nimonyPlugin -o:" & quoteShell(exefile) & " -p:" & quoteShell(pluginDir) &
+  let pluginCache = exefile & "_d"
+  createDir(pluginCache)
+  let cmd = "nim c -d:nimonyPlugin --nimcache:" & quoteShell(pluginCache) &
+    " -o:" & quoteShell(exefile) & " -p:" & quoteShell(pluginDir) &
     " " & quoteShell(nf)
   exec cmd
 
@@ -342,11 +361,11 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; plu
   finally:
     close s
 
-proc runProgram(file: string; usedModules: HashSet[string]): tuple[output: string, exitCode: int] =
-  let nimonyExe = findTool("nimsem")
-  var cmd = quoteShell(nimonyExe) & " e " & quoteShell(file)
-  for module in usedModules:
-    cmd &= " " & quoteShell(module)
+proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]): tuple[output: string, exitCode: int] =
+  # Use nimony s to compile and run the .p.nif file through the full pipeline
+  let nimonyExe = findTool("nimony")
+  var cmd = quoteShell(nimonyExe) & " --nimcache:" & quoteShell(nimcachePath) &
+    " s -r " & quoteShell(file)
   result = execCmdEx(cmd)
 
 const
@@ -358,7 +377,8 @@ proc prepareEval*(c: var SemContext): string =
     if not fileExists(c.g.config.nifcachePath / writeNifModuleSuffix & ".s.nif"):
       # precompile the module
       let nimonyExe = findTool("nimony")
-      var cmd = quoteShell(nimonyExe) & " c " & quoteShell(stdlibFile("std/writenif.nim"))
+      var cmd = quoteShell(nimonyExe) & " --nimcache:" & quoteShell(c.g.config.nifcachePath) &
+        " c " & quoteShell(stdlibFile("std/writenif.nim"))
       let (output, exitCode) = execCmdEx(cmd)
       if exitCode != 0:
         return ensureMove(output)
@@ -366,11 +386,19 @@ proc prepareEval*(c: var SemContext): string =
 
 proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf; usedModules: HashSet[string]): string =
   ## Returns an error message if the evaluation failed, "" on success.
-  #echo "HEREES ", toString(src, false)
-  let progfile = c.g.config.nifcachePath / srcName.addFileExt(".2.nif")
+  let progfile = c.g.config.nifcachePath / srcName.addFileExt(".p.nif")
   writeFileAndIndex(progfile, src)
 
-  let (output, exitCode) = runProgram(progfile, usedModules)
+  # Write the .p.deps.nif file so that `nimony s` can find the imports:
+  if c.importSnippets.len > 0:
+    var deps = createTokenBuf(c.importSnippets.len + 4)
+    deps.addParLe StmtsS, NoLineInfo
+    deps.add c.importSnippets
+    deps.addParRi()
+    let depsFile = c.g.config.nifcachePath / srcName & ".p.deps.nif"
+    writeFile deps, depsFile
+
+  let (output, exitCode) = runProgram(progfile, c.g.config.nifcachePath, usedModules)
   if exitCode != 0:
     result = ensureMove(output)
   else:

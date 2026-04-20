@@ -1,5 +1,7 @@
 ## Nim support for C/C++'s `wide strings`:idx:.
 
+{.feature: "lenientnils".}
+
 type
   Utf16Char* = distinct int16
 
@@ -11,20 +13,23 @@ when not (defined(cpu16) or defined(cpu8)):
       bytes: int
       data: WideCString
 
-  proc `=destroy`(a: WideCStringObj) =
+  func `=destroy`(a: WideCStringObj) =
     if a.data != nil:
       #when compileOption("threads"):
       #  deallocShared(a.data)
       #else:
         dealloc(a.data)
 
-  proc `=copy`(a: var WideCStringObj; b: WideCStringObj) {.error.}
+  func `=wasMoved`(a: var WideCStringObj) =
+    a.data = nil
 
-  proc `=sink`(a: var WideCStringObj; b: WideCStringObj) =
+  func `=copy`(a: var WideCStringObj; b: WideCStringObj) {.error.}
+
+  func `=sink`(a: var WideCStringObj; b: WideCStringObj) =
     a.bytes = b.bytes
     a.data = b.data
 
-  proc createWide(a: var WideCStringObj; bytes: int) =
+  func createWide(a: var WideCStringObj; bytes: int) =
     a.bytes = bytes
     #when compileOption("threads"):
     #  a.data = cast[typeof(a.data)](allocShared0(bytes))
@@ -37,15 +42,15 @@ when not (defined(cpu16) or defined(cpu8)):
 
   template nullWide(): untyped = WideCStringObj(bytes: 0, data: nil)
 
-  proc toWideCString*(x: WideCStringObj): WideCString {.inline.} =
+  func toWideCString*(x: WideCStringObj): WideCString {.inline.} =
     result = x.data
 
-  proc rawData*(x: WideCStringObj): WideCString {.inline.} =
+  func rawData*(x: WideCStringObj): WideCString {.inline.} =
     result = x.data
 
-  proc ord(arg: Utf16Char): int = int(cast[uint16](arg))
+  func ord(arg: Utf16Char): int = int(cast[uint16](arg))
 
-  proc len*(w: WideCString): int =
+  func len*(w: WideCString): int =
     ## returns the length of a widestring. This traverses the whole string to
     ## find the binary zero end marker!
     result = 0
@@ -120,11 +125,11 @@ when not (defined(cpu16) or defined(cpu8)):
       fastRuneAt(s, i, L, result, true)
       yield result
 
-  proc newWideCString*(size: int): WideCStringObj =
+  func newWideCString*(size: int): WideCStringObj =
     result = default(WideCStringObj)
     createWide(result, size * 2 + 2)
 
-  proc newWideCString*(source: cstring, L: int): WideCStringObj =
+  func newWideCString*(source: cstring, L: int): WideCStringObj =
     ## Warning:: `source` needs to be preallocated with the length `L`
     result = default(WideCStringObj)
     createWide(result, L * 2 + 2)
@@ -146,16 +151,16 @@ when not (defined(cpu16) or defined(cpu8)):
       inc d
     result[d] = Utf16Char(0)
 
-  proc newWideCString*(s: cstring): WideCStringObj =
+  func newWideCString*(s: cstring): WideCStringObj =
     if s.isNil: return nullWide()
 
     result = newWideCString(s, s.len)
 
-  proc newWideCString*(s: var string): WideCStringObj =
+  func newWideCString*(s: var string): WideCStringObj =
     # seems to be a bit buggy ...
     result = newWideCString(s.toCString, s.len)
 
-  proc `$`*(w: WideCString, estimate: int, replacement: int = 0xFFFD): string =
+  func `$`*(w: WideCString, estimate: int, replacement: int = 0xFFFD): string =
     result = newStringOfCap(estimate + estimate shr 2)
 
     var i = 0
@@ -197,14 +202,14 @@ when not (defined(cpu16) or defined(cpu8)):
         result.add chr(0xFFFD shr 6 and ones(6) or 0b10_0000_00)
         result.add chr(0xFFFD and ones(6) or 0b10_0000_00)
 
-  proc `$`*(s: WideCString): string =
+  func `$`*(s: WideCString): string =
     result = s $ 80
 
-  proc `$`*(s: WideCStringObj, estimate: int, replacement: int = 0xFFFD): string =
+  func `$`*(s: WideCStringObj, estimate: int, replacement: int = 0xFFFD): string =
     `$`(s.data, estimate, replacement)
 
-  proc `$`*(s: WideCStringObj): string =
+  func `$`*(s: WideCStringObj): string =
     $(s.data)
 
-  proc len*(w: WideCStringObj): int {.inline.} =
+  func len*(w: WideCStringObj): int {.inline.} =
     len(w.data)

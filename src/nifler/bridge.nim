@@ -332,7 +332,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       # flatten it further:
       let split = splitIdentDefName(n[i])
 
-      toNif(split.name, n[i], c) # name
+      toNif(split.name, n[i], c, allowEmpty = true) # name; empty for sum type discriminator
 
       if split.visibility != nil:
         c.b.addRaw " x"
@@ -495,23 +495,30 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
 
-    var name: PNode
-    var visibility: PNode = nil
-    if n[0].kind == nkPostfix:
-      visibility = n[0][0]
-      name = n[0][1]
+    if n.kind == nkIteratorDef and n[0].kind == nkEmpty:
+      # Anonymous iterator expression
+      c.b.addEmpty # name placeholder
+      for i in 0..<n.len:
+        toNif(n[i], n, c, allowEmpty = true)
+      c.b.endTree()
     else:
-      name = n[0]
+      var name: PNode
+      var visibility: PNode = nil
+      if n[0].kind == nkPostfix:
+        visibility = n[0][0]
+        name = n[0][1]
+      else:
+        name = n[0]
 
-    toNif(name, n, c)
-    if visibility != nil:
-      c.b.addRaw " x"
-    else:
-      c.b.addEmpty
+      toNif(name, n, c)
+      if visibility != nil:
+        c.b.addRaw " x"
+      else:
+        c.b.addEmpty
 
-    for i in 1..<n.len:
-      toNif(n[i], n, c, allowEmpty = true)
-    c.b.endTree()
+      for i in 1..<n.len:
+        toNif(n[i], n, c, allowEmpty = true)
+      c.b.endTree()
 
   of nkVarTuple:
     relLineInfo(n, parent, c)
@@ -681,6 +688,13 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       toNif(n[i], n, c)
     c.b.endTree()
     dec c.inWhen
+  of nkCast:
+    relLineInfo(n, parent, c)
+    c.b.addTree(nodeKindTranslation(n.kind))
+    toNif(n[0], n, c, allowEmpty = true)
+    for i in 1..<n.len:
+      toNif(n[i], n, c)
+    c.b.endTree()
   else:
     relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
@@ -688,14 +702,24 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       toNif(n[i], n, c)
     c.b.endTree()
 
-proc initTranslationContext*(conf: ConfigRef; outfile: string; portablePaths, depsEnabled: bool): TranslationContext =
-  result = TranslationContext(conf: conf, b: nifbuilder.open(outfile),
-    portablePaths: portablePaths, depsEnabled: depsEnabled, lineInfoEnabled: true)
-  if depsEnabled:
-    result.deps = nifbuilder.open(outfile.changeFileExt(".deps.nif"))
+proc initTranslationContext*(conf: ConfigRef; outfile: string; portablePaths, depsEnabled: bool;
+                              depsOnly = false): TranslationContext =
+  result = TranslationContext(conf: conf,
+    portablePaths: portablePaths, depsEnabled: depsEnabled or depsOnly, lineInfoEnabled: not depsOnly)
+  if depsOnly:
+    # Memory-only builder for main output (will be discarded)
+    result.b = nifbuilder.open(1024)
+    result.deps = nifbuilder.open(outfile)
+  else:
+    result.b = nifbuilder.open(outfile)
+    if depsEnabled:
+      result.deps = nifbuilder.open(outfile.changeFileExt(".deps.nif"))
 
-proc close*(c: var TranslationContext) =
-  c.b.close()
+proc close*(c: var TranslationContext; depsOnly = false) =
+  if depsOnly:
+    discard "discard main output"
+  else:
+    c.b.close()
   if c.depsEnabled:
     c.deps.endTree()
     c.deps.close()
@@ -720,7 +744,7 @@ template bench(task, body) =
   else:
     body
 
-proc parseFile*(thisfile, outfile: string; portablePaths, depsEnabled: bool) =
+proc parseFile*(thisfile, outfile: string; portablePaths, depsEnabled, depsOnly: bool) =
   let stream = llStreamOpen(AbsoluteFile thisfile, fmRead)
   if stream == nil:
     quit "cannot open file: " & thisfile
@@ -736,9 +760,9 @@ proc parseFile*(thisfile, outfile: string; portablePaths, depsEnabled: bool) =
       closeParser(parser)
       quit QuitFailure
 
-    var tc = initTranslationContext(conf, outfile, portablePaths, depsEnabled)
+    var tc = initTranslationContext(conf, outfile, portablePaths, depsEnabled, depsOnly)
 
     bench "moduleToIr":
       moduleToIr(fullTree, tc)
     closeParser(parser)
-    tc.close()
+    tc.close(depsOnly)

@@ -11,6 +11,9 @@ type
     BoundCheck
     RangeCheck
 
+  ModuleFlag* = enum
+    IsSystem, IsMain, SkipSystem
+
 const
   DefaultSettings* = {BoundCheck, RangeCheck}
 
@@ -30,7 +33,7 @@ proc parseFlags*(s: string): set[CheckMode] =
   var i = 0
   while i < s.len:
     let c = s[i]
-    for m in low(shortcuts) .. high(shortcuts):
+    for m in low(CheckMode) .. high(CheckMode):
       if c == shortcuts[m]:
         result.incl m
         break

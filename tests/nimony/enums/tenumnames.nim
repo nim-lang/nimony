@@ -21,3 +21,11 @@ direction Direction.Left
 direction Right
 edge Edge.Left
 edge Top
+
+proc p(e: Edge) =
+  case e
+  of Left: echo "Left edge"
+  of Top: echo "Top edge"
+
+p Left
+p Top

@@ -2,7 +2,7 @@
 include ".." / ".." / ".." / ".." / src / lib / nifprelude
 import nimonyplugins
 
-proc tr(n: Node): Tree =
+proc tr(n: NifCursor): NifBuilder =
   result = createTree()
   let info = n.info
   var n = n
@@ -19,5 +19,5 @@ proc tr(n: Node): Tree =
       else:
         result.takeTree n
 
-var inp = loadTree()
-saveTree tr(beginRead inp)
+var inp = loadPluginInput()
+saveTree tr(inp)

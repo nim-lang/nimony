@@ -6,7 +6,7 @@
 
 ## Read the configuration from the `.cfg.nif` file.
 
-import std / [os, sets, strutils]
+import std / [os, sets, strutils, sequtils]
 
 import ".." / lib / platform
 
@@ -20,8 +20,18 @@ type
     line*, col*: int32
     filename*: string
 
+  AppType* = enum
+    appConsole = "console"   # executable with console
+    appGui = "gui"           # executable with GUI (no console on Windows)
+    appLib = "lib"           # dynamic library (dll/so/dylib)
+    appStaticLib = "staticlib" # static library (.a/.lib)
+
+  Backend* = enum
+    backendC = "c"
+    backendLLVM = "llvm"
+
   NifConfig* = object
-    defines*: HashSet[string]
+    defines*: seq[string]
     paths*, nimblePaths*: seq[string]
     baseDir*: string # base directory for the configuration system
     nifcachePath*: string
@@ -33,17 +43,24 @@ type
     cc*: string
     linker*: string
     ccKey*: string
+    appType*: AppType
+    backend*: Backend
+    noValidate*: bool # skip running the validator on plugin sources
+
+proc addDefine*(config: var NifConfig; symbol: string) =
+  config.defines.addUnique symbol
 
 proc initNifConfig*(baseDir: sink string): NifConfig =
   result = NifConfig(
     baseDir: baseDir,
     nifcachePath: "nimcache",
-    defines: toHashSet(["nimony"]),
+    defines: @["nimony"],
     bits: sizeof(int)*8,
     targetCPU: platform.nameToCPU(system.hostCPU),
     targetOS: platform.nameToOS(system.hostOS),
     cc: "gcc",
-    linker: ""
+    linker: "",
+    appType: appConsole # console is the default
   )
 
 proc setTargetCPU*(config: var NifConfig; symbol: string): bool =
@@ -72,7 +89,7 @@ proc parseConfig(c: Cursor; result: var NifConfig) =
         inc c
         while c.kind != ParRi:
           if c.kind == StringLit:
-            result.defines.incl pool.strings[c.litId]
+            result.defines.addUnique pool.strings[c.litId]
           inc c
       of "paths":
         inc c
@@ -172,6 +189,12 @@ proc isDefined*(config: NifConfig; symbol: string): bool =
     of "nimrawsetjmp":
       result = config.targetOS in {osSolaris, osNetbsd, osFreebsd, osOpenbsd,
                             osDragonfly, osMacosx}
+    of "executable": result = config.appType in {appConsole, appGui}
+    of "library": result = config.appType in {appLib, appStaticLib}
+    of "dll": result = config.appType == appLib
+    of "staticlib": result = config.appType == appStaticLib
+    of "consoleapp": result = config.appType == appConsole
+    of "guiapp": result = config.appType == appGui
     else: result = false
 
 when isMainModule:

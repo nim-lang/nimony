@@ -5,15 +5,15 @@ import tags
 type
   NifIndexKind* = enum
     NoIndexTag
-    KvIdx = (ord(KvTagId), "kv")  ## key-value pair
+    KvIdx = (ord(KvTagId), "kv")  ## key-value pair; optional INTLIT indicates field is in an inherited object
     VvIdx = (ord(VvTagId), "vv")  ## value-value pair (used for explicitly named arguments in function calls)
     GvarIdx = (ord(GvarTagId), "gvar")  ## global variable declaration
     TvarIdx = (ord(TvarTagId), "tvar")  ## thread local variable declaration
-    VarIdx = (ord(VarTagId), "var")  ## variable declaration
+    VarIdx = (ord(VarTagId), "var")  ## variable declaration; type slot may be omitted when inferred from initializer
     ConstIdx = (ord(ConstTagId), "const")  ## const variable declaration
     GletIdx = (ord(GletTagId), "glet")  ## global let variable declaration
     TletIdx = (ord(TletTagId), "tlet")  ## thread local let variable declaration
-    LetIdx = (ord(LetTagId), "let")  ## let variable declaration
+    LetIdx = (ord(LetTagId), "let")  ## let variable declaration; type is optional when used in `(unpackflat …)`
     CursorIdx = (ord(CursorTagId), "cursor")  ## cursor variable declaration
     ProcIdx = (ord(ProcTagId), "proc")  ## proc declaration
     FuncIdx = (ord(FuncTagId), "func")  ## function declaration
@@ -28,16 +28,8 @@ type
     FromexportIdx = (ord(FromexportTagId), "fromexport")  ## specific exported symbols from a module
     ExportexceptIdx = (ord(ExportexceptTagId), "exportexcept")  ## `exportexcept` statement
     BuildIdx = (ord(BuildTagId), "build")  ## `build` pragma
-    DestroyIdx = (ord(DestroyTagId), "destroy")
-    DupIdx = (ord(DupTagId), "dup")
-    CopyIdx = (ord(CopyTagId), "copy")
-    WasmovedIdx = (ord(WasmovedTagId), "wasmoved")
-    SinkhIdx = (ord(SinkhTagId), "sinkh")
-    TraceIdx = (ord(TraceTagId), "trace")
     IndexIdx = (ord(IndexTagId), "index")  ## index section
-    PublicIdx = (ord(PublicTagId), "public")  ## public section
-    PrivateIdx = (ord(PrivateTagId), "private")  ## private section
 
 proc rawTagIsNifIndexKind*(raw: TagEnum): bool {.inline.} =
-  raw in {KvTagId, VvTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, GletTagId, TletTagId, LetTagId, CursorTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, InlineTagId, ExportTagId, FromexportTagId, ExportexceptTagId, BuildTagId, DestroyTagId, DupTagId, CopyTagId, WasmovedTagId, SinkhTagId, TraceTagId, IndexTagId, PublicTagId, PrivateTagId}
+  raw in {KvTagId, VvTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, GletTagId, TletTagId, LetTagId, CursorTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, InlineTagId, ExportTagId, FromexportTagId, ExportexceptTagId, BuildTagId, IndexTagId}
 

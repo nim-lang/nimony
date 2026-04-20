@@ -1,7 +1,7 @@
 NIFC dialect
 ============
 
-NIFC is a dialect of NIF designed to be very close to C. Its benefits are:
+NIFC is a dialect of [NIF](https://github.com/nim-lang/nifspec/blob/master/doc/nif-spec.md) designed to be very close to C. Its benefits are:
 
 - Easier to generate than generating C/C++ code directly.
 - Has all the NIF related tooling support.
@@ -10,6 +10,13 @@ NIFC is a dialect of NIF designed to be very close to C. Its benefits are:
   single element and `aptr` which points to an array of elements.
 - Inheritance is modelled directly in the type system as opposed to C's quirky type aliasing
   rule that is concerned with aliasings between a struct and its first element.
+- Leverages NIF's module system to avoid C/C++'s possible "one definition rule" violations: A symbol has one definition and can be used in client modules by simply referring to it by name.
+
+
+Module system
+-------------
+
+NIFC uses NIF's module system. Read the [nifspec.md](https://github.com/nim-lang/nifspec/blob/master/doc/nif-spec.md) for more details.
 
 
 Name mangling
@@ -25,8 +32,7 @@ Name mangling is performed by NIFC. The following assumptions are made:
   names in Nim. The original names can be made available via a `was` annotation. See the
   grammar for further details.
 
-Names ending in `.c` are mangled by removing the `.c` suffix. For other names the `.` is
-replaced by `_` and `_` is encoded as `Q_`.
+For other names the `.` is replaced by `_` and `_` is encoded as `Q_`.
 
 By design names not imported from C contain a digit somewhere and thus cannot conflict with
 a keyword from C or C++.
@@ -143,11 +149,18 @@ AsgnStmt ::= (asgn Lvalue Expr)
 KeepOverflowStmt ::= (keepovf ArithExpr Lvalue)
 IfStmt ::= (if (elif Expr StmtList)+ (else StmtList)? )
 WhileStmt ::= (while Expr StmtList)
+LoopStmt ::= (loop StmtList Expr StmtList) # pre-condition stmts, condition, body
 CaseStmt ::= (case Expr (of BranchRanges StmtList)* (else StmtList)?)
 LabelStmt ::= (lab SymbolDef)
 JumpStmt ::= (jmp Symbol)
 ScopeStmt ::= (scope StmtList)
 DiscardStmt ::= (discard Expr)
+StoreStmt ::= (store Expr Lvalue) # like AsgnStmt but with reversed operands
+IteStmt ::= (ite Expr StmtList [Empty | StmtList]) # if-then-else
+ItecStmt ::= (itec Expr StmtList [Empty | StmtList]) # same as ite
+MflagDecl ::= (mflag SymbolDef) # materialized control flow flag (bool)
+VflagDecl ::= (vflag SymbolDef) # virtual control flow flag (bool)
+JtrueStmt ::= (jtrue Symbol+) # set flags to true; last flag becomes a goto target
 
 Stmt ::= Call |
          CallCanRaise |
@@ -157,14 +170,21 @@ Stmt ::= Call |
          TryStmt |
          RaiseStmt |
          AsgnStmt |
+         StoreStmt |
          KeepOverflowStmt |
          IfStmt |
+         IteStmt |
+         ItecStmt |
          WhileStmt |
+         LoopStmt |
          (break) |
          CaseStmt |
          LabelStmt |
          JumpStmt |
          ScopeStmt |
+         MflagDecl |
+         VflagDecl |
+         JtrueStmt |
          (ret [Empty | Expr]) | # return statement
          DiscardStmt
 
@@ -196,6 +216,7 @@ Type ::= Symbol |
          (c IntBits IntQualifier*) | # character types
          (bool IntQualifier*) |
          (void) |
+         (varargs) |
          (ptr Type PtrQualifier* (cppref)?) | # pointer to a single object
          (flexarray Type) |
          (aptr Type PtrQualifier*) | # pointer to an array of objects
@@ -207,19 +228,23 @@ CallingConvention ::= (cdecl) | (stdcall) | (safecall) | (syscall)  |
                       (fastcall) | (thiscall) | (noconv) | (member)
 
 Attribute ::= (attr StringLiteral)
-ProcPragma ::= (inline) | (noinline) | CallingConvention | (varargs) | (was Identifier) | (selectany) | Attribute |
+
+CommonPragmas ::= (was Identifier) | Attribute | (importc StringLiteral?) |
+                  (importcpp StringLiteral?) | (exportc StringLiteral?) | (nodecl)
+
+ProcPragma ::= CommonPragmas | (inline) | (noinline) | CallingConvention | (selectany) |
             | (raises) | (errs)
 
-ProcTypePragma ::= CallingConvention | (varargs) | Attribute
+ProcTypePragma ::= CallingConvention | Attribute
 
 ProcTypePragmas ::= Empty | (pragmas ProcTypePragma+)
 ProcPragmas ::= Empty | (pragmas ProcPragma+)
 
-CommonPragma ::= (align Number) | (was Identifier) | Attribute
+CommonPragma ::= (align Number) | CommonPragmas
 VarPragma ::= CommonPragma | (static)
 VarPragmas ::= Empty | (pragmas VarPragma+)
 
-ParamPragma ::= (was Identifier) | Attribute
+ParamPragma ::= CommonPragmas
 ParamPragmas ::= Empty | (pragmas ParamPragma+)
 
 FieldPragma ::= CommonPragma | (bits Number)
@@ -229,12 +254,8 @@ TypePragma ::= CommonPragma | (vector Number)
 TypePragmas ::= Empty | (pragmas TypePragma+)
 
 
-ExternDecl ::= (imp ProcDecl | VarDecl | ConstDecl)
-IgnoreDecl ::= (nodecl ProcDecl | VarDecl | ConstDecl)
-Include ::= (incl StringLiteral)
-
-TopLevelConstruct ::= ExternDecl | IgnoreDecl | ProcDecl | VarDecl | ConstDecl |
-                      TypeDecl | Include | EmitStmt | Call | CallCanRaise |
+TopLevelConstruct ::= ProcDecl | VarDecl | ConstDecl |
+                      TypeDecl | EmitStmt | Call | CallCanRaise |
                       TryStmt | RaiseStmt | AsgnStmt | KeepOverflowStmt |
                       IfStmt | WhileStmt | CaseStmt | LabelStmt | JumpStmt |
                       ScopeStmt | DiscardStmt
@@ -260,17 +281,16 @@ Notes:
 - `proctype` has an Empty node where `proc` has a name so that the parameters are
   always the 2nd child followed by the return type and calling convention. This
   makes the node structure more regular and can simplify a type checker.
-- `varargs` is modelled as a pragma instead of a fancy special syntax for parameter
-  declarations.
+- `varargs` is modelled as a special type but it must be combined with a named parameter
+  just like any other parameters.
 - The type `flexarray` can only be used for a last field in an object declaration.
 - The pragma `selectany` can be used to merge proc bodies that have the same name.
   It is used for generic procs so that only one generic instances remains in the
   final executable file.
 - `attr "abc"` annotates a symbol with `__attribute__(abc)`.
-- `cast` might be mapped to a type prunning operation via a `union` as C's aliasing
-  rules are broken.
-- `conv` is a value preserving type conversion between numeric types, `cast` is a bit
-  preserving type cast.
+- `cast` is mapped to a C type cast. Bit reinterpretation casts (e.g. `int` to `float`)
+  are lowered to `copyMem` calls before reaching NIFC.
+- `conv` is a value preserving type conversion between numeric types.
 - `array` is mapped to a struct with an array inside so that arrays gain value semantics.
   Hence arrays can only be used within a `type` environment and are nominal types.
   A NIFC code generator has to ensure that e.g. `(type :MyArray.T . (array T 4))` is only
@@ -278,8 +298,7 @@ Notes:
 - `type` can only be used to introduce a name for a nominal type (that is a type which
   is only compatible to itself) or for a proc type for code compression purposes. Arbitrary
   aliases for types **cannot** be used! Rationale: Implementation simplicity.
-- `nodecl` is an import mechanism like `imp` but the declarations come from a header file
-  and are not to be declared in the resulting C/C++ code.
+- `nodecl` is a pragma that indicates that the declaration should not be emitted in the resulting C/C++ code.
 - `var` is always a local variable, `gvar` is a global variable and `tvar` a thread local
   variable.
 - `SCOPE` indicates the construct introduces a new local scope for variables.
@@ -321,6 +340,13 @@ Declaration order
 
 NIFC allows for an arbitrary order of declarations without the need for forward declarations.
 
+
+Include files
+-------------
+
+NIFC generates the required include files by inspecting the `(header)` pragmas.
+
+
 Exceptions
 ----------
 
@@ -361,3 +387,65 @@ The `(ovf)` flag is an lvalue and can be set to `(false)` to reset the flag:
 ```
 
 This is not optional! It is required for reliable native code generation.
+
+
+NJ instructions
+---------------
+
+NIFC has grown support for NJ ("No Jumps") instructions. These are lower-level control flow
+primitives that can be more efficient than structured `if`/`while` statements.
+
+### store
+
+`(store Expr Lvalue)` is like `(asgn Lvalue Expr)` but with reversed operand order.
+The RHS is listed first so that the evaluation order matches the textual order, which
+is important when the RHS has side effects.
+
+### ite and itec
+
+`(ite Expr StmtList [Empty | StmtList])` is a simplified if-then-else. Unlike `(if)` which
+supports multiple `elif` branches, `ite` has exactly one condition, one then-branch and an
+optional else-branch.
+
+`(itec)` has the same structure and semantics as `(ite)`.
+
+### loop
+
+`(loop StmtList Expr StmtList)` is a loop with a pre-condition block. The first `StmtList`
+runs before the condition is tested. If the condition is false, the loop breaks. Then the
+body `StmtList` runs.
+
+### mflag and vflag
+
+`(mflag SymbolDef)` declares a **materialized** control flow flag. It is a boolean variable
+initialized to `false`. Its value is observable at runtime and generates a real C variable
+of type `NB8`.
+
+`(vflag SymbolDef)` declares a **virtual** control flow flag. It is also a boolean initialized
+to `false`, but the code generator can optimize it away entirely. When `(ite (not vflagSym) ...)`
+is used with a vflag, the code generator knows the condition is always true and emits only the
+then-branch, eliminating the `if` statement.
+
+### jtrue
+
+`(jtrue Symbol+)` sets the listed flag symbols to `true`. The last symbol in the list is
+special: it becomes a `goto` target. This allows the code generator to turn a flag-set
+followed by a conditional check into a direct jump.
+
+### The (lab) marker in ite
+
+The last usage of a virtual flag in an `(ite)` condition must be annotated with `(lab)`.
+This tells the code generator that the virtual flag's elimination is complete and a label
+should be emitted at this point. This label serves as the target for the `goto` generated
+by `(jtrue)`.
+
+Example:
+
+```
+(vflag :x.0)
+(jtrue x.0)           ;; becomes: goto x_0;
+;; ...
+(ite (not (lab) x.0)  ;; (lab) marks last usage, emits label x_0:
+  (stmts ...)         ;; then-branch is always taken
+  .)                  ;; else-branch is ignored
+```

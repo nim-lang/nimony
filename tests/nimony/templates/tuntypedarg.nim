@@ -16,8 +16,9 @@ proc doReader(r: var Reader) =
       inc p
   echo "final p: ", r.p
 
-var r = Reader(p: 0, eof: 5)
-doReader(r)
+block:
+  var r = Reader(p: 0, eof: 5)
+  doReader(r)
 
 # bug #1305
 

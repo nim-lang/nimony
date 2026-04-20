@@ -1,4 +1,5 @@
-(.nif24)
+(.nif26)
+(.indexat +604             )
 0,1,tests/nimony/nosystem/tfloatliterals.nim(stmts
  (discard 8 +0.0) ,1
  (discard 8 +1.0) ,2
@@ -19,4 +20,4 @@
  (discard 8 +1.23E+19) ,21
  (discard 8 -1.23E+19) ,24
  (discard 8 +0.0) ,25
- (discard 8 -0.0))
+ (discard 8 -0.0))0,1,tests/nimony/nosystem/tfloatliterals.nim(.index)

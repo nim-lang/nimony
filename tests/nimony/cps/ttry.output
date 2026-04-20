@@ -1,0 +1,25 @@
+tier1a: caught
+tier1b: try
+tier1b: finally
+tier1c: caught
+tier1c: finally
+tier1c: finally
+tier1d: ok
+tier1d: finally
+tier2a: work
+tier2a: after work
+tier2b: work
+tier2b: caught after passive call
+tier2c: work
+tier2c: after work
+tier2c: finally
+tier2d: work
+tier2d: caught
+tier2d: finally
+tier2d: finally
+tier2e: first
+tier2e: second
+tier2e: done
+tier3a: passive in except
+tier3b: try
+tier3b: passive in finally

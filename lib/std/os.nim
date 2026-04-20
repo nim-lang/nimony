@@ -1,10 +1,42 @@
 import strutils
 import posix/posix
+import cmdline
+import envvars
+import private/[ospaths2, osappdirs, oscommons]
+
+export cmdline
+export ospaths2
+export osappdirs
+export oscommons
 
 proc c_system(cmd: cstring): cint {.
     importc: "system", header: "<stdlib.h>".}
 
-proc quoteShellWindows*(s: string): string {.noSideEffect.} =
+when defined(linux) or defined(aix):
+  const maxSymlinkLen = 1024
+
+  proc getApplAux(procPath: string): string =
+    result = newString(maxSymlinkLen)
+    var procPath = procPath
+    var len = readlink(procPath.toCString, result.toCString, maxSymlinkLen)
+    if len > maxSymlinkLen:
+      result = newString(len+1)
+      len = readlink(procPath.toCString, result.toCString, len)
+    if len < 0:
+      len = 0
+    setLen(result, len)
+
+when supportedSystem:
+  proc getAppFilename*(): string {.tags: [ReadIOEffect], raises: [].} =
+    when defined(linux) or defined(aix):
+      result = getApplAux("/proc/self/exe")
+    else:
+      result = paramStr(0)
+
+  proc getAppDir*(): string {.tags: [ReadIOEffect].} =
+    result = splitFile(getAppFilename()).dir
+
+func quoteShellWindows*(s: string): string {.noSideEffect.} =
   ## Quote `s`, so it can be safely passed to Windows API.
   ##
   ## Based on Python's `subprocess.list2cmdline`.
@@ -37,7 +69,7 @@ proc quoteShellWindows*(s: string): string {.noSideEffect.} =
     result.add("\"")
 
 
-proc quoteShellPosix*(s: string): string {.noSideEffect.} =
+func quoteShellPosix*(s: string): string {.noSideEffect.} =
   ## Quote ``s``, so it can be safely passed to POSIX shell.
   const safeUnixChars = {'%', '+', '-', '.', '/', '_', ':', '=', '@',
                          '0'..'9', 'A'..'Z', 'a'..'z'}
@@ -49,17 +81,17 @@ proc quoteShellPosix*(s: string): string {.noSideEffect.} =
     result = "'" & s.replace("'", "'\"'\"'") & "'"
 
 when defined(windows) or defined(posix) or defined(nintendoswitch):
-  proc quoteShell*(s: string): string {.noSideEffect.} =
+  func quoteShell*(s: string): string {.noSideEffect.} =
     ## Quote ``s``, so it can be safely passed to shell.
     ##
-    ## When on Windows, it calls `quoteShellWindows proc`_.
-    ## Otherwise, calls `quoteShellPosix proc`_.
+    ## When on Windows, it calls `quoteShellWindows func`_.
+    ## Otherwise, calls `quoteShellPosix func`_.
     when defined(windows):
       result = quoteShellWindows(s)
     else:
       result = quoteShellPosix(s)
 
-  proc quoteShellCommand*(args: openArray[string]): string =
+  func quoteShellCommand*(args: openArray[string]): string =
     ## Concatenates and quotes shell arguments `args`.
     runnableExamples:
       when defined(posix):
@@ -100,4 +132,8 @@ proc execShellCmd*(command: string): int {.tags: [ExecIOEffect].} =
   ##   discard execShellCmd("ls -la")
   ##   ```
   var command = command
-  result = exitStatusLikeShell(c_system(command.toCString))
+  let cc = command.toCString()
+  if cc.isNil:
+    result = -202 # OOM
+  else:
+    result = exitStatusLikeShell(c_system(cc))

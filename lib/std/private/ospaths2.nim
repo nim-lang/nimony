@@ -40,7 +40,7 @@ import osseps
 export osseps
 
 
-proc normalizePathEnd*(path: var string, trailingSep = false) =
+func normalizePathEnd*(path: var string, trailingSep = false) =
   ## Ensures ``path`` has exactly 0 or 1 trailing `DirSep`, depending on
   ## ``trailingSep``, and taking care of edge cases: it preservers whether
   ## a path is absolute or relative, and makes sure trailing sep is `DirSep`,
@@ -80,7 +80,7 @@ proc normalizePathEnd*(path: var string, trailingSep = false) =
 template endsWith(a: string, b: set[char]): bool =
   a.len > 0 and a[a.high] in b
 
-proc joinPathImpl(result: var string, state: var int, tail: string) =
+func joinPathImpl(result: var string, state: var int, tail: string) =
   let trailingSep = tail.endsWith({DirSep, AltSep}) or tail.len == 0 and result.endsWith({DirSep, AltSep})
   normalizePathEnd(result, trailingSep=false)
   addNormalizePath(tail, result, state, DirSep)
@@ -212,17 +212,15 @@ proc splitPath*(path: string): tuple[head, tail: string] {.
       sepPos = i
       break
   if sepPos >= 0:
-    result.head = substr(path, 0,
-        if sepPos >= 1: sepPos-1 else: 0
-    )
-    result.tail = substr(path, sepPos+1)
+    result = (
+      substr(path, 0,
+        if sepPos >= 1: sepPos-1 else: 0),
+      substr(path, sepPos+1))
   else:
     when doslikeFileSystem:
-      result.head = drive
-      result.tail = splitpath
+      result = (drive, splitpath)
     else:
-      result.head = ""
-      result.tail = path
+      result = ("", path)
 
 proc isAbsolute*(path: string): bool {.noSideEffect, raises: [].} =
   ## Checks whether a given `path` is absolute.
@@ -273,8 +271,9 @@ when doslikeFileSystem:
     ## Detail of Windows path formats:
     ## https://docs.microsoft.com/en-us/dotnet/standard/io/file-path-formats
 
-    assert(isAbsolute(path1))
-    assert(isAbsolute(path2))
+    {.cast(noSideEffect).}:
+      assert(isAbsolute(path1))
+      assert(isAbsolute(path2))
 
     if isAbsFromCurrentDrive(path1) and isAbsFromCurrentDrive(path2):
       result = true
@@ -384,7 +383,7 @@ proc isRelativeTo*(path: string, base: string): bool {.raises.} =
   let ret = relativePath(path, base)
   result = path.len > 0 and not ret.startsWith ".."
 
-proc parentDirPos(path: string): int =
+func parentDirPos(path: string): int =
   var q = 1
   if len(path) >= 1 and path[len(path)-1] in {DirSep, AltSep}: q = 2
   for i in countdown(len(path)-q, 0):
@@ -557,11 +556,11 @@ proc `/../`*(head, tail: string): string {.noSideEffect.} =
   when doslikeFileSystem:
     result = drive / result
 
-proc normExt(ext: string): string =
+func normExt(ext: string): string =
   if ext == "" or ext[0] == ExtSep: result = ext # no copy needed here
   else: result = ExtSep & ext
 
-proc searchExtPos*(path: string): int =
+func searchExtPos*(path: string): int =
   ## Returns index of the `'.'` char in `path` if it signifies the beginning
   ## of the file extension. Returns -1 otherwise.
   ##
@@ -636,27 +635,28 @@ proc splitFile*(path: string): tuple[dir, name, ext: string] {.
 
   var namePos = 0
   var dotPos = 0
+  var dir = ""
   when doslikeFileSystem:
     let (drive, _) = splitDrive(path)
     let stop = len(drive)
-    result.dir = drive
+    dir = drive
   else:
     const stop = 0
   for i in countdown(len(path) - 1, stop):
     if path[i] in {DirSep, AltSep} or i == 0:
       if path[i] in {DirSep, AltSep}:
-        result.dir = substr(path, 0, if i >= 1: i - 1 else: 0)
+        dir = substr(path, 0, if i >= 1: i - 1 else: 0)
         namePos = i + 1
       if dotPos > i:
-        result.name = substr(path, namePos, dotPos - 1)
-        result.ext = substr(path, dotPos)
+        result = (dir, substr(path, namePos, dotPos - 1), substr(path, dotPos))
       else:
-        result.name = substr(path, namePos)
-      break
+        result = (dir, substr(path, namePos), "")
+      return result
     elif path[i] == ExtSep and i > 0 and i < len(path) - 1 and
          path[i - 1] notin {DirSep, AltSep} and
          path[i + 1] != ExtSep and dotPos == 0:
       dotPos = i
+  result = (dir, "", "")
 
 proc extractFilename*(path: string): string {.
   noSideEffect.} =
@@ -855,6 +855,8 @@ when not defined(nimscript) and supportedSystem:
     elif defined(js):
       raiseAssert "use -d:nodejs to have `getCurrentDir` defined"
     elif defined(windows):
+      # XXX init checking bug:
+      result = ""
       var bufsize = MAX_PATH.int32
       var res = newWideCString(bufsize).toWideCString()
       while true:
@@ -865,8 +867,8 @@ when not defined(nimscript) and supportedSystem:
           res = newWideCString(L).toWideCString()
           bufsize = L
         else:
-          result = res$L
-          break
+          return res$L
+      raiseOSError(osLastError())
     else:
       var bufsize = 1024 # should be enough
       result = newString(bufsize)
@@ -954,7 +956,7 @@ proc normalizePath*(path: var string) {.tags: [].} =
     else:
       path = "."
 
-proc normalizePathAux(path: var string) {.inline, raises: [], noSideEffect.} =
+proc normalizePathAux(path: var string) {.inline, raises: [].} =
   ospaths2.normalizePath(path)
 
 proc normalizedPath*(path: string): string {.tags: [].} =

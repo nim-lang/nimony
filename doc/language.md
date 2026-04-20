@@ -133,7 +133,7 @@ evaluation. Example:
   ```nim
   while p != nil and p.name != "xyz":
     # p.name is not evaluated if p == nil
-    p = p.next
+    p = p.next  # p is of type `nil Node`
   ```
 
 
@@ -285,7 +285,7 @@ A `$` proc is defined for cstrings that returns a string. Thus, to get a nim
 string from a cstring:
 
   ```nim
-  var cstr: cstring
+  var cstr: cstring = cstring"hello"
   var newstr: string = $cstr
   ```
 
@@ -750,6 +750,10 @@ Traced references are declared with the **ref** keyword, untraced references
 are declared with the **ptr** keyword. In general, a `ptr T` is implicitly
 convertible to the `pointer` type.
 
+**By default, `ref`, `ptr`, `pointer` and `cstring` types cannot be `nil`.**
+The compiler enforces this statically. See [Nil](#nil) for how to declare
+nullable and unchecked pointer types.
+
 An empty subscript `[]` notation can be used to de-refer a reference,
 the `addr` proc returns the address of an item. If `x` has the type `T`
 then `addr(x)` has the type `ptr T`.
@@ -763,7 +767,7 @@ dereferencing operations for reference types:
   type
     Node = ref NodeObj
     NodeObj = object
-      le, ri: Node
+      le, ri: nil Node
       data: int
 
   var n = Node()
@@ -787,7 +791,7 @@ This feature is useful if an object should only gain reference semantics:
   ```nim
   type
     Node = ref object
-      le, ri: Node
+      le, ri: nil Node
       data: int
   ```
 
@@ -800,52 +804,65 @@ contains further information.
 
 ### Nil
 
-If a reference points to *nothing*, it has the value `nil`. `nil` is the
-default value for all `ref` and `ptr` types. The `nil` value can also be
-used like any other literal value. For example, it can be used in an assignment
-like `myRef = nil`.
+By default, `ref`, `ptr`, `pointer`, `cstring` and procedural types (`proc`) **cannot** hold the value `nil`. Dereferencing `nil` is prevented at compile-time.
 
-Dereferencing `nil` is prevented at compile-time.
+To declare a type that can be `nil`, prefix it with the `nil` keyword:
+
+  ```nim
+  type
+    Node = ref object
+      data: int
+      next: nil Node  # can be nil
+
+  var x: nil ptr int = nil
+  var y: nil ref int = nil
+  var z: nil cstring = nil
+  var t: nil pointer = nil
+  ```
+
+For `nil` types the compiler enforces that every dereference is guarded by a nil check:
+
+  ```nim
+  var x: nil ref int = nil
+  if x != nil:
+    echo x[]  # OK, guarded by nil check
+  # echo x[]  # Error: x might be nil
+  ```
 
 
-### Not nil tracking
+### Unchecked pointer types
 
-Nimony supports `not nil` tracking, which allows the compiler to track when a reference is guaranteed to be non-nil. This is done by appending `not nil` to a reference type:
+For low-level code and FFI interop, the `unchecked` prefix disables nil tracking entirely.
+No nil-checking is performed by the compiler on `unchecked` pointer types:
 
-```nim
-type
-  Node = ref object
-    data: int
-    next: Node not nil
+  ```nim
+  type
+    MemRegion = object
+      data: unchecked pointer
+      size: int
+  ```
 
-proc processNode(n: Node not nil) =
-  # n is guaranteed to be non-nil here
-  echo n.data
-  if n.next != nil:
-    processNode(n.next)
-```
+`unchecked` can be applied to `ref`, `ptr`, `pointer`,  `cstring` and proc types (`proc`).
 
-When a variable is declared as `not nil`, the compiler ensures it is never assigned `nil` and can be used without nil checks.
 
-The compiler can track when a variable becomes non-nil through control flow:
+### Lenient nils
 
-```nim
-var node: Node = nil
-if someCondition():
-  node = Node(data: 42, next: nil)
-  # node is now tracked as not nil in this branch
-  processNode(node) # OK
-else:
-  # node is still potentially nil here
-  if node != nil:
-    processNode(node) # OK after nil check
-```
+For backward compatibility with Nim code, the `.feature: "lenientnils"` pragma can be
+used to make `ref`, `ptr`, `pointer` and `cstring` types nullable by default within a module,
+matching classic Nim behavior:
+
+  ```nim
+  {.feature: "lenientnils".}
+
+  var x: ref int = nil  # OK in lenient mode
+  ```
 
 
 ### Proc type
 
-A procedural type is internally a pointer to a proc. `nil` is
-an allowed value for a variable of a procedural type.
+A procedural type is internally a pointer to a proc. Like other pointer types,
+procedural types cannot be `nil` by default. Use `nil proc (...)` to declare
+a nullable procedural type.
 
 Examples:
 
@@ -869,8 +886,7 @@ Nim supports these `calling conventions`:idx:\:
     same as `fastcall`, but only for C compilers that support `fastcall`.
 
 `closure`:idx:
-:   is the default calling convention for a **procedural type** that lacks
-    any pragma annotations. It indicates that the proc has a hidden
+:   indicates that the proc has a hidden
     implicit parameter (an *environment*). Proc vars that have the calling
     convention `closure` take up two machine words: One for the proc pointer
     and another one for the pointer to implicitly passed environment.
@@ -2129,6 +2145,93 @@ location is derived from the second parameter (called
 'container' in this case).
 
 
+## Borrow checking
+
+Nimony enforces memory safety through borrow checking. The borrow checker prevents
+two classes of errors: **aliasing violations** at call sites and **resize operations during iteration**.
+
+### Call-site aliasing checks
+
+When calling a proc, the compiler checks that mutable (`var`) arguments do not
+overlap with other arguments to the same call:
+
+  ```nim
+  proc take(a: var int, b: int) =
+    a = b
+
+  proc swap(a: var int, b: var int) =
+    let tmp = a; a = b; b = tmp
+
+  var x = 5
+  take(x, x)   # Error: mutable argument aliases with immutable parameter
+  swap(x, x)   # Error: mutable argument aliases with mutable parameter
+  ```
+
+The check extends to field paths. A mutable argument to a field overlaps with
+an immutable argument to the parent object:
+
+  ```nim
+  type Obj = object
+    x, y: int
+
+  proc update(a: var int, b: Obj) =
+    a = b.x
+
+  var o = Obj(x: 1, y: 2)
+  update(o.x, o)   # Error: mutable argument aliases with immutable parameter
+  ```
+
+The classic gotcha this prevents is passing a container by `var` alongside an element
+from that container. When `T` is large, the compiler passes the element by a hidden
+pointer — but the proc can invalidate that pointer:
+
+  ```nim
+  proc gotcha[T](s: var seq[T]; elem: T) =
+    s.shrink 0  # frees the buffer
+    use elem    # elem is a dangling pointer!
+
+  gotcha(myseq, myseq[0])  # Error: mutable argument aliases with immutable parameter
+  ```
+
+Disjoint fields of the same object are fine:
+
+  ```nim
+  var o = Obj(x: 1, y: 2)
+  swap(o.x, o.y)   # OK: disjoint fields
+  ```
+
+### Mutation of borrowed paths
+
+When iterating over a collection, the compiler borrows from the underlying path.
+During the borrow, the borrowed path cannot be mutated:
+
+  ```nim
+  proc addItem(s: var seq[int]; val: int) =
+    s.add val
+
+  var s = @[1, 2, 3]
+  for x in s:
+    addItem(s, x)  # Error: 's' is borrowed and cannot be mutated
+  ```
+
+This prevents iterator invalidation: mutating a `seq` during iteration could
+reallocate the underlying buffer while references into it are still alive.
+
+The rule is based on **prefix exclusion**: if a path `a.b.c` is borrowed,
+neither `a`, `a.b`, nor `a.b.c` can be mutated until the borrow ends.
+Other fields at the same level (siblings) remain accessible:
+
+  ```nim
+  type Config = object
+    elements: seq[int]
+    name: string
+
+  var c = Config(elements: @[1, 2], name: "old")
+  for x in c.elements:
+    c.name = "new"      # OK: disjoint sibling field
+    # c.elements.add(x)    # Error: 'c.elements' is borrowed
+  ```
+
 
 ## `out` parameters
 
@@ -2385,7 +2488,20 @@ The lifetime of captured variables extends beyond the scope where they were decl
 
 ## Func
 
-A `func` is currently simply a different spelling for a `proc`. This will be changed in the future. A `func` will be strict about what it can do.
+A `func` is a `proc` that is treated as `noSideEffect` by default. Likewise, `iterator` and `converter` are treated as `noSideEffect` by default. A plain `proc` is treated as having side effects by default.
+
+A routine is **side-effect free** when it does not access global or thread-local variables and does not call any routine that has side effects.
+
+There is no `noSideEffect` inference. The defaults can be overridden with explicit `.noSideEffect` and `.sideEffect` annotations:
+
+```nim
+proc pureComputation(x: int): int {.noSideEffect.} =
+  x * x
+
+func withSideEffect(x: int): int {.sideEffect.} =
+  echo x  # allowed because of the explicit .sideEffect annotation
+  x * x
+```
 
 
 
@@ -2419,7 +2535,9 @@ With the language mechanisms described here, a custom seq could be written as:
   type
     myseq*[T] = object
       len, cap: int
-      data: ptr UncheckedArray[T]
+      data: unchecked ptr UncheckedArray[T] # \
+        # unchecked ptr here as the [], []=
+        # use the invariant: len > 0 implies data != nil
 
   proc `=destroy`*[T](x: myseq[T]) =
     if x.data != nil:
@@ -2512,6 +2630,7 @@ The general pattern in `=destroy` looks like:
   ```nim
   proc `=destroy`(x: T) =
     # first check if 'x' was moved to somewhere else:
+    # (field is of a `nil ptr` type)
     if x.field != nil:
       freeResource(x.field)
   ```
@@ -2527,11 +2646,11 @@ The prototype of this hook for a type `T` needs to be:
   proc `=wasMoved`(x: var T)
   ```
 
-Usually some pointer field inside the object is set to `nil`:
+Usually some nullable pointer field inside the object is set to `nil`:
 
   ```nim
   proc `=wasMoved`(x: var T) =
-    x.field = nil
+    x.field = nil  # field is of a `nil ptr` type
   ```
 
 
@@ -2615,8 +2734,8 @@ The general pattern in implementing `=dup` looks like:
   ```nim
   type
     Ref[T] = object
-      data: ptr T
-      rc: ptr int
+      data: nil ptr T
+      rc: nil ptr int
 
   proc `=dup`[T](x: Ref[T]): Ref[T] =
     result = x
@@ -2930,7 +3049,7 @@ used to specialize the object traversal in order to avoid deep recursions:
   ```nim test
   type Node = ref object
     x, y: int32
-    left, right: Node
+    left, right: nil Node
 
   type Tree = object
     root: Node
@@ -3307,7 +3426,7 @@ Example:
   ```nim
   type # example demonstrating mutually recursive types
     Node = ref object  # an object managed by the garbage collector (ref)
-      le, ri: Node     # left and right subtrees
+      le, ri: nil Node # left and right subtrees (can be nil)
       sym: ref Sym     # leaves contain a reference to a Sym
 
     Sym = object       # a symbol
@@ -3844,6 +3963,35 @@ special `{.` and `.}` curly brackets.
 
 
 
+### Feature pragma
+
+The `feature` pragma enables or restores specific language features on a per-module basis:
+
+  ```nim
+  {.feature: "lenientnils".}
+  ```
+
+The term "feature" is deliberately neutral. A feature may start out as experimental,
+become the default, or eventually be deprecated as legacy — but the pragma name stays
+the same. The lifecycle stage (experimental, default, legacy) lives in the documentation
+of the individual feature, not in the pragma syntax. This means a feature changing status
+never requires renaming the pragma in source code.
+
+Features are scoped to the module they appear in and do not propagate to importers.
+
+The following features are available:
+
+| Feature | Description |
+|---------|-------------|
+| `"lenientnils"` | Makes `ref`, `ptr`, `pointer`, `cstring` and proc types nullable by default, matching Nim 2 behavior. See [lenientnils.md](lenientnils.md). |
+| `"autoclosures"` | Enables implicit conversion of expressions to closures at call sites. |
+| `"canraise"` | Allows procs without a `raises` annotation to raise exceptions. |
+| `"lenientconverters"` | Allows the definition of converters for basic types such as `int`. For compatibility with Nim 2. |
+| `"untyped"` | Treats templates and generic procs as `.untyped` by default. For compatibility with Nim 2. |
+| `"resemchoice"` | Re-resolves overloaded choice nodes during generic instantiation. |
+| `"earlymagics"` | Resolves magic procs before overload resolution. For compatibility with Nim 2. |
+
+
 ### noreturn pragma
 The `noreturn` pragma is used to mark a proc that never returns.
 
@@ -3890,7 +4038,7 @@ and instead, the generated code should contain an `#include`:c:\:
 
   ```nim
   type
-    PFile {.importc: "FILE*", header: "<stdio.h>".} = distinct pointer
+    PFile {.importc: "FILE*", header: "<stdio.h>".} = ptr object
       # import C's FILE* type; Nim will treat it as a new pointer type
   ```
 
@@ -3947,7 +4095,10 @@ be replicated at thread creation.)
 
 ## Plugins
 
-Plugins are a way to extend the language with new functionality. A plugin is a template that lacks a body. Instead it has a `{.plugin.}` pragma listing the Nim program that implements the plugin.
+Plugins are Nimony's metaprogramming mechanism, replacing Nim 2's macro system.
+A plugin is a template that lacks a body. Instead it has a `{.plugin.}` pragma
+listing the Nim program that implements the plugin.
+For the full plugin API reference, see [plugins.md](plugins.md).
 
 For example, rewriting the following template as a plugin:
 
@@ -3970,17 +4121,18 @@ In "deps/mplugin1.nim" there is the implementation:
 ```nim
 import nimonyplugins
 
-proc tr(n: Node): Tree =
+proc tr(n: NifCursor): NifBuilder =
   result = createTree()
   let info = n.info
   var n = n
-  if n.stmtKind == StmtsS: inc n
+  if n.stmtKind == StmtsS:
+    inc n
   result.withTree CallS, info:
     result.addIdent "echo"
     result.takeTree n
 
-var inp = loadTree()
-saveTree tr(beginRead inp)
+var inp = loadPluginInput()
+saveTree tr(inp)
 ```
 
 **Note that plugins are compiled with Nim 2, not Nimony as Nimony is not considered stable enough.**

@@ -28,15 +28,15 @@ The phases of compilation are:
 
 1. Pure parsing (nifler): Turn Nim code into a dialect of NIF.
 2. Semantic checking phase 1 (nimony): symbol lookups, type checking, template&macro expansions.
-3. Semantic checking phase 2 (nimony): Effect inference.
+3. Semantic checking phase 2 (nimony): Effect inference. **Not implemented yet.**
 4. Inject derefs (and the corresponding mutation checking) (nimony).
 5. Iterator inlining (hexer).
-6. Lambda lifting (hexer). **Not implemented yet.**
+6. Lambda lifting (hexer).
 7. Inject dups (hexer).
 8. Lower control flow expressions to control flow statements (elminate the expr/nkStmtListExpr construct) (hexer).
 9. Inject destructors (hexer).
 10. Map builtins like `new` and `+` to "compiler procs" (hexer).
-11. Translate exception handling (hexer). **Not implemented yet.**
+11. Translate exception handling (hexer).
 12. Generate NIFC code (hexer).
 
 These phases have been collected into different tools with dedicated names.
@@ -47,10 +47,30 @@ These phases have been collected into different tools with dedicated names.
 NIF is a general purpose text format designed for compiler construction. Think of it as a "JSON for compilers". NIF has a short precise specification and a Nim library implementation.
 
 While NIF is almost a classical Lisp, it innovates in these aspects:
-1. It uses a separate namespace for tags ("builtins") and source code identifiers. It is most  extensible and supports a wide range of abstraction levels. Code that is very high level can be represented effectively as well as code that is close to machine code.
+1. It uses a separate namespace for tags ("builtins") and source code identifiers. It is most extensible and supports a wide range of abstraction levels. Code that is very high level can be represented effectively as well as code that is close to machine code.
 2. Line information is carried around during all phases of compilation for easy debugging and code introspection tools. The line information is based on the difference between a parent and its child node so that the resulting text representation is kept small.
 3. Declaration and use of a symbol are clearly distinguished in the syntax allowing for many different tasks to be implemented with a fraction of the usual complexity: "find definition", "find all uses" and "inline this code snippet" are particularly easy to implement.
 4. There is an additional format called Nif-index that allows for the lazy on-demand loading of symbols. This is most essential for incremental compilations.
+
+
+### NIF as foundation for compile-time eval and plugins
+
+NIF is not only the format between compiler phases; it is the foundation for the compile-time evaluation engine and for compiler plugins. Both use the same idea: **compile code to machine code and run it with NIF as input/output**.
+
+- **Compile-time evaluation:** When the compiler needs to run code at compile time (e.g. constant folding, template expansion that runs code), it does not use a separate interpreter. It turns the snippet into NIF (e.g. a `.p.nif`), runs it through the full pipeline (nimsem, hexer, nifc, cc, link) to produce a native executable, runs that executable, and consumes the result. So CT eval is “real” compilation and execution; the only special part is that the “program” is a small snippet and its I/O can be NIF or the normal run’s stdout. The same pipeline and the same NIF representation are reused.
+
+- **Compiler plugins:** Plugins work the same way. A plugin is Nim source marked with `{.plugin.}`. The compiler compiles that source to a standalone executable (with `-d:nimonyPlugin`). When the plugin is invoked, the compiler writes the input to a `.in.nif` file, runs the plugin executable (with paths to the input and optional extra NIF files), and the plugin writes its result to a `.out.nif` file. The compiler then parses that NIF back into the main compilation. So plugins are first-class: they are compiled to native code and communicate purely via NIF. No separate plugin API or interpreter is required.
+
+
+### CPS and `.passive` procs
+
+The Hexer performs a continuation-passing style (CPS) transform (see `src/hexer/cps.nim`). This transform is used for both iterators and for **`.passive` procs**: procedures marked with the `{.passive.}` pragma.
+
+A passive proc is one that can “pause” and be resumed later. The CPS pass turns passive procs (and iterators) into state machines that work with a small runtime in `system`: `Continuation` (a function pointer plus an environment), `delay` (which defers execution of a passive call and returns a continuation), and `advance` / a configurable scheduler to step through continuations.
+
+By default, calling a passive proc from normal code **does** run it to completion: execution is driven by a trampoline that repeatedly runs the current continuation until it is done. So from the caller's perspective the call is synchronous. A scheduler can override the trampoline, however, giving fine-grained control over when to run which continuation—enabling runtimes with millions of picothreads (or whatever you call these lightweight cooperative threads). Passive procs can call other passive procs; the CPS transform introduces the necessary continuation state and labels so that control flow, including across call boundaries, is explicit.
+
+This gives a single, unified model for pausable/resumable execution (coroutines, async-like patterns, iterators) that is implemented by a single CPS pass over NIF and a minimal runtime. The implementation is currently not fully documented elsewhere; the main logic lives in Hexer’s CPS pass and in `lib/std/system.nim` (`delay`, `Continuation`, `advance`, `setScheduler`).
 
 
 ## Nifler

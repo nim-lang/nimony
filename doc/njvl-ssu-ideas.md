@@ -550,6 +550,89 @@ This is correct - `dup` appears before `use(x)`, so when mapped to `=dup`, it's 
 **Verification:**
 The duplifier can verify this by checking that `dup` appears before any uses of the source variable (by checking use-versions). If a `dup` appears after a use, that's an error in the SSU construction.
 
+### Detecting `wasMoved` + `destroy` Elision Patterns
+
+Nim 2's lifetime tracking detects `wasMoved(x) + destroy(x)` pairs and elides them. This is more complex than it appears because patterns like:
+
+```nim
+if a:
+  f(x)
+  wasMoved(x)
+else:
+  g(x)
+  wasMoved(x)
+destroy(x)  # Both branches called wasMoved, can elide destroy
+```
+
+Can also be optimized. With SSU, the duplifier can detect this **directly** during its pass without needing postprocessing.
+
+**The Pattern:**
+- If `wasMoved(x)` is called on all paths leading to `destroy(x)`, then `destroy(x)` can be elided
+- The value was moved, so it doesn't need destruction
+
+
+**Example with Branches:**
+
+```nim
+var x = allocate()
+if cond:
+  f(x)           # use x (use-version +1)
+  wasMoved(x)    # inserted at last use
+else:
+  g(x)           # use x (use-version +1)
+  wasMoved(x)    # inserted at last use
+destroy(x)       # kill x
+```
+
+IR with SSU:
+```
+(stmts
+  (var (v :x.0 +0) (call allocate.0))
+  (ite
+    cond
+    (stmts
+      (call f.0 (v (u x.0 +1) +0))      # Last use (use-version +1 is max)
+      (call =wasMoved.0 (haddr (v x.0 +1)))  # wasMoved inserted
+    )
+    (stmts
+      (call g.0 (v (u x.0 +1) +0))      # Last use (use-version +1 is max)
+      (call =wasMoved.0 (haddr (v x.0 +1)))  # wasMoved inserted
+    )
+    (stmts
+      (join x.0 ...)  # Join point
+    )
+  )
+  (kill x.0)  # Check: was wasMoved called on all paths?
+  (call =destroy.0 (haddr (v x.0 +1)))  # Can we elide this?
+)
+```
+
+**Detection Algorithm (Forward Pass with State Tracking):**
+
+Instead of a backwards pass, we use a **forward pass** that tracks `wasMoved` state per branch:
+
+1. **Track `wasMoved` per branch**: As we traverse forward, remember which variables have `wasMoved` called on them in the current branch
+2. **Combine at joins**: At `ite` join points, combine the `wasMoved` sets (intersection - if both branches have `wasMoved(x)`, then after the join, `wasMoved(x)` is true)
+3. **Remember positions**: Track the positions where `wasMoved` calls were generated
+4. **At `kill(x)`**: Check if current state says "all moved" - if yes, elide `destroy` AND mark previous `wasMoved` calls as no-ops using NIF's dot mechanism
+
+
+**Example:**
+
+```nim
+if cond:
+  f(x)
+  wasMoved(x)    # State: {x}
+else:
+  g(x)
+  wasMoved(x)    # State: {x}
+# After join: State: {x} (intersection - both branches have x)
+destroy(x)       # x in state - elide destroy, mark wasMoved calls as no-op
+```
+
+**NIF Dot Mechanism:**
+
+NIF's dot mechanism allows marking instructions as no-ops without reallocating the buffer. This is crucial for efficiency - we can mark the `wasMoved` calls we generated as no-ops when we discover they're unnecessary, without needing to reallocate or shift the entire buffer.
 
 
 ## Comparison: SSA vs SSU

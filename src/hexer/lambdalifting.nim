@@ -42,7 +42,8 @@ include ".." / lib / nifprelude
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
   builtintypes, langmodes, renderer, reporters]
-import hexer_context
+import hexer_context, passes
+include ".." / nimony / nif_annotations
 
 type
   EnvMode = enum
@@ -63,11 +64,13 @@ type
     typeCache: TypeCache
     thisModuleSuffix: string
     procStack: seq[SymId]
+    dest: TokenBuf
     closureProcs, createsEnv, escapes: HashSet[SymId]
     localToEnv: Table[SymId, EnvField]
     env: CurrentEnv
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
+  {.ensuresNif: addedAny(dest).}
 
 proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
@@ -212,7 +215,12 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.typeCache.openScope()
       trSons(c, dest, n)
       c.typeCache.closeScope()
-    else:
+    of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS, CaseS,
+      RetS, YldS, StmtsS, PragmaxS, InclS, ExclS, ImportasS,
+      ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
+      AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
+      StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
+      NoStmt:
       case n.exprKind
       of CallKinds:
         trCall c, dest, n
@@ -220,7 +228,24 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         takeTree dest, n
       of NilX:
         trNil c, dest, n
-      else:
+      of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX,
+        InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
+        NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
+        AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX,
+        SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX,
+        BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX,
+        CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, DdotX,
+        HaddrX, NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
+        TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CompilesX,
+        DeclaredX, DefinedX, AstToStrX, InstanceofX, HighX,
+        LowX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
+        IsmainmoduleX, DefaultobjX, DefaulttupX,
+        DefaultdistinctX, Delay0X, SuspendX, ExprX, DoX,
+        ArratX, TupatX, PlussetX, MinussetX, MulsetX, XorsetX,
+        EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
+        DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
+        InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
+        EnvpX, KvX, NoExpr:
         trSons(c, dest, n)
   of ParRi:
     bug "unexpected ')' inside"
@@ -239,7 +264,8 @@ const
   EnvParamName = "`ep.0"
   EnvLocalName = "`el.0"
 
-proc addRootRef(dest: var TokenBuf; info: PackedLineInfo) =
+proc addRootRef(dest: var TokenBuf; info: PackedLineInfo)
+  {.ensuresNif: addedType(dest).} =
   dest.copyIntoKind RefT, info:
     dest.addSymUse pool.syms.getOrIncl(RootObjName), info
 
@@ -247,7 +273,8 @@ type
   UntypedEnvMode = enum
     WantValue, WantAddr
 
-proc untypedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv; mode=WantValue) =
+proc untypedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv; mode=WantValue)
+  {.ensuresNif: addedExpr(dest).} =
   assert env.s != SymId(0)
   case env.mode
   of EnvIsLocal:
@@ -269,7 +296,8 @@ proc untypedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv; mode=
     else:
       dest.addSymUse env.s, info
 
-proc typedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv) =
+proc typedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv)
+  {.ensuresNif: addedExpr(dest).} =
   assert env.s != SymId(0)
   case env.mode
   of EnvIsLocal:
@@ -283,11 +311,79 @@ proc typedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv) =
       dest.addSymUse env.s, info
 
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor)
+  {.ensuresNif: addedAny(dest).}
 
 proc treSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
     while n.kind != ParRi:
       tre(c, dest, n)
+
+proc addEnvParam(dest: var TokenBuf; info: PackedLineInfo; envTyp: SymId) =
+  dest.copyIntoKind ParamU, info:
+    dest.addSymDef pool.syms.getOrIncl(EnvParamName), info
+    dest.addDotToken() # no export marker
+    dest.addDotToken() # no pragmas
+    if envTyp == SymId(0):
+      dest.copyIntoKind RefT, info:
+        dest.addSymUse pool.syms.getOrIncl(RootObjName), info
+    else:
+      # to keep NIFC's type system happy we need a ptr type here
+      # and then a cast in the body!
+      dest.copyIntoKind PointerT, info: discard
+    dest.addDotToken() # no default value
+
+proc treParamsWithEnv(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  copyInto dest, n:
+    while n.kind != ParRi:
+      tre(c, dest, n)
+    addEnvParam dest, NoLineInfo, SymId(0)
+
+proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  if isClosure(n):
+    # type is really a tuple:
+    let info = n.info
+    copyIntoKind dest, TupleT, info:
+      copyIntoKind dest, ProctypeT, info:
+        for i in 1..ParamsPos: dest.addDotToken()
+        let usesWrapper = n.typeKind in RoutineTypes
+        if usesWrapper:
+          inc n
+          for i in 1..4: skip n
+        if n.substructureKind == ParamsU:
+          treParamsWithEnv(c, dest, n)
+        else:
+          assert n.kind == DotToken
+          inc n
+          dest.addParLe ParamsU, info
+          addEnvParam dest, info, SymId(0)
+          dest.addParRi()
+        tre c, dest, n # return type
+        # pragmas:
+        tre c, dest, n
+        if usesWrapper:
+          # effects and body, deliberately made flexible here for future changes
+          # as it's messy to work with.
+          if n.kind != ParRi:
+            skip n
+            if n.kind != ParRi: skip n
+          skipParRi n
+      copyIntoKind dest, RefT, info:
+        dest.addSymUse pool.syms.getOrIncl(RootObjName), info
+  else:
+    dest.takeToken n
+    for i in 0..<BodyPos:
+      tre c, dest, n
+    if n.kind != ParRi:
+      dest.takeTree n # don't transform the potential proc body here
+    dest.takeParRi n
+
+proc treType(c: var Context; dest: var TokenBuf; n: var Cursor)
+  {.ensuresNif: addedType(dest).} =
+  # Like `tre` but prefer the type interpretation. (Matters for ProcS etc.)
+  if n.typeKind in RoutineTypes:
+    treProcType(c, dest, n)
+  else:
+    tre(c, dest, n)
 
 proc treLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let s = n.firstSon.symId
@@ -321,22 +417,9 @@ proc treLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeTree dest, n # export marker
       takeTree dest, n # pragmas
       c.typeCache.registerLocal(name, kind, n)
-      tre c, dest, n # type (might grow an environment parameter)
+      let beforeType = dest.len
+      treType c, dest, n # type (might grow an environment parameter)
       tre c, dest, n # value
-
-proc addEnvParam(dest: var TokenBuf; info: PackedLineInfo; envTyp: SymId) =
-  dest.copyIntoKind ParamU, info:
-    dest.addSymDef pool.syms.getOrIncl(EnvParamName), info
-    dest.addDotToken() # no export marker
-    dest.addDotToken() # no pragmas
-    if envTyp == SymId(0):
-      dest.copyIntoKind RefT, info:
-        dest.addSymUse pool.syms.getOrIncl(RootObjName), info
-    else:
-      # to keep NIFC's type system happy we need a ptr type here
-      # and then a cast in the body!
-      dest.copyIntoKind PointerT, info: discard
-    dest.addDotToken() # no default value
 
 proc treParams(c: var Context; dest, init: var TokenBuf; n: var Cursor; doAddEnvParam: bool; envTyp: SymId) =
   copyInto dest, n:
@@ -348,7 +431,7 @@ proc treParams(c: var Context; dest, init: var TokenBuf; n: var Cursor; doAddEnv
         takeTree dest, n # export marker
         takeTree dest, n # pragmas
         c.typeCache.registerLocal(name, ParamY, n)
-        tre c, dest, n # type (might grow an environment parameter)
+        treType c, dest, n # type (might grow an environment parameter)
         tre c, dest, n # value
 
         # parameter might have been captured:
@@ -435,7 +518,7 @@ proc treProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
         if i == TypevarsPos:
           isConcrete = n.substructureKind != TypevarsU
         if i == ReturnTypePos and isConcrete:
-          tre c, dest, n
+          treType c, dest, n
         else:
           takeTree dest, n
 
@@ -446,11 +529,14 @@ proc treProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
     discard c.procStack.pop()
   c.typeCache.closeScope()
 
-proc treParamsWithEnv(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  copyInto dest, n:
-    while n.kind != ParRi:
-      tre(c, dest, n)
-    addEnvParam dest, NoLineInfo, SymId(0)
+proc treProcLift(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  if c.procStack.len == 0:
+    swap c.dest, dest
+  var lift = createTokenBuf(16)
+  treProc c, lift, n
+  c.dest.add lift
+  if c.procStack.len == 0:
+    swap c.dest, dest
 
 proc isStaticCall(c: var Context;s: SymId): bool =
   let res = tryLoadSym(s)
@@ -480,9 +566,8 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tmp = n.symId
       copyIntoKind dest, TupatX, info:
         #tre c, dest, n
-        dest.add n
+        takeToken dest, n
         dest.addIntLit 0, info
-      inc n
     else:
       dest.addParLe(ExprX, info)
       copyIntoKind dest, StmtsS, info:
@@ -518,40 +603,6 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.addParRi()
   skipParRi n
 
-proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  if isClosure(n):
-    # type is really a tuple:
-    let info = n.info
-    copyIntoKind dest, TupleT, info:
-      copyIntoKind dest, ProctypeT, info:
-        for i in 1..ParamsPos: dest.addDotToken()
-        let usesWrapper = n.typeKind in RoutineTypes
-        if usesWrapper:
-          inc n
-          for i in 1..4: skip n
-        if n.substructureKind == ParamsU:
-          treParamsWithEnv(c, dest, n)
-        else:
-          assert n.kind == DotToken
-          inc n
-          dest.addParLe ParamsU, info
-          addEnvParam dest, info, SymId(0)
-          dest.addParRi()
-        tre c, dest, n # return type
-        # pragmas:
-        tre c, dest, n
-        if usesWrapper:
-          # effects and body, deliberately made flexible here for future changes
-          # as it's messy to work with.
-          if n.kind != ParRi:
-            skip n
-            if n.kind != ParRi: skip n
-          skipParRi n
-      copyIntoKind dest, RefT, info:
-        dest.addSymUse pool.syms.getOrIncl(RootObjName), info
-  else:
-    treSons(c, dest, n)
-
 proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
   var n = n
   let info = n.info
@@ -574,6 +625,12 @@ proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
     tre c, dest, n
     while n.kind != ParRi: skip n
     skipParRi n
+
+proc treKv(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  copyInto dest, n:
+    dest.takeTree n # key
+    while n.kind != ParRi:
+      tre(c, dest, n)
 
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
@@ -608,8 +665,8 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of LocalDecls:
       treLocal c, dest, n
     of ProcS, FuncS, MacroS, MethodS, ConverterS:
-      treProc c, dest, n
-    of IteratorS, TemplateS, EmitS, BreakS, ContinueS,
+      treProcLift c, dest, n
+    of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
       ForS, IncludeS, ImportS, FromimportS, ImportExceptS,
       ExportS, CommentS,
       PragmasS:
@@ -618,10 +675,27 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.typeCache.openScope()
       treSons(c, dest, n)
       c.typeCache.closeScope()
-    else:
+    of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS, CaseS,
+      RetS, YldS, StmtsS, PragmaxS, InclS, ExclS, ImportasS,
+      ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
+      AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
+      StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
+      NoStmt:
       case n.exprKind
       of CallKinds:
         genCall(c, dest, n)
+      of DotX:
+        takeToken dest, n
+        tre c, dest, n
+        takeTree dest, n # don't look up field names here
+        if n.kind != ParRi: takeTree dest, n # optional inheritance depth
+        takeParRi dest, n
+      of CastX, ConvX:
+        takeToken dest, n
+        treType c, dest, n
+        while n.kind != ParRi:
+          tre c, dest, n
+        takeParRi dest, n
       of EnvpX:
         let info = n.info
         inc n
@@ -636,9 +710,28 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         skipParRi n
       of TypeofX:
         takeTree dest, n
-      else:
+      of ErrX, SufX, AtX, DerefX, PatX, ParX, AddrX, NilX,
+        InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
+        NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
+        AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX,
+        SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX,
+        BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CchoiceX,
+        OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX,
+        NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
+        TabconstrX, AshrX, BaseobjX, HconvX, DconvX,
+        CompilesX, DeclaredX, DefinedX, AstToStrX, InstanceofX,
+        HighX, LowX, UnpackX, FieldsX, FieldpairsX,
+        EnumtostrX, IsmainmoduleX, DefaultobjX, DefaulttupX,
+        DefaultdistinctX, Delay0X, SuspendX, ExprX, DoX,
+        ArratX, TupatX, PlussetX, MinussetX, MulsetX, XorsetX,
+        EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
+        DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
+        InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
+        KvX, NoExpr:
         if n.typeKind in RoutineTypes:
           treProcType(c, dest, n)
+        elif n.substructureKind == KvU:
+          treKv(c, dest, n)
         else:
           treSons(c, dest, n)
   of ParRi:
@@ -670,30 +763,29 @@ proc genObjectTypes(c: var Context; dest: var TokenBuf) =
           programs.publish(field.field, dest, beforeField)
     programs.publish(objType, dest, beforeType)
 
-proc elimLambdas*(n: Cursor; moduleSuffix: string): TokenBuf =
-  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: moduleSuffix)
+proc elimLambdas*(pass: var Pass) =
+  var n = pass.n  # Extract cursor locally
+  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix)
   c.typeCache.openScope()
-  result = createTokenBuf(300)
-  var n = n
-  tr c, result, n
+  tr c, pass.dest, n
   c.typeCache.closeScope()
 
   # second pass: generate environments
   if c.localToEnv.len > 0:
     # some closure usage has been found, so we need to generate environments
     c.typeCache.openScope()
-    let cap = result.len
-    var oldResult = move result
-    result = createTokenBuf(cap)
-    var n = beginRead(oldResult)
-    assert n.stmtKind == StmtsS
-    result.add n # stmts
-    inc n
-    genObjectTypes(c, result)
-    while n.kind != ParRi:
-      tre(c, result, n)
-    result.takeParRi n
-    endRead(oldResult)
+    let cap = pass.dest.len
+    var oldDest = move pass.dest
+    pass.dest = createTokenBuf(cap)
+    var n2 = beginRead(oldDest)
+    assert n2.stmtKind == StmtsS
+    pass.dest.add n2 # stmts
+    inc n2
+    genObjectTypes(c, pass.dest)
+    while n2.kind != ParRi:
+      tre(c, pass.dest, n2)
+    pass.dest.takeParRi n2
+    endRead(oldDest)
     c.typeCache.closeScope()
 
-  #echo "PRODUCED ", toString(result, false)
+  #echo "PRODUCED ", toString(pass.dest, false)

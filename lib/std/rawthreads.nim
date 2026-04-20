@@ -1,5 +1,7 @@
 # Thread module for Nimony
 
+{.feature: "lenientnils".}
+
 import std/oserrors
 
 const
@@ -114,8 +116,8 @@ else:
 when defined(posix) and not defined(macosx):
   type CpuSet {.importc: "cpu_set_t", header: schedh.} = object
 
-  proc cpusetZero(s: var CpuSet) {.importc: "CPU_ZERO", header: schedh.}
-  proc cpusetIncl(cpu: cint; s: var CpuSet) {.
+  func cpusetZero(s: var CpuSet) {.importc: "CPU_ZERO", header: schedh.}
+  func cpusetIncl(cpu: cint; s: var CpuSet) {.
     importc: "CPU_SET", header: schedh.}
 
   when defined(android):

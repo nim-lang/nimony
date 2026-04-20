@@ -1,3 +1,5 @@
+{.feature: "lenientconverters".}
+
 converter toString(x: int): string = "abc"
 converter toInt(x: string): int = 123
 

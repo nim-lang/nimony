@@ -24,7 +24,8 @@ import std / [sets, assertions]
 include nifprelude
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, typeprops, builtintypes]
 import ".." / models / tags
-import duplifier, eraiser
+import duplifier, eraiser, passes
+include ".." / nimony / nif_annotations
 
 type
   Context = object
@@ -42,6 +43,7 @@ type
 
 when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
+    {.ensuresNif: addedAny(dest).}
 
 proc passByConstRef(c: var Context; typ, pragmas: Cursor): bool =
   result = sizeof.passByConstRef(typ, pragmas, c.ptrSize) or typeprops.isInheritable(typ, false)
@@ -253,7 +255,17 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
   copyInto dest, n:
     let symId = n.symId
-    let isTuple = c.tupleVars.contains(symId)
+    var isTuple = c.tupleVars.contains(symId)
+    # A void+raises call cursor: takeLocalHeader will change the void type to
+    # ErrorCode (scalar, not a tuple). Remove from tupleVars so that *uses*
+    # of this symbol are NOT transformed to (tupat sym 1) by tr().
+    if isTuple:
+      var peek = n
+      skip peek # name
+      skip peek # export marker
+      skip peek # pragmas
+      if isVoidType(peek):
+        c.tupleVars.excl(symId)
     c.typeCache.takeLocalHeader(dest, n, kind, isTuple)
     if n.exprKind in CallKinds:
       trCall c, dest, n, isTuple
@@ -308,6 +320,10 @@ proc trPragmaBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
     c.keepOverflowFlag = true
     tr(c, dest, n)
     c.keepOverflowFlag = oldKeepOverflowFlag
+  elif n.pragmaKind == CastP:
+    skip n # cast pragma
+    skipParRi n # pragmas
+    tr(c, dest, n)
   else:
     bug "unknown pragma block: " & toString(n, false)
   skipParRi n # pragmax
@@ -399,6 +415,23 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tr c, dest, n
       tr c, dest, n
 
+proc trObjConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  dest.takeToken n
+  takeTree dest, n # type
+  while n.kind != ParRi:
+    if n.substructureKind == KvU:
+      takeToken dest, n
+      takeTree dest, n # key
+      tr c, dest, n
+      if n.kind != ParRi:
+        # optional inheritance
+        takeTree dest, n
+      takeParRi dest, n
+    else:
+      # V-Table:
+      takeTree dest, n
+  takeParRi dest, n
+
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var nested = 0
   while true:
@@ -432,6 +465,14 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.add n
           inc n
           inc nested
+      of DotX:
+        dest.takeToken n
+        tr c, dest, n
+        while n.kind != ParRi:
+          dest.takeTree n
+        dest.takeParRi n
+      of OconstrX:
+        trObjConstr c, dest, n
       of FailedX:
         trFailed c, dest, n
       else:
@@ -454,7 +495,13 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           trTry c, dest, n
         of TemplateS, TypeS:
           takeTree dest, n
-        else:
+        of CallS, CmdS, IteratorS, BlockS, EmitS, IfS, WhenS, BreakS,
+           ContinueS, ForS, WhileS, CaseS, YldS, StmtsS, PragmasS,
+           PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
+           FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
+           DiscardS, UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS,
+           PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS,
+           DeferS, NoStmt:
           dest.add n
           inc n
           inc nested
@@ -464,13 +511,12 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dec nested
     if nested == 0: break
 
-proc injectConstParamDerefs*(n: Cursor; ptrSize: int; needsXelim: var bool): TokenBuf =
+proc injectConstParamDerefs*(pass: var Pass; ptrSize: int; needsXelim: var bool) =
+  var n = pass.n  # Extract cursor locally
   var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(), needsXelim: needsXelim,
     tupleVars: localsThatBecomeTuples(n))
   c.retType = c.typeCache.builtins.voidType
   c.typeCache.openScope()
-  result = createTokenBuf(300)
-  var n = n
-  tr(c, result, n)
+  tr(c, pass.dest, n)  # Write to pass.dest
   c.typeCache.closeScope()
   needsXelim = c.needsXelim

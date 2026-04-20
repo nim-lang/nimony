@@ -7,10 +7,14 @@
 ## A BiTable is a table that can be seen as an optimized pair
 ## of `(Table[Id, Val], Table[Val, Id])`.
 
-import std/hashes
+when defined(nimony):
+  {.feature: "untyped".}
+  import std/[hashes, assertions]
+else:
+  import std/hashes
 
-when defined(nimPreviewSlimSystem):
-  import std/assertions
+  when defined(nimPreviewSlimSystem):
+    import std/assertions
 
 type
   BiTable*[Id, T] = object # Id must be an int/uint or a distinct type thereof
@@ -23,7 +27,7 @@ proc initBiTable*[Id, T](): BiTable[Id, T] = BiTable[Id, T](vals: @[], keys: @[]
 proc nextTry(h, maxHash: Hash): Hash {.inline.} =
   result = (h + 1) and maxHash
 
-template maxHash(t): untyped = high(t.keys)
+template maxHash(t): untyped = high(t.keys).Hash
 template isFilled(x: untyped): bool = x.uint32 > 0'u32
 
 proc len*[Id, T](t: BiTable[Id, T]): int = t.vals.len
@@ -64,7 +68,9 @@ proc getKeyId*[Id, T](t: BiTable[Id, T]; v: T): Id =
       h = nextTry(h, maxHash(t))
   return Id(0)
 
-template getOrInclImpl() {.dirty.} =
+{.pragma: maybeDirty, dirty.}
+
+template getOrInclImpl() {.maybeDirty.} =
   let origH = hash(v)
   var h = origH and maxHash(t)
   if t.keys.len != 0:
@@ -100,15 +106,21 @@ proc getOrInclFromView*[Id, T, View](t: var BiTable[Id, T]; v: View): Id =
   t.keys[h] = result
   t.vals.add $v
 
-proc `[]`*[Id, T](t: var BiTable[Id, T]; litId: Id): var T {.inline.} =
-  let idx = idToIdx litId
-  assert idx < t.vals.len
-  result = t.vals[idx]
+when defined(nimony):
+  proc `[]`*[Id, T](t: BiTable[Id, T]; litId: Id): var T {.inline.} =
+    let idx = idToIdx litId
+    assert idx < t.vals.len
+    result = t.vals[idx]
+else:
+  proc `[]`*[Id, T](t: var BiTable[Id, T]; litId: Id): var T {.inline.} =
+    let idx = idToIdx litId
+    assert idx < t.vals.len
+    result = t.vals[idx]
 
-proc `[]`*[Id, T](t: BiTable[Id, T]; litId: Id): lent T {.inline.} =
-  let idx = idToIdx litId
-  assert idx < t.vals.len
-  result = t.vals[idx]
+  proc `[]`*[Id, T](t: BiTable[Id, T]; litId: Id): lent T {.inline.} =
+    let idx = idToIdx litId
+    assert idx < t.vals.len
+    result = t.vals[idx]
 
 proc hash*[Id, T](t: BiTable[Id, T]): Hash =
   ## as the keys are hashes of the values, we simply use them instead
@@ -141,37 +153,35 @@ proc `[]`*[Id](t: BiTableFloat[Id]; litId: Id): float64 {.inline.} =
   cast[float64](BiTable[Id, uint64](t)[litId])
 
 when isMainModule:
+  when defined(nimony):
+    import std / syncio
+  var t = initBiTable[uint32, string]()
 
-  var t: BiTable[uint32, string]
+  assert getOrIncl(t, "hello") == 1
 
-  echo getOrIncl(t, "hello")
-
-  echo getOrIncl(t, "hello")
-  echo getOrIncl(t, "hello3")
-  echo getOrIncl(t, "hello4")
-  echo getOrIncl(t, "helloasfasdfdsa")
-  echo getOrIncl(t, "hello")
-  echo getKeyId(t, "hello")
-  echo getKeyId(t, "none")
+  assert getOrIncl(t, "hello") == 1
+  assert getOrIncl(t, "hello3") == 2
+  assert getOrIncl(t, "hello4") == 3
+  assert getOrIncl(t, "helloasfasdfdsa") == 4
+  assert getOrIncl(t, "hello") == 1
+  assert getKeyId(t, "hello") == 1
+  assert getKeyId(t, "none") == 0
 
   for i in 0 ..< 100_000:
     discard t.getOrIncl($i & "___" & $i)
 
   for i in 0 ..< 100_000:
     assert t.getOrIncl($i & "___" & $i).idToIdx == i + 4
-  echo "begin"
-  echo t.vals.len
+  assert t.vals.len == 100004
 
-  echo t.vals[0]
-  echo t.vals[1004]
+  assert t.vals[0] == "hello"
+  assert t.vals[1004] == "1000___1000"
 
-  echo "middle"
-
-  var tf: BiTable[uint32, float]
+  var tf = initBiTable[uint32, float]()
 
   discard tf.getOrIncl(0.4)
   discard tf.getOrIncl(16.4)
   discard tf.getOrIncl(32.4)
-  echo getKeyId(tf, 32.4)
+  assert getKeyId(tf, 32.4) == 3
 
-  echo "end"
+  echo "success"

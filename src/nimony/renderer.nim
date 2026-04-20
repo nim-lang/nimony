@@ -5,6 +5,7 @@
 # distribution, for details about the copyright.
 
 import ".." / lib / [bitabs, lineinfos, nifstreams, nifcursors, filelinecache, symparser]
+import ".." / njvl / njvl_model
 
 import nimony_model, decls
 
@@ -201,6 +202,7 @@ proc put(g: var SrcGen, kind: TokType, s: string; sym: SymId = SymId(0)) =
 when false:
   proc putComment(g: var SrcGen, s: string) =
     if s.len == 0: return
+    const SpecialWhitespace = {' ', '\t', '\r', '\n', '\0'}
     var i = 0
     let hi = s.len - 1
     let isCode = (s.len >= 2) and (s[1] != ' ')
@@ -229,12 +231,12 @@ when false:
         # gets too long:
         # compute length of the following word:
         var j = i
-        while j <= hi and s[j] > ' ': inc(j)
+        while j <= hi and s[j] notin SpecialWhitespace: inc(j)
         if not isCode and (g.col + (j - i) > MaxLineLen):
           put(g, tkComment, com)
           optNL(g, ind)
           com = "## "
-        while i <= hi and s[i] > ' ':
+        while i <= hi and s[i] notin SpecialWhitespace:
           com.add(s[i])
           inc(i)
     put(g, tkComment, com)
@@ -757,10 +759,24 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
     of CT:
       put(g, tkSymbol, "char")
       skip n
-    of BoolT, VoidT, CstringT, PointerT,
-          UntypedT, TypedT, AutoT:
+    of BoolT, VoidT, UntypedT, TypedT, AutoT:
       put(g, tkSymbol, $n.typeKind)
       skip n
+    of CstringT, PointerT:
+      put(g, tkSymbol, $n.typeKind)
+      inc n
+      if n.kind != ParRi and n.substructureKind == NotnilU:
+        put(g, tkSpaces, Space)
+        put(g, tkSymbol, "not")
+        put(g, tkSpaces, Space)
+        put(g, tkNil, "nil")
+        skip n
+      elif n.kind != ParRi and n.substructureKind == NilU:
+        # rendered as prefix: nil cstring
+        skip n
+      elif n.kind != ParRi:
+        skip n # unchecked or other annotation
+      skipParRi(n)
     of OrdinalT:
       put(g, tkSymbol, "Ordinal")
       inc n
@@ -784,9 +800,17 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
     of PtrT:
       put(g, tkPtr, "ptr")
       inc n
-      if n.kind != ParRi:
+      if n.kind != ParRi and n.substructureKind notin {NotnilU, NilU, UncheckedU}:
         put(g, tkSpaces, Space)
         gtype(g, n, c)
+      if n.kind != ParRi and n.substructureKind == NotnilU:
+        put(g, tkSpaces, Space)
+        put(g, tkSymbol, "not")
+        put(g, tkSpaces, Space)
+        put(g, tkNil, "nil")
+        skip n
+      elif n.kind != ParRi:
+        skip n # nil, unchecked annotation
       skipParRi(n)
 
     of SetT:
@@ -801,9 +825,17 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
     of RefT:
       put(g, tkRef, "ref")
       inc n
-      if n.kind != ParRi:
+      if n.kind != ParRi and n.substructureKind notin {NotnilU, NilU, UncheckedU}:
         put(g, tkSpaces, Space)
         gtype(g, n, c)
+      if n.kind != ParRi and n.substructureKind == NotnilU:
+        put(g, tkSpaces, Space)
+        put(g, tkSymbol, "not")
+        put(g, tkSpaces, Space)
+        put(g, tkNil, "nil")
+        skip n
+      elif n.kind != ParRi:
+        skip n # nil, unchecked annotation
       skipParRi(n)
     of MutT:
       putWithSpace(g, tkVar, "var")
@@ -941,6 +973,10 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
 
     of OnumT:
       put(g, tkSymbol, "HoleyEnum")
+      skip n
+
+    of AnumT:
+      put(g, tkSymbol, "anum")
       skip n
 
     of ConceptT:
@@ -1236,11 +1272,11 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       case n.stmtKind
       of StmtsS:
         gstmts(g, n, c)
-      of VarS, LetS, CursorS, ConstS, GvarS, TvarS, GletS, TletS, ResultS:
+      of VarS, LetS, CursorS, PatternvarS, ConstS, GvarS, TvarS, GletS, TletS, ResultS:
         let descriptor: string
         let tk: TokType
         case n.stmtKind
-        of VarS, GvarS, TvarS, ResultS:
+        of VarS, GvarS, TvarS, ResultS, PatternvarS:
           descriptor = "var"
           tk = tkVar
         of CursorS, LetS, GletS, TletS:
@@ -1395,6 +1431,11 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         else:
           if n.typeKind != NoType:
             gtype(g, n, c)
+          elif n.njvlKind == VV:
+            inc n
+            gsub g, n, c, fromStmtList, isTopLevel
+            skip n # version
+            skipParRi n
           else:
             skip n
         # raiseAssert "unreachable"
@@ -1417,6 +1458,15 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     of NilX:
       put(g, tkSymbol, "nil")
       skip n
+
+    of KvX:
+      inc n
+      gsub(g, n)
+      putWithSpace(g, tkColon, ":")
+      gsub(g, n)
+      if n.kind != ParRi:
+        skip n
+      skipParRi(n)
 
     of CastX:
       inc n
@@ -1475,11 +1525,30 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       skipParRi(n)
 
     of DelayX:
-      inc n
-      skip n # don't render the type `Continuation` here
+      # (delay fn args...) -> delay(fn(args...))
+      inc n  # skip (delay
       put(g, tkSymbol, "delay")
       put(g, tkParLe, "(")
-      gsub(g, n)
+      gsub(g, n)  # fn
+      put(g, tkParLe, "(")
+      gcallComma(g, n)  # args
+      put(g, tkParRi, ")")
+      put(g, tkParRi, ")")
+      skipParRi(n)
+
+    of Delay0X:
+      # (delay0) -> delay()
+      inc n  # skip (delay0
+      put(g, tkSymbol, "delay")
+      put(g, tkParLe, "(")
+      put(g, tkParRi, ")")
+      skipParRi(n)
+
+    of SuspendX:
+      # (suspend) -> suspend()
+      inc n  # skip (suspend
+      put(g, tkSymbol, "suspend")
+      put(g, tkParLe, "(")
       put(g, tkParRi, ")")
       skipParRi(n)
 
@@ -1503,7 +1572,16 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       gcallsystem(g, n, $n.exprKind)
 
     of ProccallX:
-      gcallsystem(g, n, "procCall")
+      # New flat format: (proccall fn args...) -> render as procCall(fn(args...))
+      inc n  # skip (proccall
+      put(g, tkSymbol, "procCall")
+      put(g, tkParLe, "(")
+      gsub(g, n)  # fn
+      put(g, tkParLe, "(")
+      gcallComma(g, n)  # args
+      put(g, tkParRi, ")")
+      put(g, tkParRi, ")")
+      skipParRi(n)
 
     of NewrefX:
       inc n
@@ -1939,6 +2017,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     discard "for illformed tokens"
   else:
     inc n
+    raiseAssert "unreachable"
 
 proc gsub(g: var SrcGen; n: var Cursor, fromStmtList = false, isTopLevel = false) =
   var c: Context = initContext()
@@ -1953,6 +2032,8 @@ proc renderTree(n: Cursor, renderFlags: RenderFlags = {}, renderType = false): s
   else:
     gsub(g, n, isTopLevel = true)
   result = g.buf
+  if result.len == 0:
+    result = toString(n, false)
 
 proc asNimCode*(n: Cursor; renderFlags: RenderFlags = {}): string =
   var m0: PackedLineInfo = NoLineInfo

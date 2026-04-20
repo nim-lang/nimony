@@ -1,6 +1,8 @@
 ## This module provides support for `memory mapped files`:idx:
 ## (Posix's `mmap`:idx:) on the different operating systems.
 
+
+
 import assertions, syncio
 
 when defined(windows):
@@ -20,10 +22,10 @@ when not defined(windows):
 
 type
   MemFile* = object      ## represents a memory mapped file
-    mem*: pointer        ## a pointer to the memory mapped file. The pointer
-                         ## can be used directly to change the contents of the
-                         ## file, if it was opened with write access.
-    size*: int           ## size of the memory mapped file
+    mem*: unchecked pointer ## a pointer to the memory mapped file. The pointer
+                            ## can be used directly to change the contents of the
+                            ## file, if it was opened with write access.
+    size*: int              ## size of the memory mapped file
 
     when defined(windows):
       fHandle*: Handle   ## **Caution**: Windows specific public field to allow
@@ -195,13 +197,19 @@ proc open*(filename: string, mode: FileMode = fmRead,
       flags = flags or O_CREAT or O_TRUNC
       var permissionsMode = Mode(S_IRUSR or S_IWUSR)
       var filename = filename
-      result.handle = open(filename.toCString, flags, permissionsMode)
+      let fc = filename.toCString()
+      if fc.isNil:
+        raise OutOfMemError
+      result.handle = open(fc, flags, permissionsMode)
       if result.handle != -1:
         if (let e = setFileSize(result.handle, newFileSize);
             e != 0.OSErrorCode): fail(e, "error setting file size")
     else:
       var filename = filename
-      result.handle = open(filename.toCString, flags)
+      let fc = filename.toCString()
+      if fc.isNil:
+        raise OutOfMemError
+      result.handle = open(fc, flags)
 
     if result.handle == -1:
       fail(osLastError(), "error opening file")

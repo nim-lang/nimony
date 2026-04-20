@@ -7,6 +7,8 @@
 ## A better stdlib would offer this...
 
 import std / hashes
+when defined(nimony):
+  {.feature: "lenientnils".}
 
 type
   pchar* = ptr UncheckedArray[char]
@@ -47,21 +49,33 @@ proc add*(s: var string; b: StringView) =
     s[l+i] = b[i]
 
 when not defined(nimony):
-  proc rawData(s: string): ptr UncheckedArray[char] {.inline.} =
-    if s.len == 0:
-      nil
-    else:
-      cast[ptr UncheckedArray[char]](addr(s[0]))
+  when not declared(readRawData):
+    proc readRawData*(s: string): ptr UncheckedArray[char] {.inline.} =
+      if s.len == 0:
+        nil
+      else:
+        cast[ptr UncheckedArray[char]](addr(s[0]))
+
+  when not declared(beginStore):
+    proc beginStore*(s: var string; ensuredLen: int; start = 0): ptr UncheckedArray[char] {.inline.} =
+      if s.len == 0:
+        nil
+      else:
+        cast[ptr UncheckedArray[char]](addr(s[start]))
+
+  when not declared(endStore):
+    proc endStore*(s: var string) {.inline.} =
+      discard
 
 proc `$`*(s: StringView): string =
   result = newString(s.len)
   if s.len > 0:
-    copyMem result.rawData, s.p, s.len
+    copyMem result.readRawData, s.p, s.len
 
 proc toStringViewUnsafe*(s: string): StringView =
   ## Watch out that the string lives longer than the string view!
   if s.len != 0:
-    result = StringView(p: cast[pchar](s.rawData), len: s.len)
+    result = StringView(p: cast[pchar](s.readRawData), len: s.len)
   else:
     result = StringView(p: nil, len: 0)
 

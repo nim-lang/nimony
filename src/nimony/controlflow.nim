@@ -11,7 +11,7 @@ import std/[assertions, intsets]
 include ".." / lib / nifprelude
 
 import ".." / models / tags
-import nimony_model, programs, builtintypes, typenav
+import nimony_model, programs, builtintypes, typenav, decls
 from typeprops import isOrdinalType
 
 const
@@ -304,7 +304,21 @@ proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
     inc n
     trIte c, n, tjmp, fjmp
     skipParRi n
-  else:
+  of ErrX, SufX, AtX, DerefX, DotX, PatX, AddrX, NilX, InfX, NeginfX,
+     NanX, FalseX, TrueX, XorX, NegX, SizeofX, AlignofX, OffsetofX,
+     KvX, OconstrX, AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
+     MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX,
+     EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX, CchoiceX, OchoiceX,
+     PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
+     TupconstrX, SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX,
+     CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, DeclaredX, DefinedX,
+     AstToStrX, InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
+     FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX,
+     DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX,
+     DoX, ArratX, TupatX, PlussetX, MinussetX, MulsetX, XorsetX, EqsetX,
+     LesetX, LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX,
+     WasmovedX, SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
+     FailedX, IsX, EnvpX, NoExpr:
     # cannot exploit a special case here:
     let info = NoLineInfo # NoLineInfo is crucial here!
     var bb = Target(m: IsEmpty)
@@ -577,7 +591,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
     of AddrX, HaddrX:
       trExprLoop c, n, tar
     of QuotedX, ParX, CurlyatX, TabconstrX, DoX,
-       NilX, FalseX, TrueX, NotX, NegX, OconstrX, NewobjX, NewrefX, TupConstrX,
+       NilX, FalseX, TrueX, NotX, NegX, KvX, OconstrX, NewobjX, NewrefX, TupConstrX,
        AconstrX, SetConstrX, OchoiceX, CchoiceX, AddX, SubX, MulX, DivX, ModX,
        ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX,
        CastX, ConvX, BaseobjX, HconvX, DconvX, InfX, NegInfX, NanX, SufX,
@@ -585,8 +599,8 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
        IsMainModuleX, DefaultObjX, DefaultTupX, DefaultDistinctX, PlusSetX, MinusSetX,
        MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX, EmoveX,
        DestroyX, DupX, CopyX, WasMovedX, SinkhX, TraceX,
-       BracketX, CurlyX, TupX, OvfX, InstanceofX, ProccallX, InternalFieldPairsX,
-       FailedX, IsX, EnvpX, DelayX:
+       BracketX, CurlyX, TupX, OvfX, InstanceofX, InternalFieldPairsX,
+       FailedX, IsX, EnvpX, Delay0X, SuspendX:
       trExprLoop c, n, tar
     of PragmaxX:
       bug "pragmax should be handled in trStmt"
@@ -606,7 +620,14 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
         trIfCaseTryBlockExpr c, n, TryExpr, tar
       of BlockS:
         trIfCaseTryBlockExpr c, n, BlockExpr, tar
-      else:
+      of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS,
+         LetS, CursorS, PatternvarS, ProcS, FuncS, IteratorS, ConverterS,
+         MethodS, MacroS, TemplateS, TypeS, EmitS, AsgnS, ScopeS, WhenS,
+         BreakS, ContinueS, ForS, WhileS, RetS, YldS, StmtsS, PragmasS,
+         PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS,
+         ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS, RaiseS,
+         UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS, PrefixS,
+         HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS, NoStmt:
         trExprLoop c, n, tar
 
 proc trWhile(c: var ControlFlow; n: var Cursor) =
@@ -632,6 +653,7 @@ proc trWhile(c: var ControlFlow; n: var Cursor) =
   c.currentBlock = c.currentBlock.parent
 
 proc trReturn(c: var ControlFlow; n: var Cursor) =
+  let orig = n
   var it {.cursor.} = c.currentBlock
   var control {.cursor.}: BlockOrLoop = nil
   while it != nil and it.kind != IsRoutine:
@@ -655,6 +677,8 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
     discard "do not generate `result = result`"
     inc n
   else:
+    if c.resultSym == NoSymId:
+      bug "result symbol not found " & toString(orig, false)
     var aa = Target(m: IsEmpty)
     trExpr c, n, aa
     c.dest.addParLe(AsgnS, n.info)
@@ -880,16 +904,10 @@ proc trProc(c: var ControlFlow; n: var Cursor) =
 proc trStmt(c: var ControlFlow; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
-    if n.exprKind == PragmaxX:
-      inc n
-      skip n # ignore pragmas
-      trStmt c, n
-      skipParRi n
-    else:
-      var aa = Target(m: IsAppend)
-      trExpr c, n, aa
-      if aa.t.len > 0:
-        c.dest.add aa
+    var aa = Target(m: IsAppend)
+    trExpr c, n, aa
+    if aa.t.len > 0:
+      c.dest.add aa
   of IfS:
     var aa = Target(m: IsIgnored)
     trIf c, n, aa
@@ -917,7 +935,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     trReturn c, n
   of ResultS:
     trResult c, n
-  of VarS, LetS, CursorS, ConstS, GvarS, TvarS, GletS, TletS:
+  of VarS, LetS, CursorS, PatternvarS, ConstS, GvarS, TvarS, GletS, TletS:
     trLocal c, n
   of BlockS:
     var aa = Target(m: IsIgnored)
@@ -952,6 +970,11 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     c.dest.add head
     c.dest.add tar
     c.dest.addParRi()
+  of PragmaxS:
+    inc n
+    skip n # ignore pragmas
+    trStmt c, n
+    skipParRi n
   of WhenS:
     bug "`when` statement should have been eliminated"
 

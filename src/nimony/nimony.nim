@@ -18,7 +18,7 @@ import ".." / lib / [tooldirs, argsfinder]
 
 import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
-import sem, nifconfig, semos, semdata, deps, langmodes
+import sem, nifconfig, semos, semdata, deps, langmodes, cli
 
 const
   Version = "0.2.0"
@@ -28,7 +28,8 @@ const
 Usage:
   nimony [options] [command]
 Command:
-  c project.nim               compile the full project
+  c project.nim               compile the full project via C backend
+  l project.nim               compile the full project via LLVM backend
   check project.nim           check the full project for errors; can be
                               combined with `--usages`, `--def` for
                               editor integration
@@ -48,6 +49,7 @@ Options:
   --cpu:SYMBOL              set the target processor (cross-compilation)
   --os:SYMBOL               set the target operating system (cross-compilation)
   --silentMake              suppresses make output
+  --profile                 print nifmake timing profile of executed commands
   --nimcache:PATH           set the path used for generated files
   --boundchecks:on|off      turn bound checks on or off
   --usages:file,line,col    list usages of the symbol at the given position
@@ -55,6 +57,9 @@ Options:
   --cc:C_COMPILER           set the C compiler; can be a path to the compiler's
                             executable or a name
   --linker:LINKER           set the linker
+  --app:console|gui|lib|staticlib
+                            set the application type (default: console)
+  --novalidate              skip running the plugin validator on plugin sources
   --version                 show the version
   --help                    show this help
 """
@@ -71,20 +76,25 @@ proc processSingleModule(nimFile: string; config: sink NifConfig; moduleFlags: s
   let toforceRebuild = if forceRebuild: " -f " else: ""
   exec quoteShell(nifler) & " --portablePaths p " & toforceRebuild & quoteShell(nimFile) & " " &
     quoteShell(src)
-  semcheck(src, dest, ensureMove config, moduleFlags, commandLineArgs, true)
+  semcheck(@[src], @[dest], ensureMove config, moduleFlags, commandLineArgs, true)
 
 type
   Command = enum
-    None, SingleModule, FullProject, CheckProject
+    None, SingleModule, FullProject, CheckProject, SemCheckNif
 
-proc dispatchBasicCommand(key: string): Command =
+proc dispatchBasicCommand(key: string; config: var NifConfig): Command =
   case key.normalize:
   of "m":
     SingleModule
   of "c":
     FullProject
+  of "l":
+    config.backend = backendLLVM
+    FullProject
   of "check":
     CheckProject
+  of "s":
+    SemCheckNif
   else:
     quit "command expected"
 
@@ -97,6 +107,7 @@ type
     forceRebuild: bool
     fullRebuild: bool
     silentMake: bool
+    profile: bool
     doRun: bool
     isChild: bool
     forwardArgsToExecutable: bool
@@ -116,6 +127,7 @@ proc createCmdOptions(baseDir: sink string): CmdOptions =
     forceRebuild: false,
     fullRebuild: false,
     silentMake: false,
+    profile: false,
     doRun: false,
     moduleFlags: {},
     config: initNifConfig(baseDir),
@@ -134,7 +146,7 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
     case kind
     of cmdArgument:
       if c.cmd == None:
-        c.cmd = dispatchBasicCommand(key)
+        c.cmd = dispatchBasicCommand(key, c.config)
       else:
         if c.forwardArgsToExecutable:
           c.executableArgs.add " " & quoteShell(key)
@@ -151,83 +163,55 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
       else:
         var forwardArg = true
         var forwardArgNifc = false
-        case normalize(key)
-        of "help", "h": writeHelp()
-        of "version", "v": writeVersion()
-        of "forcebuild", "f": c.forceRebuild = true
-        of "ff":
-          c.fullRebuild = true
-          c.forceRebuild = true
-        of "run", "r":
-          c.doRun = true
-          if c.cmd == FullProject and c.args.len >= 1:
-            c.forwardArgsToExecutable = true
-          forwardArg = false
-        of "compat": c.config.compat = true
-        of "path", "p":
+        # Handle special cases first, then try common parser
+        let keyNorm = normalize(key)
+        if keyNorm == "path" or keyNorm == "p":
+          # Special handling for --path due to FromArgsFile check
           if mode == FromArgsFile:
             quit "`--path` in `.args` file is forbidden. Use a `nimony.paths` file instead."
           c.config.paths.add val
-        of "define", "d": c.config.defines.incl val
-        of "nosystem": c.moduleFlags.incl SkipSystem
-        of "issystem":
-          c.moduleFlags.incl IsSystem
-          forwardArg = false
-        of "ismain":
-          c.moduleFlags.incl IsMain
-          forwardArg = false
-        of "bits":
-          case val
-          of "64": c.config.bits = 64
-          of "32": c.config.bits = 32
-          of "16": c.config.bits = 16
-          else: quit "invalid value for --bits"
-        of "cpu":
-          if not c.config.setTargetCPU(val):
-            quit "unknown CPU: " & val
-        of "os":
-          if not c.config.setTargetOS(val):
-            quit "unknown OS: " & val
-        of "boundchecks":
-          forwardArg = false
-          case val
-          of "on": c.checkModes.incl BoundCheck
-          of "off": c.checkModes.excl BoundCheck
-          else: quit "invalid value for --boundchecks"
-        of "silentmake":
-          c.silentMake = true
-          forwardArg = false
-        of "ischild":
-          # undocumented command line option, by design
-          c.isChild = true
-          forwardArg = false
-        of "passc":
-          if c.passC.len > 0:
-            c.passC.add " "
-          c.passC.add val
-          forwardArg = false
-        of "passl":
-          if c.passL.len > 0:
-            c.passL.add " "
-          c.passL.add val
-          forwardArg = false
-        of "nimcache":
-          c.config.nifcachePath = val
-          forwardArgNifc = true
-        of "cc":
-          c.config.cc = val
-          c.config.ccKey = extractCCKey(val)
-        of "linker":
-          c.config.linker = val
-        of "usages":
-          # set for deps.nim:
-          c.config.toTrack.mode = TrackUsages
-          forwardArg = true
-        of "def":
-          # set for deps.nim:
-          c.config.toTrack.mode = TrackDef
-          forwardArg = true
-        else: writeHelp()
+        elif parseCommonOption(key, val, c.config, c.moduleFlags, forwardArg, forwardArgNifc,
+                              helpMsg = Usage, versionMsg = Version & "\n"):
+          discard "handled by common CLI parser"
+        else:
+          # Handle nimony-specific options
+          case keyNorm
+          of "forcebuild", "f": c.forceRebuild = true
+          of "ff":
+            c.fullRebuild = true
+            c.forceRebuild = true
+          of "run", "r":
+            c.doRun = true
+            if c.cmd == FullProject and c.args.len >= 1:
+              c.forwardArgsToExecutable = true
+            forwardArg = false
+          of "boundchecks":
+            forwardArg = false
+            case val
+            of "on": c.checkModes.incl BoundCheck
+            of "off": c.checkModes.excl BoundCheck
+            else: quit "invalid value for --boundchecks"
+          of "silentmake":
+            c.silentMake = true
+            forwardArg = false
+          of "profile":
+            c.profile = true
+            forwardArg = false
+          of "ischild":
+            # undocumented command line option, by design
+            c.isChild = true
+            forwardArg = false
+          of "passc":
+            if c.passC.len > 0:
+              c.passC.add " "
+            c.passC.add val
+            forwardArg = false
+          of "passl":
+            if c.passL.len > 0:
+              c.passL.add " "
+            c.passL.add val
+            forwardArg = false
+          else: writeHelp()
         if forwardArg:
           c.commandLineArgs.add " --" & key
           if val.len > 0:
@@ -240,7 +224,10 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
     of cmdEnd: assert false, "cannot happen"
 
 proc compileProgram(c: var CmdOptions) =
-  if c.config.linker.len == 0 and c.config.cc.len > 0:
+  if c.config.backend == backendLLVM:
+    if c.config.linker.len == 0:
+      c.config.linker = "clang"
+  elif c.config.linker.len == 0 and c.config.cc.len > 0:
     c.config.linker = c.config.cc
   if c.args.len == 0:
     quit "too few command line arguments"
@@ -263,14 +250,20 @@ proc compileProgram(c: var CmdOptions) =
   of FullProject:
     createDir(c.config.nifcachePath)
     # compile full project modules
-    buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake,
+    buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake, c.profile,
       c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, (if c.doRun: DoRun else: DoCompile),
       c.passC, c.passL, c.executableArgs
   of CheckProject:
     createDir(c.config.nifcachePath)
     # check full project modules
-    buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake,
+    buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake, c.profile,
       c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, DoCheck, c.passC, c.passL, c.executableArgs
+  of SemCheckNif:
+    createDir(c.config.nifcachePath)
+    # compile full project modules
+    buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake, c.profile,
+      c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, (if c.doRun: DoRun else: DoCompile),
+      c.passC, c.passL, c.executableArgs
 
 when isMainModule:
   var c = createCmdOptions(determineBaseDir())

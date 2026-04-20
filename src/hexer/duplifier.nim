@@ -31,7 +31,7 @@ It follows that we're only interested in Call expressions here, or similar
 
 import std / [assertions]
 include nifprelude
-import nifindexes, symparser, treemangler, lifter, mover, hexer_context
+import nifindexes, symparser, treemangler, lifter, mover, hexer_context, passes
 import ".." / nimony / [nimony_model, programs, decls, typenav, renderer, reporters, builtintypes, typekeys]
 
 type
@@ -47,6 +47,7 @@ type
     resultSym: SymId
     source: ptr TokenBuf
     moduleSuffix: string
+    cf: TokenBuf
 
   Expects = enum
     DontCare,
@@ -83,7 +84,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
       canAnalyse = false
     if canAnalyse:
       var otherUsage = NoLineInfo
-      result = isLastUse(n, c.source[], otherUsage)
+      result = isLastUse(n, c.source[], otherUsage, c.cf)
       if ReportLastUse in c.flags:
         echo infoToStr(n.info), " LastUse: ", result
 
@@ -108,7 +109,23 @@ proc constructsValue*(n: Cursor; derefConstructs = true): bool =
     of ExprX:
       inc n
       while not isLastSon(n): skip n
-    else: break
+    of ErrX, SufX, AtX, DotX, PatX, ParX, AddrX, NilX, InfX,
+        NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX, NotX, NegX,
+        SizeofX, AlignofX, OffsetofX, OconstrX, AconstrX, BracketX,
+        CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX,
+        ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX,
+        LeX, LtX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX,
+        QuotedX, DdotX, HaddrX, NewrefX, NewobjX, TupX, TupconstrX,
+        SetconstrX, TabconstrX, AshrX, CallstrlitX, InfixX, PrefixX,
+        HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX,
+        InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
+        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
+        DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX, Delay0X,
+        SuspendX, DoX, ArratX, TupatX, PlussetX, MinussetX, MulsetX,
+        XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
+        DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
+        InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX,
+        KvX, NoExpr: break
   result = n.exprKind in ConstructingExprs or n.kind in {IntLit, FloatLit, StringLit, CharLit}
 
 proc lvalueRoot(n: Cursor; hdrefs: var bool): SymId =
@@ -119,7 +136,23 @@ proc lvalueRoot(n: Cursor; hdrefs: var bool): SymId =
     of HderefX:
       hdrefs = true
       inc n
-    else: break
+    of ErrX, SufX, DerefX, PatX, ParX, AddrX, NilX, InfX, NeginfX,
+        NanX, FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX,
+        AlignofX, OffsetofX, OconstrX, AconstrX, BracketX, CurlyX,
+        CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
+        BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX,
+        CastX, ConvX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX,
+        QuotedX, DdotX, HaddrX, NewrefX, NewobjX, TupX, TupconstrX,
+        SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX,
+        CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, DeclaredX,
+        DefinedX, AstToStrX, InstanceofX, ProccallX, HighX, LowX,
+        TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
+        IsmainmoduleX, DefaultobjX, DefaulttupX, DefaultdistinctX,
+        DelayX, Delay0X, SuspendX, ExprX, DoX, PlussetX, MinussetX,
+        MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX,
+        EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
+        InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX,
+        KvX, NoExpr: break
   if n.kind == Symbol:
     result = n.symId
   else:
@@ -222,7 +255,22 @@ proc isSimpleExpression(n: var Cursor): bool =
         skipParRi n
       else:
         result = false
-    else:
+    of ErrX, AtX, DerefX, DotX, PatX, ParX, AddrX, AndX, OrX, XorX,
+        NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX, AconstrX,
+        BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX,
+        ModX, ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX, EqX,
+        NeqX, LeX, LtX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX,
+        QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
+        TupconstrX, SetconstrX, TabconstrX, AshrX, BaseobjX,
+        CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, DeclaredX,
+        DefinedX, AstToStrX, InstanceofX, ProccallX, HighX, LowX,
+        TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
+        IsmainmoduleX, DefaultobjX, DefaulttupX, DefaultdistinctX,
+        DelayX, Delay0X, SuspendX, DoX, ArratX, TupatX, PlussetX,
+        MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX,
+        CardX, EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX,
+        TraceX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
+        EnvpX, KvX, NoExpr:
       result = false
       skip n
   of ParRi, SymbolDef, UnknownToken, EofToken:
@@ -277,9 +325,7 @@ proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
 proc callDestroy(c: var Context; destroyProc: SymId; arg: TokenBuf; typ: Cursor) =
   let info = arg[0].info
   let staticCall = typ.typeKind notin {RefT, PtrT}
-  if staticCall:
-    c.dest.addParLe ProcCallX, info
-  copyIntoKind c.dest, CallS, info:
+  template emitArgs =
     copyIntoSymUse c.dest, destroyProc, info
     if isMutFirstParam(destroyProc):
       copyIntoKind c.dest, HaddrX, info:
@@ -287,17 +333,20 @@ proc callDestroy(c: var Context; destroyProc: SymId; arg: TokenBuf; typ: Cursor)
     else:
       copyTree c.dest, arg
   if staticCall:
-    c.dest.addParRi()
+    copyIntoKind c.dest, ProccallX, info: emitArgs
+  else:
+    copyIntoKind c.dest, CallS, info: emitArgs
 
 proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId; info: PackedLineInfo; typ: Cursor) =
   let staticCall = typ.typeKind notin {RefT, PtrT}
   if staticCall:
-    c.dest.addParLe ProcCallX, info
-  copyIntoKind c.dest, CallS, info:
-    copyIntoSymUse c.dest, destroyProc, info
-    copyIntoSymUse c.dest, arg, info
-  if staticCall:
-    c.dest.addParRi()
+    copyIntoKind c.dest, ProccallX, info:
+      copyIntoSymUse c.dest, destroyProc, info
+      copyIntoSymUse c.dest, arg, info
+  else:
+    copyIntoKind c.dest, CallS, info:
+      copyIntoSymUse c.dest, destroyProc, info
+      copyIntoSymUse c.dest, arg, info
 
 proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
   var n = n
@@ -411,7 +460,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
           n = ri
           skip n
     elif isLastRead(c, ri):
-      if isNotFirstAsgn and potentialSelfAsgn(le, ri):
+      if isNotFirstAsgn and (potentialSelfAsgn(le, ri) or potentialAliasing(le, ri)):
         # `let tmp = y; =wasMoved(y); =destroy(x); x =bitcopy tmp`
         let tmp = tempOfTrArg(c, ri, leType)
         callWasMoved c, ri, leType
@@ -432,7 +481,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
         callWasMoved c, ri, leType
     else:
       # XXX We should really prefer to simply call `=copy(x, y)` here.
-      if isNotFirstAsgn and potentialSelfAsgn(le, ri):
+      if isNotFirstAsgn and (potentialSelfAsgn(le, ri) or potentialAliasing(le, ri)):
         # `let tmp = x; x =bitcopy =dup(y); =destroy(tmp)`
         let tmp = tempOfTrArg(c, le, leType)
         copyInto c.dest, n:
@@ -585,11 +634,35 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
             trOnlyEssentials c, n
           takeParRi c.dest, n
           c.typeCache.closeScope()
-        else:
+        of CallS, CmdS, IteratorS, TemplateS, TypeS, BlockS,
+            EmitS, AsgnS, IfS, WhenS, BreakS, ContinueS, ForS,
+            WhileS, CaseS, RetS, YldS, StmtsS, PragmasS, PragmaxS,
+            InclS, ExclS, IncludeS, ImportS, ImportasS,
+            FromimportS, ImportexceptS, ExportS, ExportexceptS,
+            CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS,
+            AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
+            StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
+            NoStmt:
           c.dest.add n
           inc n
           inc nested
-      else:
+      of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
+          InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
+          NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
+          AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
+          MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
+          BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
+          CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, DdotX,
+          HaddrX, NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
+          TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX,
+          InfixX, PrefixX, HcallX, CompilesX, DeclaredX, DefinedX,
+          AstToStrX, InstanceofX, ProccallX, HighX, LowX, TypeofX,
+          UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
+          DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
+          Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX, PlussetX,
+          MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
+          InsetX, CardX, EmoveX, InternalTypeNameX,
+          InternalFieldPairsX, FailedX, IsX, EnvpX, KvX:
         c.dest.add n
         inc n
         inc nested
@@ -826,12 +899,20 @@ proc genLastRead(c: var Context; n: var Cursor; typ: Cursor) =
   c.dest.addParRi() # finish the StmtListExpr
 
 proc trLocationNonOwner(c: var Context; n: var Cursor) =
-  c.dest.add n
-  inc n
-  tr c, n, WantNonOwner
-  while n.kind != ParRi:
-    tr(c, n, DontCare)
-  takeParRi c.dest, n
+  if n.kind == ParLe and n.exprKind == DotX:
+    c.dest.add n
+    inc n
+    tr c, n, WantNonOwner
+    while n.kind != ParRi:
+      takeTree c.dest, n
+    takeParRi c.dest, n
+  else:
+    c.dest.add n
+    inc n
+    tr c, n, WantNonOwner
+    while n.kind != ParRi:
+      tr(c, n, DontCare)
+    takeParRi c.dest, n
 
 proc trLocation(c: var Context; n: var Cursor; e: Expects) =
   # `x` does not own its value as it can be read multiple times.
@@ -987,7 +1068,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trNewobj c, n, e, NewrefX
     of DotX, AtX, ArrAtX, PatX, TupatX:
       trLocation c, n, e
-    of ParX, ProccallX:
+    of ParX:
       trSons c, n, e
     of ExprX:
       trStmtListExpr c, n, e
@@ -1002,7 +1083,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
        EqX, NeqX, LeX, LtX, InfX, NegInfX, NanX, CompilesX, DeclaredX,
        DefinedX, AstToStrX, HighX, LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, QuotedX,
        AddrX, HaddrX, AlignofX, OffsetofX, ErrX, OvfX, InstanceofX, InternalTypeNameX,
-       InternalFieldPairsX, IsX, DelayX:
+       InternalFieldPairsX, IsX:
       trSons c, n, WantNonOwner
     of DerefX, HderefX:
       trDeref c, n
@@ -1012,8 +1093,14 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       bug "envp should have been eliminated in lambdalifting.nim"
     of DefaultobjX, DefaulttupX, DefaultdistinctX, BracketX, CurlyX, TupX:
       bug "nodekind should have been eliminated in sem.nim"
-    of PragmaxX, CurlyatX, TabconstrX, DoX, FailedX:
+    of PragmaxX, CurlyatX, TabconstrX, DoX, FailedX, Delay0X, SuspendX:
       trSons c, n, e
+    of KvX:
+      copyInto c.dest, n:
+        takeTree c.dest, n
+        tr c, n, e
+        if n.kind != ParRi:
+          takeTree c.dest, n
     of NoExpr:
       let k = n.stmtKind
       case k
@@ -1089,11 +1176,11 @@ proc checkForMoveTypes(c: var Context; n: Cursor): int =
     if nested == 0: break
     inc n
 
-proc injectDups*(n: Cursor; moduleSuffix: string; source: var TokenBuf; lifter: ref LiftingCtx): TokenBuf =
+proc injectDups*(pass: var Pass; lifter: ref LiftingCtx) =
+  var n = pass.n  # Extract cursor locally
   var c = Context(lifter: lifter, typeCache: createTypeCache(),
-    dest: createTokenBuf(400), source: addr source, moduleSuffix: moduleSuffix)
+    dest: move(pass.dest), source: addr pass.buf, moduleSuffix: pass.moduleSuffix)
   c.typeCache.openScope()
-  var n = n
   tr(c, n, WantNonOwner)
   genMissingHooks lifter[]
 
@@ -1105,4 +1192,4 @@ proc injectDups*(n: Cursor; moduleSuffix: string; source: var TokenBuf; lifter: 
   if errorCount > 0:
     quit 1
 
-  result = ensureMove(c.dest)
+  pass.dest = ensureMove(c.dest)

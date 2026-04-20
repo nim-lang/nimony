@@ -7,7 +7,7 @@
 ## Infer `le` ("less or equal") properties for compile-time array index checking
 ## and also for "not nil" checking.
 
-import std/assertions
+import std/[assertions, tables]
 import xints
 
 type
@@ -24,7 +24,7 @@ type
     x: seq[LeXplusC]
 
   RestorePoint* = object
-    xlen: int
+    snapshot: seq[LeXplusC]
 
 const
   InvalidVarId* = VarId(-1)
@@ -60,10 +60,10 @@ proc isNotNil*(a: VarId): LeXplusC =
 proc isNil*(a: VarId): LeXplusC =
   LeXplusC(a: a, b: VarId(0), c: createXint(0'i64)) # a <= 0
 
-proc save*(f: Facts): RestorePoint = RestorePoint(xlen: f.x.len)
+proc save*(f: Facts): RestorePoint = RestorePoint(snapshot: f.x)
 
 proc restore*(f: var Facts; r: RestorePoint) =
-  f.x.shrink r.xlen
+  f.x = r.snapshot
 
 proc addLeFact*(f: var Facts; a, b: VarId; c: xint = createXint(0'i64)) =
   # add to the knowledge base that `a <= b + c`.
@@ -124,79 +124,50 @@ proc simpleImplies(facts: Facts; v: LeXplusC): bool =
       if f.c <= v.c: return true
   return false
 
-import std/intsets
-
-type
-  Path = object
-    visited: IntSet
-    a: seq[int]
-
-proc incl(p: var Path; elem: int) =
-  p.visited.incl elem
-  p.a.add elem
-
-proc excl(p: var Path; elem: int) =
-  p.visited.excl elem
-  discard p.a.pop
-
 #[
-
-There is a single inference rule:
-
-  a <= b + 4
-  b <= c + 5
-
--->
-
-  a <= c + 5 + 4
-
+  Inference rule: a <= b + c1,  b <= d + c2  -->  a <= d + (c1+c2)
+  We need: is there a path from v.a to v.b with total weight <= v.c?
+  Use Bellman-Ford for shortest path (handles negative weights).
 ]#
 
-proc traverseAllPathsUtil(facts: Facts; u: VarId; d: LeXplusC; nodeIndex: int;
-                          p: var Path; res: var bool) =
-  p.incl nodeIndex
-  if u == d.b:
-    # See if the solution suits us:
-    var sum = createXint(0'i64)
-    for j in p.a:
-      sum = sum + facts.x[j].c
-    if sum <= d.c: res = true
-  else:
-    for i in 0..high(facts.x):
-      if i notin p.visited:
-        if facts.x[i].a == u:
-          traverseAllPathsUtil(facts, facts.x[i].b, d, i, p, res)
-  excl p, nodeIndex
-
-proc traverseAllPaths(facts: Facts; s: VarId; d: LeXplusC; res: var bool) =
-  var path = Path()
-
-  for i in 0..high(facts.x):
-    if facts.x[i].a == s:
-      traverseAllPathsUtil(facts, facts.x[i].b, d, i, path, res)
-
 proc complexImplies(facts: Facts; v: LeXplusC): bool =
-  result = false
-  traverseAllPaths(facts, v.a, v, result)
+  var dist = initTable[VarId, xint]()
+  dist[v.a] = createXint(0'i64)
+  let maxIter = max(facts.x.len, 1) * 2  # enough for longest path
+  for _ in 0 ..< maxIter:
+    var changed = false
+    for f in facts.x:
+      if f.a in dist:
+        let newDist = dist[f.a] + f.c
+        if f.b notin dist or newDist < dist[f.b]:
+          dist[f.b] = newDist
+          changed = true
+    if not changed: break
+  result = v.b in dist and dist[v.b] <= v.c
 
 proc implies*(facts: Facts; v: LeXplusC): bool =
   assert v.isValid
   result = simpleImplies(facts, v) or complexImplies(facts, v)
 
+proc consider(best: var Table[(VarId, VarId), xint]; a, b: VarId; c: xint) =
+  let key = (a, b)
+  if key notin best or c < best[key]:
+    best[key] = c
+
 proc merge*(x: Facts; xstart: int; y: Facts; negate: bool): Facts =
-  # computes thing we know on a joint point.
-  # we know that `a <= b + c` or `a <= b + d` then we know
-  # that `a <= b + max(c, d)`
-  result = Facts()
+  # At a join we know facts that hold in BOTH branches.
+  # For a<=b+c: intersection uses min(c1,c2) (strongest constraint).
+  # Deduplicate: at most one fact per (a,b).
+  var best = initTable[(VarId, VarId), xint]()
+
   for i in 0 ..< xstart:
     for j in 0..<y.len:
       let ya = y[j]
       if x[i].a == ya.a and x[i].b == ya.b:
-        result.x.add LeXplusC(a: x[i].a, b: x[i].b, c: max(x[i].c, ya.c))
+        consider(best, x[i].a, x[i].b, min(x[i].c, ya.c))
 
   if negate and x.len - xstart > 1:
-    # negation of (a and b) would be (not a or not b) so we cannot model that:
-    discard "must lose information here"
+    discard "negation of (a and b) would be (not a or not b) so we cannot model that"
   else:
     for i in xstart ..< x.len:
       for j in 0..<y.len:
@@ -204,7 +175,11 @@ proc merge*(x: Facts; xstart: int; y: Facts; negate: bool): Facts =
         if negate:
           ya.negateFact()
         if x[i].a == ya.a and x[i].b == ya.b:
-          result.x.add LeXplusC(a: x[i].a, b: x[i].b, c: max(x[i].c, ya.c))
+          consider(best, x[i].a, x[i].b, min(x[i].c, ya.c))
+
+  result = Facts()
+  for key, c in best:
+    result.x.add LeXplusC(a: key[0], b: key[1], c: c)
 
 when isMainModule:
   proc main =

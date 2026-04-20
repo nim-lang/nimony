@@ -91,7 +91,7 @@ proc buildTupleFieldIter(buf: var TokenBuf; iter: FieldsIter; i: int; name: StrI
   buf.addParRi() # (elif)
   buf.addParRi() # (if)
 
-proc semForFields(c: var SemContext; it: var Item; call, orig: Cursor) =
+proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, orig: Cursor) =
   let fieldPairs = call.exprKind in {FieldPairsX, InternalFieldPairsX}
   let isInternalSym = call.exprKind == InternalFieldPairsX
   var iter = FieldsIter()
@@ -113,7 +113,7 @@ proc semForFields(c: var SemContext; it: var Item; call, orig: Cursor) =
         if names.len == 3:
           iter.fieldVar2 = names[2]
       else:
-        buildErr c, unpackInfo, "wrong number of variables"
+        buildErr c, dest, unpackInfo, "wrong number of variables"
         skipToEnd it.n
         return
     else:
@@ -122,11 +122,11 @@ proc semForFields(c: var SemContext; it: var Item; call, orig: Cursor) =
         if names.len == 2:
           iter.fieldVar2 = names[1]
       else:
-        buildErr c, unpackInfo, "wrong number of variables"
+        buildErr c, dest, unpackInfo, "wrong number of variables"
         skipToEnd it.n
         return
   else:
-    buildErr c, unpackInfo, "illformed AST: `unpackflat` or `unpacktup` inside `for` expected"
+    buildErr c, dest, unpackInfo, "illformed AST: `unpackflat` or `unpacktup` inside `for` expected"
     skipToEnd it.n
     return
 
@@ -140,11 +140,11 @@ proc semForFields(c: var SemContext; it: var Item; call, orig: Cursor) =
   if obj2.kind != ParRi:
     iter.obj2 = obj2
     if iter.fieldVar2 == StrId(0):
-      buildErr c, unpackInfo, "wrong number of variables"
+      buildErr c, dest, unpackInfo, "wrong number of variables"
       skipToEnd it.n
       return
   elif iter.fieldVar2 != StrId(0):
-    buildErr c, unpackInfo, "wrong number of variables"
+    buildErr c, dest, unpackInfo, "wrong number of variables"
     skipToEnd it.n
     return
   let body = it.n
@@ -168,14 +168,14 @@ proc semForFields(c: var SemContext; it: var Item; call, orig: Cursor) =
         # iterating over fields of typevar, leave entire loop completely untyped
         var ctx = createUntypedContext(addr c, UntypedGeneric)
         var origRead = orig
-        semTemplBody ctx, origRead
-        producesVoid c, orig.info, it.typ
+        semTemplBody ctx, dest, origRead
+        producesVoid c, dest, orig.info, it.typ
         return
       if objType.typeKind != ObjectT:
-        c.buildErr call.info, "cannot iterate over fields of type: " & typeToString(objType)
+        c.buildErr dest, call.info, "cannot iterate over fields of type: " & typeToString(objType)
         return
     else:
-      c.buildErr call.info, "cannot iterate over fields of type: " & typeToString(objType)
+      c.buildErr dest, call.info, "cannot iterate over fields of type: " & typeToString(objType)
       return
 
   var iterBuf = createTokenBuf(64)
@@ -233,5 +233,5 @@ proc semForFields(c: var SemContext; it: var Item; call, orig: Cursor) =
   iterBuf.addParRi() # (while)
 
   var loop = beginRead(iterBuf)
-  semStmt c, loop, false
-  producesVoid c, orig.info, it.typ
+  semStmt c, dest, loop, false
+  producesVoid c, dest, orig.info, it.typ

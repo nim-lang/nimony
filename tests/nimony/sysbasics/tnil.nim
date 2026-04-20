@@ -1,32 +1,33 @@
-proc generic[T](a, b: ptr T) =
+proc generic[T](a, b: nil ptr T) =
   discard a == nil
 
 proc main =
-  var x: ptr int = nil
+  var x: nil ptr int = nil
   x = nil
-  var y: ref int = nil
+  var y: nil ref int = nil
   y = nil
-  var z: cstring = nil
+  var z: nil cstring = nil
   z = nil
-  var t: pointer = nil
+  var t: nil pointer = nil
   t = nil
 
   generic(x, nil)
   if x == nil: discard
 
 
-let x: ref int = nil
-if false:
+let x: nil ref int = nil
+if x != nil:
   let y = x[]
 
 var s = true
 case s
 of false:
-  let y = x[]
+  if x != nil:
+    let y = x[]
 else:
   let y = x
 
-var weg: ptr int
+var weg: nil ptr int
 
 if weg == nil:
   discard "X is nil!"

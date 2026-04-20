@@ -16,7 +16,7 @@ import std/assertions
 type
   Key* = (string, string) # 2nd component is the enum field name as a string
 
-func addUnique*[T](s: var seq[T]; x: T) =
+func addUnique(s: var seq[char]; x: char) =
   for y in items(s):
     if y == x: return
   s.add x

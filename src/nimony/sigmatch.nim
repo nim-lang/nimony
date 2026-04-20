@@ -35,6 +35,7 @@ type
     CallConvMismatch
     RaisesMismatch
     ClosureMismatch
+    PassiveMismatch
     UnavailableSubtypeRelation
     NotImplementedConcept
     ImplicitConversionNotMutable
@@ -73,7 +74,7 @@ type
     context: ptr SemContext
     error: MatchError
     firstVarargPosition*: int
-    genericConverter*, checkEmptyArg*, insertedParam*: bool
+    genericConverter*, refineArgType*, insertedParam*: bool
 
 proc createMatch*(context: ptr SemContext): Match = Match(context: context, firstVarargPosition: -1)
 
@@ -131,6 +132,8 @@ proc getErrorMsg*(m: Match): string =
     "`.raises` mismatch"
   of ClosureMismatch:
     "`.closure` mismatch"
+  of PassiveMismatch:
+    "`.passive` mismatch"
   of UnavailableSubtypeRelation:
     "subtype relation not available for `out` parameters"
   of NotImplementedConcept:
@@ -202,7 +205,7 @@ proc isObjectType(n: Cursor): bool =
 proc isEnumType*(n: Cursor): bool =
   if n.kind == Symbol:
     let impl = getTypeSection(n.symId)
-    result = impl.kind == TypeY and impl.body.typeKind in {EnumT, HoleyEnumT}
+    result = impl.kind == TypeY and impl.body.typeKind in {EnumT, HoleyEnumT, AnumT}
   else:
     result = false
 
@@ -476,6 +479,32 @@ proc expectPtrParRi(m: var Match; f: var Cursor) =
   else:
     m.error FormalTypeNotAtEndBug, f, f
 
+proc matchNilAnnotations(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor) =
+  ## Match nil annotations on pointer-like types. `(unchecked)` is compatible
+  ## with any other annotation (or none). `(notnil)` and `(nil)` must match exactly.
+  let fHas = isNilAnnotation(f)
+  let aHas = isNilAnnotation(a)
+  if fHas and aHas:
+    if f.substructureKind == UncheckedU or a.substructureKind == UncheckedU:
+      # unchecked is compatible with anything
+      skip f
+      skip a
+    elif f.substructureKind == a.substructureKind:
+      skip f
+      skip a
+    else:
+      m.error(InvalidMatch, fOrig, aOrig)
+  elif fHas:
+    if f.substructureKind == UncheckedU:
+      skip f # unchecked is compatible with no annotation
+    else:
+      m.error(InvalidMatch, fOrig, aOrig)
+  elif aHas:
+    if a.substructureKind == UncheckedU:
+      skip a # unchecked is compatible with no annotation
+    else:
+      m.error(InvalidMatch, fOrig, aOrig)
+
 proc procTypeMatch(m: var Match; f, a: var Cursor)
 
 proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {}) =
@@ -562,6 +591,25 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
               skip a
           expectParRi m, f
           expectParRi m, a
+        of CstringT, PointerT:
+          if a.typeKind != f.typeKind:
+            m.error(InvalidMatch, fOrig, aOrig)
+            break
+          inc f
+          inc a
+          matchNilAnnotations m, f, a, fOrig, aOrig
+          expectParRi m, f
+          expectParRi m, a
+        of PtrT, RefT:
+          if a.typeKind != f.typeKind:
+            m.error(InvalidMatch, fOrig, aOrig)
+            break
+          inc f
+          inc a
+          linearMatch m, f, a # match base type
+          matchNilAnnotations m, f, a, fOrig, aOrig
+          expectParRi m, f
+          expectParRi m, a
         else:
           if f.uoperand != a.uoperand:
             m.error(InvalidMatch, fOrig, aOrig)
@@ -604,10 +652,12 @@ type
   ProcProperties* = object
     cc*: CallConv
     usesRaises*: bool
+    raisesType*: Cursor  # The actual exception type from .raises pragma
     usesClosure*: bool
+    usesPassive*: bool
 
 proc extractProcProps*(c: var Cursor): ProcProperties =
-  result = ProcProperties(cc: Nimcall, usesRaises: false, usesClosure: false)
+  result = ProcProperties(cc: Nimcall, usesRaises: false, usesClosure: false, usesPassive: false)
   if c.substructureKind == PragmasU:
     inc c
     while c.kind != ParRi:
@@ -616,8 +666,15 @@ proc extractProcProps*(c: var Cursor): ProcProperties =
         result.cc = res
       elif c.pragmaKind == RaisesP:
         result.usesRaises = true
+        # Extract the raises type from the pragma
+        var raisesNode = c
+        inc raisesNode
+        if raisesNode.kind != ParRi:
+          result.raisesType = raisesNode
       elif c.pragmaKind == ClosureP:
         result.usesClosure = true
+      elif c.pragmaKind == PassiveP:
+        result.usesPassive = true
       skip c
     inc c
   elif c.kind == DotToken:
@@ -684,6 +741,8 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
     m.error RaisesMismatch, f, a
   elif fcc.usesClosure != acc.usesClosure:
     m.error ClosureMismatch, f, a
+  elif fcc.usesPassive != acc.usesPassive:
+    m.error PassiveMismatch, f, a
   # XXX consider when f or a is (params):
   skip f # effects
   #skip a # effects
@@ -715,7 +774,7 @@ proc useArg(m: var Match; arg: CallArg; f: Cursor) =
 
 proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg)
 
-proc matchObjectInheritance(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKind: TypeKind) =
+proc matchObjectInheritance*(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKind: TypeKind) =
   let fbase = skipTypeInstSym(fsym)
   var diff = 1
   var objbody = objtypeImpl(asym)
@@ -816,6 +875,23 @@ proc matchObjectTypes(m: var Match; f: var Cursor, a: Cursor; ptrKind: TypeKind)
       matchObjectInheritance m, f, a, fsym, asym, ptrKind
       skip f
 
+proc tryMatchEnumChoice*(choice: Cursor; enumTypeSym: SymId): SymId =
+  ## Try to find a unique enum field in the OchoiceX that matches the given enum type.
+  result = SymId(0)
+  var matchCount = 0
+  var a = choice.firstSon
+  while a.kind != ParRi:
+    if a.kind == Symbol:
+      let res = tryLoadSym(a.symId)
+      if res.status == LacksNothing and res.decl.symKind == EfldY:
+        let fieldType = asLocal(res.decl).typ
+        if fieldType.kind == Symbol and sameSymbol(fieldType.symId, enumTypeSym):
+          result = a.symId
+          inc matchCount
+    inc a
+  if matchCount != 1:
+    result = SymId(0)
+
 proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
   let a = skipModifier(arg.typ)
   let fs = f.symId
@@ -850,8 +926,15 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
       if impl.kind == ParLe and impl.tagId == ErrT:
         m.error InvalidMatch, f, a
       else:
-        if impl.typeKind in {EnumT, HoleyEnumT}:
-          #echo "ENUM: ", f.toString(false), " ", arg.n.toString(false)
+        if impl.typeKind in {EnumT, HoleyEnumT, AnumT}:
+          if arg.n.exprKind == OchoiceX:
+            let matchedSym = tryMatchEnumChoice(arg.n, fs)
+            if matchedSym != SymId(0):
+              m.refineArgType = true
+              m.args.addParLe HconvX, m.argInfo
+              m.args.addSubtree f
+              inc m.opened
+              return
           m.error InvalidMatch, f, a
         else:
           singleArgImpl(m, impl, arg)
@@ -1048,14 +1131,14 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
       if a.typeKind == NiltT:
         discard "ok"
         inc f
-        expectParRi m, f
+        expectPtrParRi m, f
       elif isStringType(a) and skipExpr(arg.n).kind == StringLit:
         m.args.addParLe HconvX, m.argInfo
         m.args.addSubtree f
         inc m.opened
         inc m.convCosts
         inc f
-        expectParRi m, f
+        expectPtrParRi m, f
       elif a.typeKind == CstringT:
         inc f
         inc a
@@ -1069,7 +1152,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
       of NiltT:
         discard "ok"
         inc f
-        expectParRi m, f
+        expectPtrParRi m, f
       of PtrT, CstringT, RoutineTypes:
         m.args.addParLe HconvX, m.argInfo
         m.args.addSubtree f
@@ -1159,7 +1242,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         procTypeMatch m, f, a
       else:
         m.error InvalidMatch, f, a
-    of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, NiltT, OrT, AndT, NotT,
+    of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, AnumT, NiltT, OrT, AndT, NotT,
         ConceptT, DistinctT, StaticT, ItertypeT, AutoT, SymKindT, TypeKindT, OrdinalT:
       m.error UnhandledTypeBug, f, f
   else:
@@ -1240,7 +1323,7 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: CallArg) =
     if not m.err:
       if containsGenericParams(f): # maybe restrict to params of this routine
         # element type needs to be instantiated:
-        m.checkEmptyArg = true
+        m.refineArgType = true
       m.args.add arg.n.load # copy tag
       m.args.takeTree f
       m.args.addParRi()
@@ -1251,7 +1334,7 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: CallArg) =
       if not m.err:
         # call to `@` needs to be instantiated/template expanded,
         # also the element type needs to be instantiated if generic:
-        m.checkEmptyArg = true
+        m.refineArgType = true
         # keep the call to `@` but give the array constructor the element type:
         var call = arg.n
         m.args.add call.load # copy call tag

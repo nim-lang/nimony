@@ -10,7 +10,7 @@
 ## NIFC driver program.
 
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
-import codegen, noptions, mangler, symparser
+import codegen, llvmcodegen, noptions, symparser
 
 when defined(windows):
   import bat
@@ -28,7 +28,7 @@ const
 Usage:
   nifc [options] [command] [arguments]
 Command:
-  c|cpp|n file.nif [file2.nif]    convert NIF files to C|C++|ASM
+  c|cpp|n|llvm file.nif [file2.nif]    convert NIF files to C|C++|ASM|LLVM IR
 
 Options:
   -r, --run                 run the makefile and the compiled program
@@ -39,6 +39,8 @@ Options:
   --lineDir:on|off          generation of #line directive on|off
   --bits:N                  `(i -1)` has N bits; possible values: 64, 32, 16
   --nimcache:PATH           set the path used for generated files
+  --app:console|gui|lib|staticlib
+                            set the application type (default: console)
   --version                 show the version
   --help                    show this help
 """
@@ -66,6 +68,17 @@ proc generateBackend(s: var State; action: Action; files: seq[string]; flags: se
   let outp = s.config.nifcacheDir / splitModulePath(inp).name & destExt
   generateCode s, inp, outp, flags
 
+proc generateLLVMBackend(s: var State; files: seq[string]; flags: set[LLVMGenFlag]) =
+  if files.len == 0:
+    quit "command takes a filename"
+  for i in 0..<files.len-1:
+    let inp = files[i]
+    let outp = s.config.nifcacheDir / splitModulePath(inp).name & ".ll"
+    generateLLVMCode s, inp, outp, {}
+  let inp = files[^1]
+  let outp = s.config.nifcacheDir / splitModulePath(inp).name & ".ll"
+  generateLLVMCode s, inp, outp, flags
+
 proc handleCmdLine() =
   var toRun = false
   var compileOnly = false
@@ -80,6 +93,7 @@ proc handleCmdLine() =
   else:
     s.config.cCompiler = ccGcc
   s.config.nifcacheDir = "nimcache"
+  s.config.appType = appConsole # console is the default
 
   for kind, key, val in getopt():
     case kind
@@ -97,6 +111,10 @@ proc handleCmdLine() =
         currentAction = atNative
         if not hasKey(actionTable, atNative):
           actionTable[atNative] = @[]
+      of "llvm":
+        currentAction = atLLVM
+        if not hasKey(actionTable, atLLVM):
+          actionTable[atLLVM] = @[]
       else:
         case currentAction
         of atC:
@@ -105,6 +123,8 @@ proc handleCmdLine() =
           actionTable[atCpp].add key
         of atNative:
           actionTable[atNative].add key
+        of atLLVM:
+          actionTable[atLLVM].add key
         of atNone:
           quit "invalid command: " & key
     of cmdLongOption, cmdShortOption:
@@ -150,6 +170,18 @@ proc handleCmdLine() =
         s.config.nifcacheDir = val
       of "out", "o":
         s.config.outputFile = val
+      of "app":
+        case normalize(val)
+        of "console":
+          s.config.appType = appConsole
+        of "gui":
+          s.config.appType = appGui
+        of "lib":
+          s.config.appType = appLib
+        of "staticlib":
+          s.config.appType = appStaticLib
+        else:
+          quit "invalid value for --app; expected console, gui, lib, or staticlib"
       else: writeHelp()
     of cmdEnd: assert false, "cannot happen"
 
@@ -159,9 +191,7 @@ proc handleCmdLine() =
       case action
       of atC, atCpp:
         let isLast = (if compileOnly: isMain else: currentAction == action)
-        var flags = if isLast: {gfMainModule} else: {}
-        if isMain:
-          flags.incl gfProducesMainProc
+        let flags = if isLast: {codegen.gfMainModule} else: {}
         generateBackend(s, action, actionTable[action], flags)
       of atNative:
         let args = actionTable[action]
@@ -174,6 +204,10 @@ proc handleCmdLine() =
               generateAsm inp, s.config.nifcacheDir / outp
           else:
             quit "wasn't built with native target support"
+      of atLLVM:
+        let isLast = (if compileOnly: isMain else: currentAction == action)
+        let llvmFlags = if isLast: {llvmcodegen.gfMainModule} else: {}
+        generateLLVMBackend(s, actionTable[action], llvmFlags)
       of atNone:
         quit "targets are not specified"
 
