@@ -8,16 +8,23 @@
 ##
 ## A proc's body produces a list of :ref:`Implication` values that tell us,
 ## at the current program point, which symbols are definitely written and
-## under which cfvar hypotheses.  Three shapes cover everything we need:
+## under which "cond" hypotheses.  Three shapes cover everything we need:
 ##
 ## - ``Always s``          — `s` is written on every path that reaches here.
-## - ``IfTrue  cf s``      — `s` is written whenever cfvar `cf` is true.
-## - ``IfFalse cf s``      — `s` is written whenever cfvar `cf` is false.
+## - ``IfTrue  cond s``    — `s` is written whenever `cond` evaluates true.
+## - ``IfFalse cond s``    — `s` is written whenever `cond` evaluates false.
 ##
-## Conditional implications are produced by :proc:`combine` at each ite join
-## from the per-branch implications; the caller does not need to distinguish
-## regular variable writes from cfvars activated via ``jtrue`` — a jtrue is
-## just an ``Always cfvar`` contribution to the relevant branch.
+## A "cond" is identified by a ``SymId``.  Two flavours share this namespace:
+## *cfvars* (mflags declared by the NJVL pass and set via ``jtrue``) and
+## *synthetic cond syms* — fresh symbols the caller mints for complex ite
+## conditions that aren't a cfvar (`(a.len == b.len)`, `(etupat …)` …).  A
+## jtrue of a cfvar is just an ``Always cfvar`` fact contributed by the
+## branch, which lets :proc:`combine` derive further implications via the
+## asymmetric-jtrue rule for cfvars.
+##
+## Since both flavours live in the same namespace, transitive reasoning
+## over conditions — ``IfTrue cond1 cond2`` + ``IfTrue cond2 s`` implies
+## ``IfTrue cond1 s`` — flows across cfvars and synthetics uniformly.
 
 import std / [sets, assertions]
 include ".." / lib / nifprelude
@@ -26,21 +33,26 @@ import nimony_model
 type
   ImplKind* = enum
     Always      ## `s` is written on every reaching path
-    IfTrue      ## `s` is written whenever `cfvar` is true
-    IfFalse     ## `s` is written whenever `cfvar` is false
+    IfTrue      ## `s` is written whenever `cond` is true
+    IfFalse     ## `s` is written whenever `cond` is false
 
   Implication* = object
     kind*: ImplKind
-    cfvar*: SymId           ## `NoSymId` for ``Always``
+    cond*: SymId            ## `NoSymId` for ``Always``; otherwise either a
+                            ## cfvar or a synthetic cond sym minted by the
+                            ## caller for a complex ite condition.
     sym*: SymId
 
   PolarizedSym* = object
-    ## Classifies the shape of an ite's condition.
-    ## ``sym == NoSymId`` — the condition is not a cfvar expression.
-    ## ``negated == true`` — the condition has the shape ``(not cf)``, so
-    ## the ite's lexical then-branch runs when ``cf`` is false.
+    ## Represents an ite's condition as a polarized cond sym.  The caller
+    ## is expected to supply a non-``NoSymId`` `sym` for every real ite
+    ## (minting a synthetic when the condition isn't a cfvar); passing
+    ## ``NoSymId`` means "no recognizable cond" and disables cond-polarity
+    ## lifting in :proc:`combine`.
     sym*: SymId
-    negated*: bool
+    negated*: bool            ## the ite's condition is ``(not sym)`` —
+                              ## the lexical then-branch runs when `sym`
+                              ## is false.
 
   Implications* = object
     items: seq[Implication]
@@ -83,19 +95,19 @@ proc add*(impls: var Implications; imp: Implication) =
     let compKind = if imp.kind == IfTrue: IfFalse else: IfTrue
     for i in impls.startIdx ..< impls.items.len:
       let other = impls.items[i]
-      if other.kind == compKind and other.cfvar == imp.cfvar and other.sym == imp.sym:
-        impls.items[i] = Implication(kind: Always, cfvar: NoSymId, sym: imp.sym)
+      if other.kind == compKind and other.cond == imp.cond and other.sym == imp.sym:
+        impls.items[i] = Implication(kind: Always, cond: NoSymId, sym: imp.sym)
         return
   impls.items.add imp
 
 proc always*(sym: SymId): Implication {.inline.} =
-  Implication(kind: Always, cfvar: NoSymId, sym: sym)
+  Implication(kind: Always, cond: NoSymId, sym: sym)
 
-proc ifTrue*(cfvar, sym: SymId): Implication {.inline.} =
-  Implication(kind: IfTrue, cfvar: cfvar, sym: sym)
+proc ifTrue*(cond, sym: SymId): Implication {.inline.} =
+  Implication(kind: IfTrue, cond: cond, sym: sym)
 
-proc ifFalse*(cfvar, sym: SymId): Implication {.inline.} =
-  Implication(kind: IfFalse, cfvar: cfvar, sym: sym)
+proc ifFalse*(cond, sym: SymId): Implication {.inline.} =
+  Implication(kind: IfFalse, cond: cond, sym: sym)
 
 # ---- queries --------------------------------------------------------------
 
@@ -110,47 +122,47 @@ proc isAlwaysInit*(impls: Implications; sym: SymId): bool =
     let imp = impls.items[i]
     if imp.kind == Always and imp.sym == sym: return true
 
-proc isInitIfCfTrueImpl(impls: Implications; sym: SymId; cf: SymId;
-                       visited: var HashSet[SymId]): bool =
-  ## sym is init when cf is true — directly or via transitive `IfTrue`
-  ## implications between cfvars (e.g. ``IfTrue cf x`` + ``IfTrue x sym``).
-  if cf in visited: return false
-  visited.incl cf
+proc isInitIfCondTrueImpl(impls: Implications; sym: SymId; cond: SymId;
+                          visited: var HashSet[SymId]): bool =
+  ## sym is init when `cond` is true — directly (``Always`` / ``IfTrue cond
+  ## sym``) or via transitive chains (``IfTrue cond x`` + ``IfTrue x sym``).
+  if cond in visited: return false
+  visited.incl cond
   for i in impls.startIdx ..< impls.items.len:
     let imp = impls.items[i]
     if imp.sym == sym:
       if imp.kind == Always: return true
-      if imp.kind == IfTrue and imp.cfvar == cf: return true
+      if imp.kind == IfTrue and imp.cond == cond: return true
   for i in impls.startIdx ..< impls.items.len:
     let imp = impls.items[i]
-    if imp.kind == IfTrue and imp.cfvar == cf:
-      if isInitIfCfTrueImpl(impls, sym, imp.sym, visited): return true
+    if imp.kind == IfTrue and imp.cond == cond:
+      if isInitIfCondTrueImpl(impls, sym, imp.sym, visited): return true
   return false
 
-proc isInitIfCfFalseImpl(impls: Implications; sym: SymId; cf: SymId;
-                        visited: var HashSet[SymId]): bool =
-  ## sym is init when cf is false — directly or via transitive implications
-  ## (``IfFalse cf x`` + ``IfFalse x sym``, or any `Always` fact).
-  if cf in visited: return false
-  visited.incl cf
+proc isInitIfCondFalseImpl(impls: Implications; sym: SymId; cond: SymId;
+                           visited: var HashSet[SymId]): bool =
+  ## sym is init when `cond` is false — directly or via transitive
+  ## ``IfFalse cond x`` + ``IfFalse x sym`` chains, or any ``Always`` fact.
+  if cond in visited: return false
+  visited.incl cond
   for i in impls.startIdx ..< impls.items.len:
     let imp = impls.items[i]
     if imp.sym == sym:
       if imp.kind == Always: return true
-      if imp.kind == IfFalse and imp.cfvar == cf: return true
+      if imp.kind == IfFalse and imp.cond == cond: return true
   for i in impls.startIdx ..< impls.items.len:
     let imp = impls.items[i]
-    if imp.kind == IfFalse and imp.cfvar == cf:
-      if isInitIfCfFalseImpl(impls, sym, imp.sym, visited): return true
+    if imp.kind == IfFalse and imp.cond == cond:
+      if isInitIfCondFalseImpl(impls, sym, imp.sym, visited): return true
   return false
 
-proc isInitIfCfTrue*(impls: Implications; sym: SymId; cf: SymId): bool =
+proc isInitIfCondTrue*(impls: Implications; sym, cond: SymId): bool =
   var visited = initHashSet[SymId]()
-  isInitIfCfTrueImpl(impls, sym, cf, visited)
+  isInitIfCondTrueImpl(impls, sym, cond, visited)
 
-proc isInitIfCfFalse*(impls: Implications; sym: SymId; cf: SymId): bool =
+proc isInitIfCondFalse*(impls: Implications; sym, cond: SymId): bool =
   var visited = initHashSet[SymId]()
-  isInitIfCfFalseImpl(impls, sym, cf, visited)
+  isInitIfCondFalseImpl(impls, sym, cond, visited)
 
 # ---- combine --------------------------------------------------------------
 
@@ -164,98 +176,113 @@ proc alwaysSyms(impls: openArray[Implication];
     case imp.kind
     of Always: result.incl imp.sym
     of IfFalse:
-      if imp.cfvar in knownFalse: result.incl imp.sym
+      if imp.cond in knownFalse: result.incl imp.sym
     of IfTrue: discard
 
 proc liftAsymmetric(impls: var Implications;
                     cf: SymId;
-                    sameAlways, otherAlways, inBoth: HashSet[SymId];
+                    sameAlways, otherAlways: HashSet[SymId];
                     sameImpls, otherImpls: openArray[Implication]) =
   ## `cf` was jtrue'd Always in one branch ("same") and not touched in the
   ## other ("other"). After the ite, `cf=true` ⟺ same ran, `cf=false` ⟺
   ## other ran, so each branch's Always facts survive under the matching
   ## cfvar condition. Conditional facts that agree with this polarity
   ## survive unchanged; complementary ones are vacuous and dropped.
-  for s in sameAlways - inBoth:
-    if s != cf:
-      impls.add Implication(kind: IfTrue, cfvar: cf, sym: s)
-  for s in otherAlways - inBoth:
-    if s != cf:
-      impls.add Implication(kind: IfFalse, cfvar: cf, sym: s)
+  for s in sameAlways:
+    if s != cf and s notin otherAlways:
+      impls.add Implication(kind: IfTrue, cond: cf, sym: s)
+  for s in otherAlways:
+    if s != cf and s notin sameAlways:
+      impls.add Implication(kind: IfFalse, cond: cf, sym: s)
   for imp in sameImpls:
-    if imp.kind == IfTrue and imp.cfvar == cf: impls.add imp
+    if imp.kind == IfTrue and imp.cond == cf: impls.add imp
   for imp in otherImpls:
-    if imp.kind == IfFalse and imp.cfvar == cf: impls.add imp
+    if imp.kind == IfFalse and imp.cond == cf: impls.add imp
 
 proc combine*(impls: var Implications;
               nowKnownFalse: var seq[SymId];
               thenImpls, elseImpls: openArray[Implication];
               cond: PolarizedSym;
               knownCfVars: HashSet[SymId];
-              knownFalseCfVars: HashSet[SymId] = initHashSet[SymId]()) =
-  ## Merge the implications produced by an ite's two branches into `impls`,
-  ## using the condition's polarity to lift branch-local ``Always`` facts
-  ## into conditionals, and any cfvars jtrue'd on only one side to derive
-  ## further conditionals via monotonicity.
-  let thenAlways = alwaysSyms(thenImpls, knownFalseCfVars)
-  let elseAlways = alwaysSyms(elseImpls, knownFalseCfVars)
-  let inBoth = thenAlways * elseAlways
+              knownFalseConds: HashSet[SymId] = initHashSet[SymId]()) =
+  ## Merge the implications produced by an ite's two branches into `impls`.
+  ##
+  ## The condition is expected to be a concrete cond sym (cfvar or synthetic
+  ## minted by the caller); a ``NoSymId`` `cond.sym` simply disables
+  ## cond-polarity lifting. `knownCfVars` lists the syms that actually
+  ## represent cfvars (the subset of conds that can be ``jtrue``'d);
+  ## synthetic cond syms participate only through cond-polarity lifting.
+  let thenAlways = alwaysSyms(thenImpls, knownFalseConds)
+  let elseAlways = alwaysSyms(elseImpls, knownFalseConds)
 
-  # Always on both paths survives unconditionally.
-  for s in inBoth: impls.add always(s)
+  # (1) Always on both paths survives unconditionally.
+  for s in thenAlways:
+    if s in elseAlways: impls.add always(s)
 
-  # Lift branch-exclusive Always facts by the condition's polarity.
+  # (2) Lift branch-exclusive Always facts by the condition's polarity.
   if cond.sym != NoSymId:
     let (thenKind, elseKind) =
       if cond.negated: (IfFalse, IfTrue)
       else:            (IfTrue,  IfFalse)
-    for s in thenAlways - inBoth:
-      impls.add Implication(kind: thenKind, cfvar: cond.sym, sym: s)
-    for s in elseAlways - inBoth:
-      impls.add Implication(kind: elseKind, cfvar: cond.sym, sym: s)
+    for s in thenAlways:
+      if s notin elseAlways:
+        impls.add Implication(kind: thenKind, cond: cond.sym, sym: s)
+    for s in elseAlways:
+      if s notin thenAlways:
+        impls.add Implication(kind: elseKind, cond: cond.sym, sym: s)
 
-  # Asymmetric-jtrue reasoning: a cfvar Always-set in exactly one branch
-  # tells us after the ite which branch ran based on the cfvar's value.
-  let thenCfs = thenAlways * knownCfVars
-  let elseCfs = elseAlways * knownCfVars
-  for cf in thenCfs - elseCfs:
-    liftAsymmetric(impls, cf, thenAlways, elseAlways, inBoth, thenImpls, elseImpls)
-  for cf in elseCfs - thenCfs:
-    liftAsymmetric(impls, cf, elseAlways, thenAlways, inBoth, elseImpls, thenImpls)
+  # (3) Asymmetric-jtrue reasoning: a cfvar Always-set in exactly one branch
+  #     tells us after the ite which branch ran based on that cfvar's value.
+  #     We also note whether either branch leaves via any cfvar (step 5).
+  var thenLeaves = false
+  var elseLeaves = false
+  for s in thenAlways:
+    if s in knownCfVars:
+      thenLeaves = true
+      if s notin elseAlways:
+        liftAsymmetric(impls, s, thenAlways, elseAlways, thenImpls, elseImpls)
+  for s in elseAlways:
+    if s in knownCfVars:
+      elseLeaves = true
+      if s notin thenAlways:
+        liftAsymmetric(impls, s, elseAlways, thenAlways, elseImpls, thenImpls)
 
-  # Propagate branch-local conditional facts through the combine. Strictly
-  # these are only valid under the additional premise that the originating
-  # branch ran — a premise our single-cfvar implications cannot encode.
-  # Passing them through is pragmatic: queries like `isInitializedAtProcEnd`
-  # combine them with the ambient cfvar state to conclude initialization
-  # (mirrors the old writesets "impliedByIte" leniency).
+  # (4) Propagate branch-local conditional facts through the combine.
+  #     Strictly only valid under the additional premise that the
+  #     originating branch ran — but queries combine them with the ambient
+  #     cfvar state (via `knownFalseConds`) to decide initialization.
   for imp in thenImpls:
     if imp.kind != Always: impls.add imp
   for imp in elseImpls:
     if imp.kind != Always: impls.add imp
 
-  # When the condition isn't a cfvar, branch-exclusive Always facts
-  # ordinarily drop out of the outer scope. However, if a branch Always
-  # jtrue's a cfvar (leaving-path behaviour), sequential code after the
-  # ite is only reachable via the other branch, so *that* branch's
-  # Always facts hold. We also register the leaving cfvar(s) as
-  # "now-known-false" so the caller can push them to its falseCfvars
-  # set for the rest of the enclosing scope.
-  if cond.sym == NoSymId:
-    let thenCfs = thenAlways * knownCfVars
-    let elseCfs = elseAlways * knownCfVars
-    let thenLeaves = thenCfs.len > 0
-    let elseLeaves = elseCfs.len > 0
-    if thenLeaves and not elseLeaves:
-      for s in elseAlways - inBoth: impls.add always(s)
-      for cf in thenCfs: nowKnownFalse.add cf
-    elif elseLeaves and not thenLeaves:
-      for s in thenAlways - inBoth: impls.add always(s)
-      for cf in elseCfs: nowKnownFalse.add cf
-    elif thenLeaves and elseLeaves:
-      # Both branches leave — no sequential successor. Still, to avoid
-      # spuriously losing writes the compiler relies on, keep each
-      # branch's Always facts as-is (unsound in general; sound when any
-      # post-ite code is anyway guarded by the cfvars they jtrue'd).
-      for s in thenAlways - inBoth: impls.add always(s)
-      for s in elseAlways - inBoth: impls.add always(s)
+  # (5) Leaving-path pragmatic promotion: if a branch unconditionally
+  #     `jtrue`'s a cfvar, sequential code past the ite is only reachable
+  #     via the other branch, so *that* branch's Always facts also hold as
+  #     Always outside the ite. Register the leaving cfvars as now-known-
+  #     false and — when the polarity is compatible — the ite's cond itself.
+  if thenLeaves and not elseLeaves:
+    for s in elseAlways:
+      if s notin thenAlways: impls.add always(s)
+    for s in thenAlways:
+      if s in knownCfVars: nowKnownFalse.add s
+    # Sequential ran else-branch ⟹ actual cond was false.
+    # Only push cond.sym to `nowKnownFalse` when `not cond.negated`
+    # (otherwise cond.sym is known *true*, which this set cannot express).
+    if cond.sym != NoSymId and not cond.negated:
+      nowKnownFalse.add cond.sym
+  elif elseLeaves and not thenLeaves:
+    for s in thenAlways:
+      if s notin elseAlways: impls.add always(s)
+    for s in elseAlways:
+      if s in knownCfVars: nowKnownFalse.add s
+    if cond.sym != NoSymId and cond.negated:
+      nowKnownFalse.add cond.sym
+  elif thenLeaves and elseLeaves:
+    # Both branches leave — any sequential successor is already guarded by
+    # the cfvars they jtrue'd, so pragmatically keep each branch's Always
+    # facts (mirrors the old writesets leniency).
+    for s in thenAlways:
+      if s notin elseAlways: impls.add always(s)
+    for s in elseAlways:
+      if s notin thenAlways: impls.add always(s)

@@ -61,7 +61,12 @@ type
                                         # subsumes both "writesTo" and
                                         # "knownTrueCfVars" — a jtrue'd cfvar
                                         # is just `Always cfvar` in `impls`.
-    falseCfvars: seq[SymId]            # cfvars currently known false (from `(ite (not cf) ...)` nesting)
+    nextCondId: int                    # counter for minting synthetic cond
+                                        # syms for complex ite conditions
+    falseCfvars: seq[SymId]            # cond syms (cfvars or synthetics)
+                                        # currently known false (from
+                                        # `(ite (not cf) ...)` nesting and
+                                        # from leaving-path asymmetries)
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
     activeBorrows: seq[BorrowInfo]
 
@@ -228,10 +233,16 @@ proc endBorrow(c: var NjvlContext; sym: SymId) =
     else:
       inc i
 
-proc conditionCfvar(c: NjvlContext; n: Cursor): PolarizedSym =
-  ## Classify an ite condition against the set of known cfvars.
-  ## Returns a `PolarizedSym` whose `sym` is `NoSymId` when the condition
-  ## is not a cfvar-based expression.
+proc conditionCond(c: var NjvlContext; n: Cursor): PolarizedSym =
+  ## Classify an ite condition into a cond-sym with polarity.
+  ## When the condition is a cfvar (``(v cf …)`` or ``(not cf)``) the
+  ## cfvar itself is used as the cond sym, preserving transitive reasoning
+  ## across chained cfvar implications. For anything else (complex
+  ## expressions, tuple-pattern checks, …) a fresh synthetic sym is
+  ## minted so `combine` can still lift branch-local `Always` facts via
+  ## cond-polarity. Synthetic conds are never ``jtrue``'d, so they don't
+  ## appear in `c.knownCfVars`; they interact with the analysis purely
+  ## through the cond-polarity lift and the `c.falseCfvars` set.
   if n.exprKind == NotX:
     var r = n
     inc r
@@ -241,7 +252,9 @@ proc conditionCfvar(c: NjvlContext; n: Cursor): PolarizedSym =
   let d = extractSymId(n)
   if d != NoSymId and d in c.knownCfVars:
     return PolarizedSym(sym: d, negated: false)
-  result = PolarizedSym(sym: NoSymId, negated: false)
+  inc c.nextCondId
+  let synth = pool.syms.getOrIncl("´cond." & $c.nextCondId & "." & c.moduleSuffix)
+  result = PolarizedSym(sym: synth, negated: false)
 
 proc cfCondKnownValue(c: NjvlContext; n: Cursor): int =
   ## Returns +1 if the condition is a mflag known to be true,
@@ -709,11 +722,11 @@ proc isDirectlyInitialized(c: var NjvlContext; symId: SymId): bool =
 
 proc isEffectivelyInitialized(c: var NjvlContext; symId: SymId): bool =
   ## True if symId is known initialized (directly, always on every path via
-  ## `c.impls`, or via cfvar-based implication when a cfvar is known false).
+  ## `c.impls`, or via cond-based implication when a cond is known false).
   if isDirectlyInitialized(c, symId): return true
   if c.impls.isAlwaysInit(symId): return true
   for cf in c.falseCfvars:
-    if c.impls.isInitIfCfFalse(symId, cf): return true
+    if c.impls.isInitIfCondFalse(symId, cf): return true
   return false
 
 proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
@@ -969,8 +982,9 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     skipParRi n
     return
 
-  # Classify the condition against known cfvars once, up front.
-  let cond = conditionCfvar(c, n)
+  # Classify the condition into a cond sym + polarity. Cfvars reuse their
+  # own sym; complex conditions get a freshly minted synthetic.
+  let cond = conditionCond(c, n)
 
   # Analyze condition and extract facts.
   let savedFacts = save(c.facts)
@@ -1165,10 +1179,10 @@ proc isInitializedAtProcEnd(c: var NjvlContext; symId: SymId): bool =
   if isEffectivelyInitialized(c, symId): return true
   if c.impls.isAlwaysInit(symId): return true
   for cf in c.knownCfVars:
-    if c.impls.isInitIfCfTrue(symId, cf) and c.impls.isInitIfCfFalse(symId, cf):
+    if c.impls.isInitIfCondTrue(symId, cf) and c.impls.isInitIfCondFalse(symId, cf):
       return true
   for cf in c.knownCfVars:
-    if c.impls.isInitIfCfFalse(symId, cf): return true
+    if c.impls.isInitIfCondFalse(symId, cf): return true
   return false
 
 proc traverseProc(c: var NjvlContext; n: var Cursor) =
