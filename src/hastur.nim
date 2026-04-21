@@ -708,6 +708,7 @@ const BootstrapModules = [
   "src/lib/stringviews.nim",
   "src/lib/tinyhashes.nim",
   "src/lib/symparser.nim",
+  "src/lib/argsfinder.nim",
   "src/lib/bitabs.nim",
   "src/lib/lineinfos.nim",
   "src/lib/nifbuilder.nim",
@@ -733,6 +734,7 @@ const BootstrapModules = [
 # Modules whose `isMainModule` block should also be executed after compilation.
 const RunnableBootstrapModules = [
   "src/lib/bitabs.nim",
+  "src/lib/argsfinder.nim",
 ]
 
 proc bootstrapTests() =

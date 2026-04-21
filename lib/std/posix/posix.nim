@@ -108,6 +108,8 @@ when defined(posix):
   proc getcwd*(a1: cstring, a2: int): cstring {.importc, header: "<unistd.h>", sideEffect.}
   proc chdir*(path: cstring): cint {.importc, header: "<unistd.h>", sideEffect.}
 
+  proc realpath*(path, resolved: cstring): cstring {.importc, header: "<stdlib.h>", sideEffect.}
+
   when not defined(nintendoswitch):
     proc readlink*(a1, a2: cstring, a3: int): int {.importc, header: "<unistd.h>".}
 

@@ -150,6 +150,22 @@ proc readLine*(f: File; s: var string): bool =
   s.shrink 0
   addReadLine f, s
 
+iterator lines*(filename: string): string {.sideEffect.} =
+  ## Iterates over every line in `filename`. Silently returns no lines if the
+  ## file cannot be opened.
+  var f: File
+  if open(f, filename, fmRead):
+    var line = ""
+    while readLine(f, line):
+      yield line
+    discard fclose(f)
+
+iterator lines*(f: File): string {.sideEffect.} =
+  ## Iterates over every remaining line of an already opened file.
+  var line = ""
+  while readLine(f, line):
+    yield line
+
 proc exit(value: int32) {.importc: "exit", header: "<stdlib.h>".}
 proc quit*(value: int) {.noreturn.} = exit(value.int32)
 
