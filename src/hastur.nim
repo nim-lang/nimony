@@ -741,6 +741,13 @@ const BootstrapModules = [
   "src/nimony/nifconfig.nim",
   "src/nimony/reporters.nim",
   "src/lib/nifindexes.nim",
+  # Tier 5 -- Basic nimony types and helpers.
+  "src/nimony/builtintypes.nim",
+  "src/nimony/symtabs.nim",
+  "src/nimony/implications.nim",
+  "src/nimony/magics.nim",
+  "src/nimony/decls.nim",
+  "src/nimony/asthelpers.nim",
 ]
 
 # Modules whose `isMainModule` block should also be executed after compilation.

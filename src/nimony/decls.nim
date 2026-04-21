@@ -10,8 +10,10 @@ import std / [assertions, syncio]
 import ".." / lib / [nifstreams, nifcursors, lineinfos]
 import ".." / nimony / [nimony_model, reporters]
 
+include ".." / lib / compat2
+
 template reportImpl(msg: string; c: Cursor; level: string) =
-  when defined(debug):
+  when defined(debug) and not defined(nimony):
     writeStackTrace()
   write stdout, level
   if isValid(c.info):
@@ -22,7 +24,7 @@ template reportImpl(msg: string; c: Cursor; level: string) =
   quit 1
 
 template reportImpl(msg: string; level: string) =
-  when defined(debug):
+  when defined(debug) and not defined(nimony):
     writeStackTrace()
   write stdout, level
   writeLine stdout, msg
@@ -35,11 +37,13 @@ proc error*(msg: string) {.noreturn.} =
   reportImpl(msg, "[Error] ")
 
 proc bug*(msg: string; c: Cursor) {.noreturn.} =
-  writeStackTrace()
+  when not defined(nimony):
+    writeStackTrace()
   reportImpl(msg, c, "[Bug] ")
 
 proc bug*(msg: string) {.noreturn.} =
-  writeStackTrace()
+  when not defined(nimony):
+    writeStackTrace()
   reportImpl(msg, "[Bug] ")
 
 proc isRoutine*(t: SymKind): bool {.inline.} =
