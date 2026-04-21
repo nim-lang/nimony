@@ -1675,6 +1675,18 @@ proc semPragmas(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
             dest.addParLe PragmasU, info
             pragmaOpen = true
           semPragma c, dest, n2, crucial, kind
+    # `{.feature: "untyped".}` applies only within the current module, but the
+    # relaxed semcheck it enables is needed at every instantiation site. Stamp
+    # `UntypedP` onto generics/templates here so the flag travels with the
+    # decl and `untypedIsActive` picks it up across module boundaries.
+    if UntypedFeature in c.features and kind.isRoutine and c.routine.inGeneric > 0 and
+        UntypedP notin crucial.flags:
+      if not pragmaOpen:
+        dest.addParLe PragmasU, info
+        pragmaOpen = true
+      crucial.flags.incl UntypedP
+      dest.addParLe UntypedP, info
+      dest.addParRi()
     if pragmaOpen:
       dest.addParRi()
     else:
