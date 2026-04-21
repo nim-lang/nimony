@@ -108,13 +108,6 @@ type
     converters*: seq[(SymId, SymId)] # string is for compat with `methods`
     exportBuf*: TokenBuf
 
-when defined(nimony):
-  # TODO: Nimony's hook inheritance (lifter/derefs/duplifier) should see that
-  # TokenBuf's {.error.}=copy makes IndexSections uncopyable too, but currently
-  # the final-build pass flags an instantiation we couldn't pinpoint. Disable
-  # copy explicitly as a workaround.
-  proc `=copy`(dest: var IndexSections; src: IndexSections) {.error.}
-
 proc getSymbolSection(tag: TagId; values: seq[(SymId, SymId)]): TokenBuf =
   result = createTokenBuf(30)
   result.addParLe tag
