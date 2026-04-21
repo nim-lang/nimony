@@ -915,6 +915,11 @@ proc semConvArg(c: var SemContext; dest: var TokenBuf; destType: Cursor; arg: It
       # between different integer sizes or object types and then
       # `m.args` contains these so use them here:
       dest.add m.args
+      # retag the wrapping `(conv ...)` as `(dconv ...)` so later phases
+      # (e.g. derefs.nim) recognize it as a distinct conversion, which is
+      # lvalue-preserving and therefore passable to `var T` parameters.
+      if dest[beforeExpr].exprKind == ConvX:
+        dest[beforeExpr] = parLeToken(DconvX, dest[beforeExpr].info)
   else:
     # maybe object types with an inheritance relation?
     var matchArg = arg
@@ -1678,6 +1683,17 @@ proc semPragmas(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
           semPragma c, dest, n2, crucial, kind
     if kind == IteratorY and ClosureP in crucial.flags and PassiveP notin crucial.flags:
       dest.add parLeToken(PassiveP, info)
+    # `{.feature: "untyped".}` applies only within the current module, but the
+    # relaxed semcheck it enables is needed at every instantiation site. Stamp
+    # `UntypedP` onto generics/templates here so the flag travels with the
+    # decl and `untypedIsActive` picks it up across module boundaries.
+    if UntypedFeature in c.features and kind.isRoutine and c.routine.inGeneric > 0 and
+        UntypedP notin crucial.flags:
+      if not pragmaOpen:
+        dest.addParLe PragmasU, info
+        pragmaOpen = true
+      crucial.flags.incl UntypedP
+      dest.addParLe UntypedP, info
       dest.addParRi()
     if pragmaOpen:
       dest.addParRi()
