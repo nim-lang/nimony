@@ -38,7 +38,7 @@ proc rollbackShadowScope*(s: Scope) =
   for k, oldLen in pairs(s.undo[last]):
     # `k` was recorded here when we shadowed it, so the entry exists; use
     # `mgetOrPut` rather than `[]` to stay non-raising.
-    s.tab.mgetOrPut(k, default(seq[Sym])).shrink oldLen
+    s.tab.mgetOrPut(k, @[]).shrink oldLen
   s.undo.shrink last
 
 proc remember(s: Scope; name: StrId) {.inline.} =
@@ -60,7 +60,7 @@ proc isUnderscore*(lit: StrId): bool =
 proc addOverloadable*(s: Scope; name: StrId; sym: Sym) =
   if not isUnderscore(name):
     s.remember name
-    s.tab.mgetOrPut(name, default(seq[Sym])).add sym
+    s.tab.mgetOrPut(name, @[]).add sym
 
 proc removeOverloadable*(s: Scope; name: StrId; symId: SymId) =
   ## Remove a symbol from the overload set. Used for forward declaration merging.
@@ -89,7 +89,7 @@ proc addNonOverloadable*(s: Scope; name: StrId; sym: Sym): AddStatus =
   if existing.len == 0:
     # no error
     s.rememberZero name
-    s.tab.mgetOrPut(name, default(seq[Sym])).add sym
+    s.tab.mgetOrPut(name, @[]).add sym
     result = Success
   else:
     # error: symbol already exists of the same name:
