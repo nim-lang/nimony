@@ -4,9 +4,7 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-import std / [syncio, strutils, os, assertions, sets]
-when not defined(nimony):
-  import std / terminal
+import std / [syncio, strutils, os, assertions, sets, terminal]
 import ".." / lib / [nifstreams, nifcursors, bitabs, lineinfos]
 
 include ".." / lib / compat2
@@ -28,10 +26,7 @@ type
     reportedErrSources: HashSet[PackedLineInfo]
 
 
-when defined(nimony):
-  proc useColors*(): bool = false
-else:
-  proc useColors*(): bool = terminal.isatty(stdout)
+proc useColors*(): bool = terminal.isatty(stdout)
 
 proc writeMessage(c: var Reporter; category: string; p, arg: string) =
   var msg = p
@@ -44,20 +39,23 @@ proc writeMessage(c: var Reporter; k: MsgKind; p, arg: string) =
   if k == Trace and c.verbosity < 1: return
   elif k == Debug and c.verbosity < 2: return
 
-  when defined(nimony):
+  if c.noColors:
     writeMessage(c, $k, p, arg)
   else:
-    if c.noColors:
-      writeMessage(c, $k, p, arg)
-    else:
-      let (color, style) =
-        case k
-        of Debug: (fgWhite, styleDim)
-        of Trace: (fgBlue, styleBright)
-        of Info: (fgGreen, styleBright)
-        of Warning: (fgYellow, styleBright)
-        of Error: (fgRed, styleBright)
-      stdout.styledWriteLine(fgCyan, p, " ", resetStyle, color, style, $k, resetStyle, arg)
+    var color: ForegroundColor
+    var style: Style
+    case k
+    of Debug:
+      color = fgWhite; style = styleDim
+    of Trace:
+      color = fgBlue; style = styleBright
+    of Info:
+      color = fgGreen; style = styleBright
+    of Warning:
+      color = fgYellow; style = styleBright
+    of Error:
+      color = fgRed; style = styleBright
+    stdout.styledWriteLine(fgCyan, p, " ", resetStyle, color, style, $k, resetStyle, arg)
 
 proc message(c: var Reporter; k: MsgKind; p, arg: string) =
   ## collects messages or prints them out immediately
