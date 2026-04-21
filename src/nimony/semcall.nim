@@ -274,9 +274,12 @@ proc untypedCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var Ca
   for a in cs.args:
     # XXX call semTemplBody for orig instead?
     dest.addSubtree a.n
+  # close the `(call ...)` tree before `typeofCallIs`, otherwise `commonType`
+  # hands `typematch` a cursor over an unterminated subtree and `addSubtree`
+  # walks past the buffer end (assertion in nifcursors.load).
+  takeParRi dest, it.n
   # untyped propagates to the result type:
   typeofCallIs c, dest, it, cs.beforeCall, c.types.untypedType
-  takeParRi dest, it.n
 
 proc semConvFromCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: CallState) =
   let beforeExpr = dest.len

@@ -9,8 +9,10 @@
 import std / [tables, assertions, syncio]
 import bitabs, lineinfos, nifreader, nifstreams, nifcursors, nifchecksums, symparser
 
-#import std / [sha1]
-import "$nim"/dist/checksums/src/checksums/sha1
+when defined(nimony):
+  import std / sha1
+else:
+  import "$nim"/dist/checksums/src/checksums/sha1
 import ".." / models / [tags, nifindex_tags]
 
 proc entryKind(tag: TagId): NifIndexKind =
