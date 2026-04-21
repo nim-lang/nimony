@@ -1632,11 +1632,11 @@ proc semPragmas(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
   var pragmaOpen = false
   let info = n.info
   if n.kind == DotToken or n.substructureKind == PragmasU:
-    if AutoClosuresFeature in c.features and kind in {ProcY, MethodY, FuncY, ConverterY}:
+    if AutoClosuresFeature in c.features and kind in {ProcY, MethodY, FuncY, ConverterY, IteratorY}:
       var isAutoClosure = false
       var it = c.routine.parent
       while it != nil:
-        if it.kind in {ProcY, MethodY, FuncY, ConverterY}:
+        if it.kind in {ProcY, MethodY, FuncY, ConverterY, IteratorY}:
           isAutoClosure = true
           break
         it = it.parent
@@ -1676,6 +1676,9 @@ proc semPragmas(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
             dest.addParLe PragmasU, info
             pragmaOpen = true
           semPragma c, dest, n2, crucial, kind
+    if kind == IteratorY and ClosureP in crucial.flags and PassiveP notin crucial.flags:
+      dest.add parLeToken(PassiveP, info)
+      dest.addParRi()
     if pragmaOpen:
       dest.addParRi()
     else:

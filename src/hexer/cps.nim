@@ -288,16 +288,14 @@ proc emitStackFrameTag(c: var Context; dest: var TokenBuf; coroVar: SymId; info:
 proc isProc*(c: var Context; s: SymId): bool =
   let res = tryLoadSym(s)
   if res.status == LacksNothing:
-    result = res.decl.symKind == ProcY
+    result = res.decl.symKind in {ProcY, IteratorY}
   else:
     let info = getLocalInfo(c.typeCache, s)
-    result = info.kind == ProcY
+    result = info.kind in {ProcY, IteratorY}
 
 proc isPassive(c: var Context; s: SymId): bool =
   let typ = c.typeCache.lookupSymbol(s)
-  if not cursorIsNil(typ) and procHasPragma(typ, PassiveP):
-    return true
-  return false
+  return not cursorIsNil(typ) and procHasPragma(typ, PassiveP)
 
 proc getNextState(buf: TokenBuf; n: Cursor): int =
   var pos = cursorToPosition(buf, n)
@@ -559,7 +557,7 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     copyInto dest, n:
       tr c, dest, n
-      tr c, dest, n    
+      tr c, dest, n
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let sym = n.firstSon.symId
@@ -1399,7 +1397,10 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       if field.def != field.use or n.symId == c.currentProc.resultSym:
         let info = n.info
         let isResult = n.symId == c.currentProc.resultSym
+        let isIterator = c.currentProc.kind == IsIterator
         if isResult:
+          if isIterator:
+            dest.addParLe TupatX, info
           dest.addParLe DerefX, info
         dest.copyIntoKind DotX, info:
           dest.copyIntoKind DerefX, info:
@@ -1407,6 +1408,9 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.addSymUse field.field, info
         if isResult:
           dest.addParRi()
+          if isIterator:
+            dest.addIntLit 0, info
+            dest.addParRi()
         inc n
       else:
         takeTree dest, n
@@ -1542,9 +1546,34 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           else:
             var valueBuf = createTokenBuf(16)
             tr c, valueBuf, n # value (first operand)
+            let updateIteratorCont = c.currentProc.kind == IsIterator and n.kind == Symbol and
+              c.currentProc.resultSym == n.symId
             dest.copyIntoKind AsgnS, info:
               tr c, dest, n   # dest (second operand)
               dest.add valueBuf
+            if updateIteratorCont:
+              let field = c.currentProc.localToEnv.getOrDefault(c.currentProc.resultSym)
+              let state = getNextState(c.currentProc.cf, n)
+              dest.copyIntoKind AsgnS, info:
+                dest.copyIntoKind TupatX, info:
+                  dest.copyIntoKind DerefX, info:
+                    dest.copyIntoKind DotX, info:
+                      dest.copyIntoKind DerefX, info:
+                        dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+                      dest.addSymUse field.field, info
+                  dest.addIntLit 1, info
+                if state == -1:
+                  # Pass StopContinuation
+                  dest.copyIntoKind OconstrX, info:
+                    dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+                    dest.copyIntoKind KvU, info:
+                      dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
+                      dest.addParPair NilX, info
+                    dest.copyIntoKind KvU, info:
+                      dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
+                      dest.addParPair NilX, info
+                else:
+                  contNextState(c, dest, state, info)
           skipParRi n
         of KillV, UnknownV:
           skip n  # NJ bookkeeping, not needed in CPS output

@@ -903,8 +903,9 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       var retTypePos = dest.len
       semLocalTypeImpl c, dest, n, InReturnTypeDecl
       var crucial = default CrucialPragma
-      semPragmas c, dest, n, crucial, ProcY
-      if tk in {IteratorT, ItertypeT} and ClosureP in crucial.flags:
+      let isIterator = tk in {IteratorT, ItertypeT}
+      semPragmas c, dest, n, crucial, if isIterator: IteratorY else: ProcY
+      if isIterator and ClosureP in crucial.flags:
         var cursor = dest.cursorAt(retTypePos)
         var transformType = false
         if cursor.typeKind != TupleT:
