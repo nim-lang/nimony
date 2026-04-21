@@ -173,6 +173,35 @@ proc quit*(msg: string) {.noreturn.} =
   echo msg
   quit 1
 
+const ReadBufSize = 4000
+
+proc readAll*(f: File): string {.raises.} =
+  result = ""
+  var buffer = newString(ReadBufSize)
+  while true:
+    let bytesRead = readBuffer(f, beginStore(buffer, ReadBufSize), ReadBufSize)
+    endStore(buffer)
+    if bytesRead == ReadBufSize:
+      result.add buffer
+    else:
+      buffer.setLen bytesRead
+      result.add buffer
+      break
+  if failed(f): raise IOError
+
+proc readFile*(filename: string): string {.raises.} =
+  ## Opens a file named `filename`, reads its entire contents and closes the file.
+  ## Raises `IOError` if the file cannot be opened.
+  result = ""
+  var f: File
+  if open(f, filename):
+    try:
+      result = readAll(f)
+    finally:
+      close(f)
+  else:
+    raise IOError
+
 proc tryWriteFile*(file, content: string): bool =
   var f: File
   if open(f, file, fmWrite):
