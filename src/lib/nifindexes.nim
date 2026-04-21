@@ -6,12 +6,16 @@
 
 ## Create an index file for a NIF file.
 
-import std / [tables, assertions, syncio]
+import std / [tables, assertions, hashes, syncio]
 import bitabs, lineinfos, nifreader, nifstreams, nifcursors, nifchecksums, symparser
 
-#import std / [sha1]
-import "$nim"/dist/checksums/src/checksums/sha1
+when defined(nimony):
+  import std / sha1
+else:
+  import "$nim"/dist/checksums/src/checksums/sha1
 import ".." / models / [tags, nifindex_tags]
+
+include compat2
 
 proc entryKind(tag: TagId): NifIndexKind =
   if rawTagIsNifIndexKind(cast[TagEnum](tag)):
@@ -119,7 +123,7 @@ proc getSymbolSection(tag: TagId; values: seq[(SymId, SymId)]): TokenBuf =
 
   result.addParRi()
 
-proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sections: IndexSections) =
+proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sections: IndexSections) {.canRaise.} =
   let indexName = changeModuleExt(infile, ".s.idx.nif")
   var content = "(.nif24)\n(index\n"
 
@@ -147,11 +151,10 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
   if existingContent != content:
     writeFile(indexName, content)
 
-proc createIndex*(infile: string; buildChecksum: bool; root: PackedLineInfo) =
-  createIndex(infile, root, buildChecksum,
-    IndexSections())
+proc createIndex*(infile: string; buildChecksum: bool; root: PackedLineInfo) {.canRaise.} =
+  createIndex(infile, root, buildChecksum, IndexSections())
 
-proc writeFileAndIndex*(outfile: string; content: TokenBuf) =
+proc writeFileAndIndex*(outfile: string; content: TokenBuf) {.canRaise.} =
   writeFile(content, outfile)
   createIndex(outfile, true, content[0].info)
 
@@ -293,4 +296,7 @@ proc readEmbeddedIndex*(s: var Stream): Table[string, NifIndexEntry] =
 
 when isMainModule:
   import std / [os]
-  createIndex paramStr(1), false, NoLineInfo
+  try:
+    createIndex paramStr(1), false, NoLineInfo
+  except:
+    quit "createIndex failed"

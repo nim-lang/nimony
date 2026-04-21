@@ -41,8 +41,13 @@ type
 
   FileId* = distinct uint32
 
-proc `==`*(a, b: FileId): bool {.borrow.}
-proc `==`*(a, b: PackedLineInfo): bool {.borrow.}
+import std/hashes
+
+func `==`*(a, b: FileId): bool {.borrow.}
+func `==`*(a, b: PackedLineInfo): bool {.borrow.}
+
+func hash*(a: FileId): Hash {.borrow.}
+func hash*(a: PackedLineInfo): Hash {.borrow.}
 
 type
   LineInfoUnpacked* = object

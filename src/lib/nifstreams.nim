@@ -79,19 +79,19 @@ type
     uintegers*: BiTable[UIntId, uint64]
     floats*: BiTableFloat[FloatId]
 
-proc `==`*(a, b: SymId): bool {.borrow.}
-proc `==`*(a, b: StrId): bool {.borrow.}
-proc `==`*(a, b: IntId): bool {.borrow.}
-proc `==`*(a, b: UIntId): bool {.borrow.}
-proc `==`*(a, b: FloatId): bool {.borrow.}
-proc `==`*(a, b: TagId): bool {.borrow.}
+func `==`*(a, b: SymId): bool {.borrow.}
+func `==`*(a, b: StrId): bool {.borrow.}
+func `==`*(a, b: IntId): bool {.borrow.}
+func `==`*(a, b: UIntId): bool {.borrow.}
+func `==`*(a, b: FloatId): bool {.borrow.}
+func `==`*(a, b: TagId): bool {.borrow.}
 
-proc hash*(x: SymId): Hash {.borrow.}
-proc hash*(x: StrId): Hash {.borrow.}
-proc hash*(x: IntId): Hash {.borrow.}
-proc hash*(x: UIntId): Hash {.borrow.}
-proc hash*(x: FloatId): Hash {.borrow.}
-proc hash*(x: TagId): Hash {.borrow.}
+func hash*(x: SymId): Hash {.borrow.}
+func hash*(x: StrId): Hash {.borrow.}
+func hash*(x: IntId): Hash {.borrow.}
+func hash*(x: UIntId): Hash {.borrow.}
+func hash*(x: FloatId): Hash {.borrow.}
+func hash*(x: TagId): Hash {.borrow.}
 
 import ".." / models / tags
 

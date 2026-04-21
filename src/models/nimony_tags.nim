@@ -7,7 +7,7 @@ type
     NoExpr
     ErrX = (ord(ErrTagId), "err")  ## indicates an error
     SufX = (ord(SufTagId), "suf")  ## literal with suffix annotation
-    AtX = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped NIFC form)
+    AtX = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped NIFC form); also used for generic proc/type instantiation `(at callee T1 T2 ...)`
     DerefX = (ord(DerefTagId), "deref")  ## pointer deref operation
     DotX = (ord(DotTagId), "dot")  ## object field selection; optional integer is the inheritance depth of the field
     PatX = (ord(PatTagId), "pat")  ## pointer indexing operation
@@ -196,7 +196,7 @@ type
   NimonyType* = enum
     NoType
     ErrT = (ord(ErrTagId), "err")  ## indicates an error
-    AtT = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped NIFC form)
+    AtT = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped NIFC form); also used for generic proc/type instantiation `(at callee T1 T2 ...)`
     AndT = (ord(AndTagId), "and")  ## boolean `and` operation
     OrT = (ord(OrTagId), "or")  ## boolean `or` operation
     NotT = (ord(NotTagId), "not")  ## boolean `not` operation

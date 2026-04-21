@@ -13,3 +13,7 @@ func addFloat*(result: var string; x: float) {.inline.} =
   result.setLen(newLen)
   for i in 0 .. (n - 1):
     result[oldLen + i] = buf[i]
+
+func `$`*(x: float): string {.inline.} =
+  result = ""
+  result.addFloat x

@@ -4,8 +4,10 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-import std / [syncio, strutils, os, terminal, assertions, sets]
+import std / [syncio, strutils, os, assertions, sets, terminal]
 import ".." / lib / [nifstreams, nifcursors, bitabs, lineinfos]
+
+include ".." / lib / compat2
 
 type
   MsgKind* = enum
@@ -40,13 +42,19 @@ proc writeMessage(c: var Reporter; k: MsgKind; p, arg: string) =
   if c.noColors:
     writeMessage(c, $k, p, arg)
   else:
-    let (color, style) =
-      case k
-      of Debug: (fgWhite, styleDim)
-      of Trace: (fgBlue, styleBright)
-      of Info: (fgGreen, styleBright)
-      of Warning: (fgYellow, styleBright)
-      of Error: (fgRed, styleBright)
+    var color: ForegroundColor
+    var style: Style
+    case k
+    of Debug:
+      color = fgWhite; style = styleDim
+    of Trace:
+      color = fgBlue; style = styleBright
+    of Info:
+      color = fgGreen; style = styleBright
+    of Warning:
+      color = fgYellow; style = styleBright
+    of Error:
+      color = fgRed; style = styleBright
     stdout.styledWriteLine(fgCyan, p, " ", resetStyle, color, style, $k, resetStyle, arg)
 
 proc message(c: var Reporter; k: MsgKind; p, arg: string) =
@@ -59,11 +67,14 @@ proc warn*(c: var Reporter; p, arg: string) =
   # writeMessage c, Warning, p, arg
   inc c.warnings
 
-proc error*(c: var Reporter; p, arg: string) =
-  when defined(debug):
+proc error*(c: var Reporter; p, arg: string) {.canRaise.} =
+  when defined(debug) and not defined(nimony):
     writeStackTrace()
   if c.assertOnError:
-    raise newException(AssertionDefect, p & ": " & arg)
+    when defined(nimony):
+      raise ValueError
+    else:
+      raise newException(AssertionDefect, p & ": " & arg)
   c.message(Error, p, arg)
   inc c.errors
 
@@ -77,11 +88,11 @@ proc debug*(c: var Reporter; p, arg: string) =
   c.message(Debug, p, arg)
 
 proc fatal*(msg: string) =
-  when defined(debug):
+  when defined(debug) and not defined(nimony):
     writeStackTrace()
   quit "[Error] " & msg
 
-proc shortenDir*(x: string): string =
+proc shortenDir*(x: string): string {.canRaise.} =
   var to = getCurrentDir()
   when defined(windows):
     let x = x.replace('\\', '/')
@@ -93,7 +104,7 @@ proc shortenDir*(x: string): string =
   else:
     result = x
 
-proc infoToStr*(info: PackedLineInfo): string =
+proc infoToStr*(info: PackedLineInfo): string {.canRaise.} =
   let rawInfo = unpack(pool.man, info)
   if not info.isValid or not rawInfo.file.isValid:
     result = "???"
@@ -101,7 +112,7 @@ proc infoToStr*(info: PackedLineInfo): string =
     result = pool.files[rawInfo.file].shortenDir()
     result.add "(" & $rawInfo.line & ", " & $(rawInfo.col+1) & ")"
 
-proc reportErrors*(dest: var TokenBuf): int =
+proc reportErrors*(dest: var TokenBuf): int {.canRaise.} =
   let errTag = pool.tags.getOrIncl("err")
   var i = 0
   var r = Reporter(verbosity: 2, noColors: not useColors())

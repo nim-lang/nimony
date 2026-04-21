@@ -786,6 +786,7 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
     c.dest.addEmpty c.info # exc
 
     let a = toTypeImpl typ
+    let bodyStart = c.dest.len
     copyIntoKind(c.dest, StmtsS, c.info):
       maybeAddResultDecl c, paramA, typ
       let beforeUnravel = c.dest.len
@@ -800,6 +801,15 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
           else:
             assert false, "empty hook created for " & toString(typ, false)
       maybeAddReturn c, paramA
+
+    # If this hook ended up calling a `.error.` hook, the synthesized routine
+    # itself becomes `.error.` (see pragma insertion below) and is therefore
+    # unreachable. Drop the body we just built so later passes don't see the
+    # inner calls — those calls would otherwise be flagged against user line
+    # info even though no reachable code path can execute them.
+    if c.calledErrorHook != NoLineInfo:
+      c.dest.shrink bodyStart
+      copyIntoKind(c.dest, StmtsS, c.info): discard
   # tell vtables.nim we need dynamic binding here:
   if c.routineKind == MethodY:
     c.dest[procStart] = parLeToken(MethodS, c.info)
