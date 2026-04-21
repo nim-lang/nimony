@@ -914,6 +914,11 @@ proc semConvArg(c: var SemContext; dest: var TokenBuf; destType: Cursor; arg: It
       # between different integer sizes or object types and then
       # `m.args` contains these so use them here:
       dest.add m.args
+      # retag the wrapping `(conv ...)` as `(dconv ...)` so later phases
+      # (e.g. derefs.nim) recognize it as a distinct conversion, which is
+      # lvalue-preserving and therefore passable to `var T` parameters.
+      if dest[beforeExpr].exprKind == ConvX:
+        dest[beforeExpr] = parLeToken(DconvX, dest[beforeExpr].info)
   else:
     # maybe object types with an inheritance relation?
     var matchArg = arg
