@@ -261,6 +261,20 @@ proc semExportSymbol(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
       return
     discard buildSymChoice(c, dest, ident, info, FindAll)
 
+proc registerExportName(c: var SemContext; moduleSym: SymId; strId: StrId) =
+  if moduleSym in c.exports:
+    case c.exports[moduleSym].kind
+    of ImportAll:
+      # nothing to do, already exported
+      discard
+    of FromImport:
+      c.exports[moduleSym].list.incl strId
+    of ImportExcept:
+      c.exports[moduleSym].list.excl strId
+  else:
+    c.exports[moduleSym] = ImportFilter(kind: FromImport, list: initHashSet[StrId]())
+    c.exports[moduleSym].list.incl strId
+
 proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: PackedLineInfo) =
   let res = tryLoadSym(sym)
   let isModule = res.status == LacksNothing and res.decl.symKind == ModuleY
@@ -278,21 +292,25 @@ proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: PackedLin
       c.buildErr dest, info, "exporting local symbol not implemented"
       return
     let moduleSym = c.processedModules[suffix]
-    var basename = ensureMove name
+    var basename = name
     extractBasename(basename)
-    let strId = pool.strings.getOrIncl(basename)
-    if moduleSym in c.exports:
-      case c.exports[moduleSym].kind
-      of ImportAll:
-        # nothing to do, already exported
-        discard
-      of FromImport:
-        c.exports[moduleSym].list.incl strId
-      of ImportExcept:
-        c.exports[moduleSym].list.excl strId
-    else:
-      c.exports[moduleSym] = ImportFilter(kind: FromImport, list: initHashSet[StrId]())
-      c.exports[moduleSym].list.incl strId
+    registerExportName(c, moduleSym, pool.strings.getOrIncl(basename))
+    # Enum types carry their fields as separately-named symbols. Exporting only
+    # the type name leaves the field names filtered out at the import site
+    # (e.g. `export NifKind` wouldn't bring `ParLe`/`DotToken` into scope).
+    # Walk the enum body and enroll each field basename in the same filter.
+    if res.status == LacksNothing and res.decl.symKind == TypeY:
+      let decl = asTypeDecl(res.decl)
+      if decl.body.typeKind in {EnumT, OnumT, HoleyEnumT, AnumT}:
+        var field = asEnumDecl(decl.body).firstField
+        while field.kind != ParRi:
+          if field.substructureKind == EfldU:
+            let local = asLocal(field)
+            if local.name.kind == SymbolDef:
+              var fname = pool.syms[local.name.symId]
+              extractBasename(fname)
+              registerExportName(c, moduleSym, pool.strings.getOrIncl(fname))
+          skip field
 
 proc semExport(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info

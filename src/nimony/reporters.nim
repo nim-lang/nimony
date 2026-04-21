@@ -4,8 +4,12 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-import std / [syncio, strutils, os, terminal, assertions, sets]
+import std / [syncio, strutils, os, assertions, sets]
+when not defined(nimony):
+  import std / terminal
 import ".." / lib / [nifstreams, nifcursors, bitabs, lineinfos]
+
+include ".." / lib / compat2
 
 type
   MsgKind* = enum
@@ -24,7 +28,10 @@ type
     reportedErrSources: HashSet[PackedLineInfo]
 
 
-proc useColors*(): bool = terminal.isatty(stdout)
+when defined(nimony):
+  proc useColors*(): bool = false
+else:
+  proc useColors*(): bool = terminal.isatty(stdout)
 
 proc writeMessage(c: var Reporter; category: string; p, arg: string) =
   var msg = p
@@ -37,17 +44,20 @@ proc writeMessage(c: var Reporter; k: MsgKind; p, arg: string) =
   if k == Trace and c.verbosity < 1: return
   elif k == Debug and c.verbosity < 2: return
 
-  if c.noColors:
+  when defined(nimony):
     writeMessage(c, $k, p, arg)
   else:
-    let (color, style) =
-      case k
-      of Debug: (fgWhite, styleDim)
-      of Trace: (fgBlue, styleBright)
-      of Info: (fgGreen, styleBright)
-      of Warning: (fgYellow, styleBright)
-      of Error: (fgRed, styleBright)
-    stdout.styledWriteLine(fgCyan, p, " ", resetStyle, color, style, $k, resetStyle, arg)
+    if c.noColors:
+      writeMessage(c, $k, p, arg)
+    else:
+      let (color, style) =
+        case k
+        of Debug: (fgWhite, styleDim)
+        of Trace: (fgBlue, styleBright)
+        of Info: (fgGreen, styleBright)
+        of Warning: (fgYellow, styleBright)
+        of Error: (fgRed, styleBright)
+      stdout.styledWriteLine(fgCyan, p, " ", resetStyle, color, style, $k, resetStyle, arg)
 
 proc message(c: var Reporter; k: MsgKind; p, arg: string) =
   ## collects messages or prints them out immediately
@@ -59,11 +69,14 @@ proc warn*(c: var Reporter; p, arg: string) =
   # writeMessage c, Warning, p, arg
   inc c.warnings
 
-proc error*(c: var Reporter; p, arg: string) =
-  when defined(debug):
+proc error*(c: var Reporter; p, arg: string) {.canRaise.} =
+  when defined(debug) and not defined(nimony):
     writeStackTrace()
   if c.assertOnError:
-    raise newException(AssertionDefect, p & ": " & arg)
+    when defined(nimony):
+      raise ValueError
+    else:
+      raise newException(AssertionDefect, p & ": " & arg)
   c.message(Error, p, arg)
   inc c.errors
 
@@ -77,11 +90,11 @@ proc debug*(c: var Reporter; p, arg: string) =
   c.message(Debug, p, arg)
 
 proc fatal*(msg: string) =
-  when defined(debug):
+  when defined(debug) and not defined(nimony):
     writeStackTrace()
   quit "[Error] " & msg
 
-proc shortenDir*(x: string): string =
+proc shortenDir*(x: string): string {.canRaise.} =
   var to = getCurrentDir()
   when defined(windows):
     let x = x.replace('\\', '/')
@@ -93,7 +106,7 @@ proc shortenDir*(x: string): string =
   else:
     result = x
 
-proc infoToStr*(info: PackedLineInfo): string =
+proc infoToStr*(info: PackedLineInfo): string {.canRaise.} =
   let rawInfo = unpack(pool.man, info)
   if not info.isValid or not rawInfo.file.isValid:
     result = "???"
@@ -101,7 +114,7 @@ proc infoToStr*(info: PackedLineInfo): string =
     result = pool.files[rawInfo.file].shortenDir()
     result.add "(" & $rawInfo.line & ", " & $(rawInfo.col+1) & ")"
 
-proc reportErrors*(dest: var TokenBuf): int =
+proc reportErrors*(dest: var TokenBuf): int {.canRaise.} =
   let errTag = pool.tags.getOrIncl("err")
   var i = 0
   var r = Reporter(verbosity: 2, noColors: not useColors())

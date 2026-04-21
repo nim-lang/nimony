@@ -6,7 +6,7 @@ type
   NifcExpr* = enum
     NoExpr
     SufC = (ord(SufTagId), "suf")  ## literal with suffix annotation
-    AtC = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped NIFC form)
+    AtC = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped NIFC form); also used for generic proc/type instantiation `(at callee T1 T2 ...)`
     DerefC = (ord(DerefTagId), "deref")  ## pointer deref operation
     DotC = (ord(DotTagId), "dot")  ## object field selection; optional integer is the inheritance depth of the field
     PatC = (ord(PatTagId), "pat")  ## pointer indexing operation

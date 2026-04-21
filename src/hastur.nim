@@ -734,6 +734,13 @@ const BootstrapModules = [
   "src/lib/nifstreams.nim",
   "src/lib/nifcursors.nim",
   "src/lib/nifchecksums.nim",
+  # Tier 4 -- Core models + NIF indexes.
+  "src/nimony/nimony_model.nim",
+  "src/nifc/nifc_model.nim",
+  "src/njvl/njvl_model.nim",
+  "src/nimony/nifconfig.nim",
+  "src/nimony/reporters.nim",
+  "src/lib/nifindexes.nim",
 ]
 
 # Modules whose `isMainModule` block should also be executed after compilation.

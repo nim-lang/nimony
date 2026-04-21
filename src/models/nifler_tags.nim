@@ -7,7 +7,7 @@ type
     None
     ErrL = (ord(ErrTagId), "err")  ## indicates an error
     SufL = (ord(SufTagId), "suf")  ## literal with suffix annotation
-    AtL = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped NIFC form)
+    AtL = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped NIFC form); also used for generic proc/type instantiation `(at callee T1 T2 ...)`
     DerefL = (ord(DerefTagId), "deref")  ## pointer deref operation
     DotL = (ord(DotTagId), "dot")  ## object field selection; optional integer is the inheritance depth of the field
     ParL = (ord(ParTagId), "par")  ## syntactic parenthesis

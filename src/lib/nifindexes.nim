@@ -6,7 +6,7 @@
 
 ## Create an index file for a NIF file.
 
-import std / [tables, assertions, syncio]
+import std / [tables, assertions, hashes, syncio]
 import bitabs, lineinfos, nifreader, nifstreams, nifcursors, nifchecksums, symparser
 
 when defined(nimony):
@@ -14,6 +14,8 @@ when defined(nimony):
 else:
   import "$nim"/dist/checksums/src/checksums/sha1
 import ".." / models / [tags, nifindex_tags]
+
+include compat2
 
 proc entryKind(tag: TagId): NifIndexKind =
   if rawTagIsNifIndexKind(cast[TagEnum](tag)):
@@ -106,6 +108,13 @@ type
     converters*: seq[(SymId, SymId)] # string is for compat with `methods`
     exportBuf*: TokenBuf
 
+when defined(nimony):
+  # TODO: Nimony's hook inheritance (lifter/derefs/duplifier) should see that
+  # TokenBuf's {.error.}=copy makes IndexSections uncopyable too, but currently
+  # the final-build pass flags an instantiation we couldn't pinpoint. Disable
+  # copy explicitly as a workaround.
+  proc `=copy`(dest: var IndexSections; src: IndexSections) {.error.}
+
 proc getSymbolSection(tag: TagId; values: seq[(SymId, SymId)]): TokenBuf =
   result = createTokenBuf(30)
   result.addParLe tag
@@ -121,7 +130,7 @@ proc getSymbolSection(tag: TagId; values: seq[(SymId, SymId)]): TokenBuf =
 
   result.addParRi()
 
-proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sections: IndexSections) =
+proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sections: IndexSections) {.canRaise.} =
   let indexName = changeModuleExt(infile, ".s.idx.nif")
   var content = "(.nif24)\n(index\n"
 
@@ -149,11 +158,10 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
   if existingContent != content:
     writeFile(indexName, content)
 
-proc createIndex*(infile: string; buildChecksum: bool; root: PackedLineInfo) =
-  createIndex(infile, root, buildChecksum,
-    IndexSections())
+proc createIndex*(infile: string; buildChecksum: bool; root: PackedLineInfo) {.canRaise.} =
+  createIndex(infile, root, buildChecksum, IndexSections())
 
-proc writeFileAndIndex*(outfile: string; content: TokenBuf) =
+proc writeFileAndIndex*(outfile: string; content: TokenBuf) {.canRaise.} =
   writeFile(content, outfile)
   createIndex(outfile, true, content[0].info)
 
@@ -295,4 +303,7 @@ proc readEmbeddedIndex*(s: var Stream): Table[string, NifIndexEntry] =
 
 when isMainModule:
   import std / [os]
-  createIndex paramStr(1), false, NoLineInfo
+  try:
+    createIndex paramStr(1), false, NoLineInfo
+  except:
+    quit "createIndex failed"
