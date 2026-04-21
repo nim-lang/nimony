@@ -1096,8 +1096,11 @@ proc generateCoroutineHelpers(c: var Context; dest: var TokenBuf; sym: SymId; it
 
   var start = dest.len
 
-  dest.addParLe ProcS, info
-  inc n
+  if n.stmtKind == IteratorS:
+    dest.addParLe ProcS, info
+    inc n
+  else:
+    dest.takeToken n # ProcS
   skip n
   dest.addSymDef newSym, info
   dest.takeTree n # 
