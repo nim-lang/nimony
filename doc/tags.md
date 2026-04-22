@@ -2,7 +2,7 @@
 |------------------------|-----------------------------|---------------|
 | `(err ...)`            | NimonyExpr, NimonyType, NiflerKind                    | indicates an error |
 | `(suf LIT STR)`        | NifcExpr, NimonyExpr, NiflerKind                     | literal with suffix annotation |
-| `(at T X X); (at X X)` | NifcExpr, NimonyExpr, NimonyType, NiflerKind | array indexing operation (typed Nimony form vs untyped NIFC form) |
+| `(at T X X); (at X X); (at Y T+)` | NifcExpr, NimonyExpr, NimonyType, NiflerKind | array indexing operation (typed Nimony form vs untyped NIFC form); also used for generic proc/type instantiation `(at callee T1 T2 ...)` |
 | `(deref X)`; `(deref X (cppref)?)`            | NifcExpr, NimonyExpr, NiflerKind | pointer deref operation |
 | `(dot X Y INTLIT?)` | NifcExpr, NimonyExpr, NiflerKind | object field selection; optional integer is the inheritance depth of the field |
 | `(pat X X)`            | NifcExpr, NimonyExpr | pointer indexing operation |
@@ -308,6 +308,7 @@
 | `(base)` | NimonyPragma | `base` pragma (currently ignored) |
 | `(pure)` | NimonyPragma | `pure` pragma (currently ignored) |
 | `(final)` | NimonyPragma | `final` pragma |
+| `(acyclic)` | NimonyPragma | `acyclic` pragma (currently ignored) |
 | `(pragma D)` | NimonyPragma | `pragma` pragma |
 | `(internalTypeName T)` | NimonyExpr | returns compiler's internal type name |
 | `(internalFieldPairs T X)` | NimonyExpr | variant of fieldPairs iterator returns compiler's internal field name |

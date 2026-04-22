@@ -8,8 +8,10 @@ import std / [formatfloat]
 
 import bitabs, nifreader, nifstreams, nifcursors
 
-#import std / [sha1]
-import "$nim"/dist/checksums/src/checksums/sha1
+when defined(nimony):
+  import std / sha1
+else:
+  import "$nim"/dist/checksums/src/checksums/sha1
 
 proc update(dest: var Sha1State; n: PackedToken) =
   case n.kind

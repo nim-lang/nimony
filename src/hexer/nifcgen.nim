@@ -740,7 +740,7 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
         of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoReturnP,
            VarargsP, NoSideEffectP, NoDestroyP, ByCopyP, ByRefP,
            InlineP, NoinlineP, NoInitP, InjectP, GensymP, DirtyP, UntypedP, ViewP,
-           InheritableP, PureP, ClosureP, PackedP, UnionP, IncompleteStructP:
+           InheritableP, PureP, AcyclicP, ClosureP, PackedP, UnionP, IncompleteStructP:
           result.flags.incl pk
           inc n
           skipParRi c, n

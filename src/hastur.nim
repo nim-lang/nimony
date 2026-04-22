@@ -710,6 +710,7 @@ const BootstrapModules = [
   "src/lib/symparser.nim",
   "src/lib/argsfinder.nim",
   "src/lib/bitabs.nim",
+  "src/lib/filelinecache.nim",
   "src/lib/lineinfos.nim",
   "src/lib/nifbuilder.nim",
   "src/lib/platform.nim",
@@ -729,6 +730,24 @@ const BootstrapModules = [
   "src/models/nimony_tags.nim",
   "src/lib/nifreader.nim",
   "src/gear2/modnames.nim",
+  # Tier 3 -- NIF stream/cursor infrastructure.
+  "src/lib/nifstreams.nim",
+  "src/lib/nifcursors.nim",
+  "src/lib/nifchecksums.nim",
+  # Tier 4 -- Core models + NIF indexes.
+  "src/nimony/nimony_model.nim",
+  "src/nifc/nifc_model.nim",
+  "src/njvl/njvl_model.nim",
+  "src/nimony/nifconfig.nim",
+  "src/nimony/reporters.nim",
+  "src/lib/nifindexes.nim",
+  # Tier 5 -- Basic nimony types and helpers.
+  "src/nimony/builtintypes.nim",
+  "src/nimony/symtabs.nim",
+  "src/nimony/implications.nim",
+  "src/nimony/magics.nim",
+  "src/nimony/decls.nim",
+  "src/nimony/asthelpers.nim",
 ]
 
 # Modules whose `isMainModule` block should also be executed after compilation.

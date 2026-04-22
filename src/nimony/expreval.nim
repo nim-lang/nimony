@@ -168,16 +168,16 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
     let val = pool.strings[a.litId].len
     result = intValue(c, val, n.info)
   else:
+    # Forward args to `executeCall` verbatim. Running `eval` here would strip
+    # distinct/conversion wrappers (e.g. `TagId(1)` → `1`), and the sub-compile
+    # would then fail to match the callee's formal parameter types.
+    # `executeCall` re-runs the full nimony pipeline and can resolve constants
+    # itself via `rewriteSymsToIdents`.
     var evaluatedCall = createTokenBuf(16)
     evaluatedCall.addParLe CallS, n.info
     evaluatedCall.addSymUse routine.name.symId, n.info
     while args.kind != ParRi:
-      let thisArg = args
-      let x = eval(c, args)
-      if x.kind == ParLe and x.tagId == nifstreams.ErrT:
-        cannotEval(thisArg)
-        return
-      evaluatedCall.addSubtree x
+      evaluatedCall.takeTree args
     evaluatedCall.addParRi()
 
     var resultBuf = createTokenBuf(12)

@@ -202,6 +202,18 @@ proc readFile*(filename: string): string {.raises.} =
   else:
     raise IOError
 
+proc writeFile*(filename, content: string) {.raises.} =
+  ## Opens `filename` for writing, writes `content`, and closes the file.
+  ## Raises `IOError` if the file cannot be opened.
+  var f: File
+  if open(f, filename, fmWrite):
+    try:
+      f.write content
+    finally:
+      close(f)
+  else:
+    raise IOError
+
 proc tryWriteFile*(file, content: string): bool =
   var f: File
   if open(f, file, fmWrite):

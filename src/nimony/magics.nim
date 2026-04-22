@@ -10,7 +10,9 @@ import ".." / models / tags
 import ".." / lib / nifstreams
 import nimony_model
 
-template res(t: ExprKind | StmtKind | TypeKind; bits = 0): (string, int) = ($t, bits)
+template res(t: ExprKind; bits = 0): (string, int) = ($t, bits)
+template res(t: StmtKind; bits = 0): (string, int) = ($t, bits)
+template res(t: TypeKind; bits = 0): (string, int) = ($t, bits)
 
 const
   TypedMagic* = -3
@@ -20,10 +22,10 @@ proc magicToTag*(m: string; bits: int): (string, int) =
   of "Defined": res DefinedX
   of "Declared": res DeclaredX
   of "AstToStr": res AstToStrX
-  of "IsMainModule": res IsMainModuleX
+  of "IsMainModule": res IsmainmoduleX
   of "Compiles": res CompilesX
   of "ArrGet": res AtX
-  of "ArrAt": res ArrAtX
+  of "ArrAt": res ArratX
   of "Pat": res PatX
   of "TupAt": res TupatX
   of "Asgn": res AsgnS
@@ -55,7 +57,7 @@ proc magicToTag*(m: string; bits: int): (string, int) =
   of "LtI", "LtU", "LtB", "LtCh", "LtF64", "LtPtr", "LtEnum": res LtX, TypedMagic
   of "Low": res LowX
   of "High": res HighX
-  of "EnumToStr": res EnumToStrX
+  of "EnumToStr": res EnumtostrX
   of "Array": res ArrayT
   of "Range": res RangetypeT
   of "Set": res SetT
@@ -91,17 +93,17 @@ proc magicToTag*(m: string; bits: int): (string, int) =
   of "Stmt": res TypedT
   of "Cstring": res CstringT
   of "Pointer": res PointerT
-  of "DefaultObj": res DefaultObjX
-  of "DefaultTup": res DefaultTupX
-  of "DefaultDistinct": res DefaultDistinctX
-  of "PlusSet": res PlusSetX, TypedMagic
-  of "MinusSet": res MinusSetX, TypedMagic
-  of "MulSet": res MulSetX, TypedMagic
-  of "XorSet": res XorSetX, TypedMagic
-  of "EqSet": res EqSetX, TypedMagic
-  of "LeSet": res LeSetX, TypedMagic
-  of "LtSet": res LtSetX, TypedMagic
-  of "InSet": res InSetX, TypedMagic
+  of "DefaultObj": res DefaultobjX
+  of "DefaultTup": res DefaulttupX
+  of "DefaultDistinct": res DefaultdistinctX
+  of "PlusSet": res PlussetX, TypedMagic
+  of "MinusSet": res MinussetX, TypedMagic
+  of "MulSet": res MulsetX, TypedMagic
+  of "XorSet": res XorsetX, TypedMagic
+  of "EqSet": res EqsetX, TypedMagic
+  of "LeSet": res LesetX, TypedMagic
+  of "LtSet": res LtsetX, TypedMagic
+  of "InSet": res InsetX, TypedMagic
   of "Card": res CardX, TypedMagic
   of "Incl": res InclS, TypedMagic
   of "Excl": res ExclS, TypedMagic
@@ -113,12 +115,12 @@ proc magicToTag*(m: string; bits: int): (string, int) =
   of "SinkHook": res SinkhX
   of "Dup": res DupX
   of "Copy": res CopyX
-  of "WasMoved": res WasMovedX
+  of "WasMoved": res WasmovedX
   of "Trace": res TraceX
   of "NewRef": res NewrefX, TypedMagic
   of "OverflowFlag": res OvfX
   of "Fields": res FieldsX, TypedMagic
-  of "FieldPairs": res FieldPairsX, TypedMagic
+  of "FieldPairs": res FieldpairsX, TypedMagic
   of "Of": res InstanceofX
   of "ProcCall": res ProccallX
   of "InternalTypeName": res InternalTypeNameX

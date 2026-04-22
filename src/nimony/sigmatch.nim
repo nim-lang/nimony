@@ -773,6 +773,8 @@ proc useArg(m: var Match; arg: CallArg; f: Cursor) =
     m.args.addSubtree arg.n
 
 proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg)
+proc singleArg(m: var Match; f: var Cursor; arg: CallArg)
+proc isEmptyContainer*(n: Cursor): bool
 
 proc matchObjectInheritance*(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKind: TypeKind) =
   let fbase = skipTypeInstSym(fsym)
@@ -1299,6 +1301,19 @@ proc addEmptyRangeType(buf: var TokenBuf; c: ptr SemContext; info: PackedLineInf
   buf.addParRi()
 
 proc matchEmptyContainer(m: var Match; f: var Cursor; arg: CallArg) =
+  # If `f` is a modifier wrapping a typevar that was already inferred
+  # (e.g. `sink V` where V became `seq[Sym]` from an earlier argument),
+  # substitute it here so the shape checks below see the concrete target.
+  # Otherwise `@[]` against `sink V` falls through to a linearMatch of
+  # `seq[Sym]` vs `auto` and fails.
+  block rebind:
+    var g = f
+    if g.typeKind in {MutT, OutT, SinkT, LentT}:
+      inc g
+    if g.kind == Symbol and isTypevar(g.symId) and m.inferred.contains(g.symId):
+      var inferred = m.inferred[g.symId]
+      matchEmptyContainer(m, inferred, arg)
+      return
   # XXX handle empty containers nested inside (expr)
   if (arg.n.exprKind == AconstrX and f.typeKind == ArrayT) or
       (arg.n.exprKind == SetConstrX and f.typeKind == SetT):
