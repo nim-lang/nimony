@@ -4,7 +4,7 @@
 | `(suf LIT STR)`        | NifcExpr, NimonyExpr, NiflerKind                     | literal with suffix annotation |
 | `(at T X X); (at X X); (at Y T+)` | NifcExpr, NimonyExpr, NimonyType, NiflerKind | array indexing operation (typed Nimony form vs untyped NIFC form); also used for generic proc/type instantiation `(at callee T1 T2 ...)` |
 | `(deref X)`; `(deref X (cppref)?)`            | NifcExpr, NimonyExpr, NiflerKind | pointer deref operation |
-| `(dot X Y INTLIT?)` | NifcExpr, NimonyExpr, NiflerKind | object field selection; optional integer is the inheritance depth of the field |
+| `(dot X Y INTLIT? STRLIT?)` | NifcExpr, NimonyExpr, NiflerKind | object field selection; optional integer is the inheritance depth of the field; optional trailing `STRLIT` is an *access token* (carrying `"x"` like an export marker) — when present, the expression was already type-checked in a scope with access to the field, so re-check at expansion/serialization sites must accept the access even if the field is private. Emitted by sem when a template body or `.semantics` serializer is type-checked in the field's defining module and later expanded/consumed elsewhere. |
 | `(pat X X)`            | NifcExpr, NimonyExpr | pointer indexing operation |
 | `(par X)`              | NifcExpr, NimonyExpr, NiflerKind | syntactic parenthesis |
 | `(addr X)`; `(addr X (cppref)?)`  | NifcExpr, NimonyExpr, NiflerKind | address of operation |
@@ -109,10 +109,10 @@
 | `(ro)` | NifcTypeQualifier | `readonly` (= `const`) type qualifier for NIFC |
 | `(restrict)` | NifcTypeQualifier | type qualifier for NIFC |
 | `(cppref)` | NifcTypeQualifier | type qualifier for NIFC that provides a C++ reference |
-| `(i INTLIT (importc/importcpp STR)? (header STR)?)` | NifcType, NimonyType | `int` builtin type |
+| `(i INTLIT ...)` | NifcType, NimonyType | `int` builtin type; size in bits followed by optional attributes (`(importc ...)`, `(header ...)`, etc.) |
 | `(u INTLIT ...)` | NifcType, NimonyType | `uint` builtin type; size in bits followed by optional attributes (`(importc ...)`, `(header ...)`, etc.) |
-| `(f INTLIT (importc/importcpp STR)? (header STR)?)` | NifcType, NimonyType | `float` builtin type |
-| `(c INTLIT (importc/importcpp STR)? (header STR)?)` | NifcType, NimonyType | `char` builtin type |
+| `(f INTLIT ...)` | NifcType, NimonyType | `float` builtin type; size in bits followed by optional attributes (`(importc ...)`, `(header ...)`, etc.) |
+| `(c INTLIT ...)` | NifcType, NimonyType | `char` builtin type; size in bits followed by optional attributes (`(importc ...)`, `(header ...)`, etc.) |
 | `(bool)` | NifcType, NimonyType | `bool` builtin type |
 | `(void)` | NifcType, NimonyType | `void` return type |
 | `(ptr T (unchecked)?)`; `(ptr T)` | NifcType, NimonyType, NiflerKind | `ptr` type contructor; the `(unchecked)` pragma relaxes nil checking on deref |
@@ -230,7 +230,7 @@
 | `(incompleteStruct)` | NimonyPragma | `incompleteStruct` pragma |
 | `(quoted X+)` | NimonyExpr, NiflerKind | name in backticks |
 | `(hderef X)` | NimonyExpr | hidden pointer deref operation |
-| `(ddot X Y INTLIT)` | NimonyExpr | deref dot: expression, field symbol, field index |
+| `(ddot X Y INTLIT STRLIT?)` | NimonyExpr | deref dot: expression, field symbol, field index; optional trailing `STRLIT` is the same *access token* described on `(dot ...)` — certifies the access was type-checked with private-field visibility and must be accepted on re-check. |
 | `(haddr X)` | NimonyExpr | hidden address of operation |
 | `(newref T X?)` | NimonyExpr | Nim's `new` magic proc that allocates a `ref T`; optional initializer expression |
 | `(newobj T (kv Y X)*)` | NimonyExpr | new object constructor |

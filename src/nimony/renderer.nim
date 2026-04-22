@@ -1912,6 +1912,10 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       gsub(g, n)
 
       if n.kind != ParRi:
+        # inheritance depth
+        skip n
+      if n.kind != ParRi:
+        # access-token string lit (only for private fields)
         skip n
       skipParRi(n)
 

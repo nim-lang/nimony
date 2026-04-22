@@ -197,6 +197,10 @@ type
     AllowModuleSym
     AllowEmpty
     InTypeContext
+    BypassFieldVis  ## input (dot ...) already carried an access-token
+                    ## certifying the field access was hygiene-checked in
+                    ## the field's owner module; skip the visibility check
+                    ## during re-semcheck
 
   TransformedCallSource = enum
     RegularCall, MethodCall,
@@ -1089,11 +1093,16 @@ proc findObjFieldAux(c: var SemContext; t: Cursor; name: StrId; bindings: Table[
       # maybe error
       result = ObjField(level: -1)
 
-proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId; bindings: Table[SymId, Cursor]): ObjField =
+proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId;
+                              bindings: Table[SymId, Cursor];
+                              bypassVis = false): ObjField =
   let impl = decl.objBody
   result = findObjFieldAux(c, impl, name, bindings)
-  if c.routine.inInst == 0:
-    # only check visibility during first semcheck
+  if c.routine.inInst == 0 and not bypassVis:
+    # only check visibility during first semcheck, unless the input NIF
+    # already carried an access-token proving the access was hygiene-checked
+    # at a site that had visibility (e.g. a template body semchecked in the
+    # field's owner module).
     if result.level == 0:
       result.rootOwner = genericRootSym(decl)
     if result.level >= 0:
@@ -1111,6 +1120,8 @@ proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId; bin
       if not visible:
         # treat as undeclared
         result = ObjField(level: -1)
+  elif bypassVis and result.level == 0:
+    result.rootOwner = genericRootSym(decl)
 
 proc semQualifiedIdent(c: var SemContext; dest: var TokenBuf; module: SymId; ident: StrId; info: PackedLineInfo): Sym =
   # mirrors semIdent
@@ -1172,13 +1183,20 @@ proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Ite
         if objType.typeKind == ObjectT:
           # build bindings for invoked object type to get proper field type:
           let bindings = bindInvokeArgs(decl, invokeArgs)
-          let field = findObjFieldConsiderVis(c, decl, fieldName, bindings)
+          let field = findObjFieldConsiderVis(c, decl, fieldName, bindings,
+                                              bypassVis = BypassFieldVis in flags)
           if field.level >= 0:
             result = MatchedDotField
             if doDeref:
               dest[exprStart] = parLeToken(DdotX, info)
             dest.add symToken(field.sym, info)
             dest.add intToken(pool.integers.getOrIncl(field.level), info)
+            if not field.exported:
+              # Emit the access-token string lit so later re-checks (template
+              # expansion, generic instantiation, exprexec serialization) see
+              # that this access was hygiene-checked with visibility and must
+              # be accepted even if the consumer module cannot see the field.
+              dest.addStrLit("x", info)
             it.typ = field.typ # will be fit later with commonType
             it.kind = FldY
           else:
@@ -1260,9 +1278,15 @@ proc semDot(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[SemF
   # skip optional inheritance depth:
   if it.n.kind == IntLit:
     inc it.n
+  # optional access-token StringLit — `"x"` — certifies this dot expression
+  # was already type-checked with visibility in the field's owner module.
+  var innerFlags = flags
+  if it.n.kind == StringLit:
+    innerFlags.incl BypassFieldVis
+    inc it.n
   skipParRi it.n
   # now interpret the dot expression:
-  let state = tryBuiltinDot(c, dest, it, lhs, fieldName, info, flags)
+  let state = tryBuiltinDot(c, dest, it, lhs, fieldName, info, innerFlags)
   if state == FailedDot:
     # attempt a dot call, i.e. build b(a) from a.b
     dest.shrink exprStart
@@ -2235,9 +2259,14 @@ proc semDotAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: Packe
   # skip optional inheritance depth:
   if dot.n.kind == IntLit:
     inc dot.n
+  var dotFlags: set[SemFlag] = {}
+  if dot.n.kind == StringLit:
+    dotFlags.incl BypassFieldVis
+    inc dot.n
   skipParRi dot.n
   var dotBuf = createTokenBuf(8)
-  let builtin = tryBuiltinDot(c, dotBuf, dot, dotLhs, fieldName, dotInfo, {}) != FailedDot
+  let builtin = tryBuiltinDot(c, dotBuf, dot, dotLhs, fieldName, dotInfo,
+                               dotFlags) != FailedDot
   if builtin:
     # build regular assignment:
     dest.addParLe(AsgnS, info)

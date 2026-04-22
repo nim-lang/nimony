@@ -379,6 +379,7 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
         analyseExpr c, pc # object
         skip pc # field name
         if pc.kind != ParRi: skip pc # inheritence depth
+        if pc.kind != ParRi: skip pc # optional access-token string lit
         skipParRi pc
       of DerefX:
         inc pc
