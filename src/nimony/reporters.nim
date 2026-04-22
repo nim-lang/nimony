@@ -92,8 +92,15 @@ proc fatal*(msg: string) =
     writeStackTrace()
   quit "[Error] " & msg
 
-proc shortenDir*(x: string): string {.canRaise.} =
-  var to = getCurrentDir()
+proc shortenDir*(x: string): string =
+  # `getCurrentDir` is `.raises`, but the only way it actually fails is a
+  # transient I/O error that would affect any diagnostic equally. Swallow it
+  # here so `shortenDir` (and by extension `infoToStr`) stays non-raising.
+  var to = ""
+  try:
+    to = getCurrentDir()
+  except:
+    return x
   when defined(windows):
     let x = x.replace('\\', '/')
     to = to.replace('\\', '/')
@@ -104,7 +111,7 @@ proc shortenDir*(x: string): string {.canRaise.} =
   else:
     result = x
 
-proc infoToStr*(info: PackedLineInfo): string {.canRaise.} =
+proc infoToStr*(info: PackedLineInfo): string =
   let rawInfo = unpack(pool.man, info)
   if not info.isValid or not rawInfo.file.isValid:
     result = "???"

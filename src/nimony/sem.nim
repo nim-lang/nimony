@@ -1508,17 +1508,20 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     dest.add parLeToken(pk, n.info)
     dest.addParRi()
     inc n
-  of ViewP, InheritableP, PureP, FinalP, PackedP, UnionP:
+  of ViewP, InheritableP, PureP, FinalP, PackedP, UnionP, AcyclicP:
     var hasErr = false
     if kind != TypeY:
       buildErr c, dest, n.info, $pk & " pragma is only allowed on types"
       hasErr = true
-    elif pk in {ViewP, InheritableP, FinalP, PackedP, UnionP}:
+    elif pk in {ViewP, InheritableP, FinalP, PackedP, UnionP, AcyclicP}:
       var n2 = n
       skipToEnd n2
       if n2.typeKind in {RefT, PtrT}:
         inc n2
-      if n2.typeKind != ObjectT:
+      # Later passes replace the inline body of `ref object` / `ptr object`
+      # with a symbol that stands for the synthesized inner object type; accept
+      # that form as valid — the first pass has already validated the shape.
+      if n2.kind != Symbol and n2.typeKind != ObjectT:
         buildErr c, dest, n.info, $pk & " pragma is only allowed on object types", n
         hasErr = true
     if not hasErr:
@@ -4960,7 +4963,17 @@ proc semEnumToStr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   if containsGenericParams(x.typ):
     discard
   else:
-    let typeSymId = x.typ.skipModifier.symId
+    # Only nominal enum types have a per-type `dollar`.TypeName compiler proc.
+    # If we don't have a nominal symbol (e.g. the operand is a type class like
+    # `ExprKind|StmtKind|TypeKind`), there is no single `$` to call — report
+    # instead of dereferencing a non-symbol token.
+    let typ = x.typ.skipModifier
+    if typ.kind != Symbol:
+      shrink dest, beforeExpr
+      c.buildErr dest, info,
+        "'$' is not available for type <" & typeToString(x.typ) & ">"
+      return
+    let typeSymId = typ.symId
     let typeName = pool.syms[typeSymId]
     let dollorName = "dollar`." & typeName
     let dollorSymId = pool.syms.getOrIncl(dollorName)

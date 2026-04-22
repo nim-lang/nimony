@@ -311,6 +311,7 @@ type
     BaseTagId
     PureTagId
     FinalTagId
+    AcyclicTagId
     PragmaTagId
     InternalTypeNameTagId
     InternalFieldPairsTagId
@@ -637,19 +638,20 @@ const
     ("base", 306),
     ("pure", 307),
     ("final", 308),
-    ("pragma", 309),
-    ("internalTypeName", 310),
-    ("internalFieldPairs", 311),
-    ("failed", 312),
-    ("is", 313),
-    ("envp", 314),
-    ("packed", 315),
-    ("passive", 316),
-    ("push", 317),
-    ("callConv", 318),
-    ("pop", 319),
-    ("passL", 320),
-    ("passC", 321),
-    ("methods", 322),
-    ("size", 323)
+    ("acyclic", 309),
+    ("pragma", 310),
+    ("internalTypeName", 311),
+    ("internalFieldPairs", 312),
+    ("failed", 313),
+    ("is", 314),
+    ("envp", 315),
+    ("packed", 316),
+    ("passive", 317),
+    ("push", 318),
+    ("callConv", 319),
+    ("pop", 320),
+    ("passL", 321),
+    ("passC", 322),
+    ("methods", 323),
+    ("size", 324)
   ]

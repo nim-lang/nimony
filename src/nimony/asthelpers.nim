@@ -1,6 +1,7 @@
 import std / [tables, sets, syncio, formatfloat, assertions]
-include nifprelude
-import nimony_model, symparser
+include ".." / lib / nifprelude
+import nimony_model
+import ".." / lib / symparser
 
 proc takeUnquoted*(c: var Cursor): StrId =
   var r = ""

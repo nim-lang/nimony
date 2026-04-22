@@ -83,7 +83,11 @@ proc rollback*(impls: var Implications; cp: int) {.inline.} =
 proc take*(impls: var Implications; cp: int): seq[Implication] =
   ## Extract and remove the items added since `cp`.  Intended for capturing
   ## per-branch implications before combining them at an ite join.
-  result = impls.items[cp ..< impls.items.len]
+  result = @[]
+  var i = cp
+  while i < impls.items.len:
+    result.add impls.items[i]
+    inc i
   impls.items.setLen(cp)
 
 proc add*(impls: var Implications; imp: Implication) =
