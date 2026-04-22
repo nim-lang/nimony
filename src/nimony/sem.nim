@@ -1686,6 +1686,7 @@ proc semPragmas(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
           semPragma c, dest, n2, crucial, kind
     if kind == IteratorY and ClosureP in crucial.flags and PassiveP notin crucial.flags:
       dest.add parLeToken(PassiveP, info)
+      dest.addParRi()
     # `{.feature: "untyped".}` applies only within the current module, but the
     # relaxed semcheck it enables is needed at every instantiation site. Stamp
     # `UntypedP` onto generics/templates here so the flag travels with the

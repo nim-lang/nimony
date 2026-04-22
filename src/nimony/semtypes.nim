@@ -653,7 +653,7 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
         stripNilAnnotation dest, before
         dest.addParPair annotation, info
         dest.addParRi()
-      elif nd.typeKind == ProctypeT:
+      elif nd.typeKind in {ProctypeT, ItertypeT}:
         dest.endRead()
         # For proctypes, replace (notnil) with (nil) inside the pragmas section.
         # Find the (notnil) that was added by default and replace it:
@@ -928,7 +928,7 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       skip n2 # dot
       if n2.kind != ParRi: skip n2 # maybe body
       let hasNilSuffix = n2.exprKind == NilX
-      if tk == ProctypeT:
+      if tk in {ProctypeT, ItertypeT}:
         let annotation =
           if hasNilSuffix:
             NilU
