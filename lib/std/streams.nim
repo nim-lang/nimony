@@ -1,3 +1,5 @@
+{.feature: "lenientnils".}
+
 #
 #
 #            Nim's Runtime Library
@@ -102,9 +104,14 @@
 import std/syncio
 export FileMode
 
+when defined(windows):
+  import "../../vendor/errorcodes/src" / errorcodes_windows
+else:
+  import "../../vendor/errorcodes/src" / errorcodes_posix
+
 # TODO: basic stuffs
 #---------------------------------------
-# import std/assertions
+import std/assertions
 
 template isNil(s: typed): bool {.untyped.} =
   s == nil
@@ -130,12 +137,6 @@ proc clamp(x, a, b: int): int =
 
 #---------------------------------------
 
-
-when defined(windows):
-  import "../../vendor/errorcodes/src" / errorcodes_windows
-else:
-  import "../../vendor/errorcodes/src" / errorcodes_posix
-
 type
   Stream* = ref StreamObj
     ## All procedures of this module use this type.
@@ -147,31 +148,31 @@ type
     ## * That these fields here shouldn't be used directly.
     ##   They are accessible so that a stream implementation can override them.
     closeImpl*: proc (s: Stream)
-      {.nimcall, raises: [IOError, OSError], tags: [WriteIOEffect].}
+      {.nimcall, tags: [WriteIOEffect], raises.}
     atEndImpl*: proc (s: Stream): bool
-      {.nimcall, raises: [Defect, IOError, OSError], tags: [].}
+      {.nimcall, tags: [], raises.}
     setPositionImpl*: proc (s: Stream, pos: int)
-      {.nimcall, raises: [Defect, IOError, OSError], tags: [].}
+      {.nimcall, tags: [], raises.}
     getPositionImpl*: proc (s: Stream): int
-      {.nimcall, raises: [Defect, IOError, OSError], tags: [].}
+      {.nimcall, tags: [], raises.}
 
     readDataStrImpl*: proc (s: Stream, buffer: var string, slice: Slice[int]): int
-      {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect].}
+      {.nimcall, tags: [ReadIOEffect], raises.}
 
     readLineImpl*: proc(s: Stream, line: var string): bool
-      {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect].}
+      {.nimcall, tags: [ReadIOEffect], raises.}
 
     readDataImpl*: proc (s: Stream, buffer: pointer, bufLen: int): int
-      {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect].}
+      {.nimcall, tags: [ReadIOEffect], raises.}
     peekDataImpl*: proc (s: Stream, buffer: pointer, bufLen: int): int
-      {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect].}
+      {.nimcall, tags: [ReadIOEffect], raises.}
     writeDataImpl*: proc (s: Stream, buffer: pointer, bufLen: int)
-      {.nimcall, raises: [Defect, IOError, OSError], tags: [WriteIOEffect].}
+      {.nimcall, tags: [WriteIOEffect], raises.}
 
     flushImpl*: proc (s: Stream)
-      {.nimcall, raises: [Defect, IOError, OSError], tags: [WriteIOEffect].}
+      {.nimcall, tags: [WriteIOEffect], raises.}
 
-proc flush*(s: Stream) {.raises: [Defect, IOError, OSError].} =
+proc flush*(s: Stream) {.raises.} =
   ## Flushes the buffers that the stream `s` might use.
   ##
   ## This procedure causes any unwritten data for that stream to be delivered
@@ -200,7 +201,7 @@ proc flush*(s: Stream) {.raises: [Defect, IOError, OSError].} =
 
   if not isNil(s.flushImpl): s.flushImpl(s)
 
-proc close*(s: Stream) {.raises: [IOError, OSError].} =
+proc close*(s: Stream) {.raises.} =
   ## Closes the stream `s`.
   ##
   ## See also:
@@ -221,7 +222,7 @@ proc close*(s: Stream) {.raises: [IOError, OSError].} =
   if not isNil(s) and not isNil(s.closeImpl):
     s.closeImpl(s)
 
-proc atEnd*(s: Stream): bool {.raises: [Defect, IOError, OSError].} =
+proc atEnd*(s: Stream): bool {.raises.} =
   ## Checks if more data can be read from `s`. Returns ``true`` if all data has
   ## been read.
   when false: # runnableExamples:
@@ -235,7 +236,7 @@ proc atEnd*(s: Stream): bool {.raises: [Defect, IOError, OSError].} =
 
   result = s.atEndImpl(s)
 
-proc setPosition*(s: Stream, pos: int) {.raises: [Defect, IOError, OSError].} =
+proc setPosition*(s: Stream, pos: int) {.raises.} =
   ## Sets the position `pos` of the stream `s`.
   when false: # runnableExamples:
     var strm = newStringStream("The first line\nthe second line\nthe third line")
@@ -247,7 +248,7 @@ proc setPosition*(s: Stream, pos: int) {.raises: [Defect, IOError, OSError].} =
 
   s.setPositionImpl(s, pos)
 
-proc getPosition*(s: Stream): int {.raises: [Defect, IOError, OSError].} =
+proc getPosition*(s: Stream): int {.raises.} =
   ## Retrieves the current position in the stream `s`.
   when false: # runnableExamples:
     var strm = newStringStream("The first line\nthe second line\nthe third line")
@@ -258,7 +259,7 @@ proc getPosition*(s: Stream): int {.raises: [Defect, IOError, OSError].} =
 
   result = s.getPositionImpl(s)
 
-proc readData*(s: Stream, buffer: pointer, bufLen: int): int {.raises: [Defect, IOError, OSError].} =
+proc readData*(s: Stream, buffer: pointer, bufLen: int): int {.raises.} =
   ## Low level proc that reads data into an untyped `buffer` of `bufLen` size.
   ##
   ## **JS note:** `buffer` is treated as a ``ptr string`` and written to between
@@ -273,7 +274,7 @@ proc readData*(s: Stream, buffer: pointer, bufLen: int): int {.raises: [Defect, 
 
   result = s.readDataImpl(s, buffer, bufLen)
 
-proc readDataStr*(s: Stream, buffer: var string, slice: Slice[int]): int {.raises: [Defect, IOError, OSError].} =
+proc readDataStr*(s: Stream, buffer: var string, slice: Slice[int]): int {.raises.} =
   ## Low level proc that reads data into a string ``buffer`` at ``slice``.
   when false: # runnableExamples:
     var strm = newStringStream("abcde")
@@ -286,7 +287,10 @@ proc readDataStr*(s: Stream, buffer: var string, slice: Slice[int]): int {.raise
     result = s.readDataStrImpl(s, buffer, slice)
   else:
     # fallback
-    result = s.readData(addr prepareMutationAt(buffer, slice.a), slice.b + 1 - slice.a)
+    let count = slice.b + 1 - slice.a
+    let dest = beginStore(buffer, count, slice.a)
+    result = s.readData(dest, count)
+    endStore(buffer)
 
 # template jsOrVmBlock(caseJsOrVm: untyped, caseElse: untyped): untyped {.untyped.} =
 #   when false: # nimvm
@@ -331,11 +335,13 @@ when not defined(js):
           break
         let prevLen = result.len
         result.setLen(prevLen + readBytes)
-        copyMem(addr(prepareMutationAt(result, prevLen)), addr(buffer[0]), readBytes)
+        let dest = beginStore(result, readBytes, prevLen)
+        copyMem(dest, addr(buffer[0]), readBytes)
+        endStore(result)
         if readBytes < bufferSize:
           break
 
-proc peekData*(s: Stream, buffer: pointer, bufLen: int): int {.raises: [Defect, IOError, OSError].} =
+proc peekData*(s: Stream, buffer: pointer, bufLen: int): int {.raises.} =
   ## Low level proc that reads data into an untyped `buffer` of `bufLen` size
   ## without moving stream position.
   ##
@@ -408,8 +414,7 @@ proc write*(s: Stream, x: string) {.raises.} =
         var x = x
         writeData(s, addr(x), x.len)
       else:
-        var x = x
-        writeData(s, toCString(x), x.len)
+        writeData(s, x.readRawData, x.len)
 
 when false: # TODO: ambiguous call: 'write' ?
   template write*(s: Stream, args: varargs[string, `$`]) =
@@ -979,7 +984,9 @@ proc readStrPrivate(s: Stream, length: int, str: var string) {.raises.} =
     when defined(js):
       L = readData(s, addr(str), length)
     else:
-      L = readData(s, toCString(str), length)
+      let dest = beginStore(str, length)
+      L = readData(s, dest, length)
+      endStore(str)
   if L != len(str): setLen(str, L)
 
 proc readStr*(s: Stream, length: int, str: var string) {.raises.} =
@@ -1005,7 +1012,9 @@ proc peekStrPrivate(s: Stream, length: int, str: var string) {.raises.} =
   when defined(js):
     let L = peekData(s, addr(str), length)
   else:
-    let L = peekData(s, toCString(str), length)
+    let dest = beginStore(str, length)
+    let L = peekData(s, dest, length)
+    endStore(str)
   if L != len(str): setLen(str, L)
 
 proc peekStr*(s: Stream, length: int, str: var string) {.raises.} =
@@ -1153,7 +1162,7 @@ proc peekLine*(s: Stream): string {.raises.} =
   defer: setPosition(s, pos)
   result = readLine(s)
 
-iterator lines*(s: Stream): string {.raises.} =
+iterator lines*(s: Stream): string {.raises, sideEffect.} =
   ## Iterates over every line in the stream.
   ## The iteration is based on ``readLine``.
   ##
@@ -1232,86 +1241,85 @@ when false: # (NimMajor, NimMinor) < (1, 3) and defined(js):
         break
 
 else: # after 1.3 or JS not defined
-  proc ssAtEnd(s: Stream): bool {.nimcall, raises: [Defect, IOError, OSError], tags: [].} =
-    var s = StringStream(s)
-    return s.pos >= s.data.len
+  proc ssAtEnd(s: Stream): bool {.nimcall, tags: [], raises.} =
+    let ss = StringStream(s)
+    return ss.pos >= ss.data.len
 
-  proc ssSetPosition(s: Stream, pos: int) {.nimcall, raises: [Defect, IOError, OSError], tags: [].} =
-    var s = StringStream(s)
-    s.pos = clamp(pos, 0, s.data.len)
+  proc ssSetPosition(s: Stream, pos: int) {.nimcall, tags: [], raises.} =
+    var ss = StringStream(s)
+    ss.pos = clamp(pos, 0, ss.data.len)
 
-  proc ssGetPosition(s: Stream): int {.nimcall, raises: [Defect, IOError, OSError], tags: [].} =
-    var s = StringStream(s)
-    return s.pos
+  proc ssGetPosition(s: Stream): int {.nimcall, tags: [], raises.} =
+    let ss = StringStream(s)
+    return ss.pos
 
-  proc ssReadDataStr(s: Stream, buffer: var string, slice: Slice[int]): int {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect].} =
-    var s = StringStream(s)
-    when false: # nimvm
-      discard
-    else:
-      when declared(prepareMutation):
-        prepareMutation(buffer) # buffer might potentially be a CoW literal with ARC
-    result = min(slice.b + 1 - slice.a, s.data.len - s.pos)
+  proc ssReadDataStr(s: Stream, buffer: var string, slice: Slice[int]): int {.nimcall, tags: [ReadIOEffect], raises.} =
+    var ss = StringStream(s)
+    result = min(slice.b + 1 - slice.a, ss.data.len - ss.pos)
     if result > 0:
       when true:
       # jsOrVmBlock:
-      #   buffer[slice.a..<slice.a+result] = s.data[s.pos..<s.pos+result]
+      #   buffer[slice.a..<slice.a+result] = ss.data[ss.pos..<ss.pos+result]
       # do:
-        copyMem(addr prepareMutationAt(buffer, slice.a), addr prepareMutationAt(s.data, s.pos), result)
-      inc(s.pos, result)
+        let dest = beginStore(buffer, result, slice.a)
+        copyMem(dest, ss.data.readRawData(ss.pos), result)
+        endStore(buffer)
+      inc(ss.pos, result)
     else:
       result = 0
 
-  proc ssReadData(s: Stream, buffer: pointer, bufLen: int): int {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect].} =
-    var s = StringStream(s)
-    result = min(bufLen, s.data.len - s.pos)
+  proc ssReadData(s: Stream, buffer: pointer, bufLen: int): int {.nimcall, tags: [ReadIOEffect], raises.} =
+    var ss = StringStream(s)
+    result = min(bufLen, ss.data.len - ss.pos)
     if result > 0:
       when defined(js):
         try:
-          cast[ptr string](buffer)[][0..<result] = s.data[s.pos..<s.pos+result]
+          cast[ptr string](buffer)[][0..<result] = ss.data[ss.pos..<ss.pos+result]
         except:
           raise newException(Defect, "could not read string stream, " &
             "did you use a non-string buffer pointer?", getCurrentException())
       elif not defined(nimscript):
-        copyMem(buffer, addr(prepareMutationAt(s.data, s.pos)), result)
-      inc(s.pos, result)
+        copyMem(buffer, ss.data.readRawData(ss.pos), result)
+      inc(ss.pos, result)
     else:
       result = 0
 
-  proc ssPeekData(s: Stream, buffer: pointer, bufLen: int): int {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect].} =
-    var s = StringStream(s)
-    result = min(bufLen, s.data.len - s.pos)
+  proc ssPeekData(s: Stream, buffer: pointer, bufLen: int): int {.nimcall, tags: [ReadIOEffect], raises.} =
+    let ss = StringStream(s)
+    result = min(bufLen, ss.data.len - ss.pos)
     if result > 0:
       when defined(js):
         try:
-          cast[ptr string](buffer)[][0..<result] = s.data[s.pos..<s.pos+result]
+          cast[ptr string](buffer)[][0..<result] = ss.data[ss.pos..<ss.pos+result]
         except:
           raise newException(Defect, "could not peek string stream, " &
             "did you use a non-string buffer pointer?", getCurrentException())
       elif not defined(nimscript):
-        copyMem(buffer, addr(prepareMutationAt(s.data, s.pos)), result)
+        copyMem(buffer, ss.data.readRawData(ss.pos), result)
     else:
       result = 0
 
-  proc ssWriteData(s: Stream, buffer: pointer, bufLen: int) {.nimcall, raises: [Defect, IOError, OSError], tags: [WriteIOEffect].} =
-    var s = StringStream(s)
+  proc ssWriteData(s: Stream, buffer: pointer, bufLen: int) {.nimcall, tags: [WriteIOEffect], raises.} =
+    var ss = StringStream(s)
     if bufLen <= 0:
       return
-    if s.pos + bufLen > s.data.len:
-      setLen(s.data, s.pos + bufLen)
+    if ss.pos + bufLen > ss.data.len:
+      setLen(ss.data, ss.pos + bufLen)
     when defined(js):
       try:
-        s.data[s.pos..<s.pos+bufLen] = cast[ptr string](buffer)[][0..<bufLen]
+        ss.data[ss.pos..<ss.pos+bufLen] = cast[ptr string](buffer)[][0..<bufLen]
       except:
         raise newException(Defect, "could not write to string stream, " &
           "did you use a non-string buffer pointer?", getCurrentException())
     elif not defined(nimscript):
-      copyMem(addr(prepareMutationAt(s.data, s.pos)), buffer, bufLen)
-    inc(s.pos, bufLen)
+      let dest = beginStore(ss.data, bufLen, ss.pos)
+      copyMem(dest, buffer, bufLen)
+      endStore(ss.data)
+    inc(ss.pos, bufLen)
 
-  proc ssClose(s: Stream) {.nimcall, raises: [IOError, OSError], tags: [WriteIOEffect].} =
-    var s = StringStream(s)
-    s.data = ""
+  proc ssClose(s: Stream) {.nimcall, tags: [WriteIOEffect], raises.} =
+    var ss = StringStream(s)
+    ss.data = ""
 
   proc newStringStream*(s: sink string = ""): StringStream =
     ## Creates a new stream from the string `s`.
@@ -1330,24 +1338,20 @@ else: # after 1.3 or JS not defined
       assert strm.readLine() == "the third line"
       strm.close()
 
-    result = StringStream(data: s)
-    when false: # nimvm
-      discard
-    else:
-      when declared(prepareMutation):
-        prepareMutation(result.data) # Allows us to mutate using `addr` logic like `copyMem`, otherwise it errors.
-    result.pos = 0
-    result.closeImpl = ssClose
-    result.atEndImpl = ssAtEnd
-    result.setPositionImpl = ssSetPosition
-    result.getPositionImpl = ssGetPosition
-    result.readDataStrImpl = ssReadDataStr
-    when false: # nimvm
-      discard
-    else:
-      result.readDataImpl = ssReadData
-      result.peekDataImpl = ssPeekData
-      result.writeDataImpl = ssWriteData
+    result = StringStream(
+      data: s,
+      pos: 0,
+      closeImpl: ssClose,
+      atEndImpl: ssAtEnd,
+      setPositionImpl: ssSetPosition,
+      getPositionImpl: ssGetPosition,
+      readDataStrImpl: ssReadDataStr,
+      readLineImpl: nil,
+      readDataImpl: ssReadData,
+      peekDataImpl: ssPeekData,
+      writeDataImpl: ssWriteData,
+      flushImpl: nil
+    )
 
 type
   FileStream* = ref FileStreamObj
@@ -1360,32 +1364,51 @@ type
     ## **Note:** Not available for JS backend.
     f: File
 
-proc fsClose(s: Stream) {.nimcall, raises: [IOError, OSError], tags: [WriteIOEffect].} =
-  if FileStream(s).f != nil:
-    close(FileStream(s).f)
-    FileStream(s).f = nil
-proc fsFlush(s: Stream) {.nimcall, raises: [Defect, IOError, OSError], tags: [WriteIOEffect].} = flushFile(FileStream(s).f)
-proc fsAtEnd(s: Stream): bool {.nimcall, raises: [Defect, IOError, OSError], tags: [].} = return endOfFile(FileStream(s).f)
-proc fsSetPosition(s: Stream, pos: int) {.nimcall, raises: [Defect, IOError, OSError], tags: [].} = setFilePos(FileStream(s).f, pos)
-proc fsGetPosition(s: Stream): int {.nimcall, raises: [Defect, IOError, OSError], tags: [].} = return int(getFilePos(FileStream(s).f))
+proc fsClose(s: Stream) {.nimcall, tags: [WriteIOEffect], raises.} =
+  let fs = FileStream(s)
+  if fs.f != nil:
+    close(fs.f)
+    fs.f = nil
+proc fsFlush(s: Stream) {.nimcall, tags: [WriteIOEffect], raises.} =
+  let fs = FileStream(s)
+  flushFile(fs.f)
+proc fsAtEnd(s: Stream): bool {.nimcall, tags: [], raises.} =
+  let fs = FileStream(s)
+  return endOfFile(fs.f)
+proc fsSetPosition(s: Stream, pos: int) {.nimcall, tags: [], raises.} =
+  let fs = FileStream(s)
+  setFilePos(fs.f, pos)
+proc fsGetPosition(s: Stream): int {.nimcall, tags: [], raises.} =
+  let fs = FileStream(s)
+  return int(getFilePos(fs.f))
 
-proc fsReadData(s: Stream, buffer: pointer, bufLen: int): int {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect].} =
-  result = readBuffer(FileStream(s).f, buffer, bufLen)
+proc fsReadData(s: Stream, buffer: pointer, bufLen: int): int {.nimcall, tags: [ReadIOEffect], raises.} =
+  let fs = FileStream(s)
+  result = readBuffer(fs.f, buffer, bufLen)
 
-proc fsReadDataStr(s: Stream, buffer: var string, slice: Slice[int]): int {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect].} =
-  result = readBuffer(FileStream(s).f, addr(prepareMutationAt(buffer, slice.a)), slice.b + 1 - slice.a)
+proc fsReadDataStr(s: Stream, buffer: var string, slice: Slice[int]): int {.nimcall, tags: [ReadIOEffect], raises.} =
+  let fs = FileStream(s)
+  let count = slice.b + 1 - slice.a
+  let dest = beginStore(buffer, count, slice.a)
+  result = readBuffer(fs.f, dest, count)
+  endStore(buffer)
 
-proc fsPeekData(s: Stream, buffer: pointer, bufLen: int): int {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect].} =
+proc fsPeekData(s: Stream, buffer: pointer, bufLen: int): int {.nimcall, tags: [ReadIOEffect], raises.} =
+  let fs = FileStream(s)
   let pos = fsGetPosition(s)
-  defer: fsSetPosition(s, pos)
-  result = readBuffer(FileStream(s).f, buffer, bufLen)
+  try:
+    result = readBuffer(fs.f, buffer, bufLen)
+  finally:
+    fsSetPosition(s, pos)
 
-proc fsWriteData(s: Stream, buffer: pointer, bufLen: int) {.nimcall, raises: [Defect, IOError, OSError], tags: [WriteIOEffect].} =
-  if writeBuffer(FileStream(s).f, buffer, bufLen) != bufLen:
+proc fsWriteData(s: Stream, buffer: pointer, bufLen: int) {.nimcall, tags: [WriteIOEffect], raises.} =
+  let fs = FileStream(s)
+  if writeBuffer(fs.f, buffer, bufLen) != bufLen:
     raise IOError #newEIO("cannot write to stream")
 
-proc fsReadLine(s: Stream, line: var string): bool {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect].} =
-  result = readLine(FileStream(s).f, line)
+proc fsReadLine(s: Stream, line: var string): bool {.nimcall, tags: [ReadIOEffect], raises.} =
+  let fs = FileStream(s)
+  result = readLine(fs.f, line)
 
 proc newFileStream*(f: File): FileStream =
   ## Creates a new stream from the file `f`.
