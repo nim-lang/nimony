@@ -442,8 +442,8 @@ typedef struct string_0_sysvq0asl{
 string_0_sysvq0asl;
 extern void X60Qini_0_sysvq0asl(void);
 extern void X60Qini_0_assy765wm(void);
-extern void write_0_syn1lfpjv(FILE* f_4, string_0_sysvq0asl s_0);
-extern void write_7_syn1lfpjv(FILE* f_11, NC8 c_1);
+extern void write_0_syn1lfpjv(FILE* f_7, string_0_sysvq0asl s_0);
+extern void write_7_syn1lfpjv(FILE* f_14, NC8 c_2);
 extern void quit_0_syn1lfpjv(NI64 value_1);
 LongString_0_sysvq0asl const strlit_0_tpakvxko41 = {
   .fullLen_0 = IL64(20), .rc_0 = IL64(0), .capImpl_0 = IL64(0), .data_0 = "[Assertion Failure] "}
