@@ -34,6 +34,14 @@ func hash*(x: float64): Hash {.inline.} = cast[Hash](x + 0.0) # +0.0 normalizes 
 func hash*(x: float32): Hash {.inline.} = hash(float64(x))
 func hash*[T: enum](x: T): Hash {.inline.} = Hash(x)
 
+func hash*[A: Hashable, B: Hashable](x: (A, B)): Hash {.inline.} =
+  result = hash(x[0]) !& hash(x[1])
+  result = !$result
+
+func hash*[A: Hashable, B: Hashable, C: Hashable](x: (A, B, C)): Hash {.inline.} =
+  result = hash(x[0]) !& hash(x[1]) !& hash(x[2])
+  result = !$result
+
 #[
 func hash*[T: object](x: T): Hash {.inline.} =
   result = 0'u

@@ -169,9 +169,17 @@ iterator lines*(f: File): string {.sideEffect.} =
 proc exit(value: int32) {.importc: "exit", header: "<stdlib.h>".}
 proc quit*(value: int) {.noreturn.} = exit(value.int32)
 
+const
+  QuitSuccess* = 0
+  QuitFailure* = 1
+
 proc quit*(msg: string) {.noreturn.} =
   echo msg
-  quit 1
+  quit QuitFailure
+
+proc quit*(msg: string; errorcode: int) {.noreturn.} =
+  echo msg
+  quit errorcode
 
 const ReadBufSize = 4000
 

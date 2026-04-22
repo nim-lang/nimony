@@ -16,7 +16,8 @@ import std/[strutils, assertions, formatfloat]
 
 proc skipParRi(n: var Cursor) =
   if n.kind != ParRi:
-    raiseAssert $(n.exprKind, n.stmtKind, n.typeKind, $n)
+    raiseAssert "expected ')' but got: " & $n & " (expr=" & $n.exprKind &
+      ", stmt=" & $n.stmtKind & ", type=" & $n.typeKind & ")"
   inc n
 
 type
@@ -749,7 +750,7 @@ proc gconcept(g: var SrcGen, n: var Cursor, c: Context) =
 proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
   case n.kind
   of ParLe:
-    case n.typekind
+    case n.typeKind
     of IT:
       takeNumberType(g, n, "int")
     of UT:
@@ -951,7 +952,7 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
 
         while n.kind != ParRi:
           case n.substructureKind
-          of EFldU:
+          of EfldU:
             let local = takeLocal(n, SkipFinalParRi)
             var name = local.name
             var value = local.val
@@ -1479,7 +1480,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       put(g, tkParRi, ")")
       skipParRi(n)
 
-    of AtX, PatX, TupatX, ArrAtX:
+    of AtX, PatX, TupatX, ArratX:
       inc n
 
       gsub(g, n)
@@ -1858,7 +1859,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
 
       skipParRi(n)
 
-    of HDerefX, HaddrX:
+    of HderefX, HaddrX:
       inc n
       gsub(g, n)
       skipParRi(n)

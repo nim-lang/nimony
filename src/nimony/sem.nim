@@ -1425,9 +1425,12 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
       hasParRi = false
     else:
       let name = getIdent(n)
-      if name != StrId(0) and name in c.userPragmas and not hasParRi:
-        # custom pragma, cannot have arguments
+      if name != StrId(0) and name in c.userPragmas:
+        # custom pragma; arguments are accepted but ignored (the pragma's
+        # body is substituted as-is regardless of the call-site arguments).
         inc n
+        if hasParRi:
+          while n.kind != ParRi: skip n
         var read = beginRead(c.userPragmas[name])
         while read.kind != ParRi:
           semPragma c, dest, read, crucial, kind
@@ -2011,10 +2014,37 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
   var value = beginRead(valueBuf)
   case value.exprKind
   of SetConstrX:
-    inc value
-    skip value
-    var dummy = Item(n: value, typ: expected)
-    semCaseOfValueImpl(c, dest, dummy, expected, seen)
+    # `evalExpr` has already lowered each enum-field reference to its raw
+    # ordinal, so the set's elements are plain int literals. Re-semchecking
+    # them through `semCaseOfValueImpl` would try to convert `int -> E` and
+    # fail with a spurious type mismatch whose info points back into the
+    # imported enum's declaration. Take the ordinals directly, emit them as
+    # case labels into `dest`, and track them in `seen`.
+    inc value # skip (setconstr
+    skip value # skip element type
+    while value.kind != ParRi:
+      if value.substructureKind == RangeU:
+        let rInfo = value.info
+        var r = value
+        inc r
+        let a = getConstOrdinalValue(r); skip r
+        let b = getConstOrdinalValue(r); skip r
+        if a.isNaN or b.isNaN:
+          buildErr c, dest, rInfo, "expected constant ordinal value"
+        else:
+          if seen.doesOverlapOrIncl(a, b):
+            buildErr c, dest, rInfo, "overlapping values"
+          dest.takeTree value
+      else:
+        let x = getConstOrdinalValue(value)
+        let vInfo = value.info
+        if x.isNaN:
+          buildErr c, dest, vInfo, "expected constant ordinal value"
+          skip value
+        else:
+          if seen.containsOrIncl(x):
+            buildErr c, dest, vInfo, "value already handled"
+          dest.takeTree value
   of NoExpr, ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX, InfX, NeginfX, NanX,
      FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX, KvX, OconstrX,
      AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,

@@ -10,9 +10,10 @@ import ".." / models / tags
 import ".." / lib / nifstreams
 import nimony_model
 
-template res(t: ExprKind; bits = 0): (string, int) = ($t, bits)
-template res(t: StmtKind; bits = 0): (string, int) = ($t, bits)
-template res(t: TypeKind; bits = 0): (string, int) = ($t, bits)
+when defined(nimony):
+  {.feature: "untyped".}
+
+template res(t: ExprKind | StmtKind | TypeKind; bits = 0): (string, int) = ($t, bits)
 
 const
   TypedMagic* = -3

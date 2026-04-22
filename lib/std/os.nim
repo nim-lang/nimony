@@ -125,6 +125,16 @@ when defined(windows) or defined(posix) or defined(nintendoswitch):
       if i > 0: result.add " "
       result.add quoteShell(args[i])
 
+when defined(posix):
+  proc getLastModificationTime*(file: string): int64 {.raises.} =
+    ## Returns the file's last modification time as seconds since the epoch.
+    ## Raises `OSError` if the file does not exist or cannot be stat'ed.
+    var s = default(Stat)
+    var filename = file
+    if stat(filename.toCString, s) < 0:
+      raiseOSError(osLastError(), file)
+    result = s.st_mtime
+
 proc exitStatusLikeShell*(status: cint): cint =
   ## Converts exit code from `c_system` into a shell exit code.
   when defined(posix):

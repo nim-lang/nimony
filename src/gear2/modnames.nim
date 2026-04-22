@@ -25,13 +25,24 @@ proc uhashBase36*(s: string): string =
     result.add Base36[int(id mod 36'u32)]
     id = id div 36'u32
 
-proc moduleSuffix*(path: string; searchPaths: openArray[string]): string {.canRaise.} =
-  var f = relativePath(path, getCurrentDir(), '/')
+proc moduleSuffix*(path: string; searchPaths: openArray[string]): string =
+  # `getCurrentDir`/`relativePath` are `.raises`, but the only reason they can
+  # fail in practice is a transient filesystem error that would break every
+  # diagnostic equally. Swallow it here so this helper (widely used inside
+  # sem/programs) stays non-raising.
+  var f = path
+  try:
+    f = relativePath(path, getCurrentDir(), '/')
+  except:
+    discard
   # Select the path that is shortest relative to the searchPath:
   for s in searchPaths:
-    let candidate = relativePath(path, s, '/')
-    if candidate.len < f.len:
-      f = candidate
+    try:
+      let candidate = relativePath(path, s, '/')
+      if candidate.len < f.len:
+        f = candidate
+    except:
+      discard
   let m = extractModulename(f)
   var id = uhash(f)
   result = newStringOfCap(10)

@@ -35,6 +35,7 @@ when defined(posix):
                                             ## For other file types, the use of this field is
                                             ## unspecified.
       st_mode* {.importc: "st_mode".} : Mode        ## Mode of file (see below).
+      st_mtime* {.importc: "st_mtime".} : int64     ## Time of last data modification (seconds since epoch).
 
 
   const StatHasNanoseconds* = defined(linux) or defined(freebsd) or
