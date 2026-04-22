@@ -21,6 +21,13 @@ type
                          ## at the end. If the file does not exist, it
                          ## will be created.
 
+  FileSeekPos* = enum    ## Position relative to which seek should happen.
+                         # The values are ordered so that they match with stdio
+                         # SEEK_SET, SEEK_CUR and SEEK_END respectively.
+    fspSet               ## Seek to absolute value
+    fspCur               ## Seek relative to current position
+    fspEnd               ## Seek relative to end
+
 var
   stdin* {.importc: "stdin", header: "<stdio.h>".}: File
   stdout* {.importc: "stdout", header: "<stdio.h>".}: File
@@ -233,3 +240,43 @@ proc tryWriteFile*(file, content: string): bool =
     result = false
 
 proc flushFile*(f: File) {.importc: "fflush", header: "<stdio.h>".}
+
+proc c_fgetc(stream: File): int32 {.
+  importc: "fgetc", header: "<stdio.h>".}
+proc c_ungetc(c: int32; f: File): int32 {.
+  importc: "ungetc", header: "<stdio.h>".}
+
+when defined(windows):
+  when not defined(amd64):
+    proc c_fseek(f: File; offset: int64; whence: int32): int32 {.
+      importc: "fseek", header: "<stdio.h>".}
+    proc c_ftell(f: File): int64 {.
+      importc: "ftell", header: "<stdio.h>".}
+  else:
+    proc c_fseek(f: File; offset: int64; whence: int32): int32 {.
+      importc: "_fseeki64", header: "<stdio.h>".}
+    proc c_ftell(f: File): int64 {.
+      importc: "_ftelli64", header: "<stdio.h>".}
+else:
+  proc c_fseek(f: File; offset: int64; whence: int32): int32 {.
+    importc: "fseeko", header: "<stdio.h>".}
+  proc c_ftell(f: File): int64 {.
+    importc: "ftello", header: "<stdio.h>".}
+
+proc endOfFile*(f: File): bool =
+  ## Returns true if `f` is at the end.
+  var c = c_fgetc(f)
+  discard c_ungetc(c, f)
+  result = c < 0'i32
+
+proc getFilePos*(f: File): int64 {.raises.} =
+  ## Retrieves the current position of the file pointer that is used to
+  ## read from the file `f`. The file's first byte has the index zero.
+  result = c_ftell(f)
+  if result < 0: raise IOError
+
+proc setFilePos*(f: File; pos: int64; relativeTo: FileSeekPos = fspSet) {.raises.} =
+  ## Sets the position of the file pointer that is used for read/write
+  ## operations. The file's first byte has the index zero.
+  if c_fseek(f, pos, int32(relativeTo)) != 0'i32:
+    raise IOError

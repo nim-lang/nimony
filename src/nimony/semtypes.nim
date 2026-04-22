@@ -594,7 +594,8 @@ proc handleNotnilType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; con
     dest.shrink before
 
 proc isPointerTypeClass(n: Cursor): bool {.inline.} =
-  result = n.typeKind == TypeKindT and n.firstSon.typeKind in {RefT, PtrT, PointerT, CstringT}
+  result = n.typeKind == TypeKindT and
+    n.firstSon.typeKind in {RefT, PtrT, PointerT, CstringT, ProctypeT}
 
 proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; context: TypeDeclContext): bool =
   result = false

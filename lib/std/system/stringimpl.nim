@@ -300,25 +300,19 @@ func shrink*(s: var string; newLen: int) =
   if newLen <= s.len:
     let sl = ssLen(s)
     if sl <= PayloadSize:
+      # Already inline; just update the slen byte.
       if newLen <= AlwaysAvail:
         zeroSwarPad(s, newLen)  # clear stale bytes for SWAR; sets slen
       else:
         setSSLen(s, newLen)
     else:
-      if newLen <= PayloadSize:
-        # Transition from long/static to inline
-        let old = s.more
-        if newLen > 0:
-          copyMem(inlinePtrV(s), addr old.data[0], newLen)
-        if newLen <= AlwaysAvail:
-          zeroSwarPad(s, newLen)
-        else:
-          setSSLen(s, newLen)
-      else:
-        # Stays long: ensure unique before mutating
-        prepareMutation(s)
-        s.more.fullLen = newLen
-        copyMem(inlinePtrV(s), addr s.more.data[0], min(newLen, AlwaysAvail))
+      # Heap or static: keep the buffer allocated, just update fullLen.
+      # Avoids alloc/dealloc flip-flops when callers shrink and then grow.
+      # `prepareMutation` promotes a static literal into a heap copy if we
+      # are about to mutate, so `s.more.fullLen = newLen` is safe afterwards.
+      prepareMutation(s)
+      s.more.fullLen = newLen
+      copyMem(inlinePtrV(s), addr s.more.data[0], min(newLen, AlwaysAvail))
 
 func setLen*(s: var string; newLen: int) =
   if newLen <= s.len:
