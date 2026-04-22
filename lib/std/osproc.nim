@@ -522,14 +522,8 @@ when defined(windows):
       atTheEnd: false,
       closeImpl: hsClose,
       atEndImpl: hsAtEnd,
-      setPositionImpl: sentSetPos,
-      getPositionImpl: sentGetPos,
-      readDataStrImpl: defaultReadDataStr,
-      readLineImpl: defaultReadLine,
       readDataImpl: hsReadData,
-      peekDataImpl: sentPeekData,
-      writeDataImpl: hsWriteData,
-      flushImpl: sentFlush)
+      writeDataImpl: hsWriteData)
 
   proc buildCommandLine(a: string; args: openArray[string]): string =
     result = quoteShell(a)
