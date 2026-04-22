@@ -1267,7 +1267,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         skip branches
       if not matched:
         m.error InvalidMatch, f, arg.typ
-      skipToEnd f
+      skip f
     of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, AnumT, NiltT, AndT, NotT,
         ConceptT, DistinctT, StaticT, ItertypeT, AutoT, SymKindT, TypeKindT, OrdinalT:
       m.error UnhandledTypeBug, f, f

@@ -19,15 +19,8 @@
 ## Procs annotated with ensuresNif must have unique names (no overloading).
 ## Use `include` not `import` since custom pragmas can't be exported.
 
-when defined(nimony):
-  # Nimony's user-pragma mechanism uses the `{.pragma: name.}` form; declare
-  # empty pragmas so `{.ensuresNif: ....}` / `{.requiresNif: ....}` attachments
-  # parse. Nimony ignores these annotations anyway.
-  {.pragma: ensuresNif.}
-  {.pragma: requiresNif.}
-else:
-  template ensuresNif*(x: untyped) {.pragma.}
-  template requiresNif*(x: untyped) {.pragma.}
+template ensuresNif*(x: untyped) {.pragma.}
+template requiresNif*(x: untyped) {.pragma.}
 
 # ---------------------------------------------------------------------------
 # Postconditions: what a proc adds to `dest`

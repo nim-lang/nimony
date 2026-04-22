@@ -132,6 +132,13 @@ type
     pluginBlacklist*: HashSet[StrId] # make 1984 fiction again
     cachedTypeboundOps*: Table[(SymId, StrId), seq[SymId]]
     userPragmas*: Table[StrId, TokenBuf]
+    customPragmaTemplates*: HashSet[StrId]
+      ## Names of templates declared with `{.pragma.}`. Such templates can
+      ## be used as custom pragmas that accept arguments, e.g.
+      ## `template ensuresNif*(x: untyped) {.pragma.}` lets later code attach
+      ## `{.ensuresNif: addedAny(dest).}`. The template body is not expanded
+      ## here — the annotation is simply accepted and dropped, matching
+      ## Nim's treatment for tooling-only pragmas.
     usingStmtMap*: Table[StrId, TypeCursor] # mapping of identifiers to types declared in using statements
     pragmaStack*: seq[TokenBuf] # used to implement {.push.} and {.pop.}
     executeCall*: SemExecutor

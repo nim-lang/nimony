@@ -1425,16 +1425,20 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
       hasParRi = false
     else:
       let name = getIdent(n)
-      if name != StrId(0) and name in c.userPragmas:
-        # custom pragma; arguments are accepted but ignored (the pragma's
-        # body is substituted as-is regardless of the call-site arguments).
+      if name != StrId(0) and name in c.userPragmas and not hasParRi:
+        # custom pragma, cannot have arguments
         inc n
-        if hasParRi:
-          while n.kind != ParRi: skip n
         var read = beginRead(c.userPragmas[name])
         while read.kind != ParRi:
           semPragma c, dest, read, crucial, kind
         endRead(c.userPragmas[name])
+      elif name != StrId(0) and name in c.customPragmaTemplates:
+        # Pragma that resolves to a `template X(args) {.pragma.}` declaration.
+        # Accept with or without arguments and drop silently — matches Nim's
+        # treatment of templates marked `sfCustomPragma` used as annotations.
+        inc n
+        if hasParRi:
+          while n.kind != ParRi: skip n
       else:
         buildErr c, dest, n.info, "expected pragma"
         inc n
@@ -1606,11 +1610,22 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     else:
       buildErr c, dest, n.info, "`callConv` pragma takes a calling convention identifier"
   of EmitP, BuildP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP, PassLP, PassCP:
-    buildErr c, dest, n.info, "pragma not supported"
-    inc n
-    if hasParRi:
-      while n.kind != ParRi: skip n # skip optional pragma arguments
-    dest.addParRi()
+    if pk == PragmaP and kind == TemplateY and not hasParRi and crucial.sym != SymId(0):
+      # `template X(args) {.pragma.}` declares `X` as a custom pragma. The
+      # body is not expanded at attachment sites — the annotation is
+      # recorded as a known custom-pragma name that will be silently
+      # accepted (and dropped) wherever it is later attached. Mirrors Nim's
+      # `sfCustomPragma`.
+      var basename = pool.syms[crucial.sym]
+      extractBasename basename
+      c.customPragmaTemplates.incl pool.strings.getOrIncl(basename)
+      inc n
+    else:
+      buildErr c, dest, n.info, "pragma not supported"
+      inc n
+      if hasParRi:
+        while n.kind != ParRi: skip n # skip optional pragma arguments
+      dest.addParRi()
   of KeepOverflowFlagP:
     dest.add parLeToken(pk, n.info)
     inc n
