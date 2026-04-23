@@ -471,7 +471,7 @@ const
                      "addEmptyNode", "addEmptyNode2", "addEmptyNode3", "addEmptyNode4",
                      "addSubtree"]
   ## Procs that skip the ParRi after a while-kind-ParRi loop
-  ParRiSkipProcs = ["inc", "skip", "skipParRi", "takeParRi", "takeToken"]
+  ParRiSkipProcs = ["inc", "skipParRi", "takeParRi", "takeToken"]
 
 proc scanCallsForCursorArg(bc: Cursor; endNested: int; cursorParams: seq[string];
                            consumeCounts: var Table[string, int]) =
