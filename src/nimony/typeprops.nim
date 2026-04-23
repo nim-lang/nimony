@@ -352,7 +352,7 @@ proc objtypeImpl*(s: SymId): Cursor =
   if k in {RefT, PtrT}:
     inc result
 
-iterator inheritanceChain*(s: SymId): SymId =
+iterator inheritanceChain*(s: SymId): SymId {.sideEffect.} =
   var objbody = objtypeImpl(s)
   while true:
     let od = asObjectDecl(objbody)

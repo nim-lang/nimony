@@ -109,10 +109,10 @@
 | `(ro)` | NifcTypeQualifier | `readonly` (= `const`) type qualifier for NIFC |
 | `(restrict)` | NifcTypeQualifier | type qualifier for NIFC |
 | `(cppref)` | NifcTypeQualifier | type qualifier for NIFC that provides a C++ reference |
-| `(i INTLIT ...)` | NifcType, NimonyType | `int` builtin type; size in bits followed by optional attributes (`(importc ...)`, `(header ...)`, etc.) |
+| `(i INTLIT (importc/importcpp STR)? (header STR)?)` | NifcType, NimonyType | `int` builtin type |
 | `(u INTLIT ...)` | NifcType, NimonyType | `uint` builtin type; size in bits followed by optional attributes (`(importc ...)`, `(header ...)`, etc.) |
-| `(f INTLIT ...)` | NifcType, NimonyType | `float` builtin type; size in bits followed by optional attributes (`(importc ...)`, `(header ...)`, etc.) |
-| `(c INTLIT ...)` | NifcType, NimonyType | `char` builtin type; size in bits followed by optional attributes (`(importc ...)`, `(header ...)`, etc.) |
+| `(f INTLIT (importc/importcpp STR)? (header STR)?)` | NifcType, NimonyType | `float` builtin type |
+| `(c INTLIT (importc/importcpp STR)? (header STR)?)` | NifcType, NimonyType | `char` builtin type |
 | `(bool)` | NifcType, NimonyType | `bool` builtin type |
 | `(void)` | NifcType, NimonyType | `void` return type |
 | `(ptr T (unchecked)?)`; `(ptr T)` | NifcType, NimonyType, NiflerKind | `ptr` type contructor; the `(unchecked)` pragma relaxes nil checking on deref |

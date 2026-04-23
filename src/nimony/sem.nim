@@ -111,7 +111,8 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
     # all branches are discardable
     result = true
   of CaseS:
-    inc it
+    inc it # tag
+    skip it # selector
     while it.kind != ParRi:
       case it.substructureKind
       of OfU:
@@ -2361,7 +2362,17 @@ proc semStmtBranch(c: var SemContext; dest: var TokenBuf; it: var Item; isNewSco
   # handle statements that could be expressions
   case classifyType(c, it.typ)
   of AutoT:
+    let start = dest.len
     semExpr c, dest, it
+    # A branch that doesn't yield a value (`return`/`raise`/`break`/...)
+    # shouldn't pin the surrounding expression's type to void — leave it
+    # as `auto` so a sibling branch can still determine the result type.
+    if classifyType(c, it.typ) == VoidT:
+      let ex = cursorAt(dest, start)
+      let nr = isNoReturn(ex)
+      endRead(dest)
+      if nr:
+        it.typ = c.types.autoType
   of VoidT:
     # performs discard check:
     semStmt c, dest, it.n, isNewScope
@@ -2369,13 +2380,6 @@ proc semStmtBranch(c: var SemContext; dest: var TokenBuf; it: var Item; isNewSco
     var ex = Item(n: it.n, typ: it.typ)
     let start = dest.len
     semExpr c, dest, ex
-    # this is handled by commonType, since it has to be done deeply:
-    #if classifyType(c, ex.typ) == VoidT:
-    #  # allow statement in expression context if it is noreturn
-    #  let ignore = isNoReturn(cursorAt(dest, start))
-    #  endRead(dest)
-    #  if not ignore:
-    #    typeMismatch(c, it.n.info, ex.typ, it.typ)
     commonType(c, dest, ex, start, it.typ)
     it.n = ex.n
 
@@ -3348,7 +3352,10 @@ proc semReturn(c: var SemContext; dest: var TokenBuf; it: var Item) =
   if c.routine.kind == NoSym:
     buildErr c, dest, info, "`return` only allowed within a routine"
   if it.n.kind == DotToken:
-    if c.routine.returnType.typeKind != VoidT:
+    # Templates have no `result` symbol — the `return` is text-substituted
+    # into the caller, so the meaning depends on the caller's signature.
+    # Preserve the dot and let template expansion resolve it.
+    if c.routine.kind != TemplateY and c.routine.returnType.typeKind != VoidT:
       dest.addSymUse c.routine.resId, info
       inc it.n # skips the dot
     else:
@@ -4466,7 +4473,11 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
             hasFieldSym = true
             field = ObjField(sym: sym, typ: asLocal(res.decl).typ, level: 0)
           else:
-            field = findObjFieldConsiderVis(c, decl, fieldName, bindings)
+            # field syms are nested inside the owning type so `tryLoadSym`
+            # often cannot resolve them. The Symbol form means a prior
+            # semcheck pass already validated visibility, so look up by name
+            # but skip the visibility check.
+            field = findObjFieldConsiderVis(c, decl, fieldName, bindings, bypassVis = true)
         else:
           field = findObjFieldConsiderVis(c, decl, fieldName, bindings)
         if field.level >= 0:
