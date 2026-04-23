@@ -257,6 +257,12 @@ proc isBranchValue(n: Cursor): bool =
   elif n.exprKind == SufC:
     inc n
     result = n.kind in {IntLit, UIntLit, CharLit}
+  elif n.exprKind in {ConvC, CastC}:
+    # `(conv T <lit>)` → `((T)<lit>)` is a constant expression in C and is
+    # valid inside a `case` label.
+    inc n
+    skip n # type
+    result = isBranchValue(n)
   else:
     result = false
 

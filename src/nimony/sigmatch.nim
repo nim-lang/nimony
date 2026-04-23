@@ -6,9 +6,11 @@
 
 import std / [sets, tables, assertions]
 
-import bitabs, nifreader, nifstreams, nifcursors, lineinfos
+include ".." / lib / nifprelude
+include ".." / lib / compat2
 
-import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes, renderer, symparser, asthelpers
+import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes, renderer, asthelpers
+import ".." / lib / symparser
 import ".." / models / tags
 
 type
@@ -78,9 +80,10 @@ type
 
 proc createMatch*(context: ptr SemContext): Match = Match(context: context, firstVarargPosition: -1)
 
-proc concat(a: varargs[string]): string =
-  result = a[0]
-  for i in 1..high(a): result.add a[i]
+when not defined(nimony):
+  proc concat(a: varargs[string]): string =
+    result = a[0]
+    for i in 1..high(a): result.add a[i]
 
 proc error(m: var Match; k: MatchErrorKind; expected, got: Cursor) =
   m.err = true
@@ -167,7 +170,7 @@ proc addErrorMsg*(dest: var string; m: Match) =
 
 proc addErrorMsg*(dest: var TokenBuf; m: Match) =
   assert m.err
-  dest.addParLe ErrT, m.argInfo
+  dest.addParLe nifstreams.ErrT, m.argInfo
   dest.addDotToken()
   let str = "For type " & typeToString(m.fn.typ) & " mismatch at position\n" &
     "[" & $(m.pos+1) & "] " & getErrorMsg(m)
@@ -277,13 +280,13 @@ proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
     # now this should be good enough for our purposes:
     result = true
     skip f
-  of TypeKindT:
+  of TypekindT:
     var aTag = a
     if aTag.typeKind == InvokeT:
       inc aTag
     if aTag.kind == Symbol:
       aTag = typeImpl(aTag.symId)
-    if aTag.typeKind == TypeKindT:
+    if aTag.typeKind == TypekindT:
       inc aTag
     inc f
     assert f.kind == ParLe
@@ -297,7 +300,7 @@ proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
     case a.typeKind
     of OrdinalT:
       result = true
-    of TypeKindT:
+    of TypekindT:
       var aTag = a
       inc aTag
       result = isOrdinalTypeKind(aTag.typeKind)
@@ -526,7 +529,7 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
           break
       elif m.inferred.contains(fs):
         # rematch?
-        var prev = m.inferred[fs]
+        var prev = m.inferred.getOrQuit(fs)
         # mark that the match is to a given type from the outside context:
         m.concreteMatch = true
         linearMatch(m, prev, a, flags) # skips a
@@ -755,15 +758,6 @@ proc commonType(f, a: Cursor): Cursor =
   # XXX Refine
   result = a
 
-proc typevarRematch(m: var Match; typeVar: SymId; f, a: Cursor) {.used.} =
-  # now unused, maybe bring back error message somehow
-  let com = commonType(f, a)
-  if com.kind == ParLe and com.tagId == ErrT:
-    m.errorTypevar InvalidRematch, f, a, typeVar
-  elif matchesConstraint(m, typeVar, com):
-    m.inferred[typeVar] = skipModifier(com)
-  else:
-    m.error ConstraintMismatch, typeImpl(typeVar), a
 
 proc useArg(m: var Match; arg: CallArg; f: Cursor) =
   if f.typeKind == UntypedT and not cursorIsNil(arg.orig):
@@ -905,7 +899,7 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
         m.error ConstraintMismatch, f, a
     elif m.inferred.contains(fs):
       # used to call typevarRematch
-      var prev = m.inferred[fs]
+      var prev = m.inferred.getOrQuit(fs)
       # mark that the match is to a given type from the outside context:
       m.concreteMatch = true
       singleArgImpl(m, prev, arg)
@@ -925,7 +919,7 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
       discard "perfect match"
     else:
       var impl = typeImpl(fs)
-      if impl.kind == ParLe and impl.tagId == ErrT:
+      if impl.kind == ParLe and impl.tagId == nifstreams.ErrT:
         m.error InvalidMatch, f, a
       else:
         if impl.typeKind in {EnumT, HoleyEnumT, AnumT}:
@@ -1269,13 +1263,13 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         m.error InvalidMatch, f, arg.typ
       skip f
     of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, AnumT, NiltT, AndT, NotT,
-        ConceptT, DistinctT, StaticT, ItertypeT, AutoT, SymKindT, TypeKindT, OrdinalT:
+        ConceptT, DistinctT, StaticT, ItertypeT, AutoT, SymkindT, TypekindT, OrdinalT:
       m.error UnhandledTypeBug, f, f
   else:
     m.error MismatchBug, f, arg.typ
 
 proc isEmptyLiteral*(n: Cursor): bool =
-  result = n.exprKind in {AconstrX, SetConstrX}
+  result = n.exprKind in {AconstrX, SetconstrX}
   if result:
     var n = n
     inc n # tag
@@ -1335,12 +1329,12 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: CallArg) =
     if g.typeKind in {MutT, OutT, SinkT, LentT}:
       inc g
     if g.kind == Symbol and isTypevar(g.symId) and m.inferred.contains(g.symId):
-      var inferred = m.inferred[g.symId]
+      var inferred = m.inferred.getOrQuit(g.symId)
       matchEmptyContainer(m, inferred, arg)
       return
   # XXX handle empty containers nested inside (expr)
   if (arg.n.exprKind == AconstrX and f.typeKind == ArrayT) or
-      (arg.n.exprKind == SetConstrX and f.typeKind == SetT):
+      (arg.n.exprKind == SetconstrX and f.typeKind == SetT):
     # could also handle case where `f` is a typevar
     if arg.n.exprKind == AconstrX:
       # need to match index type
@@ -1495,7 +1489,7 @@ proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[CallArg]) =
     skip f
 
 
-iterator typeVars(fn: SymId): SymId =
+iterator typeVars(fn: SymId): SymId {.sideEffect.} =
   let res = tryLoadSym(fn)
   assert res.status == LacksNothing
   var c = res.decl
@@ -1506,7 +1500,7 @@ iterator typeVars(fn: SymId): SymId =
     if c.substructureKind == TypevarsU:
       inc c
       while c.kind != ParRi:
-        if c.symKind == TypeVarY:
+        if c.symKind == TypevarY:
           var tv = c
           inc tv
           yield tv.symId
@@ -1688,7 +1682,7 @@ proc buildParamsInfo(params: Cursor): ParamsInfo =
     inc result.len
 
 proc orderArgs*(m: var Match; paramsCursor: Cursor; args: openArray[CallArg]): seq[CallArg] =
-  let params = buildParamsInfo(paramsCursor)
+  var params = buildParamsInfo(paramsCursor)
   var positions = newSeq[int](params.len)
   for i in 0 ..< positions.len: positions[i] = -1
   var cont: seq[bool] = @[] # could be a set but uses less memory for most common arg counts
@@ -1703,7 +1697,7 @@ proc orderArgs*(m: var Match; paramsCursor: Cursor; args: openArray[CallArg]): s
       inc n
       let name = getIdent(n)
       if name in params.names:
-        fi = params.names[name]
+        fi = params.names.getOrQuit(name)
         inVarargs = false
       else:
         swap m.pos, ai

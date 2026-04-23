@@ -74,6 +74,16 @@ func newSeqUninit*[T](size: int): seq[T] {.nodestroy, inline.} =
       {.cast(noSideEffect).}:
         oomHandler memSize
 
+func newSeqOfCap*[T](cap: int): seq[T] {.nodestroy, inline.} =
+  if cap <= 0:
+    result = seq[T](len: 0, data: nil)
+  else:
+    let memSize = memSizeInBytes[T](cap)
+    result = seq[T](len: 0, data: cast[ptr UncheckedArray[T]](alloc(memSize)))
+    if result.data == nil:
+      {.cast(noSideEffect).}:
+        oomHandler memSize
+
 template default*[T](x: typedesc[seq[T]]): seq[T] = newSeqUninit[T](0)
 
 func `=dup`*[T](a: seq[T]): seq[T] {.nodestroy.} =

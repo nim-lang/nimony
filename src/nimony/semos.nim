@@ -7,14 +7,15 @@
 ## Path handling and `exec` like features as `sem.nim` needs it.
 
 from std / strutils import multiReplace, split, strip
-import std / [tables, sets, os, syncio, formatfloat, assertions]
+import std / [tables, sets, os, envvars, syncio, formatfloat, assertions, dirs, paths]
 from std / osproc import execCmdEx
 
-include nifprelude
-import ".." / lib / [nifchecksums, tooldirs, argsfinder]
+include ".." / lib / nifprelude
+include ".." / lib / compat2
+import ".." / lib / [nifchecksums, nifindexes, tooldirs, argsfinder, symparser]
 
-import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
-  programs, sigmatch, magics, reporters, nifconfig, nifindexes,
+import nimony_model, symtabs, builtintypes, decls, asthelpers,
+  programs, sigmatch, magics, reporters, nifconfig,
   semdata
 
 import ".." / gear2 / modnames
@@ -46,13 +47,15 @@ proc compilerDir*(): string =
     return head
   else: return tail
 
-proc absoluteParentDir*(f: string): string =
+proc absoluteParentDir*(f: string): string {.canRaise.} =
   result = f.absolutePath().parentDir()
 
-proc fileExists*(f: string): bool =
+proc fileExists*(f: string): bool {.inline.} =
+  ## Re-export of `os.fileExists` under the `semos` qualifier so callers can
+  ## use `semos.fileExists` without importing `os` themselves.
   result = os.fileExists(f)
 
-proc toAbsolutePath*(f: string): string =
+proc toAbsolutePath*(f: string): string {.canRaise.} =
   if f.isAbsolute: return f
   result = os.absolutePath(f)
 
@@ -60,7 +63,7 @@ proc toAbsolutePath*(f: string, dir: string): string =
   if f.isAbsolute: return f
   result = normalizedPath(dir / f)
 
-proc toRelativePath*(f: string, dir: string): string =
+proc toRelativePath*(f: string, dir: string): string {.canRaise.} =
   if not f.isAbsolute: return f
   result = f.relativePath(dir)
 
@@ -78,7 +81,7 @@ proc nimexec(cmd: string) =
 proc requiresTool*(tool, src: string; forceRebuild: bool) =
   let t = findTool(tool)
   # XXX: hack for more convenient development
-  if not fileExists(t) or forceRebuild:
+  if not os.fileExists(t) or forceRebuild:
     let src = compilerDir() / src
     let args = # compiler bin path
       when not defined(debug):
@@ -109,7 +112,7 @@ proc resolveFile*(paths: openArray[string]; origin: string; toResolve: string): 
   else:
     result = splitFile(origin).dir / nimFile
     var i = 0
-    while not fileExists(result) and i < paths.len:
+    while not os.fileExists(result) and i < paths.len:
       result = paths[i] / nimFile
       inc i
 
@@ -217,7 +220,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
         while n.kind != ParRi:
           filenameVal(n, res, hasError, allowAs)
       inc n
-    of AconstrX, TupConstrX:
+    of AconstrX, TupconstrX:
       inc n
       skip n # skip type
       if n.kind == ParRi:
@@ -259,16 +262,16 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
     hasError = true
     skip n
 
-proc replaceSubs*(fmt, currentFile: string; config: NifConfig): string =
+proc replaceSubs*(fmt, currentFile: string; config: NifConfig): string {.canRaise.} =
   # Unpack Current File to Absolute
   let nifcache = config.nifcachePath
   var path = absolutePath(currentFile)
   if os.fileExists(path):
     path = parentDir(path)
   # Replace matches with paths
-  path = fmt.multiReplace(
+  path = fmt.multiReplace([
     ("${path}", path),
-    ("${nifcache}", nifcache))
+    ("${nifcache}", nifcache)])
   result = path.normalizedPath()
 
 # ------------------ include/import handling ------------------------
@@ -307,7 +310,7 @@ proc runValidatorOnPlugin(c: var SemContext; nf: string) =
   ## (a fresh clone before `hastur build validator` has run).
   if c.g.config.noValidate: return
   let v = findTool("validator")
-  if not fileExists(v):
+  if not os.fileExists(v):
     echo "warning: validator binary not found at ", v,
          "; skipping plugin validation (build it with `hastur build validator` ",
          "or pass --novalidate to silence this)"
@@ -318,21 +321,27 @@ proc compilePlugin(c: var SemContext; info: PackedLineInfo; nf, exefile: string)
   runValidatorOnPlugin(c, nf)
   let pluginDir = nimonyDir() / "src/nimony/lib"
   let pluginCache = exefile & "_d"
-  createDir(pluginCache)
+  try:
+    when defined(nimony):
+      createDir(path(pluginCache))
+    else:
+      createDir(Path(pluginCache))
+  except:
+    quit "FAILURE: cannot create directory " & pluginCache
   let cmd = "nim c -d:nimonyPlugin --nimcache:" & quoteShell(pluginCache) &
     " -o:" & quoteShell(exefile) & " -p:" & quoteShell(pluginDir) &
     " " & quoteShell(nf)
   exec cmd
 
-proc writeFileIfChanged(file, content: string) =
-  if fileExists(file) and readFile(file) == content:
+proc writeFileIfChanged(file, content: string) {.canRaise.} =
+  if os.fileExists(file) and readFile(file) == content:
     # do not touch the timestamp
     discard "nothing to do here"
   else:
     writeFile file, content
 
 proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; pluginName, input: string;
-                additionalInput = "") =
+                additionalInput = "") {.canRaise.} =
   let p = splitFile(pluginName)
   let checksumA = if additionalInput.len > 0: "_" & computeChecksum(additionalInput) else: ""
   let basename = c.g.config.nifcachePath / p.name & "_" & computeChecksum(input) & checksumA
@@ -361,7 +370,7 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; plu
   finally:
     close s
 
-proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]): tuple[output: string, exitCode: int] =
+proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]): tuple[output: string, exitCode: int] {.canRaise.} =
   # Use nimony s to compile and run the .p.nif file through the full pipeline
   let nimonyExe = findTool("nimony")
   var cmd = quoteShell(nimonyExe) & " --nimcache:" & quoteShell(nimcachePath) &
@@ -371,10 +380,10 @@ proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]
 const
   writeNifModuleSuffix* = "wriwhv7qv"
 
-proc prepareEval*(c: var SemContext): string =
+proc prepareEval*(c: var SemContext): string {.canRaise.} =
   if not c.checkedForWriteNifModule:
     c.checkedForWriteNifModule = true
-    if not fileExists(c.g.config.nifcachePath / writeNifModuleSuffix & ".s.nif"):
+    if not os.fileExists(c.g.config.nifcachePath / writeNifModuleSuffix & ".s.nif"):
       # precompile the module
       let nimonyExe = findTool("nimony")
       var cmd = quoteShell(nimonyExe) & " --nimcache:" & quoteShell(c.g.config.nifcachePath) &
@@ -384,8 +393,9 @@ proc prepareEval*(c: var SemContext): string =
         return ensureMove(output)
   return ""
 
-proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf; usedModules: HashSet[string]): string =
+proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf; usedModules: HashSet[string]): string {.canRaise.} =
   ## Returns an error message if the evaluation failed, "" on success.
+  result = ""
   let progfile = c.g.config.nifcachePath / srcName.addFileExt(".p.nif")
   writeFileAndIndex(progfile, src)
 

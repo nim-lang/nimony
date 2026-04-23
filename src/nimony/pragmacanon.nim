@@ -1,5 +1,5 @@
 import std / [sets]
-include nifprelude
+include ".." / lib / nifprelude
 import nimony_model, decls, asthelpers
 
 type

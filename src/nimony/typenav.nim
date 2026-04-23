@@ -72,10 +72,6 @@ proc openProcScope*(c: var TypeCache; routine: SymId; decl, params: Cursor) =
   registerLocal(c, routine, ProcY, decl)
   c.current = TypeScope(locals: initTable[SymId, LocalInfo](), parent: c.current, kind: ProcScope)
 
-proc firstSon(n: Cursor): Cursor {.inline.} =
-  result = n
-  inc result
-
 proc getInitValueImpl(c: var TypeCache; s: SymId): Cursor =
   var it {.cursor.} = c.current
   while it != nil:
@@ -93,6 +89,15 @@ proc getInitValueImpl(c: var TypeCache; s: SymId): Cursor =
     let local = asLocal(res.decl)
     if local.kind == ConstY:
       return local.val
+    elif local.kind == EfldY:
+      # Enum field values are stored as `(tup <ord> <str>)`; the caller wants
+      # the ordinal literal so constant folding can inline it at use sites
+      # (e.g. a `case` label emitted by NIFC must be an integer constant).
+      result = local.val
+      if result.kind == ParLe and result.exprKind == TupX:
+        inc result
+        return result
+      return default(Cursor)
   return default(Cursor)
 
 proc getLocalInfo*(c: var TypeCache; s: SymId): LocalInfo =
@@ -115,7 +120,7 @@ proc getInitValue*(c: var TypeCache; s: SymId): Cursor =
   result = getInitValueImpl(c, s)
   var counter = 0
   while counter < 20 and not cursorIsNil(result) and result.kind == Symbol:
-    dec counter
+    inc counter
     # see if we can resolve it even further:
     let res = getInitValueImpl(c, result.symId)
     if not cursorIsNil(res):
@@ -291,12 +296,10 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     of Symbol:
       result = lookupSymbol(c, n.symId)
       if cursorIsNil(result):
-        when defined(debug):
-          writeStackTrace()
-        quit "could not find symbol: " & pool.syms[n.symId]
+        bug "could not find symbol: " & pool.syms[n.symId]
     of IntLit:
       result = c.builtins.intType
-    of UintLit:
+    of UIntLit:
       result = c.builtins.uintType
     of CharLit:
       result = c.builtins.charType
@@ -362,7 +365,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     inc m # skip "kv"
     skip m # skip key
     result = getTypeImpl(c, m, flags)
-  of AtX, ArrAtX:
+  of AtX, ArratX:
     result = getTypeImpl(c, n.firstSon, flags)
     case typeKind(result)
     of ArrayT, SetT:
@@ -402,25 +405,25 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       registerLocals(c, n)
       if n.kind == ParRi:
         result = getTypeImpl(c, prev, flags)
-  of CallX, CallStrLitX, InfixX, PrefixX, CmdX, HcallX, ProccallX:
+  of CallX, CallstrlitX, InfixX, PrefixX, CmdX, HcallX, ProccallX:
     result = getTypeImpl(c, n.firstSon, flags)
     if result.typeKind in RoutineTypes:
       skipToReturnType result
   of FalseX, TrueX, AndX, OrX, XorX, NotX, DefinedX, DeclaredX, IsmainmoduleX, EqX, NeqX, LeX, LtX,
      EqsetX, LesetX, LtsetX, InsetX, OvfX, CompilesX, InstanceofX, FailedX, IsX:
     result = c.builtins.boolType
-  of NegX, NegInfX, NanX, InfX:
+  of NegX, NeginfX, NanX, InfX:
     result = c.builtins.floatType
-  of EnumToStrX, DefaultObjX, DefaultTupX, DefaultdistinctX, InternalTypeNameX, AstToStrX:
+  of EnumtostrX, DefaultobjX, DefaulttupX, DefaultdistinctX, InternalTypeNameX, AstToStrX:
     result = c.builtins.stringType
   of SizeofX, CardX, AlignofX, OffsetofX:
     result = c.builtins.intType
   of DelayX, Delay0X, SuspendX:
     result = c.builtins.continuationType
   of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
-     PlusSetX, MinusSetX, MulSetX, XorSetX,
+     PlussetX, MinussetX, MulsetX, XorsetX,
      CastX, ConvX, HconvX, DconvX, BaseobjX,
-     OconstrX, NewobjX, AconstrX, SetConstrX, TupConstrX, NewrefX:
+     OconstrX, NewobjX, AconstrX, SetconstrX, TupconstrX, NewrefX:
     result = n.firstSon
   of ParX, EmoveX:
     result = getTypeImpl(c, n.firstSon, flags)
@@ -536,7 +539,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     buf.addParRi()
     c.mem.add buf
     result = cursorAt(c.mem[c.mem.len-1], 0)
-  of DestroyX, CopyX, WasMovedX, SinkhX, TraceX:
+  of DestroyX, CopyX, WasmovedX, SinkhX, TraceX:
     result = c.builtins.voidType
   of DupX:
     result = getTypeImpl(c, n.firstSon, flags)

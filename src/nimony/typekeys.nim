@@ -5,9 +5,9 @@
 # distribution, for details about the copyright.
 
 import std/assertions
-include nifprelude
+include ".." / lib / nifprelude
 import ".." / nimony / [nimony_model, decls, sigmatch]
-import treemangler
+import ".." / lib / treemangler
 
 type
   MangleMode* = enum
@@ -90,12 +90,12 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
             mangleImpl b, c, mm
         b.endTree()
         inc c # ParRi
-      elif c.typeKind in {UintT, IntT, FloatT}:
+      elif c.typeKind in {UIntT, IntT, FloatT}:
         b.addTree(tag)
         inc c
         # normalize bits
         assert c.kind == IntLit
-        let bits = pool.integers[c.intID]
+        let bits = pool.integers[c.intId]
         if bits < 0 and b.bits >= 0:
           b.addIntLit(b.bits)
         else:

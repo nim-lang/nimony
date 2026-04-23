@@ -661,6 +661,9 @@ func charToString(c: char): string =
 func `&`*(x: string; y: char): string {.inline.} = result = x & charToString(y)
 func `&`*(x: char; y: string): string {.inline.} = result = charToString(x) & y
 
+func `&=`*(x: var string; y: string) {.inline.} = x.add y
+func `&=`*(x: var string; y: char) {.inline.} = x.add y
+
 func terminatingZero*(s: string): string =
   result = s & "\0"
   result.shrink s.len

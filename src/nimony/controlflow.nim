@@ -7,6 +7,9 @@
 ## Helper to translate control flow into `goto` based code
 ## which can be easier to analyze, depending on the used algorithm.
 
+when defined(nimony):
+  {.feature: "lenientnils".}
+
 import std/[assertions, intsets]
 include ".." / lib / nifprelude
 
@@ -585,20 +588,20 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
       trStmtListExpr c, n, tar
     of CallKinds:
       trCall c, n, tar
-    of ArrAtX, TupatX, AtX, DerefX, HderefX, DotX, DdotX, PatX:
+    of ArratX, TupatX, AtX, DerefX, HderefX, DotX, DdotX, PatX:
       # in anticipation of special casing:
       trExprLoop c, n, tar
     of AddrX, HaddrX:
       trExprLoop c, n, tar
     of QuotedX, ParX, CurlyatX, TabconstrX, DoX,
-       NilX, FalseX, TrueX, NotX, NegX, KvX, OconstrX, NewobjX, NewrefX, TupConstrX,
-       AconstrX, SetConstrX, OchoiceX, CchoiceX, AddX, SubX, MulX, DivX, ModX,
+       NilX, FalseX, TrueX, NotX, NegX, KvX, OconstrX, NewobjX, NewrefX, TupconstrX,
+       AconstrX, SetconstrX, OchoiceX, CchoiceX, AddX, SubX, MulX, DivX, ModX,
        ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX,
-       CastX, ConvX, BaseobjX, HconvX, DconvX, InfX, NegInfX, NanX, SufX,
-       UnpackX, FieldsX, FieldpairsX, EnumToStrX, XorX,
-       IsMainModuleX, DefaultObjX, DefaultTupX, DefaultDistinctX, PlusSetX, MinusSetX,
-       MulSetX, XorSetX, EqSetX, LeSetX, LtSetX, InSetX, CardX, EmoveX,
-       DestroyX, DupX, CopyX, WasMovedX, SinkhX, TraceX,
+       CastX, ConvX, BaseobjX, HconvX, DconvX, InfX, NeginfX, NanX, SufX,
+       UnpackX, FieldsX, FieldpairsX, EnumtostrX, XorX,
+       IsmainmoduleX, DefaultobjX, DefaulttupX, DefaultdistinctX, PlussetX, MinussetX,
+       MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
+       DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
        BracketX, CurlyX, TupX, OvfX, InstanceofX, InternalFieldPairsX,
        FailedX, IsX, EnvpX, Delay0X, SuspendX:
       trExprLoop c, n, tar
@@ -809,7 +812,7 @@ proc isComplexLhs(n: Cursor): bool =
   while true:
     case n.kind
     of ParLe:
-      if n.exprKind in CallKinds+{PatX, ArrAtX}:
+      if n.exprKind in CallKinds+{PatX, ArratX}:
         return true
       inc nested
     of ParRi:
@@ -913,7 +916,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     trIf c, n, aa
   of WhileS:
     trWhile c, n
-  of StmtsS, UnpackDeclS:
+  of StmtsS, UnpackdeclS:
     inc n
     while n.kind != ParRi:
       trStmt c, n
@@ -954,7 +957,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     trRaise c, n
   of IteratorS, ProcS, FuncS, MacroS, ConverterS, MethodS:
     trProc c, n
-  of TemplateS, TypeS, CommentS, EmitS, IncludeS, ImportS, ExportS, FromimportS, ImportExceptS, PragmasS,
+  of TemplateS, TypeS, CommentS, EmitS, IncludeS, ImportS, ExportS, FromimportS, ImportexceptS, PragmasS,
      ImportasS, ExportexceptS, BindS, MixinS, UsingS:
     c.dest.addDotToken()
     skip n
@@ -1084,6 +1087,9 @@ when isMainModule:
   proc main(infile, outputfile: string; keepReturns: bool) =
     var input = parseFromFile(infile)
     var cf = toControlflow(beginRead(input), keepReturns=keepReturns)
-    writeFile(outputfile, codeListing(cf))
+    try:
+      writeFile(outputfile, codeListing(cf))
+    except:
+      quit "cannot write: " & outputfile
 
   main(paramStr(1), paramStr(2), paramCount() > 2)

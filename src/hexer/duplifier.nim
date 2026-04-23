@@ -518,10 +518,15 @@ proc trExplicitDestroy(c: var Context; n: var Cursor) =
     inc n
     skip n
   else:
+    let needsAddr = isMutFirstParam(destructor)
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, destructor, info
       inc n
-      tr c, n, DontCare
+      if needsAddr:
+        copyIntoKind c.dest, HaddrX, info:
+          tr c, n, DontCare
+      else:
+        tr c, n, DontCare
   skipParRi n
 
 proc trExplicitDup(c: var Context; n: var Cursor; e: Expects) =
