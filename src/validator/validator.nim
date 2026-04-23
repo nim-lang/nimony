@@ -903,7 +903,7 @@ proc scanUnsafeCursorOps(ctx: var CheckContext; reg: TypeRegistry; buf: var Toke
                 if argName in cursorNames:
                   addWarning(ctx, bc.info, name,
                     "`" & callName & " " & argName &
-                    "` needs a reason string in emitter proc")
+                    "` needs a SkipIntent argument for justification")
                   break
               skip peek
         inc nested; inc bc
@@ -1032,6 +1032,9 @@ proc whileBodyContributesDest(whileNode: Cursor): bool =
   false
 
 proc scanWhileInStmts(ctx: var CheckContext; stmtsNode: Cursor; insideCopyInto: bool)
+proc whileBodyHasProgressCall(whileNode: Cursor; varName: string;
+                              acceptedCalls: openArray[string]): bool
+proc extractWhileCounterVar(n: Cursor): string
 
 proc scanWhileRecurse(ctx: var CheckContext; n: Cursor; insideCopyInto: bool) =
   ## Recurse into a subtree, delegating to `scanWhileInStmts` for every stmts node.
@@ -1059,22 +1062,76 @@ proc scanWhileInStmts(ctx: var CheckContext; stmtsNode: Cursor; insideCopyInto: 
       let childTag = pool.tags[child.tag]
       if childTag == "while":
         let varName = extractWhileParRiVar(child)
-        if varName.len > 0 and not insideCopyInto and whileBodyContributesDest(child):
-          let whileInfo = child.info
-          var afterWhile = child
-          skip afterWhile
-          var found = false
-          var lookAhead = 0
-          var peek = afterWhile
-          while peek.kind != ParRi and lookAhead < 3:
-            if isParRiSkipCall(peek, varName):
-              found = true
-              break
-            skip peek
-            inc lookAhead
-          if not found:
-            addWarning(ctx, whileInfo, "while " & varName & ".kind != ParRi",
-              "ParRi not consumed after loop for `" & varName & "`")
+        if varName.len > 0:
+          # Termination proof for while n.kind != ParRi:
+          # - direct advancement: inc/skip n
+          # - delegated advancement: any call that takes n as an argument
+          var hasAdvanceOrDelegation = false
+          var wc = child
+          inc wc, SkipTag
+          skip wc, SkipCond
+          if wc.kind == ParLe:
+            var nested = 0
+            inc nested; inc wc
+            while nested > 0 and not hasAdvanceOrDelegation:
+              case wc.kind
+              of ParLe:
+                let tag = pool.tags[wc.tag]
+                if tag in ["cmd", "call"]:
+                  var peek = wc
+                  inc peek
+                  var callName = ""
+                  if peek.kind == Ident:
+                    callName = pool.strings[peek.litId]
+                    skip peek
+                  elif peek.kind == ParLe:
+                    callName = extractDotCallName(peek)
+                    skip peek
+                  var hasVarArg = false
+                  while peek.kind != ParRi:
+                    if peek.kind == Ident and pool.strings[peek.litId] == varName:
+                      hasVarArg = true
+                      break
+                    skip peek
+                  if hasVarArg and (callName in ["inc", "skip"] or callName.len > 0):
+                    hasAdvanceOrDelegation = true
+                inc nested; inc wc
+              of ParRi:
+                dec nested; inc wc
+              else:
+                inc wc
+          if not hasAdvanceOrDelegation:
+            addWarning(ctx, child.info, "while " & varName & ".kind != ParRi",
+              "missing cursor progress in loop body (expected `inc/skip " & varName &
+              "` or a call that takes `" & varName & "`, e.g. `tr c, dest, " & varName & "`)")
+
+          # Existing structural safety check: if loop contributes to dest, ensure the
+          # trailing ParRi gets consumed after the loop.
+          if not insideCopyInto and whileBodyContributesDest(child):
+            let whileInfo = child.info
+            var afterWhile = child
+            skip afterWhile
+            var found = false
+            var lookAhead = 0
+            var peek = afterWhile
+            while peek.kind != ParRi and lookAhead < 3:
+              if isParRiSkipCall(peek, varName):
+                found = true
+                break
+              skip peek
+              inc lookAhead
+            if not found:
+              addWarning(ctx, whileInfo, "while " & varName & ".kind != ParRi",
+                "ParRi not consumed after loop for `" & varName & "`")
+        else:
+          let counterVar = extractWhileCounterVar(child)
+          if counterVar.len > 0:
+            if not whileBodyHasProgressCall(child, counterVar, ["dec"]):
+              addWarning(ctx, child.info, "while " & counterVar & " > 0 and ...",
+                "missing `dec " & counterVar & "` in loop body")
+          else:
+            addWarning(ctx, child.info, "while",
+              "termination proof not recognized: expected `while n.kind != ParRi` with progress/delegation, or `while x > 0 and ...` with `dec x`")
         # Recurse into the while body to find nested patterns
         scanWhileRecurse(ctx, child, insideCopyInto)
       elif childTag in ["cmd", "call"]:
@@ -1106,7 +1163,77 @@ proc scanWhileParRiCompletion(ctx: var CheckContext; buf: var TokenBuf) =
   endRead buf
 
 # ---------------------------------------------------------------------------
-# Step 5: Main
+# Step 6: While helpers
+# ---------------------------------------------------------------------------
+
+proc whileBodyHasProgressCall(whileNode: Cursor; varName: string;
+                              acceptedCalls: openArray[string]): bool =
+  ## Check if the while body contains any accepted call that uses `varName`.
+  var c = whileNode
+  inc c, SkipTag   # (while
+  skip c, SkipCond # condition
+  if c.kind != ParLe: return false
+  var nested = 0
+  inc nested; inc c
+  while nested > 0:
+    case c.kind
+    of ParLe:
+      let tag = pool.tags[c.tag]
+      if tag in ["cmd", "call"]:
+        var peek = c
+        inc peek
+        var callName = ""
+        if peek.kind == Ident:
+          callName = pool.strings[peek.litId]
+          skip peek
+        elif peek.kind == ParLe:
+          callName = extractDotCallName(peek)
+          skip peek
+        if callName in acceptedCalls:
+          while peek.kind != ParRi:
+            if peek.kind == Ident and pool.strings[peek.litId] == varName:
+              return true
+            skip peek
+      inc nested; inc c
+    of ParRi:
+      dec nested; inc c
+    else:
+      inc c
+  false
+
+proc extractAndCounterVar(cond: Cursor): string =
+  ## Extract `x` from `(infix and (infix > x 0) ...)`.
+  var c = cond
+  if c.kind != ParLe or pool.tags[c.tag] != "infix": return ""
+  inc c, SkipTag
+  if c.kind != Ident or pool.strings[c.litId] != "and": return ""
+  skip c, SkipExpr
+  if c.kind != ParLe or pool.tags[c.tag] != "infix": return ""
+  var cmp = c
+  inc cmp, SkipTag
+  if cmp.kind != Ident or pool.strings[cmp.litId] != ">": return ""
+  skip cmp, SkipExpr
+  if cmp.kind != Ident: return ""
+  let varName = pool.strings[cmp.litId]
+  skip cmp, SkipName
+  case cmp.kind
+  of IntLit:
+    if pool.integers[cmp.intId] != 0: return ""
+  of UIntLit:
+    if pool.uintegers[cmp.uintId] != 0'u64: return ""
+  else:
+    return ""
+  result = varName
+
+proc extractWhileCounterVar(n: Cursor): string =
+  ## If `n` is at `(while (infix and (infix > x 0) ...) BODY)`, return `x`.
+  var c = n
+  if c.kind != ParLe or pool.tags[c.tag] != "while": return ""
+  inc c, SkipTag
+  result = extractAndCounterVar(c)
+
+# ---------------------------------------------------------------------------
+# Step 7: Main
 # ---------------------------------------------------------------------------
 
 proc parseFileViaNifler(nimFile: string): TokenBuf =
