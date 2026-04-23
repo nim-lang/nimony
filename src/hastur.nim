@@ -940,7 +940,7 @@ proc handleCmdLine =
     validatorTests()
     bootstrapTests()
 
-  of "checktags", "validator":
+  of "validate", "validator":
     buildValidator()
     validatorTests()
 

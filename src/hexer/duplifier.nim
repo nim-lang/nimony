@@ -517,12 +517,12 @@ proc trExplicitDestroy(c: var Context; n: var Cursor) =
   let destructor = getDestructor(c.lifter[], typ, info)
   if destructor == NoSymId:
     c.dest.addEmpty info
-    inc n, SkipExpr
+    inc n, SkipTag
     skip n, SkipFull
   else:
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, destructor, info
-      inc n, SkipExpr
+      inc n, SkipTag
       tr c, n, DontCare
   skipParRi n
 
@@ -533,7 +533,7 @@ proc trExplicitDup(c: var Context; n: var Cursor; e: Expects) =
   if hookProc != NoSymId:
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, hookProc, info
-      inc n, SkipExpr
+      inc n, SkipTag
       tr c, n, DontCare
   else:
     let e2 = if e == WillBeOwned: WantOwner else: e
@@ -548,7 +548,7 @@ proc trExplicitCopy(c: var Context; n: var Cursor; op: AttachedOp) =
   if hookProc != NoSymId:
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, hookProc, info
-      inc n, SkipExpr
+      inc n, SkipTag
       while n.kind != ParRi:
         tr c, n, DontCare
       takeParRi c.dest, n
@@ -571,10 +571,10 @@ proc trExplicitWasMoved(c: var Context; n: var Cursor) =
   if hookProc != NoSymId:
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, hookProc, info
-      inc n, SkipExpr
+      inc n, SkipTag
       tr c, n, DontCare
   else:
-    inc n, SkipExpr
+    inc n, SkipTag
     skip n, SkipFull
   skipParRi n
 
@@ -585,11 +585,11 @@ proc trExplicitTrace(c: var Context; n: var Cursor) =
   if hookProc != NoSymId:
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, hookProc, info
-      inc n, SkipExpr
+      inc n, SkipTag
       tr c, n, DontCare
       tr c, n, DontCare
   else:
-    inc n, SkipExpr
+    inc n, SkipTag
     skip n, SkipFull
     skip n, SkipFull
   skipParRi n
