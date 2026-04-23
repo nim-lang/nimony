@@ -389,14 +389,16 @@ proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: Token
   let progfile = c.g.config.nifcachePath / srcName.addFileExt(".p.nif")
   writeFileAndIndex(progfile, src)
 
-  # Write the .p.deps.nif file so that `nimony s` can find the imports:
+  # Write the .p.deps.nif file so that `nimony s` can find the imports.
+  # Always write — `nimony s` opens this unconditionally, so an empty
+  # `(stmts)` is needed when the original module has no imports.
+  var deps = createTokenBuf(c.importSnippets.len + 4)
+  deps.addParLe StmtsS, NoLineInfo
   if c.importSnippets.len > 0:
-    var deps = createTokenBuf(c.importSnippets.len + 4)
-    deps.addParLe StmtsS, NoLineInfo
     deps.add c.importSnippets
-    deps.addParRi()
-    let depsFile = c.g.config.nifcachePath / srcName & ".p.deps.nif"
-    writeFile deps, depsFile
+  deps.addParRi()
+  let depsFile = c.g.config.nifcachePath / srcName & ".p.deps.nif"
+  writeFile deps, depsFile
 
   let (output, exitCode) = runProgram(progfile, c.g.config.nifcachePath, usedModules)
   if exitCode != 0:

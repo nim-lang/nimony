@@ -19,6 +19,10 @@ type
   EvalContext* = object
     c: ptr SemContext
     trueValue, falseValue: Cursor
+    expectedType: TypeCursor # used as the result type when forwarding
+                             # complex const initialisers (e.g. `block:`)
+                             # to `executeExpr`. Default-constructed when
+                             # no type context is available.
 
 proc isConstBoolValue*(n: Cursor): bool =
   n.exprKind in {TrueX, FalseX}
@@ -166,10 +170,10 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
     let val = pool.strings[a.litId].len
     result = intValue(c, val, n.info)
   else:
-    # Forward args to `executeCall` verbatim. Running `eval` here would strip
+    # Forward args to `executeExpr` verbatim. Running `eval` here would strip
     # distinct/conversion wrappers (e.g. `TagId(1)` → `1`), and the sub-compile
     # would then fail to match the callee's formal parameter types.
-    # `executeCall` re-runs the full nimony pipeline and can resolve constants
+    # `executeExpr` re-runs the full nimony pipeline and can resolve constants
     # itself via `rewriteSymsToIdents`.
     var evaluatedCall = createTokenBuf(16)
     evaluatedCall.addParLe CallS, n.info
@@ -179,8 +183,9 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
     evaluatedCall.addParRi()
 
     var resultBuf = createTokenBuf(12)
-    assert c.c.executeCall != nil
-    let errorMsg = c.c.executeCall(c.c[], routine, resultBuf, cursorAt(evaluatedCall, 0), n.info)
+    assert c.c.executeExpr != nil
+    let errorMsg = c.c.executeExpr(c.c[], cursorAt(evaluatedCall, 0),
+                                   routine.retType, resultBuf, n.info)
     if errorMsg.len == 0:
       result = cursorAt(resultBuf, 0)
     else:
@@ -453,18 +458,26 @@ proc evalInSet(c: var EvalContext; n: var Cursor): Cursor =
 
   result = boolValue(c, isInSet)
 
-# Number of set bits for all values of uint8 (precomputed because Nimony's
-# const evaluator doesn't yet handle `const x = block: ...` initialisation).
-const populationCount: array[uint8, uint8] = [
-  0u8,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4,1,2,2,3,2,3,3,4,2,3,3,4,3,4,4,5,
-  1u8,2,2,3,2,3,3,4,2,3,3,4,3,4,4,5,2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,
-  1u8,2,2,3,2,3,3,4,2,3,3,4,3,4,4,5,2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,
-  2u8,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,3,4,4,5,4,5,5,6,4,5,5,6,5,6,6,7,
-  1u8,2,2,3,2,3,3,4,2,3,3,4,3,4,4,5,2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,
-  2u8,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,3,4,4,5,4,5,5,6,4,5,5,6,5,6,6,7,
-  2u8,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,3,4,4,5,4,5,5,6,4,5,5,6,5,6,6,7,
-  3u8,4,4,5,4,5,5,6,4,5,5,6,5,6,6,7,4,5,5,6,5,6,6,7,5,6,6,7,6,7,7,8
-]
+# Number of set bits for all values of int8
+const populationCount: array[uint8, uint8] = block:
+    var arr: array[uint8, uint8] = default(array[uint8, uint8])
+
+    proc countSetBits(x: uint8): uint8 =
+      return
+        ( x and 0b00000001'u8) +
+        ((x and 0b00000010'u8) shr 1) +
+        ((x and 0b00000100'u8) shr 2) +
+        ((x and 0b00001000'u8) shr 3) +
+        ((x and 0b00010000'u8) shr 4) +
+        ((x and 0b00100000'u8) shr 5) +
+        ((x and 0b01000000'u8) shr 6) +
+        ((x and 0b10000000'u8) shr 7)
+
+
+    for it in low(uint8)..high(uint8):
+      arr[it] = countSetBits(cast[uint8](it))
+
+    arr
 
 proc bitSetCard(x: seq[uint8]): BiggestInt =
   result = 0
@@ -875,13 +888,32 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       if n.tagId == nifstreams.ErrT:
         result = n
         skip n
+      elif (n.stmtKind == BlockS or n.stmtKind == StmtsS) and
+           not cursorIsNil(c.expectedType) and c.c != nil and c.c.executeExpr != nil:
+        # Const initialisers such as
+        #   `const x: T = block: ...; var ...; for ...; expr`
+        # cannot be folded by the in-process evaluator. Forward the whole
+        # expression to a sub-compile via `executeExpr`, which builds a tiny
+        # wrapper program that runs the block and serialises its result.
+        let info = n.info
+        var resultBuf = createTokenBuf(12)
+        let exprStart = n
+        let errMsg = c.c.executeExpr(c.c[], exprStart, c.expectedType, resultBuf, info)
+        skip n
+        if errMsg.len == 0:
+          result = cursorAt(resultBuf, 0)
+        else:
+          result = c.error("cannot evaluate expression at compile time: " &
+            asNimCode(exprStart) & "\n\n" & errMsg, info)
       else:
         cannotEval n
   else:
     cannotEval n
 
-proc evalExpr*(c: var SemContext, n: var Cursor): TokenBuf =
+proc evalExpr*(c: var SemContext, n: var Cursor;
+               expectedType: TypeCursor = default(Cursor)): TokenBuf =
   var ec = initEvalContext(addr c)
+  ec.expectedType = expectedType
   let val = eval(ec, n)
   result = createTokenBuf(val.span)
   result.addSubtree val

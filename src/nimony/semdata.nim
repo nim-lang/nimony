@@ -69,7 +69,7 @@ type
     includedFiles*: seq[string] # will become part of the index file
     importedFiles*: seq[string] # likewise
 
-  SemExecutor* = proc (c: var SemContext; routine: Routine; result: var TokenBuf; call: Cursor; info: PackedLineInfo): string {.nimcall.}
+  SemExpressionExecutor* = proc (c: var SemContext; expr: Cursor; expectedType: TypeCursor; result: var TokenBuf; info: PackedLineInfo): string {.nimcall.}
   SemStmtCallback* = proc (c: var SemContext; dest: var TokenBuf; n: Cursor) {.nimcall.}
   SemGetSize* = proc(c: var SemContext; n: Cursor; strict=false): xint {.nimcall.}
   ForceInstantiate* = proc (c: var SemContext; dest: var TokenBuf) {.nimcall.}
@@ -142,7 +142,7 @@ type
       ## Nim's treatment for tooling-only pragmas.
     usingStmtMap*: Table[StrId, TypeCursor] # mapping of identifiers to types declared in using statements
     pragmaStack*: seq[TokenBuf] # used to implement {.push.} and {.pop.}
-    executeCall*: SemExecutor
+    executeExpr*: SemExpressionExecutor
     semStmtCallback*: SemStmtCallback
     semGetSize*: SemGetSize
     forceInstantiate*: ForceInstantiate

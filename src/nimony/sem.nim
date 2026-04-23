@@ -682,7 +682,7 @@ proc semConstExpr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   swap c.phase, phase
   # XXX future note: consider when the expression depends on a generic param
   var e = cursorAt(dest, start)
-  var valueBuf = evalExpr(c, e)
+  var valueBuf = evalExpr(c, e, it.typ)
   endRead(dest)
   dest.shrink start
   var value = beginRead(valueBuf)
@@ -6693,7 +6693,7 @@ proc initSemContext(suffix: string; config: ProgramContext; moduleFlags: set[Mod
     commandLineArgs: commandLineArgs,
     canSelfExec: canSelfExec,
     pending: createTokenBuf(),
-    executeCall: exprexec.executeCall,
+    executeExpr: exprexec.executeExpr,
     semStmtCallback: semStmtCallback,
     semGetSize: semGetSize,
     forceInstantiate: forceInstantiateCallback)
