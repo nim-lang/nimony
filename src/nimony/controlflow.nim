@@ -507,6 +507,12 @@ proc trTry(c: var ControlFlow; n: var Cursor; tar: var Target) =
     exceptEnds.add c.jmpForw(n.info)
     skipParRi n
 
+  # `return` inside an `except` also collects into `thisBlock.breakInstrs`
+  # (trReturn targets the innermost `IsTryStmt`); patch those here so they
+  # land past all of the except bodies instead of as self-loop gotos.
+  for ret in thisBlock.breakInstrs: c.patch ret
+  thisBlock.breakInstrs.shrink 0
+
   for exceptEnd in exceptEnds: c.patch exceptEnd
   c.patch tryEnd
   # Inside a `finally` `return` really means `return` again:

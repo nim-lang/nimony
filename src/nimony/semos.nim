@@ -403,7 +403,6 @@ const
   writeNifModuleSuffix* = "wriwhv7qv"
 
 proc prepareEval*(c: var SemContext): string =
-  result = ""
   if not c.checkedForWriteNifModule:
     c.checkedForWriteNifModule = true
     if not os.fileExists(c.g.config.nifcachePath / writeNifModuleSuffix & ".s.nif"):
@@ -414,9 +413,10 @@ proc prepareEval*(c: var SemContext): string =
       try:
         let (output, exitCode) = execCmdEx(cmd)
         if exitCode != 0:
-          result = ensureMove(output)
+          return ensureMove(output)
       except:
-        result = "failed to run: " & cmd
+        return "failed to run: " & cmd
+  return ""
 
 proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf; usedModules: HashSet[string]): string =
   ## Returns an error message if the evaluation failed, "" on success.
