@@ -289,7 +289,7 @@ proc trReturn(c: var Context; n: var Cursor) =
       tr c, n, WantOwner
   else:
     let info = n.info
-    inc n, "return tag rewritten to asgn+ret"
+    inc n, SkipTag
     c.dest.addParLe StmtsS, info
     c.dest.addParLe AsgnS, info
     c.dest.add symToken(c.resultSym, info)
@@ -460,7 +460,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
           copyTree c.dest, lhs
           copyIntoSymUse c.dest, tmp, ri.info
           n = ri
-          skip n, "asgn rhs replaced by temp"
+          skip n, SkipFull
     elif isLastRead(c, ri):
       if isNotFirstAsgn and (potentialSelfAsgn(le, ri) or potentialAliasing(le, ri)):
         # `let tmp = y; =wasMoved(y); =destroy(x); x =bitcopy tmp`
@@ -472,7 +472,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
           tr c, lhsAsCursor, DontCare
           copyIntoSymUse c.dest, tmp, ri.info
           n = n2
-          skip n, "asgn rhs replaced by temp"
+          skip n, SkipFull
       else:
         if isNotFirstAsgn:
           callDestroy(c, destructor, lhs, leType)
@@ -516,12 +516,12 @@ proc trExplicitDestroy(c: var Context; n: var Cursor) =
   let destructor = getDestructor(c.lifter[], typ, info)
   if destructor == NoSymId:
     c.dest.addEmpty info
-    inc n, "trivial destroy: callee dropped"
-    skip n, "trivial destroy: argument dropped"
+    inc n, SkipCallee
+    skip n, SkipFull
   else:
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, destructor, info
-      inc n, "callee replaced by destructor hook"
+      inc n, SkipCallee
       tr c, n, DontCare
   skipParRi n
 
@@ -532,11 +532,11 @@ proc trExplicitDup(c: var Context; n: var Cursor; e: Expects) =
   if hookProc != NoSymId:
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, hookProc, info
-      inc n, "callee replaced by dup hook"
+      inc n, SkipCallee
       tr c, n, DontCare
   else:
     let e2 = if e == WillBeOwned: WantOwner else: e
-    inc n, "dup wrapper tag stripped, child passed through"
+    inc n, SkipTag
     tr c, n, e2
   skipParRi n
 
@@ -547,15 +547,15 @@ proc trExplicitCopy(c: var Context; n: var Cursor; op: AttachedOp) =
   if hookProc != NoSymId:
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, hookProc, info
-      inc n, "callee replaced by copy/sink hook"
+      inc n, SkipCallee
       while n.kind != ParRi:
         tr c, n, DontCare
       takeParRi c.dest, n
   else:
     c.dest.addParLe AsgnS, info
-    inc n, "copy/sink tag rewritten to asgn"
+    inc n, SkipTag
     if n.exprKind == HaddrX:
-      inc n, "haddr tag stripped for direct lvalue"
+      inc n, SkipTag
       tr c, n, DontCare
       skipParRi(n)
     else:
@@ -570,11 +570,11 @@ proc trExplicitWasMoved(c: var Context; n: var Cursor) =
   if hookProc != NoSymId:
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, hookProc, info
-      inc n, "callee replaced by wasMoved hook"
+      inc n, SkipCallee
       tr c, n, DontCare
   else:
-    inc n, "trivial wasMoved: callee dropped"
-    skip n, "trivial wasMoved: argument dropped"
+    inc n, SkipCallee
+    skip n, SkipFull
   skipParRi n
 
 proc trExplicitTrace(c: var Context; n: var Cursor) =
@@ -584,13 +584,13 @@ proc trExplicitTrace(c: var Context; n: var Cursor) =
   if hookProc != NoSymId:
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, hookProc, info
-      inc n, "callee replaced by trace hook"
+      inc n, SkipCallee
       tr c, n, DontCare
       tr c, n, DontCare
   else:
-    inc n, "trivial trace: callee dropped"
-    skip n, "trivial trace: arg1 dropped"
-    skip n, "trivial trace: arg2 dropped"
+    inc n, SkipCallee
+    skip n, SkipFull
+    skip n, SkipFull
   skipParRi n
 
 when not defined(nimony):
@@ -827,7 +827,7 @@ proc genOutOfMemCheck(c: var Context; ow: OwningTemp; info: PackedLineInfo) =
 proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
     {.ensuresNif: addedAny(c.dest).} =
   let info = n.info
-  inc n, "newobj tag replaced by alloc sequence"
+  inc n, SkipTag
   let refType = n
   assert refType.typeKind == RefT
 
@@ -865,10 +865,10 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
         if kind == NewobjX:
           copyIntoKind c.dest, OconstrX, info:
             c.dest.addSubtree baseType
-            skip n, "newobj ref type replaced by base type in oconstr"
+            skip n, SkipType
             trNewobjFields(c, n)
         else:
-          skip n, "newobj type dropped in defaultobj path"
+          skip n, SkipType
           tr c, n, WantOwner # process default(T) call
 
   c.dest.addParRi()  # finish the StmtsS
@@ -998,16 +998,16 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects)
     # we allow rather silly code like `ensureMove(234)`.
     # Seems very useful for generic programming as this can come up
     # from template expansions:
-    inc n, "ensureMove tag stripped for constructed value"
+    inc n, SkipTag
     tr c, n, e
     skipParRi n
   elif isLastRead(c, arg):
     if e == WantOwner and hasDestructor(c, typ):
-      inc n, "ensureMove tag replaced by lastRead+wasMoved"
+      inc n, SkipTag
       genLastRead(c, n, typ)
       skipParRi n
     else:
-      inc n, "ensureMove tag stripped for last read"
+      inc n, SkipTag
       tr c, n, e
       skipParRi n
   else:
@@ -1015,12 +1015,12 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects)
     c.dest.buildTree ErrT, info:
       c.dest.addSubtree n
       c.dest.add strToken(pool.strings.getOrIncl(m), info)
-    skip n, "ensureMove input replaced by error node"
+    skip n, SkipFull
 
 proc trDeref(c: var Context; n: var Cursor)
     {.ensuresNif: addedAny(c.dest).} =
   let info = n.info
-  inc n, "deref tag replaced by deref+dot for ref types"
+  inc n, SkipTag
   var typ = getType(c.typeCache, n, {SkipAliases})
   if typ.kind == ParLe and typ.typeKind == SinkT:
     inc typ

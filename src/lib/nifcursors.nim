@@ -533,17 +533,30 @@ proc takeToken*(buf: var TokenBuf; n: var Cursor) {.inline.} =
   buf.add n
   inc n
 
-template skip*(c: var Cursor; reason: string) =
-  ## Skip a subtree with explicit justification. In emitter procs (procs that
-  ## write to a dest buffer), every `skip` must use this form to document why
-  ## the input is being dropped. Analyzers can use bare `skip` without reason.
+type
+  SkipIntent* = enum
+    SkipTag       ## advance past a ParLe tag (entering a node to rewrite children)
+    SkipParRi     ## advance past a closing paren
+    SkipName      ## skip a name/SymbolDef child
+    SkipExport    ## skip an export marker child
+    SkipPragmas   ## skip a pragmas section
+    SkipType      ## skip a type child
+    SkipValue     ## skip a value/expression child
+    SkipGenParams ## skip generic parameters
+    SkipCond      ## skip a condition expression
+    SkipBody      ## skip a body/stmts section
+    SkipCallee    ## skip a callee symbol being replaced by a different one
+    SkipResult    ## skip a result that has been handled separately
+    SkipFull      ## skip an entire subtree being dropped or replaced
+
+template skip*(c: var Cursor; intent: SkipIntent) =
+  ## Skip a subtree with declared intent. The intent enum documents why the
+  ## input is being dropped and enables the validator to check correctness.
   skip(c)
 
-template inc*(c: var Cursor; reason: string) =
-  ## Advance one token with explicit justification. In emitter procs,
-  ## every `inc` must use this form to document why the token is being dropped
-  ## (typically: a tag being replaced by a different one). Analyzers can use
-  ## bare `inc` without reason.
+template inc*(c: var Cursor; intent: SkipIntent) =
+  ## Advance one token with declared intent. The intent enum documents why
+  ## the token is being dropped and enables the validator to check correctness.
   inc c
 
 proc takeTree*(dest: var TokenBuf; n: var Cursor) =

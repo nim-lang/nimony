@@ -27,6 +27,11 @@ import nimony_model
 import effect_graph
 import tags_grammar
 
+template validate(cond: bool; msg: string = "") =
+  ## For the Nim compiler, `validate` is an alias for `assert`.
+  ## For the validator tool, each `validate` is a proof obligation.
+  assert cond, msg
+
 # ---------------------------------------------------------------------------
 # Symbol table: tracks variable types within each proc for obligation checking
 # ---------------------------------------------------------------------------
@@ -129,89 +134,112 @@ proc extractTypeName(n: Cursor): string =
         return pool.strings[c.litId]
   ""
 
+proc scanField(n: var Cursor): FieldInfo =
+  ## Analyze one (fld name export pragmas type value) node.
+  validate n.kind == ParLe and pool.tags[n.tag] == "fld"
+  inc n, SkipTag # skip (fld
+  result = FieldInfo()
+  if n.kind == Ident:
+    result.name = pool.strings[n.litId]
+  skip n, SkipName
+  skip n, SkipExport
+  skip n, SkipPragmas
+  let fldType = extractTypeName(n)
+  if fldType.len > 0:
+    result.trackedKind = classifyTypeName(fldType)
+  skip n, SkipType
+  skip n, SkipValue
+  validate n.kind == ParRi, "expected closing ParRi for fld"
+  inc n, SkipParRi
+
+proc scanObjectFields(n: var Cursor): seq[FieldInfo] =
+  ## Pure analyzer: extract tracked fields from an (object ...) node.
+  ## Advances n past the entire object node.
+  result = @[]
+  validate n.kind == ParLe, "expected (object"
+  inc n, SkipTag # skip (object
+  skip n, SkipType
+  while n.kind != ParRi:
+    if n.kind == ParLe and pool.tags[n.tag] == "fld":
+      let field = scanField(n)
+      if field.name.len > 0 and field.trackedKind != tkOther:
+        result.add field
+    else:
+      skip n
+  inc n, SkipParRi
+
+proc scanTypeDecl(n: var Cursor; reg: var TypeRegistry) =
+  ## Scan one (type name export pragmas genparams body) node.
+  ## If it's an object type with tracked fields, register it.
+  validate n.kind == ParLe and pool.tags[n.tag] == "type"
+  inc n, SkipTag # skip (type
+  if n.kind == Ident:
+    let typeName = pool.strings[n.litId]
+    skip n, SkipName
+    skip n, SkipExport
+    skip n, SkipPragmas
+    skip n, SkipGenParams
+    if n.kind == ParLe and pool.tags[n.tag] == "object":
+      let fields = scanObjectFields(n)
+      if fields.len > 0:
+        reg.addType(typeName, fields)
+    # skip remaining children
+    while n.kind != ParRi:
+      skip n
+  else:
+    while n.kind != ParRi:
+      skip n
+  inc n, SkipParRi
+
 proc buildTypeRegistry(buf: var TokenBuf): TypeRegistry =
   ## Scan the module for type declarations and record their fields.
   result = initTypeRegistry()
   var n = beginRead(buf)
-  var nested = 0
-  assert n.kind == ParLe
-  inc nested
-  inc n
-  while nested > 0:
-    case n.kind
-    of ParLe:
-      let tag = pool.tags[n.tag]
-      if tag == "type":
-        # (type ~N TypeName . . . N (object . ~N,1 (fld name . . N TypeName .) ...))
-        var peek = n
-        inc peek # skip (type
-        if peek.kind == Ident:
-          let typeName = pool.strings[peek.litId]
-          # Find the object body
-          skip peek # skip name
-          skip peek # skip export marker
-          skip peek # skip pragmas
-          skip peek # skip generic params
-          if peek.kind == ParLe:
-            let bodyTag = pool.tags[peek.tag]
-            if bodyTag == "object":
-              # Scan for fields
-              var fields: seq[FieldInfo] = @[]
-              var objCur = peek
-              inc objCur # skip (object
-              skip objCur # skip base type marker
-              while objCur.kind != ParRi:
-                if objCur.kind == ParLe and pool.tags[objCur.tag] == "fld":
-                  var fldCur = objCur
-                  inc fldCur # skip (fld
-                  if fldCur.kind == Ident:
-                    let fldName = pool.strings[fldCur.litId]
-                    skip fldCur # skip name
-                    skip fldCur # skip export marker
-                    skip fldCur # skip pragmas
-                    let fldType = extractTypeName(fldCur)
-                    if fldType.len > 0:
-                      fields.add FieldInfo(name: fldName,
-                                           trackedKind: classifyTypeName(fldType))
-                skip objCur
-              if fields.len > 0:
-                result.addType(typeName, fields)
-      inc nested
-      inc n
-    of ParRi:
-      dec nested
-      inc n
+  validate n.kind == ParLe, "module must start with ParLe (stmts)"
+  inc n, SkipTag # skip (stmts
+  while n.kind != ParRi:
+    if n.kind == ParLe and pool.tags[n.tag] == "type":
+      scanTypeDecl(n, result)
     else:
-      inc n
+      skip n
+  inc n, SkipParRi
   endRead buf
 
 # ---------------------------------------------------------------------------
 # Extract proc parameter types for the symbol table
 # ---------------------------------------------------------------------------
 
-proc buildProcSymbolTable(n: Cursor; reg: TypeRegistry): SymbolTable =
+proc scanParam(n: var Cursor; st: var SymbolTable) =
+  ## Scan one (param name export pragmas type default) node.
+  validate n.kind == ParLe and pool.tags[n.tag] == "param"
+  inc n, SkipTag # skip (param
+  if n.kind == Ident:
+    let paramName = pool.strings[n.litId]
+    skip n, SkipName
+    skip n, SkipExport
+    skip n, SkipPragmas
+    let typeName = extractTypeName(n)
+    let isMut = n.kind == ParLe and pool.tags[n.tag] == "mut"
+    if typeName.len > 0:
+      st.addVar(paramName, typeName, isMut)
+  # skip remaining children
+  while n.kind != ParRi:
+    skip n
+  inc n, SkipParRi
+
+proc buildProcSymbolTable(paramsNode: Cursor; reg: TypeRegistry): SymbolTable =
   ## Build a symbol table for a proc by scanning its parameter list.
-  ## `n` should be at the proc's (params ...) node.
+  ## `paramsNode` should be at the proc's (params ...) node.
   result = initSymbolTable()
-  var c = n
-  if c.kind != ParLe: return
-  let tag = pool.tags[c.tag]
-  if tag != "params": return
-  inc c # skip (params
-  while c.kind != ParRi:
-    if c.kind == ParLe and pool.tags[c.tag] == "param":
-      var p = c
-      inc p # skip (param
-      if p.kind == Ident:
-        let paramName = pool.strings[p.litId]
-        skip p # skip name
-        skip p # skip export marker
-        skip p # skip pragmas
-        let typeName = extractTypeName(p)
-        let isMut = p.kind == ParLe and pool.tags[p.tag] == "mut"
-        if typeName.len > 0:
-          result.addVar(paramName, typeName, isMut)
-    skip c
+  var n = paramsNode
+  if n.kind != ParLe: return
+  if pool.tags[n.tag] != "params": return
+  inc n, SkipTag # skip (params
+  while n.kind != ParRi:
+    if n.kind == ParLe and pool.tags[n.tag] == "param":
+      scanParam(n, result)
+    else:
+      skip n
 
 # ---------------------------------------------------------------------------
 # Step 1: tags.md is parsed by `tags_grammar` - we just reuse its types.
@@ -621,13 +649,21 @@ proc hasBufferArg(st: SymbolTable; reg: TypeRegistry; callNode: Cursor): bool =
     skip c
   false
 
-proc hasStringArg(n: Cursor): bool =
-  ## Check if the call/cmd has a string literal argument (the justification reason).
+const
+  SkipIntentNames = ["SkipTag", "SkipParRi", "SkipName", "SkipExport",
+                     "SkipPragmas", "SkipType", "SkipValue", "SkipGenParams",
+                     "SkipCond", "SkipBody", "SkipCallee", "SkipResult", "SkipFull"]
+
+proc hasIntentArg(n: Cursor): bool =
+  ## Check if the call/cmd has a SkipIntent enum argument or a string literal.
+  ## Accepts both: enum values (Ident matching SkipIntentNames) and legacy strings.
   var c = n
   inc c # skip (cmd/(call
   skip c # skip callee
   while c.kind != ParRi:
     if c.kind == StringLit:
+      return true
+    if c.kind == Ident and pool.strings[c.litId] in SkipIntentNames:
       return true
     skip c
   false
@@ -649,7 +685,7 @@ proc classifyCall(st: SymbolTable; reg: TypeRegistry; n: Cursor): int =
     # skip/inc with a string reason argument = justified (balanced)
     # skip/inc without = unjustified (debt)
     if hasCursorArg(st, reg, n):
-      if hasStringArg(n): return 0  # justified
+      if hasIntentArg(n): return 0  # justified
       return 1  # unjustified debt
   elif callName in StructuredReadProcs:
     return 0
@@ -687,7 +723,7 @@ proc blockBalance(ctx: var CheckContext; st: SymbolTable; reg: TypeRegistry;
   elif tag in ["if", "case"]:
     inc n
     if tag == "case":
-      skip n # skip discriminator
+      skip n, SkipValue
     while n.kind != ParRi:
       if n.kind == ParLe:
         let branchTag = pool.tags[n.tag]
@@ -854,7 +890,7 @@ proc scanUnsafeCursorOps(ctx: var CheckContext; reg: TypeRegistry; buf: var Toke
             callName = pool.strings[peek.litId]
           elif peek.kind == ParLe:
             callName = extractDotCallName(peek)
-          if callName in ReasonRequiredProcs and not hasStringArg(bc):
+          if callName in ReasonRequiredProcs and not hasIntentArg(bc):
             # skip/inc without reason string in an emitter proc — flag it
             if peek.kind == Ident:
               skip peek
@@ -955,7 +991,7 @@ const
   DestContributingProcs = ["takeTree", "takeToken", "takeParRi", "copyTree",
     "copyIntoKind", "copyIntoKinds", "copyInto", "copyIntoUnchecked",
     "addParLe", "addParRi", "addDotToken", "addSymUse", "addSymDef",
-    "addIntLit", "addStrLit", "addEmpty", "add", "addSubtree",
+    "addIntLit", "addStrLit", "addEmpty", "addSubtree",
     "trExpr", "trStmt", "trLocal", "trProcDecl", "tr",
     # plugin API (nimonyplugins):
     "addIdent", "addUIntLit", "addCharLit", "addFloatLit",
