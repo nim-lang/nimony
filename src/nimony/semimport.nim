@@ -6,7 +6,7 @@ proc semInclude(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   var x = it.n
   skip it.n
-  inc x # skip the `include`
+  inc x, SkipTag # skip the `include`
   while x.kind != ParRi:
     filenameVal(x, files, hasError, allowAs = false)
 
@@ -112,12 +112,12 @@ proc cyclicImport(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
 
     if isCyclic:
       # Manually parse the pragmax wrapper to extract the filename
-      inc x # enter PragmaxX
+      inc x, SkipTag # enter PragmaxX
       var files: seq[ImportedFilename] = @[]
       var hasError = false
       filenameVal(x, files, hasError, allowAs = false)
-      skip x # skip (pragmas cyclic)
-      inc x  # skip closing ParRi of PragmaxX
+      skip x, SkipPragmas # skip (pragmas cyclic)
+      inc x, SkipParRi  # skip closing ParRi of PragmaxX
 
       if not hasError:
         let origin = getFile(info)
@@ -169,7 +169,7 @@ proc semImport(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   var x = it.n
   skip it.n
-  inc x # skip the `import`
+  inc x, SkipTag # skip the `import`
   maybeCyclic(c, dest, x)
 
   var files: seq[ImportedFilename] = @[]
@@ -187,7 +187,7 @@ proc semImportExcept(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   var x = it.n
   skip it.n
-  inc x # skip the `importexcept`
+  inc x, SkipTag # skip the `importexcept`
 
   maybeCyclic(c, dest, x)
 
@@ -208,7 +208,7 @@ proc semFromImport(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   var x = it.n
   skip it.n
-  inc x # skip the `from`
+  inc x, SkipTag # skip the `from`
 
   maybeCyclic(c, dest, x)
 

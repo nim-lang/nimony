@@ -652,6 +652,7 @@ proc hasBufferArg(st: SymbolTable; reg: TypeRegistry; callNode: Cursor): bool =
 const
   SkipIntentNames = ["SkipTag", "SkipParRi", "SkipName", "SkipExport",
                      "SkipPragmas", "SkipType", "SkipValue", "SkipGenParams",
+                     "SkipEffects",
                      "SkipCond", "SkipBody", "SkipExpr", "SkipResult", "SkipFull"]
 
 proc hasIntentArg(n: Cursor): bool =

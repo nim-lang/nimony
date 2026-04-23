@@ -458,13 +458,13 @@ proc analyzeIfBranches*(graph: EffectGraph; n: Cursor; destVar: string = ""): Ef
     case branchTag
     of "elif":
       inc c # skip (elif
-      skip c # skip condition
+      skip c, SkipCond # skip condition
       # The body is the second child — should be (stmts ...)
       if c.kind == ParLe and pool.tags[c.tag] == "stmts":
         allEffects.add analyzeStmtsBody(graph, c, destVar)
       else:
         return unknownEffect()
-      skip c # skip body
+      skip c, SkipBody # skip body
       if c.kind == ParRi: inc c # close elif
     of "else":
       hasElse = true
@@ -473,7 +473,7 @@ proc analyzeIfBranches*(graph: EffectGraph; n: Cursor; destVar: string = ""): Ef
         allEffects.add analyzeStmtsBody(graph, c, destVar)
       else:
         return unknownEffect()
-      skip c # skip body
+      skip c, SkipBody # skip body
       if c.kind == ParRi: inc c # close else
     else:
       skip c
@@ -496,7 +496,7 @@ proc analyzeCaseBranches*(graph: EffectGraph; n: Cursor; destVar: string = ""): 
   var c = n
   if c.kind != ParLe: return unknownEffect()
   inc c # skip (case
-  skip c # skip discriminator
+  skip c, SkipValue # skip discriminator
 
   var allEffects: seq[Effect] = @[]
   var hasElse = false
@@ -515,7 +515,7 @@ proc analyzeCaseBranches*(graph: EffectGraph; n: Cursor; destVar: string = ""): 
         allEffects.add analyzeStmtsBody(graph, c, destVar)
       else:
         return unknownEffect()
-      skip c # skip body
+      skip c, SkipBody # skip body
       if c.kind == ParRi: inc c # close of
     of "else":
       hasElse = true
@@ -524,7 +524,7 @@ proc analyzeCaseBranches*(graph: EffectGraph; n: Cursor; destVar: string = ""): 
         allEffects.add analyzeStmtsBody(graph, c, destVar)
       else:
         return unknownEffect()
-      skip c # skip body
+      skip c, SkipBody # skip body
       if c.kind == ParRi: inc c # close else
     else:
       skip c
@@ -545,7 +545,7 @@ proc analyzeWhileLoop*(graph: EffectGraph; n: Cursor; destVar: string = ""): Eff
   var c = n
   if c.kind != ParLe: return unknownEffect()
   inc c # skip (while
-  skip c # skip condition
+  skip c, SkipCond # skip condition
   # body
   if c.kind == ParLe and pool.tags[c.tag] == "stmts":
     let bodyEffect = analyzeStmtsBody(graph, c, destVar)
@@ -634,9 +634,9 @@ proc extractFieldType(n: Cursor): string =
   var c = n
   if c.kind != ParLe: return ""
   inc c # skip (fld
-  skip c # skip name
-  skip c # skip export
-  skip c # skip pragmas
+  skip c, SkipName # skip name
+  skip c, SkipExport # skip export
+  skip c, SkipPragmas # skip pragmas
   # now at type
   if c.kind == Ident:
     return pool.strings[c.litId]
@@ -1200,7 +1200,7 @@ proc analyzeCursorPath*(graph: EffectGraph; body: Cursor; cursorVar: string): Cu
       # Analyze the while body — cursor might be advanced inside the loop
       var c = n
       inc c  # skip (while
-      skip c  # skip condition
+      skip c, SkipCond  # skip condition
       if c.kind == ParLe and pool.tags[c.tag] == "stmts":
         let state = analyzeCursorPath(graph, c, cursorVar)
         if state == csAdvanced: advanced = true
@@ -1208,8 +1208,8 @@ proc analyzeCursorPath*(graph: EffectGraph; body: Cursor; cursorVar: string): Cu
     of "for":
       var c = n
       inc c  # skip (for
-      skip c  # skip loop var
-      skip c  # skip range
+      skip c, SkipName  # skip loop var
+      skip c, SkipValue  # skip range
       if c.kind == ParLe and pool.tags[c.tag] == "stmts":
         let state = analyzeCursorPath(graph, c, cursorVar)
         if state == csAdvanced: advanced = true
@@ -1236,11 +1236,11 @@ proc analyzeIfCursorPaths*(graph: EffectGraph; n: Cursor; cursorVar: string): Cu
     case branchTag
     of "elif":
       inc c  # skip (elif
-      skip c  # skip condition
+      skip c, SkipCond  # skip condition
       if c.kind == ParLe and pool.tags[c.tag] == "stmts":
         if analyzeCursorPath(graph, c, cursorVar) != csAdvanced:
           allAdvanced = false
-      skip c  # skip body
+      skip c, SkipBody  # skip body
       if c.kind == ParRi: inc c  # close elif
     of "else":
       hasElse = true
@@ -1248,7 +1248,7 @@ proc analyzeIfCursorPaths*(graph: EffectGraph; n: Cursor; cursorVar: string): Cu
       if c.kind == ParLe and pool.tags[c.tag] == "stmts":
         if analyzeCursorPath(graph, c, cursorVar) != csAdvanced:
           allAdvanced = false
-      skip c  # skip body
+      skip c, SkipBody  # skip body
       if c.kind == ParRi: inc c  # close else
     else:
       skip c
@@ -1262,7 +1262,7 @@ proc analyzeCaseCursorPaths*(graph: EffectGraph; n: Cursor; cursorVar: string): 
   var c = n
   if c.kind != ParLe: return csUnknown
   inc c  # skip (case
-  skip c  # skip discriminator
+  skip c, SkipValue  # skip discriminator
 
   var allAdvanced = true
   var hasElse = false
@@ -1278,7 +1278,7 @@ proc analyzeCaseCursorPaths*(graph: EffectGraph; n: Cursor; cursorVar: string): 
       if c.kind == ParLe and pool.tags[c.tag] == "stmts":
         if analyzeCursorPath(graph, c, cursorVar) != csAdvanced:
           allAdvanced = false
-      skip c  # skip body
+      skip c, SkipBody  # skip body
       if c.kind == ParRi: inc c  # close of
     of "else":
       hasElse = true
@@ -1286,7 +1286,7 @@ proc analyzeCaseCursorPaths*(graph: EffectGraph; n: Cursor; cursorVar: string): 
       if c.kind == ParLe and pool.tags[c.tag] == "stmts":
         if analyzeCursorPath(graph, c, cursorVar) != csAdvanced:
           allAdvanced = false
-      skip c  # skip body
+      skip c, SkipBody  # skip body
       if c.kind == ParRi: inc c  # close else
     else:
       skip c

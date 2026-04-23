@@ -170,11 +170,11 @@ proc registerLocals(c: var TypeCache; n: var Cursor) =
       inc n
       let name = n.symId
       inc n # name
-      skip n # export marker
-      skip n # pragmas
+      skip n, SkipExport # export marker
+      skip n, SkipPragmas # pragmas
       c.registerLocal name, cast[SymKind](k), n
-      skip n # type
-      skip n # init value
+      skip n, SkipType # type
+      skip n, SkipValue # init value
       skipParRi n
     else:
       skip n

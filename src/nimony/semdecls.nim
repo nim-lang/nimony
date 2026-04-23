@@ -588,13 +588,13 @@ proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
     inc params
     if params.substructureKind == ParamU:
       inc params
-      skip params # name
-      skip params # export marker
-      skip params # pragmas
+      skip params, SkipName # name
+      skip params, SkipExport # export marker
+      skip params, SkipPragmas # pragmas
       root = getClass(params) # can be a generic instance symbol
       var rest = params
-      skip rest # type
-      skip rest # default value
+      skip rest, SkipType # type
+      skip rest, SkipValue # default value
       skipParRi rest
       var methodName = pool.syms[symId]
       extractBasename methodName
@@ -628,9 +628,9 @@ proc hookThatShouldBeMethod(c: var SemContext; dest: var TokenBuf; hk: HookKind;
       inc params
       if params.substructureKind == ParamU:
         inc params
-        skip params # name
-        skip params # export marker
-        skip params # pragmas
+        skip params, SkipName # name
+        skip params, SkipExport # export marker
+        skip params, SkipPragmas # pragmas
         result = isInheritable(params, true)
     endRead(dest)
   else:

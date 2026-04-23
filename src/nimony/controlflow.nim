@@ -770,18 +770,18 @@ proc trLocal(c: var ControlFlow; n: var Cursor) =
   let kind = n.symKind
   let orig = n
   inc n
-  skip n # name
-  skip n # export marker
-  skip n # pragmas
+  skip n, SkipName # name
+  skip n, SkipExport # export marker
+  skip n, SkipPragmas # pragmas
   #c.typeCache.registerLocal(name, kind, n)
-  skip n # type
+  skip n, SkipType # type
 
   var aa = Target(m: IsEmpty)
   trExpr c, n, aa
   n = orig
   copyInto c.dest, n:
     takeLocalHeader c.typeCache, c.dest, n, kind
-    skip n # value
+    skip n, SkipValue # value
     c.dest.add aa
 
 proc trRaise(c: var ControlFlow; n: var Cursor) =

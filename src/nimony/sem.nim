@@ -95,7 +95,7 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
       case it.substructureKind
       of ElifU:
         inc it
-        skip it # condition
+        skip it, SkipCond # condition
         checkBranch(it)
         skip it
         skipParRi it
@@ -122,7 +122,7 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
         skipParRi it
       of ElifU:
         inc it
-        skip it # condition
+        skip it, SkipCond # condition
         checkBranch(it)
         skip it
         skipParRi it
@@ -156,8 +156,8 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
         var decl = sym.decl
         if isRoutine(symKind(decl)):
           inc decl
-          skip decl # name
-          skip decl # exported
+          skip decl, SkipName # name
+          skip decl, SkipExport # exported
           skip decl # pattern
           skip decl # typevars
           skip decl # params
@@ -1040,7 +1040,7 @@ proc findObjFieldAux(c: var SemContext; t: Cursor; name: StrId; bindings: Table[
   var n = t
   inc n # skip `(object` token
   var baseType = n
-  skip n # skip basetype
+  skip n, SkipType # skip basetype
   var iter = initObjFieldIter()
   while nextField(iter, n):
     inc n # skip FldU
@@ -1048,8 +1048,8 @@ proc findObjFieldAux(c: var SemContext; t: Cursor; name: StrId; bindings: Table[
       let symId = n.symId
       inc n # skip name
       let exported = n.kind != DotToken
-      skip n # export marker
-      skip n # pragmas
+      skip n, SkipExport # export marker
+      skip n, SkipPragmas # pragmas
       var typ = n
       if bindings.len != 0:
         # fields in generic type AST contain generic params of the type
@@ -1057,11 +1057,11 @@ proc findObjFieldAux(c: var SemContext; t: Cursor; name: StrId; bindings: Table[
         # and the field type is instantiated based on them here
         typ = instantiateType(c, typ, bindings)
       return ObjField(sym: symId, level: level, typ: typ, exported: exported, rootOwner: SymId(0))
-    skip n # skip name
-    skip n # export marker
-    skip n # pragmas
-    skip n # type
-    skip n # value
+    skip n, SkipName # skip name
+    skip n, SkipExport # skip export marker
+    skip n, SkipPragmas # skip pragmas
+    skip n, SkipType # type
+    skip n, SkipValue # value
     skipParRi n
   if baseType.kind == DotToken:
     result = ObjField(level: -1)
@@ -6444,8 +6444,8 @@ proc addSelfModuleSym(c: var SemContext; path: string) =
 
 proc fromGeneric(dest: var TokenBuf; i: int): SymId =
   var n = cursorAt(dest, i) # at name
-  skip n # skip name
-  skip n # skip exported
+  skip n, SkipName # skip name
+  skip n, SkipExport # skip exported
   skip n # pattern
   if n.typeKind == InvokeT:
     result = n.firstSon.symId

@@ -569,11 +569,11 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let field = c.currentProc.localToEnv.getOrDefault(sym)
   if field.def != field.use:
     inc n
-    skip n # name
-    skip n # exported
-    skip n # pragmas
+    skip n, SkipName # name
+    skip n, SkipExport # exported
+    skip n, SkipPragmas # pragmas
     c.typeCache.registerLocal(sym, kind, n)
-    skip n # type
+    skip n, SkipType # type
     if n.kind == DotToken:
       inc n
     else:
@@ -1136,11 +1136,11 @@ proc generateCoroutineHelpers(c: var Context; dest: var TokenBuf; sym: SymId; it
             assert params.substructureKind == ParamU
             inc params
             dest.addSymUse params.symId, info
-            skip params # name
-            skip params # exported
-            skip params # pragmas
-            skip params # type
-            skip params # default value
+            skip params, SkipName # name
+            skip params, SkipExport # exported
+            skip params, SkipPragmas # pragmas
+            skip params, SkipType # type
+            skip params, SkipValue # default value
             inc params # ParRi
         emitAllocFrame(c, dest, sym, info)
         if hasResult:
@@ -1158,12 +1158,12 @@ proc registerParamsInTypecache(c: var Context; sym: SymId; origParams: Cursor) =
       assert n.substructureKind == ParamU
       inc n
       let paramSym = n.symId
-      skip n # name
-      skip n # exported
-      skip n # pragmas
+      skip n, SkipName # name
+      skip n, SkipExport # exported
+      skip n, SkipPragmas # pragmas
       c.typeCache.registerLocal(paramSym, ParamY, n)
-      skip n # type
-      skip n # default value
+      skip n, SkipType # type
+      skip n, SkipValue # default value
       inc n # ParRi
 
 proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId;

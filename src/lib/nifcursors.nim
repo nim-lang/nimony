@@ -541,11 +541,13 @@ type
     SkipExport    ## skip an export marker child
     SkipPragmas   ## skip a pragmas section
     SkipType      ## skip a type child
+    SkipExpr    ## skip an expression child
+    SkipStmt    ## skip a statement child
     SkipValue     ## skip a value/expression child
     SkipGenParams ## skip generic parameters
     SkipCond      ## skip a condition expression
     SkipBody      ## skip a body/stmts section
-    SkipExpr    ## skip a callee symbol being replaced by a different one
+    SkipEffects   ## skip an effects section
     SkipResult    ## skip a result that has been handled separately
     SkipFull      ## skip an entire subtree being dropped or replaced
 
