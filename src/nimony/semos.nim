@@ -48,7 +48,7 @@ proc compilerDir*(): string =
   else: return tail
 
 proc absoluteParentDir*(f: string): string =
-  result = ""
+  result = ""  # Nim's ProveInit doesn't see `quit` as noreturn across try/except
   try:
     result = f.absolutePath().parentDir()
   except:
@@ -60,7 +60,7 @@ proc fileExists*(f: string): bool {.inline.} =
   result = os.fileExists(f)
 
 proc toAbsolutePath*(f: string): string =
-  result = ""
+  result = ""  # Nim's ProveInit doesn't see `quit` as noreturn across try/except
   if f.isAbsolute: return f
   try:
     result = os.absolutePath(f)
@@ -72,7 +72,7 @@ proc toAbsolutePath*(f: string, dir: string): string =
   result = normalizedPath(dir / f)
 
 proc toRelativePath*(f: string, dir: string): string =
-  result = ""
+  result = ""  # Nim's ProveInit doesn't see `quit` as noreturn across try/except
   if not f.isAbsolute: return f
   try:
     result = f.relativePath(dir)
@@ -420,7 +420,6 @@ proc prepareEval*(c: var SemContext): string =
 
 proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf; usedModules: HashSet[string]): string =
   ## Returns an error message if the evaluation failed, "" on success.
-  result = ""
   let progfile = c.g.config.nifcachePath / srcName.addFileExt(".p.nif")
   try:
     writeFileAndIndex(progfile, src)
@@ -446,5 +445,6 @@ proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: Token
         parse s, dest, NoLineInfo
       finally:
         close s
+      result = ""  # success: caller interprets "" as no error
   except:
     result = "I/O error while evaluating " & srcName
