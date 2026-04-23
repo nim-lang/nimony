@@ -50,6 +50,21 @@ const
     ##   doAssert "01A34".find(invalid) == 2
     ##   ```
 
+func spaces*(n: int): string =
+  ## Returns a string with `n` space characters.
+  result = newString(n)
+  for i in 0 ..< n: result[i] = ' '
+
+func repeat*(c: char; n: int): string =
+  ## Returns a string made of `c` repeated `n` times.
+  result = newString(n)
+  for i in 0 ..< n: result[i] = c
+
+func repeat*(s: string; n: int): string =
+  ## Returns `s` repeated `n` times.
+  result = ""
+  for i in 0 ..< n: result.add s
+
 func isAlphaAscii*(c: char): bool {.inline.} =
   ## Checks whether or not character `c` is alphabetical.
   ##

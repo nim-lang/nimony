@@ -9,6 +9,8 @@
 import std / [assertions, syncio]
 import nifreader, nifstreams, bitabs, lineinfos
 
+include compat2
+
 type
   Storage = ptr UncheckedArray[PackedToken]
   CursorOwner = ptr CursorOwnerObj
@@ -53,7 +55,7 @@ proc `=dup`*(src: Cursor): Cursor {.nodestroy.} =
   result = Cursor(owner: src.owner, p: src.p, rem: src.rem)
   if result.owner != nil: inc result.owner.rc
 
-const
+let
   ErrToken = [parLeToken(ErrT, NoLineInfo),
               parRiToken(NoLineInfo)]
 
@@ -217,13 +219,18 @@ proc add*(b: var TokenBuf; item: PackedToken) {.inline.} =
 
 proc len*(b: TokenBuf): int {.inline.} = b.len
 
-proc `[]`*(b: TokenBuf; i: int): PackedToken {.inline.} =
-  assert i >= 0 and i < b.len
-  result = b.data[i]
+when defined(nimony):
+  proc `[]`*(b: TokenBuf; i: int): var PackedToken {.inline.} =
+    assert i >= 0 and i < b.len
+    result = b.data[i]
+else:
+  proc `[]`*(b: TokenBuf; i: int): PackedToken {.inline.} =
+    assert i >= 0 and i < b.len
+    result = b.data[i]
 
-proc `[]`*(b: var TokenBuf; i: int): var PackedToken {.inline.} =
-  assert i >= 0 and i < b.len
-  result = b.data[i]
+  proc `[]`*(b: var TokenBuf; i: int): var PackedToken {.inline.} =
+    assert i >= 0 and i < b.len
+    result = b.data[i]
 
 proc `[]=`*(b: TokenBuf; i: int; val: PackedToken) {.inline.} =
   assert i >= 0 and i < b.len
@@ -469,7 +476,7 @@ type
     AlwaysWrite,
     OnlyIfChanged
 
-proc writeFile*(b: TokenBuf; filename: string; mode: FileWriteMode = AlwaysWrite) =
+proc writeFile*(b: TokenBuf; filename: string; mode: FileWriteMode = AlwaysWrite) {.canRaise.} =
   let content = toModuleString(toOpenArray(b.data, 0, b.len-1), "." & extractModuleSuffix(filename))
   if mode == OnlyIfChanged:
     let existingContent = try: readFile(filename) except: ""

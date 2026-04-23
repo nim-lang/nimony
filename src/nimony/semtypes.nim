@@ -594,7 +594,8 @@ proc handleNotnilType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; con
     dest.shrink before
 
 proc isPointerTypeClass(n: Cursor): bool {.inline.} =
-  result = n.typeKind == TypeKindT and n.firstSon.typeKind in {RefT, PtrT, PointerT, CstringT}
+  result = n.typeKind == TypeKindT and
+    n.firstSon.typeKind in {RefT, PtrT, PointerT, CstringT, ProctypeT}
 
 proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; context: TypeDeclContext): bool =
   result = false
@@ -655,22 +656,55 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
         dest.addParRi()
       elif nd.typeKind == ProctypeT:
         dest.endRead()
-        # For proctypes, replace (notnil) with (nil) inside the pragmas section.
-        # Find the (notnil) that was added by default and replace it:
+        # For proctypes, replace the default nilability marker (notnil in
+        # strict mode, unchecked in lenient mode) with `annotation` inside
+        # the pragmas section. The marker was inserted by `semLocalTypeImpl`
+        # at the proctype's pragmas slot.
         let L = dest.len
-        # The proctype ends with: ... (pragmas (notnil)) effects body ParRi
-        # Walk backwards to find (notnil) inside pragmas
         var found = false
         for i in countdown(L-1, before):
-          if dest[i].kind == ParLe and dest[i].substructureKind == NotnilU:
+          if dest[i].kind == ParLe and
+             dest[i].substructureKind in {NotnilU, UncheckedU, NilU}:
             dest[i] = parLeToken(annotation, info)
             found = true
             break
         if not found:
-          # No notnil found (lenient mode) — add nil as direct child before closing ParRi
-          dest.shrink dest.len-1
-          dest.addParPair annotation, info
-          dest.addParRi()
+          # No pragmas at all — splice `(pragmas (annotation))` into the
+          # proctype's pragmas slot (just before the effects/body tokens).
+          # Layout: ... pragmasSlot exceptions body ParRi
+          # We need to find the pragmasSlot position. It is 3 subtrees before
+          # the closing ParRi (exceptions, body, ParRi). Walk back from ParRi
+          # skipping two subtrees.
+          var i = L - 1
+          # Skip closing ParRi
+          dec i
+          var depth = 0
+          # Skip `body` subtree
+          while i >= before:
+            if dest[i].kind == ParRi: inc depth
+            elif dest[i].kind == ParLe: dec depth
+            if depth <= 0:
+              dec i
+              break
+            dec i
+          # Skip `exceptions` subtree
+          depth = 0
+          while i >= before:
+            if dest[i].kind == ParRi: inc depth
+            elif dest[i].kind == ParLe: dec depth
+            if depth <= 0:
+              break
+            dec i
+          # `i` now points at the first token of the `pragmas` slot. If that
+          # slot is a dot token, replace it with a full (pragmas annotation).
+          if i >= before and dest[i].kind == DotToken:
+            var tail = newSeq[PackedToken]()
+            for k in (i+1) ..< dest.len: tail.add dest[k]
+            dest.shrink i
+            dest.addParLe PragmasU, info
+            dest.addParPair annotation, info
+            dest.addParRi()
+            for t in tail: dest.add t
       elif containsGenericParams(nd):
         # keep as is, will be checked later after generic instantiation:
         dest.endRead()

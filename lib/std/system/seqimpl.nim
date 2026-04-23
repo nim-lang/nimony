@@ -175,6 +175,12 @@ func del*[T](s: var seq[T]; idx: int) {.nodestroy.} =
     (s.data[idx]) = s.data[L-1]
   dec s.len
 
+func addUnique*[T: Equatable](s: var seq[T]; x: sink T) =
+  ## Append `x` to `s` only if no existing element equals it.
+  for i in 0 ..< s.len:
+    if s[i] == x: return
+  s.add x
+
 func shrink*[T](s: var seq[T]; newLen: int) =
   var i = s.len-1
   while i >= newLen:
@@ -200,6 +206,20 @@ func grow*[T](s: var seq[T]; newLen: int; val: T) {.nodestroy.} =
   while i < newLen:
     (s.data[i]) = `=dup`(val)
     inc i
+
+func setLen*[T: HasDefault](s: var seq[T]; newLen: int) {.nodestroy.} =
+  if newLen < s.len:
+    shrink(s, newLen)
+  else:
+    var i = s.len
+    growUnsafe(s, newLen)
+    if s.data == nil: return
+    while i < newLen:
+      (s.data[i]) = default(T)
+      inc i
+
+proc newSeq*[T: HasDefault](s: out seq[T]; newLen: int) {.nodestroy, inline.} =
+  s = newSeq[T](newLen)
 
 func high*[T](s: seq[T]): int {.inline.} = s.len - 1
 func low*[T](s: seq[T]): int {.inline.} = 0

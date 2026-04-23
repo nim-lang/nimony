@@ -2,6 +2,7 @@ import strutils
 import posix/posix
 import cmdline
 import envvars
+import oserrors
 import private/[ospaths2, osappdirs, oscommons]
 
 export cmdline
@@ -11,6 +12,25 @@ export oscommons
 
 proc c_system(cmd: cstring): cint {.
     importc: "system", header: "<stdlib.h>".}
+
+when defined(posix):
+  proc expandFilename*(filename: string): string {.raises.} =
+    ## Returns the full (`absolute`) path of an existing file `filename`,
+    ## resolving symlinks. Raises `OSError` if `filename` does not exist.
+    const PATH_MAX = 4096
+    result = newString(PATH_MAX)
+    var filename = filename
+    let r = realpath(filename.toCString, result.toCString)
+    if r.isNil:
+      raiseOSError(osLastError(), filename)
+    else:
+      var L = 0
+      while L < PATH_MAX and result[L] != '\0':
+        inc L
+      setLen(result, L)
+else:
+  proc expandFilename*(filename: string): string {.raises.} =
+    result = absolutePath(filename)
 
 when defined(linux) or defined(aix):
   const maxSymlinkLen = 1024
@@ -104,6 +124,41 @@ when defined(windows) or defined(posix) or defined(nintendoswitch):
     for i in 0..<args.len:
       if i > 0: result.add " "
       result.add quoteShell(args[i])
+
+when defined(posix):
+  proc getLastModificationTime*(file: string): int64 {.raises.} =
+    ## Returns the file's last modification time as seconds since the epoch.
+    ## Raises `OSError` if the file does not exist or cannot be stat'ed.
+    var s = default(Stat)
+    var filename = file
+    if stat(filename.toCString, s) < 0:
+      raiseOSError(osLastError(), file)
+    result = s.st_mtime
+elif defined(windows):
+  import windows/winlean
+
+  const
+    # Number of 100-nanosecond intervals between 1601-01-01 and 1970-01-01.
+    winEpochDiff: int64 = 116444736000000000'i64
+    hnsecsPerSec: int64 = 10000000'i64
+
+  proc rdFileTime(f: FILETIME): int64 {.inline.} =
+    result = int64(cast[uint32](f.dwLowDateTime)) or
+             (int64(cast[uint32](f.dwHighDateTime)) shl 32)
+
+  proc winFileTimeToUnix(t: int64): int64 {.inline.} =
+    (t - winEpochDiff) div hnsecsPerSec
+
+  proc getLastModificationTime*(file: string): int64 {.raises.} =
+    ## Returns the file's last modification time as seconds since the Unix
+    ## epoch (1970-01-01 UTC).
+    ## Raises `OSError` if the file does not exist or cannot be queried.
+    var f {.noinit.}: WIN32_FIND_DATA
+    let h = findFirstFile(file, f)
+    if h == INVALID_HANDLE_VALUE:
+      raiseOSError(osLastError(), file)
+    result = winFileTimeToUnix(rdFileTime(f.ftLastWriteTime))
+    discard findClose(h)
 
 proc exitStatusLikeShell*(status: cint): cint =
   ## Converts exit code from `c_system` into a shell exit code.

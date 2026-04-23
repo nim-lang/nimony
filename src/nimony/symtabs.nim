@@ -36,7 +36,9 @@ proc commitShadowScope*(s: Scope) =
 proc rollbackShadowScope*(s: Scope) =
   let last = s.undo.len - 1
   for k, oldLen in pairs(s.undo[last]):
-    s.tab[k].shrink oldLen
+    # `k` was recorded here when we shadowed it, so the entry exists; use
+    # `mgetOrPut` rather than `[]` to stay non-raising.
+    s.tab.mgetOrPut(k, @[]).shrink oldLen
   s.undo.shrink last
 
 proc remember(s: Scope; name: StrId) {.inline.} =
@@ -63,10 +65,16 @@ proc addOverloadable*(s: Scope; name: StrId; sym: Sym) =
 proc removeOverloadable*(s: Scope; name: StrId; symId: SymId) =
   ## Remove a symbol from the overload set. Used for forward declaration merging.
   if s.tab.hasKey(name):
-    var syms = s.tab[name]
+    var syms = s.tab.getOrDefault(name)
     for i in countdown(syms.high, 0):
       if syms[i].name == symId:
-        syms.delete(i)
+        # order-preserving delete: shift tail down, then shrink.
+        var j = i
+        while j < syms.high:
+          let tmp = syms[j+1]
+          syms[j] = tmp
+          inc j
+        shrink(syms, syms.len-1)
         break
     s.tab[name] = syms
 

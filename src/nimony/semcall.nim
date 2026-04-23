@@ -274,9 +274,12 @@ proc untypedCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var Ca
   for a in cs.args:
     # XXX call semTemplBody for orig instead?
     dest.addSubtree a.n
+  # close the `(call ...)` tree before `typeofCallIs`, otherwise `commonType`
+  # hands `typematch` a cursor over an unterminated subtree and `addSubtree`
+  # walks past the buffer end (assertion in nifcursors.load).
+  takeParRi dest, it.n
   # untyped propagates to the result type:
   typeofCallIs c, dest, it, cs.beforeCall, c.types.untypedType
-  takeParRi dest, it.n
 
 proc semConvFromCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: CallState) =
   let beforeExpr = dest.len
@@ -1041,10 +1044,15 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     # skip optional inheritance depth:
     if cs.fn.n.kind == IntLit:
       inc cs.fn.n
+    var dotFlags = {KeepMagics, AllowUndeclared, AllowOverloads}
+    if cs.fn.n.kind == StringLit:
+      dotFlags.incl BypassFieldVis
+      inc cs.fn.n
     skipParRi cs.fn.n
     it.n = cs.fn.n
     # now interpret the dot expression:
-    let dotState = tryBuiltinDot(c, dest, cs.fn, lhs, fieldName, dotInfo, {KeepMagics, AllowUndeclared, AllowOverloads})
+    let dotState = tryBuiltinDot(c, dest, cs.fn, lhs, fieldName, dotInfo,
+                                  dotFlags)
     if dotState == FailedDot or
         # also ignore non-proc fields:
         (dotState == MatchedDotField and cs.fn.typ.typeKind notin RoutineTypes):

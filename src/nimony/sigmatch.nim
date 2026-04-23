@@ -35,6 +35,7 @@ type
     CallConvMismatch
     RaisesMismatch
     ClosureMismatch
+    PassiveMismatch
     UnavailableSubtypeRelation
     NotImplementedConcept
     ImplicitConversionNotMutable
@@ -131,6 +132,8 @@ proc getErrorMsg*(m: Match): string =
     "`.raises` mismatch"
   of ClosureMismatch:
     "`.closure` mismatch"
+  of PassiveMismatch:
+    "`.passive` mismatch"
   of UnavailableSubtypeRelation:
     "subtype relation not available for `out` parameters"
   of NotImplementedConcept:
@@ -651,9 +654,10 @@ type
     usesRaises*: bool
     raisesType*: Cursor  # The actual exception type from .raises pragma
     usesClosure*: bool
+    usesPassive*: bool
 
 proc extractProcProps*(c: var Cursor): ProcProperties =
-  result = ProcProperties(cc: Nimcall, usesRaises: false, usesClosure: false)
+  result = ProcProperties(cc: Nimcall, usesRaises: false, usesClosure: false, usesPassive: false)
   if c.substructureKind == PragmasU:
     inc c
     while c.kind != ParRi:
@@ -669,6 +673,8 @@ proc extractProcProps*(c: var Cursor): ProcProperties =
           result.raisesType = raisesNode
       elif c.pragmaKind == ClosureP:
         result.usesClosure = true
+      elif c.pragmaKind == PassiveP:
+        result.usesPassive = true
       skip c
     inc c
   elif c.kind == DotToken:
@@ -735,6 +741,8 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
     m.error RaisesMismatch, f, a
   elif fcc.usesClosure != acc.usesClosure:
     m.error ClosureMismatch, f, a
+  elif fcc.usesPassive != acc.usesPassive:
+    m.error PassiveMismatch, f, a
   # XXX consider when f or a is (params):
   skip f # effects
   #skip a # effects
@@ -765,6 +773,8 @@ proc useArg(m: var Match; arg: CallArg; f: Cursor) =
     m.args.addSubtree arg.n
 
 proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg)
+proc singleArg(m: var Match; f: var Cursor; arg: CallArg)
+proc isEmptyContainer*(n: Cursor): bool
 
 proc matchObjectInheritance*(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKind: TypeKind) =
   let fbase = skipTypeInstSym(fsym)
@@ -1234,7 +1244,31 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         procTypeMatch m, f, a
       else:
         m.error InvalidMatch, f, a
-    of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, AnumT, NiltT, OrT, AndT, NotT,
+    of OrT:
+      # `f` is an `or`-typed parameter (e.g. `x: A | B | C`); try each
+      # alternative and accept the first that matches. We can't snapshot
+      # `Match` (no `=copy`), so undo-on-failure using the args buffer
+      # length and the `err` flag.
+      var branches = f
+      inc branches
+      let argsSave = m.args.len
+      let errSave = m.err
+      let openedSave = m.opened
+      var matched = false
+      while branches.kind != ParRi:
+        var branch = branches
+        singleArgImpl(m, branch, arg)
+        if not m.err:
+          matched = true
+          break
+        m.args.shrink argsSave
+        m.err = errSave
+        m.opened = openedSave
+        skip branches
+      if not matched:
+        m.error InvalidMatch, f, arg.typ
+      skip f
+    of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, AnumT, NiltT, AndT, NotT,
         ConceptT, DistinctT, StaticT, ItertypeT, AutoT, SymKindT, TypeKindT, OrdinalT:
       m.error UnhandledTypeBug, f, f
   else:
@@ -1291,6 +1325,19 @@ proc addEmptyRangeType(buf: var TokenBuf; c: ptr SemContext; info: PackedLineInf
   buf.addParRi()
 
 proc matchEmptyContainer(m: var Match; f: var Cursor; arg: CallArg) =
+  # If `f` is a modifier wrapping a typevar that was already inferred
+  # (e.g. `sink V` where V became `seq[Sym]` from an earlier argument),
+  # substitute it here so the shape checks below see the concrete target.
+  # Otherwise `@[]` against `sink V` falls through to a linearMatch of
+  # `seq[Sym]` vs `auto` and fails.
+  block rebind:
+    var g = f
+    if g.typeKind in {MutT, OutT, SinkT, LentT}:
+      inc g
+    if g.kind == Symbol and isTypevar(g.symId) and m.inferred.contains(g.symId):
+      var inferred = m.inferred[g.symId]
+      matchEmptyContainer(m, inferred, arg)
+      return
   # XXX handle empty containers nested inside (expr)
   if (arg.n.exprKind == AconstrX and f.typeKind == ArrayT) or
       (arg.n.exprKind == SetConstrX and f.typeKind == SetT):

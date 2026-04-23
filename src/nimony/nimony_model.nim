@@ -135,18 +135,20 @@ const
   CallKinds* = {CallX, CallstrlitX, CmdX, PrefixX, InfixX, HcallX, ProccallX, DelayX}
   CallKindsS* = {CallS, CallstrlitS, CmdS, PrefixS, InfixS, HcallS}
   ConvKinds* = {HconvX, ConvX, DconvX, CastX}
-  TypeclassKinds* = {ConceptT, TypeKindT, OrdinalT, OrT, AndT, NotT}
+  TypeclassKinds* = {ConceptT, TypekindT, OrdinalT, OrT, AndT, NotT}
   RoutineTypes* = {ProcT, FuncT, IteratorT, TemplateT, MacroT, ConverterT, MethodT, ProctypeT}
 
-proc addParLe*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|ControlFlowKind|CallConv|PragmaKind;
-               info = NoLineInfo) =
+proc addParLe*[T: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|ControlFlowKind|CallConv|PragmaKind](
+    dest: var TokenBuf; kind: T; info = NoLineInfo) =
   dest.add parLeToken(cast[TagId](kind), info)
 
-proc addParPair*(dest: var TokenBuf; kind: TypeKind|PragmaKind|ExprKind|StmtKind|SubstructureKind|CallConv; info = NoLineInfo) =
+proc addParPair*[T: TypeKind|PragmaKind|ExprKind|StmtKind|SubstructureKind|CallConv](
+    dest: var TokenBuf; kind: T; info = NoLineInfo) =
   dest.add parLeToken(cast[TagId](kind), info)
   dest.addParRi()
 
-proc parLeToken*(kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|PragmaKind; info = NoLineInfo): PackedToken =
+proc parLeToken*[T: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|PragmaKind](
+    kind: T; info = NoLineInfo): PackedToken =
   parLeToken(cast[TagId](kind), info)
 
 proc tagToken*(tag: string; info: PackedLineInfo): PackedToken {.inline.} =
@@ -164,6 +166,10 @@ template copyIntoKinds*(dest: var TokenBuf; kinds: array[2, StmtKind]; info: Pac
   body
   dest.addParRi()
   dest.addParRi()
+
+proc skipParRi(n: var Cursor) =
+  assert n.kind == ParRi, "expected ')'"
+  inc n
 
 template copyInto*(dest: var TokenBuf; n: var Cursor; body: untyped) =
   assert n.kind == ParLe
@@ -230,7 +236,7 @@ proc sameTrees*(a, b: Cursor): bool =
 
 proc isDeclarative*(n: Cursor): bool =
   case n.stmtKind
-  of FromimportS, ImportS, ExportS, IncludeS, ImportExceptS, TypeS, CommentS, TemplateS:
+  of FromimportS, ImportS, ExportS, IncludeS, ImportexceptS, TypeS, CommentS, TemplateS:
     result = true
   else:
     case n.substructureKind
@@ -244,7 +250,7 @@ proc isDeclarative*(n: Cursor): bool =
         result = false
 
 proc isCompileTimeType*(n: Cursor): bool {.inline.} =
-  n.typeKind in {TypeKindT, TypedescT, SymKindT, OrT, AndT, NotT, ConceptT, StaticT}
+  n.typeKind in {TypekindT, TypedescT, SymkindT, OrT, AndT, NotT, ConceptT, StaticT}
 
 proc hookName*(op: HookKind): string =
   case op

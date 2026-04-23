@@ -6,8 +6,9 @@
 
 ## Types required by semantic checking.
 
-import std / [tables, sets, os, syncio, formatfloat, assertions]
+import std / [tables, sets, hashes, os, syncio, formatfloat, assertions]
 include ".." / lib / nifprelude
+include ".." / lib / compat2
 import ".." / lib / [symparser, nifindexes]
 import nimony_model, symtabs, builtintypes, decls, programs, magics, reporters, nifconfig, xints,
   langmodes, features
@@ -132,6 +133,13 @@ type
     pluginBlacklist*: HashSet[StrId] # make 1984 fiction again
     cachedTypeboundOps*: Table[(SymId, StrId), seq[SymId]]
     userPragmas*: Table[StrId, TokenBuf]
+    customPragmaTemplates*: HashSet[StrId]
+      ## Names of templates declared with `{.pragma.}`. Such templates can
+      ## be used as custom pragmas that accept arguments, e.g.
+      ## `template ensuresNif*(x: untyped) {.pragma.}` lets later code attach
+      ## `{.ensuresNif: addedAny(dest).}`. The template body is not expanded
+      ## here — the annotation is simply accepted and dropped, matching
+      ## Nim's treatment for tooling-only pragmas.
     usingStmtMap*: Table[StrId, TypeCursor] # mapping of identifiers to types declared in using statements
     pragmaStack*: seq[TokenBuf] # used to implement {.push.} and {.pop.}
     executeCall*: SemExecutor
@@ -180,7 +188,8 @@ proc typeToCanon*(buf: TokenBuf; start: int): string =
 proc typeToCursor*(c: var SemContext; buf: TokenBuf; start: int): TypeCursor =
   let key = typeToCanon(buf, start)
   if c.typeMem.hasKey(key):
-    result = cursorAt(c.typeMem[key], 0)
+    # `hasKey` just returned true, so `getOrQuit` will not quit.
+    result = cursorAt(c.typeMem.getOrQuit(key), 0)
   else:
     var newBuf = createTokenBuf(buf.len - start)
     for i in start..<buf.len:

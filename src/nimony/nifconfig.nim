@@ -6,11 +6,53 @@
 
 ## Read the configuration from the `.cfg.nif` file.
 
-import std / [os, sets, strutils, sequtils]
+import std / [os, sets, strutils]
+when defined(nimony):
+  import std / syncio
+else:
+  import std / sequtils
 
 import ".." / lib / platform
 
 include ".." / lib / nifprelude
+
+when defined(nimony):
+  func addUnique(s: var seq[string]; x: sink string) =
+    for i in 0 ..< s.len:
+      if s[i] == x: return
+    s.add x
+
+  # `system.hostCPU`/`hostOS` are compile-time magics that Nimony doesn't
+  # expose; derive the string values from `when defined(...)` branches.
+  const
+    hostCPU =
+      when defined(amd64): "amd64"
+      elif defined(i386): "i386"
+      elif defined(arm64): "arm64"
+      elif defined(arm): "arm"
+      elif defined(riscv64): "riscv64"
+      elif defined(powerpc64le): "powerpc64el"
+      elif defined(powerpc64): "powerpc64"
+      elif defined(powerpc): "powerpc"
+      elif defined(mips64): "mips64"
+      elif defined(mips): "mips"
+      elif defined(sparc64): "sparc64"
+      elif defined(sparc): "sparc"
+      elif defined(wasm32): "wasm32"
+      else: "amd64"
+    hostOS =
+      when defined(windows): "windows"
+      elif defined(macosx): "macosx"
+      elif defined(linux): "linux"
+      elif defined(freebsd): "freebsd"
+      elif defined(netbsd): "netbsd"
+      elif defined(openbsd): "openbsd"
+      elif defined(dragonfly): "dragonfly"
+      elif defined(solaris): "solaris"
+      elif defined(haiku): "haiku"
+      elif defined(android): "android"
+      elif defined(ios): "ios"
+      else: "linux"
 
 type
   TrackMode* = enum
@@ -56,8 +98,8 @@ proc initNifConfig*(baseDir: sink string): NifConfig =
     nifcachePath: "nimcache",
     defines: @["nimony"],
     bits: sizeof(int)*8,
-    targetCPU: platform.nameToCPU(system.hostCPU),
-    targetOS: platform.nameToOS(system.hostOS),
+    targetCPU: platform.nameToCPU(hostCPU),
+    targetOS: platform.nameToOS(hostOS),
     cc: "gcc",
     linker: "",
     appType: appConsole # console is the default

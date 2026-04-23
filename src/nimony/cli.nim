@@ -6,7 +6,7 @@
 
 ## Common command-line option parsing for nimony and nimsem.
 
-import std / [strutils, sets]
+import std / [strutils, sets, syncio]
 import nifconfig, langmodes
 import ".." / lib / argsfinder
 

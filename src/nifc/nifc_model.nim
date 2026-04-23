@@ -6,7 +6,7 @@
 
 ## Parse NIF into a packed tree representation.
 
-import std / [assertions]
+import std / [assertions, syncio]
 include "../lib" / nifprelude
 import ".." / models / [nifc_tags, callconv_tags, tags]
 export nifc_tags, callconv_tags

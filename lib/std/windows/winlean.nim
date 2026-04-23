@@ -218,6 +218,9 @@ when defined(windows):
 
   proc sleep*(dwMilliseconds: DWORD) {.importc: "Sleep", stdcall, dynlib: "kernel32", sideEffect.}
 
+  proc getSystemTimeAsFileTime*(lpSystemTimeAsFileTime: var FILETIME) {.
+    importc: "GetSystemTimeAsFileTime", dynlib: "kernel32", stdcall, sideEffect.}
+
   proc getFileInformationByHandle*(hFile: Handle,
     lpFileInformation: ptr BY_HANDLE_FILE_INFORMATION): WINBOOL{.
       stdcall, dynlib: "kernel32", importc: "GetFileInformationByHandle", sideEffect.}
@@ -240,3 +243,151 @@ when defined(windows):
   proc createHardLinkW*(lpFileName, lpExistingFileName: WideCString,
                         security: pointer=nil): int32 {.
     importc:"CreateHardLinkW", dynlib: "kernel32", stdcall, sideEffect.}
+
+  # -------- Process / pipe / synchronization bindings for std/osproc --------
+  const
+    INFINITE* = 0xFFFFFFFF'u32
+    WAIT_TIMEOUT* = 0x00000102'i32
+    WAIT_FAILED* = 0xFFFFFFFF'i32
+    WAIT_OBJECT_0* = 0'i32
+    STILL_ACTIVE* = 0x00000103'i32
+
+    STARTF_USESTDHANDLES* = 0x00000100'u32
+    STARTF_USESHOWWINDOW* = 0x00000001'u32
+
+    NORMAL_PRIORITY_CLASS* = 0x00000020'u32
+    CREATE_UNICODE_ENVIRONMENT* = 0x00000400'u32
+    CREATE_NO_WINDOW* = 0x08000000'u32
+
+    SYNCHRONIZE* = 0x00100000'u32
+
+    PIPE_ACCESS_INBOUND* = 0x00000001'u32
+    PIPE_ACCESS_OUTBOUND* = 0x00000002'u32
+    PIPE_ACCESS_DUPLEX* = 0x00000003'u32
+
+    PIPE_NOWAIT* = 0x00000001'u32
+    PIPE_WAIT* = 0x00000000'u32
+
+    HANDLE_FLAG_INHERIT* = 0x00000001'u32
+
+    MAXIMUM_WAIT_OBJECTS* = 64
+
+    # Two's-complement bit patterns of the Win32 STD_INPUT_HANDLE (-10),
+    # STD_OUTPUT_HANDLE (-11), STD_ERROR_HANDLE (-12) constants cast to DWORD.
+    # Spelled out in hex so they can live in a `const` section without
+    # requiring a compile-time signed→unsigned cast.
+    STD_INPUT_HANDLE*: DWORD = 0xFFFFFFF6'u32
+    STD_OUTPUT_HANDLE*: DWORD = 0xFFFFFFF5'u32
+    STD_ERROR_HANDLE*: DWORD = 0xFFFFFFF4'u32
+
+  type
+    WOHandleArray* = array[0..MAXIMUM_WAIT_OBJECTS - 1, Handle]
+
+    SECURITY_ATTRIBUTES* {.pure.} = object
+      nLength*: int32
+      lpSecurityDescriptor*: nil pointer
+      bInheritHandle*: WINBOOL
+
+    STARTUPINFO* {.pure.} = object
+      cb*: int32
+      lpReserved*: nil WideCString
+      lpDesktop*: nil WideCString
+      lpTitle*: nil WideCString
+      dwX*: int32
+      dwY*: int32
+      dwXSize*: int32
+      dwYSize*: int32
+      dwXCountChars*: int32
+      dwYCountChars*: int32
+      dwFillAttribute*: int32
+      dwFlags*: int32
+      wShowWindow*: int16
+      cbReserved2*: int16
+      lpReserved2*: nil pointer
+      hStdInput*: Handle
+      hStdOutput*: Handle
+      hStdError*: Handle
+
+    PROCESS_INFORMATION* {.pure.} = object
+      hProcess*: Handle
+      hThread*: Handle
+      dwProcessId*: int32
+      dwThreadId*: int32
+
+  proc getStdHandle*(nStdHandle: DWORD): Handle {.
+    importc: "GetStdHandle", stdcall, dynlib: "kernel32", sideEffect.}
+
+  proc getCurrentProcess*(): Handle {.
+    importc: "GetCurrentProcess", stdcall, dynlib: "kernel32", sideEffect.}
+
+  proc duplicateHandle*(hSourceProcessHandle: Handle; hSourceHandle: Handle;
+                        hTargetProcessHandle: Handle;
+                        lpTargetHandle: var Handle; dwDesiredAccess: DWORD;
+                        bInheritHandle: WINBOOL;
+                        dwOptions: DWORD): WINBOOL {.
+    importc: "DuplicateHandle", stdcall, dynlib: "kernel32", sideEffect.}
+
+  proc setHandleInformation*(hObject: Handle; dwMask: DWORD;
+                             dwFlags: DWORD): WINBOOL {.
+    importc: "SetHandleInformation", stdcall, dynlib: "kernel32", sideEffect.}
+
+  proc createPipe*(hReadPipe, hWritePipe: var Handle;
+                   lpPipeAttributes: var SECURITY_ATTRIBUTES;
+                   nSize: DWORD): WINBOOL {.
+    importc: "CreatePipe", stdcall, dynlib: "kernel32", sideEffect.}
+
+  proc createNamedPipe*(lpName: WideCString; dwOpenMode, dwPipeMode: DWORD;
+                        nMaxInstances, nOutBufferSize, nInBufferSize,
+                        nDefaultTimeOut: DWORD;
+                        lpSecurityAttributes: ptr SECURITY_ATTRIBUTES): Handle {.
+    importc: "CreateNamedPipeW", stdcall, dynlib: "kernel32", sideEffect.}
+
+  proc peekNamedPipe*(hNamedPipe: Handle; lpBuffer: pointer = nil;
+                      nBufferSize: DWORD = 0'u32;
+                      lpBytesRead: ptr DWORD = nil;
+                      lpTotalBytesAvail: ptr DWORD = nil;
+                      lpBytesLeftThisMessage: ptr DWORD = nil): WINBOOL {.
+    importc: "PeekNamedPipe", stdcall, dynlib: "kernel32", sideEffect.}
+
+  proc readFile*(hFile: Handle; buffer: nil pointer;
+                 nNumberOfBytesToRead: int32;
+                 lpNumberOfBytesRead: ptr int32;
+                 lpOverlapped: nil pointer): WINBOOL {.
+    importc: "ReadFile", stdcall, dynlib: "kernel32", sideEffect.}
+
+  proc writeFile*(hFile: Handle; buffer: nil pointer;
+                  nNumberOfBytesToWrite: int32;
+                  lpNumberOfBytesWritten: ptr int32;
+                  lpOverlapped: nil pointer): WINBOOL {.
+    importc: "WriteFile", stdcall, dynlib: "kernel32", sideEffect.}
+
+  proc createProcessW*(lpApplicationName: nil WideCString;
+                      lpCommandLine: WideCString;
+                      lpProcessAttributes: nil pointer;
+                      lpThreadAttributes: nil pointer;
+                      bInheritHandles: WINBOOL;
+                      dwCreationFlags: DWORD;
+                      lpEnvironment: nil pointer;
+                      lpCurrentDirectory: nil WideCString;
+                      lpStartupInfo: var STARTUPINFO;
+                      lpProcessInformation: var PROCESS_INFORMATION): WINBOOL {.
+    importc: "CreateProcessW", stdcall, dynlib: "kernel32", sideEffect.}
+
+  proc waitForSingleObject*(hHandle: Handle;
+                            dwMilliseconds: DWORD): int32 {.
+    importc: "WaitForSingleObject", stdcall, dynlib: "kernel32", sideEffect.}
+  proc waitForMultipleObjects*(nCount: DWORD; lpHandles: ptr Handle;
+                               bWaitAll: WINBOOL;
+                               dwMilliseconds: DWORD): int32 {.
+    importc: "WaitForMultipleObjects", stdcall, dynlib: "kernel32", sideEffect.}
+
+  proc getExitCodeProcess*(hProcess: Handle;
+                           lpExitCode: var int32): WINBOOL {.
+    importc: "GetExitCodeProcess", stdcall, dynlib: "kernel32", sideEffect.}
+  proc terminateProcess*(hProcess: Handle; uExitCode: DWORD): WINBOOL {.
+    importc: "TerminateProcess", stdcall, dynlib: "kernel32", sideEffect.}
+
+  proc suspendThread*(hThread: Handle): DWORD {.
+    importc: "SuspendThread", stdcall, dynlib: "kernel32", sideEffect.}
+  proc resumeThread*(hThread: Handle): DWORD {.
+    importc: "ResumeThread", stdcall, dynlib: "kernel32", sideEffect.}

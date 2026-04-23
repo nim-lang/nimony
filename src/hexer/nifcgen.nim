@@ -739,8 +739,8 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
           skipParRi c, n
         of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoReturnP,
            VarargsP, NoSideEffectP, NoDestroyP, ByCopyP, ByRefP,
-           InlineP, NoinlineP, NoInitP, InjectP, GensymP, UntypedP, ViewP,
-           InheritableP, PureP, ClosureP, PackedP, UnionP, IncompleteStructP:
+           InlineP, NoinlineP, NoInitP, InjectP, GensymP, DirtyP, UntypedP, ViewP,
+           InheritableP, PureP, AcyclicP, ClosureP, PackedP, UnionP, IncompleteStructP:
           result.flags.incl pk
           inc n
           skipParRi c, n
@@ -1412,6 +1412,9 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       trFieldname c, dest, n # field
       if n.kind != ParRi:
         trExpr c, dest, n # inheritance depth
+      if n.kind == StringLit:
+        # drop the access-token marker; NIFC has no visibility concept.
+        skip n
       takeParRi dest, n
     of DdotX:
       dest.add tagToken("dot", n.info)
@@ -1421,6 +1424,8 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       dest.addParRi()
       trFieldname c, dest, n
       trExpr c, dest, n
+      if n.kind == StringLit:
+        skip n
       takeParRi dest, n
     of HaddrX, AddrX:
       dest.add tagToken("addr", n.info)

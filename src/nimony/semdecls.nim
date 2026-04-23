@@ -681,7 +681,10 @@ proc semBodyGenericInst(c: var SemContext; dest: var TokenBuf; it: var Item;
   c.openScope() # open body scope
   takeToken dest, it.n
   var resId = SymId(0)
-  if untypedIsActive(c, crucial):
+  # The body may already carry an explicit `(result ...)` declaration from a
+  # module that was not compiled in untyped mode. In that case we must not
+  # declare `result` a second time.
+  if untypedIsActive(c, crucial) and it.n.stmtKind != ResultS:
     # for untyped generic procs, need to add result symbol now
     resId = declareResult(c, dest, it.n.info)
   semProcBody c, dest, it
@@ -706,7 +709,8 @@ proc semBodyCheckBody(c: var SemContext; dest: var TokenBuf; it: var Item;
   if untypedIsActive(c, crucial) and c.routine.inGeneric > 0: # includes templates
     # should eventually be default for compat mode
     let mode = if kind == TemplateY: UntypedTemplate else: UntypedGeneric
-    var ctx = createUntypedContext(addr c, mode)
+    let dirty = kind == TemplateY and DirtyP in crucial.flags
+    var ctx = createUntypedContext(addr c, mode, dirty)
     addParams(ctx, dest, beforeGenericParams)
     addParams(ctx, dest, beforeParams)
     semTemplBody ctx, dest, it.n
@@ -967,19 +971,29 @@ proc fitTypeToPragmas(c: var SemContext; dest: var TokenBuf; pragmas: CrucialPra
       let info = typ.info
       endRead(dest)
       let kind = if ImportcP in pragmas.flags: ImportcP else: ImportcppP
-      var tokens = @[
+      var attrs = @[
         parLeToken(kind, info),
         strToken(pool.strings.getOrIncl(pragmas.externName), info),
         parRiToken(info)
       ]
       if HeaderP in pragmas.flags:
         assert pragmas.headerFileTok.kind == StringLit
-        tokens.add [
+        attrs.add [
           parLeToken(HeaderP, info),
           pragmas.headerFileTok,
           parRiToken(info)
         ]
-      dest.insert tokens, typeStart+2
+      # Imported aliases of scalar builtins must override the C spelling
+      # (`importc`/`importcpp` + optional `header`) rather than stack with
+      # existing builtin attributes like `(importc "int")`.
+      var rebuilt = createTokenBuf(8 + attrs.len)
+      var t = typ
+      takeToken rebuilt, t # (i/u/f/c/pointer
+      takeToken rebuilt, t # bit-size / fixed payload token
+      for tok in attrs:
+        rebuilt.add tok
+      rebuilt.addParRi()
+      dest.replace cursorAt(rebuilt, 0), typeStart
     else:
       let err = "cannot import type " & typeToString(typ)
       let info = typ.info

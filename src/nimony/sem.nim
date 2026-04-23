@@ -111,7 +111,8 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
     # all branches are discardable
     result = true
   of CaseS:
-    inc it
+    inc it # tag
+    skip it # selector
     while it.kind != ParRi:
       case it.substructureKind
       of OfU:
@@ -197,6 +198,10 @@ type
     AllowModuleSym
     AllowEmpty
     InTypeContext
+    BypassFieldVis  ## input (dot ...) already carried an access-token
+                    ## certifying the field access was hygiene-checked in
+                    ## the field's owner module; skip the visibility check
+                    ## during re-semcheck
 
   TransformedCallSource = enum
     RegularCall, MethodCall,
@@ -914,6 +919,11 @@ proc semConvArg(c: var SemContext; dest: var TokenBuf; destType: Cursor; arg: It
       # between different integer sizes or object types and then
       # `m.args` contains these so use them here:
       dest.add m.args
+      # retag the wrapping `(conv ...)` as `(dconv ...)` so later phases
+      # (e.g. derefs.nim) recognize it as a distinct conversion, which is
+      # lvalue-preserving and therefore passable to `var T` parameters.
+      if dest[beforeExpr].exprKind == ConvX:
+        dest[beforeExpr] = parLeToken(DconvX, dest[beforeExpr].info)
   else:
     # maybe object types with an inheritance relation?
     var matchArg = arg
@@ -1084,11 +1094,16 @@ proc findObjFieldAux(c: var SemContext; t: Cursor; name: StrId; bindings: Table[
       # maybe error
       result = ObjField(level: -1)
 
-proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId; bindings: Table[SymId, Cursor]): ObjField =
+proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId;
+                              bindings: Table[SymId, Cursor];
+                              bypassVis = false): ObjField =
   let impl = decl.objBody
   result = findObjFieldAux(c, impl, name, bindings)
-  if c.routine.inInst == 0:
-    # only check visibility during first semcheck
+  if c.routine.inInst == 0 and not bypassVis:
+    # only check visibility during first semcheck, unless the input NIF
+    # already carried an access-token proving the access was hygiene-checked
+    # at a site that had visibility (e.g. a template body semchecked in the
+    # field's owner module).
     if result.level == 0:
       result.rootOwner = genericRootSym(decl)
     if result.level >= 0:
@@ -1106,6 +1121,8 @@ proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId; bin
       if not visible:
         # treat as undeclared
         result = ObjField(level: -1)
+  elif bypassVis and result.level == 0:
+    result.rootOwner = genericRootSym(decl)
 
 proc semQualifiedIdent(c: var SemContext; dest: var TokenBuf; module: SymId; ident: StrId; info: PackedLineInfo): Sym =
   # mirrors semIdent
@@ -1167,13 +1184,20 @@ proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Ite
         if objType.typeKind == ObjectT:
           # build bindings for invoked object type to get proper field type:
           let bindings = bindInvokeArgs(decl, invokeArgs)
-          let field = findObjFieldConsiderVis(c, decl, fieldName, bindings)
+          let field = findObjFieldConsiderVis(c, decl, fieldName, bindings,
+                                              bypassVis = BypassFieldVis in flags)
           if field.level >= 0:
             result = MatchedDotField
             if doDeref:
               dest[exprStart] = parLeToken(DdotX, info)
             dest.add symToken(field.sym, info)
             dest.add intToken(pool.integers.getOrIncl(field.level), info)
+            if not field.exported:
+              # Emit the access-token string lit so later re-checks (template
+              # expansion, generic instantiation, exprexec serialization) see
+              # that this access was hygiene-checked with visibility and must
+              # be accepted even if the consumer module cannot see the field.
+              dest.addStrLit("x", info)
             it.typ = field.typ # will be fit later with commonType
             it.kind = FldY
           else:
@@ -1255,9 +1279,15 @@ proc semDot(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[SemF
   # skip optional inheritance depth:
   if it.n.kind == IntLit:
     inc it.n
+  # optional access-token StringLit — `"x"` — certifies this dot expression
+  # was already type-checked with visibility in the field's owner module.
+  var innerFlags = flags
+  if it.n.kind == StringLit:
+    innerFlags.incl BypassFieldVis
+    inc it.n
   skipParRi it.n
   # now interpret the dot expression:
-  let state = tryBuiltinDot(c, dest, it, lhs, fieldName, info, flags)
+  let state = tryBuiltinDot(c, dest, it, lhs, fieldName, info, innerFlags)
   if state == FailedDot:
     # attempt a dot call, i.e. build b(a) from a.b
     dest.shrink exprStart
@@ -1427,6 +1457,13 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
         while read.kind != ParRi:
           semPragma c, dest, read, crucial, kind
         endRead(c.userPragmas[name])
+      elif name != StrId(0) and name in c.customPragmaTemplates:
+        # Pragma that resolves to a `template X(args) {.pragma.}` declaration.
+        # Accept with or without arguments and drop silently — matches Nim's
+        # treatment of templates marked `sfCustomPragma` used as annotations.
+        inc n
+        if hasParRi:
+          while n.kind != ParRi: skip n
       else:
         buildErr c, dest, n.info, "expected pragma"
         inc n
@@ -1498,22 +1535,25 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     dest.addParRi()
   of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP, BorrowP,
      NoSideEffectP, NodestroyP, BycopyP, ByrefP, InlineP, NoinlineP, NoinitP,
-     InjectP, GensymP, UntypedP, SideEffectP, BaseP, ClosureP, PassiveP, IncompleteStructP:
+     InjectP, GensymP, DirtyP, UntypedP, SideEffectP, BaseP, ClosureP, PassiveP, IncompleteStructP:
     crucial.flags.incl pk
     dest.add parLeToken(pk, n.info)
     dest.addParRi()
     inc n
-  of ViewP, InheritableP, PureP, FinalP, PackedP, UnionP:
+  of ViewP, InheritableP, PureP, FinalP, PackedP, UnionP, AcyclicP:
     var hasErr = false
     if kind != TypeY:
       buildErr c, dest, n.info, $pk & " pragma is only allowed on types"
       hasErr = true
-    elif pk in {ViewP, InheritableP, FinalP, PackedP, UnionP}:
+    elif pk in {ViewP, InheritableP, FinalP, PackedP, UnionP, AcyclicP}:
       var n2 = n
       skipToEnd n2
       if n2.typeKind in {RefT, PtrT}:
         inc n2
-      if n2.typeKind != ObjectT:
+      # Later passes replace the inline body of `ref object` / `ptr object`
+      # with a symbol that stands for the synthesized inner object type; accept
+      # that form as valid — the first pass has already validated the shape.
+      if n2.kind != Symbol and n2.typeKind != ObjectT:
         buildErr c, dest, n.info, $pk & " pragma is only allowed on object types", n
         hasErr = true
     if not hasErr:
@@ -1595,11 +1635,22 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     else:
       buildErr c, dest, n.info, "`callConv` pragma takes a calling convention identifier"
   of EmitP, BuildP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP, PassLP, PassCP:
-    buildErr c, dest, n.info, "pragma not supported"
-    inc n
-    if hasParRi:
-      while n.kind != ParRi: skip n # skip optional pragma arguments
-    dest.addParRi()
+    if pk == PragmaP and kind == TemplateY and not hasParRi and crucial.sym != SymId(0):
+      # `template X(args) {.pragma.}` declares `X` as a custom pragma. The
+      # body is not expanded at attachment sites — the annotation is
+      # recorded as a known custom-pragma name that will be silently
+      # accepted (and dropped) wherever it is later attached. Mirrors Nim's
+      # `sfCustomPragma`.
+      var basename = pool.syms[crucial.sym]
+      extractBasename basename
+      c.customPragmaTemplates.incl pool.strings.getOrIncl(basename)
+      inc n
+    else:
+      buildErr c, dest, n.info, "pragma not supported"
+      inc n
+      if hasParRi:
+        while n.kind != ParRi: skip n # skip optional pragma arguments
+      dest.addParRi()
   of KeepOverflowFlagP:
     dest.add parLeToken(pk, n.info)
     inc n
@@ -1675,6 +1726,18 @@ proc semPragmas(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
             dest.addParLe PragmasU, info
             pragmaOpen = true
           semPragma c, dest, n2, crucial, kind
+    # `{.feature: "untyped".}` applies only within the current module, but the
+    # relaxed semcheck it enables is needed at every instantiation site. Stamp
+    # `UntypedP` onto generics/templates here so the flag travels with the
+    # decl and `untypedIsActive` picks it up across module boundaries.
+    if UntypedFeature in c.features and kind.isRoutine and c.routine.inGeneric > 0 and
+        UntypedP notin crucial.flags:
+      if not pragmaOpen:
+        dest.addParLe PragmasU, info
+        pragmaOpen = true
+      crucial.flags.incl UntypedP
+      dest.addParLe UntypedP, info
+      dest.addParRi()
     if pragmaOpen:
       dest.addParRi()
     else:
@@ -1991,10 +2054,37 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
   var value = beginRead(valueBuf)
   case value.exprKind
   of SetConstrX:
-    inc value
-    skip value
-    var dummy = Item(n: value, typ: expected)
-    semCaseOfValueImpl(c, dest, dummy, expected, seen)
+    # `evalExpr` has already lowered each enum-field reference to its raw
+    # ordinal, so the set's elements are plain int literals. Re-semchecking
+    # them through `semCaseOfValueImpl` would try to convert `int -> E` and
+    # fail with a spurious type mismatch whose info points back into the
+    # imported enum's declaration. Take the ordinals directly, emit them as
+    # case labels into `dest`, and track them in `seen`.
+    inc value # skip (setconstr
+    skip value # skip element type
+    while value.kind != ParRi:
+      if value.substructureKind == RangeU:
+        let rInfo = value.info
+        var r = value
+        inc r
+        let a = getConstOrdinalValue(r); skip r
+        let b = getConstOrdinalValue(r); skip r
+        if a.isNaN or b.isNaN:
+          buildErr c, dest, rInfo, "expected constant ordinal value"
+        else:
+          if seen.doesOverlapOrIncl(a, b):
+            buildErr c, dest, rInfo, "overlapping values"
+          dest.takeTree value
+      else:
+        let x = getConstOrdinalValue(value)
+        let vInfo = value.info
+        if x.isNaN:
+          buildErr c, dest, vInfo, "expected constant ordinal value"
+          skip value
+        else:
+          if seen.containsOrIncl(x):
+            buildErr c, dest, vInfo, "value already handled"
+          dest.takeTree value
   of NoExpr, ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX, InfX, NeginfX, NanX,
      FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX, KvX, OconstrX,
      AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
@@ -2170,9 +2260,14 @@ proc semDotAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: Packe
   # skip optional inheritance depth:
   if dot.n.kind == IntLit:
     inc dot.n
+  var dotFlags: set[SemFlag] = {}
+  if dot.n.kind == StringLit:
+    dotFlags.incl BypassFieldVis
+    inc dot.n
   skipParRi dot.n
   var dotBuf = createTokenBuf(8)
-  let builtin = tryBuiltinDot(c, dotBuf, dot, dotLhs, fieldName, dotInfo, {}) != FailedDot
+  let builtin = tryBuiltinDot(c, dotBuf, dot, dotLhs, fieldName, dotInfo,
+                               dotFlags) != FailedDot
   if builtin:
     # build regular assignment:
     dest.addParLe(AsgnS, info)
@@ -2267,7 +2362,17 @@ proc semStmtBranch(c: var SemContext; dest: var TokenBuf; it: var Item; isNewSco
   # handle statements that could be expressions
   case classifyType(c, it.typ)
   of AutoT:
+    let start = dest.len
     semExpr c, dest, it
+    # A branch that doesn't yield a value (`return`/`raise`/`break`/...)
+    # shouldn't pin the surrounding expression's type to void — leave it
+    # as `auto` so a sibling branch can still determine the result type.
+    if classifyType(c, it.typ) == VoidT:
+      let ex = cursorAt(dest, start)
+      let nr = isNoReturn(ex)
+      endRead(dest)
+      if nr:
+        it.typ = c.types.autoType
   of VoidT:
     # performs discard check:
     semStmt c, dest, it.n, isNewScope
@@ -2275,13 +2380,6 @@ proc semStmtBranch(c: var SemContext; dest: var TokenBuf; it: var Item; isNewSco
     var ex = Item(n: it.n, typ: it.typ)
     let start = dest.len
     semExpr c, dest, ex
-    # this is handled by commonType, since it has to be done deeply:
-    #if classifyType(c, ex.typ) == VoidT:
-    #  # allow statement in expression context if it is noreturn
-    #  let ignore = isNoReturn(cursorAt(dest, start))
-    #  endRead(dest)
-    #  if not ignore:
-    #    typeMismatch(c, it.n.info, ex.typ, it.typ)
     commonType(c, dest, ex, start, it.typ)
     it.n = ex.n
 
@@ -3254,7 +3352,10 @@ proc semReturn(c: var SemContext; dest: var TokenBuf; it: var Item) =
   if c.routine.kind == NoSym:
     buildErr c, dest, info, "`return` only allowed within a routine"
   if it.n.kind == DotToken:
-    if c.routine.returnType.typeKind != VoidT:
+    # Templates have no `result` symbol — the `return` is text-substituted
+    # into the caller, so the meaning depends on the caller's signature.
+    # Preserve the dot and let template expansion resolve it.
+    if c.routine.kind != TemplateY and c.routine.returnType.typeKind != VoidT:
       dest.addSymUse c.routine.resId, info
       inc it.n # skips the dot
     else:
@@ -4372,7 +4473,11 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
             hasFieldSym = true
             field = ObjField(sym: sym, typ: asLocal(res.decl).typ, level: 0)
           else:
-            field = findObjFieldConsiderVis(c, decl, fieldName, bindings)
+            # field syms are nested inside the owning type so `tryLoadSym`
+            # often cannot resolve them. The Symbol form means a prior
+            # semcheck pass already validated visibility, so look up by name
+            # but skip the visibility check.
+            field = findObjFieldConsiderVis(c, decl, fieldName, bindings, bypassVis = true)
         else:
           field = findObjFieldConsiderVis(c, decl, fieldName, bindings)
         if field.level >= 0:
@@ -4943,7 +5048,17 @@ proc semEnumToStr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   if containsGenericParams(x.typ):
     discard
   else:
-    let typeSymId = x.typ.skipModifier.symId
+    # Only nominal enum types have a per-type `dollar`.TypeName compiler proc.
+    # If we don't have a nominal symbol (e.g. the operand is a type class like
+    # `ExprKind|StmtKind|TypeKind`), there is no single `$` to call — report
+    # instead of dereferencing a non-symbol token.
+    let typ = x.typ.skipModifier
+    if typ.kind != Symbol:
+      shrink dest, beforeExpr
+      c.buildErr dest, info,
+        "'$' is not available for type <" & typeToString(x.typ) & ">"
+      return
+    let typeSymId = typ.symId
     let typeName = pool.syms[typeSymId]
     let dollorName = "dollar`." & typeName
     let dollorSymId = pool.syms.getOrIncl(dollorName)

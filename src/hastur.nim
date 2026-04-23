@@ -708,7 +708,9 @@ const BootstrapModules = [
   "src/lib/stringviews.nim",
   "src/lib/tinyhashes.nim",
   "src/lib/symparser.nim",
+  "src/lib/argsfinder.nim",
   "src/lib/bitabs.nim",
+  "src/lib/filelinecache.nim",
   "src/lib/lineinfos.nim",
   "src/lib/nifbuilder.nim",
   "src/lib/platform.nim",
@@ -728,6 +730,37 @@ const BootstrapModules = [
   "src/models/nimony_tags.nim",
   "src/lib/nifreader.nim",
   "src/gear2/modnames.nim",
+  # Tier 3 -- NIF stream/cursor infrastructure.
+  "src/lib/nifstreams.nim",
+  "src/lib/nifcursors.nim",
+  "src/lib/nifchecksums.nim",
+  # Tier 4 -- Core models + NIF indexes.
+  "src/nimony/nimony_model.nim",
+  "src/nifc/nifc_model.nim",
+  "src/njvl/njvl_model.nim",
+  "src/nimony/nifconfig.nim",
+  "src/nimony/reporters.nim",
+  "src/lib/nifindexes.nim",
+  # Tier 5 -- Basic nimony types and helpers.
+  "src/nimony/builtintypes.nim",
+  "src/nimony/symtabs.nim",
+  "src/nimony/implications.nim",
+  "src/nimony/magics.nim",
+  "src/nimony/decls.nim",
+  "src/nimony/asthelpers.nim",
+  # Tier 6 -- Programs, renderer, passes, CLI.
+  "src/nimony/programs.nim",
+  "src/nimony/renderer.nim",
+  "src/nimony/inferle.nim",
+  "src/nimony/deferstmts.nim",
+  "src/nimony/cli.nim",
+  "src/hexer/passes.nim",
+]
+
+# Modules whose `isMainModule` block should also be executed after compilation.
+const RunnableBootstrapModules = [
+  "src/lib/bitabs.nim",
+  "src/lib/argsfinder.nim",
 ]
 
 proc bootstrapTests() =
@@ -740,7 +773,8 @@ proc bootstrapTests() =
   var failed: seq[string] = @[]
   for m in BootstrapModules:
     removeDir "nimcache"
-    let (output, ec) = execCmdEx(nimony.quoteShell & " c " & m.quoteShell)
+    let subcmd = if m in RunnableBootstrapModules: " c -r " else: " c "
+    let (output, ec) = execCmdEx(nimony.quoteShell & subcmd & m.quoteShell)
     if ec == 0:
       echo "OK   ", m
     else:

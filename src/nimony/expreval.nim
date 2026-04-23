@@ -168,16 +168,16 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
     let val = pool.strings[a.litId].len
     result = intValue(c, val, n.info)
   else:
+    # Forward args to `executeCall` verbatim. Running `eval` here would strip
+    # distinct/conversion wrappers (e.g. `TagId(1)` → `1`), and the sub-compile
+    # would then fail to match the callee's formal parameter types.
+    # `executeCall` re-runs the full nimony pipeline and can resolve constants
+    # itself via `rewriteSymsToIdents`.
     var evaluatedCall = createTokenBuf(16)
     evaluatedCall.addParLe CallS, n.info
     evaluatedCall.addSymUse routine.name.symId, n.info
     while args.kind != ParRi:
-      let thisArg = args
-      let x = eval(c, args)
-      if x.kind == ParLe and x.tagId == nifstreams.ErrT:
-        cannotEval(thisArg)
-        return
-      evaluatedCall.addSubtree x
+      evaluatedCall.takeTree args
     evaluatedCall.addParRi()
 
     var resultBuf = createTokenBuf(12)
@@ -840,6 +840,29 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
           buf.addSubtree elem
       takeParRi buf, n
       result = cursorAt(buf, 0)
+    of OconstrX:
+      # an already-evaluated object literal: re-emit verbatim, evaluating
+      # each field's value. This path is taken on second sem passes that
+      # see the value produced by `annotateConstantType`.
+      var buf = createTokenBuf(16)
+      buf.add n
+      inc n
+      takeTree buf, n # type
+      while n.kind != ParRi:
+        if n.substructureKind == KvU:
+          buf.takeToken n # kv
+          buf.takeToken n # field sym/ident
+          let v = propagateError eval(c, n)
+          buf.addSubtree v
+          if n.kind != ParRi:
+            # optional inheritance level
+            buf.takeToken n
+          buf.takeToken n # closing parRi of kv
+        else:
+          cannotEval n
+          return
+      takeParRi buf, n
+      result = cursorAt(buf, 0)
     of CallKinds:
       result = evalCall(c, n)
       skip n
@@ -969,6 +992,24 @@ proc annotateOrdinal(buf: var TokenBuf; typ: var Cursor; n: Cursor; err: var boo
         break
   else:
     err = true
+
+proc findObjectField(objType: Cursor; fieldSym: SymId; typ: var Cursor; exported: var bool): bool =
+  ## Walks an object body to find the type and export-status of `fieldSym`.
+  ## Returns false if the field is not found. Object fields are nested
+  ## inside their owning type and never published as standalone top-level
+  ## entries in `prog.mem`, so `tryLoadSym(fieldSym)` cannot resolve them.
+  var n = objType
+  if n.typeKind != ObjectT: return false
+  inc n # tag
+  skip n # parent type
+  var iter = initObjFieldIter()
+  while nextField(iter, n):
+    let r = takeLocal(n, SkipFinalParRi)
+    if r.kind == FldY and r.name.kind == SymbolDef and r.name.symId == fieldSym:
+      typ = r.typ
+      exported = r.exported.kind != DotToken
+      return true
+  return false
 
 proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
   if n.kind == ParLe and n.tagId == ErrT:
@@ -1123,14 +1164,16 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
       else: err = true
     of OconstrX:
       if typ.typeKind == ObjectT and not cursorIsNil(symType):
-        # expect object sym type for object constructor
+        # expect object sym type for object constructor.
+        # The field's declared type is read from the object body via
+        # `findObjectField` because field syms are nested inside their
+        # owning type and not loadable through `tryLoadSym`.
         let start = buf.len
         buf.add parLeToken(OconstrX, n.info)
         buf.addSubtree symType
         var vals = n
         inc vals
         skip vals # skip type
-        inc typ # tag
         while vals.kind != ParRi:
           err = true
           if vals.substructureKind == KvU:
@@ -1138,19 +1181,19 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
             inc vals
             if vals.kind == Symbol:
               let fieldSym = vals.symId
-              let res = tryLoadSym(fieldSym)
-              if res.status == LacksNothing and res.decl.symKind == FldY:
+              var fieldType = default(Cursor)
+              var fieldExported = false
+              if findObjectField(typ, fieldSym, fieldType, fieldExported):
                 err = false
                 buf.add vals
                 inc vals
-                annotateConstantType(buf, asLocal(res.decl).typ, vals)
+                annotateConstantType(buf, fieldType, vals)
                 skip vals
                 if vals.kind != ParRi:
                   # optional inheritance
                   takeTree buf, vals
                 takeParRi buf, vals
           if err: break
-        if typ.kind != ParRi: err = true
         if err:
           buf.shrink start
         else:

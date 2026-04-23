@@ -299,6 +299,7 @@ type
     IndexTagId
     InjectTagId
     GensymTagId
+    DirtyTagId
     ErrorTagId
     ReportTagId
     TagsTagId
@@ -310,6 +311,7 @@ type
     BaseTagId
     PureTagId
     FinalTagId
+    AcyclicTagId
     PragmaTagId
     InternalTypeNameTagId
     InternalFieldPairsTagId
@@ -624,30 +626,32 @@ const
     ("index", 294),
     ("inject", 295),
     ("gensym", 296),
-    ("error", 297),
-    ("report", 298),
-    ("tags", 299),
-    ("deprecated", 300),
-    ("sideEffect", 301),
-    ("keepOverflowFlag", 302),
-    ("semantics", 303),
-    ("inheritable", 304),
-    ("base", 305),
-    ("pure", 306),
-    ("final", 307),
-    ("pragma", 308),
-    ("internalTypeName", 309),
-    ("internalFieldPairs", 310),
-    ("failed", 311),
-    ("is", 312),
-    ("envp", 313),
-    ("packed", 314),
-    ("passive", 315),
-    ("push", 316),
-    ("callConv", 317),
-    ("pop", 318),
-    ("passL", 319),
-    ("passC", 320),
-    ("methods", 321),
-    ("size", 322)
+    ("dirty", 297),
+    ("error", 298),
+    ("report", 299),
+    ("tags", 300),
+    ("deprecated", 301),
+    ("sideEffect", 302),
+    ("keepOverflowFlag", 303),
+    ("semantics", 304),
+    ("inheritable", 305),
+    ("base", 306),
+    ("pure", 307),
+    ("final", 308),
+    ("acyclic", 309),
+    ("pragma", 310),
+    ("internalTypeName", 311),
+    ("internalFieldPairs", 312),
+    ("failed", 313),
+    ("is", 314),
+    ("envp", 315),
+    ("packed", 316),
+    ("passive", 317),
+    ("push", 318),
+    ("callConv", 319),
+    ("pop", 320),
+    ("passL", 321),
+    ("passC", 322),
+    ("methods", 323),
+    ("size", 324)
   ]

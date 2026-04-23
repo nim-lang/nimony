@@ -21,6 +21,13 @@ type
                          ## at the end. If the file does not exist, it
                          ## will be created.
 
+  FileSeekPos* = enum    ## Position relative to which seek should happen.
+                         # The values are ordered so that they match with stdio
+                         # SEEK_SET, SEEK_CUR and SEEK_END respectively.
+    fspSet               ## Seek to absolute value
+    fspCur               ## Seek relative to current position
+    fspEnd               ## Seek relative to end
+
 var
   stdin* {.importc: "stdin", header: "<stdio.h>".}: File
   stdout* {.importc: "stdout", header: "<stdio.h>".}: File
@@ -150,12 +157,77 @@ proc readLine*(f: File; s: var string): bool =
   s.shrink 0
   addReadLine f, s
 
+iterator lines*(filename: string): string {.sideEffect.} =
+  ## Iterates over every line in `filename`. Silently returns no lines if the
+  ## file cannot be opened.
+  var f: File
+  if open(f, filename, fmRead):
+    var line = ""
+    while readLine(f, line):
+      yield line
+    discard fclose(f)
+
+iterator lines*(f: File): string {.sideEffect.} =
+  ## Iterates over every remaining line of an already opened file.
+  var line = ""
+  while readLine(f, line):
+    yield line
+
 proc exit(value: int32) {.importc: "exit", header: "<stdlib.h>".}
 proc quit*(value: int) {.noreturn.} = exit(value.int32)
 
+const
+  QuitSuccess* = 0
+  QuitFailure* = 1
+
 proc quit*(msg: string) {.noreturn.} =
   echo msg
-  quit 1
+  quit QuitFailure
+
+proc quit*(msg: string; errorcode: int) {.noreturn.} =
+  echo msg
+  quit errorcode
+
+const ReadBufSize = 4000
+
+proc readAll*(f: File): string {.raises.} =
+  result = ""
+  var buffer = newString(ReadBufSize)
+  while true:
+    let bytesRead = readBuffer(f, beginStore(buffer, ReadBufSize), ReadBufSize)
+    endStore(buffer)
+    if bytesRead == ReadBufSize:
+      result.add buffer
+    else:
+      buffer.setLen bytesRead
+      result.add buffer
+      break
+  if failed(f): raise IOError
+
+proc readFile*(filename: string): string {.raises.} =
+  ## Opens a file named `filename`, reads its entire contents and closes the file.
+  ## Raises `IOError` if the file cannot be opened.
+  result = ""
+  var f: File
+  if open(f, filename):
+    try:
+      result = readAll(f)
+    finally:
+      close(f)
+  else:
+    raise IOError
+
+proc writeFile*(filename, content: string) {.raises.} =
+  ## Opens `filename` for writing, writes `content`, and closes the file.
+  ## Raises `IOError` if the file cannot be opened.
+  var f: File
+  if open(f, filename, fmWrite):
+    try:
+      f.write content
+    finally:
+      close(f)
+  else:
+    raise IOError
 
 proc tryWriteFile*(file, content: string): bool =
   var f: File
@@ -168,3 +240,43 @@ proc tryWriteFile*(file, content: string): bool =
     result = false
 
 proc flushFile*(f: File) {.importc: "fflush", header: "<stdio.h>".}
+
+proc c_fgetc(stream: File): int32 {.
+  importc: "fgetc", header: "<stdio.h>".}
+proc c_ungetc(c: int32; f: File): int32 {.
+  importc: "ungetc", header: "<stdio.h>".}
+
+when defined(windows):
+  when not defined(amd64):
+    proc c_fseek(f: File; offset: int64; whence: int32): int32 {.
+      importc: "fseek", header: "<stdio.h>".}
+    proc c_ftell(f: File): int64 {.
+      importc: "ftell", header: "<stdio.h>".}
+  else:
+    proc c_fseek(f: File; offset: int64; whence: int32): int32 {.
+      importc: "_fseeki64", header: "<stdio.h>".}
+    proc c_ftell(f: File): int64 {.
+      importc: "_ftelli64", header: "<stdio.h>".}
+else:
+  proc c_fseek(f: File; offset: int64; whence: int32): int32 {.
+    importc: "fseeko", header: "<stdio.h>".}
+  proc c_ftell(f: File): int64 {.
+    importc: "ftello", header: "<stdio.h>".}
+
+proc endOfFile*(f: File): bool =
+  ## Returns true if `f` is at the end.
+  var c = c_fgetc(f)
+  discard c_ungetc(c, f)
+  result = c < 0'i32
+
+proc getFilePos*(f: File): int64 {.raises.} =
+  ## Retrieves the current position of the file pointer that is used to
+  ## read from the file `f`. The file's first byte has the index zero.
+  result = c_ftell(f)
+  if result < 0: raise IOError
+
+proc setFilePos*(f: File; pos: int64; relativeTo: FileSeekPos = fspSet) {.raises.} =
+  ## Sets the position of the file pointer that is used for read/write
+  ## operations. The file's first byte has the index zero.
+  if c_fseek(f, pos, int32(relativeTo)) != 0'i32:
+    raise IOError

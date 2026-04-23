@@ -48,6 +48,9 @@ func mi_stats_get(stats_size: csize_t; stats: ptr MiStatsPrefix) {.importc: "mi_
 func alloc*(size: int): pointer =
   result = mi_malloc(size.csize_t)
 
+func alloc0*(size: int): pointer =
+  result = mi_calloc(1.csize_t, size.csize_t)
+
 func realloc*(p: pointer; size: int): pointer =
   result = mi_realloc(p, size.csize_t)
 

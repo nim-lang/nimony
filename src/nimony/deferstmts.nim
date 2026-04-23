@@ -7,7 +7,7 @@
 ## Transforms defer statements into try-finally blocks.
 
 import std / [assertions]
-include nifprelude
+include ".." / lib / nifprelude
 import nimony_model, programs
 include nif_annotations
 
