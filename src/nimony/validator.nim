@@ -652,7 +652,7 @@ proc hasBufferArg(st: SymbolTable; reg: TypeRegistry; callNode: Cursor): bool =
 const
   SkipIntentNames = ["SkipTag", "SkipParRi", "SkipName", "SkipExport",
                      "SkipPragmas", "SkipType", "SkipValue", "SkipGenParams",
-                     "SkipCond", "SkipBody", "SkipCallee", "SkipResult", "SkipFull"]
+                     "SkipCond", "SkipBody", "SkipExpr", "SkipResult", "SkipFull"]
 
 proc hasIntentArg(n: Cursor): bool =
   ## Check if the call/cmd has a SkipIntent enum argument or a string literal.

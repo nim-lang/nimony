@@ -545,7 +545,7 @@ type
     SkipGenParams ## skip generic parameters
     SkipCond      ## skip a condition expression
     SkipBody      ## skip a body/stmts section
-    SkipCallee    ## skip a callee symbol being replaced by a different one
+    SkipExpr    ## skip a callee symbol being replaced by a different one
     SkipResult    ## skip a result that has been handled separately
     SkipFull      ## skip an entire subtree being dropped or replaced
 
