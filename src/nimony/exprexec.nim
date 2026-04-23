@@ -206,6 +206,10 @@ proc accessObjField(c: var SynthesizeSerializerCtx; obj: TokenBuf; name: Cursor;
       result.addParRi()
     copyIntoSymUse result, nameSym, c.info
     result.addIntLit(depth, c.info)
+    # trailing access-token: tells the dot-expression sem-check to bypass
+    # field visibility so private fields can be read by the synthesized
+    # serializer that runs in a separate sub-compile module.
+    result.addStrLit "x", c.info
   freeze result
 
 proc accessTupField(c: var SynthesizeSerializerCtx; tup: TokenBuf; idx: int): TokenBuf =

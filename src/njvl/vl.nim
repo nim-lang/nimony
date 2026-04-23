@@ -141,6 +141,9 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       if n.kind != ParRi:
         # inheritance depth:
         takeTree dest, n
+      if n.kind != ParRi:
+        # optional access-token string lit
+        takeTree dest, n
       dest.takeParRi n
     else:
       if n.substructureKind == KvU:

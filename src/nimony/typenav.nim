@@ -307,11 +307,25 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     of ParLe:
       case stmtKind(n)
       of IfS:
+        # Walk all branches and pick the first non-void branch's type. A
+        # branch tagged `(stmts ...)` (e.g. one whose last expression is a
+        # `return`/`raise`) yields void; the if-expression's value comes
+        # from a sibling branch that does yield.
         var n = n
-        inc n
-        inc n # skip `elif`
-        skip n # skip condition
-        result = getTypeImpl(c, n, flags)
+        inc n # skip `if`
+        result = c.builtins.voidType
+        while n.kind == ParLe:
+          let sub = n.substructureKind
+          if sub notin {ElifU, ElseU}: break
+          var br = n
+          inc br # `elif` or `else`
+          if sub == ElifU:
+            skip br # condition
+          let brType = getTypeImpl(c, br, flags)
+          if brType.typeKind != VoidT:
+            result = brType
+            break
+          skip n
       of CaseS:
         var n = n
         inc n # skip `case`

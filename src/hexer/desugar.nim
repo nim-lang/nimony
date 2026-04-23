@@ -815,6 +815,9 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
       dest.addParRi() # deref
       tr c, dest, n
       tr c, dest, n # inheritance depth
+      if n.kind == StringLit:
+        # drop optional access-token marker; no visibility in NIFC.
+        skip n
       takeParRi dest, n
     of ExprX:
       trExpr c, dest, n

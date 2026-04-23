@@ -971,19 +971,29 @@ proc fitTypeToPragmas(c: var SemContext; dest: var TokenBuf; pragmas: CrucialPra
       let info = typ.info
       endRead(dest)
       let kind = if ImportcP in pragmas.flags: ImportcP else: ImportcppP
-      var tokens = @[
+      var attrs = @[
         parLeToken(kind, info),
         strToken(pool.strings.getOrIncl(pragmas.externName), info),
         parRiToken(info)
       ]
       if HeaderP in pragmas.flags:
         assert pragmas.headerFileTok.kind == StringLit
-        tokens.add [
+        attrs.add [
           parLeToken(HeaderP, info),
           pragmas.headerFileTok,
           parRiToken(info)
         ]
-      dest.insert tokens, typeStart+2
+      # Imported aliases of scalar builtins must override the C spelling
+      # (`importc`/`importcpp` + optional `header`) rather than stack with
+      # existing builtin attributes like `(importc "int")`.
+      var rebuilt = createTokenBuf(8 + attrs.len)
+      var t = typ
+      takeToken rebuilt, t # (i/u/f/c/pointer
+      takeToken rebuilt, t # bit-size / fixed payload token
+      for tok in attrs:
+        rebuilt.add tok
+      rebuilt.addParRi()
+      dest.replace cursorAt(rebuilt, 0), typeStart
     else:
       let err = "cannot import type " & typeToString(typ)
       let info = typ.info

@@ -4,12 +4,19 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-import std / [syncio, os, tables, sequtils, times, sets]
+when defined(nimony):
+  {.feature: "lenientnils".}
+
+import std / [syncio, os, hashes, tables, sets]
+when not defined(nimony):
+  import std / [times, sequtils]
 include ".." / lib / nifprelude
 import ".." / lib / [nifindexes, symparser]
 import ".." / gear2 / modnames
 import reporters, builtintypes, decls, nimony_model
 import ".." / models / [nifindex_tags]
+
+include ".." / lib / compat2
 
 type
   Iface* = OrderedTable[StrId, seq[SymId]] # eg. "foo" -> @["foo.1.mod", "foo.3.mod"]
@@ -59,16 +66,20 @@ proc len*(t: ToplevelEntries): int {.inline.} = t.entries.len
 proc hasKey*(t: ToplevelEntries; s: SymId): bool {.inline.} =
   t.bySymId.hasKey(s)
 
-proc `[]`*(t: ToplevelEntries; s: SymId): lent ToplevelEntry {.inline.} =
-  t.entries[t.bySymId[s]]
+when defined(nimony):
+  proc `[]`*(t: ToplevelEntries; s: SymId): var ToplevelEntry {.inline.} =
+    t.entries[t.bySymId.getOrDefault(s)]
+else:
+  proc `[]`*(t: ToplevelEntries; s: SymId): lent ToplevelEntry {.inline.} =
+    t.entries[t.bySymId[s]]
 
-proc `[]`*(t: var ToplevelEntries; s: SymId): var ToplevelEntry {.inline.} =
-  t.entries[t.bySymId[s]]
+  proc `[]`*(t: var ToplevelEntries; s: SymId): var ToplevelEntry {.inline.} =
+    t.entries[t.bySymId[s]]
 
 proc `[]=`*(t: var ToplevelEntries; s: SymId; entry: sink ToplevelEntry) =
   ## Add or update an entry with a SymId key.
   if t.bySymId.hasKey(s):
-    t.entries[t.bySymId[s]] = entry
+    t.entries[t.bySymId.getOrDefault(s)] = entry
   else:
     let idx = t.entries.len
     t.entries.add entry
@@ -81,7 +92,7 @@ proc add*(t: var ToplevelEntries; entry: sink ToplevelEntry) =
 proc del*(t: var ToplevelEntries; s: SymId) =
   ## Remove an entry by SymId. The entry is cleared but not removed from the seq.
   if t.bySymId.hasKey(s):
-    let idx = t.bySymId[s]
+    let idx = t.bySymId.getOrDefault(s)
     t.entries[idx].buffer = default(TokenBuf)  # clear the buffer
     t.bySymId.del(s)
 
@@ -141,7 +152,14 @@ proc customToNif*(suffix: string): string {.inline.} =
   prog.main.dir / suffix & ".nif"
 
 proc needsRecompile*(dep, output: string): bool =
-  result = not fileExists(output) or getLastModificationTime(output) < getLastModificationTime(dep)
+  if not fileExists(output):
+    return true
+  # If either file's mtime cannot be read, treat as needing recompile rather
+  # than propagating a raise into every caller.
+  try:
+    result = getLastModificationTime(output) < getLastModificationTime(dep)
+  except:
+    result = true
 
 proc load*(suffix: string): NifModule =
   if not prog.mods.hasKey(suffix):
@@ -155,7 +173,7 @@ proc load*(suffix: string): NifModule =
     result.index = readIndex(indexName)
     prog.mods[suffix] = result
   else:
-    result = prog.mods[suffix]
+    result = prog.mods.getOrDefault(suffix)
 
 proc mergeFilter*(f: var ImportFilter; g: ImportFilter) =
   # applies filter f to filter g, commutative since it computes the intersection
@@ -211,7 +229,7 @@ proc loadInterface*(suffix: string; iface: var Iface;
     extractBasename(name)
     let nameId = pool.strings.getOrIncl(name)
     # check that the converter is imported, slow but better to be slow here:
-    if nameId in importTab and module in importTab[nameId]:
+    if nameId in importTab and module in importTab.getOrDefault(nameId):
       let key = if k == ".": SymId(0) else: pool.syms.getOrIncl(k)
       let val = pool.syms.getOrIncl(v)
       converters.mgetOrPut(key, @[]).addUnique(val)
@@ -314,7 +332,7 @@ proc tryLoadHook*(op: AttachedOp; typ: SymId): SymId =
         inc n
 
 proc tryLoadAllHooks*(typ: SymId): HooksPerType =
-  template setRes(op: AttachedOp) =
+  template setRes(n: var Cursor; op: AttachedOp) =
     inc n
     if n.kind == Symbol:
       result.a[op] = n.symId
@@ -331,12 +349,12 @@ proc tryLoadAllHooks*(typ: SymId): HooksPerType =
         of ParLe:
           case hookKind(n.tagId)
           of NoHook: discard
-          of WasmovedH: setRes attachedWasMoved
-          of DestroyH: setRes attachedDestroy
-          of DupH: setRes attachedDup
-          of CopyH: setRes attachedCopy
-          of SinkhH: setRes attachedSink
-          of TraceH: setRes attachedTrace
+          of WasmovedH: setRes(n, attachedWasMoved)
+          of DestroyH: setRes(n, attachedDestroy)
+          of DupH: setRes(n, attachedDup)
+          of CopyH: setRes(n, attachedCopy)
+          of SinkhH: setRes(n, attachedSink)
+          of TraceH: setRes(n, attachedTrace)
           inc nested
         of ParRi:
           dec nested
@@ -454,7 +472,10 @@ proc setupProgram*(infile, outfile: string; owningBuf: var TokenBuf; hasIndex=fa
   prog.main = splitModulePath(infile)
   let outp = splitModulePath(outfile)
   if prog.main.dir.len == 0:
-    prog.main.dir = getCurrentDir()
+    try:
+      prog.main.dir = getCurrentDir()
+    except:
+      prog.main.dir = "."
   prog.main.ext = outp.ext
 
   var m = newNifModule(infile)

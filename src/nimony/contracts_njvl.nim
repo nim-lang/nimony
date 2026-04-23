@@ -765,6 +765,7 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
         traverseExpr c, pc # object
         skip pc # field name
         if pc.kind != ParRi: skip pc # inheritance depth
+        if pc.kind != ParRi: skip pc # optional access-token string lit
         skipParRi pc
       of DdotX:
         inc pc
@@ -772,6 +773,7 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
         traverseExpr c, pc # object
         skip pc # field name
         if pc.kind != ParRi: skip pc # inheritance depth
+        if pc.kind != ParRi: skip pc # optional access-token string lit
         skipParRi pc
       of DerefX:
         inc pc

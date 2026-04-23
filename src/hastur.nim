@@ -748,6 +748,13 @@ const BootstrapModules = [
   "src/nimony/magics.nim",
   "src/nimony/decls.nim",
   "src/nimony/asthelpers.nim",
+  # Tier 6 -- Programs, renderer, passes, CLI.
+  "src/nimony/programs.nim",
+  "src/nimony/renderer.nim",
+  "src/nimony/inferle.nim",
+  "src/nimony/deferstmts.nim",
+  "src/nimony/cli.nim",
+  "src/hexer/passes.nim",
 ]
 
 # Modules whose `isMainModule` block should also be executed after compilation.

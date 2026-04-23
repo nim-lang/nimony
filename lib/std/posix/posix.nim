@@ -35,6 +35,7 @@ when defined(posix):
                                             ## For other file types, the use of this field is
                                             ## unspecified.
       st_mode* {.importc: "st_mode".} : Mode        ## Mode of file (see below).
+      st_mtime* {.importc: "st_mtime".} : int64     ## Time of last data modification (seconds since epoch).
 
 
   const StatHasNanoseconds* = defined(linux) or defined(freebsd) or
@@ -155,3 +156,100 @@ when defined(posix):
   proc WIFSIGNALED*(s:cint) : bool = (cast[int8]((s and 0x7f) + 1) shr 1) > 0
   proc WIFSTOPPED*(s:cint) : bool = (s and 0xff) == 0x7f
   proc WIFCONTINUED*(s:cint) : bool = s == WCONTINUED
+
+  # -------- Process / pipe / exec bindings needed by std/osproc --------
+  type
+    Pid* {.importc: "pid_t", header: "<sys/types.h>".} = cint
+    Sigset* {.importc: "sigset_t", header: "<signal.h>", final, pure.} = object
+    Tposix_spawnattr* {.importc: "posix_spawnattr_t",
+        header: "<spawn.h>", final, pure.} = object
+    Tposix_spawn_file_actions* {.importc: "posix_spawn_file_actions_t",
+        header: "<spawn.h>", final, pure.} = object
+
+  proc pipe*(a: var array[0..1, cint]): cint {.
+    importc, header: "<unistd.h>", sideEffect.}
+  proc dup2*(oldfd, newfd: cint): cint {.
+    importc, header: "<unistd.h>", sideEffect.}
+  proc fork*(): Pid {.importc, header: "<unistd.h>", sideEffect.}
+  # Use plain C `char` so that `char**` lines up with libc's expectation
+  # (Nimony's `cstring` is `NC8*` / unsigned char*, which triggers
+  # `-Wincompatible-pointer-types` on posix_spawn / execvp / execve).
+  type CChar* {.importc: "char", nodecl.} = int8
+  type CCharArray* = nil ptr UncheckedArray[nil ptr CChar]
+
+  proc execvp*(file: cstring; argv: CCharArray): cint {.
+    importc, header: "<unistd.h>", sideEffect.}
+  proc execve*(path: cstring; argv, env: CCharArray): cint {.
+    importc, header: "<unistd.h>", sideEffect.}
+  proc waitpid*(pid: Pid; status: var cint; options: cint): Pid {.
+    importc, header: "<sys/wait.h>", sideEffect.}
+  proc kill*(pid: Pid; sig: cint): cint {.
+    importc, header: "<signal.h>", sideEffect.}
+  proc setpgid*(pid, pgid: Pid): cint {.
+    importc, header: "<unistd.h>", sideEffect.}
+  proc exitnow*(status: cint) {.
+    importc: "_exit", header: "<unistd.h>", noreturn.}
+  proc read*(fildes: cint; buf: pointer; nbyte: int): int {.
+    importc, header: "<unistd.h>", sideEffect.}
+  proc write*(fildes: cint; buf: pointer; nbyte: int): int {.
+    importc, header: "<unistd.h>", sideEffect.}
+
+  # posix_spawn
+  proc posix_spawn*(pid: var Pid; path: cstring;
+                    file_actions: var Tposix_spawn_file_actions;
+                    attrp: var Tposix_spawnattr;
+                    argv, envp: CCharArray): cint {.
+    importc, header: "<spawn.h>", sideEffect.}
+  proc posix_spawnp*(pid: var Pid; file: cstring;
+                     file_actions: var Tposix_spawn_file_actions;
+                     attrp: var Tposix_spawnattr;
+                     argv, envp: CCharArray): cint {.
+    importc, header: "<spawn.h>", sideEffect.}
+  proc posix_spawn_file_actions_init*(
+      fops: var Tposix_spawn_file_actions): cint {.
+    importc, header: "<spawn.h>".}
+  proc posix_spawn_file_actions_destroy*(
+      fops: var Tposix_spawn_file_actions): cint {.
+    importc, header: "<spawn.h>".}
+  proc posix_spawn_file_actions_addclose*(
+      fops: var Tposix_spawn_file_actions; fildes: cint): cint {.
+    importc, header: "<spawn.h>".}
+  proc posix_spawn_file_actions_adddup2*(
+      fops: var Tposix_spawn_file_actions; fildes, newfildes: cint): cint {.
+    importc, header: "<spawn.h>".}
+  proc posix_spawn_file_actions_addchdir_np*(
+      fops: var Tposix_spawn_file_actions; path: cstring): cint {.
+    importc, header: "<spawn.h>".}
+  proc posix_spawnattr_init*(attr: var Tposix_spawnattr): cint {.
+    importc, header: "<spawn.h>".}
+  proc posix_spawnattr_destroy*(attr: var Tposix_spawnattr): cint {.
+    importc, header: "<spawn.h>".}
+  proc posix_spawnattr_setflags*(attr: var Tposix_spawnattr;
+                                 flags: cshort): cint {.
+    importc, header: "<spawn.h>".}
+  proc posix_spawnattr_setpgroup*(attr: var Tposix_spawnattr;
+                                  pgroup: Pid): cint {.
+    importc, header: "<spawn.h>".}
+  proc posix_spawnattr_setsigmask*(attr: var Tposix_spawnattr;
+                                   mask: var Sigset): cint {.
+    importc, header: "<spawn.h>".}
+  proc posix_spawnattr_setsigdefault*(attr: var Tposix_spawnattr;
+                                      mask: var Sigset): cint {.
+    importc, header: "<spawn.h>".}
+  proc sigemptyset*(mask: var Sigset): cint {.
+    importc, header: "<signal.h>".}
+  proc sigfillset*(mask: var Sigset): cint {.
+    importc, header: "<signal.h>".}
+  proc sigaddset*(mask: var Sigset; sig: cint): cint {.
+    importc, header: "<signal.h>".}
+
+  # environ
+  var posix_environ* {.importc: "environ", header: "<unistd.h>".}:
+    ptr UncheckedArray[cstring]
+
+  # errno
+  proc strerror*(errnum: cint): cstring {.
+    importc, header: "<string.h>", sideEffect.}
+
+  proc nanosleep*(req: var Timespec; rem: var Timespec): cint {.
+    importc, header: "<time.h>", sideEffect.}

@@ -129,8 +129,43 @@ iterator mpairs*[K, V](t: Table[K, V]): (lent K, var V) =
   for i in 0 ..< t.data.len:
     yield (t.data[i][0], t.data[i][1])
 
+iterator keys*[K, V](t: Table[K, V]): lent K =
+  for i in 0 ..< t.data.len:
+    yield t.data[i][0]
+
+iterator values*[K, V](t: Table[K, V]): lent V =
+  for i in 0 ..< t.data.len:
+    yield t.data[i][1]
+
+iterator mvalues*[K, V](t: var Table[K, V]): var V =
+  for i in 0 ..< t.data.len:
+    yield t.data[i][1]
+
+func del*[K: Keyable, V](t: var Table[K, V]; k: K) =
+  ## Remove `k` from `t`. No-op if absent. Preserves insertion order by
+  ## shifting later entries down; the hash index is rebuilt lazily on next
+  ## access.
+  let idx = rawGet(t, k, hash(k))
+  if idx < 0: return
+  var j = idx
+  while j < t.data.len - 1:
+    let next = t.data[j+1]
+    t.data[j] = next
+    inc j
+  t.data.shrink(t.data.len - 1)
+  # Invalidate the hash index so subsequent lookups rebuild it.
+  t.hashes = @[]
+
 func initTable*[K, V](): Table[K, V] =
   Table[K, V](data: @[], hashes: @[])
+
+# Nimony's `Table` is already insertion-ordered (`data` is a `seq`), so
+# `OrderedTable` is a simple alias for portability with code written
+# against the Nim stdlib split.
+type
+  OrderedTable*[K, V] = Table[K, V]
+
+func initOrderedTable*[K, V](): OrderedTable[K, V] {.inline.} = initTable[K, V]()
 
 when isMainModule:
   import std/syncio

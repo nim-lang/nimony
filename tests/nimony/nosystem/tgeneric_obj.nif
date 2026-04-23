@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +6586            )
+(.indexat +6594            )
 0,2,tests/nimony/nosystem/tgeneric_obj.nim(stmts 2,1
  (type :int.0.
   (i +64) . 5
@@ -107,9 +107,9 @@
  (gvar :myglob.0. . . 17 MyGeneric.0.Id8udwb1. .) 2,33
  (gvar :other.0. . . 16 MyGeneric.0.Iliphp3. .) 9,35
  (asgn ~3
-  (dot ~6 myglob.0. x.0 +0) 2 +56) 8,36
+  (dot ~6 myglob.0. x.0 +0 "x") 2 +56) 8,36
  (asgn ~3
-  (dot ~5 other.0. x.0 +0) 2 +79.0) ,38
+  (dot ~5 other.0. x.0 +0 "x") 2 +79.0) ,38
  (proc 5 :\2B.0.
   (add -3) . . 9
   (params 1
@@ -305,7 +305,7 @@
  (h T.3. +44) 2,32
  (h myglob.0. +84) 2,33
  (h other.0. +55) ,38
- (x \2B.0. +153) ,40
+ (x \2B.0. +161) ,40
  (h foobar.0. +180) ,43
  (h foo.0. +82) ,48
  (h overloaded.0. +331) 16,53

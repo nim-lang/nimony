@@ -175,6 +175,12 @@ func del*[T](s: var seq[T]; idx: int) {.nodestroy.} =
     (s.data[idx]) = s.data[L-1]
   dec s.len
 
+func addUnique*[T: Equatable](s: var seq[T]; x: sink T) =
+  ## Append `x` to `s` only if no existing element equals it.
+  for i in 0 ..< s.len:
+    if s[i] == x: return
+  s.add x
+
 func shrink*[T](s: var seq[T]; newLen: int) =
   var i = s.len-1
   while i >= newLen:

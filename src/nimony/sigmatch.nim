@@ -1244,7 +1244,31 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         procTypeMatch m, f, a
       else:
         m.error InvalidMatch, f, a
-    of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, AnumT, NiltT, OrT, AndT, NotT,
+    of OrT:
+      # `f` is an `or`-typed parameter (e.g. `x: A | B | C`); try each
+      # alternative and accept the first that matches. We can't snapshot
+      # `Match` (no `=copy`), so undo-on-failure using the args buffer
+      # length and the `err` flag.
+      var branches = f
+      inc branches
+      let argsSave = m.args.len
+      let errSave = m.err
+      let openedSave = m.opened
+      var matched = false
+      while branches.kind != ParRi:
+        var branch = branches
+        singleArgImpl(m, branch, arg)
+        if not m.err:
+          matched = true
+          break
+        m.args.shrink argsSave
+        m.err = errSave
+        m.opened = openedSave
+        skip branches
+      if not matched:
+        m.error InvalidMatch, f, arg.typ
+      skip f
+    of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, AnumT, NiltT, AndT, NotT,
         ConceptT, DistinctT, StaticT, ItertypeT, AutoT, SymKindT, TypeKindT, OrdinalT:
       m.error UnhandledTypeBug, f, f
   else:

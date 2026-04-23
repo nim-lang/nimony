@@ -689,6 +689,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         tre c, dest, n
         takeTree dest, n # don't look up field names here
         if n.kind != ParRi: takeTree dest, n # optional inheritance depth
+        if n.kind != ParRi: takeTree dest, n # optional access-token string lit
         takeParRi dest, n
       of CastX, ConvX:
         takeToken dest, n

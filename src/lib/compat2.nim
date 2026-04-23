@@ -12,3 +12,13 @@ when defined(nimony):
   {.pragma: canRaise, raises.}
 else:
   {.pragma: canRaise.}
+
+when not defined(nimony):
+  import std/tables
+
+  proc getOrQuit*[A, B](t: var Table[A, B]; k: A): var B =
+    ## Host-Nim shim for the Nimony `tables.getOrQuit` that returns `var B`
+    ## and aborts if the key is absent. Callers guard with `hasKey` before
+    ## this call, so the missing-key branch is unreachable in practice.
+    if not t.hasKey(k): quit "getOrQuit: missing key"
+    result = t[k]

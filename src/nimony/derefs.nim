@@ -530,7 +530,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   if IsNoSideEffect in c.r.props:
     if whichEffect(calleeKind, pragmas) == HasSideEffect:
       swap c.dest, callBuf
-      buildLocalErr c.dest, n.info, "cannot call a routine marked as `.noSideEffect` outside of a .noSideEffect context"
+      buildLocalErr c.dest, n.info, "cannot call a routine with side effects from a `.noSideEffect` context"
       n = callExpr
       skip n
       return

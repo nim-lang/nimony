@@ -7,13 +7,14 @@
 ## Infer `le` ("less or equal") properties for compile-time array index checking
 ## and also for "not nil" checking.
 
-import std/[assertions, tables]
+import std/[assertions, tables, hashes]
 import xints
 
 type
   VarId* = distinct int32  # convention: VarId(0) is always the constant 0!
 
-proc `==`*(a, b: VarId): bool {.borrow.}
+func `==`*(a, b: VarId): bool {.borrow.}
+func hash*(x: VarId): Hash {.borrow.}
 
 type
   LeXplusC* = object    # semantics: a <= b + c
@@ -138,12 +139,12 @@ proc complexImplies(facts: Facts; v: LeXplusC): bool =
     var changed = false
     for f in facts.x:
       if f.a in dist:
-        let newDist = dist[f.a] + f.c
-        if f.b notin dist or newDist < dist[f.b]:
+        let newDist = dist.getOrDefault(f.a) + f.c
+        if f.b notin dist or newDist < dist.getOrDefault(f.b):
           dist[f.b] = newDist
           changed = true
     if not changed: break
-  result = v.b in dist and dist[v.b] <= v.c
+  result = v.b in dist and dist.getOrDefault(v.b) <= v.c
 
 proc implies*(facts: Facts; v: LeXplusC): bool =
   assert v.isValid
@@ -151,7 +152,7 @@ proc implies*(facts: Facts; v: LeXplusC): bool =
 
 proc consider(best: var Table[(VarId, VarId), xint]; a, b: VarId; c: xint) =
   let key = (a, b)
-  if key notin best or c < best[key]:
+  if key notin best or c < best.getOrDefault(key):
     best[key] = c
 
 proc merge*(x: Facts; xstart: int; y: Facts; negate: bool): Facts =
@@ -182,6 +183,7 @@ proc merge*(x: Facts; xstart: int; y: Facts; negate: bool): Facts =
     result.x.add LeXplusC(a: key[0], b: key[1], c: c)
 
 when isMainModule:
+  import std/syncio
   proc main =
     let a = VarId(1)
     let b = VarId(2)

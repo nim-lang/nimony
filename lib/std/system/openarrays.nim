@@ -50,6 +50,24 @@ iterator items*[T](a: openArray[T]): var T =
     yield a[i]
     inc i
 
+iterator mitems*[T](a: var openArray[T]): var T =
+  var i = 0
+  while i < len(a):
+    yield a[i]
+    inc i
+
+iterator pairs*[T](a: openArray[T]): (int, var T) =
+  var i = 0
+  while i < len(a):
+    yield (i, a[i])
+    inc i
+
+iterator mpairs*[T](a: var openArray[T]): (int, var T) =
+  var i = 0
+  while i < len(a):
+    yield (i, a[i])
+    inc i
+
 func `==`*[T: Equatable](a, b: openArray[T]): bool =
   if a.len == b.len:
     for i in 0..<a.len:
