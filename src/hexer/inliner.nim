@@ -71,7 +71,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.registerParams(r.name.symId, decl, r.params)
   copyTree dest, r.pragmas
   copyTree dest, r.effects
-  skip n # effects
+  skip n, SkipEffects # effects
   if n.stmtKind == StmtsS and not isGeneric(r):
     tr c, dest, n
   else:

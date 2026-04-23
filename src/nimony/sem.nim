@@ -28,7 +28,7 @@ else:
 
 import ".." / gear2 / modnames
 import ".." / models / [tags, nifindex_tags]
-import phase_validator
+import ".." / validator / phase_validator
 
 proc semStmt(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: bool)
 proc semStmtBranch(c: var SemContext; dest: var TokenBuf; it: var Item; isNewScope: bool)
@@ -112,12 +112,12 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
     result = true
   of CaseS:
     inc it # tag
-    skip it # selector
+    skip it, SkipValue # selector
     while it.kind != ParRi:
       case it.substructureKind
       of OfU:
         inc it
-        skip it # ranges
+        skip it, SkipValue # ranges
         checkBranch(it)
         skip it
         skipParRi it
@@ -160,7 +160,7 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
           skip decl, SkipName # name
           skip decl, SkipExport # exported
           skip decl # pattern
-          skip decl # typevars
+          skip decl, SkipGenParams # typevars
           skip decl # params
           skip decl # retType
           # decl should now be pragmas:

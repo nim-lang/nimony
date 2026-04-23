@@ -192,7 +192,7 @@ template evalOrdBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.}
   let orig = n
   inc n # tag
   let isSigned = n.typeKind == IntT
-  skip n # type
+  skip n, SkipType # type
   let a = getConstOrdinalValue propagateError eval(c, n)
   let b = getConstOrdinalValue propagateError eval(c, n)
   skipParRi n
@@ -217,7 +217,7 @@ template evalOrdBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.}
 template evalFloatBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   let orig = n
   inc n # tag
-  skip n # type
+  skip n, SkipType # type
   let a = propagateError eval(c, n)
   let b = propagateError eval(c, n)
   skipParRi n
@@ -231,7 +231,7 @@ template evalCmpOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   let orig = n
   inc n # tag
   let t = n
-  skip n # type
+  skip n, SkipType # type
   if t.typeKind == FloatT:
     let a = propagateError eval(c, n)
     let b = propagateError eval(c, n)
@@ -263,7 +263,7 @@ template evalOrdUnOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} 
   let orig = n
   inc n # tag
   let isSigned = n.typeKind == IntT
-  skip n # type
+  skip n, SkipType # type
   let a = getConstOrdinalValue propagateError eval(c, n)
   skipParRi n
   if not isNaN(a):
@@ -287,7 +287,7 @@ template evalOrdUnOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} 
 template evalFloatUnOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   let orig = n
   inc n # tag
-  skip n # type
+  skip n, SkipType # type
   let a = propagateError eval(c, n)
   skipParRi n
   if a.kind == FloatLit:
@@ -746,7 +746,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       result = evalCast(c, typ, val, nOrig)
     of DconvX:
       inc n # tag
-      skip n # type
+      skip n, SkipType # type
       result = eval(c, n)
       skipParRi n
     of ExprX:

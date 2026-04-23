@@ -223,7 +223,7 @@ proc typeOfField(c: var TypeCache; n: var Cursor; fld: SymId): Cursor =
       case n.substructureKind
       of OfU:
         inc n
-        skip n # ranges
+        skip n, SkipValue # ranges
         inc n # stmts
         while n.kind != ParRi:
           result = typeOfField(c, n, fld)
@@ -389,7 +389,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of PragmaxX:
     var n = n
     inc n
-    skip n # pragmas
+    skip n, SkipPragmas # pragmas
     result = getTypeImpl(c, n, flags)
   of DoX:
     # the parameter list that follows `(do)` is actually a good type

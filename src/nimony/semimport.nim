@@ -316,7 +316,7 @@ proc semExport(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   var x = it.n
   skip it.n
-  inc x # skip the `export`
+  inc x, SkipTag # skip the `export`
 
   while x.kind != ParRi:
     let info = x.info
@@ -371,7 +371,7 @@ proc semExportExcept(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   var x = it.n
   skip it.n
-  inc x # skip the `exportexcept`
+  inc x, SkipTag # skip the `exportexcept`
 
   let moduleSymStart = dest.len
   var m = Item(n: x, typ: c.types.autoType)

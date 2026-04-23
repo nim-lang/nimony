@@ -744,9 +744,9 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
   elif fcc.usesPassive != acc.usesPassive:
     m.error PassiveMismatch, f, a
   # XXX consider when f or a is (params):
-  skip f # effects
+  skip f, SkipEffects # effects
   #skip a # effects
-  skip f # body
+  skip f, SkipBody # body
   #skip a # body
   expectParRi m, f
   #expectParRi m, a

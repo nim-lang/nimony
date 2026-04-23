@@ -33,6 +33,7 @@ import std / [assertions]
 include nifprelude
 import nifindexes, symparser, treemangler, lifter, mover, hexer_context, passes
 import ".." / nimony / [nimony_model, programs, decls, typenav, renderer, reporters, builtintypes, typekeys]
+include ".." / nimony / nif_annotations
 
 type
   ContextFlag = enum

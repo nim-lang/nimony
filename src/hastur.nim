@@ -690,7 +690,7 @@ proc buildNifmake(showProgress = false) =
   robustMoveFile "src/nifmake/" & exe, binDir() / exe
 
 proc buildValidator(showProgress = false) =
-  exec nimcPrefix() & "src/nimony/validator.nim", showProgress
+  exec nimcPrefix() & "src/validator/validator.nim", showProgress
   let exe = "validator".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 

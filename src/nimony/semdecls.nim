@@ -1016,7 +1016,7 @@ proc buildInnerObjDecl(c: var SemContext; decl: Cursor; sym: var SymId): TokenBu
   result.add n # (type
   inc n
   result.add symdefToken(sym, n.info)
-  skip n # name
+  skip n, SkipName # name
   takeTree result, n # copy exported (?)
   takeTree result, n # copy typevars
   # ^ may need to build fresh identifiers
@@ -1198,7 +1198,7 @@ proc semUnpackDecl(c: var SemContext; dest: var TokenBuf; it: var Item) =
     var kindTag = it.n
     while kindTag.stmtKind == UnpackdeclS:
       inc kindTag # unpackdecl tag
-      skip kindTag # value
+      skip kindTag, SkipValue # value
       assert kindTag.substructureKind == UnpacktupU
       inc kindTag # unpacktup tag
     let kind = kindTag.symKind
@@ -1226,7 +1226,7 @@ proc semUnpackDecl(c: var SemContext; dest: var TokenBuf; it: var Item) =
   while kindTag.stmtKind == UnpackdeclS:
     # skip nested unpacks as well
     inc kindTag # unpackdecl tag
-    skip kindTag # value
+    skip kindTag, SkipValue # value
     assert kindTag.substructureKind == UnpacktupU
     inc kindTag # unpacktup tag
   let kind = kindTag.symKind

@@ -466,7 +466,7 @@ proc trCase(c: var ControlFlow; n: var Cursor; tar: var Target) =
       # compile the final branch like an `else` to model the exhaustiveness precisely
       # in the control flow graph:
       inc n
-      skip n # ranges
+      skip n, SkipValue # ranges
       trStmtOrExpr c, n, tar
       endings.add c.jmpForw(n.info) # this is crucial if we use the graph to compute basic blocks
     else:
