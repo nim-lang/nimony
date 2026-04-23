@@ -692,7 +692,7 @@ proc buildNifmake(showProgress = false) =
 proc buildValidator(showProgress = false) =
   exec nimcPrefix() & "src/validator/validator.nim", showProgress
   let exe = "validator".addFileExt(ExeExt)
-  robustMoveFile "src/nimony/" & exe, binDir() / exe
+  robustMoveFile "src/validator/" & exe, binDir() / exe
 
 # ---------------------------------------------------------------------------
 # Bootstrapping progress (see https://github.com/nim-lang/nimony/issues/1788).
