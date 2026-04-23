@@ -47,25 +47,37 @@ proc compilerDir*(): string =
     return head
   else: return tail
 
-proc absoluteParentDir*(f: string): string {.canRaise.} =
-  result = f.absolutePath().parentDir()
+proc absoluteParentDir*(f: string): string =
+  result = ""
+  try:
+    result = f.absolutePath().parentDir()
+  except:
+    quit "FAILURE: cannot resolve absolute path for " & f
 
 proc fileExists*(f: string): bool {.inline.} =
   ## Re-export of `os.fileExists` under the `semos` qualifier so callers can
   ## use `semos.fileExists` without importing `os` themselves.
   result = os.fileExists(f)
 
-proc toAbsolutePath*(f: string): string {.canRaise.} =
+proc toAbsolutePath*(f: string): string =
+  result = ""
   if f.isAbsolute: return f
-  result = os.absolutePath(f)
+  try:
+    result = os.absolutePath(f)
+  except:
+    quit "FAILURE: cannot resolve absolute path for " & f
 
 proc toAbsolutePath*(f: string, dir: string): string =
   if f.isAbsolute: return f
   result = normalizedPath(dir / f)
 
-proc toRelativePath*(f: string, dir: string): string {.canRaise.} =
+proc toRelativePath*(f: string, dir: string): string =
+  result = ""
   if not f.isAbsolute: return f
-  result = f.relativePath(dir)
+  try:
+    result = f.relativePath(dir)
+  except:
+    quit "FAILURE: cannot compute relative path " & f & " against " & dir
 
 proc joinPath*(head, tail: string): string = head / tail
 
@@ -262,10 +274,14 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
     hasError = true
     skip n
 
-proc replaceSubs*(fmt, currentFile: string; config: NifConfig): string {.canRaise.} =
+proc replaceSubs*(fmt, currentFile: string; config: NifConfig): string =
   # Unpack Current File to Absolute
   let nifcache = config.nifcachePath
-  var path = absolutePath(currentFile)
+  var path = currentFile
+  try:
+    path = absolutePath(currentFile)
+  except:
+    discard "keep the input as-is"
   if os.fileExists(path):
     path = parentDir(path)
   # Replace matches with paths
@@ -341,7 +357,7 @@ proc writeFileIfChanged(file, content: string) {.canRaise.} =
     writeFile file, content
 
 proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; pluginName, input: string;
-                additionalInput = "") {.canRaise.} =
+                additionalInput = "") =
   let p = splitFile(pluginName)
   let checksumA = if additionalInput.len > 0: "_" & computeChecksum(additionalInput) else: ""
   let basename = c.g.config.nifcachePath / p.name & "_" & computeChecksum(input) & checksumA
@@ -354,9 +370,12 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; plu
   if needsRecompile(nf, pluginExe):
     compilePlugin(c, info, nf, pluginExe)
 
-  writeFileIfChanged(inputFile, input)
-  if additionalInput.len > 0:
-    writeFileIfChanged(inputFileB, additionalInput)
+  try:
+    writeFileIfChanged(inputFile, input)
+    if additionalInput.len > 0:
+      writeFileIfChanged(inputFileB, additionalInput)
+  except:
+    quit "FAILURE: cannot write plugin input file " & inputFile
 
   if needsRecompile(pluginExe, outputFile):
     var cmd = quoteShell(pluginExe) & " " & quoteShell(inputFile) & " " & quoteShell(outputFile)
@@ -370,17 +389,21 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; plu
   finally:
     close s
 
-proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]): tuple[output: string, exitCode: int] {.canRaise.} =
+proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]): tuple[output: string, exitCode: int] =
   # Use nimony s to compile and run the .p.nif file through the full pipeline
   let nimonyExe = findTool("nimony")
   var cmd = quoteShell(nimonyExe) & " --nimcache:" & quoteShell(nimcachePath) &
     " s -r " & quoteShell(file)
-  result = execCmdEx(cmd)
+  try:
+    result = execCmdEx(cmd)
+  except:
+    result = (output: "failed to run: " & cmd, exitCode: -1)
 
 const
   writeNifModuleSuffix* = "wriwhv7qv"
 
-proc prepareEval*(c: var SemContext): string {.canRaise.} =
+proc prepareEval*(c: var SemContext): string =
+  result = ""
   if not c.checkedForWriteNifModule:
     c.checkedForWriteNifModule = true
     if not os.fileExists(c.g.config.nifcachePath / writeNifModuleSuffix & ".s.nif"):
@@ -388,36 +411,40 @@ proc prepareEval*(c: var SemContext): string {.canRaise.} =
       let nimonyExe = findTool("nimony")
       var cmd = quoteShell(nimonyExe) & " --nimcache:" & quoteShell(c.g.config.nifcachePath) &
         " c " & quoteShell(stdlibFile("std/writenif.nim"))
-      let (output, exitCode) = execCmdEx(cmd)
-      if exitCode != 0:
-        return ensureMove(output)
-  return ""
+      try:
+        let (output, exitCode) = execCmdEx(cmd)
+        if exitCode != 0:
+          result = ensureMove(output)
+      except:
+        result = "failed to run: " & cmd
 
-proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf; usedModules: HashSet[string]): string {.canRaise.} =
+proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf; usedModules: HashSet[string]): string =
   ## Returns an error message if the evaluation failed, "" on success.
   result = ""
   let progfile = c.g.config.nifcachePath / srcName.addFileExt(".p.nif")
-  writeFileAndIndex(progfile, src)
+  try:
+    writeFileAndIndex(progfile, src)
 
-  # Write the .p.deps.nif file so that `nimony s` can find the imports.
-  # Always write — `nimony s` opens this unconditionally, so an empty
-  # `(stmts)` is needed when the original module has no imports.
-  var deps = createTokenBuf(c.importSnippets.len + 4)
-  deps.addParLe StmtsS, NoLineInfo
-  if c.importSnippets.len > 0:
-    deps.add c.importSnippets
-  deps.addParRi()
-  let depsFile = c.g.config.nifcachePath / srcName & ".p.deps.nif"
-  writeFile deps, depsFile
+    # Write the .p.deps.nif file so that `nimony s` can find the imports.
+    # Always write — `nimony s` opens this unconditionally, so an empty
+    # `(stmts)` is needed when the original module has no imports.
+    var deps = createTokenBuf(c.importSnippets.len + 4)
+    deps.addParLe StmtsS, NoLineInfo
+    if c.importSnippets.len > 0:
+      deps.add c.importSnippets
+    deps.addParRi()
+    let depsFile = c.g.config.nifcachePath / srcName & ".p.deps.nif"
+    writeFile deps, depsFile
 
-  let (output, exitCode) = runProgram(progfile, c.g.config.nifcachePath, usedModules)
-  if exitCode != 0:
-    result = ensureMove(output)
-  else:
-    let outfile = c.g.config.nifcachePath / srcName.addFileExt(".out.nif")
-    var s = nifstreams.open(outfile)
-    try:
-      parse s, dest, NoLineInfo
-    finally:
-      close s
-    result = ""
+    let (output, exitCode) = runProgram(progfile, c.g.config.nifcachePath, usedModules)
+    if exitCode != 0:
+      result = ensureMove(output)
+    else:
+      let outfile = c.g.config.nifcachePath / srcName.addFileExt(".out.nif")
+      var s = nifstreams.open(outfile)
+      try:
+        parse s, dest, NoLineInfo
+      finally:
+        close s
+  except:
+    result = "I/O error while evaluating " & srcName
