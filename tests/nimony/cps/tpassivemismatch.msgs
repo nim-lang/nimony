@@ -1,1 +1,1 @@
-tests/nimony/cps/tpassivemismatch.nim(3, 29) Error: type mismatch: got: proc () but wanted: proc () {.passive, notnil.}
+tests/nimony/cps/tpassivemismatch.nim(3, 29) Error: type mismatch: got: proc () but wanted: proc () {.passive.}

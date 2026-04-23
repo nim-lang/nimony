@@ -832,16 +832,14 @@ proc makeLocalSymId(c: var EContext; s: SymId): SymId =
 proc buildProcType(c: var EContext; dest: var TokenBuf; thisProc: Cursor): SymId =
   var thisProc = asRoutine(thisProc)
   var procTypeBuf = createTokenBuf()
+  # Build a Nimony-shape proctype (4 slots) since the only consumer here is
+  # `trAsNamedType` → `takeMangle` → `mangleProctype`, which expects the
+  # compact Nimony layout.
   procTypeBuf.addParLe ProctypeT
-  procTypeBuf.addDotToken() # name
-  procTypeBuf.addDotToken() # export marker
-  procTypeBuf.addDotToken() # pattern
-  procTypeBuf.addDotToken() # type vars
+  procTypeBuf.addDotToken() # nilability tag
   procTypeBuf.addSubtree thisProc.params
   procTypeBuf.addSubtree thisProc.retType
   procTypeBuf.addSubtree thisProc.pragmas
-  procTypeBuf.addDotToken() # effects
-  procTypeBuf.addDotToken() # body
   procTypeBuf.addParRi() # end of proctype
 
   var procTypeCursor = beginRead(procTypeBuf)

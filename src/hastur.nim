@@ -759,6 +759,7 @@ const BootstrapModules = [
   "src/nimony/semdata.nim",
   # Tier 8 -- Type analysis + expression eval.
   "src/nimony/typeprops.nim",
+  "src/nimony/expreval.nim",
 ]
 
 # Modules whose `isMainModule` block should also be executed after compilation.
