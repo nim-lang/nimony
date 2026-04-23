@@ -2174,15 +2174,10 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
         var thisProc = asRoutine(n)
         var procTypeBuf = createTokenBuf()
         procTypeBuf.addParLe ProctypeT
-        procTypeBuf.addDotToken() # name
-        procTypeBuf.addDotToken() # export marker
-        procTypeBuf.addDotToken() # pattern
-        procTypeBuf.addDotToken() # type vars
+        procTypeBuf.addDotToken() # nilability tag (none — `nil`/`notnil` set later)
         procTypeBuf.addSubtree thisProc.params
         procTypeBuf.addSubtree thisProc.retType
         procTypeBuf.addSubtree thisProc.pragmas
-        procTypeBuf.addDotToken() # effects
-        procTypeBuf.addDotToken() # body
         procTypeBuf.addParRi() # end of proctype
         n = beginRead(procTypeBuf)
       elif s.kind == ModuleY:

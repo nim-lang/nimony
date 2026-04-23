@@ -17,9 +17,7 @@ type
 proc mangle*(b: var Mangler; c: Cursor; mm: MangleMode)
 
 proc mangleProctype(b: var Mangler; n: var Cursor; mm: MangleMode): string =
-  inc n
-  # name, export marker, pattern, type vars:
-  for i in 0..<ParamsPos: skip n
+  skipToParams n
 
   var b = createMangler(60)
   if n.kind != DotToken:

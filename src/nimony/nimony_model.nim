@@ -303,13 +303,21 @@ template skipToLocalType*(n) =
   skip n # skip export marker
   skip n # skip pragmas
 
-template skipToReturnType*(n) =
+proc skipToReturnType*(n: var Cursor) =
+  ## Advances `n` past the prefix slots so it points at the return type.
+  ## Handles both Nimony's compact proctype layout (`(proctype <NilTag> (params) RetType ...)`)
+  ## and the proc-decl-shaped layout (`(proc Name Export Pattern Typevars (params) RetType ...)`).
+  let skipKind = n.typeKind
   inc n # skip ParLe
-  skip n # skip name
-  skip n # skip export marker
-  skip n # skip pattern
-  skip n # skip generics
-  skip n # skip params
+  if skipKind == ProctypeT:
+    skip n # nilability tag
+    skip n # params
+  else:
+    skip n # name
+    skip n # export marker
+    skip n # pattern
+    skip n # generics
+    skip n # params
 
 proc procHasPragma*(typ: Cursor; kind: PragmaKind): bool =
   var typ = typ

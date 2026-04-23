@@ -755,6 +755,10 @@ const BootstrapModules = [
   "src/nimony/deferstmts.nim",
   "src/nimony/cli.nim",
   "src/hexer/passes.nim",
+  # Tier 7 -- Semantic data.
+  "src/nimony/semdata.nim",
+  # Tier 8 -- Type analysis + expression eval.
+  "src/nimony/typeprops.nim",
 ]
 
 # Modules whose `isMainModule` block should also be executed after compilation.

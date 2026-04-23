@@ -656,55 +656,20 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
         dest.addParRi()
       elif nd.typeKind == ProctypeT:
         dest.endRead()
-        # For proctypes, replace the default nilability marker (notnil in
-        # strict mode, unchecked in lenient mode) with `annotation` inside
-        # the pragmas section. The marker was inserted by `semLocalTypeImpl`
-        # at the proctype's pragmas slot.
-        let L = dest.len
-        var found = false
-        for i in countdown(L-1, before):
-          if dest[i].kind == ParLe and
-             dest[i].substructureKind in {NotnilU, UncheckedU, NilU}:
-            dest[i] = parLeToken(annotation, info)
-            found = true
-            break
-        if not found:
-          # No pragmas at all — splice `(pragmas (annotation))` into the
-          # proctype's pragmas slot (just before the effects/body tokens).
-          # Layout: ... pragmasSlot exceptions body ParRi
-          # We need to find the pragmasSlot position. It is 3 subtrees before
-          # the closing ParRi (exceptions, body, ParRi). Walk back from ParRi
-          # skipping two subtrees.
-          var i = L - 1
-          # Skip closing ParRi
-          dec i
-          var depth = 0
-          # Skip `body` subtree
-          while i >= before:
-            if dest[i].kind == ParRi: inc depth
-            elif dest[i].kind == ParLe: dec depth
-            if depth <= 0:
-              dec i
-              break
-            dec i
-          # Skip `exceptions` subtree
-          depth = 0
-          while i >= before:
-            if dest[i].kind == ParRi: inc depth
-            elif dest[i].kind == ParLe: dec depth
-            if depth <= 0:
-              break
-            dec i
-          # `i` now points at the first token of the `pragmas` slot. If that
-          # slot is a dot token, replace it with a full (pragmas annotation).
-          if i >= before and dest[i].kind == DotToken:
-            var tail = newSeq[PackedToken]()
-            for k in (i+1) ..< dest.len: tail.add dest[k]
-            dest.shrink i
-            dest.addParLe PragmasU, info
-            dest.addParPair annotation, info
-            dest.addParRi()
-            for t in tail: dest.add t
+        # Slot 0 of `(proctype <NilTag> ...)` is the nilability marker. Set
+        # it directly — it's either a placeholder dot inserted by
+        # `semLocalTypeImpl` or a marker we now overwrite with `annotation`.
+        let nilTagPos = before + 1 # ParLe `(proctype` is at `before`
+        if dest[nilTagPos].kind == DotToken:
+          # replace dot with `(annotation)`
+          var tail = newSeq[PackedToken]()
+          for k in (nilTagPos+1) ..< dest.len: tail.add dest[k]
+          dest.shrink nilTagPos
+          dest.addParPair annotation, info
+          for t in tail: dest.add t
+        elif dest[nilTagPos].kind == ParLe and
+             dest[nilTagPos].substructureKind in {NotnilU, UncheckedU, NilU}:
+          dest[nilTagPos] = parLeToken(annotation, info)
       elif containsGenericParams(nd):
         # keep as is, will be checked later after generic instantiation:
         dest.endRead()
@@ -927,51 +892,68 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         return
       let tk = typeKind(n)
       takeToken dest, n
-      wantDot c, dest, n # name
-      wantDot c, dest, n # export marker
-      wantDot c, dest, n # pattern
-      wantDot c, dest, n # generics
+      let isProctype = tk == ProctypeT
+      let nilTagPos = dest.len
+      var sourceIsNewLayout = false
+      if isProctype:
+        # Detect input layout: nifler's source-form proctype has 4 leading
+        # `.` slots (name/export/pattern/generics) before `(params...)`. Sem
+        # may also feed back its own already-canonicalised proctype, where
+        # slot 0 is the nilability tag (`(notnil)`/`(nil)`/`(unchecked)`)
+        # or a single `.` placeholder before `(params...)`.
+        sourceIsNewLayout =
+          n.substructureKind in {NotnilU, NilU, UncheckedU} or
+          (n.kind == DotToken and (block:
+            var probe = n; inc probe
+            probe.substructureKind == ParamsU))
+        # Slot 0 carries the nilability tag. Default to notnil (or unchecked
+        # in lenientnils mode); patched to `nil` below if the source carries
+        # a trailing nil suffix.
+        let defaultMark =
+          if LenientNilsFeature notin c.features: NotnilU
+          else: UncheckedU
+        if sourceIsNewLayout:
+          if n.kind == DotToken:
+            dest.addParPair defaultMark, info
+            inc n
+          else:
+            takeTree dest, n
+        else:
+          dest.addParPair defaultMark, info
+          for _ in 0..3:
+            if n.kind == DotToken: inc n
+      else:
+        wantDot c, dest, n # name
+        wantDot c, dest, n # export marker
+        wantDot c, dest, n # pattern
+        wantDot c, dest, n # generics
       let beforeParams = dest.len
       c.openScope()
       semParams c, dest, n
       semLocalTypeImpl c, dest, n, InReturnTypeDecl
       var crucial = default CrucialPragma
       semPragmas c, dest, n, crucial, ProcY
-      var n2 = n
-      skip n2 # dot
-      if n2.kind != ParRi: skip n2 # maybe body
-      let hasNilSuffix = n2.exprKind == NilX
-      if tk == ProctypeT:
-        let annotation =
-          if hasNilSuffix:
-            NilU
-          elif LenientNilsFeature notin c.features:
-            NotnilU
-          else:
-            UncheckedU
-        if dest[dest.len-1].kind == DotToken:
-          # replace dot with (pragmas (annotation))
-          dest.shrink dest.len-1
-          dest.addParLe PragmasU, info
-          dest.addParPair annotation, info
-          dest.addParRi()
-        elif dest[dest.len-1].kind == ParRi:
-          # check if a nil annotation is already present before inserting
-          let hasNilAnnotation = dest.len >= 3 and
-            dest[dest.len-2].kind == ParRi and dest[dest.len-3].kind == ParLe and
-            (dest[dest.len-3].tag == cast[TagId](NotnilU) or
-             dest[dest.len-3].tag == cast[TagId](NilU) or
-             dest[dest.len-3].tag == cast[TagId](UncheckedU))
-          if not hasNilAnnotation:
-            dest.shrink dest.len-1
-            dest.addParPair annotation, info
-            dest.addParRi()
-      wantDot c, dest, n # exceptions
-      # make it robust against Nifler's output
-      if n.kind == ParRi:
-        dest.addDotToken()
-      else:
-        wantDot c, dest, n # body
+      var hasNilSuffix = false
+      if isProctype and not sourceIsNewLayout:
+        var n2 = n
+        skip n2 # exceptions dot
+        if n2.kind != ParRi: skip n2 # body dot
+        hasNilSuffix = n2.exprKind == NilX
+        if hasNilSuffix:
+          dest[nilTagPos] = parLeToken(NilU, info)
+        # consume the legacy trailing exceptions/body slots from input
+        if n.kind == DotToken: inc n
+        if n.kind == DotToken: inc n
+      elif not isProctype:
+        var n2 = n
+        skip n2 # exceptions dot
+        if n2.kind != ParRi: skip n2 # body dot
+        hasNilSuffix = n2.exprKind == NilX
+        wantDot c, dest, n # exceptions
+        if n.kind == ParRi:
+          dest.addDotToken()
+        else:
+          wantDot c, dest, n # body
       # close it here so that pragmas like `requires` can refer to the params:
       c.closeScope()
       if hasNilSuffix:

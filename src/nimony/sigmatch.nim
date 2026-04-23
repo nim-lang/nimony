@@ -684,11 +684,10 @@ proc extractProcProps*(c: var Cursor): ProcProperties =
 
 proc procTypeMatch(m: var Match; f, a: var Cursor) =
   assert f.typeKind in RoutineTypes
-  inc f
-  for i in 1..4: skip f
+  let fIsProctype = f.typeKind == ProctypeT
+  skipToParams f
   assert a.typeKind in RoutineTypes
-  inc a
-  for i in 1..4: skip a
+  skipToParams a
   var hasParams = 0
   if f.substructureKind == ParamsU:
     inc f
@@ -744,10 +743,11 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
   elif fcc.usesPassive != acc.usesPassive:
     m.error PassiveMismatch, f, a
   # XXX consider when f or a is (params):
-  skip f # effects
-  #skip a # effects
-  skip f # body
-  #skip a # body
+  if not fIsProctype:
+    skip f # effects
+    skip f # body
+    #skip a # effects
+    #skip a # body
   expectParRi m, f
   #expectParRi m, a
 
@@ -1559,8 +1559,7 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
 
   var f = fn.typ
   if f.typeKind in RoutineTypes:
-    inc f # skip ParLe
-    for i in 1..4: skip f
+    skipToParams f
   assert f.substructureKind == ParamsU
   inc f # "params"
   sigmatchLoop m, f, args
@@ -1601,11 +1600,9 @@ proc mutualGenericMatch(a, b: Match): DisambiguationResult =
   let c = a.context
   var aParams = a.fn.typ
   var bParams = b.fn.typ
-  inc aParams
-  for i in 1..4: skip aParams
+  skipToParams aParams
   assert aParams.substructureKind == ParamsU
-  inc bParams
-  for i in 1..4: skip bParams
+  skipToParams bParams
   assert bParams.substructureKind == ParamsU
   inc aParams
   inc bParams
@@ -1767,8 +1764,7 @@ proc sigmatchNamedArgs*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
   if hasNamedArgs:
     var params = fn.typ
     if params.typeKind in RoutineTypes:
-      inc params
-      for i in 1..4: skip params
+      skipToParams params
     assert params.substructureKind == ParamsU
     sigmatch m, fn, orderArgs(m, params, args), explicitTypeVars
   else:

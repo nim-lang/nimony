@@ -297,11 +297,11 @@ proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor)
 
 proc trProcTypeBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   dest.add tagToken("proctype", n.info)
-  # This is really stupid...
+  # NIFC proctype keeps the proc-decl shape with empty name/export/pattern/typevars
+  # slots, so we emit `.` for slot 0 ourselves.
   dest.addDotToken() # name
-  inc n # proc
-  # name, export marker, pattern, type vars:
-  for i in 0..<ParamsPos: skip n
+  let isProctype = n.typeKind == ProctypeT
+  skipToParams n
   trParams c, dest, n
 
   let pinfo = n.info
@@ -312,11 +312,12 @@ proc trProcTypeBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     addKey dest, genPragmas, name, pinfo
   closeGenPragmas dest, genPragmas
 
-  # ignore, effects and body:
-  if n.kind != ParRi:
-    skip n
+  # ignore effects and body slots only present in proc-decl-shaped layouts.
+  if not isProctype:
     if n.kind != ParRi:
       skip n
+      if n.kind != ParRi:
+        skip n
   takeParRi dest, n
 
 proc trRefBody(c: var EContext; dest: var TokenBuf; n: var Cursor; key: string) =

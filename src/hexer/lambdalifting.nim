@@ -344,11 +344,12 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let info = n.info
     copyIntoKind dest, TupleT, info:
       copyIntoKind dest, ProctypeT, info:
-        for i in 1..ParamsPos: dest.addDotToken()
-        let usesWrapper = n.typeKind in RoutineTypes
+        dest.addDotToken() # nilability tag
+        let inputKind = n.typeKind
+        let isProctypeInput = inputKind == ProctypeT
+        let usesWrapper = inputKind in RoutineTypes
         if usesWrapper:
-          inc n
-          for i in 1..4: skip n
+          skipToParams n
         if n.substructureKind == ParamsU:
           treParamsWithEnv(c, dest, n)
         else:
@@ -360,21 +361,28 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
         tre c, dest, n # return type
         # pragmas:
         tre c, dest, n
-        if usesWrapper:
+        if usesWrapper and not isProctypeInput:
           # effects and body, deliberately made flexible here for future changes
           # as it's messy to work with.
           if n.kind != ParRi:
             skip n
             if n.kind != ParRi: skip n
-          skipParRi n
+        skipParRi n
       copyIntoKind dest, RefT, info:
         dest.addSymUse pool.syms.getOrIncl(RootObjName), info
   else:
+    let isProctypeInput = n.typeKind == ProctypeT
     dest.takeToken n
-    for i in 0..<BodyPos:
-      tre c, dest, n
-    if n.kind != ParRi:
-      dest.takeTree n # don't transform the potential proc body here
+    if isProctypeInput:
+      # new layout: nilability, params, retType, pragmas
+      for i in 0..3:
+        if n.kind == ParRi: break
+        tre c, dest, n
+    else:
+      for i in 0..<BodyPos:
+        tre c, dest, n
+      if n.kind != ParRi:
+        dest.takeTree n # don't transform the potential proc body here
     dest.takeParRi n
 
 proc treType(c: var Context; dest: var TokenBuf; n: var Cursor)
@@ -607,10 +615,8 @@ proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
   var n = n
   let info = n.info
   copyIntoKind dest, ProctypeT, info:
-    inc n
-    for i in 1..ParamsPos:
-      dest.addDotToken()
-      skip n
+    dest.addDotToken() # nilability tag
+    skipToParams n
     copyIntoKind dest, ParamsU, n.info:
       if n.kind == DotToken:
         inc n
