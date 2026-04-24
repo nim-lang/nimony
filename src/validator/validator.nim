@@ -73,7 +73,7 @@ type
     paramsPos: Cursor
     bodyPos: Cursor
     st: SymbolTable
-    cursorParams: seq[string]
+    cursorParams: seq[Cursor]  ## lvalue cursors for each `var Cursor` parameter
     hasCursor: bool
     hasBuffer: bool
 
@@ -502,8 +502,8 @@ const
   ## Procs that skip the ParRi after a while-kind-ParRi loop
   ParRiSkipProcs = ["inc", "skipParRi", "takeParRi", "takeToken"]
 
-proc scanCallsForCursorArg(bc: Cursor; endNested: int; cursorParams: seq[string];
-                           consumeCounts: var Table[string, int]) =
+proc scanCallsForCursorArg(bc: Cursor; endNested: int; cursorParams: seq[Cursor];
+                           consumeCounts: var seq[int]) =
   ## Scan a subtree for any call/cmd that passes one of the cursor params
   ## as an argument. This catches both direct consume procs (skip, takeTree)
   ## and pass-internal procs that take `var Cursor` (trExpr, trStmt, etc.).
@@ -517,19 +517,16 @@ proc scanCallsForCursorArg(bc: Cursor; endNested: int; cursorParams: seq[string]
         var peek = bc
         inc peek # skip (cmd/(call
         # Skip the callee name/dot-expr
-        var callName = ""
         if peek.kind == Ident:
-          callName = pool.strings[peek.litId]
           skip peek
         elif peek.kind == ParLe:
-          callName = extractDotCallName(peek)
           skip peek
-        # Scan all arguments for cursor param names
+        # Scan all arguments for cursor param lvalues
         while peek.kind != ParRi:
-          if peek.kind == Ident:
-            let argName = pool.strings[peek.litId]
-            if argName in consumeCounts:
-              consumeCounts[argName] += 1
+          for i, cp in cursorParams:
+            if equalLvalues(peek, cp):
+              consumeCounts[i] += 1
+              break
           skip peek
       inc nested
       inc bc
@@ -548,18 +545,16 @@ proc scanObligations(ctx: var CheckContext; procs: openArray[ProcMeta]) =
   ## completely unused cursor parameters.
   for p in procs:
     if p.cursorParams.len == 0: continue
-    var consumeCounts = initTable[string, int]()
-    for cp in p.cursorParams:
-      consumeCounts[cp] = 0
+    var consumeCounts = newSeq[int](p.cursorParams.len)
 
     var bc = p.bodyPos
     inc bc # skip (stmts
     scanCallsForCursorArg(bc, 1, p.cursorParams, consumeCounts)
 
-    for cp in p.cursorParams:
-      if consumeCounts[cp] == 0:
+    for i, cp in p.cursorParams:
+      if consumeCounts[i] == 0:
         addWarning(ctx, p.procCursor.info, p.name,
-          "parameter `" & cp & ": var Cursor` is never passed to any call")
+          "parameter `" & lvalueToStr(cp) & ": var Cursor` is never passed to any call")
 
 # ---------------------------------------------------------------------------
 # Step 3b: Cursor-buffer balance — tie traversal and emission together
@@ -613,18 +608,30 @@ proc procHasBufferAccess(st: SymbolTable; reg: TypeRegistry; paramsPos: Cursor):
     skip pc
   false
 
+proc collectCursorParamLvs(paramsNode: Cursor; st: SymbolTable): seq[Cursor] =
+  ## Re-scan the params node to collect Cursor lvalues for each `var Cursor` parameter.
+  result = @[]
+  var n = paramsNode
+  if n.kind != ParLe or pool.tags[n.tag] != "params": return
+  inc n # skip (params
+  while n.kind != ParRi:
+    if n.kind == ParLe and pool.tags[n.tag] == "param":
+      var p = n
+      inc p # skip (param
+      if p.kind == Ident:
+        let info = st.getVar(pool.strings[p.litId])
+        if info.trackedKind == tkCursor and info.isMut:
+          result.add p  # cursor at the param name Ident
+    skip n
+
 proc buildProcMetas(procList: seq[ProcInfo]; reg: TypeRegistry): seq[ProcMeta] =
   result = @[]
   for p in procList:
     if not p.hasBody: continue
 
     let st = buildProcSymbolTable(p.paramsPos, reg)
-    var cursorParams: seq[string] = @[]
-    var hasCursor = false
-    for varName, info in st.vars:
-      if info.trackedKind == tkCursor and info.isMut:
-        hasCursor = true
-        cursorParams.add varName
+    let cursorParams = collectCursorParamLvs(p.paramsPos, st)
+    let hasCursor = cursorParams.len > 0
     let hasBuffer = procHasBufferAccess(st, reg, p.paramsPos)
 
     result.add ProcMeta(
@@ -854,13 +861,15 @@ proc scanUnsafeCursorOps(ctx: var CheckContext; reg: TypeRegistry; procs: openAr
               else:
                 skip peek
               while peek.kind != ParRi:
-                if peek.kind == Ident:
-                  let argName = pool.strings[peek.litId]
-                  if argName in p.cursorParams:
+                var matched = false
+                for cp in p.cursorParams:
+                  if equalLvalues(peek, cp):
                     addWarning(ctx, bc.info, p.name,
-                      "`" & callName & " " & argName &
+                      "`" & callName & " " & lvalueToStr(cp) &
                       "` needs a SkipIntent argument for justification")
+                    matched = true
                     break
+                if matched: break
                 skip peek
             elif callName notin ReasonRequiredProcs and
                  callName notin ["takeTree", "takeToken", "takeParRi",
@@ -1486,14 +1495,16 @@ proc main() =
       let name = p.name
       if name notin eg.procs: continue
       let pe = eg.procs[name]
-      var clv = pe.cursorLv
-      if cursorIsNil(clv) and pe.wrapsInput:
-        clv = detectDestLvalue(p.bodyPos, "n")
-      if cursorIsNil(clv): continue
-      let state = analyzeCursorPath(eg, p.bodyPos, clv)
-      if state == csNotAdvanced:
-        ctx.addWarning p.procCursor.info, name,
-          "cursor `" & lvalueToStr(clv) & "` not advanced on every code path"
+      var clvs = pe.cursorLvs
+      if clvs.len == 0 and pe.wrapsInput:
+        let fallback = detectDestLvalue(p.bodyPos, "n")
+        if not cursorIsNil(fallback):
+          clvs = @[fallback]
+      for clv in clvs:
+        let state = analyzeCursorPath(eg, p.bodyPos, clv)
+        if state == csNotAdvanced:
+          ctx.addWarning p.procCursor.info, name,
+            "cursor `" & lvalueToStr(clv) & "` not advanced on every code path"
 
   var errors = 0
   var warnings = 0

@@ -66,7 +66,7 @@ type
     annotated*: bool ## true if effect comes from ensuresNif annotation
     wrapsInput*: bool ## true if it does copyInto dest, n: (preserves tag)
     destLv*: Cursor   ## lvalue of the output variable (e.g. bare `dest` or `c.dest`)
-    cursorLv*: Cursor  ## lvalue of the input cursor variable (e.g. bare `n` or `c.n`)
+    cursorLvs*: seq[Cursor]  ## lvalues of input cursor variables (e.g. `n`, `f`, `a`)
     destIsParam*: bool ## true if dest is a direct parameter (not accessed via context field)
 
   SymContext* = Table[string, ChildKind]
@@ -1031,16 +1031,24 @@ proc detectWrapsInput*(graph: EffectGraph; body: Cursor; destLv: Cursor): bool =
     skip c
   return false
 
-proc detectCursorLv*(body: Cursor): Cursor =
+proc detectCursorLvs*(body: Cursor): seq[Cursor] =
   ## Deep-scan a proc body for cursor-advancing operations (inc, skip,
-  ## copyInto, takeTree, etc.) and return the cursor lvalue.
-  ## Returns nil Cursor if no cursor operations found.
+  ## copyInto, takeTree, etc.) and return all distinct cursor lvalues found.
   const IgnoredNames = ["dest", "c", "result", "info", "nested"]
+  result = @[]
   var c = body
-  if c.kind != ParLe: return default(Cursor)
+  if c.kind != ParLe: return
   var nested = 0
   inc nested
   inc c
+  template addIfNew(lv: Cursor) =
+    var found = false
+    for existing in result:
+      if equalLvalues(existing, lv):
+        found = true
+        break
+    if not found:
+      result.add lv
   while nested > 0:
     case c.kind
     of ParLe:
@@ -1055,16 +1063,15 @@ proc detectCursorLv*(body: Cursor): Cursor =
           if peek.kind == ParLe:
             # Method call: (call (dot RECV callee) args...)
             let recv = extractDotReceiver(peek)
-            if not cursorIsNil(recv) and recv.kind == Ident:
-              let rname = pool.strings[recv.litId]
-              if rname notin IgnoredNames:
-                return recv
+            if not cursorIsNil(recv) and isLvalue(recv):
+              if recv.kind != Ident or pool.strings[recv.litId] notin IgnoredNames:
+                addIfNew recv
             skip peek
             # Also check first arg after dot
             if peek.kind == Ident:
               let arg = pool.strings[peek.litId]
               if arg notin IgnoredNames:
-                return peek
+                addIfNew peek
           elif peek.kind == Ident:
             let callee = pool.strings[peek.litId]
             inc peek  # skip callee
@@ -1073,14 +1080,14 @@ proc detectCursorLv*(body: Cursor): Cursor =
               if peek.kind == Ident:
                 let arg = pool.strings[peek.litId]
                 if arg notin IgnoredNames:
-                  return peek
+                  addIfNew peek
             elif callee in ["copyInto", "takeTree", "takeToken", "takeParRi"]:
               # Second arg (after dest) is the cursor
               skip peek  # skip dest
               if peek.kind == Ident:
                 let arg = pool.strings[peek.litId]
                 if arg notin IgnoredNames:
-                  return peek
+                  addIfNew peek
       inc nested
       inc c
     of ParRi:
@@ -1088,7 +1095,6 @@ proc detectCursorLv*(body: Cursor): Cursor =
       inc c
     else:
       inc c
-  return default(Cursor)
 
 # ---- Building the full graph for a file ----
 
@@ -1150,7 +1156,7 @@ proc buildEffectGraph*(buf: var TokenBuf; procList: seq[ProcInfo]): EffectGraph 
   var destHints = initTable[string, string]()   # procName -> dest hint name
   var cursorHints = initTable[string, string]()  # procName -> cursor hint name
   var destLvs = initTable[string, Cursor]()     # procName -> detected dest lvalue
-  var cursorLvs = initTable[string, Cursor]()   # procName -> detected cursor lvalue
+  var allCursorLvs = initTable[string, seq[Cursor]]() # procName -> all cursor lvalues
   for p in procList:
     let (annotEffect, destName) = extractEnsuresNif(p.procCursor)
     if annotEffect != nil:
@@ -1168,15 +1174,17 @@ proc buildEffectGraph*(buf: var TokenBuf; procList: seq[ProcInfo]): EffectGraph 
     let lv = detectDestLvalue(p.bodyPos, hint)
     if not cursorIsNil(lv):
       destLvs[p.name] = lv
+    # Collect cursor lvalues: from annotation hint + auto-detection
+    var clvs: seq[Cursor] = @[]
     let cursorHint = cursorHints.getOrDefault(p.name, "")
     if cursorHint.len > 0:
       let clv = detectDestLvalue(p.bodyPos, cursorHint)
       if not cursorIsNil(clv):
-        cursorLvs[p.name] = clv
+        clvs.add clv
     else:
-      let clv = detectCursorLv(p.bodyPos)
-      if not cursorIsNil(clv):
-        cursorLvs[p.name] = clv
+      clvs = detectCursorLvs(p.bodyPos)
+    if clvs.len > 0:
+      allCursorLvs[p.name] = clvs
 
   # Register annotated procs.
   for p in procList:
@@ -1201,9 +1209,9 @@ proc buildEffectGraph*(buf: var TokenBuf; procList: seq[ProcInfo]): EffectGraph 
       if prev == nil or prev.effect == nil or
           prev.effect.kind == ekUnknown or not sameEffect(prev.effect, effect):
         let dip = detectDestIsParam(destLv)
-        let clv = cursorLvs.getOrDefault(p.name)
+        let clvs = allCursorLvs.getOrDefault(p.name)
         result.procs[p.name] = ProcEffect(name: p.name, effect: effect,
-                                           destLv: destLv, cursorLv: clv,
+                                           destLv: destLv, cursorLvs: clvs,
                                            destIsParam: dip)
         changed = true
 
