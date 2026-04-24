@@ -469,7 +469,7 @@ proc trCase(c: var ControlFlow; n: var Cursor; tar: var Target) =
       # compile the final branch like an `else` to model the exhaustiveness precisely
       # in the control flow graph:
       inc n
-      skip n # ranges
+      skip n, SkipValue # ranges
       trStmtOrExpr c, n, tar
       endings.add c.jmpForw(n.info) # this is crucial if we use the graph to compute basic blocks
     else:
@@ -779,18 +779,18 @@ proc trLocal(c: var ControlFlow; n: var Cursor) =
   let kind = n.symKind
   let orig = n
   inc n
-  skip n # name
-  skip n # export marker
-  skip n # pragmas
+  skip n, SkipName # name
+  skip n, SkipExport # export marker
+  skip n, SkipPragmas # pragmas
   #c.typeCache.registerLocal(name, kind, n)
-  skip n # type
+  skip n, SkipType # type
 
   var aa = Target(m: IsEmpty)
   trExpr c, n, aa
   n = orig
   copyInto c.dest, n:
     takeLocalHeader c.typeCache, c.dest, n, kind
-    skip n # value
+    skip n, SkipValue # value
     c.dest.add aa
 
 proc trRaise(c: var ControlFlow; n: var Cursor) =

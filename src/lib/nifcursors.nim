@@ -540,6 +540,34 @@ proc takeToken*(buf: var TokenBuf; n: var Cursor) {.inline.} =
   buf.add n
   inc n
 
+type
+  SkipIntent* = enum
+    SkipTag       ## advance past a ParLe tag (entering a node to rewrite children)
+    SkipParRi     ## advance past a closing paren
+    SkipName      ## skip a name/SymbolDef child
+    SkipExport    ## skip an export marker child
+    SkipPragmas   ## skip a pragmas section
+    SkipType      ## skip a type child
+    SkipExpr    ## skip an expression child
+    SkipStmt    ## skip a statement child
+    SkipValue     ## skip a value/expression child
+    SkipGenParams ## skip generic parameters
+    SkipCond      ## skip a condition expression
+    SkipBody      ## skip a body/stmts section
+    SkipEffects   ## skip an effects section
+    SkipResult    ## skip a result that has been handled separately
+    SkipFull      ## skip an entire subtree being dropped or replaced
+
+template skip*(c: var Cursor; intent: SkipIntent) =
+  ## Skip a subtree with declared intent. The intent enum documents why the
+  ## input is being dropped and enables the validator to check correctness.
+  skip(c)
+
+template inc*(c: var Cursor; intent: SkipIntent) =
+  ## Advance one token with declared intent. The intent enum documents why
+  ## the token is being dropped and enables the validator to check correctness.
+  inc c
+
 proc takeTree*(dest: var TokenBuf; n: var Cursor) =
   if n.kind != ParLe:
     dest.add n

@@ -405,9 +405,9 @@ proc hasRtti*(s: SymId): bool =
   var n = res.decl
   assert n.stmtKind == TypeS
   inc n # skip ParLe
-  skip n # name
-  skip n # export marker
-  skip n # type vars
+  skip n, SkipName # name
+  skip n, SkipExport # export marker
+  skip n, SkipGenParams # type vars
   result = hasPragma(n, InheritableP) and not hasPragma(n, PureP)
 
 proc hasRtti*(pragmas: Cursor): bool =

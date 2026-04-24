@@ -28,8 +28,8 @@ proc genEnumToStrProcCase(c: var SemContext; dest: var TokenBuf; enumDecl: var C
     let symInfo = enumDecl.info
     inc enumDecl
     skip enumDecl # enum field name
-    skip enumDecl # export marker
-    skip enumDecl # pragmas
+    skip enumDecl, SkipExport # export marker
+    skip enumDecl, SkipPragmas # pragmas
 
     inc enumDecl # into tupleConstr
     skip enumDecl # skips counter field

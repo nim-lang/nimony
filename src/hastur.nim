@@ -22,7 +22,7 @@ Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|hexer|nifc|nifmake|nj|vl]   build selected tools (default: all).
+  build [all|nimony|nifler|hexer|nifc|nifmake|nj|vl|validator]   build selected tools (default: all).
   bootstrap            compile every module on the bootstrap list with nimony.
   all                  run all tests (also the default action).
   nimony               run Nimony tests.
@@ -525,7 +525,7 @@ proc validatorTests() =
         let expected = readFile(expectedFile).strip
         var got = ""
         for line in msgs.splitLines:
-          if line.startsWith("  ") or line.contains("violation"):
+          if line.contains("Error:") or line.contains("Warning:"):
             if got.len > 0: got.add "\n"
             got.add line
         if got.strip.replace("\\", "/") != expected.strip.replace("\\", "/"):
@@ -690,9 +690,9 @@ proc buildNifmake(showProgress = false) =
   robustMoveFile "src/nifmake/" & exe, binDir() / exe
 
 proc buildValidator(showProgress = false) =
-  exec nimcPrefix() & "src/nimony/validator.nim", showProgress
+  exec nimcPrefix() & "src/validator/validator.nim", showProgress
   let exe = "validator".addFileExt(ExeExt)
-  robustMoveFile "src/nimony/" & exe, binDir() / exe
+  robustMoveFile "src/validator/" & exe, binDir() / exe
 
 # ---------------------------------------------------------------------------
 # Bootstrapping progress (see https://github.com/nim-lang/nimony/issues/1788).
@@ -924,7 +924,7 @@ proc handleCmdLine =
     validatorTests()
     bootstrapTests()
 
-  of "checktags", "validator":
+  of "validate", "validator":
     buildValidator()
     validatorTests()
 
@@ -977,6 +977,8 @@ proc handleCmdLine =
       buildNj(showProgress)
     of "vl":
       buildVl(showProgress)
+    of "validator":
+      buildValidator(showProgress)
     else:
       writeHelp()
     removeDir "nimcache"

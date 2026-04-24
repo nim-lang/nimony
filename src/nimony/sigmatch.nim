@@ -747,8 +747,8 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
     m.error PassiveMismatch, f, a
   # XXX consider when f or a is (params):
   if not fIsProctype:
-    skip f # effects
-    skip f # body
+    skip f, SkipEffects # effects
+    skip f, SkipBody # body
     #skip a # effects
     #skip a # body
   expectParRi m, f

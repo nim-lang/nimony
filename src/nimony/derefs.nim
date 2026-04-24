@@ -813,8 +813,8 @@ proc trFor(c: var Context; n: var Cursor) =
         skip nn
       if nn.typeKind in {OutT, MutT, LentT}:
         dangerous.add(s)
-      skip nn # type
-      skip nn # value
+      skip nn, SkipType # type
+      skip nn, SkipValue # value
     # now work with `n`, not `nn`
     trForHelper c, n, dangerous
   else:
