@@ -39,7 +39,6 @@ proc needsTemp(n: Cursor): bool =
   # the AtX branch. `result = false` here is the bool default anyway —
   # run `bin/nimony c --verbose src/hexer/desugar.nim` (with this line
   # removed) to see the NJ IR that trips the checker.
-  result = false
   case n.kind
   of Symbol, IntLit, UIntLit, FloatLit, CharLit, StringLit:
     result = false
@@ -65,12 +64,12 @@ proc needsTemp(n: Cursor): bool =
       skip n
       result = needsTemp(n)
     of AtX, PatX, ArratX, TupatX, DotX, DdotX, ParX, AddrX, HaddrX:
+      result = false
       inc n
       while n.kind != ParRi:
         if needsTemp(n):
           return true
         skip n
-      result = false
     of ErrX, DerefX, AndX, OrX, XorX, NotX, NegX, AlignofX,
         OffsetofX, OconstrX, AconstrX, BracketX, CurlyX, CurlyatX,
         OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX,
