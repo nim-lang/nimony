@@ -260,6 +260,27 @@ proc takeTree*(t: var NifBuilder; n: var NifCursor) =
   prepareMutation(t)
   t.p[].buf.takeTree(n.cursor)
 
+template copyInto*(t: var NifBuilder; n: var NifCursor; body: untyped) =
+  ## Copies the opening tag from `n` into `t`, advances `n` past the tag,
+  ## runs `body` (which should process the children), then closes the node
+  ## in `t` and advances `n` past the closing `)`.
+  ##
+  ## Use this instead of manual `addParLe` + `inc` + `addParRi` + `inc`
+  ## when transforming a node while preserving its tag:
+  ##
+  ## .. code-block:: nim
+  ##   o.copyInto(n):
+  ##     while n.kind != ParRi:
+  ##       transform(n, o)
+  assert n.kind == ParLe, "copyInto requires cursor at ParLe"
+  prepareMutation(t)
+  t.p[].buf.add n.cursor
+  inc n.cursor
+  body
+  t.p[].buf.addParRi()
+  assert n.kind == ParRi, "copyInto: body must consume all children"
+  inc n.cursor
+
 proc addSubtree*(t: var NifBuilder; n: NifCursor) =
   ## Copies the current token or subtree from `n` into `t` without advancing it.
   prepareMutation(t)

@@ -810,48 +810,71 @@ const
   ## With a string argument = justified. Without = flagged.
   ReasonRequiredProcs = ["skip", "inc"]
 
-proc scanUnsafeCursorOps(ctx: var CheckContext; procs: openArray[ProcMeta]) =
+proc scanUnsafeCursorOps(ctx: var CheckContext; reg: TypeRegistry; procs: openArray[ProcMeta]) =
   ## In emitter procs (cursor + buffer access), flag every bare `skip n` and
   ## `inc n` on a cursor variable. These should be replaced by:
   ##   - `takeToken dest, n` (for inc that copies)
   ##   - `skipUnsafe n, "reason"` (for skip that drops)
   ##   - `skipParRi n` (for structural close)
+  ##
+  ## Suppressed when the `inc`/`skip` is inside a call that also takes the
+  ## cursor as argument (e.g. `traverse n: inc n` — the cursor is delegated
+  ## to `traverse`, so inner ops are that call's responsibility).
   for p in procs:
     if not p.hasCursor or not p.hasBuffer: continue
     var bc = p.bodyPos
     var nested = 0
     if bc.kind != ParLe: continue
     inc nested; inc bc
+    # delegatedDepth > 0 means we're inside a call/cmd that takes a cursor
+    # param — inner skip/inc on that cursor are the call's responsibility.
+    var delegatedDepth = 0
+    var delegateNesting: seq[int] = @[]
     while nested > 0:
       case bc.kind
       of ParLe:
         let tag = pool.tags[bc.tag]
         if tag in ["cmd", "call"]:
-          var peek = bc
-          inc peek
-          var callName = ""
-          if peek.kind == Ident:
-            callName = pool.strings[peek.litId]
-          elif peek.kind == ParLe:
-            callName = extractDotCallName(peek)
-          if callName in ReasonRequiredProcs and not hasIntentArg(bc):
-            # skip/inc without reason string in an emitter proc — flag it
+          if delegatedDepth == 0:
+            var peek = bc
+            inc peek
+            var callName = ""
             if peek.kind == Ident:
-              skip peek
-            else:
-              skip peek
-            while peek.kind != ParRi:
+              callName = pool.strings[peek.litId]
+            elif peek.kind == ParLe:
+              callName = extractDotCallName(peek)
+            if callName in ReasonRequiredProcs and not hasIntentArg(bc):
+              # skip/inc without reason string — flag it
               if peek.kind == Ident:
-                let argName = pool.strings[peek.litId]
-                if argName in p.cursorParams:
-                  addWarning(ctx, bc.info, p.name,
-                    "`" & callName & " " & argName &
-                    "` needs a SkipIntent argument for justification")
-                  break
-              skip peek
+                skip peek
+              else:
+                skip peek
+              while peek.kind != ParRi:
+                if peek.kind == Ident:
+                  let argName = pool.strings[peek.litId]
+                  if argName in p.cursorParams:
+                    addWarning(ctx, bc.info, p.name,
+                      "`" & callName & " " & argName &
+                      "` needs a SkipIntent argument for justification")
+                    break
+                skip peek
+            elif callName notin ReasonRequiredProcs and
+                 callName notin ["takeTree", "takeToken", "takeParRi",
+                                 "skipParRi", "copyInto", "copyTree"]:
+              # Check if this call takes a cursor param as argument — if so,
+              # inner ops are delegated to it
+              if hasCursorArg(p.st, reg, bc):
+                delegatedDepth += 1
+                delegateNesting.add nested
+          # else: already inside a delegated call, don't check
         inc nested; inc bc
       of ParRi:
-        dec nested; inc bc
+        dec nested
+        if delegatedDepth > 0 and delegateNesting.len > 0 and
+            nested == delegateNesting[^1]:
+          delegatedDepth -= 1
+          discard delegateNesting.pop
+        inc bc
       else:
         inc bc
 
@@ -1449,42 +1472,32 @@ proc main() =
   if strict:
     scanForNonExhaustiveCases(ctx, buf)
 
-  discard # tag grammar checks done
-
-  # Check preservation property: procs with wrapsInput or requiresNif
-  # annotations must advance the cursor on every code path.
-  var preservationWarnings: seq[string] = @[]
-  for p in procMetas:
-    let name = p.name
-    if name notin eg.procs: continue
-    let pe = eg.procs[name]
-    let cv = if pe.cursorVar.len > 0: pe.cursorVar
-             elif pe.wrapsInput: "n"
-             else: ""
-    if cv.len == 0: continue
-    let state = analyzeCursorPath(eg, p.bodyPos, cv)
-    if state == csNotAdvanced:
-      preservationWarnings.add name & " — cursor `" & cv &
-        "` not advanced on every code path"
-
-  for w in preservationWarnings:
-    if noColors:
-      stdout.writeLine passFile, " Warning: ", w
-    else:
-      stdout.styledWriteLine fgCyan, passFile, " ", resetStyle,
-        fgYellow, styleBright, "Warning: ", resetStyle, w
-
   # Obligation tracking: check cursor params are consumed
   scanObligations(ctx, procMetas)
 
   # Cursor-buffer balance: tie traversal and emission together
   scanCursorBufferBalance(ctx, reg, procMetas)
 
-  # Unsafe cursor ops: flag bare skip/inc in emitter procs
-  scanUnsafeCursorOps(ctx, procMetas)
-
-  # While-ParRi completion: check ParRi is consumed after while-kind-ParRi loops
+  # While-ParRi completion: termination proofs for while loops
   scanWhileParRiCompletion(ctx, procMetas, buf)
+
+  # The remaining checks enforce strict compiler-pass discipline:
+  # - Bare skip/inc justification (redundant with balance check, noisy for plugins)
+  # - Preservation property (annotation-driven, not applicable to plugins)
+  if strict:
+    scanUnsafeCursorOps(ctx, reg, procMetas)
+    for p in procMetas:
+      let name = p.name
+      if name notin eg.procs: continue
+      let pe = eg.procs[name]
+      let cv = if pe.cursorVar.len > 0: pe.cursorVar
+               elif pe.wrapsInput: "n"
+               else: ""
+      if cv.len == 0: continue
+      let state = analyzeCursorPath(eg, p.bodyPos, cv)
+      if state == csNotAdvanced:
+        ctx.addWarning p.procCursor.info, name,
+          "cursor `" & cv & "` not advanced on every code path"
 
   var errors = 0
   var warnings = 0
