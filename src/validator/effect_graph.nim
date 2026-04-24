@@ -215,6 +215,19 @@ proc extractDotCallName*(c: Cursor): string =
   if n.kind == Ident:
     result = pool.strings[n.litId]
 
+proc extractCalleeName*(n: Cursor): string =
+  ## From a (call ...) or (cmd ...) node, extract the callee name.
+  ## For method calls like `(call (dot recv callee) ...)`, returns the method name.
+  ## For bare calls like `(call callee ...)`, returns the callee name.
+  var c = n
+  if c.kind != ParLe: return ""
+  inc c # skip (call/cmd
+  if c.kind == Ident:
+    return pool.strings[c.litId]
+  elif c.kind == ParLe:
+    return extractDotCallName(c)
+  return ""
+
 proc extractLastDotField*(c: Cursor): string =
   ## From `(dot obj fieldName)`, extract the innermost field name.
   result = ""
