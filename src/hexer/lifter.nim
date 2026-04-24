@@ -14,10 +14,11 @@ to type `(T, T)`, etc.
 
 ]##
 
-import std/[assertions, tables, strutils]
+import std/[assertions, tables, hashes, strutils, syncio]
 
-include nifprelude
-import nifindexes, symparser, treemangler
+include ".." / lib / nifprelude
+include ".." / lib / compat2
+import ".." / lib / [nifindexes, symparser, treemangler]
 import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints, builtintypes, typekeys, typeprops]
 
 proc isMutFirstParam*(destroyProc: SymId): bool =
@@ -72,7 +73,7 @@ proc loadHook(c: var LiftingCtx; op: AttachedOp; s: SymId): SymId =
   if result == SymId(0):
     # Check frontend hooks first (for current module during derefs pass)
     if c.frontendHooks != nil and c.frontendHooks[].hasKey(s):
-      result = c.frontendHooks[][s].a[op]
+      result = c.frontendHooks[].getOrQuit(s).a[op]
     if result == SymId(0):
       result = tryLoadHook(op, s)
     if result != SymId(0):
@@ -87,7 +88,7 @@ proc hasHook(c: var LiftingCtx; s: SymId): bool =
   if not result:
     # Check frontend hooks first
     if c.frontendHooks != nil and c.frontendHooks[].hasKey(s):
-      result = c.frontendHooks[][s].a[c.op] != SymId(0)
+      result = c.frontendHooks[].getOrQuit(s).a[c.op] != SymId(0)
     if not result:
       result = tryLoadHook(c.op, s) != SymId(0)
 
@@ -154,7 +155,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
   case typ.typeKind
   of IntT, UIntT, FloatT, BoolT, CharT, PtrT,
      MutT, OutT, SetT,
-     EnumT, HoleyEnumT, AnumT, VoidT, AutoT, SymKindT,
+     EnumT, HoleyEnumT, AnumT, VoidT, AutoT, SymkindT,
      CstringT, PointerT, OrdinalT,
      UarrayT, VarargsT, RangetypeT, TypedescT,
      RoutineTypes:
@@ -177,7 +178,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
       skip tup
     result = true
   of NoType, ErrT, NiltT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, InvokeT,
-     TypeKindT, UntypedT, TypedT, ItertypeT:
+     TypekindT, UntypedT, TypedT, ItertypeT:
     echo "isTrivial: ", toString(typ, false)
     bug "bug in isTrival computation"
 
@@ -478,7 +479,7 @@ proc unravelTuple(c: var LiftingCtx;
 proc accessArrayAt(c: var LiftingCtx; arr: TokenBuf; indexVar: SymId; paramPos = 0): TokenBuf =
   result = createTokenBuf(4)
   let nd = needsDeref(c, arr, paramPos)
-  copyIntoKind result, ArrAtX, c.info:
+  copyIntoKind result, ArratX, c.info:
     if nd:
       result.addParLe HderefX, c.info
     copyTree result, arr
@@ -859,8 +860,11 @@ proc getDestructor*(c: var LiftingCtx; typ: TypeCursor; info: PackedLineInfo): S
 
 when isMainModule:
   import std/os
-  setupProgramForTesting getCurrentDir() / "nimcache", "test.nim", ".nif"
-  let res = tryLoadHook(attachedDestroy, pool.syms.getOrIncl(StringName), false)
+  try:
+    setupProgramForTesting getCurrentDir() / "nimcache", "test.nim", ".nif"
+  except:
+    quit 1
+  let res = tryLoadHook(attachedDestroy, pool.syms.getOrIncl(StringName))
   if res != SymId(0):
     echo pool.syms[res]
   else:

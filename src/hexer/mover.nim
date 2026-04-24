@@ -8,9 +8,10 @@
 #
 
 ## Move analyser.
-import std / [assertions]
+import std / [assertions, syncio]
 
 include ".." / lib / nifprelude
+include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls, controlflow, programs]
 
 type
@@ -25,7 +26,7 @@ proc rootOf*(n: Cursor; mode = CanFollowDerefs): SymId =
       if mode == CannotFollowDerefs:
         break
       inc n
-    of DotX, TupatX, AtX, ArrAtX, AddrX, HaddrX:
+    of DotX, TupatX, AtX, ArratX, AddrX, HaddrX:
       inc n
     of ConvKinds:
       inc n
@@ -59,7 +60,7 @@ proc sameTreesIgnoreArrayIndexes*(a, b: Cursor): bool =
     case a.kind
     of ParLe:
       if a.tagId != b.tagId: return false
-      if a.exprKind in {PatX, ArrAtX}:
+      if a.exprKind in {PatX, ArratX}:
         inc a
         inc b
         if not sameTreesIgnoreArrayIndexes(a, b):
@@ -259,9 +260,9 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor]; otherU
             otherUsage = pc # XXX Fixme: pc advanced to ')'
             return false
         of IfS, WhenS, WhileS, ForS, CaseS, TryS, YldS, RaiseS, ExportS,
-           IncludeS, ImportS, FromimportS, ImportExceptS, CommentS, PragmasS,
+           IncludeS, ImportS, FromimportS, ImportexceptS, CommentS, PragmasS,
            ImportasS, ExportexceptS, BindS, MixinS, UsingS,
-           UnpackDeclS, StaticstmtS, AsmS, DeferS:
+           UnpackdeclS, StaticstmtS, AsmS, DeferS:
           bug "statement not eliminated: " & $pc.stmtKind
         of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
            AssumeS, AssertS:
@@ -321,7 +322,7 @@ when isMainModule:
     while true:
       case result.kind
       of ParLe:
-        if result.exprKind == EMoveX:
+        if result.exprKind == EmoveX:
           inc result
           return result
         inc nested

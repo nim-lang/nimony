@@ -769,6 +769,12 @@ const BootstrapModules = [
   "src/nimony/controlflow.nim",
   "src/nimony/semos.nim",
   "src/nimony/pragmacanon.nim",
+  # Tier 11 -- Semantic basics + hexer foundation.
+  "src/nimony/sembasics.nim",
+  "src/nimony/vtables_frontend.nim",
+  "src/hexer/mover.nim",
+  "src/hexer/lifter.nim",
+  "src/hexer/xelim.nim",
 ]
 
 # Modules whose `isMainModule` block should also be executed after compilation.

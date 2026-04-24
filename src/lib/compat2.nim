@@ -22,3 +22,7 @@ when not defined(nimony):
     ## this call, so the missing-key branch is unreachable in practice.
     if not t.hasKey(k): quit "getOrQuit: missing key"
     result = t[k]
+
+  proc getOrQuit*[A, B](t: var OrderedTable[A, B]; k: A): var B =
+    if not t.hasKey(k): quit "getOrQuit: missing key"
+    result = t[k]

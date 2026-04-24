@@ -6,12 +6,14 @@
 
 ## Lots of basic helpers for semantic checking.
 
-import std / [tables, sets, syncio, formatfloat, assertions]
-include nifprelude
-import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
-  programs, sigmatch, magics, reporters, nifconfig, nifindexes,
+import std / [tables, sets, hashes, syncio, formatfloat, assertions]
+include ".." / lib / nifprelude
+include ".." / lib / compat2
+import nimony_model, symtabs, builtintypes, decls, asthelpers,
+  programs, sigmatch, magics, reporters, nifconfig,
   intervals, xints,
   semdata, semos, expreval
+import ".." / lib / [symparser, nifindexes]
 
 import ".." / gear2 / modnames
 
@@ -19,15 +21,14 @@ import ".." / gear2 / modnames
 
 template buildTree*(dest: var TokenBuf; kind: StmtKind|ExprKind|TypeKind|SymKind|NimonyOther;
                     info: PackedLineInfo; body: untyped) =
-  dest.add parLeToken(cast[TagId](kind), info)
+  addParLe(dest, kind, info)
   body
   dest.addParRi()
 
 proc considerImportedSymbols(c: var SemContext; dest: var TokenBuf; name: StrId; info: PackedLineInfo): int =
   result = 0
   for moduleId in c.importTab.getOrDefault(name):
-    # prevent copies
-    let candidates = addr c.importedModules[moduleId].iface[name]
+    let candidates = addr c.importedModules.getOrQuit(moduleId).iface.getOrQuit(name)
     inc result, candidates[].len
     for defId in candidates[]:
       dest.add symToken(defId, info)
@@ -35,7 +36,7 @@ proc considerImportedSymbols(c: var SemContext; dest: var TokenBuf; name: StrId;
 proc addSymUse*(dest: var TokenBuf; s: Sym; info: PackedLineInfo) =
   dest.add symToken(s.name, info)
 
-proc buildSymChoiceForDot(c: var SemContext; dest: var TokenBuf; identifier: StrId; info: PackedLineInfo) {.used.} =
+proc buildSymChoiceForDot(c: var SemContext; dest: var TokenBuf; identifier: StrId; info: PackedLineInfo) =
   # not used yet
   var count = 0
   let oldLen = dest.len
@@ -83,12 +84,13 @@ proc rawBuildSymChoiceForForeignModule(c: var SemContext; dest: var TokenBuf; mo
                                        identifier: StrId; info: PackedLineInfo;
                                        marker: var HashSet[SymId]): int =
   result = 0
-  let candidates = c.importedModules[module].iface.getOrDefault(identifier)
+  let m = addr c.importedModules.getOrQuit(module)
+  let candidates = m[].iface.getOrDefault(identifier)
   for defId in candidates:
     if not marker.containsOrIncl(defId):
       dest.add symToken(defId, info)
     inc result
-  for forward, filter in c.importedModules[module].exports:
+  for forward, filter in m[].exports:
     if filterAllows(filter, identifier):
       inc result, rawBuildSymChoiceForForeignModule(c, dest, forward, identifier, info, marker)
 
@@ -146,8 +148,7 @@ proc addSymChoiceSyms*(c: var SemContext; dest: var TokenBuf; identifier: StrId;
     it = it.up
   # mirror considerImportedSymbols:
   for moduleId in c.importTab.getOrDefault(identifier):
-    # prevent copies
-    let candidates = addr c.importedModules[moduleId].iface[identifier]
+    let candidates = addr c.importedModules.getOrQuit(moduleId).iface.getOrQuit(identifier)
     for defId in candidates[]:
       if not marker.containsOrIncl(defId):
         dest.add symToken(defId, info)
@@ -199,7 +200,7 @@ proc buildErr*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; msg:
   var n = orig
   var hasErr = false
   if n.kind == ParLe:
-    if n.tagId == ErrT:
+    if n.tagId == nifstreams.ErrT:
       hasErr = true
     else:
       var nested = 0
@@ -209,7 +210,7 @@ proc buildErr*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; msg:
           if nested == 0: break
           dec nested
         elif n.kind == ParLe:
-          if n.tagId == ErrT:
+          if n.tagId == nifstreams.ErrT:
             hasErr = true
             break
           else:

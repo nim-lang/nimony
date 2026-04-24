@@ -11,8 +11,9 @@
 ## `let x = if cond: 3 else: 4` into
 ## `let tmp; if cond: tmp = 3 else: temp = 4; let x = tmp`
 
-import std / [assertions]
+import std / [assertions, syncio]
 include ".." / lib / nifprelude
+include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes]
 import passes
 include ".." / nimony / nif_annotations
@@ -117,12 +118,6 @@ proc trExprInto(c: var Context; dest: var TokenBuf; n: var Cursor; v: SymId) =
     copyIntoKind dest, AsgnS, info:
       dest.addSymUse v, info
       dest.addTarget tar
-
-proc skipParRi(n: var Cursor) =
-  if n.kind == ParRi:
-    inc n
-  else:
-    error "expected ')', but got: ", n
 
 proc trOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   if isComplex(n, c.goal):
@@ -693,7 +688,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     var tar = Target(m: IsIgnored)
     trBlock c, dest, n, tar
   of TemplateS, TypeS, EmitS, BreakS, ContinueS,
-     IncludeS, ImportS, FromimportS, ImportExceptS,
+     IncludeS, ImportS, FromimportS, ImportexceptS,
      ExportS, CommentS, AssumeS, AssertS,
      PragmasS, ImportasS, ExportexceptS, BindS, MixinS, UsingS:
     takeTree dest, n
@@ -703,7 +698,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       while n.kind != ParRi:
         trStmt c, dest, n
     c.typeCache.closeScope()
-  of StmtsS, UnpackDeclS:
+  of StmtsS, UnpackdeclS:
     copyInto(dest, n):
       while n.kind != ParRi:
         trStmt c, dest, n
