@@ -505,33 +505,76 @@ Trees built manually via `addParLe`/`addParRi` are not validated.
 
 ## Typical plugin structure
 
-Most plugins follow this pattern:
+### Using the Replacer API (recommended)
+
+The `Replacer` type bundles an input cursor and output builder into a single
+object with balanced operations. Each operation consumes input and produces
+output atomically, making cursor/builder mismatches impossible:
 
 ```nim
 import nimonyplugins
 
-proc transform(n: Node): NifBuilder =
+proc trAux(t: var Replacer) =
+  if t.isAtom:
+    keep t, Any             # pass through leaf tokens
+  else:
+    case t.stmtKind
+    of SomeStmtToTransform:
+      # ... custom transformation ...
+    else:
+      intoLoop t:           # descend and recurse
+        trAux t
+
+var t = loadReplacer()
+into t:                     # enter top-level (stmts ...)
+  loop t:
+    trAux t
+saveReplacer(t)
+```
+
+The core operations are:
+- `keep t, Kind` — copy one child verbatim, asserting its kind
+- `drop t, Kind` — skip one child without emitting, asserting its kind
+- `replace t, node` — skip one child, emit a replacement (NifCursor or NifBuilder)
+- `into t:` — descend into a compound node (copy tag, process children, close)
+- `loop t:` — iterate over remaining children until `)`
+- `intoLoop t:` — shortcut for `into t: loop t: body`
+- `peek t:` — read-ahead analysis without consuming (cursor is restored)
+- `getCursor(t)` / `setCursor(t, c)` — snapshot/restore cursor for analysis
+
+Kind annotations are mandatory: `keep t, Expr`, `drop t, Type`, `keep t, AsgnS`.
+Use `Any` when the child can be anything, or specific tags like `AsgnS`, `MutT`
+when the grammar dictates a fixed child.
+
+Use `t.dest` for direct builder access when emitting new nodes:
+
+```nim
+t.dest.withTree CallS, info:
+  t.dest.addSymUse sym, info
+  t.dest.addStrLit "hello"
+```
+
+### Low-level API
+
+The `NifCursor` and `NifBuilder` types remain available for plugins that
+construct output from scratch rather than transforming input:
+
+```nim
+import nimonyplugins
+
+proc transform(n: NifCursor): NifBuilder =
   result = createTree()
   var n = n
-  # Skip the StmtsS wrapper
   if n.stmtKind == StmtsS: inc n
   result.withTree StmtsS, n.info:
     while n.kind != ParRi:
-      case n.kind
-      of ParLe:
-        case n.stmtKind
-        of SomeStmtToTransform:
-          # ... custom transformation ...
-        else:
-          result.takeTree n  # pass through unchanged
-      else:
-        result.takeTree n
+      result.takeTree n
 
 var inp = loadPluginInput()
 saveTree transform(inp)
 ```
 
-The key operations are:
+The key low-level operations are:
 - `takeTree` to pass nodes through unchanged
 - `skip` to remove nodes
 - `withTree`/`addParLe`/`addParRi` to construct new nodes

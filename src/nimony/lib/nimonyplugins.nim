@@ -376,6 +376,290 @@ proc eqIdent*(n: NifCursor; name: string): bool =
   else:
     result = false
 
+# ── Replacer API ──────────────────────────────────────────────────────────
+# The Replacer bundles a NifBuilder (output) and NifCursor (input) into a
+# single object with balanced operations for tree transformations.
+
+type
+  ChildKind* = enum
+    ## Category of a NIF child for `keep`/`drop` assertions.
+    Any       ## matches any token or subtree
+    Expr      ## value expression (ParLe with expr tag, or Symbol/literal)
+    Type      ## type expression (ParLe with type tag, or DotToken for void)
+    Stmt      ## statement (ParLe with stmt tag)
+    Def       ## SymbolDef
+    Sym       ## Symbol use
+    Dot       ## DotToken (empty placeholder)
+    Lit       ## literal (IntLit, UIntLit, FloatLit, StringLit, CharLit)
+    Nested    ## nested substructure (params, pragmas, etc.)
+
+  Replacer* = object
+    ## Primary abstraction for NIF tree transformations. Bundles an output
+    ## builder and an input cursor with balanced operations that consume
+    ## input and produce output atomically.
+    dest*: NifBuilder   ## Output builder — public for direct emit-only access.
+    src: NifCursor      ## Input cursor — use getCursor/setCursor for raw access.
+
+proc isAtom*(t: Replacer): bool {.inline.} =
+  ## True when the cursor is at a leaf token (not ParLe). Atoms cannot be
+  ## entered with `into`.
+  t.src.kind != ParLe
+
+# Delegated cursor accessors:
+proc kind*(t: Replacer): NifKind {.inline.} = t.src.kind
+proc info*(t: Replacer): LineInfo {.inline.} = t.src.info
+proc stmtKind*(t: Replacer): NimonyStmt {.inline.} = t.src.stmtKind
+proc exprKind*(t: Replacer): NimonyExpr {.inline.} = t.src.exprKind
+proc typeKind*(t: Replacer): NimonyType {.inline.} = t.src.typeKind
+proc otherKind*(t: Replacer): NimonyOther {.inline.} = t.src.otherKind
+proc pragmaKind*(t: Replacer): NimonyPragma {.inline.} = t.src.pragmaKind
+proc symId*(t: Replacer): SymId {.inline.} = t.src.symId
+proc symText*(t: Replacer): string {.inline.} = t.src.symText
+proc identText*(t: Replacer): string {.inline.} = t.src.identText
+proc stringValue*(t: Replacer): string {.inline.} = t.src.stringValue
+proc charLit*(t: Replacer): char {.inline.} = t.src.charLit
+proc intValue*(t: Replacer): BiggestInt {.inline.} = t.src.intValue
+proc uintValue*(t: Replacer): BiggestUInt {.inline.} = t.src.uintValue
+proc floatValue*(t: Replacer): BiggestFloat {.inline.} = t.src.floatValue
+proc tagId*(t: Replacer): TagId {.inline.} = t.src.tagId
+proc tagText*(t: Replacer): string {.inline.} = t.src.tagText
+proc tag*(t: Replacer): TagId {.inline.} = t.src.tag
+proc eqIdent*(t: Replacer; name: string): bool {.inline.} = t.src.eqIdent(name)
+
+# ── Kind checking ─────────────────────────────────────────────────────────
+
+proc matchesChildKind(n: NifCursor; k: ChildKind): bool =
+  case k
+  of Any: true
+  of Expr:
+    case n.kind
+    of ParLe: n.exprKind != NoExpr
+    of Symbol, Ident, IntLit, UIntLit, FloatLit, StringLit, CharLit: true
+    else: false
+  of Type:
+    n.kind == DotToken or (n.kind == ParLe and n.typeKind != NoType)
+  of Stmt:
+    n.kind == ParLe and n.stmtKind != NoStmt
+  of Def:
+    n.kind == SymbolDef
+  of Sym:
+    n.kind in {Symbol, Ident}
+  of Dot:
+    n.kind == DotToken
+  of Lit:
+    n.kind in {IntLit, UIntLit, FloatLit, StringLit, CharLit}
+  of Nested:
+    n.kind == ParLe and n.exprKind == NoExpr and n.stmtKind == NoStmt and
+        n.typeKind == NoType
+
+proc assertChild(n: NifCursor; k: ChildKind) {.inline.} =
+  assert matchesChildKind(n, k),
+    "expected " & $k & " but got kind=" & $n.kind
+
+proc assertTag(n: NifCursor; expected: NimonyStmt) {.inline.} =
+  assert n.stmtKind == expected,
+    "expected " & $expected & " but got " & $n.stmtKind
+
+proc assertTag(n: NifCursor; expected: NimonyExpr) {.inline.} =
+  assert n.exprKind == expected,
+    "expected " & $expected & " but got " & $n.exprKind
+
+proc assertTag(n: NifCursor; expected: NimonyType) {.inline.} =
+  assert n.typeKind == expected,
+    "expected " & $expected & " but got " & $n.typeKind
+
+proc assertTag(n: NifCursor; expected: NimonyPragma) {.inline.} =
+  assert n.pragmaKind == expected,
+    "expected " & $expected & " but got " & $n.pragmaKind
+
+proc assertTag(n: NifCursor; expected: NimonyOther) {.inline.} =
+  assert n.otherKind == expected,
+    "expected " & $expected & " but got " & $n.otherKind
+
+# ── Core operations ───────────────────────────────────────────────────────
+
+proc keep*(t: var Replacer; expected: ChildKind) =
+  ## Copy one child verbatim from input to output.
+  assertChild(t.src, expected)
+  t.dest.takeTree(t.src)
+
+proc keep*(t: var Replacer; expected: NimonyStmt) =
+  ## Copy one child, asserting a specific statement tag.
+  assertTag(t.src, expected)
+  t.dest.takeTree(t.src)
+
+proc keep*(t: var Replacer; expected: NimonyExpr) =
+  ## Copy one child, asserting a specific expression tag.
+  assertTag(t.src, expected)
+  t.dest.takeTree(t.src)
+
+proc keep*(t: var Replacer; expected: NimonyType) =
+  ## Copy one child, asserting a specific type tag.
+  assertTag(t.src, expected)
+  t.dest.takeTree(t.src)
+
+proc keep*(t: var Replacer; expected: NimonyPragma) =
+  ## Copy one child, asserting a specific pragma tag.
+  assertTag(t.src, expected)
+  t.dest.takeTree(t.src)
+
+proc keep*(t: var Replacer; expected: NimonyOther) =
+  ## Copy one child, asserting a specific substructure tag.
+  assertTag(t.src, expected)
+  t.dest.takeTree(t.src)
+
+proc drop*(t: var Replacer; expected: ChildKind) =
+  ## Skip one child from input without emitting.
+  assertChild(t.src, expected)
+  t.src.skip()
+
+proc drop*(t: var Replacer; expected: NimonyStmt) =
+  ## Skip one child, asserting a specific statement tag.
+  assertTag(t.src, expected)
+  t.src.skip()
+
+proc drop*(t: var Replacer; expected: NimonyExpr) =
+  ## Skip one child, asserting a specific expression tag.
+  assertTag(t.src, expected)
+  t.src.skip()
+
+proc drop*(t: var Replacer; expected: NimonyType) =
+  ## Skip one child, asserting a specific type tag.
+  assertTag(t.src, expected)
+  t.src.skip()
+
+proc drop*(t: var Replacer; expected: NimonyPragma) =
+  ## Skip one child, asserting a specific pragma tag.
+  assertTag(t.src, expected)
+  t.src.skip()
+
+proc drop*(t: var Replacer; expected: NimonyOther) =
+  ## Skip one child, asserting a specific substructure tag.
+  assertTag(t.src, expected)
+  t.src.skip()
+
+proc replace*(t: var Replacer; expected: ChildKind; replacement: NifCursor) =
+  ## Skip one child from input, emit replacement cursor tree instead.
+  assertChild(t.src, expected)
+  t.src.skip()
+  t.dest.addSubtree(replacement)
+
+proc replace*(t: var Replacer; expected: ChildKind; replacement: NifBuilder) =
+  ## Skip one child from input, emit replacement builder tree instead.
+  assertChild(t.src, expected)
+  t.src.skip()
+  t.dest.add(replacement)
+
+proc replace*(t: var Replacer; expected: NimonyStmt; replacement: NifCursor) =
+  ## Skip one child, asserting a specific statement tag, emit replacement.
+  assertTag(t.src, expected)
+  t.src.skip()
+  t.dest.addSubtree(replacement)
+
+proc replace*(t: var Replacer; expected: NimonyStmt; replacement: NifBuilder) =
+  ## Skip one child, asserting a specific statement tag, emit replacement.
+  assertTag(t.src, expected)
+  t.src.skip()
+  t.dest.add(replacement)
+
+proc replace*(t: var Replacer; expected: NimonyExpr; replacement: NifCursor) =
+  ## Skip one child, asserting a specific expression tag, emit replacement.
+  assertTag(t.src, expected)
+  t.src.skip()
+  t.dest.addSubtree(replacement)
+
+proc replace*(t: var Replacer; expected: NimonyExpr; replacement: NifBuilder) =
+  ## Skip one child, asserting a specific expression tag, emit replacement.
+  assertTag(t.src, expected)
+  t.src.skip()
+  t.dest.add(replacement)
+
+proc replace*(t: var Replacer; expected: NimonyType; replacement: NifCursor) =
+  ## Skip one child, asserting a specific type tag, emit replacement.
+  assertTag(t.src, expected)
+  t.src.skip()
+  t.dest.addSubtree(replacement)
+
+proc replace*(t: var Replacer; expected: NimonyType; replacement: NifBuilder) =
+  ## Skip one child, asserting a specific type tag, emit replacement.
+  assertTag(t.src, expected)
+  t.src.skip()
+  t.dest.add(replacement)
+
+template into*(t: var Replacer; body: untyped) =
+  ## Copy the opening tag from input, run `body` for children, close the
+  ## node and advance past the input's closing `)`.
+  ## Requires: cursor at `ParLe` (use `isAtom` / `kind == ParLe` guard).
+  assert t.src.kind == ParLe, "into requires cursor at ParLe"
+  t.dest.copyInto(t.src):
+    body
+
+template loop*(t: var Replacer; body: untyped) =
+  ## Process remaining children until `)`. The body must advance the
+  ## cursor on every iteration.
+  while t.src.kind != ParRi:
+    body
+
+template intoLoop*(t: var Replacer; body: untyped) =
+  ## Descend into a node and loop over all its children. Shortcut for
+  ## `into t: loop t: body`.
+  into t:
+    loop t:
+      body
+
+template replaceHead*(t: var Replacer;
+                      tag: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma;
+                      info: LineInfo; body: untyped) =
+  ## Like `into` but emits a new tag instead of copying the input's tag.
+  assert t.src.kind == ParLe, "replaceHead requires cursor at ParLe"
+  inc t.src  # skip old opening tag
+  t.dest.withTree(tag, info):
+    body
+  assert t.src.kind == ParRi, "replaceHead: body must consume all children"
+  inc t.src  # skip old closing ParRi
+
+# ── Cursor access for analysis ────────────────────────────────────────────
+
+proc getCursor*(t: Replacer): NifCursor {.inline.} =
+  ## Returns a copy of the current cursor position for independent analysis
+  ## or for later use as a `replace` argument.
+  t.src
+
+proc setCursor*(t: var Replacer; c: NifCursor) {.inline.} =
+  ## Restores the cursor to a previously saved position.
+  t.src = c
+
+template peek*(t: var Replacer; body: untyped) =
+  ## Saves the cursor, runs `body` (which may advance for read-ahead
+  ## analysis), then restores the cursor.
+  ## Inside `body`, use `getCursor(t)` to obtain a `NifCursor` for
+  ## analysis procs. Prefer extracting analysis into a separate proc
+  ## that takes `NifCursor` rather than manipulating the Replacer directly.
+  let savedCursor = t.src
+  body
+  t.src = savedCursor
+
+# ── Entry points ──────────────────────────────────────────────────────────
+
+proc loadReplacer*(inputFile = paramStr(1)): Replacer =
+  ## Loads the input NIF file and returns a `Replacer` ready for
+  ## transformation. The cursor is positioned at the root of the input tree.
+  var inp = nifstreams.open(inputFile)
+  try:
+    var tree = createTree(fromStream(inp))
+    result = Replacer(dest: createTree(), src: snapshot(tree))
+  finally:
+    close(inp)
+
+proc saveReplacer*(t: Replacer; filename = paramStr(2)) =
+  ## Writes the Replacer's output to `filename` (default: `paramStr(2)`).
+  if t.dest.p == nil:
+    writeFile filename, ""
+  else:
+    writeFile filename, toString(t.dest.p[].buf)
+
+# ── Existing API (retained for backwards compatibility) ───────────────────
+
 proc loadPluginInput*(filename = paramStr(1)): NifCursor =
   ## Loads a NIF file and returns a root `NifCursor` for reading it.
   var inp = nifstreams.open(filename)

@@ -572,12 +572,18 @@ const
   ## Procs that advance cursor — debt if bare, balanced if called with reason string
   CursorSkipProcs = ["skip", "inc"]
   ## Procs that advance cursor AND emit to buffer (balanced)
-  PairedProcs = ["takeTree", "takeToken", "takeParRi", "skipParRi"]
+  PairedProcs = ["takeTree", "takeToken", "takeParRi", "skipParRi",
+    # Replacer API:
+    "keep", "replace"]
   ## Procs that consume cursor structurally and return parsed fields for later emission
   StructuredReadProcs = ["takeLocal", "takeRoutine", "asLocal", "asRoutine",
-                         "asForStmt", "takeLocalHeader", "takeRoutineHeader"]
+                         "asForStmt", "takeLocalHeader", "takeRoutineHeader",
+    # Replacer API: intentional drop (cursor advancement without emit, justified by name)
+    "drop"]
   ## Procs that wrap: advance cursor tag, run body, close (balanced at tag level)
-  WrapProcs = ["copyInto", "copyIntoKind", "copyIntoKinds", "copyIntoUnchecked"]
+  WrapProcs = ["copyInto", "copyIntoKind", "copyIntoKinds", "copyIntoUnchecked",
+    # Replacer API:
+    "into", "intoLoop", "replaceHead"]
   ## Procs that emit to buffer WITHOUT consuming cursor (creates credit)
   EmitOnlyProcs = ["add", "addParLe", "addParRi", "addDotToken", "addSymUse", "addSymDef",
                    "addIntLit", "addStrLit", "addEmpty", "addSubtree",
@@ -971,7 +977,9 @@ const
   ## body, the ParRi is consumed by the template — no explicit skip needed.
   CopyIntoProcs = ["copyInto", "copyIntoKind", "copyIntoKinds", "copyIntoUnchecked",
     # plugin API (nimonyplugins):
-    "withTree"]
+    "withTree",
+    # Replacer API:
+    "into", "intoLoop", "replaceHead", "peek"]
 
 const
   ## Procs that contribute to a dest buffer (write output).
@@ -984,7 +992,9 @@ const
     # plugin API (nimonyplugins):
     "addIdent", "addUIntLit", "addCharLit", "addFloatLit",
     "addEmptyNode", "addEmptyNode2", "addEmptyNode3", "addEmptyNode4",
-    "withTree"]
+    "withTree",
+    # Replacer API:
+    "keep", "replace", "into", "intoLoop", "replaceHead"]
 
 proc whileBodyContributesDest(whileNode: Cursor): bool =
   ## Check if the while loop body contains any call that writes to a dest buffer.
@@ -1028,7 +1038,9 @@ proc whileBodyLooksLikeNestedScanner(whileNode: Cursor): bool
 proc whileBodyMustAdvanceCursor(whileNode: Cursor; varName: string;
                                 varCursorCallees: HashSet[string]): bool
 
-const TrustedCursorAdvanceProcs = ["inc", "skip", "takeToken", "takeTree", "takeParRi", "skipParRi"]
+const TrustedCursorAdvanceProcs = ["inc", "skip", "takeToken", "takeTree", "takeParRi", "skipParRi",
+  # Replacer API:
+  "keep", "drop", "replace", "into", "intoLoop", "replaceHead"]
 
 proc callAdvancesCursor(n: Cursor; varName: string;
                         varCursorCallees: HashSet[string]): bool =
