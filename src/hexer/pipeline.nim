@@ -7,8 +7,9 @@
 #    distribution, for details about the copyright.
 #
 
-import std/assertions
-include nifprelude
+import std / [assertions, tables, hashes, sets, syncio]
+include ".." / lib / nifprelude
+include ".." / lib / compat2
 
 import ".." / nimony / [nimony_model, programs, decls]
 import hexer_context, iterinliner, desugar, xelim, duplifier, lifter, destroyer,

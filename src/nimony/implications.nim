@@ -193,11 +193,13 @@ proc liftAsymmetric(impls: var Implications;
   ## cfvar condition. Conditional facts that agree with this polarity
   ## survive unchanged; complementary ones are vacuous and dropped.
   for s in sameAlways:
-    if s != cf and s notin otherAlways:
-      impls.add Implication(kind: IfTrue, cond: cf, sym: s)
+    let sv = s
+    if sv != cf and sv notin otherAlways:
+      impls.add Implication(kind: IfTrue, cond: cf, sym: sv)
   for s in otherAlways:
-    if s != cf and s notin sameAlways:
-      impls.add Implication(kind: IfFalse, cond: cf, sym: s)
+    let sv = s
+    if sv != cf and sv notin sameAlways:
+      impls.add Implication(kind: IfFalse, cond: cf, sym: sv)
   for imp in sameImpls:
     if imp.kind == IfTrue and imp.cond == cf: impls.add imp
   for imp in otherImpls:
@@ -229,11 +231,13 @@ proc combine*(impls: var Implications;
       if cond.negated: (IfFalse, IfTrue)
       else:            (IfTrue,  IfFalse)
     for s in thenAlways:
-      if s notin elseAlways:
-        impls.add Implication(kind: thenKind, cond: cond.sym, sym: s)
+      let sv = s
+      if sv notin elseAlways:
+        impls.add Implication(kind: thenKind, cond: cond.sym, sym: sv)
     for s in elseAlways:
-      if s notin thenAlways:
-        impls.add Implication(kind: elseKind, cond: cond.sym, sym: s)
+      let sv = s
+      if sv notin thenAlways:
+        impls.add Implication(kind: elseKind, cond: cond.sym, sym: sv)
 
   # (3) Asymmetric-jtrue reasoning: a cfvar Always-set in exactly one branch
   #     tells us after the ite which branch ran based on that cfvar's value.

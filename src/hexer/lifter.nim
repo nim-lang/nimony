@@ -16,6 +16,8 @@ to type `(T, T)`, etc.
 
 import std/[assertions, tables, hashes, strutils, syncio]
 
+when defined(nimony):
+  {.feature: "lenientnils".}
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / [nifindexes, symparser, treemangler]
