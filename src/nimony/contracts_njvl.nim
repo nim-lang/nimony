@@ -47,6 +47,18 @@ type
     mode: BorrowableCheck
     path: seq[SymId]  ## root :: field1 :: field2 :: ...
     info: PackedLineInfo
+  
+  AnumNarrowInfo = object
+    # rules:
+    # allowuse = candidates.len > 0 otherwise ambigious
+    # ObjConstr => candidates = possibleCandidates
+    # of branch => candidates = @[branch]
+    # if branch => restrict candidates
+    narrower: SymId      # variable symbol the narrowing is bound to (e.g. `obj.0`)
+    discriminator: SymId # discriminator field of the case-object (e.g. `kind.0`)
+    candidates: HashSet[SymId]
+    # TODO: maybe adding possibleCandidates will cheaper
+    info: PackedLineInfo
 
   NjvlContext = object
     facts: Facts           # From inferle.nim - tracks le/notnil facts
@@ -73,11 +85,20 @@ type
                                         # leaving-path asymmetries)
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
     activeBorrows: seq[BorrowInfo]
+    anumNarrows: HashSet[AnumNarrowInfo]
+    assignTarget: SymId # not need stack because let x = (let y = 42; y) will normalized in NJVL
     verbose: bool                      # --verbose: dump NJ IR on init/contract
                                        # failures for easier debugging
     currentProcStart: Cursor           # cursor at the start of the proc whose
                                        # body we are currently analysing (used
                                        # for the --verbose dump)
+
+proc hash(a: AnumNarrowInfo): Hash {.inline.} =
+  result = hash(a.narrower) !& hash(a.discriminator)
+  result = !$result
+
+proc `==`(a, b: AnumNarrowInfo): bool {.inline.} =
+  a.narrower == b.narrower and a.discriminator == b.discriminator
 
 proc dumpCurrentProc(c: var NjvlContext; info: PackedLineInfo; msg: string) =
   ## Dump the NJ IR of the proc currently under analysis to stderr. Used
@@ -692,10 +713,45 @@ proc checkReq(c: var NjvlContext; paramMap: Table[SymId, int]; req, call: Cursor
 
 # --- Expression analysis ---
 
+proc buildAnumInfos(objType: Cursor; narrower: SymId;
+                    info: PackedLineInfo): seq[AnumNarrowInfo] =
+  result = @[]
+  var t = objType
+  while t.kind == Symbol:
+    let r = tryLoadSym(t.symId)
+    if r.status != LacksNothing: return
+    t = asTypeDecl(r.decl).body
+  if t.typeKind != ObjectT: return
+  inc t
+  skip t
+  while t.kind != ParRi:
+    if t.substructureKind == CaseU:
+      inc t
+      var entry = AnumNarrowInfo(narrower: narrower, info: info)
+      if t.substructureKind == FldU:
+        entry.discriminator = asLocal(t).name.symId
+        skip t
+      while t.substructureKind == OfU:
+        inc t
+        if t.substructureKind == RangesU:
+          inc t
+          while t.kind != ParRi:
+            if t.kind == Symbol: entry.candidates.incl t.symId
+            skip t
+          inc t
+        skip t # (stmts ...)
+        inc t # )
+      result.add entry
+    skip t
+
 proc analyseOconstr(c: var NjvlContext; n: var Cursor) =
   inc n
   let objType = n
   skip n # type
+  if c.assignTarget != NoSymId:
+    for entry in buildAnumInfos(objType, c.assignTarget, n.info):
+      c.anumNarrows.incl entry
+    c.assignTarget = NoSymId
   while n.kind != ParRi:
     assert n.substructureKind == KvU
     inc n
@@ -1154,7 +1210,9 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
         "': path is not borrowable; use 'addr' to override or a temporary move"
   if n.kind != DotToken and localType.typeKind in {PtrT, RefT, CstringT, PointerT, ProctypeT}:
     checkNilMatch c, n, localType
+  c.assignTarget = name
   traverseExpr c, n
+  c.assignTarget = NoSymId
   skipParRi n
 
 proc traverseAssume(c: var NjvlContext; n: var Cursor) =
