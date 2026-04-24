@@ -104,7 +104,7 @@
 | `(union (fld ...)*)`; `(union)` | NifcType, NimonyPragma | first one is Nifc union declaration, second one is Nimony union pragma |
 | `(object .T (fld ...)*)` | NifcType, NimonyType, NiflerKind | object type declaration |
 | `(enum (efld...)*)` | NifcType, NimonyType, NiflerKind | enum type declaration |
-| `(proctype ...)` | NifcType, NimonyType, NiflerKind | proc type declaration; same shape as `(proc D ...)` but with anonymous name slot |
+| `(proctype .Any (params...) T P)`; `(proctype ...)` | NimonyType, NiflerKind, NifcType | Nimony proc type. Slot 0 carries the nilability tag — either a `.` placeholder or one of `(notnil)`, `(nil)`, `(unchecked)`. NIFC proc type, same shape as `(proc D ...)` with anonymous name slot (varargs spec; effects/body slots present but unused). |
 | `(atomic)` | NifcTypeQualifier | `atomic` type qualifier for NIFC |
 | `(ro)` | NifcTypeQualifier | `readonly` (= `const`) type qualifier for NIFC |
 | `(restrict)` | NifcTypeQualifier | type qualifier for NIFC |

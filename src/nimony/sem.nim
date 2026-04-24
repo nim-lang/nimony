@@ -682,7 +682,7 @@ proc semConstExpr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   swap c.phase, phase
   # XXX future note: consider when the expression depends on a generic param
   var e = cursorAt(dest, start)
-  var valueBuf = evalExpr(c, e)
+  var valueBuf = evalExpr(c, e, it.typ)
   endRead(dest)
   dest.shrink start
   var value = beginRead(valueBuf)
@@ -2174,15 +2174,10 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
         var thisProc = asRoutine(n)
         var procTypeBuf = createTokenBuf()
         procTypeBuf.addParLe ProctypeT
-        procTypeBuf.addDotToken() # name
-        procTypeBuf.addDotToken() # export marker
-        procTypeBuf.addDotToken() # pattern
-        procTypeBuf.addDotToken() # type vars
+        procTypeBuf.addDotToken() # nilability tag (none — `nil`/`notnil` set later)
         procTypeBuf.addSubtree thisProc.params
         procTypeBuf.addSubtree thisProc.retType
         procTypeBuf.addSubtree thisProc.pragmas
-        procTypeBuf.addDotToken() # effects
-        procTypeBuf.addDotToken() # body
         procTypeBuf.addParRi() # end of proctype
         n = beginRead(procTypeBuf)
       elif s.kind == ModuleY:
@@ -6698,7 +6693,7 @@ proc initSemContext(suffix: string; config: ProgramContext; moduleFlags: set[Mod
     commandLineArgs: commandLineArgs,
     canSelfExec: canSelfExec,
     pending: createTokenBuf(),
-    executeCall: exprexec.executeCall,
+    executeExpr: exprexec.executeExpr,
     semStmtCallback: semStmtCallback,
     semGetSize: semGetSize,
     forceInstantiate: forceInstantiateCallback)

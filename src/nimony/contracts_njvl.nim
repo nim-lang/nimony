@@ -419,15 +419,11 @@ proc markedAs(t: Cursor; mark: NimonyOther): bool =
     if e.kind != ParRi and e.substructureKind == mark:
       result = true
   of ProctypeT:
-    # for proctypes, the annotation is inside the pragmas section
-    var e = t.firstSon
-    for i in 0 ..< 6: skip e # skip name, export, pattern, generics, params, rettype
-    if e.substructureKind == PragmasU:
-      inc e
-      while e.kind != ParRi:
-        if e.substructureKind == mark:
-          return true
-        skip e
+    # New layout: `(proctype <NilTag> (params) RetType <Pragmas>)`. The
+    # nilability marker is at slot 0.
+    let e = t.firstSon
+    if e.substructureKind == mark:
+      result = true
   else:
     discard
 

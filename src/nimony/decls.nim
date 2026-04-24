@@ -56,14 +56,26 @@ proc isNominal*(t: TypeKind): bool {.inline.} =
   ## type kinds that should stay as symbols, see sigmatch.matchSymbol
   t in {ObjectT, EnumT, OnumT, AnumT, DistinctT, ConceptT}
 
+proc skipToParams*(c: var Cursor) =
+  ## In-place: advance `c` past the prefix slots of a proctype or
+  ## proc-decl-shaped cursor so it points at the params slot.
+  ## Proctype layout: `(proctype <NilTag> (params...) RetType <Pragmas>)`.
+  ## Proc-decl layout: `(proc Name ExportMarker Pattern Typevars (params...) ...)`.
+  let kind = c.typeKind
+  inc c # skip ParLe
+  if kind == ProctypeT:
+    skip c # nilability tag
+  elif kind in RoutineTypes:
+    skip c # name
+    skip c # export marker
+    skip c # pattern
+    skip c # generics
+
 proc skipProcTypeToParams*(t: Cursor): Cursor =
+  ## Pure version: returns a cursor advanced past the prefix slots.
   result = t
   if result.typeKind in RoutineTypes:
-    inc result # skip ParLe
-    skip result # skip name
-    skip result # skip export marker
-    skip result # skip pattern
-    skip result # skip generics
+    skipToParams result
 
 const
   LocalPragmasPos* = 2

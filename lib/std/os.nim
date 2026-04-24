@@ -171,6 +171,33 @@ proc exitStatusLikeShell*(status: cint): cint =
   else:
     status
 
+proc findExe*(exe: string): string {.tags: [ReadDirEffect, ReadEnvEffect].} =
+  ## Searches for `exe` in the directories listed in the PATH environment
+  ## variable (and, on POSIX, in the current directory if `exe` contains a
+  ## path separator). Returns `""` if the exe cannot be found.
+  result = ""
+  if exe.len == 0: return
+  let withExt = addFileExt(exe, ExeExt)
+  when defined(posix):
+    if '/' in exe:
+      if fileExists(withExt): return withExt
+  else:
+    if fileExists(withExt): return withExt
+  let path = getEnv("PATH")
+  for candidate in split(path, PathSep):
+    if candidate.len == 0: continue
+    when defined(windows):
+      let dir =
+        if candidate[0] == '"' and candidate[^1] == '"':
+          substr(candidate, 1, candidate.len-2)
+        else:
+          candidate
+    else:
+      let dir = candidate
+    let x = addFileExt(dir / exe, ExeExt)
+    if fileExists(x): return x
+  result = ""
+
 proc execShellCmd*(command: string): int {.tags: [ExecIOEffect].} =
   ## Executes a `shell command`:idx:.
   ##

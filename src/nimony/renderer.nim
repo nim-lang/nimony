@@ -1034,9 +1034,8 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
         putWithSpace(g, tkProc, "proc")
       else:
         raiseAssert "cannot happen"
-      inc n
-
-      for i in 1..4: skip n
+      let isProctype = n.typeKind == ProctypeT
+      skipToParams n
       if n.substructureKind == ParamsU:
         put(g, tkParLe, "(")
         inc n
@@ -1074,8 +1073,9 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
         gsub(g, n, c)
       else:
         inc n
-      skip n, SkipEffects # effects
-      skip n, SkipBody # body
+      if not isProctype:
+        skip n, SkipEffects # effects
+        skip n, SkipBody # body
       skipParRi(n)
     else:
       case n.exprKind

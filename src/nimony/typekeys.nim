@@ -5,9 +5,9 @@
 # distribution, for details about the copyright.
 
 import std/assertions
-include nifprelude
+include ".." / lib / nifprelude
 import ".." / nimony / [nimony_model, decls, sigmatch]
-import treemangler
+import ".." / lib / treemangler
 
 type
   MangleMode* = enum
@@ -17,9 +17,7 @@ type
 proc mangle*(b: var Mangler; c: Cursor; mm: MangleMode)
 
 proc mangleProctype(b: var Mangler; n: var Cursor; mm: MangleMode): string =
-  inc n
-  # name, export marker, pattern, type vars:
-  for i in 0..<ParamsPos: skip n
+  skipToParams n
 
   var b = createMangler(60)
   if n.kind != DotToken:
@@ -92,12 +90,12 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
             mangleImpl b, c, mm
         b.endTree()
         inc c # ParRi
-      elif c.typeKind in {UintT, IntT, FloatT}:
+      elif c.typeKind in {UIntT, IntT, FloatT}:
         b.addTree(tag)
         inc c
         # normalize bits
         assert c.kind == IntLit
-        let bits = pool.integers[c.intID]
+        let bits = pool.integers[c.intId]
         if bits < 0 and b.bits >= 0:
           b.addIntLit(b.bits)
         else:

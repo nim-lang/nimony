@@ -6,6 +6,10 @@
 
 ## expression evaluator for simple constant expressions, not meant to be complete
 
+when defined(nimony):
+  {.feature: "untyped".}
+  {.feature: "lenientnils".}
+
 import std / assertions
 
 include ".." / lib / nifprelude
@@ -15,6 +19,10 @@ type
   EvalContext* = object
     c: ptr SemContext
     trueValue, falseValue: Cursor
+    expectedType: TypeCursor # used as the result type when forwarding
+                             # complex const initialisers (e.g. `block:`)
+                             # to `executeExpr`. Default-constructed when
+                             # no type context is available.
 
 proc isConstBoolValue*(n: Cursor): bool =
   n.exprKind in {TrueX, FalseX}
@@ -34,15 +42,9 @@ proc isConstCharValue*(n: Cursor): bool =
 proc initEvalContext*(c: ptr SemContext): EvalContext =
   result = EvalContext(c: c)
 
-proc skipParRi(n: var Cursor) =
-  if n.kind == ParRi:
-    inc n
-  else:
-    error "expected ')', but got: ", n
-
 proc error(c: var EvalContext, msg: string, info: PackedLineInfo): Cursor =
   var buf = createTokenBuf(4)
-  buf.addParLe ErrT, info
+  buf.addParLe nifstreams.ErrT, info
   buf.addDotToken()
   buf.addStrLit msg
   buf.addParRi()
@@ -168,10 +170,10 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
     let val = pool.strings[a.litId].len
     result = intValue(c, val, n.info)
   else:
-    # Forward args to `executeCall` verbatim. Running `eval` here would strip
+    # Forward args to `executeExpr` verbatim. Running `eval` here would strip
     # distinct/conversion wrappers (e.g. `TagId(1)` → `1`), and the sub-compile
     # would then fail to match the callee's formal parameter types.
-    # `executeCall` re-runs the full nimony pipeline and can resolve constants
+    # `executeExpr` re-runs the full nimony pipeline and can resolve constants
     # itself via `rewriteSymsToIdents`.
     var evaluatedCall = createTokenBuf(16)
     evaluatedCall.addParLe CallS, n.info
@@ -181,8 +183,9 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
     evaluatedCall.addParRi()
 
     var resultBuf = createTokenBuf(12)
-    assert c.c.executeCall != nil
-    let errorMsg = c.c.executeCall(c.c[], routine, resultBuf, cursorAt(evaluatedCall, 0), n.info)
+    assert c.c.executeExpr != nil
+    let errorMsg = c.c.executeExpr(c.c[], cursorAt(evaluatedCall, 0),
+                                   routine.retType, resultBuf, n.info)
     if errorMsg.len == 0:
       result = cursorAt(resultBuf, 0)
     else:
@@ -310,7 +313,7 @@ template evalShiftOp(c0: var EvalContext; n: var Cursor; opr: untyped) {.dirty.}
   let isSigned = n.typeKind == IntT
   var bits = c0.c.g.config.bits
   case n.typeKind
-  of IntT, UintT:
+  of IntT, UIntT:
     inc n
     bits = typebits(n.load)
     skipToEnd n
@@ -346,7 +349,7 @@ template evalBitnot(c0: var EvalContext; n: var Cursor) {.dirty.} =
   let isSigned = n.typeKind == IntT
   var bits = c0.c.g.config.bits
   case n.typeKind
-  of IntT, UintT:
+  of IntT, UIntT:
     inc n
     bits = typebits(n.load)
     skipToEnd n
@@ -393,7 +396,7 @@ proc intToToken(result: var TokenBuf; x: int; typ: Cursor) =
       assert false, "Got unexpected type: " & toString(typ)
 
 proc bitSetToTokens(result: var TokenBuf; x: seq[uint8]; elementTyp: Cursor; info: PackedLineInfo) =
-  result.addParLe SetConstrX, info
+  result.addParLe SetconstrX, info
   result.buildTree TagId(SetT), NoLineInfo:
     result.addSubtree elementTyp
 
@@ -430,7 +433,7 @@ proc evalInSet(c: var EvalContext; n: var Cursor): Cursor =
   var b = evalOrdinal(nil, n)
   skip n # skips b
   skipParRi n # skip last parRi
-  assert a.exprKind == SetConstrX, "got " & toString(a)
+  assert a.exprKind == SetconstrX, "got " & toString(a)
   inc a # skip set tag
   skip a # skip set type
 
@@ -457,7 +460,7 @@ proc evalInSet(c: var EvalContext; n: var Cursor): Cursor =
 
 # Number of set bits for all values of int8
 const populationCount: array[uint8, uint8] = block:
-    var arr: array[uint8, uint8]
+    var arr: array[uint8, uint8] = default(array[uint8, uint8])
 
     proc countSetBits(x: uint8): uint8 =
       return
@@ -489,7 +492,7 @@ proc evalCardSet(c: var EvalContext; n: var Cursor): Cursor =
   var a = eval(c, n)
   skipParRi n # skip last parRi
 
-  assert a.exprKind == SetConstrX, "got " & toString(a)
+  assert a.exprKind == SetconstrX, "got " & toString(a)
   var typeA = a
   inc typeA
 
@@ -506,8 +509,8 @@ proc evalSetOp(c: var EvalContext; n: var Cursor; op: ExprKind): Cursor =
   var a = eval(c, n)
   var b = eval(c, n)
   skipParRi n # skip last parRi
-  assert a.exprKind == SetConstrX, "got " & toString(a)
-  assert b.exprKind == SetConstrX, "got " & toString(b)
+  assert a.exprKind == SetconstrX, "got " & toString(a)
+  assert b.exprKind == SetconstrX, "got " & toString(b)
   var typeA = a
   inc typeA
   var typeB = b
@@ -518,16 +521,16 @@ proc evalSetOp(c: var EvalContext; n: var Cursor; op: ExprKind): Cursor =
   assert setA.len == setB.len
   var setRes = newSeq[uint8](setA.len)
   case op
-  of PlusSetX:
+  of PlussetX:
     for i in 0 ..< setA.len:
       setRes[i] = setA[i] or setB[i]
-  of MinusSetX:
+  of MinussetX:
     for i in 0 ..< setA.len:
       setRes[i] = setA[i] and not setB[i]
-  of XorSetX:
+  of XorsetX:
     for i in 0 ..< setA.len:
       setRes[i] = setA[i] xor setB[i]
-  of MulSetX:
+  of MulsetX:
     for i in 0 ..< setA.len:
       setRes[i] = setA[i] and setB[i]
   else:
@@ -801,7 +804,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       evalCmpOp(c, n, `<=`)
     of LtX:
       evalCmpOp(c, n, `<`)
-    of IsMainModuleX:
+    of IsmainmoduleX:
       inc n
       skipParRi n
       if c.c == nil:
@@ -818,7 +821,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         # add type
         takeTree buf, n
       while n.kind != ParRi:
-        if (exprKind == SetConstrX and n.substructureKind == RangeU) or
+        if (exprKind == SetconstrX and n.substructureKind == RangeU) or
            (exprKind == AconstrX and n.substructureKind == KvU):
           buf.takeToken n
           var a = propagateError eval(c, n)
@@ -875,23 +878,42 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       else:
         result = intValue(c, value, n.info)
       skip n
-    of PlusSetX, MinusSetX, XorSetX, MulSetX:
+    of PlussetX, MinussetX, XorsetX, MulsetX:
       result = evalSetOp(c, n, n.exprKind)
-    of InSetX:
+    of InsetX:
       result = evalInSet(c, n)
     of CardX:
       result = evalCardSet(c, n)
     else:
-      if n.tagId == ErrT:
+      if n.tagId == nifstreams.ErrT:
         result = n
         skip n
+      elif (n.stmtKind == BlockS or n.stmtKind == StmtsS) and
+           not cursorIsNil(c.expectedType) and c.c != nil and c.c.executeExpr != nil:
+        # Const initialisers such as
+        #   `const x: T = block: ...; var ...; for ...; expr`
+        # cannot be folded by the in-process evaluator. Forward the whole
+        # expression to a sub-compile via `executeExpr`, which builds a tiny
+        # wrapper program that runs the block and serialises its result.
+        let info = n.info
+        var resultBuf = createTokenBuf(12)
+        let exprStart = n
+        let errMsg = c.c.executeExpr(c.c[], exprStart, c.expectedType, resultBuf, info)
+        skip n
+        if errMsg.len == 0:
+          result = cursorAt(resultBuf, 0)
+        else:
+          result = c.error("cannot evaluate expression at compile time: " &
+            asNimCode(exprStart) & "\n\n" & errMsg, info)
       else:
         cannotEval n
   else:
     cannotEval n
 
-proc evalExpr*(c: var SemContext, n: var Cursor): TokenBuf =
+proc evalExpr*(c: var SemContext, n: var Cursor;
+               expectedType: TypeCursor = default(Cursor)): TokenBuf =
   var ec = initEvalContext(addr c)
+  ec.expectedType = expectedType
   let val = eval(ec, n)
   result = createTokenBuf(val.span)
   result.addSubtree val
@@ -1012,7 +1034,7 @@ proc findObjectField(objType: Cursor; fieldSym: SymId; typ: var Cursor; exported
   return false
 
 proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
-  if n.kind == ParLe and n.tagId == ErrT:
+  if n.kind == ParLe and n.tagId == nifstreams.ErrT:
     buf.addSubtree n
     return
   let orig = typ
@@ -1209,7 +1231,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
     if opened > 0:
       # could also replace with a general shrink to start
       buf.shrink buf.len - opened
-    buf.addParLe ErrT, n.info
+    buf.addParLe nifstreams.ErrT, n.info
     buf.addDotToken()
     let msg = "cannot annotate constant " & asNimCode(n) & " with type " & typeToString(orig)
     buf.add strToken(pool.strings.getOrIncl(msg), n.info)
@@ -1231,7 +1253,7 @@ proc enumBounds*(n: Cursor): Bounds =
   skip n # Basetype
   if kind == AnumT:
     skip n # owner object type sym (or dot)
-  result = Bounds(lo: createNan(), hi: createNaN())
+  result = Bounds(lo: createNaN(), hi: createNaN())
   while n.kind != ParRi:
     let enumField = takeLocal(n, SkipFinalParRi)
     var val = enumField.val
@@ -1323,7 +1345,7 @@ proc getArrayLen*(n: Cursor): xint =
 
 proc evalBitSet*(n, typ: Cursor): seq[uint8] =
   ## returns @[] if it could not be evaluated.
-  assert n.exprKind == SetConstrX
+  assert n.exprKind == SetconstrX
   assert typ.typeKind == SetT
   let size = bitsetSizeInBytes(typ.firstSon)
   var err = false

@@ -116,32 +116,6 @@ proc rewriteSymsToIdents*(c: var SynthesizeSerializerCtx) =
   endRead(c.dest)
   c.dest = ensureMove newDest
 
-proc collectUsedSyms(c: var SynthesizeSerializerCtx; s: var SemContext; routine: Routine) =
-  ## Collect all symbols used by the routine and add their declarations to dest.
-  ## Since we'll convert all symbols to identifiers, the semchecker will resolve them fresh.
-  ## We don't call semStmtCallback here - just copy the declarations as-is.
-  var stack = newSeq[SymId]()
-  var handledSyms = initHashSet[SymId]()
-  stack.add routine.name.symId
-  # Always add `system.nim` as a dependency:
-  c.usedModules.incl(s.g.config.nifcachePath / SystemModuleSuffix)
-  while stack.len > 0:
-    let sym = stack.pop()
-    if not handledSyms.containsOrIncl(sym):
-      let owner = extractModule(pool.syms[sym])
-      if owner == c.thisModuleSuffix:
-        # add sym's declaration to `dest`:
-        let res = tryLoadSym(sym)
-        if res.status == LacksNothing:
-          let before = c.dest.len
-          # Just copy the declaration as-is - don't re-semcheck it.
-          # The full nimony pipeline will handle semchecking after we convert symbols to idents.
-          c.dest.addSubtree res.decl
-          collectSyms(cursorAt(c.dest, before), stack)
-          endRead(c.dest)
-      elif owner.len > 0:
-        c.usedModules.incl(s.g.config.nifcachePath / owner)
-
 proc generateName(c: var SynthesizeSerializerCtx; key: string): string =
   result = "`toNif" & "_" & key
   var counter = addr c.hookNames.mgetOrPut(result, -1)
@@ -525,24 +499,77 @@ proc genMissingProcs*(c: var SynthesizeSerializerCtx) =
       c.routineKind = ProcY
       genProcDecl(c, reqs[i].sym, reqs[i].typ)
 
-proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call: Cursor; info: PackedLineInfo): string {.nimcall.} =
+proc collectSymDefs(n: Cursor; defs: var HashSet[SymId]) =
+  ## Walks `n` and records every `SymbolDef` token. Used by
+  ## `collectUsedSymsFromExpr` to avoid pulling in top-level decls for
+  ## symbols that are actually defined inline in the expression itself
+  ## (local `var`s, nested procs, etc.).
+  if n.kind != ParLe:
+    if n.kind == SymbolDef: defs.incl n.symId
+  else:
+    var n = n
+    var nested = 0
+    while true:
+      case n.kind
+      of ParRi:
+        dec nested
+        if nested == 0: break
+      of ParLe: inc nested
+      of SymbolDef: defs.incl n.symId
+      else: discard
+      inc n
+
+proc collectUsedSymsFromExpr(c: var SynthesizeSerializerCtx; s: var SemContext; expr: Cursor) =
+  ## Like `collectUsedSyms` but seeded from the symbols referenced *in the
+  ## expression itself* rather than a routine. Used by `executeExpr` to set
+  ## up the sub-compile when the const initializer is e.g. a `block:` rather
+  ## than a call. Symbols defined inline by the expression (local vars,
+  ## nested procs) are skipped — they would otherwise be re-emitted as
+  ## top-level decls and clash with their inline definitions.
+  var stack = newSeq[SymId]()
+  var handledSyms = initHashSet[SymId]()
+  var inlineDefs = initHashSet[SymId]()
+  collectSymDefs(expr, inlineDefs)
+  collectSyms(expr, stack)
+  c.usedModules.incl(s.g.config.nifcachePath / SystemModuleSuffix)
+  while stack.len > 0:
+    let sym = stack.pop()
+    if sym in inlineDefs: continue
+    if not handledSyms.containsOrIncl(sym):
+      let owner = extractModule(pool.syms[sym])
+      if owner == c.thisModuleSuffix:
+        let res = tryLoadSym(sym)
+        if res.status == LacksNothing:
+          let before = c.dest.len
+          c.dest.addSubtree res.decl
+          collectSyms(cursorAt(c.dest, before), stack)
+          endRead(c.dest)
+      elif owner.len > 0:
+        c.usedModules.incl(s.g.config.nifcachePath / owner)
+
+proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
+                  dest: var TokenBuf; info: PackedLineInfo): string {.nimcall.} =
+  ## Sub-compile and run an arbitrary expression (typically a `block:` whose
+  ## body is too complex for `expreval.eval` — local `var`s, nested procs,
+  ## `for` loops, etc.). The result is serialised to NIF in `dest` using the
+  ## same `entryPoint` machinery that `executeCall` uses.
   let prepResult = semos.prepareEval(s)
   if prepResult.len > 0: return prepResult
 
-  var c = SynthesizeSerializerCtx(dest: createTokenBuf(150), info: info, routineKind: ProcY, bits: s.g.config.bits,
-    errorMsg: "", thisModuleSuffix: s.thisModuleSuffix,
-    newModuleSuffix: s.thisModuleSuffix.substr(0, 2) & computeChecksum(mangle(call, Frontend, s.g.config.bits)))
+  var c = SynthesizeSerializerCtx(dest: createTokenBuf(150), info: info,
+    routineKind: ProcY, bits: s.g.config.bits, errorMsg: "",
+    thisModuleSuffix: s.thisModuleSuffix,
+    newModuleSuffix: s.thisModuleSuffix.substr(0, 2) &
+      computeChecksum(mangle(expr, Frontend, s.g.config.bits)))
 
   c.dest.addParLe StmtsS, info
 
-  # Add import for std/writenif so that setup, teardown, writeNifInt, etc. are available
   c.dest.copyIntoKind ImportS, info:
     c.dest.copyIntoKind InfixX, info:
       c.dest.addIdent "/", info
       c.dest.addIdent "std", info
       c.dest.addIdent "writenif", info
 
-  # Add all imports from the original module so that identifiers are resolvable:
   if s.importSnippets.len > 0:
     var cur = beginRead(s.importSnippets)
     for i in 0 ..< s.importSnippets.len:
@@ -554,29 +581,20 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
     c.dest.addSymUse pool.syms.getOrIncl("setup.0." & writeNifModuleSuffix), info
     c.dest.addStrLit s.g.config.nifcachePath / c.newModuleSuffix & ".out.nif", info
 
-  var retTypeBuf = createTokenBuf(4) # the aliasing also causes `routine.retType` to alias `prog.mem`!
-  retTypeBuf.addSubtree routine.retType
+  var retTypeBuf = createTokenBuf(4)
+  retTypeBuf.addSubtree expectedType
   var retType = cursorAt(retTypeBuf, 0)
 
-  let beforeUsercode = c.dest.len
-
   c.dest.copyIntoKind StmtsS, info:
-    collectUsedSyms c, s, routine
-
-    # now that we have all dependencies in the module, we can add the call, but wrap it in a new `toNif` tag:
+    collectUsedSymsFromExpr c, s, expr
     if isVoidType(retType):
-      # if the call is void, we can just emit the code for it directly here:
-      c.dest.addSubtree call
+      c.dest.addSubtree expr
     else:
-      # else we produce `toNif fn(args)` where `toNif` is built by the complex `lifter` machinery.
-      entryPoint(c, retType, call)
+      entryPoint(c, retType, expr)
 
-  # Skip injectDerefs - the full nimony pipeline will handle it after semcheck
   c.dest.copyIntoKind CallS, info:
     c.dest.addSymUse pool.syms.getOrIncl("teardown.0." & writeNifModuleSuffix), info
 
-  # we know that the generated code doesn't require any deref
-  # insertions so we do it after `injectDerefs`:
   genMissingProcs c
   c.dest.addParRi() # StmtsS
 
@@ -586,3 +604,4 @@ proc executeCall*(s: var SemContext; routine: Routine; dest: var TokenBuf; call:
     result = ensureMove c.errorMsg
   else:
     result = runEval(s, dest, c.newModuleSuffix, c.dest, c.usedModules)
+

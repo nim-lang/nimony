@@ -181,10 +181,7 @@ proc isLocalVar(c: var Context; n: Cursor): bool {.inline.} =
 proc genProctype(c: var Context; dest: var TokenBuf; typ: Cursor) =
   var n = typ
   dest.copyIntoKind ProctypeT, NoLineInfo:
-    dest.addDotToken() # name
-    dest.addDotToken() # export marker
-    dest.addDotToken() # pattern
-    dest.addDotToken() # type vars
+    dest.addDotToken() # nilability tag
     # params:
     dest.takeTree n
     # return type:
@@ -192,9 +189,6 @@ proc genProctype(c: var Context; dest: var TokenBuf; typ: Cursor) =
     # calling convention is always nimcall for now:
     dest.copyIntoKind PragmasU, NoLineInfo:
       dest.addParPair Nimcall, NoLineInfo
-    # ignore, effects and body:
-    dest.addDotToken() # effects
-    dest.addDotToken() # body
 
 type ClassInfo = object
   root: SymId
@@ -223,8 +217,7 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     var temp = evalOnce(c, dest, n)
 
     if fnType.typeKind in RoutineTypes:
-      inc fnType
-      for i in 1..4: skip fnType
+      skipToParams fnType
 
     var paramList = fnType
     assert paramList.substructureKind == ParamsU

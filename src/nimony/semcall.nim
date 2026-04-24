@@ -70,8 +70,7 @@ proc addFn(c: var SemContext; dest: var TokenBuf; fn: FnCandidate; fnOrig: Curso
               # use type of first param
               var paramType = fn.typ
               assert paramType.typeKind in RoutineTypes
-              inc paramType
-              for i in 1..4: skip paramType
+              skipToParams paramType
               assert paramType.substructureKind == ParamsU
               inc paramType
               assert paramType.symKind == ParamY
@@ -448,8 +447,7 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
     m.args.addParRi()
     var f = m.fn.typ
     if f.typeKind in RoutineTypes:
-      inc f # skip ParLe
-      for i in 1..4: skip f
+      skipToParams f
     assert f.substructureKind == ParamsU
     inc f # "params"
     var arg = beginRead(m.args)
