@@ -68,12 +68,12 @@ proc buildTupleFieldIter(buf: var TokenBuf; iter: FieldsIter; i: int; name: StrI
       if s == iter.nameVar:
         buf.add strToken(name, n.info)
       elif s == iter.fieldVar1:
-        buf.addParLe(TupAtX, n.info)
+        buf.addParLe(TupatX, n.info)
         buf.addSubtree iter.obj1
         buf.add intToken(intId, n.info)
         buf.addParRi()
       elif s == iter.fieldVar2:
-        buf.addParLe(TupAtX, n.info)
+        buf.addParLe(TupatX, n.info)
         buf.addSubtree iter.obj2
         buf.add intToken(intId, n.info)
         buf.addParRi()
@@ -92,7 +92,7 @@ proc buildTupleFieldIter(buf: var TokenBuf; iter: FieldsIter; i: int; name: StrI
   buf.addParRi() # (if)
 
 proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, orig: Cursor) =
-  let fieldPairs = call.exprKind in {FieldPairsX, InternalFieldPairsX}
+  let fieldPairs = call.exprKind in {FieldpairsX, InternalFieldPairsX}
   let isInternalSym = call.exprKind == InternalFieldPairsX
   var iter = FieldsIter()
   let unpackInfo = it.n.info

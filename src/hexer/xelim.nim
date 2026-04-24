@@ -312,7 +312,7 @@ proc trCondOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target
       dest.addTarget aa                # if x
       copyIntoKind dest, StmtsS, info:
         useCfVar dest, cf, info
-    # Watch out, we cannot use an ELifU here directly because `bb` can
+    # Watch out, we cannot use an ElifU here directly because `bb` can
     # have side effects!
     copyIntoKind dest, ElseU, info:
       copyIntoKind dest, StmtsS, info:

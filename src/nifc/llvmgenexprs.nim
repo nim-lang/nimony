@@ -32,7 +32,7 @@ proc scalarTypeKind(c: var LLVMCode; typ: Cursor): NifcType =
 
 proc pointeeType(c: var LLVMCode; typ: Cursor): Cursor =
   let t = navigateToObjectBody(c.m, typ)
-  if t.typeKind in {PtrT, APtrT, FlexarrayT}:
+  if t.typeKind in {PtrT, AptrT, FlexarrayT}:
     result = t.firstSon
   else:
     result = default(Cursor)
@@ -426,7 +426,7 @@ proc isNifcFloat(tk: NifcType): bool {.inline.} =
   tk == FT
 
 proc isNifcPtr(tk: NifcType): bool {.inline.} =
-  tk in {PtrT, APtrT, ProctypeT}
+  tk in {PtrT, AptrT, ProctypeT}
 
 proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCursor: Cursor;
                      isCast: bool; result: var LLValue) =

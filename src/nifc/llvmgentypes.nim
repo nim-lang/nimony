@@ -94,7 +94,7 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): string =
       inc n
     else:
       error c.m, "node is not a type: ", n
-  of PtrT, APtrT:
+  of PtrT, AptrT:
     result = "ptr"
     skip n
   of FlexarrayT:
@@ -178,7 +178,7 @@ proc typeSizeBits(c: var LLVMCode; n: Cursor): int =
       result = 64
   of BoolT:
     result = 8
-  of PtrT, APtrT, ProctypeT:
+  of PtrT, AptrT, ProctypeT:
     result = c.bits
   of FlexarrayT:
     result = 0
@@ -246,7 +246,7 @@ proc typeAlignBits(c: var LLVMCode; n: Cursor): int =
   of IT, UT, CT, FT, BoolT:
     result = typeSizeBits(c, n)
     if result > c.bits: result = c.bits
-  of PtrT, APtrT, ProctypeT:
+  of PtrT, AptrT, ProctypeT:
     result = c.bits
   of EnumT:
     var nn = n
@@ -307,7 +307,7 @@ proc recordDependencyImplLLVM(m: var MainModule; o: var TypeOrderLLVM;
   var ch = child
   while true:
     case ch.typeKind
-    of APtrT, PtrT:
+    of AptrT, PtrT:
       viaPointer = true
       ch = elementType(ch)
     of FlexarrayT:

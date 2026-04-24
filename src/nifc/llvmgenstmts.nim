@@ -560,7 +560,7 @@ proc genStmtLLVM(c: var LLVMCode; n: var Cursor) =
     if "llvm.trap" notin c.declaredExterns:
       c.declaredExterns.incl "llvm.trap"
       c.addTo(c.externs, "declare void @llvm.trap() noreturn nounwind\n")
-  of OnErrS:
+  of OnerrS:
     var onErrAction = n
     inc onErrAction
     var saved = n

@@ -468,7 +468,7 @@ proc genVarInitValue(c: var GeneratedCode; n: var Cursor) =
   if n.kind == DotToken:
     inc n
     c.add Semicolon
-  elif n.stmtKind == OnErrS:
+  elif n.stmtKind == OnerrS:
     var onErrAction = n
     inc onErrAction
     c.add AsgnOpr
@@ -619,7 +619,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
     if c.currentProc.needsOverflowFlag:
       addOverflowDecl c, c.code, beforeBody
     c.add CurlyRi
-    if SelectAnyP in prag.flags:
+    if SelectanyP in prag.flags:
       genRoutineGuardEnd(c)
   c.m.closeScope()
   c.inToplevel = true
@@ -668,7 +668,7 @@ proc genToplevel(c: var GeneratedCode; n: var Cursor) =
   of VarS, GvarS, TvarS: genStmt c, n
   of ConstS: genVar c, n, IsConst
   of DiscardS, AsgnS, KeepovfS, ScopeS, IfS,
-      WhileS, CaseS, LabS, JmpS, TryS, RaiseS, CallS, OnErrS:
+      WhileS, CaseS, LabS, JmpS, TryS, RaiseS, CallS, OnerrS:
     moveToInitSection:
       genStmt c, n
   of TypeS:

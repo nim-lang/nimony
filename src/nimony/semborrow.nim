@@ -6,11 +6,13 @@
 
 ## Implements the transformation that the `.borrow` pragma requires.
 
-import std / [tables, sets, syncio, formatfloat, assertions]
-include nifprelude
-import nimony_model, symtabs, builtintypes, decls, symparser,
+import std / [tables, sets, hashes, syncio, formatfloat, assertions]
+include ".." / lib / nifprelude
+include ".." / lib / compat2
+import nimony_model, symtabs, builtintypes, decls,
   programs, sigmatch, magics, reporters,
   semdata, sembasics, typeprops
+import ".." / lib / symparser
 
 proc genBorrowedProcBody*(c: var SemContext; fn: StrId; signature: Cursor; info: PackedLineInfo): TokenBuf =
   #[

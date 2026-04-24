@@ -458,31 +458,24 @@ proc evalInSet(c: var EvalContext; n: var Cursor): Cursor =
 
   result = boolValue(c, isInSet)
 
-# Number of set bits for all values of int8
-const populationCount: array[uint8, uint8] = block:
-    var arr: array[uint8, uint8] = default(array[uint8, uint8])
-
-    proc countSetBits(x: uint8): uint8 =
-      return
-        ( x and 0b00000001'u8) +
-        ((x and 0b00000010'u8) shr 1) +
-        ((x and 0b00000100'u8) shr 2) +
-        ((x and 0b00001000'u8) shr 3) +
-        ((x and 0b00010000'u8) shr 4) +
-        ((x and 0b00100000'u8) shr 5) +
-        ((x and 0b01000000'u8) shr 6) +
-        ((x and 0b10000000'u8) shr 7)
-
-
-    for it in low(uint8)..high(uint8):
-      arr[it] = countSetBits(cast[uint8](it))
-
-    arr
+proc countSetBits(x: uint8): uint8 {.inline.} =
+  # Previously realised via a 256-entry lookup table built in a `const block:`
+  # but that forced `expreval.eval` to shell out to `executeExpr` at sem time
+  # (the only const on this path, ~6s per clean rebuild). A straightforward
+  # per-byte formula is fine for set cardinality.
+  ( x and 0b00000001'u8) +
+    ((x and 0b00000010'u8) shr 1) +
+    ((x and 0b00000100'u8) shr 2) +
+    ((x and 0b00001000'u8) shr 3) +
+    ((x and 0b00010000'u8) shr 4) +
+    ((x and 0b00100000'u8) shr 5) +
+    ((x and 0b01000000'u8) shr 6) +
+    ((x and 0b10000000'u8) shr 7)
 
 proc bitSetCard(x: seq[uint8]): BiggestInt =
   result = 0
   for it in x:
-    result.inc int(populationCount[it])
+    result.inc int(countSetBits(it))
 
 proc evalCardSet(c: var EvalContext; n: var Cursor): Cursor =
   let info = n.info

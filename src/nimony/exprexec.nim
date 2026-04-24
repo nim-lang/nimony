@@ -295,7 +295,7 @@ proc unravelTuple(c: var SynthesizeSerializerCtx;
 
 proc accessArrayAt(c: var SynthesizeSerializerCtx; arr: TokenBuf; indexVar: SymId): TokenBuf =
   result = createTokenBuf(4)
-  copyIntoKind result, ArrAtX, c.info:
+  copyIntoKind result, ArratX, c.info:
     copyTree result, arr
     copyIntoSymUse result, indexVar, c.info
   freeze result
@@ -376,7 +376,7 @@ proc unravelSet(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBu
     copyIntoKind c.dest, StmtsS, c.info:
       copyIntoKind c.dest, IfS, c.info:
         copyIntoKind c.dest, ElifU, c.info:
-          copyIntoKind c.dest, InSetX, c.info:
+          copyIntoKind c.dest, InsetX, c.info:
             c.dest.addSubtree orig
             c.dest.add param # param is the set, so it comes first
             # the element is our indexVar

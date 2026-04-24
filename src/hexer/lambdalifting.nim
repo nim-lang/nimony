@@ -207,7 +207,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of ProcS, FuncS, MacroS, MethodS, ConverterS:
       trProc c, dest, n
     of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
-      ForS, IncludeS, ImportS, FromimportS, ImportExceptS,
+      ForS, IncludeS, ImportS, FromimportS, ImportexceptS,
       ExportS, CommentS,
       PragmasS:
       takeTree dest, n
@@ -673,7 +673,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of ProcS, FuncS, MacroS, MethodS, ConverterS:
       treProcLift c, dest, n
     of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
-      ForS, IncludeS, ImportS, FromimportS, ImportExceptS,
+      ForS, IncludeS, ImportS, FromimportS, ImportexceptS,
       ExportS, CommentS,
       PragmasS:
       takeTree dest, n

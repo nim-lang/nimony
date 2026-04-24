@@ -156,7 +156,7 @@ proc extractBorrowPath(c: var NjvlContext; n: Cursor; result: var BorrowInfo; fo
       var r = n
       inc r
       extractBorrowPath(c, r, result, followInlineVars)
-    elif ek in {TupatX, ArrAtX, AtX, PatX}:
+    elif ek in {TupatX, ArratX, AtX, PatX}:
       # Array/tuple access: recurse into container, don't distinguish indices
       var r = n
       inc r
@@ -431,7 +431,7 @@ proc analysableRoot(c: var NjvlContext; n: Cursor): SymId =
   var n = n
   while true:
     case n.exprKind
-    of DotX, TupatX, ArrAtX, HderefX:
+    of DotX, TupatX, ArratX, HderefX:
       inc n
     of ConvKinds:
       inc n
@@ -1396,7 +1396,7 @@ proc traverseToplevel(c: var NjvlContext; n: var Cursor) =
   of MacroS, TemplateS, TypeS, CommentS, PragmasS,
      ImportasS, ExportexceptS, BindS, MixinS, UsingS,
      ExportS,
-     IncludeS, ImportS, FromimportS, ImportExceptS:
+     IncludeS, ImportS, FromimportS, ImportexceptS:
     skip n
   else:
     # Toplevel statements - analyze them

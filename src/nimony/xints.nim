@@ -125,7 +125,10 @@ proc createXint*(x: int64): xint =
   else:
     xint(neg: false, val: uint64(x))
 
-proc createXint*(x: uint64): xint =
+template createXint*(x: uint64): xint =
+  ## Template so that constant expressions like `createXint(1'u64 shl 8)`
+  ## are folded by `expreval.eval` (OconstrX path) instead of shelling out
+  ## a full sub-compile via `executeExpr`.
   xint(neg: false, val: uint64(x))
 
 proc `shl`*(a: xint, b: int): xint =
