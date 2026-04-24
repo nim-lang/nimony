@@ -14,36 +14,7 @@ type
     Backend, Frontend
 
 
-proc mangle*(b: var Mangler; c: Cursor; mm: MangleMode)
-
-proc mangleProctype(b: var Mangler; n: var Cursor; mm: MangleMode): string =
-  skipToParams n
-
-  var b = createMangler(60)
-  if n.kind != DotToken:
-    inc n # params tag
-    while n.kind != ParRi:
-      let pa = takeLocal(n, SkipFinalParRi)
-      assert pa.kind == ParamY
-      mangle b, pa.typ, mm
-  inc n # DotToken or ParRi
-  # also add return type:
-  mangle b, n, Backend
-  skip n
-  # handle pragmas:
-  let props = extractProcProps(n)
-  b.addKeyw $props.cc
-  b.addKeyw $props.usesRaises
-  b.addKeyw $props.usesClosure
-  result = b.extract()
-  if n.kind != ParRi:
-    skip n, SkipEffects # effects
-    if n.kind != ParRi:
-      skip n, SkipBody # body
-  if n.kind != ParRi:
-    bug "expected ')', but got: ", n
-  inc n
-
+proc mangleProctype(b: var Mangler; n: var Cursor; mm: MangleMode): string
 
 proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
   var nested = 0
@@ -174,3 +145,31 @@ proc mangle*(c: Cursor; mm: MangleMode; bits = -1): string =
 proc mangle*(b: var Mangler; c: Cursor; mm: MangleMode) =
   var c = c
   mangleImpl b, c, mm
+
+proc mangleProctype(b: var Mangler; n: var Cursor; mm: MangleMode): string =
+  skipToParams n
+
+  var b = createMangler(60)
+  if n.kind != DotToken:
+    inc n # params tag
+    while n.kind != ParRi:
+      let pa = takeLocal(n, SkipFinalParRi)
+      assert pa.kind == ParamY
+      mangle b, pa.typ, mm
+  inc n # DotToken or ParRi
+  # also add return type:
+  mangle b, n, Backend
+  skip n
+  # handle pragmas:
+  let props = extractProcProps(n)
+  b.addKeyw $props.cc
+  b.addKeyw $props.usesRaises
+  b.addKeyw $props.usesClosure
+  result = b.extract()
+  if n.kind != ParRi:
+    skip n # effects
+    if n.kind != ParRi:
+      skip n # body
+  if n.kind != ParRi:
+    bug "expected ')', but got: ", n
+  inc n

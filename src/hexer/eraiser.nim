@@ -31,9 +31,10 @@ We also produce the required temporaries (as cursors so that we don't get even m
 
 ]##
 
-import std / [sets, assertions]
+import std / [sets, tables, hashes, assertions, syncio]
 
-include nifprelude
+include ".." / lib / nifprelude
+include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, typeprops]
 import ".." / models / tags
 import duplifier, passes

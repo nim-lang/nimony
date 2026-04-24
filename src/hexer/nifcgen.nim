@@ -492,9 +492,9 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
       error c, "could not find symbol: " & pool.syms[s]
   of ParLe:
     case n.typeKind
-    of NoType, ErrT, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypeKindT, OrdinalT:
+    of NoType, ErrT, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypekindT, OrdinalT:
       error c, "type expected but got: ", n
-    of IntT, UintT, FloatT, CharT, BoolT, AutoT, SymKindT, VarargsT:
+    of IntT, UintT, FloatT, CharT, BoolT, AutoT, SymkindT, VarargsT:
       takeTree dest, n
     of MutT, LentT:
       dest.add tagToken("ptr", n.info)
@@ -738,9 +738,9 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
           result.flags.incl pk
           inc n
           skipParRi c, n
-        of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoReturnP,
-           VarargsP, NoSideEffectP, NoDestroyP, ByCopyP, ByRefP,
-           InlineP, NoinlineP, NoInitP, InjectP, GensymP, DirtyP, UntypedP, ViewP,
+        of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP,
+           VarargsP, NoSideEffectP, NodestroyP, BycopyP, ByrefP,
+           InlineP, NoinlineP, NoinitP, InjectP, GensymP, DirtyP, UntypedP, ViewP,
            InheritableP, PureP, AcyclicP, ClosureP, PackedP, UnionP, IncompleteStructP:
           result.flags.incl pk
           inc n
@@ -1210,7 +1210,7 @@ proc isSimpleLiteral(nb: var Cursor): bool =
     inc nb
   else:
     case nb.exprKind
-    of FalseX, TrueX, InfX, NegInfX, NanX, NilX:
+    of FalseX, TrueX, InfX, NeginfX, NanX, NilX:
       result = true
       skip nb
     of SufX:
@@ -1382,9 +1382,9 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         else:
           trExpr c, dest, n
       takeParRi dest, n
-    of TupConstrX:
+    of TupconstrX:
       trTupleConstr c, dest, n
-    of CmdX, CallStrLitX, InfixX, PrefixX, HcallX, CallX:
+    of CmdX, CallstrlitX, InfixX, PrefixX, HcallX, CallX:
       dest.add tagToken("call", n.info)
       inc n
       while n.kind != ParRi:
@@ -1392,7 +1392,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       takeParRi dest, n
     of ExprX:
       trStmtsExpr c, dest, n
-    of ArrAtX:
+    of ArratX:
       trArrAt c, dest, n
     of TupatX:
       let fieldType = getType(c.typeCache, n)
@@ -1483,8 +1483,8 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         dest.addParRi()
         trExpr c, dest, n
       takeParRi dest, n
-    of ErrX, NewobjX, NewrefX, SetConstrX, PlusSetX, MinusSetX, MulSetX, XorSetX, EqSetX, LeSetX, LtSetX,
-       InSetX, CardX, BracketX, CurlyX, TupX, CompilesX, DeclaredX, DefinedX, AstToStrX, HighX, LowX, TypeofX, UnpackX,
+    of ErrX, NewobjX, NewrefX, SetconstrX, PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
+       InsetX, CardX, BracketX, CurlyX, TupX, CompilesX, DeclaredX, DefinedX, AstToStrX, HighX, LowX, TypeofX, UnpackX,
        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX, DefaulttupX, DefaultdistinctX, DoX, CchoiceX, OchoiceX,
        EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, CurlyatX, PragmaxX, QuotedX, TabconstrX,
        InstanceofX, ProccallX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX, DelayX, Delay0X, SuspendX:
@@ -1865,7 +1865,7 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
     of BlockS: trBlock c, dest, n
     of IfS: trIf c, dest, n
     of CaseS: trCase c, dest, n
-    of YldS, ForS, InclS, ExclS, DeferS, UnpackDeclS:
+    of YldS, ForS, InclS, ExclS, DeferS, UnpackdeclS:
       error c, "BUG: not eliminated: ", n
     of TryS:
       trTry c, dest, n
@@ -1882,7 +1882,7 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
           c.importedModuleSuffixes.add pool.strings[n.litId]
         skip n
       inc n # skip ParRi
-    of MacroS, TemplateS, IncludeS, FromimportS, ImportExceptS, ExportS, CommentS, IteratorS,
+    of MacroS, TemplateS, IncludeS, FromimportS, ImportexceptS, ExportS, CommentS, IteratorS,
        ImportasS, ExportexceptS, BindS, MixinS, UsingS, StaticstmtS:
       # pure compile-time construct, ignore:
       skip n
@@ -2169,7 +2169,7 @@ proc isTopLevelDecl(n: Cursor): bool {.inline.} =
   ## (outside the init proc). Everything else is executable code or
   ## local state that belongs inside the init proc.
   n.stmtKind in {ProcS, FuncS, ConverterS, MethodS, TypeS,
-    IncludeS, ImportS, FromimportS, ImportExceptS, ExportS,
+    IncludeS, ImportS, FromimportS, ImportexceptS, ExportS,
     ImportasS, ExportexceptS, CommentS, IteratorS,
     BindS, MixinS, UsingS, StaticstmtS,
     ConstS, PragmasS, EmitS}

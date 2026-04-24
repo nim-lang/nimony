@@ -13,11 +13,12 @@
 ## - Transform calls to virtual methods into calls to the vtable
 ## - Translate the `of` operator into something NIFC can understand
 
-import std/[assertions, tables]
-
-include nifprelude
+import std/[assertions, tables, hashes, sets, syncio]
+include ".." / lib / nifprelude
+include ".." / lib / compat2
 import ".." / lib / tinyhashes
-import nifindexes, symparser, treemangler, passes
+import ".." / lib / [nifindexes, symparser, treemangler]
+import passes
 import ".." / nimony / [nimony_model, decls, programs, typenav,
   renderer, builtintypes, typeprops, typekeys, vtables_frontend]
 from duplifier import constructsValue
@@ -61,7 +62,7 @@ proc computeVTableName(c: var Context; cls: SymId; middle = ".vt."): SymId =
 
 proc getVTableName(c: var Context; cls: SymId): SymId =
   if c.vtableNames.hasKey(cls):
-    result = c.vtableNames[cls]
+    result = c.vtableNames.getOrQuit(cls)
   else:
     result = computeVTableName(c, cls)
     c.vtableNames[cls] = result
@@ -153,8 +154,9 @@ proc loadVTable(c: var Context; cls: SymId) =
   let diff = vtables_frontend.loadVTable(cls)
   var dest = VTable(display: @[], methods: @[], state: Others)
   if parent != SymId(0):
-    dest.methods = c.vtables[parent].methods
-    dest.signatureToIndex = c.vtables[parent].signatureToIndex
+    let parentVT = addr c.vtables.getOrQuit(parent)
+    dest.methods = parentVT[].methods
+    dest.signatureToIndex = parentVT[].signatureToIndex
 
   for entry in diff:
     let sig = pool.strings[entry.signature]
@@ -171,7 +173,7 @@ proc getMethodIndex(c: var Context; cls, fn: SymId): int =
   if not c.vtables.hasKey(cls):
     c.loadVTable(cls)
 
-  result = c.vtables[cls].methods.find(fn)
+  result = c.vtables.getOrQuit(cls).methods.find(fn)
   if result == -1:
     error "method `" & pool.syms[fn] & "` not found in class " & pool.syms[cls]
 
@@ -260,9 +262,10 @@ proc maybeImport(c: var Context; cls, vtabName: SymId) =
   if not c.vtables.hasKey(cls):
     c.loadVTable(cls)
 
-  let state = c.vtables[cls].state
+  let vt = addr c.vtables.getOrQuit(cls)
+  let state = vt[].state
   if state == Others:
-    c.vtables[cls].state = AlreadyImported
+    vt[].state = AlreadyImported
     var decl = createTokenBuf(8)
     decl.copyIntoKind ConstS, NoLineInfo:
       decl.addSymDef vtabName, NoLineInfo
@@ -648,15 +651,16 @@ proc processMethod(c: var Context; m: MethodDecl; methodName: string) =
   let sig = methodKey(methodName, m.paramRest)
   # see if this is an override:
   for inh in inheritanceChain(m.cls):
-    let methodIndex = c.vtables[inh].signatureToIndex.getOrDefault(sig, -1)
+    let methodIndex = c.vtables.getOrQuit(inh).signatureToIndex.getOrDefault(sig, -1)
     if methodIndex != -1:
       # register as override:
-      c.vtables[m.cls].methods[methodIndex] = m.name
+      c.vtables.getOrQuit(m.cls).methods[methodIndex] = m.name
       return
   # not an override, register as a new base method:
-  let idx = c.vtables[m.cls].methods.len
-  c.vtables[m.cls].methods.add m.name
-  c.vtables[m.cls].signatureToIndex[sig] = idx
+  let myVt = addr c.vtables.getOrQuit(m.cls)
+  let idx = myVt[].methods.len
+  myVt[].methods.add m.name
+  myVt[].signatureToIndex[sig] = idx
 
 proc processMethods(c: var Context) =
   # Methods are fundamentally different from other type-bound symbols in
@@ -667,12 +671,15 @@ proc processMethods(c: var Context) =
     if entry[1]:
       let cls = entry[0]
       # inherit methods from parent class:
-      let parent = c.vtables[cls].parent
+      let parent = c.vtables.getOrQuit(cls).parent
       if parent != SymId(0):
         if parent notin c.vtables:
           loadVTable c, parent
-        c.vtables[cls].methods = c.vtables[parent].methods
-        c.vtables[cls].signatureToIndex = c.vtables[parent].signatureToIndex
+        let parentMethods = c.vtables.getOrQuit(parent).methods
+        let parentSig = c.vtables.getOrQuit(parent).signatureToIndex
+        let mine = addr c.vtables.getOrQuit(cls)
+        mine[].methods = parentMethods
+        mine[].signatureToIndex = parentSig
       for m in c.methodDecls:
         if m.cls == cls:
           var methodName = pool.syms[m.name]
@@ -682,12 +689,13 @@ proc processMethods(c: var Context) =
       let diff = vtables_frontend.loadVTable(cls)
       for entry in diff:
         let sig = pool.strings[entry.signature]
-        let idx = c.vtables[cls].signatureToIndex.getOrDefault(sig, -1)
+        let vt = addr c.vtables.getOrQuit(cls)
+        let idx = vt[].signatureToIndex.getOrDefault(sig, -1)
         if idx == -1:
-          c.vtables[cls].methods.add entry.fn
-          c.vtables[cls].signatureToIndex[sig] = c.vtables[cls].methods.len - 1
+          vt[].methods.add entry.fn
+          vt[].signatureToIndex[sig] = vt[].methods.len - 1
         else:
-          c.vtables[cls].methods[idx] = entry.fn
+          vt[].methods[idx] = entry.fn
 
 proc registerClass(c: var Context; cls: SymId; inThisModule: bool) =
   for i in 0 ..< c.classes.len:

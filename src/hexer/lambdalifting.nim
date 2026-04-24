@@ -37,8 +37,9 @@ Here `outerB` is also a closure.
 
 ]##
 
-import std / [assertions, sets, tables]
+import std / [assertions, sets, tables, hashes, syncio]
 include ".." / lib / nifprelude
+include ".." / lib / compat2
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
   builtintypes, langmodes, renderer, reporters]
@@ -114,7 +115,7 @@ proc envTypeForProc(c: var Context; procId: SymId): SymId =
 
 proc localToField(c: var Context; n: Cursor; local, typ: SymId): SymId =
   if c.localToEnv.hasKey(local):
-    result = c.localToEnv[local].field
+    result = c.localToEnv.getOrQuit(local).field
   else:
     var name = pool.syms[local]
     extractBasename name
@@ -207,7 +208,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of ProcS, FuncS, MacroS, MethodS, ConverterS:
       trProc c, dest, n
     of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
-      ForS, IncludeS, ImportS, FromimportS, ImportExceptS,
+      ForS, IncludeS, ImportS, FromimportS, ImportexceptS,
       ExportS, CommentS,
       PragmasS:
       takeTree dest, n
@@ -673,7 +674,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of ProcS, FuncS, MacroS, MethodS, ConverterS:
       treProcLift c, dest, n
     of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
-      ForS, IncludeS, ImportS, FromimportS, ImportExceptS,
+      ForS, IncludeS, ImportS, FromimportS, ImportexceptS,
       ExportS, CommentS,
       PragmasS:
       takeTree dest, n

@@ -337,12 +337,12 @@ proc checkCopyIntoKind(ctx: var CheckContext; n: Cursor; info: PackedLineInfo) =
 
   var tagName = ""
   var bodyPos = c
-  var destName = "" # track which variable this writes to
+  var destLv = default(Cursor) # track which lvalue this writes to
 
   if c.kind == ParLe:
     let name = extractDotCallName(c)
     if name notin ["copyIntoKind", "buildTree", "withTree"]: return
-    destName = extractDotReceiver(c)
+    destLv = extractDotReceiver(c)
     skip c
     if c.kind == Ident:
       tagName = pool.strings[c.litId]
@@ -359,11 +359,9 @@ proc checkCopyIntoKind(ctx: var CheckContext; n: Cursor; info: PackedLineInfo) =
     let name = pool.strings[c.litId]
     if name notin ["copyIntoKind", "buildTree", "withTree"]: return
     inc c
-    # Extract dest variable before skipping it
-    if c.kind == Ident:
-      destName = pool.strings[c.litId]
-    elif c.kind == ParLe:
-      destName = extractLastDotField(c)
+    # Extract dest lvalue before skipping it
+    if isLvalue(c):
+      destLv = c
     skip c  # skip dest
     if c.kind == Ident:
       tagName = pool.strings[c.litId]
@@ -387,8 +385,8 @@ proc checkCopyIntoKind(ctx: var CheckContext; n: Cursor; info: PackedLineInfo) =
 
   let specs = ctx.grammar[mdTag]
 
-  # Use the effect graph to analyze the body, tracking the dest variable
-  let effect = analyzeStmtsBody(ctx.effectGraph, bodyPos, destName)
+  # Use the effect graph to analyze the body, tracking the dest lvalue
+  let effect = analyzeStmtsBody(ctx.effectGraph, bodyPos, destLv)
   let flat = flatten(effect)
 
   if not flat.ok:
@@ -888,69 +886,53 @@ proc scanUnsafeCursorOps(ctx: var CheckContext; reg: TypeRegistry; procs: openAr
 # Step 5: while-ParRi completion — ensure ParRi is consumed after the loop
 # ---------------------------------------------------------------------------
 
-proc extractDotChain(n: Cursor): string =
-  ## Extract a dot-expression chain as a string: `n` → "n", `it.n` → "it.n".
-  if n.kind == Ident:
-    return pool.strings[n.litId]
-  if n.kind == ParLe and pool.tags[n.tag] == "dot":
-    var c = n
-    inc c # skip (dot
-    let receiver = extractDotChain(c)
-    skip c
-    if c.kind == Ident:
-      return receiver & "." & pool.strings[c.litId]
-  ""
+proc extractLvalue(n: Cursor): Cursor =
+  ## Extract an lvalue from the cursor position: bare Ident or (dot ...) expression.
+  ## Returns nil Cursor if not an analyzable lvalue.
+  if n.kind == Ident: return n
+  if n.kind == ParLe and pool.tags[n.tag] == "dot": return n
+  default(Cursor)
 
-proc argMatchesVar(n: Cursor; varName: string): bool =
-  ## Check if argument `n` matches `varName`. For simple names like "n",
-  ## matches a bare Ident. For dot-chains like "it.n", matches a (dot it n) expr.
-  if n.kind == Ident:
-    return pool.strings[n.litId] == varName
-  if n.kind == ParLe and pool.tags[n.tag] == "dot":
-    return extractDotChain(n) == varName
-  false
-
-proc extractWhileParRiVar(n: Cursor): string =
+proc extractWhileParRiVar(n: Cursor): Cursor =
   ## If `n` is at a `(while COND BODY)` where COND is `(infix != (dot VAR kind) ParRi)`,
-  ## return VAR. VAR can be a bare ident (`n`) or a dot-chain (`it.n`).
-  ## Otherwise return "".
+  ## return VAR as an lvalue Cursor. VAR can be a bare ident (`n`) or a nested dot (`it.n`).
+  ## Otherwise return nil Cursor.
   var c = n
-  if c.kind != ParLe or pool.tags[c.tag] != "while": return ""
+  if c.kind != ParLe or pool.tags[c.tag] != "while": return default(Cursor)
   inc c # skip (while
   # Condition should be (infix != (dot VAR kind) ParRi)
-  if c.kind != ParLe: return ""
+  if c.kind != ParLe: return default(Cursor)
   let condTag = pool.tags[c.tag]
   var infixCur = c
   if condTag == "infix":
     inc infixCur # skip (infix
-    if infixCur.kind != Ident: return ""
+    if infixCur.kind != Ident: return default(Cursor)
     let op = pool.strings[infixCur.litId]
-    if op != "!=": return ""
+    if op != "!=": return default(Cursor)
     skip infixCur # skip op name
     # LHS should be (dot EXPR kind) where EXPR is a bare ident or dot-chain
-    if infixCur.kind != ParLe: return ""
-    if pool.tags[infixCur.tag] != "dot": return ""
+    if infixCur.kind != ParLe: return default(Cursor)
+    if pool.tags[infixCur.tag] != "dot": return default(Cursor)
     var dotCur = infixCur
     inc dotCur # skip (dot
-    let varName = extractDotChain(dotCur)
-    if varName.len == 0: return ""
+    let varLv = extractLvalue(dotCur)
+    if cursorIsNil(varLv): return default(Cursor)
     skip dotCur # skip receiver
-    if dotCur.kind != Ident: return ""
+    if dotCur.kind != Ident: return default(Cursor)
     let fieldName = pool.strings[dotCur.litId]
-    if fieldName != "kind": return ""
+    if fieldName != "kind": return default(Cursor)
     skip dotCur # skip field name
     # RHS should be ParRi
     skip infixCur # skip dot expr
-    if infixCur.kind != Ident: return ""
+    if infixCur.kind != Ident: return default(Cursor)
     let rhsName = pool.strings[infixCur.litId]
-    if rhsName != "ParRi": return ""
-    return varName
-  ""
+    if rhsName != "ParRi": return default(Cursor)
+    return varLv
+  default(Cursor)
 
-proc isParRiSkipCall(n: Cursor; varName: string): bool =
-  ## Check if `n` is at a call/cmd that skips the ParRi for `varName`.
-  ## Matches: (cmd inc N varName), (cmd skipParRi N varName),
-  ##          (cmd takeParRi N ... varName), (call ~N takeParRi N ... varName)
+proc isParRiSkipCall(n: Cursor; lv: Cursor): bool =
+  ## Check if `n` is at a call/cmd that skips the ParRi for the given lvalue.
+  ## Matches: (cmd inc N lv), (cmd skipParRi N lv), etc.
   if n.kind != ParLe: return false
   let tag = pool.tags[n.tag]
   if tag notin ["cmd", "call"]: return false
@@ -964,9 +946,9 @@ proc isParRiSkipCall(n: Cursor; varName: string): bool =
     callName = extractDotCallName(c)
     skip c
   if callName notin ParRiSkipProcs: return false
-  # Check if varName appears as any argument
+  # Check if lvalue appears as any argument
   while c.kind != ParRi:
-    if argMatchesVar(c, varName):
+    if equalLvalues(c, lv):
       return true
     skip c
   false
@@ -1030,19 +1012,19 @@ proc whileBodyContributesDest(whileNode: Cursor): bool =
 
 proc scanWhileInStmts(ctx: var CheckContext; stmtsNode: Cursor; insideCopyInto: bool;
                       varCursorCallees: HashSet[string])
-proc whileBodyHasProgressCall(whileNode: Cursor; varName: string;
+proc whileBodyHasProgressCall(whileNode: Cursor; lv: Cursor;
                               acceptedCalls: openArray[string]): bool
-proc extractWhileCounterVar(n: Cursor): string
+proc extractWhileCounterVar(n: Cursor): Cursor
 proc isWhileTrueLoop(n: Cursor): bool
 proc whileBodyLooksLikeNestedScanner(whileNode: Cursor): bool
-proc whileBodyMustAdvanceCursor(whileNode: Cursor; varName: string;
+proc whileBodyMustAdvanceCursor(whileNode: Cursor; lv: Cursor;
                                 varCursorCallees: HashSet[string]): bool
 
 const TrustedCursorAdvanceProcs = ["inc", "skip", "takeToken", "takeTree", "takeParRi", "skipParRi",
   # Replacer API:
   "keep", "drop", "replace", "into", "intoLoop", "replaceHead"]
 
-proc callAdvancesCursor(n: Cursor; varName: string;
+proc callAdvancesCursor(n: Cursor; lv: Cursor;
                         varCursorCallees: HashSet[string]): bool =
   if n.kind != ParLe: return false
   let tag = pool.tags[n.tag]
@@ -1060,15 +1042,15 @@ proc callAdvancesCursor(n: Cursor; varName: string;
   if not knownAdvancer:
     return false
   while c.kind != ParRi:
-    if argMatchesVar(c, varName):
+    if equalLvalues(c, lv):
       return true
     skip c
   false
 
-proc stmtMustAdvanceCursor(n: Cursor; varName: string;
+proc stmtMustAdvanceCursor(n: Cursor; lv: Cursor;
                            varCursorCallees: HashSet[string]): bool
 
-proc stmtsMustAdvanceCursor(stmtsNode: Cursor; varName: string;
+proc stmtsMustAdvanceCursor(stmtsNode: Cursor; lv: Cursor;
                             varCursorCallees: HashSet[string]): bool =
   ## Sequential block: must-advance if at least one statement in sequence
   ## is guaranteed to advance the cursor.
@@ -1076,12 +1058,12 @@ proc stmtsMustAdvanceCursor(stmtsNode: Cursor; varName: string;
   if c.kind != ParLe or pool.tags[c.tag] != "stmts": return false
   inc c, SkipTag
   while c.kind != ParRi:
-    if stmtMustAdvanceCursor(c, varName, varCursorCallees):
+    if stmtMustAdvanceCursor(c, lv, varCursorCallees):
       return true
     skip c
   false
 
-proc branchBodyMustAdvance(branchNode: Cursor; varName: string;
+proc branchBodyMustAdvance(branchNode: Cursor; lv: Cursor;
                            varCursorCallees: HashSet[string]): bool =
   ## branchNode is `(elif ...)`, `(else ...)`, `(of ...)`.
   var b = branchNode
@@ -1093,15 +1075,15 @@ proc branchBodyMustAdvance(branchNode: Cursor; varName: string;
   elif k == "of":
     skip b, SkipValue
   if b.kind == ParLe and pool.tags[b.tag] == "stmts":
-    return stmtsMustAdvanceCursor(b, varName, varCursorCallees)
+    return stmtsMustAdvanceCursor(b, lv, varCursorCallees)
   false
 
-proc stmtMustAdvanceCursor(n: Cursor; varName: string;
+proc stmtMustAdvanceCursor(n: Cursor; lv: Cursor;
                            varCursorCallees: HashSet[string]): bool =
   if n.kind != ParLe: return false
   let tag = pool.tags[n.tag]
   if tag in ["cmd", "call"]:
-    return callAdvancesCursor(n, varName, varCursorCallees)
+    return callAdvancesCursor(n, lv, varCursorCallees)
   elif tag == "if":
     var c = n
     inc c, SkipTag
@@ -1114,7 +1096,7 @@ proc stmtMustAdvanceCursor(n: Cursor; varName: string;
         if bk in ["elif", "else"]:
           sawBranch = true
           if bk == "else": hasElse = true
-          if not branchBodyMustAdvance(c, varName, varCursorCallees):
+          if not branchBodyMustAdvance(c, lv, varCursorCallees):
             allBranchesAdvance = false
       skip c
     return sawBranch and hasElse and allBranchesAdvance
@@ -1131,16 +1113,16 @@ proc stmtMustAdvanceCursor(n: Cursor; varName: string;
         if bk in ["of", "else"]:
           sawBranch = true
           if bk == "else": hasElse = true
-          if not branchBodyMustAdvance(c, varName, varCursorCallees):
+          if not branchBodyMustAdvance(c, lv, varCursorCallees):
             allBranchesAdvance = false
       skip c
     return sawBranch and hasElse and allBranchesAdvance
   elif tag == "stmts":
-    return stmtsMustAdvanceCursor(n, varName, varCursorCallees)
+    return stmtsMustAdvanceCursor(n, lv, varCursorCallees)
   else:
     return false
 
-proc whileBodyMustAdvanceCursor(whileNode: Cursor; varName: string;
+proc whileBodyMustAdvanceCursor(whileNode: Cursor; lv: Cursor;
                                 varCursorCallees: HashSet[string]): bool =
   ## For `while n.kind != ParRi`, require body-level guaranteed progress.
   var c = whileNode
@@ -1148,7 +1130,7 @@ proc whileBodyMustAdvanceCursor(whileNode: Cursor; varName: string;
   inc c, SkipTag
   skip c, SkipCond
   if c.kind == ParLe and pool.tags[c.tag] == "stmts":
-    return stmtsMustAdvanceCursor(c, varName, varCursorCallees)
+    return stmtsMustAdvanceCursor(c, lv, varCursorCallees)
   false
 
 proc scanWhileRecurse(ctx: var CheckContext; n: Cursor; insideCopyInto: bool;
@@ -1178,14 +1160,15 @@ proc scanWhileInStmts(ctx: var CheckContext; stmtsNode: Cursor; insideCopyInto: 
     if child.kind == ParLe:
       let childTag = pool.tags[child.tag]
       if childTag == "while":
-        let varName = extractWhileParRiVar(child)
-        if varName.len > 0:
+        let varLv = extractWhileParRiVar(child)
+        if not cursorIsNil(varLv):
+          let varStr = lvalueToStr(varLv)
           # Termination proof for while n.kind != ParRi:
           # every iteration path in the body must advance/delegate `n`.
-          if not whileBodyMustAdvanceCursor(child, varName, varCursorCallees):
-            addWarning(ctx, child.info, "while " & varName & ".kind != ParRi",
+          if not whileBodyMustAdvanceCursor(child, varLv, varCursorCallees):
+            addWarning(ctx, child.info, "while " & varStr & ".kind != ParRi",
               "cursor progress is not guaranteed on all body paths (expected guaranteed `inc/skip " &
-              varName & "` or guaranteed delegated advancement via calls that take `" & varName & "`)")
+              varStr & "` or guaranteed delegated advancement via calls that take `" & varStr & "`)")
 
           # Existing structural safety check: if loop contributes to dest, ensure the
           # trailing ParRi gets consumed after the loop.
@@ -1197,20 +1180,21 @@ proc scanWhileInStmts(ctx: var CheckContext; stmtsNode: Cursor; insideCopyInto: 
             var lookAhead = 0
             var peek = afterWhile
             while peek.kind != ParRi and lookAhead < 3:
-              if isParRiSkipCall(peek, varName):
+              if isParRiSkipCall(peek, varLv):
                 found = true
                 break
               skip peek
               inc lookAhead
             if not found:
-              addWarning(ctx, whileInfo, "while " & varName & ".kind != ParRi",
-                "ParRi not consumed after loop for `" & varName & "`")
+              addWarning(ctx, whileInfo, "while " & varStr & ".kind != ParRi",
+                "ParRi not consumed after loop for `" & varStr & "`")
         else:
-          let counterVar = extractWhileCounterVar(child)
-          if counterVar.len > 0:
-            if not whileBodyHasProgressCall(child, counterVar, ["dec"]):
-              addWarning(ctx, child.info, "while " & counterVar & " > 0 and ...",
-                "missing `dec " & counterVar & "` in loop body")
+          let counterLv = extractWhileCounterVar(child)
+          if not cursorIsNil(counterLv):
+            let counterStr = lvalueToStr(counterLv)
+            if not whileBodyHasProgressCall(child, counterLv, ["dec"]):
+              addWarning(ctx, child.info, "while " & counterStr & " > 0 and ...",
+                "missing `dec " & counterStr & "` in loop body")
           elif isWhileTrueLoop(child) and whileBodyLooksLikeNestedScanner(child):
             discard # accepted scanner loop with nested counting + progress + break
           else:
@@ -1258,9 +1242,9 @@ proc scanWhileParRiCompletion(ctx: var CheckContext; procs: openArray[ProcMeta];
 # Step 6: While helpers
 # ---------------------------------------------------------------------------
 
-proc whileBodyHasProgressCall(whileNode: Cursor; varName: string;
+proc whileBodyHasProgressCall(whileNode: Cursor; lv: Cursor;
                               acceptedCalls: openArray[string]): bool =
-  ## Check if the while body contains any accepted call that uses `varName`.
+  ## Check if the while body contains any accepted call that uses `lv`.
   var c = whileNode
   inc c, SkipTag   # (while
   skip c, SkipCond # condition
@@ -1283,7 +1267,7 @@ proc whileBodyHasProgressCall(whileNode: Cursor; varName: string;
           skip peek
         if callName in acceptedCalls:
           while peek.kind != ParRi:
-            if peek.kind == Ident and pool.strings[peek.litId] == varName:
+            if equalLvalues(peek, lv):
               return true
             skip peek
       inc nested; inc c
@@ -1293,34 +1277,34 @@ proc whileBodyHasProgressCall(whileNode: Cursor; varName: string;
       inc c
   false
 
-proc extractAndCounterVar(cond: Cursor): string =
+proc extractAndCounterVar(cond: Cursor): Cursor =
   ## Extract `x` from `(infix and (infix > x 0) ...)`.
   var c = cond
-  if c.kind != ParLe or pool.tags[c.tag] != "infix": return ""
+  if c.kind != ParLe or pool.tags[c.tag] != "infix": return default(Cursor)
   inc c, SkipTag
-  if c.kind != Ident or pool.strings[c.litId] != "and": return ""
+  if c.kind != Ident or pool.strings[c.litId] != "and": return default(Cursor)
   skip c, SkipExpr
-  if c.kind != ParLe or pool.tags[c.tag] != "infix": return ""
+  if c.kind != ParLe or pool.tags[c.tag] != "infix": return default(Cursor)
   var cmp = c
   inc cmp, SkipTag
-  if cmp.kind != Ident or pool.strings[cmp.litId] != ">": return ""
+  if cmp.kind != Ident or pool.strings[cmp.litId] != ">": return default(Cursor)
   skip cmp, SkipExpr
-  if cmp.kind != Ident: return ""
-  let varName = pool.strings[cmp.litId]
+  if cmp.kind != Ident: return default(Cursor)
+  let varLv = cmp
   skip cmp, SkipName
   case cmp.kind
   of IntLit:
-    if pool.integers[cmp.intId] != 0: return ""
+    if pool.integers[cmp.intId] != 0: return default(Cursor)
   of UIntLit:
-    if pool.uintegers[cmp.uintId] != 0'u64: return ""
+    if pool.uintegers[cmp.uintId] != 0'u64: return default(Cursor)
   else:
-    return ""
-  result = varName
+    return default(Cursor)
+  result = varLv
 
-proc extractWhileCounterVar(n: Cursor): string =
+proc extractWhileCounterVar(n: Cursor): Cursor =
   ## If `n` is at `(while (infix and (infix > x 0) ...) BODY)`, return `x`.
   var c = n
-  if c.kind != ParLe or pool.tags[c.tag] != "while": return ""
+  if c.kind != ParLe or pool.tags[c.tag] != "while": return default(Cursor)
   inc c, SkipTag
   result = extractAndCounterVar(c)
 
@@ -1502,14 +1486,14 @@ proc main() =
       let name = p.name
       if name notin eg.procs: continue
       let pe = eg.procs[name]
-      let cv = if pe.cursorVar.len > 0: pe.cursorVar
-               elif pe.wrapsInput: "n"
-               else: ""
-      if cv.len == 0: continue
-      let state = analyzeCursorPath(eg, p.bodyPos, cv)
+      var clv = pe.cursorLv
+      if cursorIsNil(clv) and pe.wrapsInput:
+        clv = detectDestLvalue(p.bodyPos, "n")
+      if cursorIsNil(clv): continue
+      let state = analyzeCursorPath(eg, p.bodyPos, clv)
       if state == csNotAdvanced:
         ctx.addWarning p.procCursor.info, name,
-          "cursor `" & cv & "` not advanced on every code path"
+          "cursor `" & lvalueToStr(clv) & "` not advanced on every code path"
 
   var errors = 0
   var warnings = 0

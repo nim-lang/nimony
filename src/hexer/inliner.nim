@@ -17,8 +17,9 @@
 ## - replace `return` by `break B`.
 ## - copy local variables from the body into fresh ones.
 
-import std / [tables, assertions]
-include nifprelude
+import std / [tables, hashes, sets, assertions, syncio]
+include ".." / lib / nifprelude
+include ".." / lib / compat2
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof]
 import duplifier

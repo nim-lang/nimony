@@ -119,5 +119,7 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     discard
   of "novalidate":
     config.noValidate = true
+  of "verbose":
+    config.verbose = true
   else:
     result = false

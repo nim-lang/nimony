@@ -7,9 +7,10 @@
 #    distribution, for details about the copyright.
 #
 
-import std / [tables, sets, syncio]
+import std / [tables, sets, hashes, syncio, assertions]
 
-include nifprelude
+include ".." / lib / nifprelude
+include ".." / lib / compat2
 import lifter
 import ".." / nimony / [nimony_model, typenav, langmodes]
 

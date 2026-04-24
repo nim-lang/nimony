@@ -433,7 +433,7 @@ proc produceInvoke(c: var SemContext; dest: var TokenBuf; req: InstRequest;
     if typeVars.substructureKind == TypevarsU:
       inc typeVars
       while typeVars.kind != ParRi:
-        if typeVars.symKind == TypeVarY:
+        if typeVars.symKind == TypevarY:
           var tv = typeVars
           inc tv
           dest.copyTree req.inferred[tv.symId]
@@ -1840,7 +1840,7 @@ proc semTypeSym(c: var SemContext; dest: var TokenBuf; s: Sym; info: PackedLineI
         # magic types that are just symbols and not in the syntax:
         if magic in {ArrayT, SetT, RangetypeT, EnumT, HoleyEnumT, AnumT}:
           var typeclassBuf = createTokenBuf(4)
-          typeclassBuf.addParLe(TypeKindT, info)
+          typeclassBuf.addParLe(TypekindT, info)
           typeclassBuf.addParLe(magic, info)
           typeclassBuf.addParRi()
           typeclassBuf.addParRi()
@@ -2053,7 +2053,7 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
 
   var value = beginRead(valueBuf)
   case value.exprKind
-  of SetConstrX:
+  of SetconstrX:
     # `evalExpr` has already lowered each enum-field reference to its raw
     # ordinal, so the set's elements are plain int literals. Re-semchecking
     # them through `semCaseOfValueImpl` would try to convert `int -> E` and
@@ -3681,7 +3681,7 @@ proc semCurly(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[Se
   let exprStart = dest.len
   let info = it.n.info
   inc it.n
-  dest.addParLe(SetConstrX, info)
+  dest.addParLe(SetconstrX, info)
   if it.n.kind == ParRi:
     # empty set
     case it.typ.typeKind
@@ -3860,7 +3860,7 @@ proc semSuf(c: var SemContext; dest: var TokenBuf, it: var Item) =
 proc semTup(c: var SemContext; dest: var TokenBuf, it: var Item) =
   let exprStart = dest.len
   let origExpected = it.typ
-  dest.add parLeToken(TupConstrX, it.n.info)
+  dest.add parLeToken(TupconstrX, it.n.info)
   inc it.n
   if it.n.kind == ParRi:
     it.typ = c.types.emptyTupleType
@@ -4543,7 +4543,7 @@ proc semNewref(c: var SemContext; dest: var TokenBuf; it: var Item) =
   commonType c, dest, it, exprStart, expected
 
 proc buildDefaultTuple(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo) =
-  dest.addParLe(TupConstrX, info)
+  dest.addParLe(TupconstrX, info)
   dest.addSubtree typ
   var currentField = typ
   inc currentField # skip tuple tag
@@ -4937,7 +4937,7 @@ proc semTypedAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
   of ArrayT:
     it.typ = typ
     inc it.typ
-    # add array index information to the `ArrAtX` magic for easy
+    # add array index information to the `ArratX` magic for easy
     # code generation of index checking:
     var t = it.typ # at element type
     skip t # now at the index type
@@ -5132,7 +5132,7 @@ proc buildLowValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pac
       dest.addParLe(FalseX, info)
       dest.addParRi()
     of FloatT:
-      dest.addParLe(NegInfX, info)
+      dest.addParLe(NeginfX, info)
       dest.addParRi()
     of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
        TemplateT, ObjectT, EnumT, ProctypeT, VoidT, PtrT, VarargsT,
@@ -5746,7 +5746,7 @@ proc semIs(c: var SemContext; dest: var TokenBuf; it: var Item) =
     inc lhs.typ
 
   let rhs: TypeCursor
-  if it.n.exprKind == TupConstrX:
+  if it.n.exprKind == TupconstrX:
     inc it.n
     rhs = semLocalType(c, dest, it.n)
     while it.n.kind != ParRi:
@@ -5889,10 +5889,10 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
         of ObjectT, EnumT, HoleyEnumT, AnumT, DistinctT, ConceptT:
           buildErr c, dest, it.n.info, "expression expected"
           skip it.n
-        of IntT, FloatT, CharT, BoolT, UIntT, VoidT, NiltT, AutoT, SymKindT,
+        of IntT, FloatT, CharT, BoolT, UIntT, VoidT, NiltT, AutoT, SymkindT,
             PtrT, RefT, MutT, OutT, LentT, SinkT, UarrayT, SetT, StaticT, TypedescT,
             TupleT, ArrayT, RangetypeT, VarargsT, UntypedT, TypedT,
-            CstringT, PointerT, TypeKindT, OrdinalT, RoutineTypes, ItertypeT:
+            CstringT, PointerT, TypekindT, OrdinalT, RoutineTypes, ItertypeT:
           # every valid local type expression
           semLocalTypeExpr c, dest, it
         of OrT, AndT, NotT, InvokeT:
@@ -5980,10 +5980,10 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
           semCall c, dest, it, flags
       of IncludeS: semInclude c, dest, it
       of ImportS: semImport c, dest, it
-      of ImportExceptS: semImportExcept c, dest, it
+      of ImportexceptS: semImportExcept c, dest, it
       of FromimportS: semFromImport c, dest, it
       of ExportS: semExport c, dest, it
-      of ExportExceptS: semExportExcept c, dest, it
+      of ExportexceptS: semExportExcept c, dest, it
       of AsgnS:
         toplevelGuard c:
           semAsgn c, dest, it
@@ -6068,7 +6068,7 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
         semUsing c, dest, it.n
     of FalseX, TrueX, OvfX:
       literalB c, dest, it, c.types.boolType
-    of InfX, NegInfX, NanX:
+    of InfX, NeginfX, NanX:
       literalB c, dest, it, c.types.floatType
     of AndX, OrX, XorX:
       let start = dest.len
@@ -6097,7 +6097,7 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       inc it.n
       semExpr c, dest, it
       skipParRi it.n
-    of CallX, CmdX, CallStrLitX, InfixX, PrefixX, HcallX:
+    of CallX, CmdX, CallstrlitX, InfixX, PrefixX, HcallX:
       toplevelGuard c:
         semCall c, dest, it, flags
     of ProccallX:
@@ -6112,9 +6112,9 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     of DconvX:
       toplevelGuard c:
         semDconv c, dest, it
-    of EqX, NeqX, LeX, LtX, EqSetX, LeSetX, LtSetX:
+    of EqX, NeqX, LeX, LtX, EqsetX, LesetX, LtsetX:
       semCmp c, dest, it
-    of AddX, SubX, MulX, DivX, ModX, BitandX, BitorX, BitxorX, PlusSetX, MinusSetX, MulSetX, XorSetX:
+    of AddX, SubX, MulX, DivX, ModX, BitandX, BitorX, BitxorX, PlussetX, MinussetX, MulsetX, XorsetX:
       semTypedBinaryArithmetic c, dest, it
     of AshrX, ShrX, ShlX:
       semShift c, dest, it
@@ -6124,7 +6124,7 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       semDelay c, dest, it
     of SuspendX:
       semSuspend c, dest, it
-    of InSetX:
+    of InsetX:
       semInSet c, dest, it
     of CardX:
       semCardSet c, dest, it
@@ -6136,9 +6136,9 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       semTup c, dest, it
     of AconstrX:
       semArrayConstr c, dest, it
-    of SetConstrX:
+    of SetconstrX:
       semSetConstr c, dest, it
-    of TupConstrX:
+    of TupconstrX:
       semTupleConstr c, dest, it
     of SufX:
       semSuf c, dest, it
@@ -6152,11 +6152,11 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       semDeclared c, dest, it
     of AstToStrX:
       semAstToStr c, dest, it
-    of IsMainModuleX:
+    of IsmainmoduleX:
       semIsMainModule c, dest, it
     of AtX:
       semSubscript c, dest, it
-    of ArrAtX, PatX:
+    of ArratX, PatX:
       semTypedAt c, dest, it
     of UnpackX:
       takeToken dest, it.n
@@ -6180,13 +6180,13 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       semNil c, dest, it
     of ConvX, HconvX:
       semConv c, dest, it
-    of EnumToStrX:
+    of EnumtostrX:
       semEnumToStr c, dest, it
-    of DefaultObjX:
+    of DefaultobjX:
       semObjDefault c, dest, it
-    of DefaultTupX:
+    of DefaulttupX:
       semTupleDefault c, dest, it
-    of DefaultDistinctX:
+    of DefaultdistinctX:
       semDefaultDistinct c, dest, it
     of LowX:
       semLow c, dest, it
@@ -6202,7 +6202,7 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       semSizeof c, dest, it
     of TypeofX:
       semTypeof c, dest, it
-    of DestroyX, CopyX, WasMovedX, SinkhX, TraceX:
+    of DestroyX, CopyX, WasmovedX, SinkhX, TraceX:
       semVoidHook c, dest, it
     of DupX:
       semDupHook c, dest, it
@@ -6654,7 +6654,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
       when not useNj:
         var moreErrors = analyzeContracts(dest)
       else:
-        var moreErrors = analyzeContractsNjvl(dest, c.thisModuleSuffix)
+        var moreErrors = analyzeContractsNjvl(dest, c.thisModuleSuffix, c.g.config.verbose)
       if reporters.reportErrors(moreErrors) > 0:
         quit 1
   else:
@@ -6725,7 +6725,7 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
       when not useNj:
         var moreErrors = analyzeContracts(afterSem)
       else:
-        var moreErrors = analyzeContractsNjvl(afterSem, c.thisModuleSuffix)
+        var moreErrors = analyzeContractsNjvl(afterSem, c.thisModuleSuffix, c.g.config.verbose)
       if reporters.reportErrors(moreErrors) > 0:
         quit 1
     if c.genericInnerProcs.len > 0:

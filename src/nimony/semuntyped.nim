@@ -21,8 +21,9 @@ mostly based on templates so there might be more inconsistencies
 
 ]##
 
-import std/[assertions, sets]
-include nifprelude
+import std/[assertions, sets, tables, hashes]
+include ".." / lib / nifprelude
+include ".." / lib / compat2
 import nimony_model, decls, programs, semdata, sembasics, asthelpers, symtabs
 
 proc semBindStmt(c: var SemContext; dest: var TokenBuf; n: var Cursor; toBind: var HashSet[SymId]) =
@@ -282,7 +283,7 @@ proc semTemplType(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
   of VoidT:
     takeToken dest, n
   of IntT, FloatT, CharT, BoolT, UIntT, NiltT, AutoT,
-      SymKindT, UntypedT, TypedT, CstringT, PointerT, TypeKindT, OrdinalT,
+      SymkindT, UntypedT, TypedT, CstringT, PointerT, TypekindT, OrdinalT,
       PtrT, RefT, MutT, OutT, LentT, SinkT, NotT, UarrayT,
       StaticT, TypedescT, SetT, OrT, AndT, TupleT, ArrayT, RangetypeT, VarargsT,
       InvokeT, ErrT:
@@ -515,7 +516,7 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
         openScope c
         semTemplBody c, dest, n
         case n.substructureKind
-        of UnpackFlatU, UnpackTupU:
+        of UnpackflatU, UnpacktupU:
           semTemplBodySons c, dest, n
         else:
           error "illformed AST", n

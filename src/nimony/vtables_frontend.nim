@@ -11,10 +11,11 @@
 ## in the frontend and make them part of a module's interface.
 
 import std/assertions
-include nifprelude
-import nifindexes, symparser, treemangler, typekeys
+include ".." / lib / nifprelude
+include ".." / lib / compat2
+import ".." / lib / [nifindexes, symparser, treemangler]
 import nimony_model, decls, programs, typenav,
-  renderer, sigmatch, semdata, typeprops, builtintypes
+  renderer, sigmatch, semdata, typeprops, builtintypes, typekeys
 
 when false:
   # maybe we can use this later to provide better error messages

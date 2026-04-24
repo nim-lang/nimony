@@ -589,7 +589,7 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
       inc n
     c.add Semicolon
     skipParRi n
-  of OnErrS:
+  of OnerrS:
     var onErrAction = n
     inc onErrAction
     genCallCanRaise c, n

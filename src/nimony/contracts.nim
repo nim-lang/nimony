@@ -243,7 +243,7 @@ proc analysableRoot(c: var Context; n: Cursor): SymId =
   var n = n
   while true:
     case n.exprKind
-    of DotX, TupatX, ArrAtX, HderefX:
+    of DotX, TupatX, ArratX, HderefX:
       # Cannot analyse expressions yet that involve derefs
       # DerefX, AddrX, HderefX, HaddrX, PatX:
       inc n
@@ -786,7 +786,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
               inc pc
               skip pc # pragmas
               inc nested
-            of DestroyX, CopyX, WasMovedX, SinkhX, TraceX:
+            of DestroyX, CopyX, WasmovedX, SinkhX, TraceX:
               inc pc
               analyseExpr c, pc
               # don't assume arity here
@@ -805,9 +805,9 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
           # not of interest for contract analysis:
           skip pc
         of IfS, WhenS, WhileS, ForS, CaseS, TryS, RaiseS, ExportS,
-           IncludeS, ImportS, FromimportS, ImportExceptS, CommentS, PragmasS,
+           IncludeS, ImportS, FromimportS, ImportexceptS, CommentS, PragmasS,
            ImportasS, ExportexceptS, BindS, MixinS, UsingS,
-           UnpackDeclS, StaticstmtS, AsmS, DeferS:
+           UnpackdeclS, StaticstmtS, AsmS, DeferS:
           bug "statement not eliminated: " & $pc.stmtKind
         of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS:
           # declarative junk we don't care about:
@@ -948,10 +948,10 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
   of MacroS, TemplateS, TypeS, CommentS, PragmasS,
      ImportasS, ExportexceptS, BindS, MixinS, UsingS,
      ExportS,
-     IncludeS, ImportS, FromimportS, ImportExceptS:
+     IncludeS, ImportS, FromimportS, ImportexceptS:
     skip n
   of IfS, WhenS, WhileS, ForS, CaseS, TryS, YldS, RaiseS,
-     UnpackDeclS, StaticstmtS, AsmS, DeferS,
+     UnpackdeclS, StaticstmtS, AsmS, DeferS,
      CallKindsS, GvarS, TvarS, VarS, ConstS, ResultS,
      GletS, TletS, LetS, CursorS, PatternvarS, BlockS, EmitS, AsgnS, ScopeS,
      BreakS, ContinueS, RetS, InclS, ExclS, DiscardS, AssumeS, AssertS, NoStmt:

@@ -11,8 +11,9 @@
 ## and to not throw away information too early: Only after both `then` and `else`
 ## have been traversed, we can combine the versions in the final `join` statements.
 
-import std/[tables, assertions]
+import std/[tables, hashes, sets, assertions, syncio]
 include ".." / lib / nifprelude
+include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls]
 
 type
@@ -156,12 +157,12 @@ when isMainModule:
   assert u in joinVars
 
   # Verify join calculations
-  let xJoin = joinVars[x]
+  let xJoin = joinVars.getOrQuit(x)
   assert xJoin.old1 == 1  # x was used twice in then branch
   assert xJoin.old2 == 2  # x was used multiple times in else branch
   assert xJoin.newv == 3  # new version should be max(old1, old2) + 1
 
-  let uJoin = joinVars[u]
+  let uJoin = joinVars.getOrQuit(u)
   assert not isValid(uJoin) # u is not declared afterwards so there should be no join generated!
 
   # Verify final versions after combination

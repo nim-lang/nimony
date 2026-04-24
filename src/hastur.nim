@@ -703,72 +703,52 @@ proc buildValidator(showProgress = false) =
 # ---------------------------------------------------------------------------
 
 const BootstrapModules = [
-  # Tier 1 -- pure leaves (no project-internal imports):
-  "src/models/tags.nim",
-  "src/lib/stringviews.nim",
-  "src/lib/tinyhashes.nim",
-  "src/lib/symparser.nim",
+  # Only leaves of the current bootstrap DAG are listed: compiling each leaf
+  # transitively covers every already-ported module via its imports. Adding
+  # a module that is imported by something already on this list is redundant;
+  # removing a module that has no importer in the list shrinks coverage.
+  # Exception: modules in `RunnableBootstrapModules` stay here even if
+  # imported elsewhere, because they need to be executed with `-r`.
+
+  # Runnable leaf tests (executed with `c -r`).
   "src/lib/argsfinder.nim",
   "src/lib/bitabs.nim",
-  "src/lib/filelinecache.nim",
-  "src/lib/lineinfos.nim",
-  "src/lib/nifbuilder.nim",
-  "src/lib/platform.nim",
+
+  # Tier 1/2 genuine leaves.
   "src/lib/stringtrees.nim",
-  "src/lib/tooldirs.nim",
-  "src/lib/treemangler.nim",
   "src/nimony/features.nim",
   "src/nimony/intervals.nim",
-  "src/nimony/xints.nim",
-  "src/nimony/langmodes.nim",
-  # Tier 2 -- tag enums + simple deps on tier 1.
-  "src/models/callconv_tags.nim",
-  "src/models/njvl_tags.nim",
-  "src/models/nifindex_tags.nim",
-  "src/models/nifc_tags.nim",
   "src/models/nifler_tags.nim",
-  "src/models/nimony_tags.nim",
-  "src/lib/nifreader.nim",
-  "src/gear2/modnames.nim",
-  # Tier 3 -- NIF stream/cursor infrastructure.
-  "src/lib/nifstreams.nim",
-  "src/lib/nifcursors.nim",
-  "src/lib/nifchecksums.nim",
-  # Tier 4 -- Core models + NIF indexes.
-  "src/nimony/nimony_model.nim",
-  "src/nifc/nifc_model.nim",
-  "src/njvl/njvl_model.nim",
-  "src/nimony/nifconfig.nim",
-  "src/nimony/reporters.nim",
-  "src/lib/nifindexes.nim",
-  # Tier 5 -- Basic nimony types and helpers.
-  "src/nimony/builtintypes.nim",
-  "src/nimony/symtabs.nim",
+
+  # Tier 5/6 leaves.
   "src/nimony/implications.nim",
-  "src/nimony/magics.nim",
-  "src/nimony/decls.nim",
-  "src/nimony/asthelpers.nim",
-  # Tier 6 -- Programs, renderer, passes, CLI.
-  "src/nimony/programs.nim",
-  "src/nimony/renderer.nim",
   "src/nimony/inferle.nim",
   "src/nimony/deferstmts.nim",
   "src/nimony/cli.nim",
-  "src/hexer/passes.nim",
-  # Tier 7 -- Semantic data.
-  "src/nimony/semdata.nim",
-  # Tier 8 -- Type analysis + expression eval.
-  "src/nimony/typeprops.nim",
-  "src/nimony/expreval.nim",
-  # Tier 9 -- Type matching + navigation + sizeof.
-  "src/nimony/sigmatch.nim",
-  "src/nimony/typenav.nim",
-  "src/nimony/sizeof.nim",
-  # Tier 10 -- Semos + type keys + control flow.
-  "src/nimony/typekeys.nim",
-  "src/nimony/controlflow.nim",
-  "src/nimony/semos.nim",
+
+  # Tier 10 leaves.
   "src/nimony/pragmacanon.nim",
+
+  # Tier 12 tips still present after later tiers added.
+  "src/nimony/semborrow.nim",
+  "src/nimony/semuntyped.nim",
+  "src/nimony/enumtostr.nim",
+  "src/nimony/derefs.nim",
+
+  # Tier 13 tips still present after Tier 14 added.
+  "src/nimony/module_plugins.nim",
+  "src/hexer/iterinliner.nim",
+  "src/hexer/destroyer.nim",
+  "src/hexer/inliner.nim",
+  "src/hexer/desugar.nim",
+  "src/hexer/lambdalifting.nim",
+
+  # Tier 14 tips (cover the rest of the bootstrapped compiler surface).
+  "src/njvl/versiontabs.nim",
+  "src/hexer/cps.nim",
+  "src/hexer/constparams.nim",
+  "src/hexer/vtables_backend.nim",
+  "src/hexer/dce2.nim",
 ]
 
 # Modules whose `isMainModule` block should also be executed after compilation.

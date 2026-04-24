@@ -22,3 +22,18 @@ when not defined(nimony):
     ## this call, so the missing-key branch is unreachable in practice.
     if not t.hasKey(k): quit "getOrQuit: missing key"
     result = t[k]
+
+  proc getOrQuit*[A, B](t: var OrderedTable[A, B]; k: A): var B =
+    if not t.hasKey(k): quit "getOrQuit: missing key"
+    result = t[k]
+
+  proc getOrQuit*[A, B](t: Table[A, B]; k: A): B =
+    ## Read-only variant for `let`-bound tables: nimony's `getOrQuit` takes
+    ## the table by value and returns `var B`, but host Nim distinguishes
+    ## mutable from immutable receivers.
+    if not t.hasKey(k): quit "getOrQuit: missing key"
+    result = t[k]
+
+  proc getOrQuit*[A, B](t: OrderedTable[A, B]; k: A): B =
+    if not t.hasKey(k): quit "getOrQuit: missing key"
+    result = t[k]

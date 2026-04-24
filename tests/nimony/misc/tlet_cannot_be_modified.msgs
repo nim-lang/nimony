@@ -1,1 +1,1 @@
-tests/nimony/misc/tlet_cannot_be_modified.nim(7, 5) Error: invalid reassignment to `let` variable
+tests/nimony/misc/tlet_cannot_be_modified.nim(7, 5) Error: invalid reassignment to `let` variable [pass --verbose for the NJ IR]

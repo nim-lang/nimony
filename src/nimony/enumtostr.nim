@@ -6,12 +6,11 @@
 
 ## Generation for enum to string conversions.
 
-include nifprelude
+import std / [tables, sets, hashes, assertions]
+include ".." / lib / nifprelude
+include ".." / lib / compat2
 
 import decls, nimony_model, semdata, sembasics, symtabs, programs
-
-proc tagToken(tag: string; info: PackedLineInfo): PackedToken {.inline.} =
-  parLeToken(pool.tags.getOrIncl(tag), info)
 
 proc genEnumToStrProcCase(c: var SemContext; dest: var TokenBuf; enumDecl: var Cursor; symId, enumSymId: SymId) =
   dest.add tagToken("case", enumDecl.info)
@@ -40,7 +39,7 @@ proc genEnumToStrProcCase(c: var SemContext; dest: var TokenBuf; enumDecl: var C
 
     skipParRi enumDecl
 
-    while enumDecl.kind == ParLe and enumDecl.tagId == ErrT:
+    while enumDecl.kind == ParLe and enumDecl.tagId == nifstreams.ErrT:
       skip enumDecl
 
     dest.add symToken(symId, symInfo)

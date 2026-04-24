@@ -37,7 +37,7 @@ proc recordDependencyImpl(m: Module; o: var TypeOrder; parent, child: Cursor;
   var ch = child
   while true:
     case ch.typeKind
-    of APtrT, PtrT:
+    of AptrT, PtrT:
       viaPointer = true
       ch = elementType(ch)
     of FlexarrayT:
@@ -217,7 +217,7 @@ proc fillTypeSlot(c: var GeneratedCode; t: Cursor; dest: var AsmSlot) =
     dest = AsmSlot(kind: AFloat, size: bytes, align: bytes)
   of BoolT:
     dest = AsmSlot(kind: ABool, size: 1, align: 1)
-  of PtrT, APtrT, ProctypeT:
+  of PtrT, AptrT, ProctypeT:
     dest = AsmSlot(kind: AUInt, size: c.intmSize, align: c.intmSize)
   of FlexarrayT:
     # Call `elementType` to get the alignment right:

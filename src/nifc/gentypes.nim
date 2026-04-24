@@ -46,7 +46,7 @@ proc recordDependencyImpl(m: var MainModule; o: var TypeOrder; parent, child: Cu
   var ch = child
   while true:
     case ch.typeKind
-    of APtrT, PtrT:
+    of AptrT, PtrT:
       viaPointer = true
       ch = elementType(ch)
     of FlexarrayT:
@@ -438,7 +438,7 @@ proc genType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false) =
       inc n
     else:
       error c.m, "node is not a type: ", n
-  of PtrT, APtrT:
+  of PtrT, AptrT:
     atomPointer(c, n, name, isConst)
   of FlexarrayT:
     inc n

@@ -9,8 +9,11 @@
 
 ## Compiles Nimony IR to a simpler IR called [NJVL](doc/njvl.md) that does not contain jumps.
 
-import std / [tables, sets, assertions]
+import std / [tables, hashes, sets, assertions, syncio]
+when defined(nimony):
+  {.feature: "lenientnils".}
 include ".." / lib / nifprelude
+include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes]
 import ".." / hexer / [xelim, mover, passes]
 import njvl_model
@@ -249,7 +252,8 @@ proc declareCfVar(c: var Context; dest: var TokenBuf; s: SymId) =
   dest.add tagToken("mflag", NoLineInfo)
   dest.addSymDef s, NoLineInfo
   dest.addParRi()
-  c.typeCache.registerLocal(s, VarY, c.typeCache.builtins.boolType)
+  let boolTyp = c.typeCache.builtins.boolType
+  c.typeCache.registerLocal(s, VarY, boolTyp)
 
 proc useErrorTracker(c: Context; dest: var TokenBuf; errorTracker: SymId; info: PackedLineInfo) =
   ## Emit the correct expression to read the error code from errorTracker.
@@ -931,12 +935,12 @@ proc extractForBorrow(c: var Context; forStmt: ForStmt; info: PackedLineInfo): T
       let tempSym = iterCall.symId
       if tempSym in c.callFirstArgs:
         firstArgBuf = createTokenBuf(8)
-        firstArgBuf.addSubtree beginRead(c.callFirstArgs[tempSym])
+        firstArgBuf.addSubtree beginRead(c.callFirstArgs.getOrQuit(tempSym))
   elif iterCall.kind == Symbol:
     let tempSym = iterCall.symId
     if tempSym in c.callFirstArgs:
       firstArgBuf = createTokenBuf(8)
-      firstArgBuf.addSubtree beginRead(c.callFirstArgs[tempSym])
+      firstArgBuf.addSubtree beginRead(c.callFirstArgs.getOrQuit(tempSym))
 
   if firstArgBuf.len == 0:
     return
@@ -1258,7 +1262,8 @@ proc trCfVarDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let s = n.symId
   dest.takeToken n # SymDef
   dest.takeParRi n # ParRi
-  c.typeCache.registerLocal(s, VarY, c.typeCache.builtins.boolType)
+  let boolTyp = c.typeCache.builtins.boolType
+  c.typeCache.registerLocal(s, VarY, boolTyp)
 
 proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor; mustCloseScope: bool) =
   ## Process one statement, wrapping it in a guard ite if a guard is active.

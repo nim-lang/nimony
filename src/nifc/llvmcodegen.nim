@@ -496,7 +496,7 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
         c.addTo(c.globals, "@" & name & " = " & tls & linkage & " " & tc.typ & " " & tc.val & alignSuffix & "\n")
       else:
         skip d.value
-        let zeroVal = if d.typ.typeKind in {PtrT, APtrT, ProctypeT}: "null" else: "zeroinitializer"
+        let zeroVal = if d.typ.typeKind in {PtrT, AptrT, ProctypeT}: "null" else: "zeroinitializer"
         let linkage = if vk == IsConst: "constant" else: "global"
         c.addTo(c.globals, "@" & name & " = " & tls & linkage & " " & typ & " " & zeroVal & alignSuffix & "\n")
   else:
@@ -525,7 +525,7 @@ proc genLocalVarDeclLLVM(c: var LLVMCode; n: var Cursor) =
     emitDbgDeclare(c, localName, wasName, varInfo)
 
     if d.value.kind != DotToken:
-      if d.value.stmtKind == OnErrS:
+      if d.value.stmtKind == OnerrS:
         var onErr = d.value
         inc onErr
         var onErrAction = onErr
@@ -538,7 +538,7 @@ proc genLocalVarDeclLLVM(c: var LLVMCode; n: var Cursor) =
         c.emitLineDbg "  store " & c.str(val.typ) & " " & c.str(val.name) & ", ptr " & localName, varInfo
     else:
       inc d.value
-      let zeroVal = if d.typ.typeKind in {PtrT, APtrT, ProctypeT}: "null" else: "zeroinitializer"
+      let zeroVal = if d.typ.typeKind in {PtrT, AptrT, ProctypeT}: "null" else: "zeroinitializer"
       c.emitLineDbg "  store " & typ & " " & zeroVal & ", ptr " & localName, varInfo
   else:
     error c.m, "expected SymbolDef but got: ", d.name
@@ -755,7 +755,7 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
       if prc.returnType.kind == DotToken:
         c.emitLine "  ret void"
       else:
-        let zeroVal = if prc.returnType.typeKind in {PtrT, APtrT, ProctypeT}: "null" else: "zeroinitializer"
+        let zeroVal = if prc.returnType.typeKind in {PtrT, AptrT, ProctypeT}: "null" else: "zeroinitializer"
         c.emitLine "  ret " & retType & " " & zeroVal
 
     # Assemble function: header string + alloca tokens + body tokens + closing
@@ -810,7 +810,7 @@ proc genToplevelLLVM(c: var LLVMCode; n: var Cursor) =
     # Emit statements don't make sense for LLVM IR; skip them
     skip n
   of DiscardS, AsgnS, KeepovfS, ScopeS, IfS,
-      WhileS, CaseS, LabS, JmpS, TryS, RaiseS, CallS, OnErrS:
+      WhileS, CaseS, LabS, JmpS, TryS, RaiseS, CallS, OnerrS:
     # These go into the global init function
     var oldBody = move c.body
     var oldProc = c.currentProc

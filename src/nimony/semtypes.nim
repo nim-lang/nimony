@@ -519,7 +519,7 @@ proc tryTypeClass(c: var SemContext; dest: var TokenBuf; n: var Cursor): bool =
   var op = n
   inc op
   if op.kind == ParRi:
-    dest.addParLe(TypeKindT, n.info)
+    dest.addParLe(TypekindT, n.info)
     takeTree dest, n
     dest.addParRi()
     result = true
@@ -576,7 +576,7 @@ proc handleNotnilType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; con
       # remove ParRi of the pointer
       dest.shrink dest.len-1
       stripNilAnnotation dest, before
-      dest.addParPair NotNilU, info
+      dest.addParPair NotnilU, info
       dest.addParRi()
     elif containsGenericParams(nd):
       # keep as is, will be checked later after generic instantiation:
@@ -594,7 +594,7 @@ proc handleNotnilType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; con
     dest.shrink before
 
 proc isPointerTypeClass(n: Cursor): bool {.inline.} =
-  result = n.typeKind == TypeKindT and
+  result = n.typeKind == TypekindT and
     n.firstSon.typeKind in {RefT, PtrT, PointerT, CstringT, ProctypeT}
 
 proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; context: TypeDeclContext): bool =
@@ -767,7 +767,7 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       else:
         semTypeExpr c, dest, n, context, info
     of IntT, FloatT, CharT, BoolT, UIntT, NiltT, AutoT,
-        SymKindT, UntypedT, TypedT, TypeKindT, OrdinalT:
+        SymkindT, UntypedT, TypedT, TypekindT, OrdinalT:
       takeTree dest, n
     of CstringT, PointerT:
       takeToken dest, n # open tag

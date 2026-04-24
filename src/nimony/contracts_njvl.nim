@@ -22,7 +22,7 @@ In order to not be too annoying in the case of a contract violation, the
 compiler emits a warning (that can be suppressed or turned into an error).
 ]##
 
-import std / [assertions, tables, sets, strutils]
+import std / [assertions, tables, sets, strutils, syncio]
 
 include nifprelude
 
@@ -72,15 +72,36 @@ type
                                         # leaving-path asymmetries)
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
     activeBorrows: seq[BorrowInfo]
+    verbose: bool                      # --verbose: dump NJ IR on init/contract
+                                       # failures for easier debugging
+    currentProcStart: Cursor           # cursor at the start of the proc whose
+                                       # body we are currently analysing (used
+                                       # for the --verbose dump)
+
+proc dumpCurrentProc(c: var NjvlContext; info: PackedLineInfo; msg: string) =
+  ## Dump the NJ IR of the proc currently under analysis to stderr. Used
+  ## by `--verbose` so the user can see the lowered form that caused
+  ## a contract/init failure. Gated on `c.verbose` — callers still invoke
+  ## it unconditionally; this proc is the single decision point.
+  if not c.verbose: return
+  if cursorIsNil(c.currentProcStart): return
+  stderr.writeLine "--- NJ IR (--verbose) for: ", msg
+  stderr.writeLine "--- at ", infoToStr(info), ":"
+  stderr.writeLine toString(c.currentProcStart, false)
+  stderr.writeLine "--- end NJ IR dump ---"
 
 proc buildErr(c: var NjvlContext; info: PackedLineInfo; msg: string) =
   when defined(debug):
     writeStackTrace()
     echo infoToStr(info) & " Error: " & msg
     quit msg
+  dumpCurrentProc(c, info, msg)
+  var hintedMsg = msg
+  if not c.verbose:
+    hintedMsg.add " [pass --verbose for the NJ IR]"
   c.errors.buildTree ErrT, info:
     c.errors.addDotToken()
-    c.errors.add strToken(pool.strings.getOrIncl(msg), info)
+    c.errors.add strToken(pool.strings.getOrIncl(hintedMsg), info)
 
 proc contractViolation(c: var NjvlContext; orig: Cursor; fact: LeXplusC; report: bool) =
   if report:
@@ -156,7 +177,7 @@ proc extractBorrowPath(c: var NjvlContext; n: Cursor; result: var BorrowInfo; fo
       var r = n
       inc r
       extractBorrowPath(c, r, result, followInlineVars)
-    elif ek in {TupatX, ArrAtX, AtX, PatX}:
+    elif ek in {TupatX, ArratX, AtX, PatX}:
       # Array/tuple access: recurse into container, don't distinguish indices
       var r = n
       inc r
@@ -431,7 +452,7 @@ proc analysableRoot(c: var NjvlContext; n: Cursor): SymId =
   var n = n
   while true:
     case n.exprKind
-    of DotX, TupatX, ArrAtX, HderefX:
+    of DotX, TupatX, ArratX, HderefX:
       inc n
     of ConvKinds:
       inc n
@@ -1208,6 +1229,8 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   let oldResultSym = c.resultSym
   let oldInlineVars = move c.inlineVars
   let oldBorrows = move c.activeBorrows
+  let oldProcStart = c.currentProcStart
+  c.currentProcStart = decl
   c.resultSym = NoSymId
   inc n
   let symId = n.symId
@@ -1257,6 +1280,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   c.resultSym = oldResultSym
   c.inlineVars = ensureMove oldInlineVars
   c.activeBorrows = ensureMove oldBorrows
+  c.currentProcStart = oldProcStart
   discard c.directlyInitialized.pop()
 
 proc traverseStmt(c: var NjvlContext; n: var Cursor) =
@@ -1396,14 +1420,16 @@ proc traverseToplevel(c: var NjvlContext; n: var Cursor) =
   of MacroS, TemplateS, TypeS, CommentS, PragmasS,
      ImportasS, ExportexceptS, BindS, MixinS, UsingS,
      ExportS,
-     IncludeS, ImportS, FromimportS, ImportExceptS:
+     IncludeS, ImportS, FromimportS, ImportexceptS:
     skip n
   else:
     # Toplevel statements - analyze them
     traverseStmt c, n
 
-proc analyzeContractsNjvl*(input: var TokenBuf; moduleSuffix: string): TokenBuf =
-  ## Main entry point: converts input to NJVL and analyzes contracts
+proc analyzeContractsNjvl*(input: var TokenBuf; moduleSuffix: string; verbose = false): TokenBuf =
+  ## Main entry point: converts input to NJVL and analyzes contracts.
+  ## When `verbose` is true, every contract/init failure dumps the enclosing
+  ## proc's NJ IR to stderr to aid debugging.
   var n = beginRead(input)
 
   # Convert to NJVL first
@@ -1415,7 +1441,8 @@ proc analyzeContractsNjvl*(input: var TokenBuf; moduleSuffix: string): TokenBuf 
     typeCache: createTypeCache(),
     moduleSuffix: moduleSuffix,
     directlyInitialized: @[initHashSet[SymId]()],
-    impls: createImplications()
+    impls: createImplications(),
+    verbose: verbose
   )
   c.typeCache.openScope()
 

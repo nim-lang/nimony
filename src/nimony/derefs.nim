@@ -36,9 +36,13 @@ We can then improve compat with Nim 2 by making all inner procs `.closure` by de
 
 ]##
 
-import std / [assertions, tables]
+import std / [assertions, tables, hashes, sets]
 
-include nifprelude
+when defined(nimony):
+  {.feature: "lenientnils".}
+
+include ".." / lib / nifprelude
+include ".." / lib / compat2
 
 import ".." / models / tags
 import ".." / hexer / lifter
@@ -88,7 +92,7 @@ proc rootOf(n: Cursor; allowIndirection = false): SymId =
   var n = n
   while true:
     case n.exprKind
-    of DotX, AtX, ArrAtX, TupatX, ParX:
+    of DotX, AtX, ArratX, TupatX, ParX:
       inc n
     of PatX, DdotX:
       # not protected from mutation
@@ -142,7 +146,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
   var someIndirection = false
   while true:
     case n.exprKind
-    of DotX, AtX, ArrAtX, TupatX, ParX:
+    of DotX, AtX, ArratX, TupatX, ParX:
       inc n
     of HderefX, HaddrX, DerefX, AddrX, DdotX, PatX:
       inc n
@@ -199,7 +203,7 @@ proc skipToRoot(n: Cursor): Cursor =
   var n = n
   while true:
     case n.exprKind
-    of DotX, AtX, ArrAtX, TupatX, ParX:
+    of DotX, AtX, ArratX, TupatX, ParX:
       inc n
     of DconvX, HconvX, ConvX, CastX:
       inc n
@@ -298,7 +302,7 @@ proc trReturn(c: var Context; n: var Cursor) =
     if err:
       buildLocalErr(c.dest, n.info, "cannot borrow from " & asNimCode(n))
     else:
-      if n.exprKind == TupConstrX:
+      if n.exprKind == TupconstrX:
         if checkTupleConstrBorrowing(c, n) != Valid:
           err = true
       if not err:
@@ -323,7 +327,7 @@ proc mightBeDangerous(c: var Context; n: Cursor) =
   if root != NoSymId:
     if c.r.dangerousLocations.hasKey(root):
       buildLocalErr c.dest, n.info, "cannot mutate " & asNimCode(n) &
-          "; binding created here: " & infoToStr(c.r.dangerousLocations[root])
+          "; binding created here: " & infoToStr(c.r.dangerousLocations.getOrQuit(root))
 
 proc checkForDangerousLocations(c: var Context; n: var Cursor) =
   template recurse =
@@ -608,7 +612,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
         err = InvalidBorrow
     else:
       tr c, n, e
-      if n.exprKind == TupConstrX:
+      if n.exprKind == TupconstrX:
         if checkTupleConstrBorrowing(c, n) != Valid:
           # already emitted an error:
           skip n
@@ -864,7 +868,7 @@ proc trType(c: var Context; n: var Cursor) =
   if s != SymId(0) and s in c.classes:
     hasMethods = true
     # Convert MethodIndexEntry to (string, SymId) format for addMethodsDecl
-    for entry in c.classes[s].methods:
+    for entry in c.classes.getOrQuit(s).methods:
       let sig = pool.strings[entry.signature]
       methodsToAdd.add (sig, entry.fn)
 
@@ -880,7 +884,7 @@ proc trType(c: var Context; n: var Cursor) =
         c.dest.takeTree n # existing individual pragmas
       skipParRi n
     if c.hooks.hasKey(s):
-      addHookDecls c.dest, c.hooks[s]
+      addHookDecls c.dest, c.hooks.getOrQuit(s)
     if hasMethods:
       addMethodsDecl c.dest, methodsToAdd
     c.dest.addParRi()
@@ -960,7 +964,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trCall c, n, e, disallowDangerous
     of PragmaxX:
       trPragmaBlock c, n
-    of DotX, DdotX, AtX, ArrAtX, TupatX, PatX:
+    of DotX, DdotX, AtX, ArratX, TupatX, PatX:
       trLocation c, n, e
     of OconstrX, NewobjX:
       if e.wantMutable:
@@ -968,7 +972,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         skip n
       else:
         trObjConstr c, n, e
-    of TupConstrX:
+    of TupconstrX:
       if e.wantMutable:
         cannotPassToVar c.dest, n.info, n
         skip n
@@ -985,7 +989,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       trSons c, n, WantT
     of ParX:
       trSons c, n, e
-    of CopyX, WasMovedX, SinkhX, TraceX:
+    of CopyX, WasmovedX, SinkhX, TraceX:
       trVarHook c, n
     of DupX, DestroyX:
       trSons c, n, WantT
