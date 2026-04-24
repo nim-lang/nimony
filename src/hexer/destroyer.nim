@@ -43,9 +43,13 @@ interprets this `=` as `=bitcopy`.
 
 ]##
 
-import std / [assertions, tables]
-include nifprelude
-import nifindexes, symparser, treemangler, passes
+import std / [assertions, tables, hashes, sets, syncio]
+when defined(nimony):
+  {.feature: "lenientnils".}
+include ".." / lib / nifprelude
+include ".." / lib / compat2
+import ".." / lib / [nifindexes, symparser, treemangler]
+import passes
 import ".." / nimony / [nimony_model, programs, typenav, decls]
 import lifter
 
@@ -134,7 +138,7 @@ proc createFreshVars(c: var Context; n: Cursor): TokenBuf =
       result.add n
       inc n
 
-proc leaveScope(c: var Context; s: var Scope; kind = Other) =
+proc leaveScope(c: var Context; s: Scope; kind = Other) =
   if kind != OtherPreventFinally and s.finallySection != default(Cursor):
     var freshVars = createFreshVars(c, s.finallySection)
     var n = beginRead(freshVars)
@@ -406,7 +410,10 @@ proc injectDestructors*(pass: var Pass; lifter: ref LiftingCtx) =
   while n.kind != ParRi:
     tr(c, n)
 
-  leaveScope c, c.currentScope
+  # pass the scope by value to avoid aliasing `c` with a borrow of one of
+  # its fields; `leaveScope` only reads from it.
+  let scope = c.currentScope
+  leaveScope c, scope
   takeParRi(c.dest, n)
   genMissingHooks lifter[]
   pass.dest = ensureMove c.dest

@@ -11,7 +11,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import nimony_model, symtabs, builtintypes, decls, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig,
-  intervals, xints,
+  intervals, xints, features,
   semdata, semos, expreval
 import ".." / lib / [symparser, nifindexes]
 
@@ -278,7 +278,12 @@ proc ptrTypeOf*(c: var SemContext; dest: var TokenBuf; typ: TypeCursor): TypeCur
   let typeBegin = dest.len
   dest.addParLe PtrT, typ.info
   dest.addSubtree typ.skipModifier
-  dest.addParPair NotnilU, typ.info
+  # Mirror `semLocalTypeImpl`'s PtrT/RefT path: under `{.feature: "lenientnils".}`
+  # an implicit `ptr T` is unchecked, otherwise it defaults to notnil.
+  if LenientNilsFeature in c.features:
+    dest.addParPair UncheckedU, typ.info
+  else:
+    dest.addParPair NotnilU, typ.info
   dest.addParRi()
   result = typeToCursor(c, dest, typeBegin)
   dest.shrink typeBegin

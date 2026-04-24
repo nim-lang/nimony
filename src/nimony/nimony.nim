@@ -60,6 +60,8 @@ Options:
   --app:console|gui|lib|staticlib
                             set the application type (default: console)
   --novalidate              skip running the plugin validator on plugin sources
+  --verbose                 dump NJVL IR (and other diagnostics) on contract
+                            analysis failures
   --version                 show the version
   --help                    show this help
 """

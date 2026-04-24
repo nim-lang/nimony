@@ -66,6 +66,14 @@ func getOrDefault*[K: Keyable, V: HasDefault](t: Table[K, V]; k: K): V =
   else:
     default(V)
 
+func getOrDefault*[K: Keyable, V](t: Table[K, V]; k: K; fallback: V): V =
+  ## Return `t[k]` if the key is present, otherwise `fallback`.
+  let idx = rawGet(t, k, hash(k))
+  if idx >= 0:
+    t.data[idx][1]
+  else:
+    fallback
+
 func getOrQuit*[K: Keyable, V](t: Table[K, V]; k: K): var V =
   ## Quits if the key is not found.
   let idx = rawGet(t, k, hash(k))
@@ -158,6 +166,11 @@ func del*[K: Keyable, V](t: var Table[K, V]; k: K) =
 
 func initTable*[K, V](): Table[K, V] =
   Table[K, V](data: @[], hashes: @[])
+
+func clear*[K, V](t: var Table[K, V]) =
+  ## Remove all entries from `t`.
+  t.data.shrink(0)
+  t.hashes = @[]
 
 # Nimony's `Table` is already insertion-ordered (`data` is a `seq`), so
 # `OrderedTable` is a simple alias for portability with code written

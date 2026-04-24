@@ -1,8 +1,7 @@
+import std / [assertions, tables, hashes, sets, syncio]
+include ".." / lib / nifprelude
+include ".." / lib / compat2
 import hexer_context
-include nifprelude
-
-import std / [assertions, tables]
-
 import ".." / nimony / [nimony_model, programs, decls]
 import duplifier
 
@@ -199,7 +198,7 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
   of Symbol:
     let s = c.symId
     if mapping.hasKey(s):
-      dest.add symToken(mapping[s], c.info)
+      dest.add symToken(mapping.getOrQuit(s), c.info)
     else:
       dest.add c
     inc c
@@ -411,7 +410,7 @@ proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations
   of Symbol:
     let s = c.symId
     if relations.hasKey(s):
-      dest.add symToken(relations[s], c.info)
+      dest.add symToken(relations.getOrQuit(s), c.info)
     else:
       dest.add c
     inc c

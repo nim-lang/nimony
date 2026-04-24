@@ -1,7 +1,13 @@
 # removes abstractions like set ops and ref object constructors
 
-import std / [assertions]
-include nifprelude
+when defined(nimony):
+  {.feature: "untyped".}
+else:
+  {.pragma: untyped.}
+
+import std / [assertions, tables, hashes, sets, syncio]
+include ".." / lib / nifprelude
+include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
   builtintypes, langmodes, renderer, reporters]
 import hexer_context, passes
@@ -27,6 +33,13 @@ proc declareTemp(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLi
   copyTree dest, typ # type
 
 proc needsTemp(n: Cursor): bool =
+  # Pre-initialise: the contract analyser drops the `IfFalse cf s`
+  # implication for the leaving-path cfvar raised inside the inner
+  # while-loop, so it cannot prove `result` is set on the normal exit of
+  # the AtX branch. `result = false` here is the bool default anyway —
+  # run `bin/nimony c --verbose src/hexer/desugar.nim` (with this line
+  # removed) to see the NJ IR that trips the checker.
+  result = false
   case n.kind
   of Symbol, IntLit, UIntLit, FloatLit, CharLit, StringLit:
     result = false
@@ -77,12 +90,6 @@ proc needsTemp(n: Cursor): bool =
       result = true
   else:
     result = true
-
-proc skipParRi(n: var Cursor) =
-  if n.kind == ParRi:
-    inc n
-  else:
-    bug "expected ')', but got: ", n
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false)
   {.ensuresNif: addedAny(dest).}
@@ -216,22 +223,22 @@ proc liftTempAddr(c: var Context; dest: var TokenBuf; n: Cursor; typ: Cursor; in
     c.tempUseBufStack[^1].add symToken(tmp, n.info)
   result = beginRead(c.tempUseBufStack[^1])
 
-template addTypedOp(dest: var TokenBuf; kind: ExprKind|StmtKind; typ: Cursor; info: PackedLineInfo; body: typed) =
+template addTypedOp(dest: var TokenBuf; kind: ExprKind|StmtKind; typ: Cursor; info: PackedLineInfo; body: typed) {.untyped.} =
   copyIntoKind dest, kind, info:
     dest.addSubtree typ
     body
 
-template addUIntTypedOp(dest: var TokenBuf; kind: ExprKind|StmtKind; bits: int; info: PackedLineInfo; body: typed) =
+template addUIntTypedOp(dest: var TokenBuf; kind: ExprKind|StmtKind; bits: int; info: PackedLineInfo; body: typed) {.untyped.} =
   copyIntoKind dest, kind, info:
     dest.addUIntType(bits, info)
     body
 
-template addIntTypedOp(dest: var TokenBuf; kind: ExprKind|StmtKind; bits: int; info: PackedLineInfo; body: typed) =
+template addIntTypedOp(dest: var TokenBuf; kind: ExprKind|StmtKind; bits: int; info: PackedLineInfo; body: typed) {.untyped.} =
   copyIntoKind dest, kind, info:
     dest.addIntType(bits, info)
     body
 
-template forRangeExclusive(c: var Context; dest: var TokenBuf; i: Cursor; bound: int; info: PackedLineInfo; body: typed) =
+template forRangeExclusive(c: var Context; dest: var TokenBuf; i: Cursor; bound: int; info: PackedLineInfo; body: typed) {.untyped.} =
   copyIntoKind dest, WhileS, info:
     addIntTypedOp dest, LtX, -1, info:
       dest.addSubtree i
@@ -442,7 +449,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
             dest.addSubtree a
             addUIntTypedOp dest, ShrX, -1, info:
               dest.addSubtree b
-              dest.addUintLit(3, info)
+              dest.addUIntLit(3, info)
           addUIntTypedOp dest, ShlX, 8, info:
             dest.addUIntLit(1, info)
             addUIntTypedOp dest, BitandX, -1, info:
@@ -705,7 +712,7 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
         addLhs()
         if kind == ExclS:
           dest.addParLe BitnotX, info
-          dest.addUintType(8, info)
+          dest.addUIntType(8, info)
         addUIntTypedOp dest, ShlX, 8, info:
           dest.addUIntLit(1, info)
           addUIntTypedOp dest, BitandX, -1, info:

@@ -421,7 +421,7 @@ proc bitSetToTokens(result: var TokenBuf; x: seq[uint8]; elementTyp: Cursor; inf
 
   result.addParRi
 
-proc evalBitSet*(n, typ: Cursor): seq[uint8]
+proc evalBitSetImpl(n, typ: Cursor): seq[uint8]
 
 proc evalOrdinal(c: ptr SemContext, n: Cursor): xint
 
@@ -489,7 +489,7 @@ proc evalCardSet(c: var EvalContext; n: var Cursor): Cursor =
   var typeA = a
   inc typeA
 
-  let setA = evalBitSet(a, typeA)
+  let setA = evalBitSetImpl(a, typeA)
   result = intValue(c, bitSetCard(setA), info)
 
 proc evalSetOp(c: var EvalContext; n: var Cursor; op: ExprKind): Cursor =
@@ -509,8 +509,8 @@ proc evalSetOp(c: var EvalContext; n: var Cursor; op: ExprKind): Cursor =
   var typeB = b
   inc typeB
   assert sameTrees(typeA, typeB)  # must be the same type
-  let setA = evalBitSet(a, typeA)
-  let setB = evalBitSet(b, typeB)
+  let setA = evalBitSetImpl(a, typeA)
+  let setB = evalBitSetImpl(b, typeB)
   assert setA.len == setB.len
   var setRes = newSeq[uint8](setA.len)
   case op
@@ -1336,7 +1336,7 @@ proc getArrayLen*(n: Cursor): xint =
   skip n # skip basetype
   result = getArrayIndexLen(n)
 
-proc evalBitSet*(n, typ: Cursor): seq[uint8] =
+proc evalBitSetImpl(n, typ: Cursor): seq[uint8] =
   ## returns @[] if it could not be evaluated.
   assert n.exprKind == SetconstrX
   assert typ.typeKind == SetT
@@ -1375,3 +1375,5 @@ proc evalBitSet*(n, typ: Cursor): seq[uint8] =
         err = true
   if err:
     return @[]
+
+proc evalBitSet*(n, typ: Cursor): seq[uint8] = evalBitSetImpl(n, typ)

@@ -714,12 +714,11 @@ const BootstrapModules = [
   "src/lib/argsfinder.nim",
   "src/lib/bitabs.nim",
 
-  # Tier 1/2 genuine leaves (no module below imports them).
+  # Tier 1/2 genuine leaves.
   "src/lib/stringtrees.nim",
   "src/nimony/features.nim",
   "src/nimony/intervals.nim",
   "src/models/nifler_tags.nim",
-  "src/nifc/nifc_model.nim",
 
   # Tier 5/6 leaves.
   "src/nimony/implications.nim",
@@ -727,18 +726,25 @@ const BootstrapModules = [
   "src/nimony/deferstmts.nim",
   "src/nimony/cli.nim",
 
-  # Tier 9/10 leaves.
-  "src/nimony/sizeof.nim",
-  "src/nimony/semos.nim",
+  # Tier 10 leaves.
   "src/nimony/pragmacanon.nim",
 
-  # Tier 11/12 tips (cover the rest of the bootstrapped compiler surface).
+  # Tier 11/12 tips still present after tier 13 added.
   "src/hexer/xelim.nim",
   "src/nimony/semborrow.nim",
   "src/nimony/semuntyped.nim",
   "src/nimony/enumtostr.nim",
   "src/nimony/derefs.nim",
-  "src/hexer/duplifier.nim",
+
+  # Tier 13 tips (cover the rest of the bootstrapped compiler surface).
+  "src/nimony/module_plugins.nim",
+  "src/hexer/iterinliner.nim",
+  "src/hexer/destroyer.nim",
+  "src/hexer/inliner.nim",
+  "src/hexer/eraiser.nim",
+  "src/hexer/dce1.nim",
+  "src/hexer/desugar.nim",
+  "src/hexer/lambdalifting.nim",
 ]
 
 # Modules whose `isMainModule` block should also be executed after compilation.

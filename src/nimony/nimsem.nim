@@ -43,6 +43,8 @@ Options:
   --nimcache:PATH           set the path used for generated files
   --flags:FLAGS             undocumented flags
   --novalidate              skip running the plugin validator on plugin sources
+  --verbose                 dump NJVL IR (and other diagnostics) on contract
+                            analysis failures
   --version                 show the version
   --help                    show this help
 """
