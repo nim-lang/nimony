@@ -329,17 +329,17 @@ proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
 proc callDestroy(c: var Context; destroyProc: SymId; arg: TokenBuf; typ: Cursor) =
   let info = arg[0].info
   let staticCall = typ.typeKind notin {RefT, PtrT}
-  template emitArgs =
-    copyIntoSymUse c.dest, destroyProc, info
+  template emitArgs(dest: var TokenBuf) =
+    copyIntoSymUse dest, destroyProc, info
     if isMutFirstParam(destroyProc):
-      copyIntoKind c.dest, HaddrX, info:
-        copyTree c.dest, arg
+      copyIntoKind dest, HaddrX, info:
+        copyTree dest, arg
     else:
-      copyTree c.dest, arg
+      copyTree dest, arg
   if staticCall:
-    copyIntoKind c.dest, ProccallX, info: emitArgs()
+    copyIntoKind c.dest, ProccallX, info: emitArgs(c.dest)
   else:
-    copyIntoKind c.dest, CallS, info: emitArgs()
+    copyIntoKind c.dest, CallS, info: emitArgs(c.dest)
 
 proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId; info: PackedLineInfo; typ: Cursor) =
   let staticCall = typ.typeKind notin {RefT, PtrT}
