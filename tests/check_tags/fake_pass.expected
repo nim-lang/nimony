@@ -1,5 +1,4 @@
-4 violation(s) found:
-  tests/check_tags/fake_pass.nim(14,8): RefT (ref) [child 0: got DotToken, expected type]
-  tests/check_tags/fake_pass.nim(20,6): AddX (add) [expected 3..3 children, got 2]
-  tests/check_tags/fake_pass.nim(26,6): AsgnS (asgn) [child 0: got SymDef, expected expr]
-  tests/check_tags/fake_pass.nim(26,6): AsgnS (asgn) [child 1: got DotToken, expected expr]
+tests/check_tags/fake_pass.nim(14, 9) Error: child 0: got DotToken, expected type [RefT (ref)]
+tests/check_tags/fake_pass.nim(20, 7) Error: expected 3..3 children, got 2 [AddX (add)]
+tests/check_tags/fake_pass.nim(26, 7) Error: child 0: got SymDef, expected expr [AsgnS (asgn)]
+tests/check_tags/fake_pass.nim(26, 7) Error: child 1: got DotToken, expected expr [AsgnS (asgn)]

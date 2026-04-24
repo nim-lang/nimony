@@ -19,7 +19,7 @@
 ##
 ## Usage: validator <passfile.nim> [tags.md]
 
-import std / [strutils, os, tables, sets, osproc, assertions, syncio, sequtils]
+import std / [strutils, os, tables, sets, osproc, assertions, syncio, sequtils, terminal]
 include ".." / lib / nifprelude
 import ".." / lib / [tooldirs]
 import ".." / models / [tags, nimony_tags]
@@ -66,6 +66,16 @@ type
     ## Module-level registry of type declarations.
     ## Maps type names to their fields so we can resolve `c.dest` → TokenBuf.
     types: Table[string, TypeInfo]
+
+  ProcMeta = object
+    name: string
+    procCursor: Cursor
+    paramsPos: Cursor
+    bodyPos: Cursor
+    st: SymbolTable
+    cursorParams: seq[string]
+    hasCursor: bool
+    hasBuffer: bool
 
 const
   CursorTypeNames = ["Cursor", "NifCursor"]
@@ -260,7 +270,7 @@ proc toSpecKind(k: effect_graph.ChildKind): tags_grammar.ChildKind =
 type
   Violation = object
     line: int
-    col: int
+    col: int       ## 1-indexed, matching Nimony compiler display
     file: string
     tag: string
     msg: string
@@ -273,10 +283,31 @@ type
     filename: string
     checked: int
     skipped: int
+    noColors: bool
 
 proc lineInfoStr(info: PackedLineInfo): (int, int) =
   let u = unpack(pool.man, info)
-  (u.line.int, u.col.int)
+  (u.line.int, u.col.int + 1)
+
+proc locationStr(file: string; line, col: int): string =
+  file & "(" & $line & ", " & $col & ")"
+
+proc writeViolation(ctx: CheckContext; v: Violation) =
+  ## Write a single violation in the Nimony compiler message format.
+  let loc = locationStr(v.file, v.line, v.col)
+  let tagInfo = if v.tag.len > 0: " [" & v.tag & "]" else: ""
+  if ctx.noColors:
+    if v.isWarning:
+      stdout.writeLine loc, " Warning: ", v.msg, tagInfo
+    else:
+      stdout.writeLine loc, " Error: ", v.msg, tagInfo
+  else:
+    if v.isWarning:
+      stdout.styledWriteLine fgCyan, loc, " ", resetStyle,
+        fgYellow, styleBright, "Warning: ", resetStyle, v.msg, tagInfo
+    else:
+      stdout.styledWriteLine fgCyan, loc, " ", resetStyle,
+        fgRed, styleBright, "Error: ", resetStyle, v.msg, tagInfo
 
 
 proc enumNameToTag(name: string): string =
@@ -510,59 +541,26 @@ proc scanCallsForCursorArg(bc: Cursor; endNested: int; cursorParams: seq[string]
     else:
       inc bc
 
-proc scanObligations(ctx: var CheckContext; reg: TypeRegistry; buf: var TokenBuf) =
+proc scanObligations(ctx: var CheckContext; procs: openArray[ProcMeta]) =
   ## For each proc in the module, build a symbol table and report:
   ## - Parameters of type `var Cursor` that are never passed to any call
   ##
   ## This is a first approximation — it checks that the cursor param is used
   ## as an argument to at least one call. Not flow-sensitive, but catches
   ## completely unused cursor parameters.
-  let procList = findProcBodies(buf)
-  for (name, procCursor) in procList:
-    var c = procCursor
-    inc c
-    var paramsPos = c
-    var foundParams = false
-    while c.kind != ParRi:
-      if c.kind == ParLe and pool.tags[c.tag] == "params":
-        paramsPos = c
-        foundParams = true
-        break
-      skip c
-    if not foundParams: continue
-
-    let st = buildProcSymbolTable(paramsPos, reg)
-
-    var cursorParams: seq[string] = @[]
-    for varName, info in st.vars:
-      if info.trackedKind == tkCursor and info.isMut:
-        cursorParams.add varName
-
-    if cursorParams.len == 0: continue
-
-    # Find the stmts body
-    c = procCursor
-    inc c
-    var bodyPos = c
-    var foundBody = false
-    while c.kind != ParRi:
-      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
-        bodyPos = c
-        foundBody = true
-      skip c
-    if not foundBody: continue
-
+  for p in procs:
+    if p.cursorParams.len == 0: continue
     var consumeCounts = initTable[string, int]()
-    for cp in cursorParams:
+    for cp in p.cursorParams:
       consumeCounts[cp] = 0
 
-    var bc = bodyPos
+    var bc = p.bodyPos
     inc bc # skip (stmts
-    scanCallsForCursorArg(bc, 1, cursorParams, consumeCounts)
+    scanCallsForCursorArg(bc, 1, p.cursorParams, consumeCounts)
 
-    for cp in cursorParams:
+    for cp in p.cursorParams:
       if consumeCounts[cp] == 0:
-        addWarning(ctx, procCursor.info, name,
+        addWarning(ctx, p.procCursor.info, p.name,
           "parameter `" & cp & ": var Cursor` is never passed to any call")
 
 # ---------------------------------------------------------------------------
@@ -594,6 +592,47 @@ proc typeHasBufferField(reg: TypeRegistry; typeName: string): bool =
       if f.trackedKind == tkTokenBuf:
         return true
   false
+
+proc procHasBufferAccess(st: SymbolTable; reg: TypeRegistry; paramsPos: Cursor): bool =
+  for _, info in st.vars:
+    if info.trackedKind == tkTokenBuf:
+      return true
+  var pc = paramsPos
+  inc pc
+  while pc.kind != ParRi:
+    if pc.kind == ParLe and pool.tags[pc.tag] == "param":
+      var p = pc
+      inc p; skip p; skip p; skip p
+      let typeName = extractTypeName(p)
+      if typeName.len > 0 and typeHasBufferField(reg, typeName):
+        return true
+    skip pc
+  false
+
+proc buildProcMetas(procList: seq[ProcInfo]; reg: TypeRegistry): seq[ProcMeta] =
+  result = @[]
+  for p in procList:
+    if not p.hasBody: continue
+
+    let st = buildProcSymbolTable(p.paramsPos, reg)
+    var cursorParams: seq[string] = @[]
+    var hasCursor = false
+    for varName, info in st.vars:
+      if info.trackedKind == tkCursor and info.isMut:
+        hasCursor = true
+        cursorParams.add varName
+    let hasBuffer = procHasBufferAccess(st, reg, p.paramsPos)
+
+    result.add ProcMeta(
+      name: p.name,
+      procCursor: p.procCursor,
+      paramsPos: p.paramsPos,
+      bodyPos: p.bodyPos,
+      st: st,
+      cursorParams: cursorParams,
+      hasCursor: hasCursor,
+      hasBuffer: hasBuffer
+    )
 
 proc classifyExpr(st: SymbolTable; reg: TypeRegistry; n: Cursor): TrackedKind =
   ## Classify an expression as cursor, buffer, or unknown.
@@ -755,57 +794,12 @@ proc blockBalance(ctx: var CheckContext; st: SymbolTable; reg: TypeRegistry;
         discard blockBalance(ctx, st, reg, n, procName)
       skip n
 
-proc scanCursorBufferBalance(ctx: var CheckContext; reg: TypeRegistry; buf: var TokenBuf) =
+proc scanCursorBufferBalance(ctx: var CheckContext; reg: TypeRegistry; procs: openArray[ProcMeta]) =
   ## For each proc with both cursor and buffer access, check per-block balance.
   ## Reports warnings for if/case branches with mismatched cursor-buffer balance.
-  let procList = findProcBodies(buf)
-  for (name, procCursor) in procList:
-    var c = procCursor
-    inc c
-    var paramsPos = c
-    var foundParams = false
-    while c.kind != ParRi:
-      if c.kind == ParLe and pool.tags[c.tag] == "params":
-        paramsPos = c
-        foundParams = true
-        break
-      skip c
-    if not foundParams: continue
-
-    let st = buildProcSymbolTable(paramsPos, reg)
-
-    var hasCursor = false
-    var hasBuffer = false
-    for varName, info in st.vars:
-      if info.trackedKind == tkCursor and info.isMut: hasCursor = true
-      if info.trackedKind == tkTokenBuf: hasBuffer = true
-    if not hasBuffer:
-      var pc = paramsPos
-      inc pc
-      while pc.kind != ParRi:
-        if pc.kind == ParLe and pool.tags[pc.tag] == "param":
-          var p = pc
-          inc p; skip p; skip p; skip p
-          let typeName = extractTypeName(p)
-          if typeName in reg.types:
-            for f in reg.types[typeName].fields:
-              if f.trackedKind == tkTokenBuf:
-                hasBuffer = true
-        skip pc
-    if not hasCursor or not hasBuffer: continue
-
-    c = procCursor
-    inc c
-    var bodyPos = c
-    var foundBody = false
-    while c.kind != ParRi:
-      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
-        bodyPos = c
-        foundBody = true
-      skip c
-    if not foundBody: continue
-
-    discard blockBalance(ctx, st, reg, bodyPos, name)
+  for p in procs:
+    if not p.hasCursor or not p.hasBuffer: continue
+    discard blockBalance(ctx, p.st, reg, p.bodyPos, p.name)
 
 # ---------------------------------------------------------------------------
 # Step 4: Unsafe cursor ops — flag bare skip/inc on cursors in emitter procs
@@ -816,66 +810,15 @@ const
   ## With a string argument = justified. Without = flagged.
   ReasonRequiredProcs = ["skip", "inc"]
 
-proc scanUnsafeCursorOps(ctx: var CheckContext; reg: TypeRegistry; buf: var TokenBuf) =
+proc scanUnsafeCursorOps(ctx: var CheckContext; procs: openArray[ProcMeta]) =
   ## In emitter procs (cursor + buffer access), flag every bare `skip n` and
   ## `inc n` on a cursor variable. These should be replaced by:
   ##   - `takeToken dest, n` (for inc that copies)
   ##   - `skipUnsafe n, "reason"` (for skip that drops)
   ##   - `skipParRi n` (for structural close)
-  let procList = findProcBodies(buf)
-  for (name, procCursor) in procList:
-    var c = procCursor
-    inc c
-    var paramsPos = c
-    var foundParams = false
-    while c.kind != ParRi:
-      if c.kind == ParLe and pool.tags[c.tag] == "params":
-        paramsPos = c
-        foundParams = true
-        break
-      skip c
-    if not foundParams: continue
-
-    let st = buildProcSymbolTable(paramsPos, reg)
-
-    # Only flag in emitter procs (have both cursor and buffer access)
-    var hasCursor = false
-    var hasBuffer = false
-    for varName, info in st.vars:
-      if info.trackedKind == tkCursor and info.isMut: hasCursor = true
-      if info.trackedKind == tkTokenBuf: hasBuffer = true
-    if not hasBuffer:
-      var pc = paramsPos
-      inc pc
-      while pc.kind != ParRi:
-        if pc.kind == ParLe and pool.tags[pc.tag] == "param":
-          var p = pc
-          inc p; skip p; skip p; skip p
-          let typeName = extractTypeName(p)
-          if typeName.len > 0 and typeHasBufferField(reg, typeName):
-            hasBuffer = true
-        skip pc
-    if not hasCursor or not hasBuffer: continue
-
-    # Collect cursor param names
-    var cursorNames: seq[string] = @[]
-    for varName, info in st.vars:
-      if info.trackedKind == tkCursor and info.isMut:
-        cursorNames.add varName
-
-    # Scan body for unsafe ops on cursor variables
-    c = procCursor
-    inc c
-    var bodyPos = c
-    var foundBody = false
-    while c.kind != ParRi:
-      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
-        bodyPos = c
-        foundBody = true
-      skip c
-    if not foundBody: continue
-
-    var bc = bodyPos
+  for p in procs:
+    if not p.hasCursor or not p.hasBuffer: continue
+    var bc = p.bodyPos
     var nested = 0
     if bc.kind != ParLe: continue
     inc nested; inc bc
@@ -900,8 +843,8 @@ proc scanUnsafeCursorOps(ctx: var CheckContext; reg: TypeRegistry; buf: var Toke
             while peek.kind != ParRi:
               if peek.kind == Ident:
                 let argName = pool.strings[peek.litId]
-                if argName in cursorNames:
-                  addWarning(ctx, bc.info, name,
+                if argName in p.cursorParams:
+                  addWarning(ctx, bc.info, p.name,
                     "`" & callName & " " & argName &
                     "` needs a SkipIntent argument for justification")
                   break
@@ -916,15 +859,36 @@ proc scanUnsafeCursorOps(ctx: var CheckContext; reg: TypeRegistry; buf: var Toke
 # Step 5: while-ParRi completion — ensure ParRi is consumed after the loop
 # ---------------------------------------------------------------------------
 
+proc extractDotChain(n: Cursor): string =
+  ## Extract a dot-expression chain as a string: `n` → "n", `it.n` → "it.n".
+  if n.kind == Ident:
+    return pool.strings[n.litId]
+  if n.kind == ParLe and pool.tags[n.tag] == "dot":
+    var c = n
+    inc c # skip (dot
+    let receiver = extractDotChain(c)
+    skip c
+    if c.kind == Ident:
+      return receiver & "." & pool.strings[c.litId]
+  ""
+
+proc argMatchesVar(n: Cursor; varName: string): bool =
+  ## Check if argument `n` matches `varName`. For simple names like "n",
+  ## matches a bare Ident. For dot-chains like "it.n", matches a (dot it n) expr.
+  if n.kind == Ident:
+    return pool.strings[n.litId] == varName
+  if n.kind == ParLe and pool.tags[n.tag] == "dot":
+    return extractDotChain(n) == varName
+  false
+
 proc extractWhileParRiVar(n: Cursor): string =
   ## If `n` is at a `(while COND BODY)` where COND is `(infix != (dot VAR kind) ParRi)`,
-  ## return VAR. Otherwise return "".
+  ## return VAR. VAR can be a bare ident (`n`) or a dot-chain (`it.n`).
+  ## Otherwise return "".
   var c = n
   if c.kind != ParLe or pool.tags[c.tag] != "while": return ""
   inc c # skip (while
   # Condition should be (infix != (dot VAR kind) ParRi)
-  # or could be wrapped: (infix and (infix != ...) ...)
-  # For now handle the simple case
   if c.kind != ParLe: return ""
   let condTag = pool.tags[c.tag]
   var infixCur = c
@@ -934,14 +898,14 @@ proc extractWhileParRiVar(n: Cursor): string =
     let op = pool.strings[infixCur.litId]
     if op != "!=": return ""
     skip infixCur # skip op name
-    # LHS should be (dot VAR kind)
+    # LHS should be (dot EXPR kind) where EXPR is a bare ident or dot-chain
     if infixCur.kind != ParLe: return ""
     if pool.tags[infixCur.tag] != "dot": return ""
     var dotCur = infixCur
     inc dotCur # skip (dot
-    if dotCur.kind != Ident: return ""
-    let varName = pool.strings[dotCur.litId]
-    skip dotCur # skip var name
+    let varName = extractDotChain(dotCur)
+    if varName.len == 0: return ""
+    skip dotCur # skip receiver
     if dotCur.kind != Ident: return ""
     let fieldName = pool.strings[dotCur.litId]
     if fieldName != "kind": return ""
@@ -973,7 +937,7 @@ proc isParRiSkipCall(n: Cursor; varName: string): bool =
   if callName notin ParRiSkipProcs: return false
   # Check if varName appears as any argument
   while c.kind != ParRi:
-    if c.kind == Ident and pool.strings[c.litId] == varName:
+    if argMatchesVar(c, varName):
       return true
     skip c
   false
@@ -1031,12 +995,129 @@ proc whileBodyContributesDest(whileNode: Cursor): bool =
       inc c
   false
 
-proc scanWhileInStmts(ctx: var CheckContext; stmtsNode: Cursor; insideCopyInto: bool)
+proc scanWhileInStmts(ctx: var CheckContext; stmtsNode: Cursor; insideCopyInto: bool;
+                      varCursorCallees: HashSet[string])
 proc whileBodyHasProgressCall(whileNode: Cursor; varName: string;
                               acceptedCalls: openArray[string]): bool
 proc extractWhileCounterVar(n: Cursor): string
+proc isWhileTrueLoop(n: Cursor): bool
+proc whileBodyLooksLikeNestedScanner(whileNode: Cursor): bool
+proc whileBodyMustAdvanceCursor(whileNode: Cursor; varName: string;
+                                varCursorCallees: HashSet[string]): bool
 
-proc scanWhileRecurse(ctx: var CheckContext; n: Cursor; insideCopyInto: bool) =
+const TrustedCursorAdvanceProcs = ["inc", "skip", "takeToken", "takeTree", "takeParRi", "skipParRi"]
+
+proc callAdvancesCursor(n: Cursor; varName: string;
+                        varCursorCallees: HashSet[string]): bool =
+  if n.kind != ParLe: return false
+  let tag = pool.tags[n.tag]
+  if tag notin ["cmd", "call"]: return false
+  var c = n
+  inc c, SkipTag
+  var callName = ""
+  if c.kind == Ident:
+    callName = pool.strings[c.litId]
+    skip c, SkipExpr
+  elif c.kind == ParLe:
+    callName = extractDotCallName(c)
+    skip c, SkipExpr
+  let knownAdvancer = callName in TrustedCursorAdvanceProcs or callName in varCursorCallees
+  if not knownAdvancer:
+    return false
+  while c.kind != ParRi:
+    if argMatchesVar(c, varName):
+      return true
+    skip c
+  false
+
+proc stmtMustAdvanceCursor(n: Cursor; varName: string;
+                           varCursorCallees: HashSet[string]): bool
+
+proc stmtsMustAdvanceCursor(stmtsNode: Cursor; varName: string;
+                            varCursorCallees: HashSet[string]): bool =
+  ## Sequential block: must-advance if at least one statement in sequence
+  ## is guaranteed to advance the cursor.
+  var c = stmtsNode
+  if c.kind != ParLe or pool.tags[c.tag] != "stmts": return false
+  inc c, SkipTag
+  while c.kind != ParRi:
+    if stmtMustAdvanceCursor(c, varName, varCursorCallees):
+      return true
+    skip c
+  false
+
+proc branchBodyMustAdvance(branchNode: Cursor; varName: string;
+                           varCursorCallees: HashSet[string]): bool =
+  ## branchNode is `(elif ...)`, `(else ...)`, `(of ...)`.
+  var b = branchNode
+  if b.kind != ParLe: return false
+  let k = pool.tags[b.tag]
+  inc b, SkipTag
+  if k == "elif":
+    skip b, SkipCond
+  elif k == "of":
+    skip b, SkipValue
+  if b.kind == ParLe and pool.tags[b.tag] == "stmts":
+    return stmtsMustAdvanceCursor(b, varName, varCursorCallees)
+  false
+
+proc stmtMustAdvanceCursor(n: Cursor; varName: string;
+                           varCursorCallees: HashSet[string]): bool =
+  if n.kind != ParLe: return false
+  let tag = pool.tags[n.tag]
+  if tag in ["cmd", "call"]:
+    return callAdvancesCursor(n, varName, varCursorCallees)
+  elif tag == "if":
+    var c = n
+    inc c, SkipTag
+    var hasElse = false
+    var allBranchesAdvance = true
+    var sawBranch = false
+    while c.kind != ParRi:
+      if c.kind == ParLe:
+        let bk = pool.tags[c.tag]
+        if bk in ["elif", "else"]:
+          sawBranch = true
+          if bk == "else": hasElse = true
+          if not branchBodyMustAdvance(c, varName, varCursorCallees):
+            allBranchesAdvance = false
+      skip c
+    return sawBranch and hasElse and allBranchesAdvance
+  elif tag == "case":
+    var c = n
+    inc c, SkipTag
+    skip c, SkipValue # discriminator
+    var hasElse = false
+    var allBranchesAdvance = true
+    var sawBranch = false
+    while c.kind != ParRi:
+      if c.kind == ParLe:
+        let bk = pool.tags[c.tag]
+        if bk in ["of", "else"]:
+          sawBranch = true
+          if bk == "else": hasElse = true
+          if not branchBodyMustAdvance(c, varName, varCursorCallees):
+            allBranchesAdvance = false
+      skip c
+    return sawBranch and hasElse and allBranchesAdvance
+  elif tag == "stmts":
+    return stmtsMustAdvanceCursor(n, varName, varCursorCallees)
+  else:
+    return false
+
+proc whileBodyMustAdvanceCursor(whileNode: Cursor; varName: string;
+                                varCursorCallees: HashSet[string]): bool =
+  ## For `while n.kind != ParRi`, require body-level guaranteed progress.
+  var c = whileNode
+  if c.kind != ParLe or pool.tags[c.tag] != "while": return false
+  inc c, SkipTag
+  skip c, SkipCond
+  if c.kind == ParLe and pool.tags[c.tag] == "stmts":
+    return stmtsMustAdvanceCursor(c, varName, varCursorCallees)
+  false
+
+proc scanWhileRecurse(ctx: var CheckContext; n: Cursor; insideCopyInto: bool;
+                      varCursorCallees: HashSet[string]) =
   ## Recurse into a subtree, delegating to `scanWhileInStmts` for every stmts node.
   ## Does NOT re-enter stmts nodes on its own — only `scanWhileInStmts` processes
   ## stmts children, ensuring the copyInto context is tracked correctly.
@@ -1045,12 +1126,13 @@ proc scanWhileRecurse(ctx: var CheckContext; n: Cursor; insideCopyInto: bool) =
   inc n # skip the opening tag
   while n.kind != ParRi:
     if n.kind == ParLe and pool.tags[n.tag] == "stmts":
-      scanWhileInStmts(ctx, n, insideCopyInto)
+      scanWhileInStmts(ctx, n, insideCopyInto, varCursorCallees)
     elif n.kind == ParLe:
-      scanWhileRecurse(ctx, n, insideCopyInto)
+      scanWhileRecurse(ctx, n, insideCopyInto, varCursorCallees)
     skip n
 
-proc scanWhileInStmts(ctx: var CheckContext; stmtsNode: Cursor; insideCopyInto: bool) =
+proc scanWhileInStmts(ctx: var CheckContext; stmtsNode: Cursor; insideCopyInto: bool;
+                      varCursorCallees: HashSet[string]) =
   ## Scan children of a stmts node. For each child:
   ## - If it's a while-ParRi loop, check that ParRi is consumed after it
   ## - If it's a copyInto call, recurse into its body with insideCopyInto=true
@@ -1064,46 +1146,11 @@ proc scanWhileInStmts(ctx: var CheckContext; stmtsNode: Cursor; insideCopyInto: 
         let varName = extractWhileParRiVar(child)
         if varName.len > 0:
           # Termination proof for while n.kind != ParRi:
-          # - direct advancement: inc/skip n
-          # - delegated advancement: any call that takes n as an argument
-          var hasAdvanceOrDelegation = false
-          var wc = child
-          inc wc, SkipTag
-          skip wc, SkipCond
-          if wc.kind == ParLe:
-            var nested = 0
-            inc nested; inc wc
-            while nested > 0 and not hasAdvanceOrDelegation:
-              case wc.kind
-              of ParLe:
-                let tag = pool.tags[wc.tag]
-                if tag in ["cmd", "call"]:
-                  var peek = wc
-                  inc peek
-                  var callName = ""
-                  if peek.kind == Ident:
-                    callName = pool.strings[peek.litId]
-                    skip peek
-                  elif peek.kind == ParLe:
-                    callName = extractDotCallName(peek)
-                    skip peek
-                  var hasVarArg = false
-                  while peek.kind != ParRi:
-                    if peek.kind == Ident and pool.strings[peek.litId] == varName:
-                      hasVarArg = true
-                      break
-                    skip peek
-                  if hasVarArg and (callName in ["inc", "skip"] or callName.len > 0):
-                    hasAdvanceOrDelegation = true
-                inc nested; inc wc
-              of ParRi:
-                dec nested; inc wc
-              else:
-                inc wc
-          if not hasAdvanceOrDelegation:
+          # every iteration path in the body must advance/delegate `n`.
+          if not whileBodyMustAdvanceCursor(child, varName, varCursorCallees):
             addWarning(ctx, child.info, "while " & varName & ".kind != ParRi",
-              "missing cursor progress in loop body (expected `inc/skip " & varName &
-              "` or a call that takes `" & varName & "`, e.g. `tr c, dest, " & varName & "`)")
+              "cursor progress is not guaranteed on all body paths (expected guaranteed `inc/skip " &
+              varName & "` or guaranteed delegated advancement via calls that take `" & varName & "`)")
 
           # Existing structural safety check: if loop contributes to dest, ensure the
           # trailing ParRi gets consumed after the loop.
@@ -1129,11 +1176,13 @@ proc scanWhileInStmts(ctx: var CheckContext; stmtsNode: Cursor; insideCopyInto: 
             if not whileBodyHasProgressCall(child, counterVar, ["dec"]):
               addWarning(ctx, child.info, "while " & counterVar & " > 0 and ...",
                 "missing `dec " & counterVar & "` in loop body")
+          elif isWhileTrueLoop(child) and whileBodyLooksLikeNestedScanner(child):
+            discard # accepted scanner loop with nested counting + progress + break
           else:
             addWarning(ctx, child.info, "while",
-              "termination proof not recognized: expected `while n.kind != ParRi` with progress/delegation, or `while x > 0 and ...` with `dec x`")
+              "termination proof not recognized: expected `while n.kind != ParRi` with progress/delegation, `while x > 0 and ...` with `dec x`, or common `while true` scanner form")
         # Recurse into the while body to find nested patterns
-        scanWhileRecurse(ctx, child, insideCopyInto)
+        scanWhileRecurse(ctx, child, insideCopyInto, varCursorCallees)
       elif childTag in ["cmd", "call"]:
         var peek = child
         inc peek
@@ -1147,19 +1196,27 @@ proc scanWhileInStmts(ctx: var CheckContext; stmtsNode: Cursor; insideCopyInto: 
           skip peek # skip callee
           while peek.kind != ParRi:
             if peek.kind == ParLe and pool.tags[peek.tag] == "stmts":
-              scanWhileInStmts(ctx, peek, true)
+              scanWhileInStmts(ctx, peek, true, varCursorCallees)
             skip peek
         else:
-          scanWhileRecurse(ctx, child, insideCopyInto)
+          scanWhileRecurse(ctx, child, insideCopyInto, varCursorCallees)
       else:
-        scanWhileRecurse(ctx, child, insideCopyInto)
+        scanWhileRecurse(ctx, child, insideCopyInto, varCursorCallees)
     skip child
 
-proc scanWhileParRiCompletion(ctx: var CheckContext; buf: var TokenBuf) =
+proc buildVarCursorCalleeSet(procs: openArray[ProcMeta]): HashSet[string] =
+  ## Build set of proc names that declare at least one `var Cursor` parameter.
+  result = initHashSet[string]()
+  for p in procs:
+    if p.hasCursor:
+      result.incl p.name
+
+proc scanWhileParRiCompletion(ctx: var CheckContext; procs: openArray[ProcMeta]; buf: var TokenBuf) =
   ## Scan for `while n.kind != ParRi` loops and check that the ParRi is consumed.
   ## Loops inside `copyInto` bodies are exempted (the template handles the ParRi).
+  let varCursorCallees = buildVarCursorCalleeSet(procs)
   var n = beginRead(buf)
-  scanWhileRecurse(ctx, n, false)
+  scanWhileRecurse(ctx, n, false, varCursorCallees)
   endRead buf
 
 # ---------------------------------------------------------------------------
@@ -1232,6 +1289,66 @@ proc extractWhileCounterVar(n: Cursor): string =
   inc c, SkipTag
   result = extractAndCounterVar(c)
 
+proc isWhileTrueLoop(n: Cursor): bool =
+  var c = n
+  if c.kind != ParLe or pool.tags[c.tag] != "while": return false
+  inc c, SkipTag
+  (c.kind == ParLe and c.exprKind == TrueX) or
+    (c.kind == Ident and pool.strings[c.litId] == "true")
+
+proc whileBodyLooksLikeNestedScanner(whileNode: Cursor): bool =
+  ## Heuristic for the common `while true` + nested-counter scanner loops.
+  var c = whileNode
+  inc c, SkipTag
+  skip c, SkipCond
+  if c.kind != ParLe: return false
+
+  var hasBreak = false
+  var hasProgress = false
+  var incVars = initHashSet[string]()
+  var decVars = initHashSet[string]()
+
+  var nested = 0
+  inc nested; inc c
+  while nested > 0:
+    case c.kind
+    of ParLe:
+      let tag = pool.tags[c.tag]
+      if tag in ["break", "breakstmt"]:
+        hasBreak = true
+      elif tag in ["cmd", "call"]:
+        var peek = c
+        inc peek
+        var callName = ""
+        if peek.kind == Ident:
+          callName = pool.strings[peek.litId]
+          skip peek
+        elif peek.kind == ParLe:
+          callName = extractDotCallName(peek)
+          skip peek
+
+        if callName in ["inc", "skip", "tr", "trSons", "trStmt", "trExpr", "takeTree", "takeToken"]:
+          hasProgress = true
+
+        if callName in ["inc", "dec"]:
+          while peek.kind != ParRi:
+            if peek.kind == Ident:
+              let v = pool.strings[peek.litId]
+              if callName == "inc": incVars.incl v else: decVars.incl v
+            skip peek
+      inc nested; inc c
+    of ParRi:
+      dec nested; inc c
+    else:
+      inc c
+
+  var hasNestedCounter = false
+  for v in incVars:
+    if v in decVars:
+      hasNestedCounter = true
+      break
+  hasProgress and (hasBreak or hasNestedCounter)
+
 # ---------------------------------------------------------------------------
 # Step 7: Main
 # ---------------------------------------------------------------------------
@@ -1285,26 +1402,20 @@ proc main() =
   if not fileExists(passFile):
     quit "Cannot find pass file: " & passFile
 
+  let noColors = not terminal.isatty(stdout)
+
   let grammar = parseTagsMd(tagsFile)
-  echo "Loaded ", grammar.len, " tags from ", tagsFile
 
   var buf = parseFileViaNifler(passFile)
-  echo "Parsed ", passFile, " (", buf.len, " tokens)"
+
+  # Single pass to find all procs with their params and body positions
+  let procList = findProcs(buf)
 
   # Build module-level type registry
   let reg = buildTypeRegistry(buf)
-  echo "Type registry: ", reg.types.len, " types with tracked fields"
-  for tname, tinfo in reg.types:
-    var tracked: seq[string] = @[]
-    for f in tinfo.fields:
-      if f.trackedKind != tkOther:
-        tracked.add f.name & ": " & $f.trackedKind
-    if tracked.len > 0:
-      echo "  ", tname, ": ", tracked.join(", ")
 
   # Build the effect graph — derive each proc's effect from its body
-  var eg = buildEffectGraph(buf)
-  echo "Built effect graph: ", eg.procs.len, " procs analyzed"
+  var eg = buildEffectGraph(buf, procList)
 
   # Report annotation mismatches (ensuresNif doesn't match derived body effect)
   for m in eg.mismatches:
@@ -1320,9 +1431,16 @@ proc main() =
       for k in df.children: dDesc.add kindName(toSpecKind(k)) & " "
     else:
       dDesc.add "?"
-    echo "  WARNING: ", m.procName, " — ensuresNif mismatch: ", aDesc, "vs ", dDesc
+    if noColors:
+      stdout.writeLine passFile, " Warning: ensuresNif mismatch in `", m.procName, "`: ", aDesc, "vs ", dDesc
+    else:
+      stdout.styledWriteLine fgCyan, passFile, " ", resetStyle,
+        fgYellow, styleBright, "Warning: ", resetStyle,
+        "ensuresNif mismatch in `", m.procName, "`: ", aDesc, "vs ", dDesc
 
-  var ctx = CheckContext(grammar: grammar, effectGraph: eg, filename: passFile)
+  var ctx = CheckContext(grammar: grammar, effectGraph: eg, filename: passFile,
+                         noColors: noColors)
+  let procMetas = buildProcMetas(procList, reg)
   scanForCopyIntoKind(ctx, buf)
   # Exhaustive-case on tag kinds is valuable for compiler passes (forces every
   # pass to be reviewed when a new tag is added), but plugins legitimately use
@@ -1331,50 +1449,42 @@ proc main() =
   if strict:
     scanForNonExhaustiveCases(ctx, buf)
 
-  echo "Checked ", ctx.checked, " call sites, skipped ", ctx.skipped, " (too complex)"
+  discard # tag grammar checks done
 
   # Check preservation property: procs with wrapsInput or requiresNif
   # annotations must advance the cursor on every code path.
   var preservationWarnings: seq[string] = @[]
-  let procList = findProcBodies(buf)
-  for (name, procCursor) in procList:
+  for p in procMetas:
+    let name = p.name
     if name notin eg.procs: continue
     let pe = eg.procs[name]
     let cv = if pe.cursorVar.len > 0: pe.cursorVar
              elif pe.wrapsInput: "n"
              else: ""
     if cv.len == 0: continue
-    var c = procCursor
-    inc c
-    var lastStmts = c
-    var foundStmts = false
-    while c.kind != ParRi:
-      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
-        lastStmts = c
-        foundStmts = true
-      skip c
-    if not foundStmts: continue
-    let state = analyzeCursorPath(eg, lastStmts, cv)
+    let state = analyzeCursorPath(eg, p.bodyPos, cv)
     if state == csNotAdvanced:
       preservationWarnings.add name & " — cursor `" & cv &
         "` not advanced on every code path"
 
-  if preservationWarnings.len > 0:
-    echo preservationWarnings.len, " preservation warning(s):"
-    for w in preservationWarnings:
-      echo "  ", passFile, ": ", w
+  for w in preservationWarnings:
+    if noColors:
+      stdout.writeLine passFile, " Warning: ", w
+    else:
+      stdout.styledWriteLine fgCyan, passFile, " ", resetStyle,
+        fgYellow, styleBright, "Warning: ", resetStyle, w
 
   # Obligation tracking: check cursor params are consumed
-  scanObligations(ctx, reg, buf)
+  scanObligations(ctx, procMetas)
 
   # Cursor-buffer balance: tie traversal and emission together
-  scanCursorBufferBalance(ctx, reg, buf)
+  scanCursorBufferBalance(ctx, reg, procMetas)
 
   # Unsafe cursor ops: flag bare skip/inc in emitter procs
-  scanUnsafeCursorOps(ctx, reg, buf)
+  scanUnsafeCursorOps(ctx, procMetas)
 
   # While-ParRi completion: check ParRi is consumed after while-kind-ParRi loops
-  scanWhileParRiCompletion(ctx, buf)
+  scanWhileParRiCompletion(ctx, procMetas, buf)
 
   var errors = 0
   var warnings = 0
@@ -1384,23 +1494,11 @@ proc main() =
 
   var hasErrors = errors > 0 or eg.mismatches.len > 0
 
-  if warnings > 0:
-    echo warnings, " warning(s):"
-    for v in ctx.violations:
-      if v.isWarning:
-        echo "  ", v.file, "(", v.line, ",", v.col, "): ", v.tag,
-             " [", v.msg, "]"
+  # Print violations in Nimony compiler message format
+  for v in ctx.violations:
+    ctx.writeViolation v
 
-  if errors > 0:
-    echo errors, " violation(s) found:"
-    for v in ctx.violations:
-      if not v.isWarning:
-        echo "  ", v.file, "(", v.line, ",", v.col, "): ", v.tag,
-             " [", v.msg, "]"
-
-  if not hasErrors:
-    echo "OK: no violations found."
-  else:
+  if hasErrors:
     quit 1
 
 main()
