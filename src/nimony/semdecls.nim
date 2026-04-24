@@ -588,13 +588,13 @@ proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
     inc params
     if params.substructureKind == ParamU:
       inc params
-      skip params # name
-      skip params # export marker
-      skip params # pragmas
+      skip params, SkipName # name
+      skip params, SkipExport # export marker
+      skip params, SkipPragmas # pragmas
       root = getClass(params) # can be a generic instance symbol
       var rest = params
-      skip rest # type
-      skip rest # default value
+      skip rest, SkipType # type
+      skip rest, SkipValue # default value
       skipParRi rest
       var methodName = pool.syms[symId]
       extractBasename methodName
@@ -628,9 +628,9 @@ proc hookThatShouldBeMethod(c: var SemContext; dest: var TokenBuf; hk: HookKind;
       inc params
       if params.substructureKind == ParamU:
         inc params
-        skip params # name
-        skip params # export marker
-        skip params # pragmas
+        skip params, SkipName # name
+        skip params, SkipExport # export marker
+        skip params, SkipPragmas # pragmas
         result = isInheritable(params, true)
     endRead(dest)
   else:
@@ -1021,7 +1021,7 @@ proc buildInnerObjDecl(c: var SemContext; decl: Cursor; sym: var SymId): TokenBu
   result.add n # (type
   inc n
   result.add symdefToken(sym, n.info)
-  skip n # name
+  skip n, SkipName # name
   takeTree result, n # copy exported (?)
   takeTree result, n # copy typevars
   # ^ may need to build fresh identifiers
@@ -1203,7 +1203,7 @@ proc semUnpackDecl(c: var SemContext; dest: var TokenBuf; it: var Item) =
     var kindTag = it.n
     while kindTag.stmtKind == UnpackdeclS:
       inc kindTag # unpackdecl tag
-      skip kindTag # value
+      skip kindTag, SkipValue # value
       assert kindTag.substructureKind == UnpacktupU
       inc kindTag # unpacktup tag
     let kind = kindTag.symKind
@@ -1231,7 +1231,7 @@ proc semUnpackDecl(c: var SemContext; dest: var TokenBuf; it: var Item) =
   while kindTag.stmtKind == UnpackdeclS:
     # skip nested unpacks as well
     inc kindTag # unpackdecl tag
-    skip kindTag # value
+    skip kindTag, SkipValue # value
     assert kindTag.substructureKind == UnpacktupU
     inc kindTag # unpacktup tag
   let kind = kindTag.symKind

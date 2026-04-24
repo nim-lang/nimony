@@ -37,9 +37,9 @@ proc mangleProctype(b: var Mangler; n: var Cursor; mm: MangleMode): string =
   b.addKeyw $props.usesClosure
   result = b.extract()
   if n.kind != ParRi:
-    skip n # effects
+    skip n, SkipEffects # effects
     if n.kind != ParRi:
-      skip n # body
+      skip n, SkipBody # body
   if n.kind != ParRi:
     bug "expected ')', but got: ", n
   inc n
@@ -53,11 +53,11 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
       let tag {.cursor.} = pool.tags[c.tagId]
       if c.substructureKind == FldU:
         inc c
-        skip c # name
-        skip c # export marker
-        skip c # pragmas
+        skip c, SkipName # name
+        skip c, SkipExport # export marker
+        skip c, SkipPragmas # pragmas
         mangleImpl b, c, mm # type is interesting
-        skip c # value
+        skip c, SkipValue # value
         inc c # ParRi
       elif c.typeKind == ArrayT:
         b.addTree tag
@@ -83,7 +83,7 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
         while c.kind != ParRi:
           if c.substructureKind == KvU:
             inc c
-            skip c # name
+            skip c, SkipName # name
             mangleImpl b, c, mm # type is interesting
             inc c # ParRi
           else:

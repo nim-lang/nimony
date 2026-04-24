@@ -313,7 +313,7 @@ proc getTupleFieldType*(c: Cursor): Cursor =
   of KvU:
     result = c
     inc result # tag
-    skip result # name
+    skip result, SkipName # name
   else:
     result = c
 

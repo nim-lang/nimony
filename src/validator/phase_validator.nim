@@ -22,9 +22,9 @@
 import std / [tables, strutils, assertions, sets, syncio]
 include ".." / lib / nifprelude
 import ".." / models / [tags, nimony_tags, nifc_tags, callconv_tags]
-import nimony_model
+import ".." / nimony / nimony_model
 import tags_grammar
-import reporters  # infoToStr
+import ".." / nimony / reporters  # infoToStr
 
 # ---------------------------------------------------------------------------
 # Embedded grammar

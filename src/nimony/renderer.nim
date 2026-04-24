@@ -741,7 +741,7 @@ proc gconcept(g: var SrcGen, n: var Cursor, c: Context) =
   inc n
   skip n
   skip n
-  skip n # typevars
+  skip n, SkipGenParams # typevars
   gstmts(g, n, c)
   skipParRi(n)
 
@@ -1074,8 +1074,8 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
       else:
         inc n
       if not isProctype:
-        skip n # effects
-        skip n # body
+        skip n, SkipEffects # effects
+        skip n, SkipBody # body
       skipParRi(n)
     else:
       case n.exprKind

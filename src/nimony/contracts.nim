@@ -904,7 +904,7 @@ proc checkContracts(c: var Context; n: Cursor) =
 proc traverseProc(c: var Context; n: var Cursor) =
   let orig = n
   let r = takeRoutine(n, SkipExclBody)
-  skip n # effects
+  skip n, SkipEffects # effects
   if not isGeneric(r):
     c.routines.add orig
     var nested = 0
@@ -926,7 +926,7 @@ proc traverseProc(c: var Context; n: var Cursor) =
         inc n
         if nested == 0: break
   else:
-    skip n # body
+    skip n, SkipBody # body
   skipParRi n # proc decl end
 
 proc traverseToplevel(c: var Context; n: var Cursor) =

@@ -323,7 +323,7 @@ proc procHasPragma*(typ: Cursor; kind: PragmaKind): bool =
   var typ = typ
   if typ.typeKind in RoutineTypes:
     skipToReturnType typ
-    skip typ # return type
+    skip typ, SkipType # return type
     result = hasPragma(typ, kind)
   else:
     result = false

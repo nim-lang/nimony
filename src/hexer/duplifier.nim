@@ -33,6 +33,7 @@ import std / [assertions]
 include nifprelude
 import nifindexes, symparser, treemangler, lifter, mover, hexer_context, passes
 import ".." / nimony / [nimony_model, programs, decls, typenav, renderer, reporters, builtintypes, typekeys]
+include ".." / nimony / nif_annotations
 
 type
   ContextFlag = enum
@@ -214,11 +215,12 @@ proc potentialAliasing(le, ri: Cursor): bool =
 
 when not defined(nimony):
   proc tr(c: var Context; n: var Cursor; e: Expects)
+    {.ensuresNif: addedAny(c.dest).}
 
-proc trSons(c: var Context; n: var Cursor; e: Expects) =
+proc trSons(c: var Context; n: var Cursor; e: Expects)
+    {.ensuresNif: addedAny(c.dest).} =
   assert n.kind == ParLe
-  c.dest.add n
-  inc n
+  takeToken c.dest, n
   while n.kind != ParRi:
     tr(c, n, e)
   takeParRi c.dest, n
@@ -288,7 +290,7 @@ proc trReturn(c: var Context; n: var Cursor) =
       tr c, n, WantOwner
   else:
     let info = n.info
-    inc n # skip ParLe
+    inc n, SkipTag
     c.dest.addParLe StmtsS, info
     c.dest.addParLe AsgnS, info
     c.dest.add symToken(c.resultSym, info)
@@ -360,7 +362,8 @@ proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
     tr c, n, WillBeOwned
   c.typeCache.registerLocal(result, CursorY, typ)
 
-proc callDup(c: var Context; arg: var Cursor) =
+proc callDup(c: var Context; arg: var Cursor)
+    {.ensuresNif: addedAny(c.dest).} =
   let typ = getType(c.typeCache, arg)
   if typ.typeKind == NiltT:
     tr c, arg, DontCare
@@ -458,7 +461,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
           copyTree c.dest, lhs
           copyIntoSymUse c.dest, tmp, ri.info
           n = ri
-          skip n
+          skip n, SkipFull
     elif isLastRead(c, ri):
       if isNotFirstAsgn and (potentialSelfAsgn(le, ri) or potentialAliasing(le, ri)):
         # `let tmp = y; =wasMoved(y); =destroy(x); x =bitcopy tmp`
@@ -470,7 +473,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
           tr c, lhsAsCursor, DontCare
           copyIntoSymUse c.dest, tmp, ri.info
           n = n2
-          skip n # skip right hand side
+          skip n, SkipFull
       else:
         if isNotFirstAsgn:
           callDestroy(c, destructor, lhs, leType)
@@ -513,15 +516,14 @@ proc trExplicitDestroy(c: var Context; n: var Cursor) =
   let info = n.info
   let destructor = getDestructor(c.lifter[], typ, info)
   if destructor == NoSymId:
-    # the type has no destructor, there is nothing interesting to do:
     c.dest.addEmpty info
-    inc n
-    skip n
+    inc n, SkipTag
+    skip n, SkipFull
   else:
     let needsAddr = isMutFirstParam(destructor)
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, destructor, info
-      inc n
+      inc n, SkipTag
       if needsAddr:
         copyIntoKind c.dest, HaddrX, info:
           tr c, n, DontCare
@@ -536,11 +538,11 @@ proc trExplicitDup(c: var Context; n: var Cursor; e: Expects) =
   if hookProc != NoSymId:
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, hookProc, info
-      inc n
+      inc n, SkipTag
       tr c, n, DontCare
   else:
     let e2 = if e == WillBeOwned: WantOwner else: e
-    inc n
+    inc n, SkipTag
     tr c, n, e2
   skipParRi n
 
@@ -551,15 +553,15 @@ proc trExplicitCopy(c: var Context; n: var Cursor; op: AttachedOp) =
   if hookProc != NoSymId:
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, hookProc, info
-      inc n
+      inc n, SkipTag
       while n.kind != ParRi:
         tr c, n, DontCare
       takeParRi c.dest, n
   else:
     c.dest.addParLe AsgnS, info
-    inc n
+    inc n, SkipTag
     if n.exprKind == HaddrX:
-      inc n
+      inc n, SkipTag
       tr c, n, DontCare
       skipParRi(n)
     else:
@@ -574,11 +576,11 @@ proc trExplicitWasMoved(c: var Context; n: var Cursor) =
   if hookProc != NoSymId:
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, hookProc, info
-      inc n
+      inc n, SkipTag
       tr c, n, DontCare
   else:
-    inc n
-    skip n
+    inc n, SkipTag
+    skip n, SkipFull
   skipParRi n
 
 proc trExplicitTrace(c: var Context; n: var Cursor) =
@@ -588,25 +590,25 @@ proc trExplicitTrace(c: var Context; n: var Cursor) =
   if hookProc != NoSymId:
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, hookProc, info
-      inc n
+      inc n, SkipTag
       tr c, n, DontCare
       tr c, n, DontCare
   else:
-    inc n
-    skip n
-    skip n
+    inc n, SkipTag
+    skip n, SkipFull
+    skip n, SkipFull
   skipParRi n
 
 when not defined(nimony):
   proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false)
 
-proc trOnlyEssentials(c: var Context; n: var Cursor) =
+proc trOnlyEssentials(c: var Context; n: var Cursor)
+    {.ensuresNif: addedAny(c.dest).} =
   var nested = 0
   while true:
     case n.kind
     of Symbol, UIntLit, StringLit, IntLit, FloatLit, CharLit, SymbolDef, UnknownToken, EofToken, DotToken, Ident:
-      c.dest.add n
-      inc n
+      takeToken c.dest, n
     of ParLe:
       case n.exprKind
       of DestroyX:
@@ -625,16 +627,14 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
         case n.stmtKind
         of LocalDecls:
           let kind = n.symKind
-          c.dest.add n
-          inc n
+          takeToken c.dest, n
           c.typeCache.takeLocalHeader(c.dest, n, kind)
           inc nested
         of ProcS, FuncS, ConverterS, MethodS, MacroS:
           trProcDecl c, n, parentNodestroy = true
         of ScopeS:
           c.typeCache.openScope()
-          c.dest.add n
-          inc n
+          takeToken c.dest, n
           while n.kind != ParRi:
             trOnlyEssentials c, n
           takeParRi c.dest, n
@@ -648,8 +648,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
             AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
             StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
             NoStmt:
-          c.dest.add n
-          inc n
+          takeToken c.dest, n
           inc nested
       of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
           InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
@@ -668,12 +667,10 @@ proc trOnlyEssentials(c: var Context; n: var Cursor) =
           MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
           InsetX, CardX, EmoveX, InternalTypeNameX,
           InternalFieldPairsX, FailedX, IsX, EnvpX, KvX:
-        c.dest.add n
-        inc n
+        takeToken c.dest, n
         inc nested
     of ParRi:
-      c.dest.add n
-      inc n
+      takeToken c.dest, n
       dec nested
     if nested == 0: break
 
@@ -747,14 +744,14 @@ proc finishOwningTemp(dest: var TokenBuf; ow: OwningTemp) =
     dest.copyIntoSymUse ow.s, ow.info
     dest.addParRi()  # finish the StmtListExpr
 
-proc trCall(c: var Context; n: var Cursor; e: Expects) =
+proc trCall(c: var Context; n: var Cursor; e: Expects)
+    {.ensuresNif: addedAny(c.dest).} =
   var ow = owningTempDefault()
   let retType = getType(c.typeCache, n)
   if hasDestructor(c, retType) and e == WantNonOwner:
     ow = bindToTemp(c, retType, n.info)
 
-  c.dest.add n
-  inc n # skip `(call)`
+  takeToken c.dest, n # take `(call)`
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
 
   tr c, n, DontCare # transforms `fn` because it may be an expression that requires further handling
@@ -777,11 +774,11 @@ proc trCall(c: var Context; n: var Cursor; e: Expects) =
   takeParRi c.dest, n
   finishOwningTemp c.dest, ow
 
-proc trRawConstructor(c: var Context; n: var Cursor; e: Expects) =
+proc trRawConstructor(c: var Context; n: var Cursor; e: Expects)
+    {.ensuresNif: addedAny(c.dest).} =
   # Idioms like `echo ["ab", myvar, "xyz"]` are important to translate well.
   let e2 = if e == WillBeOwned: WantOwner else: e
-  c.dest.add n
-  inc n
+  takeToken c.dest, n
   while n.kind != ParRi:
     tr c, n, e2
   takeParRi c.dest, n
@@ -820,7 +817,7 @@ proc trNewobjFields(c: var Context; n: var Cursor) =
           takeTree c.dest, n
     else:
       tr(c, n, WantOwner)
-  inc n # skip ParRi
+  skipParRi n
 
 proc genOutOfMemCheck(c: var Context; ow: OwningTemp; info: PackedLineInfo) =
   copyIntoKind c.dest, IfS, info:
@@ -833,9 +830,10 @@ proc genOutOfMemCheck(c: var Context; ow: OwningTemp; info: PackedLineInfo) =
         copyIntoKind c.dest, RaiseS, info:
           c.dest.add symToken(pool.syms.getOrIncl("OutOfMemError.0." & SystemModuleSuffix), info)
 
-proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind) =
+proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
+    {.ensuresNif: addedAny(c.dest).} =
   let info = n.info
-  inc n
+  inc n, SkipTag
   let refType = n
   assert refType.typeKind == RefT
 
@@ -873,17 +871,18 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind) =
         if kind == NewobjX:
           copyIntoKind c.dest, OconstrX, info:
             c.dest.addSubtree baseType
-            skip n # skip old base type (which is a ref)
+            skip n, SkipType
             trNewobjFields(c, n)
         else:
-          skip n # skip type
+          skip n, SkipType
           tr c, n, WantOwner # process default(T) call
 
   c.dest.addParRi()  # finish the StmtsS
   c.dest.copyIntoSymUse ow.s, ow.info
   c.dest.addParRi()  # finish the StmtListExpr
 
-proc genLastRead(c: var Context; n: var Cursor; typ: Cursor) =
+proc genLastRead(c: var Context; n: var Cursor; typ: Cursor)
+    {.ensuresNif: addedAny(c.dest).} =
   let ex = n
   let info = n.info
   # translate it to: `(var tmp = location; wasMoved(location); tmp)`
@@ -905,21 +904,20 @@ proc genLastRead(c: var Context; n: var Cursor; typ: Cursor) =
 
 proc trLocationNonOwner(c: var Context; n: var Cursor) =
   if n.kind == ParLe and n.exprKind == DotX:
-    c.dest.add n
-    inc n
+    takeToken c.dest, n
     tr c, n, WantNonOwner
     while n.kind != ParRi:
       takeTree c.dest, n
     takeParRi c.dest, n
   else:
-    c.dest.add n
-    inc n
+    takeToken c.dest, n
     tr c, n, WantNonOwner
     while n.kind != ParRi:
       tr(c, n, DontCare)
     takeParRi c.dest, n
 
-proc trLocation(c: var Context; n: var Cursor; e: Expects) =
+proc trLocation(c: var Context; n: var Cursor; e: Expects)
+    {.ensuresNif: addedAny(c.dest).} =
   # `x` does not own its value as it can be read multiple times.
   let typ = getType(c.typeCache, n)
   if e == WantOwner and hasDestructor(c, typ):
@@ -987,9 +985,9 @@ proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
       trValue c, r.val, WillBeOwned
       c.dest.addParRi()
 
-proc trStmtListExpr(c: var Context; n: var Cursor; e: Expects) =
-  c.dest.add n
-  inc n
+proc trStmtListExpr(c: var Context; n: var Cursor; e: Expects)
+    {.ensuresNif: addedAny(c.dest).} =
+  takeToken c.dest, n
   while n.kind != ParRi:
     if isLastSon(n):
       tr(c, n, e)
@@ -997,7 +995,8 @@ proc trStmtListExpr(c: var Context; n: var Cursor; e: Expects) =
       tr(c, n, WantNonOwner)
   takeParRi c.dest, n
 
-proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
+proc trEnsureMove(c: var Context; n: var Cursor; e: Expects)
+    {.ensuresNif: addedAny(c.dest).} =
   let typ = getType(c.typeCache, n)
   let arg = n.firstSon
   let info = n.info
@@ -1005,16 +1004,16 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
     # we allow rather silly code like `ensureMove(234)`.
     # Seems very useful for generic programming as this can come up
     # from template expansions:
-    inc n
+    inc n, SkipTag
     tr c, n, e
     skipParRi n
   elif isLastRead(c, arg):
     if e == WantOwner and hasDestructor(c, typ):
-      inc n
+      inc n, SkipTag
       genLastRead(c, n, typ)
       skipParRi n
     else:
-      inc n
+      inc n, SkipTag
       tr c, n, e
       skipParRi n
   else:
@@ -1022,11 +1021,12 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects) =
     c.dest.buildTree ErrT, info:
       c.dest.addSubtree n
       c.dest.add strToken(pool.strings.getOrIncl(m), info)
-    skip n
+    skip n, SkipFull
 
-proc trDeref(c: var Context; n: var Cursor) =
+proc trDeref(c: var Context; n: var Cursor)
+    {.ensuresNif: addedAny(c.dest).} =
   let info = n.info
-  inc n
+  inc n, SkipTag
   var typ = getType(c.typeCache, n, {SkipAliases})
   if typ.kind == ParLe and typ.typeKind == SinkT:
     inc typ

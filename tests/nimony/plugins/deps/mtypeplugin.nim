@@ -93,14 +93,9 @@ proc trAux(n: var NifCursor, o: var NifBuilder) =
     elif n.stmtKind == TemplateS:
       trTemplate n, o
     else:
-      let info = n.info
-      let tag = n.tagId
-      o.addParLe(tag, info)
-      inc n
-      while n.kind != ParRi:
-        trAux(n, o)
-      o.addParRi()
-      inc n
+      o.copyInto(n):
+        while n.kind != ParRi:
+          trAux(n, o)
   else:
     o.takeTree(n)
 

@@ -132,7 +132,7 @@ proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
   var files: seq[ImportedFilename] = @[]
   var x = it
   skip it
-  inc x # skip the `include`
+  inc x, SkipTag # skip the `include`
   while x.kind != ParRi:
     var hasError = false
     filenameVal(x, files, hasError, allowAs = false)
@@ -230,11 +230,11 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   let info = it.info
   var x = it
   skip it
-  inc x # skip the `import`
+  inc x, SkipTag # skip the `import`
   # Conditional imports carry a (when) marker child; skip it and still add the
   # file to the dependency graph so cross-compilation (e.g. --os:windows) sees
   # all potential dependencies. importSingleFile already ignores missing files.
-  if x.stmtKind == WhenS: skip x
+  if x.stmtKind == WhenS: skip x, SkipCond
   while x.kind != ParRi:
     var isCyclic = false
     if x.kind == ParLe and x.exprKind == PragmaxX:
@@ -250,10 +250,10 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
     var hasError = false
     if isCyclic:
       # Manually parse the pragmax: enter it, parse the inner filename, skip the pragma
-      inc x # enter PragmaxX
+      inc x, SkipTag # enter PragmaxX
       filenameVal(x, files, hasError, allowAs = false)
-      skip x # skip (pragmas cyclic)
-      inc x  # skip closing ParRi of PragmaxX
+      skip x, SkipPragmas # skip (pragmas cyclic)
+      inc x, SkipParRi  # skip closing ParRi of PragmaxX
     else:
       filenameVal(x, files, hasError, allowAs = true)
     if hasError:
@@ -273,8 +273,8 @@ proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
   let info = it.info
   var x = it
   skip it
-  inc x # skip the tag
-  if x.stmtKind == WhenS: skip x  # skip conditional marker, same as processImport
+  inc x, SkipTag # skip the tag
+  if x.stmtKind == WhenS: skip x, SkipCond  # skip conditional marker, same as processImport
   var files: seq[ImportedFilename] = @[]
   var hasError = false
   filenameVal(x, files, hasError, allowAs = true)
