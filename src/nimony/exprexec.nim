@@ -158,7 +158,7 @@ proc requestProc(c: var SynthesizeSerializerCtx; t: TypeCursor): SymId =
     programs.publish(result, header)
 
 when not defined(nimony):
-  proc unravel(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: var TokenBuf)
+  proc unravel(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf)
   proc entryPoint(c: var SynthesizeSerializerCtx; orig: TypeCursor; arg: Cursor)
 
 proc genStringCall(c: var SynthesizeSerializerCtx; name, arg: string) =
@@ -195,21 +195,21 @@ proc accessTupField(c: var SynthesizeSerializerCtx; tup: TokenBuf; idx: int): To
     result.add intToken(pool.integers.getOrIncl(idx), c.info)
   freeze result
 
-proc unravelObjField(c: var SynthesizeSerializerCtx; n: var Cursor; param: var TokenBuf; needsDeref: bool; depth: int) =
+proc unravelObjField(c: var SynthesizeSerializerCtx; n: var Cursor; param: TokenBuf; needsDeref: bool; depth: int) =
   let r = takeLocal(n, SkipFinalParRi)
   assert r.kind == FldY
   # create `paramA.field` because we need to do `paramA.field = paramB.field` etc.
   let fieldType = r.typ
-  var a = accessObjField(c, param, r.name, needsDeref, depth = depth)
+  let a = accessObjField(c, param, r.name, needsDeref, depth = depth)
 
   genStringCall(c, "writeNifParLe", "kv")
   genStringCall(c, "writeNifRaw", " ")
   genStringCall(c, "writeNifSymbol", pool.syms[r.name.symId])
 
-  entryPoint(c, fieldType, cursorAt(a, 0))
+  entryPoint(c, fieldType, readonlyCursorAt(a, 0))
   genParRiCall c
 
-proc unravelObjFields(c: var SynthesizeSerializerCtx; n: var Cursor; param: var TokenBuf; needsDeref: bool; depth: int) =
+proc unravelObjFields(c: var SynthesizeSerializerCtx; n: var Cursor; param: TokenBuf; needsDeref: bool; depth: int) =
   while n.kind != ParRi:
     case n.substructureKind
     of CaseU:
@@ -254,7 +254,7 @@ proc unravelObjFields(c: var SynthesizeSerializerCtx; n: var Cursor; param: var 
       error "illformed AST inside object: ", n
 
 
-proc unravelObj(c: var SynthesizeSerializerCtx; orig: Cursor; param: var TokenBuf; depth: int) =
+proc unravelObj(c: var SynthesizeSerializerCtx; orig: Cursor; param: TokenBuf; depth: int) =
   genStringCall(c, "writeNifParLe", "oconstr")
   # we simply generate the type as a raw string:
   genStringCall(c, "writeNifRaw", toString(orig, false))
@@ -276,7 +276,7 @@ proc unravelObj(c: var SynthesizeSerializerCtx; orig: Cursor; param: var TokenBu
   genParRiCall c
 
 proc unravelTuple(c: var SynthesizeSerializerCtx;
-                  orig: Cursor; param: var TokenBuf) =
+                  orig: Cursor; param: TokenBuf) =
   assert orig.typeKind == TupleT
   genStringCall(c, "writeNifParLe", "tupconstr")
   # we simply generate the type as a raw string:
@@ -289,7 +289,7 @@ proc unravelTuple(c: var SynthesizeSerializerCtx;
     let fieldType = getTupleFieldType(n)
     skip n
 
-    var a = accessTupField(c, param, idx)
+    let a = accessTupField(c, param, idx)
     unravel c, fieldType, a
     inc idx
   genParRiCall c
@@ -337,7 +337,7 @@ proc declareIndexVar(c: var SynthesizeSerializerCtx; indexVar: SymId) =
     c.dest.add intToken(pool.integers.getOrIncl(0), c.info)
 
 proc unravelArray(c: var SynthesizeSerializerCtx;
-                  orig: Cursor; param: var TokenBuf) =
+                  orig: Cursor; param: TokenBuf) =
   assert orig.typeKind == ArrayT
   let arrayLen = getArrayLen(orig)
   var n = orig
@@ -354,13 +354,13 @@ proc unravelArray(c: var SynthesizeSerializerCtx;
   copyIntoKind c.dest, WhileS, c.info:
     indexVarLowerThanArrayLen c, indexVar, arrayLen
     copyIntoKind c.dest, StmtsS, c.info:
-      var a = accessArrayAt(c, param, indexVar)
+      let a = accessArrayAt(c, param, indexVar)
       unravel c, baseType, a
 
       incIndexVar c, indexVar
   genParRiCall c
 
-proc unravelSet(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: var TokenBuf) =
+proc unravelSet(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) =
   assert orig.typeKind == SetT
   let baseType = orig.firstSon
   let maxValue = bitsetSizeInBytes(orig) * createXint(8'i64)
@@ -389,7 +389,7 @@ proc unravelSet(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: var Tok
       incIndexVar c, indexVar
   genParRiCall c
 
-proc unravelEnum(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: var TokenBuf) =
+proc unravelEnum(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) =
   c.dest.addParLe CaseS, c.info
   c.dest.add param
   var enumDecl = orig
@@ -447,9 +447,9 @@ proc entryPoint(c: var SynthesizeSerializerCtx; orig: TypeCursor; arg: Cursor) =
       c.dest.addSymUse procId, c.info
       c.dest.addSubtree arg
 
-proc unravel(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: var TokenBuf) =
+proc unravel(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) =
   if isSomeStringType(orig):
-    entryPoint(c, orig, cursorAt(param, 0))
+    entryPoint(c, orig, readonlyCursorAt(param, 0))
     return
 
   let typ = toTypeImpl orig
@@ -463,7 +463,7 @@ proc unravel(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: var TokenB
   of ArrayT:
     unravelArray c, typ, param
   of IT, UT, FT, CT, BoolT, DistinctT, RangetypeT:
-    entryPoint(c, typ, cursorAt(param, 0))
+    entryPoint(c, typ, readonlyCursorAt(param, 0))
   of EnumT, OnumT, AnumT:
     unravelEnum c, typ, param
   of SetT:
