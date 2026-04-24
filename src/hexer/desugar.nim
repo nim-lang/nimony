@@ -39,6 +39,7 @@ proc needsTemp(n: Cursor): bool =
   # the AtX branch. `result = false` here is the bool default anyway —
   # run `bin/nimony c --verbose src/hexer/desugar.nim` (with this line
   # removed) to see the NJ IR that trips the checker.
+  result = false
   case n.kind
   of Symbol, IntLit, UIntLit, FloatLit, CharLit, StringLit:
     result = false

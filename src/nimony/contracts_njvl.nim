@@ -98,7 +98,7 @@ proc buildErr(c: var NjvlContext; info: PackedLineInfo; msg: string) =
   dumpCurrentProc(c, info, msg)
   var hintedMsg = msg
   if not c.verbose:
-    hintedMsg.add " [pass --verbose to dump the NJ IR for this proc]"
+    hintedMsg.add " [pass --verbose for the NJ IR]"
   c.errors.buildTree ErrT, info:
     c.errors.addDotToken()
     c.errors.add strToken(pool.strings.getOrIncl(hintedMsg), info)

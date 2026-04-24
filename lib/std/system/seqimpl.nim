@@ -29,7 +29,7 @@ func memSizeInBytes[T](size: int): int {.inline.} =
       # When required memory size is overflowed, cause out of memory.
       result = high(int)
 
-func newSeq*[T: HasDefault](size: int): seq[T] {.nodestroy.} =
+func newSeq*[T: HasDefault](size: int = 0): seq[T] {.nodestroy.} =
   if size == 0:
     result = seq[T](len: size, data: nil)
   else:

@@ -729,22 +729,26 @@ const BootstrapModules = [
   # Tier 10 leaves.
   "src/nimony/pragmacanon.nim",
 
-  # Tier 11/12 tips still present after tier 13 added.
-  "src/hexer/xelim.nim",
+  # Tier 12 tips still present after later tiers added.
   "src/nimony/semborrow.nim",
   "src/nimony/semuntyped.nim",
   "src/nimony/enumtostr.nim",
   "src/nimony/derefs.nim",
 
-  # Tier 13 tips (cover the rest of the bootstrapped compiler surface).
+  # Tier 13 tips still present after Tier 14 added.
   "src/nimony/module_plugins.nim",
   "src/hexer/iterinliner.nim",
   "src/hexer/destroyer.nim",
   "src/hexer/inliner.nim",
-  "src/hexer/eraiser.nim",
-  "src/hexer/dce1.nim",
   "src/hexer/desugar.nim",
   "src/hexer/lambdalifting.nim",
+
+  # Tier 14 tips (cover the rest of the bootstrapped compiler surface).
+  "src/njvl/versiontabs.nim",
+  "src/hexer/cps.nim",
+  "src/hexer/constparams.nim",
+  "src/hexer/vtables_backend.nim",
+  "src/hexer/dce2.nim",
 ]
 
 # Modules whose `isMainModule` block should also be executed after compilation.
