@@ -9,7 +9,7 @@ type
     SufL = (ord(SufTagId), "suf")  ## literal with suffix annotation
     AtL = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped NIFC form); also used for generic proc/type instantiation `(at callee T1 T2 ...)`
     DerefL = (ord(DerefTagId), "deref")  ## pointer deref operation
-    DotL = (ord(DotTagId), "dot")  ## object field selection; optional integer is the inheritance depth of the field
+    DotL = (ord(DotTagId), "dot")  ## object field selection; optional integer is the inheritance depth of the field; optional trailing `STRLIT` is an *access token* (carrying `"x"` like an export marker) — when present, the expression was already type-checked in a scope with access to the field, so re-check at expansion/serialization sites must accept the access even if the field is private. Emitted by sem when a template body or `.semantics` serializer is type-checked in the field's defining module and later expanded/consumed elsewhere.
     ParL = (ord(ParTagId), "par")  ## syntactic parenthesis
     AddrL = (ord(AddrTagId), "addr")  ## address of operation
     NilL = (ord(NilTagId), "nil")  ## nil pointer value; closure `nil` carries the proc type and a nil environment
@@ -57,7 +57,7 @@ type
     ParamsL = (ord(ParamsTagId), "params")  ## list of proc parameters, also used as a "proc type"
     ObjectL = (ord(ObjectTagId), "object")  ## object type declaration
     EnumL = (ord(EnumTagId), "enum")  ## enum type declaration
-    ProctypeL = (ord(ProctypeTagId), "proctype")  ## proc type declaration; same shape as `(proc D ...)` but with anonymous name slot
+    ProctypeL = (ord(ProctypeTagId), "proctype")  ## Nimony proc type. Slot 0 carries the nilability tag — either a `.` placeholder or one of `(notnil)`, `(nil)`, `(unchecked)`. NIFC proc type, same shape as `(proc D ...)` with anonymous name slot (varargs spec; effects/body slots present but unused).
     PtrL = (ord(PtrTagId), "ptr")  ## `ptr` type contructor; the `(unchecked)` pragma relaxes nil checking on deref
     PragmasL = (ord(PragmasTagId), "pragmas")  ## begin of pragma section
     PragmaxL = (ord(PragmaxTagId), "pragmax")  ## pragma expressions

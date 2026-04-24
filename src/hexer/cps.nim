@@ -1264,12 +1264,9 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if n.typeKind == ProctypeT and procHasPragma(n, PassiveP):
       var info = n.info
       # add caller for init function to the params end
-      dest.takeToken n
-      dest.takeTree n
-      dest.takeTree n
-      dest.takeTree n
-      dest.takeTree n
-      dest.takeToken n
+      dest.takeToken n        # proctype tag
+      dest.takeTree n         # nilability tag
+      dest.takeToken n        # params tag
       while n.kind != ParRi:
         trProctype(c, dest, n)
       inc n

@@ -716,7 +716,12 @@ proc semBodyCheckBody(c: var SemContext; dest: var TokenBuf; it: var Item;
     semTemplBody ctx, dest, it.n
   else:
     takeToken dest, it.n
-    resId = declareResult(c, dest, it.n.info)
+    # Don't declare `result` again if the body already carries an explicit
+    # `(result ...)` decl — happens when the proc body has already been
+    # sem-checked once and is being re-fed through sem (e.g. via the
+    # `executeExpr` sub-compile machinery).
+    if it.n.stmtKind != ResultS:
+      resId = declareResult(c, dest, it.n.info)
     semProcBody c, dest, it
   c.closeScope() # close body scope
   c.closeScope() # close parameter scope

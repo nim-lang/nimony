@@ -8,7 +8,7 @@ type
     SufC = (ord(SufTagId), "suf")  ## literal with suffix annotation
     AtC = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped NIFC form); also used for generic proc/type instantiation `(at callee T1 T2 ...)`
     DerefC = (ord(DerefTagId), "deref")  ## pointer deref operation
-    DotC = (ord(DotTagId), "dot")  ## object field selection; optional integer is the inheritance depth of the field
+    DotC = (ord(DotTagId), "dot")  ## object field selection; optional integer is the inheritance depth of the field; optional trailing `STRLIT` is an *access token* (carrying `"x"` like an export marker) — when present, the expression was already type-checked in a scope with access to the field, so re-check at expansion/serialization sites must accept the access even if the field is private. Emitted by sem when a template body or `.semantics` serializer is type-checked in the field's defining module and later expanded/consumed elsewhere.
     PatC = (ord(PatTagId), "pat")  ## pointer indexing operation
     ParC = (ord(ParTagId), "par")  ## syntactic parenthesis
     AddrC = (ord(AddrTagId), "addr")  ## address of operation
@@ -96,7 +96,7 @@ type
     UnionT = (ord(UnionTagId), "union")  ## first one is Nifc union declaration, second one is Nimony union pragma
     ObjectT = (ord(ObjectTagId), "object")  ## object type declaration
     EnumT = (ord(EnumTagId), "enum")  ## enum type declaration
-    ProctypeT = (ord(ProctypeTagId), "proctype")  ## proc type declaration; same shape as `(proc D ...)` but with anonymous name slot
+    ProctypeT = (ord(ProctypeTagId), "proctype")  ## Nimony proc type. Slot 0 carries the nilability tag — either a `.` placeholder or one of `(notnil)`, `(nil)`, `(unchecked)`. NIFC proc type, same shape as `(proc D ...)` with anonymous name slot (varargs spec; effects/body slots present but unused).
     IT = (ord(ITagId), "i")  ## `int` builtin type
     UT = (ord(UTagId), "u")  ## `uint` builtin type; size in bits followed by optional attributes (`(importc ...)`, `(header ...)`, etc.)
     FT = (ord(FTagId), "f")  ## `float` builtin type

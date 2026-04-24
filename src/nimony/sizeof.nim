@@ -7,6 +7,7 @@
 import std / [assertions, tables]
 
 include ".." / lib / nifprelude
+include ".." / lib / compat2
 import nimony_model, decls, programs, xints, semdata, expreval
 
 proc align(address, alignment: int): int {.inline.} =
@@ -137,7 +138,8 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
   var pragmas = default(TypePragmas)
   while counter > 0 and n.kind == Symbol:
     if cache.hasKey(n.symId):
-      let c2 = cache[n.symId]
+      # `hasKey` just returned true, so `getOrQuit` will not quit.
+      let c2 = cache.getOrQuit(n.symId)
       combine c, c2
       return
     let sym = tryLoadSym(n.symId)
@@ -230,7 +232,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     getSize c, cache, n.firstSon, ptrSize
   of NoType, ErrT, VoidT, VarargsT, OrT, AndT, NotT,
      ConceptT, StaticT, InvokeT, UarrayT, ItertypeT,
-     AutoT, SymKindT, TypeKindT, TypedescT, UntypedT, TypedT, OrdinalT:
+     AutoT, SymkindT, TypekindT, TypedescT, UntypedT, TypedT, OrdinalT:
     c.overflow = true
 
 proc getSize*(n: Cursor; ptrSize: int; strict=false): xint =
@@ -263,7 +265,7 @@ proc typeSectionMode(n: Cursor): PragmaKind =
 
 proc passByConstRef*(typ, pragmas: Cursor; ptrSize: int): bool =
   let k = typ.typeKind
-  if k in {SinkT, MutT, OutT, TypeKindT, UntypedT, TypedT, VarargsT, TypedescT, StaticT}:
+  if k in {SinkT, MutT, OutT, TypekindT, UntypedT, TypedT, VarargsT, TypedescT, StaticT}:
     result = false
   elif typeIsBig(typ, ptrSize):
     result = not hasPragma(pragmas, BycopyP) and typeSectionMode(typ) != BycopyP

@@ -9,7 +9,7 @@ type
     SufX = (ord(SufTagId), "suf")  ## literal with suffix annotation
     AtX = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped NIFC form); also used for generic proc/type instantiation `(at callee T1 T2 ...)`
     DerefX = (ord(DerefTagId), "deref")  ## pointer deref operation
-    DotX = (ord(DotTagId), "dot")  ## object field selection; optional integer is the inheritance depth of the field
+    DotX = (ord(DotTagId), "dot")  ## object field selection; optional integer is the inheritance depth of the field; optional trailing `STRLIT` is an *access token* (carrying `"x"` like an export marker) — when present, the expression was already type-checked in a scope with access to the field, so re-check at expansion/serialization sites must accept the access even if the field is private. Emitted by sem when a template body or `.semantics` serializer is type-checked in the field's defining module and later expanded/consumed elsewhere.
     PatX = (ord(PatTagId), "pat")  ## pointer indexing operation
     ParX = (ord(ParTagId), "par")  ## syntactic parenthesis
     AddrX = (ord(AddrTagId), "addr")  ## address of operation
@@ -58,7 +58,7 @@ type
     PragmaxX = (ord(PragmaxTagId), "pragmax")  ## pragma expressions
     QuotedX = (ord(QuotedTagId), "quoted")  ## name in backticks
     HderefX = (ord(HderefTagId), "hderef")  ## hidden pointer deref operation
-    DdotX = (ord(DdotTagId), "ddot")  ## deref dot: expression, field symbol, field index
+    DdotX = (ord(DdotTagId), "ddot")  ## deref dot: expression, field symbol, field index; optional trailing `STRLIT` is the same *access token* described on `(dot ...)` — certifies the access was type-checked with private-field visibility and must be accepted on re-check.
     HaddrX = (ord(HaddrTagId), "haddr")  ## hidden address of operation
     NewrefX = (ord(NewrefTagId), "newref")  ## Nim's `new` magic proc that allocates a `ref T`; optional initializer expression
     NewobjX = (ord(NewobjTagId), "newobj")  ## new object constructor
@@ -209,7 +209,7 @@ type
     TemplateT = (ord(TemplateTagId), "template")  ## template declaration
     ObjectT = (ord(ObjectTagId), "object")  ## object type declaration
     EnumT = (ord(EnumTagId), "enum")  ## enum type declaration
-    ProctypeT = (ord(ProctypeTagId), "proctype")  ## proc type declaration; same shape as `(proc D ...)` but with anonymous name slot
+    ProctypeT = (ord(ProctypeTagId), "proctype")  ## Nimony proc type. Slot 0 carries the nilability tag — either a `.` placeholder or one of `(notnil)`, `(nil)`, `(unchecked)`. NIFC proc type, same shape as `(proc D ...)` with anonymous name slot (varargs spec; effects/body slots present but unused).
     IT = (ord(ITagId), "i")  ## `int` builtin type
     UT = (ord(UTagId), "u")  ## `uint` builtin type; size in bits followed by optional attributes (`(importc ...)`, `(header ...)`, etc.)
     FT = (ord(FTagId), "f")  ## `float` builtin type
