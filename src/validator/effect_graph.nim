@@ -101,6 +101,11 @@ const
   LocalTypePos* = 3
   LocalValuePos* = 4
 
+const
+  CallTags* = ["call", "cmd", "callstrlit", "prefix", "infix",
+                "hcall", "proccall"]
+  RoutineTags* = ["proc", "func", "method", "converter", "iterator", "template"]
+
 proc sameEffect*(a, b: Effect): bool =
   ## Structural equality — the default ref `==` only compares pointer identity,
   ## which makes the fixed-point iteration loop unable to detect convergence.
@@ -457,7 +462,7 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor; destLv: Cursor): Effect
 
     let stmtTag = pool.tags[n.tag]
     case stmtTag
-    of "call", "cmd":
+    of "call", "cmd", "callstrlit", "prefix", "infix", "hcall", "proccall":
       let (callName, firstArg, writesToDest) = extractCallMeta(n, destLv)
 
       case callName
@@ -784,7 +789,7 @@ proc findAddSymDefInBody(body: Cursor; tag: string; result: var SymContext) =
   while n.kind != ParRi:
     if n.kind == ParLe:
       let stmtTag = pool.tags[n.tag]
-      if stmtTag in ["cmd", "call"]:
+      if stmtTag in CallTags:
         # Check if this is an addSymDef call
         var peek = n
         inc peek
@@ -834,7 +839,7 @@ proc buildSymContext*(buf: var TokenBuf): SymContext =
         result[pool.strings[p.litId]] = ckT
 
     # copyIntoKind/buildTree calls — scan their body for addSymDef
-    elif tag in ["cmd", "call"]:
+    elif tag in CallTags:
       let callee = extractCalleeName(n)
       if callee in ["copyIntoKind", "buildTree"]:
         var peek = n
@@ -964,7 +969,7 @@ proc detectDestLvalue*(body: Cursor; hintName: string): Cursor =
   if c.kind != ParLe: return default(Cursor)
   c.balancedTokens:
     let tag = pool.tags[c.tag]
-    if tag in ["call", "cmd"]:
+    if tag in CallTags:
       var peek = c
       inc peek
       if peek.kind == ParLe:
@@ -998,7 +1003,7 @@ proc detectWrapsInput*(graph: EffectGraph; body: Cursor; destLv: Cursor): bool =
   while c.kind != ParRi:
     if c.kind == ParLe:
       let tag = pool.tags[c.tag]
-      if tag in ["call", "cmd"]:
+      if tag in CallTags:
         let (callName, _, mentionsDest) = extractCallMeta(c, destLv)
         if callName == "copyInto" and mentionsDest:
           return true
@@ -1022,7 +1027,7 @@ proc detectCursorLvs*(body: Cursor): seq[Cursor] =
       result.add lv
   c.balancedTokens:
     let tag = pool.tags[c.tag]
-    if tag in ["call", "cmd"]:
+    if tag in CallTags:
       let callName = extractCalleeName(c)
       if callName in ["inc", "skip", "skipParRi", "skipToEnd",
                       "copyInto", "takeTree", "takeToken", "takeParRi"]:
@@ -1086,8 +1091,7 @@ proc findProcs*(buf: var TokenBuf): seq[ProcInfo] =
     case n.kind
     of ParLe:
       let tag = pool.tags[n.tag]
-      if tag == "proc" or tag == "func" or tag == "method" or
-         tag == "converter" or tag == "iterator":
+      if tag in RoutineTags:
         var p = n
         inc p # skip (proc
         var name = ""
@@ -1256,7 +1260,7 @@ proc analyzeCursorPath*(graph: EffectGraph; body: Cursor; cursorLv: Cursor): Cur
       continue
     let tag = pool.tags[n.tag]
     case tag
-    of "call", "cmd":
+    of "call", "cmd", "callstrlit", "prefix", "infix", "hcall", "proccall":
       let (callName, _, mentionsCursor) = extractCallMeta(n, cursorLv)
       if mentionsCursor and callAdvancesCursor(callName):
         advanced = true

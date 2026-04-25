@@ -423,7 +423,7 @@ proc scanForCopyIntoKind(ctx: var CheckContext; buf: var TokenBuf) =
     case n.kind
     of ParLe:
       let tag = pool.tags[n.tag]
-      if tag in ["cmd", "call"]:
+      if tag in CallTags:
         if extractCalleeName(n) in ["copyIntoKind", "buildTree", "withTree"]:
           checkCopyIntoKind(ctx, n, n.info)
       inc nested
@@ -497,7 +497,7 @@ proc scanCallsForCursorArg(bc: Cursor; endNested: int; cursorParams: seq[Cursor]
     case bc.kind
     of ParLe:
       let tag = pool.tags[bc.tag]
-      if tag in ["cmd", "call"]:
+      if tag in CallTags:
         var peek = bc
         inc peek # skip (cmd/(call
         # Skip the callee name/dot-expr
@@ -789,7 +789,7 @@ proc blockBalance(ctx: var CheckContext; st: SymbolTable; reg: TypeRegistry;
     # if/case as a whole contributes 0 — each branch is self-contained
     result = 0
 
-  elif tag in ["cmd", "call"]:
+  elif tag in CallTags:
     result = classifyCall(st, reg, n)
 
   elif tag in ["while", "for", "block", "try"]:
@@ -835,7 +835,7 @@ proc scanUnsafeCursorOps(ctx: var CheckContext; reg: TypeRegistry; procs: openAr
       case bc.kind
       of ParLe:
         let tag = pool.tags[bc.tag]
-        if tag in ["cmd", "call"]:
+        if tag in CallTags:
           if delegatedDepth == 0:
             let callName = extractCalleeName(bc)
             if callName in CursorAdvanceProcs and not hasIntentArg(bc):
@@ -927,7 +927,7 @@ proc isParRiSkipCall(n: Cursor; lv: Cursor): bool =
   ## Matches: (cmd inc N lv), (cmd skipParRi N lv), etc.
   if n.kind != ParLe: return false
   let tag = pool.tags[n.tag]
-  if tag notin ["cmd", "call"]: return false
+  if tag notin CallTags: return false
   var c = n
   inc c # skip (cmd/(call
   var callName = ""
@@ -963,7 +963,7 @@ proc whileBodyContributesDest(whileNode: Cursor): bool =
   if c.kind != ParLe: return false
   c.balancedTokens:
     let tag = pool.tags[c.tag]
-    if tag in ["cmd", "call"]:
+    if tag in CallTags:
       if extractCalleeName(c) in DestContributingProcs:
         return true
   false
@@ -987,7 +987,7 @@ proc callAdvancesCursor(n: Cursor; lv: Cursor;
                         varCursorCallees: HashSet[string]): bool =
   if n.kind != ParLe: return false
   let tag = pool.tags[n.tag]
-  if tag notin ["cmd", "call"]: return false
+  if tag notin CallTags: return false
   var c = n
   inc c, SkipTag
   var callName = ""
@@ -1041,7 +1041,7 @@ proc stmtMustAdvanceCursor(n: Cursor; lv: Cursor;
                            varCursorCallees: HashSet[string]): bool =
   if n.kind != ParLe: return false
   let tag = pool.tags[n.tag]
-  if tag in ["cmd", "call"]:
+  if tag in CallTags:
     return callAdvancesCursor(n, lv, varCursorCallees)
   elif tag == "if":
     var c = n
@@ -1161,7 +1161,7 @@ proc scanWhileInStmts(ctx: var CheckContext; stmtsNode: Cursor; insideCopyInto: 
               "termination proof not recognized: expected `while n.kind != ParRi` with progress/delegation, `while x > 0 and ...` with `dec x`, or common `while true` scanner form")
         # Recurse into the while body to find nested patterns
         scanWhileRecurse(ctx, child, insideCopyInto, varCursorCallees)
-      elif childTag in ["cmd", "call"]:
+      elif childTag in CallTags:
         let callName = extractCalleeName(child)
         if callName in CopyIntoProcs:
           # copyInto handles the ParRi — recurse with insideCopyInto=true
@@ -1206,7 +1206,7 @@ proc whileBodyHasProgressCall(whileNode: Cursor; lv: Cursor;
   if c.kind != ParLe: return false
   c.balancedTokens:
     let tag = pool.tags[c.tag]
-    if tag in ["cmd", "call"]:
+    if tag in CallTags:
       let callName = extractCalleeName(c)
       if callName in acceptedCalls:
         var peek = c
@@ -1272,7 +1272,7 @@ proc whileBodyLooksLikeNestedScanner(whileNode: Cursor): bool =
     let tag = pool.tags[c.tag]
     if tag in ["break", "breakstmt"]:
       hasBreak = true
-    elif tag in ["cmd", "call"]:
+    elif tag in CallTags:
       let callName = extractCalleeName(c)
 
       if callName in ["inc", "skip", "tr", "trSons", "trStmt", "trExpr", "takeTree", "takeToken"]:
