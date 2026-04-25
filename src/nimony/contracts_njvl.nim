@@ -86,7 +86,6 @@ type
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
     activeBorrows: seq[BorrowInfo]
     anumNarrows: HashSet[AnumNarrowInfo]
-    assignTarget: SymId # not need stack because let x = (let y = 42; y) will normalized in NJVL
     verbose: bool                      # --verbose: dump NJ IR on init/contract
                                        # failures for easier debugging
     currentProcStart: Cursor           # cursor at the start of the proc whose
@@ -769,12 +768,23 @@ proc narrowTo(c: var NjvlContext; narrower, discriminator: SymId; cands: HashSet
   c.anumNarrows.incl AnumNarrowInfo(narrower: narrower, discriminator: discriminator,
                                     candidates: cands, info: info)
 
-proc candidatesOf(c: NjvlContext; narrower, discriminator: SymId): HashSet[SymId] =
-  result = initHashSet[SymId]()
+proc candidatesOf(c: var NjvlContext; narrower, discriminator: SymId;
+                  info: PackedLineInfo): HashSet[SymId] =
+  # get candidate tags considering current narrowing info,
+  # if narrowing info not recorded, we don't have narrowings i.e all candidates possible
   let key = AnumNarrowInfo(narrower: narrower, discriminator: discriminator)
   for e in c.anumNarrows:
-    if e == key:
+    if discriminator == NoSymId:
+      if e.narrower == narrower:
+        return e.candidates
+    elif e == key:
       return e.candidates
+  let objType = lookupSymbol(c.typeCache, narrower)
+  if not cursorIsNil(objType):
+    for entry in buildAnumInfos(objType, narrower, info):
+      if discriminator == NoSymId or entry.discriminator == discriminator:
+        return entry.candidates
+  result = initHashSet[SymId]()
 
 proc findBranch(objType: Cursor; fld: SymId): SymId =
   ## Find tag with field, used for better error message
@@ -821,11 +831,7 @@ proc checkSumtypeFieldAccess(c: var NjvlContext; obj: Cursor; fld: SymId; info: 
   if cursorIsNil(objType): return
   let requiredTag = findBranch(objType, fld)
   if requiredTag == NoSymId: return  # common field / discriminator / not case-object
-  var candidates = initHashSet[SymId]()
-  for e in c.anumNarrows:
-    if e.narrower == narrower:
-      candidates = e.candidates
-      break
+  let candidates = candidatesOf(c, narrower, NoSymId, info)
 
   var tagsStr = ""
   for t in candidates:
@@ -842,6 +848,7 @@ proc checkSumtypeFieldAccess(c: var NjvlContext; obj: Cursor; fld: SymId; info: 
       pool.syms[narrower] & "`, active branch is not `" &
       pool.syms[requiredTag] & "`" & suffix
   else:
+    assert candidates.len > 1
     buildErr c, info,
       "cannot access field `" & pool.syms[fld] & "` of `" &
       pool.syms[narrower] & "`: discriminator is ambiguous: {" &
@@ -851,10 +858,6 @@ proc analyseOconstr(c: var NjvlContext; n: var Cursor) =
   inc n
   let objType = n
   skip n # type
-  if c.assignTarget != NoSymId:
-    for entry in buildAnumInfos(objType, c.assignTarget, n.info):
-      narrowTo(c, entry.narrower, entry.discriminator, entry.candidates, entry.info)
-    c.assignTarget = NoSymId
   while n.kind != ParRi:
     assert n.substructureKind == KvU
     inc n
@@ -1103,16 +1106,24 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
 
   # First analyze the value (source)
   let valueStart = n
-  var m = n
-  skip m
-  c.assignTarget = extractSymIdForStore(m)
   traverseExpr c, n
-  c.assignTarget = NoSymId
 
   # Check borrow conflicts for the destination
   let destMutPath = extractPath(c, n)
   if destMutPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
     checkBorrowConflict(c, destMutPath, n.info)
+
+  # if narrower is touched by destMutPath
+  # we lost narrow info since
+  # we no longer know which branch is active.
+  # it mean that obj = Bar() drop narrow info
+  if destMutPath.path.len > 0:
+    var stale: seq[AnumNarrowInfo] = @[]
+    for e in c.anumNarrows:
+      if e.narrower == destMutPath.path[0]:
+        stale.add e
+    for e in stale:
+      c.anumNarrows.excl e
 
   # Now handle the destination (Symbol or NJVL versioned variable (v symId version))
   let destSymId = extractSymIdForStore(n)
@@ -1227,9 +1238,9 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     if cond.negated: c.trueCfvars.add cond.sym
     else:            c.falseCfvars.add cond.sym
   if narrower != NoSymId:
-    var elseCands = candidatesOf(c, narrower, discriminator)
-    elseCands.excl tag
-    narrowTo(c, narrower, discriminator, elseCands, condStart.info)
+    var elseCandidates = candidatesOf(c, narrower, discriminator, condStart.info)
+    elseCandidates.excl tag
+    narrowTo(c, narrower, discriminator, elseCandidates, condStart.info)
   if n.kind == DotToken:
     inc n
   else:
@@ -1350,12 +1361,10 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
       let objType = lookupSymbol(c.typeCache, narrower)
       if not cursorIsNil(objType):
         for entry in buildAnumInfos(objType, narrower, n.info):
-          c.anumNarrows.incl entry
           if entry.discriminator == d.symId:
             c.aliasOf[name] = (narrower, entry.discriminator)
-  c.assignTarget = name
+            break
   traverseExpr c, n
-  c.assignTarget = NoSymId
   skipParRi n
 
 proc traverseAssume(c: var NjvlContext; n: var Cursor) =
