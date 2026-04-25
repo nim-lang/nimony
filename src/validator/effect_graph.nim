@@ -811,73 +811,45 @@ proc buildSymContext*(buf: var TokenBuf): SymContext =
   ## 3. Type declarations: `(type NAME ...)` → NAME is a type
   result = initTable[string, ChildKind]()
   var n = beginRead(buf)
-  var nested = 0
   if n.kind != ParLe: return
-  inc nested
-  inc n
-  while nested > 0:
-    case n.kind
-    of ParLe:
-      let tag = pool.tags[n.tag]
+  n.balancedTokens:
+    let tag = pool.tags[n.tag]
 
-      # Field type refinements via distinct types
-      if tag == "fld":
-        let typeName = extractFieldType(n)
-        let refined = typeNameToKind(typeName)
-        if refined != ckAny:
-          var p = n
-          inc p
-          if p.kind == Ident:
-            result[pool.strings[p.litId]] = refined
-
-      # Type declarations
-      elif tag == "type":
+    # Field type refinements via distinct types
+    if tag == "fld":
+      let typeName = extractFieldType(n)
+      let refined = typeNameToKind(typeName)
+      if refined != ckAny:
         var p = n
         inc p
         if p.kind == Ident:
-          result[pool.strings[p.litId]] = ckT
+          result[pool.strings[p.litId]] = refined
 
-      # copyIntoKind/buildTree calls — scan their body for addSymDef
-      elif tag in ["cmd", "call"]:
+    # Type declarations
+    elif tag == "type":
+      var p = n
+      inc p
+      if p.kind == Ident:
+        result[pool.strings[p.litId]] = ckT
+
+    # copyIntoKind/buildTree calls — scan their body for addSymDef
+    elif tag in ["cmd", "call"]:
+      let callee = extractCalleeName(n)
+      if callee in ["copyIntoKind", "buildTree"]:
         var peek = n
-        inc peek
+        inc peek  # skip (cmd/call
+        skip peek # skip callee (ident or dot)
+        if peek.kind == ParLe: skip peek  # skip dest for dot-calls
         var copyTag = ""
-        if peek.kind == ParLe:
-          let callee = extractDotCallName(peek)
-          if callee in ["copyIntoKind", "buildTree"]:
-            skip peek  # skip (dot ...)
-            if peek.kind == Ident:
-              copyTag = pool.strings[peek.litId]
-              skip peek  # skip tag
-              skip peek  # skip info
-              # Find the stmts body
-              while peek.kind != ParRi:
-                if peek.kind == ParLe and pool.tags[peek.tag] == "stmts":
-                  findAddSymDefInBody(peek, copyTag, result)
-                  break
-                skip peek
-        elif peek.kind == Ident:
-          let callee = pool.strings[peek.litId]
-          if callee in ["copyIntoKind", "buildTree"]:
-            inc peek
-            skip peek  # skip dest
-            if peek.kind == Ident:
-              copyTag = pool.strings[peek.litId]
-              skip peek  # skip tag
-              skip peek  # skip info
-              while peek.kind != ParRi:
-                if peek.kind == ParLe and pool.tags[peek.tag] == "stmts":
-                  findAddSymDefInBody(peek, copyTag, result)
-                  break
-                skip peek
-
-      inc nested
-      inc n
-    of ParRi:
-      dec nested
-      inc n
-    else:
-      inc n
+        if peek.kind == Ident:
+          copyTag = pool.strings[peek.litId]
+          skip peek  # skip tag
+          skip peek  # skip info
+          while peek.kind != ParRi:
+            if peek.kind == ParLe and pool.tags[peek.tag] == "stmts":
+              findAddSymDefInBody(peek, copyTag, result)
+              break
+            skip peek
 
 # ---- Parsing ensuresNif annotations ----
 
@@ -989,43 +961,31 @@ proc detectDestLvalue*(body: Cursor; hintName: string): Cursor =
   ## Returns nil Cursor if not found.
   var c = body
   if c.kind != ParLe: return default(Cursor)
-  var nested = 0
-  inc nested
-  inc c
-  while nested > 0:
-    case c.kind
-    of ParLe:
-      let tag = pool.tags[c.tag]
-      if tag in ["call", "cmd"]:
-        var peek = c
-        inc peek
-        if peek.kind == ParLe:
-          # Method call: (call (dot RECV callee) args...)
-          if pool.tags[peek.tag] == "dot":
-            var dot = peek
-            inc dot # skip (dot — now at receiver
-            if dot.kind == Ident and pool.strings[dot.litId] == hintName:
-              return dot  # bare `dest` as receiver
-            elif dot.kind == ParLe and pool.tags[dot.tag] == "dot":
-              if extractLastDotField(dot) == hintName:
-                return dot  # `(dot c dest)` as receiver
-        elif peek.kind == Ident:
-          inc peek  # skip callee
-          # Scan args for dest reference
-          while peek.kind != ParRi:
-            if peek.kind == Ident and pool.strings[peek.litId] == hintName:
-              return peek  # bare `dest` as argument
-            elif peek.kind == ParLe and pool.tags[peek.tag] == "dot":
-              if extractLastDotField(peek) == hintName:
-                return peek  # `(dot c dest)` as argument
-            skip peek
-      inc nested
-      inc c
-    of ParRi:
-      dec nested
-      inc c
-    else:
-      inc c
+  c.balancedTokens:
+    let tag = pool.tags[c.tag]
+    if tag in ["call", "cmd"]:
+      var peek = c
+      inc peek
+      if peek.kind == ParLe:
+        # Method call: (call (dot RECV callee) args...)
+        if pool.tags[peek.tag] == "dot":
+          var dot = peek
+          inc dot # skip (dot — now at receiver
+          if dot.kind == Ident and pool.strings[dot.litId] == hintName:
+            return dot  # bare `dest` as receiver
+          elif dot.kind == ParLe and pool.tags[dot.tag] == "dot":
+            if extractLastDotField(dot) == hintName:
+              return dot  # `(dot c dest)` as receiver
+      elif peek.kind == Ident:
+        inc peek  # skip callee
+        # Scan args for dest reference
+        while peek.kind != ParRi:
+          if peek.kind == Ident and pool.strings[peek.litId] == hintName:
+            return peek  # bare `dest` as argument
+          elif peek.kind == ParLe and pool.tags[peek.tag] == "dot":
+            if extractLastDotField(peek) == hintName:
+              return peek  # `(dot c dest)` as argument
+          skip peek
   return default(Cursor)
 
 proc detectWrapsInput*(graph: EffectGraph; body: Cursor; destLv: Cursor): bool =
@@ -1051,9 +1011,6 @@ proc detectCursorLvs*(body: Cursor): seq[Cursor] =
   result = @[]
   var c = body
   if c.kind != ParLe: return
-  var nested = 0
-  inc nested
-  inc c
   template addIfNew(lv: Cursor) =
     var found = false
     for existing in result:
@@ -1062,52 +1019,43 @@ proc detectCursorLvs*(body: Cursor): seq[Cursor] =
         break
     if not found:
       result.add lv
-  while nested > 0:
-    case c.kind
-    of ParLe:
-      let tag = pool.tags[c.tag]
-      if tag in ["call", "cmd"]:
-        let (callName, _) = extractCallInfo(c)
-        if callName in ["inc", "skip", "skipParRi", "skipToEnd",
-                        "copyInto", "takeTree", "takeToken", "takeParRi"]:
-          # Extract the cursor argument
-          var peek = c
-          inc peek
-          if peek.kind == ParLe:
-            # Method call: (call (dot RECV callee) args...)
-            let recv = extractDotReceiver(peek)
-            if not cursorIsNil(recv) and isLvalue(recv):
-              if recv.kind != Ident or pool.strings[recv.litId] notin IgnoredNames:
-                addIfNew recv
-            skip peek
-            # Also check first arg after dot
+  c.balancedTokens:
+    let tag = pool.tags[c.tag]
+    if tag in ["call", "cmd"]:
+      let callName = extractCalleeName(c)
+      if callName in ["inc", "skip", "skipParRi", "skipToEnd",
+                      "copyInto", "takeTree", "takeToken", "takeParRi"]:
+        # Extract the cursor argument
+        var peek = c
+        inc peek
+        if peek.kind == ParLe:
+          # Method call: (call (dot RECV callee) args...)
+          let recv = extractDotReceiver(peek)
+          if not cursorIsNil(recv) and isLvalue(recv):
+            if recv.kind != Ident or pool.strings[recv.litId] notin IgnoredNames:
+              addIfNew recv
+          skip peek
+          # Also check first arg after dot
+          if peek.kind == Ident:
+            let arg = pool.strings[peek.litId]
+            if arg notin IgnoredNames:
+              addIfNew peek
+        elif peek.kind == Ident:
+          let callee = pool.strings[peek.litId]
+          inc peek  # skip callee
+          if callee in ["inc", "skip", "skipParRi", "skipToEnd"]:
+            # First arg is the cursor
             if peek.kind == Ident:
               let arg = pool.strings[peek.litId]
               if arg notin IgnoredNames:
                 addIfNew peek
-          elif peek.kind == Ident:
-            let callee = pool.strings[peek.litId]
-            inc peek  # skip callee
-            if callee in ["inc", "skip", "skipParRi", "skipToEnd"]:
-              # First arg is the cursor
-              if peek.kind == Ident:
-                let arg = pool.strings[peek.litId]
-                if arg notin IgnoredNames:
-                  addIfNew peek
-            elif callee in ["copyInto", "takeTree", "takeToken", "takeParRi"]:
-              # Second arg (after dest) is the cursor
-              skip peek  # skip dest
-              if peek.kind == Ident:
-                let arg = pool.strings[peek.litId]
-                if arg notin IgnoredNames:
-                  addIfNew peek
-      inc nested
-      inc c
-    of ParRi:
-      dec nested
-      inc c
-    else:
-      inc c
+          elif callee in ["copyInto", "takeTree", "takeToken", "takeParRi"]:
+            # Second arg (after dest) is the cursor
+            skip peek  # skip dest
+            if peek.kind == Ident:
+              let arg = pool.strings[peek.litId]
+              if arg notin IgnoredNames:
+                addIfNew peek
 
 # ---- Building the full graph for a file ----
 

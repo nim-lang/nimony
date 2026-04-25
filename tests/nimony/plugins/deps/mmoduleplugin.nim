@@ -9,11 +9,10 @@ proc trAux(t: var Replacer) =
     of BlockS:
       drop t, BlockS
     else:
-      intoLoop t:
+      loopKeepTag t:
         trAux t
 
 var t = loadReplacer()
-into t:
-  loop t:
-    trAux t
+loopKeepTag t:
+  trAux t
 saveReplacer(t)

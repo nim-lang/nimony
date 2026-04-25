@@ -960,22 +960,12 @@ proc whileBodyContributesDest(whileNode: Cursor): bool =
   var c = whileNode
   inc c  # skip (while
   skip c # skip condition
-  # c is at the body (stmts ...)
   if c.kind != ParLe: return false
-  var nested = 0
-  inc nested; inc c
-  while nested > 0:
-    case c.kind
-    of ParLe:
-      let tag = pool.tags[c.tag]
-      if tag in ["cmd", "call"]:
-        if extractCalleeName(c) in DestContributingProcs:
-          return true
-      inc nested; inc c
-    of ParRi:
-      dec nested; inc c
-    else:
-      inc c
+  c.balancedTokens:
+    let tag = pool.tags[c.tag]
+    if tag in ["cmd", "call"]:
+      if extractCalleeName(c) in DestContributingProcs:
+        return true
   false
 
 proc scanWhileInStmts(ctx: var CheckContext; stmtsNode: Cursor; insideCopyInto: bool;
@@ -1214,27 +1204,18 @@ proc whileBodyHasProgressCall(whileNode: Cursor; lv: Cursor;
   inc c, SkipTag   # (while
   skip c, SkipCond # condition
   if c.kind != ParLe: return false
-  var nested = 0
-  inc nested; inc c
-  while nested > 0:
-    case c.kind
-    of ParLe:
-      let tag = pool.tags[c.tag]
-      if tag in ["cmd", "call"]:
-        let callName = extractCalleeName(c)
-        if callName in acceptedCalls:
-          var peek = c
-          inc peek  # skip (cmd/call
-          skip peek # skip callee
-          while peek.kind != ParRi:
-            if equalLvalues(peek, lv):
-              return true
-            skip peek
-      inc nested; inc c
-    of ParRi:
-      dec nested; inc c
-    else:
-      inc c
+  c.balancedTokens:
+    let tag = pool.tags[c.tag]
+    if tag in ["cmd", "call"]:
+      let callName = extractCalleeName(c)
+      if callName in acceptedCalls:
+        var peek = c
+        inc peek  # skip (cmd/call
+        skip peek # skip callee
+        while peek.kind != ParRi:
+          if equalLvalues(peek, lv):
+            return true
+          skip peek
   false
 
 proc extractAndCounterVar(cond: Cursor): Cursor =
@@ -1287,34 +1268,25 @@ proc whileBodyLooksLikeNestedScanner(whileNode: Cursor): bool =
   var incVars = initHashSet[string]()
   var decVars = initHashSet[string]()
 
-  var nested = 0
-  inc nested; inc c
-  while nested > 0:
-    case c.kind
-    of ParLe:
-      let tag = pool.tags[c.tag]
-      if tag in ["break", "breakstmt"]:
-        hasBreak = true
-      elif tag in ["cmd", "call"]:
-        let callName = extractCalleeName(c)
+  c.balancedTokens:
+    let tag = pool.tags[c.tag]
+    if tag in ["break", "breakstmt"]:
+      hasBreak = true
+    elif tag in ["cmd", "call"]:
+      let callName = extractCalleeName(c)
 
-        if callName in ["inc", "skip", "tr", "trSons", "trStmt", "trExpr", "takeTree", "takeToken"]:
-          hasProgress = true
+      if callName in ["inc", "skip", "tr", "trSons", "trStmt", "trExpr", "takeTree", "takeToken"]:
+        hasProgress = true
 
-        if callName in ["inc", "dec"]:
-          var peek = c
-          inc peek  # skip (cmd/call
-          skip peek # skip callee
-          while peek.kind != ParRi:
-            if peek.kind == Ident:
-              let v = pool.strings[peek.litId]
-              if callName == "inc": incVars.incl v else: decVars.incl v
-            skip peek
-      inc nested; inc c
-    of ParRi:
-      dec nested; inc c
-    else:
-      inc c
+      if callName in ["inc", "dec"]:
+        var peek = c
+        inc peek  # skip (cmd/call
+        skip peek # skip callee
+        while peek.kind != ParRi:
+          if peek.kind == Ident:
+            let v = pool.strings[peek.litId]
+            if callName == "inc": incVars.incl v else: decVars.incl v
+          skip peek
 
   var hasNestedCounter = false
   for v in incVars:
