@@ -84,7 +84,6 @@ type
     dagSetupTime: float
     cmdTime: Table[string, tuple[sec: float, count: int]]
     execWallTime: float
-    invocations: seq[tuple[cmdName: string, label: string, sec: float]]
 
 proc skipParRi(n: var Cursor) =
   ## Helper to skip a closing parenthesis
@@ -302,14 +301,13 @@ proc failed(arg: string) =
 proc toSeconds(d: Duration): float =
   float(d.inNanoseconds) / 1e9
 
-proc recordCmdTime(profile: var ProfileData; cmdName: string; sec: float; label = "") =
+proc recordCmdTime(profile: var ProfileData; cmdName: string; sec: float) =
   if cmdName notin profile.cmdTime:
     profile.cmdTime[cmdName] = (0.0, 0)
   var e = profile.cmdTime[cmdName]
   e.sec += sec
   e.count += 1
   profile.cmdTime[cmdName] = e
-  profile.invocations.add (cmdName, label, sec)
 
 type
   CmdStatus = enum
@@ -351,13 +349,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil): 
       if commands.len > 0:
         var progress = newSeq[CmdStatus](commands.len)
         var startTimes = if profile != nil: newSeq[MonoTime](commands.len) else: @[]
-        var labels = if profile != nil: newSeq[string](commands.len) else: @[]
-        if profile != nil:
-          startTimes.setLen(commands.len)
-          labels.setLen(commands.len)
-          for idx in 0 ..< commands.len:
-            let node = addr dag.nodes[nodeIds[idx]]
-            labels[idx] = (if node.inputs.len > 0: node.inputs[0] else: node.outputs.join(","))
+        if profile != nil: startTimes.setLen(commands.len)
         let depthStart = if profile != nil: getMonoTime() else: MonoTime()
 
         proc beforeRunEvent(idx: int) =
@@ -368,7 +360,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil): 
           progress[idx] = Finished
           if profile != nil:
             let sec = toSeconds(getMonoTime() - startTimes[idx])
-            profile[].recordCmdTime(cmdNames[idx], sec, labels[idx])
+            profile[].recordCmdTime(cmdNames[idx], sec)
 
         let maxExitCode = execProcesses(commands, beforeRunEvent = beforeRunEvent, afterRunEvent = afterRunEvent)
         if profile != nil:
@@ -391,16 +383,15 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil): 
         if Verbose in opt:
           echo "Command: ", expandedCmd
         let cmdName = dag.commands[node.cmdIdx].name
-        let label = if node.inputs.len > 0: node.inputs[0] else: node.outputs.join(",")
         let start = if profile != nil: getMonoTime() else: MonoTime()
         if not executeCommand(expandedCmd):
           if profile != nil:
-            profile[].recordCmdTime(cmdName, toSeconds(getMonoTime() - start), label)
+            profile[].recordCmdTime(cmdName, toSeconds(getMonoTime() - start))
           failed expandedCmd
           return false
         if profile != nil:
           let sec = toSeconds(getMonoTime() - start)
-          profile[].recordCmdTime(cmdName, sec, label)
+          profile[].recordCmdTime(cmdName, sec)
           profile[].execWallTime += sec
       else:
         if Verbose in opt:
@@ -627,14 +618,6 @@ proc printProfile(profile: ProfileData) =
   let execTotal = profile.cmdTime.values.toSeq.foldl(a + b.sec, 0.0)
   stderr.writeLine "  exec total:     ", execTotal.formatFloat(ffDecimal, 3), "s"
   stderr.writeLine "  wall time:      ", profile.execWallTime.formatFloat(ffDecimal, 3), "s"
-  if profile.invocations.len > 0:
-    var top = profile.invocations
-    top.sort(proc(a, b: tuple[cmdName, label: string; sec: float]): int = cmp(b.sec, a.sec))
-    let n = min(15, top.len)
-    stderr.writeLine "  slowest ", n, " invocations:"
-    for j in 0 ..< n:
-      let it = top[j]
-      stderr.writeLine "    ", it.cmdName.alignLeft(8), " ", it.sec.formatFloat(ffDecimal, 3).align(8), "s  ", it.label
   stderr.writeLine "---"
 
 proc main() =

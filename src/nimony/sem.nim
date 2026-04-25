@@ -8,8 +8,8 @@
 ## Most important task is to turn identifiers into symbols and to perform
 ## type checking.
 
-import std / [tables, sets, syncio, formatfloat, assertions, strutils, times, monotimes]
-from std/os import changeFileExt, getCurrentDir, isAbsolute, absolutePath, normalizedPath, getEnv
+import std / [tables, sets, syncio, formatfloat, assertions, strutils]
+from std/os import changeFileExt, getCurrentDir, isAbsolute, absolutePath, normalizedPath
 include nifprelude
 import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig, nifindexes,
@@ -6385,36 +6385,11 @@ proc loadSymWithPhase*(c: var SemContext; symId: SymId; targetPhase: SemPhase): 
 
 proc semToplevelStmts(c: var SemContext; dest: var TokenBuf; buf: var TokenBuf) =
   ## Iterate over toplevel statements in buf and semcheck each one.
-  let timing = getEnv("NIMSEM_TIMING").len > 0
-  let phaseName = (if c.phase == SemcheckSignatures: "phase2" else: "phase3")
   var n = beginRead(buf)
   assert n.stmtKind == StmtsS
   inc n # skip StmtsS tag
   while n.kind != ParRi:
-    if timing:
-      let origN = n
-      let t0 = getMonoTime()
-      semStmt c, dest, n, false
-      let dt = (getMonoTime() - t0).inMicroseconds.float / 1e6
-      if dt >= 0.05:
-        var descr = $origN.stmtKind
-        if origN.stmtKind == NoStmt:
-          descr = "kind=" & $origN.kind
-        # include the first symbol-def name if present for better identification
-        var m = origN
-        if m.kind == ParLe:
-          inc m
-          var tries = 0
-          while tries < 6 and m.kind != ParRi:
-            if m.kind == SymbolDef:
-              descr.add " "
-              descr.add pool.syms[m.symId]
-              break
-            skip m
-            inc tries
-        stderr.writeLine "    [", phaseName, "] ", dt.formatFloat(ffDecimal, 3), "s  ", descr, "  @", infoToStr(origN.info)
-    else:
-      semStmt c, dest, n, false
+    semStmt c, dest, n, false
   endRead(buf)
 
 proc phase1(c: var SemContext; dest: var TokenBuf; n: Cursor): (TokenBuf, PackedLineInfo) =
@@ -6635,16 +6610,6 @@ proc reorderInnerGenericInstances(c: SemContext; dest: var TokenBuf) =
       inc i
 
 proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
-  let timing = getEnv("NIMSEM_TIMING").len > 0
-  template phase(name: string; body: untyped) =
-    if timing:
-      let t0 = getMonoTime()
-      body
-      let dt = (getMonoTime() - t0).inMicroseconds.float / 1e6
-      stderr.writeLine "  [nimsem] ", name.alignLeft(20), dt.formatFloat(ffDecimal, 3), "s  ", c.thisModuleSuffix
-    else:
-      body
-
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: nil, kind: ToplevelScope)
 
   assert n0.stmtKind == StmtsS
@@ -6653,55 +6618,45 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
 
   if {SkipSystem, IsSystem} * c.moduleFlags == {}:
     let systemFile = ImportedFilename(path: stdlibFile("std/system"), name: "system", isSystem: true)
-    phase "importSystem":
-      importSingleFile(c, dest, systemFile, "", ImportFilter(kind: ImportAll), n0.info)
+    importSingleFile(c, dest, systemFile, "", ImportFilter(kind: ImportAll), n0.info)
 
-  var buf1: TokenBuf
-  var moduleLineInfo: PackedLineInfo
-  phase "phase1":
-    (buf1, moduleLineInfo) = phase1(c, dest, n0)
-  var buf2: TokenBuf
-  phase "phase2":
-    buf2 = phase2(c, buf1, moduleLineInfo)
-  phase "phase3":
-    dest = phase3(c, buf2, moduleLineInfo)
+  #echo "PHASE 1"
+  var (buf1, moduleLineInfo) = phase1(c, dest, n0)
+  #echo "PHASE 2"
+  var buf2 = phase2(c, buf1, moduleLineInfo)
+  #echo "PHASE 3"
+  dest = phase3(c, buf2, moduleLineInfo)
 
   if c.expanded.len > 0:
     dest.addParLe CommentS, c.expanded[0].info
     dest.add c.expanded
     dest.addParRi()
 
-  phase "instantiateGenerics":
-    instantiateGenerics c, dest
-  phase "requestTypeInstDecls":
-    for val in c.typeInstDecls:
-      let s = fetchSym(c, val)
-      let res = declToCursor(c, dest, s)
-      if res.status == LacksNothing:
-        requestHookInstance(c, res.decl)
-        requestMethods(c, dest, val, res.decl)
-        dest.copyTree res.decl
-    dest.add c.pendingSumtypes
-  phase "instantiateGenericHooks":
-    instantiateGenericHooks c, dest
+  instantiateGenerics c, dest
+  for val in c.typeInstDecls:
+    let s = fetchSym(c, val)
+    let res = declToCursor(c, dest, s)
+    if res.status == LacksNothing:
+      requestHookInstance(c, res.decl)
+      requestMethods(c, dest, val, res.decl)
+      dest.copyTree res.decl
+  dest.add c.pendingSumtypes
+  instantiateGenericHooks c, dest
   dest.addParRi()
 
   if reportErrors(dest) == 0:
     var afterSem = move dest
     if c.genericInnerProcs.len > 0:
-      phase "reorderInnerGenericInstances":
-        reorderInnerGenericInstances(c, afterSem)
+      reorderInnerGenericInstances(c, afterSem)
     var finalBuf = beginRead afterSem
-    phase "injectDerefs":
-      dest = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
+    dest = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
     when true: #defined(enableContracts):
-      phase "analyzeContracts":
-        when not useNj:
-          var moreErrors = analyzeContracts(dest)
-        else:
-          var moreErrors = analyzeContractsNjvl(dest, c.thisModuleSuffix, c.g.config.verbose)
-        if reporters.reportErrors(moreErrors) > 0:
-          quit 1
+      when not useNj:
+        var moreErrors = analyzeContracts(dest)
+      else:
+        var moreErrors = analyzeContractsNjvl(dest, c.thisModuleSuffix, c.g.config.verbose)
+      if reporters.reportErrors(moreErrors) > 0:
+        quit 1
   else:
     quit 1
 

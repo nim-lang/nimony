@@ -714,31 +714,24 @@ const BootstrapModules = [
   "src/lib/argsfinder.nim",
   "src/lib/bitabs.nim",
 
-  # Tier 1/2 genuine leaves (no module below imports them).
-  "src/lib/stringtrees.nim",
+  # Tier 1/2 genuine leaves.
   "src/nimony/features.nim",
   "src/nimony/intervals.nim",
   "src/models/nifler_tags.nim",
-  "src/nifc/nifc_model.nim",
 
   # Tier 5/6 leaves.
-  "src/nimony/implications.nim",
   "src/nimony/inferle.nim",
   "src/nimony/deferstmts.nim",
   "src/nimony/cli.nim",
 
-  # Tier 9/10 leaves.
-  "src/nimony/sizeof.nim",
-  "src/nimony/semos.nim",
+  # Tier 10 leaves.
   "src/nimony/pragmacanon.nim",
 
-  # Tier 11/12 tips (cover the rest of the bootstrapped compiler surface).
-  "src/hexer/xelim.nim",
+  # Tier 12 tips still present after later tiers added.
   "src/nimony/semborrow.nim",
   "src/nimony/semuntyped.nim",
   "src/nimony/enumtostr.nim",
   "src/nimony/derefs.nim",
-  "src/hexer/duplifier.nim",
 
   # Tier 13 tips still present after later tiers added.
   "src/nimony/module_plugins.nim",
