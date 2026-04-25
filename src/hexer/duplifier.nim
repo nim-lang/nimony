@@ -345,14 +345,17 @@ proc callDestroy(c: var Context; destroyProc: SymId; arg: TokenBuf; typ: Cursor)
 
 proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId; info: PackedLineInfo; typ: Cursor) =
   let staticCall = typ.typeKind notin {RefT, PtrT}
+  template emitArgs(dest: var TokenBuf) =
+    copyIntoSymUse dest, destroyProc, info
+    if isMutFirstParam(destroyProc):
+      copyIntoKind dest, HaddrX, info:
+        copyIntoSymUse dest, arg, info
+    else:
+      copyIntoSymUse dest, arg, info
   if staticCall:
-    copyIntoKind c.dest, ProccallX, info:
-      copyIntoSymUse c.dest, destroyProc, info
-      copyIntoSymUse c.dest, arg, info
+    copyIntoKind c.dest, ProccallX, info: emitArgs(c.dest)
   else:
-    copyIntoKind c.dest, CallS, info:
-      copyIntoSymUse c.dest, destroyProc, info
-      copyIntoSymUse c.dest, arg, info
+    copyIntoKind c.dest, CallS, info: emitArgs(c.dest)
 
 proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
   var n = n

@@ -6,8 +6,9 @@
 
 ## Module plugin handling
 
-import std / [tables, sets, syncio, formatfloat, assertions, strutils]
-include nifprelude
+import std / [tables, sets, hashes, syncio, formatfloat, assertions, strutils]
+include ".." / lib / nifprelude
+include ".." / lib / compat2
 import nimony_model, semdata, semos
 
 import ".." / gear2 / modnames
@@ -15,7 +16,9 @@ import ".." / gear2 / modnames
 proc handleTypePlugins*(c: var SemContext; dest: var TokenBuf) =
   var inp = move dest
 
-  for k, (v, info) in c.pendingTypePlugins:
+  for k, vInfo in c.pendingTypePlugins:
+    let v = vInfo[0]
+    let info = vInfo[1]
     c.pluginBlacklist.incl(v)
 
     var types = createTokenBuf(30)
@@ -27,7 +30,9 @@ proc handleTypePlugins*(c: var SemContext; dest: var TokenBuf) =
     runPlugin(c, destB, info, pool.strings[v], inp.toString, types.toString)
     inp = ensureMove destB
 
-  for (k, info) in c.pendingModulePlugins:
+  for kInfo in c.pendingModulePlugins:
+    let k = kInfo[0]
+    let info = kInfo[1]
     c.pluginBlacklist.incl(k)
     var destB = createTokenBuf(3000)
     runPlugin(c, destB, info, pool.strings[k], inp.toString)

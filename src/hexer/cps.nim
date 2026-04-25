@@ -103,8 +103,11 @@ The transformation produces:
 
 ]##
 
-import std / [assertions, sets, tables]
+import std / [assertions, sets, tables, hashes, syncio]
+when defined(nimony):
+  {.feature: "lenientnils".}
 include ".." / lib / nifprelude
+include ".." / lib / compat2
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
   builtintypes, langmodes, renderer, reporters, typeprops]
@@ -320,7 +323,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
     # fallback to init wrapper call for
     # methods, closures, proctype calls
     # because we cant restore its coroTypeForProc
-    if typ.typeKind == MethodT or procHasPragma(typ, ClosureP) or typ.firstson.kind == DotToken:
+    if typ.typeKind == MethodT or procHasPragma(typ, ClosureP) or typ.firstSon.kind == DotToken:
       let contVar = pool.syms.getOrIncl("`contVar." & $c.currentProc.counter)
       inc c.currentProc.counter
       copyIntoKind dest, VarS, info:
@@ -331,7 +334,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
         # constructor call as initializer:
         copyIntoKind dest, CallS, info:
           inc n
-          if n.kind == Symbol and typ.firstson.kind == SymbolDef:
+          if n.kind == Symbol and typ.firstSon.kind == SymbolDef:
             dest.addSymUse coroWrapperProc(c, n.symId), info
             inc n
           else:
@@ -360,7 +363,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
       # Tag callee.callee with bit 0 so deallocFrame is a nop.
       let coroVar = pool.syms.getOrIncl("`coroVar." & $c.currentProc.counter)
       inc c.currentProc.counter
-      var sym = n.firstson.symId
+      var sym = n.firstSon.symId
       copyIntoKind dest, VarS, info:
         dest.addSymDef coroVar, info
         dest.addDotToken() # exported
@@ -429,7 +432,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
     # value: emit constructor call with heap-allocated frame:
     copyIntoKind dest, CallS, info:
       inc n
-      if n.kind == Symbol and typ.firstson.kind == SymbolDef:
+      if n.kind == Symbol and typ.firstSon.kind == SymbolDef:
         dest.addSymUse coroWrapperProc(c, n.symId), info
         inc n
       else:
@@ -764,7 +767,7 @@ proc escapingLocals(c: var Context; n: Cursor) =
         let def = c.currentProc.localToEnv.getOrDefault(n.symId, EnvField(def: -2)).def
         if def != -2:
           if def != currentState:
-            c.currentProc.localToEnv[n.symId].use = currentState
+            c.currentProc.localToEnv.getOrQuit(n.symId).use = currentState
       else:
         discard
       inc n
@@ -1352,7 +1355,9 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
   discard c.procStack.pop()
   c.typeCache.closeScope()
   if isCoroutine:
-    generateCoroutineType(c, c.coroTypes, sym)
+    var coroTypes = move c.coroTypes
+    generateCoroutineType(c, coroTypes, sym)
+    c.coroTypes = move coroTypes
     generateCoroutineHelpers(c, dest, sym, iter)
   swap(c.currentProc, currentProc)
 
@@ -1598,5 +1603,5 @@ when isMainModule:
 
  )"""
   var buf = parseFromBuffer(inp, "slaldpees1")
-  var n = beginRead(buf)
-  discard transformToCps(n, "slaldpees1")
+  var pass = Pass(n: beginRead(buf), dest: createTokenBuf(10), moduleSuffix: "slaldpees1")
+  transformToCps(pass)

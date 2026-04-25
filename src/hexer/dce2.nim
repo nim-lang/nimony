@@ -9,10 +9,12 @@
 
 ## Dead code elimination and generic instance merging.
 
-import std / [os, tables, sets, assertions]
-include nifprelude
+import std / [os, tables, hashes, sets, assertions, syncio]
+include ".." / lib / nifprelude
+include ".." / lib / compat2
 
-import symparser, dce1
+import ".." / lib / symparser
+import dce1
 import ".." / nifc / [nifc_model]
 
 type
@@ -56,18 +58,18 @@ proc markLive(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTabl
     assert moduleName.len > 0, "moduleName is empty for " & pool.syms[sym]
 
     # Check if symbol is already live in its owning module
-    if not result[moduleName].containsOrIncl(sym):
+    if not result.getOrQuit(moduleName).containsOrIncl(sym):
       # Process dependencies from the symbol's own module
       if moduleName in moduleGraphs:
-        let graph = moduleGraphs[moduleName]
+        let graph = moduleGraphs.getOrQuit(moduleName)
         if sym in graph.uses:
-          for dep in graph.uses[sym]:
+          for dep in graph.uses.getOrQuit(sym):
             let s = translate(resolved, dep)
             let sowner = extractModule(pool.syms[s])
             # Check if dependency is already live in its owning module
             if sowner.len > 0:
               assert sowner in result, "sowner is not in result for " & pool.syms[s]
-            if sowner.len > 0 and s notin result[sowner]:
+            if sowner.len > 0 and s notin result.getOrQuit(sowner):
               worklist.add(s)
 
 template toNifcName(sym: SymId): SymId = sym
@@ -175,7 +177,10 @@ proc rewriteModule(file: string; live: HashSet[SymId]; resolved: ResolveTable; o
       outdir / splitModulePath(file).name & ".c.nif"
     else:
       file.changeModuleExt ".c.nif"
-  writeFile(dest, outPath, OnlyIfChanged)
+  try:
+    writeFile(dest, outPath, OnlyIfChanged)
+  except:
+    quit "could not write file: " & outPath
 
 proc deadCodeElimination*(files: openArray[string]; outdir: string) =
   var graphs = initTable[string, ModuleAnalysis]()
@@ -189,4 +194,4 @@ proc deadCodeElimination*(files: openArray[string]; outdir: string) =
   # TODO: we could do this step in parallel:
   for file in files:
     let modName = splitModulePath(file).name
-    rewriteModule(file, live[modName], resolved, outdir)
+    rewriteModule(file, live.getOrQuit(modName), resolved, outdir)

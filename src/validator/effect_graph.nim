@@ -248,6 +248,7 @@ proc extractDotReceiver*(c: Cursor): Cursor =
   inc n
   return n  # cursor at the receiver (Ident or nested dot)
 
+
 proc equalLvalues*(a, b: Cursor): bool =
   ## Structural comparison of two lvalue expressions.
   ## Lvalues are either bare Ident nodes or (dot recv field) expressions (potentially nested).

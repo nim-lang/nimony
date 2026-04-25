@@ -6699,7 +6699,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
         when not useNj:
           var moreErrors = analyzeContracts(dest)
         else:
-          var moreErrors = analyzeContractsNjvl(dest, c.thisModuleSuffix)
+          var moreErrors = analyzeContractsNjvl(dest, c.thisModuleSuffix, c.g.config.verbose)
         if reporters.reportErrors(moreErrors) > 0:
           quit 1
   else:
@@ -6770,7 +6770,7 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
       when not useNj:
         var moreErrors = analyzeContracts(afterSem)
       else:
-        var moreErrors = analyzeContractsNjvl(afterSem, c.thisModuleSuffix)
+        var moreErrors = analyzeContractsNjvl(afterSem, c.thisModuleSuffix, c.g.config.verbose)
       if reporters.reportErrors(moreErrors) > 0:
         quit 1
     if c.genericInnerProcs.len > 0:

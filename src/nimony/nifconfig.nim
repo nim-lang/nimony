@@ -88,6 +88,7 @@ type
     appType*: AppType
     backend*: Backend
     noValidate*: bool # skip running the validator on plugin sources
+    verbose*: bool    # --verbose: dump NJ IR on contract/init failures
 
 proc addDefine*(config: var NifConfig; symbol: string) =
   config.defines.addUnique symbol

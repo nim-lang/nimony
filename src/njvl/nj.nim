@@ -9,8 +9,11 @@
 
 ## Compiles Nimony IR to a simpler IR called [NJVL](doc/njvl.md) that does not contain jumps.
 
-import std / [tables, sets, assertions]
+import std / [tables, hashes, sets, assertions, syncio]
+when defined(nimony):
+  {.feature: "lenientnils".}
 include ".." / lib / nifprelude
+include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes]
 import ".." / hexer / [xelim, mover, passes]
 import njvl_model
@@ -249,7 +252,8 @@ proc declareCfVar(c: var Context; dest: var TokenBuf; s: SymId) =
   dest.add tagToken("mflag", NoLineInfo)
   dest.addSymDef s, NoLineInfo
   dest.addParRi()
-  c.typeCache.registerLocal(s, VarY, c.typeCache.builtins.boolType)
+  let boolTyp = c.typeCache.builtins.boolType
+  c.typeCache.registerLocal(s, VarY, boolTyp)
 
 proc useErrorTracker(c: Context; dest: var TokenBuf; errorTracker: SymId; info: PackedLineInfo) =
   ## Emit the correct expression to read the error code from errorTracker.
@@ -380,7 +384,15 @@ type
   CallInfo = object
     isNoReturn: bool
     mode: ExceptionMode
-    mutates: seq[SymId]
+    # Each entry is a small TokenBuf holding the inner location expression
+    # of a `(haddr …)` argument. Recording the *full path* rather than just
+    # the root symbol lets the contract analyser tell `c.field` apart from
+    # other fields of `c` when checking borrow conflicts. We deliberately
+    # copy the path into its own buffer instead of holding a `Cursor` into
+    # `dest`: any later append to `dest` would trigger a full COW of the
+    # dest buffer (potentially thousands of tokens) — the per-arg copy is
+    # tiny and cheaper.
+    mutates: seq[TokenBuf]
     info: PackedLineInfo
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
@@ -405,9 +417,12 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
   trExpr c, dest, n # handle `fn`
   while n.kind != ParRi:
     if n.exprKind == HaddrX:
-      let r = rootOf(n, CanFollowCalls)
-      if r != NoSymId:
-        result.mutates.add r
+      var inner = n
+      inc inner # skip haddr tag
+      if rootOf(inner, CanFollowCalls) != NoSymId:
+        var pathBuf = createTokenBuf(4)
+        pathBuf.addSubtree inner
+        result.mutates.add ensureMove pathBuf
     trExpr c, dest, n
   dest.takeParRi n
 
@@ -450,9 +465,9 @@ proc emitReturnGuards(c: var Context; dest: var TokenBuf; info: PackedLineInfo) 
 proc callIsOver(c: var Context; dest: var TokenBuf; callInfo: CallInfo) =
   # we make `unknown` part of the `call` for now. This will be cleaned up
   # in the `versionizer` pass!
-  for s in callInfo.mutates:
+  for path in callInfo.mutates:
     dest.add tagToken("unknown", callInfo.info)
-    dest.addSymUse s, callInfo.info
+    dest.add path
     dest.addParRi() # unknown
   if callInfo.isNoReturn:
     emitReturnGuards(c, dest, callInfo.info)
@@ -931,12 +946,12 @@ proc extractForBorrow(c: var Context; forStmt: ForStmt; info: PackedLineInfo): T
       let tempSym = iterCall.symId
       if tempSym in c.callFirstArgs:
         firstArgBuf = createTokenBuf(8)
-        firstArgBuf.addSubtree beginRead(c.callFirstArgs[tempSym])
+        firstArgBuf.addSubtree beginRead(c.callFirstArgs.getOrQuit(tempSym))
   elif iterCall.kind == Symbol:
     let tempSym = iterCall.symId
     if tempSym in c.callFirstArgs:
       firstArgBuf = createTokenBuf(8)
-      firstArgBuf.addSubtree beginRead(c.callFirstArgs[tempSym])
+      firstArgBuf.addSubtree beginRead(c.callFirstArgs.getOrQuit(tempSym))
 
   if firstArgBuf.len == 0:
     return
@@ -1258,7 +1273,8 @@ proc trCfVarDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let s = n.symId
   dest.takeToken n # SymDef
   dest.takeParRi n # ParRi
-  c.typeCache.registerLocal(s, VarY, c.typeCache.builtins.boolType)
+  let boolTyp = c.typeCache.builtins.boolType
+  c.typeCache.registerLocal(s, VarY, boolTyp)
 
 proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor; mustCloseScope: bool) =
   ## Process one statement, wrapping it in a guard ite if a guard is active.

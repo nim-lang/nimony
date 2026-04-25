@@ -9,11 +9,12 @@
 
 ## Prepare for dead code elimination and generic instance merging.
 
-import std / [assertions, tables, sets]
-include nifprelude
+import std / [assertions, tables, hashes, sets, syncio]
+include ".." / lib / nifprelude
+include ".." / lib / compat2
 import ".." / nifc / [nifc_model]
 
-import symparser
+import ".." / lib / symparser
 
 type
   ModuleAnalysis* = object
@@ -69,7 +70,7 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
         a.roots.incl(n.symId)
       else:
         if not a.uses.hasKey(owner): a.uses[owner] = initHashSet[SymId]()
-        a.uses[owner].incl(n.symId)
+        a.uses.getOrQuit(owner).incl(n.symId)
     inc n
   of SymbolDef, UnknownToken, EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit: inc n
   of ParRi: raiseAssert "ParRi should not be encountered here"
@@ -125,7 +126,7 @@ proc readModuleAnalysis*(infile: string): ModuleAnalysis =
           inc n
           while n.kind != ParRi:
             if n.kind == Symbol:
-              result.uses[key].incl(n.symId)
+              result.uses.getOrQuit(key).incl(n.symId)
               inc n
             else:
               raiseAssert infile & ": expected Symbol"

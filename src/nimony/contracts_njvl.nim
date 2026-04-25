@@ -22,9 +22,10 @@ In order to not be too annoying in the case of a contract violation, the
 compiler emits a warning (that can be suppressed or turned into an error).
 ]##
 
-import std / [assertions, tables, sets, strutils]
+import std / [assertions, tables, hashes, sets, strutils, syncio]
 
-include nifprelude
+include ".." / lib / nifprelude
+include ".." / lib / compat2
 
 import ".." / models / tags
 import ".." / lib / symparser
@@ -72,22 +73,43 @@ type
                                         # leaving-path asymmetries)
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
     activeBorrows: seq[BorrowInfo]
+    verbose: bool                      # --verbose: dump NJ IR on init/contract
+                                       # failures for easier debugging
+    currentProcStart: Cursor           # cursor at the start of the proc whose
+                                       # body we are currently analysing (used
+                                       # for the --verbose dump)
+
+proc dumpCurrentProc(c: var NjvlContext; info: PackedLineInfo; msg: string) =
+  ## Dump the NJ IR of the proc currently under analysis to stderr. Used
+  ## by `--verbose` so the user can see the lowered form that caused
+  ## a contract/init failure. Gated on `c.verbose` — callers still invoke
+  ## it unconditionally; this proc is the single decision point.
+  if not c.verbose: return
+  if cursorIsNil(c.currentProcStart): return
+  stderr.writeLine "--- NJ IR (--verbose) for: " & msg
+  stderr.writeLine "--- at " & infoToStr(info) & ":"
+  stderr.writeLine toString(c.currentProcStart, false)
+  stderr.writeLine "--- end NJ IR dump ---"
 
 proc buildErr(c: var NjvlContext; info: PackedLineInfo; msg: string) =
   when defined(debug):
     writeStackTrace()
     echo infoToStr(info) & " Error: " & msg
     quit msg
+  dumpCurrentProc(c, info, msg)
+  var hintedMsg = msg
+  if not c.verbose:
+    hintedMsg.add " [pass --verbose for the NJ IR]"
   c.errors.buildTree ErrT, info:
     c.errors.addDotToken()
-    c.errors.add strToken(pool.strings.getOrIncl(msg), info)
+    c.errors.add strToken(pool.strings.getOrIncl(hintedMsg), info)
 
 proc contractViolation(c: var NjvlContext; orig: Cursor; fact: LeXplusC; report: bool) =
   if report:
     echo "known facts in this context: "
     for i in 0 ..< c.facts.len:
-      echo c.facts[i]
-    echo "canonical fact: ", fact
+      echo $c.facts[i]
+    echo "canonical fact: ", $fact
   error "contract violation: ", orig
 
 # Forward declarations
@@ -191,7 +213,7 @@ proc extractBorrowPath(c: var NjvlContext; n: Cursor; result: var BorrowInfo; fo
   elif n.kind == Symbol:
     let s = n.symId
     if (followInlineVars or getType(c.typeCache, n).typeKind in {MutT, OutT, LentT}) and s in c.inlineVars:
-      extractBorrowPath(c, c.inlineVars[s], result, followInlineVars)
+      extractBorrowPath(c, c.inlineVars.getOrQuit(s), result, followInlineVars)
     else:
       if result.mode != HasAddr:
         result.mode = IsBorrowable
@@ -232,7 +254,8 @@ proc endBorrow(c: var NjvlContext; sym: SymId) =
   var i = 0
   while i < c.activeBorrows.len:
     if c.activeBorrows[i].borrower == sym:
-      c.activeBorrows.delete(i)
+      # order of active borrows is irrelevant, so swap-delete is fine
+      c.activeBorrows.del(i)
     else:
       inc i
 
@@ -1169,17 +1192,17 @@ proc traverseAssert(c: var NjvlContext; n: var Cursor) =
       contractViolation(c, orig, fact, report)
     elif wasEquality:
       if implies(c.facts, fact.geXplusC):
-        if report: echo "OK ", fact
+        if report: echo "OK ", $fact
       else:
         if shouldError:
-          if report: echo "OK (could indeed not prove) ", fact
+          if report: echo "OK (could indeed not prove) ", $fact
         else:
           contractViolation(c, orig, fact, report)
     else:
-      if report: echo "OK ", fact
+      if report: echo "OK ", $fact
   else:
     if shouldError:
-      if report: echo "OK (could indeed not prove) ", fact
+      if report: echo "OK (could indeed not prove) ", $fact
     else:
       contractViolation(c, orig, fact, report)
   skipParRi n
@@ -1208,6 +1231,8 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   let oldResultSym = c.resultSym
   let oldInlineVars = move c.inlineVars
   let oldBorrows = move c.activeBorrows
+  let oldProcStart = c.currentProcStart
+  c.currentProcStart = decl
   c.resultSym = NoSymId
   inc n
   let symId = n.symId
@@ -1257,6 +1282,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   c.resultSym = oldResultSym
   c.inlineVars = ensureMove oldInlineVars
   c.activeBorrows = ensureMove oldBorrows
+  c.currentProcStart = oldProcStart
   discard c.directlyInitialized.pop()
 
 proc traverseStmt(c: var NjvlContext; n: var Cursor) =
@@ -1402,8 +1428,10 @@ proc traverseToplevel(c: var NjvlContext; n: var Cursor) =
     # Toplevel statements - analyze them
     traverseStmt c, n
 
-proc analyzeContractsNjvl*(input: var TokenBuf; moduleSuffix: string): TokenBuf =
-  ## Main entry point: converts input to NJVL and analyzes contracts
+proc analyzeContractsNjvl*(input: var TokenBuf; moduleSuffix: string; verbose = false): TokenBuf =
+  ## Main entry point: converts input to NJVL and analyzes contracts.
+  ## When `verbose` is true, every contract/init failure dumps the enclosing
+  ## proc's NJ IR to stderr to aid debugging.
   var n = beginRead(input)
 
   # Convert to NJVL first
@@ -1415,7 +1443,8 @@ proc analyzeContractsNjvl*(input: var TokenBuf; moduleSuffix: string): TokenBuf 
     typeCache: createTypeCache(),
     moduleSuffix: moduleSuffix,
     directlyInitialized: @[initHashSet[SymId]()],
-    impls: createImplications()
+    impls: createImplications(),
+    verbose: verbose
   )
   c.typeCache.openScope()
 

@@ -1,2 +1,2 @@
-tests/nimony/borrows/tborrow_lifetime_errors.nim(13, 12) Error: 's.4' is borrowed and cannot be mutated
-tests/nimony/borrows/tborrow_lifetime_errors.nim(21, 15) Error: 's.6' is borrowed and cannot be mutated
+tests/nimony/borrows/tborrow_lifetime_errors.nim(13, 13) Error: 's.4' is borrowed and cannot be mutated [pass --verbose for the NJ IR]
+tests/nimony/borrows/tborrow_lifetime_errors.nim(21, 16) Error: 's.6' is borrowed and cannot be mutated [pass --verbose for the NJ IR]

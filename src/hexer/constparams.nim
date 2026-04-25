@@ -19,9 +19,9 @@ We also now do part of the exception handling transformations here:
 
 ]##
 
-import std / [sets, assertions]
-
-include nifprelude
+import std / [sets, tables, hashes, assertions, syncio]
+include ".." / lib / nifprelude
+include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, typeprops, builtintypes]
 import ".." / models / tags
 import duplifier, eraiser, passes
