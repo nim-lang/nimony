@@ -102,9 +102,8 @@ const
   LocalValuePos* = 4
 
 const
-  CallTags* = ["call", "cmd", "callstrlit", "prefix", "infix",
-                "hcall", "proccall"]
-  RoutineTags* = ["proc", "func", "method", "converter", "iterator", "template"]
+  CallTags* = ["call", "cmd", "callstrlit", "hcall", "proccall"]
+  RoutineTags* = ["proc", "func", "method", "converter", "iterator"]
 
 proc sameEffect*(a, b: Effect): bool =
   ## Structural equality — the default ref `==` only compares pointer identity,
@@ -462,7 +461,7 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor; destLv: Cursor): Effect
 
     let stmtTag = pool.tags[n.tag]
     case stmtTag
-    of "call", "cmd", "callstrlit", "prefix", "infix", "hcall", "proccall":
+    of "call", "cmd", "callstrlit", "hcall", "proccall":
       let (callName, firstArg, writesToDest) = extractCallMeta(n, destLv)
 
       case callName
@@ -1260,7 +1259,7 @@ proc analyzeCursorPath*(graph: EffectGraph; body: Cursor; cursorLv: Cursor): Cur
       continue
     let tag = pool.tags[n.tag]
     case tag
-    of "call", "cmd", "callstrlit", "prefix", "infix", "hcall", "proccall":
+    of "call", "cmd", "callstrlit", "hcall", "proccall":
       let (callName, _, mentionsCursor) = extractCallMeta(n, cursorLv)
       if mentionsCursor and callAdvancesCursor(callName):
         advanced = true
