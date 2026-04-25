@@ -6,8 +6,9 @@
 
 ## Nimony index generator.
 
-import std / [os, assertions, sets, tables]
+import std / [os, assertions, sets, hashes, tables, syncio]
 include ".." / lib / nifprelude
+include ".." / lib / compat2
 import ".." / lib / [nifindexes, symparser]
 import decls, nimony_model, programs, semos
 import ".." / models / nifindex_tags
@@ -91,7 +92,7 @@ proc indexFromNif*(infile: string) =
           let name = pool.syms[sym]
           let suffix = extractModule(name)
           assert suffix != ""
-          exports.mgetOrPut(suffix).incl sym
+          exports.mgetOrPut(suffix, default(HashSet[SymId])).incl sym
           inc n
         inc n
       else:
@@ -103,7 +104,10 @@ proc indexFromNif*(infile: string) =
 
   var exportBuf = buildIndexExports(exports, infile)
 
-  createIndex infile, root, true,
-    IndexSections(
-      converters: move converterIndexMap,
-      exportBuf: exportBuf)
+  try:
+    createIndex infile, root, true,
+      IndexSections(
+        converters: move converterIndexMap,
+        exportBuf: exportBuf)
+  except:
+    quit "createIndex failed: " & infile
