@@ -782,7 +782,7 @@ proc analyseOconstr(c: var NjvlContext; n: var Cursor) =
   skip n # type
   if c.assignTarget != NoSymId:
     for entry in buildAnumInfos(objType, c.assignTarget, n.info):
-      c.anumNarrows.incl entry
+      narrowTo(c, entry.narrower, entry.discriminator, entry.candidates, entry.info)
     c.assignTarget = NoSymId
   while n.kind != ParRi:
     assert n.substructureKind == KvU
