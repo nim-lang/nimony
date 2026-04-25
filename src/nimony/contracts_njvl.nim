@@ -776,6 +776,77 @@ proc candidatesOf(c: NjvlContext; narrower, discriminator: SymId): HashSet[SymId
     if e == key:
       return e.candidates
 
+proc findBranch(objType: Cursor; fld: SymId): SymId =
+  ## Find tag with field, used for better error message
+  # basicly modified copy of findBranchFields
+  result = NoSymId
+  var body = objType
+  while body.kind == Symbol:
+    let r = tryLoadSym(body.symId)
+    if r.status != LacksNothing: return
+    body = asTypeDecl(r.decl).body
+  if body.typeKind != ObjectT: return
+  var n = asObjectDecl(body).firstField
+  while n.substructureKind == FldU:
+    skip n
+  if n.substructureKind != CaseU: return
+  inc n
+  skip n     # skip discriminator fld
+  while n.kind != ParRi:
+    if n.substructureKind == OfU:
+      inc n
+      var tag = NoSymId
+      if n.substructureKind == RangesU:
+        var scan = n
+        inc scan
+        if scan.kind == Symbol:
+          tag = scan.symId
+      skip n   # skip ranges
+      if n.substructureKind == StmtsU:
+        var s = n
+        inc s
+        while s.kind != ParRi:
+          if s.substructureKind == FldU and asLocal(s).name.symId == fld:
+            return tag
+          skip s
+      skip n   # skip stmts
+      inc n    # close `of`
+    else:
+      skip n
+
+proc checkSumtypeFieldAccess(c: var NjvlContext; obj: Cursor; fld: SymId; info: PackedLineInfo) =
+  let narrower = extractSymId(obj)
+  if narrower == NoSymId: return
+  let objType = lookupSymbol(c.typeCache, narrower)
+  if cursorIsNil(objType): return
+  let requiredTag = findBranch(objType, fld)
+  if requiredTag == NoSymId: return  # common field / discriminator / not case-object
+  var candidates = initHashSet[SymId]()
+  for e in c.anumNarrows:
+    if e.narrower == narrower:
+      candidates = e.candidates
+      break
+
+  var tagsStr = ""
+  for t in candidates:
+    if tagsStr.len > 0: tagsStr.add ", "
+    tagsStr.add pool.syms[t]
+
+  let suffix = if candidates.len == 0: "" else: " (currently in {" & tagsStr & "})"
+
+  if candidates.len == 1 and requiredTag in candidates:
+    discard "ok"
+  elif requiredTag notin candidates:
+    buildErr c, info,
+      "cannot access field `" & pool.syms[fld] & "` of `" &
+      pool.syms[narrower] & "`, active branch is not `" &
+      pool.syms[requiredTag] & "`" & suffix
+  else:
+    buildErr c, info,
+      "cannot access field `" & pool.syms[fld] & "` of `" &
+      pool.syms[narrower] & "`: discriminator is ambiguous: {" &
+      tagsStr & "}"
+
 proc analyseOconstr(c: var NjvlContext; n: var Cursor) =
   inc n
   let objType = n
@@ -869,7 +940,11 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
         analyseCall c, pc
       of DotX:
         inc pc
+        let obj = pc
+        let info = pc.info
         traverseExpr c, pc # object
+        if pc.kind == Symbol:
+          checkSumtypeFieldAccess(c, obj, pc.symId, info)
         skip pc # field name
         if pc.kind != ParRi: skip pc # inheritance depth
         if pc.kind != ParRi: skip pc # optional access-token string lit
@@ -877,7 +952,11 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
       of DdotX:
         inc pc
         wantNotNilDeref c, pc
+        let obj = pc
+        let info = pc.info
         traverseExpr c, pc # object
+        if pc.kind == Symbol:
+          checkSumtypeFieldAccess(c, obj, pc.symId, info)
         skip pc # field name
         if pc.kind != ParRi: skip pc # inheritance depth
         if pc.kind != ParRi: skip pc # optional access-token string lit
@@ -1024,7 +1103,11 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
 
   # First analyze the value (source)
   let valueStart = n
+  var m = n
+  skip m
+  c.assignTarget = extractSymIdForStore(m)
   traverseExpr c, n
+  c.assignTarget = NoSymId
 
   # Check borrow conflicts for the destination
   let destMutPath = extractPath(c, n)
@@ -1122,9 +1205,6 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
 
   let (narrower, discriminator, tag) = extractEqNarrowing(c, condStart)
   if narrower != NoSymId:
-    echo "case-narrow then: narrower=", pool.syms[narrower],
-         " discriminator=", pool.syms[discriminator],
-         " tag=", pool.syms[tag]
     var s = toHashSet([tag])
     narrowTo(c, narrower, discriminator, s, condStart.info)
   traverseStmt c, n
@@ -1269,7 +1349,6 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
        AnumNarrowInfo(narrower: narrower, discriminator: d.symId) in c.anumNarrows:
 
       c.aliasOf[name] = (narrower, d.symId)
-
   c.assignTarget = name
   traverseExpr c, n
   c.assignTarget = NoSymId
