@@ -13,13 +13,19 @@ type
     lbl: string
 
 let c: Thing = Circle(radius: 2.5, tag: 42, lbl: "c")
-assert c.radius == 2.5
+case c
+of Circle:
+  assert c.radius == 2.5
+else: discard
 assert c.tag == 42
 assert c.lbl == "c"
 
 let r: Thing = Rect(w: 3.0, h: 4.0, tag: 0, lbl: "r")
-assert r.w == 3.0
-assert r.h == 4.0
+case r
+of Rect:
+  assert r.w == 3.0
+  assert r.h == 4.0
+else: discard
 assert r.tag == 0
 assert r.lbl == "r"
 
@@ -32,7 +38,15 @@ proc describe(t: Thing): string =
 
 assert describe(c) == "circle"
 assert describe(r) == "rect"
-assert c.radius == 2.5
-assert r.w == 3.0
+# what purpose of checking it twice? ok...
+case c
+of Circle:
+  assert c.radius == 2.5
+else: discard
+
+case r
+of Rect:
+  assert r.w == 3.0
+else: discard
 
 echo "tsumtype_shared_after: OK"
