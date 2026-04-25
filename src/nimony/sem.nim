@@ -8,27 +8,27 @@
 ## Most important task is to turn identifiers into symbols and to perform
 ## type checking.
 
-import std / [tables, sets, syncio, formatfloat, assertions, strutils]
+when defined(nimony):
+  {.feature: "lenientnils".}
+  {.feature: "untyped".}
+import std / [tables, sets, syncio, formatfloat, assertions, strutils, hashes]
 from std/os import changeFileExt, getCurrentDir, isAbsolute, absolutePath, normalizedPath
-include nifprelude
-import nimony_model, symtabs, builtintypes, decls, symparser, asthelpers,
-  programs, sigmatch, magics, reporters, nifconfig, nifindexes,
+include ".." / lib / nifprelude
+include ".." / lib / compat2
+import ".." / lib / [symparser, nifindexes]
+import nimony_model, symtabs, builtintypes, decls, asthelpers,
+  programs, sigmatch, magics, reporters, nifconfig,
   intervals, xints, typeprops,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
   semuntyped, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec, langmodes,
   features
 
-const
-  useNj = true # disabled for now so that we can merge the work
-
-when not useNj:
-  import contracts
-else:
-  import contracts_njvl
+import contracts_njvl
 
 import ".." / gear2 / modnames
 import ".." / models / [tags, nifindex_tags]
-import ".." / validator / phase_validator
+when defined(validatePasses):
+  import ".." / validator / phase_validator
 
 proc semStmt(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: bool)
 proc semStmtBranch(c: var SemContext; dest: var TokenBuf; it: var Item; isNewScope: bool)
@@ -436,10 +436,10 @@ proc produceInvoke(c: var SemContext; dest: var TokenBuf; req: InstRequest;
         if typeVars.symKind == TypevarY:
           var tv = typeVars
           inc tv
-          dest.copyTree req.inferred[tv.symId]
+          dest.copyTree req.inferred.getOrQuit(tv.symId)
         skip typeVars
 
-proc subsGenericType(c: var SemContext; dest: var TokenBuf; req: InstRequest) {.used.} =
+proc subsGenericType(c: var SemContext; dest: var TokenBuf; req: InstRequest) =
   # was used for `c.typeRequests` but types are instantiated eagerly now
   #[
   What we need to do is rather simple: A generic instantiation is
@@ -493,7 +493,7 @@ type
     InGenericConstraint, InInvokeHead
 
 proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
-                      context: TypeDeclContext; exported = false; ownerSym = SymId(0))
+                      context: TypeDeclContext; exported: bool = false; ownerSym: SymId = SymId(0))
 
 proc semLocalType(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = InLocalDecl): TypeCursor =
   let insertPos = dest.len
@@ -501,7 +501,7 @@ proc semLocalType(c: var SemContext; dest: var TokenBuf; n: var Cursor; context 
   assert dest.len > insertPos
   result = typeToCursor(c, dest, insertPos)
 
-proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerRefOwner = SymId(0))
+proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerRefOwner: SymId = SymId(0))
 
 proc instantiateType(c: var SemContext; typ: Cursor; bindings: Table[SymId, Cursor]): Cursor =
   var destB = createTokenBuf(30)
@@ -607,7 +607,7 @@ proc semConstBoolExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; allo
   if not isConstBoolValue(value):
     if allowUnresolved:
       discard
-    elif value.kind == ParLe and value.tagId == ErrT:
+    elif value.kind == ParLe and value.tagId == nifstreams.ErrT:
       dest.shrink start
       dest.add valueBuf
     else:
@@ -631,7 +631,7 @@ proc semConstStrExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   endRead(dest)
   let value = cursorAt(valueBuf, 0)
   if not isConstStringValue(value):
-    if value.kind == ParLe and value.tagId == ErrT:
+    if value.kind == ParLe and value.tagId == nifstreams.ErrT:
       dest.add valueBuf
     else:
       buildErr c, dest, it.n.info, "expected constant string value but got: " & asNimCode(value)
@@ -665,7 +665,7 @@ proc semConstIntExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; phase
   endRead(dest)
   let value = cursorAt(valueBuf, 0)
   if not isConstIntValue(value):
-    if value.kind == ParLe and value.tagId == ErrT:
+    if value.kind == ParLe and value.tagId == nifstreams.ErrT:
       dest.add valueBuf
     else:
       dest.shrink start
@@ -741,7 +741,7 @@ proc sameIdent(sym: SymId; str: StrId): bool =
   extractBasename(name)
   result = pool.strings.getOrIncl(name) == str
 
-proc sameIdent(a, b: SymId): bool {.used.} =
+proc sameIdent(a, b: SymId): bool =
   # not used yet
   # XXX speed this up by using the `fieldCache` idea
   var x = pool.syms[a]
@@ -784,7 +784,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
       returnType: cursorAt(signature, beforeRetType))
 
     # rebuild inferred as cursors to params in signature invocation
-    var newInferred = initTable[SymId, Cursor](inferred.len)
+    var newInferred = initTable[SymId, Cursor]()
     var typevar = decl.typevars
     inc typevar # skip tag
     var typeArg = cursorAt(signature, typeArgsStart)
@@ -1427,12 +1427,13 @@ proc resolveHeaderPath*(raw: string; currentFile: string; config: NifConfig): st
   ## Resolves header pragma paths. Only converts to absolute when ${path} or
   ## ${nifcache} is used; other headers (e.g. "bar.h", "<stdio.h>") stay as-is.
   if raw.len == 0 or raw[0] in {'<', '#'}: return raw
-  if "${path}" notin raw and "${nifcache}" notin raw: return raw
-  let resolvedFile = if currentFile.isAbsolute: absolutePath(currentFile)
+  if find(raw, "${path}") < 0 and find(raw, "${nifcache}") < 0: return raw
+  let resolvedFile = onRaiseQuit:
+    if currentFile.isAbsolute: absolutePath(currentFile)
     elif config.baseDir.len > 0 and '/' notin currentFile and '\\' notin currentFile: absolutePath(normalizedPath(joinPath(config.baseDir, currentFile)))
     else: absolutePath(currentFile)
   result = replaceSubs(raw, resolvedFile, config)
-  result = toAbsolutePath(result, absoluteParentDir(resolvedFile))
+  result = onRaiseQuit toAbsolutePath(result, absoluteParentDir(resolvedFile))
 
 proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
   var hasParRi = n.kind == ParLe # if false, has no arguments
@@ -1450,13 +1451,14 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
       hasParRi = false
     else:
       let name = getIdent(n)
-      if name != StrId(0) and name in c.userPragmas and not hasParRi:
+      if name != StrId(0) and c.userPragmas.hasKey(name) and not hasParRi:
         # custom pragma, cannot have arguments
         inc n
-        var read = beginRead(c.userPragmas[name])
+        let pragBuf = addr c.userPragmas.getOrQuit(name)
+        var read = beginRead(pragBuf[])
         while read.kind != ParRi:
           semPragma c, dest, read, crucial, kind
-        endRead(c.userPragmas[name])
+        endRead(pragBuf[])
       elif name != StrId(0) and name in c.customPragmaTemplates:
         # Pragma that resolves to a `template X(args) {.pragma.}` declaration.
         # Accept with or without arguments and drop silently — matches Nim's
@@ -1778,7 +1780,7 @@ proc maybeInlineMagic(c: var SemContext; dest: var TokenBuf; res: LoadResult) =
         # ^ export marker position has a `(`? If so, it is a magic!
         let info = dest[dest.len-1].info
         var tag = n.tagId
-        if cast[TagEnum](tag) == IsMainModuleTagId:
+        if cast[TagEnum](tag) == IsmainmoduleTagId:
           if IsMain in c.moduleFlags:
             tag = TagId(TrueTagId)
           else:
@@ -1905,11 +1907,11 @@ proc semExprMissingPhases(c: var SemContext; dest: var TokenBuf; it: var Item; f
   if c.phase <= firstPhase:
     var lastBuf = default(TokenBuf)
     var usingBuf = false
-    for phase in realPhases:
-      if phase >= c.phase:
+    for ph in realPhases:
+      if ph >= c.phase:
         break
       var buf = createTokenBuf()
-      var phase = phase
+      var phase = ph
       swap c.phase, phase
       var it2 = Item(typ: it.typ)
       if usingBuf:
@@ -1978,7 +1980,7 @@ proc semTypeof(c: var SemContext; dest: var TokenBuf; it: var Item) =
   semConstExpr c, dest, modeArg
   assert dest.len > beforeMode
   let modeTok = dest[beforeMode]
-  if modeTok.kind == ParLe and modeTok.tagId == ErrT:
+  if modeTok.kind == ParLe and modeTok.tagId == nifstreams.ErrT:
     dest.insert it.n, beforeMode
     skip it.n
     skip it.n
@@ -2036,7 +2038,7 @@ proc evalConstIntExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; expe
   let value = beginRead(valueBuf)
   result = getConstOrdinalValue(value)
   if result.isNaN:
-    if value.kind == ParLe and value.tagId == ErrT:
+    if value.kind == ParLe and value.tagId == nifstreams.ErrT:
       dest.add valueBuf
     else:
       buildErr c, dest, info, "expected constant integer value but got: " & asNimCode(value)
@@ -2107,7 +2109,7 @@ proc evalConstStrExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; expe
   let value = beginRead(valueBuf)
   result = getConstStringValue(value)
   if result == StrId(0):
-    if value.kind == ParLe and value.tagId == ErrT:
+    if value.kind == ParLe and value.tagId == nifstreams.ErrT:
       dest.add valueBuf
     else:
       buildErr c, dest, info, "expected constant string value but got: " & asNimCode(value)
@@ -2781,9 +2783,9 @@ proc findOneofEfld(c: var SemContext; name: StrId): SymId =
       if sym.kind == EfldY and isAnumEfld(sym.name):
         return sym.name
     scope = scope.up
-  if name in c.importTab:
-    for moduleSym in c.importTab[name]:
-      let candidates = c.importedModules[moduleSym].iface.getOrDefault(name)
+  if c.importTab.hasKey(name):
+    for moduleSym in c.importTab.getOrQuit(name):
+      let candidates = c.importedModules.getOrQuit(moduleSym).iface.getOrDefault(name)
       for defId in candidates:
         if isAnumEfld(defId):
           return defId
@@ -2972,7 +2974,9 @@ proc synthSumTypeDiscriminator(c: var SemContext; dest: var TokenBuf;
     # not for each instantiation (which would cause ambiguous names):
     var rootScope = c.currentScope
     while rootScope.up != nil: rootScope = rootScope.up
-    for i, (sym, name) in efldSyms:
+    for i in 0 ..< efldSyms.len:
+      let sym = efldSyms[i][0]
+      let name = efldSyms[i][1]
       var efldBuf = createTokenBuf(10)
       buildEfld(efldBuf, sym, oneofTypeSym, i, name, branches[i].info, state.isExported)
       programs.publish sym, efldBuf, c.phase
@@ -3247,7 +3251,7 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
     discard "fine"
   elif dest[beforeCall].kind == ParLe and
       (dest[beforeCall].tagId == TagId(FieldsTagId) or
-       dest[beforeCall].tagId == TagId(FieldPairsTagId) or
+       dest[beforeCall].tagId == TagId(FieldpairsTagId) or
        dest[beforeCall].tagId == TagId(InternalFieldPairsTagId)):
     var callBuf = createTokenBuf(dest.len - beforeCall)
     for tok in beforeCall ..< dest.len: callBuf.add dest[tok]
@@ -3296,7 +3300,7 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
           isIdentCall(c, dest, beforeCall):
         isMacroLike = true
       else:
-        if dest[beforeCall].kind == ParLe and dest[beforeCall].tagId == ErrT:
+        if dest[beforeCall].kind == ParLe and dest[beforeCall].tagId == nifstreams.ErrT:
           # original nim gives `items` overload errors so preserve them
           discard
         else:
@@ -3966,8 +3970,8 @@ proc buildObjConstrField(c: var SemContext; dest: var TokenBuf; field: Local;
                          setFields: Table[SymId, Cursor]; info: PackedLineInfo;
                          bindings: Table[SymId, Cursor]; depth: int) =
   let fieldSym = field.name.symId
-  if fieldSym in setFields:
-    dest.addSubtree setFields[fieldSym]
+  if setFields.hasKey(fieldSym):
+    dest.addSubtree setFields.getOrQuit(fieldSym)
   else:
     dest.addParLe(KvU, info)
     dest.add symToken(fieldSym, info)
@@ -4005,17 +4009,17 @@ template conflictingBranchesError(c: var SemContext; dest: var TokenBuf, info: P
 
 template badDiscriminatorError(c: var SemContext; dest: var TokenBuf, info: PackedLineInfo, field: SymId, discriminator: SymId) =
   c.buildErr dest, info,
-    ("cannot prove that it's safe to initialize '$1' with " &
+    onRaiseQuit(("cannot prove that it's safe to initialize '$1' with " &
     "the runtime value for the discriminator '$2'.") %
-    [asNimSym(field), asNimSym(discriminator)]
+    [asNimSym(field), asNimSym(discriminator)])
 
 template wrongBranchError(c: var SemContext; dest: var TokenBuf, info: PackedLineInfo, field: SymId,
       discriminator: SymId, discriminatorVal: Cursor) =
   c.buildErr dest, info,
-      ("a case selecting discriminator '$1' with value '$2' " &
+      onRaiseQuit(("a case selecting discriminator '$1' with value '$2' " &
       "appears in the object construction, but the field(s) '$3' " &
       "are in conflict with this value.") %
-      [asNimSym(discriminator), asNimCode(discriminatorVal), asNimSym(field)]
+      [asNimSym(discriminator), asNimCode(discriminatorVal), asNimSym(field)])
 
 proc caseBranchMatchesExpr(c: var SemContext; dest: var TokenBuf; branch, matched: Cursor; selectorType: Cursor): bool =
   result = false
@@ -4065,8 +4069,8 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       of OfU:
         inc n
         var state: BranchState
-        if selectorSymId in setFields:
-          let discriminatorVal = getValueInKv(setFields[selectorSymId])
+        if setFields.hasKey(selectorSymId):
+          let discriminatorVal = getValueInKv(setFields.getOrQuit(selectorSymId))
           if caseBranchMatchesExpr(c, dest, n, discriminatorVal, selector.typ):
             state = ThisBranch
             isBranchSelected = true
@@ -4083,7 +4087,7 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
           if lastFieldSymId != SymId(0):
             conflictingBranchesError c, dest, info, lastFieldSymId, presentFieldSymId
           elif state == Unknown:
-            wrongBranchError(c, dest, info, presentFieldSymId, selectorSymId, getValueInKv(setFields[selectorSymId]))
+            wrongBranchError(c, dest, info, presentFieldSymId, selectorSymId, getValueInKv(setFields.getOrQuit(selectorSymId)))
           inc n # stmt
           while n.kind != ParRi:
             let field = takeLocal(n, SkipFinalParRi)
@@ -4100,8 +4104,8 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         if hasField:
           if lastFieldSymId != SymId(0):
             conflictingBranchesError c, dest, info, lastFieldSymId, presentFieldSymId
-          elif isBranchSelected and selectorSymId in setFields:
-            wrongBranchError(c, dest, info, presentFieldSymId, selectorSymId, getValueInKv(setFields[selectorSymId]))
+          elif isBranchSelected and setFields.hasKey(selectorSymId):
+            wrongBranchError(c, dest, info, presentFieldSymId, selectorSymId, getValueInKv(setFields.getOrQuit(selectorSymId)))
           inc n # stmt
           while n.kind != ParRi:
             let field = takeLocal(n, SkipFinalParRi)
@@ -4270,11 +4274,11 @@ proc inferFieldTypes(c: var SemContext; args: Cursor;
     if scan.substructureKind == KvU:
       inc scan
       let fieldName = takeIdent(scan)
-      if fieldName != StrId(0) and fieldName in fieldTypesByName:
+      if fieldName != StrId(0) and fieldTypesByName.hasKey(fieldName):
         var valBuf = createTokenBuf(16)
         var val = Item(n: scan, typ: c.types.autoType)
         semExpr c, valBuf, val
-        inferTypevarFromTypes(fieldTypesByName[fieldName], val.typ, inferred)
+        inferTypevarFromTypes(fieldTypesByName.getOrQuit(fieldName), val.typ, inferred)
         scan = val.n
       else:
         skip scan
@@ -4298,8 +4302,8 @@ proc buildInferredInvoke(c: var SemContext; objTypeSym: SymId;
   while tv.kind != ParRi:
     let tvar = asLocal(tv)
     let tvSym = tvar.name.symId
-    if tvSym in inferred:
-      typeBuf.addSubtree inferred[tvSym]
+    if inferred.hasKey(tvSym):
+      typeBuf.addSubtree inferred.getOrQuit(tvSym)
     else:
       return default(TypeCursor)
     skip tv
@@ -4634,7 +4638,7 @@ proc semTupAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
     commonType c, dest, it, exprStart, expected
 
 proc getDottedIdent(n: var Cursor): string =
-  let isError = n.kind == ParLe and n.tagId == ErrT
+  let isError = n.kind == ParLe and n.tagId == nifstreams.ErrT
   if isError:
     inc n
   if n.kind == ParLe and n.exprKind == DotX:
@@ -4679,7 +4683,7 @@ proc semDeclared(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   let orig = it.n
   # XXX maybe always type the argument and check for Symbol/errored Ident instead
-  let isError = it.n.kind == ParLe and it.n.tagId == ErrT
+  let isError = it.n.kind == ParLe and it.n.tagId == nifstreams.ErrT
   if isError:
     inc it.n
   # does not consider module quoted symbols for now
@@ -5421,7 +5425,7 @@ proc semPragmaLine(c: var SemContext; dest: var TokenBuf; it: var Item; isPragma
       buildErr c, dest, info, "build expected 2 or 3 parameters"
 
     # XXX: Relative paths in makefile are relative to current working directory, not the location of the makefile.
-    let curWorkDir = os.getCurrentDir()
+    let curWorkDir = onRaiseQuit os.getCurrentDir()
     let currentDir = absoluteParentDir(info.getFile)
 
     # Extract build pragma arguments
@@ -6256,7 +6260,7 @@ proc buildIndexExports(c: var SemContext): TokenBuf =
     return default(TokenBuf)
   result = createTokenBuf(32)
   for m, ex in c.exports:
-    let path = toAbsolutePath(c.importedModules[m].path)
+    let path = toAbsolutePath(c.importedModules.getOrQuit(m).path)
     case ex.kind
     of ImportAll:
       result.addParLe(TagId(ExportIdx), NoLineInfo)
@@ -6312,9 +6316,41 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
         for i in c.passC:
           deps.addStrLit i
   let depsFile = changeModuleExt(outfile, ".s.deps.nif")
-  writeFile(deps, depsFile, OnlyIfChanged)
+  onRaiseQuit writeFile(deps, depsFile, OnlyIfChanged)
+
+proc pruneMatchedForwardDecls(c: var SemContext; dest: var TokenBuf) =
+  ## Remove `(proc :sym ...)` subtrees from `dest` for every symbol in
+  ## `c.matchedForwardDecls`. We can't do this during sem (positions held
+  ## by sibling forward decls would shift), so we wait until just before
+  ## the buffer is written and perform a single linear sweep.
+  if c.matchedForwardDecls.len == 0: return
+  var src = 0
+  var dst = 0
+  while src < dest.len:
+    if dest[src].kind == ParLe and src + 1 < dest.len and
+        dest[src + 1].kind == SymbolDef and
+        dest[src + 1].symId in c.matchedForwardDecls:
+      # Skip the entire (proc :sym ...) subtree.
+      var nesting = 0
+      while src < dest.len:
+        case dest[src].kind
+        of ParLe: inc nesting
+        of ParRi:
+          dec nesting
+          if nesting == 0:
+            inc src # skip the closing ParRi as well
+            break
+        else: discard
+        inc src
+    else:
+      if dst != src:
+        dest[dst] = dest[src]
+      inc dst
+      inc src
+  dest.shrink dst
 
 proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
+  pruneMatchedForwardDecls(c, dest)
   # Insert (import suffix1 suffix2 ...) at the beginning of the (stmts ...)
   # so the hexer sees it before any executable code:
   if c.importedModules.len != 0:
@@ -6325,12 +6361,12 @@ proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
         importBuf.addIdent moduleSuffix(i.path.toAbsolutePath, c.g.config.paths)
     importBuf.addParRi()
     dest.insert importBuf, 1 # after the (stmts tag
-  writeFile(dest, outfile, OnlyIfChanged)
+  onRaiseQuit writeFile(dest, outfile, OnlyIfChanged)
   let root = dest[0].info
-  createIndex outfile, root, true,
+  onRaiseQuit createIndex(outfile, root, true,
     IndexSections(
       converters: move c.converterIndexMap,
-      exportBuf: buildIndexExports(c))
+      exportBuf: buildIndexExports(c)))
   writeNewDepsFile c, outfile
 
 proc phaseX(c: var SemContext; dest: var TokenBuf; n: Cursor; x: SemPhase) =
@@ -6498,7 +6534,7 @@ proc instantiateMethodForType(c: var SemContext; dest: var TokenBuf; methodSym, 
         c.buildErr dest, res.decl.info, "cannot instantiate method " & pool.syms[methodSym] &
           ", cannot infer generic parameter " & pool.syms[name]
         return SymId(0)
-      typeArgsBuf.addSubtree inferred[name]
+      typeArgsBuf.addSubtree inferred.getOrQuit(name)
     let instance = requestRoutineInstance(c, methodSym, typeArgsBuf, inferred, res.decl.info)
     return instance.targetSym
   else:
@@ -6518,8 +6554,8 @@ proc requestMethods(c: var SemContext; dest: var TokenBuf; s: SymId; decl: Curso
   var baseMethods: seq[MethodIndexEntry]
 
   # First check if we have a ClassEntry for the base
-  if base in c.classes:
-    baseMethods = c.classes[base].methods
+  if c.classes.hasKey(base):
+    baseMethods = c.classes.getOrQuit(base).methods
   else:
     # Try loading from type pragmas
     baseMethods = vtables_frontend.loadVTable(base)
@@ -6610,7 +6646,7 @@ proc reorderInnerGenericInstances(c: SemContext; dest: var TokenBuf) =
       inc i
 
 proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
-  c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: nil, kind: ToplevelScope)
+  c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), kind: ToplevelScope)
 
   assert n0.stmtKind == StmtsS
   let path = getFile(n0.info) # gets current module path, maybe there is a better way
@@ -6644,18 +6680,15 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   instantiateGenericHooks c, dest
   dest.addParRi()
 
-  if reportErrors(dest) == 0:
+  if onRaiseQuit(reportErrors(dest)) == 0:
     var afterSem = move dest
     if c.genericInnerProcs.len > 0:
       reorderInnerGenericInstances(c, afterSem)
     var finalBuf = beginRead afterSem
     dest = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
     when true: #defined(enableContracts):
-      when not useNj:
-        var moreErrors = analyzeContracts(dest)
-      else:
-        var moreErrors = analyzeContractsNjvl(dest, c.thisModuleSuffix, c.g.config.verbose)
-      if reporters.reportErrors(moreErrors) > 0:
+      var moreErrors = analyzeContractsNjvl(dest, c.thisModuleSuffix, c.g.config.verbose)
+      if onRaiseQuit(reporters.reportErrors(moreErrors)) > 0:
         quit 1
   else:
     quit 1
@@ -6719,14 +6752,11 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
   instantiateGenericHooks c, dest
   dest.addParRi()
 
-  if reportErrors(dest) == 0:
+  if onRaiseQuit(reportErrors(dest)) == 0:
     var afterSem = move dest
     when true:
-      when not useNj:
-        var moreErrors = analyzeContracts(afterSem)
-      else:
-        var moreErrors = analyzeContractsNjvl(afterSem, c.thisModuleSuffix, c.g.config.verbose)
-      if reporters.reportErrors(moreErrors) > 0:
+      var moreErrors = analyzeContractsNjvl(afterSem, c.thisModuleSuffix, c.g.config.verbose)
+      if onRaiseQuit(reporters.reportErrors(moreErrors)) > 0:
         quit 1
     if c.genericInnerProcs.len > 0:
       reorderInnerGenericInstances(c, afterSem)
@@ -6739,8 +6769,9 @@ proc maybeValidatePostSem(dest: var TokenBuf; moduleName: string) =
   ## When compiled with `-d:validatePasses`, validates that `dest`
   ## conforms to the post-sem subset of `doc/tags.md`. Reports violations
   ## on stderr and aborts with a non-zero exit status so that drift from
-  ## the spec is a hard error. Set `NIMONY_VALIDATE_SOFT=1` to downgrade
-  ## violations to warnings (useful while iterating on the grammar).
+  ## the spec is a hard error. The phase_validator import is gated on
+  ## the same define so that the (currently Nim-only) validator code is
+  ## not pulled into the bootstrap build of nimony itself.
   when defined(validatePasses):
     let phase = postSemPhase()
     let violations = validate(dest, phase)
@@ -6789,7 +6820,7 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
 
   # Setup: create scopes and import system for each module
   for i in 0..<modules.len:
-    modules[i].c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: nil, kind: ToplevelScope)
+    modules[i].c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), kind: ToplevelScope)
     let path = getFile(modules[i].n0.info)
     addSelfModuleSym(modules[i].c, path)
     if {SkipSystem, IsSystem} * moduleFlags == {}:
@@ -6821,7 +6852,7 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
   # Post-processing and output for each module
   for i in 0..<modules.len:
     semcheckPostProcess modules[i].c, modules[i].dest
-    if reportErrors(modules[i].dest) == 0:
+    if onRaiseQuit(reportErrors(modules[i].dest)) == 0:
       maybeValidatePostSem modules[i].dest, modules[i].outfile
       writeOutput modules[i].c, modules[i].dest, modules[i].outfile
     else:
@@ -6857,7 +6888,7 @@ proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFla
     if c.pendingTypePlugins.len == 0 and c.pendingModulePlugins.len == 0: break
     handleTypePlugins c, dest
 
-  if reportErrors(dest) == 0:
+  if onRaiseQuit(reportErrors(dest)) == 0:
     maybeValidatePostSem dest, outfile
     writeOutput c, dest, outfile
   else:

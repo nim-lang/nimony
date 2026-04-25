@@ -206,7 +206,7 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
       var currentField = obj.firstField
       if currentField.kind != DotToken:
         while currentField.kind != ParRi:
-          let field = takeLocal(currentField, SkipfinalParRi)
+          let field = takeLocal(currentField, SkipFinalParRi)
           let fieldSym = if isInternalSym: field.name.symId else: SymId(0)
           # field name is enough:
           buildNamedFieldIter(iterBuf, iter, getIdent(field.name), fieldSym, body)

@@ -63,7 +63,7 @@ proc signaturesMatch(forwardDecl: Cursor; implDecl: Cursor): bool =
   return true
 
 proc addForwardDecl*(c: var SemContext; symId: SymId) =
-  ## Register a forward declaration candidate
+  ## Register a forward declaration candidate.
   let lit = symToIdent(symId)
   c.forwardDecls.mgetOrPut(lit, @[]).add symId
 
@@ -191,8 +191,8 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
         withNewScope c:
           semConstExpr c, dest, it # 4
       elif kind == ParamY and it.n.kind == DotToken:
-        if delayed.lit in c.usingStmtMap:
-          it.typ = c.usingStmtMap[delayed.lit]
+        if c.usingStmtMap.hasKey(delayed.lit):
+          it.typ = c.usingStmtMap.getOrQuit(delayed.lit)
         elif c.routine.kind in {TemplateY, MacroY}:
           it.typ = c.types.untypedType
         else:
@@ -245,12 +245,12 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
   if kind == LetY:
     if ThreadvarP in crucial.flags:
       copyKeepLineInfo dest[declStart], parLeToken(TletS, NoLineInfo)
-    elif GlobalP in crucial.flags or c.currentScope.kind == TopLevelScope:
+    elif GlobalP in crucial.flags or c.currentScope.kind == ToplevelScope:
       copyKeepLineInfo dest[declStart], parLeToken(GletS, NoLineInfo)
   elif kind == VarY:
     if ThreadvarP in crucial.flags:
       copyKeepLineInfo dest[declStart], parLeToken(TvarS, NoLineInfo)
-    elif GlobalP in crucial.flags or c.currentScope.kind == TopLevelScope:
+    elif GlobalP in crucial.flags or c.currentScope.kind == ToplevelScope:
       copyKeepLineInfo dest[declStart], parLeToken(GvarS, NoLineInfo)
   if kind != FldY:
     publish c, dest, delayed.s.name, declStart
@@ -266,7 +266,7 @@ proc semEnumOrdinalValue(c: var SemContext; dest: var TokenBuf; n: var Cursor): 
   c.phase = SemcheckBodies
   let before = dest.len
   result = evalConstIntExpr(c, dest, n, c.types.autoType)
-  if not isNan(result):
+  if not isNaN(result):
     var err = false
     let valI = asSigned(result, err)
     if not err:
@@ -519,7 +519,7 @@ proc registerHook(c: var SemContext; obj: SymId, symId: SymId, op: HookKind; isG
   # track per-type for embedding in type declarations:
   if not c.typeHooks.hasKey(obj):
     c.typeHooks[obj] = HooksPerType(a: default(array[AttachedOp, SymId]))
-  c.typeHooks[obj].a[attachedOp] = symId
+  c.typeHooks.getOrQuit(obj).a[attachedOp] = symId
 
 proc getHookName(symId: SymId): string =
   result = pool.syms[symId]
@@ -614,8 +614,8 @@ proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
 
     # Also add to c.classes for vtable generation
     let methodEntry = MethodIndexEntry(fn: symToRegister, signature: signature)
-    if root in c.classes:
-      c.classes[root].methods.add methodEntry
+    if c.classes.hasKey(root):
+      c.classes.getOrQuit(root).methods.add methodEntry
     else:
       c.classes[root] = ClassEntry(methods: @[methodEntry])
 
@@ -639,6 +639,9 @@ proc hookThatShouldBeMethod(c: var SemContext; dest: var TokenBuf; hk: HookKind;
 proc handleForwardDeclarations(c: var SemContext; dest: var TokenBuf; declStart: int;
                                symId: SymId; crucial: CrucialPragma; hasBody: bool) =
   ## Handle forward declaration registration and matching during signature checking.
+  ## On a successful match, the forward decl's `SymId` is added to
+  ## `c.matchedForwardDecls`; `writeOutput` later strips its `(proc ...)`
+  ## subtree from `dest` so it does not leak into the module's export index.
   if hasBody:
     # This is an implementation - look for matching forward declaration
     let implCursor = cursorAt(dest, declStart)
@@ -654,6 +657,10 @@ proc handleForwardDeclarations(c: var SemContext; dest: var TokenBuf; declStart:
       while scope != nil:
         scope.removeOverloadable(lit, fwdDecl)
         scope = scope.up
+      # Mark the forward decl for removal from `dest` at writeOutput time —
+      # we cannot splice now without invalidating positions other callers
+      # are still holding (e.g. the impl's own `declStart`).
+      c.matchedForwardDecls.incl fwdDecl
   elif {ImportcP, ImportcppP} * crucial.flags == {}:
     # This is a forward declaration - register it as a candidate
     addForwardDecl(c, symId)
@@ -761,8 +768,8 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
   takeToken dest, it.n
   let beforeName = dest.len
 
-  let symId: SymId
-  let status: SymStatus
+  var symId = SymId(0)
+  var status = OkNew
   if it.n.kind == DotToken:
     symId = newName
     status = OkNew
@@ -972,7 +979,7 @@ proc fitTypeToPragmas(c: var SemContext; dest: var TokenBuf; pragmas: CrucialPra
     if isNominal(typ.typeKind):
       # ok
       endRead(dest)
-    elif typ.typeKind in {IntT, UintT, FloatT, CharT, PointerT}:
+    elif typ.typeKind in {IntT, UIntT, FloatT, CharT, PointerT}:
       let info = typ.info
       endRead(dest)
       let kind = if ImportcP in pragmas.flags: ImportcP else: ImportcppP
@@ -983,11 +990,9 @@ proc fitTypeToPragmas(c: var SemContext; dest: var TokenBuf; pragmas: CrucialPra
       ]
       if HeaderP in pragmas.flags:
         assert pragmas.headerFileTok.kind == StringLit
-        attrs.add [
-          parLeToken(HeaderP, info),
-          pragmas.headerFileTok,
-          parRiToken(info)
-        ]
+        attrs.add parLeToken(HeaderP, info)
+        attrs.add pragmas.headerFileTok
+        attrs.add parRiToken(info)
       # Imported aliases of scalar builtins must override the C spelling
       # (`importc`/`importcpp` + optional `header`) rather than stack with
       # existing builtin attributes like `(importc "int")`.
@@ -1055,7 +1060,7 @@ proc invokeInnerObj(c: var SemContext; dest: var TokenBuf; genericsPos: int; obj
     endRead(dest)
     dest.add symToken(objSym, info)
 
-proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerRefOwner = SymId(0)) =
+proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerRefOwner: SymId = SymId(0)) =
   let startCursor = n
   let declStart = dest.len
   takeToken dest, n

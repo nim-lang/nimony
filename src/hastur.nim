@@ -744,14 +744,14 @@ const BootstrapModules = [
   "src/hexer/vtables_backend.nim",
   "src/hexer/dce2.nim",
 
-  # Tier 16 tips (cover the rest of the bootstrapped compiler surface).
-  "src/nimony/contracts_njvl.nim",
-  "src/nimony/exprexec.nim",
-
   # Tier 17 tips. `hexer.nim` subsumes `nifcgen.nim` via its import set.
   "src/hexer/hexer.nim",
   "src/nimony/indexgen.nim",
   "src/nimony/idetools.nim",
+
+  # Tier 18 tip. `sem.nim` subsumes contracts_njvl and exprexec via its
+  # import set, so the Tier 16 leaves are implicitly covered by this entry.
+  "src/nimony/sem.nim",
 ]
 
 # Modules whose `isMainModule` block should also be executed after compilation.

@@ -13,6 +13,22 @@ when defined(nimony):
 else:
   {.pragma: canRaise.}
 
+when defined(nimony):
+  template onRaiseQuit(call: untyped): untyped =
+    ## Calls a `{.raises.}` proc from a non-raising context: wraps in
+    ## try/except and aborts with a useful diagnostic on failure. Lets us
+    ## keep `raises` from spreading virally through every layer in `sem.nim`
+    ## et al. without silently swallowing the raise.
+    ## Unexported on purpose — `compat2.nim` is `include`d, not `import`ed,
+    ## so each user file gets its own private copy and there is no
+    ## cross-module ambiguity.
+    try:
+      call
+    except:
+      quit "FAILURE: " & astToStr(call)
+else:
+  template onRaiseQuit(call: untyped): untyped = call
+
 when not defined(nimony):
   import std/tables
 

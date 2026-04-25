@@ -152,6 +152,12 @@ type
     genericInnerProcs*: HashSet[SymId] # these are special in that they must be instantiated in specific places
     expanded*: TokenBuf
     forwardDecls*: Table[StrId, seq[SymId]] # forward declaration candidates by name
+    matchedForwardDecls*: HashSet[SymId] ## Forward decls whose matching
+      ## implementation has been seen. The proc-decl tokens are still in
+      ## `dest` (because we've already moved past them when the match
+      ## happens), so `writeOutput` strips them before serialising the
+      ## module so they do not leak into the export index. See
+      ## tests/nimony/lookups/tforward_decl_export.nim.
     deferredCyclicImports*: seq[(string, SymId)] # (module suffix, module sym) for cyclic imports to resolve after phase1
     inTypeInst*: int # > 0 means we're inside a generic type instantiation
 

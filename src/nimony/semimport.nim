@@ -66,7 +66,7 @@ proc importSingleFile(c: var SemContext; dest: var TokenBuf; f1: ImportedFilenam
     moduleDecl.addParRi()
     publish result, moduleDecl, SemcheckBodies
   else:
-    result = c.processedModules[suffix]
+    result = c.processedModules.getOrQuit(suffix)
   let module = addr c.importedModules.mgetOrPut(result, ImportedModule(path: f2, fromPlugin: f1.plugin))
   loadInterface suffix, module.iface, result, c.importTab, c.converters, exports, mode
   # Track NIF snippet for this import using absolute path, for use by exprexec.
@@ -89,10 +89,11 @@ proc importSingleFileConsiderExports(c: var SemContext; dest: var TokenBuf; f1: 
     for ex in exports:
       let file = ImportedFilename(path: ex[0], name: "")
       let forward = importSingleFile(c, dest, file, origin, ex[1], newExports, info)
-      if forward in c.importedModules[source].exports:
-        mergeFilter(c.importedModules[source].exports[forward], ex[1])
+      let modEntry = addr c.importedModules.getOrQuit(source)
+      if modEntry[].exports.hasKey(forward):
+        mergeFilter(modEntry[].exports.getOrQuit(forward), ex[1])
       else:
-        c.importedModules[source].exports[forward] = ex[1]
+        modEntry[].exports[forward] = ex[1]
     exports = newExports
 
 proc cyclicImport(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
@@ -127,7 +128,7 @@ proc cyclicImport(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
             c.buildErr dest, info, "file not found: " & f2
             continue
           let suffix = moduleSuffix(f2, c.g.config.paths)
-          var moduleSym: SymId
+          var moduleSym = SymId(0)
           if not c.processedModules.contains(suffix):
             c.meta.importedFiles.add f2
             let moduleName = pool.strings.getOrIncl(f1.name)
@@ -141,7 +142,7 @@ proc cyclicImport(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
             moduleDecl.addParRi()
             publish moduleSym, moduleDecl, SemcheckBodies
           else:
-            moduleSym = c.processedModules[suffix]
+            moduleSym = c.processedModules.getOrQuit(suffix)
           discard c.importedModules.mgetOrPut(moduleSym, ImportedModule(path: f2))
           # Defer the actual interface loading until after phase2
           c.deferredCyclicImports.add (suffix, moduleSym)
@@ -262,18 +263,19 @@ proc semExportSymbol(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
     discard buildSymChoice(c, dest, ident, info, FindAll)
 
 proc registerExportName(c: var SemContext; moduleSym: SymId; strId: StrId) =
-  if moduleSym in c.exports:
-    case c.exports[moduleSym].kind
+  if c.exports.hasKey(moduleSym):
+    let entry = addr c.exports.getOrQuit(moduleSym)
+    case entry[].kind
     of ImportAll:
       # nothing to do, already exported
       discard
     of FromImport:
-      c.exports[moduleSym].list.incl strId
+      entry[].list.incl strId
     of ImportExcept:
-      c.exports[moduleSym].list.excl strId
+      entry[].list.excl strId
   else:
     c.exports[moduleSym] = ImportFilter(kind: FromImport, list: initHashSet[StrId]())
-    c.exports[moduleSym].list.incl strId
+    c.exports.getOrQuit(moduleSym).list.incl strId
 
 proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: PackedLineInfo) =
   let res = tryLoadSym(sym)
@@ -291,7 +293,7 @@ proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: PackedLin
       # XXX
       c.buildErr dest, info, "exporting local symbol not implemented"
       return
-    let moduleSym = c.processedModules[suffix]
+    let moduleSym = c.processedModules.getOrQuit(suffix)
     var basename = name
     extractBasename(basename)
     registerExportName(c, moduleSym, pool.strings.getOrIncl(basename))
@@ -348,24 +350,26 @@ proc semExport(c: var SemContext; dest: var TokenBuf; it: var Item) =
 proc doExportExcept(c: var SemContext; dest: var TokenBuf; moduleSym, sym: SymId; info: PackedLineInfo) =
   let name = pool.syms[sym]
   let suffix = extractModule(name)
-  if c.processedModules[suffix] != moduleSym:
+  if not c.processedModules.hasKey(suffix) or
+      c.processedModules.getOrQuit(suffix) != moduleSym:
     # doesn't belong to exported module, no need to consider
     return
   var basename = ensureMove name
   extractBasename(basename)
   let strId = pool.strings.getOrIncl(basename)
-  if moduleSym in c.exports:
-    case c.exports[moduleSym].kind
+  if c.exports.hasKey(moduleSym):
+    let entry = addr c.exports.getOrQuit(moduleSym)
+    case entry[].kind
     of ImportAll:
-      c.exports[moduleSym] = ImportFilter(kind: ImportExcept, list: initHashSet[StrId]())
-      c.exports[moduleSym].list.incl strId
+      entry[] = ImportFilter(kind: ImportExcept, list: initHashSet[StrId]())
+      entry[].list.incl strId
     of FromImport:
-      c.exports[moduleSym].list.excl strId
+      entry[].list.excl strId
     of ImportExcept:
-      c.exports[moduleSym].list.incl strId
+      entry[].list.incl strId
   else:
     c.exports[moduleSym] = ImportFilter(kind: ImportExcept, list: initHashSet[StrId]())
-    c.exports[moduleSym].list.incl strId
+    c.exports.getOrQuit(moduleSym).list.incl strId
 
 proc semExportExcept(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
