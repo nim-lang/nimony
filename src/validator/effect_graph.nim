@@ -66,7 +66,7 @@ type
     annotated*: bool ## true if effect comes from ensuresNif annotation
     wrapsInput*: bool ## true if it does copyInto dest, n: (preserves tag)
     destLv*: Cursor   ## lvalue of the output variable (e.g. bare `dest` or `c.dest`)
-    cursorLv*: Cursor  ## lvalue of the input cursor variable (e.g. bare `n` or `c.n`)
+    cursorLvs*: seq[Cursor]  ## lvalues of input cursor variables (e.g. `n`, `f`, `a`)
     destIsParam*: bool ## true if dest is a direct parameter (not accessed via context field)
 
   SymContext* = Table[string, ChildKind]
@@ -215,6 +215,19 @@ proc extractDotCallName*(c: Cursor): string =
   if n.kind == Ident:
     result = pool.strings[n.litId]
 
+proc extractCalleeName*(n: Cursor): string =
+  ## From a (call ...) or (cmd ...) node, extract the callee name.
+  ## For method calls like `(call (dot recv callee) ...)`, returns the method name.
+  ## For bare calls like `(call callee ...)`, returns the callee name.
+  var c = n
+  if c.kind != ParLe: return ""
+  inc c # skip (call/cmd
+  if c.kind == Ident:
+    return pool.strings[c.litId]
+  elif c.kind == ParLe:
+    return extractDotCallName(c)
+  return ""
+
 proc extractLastDotField*(c: Cursor): string =
   ## From `(dot obj fieldName)`, extract the innermost field name.
   result = ""
@@ -234,6 +247,7 @@ proc extractDotReceiver*(c: Cursor): Cursor =
   if pool.tags[n.tag] != "dot": return default(Cursor)
   inc n
   return n  # cursor at the receiver (Ident or nested dot)
+
 
 proc equalLvalues*(a, b: Cursor): bool =
   ## Structural comparison of two lvalue expressions.
@@ -798,73 +812,45 @@ proc buildSymContext*(buf: var TokenBuf): SymContext =
   ## 3. Type declarations: `(type NAME ...)` → NAME is a type
   result = initTable[string, ChildKind]()
   var n = beginRead(buf)
-  var nested = 0
   if n.kind != ParLe: return
-  inc nested
-  inc n
-  while nested > 0:
-    case n.kind
-    of ParLe:
-      let tag = pool.tags[n.tag]
+  n.balancedTokens:
+    let tag = pool.tags[n.tag]
 
-      # Field type refinements via distinct types
-      if tag == "fld":
-        let typeName = extractFieldType(n)
-        let refined = typeNameToKind(typeName)
-        if refined != ckAny:
-          var p = n
-          inc p
-          if p.kind == Ident:
-            result[pool.strings[p.litId]] = refined
-
-      # Type declarations
-      elif tag == "type":
+    # Field type refinements via distinct types
+    if tag == "fld":
+      let typeName = extractFieldType(n)
+      let refined = typeNameToKind(typeName)
+      if refined != ckAny:
         var p = n
         inc p
         if p.kind == Ident:
-          result[pool.strings[p.litId]] = ckT
+          result[pool.strings[p.litId]] = refined
 
-      # copyIntoKind/buildTree calls — scan their body for addSymDef
-      elif tag in ["cmd", "call"]:
+    # Type declarations
+    elif tag == "type":
+      var p = n
+      inc p
+      if p.kind == Ident:
+        result[pool.strings[p.litId]] = ckT
+
+    # copyIntoKind/buildTree calls — scan their body for addSymDef
+    elif tag in ["cmd", "call"]:
+      let callee = extractCalleeName(n)
+      if callee in ["copyIntoKind", "buildTree"]:
         var peek = n
-        inc peek
+        inc peek  # skip (cmd/call
+        skip peek # skip callee (ident or dot)
+        if peek.kind == ParLe: skip peek  # skip dest for dot-calls
         var copyTag = ""
-        if peek.kind == ParLe:
-          let callee = extractDotCallName(peek)
-          if callee in ["copyIntoKind", "buildTree"]:
-            skip peek  # skip (dot ...)
-            if peek.kind == Ident:
-              copyTag = pool.strings[peek.litId]
-              skip peek  # skip tag
-              skip peek  # skip info
-              # Find the stmts body
-              while peek.kind != ParRi:
-                if peek.kind == ParLe and pool.tags[peek.tag] == "stmts":
-                  findAddSymDefInBody(peek, copyTag, result)
-                  break
-                skip peek
-        elif peek.kind == Ident:
-          let callee = pool.strings[peek.litId]
-          if callee in ["copyIntoKind", "buildTree"]:
-            inc peek
-            skip peek  # skip dest
-            if peek.kind == Ident:
-              copyTag = pool.strings[peek.litId]
-              skip peek  # skip tag
-              skip peek  # skip info
-              while peek.kind != ParRi:
-                if peek.kind == ParLe and pool.tags[peek.tag] == "stmts":
-                  findAddSymDefInBody(peek, copyTag, result)
-                  break
-                skip peek
-
-      inc nested
-      inc n
-    of ParRi:
-      dec nested
-      inc n
-    else:
-      inc n
+        if peek.kind == Ident:
+          copyTag = pool.strings[peek.litId]
+          skip peek  # skip tag
+          skip peek  # skip info
+          while peek.kind != ParRi:
+            if peek.kind == ParLe and pool.tags[peek.tag] == "stmts":
+              findAddSymDefInBody(peek, copyTag, result)
+              break
+            skip peek
 
 # ---- Parsing ensuresNif annotations ----
 
@@ -976,43 +962,31 @@ proc detectDestLvalue*(body: Cursor; hintName: string): Cursor =
   ## Returns nil Cursor if not found.
   var c = body
   if c.kind != ParLe: return default(Cursor)
-  var nested = 0
-  inc nested
-  inc c
-  while nested > 0:
-    case c.kind
-    of ParLe:
-      let tag = pool.tags[c.tag]
-      if tag in ["call", "cmd"]:
-        var peek = c
-        inc peek
-        if peek.kind == ParLe:
-          # Method call: (call (dot RECV callee) args...)
-          if pool.tags[peek.tag] == "dot":
-            var dot = peek
-            inc dot # skip (dot — now at receiver
-            if dot.kind == Ident and pool.strings[dot.litId] == hintName:
-              return dot  # bare `dest` as receiver
-            elif dot.kind == ParLe and pool.tags[dot.tag] == "dot":
-              if extractLastDotField(dot) == hintName:
-                return dot  # `(dot c dest)` as receiver
-        elif peek.kind == Ident:
-          inc peek  # skip callee
-          # Scan args for dest reference
-          while peek.kind != ParRi:
-            if peek.kind == Ident and pool.strings[peek.litId] == hintName:
-              return peek  # bare `dest` as argument
-            elif peek.kind == ParLe and pool.tags[peek.tag] == "dot":
-              if extractLastDotField(peek) == hintName:
-                return peek  # `(dot c dest)` as argument
-            skip peek
-      inc nested
-      inc c
-    of ParRi:
-      dec nested
-      inc c
-    else:
-      inc c
+  c.balancedTokens:
+    let tag = pool.tags[c.tag]
+    if tag in ["call", "cmd"]:
+      var peek = c
+      inc peek
+      if peek.kind == ParLe:
+        # Method call: (call (dot RECV callee) args...)
+        if pool.tags[peek.tag] == "dot":
+          var dot = peek
+          inc dot # skip (dot — now at receiver
+          if dot.kind == Ident and pool.strings[dot.litId] == hintName:
+            return dot  # bare `dest` as receiver
+          elif dot.kind == ParLe and pool.tags[dot.tag] == "dot":
+            if extractLastDotField(dot) == hintName:
+              return dot  # `(dot c dest)` as receiver
+      elif peek.kind == Ident:
+        inc peek  # skip callee
+        # Scan args for dest reference
+        while peek.kind != ParRi:
+          if peek.kind == Ident and pool.strings[peek.litId] == hintName:
+            return peek  # bare `dest` as argument
+          elif peek.kind == ParLe and pool.tags[peek.tag] == "dot":
+            if extractLastDotField(peek) == hintName:
+              return peek  # `(dot c dest)` as argument
+          skip peek
   return default(Cursor)
 
 proc detectWrapsInput*(graph: EffectGraph; body: Cursor; destLv: Cursor): bool =
@@ -1031,64 +1005,58 @@ proc detectWrapsInput*(graph: EffectGraph; body: Cursor; destLv: Cursor): bool =
     skip c
   return false
 
-proc detectCursorLv*(body: Cursor): Cursor =
+proc detectCursorLvs*(body: Cursor): seq[Cursor] =
   ## Deep-scan a proc body for cursor-advancing operations (inc, skip,
-  ## copyInto, takeTree, etc.) and return the cursor lvalue.
-  ## Returns nil Cursor if no cursor operations found.
+  ## copyInto, takeTree, etc.) and return all distinct cursor lvalues found.
   const IgnoredNames = ["dest", "c", "result", "info", "nested"]
+  result = @[]
   var c = body
-  if c.kind != ParLe: return default(Cursor)
-  var nested = 0
-  inc nested
-  inc c
-  while nested > 0:
-    case c.kind
-    of ParLe:
-      let tag = pool.tags[c.tag]
-      if tag in ["call", "cmd"]:
-        let (callName, _) = extractCallInfo(c)
-        if callName in ["inc", "skip", "skipParRi", "skipToEnd",
-                        "copyInto", "takeTree", "takeToken", "takeParRi"]:
-          # Extract the cursor argument
-          var peek = c
-          inc peek
-          if peek.kind == ParLe:
-            # Method call: (call (dot RECV callee) args...)
-            let recv = extractDotReceiver(peek)
-            if not cursorIsNil(recv) and recv.kind == Ident:
-              let rname = pool.strings[recv.litId]
-              if rname notin IgnoredNames:
-                return recv
-            skip peek
-            # Also check first arg after dot
+  if c.kind != ParLe: return
+  template addIfNew(lv: Cursor) =
+    var found = false
+    for existing in result:
+      if equalLvalues(existing, lv):
+        found = true
+        break
+    if not found:
+      result.add lv
+  c.balancedTokens:
+    let tag = pool.tags[c.tag]
+    if tag in ["call", "cmd"]:
+      let callName = extractCalleeName(c)
+      if callName in ["inc", "skip", "skipParRi", "skipToEnd",
+                      "copyInto", "takeTree", "takeToken", "takeParRi"]:
+        # Extract the cursor argument
+        var peek = c
+        inc peek
+        if peek.kind == ParLe:
+          # Method call: (call (dot RECV callee) args...)
+          let recv = extractDotReceiver(peek)
+          if not cursorIsNil(recv) and isLvalue(recv):
+            if recv.kind != Ident or pool.strings[recv.litId] notin IgnoredNames:
+              addIfNew recv
+          skip peek
+          # Also check first arg after dot
+          if peek.kind == Ident:
+            let arg = pool.strings[peek.litId]
+            if arg notin IgnoredNames:
+              addIfNew peek
+        elif peek.kind == Ident:
+          let callee = pool.strings[peek.litId]
+          inc peek  # skip callee
+          if callee in ["inc", "skip", "skipParRi", "skipToEnd"]:
+            # First arg is the cursor
             if peek.kind == Ident:
               let arg = pool.strings[peek.litId]
               if arg notin IgnoredNames:
-                return peek
-          elif peek.kind == Ident:
-            let callee = pool.strings[peek.litId]
-            inc peek  # skip callee
-            if callee in ["inc", "skip", "skipParRi", "skipToEnd"]:
-              # First arg is the cursor
-              if peek.kind == Ident:
-                let arg = pool.strings[peek.litId]
-                if arg notin IgnoredNames:
-                  return peek
-            elif callee in ["copyInto", "takeTree", "takeToken", "takeParRi"]:
-              # Second arg (after dest) is the cursor
-              skip peek  # skip dest
-              if peek.kind == Ident:
-                let arg = pool.strings[peek.litId]
-                if arg notin IgnoredNames:
-                  return peek
-      inc nested
-      inc c
-    of ParRi:
-      dec nested
-      inc c
-    else:
-      inc c
-  return default(Cursor)
+                addIfNew peek
+          elif callee in ["copyInto", "takeTree", "takeToken", "takeParRi"]:
+            # Second arg (after dest) is the cursor
+            skip peek  # skip dest
+            if peek.kind == Ident:
+              let arg = pool.strings[peek.litId]
+              if arg notin IgnoredNames:
+                addIfNew peek
 
 # ---- Building the full graph for a file ----
 
@@ -1150,7 +1118,7 @@ proc buildEffectGraph*(buf: var TokenBuf; procList: seq[ProcInfo]): EffectGraph 
   var destHints = initTable[string, string]()   # procName -> dest hint name
   var cursorHints = initTable[string, string]()  # procName -> cursor hint name
   var destLvs = initTable[string, Cursor]()     # procName -> detected dest lvalue
-  var cursorLvs = initTable[string, Cursor]()   # procName -> detected cursor lvalue
+  var allCursorLvs = initTable[string, seq[Cursor]]() # procName -> all cursor lvalues
   for p in procList:
     let (annotEffect, destName) = extractEnsuresNif(p.procCursor)
     if annotEffect != nil:
@@ -1168,15 +1136,17 @@ proc buildEffectGraph*(buf: var TokenBuf; procList: seq[ProcInfo]): EffectGraph 
     let lv = detectDestLvalue(p.bodyPos, hint)
     if not cursorIsNil(lv):
       destLvs[p.name] = lv
+    # Collect cursor lvalues: from annotation hint + auto-detection
+    var clvs: seq[Cursor] = @[]
     let cursorHint = cursorHints.getOrDefault(p.name, "")
     if cursorHint.len > 0:
       let clv = detectDestLvalue(p.bodyPos, cursorHint)
       if not cursorIsNil(clv):
-        cursorLvs[p.name] = clv
+        clvs.add clv
     else:
-      let clv = detectCursorLv(p.bodyPos)
-      if not cursorIsNil(clv):
-        cursorLvs[p.name] = clv
+      clvs = detectCursorLvs(p.bodyPos)
+    if clvs.len > 0:
+      allCursorLvs[p.name] = clvs
 
   # Register annotated procs.
   for p in procList:
@@ -1201,9 +1171,9 @@ proc buildEffectGraph*(buf: var TokenBuf; procList: seq[ProcInfo]): EffectGraph 
       if prev == nil or prev.effect == nil or
           prev.effect.kind == ekUnknown or not sameEffect(prev.effect, effect):
         let dip = detectDestIsParam(destLv)
-        let clv = cursorLvs.getOrDefault(p.name)
+        let clvs = allCursorLvs.getOrDefault(p.name)
         result.procs[p.name] = ProcEffect(name: p.name, effect: effect,
-                                           destLv: destLv, cursorLv: clv,
+                                           destLv: destLv, cursorLvs: clvs,
                                            destIsParam: dip)
         changed = true
 

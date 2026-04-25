@@ -152,6 +152,46 @@ proc skipUntilEnd*(c: var Cursor) =
       inc nested
     inc c
 
+# ── Traversal templates ──────────────────────────────────────────────────
+# Pure traversal helpers for reading/analyzing a tree without producing output.
+
+template hasMore*(n: Cursor): bool =
+  ## True while there are more children before the closing `)`.
+  n.kind != ParRi
+
+template into*(n: var Cursor; body: untyped) =
+  ## Enters the current node, runs `body` to process the children,
+  ## then advances past the closing `)`.
+  assert n.kind == ParLe, "into requires cursor at ParLe"
+  inc n          # skip opening tag
+  body
+  assert n.kind == ParRi, "into: body must consume all children"
+  inc n          # skip closing ParRi
+
+template loopInto*(n: var Cursor; body: untyped) =
+  ## Enters a node, iterates all children, then advances past `)`.
+  ## The body must advance `n` on every iteration.
+  into n:
+    while n.hasMore:
+      body
+
+template balancedTokens*(n: var Cursor; body: untyped) =
+  ## Deep-scans all `ParLe` nodes in the subtree rooted at `n`.
+  ## Inside `body`, `n` is positioned at each `ParLe` node in turn.
+  ## `body` must **not** advance `n` — the template handles traversal.
+  var nestedDepth = 0
+  if n.kind == ParLe:
+    inc nestedDepth; inc n
+    while nestedDepth > 0:
+      case n.kind
+      of ParLe:
+        body
+        inc nestedDepth; inc n
+      of ParRi:
+        dec nestedDepth; inc n
+      else:
+        inc n
+
 type
   TokenBuf* = object
     data: Storage

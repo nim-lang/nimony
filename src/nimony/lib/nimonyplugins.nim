@@ -366,6 +366,62 @@ proc skip*(n: var NifCursor) =
   ## Skips the current token or, if positioned on `ParLe`, the entire subtree.
   skip n.cursor
 
+# ── Traversal templates ──────────────────────────────────────────────────
+# Pure traversal helpers for reading/analyzing a tree without producing output.
+
+template hasMore*(n: NifCursor): bool =
+  ## True while there are more children before the closing `)`.
+  n.kind != ParRi
+
+template into*(n: var NifCursor; body: untyped) =
+  ## Enters the current node, runs `body` to process the children,
+  ## then advances past the closing `)`.
+  ##
+  ## .. code-block:: nim
+  ##   n.into:
+  ##     while n.hasMore:
+  ##       analyze(n)
+  ##       skip n
+  assert n.kind == ParLe, "into requires cursor at ParLe"
+  inc n
+  body
+  assert n.kind == ParRi, "into: body must consume all children"
+  inc n
+
+template loopInto*(n: var NifCursor; body: untyped) =
+  ## Enters a node, iterates all children, then advances past `)`.
+  ## The body must advance `n` on every iteration.
+  ##
+  ## .. code-block:: nim
+  ##   n.loopInto:
+  ##     analyze(n)
+  ##     skip n
+  into n:
+    while n.hasMore:
+      body
+
+template balancedTokens*(n: var NifCursor; body: untyped) =
+  ## Deep-scans all `ParLe` nodes in the subtree rooted at `n`.
+  ## Inside `body`, `n` is positioned at each `ParLe` node in turn.
+  ## `body` must **not** advance `n` — the template handles traversal.
+  ##
+  ## .. code-block:: nim
+  ##   n.balancedTokens:
+  ##     if n.stmtKind == IfS:
+  ##       foundIf = true
+  var nestedDepth = 0
+  if n.kind == ParLe:
+    inc nestedDepth; inc n
+    while nestedDepth > 0:
+      case n.kind
+      of ParLe:
+        body
+        inc nestedDepth; inc n
+      of ParRi:
+        dec nestedDepth; inc n
+      else:
+        inc n
+
 proc eqIdent*(n: NifCursor; name: string): bool =
   ## Returns true when `n` matches `name` exactly.
   case n.kind
@@ -402,7 +458,7 @@ type
 
 proc isAtom*(t: Replacer): bool {.inline.} =
   ## True when the cursor is at a leaf token (not ParLe). Atoms cannot be
-  ## entered with `into`.
+  ## entered with `keepTag`.
   t.src.kind != ParLe
 
 # Delegated cursor accessors:
@@ -586,31 +642,24 @@ proc replace*(t: var Replacer; expected: NimonyType; replacement: NifBuilder) =
   t.src.skip()
   t.dest.add(replacement)
 
-template into*(t: var Replacer; body: untyped) =
-  ## Copy the opening tag from input, run `body` for children, close the
-  ## node and advance past the input's closing `)`.
-  ## Requires: cursor at `ParLe` (use `isAtom` / `kind == ParLe` guard).
-  assert t.src.kind == ParLe, "into requires cursor at ParLe"
+template keepTag*(t: var Replacer; body: untyped) =
+  ## Copy the opening tag from input to output, run `body` for children,
+  ## close the node and advance past the input's closing `)`.
+  assert t.src.kind == ParLe, "keepTag requires cursor at ParLe"
   t.dest.copyInto(t.src):
     body
 
-template loop*(t: var Replacer; body: untyped) =
-  ## Process remaining children until `)`. The body must advance the
-  ## cursor on every iteration.
-  while t.src.kind != ParRi:
-    body
-
-template intoLoop*(t: var Replacer; body: untyped) =
-  ## Descend into a node and loop over all its children. Shortcut for
-  ## `into t: loop t: body`.
-  into t:
-    loop t:
+template loopKeepTag*(t: var Replacer; body: untyped) =
+  ## Copy the opening tag, iterate all children, close the node.
+  ## The body must advance the cursor on every iteration.
+  keepTag t:
+    while t.src.hasMore:
       body
 
 template replaceHead*(t: var Replacer;
                       tag: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma;
                       info: LineInfo; body: untyped) =
-  ## Like `into` but emits a new tag instead of copying the input's tag.
+  ## Like `keepTag` but emits a new tag instead of copying the input's tag.
   assert t.src.kind == ParLe, "replaceHead requires cursor at ParLe"
   inc t.src  # skip old opening tag
   t.dest.withTree(tag, info):

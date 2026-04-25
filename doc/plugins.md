@@ -522,13 +522,12 @@ proc trAux(t: var Replacer) =
     of SomeStmtToTransform:
       # ... custom transformation ...
     else:
-      intoLoop t:           # descend and recurse
+      loopKeepTag t:       # descend and recurse
         trAux t
 
 var t = loadReplacer()
-into t:                     # enter top-level (stmts ...)
-  loop t:
-    trAux t
+loopKeepTag t:             # enter top-level (stmts ...) and recurse
+  trAux t
 saveReplacer(t)
 ```
 
@@ -536,9 +535,8 @@ The core operations are:
 - `keep t, Kind` — copy one child verbatim, asserting its kind
 - `drop t, Kind` — skip one child without emitting, asserting its kind
 - `replace t, node` — skip one child, emit a replacement (NifCursor or NifBuilder)
-- `into t:` — descend into a compound node (copy tag, process children, close)
-- `loop t:` — iterate over remaining children until `)`
-- `intoLoop t:` — shortcut for `into t: loop t: body`
+- `keepTag t:` — descend into a compound node (copy tag, process children, close)
+- `loopKeepTag t:` — copy tag, iterate all children, close
 - `peek t:` — read-ahead analysis without consuming (cursor is restored)
 - `getCursor(t)` / `setCursor(t, c)` — snapshot/restore cursor for analysis
 
@@ -567,7 +565,7 @@ proc transform(n: NifCursor): NifBuilder =
   var n = n
   if n.stmtKind == StmtsS: inc n
   result.withTree StmtsS, n.info:
-    while n.kind != ParRi:
+    while n.hasMore:
       result.takeTree n
 
 var inp = loadPluginInput()
@@ -579,3 +577,18 @@ The key low-level operations are:
 - `skip` to remove nodes
 - `withTree`/`addParLe`/`addParRi` to construct new nodes
 - `addSubtree` to duplicate nodes
+
+### Traversal and transformation templates
+
+Templates for tree traversal (read-only) and transformation (read+write).
+The `skipHead`/`loopSkipHead` templates are for pure analysis; the
+`keepTag`/`loopKeepTag` templates copy the node tag to the output.
+
+| Template | Type | Purpose |
+|---|---|---|
+| `hasMore(n)` | `NifCursor` | true while there are more children before `)` |
+| `into n:` | `NifCursor` | enter node, run body for children, leave |
+| `loopInto n:` | `NifCursor` | enter node, iterate all children, leave |
+| `balancedTokens n:` | `NifCursor` | deep-scan all compound nodes in subtree |
+| `keepTag t:` | `Replacer` | copy tag to output, run body, close + skip `)` |
+| `loopKeepTag t:` | `Replacer` | copy tag, iterate all children, close + skip `)` |
