@@ -1338,17 +1338,21 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
         "': path is not borrowable; use 'addr' to override or a temporary move"
   if n.kind != DotToken and localType.typeKind in {PtrT, RefT, CstringT, PointerT, ProctypeT}:
     checkNilMatch c, n, localType
-  # Process `let cs =  obj.kind`
+  # Process `let cs = obj.kind`
+  # It place for aliasOf and
+  # another narrow point btw
   if n.kind == ParLe and n.exprKind == DotX:
     var d = n
     inc d
     let narrower = extractSymId(d)
     skip d
-    if d.kind == Symbol and
-       narrower != NoSymId and
-       AnumNarrowInfo(narrower: narrower, discriminator: d.symId) in c.anumNarrows:
-
-      c.aliasOf[name] = (narrower, d.symId)
+    if d.kind == Symbol and narrower != NoSymId:
+      let objType = lookupSymbol(c.typeCache, narrower)
+      if not cursorIsNil(objType):
+        for entry in buildAnumInfos(objType, narrower, n.info):
+          c.anumNarrows.incl entry
+          if entry.discriminator == d.symId:
+            c.aliasOf[name] = (narrower, entry.discriminator)
   c.assignTarget = name
   traverseExpr c, n
   c.assignTarget = NoSymId
