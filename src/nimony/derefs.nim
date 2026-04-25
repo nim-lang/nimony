@@ -727,13 +727,24 @@ proc fieldMode(k: TypeKind; outerE: Expects): Expects {.inline.} =
 
 proc trObjConstr(c: var Context; n: var Cursor; outerE: Expects) =
   takeToken c, n
+  let objType = n
   takeTree c.dest, n # type
   while n.kind != ParRi:
     assert n.substructureKind == KvU
     takeToken c, n
+    # Look up the *field's declared type* before consuming the key, so
+    # `tr` knows whether to insert HderefX/HaddrX coercions for fields
+    # that legitimately carry `lent`/`var`/`out`/`mut` qualifiers.
+    # `tryLoadSym` does not reliably resolve field symbols (they live
+    # inside the owning type decl), so use `typenav.lookupField` which
+    # walks the object body.
+    var fieldKind: TypeKind = NoType
+    if n.kind == Symbol:
+      let fieldType = lookupField(c.typeCache, objType, n.symId)
+      if not cursorIsNil(fieldType):
+        fieldKind = fieldType.typeKind
     takeTree c.dest, n # key
-    let fieldType = getType(c.typeCache, n)
-    tr c, n, fieldMode(fieldType.typeKind, outerE)
+    tr c, n, fieldMode(fieldKind, outerE)
     if n.kind != ParRi:
       # optional inheritance
       takeTree c.dest, n

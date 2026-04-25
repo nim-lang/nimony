@@ -384,7 +384,11 @@ type
   CallInfo = object
     isNoReturn: bool
     mode: ExceptionMode
-    mutates: seq[SymId]
+    # Each entry is the location expression the call mutates (the inner of
+    # a `(haddr …)` argument). Recording the *full path* rather than just
+    # the root symbol lets the contract analyser tell `c.field` apart from
+    # other fields of `c` when checking borrow conflicts.
+    mutates: seq[TokenBuf]
     info: PackedLineInfo
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
@@ -409,9 +413,12 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
   trExpr c, dest, n # handle `fn`
   while n.kind != ParRi:
     if n.exprKind == HaddrX:
-      let r = rootOf(n, CanFollowCalls)
-      if r != NoSymId:
-        result.mutates.add r
+      var inner = n
+      inc inner # skip haddr tag
+      if rootOf(inner, CanFollowCalls) != NoSymId:
+        var pathBuf = createTokenBuf(4)
+        pathBuf.addSubtree inner
+        result.mutates.add ensureMove pathBuf
     trExpr c, dest, n
   dest.takeParRi n
 
@@ -454,9 +461,9 @@ proc emitReturnGuards(c: var Context; dest: var TokenBuf; info: PackedLineInfo) 
 proc callIsOver(c: var Context; dest: var TokenBuf; callInfo: CallInfo) =
   # we make `unknown` part of the `call` for now. This will be cleaned up
   # in the `versionizer` pass!
-  for s in callInfo.mutates:
+  for path in callInfo.mutates:
     dest.add tagToken("unknown", callInfo.info)
-    dest.addSymUse s, callInfo.info
+    dest.add path
     dest.addParRi() # unknown
   if callInfo.isNoReturn:
     emitReturnGuards(c, dest, callInfo.info)

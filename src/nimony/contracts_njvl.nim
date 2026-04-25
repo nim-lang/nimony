@@ -1214,12 +1214,8 @@ proc isInitializedAtProcEnd(c: var NjvlContext; symId: SymId): bool =
   ## ambient `falseCfvars` with every `knownCfVars` entry for the duration
   ## of this query and run the normal sound init check.
   let savedLen = c.falseCfvars.len
-  # snapshot so we do not mutate `c.falseCfvars` while iterating
-  # `c.knownCfVars` (which shares the same owning `c`)
-  var extra: seq[SymId] = @[]
   for cf in c.knownCfVars:
-    if cf notin c.falseCfvars: extra.add cf
-  for cf in extra: c.falseCfvars.add cf
+    if cf notin c.falseCfvars: c.falseCfvars.add cf
   result = isEffectivelyInitialized(c, symId)
   c.falseCfvars.setLen(savedLen)
 
