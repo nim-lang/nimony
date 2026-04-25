@@ -92,6 +92,7 @@ type
     currentProcStart: Cursor           # cursor at the start of the proc whose
                                        # body we are currently analysing (used
                                        # for the --verbose dump)
+    aliasOf: Table[SymId, (SymId, SymId)]   # map `let cs = obj.kind` to (narrower, discriminator)
 
 proc hash(a: AnumNarrowInfo): Hash {.inline.} =
   result = hash(a.narrower) !& hash(a.discriminator)
@@ -744,6 +745,37 @@ proc buildAnumInfos(objType: Cursor; narrower: SymId;
       result.add entry
     skip t
 
+proc extractEqNarrowing(c: NjvlContext; cond: Cursor): (SymId, SymId, SymId) =
+  ## Process `(eq T <alias> Tag)`
+  result = (NoSymId, NoSymId, NoSymId)
+  if cond.kind != ParLe or cond.exprKind != EqX:
+    return
+  var r = cond
+  inc r
+  skip r
+  let lhs = extractSymId(r)
+  skip r
+  let tag =
+    if r.kind == Symbol: r.symId
+    else: NoSymId
+  if lhs == NoSymId or tag == NoSymId or lhs notin c.aliasOf:
+    return
+  let (narrower, discriminator) = c.aliasOf[lhs]
+  result = (narrower, discriminator, tag)
+
+proc narrowTo(c: var NjvlContext; narrower, discriminator: SymId; cands: HashSet[SymId]; info: PackedLineInfo) =
+  # erase old narrow for narrower and discriminator
+  c.anumNarrows.excl AnumNarrowInfo(narrower: narrower, discriminator: discriminator)
+  c.anumNarrows.incl AnumNarrowInfo(narrower: narrower, discriminator: discriminator,
+                                    candidates: cands, info: info)
+
+proc candidatesOf(c: NjvlContext; narrower, discriminator: SymId): HashSet[SymId] =
+  result = initHashSet[SymId]()
+  let key = AnumNarrowInfo(narrower: narrower, discriminator: discriminator)
+  for e in c.anumNarrows:
+    if e == key:
+      return e.candidates
+
 proc analyseOconstr(c: var NjvlContext; n: var Cursor) =
   inc n
   let objType = n
@@ -1072,7 +1104,9 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   # Analyze condition and extract facts.
   let savedFacts = save(c.facts)
   let savedBorrowsLen = c.activeBorrows.len
+  let savedNarrows = c.anumNarrows
   let implsCp = c.impls.checkpoint()
+  let condStart = n
   let condFacts = analyseCondition(c, n)
 
   # Copy condition facts for else-branch negation (only single fact can be negated)
@@ -1085,6 +1119,14 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   if cond.sym != NoSymId:
     if cond.negated: c.falseCfvars.add cond.sym
     else:            c.trueCfvars.add cond.sym
+
+  let (narrower, discriminator, tag) = extractEqNarrowing(c, condStart)
+  if narrower != NoSymId:
+    echo "case-narrow then: narrower=", pool.syms[narrower],
+         " discriminator=", pool.syms[discriminator],
+         " tag=", pool.syms[tag]
+    var s = toHashSet([tag])
+    narrowTo(c, narrower, discriminator, s, condStart.info)
   traverseStmt c, n
   if cond.sym != NoSymId:
     if cond.negated: discard c.falseCfvars.pop()
@@ -1095,6 +1137,7 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
 
   # Restore facts for else branch. Inside else, the cond's polarity flips.
   restore(c.facts, savedFacts)
+  c.anumNarrows = savedNarrows
   for f in condFactsList:
     var negated = f
     negateFact(negated)
@@ -1103,6 +1146,10 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   if cond.sym != NoSymId:
     if cond.negated: c.trueCfvars.add cond.sym
     else:            c.falseCfvars.add cond.sym
+  if narrower != NoSymId:
+    var elseCands = candidatesOf(c, narrower, discriminator)
+    elseCands.excl tag
+    narrowTo(c, narrower, discriminator, elseCands, condStart.info)
   if n.kind == DotToken:
     inc n
   else:
@@ -1111,6 +1158,7 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     if cond.negated: discard c.trueCfvars.pop()
     else:            discard c.falseCfvars.pop()
   c.activeBorrows.setLen(savedBorrowsLen)
+  c.anumNarrows = savedNarrows
   let elseImpls = c.impls.take(implsCp)
 
   # Merge branch implications into the outer scope. Pass the ambient
@@ -1210,6 +1258,18 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
         "': path is not borrowable; use 'addr' to override or a temporary move"
   if n.kind != DotToken and localType.typeKind in {PtrT, RefT, CstringT, PointerT, ProctypeT}:
     checkNilMatch c, n, localType
+  # Process `let cs =  obj.kind`
+  if n.kind == ParLe and n.exprKind == DotX:
+    var d = n
+    inc d
+    let narrower = extractSymId(d)
+    skip d
+    if d.kind == Symbol and
+       narrower != NoSymId and
+       AnumNarrowInfo(narrower: narrower, discriminator: d.symId) in c.anumNarrows:
+
+      c.aliasOf[name] = (narrower, d.symId)
+
   c.assignTarget = name
   traverseExpr c, n
   c.assignTarget = NoSymId
@@ -1291,6 +1351,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   let oldBorrows = move c.activeBorrows
   let oldProcStart = c.currentProcStart
   c.currentProcStart = decl
+  let oldAliasOf = move c.aliasOf
   c.resultSym = NoSymId
   inc n
   let symId = n.symId
@@ -1341,6 +1402,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   c.inlineVars = ensureMove oldInlineVars
   c.activeBorrows = ensureMove oldBorrows
   c.currentProcStart = oldProcStart
+  c.aliasOf = ensureMove oldAliasOf
   discard c.directlyInitialized.pop()
 
 proc traverseStmt(c: var NjvlContext; n: var Cursor) =
