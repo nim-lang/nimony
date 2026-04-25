@@ -5454,6 +5454,8 @@ proc semPragmaLine(c: var SemContext; dest: var TokenBuf; it: var Item; isPragma
     if not isPragmaBlock:
       buildErr c, dest, it.n.info, "`cast` pragma must be used in a pragma block"
       skip it.n
+    elif it.n.kind == ParLe and it.n.pragmaKind == CastP:
+      dest.takeTree it.n
     else:
       dest.add parLeToken(CastP, it.n.info)
       dest.takeTree it.n
