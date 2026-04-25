@@ -384,10 +384,14 @@ type
   CallInfo = object
     isNoReturn: bool
     mode: ExceptionMode
-    # Each entry is the location expression the call mutates (the inner of
-    # a `(haddr …)` argument). Recording the *full path* rather than just
+    # Each entry is a small TokenBuf holding the inner location expression
+    # of a `(haddr …)` argument. Recording the *full path* rather than just
     # the root symbol lets the contract analyser tell `c.field` apart from
-    # other fields of `c` when checking borrow conflicts.
+    # other fields of `c` when checking borrow conflicts. We deliberately
+    # copy the path into its own buffer instead of holding a `Cursor` into
+    # `dest`: any later append to `dest` would trigger a full COW of the
+    # dest buffer (potentially thousands of tokens) — the per-arg copy is
+    # tiny and cheaper.
     mutates: seq[TokenBuf]
     info: PackedLineInfo
 
