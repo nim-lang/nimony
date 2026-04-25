@@ -715,13 +715,11 @@ const BootstrapModules = [
   "src/lib/bitabs.nim",
 
   # Tier 1/2 genuine leaves.
-  "src/lib/stringtrees.nim",
   "src/nimony/features.nim",
   "src/nimony/intervals.nim",
   "src/models/nifler_tags.nim",
 
   # Tier 5/6 leaves.
-  "src/nimony/implications.nim",
   "src/nimony/inferle.nim",
   "src/nimony/deferstmts.nim",
   "src/nimony/cli.nim",
@@ -735,20 +733,25 @@ const BootstrapModules = [
   "src/nimony/enumtostr.nim",
   "src/nimony/derefs.nim",
 
-  # Tier 13 tips still present after Tier 14 added.
+  # Tier 13 tips still present after later tiers added.
   "src/nimony/module_plugins.nim",
-  "src/hexer/iterinliner.nim",
-  "src/hexer/destroyer.nim",
   "src/hexer/inliner.nim",
-  "src/hexer/desugar.nim",
   "src/hexer/lambdalifting.nim",
 
-  # Tier 14 tips (cover the rest of the bootstrapped compiler surface).
-  "src/njvl/versiontabs.nim",
+  # Tier 14 tips still present after later tiers added.
   "src/hexer/cps.nim",
   "src/hexer/constparams.nim",
   "src/hexer/vtables_backend.nim",
   "src/hexer/dce2.nim",
+
+  # Tier 16 tips (cover the rest of the bootstrapped compiler surface).
+  "src/nimony/contracts_njvl.nim",
+  "src/nimony/exprexec.nim",
+
+  # Tier 17 tips. `hexer.nim` subsumes `nifcgen.nim` via its import set.
+  "src/hexer/hexer.nim",
+  "src/nimony/indexgen.nim",
+  "src/nimony/idetools.nim",
 ]
 
 # Modules whose `isMainModule` block should also be executed after compilation.

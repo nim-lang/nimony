@@ -6,13 +6,15 @@
 
 ## Can run arbitrary expressions at compile-time by using `selfExec`.
 
-include nifprelude
+include ".." / lib / nifprelude
+include ".." / lib / compat2
 import ".." / lib / nifchecksums
 from std / os import `/`
-import std / [assertions, sets, tables]
+import std / [assertions, sets, tables, hashes, syncio]
 import ".." / models / tags
-import nimony_model, decls, programs, xints, semdata, symparser, renderer, builtintypes, typeprops,
+import nimony_model, decls, programs, xints, semdata, renderer, builtintypes, typeprops,
   typenav, typekeys, expreval, semos, derefs
+import ".." / lib / symparser
 
 const
   ParamSymName = "dest.0"
@@ -204,7 +206,7 @@ proc unravelObjField(c: var SynthesizeSerializerCtx; n: var Cursor; param: Token
   genStringCall(c, "writeNifRaw", " ")
   genStringCall(c, "writeNifSymbol", pool.syms[r.name.symId])
 
-  entryPoint(c, fieldType, readOnlyCursorAt(a, 0))
+  entryPoint(c, fieldType, readonlyCursorAt(a, 0))
   genParRiCall c
 
 proc unravelObjFields(c: var SynthesizeSerializerCtx; n: var Cursor; param: TokenBuf; needsDeref: bool; depth: int) =
@@ -447,7 +449,7 @@ proc entryPoint(c: var SynthesizeSerializerCtx; orig: TypeCursor; arg: Cursor) =
 
 proc unravel(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) =
   if isSomeStringType(orig):
-    entryPoint(c, orig, readOnlyCursorAt(param, 0))
+    entryPoint(c, orig, readonlyCursorAt(param, 0))
     return
 
   let typ = toTypeImpl orig
@@ -461,7 +463,7 @@ proc unravel(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) 
   of ArrayT:
     unravelArray c, typ, param
   of IT, UT, FT, CT, BoolT, DistinctT, RangetypeT:
-    entryPoint(c, typ, readOnlyCursorAt(param, 0))
+    entryPoint(c, typ, readonlyCursorAt(param, 0))
   of EnumT, OnumT, AnumT:
     unravelEnum c, typ, param
   of SetT:
@@ -479,7 +481,9 @@ proc genProcDecl(c: var SynthesizeSerializerCtx; sym: SymId; typ: TypeCursor) =
   freeze paramTreeA
 
   let procStart = c.dest.len
-  genProcHeader(c, c.dest, sym, typ)
+  var headerBuf = move c.dest
+  genProcHeader(c, headerBuf, sym, typ)
+  c.dest = move headerBuf
 
   copyIntoKind(c.dest, StmtsS, c.info):
     let beforeUnravel = c.dest.len

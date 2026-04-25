@@ -7,10 +7,15 @@
 #    distribution, for details about the copyright.
 #
 
-import std / [hashes, os, tables, assertions]
-
-include nifprelude
-import symparser
+import std / [hashes, os, tables, sets, assertions, syncio]
+when defined(nimony):
+  {.feature: "lenientnils".}
+  {.feature: "untyped".}
+else:
+  {.pragma: untyped.}
+include ".." / lib / nifprelude
+include ".." / lib / compat2
+import ".." / lib / symparser
 import ".." / models / tags
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof,
   typeprops, langmodes, typekeys, nifconfig]
@@ -200,7 +205,7 @@ proc trEnumField(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
 
   takeParRi dest, n
 
-proc genStringType(c: var EContext; dest: var TokenBuf; info: PackedLineInfo) {.used.} =
+proc genStringType(c: var EContext; dest: var TokenBuf; info: PackedLineInfo) =
   # now unused
   let s = pool.syms.getOrIncl(StringName)
   dest.add tagToken("type", info)
@@ -494,7 +499,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
     case n.typeKind
     of NoType, ErrT, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypekindT, OrdinalT:
       error c, "type expected but got: ", n
-    of IntT, UintT, FloatT, CharT, BoolT, AutoT, SymkindT, VarargsT:
+    of IntT, UIntT, FloatT, CharT, BoolT, AutoT, SymkindT, VarargsT:
       takeTree dest, n
     of MutT, LentT:
       dest.add tagToken("ptr", n.info)
@@ -805,7 +810,7 @@ proc trProcBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   else:
     trStmt c, dest, n, TraverseInner
 
-template moveToTopLevel(c: var EContext; dest: var TokenBuf; mode: TraverseMode; body: typed) =
+template moveToTopLevel(c: var EContext; dest: var TokenBuf; mode: TraverseMode; body: typed) {.untyped.} =
   if mode in {TraverseAll, TraverseInner}:
     var temp = createTokenBuf()
     swap dest, temp
@@ -1837,7 +1842,7 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
         if n.kind == StringLit:
           dest.add n
           inc n
-        elif n.exprkind == SufX:
+        elif n.exprKind == SufX:
           inc n
           assert n.kind == StringLit
           dest.add n
@@ -1927,7 +1932,10 @@ proc writeOutput(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo; 
   # Close the stmts wrapper
   result.addParRi()
 
-  writeFile result, destfileName, OnlyIfChanged
+  try:
+    writeFile result, destfileName, OnlyIfChanged
+  except:
+    quit "could not write file: " & destfileName
 
 proc initDynlib(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo) =
   # dynlib init:
@@ -2252,7 +2260,12 @@ proc trToplevel(c: var EContext; dest: var TokenBuf; n: var Cursor) =
 
 proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string; appType = appConsole) =
   let mp = splitModulePath(infile)
-  let dir = if outdir.len > 0: outdir elif mp.dir.len == 0: getCurrentDir() else: mp.dir
+  let dir =
+    if outdir.len > 0: outdir
+    elif mp.dir.len == 0:
+      try: getCurrentDir()
+      except: quit "cannot get current working directory"
+    else: mp.dir
   var c = EContext(dir: dir, ext: mp.ext, main: mp.name,
     nestedIn: @[(StmtsS, SymId(0))],
     typeCache: createTypeCache(),
@@ -2269,7 +2282,8 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
   var owningBuf = createTokenBuf(300)
 
   var c0 = setupProgram(infile, infile.changeModuleExt ".x.nif", owningBuf, true)
-  var dest = transform(c, c0, mp.name, c.bits)
+  let cBits = c.bits
+  var dest = transform(c, c0, mp.name, cBits)
 
   var n = beginRead(dest)
   let rootInfo = n.info
@@ -2294,7 +2308,8 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
 
   # Generate the init proc after all other code so NIFC places it last
   # in the C file, after all function definitions it may call.
-  genInitProc(c, cdest, rootInfo, c.importedModuleSuffixes)
+  let importedSuffixes = c.importedModuleSuffixes
+  genInitProc(c, cdest, rootInfo, importedSuffixes)
   cdest.add c.initBody
   genInitProcEnd(c, cdest, rootInfo)
 

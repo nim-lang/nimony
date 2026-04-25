@@ -14,8 +14,9 @@
 ## the `join` needs to be generated for every `ite` and `jumpelim``
 ## adds new `ite` statements.
 
-import std / [tables, sets, assertions]
+import std / [tables, hashes, sets, assertions, syncio]
 include ".." / lib / nifprelude
+include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls, programs, typenav]
 import ".." / hexer / [mover, passes]
 

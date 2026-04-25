@@ -6,7 +6,8 @@
 
 import std / [sets, syncio]
 include ".." / lib / nifprelude
-import semos, symparser, nifindexes, tooldirs, nifconfig, nimony_model
+import ".." / lib / [symparser, nifindexes, tooldirs]
+import semos, nifconfig, nimony_model
 
 proc lineInfoMatch*(info, toTrack: PackedLineInfo; tokenLen: int): bool =
   let i = unpack(pool.man, info)
