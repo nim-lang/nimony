@@ -86,12 +86,25 @@ type
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
     activeBorrows: seq[BorrowInfo]
     anumNarrows: HashSet[AnumNarrowInfo]
+    uncheckedAssignDepth: int
     verbose: bool                      # --verbose: dump NJ IR on init/contract
                                        # failures for easier debugging
     currentProcStart: Cursor           # cursor at the start of the proc whose
                                        # body we are currently analysing (used
                                        # for the --verbose dump)
     aliasOf: Table[SymId, (SymId, SymId)]   # map `let cs = obj.kind` to (narrower, discriminator)
+
+proc hasCastPragma(p: Cursor; name: string): bool =
+  result = false
+  if p.kind != ParLe or p.substructureKind != PragmasU: return
+  var n = p
+  inc n  # into pragmas
+  if n.kind != ParLe or n.pragmaKind != CastP: return
+  inc n  # into cast
+  let target = pool.strings.getOrIncl(name)
+  while n.kind != ParRi:
+    if n.kind == Ident and n.litId == target: return true
+    skip n
 
 proc hash(a: AnumNarrowInfo): Hash {.inline.} =
   result = hash(a.narrower) !& hash(a.discriminator)
@@ -825,6 +838,7 @@ proc findBranch(objType: Cursor; fld: SymId): SymId =
       skip n
 
 proc checkSumtypeFieldAccess(c: var NjvlContext; obj: Cursor; fld: SymId; info: PackedLineInfo) =
+  if c.uncheckedAssignDepth > 0: return
   let narrower = extractSymId(obj)
   if narrower == NoSymId: return
   let objType = lookupSymbol(c.typeCache, narrower)
@@ -987,6 +1001,7 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
 
 proc invalidateNarrowsFor(c: var NjvlContext; narrower: SymId) =
   ## Should be called for any mutation of value, narrower is basicly mutPath.path[0]
+  if c.uncheckedAssignDepth > 0: return
   var stale: seq[AnumNarrowInfo] = @[]
   for e in c.anumNarrows:
     if e.narrower == narrower:
@@ -1589,17 +1604,27 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
       skip n
     of PragmaxS:
       inc n
+      let hasUncheckedAssignDepthPragma = hasCastPragma(n, "uncheckedAssign")
       skip n # pragmas
+      if hasUncheckedAssignDepthPragma:
+        inc c.uncheckedAssignDepth
       while n.kind != ParRi:
         traverseStmt c, n
+      if hasUncheckedAssignDepthPragma:
+        dec c.uncheckedAssignDepth
       skipParRi n
     of NoStmt:
       if n.exprKind in CallKinds:
         analyseCall c, n
       elif n.exprKind == PragmaxX:
         inc n
+        let hasUncheckedAssignDepthPragma = hasCastPragma(n, "uncheckedAssign")
         skip n
+        if hasUncheckedAssignDepthPragma:
+          inc c.uncheckedAssignDepth
         traverseStmt c, n
+        if hasUncheckedAssignDepthPragma:
+          dec c.uncheckedAssignDepth
         skipParRi n
       elif n.exprKind in {DestroyX, CopyX, WasmovedX, SinkhX, TraceX}:
         inc n
@@ -1633,8 +1658,13 @@ proc traverseToplevel(c: var NjvlContext; n: var Cursor) =
     skipParRi n
   of PragmaxS:
     inc n
+    let hasUncheckedAssignDepthPragma = hasCastPragma(n, "uncheckedAssign")
     skip n
+    if hasUncheckedAssignDepthPragma:
+      inc c.uncheckedAssignDepth
     traverseToplevel c, n
+    if hasUncheckedAssignDepthPragma:
+      dec c.uncheckedAssignDepth
     skipParRi n
   of ProcS, FuncS, IteratorS, ConverterS, MethodS:
     inc c.nestedProcs

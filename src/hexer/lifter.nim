@@ -792,17 +792,24 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
     let bodyStart = c.dest.len
     copyIntoKind(c.dest, StmtsS, c.info):
       maybeAddResultDecl c, paramA, typ
-      let beforeUnravel = c.dest.len
-      if a.typeKind == RefT:
-        unravelRef(c, a, paramTreeA, paramTreeB)
-      else:
-        unravelDispatch(c, typ, paramTreeA, paramTreeB)
-        if c.dest.len == beforeUnravel:
-          var t = typ
-          if t.kind in {Symbol, SymbolDef} and hasRtti(t.symId):
-            discard "empty hooks are valid for RTTI'ed types"
+
+      copyIntoKind(c.dest, PragmaxS, c.info):
+        copyIntoKind(c.dest, PragmasS, c.info):
+          copyIntoKind(c.dest, CastP, c.info):
+            c.dest.add identToken(pool.strings.getOrIncl("uncheckedAssign"), c.info)
+
+        copyIntoKind(c.dest, StmtsS, c.info):
+          let beforeUnravel = c.dest.len
+          if a.typeKind == RefT:
+            unravelRef(c, a, paramTreeA, paramTreeB)
           else:
-            assert false, "empty hook created for " & toString(typ, false)
+            unravelDispatch(c, typ, paramTreeA, paramTreeB)
+            if c.dest.len == beforeUnravel:
+              var t = typ
+              if t.kind in {Symbol, SymbolDef} and hasRtti(t.symId):
+                discard "empty hooks are valid for RTTI'ed types"
+              else:
+                assert false, "empty hook created for " & toString(typ, false)
       maybeAddReturn c, paramA
 
     # If this hook ended up calling a `.error.` hook, the synthesized routine
