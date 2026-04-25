@@ -985,6 +985,15 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
         inc pc
     if nested == 0: break
 
+proc invalidateNarrowsFor(c: var NjvlContext; narrower: SymId) =
+  ## Should be called for any mutation of value, narrower is basicly mutPath.path[0]
+  var stale: seq[AnumNarrowInfo] = @[]
+  for e in c.anumNarrows:
+    if e.narrower == narrower:
+      stale.add e
+  for e in stale:
+    c.anumNarrows.excl e
+
 proc borrowCheckForCall(c: var NjvlContext; args: Cursor) =
   var mutPaths: seq[BorrowInfo] = @[]
   var immPaths: seq[BorrowInfo] = @[]
@@ -1025,6 +1034,11 @@ proc borrowCheckForCall(c: var NjvlContext; args: Cursor) =
           echo "mutPaths[j]: ", mutPaths[j]
         buildErr c, mutPaths[i].info, "mutable argument aliases with mutable parameter"
         break
+  # Mutation through any var/out arg invalidates case-object narrowings on
+  # the touched root (same reasoning as for stores).
+  for m in mutPaths:
+    if m.path.len > 0:
+      invalidateNarrowsFor(c, m.path[0])
 
 proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
   let callCursor = n
@@ -1118,12 +1132,7 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
   # we no longer know which branch is active.
   # it mean that obj = Bar() drop narrow info
   if destMutPath.path.len > 0:
-    var stale: seq[AnumNarrowInfo] = @[]
-    for e in c.anumNarrows:
-      if e.narrower == destMutPath.path[0]:
-        stale.add e
-    for e in stale:
-      c.anumNarrows.excl e
+    invalidateNarrowsFor(c, destMutPath.path[0])
 
   # Now handle the destination (Symbol or NJVL versioned variable (v symId version))
   let destSymId = extractSymIdForStore(n)
