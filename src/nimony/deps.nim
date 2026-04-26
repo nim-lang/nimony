@@ -434,15 +434,30 @@ proc processDeps(c: var DepContext; n: Cursor; current: Node) =
     while n.kind != ParRi:
       processDep c, n, current
 
+proc getLastModTime(path: string): int64 =
+  ## `getLastModificationTime` raises on transient I/O errors. We only use
+  ## the result for staleness comparisons, so any failure should fall through
+  ## to "rebuild needed" — returning -1 makes that automatic: `-1 > anything`
+  ## is false (so we don't skip rebuilds), and `-1 == -1` (when both paths
+  ## fail) is also not `>`, so we still rebuild.
+  try:
+    when defined(nimony):
+      result = getLastModificationTime(path)
+    else:
+      result = times.toUnix(getLastModificationTime(path))
+  except:
+    result = -1'i64
+
 proc execNifler(c: var DepContext; f: FilePair) =
   # File can be a .nif file, if so, we don't need to run nifler.
   if f.nimFile.endsWith(".nif"):
     return
   let output = c.config.parsedFile(f)
   let depsFile = c.config.depsFile(f)
+  let srcTime = getLastModTime(f.nimFile)
   if not c.forceRebuild and semos.fileExists(output) and
-      semos.fileExists(f.nimFile) and onRaiseQuit(getLastModificationTime(output)) > onRaiseQuit(getLastModificationTime(f.nimFile)) and
-      semos.fileExists(depsFile) and onRaiseQuit(getLastModificationTime(depsFile)) > onRaiseQuit(getLastModificationTime(f.nimFile)):
+      semos.fileExists(f.nimFile) and getLastModTime(output) > srcTime and
+      semos.fileExists(depsFile) and getLastModTime(depsFile) > srcTime:
     discard "nothing to do"
   else:
     let cmd = quoteShell(c.nifler) & " --portablePaths --deps parse " & quoteShell(f.nimFile) & " " &
