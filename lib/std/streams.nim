@@ -111,7 +111,6 @@ proc readAll*(s: Stream): string {.raises.} =
     if readBytes == 0:
       break
     let prevLen = result.len
-    result.setLen(prevLen + readBytes)
     let dest = beginStore(result, prevLen + readBytes, prevLen)
     copyMem(dest, addr buffer[0], readBytes)
     endStore(result)
@@ -445,8 +444,6 @@ proc ssWriteData(s: Stream; buffer: pointer;
   var ss = StringStream(s)
   if bufLen <= 0:
     return
-  if ss.pos + bufLen > ss.data.len:
-    setLen(ss.data, ss.pos + bufLen)
   let dest = beginStore(ss.data, ss.pos + bufLen, ss.pos)
   copyMem(dest, buffer, bufLen)
   endStore(ss.data)

@@ -57,7 +57,8 @@ when not defined(nimony):
         cast[ptr UncheckedArray[char]](addr(s[0]))
 
   when not declared(beginStore):
-    proc beginStore*(s: var string; ensuredLen: int; start = 0): ptr UncheckedArray[char] {.inline.} =
+    proc beginStore*(s: var string; newLen: int; start = 0): ptr UncheckedArray[char] {.inline.} =
+      s.setLen(newLen)
       if s.len == 0:
         nil
       else:
