@@ -336,20 +336,15 @@ func setLen*(s: var string; newLen: int) =
       if ssLen(s) == HeapSlen:
         zeroMem(cast[pointer](cast[uint](addr s.more.data[0]) + uint(curLen)), newLen - curLen)
   else:
-    if newLen <= PayloadSize:
-      let old = s.more
-      copyMem(inlinePtrV(s), addr old.data[0], newLen)
-      if newLen <= AlwaysAvail:
-        zeroSwarPad(s, newLen)  # clear stale prefix bytes for SWAR; sets slen
-      else:
-        setSSLen(s, newLen)
-    else:
-      let curLen = s.len
-      ensureUniqueLong(s, curLen, newLen)
-      if ssLen(s) == HeapSlen:
-        if newLen > curLen:
-          zeroMem(cast[pointer](cast[uint](addr s.more.data[0]) + uint(curLen)), newLen - curLen)
-        copyMem(inlinePtrV(s), addr s.more.data[0], AlwaysAvail)
+    # Currently long (slen > PayloadSize). Stay long — avoid transitioning back
+    # to inline which would free the heap buffer and cause alloc/dealloc
+    # ping-pong if the caller grows again.
+    let curLen = s.len
+    ensureUniqueLong(s, curLen, newLen)
+    if ssLen(s) == HeapSlen:
+      if newLen > curLen:
+        zeroMem(cast[pointer](cast[uint](addr s.more.data[0]) + uint(curLen)), newLen - curLen)
+      copyMem(inlinePtrV(s), addr s.more.data[0], AlwaysAvail)
 
 # ---- indexing ----
 
