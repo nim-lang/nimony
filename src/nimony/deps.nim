@@ -1102,7 +1102,7 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
   generateCachedConfigFile c, passC, passL
   let buildFilename = generateFrontendBuildFile(c, commandLineArgs, cmd)
   #echo "run with: nifmake run ", buildFilename
-  when defined(windows):
+  when defined(windows) and not defined(nimony):
     putEnv("CC", "gcc")
     putEnv("CXX", "g++")
   let nifmakeCommand = quoteShell(nifmake) &
