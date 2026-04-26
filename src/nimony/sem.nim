@@ -27,7 +27,11 @@ import contracts_njvl
 
 import ".." / gear2 / modnames
 import ".." / models / [tags, nifindex_tags]
-when defined(validatePasses):
+when not defined(nimony):
+  # The validator currently uses Nim idioms (slice operators, openArray
+  # tricks, etc.) that nimony does not implement yet, so the import is
+  # gated to host-Nim builds. Once tags_grammar / phase_validator compile
+  # under nimony, drop this guard.
   import ".." / validator / phase_validator
 
 proc semStmt(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: bool)
@@ -6319,35 +6323,29 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
   onRaiseQuit writeFile(deps, depsFile, OnlyIfChanged)
 
 proc pruneMatchedForwardDecls(c: var SemContext; dest: var TokenBuf) =
-  ## Remove `(proc :sym ...)` subtrees from `dest` for every symbol in
-  ## `c.matchedForwardDecls`. We can't do this during sem (positions held
-  ## by sibling forward decls would shift), so we wait until just before
-  ## the buffer is written and perform a single linear sweep.
+  ## Overwrite `(proc :sym ...)` subtrees with DotTokens for every symbol
+  ## in `c.matchedForwardDecls`. We can't splice during sem (positions
+  ## held by other unmatched forward decls would shift), so we do a
+  ## single in-place pass before serialisation. The DotTokens are valid
+  ## NIF stand-ins and `derefs.nim` strips them later in the pipeline.
   if c.matchedForwardDecls.len == 0: return
-  var src = 0
-  var dst = 0
-  while src < dest.len:
-    if dest[src].kind == ParLe and src + 1 < dest.len and
-        dest[src + 1].kind == SymbolDef and
-        dest[src + 1].symId in c.matchedForwardDecls:
-      # Skip the entire (proc :sym ...) subtree.
+  var i = 0
+  while i < dest.len:
+    if dest[i].kind == ParLe and i + 1 < dest.len and
+        dest[i + 1].kind == SymbolDef and
+        dest[i + 1].symId in c.matchedForwardDecls:
+      let info = dest[i].info
       var nesting = 0
-      while src < dest.len:
-        case dest[src].kind
+      while i < dest.len:
+        case dest[i].kind
         of ParLe: inc nesting
-        of ParRi:
-          dec nesting
-          if nesting == 0:
-            inc src # skip the closing ParRi as well
-            break
+        of ParRi: dec nesting
         else: discard
-        inc src
+        dest[i] = dotToken(info)
+        inc i
+        if nesting == 0: break
     else:
-      if dst != src:
-        dest[dst] = dest[src]
-      inc dst
-      inc src
-  dest.shrink dst
+      inc i
 
 proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
   pruneMatchedForwardDecls(c, dest)
@@ -6680,7 +6678,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   instantiateGenericHooks c, dest
   dest.addParRi()
 
-  if onRaiseQuit(reportErrors(dest)) == 0:
+  if reportErrors(dest) == 0:
     var afterSem = move dest
     if c.genericInnerProcs.len > 0:
       reorderInnerGenericInstances(c, afterSem)
@@ -6688,7 +6686,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     dest = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
     when true: #defined(enableContracts):
       var moreErrors = analyzeContractsNjvl(dest, c.thisModuleSuffix, c.g.config.verbose)
-      if onRaiseQuit(reporters.reportErrors(moreErrors)) > 0:
+      if reporters.reportErrors(moreErrors) > 0:
         quit 1
   else:
     quit 1
@@ -6752,11 +6750,11 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
   instantiateGenericHooks c, dest
   dest.addParRi()
 
-  if onRaiseQuit(reportErrors(dest)) == 0:
+  if reportErrors(dest) == 0:
     var afterSem = move dest
     when true:
       var moreErrors = analyzeContractsNjvl(afterSem, c.thisModuleSuffix, c.g.config.verbose)
-      if onRaiseQuit(reporters.reportErrors(moreErrors)) > 0:
+      if reporters.reportErrors(moreErrors) > 0:
         quit 1
     if c.genericInnerProcs.len > 0:
       reorderInnerGenericInstances(c, afterSem)
@@ -6766,13 +6764,12 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
     quit 1
 
 proc maybeValidatePostSem(dest: var TokenBuf; moduleName: string) =
-  ## When compiled with `-d:validatePasses`, validates that `dest`
-  ## conforms to the post-sem subset of `doc/tags.md`. Reports violations
-  ## on stderr and aborts with a non-zero exit status so that drift from
-  ## the spec is a hard error. The phase_validator import is gated on
-  ## the same define so that the (currently Nim-only) validator code is
-  ## not pulled into the bootstrap build of nimony itself.
-  when defined(validatePasses):
+  ## Validate that `dest` conforms to the post-sem subset of `doc/tags.md`.
+  ## Reports violations on stderr and aborts with a non-zero exit status so
+  ## that drift from the spec is a hard error. Active by default in host-Nim
+  ## builds; nimony's own bootstrap build skips this until the validator
+  ## (`phase_validator.nim` / `tags_grammar.nim`) compiles under nimony.
+  when not defined(nimony):
     let phase = postSemPhase()
     let violations = validate(dest, phase)
     if violations.len > 0:
@@ -6852,7 +6849,7 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
   # Post-processing and output for each module
   for i in 0..<modules.len:
     semcheckPostProcess modules[i].c, modules[i].dest
-    if onRaiseQuit(reportErrors(modules[i].dest)) == 0:
+    if reportErrors(modules[i].dest) == 0:
       maybeValidatePostSem modules[i].dest, modules[i].outfile
       writeOutput modules[i].c, modules[i].dest, modules[i].outfile
     else:
@@ -6888,7 +6885,7 @@ proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFla
     if c.pendingTypePlugins.len == 0 and c.pendingModulePlugins.len == 0: break
     handleTypePlugins c, dest
 
-  if onRaiseQuit(reportErrors(dest)) == 0:
+  if reportErrors(dest) == 0:
     maybeValidatePostSem dest, outfile
     writeOutput c, dest, outfile
   else:
