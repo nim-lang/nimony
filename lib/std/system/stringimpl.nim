@@ -202,15 +202,27 @@ func prepareMutation*(s: var string) {.inline.} =
 
 # ---- beginStore / endStore for bulk writes ----
 
-func beginStore*(s: var string; ensuredLen: int; start = 0): ptr UncheckedArray[char]
+func beginStore*(s: var string; newLen: int; start = 0): ptr UncheckedArray[char]
     {.inline, noSideEffect, raises: [], tags: [].} =
-  ## Prepares s for a bulk write. s.len must be >= ensuredLen beforehand.
-  ## Call endStore(s) afterwards to sync the hot prefix cache.
-  if ssLen(s) > PayloadSize:
-    ensureUniqueLong(s, s.more.fullLen, s.more.fullLen)
+  ## Sets s.len to `newLen` (new bytes are uninitialized), ensures unique
+  ## ownership, and returns a pointer to s[start] for bulk writing.
+  ## Call endStore(s) after writing to sync the inline cache.
+  ## To keep the current length, pass `s.len`.
+  let sl = ssLen(s)
+  let curLen = if sl > PayloadSize: s.more.fullLen else: sl
+  if newLen <= PayloadSize and sl <= PayloadSize:
+    # Stay inline/medium.
+    if newLen != curLen:
+      setSSLen(s, newLen)
+    result = cast[ptr UncheckedArray[char]](cast[uint](inlinePtrV(s)) + uint(start))
+  elif sl <= PayloadSize:
+    # Inline/medium → long.
+    transitionToLong(s, curLen, newLen)
     result = cast[ptr UncheckedArray[char]](cast[uint](addr s.more.data[0]) + uint(start))
   else:
-    result = cast[ptr UncheckedArray[char]](cast[uint](inlinePtrV(s)) + uint(start))
+    # Already long: resize within heap (no transition back to inline).
+    ensureUniqueLong(s, curLen, newLen)
+    result = cast[ptr UncheckedArray[char]](cast[uint](addr s.more.data[0]) + uint(start))
 
 func endStore*(s: var string) {.inline, noSideEffect, raises: [], tags: [].} =
   ## Syncs the hot prefix cache after a bulk write via beginStore.
