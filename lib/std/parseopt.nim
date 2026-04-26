@@ -43,9 +43,13 @@ func initOptParser*(): OptParser =
 
 func initOptParser*(cmdLine: sink seq[string]): OptParser =
   ## Parse the explicit `cmdLine` instead of the process arguments. Useful
-  ## for re-parsing options collected from a `.args` file.
-  OptParser(pos: 0, inShortState: false, idx: 0, kind: cmdEnd, key: "", val: "",
-            current: "", cmdLine: cmdLine, useCmdLine: true)
+  ## for re-parsing options collected from a `.args` file. When `cmdLine`
+  ## is empty, falls back to the process argv (matches Nim's `std/parseopt`).
+  if cmdLine.len == 0:
+    result = initOptParser()
+  else:
+    result = OptParser(pos: 0, inShortState: false, idx: 0, kind: cmdEnd, key: "", val: "",
+              current: "", cmdLine: cmdLine, useCmdLine: true)
 
 func isKeySep(c: char): bool {.inline.} = c == ':' or c == '='
 
