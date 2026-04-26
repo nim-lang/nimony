@@ -14,13 +14,17 @@
 
 ]#
 
-import std/[os, tables, sets, syncio, assertions, strutils, times]
-import semos, nifconfig, nimony_model, nifindexes, symparser
-import ".." / gear2 / modnames, semdata, langmodes
-import ".." / lib / [tooldirs, platform]
+when defined(nimony):
+  {.feature: "lenientnils".}
+  {.feature: "untyped".}
+import std/[os, tables, sets, syncio, hashes, assertions, strutils, times, formatfloat, dirs, paths]
+import semos, nifconfig, nimony_model, semdata, langmodes
+import ".." / gear2 / modnames
+import ".." / lib / [tooldirs, platform, nifindexes, symparser]
 import ".." / models / nifindex_tags
 
-include nifprelude
+include ".." / lib / nifprelude
+include ".." / lib / compat2
 
 type
   FilePair = object
@@ -226,15 +230,94 @@ proc importCyclicModule(c: var DepContext; f1: string; info: PackedLineInfo;
   traverseDeps c, p, current
   current.active = oldActive
 
+proc evalDepCond(config: NifConfig; n: Cursor): bool =
+  ## Evaluate a `when`-condition expression carried by a `(when ...)` import
+  ## marker. Recognises `defined(IDENT)`, boolean `not`/`and`/`or`, the bool
+  ## literals `true`/`false`, and falls back to *true* for anything more
+  ## complex — the conservative choice, since a false negative here removes
+  ## a valid dep from the build graph while a false positive only schedules
+  ## a file that the semantic checker will then ignore.
+  var n = n
+  if n.kind == ParLe:
+    case n.exprKind
+    of CallX, CmdX, CallstrlitX, InfixX, PrefixX:
+      inc n
+      if n.kind != Ident:
+        return true
+      let head = pool.strings[n.litId]
+      inc n
+      case head
+      of "defined":
+        if n.kind == Ident:
+          result = config.isDefined(pool.strings[n.litId])
+        elif n.kind == Symbol:
+          var name = pool.syms[n.symId]
+          extractBasename(name)
+          result = config.isDefined(name)
+        else:
+          result = true
+      of "not":
+        result = not evalDepCond(config, n)
+      of "and":
+        result = evalDepCond(config, n)
+        skip n
+        if result: result = evalDepCond(config, n)
+      of "or":
+        result = evalDepCond(config, n)
+        skip n
+        if not result: result = evalDepCond(config, n)
+      else:
+        result = true  # unknown call — assume true
+    of NotX:
+      inc n
+      result = not evalDepCond(config, n)
+    of AndX:
+      inc n
+      result = evalDepCond(config, n)
+      skip n
+      if result: result = evalDepCond(config, n)
+    of OrX:
+      inc n
+      result = evalDepCond(config, n)
+      skip n
+      if not result: result = evalDepCond(config, n)
+    else:
+      result = true  # unknown shape — assume true
+  elif n.kind == Ident:
+    case pool.strings[n.litId]
+    of "true": result = true
+    of "false": result = false
+    else: result = true  # bare identifier we cannot evaluate — assume true
+  else:
+    result = true
+
+proc whenMarkerHolds(c: DepContext; x: Cursor): bool =
+  ## `(when COND COND ...)` — implicit AND across the children. All must hold
+  ## for the import to be live. An empty `(when)` (legacy form, no children)
+  ## is treated as live so older deps files keep working.
+  assert x.kind == ParLe and x.stmtKind == WhenS
+  var inner = x
+  inc inner # skip the `when` tag
+  while inner.kind != ParRi:
+    if not evalDepCond(c.config, inner):
+      return false
+    skip inner
+  result = true
+
 proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   let info = it.info
   var x = it
   skip it
   inc x, SkipTag # skip the `import`
-  # Conditional imports carry a (when) marker child; skip it and still add the
-  # file to the dependency graph so cross-compilation (e.g. --os:windows) sees
-  # all potential dependencies. importSingleFile already ignores missing files.
-  if x.stmtKind == WhenS: skip x, SkipCond
+  # Conditional imports carry a `(when COND...)` marker child. If we can
+  # statically prove the condition is false against the active set of
+  # `defined(...)` symbols, skip the import entirely. Otherwise step over
+  # the marker and process the import normally — the conservative direction
+  # for cross-compilation and for conditions we cannot evaluate.
+  if x.stmtKind == WhenS:
+    if not whenMarkerHolds(c, x):
+      return
+    skip x, SkipCond
   while x.kind != ParRi:
     var isCyclic = false
     if x.kind == ParLe and x.exprKind == PragmaxX:
@@ -274,7 +357,10 @@ proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
   var x = it
   skip it
   inc x, SkipTag # skip the tag
-  if x.stmtKind == WhenS: skip x, SkipCond  # skip conditional marker, same as processImport
+  if x.stmtKind == WhenS:
+    if not whenMarkerHolds(c, x):
+      return
+    skip x, SkipCond  # step past conditional marker, same as processImport
   var files: seq[ImportedFilename] = @[]
   var hasError = false
   filenameVal(x, files, hasError, allowAs = true)
@@ -348,15 +434,30 @@ proc processDeps(c: var DepContext; n: Cursor; current: Node) =
     while n.kind != ParRi:
       processDep c, n, current
 
+proc getLastModTime(path: string): int64 =
+  ## `getLastModificationTime` raises on transient I/O errors. We only use
+  ## the result for staleness comparisons, so any failure should fall through
+  ## to "rebuild needed" — returning -1 makes that automatic: `-1 > anything`
+  ## is false (so we don't skip rebuilds), and `-1 == -1` (when both paths
+  ## fail) is also not `>`, so we still rebuild.
+  try:
+    when defined(nimony):
+      result = getLastModificationTime(path)
+    else:
+      result = times.toUnix(getLastModificationTime(path))
+  except:
+    result = -1'i64
+
 proc execNifler(c: var DepContext; f: FilePair) =
   # File can be a .nif file, if so, we don't need to run nifler.
   if f.nimFile.endsWith(".nif"):
     return
   let output = c.config.parsedFile(f)
   let depsFile = c.config.depsFile(f)
+  let srcTime = getLastModTime(f.nimFile)
   if not c.forceRebuild and semos.fileExists(output) and
-      semos.fileExists(f.nimFile) and getLastModificationTime(output) > getLastModificationTime(f.nimFile) and
-      semos.fileExists(depsFile) and getLastModificationTime(depsFile) > getLastModificationTime(f.nimFile):
+      semos.fileExists(f.nimFile) and getLastModTime(output) > srcTime and
+      semos.fileExists(depsFile) and getLastModTime(depsFile) > srcTime:
     discard "nothing to do"
   else:
     let cmd = quoteShell(c.nifler) & " --portablePaths --deps parse " & quoteShell(f.nimFile) & " " &
@@ -397,7 +498,7 @@ proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
 proc rootPath(c: DepContext): string =
   # XXX: Relative paths in build files are relative to current working directory, not the location of the build file.
   result = absoluteParentDir(c.rootNode.files[0].nimFile)
-  result = relativePath(result, os.getCurrentDir())
+  result = onRaiseQuit relativePath(result, onRaiseQuit os.getCurrentDir())
 
 proc defineNiflerCmd(b: var Builder; nifler: string) =
   b.withTree "cmd":
@@ -575,7 +676,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
         b.withTree "output":
           b.addStrLit c.config.exeFile(c.rootNode.files[0], backend)
 
-      objFiles.clear()
+      objFiles = initHashSet[string]()
       # Build object files from C files with custom args
       for cfile in c.toBuild:
         let obj = c.config.nifcachePath / backend / cfile.obj
@@ -788,21 +889,22 @@ proc generateCachedConfigFile(c: DepContext; passC, passL: string) =
                   " --passC:" & passC & " --passL:" & passL
 
   let needUpdate = if semos.fileExists(path) and not c.forceRebuild:
-                     configStr != readFile path
+                     configStr != onRaiseQuit(readFile(path))
                    else:
                      true
   if needUpdate:
-    writeFile path, configStr
+    onRaiseQuit writeFile(path, configStr)
 
 proc initDepContext(config: sink NifConfig; project, nifler: string; isFinal, forceRebuild: bool; moduleFlags: set[ModuleFlag]; cmd: Command): DepContext =
   result = DepContext(nifler: nifler, config: config, rootNode: nil, includeStack: @[],
     forceRebuild: forceRebuild, moduleFlags: moduleFlags, nimsem: findTool("nimsem"),
     cmd: cmd, isGeneratingFinal: isFinal)
   let p = result.toPair(project)
-  result.rootNode = Node(files: @[p], id: 0, parent: -1, active: 0, isSystem: IsSystem in moduleFlags)
-  result.nodes.add result.rootNode
+  let root = Node(files: @[p], id: 0, parent: -1, active: 0, isSystem: IsSystem in moduleFlags)
+  result.rootNode = root
+  result.nodes.add root
   result.processedModules[p.modname] = 0
-  traverseDeps result, p, result.rootNode
+  traverseDeps result, p, root
 
 proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFiles: seq[string];
     forceRebuild, silentMake: bool; moduleFlags: set[ModuleFlag]) =
@@ -899,7 +1001,9 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
           b.addStrLit writenifHexedFile
 
 
-    let allRequiredStdlibModules = toHashSet(allNifFiles)
+    var allRequiredStdlibModules = initHashSet[string]()
+    for f in allNifFiles:
+      allRequiredStdlibModules.incl f
 
     for depNifFile in dependencyNifFiles:
       let depName = depNifFile.splitModulePath.name
@@ -998,7 +1102,7 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
   generateCachedConfigFile c, passC, passL
   let buildFilename = generateFrontendBuildFile(c, commandLineArgs, cmd)
   #echo "run with: nifmake run ", buildFilename
-  when defined(windows):
+  when defined(windows) and not defined(nimony):
     putEnv("CC", "gcc")
     putEnv("CXX", "g++")
   let nifmakeCommand = quoteShell(nifmake) &
@@ -1014,7 +1118,10 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
     # https://github.com/nim-lang/nimony/issues/985
     c = initDepContext(config, project, nifler, true, forceRebuild, moduleFlags, cmd)
     let backend = c.config.nifcachePath / c.rootNode.files[0].modname
-    createDir(backend)
+    when defined(nimony):
+      onRaiseQuit createDir(path(backend))
+    else:
+      onRaiseQuit createDir(Path(backend))
     let buildFinalFilename = generateFinalBuildFile(c, commandLineArgsNifc, passC, passL)
     exec nifmakeCommand & quoteShell(buildFinalFilename)
     if cmd == DoRun:

@@ -116,7 +116,12 @@ type
     b, deps: Builder
     portablePaths: bool
     depsEnabled, lineInfoEnabled: bool
-    inWhen: int
+    whenCondStack: seq[PNode]
+      ## Conjunction of `when`-branch conditions covering the current AST
+      ## traversal point. Pushed when entering an elif branch's body, popped
+      ## on exit. Imports emitted while this stack is non-empty get the
+      ## conditions written into their `(when ...)` marker in the deps file
+      ## so the dep analyzer can evaluate them and skip dead branches.
 
 proc absLineInfo(i: TLineInfo; c: var TranslationContext) =
   var fp = toFullPath(c.conf, i.fileIndex)
@@ -645,9 +650,14 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
 
       relLineInfo(n, nil, c)
       c.b.addTree(nodeKindTranslation(n.kind))
-      if c.inWhen > 0:
-        # mark it as a conditional dependency:
-        c.b.addKeyw "when"
+      if c.whenCondStack.len > 0:
+        # Conditional dependency: emit `(when COND...)` so the dep analyzer
+        # can evaluate the condition against the active set of `defined(...)`
+        # symbols and skip the import when the branch is statically dead.
+        c.b.addTree "when"
+        for cond in c.whenCondStack:
+          toNif(cond, nil, c)
+        c.b.endTree()
       for i in 0..<n.len:
         toNif(n[i], nil, c)
       c.b.endTree()
@@ -681,13 +691,34 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       toNif(n[i], n, c)
     c.b.endTree()
   of nkWhenStmt:
-    inc c.inWhen
     relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
+    # Walk children manually so we can push each branch's condition onto
+    # `whenCondStack` before recursing into the body. Imports nested in the
+    # body then carry the condition into the deps file. We deliberately do
+    # NOT track an `else` branch's "negate priors" condition: an else with
+    # an import always shows up in the dep schedule, which is the
+    # conservative-safe direction for cross-compilation.
     for i in 0..<n.len:
-      toNif(n[i], n, c)
+      let branch = n[i]
+      case branch.kind
+      of nkElifBranch, nkElifExpr:
+        relLineInfo(branch, n, c)
+        c.b.addTree(nodeKindTranslation(branch.kind))
+        if branch.len >= 2:
+          toNif(branch[0], branch, c)  # condition (also serialised here)
+          c.whenCondStack.add branch[0]
+          toNif(branch[1], branch, c)  # body
+          discard c.whenCondStack.pop()
+          for j in 2 ..< branch.len:
+            toNif(branch[j], branch, c)
+        else:
+          for j in 0 ..< branch.len:
+            toNif(branch[j], branch, c)
+        c.b.endTree()
+      else:
+        toNif(branch, n, c)
     c.b.endTree()
-    dec c.inWhen
   of nkCast:
     relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))

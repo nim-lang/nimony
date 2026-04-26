@@ -741,6 +741,49 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skipParRi n
     dec nestedExpr
 
+proc trTupleAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## Lower `(a, b, ...) = rhs` (LHS is `tup`/`tupconstr`) into:
+  ##   (stmts (var :tmp <tupleType> <rhs>)
+  ##          (asgn a (tupat tmp 0))
+  ##          (asgn b (tupat tmp 1))
+  ##          ...)
+  ## NIFC rejects the naive `(asgn (oconstr ...) rhs)` because an oconstr
+  ## is not a valid L-value, so the destructuring assignment must be
+  ## broken apart before codegen sees it.
+  let info = n.info
+  inc n # past `asgn` tag
+  let lhsTagInfo = n.info
+  inc n # past LHS `tup`/`tupconstr` tag
+  # The tuple constructor's first child is the type (a `(tuple ...)`
+  # subtree); the remaining children are the actual element expressions.
+  let tupleType = n
+  skip n
+  var lhsItems: seq[Cursor] = @[]
+  while n.kind != ParRi:
+    lhsItems.add n
+    skip n
+  inc n # past LHS closing ParRi
+
+  dest.addParLe StmtsS, info
+
+  let tmp = declareTemp(c, dest, tupleType, lhsTagInfo)
+  trExpr c, dest, n   # serialise the RHS as the var's initial value
+  dest.addParRi()     # close `(var ...)`
+
+  skipParRi n         # close original `(asgn ...)`
+
+  for i in 0 ..< lhsItems.len:
+    var lhsLocal = lhsItems[i]
+    dest.addParLe AsgnS, info
+    tr c, dest, lhsLocal
+    dest.addParLe TupatX, info
+    dest.add symToken(tmp, info)
+    dest.addIntLit(i, info)
+    dest.addParRi() # close tupat
+    dest.addParRi() # close asgn
+
+  dest.addParRi()     # close stmts
+
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   case n.kind
   of DotToken, UnknownToken, EofToken, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StringLit:
@@ -800,7 +843,16 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         c.typeCache.closeScope()
       of StmtsS:
         trSons(c, dest, n, isTopScope = isTopScope)
-      of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS, RetS,
+      of AsgnS:
+        # Tuple-LHS assignments need to be split into per-field stores;
+        # otherwise NIFC chokes on `(asgn (tupconstr ...) ...)`.
+        var peek = n
+        inc peek
+        if peek.exprKind in {TupX, TupconstrX}:
+          trTupleAsgn(c, dest, n)
+        else:
+          trSons(c, dest, n)
+      of CallS, CmdS, BlockS, IfS, WhenS, WhileS, RetS,
           YldS, PragmaxS, ImportasS, ExportexceptS, DiscardS,
           TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
           CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS,

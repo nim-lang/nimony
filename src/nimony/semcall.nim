@@ -147,7 +147,7 @@ proc addUnique(c: var FnCandidates; x: FnCandidate) =
   if not containsOrIncl(c.marker, x.sym):
     c.a.add x
 
-iterator findConceptsInConstraint(typ: Cursor): Cursor =
+iterator findConceptsInConstraint(typ: Cursor): Cursor {.sideEffect.} =
   var typ = typ
   var nested = 0
   while true:
@@ -224,8 +224,8 @@ proc addTypeboundOps(c: var SemContext; fn: StrId; s: SymId; cands: var FnCandid
         if routine.kind in RoutineKinds and hasAttachedParam(routine.params, s):
           cands.addUnique FnCandidate(kind: routine.kind, sym: topLevelSym, typ: routine.params)
     else:
-      if (s, fn) in c.cachedTypeboundOps:
-        for fnSym in c.cachedTypeboundOps[(s, fn)]:
+      if c.cachedTypeboundOps.hasKey((s, fn)):
+        for fnSym in c.cachedTypeboundOps.getOrQuit((s, fn)):
           let res = tryLoadSym(fnSym)
           assert res.status == LacksNothing
           let routine = asRoutine(res.decl)
@@ -572,7 +572,8 @@ proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, a
   if root == SymId(0) and LenientConvertersFeature notin c.features: return
   var converters = c.converters.getOrDefault(root)
   if root != SymId(0) and LenientConvertersFeature in c.features:
-    converters.add c.converters.getOrDefault(SymId(0))
+    for conv in c.converters.getOrDefault(SymId(0)):
+      converters.add conv
   var convMatches: seq[Match] = @[]
   for conv in items converters:
     # f(a)
