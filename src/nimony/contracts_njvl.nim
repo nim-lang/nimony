@@ -1242,7 +1242,8 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
 
   let (narrower, discriminator, tag) = extractEqNarrowing(c, condStart)
   if narrower != NoSymId:
-    var s = toHashSet([tag])
+    var s = initHashSet[SymId]()
+    s.incl tag
     narrowTo(c, narrower, discriminator, s, condStart.info)
   traverseStmt c, n
   if cond.sym != NoSymId:
