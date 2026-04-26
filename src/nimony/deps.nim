@@ -14,13 +14,17 @@
 
 ]#
 
-import std/[os, tables, sets, syncio, assertions, strutils, times]
-import semos, nifconfig, nimony_model, nifindexes, symparser
-import ".." / gear2 / modnames, semdata, langmodes
-import ".." / lib / [tooldirs, platform]
+when defined(nimony):
+  {.feature: "lenientnils".}
+  {.feature: "untyped".}
+import std/[os, tables, sets, syncio, hashes, assertions, strutils, times, formatfloat, dirs, paths]
+import semos, nifconfig, nimony_model, semdata, langmodes
+import ".." / gear2 / modnames
+import ".." / lib / [tooldirs, platform, nifindexes, symparser]
 import ".." / models / nifindex_tags
 
-include nifprelude
+include ".." / lib / nifprelude
+include ".." / lib / compat2
 
 type
   FilePair = object
@@ -437,8 +441,8 @@ proc execNifler(c: var DepContext; f: FilePair) =
   let output = c.config.parsedFile(f)
   let depsFile = c.config.depsFile(f)
   if not c.forceRebuild and semos.fileExists(output) and
-      semos.fileExists(f.nimFile) and getLastModificationTime(output) > getLastModificationTime(f.nimFile) and
-      semos.fileExists(depsFile) and getLastModificationTime(depsFile) > getLastModificationTime(f.nimFile):
+      semos.fileExists(f.nimFile) and onRaiseQuit(getLastModificationTime(output)) > onRaiseQuit(getLastModificationTime(f.nimFile)) and
+      semos.fileExists(depsFile) and onRaiseQuit(getLastModificationTime(depsFile)) > onRaiseQuit(getLastModificationTime(f.nimFile)):
     discard "nothing to do"
   else:
     let cmd = quoteShell(c.nifler) & " --portablePaths --deps parse " & quoteShell(f.nimFile) & " " &
@@ -479,7 +483,7 @@ proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
 proc rootPath(c: DepContext): string =
   # XXX: Relative paths in build files are relative to current working directory, not the location of the build file.
   result = absoluteParentDir(c.rootNode.files[0].nimFile)
-  result = relativePath(result, os.getCurrentDir())
+  result = onRaiseQuit relativePath(result, onRaiseQuit os.getCurrentDir())
 
 proc defineNiflerCmd(b: var Builder; nifler: string) =
   b.withTree "cmd":
@@ -657,7 +661,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
         b.withTree "output":
           b.addStrLit c.config.exeFile(c.rootNode.files[0], backend)
 
-      objFiles.clear()
+      objFiles = initHashSet[string]()
       # Build object files from C files with custom args
       for cfile in c.toBuild:
         let obj = c.config.nifcachePath / backend / cfile.obj
@@ -870,21 +874,22 @@ proc generateCachedConfigFile(c: DepContext; passC, passL: string) =
                   " --passC:" & passC & " --passL:" & passL
 
   let needUpdate = if semos.fileExists(path) and not c.forceRebuild:
-                     configStr != readFile path
+                     configStr != onRaiseQuit(readFile(path))
                    else:
                      true
   if needUpdate:
-    writeFile path, configStr
+    onRaiseQuit writeFile(path, configStr)
 
 proc initDepContext(config: sink NifConfig; project, nifler: string; isFinal, forceRebuild: bool; moduleFlags: set[ModuleFlag]; cmd: Command): DepContext =
   result = DepContext(nifler: nifler, config: config, rootNode: nil, includeStack: @[],
     forceRebuild: forceRebuild, moduleFlags: moduleFlags, nimsem: findTool("nimsem"),
     cmd: cmd, isGeneratingFinal: isFinal)
   let p = result.toPair(project)
-  result.rootNode = Node(files: @[p], id: 0, parent: -1, active: 0, isSystem: IsSystem in moduleFlags)
-  result.nodes.add result.rootNode
+  let root = Node(files: @[p], id: 0, parent: -1, active: 0, isSystem: IsSystem in moduleFlags)
+  result.rootNode = root
+  result.nodes.add root
   result.processedModules[p.modname] = 0
-  traverseDeps result, p, result.rootNode
+  traverseDeps result, p, root
 
 proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFiles: seq[string];
     forceRebuild, silentMake: bool; moduleFlags: set[ModuleFlag]) =
@@ -981,7 +986,9 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
           b.addStrLit writenifHexedFile
 
 
-    let allRequiredStdlibModules = toHashSet(allNifFiles)
+    var allRequiredStdlibModules = initHashSet[string]()
+    for f in allNifFiles:
+      allRequiredStdlibModules.incl f
 
     for depNifFile in dependencyNifFiles:
       let depName = depNifFile.splitModulePath.name
@@ -1096,7 +1103,10 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
     # https://github.com/nim-lang/nimony/issues/985
     c = initDepContext(config, project, nifler, true, forceRebuild, moduleFlags, cmd)
     let backend = c.config.nifcachePath / c.rootNode.files[0].modname
-    createDir(backend)
+    when defined(nimony):
+      onRaiseQuit createDir(path(backend))
+    else:
+      onRaiseQuit createDir(Path(backend))
     let buildFinalFilename = generateFinalBuildFile(c, commandLineArgsNifc, passC, passL)
     exec nifmakeCommand & quoteShell(buildFinalFilename)
     if cmd == DoRun:

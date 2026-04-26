@@ -752,6 +752,9 @@ const BootstrapModules = [
   # Tier 18 tip. `sem.nim` subsumes contracts_njvl and exprexec via its
   # import set, so the Tier 16 leaves are implicitly covered by this entry.
   "src/nimony/sem.nim",
+
+  # Tier 19 tip. Peer of `sem.nim`; both feed `nimony/nimsem.nim` at Tier 20.
+  "src/nimony/deps.nim",
 ]
 
 # Modules whose `isMainModule` block should also be executed after compilation.

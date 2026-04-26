@@ -20,7 +20,6 @@ type
   Reporter* = object
     verbosity*: int
     noColors*: bool
-    assertOnError*: bool
     warnings*: int
     errors*: int
     reportedErrSources: HashSet[PackedLineInfo]
@@ -67,14 +66,9 @@ proc warn*(c: var Reporter; p, arg: string) =
   # writeMessage c, Warning, p, arg
   inc c.warnings
 
-proc error*(c: var Reporter; p, arg: string) {.canRaise.} =
+proc error*(c: var Reporter; p, arg: string) =
   when defined(debug) and not defined(nimony):
     writeStackTrace()
-  if c.assertOnError:
-    when defined(nimony):
-      raise ValueError
-    else:
-      raise newException(AssertionDefect, p & ": " & arg)
   c.message(Error, p, arg)
   inc c.errors
 
@@ -119,7 +113,7 @@ proc infoToStr*(info: PackedLineInfo): string =
     result = pool.files[rawInfo.file].shortenDir()
     result.add "(" & $rawInfo.line & ", " & $(rawInfo.col+1) & ")"
 
-proc reportErrors*(dest: var TokenBuf): int {.canRaise.} =
+proc reportErrors*(dest: var TokenBuf): int =
   let errTag = pool.tags.getOrIncl("err")
   var i = 0
   var r = Reporter(verbosity: 2, noColors: not useColors())
