@@ -73,7 +73,10 @@ proc forked*(s: seq[SearchNode]; i: int): ForkedResult =
 
 proc emitLinearSearch(a: openArray[Key]; dest: var seq[SearchNode]) =
   var d = SearchNode(kind: LinearSearch, choices: @[])
-  for x in a: d.choices.add x
+  case d.kind
+  of LinearSearch:
+    for x in a: d.choices.add x
+  else: discard
   dest.add d
 
 proc splitImpl(a: openArray[Key]; dest: var seq[SearchNode]) =

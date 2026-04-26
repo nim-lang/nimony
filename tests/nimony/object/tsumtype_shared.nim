@@ -16,17 +16,32 @@ let c: Shape = Circle(x: 1.0, y: 2.0, color: 0xFF0000, radius: 5.0)
 assert c.x == 1.0
 assert c.y == 2.0
 assert c.color == 0xFF0000
-assert c.radius == 5.0
+
+case c
+of Circle:  
+  assert c.radius == 5.0
+else: discard
 
 let r: Shape = Rectangle(x: 0.0, y: 0.0, color: 0x00FF00, width: 10.0, height: 20.0)
 assert r.x == 0.0
-assert r.width == 10.0
-assert r.height == 20.0
+assert r.y == 0.0
+assert r.color == 0x00FF00
+
+case r
+of Rectangle:
+  assert r.width == 10.0
+  assert r.height == 20.0
+else: discard
 
 let t: Shape = Triangle(x: 0.0, y: 0.0, color: 0x0000FF, x2: 3.0, y2: 0.0, x3: 0.0, y3: 4.0)
+assert t.x == 0.0
+assert t.y == 0.0
 assert t.color == 0x0000FF
-assert t.x2 == 3.0
-assert t.y3 == 4.0
+case t
+of Triangle:
+  assert t.x2 == 3.0
+  assert t.y3 == 4.0
+else: discard
 
 proc area(s: Shape): float =
   case s

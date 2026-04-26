@@ -47,6 +47,18 @@ type
     mode: BorrowableCheck
     path: seq[SymId]  ## root :: field1 :: field2 :: ...
     info: PackedLineInfo
+  
+  AnumNarrowInfo = object
+    # rules:
+    # allowuse = candidates.len > 0 otherwise ambigious
+    # ObjConstr => candidates = possibleCandidates
+    # of branch => candidates = @[branch]
+    # if branch => restrict candidates
+    narrower: SymId      # variable symbol the narrowing is bound to (e.g. `obj.0`)
+    discriminator: SymId # discriminator field of the case-object (e.g. `kind.0`)
+    candidates: HashSet[SymId]
+    # TODO: maybe adding possibleCandidates will cheaper
+    info: PackedLineInfo
 
   NjvlContext = object
     facts: Facts           # From inferle.nim - tracks le/notnil facts
@@ -73,11 +85,35 @@ type
                                         # leaving-path asymmetries)
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
     activeBorrows: seq[BorrowInfo]
+    anumNarrows: HashSet[AnumNarrowInfo]
+    uncheckedAssignDepth: int
     verbose: bool                      # --verbose: dump NJ IR on init/contract
                                        # failures for easier debugging
     currentProcStart: Cursor           # cursor at the start of the proc whose
                                        # body we are currently analysing (used
                                        # for the --verbose dump)
+    aliasOf: Table[SymId, (SymId, SymId)]   # map `let cs = obj.kind` to (narrower, discriminator)
+
+proc hasCastPragma(p: Cursor; name: string): bool =
+  result = false
+  if p.kind != ParLe or p.substructureKind != PragmasU: return
+  var n = p
+  inc n  # into pragmas
+  if n.kind != ParLe or n.pragmaKind != CastP: return
+  inc n  # into cast
+  if n.kind != ParLe or n.substructureKind != PragmasU: return
+  inc n  # into pragmas
+  let target = pool.strings.getOrIncl(name)
+  while n.kind != ParRi:
+    if n.kind == Ident and n.litId == target: return true
+    skip n
+
+func hash(a: AnumNarrowInfo): Hash {.inline.} =
+  result = hash(a.narrower) !& hash(a.discriminator)
+  result = !$result
+
+func `==`(a, b: AnumNarrowInfo): bool {.inline.} =
+  a.narrower == b.narrower and a.discriminator == b.discriminator
 
 proc dumpCurrentProc(c: var NjvlContext; info: PackedLineInfo; msg: string) =
   ## Dump the NJ IR of the proc currently under analysis to stderr. Used
@@ -692,6 +728,148 @@ proc checkReq(c: var NjvlContext; paramMap: Table[SymId, int]; req, call: Cursor
 
 # --- Expression analysis ---
 
+proc buildAnumInfos(objType: Cursor; narrower: SymId;
+                    info: PackedLineInfo): seq[AnumNarrowInfo] =
+  result = @[]
+  var t = objType
+  while t.kind == Symbol:
+    let r = tryLoadSym(t.symId)
+    if r.status != LacksNothing: return
+    t = asTypeDecl(r.decl).body
+  if t.typeKind != ObjectT: return
+  inc t
+  skip t
+  while t.kind != ParRi:
+    if t.substructureKind == CaseU:
+      inc t
+      var entry = AnumNarrowInfo(narrower: narrower, info: info)
+      if t.substructureKind == FldU:
+        entry.discriminator = asLocal(t).name.symId
+        skip t
+      while t.substructureKind == OfU:
+        inc t
+        if t.substructureKind == RangesU:
+          inc t
+          while t.kind != ParRi:
+            if t.kind == Symbol: entry.candidates.incl t.symId
+            skip t
+          inc t
+        skip t # (stmts ...)
+        inc t # )
+      result.add entry
+    skip t
+
+proc extractEqNarrowing(c: NjvlContext; cond: Cursor): (SymId, SymId, SymId) =
+  ## Process `(eq T <alias> Tag)`
+  result = (NoSymId, NoSymId, NoSymId)
+  if cond.kind != ParLe or cond.exprKind != EqX:
+    return
+  var r = cond
+  inc r
+  skip r
+  let lhs = extractSymId(r)
+  skip r
+  let tag =
+    if r.kind == Symbol: r.symId
+    else: NoSymId
+  if lhs == NoSymId or tag == NoSymId or lhs notin c.aliasOf:
+    return
+  let (narrower, discriminator) = c.aliasOf.getOrDefault(lhs)
+  result = (narrower, discriminator, tag)
+
+proc narrowTo(c: var NjvlContext; narrower, discriminator: SymId; cands: HashSet[SymId]; info: PackedLineInfo) =
+  # erase old narrow for narrower and discriminator
+  c.anumNarrows.excl AnumNarrowInfo(narrower: narrower, discriminator: discriminator)
+  c.anumNarrows.incl AnumNarrowInfo(narrower: narrower, discriminator: discriminator,
+                                    candidates: cands, info: info)
+
+proc candidatesOf(c: var NjvlContext; narrower, discriminator: SymId;
+                  info: PackedLineInfo): HashSet[SymId] =
+  # get candidate tags considering current narrowing info,
+  # if narrowing info not recorded, we don't have narrowings i.e all candidates possible
+  let key = AnumNarrowInfo(narrower: narrower, discriminator: discriminator)
+  for e in c.anumNarrows:
+    if discriminator == NoSymId:
+      if e.narrower == narrower:
+        return e.candidates
+    elif e == key:
+      return e.candidates
+  let objType = lookupSymbol(c.typeCache, narrower)
+  if not cursorIsNil(objType):
+    for entry in buildAnumInfos(objType, narrower, info):
+      if discriminator == NoSymId or entry.discriminator == discriminator:
+        return entry.candidates
+  result = initHashSet[SymId]()
+
+proc findBranch(objType: Cursor; fld: SymId): SymId =
+  ## Find tag with field, used for better error message
+  # basicly modified copy of findBranchFields
+  result = NoSymId
+  var body = objType
+  while body.kind == Symbol:
+    let r = tryLoadSym(body.symId)
+    if r.status != LacksNothing: return
+    body = asTypeDecl(r.decl).body
+  if body.typeKind != ObjectT: return
+  var n = asObjectDecl(body).firstField
+  while n.substructureKind == FldU:
+    skip n
+  if n.substructureKind != CaseU: return
+  inc n
+  skip n     # skip discriminator fld
+  while n.kind != ParRi:
+    if n.substructureKind == OfU:
+      inc n
+      var tag = NoSymId
+      if n.substructureKind == RangesU:
+        var scan = n
+        inc scan
+        if scan.kind == Symbol:
+          tag = scan.symId
+      skip n   # skip ranges
+      if n.substructureKind == StmtsU:
+        var s = n
+        inc s
+        while s.kind != ParRi:
+          if s.substructureKind == FldU and asLocal(s).name.symId == fld:
+            return tag
+          skip s
+      skip n   # skip stmts
+      inc n    # close `of`
+    else:
+      skip n
+
+proc checkSumtypeFieldAccess(c: var NjvlContext; obj: Cursor; fld: SymId; info: PackedLineInfo) =
+  if c.uncheckedAssignDepth > 0: return
+  let narrower = extractSymId(obj)
+  if narrower == NoSymId: return
+  let objType = lookupSymbol(c.typeCache, narrower)
+  if cursorIsNil(objType): return
+  let requiredTag = findBranch(objType, fld)
+  if requiredTag == NoSymId: return  # common field / discriminator / not case-object
+  let candidates = candidatesOf(c, narrower, NoSymId, info)
+
+  var tagsStr = ""
+  for t in candidates:
+    if tagsStr.len > 0: tagsStr.add ", "
+    tagsStr.add pool.syms[t]
+
+  let suffix = if candidates.len == 0: "" else: " (currently in {" & tagsStr & "})"
+
+  if candidates.len == 1 and requiredTag in candidates:
+    discard "ok"
+  elif requiredTag notin candidates:
+    buildErr c, info,
+      "cannot access field `" & pool.syms[fld] & "` of `" &
+      pool.syms[narrower] & "`, active branch is not `" &
+      pool.syms[requiredTag] & "`" & suffix
+  else:
+    assert candidates.len > 1
+    buildErr c, info,
+      "cannot access field `" & pool.syms[fld] & "` of `" &
+      pool.syms[narrower] & "`: discriminator is ambiguous: {" &
+      tagsStr & "}"
+
 proc analyseOconstr(c: var NjvlContext; n: var Cursor) =
   inc n
   let objType = n
@@ -781,7 +959,11 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
         analyseCall c, pc
       of DotX:
         inc pc
+        let obj = pc
+        let info = pc.info
         traverseExpr c, pc # object
+        if pc.kind == Symbol:
+          checkSumtypeFieldAccess(c, obj, pc.symId, info)
         skip pc # field name
         if pc.kind != ParRi: skip pc # inheritance depth
         if pc.kind != ParRi: skip pc # optional access-token string lit
@@ -789,7 +971,11 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
       of DdotX:
         inc pc
         wantNotNilDeref c, pc
+        let obj = pc
+        let info = pc.info
         traverseExpr c, pc # object
+        if pc.kind == Symbol:
+          checkSumtypeFieldAccess(c, obj, pc.symId, info)
         skip pc # field name
         if pc.kind != ParRi: skip pc # inheritance depth
         if pc.kind != ParRi: skip pc # optional access-token string lit
@@ -814,6 +1000,16 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
         inc nested
         inc pc
     if nested == 0: break
+
+proc invalidateNarrowsFor(c: var NjvlContext; narrower: SymId) =
+  ## Should be called for any mutation of value, narrower is basicly mutPath.path[0]
+  if c.uncheckedAssignDepth > 0: return
+  var stale: seq[AnumNarrowInfo] = @[]
+  for e in c.anumNarrows:
+    if e.narrower == narrower:
+      stale.add e
+  for e in stale:
+    c.anumNarrows.excl e
 
 proc borrowCheckForCall(c: var NjvlContext; args: Cursor) =
   var mutPaths: seq[BorrowInfo] = @[]
@@ -855,6 +1051,11 @@ proc borrowCheckForCall(c: var NjvlContext; args: Cursor) =
           echo "mutPaths[j]: ", mutPaths[j]
         buildErr c, mutPaths[i].info, "mutable argument aliases with mutable parameter"
         break
+  # Mutation through any var/out arg invalidates case-object narrowings on
+  # the touched root (same reasoning as for stores).
+  for m in mutPaths:
+    if m.path.len > 0:
+      invalidateNarrowsFor(c, m.path[0])
 
 proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
   let callCursor = n
@@ -943,6 +1144,13 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
   if destMutPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
     checkBorrowConflict(c, destMutPath, n.info)
 
+  # if narrower is touched by destMutPath
+  # we lost narrow info since
+  # we no longer know which branch is active.
+  # it mean that obj = Bar() drop narrow info
+  if destMutPath.path.len > 0:
+    invalidateNarrowsFor(c, destMutPath.path[0])
+
   # Now handle the destination (Symbol or NJVL versioned variable (v symId version))
   let destSymId = extractSymIdForStore(n)
   if destSymId != NoSymId:
@@ -1016,7 +1224,9 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   # Analyze condition and extract facts.
   let savedFacts = save(c.facts)
   let savedBorrowsLen = c.activeBorrows.len
+  let savedNarrows = c.anumNarrows
   let implsCp = c.impls.checkpoint()
+  let condStart = n
   let condFacts = analyseCondition(c, n)
 
   # Copy condition facts for else-branch negation (only single fact can be negated)
@@ -1029,6 +1239,12 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   if cond.sym != NoSymId:
     if cond.negated: c.falseCfvars.add cond.sym
     else:            c.trueCfvars.add cond.sym
+
+  let (narrower, discriminator, tag) = extractEqNarrowing(c, condStart)
+  if narrower != NoSymId:
+    var s = initHashSet[SymId]()
+    s.incl tag
+    narrowTo(c, narrower, discriminator, s, condStart.info)
   traverseStmt c, n
   if cond.sym != NoSymId:
     if cond.negated: discard c.falseCfvars.pop()
@@ -1039,6 +1255,7 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
 
   # Restore facts for else branch. Inside else, the cond's polarity flips.
   restore(c.facts, savedFacts)
+  c.anumNarrows = savedNarrows
   for f in condFactsList:
     var negated = f
     negateFact(negated)
@@ -1047,6 +1264,10 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   if cond.sym != NoSymId:
     if cond.negated: c.trueCfvars.add cond.sym
     else:            c.falseCfvars.add cond.sym
+  if narrower != NoSymId:
+    var elseCandidates = candidatesOf(c, narrower, discriminator, condStart.info)
+    elseCandidates.excl tag
+    narrowTo(c, narrower, discriminator, elseCandidates, condStart.info)
   if n.kind == DotToken:
     inc n
   else:
@@ -1055,6 +1276,7 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     if cond.negated: discard c.trueCfvars.pop()
     else:            discard c.falseCfvars.pop()
   c.activeBorrows.setLen(savedBorrowsLen)
+  c.anumNarrows = savedNarrows
   let elseImpls = c.impls.take(implsCp)
 
   # Merge branch implications into the outer scope. Pass the ambient
@@ -1154,6 +1376,21 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
         "': path is not borrowable; use 'addr' to override or a temporary move"
   if n.kind != DotToken and localType.typeKind in {PtrT, RefT, CstringT, PointerT, ProctypeT}:
     checkNilMatch c, n, localType
+  # Process `let cs = obj.kind`
+  # It place for aliasOf and
+  # another narrow point btw
+  if n.kind == ParLe and n.exprKind == DotX:
+    var d = n
+    inc d
+    let narrower = extractSymId(d)
+    skip d
+    if d.kind == Symbol and narrower != NoSymId:
+      let objType = lookupSymbol(c.typeCache, narrower)
+      if not cursorIsNil(objType):
+        for entry in buildAnumInfos(objType, narrower, n.info):
+          if entry.discriminator == d.symId:
+            c.aliasOf[name] = (narrower, entry.discriminator)
+            break
   traverseExpr c, n
   skipParRi n
 
@@ -1233,6 +1470,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   let oldBorrows = move c.activeBorrows
   let oldProcStart = c.currentProcStart
   c.currentProcStart = decl
+  let oldAliasOf = move c.aliasOf
   c.resultSym = NoSymId
   inc n
   let symId = n.symId
@@ -1283,6 +1521,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   c.inlineVars = ensureMove oldInlineVars
   c.activeBorrows = ensureMove oldBorrows
   c.currentProcStart = oldProcStart
+  c.aliasOf = ensureMove oldAliasOf
   discard c.directlyInitialized.pop()
 
 proc traverseStmt(c: var NjvlContext; n: var Cursor) =
@@ -1368,17 +1607,27 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
       skip n
     of PragmaxS:
       inc n
+      let hasUncheckedAssignDepthPragma = hasCastPragma(n, "uncheckedAssign")
       skip n # pragmas
+      if hasUncheckedAssignDepthPragma:
+        inc c.uncheckedAssignDepth
       while n.kind != ParRi:
         traverseStmt c, n
+      if hasUncheckedAssignDepthPragma:
+        dec c.uncheckedAssignDepth
       skipParRi n
     of NoStmt:
       if n.exprKind in CallKinds:
         analyseCall c, n
       elif n.exprKind == PragmaxX:
         inc n
+        let hasUncheckedAssignDepthPragma = hasCastPragma(n, "uncheckedAssign")
         skip n
+        if hasUncheckedAssignDepthPragma:
+          inc c.uncheckedAssignDepth
         traverseStmt c, n
+        if hasUncheckedAssignDepthPragma:
+          dec c.uncheckedAssignDepth
         skipParRi n
       elif n.exprKind in {DestroyX, CopyX, WasmovedX, SinkhX, TraceX}:
         inc n
@@ -1412,8 +1661,13 @@ proc traverseToplevel(c: var NjvlContext; n: var Cursor) =
     skipParRi n
   of PragmaxS:
     inc n
+    let hasUncheckedAssignDepthPragma = hasCastPragma(n, "uncheckedAssign")
     skip n
+    if hasUncheckedAssignDepthPragma:
+      inc c.uncheckedAssignDepth
     traverseToplevel c, n
+    if hasUncheckedAssignDepthPragma:
+      dec c.uncheckedAssignDepth
     skipParRi n
   of ProcS, FuncS, IteratorS, ConverterS, MethodS:
     inc c.nestedProcs

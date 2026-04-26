@@ -9,14 +9,29 @@ type
       val: int
 
 let v: Node = Value(val: 42)
-assert v.val == 42
+case v
+of Value:
+  assert v.val == 42
+else: discard
 
 let v2 = Value(val: 42)
-assert v2.val == 42
+case v2
+of Value:
+  assert v2.val == 42
+else: discard
 
 let add: Node = AddOpr(a: v, b: Value(val: 10))
-assert add.a.val == 42
-assert add.b.val == 10
+case add
+of AddOpr:
+  case add.a
+  of Value:
+    assert add.a.val == 42
+  else: discard
+  case add.b
+  of Value:
+    assert add.b.val == 10
+  else: discard
+else: discard
 
 proc eval(n: Node): int =
   case n
