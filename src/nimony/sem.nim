@@ -5457,9 +5457,8 @@ proc semPragmaLine(c: var SemContext; dest: var TokenBuf; it: var Item; isPragma
     elif it.n.firstSon.substructureKind == PragmasU:
       dest.takeTree it.n
     else:
-      let info = it.n.info
-      dest.add parLeToken(CastP, info)
-      dest.add parLeToken(PragmasS, info)
+      dest.add parLeToken(CastP, it.n.info)
+      dest.add parLeToken(PragmasS, it.n.info)
       inc it.n
       if it.n.kind == DotToken:
         # need because parser produce . with unknown type cast expr but it not part
