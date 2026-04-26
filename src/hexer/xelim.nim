@@ -123,73 +123,45 @@ proc trExprInto(c: var Context; dest: var TokenBuf; n: var Cursor; v: SymId) =
       dest.addSymUse v, info
       dest.addTarget tar
 
-proc hoistDeclsFromExprX(c: var Context; outerDest: var TokenBuf;
-                         transformed: var TokenBuf; n: var Cursor) =
-  ## Copies the subtree at `n` into `transformed`. If the subtree is an
-  ## `(expr (stmts decls...) val…)`, any top-level `(let|var|cursor)`
-  ## decl in the leading `(stmts …)` is *hoisted*: a `(var :sym . . type .)`
-  ## (default-initialised) is emitted into `outerDest`, and the original
-  ## decl is rewritten as `(asgn sym value)` inside `transformed`. This
-  ## keeps the binding visible to scopes that follow the surrounding
-  ## `if x and (let s = …; cond):` short-circuit lowering. `n` is
-  ## advanced past the consumed subtree.
+proc hoistDeclsFromExprX(outerDest, transformed: var TokenBuf; n: var Cursor) =
+  ## Copy the subtree at `n` into `transformed`. If the subtree is an
+  ## `(expr (stmts decls…) val…)`, top-level `let`/`var`/`cursor` decls
+  ## inside the leading `(stmts …)` are *hoisted*: an uninitialised
+  ## `(var :sym . . type .)` is emitted into `outerDest` and the original
+  ## decl is rewritten as `(asgn sym init)` so the initialiser still runs
+  ## at the original control-flow point. `n` is advanced past the consumed
+  ## subtree.
   if n.kind != ParLe or n.exprKind != ExprX:
-    transformed.addSubtree n
-    skip n
+    transformed.takeTree n
     return
-  transformed.add n           # `(expr`
-  inc n
+  transformed.takeToken n              # `(expr`
   while n.kind != ParRi:
-    if n.kind == ParLe and n.stmtKind == StmtsS:
-      transformed.add n       # `(stmts`
-      inc n
-      while n.kind != ParRi:
-        if n.kind == ParLe and n.stmtKind in {LetS, VarS, CursorS}:
-          let declHead = n
-          let info = declHead.info
-          inc n  # past tag
-          if n.kind != SymbolDef:
-            # Malformed — copy the rest of this subtree as-is.
-            transformed.add declHead
-            transformed.addSubtree n
-            skip n
-            continue
-          let sym = n.symId
-          let symInfo = n.info
-          inc n  # past name
-          let exportSlot = n; skip n
-          let pragmaSlot = n; skip n
-          let typeSlot = n;   skip n
-          let valSlot = n
-          # Hoist declaration to outer scope.
-          outerDest.addParLe(VarS, info)
-          outerDest.add symdefToken(sym, symInfo)
-          outerDest.addSubtree exportSlot
-          outerDest.addSubtree pragmaSlot
-          outerDest.addSubtree typeSlot
-          outerDest.addDotToken()  # value: uninitialised
-          outerDest.addParRi()
-          if valSlot.kind == DotToken:
-            # Original had no initialiser — nothing to assign here.
-            skip n
-          else:
-            transformed.addParLe(AsgnS, info)
-            transformed.add symToken(sym, symInfo)
-            transformed.addSubtree valSlot
-            transformed.addParRi()
-            skip n  # past value
-          assert n.kind == ParRi
-          inc n  # past decl's ParRi
-        else:
-          transformed.addSubtree n
-          skip n
-      transformed.add n       # closing `)` of stmts
-      inc n
-    else:
-      transformed.addSubtree n
-      skip n
-  transformed.add n           # closing `)` of expr
-  inc n
+    if n.kind != ParLe or n.stmtKind != StmtsS:
+      transformed.takeTree n           # not the leading stmts — pass through
+      continue
+    transformed.takeToken n            # `(stmts`
+    while n.kind != ParRi:
+      if n.kind != ParLe or n.stmtKind notin {LetS, VarS, CursorS}:
+        transformed.takeTree n
+        continue
+      let info = n.info
+      let local = takeLocal(n, SkipFinalParRi)
+      let sym = local.name.symId
+      let symInfo = local.name.info
+      outerDest.addParLe(VarS, info)
+      outerDest.add symdefToken(sym, symInfo)
+      outerDest.addSubtree local.exported
+      outerDest.addSubtree local.pragmas
+      outerDest.addSubtree local.typ
+      outerDest.addDotToken()          # uninitialised
+      outerDest.addParRi()
+      if local.val.kind != DotToken:
+        transformed.addParLe(AsgnS, info)
+        transformed.add symToken(sym, symInfo)
+        transformed.addSubtree local.val
+        transformed.addParRi()
+    transformed.takeToken n            # closing `)` of stmts
+  transformed.takeToken n              # closing `)` of expr
 
 proc trOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   if isComplex(n, c.goal):
@@ -204,7 +176,7 @@ proc trOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     # scope so they remain visible after the `or` lowering — same idea as
     # `trAnd` below; see the comment there.
     var rhs = createTokenBuf(16)
-    hoistDeclsFromExprX(c, dest, rhs, n)
+    hoistDeclsFromExprX(dest, rhs, n)
     var rhsCursor = beginRead(rhs)
     copyIntoKind dest, IfS, info:
       copyIntoKind dest, ElifU, info:
@@ -238,7 +210,7 @@ proc trAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     # and the original initialiser is rewritten into an `asgn` that runs
     # only when `x` is true (preserving short-circuit evaluation).
     var rhs = createTokenBuf(16)
-    hoistDeclsFromExprX(c, dest, rhs, n)
+    hoistDeclsFromExprX(dest, rhs, n)
     var rhsCursor = beginRead(rhs)
     copyIntoKind dest, IfS, info:
       copyIntoKind dest, ElifU, info:
