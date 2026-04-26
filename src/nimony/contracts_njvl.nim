@@ -101,6 +101,8 @@ proc hasCastPragma(p: Cursor; name: string): bool =
   inc n  # into pragmas
   if n.kind != ParLe or n.pragmaKind != CastP: return
   inc n  # into cast
+  if n.kind != ParLe or n.substructureKind != PragmasU: return
+  inc n  # into pragmas
   let target = pool.strings.getOrIncl(name)
   while n.kind != ParRi:
     if n.kind == Ident and n.litId == target: return true

@@ -796,7 +796,8 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
       copyIntoKind(c.dest, PragmaxS, c.info):
         copyIntoKind(c.dest, PragmasS, c.info):
           copyIntoKind(c.dest, CastP, c.info):
-            c.dest.add identToken(pool.strings.getOrIncl("uncheckedAssign"), c.info)
+            copyIntoKind(c.dest, PragmasS, c.info):
+              c.dest.add identToken(pool.strings.getOrIncl("uncheckedAssign"), c.info)
 
         copyIntoKind(c.dest, StmtsS, c.info):
           let beforeUnravel = c.dest.len
