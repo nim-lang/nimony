@@ -5454,9 +5454,21 @@ proc semPragmaLine(c: var SemContext; dest: var TokenBuf; it: var Item; isPragma
     if not isPragmaBlock:
       buildErr c, dest, it.n.info, "`cast` pragma must be used in a pragma block"
       skip it.n
-    else:
-      dest.add parLeToken(CastP, it.n.info)
+    elif it.n.firstSon.substructureKind == PragmasU:
       dest.takeTree it.n
+    else:
+      let info = it.n.info
+      dest.add parLeToken(CastP, info)
+      dest.add parLeToken(PragmasS, info)
+      inc it.n
+      if it.n.kind == DotToken:
+        # need because parser produce . with unknown type cast expr but it not part
+        # of cast pragma
+        inc it.n
+      while it.n.kind != ParRi:
+        dest.takeTree it.n
+      skipParRi it.n
+      dest.addParRi()
       dest.addParRi()
   of PluginP:
     dest.add parLeToken(PragmasS, it.n.info)
