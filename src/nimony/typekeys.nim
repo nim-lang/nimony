@@ -103,19 +103,21 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
       # symbols (`Foo.0.I<hash>.modname`). Two modules that instantiate
       # the same generic with the same arguments would otherwise produce
       # mangle keys that differ only in the inner instance's owning
-      # module — and `trAsNamedType` would mint a separate `(type :\`t.0.I<key>...)`
-      # per importer, so e.g. `tuple[StrId, seq[X]]` would split into
-      # `\`t.0.IXXX.semdata` vs `\`t.0.IXXX.programs` and call sites
-      # crossing module boundaries trip NIFC type-checking.
+      # module — and the `c.newTypes` cache + `genericTypeName` (used by
+      # nifcgen.trAsNamedType *and* duplifier.injectDup) would mint a
+      # separate `(type :\`t.0.I<key>...)` per importer. The strip applies
+      # in both `Frontend` and `Backend` modes because the two callers
+      # disagree about which mode they pass — keeping the names aligned
+      # across them is the whole point.
       let s = pool.syms[c.symId]
-      if mm == Backend and isInstantiation(s):
+      if isInstantiation(s):
         b.addSymbol(removeModule(s))
       else:
         b.addSymbol(s)
       inc c
     of SymbolDef:
       let s = pool.syms[c.symId]
-      if mm == Backend and isInstantiation(s):
+      if isInstantiation(s):
         b.addSymbolDef(removeModule(s))
       else:
         b.addSymbolDef(s)
