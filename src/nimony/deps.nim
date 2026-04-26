@@ -226,15 +226,94 @@ proc importCyclicModule(c: var DepContext; f1: string; info: PackedLineInfo;
   traverseDeps c, p, current
   current.active = oldActive
 
+proc evalDepCond(config: NifConfig; n: Cursor): bool =
+  ## Evaluate a `when`-condition expression carried by a `(when ...)` import
+  ## marker. Recognises `defined(IDENT)`, boolean `not`/`and`/`or`, the bool
+  ## literals `true`/`false`, and falls back to *true* for anything more
+  ## complex — the conservative choice, since a false negative here removes
+  ## a valid dep from the build graph while a false positive only schedules
+  ## a file that the semantic checker will then ignore.
+  var n = n
+  if n.kind == ParLe:
+    case n.exprKind
+    of CallX, CmdX, CallstrlitX, InfixX, PrefixX:
+      inc n
+      if n.kind != Ident:
+        return true
+      let head = pool.strings[n.litId]
+      inc n
+      case head
+      of "defined":
+        if n.kind == Ident:
+          result = config.isDefined(pool.strings[n.litId])
+        elif n.kind == Symbol:
+          var name = pool.syms[n.symId]
+          extractBasename(name)
+          result = config.isDefined(name)
+        else:
+          result = true
+      of "not":
+        result = not evalDepCond(config, n)
+      of "and":
+        result = evalDepCond(config, n)
+        skip n
+        if result: result = evalDepCond(config, n)
+      of "or":
+        result = evalDepCond(config, n)
+        skip n
+        if not result: result = evalDepCond(config, n)
+      else:
+        result = true  # unknown call — assume true
+    of NotX:
+      inc n
+      result = not evalDepCond(config, n)
+    of AndX:
+      inc n
+      result = evalDepCond(config, n)
+      skip n
+      if result: result = evalDepCond(config, n)
+    of OrX:
+      inc n
+      result = evalDepCond(config, n)
+      skip n
+      if not result: result = evalDepCond(config, n)
+    else:
+      result = true  # unknown shape — assume true
+  elif n.kind == Ident:
+    case pool.strings[n.litId]
+    of "true": result = true
+    of "false": result = false
+    else: result = true  # bare identifier we cannot evaluate — assume true
+  else:
+    result = true
+
+proc whenMarkerHolds(c: DepContext; x: Cursor): bool =
+  ## `(when COND COND ...)` — implicit AND across the children. All must hold
+  ## for the import to be live. An empty `(when)` (legacy form, no children)
+  ## is treated as live so older deps files keep working.
+  assert x.kind == ParLe and x.stmtKind == WhenS
+  var inner = x
+  inc inner # skip the `when` tag
+  while inner.kind != ParRi:
+    if not evalDepCond(c.config, inner):
+      return false
+    skip inner
+  result = true
+
 proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   let info = it.info
   var x = it
   skip it
   inc x, SkipTag # skip the `import`
-  # Conditional imports carry a (when) marker child; skip it and still add the
-  # file to the dependency graph so cross-compilation (e.g. --os:windows) sees
-  # all potential dependencies. importSingleFile already ignores missing files.
-  if x.stmtKind == WhenS: skip x, SkipCond
+  # Conditional imports carry a `(when COND...)` marker child. If we can
+  # statically prove the condition is false against the active set of
+  # `defined(...)` symbols, skip the import entirely. Otherwise step over
+  # the marker and process the import normally — the conservative direction
+  # for cross-compilation and for conditions we cannot evaluate.
+  if x.stmtKind == WhenS:
+    if not whenMarkerHolds(c, x):
+      return
+    skip x, SkipCond
   while x.kind != ParRi:
     var isCyclic = false
     if x.kind == ParLe and x.exprKind == PragmaxX:
@@ -274,7 +353,10 @@ proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
   var x = it
   skip it
   inc x, SkipTag # skip the tag
-  if x.stmtKind == WhenS: skip x, SkipCond  # skip conditional marker, same as processImport
+  if x.stmtKind == WhenS:
+    if not whenMarkerHolds(c, x):
+      return
+    skip x, SkipCond  # step past conditional marker, same as processImport
   var files: seq[ImportedFilename] = @[]
   var hasError = false
   filenameVal(x, files, hasError, allowAs = true)

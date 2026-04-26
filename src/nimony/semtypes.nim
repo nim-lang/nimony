@@ -408,7 +408,7 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
     let key = typeToCanon(dest, typeStart)
     var sym = Sym(kind: TypeY, name: SymId(0), pos: InvalidPos) # pos unused by semTypeSym
     if c.instantiatedTypes.hasKey(key):
-      let cachedSym = c.instantiatedTypes[key]
+      let cachedSym = c.instantiatedTypes.getOrQuit(key)
       dest.shrink typeStart
       dest.add symToken(cachedSym, info)
       sym.name = cachedSym
@@ -688,7 +688,7 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
       result = true
 
 proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
-                      context: TypeDeclContext; exported = false; ownerSym = SymId(0)) =
+                      context: TypeDeclContext; exported: bool = false; ownerSym: SymId = SymId(0)) =
   let info = n.info
   case n.kind
   of Ident:
