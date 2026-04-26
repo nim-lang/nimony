@@ -108,11 +108,11 @@ proc hasCastPragma(p: Cursor; name: string): bool =
     if n.kind == Ident and n.litId == target: return true
     skip n
 
-proc hash(a: AnumNarrowInfo): Hash {.inline.} =
+func hash(a: AnumNarrowInfo): Hash {.inline.} =
   result = hash(a.narrower) !& hash(a.discriminator)
   result = !$result
 
-proc `==`(a, b: AnumNarrowInfo): bool {.inline.} =
+func `==`(a, b: AnumNarrowInfo): bool {.inline.} =
   a.narrower == b.narrower and a.discriminator == b.discriminator
 
 proc dumpCurrentProc(c: var NjvlContext; info: PackedLineInfo; msg: string) =
@@ -774,7 +774,7 @@ proc extractEqNarrowing(c: NjvlContext; cond: Cursor): (SymId, SymId, SymId) =
     else: NoSymId
   if lhs == NoSymId or tag == NoSymId or lhs notin c.aliasOf:
     return
-  let (narrower, discriminator) = c.aliasOf[lhs]
+  let (narrower, discriminator) = c.aliasOf.getOrDefault(lhs)
   result = (narrower, discriminator, tag)
 
 proc narrowTo(c: var NjvlContext; narrower, discriminator: SymId; cands: HashSet[SymId]; info: PackedLineInfo) =
