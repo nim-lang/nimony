@@ -1,0 +1,2 @@
+{.cast(somePragma).}:
+  discard

@@ -1,0 +1,9 @@
+(.nif26)
+(.indexat +177             )
+0,1,tests/nimony/nosystem/tcastpragma.nim(stmts
+ (pragmax
+  (pragmas 2
+   (cast
+    (pragmas 5 somePragma))) 2,1
+  (stmts
+   (discard .))))0,1,tests/nimony/nosystem/tcastpragma.nim(.index)
