@@ -7,7 +7,7 @@
 import std/assertions
 include ".." / lib / nifprelude
 import ".." / nimony / [nimony_model, decls, sigmatch]
-import ".." / lib / treemangler
+import ".." / lib / [treemangler, symparser]
 
 type
   MangleMode* = enum
@@ -99,10 +99,26 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
       b.endTree()
       inc c
     of Symbol:
-      b.addSymbol(pool.syms[c.symId])
+      # Strip the owning module's suffix from nested generic-instance
+      # symbols (`Foo.0.I<hash>.modname`). Two modules that instantiate
+      # the same generic with the same arguments would otherwise produce
+      # mangle keys that differ only in the inner instance's owning
+      # module — and `trAsNamedType` would mint a separate `(type :\`t.0.I<key>...)`
+      # per importer, so e.g. `tuple[StrId, seq[X]]` would split into
+      # `\`t.0.IXXX.semdata` vs `\`t.0.IXXX.programs` and call sites
+      # crossing module boundaries trip NIFC type-checking.
+      let s = pool.syms[c.symId]
+      if mm == Backend and isInstantiation(s):
+        b.addSymbol(removeModule(s))
+      else:
+        b.addSymbol(s)
       inc c
     of SymbolDef:
-      b.addSymbolDef(pool.syms[c.symId])
+      let s = pool.syms[c.symId]
+      if mm == Backend and isInstantiation(s):
+        b.addSymbolDef(removeModule(s))
+      else:
+        b.addSymbolDef(s)
       inc c
     of StringLit:
       b.addStrLit(pool.strings[c.litId])

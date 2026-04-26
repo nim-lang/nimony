@@ -109,15 +109,87 @@ proc addTarget(dest: var TokenBuf; tar: Target) =
 proc trExprInto(c: var Context; dest: var TokenBuf; n: var Cursor; v: SymId) =
   var tar = Target(m: IsEmpty)
   let typ = getType(c, n)
+  let info = n.info
+    # Capture before `trExpr` advances past the expression — when the
+    # input is a standalone buffer (e.g. the hoisted RHS of `and`/`or`
+    # short-circuit lowering) `n` lands at end-of-buffer and reading
+    # `n.info` afterwards would assert in `nifcursors.load`.
   trExpr c, dest, n, tar
 
   if typ.typeKind in {VoidT, AutoT}:
     dest.addTarget tar
   else:
-    let info = n.info
     copyIntoKind dest, AsgnS, info:
       dest.addSymUse v, info
       dest.addTarget tar
+
+proc hoistDeclsFromExprX(c: var Context; outerDest: var TokenBuf;
+                         transformed: var TokenBuf; n: var Cursor) =
+  ## Copies the subtree at `n` into `transformed`. If the subtree is an
+  ## `(expr (stmts decls...) val…)`, any top-level `(let|var|cursor)`
+  ## decl in the leading `(stmts …)` is *hoisted*: a `(var :sym . . type .)`
+  ## (default-initialised) is emitted into `outerDest`, and the original
+  ## decl is rewritten as `(asgn sym value)` inside `transformed`. This
+  ## keeps the binding visible to scopes that follow the surrounding
+  ## `if x and (let s = …; cond):` short-circuit lowering. `n` is
+  ## advanced past the consumed subtree.
+  if n.kind != ParLe or n.exprKind != ExprX:
+    transformed.addSubtree n
+    skip n
+    return
+  transformed.add n           # `(expr`
+  inc n
+  while n.kind != ParRi:
+    if n.kind == ParLe and n.stmtKind == StmtsS:
+      transformed.add n       # `(stmts`
+      inc n
+      while n.kind != ParRi:
+        if n.kind == ParLe and n.stmtKind in {LetS, VarS, CursorS}:
+          let declHead = n
+          let info = declHead.info
+          inc n  # past tag
+          if n.kind != SymbolDef:
+            # Malformed — copy the rest of this subtree as-is.
+            transformed.add declHead
+            transformed.addSubtree n
+            skip n
+            continue
+          let sym = n.symId
+          let symInfo = n.info
+          inc n  # past name
+          let exportSlot = n; skip n
+          let pragmaSlot = n; skip n
+          let typeSlot = n;   skip n
+          let valSlot = n
+          # Hoist declaration to outer scope.
+          outerDest.addParLe(VarS, info)
+          outerDest.add symdefToken(sym, symInfo)
+          outerDest.addSubtree exportSlot
+          outerDest.addSubtree pragmaSlot
+          outerDest.addSubtree typeSlot
+          outerDest.addDotToken()  # value: uninitialised
+          outerDest.addParRi()
+          if valSlot.kind == DotToken:
+            # Original had no initialiser — nothing to assign here.
+            skip n
+          else:
+            transformed.addParLe(AsgnS, info)
+            transformed.add symToken(sym, symInfo)
+            transformed.addSubtree valSlot
+            transformed.addParRi()
+            skip n  # past value
+          assert n.kind == ParRi
+          inc n  # past decl's ParRi
+        else:
+          transformed.addSubtree n
+          skip n
+      transformed.add n       # closing `)` of stmts
+      inc n
+    else:
+      transformed.addSubtree n
+      skip n
+  transformed.add n           # closing `)` of expr
+  inc n
 
 proc trOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   if isComplex(n, c.goal):
@@ -128,6 +200,12 @@ proc trOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
 
     var aa = Target(m: IsEmpty)
     trExpr c, dest, n, aa
+    # Hoist any leading let/var decls in the RHS's stmt-list-expr to outer
+    # scope so they remain visible after the `or` lowering — same idea as
+    # `trAnd` below; see the comment there.
+    var rhs = createTokenBuf(16)
+    hoistDeclsFromExprX(c, dest, rhs, n)
+    var rhsCursor = beginRead(rhs)
     copyIntoKind dest, IfS, info:
       copyIntoKind dest, ElifU, info:
         dest.addTarget aa                # if x
@@ -137,7 +215,7 @@ proc trOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
             copyIntoKind dest, TrueX, info: discard
       copyIntoKind dest, ElseU, info:
         copyIntoKind dest, StmtsS, info:
-          trExprInto c, dest, n, tmp # tmp = y
+          trExprInto c, dest, rhsCursor, tmp # tmp = y
     tar.t.addSymUse tmp, info
     skipParRi n
   else:
@@ -154,11 +232,19 @@ proc trAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
 
     var aa = Target(m: IsEmpty)
     trExpr c, dest, n, aa
+    # Hoist any `let`/`var` decls that live inside the RHS's stmt-list-expr
+    # to the outer `dest` (alongside `tmp`) so they remain in scope for the
+    # surrounding `if` body. The hoisted decls become `var` placeholders
+    # and the original initialiser is rewritten into an `asgn` that runs
+    # only when `x` is true (preserving short-circuit evaluation).
+    var rhs = createTokenBuf(16)
+    hoistDeclsFromExprX(c, dest, rhs, n)
+    var rhsCursor = beginRead(rhs)
     copyIntoKind dest, IfS, info:
       copyIntoKind dest, ElifU, info:
         dest.addTarget aa                # if x
         copyIntoKind dest, StmtsS, info:
-          trExprInto c, dest, n, tmp # tmp = y
+          trExprInto c, dest, rhsCursor, tmp # tmp = y
       copyIntoKind dest, ElseU, info:
         copyIntoKind dest, StmtsS, info:
           # tmp = false
