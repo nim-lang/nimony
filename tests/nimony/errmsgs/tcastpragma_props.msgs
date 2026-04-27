@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tcastpragma_props.nim(15, 5) Error: cannot call a routine with side effects from a `.noSideEffect` context

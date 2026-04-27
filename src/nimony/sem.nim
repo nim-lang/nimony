@@ -1604,6 +1604,11 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     else:
       buildErr c, dest, n.info, "expected `cast` pragma expression"
     dest.addParRi()
+  of UncheckedAssignP:
+    buildErr c, dest, n.info, "`uncheckedAssign` is only valid inside `{.cast(uncheckedAssign).}:` pragma blocks"
+    inc n
+    if hasParRi:
+      while n.kind != ParRi: skip n
   of RaisesP:
     crucial.flags.incl pk
     let oldLen = dest.len
@@ -5409,6 +5414,23 @@ proc semAssumeAssert(c: var SemContext; dest: var TokenBuf; it: var Item; kind: 
   semBoolExpr c, dest, it.n
   takeParRi dest, it.n
 
+proc semCastInnerPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
+  ## Process a single pragma item inside a `(cast (pragmas ...))` list.
+  ## Only `noSideEffect` and `uncheckedAssign` are accepted; the result is
+  ## emitted in canonical tag form so later passes can dispatch on the kind.
+  let info = n.info
+  let pk = n.pragmaKind
+  case pk
+  of NoSideEffectP, UncheckedAssignP:
+    dest.add parLeToken(pk, info)
+    dest.addParRi()
+    if n.kind == ParLe: skip n
+    else: inc n
+  else:
+    buildErr c, dest, info, "invalid `cast` pragma argument; expected `noSideEffect` or `uncheckedAssign`"
+    if n.kind == ParLe: skip n
+    else: inc n
+
 proc semPragmaLine(c: var SemContext; dest: var TokenBuf; it: var Item; isPragmaBlock: bool) =
   case it.n.pragmaKind
   of BuildP:
@@ -5462,22 +5484,25 @@ proc semPragmaLine(c: var SemContext; dest: var TokenBuf; it: var Item; isPragma
     if not isPragmaBlock:
       buildErr c, dest, it.n.info, "`cast` pragma must be used in a pragma block"
       skip it.n
-    elif it.n.firstSon.substructureKind == PragmasU:
-      dest.takeTree it.n
     else:
       let info = it.n.info
+      let hasPragmasSub = it.n.firstSon.substructureKind == PragmasU
       dest.add parLeToken(CastP, info)
       dest.add parLeToken(PragmasS, info)
-      inc it.n
-      if it.n.kind == DotToken:
-        # need because parser produce . with unknown type cast expr but it not part
-        # of cast pragma
+      inc it.n # past CastP head
+      if hasPragmasSub:
+        inc it.n # past inner PragmasS head
+      elif it.n.kind == DotToken:
+        # need because parser produces `.` with unknown-type cast expr but it
+        # is not part of the cast pragma
         inc it.n
       while it.n.kind != ParRi:
-        dest.takeTree it.n
-      skipParRi it.n
-      dest.addParRi()
-      dest.addParRi()
+        semCastInnerPragma c, dest, it.n
+      skipParRi it.n # close (pragmas) of canonical form, or (cast) of the raw form
+      if hasPragmasSub:
+        skipParRi it.n # close (cast)
+      dest.addParRi() # close (pragmas)
+      dest.addParRi() # close (cast)
   of PluginP:
     dest.add parLeToken(PragmasS, it.n.info)
     dest.add parLeToken(PluginP, it.n.info)

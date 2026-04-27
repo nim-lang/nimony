@@ -327,6 +327,7 @@ type
     PassCTagId
     MethodsTagId
     SizeTagId
+    UncheckedAssignTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
     ("InvalidTagId", 0),
@@ -653,5 +654,6 @@ const
     ("passL", 321),
     ("passC", 322),
     ("methods", 323),
-    ("size", 324)
+    ("size", 324),
+    ("uncheckedAssign", 325)
   ]
