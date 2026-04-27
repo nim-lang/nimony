@@ -44,7 +44,19 @@ type MagicCallKind = enum
 proc addFn(c: var SemContext; dest: var TokenBuf; fn: FnCandidate; fnOrig: Cursor; m: var Match): MagicCallKind =
   result = NonMagicCall
   if fn.fromConcept and fn.sym != SymId(0):
-    dest.add identToken(symToIdent(fn.sym), fnOrig.info)
+    # The matched symbol comes from a concept body; it is a phantom
+    # declaration with no implementation, so the call has to be re-resolved
+    # at instantiation time. Preserve the original symbol-choice (containing
+    # every overload visible at the *definition* site) so that re-sem at the
+    # call site sees both the def-site overloads and any extra overloads
+    # introduced at the call site. Without this, identifiers like `hash`
+    # inside a generic body would be re-looked-up against the call site's
+    # imports only, which can pick up an unrelated `hash` overload from a
+    # third-party module that happens to be in scope.
+    if fnOrig.kind == ParLe and fnOrig.exprKind in {OchoiceX, CchoiceX}:
+      dest.addSubtree fnOrig
+    else:
+      dest.add identToken(symToIdent(fn.sym), fnOrig.info)
   elif fn.kind in RoutineKinds:
     assert fn.sym != SymId(0)
     let res = tryLoadSym(fn.sym)

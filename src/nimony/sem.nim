@@ -2983,9 +2983,7 @@ proc synthSumTypeDiscriminator(c: var SemContext; dest: var TokenBuf;
     # not for each instantiation (which would cause ambiguous names):
     var rootScope = c.currentScope
     while rootScope.up != nil: rootScope = rootScope.up
-    for i in 0 ..< efldSyms.len:
-      let sym = efldSyms[i][0]
-      let name = efldSyms[i][1]
+    for i, (sym, name) in efldSyms:
       var efldBuf = createTokenBuf(10)
       buildEfld(efldBuf, sym, oneofTypeSym, i, name, branches[i].info, state.isExported)
       programs.publish sym, efldBuf, c.phase
