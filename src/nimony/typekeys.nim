@@ -7,7 +7,7 @@
 import std/assertions
 include ".." / lib / nifprelude
 import ".." / nimony / [nimony_model, decls, sigmatch]
-import ".." / lib / treemangler
+import ".." / lib / [treemangler, symparser]
 
 type
   MangleMode* = enum
@@ -99,10 +99,28 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
       b.endTree()
       inc c
     of Symbol:
-      b.addSymbol(pool.syms[c.symId])
+      # Strip the owning module's suffix from nested generic-instance
+      # symbols (`Foo.0.I<hash>.modname`). Two modules that instantiate
+      # the same generic with the same arguments would otherwise produce
+      # mangle keys that differ only in the inner instance's owning
+      # module — and the `c.newTypes` cache + `genericTypeName` (used by
+      # nifcgen.trAsNamedType *and* duplifier.injectDup) would mint a
+      # separate `(type :\`t.0.I<key>...)` per importer. The strip applies
+      # in both `Frontend` and `Backend` modes because the two callers
+      # disagree about which mode they pass — keeping the names aligned
+      # across them is the whole point.
+      let s = pool.syms[c.symId]
+      if isInstantiation(s):
+        b.addSymbol(removeModule(s))
+      else:
+        b.addSymbol(s)
       inc c
     of SymbolDef:
-      b.addSymbolDef(pool.syms[c.symId])
+      let s = pool.syms[c.symId]
+      if isInstantiation(s):
+        b.addSymbolDef(removeModule(s))
+      else:
+        b.addSymbolDef(s)
       inc c
     of StringLit:
       b.addStrLit(pool.strings[c.litId])

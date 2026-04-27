@@ -755,6 +755,10 @@ const BootstrapModules = [
 
   # Tier 19 tip. Peer of `sem.nim`; both feed `nimony/nimsem.nim` at Tier 20.
   "src/nimony/deps.nim",
+
+  # Tier 20 tip — the driver. Subsumes sem.nim, deps.nim, and hexer/hexer.nim
+  # via its import set, so this entry alone exercises the full bootstrap DAG.
+  "src/nimony/nimony.nim",
 ]
 
 # Modules whose `isMainModule` block should also be executed after compilation.

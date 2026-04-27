@@ -13,12 +13,23 @@ when defined(windows):
     else:
       {.link: "../../icons/nimony_icon.o".}
 
-import std / [parseopt, sets, strutils, os, assertions, syncio]
+when defined(nimony):
+  {.feature: "lenientnils".}
+  {.feature: "untyped".}
+import std / [parseopt, sets, strutils, os, assertions, syncio, dirs, paths]
 import ".." / lib / [tooldirs, argsfinder]
 
 import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
 import sem, nifconfig, semos, semdata, deps, langmodes, cli
+
+include ".." / lib / compat2
+
+template makeDir(p: string) =
+  when defined(nimony):
+    onRaiseQuit createDir(path(p))
+  else:
+    onRaiseQuit createDir(Path(p))
 
 const
   Version = "0.2.0"
@@ -246,22 +257,22 @@ proc compileProgram(c: var CmdOptions) =
     quit "command missing"
   of SingleModule:
     if not c.isChild:
-      createDir(c.config.nifcachePath)
+      makeDir(c.config.nifcachePath)
     processSingleModule(c.args[0].addFileExt(".nim"), c.config, c.moduleFlags,
                         c.commandLineArgs, c.forceRebuild)
   of FullProject:
-    createDir(c.config.nifcachePath)
+    makeDir(c.config.nifcachePath)
     # compile full project modules
     buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake, c.profile,
       c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, (if c.doRun: DoRun else: DoCompile),
       c.passC, c.passL, c.executableArgs
   of CheckProject:
-    createDir(c.config.nifcachePath)
+    makeDir(c.config.nifcachePath)
     # check full project modules
     buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake, c.profile,
       c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, DoCheck, c.passC, c.passL, c.executableArgs
   of SemCheckNif:
-    createDir(c.config.nifcachePath)
+    makeDir(c.config.nifcachePath)
     # compile full project modules
     buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake, c.profile,
       c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, (if c.doRun: DoRun else: DoCompile),
