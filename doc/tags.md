@@ -324,6 +324,7 @@
 | `(passC X)`  | NimonyPragma | `passC` pragma adds options to the backend compiler |
 | `(methods (kv STR Y)+)`  | NimonyPragma | `methods` pragma lists vtable methods for a type |
 | `(size X)`  | NimonyPragma | `size` pragma for setting the byte size of a type |
+| `(uncheckedAssign)` | NimonyPragma | `uncheckedAssign` marker; only valid inside `{.cast(uncheckedAssign).}:` pragma blocks (semantics TBD) |
 
 ### unpackflat, unpacktup, unpackdecl
 

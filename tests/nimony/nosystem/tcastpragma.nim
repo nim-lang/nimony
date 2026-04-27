@@ -1,2 +1,5 @@
-{.cast(somePragma).}:
+{.cast(noSideEffect).}:
+  discard
+
+{.cast(uncheckedAssign).}:
   discard

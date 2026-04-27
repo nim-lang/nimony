@@ -504,10 +504,24 @@ proc trPragmaBlock(c: var Context; n: var Cursor) =
     c.dest.takeParRi n # pragmas
     tr(c, n, WantT)
   elif n.pragmaKind == CastP:
+    # Look at the inner pragma list of `(cast (pragmas X*))` to decide which
+    # routine props to suppress. Only `noSideEffect` clears `IsNoSideEffect`;
+    # other recognized cast pragmas (e.g. `uncheckedAssign`) are passed through
+    # without touching props.
+    var disableNoSideEffect = false
+    var inner = n
+    inc inner # past `cast`
+    if inner.substructureKind == PragmasU:
+      inc inner
+      while inner.kind != ParRi:
+        if inner.pragmaKind == NoSideEffectP:
+          disableNoSideEffect = true
+        skip inner
     c.dest.takeTree n # cast pragma
-    c.dest.takeParRi n # pragmas
+    c.dest.takeParRi n # outer pragmas
     let oldProps = c.r.props
-    c.r.props = {}
+    if disableNoSideEffect:
+      c.r.props.excl IsNoSideEffect
     tr(c, n, WantT)
     c.r.props = oldProps
   else:
