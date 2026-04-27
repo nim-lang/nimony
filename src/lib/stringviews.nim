@@ -71,7 +71,8 @@ when not defined(nimony):
 proc `$`*(s: StringView): string =
   result = newString(s.len)
   if s.len > 0:
-    copyMem result.readRawData, s.p, s.len
+    copyMem beginStore(result, s.len, 0), s.p, s.len
+    endStore(result)
 
 proc toStringViewUnsafe*(s: string): StringView =
   ## Watch out that the string lives longer than the string view!
