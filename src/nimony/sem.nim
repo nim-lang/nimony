@@ -3232,6 +3232,13 @@ proc isIteratorCall(c: var SemContext; dest: var TokenBuf; beforeCall: int): boo
       c.isIterator(dest, dest[beforeCall+1].symId)
 
 proc isIdentCall(c: var SemContext; dest: var TokenBuf; beforeCall: int): bool {.inline.} =
+  # A call whose fn is unresolved at sem time and needs re-resolution at
+  # instantiation: either a bare Ident, or — when the original sem matched
+  # a concept-bound op — the preserved symbol-choice (`addFn` writes the
+  # OchoiceX of def-site overloads in that case so the inst site can pick a
+  # concrete match). Both forms must be treated as macro-like / deferred,
+  # otherwise `semFor`'s implicit-iterator path will report "no implicit
+  # iterator found" for any concept-bound iterator.
   result = dest.len > beforeCall+1
   if result:
     let callKind =
@@ -3239,8 +3246,16 @@ proc isIdentCall(c: var SemContext; dest: var TokenBuf; beforeCall: int): bool {
         cast[NimonyExpr](tagEnum(dest[beforeCall]))
       else:
         NoExpr
-    result = callKind in CallKinds and
-      dest[beforeCall+1].kind == Ident
+    if callKind notin CallKinds:
+      return false
+    let fnTok = dest[beforeCall+1]
+    if fnTok.kind == Ident:
+      result = true
+    elif fnTok.kind == ParLe:
+      let fnExpr = exprKind(fnTok)
+      result = fnExpr in {OchoiceX, CchoiceX}
+    else:
+      result = false
 
 proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
