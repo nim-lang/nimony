@@ -1,5 +1,5 @@
 (.nif26)
-(.indexat +3284            )
+(.indexat +3397            )
 0,2,tests/nimony/nosystem/tfib2.nim(stmts 2,1
  (type :int.0.
   (i +64) . 5
@@ -99,17 +99,21 @@
    (result :result.0 . . 22,~1 T.0. .)
    (if 3
     (elif 2
-     (infix <= ~2 a.1 3 +2) ~1,1
+     (infix
+      (ochoice <=.0. <=.1.) ~2 a.1 3 +2) ~1,1
      (stmts 7
       (asgn ~7 result.0 2 +1))) ,2
     (else 2,1
      (stmts 7
       (asgn ~7 result.0 11
-       (infix \2B ~6
+       (infix
+        (ochoice \2B.0. \2B.1.) ~6
         (call ~3 fib.0. 2
-         (infix \2D ~1 a.1 1 +1)) 5
+         (infix
+          (ochoice \2D.0. \2D.1.) ~1 a.1 1 +1)) 5
         (call ~3 fib.0. 2
-         (infix \2D ~1 a.1 1 +2))))))) ~2,~1
+         (infix
+          (ochoice \2D.0. \2D.1.) ~1 a.1 1 +2))))))) ~2,~1
    (ret result.0))) ,28
  (discard 11
   (call ~3 fib.1. 1 +8)) ,29
@@ -160,4 +164,4 @@
  (h \2D.2. +137) ,22
  (h fib.0. +141) 9,22
  (h T.0. +37) 11,28
- (h fib.1. +817))
+ (h fib.1. +930))
