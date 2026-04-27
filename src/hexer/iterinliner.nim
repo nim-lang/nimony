@@ -148,15 +148,37 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
           var unpackCursor = forVars[i]
           inc unpackCursor
           var left = startTupleAccess(tmpId, info, needsDeref)
-          let leftTupleAccess = createTupleAccess(left, i, info)
+          # The yielded element may itself be wrapped in `var`/`lent`/etc.
+          # (e.g. `pairs(seq[T])` yields `(int, var T)`). Peel any modifier
+          # before walking into the inner tuple, and remember to close it at
+          # the end so the outer `typ` cursor advances past the whole element.
+          # Modifier-wrapped element types lower to a pointer, so the access
+          # path needs an `hderef` around `tmp[i]` before indexing into the
+          # inner tuple.
+          let hasModifier = typ.kind == ParLe and typ.typeKind in TypeModifiers
+          var leftTupleAccess = createTupleAccess(left, i, info)
+          if hasModifier:
+            var deref = createTokenBuf()
+            deref.copyIntoKind HderefX, info:
+              deref.add leftTupleAccess
+            leftTupleAccess = deref
+            inc typ
           assert typ.typeKind == TupleT
           inc typ
+          # When we deref'd a `var`/`lent`/... element above, the resulting
+          # tuple-field accesses are by-value but the for-vars are still typed
+          # as `var T`/`lent T`/... — sem propagates the outer modifier to
+          # every unpacked sub-var. Pass `needsAddr` through so each `let sym
+          # = (tupat ...)` is wrapped in `(haddr ...)`.
+          let innerNeedsAddr = needsDeref or hasModifier
           while unpackCursor.kind != ParRi:
-            unpackTupleAccess(e, dest, unpackCursor, leftTupleAccess, counter, info, typ, needsDeref)
+            unpackTupleAccess(e, dest, unpackCursor, leftTupleAccess, counter, info, typ, innerNeedsAddr)
             inc counter
             skip unpackCursor
             skip typ
           skipParRi(typ)
+          if hasModifier:
+            skipParRi(typ)
         else:
           var left = startTupleAccess(tmpId, info, needsDeref)
           unpackTupleAccess(e, dest, forVars[i], left, i, info, typ, needsDeref)
