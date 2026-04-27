@@ -8,8 +8,11 @@
 ## and incremental compilation. Nifmake can run a dependency graph as specified
 ## by a .nif file or it can translate this file to a Makefile.
 
-import std/[assertions, os, strutils, sequtils, tables, hashes, times, monotimes, sets, parseopt, syncio, osproc, algorithm]
+import std/[assertions, os, strutils, sequtils, tables, hashes, times, monotimes, sets, parseopt, syncio, osproc, algorithm, deques]
 import ".." / lib / [nifstreams, nifcursors, bitabs, lineinfos, nifreader, tooldirs, argsfinder]
+
+when defined(posix):
+  import std/posix
 
 # Inspired by https://gittup.org/tup/build_system_rules_and_algorithms.pdf
 #[
@@ -310,8 +313,131 @@ proc recordCmdTime(profile: var ProfileData; cmdName: string; sec: float) =
   profile.cmdTime[cmdName] = e
 
 type
-  CmdStatus = enum
-    Enqueued, Running, Finished
+  TaskId = distinct int
+  WorkerId = distinct int
+
+  Task = object
+    nodeId: int
+    p: Process
+    cmd, cmdName: string
+    startTime: MonoTime
+
+  WorkerPool = object
+    tasks: seq[Task] # uses TaskId for it
+    workerIds: seq[WorkerId]
+    wokerDeques: seq[Deque[TaskId]]
+    active: seq[TaskId]
+
+  Scheduler = object
+    pool: WorkerPool
+    pending: seq[int]
+    done: seq[bool]
+    remaining: int
+    todo: seq[int]
+
+proc `==`(a, b: WorkerId): bool {.borrow.}
+
+proc steal(p: var WorkerPool, fromWorkerId: WorkerId): TaskId =
+  result = TaskId(-1)
+  for id in p.workerIds:
+    if id != fromWorkerId and p.wokerDeques[id.int].len > 0:
+      return p.wokerDeques[id.int].popLast()
+
+proc eval(s: var Scheduler; dag: var Dag; dependents: seq[seq[int]];
+          opt: set[CliOption]; profile: ptr ProfileData): bool =
+  result = true
+
+  for id in s.pool.workerIds:
+    while s.todo.len > 0:
+      let cur = s.todo.pop()
+      if s.done[cur]: continue
+      # code borrowed from old implementation
+      let node = addr dag.nodes[cur]
+      if Force in opt or needsRebuild(node[]):
+        if Force in opt:
+          removeOutdatedArtifacts(node[], opt)
+        if Verbose in opt:
+          echo "Building: ", node.outputs.join(", ")
+        let expandedCmd = expandCommand(dag.commands[node.cmdIdx],
+          node.inputs, node.outputs, node.args, dag.baseDir)
+        if Verbose in opt:
+          echo "Command: ", expandedCmd
+        let t = TaskId(s.pool.tasks.len)
+        s.pool.tasks.add Task(
+          nodeId: cur, cmd: expandedCmd,
+          cmdName: dag.commands[node.cmdIdx].name)
+        s.pool.wokerDeques[id.int].addLast(t)
+        break # we playing ping-pong (next resolve on next iteration)
+      else:
+        if Verbose in opt:
+          echo "Up to date: ", node.outputs.join(", ")
+        s.done[cur] = true
+        dec s.remaining
+        for d in dependents[cur]:
+          dec s.pending[d]
+          if s.pending[d] == 0:
+            s.todo.add d
+
+    if s.pool.active[id.int].int >= 0:
+      let task = addr s.pool.tasks[s.pool.active[id.int].int]
+      let exit = peekExitCode(task.p)
+      if exit == 0:
+        # Process finished point: success
+
+        if profile != nil:
+          profile[].recordCmdTime(
+            task.cmdName,
+            toSeconds(getMonoTime() - task.startTime))
+
+        s.pool.active[id.int] = TaskId(-1)
+        s.done[task.nodeId] = true
+        dec s.remaining
+
+        for d in dependents[task.nodeId]:
+          dec s.pending[d]
+          if s.pending[d] == 0:
+            s.todo.add d
+
+        close(task.p)
+      elif exit > 0:
+        # Process finished point: error
+
+        if profile != nil:
+          profile[].recordCmdTime(
+            task.cmdName,
+            toSeconds(getMonoTime() - task.startTime))
+
+        s.pool.active[id.int] = TaskId(-1)
+        failed task.cmd
+        close(task.p)
+        return false
+
+    if s.pool.active[id.int].int < 0:
+      let taskId =
+        if s.pool.wokerDeques[id.int].len > 0:
+          s.pool.wokerDeques[id.int].popFirst().int
+        else:
+          s.pool.steal(id).int
+
+      if taskId >= 0:
+        if profile != nil:
+          s.pool.tasks[taskId].startTime = getMonoTime()
+
+        s.pool.active[id.int] = TaskId(taskId)
+        s.pool.tasks[taskId].p = startProcess(
+          s.pool.tasks[taskId].cmd,
+          options = {poStdErrToStdOut, poParentStreams, poUsePath, poEvalCommand})
+
+  # Yielding core until work appears
+  for id in s.pool.workerIds:
+    if s.pool.active[id.int].int >= 0:
+      when defined(posix):
+        var info = default(SigInfo)
+        discard waitid(cint(0), Id(0), info, WEXITED or WNOWAIT)  # P_ALL = 0
+      else:
+        discard waitForExit(s.pool.tasks[s.pool.active[id.int].int].p)
+
+      break
 
 proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil): bool =
   ## Execute the DAG in topological order
@@ -322,54 +448,45 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil): 
     profile[].dagSetupTime = toSeconds(getMonoTime() - sortStart)
 
   if Parallel in opt:
-    var i = 0
-    while i < sortedNodes.len:
-      let currentDepth = dag.nodes[sortedNodes[i]].depth
-      var commands: seq[string] = @[]
-      var nodeIds: seq[int] = @[]
-      var cmdNames: seq[string] = @[]
+    # Work-stealing scheduler: one worker owns one process.
+    let n = dag.nodes.len
+    let nWorkers = max(1, countProcessors())
+    var s = Scheduler(
+      pending: newSeq[int](n),
+      done: newSeq[bool](n),
+      remaining: n,
+    )
+    var dependents = newSeq[seq[int]](n)
+    for nodeId in 0..<n:
+      s.pending[nodeId] = dag.nodes[nodeId].deps.len
+      for d in dag.nodes[nodeId].deps:
+        dependents[d].add nodeId
 
-      # Collect all commands at the current depth
-      while i < sortedNodes.len and dag.nodes[sortedNodes[i]].depth == currentDepth:
-        let node = addr dag.nodes[sortedNodes[i]]
-        if Force in opt or needsRebuild(node[]):
-          if Force in opt:
-            removeOutdatedArtifacts(node[], opt)
-          if Verbose in opt:
-            echo "Building: ", node.outputs.join(", ")
-          let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs, node.args, dag.baseDir)
-          if Verbose in opt:
-            echo "Command: ", expandedCmd
-          commands.add(expandedCmd)
-          nodeIds.add(sortedNodes[i])
-          cmdNames.add(dag.commands[node.cmdIdx].name)
-        inc i
+    s.pool.workerIds = newSeq[WorkerId](nWorkers)
+    s.pool.wokerDeques = newSeq[Deque[TaskId]](nWorkers)
+    s.pool.active = newSeq[TaskId](nWorkers)
+    for i in 0..<nWorkers:
+      s.pool.workerIds[i] = WorkerId(i)
+      s.pool.wokerDeques[i] = initDeque[TaskId]()
+      s.pool.active[i] = TaskId(-1)
 
-      # Execute all commands at this depth in parallel
-      if commands.len > 0:
-        var progress = newSeq[CmdStatus](commands.len)
-        var startTimes = if profile != nil: newSeq[MonoTime](commands.len) else: @[]
-        if profile != nil: startTimes.setLen(commands.len)
-        let depthStart = if profile != nil: getMonoTime() else: MonoTime()
+    # It's first layer for start:
+    for nodeId in sortedNodes:
+      if s.pending[nodeId] == 0:
+        s.todo.add nodeId
 
-        proc beforeRunEvent(idx: int) =
-          progress[idx] = Running
-          if profile != nil: startTimes[idx] = getMonoTime()
+    let schedulerStart =
+      if profile != nil:
+        getMonoTime()
+      else:
+        MonoTime()
 
-        proc afterRunEvent(idx: int; p: Process) =
-          progress[idx] = Finished
-          if profile != nil:
-            let sec = toSeconds(getMonoTime() - startTimes[idx])
-            profile[].recordCmdTime(cmdNames[idx], sec)
+    while s.remaining > 0:
+      if not s.eval(dag, dependents, opt, profile):
+        return false
 
-        let maxExitCode = execProcesses(commands, beforeRunEvent = beforeRunEvent, afterRunEvent = afterRunEvent)
-        if profile != nil:
-          profile[].execWallTime += toSeconds(getMonoTime() - depthStart)
-        if maxExitCode != 0:
-          for i, p in pairs(progress):
-            if p == Running:
-              failed commands[i]
-          return false
+    if profile != nil:
+      profile[].execWallTime += toSeconds(getMonoTime() - schedulerStart)
   else:
     # Sequential execution
     for nodeId in sortedNodes:
