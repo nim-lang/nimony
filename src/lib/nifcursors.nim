@@ -228,11 +228,15 @@ proc prepareMutation*(b: var TokenBuf) {.inline.} =
   ## existing cursors. Releases the TokenBuf's rc ref to the old owner;
   ## if no cursors remain (rc was 1), cleans up the old owner entirely.
   if b.owner != nil:
-    let newData = cast[Storage](alloc(sizeof(PackedToken) * b.cap))
-    copyMem(newData, b.data, sizeof(PackedToken) * b.len)
-    decRcAndFree(b.owner)
-    b.owner = nil
-    b.data = newData
+    if b.owner.rc == 1:
+      dealloc(b.owner)
+      b.owner = nil
+    else:
+      let newData = cast[Storage](alloc(sizeof(PackedToken) * b.cap))
+      copyMem(newData, b.data, sizeof(PackedToken) * b.len)
+      decRcAndFree(b.owner)
+      b.owner = nil
+      b.data = newData
 
 proc freeze*(b: var TokenBuf) {.inline.} = discard
 proc thaw*(b: var TokenBuf) {.inline.} = discard
@@ -248,6 +252,11 @@ proc beginRead*(b: var TokenBuf): Cursor =
   result = Cursor(owner: b.owner, p: addr(b.data[0]), rem: b.len)
 
 proc endRead*(b: var TokenBuf) {.inline.} = discard
+
+proc endRead*(c: var Cursor) {.inline.} =
+  if c.owner != nil:
+    decRcAndFree(c.owner)
+  `=wasMoved`(c)
 
 proc add*(b: var TokenBuf; item: PackedToken) {.inline.} =
   if b.owner != nil: prepareMutation(b)

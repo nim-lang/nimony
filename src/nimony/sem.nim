@@ -244,8 +244,10 @@ proc commonType(c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: i
   if m.err:
     # try converter
     var convMatch = default(Match)
-    let convArg = CallArg(n: arg.n, typ: arg.typ)
+    var convArg = CallArg(n: arg.n, typ: arg.typ)
     if tryConverterMatch(c, convMatch, expected, convArg):
+      endRead arg.n
+      endRead convArg.n
       shrink dest, argBegin
       dest.add parLeToken(HcallX, info)
       dest.add symToken(convMatch.fn.sym, info)
@@ -255,17 +257,20 @@ proc commonType(c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: i
           # adding type args errored
           buildErr c, dest, info, getErrorMsg(convMatch)
         else:
-          let inst = c.requestRoutineInstance(convMatch.fn.sym, convMatch.typeArgs, convMatch.inferred, arg.n.info)
+          let inst = c.requestRoutineInstance(convMatch.fn.sym, convMatch.typeArgs, convMatch.inferred, info)
           dest[dest.len-1].setSymId inst.targetSym
       # ignore refineArgType case, probably environment is generic
       dest.add convMatch.args
       dest.addParRi()
       it.typ = expected
     else:
+      endRead arg.n
+      endRead convArg.n
       shrink dest, argBegin
       #buildErr c, dest, info, getErrorMsg(m)
       c.typeMismatch dest, info, it.typ, expected
   else:
+    endRead arg.n
     shrink dest, argBegin
     if m.refineArgType and cursorAt(m.args, 0).exprKind in CallKinds:
       # empty seq call, semcheck
