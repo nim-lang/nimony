@@ -5,11 +5,87 @@
 # distribution, for details about the copyright.
 
 ## Cursors into token streams. Suprisingly effective even for more complex algorithms.
+##
+## Memory layout
+## =============
+##
+## A `TokenBuf` always owns a contiguous data buffer pointed at by `b.data`.
+## Cursors borrow into that buffer. To make borrowing safe across mutations
+## of `b`, an extra reference-counted control block — the `CursorOwner`
+## header — coordinates sharing.
+##
+## **Detached state** (no live Cursors). `b.owner == nil`; the TokenBuf
+## directly owns its data buffer:
+##
+## ```
+##   TokenBuf b
+##   ┌──────────────┐         data buffer (alloc #1)
+##   │ data ────────┼──────▶ ┌─────────┐
+##   │ len, cap     │        │ tokens  │
+##   │ owner: nil   │        │  ...    │
+##   └──────────────┘        └─────────┘
+## ```
+##
+## **Attached state** (one or more live Cursors). `beginRead` /
+## `cursorAt` lazily allocate a small `CursorOwnerObj` header (alloc #2)
+## whose `data` field aliases `b.data`. `rc` counts: 1 for the TokenBuf
+## plus 1 per live Cursor.
+##
+## ```
+##   TokenBuf b
+##   ┌──────────────┐         data buffer (alloc #1)
+##   │ data ────────┼──────▶ ┌─────────┐
+##   │ len, cap     │  ┌─▶   │ tokens  │
+##   │ owner ───────┼──┼┐    │  ...    │
+##   └──────────────┘  ││    └─────────┘
+##                     ││
+##           Cursor c1 ││         CursorOwner (alloc #2)
+##           ┌────────┐││         ┌─────────┐
+##           │ owner ─┼┘│         │ rc: 3   │
+##           │ p ─────┼─┼─────▶   │ data ───┼─── points at alloc #1
+##           │ rem    │ │         └─────────┘
+##           └────────┘ │              ▲
+##                      │              │
+##           Cursor c2  │              │
+##           ┌────────┐ │              │
+##           │ owner ─┼─┴──────────────┘
+##           │ p      │
+##           │ rem    │
+##           └────────┘
+## ```
+##
+## Allocations #1 and #2 are independent. Freeing the header (#2) does
+## not touch the data buffer (#1) and vice versa. `decRcAndFree(owner)`
+## frees both — but only when `rc` decrements to 0.
+##
+## Mutations and COW
+## -----------------
+##
+## `prepareMutation` is called before any mutation that would invalidate
+## existing cursors. Two cases:
+##
+## - `rc == 1`: only the TokenBuf holds a ref; no cursor is reading.
+##   Free the header (#2) and revert to detached state — `b.data` keeps
+##   pointing at #1, which the TokenBuf now owns directly.
+##
+## - `rc > 1`: cursors still read #1. Allocate a fresh data buffer and
+##   `copyMem` into it; release one ref on the old owner via
+##   `decRcAndFree`. Old cursors continue reading the old #1 (kept alive
+##   by their own rc refs); the TokenBuf now owns the new buffer.
+##
+## Hot-path callers can stay on the no-copy branch by calling
+## `endRead(c)` on cursors before mutating the parent buffer, and
+## `expectUnique(b)` asserts that contract in debug builds.
 
 import std / [assertions, syncio]
 import nifreader, nifstreams, bitabs, lineinfos
 
 include compat2
+
+when defined(prepMutStats):
+  var cowFastCount*: int
+  var cowSlowCount*: int
+  var cowSlowBytes*: int
 
 type
   Storage = ptr UncheckedArray[PackedToken]
@@ -224,18 +300,54 @@ proc createTokenBuf*(cap = 100): TokenBuf =
   result = TokenBuf(data: cast[Storage](alloc(sizeof(PackedToken)*cap)), len: 0, cap: cap)
 
 proc prepareMutation*(b: var TokenBuf) {.inline.} =
-  ## COW detach: deep-copy the data so we can mutate without invalidating
-  ## existing cursors. Releases the TokenBuf's rc ref to the old owner;
-  ## if no cursors remain (rc was 1), cleans up the old owner entirely.
+  ## Detach the buffer from its CursorOwner so the next mutation does
+  ## not invalidate existing cursors. Two paths:
+  ##
+  ## - **No live cursors (rc == 1).** The TokenBuf is the only ref to the
+  ##   owner header; no cursor reads the data anymore. Reuse the existing
+  ##   data buffer in place — only the small owner header gets freed.
+  ##   `b.data` already aliases `b.owner.data`, so we capture the
+  ##   pointer, drop the header, and re-install it as the TokenBuf's
+  ##   single-owner data pointer. No alloc, no copy.
+  ##
+  ## - **Live cursors (rc > 1).** Cursors still read the data; we must
+  ##   detach by deep-copying so the old buffer stays valid for them.
+  ##
+  ## The fast path is what callers achieve by calling `endRead` on their
+  ## cursors before the next mutation; without `endRead`, the slow COW
+  ## still keeps things correct.
   if b.owner != nil:
-    let newData = cast[Storage](alloc(sizeof(PackedToken) * b.cap))
-    copyMem(newData, b.data, sizeof(PackedToken) * b.len)
-    decRcAndFree(b.owner)
-    b.owner = nil
-    b.data = newData
+    if b.owner.rc == 1:
+      # Only the TokenBuf itself holds a ref; no live cursor reads the
+      # buffer. Free the owner header (a separate small allocation) and
+      # revert to single-owner mode. `b.data` stays valid — it points at
+      # the data buffer, which is a different allocation from the header.
+      # See the layout diagram at the top of the file.
+      dealloc(b.owner)
+      b.owner = nil
+      when defined(prepMutStats): inc cowFastCount
+    else:
+      let newData = cast[Storage](alloc(sizeof(PackedToken) * b.cap))
+      copyMem(newData, b.data, sizeof(PackedToken) * b.len)
+      decRcAndFree(b.owner)
+      b.owner = nil
+      b.data = newData
+      when defined(prepMutStats):
+        inc cowSlowCount
+        cowSlowBytes += b.len * sizeof(PackedToken)
 
 proc freeze*(b: var TokenBuf) {.inline.} = discard
 proc thaw*(b: var TokenBuf) {.inline.} = discard
+
+proc expectUnique*(b: var TokenBuf) {.inline.} =
+  ## Hot-path mutation sites stamp this to assert that no cursor
+  ## currently holds an rc ref against `b`. Catches a missing `endRead`
+  ## that would otherwise silently force `prepareMutation` onto the
+  ## copying path. No-op in release builds — COW remains the correctness
+  ## floor, this is just a tripwire for performance regressions.
+  when defined(debug):
+    assert b.owner == nil or b.owner.rc == 1,
+      "TokenBuf has live cursors; missing endRead before mutation"
 
 proc beginRead*(b: var TokenBuf): Cursor =
   ## Returns a Cursor into the buffer. Creates a CursorOwner on first call
@@ -248,6 +360,15 @@ proc beginRead*(b: var TokenBuf): Cursor =
   result = Cursor(owner: b.owner, p: addr(b.data[0]), rem: b.len)
 
 proc endRead*(b: var TokenBuf) {.inline.} = discard
+
+proc endRead*(c: var Cursor) {.inline.} =
+  ## Release the cursor's rc ref against its owner buffer eagerly. After
+  ## this call the cursor is moved-out (`c.owner == nil`); subsequent
+  ## mutations on the underlying TokenBuf can take the fast no-copy path
+  ## in `prepareMutation` if no other cursors are live.
+  if c.owner != nil:
+    decRcAndFree(c.owner)
+  `=wasMoved`(c)
 
 proc add*(b: var TokenBuf; item: PackedToken) {.inline.} =
   if b.owner != nil: prepareMutation(b)

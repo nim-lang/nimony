@@ -220,7 +220,7 @@ shows up as:
   Code that did `cast[cstring](addr s[0])` is broken.
 - For raw access, use `readRawData(s, start = 0)` which returns
   `ptr UncheckedArray[char]`. The mutating side uses
-  `beginStore(s, ensuredLen, start)` + `endStore(s)`.
+  `beginStore(s, newLen, start)` + `endStore(s)`.
 - `rawData` is exported only on `seq`, not on `string`.
 
 When porting code that did fancy string slicing or wrote into the
@@ -307,27 +307,7 @@ So the constant for the `setconstr` tag is `SetconstrX`, **not**
 `OconstrX`. When porting compiler-internal code, grep
 `src/models/*_tags.nim` for the canonical name.
 
-
-## 9. Forward declarations
-
-Avoid exported forward declarations that are followed by a same-named
-implementation later in the same module. Nimony's symbol table tracks
-the forward decl and the body as separate exported symbols, so importers
-see two `foo` overloads and report `Error: ambiguous call: 'foo'`.
-
-Two ways out:
-
-- Reorder so the impl comes before the callers and no forward decl is
-  needed at all.
-- Make the forward decl private (`proc helper(...)` not `helper*(...)`)
-  and the implementation private as well, with a public wrapper that
-  forwards to the helper.
-
-See `src/nimony/typekeys.nim`'s `mangleProctype` (private forward) /
-`mangle*` (exported impl) pair for an example.
-
-
-## 10. Compile-time evaluation
+## 9. Compile-time evaluation
 
 Nimony's `expreval` only folds magics and ops with a `.semantics:`
 pragma; everything else routes through a full sub-compile of a wrapper
@@ -343,7 +323,7 @@ Watch for:
   with an inline formula if one exists, or accept the cost.
 
 
-## 12. Stdlib porting cheat sheet
+## 10. Stdlib porting cheat sheet
 
 These are the recurring shapes you will hit when porting a stdlib
 module from Nim 2 to `lib/std/`:
@@ -381,7 +361,7 @@ and `cast[CCharArray](myCstringArray)` at the call boundary. Nimony's
 libc's `char**` otherwise.
 
 
-## 13. The `compat2.nim` shim
+## 11. The `compat2.nim` shim
 
 [src/lib/compat2.nim](../src/lib/compat2.nim) is the bootstrap-time
 compat layer that makes the same source compile under both Nim and
@@ -402,7 +382,7 @@ a third place. Don't add Nimony-only or Nim-only sugar to it that is
 not actually needed by the bootstrap.
 
 
-## 14. Build and test
+## 12. Build and test
 
 The build/test driver is `bin/hastur` (built from `src/hastur.nim`).
 Common invocations:

@@ -244,8 +244,16 @@ proc commonType(c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: i
   if m.err:
     # try converter
     var convMatch = default(Match)
-    let convArg = CallArg(n: arg.n, typ: arg.typ)
+    var convArg = CallArg(n: arg.n, typ: arg.typ)
     if tryConverterMatch(c, convMatch, expected, convArg):
+      # `arg.n` and `convArg.n` are cursors into `dest` (via `cursorAt`
+      # earlier and the `=copy` into `convArg`). Each holds an rc ref on
+      # the buffer's CursorOwner. Releasing them before we mutate `dest`
+      # lets `prepareMutation` take the no-copy fast path; otherwise the
+      # `shrink` + `dest.add` below would COW the entire buffer.
+      endRead arg.n
+      endRead convArg.n
+      expectUnique dest
       shrink dest, argBegin
       dest.add parLeToken(HcallX, info)
       dest.add symToken(convMatch.fn.sym, info)
@@ -255,17 +263,22 @@ proc commonType(c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: i
           # adding type args errored
           buildErr c, dest, info, getErrorMsg(convMatch)
         else:
-          let inst = c.requestRoutineInstance(convMatch.fn.sym, convMatch.typeArgs, convMatch.inferred, arg.n.info)
+          let inst = c.requestRoutineInstance(convMatch.fn.sym, convMatch.typeArgs, convMatch.inferred, info)
           dest[dest.len-1].setSymId inst.targetSym
       # ignore refineArgType case, probably environment is generic
       dest.add convMatch.args
       dest.addParRi()
       it.typ = expected
     else:
+      endRead arg.n
+      endRead convArg.n
+      expectUnique dest
       shrink dest, argBegin
       #buildErr c, dest, info, getErrorMsg(m)
       c.typeMismatch dest, info, it.typ, expected
   else:
+    endRead arg.n
+    expectUnique dest
     shrink dest, argBegin
     if m.refineArgType and cursorAt(m.args, 0).exprKind in CallKinds:
       # empty seq call, semcheck

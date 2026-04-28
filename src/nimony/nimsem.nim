@@ -157,3 +157,7 @@ proc handleCmdLine() =
 
 when isMainModule:
   handleCmdLine()
+  when defined(prepMutStats):
+    stderr.writeLine "[prepMutStats] fast=", cowFastCount,
+      " slow=", cowSlowCount,
+      " slowBytes=", cowSlowBytes
