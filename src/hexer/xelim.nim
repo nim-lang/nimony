@@ -1017,7 +1017,13 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
 
 proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
   var n = pass.n  # Extract cursor locally
-  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix, goal: goal)
+  # Inherit the temp counter across passes via `pass.nextTemp` — `lowerExprs`
+  # runs three times in `pipeline.transform` (xelim1, xelim2, xelim_final);
+  # restarting from 0 each time produces colliding `\`x.<n>` SymIds whose
+  # NIFC-emitted C names clash within a single function. `pool.syms.getOrIncl`
+  # is identity-by-name, so two semantically distinct temps would otherwise
+  # share an identifier.
+  var c = Context(counter: pass.nextTemp, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix, goal: goal)
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS, $n.kind
   pass.dest.add n
@@ -1026,6 +1032,7 @@ proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
     trStmt c, pass.dest, n
   pass.dest.addParRi()
   c.typeCache.closeScope()
+  pass.nextTemp = c.counter
   #echo "PRODUCED: ", pass.dest.toString(false)
 
 when isMainModule:
