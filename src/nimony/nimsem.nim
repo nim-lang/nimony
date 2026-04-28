@@ -160,4 +160,5 @@ when isMainModule:
   when defined(prepMutStats):
     stderr.writeLine "[prepMutStats] fast=", cowFastCount,
       " slow=", cowSlowCount,
-      " slowBytes=", cowSlowBytes
+      " slowBytes=", cowSlowBytes,
+      " cmdline=", commandLineParams().join(" ")

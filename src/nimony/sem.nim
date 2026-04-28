@@ -619,7 +619,8 @@ proc semConstBoolExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; allo
   n = it.n
   var e = cursorAt(dest, start)
   var valueBuf = evalExpr(c, e)
-  endRead(dest)
+  endRead e
+  expectUnique dest
   let value = cursorAt(valueBuf, 0)
   if not isConstBoolValue(value):
     if allowUnresolved:
@@ -645,7 +646,8 @@ proc semConstStrExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
     buildErr c, dest, it.n.info, "expected `string` but got: " & typeToString(t)
   var e = cursorAt(dest, start)
   var valueBuf = evalExpr(c, e)
-  endRead(dest)
+  endRead e
+  expectUnique dest
   let value = cursorAt(valueBuf, 0)
   if not isConstStringValue(value):
     if value.kind == ParLe and value.tagId == nifstreams.ErrT:
@@ -679,7 +681,8 @@ proc semConstIntExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; phase
     buildErr c, dest, it.n.info, "expected `int` but got: " & typeToString(t)
   var e = cursorAt(dest, start)
   var valueBuf = evalExpr(c, e)
-  endRead(dest)
+  endRead e
+  expectUnique dest
   let value = cursorAt(valueBuf, 0)
   if not isConstIntValue(value):
     if value.kind == ParLe and value.tagId == nifstreams.ErrT:
@@ -700,7 +703,8 @@ proc semConstExpr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   # XXX future note: consider when the expression depends on a generic param
   var e = cursorAt(dest, start)
   var valueBuf = evalExpr(c, e, it.typ)
-  endRead(dest)
+  endRead e
+  expectUnique dest
   dest.shrink start
   var value = beginRead(valueBuf)
   annotateConstantType dest, it.typ, value
@@ -2052,7 +2056,7 @@ proc evalConstExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; expecte
   n = x.n
   var e = cursorAt(dest, beforeExpr)
   result = evalExpr(c, e)
-  endRead(dest)
+  endRead e
 
 proc evalConstIntExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; expected: TypeCursor): xint =
   let info = n.info
