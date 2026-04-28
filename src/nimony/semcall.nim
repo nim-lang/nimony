@@ -117,12 +117,16 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
   let s = fetchSym(c, fnId)
   let res = declToCursor(c, dest, s)
   if res.status == LacksNothing:
-    let args = cursorAt(dest, beforeCall + 2)
-    let firstVarargMatch = cursorAt(dest, beforeCall + 2 + m.firstVarargPosition)
+    var args = cursorAt(dest, beforeCall + 2)
+    var firstVarargMatch = cursorAt(dest, beforeCall + 2 + m.firstVarargPosition)
     expandTemplate(c, expandedInto, res.decl, args, firstVarargMatch, addr m.inferred, dest[beforeCall].info)
-    # We took 2 cursors, so we have to do the `endRead` twice too:
-    endRead(dest)
-    endRead(dest)
+    # Release the rc refs the two `cursorAt` calls bumped on `dest`, so the
+    # subsequent `shrink dest` + body re-sem can mutate `dest` without
+    # forcing the COW slow path. The earlier `endRead(dest)` calls were
+    # buffer-side no-ops; the cursor overload is what actually dec-refs.
+    endRead args
+    endRead firstVarargMatch
+    expectUnique dest
     shrink dest, beforeCall
     expandedInto.addParRi() # extra token so final `inc` doesn't break
     var a = Item(n: cursorAt(expandedInto, 0), typ: c.types.autoType)
