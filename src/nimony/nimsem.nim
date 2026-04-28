@@ -13,6 +13,7 @@ import ".." / gear2 / modnames
 import ".." / lib / argsfinder
 import sem, nifconfig, semos, semdata, indexgen, programs, symparser
 import nifstreams, derefs, deps, nifcursors, nifreader, nifbuilder, nifindexes, tooldirs, idetools, cli, langmodes
+import ".." / lib / vfs
 
 const
   Version = "0.2"
@@ -162,3 +163,4 @@ when isMainModule:
       " slow=", cowSlowCount,
       " slowBytes=", cowSlowBytes,
       " cmdline=", commandLineParams().join(" ")
+  dumpVfsProfile("nimsem")

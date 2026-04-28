@@ -12,6 +12,7 @@
 import std / [assertions, syncio, tables, sets, intsets, formatfloat, packedsets]
 from std / syncio import readFile, writeFile
 from std / os import changeFileExt, splitFile, extractFilename, fileExists
+import ".." / lib / vfs
 from std / sequtils import insert
 
 include ".." / lib / nifprelude
@@ -737,17 +738,17 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
     writeTokenSeq f, c.init, c
     f.write "}\n\n"
 
-  if fileExists(outp) and readFile(outp) == f.buf:
+  if vfsExists(outp) and vfsRead(outp) == f.buf:
     discard "unchanged, keep mtime for incremental builds"
   else:
-    writeFile outp, f.buf
+    vfsWrite outp, f.buf
 
   if c.headerFile.len > 0:
     let selectHeader = outp.changeFileExt(".h")
     s.selects.add selectHeader
-    var h = open(selectHeader, fmWrite)
+    var hbuf = ""
     for x in items(c.headerFile):
-      write h, c.tokens[x]
-    h.close()
+      hbuf.add c.tokens[x]
+    vfsWrite selectHeader, hbuf
 
   c.m.closeScope()

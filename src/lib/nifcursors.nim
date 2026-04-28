@@ -78,7 +78,7 @@
 ## `expectUnique(b)` asserts that contract in debug builds.
 
 import std / [assertions, syncio]
-import nifreader, nifstreams, bitabs, lineinfos
+import nifreader, nifstreams, bitabs, lineinfos, vfs
 
 include compat2
 
@@ -640,9 +640,9 @@ type
 proc writeFile*(b: TokenBuf; filename: string; mode: FileWriteMode = AlwaysWrite) {.canRaise.} =
   let content = toModuleString(toOpenArray(b.data, 0, b.len-1), "." & extractModuleSuffix(filename))
   if mode == OnlyIfChanged:
-    let existingContent = try: readFile(filename) except: ""
+    let existingContent = try: vfsRead(filename) except: ""
     if existingContent == content: return
-  writeFile(filename, content)
+  vfsWrite(filename, content)
 
 proc `$`*(c: Cursor): string = toString(c, false)
 

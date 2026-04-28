@@ -183,6 +183,11 @@ proc rewriteModule(file: string; live: HashSet[SymId]; resolved: ResolveTable; o
     quit "could not write file: " & outPath
 
 proc deadCodeElimination*(files: openArray[string]; outdir: string) =
+  ## Single-shot DCE: read all .dce.nif analyses, compute global liveness,
+  ## then sequentially rewrite each module's .x.nif to .c.nif. Kept for
+  ## the single-process API; the build pipeline now goes through the split
+  ## `computeLiveSet` + `dceEmit` pair so the per-module rewrite step
+  ## parallelizes across modules.
   var graphs = initTable[string, ModuleAnalysis]()
   for file in files:
     let modName = splitModulePath(file).name
@@ -191,7 +196,123 @@ proc deadCodeElimination*(files: openArray[string]; outdir: string) =
   let resolved = resolveSymbolConflicts(graphs)
 
   let live = markLive(graphs, resolved)
-  # TODO: we could do this step in parallel:
   for file in files:
     let modName = splitModulePath(file).name
     rewriteModule(file, live.getOrQuit(modName), resolved, outdir)
+
+# ---- Split DCE: liveness computation and per-module emit -----------------
+
+const
+  liveTag    = "live"      # `(live (sym Symbol Symbol …))` — per-module live syms
+  resolveTag = "resolved"  # `(resolved (kv String Symbol)*)` — generic-instance picks
+  modTag     = "mod"       # `(mod String (sym …)*)` — block per module
+  symTag     = "sym"
+
+proc writeLiveFile*(outfile: string; resolved: ResolveTable;
+                    live: Table[string, HashSet[SymId]]) =
+  ## Serialize the global DCE result to a single file consumed by all
+  ## downstream `dceEmit` invocations. Symbols are written with their
+  ## full module suffix (no abbreviation): the dotted-suffix shortcut
+  ## expands using the reader's `thisModule` which is derived from the
+  ## filename, but this file aggregates symbols from many modules — only
+  ## one expansion would be correct, all the others would be wrong. So
+  ## we pay the file-size cost rather than mis-expand.
+  var b = nifbuilder.open(outfile)
+  b.withTree "stmts":
+    b.withTree resolveTag:
+      for key, winner in pairs(resolved):
+        b.withTree "kv":
+          b.addStrLit key
+          b.addSymbol pool.syms[winner], ""
+    b.withTree liveTag:
+      for modName, syms in pairs(live):
+        b.withTree modTag:
+          b.addStrLit modName
+          for s in syms:
+            b.addSymbol pool.syms[s], ""
+  b.close()
+
+type
+  LiveSet* = object
+    resolved*: ResolveTable
+    live*: Table[string, HashSet[SymId]]
+
+proc readLiveFile*(infile: string): LiveSet =
+  var buf = parseFromFile(infile)
+  var n = beginRead(buf)
+  result = LiveSet(
+    resolved: initTable[string, SymId](),
+    live: initTable[string, HashSet[SymId]]())
+  if n.stmtKind != StmtsS:
+    raiseAssert infile & ": expected (stmts ...)"
+  inc n
+  let liveTagId = pool.tags.getOrIncl(liveTag)
+  let resolveTagId = pool.tags.getOrIncl(resolveTag)
+  let modTagId = pool.tags.getOrIncl(modTag)
+  while n.kind != ParRi:
+    if n.kind != ParLe:
+      raiseAssert infile & ": expected ParLe"
+    if n.tag == resolveTagId:
+      inc n
+      while n.kind != ParRi:
+        if n.kind == ParLe and n.substructureKind == KvU:
+          inc n  # past `kv`
+          if n.kind != StringLit:
+            raiseAssert infile & ": kv key must be StringLit"
+          let key = pool.strings[n.litId]
+          inc n
+          if n.kind != Symbol:
+            raiseAssert infile & ": kv value must be Symbol"
+          result.resolved[key] = n.symId
+          inc n
+          if n.kind != ParRi:
+            raiseAssert infile & ": expected ')' closing kv"
+          inc n
+        else:
+          raiseAssert infile & ": expected (kv …)"
+      inc n
+    elif n.tag == liveTagId:
+      inc n
+      while n.kind != ParRi:
+        if n.kind != ParLe or n.tag != modTagId:
+          raiseAssert infile & ": expected (mod …)"
+        inc n
+        if n.kind != StringLit:
+          raiseAssert infile & ": (mod) name must be StringLit"
+        let modName = pool.strings[n.litId]
+        inc n
+        var syms = initHashSet[SymId]()
+        while n.kind != ParRi:
+          if n.kind != Symbol:
+            raiseAssert infile & ": expected Symbol in (mod)"
+          syms.incl n.symId
+          inc n
+        result.live[modName] = syms
+        inc n
+      inc n
+    else:
+      raiseAssert infile & ": expected (resolved|live …)"
+
+proc computeLiveSet*(dceFiles: openArray[string]; liveOut: string) =
+  ## Read the per-module `.dce.nif` analyses, compute the global
+  ## resolve table + live sets, and write them to `liveOut`. This is the
+  ## small serial step in the split DCE pipeline.
+  var graphs = initTable[string, ModuleAnalysis]()
+  for file in dceFiles:
+    let modName = splitModulePath(file).name
+    graphs[modName] = readModuleAnalysis(file)
+
+  let resolved = resolveSymbolConflicts(graphs)
+  let live = markLive(graphs, resolved)
+  writeLiveFile(liveOut, resolved, live)
+
+proc dceEmit*(xnif, liveFile, outdir: string) =
+  ## Per-module emit: read `M.x.nif` plus the shared `liveFile`, write
+  ## `M.c.nif`. Multiple invocations run in parallel under the build
+  ## scheduler.
+  let ls = readLiveFile(liveFile)
+  let modName = splitModulePath(xnif).name
+  let liveForMod =
+    if ls.live.hasKey(modName): ls.live.getOrQuit(modName)
+    else: initHashSet[SymId]()
+  rewriteModule(xnif, liveForMod, ls.resolved, outdir)

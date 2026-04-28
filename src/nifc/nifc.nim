@@ -11,6 +11,7 @@
 
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
 import codegen, llvmcodegen, noptions, symparser
+import ".." / lib / vfs
 
 when defined(windows):
   import bat
@@ -239,3 +240,4 @@ proc handleCmdLine() =
 
 when isMainModule:
   handleCmdLine()
+  dumpVfsProfile("nifc")

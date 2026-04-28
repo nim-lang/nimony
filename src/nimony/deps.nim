@@ -533,6 +533,36 @@ proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool) 
       b.addIntLit 0
       b.addIntLit -1  # all inputs
 
+  # Split DCE: liveness phase (single, fast) + per-module emit (parallel).
+  # `dceLive` reads every module's .dce.nif analysis, computes the global
+  # live set + generic-resolve table, writes a shared .live.nif.
+  b.withTree "cmd":
+    b.addSymbolDef "dceLive"
+    b.addStrLit hexer
+    b.addStrLit "dl"
+    b.addStrLit "--bits:" & $bits
+    b.addStrLit cpuFlag
+    b.addKeyw "args"
+    b.withTree "input":
+      b.addIntLit 0
+      b.addIntLit -1
+    b.addKeyw "output"
+
+  # `dceEmit` rewrites one .x.nif into .c.nif using the shared .live.nif.
+  # Independent across modules, so nifmake can run them in parallel.
+  # Output path is derived from `--outdir` + input modname (mirrors how
+  # `hexer c` derives outputs), so no explicit output slot here.
+  b.withTree "cmd":
+    b.addSymbolDef "dceEmit"
+    b.addStrLit hexer
+    b.addStrLit "de"
+    b.addStrLit "--bits:" & $bits
+    b.addStrLit cpuFlag
+    b.addKeyw "args"
+    b.withTree "input":
+      b.addIntLit 0  # M.x.nif
+      b.addIntLit 1  # main.live.nif
+
 proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, passL: string): string =
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".final.build.nif"
   var b = nifbuilder.open(result)
@@ -642,19 +672,41 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
     if c.cmd in {DoCompile, DoRun}:
       let backend = c.rootNode.files[0].modname  # DCE and after are main-specific
       let backendDir = c.config.nifcachePath / backend
+      let liveFile = backendDir / c.rootNode.files[0].modname & ".live.nif"
+
+      # Split DCE — phase 1: collect every module's .dce.nif analysis,
+      # compute the global live set + generic-instance resolve table,
+      # write the shared <main>.live.nif. Single small serial node.
       b.withTree "do":
-        b.addIdent "dce"
-        b.withTree "args":
-          b.addStrLit "--outdir:" & backendDir
+        b.addIdent "dceLive"
         for i, n in pairs c.nodes:
+          # The .dce.nif sits next to its corresponding .x.nif.
+          var dceFile = ""
+          if i == 0:
+            dceFile = backendDir / n.files[0].modname & ".dce.nif"
+          else:
+            dceFile = c.config.nifcachePath / n.files[0].modname & ".dce.nif"
           b.withTree "input":
-            # The root module's .x.nif is backend-specific (generated with --isMain),
-            # so it does not collide with the shared .x.nif produced when this module
-            # is compiled as a non-main dependency of another program.
+            b.addStrLit dceFile
+        b.withTree "output":
+          b.addStrLit liveFile
+
+      # Split DCE — phase 2: per-module emit. Each `(do dceEmit ...)` is
+      # independent (all share live.nif as a read-only input), so nifmake
+      # parallelises them across cores.
+      for i, n in pairs c.nodes:
+        b.withTree "do":
+          b.addIdent "dceEmit"
+          b.withTree "args":
+            b.addStrLit "--outdir:" & backendDir
+          b.withTree "input":
+            # Root module's .x.nif is backend-specific (--isMain).
             if i == 0:
               b.addStrLit backendDir / n.files[0].modname & ".x.nif"
             else:
               b.addStrLit c.config.hexedFile(n.files[0])
+          b.withTree "input":
+            b.addStrLit liveFile
           b.withTree "output":
             b.addStrLit c.config.nifcFile(n.files[0], backend)
 
@@ -735,6 +787,15 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
               b.addStrLit backendDir / v.files[0].modname & ".x.nif"
             else:
               b.addStrLit c.config.hexedFile(v.files[0])
+          # `.dce.nif` is emitted alongside `.x.nif` by `bin/hexer c`. It
+          # is consumed only by the split-DCE `dceLive` node, but listing
+          # it here lets nifmake track it as a real artifact and order
+          # `dceLive` after every per-module hexer.
+          b.withTree "output":
+            if i == 0:
+              b.addStrLit backendDir / v.files[0].modname & ".dce.nif"
+            else:
+              b.addStrLit c.config.nifcachePath / v.files[0].modname & ".dce.nif"
 
 proc cachedConfigFile(config: NifConfig): string =
   config.nifcachePath / "cachedconfigfile.txt"
