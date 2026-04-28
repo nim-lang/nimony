@@ -277,7 +277,12 @@ proc visit(nodes: var seq[Node]; nodeId: int; sortedNodes: var seq[int]; maxDept
     result = true
 
 proc topologicalSort(dag: var Dag): seq[int] =
-  ## Perform topological sort on the DAG
+  ## Perform topological sort on the DAG, then re-order by depth so the
+  ## scheduler in `runDag` can group same-depth nodes contiguously and
+  ## dispatch them via `execProcesses` in parallel. The DFS post-order is
+  ## already a valid topological order, but it interleaves depths — and
+  ## the `currentDepth`-batching loop downstream then sees one node per
+  ## batch and serializes the build.
   result = @[]
   dag.maxDepth = 0
 
@@ -285,6 +290,9 @@ proc topologicalSort(dag: var Dag): seq[int] =
     if dag.nodes[i].state == nsUnvisited:
       if not visit(dag.nodes, i, result, dag.maxDepth):
         quit "Circular dependency detected in build graph"
+
+  let nodes = addr dag.nodes
+  result.sort proc(a, b: int): int = cmp(nodes[a].depth, nodes[b].depth)
 
 proc executeCommand(command: string): bool =
   ## Execute a shell command and return success status
