@@ -83,8 +83,8 @@ testNifGram(overwrite)
 
 proc hasturTests(overwrite: bool) =
   if overwrite:
-    exec "nim c -r src/hastur --overwrite"
+    exec "nim c -r src/hastur --jobs:auto --overwrite"
   else:
-    exec "nim c -r src/hastur"
+    exec "nim c -r src/hastur --jobs:auto"
 
 hasturTests(overwrite)

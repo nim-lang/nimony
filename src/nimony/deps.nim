@@ -281,6 +281,13 @@ proc evalDepCond(config: NifConfig; n: Cursor): bool =
       result = evalDepCond(config, n)
       skip n
       if not result: result = evalDepCond(config, n)
+    of ParX:
+      # `(par X)` is just parenthesised grouping — descend into the body.
+      # Without this, `not (a or b)` evaluates `not (par ...)` as the
+      # conservative-true fallback, and the negation flips to false,
+      # silently dropping the conditional `import` from the build graph.
+      inc n
+      result = evalDepCond(config, n)
     else:
       result = true  # unknown shape — assume true
   elif n.kind == Ident:
