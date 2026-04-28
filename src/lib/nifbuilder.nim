@@ -8,16 +8,21 @@
 
 import std / [assertions, syncio, formatfloat, math]
 from std / strutils import endsWith
+import vfs
 
 type
   Mode = enum
     UsesMem, UsesFile
   Builder* = object ## A builder can be in-memory or directly write into a file.
                     ## In the end either `extract` or `close` must be called.
+                    ## File-mode builders accumulate into `buffer` and flush
+                    ## once at `close()` via `vfsWrite`, so the destination
+                    ## (real disk, in-memory cache, sandbox-rejected, …) is
+                    ## decided by the active VFS relays at close time.
     buffer: string
     mode: Mode
     compact: bool
-    f: File
+    filename: string
     nesting: int
     offs: int
 
@@ -27,8 +32,9 @@ type
 proc `=copy`(dest: var Builder; src: Builder) {.error.}
 
 proc open*(filename: string; compact = false): Builder =
-  ## Opens a new builder and attached it to some output filename.
-  Builder(f: open(filename, fmWrite), mode: UsesFile, compact: compact)
+  ## Opens a new builder attached to some output path. Writes are
+  ## buffered in memory and flushed via `vfsWrite` at `close()`.
+  Builder(buffer: "", mode: UsesFile, compact: compact, filename: filename)
 
 proc open*(sizeHint: int; compact = false): Builder =
   ## Opens a new builder with the intent to keep the produced
@@ -47,8 +53,7 @@ proc extract*(b: sink Builder): string =
 
 proc close*(b: var Builder) =
   if b.mode == UsesFile:
-    write b.f, b.buffer
-    close b.f
+    vfsWrite(b.filename, b.buffer)
   when not defined(showBroken):
     assert b.nesting == 0, "unpaired '(' or ')'"
 
@@ -57,25 +62,16 @@ proc putPending(b: var Builder; s: string) =
   b.offs += s.len
 
 proc drainPending(b: var Builder) =
-  if b.mode == UsesFile:
-    # handle pending data:
-    write b.f, b.buffer
-    b.buffer.setLen 0
+  ## No-op kept for source compatibility; both modes now buffer in
+  ## memory until `close`.
+  discard
 
 proc put(b: var Builder; s: string) =
-  if b.mode == UsesFile:
-    drainPending b
-    write b.f, s
-  else:
-    b.buffer.add s
+  b.buffer.add s
   b.offs += s.len
 
 proc put(b: var Builder; s: char) =
-  if b.mode == UsesFile:
-    drainPending b
-    write b.f, s
-  else:
-    b.buffer.add s
+  b.buffer.add s
   b.offs += 1
 
 proc undoWhitespace(b: var Builder) =
@@ -229,9 +225,6 @@ proc addFloatLit*(b: var Builder; f: float) =
     for i in myLen ..< b.buffer.len:
       if b.buffer[i] == 'e': b.buffer[i] = 'E'
   b.offs += b.buffer.len - myLen
-  if b.mode == UsesFile:
-    b.f.write b.buffer
-    b.buffer.setLen 0
 
 proc addLine(b: var Builder; x: int32) =
   let oldLen = b.buffer.len

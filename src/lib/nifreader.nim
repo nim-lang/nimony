@@ -8,6 +8,7 @@
 
 import std / [memfiles, parseutils, assertions]
 import stringviews
+import vfs
 when defined(nimony):
   import std/syncio
 
@@ -43,7 +44,7 @@ type
   Reader* = object
     p: pchar
     eof: pointer # so that <= uses the correct comparison, not the cstring crap
-    f: MemFile
+    f: VfsBlob
     buf: string
     thisModule*: string
     line*: int32 # file position within the NIF file, not affected by line annotations
@@ -77,11 +78,9 @@ when not defined(nimony):
     cast[ptr UncheckedArray[char]](addr s[0])
 
 proc close*(r: var Reader) =
-  try:
-    memfiles.close(r.f)
-  except:
-    when defined(debug) and not defined(nimony): writeStackTrace()
-    quit "[Error] cannot close"
+  ## Release the backend's read handle (mmap unmap, LMDB read txn
+  ## close, …) via the explicit VfsBlob close API.
+  closeBlob(r.f)
 
 when not defined(nimony):
   {.pragma: untyped.}
@@ -469,21 +468,20 @@ proc extractModuleSuffix*(filename: string): string =
 
 proc open*(filename: string): Reader =
   let f = try:
-      memfiles.open(filename)
+      vfsOpenMmap(filename)
     except:
       when defined(debug) and not defined(nimony): writeStackTrace()
       quit "[Error] cannot open: " & filename
   result = Reader(f: f, p: nil, thisModule: extractModuleSuffix(filename))
-  result.p = cast[pchar](result.f.mem)
+  result.p = cast[pchar](result.f.data)
   result.eof = result.p +! result.f.size
   readDirectives result
 
 proc openFromBuffer*(buf: sink string; thisModule: sink string): Reader =
-  result = Reader(f: default(MemFile), buf: ensureMove buf, thisModule: ensureMove thisModule)
+  result = Reader(buf: ensureMove buf, thisModule: ensureMove thisModule)
   result.p = readRawData result.buf
   result.eof = result.p +! result.buf.len
-  result.f.mem = result.p
-  result.f.size = result.buf.len
+  result.f = initBlob(cast[pointer](result.p), result.buf.len)
   readDirectives result
 
 proc processDirectives*(r: var Reader): DirectivesResult =
@@ -493,11 +491,11 @@ proc fileSize*(r: var Reader): int {.inline.} =
   r.f.size
 
 proc offset*(r: var Reader): int {.inline.} =
-  result = r.p -! cast[pchar](r.f.mem)
+  result = r.p -! cast[pchar](r.f.data)
 
 proc jumpTo*(r: var Reader; offset: int) {.inline.} =
-  r.p = cast[pchar](r.f.mem) +! offset
-  assert cast[pointer](r.p) >= r.f.mem and r.p < r.eof
+  r.p = cast[pchar](r.f.data) +! offset
+  assert cast[pointer](r.p) >= r.f.data and r.p < r.eof
 
 proc indexStartsAt*(r: Reader): int =
   r.indexAt

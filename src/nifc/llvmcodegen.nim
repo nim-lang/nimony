@@ -12,6 +12,7 @@
 
 import std / [assertions, syncio, sets, intsets, formatfloat, packedsets, strutils, sequtils, tables]
 from std / os import changeFileExt, splitFile, extractFilename, fileExists
+import ".." / lib / vfs
 
 include ".." / lib / nifprelude
 import mangler, nifc_model, noptions, typenav, symparser, nifmodules
@@ -937,9 +938,9 @@ proc generateLLVMCode*(s: var State, inp, outp: string; flags: set[LLVMGenFlag])
     for i, md in c.debug.metadata:
       f.add "!" & $i & " = " & md & "\n"
 
-  if fileExists(outp) and readFile(outp) == f:
+  if vfsExists(outp) and vfsRead(outp) == f:
     discard "unchanged, keep mtime for incremental builds"
   else:
-    writeFile outp, f
+    vfsWrite outp, f
 
   c.m.closeScope()

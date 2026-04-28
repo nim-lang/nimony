@@ -7,7 +7,7 @@
 ## Create an index file for a NIF file.
 
 import std / [tables, assertions, hashes, syncio]
-import bitabs, lineinfos, nifreader, nifstreams, nifcursors, nifchecksums, symparser
+import bitabs, lineinfos, nifreader, nifstreams, nifcursors, nifchecksums, symparser, vfs
 
 when defined(nimony):
   import std / sha1
@@ -147,9 +147,9 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
     let final = SecureHash checksum.finalize()
     content.add "(checksum \"" & $final & "\")"
   content.add "\n)\n"
-  let existingContent = try: readFile(indexName) except: ""
+  let existingContent = try: vfsRead(indexName) except: ""
   if existingContent != content:
-    writeFile(indexName, content)
+    vfsWrite(indexName, content)
 
 proc createIndex*(infile: string; buildChecksum: bool; root: PackedLineInfo) {.canRaise.} =
   createIndex(infile, root, buildChecksum, IndexSections())

@@ -9,7 +9,7 @@
 ## by a .nif file or it can translate this file to a Makefile.
 
 import std/[assertions, os, strutils, sequtils, tables, hashes, times, monotimes, sets, parseopt, syncio, osproc, algorithm]
-import ".." / lib / [nifstreams, nifcursors, bitabs, lineinfos, nifreader, tooldirs, argsfinder]
+import ".." / lib / [nifstreams, nifcursors, bitabs, lineinfos, nifreader, tooldirs, argsfinder, vfs]
 
 # Inspired by https://gittup.org/tup/build_system_rules_and_algorithms.pdf
 #[
@@ -220,9 +220,9 @@ proc removeOutdatedArtifacts(node: Node; opt: set[CliOption]) =
   ## Remove outdated build artifacts for a node. Only used with --force;
   ## removing before normal incremental builds breaks tools that use OnlyIfChanged.
   for output in node.outputs:
-    if fileExists(output):
+    if vfsExists(output):
       try:
-        removeFile(output)
+        vfsRemove(output)
         if Verbose in opt:
           echo "Removed outdated artifact: ", output
       except:
@@ -239,19 +239,19 @@ proc needsRebuild(node: Node): bool =
 
   # Check if any output is missing
   for output in node.outputs:
-    if not fileExists(output):
+    if not vfsExists(output):
       return true
 
   # Check if any input is newer than any output
-  var oldestOutput = getTime()
+  var oldestOutput = vfsNow()
   for output in node.outputs:
-    let outputTime = getLastModificationTime(output)
+    let outputTime = vfsMtime(output)
     if outputTime < oldestOutput:
       oldestOutput = outputTime
 
   for input in node.inputs:
-    if fileExists(input):
-      let inputTime = getLastModificationTime(input)
+    if vfsExists(input):
+      let inputTime = vfsMtime(input)
       if inputTime >= oldestOutput:
         return true
 
@@ -544,7 +544,7 @@ proc parseNifFile(filename: string; baseDir: sink string): Dag =
   ## Parse a .nif file and build the DAG
   result = Dag(baseDir: baseDir)
 
-  if not fileExists(filename):
+  if not vfsExists(filename):
     quit "File not found: " & filename
 
   var stream = nifstreams.open(filename)
@@ -698,3 +698,4 @@ proc main() =
 
 when isMainModule:
   main()
+  dumpVfsProfile("nifmake")
