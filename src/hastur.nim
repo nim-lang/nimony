@@ -8,7 +8,7 @@ when defined(windows):
     else:
       {.link: "../icons/hastur_icon.o".}
 
-import std / [syncio, assertions, parseopt, strutils, times, os, osproc, algorithm]
+import std / [syncio, assertions, parseopt, strutils, times, os, osproc, algorithm, streams]
 
 import lib / [nifindexes, lineinfos, argsfinder]
 import gear2 / modnames
@@ -49,6 +49,9 @@ Options:
   --help                show this help
   --forward:OPTION      pass an option to the Nimony compiler
   --release             build in release mode
+  --jobs:N|auto         run up to N tests in parallel (auto = #cores)
+  --cachedir:PATH       use PATH instead of `nimcache/` for intermediates
+  --no-build            skip rebuilding nimony/nifc before `test`
 """
 
 proc quitWithText*(s: string) =
@@ -172,6 +175,22 @@ type
     Compat # compatibility mode tests
     Valgrind # valgrind tests
 
+var nimcacheDir* = "nimcache"
+  ## Directory used for compiler intermediates. Per-test parallel runs
+  ## point this at a unique sub-directory so concurrent tests don't
+  ## race on the same `nimcache/` artifacts.
+
+var parallelJobs* = 1
+  ## How many tests `testDir` runs concurrently. 1 = serial (current
+  ## behavior). `--jobs:N` on the command line overrides; `--jobs:auto`
+  ## uses `countProcessors()`.
+
+var skipBuild* = false
+  ## Set by the parallel test runner on its worker invocations: the
+  ## parent has already rebuilt nimony / nifc before kicking off the
+  ## pool, so each worker skips the rebuild. Otherwise every worker
+  ## spends seconds re-running `nim c` for nothing.
+
 proc toCommand(cat: Category): string =
   case cat
   of Basics: "m"
@@ -179,7 +198,10 @@ proc toCommand(cat: Category): string =
   of Normal, Compat, Valgrind: "c --silentMake"
 
 proc execNimony(cmd: string; cat: Category): (string, int) =
-  result = execLocal("nimony", toCommand(cat) & " " & cmd)
+  let cacheArg =
+    if nimcacheDir != "nimcache": "--nimcache:" & quoteShell(nimcacheDir) & " "
+    else: ""
+  result = execLocal("nimony", toCommand(cat) & " " & cacheArg & cmd)
 
 const
   HasturSessionFile = "hastur_session.txt"
@@ -233,12 +255,12 @@ proc pathsForFile(file: string): seq[string] =
 proc generatedFile(orig, ext: string): string =
   let name = modnames.moduleSuffix(orig, pathsForFile(orig))
   # Backend (DCE and after) is in nimcache/<mainmod>/, see deps.nim; .s.nif is shared
-  result = if ext == ".s.nif": "nimcache" / name.addFileExt(ext)
-           else: "nimcache" / name / name.addFileExt(ext)
+  result = if ext == ".s.nif": nimcacheDir / name.addFileExt(ext)
+           else: nimcacheDir / name / name.addFileExt(ext)
 
 proc generatedExeFile(orig: string): string =
   let name = modnames.moduleSuffix(orig, pathsForFile(orig))
-  result = "nimcache" / name / orig.splitFile.name.addFileExt(ExeExt)
+  result = nimcacheDir / name / orig.splitFile.name.addFileExt(ExeExt)
 
 proc removeMakeErrors(output: string): string =
   result = output.strip
@@ -368,6 +390,71 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category;
         let nif = generatedFile(file, ".s.nif")
         diffFiles c, file, ast, nif, overwrite
 
+proc canRunParallel(cat: Category): bool {.inline.} =
+  ## `Compat` and `Basics` reset `nimcache/` around the loop and so are
+  ## not parallel-safe with the current single-cache layout. Other
+  ## categories use isolated per-test cache dirs and parallelize fine.
+  cat notin {Compat, Basics}
+
+proc parallelTestDir(c: var TestCounters; files: openArray[string];
+                     overwrite: bool; cat: Category; forward: string;
+                     jobs: int) =
+  ## Run each test in its own subprocess (`bin/hastur test ...`) with a
+  ## per-test `--cacheDir` so concurrent compilations cannot collide on
+  ## intermediates. Up to `jobs` subprocesses run at once. Test results
+  ## are streamed in completion order; final pass/fail counts go into
+  ## the shared `c`.
+  let hastur = getAppFilename()
+  var queue: seq[(int, string)] = @[]   # (idx, file) preserving input order
+  for i, f in pairs(files): queue.add (i, f)
+  var head = 0
+
+  type Slot = object
+    p: Process
+    idx: int
+    file: string
+  var slots = newSeq[Slot](jobs)
+  var active = 0
+
+  proc launch(slot: int) =
+    if head >= queue.len: return
+    let (idx, file) = queue[head]
+    inc head
+    let cacheDir = nimcacheDir / ".par" / $idx
+    var args = @["test", "--no-build", "--cachedir:" & cacheDir]
+    if overwrite: args.add "--overwrite"
+    if forward.len > 0: args.add "--forward:" & forward
+    args.add file
+    slots[slot] = Slot(idx: idx, file: file,
+      p: startProcess(hastur, args = args,
+        options = {poStdErrToStdOut, poUsePath}))
+    inc active
+
+  for s in 0 ..< jobs: launch(s)
+
+  while active > 0:
+    for s in 0 ..< jobs:
+      if slots[s].p == nil: continue
+      let exit = peekExitCode(slots[s].p)
+      if exit != -1:
+        var outp = ""
+        var line = ""
+        while slots[s].p.outputStream.readLine(line):
+          outp.add line
+          outp.add '\n'
+        slots[s].p.close()
+        inc c.total
+        if exit != 0:
+          inc c.failures
+          stdout.write outp
+        else:
+          stdout.write outp
+        slots[s].p = nil
+        dec active
+        launch(s)
+    if active > 0:
+      sleep(2)
+
 proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category; forward: string) =
   var files: seq[string] = @[]
   for x in walkDir(dir):
@@ -376,8 +463,11 @@ proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category; f
   sort files
   if cat in {Compat, Basics}:
     removeDir "nimcache"
-  for f in items files:
-    testFile c, f, overwrite, cat, forward
+  if parallelJobs > 1 and canRunParallel(cat):
+    parallelTestDir(c, files, overwrite, cat, forward, parallelJobs)
+  else:
+    for f in items files:
+      testFile c, f, overwrite, cat, forward
   if cat in {Compat, Basics}:
     removeDir "nimcache"
 
@@ -900,21 +990,39 @@ proc handleCmdLine =
       else:
         args.add key
     of cmdLongOption, cmdShortOption:
-      if primaryCmd.len == 0 or primaryCmd == "record":
-        case normalize(key)
-        of "help", "h": writeHelp()
-        of "version", "v": writeVersion()
-        of "codegen": flags.incl RecordCodegen
-        of "ast": flags.incl RecordAst
-        of "overwrite": overwrite = true
-        of "forward": forward = val
-        of "release": release = true
-        else: writeHelp()
+      # `--cachedir` / `--jobs` can appear anywhere — they configure the
+      # test runner regardless of position relative to the primary cmd.
+      # Other long options stay tied to the pre-command position (or to
+      # the `record` subcommand).
+      let n = normalize(key)
+      case n
+      of "cachedir":
+        if val.len == 0: writeHelp()
+        nimcacheDir = val
+      of "jobs", "j":
+        if val == "auto" or val.len == 0:
+          parallelJobs = countProcessors()
+        else:
+          try: parallelJobs = max(1, parseInt(val))
+          except: writeHelp()
+      of "no-build", "nobuild":
+        skipBuild = true
       else:
-        args.add key
-        if val.len != 0:
-          args[^1].add ':'
-          args[^1].add val
+        if primaryCmd.len == 0 or primaryCmd == "record":
+          case n
+          of "help", "h": writeHelp()
+          of "version", "v": writeVersion()
+          of "codegen": flags.incl RecordCodegen
+          of "ast": flags.incl RecordAst
+          of "overwrite": overwrite = true
+          of "forward": forward = val
+          of "release": release = true
+          else: writeHelp()
+        else:
+          args.add key
+          if val.len != 0:
+            args[^1].add ':'
+            args[^1].add val
     of cmdEnd: assert false, "cannot happen"
   if primaryCmd.len == 0:
     primaryCmd = "all"
@@ -1017,8 +1125,9 @@ proc handleCmdLine =
     buildHexer()
     hexertests(overwrite)
   of "test":
-    buildNimony()
-    buildNifc()
+    if not skipBuild:
+      buildNimony()
+      buildNifc()
     if args.len > 0:
       if args[0].dirExists():
         testDirCmd args[0], overwrite, forward
