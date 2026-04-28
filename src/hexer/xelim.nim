@@ -242,6 +242,98 @@ proc trExprLoop(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
   tar.t.addParRi()
   inc n
 
+proc trAggregateValue(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
+  ## Bind a *call* in a value-position of an aggregate to a fresh let-temp
+  ## so the call evaluates at a deterministic textual point relative to
+  ## sibling pre-statements (e.g. a sibling's `wasMoved`). Non-call
+  ## expressions are pure reads and are passed through to `trExpr`
+  ## unchanged.
+  if n.kind != ParLe or n.exprKind notin CallKinds:
+    trExpr c, dest, n, tar
+    return
+
+  let info = n.info
+  let typ = getType(c, n)
+
+  var childTar = Target(m: IsBound)
+  trExpr c, dest, n, childTar
+
+  let tmp = pool.syms.getOrIncl(tempSymName(c))
+  let stmtKind = if typ.typeKind == MutT: VarS else: LetS
+  dest.addParLe stmtKind, info
+  dest.addSymDef tmp, info
+  dest.addEmpty2 info  # export marker, pragmas
+  dest.copyTree typ
+  dest.addTarget childTar
+  dest.addParRi()
+
+  tar.t.addSymUse tmp, info
+
+proc trAggregate(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
+  ## Aggregate constructors (object / tuple / array / set / bracket /
+  ## newobj) evaluate their value-children in **unspecified** order at the
+  ## C level, while xelim hoists pre-statements of any complex child to the
+  ## enclosing statement. If a sibling produces a `wasMoved`/asgn pre-stmt
+  ## that mutates a location an earlier sibling reads from, that earlier
+  ## sibling sees corrupted state. Concrete witness: the duplifier emits
+  ## `(let tmp = s; wasMoved s; tmp)` for the last read of `s`; an earlier
+  ## `=dup(s)` left inline reads the cleared `s` because `wasMoved` runs
+  ## first.
+  ##
+  ## Whenever the aggregate has at least one complex child, bind every
+  ## non-literal value-position to a temp so the temps' assignments are
+  ## the sequence points and pre-statements of later children always come
+  ## *after* the values of earlier children.
+  if not isComplex(n, c.goal):
+    trExprLoop c, dest, n, tar
+    return
+
+  if tar.m in {IsEmpty, IsBound}:
+    tar.m = IsAppend
+  else:
+    assert tar.m == IsAppend
+
+  let kind = n.exprKind
+  tar.t.add n
+  inc n
+
+  case kind
+  of OconstrX, NewobjX:
+    # `(oconstr T (kv field val INTLIT?)*)` — also accepts a leading
+    # inheritance form `(oconstr T (oconstr ...) (kv ...)*)`.
+    if n.kind != ParRi:
+      tar.t.takeTree n  # T
+    while n.kind != ParRi:
+      if n.kind == ParLe and n.substructureKind == KvU:
+        tar.t.takeToken n  # `(kv`
+        if n.kind != ParRi:
+          tar.t.takeTree n  # field key
+        if n.kind != ParRi:
+          trAggregateValue c, dest, n, tar
+        while n.kind != ParRi:
+          tar.t.takeTree n  # optional INTLIT (inheritance count)
+        tar.t.takeToken n  # closing `)` of kv
+      else:
+        # Inheritance-style first-child: another constructor expression.
+        trExpr c, dest, n, tar
+  of TupconstrX, AconstrX:
+    # `(tupconstr T X+)`, `(aconstr T X*)` — type then values.
+    if n.kind != ParRi:
+      tar.t.takeTree n
+    while n.kind != ParRi:
+      trAggregateValue c, dest, n, tar
+  of TupX, BracketX, CurlyX, SetconstrX, TabconstrX:
+    # `(tup X+)`, `(bracket X*)`, `(curly X*)`, `(setconstr X*)`,
+    # `(tabconstr X*)` — value list, no leading type.
+    while n.kind != ParRi:
+      trAggregateValue c, dest, n, tar
+  else:
+    while n.kind != ParRi:
+      trExpr c, dest, n, tar
+
+  tar.t.addParRi()
+  inc n
+
 proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   if tar.m in {IsAppend, IsEmpty} and c.goal == TowardsNjvl:
     # bind to a temporary variable:
@@ -880,15 +972,17 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
         trCast c, dest, n, tar
       else:
         trExprLoop c, dest, n, tar
+    of OconstrX, NewobjX, TupconstrX, TupX, AconstrX, BracketX,
+       CurlyX, SetconstrX, TabconstrX:
+      trAggregate c, dest, n, tar
     of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
        InfX, NeginfX, NanX, FalseX, TrueX, XorX, NotX, NegX,
-       SizeofX, AlignofX, OffsetofX, OconstrX, AconstrX,
-       BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, MulX,
+       SizeofX, AlignofX, OffsetofX, CurlyatX, OvfX, AddX, SubX, MulX,
        DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
        BitnotX, EqX, NeqX, LeX, LtX, ConvX, CchoiceX,
        OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX,
-       NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
-       TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CompilesX,
+       NewrefX,
+       AshrX, BaseobjX, HconvX, DconvX, CompilesX,
        DeclaredX, DefinedX, AstToStrX, InstanceofX, HighX, LowX,
        TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
        IsmainmoduleX, DefaultobjX, DefaulttupX,
@@ -923,7 +1017,13 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
 
 proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
   var n = pass.n  # Extract cursor locally
-  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix, goal: goal)
+  # Inherit the temp counter across passes via `pass.nextTemp` — `lowerExprs`
+  # runs three times in `pipeline.transform` (xelim1, xelim2, xelim_final);
+  # restarting from 0 each time produces colliding `\`x.<n>` SymIds whose
+  # NIFC-emitted C names clash within a single function. `pool.syms.getOrIncl`
+  # is identity-by-name, so two semantically distinct temps would otherwise
+  # share an identifier.
+  var c = Context(counter: pass.nextTemp, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix, goal: goal)
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS, $n.kind
   pass.dest.add n
@@ -932,6 +1032,7 @@ proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
     trStmt c, pass.dest, n
   pass.dest.addParRi()
   c.typeCache.closeScope()
+  pass.nextTemp = c.counter
   #echo "PRODUCED: ", pass.dest.toString(false)
 
 when isMainModule:
