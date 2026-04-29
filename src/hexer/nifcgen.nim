@@ -145,7 +145,8 @@ proc externPragmas(c: var EContext; dest: var TokenBuf; genPragmas: var GenPragm
     dest.addKeyVal genPragmas, "header", strToken(prag.header, pinfo), pinfo
 
 proc trField(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag] = {}) =
-  dest.add n # fld
+  # Translate gfld to fld for NIFC (NIFC only knows fld):
+  dest.add parLeToken(pool.tags.getOrIncl("fld"), n.info)
   inc n
 
   expectSymdef(c, n)

@@ -5474,7 +5474,7 @@ proc semCastInnerPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
     if n.kind == ParLe: skip n
     else: inc n
   else:
-    buildErr c, dest, info, "invalid `cast` pragma argument; expected `noSideEffect` or `uncheckedAssign`"
+    buildErr c, dest, info, "invalid `cast` pragma argument; expected `noSideEffect`, `uncheckedAssign` or `uncheckedAccess`"
     if n.kind == ParLe: skip n
     else: inc n
 
@@ -5741,15 +5741,15 @@ proc semPragmaExpr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   dest.takeToken it.n
   assert it.n.stmtKind == PragmasS
-  let hasUncheckedAssess = hasCastUncheckedAccess(it.n.firstSon)
+  let hasUncheckedAccess = hasCastUncheckedAccess(it.n.firstSon)
   dest.takeToken it.n
   while it.n.kind != ParRi:
     semPragmaLine c, dest, it, true
   takeParRi dest, it.n
-  if hasUncheckedAssess:
+  if hasUncheckedAccess:
     inc c.inUncheckedAccess
   semStmt(c, dest, it.n, false)
-  if hasUncheckedAssess:
+  if hasUncheckedAccess:
     dec c.inUncheckedAccess
   takeParRi dest, it.n
   producesVoid c, dest, info, it.typ

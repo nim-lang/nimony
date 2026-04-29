@@ -13,13 +13,13 @@ type
     lbl: string
 
 let c: Thing = Circle(radius: 2.5, tag: 42, lbl: "c")
-{.cast(uncheckedAssign).}:
+{.cast(uncheckedAccess).}:
   assert c.radius == 2.5
 assert c.tag == 42
 assert c.lbl == "c"
 
 let r: Thing = Rect(w: 3.0, h: 4.0, tag: 0, lbl: "r")
-{.cast(uncheckedAssign).}:
+{.cast(uncheckedAccess).}:
   assert r.w == 3.0
   assert r.h == 4.0
 assert r.tag == 0
@@ -34,7 +34,7 @@ proc describe(t: Thing): string =
 
 assert describe(c) == "circle"
 assert describe(r) == "rect"
-{.cast(uncheckedAssign).}:
+{.cast(uncheckedAccess).}:
   assert c.radius == 2.5
   assert r.w == 3.0
 

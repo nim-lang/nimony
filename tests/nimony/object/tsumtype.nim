@@ -9,15 +9,15 @@ type
       val: int
 
 let v: Node = Value(val: 42)
-{.cast(uncheckedAssign).}:
+{.cast(uncheckedAccess).}:
   assert v.val == 42
 
 let v2 = Value(val: 42)
-{.cast(uncheckedAssign).}:
+{.cast(uncheckedAccess).}:
   assert v2.val == 42
 
 let add: Node = AddOpr(a: v, b: Value(val: 10))
-{.cast(uncheckedAssign).}:
+{.cast(uncheckedAccess).}:
   assert add.a.val == 42
   assert add.b.val == 10
 
