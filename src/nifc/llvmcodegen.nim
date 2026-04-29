@@ -124,6 +124,7 @@ type
     symName: string
     wrapperName: string
     header: string
+    cType: string
 
   LLVMGenFlag* = enum
     gfMainModule
@@ -189,6 +190,36 @@ proc error(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
   when defined(debug):
     echo getStackTrace()
   quit 1
+
+proc computeCType(c: var LLVMCode; typ: Cursor): string =
+  var t = typ
+  case t.typeKind
+  of PtrT, AptrT:
+    inc t
+    if t.typeKind == VoidT:
+      return "void*"
+    if t.kind == Symbol:
+      let decl = c.m.getDeclOrNil(t.symId)
+      if decl != nil and decl.extern != StrId(0):
+        return pool.strings[decl.extern] & "*"
+    return "void*"
+  of IT, UT, FT:
+    result = case t.typeKind
+             of IT: "int"
+             of UT: "unsigned int"
+             else: "double"
+    inc t
+    if t.kind == IntLit: inc t
+    while t.kind != ParRi:
+      if t.pragmaKind == ImportcP:
+        inc t
+        if t.kind == StringLit:
+          result = pool.strings[t.litId]
+          break
+        skip t
+      else: skip t
+  else:
+    return "void*"
 
 # ---- Token helpers ----
 
@@ -504,15 +535,16 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
       # C macros (e.g. stderr, stdout) cannot be referenced as LLVM symbols;
       # generate a wrapper function that returns the macro's value.
       let wrapperName = c.stubModuleName & "_get_" & name
-      c.stubWrappers.add StubWrapper(
-        symName: name,
-        wrapperName: wrapperName,
-        header: headerStr
-      )
       c.wrappedSyms[lit] = wrapperName
       if wrapperName notin c.declaredExterns:
         c.declaredExterns.incl wrapperName
         c.addTo(c.externs, "declare " & typ & " @" & wrapperName & "()\n")
+        c.stubWrappers.add StubWrapper(
+          symName: name,
+          wrapperName: wrapperName,
+          header: headerStr,
+          cType: computeCType(c, d.typ)
+        )
     elif toExtern or isImport:
       c.addTo(c.globals, "@" & name & " = external " & tls & "global " & typ & alignSuffix & "\n")
     else:
@@ -907,8 +939,11 @@ proc generateStubFile(c: var LLVMCode; stubPath: string) =
       content.add "#include \"" & h & "\"\n"
   content.add "\n"
   for w in c.stubWrappers:
-    content.add "void* " & w.wrapperName & "(void) {\n"
-    content.add "  return (void*)" & w.symName & ";\n"
+    content.add w.cType & " " & w.wrapperName & "(void) {\n"
+    if w.cType == "void*":
+      content.add "  return (void*)" & w.symName & ";\n"
+    else:
+      content.add "  return " & w.symName & ";\n"
     content.add "}\n\n"
   let contentStr = content
   if vfsExists(stubPath) and vfsRead(stubPath) == contentStr:
