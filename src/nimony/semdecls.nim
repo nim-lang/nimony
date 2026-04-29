@@ -252,6 +252,8 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
       copyKeepLineInfo dest[declStart], parLeToken(TvarS, NoLineInfo)
     elif GlobalP in crucial.flags or c.currentScope.kind == ToplevelScope:
       copyKeepLineInfo dest[declStart], parLeToken(GvarS, NoLineInfo)
+  elif kind == GfldY:
+    copyKeepLineInfo dest[declStart], parLeToken(GfldY, NoLineInfo)
   if kind notin {FldY, GfldY}:
     publish c, dest, delayed.s.name, declStart
 

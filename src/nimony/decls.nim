@@ -264,7 +264,7 @@ proc nextField*(iter: var ObjFieldIter, n: var Cursor, keepCase = false): bool =
         inc iter.nested
         inc n
         skip n
-      of FldU:
+      of FldU, GfldU:
         result = true
         break
       else:

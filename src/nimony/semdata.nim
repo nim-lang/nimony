@@ -61,6 +61,7 @@ type
     level*: int # inheritance level
     typ*: TypeCursor
     exported*: bool
+    guarded*: bool # true for gfld fields (cannot be accessed via dot)
     rootOwner*: SymId # generic root of owner type
 
   # SemPhase and ToplevelEntry are now in programs.nim
@@ -112,6 +113,7 @@ type
     canSelfExec*: bool
     checkedForWriteNifModule*: bool
     inWhen*: int
+    inUncheckedAssign*: int
     templateInstCounter*: int
     commandLineArgs*: string # for IC we make nimony `exec` itself. Thus it is important
                              # to forward command line args properly.

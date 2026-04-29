@@ -385,7 +385,7 @@ proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: T
       if c.op == attachedDestroy:
         # destroy the selector after case stmt
         unravelObjField c, selector, paramA, paramB, depth
-    of FldU:
+    of FldU, GfldU:
       unravelObjField c, n, paramA, paramB, depth
     of NilU:
       skip n
@@ -402,7 +402,7 @@ proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf
     var scan = n
     while scan.kind != ParRi:
       case scan.substructureKind
-      of CaseU, FldU:
+      of CaseU, FldU, GfldU:
         fieldPositions.add scan
         skip scan
       of NilU:
@@ -414,7 +414,7 @@ proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf
       case cur.substructureKind
       of CaseU:
         unravelObjFieldsForward c, cur, paramA, paramB, depth
-      of FldU:
+      of FldU, GfldU:
         unravelObjField c, cur, paramA, paramB, depth
       else:
         discard

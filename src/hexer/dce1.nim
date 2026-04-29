@@ -40,7 +40,7 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
         tr n, a, newOwner
       inc n
     else:
-      if n.substructureKind == FldU:
+      if n.substructureKind in {FldU, GfldU}:
         inc n
         let symName = pool.syms[n.symId]
         if n.kind == SymbolDef:

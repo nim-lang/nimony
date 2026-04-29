@@ -4,7 +4,10 @@ proc semObjectComponent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
                         state: var SemObjectState) =
   case n.substructureKind
   of FldU:
-    semLocal(c, dest, n, FldY)
+    if state.guarded:
+      semLocal(c, dest, n, GfldY)
+    else:
+      semLocal(c, dest, n, FldY)
   of GfldU:
     semLocal(c, dest, n, GfldY)
   of WhenU:
@@ -16,13 +19,18 @@ proc semObjectComponent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     inc probe
     if probe.substructureKind == FldU:
       inc probe
-    if probe.kind == DotToken:
+    let isGuardedCase = probe.kind == DotToken
+    if isGuardedCase:
       if state.isAnum:
         c.buildErr dest, n.info,
           "only one empty `case` section is allowed in an object type"
       state.isAnum = true
+    let oldGuarded = state.guarded
+    if isGuardedCase:
+      state.guarded = true
     var it = Item(n: n, typ: c.types.autoType)
     semCaseImpl(c, dest, it, ObjectCase, state)
+    state.guarded = oldGuarded
     n = it.n
   of StmtsU:
     inc n
