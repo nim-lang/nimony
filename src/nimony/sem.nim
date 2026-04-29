@@ -110,7 +110,7 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
         skipParRi it
       of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, EfldU, FldU,
          WhenU, TypevarsU, CaseU, OfU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
-         UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU:
+         UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU:
         error "illformed AST: `elif` or `else` inside `if` expected, got ", it
     # all branches are discardable
     result = true
@@ -138,7 +138,7 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
         skipParRi it
       of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, EfldU, FldU,
          WhenU, TypevarsU, CaseU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
-         UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU:
+         UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU:
         error "illformed AST: `of`, `elif` or `else` inside `case` expected, got ", it
     # all branches are discardable
     result = true
@@ -4078,7 +4078,7 @@ proc caseBranchMatchesExpr(c: var SemContext; dest: var TokenBuf; branch, matche
       skipParRi(branch)
     of NoSub, NilU, NotnilU, KvU, VvU, RangesU, ParamU, TypevarU, EfldU, FldU,
        WhenU, ElifU, ElseU, TypevarsU, CaseU, OfU, StmtsU, ParamsU, PragmasU,
-       EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU:
+       EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU:
       if sameTrees(branch, matched):
         return true
       skip branch
@@ -4156,7 +4156,7 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         skipParRi n
       of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, EfldU, FldU,
          WhenU, ElifU, TypevarsU, CaseU, StmtsU, ParamsU, PragmasU,
-         EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU:
+         EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU:
         error "illformed AST inside case object: ", n
 
   if selectorSymId notin setFields:
