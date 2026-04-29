@@ -515,13 +515,24 @@ proc grow(b: var TokenBuf; newLen: int) =
 template buildTree*(dest: var TokenBuf; tag: TagId; info: PackedLineInfo; body: untyped) =
   dest.add parLeToken(tag, info)
   body
-  dest.add parRiToken(info)
+  dest.addParRi(info)
 
 proc addParLe*(dest: var TokenBuf; tag: TagId; info = NoLineInfo) =
   dest.add parLeToken(tag, info)
 
 proc addParRi*(dest: var TokenBuf) =
   dest.add parRiToken(NoLineInfo)
+
+proc addParRi*(dest: var TokenBuf; info: PackedLineInfo) =
+  ## Use this rather than `dest.add parRiToken(info)` so the encoding of a
+  ## closing `)` lives in one place — paves the way for a future virtual-
+  ## ParRi optimisation that folds the closer into the matching ParLe.
+  dest.add parRiToken(info)
+
+proc addParRi*(dest: var seq[PackedToken]; info: PackedLineInfo) =
+  ## Same intent for the inline-subtree case (constructing a `seq[…]`
+  ## before wrapping with `fromBuffer`).
+  dest.add parRiToken(info)
 
 proc addDotToken*(dest: var TokenBuf) =
   dest.add dotToken(NoLineInfo)
@@ -649,7 +660,7 @@ proc `$`*(c: Cursor): string = toString(c, false)
 template copyInto*(dest: var TokenBuf; tag: TagId; info: PackedLineInfo; body: untyped) =
   dest.add parLeToken(tag, info)
   body
-  dest.add parRiToken(NoLineInfo)
+  dest.addParRi()
 
 proc parLeTokenUnchecked*(tag: string; info: PackedLineInfo): PackedToken {.inline.} =
   parLeToken(pool.tags.getOrIncl(tag), info)
@@ -657,7 +668,7 @@ proc parLeTokenUnchecked*(tag: string; info: PackedLineInfo): PackedToken {.inli
 template copyIntoUnchecked*(dest: var TokenBuf; tag: string; info: PackedLineInfo; body: untyped) =
   dest.add parLeTokenUnchecked(tag, info)
   body
-  dest.add parRiToken(NoLineInfo)
+  dest.addParRi()
 
 proc parse*(r: var Stream; dest: var TokenBuf;
             parentInfo: PackedLineInfo; debug: bool = false) =

@@ -992,7 +992,7 @@ proc fitTypeToPragmas(c: var SemContext; dest: var TokenBuf; pragmas: CrucialPra
         assert pragmas.headerFileTok.kind == StringLit
         attrs.add parLeToken(HeaderP, info)
         attrs.add pragmas.headerFileTok
-        attrs.add parRiToken(info)
+        attrs.addParRi(info)
       # Imported aliases of scalar builtins must override the C spelling
       # (`importc`/`importcpp` + optional `header`) rather than stack with
       # existing builtin attributes like `(importc "int")`.
