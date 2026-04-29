@@ -12,6 +12,6 @@
   (pragmas 2
    (cast
     (pragmas 5
-     (uncheckedAssign)))) 2,1
+     (uncheckedAccess)))) 2,1
   (stmts
    (discard .))))0,1,tests/nimony/nosystem/tcastpragma.nim(.index)
