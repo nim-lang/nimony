@@ -30,6 +30,8 @@ Commands:
   nifc                 run NIFC tests.
   nj                   run NJ (Nimony Jump Elimination) tests.
   vl                   run VL (Versioned Locations) tests.
+  incremental          verify nifmake's mtime-based incremental rebuilds via
+                       the `--report` machine-readable summary.
   test <file>/<dir>    run test <file> or <dir>.
   bug [file]           build nimony+hexer and compile <file> to fill nimcache/.
                        If no file is provided `bug.nim` is used.
@@ -396,6 +398,66 @@ proc canRunParallel(cat: Category): bool {.inline.} =
   ## categories use isolated per-test cache dirs and parallelize fine.
   cat notin {Compat, Basics}
 
+proc warmupSharedCache(): string =
+  ## Compile `tools/warmup.nim` once into `nimcache/warmup/` so each
+  ## parallel test can start with system + common stdlib bundles already
+  ## present. Returns the warmup cache directory, or "" on opt-out
+  ## (warmup source missing or compile failed — tests still work, just
+  ## without the savings).
+  const warmupSrc = "tools/warmup.nim"
+  if not fileExists(warmupSrc):
+    return ""
+  result = nimcacheDir / "warmup"
+  let nimony = "bin" / "nimony".addFileExt(ExeExt)
+  if not fileExists(nimony):
+    return ""
+  let cmd = nimony.quoteShell & " c --nimcache:" & result.quoteShell &
+            " " & warmupSrc.quoteShell
+  let t0 = epochTime()
+  let exit = execShellCmd(cmd)
+  let dt = epochTime() - t0
+  if exit != 0:
+    stderr.writeLine "warmup: skipping (compile failed): " & cmd
+    return ""
+  if dt > 0.5:
+    # Only report cold compiles; subsequent calls in the same `hastur all`
+    # run are sub-second no-ops thanks to nimony's incremental build, and
+    # printing them per-category just adds noise.
+    echo "warmup compiled in ", formatFloat(dt, ffDecimal, precision=2), "s."
+
+var warmupCopySeconds: float = 0
+  ## Aggregate prefill cost across one parallel run, reported alongside
+  ## the test counts.
+
+proc copyPreservingMtime(src, dst: string) =
+  ## Copy `src` to `dst` and stamp `dst` with `src`'s mtime. Mtime
+  ## preservation is load-bearing: `nifmake.needsRebuild` keys off
+  ## output-mtime > input-mtime ordering, so a fresh "now" mtime on every
+  ## prefilled file would scramble the DAG-order mtimes the warmup set
+  ## up and trigger spurious recompiles. Hardlinks would also preserve
+  ## mtimes "for free", but they share an inode — when one parallel test
+  ## triggers an in-place rewrite of a shared bundle (say a config
+  ## difference forces a recompile), every other test holding a hardlink
+  ## sees the truncated/partial content and crashes. Copying gives each
+  ## test an independent inode, paid for once at prefill.
+  try:
+    copyFile(src, dst)
+    try: setLastModificationTime(dst, getLastModificationTime(src))
+    except: discard
+  except OSError, IOError:
+    discard  # best-effort; falling back to a cold per-test compile is fine
+
+proc prefillFromWarmup(warmupCache, cacheDir: string) =
+  if warmupCache.len == 0 or not dirExists(warmupCache):
+    return
+  let t0 = epochTime()
+  for path in walkDirRec(warmupCache, yieldFilter = {pcFile}, relative = true):
+    let dst = cacheDir / path
+    try: createDir(dst.parentDir)
+    except OSError: discard
+    copyPreservingMtime(warmupCache / path, dst)
+  warmupCopySeconds += epochTime() - t0
+
 proc parallelTestDir(c: var TestCounters; files: openArray[string];
                      overwrite: bool; cat: Category; forward: string;
                      jobs: int) =
@@ -405,6 +467,9 @@ proc parallelTestDir(c: var TestCounters; files: openArray[string];
   ## are streamed in completion order; final pass/fail counts go into
   ## the shared `c`.
   let hastur = getAppFilename()
+  let warmupCache = warmupSharedCache()
+  warmupCopySeconds = 0
+  let parallelStart = epochTime()
   var queue: seq[(int, string)] = @[]   # (idx, file) preserving input order
   for i, f in pairs(files): queue.add (i, f)
   var head = 0
@@ -421,6 +486,7 @@ proc parallelTestDir(c: var TestCounters; files: openArray[string];
     let (idx, file) = queue[head]
     inc head
     let cacheDir = nimcacheDir / ".par" / $idx
+    prefillFromWarmup(warmupCache, cacheDir)
     var args = @["test", "--no-build", "--cachedir:" & cacheDir]
     if overwrite: args.add "--overwrite"
     if forward.len > 0: args.add "--forward:" & forward
@@ -454,6 +520,12 @@ proc parallelTestDir(c: var TestCounters; files: openArray[string];
         launch(s)
     if active > 0:
       sleep(2)
+
+  if warmupCache.len > 0:
+    echo "warmup prefill total: ",
+         formatFloat(warmupCopySeconds, ffDecimal, precision=2), "s; ",
+         "parallel run: ",
+         formatFloat(epochTime() - parallelStart, ffDecimal, precision=2), "s."
 
 proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category; forward: string) =
   var files: seq[string] = @[]
@@ -626,6 +698,120 @@ proc validatorTests() =
     quit "FAILURE: Some validator tests failed."
   else:
     echo "SUCCESS."
+
+# ---- Incremental-build regression test ------------------------------------
+# `nifmake --report` prints a machine-readable summary of which commands
+# actually executed during one nifmake invocation. We drive `bin/nimony c
+# --report` over `tests/incremental/sample.nim` through a sequence of
+# scenarios and assert on the per-phase counts. This catches mtime-tracking
+# regressions (e.g. tools that drift back into "always rewrite" and trigger
+# perpetual rebuilds, or staleness checks that miss real edits) without
+# the brittleness of comparing file timestamps.
+
+type ReportEntry = tuple[cmd: string, count: int]
+
+proc parseNifmakeReports(output: string): seq[seq[ReportEntry]] =
+  ## Each `nifmake-report …` line in `output` becomes one inner seq. Lines
+  ## without entries (an up-to-date no-op) yield an empty seq plus the
+  ## sentinel `total=0` entry that nifmake always emits.
+  result = @[]
+  for line in output.splitLines:
+    if not line.startsWith("nifmake-report"): continue
+    var entries: seq[ReportEntry] = @[]
+    for part in line.split(' '):
+      if part.len == 0 or part == "nifmake-report": continue
+      let eq = part.find('=')
+      if eq < 0: continue
+      try: entries.add((part[0 ..< eq], parseInt(part[eq+1 .. ^1])))
+      except ValueError: discard
+    result.add entries
+
+proc reportField(entries: seq[ReportEntry]; cmd: string): int =
+  for e in entries:
+    if e.cmd == cmd: return e.count
+  result = 0
+
+proc incrementalTests() =
+  ## Drive `bin/nimony c --report` through a fixed sequence of scenarios on
+  ## `tests/incremental/sample.nim` and assert the per-nifmake-invocation
+  ## command counts. Fails the run on the first divergence; restores the
+  ## sample file regardless of outcome.
+  let t0 = epochTime()
+  let src = "tests/incremental/sample.nim"
+  let cache = "nimcache" / "incremental"
+  let nimony = "bin" / "nimony".addFileExt(ExeExt)
+  if not fileExists(src):
+    quit "incremental: " & src & " missing"
+  if not fileExists(nimony):
+    quit "incremental: " & nimony & " not found; run `hastur build nimony` first"
+  removeDir cache
+
+  let baseCmd = nimony.quoteShell & " c --silentMake --report --nimcache:" &
+                cache.quoteShell & " " & src.quoteShell
+  let originalSrc = readFile(src)
+
+  proc run(label: string): seq[seq[ReportEntry]] =
+    let (output, ec) = execCmdEx(baseCmd)
+    if ec != 0:
+      stdout.write output
+      writeFile(src, originalSrc)
+      quit "incremental: '" & label & "' compile failed"
+    parseNifmakeReports(output)
+
+  var failures: seq[string] = @[]
+  template expect(cond: bool; msg: string) =
+    if not (cond): failures.add msg
+
+  # Phase 1: cold cascade — both nifmake invocations should run real work.
+  block:
+    let r = run("cold")
+    expect r.len == 2, "cold: expected 2 nifmake invocations, got " & $r.len
+    if r.len == 2:
+      expect reportField(r[0], "total") > 0, "cold: frontend ran 0 commands"
+      expect reportField(r[1], "total") > 0, "cold: backend ran 0 commands"
+
+  # Phase 2: no-op rebuild — both reports should show total=0.
+  block:
+    let r = run("noop")
+    if r.len == 2:
+      expect reportField(r[0], "total") == 0,
+             "noop: frontend re-ran " & $reportField(r[0], "total") & " commands"
+      expect reportField(r[1], "total") == 0,
+             "noop: backend re-ran " & $reportField(r[1], "total") & " commands"
+
+  # Phase 3: touch (no content change). nifler reruns to find content
+  # unchanged — its OnlyIfChanged write preserves `.p.nif`'s mtime, so
+  # nimsem and the backend must stay idle.
+  block:
+    setLastModificationTime(src, getTime())
+    let r = run("touch")
+    if r.len == 2:
+      expect reportField(r[0], "nifler") >= 1,
+             "touch: nifler did not re-run"
+      expect reportField(r[0], "nimsem") == 0,
+             "touch: nimsem ran " & $reportField(r[0], "nimsem") & " times (expected 0)"
+      expect reportField(r[1], "total") == 0,
+             "touch: backend ran " & $reportField(r[1], "total") & " commands (expected 0)"
+
+  # Phase 4: real content edit — full cascade.
+  block:
+    writeFile(src, originalSrc & "\necho \"incremental edited\"\n")
+    let r = run("edit")
+    if r.len == 2:
+      expect reportField(r[0], "nimsem") >= 1,
+             "edit: nimsem did not re-run"
+      expect reportField(r[1], "total") > 0,
+             "edit: backend ran 0 commands"
+
+  writeFile(src, originalSrc)
+
+  let dt = epochTime() - t0
+  if failures.len > 0:
+    for f in failures: stderr.writeLine "incremental: " & f
+    quit "FAILURE: " & $failures.len & " incremental phase(s) failed."
+  echo "incremental: 4 / 4 phases successful in ",
+       formatFloat(dt, ffDecimal, precision=2), "s."
+  echo "SUCCESS."
 
 proc test(t: string; overwrite: bool; cat: Category; forward: string) =
   var c = TestCounters(total: 0, failures: 0)
@@ -1050,11 +1236,15 @@ proc handleCmdLine =
     vlTests(overwrite)
     buildValidator()
     validatorTests()
+    incrementalTests()
     bootstrapTests()
 
   of "validate", "validator":
     buildValidator()
     validatorTests()
+
+  of "incremental":
+    incrementalTests()
 
   of "bootstrap":
     buildNimony()

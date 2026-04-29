@@ -77,7 +77,7 @@ type
     cmdRun, cmdMakefile, cmdHelp, cmdVersion
 
   CliOption = enum
-    Parallel, Force, Verbose, Profile
+    Parallel, Force, Verbose, Profile, Report
 
   ProfileData* = object
     parseTime: float
@@ -603,6 +603,10 @@ Options:
   --base:<dir>          Use <dir> as base directory for `.args` files.
                         If not set, no `.args` files are processed.
   --profile             Print timing profile of executed commands to stderr.
+  --report              Print machine-readable per-command invocation
+                        counts to stdout, e.g.
+                          nifmake-report nimsem=2 hexer=1 total=3
+                        Used by the incremental-build regression test.
 
 Examples:
   nifmake run build.nif
@@ -614,6 +618,31 @@ Examples:
 proc writeVersion() =
   echo "nifmake 0.2.0"
   quit(0)
+
+proc printReport(profile: ProfileData) =
+  ## Machine-readable summary of which commands actually executed during
+  ## this nifmake invocation. One line on stdout, sorted by command name:
+  ##   nifmake-report dceEmit=126 hexer=16 nifc=126 nimsem=121
+  ## Zero-invocation runs print just `nifmake-report` (no entries) — that
+  ## is the up-to-date signal used by the incremental-build regression
+  ## test. Adds `total` as the sum across all commands.
+  var entries = newSeq[(string, int)](profile.cmdTime.len)
+  var i = 0
+  var total = 0
+  for cmd, data in profile.cmdTime.pairs:
+    entries[i] = (cmd, data.count)
+    inc i
+    total += data.count
+  entries.sort(proc(a, b: (string, int)): int = cmp(a[0], b[0]))
+  stdout.write "nifmake-report"
+  for (cmd, count) in entries:
+    stdout.write " "
+    stdout.write cmd
+    stdout.write "="
+    stdout.write $count
+  stdout.write " total="
+  stdout.write $total
+  stdout.write "\n"
 
 proc printProfile(profile: ProfileData) =
   stderr.writeLine "\n--- nifmake profile ---"
@@ -665,6 +694,7 @@ proc main() =
       of "verbose": opt.incl Verbose
       of "base": baseDir = val
       of "profile": opt.incl Profile
+      of "report": opt.incl Report
       else:
         echo "Unknown option: --", key
         quit(1)
@@ -678,16 +708,15 @@ proc main() =
     if inputFile == "":
       quit "Input file required for 'run' command"
 
-    var profile: ProfileData
-    if Profile in opt:
-      profile = ProfileData(cmdTime: initTable[string, tuple[sec: float, count: int]]())
+    if Profile in opt or Report in opt:
+      var profile = ProfileData(cmdTime: initTable[string, tuple[sec: float, count: int]]())
       let parseStart = getMonoTime()
       var dag = parseNifFile(inputFile, baseDir)
       profile.parseTime = toSeconds(getMonoTime() - parseStart)
-      if not runDag(dag, opt, addr profile):
-        printProfile(profile)
-        quit 1
-      printProfile(profile)
+      let ok = runDag(dag, opt, addr profile)
+      if Profile in opt: printProfile(profile)
+      if Report in opt: printReport(profile)
+      if not ok: quit 1
     else:
       var dag = parseNifFile(inputFile, baseDir)
       if not runDag(dag, opt):

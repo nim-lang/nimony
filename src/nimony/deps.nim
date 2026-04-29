@@ -102,6 +102,12 @@ type
     DoCompile, # like `nim c` but with nifler
     DoRun # like `nim run`
 
+  BuildFlag* = enum
+    ForceRebuild   ## passes `--force` to nifmake (rebuild all)
+    SilentMake     ## suppress make output
+    Profile        ## ask nifmake to print its timing profile
+    Report         ## ask nifmake to print machine-readable invocation counts
+
   CFile = object
     name, obj, customArgs: string
 
@@ -987,7 +993,7 @@ proc initDepContext(config: sink NifConfig; project, nifler: string; isFinal, fo
   traverseDeps result, p, root
 
 proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFiles: seq[string];
-    forceRebuild, silentMake: bool; moduleFlags: set[ModuleFlag]) =
+    flags: set[BuildFlag]; moduleFlags: set[ModuleFlag]) =
   ## Build graph starting from already-processed .nif files instead of .nim files
   const requiredStdlibModules = [
     "std/writenif.nim", "std/syncio.nim", "std/math.nim", "std/formatfloat.nim"
@@ -1160,17 +1166,19 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
 
   # Execute the build using nifmake
   let nifmakeCmd = quoteShell(findTool("nifmake")) &
-    (if forceRebuild: " --force" else: "") &
+    (if ForceRebuild in flags: " --force" else: "") &
     " --base:" & quoteShell(config.baseDir) &
     " -j run " & quoteShell(buildFile)
   exec(nifmakeCmd)
   exec(exeFile)
 
-proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMake, profile: bool;
+proc buildGraph*(config: sink NifConfig; project: string;
+    flags: set[BuildFlag];
     commandLineArgs, commandLineArgsNifc: string; moduleFlags: set[ModuleFlag]; cmd: Command;
     passC, passL: string, executableArgs: string) =
   let nifler = findTool("nifler")
   let nifmake = findTool("nifmake")
+  let forceRebuild = ForceRebuild in flags
 
   if config.compat:
     let cfgNif = config.nifcachePath / moduleSuffix(project, []) & ".cfg.nif"
@@ -1187,7 +1195,8 @@ proc buildGraph*(config: sink NifConfig; project: string; forceRebuild, silentMa
     putEnv("CXX", "g++")
   let nifmakeCommand = quoteShell(nifmake) &
     (if forceRebuild: " --force" else: "") &  # Use generic force flag
-    (if profile: " --profile" else: "") &
+    (if Profile in flags: " --profile" else: "") &
+    (if Report in flags: " --report" else: "") &
     " --base:" & quoteShell(config.baseDir) &
     " -j run "
   exec nifmakeCommand & quoteShell(buildFilename)

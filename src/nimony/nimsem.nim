@@ -82,8 +82,7 @@ proc executeNif(files: seq[string]; config: sink NifConfig) =
     config = config,
     mainNifFile = files[0],
     dependencyNifFiles = dependencyFiles,
-    forceRebuild = false,
-    silentMake = false,
+    flags = {},
     moduleFlags = {}
   )
 
