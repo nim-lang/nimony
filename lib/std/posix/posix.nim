@@ -36,7 +36,10 @@ when defined(posix):
                                             ## unspecified.
       st_mode* {.importc: "st_mode".} : Mode        ## Mode of file (see below).
       st_mtime* {.importc: "st_mtime".} : int64     ## Time of last data modification (seconds since epoch).
-      st_mtim* {.importc: "st_mtim".} : Timespec    ## Time of last data modification with nanosecond precision.
+      when defined(osx):
+        st_mtim* {.importc: "st_mtimespec".} : Timespec ## Time of last data modification with nanosecond precision.
+      else:
+        st_mtim* {.importc: "st_mtim".} : Timespec      ## Time of last data modification with nanosecond precision.
 
 
   const StatHasNanoseconds* = defined(linux) or defined(freebsd) or
