@@ -694,6 +694,7 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       # Look up the type from the scope before advancing
       let symType = getType(c.m, n)
       let decl = c.m.getDeclOrNil(s)
+      genImportedSymsLLVM(c)
       inc n
       # Check if this is an enum field — resolve to its integer constant
       if symType.typeKind == EnumT:
@@ -730,8 +731,13 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       let typ = genTypeLLVMReadOnly(c, symType)
       let prefix = if isGlobalSym(c, s): "@" else: "%"
       let t = c.temp()
-      c.emitLine "  " & c.str(t) & " = load " & typ & ", ptr " & prefix & name
-      result = LLValue(name: t, typ: c.tok(typ))
+      if s in c.wrappedSyms:
+        let wrapperName = c.wrappedSyms[s]
+        c.emitLine "  " & c.str(t) & " = call " & typ & " @" & wrapperName & "()"
+        result = LLValue(name: t, typ: c.tok(typ))
+      else:
+        c.emitLine "  " & c.str(t) & " = load " & typ & ", ptr " & prefix & name
+        result = LLValue(name: t, typ: c.tok(typ))
     else:
       let exprType = getType(c.m, n)
       let typ = genTypeLLVMReadOnly(c, exprType)

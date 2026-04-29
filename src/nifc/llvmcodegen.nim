@@ -120,6 +120,11 @@ proc fillTokenTable(tab: var BiTable[LToken, string]) =
     assert id == LToken(e), $(id, " ", ord(e))
 
 type
+  StubWrapper = object
+    symName: string
+    wrapperName: string
+    header: string
+
   LLVMGenFlag* = enum
     gfMainModule
 
@@ -162,6 +167,9 @@ type
     currentProc: LLVMCurrentProc
     strLitCounter*: int       # global counter for string literal names
     debug*: DebugInfo
+    stubWrappers*: seq[StubWrapper]
+    wrappedSyms*: Table[SymId, string] # symId -> wrapper function name
+    stubModuleName*: string
 
 proc initLLVMCode*(m: sink MainModule; flags: set[LLVMGenFlag]; bits: int): LLVMCode =
   result = LLVMCode(m: m, flags: flags, bits: bits, inToplevel: true,
@@ -388,6 +396,8 @@ include llvmgentypes
 
 # ---- Expression generation ----
 
+proc genImportedSymsLLVM(c: var LLVMCode)  # forward declaration
+
 include llvmgenexprs
 
 # ---- Forward declarations ----
@@ -437,6 +447,7 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
     var externName = StrId(0)
     var isImport = false
     var isNodecl = false
+    var headerStr = ""
     let alignVal = extractAlignValue(d.pragmas)
     if d.pragmas.substructureKind == PragmasU:
       var p = d.pragmas.firstSon
@@ -450,7 +461,9 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
         of NodeclP:
           isNodecl = true
         of HeaderP:
-          discard # ignored for LLVM backend
+          let hp = p.firstSon
+          if hp.kind == StringLit:
+            headerStr = pool.strings[hp.litId]
         else: discard
         skip p
 
@@ -487,7 +500,20 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
 
     let alignSuffix = if alignVal > 0: ", align " & $alignVal else: ""
     let tls = if vk == IsThreadlocal: "thread_local " else: ""
-    if toExtern or isImport:
+    if isImport and headerStr.len > 0:
+      # C macros (e.g. stderr, stdout) cannot be referenced as LLVM symbols;
+      # generate a wrapper function that returns the macro's value.
+      let wrapperName = c.stubModuleName & "_get_" & name
+      c.stubWrappers.add StubWrapper(
+        symName: name,
+        wrapperName: wrapperName,
+        header: headerStr
+      )
+      c.wrappedSyms[lit] = wrapperName
+      if wrapperName notin c.declaredExterns:
+        c.declaredExterns.incl wrapperName
+        c.addTo(c.externs, "declare " & typ & " @" & wrapperName & "()\n")
+    elif toExtern or isImport:
       c.addTo(c.globals, "@" & name & " = external " & tls & "global " & typ & alignSuffix & "\n")
     else:
       if d.value.kind != DotToken:
@@ -869,11 +895,35 @@ proc generateLLVMTypes(c: var LLVMCode) =
         if typeDef != "":
           c.addTo(c.types, typeDef)
 
+proc generateStubFile(c: var LLVMCode; stubPath: string) =
+  var content = "// Auto-generated stub wrappers for C macros\n"
+  var headers = initHashSet[string]()
+  for w in c.stubWrappers:
+    headers.incl w.header
+  for h in headers:
+    if h[0] == '<' or h[0] == '"':
+      content.add "#include " & h & "\n"
+    else:
+      content.add "#include \"" & h & "\"\n"
+  content.add "\n"
+  for w in c.stubWrappers:
+    content.add "void* " & w.wrapperName & "(void) {\n"
+    content.add "  return (void*)" & w.symName & ";\n"
+    content.add "}\n\n"
+  let contentStr = content
+  if vfsExists(stubPath) and vfsRead(stubPath) == contentStr:
+    discard "unchanged"
+  else:
+    vfsWrite stubPath, contentStr
+
 proc generateLLVMCode*(s: var State, inp, outp: string; flags: set[LLVMGenFlag]) =
   var m = load(inp)
   m.config = s.config
   var c = initLLVMCode(m, flags, s.bits)
   c.m.openScope()
+
+  let (_, moduleName, _) = splitFile(outp)
+  c.stubModuleName = moduleName
 
   # Initialize debug info
   initDebugInfo(c, inp)
@@ -942,5 +992,8 @@ proc generateLLVMCode*(s: var State, inp, outp: string; flags: set[LLVMGenFlag])
     discard "unchanged, keep mtime for incremental builds"
   else:
     vfsWrite outp, f
+
+  let stubPath = changeFileExt(outp, ".wrap.c")
+  generateStubFile(c, stubPath)
 
   c.m.closeScope()

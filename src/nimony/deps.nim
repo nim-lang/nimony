@@ -58,6 +58,12 @@ proc genFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
 proc objFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
   base / f.modname & ".o"
+proc wrapCFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
+  let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
+  base / f.modname & ".wrap.c"
+proc wrapObjFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
+  let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
+  base / f.modname & ".wrap.o"
 
 # It turned out to be too annoying in practice to have the exe file in
 # the current directory per default so we now put it into the nifcache too:
@@ -732,6 +738,11 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
           if not objFiles.containsOrIncl(obj):
             b.withTree "input":
               b.addStrLit obj
+          if c.config.backend == backendLLVM:
+            let wrapObj = c.config.wrapObjFile(v.files[0], backend)
+            if not objFiles.containsOrIncl(wrapObj):
+              b.withTree "input":
+                b.addStrLit wrapObj
         b.withTree "output":
           b.addStrLit c.config.exeFile(c.rootNode.files[0], backend)
 
@@ -759,6 +770,16 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
             b.withTree "output":
               b.addStrLit obj
 
+        if c.config.backend == backendLLVM:
+          let wrapObj = c.config.wrapObjFile(v.files[0], backend)
+          if not objFiles.containsOrIncl(wrapObj):
+            b.withTree "do":
+              b.addIdent "cc"
+              b.withTree "input":
+                b.addStrLit c.config.wrapCFile(v.files[0], backend)
+              b.withTree "output":
+                b.addStrLit wrapObj
+
         # Build C/LLVM IR files from .c.nif files
         b.withTree "do":
           b.addIdent "nifc"
@@ -771,6 +792,9 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
             b.addStrLit c.config.nifcFile(v.files[0], backend)
           b.withTree "output":
             b.addStrLit c.config.genFile(v.files[0], backend)
+          if c.config.backend == backendLLVM:
+            b.withTree "output":
+              b.addStrLit c.config.wrapCFile(v.files[0], backend)
 
         # Build .x.nif files from .s.nif files via hexer.
         # For the root module (i==0) the output is backend-specific so that
