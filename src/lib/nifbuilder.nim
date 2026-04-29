@@ -27,9 +27,13 @@ type
     filename: string
     nesting: int
     offs: int
-
-  LineInfoFormat = enum
-    LineInfoNone, LineInfoCol, LineInfoColLine, LineInfoFile
+    # NIF27 line info is a postfix suffix on the most recently written atom or
+    # tag name. To preserve the bridges' existing "info-then-atom" call order
+    # we buffer the pending info here; each atom/tag emitter consumes it via
+    # `emitPending` after writing its own content.
+    pendingInfo: bool
+    pendingCol, pendingLine: int32
+    pendingFile: string
 
 proc `=copy`(dest: var Builder; src: Builder) {.error.}
 
@@ -94,7 +98,7 @@ proc undoWhitespace(b: var Builder) =
 
 
 const
-  ControlChars* = {'(', ')', '[', ']', '{', '}', '~', '#', '\'', '"', '\\', ':'}
+  ControlChars* = {'(', ')', '[', ']', '{', '}', '~', '#', '\'', '"', '\\', ':', '@'}
 
 proc escape(b: var Builder; c: char) =
   const HexChars = "0123456789ABCDEF"
@@ -114,11 +118,12 @@ proc addSep(b: var Builder) =
   elif b.nesting != 0:
     b.putPending " "
 
+proc emitPendingFwd(b: var Builder)
+
 proc addNumber*(b: var Builder; s: string) =
   addSep b
-  if s.len > 0 and s[0] notin {'+', '-'}:
-    b.put "+"
   put b, s
+  emitPendingFwd b
 
 #  ------------ Atoms ------------------------
 
@@ -136,6 +141,7 @@ proc addIdent*(b: var Builder; s: string) =
         b.escape c
       else:
         b.put c
+  emitPendingFwd b
 
 proc addSymbolImpl(b: var Builder; s: string; len: int): int {.inline.} =
   ## Returns the number of dots in the symbol.
@@ -158,11 +164,13 @@ proc addSymbolImpl(b: var Builder; s: string; len: int): int {.inline.} =
 proc addSymbol*(b: var Builder; s: string) =
   addSep b
   discard addSymbolImpl(b, s, s.len)
+  emitPendingFwd b
 
 proc addSymbolDef*(b: var Builder; s: string) =
   addSep b
   b.put ':'
   discard addSymbolImpl(b, s, s.len)
+  emitPendingFwd b
 
 proc addSymbol*(b: var Builder; s, dottedSuffix: string) =
   addSep b
@@ -171,6 +179,7 @@ proc addSymbol*(b: var Builder; s, dottedSuffix: string) =
     L -= dottedSuffix.len
     inc L
   discard addSymbolImpl(b, s, L)
+  emitPendingFwd b
 
 proc addSymbolDefRetIsGlobal*(b: var Builder; s: string; dottedSuffix = ""): bool =
   ## Returns true if the symbol is global.
@@ -181,6 +190,7 @@ proc addSymbolDefRetIsGlobal*(b: var Builder; s: string; dottedSuffix = ""): boo
     L -= dottedSuffix.len
     inc L
   result = addSymbolImpl(b, s, L) >= 2
+  emitPendingFwd b
 
 proc addStrLit*(b: var Builder; s: string) =
   addSep b
@@ -191,11 +201,15 @@ proc addStrLit*(b: var Builder; s: string) =
     else:
       b.put c
   b.put '"'
+  emitPendingFwd b
 
 proc addEmpty*(b: var Builder; count = 1) =
   addSep b
-  for i in 1..count:
+  if count >= 1:
     b.put '.'
+    emitPendingFwd b
+    for i in 2..count:
+      b.put '.'
 
 proc addCharLit*(b: var Builder; c: char) =
   addSep b
@@ -205,92 +219,157 @@ proc addCharLit*(b: var Builder; c: char) =
   else:
     b.put c
   b.put '\''
+  emitPendingFwd b
 
 proc addIntLit*(b: var Builder; i: int64) =
   addSep b
-  if i >= 0:
-    b.buffer.add '+'
-    b.offs += 1
   b.put $i
+  emitPendingFwd b
 
 proc addUIntLit*(b: var Builder; u: uint64) =
   addSep b
-  b.buffer.add '+'
   b.put $u
   b.buffer.add 'u'
-  b.offs += 2
+  b.offs += 1
+  emitPendingFwd b
 
 proc addFloatLit*(b: var Builder; f: float) =
   addSep b
   drainPending b
-  let myLen = b.buffer.len
   case classify(f)
-  of fcInf: b.buffer.add "(inf)"
-  of fcNan: b.buffer.add "(nan)"
-  of fcNegInf: b.buffer.add "(neginf)"
-  of fcNegZero: b.buffer.add "-0.0"
+  of fcInf:
+    b.put "(inf"
+    emitPendingFwd b
+    b.put ')'
+  of fcNan:
+    b.put "(nan"
+    emitPendingFwd b
+    b.put ')'
+  of fcNegInf:
+    b.put "(neginf"
+    emitPendingFwd b
+    b.put ')'
+  of fcNegZero:
+    b.put "-0.0"
+    emitPendingFwd b
   of fcNormal, fcSubnormal, fcZero:
-    if f >= 0.0:
-      b.buffer.add '+'
+    let myLen = b.buffer.len
     b.buffer.addFloat f
     for i in myLen ..< b.buffer.len:
       if b.buffer[i] == 'e': b.buffer[i] = 'E'
-  b.offs += b.buffer.len - myLen
+    b.offs += b.buffer.len - myLen
+    emitPendingFwd b
 
-proc addLine(b: var Builder; x: int32) =
-  let oldLen = b.buffer.len
-  if x < 0:
-    b.buffer.add '~'
-    b.buffer.addInt(-x)
+proc b62Char(d: int): char {.inline.} =
+  if d < 10: char(ord('0') + d)
+  elif d < 36: char(ord('A') + d - 10)
+  else: char(ord('a') + d - 36)
+
+proc addB62Unsigned(b: var Builder; n0: uint64) =
+  ## Emit `n0` as base62 digits (most-significant first). Always emits at
+  ## least one digit (even for zero) so the line-info parser sees a non-empty
+  ## diff segment.
+  if n0 == 0:
+    b.put '0'
   else:
-    b.buffer.addInt(x)
-  b.offs += b.buffer.len - oldLen
+    var buf {.noinit.}: array[12, char]  # 62^12 > 2^64
+    var i = 0
+    var n = n0
+    while n > 0'u64:
+      buf[i] = b62Char(int(n mod 62'u64))
+      n = n div 62'u64
+      inc i
+    while i > 0:
+      dec i
+      b.put buf[i]
 
-template addLineIgnoreZero(b: var Builder; x: int32) =
-  # Adds a number if it is not zero.
-  if x != 0:
-    addLine b, x
+proc addLineDiff(b: var Builder; x: int32; emitZero: bool) {.inline.} =
+  ## Emit one base62 line-info diff. If `emitZero` is false and `x == 0`,
+  ## emit nothing (the segment is implicitly zero between two commas).
+  if x < 0:
+    b.put '~'
+    b.addB62Unsigned uint64(-int64(x))
+  elif x > 0:
+    b.addB62Unsigned uint64(x)
+  elif emitZero:
+    b.put '0'
 
-proc addLineInfo*(b: var Builder; col, line: int32; file = "") =
-  var format = LineInfoNone
-  if col != 0'i32:
-    format = LineInfoCol
-  if line != 0'i32:
-    format = LineInfoColLine
-  if file.len > 0:
-    format = LineInfoFile
+proc attachLineInfo*(b: var Builder; col, line: int32; file = "") =
+  ## Append a NIF27 line-information suffix to the most recently emitted atom
+  ## or tag name. There must be no whitespace between the atom/tag and this
+  ## call (do not call `addSep`, `addEmpty`, or any `add*Lit` between them).
+  ## A no-op when all components are zero/empty.
+  if col == 0 and line == 0 and file.len == 0:
+    return
   drainPending b
-  case format
-  of LineInfoCol:
-    addSep b
-    b.addLine col
-  of LineInfoColLine:
-    addSep b
-    b.addLineIgnoreZero col
-    b.buffer.add ','
-    b.offs += 1
-    b.addLine line
-  of LineInfoFile:
-    addSep b
-    b.addLine col
-    b.buffer.add ','
-    b.addLine line
-    b.buffer.add ','
-    b.offs += 2
+  if col < 0:
+    # Use the bare-`~` shorthand (no `@` introducer).
+    b.put '~'
+    b.addB62Unsigned uint64(-int64(col))
+  else:
+    b.put '@'
+    if col > 0:
+      b.addB62Unsigned uint64(col)
+    # else: empty first diff segment, allowed by `B62Digit*` in the grammar.
+  if line != 0 or file.len > 0:
+    b.put ','
+    b.addLineDiff line, emitZero = false
+  if file.len > 0:
+    b.put ','
     for c in file.items:
       if c.needsEscape:
         b.escape c
       else:
-        b.buffer.add c
-        b.offs += 1
-  of LineInfoNone:
-    discard "same line info"
+        b.put c
+
+proc emitPending(b: var Builder) {.inline.} =
+  ## Drain a pending line-info request scheduled via `addLineInfo`. Called by
+  ## every atom and tag emitter after it has written its content but before
+  ## any subsequent separator is added.
+  if b.pendingInfo:
+    b.pendingInfo = false
+    b.attachLineInfo(b.pendingCol, b.pendingLine, b.pendingFile)
+    b.pendingFile.setLen 0
+
+proc emitPendingFwd(b: var Builder) =
+  ## Forward used by the atom emitters defined earlier in the file (the
+  ## helper `attachLineInfo`/`emitPending` are defined further down).
+  emitPending(b)
+
+proc addLineInfo*(b: var Builder; col, line: int32; file = "") =
+  ## Schedule line information for the **next** atom or compound node that
+  ## will be emitted. The info is attached as a NIF27 suffix once the next
+  ## atom or tag has been written. A no-op when all components are zero/empty.
+  ## Two consecutive `addLineInfo` calls without an intervening emit overwrite
+  ## the pending value.
+  if col == 0 and line == 0 and file.len == 0:
+    b.pendingInfo = false
+    b.pendingFile.setLen 0
+    return
+  b.pendingCol = col
+  b.pendingLine = line
+  b.pendingFile = file
+  b.pendingInfo = true
+
+proc attachComment*(b: var Builder; s: string) =
+  ## Append a NIF27 comment suffix `#<s>#` to the most recently emitted atom
+  ## or tag name (or directly after a preceding `attachLineInfo`). No
+  ## whitespace allowed before the `#`.
+  drainPending b
+  b.put '#'
+  for c in s.items:
+    if c.needsEscape:
+      b.escape c
+    else:
+      b.put c
+  b.put '#'
 
 proc addKeyw*(b: var Builder; keyw: string) =
   ## Adds a complete compound node that has no children like `(nil)`.
   drainPending b
   b.put '('
   b.put keyw
+  emitPending b
   b.put ')'
 
 proc addTree*(b: var Builder; kind: string) =
@@ -307,6 +386,7 @@ proc addTree*(b: var Builder; kind: string) =
     b.put "\n("
   b.put kind
   inc b.nesting
+  emitPending b
 
 proc endTree*(b: var Builder) =
   when not defined(showBroken):
@@ -334,7 +414,7 @@ proc addStrLit*(b: var Builder; s: string; suffix: string) =
     addStrLit(b, suffix)
 
 proc addHeader*(b: var Builder; vendor = "", dialect = "") =
-  b.put "(.nif24)\n"
+  b.put "(.nif27)\n"
   if vendor.len > 0:
     b.put "(.vendor "
     b.addStrLit vendor
@@ -344,16 +424,15 @@ proc addHeader*(b: var Builder; vendor = "", dialect = "") =
     b.addStrLit dialect
     b.put ")\n"
 
-proc addHeader26*(b: var Builder): int =
+proc addHeader27*(b: var Builder): int =
   ## Returns the patch position for the indexat overwrite.
-  b.put "(.nif26)\n"
+  b.put "(.nif27)\n"
   result = b.offs + len("(.indexat ")
   b.put "(.indexat                  )\n"
   #                 ^ whitespace essential here for patching without reallocations!
-  #b.put "(.indexat 1_000_000_000)\n"
 
 proc patchIndexAt*(b: var Builder; patchPos: int; indexAt: int) =
-  var s = "+"
+  var s = ""
   s.addInt indexAt
   for i in 0..<s.len:
     b.buffer[patchPos + i] = s[i]
@@ -367,11 +446,12 @@ proc offset*(b: Builder): int {.inline.} =
 when isMainModule and not defined(nimony):
   proc test(b: sink Builder) =
     b.addHeader "tester", "niftest"
+    # Use the buffered "info-then-emit" idiom (the bridges' style).
+    b.addLineInfo 4, 5, "mymodb.nim"
     b.withTree "stmts":
-      b.addLineInfo 4, 5, "mymodb.nim"
+      b.addLineInfo 1, 3, "mymod.nim"
       b.withTree "call":
         b.addSymbolDef "oh.0.my.god"
-        b.addLineInfo 1, 3, "mymod.nim"
         b.addSymbol "foo.3.mymod"
         b.addIntLit 3423
         b.addFloatLit 50.4

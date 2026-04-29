@@ -1,123 +1,123 @@
-(.nif26)
-(.indexat +2157            )
-0,3,tests/nimony/nosystem/tenumsizes.nim(stmts 7
- (type ~2 :A.0. . . . 2
-  (enum
-   (u +8) ~7,1
-   (efld :a0.0. . . A.0.
-    (tup +0 "a0")) ~3,1
-   (efld :a1.0. . . A.0.
-    (tup +1 "a1")) 1,1
-   (efld :a2.0. . . A.0.
-    (tup +2 "a2")) 5,1
-   (efld :a3.0. . . A.0.
-    (tup +3 "a3")))) 5
- (proc :dollar`.A.0. x . .
+(.nif27)
+(.indexat 2120             )
+(stmts@,3,tests/nimony/nosystem/tenumsizes.nim
+ (type@7 :A.0.~2 . . .
+  (enum@2
+   (u 8)
+   (efld~7,1 :a0.0. . . A.0.
+    (tup 0 "a0"))
+   (efld~3,1 :a1.0. . . A.0.
+    (tup 1 "a1"))
+   (efld@1,1 :a2.0. . . A.0.
+    (tup 2 "a2"))
+   (efld@5,1 :a3.0. . . A.0.
+    (tup 3 "a3"))))
+ (proc@5 :dollar`.A.0. x . .
   (params
    (param :e.0 . . A.0. .)) string.0.sysvq0asl . .
-  (stmts 4
-   (result :result.0 . . string.0.sysvq0asl .) 4
-   (case e.0 ~7,1
-    (of
+  (stmts
+   (result@4 :result.0 . . string.0.sysvq0asl .)
+   (case@4 e.0
+    (of~7,1
      (ranges a0.0.)
      (stmts
-      (ret "a0"))) ~3,1
-    (of
+      (ret "a0")))
+    (of~3,1
      (ranges a1.0.)
      (stmts
-      (ret "a1"))) 1,1
-    (of
+      (ret "a1")))
+    (of@1,1
      (ranges a2.0.)
      (stmts
-      (ret "a2"))) 5,1
-    (of
+      (ret "a2")))
+    (of@5,1
      (ranges a3.0.)
      (stmts
       (ret "a3"))))
-   (ret result.0))) 7,2
- (type ~2 :B.0. . . . 2
-  (onum
-   (i +32) ~2,1
-   (efld ~5 :b0.0. . . B.0.
-    (tup -1 "b0")) 2,1
-   (efld :b1.0. . . B.0.
-    (tup +0 "b1")) 6,1
-   (efld :b2.0. . . B.0.
-    (tup +1 "b2")) 15,1
-   (efld ~5 :b3.0. . . B.0.
-    (tup +5 "b3")))) 5,2
- (proc :dollar`.B.0. x . .
+   (ret result.0)))
+ (type@7,2 :B.0.~2 . . .
+  (onum@2
+   (i 32)
+   (efld~2,1 :b0.0.~5 . . B.0.
+    (tup -1 "b0"))
+   (efld@2,1 :b1.0. . . B.0.
+    (tup 0 "b1"))
+   (efld@6,1 :b2.0. . . B.0.
+    (tup 1 "b2"))
+   (efld@F,1 :b3.0.~5 . . B.0.
+    (tup 5 "b3"))))
+ (proc@5,2 :dollar`.B.0. x . .
   (params
    (param :e.1 . . B.0. .)) string.0.sysvq0asl . .
-  (stmts 4
-   (result :result.1 . . string.0.sysvq0asl .) 4
-   (case e.1 ~2,1
-    (of
-     (ranges ~5 b0.0.)
+  (stmts
+   (result@4 :result.1 . . string.0.sysvq0asl .)
+   (case@4 e.1
+    (of~2,1
+     (ranges b0.0.~5)
      (stmts
-      (ret "b0"))) 2,1
-    (of
+      (ret "b0")))
+    (of@2,1
      (ranges b1.0.)
      (stmts
-      (ret "b1"))) 6,1
-    (of
+      (ret "b1")))
+    (of@6,1
      (ranges b2.0.)
      (stmts
-      (ret "b2"))) 15,1
-    (of
-     (ranges ~5 b3.0.)
+      (ret "b2")))
+    (of@F,1
+     (ranges b3.0.~5)
      (stmts
       (ret "b3"))))
-   (ret result.1))) 7,4
- (type ~2 :C.0. . . . 2
-  (onum
-   (u +16) ~7,1
-   (efld :c0.0. . . C.0.
-    (tup +0 "c0")) ~3,1
-   (efld :c1.0. . . C.0.
-    (tup +1 "c1")) 6,1
-   (efld ~5 :c2.0. . . C.0.
-    (tup +30000 "c2")) 14,1
-   (efld :c3.0. . . C.0.
-    (tup +30001 "c3")))) 5,4
- (proc :dollar`.C.0. x . .
+   (ret result.1)))
+ (type@7,4 :C.0.~2 . . .
+  (onum@2
+   (u 16)
+   (efld~7,1 :c0.0. . . C.0.
+    (tup 0 "c0"))
+   (efld~3,1 :c1.0. . . C.0.
+    (tup 1 "c1"))
+   (efld@6,1 :c2.0.~5 . . C.0.
+    (tup 30000 "c2"))
+   (efld@E,1 :c3.0. . . C.0.
+    (tup 30001 "c3"))))
+ (proc@5,4 :dollar`.C.0. x . .
   (params
    (param :e.2 . . C.0. .)) string.0.sysvq0asl . .
-  (stmts 4
-   (result :result.2 . . string.0.sysvq0asl .) 4
-   (case e.2 ~7,1
-    (of
+  (stmts
+   (result@4 :result.2 . . string.0.sysvq0asl .)
+   (case@4 e.2
+    (of~7,1
      (ranges c0.0.)
      (stmts
-      (ret "c0"))) ~3,1
-    (of
+      (ret "c0")))
+    (of~3,1
      (ranges c1.0.)
      (stmts
-      (ret "c1"))) 6,1
-    (of
-     (ranges ~5 c2.0.)
+      (ret "c1")))
+    (of@6,1
+     (ranges c2.0.~5)
      (stmts
-      (ret "c2"))) 14,1
-    (of
+      (ret "c2")))
+    (of@E,1
      (ranges c3.0.)
      (stmts
       (ret "c3"))))
-   (ret result.2))))0,3,tests/nimony/nosystem/tenumsizes.nim(.index 7
- (h A.0. +86) 2,1
- (h a0.0. +47) 6,1
- (h a1.0. +49) 10,1
- (h a2.0. +48) 14,1
- (h a3.0. +48) 5
- (x dollar`.A.0. +48) 7,2
- (h B.0. +440) 7,3
- (h b0.0. +48) 11,3
- (h b1.0. +51) 15,3
- (h b2.0. +48) 24,3
- (h b3.0. +49) 5,2
- (x dollar`.B.0. +53) 7,4
- (h C.0. +446) 2,5
- (h c0.0. +48) 6,5
- (h c1.0. +49) 15,5
- (h c2.0. +48) 23,5
- (h c3.0. +56) 5,4
- (x dollar`.C.0. +54))
+   (ret result.2))))(.index@,3,tests/nimony/nosystem/tenumsizes.nim
+ (h@7 A.0. 84)
+ (h@2,1 a0.0. 42)
+ (h@6,1 a1.0. 47)
+ (h@A,1 a2.0. 47)
+ (h@E,1 a3.0. 47)
+ (x@5 dollar`.A.0. 49)
+ (h@7,2 B.0. 436)
+ (h@7,3 b0.0. 45)
+ (h@B,3 b1.0. 50)
+ (h@F,3 b2.0. 47)
+ (h@O,3 b3.0. 47)
+ (x@5,2 dollar`.B.0. 51)
+ (h@7,4 C.0. 442)
+ (h@2,5 c0.0. 45)
+ (h@6,5 c1.0. 47)
+ (h@F,5 c2.0. 47)
+ (h@N,5 c3.0. 53)
+ (x@5,4 dollar`.C.0. 53))

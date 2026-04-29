@@ -1,6 +1,7 @@
+(.nif27)
 (stmts
  (ite
-  (eq +11 +11)
+  (eq 11 11)
   (goto L9)
   (goto L14))
  (lab :L9)
@@ -8,7 +9,7 @@
  (goto L14)
  (lab :L14)
  (ite
-  (eq +12 +12)
+  (eq 12 12)
   (goto L22)
   (goto L27))
  (lab :L22)
@@ -16,12 +17,12 @@
  (goto L53)
  (lab :L27)
  (ite
-  (eq +2 +3)
+  (eq 2 3)
   (goto L35)
   (goto L48))
  (lab :L35)
  (ite
-  (eq +4 +5)
+  (eq 4 5)
   (goto L43)
   (goto L48))
  (lab :L43)
@@ -32,7 +33,7 @@
  (goto L53)
  (lab :L53)
  (ite
-  (eq +13 +13)
+  (eq 13 13)
   (goto L61)
   (goto L66))
  (lab :L61)
@@ -40,12 +41,12 @@
  (goto L53)
  (lab :L66)
  (ite
-  (eq +9 +9)
+  (eq 9 9)
   (goto L82)
   (goto L74))
  (lab :L74)
  (ite
-  (eq +4 +5)
+  (eq 4 5)
   (goto L82)
   (goto L87))
  (lab :L82)
@@ -55,12 +56,12 @@
  (var :`cf.0 . .
   (bool) .)
  (ite
-  (eq +5 -5)
+  (eq 5 -5)
   (goto L103)
   (goto L111))
  (lab :L103)
  (asgn `cf.0
-  (eq +6 -6))
+  (eq 6 -6))
  (goto L116)
  (lab :L111)
  (asgn `cf.0

@@ -125,7 +125,7 @@ proc getSymbolSection(tag: TagId; values: seq[(SymId, SymId)]): TokenBuf =
 
 proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sections: IndexSections) {.canRaise.} =
   let indexName = changeModuleExt(infile, ".s.idx.nif")
-  var content = "(.nif24)\n(index\n"
+  var content = "(.nif27)\n(index\n"
 
   if sections.converters.len != 0:
     let converterSectionBuf = getSymbolSection(TagId(ConverterIdx), sections.converters)

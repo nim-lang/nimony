@@ -1,167 +1,255 @@
-(.nif24)
-
+(.nif27)
 (GRAMMAR Module
-(RULE :IntBits INTLIT)
-(RULE :Lvalue (OR SYMBOL
-             (deref Expr)
-             (at Expr Expr)
-             (dot Expr SYMBOL INTLIT)
-             (pat Expr Expr)
-             (errv)
-             (ovff)
-             ))
-
-(RULE :Call (call (ONE_OR_MANY Expr)))
-(RULE :CallCanRaise (onerr Stmt (ONE_OR_MANY Expr)))
-(RULE :ArithExpr (OR
-         (add Type Expr Expr)
-         (sub Type Expr Expr)
-         (mul Type Expr Expr)
-         (div Type Expr Expr)
-         (mod Type Expr Expr)
-))
-(RULE :Expr (OR INTLIT UINTLIT FLOATLIT CHARLITERAL STRINGLITERAL
-         Lvalue
-         (par Expr)
-         (addr Lvalue)
-         (nil) (false) (true)
-         (inf) (neginf) (nan)
-         (and Expr Expr)
-         (or Expr Expr)
-         (not Expr)
-         (neg Type Expr)
-         (sizeof Type)
-         (alignof Type)
-         (offsetof Type SYMBOL)
-         (oconstr Type (ZERO_OR_MANY (kv SYMBOL Expr)))
-         (aconstr Type (ZERO_OR_MANY Expr))
-         ArithExpr
-         (shr Type Expr Expr)
-         (shl Type Expr Expr)
-         (bitand Type Expr Expr)
-         (bitor Type Expr Expr)
-         (bitnot Type Expr)
-         (bitxor Type Expr Expr)
-         (eq Expr Expr)
-         (neq Expr Expr)
-         (le Expr Expr)
-         (lt Expr Expr)
-         (cast Type Expr)
-         (conv Type Expr)
-         Call
-         CallCanRaise
-))
-
-(RULE :BranchValue (OR INTLIT UINTLIT CHARLITERAL SYMBOL (false) (true)))
-(RULE :BranchRange (OR BranchValue (range BranchValue BranchValue)))
-(RULE :BranchRanges (OR (ranges (ONE_OR_MANY BranchRange))))
-
-(RULE :VarDeclCommon SYMBOLDEF VarPragmas Type (OR . Expr))
-(RULE :VarDecl (OR (var VarDeclCommon)
-            (gvar VarDeclCommon)
-            (tvar VarDeclCommon)))
-
-(RULE :ConstDecl (const SYMBOLDEF VarPragmas Type Expr))
-(RULE :EmitStmt (emit (ONE_OR_MANY Expr)))
-(RULE :TryStmt (try StmtList StmtList StmtList))
-(RULE :RaiseStmt (raise (OR . Expr)))
-(RULE :AsgnStmt (asgn Lvalue Expr))
-(RULE :KeepOverflowStmt (keepovf ArithExpr Lvalue))
-(RULE :IfStmt (if (ONE_OR_MANY (elif Expr StmtList)) (ZERO_OR_ONE (else StmtList))))
-(RULE :WhileStmt (while Expr StmtList))
-(RULE :CaseStmt (case Expr (ONE_OR_MANY (of BranchRanges StmtList)) (ZERO_OR_ONE (else StmtList))))
-(RULE :LabelStmt (lab SYMBOLDEF))
-(RULE :JumpStmt (jmp SYMBOL))
-(RULE :ScopeStmt (scope StmtList))
-(RULE :DiscardStmt (discard Expr))
-
-(RULE :Stmt (OR Call
-         CallCanRaise
-         VarDecl
-         ConstDecl
-         EmitStmt
-         TryStmt
-         RaiseStmt
-         AsgnStmt
-         KeepOverflowStmt
-         IfStmt
-         WhileStmt
-         (break)
-         CaseStmt
-         LabelStmt
-         JumpStmt
-         ScopeStmt
-         (ret (OR . Expr))
-         DiscardStmt
-         ))
-
-(RULE :StmtList (SCOPE (stmts (ZERO_OR_MANY Stmt))))
-
-(RULE :Param (param SYMBOLDEF ParamPragmas Type))
-(RULE :Params (OR . (ZERO_OR_MANY (params Param))))
-
-(RULE :ProcDecl (proc SYMBOLDEF Params Type ProcPragmas (OR . StmtList)))
-
-(RULE :FieldDecl (fld SYMBOLDEF FieldPragmas Type))
-
-(RULE :UnionDecl (union . (ZERO_OR_MANY FieldDecl)))
-(RULE :ObjDecl (object (OR . Type) (ZERO_OR_MANY FieldDecl)))
-(RULE :EnumFieldDecl (efld SYMBOLDEF (OR INTLIT UINTLIT CHARLITERAL)))
-(RULE :EnumDecl (enum Type (ONE_OR_MANY EnumFieldDecl)))
-
-(RULE :ProcType (proctype . Params Type ProcTypePragmas))
-
-(RULE :IntQualifier (OR (atomic) (ro)))
-(RULE :PtrQualifier (OR (atomic) (ro) (restrict)))
-
-(RULE :Type (OR SYMBOL
-         (i IntBits (ZERO_OR_MANY IntQualifier))
-         (u IntBits (ZERO_OR_MANY IntQualifier))
-         (f IntBits (ZERO_OR_MANY IntQualifier))
-         (c IntBits (ZERO_OR_MANY IntQualifier))
-         (bool (ZERO_OR_MANY IntQualifier))
-         (void)
-         (ptr Type (ZERO_OR_MANY PtrQualifier))
-         (flexarray Type)
-         (aptr Type (ZERO_OR_MANY PtrQualifier))
-         ProcType))
-(RULE :ArrayDecl (array Type Expr))
-(RULE :TypeDecl (type SYMBOLDEF TypePragmas (OR ProcType ObjDecl UnionDecl EnumDecl ArrayDecl)))
-
-(RULE :CallingConvention (OR (cdecl) (stdcall) (safecall) (syscall)
-                      (fastcall) (thiscall) (noconv) (member)))
-
-(RULE :Attribute (attr STRINGLITERAL))
-(RULE :Identifier (OR SYMBOL IDENT))
-(RULE :ProcPragma (OR (inline) (noinline) CallingConvention (varargs) (was Identifier)
-               (selectany) (raises) (errs) Attribute))
-(RULE :ProcTypePragma (OR CallingConvention (varargs) Attribute))
-
-(RULE :ProcTypePragmas (OR . (pragmas (ONE_OR_MANY ProcTypePragma))))
-(RULE :ProcPragmas (OR . (pragmas (ONE_OR_MANY ProcPragma))))
-
-(RULE :CommonPragma (OR (align INTLIT) (was Identifier) Attribute))
-(RULE :VarPragma CommonPragma)
-(RULE :VarPragmas (OR . (pragmas (ONE_OR_MANY VarPragma))))
-
-(RULE :ParamPragma (OR (was Identifier) Attribute))
-(RULE :ParamPragmas (OR . (pragmas (ONE_OR_MANY ParamPragma))))
-
-(RULE :FieldPragma (OR CommonPragma (bits INTLIT)))
-(RULE :FieldPragmas (pragmas (ONE_OR_MANY FieldPragma)))
-
-(RULE :TypePragma (OR CommonPragma (vector INTLIT)))
-(RULE :TypePragmas (OR . (pragmas (ONE_OR_MANY TypePragma))))
-
-(RULE :ExternDecl (imp (OR ProcDecl VarDecl ConstDecl)))
-(RULE :IgnoreDecl (nodecl (OR ProcDecl VarDecl ConstDecl)))
-(RULE :Include (incl STRINGLITERAL))
-
-(RULE :TopLevelConstruct (OR ExternDecl IgnoreDecl ProcDecl VarDecl ConstDecl
-                      TypeDecl Include EmitStmt
-                      Call CallCanRaise TryStmt RaiseStmt
-                      AsgnStmt KeepOverflowStmt
-                      IfStmt WhileStmt CaseStmt LabelStmt JumpStmt
-                      ScopeStmt DiscardStmt))
-(RULE :Module (stmts (ZERO_OR_MANY TopLevelConstruct)))
-)
+ (RULE :IntBits INTLIT)
+ (RULE :Lvalue
+  (OR SYMBOL
+   (deref Expr)
+   (at Expr Expr)
+   (dot Expr SYMBOL INTLIT)
+   (pat Expr Expr)
+   (errv)
+   (ovff)))
+ (RULE :Call
+  (call
+   (ONE_OR_MANY Expr)))
+ (RULE :CallCanRaise
+  (onerr Stmt
+   (ONE_OR_MANY Expr)))
+ (RULE :ArithExpr
+  (OR
+   (add Type Expr Expr)
+   (sub Type Expr Expr)
+   (mul Type Expr Expr)
+   (div Type Expr Expr)
+   (mod Type Expr Expr)))
+ (RULE :Expr
+  (OR INTLIT UINTLIT FLOATLIT CHARLITERAL STRINGLITERAL Lvalue
+   (par Expr)
+   (addr Lvalue)
+   (nil)
+   (false)
+   (true)
+   (inf)
+   (neginf)
+   (nan)
+   (and Expr Expr)
+   (or Expr Expr)
+   (not Expr)
+   (neg Type Expr)
+   (sizeof Type)
+   (alignof Type)
+   (offsetof Type SYMBOL)
+   (oconstr Type
+    (ZERO_OR_MANY
+     (kv SYMBOL Expr)))
+   (aconstr Type
+    (ZERO_OR_MANY Expr)) ArithExpr
+   (shr Type Expr Expr)
+   (shl Type Expr Expr)
+   (bitand Type Expr Expr)
+   (bitor Type Expr Expr)
+   (bitnot Type Expr)
+   (bitxor Type Expr Expr)
+   (eq Expr Expr)
+   (neq Expr Expr)
+   (le Expr Expr)
+   (lt Expr Expr)
+   (cast Type Expr)
+   (conv Type Expr) Call CallCanRaise))
+ (RULE :BranchValue
+  (OR INTLIT UINTLIT CHARLITERAL SYMBOL
+   (false)
+   (true)))
+ (RULE :BranchRange
+  (OR BranchValue
+   (range BranchValue BranchValue)))
+ (RULE :BranchRanges
+  (OR
+   (ranges
+    (ONE_OR_MANY BranchRange))))
+ (RULE :VarDeclCommon SYMBOLDEF VarPragmas Type
+  (OR . Expr))
+ (RULE :VarDecl
+  (OR
+   (var VarDeclCommon)
+   (gvar VarDeclCommon)
+   (tvar VarDeclCommon)))
+ (RULE :ConstDecl
+  (const SYMBOLDEF VarPragmas Type Expr))
+ (RULE :EmitStmt
+  (emit
+   (ONE_OR_MANY Expr)))
+ (RULE :TryStmt
+  (try StmtList StmtList StmtList))
+ (RULE :RaiseStmt
+  (raise
+   (OR . Expr)))
+ (RULE :AsgnStmt
+  (asgn Lvalue Expr))
+ (RULE :KeepOverflowStmt
+  (keepovf ArithExpr Lvalue))
+ (RULE :IfStmt
+  (if
+   (ONE_OR_MANY
+    (elif Expr StmtList))
+   (ZERO_OR_ONE
+    (else StmtList))))
+ (RULE :WhileStmt
+  (while Expr StmtList))
+ (RULE :CaseStmt
+  (case Expr
+   (ONE_OR_MANY
+    (of BranchRanges StmtList))
+   (ZERO_OR_ONE
+    (else StmtList))))
+ (RULE :LabelStmt
+  (lab SYMBOLDEF))
+ (RULE :JumpStmt
+  (jmp SYMBOL))
+ (RULE :ScopeStmt
+  (scope StmtList))
+ (RULE :DiscardStmt
+  (discard Expr))
+ (RULE :Stmt
+  (OR Call CallCanRaise VarDecl ConstDecl EmitStmt TryStmt RaiseStmt AsgnStmt KeepOverflowStmt IfStmt WhileStmt
+   (break) CaseStmt LabelStmt JumpStmt ScopeStmt
+   (ret
+    (OR . Expr)) DiscardStmt))
+ (RULE :StmtList
+  (SCOPE
+   (stmts
+    (ZERO_OR_MANY Stmt))))
+ (RULE :Param
+  (param SYMBOLDEF ParamPragmas Type))
+ (RULE :Params
+  (OR .
+   (ZERO_OR_MANY
+    (params Param))))
+ (RULE :ProcDecl
+  (proc SYMBOLDEF Params Type ProcPragmas
+   (OR . StmtList)))
+ (RULE :FieldDecl
+  (fld SYMBOLDEF FieldPragmas Type))
+ (RULE :UnionDecl
+  (union .
+   (ZERO_OR_MANY FieldDecl)))
+ (RULE :ObjDecl
+  (object
+   (OR . Type)
+   (ZERO_OR_MANY FieldDecl)))
+ (RULE :EnumFieldDecl
+  (efld SYMBOLDEF
+   (OR INTLIT UINTLIT CHARLITERAL)))
+ (RULE :EnumDecl
+  (enum Type
+   (ONE_OR_MANY EnumFieldDecl)))
+ (RULE :ProcType
+  (proctype . Params Type ProcTypePragmas))
+ (RULE :IntQualifier
+  (OR
+   (atomic)
+   (ro)))
+ (RULE :PtrQualifier
+  (OR
+   (atomic)
+   (ro)
+   (restrict)))
+ (RULE :Type
+  (OR SYMBOL
+   (i IntBits
+    (ZERO_OR_MANY IntQualifier))
+   (u IntBits
+    (ZERO_OR_MANY IntQualifier))
+   (f IntBits
+    (ZERO_OR_MANY IntQualifier))
+   (c IntBits
+    (ZERO_OR_MANY IntQualifier))
+   (bool
+    (ZERO_OR_MANY IntQualifier))
+   (void)
+   (ptr Type
+    (ZERO_OR_MANY PtrQualifier))
+   (flexarray Type)
+   (aptr Type
+    (ZERO_OR_MANY PtrQualifier)) ProcType))
+ (RULE :ArrayDecl
+  (array Type Expr))
+ (RULE :TypeDecl
+  (type SYMBOLDEF TypePragmas
+   (OR ProcType ObjDecl UnionDecl EnumDecl ArrayDecl)))
+ (RULE :CallingConvention
+  (OR
+   (cdecl)
+   (stdcall)
+   (safecall)
+   (syscall)
+   (fastcall)
+   (thiscall)
+   (noconv)
+   (member)))
+ (RULE :Attribute
+  (attr STRINGLITERAL))
+ (RULE :Identifier
+  (OR SYMBOL IDENT))
+ (RULE :ProcPragma
+  (OR
+   (inline)
+   (noinline) CallingConvention
+   (varargs)
+   (was Identifier)
+   (selectany)
+   (raises)
+   (errs) Attribute))
+ (RULE :ProcTypePragma
+  (OR CallingConvention
+   (varargs) Attribute))
+ (RULE :ProcTypePragmas
+  (OR .
+   (pragmas
+    (ONE_OR_MANY ProcTypePragma))))
+ (RULE :ProcPragmas
+  (OR .
+   (pragmas
+    (ONE_OR_MANY ProcPragma))))
+ (RULE :CommonPragma
+  (OR
+   (align INTLIT)
+   (was Identifier) Attribute))
+ (RULE :VarPragma CommonPragma)
+ (RULE :VarPragmas
+  (OR .
+   (pragmas
+    (ONE_OR_MANY VarPragma))))
+ (RULE :ParamPragma
+  (OR
+   (was Identifier) Attribute))
+ (RULE :ParamPragmas
+  (OR .
+   (pragmas
+    (ONE_OR_MANY ParamPragma))))
+ (RULE :FieldPragma
+  (OR CommonPragma
+   (bits INTLIT)))
+ (RULE :FieldPragmas
+  (pragmas
+   (ONE_OR_MANY FieldPragma)))
+ (RULE :TypePragma
+  (OR CommonPragma
+   (vector INTLIT)))
+ (RULE :TypePragmas
+  (OR .
+   (pragmas
+    (ONE_OR_MANY TypePragma))))
+ (RULE :ExternDecl
+  (imp
+   (OR ProcDecl VarDecl ConstDecl)))
+ (RULE :IgnoreDecl
+  (nodecl
+   (OR ProcDecl VarDecl ConstDecl)))
+ (RULE :Include
+  (incl STRINGLITERAL))
+ (RULE :TopLevelConstruct
+  (OR ExternDecl IgnoreDecl ProcDecl VarDecl ConstDecl TypeDecl Include EmitStmt Call CallCanRaise TryStmt RaiseStmt AsgnStmt KeepOverflowStmt IfStmt WhileStmt CaseStmt LabelStmt JumpStmt ScopeStmt DiscardStmt))
+ (RULE :Module
+  (stmts
+   (ZERO_OR_MANY TopLevelConstruct))))

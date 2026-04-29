@@ -212,7 +212,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     c.b.addEmpty 1
   of nkNilLit:
     relLineInfo(n, parent, c)
-    c.b.addRaw "(nil)"
+    c.b.addKeyw "nil"
   of nkStrLit:
     relLineInfo(n, parent, c)
     c.b.addStrLit n.strVal

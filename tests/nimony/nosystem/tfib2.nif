@@ -1,167 +1,167 @@
-(.nif26)
-(.indexat +3397            )
-0,2,tests/nimony/nosystem/tfib2.nim(stmts 2,1
- (type :int.0.
-  (i +64) . 5
-  (pragmas 2
-   (magic 7 Int)) .) 2,2
- (type :bool.0.
-  (bool) . 6
-  (pragmas 2
-   (magic 7 Bool)) .) 2,3
- (type :float.0.
-  (f +64) . 7
-  (pragmas 2
-   (magic 7 Float)) .) ,5
- (proc 5 :\2B.0.
-  (add -3) . . 9
-  (params 1
-   (param :x.0 . . 6
-    (i +64) .) 4
-   (param :y.0 . . 3
-    (i +64) .)) 13
-  (i +64) 26
-  (pragmas 2
-   (magic 7 "AddI")) . .) ,6
- (proc 5 :\2D.0.
-  (sub -3) . . 9
-  (params 1
-   (param :x.1 . . 6
-    (i +64) .) 4
-   (param :y.1 . . 3
-    (i +64) .)) 13
-  (i +64) 26
-  (pragmas 2
-   (magic 7 "SubI")) . .) ,8
- (proc 5 :<=.0.
-  (le -3) . . 10
-  (params 1
-   (param :x.2 . . 6
-    (i +64) .) 4
-   (param :y.2 . . 3
-    (i +64) .)) 13
-  (bool) 28
-  (pragmas 2
-   (magic 7 "LeI")) . .) ,10
- (proc 5 :\2B.1.
-  (add -3) . . 9
-  (params 1
-   (param :x.3 . . 6
-    (f +64) .) 4
-   (param :y.3 . . 3
-    (f +64) .)) 15
-  (f +64) 30
-  (pragmas 2
-   (magic 7 "AddF64")) . .) ,11
- (proc 5 :\2D.1.
-  (sub -3) . . 9
-  (params 1
-   (param :x.4 . . 6
-    (f +64) .) 4
-   (param :y.4 . . 3
-    (f +64) .)) 15
-  (f +64) 30
-  (pragmas 2
-   (magic 7 "SubF64")) . .) ,13
- (proc 5 :<=.1.
-  (le -3) . . 10
-  (params 1
-   (param :x.5 . . 6
-    (f +64) .) 4
-   (param :y.5 . . 3
-    (f +64) .)) 15
-  (bool) 30
-  (pragmas 2
-   (magic 7 "LeF64")) . .) 10,17
- (type ~8 :Fibable.0. . . . 2
-  (concept . .
-   (typevar :Self.0. . . . .) ~8,1
-   (stmts
-    (proc 5 :<=.2. . . . 9
-     (params 1
-      (param :a.0 . . 6 Self.0. .) 4
-      (param :b.0 . . 3 Self.0. .)) 14
-     (bool) . . .) ,1
-    (proc 5 :\2B.2. . . . 8
-     (params 1
-      (param :x.6 . . 6 Self.0. .) 4
-      (param :y.6 . . 3 Self.0. .)) 14 Self.0. . . .) ,2
-    (proc 5 :\2D.2. . . . 8
-     (params 1
-      (param :x.7 . . 6 Self.0. .) 4
-      (param :y.7 . . 3 Self.0. .)) 14 Self.0. . . .)))) ,22
- (proc 5 :fib.0. . . 8
-  (typevars 1
-   (typevar :T.0. . . 3 Fibable.0. .)) 20
-  (params 1
-   (param :a.1 . . 3 T.0. .)) 8 T.0. . . 2,1
-  (stmts
-   (result :result.0 . . 22,~1 T.0. .)
-   (if 3
-    (elif 2
-     (infix
-      (ochoice <=.0. <=.1.) ~2 a.1 3 +2) ~1,1
-     (stmts 7
-      (asgn ~7 result.0 2 +1))) ,2
-    (else 2,1
-     (stmts 7
-      (asgn ~7 result.0 11
-       (infix
-        (ochoice \2B.0. \2B.1.) ~6
-        (call ~3 fib.0. 2
-         (infix
-          (ochoice \2D.0. \2D.1.) ~1 a.1 1 +1)) 5
-        (call ~3 fib.0. 2
-         (infix
-          (ochoice \2D.0. \2D.1.) ~1 a.1 1 +2))))))) ~2,~1
-   (ret result.0))) ,28
- (discard 11
-  (call ~3 fib.1. 1 +8)) ,29
- (discard 16
-  (call ~8 fib.1. 1 +8)) 16,5
- (comment int.0. int.0. ~3 int.0. ,1 int.0. ,1 int.0. ~3,1 int.0. 1,3 int.0. 1,3 int.0. ~3,3 bool.0. ,5 float.0. ,5 float.0. ~1,5 float.0. ,6 float.0. ,6 float.0. ~1,6 float.0. 1,8 float.0. 1,8 float.0. ~1,8 bool.0. 2,13 bool.0. ~4,24 int.0.) 11,28
- (proc :fib.1. . ~11,~6 .
+(.nif27)
+(.indexat 3289             )
+(stmts@,2,tests/nimony/nosystem/tfib2.nim
+ (type@2,1 :int.0.
+  (i 64) .
+  (pragmas@5
+   (magic@2 Int@7)) .)
+ (type@2,2 :bool.0.
+  (bool) .
+  (pragmas@6
+   (magic@2 Bool@7)) .)
+ (type@2,3 :float.0.
+  (f 64) .
+  (pragmas@7
+   (magic@2 Float@7)) .)
+ (proc@,5 :\2B.0.@5
+  (add -3) . .
+  (params@9
+   (param@1 :x.0 . .
+    (i@6 64) .)
+   (param@4 :y.0 . .
+    (i@3 64) .))
+  (i@D 64)
+  (pragmas@Q
+   (magic@2 "AddI"@7)) . .)
+ (proc@,6 :\2D.0.@5
+  (sub -3) . .
+  (params@9
+   (param@1 :x.1 . .
+    (i@6 64) .)
+   (param@4 :y.1 . .
+    (i@3 64) .))
+  (i@D 64)
+  (pragmas@Q
+   (magic@2 "SubI"@7)) . .)
+ (proc@,8 :<=.0.@5
+  (le -3) . .
+  (params@A
+   (param@1 :x.2 . .
+    (i@6 64) .)
+   (param@4 :y.2 . .
+    (i@3 64) .))
+  (bool@D)
+  (pragmas@S
+   (magic@2 "LeI"@7)) . .)
+ (proc@,A :\2B.1.@5
+  (add -3) . .
+  (params@9
+   (param@1 :x.3 . .
+    (f@6 64) .)
+   (param@4 :y.3 . .
+    (f@3 64) .))
+  (f@F 64)
+  (pragmas@U
+   (magic@2 "AddF64"@7)) . .)
+ (proc@,B :\2D.1.@5
+  (sub -3) . .
+  (params@9
+   (param@1 :x.4 . .
+    (f@6 64) .)
+   (param@4 :y.4 . .
+    (f@3 64) .))
+  (f@F 64)
+  (pragmas@U
+   (magic@2 "SubF64"@7)) . .)
+ (proc@,D :<=.1.@5
+  (le -3) . .
+  (params@A
+   (param@1 :x.5 . .
+    (f@6 64) .)
+   (param@4 :y.5 . .
+    (f@3 64) .))
+  (bool@F)
+  (pragmas@U
+   (magic@2 "LeF64"@7)) . .)
+ (type@A,H :Fibable.0.~8 . . .
+  (concept@2 . .
+   (typevar :Self.0. . . . .)
+   (stmts~8,1
+    (proc :<=.2.@5 . . .
+     (params@9
+      (param@1 :a.0 . . Self.0.@6 .)
+      (param@4 :b.0 . . Self.0.@3 .))
+     (bool@E) . . .)
+    (proc@,1 :\2B.2.@5 . . .
+     (params@8
+      (param@1 :x.6 . . Self.0.@6 .)
+      (param@4 :y.6 . . Self.0.@3 .)) Self.0.@E . . .)
+    (proc@,2 :\2D.2.@5 . . .
+     (params@8
+      (param@1 :x.7 . . Self.0.@6 .)
+      (param@4 :y.7 . . Self.0.@3 .)) Self.0.@E . . .))))
+ (proc@,M :fib.0.@5 . .
+  (typevars@8
+   (typevar@1 :T.0. . . Fibable.0.@3 .))
+  (params@K
+   (param@1 :a.1 . . T.0.@3 .)) T.0.@8 . .
+  (stmts@2,1
+   (result :result.0 . . T.0.@M,~1 .)
+   (if
+    (elif@3
+     (infix@2
+      (ochoice <=.0. <=.1.) a.1~2 2@3)
+     (stmts~1,1
+      (asgn@7 result.0~7 1@2)))
+    (else@,2
+     (stmts@2,1
+      (asgn@7 result.0~7
+       (infix@B
+        (ochoice \2B.0. \2B.1.)
+        (call~6 fib.0.~3
+         (infix@2
+          (ochoice \2D.0. \2D.1.) a.1~1 1@1))
+        (call@5 fib.0.~3
+         (infix@2
+          (ochoice \2D.0. \2D.1.) a.1~1 2@1)))))))
+   (ret~2,~1 result.0)))
+ (discard@,S
+  (call@B fib.1.~3 8@1))
+ (discard@,T
+  (call@G fib.1.~8 8@1))
+ (comment@G,5 int.0. int.0. int.0.~3 int.0.@,1 int.0.@,1 int.0.~3,1 int.0.@1,3 int.0.@1,3 bool.0.~3,3 float.0.@,5 float.0.@,5 float.0.~1,5 float.0.@,6 float.0.@,6 float.0.~1,6 float.0.@1,8 float.0.@1,8 bool.0.~1,8 bool.0.@2,D int.0.~4,O)
+ (proc@B,S :fib.1. . .~B,~6
   (at fib.0.
-   (i +64)) 9,~6
-  (params 1
-   (param :a.3 . .
-    (i +64) .))
-  (i +64) . ~11,~6 . ~9,~5
-  (stmts
+   (i 64))
+  (params@9,~6
+   (param@1 :a.3 . .
+    (i 64) .))
+  (i 64) . .~B,~6
+  (stmts~9,~5
    (result :result.1 . .
-    (i +64) .)
-   (if 3
-    (elif 2
-     (le
-      (i +64) ~2 a.3 3 +2) ~1,1
-     (stmts 7
-      (asgn ~7 result.1 2 +1))) ,2
-    (else 2,1
-     (stmts 7
-      (asgn ~7 result.1 11
-       (add
-        (i +64) ~6
-        (call ~3 fib.1. 2
-         (sub
-          (i +64) ~1 a.3 1 +1)) 5
-        (call ~3 fib.1. 2
-         (sub
-          (i +64) ~1 a.3 1 +2))))))) ~2,~1
-   (ret result.1))))0,2,tests/nimony/nosystem/tfib2.nim(.index 2,1
- (x int.0. +83) 2,2
- (x bool.0. +67) 2,3
- (x float.0. +68) ,5
- (x \2B.0. +70) ,6
- (x \2D.0. +179) ,8
- (x <=.0. +179) ,10
- (x \2B.1. +177) ,11
- (x \2D.1. +182) ,13
- (x <=.1. +182) 10,17
- (h Fibable.0. +181) 12,17
- (h Self.0. +45) 4,18
- (h <=.2. +45) 4,19
- (h \2B.2. +140) 4,20
- (h \2D.2. +137) ,22
- (h fib.0. +141) 9,22
- (h T.0. +37) 11,28
- (h fib.1. +930))
+    (i 64) .)
+   (if
+    (elif@3
+     (le@2
+      (i 64) a.3~2 2@3)
+     (stmts~1,1
+      (asgn@7 result.1~7 1@2)))
+    (else@,2
+     (stmts@2,1
+      (asgn@7 result.1~7
+       (add@B
+        (i 64)
+        (call~6 fib.1.~3
+         (sub@2
+          (i 64) a.3~1 1@1))
+        (call@5 fib.1.~3
+         (sub@2
+          (i 64) a.3~1 2@1)))))))
+   (ret~2,~1 result.1))))(.index@,2,tests/nimony/nosystem/tfib2.nim
+ (x@2,1 int.0. 79)
+ (x@2,2 bool.0. 66)
+ (x@2,3 float.0. 68)
+ (x@,5 \2B.0. 70)
+ (x@,6 \2D.0. 174)
+ (x@,8 <=.0. 174)
+ (x@,A \2B.1. 171)
+ (x@,B \2D.1. 176)
+ (x@,D <=.1. 176)
+ (h@A,H Fibable.0. 173)
+ (h@C,H Self.0. 48)
+ (h@4,I <=.2. 44)
+ (h@4,J \2B.2. 136)
+ (h@4,K \2D.2. 136)
+ (h@,M fib.0. 139)
+ (h@9,M T.0. 38)
+ (h@B,S fib.1. 891))

@@ -1,331 +1,563 @@
-(.nif24)
+(.nif27)
 (stmts
-  (incl "<stdio.h>")
-  (incl "<assert.h>")
-  (type :MyProc.e . (proctype . (params (param :x.0 . (ptr MyObject3.m)) (param :y.0 . (ptr MyObject4.m))) MyObject2.m . ))
-  (type :MyProc.e2 . (proctype . (params) . . ))
-
-  (type :MyObject2.m .
-  (object . (fld :a1 . (i +32 (atomic)))
-    (fld :a2 . (i +64 (atomic)))
-    (fld :a3 . (bool (atomic)))
-  )
-  )
-
-  (type ~6 :bool.0.tesg7afhq1 . 2
-  (enum 12,1 (u +8) 2,1
-   (efld ~8 :false.0.tesg7afhq1 +0) 12,1
-   (efld ~7 :true.0.tesg7afhq1 +1))) ,13
-
-  (type :MyObject3.m .
-  (object . (fld :a1 . (i +32 (atomic)))
-    (fld :a2 . (i +64 (atomic)))
-    (fld :a3 . (bool (ro)))
-  )
-  )
-
-
-  (type :MyObject4.m .
-  (object . (fld :a1 . (i +32 (atomic)))
-    (fld :a2 . (i +64 (atomic)))
-    (fld :a3 . (bool (ro)))
-  )
-  )
-
-  (proc :foo.m2 . . . (stmts
-    1,1,test1.nim(var :x.m . (i +32) +12)
-    1,2,test1.nim(asgn x.m +15)
-  ))
-
-  (proc :foo.m3 . . . (stmts
-    (var :x.0 . (bool) (true))
-    (var :y.0 . (bool) (false))
-    (call assert.c (eq x.0 (true)))
-    (call assert.c (eq y.0 (false)))
-    (var :s.m . (c +8) 'm')
-    (call assert.c (eq 'm' s.m))
-    (var :z.0 . (ptr (c +8 (ro))) (nil))
-  ))
-
-  (proc :foo.if . . . (stmts
-    (const :x.0 . (i +32) (suf +12 "i32"))
-    (if (elif (eq x.0 +1) (call assert.c (eq x.0 +1)))
-        (elif (eq x.0 +3) (call assert.c (eq x.0 +3)))
-        (else (call assert.c (eq x.0 +12)))
-    )
-  ))
-
-  (proc :foo.switch . . . (stmts
-    (var :x.0 . (i +32) (suf +12 "i32"))
-    (case x.0
-      (of (ranges +1) (call assert.c (eq x.0 +1)))
-      (of (ranges (range +3 +5)) (call printf.c "hello %d" x.0))
-      (else (call assert.c (eq x.0 +12)))
-    )
-  ))
-
-  (proc :foo.while . . . (stmts
-    (var :x.0 . (i +32 (atomic)) (suf +12 "i32"))
-    (while (not (lt x.0 +8))
-       (stmts
-          (asgn x.0
-            (sub (i +32) x.0 +1)
-          )
-       )
-    )
-  ))
-
-  (proc :foo.neg . . . (stmts
-    (var :x.0 . (i +32) (neg (i +32) +12 ))
-  )
-  )
-
-  (type :MyObject2.mc .
-      (object . (fld :a1 . (i +32 (atomic)))
-        (fld :a2.c . (i +64 (atomic)))
-        (fld :a3.c . (bool))
-      )
-  )
-
-  (type :MyArray.mc .
-    (array (i +64 (atomic)) +3)
-  )
-
-  (gvar :x.gvar . (bool) (true))
-  (tvar :x.tvar . (bool) .)
-
-    (scope
-    (call printf.c "hello %s\0A" "file 1")
-    )
-
-    (call printf.c "hello %s\0A" "file 1")
-
-    (jmp label1.c)
-
-    (call assert.c (false))
-
-    (lab :label1.c)
-
-  (var :x.mangled (pragmas (attr "used") (was "x")) (bool) .)
-
-  (proc :foo.cs2 . . . (stmts
-    (scope
-    (call printf.c "hello %s\0A" "file 1")
-    )
-
-
-    (asgn x.gvar (false))
-    (asgn x.tvar (false))
-
-    (jmp label.c)
-
-    (call assert.c (false))
-
-    (lab :label.c)
-
-    (var :x.0 . (bool) (true))
-
-    (call assert.c (eq (sizeof (bool)) +1))
-
-    (var :y.0 . MyObject2.mc (oconstr MyObject2.mc (kv a2.c +12) (kv a3.c (true))))
-
-    (call assert.c (eq (dot y.0 a2.c +0) +12))
-    (call assert.c (eq (and (par +1) (par +0)) +0))
-    (call assert.c (eq (or (par +1) (par -0)) +1))
-
-    (var :z.0 . MyArray.mc (aconstr MyArray.mc +1 +2 +3))
-
-
-    (call assert.c (eq (at z.0 +0) +1))
-    (call assert.c (eq (at z.0 +1) +2))
-    (call assert.c (eq (mul (i +64) (at z.0 +1) (at z.0 +2)) +6))
-    (call assert.c (eq (mod (i +64) +9 +4) +1))
-    (call assert.c (eq (div (i +64) +9 +4) +2))
-    (call assert.c (eq (shr (i +64) +9 +1) +4))
-    (call assert.c (eq (shl (i +64) +9 +4) +144))
-    (call assert.c (eq (eq +9 +4) +0))
-    (call assert.c (eq (neq +9 +4) +1))
-    (call assert.c (eq (le +9 +4) +0))
-    (call assert.c (eq (lt +9 +4) +0))
-  )
-  )
-
-  (type :MyObject.aligned . (object .
-    (fld :a1.c (pragmas (align +8)) (bool))))
-
-  (proc :foo.sizealignoffset . . . (stmts
-    (call assert.c (eq (sizeof (i +32)) +4))
-    (call assert.c (eq (sizeof MyObject2.m) +24))
-    (call assert.c (eq (alignof (i +32)) +4))
-    (call assert.c (eq (alignof MyObject2.m) +8))
-    (call assert.c (eq (offsetof MyObject2.m a2.c) +8))
-    (call assert.c (eq (offsetof MyObject2.m a3.c) +16))
-    (call assert.c (eq (sizeof MyObject.aligned) +8))
-  ))
-
-  (proc :foo.floatspecial . . . (stmts
-    (var :x.m . (f +32) (inf))
-    (var :x2.m . (f +64) (neginf))
-    (var :x3.m . (f +64) (nan))
-  ))
-
-  (proc :foo.intminmax . . . (stmts
-    (call assert.c (eq (suf -2147483648 "i32") -2147483648))
-    (call assert.c (eq (suf -9223372036854775808 "i64") -9223372036854775808))
-    (call assert.c (eq (suf -9223372036854775806 "i64") -9223372036854775806))
-    (call assert.c (eq (suf +18446744073709551615u "u64") +18446744073709551615u))
-  ))
-
-  (type :FooProc.cdecl . (proctype . (params) (i +32) (pragmas (cdecl))))
-  (type :FooProc.stdcall . (proctype . (params) (i +32) (pragmas (stdcall))))
-  (type :FooProc.safecall . (proctype . (params) (i +32) (pragmas (safecall))))
-  (type :FooProc.fastcall . (proctype . (params) (i +32) (pragmas (fastcall))))
-  (type :FooProc.noconv . (proctype . (params) (i +32) (pragmas (noconv))))
-  (type :FooProc.member . (proctype . (params) (i +32) (pragmas (member))))
-
-  (proc :foo.inline . (i +32) (pragmas (inline)) (stmts
-    (ret +1)
-  ))
-
-  (proc :foo.noinline . (i +32) (pragmas (noinline)) (stmts
-    (ret +1)
-  ))
-
-  (proc :foo.cdecl . (i +32) (pragmas (cdecl)) (stmts
-    (ret +1)
-  ))
-
-  (proc :foo.stdcall . (i +32) (pragmas (stdcall)) (stmts
-    (ret +1)
-  ))
-
-  (proc :foo.safecall . (i +32) (pragmas (safecall)) (stmts
-    (ret +1)
-  ))
-
-
-  (proc :foo.fastcall . (i +32) (pragmas (fastcall)) (stmts
-    (ret +1)
-  ))
-
-  (proc :foo.noconv . (i +32) (pragmas (noconv)) (stmts
-    (ret +1)
-  ))
-
-  (proc :foo.member . (i +32) (pragmas (member)) (stmts
-    (ret +1)
-  ))
-
-  (proc :foo.switch.bool . . . (stmts
-    (var :x.0 . (bool) (false))
-    (case x.0
-      (of (ranges (true)) (call printf.c "hello %d" x.0))
-      (of (ranges (false)) (call assert.c (not x.0)))
-    )
-  ))
-
-  (proc :foo.attr.used . . (pragmas (attr "used")) (stmts
-    (var :x.0 . (bool) (false))
-  ))
-
-  (proc :foo.attr.used.inline . . (pragmas (attr "used") (inline)) (stmts
-    (var :x.0 . (bool) (false))
-  ))
-
-  (proc :foo.error.stmts . . (pragmas (errs)) (stmts
-    (asgn (errv) (true))
-    (call assert.c (errv))
-    (asgn (errv) (false))
-  )
-  )
-
-  (proc :foo.error.exprs . (i +32) (pragmas (errs)) (stmts
-    (asgn (errv) (true))
-    (call assert.c (errv))
-    (asgn (errv) (false))
-    (ret +3)
-  )
-  )
-
-  (type :ContainsImported.m . (object .
-    (fld :x.f . unsigned\20char.c)))
-
-  (proc :foo.escapedproc (params (param :x.p . unsigned\20char.c)) unsigned\20char.c . (stmts
-    (ret x.p)
-  ))
-
-  (proc :foo.escaped . . . (stmts
-    (var :x.m . unsigned\20char.c +12)
-    (call assert.c (eq x.m +12))
-    (call assert.c (eq (call foo.escapedproc x.m) x.m))
-    (var :y.m . ContainsImported.m .)
-  ))
-
-  (proc :main.c . (i +32) (pragmas (errs)) (stmts
-    1,1,hello.nim(var :x1.m . (i +32) +12)
-    1,2,hello.nim(var :z2.m . (ptr (c +8)) (cast (ptr (c +8)) (suf "hello" "r")))
-    1,3,hello.nim(var :z3.m . (ptr (c +8)) (cast (ptr (c +8)) (suf "hello" "r")))
-    1,4,hello.nim(call foo.m2)
-    (call foo.m3)
-    (call foo.if)
-    (call foo.switch)
-    (call foo.while)
-    (call foo.neg)
-    (call foo.cs2)
-    (call foo.sizealignoffset)
-    (call foo.floatspecial)
-    (call foo.intminmax)
-
-    (call foo.inline)
-    (discard (call foo.inline))
-    (call foo.noinline)
-    (call foo.cdecl)
-    (call foo.stdcall)
-    (call foo.safecall)
-    (call foo.fastcall)
-    (call foo.noconv)
-    (call foo.member)
-    (var :foovar.cdecl . FooProc.cdecl foo.cdecl)
-    (var :foovar.stdcall . FooProc.stdcall foo.stdcall)
-    (var :foovar.safecall . FooProc.safecall foo.safecall)
-    (var :foovar.fastcall . FooProc.fastcall foo.fastcall)
-    (var :foovar.noconv . FooProc.noconv foo.noconv)
-    (var :foovar.member . FooProc.member foo.member)
-
-    (var :x.0 . (i +8) (suf +12 "i8"))
-    (discard x.0)
-    (var :x.m . (i +16) (suf -12 "i16"))
-    (var :x1 . (i +32) (suf +12 "i32"))
-    (var :y1 . (u +32) (suf +12 "u32"))
-    (var :y2 . (u +64) (suf +12 "u64"))
-    (var :y3 . (u +16) (suf +12 "u16"))
-    (var :y4 . (u +8) (suf +12 "u8"))
-    (var :z . (f +32) (suf +12.5 "f32"))
-    (var :z1 . (f +64) (suf +12.5 "f64"))
-    (var :z2 . (ptr (c +8)) (cast (ptr (c +8)) (suf "hello" "r")))
-
-    (var :add2.m . (i +32) (add (i +32) +214 +21))
-    (call assert.c (eq -13 (bitnot (i +32) +12)))
-
-    (call foo.switch.bool)
-
-    (emit "(void)" x.0 ";")
-
-
-    (onerr (jmp L1.c) foo.error.stmts)
-    (call printf.c "success!\0A")
-    (lab :L1.c)
-
-    (var :s.cpp . (i +32) (onerr (jmp L2.c) foo.error.exprs))
-    (call printf.c "success!\0A")
-    (lab :L2.c)
-    (call assert.c (eq s.cpp +3))
-
-    (call foo.escaped)
-
-    (var :x.1 . 6,~3 bool.0.tesg7afhq1 4 false.0.tesg7afhq1)
-
-    (ret +0)
-  ))
-)
-
+ (incl "<stdio.h>")
+ (incl "<assert.h>")
+ (type :MyProc.e .
+  (proctype .
+   (params
+    (param :x.0 .
+     (ptr MyObject3.m))
+    (param :y.0 .
+     (ptr MyObject4.m))) MyObject2.m .))
+ (type :MyProc.e2 .
+  (proctype .
+   (params) . .))
+ (type :MyObject2.m .
+  (object .
+   (fld :a1 .
+    (i 32
+     (atomic)))
+   (fld :a2 .
+    (i 64
+     (atomic)))
+   (fld :a3 .
+    (bool
+     (atomic)))))
+ (type :bool.0.tesg7afhq1~6 .
+  (enum@2
+   (u@C,1 8)
+   (efld@2,1 :false.0.tesg7afhq1~8 0)
+   (efld@C,1 :true.0.tesg7afhq1~7 1)))
+ (type@,D :MyObject3.m .
+  (object .
+   (fld :a1 .
+    (i 32
+     (atomic)))
+   (fld :a2 .
+    (i 64
+     (atomic)))
+   (fld :a3 .
+    (bool
+     (ro)))))
+ (type :MyObject4.m .
+  (object .
+   (fld :a1 .
+    (i 32
+     (atomic)))
+   (fld :a2 .
+    (i 64
+     (atomic)))
+   (fld :a3 .
+    (bool
+     (ro)))))
+ (proc :foo.m2 . . .
+  (stmts
+   (var@1,1,test1.nim :x.m .
+    (i 32) 12)
+   (asgn@1,2,test1.nim x.m 15)))
+ (proc :foo.m3 . . .
+  (stmts
+   (var :x.0 .
+    (bool)
+    (true))
+   (var :y.0 .
+    (bool)
+    (false))
+   (call assert.c
+    (eq x.0
+     (true)))
+   (call assert.c
+    (eq y.0
+     (false)))
+   (var :s.m .
+    (c 8) 'm')
+   (call assert.c
+    (eq 'm' s.m))
+   (var :z.0 .
+    (ptr
+     (c 8
+      (ro)))
+    (nil))))
+ (proc :foo.if . . .
+  (stmts
+   (const :x.0 .
+    (i 32)
+    (suf 12 "i32"))
+   (if
+    (elif
+     (eq x.0 1)
+     (call assert.c
+      (eq x.0 1)))
+    (elif
+     (eq x.0 3)
+     (call assert.c
+      (eq x.0 3)))
+    (else
+     (call assert.c
+      (eq x.0 12))))))
+ (proc :foo.switch . . .
+  (stmts
+   (var :x.0 .
+    (i 32)
+    (suf 12 "i32"))
+   (case x.0
+    (of
+     (ranges 1)
+     (call assert.c
+      (eq x.0 1)))
+    (of
+     (ranges
+      (range 3 5))
+     (call printf.c "hello %d" x.0))
+    (else
+     (call assert.c
+      (eq x.0 12))))))
+ (proc :foo.while . . .
+  (stmts
+   (var :x.0 .
+    (i 32
+     (atomic))
+    (suf 12 "i32"))
+   (while
+    (not
+     (lt x.0 8))
+    (stmts
+     (asgn x.0
+      (sub
+       (i 32) x.0 1))))))
+ (proc :foo.neg . . .
+  (stmts
+   (var :x.0 .
+    (i 32)
+    (neg
+     (i 32) 12))))
+ (type :MyObject2.mc .
+  (object .
+   (fld :a1 .
+    (i 32
+     (atomic)))
+   (fld :a2.c .
+    (i 64
+     (atomic)))
+   (fld :a3.c .
+    (bool))))
+ (type :MyArray.mc .
+  (array
+   (i 64
+    (atomic)) 3))
+ (gvar :x.gvar .
+  (bool)
+  (true))
+ (tvar :x.tvar .
+  (bool) .)
+ (scope
+  (call printf.c "hello %s\0A" "file 1"))
+ (call printf.c "hello %s\0A" "file 1")
+ (jmp label1.c)
+ (call assert.c
+  (false))
+ (lab :label1.c)
+ (var :x.mangled
+  (pragmas
+   (attr "used")
+   (was "x"))
+  (bool) .)
+ (proc :foo.cs2 . . .
+  (stmts
+   (scope
+    (call printf.c "hello %s\0A" "file 1"))
+   (asgn x.gvar
+    (false))
+   (asgn x.tvar
+    (false))
+   (jmp label.c)
+   (call assert.c
+    (false))
+   (lab :label.c)
+   (var :x.0 .
+    (bool)
+    (true))
+   (call assert.c
+    (eq
+     (sizeof
+      (bool)) 1))
+   (var :y.0 . MyObject2.mc
+    (oconstr MyObject2.mc
+     (kv a2.c 12)
+     (kv a3.c
+      (true))))
+   (call assert.c
+    (eq
+     (dot y.0 a2.c 0) 12))
+   (call assert.c
+    (eq
+     (and
+      (par 1)
+      (par 0)) 0))
+   (call assert.c
+    (eq
+     (or
+      (par 1)
+      (par 0)) 1))
+   (var :z.0 . MyArray.mc
+    (aconstr MyArray.mc 1 2 3))
+   (call assert.c
+    (eq
+     (at z.0 0) 1))
+   (call assert.c
+    (eq
+     (at z.0 1) 2))
+   (call assert.c
+    (eq
+     (mul
+      (i 64)
+      (at z.0 1)
+      (at z.0 2)) 6))
+   (call assert.c
+    (eq
+     (mod
+      (i 64) 9 4) 1))
+   (call assert.c
+    (eq
+     (div
+      (i 64) 9 4) 2))
+   (call assert.c
+    (eq
+     (shr
+      (i 64) 9 1) 4))
+   (call assert.c
+    (eq
+     (shl
+      (i 64) 9 4) 144))
+   (call assert.c
+    (eq
+     (eq 9 4) 0))
+   (call assert.c
+    (eq
+     (neq 9 4) 1))
+   (call assert.c
+    (eq
+     (le 9 4) 0))
+   (call assert.c
+    (eq
+     (lt 9 4) 0))))
+ (type :MyObject.aligned .
+  (object .
+   (fld :a1.c
+    (pragmas
+     (align 8))
+    (bool))))
+ (proc :foo.sizealignoffset . . .
+  (stmts
+   (call assert.c
+    (eq
+     (sizeof
+      (i 32)) 4))
+   (call assert.c
+    (eq
+     (sizeof MyObject2.m) 24))
+   (call assert.c
+    (eq
+     (alignof
+      (i 32)) 4))
+   (call assert.c
+    (eq
+     (alignof MyObject2.m) 8))
+   (call assert.c
+    (eq
+     (offsetof MyObject2.m a2.c) 8))
+   (call assert.c
+    (eq
+     (offsetof MyObject2.m a3.c) 16))
+   (call assert.c
+    (eq
+     (sizeof MyObject.aligned) 8))))
+ (proc :foo.floatspecial . . .
+  (stmts
+   (var :x.m .
+    (f 32)
+    (inf))
+   (var :x2.m .
+    (f 64)
+    (neginf))
+   (var :x3.m .
+    (f 64)
+    (nan))))
+ (proc :foo.intminmax . . .
+  (stmts
+   (call assert.c
+    (eq
+     (suf -2147483648 "i32") -2147483648))
+   (call assert.c
+    (eq
+     (suf -9223372036854775808 "i64") -9223372036854775808))
+   (call assert.c
+    (eq
+     (suf -9223372036854775806 "i64") -9223372036854775806))
+   (call assert.c
+    (eq
+     (suf 18446744073709551615u "u64") 18446744073709551615u))))
+ (type :FooProc.cdecl .
+  (proctype .
+   (params)
+   (i 32)
+   (pragmas
+    (cdecl))))
+ (type :FooProc.stdcall .
+  (proctype .
+   (params)
+   (i 32)
+   (pragmas
+    (stdcall))))
+ (type :FooProc.safecall .
+  (proctype .
+   (params)
+   (i 32)
+   (pragmas
+    (safecall))))
+ (type :FooProc.fastcall .
+  (proctype .
+   (params)
+   (i 32)
+   (pragmas
+    (fastcall))))
+ (type :FooProc.noconv .
+  (proctype .
+   (params)
+   (i 32)
+   (pragmas
+    (noconv))))
+ (type :FooProc.member .
+  (proctype .
+   (params)
+   (i 32)
+   (pragmas
+    (member))))
+ (proc :foo.inline .
+  (i 32)
+  (pragmas
+   (inline))
+  (stmts
+   (ret 1)))
+ (proc :foo.noinline .
+  (i 32)
+  (pragmas
+   (noinline))
+  (stmts
+   (ret 1)))
+ (proc :foo.cdecl .
+  (i 32)
+  (pragmas
+   (cdecl))
+  (stmts
+   (ret 1)))
+ (proc :foo.stdcall .
+  (i 32)
+  (pragmas
+   (stdcall))
+  (stmts
+   (ret 1)))
+ (proc :foo.safecall .
+  (i 32)
+  (pragmas
+   (safecall))
+  (stmts
+   (ret 1)))
+ (proc :foo.fastcall .
+  (i 32)
+  (pragmas
+   (fastcall))
+  (stmts
+   (ret 1)))
+ (proc :foo.noconv .
+  (i 32)
+  (pragmas
+   (noconv))
+  (stmts
+   (ret 1)))
+ (proc :foo.member .
+  (i 32)
+  (pragmas
+   (member))
+  (stmts
+   (ret 1)))
+ (proc :foo.switch.bool . . .
+  (stmts
+   (var :x.0 .
+    (bool)
+    (false))
+   (case x.0
+    (of
+     (ranges
+      (true))
+     (call printf.c "hello %d" x.0))
+    (of
+     (ranges
+      (false))
+     (call assert.c
+      (not x.0))))))
+ (proc :foo.attr.used . .
+  (pragmas
+   (attr "used"))
+  (stmts
+   (var :x.0 .
+    (bool)
+    (false))))
+ (proc :foo.attr.used.inline . .
+  (pragmas
+   (attr "used")
+   (inline))
+  (stmts
+   (var :x.0 .
+    (bool)
+    (false))))
+ (proc :foo.error.stmts . .
+  (pragmas
+   (errs))
+  (stmts
+   (asgn
+    (errv)
+    (true))
+   (call assert.c
+    (errv))
+   (asgn
+    (errv)
+    (false))))
+ (proc :foo.error.exprs .
+  (i 32)
+  (pragmas
+   (errs))
+  (stmts
+   (asgn
+    (errv)
+    (true))
+   (call assert.c
+    (errv))
+   (asgn
+    (errv)
+    (false))
+   (ret 3)))
+ (type :ContainsImported.m .
+  (object .
+   (fld :x.f . unsigned\5C20char.c)))
+ (proc :foo.escapedproc
+  (params
+   (param :x.p . unsigned\5C20char.c)) unsigned\5C20char.c .
+  (stmts
+   (ret x.p)))
+ (proc :foo.escaped . . .
+  (stmts
+   (var :x.m . unsigned\5C20char.c 12)
+   (call assert.c
+    (eq x.m 12))
+   (call assert.c
+    (eq
+     (call foo.escapedproc x.m) x.m))
+   (var :y.m . ContainsImported.m .)))
+ (proc :main.c .
+  (i 32)
+  (pragmas
+   (errs))
+  (stmts
+   (var@1,1,hello.nim :x1.m .
+    (i 32) 12)
+   (var@1,2,hello.nim :z2.m .
+    (ptr
+     (c 8))
+    (cast
+     (ptr
+      (c 8))
+     (suf "hello" "r")))
+   (var@1,3,hello.nim :z3.m .
+    (ptr
+     (c 8))
+    (cast
+     (ptr
+      (c 8))
+     (suf "hello" "r")))
+   (call@1,4,hello.nim foo.m2)
+   (call foo.m3)
+   (call foo.if)
+   (call foo.switch)
+   (call foo.while)
+   (call foo.neg)
+   (call foo.cs2)
+   (call foo.sizealignoffset)
+   (call foo.floatspecial)
+   (call foo.intminmax)
+   (call foo.inline)
+   (discard
+    (call foo.inline))
+   (call foo.noinline)
+   (call foo.cdecl)
+   (call foo.stdcall)
+   (call foo.safecall)
+   (call foo.fastcall)
+   (call foo.noconv)
+   (call foo.member)
+   (var :foovar.cdecl . FooProc.cdecl foo.cdecl)
+   (var :foovar.stdcall . FooProc.stdcall foo.stdcall)
+   (var :foovar.safecall . FooProc.safecall foo.safecall)
+   (var :foovar.fastcall . FooProc.fastcall foo.fastcall)
+   (var :foovar.noconv . FooProc.noconv foo.noconv)
+   (var :foovar.member . FooProc.member foo.member)
+   (var :x.0 .
+    (i 8)
+    (suf 12 "i8"))
+   (discard x.0)
+   (var :x.m .
+    (i 16)
+    (suf -12 "i16"))
+   (var :x1 .
+    (i 32)
+    (suf 12 "i32"))
+   (var :y1 .
+    (u 32)
+    (suf 12 "u32"))
+   (var :y2 .
+    (u 64)
+    (suf 12 "u64"))
+   (var :y3 .
+    (u 16)
+    (suf 12 "u16"))
+   (var :y4 .
+    (u 8)
+    (suf 12 "u8"))
+   (var :z .
+    (f 32)
+    (suf 12.5 "f32"))
+   (var :z1 .
+    (f 64)
+    (suf 12.5 "f64"))
+   (var :z2 .
+    (ptr
+     (c 8))
+    (cast
+     (ptr
+      (c 8))
+     (suf "hello" "r")))
+   (var :add2.m .
+    (i 32)
+    (add
+     (i 32) 214 21))
+   (call assert.c
+    (eq -13
+     (bitnot
+      (i 32) 12)))
+   (call foo.switch.bool)
+   (emit "\28void\29" x.0 ";")
+   (onerr
+    (jmp L1.c) foo.error.stmts)
+   (call printf.c "success!\0A")
+   (lab :L1.c)
+   (var :s.cpp .
+    (i 32)
+    (onerr
+     (jmp L2.c) foo.error.exprs))
+   (call printf.c "success!\0A")
+   (lab :L2.c)
+   (call assert.c
+    (eq s.cpp 3))
+   (call foo.escaped)
+   (var :x.1 . bool.0.tesg7afhq1@6,~3 false.0.tesg7afhq1@4)
+   (ret 0))))

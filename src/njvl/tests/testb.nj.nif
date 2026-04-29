@@ -1,3 +1,4 @@
+(.nif27)
 (stmts
  (mflag :´r.0.main)
  (proc :echo.0 . . .
@@ -5,7 +6,7 @@
    (param :msg.0 . .
     (ptr
      (array
-      (i +8))) .)) . . .
+      (i 8))) .)) . . .
   (stmts
    (mflag :´r.0)
    (kill ´r.0)))

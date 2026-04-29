@@ -1,185 +1,185 @@
-(.nif26)
-(.indexat +3773            )
-0,2,tests/nimony/nosystem/tvarargs.nim(stmts 2,1
- (type :int.0.
-  (i +64) . 5
-  (pragmas 2
-   (magic 7 Int)) .) 2,2
- (type :bool.0.
-  (bool) . 6
-  (pragmas 2
-   (magic 7 Bool)) .) 2,3
- (type :char.0.
-  (c +8) . 6
-  (pragmas 2
-   (magic 7 Char)) .) 2,4
- (type :typedesc.0.
-  (typedesc) 9
-  (typevars 1
-   (typevar :T.0. . . . .)) 13
-  (pragmas 2
-   (magic 7 TypeDesc)) .) 2,5
- (type :untyped.0.
-  (untyped) . 9
-  (pragmas 2
-   (magic 7 Expr)) .) 14,7
- (type ~12 :TypeOfMode.0. x . . 2
-  (enum
-   (u +8) ~12,1
-   (efld :typeOfProc.0. x . TypeOfMode.0.
-    (tup +0 "typeOfProc")) ~12,2
-   (efld :typeOfIter.0. x . TypeOfMode.0.
-    (tup +1 "typeOfIter")))) 2,7
- (proc :dollar`.TypeOfMode.0. x . .
+(.nif27)
+(.indexat 3666             )
+(stmts@,2,tests/nimony/nosystem/tvarargs.nim
+ (type@2,1 :int.0.
+  (i 64) .
+  (pragmas@5
+   (magic@2 Int@7)) .)
+ (type@2,2 :bool.0.
+  (bool) .
+  (pragmas@6
+   (magic@2 Bool@7)) .)
+ (type@2,3 :char.0.
+  (c 8) .
+  (pragmas@6
+   (magic@2 Char@7)) .)
+ (type@2,4 :typedesc.0.
+  (typedesc)
+  (typevars@9
+   (typevar@1 :T.0. . . . .))
+  (pragmas@D
+   (magic@2 TypeDesc@7)) .)
+ (type@2,5 :untyped.0.
+  (untyped) .
+  (pragmas@9
+   (magic@2 Expr@7)) .)
+ (type@E,7 :TypeOfMode.0.~C x . .
+  (enum@2
+   (u 8)
+   (efld~C,1 :typeOfProc.0. x . TypeOfMode.0.
+    (tup 0 "typeOfProc"))
+   (efld~C,2 :typeOfIter.0. x . TypeOfMode.0.
+    (tup 1 "typeOfIter"))))
+ (proc@2,7 :dollar`.TypeOfMode.0. x . .
   (params
    (param :e.0 . . TypeOfMode.0. .)) string.0.sysvq0asl . .
-  (stmts 14
-   (result :result.0 . . string.0.sysvq0asl .) 14
-   (case e.0 ~12,1
-    (of
+  (stmts
+   (result@E :result.0 . . string.0.sysvq0asl .)
+   (case@E e.0
+    (of~C,1
      (ranges typeOfProc.0.)
      (stmts
-      (ret "typeOfProc"))) ~12,2
-    (of
+      (ret "typeOfProc")))
+    (of~C,2
      (ranges typeOfIter.0.)
      (stmts
       (ret "typeOfIter"))))
-   (ret result.0))) ,11
- (func 5 :typeof.0.
-  (typeof) . . 11
-  (params 1
-   (param :x.0 . . 3
-    (untyped) .) 13
-   (param :mode.0 . . ~22,~4 TypeOfMode.0. 7 typeOfIter.0.)) 33
-  (typekind
-   (typedesc)) 53
-  (pragmas 2
-   (magic 7 TypeOf)) . .) 10,14
- (type ~8 :string.0. x . . string.0.sysvq0asl) ,16
- (func 5 :\2B.0.
-  (add -3) . . 9
-  (params 1
-   (param :x.1 . . 6
-    (i +64) .) 4
-   (param :y.0 . . 3
-    (i +64) .)) 13
-  (i +64) 26
-  (pragmas 2
-   (magic 7 "AddI")) . .) ,17
- (func 5 :\2D.0.
-  (sub -3) . . 9
-  (params 1
-   (param :x.2 . . 6
-    (i +64) .) 4
-   (param :y.1 . . 3
-    (i +64) .)) 13
-  (i +64) 26
-  (pragmas 2
-   (magic 7 "SubI")) . .) ,19
- (func 5 :<=.0.
-  (le -3) . . 10
-  (params 1
-   (param :x.3 . . 6
-    (i +64) .) 4
-   (param :y.2 . . 3
-    (i +64) .)) 13
-  (bool) 28
-  (pragmas 2
-   (magic 7 "LeI")) . .) 8,22
- (type ~6 :File.0. x .
-  (pragmas) 2
-  (object .)) 4,24
- (gvar :stdout.0. . . 8 File.0. .) ,26
- (proc 5 :write.0. . . . 10
-  (params 1
-   (param :f.0 . . 3
-    (mut 4 File.0.) .) 14
-   (param :c.0 . . 3
-    (c +8) .)) . . . 35
-  (stmts
-   (discard .))) ,27
- (proc 5 :write.1. . . . 10
-  (params 1
-   (param :f.1 . . 3
-    (mut 4 File.0.) .) 14
-   (param :s.0 . . string.0.sysvq0asl .)) . . . 37
-  (stmts
-   (discard .))) ,29
- (cmd write.0. 6
-  (haddr stdout.0.) 14 '\0A') ,31
- (iterator 9 :unpack.0.
-  (unpack) . . 15
-  (params) 4
-  (untyped) 27
-  (pragmas 2
-   (magic 7 Unpack)) . .) ,33
- (template 9 :echo.0. x . . 14
-  (params 5
-   (param :vanon.0 . .
-    (varargs) .)) . 17
-  (pragmas 2
-   (varargs)) . 2,1
-  (stmts 4
-   (for 11
-    (unpack)
+   (ret result.0)))
+ (func@,B :typeof.0.@5
+  (typeof) . .
+  (params@B
+   (param@1 :x.0 . .
+    (untyped@3) .)
+   (param@D :mode.0 . . TypeOfMode.0.~M,~4 typeOfIter.0.@7))
+  (typekind@X
+   (typedesc))
+  (pragmas@r
+   (magic@2 TypeOf@7)) . .)
+ (type@A,E :string.0.~8 x . . string.0.sysvq0asl)
+ (func@,G :\2B.0.@5
+  (add -3) . .
+  (params@9
+   (param@1 :x.1 . .
+    (i@6 64) .)
+   (param@4 :y.0 . .
+    (i@3 64) .))
+  (i@D 64)
+  (pragmas@Q
+   (magic@2 "AddI"@7)) . .)
+ (func@,H :\2D.0.@5
+  (sub -3) . .
+  (params@9
+   (param@1 :x.2 . .
+    (i@6 64) .)
+   (param@4 :y.1 . .
+    (i@3 64) .))
+  (i@D 64)
+  (pragmas@Q
+   (magic@2 "SubI"@7)) . .)
+ (func@,J :<=.0.@5
+  (le -3) . .
+  (params@A
+   (param@1 :x.3 . .
+    (i@6 64) .)
+   (param@4 :y.2 . .
+    (i@3 64) .))
+  (bool@D)
+  (pragmas@S
+   (magic@2 "LeI"@7)) . .)
+ (type@8,M :File.0.~6 x .
+  (pragmas)
+  (object@2 .))
+ (gvar@4,O :stdout.0. . . File.0.@8 .)
+ (proc@,Q :write.0.@5 . . .
+  (params@A
+   (param@1 :f.0 . .
+    (mut@3 File.0.@4) .)
+   (param@E :c.0 . .
+    (c@3 8) .)) . . .
+  (stmts@Z
+   (discard .)))
+ (proc@,R :write.1.@5 . . .
+  (params@A
+   (param@1 :f.1 . .
+    (mut@3 File.0.@4) .)
+   (param@E :s.0 . . string.0.sysvq0asl .)) . . .
+  (stmts@b
+   (discard .)))
+ (cmd@,T write.0.
+  (haddr@6 stdout.0.) '\0A'@E)
+ (iterator@,V :unpack.0.@9
+  (unpack) . .
+  (params@F)
+  (untyped@4)
+  (pragmas@R
+   (magic@2 Unpack@7)) . .)
+ (template@,X :echo.0.@9 x . .
+  (params@E
+   (param@5 :vanon.0 . .
+    (varargs) .)) .
+  (pragmas@H
+   (varargs@2)) .
+  (stmts@2,1
+   (for@4
+    (unpack@B)
     (unpackflat
-     (let :x.4 . . 9,~23
-      (untyped) .)) ~2,1
-    (expr
+     (let :x.4 . .
+      (untyped@9,~N) .))
+    (expr~2,1
      (cmd
-      (ochoice write.0. write.1.) 6 stdout.0. 14 x.4))) ,2
-   (cmd write.0. 6 stdout.0. 14 '\0A'))) 4,38
- (gvar :someVar.0. . . string.0.sysvq0asl 10 "") 2,34
- (stmts 2,1
-  (stmts
-   (cmd write.1. 6
-    (haddr stdout.0.) 1,5 "a")) 2,1
-  (stmts
-   (cmd write.1. 6
-    (haddr stdout.0.) 6,5 someVar.0.)) 2,1
-  (stmts
-   (cmd write.1. 6
-    (haddr stdout.0.) 15,5 "b")) ,2
-  (cmd write.0. 6
-   (haddr stdout.0.) 14 '\0A')) 2,34
- (stmts 2,1
-  (stmts
-   (cmd write.1. 6
-    (haddr stdout.0.) 1,7 "xzy")) 2,1
-  (stmts
-   (cmd write.0. 6
-    (haddr stdout.0.) 8,7 'c')) ,2
-  (cmd write.0. 6
-   (haddr stdout.0.) 14 '\0A')) 2,34
- (stmts ,2
-  (cmd write.0. 6
-   (haddr stdout.0.) 14 '\0A')) 2,34
- (stmts 2,1
-  (stmts
-   (cmd write.1. 6
-    (haddr stdout.0.) 1,11 someVar.0.)) ,2
-  (cmd write.0. 6
-   (haddr stdout.0.) 14 '\0A')) 15,11
- (comment untyped.0. 18 typedesc.0. 1,5 int.0. 1,5 int.0. ~2,5 int.0. 1,6 int.0. 1,6 int.0. ~2,6 int.0. 2,8 int.0. 2,8 int.0. ~2,8 bool.0. 12,15 char.0. ~11,20 untyped.0. ~15,29 echo.0. ~15,31 echo.0. ~11,33 echo.0. ~15,35 echo.0.))0,2,tests/nimony/nosystem/tvarargs.nim(.index 2,1
- (x int.0. +86) 2,2
- (x bool.0. +67) 2,3
- (x char.0. +68) 2,4
- (x typedesc.0. +68) 12,4
- (h T.0. +49) 2,5
- (x untyped.0. +74) 14,7
- (x TypeOfMode.0. +75) 4,8
- (x typeOfProc.0. +58) 4,9
- (x typeOfIter.0. +75) 2,7
- (x dollar`.TypeOfMode.0. +75) ,11
- (x typeof.0. +368) 10,14
- (x string.0. +230) ,16
- (x \2B.0. +51) ,17
- (x \2D.0. +180) ,19
- (x <=.0. +180) 8,22
- (x File.0. +178) 4,24
- (h stdout.0. +56) ,26
- (h write.0. +39) ,27
- (h write.1. +162) ,31
- (x unpack.0. +219) ,33
- (x echo.0. +113) 4,38
- (h someVar.0. +348))
+      (ochoice write.0. write.1.) stdout.0.@6 x.4@E)))
+   (cmd@,2 write.0. stdout.0.@6 '\0A'@E)))
+ (gvar@4,c :someVar.0. . . string.0.sysvq0asl ""@A)
+ (stmts@2,Y
+  (stmts@2,1
+   (cmd write.1.
+    (haddr@6 stdout.0.) "a"@1,5))
+  (stmts@2,1
+   (cmd write.1.
+    (haddr@6 stdout.0.) someVar.0.@6,5))
+  (stmts@2,1
+   (cmd write.1.
+    (haddr@6 stdout.0.) "b"@F,5))
+  (cmd@,2 write.0.
+   (haddr@6 stdout.0.) '\0A'@E))
+ (stmts@2,Y
+  (stmts@2,1
+   (cmd write.1.
+    (haddr@6 stdout.0.) "xzy"@1,7))
+  (stmts@2,1
+   (cmd write.0.
+    (haddr@6 stdout.0.) 'c'@8,7))
+  (cmd@,2 write.0.
+   (haddr@6 stdout.0.) '\0A'@E))
+ (stmts@2,Y
+  (cmd@,2 write.0.
+   (haddr@6 stdout.0.) '\0A'@E))
+ (stmts@2,Y
+  (stmts@2,1
+   (cmd write.1.
+    (haddr@6 stdout.0.) someVar.0.@1,B))
+  (cmd@,2 write.0.
+   (haddr@6 stdout.0.) '\0A'@E))
+ (comment@F,B untyped.0. typedesc.0.@I int.0.@1,5 int.0.@1,5 int.0.~2,5 int.0.@1,6 int.0.@1,6 int.0.~2,6 int.0.@2,8 int.0.@2,8 bool.0.~2,8 char.0.@C,F untyped.0.~B,K echo.0.~F,T echo.0.~F,V echo.0.~B,X echo.0.~F,Z))(.index@,2,tests/nimony/nosystem/tvarargs.nim
+ (x@2,1 int.0. 82)
+ (x@2,2 bool.0. 66)
+ (x@2,3 char.0. 68)
+ (x@2,4 typedesc.0. 67)
+ (h@C,4 T.0. 51)
+ (x@2,5 untyped.0. 71)
+ (x@E,7 TypeOfMode.0. 74)
+ (x@4,8 typeOfProc.0. 53)
+ (x@4,9 typeOfIter.0. 72)
+ (x@2,7 dollar`.TypeOfMode.0. 74)
+ (x@,B typeof.0. 362)
+ (x@A,E string.0. 221)
+ (x@,G \2B.0. 50)
+ (x@,H \2D.0. 174)
+ (x@,J <=.0. 174)
+ (x@8,M File.0. 171)
+ (h@4,O stdout.0. 54)
+ (h@,Q write.0. 39)
+ (h@,R write.1. 157)
+ (x@,V unpack.0. 213)
+ (x@,X echo.0. 110)
+ (h@4,c someVar.0. 339))

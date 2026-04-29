@@ -1,3 +1,4 @@
+(.nif27)
 (stmts
  (mflag :´r.0.main)
  (proc :echo.0 . . .
@@ -11,7 +12,7 @@
   (params
    (param :cond.0 . .
     (bool) .))
-  (i +32) . .
+  (i 32) . .
   (stmts
    (mflag :´r.0)
    (kill ´r.0)))
@@ -57,7 +58,7 @@
  (let :`x.1 .
   (pragmas
    (inline))
-  (i +32)
+  (i 32)
   (call echo.1 "abc"))
  (call echo.0 `x.1)
  (kill a.0 `x.1 b.0 ´r.0.main `j.0.main))

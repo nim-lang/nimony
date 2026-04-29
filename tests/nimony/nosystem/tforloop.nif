@@ -1,73 +1,73 @@
-(.nif26)
-(.indexat +1394            )
-0,2,tests/nimony/nosystem/tforloop.nim(stmts 2,1
- (type :int.0.
-  (i +64) . 5
-  (pragmas 2
-   (magic 7 Int)) .) 2,2
- (type :bool.0.
-  (bool) . 6
-  (pragmas 2
-   (magic 7 Bool)) .) ,4
- (proc 5 :\2B.0.
-  (add -3) . . 9
-  (params 1
-   (param :x.0 . . 6
-    (i +64) .) 4
-   (param :y.0 . . 3
-    (i +64) .)) 13
-  (i +64) 26
-  (pragmas 2
-   (magic 7 "AddI")) . .) ,5
- (proc 5 :\2D.0.
-  (sub -3) . . 9
-  (params 1
-   (param :x.1 . . 6
-    (i +64) .) 4
-   (param :y.1 . . 3
-    (i +64) .)) 13
-  (i +64) 26
-  (pragmas 2
-   (magic 7 "SubI")) . .) ,7
- (proc 5 :<=.0.
-  (le -3) . . 10
-  (params 1
-   (param :x.2 . . 6
-    (i +64) .) 4
-   (param :y.2 . . 3
-    (i +64) .)) 13
-  (bool) 28
-  (pragmas 2
-   (magic 7 "LeI")) . .) ,9
- (iterator 9 :countup.0. . . . 16
-  (params 1
-   (param :a.0 . . 6
-    (i +64) .) 4
-   (param :b.0 . . 3
-    (i +64) .)) 13
-  (i +64) . . 2,1
-  (stmts 4
-   (var :x.3 . . 17,~1
-    (i +64) 4 a.0) ,1
-   (while 8
-    (le
-     (i +64) ~2 x.3 3 b.0) 2,1
-    (stmts
-     (yld 6 x.3) 2,1
-     (asgn ~2 x.3 4
-      (add
-       (i +64) ~2 x.3 2 +1)))))) 4,15
- (for 20
-  (call ~7 countup.0. 1 +0 4 +44)
+(.nif27)
+(.indexat 1351             )
+(stmts@,2,tests/nimony/nosystem/tforloop.nim
+ (type@2,1 :int.0.
+  (i 64) .
+  (pragmas@5
+   (magic@2 Int@7)) .)
+ (type@2,2 :bool.0.
+  (bool) .
+  (pragmas@6
+   (magic@2 Bool@7)) .)
+ (proc@,4 :\2B.0.@5
+  (add -3) . .
+  (params@9
+   (param@1 :x.0 . .
+    (i@6 64) .)
+   (param@4 :y.0 . .
+    (i@3 64) .))
+  (i@D 64)
+  (pragmas@Q
+   (magic@2 "AddI"@7)) . .)
+ (proc@,5 :\2D.0.@5
+  (sub -3) . .
+  (params@9
+   (param@1 :x.1 . .
+    (i@6 64) .)
+   (param@4 :y.1 . .
+    (i@3 64) .))
+  (i@D 64)
+  (pragmas@Q
+   (magic@2 "SubI"@7)) . .)
+ (proc@,7 :<=.0.@5
+  (le -3) . .
+  (params@A
+   (param@1 :x.2 . .
+    (i@6 64) .)
+   (param@4 :y.2 . .
+    (i@3 64) .))
+  (bool@D)
+  (pragmas@S
+   (magic@2 "LeI"@7)) . .)
+ (iterator@,9 :countup.0.@9 . . .
+  (params@G
+   (param@1 :a.0 . .
+    (i@6 64) .)
+   (param@4 :b.0 . .
+    (i@3 64) .))
+  (i@D 64) . .
+  (stmts@2,1
+   (var@4 :x.3 . .
+    (i@H,~1 64) a.0@4)
+   (while@,1
+    (le@8
+     (i 64) x.3~2 b.0@3)
+    (stmts@2,1
+     (yld x.3@6)
+     (asgn@2,1 x.3~2
+      (add@4
+       (i 64) x.3~2 1@2))))))
+ (for@4,F
+  (call@K countup.0.~7 0@1 44@4)
   (unpackflat
-   (let :mycounter.0 . . 12,~11
-    (i +64) .)) ~2,1
-  (stmts
-   (discard 8 mycounter.0))) 16,4
- (comment int.0. int.0. ~3 int.0. ,1 int.0. ,1 int.0. ~3,1 int.0. 1,3 int.0. 1,3 int.0. ~3,3 bool.0. 7,5 int.0. 7,5 int.0. ~3,5 int.0.))0,2,tests/nimony/nosystem/tforloop.nim(.index 2,1
- (x int.0. +86) 2,2
- (x bool.0. +67) ,4
- (x \2B.0. +67) ,5
- (x \2D.0. +179) ,7
- (x <=.0. +179) ,9
- (h countup.0. +176))
+   (let :mycounter.0 . .
+    (i@C,~B 64) .))
+  (stmts~2,1
+   (discard mycounter.0@8)))
+ (comment@G,4 int.0. int.0. int.0.~3 int.0.@,1 int.0.@,1 int.0.~3,1 int.0.@1,3 int.0.@1,3 bool.0.~3,3 int.0.@7,5 int.0.@7,5 int.0.~3,5))(.index@,2,tests/nimony/nosystem/tforloop.nim
+ (x@2,1 int.0. 82)
+ (x@2,2 bool.0. 66)
+ (x@,4 \2B.0. 68)
+ (x@,5 \2D.0. 174)
+ (x@,7 <=.0. 174)
+ (h@,9 countup.0. 171))

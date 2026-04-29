@@ -90,8 +90,8 @@ proc skipParRi(n: var Cursor) =
   if n.kind == ParRi:
     inc n
   else:
-    #writeStackTrace()
-    #echo toString([n.load()])
+    writeStackTrace()
+    echo toString([n.load()])
     quit "Expected ')' but found: " & $n.kind
 
 proc addSpace(result: var string) {.inline.} =
@@ -561,7 +561,7 @@ proc parseNifFile(filename: string; baseDir: sink string): Dag =
   var n = beginRead(buf)
   defer: endRead(buf)
 
-  # Parse (.nif24)(stmts ...)
+  # Parse (.nif27)(stmts ...)
   if n.kind == ParLe:
     inc n # skip opening paren
     while n.kind != ParRi:

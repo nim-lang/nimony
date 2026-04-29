@@ -1,141 +1,141 @@
-(.nif26)
-(.indexat +2713            )
-0,2,tests/nimony/nosystem/tdistinct.nim(stmts 2,1
- (type :int.0.
-  (i +64) . 5
-  (pragmas 2
-   (magic 7 Int)) .) 2,2
- (type :bool.0.
-  (bool) . 6
-  (pragmas 2
-   (magic 7 Bool)) .) 2,3
- (type :char.0.
-  (c +8) . 6
-  (pragmas 2
-   (magic 7 Char)) .) 2,5
- (type :int8.0.
-  (i +8) . 6
-  (pragmas 2
-   (magic 7 Int8)) .) 2,6
- (type :typedesc.0.
-  (typedesc) 9
-  (typevars 1
-   (typevar :T.0. . . . .)) 13
-  (pragmas 2
-   (magic 7 TypeDesc)) .) 2,7
- (type :untyped.0.
-  (untyped) . 9
-  (pragmas 2
-   (magic 7 Expr)) .) 14,9
- (type ~12 :TypeOfMode.0. x . . 2
-  (enum
-   (u +8) ~12,1
-   (efld :typeOfProc.0. x . TypeOfMode.0.
-    (tup +0 "typeOfProc")) ~12,2
-   (efld :typeOfIter.0. x . TypeOfMode.0.
-    (tup +1 "typeOfIter")))) 2,9
- (proc :dollar`.TypeOfMode.0. x . .
+(.nif27)
+(.indexat 2637             )
+(stmts@,2,tests/nimony/nosystem/tdistinct.nim
+ (type@2,1 :int.0.
+  (i 64) .
+  (pragmas@5
+   (magic@2 Int@7)) .)
+ (type@2,2 :bool.0.
+  (bool) .
+  (pragmas@6
+   (magic@2 Bool@7)) .)
+ (type@2,3 :char.0.
+  (c 8) .
+  (pragmas@6
+   (magic@2 Char@7)) .)
+ (type@2,5 :int8.0.
+  (i 8) .
+  (pragmas@6
+   (magic@2 Int8@7)) .)
+ (type@2,6 :typedesc.0.
+  (typedesc)
+  (typevars@9
+   (typevar@1 :T.0. . . . .))
+  (pragmas@D
+   (magic@2 TypeDesc@7)) .)
+ (type@2,7 :untyped.0.
+  (untyped) .
+  (pragmas@9
+   (magic@2 Expr@7)) .)
+ (type@E,9 :TypeOfMode.0.~C x . .
+  (enum@2
+   (u 8)
+   (efld~C,1 :typeOfProc.0. x . TypeOfMode.0.
+    (tup 0 "typeOfProc"))
+   (efld~C,2 :typeOfIter.0. x . TypeOfMode.0.
+    (tup 1 "typeOfIter"))))
+ (proc@2,9 :dollar`.TypeOfMode.0. x . .
   (params
    (param :e.0 . . TypeOfMode.0. .)) string.0.sysvq0asl . .
-  (stmts 14
-   (result :result.0 . . string.0.sysvq0asl .) 14
-   (case e.0 ~12,1
-    (of
+  (stmts
+   (result@E :result.0 . . string.0.sysvq0asl .)
+   (case@E e.0
+    (of~C,1
      (ranges typeOfProc.0.)
      (stmts
-      (ret "typeOfProc"))) ~12,2
-    (of
+      (ret "typeOfProc")))
+    (of~C,2
      (ranges typeOfIter.0.)
      (stmts
       (ret "typeOfIter"))))
-   (ret result.0))) ,13
- (proc 5 :typeof.0.
-  (typeof) . . 11
-  (params 1
-   (param :x.0 . . 3
-    (untyped) .) 13
-   (param :mode.0 . . ~22,~4 TypeOfMode.0. 7 typeOfIter.0.)) 33
-  (typekind
-   (typedesc)) 53
-  (pragmas 2
-   (magic 7 TypeOf)) . .) 10,17
- (type ~8 :string.0. x . . string.0.sysvq0asl) ,19
- (proc 5 :\2B.0.
-  (add -3) . . 9
-  (params 1
-   (param :x.1 . . 6
-    (i +64) .) 4
-   (param :y.0 . . 3
-    (i +64) .)) 13
-  (i +64) 26
-  (pragmas 2
-   (magic 7 "AddI")) . .) ,20
- (proc 5 :\2D.0.
-  (sub -3) . . 9
-  (params 1
-   (param :x.2 . . 6
-    (i +64) .) 4
-   (param :y.1 . . 3
-    (i +64) .)) 13
-  (i +64) 26
-  (pragmas 2
-   (magic 7 "SubI")) . .) ,22
- (proc 5 :<=.0.
-  (le -3) . . 10
-  (params 1
-   (param :x.3 . . 6
-    (i +64) .) 4
-   (param :y.2 . . 3
-    (i +64) .)) 13
-  (bool) 28
-  (pragmas 2
-   (magic 7 "LeI")) . .) 9,26
- (type ~7 :VarId.0. x .
-  (pragmas) 2
-  (distinct 9
-   (i +64))) ,28
- (proc 5 :\2B.1. x . . 9
-  (params 1
-   (param :x.4 . . 6 VarId.0. .) 4
-   (param :y.3 . . 3 VarId.0. .)) 15 VarId.0. 30
-  (pragmas 2
-   (borrow)) . 9
-  (stmts
-   (result :result.1 . . 7 VarId.0. .)
+   (ret result.0)))
+ (proc@,D :typeof.0.@5
+  (typeof) . .
+  (params@B
+   (param@1 :x.0 . .
+    (untyped@3) .)
+   (param@D :mode.0 . . TypeOfMode.0.~M,~4 typeOfIter.0.@7))
+  (typekind@X
+   (typedesc))
+  (pragmas@r
+   (magic@2 TypeOf@7)) . .)
+ (type@A,H :string.0.~8 x . . string.0.sysvq0asl)
+ (proc@,J :\2B.0.@5
+  (add -3) . .
+  (params@9
+   (param@1 :x.1 . .
+    (i@6 64) .)
+   (param@4 :y.0 . .
+    (i@3 64) .))
+  (i@D 64)
+  (pragmas@Q
+   (magic@2 "AddI"@7)) . .)
+ (proc@,K :\2D.0.@5
+  (sub -3) . .
+  (params@9
+   (param@1 :x.2 . .
+    (i@6 64) .)
+   (param@4 :y.1 . .
+    (i@3 64) .))
+  (i@D 64)
+  (pragmas@Q
+   (magic@2 "SubI"@7)) . .)
+ (proc@,M :<=.0.@5
+  (le -3) . .
+  (params@A
+   (param@1 :x.3 . .
+    (i@6 64) .)
+   (param@4 :y.2 . .
+    (i@3 64) .))
+  (bool@D)
+  (pragmas@S
+   (magic@2 "LeI"@7)) . .)
+ (type@9,Q :VarId.0.~7 x .
+  (pragmas)
+  (distinct@2
+   (i@9 64)))
+ (proc@,S :\2B.1.@5 x . .
+  (params@9
+   (param@1 :x.4 . . VarId.0.@6 .)
+   (param@4 :y.3 . . VarId.0.@3 .)) VarId.0.@F
+  (pragmas@U
+   (borrow@2)) .
+  (stmts@9
+   (result :result.1 . . VarId.0.@7 .)
    (asgn result.1
-    (dconv 6 VarId.0.
+    (dconv VarId.0.@6
      (add
-      (i +64)
-      (dconv 11,~2
-       (i +64) x.4)
-      (dconv 11,~2
-       (i +64) y.3))))
-   (ret result.1))) 4,35
- (gvar :x.0. . . 3 VarId.0. .) 2,37
- (asgn ~2 x.0. 4
-  (infix \2B.1. ~2 x.0. 2 x.0.)) 4,39
- (glet :y.0. . . 4
-  (i +8) 8
-  (conv ~4
-   (i +8) 1 x.0.)) 15,13
- (comment untyped.0. 18 typedesc.0. 1,6 int.0. 1,6 int.0. ~2,6 int.0. 1,7 int.0. 1,7 int.0. ~2,7 int.0. 2,9 int.0. 2,9 int.0. ~2,9 bool.0. 5,13 int.0. ~7,26 int8.0.))0,2,tests/nimony/nosystem/tdistinct.nim(.index 2,1
- (x int.0. +87) 2,2
- (x bool.0. +67) 2,3
- (x char.0. +68) 2,5
- (x int8.0. +68) 2,6
- (x typedesc.0. +68) 12,6
- (h T.0. +49) 2,7
- (x untyped.0. +74) 14,9
- (x TypeOfMode.0. +75) 4,10
- (x typeOfProc.0. +58) 4,11
- (x typeOfIter.0. +75) 2,9
- (x dollar`.TypeOfMode.0. +75) ,13
- (x typeof.0. +368) 10,17
- (x string.0. +230) ,19
- (x \2B.0. +51) ,20
- (x \2D.0. +180) ,22
- (x <=.0. +180) 9,26
- (x VarId.0. +178) ,28
- (x \2B.1. +69) 4,35
- (h x.0. +369) 4,39
- (h y.0. +91))
+      (i 64)
+      (dconv
+       (i@B,~2 64) x.4)
+      (dconv
+       (i@B,~2 64) y.3))))
+   (ret result.1)))
+ (gvar@4,Z :x.0. . . VarId.0.@3 .)
+ (asgn@2,b x.0.~2
+  (infix@4 \2B.1. x.0.~2 x.0.@2))
+ (glet@4,d :y.0. . .
+  (i@4 8)
+  (conv@8
+   (i~4 8) x.0.@1))
+ (comment@F,D untyped.0. typedesc.0.@I int.0.@1,6 int.0.@1,6 int.0.~2,6 int.0.@1,7 int.0.@1,7 int.0.~2,7 int.0.@2,9 int.0.@2,9 bool.0.~2,9 int.0.@5,D int8.0.~7,Q))(.index@,2,tests/nimony/nosystem/tdistinct.nim
+ (x@2,1 int.0. 83)
+ (x@2,2 bool.0. 66)
+ (x@2,3 char.0. 68)
+ (x@2,5 int8.0. 67)
+ (x@2,6 typedesc.0. 67)
+ (h@C,6 T.0. 51)
+ (x@2,7 untyped.0. 71)
+ (x@E,9 TypeOfMode.0. 74)
+ (x@4,A typeOfProc.0. 53)
+ (x@4,B typeOfIter.0. 72)
+ (x@2,9 dollar`.TypeOfMode.0. 74)
+ (x@,D typeof.0. 362)
+ (x@A,H string.0. 221)
+ (x@,J \2B.0. 50)
+ (x@,K \2D.0. 174)
+ (x@,M <=.0. 174)
+ (x@9,Q VarId.0. 171)
+ (x@,S \2B.1. 67)
+ (h@4,Z x.0. 360)
+ (h@4,d y.0. 87))

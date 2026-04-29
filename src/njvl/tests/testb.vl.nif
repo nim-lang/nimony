@@ -1,3 +1,4 @@
+(.nif27)
 (stmts
  (mflag :´r.0.main)
  (proc :echo.0 . . .
@@ -5,7 +6,7 @@
    (param :msg.0 . .
     (ptr
      (array
-      (i +8))) .)) . . .
+      (i 8))) .)) . . .
   (stmts
    (stmts
     (mflag :´r.0)
@@ -23,10 +24,10 @@
      (stmts
       (mflag :´g.1))
      (not
-      (v ´g.1 +0))
+      (v ´g.1 0))
      (stmts
       (ite
-       (v a.0 +0)
+       (v a.0 0)
        (stmts
         (jtrue ´g.1))
        (stmts
@@ -48,10 +49,10 @@
      (stmts
       (mflag :´g.1))
      (not
-      (v ´g.1 +0))
+      (v ´g.1 0))
      (stmts
       (ite
-       (v a.0 +0)
+       (v a.0 0)
        (stmts
         (jtrue ´g.1))
        (stmts
@@ -59,7 +60,7 @@
        (stmts))
       (ite
        (not
-        (v ´g.1 +1))
+        (v ´g.1 1))
        (stmts
         (call echo.0 "after if with else")) .
        (stmts))
@@ -82,13 +83,13 @@
      (stmts
       (mflag :´g.1))
      (not
-      (v ´g.1 +0))
+      (v ´g.1 0))
      (stmts
       (ite
-       (v a.0 +0)
+       (v a.0 0)
        (stmts
         (ite
-         (v b.0 +0)
+         (v b.0 0)
          (stmts
           (jtrue ´g.1))
          (stmts
@@ -97,7 +98,7 @@
        (stmts))
       (ite
        (not
-        (v ´g.1 +1))
+        (v ´g.1 1))
        (stmts
         (call echo.0 "after outer if")) .
        (stmts))
@@ -123,16 +124,16 @@
      (stmts
       (mflag :´g.1))
      (not
-      (v ´g.1 +0))
+      (v ´g.1 0))
      (stmts
       (ite
-       (v a.0 +0)
+       (v a.0 0)
        (stmts
         (ite
-         (v b.0 +0)
+         (v b.0 0)
          (stmts
           (ite
-           (v c.0 +0)
+           (v c.0 0)
            (stmts
             (jtrue ´g.1))
            (stmts
@@ -141,14 +142,14 @@
          (stmts))
         (ite
          (not
-          (v ´g.1 +1))
+          (v ´g.1 1))
          (stmts
           (call echo.0 "level 1 after")) .
          (stmts))) .
        (stmts))
       (ite
        (not
-        (v ´g.1 +1))
+        (v ´g.1 1))
        (stmts
         (call echo.0 "level 0 after")) .
        (stmts))
@@ -165,7 +166,7 @@
      (bool)
      (false))
     (ite
-     (v a.0 +0)
+     (v a.0 0)
      (stmts
       (jtrue ´r.0))
      (stmts
@@ -185,10 +186,10 @@
      (stmts
       (mflag :´g.1))
      (not
-      (v ´g.1 +0))
+      (v ´g.1 0))
      (stmts
       (ite
-       (v a.0 +0)
+       (v a.0 0)
        (stmts
         (jtrue ´g.1))
        (stmts
@@ -215,13 +216,13 @@
      (stmts
       (mflag :´g.1))
      (not
-      (v ´g.1 +0))
+      (v ´g.1 0))
      (stmts
       (ite
-       (v a.0 +0)
+       (v a.0 0)
        (stmts
         (ite
-         (v b.0 +0)
+         (v b.0 0)
          (stmts
           (jtrue ´g.1))
          (stmts
@@ -229,14 +230,14 @@
          (stmts))
         (ite
          (not
-          (v ´g.1 +1))
+          (v ´g.1 1))
          (stmts
           (call echo.0 "after inner if-else")) .
          (stmts))) .
        (stmts))
       (ite
        (not
-        (v ´g.1 +1))
+        (v ´g.1 1))
        (stmts
         (call echo.0 "after outer if")) .
        (stmts))
@@ -254,7 +255,7 @@
      (false))
     (mflag :´g.1)
     (ite
-     (v a.0 +0)
+     (v a.0 0)
      (stmts
       (jtrue ´g.1))
      (stmts
@@ -277,23 +278,23 @@
      (stmts
       (mflag :´g.1))
      (not
-      (v ´g.1 +0))
+      (v ´g.1 0))
      (stmts
       (ite
-       (v a.0 +0)
+       (v a.0 0)
        (stmts
         (jtrue ´g.1))
        (stmts
         (call echo.0 "between ifs")
         (ite
-         (v b.0 +0)
+         (v b.0 0)
          (stmts
           (jtrue ´g.1))
          (stmts
           (call echo.0 "after second if"))
          (stmts)))
        (stmts
-        (join ´g.1 +3 +1 +2)))
+        (join ´g.1 3 1 2)))
       (kill ´g.1)
       (continue)))
     (kill ´r.0 a.0 b.0))))
@@ -319,17 +320,17 @@
      (stmts
       (mflag :´g.1))
      (not
-      (v ´g.1 +0))
+      (v ´g.1 0))
      (stmts
       (call echo.0 "pre-condition")
       (ite
-       (v a.0 +0)
+       (v a.0 0)
        (stmts
         (ite
-         (v b.0 +0)
+         (v b.0 0)
          (stmts
           (ite
-           (v c.0 +0)
+           (v c.0 0)
            (stmts
             (jtrue ´g.1))
            (stmts
@@ -338,11 +339,11 @@
          (stmts))
         (ite
          (not
-          (v ´g.1 +1))
+          (v ´g.1 1))
          (stmts
           (call echo.0 "b check done")
           (ite
-           (v d.0 +0)
+           (v d.0 0)
            (stmts
             (jtrue ´g.1))
            (stmts
@@ -352,7 +353,7 @@
        (stmts))
       (ite
        (not
-        (v ´g.1 +2))
+        (v ´g.1 2))
        (stmts
         (call echo.0 "main body")) .
        (stmts))

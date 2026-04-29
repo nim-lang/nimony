@@ -19,10 +19,7 @@ proc writeNifFloat*(f: float) =
   of fcNegInf: write(outp, "(neginf)")
   of fcNegZero: write(outp, " -0.0")
   of fcNormal, fcSubnormal, fcZero:
-    if f >= 0.0:
-      write(outp, " +")
-    else:
-      write(outp, " ")
+    write(outp, " ")
     var buf = newStringOfCap(32)
     buf.addFloat f
     for i in 0 ..< buf.len:
@@ -30,14 +27,11 @@ proc writeNifFloat*(f: float) =
     write(outp, buf)
 
 proc writeNifInt*(i: int) =
-  if i >= 0:
-    write(outp, " +")
-  else:
-    write(outp, " ")
+  write(outp, " ")
   write(outp, i)
 
 proc writeNifUInt*(u: uint) =
-  write(outp, " +")
+  write(outp, " ")
   write(outp, u)
   write(outp, "u")
 
@@ -48,7 +42,7 @@ proc writeNifBool*(b: bool) =
     write(outp, "(false)")
 
 const
-  ControlChars* = {'(', ')', '[', ']', '{', '}', '~', '#', '\'', '"', '\\', ':'}
+  ControlChars* = {'(', ')', '[', ']', '{', '}', '~', '#', '\'', '"', '\\', ':', '@'}
 
 proc escape(c: char) =
   const HexChars = "0123456789ABCDEF"

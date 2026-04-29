@@ -4,22 +4,24 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-## High performance ("zero copies") NIF file reader.
+## High performance ("zero copies") NIF file reader for the **legacy NIF26**
+## format. Kept around solely so the migration tool that converts old `.nif26`
+## fixtures to the new `.nif27` syntax can still parse the originals. Do not
+## use this in fresh code — `nifreader.nim` is the current reader.
 
 import std / [memfiles, parseutils, assertions]
-import stringviews
-import vfs
+import ".." / stringviews
+import ".." / vfs
 when defined(nimony):
   import std/syncio
 
   {.feature: "lenientnils".}
 
 const
-  ControlChars = {'(', ')', '[', ']', '{', '}', '~', '#', '\'', '"', ':', '@'}
+  ControlChars = {'(', ')', '[', ']', '{', '}', '~', '#', '\'', '"', ':'}
   ControlCharsOrWhite = ControlChars + {' ', '\n', '\t', '\r'}
   HexChars = {'0'..'9', 'A'..'F'} # lowercase letters are not in the NIF spec!
   Digits = {'0'..'9'}
-  B62Digits = {'0'..'9', 'A'..'Z', 'a'..'z'}
 
 type
   NifKind* = enum
@@ -239,17 +241,7 @@ proc handleNumber(r: var Reader; result: var ExpandedToken) =
         inc p
         # ignore the suffix 'u'
 
-proc decodeB62(c: char): int {.inline.} =
-  ## Decode a single base62 digit (0-9, A-Z, a-z) to its numeric value 0..61.
-  ## Caller must guarantee `c` is in `B62Digits`.
-  if c <= '9': result = ord(c) - ord('0')
-  elif c <= 'Z': result = ord(c) - ord('A') + 10
-  else: result = ord(c) - ord('a') + 36
-
 proc handleLineInfo(r: var Reader; result: var ExpandedToken) =
-  ## Parse the body of a line-info suffix. The leading `@`, if any, has already
-  ## been consumed by the caller; a leading `~` (negative-first shorthand) has
-  ## **not** been consumed.
   proc integerOutOfRangeError() {.noinline, noreturn.} =
     quit "Parsed integer outside of valid range"
 
@@ -259,10 +251,10 @@ proc handleLineInfo(r: var Reader; result: var ExpandedToken) =
     if p < eof and ^p == '~':
       inc p
       negative = true
-    while p < eof and ^p in B62Digits:
-      let c = decodeB62(^p)
-      if col >= (low(int) + c) div 62:
-        col = col * 62 - c
+    while p < eof and ^p in Digits:
+      let c = ord(^p) - ord('0')
+      if col >= (low(int) + c) div 10:
+        col = col * 10 - c
       else:
         integerOutOfRangeError()
       inc p
@@ -279,10 +271,10 @@ proc handleLineInfo(r: var Reader; result: var ExpandedToken) =
       if p < eof and ^p == '~':
         inc p
         negative = true
-      while p < eof and ^p in B62Digits:
-        let c = decodeB62(^p)
-        if line >= (low(int) + c) div 62:
-          line = line * 62 - c
+      while p < eof and ^p in Digits:
+        let c = ord(^p) - ord('0')
+        if line >= (low(int) + c) div 10:
+          line = line * 10 - c
         else:
           integerOutOfRangeError()
         inc p
@@ -307,139 +299,115 @@ proc handleLineInfo(r: var Reader; result: var ExpandedToken) =
         inc result.filename.len
         inc p
 
-proc handleSuffix(r: var Reader; result: var ExpandedToken) {.inline.} =
-  ## After consuming an atom or a tag name, parse the optional postfix
-  ## `@<info>` (or `~<neg-info>` shorthand) followed by an optional `#comment#`.
-  ## No whitespace is allowed between the atom/tag and the suffix introducer,
-  ## nor between the line info and the comment.
-  if r.p < r.eof:
-    let ch = ^r.p
-    if ch == '@':
-      inc r.p
-      handleLineInfo(r, result)
-    elif ch == '~':
-      handleLineInfo(r, result)
-  if r.p < r.eof and ^r.p == '#':
-    inc r.p           # consume the opening '#'
-    skipComment r     # consumes through the closing '#'
-
 proc next*(r: var Reader; result: var ExpandedToken) =
   result = default(ExpandedToken)
   skipWhitespace r
   if r.p >= r.eof:
     result.tk = EofToken
-    return
+  else:
+    if ^r.p in {'0'..'9', ',', '~'}:
+      # we have node prefix
+      handleLineInfo r, result
+      skipWhitespace r
 
-  case ^r.p
-  of '(':
-    result.tk = ParLe
-    useCpuRegisters:
-      inc p
-      result.data.p = p
-      result.data.len = 0
-      while p < eof and ^p notin ControlCharsOrWhite:
-        inc result.data.len
+    if ^r.p == '#':
+      # we have a node comment, just skip it:
+      skipComment r
+      skipWhitespace r
+
+    case ^r.p
+    of '(':
+      result.tk = ParLe
+      useCpuRegisters:
         inc p
-    handleSuffix(r, result)
-
-  of ')':
-    result.tk = ParRi
-    result.data.p = r.p
-    inc result.data.len
-    inc r.p
-  of '.':
-    result.tk = DotToken
-    result.data.p = r.p
-    inc result.data.len
-    inc r.p
-    handleSuffix(r, result)
-  of '"':
-    useCpuRegisters:
-      inc p
-      result.tk = StringLit
-      result.data.p = p
-      result.data.len = 0
-      while p < eof:
-        let ch = ^p
-        if ch == '"':
+        result.data.p = p
+        result.data.len = 0
+        while p < eof and ^p notin ControlCharsOrWhite:
+          inc result.data.len
           inc p
-          break
-        elif ch == '\\':
-          result.flags.incl TokenHasEscapes
-        elif ch == '\n':
-          inc r.line
-        inc result.data.len
-        inc p
-    handleSuffix(r, result)
-  of '\'':
-    inc r.p
-    result.data.p = r.p
-    if ^r.p == '\\':
-      result.flags.incl TokenHasEscapes
+
+    of ')':
+      result.tk = ParRi
+      result.data.p = r.p
+      inc result.data.len
       inc r.p
-      if r.p[0] in HexChars and r.p[1] in HexChars:
-        inc r.p, 2
+    of '.':
+      result.tk = DotToken
+      result.data.p = r.p
+      inc result.data.len
+      inc r.p
+    of '"':
+      useCpuRegisters:
+        inc p
+        result.tk = StringLit
+        result.data.p = p
+        result.data.len = 0
+        while p < eof:
+          let ch = ^p
+          if ch == '"':
+            inc p
+            break
+          elif ch == '\\':
+            result.flags.incl TokenHasEscapes
+          elif ch == '\n':
+            inc r.line
+          inc result.data.len
+          inc p
+    of '\'':
+      inc r.p
+      result.data.p = r.p
+      if ^r.p == '\\':
+        result.flags.incl TokenHasEscapes
+        inc r.p
+        if r.p[0] in HexChars and r.p[1] in HexChars:
+          inc r.p, 2
+          if ^r.p == '\'':
+            inc r.p
+            result.tk = CharLit # now valid
+      elif ^r.p in ControlChars:
+        discard "keep it as UnknownToken"
+      else:
+        inc r.p
         if ^r.p == '\'':
           inc r.p
-          result.tk = CharLit # now valid
-    elif ^r.p in ControlChars:
-      discard "keep it as UnknownToken"
-    else:
-      inc r.p
-      if ^r.p == '\'':
-        inc r.p
-        result.tk = CharLit # only now valid
-    if result.tk == CharLit:
-      handleSuffix(r, result)
+          result.tk = CharLit # only now valid
 
-  of ':':
-    useCpuRegisters:
-      inc p
-      result.data.p = p
-      while p < eof and ^p notin ControlCharsOrWhite:
-        if ^p == '\\': result.flags.incl TokenHasEscapes
-        inc result.data.len
+    of ':':
+      useCpuRegisters:
         inc p
-    if result.data.len > 0:
-      result.tk = SymbolDef
-      if result.data[result.data.len-1] == '.':
-        result.flags.incl TokenHasModuleSuffixExpansion
-      handleSuffix(r, result)
-
-  of '-':
-    # negative number; '+' is no longer a number prefix in NIF27.
-    result.data.p = r.p
-    inc r.p
-    inc result.data.len
-    handleNumber r, result
-    handleSuffix(r, result)
-
-  of '0'..'9':
-    # bare-digit number (NIF27): no sign prefix on positives.
-    useCpuRegisters:
-      result.data.p = p
-      result.data.len = 0
-    handleNumber r, result
-    handleSuffix(r, result)
-
-  else:
-    useCpuRegisters:
-      result.data.p = p
-      var hasDot = false
-      while p < eof and ^p notin ControlCharsOrWhite:
-        if ^p == '\\': result.flags.incl TokenHasEscapes
-        elif ^p == '.': hasDot = true
-        inc result.data.len
-        inc p
-
-    if result.data.len > 0:
-      if hasDot:
-        result.tk = Symbol
+        result.data.p = p
+        while p < eof and ^p notin ControlCharsOrWhite:
+          if ^p == '\\': result.flags.incl TokenHasEscapes
+          inc result.data.len
+          inc p
+      if result.data.len > 0:
+        result.tk = SymbolDef
         if result.data[result.data.len-1] == '.':
           result.flags.incl TokenHasModuleSuffixExpansion
-      else:
-        result.tk = Ident
-      handleSuffix(r, result)
+
+    of '-', '+':
+      result.data.p = r.p
+      inc r.p
+      inc result.data.len
+      handleNumber r, result
+
+    else:
+      useCpuRegisters:
+        result.data.p = p
+        var hasDot = false
+        while p < eof and ^p notin ControlCharsOrWhite:
+          if ^p == '\\': result.flags.incl TokenHasEscapes
+          elif ^p == '.': hasDot = true
+          inc result.data.len
+          inc p
+
+      if result.data.len > 0:
+        if hasDot:
+          result.tk = Symbol
+          if result.data[result.data.len-1] == '.':
+            result.flags.incl TokenHasModuleSuffixExpansion
+        else:
+          result.tk = Ident
 
 proc next*(r: var Reader): ExpandedToken {.deprecated: "use the other next instead".} =
   result = default(ExpandedToken)
@@ -536,7 +504,7 @@ proc indexStartsAt*(r: Reader): int =
   r.indexAt
 
 when isMainModule and not defined(nimony):
-  #const test = r"(.nif27)(stmts :\5B\5D=)"
+  #const test = r"(.nif24)(stmts :\5B\5D=)"
   const test = "nimcache/sysvq0asl.s.nif"
   var r = open(test)
   var tok = default(ExpandedToken)

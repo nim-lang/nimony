@@ -1,3 +1,4 @@
+(.nif27)
 (stmts
  (proc :my.proc . . .
   (params
@@ -7,9 +8,9 @@
   (stmts
    (result :res.0 . .
     (i -1) .)
-   (asgn res.0 +1)
+   (asgn res.0 1)
    (goto L37)
    (lab :L37)
    (ret res.0)))
- (call my.proc +3)
+ (call my.proc 3)
  (ret res.0))

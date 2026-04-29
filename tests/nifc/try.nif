@@ -1,47 +1,32 @@
-(.nif24)
+(.nif27)
 (stmts
-  (incl "<assert.h>")
-  (incl "<stdio.h>")
-
-  (proc :foo.c . . . (stmts
-    (asgn (errv) (true))
-    (call assert.c (errv))
-  )
-  )
-
-
-  (proc :main.c . (i +32) (pragmas (raises))
+ (incl "<assert.h>")
+ (incl "<stdio.h>")
+ (proc :foo.c . . .
+  (stmts
+   (asgn
+    (errv)
+    (true))
+   (call assert.c
+    (errv))))
+ (proc :main.c .
+  (i 32)
+  (pragmas
+   (raises))
+  (stmts
+   (call assert.c
+    (eq 2 2))
+   (call foo.c)
+   (try
     (stmts
-
-    (call assert.c (eq +2 +2))
-    (call foo.c)
-
-      (try
-        (stmts
-          (call printf.c "call: try\0A")
-        )
-        .
-        (call printf.c "call: finally\0A")
-      )
-
-
-      (try
-        (stmts
-          (call printf.c "call: try\0A")
-          (raise +12)
-          (raise .)
-        )
-        .
-        .
-      )
-
-      (try
-        (stmts
-          (call printf.c "call: try\0A")
-        )
-        (call printf.c "call: except\0A")
-        .
-      )
-
-
-)))
+     (call printf.c "call\3A try\0A")) .
+    (call printf.c "call\3A finally\0A"))
+   (try
+    (stmts
+     (call printf.c "call\3A try\0A")
+     (raise 12)
+     (raise .)) . .)
+   (try
+    (stmts
+     (call printf.c "call\3A try\0A"))
+    (call printf.c "call\3A except\0A") .))))
