@@ -61,6 +61,8 @@ Options:
   --os:SYMBOL               set the target operating system (cross-compilation)
   --silentMake              suppresses make output
   --profile                 print nifmake timing profile of executed commands
+  --report                  print machine-readable per-command invocation
+                            counts on stdout (one line per nifmake call)
   --nimcache:PATH           set the path used for generated files
   --boundchecks:on|off      turn bound checks on or off
   --usages:file,line,col    list usages of the symbol at the given position
@@ -117,10 +119,8 @@ type
   CmdOptions = object
     args: seq[string]
     cmd: Command
-    forceRebuild: bool
     fullRebuild: bool
-    silentMake: bool
-    profile: bool
+    buildFlags: set[BuildFlag]  ## ForceRebuild, SilentMake, Profile, Report
     doRun: bool
     isChild: bool
     forwardArgsToExecutable: bool
@@ -137,10 +137,8 @@ proc createCmdOptions(baseDir: sink string): CmdOptions =
   CmdOptions(
     args: @[],
     cmd: Command.None,
-    forceRebuild: false,
     fullRebuild: false,
-    silentMake: false,
-    profile: false,
+    buildFlags: {},
     doRun: false,
     moduleFlags: {},
     config: initNifConfig(baseDir),
@@ -189,10 +187,10 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
         else:
           # Handle nimony-specific options
           case keyNorm
-          of "forcebuild", "f": c.forceRebuild = true
+          of "forcebuild", "f": c.buildFlags.incl ForceRebuild
           of "ff":
             c.fullRebuild = true
-            c.forceRebuild = true
+            c.buildFlags.incl ForceRebuild
           of "run", "r":
             c.doRun = true
             if c.cmd == FullProject and c.args.len >= 1:
@@ -205,10 +203,13 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
             of "off": c.checkModes.excl BoundCheck
             else: quit "invalid value for --boundchecks"
           of "silentmake":
-            c.silentMake = true
+            c.buildFlags.incl SilentMake
             forwardArg = false
           of "profile":
-            c.profile = true
+            c.buildFlags.incl Profile
+            forwardArg = false
+          of "report":
+            c.buildFlags.incl Report
             forwardArg = false
           of "ischild":
             # undocumented command line option, by design
@@ -259,22 +260,22 @@ proc compileProgram(c: var CmdOptions) =
     if not c.isChild:
       makeDir(c.config.nifcachePath)
     processSingleModule(c.args[0].addFileExt(".nim"), c.config, c.moduleFlags,
-                        c.commandLineArgs, c.forceRebuild)
+                        c.commandLineArgs, ForceRebuild in c.buildFlags)
   of FullProject:
     makeDir(c.config.nifcachePath)
     # compile full project modules
-    buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake, c.profile,
+    buildGraph c.config, c.args[0], c.buildFlags,
       c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, (if c.doRun: DoRun else: DoCompile),
       c.passC, c.passL, c.executableArgs
   of CheckProject:
     makeDir(c.config.nifcachePath)
     # check full project modules
-    buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake, c.profile,
+    buildGraph c.config, c.args[0], c.buildFlags,
       c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, DoCheck, c.passC, c.passL, c.executableArgs
   of SemCheckNif:
     makeDir(c.config.nifcachePath)
     # compile full project modules
-    buildGraph c.config, c.args[0], c.forceRebuild, c.silentMake, c.profile,
+    buildGraph c.config, c.args[0], c.buildFlags,
       c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, (if c.doRun: DoRun else: DoCompile),
       c.passC, c.passL, c.executableArgs
 
