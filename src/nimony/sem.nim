@@ -1210,7 +1210,7 @@ proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Ite
           let bindings = bindInvokeArgs(decl, invokeArgs)
           let field = findObjFieldConsiderVis(c, decl, fieldName, bindings,
                                               bypassVis = BypassFieldVis in flags)
-          if field.level >= 0 and field.guarded and c.inUncheckedAssess == 0 and
+          if field.level >= 0 and field.guarded and c.inUncheckedAccess == 0 and
               BypassGuardedCheck notin flags:
             dest.shrink exprStart
             c.buildErr dest, info,
@@ -5747,10 +5747,10 @@ proc semPragmaExpr(c: var SemContext; dest: var TokenBuf; it: var Item) =
     semPragmaLine c, dest, it, true
   takeParRi dest, it.n
   if hasUncheckedAssess:
-    inc c.inUncheckedAssess
+    inc c.inUncheckedAccess
   semStmt(c, dest, it.n, false)
   if hasUncheckedAssess:
-    dec c.inUncheckedAssess
+    dec c.inUncheckedAccess
   takeParRi dest, it.n
   producesVoid c, dest, info, it.typ
 
