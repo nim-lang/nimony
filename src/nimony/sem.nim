@@ -1973,7 +1973,7 @@ proc addVarargsParameter(c: var SemContext; dest: var TokenBuf; paramsAt: int; i
   ]
   if dest[paramsAt].kind == DotToken:
     dest[paramsAt] = parLeToken(ParamsU, info)
-    varargsParam.add parRiToken(info)
+    varargsParam.addParRi(info)
     dest.insert fromBuffer(varargsParam), paramsAt+1
   else:
     var n = cursorAt(dest, paramsAt)

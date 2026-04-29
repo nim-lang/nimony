@@ -147,6 +147,12 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
     let final = SecureHash checksum.finalize()
     content.add "(checksum \"" & $final & "\")"
   content.add "\n)\n"
+  # OnlyIfChanged: clients (downstream nimsem/hexer) depend on this file.
+  # When a module's interface and inline-proc bodies are unchanged, its
+  # checksum is identical, so we keep the old mtime to avoid cascading
+  # rebuilds through importers. nifmake's `needsRebuild` uses the freshest
+  # of a node's outputs (max), so the always-written `.s.nif` still proves
+  # "we ran since the inputs changed" for nimsem's own staleness check.
   let existingContent = try: vfsRead(indexName) except: ""
   if existingContent != content:
     vfsWrite(indexName, content)

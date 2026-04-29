@@ -69,6 +69,13 @@ when defined(vfsProfile):
 else:
   template dumpVfsProfile*(label: string) = discard
 
+const nanosPerSec: int64 = 1_000_000_000'i64
+
+type
+  FileWriteMode* = enum
+    AlwaysWrite,
+    OnlyIfChanged
+
 when defined(nimony):
   import std / [os, dirs, paths, times]
   # Nimony's stdlib procs are `.raises`. Wrap them so vfs.nim stays
@@ -76,7 +83,10 @@ when defined(nimony):
   proc unixModTime(p: string): int64 =
     try: getLastModificationTime(p) except: 0'i64
   proc unixNow(): int64 =
-    try: toUnix(getTime()) except: 0'i64
+    try:
+      let t = getTime()
+      toUnix(t) * nanosPerSec + int64(t.nanosecond)
+    except: 0'i64
   proc rmPath(p: string) =
     try: removeFile(path(p)) except: discard
   proc readBytes(p: string): string =
@@ -89,8 +99,12 @@ when defined(nimony):
     try: memfiles.open(p) except: quit "vfs: open failed: " & p
 else:
   import std / [os, times]
-  proc unixModTime(path: string): int64 = toUnix(getLastModificationTime(path))
-  proc unixNow(): int64 = toUnix(getTime())
+  proc unixModTime(path: string): int64 =
+    let t = getLastModificationTime(path)
+    toUnix(t) * nanosPerSec + int64(t.nanosecond)
+  proc unixNow(): int64 =
+    let t = getTime()
+    toUnix(t) * nanosPerSec + int64(t.nanosecond)
   proc rmPath(path: string) = removeFile(path)
   proc readBytes(p: string): string = readFile(p)
   proc writeBytes(p, c: string) = writeFile(p, c)
@@ -99,10 +113,10 @@ else:
 
 # --- relays ---------------------------------------------------------------
 #
-# Mtimes are exposed as `int64` (Unix epoch seconds) — Nim host returns
-# `times.Time`, nimony's stdlib returns `int64`; the compromise is to
-# normalize at the relay boundary so the rest of the codebase stays
-# portable. nifmake's `<` / `>=` comparisons keep their meaning.
+# Mtimes are exposed as `int64` nanoseconds since the Unix epoch. Whole-second
+# resolution caused spurious rebuilds when an output landed in the same wall
+# second as one of its inputs (input mtime tied with output mtime → `>=`
+# triggered rebuild). nifmake's `<` / `>=` comparisons keep their meaning.
 
 # --- VfsBlob: backend-owned, mmap-friendly read handle -------------------
 

@@ -48,7 +48,7 @@ proc genBorrowedProcBody*(c: var SemContext; fn: StrId; signature: Cursor; info:
         result.add parLeToken(DconvX, info)
         result.copyTree destType
         result.add symToken(param.name.symId, info)
-        result.add parRiToken(info)
+        result.addParRi(info)
         inc distinctParams
       else:
         result.add symToken(param.name.symId, info)
@@ -64,10 +64,10 @@ proc genBorrowedProcBody*(c: var SemContext; fn: StrId; signature: Cursor; info:
       finalConv.add parLeToken(DconvX, info)
       finalConv.copyTree n
       result.insert finalConv, 1
-      result.add parRiToken(info)
+      result.addParRi(info)
 
-  result.add parRiToken(info)
-  result.add parRiToken(info)
+  result.addParRi(info)
+  result.addParRi(info)
   if distinctParams == 0:
     result.shrink 0
     result.buildLocalErr info, "cannot .borrow: no parameter of a `distinct` type"
