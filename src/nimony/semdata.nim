@@ -113,7 +113,7 @@ type
     canSelfExec*: bool
     checkedForWriteNifModule*: bool
     inWhen*: int
-    inUncheckedAssign*: int
+    inUncheckedAccess*: int
     templateInstCounter*: int
     commandLineArgs*: string # for IC we make nimony `exec` itself. Thus it is important
                              # to forward command line args properly.

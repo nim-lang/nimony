@@ -1210,7 +1210,7 @@ proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Ite
           let bindings = bindInvokeArgs(decl, invokeArgs)
           let field = findObjFieldConsiderVis(c, decl, fieldName, bindings,
                                               bypassVis = BypassFieldVis in flags)
-          if field.level >= 0 and field.guarded and c.inUncheckedAssign == 0 and
+          if field.level >= 0 and field.guarded and c.inUncheckedAssess == 0 and
               BypassGuardedCheck notin flags:
             dest.shrink exprStart
             c.buildErr dest, info,
@@ -1634,6 +1634,11 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     dest.addParRi()
   of UncheckedAssignP:
     buildErr c, dest, n.info, "`uncheckedAssign` is only valid inside `{.cast(uncheckedAssign).}:` pragma blocks"
+    inc n
+    if hasParRi:
+      while n.kind != ParRi: skip n
+  of UncheckedAccessP:
+    buildErr c, dest, n.info, "`uncheckedAccess` is only valid inside `{.cast(uncheckedAccess).}:` pragma blocks"
     inc n
     if hasParRi:
       while n.kind != ParRi: skip n
@@ -5463,7 +5468,7 @@ proc semCastInnerPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let pk = n.pragmaKind
   case pk
-  of NoSideEffectP, UncheckedAssignP:
+  of NoSideEffectP, UncheckedAssignP, UncheckedAccessP:
     dest.add parLeToken(pk, info)
     dest.addParRi()
     if n.kind == ParLe: skip n
@@ -5714,7 +5719,7 @@ proc semCardSet(c: var SemContext; dest: var TokenBuf; it: var Item) =
   it.typ = c.types.intType
   commonType c, dest, it, beforeExpr, expected
 
-proc hasCastUncheckedAssign(n: Cursor): bool =
+proc hasCastUncheckedAccess(n: Cursor): bool =
   ## Scan the pragma list to see if it contains `{.cast(uncheckedAssign).}`.
   var scan = n
   while scan.kind != ParRi:
@@ -5726,7 +5731,7 @@ proc hasCastUncheckedAssign(n: Cursor): bool =
       elif inner.kind == DotToken:
         inc inner
       while inner.kind != ParRi:
-        if inner.pragmaKind == UncheckedAssignP:
+        if inner.pragmaKind == UncheckedAccessP:
           return true
         skip inner
     skip scan
@@ -5736,16 +5741,16 @@ proc semPragmaExpr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   dest.takeToken it.n
   assert it.n.stmtKind == PragmasS
-  let hasUncheckedAssign = hasCastUncheckedAssign(it.n.firstSon)
+  let hasUncheckedAssess = hasCastUncheckedAccess(it.n.firstSon)
   dest.takeToken it.n
   while it.n.kind != ParRi:
     semPragmaLine c, dest, it, true
   takeParRi dest, it.n
-  if hasUncheckedAssign:
-    inc c.inUncheckedAssign
+  if hasUncheckedAssess:
+    inc c.inUncheckedAssess
   semStmt(c, dest, it.n, false)
-  if hasUncheckedAssign:
-    dec c.inUncheckedAssign
+  if hasUncheckedAssess:
+    dec c.inUncheckedAssess
   takeParRi dest, it.n
   producesVoid c, dest, info, it.typ
 

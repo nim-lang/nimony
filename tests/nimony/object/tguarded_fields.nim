@@ -14,7 +14,7 @@ var obj = B1(a: 42)
 echo obj.a
 echo obj.b
 
-# But allowed inside {.cast(uncheckedAssign).}:
-{.cast(uncheckedAssign).}:
+# But allowed inside {.cast(uncheckedAccess).}:
+{.cast(uncheckedAccess).}:
   echo obj.a
   echo obj.b
