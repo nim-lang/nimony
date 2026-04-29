@@ -5,6 +5,8 @@ proc semObjectComponent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
   case n.substructureKind
   of FldU:
     semLocal(c, dest, n, FldY)
+  of GfldU:
+    semLocal(c, dest, n, GfldY)
   of WhenU:
     var it = Item(n: n, typ: c.types.autoType)
     semWhenImpl(c, dest, it, ObjectWhen, state)
