@@ -9,6 +9,7 @@
 import std / [assertions, syncio, formatfloat, math]
 from std / strutils import endsWith
 import vfs
+export vfs.FileWriteMode
 
 type
   Mode = enum
@@ -21,6 +22,7 @@ type
                     ## decided by the active VFS relays at close time.
     buffer: string
     mode: Mode
+    writeMode: FileWriteMode
     compact: bool
     filename: string
     nesting: int
@@ -31,10 +33,15 @@ type
 
 proc `=copy`(dest: var Builder; src: Builder) {.error.}
 
-proc open*(filename: string; compact = false): Builder =
+proc open*(filename: string; compact = false; writeMode: FileWriteMode = AlwaysWrite): Builder =
   ## Opens a new builder attached to some output path. Writes are
   ## buffered in memory and flushed via `vfsWrite` at `close()`.
-  Builder(buffer: "", mode: UsesFile, compact: compact, filename: filename)
+  ## With `writeMode = OnlyIfChanged` the close compares the buffered
+  ## bytes to the existing file and skips the write (preserving mtime)
+  ## when they match — useful for tools whose output should not bump
+  ## downstream mtimes when nothing actually changed (e.g. nifler).
+  Builder(buffer: "", mode: UsesFile, writeMode: writeMode,
+          compact: compact, filename: filename)
 
 proc open*(sizeHint: int; compact = false): Builder =
   ## Opens a new builder with the intent to keep the produced
@@ -53,7 +60,11 @@ proc extract*(b: sink Builder): string =
 
 proc close*(b: var Builder) =
   if b.mode == UsesFile:
-    vfsWrite(b.filename, b.buffer)
+    if b.writeMode == OnlyIfChanged and vfsExists(b.filename) and
+        vfsRead(b.filename) == b.buffer:
+      discard
+    else:
+      vfsWrite(b.filename, b.buffer)
   when not defined(showBroken):
     assert b.nesting == 0, "unpaired '(' or ')'"
 

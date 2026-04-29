@@ -127,37 +127,35 @@ when defined(windows) or defined(posix) or defined(nintendoswitch):
 
 when defined(posix):
   proc getLastModificationTime*(file: string): int64 {.raises.} =
-    ## Returns the file's last modification time as seconds since the epoch.
-    ## Raises `OSError` if the file does not exist or cannot be stat'ed.
+    ## Returns the file's last modification time as nanoseconds since the
+    ## Unix epoch (1970-01-01 UTC). Raises `OSError` if the file does not
+    ## exist or cannot be stat'ed.
     var s = default(Stat)
     var filename = file
     if stat(filename.toCString, s) < 0:
       raiseOSError(osLastError(), file)
-    result = s.st_mtime
+    result = int64(s.st_mtim.tv_sec) * 1_000_000_000'i64 + int64(s.st_mtim.tv_nsec)
 elif defined(windows):
   import windows/winlean
 
   const
     # Number of 100-nanosecond intervals between 1601-01-01 and 1970-01-01.
     winEpochDiff: int64 = 116444736000000000'i64
-    hnsecsPerSec: int64 = 10000000'i64
 
   proc rdFileTime(f: FILETIME): int64 {.inline.} =
     result = int64(cast[uint32](f.dwLowDateTime)) or
              (int64(cast[uint32](f.dwHighDateTime)) shl 32)
 
-  proc winFileTimeToUnix(t: int64): int64 {.inline.} =
-    (t - winEpochDiff) div hnsecsPerSec
-
   proc getLastModificationTime*(file: string): int64 {.raises.} =
-    ## Returns the file's last modification time as seconds since the Unix
-    ## epoch (1970-01-01 UTC).
-    ## Raises `OSError` if the file does not exist or cannot be queried.
+    ## Returns the file's last modification time as nanoseconds since the
+    ## Unix epoch (1970-01-01 UTC). Raises `OSError` if the file does not
+    ## exist or cannot be queried.
     var f {.noinit.}: WIN32_FIND_DATA
     let h = findFirstFile(file, f)
     if h == INVALID_HANDLE_VALUE:
       raiseOSError(osLastError(), file)
-    result = winFileTimeToUnix(rdFileTime(f.ftLastWriteTime))
+    # FILETIME is in 100ns intervals since 1601-01-01; rebase to ns since epoch.
+    result = (rdFileTime(f.ftLastWriteTime) - winEpochDiff) * 100'i64
     discard findClose(h)
 
 proc exitStatusLikeShell*(status: cint): cint =

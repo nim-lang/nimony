@@ -79,6 +79,7 @@
 
 import std / [assertions, syncio]
 import nifreader, nifstreams, bitabs, lineinfos, vfs
+export vfs.FileWriteMode
 
 include compat2
 
@@ -642,11 +643,6 @@ proc toString*(b: Cursor; produceLineInfo = true): string =
 proc toStringDebug*(b: Cursor; produceLineInfo = true): string =
   let L = if b.kind == ParLe: 1 else: 0
   result = nifstreams.toString(toOpenArray(cast[ptr UncheckedArray[PackedToken]](b.p), 0, L), produceLineInfo)
-
-type
-  FileWriteMode* = enum
-    AlwaysWrite,
-    OnlyIfChanged
 
 proc writeFile*(b: TokenBuf; filename: string; mode: FileWriteMode = AlwaysWrite) {.canRaise.} =
   let content = toModuleString(toOpenArray(b.data, 0, b.len-1), "." & extractModuleSuffix(filename))

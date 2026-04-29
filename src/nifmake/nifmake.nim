@@ -242,17 +242,22 @@ proc needsRebuild(node: Node): bool =
     if not vfsExists(output):
       return true
 
-  # Check if any input is newer than any output
-  var oldestOutput = vfsNow()
+  # Use the *freshest* output as the staleness reference (max instead of
+  # min). Tools may write some outputs OnlyIfChanged — when the content
+  # didn't change those preserve their old mtime. Using min would treat
+  # "preserved old" as the floor and re-fire the node forever even though
+  # some other output (always written) is fresh enough to prove "we ran
+  # since the inputs last changed".
+  var freshestOutput = low(int64)
   for output in node.outputs:
     let outputTime = vfsMtime(output)
-    if outputTime < oldestOutput:
-      oldestOutput = outputTime
+    if outputTime > freshestOutput:
+      freshestOutput = outputTime
 
   for input in node.inputs:
     if vfsExists(input):
       let inputTime = vfsMtime(input)
-      if inputTime >= oldestOutput:
+      if inputTime > freshestOutput:
         return true
 
 proc visit(nodes: var seq[Node]; nodeId: int; sortedNodes: var seq[int]; maxDepth: var int): bool =

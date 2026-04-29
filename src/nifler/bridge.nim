@@ -737,14 +737,19 @@ proc initTranslationContext*(conf: ConfigRef; outfile: string; portablePaths, de
                               depsOnly = false): TranslationContext =
   result = TranslationContext(conf: conf,
     portablePaths: portablePaths, depsEnabled: depsEnabled or depsOnly, lineInfoEnabled: not depsOnly)
+  # nifler opts into OnlyIfChanged: when a re-parse produces byte-identical
+  # output (e.g. `touch foo.nim` with no real edit, or comment-only edits
+  # that the parser strips), keep the old mtime on `.p.nif` / `.p.deps.nif`
+  # so downstream `nimsem` / `hexer` aren't perpetually re-fired.
   if depsOnly:
     # Memory-only builder for main output (will be discarded)
     result.b = nifbuilder.open(1024)
-    result.deps = nifbuilder.open(outfile)
+    result.deps = nifbuilder.open(outfile, writeMode = OnlyIfChanged)
   else:
-    result.b = nifbuilder.open(outfile)
+    result.b = nifbuilder.open(outfile, writeMode = OnlyIfChanged)
     if depsEnabled:
-      result.deps = nifbuilder.open(outfile.changeFileExt(".deps.nif"))
+      result.deps = nifbuilder.open(outfile.changeFileExt(".deps.nif"),
+                                     writeMode = OnlyIfChanged)
 
 proc close*(c: var TranslationContext; depsOnly = false) =
   if depsOnly:

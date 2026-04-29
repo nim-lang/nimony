@@ -198,7 +198,7 @@ proc produceConfig*(infile, outfile: string) =
 
   handleCmdLine(newIdentCache(), conf)
 
-  var b = nifbuilder.open(outfile)
+  var b = nifbuilder.open(outfile, writeMode = OnlyIfChanged)
   try:
     b.addHeader()
     b.withTree "config":

@@ -787,8 +787,20 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
               b.addStrLit "--outdir:" & backendDir
           b.withTree "input":
             b.addStrLit c.config.semmedFile(v.files[0], v.plugin)
-          b.withTree "input":
-            b.addStrLit c.config.indexFile(v.files[0], v.plugin)
+          # Cross-module hexer dep: imports' `.s.idx.nif` carries both the
+          # interface checksum and inline-proc body hashes (see
+          # `processForChecksum`'s inline path). Listing imports' `.s.idx.nif`
+          # — and *not* the bulkier `.s.nif` — gives finer-grained incremental:
+          # a non-inline private body change in import A keeps A's
+          # `.s.idx.nif` byte-identical (mtime preserved), so B's hexer
+          # doesn't rerun. Same-module `.s.idx.nif` is intentionally omitted
+          # — hexer reads its own embedded index out of `.s.nif`.
+          var seenImports = initHashSet[string]()
+          for depIdx in v.deps:
+            let idxFile = c.config.indexFile(c.nodes[depIdx].files[0], c.nodes[depIdx].plugin)
+            if not seenImports.containsOrIncl(idxFile):
+              b.withTree "input":
+                b.addStrLit idxFile
           b.withTree "output":
             if i == 0:
               b.addStrLit backendDir / v.files[0].modname & ".x.nif"
