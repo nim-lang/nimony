@@ -396,6 +396,66 @@ proc canRunParallel(cat: Category): bool {.inline.} =
   ## categories use isolated per-test cache dirs and parallelize fine.
   cat notin {Compat, Basics}
 
+proc warmupSharedCache(): string =
+  ## Compile `tools/warmup.nim` once into `nimcache/warmup/` so each
+  ## parallel test can start with system + common stdlib bundles already
+  ## present. Returns the warmup cache directory, or "" on opt-out
+  ## (warmup source missing or compile failed — tests still work, just
+  ## without the savings).
+  const warmupSrc = "tools/warmup.nim"
+  if not fileExists(warmupSrc):
+    return ""
+  result = nimcacheDir / "warmup"
+  let nimony = "bin" / "nimony".addFileExt(ExeExt)
+  if not fileExists(nimony):
+    return ""
+  let cmd = nimony.quoteShell & " c --nimcache:" & result.quoteShell &
+            " " & warmupSrc.quoteShell
+  let t0 = epochTime()
+  let exit = execShellCmd(cmd)
+  let dt = epochTime() - t0
+  if exit != 0:
+    stderr.writeLine "warmup: skipping (compile failed): " & cmd
+    return ""
+  if dt > 0.5:
+    # Only report cold compiles; subsequent calls in the same `hastur all`
+    # run are sub-second no-ops thanks to nimony's incremental build, and
+    # printing them per-category just adds noise.
+    echo "warmup compiled in ", formatFloat(dt, ffDecimal, precision=2), "s."
+
+var warmupCopySeconds: float = 0
+  ## Aggregate prefill cost across one parallel run, reported alongside
+  ## the test counts.
+
+proc copyPreservingMtime(src, dst: string) =
+  ## Copy `src` to `dst` and stamp `dst` with `src`'s mtime. Mtime
+  ## preservation is load-bearing: `nifmake.needsRebuild` keys off
+  ## output-mtime > input-mtime ordering, so a fresh "now" mtime on every
+  ## prefilled file would scramble the DAG-order mtimes the warmup set
+  ## up and trigger spurious recompiles. Hardlinks would also preserve
+  ## mtimes "for free", but they share an inode — when one parallel test
+  ## triggers an in-place rewrite of a shared bundle (say a config
+  ## difference forces a recompile), every other test holding a hardlink
+  ## sees the truncated/partial content and crashes. Copying gives each
+  ## test an independent inode, paid for once at prefill.
+  try:
+    copyFile(src, dst)
+    try: setLastModificationTime(dst, getLastModificationTime(src))
+    except: discard
+  except OSError, IOError:
+    discard  # best-effort; falling back to a cold per-test compile is fine
+
+proc prefillFromWarmup(warmupCache, cacheDir: string) =
+  if warmupCache.len == 0 or not dirExists(warmupCache):
+    return
+  let t0 = epochTime()
+  for path in walkDirRec(warmupCache, yieldFilter = {pcFile}, relative = true):
+    let dst = cacheDir / path
+    try: createDir(dst.parentDir)
+    except OSError: discard
+    copyPreservingMtime(warmupCache / path, dst)
+  warmupCopySeconds += epochTime() - t0
+
 proc parallelTestDir(c: var TestCounters; files: openArray[string];
                      overwrite: bool; cat: Category; forward: string;
                      jobs: int) =
@@ -405,6 +465,9 @@ proc parallelTestDir(c: var TestCounters; files: openArray[string];
   ## are streamed in completion order; final pass/fail counts go into
   ## the shared `c`.
   let hastur = getAppFilename()
+  let warmupCache = warmupSharedCache()
+  warmupCopySeconds = 0
+  let parallelStart = epochTime()
   var queue: seq[(int, string)] = @[]   # (idx, file) preserving input order
   for i, f in pairs(files): queue.add (i, f)
   var head = 0
@@ -421,6 +484,7 @@ proc parallelTestDir(c: var TestCounters; files: openArray[string];
     let (idx, file) = queue[head]
     inc head
     let cacheDir = nimcacheDir / ".par" / $idx
+    prefillFromWarmup(warmupCache, cacheDir)
     var args = @["test", "--no-build", "--cachedir:" & cacheDir]
     if overwrite: args.add "--overwrite"
     if forward.len > 0: args.add "--forward:" & forward
@@ -454,6 +518,12 @@ proc parallelTestDir(c: var TestCounters; files: openArray[string];
         launch(s)
     if active > 0:
       sleep(2)
+
+  if warmupCache.len > 0:
+    echo "warmup prefill total: ",
+         formatFloat(warmupCopySeconds, ffDecimal, precision=2), "s; ",
+         "parallel run: ",
+         formatFloat(epochTime() - parallelStart, ffDecimal, precision=2), "s."
 
 proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category; forward: string) =
   var files: seq[string] = @[]
