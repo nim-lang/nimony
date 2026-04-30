@@ -72,6 +72,12 @@ type
                                         # (from `(ite cf ...)` nesting and
                                         # leaving-path asymmetries)
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
+    freshLocals: HashSet[SymId]        # local refs whose init is a
+                                        # fresh-producing expression
+                                        # (newobj/oconstr/nil/0-arg call).
+                                        # Used by the cycle-prevention rule
+                                        # to skip writes whose receiver is
+                                        # known unaliased. See doc/nocycles.md.
     activeBorrows: seq[BorrowInfo]
     verbose: bool                      # --verbose: dump NJ IR on init/contract
                                        # failures for easier debugging
@@ -928,6 +934,262 @@ proc cannotBeNil(c: var NjvlContext; n: Cursor): bool {.inline.} =
   let t = getType(c.typeCache, n)
   result = markedAs(t, NotnilU) or isNonNilExpr(c, n)
 
+# --- Static cycle prevention ---
+# See doc/nocycles.md for the full specification.
+#
+# An assignment `α.f = e` to a non-cursor ref field is rejected unless the
+# RHS is a fresh allocation, nil, or a syntactic field projection rooted at
+# `α`. The receiver path (`α`) is the LHS path minus its trailing field; the
+# RHS must start with that exact path and continue with at least one
+# further owning (non-cursor) field access.
+
+proc receiverTypeOfDot(c: var NjvlContext; destCursor: Cursor): Cursor =
+  ## For a destination expression `α.field` returns the type expression
+  ## of `α` (the receiver). Returns a default cursor if `destCursor` is
+  ## not a dot expression.
+  var n = destCursor
+  while n.kind == ParLe:
+    let ek = n.exprKind
+    case ek
+    of DotX, DdotX:
+      var inner = n
+      inc inner
+      return getType(c.typeCache, inner)
+    of HconvX, HderefX, HaddrX:
+      inc n
+    of ConvX, DconvX, CastX:
+      inc n
+      skip n
+    of BaseobjX:
+      inc n
+      skip n
+      skip n
+    else:
+      break
+  result = default(Cursor)
+
+proc objectBodyOf(typeExpr: Cursor): Cursor =
+  ## Strips ref/ptr modifiers, then resolves a type symbol to its
+  ## `(object ...)` body via `objtypeImpl`. Returns a default cursor
+  ## if the type cannot be resolved (e.g. unresolved generic).
+  var t = skipModifier(typeExpr)
+  while t.typeKind in {RefT, PtrT}:
+    var e = t
+    inc e
+    t = e
+  if t.kind == Symbol:
+    let res = tryLoadSym(t.symId)
+    if res.status != LacksNothing: return default(Cursor)
+    return objtypeImpl(t.symId)
+  result = t
+
+proc isCursorFieldIn(objBody: Cursor; field: SymId): bool =
+  ## Walks an object body looking for `field`. Returns true iff the
+  ## field carries a `.cursor` pragma. Field decls live inside the type
+  ## body and are not published as standalone symbols, so we cannot use
+  ## `tryLoadSym` here (see expreval.nim:findObjectField).
+  result = false
+  if cursorIsNil(objBody) or objBody.typeKind != ObjectT: return
+  var n = objBody
+  inc n # object tag
+  skip n # parent type
+  var iter = initObjFieldIter()
+  while nextField(iter, n):
+    let r = takeLocal(n, SkipFinalParRi)
+    if r.kind in {FldY, GfldY, EfldY} and r.name.kind == SymbolDef and
+       r.name.symId == field:
+      return hasPragma(r.pragmas, CursorP)
+
+proc isCursorField(c: var NjvlContext; destCursor: Cursor;
+                   field: SymId): bool =
+  ## True iff `destCursor` is `α.field` and `field` is annotated `.cursor`
+  ## in the receiver's object body.
+  if field == NoSymId: return false
+  let recvType = receiverTypeOfDot(c, destCursor)
+  if cursorIsNil(recvType): return false
+  let body = objectBodyOf(recvType)
+  result = isCursorFieldIn(body, field)
+
+proc collectDotPath(c: var NjvlContext; n: Cursor;
+                    path: var seq[SymId];
+                    parentTypes: var seq[Cursor]): bool =
+  ## Recognises pure dot-chains rooted at a single binding:
+  ## `Symbol`, `(dot inner field …)`, `(v sym ver)`. Wrapping conversions
+  ## (`hconv`, `conv`, `dconv`, `baseobj`, `hderef`, `haddr`) are
+  ## transparent. Anything else (array indexing, calls, explicit derefs
+  ## of non-`haddr` paths) makes this return false — for those we cannot
+  ## prove syntactic projection identity so we skip the cycle check
+  ## conservatively.
+  ##
+  ## `parentTypes[i]` (for `i >= 1`) holds the type of the receiver for
+  ## the `i`-th field access — needed to look up the `.cursor` pragma
+  ## on each field. `parentTypes[0]` is a placeholder for the root.
+  result = false
+  var n = n
+  while true:
+    if n.kind == Symbol:
+      path.add n.symId
+      parentTypes.add default(Cursor)
+      return true
+    if n.kind != ParLe: return false
+    let ek = n.exprKind
+    case ek
+    of DotX, DdotX:
+      var inner = n
+      inc inner
+      let innerStart = inner
+      let parentType = getType(c.typeCache, innerStart)
+      skip inner # object subtree
+      if inner.kind != Symbol: return false
+      let field = inner.symId
+      if not collectDotPath(c, innerStart, path, parentTypes): return false
+      path.add field
+      parentTypes.add parentType
+      return true
+    of HconvX, HderefX, HaddrX:
+      inc n
+    of ConvX, DconvX, CastX:
+      inc n
+      skip n # type
+    of BaseobjX:
+      inc n
+      skip n # type
+      skip n # intlit
+    else:
+      if n.tagEnum == VTagId:
+        # NJVL `(v sym ver)` — record the sym as the root.
+        var r = n
+        inc r
+        if r.kind != Symbol: return false
+        path.add r.symId
+        parentTypes.add default(Cursor)
+        return true
+      return false
+
+proc isDotChain(c: var NjvlContext; n: Cursor): bool =
+  var tmpPath: seq[SymId] = @[]
+  var tmpTypes: seq[Cursor] = @[]
+  result = collectDotPath(c, n, tmpPath, tmpTypes)
+
+proc isFreshOrNilRhs(c: var NjvlContext; valueStart: Cursor): bool =
+  ## Trivially cycle-safe RHS forms: fresh allocation, nil literal, or
+  ## a read of a fresh-tracked binding (`result`, `sink` parameter,
+  ## locally fresh-initialised variable). The fresh-tracked bindings
+  ## are guaranteed disjoint from the rest of the heap at the point of
+  ## the read, so storing them into another receiver cannot close a
+  ## cycle.
+  var n = valueStart
+  while n.kind == ParLe and n.exprKind in {HconvX, ConvX, DconvX, BaseobjX}:
+    let ek = n.exprKind
+    inc n
+    if ek in {HconvX, ConvX, DconvX}: skip n # type
+    elif ek == BaseobjX:
+      skip n # type
+      skip n # intlit
+  template freshSym(sym: SymId): bool =
+    sym in c.freshLocals or
+    (c.resultSym != NoSymId and sym == c.resultSym)
+  if n.kind == Symbol:
+    if freshSym(n.symId): return true
+  if n.kind == ParLe:
+    if n.tagEnum == VTagId:
+      var r = n
+      inc r
+      if r.kind == Symbol and freshSym(r.symId): return true
+    case n.exprKind
+    of NewobjX, NilX: return true
+    else: discard
+  result = false
+
+proc rhsIsSelfProjection(c: var NjvlContext;
+                        valueStart: Cursor;
+                        receiverPath: openArray[SymId]): bool =
+  ## True iff RHS is `α.g₁.g₂…gₙ` (n ≥ 1) where `α` matches the LHS receiver
+  ## path and every `gᵢ` is a non-cursor (owning) field.
+  var rhsPath: seq[SymId] = @[]
+  var rhsParentTypes: seq[Cursor] = @[]
+  if not collectDotPath(c, valueStart, rhsPath, rhsParentTypes): return false
+  if rhsPath.len <= receiverPath.len: return false
+  for i in 0 ..< receiverPath.len:
+    if rhsPath[i] != receiverPath[i]: return false
+  # Extension fields (after the receiver) must all be owning. Each
+  # extension is looked up in the corresponding parent type so cursor
+  # detection works even when the chain crosses object types.
+  for i in receiverPath.len ..< rhsPath.len:
+    let body = objectBodyOf(rhsParentTypes[i])
+    if isCursorFieldIn(body, rhsPath[i]): return false
+  result = true
+
+proc isOwningRefFieldStore(c: var NjvlContext; destCursor: Cursor;
+                           destPath: BorrowInfo): bool =
+  ## True iff this store writes a non-cursor ref field of an object
+  ## reached through a heap reference. Writes to ref fields of plain
+  ## value-typed receivers (e.g. `var n = TBNode(); n.other = …` where
+  ## TBNode is `object`, not `ref object`) cannot form ownership cycles
+  ## because `n` itself is not on the heap, so nothing references it.
+  if destPath.mode notin {IsBorrowable, IsBorrowableFromGlobal}: return false
+  if destPath.path.len < 2: return false # plain variable assignment
+  let field = destPath.path[^1]
+  if isCursorField(c, destCursor, field): return false
+  if not isDotChain(c, destCursor): return false
+  # Field type must be a ref (only ref edges participate in cycles).
+  let t = getType(c.typeCache, destCursor)
+  if skipModifier(t).typeKind != RefT: return false
+  # Receiver type must also be a ref/ptr — otherwise the write target
+  # is a stack/embedded value with no incoming ref edges.
+  let recvType = receiverTypeOfDot(c, destCursor)
+  if cursorIsNil(recvType): return false
+  result = skipModifier(recvType).typeKind in {RefT, PtrT}
+
+proc isFreshInit(init: Cursor): bool =
+  ## Returns true when `init` is a syntactic form known to produce a
+  ## fresh ref: `(newobj …)`, `(oconstr …)`, `(nil)`, or a 0-arg call
+  ## (whose result cannot alias any of its arguments because there are
+  ## none). This is a conservative under-approximation of the freshness
+  ## analysis described in doc/nocycles.md — calls with arguments are
+  ## not assumed fresh because they could return an alias.
+  if init.kind != ParLe: return false
+  case init.exprKind
+  of NewobjX, OconstrX, NilX:
+    return true
+  of CallKinds:
+    var p = init
+    inc p # call tag
+    skip p # fn
+    return p.kind == ParRi
+  else:
+    return false
+
+proc checkNoCycleStore(c: var NjvlContext; valueStart: Cursor;
+                      destCursor: Cursor; destPath: BorrowInfo;
+                      info: PackedLineInfo) =
+  if not isOwningRefFieldStore(c, destCursor, destPath): return
+  # Receiver rooted at the proc's `result` variable: treat as fresh.
+  # A proc's result is freshly allocated by the caller and not aliased
+  # before it is returned, so writes into it cannot close a cycle —
+  # provided the result has not already escaped via a call. The escape
+  # case is handled by the freshness analysis (see doc/nocycles.md).
+  # Synthesised hooks (=dup, =copy, …) rely on this shortcut.
+  if c.resultSym != NoSymId and destPath.path[0] == c.resultSym: return
+  # Receiver is a local known to have been initialised with a
+  # fresh-producing expression. Same reasoning as for `result`.
+  if destPath.path[0] in c.freshLocals: return
+  if isFreshOrNilRhs(c, valueStart): return
+  let recvLen = destPath.path.len - 1
+  if rhsIsSelfProjection(c, valueStart,
+                         destPath.path.toOpenArray(0, recvLen - 1)):
+    return
+  # TODO: discharge `requires: disjoint(...)` from the enclosing routine.
+  # TODO: per-binding freshness/disjointness tracking (see doc/nocycles.md).
+  var isGlobal = false
+  let fieldName = extractBasename(pool.syms[destPath.path[^1]], isGlobal)
+  buildErr c, info,
+    "assignment to field '" & fieldName &
+    "' may create an ownership cycle. Hints: annotate field '" & fieldName &
+    "' as .cursor if it is a back-reference (does not own); or use new() / a" &
+    " {.unique.} proc for a freshly allocated value; or add `requires: disjoint(...)`" &
+    " to the enclosing routine. See doc/nocycles.md."
+
 # --- NJVL-specific traversal ---
 
 proc traverseStore(c: var NjvlContext; n: var Cursor) =
@@ -942,6 +1204,10 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
   let destMutPath = extractPath(c, n)
   if destMutPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
     checkBorrowConflict(c, destMutPath, n.info)
+
+  # Static cycle prevention: reject owning-ref-field writes that the rule
+  # in doc/nocycles.md cannot prove cycle-safe.
+  checkNoCycleStore(c, valueStart, n, destMutPath, n.info)
 
   # Now handle the destination (Symbol or NJVL versioned variable (v symId version))
   let destSymId = extractSymIdForStore(n)
@@ -1154,6 +1420,9 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
         "': path is not borrowable; use 'addr' to override or a temporary move"
   if n.kind != DotToken and localType.typeKind in {PtrT, RefT, CstringT, PointerT, ProctypeT}:
     checkNilMatch c, n, localType
+  # Track per-local freshness for the cycle-prevention rule.
+  if skipModifier(localType).typeKind == RefT and isFreshInit(n):
+    c.freshLocals.incl name
   traverseExpr c, n
   skipParRi n
 
@@ -1231,6 +1500,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   let oldResultSym = c.resultSym
   let oldInlineVars = move c.inlineVars
   let oldBorrows = move c.activeBorrows
+  let oldFreshLocals = move c.freshLocals
   let oldProcStart = c.currentProcStart
   c.currentProcStart = decl
   c.resultSym = NoSymId
@@ -1254,6 +1524,12 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
           c.typeCache.registerLocal(r.name.symId, ParamY, r.typ)
           if r.typ.typeKind == OutT and not hasPragma(r.pragmas, NoinitP):
             outParams.add r.name.symId
+          # `sink T` parameters: the caller has transferred ownership,
+          # so the value is freshly owned by this proc and cannot alias
+          # any other binding the caller still holds. Treat as fresh
+          # for the cycle-prevention rule.
+          if r.typ.typeKind == SinkT:
+            c.freshLocals.incl r.name.symId
       c.typeCache.registerLocal(symId, ProcY, decl)
     skip n
 
@@ -1282,6 +1558,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   c.resultSym = oldResultSym
   c.inlineVars = ensureMove oldInlineVars
   c.activeBorrows = ensureMove oldBorrows
+  c.freshLocals = ensureMove oldFreshLocals
   c.currentProcStart = oldProcStart
   discard c.directlyInitialized.pop()
 

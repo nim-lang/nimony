@@ -8,7 +8,7 @@ type
 
 proc newNode*(data: sink string): BinaryTree = BinaryTree(data: data)
 
-proc append*(root: var BinaryTree; n: BinaryTree) =
+proc append*(root: var BinaryTree; n: sink BinaryTree) =
   # insert a node into the tree
   if root == nil:
     root = n

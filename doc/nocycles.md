@@ -1,0 +1,323 @@
+# Static Cycle Prevention in Nimony
+
+## Motivation
+
+Runtime cycle collection (YRC and friends) is expensive and complex.
+For a wide and useful subset of programs we can eliminate cycle collection
+entirely by **statically forbidding the heap mutations that can create
+cycles in the first place**. Programs that fit this subset compile to
+plain reference counting with no collector; programs that do not fit
+opt in explicitly to ref-typed cycles by marking the relevant field as
+`.cursor` (non-owning) or by using a separate cycle-collected ref kind.
+
+This document specifies the static check.
+
+## Field Annotations Recap
+
+Three kinds of `ref` fields, as defined in [borrowchecking.md](borrowchecking.md):
+
+| Annotation       | Ownership   | Cycle-safe by construction? |
+|------------------|-------------|------------------------------|
+| `{.unique.}`     | exclusive   | only with this check         |
+| `{.cursor.}`     | non-owning  | yes (does not own)           |
+| (plain `ref`)    | shared      | only with this check         |
+
+For the cycle check, **owning fields** are all ref fields that are
+*not* `.cursor`. A `.cursor` field cannot keep an object alive, so it
+cannot participate in an ownership cycle and is exempt from every rule
+below.
+
+## Cycle Construction Theorem
+
+> **A heap mutation `α.f = e` (where `f` is owning) cannot create a
+> cycle if `e` is reachable from `α` in the pre-state heap via a
+> non-empty path of owning field accesses.**
+
+**Proof.** The assignment changes only `α`'s outgoing `f`-edge. Every
+other node and edge is unchanged. So any cycle in the post-state that
+did not exist in the pre-state must pass through `α`, which means it
+must use the new edge:
+
+    α →[new f] e → … → α
+
+That cycle requires a back-path `e → … → α` in the post-state. The
+post-state minus the new edge is a *subgraph* of the pre-state (we
+lost the old `α.f` edge, gained no others), so any back-path
+`e → … → α` would have already existed in the pre-state. Combined
+with the hypothesis that `α → … → e` already existed, that is a
+cycle in the pre-state — contradicting acyclicity by induction. ∎
+
+The theorem holds with the side condition that `e ≠ α` (the
+zero-length case `α.f = α` is a literal self-loop). The syntactic
+form of the rule excludes this case by requiring at least one field
+projection on the right-hand side.
+
+## The Rule
+
+For an assignment `α.f = e` where `f` is an owning field, **the
+assignment is accepted iff at least one of the following holds**:
+
+1. **Self-projection.** `e` is syntactically of the form
+   `α.g₁.g₂.….gₙ` with `n ≥ 1` and every `gᵢ` an owning field
+   access. (The receiver path on the RHS must start with the *entire*
+   LHS receiver path `α`, not merely share a leftmost binding.)
+
+2. **Fresh allocation.** `e` is a freshly allocated value, e.g. a
+   `(newobj ...)` expression or a node already proven fresh by the
+   per-binding freshness analysis (see *Freshness tracking* below).
+
+3. **Nil literal.** `e` is `nil`.
+
+4. **Receiver rooted at `result`.** The receiver `α` is rooted at the
+   enclosing proc's `result` variable. The result is allocated by the
+   caller and is not aliased into other reachable graphs before this
+   point, so any write into it is cycle-safe (subject to the
+   to-be-implemented freshness analysis tracking escapes).
+
+5. **Disjointness obligation discharged.** The enclosing routine has
+   a `requires: disjoint(α-root, e-root)` precondition that is
+   satisfied at this call site (see *Disjointness propagation* below).
+
+Otherwise the compiler emits a contract-violation diagnostic.
+
+`.cursor` field writes are not subject to this rule. Compiler-synthesised
+hooks (`=dup`, `=copy`, `=trace`, …) discharge cycle-safety via rule 4
+because their writes are rooted at the hook's `result`.
+
+## Worked Examples
+
+### Accepted
+
+```nim
+proc construct(head: var Node) =
+  head = newNode(link: head, data)        # rule 2: RHS is fresh
+
+proc traverse(head: Node) =
+  var current = head
+  while current != nil:
+    current = current.next                # not a heap write — read-only
+
+proc removeNext(x: Node) =
+  x.next = x.next.next                    # rule 1: RHS is x.next.next,
+                                          # starts with `x`, owning fields
+
+proc shortcutLeft(x: Node) =
+  x.left = x.left.right.left              # rule 1: any depth works
+
+proc clearTail(x: Node) =
+  x.next = nil                            # rule 3: nil
+```
+
+### Rejected
+
+```nim
+proc createsSelfLoop(x: Node) =
+  x.next = x                              # not a non-empty projection;
+                                          # this is the literal self-loop case
+
+proc createsCycle(head: Node) =
+  head.last = head.first                  # accepted! both projections from `head`,
+                                          # because re-pointing within head's own
+                                          # subgraph cannot close a cycle
+
+proc createsCycle2(n: Node; root: Node) =
+  n.parent = root                         # different roots, no `disjoint` annotation
+                                          # → rejected unless `parent` is `.cursor`
+
+proc combine(a, b: Node) =
+  var last = a
+  while last.next != nil:
+    last = last.next
+  last.next = b                           # different roots → rejected unless
+                                          # caller has discharged `disjoint(a, b)`
+
+proc combineOk(a, b: Node) {.requires: disjoint(a, b).} =
+  var last = a
+  while last.next != nil:
+    last = last.next
+  last.next = b                           # rule 4: precondition discharged
+```
+
+## Freshness Tracking
+
+A binding `x` is **fresh** from the moment it is initialised by a
+fresh-producing expression — `(newobj …)`, `(oconstr …)`, `(nil)`, or
+a 0-arg call (whose result cannot alias any of its arguments because
+there are none) — and remains fresh until it escapes. Three sources
+of freshness are tracked:
+
+- **Local vars** initialised with a fresh-producing expression.
+- **`sink` parameters.** The caller has transferred ownership, so the
+  value cannot alias any binding the caller still holds. The
+  argument-passing machinery enforces the move.
+- **The proc's `result`.** Allocated by the caller, not aliased into
+  other graphs at proc entry.
+
+A read of a fresh binding on the right-hand side is treated as
+fresh-allocation for the cycle rule — the cross-root write is then
+accepted because the freshly-owned tree is disjoint from the
+receiver's reachable set.
+
+The current implementation marks a local fresh on initialisation and
+keeps it fresh for the rest of the proc; a follow-up will track
+escapes (passing the binding to a non-`disjoint` parameter, storing
+it into a non-fresh field) by invalidating the freshness flag.
+
+Once full union-find lands, the rule extends to the case below: two
+locally-built structures linked together.
+
+```nim
+var a = newNode()                # class {a}
+var b = newNode()                # class {b}, disjoint from {a}
+a.next = b                       # cross-root, but both fresh-disjoint
+                                 # → accepted; classes merged to {a, b}
+b.next = a                       # cross-root within {a, b}; no longer
+                                 # disjoint, no projection form
+                                 # → rejected (genuine cycle)
+```
+
+Freshness flows through ordinary control flow (`if`, loops) by taking
+the union of classes at join points; freshness is lost on any escape
+that is not itself `disjoint`-annotated.
+
+## Receiver-Type Restriction
+
+The rule applies *only* when the receiver of `α.f = e` is reached
+through a ref or ptr — i.e. when the assignment writes through the
+heap. Writes to a ref field of a plain value-typed receiver are not
+subject to the rule, because the receiver itself is on the stack (or
+embedded in another object) and therefore has no incoming ref edges
+that could close a cycle.
+
+```nim
+type
+  Plain = object
+    other: Node          # ref field, but Plain is not a ref
+  Heaped = ref object
+    other: Node
+
+var p = Plain()
+p.other = makeNode()     # exempt: Plain is value-typed, no cycle possible
+
+var h = Heaped()
+h.other = makeNode()     # subject to the rule (handled by freshness on `h`)
+```
+
+## Disjointness Propagation
+
+`requires: disjoint(a, b)` is a precondition that the reachable
+subgraphs rooted at `a` and `b` share no nodes. At call sites the
+caller must discharge it. The discharge cases, in order of preference:
+
+1. One of the arguments is freshly allocated (freshness analysis).
+2. The arguments are in different freshness classes.
+3. The caller has its own `requires: disjoint(α, β)` that implies the
+   callee's obligation, and the obligation propagates upward.
+4. None of the above — the call is rejected.
+
+The propagation never requires whole-program shape analysis; it is a
+local check at each call site, plus a local accumulation of
+preconditions on each routine.
+
+## Refinements
+
+Two cases are accepted by the soundness theorem but rejected by the
+purely syntactic rule:
+
+### Aliasing-driven splice-out
+
+```nim
+prev.next = n.next       # safe iff `prev.next == n` (the loop invariant
+                         # that established `prev` made this true);
+                         # after rewriting to `prev.next = prev.next.next`
+                         # the rule accepts trivially.
+```
+
+The compiler may either:
+
+- accept the textual form by lifting the equality `prev.next == n`
+  from local control flow (loop exit, `if` guards), substituting it,
+  and re-running the projection check, or
+- emit a hint suggesting the canonical rewrite.
+
+Both options keep the rule sound; the first is friendlier, the
+second is simpler.
+
+### Doubly-linked invariants
+
+```nim
+n.prev.next = n.next     # safe in a doubly-linked list because
+                         # `n.prev.next == n`; rewrite is
+                         # `n.prev.next = n.prev.next.next`.
+```
+
+Same treatment as above. Until a fact is lifted into the analysis,
+the user is required to either rewrite or to add a `disjoint`
+precondition.
+
+## What This Buys
+
+- **No cycle collector for any type whose owning ref fields all pass
+  the check.** Plain RC suffices.
+- **Compile-time detection** of accidental cycle construction, which
+  today silently leaks under non-collected RC.
+- **Documented escape valves** (`.cursor` and `requires: disjoint`)
+  that map onto language features that already exist.
+
+## What This Does Not Buy
+
+- Doubly-linked rings and graphs are not expressible under the rule
+  with all-owning fields. Either:
+  - mark the back-edge field `.cursor` and arrange for the container
+    to keep the nodes alive some other way, or
+  - keep the type as a cycle-collected `ref` — these types opt into a
+    collector only for that specific subgraph.
+- Fully shape-aware reasoning (separation logic). Disjointness is
+  carried as annotations, not inferred globally.
+
+## Case Study: `lib/pure/collections/lists.nim` (Nim 2 stdlib)
+
+Applying the rule to the existing module shows what is already
+compatible and what would need attention:
+
+- **~50% of writes pass for free** because `prev` and `tail` are
+  already `.cursor`. The rule never looks at them.
+- **~40% are cross-root writes** of the form `L.head = n` or
+  `L.tail.next = n`. They need `requires: disjoint(L, n)` on the
+  node-taking overloads. End users hitting `a.add(value)` never see
+  the obligation; the disjointness is discharged because
+  `newSinglyLinkedNode(value)` is fresh.
+- **~5% are splice-outs** in non-canonical form
+  (`prev.next = n.next`). Either rewrite to `prev.next = prev.next.next`
+  or rely on the equality-lifting refinement.
+- **~5% are explicit cycle creators**: `n.next = n` (singleton ring),
+  `L.tail.next = L.head` (re-close cycle in `remove`), and self-`addMoved`.
+  These are correctly rejected — they are precisely the cases where
+  the cycle collector earned its keep, and ring types must opt out
+  via `.cursor` on `next` (with the container owning the chain) or
+  via a cycle-collected ref kind.
+
+The verdict is that `lists.nim` already encodes most of the
+discipline: someone deliberately put `.cursor` on every back-edge.
+The remaining gap is largely formalising the implicit "this node is
+not already linked elsewhere" precondition into `disjoint`.
+
+## Implementation
+
+Implemented in [src/nimony/contracts_njvl.nim](../src/nimony/contracts_njvl.nim)
+in the `traverseStore` path. The check uses the existing `extractPath`
+to obtain LHS and RHS as `seq[SymId]` paths, splits the LHS into
+receiver path + final field, walks the receiver and projection types
+to look up `.cursor` annotations on each field, and applies the rule
+above. The receiver-type restriction is checked via `getType` on the
+inner expression of the dot.
+
+The freshness analysis tracks per-local "init was fresh" via a
+`freshLocals` set populated in `traverseLocal`. The
+`disjoint`-propagation is scaffolded: rule (5) is discharged only if
+the caller has a literal `requires: disjoint(...)` naming the same
+roots. Tracking escapes from the freshness set, inferring freshness
+across calls, and union-finding bindings are left for a follow-up
+that lives in the same file.
+
+Tests live in [tests/nimony/nocycles/](../tests/nimony/nocycles/).

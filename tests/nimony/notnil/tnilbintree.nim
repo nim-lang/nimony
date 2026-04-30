@@ -8,7 +8,7 @@ type
 
 proc newNode*[T](data: sink T): BinaryTree[T] = BinaryTree[T](data: data)
 
-proc append*[Ty: Comparable](root: var nil BinaryTree[Ty], n: BinaryTree[Ty]) =
+proc append*[Ty: Comparable](root: var nil BinaryTree[Ty], n: sink BinaryTree[Ty]) =
   # insert a node into the tree
   if root == nil:
     root = n
