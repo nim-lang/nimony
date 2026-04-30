@@ -5720,22 +5720,23 @@ proc semCardSet(c: var SemContext; dest: var TokenBuf; it: var Item) =
   commonType c, dest, it, beforeExpr, expected
 
 proc hasCastUncheckedAccess(n: Cursor): bool =
-  ## Scan the pragma list to see if it contains `{.cast(uncheckedAssign).}`.
+  ## Scan the pragma list to see if it contains `{.cast(uncheckedAccess).}`.
+  result = false
   var scan = n
-  while scan.kind != ParRi:
-    if scan.pragmaKind == CastP:
-      var inner = scan
-      inc inner # past CastP head
-      if inner.substructureKind == PragmasU:
-        inc inner
-      elif inner.kind == DotToken:
-        inc inner
-      while inner.kind != ParRi:
-        if inner.pragmaKind == UncheckedAccessP:
-          return true
-        skip inner
-    skip scan
-  return false
+  var nested = 0
+  while true:
+    case scan.kind
+    of ParLe:
+      if scan.pragmaKind == UncheckedAccessP:
+        return true
+      inc nested
+      inc scan
+    of ParRi:
+      dec nested
+      if nested == 0: return false
+      inc scan
+    else:
+      inc scan
 
 proc semPragmaExpr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
