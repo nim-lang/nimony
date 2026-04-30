@@ -1,45 +1,45 @@
 (.nif27)
-(.indexat 6283             )
+(.indexat 6212             )
 (stmts@,2,tests/nimony/nosystem/tgeneric_obj.nim
  (type@2,1 :int.0.
-  (i 64) .
+  (i 64).
   (pragmas@5
-   (magic@2 Int@7)) .)
+   (magic@2 Int@7)).)
  (type@2,3 :float.0.
-  (f 64) .
+  (f 64).
   (pragmas@7
-   (magic@2 Float@7)) .)
+   (magic@2 Float@7)).)
  (type@2,4 :char.0.
-  (c 8) .
+  (c 8).
   (pragmas@6
-   (magic@2 Char@7)) .)
+   (magic@2 Char@7)).)
  (type@2,5 :uint8.0.
-  (u 8) .
+  (u 8).
   (pragmas@7
-   (magic@2 UInt8@7)) .)
+   (magic@2 UInt8@7)).)
  (type@2,7 :set.0.
   (set)
   (typevars@4
    (typevar@1 :T.0. . . . .))
   (pragmas@8
-   (magic@2 Set@7)) .)
+   (magic@2 Set@7)).)
  (type@2,8 :array.0.
   (array)
   (typevars@7
    (typevar@1 :Index.0. . . . .)
    (typevar@8 :T.1. . . . .))
   (pragmas@I
-   (magic@2 Array@7)) .)
+   (magic@2 Array@7)).)
  (type@2,9 :typedesc.0.
   (typedesc)
   (typevars@9
    (typevar@1 :T.2. . . . .))
   (pragmas@D
-   (magic@2 TypeDesc@7)) .)
+   (magic@2 TypeDesc@7)).)
  (type@2,A :untyped.0.
-  (untyped) .
+  (untyped).
   (pragmas@9
-   (magic@2 Expr@7)) .)
+   (magic@2 Expr@7)).)
  (type@E,C :TypeOfMode.0.~C x . .
   (enum@2
    (u 8)
@@ -49,7 +49,7 @@
     (tup 1 "typeOfIter"))))
  (proc@2,C :dollar`.TypeOfMode.0. x . .
   (params
-   (param :e.0 . . TypeOfMode.0. .)) string.0.sysvq0asl . .
+   (param :e.0 . . TypeOfMode.0. .))string.0.sysvq0asl . .
   (stmts
    (result@E :result.0 . . string.0.sysvq0asl .)
    (case@E e.0
@@ -63,24 +63,24 @@
       (ret "typeOfIter"))))
    (ret result.0)))
  (proc@,G :typeof.0.@5
-  (typeof) . .
+  (typeof). .
   (params@B
    (param@1 :x.0 . .
-    (untyped@3) .)
+    (untyped@3).)
    (param@D :mode.0 . . TypeOfMode.0.~M,~4 typeOfIter.0.@7))
   (typekind@X
    (typedesc))
   (pragmas@r
-   (magic@2 TypeOf@7)) . .)
+   (magic@2 TypeOf@7)). .)
  (type@A,J :string.0.~8 x . . string.0.sysvq0asl)
  (gvar@4,L :myset.0. . .
   (set@A
-   (u@1 8)) .)
+   (u@1 8)).)
  (gvar@4,M :myarr.0. . .
   (array@C
    (i@4 64)
    (rangetype
-    (i 64) 0 2)) .)
+    (i 64)0 2)).)
  (glet@4,N :u8.0. . .
   (u 8)
   (suf@5 3u "u8"))
@@ -88,7 +88,7 @@
   (setconstr@2
    (set@6,~3
     (u@1 8))
-   (suf@1 1u "u8") u8.0.@7
+   (suf@1 1u "u8")u8.0.@7
    (suf@B 5u "u8")
    (range@H
     (suf 7u "u8")
@@ -98,66 +98,66 @@
    (array@8,~3
     (i@4 64)
     (rangetype
-     (i 64) 0 2)) 1@1 2@4 3@7))
+     (i 64)0 2))1@1 2@4 3@7))
  (type@F,S :MyGeneric.0.~D .
   (typevars~4
-   (typevar@1 :T.3. . . . .)) .
+   (typevar@1 :T.3. . . . .)).
   (object@2 .
    (fld~D,1 :x.0 . . T.3.@3 .)))
  (gvar@2,W :myglob.0. . . MyGeneric.0.I7tqnb11.@H .)
  (gvar@2,X :other.0. . . MyGeneric.0.Ieuzwfh.@G .)
  (asgn@9,Z
-  (dot~3 myglob.0.~6 x.0 0 "x") 56@2)
+  (dot~3 myglob.0.~6 x.0 0 "x")56@2)
  (asgn@8,a
-  (dot~3 other.0.~5 x.0 0 "x") 79.0@2)
+  (dot~3 other.0.~5 x.0 0 "x")79.0@2)
  (proc@,c :\2B.0.@5
-  (add -3) . .
+  (add -3). .
   (params@9
    (param@1 :x.1 . .
-    (i@6 64) .)
+    (i@6 64).)
    (param@4 :y.0 . .
-    (i@3 64) .))
+    (i@3 64).))
   (i@D 64)
   (pragmas@Q
-   (magic@2 "AddI"@7)) . .)
+   (magic@2 "AddI"@7)). .)
  (template@,e :foobar.0.@9 . . .
-  (params@F) . . .
+  (params@F). . .
   (stmts@2,1
    (break .)))
  (proc@,h :foo.0.@5 . . .
   (params@8
    (param@1 :x.2 . .
-    (i@3 64) .)
+    (i@3 64).)
    (param@9 :y.1 . . string.0.sysvq0asl .))
-  (i@L 64) . .
+  (i@L 64). .
   (stmts@2,1
    (result@4 :result.1 . .
-    (i@A,~6 64) .)
+    (i@A,~6 64).)
    (var@4 :x.5 . . string.0.sysvq0asl "abc"@4)
    (asgn@7,1 result.1~7 4@2)
    (asgn@2,2 x.5~2 "34"@2)
    (ret~2,~1 result.1)))
  (proc@,m :overloaded.0.@5 . . .
-  (params@F) . . .
+  (params@F). . .
   (stmts@2,1
    (let@4 :someInt.0 . .
     (i@A,~B 64)
     (add@D
-     (i 64) 23@1 90@5))
+     (i 64)23@1 90@5))
    (discard@,1
     (call@B foo.0.~3
      (add@3
-      (i 64) 34~2 56@1) "xyz"@8))))
+      (i 64)34~2 56@1)"xyz"@8))))
  (type@G,r :HSlice.0.~E x
   (typevars~7
    (typevar@1 :T.4. . . . .)
-   (typevar@4 :U.0. . . . .)) .
+   (typevar@4 :U.0. . . . .)).
   (object@2 .
    (fld~E,1 :a.0 . . T.4.@3 .)
    (fld~E,2 :b.0 . . U.0.@3 .)))
  (type@C,u :Slice.0.~A x
   (typevars~4
-   (typevar@1 :T.5. . . . .)) .
+   (typevar@1 :T.5. . . . .)).
   (at@8 HSlice.0.~6 T.5.@1 T.5.@4))
  (proc@,w :\2E..0.@5 x .
   (typevars@A
@@ -166,51 +166,51 @@
   (params@G
    (param@1 :a.0 . . T.6.@3 .)
    (param@7 :b.0 . . U.1.@3 .))
-  (at@K HSlice.0.~6 T.6.@1 U.1.@4) . .
+  (at@K HSlice.0.~6 T.6.@1 U.1.@4). .
   (stmts@j
    (result :result.2 . .
-    (at~P HSlice.0.~6 T.6.@1 U.1.@4) .)
+    (at~P HSlice.0.~6 T.6.@1 U.1.@4).)
    (discard .)
    (ret~j result.2)))
  (gvar@4,z :myarr2.0. . .
   (array@C,~d
    (i@4 64)
    (rangetype
-    (i 64) 0 2)) myarr.0.@R)
+    (i 64)0 2))myarr.0.@R)
  (asgn@7,10 myarr2.0.~7
   (aconstr@2
    (array@7,~e
     (i@4 64)
     (rangetype
-     (i 64) 0 2)) 4@1 5@4 6@7))
+     (i 64)0 2))4@1 5@4 6@7))
  (gvar@4,12 :m3.0. . .
   (array@9
    (i@4 64)
    (rangetype
-    (i 64) 0 3))
+    (i 64)0 3))
   (aconstr@K
    (array~B
     (i@4 64)
     (rangetype
-     (i 64) 0 3)) 1@1 2@4 3@7 45@A))
+     (i 64)0 3))1@1 2@4 3@7 45@A))
  (gvar@4,13 :x3.0. . .
   (array@9
    (i@7 64)
    (rangetype
-    (i 64) 4@1 7@4)) m3.0.@N)
+    (i 64)4@1 7@4))m3.0.@N)
  (asgn@3,14 x3.0.~3
   (aconstr@2
    (array@8,~2
     (i@4 64)
     (rangetype
-     (i 64) 0 3)) 2@1 3@4 4@7 5@A))
+     (i 64)0 3))2@1 3@4 4@7 5@A))
  (proc@,16 :foo.1.@5 . .
   (typevars@8
    (typevar@1 :I.0. . . . .)
    (typevar@4 :T.7. . . . .))
   (params@E
    (param@1 :x.3 . .
-    (array@8 T.7.@4 I.0.@1) .)) . . .
+    (array@8 T.7.@4 I.0.@1).)). . .
   (stmts@X
    (discard .)))
  (call@3,17 foo.2.~3 myarr2.0.@1)
@@ -220,11 +220,11 @@
    (typevar@4 :T.8. . . . .))
   (params@J
    (param@1 :x.4 . .
-    (array@8 T.8.@4 I.1.@1) .))
-  (array@N T.8.@4 I.1.@1) . .
+    (array@8 T.8.@4 I.1.@1).))
+  (array@N T.8.@4 I.1.@1). .
   (stmts@2,1
    (result@7 :result.3 . .
-    (array@J,~1 T.8.@4 I.1.@1) .)
+    (array@J,~1 T.8.@4 I.1.@1).)
    (asgn@7 result.3~7 x.4@2)
    (ret~2,~1 result.3)))
  (asgn@7,1B myarr2.0.~7
@@ -233,37 +233,37 @@
  (proc@3,17 :foo.2. . .~3,~1
   (at foo.1.
    (rangetype@D,~l
-    (i 64) 0 2)
+    (i 64)0 2)
    (i@H,~l 64))
   (params@B,~1
    (param@1 :x.8 . .
     (array@8
      (i~3,~k 64)
      (rangetype~7,~k
-      (i 64) 0 2)) .)) .~3,~1 . .~3,~1
+      (i 64)0 2)).)).~3,~1 . .~3,~1
   (stmts@U,~1
    (discard .)))
  (proc@H,1B :identity.1. . .~H,~2
   (at identity.0.
    (rangetype~1,~p
-    (i 64) 0 2)
+    (i 64)0 2)
    (i@3,~p 64))
   (params@2,~2
    (param@1 :x.9 . .
     (array@8
      (i~8,~n 64)
      (rangetype~C,~n
-      (i 64) 0 2)) .))
+      (i 64)0 2)).))
   (array@6,~2
    (i~3,~n 64)
    (rangetype~7,~n
-    (i 64) 0 2)) . .~H,~2
+    (i 64)0 2)). .~H,~2
   (stmts~F,~1
    (result@7 :result.4 . .
     (array@J,~1
      (i~8,~n 64)
      (rangetype~C,~n
-      (i 64) 0 2)) .)
+      (i 64)0 2)).)
    (asgn@7 result.4~7 x.9@2)
    (ret~2,~1 result.4)))
  (type@J,W :MyGeneric.0.I7tqnb11. .
@@ -272,61 +272,61 @@
   (pragmas)
   (object~2,~4 .
    (fld~D,1 :x.0 . .
-    (i@G,3 64) .)))
+    (i@G,3 64).)))
  (type@I,X :MyGeneric.0.Ieuzwfh. .
   (at MyGeneric.0.
    (f@1 64))
   (pragmas)
   (object~1,~5 .
    (fld~D,1 :x.0 . .
-    (f@F,4 64) .))))(.index@,2,tests/nimony/nosystem/tgeneric_obj.nim
+    (f@F,4 64).))))(.index@,2,tests/nimony/nosystem/tgeneric_obj.nim
  (x@2,1 int.0. 86)
- (x@2,3 float.0. 66)
- (x@2,4 char.0. 70)
- (x@2,5 uint8.0. 67)
- (x@2,7 set.0. 69)
+ (x@2,3 float.0. 64)
+ (x@2,4 char.0. 68)
+ (x@2,5 uint8.0. 65)
+ (x@2,7 set.0. 67)
  (h@7,7 T.0. 41)
- (x@2,8 array.0. 66)
+ (x@2,8 array.0. 65)
  (h@A,8 Index.0. 45)
  (h@H,8 T.1. 33)
- (x@2,9 typedesc.0. 68)
+ (x@2,9 typedesc.0. 67)
  (h@C,9 T.2. 51)
- (x@2,A untyped.0. 71)
- (x@E,C TypeOfMode.0. 74)
+ (x@2,A untyped.0. 70)
+ (x@E,C TypeOfMode.0. 72)
  (x@4,D typeOfProc.0. 53)
  (x@4,E typeOfIter.0. 72)
  (x@2,C dollar`.TypeOfMode.0. 74)
- (x@,G typeof.0. 362)
- (x@A,J string.0. 221)
+ (x@,G typeof.0. 361)
+ (x@A,J string.0. 218)
  (h@4,L myset.0. 50)
- (h@4,M myarr.0. 49)
- (h@4,N u8.0. 82)
- (h@F,S MyGeneric.0. 321)
+ (h@4,M myarr.0. 48)
+ (h@4,N u8.0. 80)
+ (h@F,S MyGeneric.0. 318)
  (h@C,S T.3. 43)
- (h@2,W myglob.0. 79)
+ (h@2,W myglob.0. 78)
  (h@2,X other.0. 53)
- (x@,c \2B.0. 150)
- (h@,e foobar.0. 174)
- (h@,h foo.0. 80)
- (h@,m overloaded.0. 321)
- (x@G,r HSlice.0. 225)
+ (x@,c \2B.0. 148)
+ (h@,e foobar.0. 170)
+ (h@,h foo.0. 79)
+ (h@,m overloaded.0. 318)
+ (x@G,r HSlice.0. 221)
  (h@A,r T.4. 40)
  (h@D,r U.0. 29)
- (x@C,u Slice.0. 110)
+ (x@C,u Slice.0. 109)
  (h@9,u T.5. 39)
- (x@,w \2E..0. 68)
+ (x@,w \2E..0. 67)
  (h@B,w T.6. 39)
  (h@E,w U.1. 29)
- (h@4,z myarr2.0. 257)
- (h@4,12 m3.0. 207)
- (h@4,13 x3.0. 167)
- (h@,16 foo.1. 202)
+ (h@4,z myarr2.0. 255)
+ (h@4,12 m3.0. 203)
+ (h@4,13 x3.0. 164)
+ (h@,16 foo.1. 198)
  (h@9,16 I.0. 39)
  (h@C,16 T.7. 29)
- (h@,19 identity.0. 163)
+ (h@,19 identity.0. 161)
  (h@E,19 I.1. 44)
  (h@H,19 T.8. 29)
- (h@3,17 foo.2. 592)
- (h@H,1B identity.1. 250)
- (h@J,W MyGeneric.0.I7tqnb11. 458)
- (h@I,X MyGeneric.0.Ieuzwfh. 138))
+ (h@3,17 foo.2. 589)
+ (h@H,1B identity.1. 246)
+ (h@J,W MyGeneric.0.I7tqnb11. 451)
+ (h@I,X MyGeneric.0.Ieuzwfh. 137))

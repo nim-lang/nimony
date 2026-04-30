@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 620              )
+(.indexat 617              )
 (stmts@,1,tests/nimony/nosystem/twhen.nim
  (import mwhzgh6nt1)
  (stmts@2,3
@@ -13,13 +13,13 @@
  (stmts@2,P
   (discard "good"@8))
  (proc@,R :not.0.@5
-  (not) . .
+  (not). .
   (params@B
    (param@1 :x.0 . .
-    (bool@3) .))
+    (bool@3).))
   (bool@B)
   (pragmas@R
-   (magic@2 Not@7)) . .)
+   (magic@2 Not@7)). .)
  (stmts@2,W
   (discard "good"@8))
  (stmts@2,Z

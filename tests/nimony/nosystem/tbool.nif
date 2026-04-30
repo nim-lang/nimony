@@ -1,24 +1,24 @@
 (.nif27)
-(.indexat 790              )
+(.indexat 785              )
 (stmts@,1,tests/nimony/nosystem/tbool.nim
  (type@Q :bool.0.~L
-  (bool) .
+  (bool).
   (pragmas~G
    (magic@2 Bool@7))
   (enum@2
    (u 8)
    (efld~I,1 :false.0.~8
-    (false) .
+    (false).
     (bool)
     (tup 0 "false"))
    (efld~8,1 :true.0.~7
-    (true) .
+    (true).
     (bool)
     (tup 1 "true"))))
  (proc@5 :dollar`.bool.0. x . .
   (params
    (param :e.0 . .
-    (bool) .)) string.0.sysvq0asl . .
+    (bool).))string.0.sysvq0asl . .
   (stmts
    (result@N :result.0 . . string.0.sysvq0asl .)
    (case@N e.0
@@ -38,7 +38,7 @@
   (true@A))
  (comment@5 bool.0. false.0.~3,1 false.0.~3,1 true.0.@8,1 true.0.@8,1 bool.0.@2,3 true.0.@9,3))(.index@,1,tests/nimony/nosystem/tbool.nim
  (x@Q bool.0. 79)
- (x@A,1 false.0. 84)
- (x@K,1 true.0. 71)
- (x@5 dollar`.bool.0. 70)
- (h@4,3 x.0. 343))
+ (x@A,1 false.0. 83)
+ (x@K,1 true.0. 70)
+ (x@5 dollar`.bool.0. 69)
+ (h@4,3 x.0. 341))

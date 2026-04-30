@@ -1,56 +1,56 @@
 (.nif27)
-(.indexat 1344             )
+(.indexat 1322             )
 (stmts@,2,tests/nimony/nosystem/tcstring.nim
  (type@2,1 :int.0.
-  (i 64) .
+  (i 64).
   (pragmas@5
-   (magic@2 Int@7)) .)
+   (magic@2 Int@7)).)
  (type@2,2 :bool.0.
-  (bool) .
+  (bool).
   (pragmas@6
-   (magic@2 Bool@7)) .)
+   (magic@2 Bool@7)).)
  (type@2,4 :cstring.0.
-  (cstring) .
+  (cstring).
   (pragmas@9
-   (magic@2 Cstring@7)) .)
+   (magic@2 Cstring@7)).)
  (type@2,5 :pointer.0.
-  (pointer) .
+  (pointer).
   (pragmas@9
-   (magic@2 Pointer@7)) .)
+   (magic@2 Pointer@7)).)
  (proc@,8 :\2B.0.@5
-  (add -3) . .
+  (add -3). .
   (params@9
    (param@1 :x.0 . .
-    (i@6 64) .)
+    (i@6 64).)
    (param@4 :y.0 . .
-    (i@3 64) .))
+    (i@3 64).))
   (i@D 64)
   (pragmas@Q
-   (magic@2 "AddI"@7)) . .)
+   (magic@2 "AddI"@7)). .)
  (proc@,9 :\2D.0.@5
-  (sub -3) . .
+  (sub -3). .
   (params@9
    (param@1 :x.1 . .
-    (i@6 64) .)
+    (i@6 64).)
    (param@4 :y.1 . .
-    (i@3 64) .))
+    (i@3 64).))
   (i@D 64)
   (pragmas@Q
-   (magic@2 "SubI"@7)) . .)
+   (magic@2 "SubI"@7)). .)
  (proc@,B :<=.0.@5
-  (le -3) . .
+  (le -3). .
   (params@A
    (param@1 :x.2 . .
-    (i@6 64) .)
+    (i@6 64).)
    (param@4 :y.2 . .
-    (i@3 64) .))
+    (i@3 64).))
   (bool@D)
   (pragmas@S
-   (magic@2 "LeI"@7)) . .)
+   (magic@2 "LeI"@7)). .)
  (gvar@4,D :x.0. . .
   (i@C,~5 64)
   (cast@4
-   (i@5 64) 55@A))
+   (i@5 64)55@A))
  (gvar@4,F :y.0. . .
   (pointer@7
    (nil))
@@ -64,16 +64,16 @@
    (notnil))
   (hconv@E
    (cstring~6,~2
-    (notnil)) "xzy"))
+    (notnil))"xzy"))
  (comment@G,8 int.0. int.0. int.0.~3 int.0.@,1 int.0.@,1 int.0.~3,1 int.0.@1,3 int.0.@1,3 bool.0.~3,3 cstring.0.~4,A int.0.~3,5 pointer.0.~5,7 cstring.0.~8,C))(.index@,2,tests/nimony/nosystem/tcstring.nim
  (x@2,1 int.0. 82)
- (x@2,2 bool.0. 66)
- (x@2,4 cstring.0. 68)
- (x@2,5 pointer.0. 77)
- (x@,8 \2B.0. 77)
- (x@,9 \2D.0. 174)
- (x@,B <=.0. 174)
- (h@4,D x.0. 171)
- (h@4,F y.0. 64)
+ (x@2,2 bool.0. 64)
+ (x@2,4 cstring.0. 66)
+ (x@2,5 pointer.0. 75)
+ (x@,8 \2B.0. 75)
+ (x@,9 \2D.0. 170)
+ (x@,B <=.0. 170)
+ (h@4,D x.0. 167)
+ (h@4,F y.0. 63)
  (h@2,I myconst.0. 55)
  (h@4,K zz.0. 75))

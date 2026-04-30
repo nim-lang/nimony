@@ -1,73 +1,73 @@
 (.nif27)
-(.indexat 1351             )
+(.indexat 1328             )
 (stmts@,2,tests/nimony/nosystem/tforloop.nim
  (type@2,1 :int.0.
-  (i 64) .
+  (i 64).
   (pragmas@5
-   (magic@2 Int@7)) .)
+   (magic@2 Int@7)).)
  (type@2,2 :bool.0.
-  (bool) .
+  (bool).
   (pragmas@6
-   (magic@2 Bool@7)) .)
+   (magic@2 Bool@7)).)
  (proc@,4 :\2B.0.@5
-  (add -3) . .
+  (add -3). .
   (params@9
    (param@1 :x.0 . .
-    (i@6 64) .)
+    (i@6 64).)
    (param@4 :y.0 . .
-    (i@3 64) .))
+    (i@3 64).))
   (i@D 64)
   (pragmas@Q
-   (magic@2 "AddI"@7)) . .)
+   (magic@2 "AddI"@7)). .)
  (proc@,5 :\2D.0.@5
-  (sub -3) . .
+  (sub -3). .
   (params@9
    (param@1 :x.1 . .
-    (i@6 64) .)
+    (i@6 64).)
    (param@4 :y.1 . .
-    (i@3 64) .))
+    (i@3 64).))
   (i@D 64)
   (pragmas@Q
-   (magic@2 "SubI"@7)) . .)
+   (magic@2 "SubI"@7)). .)
  (proc@,7 :<=.0.@5
-  (le -3) . .
+  (le -3). .
   (params@A
    (param@1 :x.2 . .
-    (i@6 64) .)
+    (i@6 64).)
    (param@4 :y.2 . .
-    (i@3 64) .))
+    (i@3 64).))
   (bool@D)
   (pragmas@S
-   (magic@2 "LeI"@7)) . .)
+   (magic@2 "LeI"@7)). .)
  (iterator@,9 :countup.0.@9 . . .
   (params@G
    (param@1 :a.0 . .
-    (i@6 64) .)
+    (i@6 64).)
    (param@4 :b.0 . .
-    (i@3 64) .))
-  (i@D 64) . .
+    (i@3 64).))
+  (i@D 64). .
   (stmts@2,1
    (var@4 :x.3 . .
-    (i@H,~1 64) a.0@4)
+    (i@H,~1 64)a.0@4)
    (while@,1
     (le@8
-     (i 64) x.3~2 b.0@3)
+     (i 64)x.3~2 b.0@3)
     (stmts@2,1
      (yld x.3@6)
      (asgn@2,1 x.3~2
       (add@4
-       (i 64) x.3~2 1@2))))))
+       (i 64)x.3~2 1@2))))))
  (for@4,F
   (call@K countup.0.~7 0@1 44@4)
   (unpackflat
    (let :mycounter.0 . .
-    (i@C,~B 64) .))
+    (i@C,~B 64).))
   (stmts~2,1
    (discard mycounter.0@8)))
  (comment@G,4 int.0. int.0. int.0.~3 int.0.@,1 int.0.@,1 int.0.~3,1 int.0.@1,3 int.0.@1,3 bool.0.~3,3 int.0.@7,5 int.0.@7,5 int.0.~3,5))(.index@,2,tests/nimony/nosystem/tforloop.nim
  (x@2,1 int.0. 82)
- (x@2,2 bool.0. 66)
- (x@,4 \2B.0. 68)
- (x@,5 \2D.0. 174)
- (x@,7 <=.0. 174)
- (h@,9 countup.0. 171))
+ (x@2,2 bool.0. 64)
+ (x@,4 \2B.0. 66)
+ (x@,5 \2D.0. 170)
+ (x@,7 <=.0. 170)
+ (h@,9 countup.0. 167))

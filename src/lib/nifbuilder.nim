@@ -106,9 +106,16 @@ proc addRaw*(b: var Builder; s: string) =
   put b, s
 
 proc addSep(b: var Builder) =
-  if b.buffer.len > 0 and b.buffer[b.buffer.len-1] in {'\n', ' '}:
-    discard "space not required"
-  elif b.nesting != 0:
+  ## Insert a token separator if the previous byte isn't already one. NIF27
+  ## bare numbers (`123` instead of the legacy `+123`) carry no leading
+  ## sign-byte to act as an implicit separator, so adjacent atoms at top
+  ## level (e.g. `"foo"123u`) would otherwise glue together — emit a space
+  ## even when nesting is zero.
+  if b.buffer.len == 0:
+    discard
+  elif b.buffer[b.buffer.len-1] in {'\n', ' ', '(', ')'}:
+    discard "no separator required"
+  else:
     b.putPending " "
 
 proc addNumber*(b: var Builder; s: string) =

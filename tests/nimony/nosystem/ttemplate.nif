@@ -1,35 +1,35 @@
 (.nif27)
-(.indexat 3618             )
+(.indexat 3576             )
 (stmts@,2,tests/nimony/nosystem/ttemplate.nim
  (type@2,1 :int.0.
-  (i 64) .
+  (i 64).
   (pragmas@5
-   (magic@2 Int@7)) .)
+   (magic@2 Int@7)).)
  (type@2,3 :float.0.
-  (f 64) .
+  (f 64).
   (pragmas@7
-   (magic@2 Float@7)) .)
+   (magic@2 Float@7)).)
  (type@2,4 :char.0.
-  (c 8) .
+  (c 8).
   (pragmas@6
-   (magic@2 Char@7)) .)
+   (magic@2 Char@7)).)
  (type@2,6 :array.0.
   (array)
   (typevars@7
    (typevar@1 :Index.0. . . . .)
    (typevar@8 :T.0. . . . .))
   (pragmas@I
-   (magic@2 Array@7)) .)
+   (magic@2 Array@7)).)
  (type@2,7 :typedesc.0.
   (typedesc)
   (typevars@9
    (typevar@1 :T.1. . . . .))
   (pragmas@D
-   (magic@2 TypeDesc@7)) .)
+   (magic@2 TypeDesc@7)).)
  (type@2,8 :untyped.0.
-  (untyped) .
+  (untyped).
   (pragmas@9
-   (magic@2 Expr@7)) .)
+   (magic@2 Expr@7)).)
  (type@E,A :TypeOfMode.0.~C x . .
   (enum@2
    (u 8)
@@ -39,7 +39,7 @@
     (tup 1 "typeOfIter"))))
  (proc@2,A :dollar`.TypeOfMode.0. x . .
   (params
-   (param :e.0 . . TypeOfMode.0. .)) string.0.sysvq0asl . .
+   (param :e.0 . . TypeOfMode.0. .))string.0.sysvq0asl . .
   (stmts
    (result@E :result.0 . . string.0.sysvq0asl .)
    (case@E e.0
@@ -53,95 +53,95 @@
       (ret "typeOfIter"))))
    (ret result.0)))
  (proc@,E :typeof.0.@5
-  (typeof) . .
+  (typeof). .
   (params@B
    (param@1 :x.0 . .
-    (untyped@3) .)
+    (untyped@3).)
    (param@D :mode.0 . . TypeOfMode.0.~M,~4 typeOfIter.0.@7))
   (typekind@X
    (typedesc))
   (pragmas@r
-   (magic@2 TypeOf@7)) . .)
+   (magic@2 TypeOf@7)). .)
  (type@A,H :string.0.~8 x . . string.0.sysvq0asl)
  (type@F,K :MyGeneric.0.~D .
   (typevars~4
-   (typevar@1 :T.2. . . . .)) .
+   (typevar@1 :T.2. . . . .)).
   (object@2 .
    (fld~D,1 :x.0 . . T.2.@3 .)))
  (gvar@2,O :myglob.0. . . MyGeneric.0.Iu9y0wv.@H .)
  (gvar@2,P :other.0. . . MyGeneric.0.I1hdb4b1.@G .)
  (asgn@9,R
-  (dot~3 myglob.0.~6 x.0 0 "x") 56@2)
+  (dot~3 myglob.0.~6 x.0 0 "x")56@2)
  (asgn@8,S
-  (dot~3 other.0.~5 x.0 0 "x") 79.0@2)
+  (dot~3 other.0.~5 x.0 0 "x")79.0@2)
  (proc@,U :\2B.0.@5
-  (add -3) . .
+  (add -3). .
   (params@9
    (param@1 :x.1 . .
-    (i@6 64) .)
+    (i@6 64).)
    (param@4 :y.0 . .
-    (i@3 64) .))
+    (i@3 64).))
   (i@D 64)
   (pragmas@Q
-   (magic@2 "AddI"@7)) . .)
+   (magic@2 "AddI"@7)). .)
  (template@,W :plus.0.@9 . . .
   (params@D
    (param@1 :x.2 . .
-    (i@6 64) .)
+    (i@6 64).)
    (param@4 :y.1 . .
-    (i@3 64) .))
-  (i@D 64) . .
+    (i@3 64).))
+  (i@D 64). .
   (stmts@W
    (add@2
-    (i 64) x.2~2 y.1@2)))
+    (i 64)x.2~2 y.1@2)))
  (proc@,Y :foo.0.@5 . . .
   (params@8
    (param@1 :x.3 . .
-    (i@3 64) .)
+    (i@3 64).)
    (param@9 :y.2 . . string.0.sysvq0asl .))
-  (i@L 64) . .
+  (i@L 64). .
   (stmts@2,1
    (result@4 :result.1 . .
-    (i@A,~5 64) .)
+    (i@A,~5 64).)
    (var@4 :x.5 . . string.0.sysvq0asl "abc"@4)
    (asgn@7,1 result.1~7
     (expr@N,~4
      (add@2
-      (i 64) 4~I,4
+      (i 64)4~I,4
       (expr~2
        (add@2
-        (i 64) 2~A,4 89~7,4)))))
+        (i 64)2~A,4 89~7,4)))))
    (asgn@2,2 x.5~2 "34"@2)
    (ret~2,~1 result.1)))
  (proc@,d :overloaded.0.@5 . . .
-  (params@F) . . .
+  (params@F). . .
   (stmts@2,1
    (let@4 :someInt.0 . .
     (i@A,~A 64)
     (add@D
-     (i 64) 23@1 90@5))
+     (i 64)23@1 90@5))
    (discard@,1
     (call@B foo.0.~3
      (add@3
-      (i 64) 34~2 56@1) "xyz"@8))))
+      (i 64)34~2 56@1)"xyz"@8))))
  (type@5,h :uint.0.
-  (u 64) .
+  (u 64).
   (pragmas@6
-   (magic@2 UInt@7)) .)
+   (magic@2 UInt@7)).)
  (template@,j :conv.0.@9 . .
   (typevars@D
    (typevar@1 :T.3. . . . .))
   (params@G
    (param@1 :x.4 . .
-    (i@3 64) .)) T.3.@A . .
+    (i@3 64).))T.3.@A . .
   (stmts@U
    (conv@1 T.3.~1 x.4@1)))
  (glet@4,l :val.0. . .
-  (i 64) 123@6)
+  (i 64)123@6)
  (discard@,m
   (expr@U,~3
    (conv@1
-    (u~I,3 64) val.0.~C,3)))
+    (u~I,3 64)val.0.~C,3)))
  (comment@F,E untyped.0. typedesc.0.@I int.0.@1,G int.0.@1,G int.0.~2,G int.0.@5,I int.0.@5,I int.0.~2,I int.0.~3,K int.0.@6,K int.0.@5,V int.0.@5,A float.0.@4,B plus.0.@8,M plus.0.@,M uint.0.~2,Y conv.0.@3,Y)
  (type@J,O :MyGeneric.0.Iu9y0wv. .
   (at MyGeneric.0.
@@ -149,40 +149,40 @@
   (pragmas)
   (object~2,~4 .
    (fld~D,1 :x.0 . .
-    (i@G,3 64) .)))
+    (i@G,3 64).)))
  (type@I,P :MyGeneric.0.I1hdb4b1. .
   (at MyGeneric.0.
    (f@1 64))
   (pragmas)
   (object~1,~5 .
    (fld~D,1 :x.0 . .
-    (f@F,4 64) .))))(.index@,2,tests/nimony/nosystem/ttemplate.nim
+    (f@F,4 64).))))(.index@,2,tests/nimony/nosystem/ttemplate.nim
  (x@2,1 int.0. 83)
- (x@2,3 float.0. 66)
- (x@2,4 char.0. 70)
- (x@2,6 array.0. 67)
+ (x@2,3 float.0. 64)
+ (x@2,4 char.0. 68)
+ (x@2,6 array.0. 65)
  (h@A,6 Index.0. 45)
  (h@H,6 T.0. 33)
- (x@2,7 typedesc.0. 68)
+ (x@2,7 typedesc.0. 67)
  (h@C,7 T.1. 51)
- (x@2,8 untyped.0. 71)
- (x@E,A TypeOfMode.0. 74)
+ (x@2,8 untyped.0. 70)
+ (x@E,A TypeOfMode.0. 72)
  (x@4,B typeOfProc.0. 53)
  (x@4,C typeOfIter.0. 72)
  (x@2,A dollar`.TypeOfMode.0. 74)
- (x@,E typeof.0. 362)
- (x@A,H string.0. 221)
+ (x@,E typeof.0. 361)
+ (x@A,H string.0. 218)
  (h@F,K MyGeneric.0. 50)
  (h@C,K T.2. 43)
- (h@2,O myglob.0. 79)
+ (h@2,O myglob.0. 78)
  (h@2,P other.0. 52)
- (x@,U \2B.0. 151)
- (h@,W plus.0. 174)
- (h@,Y foo.0. 180)
- (h@,d overloaded.0. 423)
- (x@5,h uint.0. 225)
- (h@,j conv.0. 68)
+ (x@,U \2B.0. 149)
+ (h@,W plus.0. 170)
+ (h@,Y foo.0. 176)
+ (h@,d overloaded.0. 418)
+ (x@5,h uint.0. 221)
+ (h@,j conv.0. 66)
  (h@E,j T.3. 43)
- (h@4,l val.0. 129)
- (h@J,O MyGeneric.0.Iu9y0wv. 315)
- (h@I,P MyGeneric.0.I1hdb4b1. 137))
+ (h@4,l val.0. 127)
+ (h@J,O MyGeneric.0.Iu9y0wv. 313)
+ (h@I,P MyGeneric.0.I1hdb4b1. 136))

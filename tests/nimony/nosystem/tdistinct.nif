@@ -1,32 +1,32 @@
 (.nif27)
-(.indexat 2637             )
+(.indexat 2605             )
 (stmts@,2,tests/nimony/nosystem/tdistinct.nim
  (type@2,1 :int.0.
-  (i 64) .
+  (i 64).
   (pragmas@5
-   (magic@2 Int@7)) .)
+   (magic@2 Int@7)).)
  (type@2,2 :bool.0.
-  (bool) .
+  (bool).
   (pragmas@6
-   (magic@2 Bool@7)) .)
+   (magic@2 Bool@7)).)
  (type@2,3 :char.0.
-  (c 8) .
+  (c 8).
   (pragmas@6
-   (magic@2 Char@7)) .)
+   (magic@2 Char@7)).)
  (type@2,5 :int8.0.
-  (i 8) .
+  (i 8).
   (pragmas@6
-   (magic@2 Int8@7)) .)
+   (magic@2 Int8@7)).)
  (type@2,6 :typedesc.0.
   (typedesc)
   (typevars@9
    (typevar@1 :T.0. . . . .))
   (pragmas@D
-   (magic@2 TypeDesc@7)) .)
+   (magic@2 TypeDesc@7)).)
  (type@2,7 :untyped.0.
-  (untyped) .
+  (untyped).
   (pragmas@9
-   (magic@2 Expr@7)) .)
+   (magic@2 Expr@7)).)
  (type@E,9 :TypeOfMode.0.~C x . .
   (enum@2
    (u 8)
@@ -36,7 +36,7 @@
     (tup 1 "typeOfIter"))))
  (proc@2,9 :dollar`.TypeOfMode.0. x . .
   (params
-   (param :e.0 . . TypeOfMode.0. .)) string.0.sysvq0asl . .
+   (param :e.0 . . TypeOfMode.0. .))string.0.sysvq0asl . .
   (stmts
    (result@E :result.0 . . string.0.sysvq0asl .)
    (case@E e.0
@@ -50,46 +50,46 @@
       (ret "typeOfIter"))))
    (ret result.0)))
  (proc@,D :typeof.0.@5
-  (typeof) . .
+  (typeof). .
   (params@B
    (param@1 :x.0 . .
-    (untyped@3) .)
+    (untyped@3).)
    (param@D :mode.0 . . TypeOfMode.0.~M,~4 typeOfIter.0.@7))
   (typekind@X
    (typedesc))
   (pragmas@r
-   (magic@2 TypeOf@7)) . .)
+   (magic@2 TypeOf@7)). .)
  (type@A,H :string.0.~8 x . . string.0.sysvq0asl)
  (proc@,J :\2B.0.@5
-  (add -3) . .
+  (add -3). .
   (params@9
    (param@1 :x.1 . .
-    (i@6 64) .)
+    (i@6 64).)
    (param@4 :y.0 . .
-    (i@3 64) .))
+    (i@3 64).))
   (i@D 64)
   (pragmas@Q
-   (magic@2 "AddI"@7)) . .)
+   (magic@2 "AddI"@7)). .)
  (proc@,K :\2D.0.@5
-  (sub -3) . .
+  (sub -3). .
   (params@9
    (param@1 :x.2 . .
-    (i@6 64) .)
+    (i@6 64).)
    (param@4 :y.1 . .
-    (i@3 64) .))
+    (i@3 64).))
   (i@D 64)
   (pragmas@Q
-   (magic@2 "SubI"@7)) . .)
+   (magic@2 "SubI"@7)). .)
  (proc@,M :<=.0.@5
-  (le -3) . .
+  (le -3). .
   (params@A
    (param@1 :x.3 . .
-    (i@6 64) .)
+    (i@6 64).)
    (param@4 :y.2 . .
-    (i@3 64) .))
+    (i@3 64).))
   (bool@D)
   (pragmas@S
-   (magic@2 "LeI"@7)) . .)
+   (magic@2 "LeI"@7)). .)
  (type@9,Q :VarId.0.~7 x .
   (pragmas)
   (distinct@2
@@ -97,9 +97,9 @@
  (proc@,S :\2B.1.@5 x . .
   (params@9
    (param@1 :x.4 . . VarId.0.@6 .)
-   (param@4 :y.3 . . VarId.0.@3 .)) VarId.0.@F
+   (param@4 :y.3 . . VarId.0.@3 .))VarId.0.@F
   (pragmas@U
-   (borrow@2)) .
+   (borrow@2)).
   (stmts@9
    (result :result.1 . . VarId.0.@7 .)
    (asgn result.1
@@ -107,9 +107,9 @@
      (add
       (i 64)
       (dconv
-       (i@B,~2 64) x.4)
+       (i@B,~2 64)x.4)
       (dconv
-       (i@B,~2 64) y.3))))
+       (i@B,~2 64)y.3))))
    (ret result.1)))
  (gvar@4,Z :x.0. . . VarId.0.@3 .)
  (asgn@2,b x.0.~2
@@ -117,25 +117,25 @@
  (glet@4,d :y.0. . .
   (i@4 8)
   (conv@8
-   (i~4 8) x.0.@1))
+   (i~4 8)x.0.@1))
  (comment@F,D untyped.0. typedesc.0.@I int.0.@1,6 int.0.@1,6 int.0.~2,6 int.0.@1,7 int.0.@1,7 int.0.~2,7 int.0.@2,9 int.0.@2,9 bool.0.~2,9 int.0.@5,D int8.0.~7,Q))(.index@,2,tests/nimony/nosystem/tdistinct.nim
  (x@2,1 int.0. 83)
- (x@2,2 bool.0. 66)
- (x@2,3 char.0. 68)
- (x@2,5 int8.0. 67)
- (x@2,6 typedesc.0. 67)
+ (x@2,2 bool.0. 64)
+ (x@2,3 char.0. 66)
+ (x@2,5 int8.0. 65)
+ (x@2,6 typedesc.0. 65)
  (h@C,6 T.0. 51)
- (x@2,7 untyped.0. 71)
- (x@E,9 TypeOfMode.0. 74)
+ (x@2,7 untyped.0. 70)
+ (x@E,9 TypeOfMode.0. 72)
  (x@4,A typeOfProc.0. 53)
  (x@4,B typeOfIter.0. 72)
  (x@2,9 dollar`.TypeOfMode.0. 74)
- (x@,D typeof.0. 362)
- (x@A,H string.0. 221)
+ (x@,D typeof.0. 361)
+ (x@A,H string.0. 218)
  (x@,J \2B.0. 50)
- (x@,K \2D.0. 174)
- (x@,M <=.0. 174)
- (x@9,Q VarId.0. 171)
+ (x@,K \2D.0. 170)
+ (x@,M <=.0. 170)
+ (x@9,Q VarId.0. 167)
  (x@,S \2B.1. 67)
- (h@4,Z x.0. 360)
+ (h@4,Z x.0. 356)
  (h@4,d y.0. 87))
