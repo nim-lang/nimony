@@ -197,7 +197,7 @@ proc accessTupField(c: var SynthesizeSerializerCtx; tup: TokenBuf; idx: int): To
 
 proc unravelObjField(c: var SynthesizeSerializerCtx; n: var Cursor; param: TokenBuf; needsDeref: bool; depth: int) =
   let r = takeLocal(n, SkipFinalParRi)
-  assert r.kind == FldY
+  assert r.kind in {FldY, GfldY}
   # create `paramA.field` because we need to do `paramA.field = paramB.field` etc.
   let fieldType = r.typ
   let a = accessObjField(c, param, r.name, needsDeref, depth = depth)
@@ -246,7 +246,7 @@ proc unravelObjFields(c: var SynthesizeSerializerCtx; n: var Cursor; param: Toke
 
       takeParRi(c.dest, n) # end of case
 
-    of FldU:
+    of FldU, GfldU:
       unravelObjField c, n, param, needsDeref, depth
     of NilU:
       skip n

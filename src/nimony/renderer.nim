@@ -431,7 +431,7 @@ proc takeObjectFields(g: var SrcGen, fields: var Cursor) =
   case fields.substructureKind
   of CaseU:
     gcase(g, fields, isCaseObject = true)
-  of FldU:
+  of FldU, GfldU:
     takeField(g, fields)
   else:
     raiseAssert "todo"
@@ -932,7 +932,7 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
         case fields.substructureKind
         of CaseU:
           gcase(g, fields, isCaseObject = true)
-        of FldU:
+        of FldU, GfldU:
           takeField(g, fields)
         else:
           raiseAssert "todo"

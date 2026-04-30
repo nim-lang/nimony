@@ -262,6 +262,7 @@ type
     TypevarU = (ord(TypevarTagId), "typevar")  ## type variable declaration; constraint `.T` is optional
     EfldU = (ord(EfldTagId), "efld")  ## enum field declaration; slot 2 carries the export marker *or* the compile-time value (may be `.`)
     FldU = (ord(FldTagId), "fld")  ## field declaration
+    GfldU = (ord(GfldTagId), "gfld")  ## guarded field declaration, cannot be accessed outside an `of` branch
     WhenU = (ord(WhenTagId), "when")  ## when statement header
     ElifU = (ord(ElifTagId), "elif")  ## pair of (condition, action)
     ElseU = (ord(ElseTagId), "else")  ## `else` action
@@ -279,7 +280,7 @@ type
     FinU = (ord(FinTagId), "fin")  ## finally subsection
 
 proc rawTagIsNimonyOther*(raw: TagEnum): bool {.inline.} =
-  raw in {NilTagId, NotnilTagId, UncheckedTagId, KvTagId, VvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, EfldTagId, FldTagId, WhenTagId, ElifTagId, ElseTagId, TypevarsTagId, CaseTagId, OfTagId, StmtsTagId, ParamsTagId, PragmasTagId, EitherTagId, JoinTagId, UnpackflatTagId, UnpacktupTagId, ExceptTagId, FinTagId}
+  raw in {NilTagId, NotnilTagId, UncheckedTagId, KvTagId, VvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, EfldTagId, FldTagId, GfldTagId, WhenTagId, ElifTagId, ElseTagId, TypevarsTagId, CaseTagId, OfTagId, StmtsTagId, ParamsTagId, PragmasTagId, EitherTagId, JoinTagId, UnpackflatTagId, UnpacktupTagId, ExceptTagId, FinTagId}
 
 type
   NimonyPragma* = enum
@@ -349,10 +350,11 @@ type
     PassCP = (ord(PassCTagId), "passC")  ## `passC` pragma adds options to the backend compiler
     MethodsP = (ord(MethodsTagId), "methods")  ## `methods` pragma lists vtable methods for a type
     SizeP = (ord(SizeTagId), "size")  ## `size` pragma for setting the byte size of a type
-    UncheckedAssignP = (ord(UncheckedAssignTagId), "uncheckedAssign")  ## `uncheckedAssign` marker; only valid inside `{.cast(uncheckedAssign).}:` pragma blocks (semantics TBD)
+    UncheckedAccessP = (ord(UncheckedAccessTagId), "uncheckedAccess")  ## `uncheckedAccess` marker; only valid inside `{.cast(uncheckedAccess).}:` pragma blocks (allows for obj.guardedField outside of an `of` branch)
+    UncheckedAssignP = (ord(UncheckedAssignTagId), "uncheckedAssign")  ## `uncheckedAssign` marker; only valid inside `{.cast(uncheckedAssign).}:` pragma blocks (ignored for Nim compat)
 
 proc rawTagIsNimonyPragma*(raw: TagEnum): bool {.inline.} =
-  raw in {CastTagId, CursorTagId, EmitTagId, UnionTagId, InlineTagId, NoinlineTagId, ClosureTagId, VarargsTagId, SelectanyTagId, AlignTagId, BitsTagId, NodeclTagId, RaisesTagId, UntypedTagId, MagicTagId, ImportcTagId, ImportcppTagId, DynlibTagId, ExportcTagId, HeaderTagId, ThreadvarTagId, GlobalTagId, DiscardableTagId, NoreturnTagId, BorrowTagId, NoSideEffectTagId, NodestroyTagId, PluginTagId, BycopyTagId, ByrefTagId, NoinitTagId, RequiresTagId, EnsuresTagId, AssumeTagId, AssertTagId, BuildTagId, FeatureTagId, StringTagId, ViewTagId, IncompleteStructTagId, InjectTagId, GensymTagId, DirtyTagId, ErrorTagId, ReportTagId, TagsTagId, DeprecatedTagId, SideEffectTagId, KeepOverflowFlagTagId, SemanticsTagId, InheritableTagId, BaseTagId, PureTagId, FinalTagId, AcyclicTagId, PragmaTagId, PackedTagId, PassiveTagId, PushTagId, CallConvTagId, PopTagId, PassLTagId, PassCTagId, MethodsTagId, SizeTagId, UncheckedAssignTagId}
+  raw in {CastTagId, CursorTagId, EmitTagId, UnionTagId, InlineTagId, NoinlineTagId, ClosureTagId, VarargsTagId, SelectanyTagId, AlignTagId, BitsTagId, NodeclTagId, RaisesTagId, UntypedTagId, MagicTagId, ImportcTagId, ImportcppTagId, DynlibTagId, ExportcTagId, HeaderTagId, ThreadvarTagId, GlobalTagId, DiscardableTagId, NoreturnTagId, BorrowTagId, NoSideEffectTagId, NodestroyTagId, PluginTagId, BycopyTagId, ByrefTagId, NoinitTagId, RequiresTagId, EnsuresTagId, AssumeTagId, AssertTagId, BuildTagId, FeatureTagId, StringTagId, ViewTagId, IncompleteStructTagId, InjectTagId, GensymTagId, DirtyTagId, ErrorTagId, ReportTagId, TagsTagId, DeprecatedTagId, SideEffectTagId, KeepOverflowFlagTagId, SemanticsTagId, InheritableTagId, BaseTagId, PureTagId, FinalTagId, AcyclicTagId, PragmaTagId, PackedTagId, PassiveTagId, PushTagId, CallConvTagId, PopTagId, PassLTagId, PassCTagId, MethodsTagId, SizeTagId, UncheckedAccessTagId, UncheckedAssignTagId}
 
 type
   NimonySym* = enum
@@ -371,6 +373,7 @@ type
     TypevarY = (ord(TypevarTagId), "typevar")  ## type variable declaration; constraint `.T` is optional
     EfldY = (ord(EfldTagId), "efld")  ## enum field declaration; slot 2 carries the export marker *or* the compile-time value (may be `.`)
     FldY = (ord(FldTagId), "fld")  ## field declaration
+    GfldY = (ord(GfldTagId), "gfld")  ## guarded field declaration, cannot be accessed outside an `of` branch
     ProcY = (ord(ProcTagId), "proc")  ## proc declaration
     FuncY = (ord(FuncTagId), "func")  ## function declaration
     IteratorY = (ord(IteratorTagId), "iterator")  ## iterator declaration

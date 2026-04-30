@@ -13,13 +13,15 @@ type
     lbl: string
 
 let c: Thing = Circle(radius: 2.5, tag: 42, lbl: "c")
-assert c.radius == 2.5
+{.cast(uncheckedAccess).}:
+  assert c.radius == 2.5
 assert c.tag == 42
 assert c.lbl == "c"
 
 let r: Thing = Rect(w: 3.0, h: 4.0, tag: 0, lbl: "r")
-assert r.w == 3.0
-assert r.h == 4.0
+{.cast(uncheckedAccess).}:
+  assert r.w == 3.0
+  assert r.h == 4.0
 assert r.tag == 0
 assert r.lbl == "r"
 
@@ -32,7 +34,8 @@ proc describe(t: Thing): string =
 
 assert describe(c) == "circle"
 assert describe(r) == "rect"
-assert c.radius == 2.5
-assert r.w == 3.0
+{.cast(uncheckedAccess).}:
+  assert c.radius == 2.5
+  assert r.w == 3.0
 
 echo "tsumtype_shared_after: OK"

@@ -171,14 +171,14 @@ proc addDecl(c: var UntypedCtx; dest: var TokenBuf; name, pragmas: Cursor; k: Sy
     # locals default to 'gensym', fields default to 'inject';
     # `dirty` templates treat every non-param decl as inject:
     if (pragmas.kind != DotToken and symBinding(pragmas) == spInject) or
-        k == FldY or (c.dirty and k != ParamY):
+        k in {FldY, GfldY} or (c.dirty and k != ParamY):
       # even if injected, don't produce a sym choice here:
       #n = semTemplBody(c, n)
       var newNameBuf = createTokenBuf(4)
       let hasParam = getIdentReplaceParams(c, newNameBuf, name)
       var newName = cursorAt(newNameBuf, 0)
       if not hasParam:
-        if k != FldY:
+        if k notin {FldY, GfldY}:
           let ident = takeIdent(newName)
           c.inject(ident)
       else:

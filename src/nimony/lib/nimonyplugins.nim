@@ -4,8 +4,9 @@ import std / [assertions, hashes, syncio]
 from std / os import paramStr
 import ".." / ".." / "lib" / [nifcursors, nifstreams, lineinfos, bitabs]
 
-import ".." / [nimony_model]
+import ".." / [nimony_model, nif_annotations]
 export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther, NifKind, NoLineInfo
+export nif_annotations
 
 type
   NifBuilderObj = object
@@ -758,26 +759,10 @@ proc isNifIdentStart(c: char): bool {.inline.} =
 proc isNifIdentChar(c: char): bool {.inline.} =
   c in {'a'..'z', 'A'..'Z', '0'..'9', '_'}
 
-proc validateConstructedTree(tree: sink NifBuilder): NifBuilder
-
 proc parseNifBuffer(text: string): TokenBuf =
   result = parseFromBuffer(text, "")
   if result.len > 0 and result[result.len-1].kind == EofToken:
     result.shrink(result.len-1)
-
-type
-  ChildShape = enum
-    AnyChild, ExprChild, StmtChild, TypeChild, OtherChild, SymUseChild,
-    SymDefChild, IntLitChild, StringLitChild, CharLitChild
-
-  ValidationError = object
-    found: bool
-    info: PackedLineInfo
-    msg: string
-    orig: Cursor
-
-proc validationError(info: PackedLineInfo; msg: string; orig: Cursor): ValidationError =
-  ValidationError(found: true, info: info, msg: msg, orig: orig)
 
 proc createErrorTree(info: PackedLineInfo; msg: string; orig: Cursor): NifBuilder =
   var buf = createTokenBuf(8)
@@ -790,12 +775,6 @@ proc createErrorTree(info: PackedLineInfo; msg: string): NifBuilder =
   var orig = createTokenBuf(1)
   orig.addDotToken()
   result = createErrorTree(info, msg, cursorAt(orig, 0))
-
-proc errorInfo(n: NifCursor): PackedLineInfo =
-  if hasSubtree(n):
-    n.info
-  else:
-    NoLineInfo
 
 proc errorTree*(msg: string): NifBuilder =
   ## Produces an `ErrT` tree with synthetic line info.
@@ -810,224 +789,11 @@ proc errorTree*(msg: string; at: NifCursor): NifBuilder =
 
 proc errorTree*(msg: string; at, orig: NifCursor): NifBuilder =
   ## Produces an `ErrT` tree located at `at` and embeds `orig` as source.
-  if hasSubtree(orig):
-    createErrorTree(errorInfo(at), msg, orig.cursor)
-  else:
-    createErrorTree(errorInfo(at), msg)
-
-template isSupportedTag(n: Cursor): bool =
-  let raw = tagEnum(n)
-  rawTagIsNimonyExpr(raw) or rawTagIsNimonyStmt(raw) or
-  rawTagIsNimonyType(raw) or rawTagIsNimonyOther(raw) or
-  rawTagIsNimonyPragma(raw) or rawTagIsNimonySym(raw) or
-  rawTagIsControlFlowKind(raw) or rawTagIsCallConv(raw)
-
-proc describeShape(shape: ChildShape): string =
-  case shape
-  of AnyChild: "node"
-  of ExprChild: "expression"
-  of StmtChild: "statement"
-  of TypeChild: "type"
-  of OtherChild: "sub-node"
-  of SymUseChild: "symbol use"
-  of SymDefChild: "symbol definition"
-  of IntLitChild: "integer literal"
-  of StringLitChild: "string literal"
-  of CharLitChild: "character literal"
-
-proc tagText(n: Cursor): string {.inline.} =
-  pool.tags[n.tagId]
-
-proc hasSubtree(n: Cursor): bool {.inline.} =
-  hasCurrentToken(n) and n.kind != ParRi
-
-proc errorInfo(n: Cursor): PackedLineInfo =
-  if hasSubtree(n):
-    n.info
-  else:
-    NoLineInfo
-
-proc matchesShape(n: Cursor; shape: ChildShape): bool =
-  if n.kind == ParLe and n.tagId == ErrT:
-    return true
-  case shape
-  of AnyChild:
-    result = true
-  of ExprChild:
-    case n.kind
-    of ParLe:
-      result = rawTagIsNimonyExpr(tagEnum(n))
-    of Symbol, Ident, IntLit, UIntLit, FloatLit, StringLit, CharLit:
-      result = true
-    else:
-      result = false
-  of StmtChild:
-    result = n.kind == ParLe and
-      (rawTagIsNimonyStmt(tagEnum(n)) or rawTagIsControlFlowKind(tagEnum(n)))
-  of TypeChild:
-    result = n.kind == DotToken or (n.kind == ParLe and rawTagIsNimonyType(tagEnum(n)))
-  of OtherChild:
-    result = n.kind == ParLe and rawTagIsNimonyOther(tagEnum(n))
-  of SymUseChild:
-    result = n.kind in {Symbol, Ident}
-  of SymDefChild:
-    result = n.kind in {SymbolDef, Symbol, Ident}
-  of IntLitChild:
-    result = n.kind in {IntLit, UIntLit}
-  of StringLitChild:
-    result = n.kind == StringLit
-  of CharLitChild:
-    result = n.kind == CharLit
-
-proc consumeRemainingChildren(n: var Cursor) =
-  while n.kind != ParRi:
-    skip n
-  inc n
-
-proc validateChildren(n: var Cursor; parent: Cursor; shapes: openArray[ChildShape];
-    allowMore = false): ValidationError =
-  result = default(ValidationError)
-  for i in 0 ..< shapes.len:
-    if n.kind == ParRi:
-      return validationError(parent.info,
-        "missing child " & $(i + 1) & " for '" & parent.tagText &
-        "': expected " & describeShape(shapes[i]), parent)
-    if not matchesShape(n, shapes[i]):
-      return validationError(errorInfo(n),
-        "invalid child " & $(i + 1) & " for '" & parent.tagText &
-        "': expected " & describeShape(shapes[i]), parent)
-    skip n
-
-  if not allowMore and n.kind != ParRi:
-    return validationError(errorInfo(n),
-      "unexpected child " & $(shapes.len + 1) & " for '" & parent.tagText & "'", parent)
-
-  consumeRemainingChildren(n)
-
-proc validateExpr(n: var Cursor; parent: Cursor): ValidationError =
-  result = default(ValidationError)
-  case parent.exprKind
-  of AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
-      EqX, NeqX, LeX, LtX, AshrX, EqsetX, LesetX, LtsetX, InsetX:
-    result = validateChildren(n, parent, [TypeChild, ExprChild, ExprChild])
-  of BitnotX, CastX, ConvX, HconvX, DconvX, CardX:
-    result = validateChildren(n, parent, [TypeChild, ExprChild])
-  of AtX, PatX, AndX, OrX, XorX, CurlyatX, CopyX, SinkhX, TraceX, IsX:
-    result = validateChildren(n, parent, [ExprChild, ExprChild])
-  of NotX, NegX, DerefX, AddrX, ParX, EmoveX, DestroyX, DupX, WasmovedX,
-      CompilesX, DeclaredX, DefinedX, AstToStrX, HighX, LowX, EnumtostrX,
-      InternalTypeNameX, FailedX:
-    result = validateChildren(n, parent, [ExprChild])
-  of SizeofX, AlignofX, NewrefX, DefaultobjX, DefaulttupX:
-    result = validateChildren(n, parent, [TypeChild])
-  of OffsetofX, InstanceofX, EnvpX:
-    result = validateChildren(n, parent, [TypeChild, ExprChild])
-  of TypeofX, FieldsX, FieldpairsX:
-    result = validateChildren(n, parent, [TypeChild, ExprChild], allowMore = true)
-  of CallX, CmdX, HcallX, ProccallX, CallstrlitX:
-    result = validateChildren(n, parent, [ExprChild], allowMore = true)
-  else:
-    consumeRemainingChildren(n)
-
-proc validateStmt(n: var Cursor; parent: Cursor): ValidationError =
-  result = default(ValidationError)
-  case parent.stmtKind
-  of VarS, LetS, ConstS, GvarS, TvarS, GletS, TletS, CursorS, PatternvarS, ProcS,
-      FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
-      ResultS:
-    result = validateChildren(n, parent, [SymDefChild], allowMore = true)
-  of BlockS:
-    result = validateChildren(n, parent, [AnyChild, StmtChild])
-  else:
-    consumeRemainingChildren(n)
-
-proc validateType(n: var Cursor; parent: Cursor): ValidationError =
-  result = default(ValidationError)
-  case parent.typeKind
-  of ArrayT, RangetypeT:
-    result = validateChildren(n, parent, [TypeChild, ExprChild, ExprChild])
-  of PtrT, RefT, MutT, OutT, LentT, SinkT, DistinctT, TypedescT,
-      UarrayT, SetT:
-    result = validateChildren(n, parent, [TypeChild])
-  of ObjectT:
-    result = validateChildren(n, parent, [TypeChild], allowMore = true)
-  else:
-    consumeRemainingChildren(n)
-
-proc validateSubstructure(n: var Cursor; parent: Cursor): ValidationError =
-  result = default(ValidationError)
-  case parent.substructureKind
-  of RangeU:
-    result = validateChildren(n, parent, [ExprChild, ExprChild])
-  of ParamU, TypevarU, FldU, EfldU:
-    result = validateChildren(n, parent, [SymDefChild], allowMore = true)
-  else:
-    consumeRemainingChildren(n)
-
-proc validatePragma(n: var Cursor; parent: Cursor): ValidationError =
-  result = default(ValidationError)
-  case parent.pragmaKind
-  of PragmaP:
-    result = validateChildren(n, parent, [SymDefChild], allowMore = true)
-  else:
-    consumeRemainingChildren(n)
-
-proc validateShape(n: Cursor): ValidationError =
-  result = default(ValidationError)
-  let parent = n
-  var child = n
-  inc child
-  if parent.exprKind != NoExpr:
-    result = validateExpr(child, parent)
-  elif parent.stmtKind != NoStmt:
-    result = validateStmt(child, parent)
-  elif parent.typeKind != NoType:
-    result = validateType(child, parent)
-  elif parent.substructureKind != NoSub:
-    result = validateSubstructure(child, parent)
-  elif parent.pragmaKind != NoPragma:
-    result = validatePragma(child, parent)
-  else:
-    consumeRemainingChildren(child)
-
-proc validateConstructedNode(n: var Cursor): ValidationError =
-  result = default(ValidationError)
-  var nested = 0
-  while true:
-    case n.kind
-    of ParLe:
-      if n.tagId != ErrT:
-        if not isSupportedTag(n):
-          return validationError(n.info, "unsupported NIF tag '" & n.tagText & "'", n)
-        result = validateShape(n)
-        if result.found:
-          return
-      inc nested
-      inc n
-    of ParRi:
-      dec nested
-      inc n
-      if nested == 0:
-        break
-    else:
-      inc n
-      if nested == 0:
-        break
-
-proc validateConstructedTree(tree: sink NifBuilder): NifBuilder =
-  if tree.isEmpty:
-    return tree
-  var tree = tree
-  var n = snapshot(tree)
-  var current = n.cursor
-  let err = validateConstructedNode(current)
-  if err.found:
-    result = createErrorTree(err.info, err.msg, err.orig)
-  else:
-    result = ensureMove(tree)
+  let info = if hasSubtree(orig): orig.info else: NoLineInfo
+  createErrorTree(info, msg, orig.cursor)
 
 proc parseNifFragment(text: string): NifBuilder =
-  validateConstructedTree(createTree(parseNifBuffer(text)))
+  createTree(parseNifBuffer(text))
 
 proc createTree*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
     kind: K; children: varargs[NifBuilder]): NifBuilder =
@@ -1036,7 +802,6 @@ proc createTree*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
   result.withTree kind, NoLineInfo:
     for child in children:
       result.add(child)
-  result = validateConstructedTree(result)
 
 proc createTree*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
     kind: K; info: LineInfo; children: varargs[NifBuilder]): NifBuilder =
@@ -1045,7 +810,6 @@ proc createTree*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
   result.withTree kind, info:
     for child in children:
       result.add(child)
-  result = validateConstructedTree(result)
 
 proc lookupBinding(bindings: openArray[NifBinding]; name: string): int =
   var i = bindings.len - 1
@@ -1072,7 +836,7 @@ proc parseNifTemplate(spec: string; bindings: openArray[NifBinding]): NifBuilder
       literal.add spec[i]
       inc i
     elif i + 1 >= spec.len:
-      return createErrorTree(NoLineInfo, "invalid nif substitution syntax")
+      return errorTree("invalid nif substitution syntax")
     elif spec[i + 1] == '$':
       literal.add '$'
       inc i, 2
@@ -1085,14 +849,14 @@ proc parseNifTemplate(spec: string; bindings: openArray[NifBinding]): NifBuilder
       setLen(literal, 0)
       let binding = lookupBinding(bindings, substr(spec, start, i - 1))
       if binding < 0:
-        return createErrorTree(NoLineInfo,
+        return errorTree(
           "missing nif substitution: " & substr(spec, start, i - 1))
       appendTree(buf, bindings[binding].value)
     else:
-      return createErrorTree(NoLineInfo, "invalid nif substitution syntax")
+      return errorTree("invalid nif substitution syntax")
 
   appendParsedText(buf, literal)
-  result = validateConstructedTree(createTree(buf))
+  result = createTree(buf)
 
 proc renderNode*(n: NifCursor): string =
   ## Renders the current token or subtree as raw NIF text for debugging.

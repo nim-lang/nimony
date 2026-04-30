@@ -180,7 +180,7 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
   of TypevarY:
     discard semLocalType(c, dest, n, InGenericConstraint)
     wantDot c, dest, n
-  of ParamY, LetY, VarY, ConstY, CursorY, PatternvarY, ResultY, FldY, GletY, TletY, GvarY, TvarY:
+  of ParamY, LetY, VarY, ConstY, CursorY, PatternvarY, ResultY, FldY, GfldY, GletY, TletY, GvarY, TvarY:
     beforeType = dest.len
     if n.kind == DotToken:
       # no explicit type given:
@@ -252,7 +252,9 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
       copyKeepLineInfo dest[declStart], parLeToken(TvarS, NoLineInfo)
     elif GlobalP in crucial.flags or c.currentScope.kind == ToplevelScope:
       copyKeepLineInfo dest[declStart], parLeToken(GvarS, NoLineInfo)
-  if kind != FldY:
+  elif kind == GfldY:
+    copyKeepLineInfo dest[declStart], parLeToken(GfldY, NoLineInfo)
+  if kind notin {FldY, GfldY}:
     publish c, dest, delayed.s.name, declStart
 
 proc semLocal(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind) =

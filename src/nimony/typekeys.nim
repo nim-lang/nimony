@@ -22,7 +22,7 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
     case c.kind
     of ParLe:
       let tag {.cursor.} = pool.tags[c.tagId]
-      if c.substructureKind == FldU:
+      if c.substructureKind in {FldU, GfldU}:
         inc c
         skip c, SkipName # name
         skip c, SkipExport # export marker

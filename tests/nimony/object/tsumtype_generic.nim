@@ -3,26 +3,31 @@ import deps/msumtype_generic
 
 # Explicit type annotation with imported generic sum type:
 let a: Option[int] = Some(val: 42)
-assert a.val == 42
+{.cast(uncheckedAccess).}:
+  assert a.val == 42
 
 let c: Option[int] = None()
 
 # Cross-module type inference from field values:
 let d = Some(val: 99)
-assert d.val == 99
+{.cast(uncheckedAccess).}:
+  assert d.val == 99
 
 let e = Some(val: "hello")
-assert e.val == "hello"
+{.cast(uncheckedAccess).}:
+  assert e.val == "hello"
 
 # Explicit type on constructor:
 let b = Option[int](Some(val: 10))
-assert b.val == 10
+{.cast(uncheckedAccess).}:
+  assert b.val == 10
 
 # Either needs explicit annotation since one branch can't infer the other param:
 let f: Either[int, string] = Left(a: 42)
 let g: Either[int, string] = Right(b: "world")
-assert f.a == 42
-assert g.b == "world"
+{.cast(uncheckedAccess).}:
+  assert f.a == 42
+  assert g.b == "world"
 
 # Generic object constructor inference (non-sum type):
 let p = Pair(first: 1, second: 2)
