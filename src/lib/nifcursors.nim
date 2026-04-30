@@ -667,11 +667,27 @@ template copyIntoUnchecked*(dest: var TokenBuf; tag: string; info: PackedLineInf
   dest.addParRi()
 
 proc parse*(r: var Stream; dest: var TokenBuf;
-            parentInfo: PackedLineInfo; debug: bool = false) =
-  r.parents[0] = parentInfo
+            entryInfo: PackedLineInfo; debug: bool = false) =
+  ## Read tokens from `r` into `dest`, treating `entryInfo` as the absolute
+  ## line/file info of the first token to be read (typically the ParLe of an
+  ## indexed top-level decl). NIF27 stores per-token line info as a postfix
+  ## suffix that encodes the diff from the source-tree parent — but when we
+  ## jump straight to the symbol's offset via the embedded index, that source
+  ## parent is not on the stack. So we override the first ParLe's computed
+  ## info with `entryInfo` and pin `entryInfo` as the parent on the stack so
+  ## children's diffs resolve correctly.
+  r.parents[0] = entryInfo
   var nested = 0
+  # Only override when the caller actually provided an index-entry info; for
+  # `parseFromFile`/`parseFromBuffer` the parent is `NoLineInfo` and the first
+  # token's line info is meaningful (typically a `(stmts@,1,file.nim ...)` root).
+  var firstParLeFixed = not entryInfo.isValid
   while true:
-    let tok = r.next()
+    var tok = r.next()
+    if not firstParLeFixed and tok.kind == ParLe:
+      tok = tok.withLineInfo(entryInfo)
+      r.parents[^1] = entryInfo
+      firstParLeFixed = true
     dest.add tok
     if debug:
       echo "parsing ", toString([tok], false)
