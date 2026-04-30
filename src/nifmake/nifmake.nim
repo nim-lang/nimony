@@ -90,8 +90,8 @@ proc skipParRi(n: var Cursor) =
   if n.kind == ParRi:
     inc n
   else:
-    writeStackTrace()
-    echo toString([n.load()])
+    #writeStackTrace()
+    #echo toString([n.load()])
     quit "Expected ')' but found: " & $n.kind
 
 proc addSpace(result: var string) {.inline.} =

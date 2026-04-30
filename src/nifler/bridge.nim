@@ -145,23 +145,49 @@ proc relLineInfo(n, parent: PNode; c: var TranslationContext;
   let lineDiff = int32(i.line) - int32(p.line)
   c.b.addLineInfo colDiff, lineDiff, ""
 
-proc addIntLit*(b: var Builder; u: BiggestInt; suffix: string) =
-  assert suffix.len > 0
-  b.withTree SufL:
-    b.addIntLit u
-    b.addStrLit suffix
+proc lineInfoArgs(n, parent: PNode; c: var TranslationContext): (int32, int32, string) =
+  ## Compute (col, line, file) suitable for inline-info builder calls. Mirrors
+  ## the file-vs-diff logic of `relLineInfo`. Returns zeros when line-info
+  ## emission is disabled.
+  if not c.lineInfoEnabled: return (0'i32, 0'i32, "")
+  let i = n.info
+  if parent == nil or i.fileIndex != parent.info.fileIndex:
+    var fp = toFullPath(c.conf, i.fileIndex)
+    if c.portablePaths:
+      fp = relativePath(fp, getCurrentDir(), '/')
+    return (int32(i.col), int32(i.line), fp)
+  let p = parent.info
+  return (int32(i.col) - int32(p.col), int32(i.line) - int32(p.line), "")
 
-proc addUIntLit*(b: var Builder; u: BiggestUInt; suffix: string) =
+proc addIntLit*(b: var Builder; u: BiggestInt; suffix: string;
+                col: int32 = 0; line: int32 = 0; file = "") =
   assert suffix.len > 0
-  b.withTree SufL:
-    b.addUIntLit u
-    b.addStrLit suffix
+  b.addTree SufL
+  if col != 0 or line != 0 or file.len > 0:
+    b.attachLineInfo(col, line, file)
+  b.addIntLit u
+  b.addStrLit suffix
+  b.endTree()
 
-proc addFloatLit*(b: var Builder; u: BiggestFloat; suffix: string) =
+proc addUIntLit*(b: var Builder; u: BiggestUInt; suffix: string;
+                 col: int32 = 0; line: int32 = 0; file = "") =
   assert suffix.len > 0
-  b.withTree SufL:
-    b.addFloatLit u
-    b.addStrLit suffix
+  b.addTree SufL
+  if col != 0 or line != 0 or file.len > 0:
+    b.attachLineInfo(col, line, file)
+  b.addUIntLit u
+  b.addStrLit suffix
+  b.endTree()
+
+proc addFloatLit*(b: var Builder; u: BiggestFloat; suffix: string;
+                  col: int32 = 0; line: int32 = 0; file = "") =
+  assert suffix.len > 0
+  b.addTree SufL
+  if col != 0 or line != 0 or file.len > 0:
+    b.attachLineInfo(col, line, file)
+  b.addFloatLit u
+  b.addStrLit suffix
+  b.endTree()
 
 type IdentDefName = object
   name, visibility, pragma: PNode
@@ -211,68 +237,69 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     assert allowEmpty, "unexpected nkEmpty"
     c.b.addEmpty 1
   of nkNilLit:
+    c.b.addTree "nil"
     relLineInfo(n, parent, c)
-    c.b.addKeyw "nil"
+    c.b.endTree()
   of nkStrLit:
-    relLineInfo(n, parent, c)
     c.b.addStrLit n.strVal
+    relLineInfo(n, parent, c)
   of nkRStrLit:
-    relLineInfo(n, parent, c)
-    c.b.addStrLit n.strVal, "R"
+    let (col, line, file) = lineInfoArgs(n, parent, c)
+    c.b.addStrLit(n.strVal, "R", col, line, file)
   of nkTripleStrLit:
-    relLineInfo(n, parent, c)
-    c.b.addStrLit n.strVal, "T"
+    let (col, line, file) = lineInfoArgs(n, parent, c)
+    c.b.addStrLit(n.strVal, "T", col, line, file)
   of nkCharLit:
-    relLineInfo(n, parent, c)
     c.b.addCharLit char(n.intVal)
-  of nkIntLit:
-    relLineInfo(n, parent, c, true)
-    c.b.addIntLit n.intVal
-  of nkInt8Lit:
-    relLineInfo(n, parent, c, true)
-    c.b.addIntLit n.intVal, "i8"
-  of nkInt16Lit:
-    relLineInfo(n, parent, c, true)
-    c.b.addIntLit n.intVal, "i16"
-  of nkInt32Lit:
-    relLineInfo(n, parent, c, true)
-    c.b.addIntLit n.intVal, "i32"
-  of nkInt64Lit:
-    relLineInfo(n, parent, c, true)
-    c.b.addIntLit n.intVal, "i64"
-  of nkUIntLit:
-    relLineInfo(n, parent, c, true)
-    c.b.addUIntLit cast[BiggestUInt](n.intVal)
-  of nkUInt8Lit:
-    relLineInfo(n, parent, c, true)
-    c.b.addUIntLit cast[BiggestUInt](n.intVal), "u8"
-  of nkUInt16Lit:
-    relLineInfo(n, parent, c, true)
-    c.b.addUIntLit cast[BiggestUInt](n.intVal), "u16"
-  of nkUInt32Lit:
-    relLineInfo(n, parent, c, true)
-    c.b.addUIntLit cast[BiggestUInt](n.intVal), "u32"
-  of nkUInt64Lit:
-    relLineInfo(n, parent, c, true)
-    c.b.addUIntLit cast[BiggestUInt](n.intVal), "u64"
-  of nkFloatLit:
-    relLineInfo(n, parent, c, true)
-    c.b.addFloatLit n.floatVal
-  of nkFloat32Lit:
-    relLineInfo(n, parent, c, true)
-    c.b.addFloatLit n.floatVal, "f32"
-  of nkFloat64Lit:
-    relLineInfo(n, parent, c, true)
-    c.b.addFloatLit n.floatVal, "f64"
-  of nkFloat128Lit:
-    relLineInfo(n, parent, c, true)
-    c.b.addFloatLit n.floatVal, "f128"
-  of nkIdent:
-    relLineInfo(n, parent, c, true)
-    c.b.addIdent n.ident.s
-  of nkTypeDef:
     relLineInfo(n, parent, c)
+  of nkIntLit:
+    c.b.addIntLit n.intVal
+    relLineInfo(n, parent, c, true)
+  of nkInt8Lit:
+    let (col, line, file) = lineInfoArgs(n, parent, c)
+    c.b.addIntLit(n.intVal, "i8", col, line, file)
+  of nkInt16Lit:
+    let (col, line, file) = lineInfoArgs(n, parent, c)
+    c.b.addIntLit(n.intVal, "i16", col, line, file)
+  of nkInt32Lit:
+    let (col, line, file) = lineInfoArgs(n, parent, c)
+    c.b.addIntLit(n.intVal, "i32", col, line, file)
+  of nkInt64Lit:
+    let (col, line, file) = lineInfoArgs(n, parent, c)
+    c.b.addIntLit(n.intVal, "i64", col, line, file)
+  of nkUIntLit:
+    c.b.addUIntLit cast[BiggestUInt](n.intVal)
+    relLineInfo(n, parent, c, true)
+  of nkUInt8Lit:
+    let (col, line, file) = lineInfoArgs(n, parent, c)
+    c.b.addUIntLit(cast[BiggestUInt](n.intVal), "u8", col, line, file)
+  of nkUInt16Lit:
+    let (col, line, file) = lineInfoArgs(n, parent, c)
+    c.b.addUIntLit(cast[BiggestUInt](n.intVal), "u16", col, line, file)
+  of nkUInt32Lit:
+    let (col, line, file) = lineInfoArgs(n, parent, c)
+    c.b.addUIntLit(cast[BiggestUInt](n.intVal), "u32", col, line, file)
+  of nkUInt64Lit:
+    let (col, line, file) = lineInfoArgs(n, parent, c)
+    c.b.addUIntLit(cast[BiggestUInt](n.intVal), "u64", col, line, file)
+  of nkFloatLit:
+    let (col, line, file) = lineInfoArgs(n, parent, c)
+    c.b.addFloatLit(n.floatVal, col, line, file)
+  of nkFloat32Lit:
+    let (col, line, file) = lineInfoArgs(n, parent, c)
+    c.b.addFloatLit(n.floatVal, "f32", col, line, file)
+  of nkFloat64Lit:
+    let (col, line, file) = lineInfoArgs(n, parent, c)
+    c.b.addFloatLit(n.floatVal, "f64", col, line, file)
+  of nkFloat128Lit:
+    let (col, line, file) = lineInfoArgs(n, parent, c)
+    c.b.addFloatLit(n.floatVal, "f128", col, line, file)
+  of nkIdent:
+    c.b.addIdent n.ident.s
+    relLineInfo(n, parent, c, true)
+  of nkTypeDef:
     c.b.addTree TypeL
+    relLineInfo(n, parent, c)
     let split = splitIdentDefName(n[0])
 
     toNif(split.name, n, c)
@@ -312,8 +339,8 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
 
   of nkFormalParams:
     c.section = ParamL
-    relLineInfo(n, parent, c)
     c.b.addTree(ParamsL)
+    relLineInfo(n, parent, c)
     for i in 1..<n.len:
       toNif(n[i], n, c)
     c.b.endTree()
@@ -321,8 +348,8 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     toNif(n[0], n, c, allowEmpty = true)
   of nkGenericParams:
     c.section = TypevarL
-    relLineInfo(n, parent, c)
     c.b.addTree(TypevarsL)
+    relLineInfo(n, parent, c)
     for i in 0..<n.len:
       toNif(n[i], n, c)
     c.b.endTree()
@@ -332,8 +359,8 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     assert c.section != NiflerKind.None
     let last = n.len-1
     for i in 0..last - 2:
-      relLineInfo(n[i], parent, c)
       c.b.addTree(c.section)
+      relLineInfo(n[i], parent, c)
       # flatten it further:
       let split = splitIdentDefName(n[i])
 
@@ -354,15 +381,15 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       toNif(n[last], n[i], c, allowEmpty = true) # value
       c.b.endTree()
   of nkDo:
-    relLineInfo(n, parent, c)
     c.b.addTree(DoL)
+    relLineInfo(n, parent, c)
     toNif(n[paramsPos], n, c, allowEmpty = true)
     toNif(n[bodyPos], n, c)
     c.b.endTree()
   of nkLambda:
-    relLineInfo(n, parent, c)
     c.b.addTree(ProcL)
     c.b.addEmpty # adds name placeholder
+    relLineInfo(n, parent, c)
     for i in 0..<n.len:
       toNif(n[i], n, c, allowEmpty = true)
     c.b.endTree()
@@ -370,30 +397,30 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     if n.len == 1:
       toNif(n[0], parent, c)
     else:
-      relLineInfo(n, parent, c)
       c.b.addTree(ParL)
+      relLineInfo(n, parent, c)
       for i in 0..<n.len:
         toNif(n[i], n, c)
       c.b.endTree()
   of nkOfBranch:
-    relLineInfo(n, parent, c)
     c.b.addTree(OfL)
     c.b.addTree(RangesL)
+    relLineInfo(n, parent, c)
     for i in 0..<n.len-1:
       toNif(n[i], n, c)
     c.b.endTree()
     handleCaseIdentDefs(n[n.len-1], n, c)
     c.b.endTree()
   of nkElse:
-    relLineInfo(n, parent, c)
     c.b.addTree(ElseL)
+    relLineInfo(n, parent, c)
     handleCaseIdentDefs(n[n.len-1], n, c)
     c.b.endTree()
 
   of nkStmtListType, nkStmtListExpr:
-    relLineInfo(n, parent, c)
     c.b.addTree(ExprL)
     c.b.addTree(StmtsL)
+    relLineInfo(n, parent, c)
     for i in 0..<n.len-1:
       toNif(n[i], n, c)
     c.b.endTree()
@@ -404,11 +431,11 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     c.b.endTree()
 
   of nkProcTy, nkIteratorTy:
-    relLineInfo(n, parent, c)
     if n.kind == nkProcTy:
       c.b.addTree(ProctypeL)
     else:
       c.b.addTree(ItertypeL)
+    relLineInfo(n, parent, c)
 
     if n.len == 0:
       # it's a type class
@@ -441,12 +468,13 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     #   Empty      # pragmas
     #   EnumType
     #   (Integer value, "string value")
-    relLineInfo(n, parent, c)
     if n.len == 0:
       # typeclass, compiles to identifier for nimony
       c.b.addIdent "enum"
+      relLineInfo(n, parent, c)
     else:
       c.b.addTree(EnumL)
+      relLineInfo(n, parent, c)
       assert n[0].kind == nkEmpty
       c.b.addEmpty # base type
       for i in 1..<n.len:
@@ -474,9 +502,9 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
           pragma = nil
           val = nil
 
-        relLineInfo(it, n, c)
-
         c.b.addTree(EfldL)
+
+        relLineInfo(it, n, c)
 
         toNif name, it, c
         c.b.addEmpty # export marker
@@ -497,8 +525,8 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       c.b.endTree()
 
   of nkProcDef, nkFuncDef, nkConverterDef, nkMacroDef, nkTemplateDef, nkIteratorDef, nkMethodDef:
-    relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
+    relLineInfo(n, parent, c)
 
     if n.kind == nkIteratorDef and n[0].kind == nkEmpty:
       # Anonymous iterator expression
@@ -526,9 +554,9 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       c.b.endTree()
 
   of nkVarTuple:
-    relLineInfo(n, parent, c)
     assert n[n.len-2].kind == nkEmpty
     c.b.addTree(UnpackdeclL)
+    relLineInfo(n, parent, c)
     toNif(n[n.len-1], n, c, allowEmpty = true)
 
     c.b.addTree(UnpacktupL)
@@ -556,8 +584,8 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     c.b.endTree()
 
   of nkForStmt:
-    relLineInfo(n, parent, c)
     c.b.addTree(ForL)
+    relLineInfo(n, parent, c)
 
     toNif(n[n.len-2], n, c) # iterator
 
@@ -582,8 +610,8 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     c.b.endTree()
 
   of nkRefTy, nkPtrTy:
-    relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
+    relLineInfo(n, parent, c)
     for i in 0..<n.len:
       toNif(n[i], n, c)
     c.b.endTree()
@@ -591,8 +619,8 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
   of nkObjectTy:
     let kind = nodeKindTranslation(n.kind)
     c.section = FldL
-    relLineInfo(n, parent, c)
     c.b.addTree(kind)
+    relLineInfo(n, parent, c)
     for i in 0..<n.len-3:
       toNif(n[i], n, c, allowEmpty = true)
     # n.len-3: pragmas: must be empty (it is deprecated anyway)
@@ -615,15 +643,15 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     c.b.endTree()
 
   of nkTupleTy, nkTupleClassTy:
-    relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
+    relLineInfo(n, parent, c)
     for i in 0..<n.len:
       assert n[i].kind == nkIdentDefs
       let def = n[i]
       let last = def.len - 1
       for j in 0..last - 2:
-        relLineInfo(def[j], parent, c)
         c.b.addTree(KvL)
+        relLineInfo(def[j], parent, c)
         let split = splitIdentDefName(def[j])
 
         toNif(split.name, def[j], c) # name
@@ -635,8 +663,8 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
 
   of nkImportStmt, nkFromStmt, nkExportStmt, nkExportExceptStmt, nkImportAs, nkImportExceptStmt, nkIncludeStmt:
     # the usual recursion:
-    relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
+    relLineInfo(n, parent, c)
     for i in 0..<n.len:
       toNif(n[i], n, c)
     c.b.endTree()
@@ -648,8 +676,8 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       swap c.b, c.deps
       c.depsEnabled = false
 
-      relLineInfo(n, nil, c)
       c.b.addTree(nodeKindTranslation(n.kind))
+      relLineInfo(n, nil, c)
       if c.whenCondStack.len > 0:
         # Conditional dependency: emit `(when COND...)` so the dep analyzer
         # can evaluate the condition against the active set of `defined(...)`
@@ -669,30 +697,30 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     let oldDepsEnabled = c.depsEnabled
     if n.len > 0 and n[0].kind == nkIdent and n[0].ident.s == "runnableExamples":
       c.depsEnabled = false
-    relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
+    relLineInfo(n, parent, c)
     for i in 0..<n.len:
       toNif(n[i], n, c)
     c.b.endTree()
     c.depsEnabled = oldDepsEnabled
   of nkDiscardStmt, nkBreakStmt, nkContinueStmt, nkReturnStmt, nkRaiseStmt,
       nkBlockStmt, nkBlockExpr, nkBlockType, nkTypeClassTy, nkAsmStmt:
-    relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
+    relLineInfo(n, parent, c)
     for i in 0..<n.len:
       toNif(n[i], n, c, allowEmpty = true)
     c.b.endTree()
   of nkExceptBranch:
-    relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
+    relLineInfo(n, parent, c)
     if n.len == 1:
       c.b.addEmpty 1
     for i in 0..<n.len:
       toNif(n[i], n, c)
     c.b.endTree()
   of nkWhenStmt:
-    relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
+    relLineInfo(n, parent, c)
     # Walk children manually so we can push each branch's condition onto
     # `whenCondStack` before recursing into the body. Imports nested in the
     # body then carry the condition into the deps file. We deliberately do
@@ -703,8 +731,8 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       let branch = n[i]
       case branch.kind
       of nkElifBranch, nkElifExpr:
-        relLineInfo(branch, n, c)
         c.b.addTree(nodeKindTranslation(branch.kind))
+        relLineInfo(branch, n, c)
         if branch.len >= 2:
           toNif(branch[0], branch, c)  # condition (also serialised here)
           c.whenCondStack.add branch[0]
@@ -720,15 +748,15 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
         toNif(branch, n, c)
     c.b.endTree()
   of nkCast:
-    relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
+    relLineInfo(n, parent, c)
     toNif(n[0], n, c, allowEmpty = true)
     for i in 1..<n.len:
       toNif(n[i], n, c)
     c.b.endTree()
   else:
-    relLineInfo(n, parent, c)
     c.b.addTree(nodeKindTranslation(n.kind))
+    relLineInfo(n, parent, c)
     for i in 0..<n.len:
       toNif(n[i], n, c)
     c.b.endTree()

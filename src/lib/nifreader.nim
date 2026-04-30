@@ -440,6 +440,13 @@ proc next*(r: var Reader; result: var ExpandedToken) =
       else:
         result.tk = Ident
       handleSuffix(r, result)
+    else:
+      # Stray control character we don't otherwise handle (e.g. `[`, `]`, `~`).
+      # Consume it to avoid an infinite loop and surface it as UnknownToken so
+      # callers can flag the malformed input.
+      result.data.p = r.p
+      result.data.len = 1
+      inc r.p
 
 proc next*(r: var Reader): ExpandedToken {.deprecated: "use the other next instead".} =
   result = default(ExpandedToken)
