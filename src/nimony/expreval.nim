@@ -1020,7 +1020,7 @@ proc findObjectField(objType: Cursor; fieldSym: SymId; typ: var Cursor; exported
   var iter = initObjFieldIter()
   while nextField(iter, n):
     let r = takeLocal(n, SkipFinalParRi)
-    if r.kind == FldY and r.name.kind == SymbolDef and r.name.symId == fieldSym:
+    if r.kind in {FldY, GfldY} and r.name.kind == SymbolDef and r.name.symId == fieldSym:
       typ = r.typ
       exported = r.exported.kind != DotToken
       return true

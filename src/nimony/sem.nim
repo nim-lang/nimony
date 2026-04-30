@@ -110,7 +110,7 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
         skipParRi it
       of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, EfldU, FldU,
          WhenU, TypevarsU, CaseU, OfU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
-         UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU:
+         UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU:
         error "illformed AST: `elif` or `else` inside `if` expected, got ", it
     # all branches are discardable
     result = true
@@ -138,7 +138,7 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
         skipParRi it
       of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, EfldU, FldU,
          WhenU, TypevarsU, CaseU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
-         UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU:
+         UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU:
         error "illformed AST: `of`, `elif` or `else` inside `case` expected, got ", it
     # all branches are discardable
     result = true
@@ -206,6 +206,8 @@ type
                     ## certifying the field access was hygiene-checked in
                     ## the field's owner module; skip the visibility check
                     ## during re-semcheck
+    BypassGuardedCheck  ## input (dot ...) had a resolved Symbol for the field,
+                        ## meaning it was already validated in a prior semcheck pass
 
   TransformedCallSource = enum
     RegularCall, MethodCall,
@@ -431,7 +433,7 @@ proc subs(c: var SemContext; dest: var TokenBuf; sc: var SubsContext; body: Curs
         sc.newVars[s] = newDef
         dest.add symdefToken(newDef, n.info)
     of ParLe:
-      isField = n.substructureKind == FldU
+      isField = n.substructureKind in {FldU, GfldU}
       dest.add n
       inc nested
     of ParRi:
@@ -1074,7 +1076,8 @@ proc findObjFieldAux(c: var SemContext; t: Cursor; name: StrId; bindings: Table[
   skip n, SkipType # skip basetype
   var iter = initObjFieldIter()
   while nextField(iter, n):
-    inc n # skip FldU
+    let isGuarded = n.substructureKind == GfldU
+    inc n # skip FldU/GfldU
     if n.kind == SymbolDef and sameIdent(n.symId, name):
       let symId = n.symId
       inc n # skip name
@@ -1087,7 +1090,7 @@ proc findObjFieldAux(c: var SemContext; t: Cursor; name: StrId; bindings: Table[
         # for invoked object types, bindings are built from the given arguments
         # and the field type is instantiated based on them here
         typ = instantiateType(c, typ, bindings)
-      return ObjField(sym: symId, level: level, typ: typ, exported: exported, rootOwner: SymId(0))
+      return ObjField(sym: symId, level: level, typ: typ, exported: exported, guarded: isGuarded, rootOwner: SymId(0))
     skip n, SkipName # skip name
     skip n, SkipExport # skip export marker
     skip n, SkipPragmas # skip pragmas
@@ -1207,7 +1210,13 @@ proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Ite
           let bindings = bindInvokeArgs(decl, invokeArgs)
           let field = findObjFieldConsiderVis(c, decl, fieldName, bindings,
                                               bypassVis = BypassFieldVis in flags)
-          if field.level >= 0:
+          if field.level >= 0 and field.guarded and c.inUncheckedAccess == 0 and
+              BypassGuardedCheck notin flags:
+            dest.shrink exprStart
+            c.buildErr dest, info,
+              "field '" & pool.strings[fieldName] & "' can only be accessed in a pattern matching `case` branch"
+            result = InvalidDot
+          elif field.level >= 0:
             result = MatchedDotField
             if doDeref:
               dest[exprStart] = parLeToken(DdotX, info)
@@ -1303,6 +1312,8 @@ proc semDot(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[SemF
   # optional access-token StringLit — `"x"` — certifies this dot expression
   # was already type-checked with visibility in the field's owner module.
   var innerFlags = flags
+  if fieldNameCursor.kind == Symbol:
+    innerFlags.incl BypassGuardedCheck
   if it.n.kind == StringLit:
     innerFlags.incl BypassFieldVis
     inc it.n
@@ -1626,6 +1637,11 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     inc n
     if hasParRi:
       while n.kind != ParRi: skip n
+  of UncheckedAccessP:
+    buildErr c, dest, n.info, "`uncheckedAccess` is only valid inside `{.cast(uncheckedAccess).}:` pragma blocks"
+    inc n
+    if hasParRi:
+      while n.kind != ParRi: skip n
   of RaisesP:
     crucial.flags.incl pk
     let oldLen = dest.len
@@ -1915,6 +1931,7 @@ type
   SemObjectState = object
     isExported: bool
     isAnum: bool
+    guarded: bool # true when inside a case with DotToken selector (sum type)
     ownerSym: SymId
 
 proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: WhenMode;
@@ -2749,7 +2766,7 @@ proc findBranchFields(objTypeSym: SymId; efldSym: SymId): seq[SumTypeBranchField
   if body.typeKind != ObjectT: return
   let obj = asObjectDecl(body)
   var n = obj.firstField
-  while n.substructureKind == FldU:
+  while n.substructureKind in {FldU, GfldU}:
     skip n
   if n.substructureKind != CaseU: return
   inc n
@@ -2771,7 +2788,7 @@ proc findBranchFields(objTypeSym: SymId; efldSym: SymId): seq[SumTypeBranchField
       if found and n.substructureKind == StmtsU:
         inc n
         while n.kind != ParRi:
-          if n.substructureKind == FldU:
+          if n.substructureKind in {FldU, GfldU}:
             let f = asLocal(n)
             result.add SumTypeBranchField(sym: f.name.symId, typ: f.typ)
           skip n
@@ -4078,7 +4095,7 @@ proc caseBranchMatchesExpr(c: var SemContext; dest: var TokenBuf; branch, matche
       skipParRi(branch)
     of NoSub, NilU, NotnilU, KvU, VvU, RangesU, ParamU, TypevarU, EfldU, FldU,
        WhenU, ElifU, ElseU, TypevarsU, CaseU, OfU, StmtsU, ParamsU, PragmasU,
-       EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU:
+       EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU:
       if sameTrees(branch, matched):
         return true
       skip branch
@@ -4156,7 +4173,7 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         skipParRi n
       of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, EfldU, FldU,
          WhenU, ElifU, TypevarsU, CaseU, StmtsU, ParamsU, PragmasU,
-         EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU:
+         EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU:
         error "illformed AST inside case object: ", n
 
   if selectorSymId notin setFields:
@@ -4505,7 +4522,7 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
         if fieldNameCursor.kind == Symbol:
           let sym = fieldNameCursor.symId
           let res = tryLoadSym(sym)
-          if res.status == LacksNothing and res.decl.substructureKind == FldU:
+          if res.status == LacksNothing and res.decl.substructureKind in {FldU, GfldU}:
             # trust that it belongs to this object for now
             # level is either given or 0
             hasFieldSym = true
@@ -5451,13 +5468,13 @@ proc semCastInnerPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let pk = n.pragmaKind
   case pk
-  of NoSideEffectP, UncheckedAssignP:
+  of NoSideEffectP, UncheckedAssignP, UncheckedAccessP:
     dest.add parLeToken(pk, info)
     dest.addParRi()
     if n.kind == ParLe: skip n
     else: inc n
   else:
-    buildErr c, dest, info, "invalid `cast` pragma argument; expected `noSideEffect` or `uncheckedAssign`"
+    buildErr c, dest, info, "invalid `cast` pragma argument; expected `noSideEffect`, `uncheckedAssign` or `uncheckedAccess`"
     if n.kind == ParLe: skip n
     else: inc n
 
@@ -5702,15 +5719,39 @@ proc semCardSet(c: var SemContext; dest: var TokenBuf; it: var Item) =
   it.typ = c.types.intType
   commonType c, dest, it, beforeExpr, expected
 
+proc hasCastUncheckedAccess(n: Cursor): bool =
+  ## Scan the pragma list to see if it contains `{.cast(uncheckedAccess).}`.
+  result = false
+  var scan = n
+  var nested = 0
+  while true:
+    case scan.kind
+    of ParLe:
+      if scan.pragmaKind == UncheckedAccessP:
+        return true
+      inc nested
+      inc scan
+    of ParRi:
+      dec nested
+      if nested == 0: return false
+      inc scan
+    else:
+      inc scan
+
 proc semPragmaExpr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   dest.takeToken it.n
   assert it.n.stmtKind == PragmasS
+  let hasUncheckedAccess = hasCastUncheckedAccess(it.n.firstSon)
   dest.takeToken it.n
   while it.n.kind != ParRi:
     semPragmaLine c, dest, it, true
   takeParRi dest, it.n
+  if hasUncheckedAccess:
+    inc c.inUncheckedAccess
   semStmt(c, dest, it.n, false)
+  if hasUncheckedAccess:
+    dec c.inUncheckedAccess
   takeParRi dest, it.n
   producesVoid c, dest, info, it.typ
 

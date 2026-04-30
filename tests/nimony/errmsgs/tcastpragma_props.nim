@@ -11,5 +11,5 @@ func ok() =
     bumps()
 
 func bad() =
-  {.cast(uncheckedAssign).}:
+  {.cast(uncheckedAccess).}:
     bumps()

@@ -1,2 +1,2 @@
-tests/nimony/errmsgs/tcastpragma_unknown.nim(5, 8) Error: invalid `cast` pragma argument; expected `noSideEffect` or `uncheckedAssign`
-tests/nimony/errmsgs/tcastpragma_unknown.nim(8, 31) Error: `uncheckedAssign` is only valid inside `{.cast(uncheckedAssign).}:` pragma blocks
+tests/nimony/errmsgs/tcastpragma_unknown.nim(5, 8) Error: invalid `cast` pragma argument; expected `noSideEffect`, `uncheckedAssign` or `uncheckedAccess`
+tests/nimony/errmsgs/tcastpragma_unknown.nim(8, 31) Error: `uncheckedAccess` is only valid inside `{.cast(uncheckedAccess).}:` pragma blocks

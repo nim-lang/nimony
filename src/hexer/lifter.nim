@@ -102,7 +102,7 @@ proc isTrivialForFields(c: var LiftingCtx; n: Cursor): bool =
   var iter = initObjFieldIter()
   while nextField(iter, n):
     let field = takeLocal(n, SkipFinalParRi)
-    if field.kind == FldY:
+    if field.kind in {FldY, GfldY}:
       if not isTrivial(c, field.typ):
         return false
     else:
@@ -323,7 +323,7 @@ proc accessTupField(c: var LiftingCtx; tup: TokenBuf; idx: int; paramPos = 0): T
 
 proc unravelObjField(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf; depth: int) =
   let r = takeLocal(n, SkipFinalParRi)
-  assert r.kind == FldY
+  assert r.kind in {FldY, GfldY}
   # create `paramA.field` because we need to do `paramA.field = paramB.field` etc.
   let fieldType = r.typ
   case c.op
@@ -385,7 +385,7 @@ proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: T
       if c.op == attachedDestroy:
         # destroy the selector after case stmt
         unravelObjField c, selector, paramA, paramB, depth
-    of FldU:
+    of FldU, GfldU:
       unravelObjField c, n, paramA, paramB, depth
     of NilU:
       skip n
@@ -402,7 +402,7 @@ proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf
     var scan = n
     while scan.kind != ParRi:
       case scan.substructureKind
-      of CaseU, FldU:
+      of CaseU, FldU, GfldU:
         fieldPositions.add scan
         skip scan
       of NilU:
@@ -414,7 +414,7 @@ proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf
       case cur.substructureKind
       of CaseU:
         unravelObjFieldsForward c, cur, paramA, paramB, depth
-      of FldU:
+      of FldU, GfldU:
         unravelObjField c, cur, paramA, paramB, depth
       else:
         discard

@@ -773,6 +773,7 @@ proc tagToSymKind(tag: string): ChildKind =
   of "TypeS": ckT  # type declaration → type
   of "ParamU": ckX  # parameter → expr
   of "FldY": ckY  # field → sym reference
+  of "GfldY": ckY  # guarded field → sym reference
   of "EfldY": ckY  # enum field → sym reference
   else: ckAny
 

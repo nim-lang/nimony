@@ -56,7 +56,7 @@ proc buildSymChoiceForDot(c: var SemContext; dest: var TokenBuf; identifier: Str
     dest.add identToken(identifier, info)
 
 proc isNonOverloadable(t: SymKind): bool {.inline.} =
-  t in {LetY, VarY, ParamY, TypevarY, ConstY, TypeY, ResultY, FldY, CursorY, PatternvarY, BlockY, GletY, TletY, GvarY, TvarY}
+  t in {LetY, VarY, ParamY, TypevarY, ConstY, TypeY, ResultY, FldY, GfldY, CursorY, PatternvarY, BlockY, GletY, TletY, GvarY, TvarY}
 
 proc buildSymChoiceForSelfModule*(c: var SemContext; dest: var TokenBuf;
                                   identifier: StrId; info: PackedLineInfo): int =
@@ -350,7 +350,7 @@ proc identToSym*(c: var SemContext; str: sink string; kind: SymKind): SymId =
     # XXX activate this later!
     for i in 0..<name.len:
       if name[i] == '.': name[i] = ' '
-  if kind == FldY:
+  if kind in {FldY, GfldY}:
     c.makeFieldSym(name)
   elif c.currentScope.kind == ToplevelScope or
       kind in {TypevarY, ProcY, FuncY, ConverterY, MethodY, TemplateY, MacroY, IteratorY, TypeY, EfldY}:

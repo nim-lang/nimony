@@ -207,7 +207,7 @@ proc skipToObjectBody(n: Cursor): Cursor =
       break
 
 proc typeOfField(c: var TypeCache; n: var Cursor; fld: SymId): Cursor =
-  if n.substructureKind == FldU:
+  if n.substructureKind in {FldU, GfldU}:
     let decl = takeLocal(n, SkipFinalParRi)
     if decl.name.kind == SymbolDef and decl.name.symId == fld:
       result = decl.typ

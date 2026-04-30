@@ -959,7 +959,7 @@ proc validateSubstructure(n: var Cursor; parent: Cursor): ValidationError =
   case parent.substructureKind
   of RangeU:
     result = validateChildren(n, parent, [ExprChild, ExprChild])
-  of ParamU, TypevarU, FldU, EfldU:
+  of ParamU, TypevarU, FldU, GfldU, EfldU:
     result = validateChildren(n, parent, [SymDefChild], allowMore = true)
   else:
     consumeRemainingChildren(n)

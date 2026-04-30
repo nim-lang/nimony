@@ -1,5 +1,5 @@
 {.cast(noSideEffect).}:
   discard
 
-{.cast(uncheckedAssign).}:
+{.cast(uncheckedAccess).}:
   discard

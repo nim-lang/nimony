@@ -145,7 +145,8 @@ proc externPragmas(c: var EContext; dest: var TokenBuf; genPragmas: var GenPragm
     dest.addKeyVal genPragmas, "header", strToken(prag.header, pinfo), pinfo
 
 proc trField(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag] = {}) =
-  dest.add n # fld
+  # Translate gfld to fld for NIFC (NIFC only knows fld):
+  dest.add parLeToken(pool.tags.getOrIncl("fld"), n.info)
   inc n
 
   expectSymdef(c, n)
@@ -417,7 +418,7 @@ proc addRttiField(c: var EContext; dest: var TokenBuf; info: PackedLineInfo) =
 proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag]) =
   while n.kind != ParRi:
     case n.substructureKind
-    of FldU:
+    of FldU, GfldU:
       trField(c, dest, n, flags)
     of CaseU:
       # XXX for now counts each case object field as separate
@@ -457,7 +458,7 @@ proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
             TypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU,
             CaseU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
             UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU,
-            NoSub:
+            GfldU, NoSub:
           error "expected `of` or `else` inside `case`"
       dest.addParRi # end of union
       skipParRi c, n
@@ -783,7 +784,7 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
         of RequiresP, EnsuresP, StringP, RaisesP, ErrorP, AssumeP, AssertP, ReportP,
            TagsP, DeprecatedP, SideEffectP, KeepOverflowFlagP, SemanticsP,
            BaseP, FinalP, PragmaP, CursorP, PassiveP, PluginP, MethodsP, CastP, SizeP,
-           FeatureP, UncheckedAssignP:
+           FeatureP, UncheckedAssignP, UncheckedAccessP:
           skip n
         of BuildP, EmitP, PushP, PopP, PassLP, PassCP, CallConvP:
           bug "unreachable"
@@ -1704,7 +1705,7 @@ proc trCase(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         TypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
         StmtsU, ParamsU, PragmasU, EitherU, JoinU,
         UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU,
-        NoSub:
+        GfldU, NoSub:
       error c, "expected (of) or (else) but got: ", n
   takeParRi dest, n
 

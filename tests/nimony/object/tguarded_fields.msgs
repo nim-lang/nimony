@@ -1,0 +1,4 @@
+tests/nimony/object/tguarded_fields.nim(14, 1) Trace: instantiation from here
+tests/nimony/object/tguarded_fields.nim(14, 9) Error: field 'a' can only be accessed in a pattern matching `case` branch
+tests/nimony/object/tguarded_fields.nim(15, 1) Trace: instantiation from here
+tests/nimony/object/tguarded_fields.nim(15, 9) Error: field 'b' can only be accessed in a pattern matching `case` branch

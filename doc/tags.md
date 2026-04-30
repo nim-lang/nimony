@@ -67,6 +67,7 @@
 | `(typevar D E P .T .X)` | NimonySym, NifcOther, NimonyOther, NiflerKind | type variable declaration; constraint `.T` is optional |
 | `(efld D .X P T .X)`; `(efld D X)` | NimonySym, NifcSym, NifcOther, NimonyOther, NiflerKind | enum field declaration; slot 2 carries the export marker *or* the compile-time value (may be `.`) |
 | `(fld D E P T .X)`; `(fld D P T)` | NifcOther, NimonyOther, NimonySym, NifcSym, NiflerKind | field declaration |
+| `(gfld D E P T .X)` | NimonySym, NimonyOther | guarded field declaration, cannot be accessed outside an `of` branch |
 | `(proc D ...)` | NifcStmt, NimonyStmt, NimonySym, NimonyType, NifcSym, NiflerKind, NifIndexKind | proc declaration |
 | `(func D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind, NifIndexKind | function declaration |
 | `(iterator D ...)` | NimonyStmt, NimonySym, NimonyType, NiflerKind, NifIndexKind | iterator declaration |
@@ -324,7 +325,8 @@
 | `(passC X)`  | NimonyPragma | `passC` pragma adds options to the backend compiler |
 | `(methods (kv STR Y)+)`  | NimonyPragma | `methods` pragma lists vtable methods for a type |
 | `(size X)`  | NimonyPragma | `size` pragma for setting the byte size of a type |
-| `(uncheckedAssign)` | NimonyPragma | `uncheckedAssign` marker; only valid inside `{.cast(uncheckedAssign).}:` pragma blocks (semantics TBD) |
+| `(uncheckedAccess)` | NimonyPragma | `uncheckedAccess` marker; only valid inside `{.cast(uncheckedAccess).}:` pragma blocks (allows for obj.guardedField outside of an `of` branch) |
+| `(uncheckedAssign)` | NimonyPragma | `uncheckedAssign` marker; only valid inside `{.cast(uncheckedAssign).}:` pragma blocks (ignored for Nim compat) |
 
 ### unpackflat, unpacktup, unpackdecl
 
