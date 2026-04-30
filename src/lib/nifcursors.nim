@@ -686,7 +686,7 @@ proc parse*(r: var Stream; dest: var TokenBuf;
     var tok = r.next()
     if not firstParLeFixed and tok.kind == ParLe:
       tok = tok.withLineInfo(entryInfo)
-      r.parents[^1] = entryInfo
+      r.parents[r.parents.len - 1] = entryInfo
       firstParLeFixed = true
     dest.add tok
     if debug:
