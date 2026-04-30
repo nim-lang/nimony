@@ -2895,7 +2895,8 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
                 firstBranchFields = findBranchFields(objTypeSym, efldSym)
               else:
                 let otherFields = findBranchFields(objTypeSym, efldSym)
-                if otherFields.len != firstBranchFields.len:
+                if otherFields.len != firstBranchFields.len or
+                    (otherFields.len > 0 and otherFields[0].sym != firstBranchFields[0].sym):
                   buildErr c, dest, it.n.info,
                     "branches in set pattern must come from the same `of` declaration"
           inc it.n
