@@ -7,8 +7,8 @@ const
   ExpectedNifBuilderResult = """(.nif27)
 (.vendor "tester")
 (.dialect "niftest")
-(stmts
- (call@4,5,mymodb.nim foo.3.mymod@1,3,mymod.nim 3423 50.4))"""
+(stmts@4,5,mymodb.nim
+ (call@1,3,mymod.nim foo.3.mymod 3423 50.4))"""
 
 proc buildSomething(b: sink Builder): string =
   b.addHeader "tester", "niftest"
