@@ -1,18 +1,17 @@
-(.nif27)
 (stmts
  (mflag :´r.0.main)
  (proc :echo.0 . . .
   (params
    (param :cond.0 . .
-    (bool) .)) . . .
+    (bool).)). . .
   (stmts
    (mflag :´r.0)
    (kill ´r.0)))
  (proc :echo.1 . . .
   (params
    (param :cond.0 . .
-    (bool) .))
-  (i 32) . .
+    (bool).))
+  (i 32). .
   (stmts
    (mflag :´r.0)
    (kill ´r.0)))
@@ -29,12 +28,12 @@
   (stmts
    (ite b.0
     (stmts
-     (jtrue `j.0.main)) .)))
+     (jtrue `j.0.main)).)))
  (ite `j.0.main
   (stmts
-   (call echo.0 "abc")) .)
+   (call echo.0 "abc")).)
  (store
-  (false) b.0)
+  (false)b.0)
  (loop
   (stmts
    (mflag :´g.0))
@@ -47,11 +46,11 @@
       (stmts
        (jtrue ´g.0))
       (stmts
-       (call echo.0 "more")))) .)
+       (call echo.0 "more")))).)
    (ite
     (not ´g.0)
     (stmts
-     (call echo.0 "code here")) .)
+     (call echo.0 "code here")).)
    (kill ´g.0)
    (continue .)))
  (call echo.0 "after loop")

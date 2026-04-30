@@ -1,4 +1,3 @@
-(.nif27)
 (stmts
  (call echo "try")
  (asgn localErr.0.sysvq0asl some.exc)

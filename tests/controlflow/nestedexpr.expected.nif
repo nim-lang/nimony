@@ -1,22 +1,21 @@
-(.nif27)
 (stmts
  (proc :getOrDefault.0.tem6twvye1 . . .
   (params
    (param :t.3 . .
-    (i -1) .)
+    (i -1).)
    (param :k.2 . .
-    (i -1) .))
-  (i -1) . .
+    (i -1).))
+  (i -1). .
   (stmts
    (result :result.1 . .
-    (i -1) .)
+    (i -1).)
    (let :idx.0 . .
-    (i -1) 1212)
+    (i -1)1212)
    (var :`cf.0 . .
-    (i 64) .)
+    (i 64).)
    (ite
     (le
-     (i -1) 0 idx.0)
+     (i -1)0 idx.0)
     (goto L70)
     (goto L75))
    (lab :L70)

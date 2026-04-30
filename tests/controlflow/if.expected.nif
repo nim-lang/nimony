@@ -1,10 +1,9 @@
-(.nif27)
 (stmts
  (let :other.var . .
-  (i -1) 12)
+  (i -1)12)
  (call echo "before")
  (var :`cf.0 . .
-  (auto) .)
+  (auto).)
  (ite
   (eq other.var 12)
   (goto L30)
@@ -18,5 +17,5 @@
  (goto L43)
  (lab :L43)
  (let :my.var . .
-  (i -1) `cf.0)
+  (i -1)`cf.0)
  (ret .))

@@ -1,4 +1,3 @@
-(.nif27)
 (stmts
  (ite
   (eq 1 1)

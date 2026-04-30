@@ -1,12 +1,11 @@
-(.nif27)
 (stmts
  (mflag :´r.0.main)
  (proc :echo.0 . . .
   (params
    (param :cond.0 . .
-    (bool) .)) .
+    (bool).)).
   (pragmas
-   (raises)) .
+   (raises)).
   (stmts
    (stmts
     (result :`result.1 . . ErrorCode.0.sysvq0asl .)
@@ -15,7 +14,7 @@
     (mflag :´r.0)
     (kill ´r.0))))
  (proc :test . . .
-  (params) . . .
+  (params). . .
   (stmts
    (stmts
     (mflag :´r.0)
@@ -39,7 +38,7 @@
          (stmts
           (jtrue ´g.1))
          (stmts)
-         (stmts))) .
+         (stmts))).
        (stmts)))
      (stmts
       (join ´g.1 3 1 2)))
@@ -54,7 +53,7 @@
     (ite
      (v ´err.2 0)
      (stmts
-      (jtrue ´g.1)) .
+      (jtrue ´g.1)).
      (stmts))
     (kill ´r.0 ´g.1))))
  (kill ´r.0.main))
