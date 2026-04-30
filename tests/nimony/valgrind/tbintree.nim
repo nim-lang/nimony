@@ -8,24 +8,28 @@ type
 
 proc newNode*(data: sink string): BinaryTree = BinaryTree(data: data)
 
-proc append*(root: var BinaryTree; n: sink BinaryTree) =
-  # insert a node into the tree
-  if root == nil:
-    root = n
-  else:
-    var it = root
-    while it != nil:
-      var c = cmp(n.data, it.data)
-      if c < 0:
-        if it.le == nil:
-          it.le = n
-          return
-        it = it.le
-      else:
-        if it.ri == nil:
-          it.ri = n
-          return
-        it = it.ri
+proc append*(root: var BinaryTree; n: BinaryTree) =
+  # insert a node into the tree.
+  # Caller's precondition: `n` is not already linked into `root`.
+  # The static cycle-prevention check (doc/nocycles.md) cannot prove
+  # this disjointness, so we suppress it for this proc body.
+  {.cast(uncheckedCycle).}:
+    if root == nil:
+      root = n
+    else:
+      var it = root
+      while it != nil:
+        var c = cmp(n.data, it.data)
+        if c < 0:
+          if it.le == nil:
+            it.le = n
+            return
+          it = it.le
+        else:
+          if it.ri == nil:
+            it.ri = n
+            return
+          it = it.ri
 
 proc append*(root: var BinaryTree, data: sink string) =
   append(root, newNode(data))

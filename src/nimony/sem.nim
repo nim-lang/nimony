@@ -1642,6 +1642,11 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     inc n
     if hasParRi:
       while n.kind != ParRi: skip n
+  of UncheckedCycleP:
+    buildErr c, dest, n.info, "`uncheckedCycle` is only valid inside `{.cast(uncheckedCycle).}:` pragma blocks"
+    inc n
+    if hasParRi:
+      while n.kind != ParRi: skip n
   of RaisesP:
     crucial.flags.incl pk
     let oldLen = dest.len
@@ -5464,18 +5469,19 @@ proc semAssumeAssert(c: var SemContext; dest: var TokenBuf; it: var Item; kind: 
 
 proc semCastInnerPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   ## Process a single pragma item inside a `(cast (pragmas ...))` list.
-  ## Only `noSideEffect` and `uncheckedAssign` are accepted; the result is
-  ## emitted in canonical tag form so later passes can dispatch on the kind.
+  ## Accepted markers: `noSideEffect`, `uncheckedAssign`, `uncheckedAccess`,
+  ## `uncheckedCycle`. The result is emitted in canonical tag form so
+  ## later passes can dispatch on the kind.
   let info = n.info
   let pk = n.pragmaKind
   case pk
-  of NoSideEffectP, UncheckedAssignP, UncheckedAccessP:
+  of NoSideEffectP, UncheckedAssignP, UncheckedAccessP, UncheckedCycleP:
     dest.add parLeToken(pk, info)
     dest.addParRi()
     if n.kind == ParLe: skip n
     else: inc n
   else:
-    buildErr c, dest, info, "invalid `cast` pragma argument; expected `noSideEffect`, `uncheckedAssign` or `uncheckedAccess`"
+    buildErr c, dest, info, "invalid `cast` pragma argument; expected `noSideEffect`, `uncheckedAssign`, `uncheckedAccess` or `uncheckedCycle`"
     if n.kind == ParLe: skip n
     else: inc n
 

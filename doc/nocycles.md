@@ -62,9 +62,10 @@ assignment is accepted iff at least one of the following holds**:
    access. (The receiver path on the RHS must start with the *entire*
    LHS receiver path `α`, not merely share a leftmost binding.)
 
-2. **Fresh allocation.** `e` is a freshly allocated value, e.g. a
-   `(newobj ...)` expression or a node already proven fresh by the
-   per-binding freshness analysis (see *Freshness tracking* below).
+2. **Fresh allocation.** `e` is a freshly allocated value — a
+   `(newobj …)` or `(oconstr …)` expression — or a node already
+   proven fresh by the per-binding freshness analysis (see
+   *Freshness tracking* below).
 
 3. **Nil literal.** `e` is `nil`.
 
@@ -141,17 +142,24 @@ proc combineOk(a, b: Node) {.requires: disjoint(a, b).} =
 ## Freshness Tracking
 
 A binding `x` is **fresh** from the moment it is initialised by a
-fresh-producing expression — `(newobj …)`, `(oconstr …)`, `(nil)`, or
-a 0-arg call (whose result cannot alias any of its arguments because
-there are none) — and remains fresh until it escapes. Three sources
-of freshness are tracked:
+fresh-producing expression — `(newobj …)`, `(oconstr …)`, or
+`(nil)` — and remains fresh until it escapes. Calls are not assumed
+fresh: even a 0-arg call could return a global, and they are rare
+enough that no special-casing is warranted. Two sources of freshness
+are tracked:
 
 - **Local vars** initialised with a fresh-producing expression.
-- **`sink` parameters.** The caller has transferred ownership, so the
-  value cannot alias any binding the caller still holds. The
-  argument-passing machinery enforces the move.
 - **The proc's `result`.** Allocated by the caller, not aliased into
   other graphs at proc entry.
+
+**`sink` parameters are NOT fresh.** `sink ref T` only transfers one
+RC count from caller to callee; the caller may still hold other
+aliases that reach the same heap node, so a sink-ref parameter is
+not necessarily disjoint from other parameters. Treating sink as
+fresh would be unsound. The disjointness obligation for cross-root
+writes from sink-ref parameters needs an explicit
+`requires: disjoint(...)` precondition or a future `.unique`
+parameter pragma.
 
 A read of a fresh binding on the right-hand side is treated as
 fresh-allocation for the cycle rule — the cross-root write is then
@@ -218,6 +226,26 @@ caller must discharge it. The discharge cases, in order of preference:
 The propagation never requires whole-program shape analysis; it is a
 local check at each call site, plus a local accumulation of
 preconditions on each routine.
+
+## Override: `{.cast(uncheckedCycle).}`
+
+Sometimes the caller knows a precondition the analysis cannot
+prove — for instance, "this newly-allocated node is not already in
+the tree." For those cases the static check can be locally
+suppressed inside a cast block:
+
+```nim
+proc bstInsert(root: Node, n: Node) =
+  {.cast(uncheckedCycle).}:
+    root.next = n          # caller guarantees `n` is not in `root`
+```
+
+The block disables the cycle check for the statements inside it. As
+with any `cast(...)` escape, the responsibility shifts to the
+programmer; misuse can leak memory through cycles. Future work that
+formalises `requires: disjoint(...)` will let most of these blocks
+be replaced with a precondition that the compiler verifies at call
+sites.
 
 ## Refinements
 

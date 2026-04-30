@@ -327,6 +327,7 @@
 | `(size X)`  | NimonyPragma | `size` pragma for setting the byte size of a type |
 | `(uncheckedAccess)` | NimonyPragma | `uncheckedAccess` marker; only valid inside `{.cast(uncheckedAccess).}:` pragma blocks (allows for obj.guardedField outside of an `of` branch) |
 | `(uncheckedAssign)` | NimonyPragma | `uncheckedAssign` marker; only valid inside `{.cast(uncheckedAssign).}:` pragma blocks (ignored for Nim compat) |
+| `(uncheckedCycle)` | NimonyPragma | `uncheckedCycle` marker; only valid inside `{.cast(uncheckedCycle).}:` pragma blocks; suppresses the static cycle-prevention check (see doc/nocycles.md) inside the block |
 
 ### unpackflat, unpacktup, unpackdecl
 

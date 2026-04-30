@@ -78,6 +78,11 @@ type
                                         # Used by the cycle-prevention rule
                                         # to skip writes whose receiver is
                                         # known unaliased. See doc/nocycles.md.
+    uncheckedCycleDepth: int           # `>0` when we are inside a
+                                        # `{.cast(uncheckedCycle).}:` block.
+                                        # Suppresses the static cycle-
+                                        # prevention check for writes inside
+                                        # the block. See doc/nocycles.md.
     activeBorrows: seq[BorrowInfo]
     verbose: bool                      # --verbose: dump NJ IR on init/contract
                                        # failures for easier debugging
@@ -1143,26 +1148,38 @@ proc isOwningRefFieldStore(c: var NjvlContext; destCursor: Cursor;
 
 proc isFreshInit(init: Cursor): bool =
   ## Returns true when `init` is a syntactic form known to produce a
-  ## fresh ref: `(newobj …)`, `(oconstr …)`, `(nil)`, or a 0-arg call
-  ## (whose result cannot alias any of its arguments because there are
-  ## none). This is a conservative under-approximation of the freshness
-  ## analysis described in doc/nocycles.md — calls with arguments are
-  ## not assumed fresh because they could return an alias.
+  ## fresh ref: `(newobj …)`, `(oconstr …)`, or `(nil)`. Calls are not
+  ## assumed fresh — even a 0-arg call could return a global. This is
+  ## a conservative under-approximation of the freshness analysis
+  ## described in doc/nocycles.md.
   if init.kind != ParLe: return false
   case init.exprKind
-  of NewobjX, OconstrX, NilX:
-    return true
-  of CallKinds:
-    var p = init
-    inc p # call tag
-    skip p # fn
-    return p.kind == ParRi
-  else:
-    return false
+  of NewobjX, OconstrX, NilX: return true
+  else: return false
+
+proc hasUncheckedCycleCast(pragmas: Cursor): bool =
+  ## True iff the pragma list contains `(cast (pragmas (uncheckedCycle)))`.
+  result = false
+  if pragmas.kind != ParLe: return
+  var n = pragmas
+  inc n # past pragmas tag
+  while n.kind != ParRi:
+    if n.pragmaKind == CastP:
+      var inner = n
+      inc inner
+      if inner.kind == ParLe and inner.substructureKind == PragmasU:
+        var p = inner
+        inc p
+        while p.kind != ParRi:
+          if p.pragmaKind == UncheckedCycleP:
+            return true
+          skip p
+    skip n
 
 proc checkNoCycleStore(c: var NjvlContext; valueStart: Cursor;
                       destCursor: Cursor; destPath: BorrowInfo;
                       info: PackedLineInfo) =
+  if c.uncheckedCycleDepth > 0: return
   if not isOwningRefFieldStore(c, destCursor, destPath): return
   # Receiver rooted at the proc's `result` variable: treat as fresh.
   # A proc's result is freshly allocated by the caller and not aliased
@@ -1524,12 +1541,13 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
           c.typeCache.registerLocal(r.name.symId, ParamY, r.typ)
           if r.typ.typeKind == OutT and not hasPragma(r.pragmas, NoinitP):
             outParams.add r.name.symId
-          # `sink T` parameters: the caller has transferred ownership,
-          # so the value is freshly owned by this proc and cannot alias
-          # any other binding the caller still holds. Treat as fresh
-          # for the cycle-prevention rule.
-          if r.typ.typeKind == SinkT:
-            c.freshLocals.incl r.name.symId
+          # NOTE: `sink ref T` does NOT imply uniqueness. It only
+          # transfers one RC count; the caller may still hold other
+          # aliases that reach the same heap node, so a sink-ref
+          # parameter cannot be assumed disjoint from other parameters.
+          # Treating sink as fresh would be unsound for the
+          # cycle-prevention rule. A future `.unique` parameter pragma
+          # or `requires: disjoint(...)` discharges this case.
       c.typeCache.registerLocal(symId, ProcY, decl)
     skip n
 
@@ -1645,17 +1663,25 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
       skip n
     of PragmaxS:
       inc n
+      let pragmas = n
+      let suppress = hasUncheckedCycleCast(pragmas)
       skip n # pragmas
+      if suppress: inc c.uncheckedCycleDepth
       while n.kind != ParRi:
         traverseStmt c, n
+      if suppress: dec c.uncheckedCycleDepth
       skipParRi n
     of NoStmt:
       if n.exprKind in CallKinds:
         analyseCall c, n
       elif n.exprKind == PragmaxX:
         inc n
+        let pragmas = n
+        let suppress = hasUncheckedCycleCast(pragmas)
         skip n
+        if suppress: inc c.uncheckedCycleDepth
         traverseStmt c, n
+        if suppress: dec c.uncheckedCycleDepth
         skipParRi n
       elif n.exprKind in {DestroyX, CopyX, WasmovedX, SinkhX, TraceX}:
         inc n

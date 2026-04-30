@@ -55,18 +55,12 @@ proc attach(child: Node): Node =
   new(result)
   result.next = child
 
-# `sink` parameter is fresh-disjoint from other bindings, so a write
-# from a sink-param into a (potentially aliased) receiver is safe.
-proc insertChild(parent: Node, child: sink Node) =
-  parent.next = child
+# `{.cast(uncheckedCycle).}:` block disables the cycle-prevention
+# check inside its body. Used when the caller is responsible for
+# disjointness (e.g. BST insert: caller guarantees the new node is
+# not already in the tree).
+proc bstInsert(root: Node, n: Node) =
+  {.cast(uncheckedCycle).}:
+    root.next = n
 
-# Local ref var initialised via a 0-arg constructor call is treated
-# as fresh, so writes to its ref-typed fields are accepted regardless
-# of RHS source.
-proc makeNode(): Node =
-  new(result)
-
-proc buildAndLink(other: Node) =
-  var n = makeNode()
-  n.next = other
 

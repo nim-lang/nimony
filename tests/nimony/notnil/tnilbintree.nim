@@ -8,24 +8,28 @@ type
 
 proc newNode*[T](data: sink T): BinaryTree[T] = BinaryTree[T](data: data)
 
-proc append*[Ty: Comparable](root: var nil BinaryTree[Ty], n: sink BinaryTree[Ty]) =
-  # insert a node into the tree
-  if root == nil:
-    root = n
-  else:
-    var it = root
-    while it != nil:
-      var c = cmp(n.data, it.data)
-      if c < 0:
-        if it.le == nil:
-          it.le = n
-          return
-        it = it.le
-      else:
-        if it.ri == nil:
-          it.ri = n
-          return
-        it = it.ri
+proc append*[Ty: Comparable](root: var nil BinaryTree[Ty], n: BinaryTree[Ty]) =
+  # insert a node into the tree.
+  # Caller's precondition: `n` is not already linked into `root`.
+  # The static cycle-prevention check (doc/nocycles.md) cannot prove
+  # this disjointness, so we suppress it for this proc body.
+  {.cast(uncheckedCycle).}:
+    if root == nil:
+      root = n
+    else:
+      var it = root
+      while it != nil:
+        var c = cmp(n.data, it.data)
+        if c < 0:
+          if it.le == nil:
+            it.le = n
+            return
+          it = it.le
+        else:
+          if it.ri == nil:
+            it.ri = n
+            return
+          it = it.ri
 
 proc append*[Ty](root: var BinaryTree[Ty], data: sink Ty) =
   append(root, newNode(data))
