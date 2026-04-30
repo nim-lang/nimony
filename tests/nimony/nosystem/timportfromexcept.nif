@@ -38,6 +38,6 @@
    (true@A)
    (false@R)
    (true@i))))(.index@,1,tests/nimony/nosystem/timportfromexcept.nim
- (h@4,4 allImported.0. 130)
- (h@4,5 exceptDeclared.0. 299)
- (h@4,6 fromDeclared.0. 191))
+ (h allImported.0. 130)
+ (h exceptDeclared.0. 299)
+ (h fromDeclared.0. 191))

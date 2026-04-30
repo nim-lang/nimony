@@ -37,8 +37,8 @@
   (bool@1,~3)
   (true@A))
  (comment@5 bool.0. false.0.~3,1 false.0.~3,1 true.0.@8,1 true.0.@8,1 bool.0.@2,3 true.0.@9,3))(.index@,1,tests/nimony/nosystem/tbool.nim
- (x@Q bool.0. 79)
- (x@A,1 false.0. 83)
- (x@K,1 true.0. 70)
- (x@5 dollar`.bool.0. 69)
- (h@4,3 x.0. 341))
+ (x bool.0. 79)
+ (x@S false.0. 83)
+ (x@S true.0. 70)
+ (x dollar`.bool.0. 69)
+ (h x.0. 341))

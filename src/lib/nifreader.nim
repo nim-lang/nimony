@@ -132,13 +132,30 @@ proc handleHex(p: pchar): char =
   else: discard
   result = char(output)
 
+proc decodeEscape(p: var pchar): char {.inline.} =
+  ## Decode a single NIF27 escape body. Caller has already advanced past the
+  ## leading `\`. On return, `p` points just past the escape (advanced by 1
+  ## for a shortcut, 2 for a hex pair). The shortcut bodies (`n`, `t`, `r`,
+  ## `|`, `^`) are deliberately chosen so that none of them is a hex digit
+  ## or a NIF control character, which lets a one-byte look-ahead pick the
+  ## form unambiguously.
+  case ^p
+  of 'n': result = '\x0A'; inc p
+  of 't': result = '\x09'; inc p
+  of 'r': result = '\x0D'; inc p
+  of '|': result = '\x5C'; inc p
+  of '^': result = '\x22'; inc p
+  else:
+    result = handleHex(p)
+    inc p, 2
+
 proc decodeChar*(t: ExpandedToken): char =
   assert t.tk == CharLit
   result = ^t.data.p
   if result == '\\':
     var p = t.data.p
     inc p
-    result = handleHex(p)
+    result = decodeEscape(p)
 
 proc decodeStr*(r: Reader; t: ExpandedToken): string =
   if TokenHasEscapes in t.flags:
@@ -148,8 +165,7 @@ proc decodeStr*(r: Reader; t: ExpandedToken): string =
     while p < sentinel:
       if ^p == '\\':
         inc p
-        result.add handleHex(p)
-        inc p, 2
+        result.add decodeEscape(p)
       else:
         result.add ^p
         inc p
@@ -178,8 +194,7 @@ proc decodeFilename*(t: ExpandedToken): string =
     while p < sentinel:
       if ^p == '\\':
         inc p
-        result.add handleHex(p)
-        inc p, 2
+        result.add decodeEscape(p)
       else:
         result.add ^p
         inc p

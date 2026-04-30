@@ -363,9 +363,15 @@ proc toModuleString*(tree: openArray[PackedToken]; dottedSuffix = ""; produceLin
           index.addTree "h" # no export marker --> hidden
         else:
           index.addTree "x" # export marker --> exported
-        # NIF27: emit line info for the index entry as a suffix on the h/x tag,
-        # so the index `kv` entry stays in sync with the source location.
-        emitLineInfo(index, stack[^1], tree[0].info)
+        # Record the **parent** info (stack[^2]) of the indexed compound, not
+        # the compound's own info (stack[^1]). On lookup, parse() seeds its
+        # parent stack with this value and the very first token it reads is
+        # the indexed compound's ParLe — its NIF27 suffix encodes the diff
+        # from this same parent, so parent + diff yields the correct absolute
+        # info. Recording the compound's own info instead would double-apply
+        # the diff (the bug fixed in 2026-04: line=160 vs line=317).
+        let parentInfo = if stack.len >= 2: stack[^2] else: tree[0].info
+        emitLineInfo(index, parentInfo, tree[0].info)
         index.addSymbol(pool.syms[symId], dottedSuffix)
         index.addIntLit(mostRecentOffset - previousOffset)
         previousOffset = mostRecentOffset

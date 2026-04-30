@@ -22,8 +22,8 @@
   (bool)
   (false@F))
  (comment@G,2 untyped.0.))(.index@,1,tests/nimony/nosystem/tdefinedarg.nim
- (x@5 untyped.0. 85)
- (x@,2 defined.0. 70)
- (h@4,4 x.0. 133)
- (h@4,5 y.0. 43)
- (h@4,6 z.0. 42))
+ (x untyped.0. 85)
+ (x defined.0. 70)
+ (h x.0. 133)
+ (h y.0. 43)
+ (h z.0. 42))
