@@ -9,6 +9,7 @@ proc main() =
       buf.addDotToken()
       doAssert toString(snapshot, false) == "(call foo)"
     doAssert toString(buf, false) == "(call foo)."
+    doAssert buf.len == 4
 
   # 2. Cursor dies before mutation — exercises rc==1 detach path
   block:
@@ -18,6 +19,7 @@ proc main() =
       doAssert toString(snapshot, false) == "(call foo)"
     buf.addDotToken()
     doAssert toString(buf, false) == "(call foo)."
+    doAssert buf.len == 4
 
   # 3. Multiple cursors, all alive during mutation
   block:
@@ -28,6 +30,7 @@ proc main() =
     doAssert toString(snap1, false) == "(call foo)"
     doAssert toString(snap2, false) == "(call foo)"
     doAssert toString(buf, false) == "(call foo)."
+    doAssert buf.len == 4
 
   # 4. Some cursors die before mutation
   block:
@@ -38,6 +41,7 @@ proc main() =
     buf.addDotToken()
     doAssert toString(snap2, false) == "(call bar)"
     doAssert toString(buf, false) == "(call bar)."
+    doAssert buf.len == 4
 
   # 5. Repeated mutations — COW fires first time only
   block:
@@ -49,6 +53,7 @@ proc main() =
     buf.addDotToken()
     doAssert toString(buf, false) == "(a).."
     doAssert toString(snap, false) == "(a)"
+    doAssert buf.len == 4
 
   # 6. beginRead after mutation — re-attaches owner
   block:
@@ -59,6 +64,7 @@ proc main() =
     buf.addDotToken()
     doAssert toString(snap, false) == "(call x)"
     doAssert toString(buf, false) == "(call x).."
+    doAssert buf.len == 5
 
   # 7. cursorAt — same COW semantics
   block:
@@ -67,6 +73,7 @@ proc main() =
     buf.addDotToken()
     doAssert toString(c, false) == "(call foo)"
     doAssert toString(buf, false) == "(call foo)."
+    doAssert buf.len == 4
 
   # 8. readonlyCursorAt — no COW triggered
   block:
@@ -93,12 +100,14 @@ proc main() =
     doAssert toString(s2, false) == "(stack)"
     doAssert toString(s3, false) == "(stack)"
     doAssert toString(buf, false) == "(stack)."
+    doAssert buf.len == 3
 
   # 11. Mutation without any beginRead — owner stays nil
   block:
     var buf = parseFromBuffer("(noop)", "", 8)
     buf.addDotToken()
     doAssert toString(buf, false) == "(noop)."
+    doAssert buf.len == 3
 
   # 12. Shrink after COW
   block:
