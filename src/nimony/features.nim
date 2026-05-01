@@ -16,6 +16,8 @@ type
     EarlyMagicsFeature
     AutoClosuresFeature
     LenientNilsFeature
+    CheckCyclesFeature  ## opt-in abstract-interpretation cycle check
+                        ## (see doc/nocycles.md)
 
 proc parseFeature*(s: string): Feature =
   case s
@@ -26,4 +28,5 @@ proc parseFeature*(s: string): Feature =
   of "earlymagics": EarlyMagicsFeature
   of "autoclosures": AutoClosuresFeature
   of "lenientnils": LenientNilsFeature
+  of "checkcycles": CheckCyclesFeature
   else: InvalidFeature

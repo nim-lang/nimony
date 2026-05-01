@@ -107,6 +107,19 @@ proc shortcutLeft(x: Node) =
 
 proc clearTail(x: Node) =
   x.next = nil                            # rule 3: nil
+
+# Surprising accept: both sides are projections from `head`, so
+# re-pointing within head's own subgraph cannot close a cycle even
+# though the field names differ. The proc name is intentionally
+# misleading — the rule correctly accepts this.
+proc reLink(head: Node) =
+  head.last = head.first                  # rule 1: both rooted at `head`
+
+proc combineOk(a, b: Node) {.requires: disjoint(a, b).} =
+  var last = a
+  while last.next != nil:
+    last = last.next
+  last.next = b                           # rule 5: precondition discharged
 ```
 
 ### Rejected
@@ -116,14 +129,10 @@ proc createsSelfLoop(x: Node) =
   x.next = x                              # not a non-empty projection;
                                           # this is the literal self-loop case
 
-proc createsCycle(head: Node) =
-  head.last = head.first                  # accepted! both projections from `head`,
-                                          # because re-pointing within head's own
-                                          # subgraph cannot close a cycle
-
-proc createsCycle2(n: Node; root: Node) =
-  n.parent = root                         # different roots, no `disjoint` annotation
-                                          # → rejected unless `parent` is `.cursor`
+proc createsCycle(n: Node; root: Node) =
+  n.parent = root                         # different roots, no `disjoint`
+                                          # annotation → rejected unless
+                                          # `parent` is `.cursor`
 
 proc combine(a, b: Node) =
   var last = a
@@ -131,12 +140,6 @@ proc combine(a, b: Node) =
     last = last.next
   last.next = b                           # different roots → rejected unless
                                           # caller has discharged `disjoint(a, b)`
-
-proc combineOk(a, b: Node) {.requires: disjoint(a, b).} =
-  var last = a
-  while last.next != nil:
-    last = last.next
-  last.next = b                           # rule 4: precondition discharged
 ```
 
 ## Freshness Tracking
@@ -210,6 +213,40 @@ p.other = makeNode()     # exempt: Plain is value-typed, no cycle possible
 var h = Heaped()
 h.other = makeNode()     # subject to the rule (handled by freshness on `h`)
 ```
+
+## Known Loophole: Whole-Value Assignment of Aggregates Containing Refs
+
+The rule fires on writes to ref-typed fields. It does **not** fire
+on whole-value assignments of value-typed aggregates (`object`,
+`tuple`, `array`, …) that happen to contain ref fields. Such
+assignments can re-plumb ref edges without ever writing to a ref
+field directly, and could in principle be used to construct cycles:
+
+```nim
+type
+  Wrap = object        # value type containing a ref
+    r: Node
+
+proc evade(target: Node, w: Wrap) =
+  target.wrap = w      # writes a Wrap, not a ref. No cycle check fires.
+                       # If `w.r` reaches `target`, this closes a cycle
+                       # via target → w.r → … → target.
+```
+
+We deliberately leave this unchecked. Two reasons:
+
+1. **Practice.** Stuffing an aggregate value into a ref's field as a
+   way to attach refs to a graph is exceedingly rare — nearly every
+   real cycle constructor in Nim/Nimony goes through a direct
+   `α.field = ref` write. The audit of `lib/pure/collections/lists.nim`
+   (Nim 2 stdlib) found zero instances.
+2. **False-positive cost.** Extending the rule to "any assignment of
+   any value containing a ref field" would flag a lot of perfectly
+   benign code — copying tuples, returning structured results,
+   passing aggregates by value. The signal-to-noise ratio collapses.
+
+The escape valve `{.cast(uncheckedCycle).}:` is also available for
+the rare aggregate-write case if a future iteration tightens this.
 
 ## Disjointness Propagation
 
@@ -329,6 +366,66 @@ The verdict is that `lists.nim` already encodes most of the
 discipline: someone deliberately put `.cursor` on every back-edge.
 The remaining gap is largely formalising the implicit "this node is
 not already linked elsewhere" precondition into `disjoint`.
+
+## Opt-in Abstract-Interpretation Pass
+
+The syntactic rule above is fundamentally limited: it cannot replace
+runtime cycle collection in the presence of generic containers,
+aggregate value writes, `seq.add`, `arr[i] = ref`, and other indirect
+edge constructions. Closing those gaps with more syntactic special
+cases creates teachability problems (false positives in code that
+isn't even under the user's control — generic library
+instantiations) without ever fully replacing the collector.
+
+For users who want a stricter analysis, an opt-in
+abstract-interpretation pass runs **as the last step of
+`contracts_njvl.nim`** when the module enables it:
+
+```nim
+{.feature: "checkcycles".}
+```
+
+The pass uses **allocation-site abstraction**: each `(newobj …)` /
+`(oconstr …)` site, and each ref/ptr parameter, gets a unique
+abstract identity. Variables map to *sets* of abstract identities.
+Each ref field of each abstract object holds a set of identities it
+might point to. Statement-by-statement, the pass updates this
+abstract heap. After every owning-ref-field write, it scans the
+field-edge graph for cycles reachable from the modified receiver and
+reports each new cycle once.
+
+Properties of the AI pass:
+
+- **No annotations required on generic library code.** The seq's
+  `add` is analyzed in the calling context; if the appended argument
+  is a fresh abstract identity, no cycle is reported. The seq source
+  itself stays annotation-free.
+- **Catches what the syntactic rule misses.** A self-loop like
+  `result.next = result` is accepted by the syntactic rule (rule 4,
+  result-rooted) but rejected by AI because the abstract heap shows
+  `result` reachable from itself.
+- **Honest framing.** Reports are "potential ownership cycle through
+  …", not hard errors. The pass is an over-approximation in the
+  sound direction (no missed cycles when the analyzer is precise
+  enough) and an under-approximation when call summaries are
+  imprecise.
+- **`{.cast(uncheckedCycle).}` suppresses both** the syntactic rule
+  and the AI pass — useful when you genuinely intend a temporary
+  cycle that you break before destruction.
+
+Limitations of the current implementation (deliberate MVP scope):
+
+- **No inter-procedural summaries.** A call's result is treated as a
+  fresh isolated abstract identity. Cycles created by procedures
+  that return aliases of their arguments are not caught.
+- **Loop bodies are visited once**, not iterated to fixpoint. Cycles
+  that only manifest after several loop iterations may be missed.
+- **Aggregate value reads** (tuple/array/object literals) collapse
+  to an external "unknown" identity. The `seq.add` / `arr[i] = ref`
+  cases need element-write modelling that's not in the MVP.
+
+These are the natural follow-up extensions. The pass is structured
+so each can be added without rewriting the core.
 
 ## Implementation
 

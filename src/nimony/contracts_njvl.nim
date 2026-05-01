@@ -1731,10 +1731,424 @@ proc traverseToplevel(c: var NjvlContext; n: var Cursor) =
     # Toplevel statements - analyze them
     traverseStmt c, n
 
-proc analyzeContractsNjvl*(input: var TokenBuf; moduleSuffix: string; verbose = false): TokenBuf =
+# --- Abstract-interpretation cycle detection (feature: "checkCycles") ---
+# Per-procedure analysis using allocation-site abstraction. See
+# doc/nocycles.md for the design. This is opt-in via
+# `{.feature: "checkCycles".}` and runs as the last step of
+# `analyzeContractsNjvl`.
+
+type
+  AbsId = distinct uint32  # 0 = "external/unknown"
+  AbsSet = HashSet[AbsId]
+  FieldKey = tuple[id: AbsId, field: SymId]
+
+const ExternalAbsId = AbsId(0)
+
+proc `==`(a, b: AbsId): bool {.borrow.}
+proc hash(a: AbsId): Hash {.borrow.}
+proc `$`(a: AbsId): string {.borrow.}
+
+type
+  AbsHeap = object
+    bindings: Table[SymId, AbsSet]    ## variable → abstract set
+    fields: Table[FieldKey, AbsSet]   ## (id, field) → abstract set
+    siteInfo: Table[AbsId, PackedLineInfo]  ## site → source location
+    siteName: Table[AbsId, string]    ## site → printable label
+    nextId: uint32
+
+  CycleCtx = object
+    heap: AbsHeap
+    typeCache: TypeCache
+    errors: TokenBuf
+    moduleSuffix: string
+    inUncheckedCycle: int
+    reported: HashSet[AbsId]          ## avoid duplicate reports
+    procStart: PackedLineInfo
+
+proc freshAbsId(c: var CycleCtx; info: PackedLineInfo;
+                label: string): AbsId =
+  inc c.heap.nextId
+  result = AbsId(c.heap.nextId)
+  c.heap.siteInfo[result] = info
+  c.heap.siteName[result] = label
+
+proc bindingOf(c: CycleCtx; s: SymId): AbsSet =
+  c.heap.bindings.getOrDefault(s, initHashSet[AbsId]())
+
+proc fieldOf(c: CycleCtx; id: AbsId; field: SymId): AbsSet =
+  c.heap.fields.getOrDefault((id, field), initHashSet[AbsId]())
+
+proc setBinding(c: var CycleCtx; s: SymId; aset: AbsSet) =
+  c.heap.bindings[s] = aset
+
+proc weakUpdateField(c: var CycleCtx; receiver: AbsSet; field: SymId;
+                     value: AbsSet) =
+  ## Weak (union) update — necessary when multiple abstract receivers
+  ## are possible: we cannot prove which one is being mutated, so we
+  ## conservatively add the new value to all of them.
+  for id in receiver:
+    if id == ExternalAbsId: continue
+    let key: FieldKey = (id, field)
+    var existing = c.heap.fields.getOrDefault(key, initHashSet[AbsId]())
+    existing.incl value
+    c.heap.fields[key] = existing
+
+proc strongUpdateField(c: var CycleCtx; receiver: AbsSet; field: SymId;
+                       value: AbsSet) =
+  ## Strong update is sound only when the receiver is a singleton.
+  ## Otherwise we must do a weak update.
+  if receiver.len == 1:
+    for id in receiver:
+      if id == ExternalAbsId: return
+      c.heap.fields[(id, field)] = value
+  else:
+    weakUpdateField(c, receiver, field, value)
+
+proc isCursorFieldSym(typeExpr: Cursor; field: SymId): bool =
+  ## Same idea as `isCursorFieldIn` above but takes a type-expression
+  ## directly (used by the AI pass which works with NJ IR types).
+  let body = objectBodyOf(typeExpr)
+  isCursorFieldIn(body, field)
+
+proc skipExprWrappers(n: var Cursor) =
+  while n.kind == ParLe and
+        n.exprKind in {HconvX, ConvX, DconvX, BaseobjX, HderefX, HaddrX, CastX}:
+    let ek = n.exprKind
+    inc n
+    case ek
+    of ConvX, DconvX, HconvX, CastX: skip n  # type
+    of BaseobjX:
+      skip n  # type
+      skip n  # intlit
+    else: discard
+
+proc evalExpr(c: var CycleCtx; n: Cursor): AbsSet =
+  ## Compute the abstract set of objects an expression can denote.
+  result = initHashSet[AbsId]()
+  var n = n
+  skipExprWrappers(n)
+  if n.kind == Symbol:
+    return bindingOf(c, n.symId)
+  if n.kind != ParLe:
+    # literals, dot tokens, etc.: external/unknown
+    return
+  case n.exprKind
+  of NewobjX, OconstrX:
+    result.incl freshAbsId(c, n.info, "alloc@" & infoToStr(n.info))
+  of NilX:
+    discard  # empty set models "nothing"
+  of TupconstrX, AconstrX, SetconstrX:
+    # value-typed aggregates: opaque to this analysis (the known
+    # loophole — see doc/nocycles.md). We return the empty set so
+    # subsequent reads through fields return external.
+    result.incl ExternalAbsId
+  of DotX, DdotX:
+    var inner = n
+    inc inner
+    let innerStart = inner
+    skip inner  # object subtree
+    if inner.kind == Symbol:
+      let recv = evalExpr(c, innerStart)
+      let field = inner.symId
+      for id in recv:
+        result.incl fieldOf(c, id, field)
+  of CallKinds:
+    # Conservative: a call result is a fresh, isolated abstract id.
+    # Without inter-procedural summaries we cannot say whether the
+    # call returned an alias of an argument; treating it as fresh is
+    # an under-approximation that misses some cycles but avoids
+    # collapsing the analysis with `External` everywhere.
+    result.incl freshAbsId(c, n.info, "call@" & infoToStr(n.info))
+  else:
+    if n.tagEnum == VTagId:
+      var r = n
+      inc r
+      if r.kind == Symbol:
+        return bindingOf(c, r.symId)
+    result.incl ExternalAbsId
+
+proc reachesCycle(c: CycleCtx; start: AbsSet): seq[AbsId] =
+  ## Returns the abstract ids that participate in a cycle reachable
+  ## from `start` via field edges.
+  result = @[]
+  var visited = initHashSet[AbsId]()
+  var onStack = initHashSet[AbsId]()
+  var stackOrder: seq[AbsId] = @[]
+  var cycle: seq[AbsId] = @[]
+
+  proc dfs(c: CycleCtx; id: AbsId; visited, onStack: var HashSet[AbsId];
+           stackOrder: var seq[AbsId]; cycle: var seq[AbsId]): bool =
+    if id == ExternalAbsId: return false
+    if id in onStack:
+      var i = stackOrder.high
+      while i >= 0 and stackOrder[i] != id:
+        cycle.add stackOrder[i]
+        dec i
+      if i >= 0: cycle.add stackOrder[i]
+      return true
+    if id in visited: return false
+    visited.incl id
+    onStack.incl id
+    stackOrder.add id
+    for key, targets in c.heap.fields.pairs:
+      if key.id == id:
+        for t in targets:
+          if dfs(c, t, visited, onStack, stackOrder, cycle):
+            return true
+    discard stackOrder.pop()
+    onStack.excl id
+    return false
+
+  for id in start:
+    if dfs(c, id, visited, onStack, stackOrder, cycle):
+      return cycle
+  return @[]
+
+proc reportCycle(c: var CycleCtx; cyc: seq[AbsId]; info: PackedLineInfo) =
+  if cyc.len == 0: return
+  # Avoid duplicate reports for the same cycle.
+  for id in cyc:
+    if id in c.reported: return
+  for id in cyc:
+    c.reported.incl id
+  var msg = "potential ownership cycle through "
+  for i, id in cyc:
+    if i > 0: msg.add " -> "
+    msg.add c.heap.siteName.getOrDefault(id, "?")
+  msg.add ". Use `{.cast(uncheckedCycle).}:` to suppress if the cycle is broken before destruction. See doc/nocycles.md."
+  c.errors.buildTree ErrT, info:
+    c.errors.addDotToken()
+    c.errors.add strToken(pool.strings.getOrIncl(msg), info)
+
+proc applyAssign(c: var CycleCtx; rhsCursor, lhsCursor: Cursor;
+                 info: PackedLineInfo) =
+  if c.inUncheckedCycle > 0: return
+  let rhs = evalExpr(c, rhsCursor)
+  # Walk lhs to find the last receiver and the field being written.
+  var lhs = lhsCursor
+  skipExprWrappers(lhs)
+  if lhs.kind == ParLe and lhs.exprKind in {DotX, DdotX}:
+    var inner = lhs
+    inc inner
+    let innerStart = inner
+    skip inner  # object subtree
+    if inner.kind == Symbol:
+      let field = inner.symId
+      let recv = evalExpr(c, innerStart)
+      # Skip cursor fields — they don't form ownership edges.
+      let recvType = getType(c.typeCache, innerStart)
+      if not isCursorFieldSym(recvType, field):
+        # Check the field's type: only ref edges create cycles.
+        let lhsType = getType(c.typeCache, lhs)
+        if skipModifier(lhsType).typeKind == RefT and
+           skipModifier(recvType).typeKind in {RefT, PtrT}:
+          strongUpdateField(c, recv, field, rhs)
+          let cycle = reachesCycle(c, recv)
+          if cycle.len > 0:
+            reportCycle(c, cycle, info)
+          return
+  # Plain variable assignment: update its binding.
+  if lhs.kind == Symbol:
+    setBinding(c, lhs.symId, rhs)
+  elif lhs.kind == ParLe and lhs.tagEnum == VTagId:
+    var r = lhs
+    inc r
+    if r.kind == Symbol:
+      setBinding(c, r.symId, rhs)
+
+proc walkCycleStmt(c: var CycleCtx; n: var Cursor)
+
+proc walkCycleLocal(c: var CycleCtx; n: var Cursor) =
+  let kind = n.symKind
+  let info = n.info
+  inc n
+  let name = n.symId
+  skip n  # name
+  skip n  # export
+  let pragmas = n
+  let suppress = hasUncheckedCycleCast(pragmas)
+  skip n  # pragmas
+  let typ = n
+  skip n  # type
+  if skipModifier(typ).typeKind == RefT:
+    if n.kind != DotToken:
+      if suppress: inc c.inUncheckedCycle
+      let initSet = evalExpr(c, n)
+      if suppress: dec c.inUncheckedCycle
+      setBinding(c, name, initSet)
+    elif kind == ResultY:
+      # `result` of a ref-returning proc starts as a fresh abstract
+      # identity that will receive field writes via `new(result)` etc.
+      var s = initHashSet[AbsId]()
+      s.incl freshAbsId(c, info, "result")
+      setBinding(c, name, s)
+  skip n  # value
+  skipParRi n
+
+proc walkCycleStmt(c: var CycleCtx; n: var Cursor) =
+  if n.kind == DotToken:
+    inc n
+    return
+  if n.kind != ParLe:
+    inc n
+    return
+  case n.njvlKind
+  of StoreV:
+    let info = n.info
+    inc n  # store tag
+    let valueStart = n
+    skip n
+    let destStart = n
+    skip n
+    skipParRi n
+    applyAssign(c, valueStart, destStart, info)
+    return
+  of IteV, ItecV:
+    inc n  # ite tag
+    skip n  # condition
+    let saved = c.heap
+    walkCycleStmt(c, n)  # then branch
+    let afterThen = c.heap
+    c.heap = saved
+    if n.kind == DotToken: inc n
+    else: walkCycleStmt(c, n)
+    # union the resulting heaps
+    for k, v in afterThen.bindings:
+      var existing = c.heap.bindings.getOrDefault(k, initHashSet[AbsId]())
+      existing.incl v
+      c.heap.bindings[k] = existing
+    for k, v in afterThen.fields:
+      var existing = c.heap.fields.getOrDefault(k, initHashSet[AbsId]())
+      existing.incl v
+      c.heap.fields[k] = existing
+    if n.kind == ParLe and n.stmtKind == StmtsS: skip n  # join
+    skipParRi n
+    return
+  of LoopV:
+    # Visit body once; full fixpoint iteration deferred (linear MVP).
+    inc n
+    while n.kind != ParRi:
+      walkCycleStmt(c, n)
+    skipParRi n
+    return
+  else: discard
+  case n.stmtKind
+  of StmtsS:
+    inc n
+    while n.kind != ParRi:
+      walkCycleStmt(c, n)
+    skipParRi n
+  of VarS, LetS, CursorS, ResultS, PatternvarS, GvarS, GletS, TvarS, TletS:
+    walkCycleLocal(c, n)
+  of PragmaxS:
+    inc n
+    let pragmas = n
+    let suppress = hasUncheckedCycleCast(pragmas)
+    skip n
+    if suppress: inc c.inUncheckedCycle
+    while n.kind != ParRi:
+      walkCycleStmt(c, n)
+    if suppress: dec c.inUncheckedCycle
+    skipParRi n
+  of NoStmt:
+    if n.exprKind == PragmaxX:
+      inc n
+      let pragmas = n
+      let suppress = hasUncheckedCycleCast(pragmas)
+      skip n
+      if suppress: inc c.inUncheckedCycle
+      walkCycleStmt(c, n)
+      if suppress: dec c.inUncheckedCycle
+      skipParRi n
+    else:
+      skip n
+  else:
+    skip n
+
+proc walkCycleProc(c: var CycleCtx; n: var Cursor) =
+  let saved = c.heap
+  let savedReported = c.reported
+  c.heap = AbsHeap()
+  c.reported = initHashSet[AbsId]()
+  c.procStart = n.info
+
+  let decl = n
+  inc n
+  let symId = n.symId
+  skip n  # name
+  skip n  # exported
+  skip n  # pattern
+  let typevars = n
+  skip n  # typevars
+  let isGeneric = typevars.substructureKind == TypevarsU
+  let params = n
+  if params.kind == ParLe:
+    var p = params
+    inc p
+    while p.kind != ParRi:
+      let r = takeLocal(p, SkipFinalParRi)
+      c.typeCache.registerLocal(r.name.symId, ParamY, r.typ)
+      # Each ref/ptr param gets its own abstract id (caller-provided).
+      if skipModifier(r.typ).typeKind in {RefT, PtrT}:
+        let pid = freshAbsId(c, r.name.info, pool.syms[r.name.symId])
+        var s = initHashSet[AbsId]()
+        s.incl pid
+        setBinding(c, r.name.symId, s)
+  c.typeCache.registerLocal(symId, ProcY, decl)
+  skip n  # params
+  skip n  # return type
+  skip n  # pragmas
+  skip n  # effects
+  if not isGeneric and n.kind != DotToken:
+    walkCycleStmt(c, n)
+  else:
+    skip n
+  skipParRi n
+
+  c.heap = saved
+  c.reported = savedReported
+
+proc walkCycleToplevel(c: var CycleCtx; n: var Cursor) =
+  case n.stmtKind
+  of StmtsS:
+    inc n
+    while n.kind != ParRi:
+      walkCycleToplevel(c, n)
+    skipParRi n
+  of PragmaxS:
+    inc n
+    skip n
+    walkCycleToplevel(c, n)
+    skipParRi n
+  of ProcS, FuncS, IteratorS, ConverterS, MethodS:
+    walkCycleProc(c, n)
+  of MacroS, TemplateS, TypeS, CommentS, PragmasS,
+     ImportasS, ExportexceptS, BindS, MixinS, UsingS, ExportS,
+     IncludeS, ImportS, FromimportS, ImportexceptS:
+    skip n
+  else:
+    skip n
+
+proc analyzeCyclesAI(njvlBuf: var TokenBuf; moduleSuffix: string;
+                     errors: var TokenBuf) =
+  var c = CycleCtx(
+    typeCache: createTypeCache(),
+    moduleSuffix: moduleSuffix
+  )
+  c.typeCache.openScope()
+  var n = beginRead(njvlBuf)
+  walkCycleToplevel c, n
+  endRead njvlBuf
+  c.typeCache.closeScope()
+  errors.add c.errors
+
+proc analyzeContractsNjvl*(input: var TokenBuf; moduleSuffix: string;
+                           verbose = false; checkCycles = false): TokenBuf =
   ## Main entry point: converts input to NJVL and analyzes contracts.
   ## When `verbose` is true, every contract/init failure dumps the enclosing
   ## proc's NJ IR to stderr to aid debugging.
+  ## When `checkCycles` is true, an additional abstract-interpretation pass
+  ## (see doc/nocycles.md) reports potential ownership cycles.
   var n = beginRead(input)
 
   # Convert to NJVL first
@@ -1756,6 +2170,11 @@ proc analyzeContractsNjvl*(input: var TokenBuf; moduleSuffix: string; verbose = 
   endRead njvlBuf
 
   c.typeCache.closeScope()
+
+  # Opt-in abstract-interpretation cycle check.
+  if checkCycles:
+    analyzeCyclesAI(njvlBuf, moduleSuffix, c.errors)
+
   result = ensureMove c.errors
 
 when isMainModule:

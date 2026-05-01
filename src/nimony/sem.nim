@@ -6800,7 +6800,9 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     var finalBuf = beginRead afterSem
     dest = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
     when true: #defined(enableContracts):
-      var moreErrors = analyzeContractsNjvl(dest, c.thisModuleSuffix, c.g.config.verbose)
+      let checkCycles = CheckCyclesFeature in c.features
+      var moreErrors = analyzeContractsNjvl(dest, c.thisModuleSuffix,
+                                            c.g.config.verbose, checkCycles)
       if reporters.reportErrors(moreErrors) > 0:
         quit 1
   else:
@@ -6868,7 +6870,9 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
   if reportErrors(dest) == 0:
     var afterSem = move dest
     when true:
-      var moreErrors = analyzeContractsNjvl(afterSem, c.thisModuleSuffix, c.g.config.verbose)
+      let checkCycles = CheckCyclesFeature in c.features
+      var moreErrors = analyzeContractsNjvl(afterSem, c.thisModuleSuffix,
+                                            c.g.config.verbose, checkCycles)
       if reporters.reportErrors(moreErrors) > 0:
         quit 1
     if c.genericInnerProcs.len > 0:
