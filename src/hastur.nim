@@ -24,6 +24,9 @@ Usage:
 Commands:
   build [all|nimony|nifler|hexer|nifc|nifmake|nj|vl|validator]   build selected tools (default: all).
   bootstrap            compile every module on the bootstrap list with nimony.
+  boot [options]       3-iteration self-host of `bin/nimony` (koch-style).
+                       Result is installed to `bin/nimony_b`. Extra args are
+                       forwarded to each `nimony c` invocation.
   all                  run all tests (also the default action).
   nimony               run Nimony tests.
   examples             run examples (examples/ directory).
@@ -54,6 +57,9 @@ Options:
   --jobs:N|auto         run up to N tests in parallel (auto = #cores)
   --cachedir:PATH       use PATH instead of `nimcache/` for intermediates
   --no-build            skip rebuilding nimony/nifc before `test`
+  --valgrind            for `boot`: build with -DMI_TRACK_VALGRIND=1 so
+                        mimalloc plays nicely with valgrind, then run a
+                        valgrind smoke test on the bootstrapped binary.
 """
 
 proc quitWithText*(s: string) =
@@ -1068,6 +1074,123 @@ proc bootstrapTests() =
   else:
     echo "SUCCESS."
 
+# ---- koch-style 3-iteration self-host bootstrap of `bin/nimony` -----------
+# Mirrors koch.nim's `boot` command: stage1 = host-Nim-compiled bin/nimony,
+# stage2 = stage1 compiled by stage1, stage3 = stage2 compiled by stage2.
+# If two consecutive stages produce byte-identical binaries, the bootstrap is
+# considered stable. Result lands at `bin/nimony_b` so the host-Nim-built
+# `bin/nimony` keeps working as a fallback while the self-hosted binary is
+# being shaken down (this whole path is brand-new and likely to surface
+# nimony codegen bugs).
+
+proc copyExe(source, dest: string) =
+  if fileExists(dest): removeFile(dest)
+  copyFile(source = source, dest = dest)
+  when defined(posix):
+    inclFilePermissions(dest, {fpUserExec, fpGroupExec, fpOthersExec})
+
+proc findStageExe(cacheDir, source: string): string =
+  ## Locate the executable produced by `nimony c` under `cacheDir`. Nimony
+  ## emits `<cacheDir>/<modnames-mangled-dir>/<basename>(.exe)`; rather than
+  ## reimplement the mangling, walk the tree and pick the first matching
+  ## file with executable permissions.
+  let baseName = source.splitFile.name
+  result = ""
+  for path in walkDirRec(cacheDir, yieldFilter = {pcFile}):
+    let f = path.splitFile
+    if f.name == baseName and (f.ext == "" or f.ext == ExeExt):
+      when defined(posix):
+        if fpUserExec in getFilePermissions(path):
+          return path
+      else:
+        return path
+
+proc compileNimonyStage(stage: int; compiler, cacheBase, source, args: string;
+                       withValgrind: bool): string =
+  let cache = cacheBase / ("s" & $stage)
+  removeDir cache
+  createDir cache
+  var cmd = compiler.quoteShell & " c --silentMake --nimcache:" &
+            cache.quoteShell
+  if withValgrind:
+    cmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\""
+  if args.len > 0:
+    cmd.add ' '
+    cmd.add args
+  cmd.add ' '
+  cmd.add source.quoteShell
+  echo "[boot] stage ", stage, ": ", cmd
+  let t0 = epochTime()
+  let exitCode = execShellCmd(cmd)
+  let dt = epochTime() - t0
+  if exitCode != 0:
+    quit "FAILURE: boot stage " & $stage & " failed after " &
+         formatFloat(dt, ffDecimal, precision=2) & "s"
+  let produced = findStageExe(cache, source)
+  if produced.len == 0:
+    quit "FAILURE: boot stage " & $stage & ": could not locate produced binary under " & cache
+  # nimony resolves the stdlib via `getAppDir() / "lib"` (or `<dir>/../lib`
+  # when launched from a sibling `bin/`). The fresh per-stage cache dir
+  # has no `lib/` next to it, so we stage each binary into `bin/` where
+  # the project's real `lib/` lives. Without this, stage 2 dies trying
+  # to open `<cache>/lib/std/system.nim`.
+  let staged = binDir() / ("nimony_stage" & $stage).addFileExt(ExeExt)
+  copyExe(produced, staged)
+  result = staged
+  echo "[boot] stage ", stage, " produced ", produced, " (-> ", staged,
+       ") in ", formatFloat(dt, ffDecimal, precision=2), "s"
+
+proc valgrindSmokeTest(exe: string) =
+  ## Run the bootstrapped binary under valgrind on a trivial command to flush
+  ## out the obvious memory corruption bugs (use-after-free, double-free,
+  ## invalid reads). `-DMI_TRACK_VALGRIND=1` must already be baked in via
+  ## the `--valgrind` boot flag, otherwise mimalloc's arena is opaque to
+  ## valgrind and nothing useful comes out.
+  echo "[boot] valgrind smoke check on ", exe
+  let cmd = "valgrind --leak-check=full --error-exitcode=1 " &
+            exe.quoteShell & " --version"
+  echo "[boot] ", cmd
+  let exitCode = execShellCmd(cmd)
+  if exitCode != 0:
+    quit "FAILURE: valgrind reported errors in " & exe
+  echo "[boot] valgrind smoke check passed"
+
+proc bootCmd(args: string; withValgrind: bool) =
+  let nimonyExe = binDir() / "nimony".addFileExt(ExeExt)
+  if not fileExists(nimonyExe):
+    quit "boot: " & nimonyExe & " not found; run `hastur build nimony` first"
+  const nimonyMain = "src/nimony/nimony.nim"
+  if not fileExists(nimonyMain):
+    quit "boot: " & nimonyMain & " missing"
+  let cacheBase = nimcacheDir / "boot"
+  removeDir cacheBase
+  createDir cacheBase
+  let t0 = epochTime()
+
+  let s1 = compileNimonyStage(1, nimonyExe, cacheBase, nimonyMain, args, withValgrind)
+  let s2 = compileNimonyStage(2, s1,        cacheBase, nimonyMain, args, withValgrind)
+
+  var winner = s2
+  if sameFileContent(s1, s2):
+    echo "[boot] stages 1 and 2 are byte-identical: stable bootstrap."
+  else:
+    echo "[boot] stages 1 and 2 differ; running stage 3 to check for convergence"
+    let s3 = compileNimonyStage(3, s2, cacheBase, nimonyMain, args, withValgrind)
+    if sameFileContent(s2, s3):
+      echo "[boot] stages 2 and 3 are byte-identical: stable bootstrap."
+    else:
+      echo "[boot] WARNING: stages 2 and 3 still differ — bootstrap is not converging."
+    winner = s3
+
+  if withValgrind:
+    valgrindSmokeTest(winner)
+
+  let dest = binDir() / "nimony_b".addFileExt(ExeExt)
+  copyExe(winner, dest)
+  echo "[boot] installed ", winner, " -> ", dest, " in total ",
+       formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  echo "SUCCESS."
+
 proc execNifc(cmd: string) =
   exec "nifc", cmd
 
@@ -1168,6 +1291,7 @@ proc handleCmdLine =
   var flags: set[RecordFlag] = {}
   var overwrite = false
   var forward = ""
+  var withValgrind = false
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -1193,6 +1317,8 @@ proc handleCmdLine =
           except: writeHelp()
       of "no-build", "nobuild":
         skipBuild = true
+      of "valgrind":
+        withValgrind = true
       else:
         if primaryCmd.len == 0 or primaryCmd == "record":
           case n
@@ -1249,6 +1375,14 @@ proc handleCmdLine =
   of "bootstrap":
     buildNimony()
     bootstrapTests()
+
+  of "boot":
+    buildNimony()
+    var bootArgs = ""
+    for a in items(args):
+      if bootArgs.len > 0: bootArgs.add ' '
+      bootArgs.add quoteShell(a)
+    bootCmd(bootArgs, withValgrind)
 
   of "controlflow", "cf":
     buildControlflow()
