@@ -1775,8 +1775,26 @@ proc freshAbsId(c: var CycleCtx; info: PackedLineInfo;
 proc bindingOf(c: CycleCtx; s: SymId): AbsSet =
   c.heap.bindings.getOrDefault(s, initHashSet[AbsId]())
 
-proc fieldOf(c: CycleCtx; id: AbsId; field: SymId): AbsSet =
-  c.heap.fields.getOrDefault((id, field), initHashSet[AbsId]())
+proc fieldOf(c: var CycleCtx; id: AbsId; field: SymId;
+             info: PackedLineInfo): AbsSet =
+  ## Reads `id.field`. On the first read of a field that has not been
+  ## written to, mint a fresh disjoint abstract identity. This bakes
+  ## in two defaults (see doc/nocycles.md):
+  ##   1. Non-cursor ref fields of an object are *unique* by default —
+  ##      otherwise why have them as separate fields?
+  ##   2. Different fields of the same object never collapse to the
+  ##      same abstract identity unless explicitly aliased.
+  ## External/unknown receivers contribute nothing — there's no field
+  ## to lazily allocate against.
+  result = initHashSet[AbsId]()
+  if id == ExternalAbsId: return
+  let key: FieldKey = (id, field)
+  if key in c.heap.fields:
+    return c.heap.fields[key]
+  let parent = c.heap.siteName.getOrDefault(id, "?")
+  let lazy = freshAbsId(c, info, parent & "." & pool.syms[field])
+  result.incl lazy
+  c.heap.fields[key] = result
 
 proc setBinding(c: var CycleCtx; s: SymId; aset: AbsSet) =
   c.heap.bindings[s] = aset
@@ -1851,7 +1869,7 @@ proc evalExpr(c: var CycleCtx; n: Cursor): AbsSet =
       let recv = evalExpr(c, innerStart)
       let field = inner.symId
       for id in recv:
-        result.incl fieldOf(c, id, field)
+        result.incl fieldOf(c, id, field, n.info)
   of CallKinds:
     # Conservative: a call result is a fresh, isolated abstract id.
     # Without inter-procedural summaries we cannot say whether the
