@@ -1,28 +1,28 @@
-(.nif26)
-(.indexat +635             )
-0,1,tests/nimony/nosystem/twhen.nim(stmts
- (import mwhzgh6nt1) 2,3
- (stmts
-  (discard 8 "good")) 2,10
- (stmts
-  (discard 8 "good")) 2,13
- (stmts
-  (discard 8 "good")) 2,20
- (stmts
-  (discard 8 "good")) 2,25
- (stmts
-  (discard 8 "good")) ,27
- (proc 5 :not.0.
-  (not) . . 11
-  (params 1
-   (param :x.0 . . 3
-    (bool) .)) 11
-  (bool) 27
-  (pragmas 2
-   (magic 7 Not)) . .) 2,32
- (stmts
-  (discard 8 "good")) 2,35
- (stmts
-  (discard 8 "good")) 5,2
- (comment true.0.mwhzgh6nt1 ,5 false.0.mwhzgh6nt1 ,10 isMainModule.0.mwhzgh6nt1 10,25 bool.0.mwhzgh6nt1 6,25 bool.0.mwhzgh6nt1 4,27 true.0.mwhzgh6nt1))0,1,tests/nimony/nosystem/twhen.nim(.index ,27
- (x not.0. +278))
+(.nif27)
+(.indexat 617              )
+(stmts@,1,tests/nimony/nosystem/twhen.nim
+ (import mwhzgh6nt1)
+ (stmts@2,3
+  (discard "good"@8))
+ (stmts@2,A
+  (discard "good"@8))
+ (stmts@2,D
+  (discard "good"@8))
+ (stmts@2,K
+  (discard "good"@8))
+ (stmts@2,P
+  (discard "good"@8))
+ (proc@,R :not.0.@5
+  (not). .
+  (params@B
+   (param@1 :x.0 . .
+    (bool@3).))
+  (bool@B)
+  (pragmas@R
+   (magic@2 Not@7)). .)
+ (stmts@2,W
+  (discard "good"@8))
+ (stmts@2,Z
+  (discard "good"@8))
+ (comment@5,2 true.0.mwhzgh6nt1 false.0.mwhzgh6nt1@,5 isMainModule.0.mwhzgh6nt1@,A bool.0.mwhzgh6nt1@A,P bool.0.mwhzgh6nt1@6,P true.0.mwhzgh6nt1@4,R))(.index@,1,tests/nimony/nosystem/twhen.nim
+ (x not.0. 270))

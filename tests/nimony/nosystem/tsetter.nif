@@ -1,35 +1,35 @@
-(.nif26)
-(.indexat +696             )
-0,1,tests/nimony/nosystem/tsetter.nim(stmts 5
- (type :int.0.
-  (i +64) . 4
-  (pragmas 2
-   (magic 7 Int)) .) 9,2
- (type ~4 :Foo.0. . .
-  (pragmas) 2
-  (object .)) ,4
- (proc 5 :bar=.0. . . . 11
-  (params 1
-   (param :x.0 . . 3 Foo.0. .) 9
-   (param :y.0 . . 3
-    (i +64) .)) . . . 30
-  (stmts
-   (discard .))) ,5
- (proc 5 :\5B\5D=.0. . . . 10
-  (params 1
-   (param :x.1 . . 3 Foo.0. .) 9
-   (param :y.1 . . 3
-    (i +64) .) 17
-   (param :z.0 . . 3
-    (i +64) .)) . . . 37
-  (stmts
-   (discard .))) 4,7
- (gvar :foo.0. . . 5 Foo.0. .) ,8
- (call bar=.0. foo.0. 10 +123) ,9
- (call \5B\5D=.0. foo.0. 4 +123 11 +456) 23,4
- (comment int.0. ~1,1 int.0. 7,1 int.0.))0,1,tests/nimony/nosystem/tsetter.nim(.index 5
- (x int.0. +83) 9,2
- (h Foo.0. +67) ,4
- (h bar=.0. +53) ,5
- (h \5B\5D=.0. +147) 4,7
- (h foo.0. +190))
+(.nif27)
+(.indexat 672              )
+(stmts@,1,tests/nimony/nosystem/tsetter.nim
+ (type@5 :int.0.
+  (i 64).
+  (pragmas@4
+   (magic@2 Int@7)).)
+ (type@9,2 :Foo.0.~4 . .
+  (pragmas)
+  (object@2 .))
+ (proc@,4 :bar=.0.@5 . . .
+  (params@B
+   (param@1 :x.0 . . Foo.0.@3 .)
+   (param@9 :y.0 . .
+    (i@3 64).)). . .
+  (stmts@U
+   (discard .)))
+ (proc@,5 :\5B\5D=.0.@5 . . .
+  (params@A
+   (param@1 :x.1 . . Foo.0.@3 .)
+   (param@9 :y.1 . .
+    (i@3 64).)
+   (param@H :z.0 . .
+    (i@3 64).)). . .
+  (stmts@b
+   (discard .)))
+ (gvar@4,7 :foo.0. . . Foo.0.@5 .)
+ (call@,8 bar=.0. foo.0. 123@A)
+ (call@,9 \5B\5D=.0. foo.0. 123@4 456@B)
+ (comment@N,4 int.0. int.0.~1,1 int.0.@7,1))(.index@,1,tests/nimony/nosystem/tsetter.nim
+ (x int.0. 81)
+ (h Foo.0. 62)
+ (h bar=.0. 53)
+ (h \5B\5D=.0. 142)
+ (h foo.0. 181))

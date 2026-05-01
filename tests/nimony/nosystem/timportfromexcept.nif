@@ -1,43 +1,43 @@
-(.nif26)
-(.indexat +860             )
-0,1,tests/nimony/nosystem/timportfromexcept.nim(stmts
- (import mde75jr5h modvx9hpf modepjal) 4,4
- (glet :allImported.0. . . 14
-  (array 11,2,tests/nimony/nosystem/deps/modexcept.nim
-   (i +64)
+(.nif27)
+(.indexat 817              )
+(stmts@,1,tests/nimony/nosystem/timportfromexcept.nim
+ (import mde75jr5h modvx9hpf modepjal)
+ (glet@4,4 :allImported.0. . .
+  (array@E
+   (i@B,2,tests/nimony/nosystem/deps/modexcept.nim 64)
    (rangetype
-    (i +64) +0 +2)) 14
-  (aconstr
-   (array 11,2,tests/nimony/nosystem/deps/modexcept.nim
-    (i +64)
+    (i 64)0 2))
+  (aconstr@E
+   (array
+    (i@B,2,tests/nimony/nosystem/deps/modexcept.nim 64)
     (rangetype
-     (i +64) +0 +2)) 1 exceptB.0.modvx9hpf 10 fromA.0.modepjal 17 fromC.0.modepjal)) 4,5
- (glet :exceptDeclared.0. . . 17
-  (array
+     (i 64)0 2))exceptB.0.modvx9hpf@1 fromA.0.modepjal@A fromC.0.modepjal@H))
+ (glet@4,5 :exceptDeclared.0. . .
+  (array@H
    (bool)
    (rangetype
-    (i +64) +0 +2)) 17
-  (aconstr
+    (i 64)0 2))
+  (aconstr@H
    (array
     (bool)
     (rangetype
-     (i +64) +0 +2)) 10
-   (false) 29
-   (true) 48
-   (false))) 4,6
- (glet :fromDeclared.0. . . 17,~1
-  (array
+     (i 64)0 2))
+   (false@A)
+   (true@T)
+   (false@m)))
+ (glet@4,6 :fromDeclared.0. . .
+  (array@H,~1
    (bool)
    (rangetype
-    (i +64) +0 +2)) 15
-  (aconstr 2,~1
-   (array
+    (i 64)0 2))
+  (aconstr@F
+   (array@2,~1
     (bool)
     (rangetype
-     (i +64) +0 +2)) 10
-   (true) 27
-   (false) 44
-   (true))))0,1,tests/nimony/nosystem/timportfromexcept.nim(.index 4,4
- (h allImported.0. +134) 4,5
- (h exceptDeclared.0. +316) 4,6
- (h fromDeclared.0. +204))
+     (i 64)0 2))
+   (true@A)
+   (false@R)
+   (true@i))))(.index@,1,tests/nimony/nosystem/timportfromexcept.nim
+ (h allImported.0. 130)
+ (h exceptDeclared.0. 299)
+ (h fromDeclared.0. 191))

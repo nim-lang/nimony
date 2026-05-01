@@ -22,7 +22,7 @@ There are **two distinct roles of Inputs and Outputs**:
 Create a build description file (e.g., `build.nif`):
 
 ```nif
-(.nif24)
+(.nif27)
 (stmts
   (cmd :nifler "bin/nifler" "--portablePaths --deps parse" (input) (output))
 
@@ -97,7 +97,7 @@ After the indexes a suffix can be written: `(input 0 -1 ".nim")` produces `<inpu
 Build files use the NIF syntax:
 
 ```nif
-(.nif24)
+(.nif27)
 (stmts
   (cmd :command_template "bin/tool" (args) (input +0 +1) (output))
   (do command_template
@@ -127,7 +127,7 @@ Each `do` statement defines a build rule:
 ## Example
 
 ```nif
-(.nif24)
+(.nif27)
 (stmts
   (cmd :nifler "nifler" "--portablePaths --deps parse" (input) (output))
   (cmd :nimsem "nimsem" (input) (output))

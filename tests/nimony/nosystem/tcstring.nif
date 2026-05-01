@@ -1,79 +1,79 @@
-(.nif26)
-(.indexat +1385            )
-0,2,tests/nimony/nosystem/tcstring.nim(stmts 2,1
- (type :int.0.
-  (i +64) . 5
-  (pragmas 2
-   (magic 7 Int)) .) 2,2
- (type :bool.0.
-  (bool) . 6
-  (pragmas 2
-   (magic 7 Bool)) .) 2,4
- (type :cstring.0.
-  (cstring) . 9
-  (pragmas 2
-   (magic 7 Cstring)) .) 2,5
- (type :pointer.0.
-  (pointer) . 9
-  (pragmas 2
-   (magic 7 Pointer)) .) ,8
- (proc 5 :\2B.0.
-  (add -3) . . 9
-  (params 1
-   (param :x.0 . . 6
-    (i +64) .) 4
-   (param :y.0 . . 3
-    (i +64) .)) 13
-  (i +64) 26
-  (pragmas 2
-   (magic 7 "AddI")) . .) ,9
- (proc 5 :\2D.0.
-  (sub -3) . . 9
-  (params 1
-   (param :x.1 . . 6
-    (i +64) .) 4
-   (param :y.1 . . 3
-    (i +64) .)) 13
-  (i +64) 26
-  (pragmas 2
-   (magic 7 "SubI")) . .) ,11
- (proc 5 :<=.0.
-  (le -3) . . 10
-  (params 1
-   (param :x.2 . . 6
-    (i +64) .) 4
-   (param :y.2 . . 3
-    (i +64) .)) 13
-  (bool) 28
-  (pragmas 2
-   (magic 7 "LeI")) . .) 4,13
- (gvar :x.0. . . 12,~5
-  (i +64) 4
-  (cast 5
-   (i +64) 10 +55)) 4,15
- (gvar :y.0. . . 7
-  (pointer
-   (nil)) 17
-  (nil)) 2,18
- (const :myconst.0. . . 10
-  (cstring
-   (notnil)) 17
-  (suf "abc" "C")) 4,20
- (gvar :zz.0. . . 8,~2
-  (cstring
-   (notnil)) 14
-  (hconv ~6,~2
-   (cstring
-    (notnil)) "xzy")) 16,8
- (comment int.0. int.0. ~3 int.0. ,1 int.0. ,1 int.0. ~3,1 int.0. 1,3 int.0. 1,3 int.0. ~3,3 bool.0. ~4,10 cstring.0. ~3,5 int.0. ~5,7 pointer.0. ~8,12 cstring.0.))0,2,tests/nimony/nosystem/tcstring.nim(.index 2,1
- (x int.0. +86) 2,2
- (x bool.0. +67) 2,4
- (x cstring.0. +68) 2,5
- (x pointer.0. +77) ,8
- (x \2B.0. +76) ,9
- (x \2D.0. +179) ,11
- (x <=.0. +180) 4,13
- (h x.0. +178) 4,15
- (h y.0. +70) 2,18
- (h myconst.0. +57) 4,20
- (h zz.0. +78))
+(.nif27)
+(.indexat 1322             )
+(stmts@,2,tests/nimony/nosystem/tcstring.nim
+ (type@2,1 :int.0.
+  (i 64).
+  (pragmas@5
+   (magic@2 Int@7)).)
+ (type@2,2 :bool.0.
+  (bool).
+  (pragmas@6
+   (magic@2 Bool@7)).)
+ (type@2,4 :cstring.0.
+  (cstring).
+  (pragmas@9
+   (magic@2 Cstring@7)).)
+ (type@2,5 :pointer.0.
+  (pointer).
+  (pragmas@9
+   (magic@2 Pointer@7)).)
+ (proc@,8 :\2B.0.@5
+  (add -3). .
+  (params@9
+   (param@1 :x.0 . .
+    (i@6 64).)
+   (param@4 :y.0 . .
+    (i@3 64).))
+  (i@D 64)
+  (pragmas@Q
+   (magic@2 "AddI"@7)). .)
+ (proc@,9 :\2D.0.@5
+  (sub -3). .
+  (params@9
+   (param@1 :x.1 . .
+    (i@6 64).)
+   (param@4 :y.1 . .
+    (i@3 64).))
+  (i@D 64)
+  (pragmas@Q
+   (magic@2 "SubI"@7)). .)
+ (proc@,B :<=.0.@5
+  (le -3). .
+  (params@A
+   (param@1 :x.2 . .
+    (i@6 64).)
+   (param@4 :y.2 . .
+    (i@3 64).))
+  (bool@D)
+  (pragmas@S
+   (magic@2 "LeI"@7)). .)
+ (gvar@4,D :x.0. . .
+  (i@C,~5 64)
+  (cast@4
+   (i@5 64)55@A))
+ (gvar@4,F :y.0. . .
+  (pointer@7
+   (nil))
+  (nil@H))
+ (const@2,I :myconst.0. . .
+  (cstring@A
+   (notnil))
+  (suf@H "abc" "C"))
+ (gvar@4,K :zz.0. . .
+  (cstring@8,~2
+   (notnil))
+  (hconv@E
+   (cstring~6,~2
+    (notnil))"xzy"))
+ (comment@G,8 int.0. int.0. int.0.~3 int.0.@,1 int.0.@,1 int.0.~3,1 int.0.@1,3 int.0.@1,3 bool.0.~3,3 cstring.0.~4,A int.0.~3,5 pointer.0.~5,7 cstring.0.~8,C))(.index@,2,tests/nimony/nosystem/tcstring.nim
+ (x int.0. 82)
+ (x bool.0. 64)
+ (x cstring.0. 66)
+ (x pointer.0. 75)
+ (x \2B.0. 75)
+ (x \2D.0. 170)
+ (x <=.0. 170)
+ (h x.0. 167)
+ (h y.0. 63)
+ (h myconst.0. 55)
+ (h zz.0. 75))

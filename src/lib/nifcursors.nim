@@ -668,6 +668,11 @@ template copyIntoUnchecked*(dest: var TokenBuf; tag: string; info: PackedLineInf
 
 proc parse*(r: var Stream; dest: var TokenBuf;
             parentInfo: PackedLineInfo; debug: bool = false) =
+  ## Read tokens from `r` into `dest`. `parentInfo` seeds the parent line-info
+  ## stack so that the first token read resolves its diff against the correct
+  ## source-tree parent. `parseFromFile`/`parseFromBuffer` pass `NoLineInfo`;
+  ## index-jumped reads pass the indexed compound's *parent* info (recorded
+  ## by `toModuleString`'s SymbolDef branch — see the comment there).
   r.parents[0] = parentInfo
   var nested = 0
   while true:

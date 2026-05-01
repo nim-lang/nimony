@@ -3,18 +3,18 @@
  (proc :echo.0 . . .
   (params
    (param :cond.0 . .
-    (bool) .)) .
+    (bool).)).
   (pragmas
-   (raises)) .
+   (raises)).
   (stmts
    (stmts
     (result :`result.1 . . ErrorCode.0.sysvq0asl .)
     (store Success.0.sysvq0asl
-     (v `result.1 +1))
+     (v `result.1 1))
     (mflag :´r.0)
     (kill ´r.0))))
  (proc :test . . .
-  (params) . . .
+  (params). . .
   (stmts
    (stmts
     (mflag :´r.0)
@@ -23,37 +23,37 @@
     (let :`g.3 . . ErrorCode.0.sysvq0asl
      (call echo.0 "abc"))
     (ite
-     (v `g.3 +0)
+     (v `g.3 0)
      (stmts
       (jtrue ´g.1))
      (stmts
       (ite
        (not
-        (v ´g.1 +1))
+        (v ´g.1 1))
        (stmts
         (let :`g.4 . . ErrorCode.0.sysvq0asl
          (call echo.0 "xyz"))
         (ite
-         (v `g.4 +0)
+         (v `g.4 0)
          (stmts
           (jtrue ´g.1))
          (stmts)
-         (stmts))) .
+         (stmts))).
        (stmts)))
      (stmts
-      (join ´g.1 +3 +1 +2)))
+      (join ´g.1 3 1 2)))
     (let :`g.5 . . ErrorCode.0.sysvq0asl
      (call echo.0 "regardless"))
     (ite
-     (v `g.5 +0)
+     (v `g.5 0)
      (stmts
       (jtrue ´g.1))
      (stmts)
      (stmts))
     (ite
-     (v ´err.2 +0)
+     (v ´err.2 0)
      (stmts
-      (jtrue ´g.1)) .
+      (jtrue ´g.1)).
      (stmts))
     (kill ´r.0 ´g.1))))
  (kill ´r.0.main))

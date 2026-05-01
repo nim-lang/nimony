@@ -1,16 +1,15 @@
-(.nif24)
+(.nif27)
 (stmts
-  (incl "<stdio.h>")
-
-  (proc :genericProc.c . (void) (pragmas (selectany)) (stmts
-    (call printf.c "hello %s" "file t1")
-  )
-  )
-
-  (proc :genericProc2.c . (void) (pragmas (selectany)) (stmts
-    (call printf.c "hello %s\0A" "file t1")
-  )
-  )
-
-
-)
+ (incl "<stdio.h>")
+ (proc :genericProc.c .
+  (void)
+  (pragmas
+   (selectany))
+  (stmts
+   (call printf.c "hello %s" "file t1")))
+ (proc :genericProc2.c .
+  (void)
+  (pragmas
+   (selectany))
+  (stmts
+   (call printf.c "hello %s\0A" "file t1"))))

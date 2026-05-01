@@ -5,12 +5,12 @@
    (param :msg.0 . .
     (ptr
      (array
-      (i +8))) .)) . . .
+      (i 8))).)). . .
   (stmts
    (mflag :´r.0)
    (kill ´r.0)))
  (proc :test1.0 . . .
-  (params) . . .
+  (params). . .
   (stmts
    (mflag :´r.0)
    (mflag :´r.0)
@@ -31,7 +31,7 @@
      (continue .)))
    (kill ´r.0 a.0)))
  (proc :test2.0 . . .
-  (params) . . .
+  (params). . .
   (stmts
    (mflag :´r.0)
    (mflag :´r.0)
@@ -51,12 +51,12 @@
      (ite
       (not ´g.1)
       (stmts
-       (call echo.0 "after if with else")) .)
+       (call echo.0 "after if with else")).)
      (kill ´g.1)
      (continue .)))
    (kill ´r.0 a.0)))
  (proc :test3.0 . . .
-  (params) . . .
+  (params). . .
   (stmts
    (mflag :´r.0)
    (mflag :´r.0)
@@ -77,16 +77,16 @@
         (stmts
          (jtrue ´g.1))
         (stmts
-         (call echo.0 "after inner if")))) .)
+         (call echo.0 "after inner if")))).)
      (ite
       (not ´g.1)
       (stmts
-       (call echo.0 "after outer if")) .)
+       (call echo.0 "after outer if")).)
      (kill ´g.1)
      (continue .)))
    (kill ´r.0 a.0 b.0)))
  (proc :test4.0 . . .
-  (params) . . .
+  (params). . .
   (stmts
    (mflag :´r.0)
    (mflag :´r.0)
@@ -112,20 +112,20 @@
           (stmts
            (jtrue ´g.1))
           (stmts
-           (call echo.0 "level 2 after")))) .)
+           (call echo.0 "level 2 after")))).)
        (ite
         (not ´g.1)
         (stmts
-         (call echo.0 "level 1 after")) .)) .)
+         (call echo.0 "level 1 after")).)).)
      (ite
       (not ´g.1)
       (stmts
-       (call echo.0 "level 0 after")) .)
+       (call echo.0 "level 0 after")).)
      (kill ´g.1)
      (continue .)))
    (kill ´r.0 a.0 c.0 b.0)))
  (proc :test5.0 . . .
-  (params) . . .
+  (params). . .
   (stmts
    (mflag :´r.0)
    (mflag :´r.0)
@@ -139,7 +139,7 @@
      (call echo.0 "after return if")))
    (kill ´r.0 a.0)))
  (proc :test6.0 . . .
-  (params) . . .
+  (params). . .
   (stmts
    (mflag :´r.0)
    (mflag :´r.0)
@@ -162,7 +162,7 @@
      (continue .)))
    (kill ´r.0 a.0)))
  (proc :test7.0 . . .
-  (params) . . .
+  (params). . .
   (stmts
    (mflag :´r.0)
    (mflag :´r.0)
@@ -187,16 +187,16 @@
        (ite
         (not ´g.1)
         (stmts
-         (call echo.0 "after inner if-else")) .)) .)
+         (call echo.0 "after inner if-else")).)).)
      (ite
       (not ´g.1)
       (stmts
-       (call echo.0 "after outer if")) .)
+       (call echo.0 "after outer if")).)
      (kill ´g.1)
      (continue .)))
    (kill ´r.0 a.0 b.0)))
  (proc :test8.0 . . .
-  (params) . . .
+  (params). . .
   (stmts
    (mflag :´r.0)
    (mflag :´r.0)
@@ -211,7 +211,7 @@
      (call echo.0 "after block break")))
    (kill ´r.0 a.0 ´g.1)))
  (proc :test9.0 . . .
-  (params) . . .
+  (params). . .
   (stmts
    (mflag :´r.0)
    (mflag :´r.0)
@@ -240,7 +240,7 @@
      (continue .)))
    (kill ´r.0 a.0 b.0)))
  (proc :test10.0 . . .
-  (params) . . .
+  (params). . .
   (stmts
    (mflag :´r.0)
    (mflag :´r.0)
@@ -270,7 +270,7 @@
           (stmts
            (jtrue ´g.1))
           (stmts
-           (call echo.0 "c was false")))) .)
+           (call echo.0 "c was false")))).)
        (ite
         (not ´g.1)
         (stmts
@@ -279,12 +279,12 @@
           (stmts
            (jtrue ´g.1))
           (stmts
-           (call echo.0 "d was false")) .)))) .)
+           (call echo.0 "d was false")).)))).)
      (ite
       (not ´g.1)
       (stmts
        (call echo.0 "main body")
-       (continue .)) .)
+       (continue .)).)
      (kill ´g.1)
      (continue .)))
    (kill ´r.0 a.0 d.0 c.0 b.0)))

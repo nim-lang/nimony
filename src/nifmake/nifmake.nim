@@ -561,7 +561,7 @@ proc parseNifFile(filename: string; baseDir: sink string): Dag =
   var n = beginRead(buf)
   defer: endRead(buf)
 
-  # Parse (.nif24)(stmts ...)
+  # Parse (.nif27)(stmts ...)
   if n.kind == ParLe:
     inc n # skip opening paren
     while n.kind != ParRi:

@@ -1,5 +1,5 @@
-(.nif26)
-(.indexat +129             )
-0,2,tests/nimony/nosystem/tfloatliterals0.nim(stmts
- (discard 8 -0.0) ,1
- (discard 8 +0.0))0,2,tests/nimony/nosystem/tfloatliterals0.nim(.index)
+(.nif27)
+(.indexat 128              )
+(stmts@,2,tests/nimony/nosystem/tfloatliterals0.nim
+ (discard -0.0@8)
+ (discard@,1 0.0@8))(.index@,2,tests/nimony/nosystem/tfloatliterals0.nim)

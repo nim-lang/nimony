@@ -1,29 +1,29 @@
-(.nif26)
-(.indexat +455             )
-0,1,tests/nimony/nosystem/tdefinedarg.nim(stmts 5
- (type :untyped.0.
-  (untyped) . 9
-  (pragmas 2
-   (magic 7 Expr)) .) ,2
- (proc 5 :defined.0.
-  (defined) . . 12
-  (params 1
-   (param :x.0 . . 3
-    (untyped) .)) . 25
-  (pragmas 2
-   (magic 7 Defined)) . .) 4,4
- (glet :x.0. . .
-  (bool) 12
-  (false)) 4,5
- (glet :y.0. . .
-  (bool) 12
-  (true)) 4,6
- (glet :z.0. . .
-  (bool) 15
-  (false)) 16,2
- (comment untyped.0.))0,1,tests/nimony/nosystem/tdefinedarg.nim(.index 5
- (x untyped.0. +87) ,2
- (x defined.0. +73) 4,4
- (h x.0. +140) 4,5
- (h y.0. +44) 4,6
- (h z.0. +43))
+(.nif27)
+(.indexat 443              )
+(stmts@,1,tests/nimony/nosystem/tdefinedarg.nim
+ (type@5 :untyped.0.
+  (untyped).
+  (pragmas@9
+   (magic@2 Expr@7)).)
+ (proc@,2 :defined.0.@5
+  (defined). .
+  (params@C
+   (param@1 :x.0 . .
+    (untyped@3).)).
+  (pragmas@P
+   (magic@2 Defined@7)). .)
+ (glet@4,4 :x.0. . .
+  (bool)
+  (false@C))
+ (glet@4,5 :y.0. . .
+  (bool)
+  (true@C))
+ (glet@4,6 :z.0. . .
+  (bool)
+  (false@F))
+ (comment@G,2 untyped.0.))(.index@,1,tests/nimony/nosystem/tdefinedarg.nim
+ (x untyped.0. 85)
+ (x defined.0. 70)
+ (h x.0. 133)
+ (h y.0. 43)
+ (h z.0. 42))

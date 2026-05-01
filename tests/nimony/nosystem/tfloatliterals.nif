@@ -1,23 +1,23 @@
-(.nif26)
-(.indexat +604             )
-0,1,tests/nimony/nosystem/tfloatliterals.nim(stmts
- (discard 8 +0.0) ,1
- (discard 8 +1.0) ,2
- (discard 8 +1.0) ,3
- (discard 8 -1.0) ,4
- (discard 8 +10.0) ,5
- (discard 8 -10.0) ,6
- (discard 8 +100.0) ,7
- (discard 8 -100.0) ,11
- (discard 8 +1000000000000000.0) ,12
- (discard 8 -1000000000000000.0) ,13
- (discard 8 +10000000000000000.0) ,14
- (discard 8 -10000000000000000.0) ,15
- (discard 8 +1E+17) ,16
- (discard 8 -1E+17) ,17
- (discard 8 +1E+18) ,18
- (discard 8 -1E+18) ,20
- (discard 8 +1.23E+19) ,21
- (discard 8 -1.23E+19) ,24
- (discard 8 +0.0) ,25
- (discard 8 -0.0))0,1,tests/nimony/nosystem/tfloatliterals.nim(.index)
+(.nif27)
+(.indexat 581              )
+(stmts@,1,tests/nimony/nosystem/tfloatliterals.nim
+ (discard 0.0@8)
+ (discard@,1 1.0@8)
+ (discard@,2 1.0@8)
+ (discard@,3 -1.0@8)
+ (discard@,4 10.0@8)
+ (discard@,5 -10.0@8)
+ (discard@,6 100.0@8)
+ (discard@,7 -100.0@8)
+ (discard@,B 1000000000000000.0@8)
+ (discard@,C -1000000000000000.0@8)
+ (discard@,D 10000000000000000.0@8)
+ (discard@,E -10000000000000000.0@8)
+ (discard@,F 1E+17@8)
+ (discard@,G -1E+17@8)
+ (discard@,H 1E+18@8)
+ (discard@,I -1E+18@8)
+ (discard@,K 1.23E+19@8)
+ (discard@,L -1.23E+19@8)
+ (discard@,O 0.0@8)
+ (discard@,P -0.0@8))(.index@,1,tests/nimony/nosystem/tfloatliterals.nim)

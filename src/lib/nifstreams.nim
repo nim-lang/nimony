@@ -269,6 +269,8 @@ proc typebits*(n: PackedToken): int =
     result = 0
 
 proc emitLineInfo(b: var Builder; info, parentInfo: PackedLineInfo) =
+  ## Append the NIF27 line-info suffix for `info` (relative to `parentInfo` if
+  ## both share a file) to whatever atom or tag was just written into `b`.
   let rawInfo = unpack(pool.man, info)
   let file = rawInfo.file
   var line = rawInfo.line
@@ -283,7 +285,7 @@ proc emitLineInfo(b: var Builder; info, parentInfo: PackedLineInfo) =
         col = col - pRawInfo.col
     else:
       fileAsStr = pool.files[file]
-    b.addLineInfo(col, line, fileAsStr)
+    b.attachLineInfo(col, line, fileAsStr)
 
 proc toString*(tree: openArray[PackedToken]; produceLineInfo = true): string =
   var b = nifbuilder.open(tree.len * 20)
@@ -291,8 +293,6 @@ proc toString*(tree: openArray[PackedToken]; produceLineInfo = true): string =
   for n in 0 ..< tree.len:
     let info = tree[n].info
     let k = tree[n].kind
-    if produceLineInfo and info.isValid and k != ParRi:
-      emitLineInfo(b, info, if stack.len > 0: stack[^1] else: NoLineInfo)
     case k
     of DotToken:
       b.addEmpty()
@@ -322,25 +322,27 @@ proc toString*(tree: openArray[PackedToken]; produceLineInfo = true): string =
       b.endTree()
     of ParLe:
       b.addTree(pool.tags[tree[n].tagId])
+    # NIF27: line info is a postfix suffix on the atom or tag we just wrote.
+    if produceLineInfo and info.isValid and k != ParRi:
+      emitLineInfo(b, info, if stack.len > 0: stack[^1] else: NoLineInfo)
+    if k == ParLe:
       stack.add info
   result = b.extract()
 
 proc toModuleString*(tree: openArray[PackedToken]; dottedSuffix = ""; produceLineInfo = true): string =
   ## Like `toString` but produces a full file including the header and an index.
   var b = nifbuilder.open(tree.len * 20)
-  let patchPos = b.addHeader26()
+  let patchPos = b.addHeader27()
   var stack: seq[PackedLineInfo] = @[]
   var mostRecentOffset = 0
   var previousOffset = 0
   var index = nifbuilder.open(tree.len * 2)
+  index.addTree ".index"
   if tree.len > 0:
     index.emitLineInfo(tree[0].info, NoLineInfo)
-  index.addTree ".index"
   for n in 0 ..< tree.len:
     let info = tree[n].info
     let k = tree[n].kind
-    if produceLineInfo and info.isValid and k != ParRi:
-      emitLineInfo(b, info, if stack.len > 0: stack[^1] else: NoLineInfo)
     case k
     of DotToken:
       b.addEmpty()
@@ -357,12 +359,19 @@ proc toModuleString*(tree: openArray[PackedToken]; dottedSuffix = ""; produceLin
     of SymbolDef:
       let symId = tree[n].symId
       if b.addSymbolDefRetIsGlobal(pool.syms[symId], dottedSuffix):
-        # we need to emit the line information for `kv` entry so that it can stay in sync:
-        emitLineInfo(index, stack[^1], tree[0].info)
         if n+1 >= tree.len or (tree[n+1].kind == DotToken):
           index.addTree "h" # no export marker --> hidden
         else:
           index.addTree "x" # export marker --> exported
+        # Record the **parent** info (stack[^2]) of the indexed compound, not
+        # the compound's own info (stack[^1]). On lookup, parse() seeds its
+        # parent stack with this value and the very first token it reads is
+        # the indexed compound's ParLe — its NIF27 suffix encodes the diff
+        # from this same parent, so parent + diff yields the correct absolute
+        # info. Recording the compound's own info instead would double-apply
+        # the diff (the bug fixed in 2026-04: line=160 vs line=317).
+        let parentInfo = if stack.len >= 2: stack[^2] else: tree[0].info
+        emitLineInfo(index, parentInfo, tree[0].info)
         index.addSymbol(pool.syms[symId], dottedSuffix)
         index.addIntLit(mostRecentOffset - previousOffset)
         previousOffset = mostRecentOffset
@@ -382,6 +391,10 @@ proc toModuleString*(tree: openArray[PackedToken]; dottedSuffix = ""; produceLin
     of ParLe:
       mostRecentOffset = b.offset
       b.addTree(pool.tags[tree[n].tagId])
+    # NIF27: line info is postfix on the atom or tag just emitted.
+    if produceLineInfo and info.isValid and k != ParRi:
+      emitLineInfo(b, info, if stack.len > 0: stack[^1] else: NoLineInfo)
+    if k == ParLe:
       stack.add info
 
   b.patchIndexAt(patchPos, b.offset)

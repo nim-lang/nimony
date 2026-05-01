@@ -1,14 +1,15 @@
-(.nif24)
-
+(.nif27)
 (stmts
-
-(const :x.c12.mod1 x . (i +32) +12)
-(var :y.c12.mod1 x . (i +32) +12)
-
-(proc :foo.c12.mod1 x . .
+ (const :x.c12.mod1 x .
+  (i 32) 12)
+ (var :y.c12.mod1 x .
+  (i 32) 12)
+ (proc :foo.c12.mod1 x . .
   (params
-  (param :x . . (i +32) .)
-  (param :y . . (i +32) .)) . . .
+   (param :x . .
+    (i 32) .)
+   (param :y . .
+    (i 32) .)) . . .
   (stmts
-  (var :x.m . . (i +32) +2)))
-)
+   (var :x.m . .
+    (i 32) 2))))

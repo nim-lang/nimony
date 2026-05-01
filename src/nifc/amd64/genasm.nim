@@ -315,7 +315,7 @@ proc generateAsm*(inp, outp: string) =
 
   traverseCode c, c.m.code, StartPos
   var f = ""
-  f.add "(.nif24)\n(stmts"
+  f.add "(.nif27)\n(stmts"
   f.add toString(c.data)
   f.add toString(c.code)
   f.add ")\n"
@@ -346,7 +346,7 @@ when isMainModule:
   (rcx)
   (rel str.3))
  (mov
-  (rdx) +12)
+  (rdx) 12)
  (call printf.c)
  (lea
   (rcx)
@@ -367,7 +367,7 @@ when isMainModule:
   (rdi)
   (rel str.3))
  (mov
-  (rsi) +12)
+  (rsi) 12)
  (call printf.c)
  (lea
   (rdi)
@@ -377,7 +377,7 @@ when isMainModule:
   (rbx))
  (call printf.c)"""
 
-    TestCode = """(.nif24)
+    TestCode = """(.nif27)
 (stmts
 (rodata
   :str.1 (string "str.1 %s\0A")
@@ -388,9 +388,9 @@ when isMainModule:
  (push (rbp))
  (mov (rbp) (rsp))
  (mov
-  (rbx) +12) """ & CallPrintf & """
+  (rbx) 12) """ & CallPrintf & """
  (mov
-  (rax) +0)
+  (rax) 0)
  (jmp L.0)
  (lab :L.0)
  (mov (rsp) (rbp))
