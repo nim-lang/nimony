@@ -63,11 +63,25 @@ proc objFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
 # the current directory per default so we now put it into the nifcache too:
 # DCE and everything after is main-specific (different DCE outcomes); use backendDir.
 proc exeFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
+  # `--out:PATH` / `--outdir:DIR` override the default
+  # `<nimcache>/<backendDir>/<basename>.exe` location for executables.
+  # `outDir` / `outFile` are populated by the CLI parser per Nim's
+  # semantics (see `cli.nim`'s "out"/"outdir" handlers). Lib and
+  # staticlib paths still derive from nimcache — extension fix-ups for
+  # those are platform-specific and not in scope yet.
   let baseName = f.nimFile.splitFile.name
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
   case config.appType
   of appConsole, appGui:
-    base / baseName.addFileExt(ExeExt)
+    if config.outFile.len > 0 or config.outDir.len > 0:
+      let nameOnly = if config.outFile.len > 0: config.outFile else: baseName
+      let withExt =
+        if nameOnly.splitFile.ext.len > 0: nameOnly
+        else: nameOnly.addFileExt(ExeExt)
+      if config.outDir.len > 0: config.outDir / withExt
+      else: withExt
+    else:
+      base / baseName.addFileExt(ExeExt)
   of appLib:
     if config.targetOS == osWindows:
       base / baseName.addFileExt("dll")
@@ -1212,6 +1226,16 @@ proc buildGraph*(config: sink NifConfig; project: string;
     else:
       onRaiseQuit createDir(Path(backend))
     let buildFinalFilename = generateFinalBuildFile(c, commandLineArgsNifc, passC, passL)
+    # Linkers (gcc/clang/ld/ar) don't auto-create the output directory.
+    # When the user passes `--out:bin/foo` or `--outdir:bin`, materialise
+    # `bin/` here. Nim does the same in `prepareToWriteOutput`.
+    let exeOutPath = c.config.exeFile(c.rootNode.files[0], c.rootNode.files[0].modname)
+    let exeOutDir = exeOutPath.parentDir
+    if exeOutDir.len > 0:
+      when defined(nimony):
+        onRaiseQuit createDir(path(exeOutDir))
+      else:
+        onRaiseQuit createDir(Path(exeOutDir))
     exec nifmakeCommand & quoteShell(buildFinalFilename)
     if cmd == DoRun:
       let backend = c.rootNode.files[0].modname

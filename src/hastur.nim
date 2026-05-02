@@ -1083,35 +1083,21 @@ proc bootstrapTests() =
 # being shaken down (this whole path is brand-new and likely to surface
 # nimony codegen bugs).
 
-proc copyExe(source, dest: string) =
-  if fileExists(dest): removeFile(dest)
-  copyFile(source = source, dest = dest)
-  when defined(posix):
-    inclFilePermissions(dest, {fpUserExec, fpGroupExec, fpOthersExec})
-
-proc findStageExe(cacheDir, source: string): string =
-  ## Locate the executable produced by `nimony c` under `cacheDir`. Nimony
-  ## emits `<cacheDir>/<modnames-mangled-dir>/<basename>(.exe)`; rather than
-  ## reimplement the mangling, walk the tree and pick the first matching
-  ## file with executable permissions.
-  let baseName = source.splitFile.name
-  result = ""
-  for path in walkDirRec(cacheDir, yieldFilter = {pcFile}):
-    let f = path.splitFile
-    if f.name == baseName and (f.ext == "" or f.ext == ExeExt):
-      when defined(posix):
-        if fpUserExec in getFilePermissions(path):
-          return path
-      else:
-        return path
-
 proc compileNimonyStage(stage: int; compiler, cacheBase, source, args: string;
                        withValgrind: bool): string =
+  ## Use nimony's `--out` to write each stage's binary directly into
+  ## `bin/nimony_stageN`. nimony resolves stdlib via `getAppDir()/../lib`
+  ## when launched from a sibling `bin/`, so dropping the binary into
+  ## `bin/` is what makes the next stage able to find `lib/std/system.nim`.
+  ## Before `--out` existed, hastur had to walk the cache for the produced
+  ## exe and copy it into `bin/`; now nimony places it there directly.
   let cache = cacheBase / ("s" & $stage)
   removeDir cache
   createDir cache
+  result = binDir() / ("nimony_stage" & $stage).addFileExt(ExeExt)
+  if fileExists(result): removeFile(result)
   var cmd = compiler.quoteShell & " c --silentMake --nimcache:" &
-            cache.quoteShell
+            cache.quoteShell & " --out:" & result.quoteShell
   if withValgrind:
     cmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\""
   if args.len > 0:
@@ -1126,19 +1112,11 @@ proc compileNimonyStage(stage: int; compiler, cacheBase, source, args: string;
   if exitCode != 0:
     quit "FAILURE: boot stage " & $stage & " failed after " &
          formatFloat(dt, ffDecimal, precision=2) & "s"
-  let produced = findStageExe(cache, source)
-  if produced.len == 0:
-    quit "FAILURE: boot stage " & $stage & ": could not locate produced binary under " & cache
-  # nimony resolves the stdlib via `getAppDir() / "lib"` (or `<dir>/../lib`
-  # when launched from a sibling `bin/`). The fresh per-stage cache dir
-  # has no `lib/` next to it, so we stage each binary into `bin/` where
-  # the project's real `lib/` lives. Without this, stage 2 dies trying
-  # to open `<cache>/lib/std/system.nim`.
-  let staged = binDir() / ("nimony_stage" & $stage).addFileExt(ExeExt)
-  copyExe(produced, staged)
-  result = staged
-  echo "[boot] stage ", stage, " produced ", produced, " (-> ", staged,
-       ") in ", formatFloat(dt, ffDecimal, precision=2), "s"
+  if not fileExists(result):
+    quit "FAILURE: boot stage " & $stage & ": " & result &
+         " was not produced (did `--out` get rejected?)"
+  echo "[boot] stage ", stage, " produced ", result, " in ",
+       formatFloat(dt, ffDecimal, precision=2), "s"
 
 proc valgrindSmokeTest(exe: string) =
   ## Run the bootstrapped binary under valgrind on a trivial command to flush
@@ -1186,7 +1164,10 @@ proc bootCmd(args: string; withValgrind: bool) =
     valgrindSmokeTest(winner)
 
   let dest = binDir() / "nimony_b".addFileExt(ExeExt)
-  copyExe(winner, dest)
+  if fileExists(dest): removeFile(dest)
+  copyFile(source = winner, dest = dest)
+  when defined(posix):
+    inclFilePermissions(dest, {fpUserExec, fpGroupExec, fpOthersExec})
   echo "[boot] installed ", winner, " -> ", dest, " in total ",
        formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   echo "SUCCESS."

@@ -6,7 +6,7 @@
 
 ## Common command-line option parsing for nimony and nimsem.
 
-import std / [strutils, sets, syncio]
+import std / [strutils, sets, syncio, os]
 import nifconfig, langmodes
 import ".." / lib / argsfinder
 
@@ -103,6 +103,26 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     config.baseDir = val
   of "nimcache":
     config.nifcachePath = val
+    forwardArgNifc = false
+  of "out", "o":
+    # `--out:PATH` (alias `-o:PATH`) sets the executable's output path,
+    # mirroring Nim. The path is split into a directory portion and
+    # a filename portion; both are stored on the config and joined at
+    # link time. Bare filenames (`--out:foo`) leave `outDir` as ""
+    # (resolved against cwd at link time). With `--out:bin/foo` the
+    # `bin` part lands in `outDir`. Note: like Nim, `--out` overrides
+    # `outDir` whenever the user gives one — a later `--out:foo`
+    # clears any earlier `--outdir`. Use `--outdir:` *after* `--out:`
+    # if you want to layer them. The platform's exe extension is
+    # appended at link time when the user didn't provide one.
+    let f = val.splitFile
+    config.outFile = f.name & f.ext
+    config.outDir = f.dir
+    forwardArgNifc = false
+  of "outdir":
+    # `--outdir:DIR` — output directory, mirrors Nim. Combine with
+    # `--out:NAME` (in that order) to control both name and location.
+    config.outDir = val
     forwardArgNifc = false
   of "usages":
     if config.toTrack.mode == TrackNone:
