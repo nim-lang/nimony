@@ -1739,9 +1739,10 @@ proc trTry(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   skip nn # stmts
   let oldLen = c.exceptLabels.len
   var hasExcept = false
+  var tryLab: SymId = NoSymId
   if nn.substructureKind == ExceptU:
-    let lab = pool.syms.getOrIncl("`lab." & $getTmpId(c))
-    c.exceptLabels.add lab
+    tryLab = pool.syms.getOrIncl("`lab." & $getTmpId(c))
+    c.exceptLabels.add tryLab
     hasExcept = true
   trStmt c, dest, n
 
@@ -1749,7 +1750,7 @@ proc trTry(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     dest.addParLe IfS, n.info
 
   while n.substructureKind == ExceptU:
-    let lab = c.exceptLabels[oldLen]
+    let lab = tryLab
     dest.copyIntoKind ElifU, n.info:
       dest.addParPair(FalseX, n.info)
       dest.copyIntoKind StmtsS, n.info:
@@ -1761,7 +1762,13 @@ proc trTry(c: var EContext; dest: var TokenBuf; n: var Cursor) =
           trStmt c, dest, n
         else:
           skip n # skip `T`
+        # A `raise` (typed or bare) inside an except handler must propagate
+        # PAST this try, not loop back to its own handler label. Temporarily
+        # pop the label for the duration of the handler body so any nested
+        # `raise` uses the next outer label (or `return`).
+        c.exceptLabels.shrink oldLen
         trStmt c, dest, n
+        c.exceptLabels.add tryLab
         skipParRi n
   c.exceptLabels.shrink oldLen
 
