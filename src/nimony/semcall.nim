@@ -114,6 +114,15 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
                      m: Match) =
   var expandedInto = createTokenBuf(30)
 
+  # If we are about to expand a template whose published body is still
+  # in unresolved Ident form (phase 2's `takeTree` published it with
+  # `phase = SemcheckSignatures`), promote it on demand so
+  # `expandTemplateImpl`'s SymId-keyed substitution can find the params.
+  # See `tryPromoteTemplateBody` for why this must be lazy rather than
+  # eager. Must run before `declToCursor` reads the decl into the local
+  # `res` since promotion swaps the registry buffer out.
+  discard tryPromoteTemplateBody(c, fnId)
+
   let s = fetchSym(c, fnId)
   let res = declToCursor(c, dest, s)
   if res.status == LacksNothing:

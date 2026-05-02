@@ -77,12 +77,19 @@ proc recordDependencyImpl(m: var MainModule; o: var TypeOrder; parent, child: Cu
     # enums do not depend on anything so always safe to generate them
     o.ordered.add tracebackTypeC(ch), TypedefKeyword
   of ProctypeT:
-    if viaPointer:
-      o.forwardedDecls.add parent, TypedefKeyword
-    else:
-      if not containsOrIncl(o.lookedAt, ch.toUniqueId()):
-        traverseProctypeBody(m, o, ch)
-      o.ordered.add tracebackTypeC(ch), TypedefKeyword
+    # Function-pointer typedefs in C don't have a separate "forward
+    # declaration" form: `typedef X X;` is just a self-typedef and the
+    # real `typedef R (*X)(args)` is required for the type to be usable
+    # at all. So emit the full definition regardless of `viaPointer`;
+    # the existing `lookedAt` guard already prevents repeated traversal
+    # of the same proc-type, and `traverseProctypeBody` deliberately
+    # recurses into params with `viaPointer = true` so cycles stay
+    # bounded. Surfaced 2026-05-01 by self-host work on `sdl3.nim`,
+    # where dynlib procs taking other proc types as parameters produced
+    # `typedef X60Qt_… X60Qt_…;` lines that gcc rightly rejected.
+    if not containsOrIncl(o.lookedAt, ch.toUniqueId()):
+      traverseProctypeBody(m, o, ch)
+    o.ordered.add tracebackTypeC(ch), TypedefKeyword
   else:
     if ch.kind == Symbol:
       # follow the symbol to its definition:
