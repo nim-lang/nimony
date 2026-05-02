@@ -85,7 +85,10 @@ proc isLastRead(c: var Context; n: Cursor): bool =
       # as it doesn't have any.
       canAnalyse = true
     else:
-      assert v.kind != NoSym
+      # Globals (GvarY/TvarY/GletY/TletY), cursors, params (non-sink), etc.
+      # `getLocalInfo` returns `NoSym` for globals because they live outside
+      # any local scope; treat them all as unanalyzable so the caller emits a
+      # copy rather than a move.
       canAnalyse = false
     if canAnalyse:
       var otherUsage = NoLineInfo
@@ -394,9 +397,21 @@ proc callWasMoved(c: var Context; arg: Cursor; typ: Cursor) =
       else:
         skip n
   if n.exprKind == EmoveX: inc n
+  # `=wasMoved` mutates its argument in place, so we have to take its address.
+  # Peel any conversion wrappers — `(hconv T x)` / `(conv T x)` / `(cast T x)`
+  # — so we land on the underlying lvalue. The destination type that was
+  # passed in is no longer the right one to look up the hook with, since the
+  # location we are zeroing is the (pre-conversion) source: re-derive the type
+  # from the peeled cursor.
+  var hookTyp = typ
+  if n.exprKind in ConvKinds:
+    while n.exprKind in ConvKinds:
+      inc n
+      skip n  # skip the target type
+    hookTyp = getType(c.typeCache, n)
 
   let info = n.info
-  let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
+  let hookProc = getHook(c.lifter[], attachedWasMoved, hookTyp, info)
   if hookProc != NoSymId:
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, hookProc, info

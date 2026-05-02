@@ -901,14 +901,19 @@ proc trTryCollapsed(c: var Context; n: var Cursor) =
 
   c.dest.addParLe StmtsS, info  # arm body stmts
 
-  # `let err = move(exc)` -- type `(ref Exception)`
+  # `let err = exc` followed by `exc = nil` — equivalent to a move but
+  # expressed without `(emove ...)` so the duplifier does not have to reason
+  # about moving from a thread-local global.
   c.dest.copyIntoKind LetS, info:
     c.dest.addSymDef errSym, info
     c.dest.addDotToken()
     c.dest.addDotToken()
     emitRefExceptionType(c.dest, info)
-    c.dest.copyIntoKind EmoveX, info:
-      c.dest.addSymUse excSym, info
+    c.dest.addSymUse excSym, info
+  c.dest.copyIntoKind AsgnS, info:
+    c.dest.addSymUse excSym, info
+    c.dest.copyIntoKind NilX, info:
+      discard
 
   # Push handler stack so that bare `raise` inside arm bodies restores `exc = err`.
   c.handlerStack.add (errSym: errSym, eSym: NoSymId)
@@ -939,14 +944,20 @@ proc trTryCollapsed(c: var Context; n: var Cursor) =
     # Branch body
     c.dest.addParLe StmtsS, info
     if arm.bindSym != NoSymId:
-      # `let e = err`, typed as the user's declared T.
+      # `let e = (hconv T err)` typed as the user's declared T. The dynamic
+      # type was just proven by the surrounding `(instanceof err T)` check,
+      # so the narrowing is sound. Using `hconv` (hidden conversion) instead
+      # of a bare assignment lets the C codegen and the duplifier both see
+      # the type change explicitly.
       c.typeCache.registerLocal(arm.bindSym, LetY, arm.declType)
       c.dest.copyIntoKind LetS, info:
         c.dest.addSymDef arm.bindSym, info
         c.dest.addDotToken()
         c.dest.addDotToken()
         c.dest.addSubtree arm.declType
-        c.dest.addSymUse errSym, info
+        c.dest.copyIntoKind HconvX, info:
+          c.dest.addSubtree arm.declType
+          c.dest.addSymUse errSym, info
     # Recursively transform the original arm body
     var bodyCur = arm.bodyStart
     if bodyCur.kind == ParLe and bodyCur.stmtKind == StmtsS:
@@ -1057,8 +1068,14 @@ proc trRaise(c: var Context; n: var Cursor) =
     c.dest.copyIntoKind StmtsS, info:
       c.dest.addParLe AsgnS, info
       c.dest.addSymUse excSym, info
+      # Cast the operand from its (possibly subtype) `ref T` to `ref Exception`
+      # so the C codegen does not warn about incompatible pointer types when
+      # writing it into the threadvar.
+      c.dest.addParLe CastX, info
+      emitRefExceptionType(c.dest, info)
       inc n  # past `(raise` tag
       tr c, n, WantT  # transform and consume operand
+      c.dest.addParRi()  # close cast
       c.dest.addParRi()  # close asgn
       skipParRi n  # close original `(raise ...)`
       c.dest.copyIntoKind RaiseS, info:

@@ -155,7 +155,7 @@
 | `(comment ...)` | NimonyStmt, NiflerKind | `comment` statement; also used as a variadic trailer for module metadata |
 | `(discard .X)` | NifcStmt, NimonyStmt, NiflerKind | `discard` statement; optional expression to discard |
 | `(try X (except .X X)* (fin S)?); (try S S S)` | NifcStmt, NimonyStmt, NiflerKind | `try` statement |
-| `(raise X)` | NifcStmt, NimonyStmt, NiflerKind | `raise` statement |
+| `(raise .X)` | NifcStmt, NimonyStmt, NiflerKind | `raise` statement; bare `(raise .)` re-raises the in-flight exception (only valid inside an `except` block) |
 | `(onerr S X+)` | NifcStmt | error handling statement |
 | `(raises ...)` | NifcPragma, NimonyPragma | proc annotation; optional list of exception types the proc may raise |
 | `(errs)` | NifcPragma | proc annotation |
