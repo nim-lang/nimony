@@ -20,7 +20,7 @@ when defined(nimony):
 import std/[os, tables, sets, syncio, hashes, assertions, strutils, times, formatfloat, dirs, paths]
 import semos, nifconfig, nimony_model, semdata, langmodes
 import ".." / gear2 / modnames
-import ".." / lib / [tooldirs, platform, nifindexes, symparser]
+import ".." / lib / [tooldirs, platform, nifindexes, symparser, docpaths]
 import ".." / models / nifindex_tags
 
 include ".." / lib / nifprelude
@@ -48,8 +48,24 @@ proc semmedFile(config: NifConfig; f: FilePair; bundle: string; preserveDocs = f
   ## Mirrors the `.p.nif` / `.pc.nif` split so the doc and code-gen flows
   ## don't trample each other's post-sem artifact.
   config.nifcachePath / bundle / f.modname & (if preserveDocs: ".sc.nif" else: ".s.nif")
-proc docFile(config: NifConfig; f: FilePair): string =
-  config.nifcachePath / "docs" / f.modname & ".html"
+proc docOutDir(config: NifConfig): string =
+  ## User-facing destination for `nimony doc`. Honors `--outdir:DIR`; default
+  ## is `htmldocs/` (matches Nim's convention).
+  if config.outDir.len > 0: config.outDir
+  else: "htmldocs"
+proc docRelpath(f: FilePair; projectRoot, stdlibRoot: string): string =
+  ## Source-derived html relpath, shared by deps.nim (which declares the
+  ## output) and dagon (which synthesises the cross-link URL).
+  deriveRelpath(f.nimFile, projectRoot, stdlibRoot)
+proc docFile(config: NifConfig; f: FilePair; projectRoot, stdlibRoot: string): string =
+  docOutDir(config) / docRelpath(f, projectRoot, stdlibRoot)
+proc indexHtmlFile(config: NifConfig): string =
+  docOutDir(config) / "theindex.html"
+proc docIdxFile(config: NifConfig; f: FilePair): string =
+  ## Build-cache sidecar; stays under `nifcachePath` even when the user-facing
+  ## HTML is redirected via `--outdir`. Not user-relevant; uses the modname
+  ## hash so it can't collide regardless of source layout.
+  config.nifcachePath / "docs" / f.modname & ".docidx"
 proc hexedFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".x.nif"
 proc nifcFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
@@ -606,12 +622,18 @@ proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool) 
       b.addIntLit 1  # main.live.nif
 
 proc generateDocBuildFile(c: DepContext): string =
-  ## Doc backend: emit one `(do dagon …)` per module, reading the post-sem
-  ## `.s.nif` and writing one `.html`. Parallel to `generateFinalBuildFile`
-  ## but for `nimony doc` instead of `nimony c`.
+  ## Doc backend: each per-module `dagon module` rule produces both a `.html`
+  ## and a `.docidx` sidecar; the trailing `dagon link` task gathers all the
+  ## sidecars into the global `theindex.html`. The HTML lands at a friendly
+  ## directory-mirrored path (`htmldocs/std/system.html` etc.); the `.docidx`
+  ## stays under nimcache to avoid user-visible churn.
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".doc.build.nif"
   var b = nifbuilder.open(result)
   defer: b.close()
+
+  let projectRoot = absoluteParentDir(c.rootNode.files[0].nimFile)
+  let stdlibRoot = stdlibDir()
+  let rootFlags = "--projectRoot:" & projectRoot & " --stdlibRoot:" & stdlibRoot
 
   b.addHeader()
   b.withTree "stmts":
@@ -620,18 +642,52 @@ proc generateDocBuildFile(c: DepContext): string =
     b.withTree "cmd":
       b.addSymbolDef "dagon"
       b.addStrLit dagon
+      b.addStrLit "--projectRoot:" & projectRoot
+      b.addStrLit "--stdlibRoot:" & stdlibRoot
       b.addStrLit "module"
-      b.addKeyw "input"
-      b.addKeyw "output"
+      b.addKeyw "args"
+
+    b.withTree "cmd":
+      b.addSymbolDef "doclink"
+      b.addStrLit dagon
+      b.addStrLit "--projectRoot:" & projectRoot
+      b.addStrLit "--stdlibRoot:" & stdlibRoot
+      b.addStrLit "link"
+      b.addKeyw "args"
 
     for v in c.nodes:
       if v.plugin.len > 0: continue
+      let semFile = c.config.semmedFile(v.files[0], v.plugin, preserveDocs = true)
+      let htmlOut = c.config.docFile(v.files[0], projectRoot, stdlibRoot)
+      let idxOut = c.config.docIdxFile(v.files[0])
       b.withTree "do":
         b.addIdent "dagon"
+        b.withTree "args":
+          b.addStrLit semFile
+          b.addStrLit htmlOut
+          b.addStrLit idxOut
         b.withTree "input":
-          b.addStrLit c.config.semmedFile(v.files[0], v.plugin, preserveDocs = true)
+          b.addStrLit semFile
         b.withTree "output":
-          b.addStrLit c.config.docFile(v.files[0])
+          b.addStrLit htmlOut
+        b.withTree "output":
+          b.addStrLit idxOut
+
+    let indexOut = c.config.indexHtmlFile()
+    b.withTree "do":
+      b.addIdent "doclink"
+      b.withTree "args":
+        b.addStrLit indexOut
+        for v in c.nodes:
+          if v.plugin.len > 0: continue
+          b.addStrLit c.config.docIdxFile(v.files[0])
+      for v in c.nodes:
+        if v.plugin.len > 0: continue
+        b.withTree "input":
+          b.addStrLit c.config.docIdxFile(v.files[0])
+      b.withTree "output":
+        b.addStrLit indexOut
+  discard rootFlags  # silence unused warning if logging is later removed
 
 proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, passL: string): string =
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".final.build.nif"
@@ -1261,11 +1317,27 @@ proc buildGraph*(config: sink NifConfig; project: string;
 
   if cmd == DoDoc:
     c = initDepContext(config, project, nifler, true, forceRebuild, moduleFlags, cmd)
-    let docDir = c.config.nifcachePath / "docs"
+    let docCacheDir = c.config.nifcachePath / "docs"
+    let docOut = docOutDir(c.config)
+    let projectRoot = absoluteParentDir(c.rootNode.files[0].nimFile)
+    let stdlibRoot = stdlibDir()
     when defined(nimony):
-      onRaiseQuit createDir(path(docDir))
+      onRaiseQuit createDir(path(docCacheDir))
+      onRaiseQuit createDir(path(docOut))
     else:
-      onRaiseQuit createDir(Path(docDir))
+      onRaiseQuit createDir(Path(docCacheDir))
+      onRaiseQuit createDir(Path(docOut))
+    # Pre-create the per-module subdirectories under outdir. dagon writes to
+    # `<outdir>/<relpath>` and won't auto-mkdir intermediate components.
+    for v in c.nodes:
+      if v.plugin.len > 0: continue
+      let relp = deriveRelpath(v.files[0].nimFile, projectRoot, stdlibRoot)
+      let parent = docOut / parentDir(relp)
+      if parent.len > 0 and parent != docOut:
+        when defined(nimony):
+          onRaiseQuit createDir(path(parent))
+        else:
+          onRaiseQuit createDir(Path(parent))
     let buildDocFilename = generateDocBuildFile(c)
     exec nifmakeCommand & quoteShell(buildDocFilename)
     return

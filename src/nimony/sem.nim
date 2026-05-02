@@ -6458,14 +6458,19 @@ proc pruneMatchedForwardDecls(c: var SemContext; dest: var TokenBuf) =
 
 proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
   pruneMatchedForwardDecls(c, dest)
-  # Insert (import suffix1 suffix2 ...) at the beginning of the (stmts ...)
-  # so the hexer sees it before any executable code:
+  # Insert `(import (kv suffix "path") …)` at the beginning of the (stmts ...)
+  # so the hexer sees it before any executable code. The path is paired with
+  # the suffix so downstream tools (dagon doc-gen) have the source location
+  # without needing a separate manifest. Only consumer of the body today is
+  # `nifcgen`'s init-proc generation, which reads the suffix from each `kv`.
   if c.importedModules.len != 0:
-    var importBuf = createTokenBuf(c.importedModules.len + 2)
+    var importBuf = createTokenBuf(c.importedModules.len * 5 + 2)
     importBuf.addParLe ImportS, NoLineInfo
     for _, i in c.importedModules:
       if i.fromPlugin.len == 0:
-        importBuf.addIdent moduleSuffix(i.path.toAbsolutePath, c.g.config.paths)
+        importBuf.buildTree KvU, NoLineInfo:
+          importBuf.addIdent moduleSuffix(i.path.toAbsolutePath, c.g.config.paths)
+          importBuf.addStrLit i.path.toAbsolutePath
     importBuf.addParRi()
     dest.insert importBuf, 1 # after the (stmts tag
   onRaiseQuit writeFile(dest, outfile, OnlyIfChanged)

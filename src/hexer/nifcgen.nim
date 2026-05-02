@@ -1887,12 +1887,19 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
       moveToTopLevel(c, dest, mode):
         trProc c, dest, n, mode
     of ImportS:
-      # Collect module suffixes for init proc generation:
+      # Collect module suffixes for init proc generation. The body of an
+      # `(import …)` is a list of `(kv suffix "path")` pairs (sem emits this
+      # paired form so doc-gen has the source path). We only need the suffix.
       inc n
       while n.kind != ParRi:
-        if n.kind == Ident:
-          c.importedModuleSuffixes.add pool.strings[n.litId]
-        skip n
+        if n.kind == ParLe and n.substructureKind == KvU:
+          inc n  # enter (kv …)
+          if n.kind == Ident:
+            c.importedModuleSuffixes.add pool.strings[n.litId]
+          while n.kind != ParRi: skip n
+          inc n  # closing ')'
+        else:
+          skip n
       inc n # skip ParRi
     of MacroS, TemplateS, IncludeS, FromimportS, ImportexceptS, ExportS, CommentS, IteratorS,
        ImportasS, ExportexceptS, BindS, MixinS, UsingS, StaticstmtS:
