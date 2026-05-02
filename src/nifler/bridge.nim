@@ -115,7 +115,7 @@ type
     section: NiflerKind
     b, deps: Builder
     portablePaths: bool
-    depsEnabled, lineInfoEnabled: bool
+    depsEnabled, lineInfoEnabled, preserveDocs: bool
     whenCondStack: seq[PNode]
       ## Conjunction of `when`-branch conditions covering the current AST
       ## traversal point. Pushed when entering an elif branch's body, popped
@@ -144,6 +144,34 @@ proc relLineInfo(n, parent: PNode; c: var TranslationContext;
   let colDiff = int32(i.col) - int32(p.col)
   let lineDiff = int32(i.line) - int32(p.line)
   c.b.addLineInfo colDiff, lineDiff, ""
+
+proc docCommentOf(n: PNode): string =
+  ## Find the `##` doc comment that conventionally documents `n`. Nim's parser
+  ## may stash it in `n.comment`, or as the first `nkCommentStmt` inside a
+  ## routine body, or as the first `nkCommentStmt` of a top-level / scope
+  ## stmt-list (module-level docs). Returns empty if none.
+  if n.comment.len > 0:
+    return n.comment
+  case n.kind
+  of nkProcDef, nkFuncDef, nkConverterDef, nkMacroDef, nkTemplateDef,
+     nkIteratorDef, nkMethodDef:
+    if n.len > bodyPos:
+      let body = n[bodyPos]
+      if body.kind == nkStmtList and body.len > 0 and body[0].kind == nkCommentStmt:
+        return body[0].comment
+  of nkStmtList, nkStmtListExpr, nkStmtListType:
+    if n.len > 0 and n[0].kind == nkCommentStmt:
+      return n[0].comment
+  else: discard
+  return ""
+
+proc attachDocComment(n: PNode; c: var TranslationContext) =
+  ## When `--docs` is on, emit the node's `##` doc comment as a NIF27
+  ## `#…#` annotation on whatever line-info / tag was last written.
+  if not c.preserveDocs: return
+  let doc = docCommentOf(n)
+  if doc.len > 0:
+    c.b.attachComment doc
 
 proc lineInfoArgs(n, parent: PNode; c: var TranslationContext): (int32, int32, string) =
   ## Compute (col, line, file) suitable for inline-info builder calls. Mirrors
@@ -300,6 +328,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
   of nkTypeDef:
     c.b.addTree TypeL
     relLineInfo(n, parent, c)
+    attachDocComment(n, c)
     let split = splitIdentDefName(n[0])
 
     toNif(split.name, n, c)
@@ -361,6 +390,8 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     for i in 0..last - 2:
       c.b.addTree(c.section)
       relLineInfo(n[i], parent, c)
+      # Doc-comment lives on the outer ident-def, not the inner name node.
+      attachDocComment(n, c)
       # flatten it further:
       let split = splitIdentDefName(n[i])
 
@@ -527,6 +558,7 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
   of nkProcDef, nkFuncDef, nkConverterDef, nkMacroDef, nkTemplateDef, nkIteratorDef, nkMethodDef:
     c.b.addTree(nodeKindTranslation(n.kind))
     relLineInfo(n, parent, c)
+    attachDocComment(n, c)
 
     if n.kind == nkIteratorDef and n[0].kind == nkEmpty:
       # Anonymous iterator expression
@@ -757,14 +789,16 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
   else:
     c.b.addTree(nodeKindTranslation(n.kind))
     relLineInfo(n, parent, c)
+    attachDocComment(n, c)
     for i in 0..<n.len:
       toNif(n[i], n, c)
     c.b.endTree()
 
 proc initTranslationContext*(conf: ConfigRef; outfile: string; portablePaths, depsEnabled: bool;
-                              depsOnly = false): TranslationContext =
+                              depsOnly = false; preserveDocs = false): TranslationContext =
   result = TranslationContext(conf: conf,
-    portablePaths: portablePaths, depsEnabled: depsEnabled or depsOnly, lineInfoEnabled: not depsOnly)
+    portablePaths: portablePaths, depsEnabled: depsEnabled or depsOnly, lineInfoEnabled: not depsOnly,
+    preserveDocs: preserveDocs)
   # nifler opts into OnlyIfChanged: when a re-parse produces byte-identical
   # output (e.g. `touch foo.nim` with no real edit, or comment-only edits
   # that the parser strips), keep the old mtime on `.p.nif` / `.p.deps.nif`
@@ -808,7 +842,8 @@ template bench(task, body) =
   else:
     body
 
-proc parseFile*(thisfile, outfile: string; portablePaths, depsEnabled, depsOnly: bool) =
+proc parseFile*(thisfile, outfile: string; portablePaths, depsEnabled, depsOnly: bool;
+                preserveDocs: bool = false) =
   let stream = llStreamOpen(AbsoluteFile thisfile, fmRead)
   if stream == nil:
     quit "cannot open file: " & thisfile
@@ -824,7 +859,7 @@ proc parseFile*(thisfile, outfile: string; portablePaths, depsEnabled, depsOnly:
       closeParser(parser)
       quit QuitFailure
 
-    var tc = initTranslationContext(conf, outfile, portablePaths, depsEnabled, depsOnly)
+    var tc = initTranslationContext(conf, outfile, portablePaths, depsEnabled, depsOnly, preserveDocs)
 
     bench "moduleToIr":
       moduleToIr(fullTree, tc)

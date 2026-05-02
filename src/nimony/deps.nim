@@ -32,14 +32,24 @@ type
                     # calls itself for an extracted code snippet that must run at compile time.
     modname: string
 
-proc indexFile(config: NifConfig; f: FilePair; bundle: string): string =
-  config.nifcachePath / bundle / f.modname & ".s.idx.nif"
+proc indexFile(config: NifConfig; f: FilePair; bundle: string; preserveDocs = false): string =
+  config.nifcachePath / bundle / f.modname & (if preserveDocs: ".sc.idx.nif" else: ".s.idx.nif")
 
-proc parsedFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".p.nif"
-proc depsFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".p.deps.nif"
+proc parsedFile(config: NifConfig; f: FilePair; preserveDocs = false): string =
+  ## `.p.nif` for normal builds, `.pc.nif` (parsed-with-comments) for `nimony doc`.
+  ## Splitting the artifact keeps both cache populations valid simultaneously,
+  ## so `nimony c` and `nimony doc` on the same project don't fight each other.
+  config.nifcachePath / f.modname & (if preserveDocs: ".pc.nif" else: ".p.nif")
+proc depsFile(config: NifConfig; f: FilePair; preserveDocs = false): string =
+  config.nifcachePath / f.modname & (if preserveDocs: ".pc.deps.nif" else: ".p.deps.nif")
 proc deps2File(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".s.deps.nif"
-proc semmedFile(config: NifConfig; f: FilePair; bundle: string): string =
-  config.nifcachePath / bundle / f.modname & ".s.nif"
+proc semmedFile(config: NifConfig; f: FilePair; bundle: string; preserveDocs = false): string =
+  ## `.s.nif` for normal builds, `.sc.nif` (semmed-with-comments) for `nimony doc`.
+  ## Mirrors the `.p.nif` / `.pc.nif` split so the doc and code-gen flows
+  ## don't trample each other's post-sem artifact.
+  config.nifcachePath / bundle / f.modname & (if preserveDocs: ".sc.nif" else: ".s.nif")
+proc docFile(config: NifConfig; f: FilePair): string =
+  config.nifcachePath / "docs" / f.modname & ".html"
 proc hexedFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".x.nif"
 proc nifcFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
@@ -114,7 +124,8 @@ type
     DoCheck, # like `nim check`
     DoTranslate, # translate to C like "nim --compileOnly"
     DoCompile, # like `nim c` but with nifler
-    DoRun # like `nim run`
+    DoRun, # like `nim run`
+    DoDoc # like `nim doc`: front-end then dagon backend
 
   BuildFlag* = enum
     ForceRebuild   ## passes `--force` to nifmake (rebuild all)
@@ -479,16 +490,18 @@ proc execNifler(c: var DepContext; f: FilePair) =
   # File can be a .nif file, if so, we don't need to run nifler.
   if f.nimFile.endsWith(".nif"):
     return
-  let output = c.config.parsedFile(f)
-  let depsFile = c.config.depsFile(f)
+  let preserveDocs = c.cmd == DoDoc
+  let output = c.config.parsedFile(f, preserveDocs)
+  let depsFile = c.config.depsFile(f, preserveDocs)
   let srcTime = getLastModTime(f.nimFile)
   if not c.forceRebuild and semos.fileExists(output) and
       semos.fileExists(f.nimFile) and getLastModTime(output) > srcTime and
       semos.fileExists(depsFile) and getLastModTime(depsFile) > srcTime:
     discard "nothing to do"
   else:
-    let cmd = quoteShell(c.nifler) & " --portablePaths --deps parse " & quoteShell(f.nimFile) & " " &
-      quoteShell(output)
+    let docsFlag = if preserveDocs: " --docs" else: ""
+    let cmd = quoteShell(c.nifler) & " --portablePaths --deps" & docsFlag & " parse " &
+      quoteShell(f.nimFile) & " " & quoteShell(output)
     exec cmd
 
 proc importSystem(c: var DepContext; current: Node) =
@@ -508,7 +521,7 @@ proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
   let depsFile: string
   if not c.isGeneratingFinal:
     execNifler c, p
-    depsFile = c.config.depsFile(p)
+    depsFile = c.config.depsFile(p, c.cmd == DoDoc)
   else:
     depsFile = c.config.deps2File(p)
 
@@ -527,12 +540,14 @@ proc rootPath(c: DepContext): string =
   result = absoluteParentDir(c.rootNode.files[0].nimFile)
   result = onRaiseQuit relativePath(result, onRaiseQuit os.getCurrentDir())
 
-proc defineNiflerCmd(b: var Builder; nifler: string) =
+proc defineNiflerCmd(b: var Builder; nifler: string; preserveDocs = false) =
   b.withTree "cmd":
     b.addSymbolDef "nifler"
     b.addStrLit nifler
     b.addStrLit "--portablePaths"
     b.addStrLit "--deps"
+    if preserveDocs:
+      b.addStrLit "--docs"
     b.addStrLit "parse"
     b.addKeyw "input"
     b.addKeyw "output"
@@ -589,6 +604,34 @@ proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool) 
     b.withTree "input":
       b.addIntLit 0  # M.x.nif
       b.addIntLit 1  # main.live.nif
+
+proc generateDocBuildFile(c: DepContext): string =
+  ## Doc backend: emit one `(do dagon …)` per module, reading the post-sem
+  ## `.s.nif` and writing one `.html`. Parallel to `generateFinalBuildFile`
+  ## but for `nimony doc` instead of `nimony c`.
+  result = c.config.nifcachePath / c.rootNode.files[0].modname & ".doc.build.nif"
+  var b = nifbuilder.open(result)
+  defer: b.close()
+
+  b.addHeader()
+  b.withTree "stmts":
+    let dagon = findTool("dagon")
+
+    b.withTree "cmd":
+      b.addSymbolDef "dagon"
+      b.addStrLit dagon
+      b.addStrLit "module"
+      b.addKeyw "input"
+      b.addKeyw "output"
+
+    for v in c.nodes:
+      if v.plugin.len > 0: continue
+      b.withTree "do":
+        b.addIdent "dagon"
+        b.withTree "input":
+          b.addStrLit c.config.semmedFile(v.files[0], v.plugin, preserveDocs = true)
+        b.withTree "output":
+          b.addStrLit c.config.docFile(v.files[0])
 
 proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, passL: string): string =
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".final.build.nif"
@@ -848,19 +891,19 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
       elif isMain:
         b.addStrLit "--isMain"
       # Module files are passed as args (primary first, then cyclic members)
-      b.addStrLit c.config.parsedFile(v.files[0])
+      b.addStrLit c.config.parsedFile(v.files[0], c.cmd == DoDoc)
       for idx in v.cyclicFiles:
-        b.addStrLit c.config.parsedFile(v.files[idx])
+        b.addStrLit c.config.parsedFile(v.files[idx], c.cmd == DoDoc)
     # Input: parsed file
     var seenDeps = initHashSet[string]()
     for f in v.files:
-      let pf = c.config.parsedFile(f)
+      let pf = c.config.parsedFile(f, c.cmd == DoDoc)
       if not seenDeps.containsOrIncl(pf):
         b.withTree "input":
           b.addStrLit pf
     # Input: dependencies
     for i in v.deps:
-      let idxFile = c.config.indexFile(c.nodes[i].files[0], c.nodes[i].plugin)
+      let idxFile = c.config.indexFile(c.nodes[i].files[0], c.nodes[i].plugin, c.cmd == DoDoc)
       if not seenDeps.containsOrIncl(idxFile):
         b.withTree "input":
           b.addStrLit idxFile
@@ -868,16 +911,17 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
     b.withTree "input":
       b.addStrLit c.config.cachedConfigFile()
     # Outputs: semmed file and index file for primary module
+    let docMode = c.cmd == DoDoc
     b.withTree "output":
-      b.addStrLit c.config.semmedFile(v.files[0], v.plugin)
+      b.addStrLit c.config.semmedFile(v.files[0], v.plugin, docMode)
     b.withTree "output":
-      b.addStrLit c.config.indexFile(v.files[0], v.plugin)
+      b.addStrLit c.config.indexFile(v.files[0], v.plugin, docMode)
     # Outputs for cyclic group members:
     for idx in v.cyclicFiles:
       b.withTree "output":
-        b.addStrLit c.config.semmedFile(v.files[idx], v.plugin)
+        b.addStrLit c.config.semmedFile(v.files[idx], v.plugin, docMode)
       b.withTree "output":
-        b.addStrLit c.config.indexFile(v.files[idx], v.plugin)
+        b.addStrLit c.config.indexFile(v.files[idx], v.plugin, docMode)
 
 proc generatePluginSemInstructions(c: DepContext; v: Node; b: var Builder) =
   #[ An import plugin fills `nimcache/<plugin>` for us. It is our job to
@@ -904,7 +948,7 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
   b.addHeader()
   b.withTree "stmts":
     # Command definitions
-    defineNiflerCmd(b, c.nifler)
+    defineNiflerCmd(b, c.nifler, preserveDocs = c.cmd == DoDoc)
 
     b.withTree "cmd":
       b.addSymbolDef "nimsem"
@@ -963,7 +1007,7 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
       if v.plugin.len > 0:
         continue
       for i in 0..<v.files.len:
-        let f = c.config.parsedFile(v.files[i])
+        let f = c.config.parsedFile(v.files[i], c.cmd == DoDoc)
         if not seenFiles.containsOrIncl(f):
           let nimFile = v.files[i].nimFile
           if nimFile.endsWith(".nif"):
@@ -1214,6 +1258,17 @@ proc buildGraph*(config: sink NifConfig; project: string;
     " --base:" & quoteShell(config.baseDir) &
     " -j run "
   exec nifmakeCommand & quoteShell(buildFilename)
+
+  if cmd == DoDoc:
+    c = initDepContext(config, project, nifler, true, forceRebuild, moduleFlags, cmd)
+    let docDir = c.config.nifcachePath / "docs"
+    when defined(nimony):
+      onRaiseQuit createDir(path(docDir))
+    else:
+      onRaiseQuit createDir(Path(docDir))
+    let buildDocFilename = generateDocBuildFile(c)
+    exec nifmakeCommand & quoteShell(buildDocFilename)
+    return
 
   if cmd != DoCheck:
     # Parse `.s.deps.nif`.

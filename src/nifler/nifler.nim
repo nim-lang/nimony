@@ -26,6 +26,7 @@ Command:
 Options:
   --portablePaths       keep line information portable accross different OSes
   --deps                also produce a <inputfile>.deps.nif file (for 'parse' command)
+  --docs                preserve `##` doc comments as NIF comment-meta on decls
   --force, -f           force a rebuild
   --version             show the version
   --help                show this help
@@ -40,6 +41,7 @@ proc handleCmdLine() =
   var forceRebuild = false
   var portablePaths = true # false
   var deps = false
+  var preserveDocs = false
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -54,6 +56,7 @@ proc handleCmdLine() =
       of "force", "f": forceRebuild = true
       of "portablepaths": portablePaths = true
       of "deps": deps = true
+      of "docs": preserveDocs = true
       else: quit(Usage)
     of cmdEnd: assert false, "cannot happen"
 
@@ -72,7 +75,7 @@ proc handleCmdLine() =
           (not deps or (fileExists(depsNif) and getLastModificationTime(depsNif) > getLastModificationTime(inp))):
         discard "nothing to do"
       else:
-        parseFile inp, outp, portablePaths, deps, action == "deps"
+        parseFile inp, outp, portablePaths, deps, action == "deps", preserveDocs
   of "config":
     if args.len == 0:
       quit "'config' command takes a filename"

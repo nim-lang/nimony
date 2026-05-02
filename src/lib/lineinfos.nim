@@ -54,6 +54,8 @@ type
     file*: FileId
     line*: int32
     col*: int32
+    comment*: uint32 ## interned comment id (StrId.uint32); 0 means no comment.
+                     ## Stored as raw uint32 to avoid a circular dep on nifstreams' StrId.
 
   LineInfoManager* = object
     aside: seq[LineInfoUnpacked]
@@ -76,6 +78,18 @@ proc pack*(m: var LineInfoManager; file: FileId; line, col: int32): PackedLineIn
     result = PackedLineInfo((m.aside.len shl 2) or AsideBit)
     m.aside.add LineInfoUnpacked(file: file, line: line, col: col)
 
+proc packWithComment*(m: var LineInfoManager; file: FileId; line, col: int32;
+                     comment: uint32): PackedLineInfo =
+  ## Like `pack` but also attaches a `#comment#` to the position. Comment-bearing
+  ## infos always use the aside path (the inline encoding has no room for a
+  ## comment id). `comment == 0` means no comment — callers should use the plain
+  ## `pack` in that case.
+  if comment == 0'u32:
+    result = pack(m, file, line, col)
+  else:
+    result = PackedLineInfo((m.aside.len shl 2) or AsideBit)
+    m.aside.add LineInfoUnpacked(file: file, line: line, col: col, comment: comment)
+
 proc isPayload*(i: PackedLineInfo): bool {.inline.} =
   result = (i.uint32 and 3'u32) == 3'u32
 
@@ -90,6 +104,14 @@ proc unpack*(m: LineInfoManager; info: PackedLineInfo): LineInfoUnpacked =
     result = m.aside[int(i shr 2'u32)]
   else:
     result = LineInfoUnpacked(file: NoFile)
+
+proc stripComment*(m: var LineInfoManager; info: PackedLineInfo): PackedLineInfo =
+  ## Return the same file/line/col but with no comment attached. Useful when
+  ## propagating a parent's info to children for relative-position math:
+  ## comments are *decorations on a single token*, not inherited by descendants.
+  let raw = unpack(m, info)
+  if raw.comment == 0'u32: result = info
+  else: result = pack(m, raw.file, raw.line, raw.col)
 
 proc getPayload*(i: PackedLineInfo): uint32 {.inline.} =
   assert isPayload(i)

@@ -124,7 +124,11 @@ proc getSymbolSection(tag: TagId; values: seq[(SymId, SymId)]): TokenBuf =
   result.addParRi()
 
 proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sections: IndexSections) {.canRaise.} =
-  let indexName = changeModuleExt(infile, ".s.idx.nif")
+  # Mirror the doc-mode cache split: `foo.sc.nif` → `foo.sc.idx.nif`, the regular
+  # `foo.s.nif` → `foo.s.idx.nif`. Keeps both populations valid in parallel.
+  let isDocMode = infile.len >= 7 and infile[infile.len-7 .. infile.len-1] == ".sc.nif"
+  let idxExt = if isDocMode: ".sc.idx.nif" else: ".s.idx.nif"
+  let indexName = changeModuleExt(infile, idxExt)
   var content = "(.nif27)\n(index\n"
 
   if sections.converters.len != 0:

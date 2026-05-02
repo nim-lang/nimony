@@ -22,7 +22,7 @@ Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|hexer|nifc|nifmake|nj|vl|validator]   build selected tools (default: all).
+  build [all|nimony|nifler|hexer|nifc|nifmake|nj|vl|validator|dagon]   build selected tools (default: all).
   bootstrap            compile every module on the bootstrap list with nimony.
   boot [options]       3-iteration self-host of `bin/nimony` (koch-style).
                        Result is installed to `bin/nimony_b`. Extra args are
@@ -976,6 +976,11 @@ proc buildValidator(showProgress = false) =
   let exe = "validator".addFileExt(ExeExt)
   robustMoveFile "src/validator/" & exe, binDir() / exe
 
+proc buildDagon(showProgress = false) =
+  exec nimcPrefix() & "src/dagon/dagon.nim", showProgress
+  let exe = "dagon".addFileExt(ExeExt)
+  robustMoveFile "src/dagon/" & exe, binDir() / exe
+
 # ---------------------------------------------------------------------------
 # Bootstrapping progress (see https://github.com/nim-lang/nimony/issues/1788).
 #
@@ -1394,6 +1399,7 @@ proc handleCmdLine =
       buildNifmake(showProgress)
       buildNj(showProgress)
       buildVl(showProgress)
+      buildDagon(showProgress)
     of "nifler":
       buildNifler(showProgress)
     of "nimony":
@@ -1412,6 +1418,8 @@ proc handleCmdLine =
       buildVl(showProgress)
     of "validator":
       buildValidator(showProgress)
+    of "dagon":
+      buildDagon(showProgress)
     else:
       writeHelp()
     removeDir "nimcache"
