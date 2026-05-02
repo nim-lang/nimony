@@ -481,19 +481,27 @@ proc trBoundExpr(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
     trExpr c, dest, n
     result = CallInfo(isNoReturn: false, mode: NoRaise, mutates: @[], info: n.info)
 
-proc raiseGuards(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
+proc raiseGuards(c: var Context; dest: var TokenBuf; info: PackedLineInfo;
+                 skipInnermostHandler = false) =
   let before = dest.len
   dest.add tagToken("jtrue", info)
   var produced = 0
+  var skippedHandler = not skipInnermostHandler
   # Break out of everything up to and INCLUDING the innermost try guard.
   # The try guard itself must be set so the except handler fires.
+  # When `skipInnermostHandler` is true, we are inside a try's except handler
+  # and a bare `(raise .)` (or rebuilt typed raise during reraise) needs to
+  # propagate PAST that try; skip the first deactivated try guard we hit.
   for i in countdown(c.current.guards.len - 1, 0):
-    let cond = c.current.guards[i].cond
-    assert cond != NoSymId
-    c.current.guards[i].active = true
-    dest.addSymUse cond, info
+    let g = addr c.current.guards[i]
+    if not skippedHandler and g.isTryGuard and not g.active:
+      skippedHandler = true
+      continue
+    assert g.cond != NoSymId
+    g.active = true
+    dest.addSymUse g.cond, info
     inc produced
-    if c.current.guards[i].isTryGuard:
+    if g.isTryGuard:
       break  # include the try guard, then stop (don't propagate further up)
   dest.addParRi()
   if produced == 0: dest.shrink before
@@ -1253,17 +1261,20 @@ proc trRaise(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
   let info = n.info
   inc n
 
+  var isReraise = false
   if n.kind == ParRi:
     inc n
   else:
     if n.kind == DotToken:
+      # bare `(raise .)`: propagate the current `errorTracker` value past the
+      # immediately-enclosing handler. Don't store anything new.
+      isReraise = true
       inc n
-      bug "reraise not implemented"
     else:
       assert c.current.errorTracker != NoSymId, "raise outside a .raises proc or try section"
       storeToErrorTracker(c, dest, n, info)
     skipParRi n
-  raiseGuards(c, dest, info)
+  raiseGuards(c, dest, info, skipInnermostHandler = isReraise)
   assert c.current.guards.len > 0, "raise outside any guarded scope"
   b.leavesWith = c.current.guards.len-1
 

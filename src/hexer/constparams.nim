@@ -145,6 +145,25 @@ proc finishRaiseTuple(c: var Context; dest: var TokenBuf; info: PackedLineInfo) 
 proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let isSpecial = c.nextRaiseIsSpecial
   c.nextRaiseIsSpecial = false
+  # Bare `(raise .)` (re-raise) reaches us when derefs lowers a heap-based
+  # exception's no-match fall-through. In a `.raises` context we propagate
+  # the in-flight exception by signalling `Failure` to the caller; the caller
+  # consults the threadvar `exc` for the actual value. Outside a raises proc
+  # there is no error channel, so we degrade to a bare `(ret .)`.
+  if n.firstSon.kind == DotToken:
+    let info = n.info
+    inc n  # past `(raise`
+    inc n  # past `.`
+    skipParRi n
+    if c.canRaise:
+      copyIntoKind dest, RaiseS, info:
+        produceRaiseTuple(c, dest, c.retType, info)
+        dest.addSymUse pool.syms.getOrIncl(FailureName), info
+        finishRaiseTuple(c, dest, info)
+    else:
+      copyIntoKind dest, RetS, info:
+        dest.addDotToken()
+    return
   let localIsVoid = isVoidType(getType(c.typeCache, n.firstSon))
   if c.exceptVars.len > 0:
     # also bind the value to a potential `T as e` variable:

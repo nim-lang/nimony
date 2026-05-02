@@ -2481,7 +2481,9 @@ proc semTry(c: var SemContext; dest: var TokenBuf; it: var Item) =
       semLocal(c, dest, it.n, LetY)
     else:
       discard semExceptionType(c, dest, it)
+    inc c.routine.inExcept
     semStmtBranch c, dest, it, true
+    dec c.routine.inExcept
     takeParRi dest, it.n
     closeScope(c)
   if it.n.substructureKind == FinU:
@@ -3435,6 +3437,9 @@ proc semRaise(c: var SemContext; dest: var TokenBuf; it: var Item) =
   elif not c.routine.pragmas.contains(RaisesP) and CanRaiseFeature notin c.features:
     buildErr c, dest, info, "`raise` only allowed within a routine with `raises` pragma"
   if it.n.kind == DotToken:
+    if c.routine.inExcept == 0:
+      buildErr c, dest, info,
+        "bare `raise` is only allowed inside an `except` block"
     takeToken dest, it.n
   else:
     var a = Item(n: it.n, typ: c.types.autoType)

@@ -446,3 +446,9 @@ proc deallocFrame*(frame: ptr CoroutineBase) =
   ## have `callee == nil` or `caller.fn == nil` and are not freed.
   if frame.callee != nil and frame.caller.fn != nil:
     dealloc(frame)
+
+type
+  Exception* = object of RootObj
+    msg*: string
+
+var exc* {.threadvar.}: ref Exception

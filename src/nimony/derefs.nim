@@ -46,7 +46,7 @@ include ".." / lib / compat2
 
 import ".." / models / tags
 import ".." / hexer / lifter
-import nimony_model, programs, decls, typenav, sembasics, reporters, renderer, typeprops, vtables_frontend, semdata
+import nimony_model, programs, decls, typenav, sembasics, reporters, renderer, typeprops, vtables_frontend, semdata, builtintypes
 
 type
   Expects = enum
@@ -76,6 +76,11 @@ type
     classes: semdata.Classes # class entries with methods for vtables
     lifter: ref LiftingCtx
     typeSymBufs: seq[TokenBuf] # keeps Symbol cursors alive for lifter
+    tmpCounter: int  # for fresh symbols in exception lowering
+    handlerStack: seq[tuple[errSym, eSym: SymId]]
+      # stack of (`err`, `_e`) syms for synthesized ref-exception handlers; used to
+      # rewrite bare `raise` into `exc = err; raise _e` so the original error code
+      # is preserved when propagating past the handler.
 
 proc takeToken(c: var Context; n: var Cursor) {.inline.} =
   c.dest.add n
@@ -791,7 +796,227 @@ proc trVarHook(c: var Context; n: var Cursor) =
     tr c, n, WantT
   takeParRi c, n
 
+proc isRefTypeFollow(t: Cursor): bool =
+  ## Walk type aliases and report whether `t` resolves to a ref type.
+  var t = t
+  var counter = 20
+  while counter > 0:
+    dec counter
+    if cursorIsNil(t): return false
+    if t.typeKind == RefT: return true
+    if t.kind != Symbol: return false
+    let res = tryLoadSym(t.symId)
+    if res.status != LacksNothing: return false
+    if res.decl.stmtKind != TypeS: return false
+    let decl = asTypeDecl(res.decl)
+    t = decl.body
+  result = false
+
+type
+  ExceptArm = object
+    isCatchAll: bool
+    isRef: bool
+    declType: Cursor   # type cursor (only if not catchall)
+    bindSym: SymId     # NoSymId if no `as e`
+    bodyStart: Cursor  # cursor at first body stmt of the arm
+
+proc parseExceptArm(armCur: Cursor): ExceptArm =
+  ## armCur points just inside `(except ...`, at the type/decl/dot.
+  var n = armCur
+  if n.kind == DotToken:
+    var bodyN = n
+    inc bodyN
+    return ExceptArm(isCatchAll: true, bodyStart: bodyN)
+  if n.stmtKind == LetS:
+    var inner = n
+    inc inner  # past `(let`
+    var bindSym = NoSymId
+    if inner.kind == SymbolDef:
+      bindSym = inner.symId
+    skip inner  # name
+    skip inner  # export marker
+    skip inner  # pragmas
+    let typ = inner
+    var bodyN = n
+    skip bodyN  # past the let decl
+    return ExceptArm(isCatchAll: false, isRef: isRefTypeFollow(typ),
+                     declType: typ, bindSym: bindSym, bodyStart: bodyN)
+  let typ = n
+  var bodyN = n
+  skip bodyN
+  return ExceptArm(isCatchAll: false, isRef: isRefTypeFollow(typ),
+                   declType: typ, bindSym: NoSymId, bodyStart: bodyN)
+
+proc shouldCollapseTry(c: var Context; tryAfterTag: Cursor): bool =
+  ## Decide whether to do the ref-exception collapsing lowering. Yes iff
+  ## at least one `(except ...)` arm declares a ref-typed exception AND no
+  ## arm uses a non-ref non-catchall type (we leave such legacy tries alone).
+  var n = tryAfterTag
+  skip n  # body
+  var anyRef = false
+  while n.substructureKind == ExceptU:
+    var arm = n
+    inc arm  # past 'except' tag
+    let info = parseExceptArm(arm)
+    if info.isCatchAll:
+      discard
+    elif info.isRef:
+      anyRef = true
+    else:
+      return false
+    skip n  # past the whole `(except ...)`
+  result = anyRef
+
+proc emitRefExceptionType(dest: var TokenBuf; info: PackedLineInfo) =
+  ## Emits `(ref Exception)` into `dest`.
+  dest.copyIntoKind RefT, info:
+    dest.addSymUse pool.syms.getOrIncl(ExceptionName), info
+
+proc trTryCollapsed(c: var Context; n: var Cursor) =
+  ## Lower a try with ref-typed except arms into a single catchall
+  ## `(except . (stmts (let :err ...) (if ...)))`, leaving any `(fin ...)`
+  ## clause intact. The if-chain dispatches via `(of err T)`; for non-Failure
+  ## error codes `exc` is nil and every arm falls through to the else, where
+  ## we re-raise so the original `errorTracker` value is preserved.
+  let info = n.info
+  takeToken c, n  # take '(try' tag
+
+  # Allow raises inside the try body — there is at least one except arm:
+  let oldProps = c.r.props
+  c.r.props.incl CanRaise
+
+  # Body
+  tr c, n, WantT
+
+  c.r.props = oldProps
+
+  # Mint a fresh symbol for `err` (moved-out exc).
+  inc c.tmpCounter
+  let errSym = pool.syms.getOrIncl("`err." & $c.tmpCounter)
+  let excSym = pool.syms.getOrIncl(ExcThreadVarName)
+
+  # Open the synthesized `(except . (stmts ...))`
+  c.dest.addParLe ExceptU, info
+  c.dest.addDotToken()  # catchall: no type / no binding
+
+  c.dest.addParLe StmtsS, info  # arm body stmts
+
+  # `let err = exc` followed by `exc = nil` — equivalent to a move but
+  # expressed without `(emove ...)` so the duplifier does not have to reason
+  # about moving from a thread-local global.
+  c.dest.copyIntoKind LetS, info:
+    c.dest.addSymDef errSym, info
+    c.dest.addDotToken()
+    c.dest.addDotToken()
+    emitRefExceptionType(c.dest, info)
+    c.dest.addSymUse excSym, info
+  c.dest.copyIntoKind AsgnS, info:
+    c.dest.addSymUse excSym, info
+    c.dest.copyIntoKind NilX, info:
+      discard
+
+  # Push handler stack so that bare `raise` inside arm bodies restores `exc = err`.
+  c.handlerStack.add (errSym: errSym, eSym: NoSymId)
+
+  # Open if-chain
+  c.dest.addParLe IfS, info
+
+  # Iterate arms, collecting any catchall body.
+  var catchallBody: Cursor = default(Cursor)
+  var hasCatchall = false
+
+  while n.substructureKind == ExceptU:
+    var armCur = n
+    inc armCur  # past `(except`
+    let arm = parseExceptArm(armCur)
+    if arm.isCatchAll:
+      catchallBody = arm.bodyStart
+      hasCatchall = true
+      # We will consume this arm later; for now skip the cursor past it.
+      skip n
+      continue
+
+    # Ref arm — emit `(elif (instanceof err T) <body>)`.
+    c.dest.addParLe ElifU, info
+    c.dest.copyIntoKind InstanceofX, info:
+      c.dest.addSymUse errSym, info
+      c.dest.addSubtree arm.declType  # type cursor
+    # Branch body
+    c.dest.addParLe StmtsS, info
+    if arm.bindSym != NoSymId:
+      # `let e = (hconv T err)` typed as the user's declared T. The dynamic
+      # type was just proven by the surrounding `(instanceof err T)` check,
+      # so the narrowing is sound. Using `hconv` (hidden conversion) instead
+      # of a bare assignment lets the C codegen and the duplifier both see
+      # the type change explicitly.
+      c.typeCache.registerLocal(arm.bindSym, LetY, arm.declType)
+      c.dest.copyIntoKind LetS, info:
+        c.dest.addSymDef arm.bindSym, info
+        c.dest.addDotToken()
+        c.dest.addDotToken()
+        c.dest.addSubtree arm.declType
+        c.dest.copyIntoKind HconvX, info:
+          c.dest.addSubtree arm.declType
+          c.dest.addSymUse errSym, info
+    # Recursively transform the original arm body
+    var bodyCur = arm.bodyStart
+    if bodyCur.kind == ParLe and bodyCur.stmtKind == StmtsS:
+      inc bodyCur
+      while bodyCur.kind != ParRi:
+        tr c, bodyCur, WantT
+      skipParRi bodyCur
+    else:
+      while bodyCur.kind != ParRi:
+        tr c, bodyCur, WantT
+    c.dest.addParRi()  # close inner stmts
+    c.dest.addParRi()  # close elif
+
+    # Advance n past this whole `(except ...)`.
+    skip n
+
+  # Else branch: catchall body, or re-raise.
+  c.dest.addParLe ElseU, info
+  c.dest.addParLe StmtsS, info
+  if hasCatchall:
+    var bodyCur = catchallBody
+    if bodyCur.kind == ParLe and bodyCur.stmtKind == StmtsS:
+      inc bodyCur
+      while bodyCur.kind != ParRi:
+        tr c, bodyCur, WantT
+      skipParRi bodyCur
+    else:
+      while bodyCur.kind != ParRi:
+        tr c, bodyCur, WantT
+  else:
+    # `(asgn exc err)`
+    c.dest.copyIntoKind AsgnS, info:
+      c.dest.addSymUse excSym, info
+      c.dest.addSymUse errSym, info
+    # Bare re-raise: `(raise .)`. njvl is expected to lower this into
+    # propagation that preserves the current `errorTracker` value.
+    c.dest.copyIntoKind RaiseS, info:
+      c.dest.addDotToken()
+  c.dest.addParRi()  # close else stmts
+  c.dest.addParRi()  # close else
+
+  c.dest.addParRi()  # close if
+  c.dest.addParRi()  # close arm body stmts
+  c.dest.addParRi()  # close synthesized except
+
+  discard c.handlerStack.pop()
+
+  # Pass through `(fin ...)` if present.
+  if n.substructureKind == FinU:
+    tr c, n, WantT
+
+  takeParRi c, n  # close try
+
 proc trTry(c: var Context; n: var Cursor) =
+  var prescan = n
+  inc prescan  # past `(try` tag
+  if shouldCollapseTry(c, prescan):
+    trTryCollapsed(c, n)
+    return
   takeToken c, n
   var nn = n
   skip nn
@@ -801,6 +1026,64 @@ proc trTry(c: var Context; n: var Cursor) =
   # now can raise in the `try` block:
   tr c, n, WantT
   c.r.props = oldProps
+  while n.kind != ParRi:
+    tr c, n, WantT
+  takeParRi c, n
+
+proc trRaise(c: var Context; n: var Cursor) =
+  ## Lowers `(raise <ref-expr>)` to `(stmts (asgn exc <expr>) (raise Failure))`
+  ## and rewrites bare `(raise .)` inside a synthesized handler to first
+  ## restore `exc = err` and reraise with the original error code so the
+  ## outer try sees the same `errorTracker` value. Other forms pass through
+  ## unchanged.
+  let info = n.info
+  var lookahead = n
+  inc lookahead  # past `(raise` tag
+
+  if lookahead.kind == DotToken:
+    if c.handlerStack.len > 0:
+      let h = c.handlerStack[^1]
+      let excSym = pool.syms.getOrIncl(ExcThreadVarName)
+      c.dest.copyIntoKind StmtsS, info:
+        c.dest.copyIntoKind AsgnS, info:
+          c.dest.addSymUse excSym, info
+          c.dest.addSymUse h.errSym, info
+        c.dest.copyIntoKind RaiseS, info:
+          c.dest.addDotToken()
+      # consume the original `(raise .)`
+      inc n  # past `(raise`
+      inc n  # past `.`
+      skipParRi n
+      return
+    # No active handler — pass through unchanged.
+    takeToken c, n  # `(raise`
+    takeToken c, n  # `.`
+    takeParRi c, n
+    return
+
+  let opType = getType(c.typeCache, lookahead, {SkipAliases})
+  if opType.typeKind == RefT:
+    let excSym = pool.syms.getOrIncl(ExcThreadVarName)
+    let failureSym = pool.syms.getOrIncl(FailureName)
+    c.dest.copyIntoKind StmtsS, info:
+      c.dest.addParLe AsgnS, info
+      c.dest.addSymUse excSym, info
+      # Cast the operand from its (possibly subtype) `ref T` to `ref Exception`
+      # so the C codegen does not warn about incompatible pointer types when
+      # writing it into the threadvar.
+      c.dest.addParLe CastX, info
+      emitRefExceptionType(c.dest, info)
+      inc n  # past `(raise` tag
+      tr c, n, WantT  # transform and consume operand
+      c.dest.addParRi()  # close cast
+      c.dest.addParRi()  # close asgn
+      skipParRi n  # close original `(raise ...)`
+      c.dest.copyIntoKind RaiseS, info:
+        c.dest.addSymUse failureSym, info
+    return
+
+  # Legacy enum/value-typed raise — pass through unchanged.
+  takeToken c, n  # `(raise`
   while n.kind != ParRi:
     tr c, n, WantT
   takeParRi c, n
@@ -1054,6 +1337,8 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         trFor c, n
       of TryS:
         trTry c, n
+      of RaiseS:
+        trRaise c, n
       of ProcS, FuncS, MacroS, MethodS, ConverterS, IteratorS:
         trProcDecl c, n
       of ScopeS:

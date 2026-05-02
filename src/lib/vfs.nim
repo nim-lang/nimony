@@ -132,7 +132,7 @@ type
     data*: pointer
     size*: int
     mf: MemFile
-    cookie: pointer
+    cookie*: pointer
     cleanup: proc (b: var VfsBlob) {.nimcall.}
 
 proc initBlob*(data: pointer; size: int;

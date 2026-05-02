@@ -365,6 +365,24 @@ proc translateCond(c: var NjvlContext; pc: var Cursor; wasEquality: var bool): L
     wasEquality = negations == 0  # negated equality is inequality, not equality
     inc r
     skip r # skip type
+  elif xk == InstanceofX:
+    # `(instanceof x T)` truthy: x is not nil (and is at least T at runtime).
+    # We don't model the type-narrowing here, just the not-nil consequence.
+    var probe = r
+    inc probe
+    let sa = extractSymId(probe)
+    if sa != NoSymId:
+      result = isNotNil(getVarId(c, sa))
+    else:
+      traverseExpr c, pc
+      return result
+    skip r
+    while negations > 0:
+      negateFact(result)
+      dec negations
+      skipParRi r
+    pc = r
+    return result
   else:
     # Check for a bare symbol/hderef/haddr (truthy ref check: `if x:` means `x != nil`)
     let sa = extractSymId(r)

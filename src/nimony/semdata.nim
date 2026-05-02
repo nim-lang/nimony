@@ -20,7 +20,7 @@ type
   SemRoutine* {.acyclic.} = ref object
     kind*: SymKind
     hasDefer*: bool
-    inGeneric*, inLoop*, inBlock*, inInst*: int
+    inGeneric*, inLoop*, inBlock*, inInst*, inExcept*: int
     returnType*: TypeCursor
     pragmas*: set[PragmaKind]
     raisesType*: TypeCursor  # Type from .raises pragma (e.g., ErrorCode, MyError)
