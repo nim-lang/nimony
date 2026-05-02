@@ -89,6 +89,10 @@ type
     backend*: Backend
     noValidate*: bool # skip running the validator on plugin sources
     verbose*: bool    # --verbose: dump NJ IR on contract/init failures
+    outFile*: string  # filename portion set by `--out:PATH` / `-o:PATH`
+                      # (empty = derive from module basename).
+    outDir*: string   # directory portion set by `--out:DIR/NAME` (its
+                      # dir half) and/or `--outdir:DIR`. Empty = cwd.
 
 proc addDefine*(config: var NifConfig; symbol: string) =
   config.defines.addUnique symbol

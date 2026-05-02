@@ -64,6 +64,13 @@ Options:
   --report                  print machine-readable per-command invocation
                             counts on stdout (one line per nifmake call)
   --nimcache:PATH           set the path used for generated files
+  -o, --out:PATH            write the executable to PATH (overrides the
+                            default `<nimcache>/<modhash>/<basename>.exe`).
+                            Splits into directory + filename like Nim;
+                            combine with --outdir if you want them set
+                            independently.
+  --outdir:DIR              put the executable in DIR (default = cwd).
+                            Same semantics as Nim's --outdir.
   --boundchecks:on|off      turn bound checks on or off
   --usages:file,line,col    list usages of the symbol at the given position
   --def:file,line,col       list definition of the symbol at the given position

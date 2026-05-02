@@ -66,6 +66,13 @@ proc len*(t: ToplevelEntries): int {.inline.} = t.entries.len
 proc hasKey*(t: ToplevelEntries; s: SymId): bool {.inline.} =
   t.bySymId.hasKey(s)
 
+proc inSignatureCheck*(t: ToplevelEntries; s: SymId): bool =
+  let d = t.bySymId.getOrDefault(s, -1)
+  if d >= 0:
+    t.entries[d].phase in {SemcheckSignatures, SemcheckSignaturesInProgress}
+  else:
+    false
+
 when defined(nimony):
   proc `[]`*(t: ToplevelEntries; s: SymId): var ToplevelEntry {.inline.} =
     t.entries[t.bySymId.getOrDefault(s)]

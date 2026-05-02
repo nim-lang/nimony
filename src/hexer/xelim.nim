@@ -243,11 +243,21 @@ proc trExprLoop(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
   inc n
 
 proc trAggregateValue(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
-  ## Bind a *call* in a value-position of an aggregate to a fresh let-temp
+  ## Bind a *call* in a value-position of an aggregate to a fresh cursor temp
   ## so the call evaluates at a deterministic textual point relative to
   ## sibling pre-statements (e.g. a sibling's `wasMoved`). Non-call
   ## expressions are pure reads and are passed through to `trExpr`
   ## unchanged.
+  ##
+  ## **The temp is a `cursor`, not a `let`.** The aggregate constructor
+  ## that immediately consumes this temp is the rightful owner of the
+  ## call result; declaring the temp as `let` would tell the destroyer
+  ## to inject `=destroy(tmp)` at scope end, which double-frees the
+  ## value already moved into the aggregate (the aggregate's field has
+  ## the only live owning reference). Cursor semantics: the temp is a
+  ## non-owning view that goes out of scope without cleanup, which is
+  ## exactly what xelim needs here. Surfaced 2026-05-01 by self-host
+  ## debugging — see `bug_self_host_nifconfig_destroy.md`.
   if n.kind != ParLe or n.exprKind notin CallKinds:
     trExpr c, dest, n, tar
     return
@@ -259,8 +269,7 @@ proc trAggregateValue(c: var Context; dest: var TokenBuf; n: var Cursor; tar: va
   trExpr c, dest, n, childTar
 
   let tmp = pool.syms.getOrIncl(tempSymName(c))
-  let stmtKind = if typ.typeKind == MutT: VarS else: LetS
-  dest.addParLe stmtKind, info
+  dest.addParLe CursorS, info
   dest.addSymDef tmp, info
   dest.addEmpty2 info  # export marker, pragmas
   dest.copyTree typ
