@@ -48,6 +48,9 @@ else:
 const
   ErrorCodeName* = "ErrorCode.0." & SystemModuleSuffix
   SuccessName* = "Success.0." & SystemModuleSuffix
+  FailureName* = "Failure.0." & SystemModuleSuffix
+  ExceptionName* = "Exception.0." & SystemModuleSuffix
+  ExcThreadVarName* = "exc.0." & SystemModuleSuffix
   ContinuationName* = "Continuation.0." & SystemModuleSuffix
 
 proc createBuiltinTypes*(bits: int): BuiltinTypes =
