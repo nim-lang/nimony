@@ -230,36 +230,71 @@ proc skipToRoot(n: Cursor): Cursor =
   result = n
 
 proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
+  result = false
   let n = skipToRoot(n)
   if n.kind == Symbol:
-    let res = tryLoadSym(n.symId)
-    assert res.status == LacksNothing
-    let local = asLocal(res.decl)
-    case local.kind
-    of ConstY:
-      result = true
-    of LetY, GletY, TletY:
-      let tk = local.typ.typeKind
-      if allowLet:
-        result = tk == LentT # see VarY case
-      else:
-        result = tk notin {MutT, OutT, LentT}
-        if result and isViewType(local.typ):
-          # Special rule to make `toOpenArray` work:
+    # Prefer the scope-aware `getLocalInfo` so that a local var doesn't get
+    # resolved to an unrelated parameter of the same name in some proctype
+    # declared elsewhere — `tryLoadSym` is a flat module-index probe and
+    # will happily return such a collision (mirrors `contracts_njvl`'s use
+    # of `getLocalInfo` for the same reason).
+    let info = c.typeCache.getLocalInfo(n.symId)
+    if info.kind != NoSym:
+      case info.kind
+      of ConstY:
+        result = true
+      of LetY, GletY, TletY:
+        let tk = info.typ.typeKind
+        if allowLet:
+          result = tk == LentT
+        else:
+          result = tk notin {MutT, OutT, LentT}
+          if result and isViewType(info.typ):
+            # `toOpenArray` rule needs the init value, which the typeCache
+            # does not retain — fall back to the global decl just for that.
+            let res = tryLoadSym(n.symId)
+            if res.status == LacksNothing:
+              let local = asLocal(res.decl)
+              result = borrowsFromReadonly(c, local.val)
+      of VarY, GvarY, TvarY:
+        result = info.typ.typeKind == LentT
+      of PatternvarY:
+        let res = tryLoadSym(n.symId)
+        if res.status == LacksNothing:
+          let local = asLocal(res.decl)
           result = borrowsFromReadonly(c, local.val)
-    of VarY, GvarY, TvarY:
-      result = local.typ.typeKind == LentT
-    of PatternvarY:
-      result = borrowsFromReadonly(c, local.val)
-    of ParamY:
-      result = local.typ.typeKind notin {MutT, OutT, LentT, SinkT}
+      of ParamY:
+        result = info.typ.typeKind notin {MutT, OutT, LentT, SinkT}
+      else:
+        result = false
     else:
-      result = false
+      # Not a local in our scope chain — fall back to the module-index lookup
+      # for globals/constants that aren't tracked by the typeCache.
+      let res = tryLoadSym(n.symId)
+      assert res.status == LacksNothing
+      let local = asLocal(res.decl)
+      case local.kind
+      of ConstY:
+        result = true
+      of LetY, GletY, TletY:
+        let tk = local.typ.typeKind
+        if allowLet:
+          result = tk == LentT
+        else:
+          result = tk notin {MutT, OutT, LentT}
+          if result and isViewType(local.typ):
+            result = borrowsFromReadonly(c, local.val)
+      of VarY, GvarY, TvarY:
+        result = local.typ.typeKind == LentT
+      of PatternvarY:
+        result = borrowsFromReadonly(c, local.val)
+      of ParamY:
+        result = local.typ.typeKind notin {MutT, OutT, LentT, SinkT}
+      else:
+        result = false
   elif n.kind in {StringLit, IntLit, UIntLit, FloatLit, CharLit} or
        n.exprKind in {SufX, OconstrX, NewobjX, AconstrX}:
     result = true
-  else:
-    result = false
 
 type
   LvalueStatus = enum
