@@ -684,7 +684,14 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
       transformStmt(e, dest, c)
       discard e.breaks.pop
       takeParRi(dest, c)
-    of CallS, CmdS, MacroS, TypeS, EmitS, AsgnS, ScopeS, IfS,
+    of TypeS:
+      # Type bodies contain field decls and field-level pragmas (e.g. the
+      # `.cursor` annotation on a field). Their tags overlap with
+      # statement tags but their layout is not statement-shaped, so
+      # descending into them with `transformStmt` mis-parses them.
+      # Type bodies don't need iterator transformations.
+      dest.takeTree c
+    of CallS, CmdS, MacroS, EmitS, AsgnS, ScopeS, IfS,
         WhenS, CaseS, RetS, YldS, PragmasS, PragmaxS, InclS,
         ExclS, IncludeS, ImportS, ImportasS, FromimportS,
         ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS,
