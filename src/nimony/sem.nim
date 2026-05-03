@@ -6463,14 +6463,20 @@ proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
   # the suffix so downstream tools (dagon doc-gen) have the source location
   # without needing a separate manifest. Only consumer of the body today is
   # `nifcgen`'s init-proc generation, which reads the suffix from each `kv`.
+  #
+  # Path is stored relative to CWD so the `.s.nif` is reproducible across
+  # checkouts (CI has a different absolute prefix than the dev's machine).
+  # Mirrors nifler's `--portablePaths` line-info convention.
   if c.importedModules.len != 0:
+    let curWorkDir = onRaiseQuit os.getCurrentDir()
     var importBuf = createTokenBuf(c.importedModules.len * 5 + 2)
     importBuf.addParLe ImportS, NoLineInfo
     for _, i in c.importedModules:
       if i.fromPlugin.len == 0:
+        let abs = i.path.toAbsolutePath
         importBuf.buildTree KvU, NoLineInfo:
-          importBuf.addIdent moduleSuffix(i.path.toAbsolutePath, c.g.config.paths)
-          importBuf.addStrLit i.path.toAbsolutePath
+          importBuf.addIdent moduleSuffix(abs, c.g.config.paths)
+          importBuf.addStrLit abs.toRelativePath(curWorkDir)
     importBuf.addParRi()
     dest.insert importBuf, 1 # after the (stmts tag
   onRaiseQuit writeFile(dest, outfile, OnlyIfChanged)

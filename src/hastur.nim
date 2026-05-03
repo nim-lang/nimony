@@ -27,6 +27,10 @@ Commands:
   boot [options]       3-iteration self-host of `bin/nimony` (koch-style).
                        Result is installed to `bin/nimony_b`. Extra args are
                        forwarded to each `nimony c` invocation.
+  selfcheck            full compiler regression check: rebuilds the nimony
+                       toolchain (nimony+nimsem+hexer share `programs.nim`),
+                       runs `bootstrap`, then `boot --valgrind`. Use this
+                       after touching any module the compiler itself imports.
   all                  run all tests (also the default action).
   nimony               run Nimony tests.
   examples             run examples (examples/ directory).
@@ -1079,6 +1083,17 @@ proc bootstrapTests() =
   else:
     echo "SUCCESS."
 
+proc buildNimonyToolchain(showProgress = false) =
+  ## Rebuild every host-Nim-compiled binary that shares `src/nimony/programs.nim`
+  ## (or any other module reused across compiler stages). A change to a shared
+  ## helper like `suffixToNif` only takes effect once nimony, nimsem AND hexer
+  ## are all re-linked, so `hastur selfcheck` (and any caller that wants a
+  ## fully-consistent toolchain) goes through this rather than `buildNimony`
+  ## alone — which is what masked a hexer bug during the doc-generator work.
+  buildNimsem(showProgress)
+  buildNimony(showProgress)
+  buildHexer(showProgress)
+
 # ---- koch-style 3-iteration self-host bootstrap of `bin/nimony` -----------
 # Mirrors koch.nim's `boot` command: stage1 = host-Nim-compiled bin/nimony,
 # stage2 = stage1 compiled by stage1, stage3 = stage2 compiled by stage2.
@@ -1176,6 +1191,36 @@ proc bootCmd(args: string; withValgrind: bool) =
   echo "[boot] installed ", winner, " -> ", dest, " in total ",
        formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   echo "SUCCESS."
+
+proc selfcheckCmd() =
+  ## Full compiler self-host regression check. The sequence here mirrors what
+  ## a maintainer runs after touching anything in `src/nimony/`, `src/hexer/`
+  ## or `src/lib/` that the compiler itself depends on:
+  ##
+  ##   1. Rebuild nimony + nimsem + hexer from host Nim, so all three reflect
+  ##      current source (a stale hexer was what hid the
+  ##      `suffixToNif` extension regression — `boot` and `bootstrap` only
+  ##      rebuild `bin/nimony`, which can lull you into a false green).
+  ##   2. `bootstrap`: compile every module on the bootstrap list with the
+  ##      freshly-built `bin/nimony`. Catches per-module sem/codegen
+  ##      regressions and fails fast.
+  ##   3. `boot --valgrind`: 3-stage self-host of `bin/nimony` itself, then
+  ##      run the resulting binary under valgrind. Catches whole-program
+  ##      regressions (init order, codegen interactions, runtime UAFs) that
+  ##      single-module compiles miss.
+  ##
+  ## Boot's "stages 2 and 3 still differ" warning is non-fatal — it normally
+  ## reflects gcc's `--build-id` non-determinism, not a real divergence; the
+  ## valgrind smoke test on stage 3 is what tells us the binary actually runs.
+  let t0 = epochTime()
+  echo "[selfcheck] step 1/3: rebuilding nimony toolchain"
+  buildNimonyToolchain(showProgress = true)
+  echo "[selfcheck] step 2/3: bootstrap (per-module compile check)"
+  bootstrapTests()
+  echo "[selfcheck] step 3/3: boot --valgrind (3-stage self-host + valgrind smoke)"
+  bootCmd("", withValgrind = true)
+  echo "[selfcheck] all checks passed in ",
+       formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
 
 proc execNifc(cmd: string) =
   exec "nifc", cmd
@@ -1369,6 +1414,9 @@ proc handleCmdLine =
       if bootArgs.len > 0: bootArgs.add ' '
       bootArgs.add quoteShell(a)
     bootCmd(bootArgs, withValgrind)
+
+  of "selfcheck":
+    selfcheckCmd()
 
   of "controlflow", "cf":
     buildControlflow()

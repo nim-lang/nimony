@@ -1,10 +1,10 @@
 (.nif27)
-(.indexat 1046             )
+(.indexat 965              )
 (stmts@,1,tests/nimony/nosystem/timportfromexcept.nim
  (import
-  (kv mde75jr5h "/home/araq/projects/nimony/tests/nimony/nosystem/deps/mdeclared.nim")
-  (kv modvx9hpf "/home/araq/projects/nimony/tests/nimony/nosystem/deps/modexcept.nim")
-  (kv modepjal "/home/araq/projects/nimony/tests/nimony/nosystem/deps/modfrom.nim"))
+  (kv mde75jr5h "tests/nimony/nosystem/deps/mdeclared.nim")
+  (kv modvx9hpf "tests/nimony/nosystem/deps/modexcept.nim")
+  (kv modepjal "tests/nimony/nosystem/deps/modfrom.nim"))
  (glet@4,4 :allImported.0. . .
   (array@E
    (i@B,2,tests/nimony/nosystem/deps/modexcept.nim 64)
@@ -41,6 +41,6 @@
    (true@A)
    (false@R)
    (true@i))))(.index@,1,tests/nimony/nosystem/timportfromexcept.nim
- (h allImported.0. 359)
+ (h allImported.0. 278)
  (h exceptDeclared.0. 299)
  (h fromDeclared.0. 191))
