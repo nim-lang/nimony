@@ -3449,17 +3449,22 @@ proc semRaise(c: var SemContext; dest: var TokenBuf; it: var Item) =
       # Allow exact match or subtype (inheritance).
       # If both are `ref T` heap-exception types, peel the ref so the
       # inheritance check below can compare the underlying object types.
-      var raisedType = skipModifier(a.typ)
-      var expectedType = skipModifier(c.routine.raisesType)
-      if raisedType.typeKind == RefT and expectedType.typeKind == RefT:
-        inc raisedType
-        inc expectedType
-      var compatible = sameTrees(raisedType, expectedType)
-      # Check if raisedType is a subtype of expectedType (inheritance)
-      if not compatible and raisedType.kind == Symbol and expectedType.kind == Symbol:
+      # The local names below are chosen to avoid collisions with the
+      # `expectedType` parameter on `SemExpressionExecutor` (semdata.nim) —
+      # `makeLocalSym` only guarantees per-module uniqueness, so naming
+      # this `expectedType` would share its `pool.syms` ID with that
+      # parameter and the borrow check would resolve to the wrong decl.
+      var raisedRefT = skipModifier(a.typ)
+      var raisesRefT = skipModifier(c.routine.raisesType)
+      if raisedRefT.typeKind == RefT and raisesRefT.typeKind == RefT:
+        inc raisedRefT
+        inc raisesRefT
+      var compatible = sameTrees(raisedRefT, raisesRefT)
+      # Check if raisedRefT is a subtype of raisesRefT (inheritance)
+      if not compatible and raisedRefT.kind == Symbol and raisesRefT.kind == Symbol:
         # Use sigmatch's inheritance checking instead of manual chain walking
         var m = createMatch(addr c)
-        matchObjectInheritance(m, expectedType, raisedType, expectedType.symId, raisedType.symId, NoType)
+        matchObjectInheritance(m, raisesRefT, raisedRefT, raisesRefT.symId, raisedRefT.symId, NoType)
         compatible = not m.err
       if not compatible:
         c.typeMismatch dest, info, a.typ, c.routine.raisesType

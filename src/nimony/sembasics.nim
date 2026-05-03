@@ -335,19 +335,13 @@ proc makeLocalSym*(c: var SemContext; result: var string) =
 
 proc makeTemplateSym*(c: var SemContext; result: var string) =
   ## Make a fresh symbol for a name introduced by a template body. Templates
-  ## are defined in one module and expanded in others; the syms baked into a
-  ## template's body must be unique across the whole compilation, otherwise
-  ## a `var x` inside the template body collides with a `var x` (or any
-  ## same-named local) anywhere else in the program. `makeLocalSym` only
-  ## guarantees per-module uniqueness because `c.locals` is per-`SemContext`.
-  ## Append the defining module's suffix so the sym is module-qualified
-  ## without promoting it to a global symbol layout.
+  ## need a separate mechanism from `makeLocalSym` so that cross-module
+  ## interference can be addressed without promoting the sym to global
+  ## layout — i.e. without mangling in `c.thisModuleSuffix`.
   var counter = addr c.locals.mgetOrPut(result, -1)
   counter[] += 1
   result.add '.'
   result.addInt counter[]
-  result.add '.'
-  result.add c.thisModuleSuffix
 
 type
   SymStatus* = enum
