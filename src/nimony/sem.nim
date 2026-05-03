@@ -15,7 +15,7 @@ import std / [tables, sets, syncio, formatfloat, assertions, strutils, hashes]
 from std/os import changeFileExt, getCurrentDir, isAbsolute, absolutePath, normalizedPath
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / lib / [symparser, nifindexes]
+import ".." / lib / [symparser, nifindexes, docpaths]
 import nimony_model, symtabs, builtintypes, decls, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig,
   intervals, xints, typeprops,
@@ -6476,7 +6476,10 @@ proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
         let abs = i.path.toAbsolutePath
         importBuf.buildTree KvU, NoLineInfo:
           importBuf.addIdent moduleSuffix(abs, c.g.config.paths)
-          importBuf.addStrLit abs.toRelativePath(curWorkDir)
+          # Slash-normalise: paths in the .nif must use `/` regardless of OS
+          # so the file is byte-identical across Windows / Linux / macOS, and
+          # downstream consumers (dagon) compare prefixes uniformly.
+          importBuf.addStrLit toUnixPath(abs.toRelativePath(curWorkDir))
     importBuf.addParRi()
     dest.insert importBuf, 1 # after the (stmts tag
   onRaiseQuit writeFile(dest, outfile, OnlyIfChanged)

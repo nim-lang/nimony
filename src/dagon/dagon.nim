@@ -377,9 +377,11 @@ proc parseImports(n: var Cursor; ctx: var RenderCtx) =
           path = pool.strings[n.litId]
           inc n
         if suffix.len > 0 and path.len > 0:
-          # Path may be relative (nifler's `--portablePaths` emits paths
-          # relative to its cwd); absolutise so the root-prefix match works.
-          let absPath =
+          # Path may be relative (sem stores it relative to cwd so the .nif
+          # is reproducible across checkouts); absolutise so the root-prefix
+          # match works. Slash-normalise on Windows so `deriveRelpath`'s
+          # prefix test agrees with the already-normalised roots.
+          let absPath = toUnixPath:
             if isAbsolute(path): path
             else: absolutePath(path)
           ctx.importMap[suffix] =

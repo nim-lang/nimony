@@ -13,6 +13,17 @@ import std / [os, strutils]
 
 const ExternalBucket* = "_external"
 
+proc toUnixPath*(s: string): string =
+  ## On Windows, replace `\` with `/` so paths emitted into NIF / HTML are
+  ## byte-identical across operating systems (Windows, Linux, macOS produce
+  ## the same artifacts). No-op on POSIX. Apply at every boundary where a
+  ## path crosses into a NIF token, an HTML attribute, or a CLI arg whose
+  ## downstream consumer might also be cross-OS.
+  when defined(windows):
+    s.replace('\\', '/')
+  else:
+    s
+
 const UnreservedChar = {'A'..'Z', 'a'..'z', '0'..'9', '-', '.', '_', '~'}
 
 proc sanitizePart(s: string): string =

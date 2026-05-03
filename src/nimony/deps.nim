@@ -58,9 +58,10 @@ proc docRelpath(f: FilePair; projectRoot, stdlibRoot: string): string =
   ## output) and dagon (which synthesises the cross-link URL). `nimFile` may
   ## have been recorded relative to the original cwd (when imports resolved
   ## paths against a non-cwd module) — absolutise so the root-prefix tests
-  ## match. Uses semos's `.raises`-safe wrapper so the call passes Nimony's
-  ## bootstrap.
-  deriveRelpath(toAbsolutePath(f.nimFile), projectRoot, stdlibRoot)
+  ## match. Slash-normalised so Windows builds produce the same artifacts as
+  ## POSIX builds and so `deriveRelpath`'s prefix match agrees with
+  ## already-normalised `projectRoot`/`stdlibRoot`.
+  deriveRelpath(toUnixPath(toAbsolutePath(f.nimFile)), projectRoot, stdlibRoot)
 proc docFile(config: NifConfig; f: FilePair; projectRoot, stdlibRoot: string): string =
   docOutDir(config) / docRelpath(f, projectRoot, stdlibRoot)
 proc indexHtmlFile(config: NifConfig): string =
@@ -635,8 +636,11 @@ proc generateDocBuildFile(c: DepContext): string =
   var b = nifbuilder.open(result)
   defer: b.close()
 
-  let projectRoot = absoluteParentDir(c.rootNode.files[0].nimFile)
-  let stdlibRoot = stdlibDir()
+  # Slash-normalise so the build file (and the args we pass to dagon) is
+  # byte-identical across OSes. `deriveRelpath` does prefix matching on
+  # roots, so callers downstream must agree on the separator.
+  let projectRoot = toUnixPath(absoluteParentDir(c.rootNode.files[0].nimFile))
+  let stdlibRoot = toUnixPath(stdlibDir())
   let rootFlags = "--projectRoot:" & projectRoot & " --stdlibRoot:" & stdlibRoot
 
   b.addHeader()
@@ -1326,8 +1330,8 @@ proc buildGraph*(config: sink NifConfig; project: string;
     c = initDepContext(config, project, nifler, true, forceRebuild, moduleFlags, cmd)
     let docCacheDir = c.config.nifcachePath / "docs"
     let docOut = docOutDir(c.config)
-    let projectRoot = absoluteParentDir(c.rootNode.files[0].nimFile)
-    let stdlibRoot = stdlibDir()
+    let projectRoot = toUnixPath(absoluteParentDir(c.rootNode.files[0].nimFile))
+    let stdlibRoot = toUnixPath(stdlibDir())
     onRaiseQuit createDir(path(docCacheDir))
     onRaiseQuit createDir(path(docOut))
     # Pre-create the per-module subdirectories under outdir. dagon writes to
