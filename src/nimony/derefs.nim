@@ -188,11 +188,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
     else:
       break
   if n.kind == Symbol:
-    let res = tryLoadSym(n.symId)
-    assert res.status == LacksNothing
-    # XXX Is this check really reliable for local symbols
-    # that are not guaranteed to be unique?
-    if res.decl.tagEnum == ParamTagId and n.symId == c.r.firstParam:
+    if c.typeCache.fetchSymKind(n.symId) == ParamY and n.symId == c.r.firstParam:
       # There is a difference between
       # proc forward(x: var int): var int = x
       # and
@@ -1249,13 +1245,10 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       return
 
     if IsNoSideEffect in c.r.props:
-      let res = tryLoadSym(n.symId)
-      if res.status == LacksNothing:
-        let local = asLocal(res.decl)
-        if local.kind in {GvarY, TvarY}:
-          buildLocalErr c.dest, n.info, "use of global/thread-local variable '" & asNimCode(n) & "' in .noSideEffect context"
-          skip n
-          return
+      if c.typeCache.fetchSymKind(n.symId) in {GvarY, TvarY}:
+        buildLocalErr c.dest, n.info, "use of global/thread-local variable '" & asNimCode(n) & "' in .noSideEffect context"
+        skip n
+        return
     trLocation c, n, e
   of IntLit, UIntLit, FloatLit, CharLit, StringLit:
     if e.wantMutable:
