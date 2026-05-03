@@ -102,7 +102,7 @@ proc processSingleModule(nimFile: string; config: sink NifConfig; moduleFlags: s
 
 type
   Command = enum
-    None, SingleModule, FullProject, CheckProject, SemCheckNif
+    None, SingleModule, FullProject, CheckProject, SemCheckNif, DocProject
 
 proc dispatchBasicCommand(key: string; config: var NifConfig): Command =
   case key.normalize:
@@ -117,6 +117,8 @@ proc dispatchBasicCommand(key: string; config: var NifConfig): Command =
     CheckProject
   of "s":
     SemCheckNif
+  of "doc":
+    DocProject
   else:
     quit "command expected"
 
@@ -252,7 +254,7 @@ proc compileProgram(c: var CmdOptions) =
     c.config.linker = c.config.cc
   if c.args.len == 0:
     quit "too few command line arguments"
-  elif c.args.len > 2 - int(c.cmd in {FullProject, CheckProject}):
+  elif c.args.len > 2 - int(c.cmd in {FullProject, CheckProject, DocProject}):
     quit "too many command line arguments"
 
   if c.checkModes != DefaultSettings:
@@ -279,6 +281,11 @@ proc compileProgram(c: var CmdOptions) =
     # check full project modules
     buildGraph c.config, c.args[0], c.buildFlags,
       c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, DoCheck, c.passC, c.passL, c.executableArgs
+  of DocProject:
+    makeDir(c.config.nifcachePath)
+    # doc full project modules
+    buildGraph c.config, c.args[0], c.buildFlags,
+      c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, DoDoc, c.passC, c.passL, c.executableArgs
   of SemCheckNif:
     makeDir(c.config.nifcachePath)
     # compile full project modules

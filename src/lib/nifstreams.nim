@@ -169,17 +169,22 @@ proc close*(s: var Stream) = nifreader.close(s.r)
 
 proc rawNext(s: var Stream; t: ExpandedToken): PackedToken =
   var currentInfo = NoLineInfo
+  let commentId =
+    if t.comment.len == 0: 0'u32
+    else: pool.strings.getOrIncl(decodeComment t).uint32
   if t.filename.len == 0:
     # relative file position
-    if t.pos.line != 0 or t.pos.col != 0:
+    if t.pos.line != 0 or t.pos.col != 0 or commentId != 0'u32:
       let rawInfo = unpack(pool.man, s.parents[^1])
-      currentInfo = pack(pool.man, rawInfo.file, rawInfo.line+t.pos.line, rawInfo.col+t.pos.col)
+      currentInfo = packWithComment(pool.man, rawInfo.file,
+                                    rawInfo.line+t.pos.line,
+                                    rawInfo.col+t.pos.col, commentId)
     else:
       currentInfo = s.parents[^1]
   else:
     # absolute file position:
     let fileId = pool.files.getOrIncl(decodeFilename t)
-    currentInfo = pack(pool.man, fileId, t.pos.line, t.pos.col)
+    currentInfo = packWithComment(pool.man, fileId, t.pos.line, t.pos.col, commentId)
 
   case t.tk
   of ParRi:
@@ -191,7 +196,9 @@ proc rawNext(s: var Stream; t: ExpandedToken): PackedToken =
   of ParLe:
     let ka = pool.tags.getOrInclFromView(t.data)
     result = toToken(ParLe, ka, currentInfo)
-    s.parents.add currentInfo
+    # Children resolve relative positions against the parent's location, not
+    # against its decorations — strip any `#comment#` before pushing.
+    s.parents.add stripComment(pool.man, currentInfo)
   of Ident, StringLit:
     result = toToken(t.tk, pool.strings.getOrIncl(s.r.decodeStr t), currentInfo)
   of Symbol, SymbolDef:
@@ -271,6 +278,7 @@ proc typebits*(n: PackedToken): int =
 proc emitLineInfo(b: var Builder; info, parentInfo: PackedLineInfo) =
   ## Append the NIF27 line-info suffix for `info` (relative to `parentInfo` if
   ## both share a file) to whatever atom or tag was just written into `b`.
+  ## Also re-emits any `#comment#` attached to `info`.
   let rawInfo = unpack(pool.man, info)
   let file = rawInfo.file
   var line = rawInfo.line
@@ -286,6 +294,8 @@ proc emitLineInfo(b: var Builder; info, parentInfo: PackedLineInfo) =
     else:
       fileAsStr = pool.files[file]
     b.attachLineInfo(col, line, fileAsStr)
+  if rawInfo.comment != 0'u32:
+    b.attachComment pool.strings[StrId(rawInfo.comment)]
 
 proc toString*(tree: openArray[PackedToken]; produceLineInfo = true): string =
   var b = nifbuilder.open(tree.len * 20)

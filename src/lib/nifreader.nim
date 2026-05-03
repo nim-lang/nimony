@@ -32,7 +32,8 @@ type
     col*, line*: int32
 
   TokenFlag = enum
-    TokenHasEscapes, FilenameHasEscapes, TokenHasModuleSuffixExpansion
+    TokenHasEscapes, FilenameHasEscapes, TokenHasModuleSuffixExpansion,
+    CommentHasEscapes
 
   ExpandedToken* = object
     tk*: NifKind
@@ -41,6 +42,7 @@ type
     data*: StringView
     pos*: FilePos
     filename*: StringView
+    comment*: StringView ## raw bytes between '#' and '#'; empty if absent
 
   Reader* = object
     p: pchar
@@ -104,16 +106,24 @@ proc skipWhitespace(r: var Reader) =
       else:
         break
 
-proc skipComment(r: var Reader) {.inline.} =
+proc captureComment(r: var Reader; result: var ExpandedToken) {.inline.} =
+  ## Consume the bytes up to (and including) the closing `#` and record the
+  ## inner span on `result.comment`. Tracks the `CommentHasEscapes` flag so
+  ## downstream decoders can take the fast path when no escapes were present.
+  result.comment.p = r.p
   useCpuRegisters:
+    let start = p
     while p < eof:
       if ^p == '#':
+        result.comment.len = cast[int](p) - cast[int](start)
         inc p
         break
       elif ^p == '\n':
         inc p
         inc r.line
       else:
+        if ^p == '\\':
+          result.flags.incl CommentHasEscapes
         inc p
 
 proc handleHex(p: pchar): char =
@@ -185,6 +195,27 @@ proc decodeStr*(r: Reader; t: ExpandedToken): string =
     if t.data.len > 0:
       copyMem(beginStore(result, result.len), t.data.p, t.data.len)
       endStore(result)
+
+proc decodeComment*(t: ExpandedToken): string =
+  ## Decode the captured `#…#` comment, expanding `\HH` escapes. Returns "" if
+  ## no comment is attached.
+  if t.comment.len == 0:
+    return ""
+  if CommentHasEscapes notin t.flags:
+    result = newString(t.comment.len)
+    copyMem(beginStore(result, result.len), t.comment.p, t.comment.len)
+    endStore(result)
+    return
+  result = ""
+  var p = t.comment.p
+  let sentinel = p +! t.comment.len
+  while p < sentinel:
+    if ^p == '\\':
+      inc p
+      result.add decodeEscape(p)
+    else:
+      result.add ^p
+      inc p
 
 proc decodeFilename*(t: ExpandedToken): string =
   if FilenameHasEscapes in t.flags:
@@ -336,7 +367,7 @@ proc handleSuffix(r: var Reader; result: var ExpandedToken) {.inline.} =
       handleLineInfo(r, result)
   if r.p < r.eof and ^r.p == '#':
     inc r.p           # consume the opening '#'
-    skipComment r     # consumes through the closing '#'
+    captureComment r, result   # consumes through the closing '#'
 
 proc next*(r: var Reader; result: var ExpandedToken) =
   result = default(ExpandedToken)

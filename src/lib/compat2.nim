@@ -30,6 +30,18 @@ else:
   template onRaiseQuit(call: untyped): untyped = call
 
 when not defined(nimony):
+  from std/paths import Path
+
+  proc path*(s: string): Path {.inline.} =
+    ## Compat shim: Nimony exposes `path(string) -> Path` (its dirs/paths API
+    ## takes a `Path`-typed wrapper); on host Nim the equivalent is `Path(s)`.
+    ## Having both spellings lets call sites write `createDir(path(s))`
+    ## unconditionally, dropping the `when defined(nimony)`/`else` ladder.
+    ## `from … import` keeps `paths.getCurrentDir` etc. out of scope so it
+    ## doesn't collide with `os.getCurrentDir` in modules that include this.
+    Path(s)
+
+when not defined(nimony):
   import std/tables
 
   proc getOrQuit*[A, B](t: var Table[A, B]; k: A): var B =

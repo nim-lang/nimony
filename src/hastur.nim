@@ -22,17 +22,22 @@ Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|hexer|nifc|nifmake|nj|vl|validator]   build selected tools (default: all).
+  build [all|nimony|nifler|hexer|nifc|nifmake|nj|vl|validator|dagon]   build selected tools (default: all).
   bootstrap            compile every module on the bootstrap list with nimony.
   boot [options]       3-iteration self-host of `bin/nimony` (koch-style).
                        Result is installed to `bin/nimony_b`. Extra args are
                        forwarded to each `nimony c` invocation.
+  selfcheck            full compiler regression check: rebuilds the nimony
+                       toolchain (nimony+nimsem+hexer share `programs.nim`),
+                       runs `bootstrap`, then `boot --valgrind`. Use this
+                       after touching any module the compiler itself imports.
   all                  run all tests (also the default action).
   nimony               run Nimony tests.
   examples             run examples (examples/ directory).
   nifc                 run NIFC tests.
   nj                   run NJ (Nimony Jump Elimination) tests.
   vl                   run VL (Versioned Locations) tests.
+  dagon                run Dagon doc-generator tests (tests/dagon/).
   incremental          verify nifmake's mtime-based incremental rebuilds via
                        the `--report` machine-readable summary.
   test <file>/<dir>    run test <file> or <dir>.
@@ -976,6 +981,11 @@ proc buildValidator(showProgress = false) =
   let exe = "validator".addFileExt(ExeExt)
   robustMoveFile "src/validator/" & exe, binDir() / exe
 
+proc buildDagon(showProgress = false) =
+  exec nimcPrefix() & "src/dagon/dagon.nim", showProgress
+  let exe = "dagon".addFileExt(ExeExt)
+  robustMoveFile "src/dagon/" & exe, binDir() / exe
+
 # ---------------------------------------------------------------------------
 # Bootstrapping progress (see https://github.com/nim-lang/nimony/issues/1788).
 #
@@ -1073,6 +1083,17 @@ proc bootstrapTests() =
     quit "FAILURE: bootstrap regression(s): " & failed.join(", ")
   else:
     echo "SUCCESS."
+
+proc buildNimonyToolchain(showProgress = false) =
+  ## Rebuild every host-Nim-compiled binary that shares `src/nimony/programs.nim`
+  ## (or any other module reused across compiler stages). A change to a shared
+  ## helper like `suffixToNif` only takes effect once nimony, nimsem AND hexer
+  ## are all re-linked, so `hastur selfcheck` (and any caller that wants a
+  ## fully-consistent toolchain) goes through this rather than `buildNimony`
+  ## alone — which is what masked a hexer bug during the doc-generator work.
+  buildNimsem(showProgress)
+  buildNimony(showProgress)
+  buildHexer(showProgress)
 
 # ---- koch-style 3-iteration self-host bootstrap of `bin/nimony` -----------
 # Mirrors koch.nim's `boot` command: stage1 = host-Nim-compiled bin/nimony,
@@ -1172,6 +1193,36 @@ proc bootCmd(args: string; withValgrind: bool) =
        formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   echo "SUCCESS."
 
+proc selfcheckCmd() =
+  ## Full compiler self-host regression check. The sequence here mirrors what
+  ## a maintainer runs after touching anything in `src/nimony/`, `src/hexer/`
+  ## or `src/lib/` that the compiler itself depends on:
+  ##
+  ##   1. Rebuild nimony + nimsem + hexer from host Nim, so all three reflect
+  ##      current source (a stale hexer was what hid the
+  ##      `suffixToNif` extension regression — `boot` and `bootstrap` only
+  ##      rebuild `bin/nimony`, which can lull you into a false green).
+  ##   2. `bootstrap`: compile every module on the bootstrap list with the
+  ##      freshly-built `bin/nimony`. Catches per-module sem/codegen
+  ##      regressions and fails fast.
+  ##   3. `boot --valgrind`: 3-stage self-host of `bin/nimony` itself, then
+  ##      run the resulting binary under valgrind. Catches whole-program
+  ##      regressions (init order, codegen interactions, runtime UAFs) that
+  ##      single-module compiles miss.
+  ##
+  ## Boot's "stages 2 and 3 still differ" warning is non-fatal — it normally
+  ## reflects gcc's `--build-id` non-determinism, not a real divergence; the
+  ## valgrind smoke test on stage 3 is what tells us the binary actually runs.
+  let t0 = epochTime()
+  echo "[selfcheck] step 1/3: rebuilding nimony toolchain"
+  buildNimonyToolchain(showProgress = true)
+  echo "[selfcheck] step 2/3: bootstrap (per-module compile check)"
+  bootstrapTests()
+  echo "[selfcheck] step 3/3: boot --valgrind (3-stage self-host + valgrind smoke)"
+  bootCmd("", withValgrind = true)
+  echo "[selfcheck] all checks passed in ",
+       formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+
 proc execNifc(cmd: string) =
   exec "nifc", cmd
 
@@ -1209,6 +1260,62 @@ proc hexertests(overwrite: bool) =
   execHexer "c " & mod1 & ".nif"
   execHexer "c " & helloworld & ".nif"
   execNifc " c -r " & mod1 & ".c.nif " & helloworld & ".c.nif"
+
+proc runDagonTest(c: var TestCounters; testFile: string) =
+  ## Drive `nimony doc <testFile>` into a per-test outdir, then check every
+  ## line in the sibling `.assertions` file is present in the produced output.
+  ## Each assertion line is `<file-relative-to-outdir>: <substring>`.
+  inc c.total
+  let basename = splitFile(testFile).name
+  let outdir = nimcacheDir / "dagontests" / basename
+  removeDir outdir
+  createDir outdir
+  let cmd = "-f --outdir:" & quoteShell(outdir) & " doc " & quoteShell(testFile)
+  let (output, exit) = execLocal("nimony", cmd)
+  if exit != 0:
+    failure c, testFile, "nimony doc exit code 0 (cmd: " & cmd & ")",
+      "exit " & $exit & "\n" & output
+    return
+  let assertionsFile = testFile.changeFileExt(".assertions")
+  if not fileExists(assertionsFile): return
+  # Collect every failed assertion under one test failure rather than counting
+  # each as a separate `c.failures` increment.
+  var problems: seq[string] = @[]
+  for line in lines(assertionsFile):
+    let s = line.strip()
+    if s.len == 0 or s.startsWith("#"): continue
+    let colon = s.find(':')
+    if colon < 0:
+      problems.add "malformed assertion: " & s
+      continue
+    let relPath = s.substr(0, colon - 1).strip()
+    let needle = s.substr(colon + 1).strip()
+    let path = outdir / relPath
+    if not fileExists(path):
+      problems.add "missing file " & relPath & " (needle: " & needle & ")"
+      continue
+    if needle notin readFile(path):
+      problems.add "needle not in " & relPath & ": " & needle
+  if problems.len > 0:
+    failure c, testFile, $problems.len & " assertion(s) failed",
+      problems.join("\n")
+
+proc dagontests(overwrite: bool) =
+  ## Run every `t*.nim` under `tests/dagon/` through `nimony doc` and verify
+  ## the produced HTML/idx files against an `.assertions` sidecar.
+  const TestDir = "tests/dagon"
+  let t0 = epochTime()
+  var c = TestCounters(total: 0, failures: 0)
+  if dirExists(TestDir):
+    for x in walkDir(TestDir, relative = true):
+      if x.kind == pcFile and x.path.endsWith(".nim") and x.path.startsWith("t"):
+        runDagonTest c, TestDir / x.path
+  echo c.total - c.failures, " / ", c.total, " dagon tests successful in ",
+       formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if c.failures > 0:
+    quit "FAILURE: Some dagon tests failed."
+  else:
+    echo "SUCCESS."
 
 proc syncCmd(newBranch: string) =
   let (output, status) = execCmdEx("git symbolic-ref --short HEAD")
@@ -1365,6 +1472,9 @@ proc handleCmdLine =
       bootArgs.add quoteShell(a)
     bootCmd(bootArgs, withValgrind)
 
+  of "selfcheck":
+    selfcheckCmd()
+
   of "controlflow", "cf":
     buildControlflow()
     controlflowTests("controlflow", overwrite)
@@ -1394,6 +1504,7 @@ proc handleCmdLine =
       buildNifmake(showProgress)
       buildNj(showProgress)
       buildVl(showProgress)
+      buildDagon(showProgress)
     of "nifler":
       buildNifler(showProgress)
     of "nimony":
@@ -1412,6 +1523,8 @@ proc handleCmdLine =
       buildVl(showProgress)
     of "validator":
       buildValidator(showProgress)
+    of "dagon":
+      buildDagon(showProgress)
     else:
       writeHelp()
     removeDir "nimcache"
@@ -1429,6 +1542,10 @@ proc handleCmdLine =
   of "hexer":
     buildHexer()
     hexertests(overwrite)
+  of "dagon":
+    buildNimony()
+    buildDagon()
+    dagontests(overwrite)
   of "test":
     if not skipBuild:
       buildNimony()

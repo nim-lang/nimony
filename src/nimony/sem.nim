@@ -15,7 +15,7 @@ import std / [tables, sets, syncio, formatfloat, assertions, strutils, hashes]
 from std/os import changeFileExt, getCurrentDir, isAbsolute, absolutePath, normalizedPath
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / lib / [symparser, nifindexes]
+import ".." / lib / [symparser, nifindexes, docpaths]
 import nimony_model, symtabs, builtintypes, decls, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig,
   intervals, xints, typeprops,
@@ -6473,14 +6473,28 @@ proc pruneMatchedForwardDecls(c: var SemContext; dest: var TokenBuf) =
 
 proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
   pruneMatchedForwardDecls(c, dest)
-  # Insert (import suffix1 suffix2 ...) at the beginning of the (stmts ...)
-  # so the hexer sees it before any executable code:
+  # Insert `(import (kv suffix "path") …)` at the beginning of the (stmts ...)
+  # so the hexer sees it before any executable code. The path is paired with
+  # the suffix so downstream tools (dagon doc-gen) have the source location
+  # without needing a separate manifest. Only consumer of the body today is
+  # `nifcgen`'s init-proc generation, which reads the suffix from each `kv`.
+  #
+  # Path is stored relative to CWD so the `.s.nif` is reproducible across
+  # checkouts (CI has a different absolute prefix than the dev's machine).
+  # Mirrors nifler's `--portablePaths` line-info convention.
   if c.importedModules.len != 0:
-    var importBuf = createTokenBuf(c.importedModules.len + 2)
+    let curWorkDir = onRaiseQuit os.getCurrentDir()
+    var importBuf = createTokenBuf(c.importedModules.len * 5 + 2)
     importBuf.addParLe ImportS, NoLineInfo
     for _, i in c.importedModules:
       if i.fromPlugin.len == 0:
-        importBuf.addIdent moduleSuffix(i.path.toAbsolutePath, c.g.config.paths)
+        let abs = i.path.toAbsolutePath
+        importBuf.buildTree KvU, NoLineInfo:
+          importBuf.addIdent moduleSuffix(abs, c.g.config.paths)
+          # Slash-normalise: paths in the .nif must use `/` regardless of OS
+          # so the file is byte-identical across Windows / Linux / macOS, and
+          # downstream consumers (dagon) compare prefixes uniformly.
+          importBuf.addStrLit toUnixPath(abs.toRelativePath(curWorkDir))
     importBuf.addParRi()
     dest.insert importBuf, 1 # after the (stmts tag
   onRaiseQuit writeFile(dest, outfile, OnlyIfChanged)

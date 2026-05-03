@@ -63,7 +63,10 @@ proc processModules(infiles: seq[string]; config: sink NifConfig; moduleFlags: s
       quit "cannot find " & infile
   var outfiles: seq[string] = @[]
   for infile in infiles:
-    outfiles.add infile.changeModuleExt(".s.nif")
+    # Mirror the doc-mode prefix: `.pc.nif` → `.sc.nif`, plain `.p.nif` → `.s.nif`.
+    # Keeps the doc and code-gen caches separate so they don't trample each other.
+    let outExt = if infile.endsWith(".pc.nif"): ".sc.nif" else: ".s.nif"
+    outfiles.add infile.changeModuleExt(outExt)
   semcheck(infiles, outfiles, ensureMove config, moduleFlags, "", false)
 
 proc executeNif(files: seq[string]; config: sink NifConfig) =

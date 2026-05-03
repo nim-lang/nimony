@@ -1,0 +1,34 @@
+# Assertions consumed by `hastur dagon`. Each non-blank, non-comment line is
+# `<file-relative-to-outdir>: <substring>` — the runner checks the substring
+# is present in that file.
+
+# --- Project module: signatures + cross-link to system module ---
+tdoc_smoke.html: <h1>tdoc_smoke</h1>
+tdoc_smoke.html: <code><span class="kw">proc</span> <span class="name">square</span>
+tdoc_smoke.html: <code><span class="kw">proc</span> <span class="name">shout</span>
+tdoc_smoke.html: <span class="prim">int</span>
+tdoc_smoke.html: <a class="typeref" href="std/system.html#string.0.sysvq0asl">
+tdoc_smoke.html: id="square.0.
+tdoc_smoke.html: id="shout.0.
+
+# --- Module-level markdown rendered ---
+tdoc_smoke.html: <h1>Markdown smoke test</h1>
+tdoc_smoke.html: <strong>bold</strong>
+tdoc_smoke.html: <em>italic</em>
+tdoc_smoke.html: <a href="https://example.com">
+tdoc_smoke.html: <table>
+tdoc_smoke.html: <pre class="code">
+
+# --- Per-decl doc renders markdown too ---
+tdoc_smoke.html: <div class="doc">
+tdoc_smoke.html: Returns
+
+# --- System module rendered with friendly path + anchor ---
+std/system.html: <h1>system</h1>
+std/system.html: id="string.0.sysvq0asl"
+
+# --- Global index page ---
+theindex.html: <h1>Index</h1>
+theindex.html: <a class="name" href="std/system.html#string.0.sysvq0asl"
+theindex.html: <a class="name" href="tdoc_smoke.html#square.0.
+theindex.html: <a href="std/system.html">system</a>

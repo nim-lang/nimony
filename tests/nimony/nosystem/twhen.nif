@@ -1,7 +1,8 @@
 (.nif27)
-(.indexat 617              )
+(.indexat 663              )
 (stmts@,1,tests/nimony/nosystem/twhen.nim
- (import mwhzgh6nt1)
+ (import
+  (kv mwhzgh6nt1 "tests/nimony/nosystem/deps/mwhen.nim"))
  (stmts@2,3
   (discard "good"@8))
  (stmts@2,A
@@ -25,4 +26,4 @@
  (stmts@2,Z
   (discard "good"@8))
  (comment@5,2 true.0.mwhzgh6nt1 false.0.mwhzgh6nt1@,5 isMainModule.0.mwhzgh6nt1@,A bool.0.mwhzgh6nt1@A,P bool.0.mwhzgh6nt1@6,P true.0.mwhzgh6nt1@4,R))(.index@,1,tests/nimony/nosystem/twhen.nim
- (x not.0. 270))
+ (x not.0. 316))
