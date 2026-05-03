@@ -37,6 +37,7 @@ Commands:
   nifc                 run NIFC tests.
   nj                   run NJ (Nimony Jump Elimination) tests.
   vl                   run VL (Versioned Locations) tests.
+  dagon                run Dagon doc-generator tests (tests/dagon/).
   incremental          verify nifmake's mtime-based incremental rebuilds via
                        the `--report` machine-readable summary.
   test <file>/<dir>    run test <file> or <dir>.
@@ -1260,6 +1261,62 @@ proc hexertests(overwrite: bool) =
   execHexer "c " & helloworld & ".nif"
   execNifc " c -r " & mod1 & ".c.nif " & helloworld & ".c.nif"
 
+proc runDagonTest(c: var TestCounters; testFile: string) =
+  ## Drive `nimony doc <testFile>` into a per-test outdir, then check every
+  ## line in the sibling `.assertions` file is present in the produced output.
+  ## Each assertion line is `<file-relative-to-outdir>: <substring>`.
+  inc c.total
+  let basename = splitFile(testFile).name
+  let outdir = nimcacheDir / "dagontests" / basename
+  removeDir outdir
+  createDir outdir
+  let cmd = "-f --outdir:" & quoteShell(outdir) & " doc " & quoteShell(testFile)
+  let (output, exit) = execLocal("nimony", cmd)
+  if exit != 0:
+    failure c, testFile, "nimony doc exit code 0 (cmd: " & cmd & ")",
+      "exit " & $exit & "\n" & output
+    return
+  let assertionsFile = testFile.changeFileExt(".assertions")
+  if not fileExists(assertionsFile): return
+  # Collect every failed assertion under one test failure rather than counting
+  # each as a separate `c.failures` increment.
+  var problems: seq[string] = @[]
+  for line in lines(assertionsFile):
+    let s = line.strip()
+    if s.len == 0 or s.startsWith("#"): continue
+    let colon = s.find(':')
+    if colon < 0:
+      problems.add "malformed assertion: " & s
+      continue
+    let relPath = s.substr(0, colon - 1).strip()
+    let needle = s.substr(colon + 1).strip()
+    let path = outdir / relPath
+    if not fileExists(path):
+      problems.add "missing file " & relPath & " (needle: " & needle & ")"
+      continue
+    if needle notin readFile(path):
+      problems.add "needle not in " & relPath & ": " & needle
+  if problems.len > 0:
+    failure c, testFile, $problems.len & " assertion(s) failed",
+      problems.join("\n")
+
+proc dagontests(overwrite: bool) =
+  ## Run every `t*.nim` under `tests/dagon/` through `nimony doc` and verify
+  ## the produced HTML/idx files against an `.assertions` sidecar.
+  const TestDir = "tests/dagon"
+  let t0 = epochTime()
+  var c = TestCounters(total: 0, failures: 0)
+  if dirExists(TestDir):
+    for x in walkDir(TestDir, relative = true):
+      if x.kind == pcFile and x.path.endsWith(".nim") and x.path.startsWith("t"):
+        runDagonTest c, TestDir / x.path
+  echo c.total - c.failures, " / ", c.total, " dagon tests successful in ",
+       formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if c.failures > 0:
+    quit "FAILURE: Some dagon tests failed."
+  else:
+    echo "SUCCESS."
+
 proc syncCmd(newBranch: string) =
   let (output, status) = execCmdEx("git symbolic-ref --short HEAD")
   if status != 0:
@@ -1485,6 +1542,10 @@ proc handleCmdLine =
   of "hexer":
     buildHexer()
     hexertests(overwrite)
+  of "dagon":
+    buildNimony()
+    buildDagon()
+    dagontests(overwrite)
   of "test":
     if not skipBuild:
       buildNimony()

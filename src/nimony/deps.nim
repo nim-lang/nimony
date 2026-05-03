@@ -55,8 +55,11 @@ proc docOutDir(config: NifConfig): string =
   else: "htmldocs"
 proc docRelpath(f: FilePair; projectRoot, stdlibRoot: string): string =
   ## Source-derived html relpath, shared by deps.nim (which declares the
-  ## output) and dagon (which synthesises the cross-link URL).
-  deriveRelpath(f.nimFile, projectRoot, stdlibRoot)
+  ## output) and dagon (which synthesises the cross-link URL). `nimFile` may
+  ## have been recorded relative to the original cwd (when imports resolved
+  ## paths against a non-cwd module) — absolutise so the root-prefix tests
+  ## match.
+  deriveRelpath(absolutePath(f.nimFile), projectRoot, stdlibRoot)
 proc docFile(config: NifConfig; f: FilePair; projectRoot, stdlibRoot: string): string =
   docOutDir(config) / docRelpath(f, projectRoot, stdlibRoot)
 proc indexHtmlFile(config: NifConfig): string =
@@ -639,11 +642,13 @@ proc generateDocBuildFile(c: DepContext): string =
   b.withTree "stmts":
     let dagon = findTool("dagon")
 
+    let outdir = docOutDir(c.config)
     b.withTree "cmd":
       b.addSymbolDef "dagon"
       b.addStrLit dagon
       b.addStrLit "--projectRoot:" & projectRoot
       b.addStrLit "--stdlibRoot:" & stdlibRoot
+      b.addStrLit "--outdir:" & outdir
       b.addStrLit "module"
       b.addKeyw "args"
 
@@ -652,6 +657,7 @@ proc generateDocBuildFile(c: DepContext): string =
       b.addStrLit dagon
       b.addStrLit "--projectRoot:" & projectRoot
       b.addStrLit "--stdlibRoot:" & stdlibRoot
+      b.addStrLit "--outdir:" & outdir
       b.addStrLit "link"
       b.addKeyw "args"
 

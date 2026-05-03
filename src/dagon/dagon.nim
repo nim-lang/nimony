@@ -32,6 +32,8 @@ Options:
   --projectRoot:DIR     source files under DIR map to mirrored relpaths
   --stdlibRoot:DIR      source files under DIR map to mirrored relpaths
                         (paths outside both roots bucket under _external/)
+  --outdir:DIR          documentation output root; used to compute the page's
+                        own relpath for cross-page URL math (default: htmldocs)
   --version             show the version
   --help                show this help
 """
@@ -375,8 +377,13 @@ proc parseImports(n: var Cursor; ctx: var RenderCtx) =
           path = pool.strings[n.litId]
           inc n
         if suffix.len > 0 and path.len > 0:
+          # Path may be relative (nifler's `--portablePaths` emits paths
+          # relative to its cwd); absolutise so the root-prefix match works.
+          let absPath =
+            if isAbsolute(path): path
+            else: absolutePath(path)
           ctx.importMap[suffix] =
-            deriveRelpath(path, ctx.projectRoot, ctx.stdlibRoot)
+            deriveRelpath(absPath, ctx.projectRoot, ctx.stdlibRoot)
         while n.kind != ParRi: skip n
         inc n  # closing ')' of (kv …)
       else:
@@ -387,6 +394,9 @@ proc renderDecls(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
                  ctx: RenderCtx; n: var Cursor) =
   ## Walk the children of the outer `(stmts …)`. Caller must have entered the
   ## stmts already (so `parseImports` and this can share the same cursor).
+  ## Recurses into nested `(stmts …)` blocks because `include` directives in
+  ## the source flatten into inner stmt-lists at sem time, and the decls we
+  ## want to document live inside those.
   while n.kind != ParRi:
     if n.kind == ParLe:
       let sk = n.stmtKind
@@ -399,6 +409,10 @@ proc renderDecls(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
           renderTypeDecl(b, idx, ctx, n, doc)
         else:
           renderLocal(b, idx, ctx, sk, n, doc)
+      elif sk == StmtsS:
+        inc n  # enter the inner (stmts …)
+        renderDecls(b, idx, ctx, n)
+        if n.kind == ParRi: inc n
       else:
         skip n
     else:
@@ -462,7 +476,7 @@ proc writeDocIdx(path, currentModule, moduleName, srcPath, relpath: string;
         b.addStrLit e.summary
 
 proc renderModule(input, htmlOut, docIdxOut: string; format: HtmlOutFormat;
-                  projectRoot, stdlibRoot: string) =
+                  projectRoot, stdlibRoot, outdir: string) =
   if not fileExists(input):
     quit "input file not found: " & input
   var buf = parseFromFile(input)
@@ -478,14 +492,14 @@ proc renderModule(input, htmlOut, docIdxOut: string; format: HtmlOutFormat;
     if src.len > 0: src
     else: input
 
-  # Build the render context. Own relpath is computed via the same algorithm
-  # deps.nim used to choose where to put us, so cross-page links from sibling
-  # modules (with their own currentRelpaths) resolve consistently.
+  # Own relpath derives from the `htmlOut` path deps.nim handed us — that
+  # guarantees it matches whatever deps.nim told nifmake to track, even when
+  # the in-NIF source path is relative and would otherwise bucket to
+  # `_external/`. Cross-page link math (dirname / `..` steps) needs this to
+  # be consistent with where the file actually lives under the outdir.
   var ctx = RenderCtx(
     currentModule: currentModule,
-    currentRelpath:
-      if src.len > 0: deriveRelpath(src, projectRoot, stdlibRoot)
-      else: extractFilename(htmlOut),
+    currentRelpath: relativePath(htmlOut, outdir, '/'),
     importMap: initTable[string, string](),
     projectRoot: projectRoot,
     stdlibRoot: stdlibRoot)
@@ -686,6 +700,7 @@ proc handleCmdLine() =
   var format = hofHtml
   var projectRoot = ""
   var stdlibRoot = ""
+  var outdir = "htmldocs"
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -704,6 +719,7 @@ proc handleCmdLine() =
         else: quit "invalid value for --format; expected 'html' or 'nif'"
       of "projectroot": projectRoot = val
       of "stdlibroot":  stdlibRoot = val
+      of "outdir":      outdir = val
       else: writeHelp()
     of cmdEnd: assert false, "cannot happen"
 
@@ -713,7 +729,7 @@ proc handleCmdLine() =
   of "m", "module":
     if args.len < 3:
       quit "'module' takes <input.sc.nif> <output.html> <output.docidx>"
-    renderModule(args[0], args[1], args[2], format, projectRoot, stdlibRoot)
+    renderModule(args[0], args[1], args[2], format, projectRoot, stdlibRoot, outdir)
   of "link":
     if args.len < 2:
       quit "'link' takes <output.html> <docidx>..."
