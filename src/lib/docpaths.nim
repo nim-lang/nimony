@@ -33,6 +33,10 @@ proc startsWithPath(s, prefix: string): bool {.inline.} =
   let next = s[prefix.len]
   result = next == '/' or next == '\\'
 
+proc externalBucketPath(srcPath: string): string =
+  let bn = splitFile(srcPath).name
+  result = ExternalBucket / sanitizePart(bn) & ".html"
+
 proc deriveRelpath*(srcPath, projectRoot, stdlibRoot: string): string =
   ## Compute the htmldocs-relative path for a source `.nim` file. Three
   ## buckets, in priority order:
@@ -43,15 +47,13 @@ proc deriveRelpath*(srcPath, projectRoot, stdlibRoot: string): string =
   ##   3. Anywhere else: `_external/<sanitized-basename>.html`. Loses path
   ##      info; collisions punted (rare in practice — stray imports of
   ##      absolute paths from outside the project tree).
-  let abs = absolutePath(srcPath)
-  let absStdlib = if stdlibRoot.len > 0: absolutePath(stdlibRoot) else: ""
-  let absProject = if projectRoot.len > 0: absolutePath(projectRoot) else: ""
-
-  if absStdlib.len > 0 and abs.startsWithPath(absStdlib):
-    let rest = abs.substr(absStdlib.len + 1)
-    return rest.changeFileExt("html")
-  if absProject.len > 0 and abs.startsWithPath(absProject):
-    let rest = abs.substr(absProject.len + 1)
-    return rest.changeFileExt("html")
-  let bn = splitFile(srcPath).name
-  return ExternalBucket / sanitizePart(bn) & ".html"
+  ##
+  ## `projectRoot` and `stdlibRoot` are expected to be absolute (callers in
+  ## `deps.nim` and `dagon` use `absoluteParentDir`/`stdlibDir`). If `srcPath`
+  ## is relative, fall through to bucket 3.
+  if srcPath.isAbsolute:
+    if stdlibRoot.len > 0 and srcPath.startsWithPath(stdlibRoot):
+      return srcPath.substr(stdlibRoot.len + 1).changeFileExt("html")
+    if projectRoot.len > 0 and srcPath.startsWithPath(projectRoot):
+      return srcPath.substr(projectRoot.len + 1).changeFileExt("html")
+  result = externalBucketPath(srcPath)

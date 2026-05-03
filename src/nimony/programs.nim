@@ -152,19 +152,17 @@ proc loadModule*(infile: string; owningBuf: var TokenBuf; suffix: string): Curso
   prog.mods[suffix] = m
 
 proc suffixToNif*(suffix: string): string {.inline.} =
-  ## Imported semchecked file. Mirrors the main module's extension so a
-  ## doc-mode build (`.sc.nif`) imports `.sc.nif` files and a normal build
-  ## (`.s.nif`) imports `.s.nif` files; the two cache populations don't mix.
-  let ext =
-    if prog.main.ext.len > 0: prog.main.ext
-    else: ".s.nif"
+  ## Imported semchecked file. Doc-mode (`.sc.nif`) imports `.sc.nif` files
+  ## so the doc and code-gen cache populations don't mix; every other caller
+  ## (hexer, normal `nimony c`) reads `.s.nif`.
+  let ext = if prog.main.ext == ".sc.nif": ".sc.nif" else: ".s.nif"
   prog.main.dir / suffix & ext
 
 proc customToNif*(suffix: string): string {.inline.} =
   prog.main.dir / suffix & ".nif"
 
 proc semIndexExt(): string {.inline.} =
-  ## `.sc.idx.nif` in doc mode, `.s.idx.nif` otherwise. Tracks `prog.main.ext`.
+  ## `.sc.idx.nif` in doc mode, `.s.idx.nif` otherwise.
   if prog.main.ext == ".sc.nif": ".sc.idx.nif"
   else: ".s.idx.nif"
 
