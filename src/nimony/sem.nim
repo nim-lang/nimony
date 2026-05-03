@@ -3447,17 +3447,8 @@ proc semRaise(c: var SemContext; dest: var TokenBuf; it: var Item) =
     # Type check: raised type must be a subtype of the .raises pragma type
     if not cursorIsNil(c.routine.raisesType) and typeKind(c.routine.raisesType) != AutoT:
       # Allow exact match or subtype (inheritance)
-      var raisedType = skipModifier(a.typ)
-      var expectedType = skipModifier(c.routine.raisesType)
-      # If both are `ref T` heap-exception types, peel the ref so the
-      # inheritance check below can compare the underlying object types.
-      if raisedType.typeKind == RefT and expectedType.typeKind == RefT:
-        var rInner = raisedType
-        inc rInner
-        var eInner = expectedType
-        inc eInner
-        raisedType = rInner
-        expectedType = eInner
+      let raisedType = skipModifier(a.typ)
+      let expectedType = skipModifier(c.routine.raisesType)
       var compatible = sameTrees(raisedType, expectedType)
       # Check if raisedType is a subtype of expectedType (inheritance)
       if not compatible and raisedType.kind == Symbol and expectedType.kind == Symbol:
