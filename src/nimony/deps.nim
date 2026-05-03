@@ -58,8 +58,9 @@ proc docRelpath(f: FilePair; projectRoot, stdlibRoot: string): string =
   ## output) and dagon (which synthesises the cross-link URL). `nimFile` may
   ## have been recorded relative to the original cwd (when imports resolved
   ## paths against a non-cwd module) — absolutise so the root-prefix tests
-  ## match.
-  deriveRelpath(absolutePath(f.nimFile), projectRoot, stdlibRoot)
+  ## match. Uses semos's `.raises`-safe wrapper so the call passes Nimony's
+  ## bootstrap.
+  deriveRelpath(toAbsolutePath(f.nimFile), projectRoot, stdlibRoot)
 proc docFile(config: NifConfig; f: FilePair; projectRoot, stdlibRoot: string): string =
   docOutDir(config) / docRelpath(f, projectRoot, stdlibRoot)
 proc indexHtmlFile(config: NifConfig): string =
@@ -1327,12 +1328,8 @@ proc buildGraph*(config: sink NifConfig; project: string;
     let docOut = docOutDir(c.config)
     let projectRoot = absoluteParentDir(c.rootNode.files[0].nimFile)
     let stdlibRoot = stdlibDir()
-    when defined(nimony):
-      onRaiseQuit createDir(path(docCacheDir))
-      onRaiseQuit createDir(path(docOut))
-    else:
-      onRaiseQuit createDir(Path(docCacheDir))
-      onRaiseQuit createDir(Path(docOut))
+    onRaiseQuit createDir(path(docCacheDir))
+    onRaiseQuit createDir(path(docOut))
     # Pre-create the per-module subdirectories under outdir. dagon writes to
     # `<outdir>/<relpath>` and won't auto-mkdir intermediate components.
     for v in c.nodes:
@@ -1340,10 +1337,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
       let relp = deriveRelpath(v.files[0].nimFile, projectRoot, stdlibRoot)
       let parent = docOut / parentDir(relp)
       if parent.len > 0 and parent != docOut:
-        when defined(nimony):
-          onRaiseQuit createDir(path(parent))
-        else:
-          onRaiseQuit createDir(Path(parent))
+        onRaiseQuit createDir(path(parent))
     let buildDocFilename = generateDocBuildFile(c)
     exec nifmakeCommand & quoteShell(buildDocFilename)
     return
@@ -1354,10 +1348,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
     # https://github.com/nim-lang/nimony/issues/985
     c = initDepContext(config, project, nifler, true, forceRebuild, moduleFlags, cmd)
     let backend = c.config.nifcachePath / c.rootNode.files[0].modname
-    when defined(nimony):
-      onRaiseQuit createDir(path(backend))
-    else:
-      onRaiseQuit createDir(Path(backend))
+    onRaiseQuit createDir(path(backend))
     let buildFinalFilename = generateFinalBuildFile(c, commandLineArgsNifc, passC, passL)
     # Linkers (gcc/clang/ld/ar) don't auto-create the output directory.
     # When the user passes `--out:bin/foo` or `--outdir:bin`, materialise
@@ -1365,10 +1356,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
     let exeOutPath = c.config.exeFile(c.rootNode.files[0], c.rootNode.files[0].modname)
     let exeOutDir = exeOutPath.parentDir
     if exeOutDir.len > 0:
-      when defined(nimony):
-        onRaiseQuit createDir(path(exeOutDir))
-      else:
-        onRaiseQuit createDir(Path(exeOutDir))
+      onRaiseQuit createDir(path(exeOutDir))
     exec nifmakeCommand & quoteShell(buildFinalFilename)
     if cmd == DoRun:
       let backend = c.rootNode.files[0].modname
