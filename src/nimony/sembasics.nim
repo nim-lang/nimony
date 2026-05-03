@@ -333,6 +333,16 @@ proc makeLocalSym*(c: var SemContext; result: var string) =
   result.add '.'
   result.addInt counter[]
 
+proc makeTemplateSym*(c: var SemContext; result: var string) =
+  ## Make a fresh symbol for a name introduced by a template body. Templates
+  ## need a separate mechanism from `makeLocalSym` so that cross-module
+  ## interference can be addressed without promoting the sym to global
+  ## layout — i.e. without mangling in `c.thisModuleSuffix`.
+  var counter = addr c.locals.mgetOrPut(result, -1)
+  counter[] += 1
+  result.add '.'
+  result.addInt counter[]
+
 type
   SymStatus* = enum
     ErrNoIdent, ErrRedef, OkNew, OkExisting, OkExistingFresh

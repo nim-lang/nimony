@@ -944,13 +944,14 @@ proc trTryCollapsed(c: var Context; n: var Cursor) =
     # Branch body
     c.dest.addParLe StmtsS, info
     if arm.bindSym != NoSymId:
-      # `let e = (hconv T err)` typed as the user's declared T. The dynamic
-      # type was just proven by the surrounding `(instanceof err T)` check,
-      # so the narrowing is sound. Using `hconv` (hidden conversion) instead
-      # of a bare assignment lets the C codegen and the duplifier both see
-      # the type change explicitly.
-      c.typeCache.registerLocal(arm.bindSym, LetY, arm.declType)
-      c.dest.copyIntoKind LetS, info:
+      # `cursor e = (hconv T err)` — non-owning view of `err` typed as the
+      # user's declared T. The dynamic type was just proven by the
+      # surrounding `(instanceof err T)` check, so the narrowing is sound.
+      # `cursor` keeps `err` as the sole owner of the in-flight exception
+      # so that a bare `raise` inside the body can faithfully restore
+      # `exc = err` without the duplifier turning the read into a move.
+      c.typeCache.registerLocal(arm.bindSym, CursorY, arm.declType)
+      c.dest.copyIntoKind CursorS, info:
         c.dest.addSymDef arm.bindSym, info
         c.dest.addDotToken()
         c.dest.addDotToken()

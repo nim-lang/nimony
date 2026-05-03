@@ -326,14 +326,24 @@ proc unravelObjField(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf;
   assert r.kind in {FldY, GfldY}
   # create `paramA.field` because we need to do `paramA.field = paramB.field` etc.
   let fieldType = r.typ
+  # `.cursor` fields are non-owning. They participate in the lifecycle
+  # hooks like a trivial (bit-copy) value: no recursive destroy/trace,
+  # no RC bump on copy/dup. See doc/borrowchecking.md.
+  let isCursor = hasPragma(r.pragmas, CursorP)
   case c.op
   of attachedDestroy, attachedTrace, attachedWasMoved:
     let a = accessObjField(c, paramA, r.name, depth = depth)
-    unravel c, fieldType, a, paramB
+    if isCursor:
+      genTrivialOp c, a, paramB
+    else:
+      unravel c, fieldType, a, paramB
   of attachedCopy, attachedSink, attachedDup:
     let a = accessObjField(c, paramA, r.name, 0, depth = depth)
     let b = accessObjField(c, paramB, r.name, 1, depth = depth)
-    unravel c, fieldType, a, b
+    if isCursor:
+      genTrivialOp c, a, b
+    else:
+      unravel c, fieldType, a, b
 
 proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf; depth: int) =
   while n.kind != ParRi:
