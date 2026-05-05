@@ -1388,10 +1388,14 @@ proc handleCmdLine =
       else:
         args.add key
     of cmdLongOption, cmdShortOption:
-      # `--cachedir` / `--jobs` can appear anywhere — they configure the
-      # test runner regardless of position relative to the primary cmd.
-      # Other long options stay tied to the pre-command position (or to
-      # the `record` subcommand).
+      # `--cachedir` / `--jobs` / `--forward` can appear anywhere — they
+      # configure the test runner regardless of position relative to the
+      # primary cmd. `--forward` in particular MUST be position-agnostic
+      # because the parallel test runner spawns child `hastur test ...`
+      # invocations and threads the forward value back in after `test`,
+      # so requiring it before the subcommand would silently lose it in
+      # the child. Other long options stay tied to the pre-command
+      # position (or to the `record` subcommand).
       let n = normalize(key)
       case n
       of "cachedir":
@@ -1407,6 +1411,13 @@ proc handleCmdLine =
         skipBuild = true
       of "valgrind":
         withValgrind = true
+      of "forward":
+        # Accumulate so callers can layer flags — `--forward:--cc:clang
+        # --forward:--passL:-fuse-ld=lld` reaches nimony as both options
+        # rather than only the last one. The whole string is appended
+        # verbatim to the nimony command line.
+        if forward.len > 0: forward.add ' '
+        forward.add val
       else:
         if primaryCmd.len == 0 or primaryCmd == "record":
           case n
@@ -1415,7 +1426,6 @@ proc handleCmdLine =
           of "codegen": flags.incl RecordCodegen
           of "ast": flags.incl RecordAst
           of "overwrite": overwrite = true
-          of "forward": forward = val
           of "release": release = true
           else: writeHelp()
         else:

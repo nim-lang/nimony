@@ -112,9 +112,14 @@ jobs:
         uses: actions/cache@v5
         with:
           path: external/mingw-${{ matrix.target.cpu }}
+<<<<<<< HEAD
           # Bump the suffix when changing MINGW_URL below — the old cache
           # would otherwise keep delivering the previous bundle even though
           # the archive name and contents changed.
+=======
+          # Suffix tracks the MINGW_URL contents — bump when changing the
+          # archive so a stale cache doesn't keep delivering the old one.
+>>>>>>> master
           key: 'mingw-${{ matrix.target.cpu }}-gcc14-llvm19'
 
       - name: Restore Nim DLLs dependencies (Windows) from cache
@@ -231,14 +236,11 @@ jobs:
       - name: Run tester
         if: matrix.target.cpu != 'i386' # TODO: enables i386
         env:
-          # On Windows, route per-test C compilation through clang + LLD
-          # instead of mingw gcc + ld.bfd. clang is ~57% faster on the
-          # compile step for our codegen and emits native PE TLS (one
-          # gs:0x58 load per `__thread` access vs an emutls function call),
-          # which is a meaningful perf bump for any compiled binary that
-          # touches TLS in a hot loop. Both clang and LLD ship in the
-          # same winlibs MinGW bundle we already cache. Empty on
-          # Linux/macOS so the existing default toolchains are used.
+          # Read by tests/tester.nim, which forwards `--cc:clang` to nimony.
+          # On Windows the tester additionally forwards `--passL:-fuse-ld=lld`
+          # because clang emits native PE TLS by default and ld.bfd lays out
+          # `.tls$` incorrectly — only LLD produces a binary that runs.
+          # Empty on Linux/macOS so the existing default toolchains kick in.
           NIMONY_CC: ${{ runner.os == 'Windows' && 'clang' || '' }}
         run: |
           cd nif
