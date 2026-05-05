@@ -17,14 +17,16 @@
 import std/private/osseps
 
 type
-  PathIter* = object
+  PathIter* = object ## Cursor used while scanning raw path strings component by component.
     i, prev: int
     notFirst: bool
 
 func hasNext*(it: PathIter; x: string): bool =
+  ## True while `it` has not consumed all of `x`.
   it.i < x.len
 
 func next*(it: var PathIter; x: string): (int, int) =
+  ## Advances `it` over `x` and returns inclusive `(start, end)` indices of the next component.
   result = (0, 0)
   it.prev = it.i
   if not it.notFirst and x[it.i] in {DirSep, AltSep}:

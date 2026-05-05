@@ -31,4 +31,6 @@ func default*[I: Ordinal; T: HasDefault](x: typedesc[array[I, T]]): array[I, T] 
   for i in low(array[I, T]) .. high(array[I, T]):
     result[i] = default(T)
 
-template default*[T](x: typedesc[set[T]]): set[T] = {}
+template default*[T](x: typedesc[set[T]]): set[T] =
+  ## Returns the default value for `set[T]` (the empty set).
+  {}

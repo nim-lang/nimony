@@ -2,22 +2,27 @@
 import tables
 
 type
-  HashSet*[T] = object
+  HashSet*[T] = object ## Hash-backed set of distinct values (implemented as `Table[T, bool]`).
     t: Table[T, bool]
 
 func initHashSet*[T](): HashSet[T] =
+  ## Constructs an empty `HashSet`.
   HashSet[T](t: initTable[T, bool]())
 
 func incl*[T](s: var HashSet[T]; x: sink T) =
+  ## Inserts `x` into `s`.
   s.t[x] = true
 
 func excl*[T](s: var HashSet[T]; x: T) =
+  ## Removes `x` from `s` if present.
   s.t[x] = false
 
 func contains*[T](s: HashSet[T]; x: T): bool =
+  ## True if `x` is in `s`.
   s.t.getOrDefault(x)
 
 func containsOrIncl*[T](s: var HashSet[T]; x: T): bool =
+  ## True if `x` was already present; otherwise inserts it and returns false.
   result = contains(s, x)
   if not result:
     incl s, x
@@ -30,6 +35,7 @@ func missingOrExcl*[T](s: var HashSet[T]; x: T): bool =
     excl s, x
 
 iterator items*[T](s: HashSet[T]): lent T =
+  ## Yields each element currently stored in `s`.
   for k, v in pairs(s.t):
     if v: yield k
 

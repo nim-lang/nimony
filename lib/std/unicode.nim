@@ -11,6 +11,11 @@ import syncio, assertions, strutils
 
 ## This module provides support to handle the Unicode UTF-8 encoding.
 ##
+## A `Rune` is one Unicode **code point**. Several APIs distinguish **byte**
+## offsets into UTF-8 (`runeAt`, `runeLenAt`) from **code-point** indices
+## (`runeAtPos`, `runeOffset`, `runeSubStr`). For user-perceived characters that
+## combine multiple code points, see `graphemeLen` and `reversed`.
+##
 ## There are no specialized ``insert``, ``delete``, ``add`` and ``contains``
 ## procedures for ``seq[Rune]`` in this module because the generic variants
 ## of these procedures in the system module already work with it.
@@ -87,7 +92,7 @@ type
 template ones(n: untyped): untyped = ((1 shl n)-1)
 
 func runeLen*(s: openArray[char]): int =
-  ## Returns the number of runes of the string ``s``.
+  ## Returns the number of runes (code points) in ``s``, **not** the UTF-8 byte length (`len(s)`).
   runnableExamples:
     let a = "añyóng"
     assert a.runeLen == 6
@@ -355,9 +360,9 @@ func `$`*(runes: seq[Rune]): string =
     result.add rune
 
 func runeOffset*(s: openArray[char], pos: Natural, start: Natural = 0): int =
-  ## Returns the byte position of rune
-  ## at position ``pos`` in ``s`` with an optional start byte position.
-  ## Returns the special value -1 if it runs out of the string.
+  ## Returns the **byte offset** in ``s`` where **code-point index** ``pos`` begins,
+  ## optionally skipping ahead to ``start`` bytes first.
+  ## Returns `-1` if ``pos`` is past the last code point.
   ##
   ## **Beware:** This can lead to unoptimized code and slow execution!
   ## Most problems can be solved more efficiently by using an iterator
@@ -410,7 +415,7 @@ func runeReverseOffset*(s: openArray[char], rev: Positive): (int, int) =
   result = if a > 0: (-a, rev.int-a) else: (x, -a+rev.int)
 
 func runeAtPos*(s: openArray[char], pos: int): Rune =
-  ## Returns the rune at position ``pos``.
+  ## Returns the rune at **code-point index** ``pos`` (not a UTF-8 byte index; see `runeAt`).
   ##
   ## **Beware:** This can lead to unoptimized code and slow execution!
   ## Most problems can be solved more efficiently by using an iterator
@@ -423,7 +428,7 @@ func runeAtPos*(s: openArray[char], pos: int): Rune =
   fastRuneAt(s, runeOffset(s, pos), result, false)
 
 func runeStrAtPos*(s: openArray[char], pos: Natural): string =
-  ## Returns the rune at position ``pos`` as UTF8 String.
+  ## Returns the UTF-8 substring for the rune at **code-point index** ``pos``.
   ##
   ## **Beware:** This can lead to unoptimized code and slow execution!
   ## Most problems can be solved more efficiently by using an iterator
@@ -967,8 +972,9 @@ func graphemeLen*(s: openArray[char]; i: Natural): Natural =
       result = j-i
 
 func lastRune*(s: openArray[char]; last: int): (Rune, int) =
-  ## Length of the last rune in ``s[0..last]``. Returns the rune and its length
-  ## in bytes.
+  ## Treating ``last`` as the inclusive byte index of the **final UTF-8 byte** of interest,
+  ## finds that code unit's starting byte (walking backward through continuation bytes),
+  ## decodes one ``Rune``, and returns `(rune, byteLength)` for that encoding.
   if s[last] <= chr(127):
     result = (Rune(s[last]), 1)
   else:
@@ -1209,7 +1215,7 @@ func alignLeft*(s: openArray[char], count: Natural, padding = ' '.Rune): string 
 
 
 func runeLen*(s: string): int {.inline.} =
-  ## Returns the number of runes of the string ``s``.
+  ## Returns the number of runes (code points) in ``s``, **not** ``s.len`` (bytes).
   runnableExamples:
     let a = "añyóng"
     assert a.runeLen == 6
@@ -1252,9 +1258,9 @@ func validateUtf8*(s: string): int {.inline.} =
   validateUtf8(toOa(s))
 
 func runeOffset*(s: string, pos: Natural, start: Natural = 0): int {.inline.} =
-  ## Returns the byte position of rune
-  ## at position ``pos`` in ``s`` with an optional start byte position.
-  ## Returns the special value -1 if it runs out of the string.
+  ## Returns the **byte offset** in ``s`` where **code-point index** ``pos`` begins,
+  ## optionally skipping ahead to ``start`` bytes first.
+  ## Returns `-1` if ``pos`` is past the last code point.
   ##
   ## **Beware:** This can lead to unoptimized code and slow execution!
   ## Most problems can be solved more efficiently by using an iterator
@@ -1287,7 +1293,7 @@ func runeReverseOffset*(s: string, rev: Positive): (int, int) {.inline.} =
   runeReverseOffset(toOa(s), rev)
 
 func runeAtPos*(s: string, pos: int): Rune {.inline.} =
-  ## Returns the rune at position ``pos``.
+  ## Returns the rune at **code-point index** ``pos`` (not a UTF-8 byte index; see `runeAt`).
   ##
   ## **Beware:** This can lead to unoptimized code and slow execution!
   ## Most problems can be solved more efficiently by using an iterator
@@ -1300,7 +1306,7 @@ func runeAtPos*(s: string, pos: int): Rune {.inline.} =
   fastRuneAt(toOa(s), runeOffset(s, pos), result, false)
 
 func runeStrAtPos*(s: string, pos: Natural): string {.inline.} =
-  ## Returns the rune at position ``pos`` as UTF8 String.
+  ## Returns the UTF-8 substring for the rune at **code-point index** ``pos``.
   ##
   ## **Beware:** This can lead to unoptimized code and slow execution!
   ## Most problems can be solved more efficiently by using an iterator
@@ -1447,7 +1453,7 @@ func reversed*(s: string): string {.inline.} =
 
 func graphemeLen*(s: string; i: Natural): Natural {.inline.} =
   ## The number of bytes belonging to byte index ``s[i]``,
-  ## including following combining code unit.
+  ## including following combining code units.
   runnableExamples:
     let a = "añyóng"
     assert a.graphemeLen(1) == 2 ## ñ
@@ -1456,8 +1462,7 @@ func graphemeLen*(s: string; i: Natural): Natural {.inline.} =
   graphemeLen(toOa(s), i)
 
 func lastRune*(s: string; last: int): (Rune, int) {.inline.} =
-  ## Length of the last rune in ``s[0..last]``. Returns the rune and its length
-  ## in bytes.
+  ## Same as `lastRune(openArray[char], int)` — ``last`` is the inclusive byte index of the final UTF-8 byte examined.
   lastRune(toOa(s), last)
 
 iterator split*(s: string, seps: openArray[Rune] = unicodeSpaces,

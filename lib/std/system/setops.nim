@@ -22,6 +22,7 @@ func `+`*[T](x, y: set[T]): set[T] {.magic: "PlusSet".}
 func `-`*[T](x, y: set[T]): set[T] {.magic: "MinusSet".}
 
 func contains*[T](x: set[T], y: T): bool {.magic: "InSet".}
+  ## Set membership (`y in x` is rewritten to `x contains y`).
 
 func cardSetImpl(s: ptr UncheckedArray[uint8], len: int): int {.inline.} =
   var i = 0

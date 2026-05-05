@@ -2,14 +2,14 @@
 import hashes, assertions
 
 type
-  Keyable* = concept
+  Keyable* = concept ## Concept describing types usable as table keys (`==` plus `hash`).
     func `==`(a, b: Self): bool
     func hash(a: Self): Hash
 
   HashEntry = object
     fullhash: Hash
     position: int # index into `data`; 1 based so that 0 means "unfilled"
-  Table*[K, V] = object
+  Table*[K, V] = object ## Generic hash map storing key/value pairs (linear scan when tiny, open addressing otherwise).
     data: seq[(K, V)]
     hashes: seq[HashEntry]
 
@@ -54,9 +54,11 @@ func rawGet[K: Keyable, V](t: Table[K, V]; k: K; kh: Hash): int =
   result = -1
 
 func contains*[K: Keyable, V](t: Table[K, V]; k: K): bool {.inline.} =
+  ## True if `k` is stored in `t`.
   rawGet(t, k, hash(k)) >= 0
 
 func hasKey*[K: Keyable, V](t: Table[K, V]; k: K): bool {.inline.} =
+  ## Alias for `contains`.
   contains(t, k)
 
 func getOrDefault*[K: Keyable, V: HasDefault](t: Table[K, V]; k: K): V =
@@ -75,7 +77,7 @@ func getOrDefault*[K: Keyable, V](t: Table[K, V]; k: K; fallback: V): V =
     fallback
 
 func getOrQuit*[K: Keyable, V](t: Table[K, V]; k: K): var V =
-  ## Quits if the key is not found.
+  ## Like `[]`, but terminates the program if `k` is missing (after `assert`).
   let idx = rawGet(t, k, hash(k))
   {.cast(noSideEffect).}:
     assert idx >= 0
@@ -83,6 +85,7 @@ func getOrQuit*[K: Keyable, V](t: Table[K, V]; k: K): var V =
 
 when defined(nimony):
   func `[]`*[K: Keyable, V](t: Table[K, V]; k: K): var V {.raises.} =
+    ## Retrieves `k`'s value or raises `KeyError` when absent.
     let idx = rawGet(t, k, hash(k))
     if idx < 0:
       raise KeyError
@@ -112,6 +115,7 @@ func rawPut[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V; h: Hash) =
   t.hashes[hi] = HashEntry(fullhash: h, position: t.data.len)
 
 func `[]=`*[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V) =
+  ## Inserts or updates `k` with `v`.
   let h = hash(k)
   let idx = rawGet(t, k, h)
   if idx >= 0:
@@ -120,6 +124,7 @@ func `[]=`*[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V) =
     rawPut(t, k, v, h)
 
 func mgetOrPut*[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V): var V =
+  ## Returns `t[k]`, inserting `v` when `k` was missing; result is mutable.
   let h = hash(k)
   var idx = rawGet(t, k, h)
   if idx < 0:
@@ -127,13 +132,17 @@ func mgetOrPut*[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V): var V 
     idx = t.data.len-1
   result = t.data[idx][1]
 
-func len*[K, V](t: Table[K, V]): int {.inline.} = t.data.len
+func len*[K, V](t: Table[K, V]): int {.inline.} =
+  ## Number of key/value pairs stored in `t`.
+  t.data.len
 
 iterator pairs*[K, V](t: Table[K, V]): (lent K, lent V) =
+  ## Yields every `(key, value)` stored in `t`.
   for i in 0 ..< t.data.len:
     yield (t.data[i][0], t.data[i][1])
 
 iterator mpairs*[K, V](t: Table[K, V]): (lent K, var V) =
+  ## Mutable variant of `pairs` (values can be updated in place).
   for i in 0 ..< t.data.len:
     yield (t.data[i][0], t.data[i][1])
 
@@ -165,6 +174,7 @@ func del*[K: Keyable, V](t: var Table[K, V]; k: K) =
   t.hashes = @[]
 
 func initTable*[K, V](): Table[K, V] =
+  ## Creates an empty table.
   Table[K, V](data: @[], hashes: @[])
 
 func clear*[K, V](t: var Table[K, V]) =
