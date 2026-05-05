@@ -30,8 +30,11 @@ type
 
 var
   stdin* {.importc: "stdin", header: "<stdio.h>".}: File
+    ## Standard input file handle.
   stdout* {.importc: "stdout", header: "<stdio.h>".}: File
+    ## Standard output file handle.
   stderr* {.importc: "stderr", header: "<stdio.h>".}: File
+    ## Standard error file handle.
 
 proc c_fputc(c: int32; f: File): int32 {.
   importc: "fputc", header: "<stdio.h>".}
@@ -68,24 +71,31 @@ proc write*(f: File; c: char) =
   discard c_fputc(int32(c), f)
 
 proc write*(f: File; x: float) =
+  ## Writes data to a file (overloaded for different types).
   fprintf(f, cstring"%g", x)
 
 proc fclose(f: File): int32 {.importc: "fclose", header: "<stdio.h>".}
 
-proc close*(f: File) = discard fclose(f)
+proc close*(f: File) =
+  ## Closes a file handle.
+  discard fclose(f)
 
 proc fopen(filename, mode: cstring): File {.importc: "fopen", header: "<stdio.h>".}
 
 proc writeBuffer*(f: File; buffer: pointer; size: int): int =
+  ## Writes raw bytes to a file.
   result = cast[int](c_fwrite(buffer, 1'u, cast[uint](size), f))
 
 proc readBuffer*(f: File; buffer: pointer; size: int): int =
+  ## Reads raw bytes from a file.
   result = cast[int](c_fread(buffer, 1'u, cast[uint](size), f))
 
 proc c_ferror(f: File): int32 {.
   importc: "ferror", header: "<stdio.h>".}
 
-proc failed*(f: File): bool {.inline.} = c_ferror(f) != 0
+proc failed*(f: File): bool {.inline.} =
+  ## Checks if a file operation has failed.
+  c_ferror(f) != 0
 
 proc c_setvbuf(f: File; buffer: pointer; mode: int32; size: uint): int32 {.
   importc: "setvbuf", header: "<stdio.h>".}
@@ -95,6 +105,8 @@ var IOFBF {.importc: "_IOFBF", header: "<stdio.h>".}: int32
 proc open*(f: out File; filename: string;
            mode: FileMode = fmRead;
            bufSize: int = -1): bool =
+  ## Opens a file with specified mode and buffer size (`bufSize`; use `-1` for default buffering).
+  ## Returns whether the open succeeded.
   let m =
     case mode
     of fmRead: cstring"rb"
@@ -127,11 +139,13 @@ proc open*(filename: string,
     quit "cannot open: " & filename
 
 template echo*() {.varargs.} =
+  ## Prints arguments to stdout followed by a newline.
   for x in unpack():
     write stdout, x
   write stdout, '\n'
 
 proc writeLine*(f: File; s: string) =
+  ## Writes a string followed by a newline to a file.
   write f, s
   write f, '\n'
 
@@ -141,6 +155,7 @@ proc fgets(str: out array[bufsize, char]; n: int32; f: File): cstring {.
   importc: "fgets", header: "<stdio.h>".}
 
 proc addReadLine*(f: File; s: var string): bool =
+  ## Appends a line from a file to a string.
   result = false
   var buf: array[bufsize, char]
   while fgets(buf, bufsize.int32, f) != nil:
@@ -154,6 +169,7 @@ proc addReadLine*(f: File; s: var string): bool =
     if done: break
 
 proc readLine*(f: File; s: var string): bool =
+  ## Reads a line from a file into a string.
   s.shrink 0
   addReadLine f, s
 
@@ -185,6 +201,10 @@ proc quit*(msg: string) {.noreturn.} =
   quit QuitFailure
 
 proc quit*(msg: string; errorcode: int) {.noreturn.} =
+  ## Exits the program with a status code or message.
+  ##
+  ## Use `quit(int)` to exit with a code only, `quit(string)` to print a message and exit
+  ## with failure, or this overload to print a message and use a specific code.
   echo msg
   quit errorcode
 
@@ -230,6 +250,7 @@ proc writeFile*(filename, content: string) {.raises.} =
     raise IOError
 
 proc tryWriteFile*(file, content: string): bool =
+  ## Attempts to write content to a file, returns whether the operation succeeded.
   var f: File
   if open(f, file, fmWrite):
     f.write content
@@ -240,6 +261,7 @@ proc tryWriteFile*(file, content: string): bool =
     result = false
 
 proc flushFile*(f: File) {.importc: "fflush", header: "<stdio.h>".}
+  ## Flushes file buffers to the underlying device.
 
 proc c_fgetc(stream: File): int32 {.
   importc: "fgetc", header: "<stdio.h>".}

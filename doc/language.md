@@ -2531,7 +2531,7 @@ Type bound operations are the foundation for Nim's *scope based memory managemen
 
 With the language mechanisms described here, a custom seq could be written as:
 
-  ```nim test
+  ```nim
   type
     myseq*[T] = object
       len, cap: int
@@ -3046,7 +3046,7 @@ The `nodestroy`:idx: pragma inhibits hook injections. This can be
 used to specialize the object traversal in order to avoid deep recursions:
 
 
-  ```nim test
+  ```nim
   type Node = ref object
     x, y: int32
     left, right: nil Node

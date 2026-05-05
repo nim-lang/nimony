@@ -95,12 +95,15 @@ proc `==`*(x, y: uint64): bool {.magic: "EqI", noSideEffect.}
 
 proc `<=`*(x, y: float32): bool {.magic: "LeF64", noSideEffect.}
 proc `<=`*(x, y: float): bool {.magic: "LeF64", noSideEffect.}
+  ## Less-than-or-equal comparison.
 
 proc `<`*(x, y: float32): bool {.magic: "LtF64", noSideEffect.}
 proc `<`*(x, y: float): bool {.magic: "LtF64", noSideEffect.}
+  ## Less-than comparison.
 
 proc `==`*(x, y: float32): bool {.magic: "EqF64", noSideEffect.}
 proc `==`*(x, y: float): bool {.magic: "EqF64", noSideEffect.}
+  ## Equality comparison.
 
 template `!=`*(x, y: untyped): untyped =
   ## Unequals operator. This is a shorthand for `not (x == y)`.

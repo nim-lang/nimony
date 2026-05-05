@@ -140,7 +140,7 @@ when defined(posix) and not defined(macosx):
 
 
 type
-  RawThread* = object
+  RawThread* = object ## OS thread wrapper holding the system handle and entry closure.
     sys*: SysThread
     dataFn: proc (arg: pointer) {.nimcall.}
     data: pointer
@@ -170,6 +170,8 @@ when defined(genode):
 
 proc create*(t {.noinit.}: out RawThread; fn: proc (arg: pointer) {.nimcall.}; arg: pointer;
             stackSize = 0; pinnedToCpu = -1) {.raises.} =
+  ## Spawns a thread running `fn(arg)`. `stackSize` selects a custom stack (0 → OS default).
+  ## `pinnedToCpu` requests CPU affinity where supported (`-1` leaves scheduling to the OS).
   t.dataFn = fn
   t.data = arg
   when defined(windows):

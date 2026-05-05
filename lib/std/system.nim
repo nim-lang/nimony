@@ -47,7 +47,9 @@ include "system/arithmetics"
 include "system/comparisons"
 
 func defined*(x: untyped): bool {.magic: Defined.}
+  ## Checks whether the symbol named by `x` is defined (typically via `-d:name` or `define`).
 func declared*(x: untyped): bool {.magic: Declared.}
+  ## Checks whether the symbol named by `x` is declared in the current scope.
 
 func astToStr*[T](x: T): string {.magic: AstToStr.}
   ## Converts the AST of `x` into a string representation. This is very useful
@@ -118,11 +120,14 @@ func `$`*[T: enum](x: T): string {.magic: "EnumToStr", noSideEffect.}
   ## Converts an enum value to a string.
 
 func addr*[T](x: T): ptr T {.magic: "Addr", noSideEffect.}
+  ## Returns the address of `x`.
 func unsafeAddr*[T](x: T): ptr T {.magic: "Addr", noSideEffect.}
 
 func sizeof*[T](x: typedesc[T]): int {.magic: "SizeOf", noSideEffect.}
+  ## Returns the size of type `T` in bytes.
 
 template sizeof*[T](_: T): int =
+  ## Returns the size in bytes of the type of the given value.
   sizeof(T)
 
 func `=destroy`*[T](x: T) {.magic: "Destroy", noSideEffect.}
@@ -133,8 +138,10 @@ func `=sink`*[T](dest: var T; src: T) {.magic: "SinkHook", noSideEffect.}
 func `=trace`*[T](x: var T; env: pointer) {.magic: "Trace", noSideEffect.}
 
 func ensureMove*[T](x: T): T {.magic: "EnsureMove", noSideEffect.}
+  ## Hint for the compiler to treat `x` as a moved-from value where applicable.
 
 func move*[T](x: var T): T {.nodestroy, inline, noSideEffect.} =
+  ## Moves `x` out: returns its value and leaves `x` in a moved-from state.
   result = x
   `=wasMoved`(x)
 
@@ -148,6 +155,7 @@ template len*[I, T](x: array[I, T]): int =
   len(array[I, T])
 
 func swap*[T](x, y: var T) {.inline, nodestroy.} =
+  ## Swaps two values bitwise without invoking `=sink`, `=copy`, or `=dup`.
   let tmp = x
   x = y
   y = tmp
@@ -159,6 +167,7 @@ template `notin`*(x, y: untyped): untyped =
   not contains(y, x)
 
 func `is`*[T, S](x: T, y: S): bool {.magic: "Is", noSideEffect.}
+  ## True if `x` has exactly type `S` (compile-time check).
 template `isnot`*(x, y: untyped): untyped =
   not (x is y)
 
@@ -195,6 +204,7 @@ include "system/panics"
 include "system/dyncalls"
 
 func `of`*[T, S](x: T; y: typedesc[S]): bool {.magic: "Of", noSideEffect.}
+  ## True if `x`'s runtime type is `S` or a subtype (runtime subtype check).
 func procCall*[T](x: T): untyped {.magic: "ProcCall".}
 
 type

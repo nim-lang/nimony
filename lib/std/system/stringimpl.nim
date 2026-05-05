@@ -375,6 +375,11 @@ func `[]=`*(s: var string; i: int; c: char) {.requires: (i < len(s) and i >= 0),
 # ---- substr / slicing ----
 
 func substr*(s: string; first, last: int): string =
+  ## Returns the substring for the inclusive index range `first .. last`.
+  ##
+  ## `first` is clamped up to `0`, `last` down to `high(s)`. If that range is empty,
+  ## the result is `""`. The slice is always a **new** string (copying the selected
+  ## characters from `s`).
   result = string(bytes: 0'u, more: nil)
   let sLen = s.len
   let f = max(first, 0)
@@ -400,6 +405,7 @@ func substr*(s: string; first, last: int): string =
       result.bytes = 0
 
 func substr*(s: string; first = 0): string =
+  ## Same as ``substr(s, first, s.high)``: characters from index `first` through the end.
   result = substr(s, first, high(s))
 
 # ---- SWAR / comparison helpers ----

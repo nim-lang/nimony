@@ -20,16 +20,19 @@ from private/ospaths2 import  joinPath, splitPath,
                               normalizePath
 
 type
-  Path* = object
+  Path* = object ## Lightweight path value; stores normalized string data internally.
     data: string
 
 func path*(s: string): Path {.inline.} =
+  ## Constructs a `Path` from the raw string `s` (normalization happens on demand).
   Path(data: s)
 
 func `$`*(x: Path): string {.inline.} =
+  ## String form of `x` (native path representation).
   x.data
 
 proc hash*(x: Path): Hash =
+  ## Stable hash honoring filesystem case sensitivity (`hashIgnoreCase` on case-insensitive FS).
   var s = x.data
   ospaths2.normalizePath(s)
   if FileSystemCaseSensitive:

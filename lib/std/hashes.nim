@@ -1,7 +1,8 @@
 type
   Hash* = uint
+    ## Integer type carrying hash values; combine with `!&` and finish with `!$`.
 
-  Hashable* = concept
+  Hashable* = concept ## Concept describing types that supply `hash` for tables and sets.
     func hash(a: Self): Hash
 
 func `!&`*(h: Hash; val: uint): Hash {.inline.} =
@@ -39,6 +40,7 @@ func hash*[A: Hashable, B: Hashable](x: (A, B)): Hash {.inline.} =
   result = !$result
 
 func hash*[A: Hashable, B: Hashable, C: Hashable](x: (A, B, C)): Hash {.inline.} =
+  ## Computes a hash value for `x`.
   result = hash(x[0]) !& hash(x[1]) !& hash(x[2])
   result = !$result
 
@@ -51,6 +53,7 @@ func hash*[T: object](x: T): Hash {.inline.} =
 ]#
 
 func nextTry*(h: Hash; maxHash: int): Hash {.inline.} =
+  ## Advances a hash probe index inside `0 .. maxHash` (linear probing helper).
   result = (h + 1'u) and maxHash.uint
 
 func hashIgnoreStyle*(x: string): Hash =

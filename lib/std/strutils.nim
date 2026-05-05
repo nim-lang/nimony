@@ -1,3 +1,10 @@
+## ASCII-focused helpers for splitting, searching, comparing, replacing, escaping,
+## percent-formatting (`%`, `format`), float rendering (`formatFloat`,
+## `formatBiggestFloat`), and human-readable sizes (`formatSize`).
+##
+## Shared `set[char]` constants (`Whitespace`, `Letters`, …) describe common character
+## classes; see each constant for details.
+
 {.feature: "lenientnils".}
 
 import std/[assertions, parseutils]
@@ -146,11 +153,14 @@ func isEmptyOrWhitespace*(s: string): bool {.inline.} =
   result = s.allCharsInSet(Whitespace)
 
 func endsWith*(s: string; c: char): bool {.inline.} =
+  ## True if `s` is non-empty and its last character is `c`.
   if s.len > 0: s[s.len-1] == c else: false
 
 func strlen*(x: cstring): int {.importc: "strlen", header: "<string.h>".}
+  ## Length of the C string `x` (not counting the terminating zero); `0` when `x` is nil.
 
 func `$`*(x: cstring): string =
+  ## Copies a nil-terminated C string into a Nim `string`.
   if x == nil:
     result = ""
   else:
@@ -160,6 +170,7 @@ func `$`*(x: cstring): string =
       result[i] = x[i]
 
 func `$`*(x: char): string =
+  ## Returns a one-character string containing `x`.
   result = newString(1)
   result[0] = x
 
@@ -587,6 +598,7 @@ func find*(s, sub: string; start: Natural = 0; last = -1): int =
   result = find(initSkipTable(sub), s, sub, start, last)
 
 func replace*(s: string; sub, by: char): string =
+  ## Returns a copy of `s` where every `sub` is replaced by `by`.
   result = newString(s.len)
   var i = 0
   while i < s.len:
