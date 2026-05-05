@@ -9,6 +9,7 @@
 
 import std / [parseopt, strutils, os, assertions, times]
 import bridge, configcmd
+import ".." / lib / vfs
 
 const
   Version = "0.2.0"
@@ -91,3 +92,4 @@ proc handleCmdLine() =
 
 when isMainModule:
   handleCmdLine()
+  dumpVfsProfile("nifler")

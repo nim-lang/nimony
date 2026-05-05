@@ -82,9 +82,15 @@ proc testNifGram(overwrite: bool) =
 testNifGram(overwrite)
 
 proc hasturTests(overwrite: bool) =
+  # CI sets NIMONY_CC=clang on Windows so tests exercise the clang-on-MinGW
+  # path (faster cc step + native PE TLS via LLD). Locally the env var is
+  # unset and the gcc default kicks in.
+  var args = "--jobs:auto"
+  let cc = os.getEnv("NIMONY_CC")
+  if cc.len > 0:
+    args.add " --forward:--cc:" & cc
   if overwrite:
-    exec "nim c -r src/hastur --jobs:auto --overwrite"
-  else:
-    exec "nim c -r src/hastur --jobs:auto"
+    args.add " --overwrite"
+  exec "nim c -r src/hastur " & args
 
 hasturTests(overwrite)
