@@ -1155,6 +1155,14 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
       b.addStrLit findTool("nimsem")
       if config.baseDir.len > 0:
         b.addStrLit "--base:" & quoteShell(config.baseDir)
+      # Match the OUTER frontend build file's `--cc:VAL` so nifmake's
+      # per-cmd staleness check sees the same argv on both sides — without
+      # this the static-eval helper's nifmake decides the existing
+      # sysvq0asl.s.nif is stale and tries to rewrite it, and on Windows
+      # the open fails because the outer (paused) nimsem still has the
+      # file mmap'd via nifreader.
+      if config.ccKey.len > 0:
+        b.addStrLit "--cc:" & quoteShell(config.cc)
       b.addStrLit "m"
       b.addKeyw "args"
       b.withTree "input":

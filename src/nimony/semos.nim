@@ -389,10 +389,16 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; plu
   finally:
     close s
 
-proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]): tuple[output: string, exitCode: int] =
-  # Use nimony s to compile and run the .p.nif file through the full pipeline
+proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string];
+                commandLineArgs: string): tuple[output: string, exitCode: int] =
+  # Use nimony s to compile and run the .p.nif file through the full pipeline.
+  # Forward the outer compile's CLI args so the nested build's nifmake-cmd
+  # signatures match — see `prepareEval` for the same rationale (mismatched
+  # `--cc` makes nifmake think `sysvq0asl.s.nif` is stale and try to rewrite
+  # it while the outer nimsem still has it mmap'd).
   let nimonyExe = findTool("nimony")
-  var cmd = quoteShell(nimonyExe) & " --nimcache:" & quoteShell(nimcachePath) &
+  var cmd = quoteShell(nimonyExe) & commandLineArgs &
+    " --nimcache:" & quoteShell(nimcachePath) &
     " s -r " & quoteShell(file)
   try:
     result = execCmdEx(cmd)
@@ -406,9 +412,18 @@ proc prepareEval*(c: var SemContext): string =
   if not c.checkedForWriteNifModule:
     c.checkedForWriteNifModule = true
     if not os.fileExists(c.g.config.nifcachePath / writeNifModuleSuffix & ".s.nif"):
-      # precompile the module
+      # precompile the module.
+      # Forward the outer compile's CLI args (notably `--cc`) so the
+      # inner nimony emits a build file whose `nimsem` cmd-line MATCHES
+      # what the outer build file uses. Otherwise nifmake's per-cmd
+      # staleness check sees a different argv for `nimsem ... m
+      # sysvq0asl.p.nif`, decides the existing `sysvq0asl.s.nif` is
+      # stale, and tries to overwrite it — which on Windows fails because
+      # the outer nimsem (currently paused waiting on this exec) still
+      # has it mmap'd. The outer's args live on `c.commandLineArgs`.
       let nimonyExe = findTool("nimony")
-      var cmd = quoteShell(nimonyExe) & " --nimcache:" & quoteShell(c.g.config.nifcachePath) &
+      var cmd = quoteShell(nimonyExe) & c.commandLineArgs &
+        " --nimcache:" & quoteShell(c.g.config.nifcachePath) &
         " c " & quoteShell(stdlibFile("std/writenif.nim"))
       try:
         let (output, exitCode) = execCmdEx(cmd)
@@ -435,7 +450,8 @@ proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: Token
     let depsFile = c.g.config.nifcachePath / srcName & ".p.deps.nif"
     writeFile deps, depsFile
 
-    let (output, exitCode) = runProgram(progfile, c.g.config.nifcachePath, usedModules)
+    let (output, exitCode) = runProgram(progfile, c.g.config.nifcachePath, usedModules,
+                                        c.commandLineArgs)
     if exitCode != 0:
       result = ensureMove(output)
     else:

@@ -1,0 +1,12 @@
+# Extra flags appended to every `clang` cc invocation that nimony runs
+# (picked up by argsfinder, which walks up from the test/source baseDir
+# looking for `<cc>.args`).
+#
+# `-Wno-#warnings` suppresses `#warning` directives emitted from headers.
+# clang 19+ on MinGW emits one from `<mm3dnow.h>` (transitively included
+# via `<intrin.h>` → `<x86intrin.h>` from mimalloc when its
+# `_WIN32 && _M_X64` fast-path fires — clang 19 started defining `_M_X64`
+# on the MinGW target, where earlier clangs didn't). The intrinsic header
+# being deprecated is not actionable from our side; the warning would
+# fail any `-Werror` policy and pollutes CI logs otherwise.
+-Wno-#warnings
