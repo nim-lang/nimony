@@ -112,14 +112,9 @@ jobs:
         uses: actions/cache@v5
         with:
           path: external/mingw-${{ matrix.target.cpu }}
-<<<<<<< HEAD
           # Bump the suffix when changing MINGW_URL below — the old cache
           # would otherwise keep delivering the previous bundle even though
           # the archive name and contents changed.
-=======
-          # Suffix tracks the MINGW_URL contents — bump when changing the
-          # archive so a stale cache doesn't keep delivering the old one.
->>>>>>> master
           key: 'mingw-${{ matrix.target.cpu }}-gcc14-llvm19'
 
       - name: Restore Nim DLLs dependencies (Windows) from cache
