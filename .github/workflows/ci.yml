@@ -48,6 +48,22 @@ jobs:
           git config --global core.autocrlf false
           git config --global init.defaultBranch master
 
+      - name: Disable Defender real-time scan for workspace (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          # Defender scanning every file the Nim/MinGW toolchain touches is the
+          # single biggest reason Windows CI runs ~3x slower than Linux/macOS
+          # for this workload. Excluding the workspace and the compiler
+          # processes brings I/O-bound build/test phases close to parity.
+          $ErrorActionPreference = 'Continue'
+          Add-MpPreference -ExclusionPath "${{ github.workspace }}" -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionPath "$env:USERPROFILE\nimcache" -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionPath "$env:TEMP" -ErrorAction SilentlyContinue
+          foreach ($p in @('nim.exe','nimony.exe','nimsem.exe','hexer.exe','nifc.exe','nifler.exe','nifmake.exe','nj.exe','vl.exe','validator.exe','dagon.exe','controlflow.exe','contracts.exe','hastur.exe','tester.exe','gcc.exe','g++.exe','ld.exe','as.exe','ar.exe','make.exe')) {
+            Add-MpPreference -ExclusionProcess $p -ErrorAction SilentlyContinue
+          }
+
       - name: Checkout nif
         uses: actions/checkout@v6
         with:
@@ -178,6 +194,23 @@ jobs:
           path: 'nim'
           version: ${{ matrix.target.nim_branch }}
           architecture: ${{ matrix.target.cpu }}
+
+      - name: Cache host-Nim build artifacts
+        uses: actions/cache@v5
+        with:
+          # `nif/bin/` holds the built tools. The two `nim` paths are Nim's
+          # default per-project cache locations: `~/.cache/nim/<name>_d/` on
+          # POSIX and `~/nimcache/<name>_d/` on Windows (see compiler/options.nim
+          # `getOsCacheDir`). Caching both lets `hastur build all` short-circuit
+          # to a near-no-op when source hasn't changed; on partial hits the
+          # incremental rebuild still benefits from the prior cache.
+          path: |
+            nif/bin
+            ~/.cache/nim
+            ~/nimcache
+          key: hastur-${{ runner.os }}-${{ matrix.target.cpu }}-${{ matrix.target.nim_branch }}-${{ hashFiles('nif/src/**/*.nim', 'nif/src/**/*.cfg', 'nif/src/**/*.nims') }}
+          restore-keys: |
+            hastur-${{ runner.os }}-${{ matrix.target.cpu }}-${{ matrix.target.nim_branch }}-
 
       - name: Test Building nimony
         run: |
