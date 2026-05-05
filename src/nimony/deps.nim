@@ -20,7 +20,7 @@ when defined(nimony):
 import std/[os, tables, sets, syncio, hashes, assertions, strutils, times, formatfloat, dirs, paths]
 import semos, nifconfig, nimony_model, semdata, langmodes
 import ".." / gear2 / modnames
-import ".." / lib / [tooldirs, platform, nifindexes, symparser, docpaths]
+import ".." / lib / [tooldirs, platform, nifindexes, symparser, docpaths, argsfinder]
 import ".." / models / nifindex_tags
 
 include ".." / lib / nifprelude
@@ -738,6 +738,13 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       b.addStrLit "-c"
       # Suppress visibility-attribute warnings from mimalloc etc. (GCC/Clang)
       b.addStrLit "-Wno-attributes"
+      # Note on TLS for clang/Windows: clang emits native PE TLS by default,
+      # which is what we want — `__thread` access compiles to a single
+      # `gs:0x58` load instead of a `__emutls_get_address` call. ld.bfd
+      # (mingw-w64's default linker) mishandles this and produces binaries
+      # that segfault on first TLS access; we paper over that at link time
+      # by switching to LLD, see the link cmd below. No `-femulated-tls`
+      # here.
       # Add -fPIC for shared libraries
       if c.config.appType == appLib:
         b.addStrLit "-fPIC"
@@ -780,6 +787,13 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
             b.addIntLit -1  # all inputs
           b.withTree "argsext":
             b.addStrLit ".linker.args"
+          # See cc command above: clang's native PE TLS is broken when laid
+          # out by ld.bfd. LLD lays out the .tls$ section the way the loader
+          # actually expects, so native TLS survives to runtime — and we
+          # keep the fast `gs:0x58` path instead of falling back to
+          # emulated-TLS function calls.
+          if extractCCKey(c.config.linker) == "clang" and c.config.targetOS == osWindows:
+            b.addStrLit "-fuse-ld=lld"
           if passL.len > 0:
             for arg in passL.split(' '):
               if arg.len > 0:
@@ -798,6 +812,8 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
             b.addIntLit -1  # all inputs
           b.withTree "argsext":
             b.addStrLit ".linker.args"
+          if extractCCKey(c.config.linker) == "clang" and c.config.targetOS == osWindows:
+            b.addStrLit "-fuse-ld=lld"
           if passL.len > 0:
             for arg in passL.split(' '):
               if arg.len > 0:
@@ -1139,6 +1155,14 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
       b.addStrLit findTool("nimsem")
       if config.baseDir.len > 0:
         b.addStrLit "--base:" & quoteShell(config.baseDir)
+      # Match the OUTER frontend build file's `--cc:VAL` so nifmake's
+      # per-cmd staleness check sees the same argv on both sides — without
+      # this the static-eval helper's nifmake decides the existing
+      # sysvq0asl.s.nif is stale and tries to rewrite it, and on Windows
+      # the open fails because the outer (paused) nimsem still has the
+      # file mmap'd via nifreader.
+      if config.ccKey.len > 0:
+        b.addStrLit "--cc:" & quoteShell(config.cc)
       b.addStrLit "m"
       b.addKeyw "args"
       b.withTree "input":
@@ -1176,6 +1200,10 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
         b.addIntLit -1  # all inputs
       b.withTree "argsext":
         b.addStrLit ".linker.args"
+      # Clang on MinGW: native PE TLS code-gen + LLD lays out `.tls$` so the
+      # loader sees it correctly; ld.bfd does not, leading to startup segfaults.
+      if extractCCKey(config.linker) == "clang" and config.targetOS == osWindows:
+        b.addStrLit "-fuse-ld=lld"
 
     # Collect all .nif files for DCE analysis
     var allNifFiles: seq[string] = @[]

@@ -57,7 +57,8 @@ type
   Command = enum
     None, SingleModule, GenerateIdx, Execute, Idetools
 
-proc processModules(infiles: seq[string]; config: sink NifConfig; moduleFlags: set[ModuleFlag]) =
+proc processModules(infiles: seq[string]; config: sink NifConfig;
+                    moduleFlags: set[ModuleFlag]; commandLineArgs: string) =
   for infile in infiles:
     if not semos.fileExists(infile):
       quit "cannot find " & infile
@@ -67,7 +68,7 @@ proc processModules(infiles: seq[string]; config: sink NifConfig; moduleFlags: s
     # Keeps the doc and code-gen caches separate so they don't trample each other.
     let outExt = if infile.endsWith(".pc.nif"): ".sc.nif" else: ".s.nif"
     outfiles.add infile.changeModuleExt(outExt)
-  semcheck(infiles, outfiles, ensureMove config, moduleFlags, "", false)
+  semcheck(infiles, outfiles, ensureMove config, moduleFlags, commandLineArgs, false)
 
 proc executeNif(files: seq[string]; config: sink NifConfig) =
   # file 0 is special as it is the main file. We need to run injectDerefs on it first.
@@ -75,7 +76,13 @@ proc executeNif(files: seq[string]; config: sink NifConfig) =
   if files.len == 0:
     return
 
-  # little hack: prepare our writenif dependency
+  # little hack: prepare our writenif dependency.
+  # Forward `--cc` so the nested nimony's idea of `defined(gcc)` /
+  # `defined(clang)` matches the outer nimsem's. Otherwise the nested
+  # build sees system.s.nif (already produced by the outer pass under
+  # the outer's `--cc` profile) as stale for its own profile and tries
+  # to rewrite it — and on Windows that write open fails because the
+  # outer nimsem still has the file mmap'd.
   exec quoteShell(findTool("nimony")) & " --nimcache:" & quoteShell(config.nifcachePath) &
     " c " & quoteShell(stdlibFile("std/writenif.nim"))
 
@@ -140,7 +147,7 @@ proc handleCmdLine() =
   of SingleModule:
     if args.len < 1:
       quit "want at least 1 command line argument"
-    processModules(args, ensureMove config, moduleFlags)
+    processModules(args, ensureMove config, moduleFlags, commandLineArgs)
   of GenerateIdx:
     if args.len != 1:
       quit "want exactly 1 command line argument"

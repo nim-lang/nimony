@@ -38,9 +38,6 @@ elif defined(posix):
 
 
 when defined(windows) and not weirdTarget:
-  template wrapUnary*(varname, winApiProc, arg: untyped; body: untyped) {.untyped.} =
-    var varname: int32 = winApiProc(newWideCString(arg).toWideCString)
-
   template wrapBinary*(varname, winApiProc, arg, arg2: untyped) {.untyped.} =
     var varname = winApiProc(newWideCString(arg).toWideCString, arg2)
   proc findFirstFile*(a: string, b: var WIN32_FIND_DATA): Handle =
@@ -113,11 +110,21 @@ when supportedSystem:
     ## * `dirExists proc`_
     ## * `symlinkExists proc`_
     when defined(windows):
+      # Inlined wrapper: a previous `wrapUnary` template silently dropped its
+      # `body` parameter, which left every caller returning the initial
+      # `result = false` regardless of GetFileAttributesW's verdict. That bug
+      # only surfaced in the self-hosted nimony — the host-Nim build uses
+      # Nim's own stdlib.
       var filename = filename
       result = false
-      wrapUnary(a, getFileAttributesW, filename):
-        if a != -1'i32:
-          result = (a and FILE_ATTRIBUTE_DIRECTORY) == 0'i32
+      # Bind the WideCStringObj to a `let` so its buffer outlives the
+      # GetFileAttributesW call. Inlining `newWideCString(...).toWideCString`
+      # into the call would leave the raw pointer pointing at memory that
+      # was already destroyed by the temporary's `=destroy` hook.
+      let w = newWideCString(filename)
+      let a: int32 = getFileAttributesW(w.toWideCString)
+      if a != -1'i32:
+        result = (a.uint32 and FILE_ATTRIBUTE_DIRECTORY) == 0'u32
     else:
       var res: Stat = default(Stat)
       var filename = filename
@@ -135,9 +142,10 @@ when supportedSystem:
     when defined(windows):
       result = false
       var dir = dir
-      wrapUnary(a, getFileAttributesW, dir):
-        if a != -1'i32:
-          result = (a and FILE_ATTRIBUTE_DIRECTORY) != 0'i32
+      let w = newWideCString(dir)
+      let a: int32 = getFileAttributesW(w.toWideCString)
+      if a != -1'i32:
+        result = (a.uint32 and FILE_ATTRIBUTE_DIRECTORY) != 0'u32
     else:
       var res: Stat = default(Stat)
       var dir = dir
@@ -155,11 +163,12 @@ when supportedSystem:
     when defined(windows):
       result = false
       var link = link
-      wrapUnary(a, getFileAttributesW, link):
-        if a != -1'i32:
-          # xxx see: bug #16784 (bug9); checking `IO_REPARSE_TAG_SYMLINK`
-          # may also be needed.
-          result = (a and FILE_ATTRIBUTE_REPARSE_POINT) != 0'i32
+      let w = newWideCString(link)
+      let a: int32 = getFileAttributesW(w.toWideCString)
+      if a != -1'i32:
+        # xxx see: bug #16784 (bug9); checking `IO_REPARSE_TAG_SYMLINK`
+        # may also be needed.
+        result = (a.uint32 and FILE_ATTRIBUTE_REPARSE_POINT) != 0'u32
     else:
       var res: Stat = default(Stat)
       var link = link

@@ -8,7 +8,11 @@ when defined(windows):
     else:
       {.link: "../icons/hastur_icon.o".}
 
-import std / [syncio, assertions, parseopt, strutils, times, os, osproc, algorithm, streams]
+import std / [syncio, assertions, parseopt, strutils, times, os, osproc, algorithm, typedthreads, locks]
+when defined(windows):
+  import std/winlean
+else:
+  import std/posix
 
 import lib / [nifindexes, lineinfos, argsfinder]
 import gear2 / modnames
@@ -469,6 +473,61 @@ proc prefillFromWarmup(warmupCache, cacheDir: string) =
     copyPreservingMtime(warmupCache / path, dst)
   warmupCopySeconds += epochTime() - t0
 
+type
+  ReaderArg = object
+    ## Pure value-type passed to a reader thread: just an OS handle and a
+    ## pointer to a shared `Lock`. No `ref`, no string transfer across
+    ## threads. The worker accumulates output in a thread-local string,
+    ## allocated and freed in the same thread it lives in, and prints
+    ## under the lock so concurrent slots don't interleave their
+    ## per-test output. Earlier designs that handed the string back to
+    ## the main thread (via ref, channel, or ptr-string) all hit
+    ## `addToSharedFreeListBigChunks` SIGSEGVs in the runtime when ORC
+    ## tried to free a worker-allocated big chunk on the main thread —
+    ## keeping every alloc and dealloc thread-local sidesteps that.
+    handle: int      # cast of the child's stdout `FileHandle` to int.
+    lockPtr: pointer # ptr Lock guarding stdout.
+
+proc drainStdout(arg: ReaderArg) {.thread, nimcall.} =
+  ## Background reader: pulls bytes off the child's pipe as they arrive so
+  ## the child never blocks on a full pipe buffer. The previous one-shot
+  ## drain (only after `peekExitCode` reported the child gone) deadlocked
+  ## on Windows: clang on the generated C emits enough `-W…-cast`
+  ## warnings during a normal compile to fill the ~4KB pipe buffer, the
+  ## child then blocks on its next write, the parent's `peekExitCode`
+  ## never advances past -1, and the whole `--jobs:auto` run hangs
+  ## producing zero output. Streaming as we go fixes that.
+  ##
+  ## At EOF we flush the accumulated buffer to stdout under
+  ## `lockPtr[]` so the per-test block stays atomic relative to other
+  ## slots' reads.
+  var buf = newStringOfCap(1 shl 12)
+  var tmp = newString(4096)
+  while true:
+    var n: int = 0
+    when defined(windows):
+      var bytesRead: int32 = 0
+      let ok = winlean.readFile(cast[Handle](arg.handle), tmp[0].addr,
+                                tmp.len.int32, addr bytesRead, nil)
+      # `readFile` returns 0 on error; ERROR_BROKEN_PIPE is the normal EOF
+      # when the child closes its stdout, and it's also signaled by
+      # `bytesRead == 0` with success. Treat both as EOF.
+      if ok == 0'i32 or bytesRead == 0'i32: break
+      n = bytesRead.int
+    else:
+      n = posix.read(arg.handle.cint, tmp[0].addr, tmp.len)
+      if n <= 0: break
+    let prevLen = buf.len
+    buf.setLen(prevLen + n)
+    copyMem(addr buf[prevLen], addr tmp[0], n)
+  let lock = cast[ptr Lock](arg.lockPtr)
+  acquire lock[]
+  try:
+    stdout.write buf
+    stdout.flushFile()
+  finally:
+    release lock[]
+
 proc parallelTestDir(c: var TestCounters; files: openArray[string];
                      overwrite: bool; cat: Category; forward: string;
                      jobs: int) =
@@ -489,8 +548,11 @@ proc parallelTestDir(c: var TestCounters; files: openArray[string];
     p: Process
     idx: int
     file: string
+    reader: Thread[ReaderArg]
   var slots = newSeq[Slot](jobs)
   var active = 0
+  var stdoutLock = default(Lock)
+  initLock(stdoutLock)
 
   proc launch(slot: int) =
     if head >= queue.len: return
@@ -502,9 +564,12 @@ proc parallelTestDir(c: var TestCounters; files: openArray[string];
     if overwrite: args.add "--overwrite"
     if forward.len > 0: args.add "--forward:" & forward
     args.add file
-    slots[slot] = Slot(idx: idx, file: file,
-      p: startProcess(hastur, args = args,
-        options = {poStdErrToStdOut, poUsePath}))
+    let p = startProcess(hastur, args = args,
+        options = {poStdErrToStdOut, poUsePath})
+    slots[slot] = Slot(idx: idx, file: file, p: p)
+    let arg = ReaderArg(handle: p.outputHandle.int,
+                        lockPtr: cast[pointer](addr stdoutLock))
+    createThread(slots[slot].reader, drainStdout, arg)
     inc active
 
   for s in 0 ..< jobs: launch(s)
@@ -514,24 +579,22 @@ proc parallelTestDir(c: var TestCounters; files: openArray[string];
       if slots[s].p == nil: continue
       let exit = peekExitCode(slots[s].p)
       if exit != -1:
-        var outp = ""
-        var line = ""
-        while slots[s].p.outputStream.readLine(line):
-          outp.add line
-          outp.add '\n'
+        # Child exited. Worker's read loop hits EOF, flushes its
+        # accumulated buffer to stdout under the lock, and exits.
+        # `joinThread` waits for that flush to complete before we
+        # tally the result and reuse the slot.
+        joinThread(slots[s].reader)
         slots[s].p.close()
         inc c.total
         if exit != 0:
           inc c.failures
-          stdout.write outp
-        else:
-          stdout.write outp
         slots[s].p = nil
         dec active
         launch(s)
     if active > 0:
       sleep(2)
 
+  deinitLock(stdoutLock)
   if warmupCache.len > 0:
     echo "warmup prefill total: ",
          formatFloat(warmupCopySeconds, ffDecimal, precision=2), "s; ",
@@ -1388,10 +1451,14 @@ proc handleCmdLine =
       else:
         args.add key
     of cmdLongOption, cmdShortOption:
-      # `--cachedir` / `--jobs` can appear anywhere — they configure the
-      # test runner regardless of position relative to the primary cmd.
-      # Other long options stay tied to the pre-command position (or to
-      # the `record` subcommand).
+      # `--cachedir` / `--jobs` / `--forward` can appear anywhere — they
+      # configure the test runner regardless of position relative to the
+      # primary cmd. `--forward` in particular MUST be position-agnostic
+      # because the parallel test runner spawns child `hastur test ...`
+      # invocations and threads the forward value back in after `test`,
+      # so requiring it before the subcommand would silently lose it in
+      # the child. Other long options stay tied to the pre-command
+      # position (or to the `record` subcommand).
       let n = normalize(key)
       case n
       of "cachedir":
@@ -1407,6 +1474,13 @@ proc handleCmdLine =
         skipBuild = true
       of "valgrind":
         withValgrind = true
+      of "forward":
+        # Accumulate so callers can layer flags — `--forward:--cc:clang
+        # --forward:--passL:-fuse-ld=lld` reaches nimony as both options
+        # rather than only the last one. The whole string is appended
+        # verbatim to the nimony command line.
+        if forward.len > 0: forward.add ' '
+        forward.add val
       else:
         if primaryCmd.len == 0 or primaryCmd == "record":
           case n
@@ -1415,7 +1489,6 @@ proc handleCmdLine =
           of "codegen": flags.incl RecordCodegen
           of "ast": flags.incl RecordAst
           of "overwrite": overwrite = true
-          of "forward": forward = val
           of "release": release = true
           else: writeHelp()
         else:

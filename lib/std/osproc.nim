@@ -29,8 +29,15 @@ export quoteShell, quoteShellWindows, quoteShellPosix
 when defined(windows):
   import std/windows/winlean
   import std/widestrs
+  type FileHandle* = Handle
+    ## OS-level handle. Win32 HANDLE on Windows (pointer-sized so the upper
+    ## 32 bits of a HANDLE survive — storing it as `cint` truncated handles
+    ## to garbage and broke subprocess I/O on x64). Pipe and process handles
+    ## returned by `CreatePipe` / `CreateProcess` go straight into this field.
 else:
   import std/posix/posix
+  type FileHandle* = cint
+    ## OS-level file descriptor.
 
 type
   ProcessOption* = enum ## Options that can be passed to `startProcess`.
@@ -49,8 +56,6 @@ type
     poDaemon            ## Windows: the program creates no window.
                         ## Unix: start the program as a daemon. Still a
                         ## work in progress.
-
-  FileHandle* = cint    ## OS-level file descriptor.
 
   ProcessObj = object of RootObj
     when defined(windows):
