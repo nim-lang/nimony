@@ -15,7 +15,7 @@ from std / os import changeFileExt, splitFile, extractFilename, fileExists
 import ".." / lib / vfs
 from std / sequtils import insert
 
-include ".." / lib / nifprelude
+include ".." / lib / nifprelude2
 import mangler, nifc_model, cprelude, noptions, typenav, symparser, nifmodules
 
 type
@@ -248,8 +248,7 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
   if n.kind == DotToken:
     inc n
   elif n.substructureKind == PragmasU:
-    inc n
-    while n.kind != ParRi:
+    n.loopInto:
       let pk = n.pragmaKind
       case pk
       of NoPragma, AlignP, BitsP, VectorP, StaticP, PackedP:
@@ -262,21 +261,21 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
         result.flags.incl NodeclP
         skip n
       of ImportcppP, ImportcP, ExportcP:
-        inc n
-        if n.kind == StringLit:
-          result.extern = n.litId
-          inc n
-        result.flags.incl pk
-        skipParRi n
-      of HeaderP:
-        inc n
-        if n.kind != StringLit:
-          error c.m, "expected string literal in header pragma but got: ", n
-        else:
-          inclHeader(c, n.litId)
+        n.into:
+          if n.hasMore and n.kind == StringLit:
+            result.extern = n.litId
+            inc n
           result.flags.incl pk
-          inc n
-        skipParRi n
+          while n.hasMore: skip n
+      of HeaderP:
+        n.into:
+          if n.kind != StringLit:
+            error c.m, "expected string literal in header pragma but got: ", n
+          else:
+            inclHeader(c, n.litId)
+            result.flags.incl pk
+            inc n
+          while n.hasMore: skip n
       of SelectanyP:
         result.flags.incl pk
         skip n
@@ -291,14 +290,13 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
         result.flags.incl pk
         skip n
       of AttrP:
-        inc n
-        if n.kind != StringLit:
-          error c.m, "expected string literal in attr pragma but got: ", n
-        else:
-          result.attr = n.litId
-        inc n
-        skipParRi n
-    inc n # ParRi
+        n.into:
+          if n.kind != StringLit:
+            error c.m, "expected string literal in attr pragma but got: ", n
+          else:
+            result.attr = n.litId
+          inc n
+          while n.hasMore: skip n
   else:
     error c.m, "expected proc pragmas but got: ", n
 
@@ -323,19 +321,17 @@ proc genParamPragmas(c: var GeneratedCode; n: var Cursor) =
   if n.kind == DotToken:
     inc n
   elif n.substructureKind == PragmasU:
-    inc n
-    while n.kind != ParRi:
+    n.loopInto:
       case n.pragmaKind
       of AttrP:
-        inc n
-        c.add " __attribute__((" & pool.strings[n.litId] & "))"
-        inc n
-        skipParRi n
+        n.into:
+          c.add " __attribute__((" & pool.strings[n.litId] & "))"
+          inc n
+          while n.hasMore: skip n
       of WasP:
         genWasPragma c, n
       else:
         error c.m, "invalid pragma: ", n
-    inc n # ParRi
   else:
     error c.m, "expected pragmas but got: ", n
 
@@ -356,37 +352,35 @@ proc genVarPragmas(c: var GeneratedCode; n: var Cursor): set[NifcPragma] =
   if n.kind == DotToken:
     inc n
   elif n.substructureKind == PragmasU:
-    inc n
-    while n.kind != ParRi:
+    n.loopInto:
       let pk = n.pragmaKind
       case pk
       of AlignP:
-        inc n
-        c.add " NIM_ALIGN(" & $pool.integers[n.intId] & ")"
-        inc n
-        skipParRi n
+        n.into:
+          c.add " NIM_ALIGN(" & $pool.integers[n.intId] & ")"
+          inc n
+          while n.hasMore: skip n
       of AttrP:
-        inc n
-        c.add " __attribute__((" & pool.strings[n.litId] & "))"
-        skip n
-        skipParRi n
+        n.into:
+          c.add " __attribute__((" & pool.strings[n.litId] & "))"
+          skip n
+          while n.hasMore: skip n
       of WasP:
         genWasPragma c, n
       of HeaderP:
-        inc n
-        if n.kind != StringLit:
-          error c.m, "expected string literal in header pragma but got: ", n
-        else:
-          inclHeader(c, n.litId)
-          result.incl pk
-          skip n
-        skipParRi n
+        n.into:
+          if n.kind != StringLit:
+            error c.m, "expected string literal in header pragma but got: ", n
+          else:
+            inclHeader(c, n.litId)
+            result.incl pk
+            skip n
+          while n.hasMore: skip n
       of StaticP, ImportcP, ImportcppP, ExportcP, NodeclP:
         result.incl pk
         skip n
       else:
         error c.m, "invalid pragma: ", n
-    inc n # ParRi
   else:
     error c.m, "expected pragmas but got: ", n
 
@@ -436,20 +430,18 @@ proc isLiteral(n: var Cursor): bool =
       skip n
     of AconstrC, OconstrC, CastC, ConvC:
       result = true
-      inc n
-      skip n # type
-      while n.kind != ParRi:
-        if n.substructureKind == KvU:
-          inc n
-          skip n # key (field name Symbol - not a value to check)
-          if not isLiteral(n): return false # check the value
-          if n.kind != ParRi:
-            # optional inheritance
-            skip n
-          skipParRi n
-        else:
-          if not isLiteral(n): return false
-      skipParRi n
+      n.into:
+        skip n # type
+        while n.hasMore:
+          if n.substructureKind == KvU:
+            n.into:
+              skip n # key (field name Symbol - not a value to check)
+              if not isLiteral(n): return false # check the value
+              if n.hasMore:
+                skip n # optional inheritance
+              while n.hasMore: skip n
+          else:
+            if not isLiteral(n): return false
     else:
       result = false
 
@@ -586,12 +578,11 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
 
   var params = 0
   if prc.params.kind != DotToken:
-    var p = prc.params.firstSon
-    while p.kind != ParRi:
+    var p = prc.params
+    p.loopInto:
       if params > 0: c.add Comma
       genParam c, p
       inc params
-    skipParRi p
 
   if params == 0:
     c.add "void"
@@ -649,14 +640,14 @@ proc genImportedSyms(c: var GeneratedCode) =
 
 proc genNodecl(c: var GeneratedCode; n: var Cursor) =
   let signatureBegin = c.code.len
-  inc n
-  case n.stmtKind
-  of ProcS: genProcDecl c, n, false
-  of VarS: genStmt c, n
-  of ConstS: genStmt c, n
-  else:
-    error c.m, "expected declaration for `nodecl` but got: ", n
-  skipParRi n
+  n.into:
+    case n.stmtKind
+    of ProcS: genProcDecl c, n, false
+    of VarS: genStmt c, n
+    of ConstS: genStmt c, n
+    else:
+      error c.m, "expected declaration for `nodecl` but got: ", n
+    while n.hasMore: skip n
   c.code.setLen signatureBegin
 
 proc genToplevel(c: var GeneratedCode; n: var Cursor) =
@@ -677,17 +668,13 @@ proc genToplevel(c: var GeneratedCode; n: var Cursor) =
     skip n
   of EmitS: genEmitStmt c, n
   of StmtsS:
-    inc n
-    while n.kind != ParRi: genToplevel c, n
-    skipParRi n
+    n.loopInto: genToplevel c, n
   else:
     error c.m, "expected top level construct but got: ", n
 
 proc traverseCode(c: var GeneratedCode; n: var Cursor) =
   if n.stmtKind == StmtsS:
-    inc n
-    while n.kind != ParRi: genToplevel(c, n)
-    # missing `inc n` here is intentional
+    n.loopInto: genToplevel(c, n)
     genImportedSyms c
   else:
     error c.m, "expected `stmts` but got: ", n

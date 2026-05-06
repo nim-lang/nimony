@@ -9,7 +9,7 @@
 ## by a .nif file or it can translate this file to a Makefile.
 
 import std/[assertions, os, strutils, sequtils, tables, hashes, times, monotimes, sets, parseopt, syncio, osproc, algorithm]
-import ".." / lib / [nifstreams, nifcursors, bitabs, lineinfos, nifreader, tooldirs, argsfinder, vfs]
+import ".." / lib / [bitabs, lineinfos, nifreader, tooldirs, argsfinder, vfs, nifprims]
 
 # Inspired by https://gittup.org/tup/build_system_rules_and_algorithms.pdf
 #[
@@ -85,15 +85,6 @@ type
     cmdTime: Table[string, tuple[sec: float, count: int]]
     execWallTime: float
 
-proc skipParRi(n: var Cursor) =
-  ## Helper to skip a closing parenthesis
-  if n.kind == ParRi:
-    inc n
-  else:
-    #writeStackTrace()
-    #echo toString([n.load()])
-    quit "Expected ')' but found: " & $n.kind
-
 proc addSpace(result: var string) {.inline.} =
   if result.len > 0 and result[^1] != ' ': result.add ' '
 
@@ -123,7 +114,7 @@ proc expandCommand(cmd: Command; inputs, outputs, args: seq[string]; baseDir: st
   while true:
     case n.kind
     of ParRi:
-      break
+      break  # sentinel emitted by `parseCommandDefinition`'s trailing addParRi
     of StringLit:
       addSpace(result)
       result.add pool.strings[n.litId]
@@ -139,32 +130,30 @@ proc expandCommand(cmd: Command; inputs, outputs, args: seq[string]; baseDir: st
         for arg in toolArgs:
           addSpace(result)
           result.add arg
-
-        inc n
-        skipParRi n
+        skip n  # advance past the (args …) subtree
       else:
         let L = if tag == "output": outputs.len else: inputs.len
         var a = 0
         var b = 0
-        inc n
         var prefix = ""
-        if n.kind == StringLit:
-          prefix = pool.strings[n.litId]
-          inc n
-        if n.kind == IntLit:
-          a = int pool.integers[n.intId]
-          if a < 0: a = L + a
-          b = a
-          inc n
-        if n.kind == IntLit:
-          b = int pool.integers[n.intId]
-          if b < 0: b = L + b
-          inc n
         var suffix = ""
-        if n.kind == StringLit:
-          suffix = pool.strings[n.litId]
-          inc n
-        skipParRi n
+        n.into:
+          if n.hasMore and n.kind == StringLit:
+            prefix = pool.strings[n.litId]
+            inc n
+          if n.hasMore and n.kind == IntLit:
+            a = int pool.integers[n.intId]
+            if a < 0: a = L + a
+            b = a
+            inc n
+          if n.hasMore and n.kind == IntLit:
+            b = int pool.integers[n.intId]
+            if b < 0: b = L + b
+            inc n
+          if n.hasMore and n.kind == StringLit:
+            suffix = pool.strings[n.litId]
+            inc n
+          while n.hasMore: skip n
         case tag
         of "input":
           for i in a..b:
@@ -468,34 +457,31 @@ proc parseCommandDefinition(n: var Cursor; dag: var Dag) =
 
     var tokens = createTokenBuf(4)
     var argsext = ".args"
-    while n.kind != ParRi:
+    while n.hasMore:
       case n.kind
       of StringLit:
-        tokens.add n.load()
+        tokens.addRaw n.load()
         inc n
       of ParLe:
         let tag = pool.tags[n.tag]
         if tag == "argsext":
-          inc n
-          if n.kind == StringLit:
-            argsext = pool.strings[n.litId]
-            inc n
-          skipParRi n
+          n.into:
+            if n.hasMore and n.kind == StringLit:
+              argsext = pool.strings[n.litId]
+              inc n
         elif tag in ["input", "output", "args"]:
-          var nested = 0
-          while true:
-            if n.kind == ParLe:
-              inc nested
-            elif n.kind == ParRi:
-              dec nested
-            tokens.add n.load()
-            inc n
-            if nested == 0: break
+          # Bulk-copy the (input/output/args …) subtree into `tokens`. The
+          # source's sealed jumps are preserved; `tokens.openTags` is left
+          # alone because the subtree is internally balanced.
+          tokens.addSubtree n
+          skip n
         else:
           quit "unsupported tag in `cmd` definition: " & tag
       else:
         quit "unsupported token in `cmd` definition: " & $n.kind
-    tokens.addParRi()
+    # Sentinel ParRi: tokens has no opener registered, so `add` falls through
+    # to emitting a real ParRi. `expandCommand` uses it as the loop terminator.
+    tokens.add parRiToken(NoLineInfo)
     let cmdIdx = registerCommand(dag, cmdName, argsext)
     freeze tokens
     dag.commands[cmdIdx].tokens = tokens
@@ -518,28 +504,27 @@ proc parseDoRule(n: var Cursor; dag: var Dag) =
   var args: seq[string] = @[]
 
   # Parse imports and results
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.kind == ParLe:
       let tag = pool.tags[n.tag]
-      inc n # skip opening paren
-
-      if tag == "input":
-        if n.kind == StringLit:
-          inputs.add(pool.strings[n.litId])
-          inc n
-      elif tag == "output":
-        if n.kind == StringLit:
-          outputs.add(pool.strings[n.litId])
-          inc n
-      elif tag == "args":
-        while n.kind != ParRi:
-          if n.kind == StringLit:
-            args.add(pool.strings[n.litId])
-          inc n
-      else:
-        quit "unsupported tag in `do` definition: " & tag
-
-      skipParRi n
+      n.into:
+        if tag == "input":
+          if n.hasMore and n.kind == StringLit:
+            inputs.add(pool.strings[n.litId])
+            inc n
+        elif tag == "output":
+          if n.hasMore and n.kind == StringLit:
+            outputs.add(pool.strings[n.litId])
+            inc n
+        elif tag == "args":
+          while n.hasMore:
+            if n.kind == StringLit:
+              args.add(pool.strings[n.litId])
+            inc n
+        else:
+          quit "unsupported tag in `do` definition: " & tag
+        # Body must consume all children — mop up anything we didn't recognise.
+        while n.hasMore: skip n
     else:
       quit "expected `input` or `output` in `do` definition, but found: " & $n.kind
 
@@ -552,8 +537,8 @@ proc parseNifFile(filename: string; baseDir: sink string): Dag =
   if not vfsExists(filename):
     quit "File not found: " & filename
 
-  var stream = nifstreams.open(filename)
-  defer: nifstreams.close(stream)
+  var stream = nifprims.open(filename)
+  defer: nifprims.close(stream)
 
   discard processDirectives(stream.r)
 
@@ -563,21 +548,20 @@ proc parseNifFile(filename: string; baseDir: sink string): Dag =
 
   # Parse (.nif27)(stmts ...)
   if n.kind == ParLe:
-    inc n # skip opening paren
-    while n.kind != ParRi:
-      if n.kind == ParLe:
-        case pool.tags[n.tag]
-        of "cmd":
-          inc n
-          parseCommandDefinition(n, result)
-        of "do":
-          inc n
-          parseDoRule(n, result)
+    n.into:  # enter the (stmts ...) wrapper
+      while n.hasMore:
+        if n.kind == ParLe:
+          case pool.tags[n.tag]
+          of "cmd":
+            n.into:
+              parseCommandDefinition(n, result)
+          of "do":
+            n.into:
+              parseDoRule(n, result)
+          else:
+            quit "unknown statement: " & pool.tags[n.tag]
         else:
-          quit "unknown statement: " & pool.tags[n.tag]
-        skipParRi n
-      else:
-        quit "expected statement in .nif file, but found: " & $n.kind
+          quit "expected statement in .nif file, but found: " & $n.kind
 
   # Find dependencies between nodes
   for i in 0..<result.nodes.len:

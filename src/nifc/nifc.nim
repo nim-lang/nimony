@@ -10,7 +10,7 @@
 ## NIFC driver program.
 
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
-import codegen, llvmcodegen, noptions, symparser
+import codegen, noptions, symparser
 import ".." / lib / vfs
 
 when defined(windows):
@@ -20,6 +20,10 @@ else:
 
 when defined(enableAsm):
   import amd64 / genasm
+
+# LLVM backend disabled while nifc is on the experimental nifprims fork.
+when false:
+  import llvmcodegen
 
 const
   Version = "0.2.0"
@@ -69,16 +73,7 @@ proc generateBackend(s: var State; action: Action; files: seq[string]; flags: se
   let outp = s.config.nifcacheDir / splitModulePath(inp).name & destExt
   generateCode s, inp, outp, flags
 
-proc generateLLVMBackend(s: var State; files: seq[string]; flags: set[LLVMGenFlag]) =
-  if files.len == 0:
-    quit "command takes a filename"
-  for i in 0..<files.len-1:
-    let inp = files[i]
-    let outp = s.config.nifcacheDir / splitModulePath(inp).name & ".ll"
-    generateLLVMCode s, inp, outp, {}
-  let inp = files[^1]
-  let outp = s.config.nifcacheDir / splitModulePath(inp).name & ".ll"
-  generateLLVMCode s, inp, outp, flags
+# LLVM backend disabled while nifc is on the experimental nifprims fork.
 
 proc handleCmdLine() =
   var toRun = false
@@ -206,9 +201,7 @@ proc handleCmdLine() =
           else:
             quit "wasn't built with native target support"
       of atLLVM:
-        let isLast = (if compileOnly: isMain else: currentAction == action)
-        let llvmFlags = if isLast: {llvmcodegen.gfMainModule} else: {}
-        generateLLVMBackend(s, actionTable[action], llvmFlags)
+        quit "LLVM backend disabled in this build (nifprims experiment)"
       of atNone:
         quit "targets are not specified"
 

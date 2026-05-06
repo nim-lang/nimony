@@ -7,7 +7,7 @@
 ## Parse NIF into a packed tree representation.
 
 import std / [assertions, syncio]
-include "../lib" / nifprelude
+include "../lib" / nifprelude2
 import ".." / models / [nifc_tags, callconv_tags, tags]
 export nifc_tags, callconv_tags
 
@@ -112,8 +112,13 @@ proc tracebackTypeC*(n: Cursor): Cursor =
     unsafeDec result
 
 
-proc parLeToken*(t: NifcType; info = NoLineInfo): PackedToken =
-  result = parLeToken(TagId(t), info)
+proc tagToken*(t: NifcType; info = NoLineInfo): PackedToken =
+  result = tagToken(TagId(t), info)
+
+# Backwards-compat alias for callers that still use the old name; the body
+# now goes through `tagToken` so the new (kind|tag|jump) layout is used.
+template parLeToken*(t: NifcType; info = NoLineInfo): PackedToken =
+  tagToken(t, info)
 
 # Read helpers:
 
@@ -124,22 +129,22 @@ type
     name*, pragmas*, body*: Cursor
 
 proc asTypeDeclImpl(n: var Cursor): TypeDecl =
+  ## Reads child positions; advances `n` past the (type) scope close.
   assert n.stmtKind == TypeS
-  inc n
-  result = TypeDecl(name: n)
-  skip n
-  result.pragmas = n
-  skip n
-  result.body = n
+  n.into:
+    result = TypeDecl(name: n)
+    skip n
+    result.pragmas = n
+    skip n
+    result.body = n
+    skip n  # consume body so the into-epilogue closes the scope cleanly
 
 proc asTypeDecl*(n: Cursor): TypeDecl =
   var n = n
-  asTypeDeclImpl(n)
+  asTypeDeclImpl(n)  # local cursor is dropped on return
 
 proc takeTypeDecl*(n: var Cursor): TypeDecl =
-  result = asTypeDeclImpl(n)
-  skip n # skip body
-  skipParRi n
+  asTypeDeclImpl(n)  # advances `n` past the close
 
 type
   FieldDecl* = object
@@ -147,14 +152,13 @@ type
 
 proc takeFieldDecl*(n: var Cursor): FieldDecl =
   assert n.substructureKind == FldU
-  inc n
-  result = FieldDecl(name: n)
-  skip n
-  result.pragmas = n
-  skip n
-  result.typ = n
-  skip n
-  skipParRi n
+  n.into:
+    result = FieldDecl(name: n)
+    skip n
+    result.pragmas = n
+    skip n
+    result.typ = n
+    skip n
 
 type
   ParamDecl* = object
@@ -162,14 +166,13 @@ type
 
 proc takeParamDecl*(n: var Cursor): ParamDecl =
   assert n.substructureKind == ParamU
-  inc n
-  result = ParamDecl(name: n)
-  skip n
-  result.pragmas = n
-  skip n
-  result.typ = n
-  skip n
-  skipParRi n
+  n.into:
+    result = ParamDecl(name: n)
+    skip n
+    result.pragmas = n
+    skip n
+    result.typ = n
+    skip n
 
 
 type
@@ -178,21 +181,31 @@ type
 
 proc takeProcType*(n: var Cursor): ProcType =
   if n.typeKind == ParamsT:
-    discard
+    # Already inside a (proc/proctype) scope; the caller entered. Read the
+    # remaining sibling cursors without entering a new scope.
+    assert n.typeKind == ParamsT or n.kind == DotToken
+    result = ProcType(params: n)
+    skip n
+    result.returnType = n
+    skip n
+    result.pragmas = n
+    skip n
+    if n.kind == DotToken:
+      inc n
   else:
     assert n.stmtKind == ProcS or n.typeKind == ProctypeT
-    inc n # into (proctype ...)
-    skip n # skip the name
-  assert n.typeKind == ParamsT or n.kind == DotToken
-  result = ProcType(params: n)
-  skip n
-  result.returnType = n
-  skip n
-  result.pragmas = n
-  skip n
-  if n.kind == DotToken:
-    inc n
-  skipParRi n
+    n.into:  # enter (proc ...) / (proctype ...)
+      skip n # name
+      assert n.typeKind == ParamsT or n.kind == DotToken
+      result = ProcType(params: n)
+      skip n
+      result.returnType = n
+      skip n
+      result.pragmas = n
+      skip n
+      if n.hasMore and n.kind == DotToken:
+        inc n
+      while n.hasMore: skip n
 
 type
   ProcDecl* = object
@@ -200,18 +213,17 @@ type
 
 proc takeProcDecl*(n: var Cursor): ProcDecl =
   assert n.stmtKind == ProcS
-  inc n
-  result = ProcDecl(name: n)
-  skip n
-  result.params = n
-  skip n
-  result.returnType = n
-  skip n
-  result.pragmas = n
-  skip n
-  result.body = n
-  skip n
-  skipParRi n
+  n.into:
+    result = ProcDecl(name: n)
+    skip n
+    result.params = n
+    skip n
+    result.returnType = n
+    skip n
+    result.pragmas = n
+    skip n
+    result.body = n
+    skip n
 
 type
   VarDecl* = object
@@ -219,13 +231,12 @@ type
 
 proc takeVarDecl*(n: var Cursor): VarDecl =
   assert n.stmtKind in {GvarS, TvarS, VarS, ConstS}
-  inc n
-  result = VarDecl(name: n)
-  skip n
-  result.pragmas = n
-  skip n
-  result.typ = n
-  skip n
-  result.value = n
-  skip n
-  skipParRi n
+  n.into:
+    result = VarDecl(name: n)
+    skip n
+    result.pragmas = n
+    skip n
+    result.typ = n
+    skip n
+    result.value = n
+    skip n

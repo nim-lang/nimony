@@ -10,14 +10,12 @@
 # included from codegen.nim
 
 proc genEmitStmt(c: var GeneratedCode; n: var Cursor) =
-  inc n
-  while n.kind != ParRi:
+  n.loopInto:
     if n.kind == StringLit:
       c.add pool.strings[n.litId]
       inc n
     else:
       genx c, n
-  inc n # ParRi
   c.add NewLine
 
 proc genIf(c: var GeneratedCode; n: var Cursor) =
@@ -25,9 +23,8 @@ proc genIf(c: var GeneratedCode; n: var Cursor) =
   c.inToplevel = false
   var hasElse = false
   var hasElif = false
-  inc n
-  let first = n
-  while n.kind != ParRi:
+  let first = n.firstSon
+  n.loopInto:
     case n.substructureKind
     of ElifU:
       if hasElse:
@@ -36,12 +33,12 @@ proc genIf(c: var GeneratedCode; n: var Cursor) =
         if hasElif:
           c.add ElseKeyword
         c.add IfKeyword
-        inc n
-        c.genCond n
-        c.add CurlyLe
-        genStmt c, n
-        c.add CurlyRi
-        skipParRi n
+        n.into:
+          c.genCond n
+          c.add CurlyLe
+          genStmt c, n
+          c.add CurlyRi
+          while n.hasMore: skip n
       hasElif = true
     of ElseU:
       hasElse = true
@@ -50,13 +47,13 @@ proc genIf(c: var GeneratedCode; n: var Cursor) =
       else:
         c.add ElseKeyword
         c.add CurlyLe
-        inc n
-        genStmt c, n
+        n.into:
+          genStmt c, n
+          while n.hasMore: skip n
         c.add CurlyRi
-        skipParRi n
     else:
       error c.m, "`if` expects `elif` or `else` but got: ", n
-  skipParRi n
+      skip n  # avoid infinite loop on unexpected input
   if not hasElif and not hasElse:
     error c.m, "`if` expects `elif` or `else` but got: ", first
   c.inToplevel = oldInToplevel
@@ -77,86 +74,86 @@ proc getVirtualGuard(c: var GeneratedCode; n: Cursor): (SymId, bool) =
         result = (n.symId, isLast)
 
 proc genIte(c: var GeneratedCode; n: var Cursor) =
-  inc n
   let oldInToplevel = c.inToplevel
   c.inToplevel = false
-  let (vflag, isLast) = getVirtualGuard(c, n)
-  if vflag != SymId(0):
-    #[
-       vflag x = false
-       ...
-       jtrue x
-       ...
-       if not x:
-         actions
+  n.into:
+    let (vflag, isLast) = getVirtualGuard(c, n)
+    if vflag != SymId(0):
+      #[
+         vflag x = false
+         ...
+         jtrue x
+         ...
+         if not x:
+           actions
 
-       -->
-         actions
-    ]#
-    skip n
-    c.genStmt n # then-part is always taken
-    # emit the label:
-    if isLast:
-      c.add mangleToC(pool.syms[vflag])
-      c.add Colon
-      c.add Semicolon
-    skip n      # else-part is always ignored
-  else:
-    c.add IfKeyword
-    c.add Space
-    c.genCond n
-    c.add Space
-    c.add CurlyLe
-    c.genStmt n
-    c.add CurlyRi
-    if n.kind != DotToken:
-      c.add ElseKeyword
-      c.add CurlyLe
-      genStmt c, n
-      c.add CurlyRi
+         -->
+           actions
+      ]#
+      skip n
+      c.genStmt n # then-part is always taken
+      # emit the label:
+      if isLast:
+        c.add mangleToC(pool.syms[vflag])
+        c.add Colon
+        c.add Semicolon
+      skip n      # else-part is always ignored
     else:
-      inc n
-  skipParRi n
+      c.add IfKeyword
+      c.add Space
+      c.genCond n
+      c.add Space
+      c.add CurlyLe
+      c.genStmt n
+      c.add CurlyRi
+      if n.kind != DotToken:
+        c.add ElseKeyword
+        c.add CurlyLe
+        genStmt c, n
+        c.add CurlyRi
+      else:
+        inc n
+    while n.hasMore: skip n
   c.inToplevel = oldInToplevel
   c.add Semicolon
 
 proc genLoop(c: var GeneratedCode; n: var Cursor) =
   let oldInToplevel = c.inToplevel
   c.inToplevel = false
-  inc n
-  c.add WhileKeyword
-  c.add Space
-  c.add ParLe
-  c.add "NIM_TRUE"
-  c.add ParRi
-  c.add Space
-  c.add CurlyLe
-  c.genStmt n # pre condition statements
-  c.add IfKeyword
-  c.add Space
-  c.add ParLe
-  c.add "!"
-  c.add ParLe
-  c.genx n # loop condition
-  c.add ParRi
-  c.add ParRi
-  c.add BreakKeyword
-  c.add Semicolon
-  c.genStmt n # loop body
-  c.add CurlyRi
-  skipParRi n
+  n.into:
+    c.add WhileKeyword
+    c.add Space
+    c.add ParLe
+    c.add "NIM_TRUE"
+    c.add ParRi
+    c.add Space
+    c.add CurlyLe
+    c.genStmt n # pre condition statements
+    c.add IfKeyword
+    c.add Space
+    c.add ParLe
+    c.add "!"
+    c.add ParLe
+    c.genx n # loop condition
+    c.add ParRi
+    c.add ParRi
+    c.add BreakKeyword
+    c.add Semicolon
+    c.genStmt n # loop body
+    c.add CurlyRi
+    while n.hasMore: skip n
   c.inToplevel = oldInToplevel
 
 proc genWhile(c: var GeneratedCode; n: var Cursor) =
   let oldInToplevel = c.inToplevel
   c.inToplevel = false
-  inc n
-  c.add WhileKeyword
-  c.genCond n
-  c.add CurlyLe
-  c.genStmt n
-  c.add CurlyRi
-  skipParRi n
+  n.into:
+    c.add WhileKeyword
+    c.genCond n
+    c.add CurlyLe
+    c.genStmt n
+    c.add CurlyRi
+    while n.hasMore: skip n
   c.inToplevel = oldInToplevel
 
 proc genTryCpp(c: var GeneratedCode; n: var Cursor) =
@@ -193,60 +190,58 @@ proc genTryCpp(c: var GeneratedCode; n: var Cursor) =
        - finally throws directly
        - never reaches rethrow check
   ]#
-  inc n
+  n.into:
 
-  # Add needsFinalRethrow flag
-  let varName = "needsFinalRethrow" & $c.currentProc.nextTemp
-  inc c.currentProc.nextTemp
-  c.add "bool " & varName & " = false;"
-  c.add NewLine
+    # Add needsFinalRethrow flag
+    let varName = "needsFinalRethrow" & $c.currentProc.nextTemp
+    inc c.currentProc.nextTemp
+    c.add "bool " & varName & " = false;"
+    c.add NewLine
 
-  # Try block
-  c.add TryKeyword
-  c.add CurlyLe
-  c.genStmt n
-  c.add CurlyRi
-
-  # Catch block for original exception
-  c.add CatchKeyword
-  c.add "..."
-  c.add ParRi
-  c.add Space
-  c.add CurlyLe
-  let beforeAsgn = c.code.len
-  var sections = 0
-  c.add varName & " = true;"
-  c.add NewLine
-  if n.kind != DotToken:
+    # Try block
+    c.add TryKeyword
+    c.add CurlyLe
     c.genStmt n
-    inc sections
-  else:
-    inc n
-  c.add CurlyRi
-
-  # Finally section
-  if n.kind != DotToken:
-    c.genStmt n
-    inc sections
-  else:
-    inc n
-  if sections == 0:
-    c.code.shrink beforeAsgn
     c.add CurlyRi
 
-  # Rethrow original exception if needed
-  c.add "if (" & varName & ") { throw; }"
-  c.add NewLine
+    # Catch block for original exception
+    c.add CatchKeyword
+    c.add "..."
+    c.add ParRi
+    c.add Space
+    c.add CurlyLe
+    let beforeAsgn = c.code.len
+    var sections = 0
+    c.add varName & " = true;"
+    c.add NewLine
+    if n.kind != DotToken:
+      c.genStmt n
+      inc sections
+    else:
+      inc n
+    c.add CurlyRi
 
-  skipParRi n
+    # Finally section
+    if n.kind != DotToken:
+      c.genStmt n
+      inc sections
+    else:
+      inc n
+    if sections == 0:
+      c.code.shrink beforeAsgn
+      c.add CurlyRi
+
+    # Rethrow original exception if needed
+    c.add "if (" & varName & ") { throw; }"
+    c.add NewLine
+
+    while n.hasMore: skip n
 
 proc genScope(c: var GeneratedCode; n: var Cursor) =
   c.add CurlyLe
-  inc n
   c.m.openScope()
-  while n.kind != ParRi:
+  n.loopInto:
     c.genStmt n
-  skipParRi n
   c.add CurlyRi
   c.m.closeScope()
 
@@ -255,12 +250,12 @@ proc isBranchValue(n: Cursor): bool =
   if n.kind in {IntLit, UIntLit, CharLit, Symbol} or n.exprKind in {TrueC, FalseC}:
     result = true
   elif n.exprKind == SufC:
-    inc n
+    inc n  # peek; n is a local copy
     result = n.kind in {IntLit, UIntLit, CharLit}
   elif n.exprKind in {ConvC, CastC}:
     # `(conv T <lit>)` → `((T)<lit>)` is a constant expression in C and is
     # valid inside a `case` label.
-    inc n
+    inc n  # peek; n is a local copy
     skip n # type
     result = isBranchValue(n)
   else:
@@ -277,139 +272,137 @@ proc genCaseCond(c: var GeneratedCode; n: var Cursor) =
   # BranchRange ::= BranchValue | (range BranchValue BranchValue)
   # BranchRanges ::= (ranges BranchRange+)
   if n.substructureKind == RangesU:
-    inc n
-    while n.kind != ParRi:
+    n.loopInto:
       c.add CaseKeyword
       if n.substructureKind == RangeU:
-        inc n
-        genBranchValue c, n
-        c.add " ... "
-        genBranchValue c, n
-        skipParRi n
+        n.into:
+          genBranchValue c, n
+          c.add " ... "
+          genBranchValue c, n
+          while n.hasMore: skip n
       else:
         genBranchValue c, n
       c.add ":"
       c.add NewLine
-    skipParRi n
   else:
     error c.m, "`ranges` expected but got: ", n
 
 proc genLabel(c: var GeneratedCode; n: var Cursor) =
-  inc n
-  if n.kind == SymbolDef:
-    let name = mangleToC(pool.syms[n.symId])
-    c.add name
-    c.add Colon
-    c.add Semicolon
-    inc n
-  else:
-    error c.m, "expected SymbolDef but got: ", n
-  skipParRi n
+  n.into:
+    if n.kind == SymbolDef:
+      let name = mangleToC(pool.syms[n.symId])
+      c.add name
+      c.add Colon
+      c.add Semicolon
+      inc n
+    else:
+      error c.m, "expected SymbolDef but got: ", n
+    while n.hasMore: skip n
 
 proc genGoto(c: var GeneratedCode; n: var Cursor) =
-  inc n
-  if n.kind == Symbol:
-    let name = mangleToC(pool.syms[n.symId])
-    c.add GotoKeyword
-    c.add name
-    c.add Semicolon
-    inc n
-  else:
-    error c.m, "expected Symbol but got: ", n
-  skipParRi n
+  n.into:
+    if n.kind == Symbol:
+      let name = mangleToC(pool.syms[n.symId])
+      c.add GotoKeyword
+      c.add name
+      c.add Semicolon
+      inc n
+    else:
+      error c.m, "expected Symbol but got: ", n
+    while n.hasMore: skip n
 
 proc genSwitch(c: var GeneratedCode; n: var Cursor) =
   # (case Expr (of BranchRanges StmtList)* (else StmtList)?) |
   let oldInToplevel = c.inToplevel
   c.inToplevel = false
   c.add SwitchKeyword
-  inc n
-  let first = n
-  c.genCond n
-  c.add CurlyLe
+  let first = n.firstSon
+  n.into:
+    c.genCond n
+    c.add CurlyLe
 
-  var hasElse = false
-  var hasElif = false
-  while n.kind != ParRi:
-    case n.substructureKind
-    of OfU:
-      if hasElse:
-        error c.m, "no `of` allowed after `else` but got: ", n
+    var hasElse = false
+    var hasElif = false
+    while n.hasMore:
+      case n.substructureKind
+      of OfU:
+        if hasElse:
+          error c.m, "no `of` allowed after `else` but got: ", n
+        else:
+          n.into:
+            c.genCaseCond n
+            c.add CurlyLe
+            genStmt c, n
+            c.add CurlyRi
+            c.add BreakKeyword
+            c.add Semicolon
+            while n.hasMore: skip n
+        hasElif = true
+      of ElseU:
+        hasElse = true
+        if not hasElif:
+          error c.m, "no `of` before `else` but got: ", n
+        else:
+          c.add DefaultKeyword
+          c.add NewLine
+          c.add CurlyLe
+          n.into:
+            genStmt c, n
+            while n.hasMore: skip n
+          c.add CurlyRi
+          c.add BreakKeyword
+          c.add Semicolon
       else:
-        inc n
-        c.genCaseCond n
-        c.add CurlyLe
-        genStmt c, n
-        c.add CurlyRi
-        c.add BreakKeyword
-        c.add Semicolon
-        skipParRi n
-      hasElif = true
-    of ElseU:
-      hasElse = true
-      if not hasElif:
-        error c.m, "no `of` before `else` but got: ", n
-      else:
-        c.add DefaultKeyword
-        c.add NewLine
-        c.add CurlyLe
-        inc n
-        genStmt c, n
-        skipParRi n
-        c.add CurlyRi
-        c.add BreakKeyword
-        c.add Semicolon
-    else:
-      error c.m, "`case` expects `of` or `else` but got: ", n
-  if not hasElif and not hasElse:
-    error c.m, "`case` expects `of` or `else` but got: ", first
-  c.add CurlyRi
-  skipParRi n
+        error c.m, "`case` expects `of` or `else` but got: ", n
+        skip n  # avoid infinite loop on unexpected input
+    if not hasElif and not hasElse:
+      error c.m, "`case` expects `of` or `else` but got: ", first
+    c.add CurlyRi
   c.inToplevel = oldInToplevel
 
 proc genMflagDecl(c: var GeneratedCode; n: var Cursor) =
   genCLineDir(c, n.info)
-  inc n
-  if n.kind == SymbolDef:
-    let s = n.symId
-    c.m.registerLocal(s, createIntegralType(c.m, "(bool)"))
-    c.add "NB8"
-    c.add Space
-    c.add mangleToC(pool.syms[s])
-    c.add Semicolon
-    inc n
-  else:
-    error c.m, "expected SymbolDef but got: ", n
-  skipParRi n
+  n.into:
+    if n.kind == SymbolDef:
+      let s = n.symId
+      c.m.registerLocal(s, createIntegralType(c.m, "(bool)"))
+      c.add "NB8"
+      c.add Space
+      c.add mangleToC(pool.syms[s])
+      c.add Semicolon
+      inc n
+    else:
+      error c.m, "expected SymbolDef but got: ", n
+    while n.hasMore: skip n
 
 proc genVflagDecl(c: var GeneratedCode; n: var Cursor) =
   genCLineDir(c, n.info)
-  inc n
-  if n.kind == SymbolDef:
-    let s = n.symId
-    c.m.registerLocal(s, createIntegralType(c.m, "(bool)"))
-    c.currentProc.vflags.incl(s)
-    inc n
-  else:
-    error c.m, "expected SymbolDef but got: ", n
-  skipParRi n
+  n.into:
+    if n.kind == SymbolDef:
+      let s = n.symId
+      c.m.registerLocal(s, createIntegralType(c.m, "(bool)"))
+      c.currentProc.vflags.incl(s)
+      inc n
+    else:
+      error c.m, "expected SymbolDef but got: ", n
+    while n.hasMore: skip n
 
 proc genJtrue(c: var GeneratedCode; n: var Cursor) =
-  inc n
-  while n.kind != ParRi:
-    if n.kind == Symbol:
-      let s = n.symId
-      if not c.currentProc.vflags.contains(s):
-        error c.m, "virtual flag not declared: ", n
-      inc n
-      if n.kind == ParRi:
-        # last symbol becomes a target goto:
-        c.add GotoKeyword
-        c.add mangleToC(pool.syms[s])
-        c.add Semicolon
-    else:
-      error c.m, "expected Symbol but got: ", n
-  skipParRi n
+  n.into:
+    while n.hasMore:
+      if n.kind == Symbol:
+        let s = n.symId
+        if not c.currentProc.vflags.contains(s):
+          error c.m, "virtual flag not declared: ", n
+        inc n
+        if not n.hasMore:
+          # last symbol becomes a target goto:
+          c.add GotoKeyword
+          c.add mangleToC(pool.syms[s])
+          c.add Semicolon
+      else:
+        error c.m, "expected Symbol but got: ", n
+        inc n  # avoid infinite loop
 
 proc genVar(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false; useStatic = false) =
   case vk
@@ -428,82 +421,82 @@ proc genVar(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false; 
       genVarDecl c, n, IsConst, toExtern, useStatic
 
 proc genKeepOverflow(c: var GeneratedCode; n: var Cursor) =
-  inc n # keepovf
-  let op = n.exprKind
-  var gcc = ""
-  var prefix = "__builtin_"
-  case op
-  of AddC:
-    gcc.add "add"
-  of SubC:
-    gcc.add "sub"
-  of MulC:
-    gcc.add "mul"
-  of DivC:
-    gcc.add "div_"
-    prefix = "_Qnifc_"
-  of ModC:
-    gcc.add "mod_"
-    prefix = "_Qnifc_"
-  else:
-    error c.m, "expected arithmetic operation but got: ", n
-  inc n # operation
-  if n.typeKind == IT:
-    gcc = prefix & "s" & gcc
-  elif n.typeKind == UT:
-    gcc = prefix & "u" & gcc
-  else:
-    error c.m, "expected integer type but got: ", n
-  inc n # type
-  var isLongLong = false
-  if n.kind == IntLit:
-    let bits = pool.integers[n.intId]
-    if bits == 64 or (bits == -1 and c.bits == 64):
-      gcc.add "ll"
-      isLongLong = true
-    inc n
-  else:
-    error c.m, "expected integer literal but got: ", n
-  c.currentProc.needsOverflowFlag = true
-  skipParRi n # end of type
-  c.add IfKeyword
-  c.add ParLe
-  gcc.add "_overflow"
-  c.add gcc
-  c.add ParLe
-  genx c, n
-  c.add Comma
-  genx c, n
-  skipParRi n
-  c.add Comma
-  if isLongLong:
-    c.add "(long long int*)"
-    c.add ParLe
-  c.add Amp
-  genLvalue c, n
-  if isLongLong:
+  n.into:  # (keepovf …)
+    let op = n.exprKind
+    var gcc = ""
+    var prefix = "__builtin_"
+    case op
+    of AddC:
+      gcc.add "add"
+    of SubC:
+      gcc.add "sub"
+    of MulC:
+      gcc.add "mul"
+    of DivC:
+      gcc.add "div_"
+      prefix = "_Qnifc_"
+    of ModC:
+      gcc.add "mod_"
+      prefix = "_Qnifc_"
+    else:
+      error c.m, "expected arithmetic operation but got: ", n
+    var isLongLong = false
+    n.into:  # (add | sub | mul | … <type> lhs rhs)
+      if n.typeKind == IT:
+        gcc = prefix & "s" & gcc
+      elif n.typeKind == UT:
+        gcc = prefix & "u" & gcc
+      else:
+        error c.m, "expected integer type but got: ", n
+      n.into:  # (i bits) | (u bits)
+        if n.kind == IntLit:
+          let bits = pool.integers[n.intId]
+          if bits == 64 or (bits == -1 and c.bits == 64):
+            gcc.add "ll"
+            isLongLong = true
+          inc n
+        else:
+          error c.m, "expected integer literal but got: ", n
+        while n.hasMore: skip n
+      c.currentProc.needsOverflowFlag = true
+      c.add IfKeyword
+      c.add ParLe
+      gcc.add "_overflow"
+      c.add gcc
+      c.add ParLe
+      genx c, n
+      c.add Comma
+      genx c, n
+      while n.hasMore: skip n
+    c.add Comma
+    if isLongLong:
+      c.add "(long long int*)"
+      c.add ParLe
+    c.add Amp
+    genLvalue c, n
+    if isLongLong:
+      c.add ParRi
     c.add ParRi
-  c.add ParRi
-  c.add ParRi # end of condition
-  c.add CurlyLe
-  c.add OvfToken
-  c.add AsgnOpr
-  c.add OvfToken
-  c.add " || "
-  c.add "NIM_TRUE"
-  c.add Semicolon
-  c.add CurlyRi
-  skipParRi n
+    c.add ParRi # end of condition
+    c.add CurlyLe
+    c.add OvfToken
+    c.add AsgnOpr
+    c.add OvfToken
+    c.add " || "
+    c.add "NIM_TRUE"
+    c.add Semicolon
+    c.add CurlyRi
+    while n.hasMore: skip n
 
 proc genStore(c: var GeneratedCode; n: var Cursor) =
-  inc n
-  var rhs = n
-  skip n
-  genLvalue c, n
-  c.add AsgnOpr
-  genx c, rhs
-  c.add Semicolon
-  skipParRi n
+  n.into:
+    var rhs = n
+    skip n
+    genLvalue c, n
+    c.add AsgnOpr
+    genx c, rhs
+    c.add Semicolon
+    while n.hasMore: skip n
 
 proc genStmt(c: var GeneratedCode; n: var Cursor) =
   case n.stmtKind
@@ -513,10 +506,8 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
     else:
       error c.m, "expected statement but got: ", n
   of StmtsS:
-    inc n
-    while n.kind != ParRi:
+    n.loopInto:
       genStmt(c, n)
-    inc n # ParRi
   of ScopeS:
     let oldInToplevel = c.inToplevel
     c.inToplevel = false
@@ -541,54 +532,54 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
     genEmitStmt c, n
   of AsgnS:
     genCLineDir(c, info(n))
-    inc n
-    genLvalue c, n
-    c.add AsgnOpr
-    genx c, n
-    c.add Semicolon
-    skipParRi n
+    n.into:
+      genLvalue c, n
+      c.add AsgnOpr
+      genx c, n
+      c.add Semicolon
+      while n.hasMore: skip n
   of StoreS: genStore c, n
   of IfS: genIf c, n
   of IteS, ItecS: genIte c, n
   of WhileS: genWhile c, n
   of LoopS: genLoop c, n
   of BreakS:
-    inc n
-    c.add BreakKeyword
-    c.add Semicolon
-    skipParRi n
+    n.into:
+      c.add BreakKeyword
+      c.add Semicolon
+      while n.hasMore: skip n
   of JtrueS: genJtrue c, n
   of CaseS: genSwitch c, n
   of LabS: genLabel c, n
   of JmpS: genGoto c, n
   of RetS:
     c.add ReturnKeyword
-    inc n
-    if n.kind != DotToken:
-      c.add Space
-      c.genx n
-    else:
-      inc n
-    c.add Semicolon
-    skipParRi n
+    n.into:
+      if n.kind != DotToken:
+        c.add Space
+        c.genx n
+      else:
+        inc n
+      c.add Semicolon
+      while n.hasMore: skip n
   of DiscardS:
-    inc n
-    c.add DiscardToken
-    c.genx n
-    c.add Semicolon
-    skipParRi n
+    n.into:
+      c.add DiscardToken
+      c.genx n
+      c.add Semicolon
+      while n.hasMore: skip n
   of TryS:
     genTryCpp c, n
   of RaiseS:
     c.add ThrowKeyword
-    inc n
-    if n.kind != DotToken:
-      c.add Space
-      c.genx n
-    else:
-      inc n
-    c.add Semicolon
-    skipParRi n
+    n.into:
+      if n.kind != DotToken:
+        c.add Space
+        c.genx n
+      else:
+        inc n
+      c.add Semicolon
+      while n.hasMore: skip n
   of OnerrS:
     var onErrAction = n
     inc onErrAction

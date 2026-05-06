@@ -12,7 +12,9 @@
 import std / [assertions, tables, hashes, sets, syncio]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / nifc / [nifc_model]
+import nifc_compat  # was: import ".." / nifc / [nifc_model]
+                    # nifc_model is on nifprims now; this shim keeps dce1
+                    # on the classic nifcursors-typed accessors.
 
 import ".." / lib / symparser
 

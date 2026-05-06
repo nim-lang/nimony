@@ -15,7 +15,7 @@ include ".." / lib / compat2
 
 import ".." / lib / symparser
 import dce1
-import ".." / nifc / [nifc_model]
+import nifc_compat  # was: import ".." / nifc / [nifc_model] — see comment in dce1.nim
 
 type
   ResolveTable = Table[string, SymId]

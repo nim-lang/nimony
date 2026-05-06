@@ -7,7 +7,7 @@
 ## A type navigator can recompute the type of an expression.
 
 import std / [tables, assertions]
-include "../lib" / nifprelude
+include "../lib" / nifprelude2
 
 import nifc_model, nifmodules
 
@@ -21,7 +21,7 @@ proc isImportC*(m: var MainModule; n: Cursor): bool =
 proc createIntegralType*(m: var MainModule; name: string): Cursor =
   result = m.builtinTypes.getOrDefault(name)
   if cursorIsNil(result):
-    var buf = nifcursors.parseFromBuffer(name, "<invalid>", 3)
+    var buf = nifprims.parseFromBuffer(name, "<invalid>", 3)
     result = cursorAt(buf, 0)
     m.mem.add buf
     m.builtinTypes[name] = result
@@ -41,13 +41,14 @@ proc typeOfField*(m: var MainModule; n: var Cursor; fld: SymId; sel = FieldType)
     result = default(Cursor)
     let tk = n.typeKind
     if tk in {ObjectT, UnionT}:
-      inc n
-      if tk == ObjectT:
-        skip n # inheritance
-      while n.kind != ParRi:
-        result = typeOfField(m, n, fld, sel)
-        if not cursorIsNil(result): break
-      inc n
+      n.into:
+        if tk == ObjectT:
+          skip n # inheritance
+        var done = false
+        while n.hasMore and not done:
+          result = typeOfField(m, n, fld, sel)
+          if not cursorIsNil(result): done = true
+        while n.hasMore: skip n  # mop up if we broke early
 
 proc getTypeImpl(m: var MainModule; n: Cursor): Cursor =
   case n.kind
