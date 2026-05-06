@@ -46,6 +46,25 @@ proc flushPending(b: var HtmlBuilder; pending: var string) =
     emitText(b, pending)
     pending.setLen 0
 
+proc parseRstInlineLink(s: string; start: int): tuple[ok: bool, text, url: string, nextPos: int] =
+  ## Parses reST-style inline links: `text <url>`_
+  ## Returns ok=false if `start` does not begin a valid link.
+  result = (false, "", "", start)
+  if start < 0 or start >= s.len or s[start] != '`':
+    return
+  let close = findClose(s, start + 1, '`')
+  if close < 0 or close + 1 >= s.len or s[close + 1] != '_':
+    return
+  let payload = s[start + 1 ..< close]
+  let lt = payload.rfind(" <")
+  if lt <= 0 or not payload.endsWith(">"):
+    return
+  let txt = payload[0 ..< lt].strip()
+  let url = payload[lt + 2 ..< payload.len - 1].strip()
+  if txt.len == 0 or url.len == 0:
+    return
+  result = (true, txt, url, close + 2)
+
 proc renderInline*(b: var HtmlBuilder; s: string) =
   var i = 0
   var pending = ""
@@ -54,14 +73,20 @@ proc renderInline*(b: var HtmlBuilder; s: string) =
     case c
     of '`':
       flushPending(b, pending)
-      let close = findClose(s, i + 1, '`')
-      if close >= 0:
-        emitTag(b, "code"):
-          emitText(b, s[i+1 ..< close])
-        i = close + 1
+      let rst = parseRstInlineLink(s, i)
+      if rst.ok:
+        emitTagAttr(b, "a", [("href", rst.url)]):
+          renderInline(b, rst.text)
+        i = rst.nextPos
       else:
-        pending.add c
-        inc i
+        let close = findClose(s, i + 1, '`')
+        if close >= 0:
+          emitTag(b, "code"):
+            emitText(b, s[i+1 ..< close])
+          i = close + 1
+        else:
+          pending.add c
+          inc i
     of '*', '_':
       flushPending(b, pending)
       if i + 1 < s.len and s[i+1] == c:

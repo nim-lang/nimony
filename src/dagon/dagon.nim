@@ -12,7 +12,7 @@ import std / [parseopt, os, strutils, syncio, assertions, algorithm, tables]
 
 include ".." / lib / nifprelude
 import ".." / lib / [symparser, htmlbuilder, docpaths]
-import ".." / nimony / [nimony_model, decls]
+import ".." / nimony / [nimony_model, decls, renderer]
 import markdown
 
 const
@@ -51,6 +51,7 @@ type
     currentModule: string             ## own modid (e.g. "sysvq0asl")
     currentRelpath: string            ## own page path under outdir (e.g. "std/system.html")
     importMap: Table[string, string]  ## modid → relpath, from own (import (kv …))
+    nameToSym: Table[string, int]     ## basename -> unique sym id, -1 means ambiguous
     projectRoot, stdlibRoot: string
 
 proc kindLabel(k: NimonyStmt): string =
@@ -152,68 +153,59 @@ proc emitPrim(b: var HtmlBuilder; name: string) =
   emitClass(b, "prim"):
     emitText(b, name)
 
-proc primitiveTypeName(tag: string; bits: int): string =
-  ## Map NIF primitive type tags to Nim-ish names. `(i 64)` → `int`, `(i 8)` → `int8`.
-  let base = case tag
-    of "i": "int"
-    of "u": "uint"
-    of "f": "float"
-    of "c": "char"
-    else: tag
-  case tag
-  of "i", "u":
-    if bits == sizeof(int) * 8 or bits <= 0: base
-    else: base & $bits
-  of "f":
-    if bits == 64 or bits <= 0: base
-    else: base & $bits
-  of "c":
-    base
-  else:
-    base
+proc typeExprSrcGen(n: var Cursor): SrcGen =
+  typeToSrcGen(n, {renderNoComments, renderDocComments,
+                   renderExpandUsing, renderNoPostfix, renderSyms})
+
+proc isMultiline(g: SrcGen): bool =
+  '\n' in g.buf
+
+proc emitSrcGen(b: var HtmlBuilder; ctx: RenderCtx; g: SrcGen) =
+  var pos = 0
+  for t in g.tokens:
+    let L = int(t.length)
+    if L < 0: continue
+    let frag =
+      if L == 0: ""
+      else: g.buf[pos ..< pos + L]
+    pos += L
+    case t.kind
+    of tkSymbol:
+      if t.isDef:
+        # Definition sites (object/enum field names, etc.) are emitted as
+        # plain names — they're being declared here, so a hyperlink would
+        # either point to a non-existent anchor or, via the basename
+        # fallback, to something unrelated.
+        emitName(b, frag)
+      elif t.sym != SymId(0):
+        emitTyperef(b, ctx, t.sym)
+      else:
+        let cand = ctx.nameToSym.getOrDefault(frag, 0)
+        if cand > 0:
+          emitTyperef(b, ctx, SymId(cand))
+        else:
+          emitName(b, frag)
+    of tkSpaces:
+      emitText(b, frag)
+    of tkAddr..tkYield:
+      emitKw(b, frag)
+    of tkOpr, tkInfixOpr, tkPrefixOpr, tkPostfixOpr,
+       tkParLe, tkParRi, tkBracketLe, tkBracketRi,
+       tkCurlyLe, tkCurlyRi, tkCurlyDotLe, tkCurlyDotRi,
+       tkBracketDotLe, tkBracketDotRi, tkParDotLe, tkParDotRi,
+       tkComma, tkSemiColon, tkColon, tkColonColon, tkEquals,
+       tkDot, tkDotDot:
+      emitOp(b, frag)
+    of tkIntLit..tkFloat128Lit, tkStrLit..tkCustomLit:
+      emitClass(b, "lit"):
+        emitText(b, frag)
+    else:
+      emitText(b, frag)
 
 proc renderTypeExpr(b: var HtmlBuilder; ctx: RenderCtx; n: var Cursor) =
-  ## Pretty-print a type expression. Symbols → cross-linked typeref;
-  ## primitive `(i 64)` etc. → `int`/`float64`/`char` as `prim` spans;
-  ## compound trees → `Tag[children…]`.
-  case n.kind
-  of Symbol:
-    emitTyperef(b, ctx,n.symId)
-    inc n
-  of Ident:
-    emitPrim(b, pool.strings[n.litId])
-    inc n
-  of IntLit:
-    emitText(b, $pool.integers[n.intId])
-    inc n
-  of DotToken:
-    inc n
-  of ParLe:
-    let tag = pool.tags[n.tagId]
-    inc n
-    if tag in ["i", "u", "f", "c"]:
-      let bits =
-        if n.kind == IntLit: int(pool.integers[n.intId])
-        else: 0
-      emitPrim(b, primitiveTypeName(tag, bits))
-      while n.kind != ParRi: skip n
-      inc n
-      return
-    if n.kind == ParRi:
-      emitPrim(b, tag)
-      inc n
-      return
-    emitPrim(b, tag)
-    emitOp(b, "[")
-    var first = true
-    while n.kind != ParRi:
-      if not first: emitOp(b, ", ")
-      first = false
-      renderTypeExpr(b, ctx,n)
-    emitOp(b, "]")
-    inc n
-  else:
-    skip n
+  ## Pretty-print a type expression via Nimony's renderer, but hyperlink symbols.
+  let g = typeExprSrcGen(n)
+  emitSrcGen(b, ctx, g)
 
 proc emitDocBlock(b: var HtmlBuilder; doc: string) =
   ## Render a per-decl doc comment as Markdown. Wrapped in `<div class="doc">`
@@ -294,10 +286,18 @@ proc recordEntry(idx: var seq[DocIdxEntry]; sk: NimonyStmt; sym: SymId; doc: str
     symid: pool.syms[sym],
     summary: summarise(doc))
 
+proc isExported(exported: Cursor): bool =
+  ## A decl is exported when its `exported` slot holds the `x` ident; sem
+  ## emits `.` for private decls.
+  exported.kind == Ident and pool.strings[exported.litId] == "x"
+
 proc renderRoutine(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
                    ctx: RenderCtx; sk: NimonyStmt;
                    n: var Cursor; doc: string) =
   let r = asRoutine(n)
+  if not isExported(r.exported):
+    skip n
+    return
   recordEntry(idx, sk, r.name.symId, doc)
   emitDeclItem(b, r.name.symId):
     emitTag(b, "code"):
@@ -329,15 +329,38 @@ proc renderRoutine(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
 proc renderTypeDecl(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
                     ctx: RenderCtx; n: var Cursor; doc: string) =
   let t = asTypeDecl(n)
+  if not isExported(t.exported):
+    skip n
+    return
   recordEntry(idx, TypeS, t.name.symId, doc)
+  # Pre-render the body to a SrcGen so we can decide whether to wrap the
+  # signature in `<code>` (single-line, default) or `<pre class="sig">`
+  # (multi-line, e.g. `enum`/`object`/`concept` bodies). HTML collapses
+  # whitespace inside `<code>`, which loses the field listing for compound
+  # type bodies.
+  var bodyG: SrcGen = SrcGen()
+  let hasBody = t.body.kind notin {DotToken, EofToken}
+  if hasBody:
+    var bodyCur = t.body
+    bodyG = typeExprSrcGen(bodyCur)
+  let multiline = hasBody and isMultiline(bodyG) and b.format == hofHtml
+  let wrapper = if multiline: "pre" else: "code"
   emitDeclItem(b, t.name.symId):
-    emitTag(b, "code"):
-      emitKw(b, "type")
-      emitText(b, " ")
-      emitName(b, basename(pool.syms[t.name.symId]))
-      if t.body.kind == ParLe:
+    if multiline:
+      emitTagAttr(b, wrapper, [("class", "sig")]):
+        emitKw(b, "type")
+        emitText(b, " ")
+        emitName(b, basename(pool.syms[t.name.symId]))
         emitOp(b, " = ")
-        emitKw(b, pool.tags[t.body.tagId])
+        emitSrcGen(b, ctx, bodyG)
+    else:
+      emitTag(b, wrapper):
+        emitKw(b, "type")
+        emitText(b, " ")
+        emitName(b, basename(pool.syms[t.name.symId]))
+        if hasBody:
+          emitOp(b, " = ")
+          emitSrcGen(b, ctx, bodyG)
     emitDocBlock(b, doc)
   skip n
 
@@ -345,6 +368,9 @@ proc renderLocal(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
                  ctx: RenderCtx; sk: NimonyStmt;
                  n: var Cursor; doc: string) =
   let l = asLocal(n)
+  if not isExported(l.exported):
+    skip n
+    return
   recordEntry(idx, sk, l.name.symId, doc)
   emitDeclItem(b, l.name.symId):
     emitTag(b, "code"):
@@ -392,6 +418,22 @@ proc parseImports(n: var Cursor; ctx: var RenderCtx) =
         skip n
     inc n  # closing ')' of (import …)
 
+proc buildNameLookup(ctx: var RenderCtx) =
+  for i in 1 ..< pool.syms.len:
+    let sid = SymId(i)
+    let full = pool.syms[sid]
+    let modid = extractModule(full)
+    if modid.len > 0 and modid != ctx.currentModule and modid notin ctx.importMap:
+      continue
+    var base = full
+    extractBasename(base)
+    if base.len == 0: continue
+    let old = ctx.nameToSym.getOrDefault(base, 0)
+    if old == 0:
+      ctx.nameToSym[base] = i
+    elif old != i:
+      ctx.nameToSym[base] = -1
+
 proc renderDecls(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
                  ctx: RenderCtx; n: var Cursor) =
   ## Walk the children of the outer `(stmts …)`. Caller must have entered the
@@ -428,6 +470,7 @@ a { color: #2e6e44; }
 ul.decls { list-style: none; padding: 0; }
 ul.decls > li { padding: .5rem 0; border-bottom: 1px dashed #eee; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92rem; }
+pre.sig { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92rem; margin: 0; white-space: pre-wrap; }
 .kw { color: #0a55a4; font-weight: 600; }
 .name { color: #1a1a1a; font-weight: 600; }
 .op { color: #555; }
@@ -503,12 +546,14 @@ proc renderModule(input, htmlOut, docIdxOut: string; format: HtmlOutFormat;
     currentModule: currentModule,
     currentRelpath: relativePath(htmlOut, outdir, '/'),
     importMap: initTable[string, string](),
+    nameToSym: initTable[string, int](),
     projectRoot: projectRoot,
     stdlibRoot: stdlibRoot)
 
   # Enter (stmts …) and consume any leading (import (kv …)) into the map.
   if n.kind == ParLe: inc n
   parseImports(n, ctx)
+  buildNameLookup(ctx)
 
   var b = initHtmlBuilder(format)
   var idx: seq[DocIdxEntry] = @[]
@@ -568,7 +613,10 @@ proc readDocIdx(path: string; entries: var seq[IndexEntry];
                 modules: var seq[(string, string, string)]) =
   ## Parse a `.docidx` sidecar emitted by `dagon module`. Tolerant of unknown
   ## fields so newer schemas are read by older `link` steps without crashing.
-  ## `modules` collects `(modid, modname, relpath)` triples for the index.
+  ## `modules` collects `(modid, modname, relpath)` triples for the index;
+  ## modules with zero entries (synthetic aggregator drivers like
+  ## `tests/nimony/stdlib/tall.nim`) are dropped here so they don't pollute
+  ## the index.
   if not fileExists(path): return
   var buf = parseFromFile(path)
   var n = beginRead(buf)
@@ -577,6 +625,7 @@ proc readDocIdx(path: string; entries: var seq[IndexEntry];
   var modid = ""
   var modname = ""
   var modRelpath = ""
+  let beforeEntries = entries.len
   while n.kind != ParRi:
     if n.kind != ParLe:
       inc n
@@ -589,7 +638,6 @@ proc readDocIdx(path: string; entries: var seq[IndexEntry];
       modname = takeStrLit(n)
       discard takeStrLit(n)            # srcPath (unused by link step today)
       modRelpath = takeStrLit(n)
-      modules.add (modid, modname, modRelpath)
     of "entry":
       var e = IndexEntry(modid: modid, modname: modname, modRelpath: modRelpath)
       e.kind = takeStrLit(n)
@@ -601,6 +649,8 @@ proc readDocIdx(path: string; entries: var seq[IndexEntry];
     while n.kind != ParRi: skip n
     inc n  # closing ')'
   endRead(buf)
+  if entries.len > beforeEntries:
+    modules.add (modid, modname, modRelpath)
 
 const IndexCss = """
 ul.modules { list-style: none; padding: 0; column-count: 3; column-gap: 1.5rem; }
@@ -621,6 +671,7 @@ proc renderLinkIndex(output: string; idxFiles: openArray[string];
   entries.sort do (a, b: IndexEntry) -> int:
     let c = cmpIgnoreCase(a.basename, b.basename)
     if c != 0: c else: cmp(a.modid, b.modid)
+
   modules.sort do (a, b: (string, string, string)) -> int:
     cmpIgnoreCase(a[1], b[1])
 
