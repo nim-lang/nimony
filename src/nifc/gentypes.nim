@@ -295,7 +295,9 @@ template atom(c: var GeneratedCode; s, name: string; isConst: bool) =
 proc atomNumber(c: var GeneratedCode; n: var Cursor; typeName, name: string; isConst: bool) =
   var s: string
   n.into:
-    if n.kind == IntLit:
+    # Empty type tags like `(bool)` have no children — guard with hasMore
+    # before peeking, otherwise we'd read the next sibling.
+    if n.hasMore and n.kind == IntLit:
       s = typeName & integralBits(n)
       inc n
     else:

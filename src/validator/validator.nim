@@ -701,21 +701,35 @@ proc hasBufferArg(st: SymbolTable; reg: TypeRegistry; callNode: Cursor): bool =
   false
 
 const
+  # Closed set: classic SkipIntent role enum, plus structural TagClass.
   SkipIntentNames = ["SkipTag", "SkipParRi", "SkipName", "SkipExport",
                      "SkipPragmas", "SkipType", "SkipValue", "SkipGenParams",
                      "SkipEffects",
-                     "SkipCond", "SkipBody", "SkipExpr", "SkipResult", "SkipFull"]
+                     "SkipCond", "SkipBody", "SkipExpr", "SkipResult", "SkipFull",
+                     # TagClass — structural categories
+                     "Anything", "AnyExpr", "AnyStmt", "AnyType"]
 
 proc hasIntentArg(n: Cursor): bool =
-  ## Check if the call/cmd has a SkipIntent enum argument or a string literal.
-  ## Accepts both: enum values (Ident matching SkipIntentNames) and legacy strings.
+  ## Check if the call/cmd has an intent argument (any of: SkipIntent enum,
+  ## TagClass enum, a per-language tag enum value like `IfS`/`ProcS`/…, a
+  ## qualified `EnumName.Value`, or a legacy string literal).
+  ##
+  ## Per-language tag enums (NimonyStmt, NifcStmt, …) have hundreds of
+  ## values, so we can't enumerate them. We accept *any* Ident or qualified
+  ## reference as a candidate intent — the runtime assertion in the
+  ## inc/skip/into overload catches wrong values. The validator's job is
+  ## just to confirm an intent annotation is present at the call site.
   var c = n
   inc c # skip (cmd/(call
   skip c # skip callee
   while c.kind != ParRi:
     if c.kind == StringLit:
       return true
-    if c.kind == Ident and pool.strings[c.litId] in SkipIntentNames:
+    if c.kind == Ident:
+      # Either a known SkipIntent/TagClass name or a tag enum value (loose).
+      return true
+    if c.kind == ParLe and pool.tags[c.tag] == "dot":
+      # A qualified reference like `NimonyStmt.IfS`.
       return true
     skip c
   false

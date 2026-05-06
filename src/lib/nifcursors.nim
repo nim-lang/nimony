@@ -731,15 +731,80 @@ type
     SkipResult    ## skip a result that has been handled separately
     SkipFull      ## skip an entire subtree being dropped or replaced
 
+proc skipIntentMatches*(k: NifKind; intent: SkipIntent): bool {.inline.} =
+  ## Loose predicate: catches obviously wrong intents (wrong direction,
+  ## skipping a stmt where there's no ParLe, etc.) without over-fitting.
+  case intent
+  of SkipTag:        k == ParLe
+  of SkipParRi:      k == ParRi
+  of SkipName:       k in {SymbolDef, Symbol, Ident, DotToken}
+  of SkipExport:     k in {DotToken, Ident, ParLe}
+  of SkipPragmas:    k in {DotToken, ParLe}
+  of SkipType:       k in {ParLe, Symbol, Ident, DotToken, IntLit, UIntLit}
+  of SkipExpr:       k notin {EofToken, ParRi}
+  of SkipStmt:       k in {ParLe, DotToken}
+  of SkipValue:      k notin {EofToken, ParRi}
+  of SkipGenParams:  k in {DotToken, ParLe}
+  of SkipCond:       k notin {EofToken, ParRi}
+  of SkipBody:       k in {DotToken, ParLe}
+  of SkipEffects:    k in {DotToken, ParLe}
+  of SkipResult:     k in {DotToken, ParLe, Symbol, SymbolDef}
+  of SkipFull:       k != EofToken
+
 template skip*(c: var Cursor; intent: SkipIntent) =
-  ## Skip a subtree with declared intent. The intent enum documents why the
-  ## input is being dropped and enables the validator to check correctness.
+  ## Skip a subtree with declared intent. The intent is enforced at runtime
+  ## via a loose predicate (`skipIntentMatches`) so wrong labels fire early.
+  assert skipIntentMatches(c.kind, intent),
+    "skip " & $intent & ": cursor at " & $c.kind & " is incompatible"
   skip(c)
 
 template inc*(c: var Cursor; intent: SkipIntent) =
-  ## Advance one token with declared intent. The intent enum documents why
-  ## the token is being dropped and enables the validator to check correctness.
+  ## Advance one token with declared intent. Same enforcement as `skip`.
+  assert skipIntentMatches(c.kind, intent),
+    "inc " & $intent & ": cursor at " & $c.kind & " is incompatible"
   inc c
+
+# ── TagClass: structural categories of tokens ──────────────────────────────
+# These complement `SkipIntent` (which describes a *role* in a parent shape)
+# with a *kind* category. Used as the intent argument to `inc`/`skip`/`into`
+# when the precise tag isn't statically known but a category is.
+
+type
+  TagClass* = enum
+    Anything    ## any single token (any NifKind except EofToken)
+    AnyExpr     ## any expression position — atom or ParLe (anything but EOF/ParRi)
+    AnyStmt     ## any statement position — ParLe-tagged or DotToken (no-op)
+    AnyType     ## any type position — ParLe-tagged, Symbol/Ident alias, or DotToken (void)
+
+proc tagClassMatches*(k: NifKind; expected: TagClass): bool {.inline.} =
+  case expected
+  of Anything: k != EofToken
+  of AnyExpr:  k notin {EofToken, ParRi}
+  of AnyStmt:  k in {ParLe, DotToken}
+  of AnyType:  k in {ParLe, Symbol, Ident, DotToken}
+
+template skip*(c: var Cursor; expected: TagClass) =
+  assert tagClassMatches(c.kind, expected),
+    "skip " & $expected & ": cursor at " & $c.kind & " is incompatible"
+  skip(c)
+
+template inc*(c: var Cursor; expected: TagClass) =
+  assert tagClassMatches(c.kind, expected),
+    "inc " & $expected & ": cursor at " & $c.kind & " is incompatible"
+  inc c
+
+template into*(c: var Cursor; expected: TagClass; body: untyped) =
+  ## Like the bare `into`, but asserts the entered scope matches `expected`.
+  assert tagClassMatches(c.kind, expected),
+    "into " & $expected & ": cursor at " & $c.kind & " is incompatible"
+  into c:
+    body
+
+template loopInto*(c: var Cursor; expected: TagClass; body: untyped) =
+  assert tagClassMatches(c.kind, expected),
+    "loopInto " & $expected & ": cursor at " & $c.kind & " is incompatible"
+  loopInto c:
+    body
 
 proc takeTree*(dest: var TokenBuf; n: var Cursor) =
   if n.kind != ParLe:

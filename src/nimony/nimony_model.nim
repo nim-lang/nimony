@@ -122,6 +122,50 @@ type
   PragmaKind* = NimonyPragma
   TypeKind* = NimonyType
 
+# ── Tag-typed intent overloads for inc/skip/into/loopInto ───────────────────
+# Concrete-tag intents document the expected node kind and fail loudly at
+# runtime when reality differs. Use these when the tag is statically known
+# (`n.into IfS: …`); use `TagClass` (Anything/AnyExpr/AnyStmt/AnyType) for
+# the looser categorical intent; fall back to `SkipIntent` for role-style
+# annotations (SkipName, SkipPragmas, …).
+
+type NimonyTagKind* =
+  NimonyStmt | NimonyExpr | NimonyType | NimonyOther | NimonyPragma | NimonySym
+
+template kindMatches(c: Cursor; expected: NimonyTagKind): bool =
+  when expected is NimonyStmt:    c.stmtKind == expected
+  elif expected is NimonyExpr:    c.exprKind == expected
+  elif expected is NimonyType:    c.typeKind == expected
+  elif expected is NimonyOther:   c.substructureKind == expected
+  elif expected is NimonyPragma:  c.pragmaKind == expected
+  elif expected is NimonySym:     c.symKind == expected
+
+template skip*(c: var Cursor; expected: NimonyTagKind) =
+  assert kindMatches(c, expected),
+    "skip " & $expected & ": cursor at kind=" & $c.kind &
+    " (stmt=" & $c.stmtKind & " expr=" & $c.exprKind & " type=" & $c.typeKind & ")"
+  skip c
+
+template inc*(c: var Cursor; expected: NimonyTagKind) =
+  assert kindMatches(c, expected),
+    "inc " & $expected & ": cursor at kind=" & $c.kind &
+    " (stmt=" & $c.stmtKind & " expr=" & $c.exprKind & " type=" & $c.typeKind & ")"
+  inc c
+
+template into*(c: var Cursor; expected: NimonyTagKind; body: untyped) =
+  assert kindMatches(c, expected),
+    "into " & $expected & ": cursor at kind=" & $c.kind &
+    " (stmt=" & $c.stmtKind & " expr=" & $c.exprKind & " type=" & $c.typeKind & ")"
+  into c:
+    body
+
+template loopInto*(c: var Cursor; expected: NimonyTagKind; body: untyped) =
+  assert kindMatches(c, expected),
+    "loopInto " & $expected & ": cursor at kind=" & $c.kind &
+    " (stmt=" & $c.stmtKind & " expr=" & $c.exprKind & " type=" & $c.typeKind & ")"
+  loopInto c:
+    body
+
 const
   IntT* = IT
   UIntT* = UT

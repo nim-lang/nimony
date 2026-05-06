@@ -240,3 +240,38 @@ proc takeVarDecl*(n: var Cursor): VarDecl =
     skip n
     result.value = n
     skip n
+
+# ── Tag-typed intent overloads (mirrors nimony_model's pattern) ─────────────
+
+type NifcTagKind* =
+  NifcStmt | NifcExpr | NifcType | NifcOther | NifcPragma | NifcSym
+
+template kindMatches(c: Cursor; expected: NifcTagKind): bool =
+  when expected is NifcStmt:    c.stmtKind == expected
+  elif expected is NifcExpr:    c.exprKind == expected
+  elif expected is NifcType:    c.typeKind == expected
+  elif expected is NifcOther:   c.substructureKind == expected
+  elif expected is NifcPragma:  c.pragmaKind == expected
+  elif expected is NifcSym:     c.symKind == expected
+
+template skip*(c: var Cursor; expected: NifcTagKind) =
+  assert kindMatches(c, expected),
+    "skip " & $expected & ": cursor at kind=" & $c.kind
+  skip c
+
+template inc*(c: var Cursor; expected: NifcTagKind) =
+  assert kindMatches(c, expected),
+    "inc " & $expected & ": cursor at kind=" & $c.kind
+  inc c
+
+template into*(c: var Cursor; expected: NifcTagKind; body: untyped) =
+  assert kindMatches(c, expected),
+    "into " & $expected & ": cursor at kind=" & $c.kind
+  into c:
+    body
+
+template loopInto*(c: var Cursor; expected: NifcTagKind; body: untyped) =
+  assert kindMatches(c, expected),
+    "loopInto " & $expected & ": cursor at kind=" & $c.kind
+  loopInto c:
+    body
