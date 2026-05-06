@@ -49,6 +49,10 @@ Commands:
                        If no file is provided `bug.nim` is used.
   rep                  repeat the last failing tool command from the session.
   record <file> <tout> track the results to make it part of the test suite.
+  install              write activation script(s) at the project root that
+                       prepend the toolchain dirs to `$PATH` for the current
+                       shell. On Windows, also download MinGW+LLVM (gcc,
+                       clang, lld) and Nim's DLL deps into `external/`.
   clean                remove all generated files.
   sync [new-branch]    delete current branch and pull the latest
                        changes from remote. Optionally creates a new branch.
@@ -1380,6 +1384,8 @@ proc dagontests(overwrite: bool) =
   else:
     echo "SUCCESS."
 
+import install
+
 proc syncCmd(newBranch: string) =
   let (output, status) = execCmdEx("git symbolic-ref --short HEAD")
   if status != 0:
@@ -1651,6 +1657,8 @@ proc handleCmdLine =
   of "clean":
     removeDir "nimcache"
     removeDir "bin"
+  of "install":
+    runInstall(args)
   of "sync":
     syncCmd(if args.len > 0: args[0] else: "")
   of "pull":
