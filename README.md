@@ -55,4 +55,4 @@ The [examples/](examples/) directory contains runnable Nim files that serve as b
 
 ## Language manual
 
-The [language manual](doc/manual.md) covers syntax, semantics, and the type system.
+The [language manual](doc/language.md) covers syntax, semantics, and the type system.

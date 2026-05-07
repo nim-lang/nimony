@@ -309,7 +309,7 @@ it can be modified:
 `cstring` values may also be used in case statements like strings.
 
 
-### Array type
+## Array type
 
 An array is a fixed sized container of elements. Each element in the array has the
 same type.
@@ -341,7 +341,7 @@ An array constructor can have explicit indexes for readability:
   ```
 
 
-### seq type
+## seq type
 
 Sequences can be constructed by the array constructor `[]` in conjunction
 with the array to sequence operator `@`. Another way to allocate space for a
@@ -375,7 +375,7 @@ The notation `x[i]` can be used to access the i-th element of `x`.
 
 
 
-### openArray type
+## openArray type
 
 An `openArray` is a *slice* into a contiguous container such as an array or
 a `seq`. As a slice it does not own the data and so it must be used carefully.
@@ -392,7 +392,7 @@ to open arrays without any explicit operation:
   testOpenArray(@[1,2,3]) # seq[]
   ```
 
-### Unchecked arrays
+## Unchecked arrays
 The `UncheckedArray[T]` type is a special kind of `array` where its bounds
 are not checked. This is often useful to implement customized flexibly sized
 arrays. Additionally, an unchecked array is translated into a C array of
@@ -416,7 +416,7 @@ Produces roughly this C code:
   ```
 
 
-### varargs
+## varargs
 
 `varargs` is a pragma that can be applied to `importc` procs to indicate
 the proc takes a variable number of arguments (`printf` being the typical
@@ -441,7 +441,7 @@ template echo*() {.varargs} =
 
 
 
-### Tuples and object types
+## Tuples and object types
 A variable of a tuple or object type is a heterogeneous storage
 container.
 A tuple or object defines various named *fields* of a type. A tuple also
@@ -533,7 +533,7 @@ The assignment operator for tuples and objects copies each component.
 The methods to override this copying behavior are described [here][Lifetime-tracking hooks].
 
 
-### Object construction
+## Object construction
 
 Objects can also be created with an `object construction expression`:idx: that
 has the syntax `T(fieldA: valueA, fieldB: valueB, ...)` where `T` is
@@ -557,7 +557,7 @@ Note that, unlike tuples, objects require the field names along with their value
 For a `ref object` type `system.new` is invoked implicitly.
 
 
-### Case in object
+## Case in object
 
 Objects can contain a `case` section to create variant types, where different object variants have different fields:
 
@@ -617,7 +617,7 @@ type
 ```
 
 
-### Default values for object fields
+## Default values for object fields
 
 Object fields are allowed to have a constant default value.
 
@@ -671,7 +671,7 @@ block: # created with the proc `new`
 ```
 
 
-### Set type
+## Set type
 
 The set type models the mathematical notion of a set. The set's basetype can
 only be an ordinal type of a certain size, namely:
@@ -733,7 +733,7 @@ operation             meaning
 
 
 
-### Reference and pointer types
+## Reference and pointer types
 
 References (similar to pointers in other programming languages) are a
 way to introduce many-to-one relationships. This means different references can
@@ -802,7 +802,7 @@ To deal with untraced memory, the procs `alloc`, `dealloc` and
 contains further information.
 
 
-### Nil
+## Nil
 
 By default, `ref`, `ptr`, `pointer`, `cstring` and procedural types (`proc`) **cannot** hold the value `nil`. Dereferencing `nil` is prevented at compile-time.
 
@@ -830,7 +830,7 @@ For `nil` types the compiler enforces that every dereference is guarded by a nil
   ```
 
 
-### Unchecked pointer types
+## Unchecked pointer types
 
 For low-level code and FFI interop, the `unchecked` prefix disables nil tracking entirely.
 No nil-checking is performed by the compiler on `unchecked` pointer types:
@@ -845,7 +845,7 @@ No nil-checking is performed by the compiler on `unchecked` pointer types:
 `unchecked` can be applied to `ref`, `ptr`, `pointer`,  `cstring` and proc types (`proc`).
 
 
-### Lenient nils
+## Lenient nils
 
 For backward compatibility with Nim code, the `.feature: "lenientnils"` pragma can be
 used to make `ref`, `ptr`, `pointer` and `cstring` types nullable by default within a module,
@@ -858,7 +858,7 @@ matching classic Nim behavior:
   ```
 
 
-### Proc type
+## Proc type
 
 A procedural type is internally a pointer to a proc. Like other pointer types,
 procedural types cannot be `nil` by default. Use `nil proc (...)` to declare
@@ -940,7 +940,7 @@ Most calling conventions exist only for the Windows 32-bit platform.
 The default calling convention is `nimcall`.
 
 
-### Distinct type
+## Distinct type
 
 A `distinct` type is a new type derived from a `base type`:idx: that is
 incompatible with its base type. In particular, it is an essential property

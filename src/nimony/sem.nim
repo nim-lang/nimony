@@ -6907,7 +6907,9 @@ proc maybeValidatePostSem(dest: var TokenBuf; moduleName: string) =
   ## that drift from the spec is a hard error. Active by default in host-Nim
   ## builds; nimony's own bootstrap build skips this until the validator
   ## (`phase_validator.nim` / `tags_grammar.nim`) compiles under nimony.
-  when not defined(nimony):
+  ## `-d:skipPostSemValidator` opts out (used by Windows CI — see hastur's
+  ## `validatePassesFlag`).
+  when not defined(nimony) and not defined(skipPostSemValidator):
     let phase = postSemPhase()
     let violations = validate(dest, phase)
     if violations.len > 0:
