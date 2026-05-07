@@ -115,22 +115,22 @@ proc loadVTable*(typ: SymId): seq[semdata.MethodIndexEntry] =
   let typeDecl = asTypeDecl(res.decl)
   var pragmas = typeDecl.pragmas
   if pragmas.kind == ParLe:
-    inc pragmas # skip (pragmas
-    while pragmas.kind != ParRi:
-      if pragmas.kind == ParLe and pragmas.pragmaKind == MethodsP:
-        inc pragmas # skip (methods
-        while pragmas.kind == ParLe and pragmas.substructureKind == KvU:
-          inc pragmas # skip (kv
-          if pragmas.kind == StringLit:
-            let signature = pragmas.litId
-            inc pragmas
-            if pragmas.kind == Symbol:
-              let methodSym = pragmas.symId
-              result.add semdata.MethodIndexEntry(fn: methodSym, signature: signature)
-              inc pragmas
-            skipParRi pragmas
-          else:
-            skip pragmas
-        skipParRi pragmas # skip methods )
-      else:
-        skip pragmas
+    pragmas.into:  # (pragmas …)
+      while pragmas.hasMore:
+        if pragmas.kind == ParLe and pragmas.pragmaKind == MethodsP:
+          pragmas.into:  # (methods …)
+            while pragmas.hasMore:
+              if pragmas.kind == ParLe and pragmas.substructureKind == KvU:
+                pragmas.into KvU:
+                  if pragmas.hasMore and pragmas.kind == StringLit:
+                    let signature = pragmas.litId
+                    inc pragmas, AnyExpr
+                    if pragmas.hasMore and pragmas.kind == Symbol:
+                      let methodSym = pragmas.symId
+                      result.add semdata.MethodIndexEntry(fn: methodSym, signature: signature)
+                      inc pragmas, AnyExpr
+                  while pragmas.hasMore: skip pragmas
+              else:
+                skip pragmas  # non-KvU child of (methods)
+        else:
+          skip pragmas  # not (methods …)

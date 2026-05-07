@@ -50,17 +50,16 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
         inc nested
       elif c.typeKind == TupleT:
         b.addTree(tag)
-        inc c
-        while c.kind != ParRi:
-          if c.substructureKind == KvU:
-            inc c
-            skip c, SkipName # name
-            mangleImpl b, c, mm # type is interesting
-            inc c # ParRi
-          else:
-            mangleImpl b, c, mm
+        c.into:
+          while c.hasMore:
+            if c.substructureKind == KvU:
+              c.into KvU:
+                skip c, SkipName # name
+                mangleImpl b, c, mm # type is interesting
+                while c.hasMore: skip c, SkipFull
+            else:
+              mangleImpl b, c, mm
         b.endTree()
-        inc c # ParRi
       elif c.typeKind in {UIntT, IntT, FloatT}:
         b.addTree(tag)
         inc c
@@ -75,16 +74,14 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
         inc nested
       elif mm == Backend and c.typeKind in {RefT, PtrT, CstringT, PointerT}:
         b.addTree(tag)
-        inc c
-        # mangle children except nil annotations:
-        while c.kind != ParRi:
-          if isNilAnnotation(c):
-            skip c
-          else:
-            mangleImpl b, c, mm
-        assert c.kind == ParRi
+        c.into:
+          # mangle children except nil annotations:
+          while c.hasMore:
+            if isNilAnnotation(c):
+              skip c
+            else:
+              mangleImpl b, c, mm
         b.endTree()
-        inc c
       elif mm == Backend and c.typeKind in RoutineTypes:
         b.addRaw mangleProctype(b, c, mm)
       elif isNilAnnotation(c):
@@ -169,12 +166,13 @@ proc mangleProctype(b: var Mangler; n: var Cursor; mm: MangleMode): string =
 
   var b = createMangler(60)
   if n.kind != DotToken:
-    inc n # params tag
-    while n.kind != ParRi:
-      let pa = takeLocal(n, SkipFinalParRi)
-      assert pa.kind == ParamY
-      mangle b, pa.typ, mm
-  inc n # DotToken or ParRi
+    n.into:  # (params …)
+      while n.hasMore:
+        let pa = takeLocal(n, SkipFinalParRi)
+        assert pa.kind == ParamY
+        mangle b, pa.typ, mm
+  else:
+    inc n, AnyType  # the `.` placeholder for missing params
   # also add return type:
   mangle b, n, Backend
   skip n

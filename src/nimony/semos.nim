@@ -225,22 +225,20 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
       for suf in mitems(suffix):
         res.add ImportedFilename(path: op & suf.path, name: suf.name, plugin: suf.plugin)
     of ParX, TupX, BracketX:
-      inc n
-      if n.kind == ParRi:
-        hasError = true
-      else:
-        while n.kind != ParRi:
-          filenameVal(n, res, hasError, allowAs)
-      inc n
+      n.into:
+        if not n.hasMore:
+          hasError = true
+        else:
+          while n.hasMore:
+            filenameVal(n, res, hasError, allowAs)
     of AconstrX, TupconstrX:
-      inc n
-      skip n # skip type
-      if n.kind == ParRi:
-        hasError = true
-      else:
-        while n.kind != ParRi:
-          filenameVal(n, res, hasError, allowAs)
-      inc n
+      n.into:
+        skip n, SkipType  # type
+        if not n.hasMore:
+          hasError = true
+        else:
+          while n.hasMore:
+            filenameVal(n, res, hasError, allowAs)
     of PragmaxX:
       let orig = n
       inc n

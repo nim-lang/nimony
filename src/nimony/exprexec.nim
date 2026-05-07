@@ -283,15 +283,15 @@ proc unravelTuple(c: var SynthesizeSerializerCtx;
   genStringCall(c, "writeNifRaw", toString(orig, false))
 
   var n = orig
-  inc n
   var idx = 0
-  while n.kind != ParRi:
-    let fieldType = getTupleFieldType(n)
-    skip n
+  n.into:  # (tuple …)
+    while n.hasMore:
+      let fieldType = getTupleFieldType(n)
+      skip n
 
-    let a = accessTupField(c, param, idx)
-    unravel c, fieldType, a
-    inc idx
+      let a = accessTupField(c, param, idx)
+      unravel c, fieldType, a
+      inc idx
   genParRiCall c
 
 
@@ -393,17 +393,17 @@ proc unravelEnum(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenB
   c.dest.addParLe CaseS, c.info
   c.dest.add param
   var enumDecl = orig
-  inc enumDecl # skips enum
-  skip enumDecl # skips base type
-  while enumDecl.kind != ParRi:
-    let enumDeclInfo = enumDecl.info
-    c.dest.copyIntoKind OfU, enumDeclInfo:
-      c.dest.copyIntoKind RangesU, enumDeclInfo:
-        let enumField = takeLocal(enumDecl, SkipFinalParRi)
-        let esym = enumField.name.symId
-        c.dest.addSymUse esym, enumDeclInfo
-      c.dest.copyIntoKind StmtsS, enumDeclInfo:
-        genStringCall(c, "writeNifSymbol", pool.syms[esym])
+  enumDecl.into:  # (enum baseType field1 field2 …)
+    skip enumDecl, SkipType  # base type
+    while enumDecl.hasMore:
+      let enumDeclInfo = enumDecl.info
+      c.dest.copyIntoKind OfU, enumDeclInfo:
+        c.dest.copyIntoKind RangesU, enumDeclInfo:
+          let enumField = takeLocal(enumDecl, SkipFinalParRi)
+          let esym = enumField.name.symId
+          c.dest.addSymUse esym, enumDeclInfo
+        c.dest.copyIntoKind StmtsS, enumDeclInfo:
+          genStringCall(c, "writeNifSymbol", pool.syms[esym])
   c.dest.addParRi() # case
 
 proc primitiveCall(c: var SynthesizeSerializerCtx; name: string; arg: Cursor) =

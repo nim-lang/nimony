@@ -218,10 +218,9 @@ proc skipParRi(n: var Cursor) =
 template copyInto*(dest: var TokenBuf; n: var Cursor; body: untyped) =
   assert n.kind == ParLe
   dest.add n
-  inc n
-  body
+  n.into:
+    body
   dest.addParRi()
-  skipParRi n
 
 proc isAtom*(n: Cursor): bool {.inline.} = n.kind < ParLe
 
@@ -312,12 +311,12 @@ const
 proc extractPragma*(n: Cursor; kind: PragmaKind): Cursor =
   var n = n
   if n.kind != DotToken:
-    inc n
-    while n.kind != ParRi:
-      if pragmaKind(n) == kind:
-        inc n
-        return n
-      skip n
+    n.into:  # (pragmas …)
+      while n.hasMore:
+        if pragmaKind(n) == kind:
+          inc n, SkipTag  # past the matched pragma's open
+          return n  # caller reads the pragma's value at this position
+        skip n
   result = default(Cursor)
 
 proc hasPragma*(n: Cursor; kind: PragmaKind): bool =

@@ -98,14 +98,13 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
   let unpackInfo = it.n.info
   case it.n.substructureKind
   of UnpackflatU, UnpacktupU:
-    inc it.n
     # take direct ident names for now,
-    # defining and substituting full symbols would need prepass: 
+    # defining and substituting full symbols would need prepass:
     var names: seq[StrId] = @[]
-    while it.n.kind != ParRi:
-      let loopvar = takeLocal(it.n, SkipFinalParRi)
-      names.add getIdent(loopvar.name)
-    skipParRi it.n
+    it.n.into:
+      while it.n.hasMore:
+        let loopvar = takeLocal(it.n, SkipFinalParRi)
+        names.add getIdent(loopvar.name)
     if fieldPairs:
       if names.len == 2 or names.len == 3:
         iter.nameVar = names[0]
@@ -187,18 +186,18 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
 
   if isTuple:
     var tup = objType
-    inc tup
     var i = 0
-    while tup.kind != ParRi:
-      let fld = asTupleField(tup)
-      let name =
-        if not cursorIsNil(fld.name):
-          getIdent(fld.name)
-        else:
-          pool.strings.getOrIncl("Field" & $(i+1))
-      buildTupleFieldIter(iterBuf, iter, i, name, body)
-      skip tup
-      inc i
+    tup.into:
+      while tup.hasMore:
+        let fld = asTupleField(tup)
+        let name =
+          if not cursorIsNil(fld.name):
+            getIdent(fld.name)
+          else:
+            pool.strings.getOrIncl("Field" & $(i+1))
+        buildTupleFieldIter(iterBuf, iter, i, name, body)
+        skip tup
+        inc i
   else: # object
     # same order as original nim fields iterator:
     while true:
