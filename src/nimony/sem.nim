@@ -2742,23 +2742,23 @@ proc findSumTypeInfo(selectorType: TypeCursor): SumTypeInfo =
   if body.typeKind != ObjectT: return
   let obj = asObjectDecl(body)
   var field = obj.body
-  field.into:
-    skip field, AnyType  # parent type / inheritance slot
-    while field.hasMore and field.substructureKind == FldU:
-      skip field
-    if not field.hasMore or field.substructureKind != CaseU: return
-    field.into:
-      if not field.hasMore or field.substructureKind != FldU: return
-      let fld = asLocal(field)
-      var discrimType = fld.typ
-      if discrimType.kind == Symbol:
-        let typeRes = tryLoadSym(discrimType.symId)
-        if typeRes.status == LacksNothing:
-          let td = asTypeDecl(typeRes.decl)
-          if td.body.typeKind == AnumT:
-            result = SumTypeInfo(valid: true, discrimSym: fld.name.symId,
-                                 discrimType: fld.typ, isRef: isRef,
-                                 objTypeSym: typeSym, invokeArgs: invokeArgs)
+  inc field  # past (object
+  skip field, AnyType  # parent type / inheritance slot
+  while field.hasMore and field.substructureKind == FldU:
+    skip field
+  if not field.hasMore or field.substructureKind != CaseU: return
+  inc field  # past (case
+  if not field.hasMore or field.substructureKind != FldU: return
+  let fld = asLocal(field)
+  var discrimType = fld.typ
+  if discrimType.kind == Symbol:
+    let typeRes = tryLoadSym(discrimType.symId)
+    if typeRes.status == LacksNothing:
+      let td = asTypeDecl(typeRes.decl)
+      if td.body.typeKind == AnumT:
+        result = SumTypeInfo(valid: true, discrimSym: fld.name.symId,
+                             discrimType: fld.typ, isRef: isRef,
+                             objTypeSym: typeSym, invokeArgs: invokeArgs)
 
 type
   SumTypeBranchField = object
