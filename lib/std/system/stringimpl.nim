@@ -16,7 +16,7 @@ const
 
 const LongStringDataOffset = 3 * sizeof(int)  ## byte offset of LongString.data from start
 
-## OOM cookie: "\nD^OOM\0" packed inline (slen=7). Detect with `isOom(s)`.
+# OOM cookie: "\nD^OOM\0" packed inline (slen=7). Detect with `isOom(s)`.
 when defined(bigEndian):
   const OomBytes*: uint = 0x070A445E4F4F4D00'u
 else:
