@@ -37,7 +37,7 @@ const
   NaturalMaxJump = (1'u32 shl (32'u32 - JumpShift)) - 1'u32       # 0x7FFFF
 
 const
-  NifJumpCap* {.intdefine.}: int = int(NaturalMaxJump)
+  NifJumpCap*: int = int(NaturalMaxJump)
     ## Test/stress knob (only meaningful under `-d:virtualParRi`): lower
     ## with `-d:nifJumpCap=N` to artificially shrink the elision window so
     ## any subtree of ≥ N body tokens hits the real-ParRi overflow path.
