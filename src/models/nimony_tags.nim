@@ -174,7 +174,7 @@ type
     CommentS = (ord(CommentTagId), "comment")  ## `comment` statement; also used as a variadic trailer for module metadata
     DiscardS = (ord(DiscardTagId), "discard")  ## `discard` statement; optional expression to discard
     TryS = (ord(TryTagId), "try")  ## `try` statement
-    RaiseS = (ord(RaiseTagId), "raise")  ## `raise` statement
+    RaiseS = (ord(RaiseTagId), "raise")  ## `raise` statement; bare `(raise .)` re-raises the in-flight exception (only valid inside an `except` block)
     UnpackdeclS = (ord(UnpackdeclTagId), "unpackdecl")  ## unpack var/let/const declaration
     AssumeS = (ord(AssumeTagId), "assume")  ## `assume` pragma/annotation
     AssertS = (ord(AssertTagId), "assert")  ## `assert` pragma/annotation
@@ -241,8 +241,8 @@ type
     TypedescT = (ord(TypedescTagId), "typedesc")  ## `typedesc` type
     UntypedT = (ord(UntypedTagId), "untyped")  ## `untyped` type
     TypedT = (ord(TypedTagId), "typed")  ## `typed` type
-    CstringT = (ord(CstringTagId), "cstring")  ## `cstring` type; optional child is the string literal used in a `cstring"…"` generalized string
-    PointerT = (ord(PointerTagId), "pointer")  ## `pointer` type; the optional `(nil)` annotation marks a nilable pointer
+    CstringT = (ord(CstringTagId), "cstring")  ## `cstring` type; optional first child is the string literal used in a `cstring"…"` generalized string; further attributes carry importc/header overrides inlined from `{.importc.}` aliases
+    PointerT = (ord(PointerTagId), "pointer")  ## `pointer` type; the optional `(nil)` annotation marks a nilable pointer; further attributes carry importc/header overrides inlined from `{.importc.}` aliases
     OrdinalT = (ord(OrdinalTagId), "ordinal")  ## `ordinal` type
 
 proc rawTagIsNimonyType*(raw: TagEnum): bool {.inline.} =

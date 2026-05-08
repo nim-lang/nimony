@@ -71,7 +71,7 @@ type
     CommentL = (ord(CommentTagId), "comment")  ## `comment` statement; also used as a variadic trailer for module metadata
     DiscardL = (ord(DiscardTagId), "discard")  ## `discard` statement; optional expression to discard
     TryL = (ord(TryTagId), "try")  ## `try` statement
-    RaiseL = (ord(RaiseTagId), "raise")  ## `raise` statement
+    RaiseL = (ord(RaiseTagId), "raise")  ## `raise` statement; bare `(raise .)` re-raises the in-flight exception (only valid inside an `except` block)
     StaticL = (ord(StaticTagId), "static")  ## `static` type or annotation
     UnpackflatL = (ord(UnpackflatTagId), "unpackflat")  ## unpack into flat variable list
     UnpacktupL = (ord(UnpacktupTagId), "unpacktup")  ## unpack tuple
