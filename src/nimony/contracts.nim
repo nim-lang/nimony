@@ -210,7 +210,7 @@ proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): P
     var r = req
     while r.exprKind == ExprX:
       inc r
-      while r.kind != ParRi and not isLastSon(r): skip r
+      while r.hasMore and not isLastSon(r): skip r
     result = checkReq(c, paramMap, r, call)
   else:
     result = Unprovable
@@ -223,12 +223,12 @@ proc markedAs(t: Cursor; mark: NimonyOther): bool =
   of PtrT, RefT:
     var e = t.firstSon
     skip e # base type
-    if e.kind != ParRi and e.substructureKind == mark:
+    if e.hasMore and e.substructureKind == mark:
       result = true
   of CstringT, PointerT:
     let e = t.firstSon
     # no base type
-    if e.kind != ParRi and e.substructureKind == mark:
+    if e.hasMore and e.substructureKind == mark:
       result = true
   of ProctypeT:
     # New layout: `(proctype <NilTag> (params) RetType <Pragmas>)`. The
@@ -317,7 +317,7 @@ proc analyseOconstr(c: var Context; n: var Cursor) =
     skip n # field name
     checkNilMatch c, n, expected
     skip n # value
-    if n.kind != ParRi:
+    if n.hasMore:
       # optional inheritance
       skip n
     skipParRi n
@@ -337,7 +337,7 @@ proc analyseTupConstr(c: var Context; n: var Cursor) =
   var expected = n.firstSon # type of the first field
   skip n # type
   while n.hasMore:
-    assert expected.kind != ParRi
+    assert expected.hasMore
     checkNilMatch c, n, getTupleFieldType(expected)
     skip n
     skip expected # type of the next field
@@ -374,8 +374,8 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
         wantNotNilDeref c, pc
         analyseExpr c, pc # object
         skip pc # field name
-        if pc.kind != ParRi: skip pc # inheritence depth
-        if pc.kind != ParRi: skip pc # optional access-token string lit
+        if pc.hasMore: skip pc # inheritence depth
+        if pc.hasMore: skip pc # optional access-token string lit
         skipParRi pc
       of DerefX:
         inc pc
@@ -407,7 +407,7 @@ proc analyseCallArgs(c: var Context; n: var Cursor) =
   var paramMap = initTable[SymId, int]() # param to position
   while n.hasMore:
     let previousFormalParam = fnType
-    assert fnType.kind != ParRi
+    assert fnType.hasMore
     let param = takeLocal(fnType, SkipFinalParRi)
     paramMap[param.name.symId] = paramMap.len+1
     let pk = param.typ.typeKind

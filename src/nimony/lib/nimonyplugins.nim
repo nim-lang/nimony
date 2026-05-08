@@ -73,7 +73,7 @@ proc copyBuffer(buf: TokenBuf): TokenBuf =
   result.add buf
 
 proc hasSubtree(n: NifCursor): bool {.inline.} =
-  hasCurrentToken(n.cursor) and n.cursor.kind != ParRi
+  hasCurrentToken(n.cursor) and n.cursor.hasMore
 
 proc createTree(buf: sink TokenBuf): NifBuilder =
   result = NifBuilder(p: initNifBuilderObj(buf))
@@ -372,7 +372,7 @@ proc skip*(n: var NifCursor) =
 
 template hasMore*(n: NifCursor): bool =
   ## True while there are more children before the closing `)`.
-  n.kind != ParRi
+  n.hasMore
 
 template into*(n: var NifCursor; body: untyped) =
   ## Enters the current node, runs `body` to process the children,

@@ -195,7 +195,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
         let alias = pool.strings[aliasId]
         var prefix: seq[ImportedFilename] = @[]
         filenameVal(x, prefix, hasError, allowAs = false)
-        if rhs.kind != ParRi or prefix.len == 0:
+        if rhs.hasMore or prefix.len == 0:
           hasError = true
         for pre in mitems(prefix):
           res.add ImportedFilename(path: pre.path, name: alias)
@@ -204,7 +204,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
         filenameVal(x, prefix, hasError, allowAs = false)
         var suffix: seq[ImportedFilename] = @[]
         filenameVal(x, suffix, hasError, allowAs = allowAs)
-        if x.kind != ParRi or prefix.len == 0 or suffix.len == 0:
+        if x.hasMore or prefix.len == 0 or suffix.len == 0:
           hasError = true
         for pre in mitems(prefix):
           for suf in mitems(suffix):
@@ -220,7 +220,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
       let op = pool.strings[opId] # any operator, could restrict to slash-like
       var suffix: seq[ImportedFilename] = @[]
       filenameVal(x, suffix, hasError, allowAs = allowAs)
-      if x.kind != ParRi or suffix.len == 0:
+      if x.hasMore or suffix.len == 0:
         hasError = true
       for suf in mitems(suffix):
         res.add ImportedFilename(path: op & suf.path, name: suf.name, plugin: suf.plugin)

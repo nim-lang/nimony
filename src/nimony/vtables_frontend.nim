@@ -29,7 +29,7 @@ when false:
     # first parameter is of the class type and must be ignored:
     skip a
     skip b
-    while a.kind != ParRi and b.kind != ParRi:
+    while a.hasMore and b.hasMore:
       let pa = takeLocal(a, SkipFinalParRi)
       let pb = takeLocal(b, SkipFinalParRi)
       if not sameTrees(pa.typ, pb.typ):

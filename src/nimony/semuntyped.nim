@@ -593,7 +593,7 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
       inc c.noGenSym
       semTemplBody c, dest, n
       dec c.noGenSym
-      if n.kind != ParRi:
+      if n.hasMore:
         # annoying inheritance depth:
         takeTree dest, n
       takeParRi dest, n

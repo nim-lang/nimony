@@ -1000,7 +1000,7 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
     inc nExt  # skip outer StmtsS, now at first child
     # Skip cfvar decls and other non-proc statements until we find the proc
     let procKind = iter.stmtKind
-    while nExt.kind != ParRi and nExt.stmtKind != procKind:
+    while nExt.hasMore and nExt.stmtKind != procKind:
       skip nExt
     # Now at the proc node
     inc nExt  # skip ProcS/IteratorS tag, now at first header subtree

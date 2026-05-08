@@ -43,7 +43,7 @@ proc hasContinueStmt(c: Cursor): bool =
 proc createDecl(e: var EContext; dest: var TokenBuf; destSym: SymId;
         typ: var Cursor; value: var Cursor;
         info: PackedLineInfo; kind: StmtKind; needsAddr: bool) =
-  assert typ.kind != ParRi
+  assert typ.hasMore
   dest.addParLe kind, info
   dest.add symdefToken(destSym, info)
   dest.addDotToken()
@@ -88,7 +88,7 @@ proc connectSingleExprToLoopVar(e: var EContext; dest: var TokenBuf; c: var Curs
     createDecl(e, dest, destSym, typ, c, info, VarS, needsAddr=false)
 
 proc unpackTupleAccess(e: var EContext; dest: var TokenBuf; forVar: Cursor; left: TokenBuf; i: int; info: PackedLineInfo; typ: Cursor; needsAddr: bool) =
-  assert typ.kind != ParRi
+  assert typ.hasMore
   let local = asLocal(forVar)
   let symId = local.name.symId
   var tupBuf = createTupleAccess(left, i, info)

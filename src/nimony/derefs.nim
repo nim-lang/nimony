@@ -172,7 +172,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
       inc n
       let fn = n
       skip n # skip the `fn`
-      if n.kind != ParRi:
+      if n.hasMore:
         var fnType = skipProcTypeToParams(getType(c.typeCache, fn))
         assert fnType.isParamsTag
         inc fnType
@@ -216,7 +216,7 @@ proc skipToRoot(n: Cursor): Cursor =
     of CallKinds:
       inc n
       skip n # skip the `fn`
-      if n.kind != ParRi:
+      if n.hasMore:
         # borrowing only work from first parameters:
         discard "n already at the correct position"
       else:
@@ -480,9 +480,9 @@ proc firstArgIsMutable(c: var Context; n: Cursor): bool =
   assert n.exprKind in CallKinds
   var n = n
   inc n
-  assert n.kind != ParRi
+  assert n.hasMore
   skip n
-  if n.kind != ParRi:
+  if n.hasMore:
     result = not borrowsFromReadonly(c, n)
   else:
     result = false
@@ -760,7 +760,7 @@ proc trObjConstr(c: var Context; n: var Cursor; outerE: Expects) =
         fieldKind = fieldType.typeKind
     takeTree c.dest, n # key
     tr c, n, fieldMode(fieldKind, outerE)
-    if n.kind != ParRi:
+    if n.hasMore:
       # optional inheritance
       takeTree c.dest, n
     takeParRi c, n
@@ -788,7 +788,7 @@ proc trTupleConstr(c: var Context; n: var Cursor; outerE: Expects) =
 proc trVarHook(c: var Context; n: var Cursor) =
   takeToken c, n
   tr c, n, WantVarT
-  if n.kind != ParRi:
+  if n.hasMore:
     tr c, n, WantT
   takeParRi c, n
 

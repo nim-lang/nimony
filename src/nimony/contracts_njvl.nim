@@ -452,12 +452,12 @@ proc markedAs(t: Cursor; mark: NimonyOther): bool =
   of PtrT, RefT:
     var e = t.firstSon
     skip e # base type
-    if e.kind != ParRi and e.substructureKind == mark:
+    if e.hasMore and e.substructureKind == mark:
       result = true
   of CstringT, PointerT:
     let e = t.firstSon
     # no base type
-    if e.kind != ParRi and e.substructureKind == mark:
+    if e.hasMore and e.substructureKind == mark:
       result = true
   of ProctypeT:
     # New layout: `(proctype <NilTag> (params) RetType <Pragmas>)`. The
@@ -703,7 +703,7 @@ proc checkReq(c: var NjvlContext; paramMap: Table[SymId, int]; req, call: Cursor
     var r = req
     while r.exprKind == ExprX:
       inc r
-      while r.kind != ParRi and not isLastSon(r): skip r
+      while r.hasMore and not isLastSon(r): skip r
     result = checkReq(c, paramMap, r, call)
   else:
     result = Unprovable
@@ -723,7 +723,7 @@ proc analyseOconstr(c: var NjvlContext; n: var Cursor) =
     skip n # field name
     checkNilMatch c, n, expected
     skip n # value
-    if n.kind != ParRi:
+    if n.hasMore:
       # optional inheritance
       skip n
     skipParRi n
@@ -743,7 +743,7 @@ proc analyseTupConstr(c: var NjvlContext; n: var Cursor) =
   var expected = n.firstSon # type of the first field
   skip n # type
   while n.hasMore:
-    assert expected.kind != ParRi
+    assert expected.hasMore
     let fieldType = getTupleFieldType(expected)
     var val = n
     if val.substructureKind == KvU:
@@ -801,16 +801,16 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
         inc pc
         traverseExpr c, pc # object
         skip pc # field name
-        if pc.kind != ParRi: skip pc # inheritance depth
-        if pc.kind != ParRi: skip pc # optional access-token string lit
+        if pc.hasMore: skip pc # inheritance depth
+        if pc.hasMore: skip pc # optional access-token string lit
         skipParRi pc
       of DdotX:
         inc pc
         wantNotNilDeref c, pc
         traverseExpr c, pc # object
         skip pc # field name
-        if pc.kind != ParRi: skip pc # inheritance depth
-        if pc.kind != ParRi: skip pc # optional access-token string lit
+        if pc.hasMore: skip pc # inheritance depth
+        if pc.hasMore: skip pc # optional access-token string lit
         skipParRi pc
       of DerefX:
         inc pc

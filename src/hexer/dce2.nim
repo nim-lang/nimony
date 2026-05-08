@@ -122,7 +122,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
             dest.addSymDef t.toNifcName, n.info
             inc n # skip symbol def
             var untilBody = if stmtKind == ProcS: 3 else: 2 # pragmas type (for procs: return type)
-            while n.kind != ParRi and untilBody > 0:
+            while n.hasMore and untilBody > 0:
               dec untilBody
               tr dest, n, alive, resolved
             skip n # skip the body
@@ -265,7 +265,7 @@ proc readLiveFile*(infile: string): LiveSet =
             raiseAssert infile & ": kv value must be Symbol"
           result.resolved[key] = n.symId
           inc n
-          if n.kind != ParRi:
+          if n.hasMore:
             raiseAssert infile & ": expected ')' closing kv"
           inc n
         else:

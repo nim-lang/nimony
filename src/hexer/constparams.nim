@@ -442,7 +442,7 @@ proc trObjConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeToken dest, n
       takeTree dest, n # key
       tr c, dest, n
-      if n.kind != ParRi:
+      if n.hasMore:
         # optional inheritance
         takeTree dest, n
       takeParRi dest, n

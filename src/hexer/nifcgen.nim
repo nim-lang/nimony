@@ -320,9 +320,9 @@ proc trProcTypeBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
 
   # ignore effects and body slots only present in proc-decl-shaped layouts.
   if not isProctype:
-    if n.kind != ParRi:
+    if n.hasMore:
       skip n
-      if n.kind != ParRi:
+      if n.hasMore:
         skip n
   takeParRi dest, n
 
@@ -1268,14 +1268,14 @@ proc trArrAt(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let isUnsigned = getType(c.typeCache, n).typeKind in {UIntT, CharT}
   trExpr(c, dest, n)
-  if n.kind != ParRi:
+  if n.hasMore:
     var indexDest = createTokenBuf(dest.len - beforeIndex)
     for i in beforeIndex..<dest.len:
       indexDest.add dest[i]
     dest.shrink beforeIndex
     let indexB = n
     skip n
-    if n.kind != ParRi:
+    if n.hasMore:
       # we have `low(T)`:
       let indexA = n
       skip n
@@ -1387,7 +1387,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
           inc n
           takeTree dest, n # key
           trExpr c, dest, n # value
-          if n.kind != ParRi:
+          if n.hasMore:
             # optional inheritance
             takeTree dest, n
           takeParRi dest, n
@@ -1421,7 +1421,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       inc n # skip tag
       trExpr c, dest, n # obj
       trFieldname c, dest, n # field
-      if n.kind != ParRi:
+      if n.hasMore:
         trExpr c, dest, n # inheritance depth
       if n.kind == StringLit:
         # drop the access-token marker; NIFC has no visibility concept.
@@ -1526,7 +1526,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       inc n
       takeTree dest, n
       trExpr c, dest, n
-      if n.kind != ParRi:
+      if n.hasMore:
         takeTree dest, n
       takeParRi dest, n
     of NoExpr:
@@ -1920,7 +1920,7 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
     of PragmasS, AssumeS, AssertS:
       skip n
   else:
-    assert n.kind != ParRi
+    assert n.hasMore
     error c, "statement expected, but got: ", n
 
 proc transformInlineRoutines(c: var EContext; dest: var TokenBuf; n: var Cursor) =

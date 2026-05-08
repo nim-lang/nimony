@@ -476,7 +476,7 @@ proc expectParRi(m: var Match; f: var Cursor) =
     m.error FormalTypeNotAtEndBug, f, f
 
 proc expectPtrParRi(m: var Match; f: var Cursor) =
-  if f.kind != ParRi: skip f # skip nil/not nil annotation
+  if f.hasMore: skip f # skip nil/not nil annotation
   if f.kind == ParRi:
     inc f
   else:
@@ -584,11 +584,11 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
               break
           skip f
           skip a
-          if f.kind != ParRi:
+          if f.hasMore:
             # importc part
             while f.pragmaKind in {ImportcP, ImportcppP, HeaderP}:
               skip f
-          if a.kind != ParRi:
+          if a.hasMore:
             # importc part
             while a.pragmaKind in {ImportcP, ImportcppP, HeaderP}:
               skip a
@@ -672,7 +672,7 @@ proc extractProcProps*(c: var Cursor): ProcProperties =
         # Extract the raises type from the pragma
         var raisesNode = c
         inc raisesNode
-        if raisesNode.kind != ParRi:
+        if raisesNode.hasMore:
           result.raisesType = raisesNode
       elif c.pragmaKind == ClosureP:
         result.usesClosure = true
@@ -694,12 +694,12 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
   var hasParams = 0
   if f.substructureKind == ParamsU:
     inc f
-    if f.kind != ParRi: inc hasParams
+    if f.hasMore: inc hasParams
   if a.substructureKind == ParamsU:
     inc a
-    if a.kind != ParRi: inc hasParams, 2
+    if a.hasMore: inc hasParams, 2
   if hasParams == 3:
-    while f.kind != ParRi and a.kind != ParRi:
+    while f.hasMore and a.hasMore:
       var fParam = takeLocal(f, SkipFinalParRi)
       var aParam = takeLocal(a, SkipFinalParRi)
       assert fParam.kind == ParamY
@@ -1222,7 +1222,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
           # skip fields:
           skip f
           skip a
-        if a.kind != ParRi:
+        if a.hasMore:
           # len(a) > len(f)
           m.error InvalidMatch, fOrig, aOrig
     of RoutineTypes:
@@ -1288,7 +1288,7 @@ proc isEmptyCall*(n: Cursor): bool =
   if not isEmptyLiteral(n):
     return false
   skip n
-  if n.kind != ParRi:
+  if n.hasMore:
     return false
 
 proc isEmptyContainer*(n: Cursor): bool =
@@ -1308,7 +1308,7 @@ proc isEmptyOpenArrayCall*(n: Cursor): bool =
   if not isEmptyContainer(n):
     return false
   skip n
-  if n.kind != ParRi:
+  if n.hasMore:
     return false
 
 proc addEmptyRangeType(buf: var TokenBuf; c: ptr SemContext; info: PackedLineInfo) =
@@ -1537,7 +1537,7 @@ proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
           assert typevar.kind == TypevarY
           m.error ConstraintMismatch, typevar.typ, e
         skip e
-    if e.kind != DotToken and e.kind != ParRi:
+    if e.kind != DotToken and e.hasMore:
       m.error0 ExtraGenericParameter
   elif explicitTypeVars.kind != DotToken:
     # aka there are explicit type vars
@@ -1561,11 +1561,11 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
   if m.pos < args.len:
     # not all arguments where used, error:
     m.error0 TooManyArguments
-  elif f.kind != ParRi:
+  elif f.hasMore:
     # use default values for these parameters
     let moreArgs = collectDefaultValues(m, f)
     sigmatchLoop m, f, moreArgs
-    if f.kind != ParRi:
+    if f.hasMore:
       m.error0 TooFewArguments
 
   if f.kind == ParRi:
@@ -1600,7 +1600,7 @@ proc mutualGenericMatch(a, b: Match): DisambiguationResult =
   assert bParams.substructureKind == ParamsU
   inc aParams
   inc bParams
-  while aParams.kind != ParRi and bParams.kind != ParRi:
+  while aParams.hasMore and bParams.hasMore:
     let aParam = takeLocal(aParams, SkipFinalParRi)
     let bParam = takeLocal(bParams, SkipFinalParRi)
     var aFormal = aParam.typ

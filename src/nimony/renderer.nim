@@ -15,7 +15,7 @@ import std/[strutils, assertions, formatfloat]
 ## Rendering of Nim code from a cursor.
 
 proc skipParRi(n: var Cursor) =
-  if n.kind != ParRi:
+  if n.hasMore:
     raiseAssert "expected ')' but got: " & $n & " (expr=" & $n.exprKind &
       ", stmt=" & $n.stmtKind & ", type=" & $n.typeKind & ")"
   inc n
@@ -766,22 +766,22 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
     of CstringT, PointerT:
       put(g, tkSymbol, $n.typeKind)
       inc n
-      if n.kind != ParRi and n.substructureKind == NotnilU:
+      if n.hasMore and n.substructureKind == NotnilU:
         put(g, tkSpaces, Space)
         put(g, tkSymbol, "not")
         put(g, tkSpaces, Space)
         put(g, tkNil, "nil")
         skip n
-      elif n.kind != ParRi and n.substructureKind == NilU:
+      elif n.hasMore and n.substructureKind == NilU:
         # rendered as prefix: nil cstring
         skip n
-      elif n.kind != ParRi:
+      elif n.hasMore:
         skip n # unchecked or other annotation
       skipParRi(n)
     of OrdinalT:
       put(g, tkSymbol, "Ordinal")
       inc n
-      if n.kind != ParRi:
+      if n.hasMore:
         put(g, tkBracketLe, "[")
         gtype(g, n, c)
         put(g, tkBracketRi, "]")
@@ -789,7 +789,7 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
     of TypedescT:
       put(g, tkSymbol, "typedesc")
       inc n
-      if n.kind != ParRi:
+      if n.hasMore:
         put(g, tkBracketLe, "[")
         gtype(g, n, c)
         put(g, tkBracketRi, "]")
@@ -801,23 +801,23 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
     of PtrT:
       put(g, tkPtr, "ptr")
       inc n
-      if n.kind != ParRi and n.substructureKind notin {NotnilU, NilU, UncheckedU}:
+      if n.hasMore and n.substructureKind notin {NotnilU, NilU, UncheckedU}:
         put(g, tkSpaces, Space)
         gtype(g, n, c)
-      if n.kind != ParRi and n.substructureKind == NotnilU:
+      if n.hasMore and n.substructureKind == NotnilU:
         put(g, tkSpaces, Space)
         put(g, tkSymbol, "not")
         put(g, tkSpaces, Space)
         put(g, tkNil, "nil")
         skip n
-      elif n.kind != ParRi:
+      elif n.hasMore:
         skip n # nil, unchecked annotation
       skipParRi(n)
 
     of SetT:
       put(g, tkSymbol, "set")
       inc n
-      if n.kind != ParRi:
+      if n.hasMore:
         put(g, tkBracketLe, "[")
         gtype(g, n, c)
         put(g, tkBracketRi, "]")
@@ -826,16 +826,16 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
     of RefT:
       put(g, tkRef, "ref")
       inc n
-      if n.kind != ParRi and n.substructureKind notin {NotnilU, NilU, UncheckedU}:
+      if n.hasMore and n.substructureKind notin {NotnilU, NilU, UncheckedU}:
         put(g, tkSpaces, Space)
         gtype(g, n, c)
-      if n.kind != ParRi and n.substructureKind == NotnilU:
+      if n.hasMore and n.substructureKind == NotnilU:
         put(g, tkSpaces, Space)
         put(g, tkSymbol, "not")
         put(g, tkSpaces, Space)
         put(g, tkNil, "nil")
         skip n
-      elif n.kind != ParRi:
+      elif n.hasMore:
         skip n # nil, unchecked annotation
       skipParRi(n)
     of MutT:
@@ -883,7 +883,7 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
 
     of RangetypeT:
       inc n
-      if n.kind != ParRi:
+      if n.hasMore:
         skip n
         gtype(g, n, c)
         put(g, tkDotDot, "..")
@@ -944,7 +944,7 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
     of EnumT:
       inc n
 
-      if n.kind != ParRi:
+      if n.hasMore:
         putWithSpace(g, tkEnum, "enum")
         skip n
 
@@ -1055,7 +1055,7 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
             putWithSpace(g, tkEquals, "=")
             gsub(g, value, c)
 
-          if n.kind != ParRi:
+          if n.hasMore:
             putWithSpace(g, tkComma, ",")
         inc n
         put(g, tkParRi, ")")
@@ -1251,11 +1251,11 @@ proc isUseSpace(n: Cursor): bool =
   result = true
   var n = n
 
-  assert n.kind != ParRi
+  assert n.hasMore
   let firstSon = n
   skip n
 
-  if n.kind != ParRi:
+  if n.hasMore:
     let secondSon = n
     skip n
     if n.kind == ParRi:
@@ -1465,7 +1465,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       gsub(g, n)
       putWithSpace(g, tkColon, ":")
       gsub(g, n)
-      if n.kind != ParRi:
+      if n.hasMore:
         skip n
       skipParRi(n)
 
@@ -1678,7 +1678,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         putWithSpace(g, tkColon, ":")
         gsub(g, n)
 
-        if n.kind != ParRi:
+        if n.hasMore:
           skip n
 
         skipParRi(n)
@@ -1705,7 +1705,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         gsub(g, n)
         putWithSpace(g, tkColon, ":")
         gsub(g, n)
-        if n.kind != ParRi:
+        if n.hasMore:
           skip n
         skipParRi(n)
 
@@ -1841,9 +1841,9 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       var ncopy = n
 
       var hasChildren = false
-      if n.kind != ParRi:
+      if n.hasMore:
         skip ncopy
-        hasChildren = ncopy.kind != ParRi
+        hasChildren = ncopy.hasMore
 
       if hasChildren:
         put(g, tkParLe, "(")
@@ -1911,10 +1911,10 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       put(g, tkDot, ".")
       gsub(g, n)
 
-      if n.kind != ParRi:
+      if n.hasMore:
         # inheritance depth
         skip n
-      if n.kind != ParRi:
+      if n.hasMore:
         # access-token string lit (only for private fields)
         skip n
       skipParRi(n)
@@ -1954,7 +1954,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       inc n
       put(g, tkCurlyLe, "{")
 
-      if n.kind != ParRi:
+      if n.hasMore:
         var afterFirst = false
         while n.hasMore:
           if afterFirst:

@@ -229,7 +229,7 @@ proc subsGenericTypeFromArgs(c: var SemContext; dest: var TokenBuf;
       var a = args
       var typevars = decl.typevars
       inc typevars
-      while a.kind != ParRi and typevars.kind != ParRi:
+      while a.hasMore and typevars.hasMore:
         var tv = typevars
         assert tv.substructureKind == TypevarU
         inc tv
@@ -237,9 +237,9 @@ proc subsGenericTypeFromArgs(c: var SemContext; dest: var TokenBuf;
         inferred[tv.symId] = a
         takeTree dest, a
         skip typevars
-      if a.kind != ParRi:
+      if a.hasMore:
         err = -1
-      elif typevars.kind != ParRi:
+      elif typevars.hasMore:
         err = 1
     # take the pragmas from the origin, but drop hook pragmas
     copyPragmasWithoutHooks(dest, decl.pragmas)
@@ -331,7 +331,7 @@ proc semMagicInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: 
     takeParRi typeBuf, n
   of VarargsT:
     takeTree typeBuf, n
-    if n.kind != ParRi:
+    if n.hasMore:
       # optional varargs call
       takeTree typeBuf, n
     takeParRi typeBuf, n
@@ -781,7 +781,7 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       takeTree dest, n
     of CstringT, PointerT:
       takeToken dest, n # open tag
-      if n.kind != ParRi:
+      if n.hasMore:
         takeTree dest, n # existing notnil, nil, unchecked annotation
       elif LenientNilsFeature notin c.features:
         dest.addParPair NotnilU, info
@@ -805,7 +805,7 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         skipParRi n
       else:
         semLocalTypeImpl c, dest, n, InLocalDecl
-      if n.kind != ParRi:
+      if n.hasMore:
         takeTree dest, n # notnil, nil, unchecked
       elif LenientNilsFeature notin c.features:
         dest.addParPair NotnilU, info
@@ -857,9 +857,9 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       semRangeType c, dest, n, context
     of VarargsT:
       takeToken dest, n
-      if n.kind != ParRi:
+      if n.hasMore:
         semLocalTypeImpl c, dest, n, InLocalDecl
-        if n.kind != ParRi:
+        if n.hasMore:
           # optional converter
           var it = Item(n: n, typ: c.types.autoType)
           semExpr c, dest, it, {KeepMagics, AllowOverloads}
@@ -947,7 +947,7 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       if isProctype and not sourceIsNewLayout:
         var n2 = n
         skip n2 # exceptions dot
-        if n2.kind != ParRi: skip n2 # body dot
+        if n2.hasMore: skip n2 # body dot
         hasNilSuffix = n2.exprKind == NilX
         if hasNilSuffix:
           dest[nilTagPos] = parLeToken(NilU, info)
@@ -957,7 +957,7 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       elif not isProctype:
         var n2 = n
         skip n2 # exceptions dot
-        if n2.kind != ParRi: skip n2 # body dot
+        if n2.hasMore: skip n2 # body dot
         hasNilSuffix = n2.exprKind == NilX
         wantDot c, dest, n # exceptions
         if n.kind == ParRi:

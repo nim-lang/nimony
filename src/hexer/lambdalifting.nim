@@ -141,11 +141,11 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trNil(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   inc n
-  if n.kind != ParRi and procHasPragma(n, ClosureP):
+  if n.hasMore and procHasPragma(n, ClosureP):
     # nil closure must be a tuple:
     dest.copyIntoKind TupconstrX, info:
       dest.takeTree n # type
-      if n.kind != ParRi: skip n # might have another nil value
+      if n.hasMore: skip n # might have another nil value
       dest.addParPair NilX, info
       dest.addParPair NilX, info
     skipParRi n
@@ -365,9 +365,9 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
         if usesWrapper and not isProctypeInput:
           # effects and body, deliberately made flexible here for future changes
           # as it's messy to work with.
-          if n.kind != ParRi:
+          if n.hasMore:
             skip n
-            if n.kind != ParRi: skip n
+            if n.hasMore: skip n
         skipParRi n
       copyIntoKind dest, RefT, info:
         dest.addSymUse pool.syms.getOrIncl(RootObjName), info
@@ -382,7 +382,7 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       for i in 0..<BodyPos:
         tre c, dest, n
-      if n.kind != ParRi:
+      if n.hasMore:
         dest.takeTree n # don't transform the potential proc body here
     dest.takeParRi n
 
@@ -695,8 +695,8 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         takeToken dest, n
         tre c, dest, n
         takeTree dest, n # don't look up field names here
-        if n.kind != ParRi: takeTree dest, n # optional inheritance depth
-        if n.kind != ParRi: takeTree dest, n # optional access-token string lit
+        if n.hasMore: takeTree dest, n # optional inheritance depth
+        if n.hasMore: takeTree dest, n # optional access-token string lit
         takeParRi dest, n
       of CastX, ConvX:
         takeToken dest, n

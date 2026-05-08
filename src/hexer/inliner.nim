@@ -212,7 +212,7 @@ proc mapParamToLocal(c: var InlineContext; dest: var TokenBuf; args: var Cursor;
   # consider: `inlineCall effect(x)` where `inlineCall` does not even use
   # its first parameter!
   assert params.kind != DotToken
-  assert params.kind != ParRi
+  assert params.hasMore
   let p = params
   let r = takeLocal(params, SkipFinalParRi)
   if r.typ.typeKind == VarargsT: params = p

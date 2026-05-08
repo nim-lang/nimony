@@ -149,7 +149,7 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
   of "string.&":
     let a = eval(c, args)
     let b = eval(c, args)
-    if a.kind != StringLit or b.kind != StringLit or args.kind != ParRi:
+    if a.kind != StringLit or b.kind != StringLit or args.hasMore:
       cannotEval(n)
       return
     let val = pool.strings[a.litId] & pool.strings[b.litId]
@@ -157,14 +157,14 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
   of "string.==":
     let a = eval(c, args)
     let b = eval(c, args)
-    if a.kind != StringLit or b.kind != StringLit or args.kind != ParRi:
+    if a.kind != StringLit or b.kind != StringLit or args.hasMore:
       cannotEval(n)
       return
     let val = pool.strings[a.litId] == pool.strings[b.litId]
     result = boolValue(c, val)
   of "string.len":
     let a = eval(c, args)
-    if a.kind != StringLit or args.kind != ParRi:
+    if a.kind != StringLit or args.hasMore:
       cannotEval(n)
       return
     let val = pool.strings[a.litId].len
@@ -850,7 +850,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
           buf.takeToken n # field sym/ident
           let v = propagateError eval(c, n)
           buf.addSubtree v
-          if n.kind != ParRi:
+          if n.hasMore:
             # optional inheritance level
             buf.takeToken n
           buf.takeToken n # closing parRi of kv
@@ -1140,7 +1140,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
           annotateConstantType(buf, getTupleFieldType(typ), vals)
           skip typ
           skip vals
-        if typ.kind != ParRi: err = true
+        if typ.hasMore: err = true
         if err:
           buf.shrink start
         else:
@@ -1210,7 +1210,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
                 inc vals
                 annotateConstantType(buf, fieldType, vals)
                 skip vals
-                if vals.kind != ParRi:
+                if vals.hasMore:
                   # optional inheritance
                   takeTree buf, vals
                 takeParRi buf, vals

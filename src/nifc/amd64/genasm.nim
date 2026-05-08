@@ -147,7 +147,7 @@ proc genProcPragmas(c: var GeneratedCode; n: Cursor;
     discard
   elif n.substructureKind == PragmasU:
     inc n
-    while n.kind != ParRi:
+    while n.hasMore:
       case n.pragmaKind
       #of CdeclP, StdcallP, NoconvP:
       #  discard "supported calling convention"

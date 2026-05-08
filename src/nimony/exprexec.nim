@@ -21,7 +21,7 @@ const
 
 when false:
   proc addSubtreeAndSyms(result: var TokenBuf; c: Cursor; stack: var seq[SymId]) =
-    assert c.kind != ParRi, "cursor at end?"
+    assert c.hasMore, "cursor at end?"
     if c.kind != ParLe:
       # atom:
       result.add c.load
@@ -56,7 +56,7 @@ type
     errorMsg: string
 
 proc collectSyms(n: Cursor; stack: var seq[SymId]) =
-  assert n.kind != ParRi, "cursor at end?"
+  assert n.hasMore, "cursor at end?"
   if n.kind != ParLe:
     # atom:
     if n.kind == Symbol: stack.add n.symId

@@ -182,10 +182,10 @@ proc mangleProctype(b: var Mangler; n: var Cursor; mm: MangleMode): string =
   b.addKeyw $props.usesRaises
   b.addKeyw $props.usesClosure
   result = b.extract()
-  if n.kind != ParRi:
+  if n.hasMore:
     skip n # effects
-    if n.kind != ParRi:
+    if n.hasMore:
       skip n # body
-  if n.kind != ParRi:
+  if n.hasMore:
     bug "expected ')', but got: ", n
   inc n

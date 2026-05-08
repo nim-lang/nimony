@@ -406,7 +406,7 @@ proc readNode(c: var Cursor; r: var RContext): PNode =
     case k
     of nkTypeSection:
       var childCounter = 0
-      while c.kind != ParRi:
+      while c.hasMore:
         if childCounter == 4:
           let t = readType(c, r)
           result[0].sym.typ = t
@@ -415,7 +415,7 @@ proc readNode(c: var Cursor; r: var RContext): PNode =
           result.addAllowNil readNode(c, r)
         inc childCounter
     else:
-      while c.kind != ParRi:
+      while c.hasMore:
         result.addAllowNil readNode(c, r)
     expect c, ParRi
     if k == nkNone:
@@ -509,7 +509,7 @@ proc readTypeImpl(c: var Cursor; r: var RContext; kind: TTypeKind; res: PType) =
     res.addAllowNil readType(c, r)
     res.n = readNode(c, r)
   else:
-    while c.kind != ParRi:
+    while c.hasMore:
       res.addAllowNil readType(c, r)
     expect c, ParRi
 

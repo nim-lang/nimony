@@ -575,7 +575,7 @@ proc trLocal(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
     var tmp = n
     inc tmp # skip call tag
     skip tmp # skip callee
-    if tmp.kind != ParRi: # has at least one argument
+    if tmp.hasMore: # has at least one argument
       var argBuf = createTokenBuf(8)
       argBuf.addSubtree tmp
       c.callFirstArgs[symId] = argBuf
@@ -694,7 +694,7 @@ proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cur
   closeBasicBlock c, b, dest
   skipParRi n # end of `elif`
 
-  if n.kind != ParRi:
+  if n.hasMore:
     # --- Case 1: Explicit else branch ---
     assert n.substructureKind == ElseU
     inc n
@@ -845,7 +845,7 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor;
 
     var breakSplitPoint = findBreakSplitPoint(n)
     inc n # into the loop body statement list
-    while n.kind != ParRi and breakSplitPoint >= 1:
+    while n.hasMore and breakSplitPoint >= 1:
       trGuardedStmts c, b, dest, n, false
       dec breakSplitPoint
 
@@ -945,7 +945,7 @@ proc extractForBorrow(c: var Context; forStmt: ForStmt; info: PackedLineInfo): T
   if iterCall.kind == ParLe and iterCall.exprKind in CallKinds:
     inc iterCall
     skip iterCall
-    if iterCall.kind != ParRi:
+    if iterCall.hasMore:
       firstArgBuf = createTokenBuf(8)
       firstArgBuf.addSubtree iterCall
   elif iterCall.kind == ParLe and iterCall.exprKind in {HderefX, HaddrX}:

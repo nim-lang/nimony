@@ -125,26 +125,26 @@ proc analyseVarUsages(c: var Context; n: var Cursor) =
          AddC, SubC, MulC, DivC, ModC, ShrC, ShlC, BitandC, BitorC, BitxorC, BitnotC,
          EqC, NeqC, LeC, LtC, CastC, ConvC, BaseobjC:
         inc n
-        while n.kind != ParRi:
+        while n.hasMore:
           analyseVarUsages(c, n)
         inc n
       of CallC:
         # XXX Special case `cold` procs like `raiseIndexError` in order
         # to produce better code for the common case.
         inc n
-        while n.kind != ParRi:
+        while n.hasMore:
           analyseVarUsages(c, n)
         inc n
         c.scopes[^1].hasCall = true
     of StmtsS, ScopeS:
       c.openScope()
-      while n.kind != ParRi:
+      while n.hasMore:
         analyseVarUsages(c, n)
       inc n
       c.closeScope()
     of CallS, OnerrS:
       inc n
-      while n.kind != ParRi:
+      while n.hasMore:
         analyseVarUsages(c, n)
       inc n
       c.scopes[^1].hasCall = true
@@ -177,13 +177,13 @@ proc analyseVarUsages(c: var Context; n: var Cursor) =
     of WhileS:
       inc n
       inc c.inLoops
-      while n.kind != ParRi:
+      while n.hasMore:
         analyseVarUsages(c, n)
       dec c.inLoops
       skipParRi n
     of EmitS, IfS, CaseS, RetS, DiscardS, TryS, RaiseS:
       inc n
-      while n.kind != ParRi:
+      while n.hasMore:
         analyseVarUsages(c, n)
       inc n
 
@@ -196,7 +196,7 @@ proc analyseVarUsages*(n: Cursor): ProcBodyProps =
     var params = prc.params
     if params.kind != DotToken:
       inc params
-      while params.kind != ParRi:
+      while params.hasMore:
         var p = takeParamDecl(params)
         assert p.name.kind == SymbolDef
         let vn = p.name.symId

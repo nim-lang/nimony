@@ -223,13 +223,12 @@ proc trOrValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
   maybeAppend tar, w
 
 proc trStmtListExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
-  inc n
-  while n.hasMore:
-    if not isLastSon(n):
-      trStmt c, n
-    else:
-      trExpr c, n, tar
-  skipParRi n
+  n.into:
+    while n.hasMore:
+      if not isLastSon(n):
+        trStmt c, n
+      else:
+        trExpr c, n, tar
 
 proc trExprLoop(c: var ControlFlow; n: var Cursor; tar: var Target) =
   if tar.m == IsEmpty:
@@ -237,11 +236,10 @@ proc trExprLoop(c: var ControlFlow; n: var Cursor; tar: var Target) =
   else:
     assert tar.m == IsAppend, toString(n, false) & " " & $tar.m
   tar.t.add n
-  inc n
-  while n.hasMore:
-    trExpr c, n, tar
+  n.into:
+    while n.hasMore:
+      trExpr c, n, tar
   tar.t.addParRi()
-  inc n
 
 proc trCall(c: var ControlFlow; n: var Cursor; tar: var Target) =
   if c.keepReturns and tar.m == IsAppend:
@@ -269,11 +267,10 @@ proc trCall(c: var ControlFlow; n: var Cursor; tar: var Target) =
 proc trVoidCall(c: var ControlFlow; n: var Cursor) =
   var tar = Target(m: IsAppend)
   tar.t.add n
-  inc n
-  while n.hasMore:
-    trExpr c, n, tar
+  n.into:
+    while n.hasMore:
+      trExpr c, n, tar
   tar.t.addParRi()
-  inc n
   c.dest.add tar
 
 proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
@@ -923,18 +920,16 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
   of WhileS:
     trWhile c, n
   of StmtsS, UnpackdeclS:
-    inc n
-    while n.hasMore:
-      trStmt c, n
-    inc n
+    n.into:
+      while n.hasMore:
+        trStmt c, n
   of ScopeS, StaticstmtS:
     c.dest.add n
-    inc n
     c.typeCache.openScope()
-    while n.hasMore:
-      trStmt c, n
+    n.into:
+      while n.hasMore:
+        trStmt c, n
     c.dest.addParRi()
-    inc n
     c.typeCache.closeScope()
   of BreakS:
     trBreak c, n
@@ -972,10 +967,9 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
   of YldS, DiscardS, AsmS, DeferS:
     var tar = Target(m: IsAppend)
     let head = n.load()
-    inc n
-    while n.hasMore:
-      trExpr c, n, tar
-    inc n
+    n.into:
+      while n.hasMore:
+        trExpr c, n, tar
     c.dest.add head
     c.dest.add tar
     c.dest.addParRi()
@@ -997,9 +991,9 @@ proc toControlflow*(n: Cursor; keepReturns = false): TokenBuf =
   else:
     assert sk == StmtsS
     c.dest.add n
-    inc n
-    while n.hasMore:
-      trStmt c, n
+    n.into:
+      while n.hasMore:
+        trStmt c, n
     addRet c
     c.dest.addParRi()
   c.typeCache.closeScope()

@@ -44,7 +44,7 @@ proc genIfLLVM(c: var LLVMCode; n: var Cursor) =
   var endLabel = c.label()
   var needsEnd = false
 
-  while n.kind != ParRi:
+  while n.hasMore:
     case n.substructureKind
     of ElifU:
       inc n
@@ -196,7 +196,7 @@ proc genSwitchLLVM(c: var LLVMCode; n: var Cursor) =
   var savedPos = n
 
   # We need to process branches to know labels before emitting the switch
-  while n.kind != ParRi:
+  while n.hasMore:
     case n.substructureKind
     of OfU:
       inc n
@@ -204,7 +204,7 @@ proc genSwitchLLVM(c: var LLVMCode; n: var Cursor) =
       # Parse ranges
       if n.substructureKind == RangesU:
         inc n
-        while n.kind != ParRi:
+        while n.hasMore:
           if n.substructureKind == RangeU:
             inc n
             # Range: add all values (simplified - just add endpoints)
@@ -240,7 +240,7 @@ proc genSwitchLLVM(c: var LLVMCode; n: var Cursor) =
   n = savedPos
   var branchIdx = 0
   c.currentProc.breakStack.add endLabel
-  while n.kind != ParRi:
+  while n.hasMore:
     case n.substructureKind
     of OfU:
       inc n
@@ -296,7 +296,7 @@ proc genGotoLLVM(c: var LLVMCode; n: var Cursor) =
 proc genScopeLLVM(c: var LLVMCode; n: var Cursor) =
   inc n
   c.m.openScope()
-  while n.kind != ParRi:
+  while n.hasMore:
     genStmtLLVM c, n
   skipParRi n
   c.m.closeScope()
@@ -327,7 +327,7 @@ proc genVflagDeclLLVM(c: var LLVMCode; n: var Cursor) =
 
 proc genJtrueLLVM(c: var LLVMCode; n: var Cursor) =
   inc n
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.kind == Symbol:
       let s = n.symId
       if not c.currentProc.vflags.contains(s):
@@ -430,7 +430,7 @@ proc genEmitStmtLLVM(c: var LLVMCode; n: var Cursor) =
   ## Emit statements: pass through as LLVM IR comments (can't emit raw C in LLVM)
   inc n
   var comment = "; emit: "
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.kind == StringLit:
       comment.add pool.strings[n.litId]
       inc n
@@ -448,7 +448,7 @@ proc genStmtLLVM(c: var LLVMCode; n: var Cursor) =
       error c.m, "expected statement but got: ", n
   of StmtsS:
     inc n
-    while n.kind != ParRi:
+    while n.hasMore:
       genStmtLLVM(c, n)
     inc n
   of ScopeS:

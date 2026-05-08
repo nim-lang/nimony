@@ -69,7 +69,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
   var n = n
   while n.exprKind == ExprX:
     inc n
-    while n.kind != ParRi and not isLastSon(n): skip n
+    while n.hasMore and not isLastSon(n): skip n
 
   if n.exprKind == EmoveX: inc n
 
@@ -823,7 +823,7 @@ proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
       copyInto c.dest, n:
         takeTree c.dest, n
         tr c, n, WantOwner
-        if n.kind != ParRi:
+        if n.hasMore:
           # optional inheritance
           takeTree c.dest, n
   finishOwningTemp c.dest, ow
@@ -834,7 +834,7 @@ proc trNewobjFields(c: var Context; n: var Cursor) =
       copyInto c.dest, n:
         takeTree c.dest, n # keep field name
         tr(c, n, WantOwner)
-        if n.kind != ParRi:
+        if n.hasMore:
           # optional inheritance
           takeTree c.dest, n
     else:
@@ -1126,7 +1126,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       copyInto c.dest, n:
         takeTree c.dest, n
         tr c, n, e
-        if n.kind != ParRi:
+        if n.hasMore:
           takeTree c.dest, n
     of NoExpr:
       let k = n.stmtKind
@@ -1168,7 +1168,7 @@ proc checkForErrorRoutine(r: var Reporter; fn: SymId; info: PackedLineInfo): int
       var arg = routine.params
       if arg.substructureKind == ParamsU:
         inc arg
-        if arg.kind != ParRi:
+        if arg.hasMore:
           let param = asLocal(arg)
           m.add " for type <" & typeToString(param.typ) & ">"
       try:

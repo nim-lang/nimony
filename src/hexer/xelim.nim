@@ -310,14 +310,14 @@ proc trAggregate(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Tar
   of OconstrX, NewobjX:
     # `(oconstr T (kv field val INTLIT?)*)` — also accepts a leading
     # inheritance form `(oconstr T (oconstr ...) (kv ...)*)`.
-    if n.kind != ParRi:
+    if n.hasMore:
       tar.t.takeTree n  # T
     while n.hasMore:
       if n.kind == ParLe and n.substructureKind == KvU:
         tar.t.takeToken n  # `(kv`
-        if n.kind != ParRi:
+        if n.hasMore:
           tar.t.takeTree n  # field key
-        if n.kind != ParRi:
+        if n.hasMore:
           trAggregateValue c, dest, n, tar
         while n.hasMore:
           tar.t.takeTree n  # optional INTLIT (inheritance count)
@@ -327,7 +327,7 @@ proc trAggregate(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Tar
         trExpr c, dest, n, tar
   of TupconstrX, AconstrX:
     # `(tupconstr T X+)`, `(aconstr T X*)` — type then values.
-    if n.kind != ParRi:
+    if n.hasMore:
       tar.t.takeTree n
     while n.hasMore:
       trAggregateValue c, dest, n, tar

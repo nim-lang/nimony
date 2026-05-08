@@ -384,7 +384,7 @@ proc genCallWithType(c: var LLVMCode; n: var Cursor; retType: string; result: va
     calleeName = c.str(callee.name)
 
   var args: seq[LLValue] = @[]
-  while n.kind != ParRi:
+  while n.hasMore:
     var arg = LLValue(); genExprLLVM(c, n, arg)
     args.add arg
   skipParRi n
@@ -493,7 +493,7 @@ proc genAddrLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   inc n
   var lval = LLValue(); genLvalueLLVM(c, n, lval)
   # Skip optional CppRefQ qualifier
-  if n.kind != ParRi and n.typeQual == CppRefQ:
+  if n.hasMore and n.typeQual == CppRefQ:
     skip n
   skipParRi n
   # The lvalue is already a pointer
@@ -615,7 +615,7 @@ proc genLvalueLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     # Dereference gives us the pointer value
     inc n
     var ptrVal = LLValue(); genExprLLVM(c, n, ptrVal)
-    if n.kind != ParRi and n.typeQual == CppRefQ:
+    if n.hasMore and n.typeQual == CppRefQ:
       skip n
     skipParRi n
     result = LLValue(name: ptrVal.name, typ: LToken(PtrToken))
@@ -702,7 +702,7 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
         let baseTyp = genTypeLLVMReadOnly(c, enumBody)
         skip enumBody # skip base type
         # Search for the field
-        while enumBody.kind != ParRi:
+        while enumBody.hasMore:
           if enumBody.substructureKind == EfldU:
             inc enumBody
             if enumBody.kind == SymbolDef and enumBody.symId == s:
@@ -869,7 +869,7 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     let loadType = genTypeLLVMReadOnly(c, derefType)
     inc n
     var ptrVal = LLValue(); genExprLLVM(c, n, ptrVal)
-    if n.kind != ParRi and n.typeQual == CppRefQ:
+    if n.hasMore and n.typeQual == CppRefQ:
       skip n
     skipParRi n
     let t = c.temp()
@@ -984,13 +984,13 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     # Zero-initialize
     c.emitLine "  store " & typ & " zeroinitializer, ptr " & c.str(tmp)
 
-    while n.kind != ParRi:
+    while n.hasMore:
       if n.substructureKind == KvU:
         inc n
         let fldSym = n.symId
         skip n # field name
         var fieldVal = LLValue(); genExprLLVM(c, n, fieldVal)
-        let inhDepth = if n.kind != ParRi and n.kind == IntLit: (let d = int(pool.integers[n.intId]); skip n; d) else: 0
+        let inhDepth = if n.hasMore and n.kind == IntLit: (let d = int(pool.integers[n.intId]); skip n; d) else: 0
         skipParRi n
         # Navigate to the field — objTypeCursor is the type symbol itself
         var curType = objTypeCursor
@@ -1030,7 +1030,7 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
 
     var current = "undef"
     var idx = 0
-    while n.kind != ParRi:
+    while n.hasMore:
       var elemVal = LLValue(); genExprLLVM(c, n, elemVal)
       let t = c.temp()
       c.emitLine "  " & c.str(t) & " = insertvalue " & typ & " " & current & ", " & c.str(elemVal.typ) & " " & c.str(elemVal.name) & ", " & $idx

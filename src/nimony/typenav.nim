@@ -571,7 +571,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of EnvpX:
     result = c.builtins.autoType
 
-  assert result.kind != ParRi, "ParRi for expression: " & toString(n, false)
+  assert result.hasMore, "ParRi for expression: " & toString(n, false)
 
 proc getType*(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag] = {}): Cursor =
   result = getTypeImpl(c, n, flags)
@@ -586,7 +586,7 @@ proc getType*(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag] = {}): Cursor
         result = decl.body
       else:
         break
-  assert result.kind != ParRi
+  assert result.hasMore
 
 proc takeRoutineHeader*(c: var TypeCache; dest: var TokenBuf; decl: Cursor; n: var Cursor): bool =
   # returns false if the routine is generic

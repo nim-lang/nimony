@@ -98,7 +98,7 @@ proc addFn(c: var SemContext; dest: var TokenBuf; fn: FnCandidate; fnOrig: Curso
             else:
               dest.add n
             inc n
-          if n.kind != ParRi:
+          if n.hasMore:
             bug "broken `magic`: expected ')', but got: ", n
     if result == NonMagicCall:
       dest.add symToken(fn.sym, fnOrig.info)
@@ -686,7 +686,7 @@ proc varargsHasConverter(t: Cursor): bool =
   assert t.typeKind == VarargsT
   inc t
   skip t
-  result = t.kind != ParRi
+  result = t.hasMore
 
 proc tryVarargsConverter(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: CallArg): bool =
   result = false
@@ -695,7 +695,7 @@ proc tryVarargsConverter(c: var SemContext; convMatch: var Match; f: TypeCursor,
   inc baseType
   var conv = baseType
   skip conv
-  assert conv.kind != ParRi
+  assert conv.hasMore
 
   var callBuf = createTokenBuf(16)
   callBuf.addParLe(HcallX, arg.n.info)

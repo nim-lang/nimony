@@ -136,7 +136,7 @@ proc genFieldPragmas(c: var GeneratedCode; n: Cursor;
     discard
   elif n.substructureKind == PragmasU:
     inc n
-    while n.kind != ParRi:
+    while n.hasMore:
       case n.pragmaKind
       of AlignP:
         inc n

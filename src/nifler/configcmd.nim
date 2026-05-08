@@ -226,7 +226,7 @@ proc sourcesChangedImpl(configFile: string; c: Cursor): bool =
       inc nested
       if pool.tags[c.tag] == "sources":
         inc c
-        while c.kind != ParRi:
+        while c.hasMore:
           if c.kind == StringLit:
             let dep = pool.strings[c.litId]
             if not fileExists(dep):

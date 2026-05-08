@@ -136,7 +136,7 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
   iter.obj1 = obj1
   var obj2 = obj1
   skip obj2
-  if obj2.kind != ParRi:
+  if obj2.hasMore:
     iter.obj2 = obj2
     if iter.fieldVar2 == StrId(0):
       buildErr c, dest, unpackInfo, "wrong number of variables"

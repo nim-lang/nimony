@@ -139,10 +139,10 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trExpr c, dest, n
       # field name:
       dest.takeTree n
-      if n.kind != ParRi:
+      if n.hasMore:
         # inheritance depth:
         takeTree dest, n
-      if n.kind != ParRi:
+      if n.hasMore:
         # optional access-token string lit
         takeTree dest, n
       dest.takeParRi n
@@ -151,7 +151,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.takeToken n
         dest.takeTree n # key, don't versionize!
         trExpr c, dest, n
-        if n.kind != ParRi:
+        if n.hasMore:
           # inheritance depth:
           takeTree dest, n
         takeParRi dest, n
@@ -187,7 +187,7 @@ proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
   closeSection c.vt
   openSection c.vt
   openScope c.typeCache
-  if n.kind != ParRi:
+  if n.hasMore:
     trStmt c, dest, n
   else:
     # repair broken ite statements (missing else):
@@ -195,7 +195,7 @@ proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
   closeScope c.typeCache
   closeSection c.vt
   # join information is optional here:
-  if n.kind != ParRi:
+  if n.hasMore:
     skip n # ignore the currently empty join information
   dest.addParLe StmtsS, info
   let joinData = combineJoin(c.vt, IfJoin)

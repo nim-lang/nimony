@@ -818,7 +818,7 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
     var typeArg = cursorAt(signature, typeArgsStart)
     typevar.into:  # (typevars …)
       while typevar.hasMore:
-        assert typeArg.kind != ParRi
+        assert typeArg.hasMore
         let sym = asLocal(typevar).name.symId
         newInferred[sym] = typeArg
         skip typevar
@@ -1535,7 +1535,7 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     crucial.flags.incl pk
     dest.add parLeToken(pk, n.info)
     inc n
-    if hasParRi and n.kind != ParRi:
+    if hasParRi and n.hasMore:
       semConstStrExprIgnoreTopLevel c, dest, n
     dest.addParRi()
   of ImportcP, ImportcppP, ExportcP, HeaderP, DynlibP, PluginP:
@@ -1544,7 +1544,7 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     dest.add parLeToken(pk, info)
     inc n
     let strPos = dest.len
-    if hasParRi and n.kind != ParRi:
+    if hasParRi and n.hasMore:
       semConstStrExprIgnoreTopLevel c, dest, n
     elif crucial.sym != SymId(0):
       var name = pool.syms[crucial.sym]
@@ -1572,7 +1572,7 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     dest.add parLeToken(pk, n.info)
     inc n
     let valueStart = dest.len
-    if hasParRi and n.kind != ParRi:
+    if hasParRi and n.hasMore:
       semConstIntExpr(c, dest, n, SemcheckBodies)
     else:
       buildErr c, dest, n.info, "expected int literal"
@@ -1623,7 +1623,7 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     crucial.flags.incl pk
     dest.add parLeToken(pk, n.info)
     inc n
-    if hasParRi and n.kind != ParRi:
+    if hasParRi and n.hasMore:
       semProposition c, dest, n, pk
     else:
       buildErr c, dest, n.info, "`requires`/`ensures` pragma takes a bool expression"
@@ -1631,7 +1631,7 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
   of TagsP:
     dest.add parLeToken(pk, n.info)
     inc n
-    if hasParRi and n.kind != ParRi:
+    if hasParRi and n.hasMore:
       takeTree dest, n
     else:
       buildErr c, dest, n.info, "expected tags/raises list"
@@ -1639,7 +1639,7 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
   of CastP:
     dest.add parLeToken(pk, n.info)
     inc n
-    if hasParRi and n.kind != ParRi:
+    if hasParRi and n.hasMore:
       takeTree dest, n
     else:
       buildErr c, dest, n.info, "expected `cast` pragma expression"
@@ -1659,7 +1659,7 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     let oldLen = dest.len
     dest.add parLeToken(pk, n.info)
     inc n
-    if hasParRi and n.kind != ParRi:
+    if hasParRi and n.hasMore:
       var nn = n
       let typeStart = dest.len
       # Sem-check the type properly
@@ -1728,7 +1728,7 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
       dest.takeTree n
     dest.addParRi()
   if hasParRi:
-    if n.kind != ParRi:
+    if n.hasMore:
       if n.exprKind != ErrX:
         buildErr c, dest, n.info, "too many arguments for pragma"
       while n.hasMore: skip n
@@ -3253,7 +3253,7 @@ proc semForLoopTupleVar(c: var SemContext; dest: var TokenBuf; it: var Item; tup
     loopvarTypeMod = tup.typeKind
     inc tup
   inc tup
-  while it.n.kind != ParRi and tup.kind != ParRi:
+  while it.n.hasMore and tup.hasMore:
     let field = getTupleFieldType(tup)
     if it.n.substructureKind == UnpacktupU:
       takeToken dest, it.n
@@ -3391,7 +3391,7 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
       takeToken dest, it.n
       var n2 = it.n
       skip n2
-      let hasMultiVars = n2.kind != ParRi
+      let hasMultiVars = n2.hasMore
       if hasMultiVars:
         if iterCall.typ.skipModifier.typeKind == TupleT:
           semForLoopTupleVar c, dest, it, iterCall.typ
@@ -3561,11 +3561,11 @@ proc literalB(c: var SemContext; dest: var TokenBuf; it: var Item; literalType: 
   let beforeExpr = dest.len
   takeToken dest, it.n
   var literalType = literalType
-  if it.n.kind != ParRi:
+  if it.n.hasMore:
     let typeStart = dest.len
     semLocalTypeImpl c, dest, it.n, InLocalDecl
     literalType = typeToCursor(c, dest, typeStart)
-    if it.n.kind != ParRi and it.n.exprKind == NilX:
+    if it.n.hasMore and it.n.exprKind == NilX:
       skip it.n
   takeParRi dest, it.n
   let expected = it.typ
@@ -4035,7 +4035,7 @@ proc semTupleConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
       takeToken dest, it.n
       takeTree dest, it.n
     var elem = Item(n: it.n, typ: c.types.autoType)
-    if t.kind != ParRi:
+    if t.hasMore:
       elem.typ = getTupleFieldType(t)
       skip t
     else:
@@ -4044,7 +4044,7 @@ proc semTupleConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
     it.n = elem.n
     if named:
       takeParRi dest, it.n
-  if t.kind != ParRi:
+  if t.hasMore:
     c.buildErr dest, info, "tuple type " & typeToString(it.typ) & " too long for tuple constructor"
   takeParRi dest, it.n
   commonType c, dest, it, start, expected
@@ -4359,7 +4359,7 @@ proc inferTypevarFromTypes(formal, actual: Cursor; inferred: var Table[SymId, Cu
       return
   if f.kind == ParLe and a.kind == ParLe and f.tagId == a.tagId:
     inc f; inc a
-    while f.kind != ParRi and a.kind != ParRi:
+    while f.hasMore and a.hasMore:
       inferTypevarFromTypes(f, a, inferred)
       skip f; skip a
 
@@ -4598,7 +4598,7 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
         else:
           c.buildErr dest, fieldInfo, "undeclared field: '" & pool.strings[fieldName] & "' for type " & typeToString(it.typ)
           skip it.n
-        if it.n.kind != ParRi:
+        if it.n.hasMore:
           # inheritance level, reuse if field already has a sym, otherwise set a new one
           if hasFieldSym:
             takeTree fieldBuf, it.n
@@ -4642,7 +4642,7 @@ proc semNewref(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let typeForDefault = it.typ.firstSon
   callDefault c, dest, typeForDefault, info
   skip it.n # type
-  if it.n.kind != ParRi:
+  if it.n.hasMore:
     skip it.n # existing `default(T)` call
   takeParRi dest, it.n
   commonType c, dest, it, exprStart, expected
@@ -4733,7 +4733,7 @@ proc semTupAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
         idxValue = idxValue - one
       else:
         break
-    if it.typ.kind != ParRi:
+    if it.typ.hasMore:
       it.typ = getTupleFieldType(it.typ)
     takeParRi dest, it.n
     commonType c, dest, it, exprStart, expected
@@ -5398,7 +5398,7 @@ proc semVoidHook(c: var SemContext; dest: var TokenBuf; it: var Item) =
   takeToken dest, it.n
   it.typ = c.types.autoType
   semExpr c, dest, it
-  if it.n.kind != ParRi:
+  if it.n.hasMore:
     # hook has 2nd argument:
     it.typ = c.types.autoType
     semExpr c, dest, it
@@ -5617,7 +5617,7 @@ proc semPragmaLine(c: var SemContext; dest: var TokenBuf; it: var Item; isPragma
       inc it.n
     else:
       buildErr c, dest, it.n.info, "expected `string` but got: " & asNimCode(it.n)
-      if it.n.kind != ParRi: skip it.n
+      if it.n.hasMore: skip it.n
     takeParRi dest, it.n
     dest.addParRi()
   of PragmaP:
@@ -5960,7 +5960,7 @@ proc semTableConstructor(c: var SemContext; dest: var TokenBuf; it: var Item; fl
         if singleKeys.len != 0:
           var cur = it.n
           skip cur
-          assert cur.kind != ParRi
+          assert cur.hasMore
           for key in singleKeys:
             arrayBuf.buildTree TupX, key.info:
               arrayBuf.copyTree key
@@ -5970,7 +5970,7 @@ proc semTableConstructor(c: var SemContext; dest: var TokenBuf; it: var Item; fl
 
         arrayBuf.buildTree TupX, kvInfo:
           arrayBuf.takeTree it.n
-          assert it.n.kind != ParRi
+          assert it.n.hasMore
           arrayBuf.takeTree it.n
         inc it.n
       else:
@@ -6412,7 +6412,7 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       var valIt = Item(n: it.n, typ: c.types.autoType)
       semExpr c, dest, valIt
       it.n = valIt.n
-      if it.n.kind != ParRi:
+      if it.n.hasMore:
         takeTree dest, it.n
       takeParRi dest, it.n
       it.typ = valIt.typ
