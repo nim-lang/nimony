@@ -276,7 +276,7 @@ template copyInto*(t: var NifBuilder; n: var NifCursor; body: untyped) =
   assert n.kind == ParLe, "copyInto requires cursor at ParLe"
   prepareMutation(t)
   t.p[].buf.add n.cursor
-  nifstreams.into n.cursor:
+  nifcursors.into n.cursor:
     body
   t.p[].buf.addParRi()
 
@@ -375,7 +375,7 @@ proc firstChild*(n: NifCursor): NifCursor {.inline.} =
 
 template hasMore*(n: NifCursor): bool =
   ## True while there are more children before the closing `)`.
-  n.hasMore
+  n.cursor.hasMore
 
 template into*(n: var NifCursor; body: untyped) =
   ## Enters the current node, runs `body` to process the children, then
@@ -387,7 +387,7 @@ template into*(n: var NifCursor; body: untyped) =
   ##     while n.hasMore:
   ##       analyze(n)
   ##       skip n
-  nifstreams.into n.cursor:
+  nifcursors.into n.cursor:
     body
 
 template loopInto*(n: var NifCursor; body: untyped) =
@@ -411,7 +411,7 @@ template balancedTokens*(n: var NifCursor; body: untyped) =
   ##   n.balancedTokens:
   ##     if n.stmtKind == IfS:
   ##       foundIf = true
-  nifstreams.balancedTokens n.cursor:
+  nifcursors.balancedTokens n.cursor:
     body
 
 proc eqIdent*(n: NifCursor; name: string): bool =
@@ -657,7 +657,7 @@ template replaceHead*(t: var Replacer;
   ## scopes — virtual-ParRi safe.
   assert t.src.kind == ParLe, "replaceHead requires cursor at ParLe"
   t.dest.withTree(tag, info):
-    nifstreams.into t.src.cursor:
+    nifcursors.into t.src.cursor:
       body
 
 # ── Cursor access for analysis ────────────────────────────────────────────

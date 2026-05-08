@@ -36,15 +36,18 @@ proc trAsgn(n: var NifCursor, o: var NifBuilder) =
     n.into:                              # descend past `(asgn`
       if n.kind == ParLe and n.exprKind == DotX:
         access = n                       # snapshot at the dot expression
-        skip n                           # past dotX subtree
-        if n.kind == Symbol and n.symId in knownInstances and knownInstances[n.symId] in knownOnChanged:
-          instance = n
-          skip n                         # past instance symbol (atom)
-          if n.kind == Symbol:
-            fieldName = n.symText
+        # Inspect the receiver/field inside the (dot ...) without consuming
+        # `n` — the outer loop's `skip` below handles that.
+        var dot = firstChild(n)
+        if dot.kind == Symbol and dot.symId in knownInstances and
+           knownInstances[dot.symId] in knownOnChanged:
+          instance = dot
+          skip dot                       # past receiver (atom)
+          if dot.kind == Symbol:
+            fieldName = dot.symText
             fieldName.delete fieldName.find('.')..fieldName.high
             emitOnChanged = true
-      while n.hasMore: skip n            # consume any leftover children
+      while n.hasMore: skip n            # consume LHS, RHS, anything else
   let info = n.info
   o.takeTree(n)
   if emitOnChanged:
