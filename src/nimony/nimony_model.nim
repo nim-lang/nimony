@@ -349,6 +349,8 @@ proc isNilAnnotation*(n: Cursor): bool {.inline.} =
   n.kind == ParLe and n.substructureKind in {NotnilU, NilU, UncheckedU}
 
 proc skipNilAnnotation*(n: var Cursor) {.inline.} =
-  ## Skip a trailing nil annotation `(notnil)`, `(nil)`, or `(unchecked)` if present.
-  if n.kind == ParLe and n.substructureKind in {NotnilU, NilU, UncheckedU}:
+  ## Skip a trailing nil annotation `(notnil)`, `(nil)`, or `(unchecked)`
+  ## plus any further attributes (importc/header/...) that `fitTypeToPragmas`
+  ## may have appended when an importc'd pointer alias was inlined.
+  while n.kind != ParRi:
     skip n

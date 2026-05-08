@@ -164,11 +164,26 @@ when defined(posix):
   # -------- Process / pipe / exec bindings needed by std/osproc --------
   type
     Pid* {.importc: "pid_t", header: "<sys/types.h>".} = cint
-    Sigset* {.importc: "sigset_t", header: "<signal.h>", final, pure.} = object
-    Tposix_spawnattr* {.importc: "posix_spawnattr_t",
-        header: "<spawn.h>", final, pure.} = object
-    Tposix_spawn_file_actions* {.importc: "posix_spawn_file_actions_t",
-        header: "<spawn.h>", final, pure.} = object
+  when defined(osx):
+    # On macOS these are typedef'd to scalar types (`__uint32_t` for
+    # `sigset_t`, `void *` for the spawn handles); declaring them as
+    # opaque `object` makes nimony emit `(T){}` compound literals which
+    # clang rejects for scalar types. The pointer typedefs are nullable
+    # at the C level, so map to `nil pointer` (which has a `default()`
+    # overload).
+    type
+      Sigset* {.importc: "sigset_t", header: "<signal.h>".} = uint32
+      Tposix_spawnattr* {.importc: "posix_spawnattr_t",
+          header: "<spawn.h>".} = nil pointer
+      Tposix_spawn_file_actions* {.importc: "posix_spawn_file_actions_t",
+          header: "<spawn.h>".} = nil pointer
+  else:
+    type
+      Sigset* {.importc: "sigset_t", header: "<signal.h>", final, pure.} = object
+      Tposix_spawnattr* {.importc: "posix_spawnattr_t",
+          header: "<spawn.h>", final, pure.} = object
+      Tposix_spawn_file_actions* {.importc: "posix_spawn_file_actions_t",
+          header: "<spawn.h>", final, pure.} = object
 
   proc pipe*(a: var array[0..1, cint]): cint {.
     importc, header: "<unistd.h>", sideEffect.}
