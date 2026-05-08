@@ -83,12 +83,18 @@ testNifGram(overwrite)
 
 proc hasturTests(overwrite: bool) =
   # CI sets NIMONY_CC=clang on Windows so tests exercise the clang-on-MinGW
-  # path (faster cc step + native PE TLS via LLD). Locally the env var is
-  # unset and the gcc default kicks in.
+  # path (faster cc step + native PE TLS). Locally the env var is unset
+  # and the gcc default kicks in. On Windows + clang we also force LLD as
+  # the linker: clang emits native PE TLS by default but ld.bfd lays out
+  # `.tls$` incorrectly, producing binaries that segfault on first TLS
+  # access; LLD's layout matches what the loader expects.
   var args = "--jobs:auto"
   let cc = os.getEnv("NIMONY_CC")
   if cc.len > 0:
     args.add " --forward:--cc:" & cc
+    when defined(windows):
+      if cc == "clang":
+        args.add " --forward:--passL:-fuse-ld=lld"
   if overwrite:
     args.add " --overwrite"
   exec "nim c -r src/hastur " & args

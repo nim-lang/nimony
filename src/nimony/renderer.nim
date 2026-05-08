@@ -21,7 +21,7 @@ proc skipParRi(n: var Cursor) =
   consumeParRi n
 
 type
-  TokType = enum
+  TokType* = enum
     tkInvalid = "tkInvalid", tkEof = "[EOF]", # order is important here!
     tkSymbol = "tkSymbol", # keywords:
     tkAddr = "addr", tkAnd = "and", tkAs = "as", tkAsm = "asm",
@@ -74,6 +74,7 @@ type
     kind*: TokType
     length*: int16
     sym*: SymId
+    isDef*: bool
 
   Section = enum
     GenericParams
@@ -129,8 +130,9 @@ proc initSrcGen(renderFlags: RenderFlags): SrcGen =
                    pendingWhitespace: -1, inside: {},
                    )
 
-proc addTok(g: var SrcGen, kind: TokType, s: string; sym: SymId = SymId(0)) =
-  g.tokens.add RenderTok(kind: kind, length: int16(s.len), sym: sym)
+proc addTok(g: var SrcGen, kind: TokType, s: string; sym: SymId = SymId(0);
+            isDef = false) =
+  g.tokens.add RenderTok(kind: kind, length: int16(s.len), sym: sym, isDef: isDef)
   g.buf.add(s)
   if kind != tkSpaces:
     inc g.col, s.len
@@ -189,11 +191,12 @@ proc dedent(g: var SrcGen) =
     dec(g.pendingNL, IndentWidth)
     dec(g.lineLen, IndentWidth)
 
-proc put(g: var SrcGen, kind: TokType, s: string; sym: SymId = SymId(0)) =
+proc put(g: var SrcGen, kind: TokType, s: string; sym: SymId = SymId(0);
+         isDef = false) =
   if kind != tkSpaces:
     addPendingNL(g)
     if s.len > 0 or kind in {tkHideableStart, tkHideableEnd}:
-      addTok(g, kind, s, sym)
+      addTok(g, kind, s, sym, isDef)
   else:
     g.pendingWhitespace = s.len
     inc g.col, s.len
@@ -326,8 +329,9 @@ proc gcomma(g: var SrcGen) =
   putWithSpace(g, tkComma, ",")
 
 proc mayAddExportMarker(g: var SrcGen, n: var Cursor) =
-  if n.kind == Ident and pool.strings[n.litId] == "x":
-    put(g, tkSymbol, "*")
+  if n.kind == Ident and pool.strings[n.litId] == "x" and
+      renderNoPostfix notin g.flags:
+    put(g, tkPostfixOpr, "*")
   skip n
 
 proc gpragmas(g: var SrcGen, n: var Cursor) =
@@ -2001,10 +2005,15 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     lit.add "\'"
     put(g, tkCharLit, lit)
     inc n
-  of Symbol, SymbolDef:
+  of Symbol:
     var name = pool.syms[n.symId]
     extractBasename(name)
-    put(g, tkSymbol, name)
+    put(g, tkSymbol, name, n.symId)
+    inc n
+  of SymbolDef:
+    var name = pool.syms[n.symId]
+    extractBasename(name)
+    put(g, tkSymbol, name, n.symId, isDef = true)
     inc n
   of Ident:
     put(g, tkSymbol, pool.strings[n.litId])
@@ -2082,3 +2091,14 @@ proc asNimCode*(n: Cursor; renderFlags: RenderFlags = {}): string =
 
 proc typeToString*(n: Cursor; renderFlags: RenderFlags = {}): string =
   result = renderTree(n, renderFlags = renderFlags, renderType = true)
+
+proc typeToSrcGen*(n: Cursor; renderFlags: RenderFlags = {}): SrcGen =
+  ## Render a type expression and return both rendered buffer and token stream.
+  ## Useful for consumers (like docs) that need Nim's renderer plus custom
+  ## post-processing (for example: symbol hyperlinks).
+  result = initSrcGen(renderFlags)
+  var n = n
+  var c: Context = initContext()
+  gtype(result, n, c)
+  if result.buf.len == 0:
+    result.buf = toString(n, false)

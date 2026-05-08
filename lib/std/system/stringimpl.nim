@@ -16,6 +16,17 @@ const
 
 const LongStringDataOffset = 3 * sizeof(int)  ## byte offset of LongString.data from start
 
+# OOM cookie: "\nD^OOM\0" packed inline (slen=7). Detect with `isOom(s)`.
+when defined(bigEndian):
+  const OomBytes*: uint = 0x070A445E4F4F4D00'u
+else:
+  const OomBytes*: uint = 0x004D4F4F5E440A07'u
+
+template strOom(s: var string; failedLen: int) =
+  {.cast(noSideEffect).}: oomHandler failedLen
+  s.bytes = OomBytes
+  s.more = nil
+
 # ---- low-level byte accessors ----
 
 func ssLenOf(bytes: uint): int {.inline.} =
@@ -71,6 +82,10 @@ func capacity*(s: string): int =
   if sl == HeapSlen: s.more.capImpl
   elif sl == StaticSlen: s.more.fullLen
   else: PayloadSize
+
+func isOom*(s: string): bool {.inline.} =
+  ## True if `s` is the OOM marker (set by string ops on allocation failure).
+  s.bytes == OomBytes
 
 # ---- read-only raw data API (public, safe for external callers) ----
 
@@ -159,8 +174,7 @@ func ensureUniqueLong(s: var string; oldLen, newLen: int) =
       # Sync inline cache after creating new block (use oldLen since new data may not exist yet)
       copyMem(inlinePtrV(s), addr p.data[0], min(oldLen, AlwaysAvail))
     else:
-      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + newCap
-      s.bytes = 0
+      strOom s, LongStringDataOffset + newCap
 
 func transitionToLong(s: var string; sl: int; newLen: int) =
   let newCap = max(newLen, ssResize(newLen))
@@ -175,8 +189,7 @@ func transitionToLong(s: var string; sl: int; newLen: int) =
     # Sync inline cache after creating new block
     copyMem(inlinePtrV(s), addr p.data[0], min(sl, AlwaysAvail))
   else:
-    {.cast(noSideEffect).}: oomHandler LongStringDataOffset + newCap
-    s.bytes = 0
+    strOom s, LongStringDataOffset + newCap
 
 # ---- mutation helpers ----
 
@@ -197,8 +210,7 @@ func prepareMutation*(s: var string) {.inline.} =
       s.more = p
       setSSLen(s, HeapSlen)
     else:
-      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + oldLen
-      s.bytes = 0
+      strOom s, LongStringDataOffset + oldLen
 
 # ---- beginStore / endStore for bulk writes ----
 
@@ -401,8 +413,7 @@ func substr*(s: string; first, last: int): string =
       setSSLen(result, HeapSlen)
       copyMem(inlinePtrV(result), addr p.data[0], AlwaysAvail)
     else:
-      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + newLen
-      result.bytes = 0
+      strOom result, LongStringDataOffset + newLen
 
 func substr*(s: string; first = 0): string =
   ## Same as ``substr(s, first, s.high)``: characters from index `first` through the end.
@@ -616,7 +627,7 @@ func newString*(len: int): string =
       result.more = p
       setSSLen(result, HeapSlen)
     else:
-      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + len
+      strOom result, LongStringDataOffset + len
 
 func newStringOfCap*(len: int): string =
   ## Returns a new empty string with capacity reserved for `len` chars.
@@ -631,7 +642,7 @@ func newStringOfCap*(len: int): string =
     result.more = p
     setSSLen(result, HeapSlen)
   else:
-    {.cast(noSideEffect).}: oomHandler LongStringDataOffset + len
+    strOom result, LongStringDataOffset + len
 
 # ---- concat / & ----
 
@@ -664,7 +675,7 @@ func `&`*(a, b: string): string {.semantics: "string.&".} =
       setSSLen(result, HeapSlen)
       copyMem(inlinePtrV(result), addr p.data[0], AlwaysAvail)
     else:
-      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + rlen
+      strOom result, LongStringDataOffset + rlen
 
 func charToString(c: char): string =
   result = string(bytes: 0'u, more: nil)
@@ -701,7 +712,7 @@ func borrowCStringUnsafe*(s: cstring; l: int): string =
       setSSLen(result, HeapSlen)
       copyMem(inlinePtrV(result), addr p.data[0], AlwaysAvail)
     else:
-      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + l
+      strOom result, LongStringDataOffset + l
 
 func borrowCStringUnsafe*(s: cstring): string {.exportc: "nimBorrowCStringUnsafe".} =
   borrowCStringUnsafe(s, len(s))
@@ -738,6 +749,6 @@ func fromCString*(s: cstring): string =
       setSSLen(result, HeapSlen)
       copyMem(inlinePtrV(result), addr p.data[0], AlwaysAvail)
     else:
-      {.cast(noSideEffect).}: oomHandler LongStringDataOffset + l
+      strOom result, LongStringDataOffset + l
 
 template `$`*(x: string): string = x

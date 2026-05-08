@@ -49,6 +49,10 @@ Commands:
                        If no file is provided `bug.nim` is used.
   rep                  repeat the last failing tool command from the session.
   record <file> <tout> track the results to make it part of the test suite.
+  install              write activation script(s) at the project root that
+                       prepend the toolchain dirs to `$PATH` for the current
+                       shell. On Windows, also download MinGW+LLVM (gcc,
+                       clang, lld) and Nim's DLL deps into `external/`.
   clean                remove all generated files.
   sync [new-branch]    delete current branch and pull the latest
                        changes from remote. Optionally creates a new branch.
@@ -983,9 +987,15 @@ proc validatePassesFlag(): string =
   ## Enable the phase-aware IR validator only when running on CI. GitHub Actions
   ## (and most other CI providers) set `CI=true` in the environment, so we key
   ## off that: locally the validator stays opt-in via `NIMONY_VALIDATE=1`, which
-  ## keeps iteration fast while guaranteeing the check on every PR.
+  ## keeps iteration fast while guaranteeing the check on every PR. On Windows
+  ## CI the in-process post-sem validator is turned off — the per-module walk
+  ## amplifies Windows' per-process overhead enough to dominate the test phase,
+  ## and the Linux/macOS jobs already catch the same drift on every PR.
   if getEnv("CI").len > 0 or getEnv("NIMONY_VALIDATE").len > 0:
-    "-d:validatePasses "
+    when defined(windows):
+      "-d:skipPostSemValidator "
+    else:
+      "-d:validatePasses "
   else:
     ""
 
@@ -1124,13 +1134,19 @@ const RunnableBootstrapModules = [
 
 proc bootstrapTests() =
   ## Compile every module on `BootstrapModules` with `bin/nimony c`. Fails
-  ## fast on the first regression so the offending module is obvious.
+  ## fast on the first regression so the offending module is obvious. On
+  ## Windows the list collapses to the Tier 20 tip (`nimony.nim`) — its
+  ## import set already covers every other entry, so the redundant per-leaf
+  ## compiles are pure CI cost; Linux/macOS still cover every leaf.
   let nimony = binDir() / "nimony".addFileExt(ExeExt)
   if not fileExists(nimony):
     quit "bootstrap: " & nimony & " not found; run `hastur build nimony` first"
+  let modules =
+    when defined(windows): @["src/nimony/nimony.nim"]
+    else: @BootstrapModules
   let t0 = epochTime()
   var failed: seq[string] = @[]
-  for m in BootstrapModules:
+  for m in modules:
     removeDir "nimcache"
     let subcmd = if m in RunnableBootstrapModules: " c -r " else: " c "
     let (output, ec) = execCmdEx(nimony.quoteShell & subcmd & m.quoteShell)
@@ -1140,7 +1156,7 @@ proc bootstrapTests() =
       echo "FAIL ", m
       echo output
       failed.add m
-  echo failed.len, " / ", BootstrapModules.len, " bootstrap regressions in ",
+  echo failed.len, " / ", modules.len, " bootstrap regressions in ",
        formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if failed.len > 0:
     quit "FAILURE: bootstrap regression(s): " & failed.join(", ")
@@ -1379,6 +1395,8 @@ proc dagontests(overwrite: bool) =
     quit "FAILURE: Some dagon tests failed."
   else:
     echo "SUCCESS."
+
+import install
 
 proc syncCmd(newBranch: string) =
   let (output, status) = execCmdEx("git symbolic-ref --short HEAD")
@@ -1651,6 +1669,8 @@ proc handleCmdLine =
   of "clean":
     removeDir "nimcache"
     removeDir "bin"
+  of "install":
+    runInstall(args)
   of "sync":
     syncCmd(if args.len > 0: args[0] else: "")
   of "pull":

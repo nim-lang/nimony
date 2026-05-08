@@ -19,10 +19,10 @@ The system module is always imported implicitly.
 `string` and `seq` use value semantics. Assignment copies; strings
 are copy-on-write internally.
 
-- **`concat` vs `&`**: `&` allocates a new string per call. Use `concat`
+- `concat` vs `&`: `&` allocates a new string per call. Use `concat`
   when joining more than two pieces — it pre-calculates the total length
   and allocates once.
-- **`beginStore` / `endStore`**: The safe way to do bulk writes into a
+- `beginStore` / `endStore`: The safe way to do bulk writes into a
   string through a pointer. `beginStore(s, len, start)` returns a
   `ptr UncheckedArray[char]` pointing at position `start`; you may
   write up to `len` bytes through it. You **must** call `endStore(s)`
@@ -52,10 +52,10 @@ are copy-on-write internally.
   The older `prepareMutation` only handles copy-on-write but does
   **not** sync the inline cache, so it is insufficient with SSO.
   Prefer `beginStore`/`endStore`.
-- **`del`**: Removes an element from a `seq` by swapping it with the last
+- `del`: Removes an element from a `seq` by swapping it with the last
   element. O(1) but **changes order**. If you need stable order, shift
   elements manually.
-- **`grow` / `shrink`** are preferred over `setLen` — they are more
+- `grow` / `shrink` are preferred over `setLen` — they are more
   explicit about direction. `grow` takes a target length and a value
   to initialize new elements with: `s.grow(newLen, val)`.
   `growUnsafe` skips initialization; use with care.
@@ -71,16 +71,16 @@ are copy-on-write internally.
 
 ### Memory management
 
-- **`swap`** exchanges bits directly. It does **not** call `=sink`,
+- `swap` exchanges bits directly. It does **not** call `=sink`,
   `=copy`, or `=dup` hooks. This is by design — it's faster this way and Nim's lifetime tracking hooks do not support "self-pointers" (pointers inside the same object, `obj.field = addr(obj)`).
-- **`allocFixed` / `deallocFixed`**: Low-level fixed-size allocation.
-- **`setOomHandler`**: By default the runtime tries to continue after
+- `allocFixed` / `deallocFixed`: Low-level fixed-size allocation.
+- `setOomHandler`: By default the runtime tries to continue after
   out-of-memory. For many applications, just quitting is the more robust solution — set a handler that calls `quit`.
 
 ### Iterators
 
-- **`..`** is inclusive: `0..3` yields 0, 1, 2, 3.
-- **`..<`** is exclusive on the right: `0..<3` yields 0, 1, 2.
+- `..` is inclusive: `0..3` yields 0, 1, 2, 3.
+- `..<` is exclusive on the right: `0..<3` yields 0, 1, 2.
 
 ### Coroutines
 
@@ -98,13 +98,13 @@ See the CPS documentation for details.
 Synchronous file I/O. `echo`, `stdin`, `stdout`, `stderr` are always
 available.
 
-- **`open` returns bool**, not a File — check it. The `File` is an
+- `open` returns bool**, not a File — check it. The `File` is an
   out-parameter.
-- **`readLine`** returns `false` at EOF. Use it in a `while` loop.
-- **`writeLine`** appends the platform line ending.
-- **`tryWriteFile`** is a convenience that opens, writes, and closes
+- `readLine` returns `false` at EOF. Use it in a `while` loop.
+- `writeLine` appends the platform line ending.
+- `tryWriteFile` is a convenience that opens, writes, and closes
   in one call.
-- **`quit(msg)`** writes to stderr and exits — useful for fatal errors.
+- `quit(msg)` writes to stderr and exits — useful for fatal errors.
 
 [Examples: file I/O](../examples/io_basics.nim)
 
@@ -128,11 +128,11 @@ Use `AllChars - ValidChars` to build an *invalid* character set for
 
 ### Comparison
 
-- **`cmpIgnoreCase`** returns `int` (not `bool`) — designed for sort
+- `cmpIgnoreCase` returns `int` (not `bool`) — designed for sort
   comparators.
-- **`cmpIgnoreStyle`** ignores case **and** underscores, matching
+- `cmpIgnoreStyle` ignores case **and** underscores, matching
   Nim's identifier comparison rules: `foo_bar` == `FooBar`.
-- **`normalize`** lowercases and strips underscores — the canonical
+- `normalize` lowercases and strips underscores — the canonical
   form for Nim-style comparison.
 
 ### Splitting
@@ -150,11 +150,11 @@ Use `maxsplit` to limit the number of splits.
 
 ### Formatting
 
-- **`%`** interpolates `$1`, `$2`, ... placeholders. `format` is the
+- `%` interpolates `$1`, `$2`, ... placeholders. `format` is the
   same thing as a named proc.
-- **`formatFloat`** / `formatBiggestFloat`**: Use `ffDecimal` for
+- `formatFloat` / `formatBiggestFloat`: Use `ffDecimal` for
   fixed decimals, `ffScientific` for scientific notation.
-- **`formatSize`** formats byte counts as human-readable strings
+- `formatSize` formats byte counts as human-readable strings
   (KiB, MiB, etc.).
 
 
@@ -168,15 +168,15 @@ Key distinction: **byte position vs rune position**. Most procs
 take byte positions for efficiency. Use `runeOffset` to convert
 a rune index to a byte index.
 
-- **`runeLen`** returns the number of runes (not bytes).
+- `runeLen` returns the number of runes (not bytes).
   `s.len` gives bytes.
-- **`fastRuneAt`** is a template that avoids allocation — use it
+- `fastRuneAt` is a template that avoids allocation — use it
   in tight loops instead of `runeAt`.
-- **`graphemeLen`** accounts for combining characters — one
+- `graphemeLen` accounts for combining characters — one
   "visible character" may be multiple runes.
-- **`toLower` / `toUpper`** here handle the full Unicode range,
+- `toLower` / `toUpper` here handle the full Unicode range,
   unlike `strutils.toLowerAscii`.
-- **`validateUtf8`** returns -1 if valid, otherwise the byte
+- `validateUtf8` returns -1 if valid, otherwise the byte
   position of the first invalid byte.
 
 
@@ -188,7 +188,7 @@ Hash values are prerequisites for `Table` and `HashSet` keys.
 
 - Combine hashes with `!&`, finalize with `!$`.
 - The `Hashable` concept describes what a type needs to be hashable.
-- **`hashIgnoreStyle`** matches `cmpIgnoreStyle` — use them together
+- `hashIgnoreStyle` matches `cmpIgnoreStyle` — use them together
   for Nim-style identifier tables.
 
 
@@ -205,11 +205,11 @@ The table uses a hybrid strategy: **linear scan for ≤ 4 entries**,
 hash table with open addressing for larger sizes. This means small
 tables have no hashing overhead at all.
 
-- **`[]`** raises `KeyError` on missing keys. Use `getOrDefault` for
+- `[]` raises `KeyError` on missing keys. Use `getOrDefault` for
   a safe fallback, or `contains` to check first.
-- **`mgetOrPut`** returns a `var` reference — ideal for counters:
+- `mgetOrPut` returns a `var` reference — ideal for counters:
   `tab.mgetOrPut(key, 0) += 1`.
-- **`getOrQuit`** is for cases where a missing key is a programming
+- `getOrQuit` is for cases where a missing key is a programming
   error — it calls `quit`, not an exception.
 
 
@@ -221,7 +221,7 @@ tables have no hashing overhead at all.
 Hash-based sets for any hashable type. Built on top of `Table[T, bool]`.
 Like `tables`, you must also `import std/hashes`.
 
-- **`containsOrIncl`** is the deduplication primitive — returns whether
+- `containsOrIncl` is the deduplication primitive — returns whether
   the element was already present, and adds it if not.
 
 For small ordinal types (`char`, `enum`, small integer ranges), prefer
@@ -234,14 +234,14 @@ the built-in `set[T]` which is a bitset and much faster.
 
 Type-safe path handling via the `Path` distinct type.
 
-- **`/`** joins paths and normalizes. Use it instead of string
+- `/` joins paths and normalizes. Use it instead of string
   concatenation.
-- **`splitFile`** returns `(dir, name, ext)` where `ext` includes the
+- `splitFile` returns `(dir, name, ext)` where `ext` includes the
   leading dot. Empty components are empty strings, never `/`.
-- **`relativePath`** can use `'/'` as separator (via `sep` parameter)
+- `relativePath` can use `'/'` as separator (via `sep` parameter)
   for URL construction.
-- **`absolutePath`** defaults to the current directory as root.
-- **`expandTilde`** handles `~/` expansion. Works on all platforms
+- `absolutePath` defaults to the current directory as root.
+- `expandTilde` handles `~/` expansion. Works on all platforms
   including Windows.
 
 
@@ -251,12 +251,12 @@ Type-safe path handling via the `Path` distinct type.
 
 Directory operations.
 
-- **`createDir`** creates nested directories (like `mkdir -p`).
+- `createDir` creates nested directories (like `mkdir -p`).
   No error if it already exists.
-- **`walkDir`** yields `(kind, path)` tuples. The `kind` distinguishes
+- `walkDir` yields `(kind, path)` tuples. The `kind` distinguishes
   files, directories, and symlinks. Set `relative = true` to get just
   names instead of full paths.
-- **`tryRemoveFinalDir` / `tryRemoveFile`** return OS error codes
+- `tryRemoveFinalDir` / `tryRemoveFile` return OS error codes
   instead of raising — useful when you need to distinguish "not found"
   from "permission denied".
 
@@ -265,9 +265,9 @@ Directory operations.
 
 [Source](../lib/std/envvars.nim)
 
-- **`getEnv`** returns `""` for missing variables. Use `existsEnv` to
+- `getEnv` returns `""` for missing variables. Use `existsEnv` to
   distinguish missing from empty.
-- **`envPairs`** iterates all environment variables as `(key, value)`.
+- `envPairs` iterates all environment variables as `(key, value)`.
 
 
 ## appdirs
@@ -277,9 +277,9 @@ Directory operations.
 Platform-correct application directories (XDG on Linux, `Library/` on
 macOS, `AppData` on Windows).
 
-- **`getConfigDir`** / **`getDataDir`** / **`getCacheDir`** respect
+- `getConfigDir` / `getDataDir` / `getCacheDir` respect
   `XDG_*` environment variables on Unix.
-- **`getTempDir`** does **not** verify the directory exists.
+- `getTempDir` does **not** verify the directory exists.
 
 
 ## memfiles
@@ -289,9 +289,9 @@ macOS, `AppData` on Windows).
 Memory-mapped file I/O. The `MemFile` type exposes `mem` (pointer)
 and `size`.
 
-- **`open`** with `mappedSize = -1` maps the entire file.
+- `open` with `mappedSize = -1` maps the entire file.
 - The `offset` parameter must be a multiple of the OS page size.
-- **`close`** flushes changes for files opened with write access.
+- `close` flushes changes for files opened with write access.
 
 
 ## encodings
@@ -301,7 +301,7 @@ and `size`.
 Character encoding conversion. Uses iconv on Unix, Windows API on
 Windows.
 
-- **`getCurrentEncoding`** always returns `"UTF-8"` on Unix.
+- `getCurrentEncoding` always returns `"UTF-8"` on Unix.
 - Open a converter with `open(srcEncoding, destEncoding)`, then call
   `convert`. Don't forget to `close` it.
 
@@ -310,7 +310,7 @@ Windows.
 
 [Source](../lib/std/wordwrap.nim)
 
-- **`wrapWords`** handles Unicode graphemes correctly.
+- `wrapWords` handles Unicode graphemes correctly.
 - Set `splitLongWords = false` to keep long words intact instead of
   breaking them mid-word.
 
@@ -321,8 +321,8 @@ Windows.
 
 Low-level thread creation.
 
-- **`create`** takes a `fn(arg)` pair and an optional stack size
+- `create` takes a `fn(arg)` pair and an optional stack size
   (0 = system default, typically 2MB).
-- **`pinnedToCpu`** is best-effort — some platforms (macOS) do not
+- `pinnedToCpu` is best-effort — some platforms (macOS) do not
   support CPU pinning.
 - Always `join` threads before the program exits.
