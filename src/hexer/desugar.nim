@@ -67,7 +67,7 @@ proc needsTemp(n: Cursor): bool =
     of AtX, PatX, ArratX, TupatX, DotX, DdotX, ParX, AddrX, HaddrX:
       result = false
       inc n
-      while n.kind != ParRi:
+      while n.hasMore:
         if needsTemp(n):
           return true
         skip n
@@ -98,18 +98,18 @@ proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = fals
   if n.substructureKind == KvU:
     dest.takeToken n
     dest.takeTree n # key
-    while n.kind != ParRi:
+    while n.hasMore:
       tr(c, dest, n, isTopScope)
     dest.takeParRi n
   elif n.exprKind in {DotX, DdotX}:
     dest.takeToken n
     tr(c, dest, n, isTopScope)
-    while n.kind != ParRi:
+    while n.hasMore:
       dest.takeTree n
     dest.takeParRi n
   else:
     copyInto dest, n:
-      while n.kind != ParRi:
+      while n.hasMore:
         tr(c, dest, n, isTopScope)
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -120,7 +120,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trProcBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
   inc n # (stmts)
-  while n.kind != ParRi:
+  while n.hasMore:
     tr(c, dest, n)
   skipParRi n
 
@@ -557,7 +557,7 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.add symToken(pool.syms.getOrIncl("zeroMem.0." & SystemModuleSuffix), info)
       dest.arrayToPointer(res, info)
       dest.addIntLit(size, info)
-  while n.kind != ParRi:
+  while n.hasMore:
     let elemInfo = n.info
     if n.substructureKind == RangeU:
       inc n
@@ -733,7 +733,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   while n.exprKind == ExprX:
     inc n
     inc nestedExpr
-  while n.kind != ParRi:
+  while n.hasMore:
     tr(c, dest, n)
   inc n
   dest.addParRi()
@@ -759,7 +759,7 @@ proc trTupleAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let tupleType = n
   skip n
   var lhsItems: seq[Cursor] = @[]
-  while n.kind != ParRi:
+  while n.hasMore:
     lhsItems.add n
     skip n
   inc n # past LHS closing ParRi
@@ -811,7 +811,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         genInclExcl(c, dest, n)
       of CaseS:
         copyInto dest, n:
-          while n.kind != ParRi:
+          while n.hasMore:
             case n.substructureKind
             of OfU:
               copyInto dest, n:

@@ -202,9 +202,11 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
     # same order as original nim fields iterator:
     while true:
       var obj = asObjectDecl(objType)
-      var currentField = obj.firstField
-      if currentField.kind != DotToken:
-        while currentField.kind != ParRi:
+      var currentField = obj.body
+      currentField.into:
+        if obj.kind == ObjectT:
+          skip currentField, AnyType  # parent type / inheritance slot
+        while currentField.hasMore:
           let field = takeLocal(currentField, SkipFinalParRi)
           let fieldSym = if isInternalSym: field.name.symId else: SymId(0)
           # field name is enough:

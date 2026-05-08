@@ -181,7 +181,7 @@ proc collectChildKinds(parent: Cursor; preferStmtContext: bool;
   var c = parent
   inc c  # past the ParLe
   var idx = 0
-  while c.kind != ParRi:
+  while c.hasMore:
     let inTypeSlot = allKidsType or (idx in typeSlots)
     outKinds.add classifyCursor(c, preferStmtContext, inTypeSlot)
     skip c
@@ -385,7 +385,7 @@ proc checkParLe(ctx: var ValidatorCtx; c: var Cursor;
   var child = c
   inc child
   var idx = 0
-  while child.kind != ParRi:
+  while child.hasMore:
     let childInType = kidsTypeByThisTag or (idx in typeSlots)
     checkTree(ctx, child, tag, idx, childInType)
     inc idx

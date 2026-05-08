@@ -308,7 +308,7 @@ proc analyseOconstr(c: var Context; n: var Cursor) =
   inc n
   let objType = n
   skip n # type
-  while n.kind != ParRi:
+  while n.hasMore:
     assert n.substructureKind == KvU
     inc n
     assert n.kind == Symbol
@@ -327,7 +327,7 @@ proc analyseArrayConstr(c: var Context; n: var Cursor) =
   inc n
   let expected = n.firstSon # element type of the array
   skip n # type
-  while n.kind != ParRi:
+  while n.hasMore:
     checkNilMatch c, n, expected
     skip n
   skipParRi n
@@ -336,7 +336,7 @@ proc analyseTupConstr(c: var Context; n: var Cursor) =
   inc n
   var expected = n.firstSon # type of the first field
   skip n # type
-  while n.kind != ParRi:
+  while n.hasMore:
     assert expected.kind != ParRi
     checkNilMatch c, n, getTupleFieldType(expected)
     skip n
@@ -405,7 +405,7 @@ proc analyseCallArgs(c: var Context; n: var Cursor) =
   assert fnType.isParamsTag
   inc fnType
   var paramMap = initTable[SymId, int]() # param to position
-  while n.kind != ParRi:
+  while n.hasMore:
     let previousFormalParam = fnType
     assert fnType.kind != ParRi
     let param = takeLocal(fnType, SkipFinalParRi)
@@ -422,7 +422,7 @@ proc analyseCallArgs(c: var Context; n: var Cursor) =
       fnType = previousFormalParam
     checkNilMatch c, n, param.typ
     analyseExpr c, n
-  while fnType.kind != ParRi: skip fnType
+  while fnType.hasMore: skip fnType
   inc fnType # skip ParRi
   # skip return type:
   skip fnType
@@ -790,7 +790,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
               inc pc
               analyseExpr c, pc
               # don't assume arity here
-              while pc.kind != ParRi:
+              while pc.hasMore:
                 analyseExpr c, pc
               skipParRi pc
             else:
@@ -934,7 +934,7 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
   of StmtsS:
     c.toplevelStmts.add n
     inc n
-    while n.kind != ParRi:
+    while n.hasMore:
       traverseToplevel(c, n)
     c.toplevelStmts.add n
     skipParRi n

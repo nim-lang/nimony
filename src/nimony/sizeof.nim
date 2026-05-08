@@ -68,14 +68,14 @@ proc parseTypePragmas(n: Cursor): TypePragmas =
   result = default TypePragmas
   var n = n
   if n.substructureKind == PragmasU:
-    inc n
-    while n.kind != ParRi:
-      case n.pragmaKind:
-      of {PackedP, UnionP, InheritableP, IncompleteStructP}:
-        result.pragmas.incl n.pragmaKind
-        skip n
-      else:
-        skip n
+    n.into PragmasU:
+      while n.hasMore:
+        case n.pragmaKind:
+        of {PackedP, UnionP, InheritableP, IncompleteStructP}:
+          result.pragmas.incl n.pragmaKind
+          skip n
+        else:
+          skip n
   elif n.kind != DotToken:
     error "illformed AST inside type section: ", n
 
@@ -88,39 +88,36 @@ proc getSizeObject(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; ite
   if result:
     if n.substructureKind == CaseU:
       assert UnionP notin pragmas.pragmas, "Case objects cannot work with union pragma."
-      inc n
-      # selector
-      let field = takeLocal(n, SkipFinalParRi)
-      getSize c, cache, field.typ, ptrSize
       var cCase = createSizeofValue(c.strict)
-      while n.kind != ParRi:
-        case n.substructureKind
-        of OfU:
-          inc n
-          # field
-          skip n
-          var cOf = createSizeofValue(c.strict)
-          inc n # stmt
-          while n.kind != ParRi:
-            discard getSizeObject(cOf, cache, iter, n, ptrSize, pragmas)
-          skipParRi n # stmt
-          skipParRi n
-
-          finish cOf
-          combineCaseObject(cCase, cOf)
-        of ElseU:
-          inc n
-          # else
-          var cElse = createSizeofValue(c.strict)
-          inc n # stmt
-          while n.kind != ParRi:
-            discard getSizeObject(cElse, cache, iter, n, ptrSize, pragmas)
-          skipParRi n # stmt
-          skipParRi n
-          finish cElse
-          combineCaseObject(cCase, cElse)
-        else:
-          error "illformed AST inside case object: ", n
+      n.into CaseU:
+        # selector
+        let field = takeLocal(n, SkipFinalParRi)
+        getSize c, cache, field.typ, ptrSize
+        while n.hasMore:
+          case n.substructureKind
+          of OfU:
+            n.into OfU:
+              # ranges
+              skip n
+              var cOf = createSizeofValue(c.strict)
+              n.into StmtsU:
+                while n.hasMore:
+                  discard getSizeObject(cOf, cache, iter, n, ptrSize, pragmas)
+              finish cOf
+              combineCaseObject(cCase, cOf)
+              while n.hasMore: skip n
+          of ElseU:
+            n.into ElseU:
+              var cElse = createSizeofValue(c.strict)
+              n.into StmtsU:
+                while n.hasMore:
+                  discard getSizeObject(cElse, cache, iter, n, ptrSize, pragmas)
+              finish cElse
+              combineCaseObject(cCase, cElse)
+              while n.hasMore: skip n
+          else:
+            error "illformed AST inside case object: ", n
+            skip n  # avoid infinite loop on unexpected
       combine(c, cCase)
     else:
       let field = takeLocal(n, SkipFinalParRi)
@@ -220,11 +217,11 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
       # mark as invalid as we pretend to not to know the alignment the backend ends up using etc.
       c.overflow = true
     var n = n
-    inc n
     var c2 = createSizeofValue(c.strict)
-    while n.kind != ParRi:
-      getSize c2, cache, getTupleFieldType(n), ptrSize
-      skip n
+    n.into:  # (tuple …)
+      while n.hasMore:
+        getSize c2, cache, getTupleFieldType(n), ptrSize
+        skip n
     finish c2
     if cacheKey != NoSymId: cache[cacheKey] = c2
     combine c, c2

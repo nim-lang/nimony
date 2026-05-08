@@ -316,7 +316,7 @@ proc gstmts(g: var SrcGen, n: var Cursor, c: Context, doIndent=false) =
   inc n
   if doIndent: indentNL(g)
 
-  while n.kind != ParRi:
+  while n.hasMore:
     optNL(g)
     gsub(g, n)
 
@@ -337,7 +337,7 @@ proc gpragmas(g: var SrcGen, n: var Cursor) =
   put(g, tkCurlyDotLe, "{.")
   var afterFirst = false
 
-  while n.kind != ParRi:
+  while n.hasMore:
     if afterFirst:
       gcomma(g)
     else:
@@ -387,7 +387,7 @@ proc gif(g: var SrcGen, n: var Cursor) =
 
   var isFirst = true
 
-  while n.kind != ParRi:
+  while n.hasMore:
     case n.substructureKind
     of ElifU:
       inc n
@@ -441,7 +441,7 @@ proc takeCaseStmts(g: var SrcGen, n: var Cursor; c: var Context; isCaseObject = 
     inc n
     indentNL(g)
 
-    while n.kind != ParRi:
+    while n.hasMore:
       optNL(g)
       takeObjectFields(g, n)
 
@@ -462,7 +462,7 @@ proc gcase(g: var SrcGen, n: var Cursor; isCaseObject = false) =
 
   optNL(g)
 
-  while n.kind != ParRi:
+  while n.hasMore:
     case n.substructureKind
     of OfU:
       inc n
@@ -470,7 +470,7 @@ proc gcase(g: var SrcGen, n: var Cursor; isCaseObject = false) =
       putWithSpace(g, tkOf, "of")
       assert n.substructureKind == RangesU
       inc n
-      while n.kind != ParRi:
+      while n.hasMore:
         gsub(g, n)
 
       skipParRi(n)
@@ -496,7 +496,7 @@ proc takeTypeVars(g: var SrcGen, n: var Cursor) =
     put(g, tkBracketLe, "[")
     var afterFirst = false
 
-    while n.kind != ParRi:
+    while n.hasMore:
       if afterFirst:
         gcomma(g)
       else:
@@ -535,7 +535,7 @@ proc gproc(g: var SrcGen, n: var Cursor) =
   if params.kind != DotToken:
     inc params
     var afterFirst = false
-    while params.kind != ParRi:
+    while params.hasMore:
       if afterFirst:
         gcomma(g)
       else:
@@ -597,7 +597,7 @@ proc bracketKind(g: SrcGen, n: Cursor): BracketKind =
 proc gcallComma(g: var SrcGen, n: var Cursor) =
   var afterFirst = false
 
-  while n.kind != ParRi:
+  while n.hasMore:
     if afterFirst:
       gcomma(g)
     else:
@@ -645,7 +645,7 @@ proc gcallsystem(g: var SrcGen, n: var Cursor; name: string) =
 
   var afterFirst = false
 
-  while n.kind != ParRi:
+  while n.hasMore:
     if afterFirst:
       gcomma(g)
     else:
@@ -662,7 +662,7 @@ proc gcmd(g: var SrcGen, n: var Cursor) =
 
   var afterFirst = false
 
-  while n.kind != ParRi:
+  while n.hasMore:
     if afterFirst:
       gcomma(g)
     else:
@@ -679,7 +679,7 @@ proc ginfix(g: var SrcGen, n: var Cursor) =
 
   var afterFirst = false
 
-  while n.kind != ParRi:
+  while n.hasMore:
     if afterFirst:
       gsub(g, n)
     else:
@@ -726,7 +726,7 @@ proc takeNumberType(g: var SrcGen, n: var Cursor, typ: string) =
 
   inc n
 
-  while n.kind != ParRi:
+  while n.hasMore:
     # skips importc and headers etc.
     skip n
 
@@ -857,7 +857,7 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
     of OrT:
       inc n
       var afterFirst = false
-      while n.kind != ParRi:
+      while n.hasMore:
         if afterFirst:
           put(g, tkOpr, "|")
         else:
@@ -871,7 +871,7 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
       var afterFirst = false
       gtype(g, n, c)
       put(g, tkBracketLe, "[")
-      while n.kind != ParRi:
+      while n.hasMore:
         if afterFirst:
           put(g, tkComma, ",")
         else:
@@ -924,22 +924,22 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
       putWithSpace(g, tkObject, "object")
       let obj = asObjectDecl(n)
       skip n
-      var fields = obj.firstField
+      var fields = obj.body
 
       indentNL(g)
 
-      while fields.kind != ParRi:
-        case fields.substructureKind
-        of CaseU:
-          gcase(g, fields, isCaseObject = true)
-        of FldU, GfldU:
-          takeField(g, fields)
-        else:
-          raiseAssert "todo"
+      fields.into:
+        skip fields, AnyType  # parent type / inheritance slot
+        while fields.hasMore:
+          case fields.substructureKind
+          of CaseU:
+            gcase(g, fields, isCaseObject = true)
+          of FldU, GfldU:
+            takeField(g, fields)
+          else:
+            raiseAssert "todo"
 
       dedent(g)
-
-      skipParRi(fields)
 
     of EnumT:
       inc n
@@ -950,7 +950,7 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
 
         indentNL(g)
 
-        while n.kind != ParRi:
+        while n.hasMore:
           case n.substructureKind
           of EfldU:
             let local = takeLocal(n, SkipFinalParRi)
@@ -991,7 +991,7 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
 
       var afterFirst = false
 
-      while n.kind != ParRi:
+      while n.hasMore:
         if afterFirst:
           gcomma(g)
         else:
@@ -1039,7 +1039,7 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
       if n.substructureKind == ParamsU:
         put(g, tkParLe, "(")
         inc n
-        while n.kind != ParRi:
+        while n.hasMore:
           let decl = takeLocal(n, SkipFinalParRi)
           var name = decl.name
           var value = decl.val
@@ -1117,7 +1117,7 @@ proc gfor(g: var SrcGen, n: var Cursor) =
   inc vars
 
   var afterFirst = false
-  while vars.kind != ParRi:
+  while vars.hasMore:
     let local = takeLocal(vars, SkipFinalParRi)
     var name = local.name
 
@@ -1214,7 +1214,7 @@ proc gconstr(g: var SrcGen, n: var Cursor, kind: BracketKind, isUntyped = false)
     raiseAssert "todo"
 
   var afterFirst = false
-  while n.kind != ParRi:
+  while n.hasMore:
     if afterFirst:
       gcomma(g)
     else:
@@ -1416,7 +1416,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
 
       of ScopeS:
         inc n
-        while n.kind != ParRi:
+        while n.hasMore:
           gsub(g, n, c)
 
         skipParRi(n)
@@ -1490,7 +1490,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
 
       put(g, tkBracketRi, "]")
 
-      while n.kind != ParRi:
+      while n.hasMore:
         skip n
 
       skipParRi(n)
@@ -1630,7 +1630,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
 
       var afterFirst = false
 
-      while n.kind != ParRi:
+      while n.hasMore:
         if afterFirst:
           gcomma(g)
         else:
@@ -1667,7 +1667,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       gtype(g, n, c)
       put(g, tkParLe, "(")
       var afterFirst = false
-      while n.kind != ParRi:
+      while n.hasMore:
         if afterFirst:
           gcomma(g)
         else:
@@ -1695,7 +1695,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
 
       put(g, tkParLe, "(")
       var afterFirst = false
-      while n.kind != ParRi:
+      while n.hasMore:
         if afterFirst:
           gcomma(g)
         else:
@@ -1847,7 +1847,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
 
       if hasChildren:
         put(g, tkParLe, "(")
-      while n.kind != ParRi:
+      while n.hasMore:
         if isFirst:
           isFirst = false
         else:
@@ -1894,7 +1894,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     of CchoiceX, OchoiceX:
       inc n
       gsub(g, n)
-      while n.kind != ParRi:
+      while n.hasMore:
         skip n
 
       skipParRi(n)
@@ -1939,7 +1939,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       put(g, tkAccent, "`")
 
       var afterFirst = false
-      while n.kind != ParRi:
+      while n.hasMore:
         if afterFirst:
           if useSpace:
             put(g, tkSpaces, Space)
@@ -1956,7 +1956,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
 
       if n.kind != ParRi:
         var afterFirst = false
-        while n.kind != ParRi:
+        while n.hasMore:
           if afterFirst:
             gcomma(g)
           else:

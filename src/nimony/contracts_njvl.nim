@@ -714,7 +714,7 @@ proc analyseOconstr(c: var NjvlContext; n: var Cursor) =
   inc n
   let objType = n
   skip n # type
-  while n.kind != ParRi:
+  while n.hasMore:
     assert n.substructureKind == KvU
     inc n
     assert n.kind == Symbol
@@ -733,7 +733,7 @@ proc analyseArrayConstr(c: var NjvlContext; n: var Cursor) =
   inc n
   let expected = n.firstSon # element type of the array
   skip n # type
-  while n.kind != ParRi:
+  while n.hasMore:
     checkNilMatch c, n, expected
     skip n
   skipParRi n
@@ -742,7 +742,7 @@ proc analyseTupConstr(c: var NjvlContext; n: var Cursor) =
   inc n
   var expected = n.firstSon # type of the first field
   skip n # type
-  while n.kind != ParRi:
+  while n.hasMore:
     assert expected.kind != ParRi
     let fieldType = getTupleFieldType(expected)
     var val = n
@@ -837,7 +837,7 @@ proc borrowCheckForCall(c: var NjvlContext; args: Cursor) =
   var mutPaths: seq[BorrowInfo] = @[]
   var immPaths: seq[BorrowInfo] = @[]
   var n = args
-  while n.kind != ParRi:
+  while n.hasMore:
     let isMut = n.exprKind == HaddrX
     # Validate borrowable path for haddr arguments (call-scoped borrows)
     var inner = n
@@ -890,12 +890,12 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
   # Collect argument paths for aliasing check
   let args = n
   var needsBorrowCheck = false
-  while n.kind != ParRi:
+  while n.hasMore:
     if fnType.kind == ParRi:
       # All formal params consumed but args remain (e.g. varargs that were
       # consumed without a matching VarargsT param, or similar edge cases).
       # Traverse remaining args for their side effects.
-      while n.kind != ParRi:
+      while n.hasMore:
         traverseExpr c, n
       break
     let previousFormalParam = fnType
@@ -919,7 +919,7 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
     traverseExpr c, n
   if needsBorrowCheck:
     borrowCheckForCall c, args
-  while fnType.kind != ParRi: skip fnType
+  while fnType.hasMore: skip fnType
   inc fnType # skip ParRi
   skip fnType # skip return type
   # now we have the pragmas:
@@ -1267,7 +1267,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
       if n.kind == ParLe:
         var p = n
         inc p
-        while p.kind != ParRi:
+        while p.hasMore:
           let r = takeLocal(p, SkipFinalParRi)
           c.typeCache.registerLocal(r.name.symId, ParamY, r.typ)
           if r.typ.typeKind == OutT and not hasPragma(r.pragmas, NoinitP):
@@ -1327,7 +1327,7 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     # The mflag information is used at join points to determine which branches are
     # leaving paths, enabling the writeSets implication mechanism.
     inc n
-    while n.kind != ParRi:
+    while n.hasMore:
       assert n.kind == Symbol
       c.impls.add always(n.symId)
       inc n
@@ -1335,7 +1335,7 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
   of KillV:
     # Variable going out of scope - end any active borrows
     inc n
-    while n.kind != ParRi:
+    while n.hasMore:
       let s = extractSymId(n)
       if s != NoSymId:
         endBorrow(c, s)
@@ -1362,7 +1362,7 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     case n.stmtKind
     of StmtsS, ScopeS, BlockS:
       inc n
-      while n.kind != ParRi:
+      while n.hasMore:
         traverseStmt c, n
       skipParRi n
     of LocalDecls:
@@ -1387,7 +1387,7 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     of PragmaxS:
       inc n
       skip n # pragmas
-      while n.kind != ParRi:
+      while n.hasMore:
         traverseStmt c, n
       skipParRi n
     of NoStmt:
@@ -1401,7 +1401,7 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
       elif n.exprKind in {DestroyX, CopyX, WasmovedX, SinkhX, TraceX}:
         inc n
         traverseExpr c, n
-        while n.kind != ParRi:
+        while n.hasMore:
           traverseExpr c, n
         skipParRi n
       else:
@@ -1425,7 +1425,7 @@ proc traverseToplevel(c: var NjvlContext; n: var Cursor) =
   case n.stmtKind
   of StmtsS:
     inc n
-    while n.kind != ParRi:
+    while n.hasMore:
       traverseToplevel c, n
     skipParRi n
   of PragmaxS:

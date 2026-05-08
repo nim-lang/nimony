@@ -415,7 +415,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
   dest.add n
   inc n # skip `(call)`
   trExpr c, dest, n # handle `fn`
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.exprKind == HaddrX:
       var inner = n
       inc inner # skip haddr tag
@@ -447,7 +447,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       bug "and/or should have been handled by the expression elimination pass xelim.nim"
     else:
       dest.takeToken n
-      while n.kind != ParRi:
+      while n.hasMore:
         trExpr c, dest, n
       dest.takeToken n
   of ParRi: bug "Unmatched ParRi"
@@ -674,7 +674,7 @@ proc countSons(dest: var TokenBuf; d: int): int =
   result = 0
   assert n.kind == ParLe
   inc n
-  while n.kind != ParRi:
+  while n.hasMore:
     skip n
     inc result
   endRead(dest)
@@ -802,7 +802,7 @@ proc findBreakSplitPoint(n: Cursor): int =
   assert n.stmtKind == StmtsS
   inc n # stmtList
   result = 0
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.stmtKind == IfS:
       inc n
       assert n.substructureKind == ElifU
@@ -862,7 +862,7 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor;
 
     var b2 = BasicBlock(openElseBranches: 0, hasParLe: true, leavesWith: -1)
     var g = (-1, NoSymId)
-    while n.kind != ParRi:
+    while n.hasMore:
       if g[0] < 0: g = maybeEmitGuard(c, dest, n.info)
       elif g[0] < c.current.guards.len and g[1] == c.current.guards[g[0]].cond:
         c.current.guards[g[0]].active = false
@@ -911,7 +911,7 @@ proc addForBorrowDecls(dest: var TokenBuf; vars: Cursor; firstArgBuf: TokenBuf) 
   var vars = vars
   if vars.substructureKind in {UnpackflatU, UnpacktupU}:
     inc vars
-    while vars.kind != ParRi:
+    while vars.hasMore:
       addForBorrowDecls dest, vars, firstArgBuf
       skip vars
   elif isLocal(vars.symKind):
@@ -989,7 +989,7 @@ proc buildCaseCondition(c: var Context; dest: var TokenBuf; n: var Cursor;
   # Collect all conditions
   var conditions: seq[TokenBuf] = @[]
 
-  while n.kind != ParRi:
+  while n.hasMore:
     var cond = createTokenBuf(10)
     if n.substructureKind == RangeU:
       # Range: low..high => (low <= selector) and (selector <= high)
@@ -1314,7 +1314,7 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
     # g2 borrows the innermost active guard for the ENTIRE statement list.
     # All children are emitted inside this single guard, achieving the merge.
     var g2 = (-1, NoSymId)
-    while n.kind != ParRi:
+    while n.hasMore:
       if g2[0] < 0:
         g2 = maybeEmitGuard(c, dest, n.info)
       elif g2[0] < c.current.guards.len and g2[1] == c.current.guards[g2[0]].cond:
@@ -1395,7 +1395,7 @@ proc eliminateJumps*(pass: var Pass; raisesResolved = false) =
   c.current.guards.add Guard(cond: topFlag, active: false)
   declareCfVar c, pass.dest, topFlag
   var b = BasicBlock(openElseBranches: 0, hasParLe: true, leavesWith: -1)
-  while n.kind != ParRi:
+  while n.hasMore:
     trGuardedStmts c, b, pass.dest, n, false
   closeScope c, pass.dest, n.info
   closeBasicBlock c, b, pass.dest

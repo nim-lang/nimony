@@ -268,7 +268,7 @@ proc trTupleBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   dest.add tagToken("object", info)
   dest.addDotToken()
   var counter = 0
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.substructureKind == KvU:
       inc n # skip tag
       skip n # skip name
@@ -416,7 +416,7 @@ proc addRttiField(c: var EContext; dest: var TokenBuf; info: PackedLineInfo) =
   dest.addParRi() # "fld"
 
 proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag]) =
-  while n.kind != ParRi:
+  while n.hasMore:
     case n.substructureKind
     of FldU, GfldU:
       trField(c, dest, n, flags)
@@ -425,7 +425,7 @@ proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
       inc n
       trField(c, dest, n, flags)
       dest.add tagToken("union", n.info)
-      while n.kind != ParRi:
+      while n.hasMore:
         case n.substructureKind
         of OfU:
           inc n
@@ -798,7 +798,7 @@ proc trProcBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     dest.add n
     inc n
     var prevStmt = NoStmt
-    while n.kind != ParRi:
+    while n.hasMore:
       prevStmt = n.stmtKind
       trStmt c, dest, n, TraverseInner
     if prevStmt == RetS or c.resultSym == SymId(0):
@@ -882,7 +882,7 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
     isGeneric = true
     # count each typevar as used:
     inc n
-    while n.kind != ParRi:
+    while n.hasMore:
       assert n.symKind == TypevarY
       inc n
       let (typevar, _) = getSymDef(c, n)
@@ -894,7 +894,7 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
   if isGeneric:
     # count each param as used:
     inc n
-    while n.kind != ParRi:
+    while n.hasMore:
       assert n.symKind == ParamY
       inc n
       let (param, _) = getSymDef(c, n)
@@ -972,7 +972,7 @@ proc trTypeDecl(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: Traver
     isGeneric = true
     # count each typevar as used:
     inc n
-    while n.kind != ParRi:
+    while n.hasMore:
       assert n.symKind == TypevarY
       inc n
       let (typevar, _) = getSymDef(c, n)
@@ -1141,7 +1141,7 @@ proc trStmtsExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     skipParRi c, n
   else:
     dest.add head
-    while n.kind != ParRi:
+    while n.hasMore:
       if not isLastSon(n):
         trStmt c, dest, n
       else:
@@ -1156,7 +1156,7 @@ proc trTupleConstr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
 
   inc tupleType
   var counter = 0
-  while n.kind != ParRi:
+  while n.hasMore:
     dest.add tagToken("kv", n.info)
     let isKvU = tupleType.substructureKind == KvU
     if isKvU:
@@ -1234,7 +1234,7 @@ proc isSimpleLiteral(nb: var Cursor): bool =
       result = true
       inc nb
       skip nb # type
-      while nb.kind != ParRi:
+      while nb.hasMore:
         if not isSimpleLiteral(nb): return false
       skipParRi nb
     of ErrX, AtX, DerefX, DotX, PatX, ParX, AddrX, AndX, OrX,
@@ -1374,14 +1374,14 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       dest.add tagToken("aconstr", n.info)
       inc n
       trType(c, dest, n)
-      while n.kind != ParRi:
+      while n.hasMore:
         trExpr(c, dest, n)
       takeParRi dest, n
     of OconstrX:
       dest.add tagToken("oconstr", n.info)
       inc n
       trType(c, dest, n)
-      while n.kind != ParRi:
+      while n.hasMore:
         if n.substructureKind == KvU:
           dest.add n # KvU
           inc n
@@ -1399,7 +1399,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     of CmdX, CallstrlitX, InfixX, PrefixX, HcallX, CallX:
       dest.add tagToken("call", n.info)
       inc n
-      while n.kind != ParRi:
+      while n.hasMore:
         trExpr(c, dest, n)
       takeParRi dest, n
     of ExprX:
@@ -1505,20 +1505,20 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     of AtX, PatX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX, OvfX:
       dest.add n
       inc n
-      while n.kind != ParRi:
+      while n.hasMore:
         trExpr c, dest, n
       takeParRi dest, n
     of SizeofX, AlignofX, OffsetofX:
       dest.add n
       inc n
       trType c, dest, n
-      while n.kind != ParRi:
+      while n.hasMore:
         trExpr c, dest, n
       takeParRi dest, n
     of XorX:
       dest.add tagToken("neq", n.info)
       inc n
-      while n.kind != ParRi:
+      while n.hasMore:
         trExpr c, dest, n
       takeParRi dest, n
     of KvX:
@@ -1680,7 +1680,7 @@ proc trCase(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   dest.add n
   inc n
   trExpr c, dest, n
-  while n.kind != ParRi:
+  while n.hasMore:
     case n.substructureKind
     of OfU:
       dest.add n
@@ -1688,11 +1688,11 @@ proc trCase(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       if n.kind == ParLe and n.substructureKind == RangesU:
         inc n
         dest.add "ranges", n.info
-        while n.kind != ParRi:
+        while n.hasMore:
           if n.kind == ParLe and n.substructureKind == RangeU:
             inc n
             dest.add "range", n.info
-            while n.kind != ParRi:
+            while n.hasMore:
               trExpr c, dest, n
             takeParRi dest, n
           else:
@@ -1898,12 +1898,12 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
       # `(import …)` is a list of `(kv suffix "path")` pairs (sem emits this
       # paired form so doc-gen has the source path). We only need the suffix.
       inc n
-      while n.kind != ParRi:
+      while n.hasMore:
         if n.kind == ParLe and n.substructureKind == KvU:
           inc n  # enter (kv …)
           if n.kind == Ident:
             c.importedModuleSuffixes.add pool.strings[n.litId]
-          while n.kind != ParRi: skip n
+          while n.hasMore: skip n
           inc n  # closing ')'
         else:
           skip n
@@ -1939,7 +1939,7 @@ proc transformInlineRoutines(c: var EContext; dest: var TokenBuf; n: var Cursor)
   swap dest, swapped
 
   trStmt c, dest, d, TraverseSig
-  while d.kind != ParRi:
+  while d.hasMore:
     trStmt c, dest, d, TraverseAll
 
 proc writeOutput(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo; destfileName: string): TokenBuf =
@@ -2240,7 +2240,7 @@ proc initHasCall(c: var EContext; n: Cursor): bool =
 
 proc trToplevel(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   inc n
-  while n.kind != ParRi:
+  while n.hasMore:
     let sk = n.stmtKind
     if sk in {GvarS, GletS, TvarS, TletS}:
       let tag = if sk in {TvarS, TletS}: TvarY else: GvarY

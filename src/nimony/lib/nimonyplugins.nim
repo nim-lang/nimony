@@ -271,7 +271,7 @@ template copyInto*(t: var NifBuilder; n: var NifCursor; body: untyped) =
   ##
   ## .. code-block:: nim
   ##   o.copyInto(n):
-  ##     while n.kind != ParRi:
+  ##     while n.hasMore:
   ##       transform(n, o)
   assert n.kind == ParLe, "copyInto requires cursor at ParLe"
   prepareMutation(t)

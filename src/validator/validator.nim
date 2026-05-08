@@ -169,7 +169,7 @@ proc scanObjectFields(n: var Cursor): seq[FieldInfo] =
   validate n.kind == ParLe, "expected (object"
   inc n, SkipTag # skip (object
   skip n, SkipType
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.kind == ParLe and pool.tags[n.tag] == "fld":
       let field = scanField(n)
       if field.name.len > 0 and field.trackedKind != tkOther:
@@ -194,10 +194,10 @@ proc scanTypeDecl(n: var Cursor; reg: var TypeRegistry) =
       if fields.len > 0:
         reg.addType(typeName, fields)
     # skip remaining children
-    while n.kind != ParRi:
+    while n.hasMore:
       skip n
   else:
-    while n.kind != ParRi:
+    while n.hasMore:
       skip n
   inc n, SkipParRi
 
@@ -207,7 +207,7 @@ proc buildTypeRegistry(buf: var TokenBuf): TypeRegistry =
   var n = beginRead(buf)
   validate n.kind == ParLe, "module must start with ParLe (stmts)"
   inc n, SkipTag # skip (stmts
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.kind == ParLe and pool.tags[n.tag] == "type":
       scanTypeDecl(n, result)
     else:
@@ -233,7 +233,7 @@ proc scanParam(n: var Cursor; st: var SymbolTable) =
     if typeName.len > 0:
       st.addVar(paramName, typeName, isMut)
   # skip remaining children
-  while n.kind != ParRi:
+  while n.hasMore:
     skip n
   inc n, SkipParRi
 
@@ -245,7 +245,7 @@ proc buildProcSymbolTable(paramsNode: Cursor; reg: TypeRegistry): SymbolTable =
   if n.kind != ParLe: return
   if pool.tags[n.tag] != "params": return
   inc n, SkipTag # skip (params
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.kind == ParLe and pool.tags[n.tag] == "param":
       scanParam(n, result)
     else:
@@ -350,7 +350,7 @@ proc checkCopyIntoKind(ctx: var CheckContext; n: Cursor; info: PackedLineInfo) =
     else:
       return
     skip c  # skip info
-    while c.kind != ParRi:
+    while c.hasMore:
       if c.kind == ParLe and pool.tags[c.tag] == "stmts":
         bodyPos = c
         break
@@ -369,7 +369,7 @@ proc checkCopyIntoKind(ctx: var CheckContext; n: Cursor; info: PackedLineInfo) =
     else:
       return
     skip c  # skip info
-    while c.kind != ParRi:
+    while c.hasMore:
       if c.kind == ParLe and pool.tags[c.tag] == "stmts":
         bodyPos = c
         break
@@ -464,7 +464,7 @@ proc scanForNonExhaustiveCases(ctx: var CheckContext; buf: var TokenBuf) =
         if discr in ExhaustiveDiscriminators:
           # Scan children for an `else` branch
           skip peek  # skip discriminator
-          while peek.kind != ParRi:
+          while peek.hasMore:
             if peek.kind == ParLe and pool.tags[peek.tag] == "else":
               addViolation(ctx, n.info, "case " & discr,
                 "`else` branch not allowed; enumerate all values for exhaustive checking")
@@ -506,7 +506,7 @@ proc scanCallsForCursorArg(bc: Cursor; endNested: int; cursorParams: seq[Cursor]
         elif peek.kind == ParLe:
           skip peek
         # Scan all arguments for cursor param lvalues
-        while peek.kind != ParRi:
+        while peek.hasMore:
           for i, cp in cursorParams:
             if equalLvalues(peek, cp):
               consumeCounts[i] += 1
@@ -599,7 +599,7 @@ proc procHasBufferAccess(st: SymbolTable; reg: TypeRegistry; paramsPos: Cursor):
       return true
   var pc = paramsPos
   inc pc
-  while pc.kind != ParRi:
+  while pc.hasMore:
     if pc.kind == ParLe and pool.tags[pc.tag] == "param":
       var p = pc
       inc p; skip p; skip p; skip p
@@ -615,7 +615,7 @@ proc collectCursorParamLvs(paramsNode: Cursor; st: SymbolTable): seq[Cursor] =
   var n = paramsNode
   if n.kind != ParLe or pool.tags[n.tag] != "params": return
   inc n # skip (params
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.kind == ParLe and pool.tags[n.tag] == "param":
       var p = n
       inc p # skip (param
@@ -675,7 +675,7 @@ proc hasCursorArg(st: SymbolTable; reg: TypeRegistry; callNode: Cursor): bool =
   var c = callNode
   inc c # skip (cmd/(call
   skip c # skip callee
-  while c.kind != ParRi:
+  while c.hasMore:
     if classifyExpr(st, reg, c) == tkCursor:
       return true
     skip c
@@ -694,7 +694,7 @@ proc hasBufferArg(st: SymbolTable; reg: TypeRegistry; callNode: Cursor): bool =
     if classifyExpr(st, reg, dotExpr) == tkTokenBuf:
       return true
   skip c # skip callee
-  while c.kind != ParRi:
+  while c.hasMore:
     if classifyExpr(st, reg, c) == tkTokenBuf:
       return true
     skip c
@@ -722,7 +722,7 @@ proc hasIntentArg(n: Cursor): bool =
   var c = n
   inc c # skip (cmd/(call
   skip c # skip callee
-  while c.kind != ParRi:
+  while c.hasMore:
     if c.kind == StringLit:
       return true
     if c.kind == Ident:
@@ -776,7 +776,7 @@ proc blockBalance(ctx: var CheckContext; st: SymbolTable; reg: TypeRegistry;
   if tag == "stmts":
     # Sequential: balances add up
     inc n
-    while n.kind != ParRi:
+    while n.hasMore:
       result += blockBalance(ctx, st, reg, n, procName)
       skip n
 
@@ -784,7 +784,7 @@ proc blockBalance(ctx: var CheckContext; st: SymbolTable; reg: TypeRegistry;
     inc n
     if tag == "case":
       skip n, SkipValue
-    while n.kind != ParRi:
+    while n.hasMore:
       if n.kind == ParLe:
         let branchTag = pool.tags[n.tag]
         if branchTag in ["elif", "else", "of"]:
@@ -809,7 +809,7 @@ proc blockBalance(ctx: var CheckContext; st: SymbolTable; reg: TypeRegistry;
   elif tag in ["while", "for", "block", "try"]:
     # Recurse into bodies
     inc n
-    while n.kind != ParRi:
+    while n.hasMore:
       if n.kind == ParLe:
         discard blockBalance(ctx, st, reg, n, procName)
       skip n
@@ -857,7 +857,7 @@ proc scanUnsafeCursorOps(ctx: var CheckContext; reg: TypeRegistry; procs: openAr
               var peek = bc
               inc peek  # skip (cmd/call
               skip peek # skip callee
-              while peek.kind != ParRi:
+              while peek.hasMore:
                 var matched = false
                 for cp in p.cursorParams:
                   if equalLvalues(peek, cp):
@@ -953,7 +953,7 @@ proc isParRiSkipCall(n: Cursor; lv: Cursor): bool =
     skip c
   if callName notin ParRiSkipProcs: return false
   # Check if lvalue appears as any argument
-  while c.kind != ParRi:
+  while c.hasMore:
     if equalLvalues(c, lv):
       return true
     skip c
@@ -1014,7 +1014,7 @@ proc callAdvancesCursor(n: Cursor; lv: Cursor;
   let knownAdvancer = callName in TrustedCursorAdvanceProcs or callName in varCursorCallees
   if not knownAdvancer:
     return false
-  while c.kind != ParRi:
+  while c.hasMore:
     if equalLvalues(c, lv):
       return true
     skip c
@@ -1030,7 +1030,7 @@ proc stmtsMustAdvanceCursor(stmtsNode: Cursor; lv: Cursor;
   var c = stmtsNode
   if c.kind != ParLe or pool.tags[c.tag] != "stmts": return false
   inc c, SkipTag
-  while c.kind != ParRi:
+  while c.hasMore:
     if stmtMustAdvanceCursor(c, lv, varCursorCallees):
       return true
     skip c
@@ -1063,7 +1063,7 @@ proc stmtMustAdvanceCursor(n: Cursor; lv: Cursor;
     var hasElse = false
     var allBranchesAdvance = true
     var sawBranch = false
-    while c.kind != ParRi:
+    while c.hasMore:
       if c.kind == ParLe:
         let bk = pool.tags[c.tag]
         if bk in ["elif", "else"]:
@@ -1080,7 +1080,7 @@ proc stmtMustAdvanceCursor(n: Cursor; lv: Cursor;
     var hasElse = false
     var allBranchesAdvance = true
     var sawBranch = false
-    while c.kind != ParRi:
+    while c.hasMore:
       if c.kind == ParLe:
         let bk = pool.tags[c.tag]
         if bk in ["of", "else"]:
@@ -1114,7 +1114,7 @@ proc scanWhileRecurse(ctx: var CheckContext; n: Cursor; insideCopyInto: bool;
   var n = n
   if n.kind != ParLe: return
   inc n # skip the opening tag
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.kind == ParLe and pool.tags[n.tag] == "stmts":
       scanWhileInStmts(ctx, n, insideCopyInto, varCursorCallees)
     elif n.kind == ParLe:
@@ -1129,14 +1129,14 @@ proc scanWhileInStmts(ctx: var CheckContext; stmtsNode: Cursor; insideCopyInto: 
   ## - Otherwise recurse normally
   var child = stmtsNode
   inc child # skip (stmts
-  while child.kind != ParRi:
+  while child.hasMore:
     if child.kind == ParLe:
       let childTag = pool.tags[child.tag]
       if childTag == "while":
         let varLv = extractWhileParRiVar(child)
         if not cursorIsNil(varLv):
           let varStr = lvalueToStr(varLv)
-          # Termination proof for while n.kind != ParRi:
+          # Termination proof for while n.hasMore:
           # every iteration path in the body must advance/delegate `n`.
           if not whileBodyMustAdvanceCursor(child, varLv, varCursorCallees):
             addWarning(ctx, child.info, "while " & varStr & ".kind != ParRi",
@@ -1182,7 +1182,7 @@ proc scanWhileInStmts(ctx: var CheckContext; stmtsNode: Cursor; insideCopyInto: 
           var peek = child
           inc peek  # skip (cmd/call
           skip peek # skip callee
-          while peek.kind != ParRi:
+          while peek.hasMore:
             if peek.kind == ParLe and pool.tags[peek.tag] == "stmts":
               scanWhileInStmts(ctx, peek, true, varCursorCallees)
             skip peek
@@ -1226,7 +1226,7 @@ proc whileBodyHasProgressCall(whileNode: Cursor; lv: Cursor;
         var peek = c
         inc peek  # skip (cmd/call
         skip peek # skip callee
-        while peek.kind != ParRi:
+        while peek.hasMore:
           if equalLvalues(peek, lv):
             return true
           skip peek
@@ -1296,7 +1296,7 @@ proc whileBodyLooksLikeNestedScanner(whileNode: Cursor): bool =
         var peek = c
         inc peek  # skip (cmd/call
         skip peek # skip callee
-        while peek.kind != ParRi:
+        while peek.hasMore:
           if peek.kind == Ident:
             let v = pool.strings[peek.litId]
             if callName == "inc": incVars.incl v else: decVars.incl v

@@ -46,7 +46,7 @@ proc methodKeyImpl(name: string; a: Cursor): string =
   # First parameter was the class type and has already been skipped here!
   var a = a
   var b = createMangler(60)
-  while a.kind != ParRi:
+  while a.hasMore:
     let pa = takeLocal(a, SkipFinalParRi)
     mangle b, pa.typ, Frontend
   inc a

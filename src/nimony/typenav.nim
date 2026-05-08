@@ -63,7 +63,7 @@ proc registerParams*(c: var TypeCache; routine: SymId; decl, params: Cursor) =
   if params.kind == ParLe:
     var p = params
     inc p
-    while p.kind != ParRi:
+    while p.hasMore:
       let r = takeLocal(p, SkipFinalParRi)
       registerLocal(c, r.name.symId, ParamY, r.typ)
   c.current.locals[routine] = LocalInfo(kind: ProcY, typ: decl)
@@ -168,7 +168,7 @@ proc registerLocals(c: var TypeCache; n: var Cursor) =
     case k
     of StmtsS:
       inc n
-      while n.kind != ParRi:
+      while n.hasMore:
         registerLocals(c, n)
       inc n
     of LetS, CursorS, PatternvarS, VarS, TvarS, TletS, GvarS, GletS:
@@ -215,7 +215,7 @@ proc typeOfField(c: var TypeCache; n: var Cursor; fld: SymId): Cursor =
       result = default(Cursor)
   elif n.substructureKind == StmtsU:
     inc n
-    while n.kind != ParRi:
+    while n.hasMore:
       result = typeOfField(c, n, fld)
       if not cursorIsNil(result): return result
     skipParRi n
@@ -224,13 +224,13 @@ proc typeOfField(c: var TypeCache; n: var Cursor; fld: SymId): Cursor =
     inc n
     result = typeOfField(c, n, fld) # selector field
     if not cursorIsNil(result): return result
-    while n.kind != ParRi:
+    while n.hasMore:
       case n.substructureKind
       of OfU:
         inc n
         skip n, SkipValue # ranges
         inc n # stmts
-        while n.kind != ParRi:
+        while n.hasMore:
           result = typeOfField(c, n, fld)
           if not cursorIsNil(result): return result
         skipParRi n # stmts
@@ -238,7 +238,7 @@ proc typeOfField(c: var TypeCache; n: var Cursor; fld: SymId): Cursor =
       of ElseU:
         inc n
         inc n # stmts
-        while n.kind != ParRi:
+        while n.hasMore:
           result = typeOfField(c, n, fld)
           if not cursorIsNil(result): return result
         skipParRi n # stmts
@@ -256,7 +256,7 @@ proc typeOfField(c: var TypeCache; n: var Cursor; fld: SymId): Cursor =
       if tk == ObjectT:
         baseObj = n
         skip n # inheritance
-      while n.kind != ParRi:
+      while n.hasMore:
         result = typeOfField(c, n, fld)
         if not cursorIsNil(result): return result
       inc n
@@ -400,7 +400,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of ExprX:
     var n = n
     inc n # skip "expr"
-    while n.kind != ParRi:
+    while n.hasMore:
       let prev = n
       registerLocals(c, n)
       if n.kind == ParRi:
@@ -511,7 +511,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     buf.add parLeToken(TupleT, n.info)
     var n = n
     inc n
-    while n.kind != ParRi:
+    while n.hasMore:
       var val = n
       if val.substructureKind == KvU:
         inc val
@@ -532,7 +532,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     var n = n
     var arrayLen = 0
     inc n # skips BracketX
-    while n.kind != ParRi:
+    while n.hasMore:
       skip n
       inc arrayLen
     buf.addIntLit(arrayLen, n.info)

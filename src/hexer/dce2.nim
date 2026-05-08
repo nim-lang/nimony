@@ -90,13 +90,13 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
         dest.add head
         dest.addSymDef t.toNifcName, n.info
         inc n # skip symbol def
-        while n.kind != ParRi:
+        while n.hasMore:
           tr dest, n, alive, resolved
         dest.takeToken n
       else:
         # let errors propagate:
         dest.add head
-        while n.kind != ParRi:
+        while n.hasMore:
           tr dest, n, alive, resolved
         dest.takeToken n
 
@@ -109,7 +109,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
           dest.add head
           dest.addSymDef def.toNifcName, n.info
           inc n # skip symbol def
-          while n.kind != ParRi:
+          while n.hasMore:
             tr dest, n, alive, resolved
           dest.takeToken n
         elif alive.contains(def):
@@ -135,23 +135,23 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
             dest.add head
             dest.addSymDef def.toNifcName, n.info
             inc n # skip symbol def
-            while n.kind != ParRi:
+            while n.hasMore:
               tr dest, n, alive, resolved
             dest.takeToken n
         else:
           # skip it, it's dead
           inc n # skip symbol def
-          while n.kind != ParRi: skip n
+          while n.hasMore: skip n
           inc n
       else:
         # let errors propagate:
         dest.add head
-        while n.kind != ParRi:
+        while n.hasMore:
           tr dest, n, alive, resolved
         dest.takeToken n
     else:
       dest.takeToken n
-      while n.kind != ParRi:
+      while n.hasMore:
         tr dest, n, alive, resolved
       dest.takeToken n
   of Symbol:
@@ -249,12 +249,12 @@ proc readLiveFile*(infile: string): LiveSet =
   let liveTagId = pool.tags.getOrIncl(liveTag)
   let resolveTagId = pool.tags.getOrIncl(resolveTag)
   let modTagId = pool.tags.getOrIncl(modTag)
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.kind != ParLe:
       raiseAssert infile & ": expected ParLe"
     if n.tag == resolveTagId:
       inc n
-      while n.kind != ParRi:
+      while n.hasMore:
         if n.kind == ParLe and n.substructureKind == KvU:
           inc n  # past `kv`
           if n.kind != StringLit:
@@ -273,7 +273,7 @@ proc readLiveFile*(infile: string): LiveSet =
       inc n
     elif n.tag == liveTagId:
       inc n
-      while n.kind != ParRi:
+      while n.hasMore:
         if n.kind != ParLe or n.tag != modTagId:
           raiseAssert infile & ": expected (mod …)"
         inc n
@@ -282,7 +282,7 @@ proc readLiveFile*(infile: string): LiveSet =
         let modName = pool.strings[n.litId]
         inc n
         var syms = initHashSet[SymId]()
-        while n.kind != ParRi:
+        while n.hasMore:
           if n.kind != Symbol:
             raiseAssert infile & ": expected Symbol in (mod)"
           syms.incl n.symId

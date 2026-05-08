@@ -224,7 +224,7 @@ proc trOrValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
 
 proc trStmtListExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
   inc n
-  while n.kind != ParRi:
+  while n.hasMore:
     if not isLastSon(n):
       trStmt c, n
     else:
@@ -238,7 +238,7 @@ proc trExprLoop(c: var ControlFlow; n: var Cursor; tar: var Target) =
     assert tar.m == IsAppend, toString(n, false) & " " & $tar.m
   tar.t.add n
   inc n
-  while n.kind != ParRi:
+  while n.hasMore:
     trExpr c, n, tar
   tar.t.addParRi()
   inc n
@@ -270,7 +270,7 @@ proc trVoidCall(c: var ControlFlow; n: var Cursor) =
   var tar = Target(m: IsAppend)
   tar.t.add n
   inc n
-  while n.kind != ParRi:
+  while n.hasMore:
     trExpr c, n, tar
   tar.t.addParRi()
   inc n
@@ -383,7 +383,7 @@ proc trCaseRanges(c: var ControlFlow; n: var Cursor; selector: SymId; selectorTy
   inc n
   var nextAttempt = Label(-1)
   var nextAttemptB = Label(-1)
-  while n.kind != ParRi:
+  while n.hasMore:
     if nextAttempt.int >= 0:
       c.patch nextAttempt
       nextAttempt = Label(-1)
@@ -924,14 +924,14 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     trWhile c, n
   of StmtsS, UnpackdeclS:
     inc n
-    while n.kind != ParRi:
+    while n.hasMore:
       trStmt c, n
     inc n
   of ScopeS, StaticstmtS:
     c.dest.add n
     inc n
     c.typeCache.openScope()
-    while n.kind != ParRi:
+    while n.hasMore:
       trStmt c, n
     c.dest.addParRi()
     inc n
@@ -973,7 +973,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     var tar = Target(m: IsAppend)
     let head = n.load()
     inc n
-    while n.kind != ParRi:
+    while n.hasMore:
       trExpr c, n, tar
     inc n
     c.dest.add head
@@ -998,7 +998,7 @@ proc toControlflow*(n: Cursor; keepReturns = false): TokenBuf =
     assert sk == StmtsS
     c.dest.add n
     inc n
-    while n.kind != ParRi:
+    while n.hasMore:
       trStmt c, n
     addRet c
     c.dest.addParRi()

@@ -198,33 +198,33 @@ proc maybeAddConceptMethods(c: var SemContext; fn: StrId; typevar: SymId; cands:
   if local.kind == TypevarY and local.typ.kind != DotToken:
     for concpt in findConceptsInConstraint(local.typ):
       var ops = concpt
-      inc ops  # (concept
-      skip ops # .
-      skip ops # .
-      skip ops #   (typevar Self ...)
-      if ops.stmtKind == StmtsS:
-        inc ops
-        while ops.kind != ParRi:
-          let sk = ops.symKind
-          if sk in RoutineKinds:
-            var prc = ops
-            inc prc # (proc
-            if prc.kind == SymbolDef and sameIdent(prc.symId, fn):
-              var d = ops
-              #skipToParams d
-              cands.addUnique FnCandidate(kind: sk, sym: prc.symId, typ: d, fromConcept: true)
-          skip ops
+      ops.into:  # (concept …)
+        skip ops # .
+        skip ops # .
+        skip ops #   (typevar Self ...)
+        if ops.stmtKind == StmtsS:
+          ops.into StmtsS:
+            while ops.hasMore:
+              let sk = ops.symKind
+              if sk in RoutineKinds:
+                var prc = ops
+                inc prc # (proc
+                if prc.kind == SymbolDef and sameIdent(prc.symId, fn):
+                  var d = ops
+                  #skipToParams d
+                  cands.addUnique FnCandidate(kind: sk, sym: prc.symId, typ: d, fromConcept: true)
+              skip ops
 
 proc hasAttachedParam(params: Cursor; typ: SymId): bool =
   result = false
   var params = params
-  assert params.substructureKind == ParamsU
-  inc params
-  while params.kind != ParRi:
-    let param = takeLocal(params, SkipFinalParRi)
-    let root = nominalRoot(param.typ)
-    if root != SymId(0) and root == typ:
-      return true
+  params.into ParamsU:
+    while params.hasMore:
+      let param = takeLocal(params, SkipFinalParRi)
+      let root = nominalRoot(param.typ)
+      if root != SymId(0) and root == typ:
+        while params.hasMore: skip params  # mop-up before early-exit
+        return true
 
 proc addTypeboundOps(c: var SemContext; fn: StrId; s: SymId; cands: var FnCandidates) =
   let res = tryLoadSym(s)
@@ -477,7 +477,7 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
     inc f # "params"
     var arg = beginRead(m.args)
     var i = 0
-    while arg.kind != ParRi:
+    while arg.hasMore:
       if m.insertedParam and arg.kind == DotToken:
         let param = asLocal(f)
         assert param.val.kind != DotToken
@@ -726,7 +726,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
   if cs.fn.n.exprKind in {OchoiceX, CchoiceX}:
     var f = cs.fn.n
     inc f
-    while f.kind != ParRi:
+    while f.hasMore:
       if f.kind == Symbol:
         let sym = f.symId
         let s = fetchSym(c, sym)
@@ -800,7 +800,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       inc param
       var ai = 0
       var anyConverters = false
-      while param.kind != ParRi:
+      while param.hasMore:
         # varargs not handled yet
         if ai >= cs.args.len: break
         let f = asLocal(param).typ
@@ -907,7 +907,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
           invokeBuf.addParLe(AtX, cs.fn.n.info)
           invokeBuf.add symToken(finalFn.sym, cs.fn.n.info)
           var genericArgsRead = genericArgs
-          while genericArgsRead.kind != ParRi:
+          while genericArgsRead.hasMore:
             takeTree invokeBuf, genericArgsRead
           invokeBuf.addParRi()
           replace dest, beginRead(invokeBuf), cs.beforeCall+1
@@ -1000,7 +1000,7 @@ proc unoverloadableMagicCall(c: var SemContext; dest: var TokenBuf; it: var Item
   else:
     cs.dest.shrink 0
     cs.dest.add nifTag
-  while it.n.kind != ParRi:
+  while it.n.hasMore:
     # add all args in call:
     takeTree cs.dest, it.n
   takeParRi cs.dest, it.n
@@ -1039,7 +1039,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
         cs.hasGenericArgs = true
         cs.genericDest = createTokenBuf(16)
         swap dest, cs.genericDest
-        while cs.fn.n.kind != ParRi:
+        while cs.fn.n.hasMore:
           semLocalTypeImpl c, dest, cs.fn.n, AllowValues
         takeParRi dest, cs.fn.n
         swap dest, cs.genericDest
@@ -1112,7 +1112,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       c.debugAllowErrors = true
   cs.fnKind = cs.fn.kind
   var skipSemCheck = false
-  while it.n.kind != ParRi:
+  while it.n.hasMore:
     let argOrig = it.n
     var arg = Item(n: it.n, typ: c.types.autoType)
     argIndexes.add dest.len

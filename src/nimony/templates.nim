@@ -56,7 +56,7 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
         inc fv
         let vid = fv.symId
         if arg.kind notin {DotToken, ParRi}:
-          while arg.kind != ParRi:
+          while arg.hasMore:
             e.formalParams[vid] = arg
             expandTemplateImpl c, dest, e, forStmt.body
             skip arg
@@ -68,11 +68,11 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
         var arg = e.firstVarargMatch
         if body.kind == ParRi:
           # `unpack()` variant:
-          while arg.kind != ParRi:
+          while arg.hasMore:
             dest.takeTree arg
         else:
           # `unpack(fn)` variant:
-          while arg.kind != ParRi:
+          while arg.hasMore:
             dest.addParLe CallX, arg.info
             dest.copyTree body # fn
             dest.takeTree arg
@@ -90,27 +90,28 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
     inc body
 
 proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cursor): bool =
+  result = false
   var p = temp.pragmas
   if p.kind != ParLe:
-    return false
-  inc p
-  while p.kind != ParRi:
-    if p.pragmaKind == PluginP:
-      inc p
-      if p.kind == StringLit:
-        var b = createTokenBuf(30)
-        b.addParLe StmtsS, args.info
-        var a = args
-        while a.kind != ParRi:
-          b.takeTree a
-        b.addParRi()
+    return
+  p.into:  # (pragmas …)
+    while p.hasMore:
+      if p.pragmaKind == PluginP:
+        p.into PluginP:
+          if p.kind == StringLit:
+            var b = createTokenBuf(30)
+            b.addParLe StmtsS, args.info
+            var a = args
+            while a.hasMore:
+              b.takeTree a
+            b.addParRi()
 
-        runPlugin(c, dest, p.info, pool.strings[p.litId], b.toString)
-        return true
-      skipToEnd p
-    else:
-      skip p
-  return false
+            runPlugin(c, dest, p.info, pool.strings[p.litId], b.toString)
+            result = true
+          while p.hasMore: skip p
+        if result: return
+      else:
+        skip p
 
 proc tryPromoteTemplateBody*(c: var SemContext; sym: SymId): bool =
   ## On-demand upgrade of a verbatim-published template body. Phase 2's
@@ -182,17 +183,17 @@ proc tryPromoteTemplateBody*(c: var SemContext; sym: SymId): bool =
   block addParamsToScope:
     var p = readonlyCursorAt(newBuf, paramsAt)
     if p.substructureKind == ParamsU:
-      inc p
-      while p.kind != ParRi:
-        let param = asLocal(p)
-        if param.name.kind == SymbolDef:
-          var nameStr = pool.syms[param.name.symId]
-          extractBasename(nameStr)
-          if nameStr.len > 0:
-            let s = Sym(kind: ParamY, name: param.name.symId, pos: 0)
-            addOverloadable(c.currentScope,
-                            pool.strings.getOrIncl(nameStr), s)
-        skip p
+      p.into ParamsU:
+        while p.hasMore:
+          let param = asLocal(p)
+          if param.name.kind == SymbolDef:
+            var nameStr = pool.syms[param.name.symId]
+            extractBasename(nameStr)
+            if nameStr.len > 0:
+              let s = Sym(kind: ParamY, name: param.name.symId, pos: 0)
+              addOverloadable(c.currentScope,
+                              pool.strings.getOrIncl(nameStr), s)
+          skip p
 
   semTemplBody ctx, newBuf, oldHead
   # `oldHead` is now past the body, sitting on the closing `)`.
@@ -227,14 +228,15 @@ proc expandTemplate*(c: var SemContext; dest: var TokenBuf;
   var f = templ.params
   if f.kind != DotToken:
     assert f.isParamsTag
-    inc f
-    while f.kind != ParRi and a.kind != ParRi:
-      var param = f
-      inc param
-      assert param.kind == SymbolDef
-      e.formalParams[param.symId] = a
-      skip a
-      skip f
+    f.into ParamsU:
+      while f.hasMore and a.hasMore:
+        var param = f
+        inc param
+        assert param.kind == SymbolDef
+        e.formalParams[param.symId] = a
+        skip a
+        skip f
+      while f.hasMore: skip f  # mop-up if a ran out first
 
   if templ.body.kind == DotToken:
     c.buildErr dest, info, "cannot expand template from prototype; possibly a recursive template call"

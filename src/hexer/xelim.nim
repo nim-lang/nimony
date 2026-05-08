@@ -135,12 +135,12 @@ proc hoistDeclsFromExprX(outerDest, transformed: var TokenBuf; n: var Cursor) =
     transformed.takeTree n
     return
   transformed.takeToken n              # `(expr`
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.kind != ParLe or n.stmtKind != StmtsS:
       transformed.takeTree n           # not the leading stmts — pass through
       continue
     transformed.takeToken n            # `(stmts`
-    while n.kind != ParRi:
+    while n.hasMore:
       if n.kind != ParLe or n.stmtKind notin {LetS, VarS, CursorS}:
         transformed.takeTree n
         continue
@@ -237,7 +237,7 @@ proc trExprLoop(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
     assert tar.m == IsAppend, toString(n, false) & " " & $tar.m
   tar.t.add n
   inc n
-  while n.kind != ParRi:
+  while n.hasMore:
     trExpr c, dest, n, tar
   tar.t.addParRi()
   inc n
@@ -312,14 +312,14 @@ proc trAggregate(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Tar
     # inheritance form `(oconstr T (oconstr ...) (kv ...)*)`.
     if n.kind != ParRi:
       tar.t.takeTree n  # T
-    while n.kind != ParRi:
+    while n.hasMore:
       if n.kind == ParLe and n.substructureKind == KvU:
         tar.t.takeToken n  # `(kv`
         if n.kind != ParRi:
           tar.t.takeTree n  # field key
         if n.kind != ParRi:
           trAggregateValue c, dest, n, tar
-        while n.kind != ParRi:
+        while n.hasMore:
           tar.t.takeTree n  # optional INTLIT (inheritance count)
         tar.t.takeToken n  # closing `)` of kv
       else:
@@ -329,15 +329,15 @@ proc trAggregate(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Tar
     # `(tupconstr T X+)`, `(aconstr T X*)` — type then values.
     if n.kind != ParRi:
       tar.t.takeTree n
-    while n.kind != ParRi:
+    while n.hasMore:
       trAggregateValue c, dest, n, tar
   of TupX, BracketX, CurlyX, SetconstrX, TabconstrX:
     # `(tup X+)`, `(bracket X*)`, `(curly X*)`, `(setconstr X*)`,
     # `(tabconstr X*)` — value list, no leading type.
-    while n.kind != ParRi:
+    while n.hasMore:
       trAggregateValue c, dest, n, tar
   else:
-    while n.kind != ParRi:
+    while n.hasMore:
       trExpr c, dest, n, tar
 
   tar.t.addParRi()
@@ -392,7 +392,7 @@ proc trStmtCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # IMPORTANT: Stores into `tar` helper!
   var tar = Target(m: IsAppend)
   tar.t.copyInto n:
-    while n.kind != ParRi:
+    while n.hasMore:
       trExpr c, dest, n, tar
   dest.addTarget tar
 
@@ -535,7 +535,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   var toClose = 0
   var ifs = 0
   inc n
-  while n.kind != ParRi:
+  while n.hasMore:
     if ifs >= 1:
       dest.addParLe ElseU, info
       dest.addParLe StmtsS, info
@@ -596,7 +596,7 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   trExpr c, dest, n, t0
   dest.addParLe CaseS, info
   dest.addTarget t0
-  while n.kind != ParRi:
+  while n.hasMore:
     case n.substructureKind
     of OfU:
       copyInto(dest, n):
@@ -637,7 +637,7 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     else:
       trStmt c, dest, n
 
-    while n.kind != ParRi:
+    while n.hasMore:
       case n.substructureKind
       of ExceptU:
         copyInto(dest, n):
@@ -836,7 +836,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # IMPORTANT: Stores into `tar` helper!
     var tar = Target(m: IsAppend)
     tar.t.copyInto n:
-      while n.kind != ParRi:
+      while n.hasMore:
         trExpr c, dest, n, tar
     dest.addTarget tar
   of LocalDecls:
@@ -854,12 +854,12 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of ScopeS, StaticstmtS:
     c.typeCache.openScope()
     copyInto(dest, n):
-      while n.kind != ParRi:
+      while n.hasMore:
         trStmt c, dest, n
     c.typeCache.closeScope()
   of StmtsS, UnpackdeclS:
     copyInto(dest, n):
-      while n.kind != ParRi:
+      while n.hasMore:
         trStmt c, dest, n
 
 proc isIntLike(tk: TypeKind): bool {.inline.} =
@@ -964,7 +964,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
     case n.exprKind
     of ExprX:
       inc n
-      while n.kind != ParRi:
+      while n.hasMore:
         if not isLastSon(n):
           trStmt c, dest, n
         else:
@@ -1037,7 +1037,7 @@ proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
   assert n.stmtKind == StmtsS, $n.kind
   pass.dest.add n
   inc n
-  while n.kind != ParRi:
+  while n.hasMore:
     trStmt c, pass.dest, n
   pass.dest.addParRi()
   c.typeCache.closeScope()

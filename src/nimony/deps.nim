@@ -188,36 +188,36 @@ proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
   var files: seq[ImportedFilename] = @[]
   var x = it
   skip it
-  inc x, SkipTag # skip the `include`
-  while x.kind != ParRi:
-    var hasError = false
-    filenameVal(x, files, hasError, allowAs = false)
+  x.into:  # (include …)
+    while x.hasMore:
+      var hasError = false
+      filenameVal(x, files, hasError, allowAs = false)
 
-    if hasError:
-      discard "ignore wrong `include` statement"
-    else:
-      for f1 in items(files):
-        if f1.plugin.len > 0:
-          discard "ignore plugin include file, will cause an error in sem.nim"
-          continue
-        let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1.path)
-        # check for recursive include files:
-        var isRecursive = false
-        for a in c.includeStack:
-          if a == f2:
-            isRecursive = true
-            break
+      if hasError:
+        discard "ignore wrong `include` statement"
+      else:
+        for f1 in items(files):
+          if f1.plugin.len > 0:
+            discard "ignore plugin include file, will cause an error in sem.nim"
+            continue
+          let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1.path)
+          # check for recursive include files:
+          var isRecursive = false
+          for a in c.includeStack:
+            if a == f2:
+              isRecursive = true
+              break
 
-        if not isRecursive and semos.fileExists(f2):
-          let oldActive = current.active
-          current.active = current.files.len
-          current.files.add c.toPair(f2)
-          traverseDeps(c, c.toPair(f2), current)
-          c.includeStack.add f2
-          current.active = oldActive
-          c.includeStack.setLen c.includeStack.len - 1
-        else:
-          discard "ignore recursive include"
+          if not isRecursive and semos.fileExists(f2):
+            let oldActive = current.active
+            current.active = current.files.len
+            current.files.add c.toPair(f2)
+            traverseDeps(c, c.toPair(f2), current)
+            c.includeStack.add f2
+            current.active = oldActive
+            c.includeStack.setLen c.includeStack.len - 1
+          else:
+            discard "ignore recursive include"
 
 proc wouldCreateCycle(c: var DepContext; current: Node; p: FilePair): bool =
   var it = current.id
@@ -356,73 +356,75 @@ proc whenMarkerHolds(c: DepContext; x: Cursor): bool =
   ## is treated as live so older deps files keep working.
   assert x.kind == ParLe and x.stmtKind == WhenS
   var inner = x
-  inc inner # skip the `when` tag
-  while inner.kind != ParRi:
-    if not evalDepCond(c.config, inner):
-      return false
-    skip inner
+  inner.into WhenS:
+    while inner.hasMore:
+      if not evalDepCond(c.config, inner):
+        while inner.hasMore: skip inner  # mop-up before early-exit (return bypasses epilogue)
+        return false
+      skip inner
   result = true
 
 proc processImport(c: var DepContext; it: var Cursor; current: Node) =
   let info = it.info
   var x = it
   skip it
-  inc x, SkipTag # skip the `import`
-  # Conditional imports carry a `(when COND...)` marker child. If we can
-  # statically prove the condition is false against the active set of
-  # `defined(...)` symbols, skip the import entirely. Otherwise step over
-  # the marker and process the import normally — the conservative direction
-  # for cross-compilation and for conditions we cannot evaluate.
-  if x.stmtKind == WhenS:
-    if not whenMarkerHolds(c, x):
-      return
-    skip x, SkipCond
-  while x.kind != ParRi:
-    var isCyclic = false
-    if x.kind == ParLe and x.exprKind == PragmaxX:
-      var y = x
-      inc y
-      skip y
-      if y.substructureKind == PragmasU:
+  x.into:  # (import …)
+    # Conditional imports carry a `(when COND...)` marker child. If we can
+    # statically prove the condition is false against the active set of
+    # `defined(...)` symbols, skip the import entirely. Otherwise step over
+    # the marker and process the import normally — the conservative direction
+    # for cross-compilation and for conditions we cannot evaluate.
+    if x.stmtKind == WhenS:
+      if not whenMarkerHolds(c, x):
+        return
+      skip x, SkipCond
+    while x.hasMore:
+      var isCyclic = false
+      if x.kind == ParLe and x.exprKind == PragmaxX:
+        var y = x
         inc y
-        if y.kind == Ident and pool.strings[y.litId] == "cyclic":
-          isCyclic = true
+        skip y
+        if y.substructureKind == PragmasU:
+          inc y
+          if y.kind == Ident and pool.strings[y.litId] == "cyclic":
+            isCyclic = true
 
-    var files: seq[ImportedFilename] = @[]
-    var hasError = false
-    if isCyclic:
-      # Manually parse the pragmax: enter it, parse the inner filename, skip the pragma
-      inc x, SkipTag # enter PragmaxX
-      filenameVal(x, files, hasError, allowAs = false)
-      skip x, SkipPragmas # skip (pragmas cyclic)
-      inc x, SkipParRi  # skip closing ParRi of PragmaxX
-    else:
-      filenameVal(x, files, hasError, allowAs = true)
-    if hasError:
-      discard "ignore wrong `import` statement"
-    elif isCyclic:
-      for f in files:
-        importCyclicModule c, f.path, info, current
-    else:
-      for f in files:
-        if f.plugin.len == 0:
-          importSingleFile c, f.path, info, current, false
-        else:
-          processPluginImport c, f, info, current
+      var files: seq[ImportedFilename] = @[]
+      var hasError = false
+      if isCyclic:
+        # Manually parse the pragmax: enter it, parse the inner filename, skip the pragma
+        x.into PragmaxX:
+          filenameVal(x, files, hasError, allowAs = false)
+          skip x, SkipPragmas # skip (pragmas cyclic)
+          while x.hasMore: skip x, SkipFull
+      else:
+        filenameVal(x, files, hasError, allowAs = true)
+      if hasError:
+        discard "ignore wrong `import` statement"
+      elif isCyclic:
+        for f in files:
+          importCyclicModule c, f.path, info, current
+      else:
+        for f in files:
+          if f.plugin.len == 0:
+            importSingleFile c, f.path, info, current, false
+          else:
+            processPluginImport c, f, info, current
 
 proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
   # process `from import` and `import except` which have a single module expression
   let info = it.info
   var x = it
   skip it
-  inc x, SkipTag # skip the tag
-  if x.stmtKind == WhenS:
-    if not whenMarkerHolds(c, x):
-      return
-    skip x, SkipCond  # step past conditional marker, same as processImport
   var files: seq[ImportedFilename] = @[]
   var hasError = false
-  filenameVal(x, files, hasError, allowAs = true)
+  x.into:  # (fromimport …) / (importexcept …)
+    if x.stmtKind == WhenS:
+      if not whenMarkerHolds(c, x):
+        return
+      skip x, SkipCond  # step past conditional marker, same as processImport
+    filenameVal(x, files, hasError, allowAs = true)
+    while x.hasMore: skip x  # (the rest of the children are the included/excluded names; processed elsewhere)
   if hasError:
     discard "ignore wrong `from` statement"
   else:
@@ -434,24 +436,24 @@ proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
       break
 
 proc processBuild(c: var DepContext; it: var Cursor) =
-  inc it
-  while it.kind != ParRi:
-    assert it.exprKind == TupX
-    var x = it
-    skip it
-    inc x
-    assert x.kind == StringLit
-    let typ = pool.strings[x.litId]
-    inc x
-    assert x.kind == StringLit
-    let path = pool.strings[x.litId]
-    let obj = splitFile(path).name & ".o"
-    inc x
-    assert x.kind == StringLit
-    let args = pool.strings[x.litId]
-    inc x
-    c.toBuild.add CFile(name: path, obj: obj, customArgs: args)
-  inc it
+  it.into:  # (build …)
+    while it.hasMore:
+      assert it.exprKind == TupX
+      var x = it
+      skip it
+      x.into TupX:
+        assert x.kind == StringLit
+        let typ = pool.strings[x.litId]
+        inc x
+        assert x.kind == StringLit
+        let path = pool.strings[x.litId]
+        let obj = splitFile(path).name & ".o"
+        inc x
+        assert x.kind == StringLit
+        let args = pool.strings[x.litId]
+        inc x
+        while x.hasMore: skip x
+        c.toBuild.add CFile(name: path, obj: obj, customArgs: args)
 
 proc processDep(c: var DepContext; n: var Cursor; current: Node) =
   case stmtKind(n)
@@ -469,17 +471,17 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
     if n.tagId == TagId(BuildIdx):
       processBuild c, n
     elif n.tagId == TagId(PassLP):
-      inc n
-      while n.kind != ParRi:
-        assert n.kind == StringLit
-        c.passL.add pool.strings[n.litId]
-        inc n
+      n.into:  # (passL …)
+        while n.hasMore:
+          assert n.kind == StringLit
+          c.passL.add pool.strings[n.litId]
+          inc n
     elif n.tagId == TagId(PassCP):
-      inc n
-      while n.kind != ParRi:
-        assert n.kind == StringLit
-        c.passC.add pool.strings[n.litId]
-        inc n
+      n.into:  # (passC …)
+        while n.hasMore:
+          assert n.kind == StringLit
+          c.passC.add pool.strings[n.litId]
+          inc n
     else:
       skip n
   else:
@@ -489,9 +491,9 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
 proc processDeps(c: var DepContext; n: Cursor; current: Node) =
   var n = n
   if n.kind == ParLe and pool.tags[n.tagId] == "stmts":
-    inc n
-    while n.kind != ParRi:
-      processDep c, n, current
+    n.into:
+      while n.hasMore:
+        processDep c, n, current
 
 proc getLastModTime(path: string): int64 =
   ## `getLastModificationTime` raises on transient I/O errors. We only use

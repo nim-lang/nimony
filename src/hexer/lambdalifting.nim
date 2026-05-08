@@ -75,7 +75,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
-    while n.kind != ParRi:
+    while n.hasMore:
       tr(c, dest, n)
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -134,7 +134,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # if a closure proc is called, we don't want to see it as "escaping".
     dest.add n
     inc n
-  while n.kind != ParRi:
+  while n.hasMore:
     tr(c, dest, n)
   dest.takeParRi(n)
 
@@ -151,7 +151,7 @@ proc trNil(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skipParRi n
   else:
     dest.addParLe NilX, n.info
-    while n.kind != ParRi: takeTree dest, n
+    while n.hasMore: takeTree dest, n
     dest.takeParRi n
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -316,7 +316,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc treSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
-    while n.kind != ParRi:
+    while n.hasMore:
       tre(c, dest, n)
 
 proc addEnvParam(dest: var TokenBuf; info: PackedLineInfo; envTyp: SymId) =
@@ -335,7 +335,7 @@ proc addEnvParam(dest: var TokenBuf; info: PackedLineInfo; envTyp: SymId) =
 
 proc treParamsWithEnv(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
-    while n.kind != ParRi:
+    while n.hasMore:
       tre(c, dest, n)
     addEnvParam dest, NoLineInfo, SymId(0)
 
@@ -432,7 +432,7 @@ proc treLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc treParams(c: var Context; dest, init: var TokenBuf; n: var Cursor; doAddEnvParam: bool; envTyp: SymId) =
   copyInto dest, n:
-    while n.kind != ParRi:
+    while n.hasMore:
       assert n.substructureKind == ParamU
       copyInto dest, n:
         let name = n.symId
@@ -501,7 +501,7 @@ proc treProcBody(c: var Context; dest, init: var TokenBuf; n: var Cursor; sym: S
       else:
         c.env = CurrentEnv(s: SymId(0), mode: EnvIsParam, typ: SymId(0), needsHeap: needsHeap)
       dest.add init
-      while n.kind != ParRi:
+      while n.hasMore:
         tre(c, dest, n)
       var needsHeapB = c.env.needsHeap
       c.env = oldEnv
@@ -591,7 +591,7 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
           tre c, dest, n # value
       dest.addSymUse tmp, info
       dest.addParRi() # ExprX
-  while n.kind != ParRi:
+  while n.hasMore:
     tre(c, dest, n)
   if wantsEnv:
     if isStatic:
@@ -623,20 +623,20 @@ proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
         inc n
       else:
         inc n
-        while n.kind != ParRi:
+        while n.hasMore:
           tre c, dest, n # params
         skipParRi n
       addEnvParam dest, info, SymId(0)
     tre c, dest, n # return type
     # pragmas:
     tre c, dest, n
-    while n.kind != ParRi: skip n
+    while n.hasMore: skip n
     skipParRi n
 
 proc treKv(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
     dest.takeTree n # key
-    while n.kind != ParRi:
+    while n.hasMore:
       tre(c, dest, n)
 
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -701,7 +701,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of CastX, ConvX:
         takeToken dest, n
         treType c, dest, n
-        while n.kind != ParRi:
+        while n.hasMore:
           tre c, dest, n
         takeParRi dest, n
       of EnvpX:
@@ -790,7 +790,7 @@ proc elimLambdas*(pass: var Pass) =
     pass.dest.add n2 # stmts
     inc n2
     genObjectTypes(c, pass.dest)
-    while n2.kind != ParRi:
+    while n2.hasMore:
       tre(c, pass.dest, n2)
     pass.dest.takeParRi n2
     endRead(oldDest)

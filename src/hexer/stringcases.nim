@@ -107,13 +107,13 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       trExpr(c, dest, selectorNode)
   skip nb # selector
 
-  while nb.kind != ParRi:
+  while nb.hasMore:
     if nb.substructureKind == OfU:
       let labl = "`sc." & $getTmpId(c)
       inc nb
       assert nb.substructureKind == RangesU
       inc nb
-      while nb.kind != ParRi:
+      while nb.hasMore:
         let litId = getSimpleStringLit(c, nb)
         pairs.add (pool.strings[litId], labl)
       inc nb # skip ParRi
@@ -135,14 +135,14 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   dest.copyIntoUnchecked "jmp", selectorNode.info:
     dest.add symToken(elseLabel, selectorNode.info)
   var hasElse = false
-  while nb.kind != ParRi:
+  while nb.hasMore:
     let info = nb.info
     if nb.substructureKind == OfU:
       dest.copyIntoUnchecked "lab", info:
         dest.add symdefToken(pool.syms.getOrIncl(pairs[i][1]), info)
       inc nb
       inc nb
-      while nb.kind != ParRi:
+      while nb.hasMore:
         skip nb
         inc i
       inc nb # skip ParRi

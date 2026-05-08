@@ -145,7 +145,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
         copyTree dest, retType
         # value is the call expression:
         dest.add head
-        while n.kind != ParRi:
+        while n.hasMore:
           tr c, dest, n
         takeParRi dest, n
       addRaiseStmt(dest, symId, info)
@@ -154,7 +154,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
       dest.addParRi()
   else:
     dest.add head
-    while n.kind != ParRi:
+    while n.hasMore:
       tr c, dest, n
     takeParRi dest, n
 
@@ -180,7 +180,7 @@ proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
   dest.add n
   inc n
-  while n.kind != ParRi:
+  while n.hasMore:
     tr c, dest, n
   takeParRi dest, n
   c.typeCache.closeScope()

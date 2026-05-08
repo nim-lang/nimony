@@ -319,7 +319,7 @@ proc callMentionsDest*(n: Cursor; destLv: Cursor): bool =
     # Function call: (call callee DEST args...)
     inc c  # skip callee
   # Scan remaining arguments
-  while c.kind != ParRi:
+  while c.hasMore:
     if equalLvalues(c, destLv): return true
     skip c
   return false
@@ -376,7 +376,7 @@ proc extractCallMeta(n: Cursor; targetLv: Cursor): (string, string, bool) =
   elif c.kind == ParLe:
     firstArg = extractLastDotField(c)
 
-  while c.kind != ParRi:
+  while c.hasMore:
     if not mentionsTarget:
       if equalLvalues(c, targetLv):
         mentionsTarget = true
@@ -451,7 +451,7 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor; destLv: Cursor): Effect
 
   var effects: seq[Effect] = @[]
 
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.kind != ParLe:
       if n.kind == Ident:
         # Bare identifier — could be template invocation
@@ -541,7 +541,7 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor; destLv: Cursor): Effect
       skip n
 
     of "while":
-      # while n.kind != ParRi: f(dest, n) → repeat
+      # while n.hasMore: f(dest, n) → repeat
       let loopEffect = analyzeWhileLoop(graph, n, destLv)
       if loopEffect.kind == ekUnknown:
         return unknownEffect()
@@ -572,7 +572,7 @@ proc analyzeIfBranches*(graph: EffectGraph; n: Cursor; destLv: Cursor): Effect =
   var allEffects: seq[Effect] = @[]
   var hasElse = false
 
-  while c.kind != ParRi:
+  while c.hasMore:
     if c.kind != ParLe:
       skip c
       continue
@@ -623,7 +623,7 @@ proc analyzeCaseBranches*(graph: EffectGraph; n: Cursor; destLv: Cursor): Effect
   var allEffects: seq[Effect] = @[]
   var hasElse = false
 
-  while c.kind != ParRi:
+  while c.hasMore:
     if c.kind != ParLe:
       skip c
       continue
@@ -663,7 +663,7 @@ proc analyzeCaseBranches*(graph: EffectGraph; n: Cursor; destLv: Cursor): Effect
     result = branchEffect(result, allEffects[i])
 
 proc analyzeWhileLoop*(graph: EffectGraph; n: Cursor; destLv: Cursor): Effect =
-  ## Analyze `while n.kind != ParRi: body` — produces 0+ children.
+  ## Analyze `while n.hasMore: body` — produces 0+ children.
   var c = n
   if c.kind != ParLe: return unknownEffect()
   inc c # skip (while
@@ -786,7 +786,7 @@ proc findAddSymDefInBody(body: Cursor; tag: string; result: var SymContext) =
   if n.kind != ParLe: return
   if pool.tags[n.tag] != "stmts": return
   inc n
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.kind == ParLe:
       let stmtTag = pool.tags[n.tag]
       if stmtTag in CallTags:
@@ -851,7 +851,7 @@ proc buildSymContext*(buf: var TokenBuf): SymContext =
           copyTag = pool.strings[peek.litId]
           skip peek  # skip tag
           skip peek  # skip info
-          while peek.kind != ParRi:
+          while peek.hasMore:
             if peek.kind == ParLe and pool.tags[peek.tag] == "stmts":
               findAddSymDefInBody(peek, copyTag, result)
               break
@@ -881,12 +881,12 @@ proc extractEnsuresNif(procCursor: Cursor): (Effect, string) =
   if c.kind != ParLe: return (nil, "")
   inc c # skip (proc
   # Walk children looking for (pragmas ...)
-  while c.kind != ParRi:
+  while c.hasMore:
     if c.kind == ParLe and pool.tags[c.tag] == "pragmas":
       # Found pragmas — scan for (kv ensuresNif ...)
       var p = c
       inc p # skip (pragmas
-      while p.kind != ParRi:
+      while p.hasMore:
         if p.kind == ParLe and pool.tags[p.tag] == "kv":
           var kv = p
           inc kv # skip (kv
@@ -921,11 +921,11 @@ proc extractRequiresNif(procCursor: Cursor): (ChildKind, string) =
   var c = procCursor
   if c.kind != ParLe: return (ckAny, "")
   inc c # skip (proc
-  while c.kind != ParRi:
+  while c.hasMore:
     if c.kind == ParLe and pool.tags[c.tag] == "pragmas":
       var p = c
       inc p
-      while p.kind != ParRi:
+      while p.hasMore:
         if p.kind == ParLe and pool.tags[p.tag] == "kv":
           var kv = p
           inc kv
@@ -985,7 +985,7 @@ proc detectDestLvalue*(body: Cursor; hintName: string): Cursor =
       elif peek.kind == Ident:
         inc peek  # skip callee
         # Scan args for dest reference
-        while peek.kind != ParRi:
+        while peek.hasMore:
           if peek.kind == Ident and pool.strings[peek.litId] == hintName:
             return peek  # bare `dest` as argument
           elif peek.kind == ParLe and pool.tags[peek.tag] == "dot":
@@ -1000,7 +1000,7 @@ proc detectWrapsInput*(graph: EffectGraph; body: Cursor; destLv: Cursor): bool =
   var c = body
   if c.kind != ParLe or pool.tags[c.tag] != "stmts": return false
   inc c
-  while c.kind != ParRi:
+  while c.hasMore:
     if c.kind == ParLe:
       let tag = pool.tags[c.tag]
       if tag in CallTags:
@@ -1069,7 +1069,7 @@ proc locateProcChildren(info: var ProcInfo) =
   ## From a proc cursor, locate its params and body children.
   var c = info.procCursor
   inc c # skip (proc
-  while c.kind != ParRi:
+  while c.hasMore:
     if c.kind == ParLe:
       let tag = pool.tags[c.tag]
       if tag == "params":
@@ -1254,7 +1254,7 @@ proc analyzeCursorPath*(graph: EffectGraph; body: Cursor; cursorLv: Cursor): Cur
   inc n
 
   var advanced = false
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.kind != ParLe:
       skip n
       continue
@@ -1313,7 +1313,7 @@ proc analyzeIfCursorPaths*(graph: EffectGraph; n: Cursor; cursorLv: Cursor): Cur
 
   var allAdvanced = true
   var hasElse = false
-  while c.kind != ParRi:
+  while c.hasMore:
     if c.kind != ParLe:
       skip c
       continue
@@ -1351,7 +1351,7 @@ proc analyzeCaseCursorPaths*(graph: EffectGraph; n: Cursor; cursorLv: Cursor): C
 
   var allAdvanced = true
   var hasElse = false
-  while c.kind != ParRi:
+  while c.hasMore:
     if c.kind != ParLe:
       skip c
       continue

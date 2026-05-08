@@ -354,7 +354,7 @@ proc matchBooleanConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   of AndT:
     inc f
     result = true
-    while f.kind != ParRi:
+    while f.hasMore:
       var f2 = f
       if not matchBooleanConstraint(m, f2, a):
         result = false
@@ -363,7 +363,7 @@ proc matchBooleanConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
     skipToEnd f
   of OrT:
     inc f
-    while f.kind != ParRi:
+    while f.hasMore:
       var f2 = f
       if matchBooleanConstraint(m, f2, a):
         result = true
@@ -663,7 +663,7 @@ proc extractProcProps*(c: var Cursor): ProcProperties =
   result = ProcProperties(cc: Nimcall, usesRaises: false, usesClosure: false, usesPassive: false)
   if c.substructureKind == PragmasU:
     inc c
-    while c.kind != ParRi:
+    while c.hasMore:
       let res = callConvKind(c)
       if res != NoCallConv:
         result.cc = res
@@ -876,7 +876,7 @@ proc tryMatchEnumChoice*(choice: Cursor; enumTypeSym: SymId): SymId =
   result = SymId(0)
   var matchCount = 0
   var a = choice.firstSon
-  while a.kind != ParRi:
+  while a.hasMore:
     if a.kind == Symbol:
       let res = tryLoadSym(a.symId)
       if res.status == LacksNothing and res.decl.symKind == EfldY:
@@ -947,7 +947,7 @@ proc skipExpr*(n: Cursor): Cursor =
   while result.exprKind in {ExprX, ParX}:
     inc result
     var next = result
-    while next.kind != ParRi:
+    while next.hasMore:
       result = next
       skip next
 
@@ -1211,7 +1211,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         # skip tags:
         inc f
         inc a
-        while f.kind != ParRi:
+        while f.hasMore:
           if a.kind == ParRi:
             # len(f) > len(a)
             m.error InvalidMatch, fOrig, aOrig
@@ -1249,7 +1249,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
       let errSave = m.err
       let openedSave = m.opened
       var matched = false
-      while branches.kind != ParRi:
+      while branches.hasMore:
         var branch = branches
         singleArgImpl(m, branch, arg)
         if not m.err:
@@ -1454,7 +1454,7 @@ proc classifyMatch*(m: Match): TypeRelation {.inline.} =
 proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[CallArg]) =
   var i = 0
   var isVarargs = false
-  while f.kind != ParRi:
+  while f.hasMore:
     m.skippedMod = NoType
 
     assert f.symKind == ParamY
@@ -1499,7 +1499,7 @@ iterator typeVars(fn: SymId): SymId {.sideEffect.} =
       skip c # name, export marker, pattern
     if c.substructureKind == TypevarsU:
       inc c
-      while c.kind != ParRi:
+      while c.hasMore:
         if c.symKind == TypevarY:
           var tv = c
           inc tv
@@ -1672,7 +1672,7 @@ proc buildParamsInfo(params: Cursor): ParamsInfo =
   var f = params
   assert f.isParamsTag
   inc f # "params"
-  while f.kind != ParRi:
+  while f.hasMore:
     assert f.symKind == ParamY
     var param = takeLocal(f, SkipFinalParRi)
     let isVarargs = param.typ.tagEnum == VarargsTagId

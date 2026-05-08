@@ -210,7 +210,7 @@ proc unravelObjField(c: var SynthesizeSerializerCtx; n: var Cursor; param: Token
   genParRiCall c
 
 proc unravelObjFields(c: var SynthesizeSerializerCtx; n: var Cursor; param: TokenBuf; needsDeref: bool; depth: int) =
-  while n.kind != ParRi:
+  while n.hasMore:
     case n.substructureKind
     of CaseU:
       let info = n.info
@@ -224,7 +224,7 @@ proc unravelObjFields(c: var SynthesizeSerializerCtx; n: var Cursor; param: Toke
       c.dest.addParLe CaseU, info
       c.dest.add sel
 
-      while n.kind != ParRi:
+      while n.hasMore:
         case n.substructureKind
         of OfU:
           c.dest.takeToken(n)

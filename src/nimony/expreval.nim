@@ -134,7 +134,7 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
   var pragmas = routine.pragmas
   if pragmas.substructureKind == PragmasU:
     inc pragmas
-    while pragmas.kind != ParRi:
+    while pragmas.hasMore:
       var prag = pragmas
       if prag.pragmaKind == SemanticsP:
         inc prag
@@ -178,7 +178,7 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
     var evaluatedCall = createTokenBuf(16)
     evaluatedCall.addParLe CallS, n.info
     evaluatedCall.addSymUse routine.name.symId, n.info
-    while args.kind != ParRi:
+    while args.hasMore:
       evaluatedCall.takeTree args
     evaluatedCall.addParRi()
 
@@ -438,7 +438,7 @@ proc evalInSet(c: var EvalContext; n: var Cursor): Cursor =
   skip a # skip set type
 
   var isInSet = false
-  while a.kind != ParRi:
+  while a.hasMore:
     if a.substructureKind == RangeU:
       inc a
       let xa = evalOrdinal(nil, a)
@@ -813,7 +813,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       if exprKind in {AconstrX, SetconstrX, TupconstrX}:
         # add type
         takeTree buf, n
-      while n.kind != ParRi:
+      while n.hasMore:
         if (exprKind == SetconstrX and n.substructureKind == RangeU) or
            (exprKind == AconstrX and n.substructureKind == KvU):
           buf.takeToken n
@@ -844,7 +844,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       buf.add n
       inc n
       takeTree buf, n # type
-      while n.kind != ParRi:
+      while n.hasMore:
         if n.substructureKind == KvU:
           buf.takeToken n # kv
           buf.takeToken n # field sym/ident
@@ -994,17 +994,23 @@ proc annotateOrdinal(buf: var TokenBuf; typ: var Cursor; n: Cursor; err: var boo
   of EnumT, HoleyEnumT, AnumT:
     # finds the field sym but could also generate a conversion
     let decl = asEnumDecl(typ)
-    var fields = decl.firstField
+    var fields = decl.body
     err = true
-    while fields.kind != ParRi:
-      let field = takeLocal(fields, SkipFinalParRi)
-      var val = field.val
-      inc val # skip tuple tag
-      let x = getConstOrdinalValue(val)
-      if ordinal == x:
-        err = false
-        buf.add symToken(field.name.symId, n.info)
-        break
+    fields.into:
+      skip fields, SkipType
+      if decl.kind == AnumT:
+        skip fields, AnyType
+      var done = false
+      while fields.hasMore and not done:
+        let field = takeLocal(fields, SkipFinalParRi)
+        var val = field.val
+        inc val # skip tuple tag
+        let x = getConstOrdinalValue(val)
+        if ordinal == x:
+          err = false
+          buf.add symToken(field.name.symId, n.info)
+          done = true
+      while fields.hasMore: skip fields  # mop-up so into closes cleanly
   else:
     err = true
 
@@ -1127,7 +1133,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
         if exprKind == TupconstrX:
           skip vals # skip type
         inc typ # tag
-        while vals.kind != ParRi:
+        while vals.hasMore:
           if typ.kind == ParRi:
             err = true
             break
@@ -1149,7 +1155,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
         if exprKind == AconstrX:
           skip vals # skip type
         inc typ # tag, get to element type
-        while vals.kind != ParRi:
+        while vals.hasMore:
           annotateConstantType(buf, typ, vals)
           skip vals
         buf.addParRi()
@@ -1163,7 +1169,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
         if exprKind == SetconstrX:
           skip vals # skip type
         inc typ # tag, get to element type
-        while vals.kind != ParRi:
+        while vals.hasMore:
           if vals.substructureKind == RangeU:
             buf.add vals
             inc vals
@@ -1189,7 +1195,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
         var vals = n
         inc vals
         skip vals # skip type
-        while vals.kind != ParRi:
+        while vals.hasMore:
           err = true
           if vals.substructureKind == KvU:
             buf.add vals
@@ -1247,7 +1253,7 @@ proc enumBounds*(n: Cursor): Bounds =
   if kind == AnumT:
     skip n # owner object type sym (or dot)
   result = Bounds(lo: createNaN(), hi: createNaN())
-  while n.kind != ParRi:
+  while n.hasMore:
     let enumField = takeLocal(n, SkipFinalParRi)
     var val = enumField.val
     inc val # skip tuple tag
@@ -1349,7 +1355,7 @@ proc evalBitSetImpl(n, typ: Cursor): seq[uint8] =
   var n = n
   inc n # skip set tag
   skip n # skip set type
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.substructureKind == RangeU:
       inc n
       let xa = evalOrdinal(nil, n)

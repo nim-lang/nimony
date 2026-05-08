@@ -218,7 +218,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
-    while n.kind != ParRi:
+    while n.hasMore:
       tr(c, dest, n)
 
 proc contNextState(c: var Context; dest: var TokenBuf; state: int; info: PackedLineInfo) =
@@ -339,7 +339,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
             inc n
           else:
             tr(c, dest, n)
-          while n.kind != ParRi:
+          while n.hasMore:
             tr(c, dest, n)
           inc n
           if hasResult:
@@ -382,7 +382,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
           dest.addSymUse sym, info
           inc n
           skip n # fn already handled
-          while n.kind != ParRi:
+          while n.hasMore:
             tr(c, dest, n)
           inc n
           dest.copyIntoKind AddrX, info:
@@ -437,7 +437,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
         inc n
       else:
         tr(c, dest, n)
-      while n.kind != ParRi:
+      while n.hasMore:
         tr(c, dest, n)
       inc n
 
@@ -488,7 +488,7 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # The callee's frame is heap-allocated via allocFrame.
     copyIntoKind dest, CallS, info:
       dest.addSymUse sym, info
-      while n.kind != ParRi:
+      while n.hasMore:
         tr(c, dest, n)
       emitAllocFrame(c, dest, sym, info)
       # Pass StopContinuation as the caller so the child doesn't resume anyone on finish.
@@ -820,7 +820,7 @@ proc trJtrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## If the symbol is lifted to the environment, assign to the env field.
   let info = n.info
   inc n  # skip jtrue tag
-  while n.kind != ParRi:
+  while n.hasMore:
     let symId = n.symId
     let field = c.currentProc.localToEnv.getOrDefault(symId)
     dest.addParLe AsgnS, info
@@ -865,7 +865,7 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
       inc n
       assert n.stmtKind == StmtsS
       inc n # enter stmts_before
-      while n.kind != ParRi:
+      while n.hasMore:
         dest.takeTree n # copy all mflags, it will be handled later
       inc n # skip stmts_before ParRi
       var beforeLoopState = c.currentProc.labelCounter
@@ -882,7 +882,7 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
             emitJump dest, afterLoopState, info
       assert n.stmtKind == StmtsS
       inc n  # enter stmts_body (past StmtsS tag)
-      while n.kind != ParRi:
+      while n.hasMore:
         trGoto c, dest, n
       inc n  # skip stmts_body ParRi
       emitJump dest, beforeLoopState, info
@@ -912,12 +912,12 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
         emitJump dest, lelse, info
         emitLabel dest, lelse, info
         inc elseCur
-        while elseCur.kind != ParRi:
+        while elseCur.hasMore:
           trGoto c, dest, elseCur
       emitJump dest, lend, info
       emitLabel dest, lthen, info
       inc thenCur
-      while thenCur.kind != ParRi:
+      while thenCur.hasMore:
         trGoto c, dest, thenCur
       emitJump dest, lend, info
       emitLabel dest, lend, info
@@ -963,7 +963,7 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
             StaticstmtS, BindS, MixinS, UsingS, AsmS,
             DeferS, NoStmt:
           dest.takeToken n
-          while n.kind != ParRi:
+          while n.hasMore:
             trGoto c, dest, n
           dest.takeToken n
       else:
@@ -1032,7 +1032,7 @@ proc treIteratorBody(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: C
   dest.addParRi() # close stmts
   dest.addParRi() # close proc decl
   newLocalProc c, dest, 0, c.procStack[^1]
-  while n.kind != ParRi:
+  while n.hasMore:
     tr c, dest, n
   skipParRi n
 
@@ -1091,7 +1091,7 @@ proc generateCoroutineHelpers(c: var Context; dest: var TokenBuf; sym: SymId; it
     c.typeCache.openProcScope(newSym, iter, n)
     if n.kind != DotToken:
       inc n
-      while n.kind != ParRi:
+      while n.hasMore:
         assert n.substructureKind == ParamU
         dest.takeToken n
         let paramSym = n.symId
@@ -1135,7 +1135,7 @@ proc generateCoroutineHelpers(c: var Context; dest: var TokenBuf; sym: SymId; it
         dest.addSymUse sym, info
         if params.kind != DotToken:
           inc params
-          while params.kind != ParRi:
+          while params.hasMore:
             assert params.substructureKind == ParamU
             inc params
             dest.addSymUse params.symId, info
@@ -1157,7 +1157,7 @@ proc registerParamsInTypecache(c: var Context; sym: SymId; origParams: Cursor) =
   var n = origParams
   if n.kind != DotToken:
     inc n
-    while n.kind != ParRi:
+    while n.hasMore:
       assert n.substructureKind == ParamU
       inc n
       let paramSym = n.symId
@@ -1188,7 +1188,7 @@ proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId;
     var n = origParams
     if n.kind != DotToken:
       inc n
-      while n.kind != ParRi:
+      while n.hasMore:
         assert n.substructureKind == ParamU
         dest.takeToken n
         let paramSym = n.symId
@@ -1270,7 +1270,7 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.takeToken n        # proctype tag
       dest.takeTree n         # nilability tag
       dest.takeToken n        # params tag
-      while n.kind != ParRi:
+      while n.hasMore:
         trProctype(c, dest, n)
       inc n
       # return type becomes a ptr parameter:
@@ -1293,12 +1293,12 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addDotToken() # default value
       dest.addParRi()
       dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
-      while n.kind != ParRi:
+      while n.hasMore:
         trProctype(c, dest, n)
       dest.takeParRi n
     else:
       copyInto dest, n:
-        while n.kind != ParRi:
+        while n.hasMore:
           trProctype(c, dest, n)
   else:
     dest.takeToken n
@@ -1466,7 +1466,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           inc n
           assert n.stmtKind == StmtsS
           inc n  # enter stmts_before
-          while n.kind != ParRi:
+          while n.hasMore:
             if n.njvlKind in {MflagV, VflagV}:
               trMflag c, dest, n   # hoisted outside while
             else:
@@ -1477,7 +1477,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           var bodyBuf = createTokenBuf(64)
           assert n.stmtKind == StmtsS
           inc n  # enter stmts_body
-          while n.kind != ParRi:
+          while n.hasMore:
             if n.stmtKind == ContinueS:
               skip n
             else:
@@ -1563,7 +1563,7 @@ proc transformToCps*(pass: var Pass) =
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS
   c.coroTypes.takeToken n
-  while n.kind != ParRi:
+  while n.hasMore:
     tr(c, pass.dest, n)
   for (sym, start) in c.shouldPublish:
     var buf = createTokenBuf(16)

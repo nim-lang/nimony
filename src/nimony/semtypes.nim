@@ -34,7 +34,7 @@ proc semObjectComponent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     n = it.n
   of StmtsU:
     inc n
-    while n.kind != ParRi:
+    while n.hasMore:
       semObjectComponent c, dest, n, state
     skipParRi n
   of NilU:
@@ -67,7 +67,7 @@ proc semObjectType(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     withNewScope c:
       # copy toplevel scope status for exported fields
       c.currentScope.kind = oldScopeKind
-      while n.kind != ParRi:
+      while n.hasMore:
         semObjectComponent c, dest, n, state
   takeParRi dest, n
 
@@ -76,7 +76,7 @@ proc semTupleType(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   inc n
   # tuple fields:
   withNewScope c:
-    while n.kind != ParRi:
+    while n.hasMore:
       if n.substructureKind == KvU:
         takeToken dest, n
         let nameCursor = n
@@ -202,7 +202,7 @@ proc copyPragmasWithoutHooks(dest: var TokenBuf; pragmas: Cursor) =
     dest.copyTree pragmas
     return
   takeToken dest, n # pragmas tag
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.kind == ParLe and hookKind(n.tagId) != NoHook:
       skip n
     else:
@@ -380,7 +380,7 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   var m = createMatch(addr c)
   let usedTypevarsInitial = c.usedTypevars
   let beforeArgs = dest.len
-  while n.kind != ParRi:
+  while n.hasMore:
     inc argCount
     let argInfo = n.info
     var argBuf = createTokenBuf(16)
@@ -840,7 +840,7 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
           c.buildErr dest, info, "type " & typeToString(elemType) & " is too large to be a set element type"
     of OrT, AndT:
       takeToken dest, n
-      while n.kind != ParRi:
+      while n.hasMore:
         semLocalTypeImpl c, dest, n, context
       takeParRi dest, n
     of TupleT:

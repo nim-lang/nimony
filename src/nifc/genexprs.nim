@@ -167,7 +167,7 @@ proc genLvalue(c: var GeneratedCode; n: var Cursor) =
       genx c, n
       var fld = n
       skip n
-      if n.kind == IntLit:
+      if n.hasMore and n.kind == IntLit:
         var inh = pool.integers[n.intId]
         inc n
         while inh > 0:
