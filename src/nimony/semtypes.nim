@@ -787,6 +787,10 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         dest.addParPair NotnilU, info
       else:
         dest.addParPair UncheckedU, info
+      # Carry over any further attributes (e.g. importc/header injected by
+      # `fitTypeToPragmas` on imported pointer aliases like `posix_spawnattr_t`).
+      while n.kind != ParRi:
+        takeTree dest, n
       takeParRi dest, n
     of VoidT:
       if context == InReturnTypeDecl:

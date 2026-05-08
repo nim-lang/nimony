@@ -77,7 +77,7 @@ type
     StmtsS = (ord(StmtsTagId), "stmts")  ## list of statements
     DiscardS = (ord(DiscardTagId), "discard")  ## `discard` statement; optional expression to discard
     TryS = (ord(TryTagId), "try")  ## `try` statement
-    RaiseS = (ord(RaiseTagId), "raise")  ## `raise` statement
+    RaiseS = (ord(RaiseTagId), "raise")  ## `raise` statement; bare `(raise .)` re-raises the in-flight exception (only valid inside an `except` block)
     OnerrS = (ord(OnerrTagId), "onerr")  ## error handling statement
     IteS = (ord(IteTagId), "ite")  ## if-then-else followed by `join` information followed by an optional label
     ItecS = (ord(ItecTagId), "itec")  ## if-then-else (that was a `case`)

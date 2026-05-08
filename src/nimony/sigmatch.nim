@@ -476,6 +476,10 @@ proc expectParRi(m: var Match; f: var Cursor) =
 
 proc expectPtrParRi(m: var Match; f: var Cursor) =
   if f.hasMore: skip f # skip nil/not nil annotation
+  # Inlined importc'd pointer aliases drag importc/header attrs into the
+  # type body — they are bookkeeping, not part of type identity.
+  while f.pragmaKind in {ImportcP, ImportcppP, HeaderP}:
+    skip f
   if f.kind == ParRi:
     inc f
   else:
@@ -600,6 +604,12 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
           inc f
           inc a
           matchNilAnnotations m, f, a, fOrig, aOrig
+          # importc/header attrs are an inlined-alias bookkeeping detail,
+          # not part of type identity — ignore them on both sides.
+          while f.pragmaKind in {ImportcP, ImportcppP, HeaderP}:
+            skip f
+          while a.pragmaKind in {ImportcP, ImportcppP, HeaderP}:
+            skip a
           expectParRi m, f
           expectParRi m, a
         of PtrT, RefT:

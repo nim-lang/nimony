@@ -200,8 +200,8 @@
 | `(typedesc T)` | NimonyType | `typedesc` type |
 | `(untyped)` | NimonyPragma, NimonyType | `untyped` type |
 | `(typed)` | NimonyType | `typed` type |
-| `(cstring X?)` | NimonyType | `cstring` type; optional child is the string literal used in a `cstring"…"` generalized string |
-| `(pointer (nil)?)` | NimonyType | `pointer` type; the optional `(nil)` annotation marks a nilable pointer |
+| `(cstring X? (importc/importcpp STR)? (header STR)?)` | NimonyType | `cstring` type; optional first child is the string literal used in a `cstring"…"` generalized string; further attributes carry importc/header overrides inlined from `{.importc.}` aliases |
+| `(pointer (nil)? (importc/importcpp STR)? (header STR)?)` | NimonyType | `pointer` type; the optional `(nil)` annotation marks a nilable pointer; further attributes carry importc/header overrides inlined from `{.importc.}` aliases |
 | `(ordinal)` | NimonyType | `ordinal` type |
 | `(magic X)` | NimonyPragma | `magic` pragma; argument is the magic's name as string literal or ident (e.g. `"Bool"`, `HoleyEnum`) |
 | `(importc X)` | NimonyPragma, NifcPragma | `importc` pragma |

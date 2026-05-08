@@ -997,11 +997,25 @@ proc fitTypeToPragmas(c: var SemContext; dest: var TokenBuf; pragmas: CrucialPra
         attrs.addParRi(info)
       # Imported aliases of scalar builtins must override the C spelling
       # (`importc`/`importcpp` + optional `header`) rather than stack with
-      # existing builtin attributes like `(importc "int")`.
+      # existing builtin attributes like `(importc "int")`. The payload
+      # shape varies per type kind: `(i 32)` carries a single bit-size
+      # literal, `(pointer)` is empty, `(pointer (notnil))` wraps a
+      # nilness annotation. We preserve the kind-specific payload, drop
+      # any pre-existing attrs, then attach the new ones.
       var rebuilt = createTokenBuf(8 + attrs.len)
       var t = typ
-      takeToken rebuilt, t # (i/u/f/c/pointer
-      takeToken rebuilt, t # bit-size / fixed payload token
+      let tk = typ.typeKind
+      takeToken rebuilt, t # (i/u/f/c/pointer/cstring
+      case tk
+      of IntT, UIntT, FloatT, CharT:
+        takeToken rebuilt, t # bit-size literal
+      of PointerT, CstringT:
+        if t.kind != ParRi and
+           t.substructureKind in {NotnilU, NilU, UncheckedU}:
+          takeTree rebuilt, t
+      else: discard
+      while t.kind != ParRi:
+        skip t
       for tok in attrs:
         rebuilt.add tok
       rebuilt.addParRi()

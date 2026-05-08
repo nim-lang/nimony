@@ -776,6 +776,10 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
         skip n
       elif n.hasMore:
         skip n # unchecked or other annotation
+      # Skip any importc/header attrs trailing the nilness annotation —
+      # these get inlined when a `{.importc.}` pointer alias is expanded.
+      while n.kind != ParRi:
+        skip n
       skipParRi(n)
     of OrdinalT:
       put(g, tkSymbol, "Ordinal")
