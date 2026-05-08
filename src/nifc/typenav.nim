@@ -7,7 +7,7 @@
 ## A type navigator can recompute the type of an expression.
 
 import std / [tables, assertions]
-include "../lib" / nifprelude2
+include "../lib" / nifprelude
 
 import nifc_model, nifmodules
 
@@ -21,7 +21,7 @@ proc isImportC*(m: var MainModule; n: Cursor): bool =
 proc createIntegralType*(m: var MainModule; name: string): Cursor =
   result = m.builtinTypes.getOrDefault(name)
   if cursorIsNil(result):
-    var buf = nifprims.parseFromBuffer(name, "<invalid>", 3)
+    var buf = nifcursors.parseFromBuffer(name, "<invalid>", 3)
     result = cursorAt(buf, 0)
     m.mem.add buf
     m.builtinTypes[name] = result

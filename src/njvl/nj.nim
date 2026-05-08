@@ -18,8 +18,7 @@ import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, built
 import ".." / hexer / [xelim, mover, passes]
 import njvl_model
 
-#[
-Introducing cfvars is more complex than it looks.
+#[Introducing cfvars is more complex than it looks.
 
 Consider:
 
@@ -111,9 +110,7 @@ else:
 
 This avoids most of the overhead of control flow variables by construction and keeps
 our dominator trees more precise. In order to do this reliably we pass the
-"current basic block" around as a parameter.
-
-]#
+"current basic block" around as a parameter.]#
 
 type
   Guard = object
@@ -673,10 +670,10 @@ proc countSons(dest: var TokenBuf; d: int): int =
   var n = cursorAt(dest, d)
   result = 0
   assert n.kind == ParLe
-  inc n
-  while n.hasMore:
-    skip n
-    inc result
+  n.into:
+    while n.hasMore:
+      skip n
+      inc result
   endRead(dest)
 
 proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cursor) =

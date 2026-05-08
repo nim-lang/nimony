@@ -64,7 +64,8 @@ proc getSimpleStringLit(c: var EContext; n: var Cursor): StrId =
       inc n
       assert n.kind == StringLit
       result = n.litId
-      skipToEnd n
+      while n.hasMore: skip n
+      consumeParRi n
     of HconvX, ConvX:
       inc n
       assert n.typeKind == CstringT
@@ -110,15 +111,13 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   while nb.hasMore:
     if nb.substructureKind == OfU:
       let labl = "`sc." & $getTmpId(c)
-      inc nb
-      assert nb.substructureKind == RangesU
-      inc nb
-      while nb.hasMore:
-        let litId = getSimpleStringLit(c, nb)
-        pairs.add (pool.strings[litId], labl)
-      inc nb # skip ParRi
-      skip nb # skip action for now
-      skipParRi nb
+      nb.into:                                # (of ...)
+        assert nb.substructureKind == RangesU
+        nb.into:                              # (ranges ...)
+          while nb.hasMore:
+            let litId = getSimpleStringLit(c, nb)
+            pairs.add (pool.strings[litId], labl)
+        skip nb # skip action for now
     else:
       skip nb
 
@@ -140,16 +139,14 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     if nb.substructureKind == OfU:
       dest.copyIntoUnchecked "lab", info:
         dest.add symdefToken(pool.syms.getOrIncl(pairs[i][1]), info)
-      inc nb
-      inc nb
-      while nb.hasMore:
-        skip nb
-        inc i
-      inc nb # skip ParRi
-      trStmt c, dest, nb
-      dest.copyIntoUnchecked "jmp", info:
-        dest.add symToken(afterwards, info)
-      skipParRi nb
+      nb.into:                                # (of ...)
+        nb.into:                              # (ranges ...)
+          while nb.hasMore:
+            skip nb
+            inc i
+        trStmt c, dest, nb
+        dest.copyIntoUnchecked "jmp", info:
+          dest.add symToken(afterwards, info)
     elif nb.substructureKind == ElseU:
       dest.copyIntoUnchecked "lab", info:
         dest.add symdefToken(elseLabel, info)

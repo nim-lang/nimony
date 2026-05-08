@@ -20,11 +20,10 @@ var knownOnChanged: Table[SymId, SymId]  # type -> `onChanged` template sym
 
 proc typesTr(n: NifCursor) =
   var n = n
-  inc n
-  while n.kind != ParRi:
-    knownTypes.add n.symId
-    inc n
-  inc n
+  n.into:
+    while n.hasMore:
+      knownTypes.add n.symId
+      skip n
 
 
 proc trAsgn(n: var NifCursor, o: var NifBuilder) =
@@ -34,18 +33,18 @@ proc trAsgn(n: var NifCursor, o: var NifBuilder) =
     instance = NifCursor()
     emitOnChanged = false
   traverse n:
-    inc n
-    if n.kind == ParLe and n.exprKind == DotX:
-      traverse n:
-        access = n
-      inc n
-      if n.kind == Symbol and n.symId in knownInstances and knownInstances[n.symId] in knownOnChanged:
-        instance = n
-        inc n
-        if n.kind == Symbol:
-          fieldName = n.symText
-          fieldName.delete fieldName.find('.')..fieldName.high
-          emitOnChanged = true
+    n.into:                              # descend past `(asgn`
+      if n.kind == ParLe and n.exprKind == DotX:
+        access = n                       # snapshot at the dot expression
+        skip n                           # past dotX subtree
+        if n.kind == Symbol and n.symId in knownInstances and knownInstances[n.symId] in knownOnChanged:
+          instance = n
+          skip n                         # past instance symbol (atom)
+          if n.kind == Symbol:
+            fieldName = n.symText
+            fieldName.delete fieldName.find('.')..fieldName.high
+            emitOnChanged = true
+      while n.hasMore: skip n            # consume any leftover children
   let info = n.info
   o.takeTree(n)
   if emitOnChanged:
@@ -58,28 +57,35 @@ proc trAsgn(n: var NifCursor, o: var NifBuilder) =
 
 proc trGvar(n: var NifCursor, o: var NifBuilder) =
   traverse n:
-    inc n
-    let nameSym = n.symId
-    skip n, 3
-    if n.kind == Symbol and n.symId in knownTypes:
-      knownInstances[nameSym] = n.symId
+    n.into:                              # descend past `(gvar`
+      let nameSym = n.symId              # name SymbolDef is the first child (atom; reading does not advance)
+      skip n, 3                          # name + export marker + pragmas
+      if n.kind == Symbol and n.symId in knownTypes:
+        knownInstances[nameSym] = n.symId
+      while n.hasMore: skip n            # consume value (and anything else)
   o.takeTree(n)
 
 
 proc trTemplate(n: var NifCursor, o: var NifBuilder) =
   traverse n:
-    inc n
-    let nameSym = n.symId
-    let name = n.symText
-    if name.startsWith("onChanged"):
-      skip n, 4
-      inc n  # params
-      inc n  # (first) param
-      skip n, 3
-      if n.kind == ParLe and n.typeKind == MutT:
-        inc n
-      if n.kind == Symbol:
-        knownOnChanged[n.symId] = nameSym
+    n.into:                              # descend past `(template`
+      let nameSym = n.symId
+      let name = n.symText
+      if name.startsWith("onChanged"):
+        skip n, 4                        # name + export marker + pragmas + typeParams
+        n.into:                          # descend into `(params`
+          n.into:                        # descend into the first `(param`
+            skip n, 3                    # skip first three param children
+            if n.kind == ParLe and n.typeKind == MutT:
+              n.into:                    # descend into `(mut`
+                if n.kind == Symbol:
+                  knownOnChanged[n.symId] = nameSym
+                while n.hasMore: skip n
+            elif n.kind == Symbol:
+              knownOnChanged[n.symId] = nameSym
+            while n.hasMore: skip n      # rest of param children
+          while n.hasMore: skip n        # other params
+      while n.hasMore: skip n            # rest of template body
   o.takeTree(n)
 
 
@@ -94,7 +100,7 @@ proc trAux(n: var NifCursor, o: var NifBuilder) =
       trTemplate n, o
     else:
       o.copyInto(n):
-        while n.kind != ParRi:
+        while n.hasMore:
           trAux(n, o)
   else:
     o.takeTree(n)
@@ -103,11 +109,14 @@ proc trAux(n: var NifCursor, o: var NifBuilder) =
 proc tr(n: NifCursor): NifBuilder =
   result = createTree()
   let info = n.info
-  var n = n
-  if n.stmtKind == StmtsS: inc n
   result.withTree StmtsS, info:
-    while n.kind != ParRi:
-      trAux(n, result)
+    if n.stmtKind == StmtsS:
+      var body = firstChild(n)
+      while body.hasMore:
+        trAux(body, result)
+    else:
+      var head = n
+      trAux(head, result)
 
 
 var inp = loadPluginInput()

@@ -26,6 +26,28 @@ const
   TokenKindMask = (1'u32 shl TokenKindBits) - 1'u32
   ExcessK = 1'i32 shl (32 - TokenKindBits - 1)
 
+  # Under `-d:virtualParRi` the ParLe operand is split into a 9-bit tag and
+  # a 19-bit "jump" field counting tokens until the matching close. Phase 3
+  # uses this to elide trailing `ParRi` tokens whose count fits in 19 bits.
+  # Without the flag the operand stays a 28-bit tagId — nothing changes.
+  TagBits     = 9'u32
+  TagShift*   = TokenKindBits                                     # 4
+  TagMask     = (1'u32 shl TagBits) - 1'u32                       # 0x1FF
+  JumpShift*  = TokenKindBits + TagBits                           # 13
+  NaturalMaxJump = (1'u32 shl (32'u32 - JumpShift)) - 1'u32       # 0x7FFFF
+
+const
+  NifJumpCap* {.intdefine.}: int = int(NaturalMaxJump)
+    ## Test/stress knob (only meaningful under `-d:virtualParRi`): lower
+    ## with `-d:nifJumpCap=N` to artificially shrink the elision window so
+    ## any subtree of ≥ N body tokens hits the real-ParRi overflow path.
+    ## E.g. `-d:nifJumpCap=3` makes only trivial subtrees use virtual ParRi.
+
+const
+  MaxJump* = uint32(NifJumpCap)
+    ## Sentinel: a tag whose subtree is too large carries `jump = MaxJump`,
+    ## and a real `ParRi` token is emitted at the matching position.
+
 template kind*(n: PackedToken): NifKind = cast[NifKind](n.x and TokenKindMask)
 template uoperand*(n: PackedToken): uint32 = (n.x shr TokenKindBits)
 template soperand*(n: PackedToken): int32 = cast[int32](uoperand(n))
@@ -121,7 +143,50 @@ proc symdefToken*(s: SymId; info: PackedLineInfo): PackedToken {.inline.} =
   toToken(SymbolDef, s, info)
 
 proc parLeToken*(t: TagId; info: PackedLineInfo): PackedToken {.inline.} =
-  toToken(ParLe, t, info)
+  when defined(virtualParRi):
+    let tagBits = uint32(t) and TagMask
+    assert uint32(t) == tagBits, "tag id " & $uint32(t) & " exceeds 9 bits"
+    PackedToken(x: uint32(ParLe) or (tagBits shl TagShift), info: info)
+  else:
+    toToken(ParLe, t, info)
+
+proc tagToken*(t: TagId; info: PackedLineInfo): PackedToken {.inline.} =
+  ## Alias for `parLeToken` (the nifprims spelling).
+  parLeToken(t, info)
+
+proc jump*(n: PackedToken): uint32 {.inline.} =
+  ## Extract the 19-bit "tokens until matching close" field from a ParLe.
+  ## Returns 0 for unsealed scopes; under `-d:virtualParRi` this is filled
+  ## in by `setJump` on the matching `ParRi`. Without the flag this is
+  ## always 0 — the value is meaningless and `MaxJump` should be used.
+  assert n.kind == ParLe, $n.kind
+  when defined(virtualParRi):
+    n.x shr JumpShift
+  else:
+    MaxJump  # always overflow → callers fall back to balanced walks
+
+proc setJump*(n: var PackedToken; j: uint32) {.inline.} =
+  ## Patch the jump field of an existing ParLe. No-op without
+  ## `-d:virtualParRi` (no jump field to patch).
+  assert n.kind == ParLe, $n.kind
+  when defined(virtualParRi):
+    assert j <= MaxJump, "jump " & $j & " exceeds 19 bits"
+    let preserved = n.x and ((1'u32 shl JumpShift) - 1'u32)  # kind + tag bits
+    n.x = preserved or (j shl JumpShift)
+
+proc setTag*(n: var PackedToken; t: TagId) {.inline.} =
+  ## Patch the tag of an existing ParLe in place, preserving any
+  ## already-sealed `jump`. Use this instead of `n = parLeToken(t, info)`
+  ## when retagging a ParLe in a buffer that has already been sealed —
+  ## `parLeToken` resets jump to 0.
+  assert n.kind == ParLe, $n.kind
+  when defined(virtualParRi):
+    let tagBits = uint32(t) and TagMask
+    assert uint32(t) == tagBits, "tag id " & $uint32(t) & " exceeds 9 bits"
+    n.x = (n.x and not (TokenKindMask or (TagMask shl TagShift))) or
+          uint32(ParLe) or (tagBits shl TagShift)
+  else:
+    n = parLeToken(t, n.info)
 
 proc intToken*(id: IntId; info: PackedLineInfo): PackedToken {.inline.} =
   toToken(IntLit, id, info)
@@ -261,7 +326,10 @@ proc floatId*(n: PackedToken): FloatId {.inline.} =
 
 proc tagId*(n: PackedToken): TagId {.inline.} =
   assert n.kind == ParLe, $n.kind
-  TagId(n.uoperand)
+  when defined(virtualParRi):
+    TagId((n.x shr TagShift) and TagMask)
+  else:
+    TagId(n.uoperand)
 
 proc tag*(n: PackedToken): TagId {.inline.} =
   if n.kind == ParLe: result = n.tagId

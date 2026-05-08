@@ -2,9 +2,7 @@ import std / [os, syncio]
 import nimonyplugins
 
 proc tr(n: NifCursor): NifBuilder =
-  var n = n
-  if n.stmtKind == StmtsS:
-    inc n
+  let head = if n.stmtKind == StmtsS: firstChild(n) else: n
 
   let prepared = ~"prepared"
 
@@ -16,7 +14,7 @@ proc tr(n: NifCursor): NifBuilder =
   let byUint32 = """(call echo $num)""" %~ {"num": ~18'u32}
   let byFloat32 = """(call echo $num)""" %~ {"num": ~2.5'f32}
   let byPrepared = """(call echo $msg)""" %~ {"msg": ~prepared}
-  let byNode = """(call echo $msg)""" %~ {"msg": ~n}
+  let byNode = """(call echo $msg)""" %~ {"msg": ~head}
 
   result = """(stmts $a $b $c $d $e $f $g $h)""" %~ {
     "a": ~byIdent,

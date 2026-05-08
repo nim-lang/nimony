@@ -179,10 +179,10 @@ proc trAssign(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
   dest.add n
-  inc n
-  while n.hasMore:
-    tr c, dest, n
-  takeParRi dest, n
+  n.into:
+    while n.hasMore:
+      tr c, dest, n
+  dest.addParRi()
   c.typeCache.closeScope()
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =

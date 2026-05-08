@@ -113,7 +113,8 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
           iter.fieldVar2 = names[2]
       else:
         buildErr c, dest, unpackInfo, "wrong number of variables"
-        skipToEnd it.n
+        while it.n.hasMore: skip it.n
+        consumeParRi it.n
         return
     else:
       if names.len == 1 or names.len == 2:
@@ -122,11 +123,13 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
           iter.fieldVar2 = names[1]
       else:
         buildErr c, dest, unpackInfo, "wrong number of variables"
-        skipToEnd it.n
+        while it.n.hasMore: skip it.n
+        consumeParRi it.n
         return
   else:
     buildErr c, dest, unpackInfo, "illformed AST: `unpackflat` or `unpacktup` inside `for` expected"
-    skipToEnd it.n
+    while it.n.hasMore: skip it.n
+    consumeParRi it.n
     return
 
   var objType = call # call is typed magic so we don't have to call getType
@@ -140,11 +143,13 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
     iter.obj2 = obj2
     if iter.fieldVar2 == StrId(0):
       buildErr c, dest, unpackInfo, "wrong number of variables"
-      skipToEnd it.n
+      while it.n.hasMore: skip it.n
+      consumeParRi it.n
       return
   elif iter.fieldVar2 != StrId(0):
     buildErr c, dest, unpackInfo, "wrong number of variables"
-    skipToEnd it.n
+    while it.n.hasMore: skip it.n
+    consumeParRi it.n
     return
   let body = it.n
   skip it.n

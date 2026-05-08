@@ -129,11 +129,10 @@ proc aStmt(c: var Context; n: var Cursor) =
   case n.njvlKind
   of JtrueV:
     # we now know these symbols are true:
-    inc n
-    while n.hasMore:
-      let s = getCfvar(n)
-      c.state[s][0] = true
-    inc n
+    n.into:
+      while n.hasMore:
+        let s = getCfvar(n)
+        c.state[s][0] = true
   of IteV, ItecV:
     inc n
     # we mask out cfvars here. Thus the statements that are
@@ -172,10 +171,9 @@ proc aStmt(c: var Context; n: var Cursor) =
     else:
       discard
     # ordinary recursion
-    inc n
-    while n.hasMore:
-      aStmt c, n
-    inc n
+    n.into:
+      while n.hasMore:
+        aStmt c, n
 
 proc labelFromCfvar(s: Cfvar): SymId =
   let name = pool.syms[s[0]] & "_" & $s[1]
@@ -309,8 +307,8 @@ proc toGoto*(n: Cursor; moduleSuffix: string): TokenBuf =
 
   aStmt c, n
 
-  inc n
-  while n.hasMore:
-    trStmt c, result, n
+  n.into:
+    while n.hasMore:
+      trStmt c, result, n
   result.addParRi()
   c.typeCache.closeScope()

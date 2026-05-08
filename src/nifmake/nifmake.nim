@@ -9,7 +9,7 @@
 ## by a .nif file or it can translate this file to a Makefile.
 
 import std/[assertions, os, strutils, sequtils, tables, hashes, times, monotimes, sets, parseopt, syncio, osproc, algorithm]
-import ".." / lib / [bitabs, lineinfos, nifreader, tooldirs, argsfinder, vfs, nifprims]
+import ".." / lib / [bitabs, lineinfos, nifreader, tooldirs, argsfinder, vfs, nifcursors, nifstreams]
 
 # Inspired by https://gittup.org/tup/build_system_rules_and_algorithms.pdf
 #[
@@ -460,7 +460,7 @@ proc parseCommandDefinition(n: var Cursor; dag: var Dag) =
     while n.hasMore:
       case n.kind
       of StringLit:
-        tokens.addRaw n.load()
+        tokens.add n.load()
         inc n
       of ParLe:
         let tag = pool.tags[n.tag]
@@ -537,8 +537,8 @@ proc parseNifFile(filename: string; baseDir: sink string): Dag =
   if not vfsExists(filename):
     quit "File not found: " & filename
 
-  var stream = nifprims.open(filename)
-  defer: nifprims.close(stream)
+  var stream = nifstreams.open(filename)
+  defer: nifstreams.close(stream)
 
   discard processDirectives(stream.r)
 

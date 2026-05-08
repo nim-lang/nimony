@@ -11,9 +11,7 @@ when defined(nifBench):
 
 import std / [assertions, syncio, os]
 
-import compiler / [
-  ast, options, pathutils, renderer, lineinfos,
-  syntaxes, llstream, idents, msgs]
+import compiler / [ast, options, pathutils, renderer, lineinfos, syntaxes, llstream, idents, msgs]
 
 import ".." / lib / nifbuilder
 import ".." / models / nifler_tags

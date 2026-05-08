@@ -4,7 +4,7 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-import ".." / lib / [bitabs, lineinfos, nifstreams, nifcursors, filelinecache, symparser]
+import ".." / lib / [bitabs, lineinfos, nifcursors, nifstreams, filelinecache, symparser]
 import ".." / njvl / njvl_model
 
 import nimony_model, decls
@@ -18,7 +18,7 @@ proc skipParRi(n: var Cursor) =
   if n.hasMore:
     raiseAssert "expected ')' but got: " & $n & " (expr=" & $n.exprKind &
       ", stmt=" & $n.stmtKind & ", type=" & $n.typeKind & ")"
-  inc n
+  consumeParRi n
 
 type
   TokType = enum
@@ -52,8 +52,7 @@ type
     tkGStrLit = "tkGStrLit", tkGTripleStrLit = "tkGTripleStrLit", tkCharLit = "tkCharLit",
     tkCustomLit = "tkCustomLit",
 
-    tkParLe = "(", tkParRi = ")", tkBracketLe = "[",
-    tkBracketRi = "]", tkCurlyLe = "{", tkCurlyRi = "}",
+    tkParLe = "(", tkParRi = ")", tkBracketLe = "[", tkBracketRi = "]", tkCurlyLe = "{", tkCurlyRi = "}",
     tkBracketDotLe = "[.", tkBracketDotRi = ".]",
     tkCurlyDotLe = "{.", tkCurlyDotRi = ".}",
     tkParDotLe = "(.", tkParDotRi = ".)",
@@ -465,26 +464,22 @@ proc gcase(g: var SrcGen, n: var Cursor; isCaseObject = false) =
   while n.hasMore:
     case n.substructureKind
     of OfU:
-      inc n
-      optNL(g)
-      putWithSpace(g, tkOf, "of")
-      assert n.substructureKind == RangesU
-      inc n
-      while n.hasMore:
-        gsub(g, n)
+      n.into:                                     # (of ...)
+        optNL(g)
+        putWithSpace(g, tkOf, "of")
+        assert n.substructureKind == RangesU
+        n.into:                                   # (ranges ...)
+          while n.hasMore:
+            gsub(g, n)
 
-      skipParRi(n)
-
-      putWithSpace(g, tkColon, ":")
-      takeCaseStmts(g, n, c, isCaseObject = isCaseObject)
-      skipParRi(n)
+        putWithSpace(g, tkColon, ":")
+        takeCaseStmts(g, n, c, isCaseObject = isCaseObject)
     of ElseU:
-      inc n
-      optNL(g)
-      put(g, tkElse, "else")
-      putWithSpace(g, tkColon, ":")
-      takeCaseStmts(g, n, c, isCaseObject = isCaseObject)
-      skipParRi(n)
+      n.into:                                     # (else ...)
+        optNL(g)
+        put(g, tkElse, "else")
+        putWithSpace(g, tkColon, ":")
+        takeCaseStmts(g, n, c, isCaseObject = isCaseObject)
     else:
       raiseAssert "unreachable"
 
@@ -1415,11 +1410,9 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         gtry(g, n)
 
       of ScopeS:
-        inc n
-        while n.hasMore:
-          gsub(g, n, c)
-
-        skipParRi(n)
+        n.into:
+          while n.hasMore:
+            gsub(g, n, c)
 
       of NoStmt:
         case n.substructureKind

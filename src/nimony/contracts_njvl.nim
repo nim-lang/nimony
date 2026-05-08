@@ -1326,21 +1326,19 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     # NJ emits jtrue after noreturn calls and leaving paths (return/break/raise).
     # The mflag information is used at join points to determine which branches are
     # leaving paths, enabling the writeSets implication mechanism.
-    inc n
-    while n.hasMore:
-      assert n.kind == Symbol
-      c.impls.add always(n.symId)
-      inc n
-    inc n  # ParRi
+    n.into:
+      while n.hasMore:
+        assert n.kind == Symbol
+        c.impls.add always(n.symId)
+        skip n
   of KillV:
     # Variable going out of scope - end any active borrows
-    inc n
-    while n.hasMore:
-      let s = extractSymId(n)
-      if s != NoSymId:
-        endBorrow(c, s)
-      skip n
-    inc n # ParRi
+    n.into:
+      while n.hasMore:
+        let s = extractSymId(n)
+        if s != NoSymId:
+          endBorrow(c, s)
+        skip n
   of UnknownV:
     # Unknown instruction - variable's contents become unknown after a call.
     # Check borrow conflicts: passing a borrowed path to a var param is a mutation.
@@ -1361,10 +1359,9 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
   of NoVTag:
     case n.stmtKind
     of StmtsS, ScopeS, BlockS:
-      inc n
-      while n.hasMore:
-        traverseStmt c, n
-      skipParRi n
+      n.into:
+        while n.hasMore:
+          traverseStmt c, n
     of LocalDecls:
       traverseLocal c, n
     of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS:
@@ -1424,10 +1421,9 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
 proc traverseToplevel(c: var NjvlContext; n: var Cursor) =
   case n.stmtKind
   of StmtsS:
-    inc n
-    while n.hasMore:
-      traverseToplevel c, n
-    skipParRi n
+    n.into:
+      while n.hasMore:
+        traverseToplevel c, n
   of PragmaxS:
     inc n
     skip n

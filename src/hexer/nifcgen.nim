@@ -17,8 +17,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / symparser
 import ".." / models / tags
-import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof,
-  typeprops, langmodes, typekeys, nifconfig]
+import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof, typeprops, langmodes, typekeys, nifconfig]
 import hexer_context, pipeline, dce1, lifter
 import  ".." / lib / [stringtrees]
 
@@ -881,25 +880,23 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
   if n.substructureKind == TypevarsU:
     isGeneric = true
     # count each typevar as used:
-    inc n
-    while n.hasMore:
-      assert n.symKind == TypevarY
-      inc n
-      let (typevar, _) = getSymDef(c, n)
-      skipToEnd n
-    inc n
+    n.into:                                     # (typevars ...)
+      while n.hasMore:
+        assert n.symKind == TypevarY
+        n.into:                                 # (typevar ...)
+          let (typevar, _) = getSymDef(c, n)
+          while n.hasMore: skip n
   else:
     skip n # generic parameters
 
   if isGeneric:
     # count each param as used:
-    inc n
-    while n.hasMore:
-      assert n.symKind == ParamY
-      inc n
-      let (param, _) = getSymDef(c, n)
-      skipToEnd n
-    inc n
+    n.into:                                     # (params ...)
+      while n.hasMore:
+        assert n.symKind == ParamY
+        n.into:                                 # (param ...)
+          let (param, _) = getSymDef(c, n)
+          while n.hasMore: skip n
     skip n # skip return type
   else:
     trParams c, dest, n
@@ -971,13 +968,12 @@ proc trTypeDecl(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: Traver
   if n.substructureKind == TypevarsU:
     isGeneric = true
     # count each typevar as used:
-    inc n
-    while n.hasMore:
-      assert n.symKind == TypevarY
-      inc n
-      let (typevar, _) = getSymDef(c, n)
-      skipToEnd n
-    inc n
+    n.into:                                     # (typevars ...)
+      while n.hasMore:
+        assert n.symKind == TypevarY
+        n.into:                                 # (typevar ...)
+          let (typevar, _) = getSymDef(c, n)
+          while n.hasMore: skip n               # consume rest of body (skipToEnd would eat the parri too)
   else:
     skip n # generic parameters
 
@@ -1398,10 +1394,10 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       trTupleConstr c, dest, n
     of CmdX, CallstrlitX, InfixX, PrefixX, HcallX, CallX:
       dest.add tagToken("call", n.info)
-      inc n
-      while n.hasMore:
-        trExpr(c, dest, n)
-      takeParRi dest, n
+      n.into:
+        while n.hasMore:
+          trExpr(c, dest, n)
+      dest.addParRi()
     of ExprX:
       trStmtsExpr c, dest, n
     of ArratX:
@@ -1504,23 +1500,23 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       #skip n
     of AtX, PatX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX, OvfX:
       dest.add n
-      inc n
-      while n.hasMore:
-        trExpr c, dest, n
-      takeParRi dest, n
+      n.into:
+        while n.hasMore:
+          trExpr c, dest, n
+      dest.addParRi()
     of SizeofX, AlignofX, OffsetofX:
       dest.add n
-      inc n
-      trType c, dest, n
-      while n.hasMore:
-        trExpr c, dest, n
-      takeParRi dest, n
+      n.into:
+        trType c, dest, n
+        while n.hasMore:
+          trExpr c, dest, n
+      dest.addParRi()
     of XorX:
       dest.add tagToken("neq", n.info)
-      inc n
-      while n.hasMore:
-        trExpr c, dest, n
-      takeParRi dest, n
+      n.into:
+        while n.hasMore:
+          trExpr c, dest, n
+      dest.addParRi()
     of KvX:
       dest.add n
       inc n
@@ -1570,10 +1566,10 @@ proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; m
     externPragmas c, dest, genPragmas, prag, pinfo
 
   if ThreadvarP in prag.flags:
-    dest[toPatch] = tagToken("tvar", vinfo)
+    setTag(dest[toPatch], pool.tags.getOrIncl("tvar"))
     symKind = TvarY
   elif GlobalP in prag.flags:
-    dest[toPatch] = tagToken("gvar", vinfo)
+    setTag(dest[toPatch], pool.tags.getOrIncl("gvar"))
     symKind = GvarY
 
   if prag.align != IntId(0):
@@ -1860,7 +1856,8 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
           inc n
           assert n.kind == StringLit
           dest.add n
-          skipToEnd n
+          while n.hasMore: skip n
+          consumeParRi n
         else:
           trExpr c, dest, n
     of AsgnS, RetS:
@@ -1897,17 +1894,15 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
       # Collect module suffixes for init proc generation. The body of an
       # `(import …)` is a list of `(kv suffix "path")` pairs (sem emits this
       # paired form so doc-gen has the source path). We only need the suffix.
-      inc n
-      while n.hasMore:
-        if n.kind == ParLe and n.substructureKind == KvU:
-          inc n  # enter (kv …)
-          if n.kind == Ident:
-            c.importedModuleSuffixes.add pool.strings[n.litId]
-          while n.hasMore: skip n
-          inc n  # closing ')'
-        else:
-          skip n
-      inc n # skip ParRi
+      n.into:                                   # (import …)
+        while n.hasMore:
+          if n.kind == ParLe and n.substructureKind == KvU:
+            n.into:                             # (kv …)
+              if n.kind == Ident:
+                c.importedModuleSuffixes.add pool.strings[n.litId]
+              while n.hasMore: skip n
+          else:
+            skip n
     of MacroS, TemplateS, IncludeS, FromimportS, ImportexceptS, ExportS, CommentS, IteratorS,
        ImportasS, ExportexceptS, BindS, MixinS, UsingS, StaticstmtS:
       # pure compile-time construct, ignore:

@@ -267,16 +267,15 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
       takeParRi(dest, c)
     of StmtsS:
       if fromForloop:
-        inc c
-        while c.hasMore:
-          inlineLoopBody(e, dest, c, mapping)
-        skipParRi(e, c)
+        c.into:
+          while c.hasMore:
+            inlineLoopBody(e, dest, c, mapping)
       else:
         dest.add c
-        inc c
-        while c.hasMore:
-          inlineLoopBody(e, dest, c, mapping)
-        takeParRi(dest, c)
+        c.into:
+          while c.hasMore:
+            inlineLoopBody(e, dest, c, mapping)
+        dest.addParRi()
     of VarS, LetS, CursorS, PatternvarS, ResultS:
       dest.add c
       inc c
@@ -334,10 +333,10 @@ proc inlineIteratorBody(e: var EContext; dest: var TokenBuf;
     case c.stmtKind
     of StmtsS:
       dest.add c
-      inc c
-      while c.hasMore:
-        inlineIteratorBody(e, dest, c, forStmt, yieldType)
-      takeParRi dest, c
+      c.into:
+        while c.hasMore:
+          inlineIteratorBody(e, dest, c, forStmt, yieldType)
+      dest.addParRi()
     of YldS:
       dest.add tagToken($BlockS, c.info)
       dest.addDotToken()

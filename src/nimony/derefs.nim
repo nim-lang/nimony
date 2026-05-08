@@ -89,7 +89,7 @@ proc takeToken(c: var Context; n: var Cursor) {.inline.} =
 proc takeParRi(c: var Context; n: var Cursor) =
   if n.kind == ParRi:
     c.dest.add n
-    inc n
+    consumeParRi n
   else:
     bug "expected ')', but got: ", n
 
@@ -958,10 +958,9 @@ proc trTryCollapsed(c: var Context; n: var Cursor) =
     # Recursively transform the original arm body
     var bodyCur = arm.bodyStart
     if bodyCur.kind == ParLe and bodyCur.stmtKind == StmtsS:
-      inc bodyCur
-      while bodyCur.hasMore:
-        tr c, bodyCur, WantT
-      skipParRi bodyCur
+      bodyCur.into:
+        while bodyCur.hasMore:
+          tr c, bodyCur, WantT
     else:
       while bodyCur.hasMore:
         tr c, bodyCur, WantT
@@ -977,10 +976,9 @@ proc trTryCollapsed(c: var Context; n: var Cursor) =
   if hasCatchall:
     var bodyCur = catchallBody
     if bodyCur.kind == ParLe and bodyCur.stmtKind == StmtsS:
-      inc bodyCur
-      while bodyCur.hasMore:
-        tr c, bodyCur, WantT
-      skipParRi bodyCur
+      bodyCur.into:
+        while bodyCur.hasMore:
+          tr c, bodyCur, WantT
     else:
       while bodyCur.hasMore:
         tr c, bodyCur, WantT

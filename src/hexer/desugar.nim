@@ -8,8 +8,7 @@ else:
 import std / [assertions, tables, hashes, sets, syncio]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
-  builtintypes, langmodes, renderer, reporters]
+import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters]
 import hexer_context, passes
 include ".." / nimony / nif_annotations
 
@@ -119,10 +118,9 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     tr(c, dest, n)
 
 proc trProcBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  inc n # (stmts)
-  while n.hasMore:
-    tr(c, dest, n)
-  skipParRi n
+  n.into:
+    while n.hasMore:
+      tr(c, dest, n)
 
 proc trRoutineHeader(c: var Context; dest: var TokenBuf; decl: Cursor; n: var Cursor; pragmas: var Cursor): bool =
   # returns false if the routine is generic

@@ -9,9 +9,7 @@
 import std/[os, strutils, parseopt, strtabs, times]
 from std/sequtils import addUnique
 
-import compiler / [
-  commands, options, msgs, idents, lineinfos, cmdlinehelper,
-  pathutils, modulegraphs, condsyms]
+import compiler / [commands, options, msgs, idents, lineinfos, cmdlinehelper, pathutils, modulegraphs, condsyms]
 
 include ".." / lib / nifprelude
 

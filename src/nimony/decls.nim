@@ -7,7 +7,7 @@
 ## Helpers for declarative constructs like `let` statements or `proc` declarations.
 
 import std / [assertions, syncio]
-import ".." / lib / [nifstreams, nifcursors, lineinfos]
+import ".." / lib / [nifcursors, nifstreams, lineinfos]
 import ".." / nimony / [nimony_model, reporters]
 
 include ".." / lib / compat2

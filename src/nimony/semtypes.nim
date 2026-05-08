@@ -33,10 +33,9 @@ proc semObjectComponent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     state.guarded = oldGuarded
     n = it.n
   of StmtsU:
-    inc n
-    while n.hasMore:
-      semObjectComponent c, dest, n, state
-    skipParRi n
+    n.into:
+      while n.hasMore:
+        semObjectComponent c, dest, n, state
   of NilU:
     takeTree dest, n
   else:
@@ -323,7 +322,8 @@ proc semMagicInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: 
       skipParRi n
     else:
       c.buildErr dest, info, "expected `a..b` expression for range type"
-      skipToEnd n
+      while n.hasMore: skip n
+      consumeParRi n
     return
   of PtrT, RefT, UarrayT, SetT, StaticT, TypedescT, SinkT, LentT:
     # unary invocations

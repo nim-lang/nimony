@@ -12,9 +12,7 @@
 import std / [assertions, tables, hashes, sets, syncio]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import nifc_compat  # was: import ".." / nifc / [nifc_model]
-                    # nifc_model is on nifprims now; this shim keeps dce1
-                    # on the classic nifcursors-typed accessors.
+import ".." / nifc / [nifc_model]
 
 import ".." / lib / symparser
 
@@ -107,44 +105,42 @@ proc readModuleAnalysis*(infile: string): ModuleAnalysis =
   var n = beginRead(buf)
   result = ModuleAnalysis()
   if n.stmtKind == StmtsS:
-    inc n
     let depTag = pool.tags.getOrIncl(depName)
     let offerTag = pool.tags.getOrIncl(offerName)
     let rootTag = pool.tags.getOrIncl(rootName)
-    while n.hasMore:
-      if n.kind == ParLe:
+    n.into:                                     # (stmts ...)
+      while n.hasMore:
+        if n.kind != ParLe:
+          raiseAssert infile & ": expected ParLe"
         if n.tag == rootTag:
-          inc n
-          while n.hasMore:
-            if n.kind == Symbol:
-              result.roots.incl(n.symId)
-              inc n
-            else:
-              raiseAssert infile & ": expected Symbol"
+          n.into:                               # (roots ...)
+            while n.hasMore:
+              if n.kind == Symbol:
+                result.roots.incl(n.symId)
+                skip n
+              else:
+                raiseAssert infile & ": expected Symbol"
         elif n.tag == depTag:
-          inc n
-          let key = n.symId
-          result.uses[key] = initHashSet[SymId]()
-          inc n
-          while n.hasMore:
-            if n.kind == Symbol:
-              result.uses.getOrQuit(key).incl(n.symId)
-              inc n
-            else:
-              raiseAssert infile & ": expected Symbol"
+          n.into:                               # (uses ...)
+            let key = n.symId
+            result.uses[key] = initHashSet[SymId]()
+            skip n
+            while n.hasMore:
+              if n.kind == Symbol:
+                result.uses.getOrQuit(key).incl(n.symId)
+                skip n
+              else:
+                raiseAssert infile & ": expected Symbol"
         elif n.tag == offerTag:
-          inc n
-          while n.hasMore:
-            if n.kind == Symbol:
-              result.offers.incl(n.symId)
-              inc n
-            else:
-              raiseAssert infile & ": expected Symbol"
+          n.into:                               # (offers ...)
+            while n.hasMore:
+              if n.kind == Symbol:
+                result.offers.incl(n.symId)
+                skip n
+              else:
+                raiseAssert infile & ": expected Symbol"
         else:
           raiseAssert infile & ": expected (roots|uses|offers)"
-        inc n
-      else:
-        raiseAssert infile & ": expected ParLe"
 
 proc writeDceOutput*(buf: var TokenBuf; outfile, dottedSuffix: string) =
   ## Direct overload that works on an already-parsed token buffer,

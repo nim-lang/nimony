@@ -98,7 +98,8 @@ proc rewriteSymsToIdents*(c: var SynthesizeSerializerCtx) =
           extractBasename name
           let identId = pool.strings.getOrIncl(name)
           newDest.add identToken(identId, n.info)
-          skipToEnd(n)
+          while n.hasMore: skip n
+          consumeParRi n
         else:
           newDest.add n
           inc nested

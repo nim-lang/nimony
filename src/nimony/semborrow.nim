@@ -15,9 +15,7 @@ import nimony_model, symtabs, builtintypes, decls,
 import ".." / lib / symparser
 
 proc genBorrowedProcBody*(c: var SemContext; fn: StrId; signature: Cursor; info: PackedLineInfo): TokenBuf =
-  #[
-
-  Consider:
+  #[Consider:
 
   type
     VarId* = distinct int
@@ -28,9 +26,7 @@ proc genBorrowedProcBody*(c: var SemContext; fn: StrId; signature: Cursor; info:
   The body is a single call of the current proc name, converted
   to the distinct type, if the return type is one. The type could also
   be generic, so generate the parmeter type properly. It also needs to
-  skip modifiers first.
-
-  ]#
+  skip modifiers first.]#
   var n = signature
   result = createTokenBuf(10)
   result.add parLeToken(StmtsS, info)

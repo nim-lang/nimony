@@ -418,9 +418,8 @@ proc validate*(buf: var TokenBuf; phase: Phase;
   # After the root subtree has been consumed, the cursor must be exhausted.
   # Anything remaining is content that a pass walking the IR with nested
   # counters / recursive descent would silently ignore — a spec-level bug the
-  # validator has a duty to surface. We use `hasCurrentToken` here (and only
-  # here) exactly for this purpose.
-  if hasCurrentToken(c):
+  # validator has a duty to surface.
+  if c.hasMore:
     ctx.addViolation info, "",
       "trailing content after root subtree: " &
       "the pass would silently drop these tokens"

@@ -41,8 +41,7 @@ import std / [assertions, sets, tables, hashes, syncio]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / symparser
-import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
-  builtintypes, langmodes, renderer, reporters]
+import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters]
 import hexer_context, passes
 include ".." / nimony / nif_annotations
 
@@ -622,10 +621,9 @@ proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
       if n.kind == DotToken:
         inc n
       else:
-        inc n
-        while n.hasMore:
-          tre c, dest, n # params
-        skipParRi n
+        n.into:
+          while n.hasMore:
+            tre c, dest, n # params
       addEnvParam dest, info, SymId(0)
     tre c, dest, n # return type
     # pragmas:

@@ -501,25 +501,24 @@ proc multiplyMinterms(buf: var TokenBuf; a, b: var TypeCursor) =
   if a.typeKind == AndT:
     # flatten:
     buf.add a
-    inc a
-    while a.hasMore:
-      takeTree buf, a
-    if b.typeKind == AndT:
-      inc b
-      while b.hasMore:
+    a.into:
+      while a.hasMore:
+        takeTree buf, a
+      if b.typeKind == AndT:
+        b.into:
+          while b.hasMore:
+            takeTree buf, b
+      else:
         takeTree buf, b
-      skipParRi b
-    else:
-      takeTree buf, b
-    takeParRi buf, a
+    buf.addParRi()
   else:
     if b.typeKind == AndT:
       buf.add b
-      inc b
-      takeTree buf, a
-      while b.hasMore:
-        takeTree buf, b
-      takeParRi buf, b
+      b.into:
+        takeTree buf, a
+        while b.hasMore:
+          takeTree buf, b
+      buf.addParRi()
     else:
       buf.addParLe(AndT, a.info)
       takeTree buf, a
@@ -560,10 +559,10 @@ proc countProducts(a: TypeCursor): int =
   result = 0
   if a.typeKind == OrT:
     var a = a
-    inc a
-    while a.hasMore:
-      inc result
-      skip a
+    a.into:
+      while a.hasMore:
+        inc result
+        skip a
   else:
     inc result
 
@@ -577,9 +576,8 @@ proc reorderSumOfProducts*(buf: var TokenBuf; n: var TypeCursor; negative = fals
     else: discard
   case kind
   of NotT:
-    inc n
-    reorderSumOfProducts(buf, n, not negative)
-    skipParRi n
+    n.into:
+      reorderSumOfProducts(buf, n, not negative)
   of AndT:
     var buf2 = createTokenBuf(32)
     inc n
@@ -614,19 +612,19 @@ proc reorderSumOfProducts*(buf: var TokenBuf; n: var TypeCursor; negative = fals
     # flatten:
     buf.addParLe(OrT, n.info)
     var buf2 = createTokenBuf(16)
-    inc n
-    while n.hasMore:
-      reorderSumOfProducts(buf2, n, negative)
-      var n2 = beginRead(buf2)
-      if n2.typeKind == OrT:
-        inc n2
-        while n2.hasMore:
-          takeTree buf, n2
-      else:
-        buf.addSubtree n2
-      endRead(buf2)
-      buf2.shrink 0
-    takeParRi buf, n
+    n.into:
+      while n.hasMore:
+        reorderSumOfProducts(buf2, n, negative)
+        var n2 = beginRead(buf2)
+        if n2.typeKind == OrT:
+          n2.into:
+            while n2.hasMore:
+              takeTree buf, n2
+        else:
+          buf.addSubtree n2
+        endRead(buf2)
+        buf2.shrink 0
+    buf.addParRi()
   else:
     if negative:
       buf.addParLe(NotT, n.info)

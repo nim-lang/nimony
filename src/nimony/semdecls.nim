@@ -1229,7 +1229,8 @@ proc semUnpackDecl(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let tupleType = skipModifier(tup.typ)
   if tupleType.typeKind != TupleT:
     c.buildErr dest, tupInfo, "expected tuple for tuple unpacking"
-    skipToEnd it.n
+    while it.n.hasMore: skip it.n
+    consumeParRi it.n
     return
   if it.n.substructureKind != UnpacktupU:
     error "illformed AST: `unpacktup` inside `unpackdecl` expected, got ", it.n

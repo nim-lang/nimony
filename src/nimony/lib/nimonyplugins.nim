@@ -73,7 +73,7 @@ proc copyBuffer(buf: TokenBuf): TokenBuf =
   result.add buf
 
 proc hasSubtree(n: NifCursor): bool {.inline.} =
-  hasCurrentToken(n.cursor) and n.cursor.hasMore
+  n.cursor.hasMore
 
 proc createTree(buf: sink TokenBuf): NifBuilder =
   result = NifBuilder(p: initNifBuilderObj(buf))
@@ -262,12 +262,12 @@ proc takeTree*(t: var NifBuilder; n: var NifCursor) =
   t.p[].buf.takeTree(n.cursor)
 
 template copyInto*(t: var NifBuilder; n: var NifCursor; body: untyped) =
-  ## Copies the opening tag from `n` into `t`, advances `n` past the tag,
-  ## runs `body` (which should process the children), then closes the node
-  ## in `t` and advances `n` past the closing `)`.
+  ## Copies the opening tag from `n` into `t`, processes children via `body`
+  ## (which must consume them through `take*` / `skip` / nested `copyInto`),
+  ## then closes the node in `t` and advances `n` past the matching `)`.
   ##
-  ## Use this instead of manual `addParLe` + `inc` + `addParRi` + `inc`
-  ## when transforming a node while preserving its tag:
+  ## Delegates to nifprims's `into`, so it remains correct under virtual
+  ## ParRi (sealed-jump) and overflow scopes.
   ##
   ## .. code-block:: nim
   ##   o.copyInto(n):
@@ -276,11 +276,9 @@ template copyInto*(t: var NifBuilder; n: var NifCursor; body: untyped) =
   assert n.kind == ParLe, "copyInto requires cursor at ParLe"
   prepareMutation(t)
   t.p[].buf.add n.cursor
-  inc n.cursor
-  body
+  nifstreams.into n.cursor:
+    body
   t.p[].buf.addParRi()
-  assert n.kind == ParRi, "copyInto: body must consume all children"
-  inc n.cursor
 
 proc addSubtree*(t: var NifBuilder; n: NifCursor) =
   ## Copies the current token or subtree from `n` into `t` without advancing it.
@@ -359,13 +357,18 @@ proc addEmptyNode4*(t: var NifBuilder; info: LineInfo = NoLineInfo) =
   t.p[].buf.addEmpty3(info)
   t.p[].buf.addEmpty(info)
 
-proc inc*(n: var NifCursor) =
-  ## Advances `n` by one token.
-  inc n.cursor
-
 proc skip*(n: var NifCursor) =
   ## Skips the current token or, if positioned on `ParLe`, the entire subtree.
   skip n.cursor
+
+proc firstChild*(n: NifCursor): NifCursor {.inline.} =
+  ## Returns a cursor positioned at the first child of `n`. `n` must be at
+  ## a `ParLe`. The returned cursor's bounded `rem` is set to the sub-scope's
+  ## body count so it can be used both for read-only `~` / `takeTree`
+  ## extraction *and* for bounded iteration (`while c.hasMore: …`). `n`
+  ## itself is unchanged.
+  assert n.kind == ParLe, "firstChild requires cursor at ParLe"
+  result = NifCursor(cursor: firstSon(n.cursor))
 
 # ── Traversal templates ──────────────────────────────────────────────────
 # Pure traversal helpers for reading/analyzing a tree without producing output.
@@ -375,19 +378,17 @@ template hasMore*(n: NifCursor): bool =
   n.hasMore
 
 template into*(n: var NifCursor; body: untyped) =
-  ## Enters the current node, runs `body` to process the children,
-  ## then advances past the closing `)`.
+  ## Enters the current node, runs `body` to process the children, then
+  ## advances past the (real or virtual) closing `)`. Delegates to nifprims
+  ## so the bounded-scope and overflow paths are handled correctly.
   ##
   ## .. code-block:: nim
   ##   n.into:
   ##     while n.hasMore:
   ##       analyze(n)
   ##       skip n
-  assert n.kind == ParLe, "into requires cursor at ParLe"
-  inc n
-  body
-  assert n.kind == ParRi, "into: body must consume all children"
-  inc n
+  nifstreams.into n.cursor:
+    body
 
 template loopInto*(n: var NifCursor; body: untyped) =
   ## Enters a node, iterates all children, then advances past `)`.
@@ -410,18 +411,8 @@ template balancedTokens*(n: var NifCursor; body: untyped) =
   ##   n.balancedTokens:
   ##     if n.stmtKind == IfS:
   ##       foundIf = true
-  var nestedDepth = 0
-  if n.kind == ParLe:
-    inc nestedDepth; inc n
-    while nestedDepth > 0:
-      case n.kind
-      of ParLe:
-        body
-        inc nestedDepth; inc n
-      of ParRi:
-        dec nestedDepth; inc n
-      else:
-        inc n
+  nifstreams.balancedTokens n.cursor:
+    body
 
 proc eqIdent*(n: NifCursor; name: string): bool =
   ## Returns true when `n` matches `name` exactly.
@@ -661,12 +652,13 @@ template replaceHead*(t: var Replacer;
                       tag: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma;
                       info: LineInfo; body: untyped) =
   ## Like `keepTag` but emits a new tag instead of copying the input's tag.
+  ## Enters the input tree via nifprims's bounded `into`, runs `body`
+  ## (which must consume the children), then closes both input and output
+  ## scopes — virtual-ParRi safe.
   assert t.src.kind == ParLe, "replaceHead requires cursor at ParLe"
-  inc t.src  # skip old opening tag
   t.dest.withTree(tag, info):
-    body
-  assert t.src.kind == ParRi, "replaceHead: body must consume all children"
-  inc t.src  # skip old closing ParRi
+    nifstreams.into t.src.cursor:
+      body
 
 # ── Cursor access for analysis ────────────────────────────────────────────
 

@@ -109,8 +109,7 @@ when defined(nimony):
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / symparser
-import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints,
-  builtintypes, langmodes, renderer, reporters, typeprops]
+import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters, typeprops]
 import ".." / njvl / [nj, njvl_model]
 import hexer_context, passes
 include ".." / nimony / nif_annotations
@@ -120,9 +119,7 @@ include ".." / nimony / nif_annotations
 # - the control flow graph must duplicate `finally` blocks
 # - the control flow graph must model procs that can raise
 
-#[
-
-Compatibility with Nim is not easy. We need to produce full-fledged adapter objects:
+#[Compatibility with Nim is not easy. We need to produce full-fledged adapter objects:
 
 var it = (iter)
 while not finished(it):
@@ -142,9 +139,7 @@ proc emulate(this: ptr IterAdapter; args) =
 
 proc emulateBegin(this: ptr IterAdapter; args) =
   initIterCoroutine(this, args)
-  this.emulate = emulate
-
-]#
+  this.emulate = emulate]#
 
 const
   ContinuationProcName = "ContinuationProc.0." & SystemModuleSuffix
@@ -819,22 +814,21 @@ proc trJtrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Convert NJ `(jtrue sym...)` to `(asgn sym true)` for each symbol.
   ## If the symbol is lifted to the environment, assign to the env field.
   let info = n.info
-  inc n  # skip jtrue tag
-  while n.hasMore:
-    let symId = n.symId
-    let field = c.currentProc.localToEnv.getOrDefault(symId)
-    dest.addParLe AsgnS, info
-    if field.def != field.use:
-      dest.copyIntoKind DotX, info:
-        dest.copyIntoKind DerefX, info:
-          dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
-        dest.addSymUse field.field, info
-    else:
-      dest.add n
-    dest.addParPair TrueX, info
-    dest.addParRi()
-    inc n
-  inc n  # skip ParRi
+  n.into:
+    while n.hasMore:
+      let symId = n.symId
+      let field = c.currentProc.localToEnv.getOrDefault(symId)
+      dest.addParLe AsgnS, info
+      if field.def != field.use:
+        dest.copyIntoKind DotX, info:
+          dest.copyIntoKind DerefX, info:
+            dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+          dest.addSymUse field.field, info
+      else:
+        dest.add n
+      dest.addParPair TrueX, info
+      dest.addParRi()
+      skip n
 
 proc emitJump(dest: var TokenBuf; label: int; info: PackedLineInfo) =
   dest.add tagToken("jmp", info)
@@ -862,32 +856,29 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
       inc c.currentProc.labelCounter
   of LoopV:
     if containsSuspensionPoint(c, n):
-      inc n
-      assert n.stmtKind == StmtsS
-      inc n # enter stmts_before
-      while n.hasMore:
-        dest.takeTree n # copy all mflags, it will be handled later
-      inc n # skip stmts_before ParRi
-      var beforeLoopState = c.currentProc.labelCounter
-      inc c.currentProc.labelCounter
-      var afterLoopState = c.currentProc.labelCounter
-      inc c.currentProc.labelCounter
-      emitJump dest, beforeLoopState, info
-      emitLabel dest, beforeLoopState, info
-      dest.copyIntoKind IfS, info:
-        dest.copyIntoKind ElifU, info:
-          dest.copyIntoKind NotX, info:
-            dest.takeTree n
-          dest.copyIntoKind StmtsS, info:
-            emitJump dest, afterLoopState, info
-      assert n.stmtKind == StmtsS
-      inc n  # enter stmts_body (past StmtsS tag)
-      while n.hasMore:
-        trGoto c, dest, n
-      inc n  # skip stmts_body ParRi
-      emitJump dest, beforeLoopState, info
-      emitLabel dest, afterLoopState, info
-      skipParRi n  # skip loop ParRi
+      n.into:                                       # (loop ...)
+        assert n.stmtKind == StmtsS
+        n.into:                                     # stmts_before
+          while n.hasMore:
+            dest.takeTree n # copy all mflags, it will be handled later
+        var beforeLoopState = c.currentProc.labelCounter
+        inc c.currentProc.labelCounter
+        var afterLoopState = c.currentProc.labelCounter
+        inc c.currentProc.labelCounter
+        emitJump dest, beforeLoopState, info
+        emitLabel dest, beforeLoopState, info
+        dest.copyIntoKind IfS, info:
+          dest.copyIntoKind ElifU, info:
+            dest.copyIntoKind NotX, info:
+              dest.takeTree n
+            dest.copyIntoKind StmtsS, info:
+              emitJump dest, afterLoopState, info
+        assert n.stmtKind == StmtsS
+        n.into:                                     # stmts_body
+          while n.hasMore:
+            trGoto c, dest, n
+        emitJump dest, beforeLoopState, info
+        emitLabel dest, afterLoopState, info
     else:
       dest.takeTree n
   of IteV, ItecV:
@@ -911,14 +902,14 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
       if elseCur.kind != DotToken:
         emitJump dest, lelse, info
         emitLabel dest, lelse, info
-        inc elseCur
-        while elseCur.hasMore:
-          trGoto c, dest, elseCur
+        elseCur.into:
+          while elseCur.hasMore:
+            trGoto c, dest, elseCur
       emitJump dest, lend, info
       emitLabel dest, lthen, info
-      inc thenCur
-      while thenCur.hasMore:
-        trGoto c, dest, thenCur
+      thenCur.into:
+        while thenCur.hasMore:
+          trGoto c, dest, thenCur
       emitJump dest, lend, info
       emitLabel dest, lend, info
       skipParRi n
@@ -1462,28 +1453,25 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         of LoopV:
           # No suspension points inside this loop → simple while loop
           var beforeBuf = createTokenBuf(32)
-          var info = n.info
-          inc n
-          assert n.stmtKind == StmtsS
-          inc n  # enter stmts_before
-          while n.hasMore:
-            if n.njvlKind in {MflagV, VflagV}:
-              trMflag c, dest, n   # hoisted outside while
-            else:
-              tr c, beforeBuf, n
-          inc n  # skip stmts_before ParRi
           var condBuf = createTokenBuf(16)
-          tr c, condBuf, n
           var bodyBuf = createTokenBuf(64)
-          assert n.stmtKind == StmtsS
-          inc n  # enter stmts_body
-          while n.hasMore:
-            if n.stmtKind == ContinueS:
-              skip n
-            else:
-              tr c, bodyBuf, n
-          inc n  # skip stmts_body ParRi
-          skipParRi n  # skip loop ParRi
+          var info = n.info
+          n.into:                                 # (loop ...)
+            assert n.stmtKind == StmtsS
+            n.into:                               # stmts_before
+              while n.hasMore:
+                if n.njvlKind in {MflagV, VflagV}:
+                  trMflag c, dest, n   # hoisted outside while
+                else:
+                  tr c, beforeBuf, n
+            tr c, condBuf, n
+            assert n.stmtKind == StmtsS
+            n.into:                               # stmts_body
+              while n.hasMore:
+                if n.stmtKind == ContinueS:
+                  skip n
+                else:
+                  tr c, bodyBuf, n
           dest.addParLe WhileS, info
           dest.add condBuf
           dest.addParLe StmtsS, info

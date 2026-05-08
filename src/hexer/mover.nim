@@ -66,8 +66,10 @@ proc sameTreesIgnoreArrayIndexes*(a, b: Cursor): bool =
         if not sameTreesIgnoreArrayIndexes(a, b):
           return false
         # do not compare the array indexes:
-        skipToEnd a
-        skipToEnd b
+        while a.hasMore: skip a
+        consumeParRi a
+        while b.hasMore: skip b
+        consumeParRi b
       else:
         inc a
         inc b

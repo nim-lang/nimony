@@ -316,7 +316,8 @@ template evalShiftOp(c0: var EvalContext; n: var Cursor; opr: untyped) {.dirty.}
   of IntT, UIntT:
     inc n
     bits = typebits(n.load)
-    skipToEnd n
+    while n.hasMore: skip n
+    consumeParRi n
   else:
     error "expected int or uint type for shift operation, got: " & typeToString(n), n.info
   let a = getConstOrdinalValue propagateError eval(c0, n)
@@ -352,7 +353,8 @@ template evalBitnot(c0: var EvalContext; n: var Cursor) {.dirty.} =
   of IntT, UIntT:
     inc n
     bits = typebits(n.load)
-    skipToEnd n
+    while n.hasMore: skip n
+    consumeParRi n
   else:
     error "expected int or uint type for shl, got: " & typeToString(n), n.info
   let a = getConstOrdinalValue propagateError eval(c, n)
@@ -635,7 +637,8 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       inc n
       let a = propagateError eval(c, n)
       if a.exprKind == FalseX:
-        skipToEnd n
+        while n.hasMore: skip n
+        consumeParRi n
         return a
       elif a.exprKind != TrueX:
         error "expected bool for operand of `and` but got: " & asNimCode(a), n.info
@@ -651,7 +654,8 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       inc n
       let a = propagateError eval(c, n)
       if a.exprKind == TrueX:
-        skipToEnd n
+        while n.hasMore: skip n
+        consumeParRi n
         return a
       elif a.exprKind != FalseX:
         error "expected bool for operand of `or` but got: " & asNimCode(a), n.info
@@ -679,7 +683,8 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       # we only need raw value
       inc n
       result = n
-      skipToEnd n
+      while n.hasMore: skip n
+      consumeParRi n
     of ConvX, HconvX:
       let nOrig = n
       inc n

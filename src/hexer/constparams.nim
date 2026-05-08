@@ -75,10 +75,9 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
       let info = n.info
       copyIntoKind dest, StmtsS, info:
         if n.stmtKind == StmtsS:
-          inc n
-          while n.hasMore:
-            tr c2, dest, n
-          skipParRi n
+          n.into:
+            while n.hasMore:
+              tr c2, dest, n
         else:
           tr c2, dest, n
         if c2.canRaise and isVoidType(r.retType):
@@ -323,10 +322,10 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
   dest.add n
-  inc n
-  while n.hasMore:
-    tr c, dest, n
-  takeParRi dest, n
+  n.into:
+    while n.hasMore:
+      tr c, dest, n
+  dest.addParRi()
   c.typeCache.closeScope()
 
 proc trPragmaBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =

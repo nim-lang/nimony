@@ -352,29 +352,28 @@ proc matchBooleanConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
   case f.typeKind
   of AndT:
-    inc f
-    result = true
-    while f.hasMore:
-      var f2 = f
-      if not matchBooleanConstraint(m, f2, a):
-        result = false
-        break
-      skip f
-    skipToEnd f
+    f.into:
+      result = true
+      while f.hasMore:
+        var f2 = f
+        if not matchBooleanConstraint(m, f2, a):
+          result = false
+          break
+        skip f
+      while f.hasMore: skip f                  # consume the rest after early break
   of OrT:
-    inc f
-    while f.hasMore:
-      var f2 = f
-      if matchBooleanConstraint(m, f2, a):
-        result = true
-        break
-      skip f
-    skipToEnd f
+    f.into:
+      while f.hasMore:
+        var f2 = f
+        if matchBooleanConstraint(m, f2, a):
+          result = true
+          break
+        skip f
+      while f.hasMore: skip f
   of NotT:
     # XXX handle not/not case somehow
-    inc f
-    result = not matchBooleanConstraint(m, f, a)
-    skipParRi f
+    f.into:
+      result = not matchBooleanConstraint(m, f, a)
   else:
     # standalone typeclass
     result = matchConstraintSplitAnd(m, f, a)

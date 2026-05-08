@@ -730,7 +730,7 @@ proc semStmtsExpr(c: var SemContext; dest: var TokenBuf; it: var Item; isNewScop
     if classifyType(c, it.typ) in {VoidT, AutoT}:
       (if isNewScope: ScopeTagId else: StmtsTagId)
     else: ExprTagId
-  dest[before] = parLeToken(TagId(kind), dest[before].info)
+  setTag(dest[before], TagId(kind))
 
 proc semStmt(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: bool) =
   let info = n.info
@@ -1593,7 +1593,8 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
       hasErr = true
     elif pk in {ViewP, InheritableP, FinalP, PackedP, UnionP, AcyclicP}:
       var n2 = n
-      skipToEnd n2
+      while n2.hasMore: skip n2
+      consumeParRi n2
       if n2.typeKind in {RefT, PtrT}:
         inc n2
       # Later passes replace the inline body of `ref object` / `ptr object`
@@ -2015,7 +2016,8 @@ proc addVarargsParameter(c: var SemContext; dest: var TokenBuf; paramsAt: int; i
             # already added:
             endRead(dest)
             return
-          skipToEnd n
+          while n.hasMore: skip n
+          consumeParRi n
         else:
           break
       let insertPos = cursorToPosition(dest, n)
@@ -2381,12 +2383,11 @@ proc semEmit(c: var SemContext; dest: var TokenBuf; it: var Item) =
   dest.add parLeToken(EmitS, info)
   inc it.n
   if it.n.exprKind == BracketX:
-    inc it.n
-    while it.n.hasMore:
-      var a = Item(n: it.n, typ: c.types.autoType)
-      semExpr c, dest, a
-      it.n = a.n
-    skipParRi it.n
+    it.n.into:
+      while it.n.hasMore:
+        var a = Item(n: it.n, typ: c.types.autoType)
+        semExpr c, dest, a
+        it.n = a.n
   else:
     var a = Item(n: it.n, typ: c.types.autoType)
     semExpr c, dest, a
@@ -2531,7 +2532,8 @@ proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: When
           of ObjectWhen:
             semObjectComponent c, dest, it.n, state
           skipParRi it.n # finish elif
-          skipToEnd it.n
+          while it.n.hasMore: skip it.n
+          consumeParRi it.n
           return
         elif condValue != FalseX:
           # erroring/unresolved condition, leave entire statement as unresolved
@@ -2555,7 +2557,8 @@ proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: When
       of ObjectWhen:
         semObjectComponent c, dest, it.n, state
       skipParRi it.n # finish else
-      skipToEnd it.n
+      while it.n.hasMore: skip it.n
+      consumeParRi it.n
       return
     else:
       var ctx = createUntypedContext(addr c, UntypedGeneric)
@@ -2874,7 +2877,8 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
         let efldSym = findOneofEfld(c, branchName)
         if efldSym == SymId(0):
           buildErr c, dest, info, "undeclared sum type branch: " & pool.strings[branchName]
-          skipToEnd it.n
+          while it.n.hasMore: skip it.n
+          consumeParRi it.n
           continue
         dest.add symToken(efldSym, info)
         inc it.n
@@ -2942,7 +2946,8 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
         inc it.n # skip call ParRi
       else:
         buildErr c, dest, info, "identifier expected for sum type branch name"
-        skipToEnd it.n
+        while it.n.hasMore: skip it.n
+        consumeParRi it.n
     else:
       evalConstCaseBranch(c, dest, it, selectorType, seen, info)
   takeParRi dest, it.n
@@ -2988,20 +2993,18 @@ proc synthSumTypeDiscriminator(c: var SemContext; dest: var TokenBuf;
   var seen = initHashSet[StrId]()
   var scan = it.n
   while scan.substructureKind == OfU:
-    inc scan
-    if scan.substructureKind == RangesU:
-      inc scan
-      while scan.hasMore:
-        if scan.kind == Ident:
-          let name = scan.litId
-          if seen.containsOrIncl(name):
-            buildErr c, dest, scan.info, "duplicate sum type branch name: " & pool.strings[name]
-          else:
-            branches.add BranchInfo(name: name, info: scan.info)
-        skip scan
-      inc scan
-    skip scan
-    inc scan
+    scan.into:                                  # (of ...)
+      if scan.substructureKind == RangesU:
+        scan.into:                              # (ranges ...)
+          while scan.hasMore:
+            if scan.kind == Ident:
+              let name = scan.litId
+              if seen.containsOrIncl(name):
+                buildErr c, dest, scan.info, "duplicate sum type branch name: " & pool.strings[name]
+              else:
+                branches.add BranchInfo(name: name, info: scan.info)
+            skip scan
+      skip scan                                 # action subtree
   if scan.substructureKind == ElseU:
     buildErr c, dest, scan.info, "sum type case objects cannot have an else branch"
 
@@ -3272,7 +3275,8 @@ proc semForLoopTupleVar(c: var SemContext; dest: var TokenBuf; it: var Item; tup
       buildErr c, dest, it.n.info, "too few for loop variables"
   else:
     buildErr c, dest, it.n.info, "too many for loop variables"
-    skipToEnd it.n
+    while it.n.hasMore: skip it.n
+    consumeParRi it.n
 
 include semfields
 
@@ -3346,10 +3350,10 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
     var vars = 0
     var varsCursor = it.n
     if varsCursor.substructureKind == UnpackflatU:
-      inc varsCursor
-      while varsCursor.hasMore:
-        inc vars
-        skip varsCursor
+      varsCursor.into:
+        while varsCursor.hasMore:
+          inc vars
+          skip varsCursor
     else:
       vars = 1
     var name = ""
@@ -3601,12 +3605,11 @@ proc semDelay(c: var SemContext; dest: var TokenBuf; it: var Item) =
   elif it.n.exprKind in CallKinds:
     # delay(call) form: produce (delay fn args)
     dest.addParLe(DelayX, info)
-    inc it.n  # skip inner call tag
-    while it.n.hasMore:
-      takeTree dest, it.n  # copy fn and args verbatim (already semchecked)
-    skipParRi it.n  # skip inner call's )
+    it.n.into:                         # descend past inner call's tag
+      while it.n.hasMore:
+        takeTree dest, it.n            # copy fn and args verbatim (already semchecked)
     dest.addParRi()
-    skipParRi it.n  # skip outer delay's )
+    skipParRi it.n                     # skip outer delay's )
   else:
     buildErr c, dest, it.n.info, "`delay` takes a call expression or no argument"
     skip it.n
@@ -4497,7 +4500,8 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
           it.n = savedN # restore cursor for semSumTypeObjConstr
           if inferredExpected == default(TypeCursor):
             c.buildErr dest, info, "cannot infer generic type for sum type constructor"
-            skipToEnd it.n
+            while it.n.hasMore: skip it.n
+            consumeParRi it.n
             return
         semSumTypeObjConstr(c, dest, it, efldSym, inferredExpected, info)
         return
@@ -4516,23 +4520,27 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
     if decl.kind != TypeY:
       # includes typevar case
       c.buildErr dest, info, "expected type for object constructor"
-      skipToEnd it.n
+      while it.n.hasMore: skip it.n
+      consumeParRi it.n
       return
     objType = decl.objBody
     if objType.typeKind != ObjectT:
       c.buildErr dest, info, "expected object type for object constructor"
-      skipToEnd it.n
+      while it.n.hasMore: skip it.n
+      consumeParRi it.n
       return
   else:
     c.buildErr dest, info, "expected type symbol for object constructor"
-    skipToEnd it.n
+    while it.n.hasMore: skip it.n
+    consumeParRi it.n
     return
   if decl.isGeneric and invokeArgs == default(Cursor):
     # Generic object without explicit type params — infer from field values:
     let inferred = inferObjTypeFromFields(c, typeSym, decl, it.n, info)
     if inferred == default(TypeCursor):
       c.buildErr dest, info, "cannot infer generic type for object constructor"
-      skipToEnd it.n
+      while it.n.hasMore: skip it.n
+      consumeParRi it.n
       return
     it.typ = inferred
     objType = it.typ
@@ -4760,7 +4768,8 @@ proc getDottedIdent(n: var Cursor): string =
     else:
       result = pool.strings[s]
   if isError:
-    skipToEnd n
+    while n.hasMore: skip n
+    consumeParRi n
 
 proc semDefined(c: var SemContext; dest: var TokenBuf; it: var Item) =
   inc it.n
@@ -4790,7 +4799,8 @@ proc semDeclared(c: var SemContext; dest: var TokenBuf; it: var Item) =
   # does not consider module quoted symbols for now
   let nameId = takeIdent(it.n)
   if isError:
-    skipToEnd it.n
+    while it.n.hasMore: skip it.n
+    consumeParRi it.n
   skipParRi it.n
   if nameId == StrId(0):
     c.buildErr dest, info, "invalid expression for declared: " & asNimCode(orig), orig
@@ -5714,14 +5724,13 @@ proc semPragmaLine(c: var SemContext; dest: var TokenBuf; it: var Item; isPragma
 
 proc semPragmasLine(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
-  inc it.n
-  while it.n.hasMore:
-    if it.n.kind == ParLe:
-      if it.n.stmtKind in CallKindsS or
-          it.n.substructureKind == KvU:
-        inc it.n
-    semPragmaLine c, dest, it, false
-  skipParRi it.n
+  it.n.into:
+    while it.n.hasMore:
+      if it.n.kind == ParLe:
+        if it.n.stmtKind in CallKindsS or
+            it.n.substructureKind == KvU:
+          inc it.n
+      semPragmaLine c, dest, it, false
   producesVoid c, dest, info, it.typ # in case it was not already produced
 
 proc semInclExcl(c: var SemContext; dest: var TokenBuf; it: var Item) =
@@ -6549,10 +6558,11 @@ proc phaseX(c: var SemContext; dest: var TokenBuf; n: Cursor; x: SemPhase) =
   assert n.stmtKind == StmtsS
   c.phase = x
   var n = n
-  takeToken dest, n
-  while n.hasMore:
-    semStmt c, dest, n, false
-  takeParRi dest, n
+  dest.add n
+  n.into:
+    while n.hasMore:
+      semStmt c, dest, n, false
+  dest.addParRi()
   # clear pragmaStack in case {.pop.} was not called
   c.pragmaStack.setLen(0)
 
@@ -6599,9 +6609,9 @@ proc semToplevelStmts(c: var SemContext; dest: var TokenBuf; buf: var TokenBuf) 
   ## Iterate over toplevel statements in buf and semcheck each one.
   var n = beginRead(buf)
   assert n.stmtKind == StmtsS
-  inc n # skip StmtsS tag
-  while n.hasMore:
-    semStmt c, dest, n, false
+  n.into:
+    while n.hasMore:
+      semStmt c, dest, n, false
   endRead(buf)
 
 proc phase1(c: var SemContext; dest: var TokenBuf; n: Cursor): (TokenBuf, PackedLineInfo) =

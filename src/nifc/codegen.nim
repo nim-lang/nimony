@@ -15,7 +15,7 @@ from std / os import changeFileExt, splitFile, extractFilename, fileExists
 import ".." / lib / vfs
 from std / sequtils import insert
 
-include ".." / lib / nifprelude2
+include ".." / lib / nifprelude
 import mangler, nifc_model, cprelude, noptions, typenav, symparser, nifmodules
 
 type

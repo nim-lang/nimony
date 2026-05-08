@@ -70,13 +70,13 @@ proc error*(e: var EContext; msg: string) {.noreturn.} =
 proc takeParRi*(e: var EContext; dest: var TokenBuf; c: var Cursor) =
   if c.kind == ParRi:
     dest.add c
-    inc c
+    consumeParRi c
   else:
     error e, "expected ')', but got: ", c
 
 proc skipParRi*(e: var EContext; c: var Cursor) =
   if c.kind == ParRi:
-    inc c
+    consumeParRi c
   else:
     error e, "expected ')', but got: ", c
 

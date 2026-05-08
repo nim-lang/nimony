@@ -163,7 +163,8 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
         hasError = true
       else:
         filenameVal(n, res, hasError, allowAs)
-      skipToEnd n
+      while n.hasMore: skip n
+      consumeParRi n
     of QuotedX:
       let s = pool.strings[takeUnquoted(n)]
       res.add ImportedFilename(path: s, name: s)

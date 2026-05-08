@@ -6,13 +6,13 @@
 
 ## NIF set-of-modules handling.
 
-include ".." / lib / nifprelude2
+include ".." / lib / nifprelude
 import std / [assertions, tables, strutils]
-import symparser, nifindexes2, nifc_model, noptions
+import symparser, nifindexes, nifc_model, noptions
 
 type
   NifModule = ref object
-    stream: nifprims.Stream
+    stream: nifstreams.Stream
     index: Table[string, NifIndexEntry]  # Simple embedded index for offsets
 
   Definition* = object
@@ -36,7 +36,7 @@ proc lookupDeclaration(c: var NifProgram; s: SplittedSymName): TokenBuf =
     var m: NifModule
     if not c.mods.hasKey(s.module):
       c.scheme.name = s.module
-      var stream = nifprims.open($c.scheme)
+      var stream = nifstreams.open($c.scheme)
       let index = readEmbeddedIndex(stream)
       m = NifModule(stream: stream, index: index)
       c.mods[s.module] = m
@@ -49,7 +49,7 @@ proc lookupDeclaration(c: var NifProgram; s: SplittedSymName): TokenBuf =
     else:
       result = createTokenBuf()
       m.stream.r.jumpTo entry.offset
-      nifprims.parse(m.stream, result, entry.info)
+      nifcursors.parse(m.stream, result, entry.info)
 
 proc externName*(s: SymId; n: Cursor): StrId =
   let nn = n.firstSon

@@ -7,7 +7,7 @@
 ## Parse NIF into a packed tree representation.
 
 import std / [assertions, syncio]
-include "../lib" / nifprelude2
+include "../lib" / nifprelude
 import ".." / models / [nifc_tags, callconv_tags, tags]
 export nifc_tags, callconv_tags
 
@@ -19,7 +19,7 @@ proc bug*(msg: string) {.noreturn.} =
 proc skipParRi*(n: var Cursor) =
   # XXX: Give NIFC some better error reporting.
   if n.kind == ParRi:
-    inc n
+    consumeParRi n
   else:
     when defined(debug):
       writeStackTrace()

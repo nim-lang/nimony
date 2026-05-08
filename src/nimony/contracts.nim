@@ -933,11 +933,10 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
   case n.stmtKind
   of StmtsS:
     c.toplevelStmts.add n
-    inc n
-    while n.hasMore:
-      traverseToplevel(c, n)
-    c.toplevelStmts.add n
-    skipParRi n
+    n.into:
+      while n.hasMore:
+        traverseToplevel(c, n)
+    c.toplevelStmts.addParRi()
   of PragmaxS:
     inc n
     skip n

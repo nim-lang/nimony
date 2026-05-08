@@ -43,9 +43,7 @@ proc finish(c: var SizeofValue) =
   if c.maxAlign != 0:
     c.size = align(c.size, c.maxAlign)
 
-#[
-Structs and tuples currently share the same layout algorithm,
-noted as the "Universal" layout algorithm in the compiler implementation.
+#[Structs and tuples currently share the same layout algorithm, noted as the "Universal" layout algorithm in the compiler implementation.
 The algorithm is as follows:
 
 Start with a size of 0 and an alignment of 1.
@@ -57,8 +55,7 @@ Assign the offset of the field to the current value of size.
 Update size by adding the size of the field.
 Update alignment to the max of alignment and the alignment of the field.
 The final size and alignment are the size and alignment of the aggregate.
-The stride of the type is the final size rounded up to alignment.
-]#
+The stride of the type is the final size rounded up to alignment.]#
 
 type
   TypePragmas = object

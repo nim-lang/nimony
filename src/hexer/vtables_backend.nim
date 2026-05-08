@@ -19,8 +19,7 @@ include ".." / lib / compat2
 import ".." / lib / tinyhashes
 import ".." / lib / [nifindexes, symparser, treemangler]
 import passes
-import ".." / nimony / [nimony_model, decls, programs, typenav,
-  renderer, builtintypes, typeprops, typekeys, vtables_frontend]
+import ".." / nimony / [nimony_model, decls, programs, typenav, renderer, builtintypes, typeprops, typekeys, vtables_frontend]
 from duplifier import constructsValue
 
 type
@@ -595,10 +594,10 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
   dest.add n
-  inc n
-  while n.hasMore:
-    tr c, dest, n
-  takeParRi dest, n
+  n.into:
+    while n.hasMore:
+      tr c, dest, n
+  dest.addParRi()
   c.typeCache.closeScope()
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -739,10 +738,9 @@ proc collectMethods(c: var Context; n: var Cursor) =
   # we only care about top level methods
   case n.stmtKind
   of StmtsS:
-    inc n
-    while n.hasMore:
-      collectMethods c, n
-    skipParRi n
+    n.into:
+      while n.hasMore:
+        collectMethods c, n
   of MethodS:
     let orig = n
     let r = takeRoutine(n, SkipFinalParRi)

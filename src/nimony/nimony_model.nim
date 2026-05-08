@@ -213,7 +213,7 @@ template copyIntoKinds*(dest: var TokenBuf; kinds: array[2, StmtKind]; info: Pac
 
 proc skipParRi(n: var Cursor) =
   assert n.kind == ParRi, "expected ')'"
-  inc n
+  consumeParRi n
 
 template copyInto*(dest: var TokenBuf; n: var Cursor; body: untyped) =
   assert n.kind == ParLe

@@ -21,27 +21,24 @@ proc makeProgram(info: LineInfo): NifCursor =
 proc tr(n: NifCursor): NifBuilder =
   var input = n
   if input.stmtKind == StmtsS:
-    inc input
+    input = firstChild(input)
 
   let info = input.info
   var source = makeProgram(info)
 
-  var first = source
-  inc first
+  var first = firstChild(source)              # at "alpha"
 
-  var second = source
-  inc second
-  skip second
+  var second = firstChild(source)
+  skip second                                 # at "beta"
 
   var beta = second
 
   var empty: NifCursor
   empty = beta
 
-  var third = source
-  inc third
+  var third = firstChild(source)
   skip third
-  skip third
+  skip third                                  # at "gamma"
   # Reassigning an existing reader should release the old lease and acquire the new one.
   second = third
 
@@ -58,8 +55,7 @@ proc tr(n: NifCursor): NifBuilder =
   scratchTree.withTree StmtsS, info:
     scratchTree.addEcho(info, "delta")
 
-  var scratch = snapshot(scratchTree)
-  inc scratch
+  var scratch = firstChild(snapshot(scratchTree))
 
   var reusableTree = createTree()
   reusableTree.addEcho(info, "epsilon")
@@ -72,8 +68,7 @@ proc tr(n: NifCursor): NifBuilder =
 
   var resultTree = createTree()
   resultTree.withTree StmtsS, info:
-    var it = copied
-    inc it
+    var it = firstChild(copied)
     resultTree.takeTree(it)
     resultTree.takeTree(it)
     resultTree.takeTree(it)

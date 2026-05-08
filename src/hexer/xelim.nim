@@ -236,11 +236,10 @@ proc trExprLoop(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
   else:
     assert tar.m == IsAppend, toString(n, false) & " " & $tar.m
   tar.t.add n
-  inc n
-  while n.hasMore:
-    trExpr c, dest, n, tar
+  n.into:
+    while n.hasMore:
+      trExpr c, dest, n, tar
   tar.t.addParRi()
-  inc n
 
 proc trAggregateValue(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   ## Bind a *call* in a value-position of an aggregate to a fresh cursor temp
@@ -534,48 +533,47 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
 
   var toClose = 0
   var ifs = 0
-  inc n
-  while n.hasMore:
-    if ifs >= 1:
-      dest.addParLe ElseU, info
-      dest.addParLe StmtsS, info
-      inc toClose, 2
+  n.into:
+    while n.hasMore:
+      if ifs >= 1:
+        dest.addParLe ElseU, info
+        dest.addParLe StmtsS, info
+        inc toClose, 2
 
-    let info = n.info
-    case n.substructureKind
-    of ElifU:
-      var t0 = Target(m: IsEmpty)
-      inc n
-      trCond c, dest, n, t0, c.goal == TowardsNjvl
+      let info = n.info
+      case n.substructureKind
+      of ElifU:
+        var t0 = Target(m: IsEmpty)
+        inc n
+        trCond c, dest, n, t0, c.goal == TowardsNjvl
 
-      dest.add head
-      inc toClose
-      inc ifs
+        dest.add head
+        inc toClose
+        inc ifs
 
-      copyIntoKind dest, ElifU, info:
-        dest.addTarget t0
-        #copyIntoKind dest, StmtsS, info:
+        copyIntoKind dest, ElifU, info:
+          dest.addTarget t0
+          #copyIntoKind dest, StmtsS, info:
+          if tar.m != IsIgnored:
+            copyIntoKind dest, StmtsS, info:
+              trExprInto c, dest, n, tmp
+          else:
+            trStmt c, dest, n
+        skipParRi n
+      of ElseU:
+        inc n
         if tar.m != IsIgnored:
           copyIntoKind dest, StmtsS, info:
             trExprInto c, dest, n, tmp
         else:
           trStmt c, dest, n
-      skipParRi n
-    of ElseU:
-      inc n
-      if tar.m != IsIgnored:
-        copyIntoKind dest, StmtsS, info:
-          trExprInto c, dest, n, tmp
-      else:
-        trStmt c, dest, n
-      skipParRi n
-    of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
-       TypevarU, EfldU, FldU, WhenU, TypevarsU, CaseU, OfU,
-       StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
-       UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, NoSub:
-      # Bug: just copy the thing around
-      takeTree dest, n
-  skipParRi n
+        skipParRi n
+      of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+         TypevarU, EfldU, FldU, WhenU, TypevarsU, CaseU, OfU,
+         StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
+         UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, NoSub:
+        # Bug: just copy the thing around
+        takeTree dest, n
 
   while toClose > 0:
     dest.addParRi()
@@ -963,13 +961,12 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   of ParLe:
     case n.exprKind
     of ExprX:
-      inc n
-      while n.hasMore:
-        if not isLastSon(n):
-          trStmt c, dest, n
-        else:
-          trExpr c, dest, n, tar
-      skipParRi n
+      n.into:
+        while n.hasMore:
+          if not isLastSon(n):
+            trStmt c, dest, n
+          else:
+            trExpr c, dest, n, tar
     of AndX:
       trAnd c, dest, n, tar
     of OrX:
@@ -1036,9 +1033,9 @@ proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS, $n.kind
   pass.dest.add n
-  inc n
-  while n.hasMore:
-    trStmt c, pass.dest, n
+  n.into:
+    while n.hasMore:
+      trStmt c, pass.dest, n
   pass.dest.addParRi()
   c.typeCache.closeScope()
   pass.nextTemp = c.counter

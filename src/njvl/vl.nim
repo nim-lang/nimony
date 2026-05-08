@@ -324,9 +324,9 @@ proc toNjvl*(n: Cursor; moduleSuffix: string): TokenBuf =
   var n = beginRead(elimJumps)
   assert n.stmtKind == StmtsS, $n.kind
   result.add n
-  inc n
-  while n.hasMore:
-    trStmt c, result, n
+  n.into:
+    while n.hasMore:
+      trStmt c, result, n
   result.addParRi()
   c.typeCache.closeScope()
   endRead elimJumps
