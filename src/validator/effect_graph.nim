@@ -501,7 +501,7 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor; destLv: Cursor): Effect
         if writesToDest: effects.add fixedEffect(ckT) # adds a type reference
       of "addIdent":
         if writesToDest: effects.add fixedEffect(ckAny)
-      of "skip", "skipToEnd", "skipParRi", "inc", "swap",
+      of "skip", "skipToEnd", "skipUntilEnd", "skipParRi", "consumeParRi", "inc", "swap",
          "endRead", "assert", "registerLocal", "registerLocalPtrOf",
          "openScope", "closeScope", "openProcScope", "registerParams",
          "publish", "mgetOrPut":
@@ -1029,7 +1029,7 @@ proc detectCursorLvs*(body: Cursor): seq[Cursor] =
     let tag = pool.tags[c.tag]
     if tag in CallTags:
       let callName = extractCalleeName(c)
-      if callName in ["inc", "skip", "skipParRi", "skipToEnd",
+      if callName in ["inc", "skip", "skipParRi", "consumeParRi", "skipToEnd", "skipUntilEnd",
                       "copyInto", "takeTree", "takeToken", "takeParRi"]:
         # Extract the cursor argument
         var peek = c
@@ -1049,7 +1049,7 @@ proc detectCursorLvs*(body: Cursor): seq[Cursor] =
         elif peek.kind == Ident:
           let callee = pool.strings[peek.litId]
           inc peek  # skip callee
-          if callee in ["inc", "skip", "skipParRi", "skipToEnd"]:
+          if callee in ["inc", "skip", "skipParRi", "consumeParRi", "skipToEnd", "skipUntilEnd"]:
             # First arg is the cursor
             if peek.kind == Ident:
               let arg = pool.strings[peek.litId]
@@ -1234,7 +1234,7 @@ proc callIsNoReturn(callName: string): bool =
 proc callAdvancesCursor(callName: string): bool =
   ## Check if a call is a known cursor-advancing operation.
   case callName
-  of "inc", "skip", "skipParRi", "skipToEnd",
+  of "inc", "skip", "skipParRi", "consumeParRi", "skipToEnd", "skipUntilEnd",
      "copyInto", "takeTree", "takeToken", "takeParRi", "copyTree":
     return true
   else:
