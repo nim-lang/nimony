@@ -246,31 +246,41 @@ proc takeVarDecl*(n: var Cursor): VarDecl =
 type NifcTagKind* =
   NifcStmt | NifcExpr | NifcType | NifcOther | NifcPragma | NifcSym
 
-template kindMatches(c: Cursor; expected: NifcTagKind): bool =
+# See `nimony_model.nim`'s `tagDispatch` for the rationale: tag-class
+# templates dispatch via `when expected is X` and use `==`/`$` operators
+# that don't exist on the union itself, so we mark them `.untyped` under
+# nimony so the body isn't typechecked at definition time.
+when defined(nimony):
+  {.pragma: tagDispatch, untyped.}
+else:
+  {.pragma: tagDispatch.}
+
+template kindMatches(c: Cursor; expected: NifcTagKind): bool {.tagDispatch.} =
   when expected is NifcStmt:    c.stmtKind == expected
   elif expected is NifcExpr:    c.exprKind == expected
   elif expected is NifcType:    c.typeKind == expected
   elif expected is NifcOther:   c.substructureKind == expected
   elif expected is NifcPragma:  c.pragmaKind == expected
   elif expected is NifcSym:     c.symKind == expected
+  else:                         false
 
-template skip*(c: var Cursor; expected: NifcTagKind) =
+template skip*(c: var Cursor; expected: NifcTagKind) {.tagDispatch.} =
   assert kindMatches(c, expected),
     "skip " & $expected & ": cursor at kind=" & $c.kind
   skip c
 
-template inc*(c: var Cursor; expected: NifcTagKind) =
+template inc*(c: var Cursor; expected: NifcTagKind) {.tagDispatch.} =
   assert kindMatches(c, expected),
     "inc " & $expected & ": cursor at kind=" & $c.kind
   inc c
 
-template into*(c: var Cursor; expected: NifcTagKind; body: untyped) =
+template into*(c: var Cursor; expected: NifcTagKind; body: untyped) {.tagDispatch.} =
   assert kindMatches(c, expected),
     "into " & $expected & ": cursor at kind=" & $c.kind
   into c:
     body
 
-template loopInto*(c: var Cursor; expected: NifcTagKind; body: untyped) =
+template loopInto*(c: var Cursor; expected: NifcTagKind; body: untyped) {.tagDispatch.} =
   assert kindMatches(c, expected),
     "loopInto " & $expected & ": cursor at kind=" & $c.kind
   loopInto c:

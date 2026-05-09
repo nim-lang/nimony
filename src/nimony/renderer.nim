@@ -1446,7 +1446,9 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         gpragmas(g, n)
 
       of CommentS:
-        raiseAssert "todo"
+        # Comments are kept in the IR for tooling (typenav, doc-gen) but
+        # have no Nim source rendering — drop the subtree.
+        skip n
 
       else:
         # raiseAssert $pool.tags[n.tagId]

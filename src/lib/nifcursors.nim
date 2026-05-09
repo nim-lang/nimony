@@ -288,11 +288,6 @@ proc skipUntilEnd*(c: var Cursor) =
 template hasMore*(n: Cursor): bool =
   ## True while there are more tokens to read in the current scope. Safe
   ## at end-of-buffer (`rem == 0`) — returns false rather than dereferencing.
-  ##
-  ## Under `-d:virtualParRi` `rem` is the *bounded* count of children left
-  ## to consume in the current `into`-entered scope. `0` means scope done;
-  ## the legacy ParRi-token check is OR'd in for unbounded (root, overflow)
-  ## scopes and for `-d:preserveRealParRi` migration walks.
   n.rem > 0 and n.kind != ParRi
 
 template into*(n: var Cursor; body: untyped) =

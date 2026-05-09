@@ -1248,29 +1248,40 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
       else:
         m.error InvalidMatch, f, a
     of OrT:
-      # `f` is an `or`-typed parameter (e.g. `x: A | B | C`); try each
-      # alternative and accept the first that matches. We can't snapshot
-      # `Match` (no `=copy`), so undo-on-failure using the args buffer
-      # length and the `err` flag.
-      var branches = f
-      inc branches
-      let argsSave = m.args.len
-      let errSave = m.err
-      let openedSave = m.opened
-      var matched = false
-      while branches.hasMore:
-        var branch = branches
-        singleArgImpl(m, branch, arg)
-        if not m.err:
-          matched = true
-          break
-        m.args.shrink argsSave
-        m.err = errSave
-        m.opened = openedSave
-        skip branches
-      if not matched:
-        m.error InvalidMatch, f, arg.typ
-      skip f
+      # `f` is an `or`-typed parameter (e.g. `x: A | B | C`).
+      #
+      # Pass-through: if `arg.typ` is structurally the same OR type, accept
+      # without iterating branches. This handles inner templates that
+      # forward their own union-typed parameter (`template wrap*(x:
+      # NimonyTagKind) = inner(x)` calling `inner(x: NimonyTagKind)`) —
+      # without this, the per-branch matching would try to unify each
+      # formal alternative with the WHOLE arg-OR and reject at the first
+      # mismatch.
+      if arg.typ.typeKind == OrT and sameTrees(f, arg.typ):
+        skip f
+      else:
+        # Try each alternative and accept the first that matches. We can't
+        # snapshot `Match` (no `=copy`), so undo-on-failure using the args
+        # buffer length and the `err` flag.
+        var branches = f
+        inc branches
+        let argsSave = m.args.len
+        let errSave = m.err
+        let openedSave = m.opened
+        var matched = false
+        while branches.hasMore:
+          var branch = branches
+          singleArgImpl(m, branch, arg)
+          if not m.err:
+            matched = true
+            break
+          m.args.shrink argsSave
+          m.err = errSave
+          m.opened = openedSave
+          skip branches
+        if not matched:
+          m.error InvalidMatch, f, arg.typ
+        skip f
     of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, AnumT, NiltT, AndT, NotT,
         ConceptT, DistinctT, StaticT, ItertypeT, AutoT, SymkindT, TypekindT, OrdinalT:
       m.error UnhandledTypeBug, f, f

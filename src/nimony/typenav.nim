@@ -339,7 +339,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         inc n
         skip n # label or DotToken
         result = getTypeImpl(c, n, flags)
-      of StmtsS, RetS:
+      of StmtsS, RetS, CommentS:
         result = c.builtins.voidType
       else:
         case njvlKind(n)

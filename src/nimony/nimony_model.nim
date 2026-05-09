@@ -132,34 +132,49 @@ type
 type NimonyTagKind* =
   NimonyStmt | NimonyExpr | NimonyType | NimonyOther | NimonyPragma | NimonySym
 
-template kindMatches(c: Cursor; expected: NimonyTagKind): bool =
+# Tag-typed `skip`/`inc`/`into`/`loopInto` overloads (and the `kindMatches`
+# helper they share) take a tag-class argument. The body uses
+# `when expected is X` to dispatch on which tag-class the caller passed.
+# Nimony typechecks generic code, so a *typed* template here would force
+# `==` and `$` to exist on the union type at definition time — they don't.
+# Mark the templates `untyped` (under nimony) so the body is only checked
+# at instantiation, when `expected` has a concrete tag-class type. Host
+# Nim is fine with the typed form, so we keep the `NimonyTagKind` typing
+# there for sharper sigs and IDE help.
+when defined(nimony):
+  {.pragma: tagDispatch, untyped.}
+else:
+  {.pragma: tagDispatch.}
+
+template kindMatches(c: Cursor; expected: NimonyTagKind): bool {.tagDispatch.} =
   when expected is NimonyStmt:    c.stmtKind == expected
   elif expected is NimonyExpr:    c.exprKind == expected
   elif expected is NimonyType:    c.typeKind == expected
   elif expected is NimonyOther:   c.substructureKind == expected
   elif expected is NimonyPragma:  c.pragmaKind == expected
   elif expected is NimonySym:     c.symKind == expected
+  else:                           false
 
-template skip*(c: var Cursor; expected: NimonyTagKind) =
+template skip*(c: var Cursor; expected: NimonyTagKind) {.tagDispatch.} =
   assert kindMatches(c, expected),
     "skip " & $expected & ": cursor at kind=" & $c.kind &
     " (stmt=" & $c.stmtKind & " expr=" & $c.exprKind & " type=" & $c.typeKind & ")"
   skip c
 
-template inc*(c: var Cursor; expected: NimonyTagKind) =
+template inc*(c: var Cursor; expected: NimonyTagKind) {.tagDispatch.} =
   assert kindMatches(c, expected),
     "inc " & $expected & ": cursor at kind=" & $c.kind &
     " (stmt=" & $c.stmtKind & " expr=" & $c.exprKind & " type=" & $c.typeKind & ")"
   inc c
 
-template into*(c: var Cursor; expected: NimonyTagKind; body: untyped) =
+template into*(c: var Cursor; expected: NimonyTagKind; body: untyped) {.tagDispatch.} =
   assert kindMatches(c, expected),
     "into " & $expected & ": cursor at kind=" & $c.kind &
     " (stmt=" & $c.stmtKind & " expr=" & $c.exprKind & " type=" & $c.typeKind & ")"
   into c:
     body
 
-template loopInto*(c: var Cursor; expected: NimonyTagKind; body: untyped) =
+template loopInto*(c: var Cursor; expected: NimonyTagKind; body: untyped) {.tagDispatch.} =
   assert kindMatches(c, expected),
     "loopInto " & $expected & ": cursor at kind=" & $c.kind &
     " (stmt=" & $c.stmtKind & " expr=" & $c.exprKind & " type=" & $c.typeKind & ")"
