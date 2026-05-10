@@ -28,9 +28,11 @@ Usage:
 Commands:
   build [all|nimony|nifler|hexer|nifc|nifmake|nj|vl|validator|dagon]   build selected tools (default: all).
   bootstrap            compile every module on the bootstrap list with nimony.
-  boot [options]       3-iteration self-host of `bin/nimony` (koch-style).
-                       Result is installed to `bin/nimony_b`. Extra args are
-                       forwarded to each `nimony c` invocation.
+  boot [options]       3-iteration self-host of the *full* nimony toolchain
+                       (nimony, nimsem, hexer). Stages live in `bin1/`,
+                       `bin2/`, `bin3/`; winners are installed to
+                       `bin/{nimony,nimsem,hexer}_b`. Extra args are
+                       forwarded to every `nimony c` invocation.
   selfcheck            full compiler regression check: rebuilds the nimony
                        toolchain (nimony+nimsem+hexer share `programs.nim`),
                        runs `bootstrap`, then `boot --valgrind`. Use this
@@ -1183,21 +1185,71 @@ proc buildNimonyToolchain(showProgress = false) =
 # being shaken down (this whole path is brand-new and likely to surface
 # nimony codegen bugs).
 
-proc compileNimonyStage(stage: int; compiler, cacheBase, source, args: string;
-                       withValgrind: bool): string =
-  ## Use nimony's `--out` to write each stage's binary directly into
-  ## `bin/nimony_stageN`. nimony resolves stdlib via `getAppDir()/../lib`
-  ## when launched from a sibling `bin/`, so dropping the binary into
-  ## `bin/` is what makes the next stage able to find `lib/std/system.nim`.
-  ## Before `--out` existed, hastur had to walk the cache for the produced
-  ## exe and copy it into `bin/`; now nimony places it there directly.
-  let cache = cacheBase / ("s" & $stage)
+## The boot bootstrap rebuilds the *full* toolchain at every stage — not just
+## `bin/nimony`. nimony is only the driver; the heavy lifting (semantic
+## analysis, hexer lowering) happens in `bin/nimsem` and `bin/hexer`, both
+## reached via `findTool` from each `nimony c` invocation. Iterating only
+## over the driver therefore exercises self-hosting of nimony alone while
+## stage-0 nimsem and hexer keep doing all the real work — bugs in their
+## codegen go undetected indefinitely. Each stage now produces its own
+## `bin0/`, `bin1/`, `bin2/` (sibling of `lib/`); `tooldirs.binDir` and
+## `semos.nimonyDir` accept any tail starting with `bin`, so stage-N's
+## nimony resolves stage-N's tools and the project's stdlib without any
+## CLI override.
+const BootSelfTools = ["nimsem", "hexer", "nimony"]
+  ## Tools rebuilt from source at every stage. The order matters: nimsem and
+  ## hexer are needed by every later `nimony c` call, so they go first;
+  ## nimony itself goes last because it's the one each *next* stage will
+  ## drive with.
+const BootCarryTools = ["nifler", "nifc", "nifmake", "validator"]
+  ## Tools copied from `bin/` into each stage dir. They're tier-0 for
+  ## bootstrap purposes (host-Nim-built throughout) but `nimony c` shells
+  ## to them, so each stage dir needs its own copy.
+
+proc bootSourceFor(tool: string): string =
+  case tool
+  of "nimony", "nimsem": "src/nimony/" & tool & ".nim"
+  of "hexer": "src/hexer/hexer.nim"
+  else: quit "boot: no source mapping for tool " & tool
+
+proc bootStageDir(stage: int): string =
+  ## Stage 0 is the prebuilt toolchain in `bin/`; stage N>=1 lives in
+  ## `binN/` next to `lib/`.
+  if stage == 0: binDir() else: "bin" & $stage
+
+proc carryAuxTool(stageBin, name: string) =
+  let exe = name.addFileExt(ExeExt)
+  let src = binDir() / exe
+  let dst = stageBin / exe
+  if not fileExists(src):
+    quit "boot: " & src & " not found; run `hastur build " & name &
+         "` (or `hastur build all`) first"
+  if fileExists(dst): removeFile(dst)
+  copyFile(src, dst)
+  when defined(posix):
+    inclFilePermissions(dst, {fpUserExec, fpGroupExec, fpOthersExec})
+
+proc provisionStageBin(stage: int): string =
+  ## Create `binN/` (clean) and populate it with the tools that don't get
+  ## rebuilt per stage. The self-rebuilt tools are dropped in afterwards by
+  ## `compileBootTool`.
+  result = bootStageDir(stage)
+  removeDir result
+  createDir result
+  for aux in BootCarryTools:
+    carryAuxTool(result, aux)
+
+proc compileBootTool(stage: int; compiler, source, outBin, cacheBase, args: string;
+                     withValgrind: bool) =
+  ## Run `compiler c --out:outBin source`. `compiler` is the previous
+  ## stage's nimony, so it transitively drives the previous stage's
+  ## nimsem/hexer (siblings under the same stage's bin dir) for this build.
+  let cache = cacheBase / outBin.extractFilename
   removeDir cache
   createDir cache
-  result = binDir() / ("nimony_stage" & $stage).addFileExt(ExeExt)
-  if fileExists(result): removeFile(result)
+  if fileExists(outBin): removeFile(outBin)
   var cmd = compiler.quoteShell & " c --silentMake --nimcache:" &
-            cache.quoteShell & " --out:" & result.quoteShell
+            cache.quoteShell & " --out:" & outBin.quoteShell
   if withValgrind:
     cmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\""
   if args.len > 0:
@@ -1210,13 +1262,40 @@ proc compileNimonyStage(stage: int; compiler, cacheBase, source, args: string;
   let exitCode = execShellCmd(cmd)
   let dt = epochTime() - t0
   if exitCode != 0:
-    quit "FAILURE: boot stage " & $stage & " failed after " &
-         formatFloat(dt, ffDecimal, precision=2) & "s"
-  if not fileExists(result):
-    quit "FAILURE: boot stage " & $stage & ": " & result &
+    quit "FAILURE: boot stage " & $stage & " (" & outBin.extractFilename &
+         ") failed after " & formatFloat(dt, ffDecimal, precision=2) & "s"
+  if not fileExists(outBin):
+    quit "FAILURE: boot stage " & $stage & ": " & outBin &
          " was not produced (did `--out` get rejected?)"
-  echo "[boot] stage ", stage, " produced ", result, " in ",
+  echo "[boot] stage ", stage, " produced ", outBin, " in ",
        formatFloat(dt, ffDecimal, precision=2), "s"
+
+proc compileBootStage(stage: int; cacheBase, args: string; withValgrind: bool):
+                     string =
+  ## Build stage `stage` of the toolchain. Returns the stage's bin
+  ## directory. Driver of stage N is the stage-(N-1) nimony.
+  let prev = bootStageDir(stage - 1)
+  let prevNimony = prev / "nimony".addFileExt(ExeExt)
+  if not fileExists(prevNimony):
+    quit "boot: " & prevNimony & " not found (stage " & $(stage - 1) &
+         " missing)"
+  result = provisionStageBin(stage)
+  for tool in BootSelfTools:
+    let outBin = result / tool.addFileExt(ExeExt)
+    compileBootTool(stage, prevNimony, bootSourceFor(tool), outBin,
+                    cacheBase, args, withValgrind)
+
+proc stagesEqual(a, b: string): bool =
+  ## Two stages converge when every self-rebuilt binary is byte-identical.
+  ## Auxiliary carried tools are the same file copied twice, so we don't
+  ## bother comparing them.
+  for tool in BootSelfTools:
+    let pa = a / tool.addFileExt(ExeExt)
+    let pb = b / tool.addFileExt(ExeExt)
+    if not sameFileContent(pa, pb):
+      echo "[boot] stage diff: ", tool
+      return false
+  return true
 
 proc valgrindSmokeTest(exe: string) =
   ## Run the bootstrapped binary under valgrind on a trivial command to flush
@@ -1233,43 +1312,57 @@ proc valgrindSmokeTest(exe: string) =
     quit "FAILURE: valgrind reported errors in " & exe
   echo "[boot] valgrind smoke check passed"
 
+proc installBootWinner(winnerStageBin: string) =
+  ## Copy each self-rebuilt binary out as `bin/<tool>_b` so the
+  ## host-Nim-built `bin/<tool>` keeps working as a fallback. Mirrors the
+  ## prior single-binary `bin/nimony_b` install.
+  for tool in BootSelfTools:
+    let src = winnerStageBin / tool.addFileExt(ExeExt)
+    let dst = binDir() / (tool & "_b").addFileExt(ExeExt)
+    if fileExists(dst): removeFile(dst)
+    copyFile(source = src, dest = dst)
+    when defined(posix):
+      inclFilePermissions(dst, {fpUserExec, fpGroupExec, fpOthersExec})
+    echo "[boot] installed ", src, " -> ", dst
+
 proc bootCmd(args: string; withValgrind: bool) =
-  let nimonyExe = binDir() / "nimony".addFileExt(ExeExt)
-  if not fileExists(nimonyExe):
-    quit "boot: " & nimonyExe & " not found; run `hastur build nimony` first"
-  const nimonyMain = "src/nimony/nimony.nim"
-  if not fileExists(nimonyMain):
-    quit "boot: " & nimonyMain & " missing"
+  for tool in BootSelfTools:
+    let exe = binDir() / tool.addFileExt(ExeExt)
+    if not fileExists(exe):
+      quit "boot: " & exe & " not found; run `hastur build all` first"
+  for tool in BootCarryTools:
+    let exe = binDir() / tool.addFileExt(ExeExt)
+    if not fileExists(exe):
+      quit "boot: " & exe & " not found; run `hastur build all` first"
+  for tool in BootSelfTools:
+    let src = bootSourceFor(tool)
+    if not fileExists(src):
+      quit "boot: " & src & " missing"
   let cacheBase = nimcacheDir / "boot"
   removeDir cacheBase
   createDir cacheBase
   let t0 = epochTime()
 
-  let s1 = compileNimonyStage(1, nimonyExe, cacheBase, nimonyMain, args, withValgrind)
-  let s2 = compileNimonyStage(2, s1,        cacheBase, nimonyMain, args, withValgrind)
+  let s1 = compileBootStage(1, cacheBase, args, withValgrind)
+  let s2 = compileBootStage(2, cacheBase, args, withValgrind)
 
   var winner = s2
-  if sameFileContent(s1, s2):
+  if stagesEqual(s1, s2):
     echo "[boot] stages 1 and 2 are byte-identical: stable bootstrap."
   else:
     echo "[boot] stages 1 and 2 differ; running stage 3 to check for convergence"
-    let s3 = compileNimonyStage(3, s2, cacheBase, nimonyMain, args, withValgrind)
-    if sameFileContent(s2, s3):
+    let s3 = compileBootStage(3, cacheBase, args, withValgrind)
+    if stagesEqual(s2, s3):
       echo "[boot] stages 2 and 3 are byte-identical: stable bootstrap."
     else:
       echo "[boot] WARNING: stages 2 and 3 still differ — bootstrap is not converging."
     winner = s3
 
   if withValgrind:
-    valgrindSmokeTest(winner)
+    valgrindSmokeTest(winner / "nimony".addFileExt(ExeExt))
 
-  let dest = binDir() / "nimony_b".addFileExt(ExeExt)
-  if fileExists(dest): removeFile(dest)
-  copyFile(source = winner, dest = dest)
-  when defined(posix):
-    inclFilePermissions(dest, {fpUserExec, fpGroupExec, fpOthersExec})
-  echo "[boot] installed ", winner, " -> ", dest, " in total ",
-       formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  installBootWinner(winner)
+  echo "[boot] total ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   echo "SUCCESS."
 
 proc selfcheckCmd() =
@@ -1278,9 +1371,9 @@ proc selfcheckCmd() =
   ## or `src/lib/` that the compiler itself depends on:
   ##
   ##   1. Rebuild nimony + nimsem + hexer from host Nim, so all three reflect
-  ##      current source (a stale hexer was what hid the
-  ##      `suffixToNif` extension regression — `boot` and `bootstrap` only
-  ##      rebuild `bin/nimony`, which can lull you into a false green).
+  ##      current source. `boot` self-rebuilds the same trio at every stage,
+  ##      but it starts from whatever `bin/` already contains, so a stale
+  ##      stage-0 toolchain would still poison stage 1's inputs.
   ##   2. `bootstrap`: compile every module on the bootstrap list with the
   ##      freshly-built `bin/nimony`. Catches per-module sem/codegen
   ##      regressions and fails fast.

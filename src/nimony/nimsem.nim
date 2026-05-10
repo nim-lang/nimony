@@ -9,10 +9,10 @@
 import std / [parseopt, sets, strutils, os, assertions, syncio]
 
 import ".." / gear2 / modnames
-import ".." / lib / argsfinder
-import sem, nifconfig, semos, semdata, indexgen, programs, symparser
-import nifcursors, nifstreams, derefs, deps, nifcursors, nifstreams, nifreader, nifbuilder, nifindexes, tooldirs, idetools, cli, langmodes
-import ".." / lib / vfs
+import ".." / lib / [argsfinder, symparser, nifcursors, nifstreams, nifreader,
+                     nifbuilder, nifindexes, tooldirs, vfs]
+import sem, nifconfig, semos, semdata, indexgen, programs,
+       derefs, deps, idetools, cli, langmodes
 
 const
   Version = "0.2"
@@ -85,7 +85,8 @@ proc executeNif(files: seq[string]; config: sink NifConfig) =
   exec quoteShell(findTool("nimony")) & " --nimcache:" & quoteShell(config.nifcachePath) &
     " c " & quoteShell(stdlibFile("std/writenif.nim"))
 
-  let dependencyFiles = files[1..^1]
+  var dependencyFiles: seq[string] = @[]
+  for i in 1..files.high: dependencyFiles.add files[i]
 
   buildGraphForEval(
     config = config,

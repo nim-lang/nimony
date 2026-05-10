@@ -6,7 +6,7 @@
 
 ## Path handling and `exec` like features as `sem.nim` needs it.
 
-from std / strutils import multiReplace, split, strip
+from std / strutils import multiReplace, split, strip, startsWith
 import std / [tables, sets, os, envvars, syncio, formatfloat, assertions, dirs, paths]
 from std / osproc import execCmdEx
 
@@ -21,9 +21,13 @@ import nimony_model, symtabs, builtintypes, decls, asthelpers,
 import ".." / gear2 / modnames
 
 proc nimonyDir(): string =
+  ## The project root for stdlib resolution. `bin*` (not just `bin`) is
+  ## matched so the boot bootstrap can stage toolchains under sibling
+  ## directories like `bin0`, `bin1`, `bin2` and still find `lib/` next to
+  ## them.
   let appDir = getAppDir()
   let (head, tail) = splitPath(appDir)
-  if tail == "bin":
+  if tail.startsWith("bin"):
     result = head
   else:
     result = appDir
@@ -43,7 +47,7 @@ proc stdlibFile*(f: string): string =
 proc compilerDir*(): string =
   let appDir = getAppDir()
   let (head, tail) = splitPath(appDir)
-  if tail == "bin":
+  if tail.startsWith("bin"):
     return head
   else: return tail
 

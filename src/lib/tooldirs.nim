@@ -3,9 +3,13 @@
 import std / [os, strutils]
 
 proc binDir*(): string =
+  ## The directory tools live in. `bin*` is matched (not just `bin`) so the
+  ## boot bootstrap can stage parallel toolchains under sibling directories
+  ## like `bin0`, `bin1`, `bin2` without each stage's nimony falling back to
+  ## looking in `bin*/bin`.
   let appDir = getAppDir()
   let (_, tail) = splitPath(appDir)
-  if tail == "bin":
+  if tail.startsWith("bin"):
     result = appDir
   else:
     result = appDir / "bin"

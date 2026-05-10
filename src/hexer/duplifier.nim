@@ -456,7 +456,14 @@ proc trAsgn(c: var Context; n: var Cursor) =
   assert leType.typeKind != AutoT, "could not compute type of: " & toString(le, false)
 
   let destructor = getDestructor(c.lifter[], leType, n.info)
-  if destructor == NoSymId:
+  # A `{.cursor.}` variable is non-owning: trLocal already skipped the `=dup`
+  # at its declaration, so per-asgn `=destroy(old) … =dup(rhs)` would
+  # over-decrement the rc on a value the cursor never claimed ownership of
+  # (and matching =destroy at end of scope was suppressed for the same
+  # reason). Treat cursor lhs's like the no-destructor case — raw bitcopy.
+  let lhsIsCursor = le.kind == Symbol and
+                    c.typeCache.getLocalInfo(le.symId).kind == CursorY
+  if destructor == NoSymId or lhsIsCursor:
     # the type has no destructor, there is nothing interesting to do:
     trSons c, n, DontCare
 
@@ -1045,9 +1052,26 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects)
       c.dest.add strToken(pool.strings.getOrIncl(m), info)
     skip n, SkipFull
 
-proc trDeref(c: var Context; n: var Cursor)
+proc trDeref(c: var Context; n: var Cursor; e: Expects)
     {.ensuresNif: addedAny(c.dest).} =
+  # `(deref ptr)` produces a value of the dereffed type. When the
+  # caller wants to own it (e.g. an `Item(field: deref ptr)` field
+  # value, or any other `WantOwner` slot), we have to splice in the
+  # type's `=dup` hook the same way `trLocation` does for symbol/dot
+  # reads — otherwise the slot is initialized via raw struct copy with
+  # no rc bump, and the matching `=destroy` later under-counts the
+  # owner's refcount and frees the underlying buffer prematurely.
   let info = n.info
+  let derefedTyp = getType(c.typeCache, n) # type of the whole `(deref …)` expr
+  let needsDup = e == WantOwner and not cursorIsNil(derefedTyp) and
+                 hasDestructor(c, derefedTyp) and not isLastRead(c, n)
+  var dupHook = NoSymId
+  if needsDup:
+    dupHook = getHook(c.lifter[], attachedDup, derefedTyp, info)
+  let wrapDup = needsDup and dupHook != NoSymId
+  if wrapDup:
+    c.dest.addParLe CallS, info
+    c.dest.add symToken(dupHook, info)
   inc n, SkipTag
   var typ = getType(c.typeCache, n, {SkipAliases})
   if typ.kind == ParLe and typ.typeKind == SinkT:
@@ -1063,6 +1087,8 @@ proc trDeref(c: var Context; n: var Cursor)
     c.dest.add symToken(dataField, info)
     c.dest.addIntLit(0, info) # inheritance
   takeParRi c.dest, n
+  if wrapDup:
+    c.dest.addParRi()
 
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   if n.kind == Symbol:
@@ -1113,7 +1139,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
        InternalFieldPairsX, IsX:
       trSons c, n, WantNonOwner
     of DerefX, HderefX:
-      trDeref c, n
+      trDeref c, n, e
     of DdotX:
       bug "nodekind should have been eliminated in desugar.nim"
     of EnvpX:
