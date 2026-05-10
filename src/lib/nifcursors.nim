@@ -288,7 +288,10 @@ proc skipUntilEnd*(c: var Cursor) =
 template hasMore*(n: Cursor): bool =
   ## True while there are more tokens to read in the current scope. Safe
   ## at end-of-buffer (`rem == 0`) — returns false rather than dereferencing.
-  n.rem > 0 and n.kind != ParRi
+  when defined(virtualParRi):
+    n.rem > 0 and n.kind != ParRi
+  else:
+    n.kind != ParRi
 
 template into*(n: var Cursor; body: untyped) =
   ## Enters the current ParLe node, runs `body` to process the children,
