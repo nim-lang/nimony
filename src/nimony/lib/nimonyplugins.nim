@@ -367,7 +367,7 @@ proc firstChild*(n: NifCursor): NifCursor {.inline.} =
   ## body count so it can be used both for read-only `~` / `takeTree`
   ## extraction *and* for bounded iteration (`while c.hasMore: …`). `n`
   ## itself is unchanged.
-  assert n.kind == ParLe, "firstChild requires cursor at ParLe"
+  ## a `ParLe`.
   result = NifCursor(cursor: firstSon(n.cursor))
 
 # ── Traversal templates ──────────────────────────────────────────────────
@@ -652,9 +652,9 @@ template replaceHead*(t: var Replacer;
                       tag: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma;
                       info: LineInfo; body: untyped) =
   ## Like `keepTag` but emits a new tag instead of copying the input's tag.
-  ## Enters the input tree via nifprims's bounded `into`, runs `body`
+  ## Enters the input tree via `into`, runs `body`
   ## (which must consume the children), then closes both input and output
-  ## scopes — virtual-ParRi safe.
+  ## scopes.
   assert t.src.kind == ParLe, "replaceHead requires cursor at ParLe"
   t.dest.withTree(tag, info):
     nifcursors.into t.src.cursor:
