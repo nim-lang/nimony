@@ -228,10 +228,9 @@ proc trLocal(c: var Context; n: var Cursor) =
 proc trScope(c: var Context; body: var Cursor; kind = Other) =
   copyIntoKind c.dest, StmtsS, body.info:
     if body.stmtKind == StmtsS:
-      inc body
-      while body.kind != ParRi:
-        tr c, body
-      inc body
+      body.into:
+        while body.hasMore:
+          tr c, body
     else:
       tr c, body
     leaveScope(c, c.currentScope, kind)
@@ -239,7 +238,7 @@ proc trScope(c: var Context; body: var Cursor; kind = Other) =
 proc registerSinkParameters(c: var Context; params: Cursor) =
   var p = params
   inc p
-  while p.kind != ParRi:
+  while p.hasMore:
     let r = takeLocal(p, SkipFinalParRi)
     if r.typ.typeKind == SinkT:
       let destructor = getDestructor(c.lifter[], r.typ.firstSon, p.info)
@@ -305,7 +304,7 @@ proc trBlock(c: var Context; n: var Cursor) =
 
 proc trIf(c: var Context; n: var Cursor) =
   copyInto(c.dest, n):
-    while n.kind != ParRi:
+    while n.hasMore:
       case n.substructureKind
       of ElifU:
         copyInto(c.dest, n):
@@ -323,7 +322,7 @@ proc trIf(c: var Context; n: var Cursor) =
 proc trCase(c: var Context; n: var Cursor) =
   copyInto(c.dest, n):
     tr c, n
-    while n.kind != ParRi:
+    while n.hasMore:
       case n.substructureKind
       of OfU:
         copyInto(c.dest, n):
@@ -391,10 +390,10 @@ proc tr(c: var Context; n: var Cursor) =
         BindS, MixinS, UsingS, AsmS, DeferS, NoStmt:
       if n.kind == ParLe:
         c.dest.add n
-        inc n
-        while n.kind != ParRi:
-          tr(c, n)
-        takeParRi(c.dest, n)
+        n.into:
+          while n.hasMore:
+            tr(c, n)
+        c.dest.addParRi()
       else:
         c.dest.add n
         inc n
@@ -406,14 +405,14 @@ proc injectDestructors*(pass: var Pass; lifter: ref LiftingCtx) =
     dest: move(pass.dest))
   assert n.stmtKind == StmtsS
   c.dest.add n
-  inc n
-  while n.kind != ParRi:
-    tr(c, n)
+  n.into:
+    while n.hasMore:
+      tr(c, n)
 
-  # pass the scope by value to avoid aliasing `c` with a borrow of one of
-  # its fields; `leaveScope` only reads from it.
-  let scope = c.currentScope
-  leaveScope c, scope
-  takeParRi(c.dest, n)
+    # pass the scope by value to avoid aliasing `c` with a borrow of one of
+    # its fields; `leaveScope` only reads from it.
+    let scope = c.currentScope
+    leaveScope c, scope
+  c.dest.addParRi()
   genMissingHooks lifter[]
   pass.dest = ensureMove c.dest

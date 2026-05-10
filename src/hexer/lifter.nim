@@ -173,7 +173,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
   of TupleT:
     var tup = typ
     inc tup
-    while tup.kind != ParRi:
+    while tup.hasMore:
       let field = getTupleFieldType(tup)
       if not isTrivial(c, field):
         return false
@@ -346,7 +346,7 @@ proc unravelObjField(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf;
       unravel c, fieldType, a, b
 
 proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf; depth: int) =
-  while n.kind != ParRi:
+  while n.hasMore:
     case n.substructureKind
     of CaseU:
       # XXX for now counts each case object field as separate
@@ -370,7 +370,7 @@ proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: T
       let dest = accessObjField(c, paramA, selectorField.name)
       c.dest.add dest
 
-      while n.kind != ParRi:
+      while n.hasMore:
         case n.substructureKind
         of OfU:
           c.dest.takeToken(n)
@@ -410,7 +410,7 @@ proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf
     # Collect field cursor positions first, then process in reverse.
     var fieldPositions: seq[Cursor] = @[]
     var scan = n
-    while scan.kind != ParRi:
+    while scan.hasMore:
       case scan.substructureKind
       of CaseU, FldU, GfldU:
         fieldPositions.add scan
@@ -474,7 +474,7 @@ proc unravelTuple(c: var LiftingCtx;
   var n = n
   inc n
   var idx = 0
-  while n.kind != ParRi:
+  while n.hasMore:
     let fieldType = getTupleFieldType(n)
     skip n
 
@@ -700,7 +700,7 @@ proc addParamType(c: var LiftingCtx; typ: TypeCursor) =
     copyTree c.dest, typ
   else:
     c.dest.takeToken n
-    while n.kind != ParRi:
+    while n.hasMore:
       if isNilAnnotation(n):
         skip n
       else:

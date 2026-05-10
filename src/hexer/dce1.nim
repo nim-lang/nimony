@@ -36,7 +36,7 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
         if not isLocalName(symName):
           newOwner = n.symId
 
-      while n.kind != ParRi:
+      while n.hasMore:
         tr n, a, newOwner
       inc n
     else:
@@ -51,7 +51,7 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
         # If so, mark the owner as a root (exportc symbols are entry points)
         inc n
         var hasExportc = false
-        while n.kind != ParRi:
+        while n.hasMore:
           if n.kind == ParLe and n.pragmaKind == ExportcP:
             hasExportc = true
           tr n, a, owner
@@ -61,7 +61,7 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
         return
       else:
         inc n
-      while n.kind != ParRi:
+      while n.hasMore:
         tr n, a, owner
       inc n
   of Symbol:
@@ -105,44 +105,42 @@ proc readModuleAnalysis*(infile: string): ModuleAnalysis =
   var n = beginRead(buf)
   result = ModuleAnalysis()
   if n.stmtKind == StmtsS:
-    inc n
     let depTag = pool.tags.getOrIncl(depName)
     let offerTag = pool.tags.getOrIncl(offerName)
     let rootTag = pool.tags.getOrIncl(rootName)
-    while n.kind != ParRi:
-      if n.kind == ParLe:
+    n.into:                                     # (stmts ...)
+      while n.hasMore:
+        if n.kind != ParLe:
+          raiseAssert infile & ": expected ParLe"
         if n.tag == rootTag:
-          inc n
-          while n.kind != ParRi:
-            if n.kind == Symbol:
-              result.roots.incl(n.symId)
-              inc n
-            else:
-              raiseAssert infile & ": expected Symbol"
+          n.into:                               # (roots ...)
+            while n.hasMore:
+              if n.kind == Symbol:
+                result.roots.incl(n.symId)
+                skip n
+              else:
+                raiseAssert infile & ": expected Symbol"
         elif n.tag == depTag:
-          inc n
-          let key = n.symId
-          result.uses[key] = initHashSet[SymId]()
-          inc n
-          while n.kind != ParRi:
-            if n.kind == Symbol:
-              result.uses.getOrQuit(key).incl(n.symId)
-              inc n
-            else:
-              raiseAssert infile & ": expected Symbol"
+          n.into:                               # (uses ...)
+            let key = n.symId
+            result.uses[key] = initHashSet[SymId]()
+            skip n
+            while n.hasMore:
+              if n.kind == Symbol:
+                result.uses.getOrQuit(key).incl(n.symId)
+                skip n
+              else:
+                raiseAssert infile & ": expected Symbol"
         elif n.tag == offerTag:
-          inc n
-          while n.kind != ParRi:
-            if n.kind == Symbol:
-              result.offers.incl(n.symId)
-              inc n
-            else:
-              raiseAssert infile & ": expected Symbol"
+          n.into:                               # (offers ...)
+            while n.hasMore:
+              if n.kind == Symbol:
+                result.offers.incl(n.symId)
+                skip n
+              else:
+                raiseAssert infile & ": expected Symbol"
         else:
           raiseAssert infile & ": expected (roots|uses|offers)"
-        inc n
-      else:
-        raiseAssert infile & ": expected ParLe"
 
 proc writeDceOutput*(buf: var TokenBuf; outfile, dottedSuffix: string) =
   ## Direct overload that works on an already-parsed token buffer,

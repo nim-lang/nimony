@@ -63,30 +63,27 @@ proc externName*(s: SymId; n: Cursor): StrId =
 proc extractExtern(n: var Cursor; pragmasAt: int; isImport: var bool): StrId =
   result = StrId(0)
   isImport = false
-  inc n
-  if n.kind != SymbolDef:
-    raiseAssert "Expected SymbolDef after toplevel declaration"
-  else:
+  n.into:  # enter toplevel (type/proc/var/...)
+    if n.kind != SymbolDef:
+      raiseAssert "Expected SymbolDef after toplevel declaration"
     let symId = n.symId
     inc n
     for i in 1..<pragmasAt: skip n
     if n.substructureKind == PragmasU:
-      inc n
-      while n.kind != ParRi:
-        let pk = n.pragmaKind
-        if pk in {ImportcP, ImportcppP, ExportcP}:
-          result = externName(symId, n)
-          if pk in {ImportcP, ImportcppP}:
-            isImport = true
-        skip n
-      inc n
+      n.into:
+        while n.hasMore:
+          let pk = n.pragmaKind
+          if pk in {ImportcP, ImportcppP, ExportcP}:
+            result = externName(symId, n)
+            if pk in {ImportcP, ImportcppP}:
+              isImport = true
+          skip n
     elif n.kind == DotToken:
       discard "ok"
     else:
       raiseAssert "pragmas not at the correct position"
-    while n.kind != ParRi:
+    while n.hasMore:
       skip n
-    inc n
 
 type
   TypeScope* {.acyclic.} = ref object
@@ -203,28 +200,24 @@ proc processToplevelDecl(m: var MainModule; n: var Cursor; kind: NifcSym; pragma
 
 proc detectToplevelDecls(m: var MainModule) =
   var n = cursorAt(m.src, 0)
-  var nested = 0
-  while true:
-    case n.kind
-    of ParLe:
-      case n.stmtKind
-      of TypeS:
-        m.types.add n
-        processToplevelDecl(m, n, TypeY, 1)
-      of ProcS:
-        processToplevelDecl(m, n, ProcY, 3)
-      of VarS, ConstS, GvarS, TvarS:
-        processToplevelDecl(m, n, n.symKind, 1)
+  if n.kind != ParLe: return
+  # The src buffer starts with a (stmts ...) wrapper. Walk its children.
+  n.into:
+    while n.hasMore:
+      case n.kind
+      of ParLe:
+        case n.stmtKind
+        of TypeS:
+          m.types.add n
+          processToplevelDecl(m, n, TypeY, 1)
+        of ProcS:
+          processToplevelDecl(m, n, ProcY, 3)
+        of VarS, ConstS, GvarS, TvarS:
+          processToplevelDecl(m, n, n.symKind, 1)
+        else:
+          skip n
       else:
         inc n
-        inc nested
-    of ParRi:
-      assert nested > 0
-      dec nested
-      inc n
-    else:
-      inc n
-    if nested == 0: break
 
 proc parse(r: var Reader; filename: string): MainModule =
   # empirically, (size div 7) is a good estimate for the number of nodes

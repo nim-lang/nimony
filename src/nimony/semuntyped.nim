@@ -27,42 +27,45 @@ include ".." / lib / compat2
 import nimony_model, decls, programs, semdata, sembasics, asthelpers, symtabs
 
 proc semBindStmt(c: var SemContext; dest: var TokenBuf; n: var Cursor; toBind: var HashSet[SymId]) =
-  takeToken dest, n
-  while n.kind != ParRi:
-    # If 'a' is an overloaded symbol, we used to use the first symbol
-    # as a 'witness' and use the fact that subsequent lookups will yield
-    # the same symbol!
-    # This is however not true anymore for hygienic templates as semantic
-    # processing for them changes the symbol table...
-    let name = takeIdent(n)
-    if name == StrId(0):
-      c.buildErr dest, n.info, "invalid identifier"
-    var symsBuf = createTokenBuf(4)
-    discard buildSymChoice(c, symsBuf, name, n.info, FindAll)
-    var syms = cursorAt(symsBuf, 0)
-    case syms.kind
-    of Ident:
-      c.buildErr dest, n.info, "undeclared identifier: " & pool.strings[syms.litId]
-    of Symbol:
-      dest.add syms
-    else:
-      if syms.exprKind in {OchoiceX, CchoiceX}:
-        inc syms
-        while syms.kind != ParRi:
-          dest.add syms
+  dest.add n
+  n.into:  # (bind …)
+    while n.hasMore:
+      # If 'a' is an overloaded symbol, we used to use the first symbol
+      # as a 'witness' and use the fact that subsequent lookups will yield
+      # the same symbol!
+      # This is however not true anymore for hygienic templates as semantic
+      # processing for them changes the symbol table...
+      let name = takeIdent(n)
+      if name == StrId(0):
+        c.buildErr dest, n.info, "invalid identifier"
+      var symsBuf = createTokenBuf(4)
+      discard buildSymChoice(c, symsBuf, name, n.info, FindAll)
+      var syms = cursorAt(symsBuf, 0)
+      case syms.kind
+      of Ident:
+        c.buildErr dest, n.info, "undeclared identifier: " & pool.strings[syms.litId]
+      of Symbol:
+        dest.add syms
       else:
-        bug("unreachable")
-  takeParRi dest, n
+        if syms.exprKind in {OchoiceX, CchoiceX}:
+          syms.into:
+            while syms.hasMore:
+              dest.add syms
+              inc syms, AnyExpr
+        else:
+          bug("unreachable")
+  dest.addParRi()
 
 proc semMixinStmt(c: var SemContext; dest: var TokenBuf; n: var Cursor; toMixin: var HashSet[StrId]) =
-  takeToken dest, n
-  while n.kind != ParRi:
-    let name = takeIdent(n)
-    if name == StrId(0):
-      c.buildErr dest, n.info, "invalid identifier"
-    toMixin.incl(name)
-    discard buildSymChoice(c, dest, name, n.info, FindAll)
-  takeParRi dest, n
+  dest.add n
+  n.into:  # (mixin …)
+    while n.hasMore:
+      let name = takeIdent(n)
+      if name == StrId(0):
+        c.buildErr dest, n.info, "invalid identifier"
+      toMixin.incl(name)
+      discard buildSymChoice(c, dest, name, n.info, FindAll)
+  dest.addParRi()
 
 type
   UntypedMode* = enum
@@ -88,11 +91,11 @@ proc createUntypedContext*(c: ptr SemContext; mode: UntypedMode; dirty = false):
 proc addParams*(c: var UntypedCtx; dest: var TokenBuf; paramsStart: int) =
   var read = cursorAt(dest, paramsStart)
   if read.substructureKind in {ParamsU, TypevarsU}:
-    inc read # skip tag
-    while read.kind != ParRi:
-      let param = asLocal(read)
-      incl c.params, param.name.symId
-      skip read
+    read.into:
+      while read.hasMore:
+        let param = asLocal(read)
+        incl c.params, param.name.symId
+        skip read
   endRead(dest)
 
 proc openScope(c: var UntypedCtx) =
@@ -136,13 +139,14 @@ proc getIdentReplaceParams(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor)
     takeToken dest, n
   of ParLe:
     if n.exprKind == QuotedX:
-      takeToken dest, n
+      dest.add n
       result = false
-      while n.kind != ParRi:
-        let hasParam = getIdentReplaceParams(c, dest, n)
-        if hasParam:
-          result = true
-      takeParRi dest, n
+      n.into QuotedX:
+        while n.hasMore:
+          let hasParam = getIdentReplaceParams(c, dest, n)
+          if hasParam:
+            result = true
+      dest.addParRi()
     else:
       result = false
       c.c[].buildErr dest, n.info, "illformed AST"
@@ -157,13 +161,13 @@ type
 proc symBinding(n: Cursor): TSymBinding =
   result = spNone
   var n = n
-  inc n
-  while n.kind != ParRi:
-    case n.pragmaKind
-    of GensymP: return spGenSym
-    of InjectP: return spInject
-    else: discard
-    skip n
+  n.into:  # (pragmas …)
+    while n.hasMore:
+      case n.pragmaKind
+      of GensymP: return spGenSym
+      of InjectP: return spInject
+      else: discard
+      skip n
 
 proc addDecl(c: var UntypedCtx; dest: var TokenBuf; name, pragmas: Cursor; k: SymKind; nameStart, declStart: int) =
   var name = name
@@ -257,13 +261,13 @@ proc semTemplSymbol(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor; firstS
       var withoutGensyms = createTokenBuf(16)
       var choice = dest.cursorAt(start)
       withoutGensyms.add choice # add tag
-      inc choice
-      while choice.kind != ParRi:
-        let sym = choice.symId
-        if sym notin c.gensyms:
-          withoutGensyms.add choice
-        inc choice
-      takeParRi withoutGensyms, choice
+      choice.into:
+        while choice.hasMore:
+          let sym = choice.symId
+          if sym notin c.gensyms:
+            withoutGensyms.add choice
+          inc choice, AnyExpr
+      withoutGensyms.addParRi()
       dest.endRead()
       dest.shrink start
       dest.add withoutGensyms
@@ -271,10 +275,11 @@ proc semTemplSymbol(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor; firstS
 proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor)
 
 proc semTemplBodySons(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
-  takeToken dest, n
-  while n.kind != ParRi:
-    semTemplBody c, dest, n
-  takeParRi dest, n
+  dest.add n
+  n.into:
+    while n.hasMore:
+      semTemplBody c, dest, n
+  dest.addParRi()
 
 proc semTemplPragmas(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
   # XXX should call `semTemplBody` but ignore valid pragma identifiers
@@ -381,10 +386,11 @@ proc semTemplRoutineDecl(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor; k
   inc c.inNestedRoutine
   inc c.inTemplateHeader
   if n.substructureKind == ParamsU:
-    takeToken dest, n
-    while n.kind != ParRi:
-      semTemplLocal(c, dest, n, ParamY)
-    takeParRi dest, n
+    dest.add n
+    n.into ParamsU:
+      while n.hasMore:
+        semTemplLocal(c, dest, n, ParamY)
+    dest.addParRi()
   else:
     takeToken dest, n # dot
   dec c.inTemplateHeader
@@ -453,32 +459,37 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
         semBindStmt c.c[], dest, n, c.toBind
       of MixinS:
         if c.inNestedRoutine > 0:
-          takeToken dest, n
-          while n.kind != ParRi:
-            semTemplBody c, dest, n
-          takeParRi dest, n
+          dest.add n
+          n.into MixinS:
+            while n.hasMore:
+              semTemplBody c, dest, n
+          dest.addParRi()
         else:
           semMixinStmt c.c[], dest, n, c.toMixin
       of IfS:
-        takeToken dest, n
-        while n.kind != ParRi:
-          case n.substructureKind
-          of ElifU:
-            takeToken dest, n
-            openScope c
-            semTemplBody c, dest, n
-            semTemplBody c, dest, n
-            closeScope c
-            takeParRi dest, n
-          of ElseU:
-            takeToken dest, n
-            openScope c
-            semTemplBody c, dest, n
-            closeScope c
-            takeParRi dest, n
-          else:
-            error "illformed AST", n
-        takeParRi dest, n
+        dest.add n
+        n.into IfS:
+          while n.hasMore:
+            case n.substructureKind
+            of ElifU:
+              dest.add n
+              n.into ElifU:
+                openScope c
+                semTemplBody c, dest, n
+                semTemplBody c, dest, n
+                closeScope c
+              dest.addParRi()
+            of ElseU:
+              dest.add n
+              n.into ElseU:
+                openScope c
+                semTemplBody c, dest, n
+                closeScope c
+              dest.addParRi()
+            else:
+              error "illformed AST", n
+              skip n  # avoid infinite loop on illformed
+        dest.addParRi()
       of WhileS:
         takeToken dest, n
         semTemplBody c, dest, n
@@ -487,35 +498,40 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
         closeScope c
         takeParRi dest, n
       of CaseS:
-        takeToken dest, n
+        dest.add n
         openScope c
-        semTemplBody c, dest, n
-        while n.kind != ParRi:
-          case n.substructureKind
-          of OfU:
-            takeToken dest, n
-            semTemplBody c, dest, n
-            openScope c
-            semTemplBody c, dest, n
-            closeScope c
-            takeParRi dest, n
-          of ElifU:
-            takeToken dest, n
-            openScope c
-            semTemplBody c, dest, n
-            semTemplBody c, dest, n
-            closeScope c
-            takeParRi dest, n
-          of ElseU:
-            takeToken dest, n
-            openScope c
-            semTemplBody c, dest, n
-            closeScope c
-            takeParRi dest, n
-          else:
-            error "illformed AST", n
+        n.into CaseS:
+          semTemplBody c, dest, n
+          while n.hasMore:
+            case n.substructureKind
+            of OfU:
+              dest.add n
+              n.into OfU:
+                semTemplBody c, dest, n
+                openScope c
+                semTemplBody c, dest, n
+                closeScope c
+              dest.addParRi()
+            of ElifU:
+              dest.add n
+              n.into ElifU:
+                openScope c
+                semTemplBody c, dest, n
+                semTemplBody c, dest, n
+                closeScope c
+              dest.addParRi()
+            of ElseU:
+              dest.add n
+              n.into ElseU:
+                openScope c
+                semTemplBody c, dest, n
+                closeScope c
+              dest.addParRi()
+            else:
+              error "illformed AST", n
+              skip n  # avoid infinite loop
         closeScope c
-        takeParRi dest, n
+        dest.addParRi()
       of ForS:
         takeToken dest, n
         openScope c
@@ -577,7 +593,7 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
       inc c.noGenSym
       semTemplBody c, dest, n
       dec c.noGenSym
-      if n.kind != ParRi:
+      if n.hasMore:
         # annoying inheritance depth:
         takeTree dest, n
       takeParRi dest, n

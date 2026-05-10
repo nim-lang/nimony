@@ -55,7 +55,8 @@ proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
           updateLoop(dest, n, inlineT, foundInline) # pragmas
           updateLoop(dest, n, inlineT, foundInline) # type
           updateLoop(dest, n, inlineT, foundInline) # value
-        skipToEnd n
+        while n.hasMore: skip n
+        consumeParRi n
       of TemplateIdx, MacroIdx, IteratorIdx:
         # these always have inline semantics
         inc n # tag
@@ -69,7 +70,8 @@ proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
           updateLoop(dest, n, inlineT, foundInline) # pragmas
           updateLoop(dest, n, inlineT, foundInline) # effects
           updateLoop(dest, n, inlineT, foundInline) # body
-        skipToEnd n
+        while n.hasMore: skip n
+        consumeParRi n
       of ProcIdx, FuncIdx, MethodIdx, ConverterIdx:
         inc n # tag
         if isExported(n):
@@ -86,7 +88,8 @@ proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
             updateLoop(dest, n, inlineT, dummy) # body
           else:
             skip n
-        skipToEnd n
+        while n.hasMore: skip n
+        consumeParRi n
       of NoIndexTag, InlineIdx, KvIdx, VvIdx, BuildIdx, IndexIdx,
          ExportIdx, FromexportIdx, ExportexceptIdx:
         inc n

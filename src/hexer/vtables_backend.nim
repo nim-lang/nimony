@@ -19,8 +19,7 @@ include ".." / lib / compat2
 import ".." / lib / tinyhashes
 import ".." / lib / [nifindexes, symparser, treemangler]
 import passes
-import ".." / nimony / [nimony_model, decls, programs, typenav,
-  renderer, builtintypes, typeprops, typekeys, vtables_frontend]
+import ".." / nimony / [nimony_model, decls, programs, typenav, renderer, builtintypes, typeprops, typekeys, vtables_frontend]
 from duplifier import constructsValue
 
 type
@@ -255,7 +254,7 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # first arg still need to be passed to the method:
     useTemp dest, temp, info
   # other arguments are handled by the regular code:
-  while n.kind != ParRi:
+  while n.hasMore:
     tr c, dest, n
 
 proc maybeImport(c: var Context; cls, vtabName: SymId) =
@@ -304,7 +303,7 @@ proc trObjConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.copyIntoKind AddrX, info:
       dest.addSymUse vtabName, info
     maybeImport(c, cls, vtabName)
-  while n.kind != ParRi:
+  while n.hasMore:
     tr c, dest, n
   takeParRi dest, n
 
@@ -318,7 +317,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; forceStaticCall: 
     trGetRtti c, dest, n
   else:
     dest.takeToken n # skip `(call)`
-    while n.kind != ParRi:
+    while n.hasMore:
       tr c, dest, n
     takeParRi dest, n
 
@@ -327,7 +326,7 @@ proc trProcCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   inc n  # skip (proccall
   dest.addParLe(CallS, info)
-  while n.kind != ParRi:
+  while n.hasMore:
     tr c, dest, n
   takeParRi dest, n
 
@@ -581,7 +580,7 @@ proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
     else:
       n = nn
       copyInto dest, n:
-        while n.kind != ParRi:
+        while n.hasMore:
           tr c, dest, n
   # store back:
   nn = n
@@ -595,10 +594,10 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
   dest.add n
-  inc n
-  while n.kind != ParRi:
-    tr c, dest, n
-  takeParRi dest, n
+  n.into:
+    while n.hasMore:
+      tr c, dest, n
+  dest.addParRi()
   c.typeCache.closeScope()
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -739,10 +738,9 @@ proc collectMethods(c: var Context; n: var Cursor) =
   # we only care about top level methods
   case n.stmtKind
   of StmtsS:
-    inc n
-    while n.kind != ParRi:
-      collectMethods c, n
-    skipParRi n
+    n.into:
+      while n.hasMore:
+        collectMethods c, n
   of MethodS:
     let orig = n
     let r = takeRoutine(n, SkipFinalParRi)
@@ -860,7 +858,7 @@ proc transformVTables*(pass: var Pass; needsXelim: var bool) =
 
   emitVTables c, pass.dest
 
-  while n.kind != ParRi: tr c, pass.dest, n
+  while n.hasMore: tr c, pass.dest, n
   pass.dest.addParRi()
 
   c.typeCache.closeScope()

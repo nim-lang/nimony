@@ -129,11 +129,10 @@ proc aStmt(c: var Context; n: var Cursor) =
   case n.njvlKind
   of JtrueV:
     # we now know these symbols are true:
-    inc n
-    while n.kind != ParRi:
-      let s = getCfvar(n)
-      c.state[s][0] = true
-    inc n
+    n.into:
+      while n.hasMore:
+        let s = getCfvar(n)
+        c.state[s][0] = true
   of IteV, ItecV:
     inc n
     # we mask out cfvars here. Thus the statements that are
@@ -172,10 +171,9 @@ proc aStmt(c: var Context; n: var Cursor) =
     else:
       discard
     # ordinary recursion
-    inc n
-    while n.kind != ParRi:
-      aStmt c, n
-    inc n
+    n.into:
+      while n.hasMore:
+        aStmt c, n
 
 proc labelFromCfvar(s: Cfvar): SymId =
   let name = pool.syms[s[0]] & "_" & $s[1]
@@ -229,7 +227,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # we now know these symbols are true:
     inc n
     var label = (NoSymId, 0)
-    while n.kind != ParRi:
+    while n.hasMore:
       let mflag = n
       let s = getCfvar(n)
       if c.mustMaterialize.contains(s):
@@ -292,7 +290,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.takeToken n
     of ParLe:
       dest.takeToken n
-      while n.kind != ParRi:
+      while n.hasMore:
         trStmt c, dest, n
       dest.takeToken n
     of ParRi:
@@ -309,8 +307,8 @@ proc toGoto*(n: Cursor; moduleSuffix: string): TokenBuf =
 
   aStmt c, n
 
-  inc n
-  while n.kind != ParRi:
-    trStmt c, result, n
+  n.into:
+    while n.hasMore:
+      trStmt c, result, n
   result.addParRi()
   c.typeCache.closeScope()

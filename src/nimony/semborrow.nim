@@ -15,9 +15,7 @@ import nimony_model, symtabs, builtintypes, decls,
 import ".." / lib / symparser
 
 proc genBorrowedProcBody*(c: var SemContext; fn: StrId; signature: Cursor; info: PackedLineInfo): TokenBuf =
-  #[
-
-  Consider:
+  #[Consider:
 
   type
     VarId* = distinct int
@@ -28,32 +26,28 @@ proc genBorrowedProcBody*(c: var SemContext; fn: StrId; signature: Cursor; info:
   The body is a single call of the current proc name, converted
   to the distinct type, if the return type is one. The type could also
   be generic, so generate the parmeter type properly. It also needs to
-  skip modifiers first.
-
-  ]#
+  skip modifiers first.]#
   var n = signature
-  assert n.substructureKind == ParamsU
-  inc n
   result = createTokenBuf(10)
   result.add parLeToken(StmtsS, info)
   result.add parLeToken(CallS, info)
   result.add identToken(fn, info)
   var distinctParams = 0
-  while n.kind != ParRi:
-    let param = asLocal(n)
-    if param.kind == ParamY and param.name.kind == SymbolDef:
-      var isDistinct = false
-      let destType = skipDistinct(param.typ, isDistinct)
-      if isDistinct:
-        result.add parLeToken(DconvX, info)
-        result.copyTree destType
-        result.add symToken(param.name.symId, info)
-        result.addParRi(info)
-        inc distinctParams
-      else:
-        result.add symToken(param.name.symId, info)
-    skip n
-  inc n # skip ParRi
+  n.into ParamsU:
+    while n.hasMore:
+      let param = asLocal(n)
+      if param.kind == ParamY and param.name.kind == SymbolDef:
+        var isDistinct = false
+        let destType = skipDistinct(param.typ, isDistinct)
+        if isDistinct:
+          result.add parLeToken(DconvX, info)
+          result.copyTree destType
+          result.add symToken(param.name.symId, info)
+          result.addParRi(info)
+          inc distinctParams
+        else:
+          result.add symToken(param.name.symId, info)
+      skip n
   if n.kind == DotToken:
     discard "fine: no return type"
   else:

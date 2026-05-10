@@ -69,7 +69,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
   var n = n
   while n.exprKind == ExprX:
     inc n
-    while n.kind != ParRi and not isLastSon(n): skip n
+    while n.hasMore and not isLastSon(n): skip n
 
   if n.exprKind == EmoveX: inc n
 
@@ -228,7 +228,7 @@ proc trSons(c: var Context; n: var Cursor; e: Expects)
     {.ensuresNif: addedAny(c.dest).} =
   assert n.kind == ParLe
   takeToken c.dest, n
-  while n.kind != ParRi:
+  while n.hasMore:
     tr(c, n, e)
   takeParRi c.dest, n
 
@@ -252,7 +252,7 @@ proc isSimpleExpression(n: var Cursor): bool =
       result = true
       inc n
       skip n # type
-      while n.kind != ParRi:
+      while n.hasMore:
         if not isSimpleExpression(n): return false
       skipParRi n
     of ExprX:
@@ -391,7 +391,7 @@ proc callWasMoved(c: var Context; arg: Cursor; typ: Cursor) =
   var n = arg
   if n.exprKind == ExprX:
     inc n
-    while n.kind != ParRi:
+    while n.hasMore:
       if isLastSon(n):
         break
       else:
@@ -576,7 +576,7 @@ proc trExplicitCopy(c: var Context; n: var Cursor; op: AttachedOp) =
     copyIntoKind c.dest, CallS, info:
       copyIntoSymUse c.dest, hookProc, info
       inc n, SkipTag
-      while n.kind != ParRi:
+      while n.hasMore:
         tr c, n, DontCare
       takeParRi c.dest, n
   else:
@@ -657,7 +657,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
         of ScopeS:
           c.typeCache.openScope()
           takeToken c.dest, n
-          while n.kind != ParRi:
+          while n.hasMore:
             trOnlyEssentials c, n
           takeParRi c.dest, n
           c.typeCache.closeScope()
@@ -779,7 +779,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects)
   tr c, n, DontCare # transforms `fn` because it may be an expression that requires further handling
   assert fnType.substructureKind == ParamsU
   inc fnType
-  while n.kind != ParRi:
+  while n.hasMore:
     let previousFormalParam = fnType
     var e2 = WantNonOwner
     if fnType.kind == ParRi:
@@ -801,14 +801,14 @@ proc trRawConstructor(c: var Context; n: var Cursor; e: Expects)
   # Idioms like `echo ["ab", myvar, "xyz"]` are important to translate well.
   let e2 = if e == WillBeOwned: WantOwner else: e
   takeToken c.dest, n
-  while n.kind != ParRi:
+  while n.hasMore:
     tr c, n, e2
   takeParRi c.dest, n
 
 proc trConvExpr(c: var Context; n: var Cursor; e: Expects) =
   copyInto c.dest, n:
     takeTree c.dest, n # type
-    while n.kind != ParRi:
+    while n.hasMore:
       tr c, n, e
 
 proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
@@ -818,23 +818,23 @@ proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
     ow = bindToTemp(c, typ, n.info)
   copyInto c.dest, n:
     takeTree c.dest, n
-    while n.kind != ParRi:
+    while n.hasMore:
       assert n.substructureKind == KvU
       copyInto c.dest, n:
         takeTree c.dest, n
         tr c, n, WantOwner
-        if n.kind != ParRi:
+        if n.hasMore:
           # optional inheritance
           takeTree c.dest, n
   finishOwningTemp c.dest, ow
 
 proc trNewobjFields(c: var Context; n: var Cursor) =
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.substructureKind == KvU:
       copyInto c.dest, n:
         takeTree c.dest, n # keep field name
         tr(c, n, WantOwner)
-        if n.kind != ParRi:
+        if n.hasMore:
           # optional inheritance
           takeTree c.dest, n
     else:
@@ -928,13 +928,13 @@ proc trLocationNonOwner(c: var Context; n: var Cursor) =
   if n.kind == ParLe and n.exprKind == DotX:
     takeToken c.dest, n
     tr c, n, WantNonOwner
-    while n.kind != ParRi:
+    while n.hasMore:
       takeTree c.dest, n
     takeParRi c.dest, n
   else:
     takeToken c.dest, n
     tr c, n, WantNonOwner
-    while n.kind != ParRi:
+    while n.hasMore:
       tr(c, n, DontCare)
     takeParRi c.dest, n
 
@@ -1010,7 +1010,7 @@ proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
 proc trStmtListExpr(c: var Context; n: var Cursor; e: Expects)
     {.ensuresNif: addedAny(c.dest).} =
   takeToken c.dest, n
-  while n.kind != ParRi:
+  while n.hasMore:
     if isLastSon(n):
       tr(c, n, e)
     else:
@@ -1126,7 +1126,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       copyInto c.dest, n:
         takeTree c.dest, n
         tr c, n, e
-        if n.kind != ParRi:
+        if n.hasMore:
           takeTree c.dest, n
     of NoExpr:
       let k = n.stmtKind
@@ -1168,7 +1168,7 @@ proc checkForErrorRoutine(r: var Reporter; fn: SymId; info: PackedLineInfo): int
       var arg = routine.params
       if arg.substructureKind == ParamsU:
         inc arg
-        if arg.kind != ParRi:
+        if arg.hasMore:
           let param = asLocal(arg)
           m.add " for type <" & typeToString(param.typ) & ">"
       try:

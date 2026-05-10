@@ -63,7 +63,7 @@ proc registerParams*(c: var TypeCache; routine: SymId; decl, params: Cursor) =
   if params.kind == ParLe:
     var p = params
     inc p
-    while p.kind != ParRi:
+    while p.hasMore:
       let r = takeLocal(p, SkipFinalParRi)
       registerLocal(c, r.name.symId, ParamY, r.typ)
   c.current.locals[routine] = LocalInfo(kind: ProcY, typ: decl)
@@ -167,10 +167,9 @@ proc registerLocals(c: var TypeCache; n: var Cursor) =
     let k = n.stmtKind
     case k
     of StmtsS:
-      inc n
-      while n.kind != ParRi:
-        registerLocals(c, n)
-      inc n
+      n.into:
+        while n.hasMore:
+          registerLocals(c, n)
     of LetS, CursorS, PatternvarS, VarS, TvarS, TletS, GvarS, GletS:
       inc n
       let name = n.symId
@@ -214,35 +213,30 @@ proc typeOfField(c: var TypeCache; n: var Cursor; fld: SymId): Cursor =
     else:
       result = default(Cursor)
   elif n.substructureKind == StmtsU:
-    inc n
-    while n.kind != ParRi:
-      result = typeOfField(c, n, fld)
-      if not cursorIsNil(result): return result
-    skipParRi n
+    n.into:
+      while n.hasMore:
+        result = typeOfField(c, n, fld)
+        if not cursorIsNil(result): return result
     result = default(Cursor)
   elif n.substructureKind == CaseU:
     inc n
     result = typeOfField(c, n, fld) # selector field
     if not cursorIsNil(result): return result
-    while n.kind != ParRi:
+    while n.hasMore:
       case n.substructureKind
       of OfU:
-        inc n
-        skip n, SkipValue # ranges
-        inc n # stmts
-        while n.kind != ParRi:
-          result = typeOfField(c, n, fld)
-          if not cursorIsNil(result): return result
-        skipParRi n # stmts
-        skipParRi n # of
+        n.into:
+          skip n, SkipValue # ranges
+          n.into:                                # (stmts ...)
+            while n.hasMore:
+              result = typeOfField(c, n, fld)
+              if not cursorIsNil(result): return result
       of ElseU:
-        inc n
-        inc n # stmts
-        while n.kind != ParRi:
-          result = typeOfField(c, n, fld)
-          if not cursorIsNil(result): return result
-        skipParRi n # stmts
-        skipParRi n # else
+        n.into:
+          n.into:                                # (stmts ...)
+            while n.hasMore:
+              result = typeOfField(c, n, fld)
+              if not cursorIsNil(result): return result
       else:
         skip n
     skipParRi n
@@ -256,7 +250,7 @@ proc typeOfField(c: var TypeCache; n: var Cursor; fld: SymId): Cursor =
       if tk == ObjectT:
         baseObj = n
         skip n # inheritance
-      while n.kind != ParRi:
+      while n.hasMore:
         result = typeOfField(c, n, fld)
         if not cursorIsNil(result): return result
       inc n
@@ -345,7 +339,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         inc n
         skip n # label or DotToken
         result = getTypeImpl(c, n, flags)
-      of StmtsS, RetS:
+      of StmtsS, RetS, CommentS:
         result = c.builtins.voidType
       else:
         case njvlKind(n)
@@ -400,7 +394,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of ExprX:
     var n = n
     inc n # skip "expr"
-    while n.kind != ParRi:
+    while n.hasMore:
       let prev = n
       registerLocals(c, n)
       if n.kind == ParRi:
@@ -510,14 +504,14 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     var buf = createTokenBuf(4)
     buf.add parLeToken(TupleT, n.info)
     var n = n
-    inc n
-    while n.kind != ParRi:
-      var val = n
-      if val.substructureKind == KvU:
-        inc val
-        skip val
-      buf.addSubtree getTypeImpl(c, val, flags)
-      skip n
+    n.into:
+      while n.hasMore:
+        var val = n
+        if val.substructureKind == KvU:
+          inc val          # past (kv parle (read-only probe on copy)
+          skip val
+        buf.addSubtree getTypeImpl(c, val, flags)
+        skip n
     buf.addParRi()
     c.mem.add buf
     result = cursorAt(c.mem[c.mem.len-1], 0)
@@ -531,11 +525,12 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     buf.addSubtree elemType
     var n = n
     var arrayLen = 0
-    inc n # skips BracketX
-    while n.kind != ParRi:
-      skip n
-      inc arrayLen
-    buf.addIntLit(arrayLen, n.info)
+    let info = n.info
+    n.into:                 # past BracketX
+      while n.hasMore:
+        skip n
+        inc arrayLen
+    buf.addIntLit(arrayLen, info)
     buf.addParRi()
     c.mem.add buf
     result = cursorAt(c.mem[c.mem.len-1], 0)
@@ -571,7 +566,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of EnvpX:
     result = c.builtins.autoType
 
-  assert result.kind != ParRi, "ParRi for expression: " & toString(n, false)
+  assert result.hasMore, "ParRi for expression: " & toString(n, false)
 
 proc getType*(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag] = {}): Cursor =
   result = getTypeImpl(c, n, flags)
@@ -586,7 +581,7 @@ proc getType*(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag] = {}): Cursor
         result = decl.body
       else:
         break
-  assert result.kind != ParRi
+  assert result.hasMore
 
 proc takeRoutineHeader*(c: var TypeCache; dest: var TokenBuf; decl: Cursor; n: var Cursor): bool =
   # returns false if the routine is generic

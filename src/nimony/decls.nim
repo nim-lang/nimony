@@ -7,7 +7,7 @@
 ## Helpers for declarative constructs like `let` statements or `proc` declarations.
 
 import std / [assertions, syncio]
-import ".." / lib / [nifstreams, nifcursors, lineinfos]
+import ".." / lib / [nifcursors, nifstreams, lineinfos]
 import ".." / nimony / [nimony_model, reporters]
 
 include ".." / lib / compat2
@@ -224,17 +224,18 @@ type
   ObjectDecl* = object
     kind*: TypeKind
     parentType*: Cursor
-    firstField*: Cursor
+    body*: Cursor
+      ## Cursor at the (object …) / (union …) parent ParLe. Walk the fields
+      ## via `body.into:` — for ObjectT remember to `skip body` past the
+      ## inheritance slot first; for UnionT `body.into:` is enough.
 
 proc asObjectDecl*(c: Cursor): ObjectDecl =
-  var c = c
   let kind = typeKind c
-  result = ObjectDecl(kind: kind)
+  result = ObjectDecl(kind: kind, body: c)
   if kind == ObjectT:
-    inc c
-    result.parentType = c
-    skip c
-    result.firstField = c
+    var x = c
+    inc x
+    result.parentType = x
 
 type ObjFieldIter* = object
   nested: int
@@ -274,19 +275,18 @@ type
   EnumDecl* = object
     kind*: TypeKind
     baseType*: Cursor
-    firstField*: Cursor
+    body*: Cursor
+      ## Cursor at the (enum/onum/anum …) parent ParLe. Walk fields via
+      ## `body.into:` — skip the baseType (and, for AnumT, the owner-type
+      ## sym) before iterating.
 
 proc asEnumDecl*(c: Cursor): EnumDecl =
-  var c = c
   let kind = typeKind c
-  result = EnumDecl(kind: kind)
+  result = EnumDecl(kind: kind, body: c)
   if kind in {EnumT, OnumT, AnumT}:
-    inc c
-    result.baseType = c
-    skip c
-    if kind == AnumT:
-      skip c # skip owner object type sym (or dot)
-    result.firstField = c
+    var x = c
+    inc x
+    result.baseType = x
 
 type
   TupleField* = object

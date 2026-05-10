@@ -12,92 +12,90 @@
 proc genx(c: var GeneratedCode; n: var Cursor)
 
 proc typedBinOp(c: var GeneratedCode; n: var Cursor; opr: string) =
-  inc n
-  c.add ParLe
-  c.add ParLe
-  genType c, n
-  c.add ParRi
-  c.add ParLe
-  genx c, n
-  c.add opr
-  genx c, n
-  c.add ParRi
-  c.add ParRi
-  skipParRi n
+  n.into:
+    c.add ParLe
+    c.add ParLe
+    genType c, n
+    c.add ParRi
+    c.add ParLe
+    genx c, n
+    c.add opr
+    genx c, n
+    c.add ParRi
+    c.add ParRi
+    while n.hasMore: skip n
 
 proc cmpOp(c: var GeneratedCode; n: var Cursor; opr: string) =
-  inc n
-  c.add ParLe
-  genx c, n
-  c.add opr
-  genx c, n
-  c.add ParRi
-  skipParRi n
+  n.into:
+    c.add ParLe
+    genx c, n
+    c.add opr
+    genx c, n
+    c.add ParRi
+    while n.hasMore: skip n
 
 proc unOp(c: var GeneratedCode; n: var Cursor; opr: string) =
-  inc n
-  c.add ParLe
-  c.add opr
-  genx c, n
-  c.add ParRi
-  skipParRi n
+  n.into:
+    c.add ParLe
+    c.add opr
+    genx c, n
+    c.add ParRi
+    while n.hasMore: skip n
 
 proc typedUnOp(c: var GeneratedCode; n: var Cursor; opr: string) =
-  inc n
-  c.add ParLe
-  c.add ParLe
-  genType c, n
-  c.add ParRi
-  c.add opr
-  genx c, n
-  c.add ParRi
-  skipParRi n
+  n.into:
+    c.add ParLe
+    c.add ParLe
+    genType c, n
+    c.add ParRi
+    c.add opr
+    genx c, n
+    c.add ParRi
+    while n.hasMore: skip n
 
 proc genCall(c: var GeneratedCode; n: var Cursor) =
   genCLineDir(c, info(n))
-  inc n
-  let isCfn = isImportC(c.m, n)
-  genx c, n
-  c.add ParLe
-  var i = 0
-  while n.kind != ParRi:
-    if i > 0: c.add Comma
-    if isCfn:
-      c.flags.incl gfInCallImportC
+  n.into:
+    let isCfn = isImportC(c.m, n)
     genx c, n
-    inc i
-  c.add ParRi
-  skipParRi n
+    c.add ParLe
+    var i = 0
+    while n.hasMore:
+      if i > 0: c.add Comma
+      if isCfn:
+        c.flags.incl gfInCallImportC
+      genx c, n
+      inc i
+    c.add ParRi
 
 proc genCallCanRaise(c: var GeneratedCode; n: var Cursor) =
   genCLineDir(c, info(n))
-  inc n
-  skip n # skip error action
-  let isCfn = isImportC(c.m, n)
-  genx c, n
-  c.add ParLe
-  var i = 0
-  while n.kind != ParRi:
-    if i > 0: c.add Comma
-    if isCfn:
-      c.flags.incl gfInCallImportC
+  n.into:
+    skip n # skip error action
+    let isCfn = isImportC(c.m, n)
     genx c, n
-    inc i
-  c.add ParRi
-  skipParRi n
+    c.add ParLe
+    var i = 0
+    while n.hasMore:
+      if i > 0: c.add Comma
+      if isCfn:
+        c.flags.incl gfInCallImportC
+      genx c, n
+      inc i
+    c.add ParRi
 
 proc genDeref(c: var GeneratedCode; n: var Cursor) =
-  inc n
-  c.add ParLe
-  let starAt = c.code.len
-  c.add "*"
-  genx c, n
-  c.add ParRi
-  if n.kind != ParRi and n.typeQual == CppRefQ:
-    if c.m.config.backend == backendCpp:
-      c.code[starAt] = Token EmptyToken
-    skip n
-  skipParRi n
+  n.into:
+    c.add ParLe
+    let starAt = c.code.len
+    c.add "*"
+    genx c, n
+    c.add ParRi
+    if n.hasMore and n.typeQual == CppRefQ:
+      if c.m.config.backend == backendCpp:
+        c.code[starAt] = Token EmptyToken
+      skip n
+    while n.hasMore: skip n
 
 proc genField(c: var GeneratedCode; fld: Cursor; objBody: Cursor; objTypeIsImported: bool) =
   if fld.kind == Symbol:
@@ -105,16 +103,17 @@ proc genField(c: var GeneratedCode; fld: Cursor; objBody: Cursor; objTypeIsImpor
     var t = objBody
     let pragmas = typeOfField(c.m, t, s, FieldPragmas)
     if not cursorIsNil(pragmas) and pragmas.kind == ParLe:
-      var p = pragmas.firstSon
-      while p.kind != ParRi:
-        case p.pragmaKind
-        of ImportcP, ImportcppP, ExportcP:
-          let litId = externName(s, p)
-          c.add pool.strings[litId]
-          return
-        else:
-          discard
-        skip p
+      var p = pragmas
+      p.into:
+        while p.hasMore:
+          case p.pragmaKind
+          of ImportcP, ImportcppP, ExportcP:
+            let litId = externName(s, p)
+            c.add pool.strings[litId]
+            return
+          else:
+            discard
+          skip p
     var x = pool.syms[s]
     if objTypeIsImported:
       extractBasename x
@@ -144,39 +143,39 @@ proc genLvalue(c: var GeneratedCode; n: var Cursor) =
       error c.m, "expected expression but got: ", n
   of DerefC: genDeref c, n
   of AtC:
-    inc n
-    let needsAwrapper = not isImportedArray(c, n)
-    genx c, n
-    if needsAwrapper:
-      c.add Dot
-      c.add "a"
-    c.add BracketLe
-    genx c, n
-    c.add BracketRi
-    skipParRi n
+    n.into:
+      let needsAwrapper = not isImportedArray(c, n)
+      genx c, n
+      if needsAwrapper:
+        c.add Dot
+        c.add "a"
+      c.add BracketLe
+      genx c, n
+      c.add BracketRi
+      while n.hasMore: skip n
   of PatC:
-    inc n
-    genx c, n
-    c.add BracketLe
-    genx c, n
-    c.add BracketRi
-    skipParRi n
+    n.into:
+      genx c, n
+      c.add BracketLe
+      genx c, n
+      c.add BracketRi
+      while n.hasMore: skip n
   of DotC:
-    inc n
-    let objType = getNominalType(c.m, n)
-    let objBody = navigateToObjectBody(c.m, objType)
-    genx c, n
-    var fld = n
-    skip n
-    if n.kind == IntLit:
-      var inh = pool.integers[n.intId]
-      inc n
-      while inh > 0:
-        c.add ".Q"
-        dec inh
-    c.add Dot
-    genField c, fld, objBody, c.m.isImportC(objType)
-    skipParRi n
+    n.into:
+      let objType = getNominalType(c.m, n)
+      let objBody = navigateToObjectBody(c.m, objType)
+      genx c, n
+      var fld = n
+      skip n
+      if n.hasMore and n.kind == IntLit:
+        var inh = pool.integers[n.intId]
+        inc n
+        while inh > 0:
+          c.add ".Q"
+          dec inh
+      c.add Dot
+      genField c, fld, objBody, c.m.isImportC(objType)
+      while n.hasMore: skip n
   of ErrvC:
     if {gfMainModule, gfHasError} * c.flags == {}:
       moveToDataSection:
@@ -243,21 +242,21 @@ proc suffixConv(c: var GeneratedCode; value, suffix: Cursor) =
 proc genAddr(c: var GeneratedCode; n: var Cursor) =
   # If we take the address of an array expression, add the `.a` field access.
   let inCallImportC = gfInCallImportC in c.flags
-  inc n
-  let needsAwrapper = not isImportedArray(c, n)
-  let arrType = getType(c.m, n)
-  c.add ParLe
-  let ampAt = c.code.len
-  c.add "&"
-  genx c, n
-  if arrType.typeKind == ArrayT and needsAwrapper and inCallImportC:
-    c.add ".a[0]"
-  c.add ParRi
-  if n.kind != ParRi and n.typeQual == CppRefQ:
-    if c.m.config.backend == backendCpp:
-      c.code[ampAt] = Token EmptyToken
-    skip n
-  skipParRi n
+  n.into:
+    let needsAwrapper = not isImportedArray(c, n)
+    let arrType = getType(c.m, n)
+    c.add ParLe
+    let ampAt = c.code.len
+    c.add "&"
+    genx c, n
+    if arrType.typeKind == ArrayT and needsAwrapper and inCallImportC:
+      c.add ".a[0]"
+    c.add ParRi
+    if n.hasMore and n.typeQual == CppRefQ:
+      if c.m.config.backend == backendCpp:
+        c.code[ampAt] = Token EmptyToken
+      skip n
+    while n.hasMore: skip n
 
 proc genCond(c: var GeneratedCode; n: var Cursor) =
   # Special cased so that we do not end up with `if ((a == b))` which
@@ -321,112 +320,109 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
     c.add "NAN"
     skip n
   of AconstrC:
-    inc n
-    let isUncheckedArray = n.typeKind in {PtrT, AptrT, FlexarrayT}
-    c.objConstrType(n)
-    c.add CurlyLe
-    if not isUncheckedArray:
-      c.add ".a = "
+    n.into:
+      let isUncheckedArray = n.typeKind in {PtrT, AptrT, FlexarrayT}
+      c.objConstrType(n)
       c.add CurlyLe
-    var i = 0
-    while n.kind != ParRi:
-      if i > 0: c.add Comma
-      c.genx n
-      inc i
-    if not isUncheckedArray:
+      if not isUncheckedArray:
+        c.add ".a = "
+        c.add CurlyLe
+      var i = 0
+      while n.hasMore:
+        if i > 0: c.add Comma
+        c.genx n
+        inc i
+      if not isUncheckedArray:
+        c.add CurlyRi
       c.add CurlyRi
-    c.add CurlyRi
-    skipParRi n
   of OconstrC:
-    inc n
-    let objType = n
-    let objBody = navigateToObjectBody(c.m, n)
-    c.objConstrType(n)
-    c.add CurlyLe
-    var i = 0
-    while n.kind != ParRi:
-      if i > 0: c.add Comma
-      if n.substructureKind == KvU:
-        inc n
-        c.add Dot
-        var depth = n
-        skip depth
-        skip depth
-        if depth.kind != ParRi:
-          # inheritance depth
-          assert depth.kind == IntLit
-          let d = pool.integers[depth.intId]
-          for _ in 0 ..< d:
-            c.add "Q"
+    n.into:
+      let objType = n
+      let objBody = navigateToObjectBody(c.m, n)
+      c.objConstrType(n)
+      c.add CurlyLe
+      var i = 0
+      while n.hasMore:
+        if i > 0: c.add Comma
+        if n.substructureKind == KvU:
+          n.into:
             c.add Dot
-        let fldSym = if n.kind == Symbol: n.symId else: SymId(0)
-        c.genField n, objBody, c.m.isImportC(objType)
-        inc n
-        c.add AsgnOpr
-        # For flexible array member fields, suppress the (NC8*) cast on string literals
-        var fldBody = objBody
-        let fldType = if fldSym != SymId(0): typeOfField(c.m, fldBody, fldSym) else: default(Cursor)
-        let isFlexArr = not cursorIsNil(fldType) and fldType.typeKind == FlexarrayT
-        if isFlexArr: c.flags.incl gfInFlexArray
-        c.genx n
-        if isFlexArr: c.flags.excl gfInFlexArray
-        if n.kind != ParRi: skip n
-        skipParRi n
-      elif n.exprKind == OconstrC:
-        # inheritance
-        c.add Dot
-        c.add "Q"
-        c.add AsgnOpr
-        c.genx n
-      else:
-        c.genx n
-      inc i
-    c.add CurlyRi
-    skipParRi n
+            var depth = n
+            skip depth
+            skip depth
+            if depth.hasMore and depth.hasMore:
+              # inheritance depth
+              assert depth.kind == IntLit
+              let d = pool.integers[depth.intId]
+              for _ in 0 ..< d:
+                c.add "Q"
+                c.add Dot
+            let fldSym = if n.kind == Symbol: n.symId else: SymId(0)
+            c.genField n, objBody, c.m.isImportC(objType)
+            inc n
+            c.add AsgnOpr
+            # For flexible array member fields, suppress the (NC8*) cast on string literals
+            var fldBody = objBody
+            let fldType = if fldSym != SymId(0): typeOfField(c.m, fldBody, fldSym) else: default(Cursor)
+            let isFlexArr = not cursorIsNil(fldType) and fldType.typeKind == FlexarrayT
+            if isFlexArr: c.flags.incl gfInFlexArray
+            c.genx n
+            if isFlexArr: c.flags.excl gfInFlexArray
+            while n.hasMore: skip n
+        elif n.exprKind == OconstrC:
+          # inheritance
+          c.add Dot
+          c.add "Q"
+          c.add AsgnOpr
+          c.genx n
+        else:
+          c.genx n
+        inc i
+      c.add CurlyRi
   of BaseobjC:
-    inc n
-    skip n # type not interesting for us
-    var counter = pool.integers[n.intId]
-    skip n
-    c.genx n
-    while counter > 0:
-      c.add ".Q"
-      dec counter
-    skipParRi n
+    n.into:
+      skip n # type not interesting for us
+      var counter = pool.integers[n.intId]
+      skip n
+      c.genx n
+      while counter > 0:
+        c.add ".Q"
+        dec counter
+      while n.hasMore: skip n
   of ParC:
     c.add ParLe
-    inc n
-    genx c, n
-    c.add ParRi
-    skipParRi n
+    n.into:
+      genx c, n
+      c.add ParRi
+      while n.hasMore: skip n
   of AddrC:
     genAddr c, n
     c.flags.excl gfInCallImportC
   of SizeofC:
     c.add "sizeof"
     c.add ParLe
-    inc n
-    genType c, n
-    c.add ParRi
-    skipParRi n
+    n.into:
+      genType c, n
+      c.add ParRi
+      while n.hasMore: skip n
   of AlignofC:
     c.add "NIM_ALIGNOF"
     c.add ParLe
-    inc n
-    genType c, n
-    c.add ParRi
-    skipParRi n
+    n.into:
+      genType c, n
+      c.add ParRi
+      while n.hasMore: skip n
   of OffsetofC:
-    inc n
-    c.add "offsetof"
-    c.add ParLe
-    genType c, n
-    c.add Comma
-    let name = mangleSym(c, n.symId)
-    inc n
-    c.add name
-    c.add ParRi
-    skipParRi n
+    n.into:
+      c.add "offsetof"
+      c.add ParLe
+      genType c, n
+      c.add Comma
+      let name = mangleSym(c, n.symId)
+      inc n
+      c.add name
+      c.add ParRi
+      while n.hasMore: skip n
   of CallC: genCall c, n
   of AddC: typedBinOp c, n, " + "
   of SubC: typedBinOp c, n, " - "
@@ -450,12 +446,14 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
   of CastC: typedUnOp c, n, ""
   of ConvC: typedUnOp c, n, ""
   of SufC:
-    inc n
-    var value = n
-    skip n
-    let suffix = n
-    skip n
-    skipParRi n
+    var value: Cursor
+    var suffix: Cursor
+    n.into:
+      value = n
+      skip n
+      suffix = n
+      skip n
+      while n.hasMore: skip n
     if value.kind == StringLit:
       genx c, value
     else:

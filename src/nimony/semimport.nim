@@ -6,9 +6,9 @@ proc semInclude(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   var x = it.n
   skip it.n
-  inc x, SkipTag # skip the `include`
-  while x.kind != ParRi:
-    filenameVal(x, files, hasError, allowAs = false)
+  x.into:  # (include …)
+    while x.hasMore:
+      filenameVal(x, files, hasError, allowAs = false)
 
   if hasError:
     c.buildErr dest, info, "wrong `include` statement"
@@ -99,26 +99,29 @@ proc importSingleFileConsiderExports(c: var SemContext; dest: var TokenBuf; f1: 
 proc cyclicImport(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
   ## Handle `import foo {.cyclic.}`. Registers the module sym and records
   ## the import for deferred resolution (after phase1 of all cycle group members).
+  ##
+  ## Caller has already entered the surrounding (import …) / (importexcept …)
+  ## scope, so `x` is positioned at children. We walk those.
   let info = x.info
-  while x.kind != ParRi:
+  while x.hasMore:
     var isCyclic = false
     if x.kind == ParLe and x.exprKind == PragmaxX:
       var y = x
-      inc y
-      skip y
+      inc y, SkipTag
+      skip y, AnyExpr  # filename expr
       if y.substructureKind == PragmasU:
-        inc y
+        inc y, SkipTag
         if y.kind == Ident and pool.strings[y.litId] == "cyclic":
           isCyclic = true
 
     if isCyclic:
       # Manually parse the pragmax wrapper to extract the filename
-      inc x, SkipTag # enter PragmaxX
       var files: seq[ImportedFilename] = @[]
       var hasError = false
-      filenameVal(x, files, hasError, allowAs = false)
-      skip x, SkipPragmas # skip (pragmas cyclic)
-      inc x, SkipParRi  # skip closing ParRi of PragmaxX
+      x.into PragmaxX:
+        filenameVal(x, files, hasError, allowAs = false)
+        skip x, SkipPragmas # skip (pragmas cyclic)
+        while x.hasMore: skip x, SkipFull
 
       if not hasError:
         let origin = getFile(info)
@@ -170,13 +173,12 @@ proc semImport(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   var x = it.n
   skip it.n
-  inc x, SkipTag # skip the `import`
-  maybeCyclic(c, dest, x)
-
   var files: seq[ImportedFilename] = @[]
   var hasError = false
-  while x.kind != ParRi:
-    filenameVal(x, files, hasError, allowAs = true)
+  x.into:  # (import …)
+    maybeCyclic(c, dest, x)
+    while x.hasMore:
+      filenameVal(x, files, hasError, allowAs = true)
   if hasError:
     c.buildErr dest, info, "wrong `import` statement"
   else:
@@ -188,19 +190,18 @@ proc semImportExcept(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   var x = it.n
   skip it.n
-  inc x, SkipTag # skip the `importexcept`
-
-  maybeCyclic(c, dest, x)
-
   var files: seq[ImportedFilename] = @[]
   var hasError = false
-  filenameVal(x, files, hasError, allowAs = true)
+  var excluded = initHashSet[StrId]()
+  x.into:  # (importexcept …)
+    maybeCyclic(c, dest, x)
+    filenameVal(x, files, hasError, allowAs = true)
+    if not hasError:
+      while x.hasMore:
+        excluded.incl takeIdent(x)
   if hasError:
     c.buildErr dest, info, "wrong `import except` statement"
   else:
-    var excluded = initHashSet[StrId]()
-    while x.kind != ParRi:
-      excluded.incl takeIdent(x)
     doImports c, dest, files, ImportFilter(kind: ImportExcept, list: excluded), info
 
   producesVoid c, dest, info, it.typ
@@ -209,23 +210,22 @@ proc semFromImport(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   var x = it.n
   skip it.n
-  inc x, SkipTag # skip the `from`
-
-  maybeCyclic(c, dest, x)
-
   var files: seq[ImportedFilename] = @[]
   var hasError = false
-  filenameVal(x, files, hasError, allowAs = true)
+  var included = initHashSet[StrId]()
+  x.into:  # (from …)
+    maybeCyclic(c, dest, x)
+    filenameVal(x, files, hasError, allowAs = true)
+    if not hasError:
+      while x.hasMore:
+        if x.kind == ParLe and x.exprKind == NilX:
+          # from a import nil
+          skip x, AnyExpr
+        else:
+          included.incl takeIdent(x)
   if hasError:
     c.buildErr dest, info, "wrong `from import` statement"
   else:
-    var included = initHashSet[StrId]()
-    while x.kind != ParRi:
-      if x.kind == ParLe and x.exprKind == NilX:
-        # from a import nil
-        skip x
-      else:
-        included.incl takeIdent(x)
     doImports c, dest, files, ImportFilter(kind: FromImport, list: included), info
 
   producesVoid c, dest, info, it.typ
@@ -240,11 +240,13 @@ proc findModuleSymbol(n: Cursor): SymId =
     # if any sym in choice is module sym, count it as a module reference
     # this emulates behavior that was caused by sym order shenanigans before, could be removed
     var n = n
-    inc n
-    while n.kind != ParRi:
-      result = findModuleSymbol(n)
-      if result != SymId(0): break
-      inc n
+    n.into:
+      while n.hasMore:
+        result = findModuleSymbol(n)
+        if result != SymId(0):
+          while n.hasMore: skip n, AnyExpr  # mop-up so into closes cleanly
+          return
+        inc n, AnyExpr
 
 proc semExportSymbol(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -303,47 +305,54 @@ proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: PackedLin
     # Walk the enum body and enroll each field basename in the same filter.
     if res.status == LacksNothing and res.decl.symKind == TypeY:
       let decl = asTypeDecl(res.decl)
-      if decl.body.typeKind in {EnumT, OnumT, HoleyEnumT, AnumT}:
-        var field = asEnumDecl(decl.body).firstField
-        while field.kind != ParRi:
-          if field.substructureKind == EfldU:
-            let local = asLocal(field)
-            if local.name.kind == SymbolDef:
-              var fname = pool.syms[local.name.symId]
-              extractBasename(fname)
-              registerExportName(c, moduleSym, pool.strings.getOrIncl(fname))
-          skip field
+      let bodyKind = decl.body.typeKind
+      if bodyKind in {EnumT, OnumT, HoleyEnumT, AnumT}:
+        # Walk the enum body: (enum baseType field…) — or for AnumT,
+        # (anum baseType ownerType field…). Use `into` so the loop has
+        # proper scope-rem (works under both nifcursors and nifprims).
+        var enumBody = decl.body
+        enumBody.into:
+          skip enumBody, SkipType  # base type
+          if bodyKind == AnumT:
+            skip enumBody, AnyType  # owner object type sym (or dot)
+          while enumBody.hasMore:
+            if enumBody.substructureKind == EfldU:
+              let local = asLocal(enumBody)
+              if local.name.kind == SymbolDef:
+                var fname = pool.syms[local.name.symId]
+                extractBasename(fname)
+                registerExportName(c, moduleSym, pool.strings.getOrIncl(fname))
+            skip enumBody
 
 proc semExport(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   var x = it.n
   skip it.n
-  inc x, SkipTag # skip the `export`
-
-  while x.kind != ParRi:
-    let info = x.info
-    var symBuf = createTokenBuf(8)
-    semExportSymbol(c, symBuf, x)
-    var syms = beginRead(symBuf)
-    case syms.kind
-    of Ident:
-      c.buildErr dest, info, "undeclared identifier: " & pool.strings[syms.litId]
-    of Symbol:
-      doExport(c, dest, syms.symId, info)
-    of ParLe:
-      case syms.exprKind
-      of ErrX:
-        dest.add symBuf
-      of OchoiceX, CchoiceX:
-        inc syms
-        while syms.kind != ParRi:
-          assert syms.kind == Symbol
-          doExport(c, dest, syms.symId, info)
-          inc syms
+  x.into:  # (export …)
+    while x.hasMore:
+      let info = x.info
+      var symBuf = createTokenBuf(8)
+      semExportSymbol(c, symBuf, x)
+      var syms = beginRead(symBuf)
+      case syms.kind
+      of Ident:
+        c.buildErr dest, info, "undeclared identifier: " & pool.strings[syms.litId]
+      of Symbol:
+        doExport(c, dest, syms.symId, info)
+      of ParLe:
+        case syms.exprKind
+        of ErrX:
+          dest.add symBuf
+        of OchoiceX, CchoiceX:
+          syms.into:
+            while syms.hasMore:
+              assert syms.kind == Symbol
+              doExport(c, dest, syms.symId, info)
+              inc syms, AnyExpr
+        else:
+          c.buildErr dest, info, "not an identifier for `export`"
       else:
         c.buildErr dest, info, "not an identifier for `export`"
-    else:
-      c.buildErr dest, info, "not an identifier for `export`"
 
   producesVoid c, dest, info, it.typ
 
@@ -375,42 +384,41 @@ proc semExportExcept(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   var x = it.n
   skip it.n
-  inc x, SkipTag # skip the `exportexcept`
+  x.into:  # (exportexcept …)
+    let moduleSymStart = dest.len
+    var m = Item(n: x, typ: c.types.autoType)
+    semExpr c, dest, m, {AllowModuleSym} # get module sym
+    x = m.n
+    let moduleSym = findModuleSymbol(cursorAt(dest, moduleSymStart))
+    endRead(dest)
+    dest.shrink moduleSymStart
+    if moduleSym == SymId(0):
+      c.buildErr dest, info, "expected module for `export except`"
+      return
 
-  let moduleSymStart = dest.len
-  var m = Item(n: x, typ: c.types.autoType)
-  semExpr c, dest, m, {AllowModuleSym} # get module sym
-  x = m.n
-  let moduleSym = findModuleSymbol(cursorAt(dest, moduleSymStart))
-  endRead(dest)
-  dest.shrink moduleSymStart
-  if moduleSym == SymId(0):
-    c.buildErr dest, info, "expected module for `export except`"
-    return
-
-  while x.kind != ParRi:
-    let info = x.info
-    var symBuf = createTokenBuf(8)
-    semExportSymbol(c, symBuf, x)
-    var syms = beginRead(symBuf)
-    case syms.kind
-    of Ident:
-      c.buildErr dest, info, "undeclared identifier: " & pool.strings[syms.litId]
-    of Symbol:
-      doExportExcept(c, dest, moduleSym, syms.symId, info)
-    of ParLe:
-      case syms.exprKind
-      of ErrX:
-        dest.add symBuf
-      of OchoiceX, CchoiceX:
-        inc syms
-        while syms.kind != ParRi:
-          assert syms.kind == Symbol
-          doExportExcept(c, dest, moduleSym, syms.symId, info)
-          inc syms
+    while x.hasMore:
+      let info = x.info
+      var symBuf = createTokenBuf(8)
+      semExportSymbol(c, symBuf, x)
+      var syms = beginRead(symBuf)
+      case syms.kind
+      of Ident:
+        c.buildErr dest, info, "undeclared identifier: " & pool.strings[syms.litId]
+      of Symbol:
+        doExportExcept(c, dest, moduleSym, syms.symId, info)
+      of ParLe:
+        case syms.exprKind
+        of ErrX:
+          dest.add symBuf
+        of OchoiceX, CchoiceX:
+          syms.into:
+            while syms.hasMore:
+              assert syms.kind == Symbol
+              doExportExcept(c, dest, moduleSym, syms.symId, info)
+              inc syms, AnyExpr
+        else:
+          c.buildErr dest, info, "not an identifier for `export`"
       else:
         c.buildErr dest, info, "not an identifier for `export`"
-    else:
-      c.buildErr dest, info, "not an identifier for `export`"
 
   producesVoid c, dest, info, it.typ

@@ -51,7 +51,7 @@ proc passByConstRef(c: var Context; typ, pragmas: Cursor): bool =
 proc rememberConstRefParams(c: var Context; params: Cursor) =
   var n = params
   inc n # skips (params
-  while n.kind != ParRi:
+  while n.hasMore:
     let r = takeLocal(n, SkipFinalParRi)
     if r.name.kind == SymbolDef and passByConstRef(c, r.typ, r.pragmas):
       c.constRefParams.incl r.name.symId
@@ -75,10 +75,9 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
       let info = n.info
       copyIntoKind dest, StmtsS, info:
         if n.stmtKind == StmtsS:
-          inc n
-          while n.kind != ParRi:
-            tr c2, dest, n
-          skipParRi n
+          n.into:
+            while n.hasMore:
+              tr c2, dest, n
         else:
           tr c2, dest, n
         if c2.canRaise and isVoidType(r.retType):
@@ -228,7 +227,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetExpectsTupl
   tr c, dest, n # handle `fn`
 
   inc fnType
-  while n.kind != ParRi:
+  while n.hasMore:
     let previousFormalParam = fnType
     if fnType.kind == ParRi:
       tr c, dest, n # can happen for closure parameter
@@ -323,10 +322,10 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
   dest.add n
-  inc n
-  while n.kind != ParRi:
-    tr c, dest, n
-  takeParRi dest, n
+  n.into:
+    while n.hasMore:
+      tr c, dest, n
+  dest.addParRi()
   c.typeCache.closeScope()
 
 proc trPragmaBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -437,12 +436,12 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trObjConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.takeToken n
   takeTree dest, n # type
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.substructureKind == KvU:
       takeToken dest, n
       takeTree dest, n # key
       tr c, dest, n
-      if n.kind != ParRi:
+      if n.hasMore:
         # optional inheritance
         takeTree dest, n
       takeParRi dest, n
@@ -487,7 +486,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of DotX:
         dest.takeToken n
         tr c, dest, n
-        while n.kind != ParRi:
+        while n.hasMore:
           dest.takeTree n
         dest.takeParRi n
       of OconstrX:

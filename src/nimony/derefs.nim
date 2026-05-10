@@ -89,7 +89,7 @@ proc takeToken(c: var Context; n: var Cursor) {.inline.} =
 proc takeParRi(c: var Context; n: var Cursor) =
   if n.kind == ParRi:
     c.dest.add n
-    inc n
+    consumeParRi n
   else:
     bug "expected ')', but got: ", n
 
@@ -138,7 +138,7 @@ proc trSons(c: var Context; n: var Cursor; e: Expects) =
     takeToken c, n
   else:
     takeToken c, n
-    while n.kind != ParRi:
+    while n.hasMore:
       tr c, n, e
     takeParRi c, n
 
@@ -172,7 +172,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
       inc n
       let fn = n
       skip n # skip the `fn`
-      if n.kind != ParRi:
+      if n.hasMore:
         var fnType = skipProcTypeToParams(getType(c.typeCache, fn))
         assert fnType.isParamsTag
         inc fnType
@@ -216,7 +216,7 @@ proc skipToRoot(n: Cursor): Cursor =
     of CallKinds:
       inc n
       skip n # skip the `fn`
-      if n.kind != ParRi:
+      if n.hasMore:
         # borrowing only work from first parameters:
         discard "n already at the correct position"
       else:
@@ -272,7 +272,7 @@ proc checkTupleConstrBorrowing(c: var Context; n: Cursor): LvalueStatus =
   assert typ.typeKind == TupleT
   inc typ
   skip n
-  while n.kind != ParRi:
+  while n.hasMore:
     let fieldType = getTupleFieldType(typ)
     skip typ
     let isKv = n.substructureKind == KvU
@@ -332,7 +332,7 @@ proc mightBeDangerous(c: var Context; n: Cursor) =
 
 proc checkForDangerousLocations(c: var Context; n: var Cursor) =
   template recurse =
-    while n.kind != ParRi:
+    while n.hasMore:
       checkForDangerousLocations c, n
     inc n # skip ParRi
 
@@ -353,7 +353,7 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
       skip n # skip `fn`
       assert fnType.isParamsTag
       inc fnType
-      while n.kind != ParRi:
+      while n.hasMore:
         let previousFormalParam = fnType
         let param = takeLocal(fnType, SkipFinalParRi)
         let pk = param.typ.typeKind
@@ -377,7 +377,7 @@ proc trProcPragmas(c: var Context; n: var Cursor) =
     takeToken c, n
   else:
     takeToken c, n # pragmas
-    while n.kind != ParRi:
+    while n.hasMore:
       let pk = n.pragmaKind
       if pk == RequiresP:
         tr c, n, WantT
@@ -450,7 +450,7 @@ proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
   var fnType = skipProcTypeToParams(fnType)
   assert fnType.isParamsTag
   inc fnType
-  while n.kind != ParRi:
+  while n.hasMore:
     var e = WantT
     let previousFormalParam = fnType
     let param = takeLocal(fnType, SkipFinalParRi)
@@ -468,7 +468,7 @@ proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
       # do not advance formal parameter:
       fnType = previousFormalParam
     tr c, n, e
-  while fnType.kind != ParRi: skip fnType
+  while fnType.hasMore: skip fnType
   inc fnType # skip ParRi
   # skip return type:
   skip fnType
@@ -480,9 +480,9 @@ proc firstArgIsMutable(c: var Context; n: Cursor): bool =
   assert n.exprKind in CallKinds
   var n = n
   inc n
-  assert n.kind != ParRi
+  assert n.hasMore
   skip n
-  if n.kind != ParRi:
+  if n.hasMore:
     result = not borrowsFromReadonly(c, n)
   else:
     result = false
@@ -514,7 +514,7 @@ proc trPragmaBlock(c: var Context; n: var Cursor) =
     inc inner # past `cast`
     if inner.substructureKind == PragmasU:
       inc inner
-      while inner.kind != ParRi:
+      while inner.hasMore:
         if inner.pragmaKind == NoSideEffectP:
           disableNoSideEffect = true
         skip inner
@@ -576,7 +576,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
       trCallArgs(c, n, fnType)
       takeParRi c, n
     else:
-      while n.kind != ParRi: skip n
+      while n.hasMore: skip n
       inc n # skip ParRi without emitting into callBuf
       swap c.dest, callBuf # restore original dest; discard partial callBuf
       cannotPassToVar c.dest, info, callExpr
@@ -586,7 +586,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
       trCallArgs(c, n, fnType)
       takeParRi c, n
     else:
-      while n.kind != ParRi: skip n
+      while n.hasMore: skip n
       inc n # skip ParRi without emitting into callBuf
       swap c.dest, callBuf # restore original dest; discard partial callBuf
       cannotPassToVar c.dest, info, callExpr
@@ -656,12 +656,12 @@ proc trSonsLocation(c: var Context; n: var Cursor; e: Expects) =
   elif n.exprKind in {DotX, DdotX}:
     takeToken c, n
     tr c, n, e
-    while n.kind != ParRi:
+    while n.hasMore:
       takeTree c.dest, n
     takeParRi c, n
   else:
     takeToken c, n
-    while n.kind != ParRi:
+    while n.hasMore:
       tr c, n, e
     takeParRi c, n
 
@@ -727,7 +727,7 @@ proc trLocal(c: var Context; n: var Cursor) =
 
 proc trStmtListExpr(c: var Context; n: var Cursor; outerE: Expects) =
   takeToken c, n
-  while n.kind != ParRi:
+  while n.hasMore:
     if isLastSon(n):
       tr c, n, outerE
     else:
@@ -744,7 +744,7 @@ proc trObjConstr(c: var Context; n: var Cursor; outerE: Expects) =
   takeToken c, n
   let objType = n
   takeTree c.dest, n # type
-  while n.kind != ParRi:
+  while n.hasMore:
     assert n.substructureKind == KvU
     takeToken c, n
     # Look up the *field's declared type* before consuming the key, so
@@ -760,7 +760,7 @@ proc trObjConstr(c: var Context; n: var Cursor; outerE: Expects) =
         fieldKind = fieldType.typeKind
     takeTree c.dest, n # key
     tr c, n, fieldMode(fieldKind, outerE)
-    if n.kind != ParRi:
+    if n.hasMore:
       # optional inheritance
       takeTree c.dest, n
     takeParRi c, n
@@ -772,7 +772,7 @@ proc trTupleConstr(c: var Context; n: var Cursor; outerE: Expects) =
   assert typ.typeKind == TupleT
   inc typ
   takeTree c.dest, n # type
-  while n.kind != ParRi:
+  while n.hasMore:
     let fieldType = getTupleFieldType(typ)
     skip typ
     let e = fieldMode(fieldType.typeKind, outerE)
@@ -788,7 +788,7 @@ proc trTupleConstr(c: var Context; n: var Cursor; outerE: Expects) =
 proc trVarHook(c: var Context; n: var Cursor) =
   takeToken c, n
   tr c, n, WantVarT
-  if n.kind != ParRi:
+  if n.hasMore:
     tr c, n, WantT
   takeParRi c, n
 
@@ -958,12 +958,11 @@ proc trTryCollapsed(c: var Context; n: var Cursor) =
     # Recursively transform the original arm body
     var bodyCur = arm.bodyStart
     if bodyCur.kind == ParLe and bodyCur.stmtKind == StmtsS:
-      inc bodyCur
-      while bodyCur.kind != ParRi:
-        tr c, bodyCur, WantT
-      skipParRi bodyCur
+      bodyCur.into:
+        while bodyCur.hasMore:
+          tr c, bodyCur, WantT
     else:
-      while bodyCur.kind != ParRi:
+      while bodyCur.hasMore:
         tr c, bodyCur, WantT
     c.dest.addParRi()  # close inner stmts
     c.dest.addParRi()  # close elif
@@ -977,12 +976,11 @@ proc trTryCollapsed(c: var Context; n: var Cursor) =
   if hasCatchall:
     var bodyCur = catchallBody
     if bodyCur.kind == ParLe and bodyCur.stmtKind == StmtsS:
-      inc bodyCur
-      while bodyCur.kind != ParRi:
-        tr c, bodyCur, WantT
-      skipParRi bodyCur
+      bodyCur.into:
+        while bodyCur.hasMore:
+          tr c, bodyCur, WantT
     else:
-      while bodyCur.kind != ParRi:
+      while bodyCur.hasMore:
         tr c, bodyCur, WantT
   else:
     # `(asgn exc err)`
@@ -1023,7 +1021,7 @@ proc trTry(c: var Context; n: var Cursor) =
   # now can raise in the `try` block:
   tr c, n, WantT
   c.r.props = oldProps
-  while n.kind != ParRi:
+  while n.hasMore:
     tr c, n, WantT
   takeParRi c, n
 
@@ -1081,7 +1079,7 @@ proc trRaise(c: var Context; n: var Cursor) =
 
   # Legacy enum/value-typed raise — pass through unchanged.
   takeToken c, n  # `(raise`
-  while n.kind != ParRi:
+  while n.hasMore:
     tr c, n, WantT
   takeParRi c, n
 
@@ -1111,7 +1109,7 @@ proc trFor(c: var Context; n: var Cursor) =
   of UnpackflatU, UnpacktupU:
     inc nn
     var dangerous: seq[SymId] = @[]
-    while nn.kind != ParRi:
+    while nn.hasMore:
       inc nn # LetS etc.
       let s = nn.symId
       for i in 0..<LocalTypePos:
@@ -1185,7 +1183,7 @@ proc trType(c: var Context; n: var Cursor) =
       inc n
     else:
       c.dest.takeToken n # existing pragma tag
-      while n.kind != ParRi:
+      while n.hasMore:
         c.dest.takeTree n # existing individual pragmas
       skipParRi n
     if c.hooks.hasKey(s):
@@ -1200,7 +1198,7 @@ proc trType(c: var Context; n: var Cursor) =
       inc n
     else:
       c.dest.takeToken n # existing pragma tag
-      while n.kind != ParRi:
+      while n.hasMore:
         c.dest.takeTree n # existing individual pragmas
       skipParRi n
     # Generate hooks via lifter - create Symbol buffer that stays alive:
@@ -1361,7 +1359,7 @@ proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
   var n2 = n
   var n3 = n
   c.takeToken n2
-  while n2.kind != ParRi:
+  while n2.hasMore:
     # clean up dots that sem might have introduced for moving inner generic instances:
     if n2.kind == DotToken: inc n2
     else: tr(c, n2, WantT)

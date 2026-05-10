@@ -8,11 +8,10 @@
 
 import std / [parseopt, sets, strutils, os, assertions, syncio]
 
-import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
 import ".." / lib / argsfinder
 import sem, nifconfig, semos, semdata, indexgen, programs, symparser
-import nifstreams, derefs, deps, nifcursors, nifreader, nifbuilder, nifindexes, tooldirs, idetools, cli, langmodes
+import nifcursors, nifstreams, derefs, deps, nifcursors, nifstreams, nifreader, nifbuilder, nifindexes, tooldirs, idetools, cli, langmodes
 import ".." / lib / vfs
 
 const

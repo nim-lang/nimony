@@ -17,8 +17,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / symparser
 import ".." / models / tags
-import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof,
-  typeprops, langmodes, typekeys, nifconfig]
+import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof, typeprops, langmodes, typekeys, nifconfig]
 import hexer_context, pipeline, dce1, lifter
 import  ".." / lib / [stringtrees]
 
@@ -268,7 +267,7 @@ proc trTupleBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   dest.add tagToken("object", info)
   dest.addDotToken()
   var counter = 0
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.substructureKind == KvU:
       inc n # skip tag
       skip n # skip name
@@ -320,9 +319,9 @@ proc trProcTypeBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
 
   # ignore effects and body slots only present in proc-decl-shaped layouts.
   if not isProctype:
-    if n.kind != ParRi:
+    if n.hasMore:
       skip n
-      if n.kind != ParRi:
+      if n.hasMore:
         skip n
   takeParRi dest, n
 
@@ -416,7 +415,7 @@ proc addRttiField(c: var EContext; dest: var TokenBuf; info: PackedLineInfo) =
   dest.addParRi() # "fld"
 
 proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag]) =
-  while n.kind != ParRi:
+  while n.hasMore:
     case n.substructureKind
     of FldU, GfldU:
       trField(c, dest, n, flags)
@@ -425,7 +424,7 @@ proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
       inc n
       trField(c, dest, n, flags)
       dest.add tagToken("union", n.info)
-      while n.kind != ParRi:
+      while n.hasMore:
         case n.substructureKind
         of OfU:
           inc n
@@ -798,7 +797,7 @@ proc trProcBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     dest.add n
     inc n
     var prevStmt = NoStmt
-    while n.kind != ParRi:
+    while n.hasMore:
       prevStmt = n.stmtKind
       trStmt c, dest, n, TraverseInner
     if prevStmt == RetS or c.resultSym == SymId(0):
@@ -881,25 +880,23 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
   if n.substructureKind == TypevarsU:
     isGeneric = true
     # count each typevar as used:
-    inc n
-    while n.kind != ParRi:
-      assert n.symKind == TypevarY
-      inc n
-      let (typevar, _) = getSymDef(c, n)
-      skipToEnd n
-    inc n
+    n.into:                                     # (typevars ...)
+      while n.hasMore:
+        assert n.symKind == TypevarY
+        n.into:                                 # (typevar ...)
+          let (typevar, _) = getSymDef(c, n)
+          while n.hasMore: skip n
   else:
     skip n # generic parameters
 
   if isGeneric:
     # count each param as used:
-    inc n
-    while n.kind != ParRi:
-      assert n.symKind == ParamY
-      inc n
-      let (param, _) = getSymDef(c, n)
-      skipToEnd n
-    inc n
+    n.into:                                     # (params ...)
+      while n.hasMore:
+        assert n.symKind == ParamY
+        n.into:                                 # (param ...)
+          let (param, _) = getSymDef(c, n)
+          while n.hasMore: skip n
     skip n # skip return type
   else:
     trParams c, dest, n
@@ -971,13 +968,12 @@ proc trTypeDecl(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: Traver
   if n.substructureKind == TypevarsU:
     isGeneric = true
     # count each typevar as used:
-    inc n
-    while n.kind != ParRi:
-      assert n.symKind == TypevarY
-      inc n
-      let (typevar, _) = getSymDef(c, n)
-      skipToEnd n
-    inc n
+    n.into:                                     # (typevars ...)
+      while n.hasMore:
+        assert n.symKind == TypevarY
+        n.into:                                 # (typevar ...)
+          let (typevar, _) = getSymDef(c, n)
+          while n.hasMore: skip n               # consume rest of body (skipToEnd would eat the parri too)
   else:
     skip n # generic parameters
 
@@ -1141,7 +1137,7 @@ proc trStmtsExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     skipParRi c, n
   else:
     dest.add head
-    while n.kind != ParRi:
+    while n.hasMore:
       if not isLastSon(n):
         trStmt c, dest, n
       else:
@@ -1156,7 +1152,7 @@ proc trTupleConstr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
 
   inc tupleType
   var counter = 0
-  while n.kind != ParRi:
+  while n.hasMore:
     dest.add tagToken("kv", n.info)
     let isKvU = tupleType.substructureKind == KvU
     if isKvU:
@@ -1234,7 +1230,7 @@ proc isSimpleLiteral(nb: var Cursor): bool =
       result = true
       inc nb
       skip nb # type
-      while nb.kind != ParRi:
+      while nb.hasMore:
         if not isSimpleLiteral(nb): return false
       skipParRi nb
     of ErrX, AtX, DerefX, DotX, PatX, ParX, AddrX, AndX, OrX,
@@ -1268,14 +1264,14 @@ proc trArrAt(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let isUnsigned = getType(c.typeCache, n).typeKind in {UIntT, CharT}
   trExpr(c, dest, n)
-  if n.kind != ParRi:
+  if n.hasMore:
     var indexDest = createTokenBuf(dest.len - beforeIndex)
     for i in beforeIndex..<dest.len:
       indexDest.add dest[i]
     dest.shrink beforeIndex
     let indexB = n
     skip n
-    if n.kind != ParRi:
+    if n.hasMore:
       # we have `low(T)`:
       let indexA = n
       skip n
@@ -1374,20 +1370,20 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       dest.add tagToken("aconstr", n.info)
       inc n
       trType(c, dest, n)
-      while n.kind != ParRi:
+      while n.hasMore:
         trExpr(c, dest, n)
       takeParRi dest, n
     of OconstrX:
       dest.add tagToken("oconstr", n.info)
       inc n
       trType(c, dest, n)
-      while n.kind != ParRi:
+      while n.hasMore:
         if n.substructureKind == KvU:
           dest.add n # KvU
           inc n
           takeTree dest, n # key
           trExpr c, dest, n # value
-          if n.kind != ParRi:
+          if n.hasMore:
             # optional inheritance
             takeTree dest, n
           takeParRi dest, n
@@ -1398,10 +1394,10 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       trTupleConstr c, dest, n
     of CmdX, CallstrlitX, InfixX, PrefixX, HcallX, CallX:
       dest.add tagToken("call", n.info)
-      inc n
-      while n.kind != ParRi:
-        trExpr(c, dest, n)
-      takeParRi dest, n
+      n.into:
+        while n.hasMore:
+          trExpr(c, dest, n)
+      dest.addParRi()
     of ExprX:
       trStmtsExpr c, dest, n
     of ArratX:
@@ -1421,7 +1417,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       inc n # skip tag
       trExpr c, dest, n # obj
       trFieldname c, dest, n # field
-      if n.kind != ParRi:
+      if n.hasMore:
         trExpr c, dest, n # inheritance depth
       if n.kind == StringLit:
         # drop the access-token marker; NIFC has no visibility concept.
@@ -1504,29 +1500,29 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       #skip n
     of AtX, PatX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX, OvfX:
       dest.add n
-      inc n
-      while n.kind != ParRi:
-        trExpr c, dest, n
-      takeParRi dest, n
+      n.into:
+        while n.hasMore:
+          trExpr c, dest, n
+      dest.addParRi()
     of SizeofX, AlignofX, OffsetofX:
       dest.add n
-      inc n
-      trType c, dest, n
-      while n.kind != ParRi:
-        trExpr c, dest, n
-      takeParRi dest, n
+      n.into:
+        trType c, dest, n
+        while n.hasMore:
+          trExpr c, dest, n
+      dest.addParRi()
     of XorX:
       dest.add tagToken("neq", n.info)
-      inc n
-      while n.kind != ParRi:
-        trExpr c, dest, n
-      takeParRi dest, n
+      n.into:
+        while n.hasMore:
+          trExpr c, dest, n
+      dest.addParRi()
     of KvX:
       dest.add n
       inc n
       takeTree dest, n
       trExpr c, dest, n
-      if n.kind != ParRi:
+      if n.hasMore:
         takeTree dest, n
       takeParRi dest, n
     of NoExpr:
@@ -1570,10 +1566,10 @@ proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; m
     externPragmas c, dest, genPragmas, prag, pinfo
 
   if ThreadvarP in prag.flags:
-    dest[toPatch] = tagToken("tvar", vinfo)
+    setTag(dest[toPatch], pool.tags.getOrIncl("tvar"))
     symKind = TvarY
   elif GlobalP in prag.flags:
-    dest[toPatch] = tagToken("gvar", vinfo)
+    setTag(dest[toPatch], pool.tags.getOrIncl("gvar"))
     symKind = GvarY
 
   if prag.align != IntId(0):
@@ -1680,7 +1676,7 @@ proc trCase(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   dest.add n
   inc n
   trExpr c, dest, n
-  while n.kind != ParRi:
+  while n.hasMore:
     case n.substructureKind
     of OfU:
       dest.add n
@@ -1688,11 +1684,11 @@ proc trCase(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       if n.kind == ParLe and n.substructureKind == RangesU:
         inc n
         dest.add "ranges", n.info
-        while n.kind != ParRi:
+        while n.hasMore:
           if n.kind == ParLe and n.substructureKind == RangeU:
             inc n
             dest.add "range", n.info
-            while n.kind != ParRi:
+            while n.hasMore:
               trExpr c, dest, n
             takeParRi dest, n
           else:
@@ -1860,7 +1856,8 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
           inc n
           assert n.kind == StringLit
           dest.add n
-          skipToEnd n
+          while n.hasMore: skip n
+          consumeParRi n
         else:
           trExpr c, dest, n
     of AsgnS, RetS:
@@ -1897,17 +1894,15 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
       # Collect module suffixes for init proc generation. The body of an
       # `(import …)` is a list of `(kv suffix "path")` pairs (sem emits this
       # paired form so doc-gen has the source path). We only need the suffix.
-      inc n
-      while n.kind != ParRi:
-        if n.kind == ParLe and n.substructureKind == KvU:
-          inc n  # enter (kv …)
-          if n.kind == Ident:
-            c.importedModuleSuffixes.add pool.strings[n.litId]
-          while n.kind != ParRi: skip n
-          inc n  # closing ')'
-        else:
-          skip n
-      inc n # skip ParRi
+      n.into:                                   # (import …)
+        while n.hasMore:
+          if n.kind == ParLe and n.substructureKind == KvU:
+            n.into:                             # (kv …)
+              if n.kind == Ident:
+                c.importedModuleSuffixes.add pool.strings[n.litId]
+              while n.hasMore: skip n
+          else:
+            skip n
     of MacroS, TemplateS, IncludeS, FromimportS, ImportexceptS, ExportS, CommentS, IteratorS,
        ImportasS, ExportexceptS, BindS, MixinS, UsingS, StaticstmtS:
       # pure compile-time construct, ignore:
@@ -1920,7 +1915,7 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
     of PragmasS, AssumeS, AssertS:
       skip n
   else:
-    assert n.kind != ParRi
+    assert n.hasMore
     error c, "statement expected, but got: ", n
 
 proc transformInlineRoutines(c: var EContext; dest: var TokenBuf; n: var Cursor) =
@@ -1939,7 +1934,7 @@ proc transformInlineRoutines(c: var EContext; dest: var TokenBuf; n: var Cursor)
   swap dest, swapped
 
   trStmt c, dest, d, TraverseSig
-  while d.kind != ParRi:
+  while d.hasMore:
     trStmt c, dest, d, TraverseAll
 
 proc writeOutput(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo; destfileName: string): TokenBuf =
@@ -2240,7 +2235,7 @@ proc initHasCall(c: var EContext; n: Cursor): bool =
 
 proc trToplevel(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   inc n
-  while n.kind != ParRi:
+  while n.hasMore:
     let sk = n.stmtKind
     if sk in {GvarS, GletS, TvarS, TletS}:
       let tag = if sk in {TvarS, TletS}: TvarY else: GvarY

@@ -352,29 +352,28 @@ proc matchBooleanConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
   case f.typeKind
   of AndT:
-    inc f
-    result = true
-    while f.kind != ParRi:
-      var f2 = f
-      if not matchBooleanConstraint(m, f2, a):
-        result = false
-        break
-      skip f
-    skipToEnd f
+    f.into:
+      result = true
+      while f.hasMore:
+        var f2 = f
+        if not matchBooleanConstraint(m, f2, a):
+          result = false
+          break
+        skip f
+      while f.hasMore: skip f                  # consume the rest after early break
   of OrT:
-    inc f
-    while f.kind != ParRi:
-      var f2 = f
-      if matchBooleanConstraint(m, f2, a):
-        result = true
-        break
-      skip f
-    skipToEnd f
+    f.into:
+      while f.hasMore:
+        var f2 = f
+        if matchBooleanConstraint(m, f2, a):
+          result = true
+          break
+        skip f
+      while f.hasMore: skip f
   of NotT:
     # XXX handle not/not case somehow
-    inc f
-    result = not matchBooleanConstraint(m, f, a)
-    skipParRi f
+    f.into:
+      result = not matchBooleanConstraint(m, f, a)
   else:
     # standalone typeclass
     result = matchConstraintSplitAnd(m, f, a)
@@ -476,7 +475,7 @@ proc expectParRi(m: var Match; f: var Cursor) =
     m.error FormalTypeNotAtEndBug, f, f
 
 proc expectPtrParRi(m: var Match; f: var Cursor) =
-  if f.kind != ParRi: skip f # skip nil/not nil annotation
+  if f.hasMore: skip f # skip nil/not nil annotation
   # Inlined importc'd pointer aliases drag importc/header attrs into the
   # type body — they are bookkeeping, not part of type identity.
   while f.pragmaKind in {ImportcP, ImportcppP, HeaderP}:
@@ -588,11 +587,11 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
               break
           skip f
           skip a
-          if f.kind != ParRi:
+          if f.hasMore:
             # importc part
             while f.pragmaKind in {ImportcP, ImportcppP, HeaderP}:
               skip f
-          if a.kind != ParRi:
+          if a.hasMore:
             # importc part
             while a.pragmaKind in {ImportcP, ImportcppP, HeaderP}:
               skip a
@@ -673,7 +672,7 @@ proc extractProcProps*(c: var Cursor): ProcProperties =
   result = ProcProperties(cc: Nimcall, usesRaises: false, usesClosure: false, usesPassive: false)
   if c.substructureKind == PragmasU:
     inc c
-    while c.kind != ParRi:
+    while c.hasMore:
       let res = callConvKind(c)
       if res != NoCallConv:
         result.cc = res
@@ -682,7 +681,7 @@ proc extractProcProps*(c: var Cursor): ProcProperties =
         # Extract the raises type from the pragma
         var raisesNode = c
         inc raisesNode
-        if raisesNode.kind != ParRi:
+        if raisesNode.hasMore:
           result.raisesType = raisesNode
       elif c.pragmaKind == ClosureP:
         result.usesClosure = true
@@ -704,12 +703,12 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
   var hasParams = 0
   if f.substructureKind == ParamsU:
     inc f
-    if f.kind != ParRi: inc hasParams
+    if f.hasMore: inc hasParams
   if a.substructureKind == ParamsU:
     inc a
-    if a.kind != ParRi: inc hasParams, 2
+    if a.hasMore: inc hasParams, 2
   if hasParams == 3:
-    while f.kind != ParRi and a.kind != ParRi:
+    while f.hasMore and a.hasMore:
       var fParam = takeLocal(f, SkipFinalParRi)
       var aParam = takeLocal(a, SkipFinalParRi)
       assert fParam.kind == ParamY
@@ -886,7 +885,7 @@ proc tryMatchEnumChoice*(choice: Cursor; enumTypeSym: SymId): SymId =
   result = SymId(0)
   var matchCount = 0
   var a = choice.firstSon
-  while a.kind != ParRi:
+  while a.hasMore:
     if a.kind == Symbol:
       let res = tryLoadSym(a.symId)
       if res.status == LacksNothing and res.decl.symKind == EfldY:
@@ -957,7 +956,7 @@ proc skipExpr*(n: Cursor): Cursor =
   while result.exprKind in {ExprX, ParX}:
     inc result
     var next = result
-    while next.kind != ParRi:
+    while next.hasMore:
       result = next
       skip next
 
@@ -1221,7 +1220,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         # skip tags:
         inc f
         inc a
-        while f.kind != ParRi:
+        while f.hasMore:
           if a.kind == ParRi:
             # len(f) > len(a)
             m.error InvalidMatch, fOrig, aOrig
@@ -1232,7 +1231,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
           # skip fields:
           skip f
           skip a
-        if a.kind != ParRi:
+        if a.hasMore:
           # len(a) > len(f)
           m.error InvalidMatch, fOrig, aOrig
     of RoutineTypes:
@@ -1249,29 +1248,40 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
       else:
         m.error InvalidMatch, f, a
     of OrT:
-      # `f` is an `or`-typed parameter (e.g. `x: A | B | C`); try each
-      # alternative and accept the first that matches. We can't snapshot
-      # `Match` (no `=copy`), so undo-on-failure using the args buffer
-      # length and the `err` flag.
-      var branches = f
-      inc branches
-      let argsSave = m.args.len
-      let errSave = m.err
-      let openedSave = m.opened
-      var matched = false
-      while branches.kind != ParRi:
-        var branch = branches
-        singleArgImpl(m, branch, arg)
-        if not m.err:
-          matched = true
-          break
-        m.args.shrink argsSave
-        m.err = errSave
-        m.opened = openedSave
-        skip branches
-      if not matched:
-        m.error InvalidMatch, f, arg.typ
-      skip f
+      # `f` is an `or`-typed parameter (e.g. `x: A | B | C`).
+      #
+      # Pass-through: if `arg.typ` is structurally the same OR type, accept
+      # without iterating branches. This handles inner templates that
+      # forward their own union-typed parameter (`template wrap*(x:
+      # NimonyTagKind) = inner(x)` calling `inner(x: NimonyTagKind)`) —
+      # without this, the per-branch matching would try to unify each
+      # formal alternative with the WHOLE arg-OR and reject at the first
+      # mismatch.
+      if arg.typ.typeKind == OrT and sameTrees(f, arg.typ):
+        skip f
+      else:
+        # Try each alternative and accept the first that matches. We can't
+        # snapshot `Match` (no `=copy`), so undo-on-failure using the args
+        # buffer length and the `err` flag.
+        var branches = f
+        inc branches
+        let argsSave = m.args.len
+        let errSave = m.err
+        let openedSave = m.opened
+        var matched = false
+        while branches.hasMore:
+          var branch = branches
+          singleArgImpl(m, branch, arg)
+          if not m.err:
+            matched = true
+            break
+          m.args.shrink argsSave
+          m.err = errSave
+          m.opened = openedSave
+          skip branches
+        if not matched:
+          m.error InvalidMatch, f, arg.typ
+        skip f
     of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, AnumT, NiltT, AndT, NotT,
         ConceptT, DistinctT, StaticT, ItertypeT, AutoT, SymkindT, TypekindT, OrdinalT:
       m.error UnhandledTypeBug, f, f
@@ -1298,7 +1308,7 @@ proc isEmptyCall*(n: Cursor): bool =
   if not isEmptyLiteral(n):
     return false
   skip n
-  if n.kind != ParRi:
+  if n.hasMore:
     return false
 
 proc isEmptyContainer*(n: Cursor): bool =
@@ -1318,7 +1328,7 @@ proc isEmptyOpenArrayCall*(n: Cursor): bool =
   if not isEmptyContainer(n):
     return false
   skip n
-  if n.kind != ParRi:
+  if n.hasMore:
     return false
 
 proc addEmptyRangeType(buf: var TokenBuf; c: ptr SemContext; info: PackedLineInfo) =
@@ -1464,7 +1474,7 @@ proc classifyMatch*(m: Match): TypeRelation {.inline.} =
 proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[CallArg]) =
   var i = 0
   var isVarargs = false
-  while f.kind != ParRi:
+  while f.hasMore:
     m.skippedMod = NoType
 
     assert f.symKind == ParamY
@@ -1509,7 +1519,7 @@ iterator typeVars(fn: SymId): SymId {.sideEffect.} =
       skip c # name, export marker, pattern
     if c.substructureKind == TypevarsU:
       inc c
-      while c.kind != ParRi:
+      while c.hasMore:
         if c.symKind == TypevarY:
           var tv = c
           inc tv
@@ -1547,7 +1557,7 @@ proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
           assert typevar.kind == TypevarY
           m.error ConstraintMismatch, typevar.typ, e
         skip e
-    if e.kind != DotToken and e.kind != ParRi:
+    if e.kind != DotToken and e.hasMore:
       m.error0 ExtraGenericParameter
   elif explicitTypeVars.kind != DotToken:
     # aka there are explicit type vars
@@ -1571,11 +1581,11 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
   if m.pos < args.len:
     # not all arguments where used, error:
     m.error0 TooManyArguments
-  elif f.kind != ParRi:
+  elif f.hasMore:
     # use default values for these parameters
     let moreArgs = collectDefaultValues(m, f)
     sigmatchLoop m, f, moreArgs
-    if f.kind != ParRi:
+    if f.hasMore:
       m.error0 TooFewArguments
 
   if f.kind == ParRi:
@@ -1610,7 +1620,7 @@ proc mutualGenericMatch(a, b: Match): DisambiguationResult =
   assert bParams.substructureKind == ParamsU
   inc aParams
   inc bParams
-  while aParams.kind != ParRi and bParams.kind != ParRi:
+  while aParams.hasMore and bParams.hasMore:
     let aParam = takeLocal(aParams, SkipFinalParRi)
     let bParam = takeLocal(bParams, SkipFinalParRi)
     var aFormal = aParam.typ
@@ -1682,7 +1692,7 @@ proc buildParamsInfo(params: Cursor): ParamsInfo =
   var f = params
   assert f.isParamsTag
   inc f # "params"
-  while f.kind != ParRi:
+  while f.hasMore:
     assert f.symKind == ParamY
     var param = takeLocal(f, SkipFinalParRi)
     let isVarargs = param.typ.tagEnum == VarargsTagId

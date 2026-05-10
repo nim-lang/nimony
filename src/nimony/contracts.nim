@@ -210,7 +210,7 @@ proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): P
     var r = req
     while r.exprKind == ExprX:
       inc r
-      while r.kind != ParRi and not isLastSon(r): skip r
+      while r.hasMore and not isLastSon(r): skip r
     result = checkReq(c, paramMap, r, call)
   else:
     result = Unprovable
@@ -223,12 +223,12 @@ proc markedAs(t: Cursor; mark: NimonyOther): bool =
   of PtrT, RefT:
     var e = t.firstSon
     skip e # base type
-    if e.kind != ParRi and e.substructureKind == mark:
+    if e.hasMore and e.substructureKind == mark:
       result = true
   of CstringT, PointerT:
     let e = t.firstSon
     # no base type
-    if e.kind != ParRi and e.substructureKind == mark:
+    if e.hasMore and e.substructureKind == mark:
       result = true
   of ProctypeT:
     # New layout: `(proctype <NilTag> (params) RetType <Pragmas>)`. The
@@ -308,7 +308,7 @@ proc analyseOconstr(c: var Context; n: var Cursor) =
   inc n
   let objType = n
   skip n # type
-  while n.kind != ParRi:
+  while n.hasMore:
     assert n.substructureKind == KvU
     inc n
     assert n.kind == Symbol
@@ -317,7 +317,7 @@ proc analyseOconstr(c: var Context; n: var Cursor) =
     skip n # field name
     checkNilMatch c, n, expected
     skip n # value
-    if n.kind != ParRi:
+    if n.hasMore:
       # optional inheritance
       skip n
     skipParRi n
@@ -327,7 +327,7 @@ proc analyseArrayConstr(c: var Context; n: var Cursor) =
   inc n
   let expected = n.firstSon # element type of the array
   skip n # type
-  while n.kind != ParRi:
+  while n.hasMore:
     checkNilMatch c, n, expected
     skip n
   skipParRi n
@@ -336,8 +336,8 @@ proc analyseTupConstr(c: var Context; n: var Cursor) =
   inc n
   var expected = n.firstSon # type of the first field
   skip n # type
-  while n.kind != ParRi:
-    assert expected.kind != ParRi
+  while n.hasMore:
+    assert expected.hasMore
     checkNilMatch c, n, getTupleFieldType(expected)
     skip n
     skip expected # type of the next field
@@ -374,8 +374,8 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
         wantNotNilDeref c, pc
         analyseExpr c, pc # object
         skip pc # field name
-        if pc.kind != ParRi: skip pc # inheritence depth
-        if pc.kind != ParRi: skip pc # optional access-token string lit
+        if pc.hasMore: skip pc # inheritence depth
+        if pc.hasMore: skip pc # optional access-token string lit
         skipParRi pc
       of DerefX:
         inc pc
@@ -405,9 +405,9 @@ proc analyseCallArgs(c: var Context; n: var Cursor) =
   assert fnType.isParamsTag
   inc fnType
   var paramMap = initTable[SymId, int]() # param to position
-  while n.kind != ParRi:
+  while n.hasMore:
     let previousFormalParam = fnType
-    assert fnType.kind != ParRi
+    assert fnType.hasMore
     let param = takeLocal(fnType, SkipFinalParRi)
     paramMap[param.name.symId] = paramMap.len+1
     let pk = param.typ.typeKind
@@ -422,7 +422,7 @@ proc analyseCallArgs(c: var Context; n: var Cursor) =
       fnType = previousFormalParam
     checkNilMatch c, n, param.typ
     analyseExpr c, n
-  while fnType.kind != ParRi: skip fnType
+  while fnType.hasMore: skip fnType
   inc fnType # skip ParRi
   # skip return type:
   skip fnType
@@ -790,7 +790,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
               inc pc
               analyseExpr c, pc
               # don't assume arity here
-              while pc.kind != ParRi:
+              while pc.hasMore:
                 analyseExpr c, pc
               skipParRi pc
             else:
@@ -933,11 +933,10 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
   case n.stmtKind
   of StmtsS:
     c.toplevelStmts.add n
-    inc n
-    while n.kind != ParRi:
-      traverseToplevel(c, n)
-    c.toplevelStmts.add n
-    skipParRi n
+    n.into:
+      while n.hasMore:
+        traverseToplevel(c, n)
+    c.toplevelStmts.addParRi()
   of PragmaxS:
     inc n
     skip n

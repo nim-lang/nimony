@@ -17,7 +17,7 @@ proc genEnumToStrProcCase(c: var SemContext; dest: var TokenBuf; enumDecl: var C
   dest.add symToken(symId, enumDecl.info)
   inc enumDecl # skips enum
   skip enumDecl # skips base type
-  while enumDecl.kind != ParRi:
+  while enumDecl.hasMore:
     let enumDeclInfo = enumDecl.info
     dest.add tagToken("of", enumDeclInfo)
 
@@ -26,10 +26,10 @@ proc genEnumToStrProcCase(c: var SemContext; dest: var TokenBuf; enumDecl: var C
     inc enumDecl # into efld
     let symId = enumDecl.symId
     let symInfo = enumDecl.info
-    inc enumDecl
-    skip enumDecl # enum field name
-    skip enumDecl, SkipExport # export marker
-    skip enumDecl, SkipPragmas # pragmas
+    inc enumDecl                # past name (SymbolDef)
+    skip enumDecl, SkipExport   # export marker
+    skip enumDecl, SkipPragmas  # pragmas
+    skip enumDecl, SkipType     # type
 
     inc enumDecl # into tupleConstr
     skip enumDecl # skips counter field

@@ -29,7 +29,7 @@ when false:
     # first parameter is of the class type and must be ignored:
     skip a
     skip b
-    while a.kind != ParRi and b.kind != ParRi:
+    while a.hasMore and b.hasMore:
       let pa = takeLocal(a, SkipFinalParRi)
       let pb = takeLocal(b, SkipFinalParRi)
       if not sameTrees(pa.typ, pb.typ):
@@ -46,7 +46,7 @@ proc methodKeyImpl(name: string; a: Cursor): string =
   # First parameter was the class type and has already been skipped here!
   var a = a
   var b = createMangler(60)
-  while a.kind != ParRi:
+  while a.hasMore:
     let pa = takeLocal(a, SkipFinalParRi)
     mangle b, pa.typ, Frontend
   inc a
@@ -115,22 +115,22 @@ proc loadVTable*(typ: SymId): seq[semdata.MethodIndexEntry] =
   let typeDecl = asTypeDecl(res.decl)
   var pragmas = typeDecl.pragmas
   if pragmas.kind == ParLe:
-    inc pragmas # skip (pragmas
-    while pragmas.kind != ParRi:
-      if pragmas.kind == ParLe and pragmas.pragmaKind == MethodsP:
-        inc pragmas # skip (methods
-        while pragmas.kind == ParLe and pragmas.substructureKind == KvU:
-          inc pragmas # skip (kv
-          if pragmas.kind == StringLit:
-            let signature = pragmas.litId
-            inc pragmas
-            if pragmas.kind == Symbol:
-              let methodSym = pragmas.symId
-              result.add semdata.MethodIndexEntry(fn: methodSym, signature: signature)
-              inc pragmas
-            skipParRi pragmas
-          else:
-            skip pragmas
-        skipParRi pragmas # skip methods )
-      else:
-        skip pragmas
+    pragmas.into:  # (pragmas …)
+      while pragmas.hasMore:
+        if pragmas.kind == ParLe and pragmas.pragmaKind == MethodsP:
+          pragmas.into:  # (methods …)
+            while pragmas.hasMore:
+              if pragmas.kind == ParLe and pragmas.substructureKind == KvU:
+                pragmas.into KvU:
+                  if pragmas.hasMore and pragmas.kind == StringLit:
+                    let signature = pragmas.litId
+                    inc pragmas, AnyExpr
+                    if pragmas.hasMore and pragmas.kind == Symbol:
+                      let methodSym = pragmas.symId
+                      result.add semdata.MethodIndexEntry(fn: methodSym, signature: signature)
+                      inc pragmas, AnyExpr
+                  while pragmas.hasMore: skip pragmas
+              else:
+                skip pragmas  # non-KvU child of (methods)
+        else:
+          skip pragmas  # not (methods …)

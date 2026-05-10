@@ -85,7 +85,7 @@ proc findMatchingForwardDecl*(c: var SemContext; symId: SymId; implDecl: Cursor)
 proc processBodyStatements(c: var SemContext; dest: var TokenBuf; it: var Item;
                            lastSonInfo: var PackedLineInfo; beforeLastSon: var int) =
   ## Process all statements in the proc body, treating the last one as an expression.
-  while it.n.kind != ParRi:
+  while it.n.hasMore:
     if not isLastSon(it.n):
       semStmt c, dest, it.n, false
     else:
@@ -378,7 +378,7 @@ proc semGenericParams(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   elif n.substructureKind == TypevarsU:
     inc c.routine.inGeneric
     takeToken dest, n
-    while n.kind != ParRi:
+    while n.hasMore:
       semGenericParam c, dest, n
     takeParRi dest, n
   elif n.typeKind == InvokeT:
@@ -398,7 +398,7 @@ proc semParams(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
     takeToken dest, n
   elif n.substructureKind == ParamsU:
     takeToken dest, n
-    while n.kind != ParRi:
+    while n.hasMore:
       semParam c, dest, n
     takeParRi dest, n
   else:
@@ -430,7 +430,7 @@ proc getParamsType(c: var SemContext; dest: var TokenBuf; paramsAt: int): seq[Ty
     var n = cursorAt(dest, paramsAt)
     if n.substructureKind == ParamsU:
       inc n
-      while n.kind != ParRi:
+      while n.hasMore:
         if n.symKind == ParamY:
           var local = takeLocal(n, SkipFinalParRi)
           result.add local.typ
@@ -870,7 +870,7 @@ proc findMacroInvocs(c: SemContext; n: Cursor; kind: SymKind): seq[Cursor] =
     var n = asRoutine(n).pragmas
     if n.substructureKind == PragmasU:
       inc n
-      while n.kind != ParRi:
+      while n.hasMore:
         if n.exprKind == ErrX or n.substructureKind == KvU:
           skip n
         elif pragmaKind(n) != NoPragma or callConvKind(n) != NoCallConv:
@@ -904,7 +904,7 @@ proc transformMacroInvoc(c: var SemContext; dest: var TokenBuf; it: var Item; ma
     inBuf.add n
     if isCall:
       inc n
-      while n.kind != ParRi:
+      while n.hasMore:
         inBuf.takeTree n
     inBuf.addParLe StmtsS, info
 
@@ -1061,7 +1061,7 @@ proc invokeInnerObj(c: var SemContext; dest: var TokenBuf; genericsPos: int; obj
     var invokeBuf = createTokenBuf(16)
     invokeBuf.buildTree InvokeT, info:
       invokeBuf.add symToken(objSym, info)
-      while params.kind != ParRi:
+      while params.hasMore:
         let typevar = asTypevar(params).name
         if typevar.kind == SymbolDef:
           invokeBuf.add symToken(typevar.symId, typevar.info)
@@ -1243,7 +1243,8 @@ proc semUnpackDecl(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let tupleType = skipModifier(tup.typ)
   if tupleType.typeKind != TupleT:
     c.buildErr dest, tupInfo, "expected tuple for tuple unpacking"
-    skipToEnd it.n
+    while it.n.hasMore: skip it.n
+    consumeParRi it.n
     return
   if it.n.substructureKind != UnpacktupU:
     error "illformed AST: `unpacktup` inside `unpackdecl` expected, got ", it.n
@@ -1271,7 +1272,7 @@ proc semUnpackDecl(c: var SemContext; dest: var TokenBuf; it: var Item) =
   # iterate over unpacktup:
   var declBuf = createTokenBuf(32)
   var i = 0
-  while it.n.kind != ParRi:
+  while it.n.hasMore:
     let declInfo = it.n.info
     if it.n.stmtKind == UnpackdeclS:
       declBuf.add it.n
@@ -1303,7 +1304,7 @@ proc semUnpackDecl(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
 proc semUsing(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   takeToken dest, n
-  while n.kind != ParRi:
+  while n.hasMore:
     assert n.substructureKind == FldU
     takeToken dest, n
     var ident = StrId(0)

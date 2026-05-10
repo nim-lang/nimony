@@ -19,7 +19,7 @@ proc bug*(msg: string) {.noreturn.} =
 proc skipParRi*(n: var Cursor) =
   # XXX: Give NIFC some better error reporting.
   if n.kind == ParRi:
-    inc n
+    consumeParRi n
   else:
     when defined(debug):
       writeStackTrace()
@@ -112,8 +112,13 @@ proc tracebackTypeC*(n: Cursor): Cursor =
     unsafeDec result
 
 
-proc parLeToken*(t: NifcType; info = NoLineInfo): PackedToken =
-  result = parLeToken(TagId(t), info)
+proc tagToken*(t: NifcType; info = NoLineInfo): PackedToken =
+  result = tagToken(TagId(t), info)
+
+# Backwards-compat alias for callers that still use the old name; the body
+# now goes through `tagToken` so the new (kind|tag|jump) layout is used.
+template parLeToken*(t: NifcType; info = NoLineInfo): PackedToken =
+  tagToken(t, info)
 
 # Read helpers:
 
@@ -124,22 +129,22 @@ type
     name*, pragmas*, body*: Cursor
 
 proc asTypeDeclImpl(n: var Cursor): TypeDecl =
+  ## Reads child positions; advances `n` past the (type) scope close.
   assert n.stmtKind == TypeS
-  inc n
-  result = TypeDecl(name: n)
-  skip n
-  result.pragmas = n
-  skip n
-  result.body = n
+  n.into:
+    result = TypeDecl(name: n)
+    skip n
+    result.pragmas = n
+    skip n
+    result.body = n
+    skip n  # consume body so the into-epilogue closes the scope cleanly
 
 proc asTypeDecl*(n: Cursor): TypeDecl =
   var n = n
-  asTypeDeclImpl(n)
+  asTypeDeclImpl(n)  # local cursor is dropped on return
 
 proc takeTypeDecl*(n: var Cursor): TypeDecl =
-  result = asTypeDeclImpl(n)
-  skip n # skip body
-  skipParRi n
+  asTypeDeclImpl(n)  # advances `n` past the close
 
 type
   FieldDecl* = object
@@ -147,14 +152,13 @@ type
 
 proc takeFieldDecl*(n: var Cursor): FieldDecl =
   assert n.substructureKind == FldU
-  inc n
-  result = FieldDecl(name: n)
-  skip n
-  result.pragmas = n
-  skip n
-  result.typ = n
-  skip n
-  skipParRi n
+  n.into:
+    result = FieldDecl(name: n)
+    skip n
+    result.pragmas = n
+    skip n
+    result.typ = n
+    skip n
 
 type
   ParamDecl* = object
@@ -162,14 +166,13 @@ type
 
 proc takeParamDecl*(n: var Cursor): ParamDecl =
   assert n.substructureKind == ParamU
-  inc n
-  result = ParamDecl(name: n)
-  skip n
-  result.pragmas = n
-  skip n
-  result.typ = n
-  skip n
-  skipParRi n
+  n.into:
+    result = ParamDecl(name: n)
+    skip n
+    result.pragmas = n
+    skip n
+    result.typ = n
+    skip n
 
 
 type
@@ -178,21 +181,31 @@ type
 
 proc takeProcType*(n: var Cursor): ProcType =
   if n.typeKind == ParamsT:
-    discard
+    # Already inside a (proc/proctype) scope; the caller entered. Read the
+    # remaining sibling cursors without entering a new scope.
+    assert n.typeKind == ParamsT or n.kind == DotToken
+    result = ProcType(params: n)
+    skip n
+    result.returnType = n
+    skip n
+    result.pragmas = n
+    skip n
+    if n.kind == DotToken:
+      inc n
   else:
     assert n.stmtKind == ProcS or n.typeKind == ProctypeT
-    inc n # into (proctype ...)
-    skip n # skip the name
-  assert n.typeKind == ParamsT or n.kind == DotToken
-  result = ProcType(params: n)
-  skip n
-  result.returnType = n
-  skip n
-  result.pragmas = n
-  skip n
-  if n.kind == DotToken:
-    inc n
-  skipParRi n
+    n.into:  # enter (proc ...) / (proctype ...)
+      skip n # name
+      assert n.typeKind == ParamsT or n.kind == DotToken
+      result = ProcType(params: n)
+      skip n
+      result.returnType = n
+      skip n
+      result.pragmas = n
+      skip n
+      if n.hasMore and n.kind == DotToken:
+        inc n
+      while n.hasMore: skip n
 
 type
   ProcDecl* = object
@@ -200,18 +213,17 @@ type
 
 proc takeProcDecl*(n: var Cursor): ProcDecl =
   assert n.stmtKind == ProcS
-  inc n
-  result = ProcDecl(name: n)
-  skip n
-  result.params = n
-  skip n
-  result.returnType = n
-  skip n
-  result.pragmas = n
-  skip n
-  result.body = n
-  skip n
-  skipParRi n
+  n.into:
+    result = ProcDecl(name: n)
+    skip n
+    result.params = n
+    skip n
+    result.returnType = n
+    skip n
+    result.pragmas = n
+    skip n
+    result.body = n
+    skip n
 
 type
   VarDecl* = object
@@ -219,13 +231,57 @@ type
 
 proc takeVarDecl*(n: var Cursor): VarDecl =
   assert n.stmtKind in {GvarS, TvarS, VarS, ConstS}
-  inc n
-  result = VarDecl(name: n)
-  skip n
-  result.pragmas = n
-  skip n
-  result.typ = n
-  skip n
-  result.value = n
-  skip n
-  skipParRi n
+  n.into:
+    result = VarDecl(name: n)
+    skip n
+    result.pragmas = n
+    skip n
+    result.typ = n
+    skip n
+    result.value = n
+    skip n
+
+# ── Tag-typed intent overloads (mirrors nimony_model's pattern) ─────────────
+
+type NifcTagKind* =
+  NifcStmt | NifcExpr | NifcType | NifcOther | NifcPragma | NifcSym
+
+# See `nimony_model.nim`'s `tagDispatch` for the rationale: tag-class
+# templates dispatch via `when expected is X` and use `==`/`$` operators
+# that don't exist on the union itself, so we mark them `.untyped` under
+# nimony so the body isn't typechecked at definition time.
+when defined(nimony):
+  {.pragma: tagDispatch, untyped.}
+else:
+  {.pragma: tagDispatch.}
+
+template kindMatches(c: Cursor; expected: NifcTagKind): bool {.tagDispatch.} =
+  when expected is NifcStmt:    c.stmtKind == expected
+  elif expected is NifcExpr:    c.exprKind == expected
+  elif expected is NifcType:    c.typeKind == expected
+  elif expected is NifcOther:   c.substructureKind == expected
+  elif expected is NifcPragma:  c.pragmaKind == expected
+  elif expected is NifcSym:     c.symKind == expected
+  else:                         false
+
+template skip*(c: var Cursor; expected: NifcTagKind) {.tagDispatch.} =
+  assert kindMatches(c, expected),
+    "skip " & $expected & ": cursor at kind=" & $c.kind
+  skip c
+
+template inc*(c: var Cursor; expected: NifcTagKind) {.tagDispatch.} =
+  assert kindMatches(c, expected),
+    "inc " & $expected & ": cursor at kind=" & $c.kind
+  inc c
+
+template into*(c: var Cursor; expected: NifcTagKind; body: untyped) {.tagDispatch.} =
+  assert kindMatches(c, expected),
+    "into " & $expected & ": cursor at kind=" & $c.kind
+  into c:
+    body
+
+template loopInto*(c: var Cursor; expected: NifcTagKind; body: untyped) {.tagDispatch.} =
+  assert kindMatches(c, expected),
+    "loopInto " & $expected & ": cursor at kind=" & $c.kind
+  loopInto c:
+    body

@@ -122,6 +122,65 @@ type
   PragmaKind* = NimonyPragma
   TypeKind* = NimonyType
 
+# ── Tag-typed intent overloads for inc/skip/into/loopInto ───────────────────
+# Concrete-tag intents document the expected node kind and fail loudly at
+# runtime when reality differs. Use these when the tag is statically known
+# (`n.into IfS: …`); use `TagClass` (Anything/AnyExpr/AnyStmt/AnyType) for
+# the looser categorical intent; fall back to `SkipIntent` for role-style
+# annotations (SkipName, SkipPragmas, …).
+
+type NimonyTagKind* =
+  NimonyStmt | NimonyExpr | NimonyType | NimonyOther | NimonyPragma | NimonySym
+
+# Tag-typed `skip`/`inc`/`into`/`loopInto` overloads (and the `kindMatches`
+# helper they share) take a tag-class argument. The body uses
+# `when expected is X` to dispatch on which tag-class the caller passed.
+# Nimony typechecks generic code, so a *typed* template here would force
+# `==` and `$` to exist on the union type at definition time — they don't.
+# Mark the templates `untyped` (under nimony) so the body is only checked
+# at instantiation, when `expected` has a concrete tag-class type. Host
+# Nim is fine with the typed form, so we keep the `NimonyTagKind` typing
+# there for sharper sigs and IDE help.
+when defined(nimony):
+  {.pragma: tagDispatch, untyped.}
+else:
+  {.pragma: tagDispatch.}
+
+template kindMatches(c: Cursor; expected: NimonyTagKind): bool {.tagDispatch.} =
+  when expected is NimonyStmt:    c.stmtKind == expected
+  elif expected is NimonyExpr:    c.exprKind == expected
+  elif expected is NimonyType:    c.typeKind == expected
+  elif expected is NimonyOther:   c.substructureKind == expected
+  elif expected is NimonyPragma:  c.pragmaKind == expected
+  elif expected is NimonySym:     c.symKind == expected
+  else:                           false
+
+template skip*(c: var Cursor; expected: NimonyTagKind) {.tagDispatch.} =
+  assert kindMatches(c, expected),
+    "skip " & $expected & ": cursor at kind=" & $c.kind &
+    " (stmt=" & $c.stmtKind & " expr=" & $c.exprKind & " type=" & $c.typeKind & ")"
+  skip c
+
+template inc*(c: var Cursor; expected: NimonyTagKind) {.tagDispatch.} =
+  assert kindMatches(c, expected),
+    "inc " & $expected & ": cursor at kind=" & $c.kind &
+    " (stmt=" & $c.stmtKind & " expr=" & $c.exprKind & " type=" & $c.typeKind & ")"
+  inc c
+
+template into*(c: var Cursor; expected: NimonyTagKind; body: untyped) {.tagDispatch.} =
+  assert kindMatches(c, expected),
+    "into " & $expected & ": cursor at kind=" & $c.kind &
+    " (stmt=" & $c.stmtKind & " expr=" & $c.exprKind & " type=" & $c.typeKind & ")"
+  into c:
+    body
+
+template loopInto*(c: var Cursor; expected: NimonyTagKind; body: untyped) {.tagDispatch.} =
+  assert kindMatches(c, expected),
+    "loopInto " & $expected & ": cursor at kind=" & $c.kind &
+    " (stmt=" & $c.stmtKind & " expr=" & $c.exprKind & " type=" & $c.typeKind & ")"
+  loopInto c:
+    body
+
 const
   IntT* = IT
   UIntT* = UT
@@ -169,15 +228,14 @@ template copyIntoKinds*(dest: var TokenBuf; kinds: array[2, StmtKind]; info: Pac
 
 proc skipParRi(n: var Cursor) =
   assert n.kind == ParRi, "expected ')'"
-  inc n
+  consumeParRi n
 
 template copyInto*(dest: var TokenBuf; n: var Cursor; body: untyped) =
   assert n.kind == ParLe
   dest.add n
-  inc n
-  body
+  n.into:
+    body
   dest.addParRi()
-  skipParRi n
 
 proc isAtom*(n: Cursor): bool {.inline.} = n.kind < ParLe
 
@@ -268,12 +326,12 @@ const
 proc extractPragma*(n: Cursor; kind: PragmaKind): Cursor =
   var n = n
   if n.kind != DotToken:
-    inc n
-    while n.kind != ParRi:
-      if pragmaKind(n) == kind:
-        inc n
-        return n
-      skip n
+    n.into:  # (pragmas …)
+      while n.hasMore:
+        if pragmaKind(n) == kind:
+          inc n, SkipTag  # past the matched pragma's open
+          return n  # caller reads the pragma's value at this position
+        skip n
   result = default(Cursor)
 
 proc hasPragma*(n: Cursor; kind: PragmaKind): bool =

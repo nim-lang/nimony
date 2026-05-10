@@ -56,7 +56,7 @@ proc setupProc(c: var Context; procBody: Cursor) =
 proc trParams(c: var Context; params: Cursor) =
   var n = params
   inc n # skips (params
-  while n.kind != ParRi:
+  while n.hasMore:
     let r = takeLocal(n, SkipFinalParRi)
     if r.name.kind == SymbolDef:
       c.vt.newValueFor r.name.symId # register parameter as known location
@@ -110,7 +110,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # for now we leave the unknown instructions where they are as they do not hurt us.
   # We can later push them around.
   dest.takeToken n
-  while n.kind != ParRi:
+  while n.hasMore:
     trExpr c, dest, n
   dest.takeToken n
 
@@ -139,10 +139,10 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trExpr c, dest, n
       # field name:
       dest.takeTree n
-      if n.kind != ParRi:
+      if n.hasMore:
         # inheritance depth:
         takeTree dest, n
-      if n.kind != ParRi:
+      if n.hasMore:
         # optional access-token string lit
         takeTree dest, n
       dest.takeParRi n
@@ -151,13 +151,13 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.takeToken n
         dest.takeTree n # key, don't versionize!
         trExpr c, dest, n
-        if n.kind != ParRi:
+        if n.hasMore:
           # inheritance depth:
           takeTree dest, n
         takeParRi dest, n
       else:
         dest.takeToken n
-        while n.kind != ParRi:
+        while n.hasMore:
           trExpr c, dest, n
         dest.takeToken n
   of ParRi: bug "Unmatched ParRi"
@@ -187,7 +187,7 @@ proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
   closeSection c.vt
   openSection c.vt
   openScope c.typeCache
-  if n.kind != ParRi:
+  if n.hasMore:
     trStmt c, dest, n
   else:
     # repair broken ite statements (missing else):
@@ -195,7 +195,7 @@ proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
   closeScope c.typeCache
   closeSection c.vt
   # join information is optional here:
-  if n.kind != ParRi:
+  if n.hasMore:
     skip n # ignore the currently empty join information
   dest.addParLe StmtsS, info
   let joinData = combineJoin(c.vt, IfJoin)
@@ -231,7 +231,7 @@ proc trLoop(c: var Context; dest: var TokenBuf; n: var Cursor) =
   trExpr c, dest, n # condition
   assert n.stmtKind == StmtsS
   dest.takeToken n
-  while n.kind != ParRi:
+  while n.hasMore:
     trStmt c, dest, n # body
   # last statement of our loop body is the `continue`:
   closeSection c.vt
@@ -254,7 +254,7 @@ proc trLoop(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trKill(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Do not version the variables here!
   dest.takeToken n
-  while n.kind != ParRi:
+  while n.hasMore:
     assert n.kind == Symbol
     let s = n.symId
     killVar c.vt, s
@@ -263,7 +263,7 @@ proc trKill(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trJtrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.takeToken n
-  while n.kind != ParRi:
+  while n.hasMore:
     assert n.kind == Symbol
     let s = n.symId
     dest.takeToken n
@@ -308,7 +308,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       skip n
     else:
       dest.takeToken n
-      while n.kind != ParRi:
+      while n.hasMore:
         trStmt c, dest, n
       dest.takeToken n
 
@@ -324,9 +324,9 @@ proc toNjvl*(n: Cursor; moduleSuffix: string): TokenBuf =
   var n = beginRead(elimJumps)
   assert n.stmtKind == StmtsS, $n.kind
   result.add n
-  inc n
-  while n.kind != ParRi:
-    trStmt c, result, n
+  n.into:
+    while n.hasMore:
+      trStmt c, result, n
   result.addParRi()
   c.typeCache.closeScope()
   endRead elimJumps

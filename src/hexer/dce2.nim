@@ -83,22 +83,20 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
       # types are fundamentally different from procs when it comes to generic instantiations:
       # We need to ensure **consistency** for types, but for procs we need to ensure **uniqueness**.
       let head = n.load()
-      inc n
-      if n.kind == SymbolDef:
-        let def = n.symId
-        let t = translate(resolved, def)
-        dest.add head
-        dest.addSymDef t.toNifcName, n.info
-        inc n # skip symbol def
-        while n.kind != ParRi:
-          tr dest, n, alive, resolved
-        dest.takeToken n
-      else:
-        # let errors propagate:
-        dest.add head
-        while n.kind != ParRi:
-          tr dest, n, alive, resolved
-        dest.takeToken n
+      dest.add head
+      n.into:
+        if n.kind == SymbolDef:
+          let def = n.symId
+          let t = translate(resolved, def)
+          dest.addSymDef t.toNifcName, n.info
+          skip n # skip symbol def (atom)
+          while n.hasMore:
+            tr dest, n, alive, resolved
+        else:
+          # let errors propagate:
+          while n.hasMore:
+            tr dest, n, alive, resolved
+      dest.addParRi()
 
     of ProcS, VarS, ConstS, GvarS, TvarS:
       let head = n.load()
@@ -109,7 +107,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
           dest.add head
           dest.addSymDef def.toNifcName, n.info
           inc n # skip symbol def
-          while n.kind != ParRi:
+          while n.hasMore:
             tr dest, n, alive, resolved
           dest.takeToken n
         elif alive.contains(def):
@@ -122,7 +120,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
             dest.addSymDef t.toNifcName, n.info
             inc n # skip symbol def
             var untilBody = if stmtKind == ProcS: 3 else: 2 # pragmas type (for procs: return type)
-            while n.kind != ParRi and untilBody > 0:
+            while n.hasMore and untilBody > 0:
               dec untilBody
               tr dest, n, alive, resolved
             skip n # skip the body
@@ -135,23 +133,23 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
             dest.add head
             dest.addSymDef def.toNifcName, n.info
             inc n # skip symbol def
-            while n.kind != ParRi:
+            while n.hasMore:
               tr dest, n, alive, resolved
             dest.takeToken n
         else:
           # skip it, it's dead
           inc n # skip symbol def
-          while n.kind != ParRi: skip n
+          while n.hasMore: skip n
           inc n
       else:
         # let errors propagate:
         dest.add head
-        while n.kind != ParRi:
+        while n.hasMore:
           tr dest, n, alive, resolved
         dest.takeToken n
     else:
       dest.takeToken n
-      while n.kind != ParRi:
+      while n.hasMore:
         tr dest, n, alive, resolved
       dest.takeToken n
   of Symbol:
@@ -245,53 +243,49 @@ proc readLiveFile*(infile: string): LiveSet =
     live: initTable[string, HashSet[SymId]]())
   if n.stmtKind != StmtsS:
     raiseAssert infile & ": expected (stmts ...)"
-  inc n
   let liveTagId = pool.tags.getOrIncl(liveTag)
   let resolveTagId = pool.tags.getOrIncl(resolveTag)
   let modTagId = pool.tags.getOrIncl(modTag)
-  while n.kind != ParRi:
-    if n.kind != ParLe:
-      raiseAssert infile & ": expected ParLe"
-    if n.tag == resolveTagId:
-      inc n
-      while n.kind != ParRi:
-        if n.kind == ParLe and n.substructureKind == KvU:
-          inc n  # past `kv`
-          if n.kind != StringLit:
-            raiseAssert infile & ": kv key must be StringLit"
-          let key = pool.strings[n.litId]
-          inc n
-          if n.kind != Symbol:
-            raiseAssert infile & ": kv value must be Symbol"
-          result.resolved[key] = n.symId
-          inc n
-          if n.kind != ParRi:
-            raiseAssert infile & ": expected ')' closing kv"
-          inc n
-        else:
-          raiseAssert infile & ": expected (kv …)"
-      inc n
-    elif n.tag == liveTagId:
-      inc n
-      while n.kind != ParRi:
-        if n.kind != ParLe or n.tag != modTagId:
-          raiseAssert infile & ": expected (mod …)"
-        inc n
-        if n.kind != StringLit:
-          raiseAssert infile & ": (mod) name must be StringLit"
-        let modName = pool.strings[n.litId]
-        inc n
-        var syms = initHashSet[SymId]()
-        while n.kind != ParRi:
-          if n.kind != Symbol:
-            raiseAssert infile & ": expected Symbol in (mod)"
-          syms.incl n.symId
-          inc n
-        result.live[modName] = syms
-        inc n
-      inc n
-    else:
-      raiseAssert infile & ": expected (resolved|live …)"
+  n.into:                                       # (stmts ...)
+    while n.hasMore:
+      if n.kind != ParLe:
+        raiseAssert infile & ": expected ParLe"
+      if n.tag == resolveTagId:
+        n.into:                                 # (resolved ...)
+          while n.hasMore:
+            if n.kind == ParLe and n.substructureKind == KvU:
+              n.into:                           # (kv ...)
+                if n.kind != StringLit:
+                  raiseAssert infile & ": kv key must be StringLit"
+                let key = pool.strings[n.litId]
+                skip n
+                if n.kind != Symbol:
+                  raiseAssert infile & ": kv value must be Symbol"
+                result.resolved[key] = n.symId
+                skip n
+                if n.hasMore:
+                  raiseAssert infile & ": expected ')' closing kv"
+            else:
+              raiseAssert infile & ": expected (kv …)"
+      elif n.tag == liveTagId:
+        n.into:                                 # (live ...)
+          while n.hasMore:
+            if n.kind != ParLe or n.tag != modTagId:
+              raiseAssert infile & ": expected (mod …)"
+            n.into:                             # (mod ...)
+              if n.kind != StringLit:
+                raiseAssert infile & ": (mod) name must be StringLit"
+              let modName = pool.strings[n.litId]
+              skip n
+              var syms = initHashSet[SymId]()
+              while n.hasMore:
+                if n.kind != Symbol:
+                  raiseAssert infile & ": expected Symbol in (mod)"
+                syms.incl n.symId
+                skip n
+              result.live[modName] = syms
+      else:
+        raiseAssert infile & ": expected (resolved|live …)"
 
 proc computeLiveSet*(dceFiles: openArray[string]; liveOut: string) =
   ## Read the per-module `.dce.nif` analyses, compute the global

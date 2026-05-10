@@ -28,9 +28,9 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.scopeStack.add beforeBody
   if n.stmtKind in {ScopeS, StmtsS}:
     dest.takeToken n
-    while n.kind != ParRi:
+    while n.hasMore:
       trStmt c, dest, n
-    inc n # skip ParRi
+    skipParRi n
   else:
     dest.addParLe(StmtsS, n.info)
     trStmt c, dest, n
@@ -47,7 +47,7 @@ proc trDefer(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var fin = createTokenBuf(50)
   fin.addParRi() # stmts body from try statement
   fin.addParLe(FinU, n.info)
-  inc n
+  inc n, SkipTag # enter (defer
   trStmt c, fin, n
   fin.takeParRi n
   fin.addParRi() # close try statement
@@ -59,14 +59,14 @@ proc trReturn(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let info = n.info
     dest.copyIntoKind AsgnS, info:
       dest.addSymUse c.retSym, info
-      inc n # skip `ret`
+      inc n, SkipTag # skip `ret`
       trStmt c, dest, n
     dest.copyIntoKind RetS, info:
       dest.addSymUse c.retSym, info
   else:
     # ordinary recursion:
     dest.takeToken n
-    while n.kind != ParRi:
+    while n.hasMore:
       trStmt c, dest, n
     dest.takeParRi n
 
@@ -149,7 +149,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       assert n.kind == SymbolDef
       c.retSym = n.symId
       dest.takeToken n
-      while n.kind != ParRi:
+      while n.hasMore:
         trStmt c, dest, n
       dest.takeParRi n
     of CallS, CmdS, GvarS, TvarS, VarS, ConstS, GletS, TletS, LetS, CursorS,
@@ -159,7 +159,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
        RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS, PrefixS,
        HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS, NoStmt:
       dest.takeToken n
-      while n.kind != ParRi:
+      while n.hasMore:
         trStmt c, dest, n
       dest.takeParRi n
   of ParRi:
@@ -174,7 +174,7 @@ proc transformDefer*(dest: var TokenBuf; procBody: int) =
   c.scopeStack.add procBody
   var buf = createTokenBuf(50)
   buf.takeToken n
-  while n.kind != ParRi:
+  while n.hasMore:
     trStmt c, buf, n
   while c.actionStack.len > 0:
     let a = c.actionStack.pop

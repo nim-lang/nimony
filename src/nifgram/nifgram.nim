@@ -383,7 +383,7 @@ proc compileQuery(c: var Context; it, prefix: string, n: var Cursor): string =
     result.add prefix & pool.strings[n.litId] & "(" & c.args & ")"
     inc n
 
-  if n.kind != ParRi:
+  if n.hasMore:
     result = ""
     error c, "string literal after QUERY|COND expected"
 
@@ -413,7 +413,7 @@ proc compileDo(c: var Context; it: string, n: var Cursor): string =
     inc n
     inc counter
   c.outp.add ")"
-  if n.kind != ParRi:
+  if n.hasMore:
     error c, "string literal after DO expected"
   result = "true"
 

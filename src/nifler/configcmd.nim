@@ -9,9 +9,7 @@
 import std/[os, strutils, parseopt, strtabs, times]
 from std/sequtils import addUnique
 
-import compiler / [
-  commands, options, msgs, idents, lineinfos, cmdlinehelper,
-  pathutils, modulegraphs, condsyms]
+import compiler / [commands, options, msgs, idents, lineinfos, cmdlinehelper, pathutils, modulegraphs, condsyms]
 
 include ".." / lib / nifprelude
 
@@ -226,7 +224,7 @@ proc sourcesChangedImpl(configFile: string; c: Cursor): bool =
       inc nested
       if pool.tags[c.tag] == "sources":
         inc c
-        while c.kind != ParRi:
+        while c.hasMore:
           if c.kind == StringLit:
             let dep = pool.strings[c.litId]
             if not fileExists(dep):

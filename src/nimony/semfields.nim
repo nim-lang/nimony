@@ -98,14 +98,13 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
   let unpackInfo = it.n.info
   case it.n.substructureKind
   of UnpackflatU, UnpacktupU:
-    inc it.n
     # take direct ident names for now,
-    # defining and substituting full symbols would need prepass: 
+    # defining and substituting full symbols would need prepass:
     var names: seq[StrId] = @[]
-    while it.n.kind != ParRi:
-      let loopvar = takeLocal(it.n, SkipFinalParRi)
-      names.add getIdent(loopvar.name)
-    skipParRi it.n
+    it.n.into:
+      while it.n.hasMore:
+        let loopvar = takeLocal(it.n, SkipFinalParRi)
+        names.add getIdent(loopvar.name)
     if fieldPairs:
       if names.len == 2 or names.len == 3:
         iter.nameVar = names[0]
@@ -114,7 +113,8 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
           iter.fieldVar2 = names[2]
       else:
         buildErr c, dest, unpackInfo, "wrong number of variables"
-        skipToEnd it.n
+        while it.n.hasMore: skip it.n
+        consumeParRi it.n
         return
     else:
       if names.len == 1 or names.len == 2:
@@ -123,11 +123,13 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
           iter.fieldVar2 = names[1]
       else:
         buildErr c, dest, unpackInfo, "wrong number of variables"
-        skipToEnd it.n
+        while it.n.hasMore: skip it.n
+        consumeParRi it.n
         return
   else:
     buildErr c, dest, unpackInfo, "illformed AST: `unpackflat` or `unpacktup` inside `for` expected"
-    skipToEnd it.n
+    while it.n.hasMore: skip it.n
+    consumeParRi it.n
     return
 
   var objType = call # call is typed magic so we don't have to call getType
@@ -137,15 +139,17 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
   iter.obj1 = obj1
   var obj2 = obj1
   skip obj2
-  if obj2.kind != ParRi:
+  if obj2.hasMore:
     iter.obj2 = obj2
     if iter.fieldVar2 == StrId(0):
       buildErr c, dest, unpackInfo, "wrong number of variables"
-      skipToEnd it.n
+      while it.n.hasMore: skip it.n
+      consumeParRi it.n
       return
   elif iter.fieldVar2 != StrId(0):
     buildErr c, dest, unpackInfo, "wrong number of variables"
-    skipToEnd it.n
+    while it.n.hasMore: skip it.n
+    consumeParRi it.n
     return
   let body = it.n
   skip it.n
@@ -187,25 +191,27 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
 
   if isTuple:
     var tup = objType
-    inc tup
     var i = 0
-    while tup.kind != ParRi:
-      let fld = asTupleField(tup)
-      let name =
-        if not cursorIsNil(fld.name):
-          getIdent(fld.name)
-        else:
-          pool.strings.getOrIncl("Field" & $(i+1))
-      buildTupleFieldIter(iterBuf, iter, i, name, body)
-      skip tup
-      inc i
+    tup.into:
+      while tup.hasMore:
+        let fld = asTupleField(tup)
+        let name =
+          if not cursorIsNil(fld.name):
+            getIdent(fld.name)
+          else:
+            pool.strings.getOrIncl("Field" & $(i+1))
+        buildTupleFieldIter(iterBuf, iter, i, name, body)
+        skip tup
+        inc i
   else: # object
     # same order as original nim fields iterator:
     while true:
       var obj = asObjectDecl(objType)
-      var currentField = obj.firstField
-      if currentField.kind != DotToken:
-        while currentField.kind != ParRi:
+      var currentField = obj.body
+      currentField.into:
+        if obj.kind == ObjectT:
+          skip currentField, AnyType  # parent type / inheritance slot
+        while currentField.hasMore:
           let field = takeLocal(currentField, SkipFinalParRi)
           let fieldSym = if isInternalSym: field.name.symId else: SymId(0)
           # field name is enough:

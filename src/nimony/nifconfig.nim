@@ -134,19 +134,19 @@ proc parseConfig(c: Cursor; result: var NifConfig) =
       case pool.tags[c.tag]
       of "defines":
         inc c
-        while c.kind != ParRi:
+        while c.hasMore:
           if c.kind == StringLit:
             result.defines.addUnique pool.strings[c.litId]
           inc c
       of "paths":
         inc c
-        while c.kind != ParRi:
+        while c.hasMore:
           if c.kind == StringLit:
             result.paths.add pool.strings[c.litId]
           inc c
       of "nimblepaths":
         inc c
-        while c.kind != ParRi:
+        while c.hasMore:
           if c.kind == StringLit:
             result.nimblePaths.add pool.strings[c.litId]
           inc c

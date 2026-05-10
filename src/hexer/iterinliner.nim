@@ -43,7 +43,7 @@ proc hasContinueStmt(c: Cursor): bool =
 proc createDecl(e: var EContext; dest: var TokenBuf; destSym: SymId;
         typ: var Cursor; value: var Cursor;
         info: PackedLineInfo; kind: StmtKind; needsAddr: bool) =
-  assert typ.kind != ParRi
+  assert typ.hasMore
   dest.addParLe kind, info
   dest.add symdefToken(destSym, info)
   dest.addDotToken()
@@ -69,7 +69,7 @@ proc getForVars(e: var EContext, forVars: Cursor): seq[Cursor] =
   if forVars.substructureKind notin {UnpackflatU, UnpacktupU}:
     error e, "`unpackflat` or `unpacktup` expected, but got: ", forVars
   inc forVars # unpackflat/unpacktup
-  while forVars.kind != ParRi:
+  while forVars.hasMore:
     result.add forVars
     skip forVars
 
@@ -88,7 +88,7 @@ proc connectSingleExprToLoopVar(e: var EContext; dest: var TokenBuf; c: var Curs
     createDecl(e, dest, destSym, typ, c, info, VarS, needsAddr=false)
 
 proc unpackTupleAccess(e: var EContext; dest: var TokenBuf; forVar: Cursor; left: TokenBuf; i: int; info: PackedLineInfo; typ: Cursor; needsAddr: bool) =
-  assert typ.kind != ParRi
+  assert typ.hasMore
   let local = asLocal(forVar)
   let symId = local.name.symId
   var tupBuf = createTupleAccess(left, i, info)
@@ -116,7 +116,7 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
     if c.kind == ParLe and c.exprKind == TupX:
       inc c
       var i = 0
-      while c.kind != ParRi:
+      while c.hasMore:
         connectSingleExprToLoopVar(e, dest, c, forVars[i], result)
         inc i
       skipParRi(e, c)
@@ -171,7 +171,7 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
           # every unpacked sub-var. Pass `needsAddr` through so each `let sym
           # = (tupat ...)` is wrapped in `(haddr ...)`.
           let innerNeedsAddr = needsDeref or hasModifier
-          while unpackCursor.kind != ParRi:
+          while unpackCursor.hasMore:
             unpackTupleAccess(e, dest, unpackCursor, leftTupleAccess, counter, info, typ, innerNeedsAddr)
             inc counter
             skip unpackCursor
@@ -267,16 +267,15 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
       takeParRi(dest, c)
     of StmtsS:
       if fromForloop:
-        inc c
-        while c.kind != ParRi:
-          inlineLoopBody(e, dest, c, mapping)
-        skipParRi(e, c)
+        c.into:
+          while c.hasMore:
+            inlineLoopBody(e, dest, c, mapping)
       else:
         dest.add c
-        inc c
-        while c.kind != ParRi:
-          inlineLoopBody(e, dest, c, mapping)
-        takeParRi(dest, c)
+        c.into:
+          while c.hasMore:
+            inlineLoopBody(e, dest, c, mapping)
+        dest.addParRi()
     of VarS, LetS, CursorS, PatternvarS, ResultS:
       dest.add c
       inc c
@@ -309,14 +308,14 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
         dest.add c
         inc c
         dest.takeTree c
-        while c.kind != ParRi:
+        while c.hasMore:
           inlineLoopBody(e, dest, c, mapping)
         takeParRi(dest, c)
       elif c.exprKind in {DotX, DdotX}:
         dest.add c
         inc c
         inlineLoopBody(e, dest, c, mapping)
-        while c.kind != ParRi:
+        while c.hasMore:
           dest.takeTree c
         takeParRi(dest, c)
       else:
@@ -334,10 +333,10 @@ proc inlineIteratorBody(e: var EContext; dest: var TokenBuf;
     case c.stmtKind
     of StmtsS:
       dest.add c
-      inc c
-      while c.kind != ParRi:
-        inlineIteratorBody(e, dest, c, forStmt, yieldType)
-      takeParRi dest, c
+      c.into:
+        while c.hasMore:
+          inlineIteratorBody(e, dest, c, forStmt, yieldType)
+      dest.addParRi()
     of YldS:
       dest.add tagToken($BlockS, c.info)
       dest.addDotToken()
@@ -414,14 +413,14 @@ proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations
         dest.add c
         inc c
         dest.takeTree c
-        while c.kind != ParRi:
+        while c.hasMore:
           replaceSymbol(e, dest, c, relations)
         takeParRi(dest, c)
       elif c.exprKind in {DotX, DdotX}:
         dest.add c
         inc c
         replaceSymbol(e, dest, c, relations)
-        while c.kind != ParRi:
+        while c.hasMore:
           dest.takeTree c
         takeParRi(dest, c)
       else:
@@ -454,7 +453,7 @@ proc inlineIterator(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
     inc params # (params
     inc iter # name
     var relationsMap = initTable[SymId, SymId]()
-    while params.kind != ParRi:
+    while params.hasMore:
       let param = asLocal(params)
       var typ = param.typ
       let name = param.name

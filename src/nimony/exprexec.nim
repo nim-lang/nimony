@@ -21,7 +21,7 @@ const
 
 when false:
   proc addSubtreeAndSyms(result: var TokenBuf; c: Cursor; stack: var seq[SymId]) =
-    assert c.kind != ParRi, "cursor at end?"
+    assert c.hasMore, "cursor at end?"
     if c.kind != ParLe:
       # atom:
       result.add c.load
@@ -56,7 +56,7 @@ type
     errorMsg: string
 
 proc collectSyms(n: Cursor; stack: var seq[SymId]) =
-  assert n.kind != ParRi, "cursor at end?"
+  assert n.hasMore, "cursor at end?"
   if n.kind != ParLe:
     # atom:
     if n.kind == Symbol: stack.add n.symId
@@ -98,7 +98,8 @@ proc rewriteSymsToIdents*(c: var SynthesizeSerializerCtx) =
           extractBasename name
           let identId = pool.strings.getOrIncl(name)
           newDest.add identToken(identId, n.info)
-          skipToEnd(n)
+          while n.hasMore: skip n
+          consumeParRi n
         else:
           newDest.add n
           inc nested
@@ -210,7 +211,7 @@ proc unravelObjField(c: var SynthesizeSerializerCtx; n: var Cursor; param: Token
   genParRiCall c
 
 proc unravelObjFields(c: var SynthesizeSerializerCtx; n: var Cursor; param: TokenBuf; needsDeref: bool; depth: int) =
-  while n.kind != ParRi:
+  while n.hasMore:
     case n.substructureKind
     of CaseU:
       let info = n.info
@@ -224,7 +225,7 @@ proc unravelObjFields(c: var SynthesizeSerializerCtx; n: var Cursor; param: Toke
       c.dest.addParLe CaseU, info
       c.dest.add sel
 
-      while n.kind != ParRi:
+      while n.hasMore:
         case n.substructureKind
         of OfU:
           c.dest.takeToken(n)
@@ -283,15 +284,15 @@ proc unravelTuple(c: var SynthesizeSerializerCtx;
   genStringCall(c, "writeNifRaw", toString(orig, false))
 
   var n = orig
-  inc n
   var idx = 0
-  while n.kind != ParRi:
-    let fieldType = getTupleFieldType(n)
-    skip n
+  n.into:  # (tuple …)
+    while n.hasMore:
+      let fieldType = getTupleFieldType(n)
+      skip n
 
-    let a = accessTupField(c, param, idx)
-    unravel c, fieldType, a
-    inc idx
+      let a = accessTupField(c, param, idx)
+      unravel c, fieldType, a
+      inc idx
   genParRiCall c
 
 
@@ -393,17 +394,17 @@ proc unravelEnum(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenB
   c.dest.addParLe CaseS, c.info
   c.dest.add param
   var enumDecl = orig
-  inc enumDecl # skips enum
-  skip enumDecl # skips base type
-  while enumDecl.kind != ParRi:
-    let enumDeclInfo = enumDecl.info
-    c.dest.copyIntoKind OfU, enumDeclInfo:
-      c.dest.copyIntoKind RangesU, enumDeclInfo:
-        let enumField = takeLocal(enumDecl, SkipFinalParRi)
-        let esym = enumField.name.symId
-        c.dest.addSymUse esym, enumDeclInfo
-      c.dest.copyIntoKind StmtsS, enumDeclInfo:
-        genStringCall(c, "writeNifSymbol", pool.syms[esym])
+  enumDecl.into:  # (enum baseType field1 field2 …)
+    skip enumDecl, SkipType  # base type
+    while enumDecl.hasMore:
+      let enumDeclInfo = enumDecl.info
+      c.dest.copyIntoKind OfU, enumDeclInfo:
+        c.dest.copyIntoKind RangesU, enumDeclInfo:
+          let enumField = takeLocal(enumDecl, SkipFinalParRi)
+          let esym = enumField.name.symId
+          c.dest.addSymUse esym, enumDeclInfo
+        c.dest.copyIntoKind StmtsS, enumDeclInfo:
+          genStringCall(c, "writeNifSymbol", pool.syms[esym])
   c.dest.addParRi() # case
 
 proc primitiveCall(c: var SynthesizeSerializerCtx; name: string; arg: Cursor) =

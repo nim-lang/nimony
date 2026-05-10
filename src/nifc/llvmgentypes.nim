@@ -31,7 +31,7 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): string =
     else:
       result = "i" & $c.bits
     # consume qualifiers
-    while n.kind != ParRi:
+    while n.hasMore:
       skip n
     skipParRi n
   of UT:
@@ -41,7 +41,7 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): string =
       inc n
     else:
       result = "i" & $c.bits
-    while n.kind != ParRi:
+    while n.hasMore:
       skip n
     skipParRi n
   of FT:
@@ -50,7 +50,7 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): string =
     if n.kind == IntLit:
       bits = integralBitsLLVM(n, c)
       inc n
-    while n.kind != ParRi:
+    while n.hasMore:
       skip n
     skipParRi n
     case bits
@@ -60,7 +60,7 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): string =
     else: result = "double"
   of BoolT:
     inc n
-    while n.kind != ParRi:
+    while n.hasMore:
       skip n
     skipParRi n
     result = "i8" # Use i8 for bool to match C ABI (i1 has different ABI)
@@ -71,7 +71,7 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): string =
       inc n
     else:
       result = "i8"
-    while n.kind != ParRi:
+    while n.hasMore:
       skip n
     skipParRi n
   of NoType:
@@ -113,7 +113,7 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): string =
     # Enum type encountered inline - use its underlying type
     inc n
     result = genTypeLLVM(c, n) # base type
-    while n.kind != ParRi:
+    while n.hasMore:
       skip n
     skipParRi n
   of ArrayT:
@@ -219,7 +219,7 @@ proc typeSizeBits(c: var LLVMCode; n: Cursor): int =
       inc nn
     else:
       result = 0
-    while nn.kind != ParRi:
+    while nn.hasMore:
       if nn.substructureKind == FldU:
         var fdecl = takeFieldDecl(nn)
         result += typeSizeBits(c, fdecl.typ)
@@ -230,7 +230,7 @@ proc typeSizeBits(c: var LLVMCode; n: Cursor): int =
     var nn = n
     inc nn
     result = 0
-    while nn.kind != ParRi:
+    while nn.hasMore:
       if nn.substructureKind == FldU:
         var fdecl = takeFieldDecl(nn)
         let sz = typeSizeBits(c, fdecl.typ)
@@ -278,7 +278,7 @@ proc typeAlignBits(c: var LLVMCode; n: Cursor): int =
         result = 0
     else:
       result = 0
-    while nn.kind != ParRi:
+    while nn.hasMore:
       if nn.substructureKind == FldU:
         var fdecl = takeFieldDecl(nn)
         let a = typeAlignBits(c, fdecl.typ)
@@ -404,7 +404,7 @@ proc traverseProctypeBodyLLVM(m: var MainModule; o: var TypeOrderLLVM; t: Cursor
   var viaPointer = true
   if param.kind == ParLe:
     param = param.firstSon
-    while param.kind != ParRi:
+    while param.hasMore:
       let paramDecl = takeParamDecl(param)
       recordDependencyImplLLVM m, o, t, paramDecl.typ, viaPointer
   recordDependencyImplLLVM m, o, t, procType.returnType, viaPointer
@@ -637,7 +637,7 @@ proc fieldIndex(c: var LLVMCode; objBody: Cursor; fldSym: SymId): int =
           # Search for fldSym inside the union
           var search = body
           inc search # skip UnionT tag
-          while search.kind != ParRi:
+          while search.hasMore:
             if search.substructureKind == FldU:
               let fdecl = takeFieldDecl(search)
               if fdecl.name.kind == SymbolDef and fdecl.name.symId == fldSym:
@@ -690,7 +690,7 @@ proc genTypeDefLLVM(c: var LLVMCode; body: var Cursor; name: string;
     # Enums are just their underlying integer type, no struct wrapper
     inc body
     let baseType = genTypeLLVM(c, body)
-    while body.kind != ParRi:
+    while body.hasMore:
       skip body
     inc body
     result = "%" & name & " = type " & baseType & "\n"
@@ -706,7 +706,7 @@ proc genTypeDefLLVM(c: var LLVMCode; body: var Cursor; name: string;
     var paramTypes: seq[string] = @[]
     if procType.params.kind == ParLe:
       var p = procType.params.firstSon
-      while p.kind != ParRi:
+      while p.hasMore:
         let paramDecl = takeParamDecl(p)
         var t = paramDecl.typ
         paramTypes.add genTypeLLVM(c, t)
@@ -791,7 +791,7 @@ proc isPackedType(c: var LLVMCode; typeSym: Cursor): bool =
       let tdecl = asTypeDecl(d.pos)
       if tdecl.pragmas.substructureKind == PragmasU:
         var p = tdecl.pragmas.firstSon
-        while p.kind != ParRi:
+        while p.hasMore:
           if p.pragmaKind == PackedP: return true
           skip p
 
@@ -881,7 +881,7 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor; declaredType: Cursor): Type
                 inc body
               elif body.kind == DotToken:
                 inc body
-            while body.kind != ParRi:
+            while body.hasMore:
               if body.substructureKind == FldU:
                 var fdecl = takeFieldDecl(body)
                 fieldNifTypes.add fdecl.typ
@@ -891,7 +891,7 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor; declaredType: Cursor): Type
       var typeParts: seq[string] = @[]
       var valParts: seq[string] = @[]
       var fieldIdx = 0
-      while n.kind != ParRi:
+      while n.hasMore:
         if n.substructureKind == KvU:
           inc n
           skip n # field name
@@ -900,7 +900,7 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor; declaredType: Cursor): Type
           let tc = genGlobalConstr(c, n, nifType)
           typeParts.add tc.typ
           valParts.add tc.typ & " " & tc.val
-          if n.kind != ParRi: skip n # optional inheritance depth
+          if n.hasMore: skip n # optional inheritance depth
           skipParRi n
           inc fieldIdx
         elif n.exprKind == OconstrC:
@@ -973,7 +973,7 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor; declaredType: Cursor): Type
               elemTypeCursor = at
       skip n # type
       var elems: seq[string] = @[]
-      while n.kind != ParRi:
+      while n.hasMore:
         let tc = genGlobalConstr(c, n, elemTypeCursor)
         elems.add tc.typ & " " & tc.val
       skipParRi n

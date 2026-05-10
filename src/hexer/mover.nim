@@ -66,8 +66,10 @@ proc sameTreesIgnoreArrayIndexes*(a, b: Cursor): bool =
         if not sameTreesIgnoreArrayIndexes(a, b):
           return false
         # do not compare the array indexes:
-        skipToEnd a
-        skipToEnd b
+        while a.hasMore: skip a
+        consumeParRi a
+        while b.hasMore: skip b
+        consumeParRi b
       else:
         inc a
         inc b
@@ -105,7 +107,7 @@ proc containsUsage(tree: var Cursor; x: Cursor): bool =
         inc tree
         if containsUsage(tree, x):
           result = true
-        while tree.kind != ParRi:
+        while tree.hasMore:
           skip tree
       elif tree.substructureKind == KvU:
         inc tree
@@ -137,7 +139,7 @@ proc containsRoot(tree: var Cursor; x: Cursor): bool =
         inc tree
         if containsRoot(tree, x):
           result = true
-        while tree.kind != ParRi:
+        while tree.hasMore:
           skip tree
       elif tree.substructureKind == KvU:
         inc tree

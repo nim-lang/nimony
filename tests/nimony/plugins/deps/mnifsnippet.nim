@@ -2,11 +2,8 @@ import std / [os, syncio]
 import nimonyplugins
 
 proc tr(n: NifCursor): NifBuilder =
-  var n = n
-  if n.stmtKind == StmtsS:
-    inc n
-
-  let first = """(call echo $arg)""" %~ {"arg": ~n}
+  let head = if n.stmtKind == StmtsS: firstChild(n) else: n
+  let first = """(call echo $arg)""" %~ {"arg": ~head}
   let second = """(call echo $msg)""" %~ {"msg": ~"seen"}
   let third = """(call echo $count)""" %~ {"count": ~17}
   let tail = nifFragment("""(call echo "done")""")

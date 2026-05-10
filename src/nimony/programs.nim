@@ -519,13 +519,13 @@ proc setupProgramForTesting*(dir, file, ext: string) =
 proc takeParRi*(dest: var TokenBuf; n: var Cursor) =
   if n.kind == ParRi:
     dest.add n
-    inc n
+    consumeParRi n
   else:
     bug "expected ')', but got: ", n
 
 proc skipParRi*(n: var Cursor) =
   if n.kind == ParRi:
-    inc n
+    consumeParRi n
   else:
     bug "expected ')', but got: ", n
 

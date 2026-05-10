@@ -181,7 +181,7 @@ proc collectChildKinds(parent: Cursor; preferStmtContext: bool;
   var c = parent
   inc c  # past the ParLe
   var idx = 0
-  while c.kind != ParRi:
+  while c.hasMore:
     let inTypeSlot = allKidsType or (idx in typeSlots)
     outKinds.add classifyCursor(c, preferStmtContext, inTypeSlot)
     skip c
@@ -385,7 +385,7 @@ proc checkParLe(ctx: var ValidatorCtx; c: var Cursor;
   var child = c
   inc child
   var idx = 0
-  while child.kind != ParRi:
+  while child.hasMore:
     let childInType = kidsTypeByThisTag or (idx in typeSlots)
     checkTree(ctx, child, tag, idx, childInType)
     inc idx
@@ -418,8 +418,10 @@ proc validate*(buf: var TokenBuf; phase: Phase;
   # After the root subtree has been consumed, the cursor must be exhausted.
   # Anything remaining is content that a pass walking the IR with nested
   # counters / recursive descent would silently ignore — a spec-level bug the
-  # validator has a duty to surface. We use `hasCurrentToken` here (and only
-  # here) exactly for this purpose.
+  # validator has a duty to surface. `hasMore` cannot answer this: it goes
+  # through `kind` (and thus `load`), which asserts on an exhausted cursor.
+  # `hasCurrentToken` is the dedicated API for this end-of-buffer check —
+  # it inspects `c.rem` directly without dereferencing `c.p`.
   if hasCurrentToken(c):
     ctx.addViolation info, "",
       "trailing content after root subtree: " &

@@ -309,7 +309,7 @@ proc renderRoutine(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
       if p.kind == ParLe and p.substructureKind == ParamsU:
         inc p
         var first = true
-        while p.kind != ParRi:
+        while p.hasMore:
           if not first: emitOp(b, "; ")
           first = false
           let local = asLocal(p)
@@ -391,7 +391,7 @@ proc parseImports(n: var Cursor; ctx: var RenderCtx) =
   ## from where we left off.
   while n.kind == ParLe and n.stmtKind == ImportS:
     inc n  # enter (import …)
-    while n.kind != ParRi:
+    while n.hasMore:
       if n.kind == ParLe and n.substructureKind == KvU:
         inc n  # enter (kv …)
         var suffix = ""
@@ -412,7 +412,7 @@ proc parseImports(n: var Cursor; ctx: var RenderCtx) =
             else: absolutePath(path)
           ctx.importMap[suffix] =
             deriveRelpath(absPath, ctx.projectRoot, ctx.stdlibRoot)
-        while n.kind != ParRi: skip n
+        while n.hasMore: skip n
         inc n  # closing ')' of (kv …)
       else:
         skip n
@@ -441,7 +441,7 @@ proc renderDecls(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
   ## Recurses into nested `(stmts …)` blocks because `include` directives in
   ## the source flatten into inner stmt-lists at sem time, and the decls we
   ## want to document live inside those.
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.kind == ParLe:
       let sk = n.stmtKind
       if sk in AllDeclKinds:
@@ -626,7 +626,7 @@ proc readDocIdx(path: string; entries: var seq[IndexEntry];
   var modname = ""
   var modRelpath = ""
   let beforeEntries = entries.len
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.kind != ParLe:
       inc n
       continue
@@ -646,7 +646,7 @@ proc readDocIdx(path: string; entries: var seq[IndexEntry];
       e.summary = takeStrLit(n)
       entries.add e
     else: discard
-    while n.kind != ParRi: skip n
+    while n.hasMore: skip n
     inc n  # closing ')'
   endRead(buf)
   if entries.len > beforeEntries:

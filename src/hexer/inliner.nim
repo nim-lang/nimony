@@ -190,7 +190,7 @@ proc inlineRoutineBody(c: var InlineContext; dest: var TokenBuf; n: var Cursor) 
         # we need the result declaration. But it is inlined, so
         # it is not a `ResultDecl`!
         copyIntoKind dest, VarS, info:
-          while n.kind != ParRi:
+          while n.hasMore:
             inlineRoutineBody(c, dest, n)
         dest.addParRi()
         assert n.kind == ParRi
@@ -204,7 +204,7 @@ proc inlineRoutineBody(c: var InlineContext; dest: var TokenBuf; n: var Cursor) 
         takeTree dest, n
       else:
         copyInto dest, n:
-          while n.kind != ParRi:
+          while n.hasMore:
             inlineRoutineBody(c, dest, n)
 
 proc mapParamToLocal(c: var InlineContext; dest: var TokenBuf; args: var Cursor; params: var Cursor) =
@@ -212,7 +212,7 @@ proc mapParamToLocal(c: var InlineContext; dest: var TokenBuf; args: var Cursor;
   # consider: `inlineCall effect(x)` where `inlineCall` does not even use
   # its first parameter!
   assert params.kind != DotToken
-  assert params.kind != ParRi
+  assert params.hasMore
   let p = params
   let r = takeLocal(params, SkipFinalParRi)
   if r.typ.typeKind == VarargsT: params = p
@@ -261,7 +261,7 @@ proc doInline(outer: var Context; dest: var TokenBuf; procCall: var Cursor; rout
       inc procCall # skip `(call`
       takeTree dest, procCall # `fn`
       var params = routine.params
-      while procCall.kind != ParRi:
+      while procCall.hasMore:
         mapParamToLocal(c, dest, procCall, params)
 
       var procBody = routine.body
@@ -328,7 +328,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         c.typeCache.openScope()
         dest.add n
         inc n
-        while n.kind != ParRi:
+        while n.hasMore:
           tr c, dest, n
         c.typeCache.closeScope()
       else:

@@ -41,13 +41,14 @@ proc typeOfField*(m: var MainModule; n: var Cursor; fld: SymId; sel = FieldType)
     result = default(Cursor)
     let tk = n.typeKind
     if tk in {ObjectT, UnionT}:
-      inc n
-      if tk == ObjectT:
-        skip n # inheritance
-      while n.kind != ParRi:
-        result = typeOfField(m, n, fld, sel)
-        if not cursorIsNil(result): break
-      inc n
+      n.into:
+        if tk == ObjectT:
+          skip n # inheritance
+        var done = false
+        while n.hasMore and not done:
+          result = typeOfField(m, n, fld, sel)
+          if not cursorIsNil(result): done = true
+        while n.hasMore: skip n  # mop up if we broke early
 
 proc getTypeImpl(m: var MainModule; n: Cursor): Cursor =
   case n.kind

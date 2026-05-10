@@ -172,9 +172,28 @@ proc soperand*(c: Cursor): int32 {.inline.} = nifstreams.soperand(c.load)
 proc getInt28*(c: Cursor): int32 {.inline.} = nifstreams.getInt28(c.load)
 
 proc inc*(c: var Cursor) {.inline.} =
-  assert c.rem > 0
-  c.p = cast[ptr PackedToken](cast[uint](c.p) + sizeof(PackedToken).uint)
-  dec c.rem
+  when defined(virtualParRi):
+    assert c.rem != 0, "advancing past end of scope"
+    c.p = cast[ptr PackedToken](cast[uint](c.p) + sizeof(PackedToken).uint)
+    if c.rem > 0: dec c.rem
+  else:
+    assert c.rem > 0
+    c.p = cast[ptr PackedToken](cast[uint](c.p) + sizeof(PackedToken).uint)
+    dec c.rem
+
+proc consumeParRi*(c: var Cursor) {.inline.} =
+  ## Advance past a ParRi token. Under `-d:virtualParRi` the real ParRi
+  ## may sit at the bounded scope's tail without being counted in `rem`,
+  ## so plain `inc` would trip its `rem != 0` guard — we accept rem == 0
+  ## and just advance the pointer.
+  assert c.kind == ParRi, "consumeParRi: cursor not at ParRi"
+  when defined(virtualParRi):
+    c.p = cast[ptr PackedToken](cast[uint](c.p) + sizeof(PackedToken).uint)
+    if c.rem > 0: dec c.rem
+  else:
+    inc c
+
+# `setTag(PackedToken, TagId)` lives in nifstreams now (gated by `-d:virtualParRi`)
 
 proc unsafeDec*(c: var Cursor) {.inline.} =
   c.p = cast[ptr PackedToken](cast[uint](c.p) - sizeof(PackedToken).uint)
@@ -193,28 +212,62 @@ proc cursorIsNil*(c: Cursor): bool {.inline.} =
 proc hasCurrentToken*(c: Cursor): bool {.inline.} =
   result = c.p != nil and c.rem > 0
 
-proc skip*(c: var Cursor) =
-  if c.kind == ParLe:
-    var nested = 0
-    while true:
-      inc c
-      if c.kind == ParRi:
-        if nested == 0: break
-        dec nested
-      elif c.kind == ParLe: inc nested
-  inc c
+when defined(virtualParRi):
+  template subtreeSpan(n: PackedToken): uint32 =
+    ## Number of tokens that `skip` past this token would consume.
+    ## Sealed ParLe (jump < MaxJump): 1 + jump (or 2 + jump under
+    ## `-d:preserveRealParRi`). Overflow (jump == MaxJump): returns 0
+    ## to signal "caller takes the slow balanced walk".
+    case n.kind
+    of ParLe:
+      let j = jump(n)
+      if j == MaxJump: 0'u32
+      else:
+        when defined(preserveRealParRi): 2'u32 + j
+        else: 1'u32 + j
+    else: 1'u32
 
-proc skipToEnd*(c: var Cursor) =
-  ## skips `c` until an unmatched ParRi is found, then skips the ParRi and returns
-  var nested = 0
-  while true:
-    if c.kind == ParRi:
-      if nested == 0:
+proc skip*(c: var Cursor) =
+  when defined(virtualParRi):
+    if c.kind == ParLe:
+      let span = subtreeSpan(c.load)
+      if span > 0:
+        c.p = cast[ptr PackedToken](cast[uint](c.p) + uint(span) * sizeof(PackedToken).uint)
+        if c.rem > 0:
+          let s = int(span)
+          c.rem = if c.rem >= s: c.rem - s else: 0
+        return
+      # Overflow tag: balanced walk (real ParRi balances; nested sealed
+      # tags still skip via their jump fields).
+      var depth = 1
+      inc c   # past overflow tag
+      while depth > 0:
+        if c.kind == ParRi:
+          dec depth
+          inc c
+        elif c.kind == ParLe:
+          let innerSpan = subtreeSpan(c.load)
+          if innerSpan > 0:
+            c.p = cast[ptr PackedToken](cast[uint](c.p) + uint(innerSpan) * sizeof(PackedToken).uint)
+            if c.rem > 0:
+              let s = int(innerSpan)
+              c.rem = if c.rem >= s: c.rem - s else: 0
+          else:
+            inc depth
+            inc c
+        else:
+          inc c
+    else:
+      inc c
+  else:
+    if c.kind == ParLe:
+      var nested = 0
+      while true:
         inc c
-        break
-      dec nested
-    elif c.kind == ParLe:
-      inc nested
+        if c.kind == ParRi:
+          if nested == 0: break
+          dec nested
+        elif c.kind == ParLe: inc nested
     inc c
 
 proc skipUntilEnd*(c: var Cursor) =
@@ -233,17 +286,48 @@ proc skipUntilEnd*(c: var Cursor) =
 # Pure traversal helpers for reading/analyzing a tree without producing output.
 
 template hasMore*(n: Cursor): bool =
-  ## True while there are more children before the closing `)`.
-  n.kind != ParRi
+  ## True while there are more tokens to read in the current scope. Safe
+  ## at end-of-buffer (`rem == 0`) — returns false rather than dereferencing.
+  when defined(virtualParRi):
+    n.rem > 0 and n.kind != ParRi
+  else:
+    n.kind != ParRi
 
 template into*(n: var Cursor; body: untyped) =
-  ## Enters the current node, runs `body` to process the children,
-  ## then advances past the closing `)`.
+  ## Enters the current ParLe node, runs `body` to process the children,
+  ## then advances past the (real or virtual) closing `)`.
+  ##
+  ## Under `-d:virtualParRi` this sets a bounded `rem` from the parle's
+  ## `jump` field so the body's `hasMore` checks terminate cheaply. The
+  ## body must consume all children (leaving `rem == 0`); the closing
+  ## `ParRi` (real or elided) is consumed by the epilogue.
   assert n.kind == ParLe, "into requires cursor at ParLe"
-  inc n          # skip opening tag
-  body
-  assert n.kind == ParRi, "into: body must consume all children"
-  inc n          # skip closing ParRi
+  when defined(virtualParRi):
+    let savedRem = n.rem
+    let savedP   = n.p
+    let j        = jump(n.load)
+    let isOverflow = j == MaxJump
+    n.p = cast[ptr PackedToken](cast[uint](n.p) + sizeof(PackedToken).uint)
+    n.rem = if isOverflow: -1 else: int(j)
+    body
+    if isOverflow:
+      assert n.kind == ParRi, "into: overflow scope did not end at real ParRi"
+      n.p = cast[ptr PackedToken](cast[uint](n.p) + sizeof(PackedToken).uint)
+    else:
+      assert n.rem == 0, "into: body did not consume all children of sealed scope"
+      when defined(preserveRealParRi):
+        if n.kind == ParRi:
+          n.p = cast[ptr PackedToken](cast[uint](n.p) + sizeof(PackedToken).uint)
+    if savedRem >= 0:
+      let consumed = int((cast[uint](n.p) - cast[uint](savedP)) div sizeof(PackedToken).uint)
+      n.rem = if savedRem >= consumed: savedRem - consumed else: 0
+    else:
+      n.rem = -1
+  else:
+    inc n          # skip opening tag
+    body
+    assert n.kind == ParRi, "into: body must consume all children"
+    inc n          # skip closing ParRi
 
 template loopInto*(n: var Cursor; body: untyped) =
   ## Enters a node, iterates all children, then advances past `)`.
@@ -276,6 +360,12 @@ type
     owner: CursorOwner  ## nil = exclusive ownership of data.
                         ## non-nil = data is shared via CursorOwner with Cursors;
                         ## b.data aliases owner.data. TokenBuf holds one rc ref.
+    when defined(virtualParRi):
+      openTags: seq[int]
+        ## Stack of buffer offsets pointing at every still-unsealed `ParLe`.
+        ## `add(ParLe)` pushes; `add(ParRi)` pops and seals via `setJump`.
+        ## When `count < MaxJump`, the matching ParRi is elided in default
+        ## mode (kept under `-d:preserveRealParRi` for legacy walks).
 
 proc `=copy`(dest: var TokenBuf; src: TokenBuf) {.error.}
 proc `=wasMoved`(dest: var TokenBuf) {.inline.} =
@@ -371,13 +461,64 @@ proc endRead*(c: var Cursor) {.inline.} =
     decRcAndFree(c.owner)
   `=wasMoved`(c)
 
-proc add*(b: var TokenBuf; item: PackedToken) {.inline.} =
+proc addRaw*(b: var TokenBuf; item: PackedToken) {.inline.} =
+  ## Append a single token without sealing/elision. Under `-d:virtualParRi`
+  ## this bypasses the open-tags stack — use when bulk-copying an already
+  ## balanced span (opens and closes paired inside the copy). Otherwise
+  ## identical to plain append.
   if b.owner != nil: prepareMutation(b)
   if b.len >= b.cap:
     b.cap = max(b.cap div 2 + b.cap, 8)
     b.data = cast[Storage](realloc(b.data, sizeof(PackedToken)*b.cap))
   b.data[b.len] = item
   inc b.len
+
+proc add*(b: var TokenBuf; item: PackedToken) {.inline.} =
+  if b.owner != nil: prepareMutation(b)
+  when defined(virtualParRi):
+    case item.kind
+    of ParLe:
+      if b.len >= b.cap:
+        b.cap = max(b.cap div 2 + b.cap, 8)
+        b.data = cast[Storage](realloc(b.data, sizeof(PackedToken)*b.cap))
+      b.data[b.len] = item
+      b.openTags.add b.len
+      inc b.len
+    of ParRi:
+      var elide = false
+      if b.openTags.len > 0:
+        let openPos = b.openTags.pop()
+        let count = uint32(b.len - openPos - 1)
+        if count < MaxJump:
+          b.data[openPos].setJump count
+          elide = true
+        else:
+          b.data[openPos].setJump MaxJump
+      when defined(preserveRealParRi):
+        if b.len >= b.cap:
+          b.cap = max(b.cap div 2 + b.cap, 8)
+          b.data = cast[Storage](realloc(b.data, sizeof(PackedToken)*b.cap))
+        b.data[b.len] = item
+        inc b.len
+      else:
+        if not elide:
+          if b.len >= b.cap:
+            b.cap = max(b.cap div 2 + b.cap, 8)
+            b.data = cast[Storage](realloc(b.data, sizeof(PackedToken)*b.cap))
+          b.data[b.len] = item
+          inc b.len
+    else:
+      if b.len >= b.cap:
+        b.cap = max(b.cap div 2 + b.cap, 8)
+        b.data = cast[Storage](realloc(b.data, sizeof(PackedToken)*b.cap))
+      b.data[b.len] = item
+      inc b.len
+  else:
+    if b.len >= b.cap:
+      b.cap = max(b.cap div 2 + b.cap, 8)
+      b.data = cast[Storage](realloc(b.data, sizeof(PackedToken)*b.cap))
+    b.data[b.len] = item
+    inc b.len
 
 proc len*(b: TokenBuf): int {.inline.} = b.len
 
@@ -450,19 +591,39 @@ proc addSymDef*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) {.inline.} =
 
 proc addSubtree*(result: var TokenBuf; c: Cursor) =
   assert c.kind != ParRi, "cursor at end?"
-  if c.kind != ParLe:
-    # atom:
-    result.add c.load
+  when defined(virtualParRi):
+    if c.kind != ParLe:
+      result.addRaw c.load
+      return
+    # Bulk-copy the already-sealed subtree byte-for-byte. Doing this
+    # token-by-token through `add` would push/pop `openTags` and re-seal
+    # the source's jumps from dest-side positions; since the source's
+    # `ParRi`s may be elided, the per-token loop wouldn't even terminate.
+    var c2 = c
+    let startP = c2.p
+    skip c2
+    let n = int((cast[uint](c2.p) - cast[uint](startP)) div sizeof(PackedToken).uint)
+    if result.owner != nil: prepareMutation(result)
+    if result.len + n > result.cap:
+      result.cap = max(result.cap div 2 + result.cap, result.len + n)
+      result.data = cast[Storage](realloc(result.data, sizeof(PackedToken)*result.cap))
+    copyMem(addr result.data[result.len], startP, n * sizeof(PackedToken))
+    result.len += n
   else:
-    var c = c
-    var nested = 0
-    while true:
-      let item = c.load
-      result.add item
-      if item.kind == ParRi:
-        dec nested
-        if nested == 0: break
-      elif item.kind == ParLe: inc nested
+    if c.kind != ParLe:
+      # atom:
+      result.add c.load
+    else:
+      var c = c
+      var nested = 0
+      while true:
+        let item = c.load
+        result.add item
+        if item.kind == ParRi:
+          dec nested
+          if nested == 0: break
+        elif item.kind == ParLe: inc nested
+        inc c
       inc c
 
 proc addUnstructured*(result: var TokenBuf; c: Cursor) =
@@ -731,15 +892,81 @@ type
     SkipResult    ## skip a result that has been handled separately
     SkipFull      ## skip an entire subtree being dropped or replaced
 
+proc skipIntentMatches*(k: NifKind; intent: SkipIntent): bool {.inline.} =
+  ## Loose predicate: catches obviously wrong intents (wrong direction,
+  ## skipping a stmt where there's no ParLe, etc.) without over-fitting.
+  case intent
+  of SkipTag:        k == ParLe
+  of SkipParRi:      k == ParRi
+  of SkipName:       k in {SymbolDef, Symbol, Ident, DotToken, ParLe}
+                       # ParLe: `for (unpackdecl ...)` / `(unpacktup ...)`
+  of SkipExport:     k in {DotToken, Ident, ParLe}
+  of SkipPragmas:    k in {DotToken, ParLe}
+  of SkipType:       k in {ParLe, Symbol, Ident, DotToken, IntLit, UIntLit}
+  of SkipExpr:       k notin {EofToken, ParRi}
+  of SkipStmt:       k in {ParLe, DotToken}
+  of SkipValue:      k notin {EofToken, ParRi}
+  of SkipGenParams:  k in {DotToken, ParLe}
+  of SkipCond:       k notin {EofToken, ParRi}
+  of SkipBody:       k in {DotToken, ParLe}
+  of SkipEffects:    k in {DotToken, ParLe}
+  of SkipResult:     k in {DotToken, ParLe, Symbol, SymbolDef}
+  of SkipFull:       k != EofToken
+
 template skip*(c: var Cursor; intent: SkipIntent) =
-  ## Skip a subtree with declared intent. The intent enum documents why the
-  ## input is being dropped and enables the validator to check correctness.
+  ## Skip a subtree with declared intent. The intent is enforced at runtime
+  ## via a loose predicate (`skipIntentMatches`) so wrong labels fire early.
+  assert skipIntentMatches(c.kind, intent),
+    "skip " & $intent & ": cursor at " & $c.kind & " is incompatible"
   skip(c)
 
 template inc*(c: var Cursor; intent: SkipIntent) =
-  ## Advance one token with declared intent. The intent enum documents why
-  ## the token is being dropped and enables the validator to check correctness.
+  ## Advance one token with declared intent. Same enforcement as `skip`.
+  assert skipIntentMatches(c.kind, intent),
+    "inc " & $intent & ": cursor at " & $c.kind & " is incompatible"
   inc c
+
+# ── TagClass: structural categories of tokens ──────────────────────────────
+# These complement `SkipIntent` (which describes a *role* in a parent shape)
+# with a *kind* category. Used as the intent argument to `inc`/`skip`/`into`
+# when the precise tag isn't statically known but a category is.
+
+type
+  TagClass* = enum
+    Anything    ## any single token (any NifKind except EofToken)
+    AnyExpr     ## any expression position — atom or ParLe (anything but EOF/ParRi)
+    AnyStmt     ## any statement position — ParLe-tagged or DotToken (no-op)
+    AnyType     ## any type position — ParLe-tagged, Symbol/Ident alias, or DotToken (void)
+
+proc tagClassMatches*(k: NifKind; expected: TagClass): bool {.inline.} =
+  case expected
+  of Anything: k != EofToken
+  of AnyExpr:  k notin {EofToken, ParRi}
+  of AnyStmt:  k in {ParLe, DotToken}
+  of AnyType:  k in {ParLe, Symbol, Ident, DotToken}
+
+template skip*(c: var Cursor; expected: TagClass) =
+  assert tagClassMatches(c.kind, expected),
+    "skip " & $expected & ": cursor at " & $c.kind & " is incompatible"
+  skip(c)
+
+template inc*(c: var Cursor; expected: TagClass) =
+  assert tagClassMatches(c.kind, expected),
+    "inc " & $expected & ": cursor at " & $c.kind & " is incompatible"
+  inc c
+
+template into*(c: var Cursor; expected: TagClass; body: untyped) =
+  ## Like the bare `into`, but asserts the entered scope matches `expected`.
+  assert tagClassMatches(c.kind, expected),
+    "into " & $expected & ": cursor at " & $c.kind & " is incompatible"
+  into c:
+    body
+
+template loopInto*(c: var Cursor; expected: TagClass; body: untyped) =
+  assert tagClassMatches(c.kind, expected),
+    "loopInto " & $expected & ": cursor at " & $c.kind & " is incompatible"
+  loopInto c:
+    body
 
 proc takeTree*(dest: var TokenBuf; n: var Cursor) =
   if n.kind != ParLe:
