@@ -161,6 +161,15 @@ proc isTrivialForFields(c: var LiftingCtx; n: Cursor): bool =
   while nextField(iter, n):
     let field = takeLocal(n, SkipFinalParRi)
     if field.kind in {FldY, GfldY}:
+      # `{.cursor.}` fields are non-owning aliases — they're trivially
+      # bit-copied/discarded by the auto-derived hooks (see
+      # `unravelObjField`). Treat them as trivial here so an object
+      # whose only destructor-relevant field is `{.cursor.}` doesn't
+      # need a non-empty `=destroy`/`=wasMoved` synthesised for it —
+      # which would trip the "empty hook created" assertion in
+      # `genProcDecl`.
+      if hasPragma(field.pragmas, CursorP):
+        continue
       if not isTrivial(c, field.typ):
         return false
     else:

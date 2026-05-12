@@ -833,6 +833,19 @@ proc trConvExpr(c: var Context; n: var Cursor; e: Expects) =
     while n.hasMore:
       tr c, n, e
 
+proc isCursorField(fieldKey: Cursor): bool =
+  ## A field referenced in a `(kv fieldSym value …)` constructor entry.
+  ## Loads the field's decl and checks for the `.cursor` pragma so the
+  ## value can be moved/bit-copied without an `=dup` — matching the
+  ## non-owning semantics the lifter uses inside auto-derived hooks
+  ## (see `unravelObjField` in `src/hexer/lifter.nim`).
+  if fieldKey.kind != Symbol: return false
+  let res = tryLoadSym(fieldKey.symId)
+  if res.status != LacksNothing: return false
+  let local = asLocal(res.decl)
+  if local.kind notin {FldY, GfldY}: return false
+  result = hasPragma(local.pragmas, CursorP)
+
 proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
   var ow = owningTempDefault()
   let typ = n.firstSon
@@ -843,8 +856,19 @@ proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
     while n.hasMore:
       assert n.substructureKind == KvU
       copyInto c.dest, n:
+        let fieldKey = n
         takeTree c.dest, n
-        tr c, n, WantOwner
+        # `{.cursor.}` fields are non-owning aliases — they don't bump
+        # rc on assignment, and the auto-derived `=destroy` doesn't
+        # recurse into them. Pass `WantNonOwner` so `tr → trLocation`
+        # emits a plain read instead of splicing an `=dup` hook around
+        # the value. Without this, `LocalInfo(typ: someCursor)` would
+        # `=dup_Cursor(someCursor)` (rc+1) and the matching
+        # `=destroy(typ)` at scope exit would `rc-` — net rc+0, but a
+        # mismatched =wasMoved on the source would over-count, exactly
+        # the shape of the open stage-2 TypeCache UAF.
+        let kind = if isCursorField(fieldKey): WantNonOwner else: WantOwner
+        tr c, n, kind
         if n.hasMore:
           # optional inheritance
           takeTree c.dest, n
@@ -854,8 +878,10 @@ proc trNewobjFields(c: var Context; n: var Cursor) =
   while n.hasMore:
     if n.substructureKind == KvU:
       copyInto c.dest, n:
+        let fieldKey = n
         takeTree c.dest, n # keep field name
-        tr(c, n, WantOwner)
+        let kind = if isCursorField(fieldKey): WantNonOwner else: WantOwner
+        tr(c, n, kind)
         if n.hasMore:
           # optional inheritance
           takeTree c.dest, n
