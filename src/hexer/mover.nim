@@ -8,7 +8,7 @@
 #
 
 ## Move analyser.
-import std / [assertions, syncio]
+import std / [assertions, intsets, syncio]
 
 include ".." / lib / nifprelude
 include ".." / lib / compat2
@@ -169,7 +169,8 @@ proc findStart(c: TokenBuf; idx: PackedLineInfo; n: var Cursor): int =
       return result
   return -1
 
-proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor]; otherUsage: var Cursor): bool =
+proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
+                otherUsage: var Cursor; marks: var IntSet; cfBase: Cursor): bool =
   var nested = nested
   var pc = pc
   let root = rootOf(x)
@@ -182,7 +183,7 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor]; otherU
       if diff < 0:
         # jump backwards:
         let back = pc +! diff
-        if not testOrSetMark(back):
+        if not marks.containsOrIncl(cursorToPosition(cfBase, back)):
           pc = back
         else:
           # finished traversing this path:
@@ -219,7 +220,7 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor]; otherU
         inc pc
         let b = pc +! pc.getInt28
         # we follow the second goto and remember the first one:
-        if not isMarked(a):
+        if not marks.contains(cursorToPosition(cfBase, a)):
           pcs.add a
         pc = b
       else:
@@ -277,41 +278,41 @@ proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var Cursor): bool =
   let nested = findStart(c, toPayload(idx + PayloadOffset), n)
   if nested < 0:
     return true
-  #echo "LOOKING AT: ", codeListing(c)
-  #echo "N IS: ", toString(n, false)
-  # we are interested in what comes after this node:
   let x = n
   skip n
   while n.kind == ParRi: inc n
-  #echo "START IS ", toString(n, false)
+  let cfBase = c.readonlyCursorAt(0)
   var pcs = @[n]
+  var marks = initIntSet()
   while pcs.len > 0:
     let pc = pcs.pop()
-    #echo "Looking at: ", toString(pc, false)
-    if not isMarked(pc):
-      if not singlePath(pc, nested, x, pcs, otherUsage):
+    let pcPos = cursorToPosition(cfBase, pc)
+    if not marks.contains(pcPos):
+      if not singlePath(pc, nested, x, pcs, otherUsage, marks, cfBase):
         return false
-      doMark pc
+      marks.incl pcPos
   return true
 
-proc isLastUse*(n: Cursor; buf: var TokenBuf; otherUsage: var PackedLineInfo;
+proc isLastUse*(n: Cursor; buf: var TokenBuf;
+                otherUsage: var PackedLineInfo;
                 cf: var TokenBuf): bool =
   # XXX Todo: only transform&traverse the innermost scope the variable was declared in.
-  #echo "Input is: ", toString(buf, false)
-  let oldInfos = prepare(buf)
-  let idx = cursorToPosition(buf, n)
-  assert idx >= 0
-  var needsRead = false
   if cf.len == 0:
-    needsRead = true
+    # First call for this `buf`: bake the payload-encoded back-pointers into
+    # `buf.info`, build the CF from it, then restore `buf` to its original
+    # infos. The CF inherits the payloads and keeps them for the lifetime of
+    # this analysis pass — they never change once built, because per-walk
+    # visited marks now live in a side IntSet (see isLastReadImpl), not in
+    # the `info` field.
+    let oldInfos = prepare(buf)
     cf = toControlflow(beginRead buf)
     freeze cf
-  #echo "CF IS ", codeListing(cf)
+    endRead buf
+    restore(buf, oldInfos)
+  let idx = cursorToPosition(buf, n)
+  assert idx >= 0
   var other = default Cursor
   result = isLastReadImpl(cf, idx.uint32, other)
-  if needsRead:
-    endRead buf
-  restore(buf, oldInfos)
   if other.cursorIsNil:
     otherUsage = NoLineInfo
   else:

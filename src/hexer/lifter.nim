@@ -85,14 +85,72 @@ proc loadHook(c: var LiftingCtx; op: AttachedOp; s: SymId): SymId =
       else:
         c.nominalTypeToHook[op][s] = result
 
-proc hasHook(c: var LiftingCtx; s: SymId): bool =
-  result = c.nominalTypeToHook[c.op].hasKey(s)
-  if not result:
-    # Check frontend hooks first
+proc hasDestroyHook*(c: var LiftingCtx; typ: TypeCursor): bool =
+  ## Specifically checks whether `typ` has a `=destroy` hook reachable.
+  ## Unlike `isTrivial`, this does NOT depend on the lifter's current
+  ## `c.op` (which floats with each `getHook` call), so it is safe to
+  ## call from the duplifier mid-pass without risk of misclassifying
+  ## types that define `=destroy` but no `=dup`/`=copy` (e.g. TokenBuf).
+  if typ.kind == Symbol:
+    let s = typ.symId
+    if c.nominalTypeToHook[attachedDestroy].hasKey(s):
+      return true
     if c.frontendHooks != nil and c.frontendHooks[].hasKey(s):
-      result = c.frontendHooks[].getOrQuit(s).a[c.op] != SymId(0)
-    if not result:
-      result = tryLoadHook(c.op, s) != SymId(0)
+      if c.frontendHooks[].getOrQuit(s).a[attachedDestroy] != SymId(0):
+        return true
+    if tryLoadHook(attachedDestroy, s) != SymId(0):
+      return true
+    let saved = c.op
+    c.op = attachedDestroy
+    result = not isTrivial(c, typ)
+    c.op = saved
+  else:
+    let saved = c.op
+    c.op = attachedDestroy
+    result = not isTrivial(c, typ)
+    c.op = saved
+
+proc lookupHookSym(c: var LiftingCtx; op: AttachedOp; s: SymId): SymId =
+  result = SymId(0)
+  if c.frontendHooks != nil and c.frontendHooks[].hasKey(s):
+    result = c.frontendHooks[].getOrQuit(s).a[op]
+  if result == SymId(0):
+    result = tryLoadHook(op, s)
+
+proc isErrorHook(s: SymId): bool =
+  if s == SymId(0): return false
+  let res = tryLoadSym(s)
+  if res.status == LacksNothing:
+    let r = asRoutine(res.decl)
+    return hasPragma(r.pragmas, ErrorP)
+  return false
+
+proc hasHook(c: var LiftingCtx; s: SymId): bool =
+  result = c.nominalTypeToHook[c.op].hasKey(s) or
+           lookupHookSym(c, c.op, s) != SymId(0)
+  if not result and c.op in {attachedCopy, attachedDup}:
+    # The sibling hook (`=copy` ↔ `=dup`) being `.error` means the user
+    # forbade copying. Treat the type as non-trivial so the lifter
+    # synthesizes a hook for `c.op` and `genProcDecl`'s sibling check
+    # propagates `.error` into it. Without this, a type with only field-
+    # trivial layout and only `.error =copy` would silently bit-copy
+    # through assignment.
+    let siblingOp = if c.op == attachedCopy: attachedDup else: attachedCopy
+    result = isErrorHook(lookupHookSym(c, siblingOp, s))
+
+proc siblingHookErrorInfo(c: var LiftingCtx; typ: TypeCursor;
+                          siblingOp: AttachedOp): PackedLineInfo =
+  ## Returns the sibling `=copy`/`=dup` hook's `name.info` if it is marked
+  ## `.error` for the (nominal) type `typ`. Otherwise `NoLineInfo`.
+  result = NoLineInfo
+  if typ.kind notin {Symbol, SymbolDef}:
+    return
+  let siblingSym = lookupHookSym(c, siblingOp, typ.symId)
+  if not isErrorHook(siblingSym):
+    return
+  let res = tryLoadSym(siblingSym)
+  let r = asRoutine(res.decl)
+  result = r.name.info
 
 proc getCompilerProc(c: var LiftingCtx; name: string): SymId =
   result = pool.syms.getOrIncl(name & ".0." & SystemModuleSuffix)
@@ -278,6 +336,18 @@ proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
   # synthesized, if so this will be done by calling `requestLifting`.
   if isTrivial(c, typ):
     return NoSymId
+
+  # Speculative `.error` propagation: when the *current* hook being
+  # generated is `=copy` or `=dup`, and the sub-type's sibling is `.error`,
+  # the sub-hook will end up `.error` once it is generated. The sub-hook
+  # may not exist yet (it's only just been queued), so `maybeCallHook`'s
+  # pragma check on the sym would miss it. Look at the sub-type's sibling
+  # here and propagate `.error` into the *enclosing* hook now.
+  if c.op in {attachedCopy, attachedDup} and c.calledErrorHook == NoLineInfo:
+    let siblingOp = if c.op == attachedCopy: attachedDup else: attachedCopy
+    let info = siblingHookErrorInfo(c, typ, siblingOp)
+    if info != NoLineInfo:
+      c.calledErrorHook = info
 
   let orig = typ
   let typ = toTypeImpl typ
@@ -744,6 +814,13 @@ proc publishProc(sym: SymId; dest: TokenBuf; procStart: int) =
   programs.publish(sym, buf)
 
 proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
+  if c.op == attachedCopy:
+    let info = siblingHookErrorInfo(c, typ, attachedDup)
+    if info != NoLineInfo: c.calledErrorHook = info
+  elif c.op == attachedDup:
+    let info = siblingHookErrorInfo(c, typ, attachedCopy)
+    if info != NoLineInfo: c.calledErrorHook = info
+
   let paramA = pool.syms.getOrIncl("dest.0")
   var paramTreeA = createTokenBuf(4)
   copyIntoSymUse paramTreeA, paramA, c.info
