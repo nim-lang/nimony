@@ -513,13 +513,16 @@ func cmpStringPtrs(a, b: ptr string): int {.inline.} =
       result = cmpInlineBytes(tailPtrOf(a), tailPtrOf(b), minLen - AlwaysAvail)
     if result == 0: result = aslen - bslen
     return
-  # At least one long. Hot prefix (bytes 1..AlwaysAvail) mirrors heap data.
-  let pfxLen = min(min(aslen, bslen), AlwaysAvail)
-  result = cmpInlineBytes(inlinePtrOf(a), inlinePtrOf(b), pfxLen)
-  if result != 0: return
+  # At least one long. Hot prefix (bytes 1..AlwaysAvail) mirrors heap data,
+  # but ONLY for the first fullLen bytes — `shrink` leaves stale bytes in the
+  # cache past fullLen. Cap pfxLen at the logical length so we don't compare
+  # garbage when a heap string was shrunk below AlwaysAvail.
   let la = if aslen > PayloadSize: a.more.fullLen else: aslen
   let lb = if bslen > PayloadSize: b.more.fullLen else: bslen
   let minLen = min(la, lb)
+  let pfxLen = min(minLen, AlwaysAvail)
+  result = cmpInlineBytes(inlinePtrOf(a), inlinePtrOf(b), pfxLen)
+  if result != 0: return
   if minLen <= AlwaysAvail:
     result = la - lb
     return
