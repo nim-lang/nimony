@@ -1703,7 +1703,15 @@ proc handleCmdLine =
     buildValidator()
     validatorTests()
     incrementalTests()
-    bootstrapTests()
+    when defined(linux):
+      # Self-host boot: build the toolchain with itself and confirm the
+      # two stages match (modulo build-time stamps). Linux-only for now —
+      # macOS / Windows / Linux-i386 surface codegen issues we haven't
+      # worked through yet, and the stage-equality masking has only been
+      # validated against ELF.
+      bootCmd("", withValgrind = false)
+    else:
+      bootstrapTests()
 
   of "validate", "validator":
     buildValidator()
