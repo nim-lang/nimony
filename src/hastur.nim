@@ -28,11 +28,14 @@ Usage:
 Commands:
   build [all|nimony|nifler|hexer|nifc|nifmake|nj|vl|validator|dagon]   build selected tools (default: all).
   bootstrap            compile every module on the bootstrap list with nimony.
-  boot [options]       3-iteration self-host of the *full* nimony toolchain
-                       (nimony, nimsem, hexer). Stages live in `bin1/`,
-                       `bin2/`, `bin3/`; winners are installed to
-                       `bin/{nimony,nimsem,hexer}_b`. Extra args are
-                       forwarded to every `nimony c` invocation.
+  boot [options]       Self-host the *full* nimony toolchain (nimony,
+                       nimsem, hexer). `bin0/` is a fresh copy of the
+                       host-Nim-built toolchain; `binN/` is `binN-1/`'s
+                       nimony recompiling all three from source. Runs a
+                       fixed number of self-compile passes and leaves the
+                       results in place — nothing is installed back to
+                       `bin/`. Extra args are forwarded to every
+                       `nimony c` invocation.
   selfcheck            full compiler regression check: rebuilds the nimony
                        toolchain (nimony+nimsem+hexer share `programs.nim`),
                        runs `bootstrap`, then `boot --valgrind`. Use this
@@ -1176,23 +1179,20 @@ proc buildNimonyToolchain(showProgress = false) =
   buildNimony(showProgress)
   buildHexer(showProgress)
 
-# ---- koch-style 3-iteration self-host bootstrap of `bin/nimony` -----------
-# Mirrors koch.nim's `boot` command: stage1 = host-Nim-compiled bin/nimony,
-# stage2 = stage1 compiled by stage1, stage3 = stage2 compiled by stage2.
-# If two consecutive stages produce byte-identical binaries, the bootstrap is
-# considered stable. Result lands at `bin/nimony_b` so the host-Nim-built
-# `bin/nimony` keeps working as a fallback while the self-hosted binary is
-# being shaken down (this whole path is brand-new and likely to surface
-# nimony codegen bugs).
+# ---- deterministic self-host bootstrap ------------------------------------
+# `bin0/` is a fresh copy of the host-Nim-built toolchain in `bin/`; `binN/`
+# (N >= 1) is `binN-1/`'s nimony recompiling all three self-tools from
+# source. Each pass produces a sibling `binN/` directory next to `lib/` and
+# nothing is fed back into `bin/` — `bin/` remains the host-Nim-built
+# toolchain the rest of hastur drives the test suite with.
 
 ## The boot bootstrap rebuilds the *full* toolchain at every stage — not just
 ## `bin/nimony`. nimony is only the driver; the heavy lifting (semantic
-## analysis, hexer lowering) happens in `bin/nimsem` and `bin/hexer`, both
-## reached via `findTool` from each `nimony c` invocation. Iterating only
-## over the driver therefore exercises self-hosting of nimony alone while
+## analysis, hexer lowering) happens in `nimsem` and `hexer`, both reached
+## via `findTool` from each `nimony c` invocation. Iterating only over the
+## driver therefore exercises self-hosting of nimony alone while the
 ## stage-0 nimsem and hexer keep doing all the real work — bugs in their
-## codegen go undetected indefinitely. Each stage now produces its own
-## `bin0/`, `bin1/`, `bin2/` (sibling of `lib/`); `tooldirs.binDir` and
+## codegen go undetected indefinitely. `tooldirs.binDir` and
 ## `semos.nimonyDir` accept any tail starting with `bin`, so stage-N's
 ## nimony resolves stage-N's tools and the project's stdlib without any
 ## CLI override.
@@ -1213,9 +1213,11 @@ proc bootSourceFor(tool: string): string =
   else: quit "boot: no source mapping for tool " & tool
 
 proc bootStageDir(stage: int): string =
-  ## Stage 0 is the prebuilt toolchain in `bin/`; stage N>=1 lives in
-  ## `binN/` next to `lib/`.
-  if stage == 0: binDir() else: "bin" & $stage
+  ## Every stage lives in its own `binN/` directory next to `lib/`. `bin0/`
+  ## is a fresh copy of the host-Nim-built `bin/` (provisioned by
+  ## `provisionStageZero`); `binN/` (N>=1) is built by
+  ## `binN-1/nimony`.
+  "bin" & $stage
 
 proc carryAuxTool(stageBin, name: string) =
   let exe = name.addFileExt(ExeExt)
@@ -1238,6 +1240,19 @@ proc provisionStageBin(stage: int): string =
   createDir result
   for aux in BootCarryTools:
     carryAuxTool(result, aux)
+
+proc provisionStageZero(): string =
+  ## Seed `bin0/` with a fresh copy of the host-Nim-built toolchain in
+  ## `bin/`. Unlike later stages, the self-tools aren't recompiled here —
+  ## they're copied across so that `bin1/` has a complete driver to start
+  ## from.
+  result = bootStageDir(0)
+  removeDir result
+  createDir result
+  for aux in BootCarryTools:
+    carryAuxTool(result, aux)
+  for tool in BootSelfTools:
+    carryAuxTool(result, tool)
 
 proc compileBootTool(stage: int; compiler, source, outBin, cacheBase, args: string;
                      withValgrind: bool) =
@@ -1380,18 +1395,11 @@ proc valgrindSmokeTest(exe: string) =
     quit "FAILURE: valgrind reported errors in " & exe
   echo "[boot] valgrind smoke check passed"
 
-proc installBootWinner(winnerStageBin: string) =
-  ## Copy each self-rebuilt binary out as `bin/<tool>_b` so the
-  ## host-Nim-built `bin/<tool>` keeps working as a fallback. Mirrors the
-  ## prior single-binary `bin/nimony_b` install.
-  for tool in BootSelfTools:
-    let src = winnerStageBin / tool.addFileExt(ExeExt)
-    let dst = binDir() / (tool & "_b").addFileExt(ExeExt)
-    if fileExists(dst): removeFile(dst)
-    copyFile(source = src, dest = dst)
-    when defined(posix):
-      inclFilePermissions(dst, {fpUserExec, fpGroupExec, fpOthersExec})
-    echo "[boot] installed ", src, " -> ", dst
+const BootSelfCompilePasses = 3
+  ## Number of self-compile passes the bootstrap runs (`bin1/` … `binN/`).
+  ## Fixed so that `boot` is deterministic: every invocation produces the
+  ## same set of stage directories regardless of whether earlier stages
+  ## happen to converge to a byte-identical binary.
 
 proc bootCmd(args: string; withValgrind: bool) =
   for tool in BootSelfTools:
@@ -1411,25 +1419,20 @@ proc bootCmd(args: string; withValgrind: bool) =
   createDir cacheBase
   let t0 = epochTime()
 
-  let s1 = compileBootStage(1, cacheBase, args, withValgrind)
-  let s2 = compileBootStage(2, cacheBase, args, withValgrind)
+  var stages = newSeq[string](BootSelfCompilePasses + 1)
+  stages[0] = provisionStageZero()
+  for n in 1 .. BootSelfCompilePasses:
+    stages[n] = compileBootStage(n, cacheBase, args, withValgrind)
 
-  var winner = s2
-  if stagesEqual(s1, s2):
-    echo "[boot] stages 1 and 2 are byte-identical: stable bootstrap."
-  else:
-    echo "[boot] stages 1 and 2 differ; running stage 3 to check for convergence"
-    let s3 = compileBootStage(3, cacheBase, args, withValgrind)
-    if stagesEqual(s2, s3):
-      echo "[boot] stages 2 and 3 are byte-identical: stable bootstrap."
+  for n in 1 .. BootSelfCompilePasses:
+    if stagesEqual(stages[n-1], stages[n]):
+      echo "[boot] stages ", n-1, " and ", n, " are byte-identical."
     else:
-      echo "[boot] WARNING: stages 2 and 3 still differ — bootstrap is not converging."
-    winner = s3
+      echo "[boot] stages ", n-1, " and ", n, " differ."
 
   if withValgrind:
-    valgrindSmokeTest(winner / "nimony".addFileExt(ExeExt))
+    valgrindSmokeTest(stages[^1] / "nimony".addFileExt(ExeExt))
 
-  installBootWinner(winner)
   echo "[boot] total ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   echo "SUCCESS."
 
@@ -1439,20 +1442,20 @@ proc selfcheckCmd() =
   ## or `src/lib/` that the compiler itself depends on:
   ##
   ##   1. Rebuild nimony + nimsem + hexer from host Nim, so all three reflect
-  ##      current source. `boot` self-rebuilds the same trio at every stage,
-  ##      but it starts from whatever `bin/` already contains, so a stale
-  ##      stage-0 toolchain would still poison stage 1's inputs.
+  ##      current source. `boot` copies `bin/` into `bin0/` at every run, so
+  ##      a stale `bin/` would still poison `bin0/`.
   ##   2. `bootstrap`: compile every module on the bootstrap list with the
   ##      freshly-built `bin/nimony`. Catches per-module sem/codegen
   ##      regressions and fails fast.
-  ##   3. `boot --valgrind`: 3-stage self-host of `bin/nimony` itself, then
-  ##      run the resulting binary under valgrind. Catches whole-program
-  ##      regressions (init order, codegen interactions, runtime UAFs) that
-  ##      single-module compiles miss.
+  ##   3. `boot --valgrind`: deterministic self-host (bin0 → bin1 → … →
+  ##      binN), then run the last stage's nimony under valgrind. Catches
+  ##      whole-program regressions (init order, codegen interactions,
+  ##      runtime UAFs) that single-module compiles miss.
   ##
-  ## Boot's "stages 2 and 3 still differ" warning is non-fatal — it normally
-  ## reflects gcc's `--build-id` non-determinism, not a real divergence; the
-  ## valgrind smoke test on stage 3 is what tells us the binary actually runs.
+  ## Boot's "stages N and N+1 differ" messages are informational — they
+  ## normally reflect gcc's `--build-id` non-determinism, not a real
+  ## divergence; the valgrind smoke test is what tells us the last stage
+  ## actually runs.
   let t0 = epochTime()
   echo "[selfcheck] step 1/3: rebuilding nimony toolchain"
   buildNimonyToolchain(showProgress = true)
@@ -1838,6 +1841,8 @@ proc handleCmdLine =
   of "clean":
     removeDir "nimcache"
     removeDir "bin"
+    for n in 0 .. 9:
+      removeDir "bin" & $n
   of "install":
     runInstall(args)
   of "sync":
