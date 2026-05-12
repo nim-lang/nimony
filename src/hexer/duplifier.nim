@@ -97,7 +97,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
         echo infoToStr(n.info), " LastUse: ", result
 
 const
-  ConstructingExprs = CallKinds + {OconstrX, NewobjX, AconstrX, TupX, NewrefX}
+  ConstructingExprs = CallKinds + {OconstrX, NewobjX, AconstrX, TupconstrX, TupX, NewrefX}
 
 proc constructsValue*(n: Cursor; derefConstructs = true): bool =
   var n = n
@@ -374,6 +374,15 @@ proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
 
 proc callDup(c: var Context; arg: var Cursor)
     {.ensuresNif: addedAny(c.dest).} =
+  if arg.exprKind == EmoveX:
+    # `=dup` on an `ensureMove(x)` is always wrong: the user has asserted
+    # this is a move, so calling `=dup` on top would emit a bogus
+    # `=dup_T(ensureMove …)` that the destroyer would later pair with
+    # one too many `=destroy`. `trEnsureMove` enforces the proof
+    # obligation: if the inner expression isn't a constructing rvalue or
+    # a provable last-read, it produces an `(err …)` node here.
+    tr c, arg, WillBeOwned
+    return
   let typ = getType(c.typeCache, arg)
   if typ.typeKind == NiltT:
     tr c, arg, DontCare
@@ -456,7 +465,14 @@ proc trAsgn(c: var Context; n: var Cursor) =
   assert leType.typeKind != AutoT, "could not compute type of: " & toString(le, false)
 
   let destructor = getDestructor(c.lifter[], leType, n.info)
-  if destructor == NoSymId:
+  # A `{.cursor.}` variable is non-owning: trLocal already skipped the `=dup`
+  # at its declaration, so per-asgn `=destroy(old) … =dup(rhs)` would
+  # over-decrement the rc on a value the cursor never claimed ownership of
+  # (and matching =destroy at end of scope was suppressed for the same
+  # reason). Treat cursor lhs's like the no-destructor case — raw bitcopy.
+  let lhsIsCursor = le.kind == Symbol and
+                    c.typeCache.getLocalInfo(le.symId).kind == CursorY
+  if destructor == NoSymId or lhsIsCursor:
     # the type has no destructor, there is nothing interesting to do:
     trSons c, n, DontCare
 
@@ -734,7 +750,13 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
   c.flags = oldFlags
 
 proc hasDestructor(c: Context; typ: Cursor): bool {.inline.} =
-  not isTrivial(c.lifter[], typ)
+  # `isTrivial(c.lifter[], typ)` consults `c.lifter[].op`, which floats
+  # with each `getHook(...)` call (e.g. a sibling sink-arg's `=dup`
+  # lookup mid-trCall): a follow-up call asks "does `T` have an op?" and
+  # gets answered against the OTHER op, misclassifying types that define
+  # `=destroy` but no `=dup` (e.g. TokenBuf) as trivial. `hasDestroyHook`
+  # pins the query to `attachedDestroy` regardless of context.
+  hasDestroyHook(c.lifter[], typ)
 
 type
   OwningTemp = object
@@ -811,6 +833,19 @@ proc trConvExpr(c: var Context; n: var Cursor; e: Expects) =
     while n.hasMore:
       tr c, n, e
 
+proc isCursorField(fieldKey: Cursor): bool =
+  ## A field referenced in a `(kv fieldSym value …)` constructor entry.
+  ## Loads the field's decl and checks for the `.cursor` pragma so the
+  ## value can be moved/bit-copied without an `=dup` — matching the
+  ## non-owning semantics the lifter uses inside auto-derived hooks
+  ## (see `unravelObjField` in `src/hexer/lifter.nim`).
+  if fieldKey.kind != Symbol: return false
+  let res = tryLoadSym(fieldKey.symId)
+  if res.status != LacksNothing: return false
+  let local = asLocal(res.decl)
+  if local.kind notin {FldY, GfldY}: return false
+  result = hasPragma(local.pragmas, CursorP)
+
 proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
   var ow = owningTempDefault()
   let typ = n.firstSon
@@ -821,8 +856,19 @@ proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
     while n.hasMore:
       assert n.substructureKind == KvU
       copyInto c.dest, n:
+        let fieldKey = n
         takeTree c.dest, n
-        tr c, n, WantOwner
+        # `{.cursor.}` fields are non-owning aliases — they don't bump
+        # rc on assignment, and the auto-derived `=destroy` doesn't
+        # recurse into them. Pass `WantNonOwner` so `tr → trLocation`
+        # emits a plain read instead of splicing an `=dup` hook around
+        # the value. Without this, `LocalInfo(typ: someCursor)` would
+        # `=dup_Cursor(someCursor)` (rc+1) and the matching
+        # `=destroy(typ)` at scope exit would `rc-` — net rc+0, but a
+        # mismatched =wasMoved on the source would over-count, exactly
+        # the shape of the open stage-2 TypeCache UAF.
+        let kind = if isCursorField(fieldKey): WantNonOwner else: WantOwner
+        tr c, n, kind
         if n.hasMore:
           # optional inheritance
           takeTree c.dest, n
@@ -832,8 +878,10 @@ proc trNewobjFields(c: var Context; n: var Cursor) =
   while n.hasMore:
     if n.substructureKind == KvU:
       copyInto c.dest, n:
+        let fieldKey = n
         takeTree c.dest, n # keep field name
-        tr(c, n, WantOwner)
+        let kind = if isCursorField(fieldKey): WantNonOwner else: WantOwner
+        tr(c, n, kind)
         if n.hasMore:
           # optional inheritance
           takeTree c.dest, n
@@ -994,7 +1042,6 @@ proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
       elif constructsValue(r.val, derefConstructs = false):
         trValue c, r.val, WillBeOwned
         c.dest.addParRi()
-
       elif isLastRead(c, r.val):
         trValue c, r.val, WillBeOwned
         c.dest.addParRi()
@@ -1022,7 +1069,21 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects)
   let typ = getType(c.typeCache, n)
   let arg = n.firstSon
   let info = n.info
-  if constructsValue(arg, derefConstructs = true):
+  # `ensureMove(hderef (call subscript x i))` reads an lvalue through a
+  # `var V`-returning accessor. With the old `derefConstructs=true` check
+  # this fell into the "constructor" branch and was just copied (no
+  # `=wasMoved` on the source) — fine for non-destructor element types
+  # but a guaranteed double-free for destructor types: the seq slot and
+  # the temp both end up owning the same payload. Force the genLastRead
+  # (bitcopy + `=wasMoved(addr inner)`) path when (a) the argument goes
+  # through a deref and (b) the result owns resources we'd otherwise
+  # alias.
+  if arg.exprKind in {DerefX, HderefX} and
+      e in {WantOwner, WillBeOwned} and hasDestructor(c, typ):
+    inc n, SkipTag
+    genLastRead(c, n, typ)
+    skipParRi n
+  elif constructsValue(arg, derefConstructs = true):
     # we allow rather silly code like `ensureMove(234)`.
     # Seems very useful for generic programming as this can come up
     # from template expansions:
@@ -1045,9 +1106,26 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects)
       c.dest.add strToken(pool.strings.getOrIncl(m), info)
     skip n, SkipFull
 
-proc trDeref(c: var Context; n: var Cursor)
+proc trDeref(c: var Context; n: var Cursor; e: Expects)
     {.ensuresNif: addedAny(c.dest).} =
+  # `(deref ptr)` produces a value of the dereffed type. When the
+  # caller wants to own it (e.g. an `Item(field: deref ptr)` field
+  # value, or any other `WantOwner` slot), we have to splice in the
+  # type's `=dup` hook the same way `trLocation` does for symbol/dot
+  # reads — otherwise the slot is initialized via raw struct copy with
+  # no rc bump, and the matching `=destroy` later under-counts the
+  # owner's refcount and frees the underlying buffer prematurely.
   let info = n.info
+  let derefedTyp = getType(c.typeCache, n) # type of the whole `(deref …)` expr
+  let needsDup = e == WantOwner and not cursorIsNil(derefedTyp) and
+                 hasDestructor(c, derefedTyp) and not isLastRead(c, n)
+  var dupHook = NoSymId
+  if needsDup:
+    dupHook = getHook(c.lifter[], attachedDup, derefedTyp, info)
+  let wrapDup = needsDup and dupHook != NoSymId
+  if wrapDup:
+    c.dest.addParLe CallS, info
+    c.dest.add symToken(dupHook, info)
   inc n, SkipTag
   var typ = getType(c.typeCache, n, {SkipAliases})
   if typ.kind == ParLe and typ.typeKind == SinkT:
@@ -1063,6 +1141,8 @@ proc trDeref(c: var Context; n: var Cursor)
     c.dest.add symToken(dataField, info)
     c.dest.addIntLit(0, info) # inheritance
   takeParRi c.dest, n
+  if wrapDup:
+    c.dest.addParRi()
 
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   if n.kind == Symbol:
@@ -1113,7 +1193,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
        InternalFieldPairsX, IsX:
       trSons c, n, WantNonOwner
     of DerefX, HderefX:
-      trDeref c, n
+      trDeref c, n, e
     of DdotX:
       bug "nodekind should have been eliminated in desugar.nim"
     of EnvpX:
@@ -1181,29 +1261,47 @@ proc checkForMoveTypes(c: var Context; n: Cursor): int =
   var nested = 0
   var r = Reporter(verbosity: 2, noColors: not useColors())
   var n = n
+  var skipDepth = -1
+    ## -1 = walking normally; otherwise the `nested` depth we resume walking at.
+    ## We skip the bodies of `(nodestroy)` routines: those are auto-derived hooks
+    ## or library hook implementations (e.g. `seq.=dup`), whose bodies may
+    ## reference a `.error` sub-hook for dead-code reasons. The lifter has
+    ## already propagated `.error` to the enclosing hook itself via
+    ## `siblingHookIsError` + `c.calledErrorHook`, so a user-visible call to
+    ## the *enclosing* hook is what we want to surface, not the inner call.
   result = 0
   while true:
     case n.kind
     of ParLe:
       inc nested
-      let ek = n.exprKind
-      if ek in CallKinds:
-        let fn = n.firstSon
-        if fn.kind == Symbol:
-          result += checkForErrorRoutine(r, fn.symId, n.info)
-      elif ek == ErrX:
-        let info = n.info
-        inc n
-        skip n
-        while n.kind == DotToken: inc n
-        if n.kind == StringLit:
-          try:
-            r.error infoToStr(info), pool.strings[n.litId]
-          except:
-            quit 1
-          inc result
+      if skipDepth < 0:
+        let sk = symKind n
+        if isRoutine(sk):
+          var probe = n
+          let routine = asRoutine(probe)
+          if hasPragma(routine.pragmas, NodestroyP):
+            skipDepth = nested - 1
+        if skipDepth < 0:
+          let ek = n.exprKind
+          if ek in CallKinds:
+            let fn = n.firstSon
+            if fn.kind == Symbol:
+              result += checkForErrorRoutine(r, fn.symId, n.info)
+          elif ek == ErrX:
+            let info = n.info
+            inc n
+            skip n
+            while n.kind == DotToken: inc n
+            if n.kind == StringLit:
+              try:
+                r.error infoToStr(info), pool.strings[n.litId]
+              except:
+                quit 1
+              inc result
     of ParRi:
       dec nested
+      if skipDepth >= 0 and nested == skipDepth:
+        skipDepth = -1
     else:
       discard
     if nested == 0: break

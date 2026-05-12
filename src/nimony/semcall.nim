@@ -679,7 +679,13 @@ proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, a
   let idx = pickBestMatch(c, convMatches)
   if idx >= 0:
     result = true
-    convMatch = convMatches[idx]
+    # Move out of the seq instead of copying. Match's auto-derived `=dup`
+    # would raw-bitcopy its TokenBuf fields (because TokenBuf has
+    # `=copy.error.` and no usable `=dup`), aliasing the owner pointer
+    # and producing a double-free at scope-end destroy. `convMatches`
+    # goes out of scope right after, so the wasMoved-zeroed slot's
+    # destroy is a no-op.
+    convMatch = ensureMove(convMatches[idx])
 
 proc varargsHasConverter(t: Cursor): bool =
   var t = t
@@ -891,7 +897,9 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
     elif finalFn.kind == IteratorY and PreferIterators notin cs.flags:
       buildErr c, dest, cs.callNode.info, "Iterators can be called only in `for` statements"
     elif m[idx].inferred.len > 0:
-      var matched = m[idx]
+      # Move out of the seq — see convMatch note above. The seq goes out
+      # of scope right after resolveOverloads returns.
+      var matched = ensureMove(m[idx])
       let returnType: Cursor
       if isMagic == NonMagicCall and c.routine.inGeneric == 0 and
           isGeneric(getProcDecl(finalFn.sym)):

@@ -218,7 +218,7 @@ func growUnsafe*[T](s: var seq[T]; newLen: int) =
       {.cast(noSideEffect).}:
         oomHandler high(int)
       return
-  if s.capInBytes <= newSize:
+  if s.capInBytes < newSize:
     if not resize(s, newLen - s.len): return
   s.len = newLen
 

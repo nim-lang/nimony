@@ -14,6 +14,9 @@ include ".." / lib / compat2
 import ".." / nimony / [nimony_model, programs, decls]
 import hexer_context, iterinliner, desugar, xelim, duplifier, lifter, destroyer,
   constparams, vtables_backend, eraiser, lambdalifting, cps, passes
+when defined(verifyArc):
+  import std / syncio
+  import ".." / nimony / verify_arc
 
 proc publishHooks*(n: var Cursor) =
   var nested = 0
@@ -88,6 +91,18 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
 
   pass.dest.add move(c.liftingCtx[].dest)
   pass.dest.addParRi()
+
+  when defined(verifyArc):
+    # Verify RC-op consistency on the post-destroyer IR. Gated on
+    # `-d:verifyArc`. Currently the verifier runs straight-line analysis
+    # only — no CFG/NJVL meet across branches yet — so it false-positives
+    # on multi-branch destroyer output. We dump findings to stderr so
+    # they can be triaged without failing the build.
+    block:
+      var arcErrs = analyzeArc(pass.dest, pass.moduleSuffix)
+      if arcErrs.len > 0:
+        stderr.writeLine "verify_arc diagnostics for ", pass.moduleSuffix, ":"
+        stderr.writeLine toString(arcErrs, false)
 
   pass.prepareForNext("cps")
   transformToCps(pass)

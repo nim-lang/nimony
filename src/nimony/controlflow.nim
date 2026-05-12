@@ -1057,7 +1057,12 @@ proc eliminateDeadInstructions*(c: TokenBuf; start = 0; last = -1): seq[bool] =
     worklist.add(pos + 1)
 
 const
-  PayloadOffset* = 1'u32 # so that we don't use 0 as a payload
+  PayloadOffset* = 1'u32
+    ## Position payloads stored in CF token `info` fields use
+    ## `toPayload(srcPos + PayloadOffset)`. The offset of 1 dates back to when
+    ## `toPayload(0)` was reserved as a visited-mark sentinel — that scheme has
+    ## been replaced by a side `IntSet` in the mover (see mover.nim), but the
+    ## offset is kept so the encoding of existing CFs is stable.
 
 proc prepare*(buf: var TokenBuf): seq[PackedLineInfo] =
   result = newSeq[PackedLineInfo](buf.len)
@@ -1068,19 +1073,6 @@ proc prepare*(buf: var TokenBuf): seq[PackedLineInfo] =
 proc restore*(buf: var TokenBuf; infos: seq[PackedLineInfo]) =
   for i in 0..<buf.len:
     buf[i].info = infos[i]
-
-proc isMarked*(n: Cursor): bool {.inline.} =
-  result = n.info == toPayload(0'u32)
-
-proc doMark*(n: Cursor) {.inline.} =
-  n.setInfo(toPayload(0'u32))
-
-proc testOrSetMark*(n: Cursor): bool {.inline.} =
-  if isMarked(n):
-    result = true
-  else:
-    doMark(n)
-    result = false
 
 when isMainModule:
   import std / [syncio, os]

@@ -160,8 +160,8 @@ iterator mvalues*[K, V](t: var Table[K, V]): var V =
 
 func del*[K: Keyable, V](t: var Table[K, V]; k: K) =
   ## Remove `k` from `t`. No-op if absent. Preserves insertion order by
-  ## shifting later entries down; the hash index is rebuilt lazily on next
-  ## access.
+  ## shifting later entries down; the hash index is rebuilt afterwards
+  ## because the shift renamed every entry's data position.
   let idx = rawGet(t, k, hash(k))
   if idx < 0: return
   var j = idx
@@ -170,8 +170,26 @@ func del*[K: Keyable, V](t: var Table[K, V]; k: K) =
     t.data[j] = next
     inc j
   t.data.shrink(t.data.len - 1)
-  # Invalidate the hash index so subsequent lookups rebuild it.
-  t.hashes = @[]
+  if t.data.len > HashThreshold:
+    # `rawGet` does NOT rebuild lazily: when `data.len > HashThreshold`
+    # it indexes into `t.hashes` directly, so leaving `hashes = @[]`
+    # turns the next lookup into an out-of-bounds read. Rebuild the
+    # hash table sized to fit the current data.len. We can't just call
+    # `fillHashPart` because it hardcodes size = `HashThreshold*2`,
+    # which is too small once data has grown past 8 entries — the
+    # probe loop would never terminate.
+    var size = HashThreshold * 2
+    while size < t.data.len * 2:
+      size = size * 2
+    t.hashes = newSeq[HashEntry](size)
+    for i in 0 ..< t.data.len:
+      let fullhash = hash(t.data[i][0])
+      var hi = fullhash and t.hashes.high.uint
+      while isFilled(t.hashes[hi]): hi = nextTry(hi, high(t.hashes))
+      t.hashes[hi] = HashEntry(fullhash: fullhash, position: i+1)
+  else:
+    # data fits the linear-scan threshold; drop the hash table entirely.
+    t.hashes.shrink(0)
 
 func initTable*[K, V](): Table[K, V] =
   ## Creates an empty table.

@@ -1608,11 +1608,16 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
       dest.addParRi()
     inc n
   of CursorP:
-    if kind in {VarY, LetY, CursorY}:
+    if kind in {VarY, LetY, CursorY, FldY, GfldY}:
+      # On object fields, `.cursor` marks the field as a non-owning alias:
+      # the lifter's `unravelObjField` already special-cases such fields
+      # (no recursive destroy/dup), and `trObjConstr`/`trNewobjFields` in
+      # the duplifier emit `WantNonOwner` reads for them so no `=dup` is
+      # spliced around the value at construction time.
       dest.add parLeToken(pk, n.info)
       inc n
     else:
-      buildErr c, dest, n.info, "pragma only allowed on local variables"
+      buildErr c, dest, n.info, "pragma only allowed on local variables or object fields"
       inc n
     dest.addParRi()
   of VarargsP:
