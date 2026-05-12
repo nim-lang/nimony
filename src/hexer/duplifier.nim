@@ -97,7 +97,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
         echo infoToStr(n.info), " LastUse: ", result
 
 const
-  ConstructingExprs = CallKinds + {OconstrX, NewobjX, AconstrX, TupX, NewrefX}
+  ConstructingExprs = CallKinds + {OconstrX, NewobjX, AconstrX, TupconstrX, TupX, NewrefX}
 
 proc constructsValue*(n: Cursor; derefConstructs = true): bool =
   var n = n
@@ -374,6 +374,15 @@ proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
 
 proc callDup(c: var Context; arg: var Cursor)
     {.ensuresNif: addedAny(c.dest).} =
+  if arg.exprKind == EmoveX:
+    # `=dup` on an `ensureMove(x)` is always wrong: the user has asserted
+    # this is a move, so calling `=dup` on top would emit a bogus
+    # `=dup_T(ensureMove …)` that the destroyer would later pair with
+    # one too many `=destroy`. `trEnsureMove` enforces the proof
+    # obligation: if the inner expression isn't a constructing rvalue or
+    # a provable last-read, it produces an `(err …)` node here.
+    tr c, arg, WillBeOwned
+    return
   let typ = getType(c.typeCache, arg)
   if typ.typeKind == NiltT:
     tr c, arg, DontCare
@@ -1005,18 +1014,6 @@ proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
         trValue c, r.val, DontCare
         c.dest.addParRi()
       elif constructsValue(r.val, derefConstructs = false):
-        trValue c, r.val, WillBeOwned
-        c.dest.addParRi()
-      elif r.val.exprKind == EmoveX:
-        # `var x = ensureMove(y)` — user explicitly asked for a move. The
-        # default flow here would skip the constructsValue branch (an
-        # EmoveX is not in ConstructingExprs after derefConstructs=false
-        # collapses `(hderef ...)` to false), fall to `isLastRead`, fail
-        # the rootOf-CannotFollowDerefs check on inner derefs, and bottom
-        # out at `callDup` — silently emitting `=dup_T` even though the
-        # user asked for a move. Route explicitly through `trValue` so
-        # `tr → trEnsureMove` picks the right lowering (genLastRead +
-        # =wasMoved on the source lvalue when the type has a destructor).
         trValue c, r.val, WillBeOwned
         c.dest.addParRi()
       elif isLastRead(c, r.val):

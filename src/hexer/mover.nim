@@ -122,8 +122,23 @@ proc containsUsage(tree: var Cursor; x: Cursor): bool =
       inc tree
     if nested == 0: break
 
+proc tupleFieldOf(x: Cursor): int =
+  ## If `x` is `(tupat sym idx)`, return `idx`. Otherwise -1.
+  ## Used by `containsRoot` to skip disjoint tuple-field accesses: a future
+  ## `(tupat tmp 1)` is not a usage of `(tupat tmp 0)` because the fields
+  ## are statically disjoint locations.
+  if x.kind != ParLe or x.exprKind != TupatX: return -1
+  var n = x
+  inc n
+  if n.kind != Symbol: return -1
+  inc n
+  if n.kind == IntLit:
+    return int pool.integers[n.intId]
+  return -1
+
 proc containsRoot(tree: var Cursor; x: Cursor): bool =
   let r = rootOf(x)
+  let xField = tupleFieldOf(x)
   # scan loop also correct for `r == NoSymId`:
   var nested = 0
   result = false
@@ -141,6 +156,20 @@ proc containsRoot(tree: var Cursor; x: Cursor): bool =
           result = true
         while tree.hasMore:
           skip tree
+      elif tree.exprKind == TupatX and xField >= 0:
+        # `x` is a specific tuple field of `r`. A future `(tupat r J)` with
+        # `J != xField` accesses a *disjoint* location and does not block
+        # the move out of `x`. Skip the whole tupat subtree in that case.
+        var probe = tree
+        inc probe
+        if probe.kind == Symbol and probe.symId == r:
+          inc probe
+          if probe.kind == IntLit and int(pool.integers[probe.intId]) != xField:
+            skip tree
+            continue
+        # Otherwise (different root, non-literal index, or matching index)
+        # fall back to the conservative scan.
+        inc tree
       elif tree.substructureKind == KvU:
         inc tree
         skip tree # key ignored for object construction!
