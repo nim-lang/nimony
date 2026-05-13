@@ -1,0 +1,1 @@
+tests/nimony/lookups/tignorestyle_off.nim(7, 21) Error: undeclared identifier: 'my_proc_name'
