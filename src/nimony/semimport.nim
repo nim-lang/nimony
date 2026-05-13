@@ -169,6 +169,15 @@ template maybeCyclic(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
         cyclicImport(c, dest, x)
         return
 
+proc takeImportedName(x: var Cursor; names: var HashSet[StrId];
+                      hasError: var bool) =
+  let ident = takeIdent(x)
+  if ident == StrId(0):
+    hasError = true
+    skip x, AnyExpr
+  else:
+    names.incl ident
+
 proc semImport(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   var x = it.n
@@ -198,7 +207,7 @@ proc semImportExcept(c: var SemContext; dest: var TokenBuf; it: var Item) =
     filenameVal(x, files, hasError, allowAs = true)
     if not hasError:
       while x.hasMore:
-        excluded.incl takeIdent(x)
+        takeImportedName(x, excluded, hasError)
   if hasError:
     c.buildErr dest, info, "wrong `import except` statement"
   else:
@@ -222,7 +231,7 @@ proc semFromImport(c: var SemContext; dest: var TokenBuf; it: var Item) =
           # from a import nil
           skip x, AnyExpr
         else:
-          included.incl takeIdent(x)
+          takeImportedName(x, included, hasError)
   if hasError:
     c.buildErr dest, info, "wrong `from import` statement"
   else:

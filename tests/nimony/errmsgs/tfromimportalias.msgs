@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tfromimportalias.nim(1, 1) Error: wrong `from import` statement
