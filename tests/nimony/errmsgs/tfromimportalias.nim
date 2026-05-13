@@ -1,0 +1,1 @@
+from deps / mfromimportalias import hello as sayHello
