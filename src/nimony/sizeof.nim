@@ -184,7 +184,12 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     if n.kind != DotToken:  # base type
       getSize(c2, cache, n, ptrSize)
     elif InheritableP in pragmas.pragmas:
-      update c, ptrSize, ptrSize
+      # No explicit base, but inheritable: account for the RTTI pointer in
+      # `c2` so the *cached* size matches the actual size. Updating `c`
+      # directly works for the immediate caller but stores size=0 for an
+      # inheritable empty-base object in the cache, poisoning every later
+      # lookup (and every derived type's base-size computation).
+      update c2, ptrSize, ptrSize
 
     skip n
     var iter = initObjFieldIter()
@@ -195,15 +200,17 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     combine c, c2
 
   of ArrayT:
-    var c2 = createSizeofValue(c.strict)
-    getSize(c2, cache, n.firstSon, ptrSize)
+    var elem = createSizeofValue(c.strict)
+    getSize(elem, cache, n.firstSon, ptrSize)
     let al1 = asSigned(getArrayLen(n), c.overflow)
-    if al1 >= high(int) div c2.size:
-      c.overflow = true
+    var arr = createSizeofValue(c.strict)
+    if elem.overflow or elem.size <= 0 or al1 >= high(int) div elem.size:
+      arr.overflow = true
     else:
-      update c, int(al1 * c2.size), c2.maxAlign
-      c.overflow = c2.overflow
-    if cacheKey != NoSymId: cache[cacheKey] = c2
+      update arr, int(al1 * elem.size), elem.maxAlign
+      arr.overflow = elem.overflow
+    if cacheKey != NoSymId: cache[cacheKey] = arr
+    combine c, arr
 
   of SetT:
     let size0 = bitsetSizeInBytes(n.firstSon)
