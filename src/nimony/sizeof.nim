@@ -184,7 +184,12 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     if n.kind != DotToken:  # base type
       getSize(c2, cache, n, ptrSize)
     elif InheritableP in pragmas.pragmas:
-      update c, ptrSize, ptrSize
+      # No explicit base, but inheritable: account for the RTTI pointer in
+      # `c2` so the *cached* size matches the actual size. Updating `c`
+      # directly works for the immediate caller but stores size=0 for an
+      # inheritable empty-base object in the cache, poisoning every later
+      # lookup (and every derived type's base-size computation).
+      update c2, ptrSize, ptrSize
 
     skip n
     var iter = initObjFieldIter()
@@ -195,15 +200,17 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     combine c, c2
 
   of ArrayT:
-    var c2 = createSizeofValue(c.strict)
-    getSize(c2, cache, n.firstSon, ptrSize)
+    var elem = createSizeofValue(c.strict)
+    getSize(elem, cache, n.firstSon, ptrSize)
     let al1 = asSigned(getArrayLen(n), c.overflow)
-    if al1 >= high(int) div c2.size:
-      c.overflow = true
+    var arr = createSizeofValue(c.strict)
+    if elem.overflow or elem.size <= 0 or al1 >= high(int) div elem.size:
+      arr.overflow = true
     else:
-      update c, int(al1 * c2.size), c2.maxAlign
-      c.overflow = c2.overflow
-    if cacheKey != NoSymId: cache[cacheKey] = c2
+      update arr, int(al1 * elem.size), elem.maxAlign
+      arr.overflow = elem.overflow
+    if cacheKey != NoSymId: cache[cacheKey] = arr
+    combine c, arr
 
   of SetT:
     let size0 = bitsetSizeInBytes(n.firstSon)
@@ -229,14 +236,29 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
      AutoT, SymkindT, TypekindT, TypedescT, UntypedT, TypedT, OrdinalT:
     c.overflow = true
 
-proc getSize*(n: Cursor; ptrSize: int; strict=false): xint =
+type
+  SizeofCache* = Table[SymId, SizeofValue]
+    ## Long-lived size-by-symbol memoization, shared across many `getSize`
+    ## calls. Internal recursion already keys on `SymId`, but the public
+    ## entrypoint used to throw the table away after each call. Pass a
+    ## context-owned cache in to amortize the size walk across all the type
+    ## queries a single hexer pass performs.
+
+proc getSize*(n: Cursor; ptrSize: int; cache: var SizeofCache; strict=false): xint =
   var c = createSizeofValue(strict)
-  var cache = initTable[SymId, SizeofValue]()
   getSize(c, cache, n, ptrSize)
   if not c.overflow:
     result = createXint(c.size)
   else:
     result = createNaN()
+
+proc getSize*(n: Cursor; ptrSize: int; strict=false): xint =
+  var cache = initTable[SymId, SizeofValue]()
+  result = getSize(n, ptrSize, cache, strict)
+
+proc typeIsBig*(n: Cursor; ptrSize: int; cache: var SizeofCache): bool {.inline.} =
+  let s = getSize(n, ptrSize, cache)
+  result = s > createXint(24'i64)
 
 proc typeIsBig*(n: Cursor; ptrSize: int): bool {.inline.} =
   let s = getSize(n, ptrSize)
@@ -257,14 +279,18 @@ proc typeSectionMode(n: Cursor): PragmaKind =
         n = local.body
   return NoPragma
 
-proc passByConstRef*(typ, pragmas: Cursor; ptrSize: int): bool =
+proc passByConstRef*(typ, pragmas: Cursor; ptrSize: int; cache: var SizeofCache): bool =
   let k = typ.typeKind
   if k in {SinkT, MutT, OutT, TypekindT, UntypedT, TypedT, VarargsT, TypedescT, StaticT}:
     result = false
-  elif typeIsBig(typ, ptrSize):
+  elif typeIsBig(typ, ptrSize, cache):
     result = not hasPragma(pragmas, BycopyP) and typeSectionMode(typ) != BycopyP
   else:
     result = hasPragma(pragmas, ByrefP) or typeSectionMode(typ) == ByrefP
+
+proc passByConstRef*(typ, pragmas: Cursor; ptrSize: int): bool =
+  var cache = initTable[SymId, SizeofValue]()
+  result = passByConstRef(typ, pragmas, ptrSize, cache)
 
 when isMainModule:
   setupProgramForTesting("", "", "")

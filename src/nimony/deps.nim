@@ -153,6 +153,7 @@ type
     SilentMake     ## suppress make output
     Profile        ## ask nifmake to print its timing profile
     Report         ## ask nifmake to print machine-readable invocation counts
+    Stats          ## after build, print total LOC + module count across the dep graph
 
   CFile = object
     name, obj, customArgs: string
@@ -1392,6 +1393,38 @@ proc buildGraph*(config: sink NifConfig; project: string;
     if exeOutDir.len > 0:
       onRaiseQuit createDir(path(exeOutDir))
     exec nifmakeCommand & quoteShell(buildFinalFilename)
+
+  if Stats in flags:
+    # Walk every source module in the dep graph and sum line counts. Counting
+    # `\n` bytes in each `.nim` is cheap (sub-millisecond per file at this
+    # scale); no caching needed since this only fires under `--stats`.
+    var totalLines = 0
+    var totalBytes = 0
+    var nimFiles = 0
+    var seen = initHashSet[string]()
+    for v in c.nodes:
+      if v.plugin.len > 0: continue
+      for f in v.files:
+        if not f.nimFile.endsWith(".nim"): continue
+        if seen.containsOrIncl(f.nimFile): continue
+        if not semos.fileExists(f.nimFile): continue
+        try:
+          let s = readFile(f.nimFile)
+          inc nimFiles
+          totalBytes += s.len
+          # Count newlines; treat a file with no trailing newline as
+          # contributing one extra line for its last content line.
+          var n = 0
+          for ch in s:
+            if ch == '\n': inc n
+          if s.len > 0 and s[^1] != '\n': inc n
+          totalLines += n
+        except:
+          discard
+    echo "[stats] ", nimFiles, " modules, ",
+         totalLines, " LOC, ", totalBytes, " bytes"
+
+  if cmd != DoCheck:
     if cmd == DoRun:
       let backend = c.rootNode.files[0].modname
       exec c.config.exeFile(c.rootNode.files[0], backend) & executableArgs

@@ -18,6 +18,19 @@ type
   RootOfMode* = enum
     CanFollowDerefs, CannotFollowDerefs, CanFollowCalls
 
+  FindStartEntry = object
+    pos: int32       ## position in `cf`, or -1 if no CF token has this payload
+    nested: int16    ## paren-nesting depth at that position
+
+  MoverContext* = object
+    ## Per-pass context for the mover. Holds the controlflow buffer and a
+    ## position-payload → (cf position, nested depth) lookup built once when
+    ## the CF is materialized. Replaces the bare `cf: TokenBuf` the duplifier
+    ## used to carry around, and turns `findStart` from an O(N) buffer scan
+    ## into an O(1) array index.
+    cf*: TokenBuf
+    index*: seq[FindStartEntry]   ## indexed by payload value (= srcPos + PayloadOffset)
+
 proc rootOf*(n: Cursor; mode = CanFollowDerefs): SymId =
   var n = n
   while true:
@@ -183,20 +196,36 @@ proc containsRoot(tree: var Cursor; x: Cursor): bool =
       inc tree
     if nested == 0: break
 
-proc findStart(c: TokenBuf; idx: PackedLineInfo; n: var Cursor): int =
-  result = 0
-  for i in 0..<c.len:
-    case c[i].kind
-    of ParLe:
-      inc result
-    of ParRi:
-      dec result
-    else:
-      discard
-    if c[i].info == idx:
-      n = c.readonlyCursorAt(i)
-      return result
-  return -1
+proc buildFindStartIndex(cf: TokenBuf; srcLen: int): seq[FindStartEntry] =
+  ## One-pass scan of the just-built CF buffer that records, for each
+  ## payload value, the *first* CF token whose `info` carries it and the
+  ## paren-nesting depth at that position. Subsequent `findStart` lookups
+  ## are then O(1).
+  result = newSeq[FindStartEntry](srcLen + int(PayloadOffset))
+  for i in 0 ..< result.len:
+    result[i] = FindStartEntry(pos: -1'i32, nested: 0)
+  var nested = 0
+  for i in 0 ..< cf.len:
+    case cf[i].kind
+    of ParLe: inc nested
+    of ParRi: dec nested
+    else: discard
+    let info = cf[i].info
+    if isPayload(info):
+      let p = int(getPayload(info))
+      if p < result.len and result[p].pos < 0:
+        result[p] = FindStartEntry(pos: int32(i), nested: int16(nested))
+
+proc findStart(c: TokenBuf; idx: PackedLineInfo; n: var Cursor;
+               index: openArray[FindStartEntry]): int =
+  if not isPayload(idx):
+    return -1
+  let p = int(getPayload(idx))
+  if p < 0 or p >= index.len: return -1
+  let e = index[p]
+  if e.pos < 0: return -1
+  n = c.readonlyCursorAt(int(e.pos))
+  result = int(e.nested)
 
 proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
                 otherUsage: var Cursor; marks: var IntSet; cfBase: Cursor): bool =
@@ -302,9 +331,10 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
           skip pc
   return true
 
-proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var Cursor): bool =
+proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var Cursor;
+                    index: openArray[FindStartEntry]): bool =
   var n = default Cursor
-  let nested = findStart(c, toPayload(idx + PayloadOffset), n)
+  let nested = findStart(c, toPayload(idx + PayloadOffset), n, index)
   if nested < 0:
     return true
   let x = n
@@ -324,24 +354,26 @@ proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var Cursor): bool =
 
 proc isLastUse*(n: Cursor; buf: var TokenBuf;
                 otherUsage: var PackedLineInfo;
-                cf: var TokenBuf): bool =
+                mover: var MoverContext): bool =
   # XXX Todo: only transform&traverse the innermost scope the variable was declared in.
-  if cf.len == 0:
+  if mover.cf.len == 0:
     # First call for this `buf`: bake the payload-encoded back-pointers into
     # `buf.info`, build the CF from it, then restore `buf` to its original
     # infos. The CF inherits the payloads and keeps them for the lifetime of
     # this analysis pass — they never change once built, because per-walk
     # visited marks now live in a side IntSet (see isLastReadImpl), not in
-    # the `info` field.
+    # the `info` field. The same scan also builds the payload→position index
+    # so `findStart` runs in O(1) instead of O(cf.len) per query.
     let oldInfos = prepare(buf)
-    cf = toControlflow(beginRead buf)
-    freeze cf
+    mover.cf = toControlflow(beginRead buf)
+    freeze mover.cf
     endRead buf
     restore(buf, oldInfos)
+    mover.index = buildFindStartIndex(mover.cf, buf.len)
   let idx = cursorToPosition(buf, n)
   assert idx >= 0
   var other = default Cursor
-  result = isLastReadImpl(cf, idx.uint32, other)
+  result = isLastReadImpl(mover.cf, idx.uint32, other, mover.index)
   if other.cursorIsNil:
     otherUsage = NoLineInfo
   else:
@@ -370,8 +402,8 @@ when isMainModule:
     var input = parseFromBuffer(s, "")
     var otherUsage = NoLineInfo
     let n = findX(beginRead(input))
-    var cf = createTokenBuf(300)
-    let res = isLastUse(n, input, otherUsage, cf)
+    var mover = MoverContext(cf: createTokenBuf(300))
+    let res = isLastUse(n, input, otherUsage, mover)
     if res != expected:
       echo "FAILED Test case: ", s
 

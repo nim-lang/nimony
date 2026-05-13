@@ -63,6 +63,8 @@ Options:
   --profile                 print nifmake timing profile of executed commands
   --report                  print machine-readable per-command invocation
                             counts on stdout (one line per nifmake call)
+  --stats                   after build, print total LOC and module count
+                            across the dep graph
   --nimcache:PATH           set the path used for generated files
   -o, --out:PATH            write the executable to PATH (overrides the
                             default `<nimcache>/<modhash>/<basename>.exe`).
@@ -219,6 +221,9 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
             forwardArg = false
           of "report":
             c.buildFlags.incl Report
+            forwardArg = false
+          of "stats":
+            c.buildFlags.incl Stats
             forwardArg = false
           of "ischild":
             # undocumented command line option, by design
