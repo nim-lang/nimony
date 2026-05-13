@@ -21,7 +21,7 @@ import nimony_model, symtabs, builtintypes, decls, asthelpers,
   intervals, xints, typeprops,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
   semuntyped, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec, langmodes,
-  features
+  features, identstyle
 
 import contracts_njvl
 
@@ -1483,7 +1483,13 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
   var hasParRi = n.kind == ParLe # if false, has no arguments
   if n.substructureKind == KvU:
     inc n
-  let pk = pragmaKind(n)
+  var pk = pragmaKind(n)
+  if pk == NoPragma and n.kind == Ident and IgnoreStyleFeature in c.features:
+    # Under `.feature: "ignoreStyle".` accept builtin pragma names spelled in
+    # any case / underscore variant (Nim's `cmpIgnoreStyle` rule). The
+    # downstream case branches still emit the canonical form into `dest`, so
+    # the lowering pipeline never sees the user-written spelling.
+    pk = pragmaKindByStyle(n.litId)
   case pk
   of NoPragma:
     if kind.isRoutine and (let cc = callConvKind(n); cc != NoCallConv):
@@ -2850,18 +2856,22 @@ type
 
 proc findOneofEfld(c: var SemContext; name: StrId): SymId =
   result = SymId(0)
+  let ignoreStyle = IgnoreStyleFeature in c.features
   var scope = c.currentScope
   while scope != nil:
-    for sym in scope.tab.getOrDefault(name):
-      if sym.kind == EfldY and isAnumEfld(sym.name):
-        return sym.name
+    for k in stylesOfScope(scope, name, ignoreStyle):
+      for sym in scope.tab.getOrDefault(k):
+        if sym.kind == EfldY and isAnumEfld(sym.name):
+          return sym.name
     scope = scope.up
-  if c.importTab.hasKey(name):
-    for moduleSym in c.importTab.getOrQuit(name):
-      let candidates = c.importedModules.getOrQuit(moduleSym).iface.getOrDefault(name)
-      for defId in candidates:
-        if isAnumEfld(defId):
-          return defId
+  for realName in stylesOfImport(c.importTab, name, ignoreStyle):
+    for moduleSym in c.importTab.getOrQuit(realName):
+      let iface = addr c.importedModules.getOrQuit(moduleSym).iface
+      for foreignName in stylesOfIface(iface[], realName, ignoreStyle):
+        let candidates = iface[].getOrDefault(foreignName)
+        for defId in candidates:
+          if isAnumEfld(defId):
+            return defId
 
 proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
                             selectorType: TypeCursor; objTypeSym: SymId;

@@ -27,11 +27,15 @@ template buildTree*(dest: var TokenBuf; kind: StmtKind|ExprKind|TypeKind|SymKind
 
 proc considerImportedSymbols(c: var SemContext; dest: var TokenBuf; name: StrId; info: PackedLineInfo): int =
   result = 0
-  for moduleId in c.importTab.getOrDefault(name):
-    let candidates = addr c.importedModules.getOrQuit(moduleId).iface.getOrQuit(name)
-    inc result, candidates[].len
-    for defId in candidates[]:
-      dest.add symToken(defId, info)
+  let ignoreStyle = IgnoreStyleFeature in c.features
+  for realName in stylesOfImport(c.importTab, name, ignoreStyle):
+    for moduleId in c.importTab.getOrDefault(realName):
+      let iface = addr c.importedModules.getOrQuit(moduleId).iface
+      for foreignName in stylesOfIface(iface[], realName, ignoreStyle):
+        let candidates = addr iface[].getOrQuit(foreignName)
+        inc result, candidates[].len
+        for defId in candidates[]:
+          dest.add symToken(defId, info)
 
 proc addSymUse*(dest: var TokenBuf; s: Sym; info: PackedLineInfo) =
   dest.add symToken(s.name, info)
@@ -40,13 +44,15 @@ proc buildSymChoiceForDot(c: var SemContext; dest: var TokenBuf; identifier: Str
   # not used yet
   var count = 0
   let oldLen = dest.len
+  let ignoreStyle = IgnoreStyleFeature in c.features
   dest.buildTree OchoiceX, info:
     var it = c.currentScope
     while it != nil:
-      for sym in it.tab.getOrDefault(identifier):
-        if sym.kind in {ProcY, FuncY, ConverterY, MethodY, TemplateY, MacroY, IteratorY, TypeY}:
-          dest.addSymUse sym, info
-          inc count
+      for k in stylesOfScope(it, identifier, ignoreStyle):
+        for sym in it.tab.getOrDefault(k):
+          if sym.kind in {ProcY, FuncY, ConverterY, MethodY, TemplateY, MacroY, IteratorY, TypeY}:
+            dest.addSymUse sym, info
+            inc count
       it = it.up
     inc count, considerImportedSymbols(c, dest, identifier, info)
 
@@ -62,34 +68,40 @@ proc buildSymChoiceForSelfModule*(c: var SemContext; dest: var TokenBuf;
                                   identifier: StrId; info: PackedLineInfo): int =
   result = 0
   let oldLen = dest.len
+  let ignoreStyle = IgnoreStyleFeature in c.features
   dest.buildTree OchoiceX, info:
     # add symbols from top scope:
     var it = c.currentScope
     while it.up != nil: it = it.up
-    for sym in it.tab.getOrDefault(identifier):
-      dest.addSymUse sym, info
-      inc result
+    for k in stylesOfScope(it, identifier, ignoreStyle):
+      for sym in it.tab.getOrDefault(k):
+        dest.addSymUse sym, info
+        inc result
   # if the sym choice is empty, create an ident node:
   if result == 0:
     dest.shrink oldLen
     dest.add identToken(identifier, info)
 
 iterator topLevelSyms*(c: var SemContext; identifier: StrId): SymId =
+  let ignoreStyle = IgnoreStyleFeature in c.features
   var it = c.currentScope
   while it.up != nil: it = it.up
-  for sym in it.tab.getOrDefault(identifier):
-    yield sym.name
+  for k in stylesOfScope(it, identifier, ignoreStyle):
+    for sym in it.tab.getOrDefault(k):
+      yield sym.name
 
 proc rawBuildSymChoiceForForeignModule(c: var SemContext; dest: var TokenBuf; module: SymId;
                                        identifier: StrId; info: PackedLineInfo;
                                        marker: var HashSet[SymId]): int =
   result = 0
   let m = addr c.importedModules.getOrQuit(module)
-  let candidates = m[].iface.getOrDefault(identifier)
-  for defId in candidates:
-    if not marker.containsOrIncl(defId):
-      dest.add symToken(defId, info)
-    inc result
+  let ignoreStyle = IgnoreStyleFeature in c.features
+  for k in stylesOfIface(m[].iface, identifier, ignoreStyle):
+    let candidates = m[].iface.getOrDefault(k)
+    for defId in candidates:
+      if not marker.containsOrIncl(defId):
+        dest.add symToken(defId, info)
+      inc result
   for forward, filter in m[].exports:
     if filterAllows(filter, identifier):
       inc result, rawBuildSymChoiceForForeignModule(c, dest, forward, identifier, info, marker)
@@ -112,14 +124,16 @@ type
 proc rawBuildSymChoice(c: var SemContext; dest: var TokenBuf; identifier: StrId; info: PackedLineInfo;
                        option = FindAll): int =
   result = 0
+  let ignoreStyle = IgnoreStyleFeature in c.features
   var it = c.currentScope
   while it != nil:
     var nonOverloadable = 0
-    for sym in it.tab.getOrDefault(identifier):
-      dest.addSymUse sym, info
-      inc result
-      if sym.kind.isNonOverloadable:
-        inc nonOverloadable
+    for k in stylesOfScope(it, identifier, ignoreStyle):
+      for sym in it.tab.getOrDefault(k):
+        dest.addSymUse sym, info
+        inc result
+        if sym.kind.isNonOverloadable:
+          inc nonOverloadable
     if result == 1 and (option == InnerMost or
         (option == FindOverloads and nonOverloadable == 1)):
       # unambiguous local symbol found
@@ -140,26 +154,34 @@ proc buildSymChoice*(c: var SemContext; dest: var TokenBuf; identifier: StrId; i
 
 proc addSymChoiceSyms*(c: var SemContext; dest: var TokenBuf; identifier: StrId; marker: var HashSet[SymId]; info: PackedLineInfo) =
   # like rawBuildSymChoice but adds to an existing symchoice, ignoring duplicates
+  let ignoreStyle = IgnoreStyleFeature in c.features
   var it = c.currentScope
   while it != nil:
-    for sym in it.tab.getOrDefault(identifier):
-      if not marker.containsOrIncl(sym.name):
-        dest.addSymUse sym, info
+    for k in stylesOfScope(it, identifier, ignoreStyle):
+      for sym in it.tab.getOrDefault(k):
+        if not marker.containsOrIncl(sym.name):
+          dest.addSymUse sym, info
     it = it.up
   # mirror considerImportedSymbols:
-  for moduleId in c.importTab.getOrDefault(identifier):
-    let candidates = addr c.importedModules.getOrQuit(moduleId).iface.getOrQuit(identifier)
-    for defId in candidates[]:
-      if not marker.containsOrIncl(defId):
-        dest.add symToken(defId, info)
+  for realName in stylesOfImport(c.importTab, identifier, ignoreStyle):
+    for moduleId in c.importTab.getOrDefault(realName):
+      let iface = addr c.importedModules.getOrQuit(moduleId).iface
+      for foreignName in stylesOfIface(iface[], realName, ignoreStyle):
+        let candidates = addr iface[].getOrQuit(foreignName)
+        for defId in candidates[]:
+          if not marker.containsOrIncl(defId):
+            dest.add symToken(defId, info)
 
 proc isDeclared*(c: var SemContext; name: StrId): bool =
+  let ignoreStyle = IgnoreStyleFeature in c.features
   var scope = c.currentScope
   while scope != nil:
-    if name in scope.tab:
-      return true
+    for k in stylesOfScope(scope, name, ignoreStyle):
+      if k in scope.tab: return true
     scope = scope.up
-  result = name in c.importTab
+  for k in stylesOfImport(c.importTab, name, ignoreStyle):
+    if k in c.importTab: return true
+  result = false
 
 proc openScope*(c: var SemContext) =
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), up: c.currentScope, kind: NormalScope)

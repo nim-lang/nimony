@@ -6,7 +6,7 @@
 
 import std / [tables]
 include ".." / lib / nifprelude
-import nimony_model
+import nimony_model, identstyle
 
 const
   InvalidPos* = -1
@@ -25,6 +25,18 @@ type
     undo: seq[Table[StrId, int]] # len of 'key' to reset tab[key] to.
     up*: Scope
     kind*: ScopeKind
+
+iterator stylesOfScope*(s: Scope; name: StrId; ignoreStyle: bool): StrId =
+  ## Yields every key in `s.tab` that, under the active style mode, should be
+  ## considered a match for `name`. When `ignoreStyle` is false this is just
+  ## `name`. When `ignoreStyle` is true we walk the global style-group index
+  ## (`pool.styleSiblings`) and yield only those siblings that actually live
+  ## in this scope.
+  if not ignoreStyle:
+    yield name
+  else:
+    for k in styleSiblings(name):
+      if s.tab.hasKey(k): yield k
 
 proc openShadowScope*(s: Scope) =
   s.undo.add initTable[StrId, int]()
