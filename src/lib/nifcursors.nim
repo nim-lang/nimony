@@ -120,7 +120,7 @@ proc `=wasMoved`*(c: var Cursor) {.inline.} =
   c.p = nil
   c.rem = 0
 
-proc `=copy`*(dest: var Cursor; src: Cursor) =
+proc `=copy`*(dest: var Cursor; src: Cursor) {.inline.} =
   if dest.owner != src.owner or dest.p != src.p:
     `=destroy`(dest)
     if src.owner != nil: inc src.owner.rc
@@ -128,7 +128,7 @@ proc `=copy`*(dest: var Cursor; src: Cursor) =
     dest.p = src.p
     dest.rem = src.rem
 
-proc `=dup`*(src: Cursor): Cursor {.nodestroy.} =
+proc `=dup`*(src: Cursor): Cursor {.nodestroy, inline.} =
   result = Cursor(owner: src.owner, p: src.p, rem: src.rem)
   if result.owner != nil: inc result.owner.rc
 

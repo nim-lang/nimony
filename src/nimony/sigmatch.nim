@@ -1538,7 +1538,7 @@ proc collectDefaultValues(m: var Match; f: Cursor): seq[CallArg] =
     skip f
 
 proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
-  m.tvars = initHashSet[SymId]()
+  m.tvars = default(HashSet[SymId])
   if fn.kind in RoutineKinds:
     var e = explicitTypeVars
     for v in typeVars(fn.sym):

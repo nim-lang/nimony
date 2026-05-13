@@ -34,6 +34,7 @@ type
     exceptVars: seq[SymId]
     ptrSize, tmpCounter: int
     typeCache: TypeCache
+    sizeofCache: SizeofCache  ## shared size-by-symbol memoization
     needsXelim: bool
     keepOverflowFlag: bool
     canRaise: bool
@@ -46,7 +47,8 @@ when not defined(nimony):
     {.ensuresNif: addedAny(dest).}
 
 proc passByConstRef(c: var Context; typ, pragmas: Cursor): bool =
-  result = sizeof.passByConstRef(typ, pragmas, c.ptrSize) or typeprops.isInheritable(typ, false)
+  result = sizeof.passByConstRef(typ, pragmas, c.ptrSize, c.sizeofCache) or
+           typeprops.isInheritable(typ, false)
 
 proc rememberConstRefParams(c: var Context; params: Cursor) =
   var n = params
@@ -59,7 +61,8 @@ proc rememberConstRefParams(c: var Context; params: Cursor) =
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n
   var r = asRoutine(n)
-  var c2 = Context(ptrSize: c.ptrSize, typeCache: move(c.typeCache), needsXelim: c.needsXelim,
+  var c2 = Context(ptrSize: c.ptrSize, typeCache: move(c.typeCache),
+    sizeofCache: move(c.sizeofCache), needsXelim: c.needsXelim,
     resultSym: SymId(0), canRaise: hasPragma(r.pragmas, RaisesP),
     retType: r.retType)
 
@@ -87,6 +90,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       takeTree dest, n
   c.typeCache = move(c2.typeCache)
+  c.sizeofCache = move(c2.sizeofCache)
   c.needsXelim = c2.needsXelim
 
 proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =

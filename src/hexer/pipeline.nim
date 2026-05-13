@@ -121,5 +121,6 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   # the previously conditional xelim_final pass.
   pass.prepareForNext("xelim_final")
   lowerExprs(pass, LowerCasts)
+  pass.finishPass()
 
   result = ensureMove(pass.dest)

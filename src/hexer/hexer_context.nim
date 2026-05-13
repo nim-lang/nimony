@@ -16,7 +16,7 @@ when defined(nimony):
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import lifter
-import ".." / nimony / [nimony_model, typenav, langmodes]
+import ".." / nimony / [nimony_model, typenav, langmodes, sizeof]
 
 export RcField, DataField
 
@@ -31,6 +31,7 @@ type
     strLitBuf*: TokenBuf   ## static LongString const decls for SSO long literals
     strLitCounter*: int    ## unique suffix for strLitBuf symbols
     typeCache*: TypeCache
+    sizeofCache*: SizeofCache  ## shared size-by-symbol memoization
     bits*: int
     bigEndian*: bool
 

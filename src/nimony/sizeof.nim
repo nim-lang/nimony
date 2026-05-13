@@ -229,14 +229,29 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
      AutoT, SymkindT, TypekindT, TypedescT, UntypedT, TypedT, OrdinalT:
     c.overflow = true
 
-proc getSize*(n: Cursor; ptrSize: int; strict=false): xint =
+type
+  SizeofCache* = Table[SymId, SizeofValue]
+    ## Long-lived size-by-symbol memoization, shared across many `getSize`
+    ## calls. Internal recursion already keys on `SymId`, but the public
+    ## entrypoint used to throw the table away after each call. Pass a
+    ## context-owned cache in to amortize the size walk across all the type
+    ## queries a single hexer pass performs.
+
+proc getSize*(n: Cursor; ptrSize: int; cache: var SizeofCache; strict=false): xint =
   var c = createSizeofValue(strict)
-  var cache = initTable[SymId, SizeofValue]()
   getSize(c, cache, n, ptrSize)
   if not c.overflow:
     result = createXint(c.size)
   else:
     result = createNaN()
+
+proc getSize*(n: Cursor; ptrSize: int; strict=false): xint =
+  var cache = initTable[SymId, SizeofValue]()
+  result = getSize(n, ptrSize, cache, strict)
+
+proc typeIsBig*(n: Cursor; ptrSize: int; cache: var SizeofCache): bool {.inline.} =
+  let s = getSize(n, ptrSize, cache)
+  result = s > createXint(24'i64)
 
 proc typeIsBig*(n: Cursor; ptrSize: int): bool {.inline.} =
   let s = getSize(n, ptrSize)
@@ -257,14 +272,18 @@ proc typeSectionMode(n: Cursor): PragmaKind =
         n = local.body
   return NoPragma
 
-proc passByConstRef*(typ, pragmas: Cursor; ptrSize: int): bool =
+proc passByConstRef*(typ, pragmas: Cursor; ptrSize: int; cache: var SizeofCache): bool =
   let k = typ.typeKind
   if k in {SinkT, MutT, OutT, TypekindT, UntypedT, TypedT, VarargsT, TypedescT, StaticT}:
     result = false
-  elif typeIsBig(typ, ptrSize):
+  elif typeIsBig(typ, ptrSize, cache):
     result = not hasPragma(pragmas, BycopyP) and typeSectionMode(typ) != BycopyP
   else:
     result = hasPragma(pragmas, ByrefP) or typeSectionMode(typ) == ByrefP
+
+proc passByConstRef*(typ, pragmas: Cursor; ptrSize: int): bool =
+  var cache = initTable[SymId, SizeofValue]()
+  result = passByConstRef(typ, pragmas, ptrSize, cache)
 
 when isMainModule:
   setupProgramForTesting("", "", "")
