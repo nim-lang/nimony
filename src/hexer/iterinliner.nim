@@ -215,6 +215,50 @@ proc transformContinueStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
 proc transformForStmt(e: var EContext; dest: var TokenBuf; c: var Cursor)
 proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor)
 
+proc copyWithMapping(dest: var TokenBuf; c: var Cursor; mapping: Table[SymId, SymId]) =
+  ## Copy one subtree from `c` into `dest`, applying `mapping` to every
+  ## Symbol reference. Symbol DEFINITIONS (SymbolDef) and structure are
+  ## preserved verbatim — no fresh names, no recursive transformation.
+  ## Used by `inlineLoopBody` to buffer a for-stmt before handing it to
+  ## `transformForStmt`, so that nested for-stmts inside are inlined fresh
+  ## (with distinct labels) on every yield expansion of the outer iterator.
+  case c.kind
+  of ParLe:
+    var depth = 0
+    while true:
+      case c.kind
+      of ParLe:
+        dest.add c
+        inc c
+        inc depth
+      of ParRi:
+        dest.add c
+        inc c
+        dec depth
+        if depth == 0: break
+      of Symbol:
+        let s = c.symId
+        if mapping.hasKey(s):
+          dest.add symToken(mapping.getOrQuit(s), c.info)
+        else:
+          dest.add c
+        inc c
+      of EofToken:
+        bug "unexpected EOF in copyWithMapping"
+      else:
+        dest.add c
+        inc c
+  of Symbol:
+    let s = c.symId
+    if mapping.hasKey(s):
+      dest.add symToken(mapping.getOrQuit(s), c.info)
+    else:
+      dest.add c
+    inc c
+  else:
+    dest.add c
+    inc c
+
 proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping: var Table[SymId, SymId]; fromForloop = false) =
   case c.kind
   of Symbol:
@@ -231,17 +275,17 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
     of ContinueS:
       transformContinueStmt(e, dest, c)
     of ForS:
+      # Buffer the for-stmt with the outer iterator's symbol substitutions
+      # applied, but DO NOT pre-inline nested for-stmts and DO NOT generate
+      # fresh local names: those decisions happen per-yield-expansion when
+      # `transformForStmt` below drives `inlineIterator`. Pre-inlining here
+      # would bake nested labels and locals into the buffer, and a multi-
+      # yield outer iterator would then emit the same labels/locals from
+      # each yield expansion (duplicate `forStmtLabel.N` in C output).
       var forStmtBuf = createTokenBuf()
       swap dest, forStmtBuf
-      dest.add c
-      inc c
-      e.breaks.add SymId(0)
-      e.continues.add SymId(0)
-      e.loop(dest, c):
-        inlineLoopBody(e, dest, c, mapping)
+      copyWithMapping(dest, c, mapping)
       swap dest, forStmtBuf
-      discard e.breaks.pop()
-      discard e.continues.pop()
       var forCursor = beginRead(forStmtBuf)
       transformForStmt(e, dest, forCursor)
       endRead(forStmtBuf)

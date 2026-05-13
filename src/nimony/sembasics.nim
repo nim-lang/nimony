@@ -82,7 +82,7 @@ proc buildSymChoiceForSelfModule*(c: var SemContext; dest: var TokenBuf;
     dest.shrink oldLen
     dest.add identToken(identifier, info)
 
-iterator topLevelSyms*(c: var SemContext; identifier: StrId): SymId =
+iterator topLevelSyms*(c: var SemContext; identifier: StrId): SymId {.sideEffect.} =
   let ignoreStyle = IgnoreStyleFeature in c.features
   var it = c.currentScope
   while it.up != nil: it = it.up

@@ -66,7 +66,7 @@ var
 # group and yield only those that are actually keys in this `iface` /
 # `importTab`. When off, we just yield `name` itself.
 
-iterator stylesOfIface*(iface: Iface; name: StrId; ignoreStyle: bool): StrId =
+iterator stylesOfIface*(iface: Iface; name: StrId; ignoreStyle: bool): StrId {.sideEffect.} =
   if not ignoreStyle:
     if iface.hasKey(name): yield name
   else:
@@ -74,7 +74,7 @@ iterator stylesOfIface*(iface: Iface; name: StrId; ignoreStyle: bool): StrId =
       if iface.hasKey(k): yield k
 
 iterator stylesOfImport*(importTab: OrderedTable[StrId, seq[SymId]];
-                         name: StrId; ignoreStyle: bool): StrId =
+                         name: StrId; ignoreStyle: bool): StrId {.sideEffect.} =
   if not ignoreStyle:
     if importTab.hasKey(name): yield name
   else:
