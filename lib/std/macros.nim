@@ -17,6 +17,8 @@ type
     nnkEmpty
     nnkIdent
     nnkSym
+    nnkClosedSymChoice  # multi-symbol bundle, sem won't add new candidates at call site
+    nnkOpenSymChoice    # multi-symbol bundle, sem augments with call-site overloads
     nnkIntLit
     nnkInt8Lit
     nnkInt16Lit
@@ -238,12 +240,40 @@ func newSymNode*(fullName: string): NimNode =
   result = newNimNode(nnkSym)
   result.strValField = fullName
 
-proc bindSym*(name: string): NimNode {.magic: BindSym.}
+type
+  BindSymRule* = enum
+    ## Selector for `bindSym`'s second argument.
+    brClosed     ## Default: candidates fixed at the macro's def-site;
+                 ## sem at the call site won't add further overloads.
+    brOpen       ## Open: sem at the call site augments the choice with
+                 ## call-site visible overloads (full Nim-style mixin).
+    brForceOpen  ## Same as `brOpen` for now; reserved for stricter semantics.
+
+func newSymChoiceNode*(rule: BindSymRule; fullNames: openArray[string]): NimNode =
+  ## Multi-symbol bundle: returns a NimNode of kind `nnkClosedSymChoice` or
+  ## `nnkOpenSymChoice` whose children are individual `nnkSym` nodes for each
+  ## `fullName`. The serialiser emits this as `(cchoice …)` / `(ochoice …)`.
+  ## Used by `bindSym` when the looked-up identifier matches more than one
+  ## symbol.
+  let k =
+    if rule == brClosed: nnkClosedSymChoice
+    else: nnkOpenSymChoice
+  result = newNimNode(k)
+  for n in fullNames:
+    var s = newNimNode(nnkSym)
+    s.strValField = n
+    result.kids.add s
+
+proc bindSym*(name: string; rule: BindSymRule = brClosed): NimNode {.magic: BindSym.}
   ## Hygienic symbol reference: resolves `name` in the surrounding macro's
   ## *definition* scope (not the call site, not the plugin runtime) and
-  ## returns a NimNode of kind `nnkSym` that, when spliced into the macro's
-  ## output and fed back to sem, binds to that specific symbol regardless of
-  ## what's in scope at the caller. `name` must be a string literal.
+  ## returns a NimNode that, when spliced into the macro's output and fed
+  ## back to sem, binds to the resolved symbol(s) regardless of what's in
+  ## scope at the caller. `name` must be a string literal.
+  ##
+  ## With `brClosed` (default) the call site won't add further overload
+  ## candidates; with `brOpen` it will. If multiple symbols match, returns
+  ## a `nnkClosedSymChoice` / `nnkOpenSymChoice` accordingly.
 
 func newTree*(kind: NimNodeKind; children: openArray[NimNode]): NimNode =
   result = newNimNode(kind)

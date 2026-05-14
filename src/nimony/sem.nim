@@ -4900,14 +4900,37 @@ proc semAstToStr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   it.typ = c.types.stringType
   commonType c, dest, it, beforeExpr, expected
 
+proc readBindSymRule(arg: Cursor): string =
+  ## Best-effort extraction of the second `bindSym` arg as a rule name.
+  ## Accepts an Ident, Symbol, or IntLit (0=brClosed, 1=brOpen, 2=brForceOpen)
+  ## form; falls back to "" if it can't be classified, which the caller
+  ## treats as `brClosed`.
+  case arg.kind
+  of Ident:
+    result = pool.strings[arg.litId]
+  of Symbol:
+    var s = pool.syms[arg.symId]
+    extractBasename s
+    result = s
+  of IntLit:
+    case pool.integers[arg.intId]
+    of 0: result = "brClosed"
+    of 1: result = "brOpen"
+    of 2: result = "brForceOpen"
+    else: result = ""
+  else:
+    result = ""
+
 proc semBindSym(c: var SemContext; dest: var TokenBuf; it: var Item) =
-  ## `bindSym(name: string): NimNode` — resolve `name` in the *current* (i.e.,
-  ## macro-definition) scope at sem time and replace the call with
-  ##   newSymNode("<full-sym-name>")
-  ## so the macro plugin, when it runs, builds a NimNode of kind nnkSym whose
-  ## strVal is the fully-qualified name. Serialising that NimNode emits a NIF
-  ## Symbol token, which sem at the macro call site treats as already-resolved
-  ## (hygiene preserved against the caller's scope).
+  ## `bindSym(name: string; rule: BindSymRule = brClosed): NimNode` — resolve
+  ## `name` in the *current* (macro-definition) scope at sem time and replace
+  ## the call with either
+  ##   newSymNode("<full-sym-name>")           (single match)
+  ## or
+  ##   newSymChoiceNode(<rule>, ["<sym1>", …]) (multiple matches)
+  ## The plugin emits the result as `(sym …)` / `(cchoice …)` / `(ochoice …)`,
+  ## which sem at the macro call site treats as already-resolved (closed) or
+  ## as an open-overload set (open).
   inc it.n                                # skip (bindSym
   let info = it.n.info
   let orig = it.n
@@ -4915,10 +4938,19 @@ proc semBindSym(c: var SemContext; dest: var TokenBuf; it: var Item) =
     c.buildErr dest, info,
       "bindSym expects a string literal, got: " & asNimCode(orig), orig
     skip it.n
+    while it.n.kind != ParRi: skip it.n
     skipParRi it.n
     return
   let nameStr = pool.strings[it.n.litId]
   skip it.n                               # consume the StringLit
+
+  # Optional second arg: rule (default brClosed).
+  var ruleName = "brClosed"
+  if it.n.kind != ParRi:
+    let r = readBindSymRule(it.n)
+    if r.len > 0:
+      ruleName = r
+    skip it.n
   skipParRi it.n                          # consume )
 
   # Look up `nameStr` in the macro's def scope (== current scope here).
@@ -4929,27 +4961,46 @@ proc semBindSym(c: var SemContext; dest: var TokenBuf; it: var Item) =
     c.buildErr dest, info, "bindSym: undeclared identifier: '" & nameStr & "'", orig
     return
 
-  # Pick the (first) symbol from the choice. If there are multiple overloads,
-  # use the first; brOpen-style multi-symbol binding is a follow-up.
+  # Collect every matching symbol from the choice buffer. `buildSymChoice`
+  # writes either a single Symbol token or `(ochoice sym1 sym2 …)`.
+  var resolved: seq[SymId] = @[]
   var choice = beginRead(choiceBuf)
-  if choice.kind == ParLe:
-    # (ochoice sym1 sym2 …) — take sym1
+  if choice.kind == Symbol:
+    resolved.add choice.symId
+  elif choice.kind == ParLe:
     inc choice
-  if choice.kind != Symbol:
-    endRead(choiceBuf)
+    while choice.kind == Symbol:
+      resolved.add choice.symId
+      inc choice
+  endRead(choiceBuf)
+  if resolved.len == 0:
     c.buildErr dest, info, "bindSym: cannot resolve '" & nameStr & "' to a symbol", orig
     return
-  let resolvedSym = choice.symId
-  endRead(choiceBuf)
 
-  # Build `(call newSymNode "<full-sym-name>")` in a scratch buffer and run
-  # it through `semExpr` so the Ident `newSymNode` gets bound to the real
-  # `lib/std/macros.newSymNode` symbol and the call is typed as `NimNode`.
-  # Otherwise later passes (derefs etc.) see a bare ident in dest and assert.
-  var synthBuf = createTokenBuf(8)
-  synthBuf.copyIntoKind CallS, info:
-    synthBuf.addIdent "newSymNode", info
-    synthBuf.addStrLit pool.syms[resolvedSym], info
+  # Build the synthesized call in a scratch buffer and re-run it through
+  # `semExpr` so the helper Ident binds to `lib/std/macros.newSymNode` /
+  # `newSymChoiceNode` and the call is properly typed.
+  #
+  # Emission rules:
+  #   `brClosed`     single → newSymNode; multi → newSymChoiceNode(brClosed, …)
+  #   `brOpen`       single → newSymNode; multi → newSymChoiceNode(brOpen, …)
+  #   `brForceOpen`  always → newSymChoiceNode(brOpen, …) — even with one match,
+  #                  so sem at the call site augments the choice with
+  #                  call-site-visible overloads instead of treating it as
+  #                  already-resolved.
+  let forceOpen = ruleName == "brForceOpen"
+  var synthBuf = createTokenBuf(16)
+  if resolved.len == 1 and not forceOpen:
+    synthBuf.copyIntoKind CallS, info:
+      synthBuf.addIdent "newSymNode", info
+      synthBuf.addStrLit pool.syms[resolved[0]], info
+  else:
+    synthBuf.copyIntoKind CallS, info:
+      synthBuf.addIdent "newSymChoiceNode", info
+      synthBuf.addIdent ruleName, info
+      synthBuf.copyIntoKind BracketX, info:
+        for s in resolved:
+          synthBuf.addStrLit pool.syms[s], info
   synthBuf.addParRi()  # extra closer so the final `inc` after sem doesn't run off
   var inner = Item(n: cursorAt(synthBuf, 0), typ: it.typ)
   semExpr c, dest, inner
