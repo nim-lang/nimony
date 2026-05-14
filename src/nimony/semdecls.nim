@@ -873,7 +873,12 @@ proc findMacroInvocs(c: SemContext; n: Cursor; kind: SymKind): seq[Cursor] =
       while n.hasMore:
         if n.exprKind == ErrX or n.substructureKind == KvU:
           skip n
-        elif pragmaKind(n) != NoPragma or callConvKind(n) != NoCallConv:
+        elif pragmaKind(n) != NoPragma or callConvKind(n) != NoCallConv or
+            (IgnoreStyleFeature in c.features and n.kind == Ident and
+             pragmaKindByStyle(n.litId) != NoPragma):
+          # known builtin pragma — skip; under ignoreStyle this also covers
+          # variants like `noInline` / `no_inline` so they don't get
+          # mis-routed to the macro-invocation path below.
           skip n
         else:
           let hasParRi = n.kind == ParLe

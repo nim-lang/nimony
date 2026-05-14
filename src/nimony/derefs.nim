@@ -119,8 +119,24 @@ proc rootOf(n: Cursor; allowIndirection = false): SymId =
   else:
     result = NoSymId
 
+proc callReturnsVarOrLent(n: Cursor): bool =
+  ## True if the call at `n` resolves to a proc returning `var T` or `lent T`.
+  var c = n
+  inc c # past CallKinds tag
+  if c.kind != Symbol:
+    return false
+  let r = tryLoadSym(c.symId)
+  if r.status != LacksNothing:
+    return false
+  var decl = r.decl
+  if decl.typeKind notin RoutineTypes:
+    return false
+  skipToReturnType decl
+  result = decl.typeKind in {MutT, LentT}
+
 proc isAddressable*(n: Cursor): bool =
   ## Addressable means that we can take the address of the expression.
+  result = false
   let s = rootOf(n, allowIndirection = true)
   if s != NoSymId:
     let res = tryLoadSym(s)
@@ -129,7 +145,27 @@ proc isAddressable*(n: Cursor): bool =
     result = local.kind in {ParamY, LetY, ResultY, VarY, CursorY, PatternvarY, ConstY, GletY, TletY, GvarY, TvarY}
     # Assignments to `ConstY` are prevented later.
   else:
-    result = false
+    # A path rooted at a call returning `var T` / `lent T` is addressable,
+    # because field- and element-accesses through such a result preserve
+    # the mutable-location property even after the type's MutT/LentT modifier
+    # has been stripped by the dot expression's type computation.
+    var cur = n
+    while true:
+      case cur.exprKind
+      of DotX, AtX, ArratX, TupatX, ParX, PatX, DdotX:
+        inc cur
+      of DconvX:
+        inc cur
+        skip cur # skip type
+      of BaseobjX:
+        inc cur
+        skip cur # intlit
+        skip cur # type
+      of CallKinds:
+        result = callReturnsVarOrLent(cur)
+        break
+      else:
+        break
 
 proc tr(c: var Context; n: var Cursor; e: Expects)
 

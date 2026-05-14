@@ -16,9 +16,20 @@ type
     EarlyMagicsFeature
     AutoClosuresFeature
     LenientNilsFeature
+    IgnoreStyleFeature
+      ## Nim-2-style "style insensitivity": identifier lookup ignores
+      ## underscores and ASCII case after the first character. Strictly a
+      ## sem-frontend toggle; hexer / nifc / nifmake are unaffected.
+
+proc normalizeFeatureName(s: string): string =
+  result = newStringOfCap(s.len)
+  for ch in s:
+    if ch == '_': discard
+    elif ch >= 'A' and ch <= 'Z': result.add chr(ord(ch) + (ord('a') - ord('A')))
+    else: result.add ch
 
 proc parseFeature*(s: string): Feature =
-  case s
+  case normalizeFeatureName(s)
   of "resemchoice": ResemChoiceFeature
   of "untyped": UntypedFeature
   of "canraise": CanRaiseFeature
@@ -26,4 +37,5 @@ proc parseFeature*(s: string): Feature =
   of "earlymagics": EarlyMagicsFeature
   of "autoclosures": AutoClosuresFeature
   of "lenientnils": LenientNilsFeature
+  of "ignorestyle": IgnoreStyleFeature
   else: InvalidFeature

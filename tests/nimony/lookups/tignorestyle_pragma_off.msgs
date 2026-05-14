@@ -1,0 +1,2 @@
+tests/nimony/lookups/tignorestyle_pragma_off.nim(6, 1) Error: undeclared identifier: 'NoInline'
+tests/nimony/lookups/tignorestyle_pragma_off.nim(8, 10) Error: undeclared identifier: 'a'
