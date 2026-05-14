@@ -360,9 +360,14 @@ proc compilePlugin(c: var SemContext; info: PackedLineInfo; nf, exefile: string;
     # switch their `import nimonyplugins` to `import nim3plugins`; everything
     # else (the `.plugin: "path"` declaration syntax, the run-time IO
     # contract) stays the same.
+    #
+    # `--nimcache:<pluginCache>` keeps the sub-compile's intermediate NIF
+    # artefacts in a per-plugin scratch dir (same convention pcNim2 uses) so
+    # parallel test workers don't fight over `nimcache/` entries.
     let nimonyExe = findTool("nimony")
     let srcLibPath = nimonyDir() / "src" / "lib"
     let cmd = quoteShell(nimonyExe) &
+      " --nimcache:" & quoteShell(pluginCache) &
       " --path:" & quoteShell(pluginDir) &
       " --path:" & quoteShell(srcLibPath) &
       " -o:" & quoteShell(exefile) & " c " & quoteShell(nf)

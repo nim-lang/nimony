@@ -3954,6 +3954,105 @@ fizz.fb() # Works
 
 
 
+## Macros
+
+An alternative to plugins, they exist for Nim 2 backwards compatibility reasons.
+A macro is a routine that runs at compile time, receives its arguments as `NimNode`
+syntax trees from `std/macros`, and returns a tree that the compiler substitutes
+back in place of the call. Unlike a template — which is a purely lexical substitution —
+the macro body is ordinary Nimony code that can inspect, construct, and
+combine syntax trees procedurally.
+
+Internally, every macro is compiled into a **separate executable** that the
+compiler invokes at every call site. The invocation pipeline is the same
+one the plugin system uses: arguments are serialised to NIF, the macro's
+binary processes them, and the result is parsed back into the user's
+compilation. This is transparent to the macro author — `macro foo(...) = ...`
+behaves mostly as in Nim 2 — but it explains a few constraints (a macro's
+body cannot mutate compiler-internal state, must be self-contained, etc.).
+
+Example:
+
+  ```nim
+  import std / [syncio, macros]
+
+  macro hello(): untyped =
+    result = newCall("echo", [newStrLitNode("hello from macro!")])
+
+  hello()      # → prints "hello from macro!"
+  ```
+
+A macro may declare its return type as `untyped`, but its `result` variable
+holds a `NimNode` regardless — `untyped` simply tells the compiler not to
+type-check the macro's *output* before inserting it into the callee's
+tree structure.
+
+
+### Macros calling macros
+
+A macro body may call other macros. The nested call is expanded at the
+*outer* macro's sem time (just like in Nim 2), so by the time the outer
+macro's binary is compiled, the inner call has already been replaced with
+its result.
+
+  ```nim
+  import std / [syncio, macros]
+
+  macro buildLit(): untyped =
+    result = newIntLitNode(42)
+
+  macro outer(): untyped =
+    let x = buildLit()                # `buildLit()` is expanded to 42 here
+    result = newIntLitNode(x + 100)
+
+  echo outer()    # → 142
+  ```
+
+The same caveat that applies in Nim 2 applies here: passing a NimNode-typed
+argument by *expression* (`outerMacro(newStrLitNode("hi"))`) does **not**
+pre-evaluate `newStrLitNode("hi")` — the argument AST is the *call*, not
+the resulting `StrLit` node.
+
+
+### Hygienic symbol references — `bindSym`
+
+`bindSym(name)` inside a macro body resolves `name` against the macro's
+*definition* scope at compile time and returns a `NimNode` of kind `nnkSym` - bound to that specific symbol
+or `nnkOpenSymChoice` or `nnkClosedSymChoice` - a single symbol that binds that specific symbol or lists
+of symbol candidates. When the symbol survives back to the user's
+call site, the compiler treats it as already-resolved — so a name shadow at
+the caller cannot redirect it.
+
+  ```nim
+  import std / [syncio, macros]
+
+  macro nextOf(): untyped =
+    let succSym = bindSym("succ")
+    result = newCall(succSym, [newIntLitNode(41)])
+
+  echo nextOf()   # → 42 (system.succ, regardless of caller-side overloads)
+  ```
+
+`bindSym` accepts an optional second argument:
+
+  - `brClosed` (default) — single-symbol match resolves to `nnkSym`;
+    multi-symbol match resolves to `nnkClosedSymChoice`. The set is fixed
+    at the macro's definition site.
+  - `brOpen` — same shape, but emitted as `nnkOpenSymChoice` when multi —
+    sem at the call site augments the choice with call-site-visible
+    overloads.
+  - `brForceOpen` — always emits `nnkOpenSymChoice`, even with a single
+    def-site match, so call-site augmentation always happens.
+
+The first argument to `bindSym` must be a string literal.
+
+`bindSym` is also available for plugins. In macros it returns `NimNode`; in a
+plugin (when compiled by Nimony via `nim3plugins`) the same name is exposed
+as `proc bindSym(name: string): string`, returning the fully-qualified name
+for use with `addSymUse`.
+
+
+
 ## Pragmas
 
 Pragmas give the compiler additional information /
@@ -3990,6 +4089,7 @@ The following features are available:
 | `"untyped"` | Treats templates and generic procs as `.untyped` by default. For compatibility with Nim 2. |
 | `"resemchoice"` | Re-resolves overloaded choice nodes during generic instantiation. |
 | `"earlymagics"` | Resolves magic procs before overload resolution. For compatibility with Nim 2. |
+| `"ignoreStyle"` | Be compatible with Nim 2's style insensitivity rules. |
 
 
 ### noreturn pragma
@@ -4135,9 +4235,71 @@ var inp = loadPluginInput()
 saveTree tr(inp)
 ```
 
-**Note that plugins are compiled with Nim 2, not Nimony as Nimony is not considered stable enough.**
-
 Plugins that are attached to a template receive only the code that is related to the template invocation. But `.plugin` can also be a statement of its own, then it is a so called "module plugin".
+
+
+### Selecting the compiler
+
+`.plugin` accepts two forms:
+
+```nim
+template foo {.plugin: "path/to/plugin".}                # form 1 (default)
+template foo {.plugin: ("path/to/plugin", "v2").}        # form 2 (explicit Nim 2)
+template foo {.plugin: ("path/to/plugin", "nimony").}    # form 3 (Nimony)
+```
+
+The bare-string form 1 currently defaults to compiling the plugin source
+with **Nim 2** — this matches Nim's library coverage which is broader than
+Nimony's during the transition. The tuple form lets the plugin author
+opt in explicitly:
+
+  - `"v2"` (or `"nim"` / `"nim2"`) — compile with Nim 2; the plugin must
+    `import nimonyplugins`.
+  - `"nimony"` — compile with Nimony; the plugin must `import nim3plugins`
+    (the Nimony-targeted mirror of `nimonyplugins`). Plugins on this path
+    can use Nimony-only primitives that depend on the compiler's symbol
+    table, notably `bindSym` (see below).
+
+Porting a Nim 2 plugin to Nimony is usually two edits: switch
+`import nimonyplugins` to `import nim3plugins`, and change the pragma to
+`{.plugin: ("path", "nimony").}`. Plugin authors who want to stay on Nim 2
+through future default flips can pin themselves by adding `("path", "v2")`.
+
+A bad version string is rejected at sem time:
+`unknown plugin compiler: '<x>' (expected "v2" or "nimony")`.
+
+### `bindSym` in Nimony-compiled plugins
+
+When a plugin is compiled by Nimony (`nim3plugins`), it can use `bindSym`
+exactly like a macro — but the plugin variant returns a `string`
+(the fully-qualified symbol name) instead of a `NimNode`, because
+plugins build NIF directly:
+
+```nim
+import std / syncio          # makes `echo` visible at the plugin's def-site
+import nim3plugins
+
+proc tr(n: NifCursor): NifBuilder =
+  result = createTree()
+  let info = n.info
+  result.withTree StmtsS, info:
+    result.withTree CallS, info:
+      result.addSymUse bindSym("echo"), info   # hygienic; bypasses caller's `echo`
+      result.takeTree firstChild(n)
+
+var inp = loadPluginInput()
+saveTree tr(inp)
+```
+
+`bindSym` here is a sem-time magic: at the moment Nimony compiles the
+plugin source, it resolves the literal `"echo"` against the plugin
+module's def-site scope and folds the call to a string literal carrying
+the fully-qualified name. `addSymUse(builder, name: string)` then writes
+a NIF `Symbol` token. When the user's compiler reads the plugin's output,
+that Symbol bypasses caller-side scope lookups — so a `proc echo(x: string)
+= discard` in the caller cannot redirect the plugin's reference. This
+primitive cannot be provided to Nim-2-compiled plugins because their
+compiler is not aware of Nimony's symbol-naming scheme.
 
 
 ### Plugins search

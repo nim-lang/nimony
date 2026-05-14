@@ -280,8 +280,13 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
 
   let nimonyExe = getAppDir() / "nimony"
   let srcLibPath = getAppDir().parentDir() / "src" / "lib"
+  # Forward `--nimcache:` so the sub-compile reads the `.p.deps.nif` from the
+  # same per-worker directory we wrote it to. Without this, `nimony s` falls
+  # back to its default `nimcache/` and can't find the deps file under
+  # parallel test execution (CI uses `nimcache/.par/<n>/` per worker).
   let cmd = quoteShell(nimonyExe) &
             " --path:" & quoteShell(srcLibPath) &
+            " --nimcache:" & quoteShell(nifcachePath) &
             " -o:" & quoteShell(exePath) &
             " s " & quoteShell(progfile)
 
