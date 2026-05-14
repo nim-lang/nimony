@@ -2243,7 +2243,7 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
      BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
      TupconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
-     PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, InstanceofX, ProccallX, HighX,
+     PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX,
      LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX,
      DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
      PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
@@ -2453,7 +2453,7 @@ proc semAsgn(c: var SemContext; dest: var TokenBuf; it: var Item) =
      BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, HaddrX, NewrefX, NewobjX, TupX,
      TupconstrX, SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
-     PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, InstanceofX, ProccallX, HighX,
+     PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX,
      LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX,
      DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
      PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
@@ -5004,6 +5004,49 @@ proc readBindSymRule(arg: Cursor): string =
   else:
     result = ""
 
+proc semBindSymName(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  ## `bindSymName(name: string): string` — sem-time magic that resolves `name`
+  ## in the *current* (module's def-site) scope and emits the fully-qualified
+  ## symbol name as a `StringLit`. Used by nim3plugins so plugin authors can
+  ## get a hygienic spelling of a system/imported symbol that survives the
+  ## plugin's IO round-trip and lands as a NIF `Symbol` token at the call
+  ## site (via `addSymUse(builder, name)`).
+  inc it.n                                # skip (bindSymName
+  let info = it.n.info
+  let orig = it.n
+  if it.n.kind != StringLit:
+    c.buildErr dest, info,
+      "bindSymName expects a string literal, got: " & asNimCode(orig), orig
+    while it.n.kind != ParRi: skip it.n
+    skipParRi it.n
+    return
+  let nameStr = pool.strings[it.n.litId]
+  skip it.n                               # consume the StringLit
+  skipParRi it.n                          # consume )
+
+  let identifier = pool.strings.getOrIncl(nameStr)
+  var choiceBuf = createTokenBuf(8)
+  let n = buildSymChoice(c, choiceBuf, identifier, info, FindAll)
+  if n == 0:
+    c.buildErr dest, info, "bindSymName: undeclared identifier: '" & nameStr & "'", orig
+    return
+  var choice = beginRead(choiceBuf)
+  if choice.kind == ParLe:
+    inc choice                            # past (ochoice
+  if choice.kind != Symbol:
+    endRead(choiceBuf)
+    c.buildErr dest, info,
+      "bindSymName: cannot resolve '" & nameStr & "' to a symbol", orig
+    return
+  let resolvedSym = choice.symId
+  endRead(choiceBuf)
+
+  let beforeExpr = dest.len
+  dest.addStrLit pool.syms[resolvedSym], info
+  let expected = it.typ
+  it.typ = c.types.stringType
+  commonType c, dest, it, beforeExpr, expected
+
 proc semBindSym(c: var SemContext; dest: var TokenBuf; it: var Item) =
   ## `bindSym(name: string; rule: BindSymRule = brClosed): NimNode` — resolve
   ## `name` in the *current* (macro-definition) scope at sem time and replace
@@ -6583,6 +6626,8 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       semAstToStr c, dest, it
     of BindSymX:
       semBindSym c, dest, it
+    of BindSymNameX:
+      semBindSymName c, dest, it
     of IsmainmoduleX:
       semIsMainModule c, dest, it
     of AtX:

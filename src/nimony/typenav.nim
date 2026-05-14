@@ -408,7 +408,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     result = c.builtins.boolType
   of NegX, NeginfX, NanX, InfX:
     result = c.builtins.floatType
-  of EnumtostrX, DefaultobjX, DefaulttupX, DefaultdistinctX, InternalTypeNameX, AstToStrX:
+  of EnumtostrX, DefaultobjX, DefaulttupX, DefaultdistinctX, InternalTypeNameX,
+     AstToStrX, BindSymNameX:
     result = c.builtins.stringType
   of BindSymX:
     # bindSym returns NimNode. By the time typenav is reached, sem has

@@ -132,4 +132,5 @@ proc magicToTag*(m: string; bits: int): (string, int) =
   of "Inf": res InfX
   of "Is": res IsX
   of "BindSym": res BindSymX
+  of "BindSymName": res BindSymNameX
   else: ("", 0)
