@@ -336,7 +336,8 @@ proc runValidatorOnPlugin(c: var SemContext; nf: string) =
     return
   exec quoteShell(v) & " " & quoteShell(nf)
 
-proc compilePlugin(c: var SemContext; info: PackedLineInfo; nf, exefile: string) =
+proc compilePlugin(c: var SemContext; info: PackedLineInfo; nf, exefile: string;
+                   compiler: PluginCompiler) =
   runValidatorOnPlugin(c, nf)
   let pluginDir = nimonyDir() / "src/nimony/lib"
   let pluginCache = exefile & "_d"
@@ -347,10 +348,25 @@ proc compilePlugin(c: var SemContext; info: PackedLineInfo; nf, exefile: string)
       createDir(Path(pluginCache))
   except:
     quit "FAILURE: cannot create directory " & pluginCache
-  let cmd = "nim c -d:nimonyPlugin --nimcache:" & quoteShell(pluginCache) &
-    " -o:" & quoteShell(exefile) & " -p:" & quoteShell(pluginDir) &
-    " " & quoteShell(nf)
-  exec cmd
+  case compiler
+  of pcNim2:
+    let cmd = "nim c -d:nimonyPlugin --nimcache:" & quoteShell(pluginCache) &
+      " -o:" & quoteShell(exefile) & " -p:" & quoteShell(pluginDir) &
+      " " & quoteShell(nf)
+    exec cmd
+  of pcNimony:
+    # Nimony-compiled plugins use `lib/nim3plugins.nim` (a nimony-ported
+    # mirror of `lib/nimonyplugins.nim`). Plugin authors who want this path
+    # switch their `import nimonyplugins` to `import nim3plugins`; everything
+    # else (the `.plugin: "path"` declaration syntax, the run-time IO
+    # contract) stays the same.
+    let nimonyExe = findTool("nimony")
+    let srcLibPath = nimonyDir() / "src" / "lib"
+    let cmd = quoteShell(nimonyExe) &
+      " --path:" & quoteShell(pluginDir) &
+      " --path:" & quoteShell(srcLibPath) &
+      " -o:" & quoteShell(exefile) & " c " & quoteShell(nf)
+    exec cmd
 
 proc writeFileIfChanged(file, content: string) {.canRaise.} =
   if os.fileExists(file) and readFile(file) == content:
@@ -359,8 +375,9 @@ proc writeFileIfChanged(file, content: string) {.canRaise.} =
   else:
     writeFile file, content
 
-proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; pluginName, input: string;
-                additionalInput = "") =
+proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
+                pluginName: string; compiler: PluginCompiler;
+                input: string; additionalInput = "") =
   let p = splitFile(pluginName)
   let checksumA = if additionalInput.len > 0: "_" & computeChecksum(additionalInput) else: ""
   let basename = c.g.config.nifcachePath / p.name & "_" & computeChecksum(input) & checksumA
@@ -371,7 +388,7 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; plu
 
   let nf = resolveFile(c.g.config.paths, getFile(info), pluginName)
   if needsRecompile(nf, pluginExe):
-    compilePlugin(c, info, nf, pluginExe)
+    compilePlugin(c, info, nf, pluginExe, compiler)
 
   try:
     writeFileIfChanged(inputFile, input)
