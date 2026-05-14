@@ -2160,7 +2160,7 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
      BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
      TupconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
-     PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, InstanceofX, ProccallX, HighX,
+     PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, InstanceofX, ProccallX, HighX,
      LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX,
      DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
      PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
@@ -2370,7 +2370,7 @@ proc semAsgn(c: var SemContext; dest: var TokenBuf; it: var Item) =
      BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, HaddrX, NewrefX, NewobjX, TupX,
      TupconstrX, SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
-     PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, InstanceofX, ProccallX, HighX,
+     PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, InstanceofX, ProccallX, HighX,
      LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX,
      DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
      PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
@@ -4900,6 +4900,61 @@ proc semAstToStr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   it.typ = c.types.stringType
   commonType c, dest, it, beforeExpr, expected
 
+proc semBindSym(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  ## `bindSym(name: string): NimNode` — resolve `name` in the *current* (i.e.,
+  ## macro-definition) scope at sem time and replace the call with
+  ##   newSymNode("<full-sym-name>")
+  ## so the macro plugin, when it runs, builds a NimNode of kind nnkSym whose
+  ## strVal is the fully-qualified name. Serialising that NimNode emits a NIF
+  ## Symbol token, which sem at the macro call site treats as already-resolved
+  ## (hygiene preserved against the caller's scope).
+  inc it.n                                # skip (bindSym
+  let info = it.n.info
+  let orig = it.n
+  if it.n.kind != StringLit:
+    c.buildErr dest, info,
+      "bindSym expects a string literal, got: " & asNimCode(orig), orig
+    skip it.n
+    skipParRi it.n
+    return
+  let nameStr = pool.strings[it.n.litId]
+  skip it.n                               # consume the StringLit
+  skipParRi it.n                          # consume )
+
+  # Look up `nameStr` in the macro's def scope (== current scope here).
+  let identifier = pool.strings.getOrIncl(nameStr)
+  var choiceBuf = createTokenBuf(8)
+  let n = buildSymChoice(c, choiceBuf, identifier, info, FindAll)
+  if n == 0:
+    c.buildErr dest, info, "bindSym: undeclared identifier: '" & nameStr & "'", orig
+    return
+
+  # Pick the (first) symbol from the choice. If there are multiple overloads,
+  # use the first; brOpen-style multi-symbol binding is a follow-up.
+  var choice = beginRead(choiceBuf)
+  if choice.kind == ParLe:
+    # (ochoice sym1 sym2 …) — take sym1
+    inc choice
+  if choice.kind != Symbol:
+    endRead(choiceBuf)
+    c.buildErr dest, info, "bindSym: cannot resolve '" & nameStr & "' to a symbol", orig
+    return
+  let resolvedSym = choice.symId
+  endRead(choiceBuf)
+
+  # Build `(call newSymNode "<full-sym-name>")` in a scratch buffer and run
+  # it through `semExpr` so the Ident `newSymNode` gets bound to the real
+  # `lib/std/macros.newSymNode` symbol and the call is typed as `NimNode`.
+  # Otherwise later passes (derefs etc.) see a bare ident in dest and assert.
+  var synthBuf = createTokenBuf(8)
+  synthBuf.copyIntoKind CallS, info:
+    synthBuf.addIdent "newSymNode", info
+    synthBuf.addStrLit pool.syms[resolvedSym], info
+  synthBuf.addParRi()  # extra closer so the final `inc` after sem doesn't run off
+  var inner = Item(n: cursorAt(synthBuf, 0), typ: it.typ)
+  semExpr c, dest, inner
+  it.typ = inner.typ
+
 proc semIsMainModule(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   inc it.n
@@ -6348,6 +6403,8 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       semDeclared c, dest, it
     of AstToStrX:
       semAstToStr c, dest, it
+    of BindSymX:
+      semBindSym c, dest, it
     of IsmainmoduleX:
       semIsMainModule c, dest, it
     of AtX:

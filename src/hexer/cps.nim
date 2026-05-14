@@ -1439,7 +1439,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           HderefX, DdotX, HaddrX, NewrefX, NewobjX,
           TupX, TupconstrX, SetconstrX, TabconstrX,
           AshrX, BaseobjX, HconvX, DconvX, CompilesX,
-          DeclaredX, DefinedX, AstToStrX, InstanceofX,
+          DeclaredX, DefinedX, AstToStrX, BindSymX, InstanceofX,
           HighX, LowX, UnpackX, FieldsX, FieldpairsX,
           EnumtostrX, IsmainmoduleX, DefaultobjX,
           DefaulttupX, DefaultdistinctX, ExprX, DoX,

@@ -296,13 +296,15 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     case n.stmtKind
     of NoStmt:
       trExpr c, dest, n
-    of ProcS, FuncS, MacroS, MethodS, ConverterS, IteratorS:
+    of ProcS, FuncS, MethodS, ConverterS, IteratorS:
       trProcDecl c, dest, n
     of LocalDecls:
       trLocal c, dest, n
     of AsgnS, IfS, WhileS, CaseS, TryS, BreakS, RaiseS:
       bug "construct should have been eliminated: " & $n.stmtKind
-    of TemplateS, TypeS:
+    of MacroS, TemplateS, TypeS:
+      # Macro bodies belong to the plugin compilation, not the user's
+      # codegen pipeline. Pass through opaquely.
       takeTree dest, n
     of ContinueS:
       skip n

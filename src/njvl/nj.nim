@@ -1335,7 +1335,7 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
     trFor c, dest, n
   of LocalDecls:
     trLocal c, b, dest, n
-  of ProcS, FuncS, MacroS, MethodS, ConverterS, IteratorS:
+  of ProcS, FuncS, MethodS, ConverterS, IteratorS:
     trProcDecl c, dest, n
   of RetS:
     trRet c, b, dest, n
@@ -1343,7 +1343,9 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
     trBreak c, b, dest, n
   of BlockS:
     trBlock c, b, dest, n
-  of TemplateS, TypeS:
+  of MacroS, TemplateS, TypeS:
+    # Macro bodies are owned by the out-of-process plugin, never lowered
+    # in the user's compile output. Pass through opaquely.
     takeTree dest, n
   of RaiseS:
     trRaise c, b, dest, n

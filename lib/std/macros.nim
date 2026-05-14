@@ -228,6 +228,23 @@ func newFloatLitNode*(f: BiggestFloat): NimNode =
 func newNilLit*(): NimNode =
   newNimNode(nnkNilLit)
 
+func newSymNode*(fullName: string): NimNode =
+  ## Construct a `NimNode` of kind `nnkSym` carrying a fully-qualified symbol
+  ## name. The serialiser emits this as a NIF Symbol token, which sem treats
+  ## as already-resolved — so any name lookup at the macro call site is
+  ## bypassed. Used as the runtime form of `bindSym` (the magic resolves the
+  ## name at the macro's def-site and rewrites `bindSym "foo"` to
+  ## `newSymNode "<full.foo.suffix>"`).
+  result = newNimNode(nnkSym)
+  result.strValField = fullName
+
+proc bindSym*(name: string): NimNode {.magic: BindSym.}
+  ## Hygienic symbol reference: resolves `name` in the surrounding macro's
+  ## *definition* scope (not the call site, not the plugin runtime) and
+  ## returns a NimNode of kind `nnkSym` that, when spliced into the macro's
+  ## output and fed back to sem, binds to that specific symbol regardless of
+  ## what's in scope at the caller. `name` must be a string literal.
+
 func newTree*(kind: NimNodeKind; children: openArray[NimNode]): NimNode =
   result = newNimNode(kind)
   for c in children:

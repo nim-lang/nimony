@@ -131,4 +131,5 @@ proc magicToTag*(m: string; bits: int): (string, int) =
   of "NaN": res NanX
   of "Inf": res InfX
   of "Is": res IsX
+  of "BindSym": res BindSymX
   else: ("", 0)

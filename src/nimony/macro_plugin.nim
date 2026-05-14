@@ -24,7 +24,7 @@ proc cleanSymbolName(s: string): string =
   ## Extract the base name from a fully-qualified symbol (strip `.0.suffix`).
   let dotPos = s.find('.')
   if dotPos >= 0:
-    result = s[0 ..< dotPos]
+    result = substr(s, 0, dotPos - 1)
   else:
     result = s
 
@@ -40,7 +40,7 @@ proc spliceBodyWithoutResult(dest: var TokenBuf; body: Cursor) =
   ## redundant and prevents sem from giving `result` the wrapping proc's
   ## return type.
   var n = body
-  doAssert n.stmtKind == StmtsS, "macro body should be a stmts block"
+  assert n.stmtKind == StmtsS, "macro body should be a stmts block"
   dest.add n.load
   inc n
   if n.kind == ParLe and n.stmtKind == ResultS:
@@ -285,7 +285,15 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
             " -o:" & quoteShell(exePath) &
             " s " & quoteShell(progfile)
 
-  let (output, exitCode) = execCmdEx(cmd)
+  var output = ""
+  var exitCode = -1
+  try:
+    let r = execCmdEx(cmd)
+    output = r[0]
+    exitCode = int(r[1])
+  except:
+    echo "Macro plugin: failed to invoke ", cmd
+    return ""
   if exitCode != 0:
     echo "Error compiling macro plugin for '", cleanSymbolName(pool.syms[macroSym]), "':"
     echo output
@@ -303,10 +311,22 @@ proc runMacroPlugin*(nifcachePath: string; dest: var TokenBuf;
 
   let inputPath = nifcachePath / "macro_in_" & $macroSym.int & ".nif"
   let outputPath = nifcachePath / "macro_out_" & $macroSym.int & ".nif"
-  writeFile(inputPath, toString(args))
+  try:
+    writeFile(inputPath, toString(args))
+  except:
+    echo "Macro plugin: failed to write ", inputPath
+    return false
 
   let cmd = quoteShell(exePath) & " " & quoteShell(inputPath) & " " & quoteShell(outputPath)
-  let (output, exitCode) = execCmdEx(cmd)
+  var output = ""
+  var exitCode = -1
+  try:
+    let r = execCmdEx(cmd)
+    output = r[0]
+    exitCode = int(r[1])
+  except:
+    echo "Macro plugin: failed to invoke ", cmd
+    return false
   if exitCode != 0:
     echo "Macro plugin execution failed:"
     echo output
