@@ -499,7 +499,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trFailed c, dest, n
       else:
         case n.stmtKind
-        of ProcS, FuncS, MacroS, MethodS, ConverterS:
+        of ProcS, FuncS, MethodS, ConverterS:
           trProcDecl c, dest, n
         of LocalDecls - {ResultS}:
           trLocal c, dest, n
@@ -515,7 +515,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           trRaise c, dest, n
         of TryS:
           trTry c, dest, n
-        of TemplateS, TypeS:
+        of MacroS, TemplateS, TypeS:
           takeTree dest, n
         of CallS, CmdS, IteratorS, BlockS, EmitS, IfS, WhenS, BreakS,
            ContinueS, ForS, WhileS, CaseS, YldS, StmtsS, PragmasS,

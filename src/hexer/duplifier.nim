@@ -668,8 +668,12 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
           takeToken c.dest, n
           c.typeCache.takeLocalHeader(c.dest, n, kind)
           inc nested
-        of ProcS, FuncS, ConverterS, MethodS, MacroS:
+        of ProcS, FuncS, ConverterS, MethodS:
           trProcDecl c, n, parentNodestroy = true
+        of MacroS:
+          # Macro bodies live in the out-of-process plugin binary; pass
+          # the whole decl through opaquely.
+          takeTree c.dest, n
         of ScopeS:
           c.typeCache.openScope()
           takeToken c.dest, n
@@ -1217,13 +1221,17 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         trAsgn c, n
       of LocalDecls:
         trLocal c, n, k
-      of ProcS, FuncS, ConverterS, MethodS, MacroS:
+      of ProcS, FuncS, ConverterS, MethodS:
         trProcDecl c, n
       of ScopeS:
         c.typeCache.openScope()
         trSons c, n, WantNonOwner
         c.typeCache.closeScope()
-      of BreakS, ContinueS, IteratorS:
+      of BreakS, ContinueS, IteratorS, MacroS, TemplateS:
+        # Macros are compiled into out-of-process plugins by `nimony`
+        # itself; templates are expanded at call-sites. Neither has a
+        # body that participates in the regular lowering pipeline, so
+        # pass the decl through verbatim.
         takeTree c.dest, n
       else:
         trSons c, n, WantNonOwner

@@ -203,13 +203,13 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         case n.stmtKind
         of AsgnS:
           trAssign c, dest, n
-        of ProcS, FuncS, MacroS, MethodS, ConverterS:
+        of ProcS, FuncS, MethodS, ConverterS:
           trProcDecl c, dest, n
         of LocalDecls:
           trLocal c, dest, n
         of ScopeS:
           trScope c, dest, n
-        of TemplateS, TypeS:
+        of MacroS, TemplateS, TypeS:
           takeTree dest, n
         of CallS, CmdS, IteratorS, BlockS, EmitS, IfS, WhenS, BreakS,
            ContinueS, ForS, WhileS, CaseS, RetS, YldS, StmtsS, PragmasS,

@@ -839,12 +839,12 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addTarget tar
   of LocalDecls:
     trLocal c, dest, n
-  of ProcS, FuncS, MacroS, MethodS, ConverterS, IteratorS:
+  of ProcS, FuncS, MethodS, ConverterS, IteratorS:
     trProc c, dest, n
   of BlockS:
     var tar = Target(m: IsIgnored)
     trBlock c, dest, n, tar
-  of TemplateS, TypeS, EmitS, BreakS, ContinueS,
+  of MacroS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
      IncludeS, ImportS, FromimportS, ImportexceptS,
      ExportS, CommentS, AssumeS, AssertS,
      PragmasS, ImportasS, ExportexceptS, BindS, MixinS, UsingS:

@@ -21,7 +21,7 @@ import nimony_model, symtabs, builtintypes, decls, asthelpers,
   intervals, xints, typeprops,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
   semuntyped, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec, langmodes,
-  features, identstyle
+  features, identstyle, macro_plugin
 
 import contracts_njvl
 

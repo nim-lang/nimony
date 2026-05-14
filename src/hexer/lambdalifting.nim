@@ -204,9 +204,9 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     case n.stmtKind
     of LocalDecls:
       trLocal c, dest, n
-    of ProcS, FuncS, MacroS, MethodS, ConverterS:
+    of ProcS, FuncS, MethodS, ConverterS:
       trProc c, dest, n
-    of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
+    of MacroS, IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
       ForS, IncludeS, ImportS, FromimportS, ImportexceptS,
       ExportS, CommentS,
       PragmasS:
@@ -669,9 +669,9 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
     case n.stmtKind
     of LocalDecls:
       treLocal c, dest, n
-    of ProcS, FuncS, MacroS, MethodS, ConverterS:
+    of ProcS, FuncS, MethodS, ConverterS:
       treProcLift c, dest, n
-    of IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
+    of MacroS, IteratorS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
       ForS, IncludeS, ImportS, FromimportS, ImportexceptS,
       ExportS, CommentS,
       PragmasS:
