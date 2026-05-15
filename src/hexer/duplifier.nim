@@ -1236,10 +1236,17 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         # pass the decl through verbatim.
         takeTree c.dest, n
       of IteratorS:
-        # iterinliner passes only `.closure` iterators through to hexer;
-        # their bodies need duplifier's hook injection on every asgn
-        # (especially the synthesized `result = v` at each yield).
-        trProcDecl c, n
+        # iterinliner passes only `.closure` iterators through to hexer.
+        # When the closure flag is set, their bodies need duplifier's hook
+        # injection on every asgn (especially the synthesized `result = v`
+        # at each yield). Non-closure iters that slip through should be
+        # passed verbatim.
+        var probe = n
+        let routine = asRoutine(probe, SkipExclBody)
+        if hasPragma(routine.pragmas, ClosureP):
+          trProcDecl c, n
+        else:
+          takeTree c.dest, n
       of CoroforS:
         trCoroFor c, n
       else:

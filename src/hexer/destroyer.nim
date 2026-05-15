@@ -382,11 +382,16 @@ proc tr(c: var Context; n: var Cursor) =
     of ProcS, FuncS, MethodS, ConverterS:
       trProcDecl c, n
     of IteratorS:
-      # iterinliner passes only `.closure` iterators through to here; their
-      # bodies need full destroyer treatment (scope tracking, =destroy
-      # injection on locals) just like regular procs. cps.nim later splits
-      # the body into state procs but the hook calls travel with the locals.
-      trProcDecl c, n
+      # iterinliner passes only `.closure` iterators through to here. Their
+      # bodies need destroyer treatment (scope tracking, =destroy injection
+      # on locals) when the closure flag is actually set; non-closure iters
+      # would have been stripped by iterinliner.
+      var probe = n
+      let routine = asRoutine(probe, SkipExclBody)
+      if hasPragma(routine.pragmas, ClosureP):
+        trProcDecl c, n
+      else:
+        takeTree c.dest, n
     of MacroS:
       # Macros are out-of-process plugins compiled separately; their
       # bodies don't participate in lowering.

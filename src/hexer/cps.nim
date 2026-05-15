@@ -1200,10 +1200,17 @@ proc generateCoroutineHelpers(c: var Context; dest: var TokenBuf; sym: SymId; it
 
   var start = dest.len
 
-  # The wrapper is always a `proc` even when the source was an `iterator`,
-  # so emit ProcS unconditionally instead of mirroring the input tag.
-  dest.addParLe ProcS, info
-  inc n          # skip original (proc/iterator) tag
+  # Mirror the source's tag for the wrapper, EXCEPT for iterators —
+  # they lower to plain procs (their state-machine entry is a regular
+  # function). For methods, preserving MethodS is essential so the wrapper
+  # participates in vtable dispatch (otherwise `i.mysupermethod()` always
+  # statically dispatches to the base impl).
+  let srcKind = symKind(n)
+  if srcKind == IteratorY:
+    dest.addParLe ProcS, info
+    inc n
+  else:
+    dest.takeToken n
   skip n         # skip original name
   dest.addSymDef newSym, info
   dest.takeTree n # exported
