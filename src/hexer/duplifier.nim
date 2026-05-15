@@ -683,8 +683,8 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
           c.typeCache.closeScope()
         of CallS, CmdS, IteratorS, TemplateS, TypeS, BlockS,
             EmitS, AsgnS, IfS, WhenS, BreakS, ContinueS, ForS,
-            WhileS, CaseS, RetS, YldS, StmtsS, PragmasS, PragmaxS,
-            InclS, ExclS, IncludeS, ImportS, ImportasS,
+            WhileS, CoroforS, CaseS, RetS, YldS, StmtsS, PragmasS,
+            PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
             FromimportS, ImportexceptS, ExportS, ExportexceptS,
             CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS,
             AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
@@ -1148,6 +1148,8 @@ proc trDeref(c: var Context; n: var Cursor; e: Expects)
   if wrapDup:
     c.dest.addParRi()
 
+proc trCoroFor(c: var Context; n: var Cursor)
+
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   if n.kind == Symbol:
     trLocation c, n, e
@@ -1227,14 +1229,31 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         c.typeCache.openScope()
         trSons c, n, WantNonOwner
         c.typeCache.closeScope()
-      of BreakS, ContinueS, IteratorS, MacroS, TemplateS:
+      of BreakS, ContinueS, MacroS, TemplateS:
         # Macros are compiled into out-of-process plugins by `nimony`
         # itself; templates are expanded at call-sites. Neither has a
         # body that participates in the regular lowering pipeline, so
         # pass the decl through verbatim.
         takeTree c.dest, n
+      of IteratorS:
+        # iterinliner passes only `.closure` iterators through to hexer;
+        # their bodies need duplifier's hook injection on every asgn
+        # (especially the synthesized `result = v` at each yield).
+        trProcDecl c, n
+      of CoroforS:
+        trCoroFor c, n
       else:
         trSons c, n, WantNonOwner
+
+proc trCoroFor(c: var Context; n: var Cursor) =
+  ## The iter call is consumed by cps.nim's trCoroFor (rewritten to the
+  ## init wrapper call). Don't =dup/extract it here. Just descend into the
+  ## body.
+  c.dest.add n # corofor tag
+  inc n
+  takeTree c.dest, n # iter call verbatim
+  tr c, n, WantNonOwner # body
+  c.dest.takeParRi n
 
 proc readableHookname(s: string): string =
   result = s

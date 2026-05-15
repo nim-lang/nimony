@@ -692,6 +692,17 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   trStmt c, dest, n
   dest.takeParRi n
 
+proc trCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## The iter call is consumed entirely by cps.nim's trCoroFor (it is
+  ## rewritten to a wrapper call with extra args). Don't extract its result
+  ## into a temp here — keep it verbatim so cps sees its original shape.
+  let head = n.load()
+  inc n
+  dest.add head
+  takeTree dest, n # iter call, verbatim
+  trStmt c, dest, n # body
+  dest.takeParRi n
+
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var tmp = createTokenBuf(30)
   let kind = n.symKind
@@ -806,6 +817,8 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trWhile c, dest, n
   of ForS:
     trFor c, dest, n
+  of CoroforS:
+    trCoroFor c, dest, n
   of CallKindsS, InclS, ExclS:
     trStmtCall c, dest, n
   of AsgnS:
@@ -1010,8 +1023,8 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
          GletS, TletS, LetS, CursorS, PatternvarS, ProcS, FuncS,
          IteratorS, ConverterS, MethodS, MacroS, TemplateS,
          TypeS, EmitS, AsgnS, ScopeS, WhenS, BreakS, ContinueS,
-         ForS, WhileS, RetS, YldS, StmtsS, PragmasS, PragmaxS,
-         InclS, ExclS, IncludeS, ImportS, ImportasS,
+         ForS, WhileS, CoroforS, RetS, YldS, StmtsS, PragmasS,
+         PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
          FromimportS, ImportexceptS, ExportS, ExportexceptS,
          CommentS, DiscardS, RaiseS, UnpackdeclS, AssumeS,
          AssertS, CallstrlitS, InfixS, PrefixS, HcallS,

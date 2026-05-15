@@ -375,17 +375,23 @@ proc tr(c: var Context; n: var Cursor) =
       trBlock c, n
     of LocalDecls:
       trLocal c, n
-    of WhileS:
+    of WhileS, CoroforS:
       trWhile c, n
     of TryS:
       trTry c, n
     of ProcS, FuncS, MethodS, ConverterS:
       trProcDecl c, n
+    of IteratorS:
+      # iterinliner passes only `.closure` iterators through to here; their
+      # bodies need full destroyer treatment (scope tracking, =destroy
+      # injection on locals) just like regular procs. cps.nim later splits
+      # the body into state procs but the hook calls travel with the locals.
+      trProcDecl c, n
     of MacroS:
       # Macros are out-of-process plugins compiled separately; their
       # bodies don't participate in lowering.
       takeTree c.dest, n
-    of CallS, CmdS, IteratorS, TemplateS, TypeS, EmitS, AsgnS,
+    of CallS, CmdS, TemplateS, TypeS, EmitS, AsgnS,
         ScopeS, WhenS, ContinueS, ForS, YldS, StmtsS, PragmasS,
         PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
         FromimportS, ImportexceptS, ExportS, ExportexceptS,

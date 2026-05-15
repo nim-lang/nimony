@@ -215,8 +215,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.typeCache.openScope()
       trSons(c, dest, n)
       c.typeCache.closeScope()
-    of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS, CaseS,
-      RetS, YldS, StmtsS, PragmaxS, InclS, ExclS, ImportasS,
+    of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS, CoroforS,
+      CaseS, RetS, YldS, StmtsS, PragmaxS, InclS, ExclS, ImportasS,
       ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
       AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
       StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
@@ -680,8 +680,8 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.typeCache.openScope()
       treSons(c, dest, n)
       c.typeCache.closeScope()
-    of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS, CaseS,
-      RetS, YldS, StmtsS, PragmaxS, InclS, ExclS, ImportasS,
+    of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS, CoroforS,
+      CaseS, RetS, YldS, StmtsS, PragmaxS, InclS, ExclS, ImportasS,
       ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
       AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
       StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,

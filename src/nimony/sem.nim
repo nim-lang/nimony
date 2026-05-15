@@ -6384,6 +6384,9 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       of WhileS:
         toplevelGuard c:
           semWhile c, dest, it
+      of CoroforS:
+        buildErr c, dest, it.n.info, "`corofor` is a hexer-internal shape and must not appear in source"
+        skip it.n
       of VarS:
         toplevelGuard c:
           semLocal c, dest, it, VarY

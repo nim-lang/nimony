@@ -94,6 +94,7 @@
 | `(continue .Y)`; `(continue)` | NimonyStmt, NiflerKind, NjvlKind | `continue` statement |
 | `(for X ... S)` | NimonyStmt, NiflerKind | for statement |
 | `(while X S)` | NifcStmt, NimonyStmt, NiflerKind| `while` statement |
+| `(corofor X S)` | NimonyStmt | closure-iterator for loop, lowered shape used between iterinliner and cps; first child is the iterator call, second child is a `(stmts ...)` whose first inner statement is a `(var :forLoopVar T .)` declaration that receives each yielded value |
 | `(case X (of (ranges...) S)+ (else X)?)` | NifcStmt, NimonyStmt, NimonyOther, NiflerKind | `case` statement |
 | `(of (ranges ...) S)` | NifcOther, NimonyOther, NiflerKind | `of` branch within a `case` statement |
 | `(lab D)` | NifcStmt, NifcSym | label, target of a `jmp` instruction |

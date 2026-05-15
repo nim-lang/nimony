@@ -508,6 +508,136 @@ proc isPassiveCall(c: var Context; n: Cursor): bool =
     return procHasPragma(typ, PassiveP)
   return false
 
+proc coroWrapperForExternIter(iterSym: SymId): SymId =
+  ## Mangle the closure iterator's init-wrapper symbol using the iterator's
+  ## OWN module suffix (which may differ from the current module's). The
+  ## wrapper is defined in the same module that declared the iterator.
+  let s = pool.syms[iterSym]
+  let modSuffix = extractModule(s)
+  let base = extractVersionedBasename(s)
+  result = pool.syms.getOrIncl(base & ".init." & modSuffix)
+
+proc emitStopContinuation(dest: var TokenBuf; info: PackedLineInfo) =
+  ## Emit `Continuation(fn: nil, env: nil)` — the sentinel "no caller"
+  ## continuation passed to closure-iterator init wrappers.
+  dest.copyIntoKind OconstrX, info:
+    dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+    dest.copyIntoKind KvU, info:
+      dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
+      dest.addParPair NilX, info
+    dest.copyIntoKind KvU, info:
+      dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
+      dest.addParPair NilX, info
+
+proc trCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## Expand `(corofor (call iter args... (haddr forLoopVar)) (block ...))`
+  ## into the trampoline:
+  ##
+  ##   var it: Continuation = `iter.init.<suffix>`(args..., addr forLoopVar,
+  ##                                                StopContinuation)
+  ##   try:
+  ##     while isRunning(it):
+  ##       it = advance(it)
+  ##       if not isRunning(it): break
+  ##       <body>
+  ##   finally:
+  ##     finalizeCoroutine(addr it)
+  ##
+  ## The `forLoopVar` decl is emitted by iterinliner as a sibling *before*
+  ## corofor, so its lifetime spans the outer block, not the per-iter body.
+  ## That keeps destroyer's `=destroy(forLoopVar)` out of the loop body and
+  ## avoids double-destroying values whose hook-injected `=copy` already
+  ## owns fresh storage.
+  let info = n.info
+  inc n # skip (corofor
+
+  # ---- first child: (call iter args... (haddr forLoopVar)) ----
+  assert n.exprKind in CallKinds, "corofor: expected iter call as first child"
+  inc n # past CallS tag
+  assert n.kind == Symbol, "corofor: iter call must target a symbol"
+  let iterSym = n.symId
+  inc n # past iter sym
+  # Collect the iter's original args into argsBuf; the trailing (haddr forLoopVar)
+  # is split off into addrBuf.
+  var argsBuf = createTokenBuf(8)
+  var addrBuf = createTokenBuf(4)
+  while n.hasMore:
+    var nxt = n
+    skip nxt
+    if not nxt.hasMore:
+      # last arg — must be (haddr forLoopVar)
+      assert n.exprKind == HaddrX, "corofor: last call arg must be (haddr ..)"
+      addrBuf.takeTree n
+    else:
+      argsBuf.takeTree n
+  skipParRi n # close iter call
+
+  # ---- emit `var it: Continuation = wrapper(args..., addr forLoopVar, Stop)` ----
+  let itSym = pool.syms.getOrIncl("`coroIt." & $c.currentProc.counter)
+  inc c.currentProc.counter
+  c.typeCache.registerLocal(itSym, VarY, default(Cursor))
+  let wrapperSym = coroWrapperForExternIter(iterSym)
+  dest.copyIntoKind VarS, info:
+    dest.addSymDef itSym, info
+    dest.addDotToken() # exported
+    dest.addDotToken() # pragmas
+    dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+    dest.copyIntoKind CallS, info:
+      dest.addSymUse wrapperSym, info
+      dest.add argsBuf
+      dest.add addrBuf
+      emitStopContinuation(dest, info)
+
+  # ---- emit try/while/finally ----
+  let isRunningSym = pool.syms.getOrIncl("isRunning.0." & SystemModuleSuffix)
+  let advanceSym = pool.syms.getOrIncl("advance.0." & SystemModuleSuffix)
+  let finalizeSym = pool.syms.getOrIncl("finalizeCoroutine.0." & SystemModuleSuffix)
+
+  dest.addParLe TryS, info
+  dest.copyIntoKind StmtsS, info:
+    dest.addParLe WhileS, info
+    # cond: (call isRunning it)
+    dest.copyIntoKind CallS, info:
+      dest.addSymUse isRunningSym, info
+      dest.addSymUse itSym, info
+    # body: (stmts (asgn it (call advance it))
+    #              (if (elif (not (call isRunning it)) (stmts (break))))
+    #              <body>)
+    # Order matters: the init wrapper returns AFTER state 0 (initialization)
+    # but BEFORE the first `yield` writes to `*forLoopVar`. We advance first
+    # to reach the next yield (or terminal state), check whether the iterator
+    # produced a value, then run the body.
+    dest.copyIntoKind StmtsS, info:
+      dest.copyIntoKind AsgnS, info:
+        dest.addSymUse itSym, info
+        dest.copyIntoKind CallS, info:
+          dest.addSymUse advanceSym, info
+          dest.addSymUse itSym, info
+      dest.copyIntoKind IfS, info:
+        dest.copyIntoKind ElifU, info:
+          dest.copyIntoKind NotX, info:
+            dest.copyIntoKind CallS, info:
+              dest.addSymUse isRunningSym, info
+              dest.addSymUse itSym, info
+          dest.copyIntoKind StmtsS, info:
+            dest.copyIntoKind BreakS, info:
+              dest.addDotToken()
+      # Second child of corofor is the inner-block (and any destroyer-injected
+      # cleanup that ended up alongside it).
+      while n.hasMore:
+        tr(c, dest, n)
+    dest.addParRi() # close while
+  # finally: finalizeCoroutine(addr it)
+  dest.copyIntoKind FinU, info:
+    dest.copyIntoKind StmtsS, info:
+      dest.copyIntoKind CallS, info:
+        dest.addSymUse finalizeSym, info
+        dest.copyIntoKind HaddrX, info:
+          dest.addSymUse itSym, info
+  dest.addParRi() # close try
+
+  skipParRi n # close (corofor
+
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let fn = n.firstSon
@@ -945,8 +1075,8 @@ proc trGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
         of CallS, CmdS, ResultS, ProcS, FuncS, IteratorS,
             ConverterS, MethodS, MacroS, TemplateS, TypeS,
             BlockS, EmitS, AsgnS, ScopeS, IfS, WhenS,
-            BreakS, ContinueS, ForS, WhileS, CaseS, RetS,
-            YldS, StmtsS, PragmasS, PragmaxS, InclS, ExclS,
+            BreakS, ContinueS, ForS, WhileS, CoroforS, CaseS,
+            RetS, YldS, StmtsS, PragmasS, PragmaxS, InclS, ExclS,
             IncludeS, ImportS, ImportasS, FromimportS,
             ImportexceptS, ExportS, ExportexceptS, CommentS,
             DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS,
@@ -1070,11 +1200,14 @@ proc generateCoroutineHelpers(c: var Context; dest: var TokenBuf; sym: SymId; it
 
   var start = dest.len
 
-  dest.takeToken n # ProcS
-  skip n
+  # The wrapper is always a `proc` even when the source was an `iterator`,
+  # so emit ProcS unconditionally instead of mirroring the input tag.
+  dest.addParLe ProcS, info
+  inc n          # skip original (proc/iterator) tag
+  skip n         # skip original name
   dest.addSymDef newSym, info
-  dest.takeTree n # 
-  dest.takeTree n # 
+  dest.takeTree n # exported
+  dest.takeTree n # pattern
   dest.takeTree n # TypevarsU
 
   dest.copyIntoKind ParamsU, info:
@@ -1319,6 +1452,11 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
       if (kind == IteratorY and hasPragma(n, ClosureP)) or hasPragma(n, PassiveP):
         isCoroutine = true
         c.currentProc.kind = (if kind == IteratorY: IsIterator else: IsPassive)
+        # Closure iterators get lowered to a regular proc plus a state
+        # machine. Rewrite the tag emitted at the start of this decl so
+        # downstream passes (and NIFC) see a `proc`, not an `iterator`.
+        if kind == IteratorY:
+          dest[procStart] = parLeToken(ProcS, dest[procStart].info)
         patchParamList c, dest, init, sym, paramsBegin, paramsEnd, origParams
     elif i == TypevarsPos:
       isConcrete = n.substructureKind != TypevarsU
@@ -1411,6 +1549,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.typeCache.openScope()
       trSons(c, dest, n)
       c.typeCache.closeScope()
+    of CoroforS:
+      trCoroFor c, dest, n
     of CallS, CmdS, BlockS, IfS, WhenS, WhileS, CaseS,
         StmtsS, PragmaxS, InclS, ExclS, ImportasS,
         ExportexceptS, DiscardS, TryS, UnpackdeclS,
