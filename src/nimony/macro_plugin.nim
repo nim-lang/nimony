@@ -18,7 +18,7 @@ type
   MacroPlugin* = object
     exePath*: string
 
-proc hash(s: SymId): Hash {.borrow.}
+func hash(s: SymId): Hash {.borrow.}
 
 proc cleanSymbolName(s: string): string =
   ## Extract the base name from a fully-qualified symbol (strip `.0.suffix`).
@@ -41,20 +41,13 @@ proc spliceBodyWithoutResult(dest: var TokenBuf; body: Cursor) =
   ## return type.
   var n = body
   assert n.stmtKind == StmtsS, "macro body should be a stmts block"
-  dest.add n.load
-  inc n
+  dest.takeToken n
   if n.kind == ParLe and n.stmtKind == ResultS:
     # Skip the leading result declaration.
-    var nested = 1
-    inc n
-    while nested > 0:
-      if n.kind == ParLe: inc nested
-      elif n.kind == ParRi: dec nested
-      inc n
-  while n.kind != ParRi:
-    dest.addSubtree n
     skip n
-  dest.add n.load  # the closing ParRi of stmts
+  while n.kind != ParRi:
+    dest.takeTree n
+  dest.addParRi()  # the closing ParRi of stmts
 
 proc rewriteSymsToIdents(buf: var TokenBuf) =
   ## Convert every Symbol / SymbolDef in `buf` to an Ident bearing the symbol's
@@ -80,15 +73,13 @@ proc rewriteSymsToIdents(buf: var TokenBuf) =
           extractBasename name
           newBuf.add identToken(pool.strings.getOrIncl(name), n.info)
           while n.kind != ParRi: skip n
-          inc n  # consume ParRi
+          skipParRi n  # consume ParRi
         else:
-          newBuf.add n.load
+          newBuf.takeToken n
           inc nested
-          inc n
       else:
-        newBuf.add n.load
+        newBuf.takeToken n
         inc nested
-        inc n
     of ParRi:
       newBuf.add n.load
       dec nested
@@ -97,8 +88,7 @@ proc rewriteSymsToIdents(buf: var TokenBuf) =
     of EofToken:
       break
     else:
-      newBuf.add n.load
-      inc n
+      newBuf.takeToken n
   endRead(buf)
   buf = ensureMove newBuf
 
@@ -139,17 +129,13 @@ proc copyParamsRewritingMetatypes(dest: var TokenBuf; params: Cursor;
   inc n
   while n.kind != ParRi:
     if n.substructureKind == ParamU:
-      dest.add n.load
-      inc n
+      dest.takeToken n
       # Slot 0: name (SymbolDef or Ident)
-      dest.addSubtree n
-      skip n
+      dest.takeTree n
       # Slot 1: exported marker (DotToken)
-      dest.addSubtree n
-      skip n
+      dest.takeTree n
       # Slot 2: pragmas
-      dest.addSubtree n
-      skip n
+      dest.takeTree n
       # Slot 3: type — rewrite (untyped) / (typed) → NimNode
       let isMetatype = n.kind == ParLe and
         (n.typeKind == UntypedT or n.typeKind == TypedT)
@@ -157,19 +143,15 @@ proc copyParamsRewritingMetatypes(dest: var TokenBuf; params: Cursor;
         dest.addIdent "NimNode", info
         skip n
       else:
-        dest.addSubtree n
-        skip n
+        dest.takeTree n
       # Slot 4: default value
-      dest.addSubtree n
-      skip n
+      dest.takeTree n
       # Closing ParRi of (param ...)
-      dest.add n.load
-      inc n
+      dest.takeParRi n
     else:
       # Non-param entry (e.g. return-type-of-routine slot at end). Copy verbatim.
-      dest.addSubtree n
-      skip n
-  dest.add n.load  # closing ParRi of params
+      dest.takeTree n
+  dest.takeParRi n  # closing ParRi of params
 
 proc emitImplProc(dest: var TokenBuf; implName: string; macroDecl: Cursor;
                   info: PackedLineInfo) =
