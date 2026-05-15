@@ -4046,10 +4046,10 @@ the caller cannot redirect it.
 
 The first argument to `bindSym` must be a string literal.
 
-`bindSym` is also available for plugins. In macros it returns `NimNode`; in a
-plugin (when compiled by Nimony via `nim3plugins`) the same name is exposed
-as `proc bindSym(name: string): string`, returning the fully-qualified name
-for use with `addSymUse`.
+`bindSym` is also available in plugins (`import plugins`). The plugin variant
+takes a builder as its first argument and appends the resolved symbol(s)
+directly: `proc bindSym(t: var NifBuilder; name: string; rule = brClosed)`.
+See "bindSym in plugins" in the Plugins section below.
 
 
 
@@ -4219,7 +4219,7 @@ generateEcho("Hello, world!")
 In "deps/mplugin1.nim" there is the implementation:
 
 ```nim
-import nimonyplugins
+import plugins
 
 proc tr(n: NifCursor): NifBuilder =
   result = createTree()
@@ -4237,54 +4237,22 @@ saveTree tr(inp)
 
 Plugins that are attached to a template receive only the code that is related to the template invocation. But `.plugin` can also be a statement of its own, then it is a so called "module plugin".
 
+### `bindSym` in plugins
 
-### Selecting the compiler
-
-`.plugin` accepts two forms:
-
-```nim
-template foo {.plugin: "path/to/plugin".}                # form 1 (default)
-template foo {.plugin: ("path/to/plugin", "v2").}        # form 2 (explicit Nim 2)
-template foo {.plugin: ("path/to/plugin", "nimony").}    # form 3 (Nimony)
-```
-
-The bare-string form 1 currently defaults to compiling the plugin source
-with **Nim 2** — this matches Nim's library coverage which is broader than
-Nimony's during the transition. The tuple form lets the plugin author
-opt in explicitly:
-
-  - `"v2"` (or `"nim"` / `"nim2"`) — compile with Nim 2; the plugin must
-    `import nimonyplugins`.
-  - `"nimony"` — compile with Nimony; the plugin must `import nim3plugins`
-    (the Nimony-targeted mirror of `nimonyplugins`). Plugins on this path
-    can use Nimony-only primitives that depend on the compiler's symbol
-    table, notably `bindSym` (see below).
-
-Porting a Nim 2 plugin to Nimony is usually two edits: switch
-`import nimonyplugins` to `import nim3plugins`, and change the pragma to
-`{.plugin: ("path", "nimony").}`. Plugin authors who want to stay on Nim 2
-through future default flips can pin themselves by adding `("path", "v2")`.
-
-A bad version string is rejected at sem time:
-`unknown plugin compiler: '<x>' (expected "v2" or "nimony")`.
-
-### `bindSym` in Nimony-compiled plugins
-
-When a plugin is compiled by Nimony (`nim3plugins`), it can use `bindSym`
-exactly like a macro — but the plugin variant returns a `string`
-(the fully-qualified symbol name) instead of a `NimNode`, because
-plugins build NIF directly:
+Plugins can use `bindSym` to emit hygienic symbol references, just like a
+macro. The plugin variant takes the builder as its first argument and
+appends the resolved symbol(s) directly:
 
 ```nim
 import std / syncio          # makes `echo` visible at the plugin's def-site
-import nim3plugins
+import plugins
 
 proc tr(n: NifCursor): NifBuilder =
   result = createTree()
   let info = n.info
   result.withTree StmtsS, info:
     result.withTree CallS, info:
-      result.addSymUse bindSym("echo"), info   # hygienic; bypasses caller's `echo`
+      result.bindSym "echo"               # hygienic; bypasses caller's `echo`
       result.takeTree firstChild(n)
 
 var inp = loadPluginInput()
@@ -4293,13 +4261,16 @@ saveTree tr(inp)
 
 `bindSym` here is a sem-time magic: at the moment Nimony compiles the
 plugin source, it resolves the literal `"echo"` against the plugin
-module's def-site scope and folds the call to a string literal carrying
-the fully-qualified name. `addSymUse(builder, name: string)` then writes
-a NIF `Symbol` token. When the user's compiler reads the plugin's output,
-that Symbol bypasses caller-side scope lookups — so a `proc echo(x: string)
-= discard` in the caller cannot redirect the plugin's reference. This
-primitive cannot be provided to Nim-2-compiled plugins because their
-compiler is not aware of Nimony's symbol-naming scheme.
+module's def-site scope and emits either one Symbol atom (single match)
+or a `(cchoice …)` / `(ochoice …)` sym-choice subtree (multiple matches).
+When the user's compiler reads the plugin's output, the Symbol bypasses
+caller-side scope lookups — so a `proc echo(x: string) = discard` in the
+caller cannot redirect the plugin's reference.
+
+The optional second argument selects the resolution rule, mirroring the
+macro-side `BindSymRule` enum: `brClosed` (default, candidates fixed at
+def-site), `brOpen` (call-site sem augments the choice), `brForceOpen`
+(always emit a one- or many-element open choice).
 
 
 ### Plugins search

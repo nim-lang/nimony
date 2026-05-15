@@ -682,6 +682,30 @@ proc attachSpecialProc(c: var SemContext; dest: var TokenBuf; kind: SymKind;
 proc untypedIsActive(c: SemContext; crucial: CrucialPragma): bool {.inline.} =
   result = UntypedP in crucial.flags or UntypedFeature in c.features
 
+proc hasUntypedOrTypedParam(dest: var TokenBuf; beforeParams: int): bool =
+  ## Check if any of the routine's params (already sem'd into dest at
+  ## position `beforeParams`) carries `(untyped)` or `(typed)` as its type.
+  ## Used to decide whether a macro body needs the special "skip user-side
+  ## sem" path (which the plugin sub-compile re-sems with NimNode-typed
+  ## params).
+  result = false
+  var n = cursorAt(dest, beforeParams)
+  if n.substructureKind != ParamsU:
+    endRead(dest)
+    return
+  inc n
+  while n.kind != ParRi:
+    if n.substructureKind == ParamU:
+      var p = n
+      inc p
+      # Skip name, exported marker, pragmas to land on the type slot.
+      skip p; skip p; skip p
+      if p.kind == ParLe and p.typeKind in {UntypedT, TypedT}:
+        endRead(dest)
+        return true
+    skip n
+  endRead(dest)
+
 proc semBodyGenericInst(c: var SemContext; dest: var TokenBuf; it: var Item;
                         crucial: CrucialPragma; symId: SymId; beforeParams: int; hk: HookKind) =
   ## Process proc body for generic instantiation pass.
@@ -715,7 +739,24 @@ proc semBodyCheckBody(c: var SemContext; dest: var TokenBuf; it: var Item;
     bug "(stmts) expected, but got ", it.n
   c.openScope() # open body scope
   var resId = SymId(0)
-  if untypedIsActive(c, crucial) and c.routine.inGeneric > 0: # includes templates
+  if kind == MacroY and hasUntypedOrTypedParam(dest, beforeParams):
+    # The user's macro takes an `untyped` / `typed` param. We can't
+    # type-check uses like `body[0]` / `body.kind` at the user-side
+    # because untyped has no NimNode methods. The plugin sub-compile
+    # rewrites those param types to NimNode and does the real sem; here
+    # we just store the body as raw AST. Downstream passes (derefs etc.)
+    # already skip MacroS bodies. Side-effect: nested macro calls in this
+    # body don't expand at user-side; they'd be re-resolved by the plugin
+    # under the plugin's import scope.
+    dest.takeTree it.n
+  elif kind == MacroY:
+    # Macro without untyped/typed params — sem normally so nested macro
+    # calls expand at user-sem time (see project_macro_plugins.md).
+    takeToken dest, it.n
+    if it.n.stmtKind != ResultS:
+      resId = declareResult(c, dest, it.n.info)
+    semProcBody c, dest, it
+  elif untypedIsActive(c, crucial) and c.routine.inGeneric > 0: # includes templates
     # should eventually be default for compat mode
     let mode = if kind == TemplateY: UntypedTemplate else: UntypedGeneric
     let dirty = kind == TemplateY and DirtyP in crucial.flags

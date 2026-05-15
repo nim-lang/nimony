@@ -98,34 +98,21 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
     while p.hasMore:
       if p.pragmaKind == PluginP:
         p.into PluginP:
-          # Recover (path, version) — accepts either `"path"` (old form,
-          # defaults to pcNim2) or `(tup "path" "version")` (new form).
+          # `.plugin: "path"` — single-string form only.
           var path = StrId(0)
-          var ver = ""
           var pathInfo = p.info
           if p.kind == StringLit:
             path = p.litId
             pathInfo = p.info
-          elif p.exprKind == TupX:
-            var t = p
-            inc t
-            if t.kind == StringLit:
-              path = t.litId
-              pathInfo = t.info
-              inc t
-              if t.kind == StringLit:
-                ver = pool.strings[t.litId]
           if path != StrId(0):
-            let (compiler, ok) = parsePluginCompiler(ver)
-            if ok:
-              var b = createTokenBuf(30)
-              b.addParLe StmtsS, args.info
-              var a = args
-              while a.hasMore:
-                b.takeTree a
-              b.addParRi()
-              runPlugin(c, dest, pathInfo, pool.strings[path], compiler, b.toString)
-              result = true
+            var b = createTokenBuf(30)
+            b.addParLe StmtsS, args.info
+            var a = args
+            while a.hasMore:
+              b.takeTree a
+            b.addParRi()
+            runPlugin(c, dest, pathInfo, pool.strings[path], b.toString)
+            result = true
           while p.hasMore: skip p
         if result: return
       else:

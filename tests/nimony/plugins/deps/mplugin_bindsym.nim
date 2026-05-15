@@ -6,7 +6,7 @@
 # `Symbol` token — the user's call site can't shadow it.
 
 import std / syncio                       # makes `echo` visible at def-site
-import nim3plugins
+import plugins
 
 proc tr(n: NifCursor): NifBuilder =
   result = createTree()

@@ -16,7 +16,7 @@ There are four kinds of plugins:
 | **Type plugin** | `type T {.plugin: "path".} = ...` | Invoked for every module that uses `T` |
 | **Import plugin** | `import (path/foo) {.plugin: "std/v2".}` | Imports the module `path/foo` **from the plugin** `std/v2` |
 
-All plugins share the same API (`nimonyplugins`) and execution model.
+All plugins share the same API (`plugins`) and execution model.
 
 
 ## Quick start
@@ -41,7 +41,7 @@ generateEcho("Hello, world!")  # prints: Hello, world!
 And in `deps/mplugin1.nim`:
 
 ```nim
-import nimonyplugins
+import plugins
 
 proc transform(n: Node): NifBuilder =
   result = createTree()
@@ -232,7 +232,7 @@ The plugin can selectively strip, rewrite, or augment any part of the module.
 For example, stripping all top-level `block` statements:
 
 ```nim
-import nimonyplugins
+import plugins
 
 proc transform(n: Node): NifBuilder =
   result = createTree()
@@ -321,12 +321,12 @@ import (path/foo) {.plugin: "std/v2".}
 This is used for compatibility layers that translate between different NIF formats.
 
 
-## The plugin API (`nimonyplugins`)
+## The plugin API (`plugins`)
 
 Plugins import a single module:
 
 ```nim
-import nimonyplugins
+import plugins
 ```
 
 ### Reading input
@@ -512,7 +512,7 @@ object with balanced operations. Each operation consumes input and produces
 output atomically, making cursor/builder mismatches impossible:
 
 ```nim
-import nimonyplugins
+import plugins
 
 proc trAux(t: var Replacer) =
   if t.isAtom:
@@ -558,7 +558,7 @@ The `NifCursor` and `NifBuilder` types remain available for plugins that
 construct output from scratch rather than transforming input:
 
 ```nim
-import nimonyplugins
+import plugins
 
 proc transform(n: NifCursor): NifBuilder =
   result = createTree()

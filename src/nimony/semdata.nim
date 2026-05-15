@@ -70,17 +70,8 @@ type
     includedFiles*: seq[string] # will become part of the index file
     importedFiles*: seq[string] # likewise
 
-  PluginCompiler* = enum
-    ## Which compiler builds a `{.plugin.}`-attached source file.
-    ## Defaults to `pcNim2` (today's behaviour); `pcNimony` is reserved for
-    ## the future migration when `lib/nimonyplugins.nim` and friends compile
-    ## under Nimony.
-    pcNim2
-    pcNimony
-
   PluginRef* = object
     path*: StrId
-    compiler*: PluginCompiler
     info*: PackedLineInfo
 
   SemExpressionExecutor* = proc (c: var SemContext; expr: Cursor; expectedType: TypeCursor; result: var TokenBuf; info: PackedLineInfo): string {.nimcall.}
@@ -225,12 +216,3 @@ template emptyNode*(c: var SemContext): Cursor =
   # XXX find a better solution for this
   c.types.voidType
 
-proc parsePluginCompiler*(version: string): (PluginCompiler, bool) =
-  ## Map a `.plugin: ("path", "<version>")` selector to a `PluginCompiler`.
-  ## Returns `(compiler, ok)`; `ok=false` means the string didn't match any
-  ## known compiler, and the caller should error out. Empty version → Nim 2
-  ## (today's default; lets `.plugin: "path"` keep working unchanged).
-  case version
-  of "", "v2", "nim2", "nim": (pcNim2, true)
-  of "nimony": (pcNimony, true)
-  else: (pcNim2, false)

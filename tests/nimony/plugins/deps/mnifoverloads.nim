@@ -1,31 +1,48 @@
-import std / [os, syncio]
-import nimonyplugins
+# Plugin that exercises the various `add*Lit` overloads on `NifBuilder`.
+# Replaces the prior `~` / `%~` tilde-DSL version, which inflated the API
+# surface and obscured line-info handling.
+
+import plugins
 
 proc tr(n: NifCursor): NifBuilder =
+  result = createTree()
+  let info = n.info
   let head = if n.stmtKind == StmtsS: firstChild(n) else: n
 
-  let prepared = ~"prepared"
-
-  let byIdent = """(call $callee $msg)""" %~
-    {"callee": ~ident("echo"), "msg": ~"seen"}
-  let byBool = """(call echo $flag)""" %~ {"flag": ~true}
-  let byChar = """(call echo $ch)""" %~ {"ch": ~'Z'}
-  let byInt64 = """(call echo $num)""" %~ {"num": ~17'i64}
-  let byUint32 = """(call echo $num)""" %~ {"num": ~18'u32}
-  let byFloat32 = """(call echo $num)""" %~ {"num": ~2.5'f32}
-  let byPrepared = """(call echo $msg)""" %~ {"msg": ~prepared}
-  let byNode = """(call echo $msg)""" %~ {"msg": ~head}
-
-  result = """(stmts $a $b $c $d $e $f $g $h)""" %~ {
-    "a": ~byIdent,
-    "b": ~byBool,
-    "c": ~byChar,
-    "d": ~byInt64,
-    "e": ~byUint32,
-    "f": ~byFloat32,
-    "g": ~byPrepared,
-    "h": ~byNode
-  }
+  result.withTree StmtsS, info:
+    # echo "seen"   — built via an explicit ident head and a string literal arg
+    result.withTree CallS, info:
+      result.addIdent "echo"
+      result.addStrLit "seen"
+    # echo true
+    result.withTree CallS, info:
+      result.addIdent "echo"
+      result.withTree TrueX, info:
+        discard
+    # echo 'Z'
+    result.withTree CallS, info:
+      result.addIdent "echo"
+      result.addCharLit 'Z'
+    # echo 17 (BiggestInt)
+    result.withTree CallS, info:
+      result.addIdent "echo"
+      result.addIntLit BiggestInt(17)
+    # echo 18'u32
+    result.withTree CallS, info:
+      result.addIdent "echo"
+      result.addUIntLit BiggestUInt(18'u32)
+    # echo 2.5'f32
+    result.withTree CallS, info:
+      result.addIdent "echo"
+      result.addFloatLit BiggestFloat(2.5'f32)
+    # echo "prepared"
+    result.withTree CallS, info:
+      result.addIdent "echo"
+      result.addStrLit "prepared"
+    # echo <input>
+    result.withTree CallS, info:
+      result.addIdent "echo"
+      result.addSubtree head
 
 var inp = loadPluginInput()
-writeFile os.paramStr(2), renderTree(tr(inp))
+saveTree tr(inp)

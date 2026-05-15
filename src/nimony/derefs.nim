@@ -1367,8 +1367,14 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         trTry c, n
       of RaiseS:
         trRaise c, n
-      of ProcS, FuncS, MacroS, MethodS, ConverterS, IteratorS:
+      of ProcS, FuncS, MethodS, ConverterS, IteratorS:
         trProcDecl c, n
+      of MacroS:
+        # Macros are compile-time only — the body lives in the separate
+        # plugin binary (see compileMacroPlugin), not in the user's compile
+        # output. Skip body analysis so we don't trip on raw (untyped)
+        # parameters or unsem'd identifiers.
+        takeTree c.dest, n
       of ScopeS:
         c.typeCache.openScope()
         trSons c, n, WantT

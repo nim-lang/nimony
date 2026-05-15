@@ -122,20 +122,71 @@ proc emitNimNodeRetType(dest: var TokenBuf; info: PackedLineInfo) =
   ## against `lib/std/macros.nim`'s `NimNode*` type.
   dest.addIdent "NimNode", info
 
+proc copyParamsRewritingMetatypes(dest: var TokenBuf; params: Cursor;
+                                  info: PackedLineInfo) =
+  ## Copy a `(params (param ...)*)` subtree but rewrite each param's TYPE slot
+  ## from `(untyped)` / `(typed)` to the ident `NimNode`. The user's macro
+  ## signature uses `untyped` (for "any AST, don't sem-check") which is
+  ## meaningful at the macro CALL site, but inside the macro body we want
+  ## the parameter to be usable as a `NimNode` (so methods like `len`,
+  ## `[i]`, `kind`, `add`, etc. resolve). This rewrite gives us both.
+  ##
+  ## Param shape per `(param :name pragmas TYPE default)`. We pass through
+  ## name/pragmas/default verbatim and only swap the TYPE slot.
+  assert params.substructureKind == ParamsU
+  dest.add params.load
+  var n = params
+  inc n
+  while n.kind != ParRi:
+    if n.substructureKind == ParamU:
+      dest.add n.load
+      inc n
+      # Slot 0: name (SymbolDef or Ident)
+      dest.addSubtree n
+      skip n
+      # Slot 1: exported marker (DotToken)
+      dest.addSubtree n
+      skip n
+      # Slot 2: pragmas
+      dest.addSubtree n
+      skip n
+      # Slot 3: type — rewrite (untyped) / (typed) → NimNode
+      let isMetatype = n.kind == ParLe and
+        (n.typeKind == UntypedT or n.typeKind == TypedT)
+      if isMetatype:
+        dest.addIdent "NimNode", info
+        skip n
+      else:
+        dest.addSubtree n
+        skip n
+      # Slot 4: default value
+      dest.addSubtree n
+      skip n
+      # Closing ParRi of (param ...)
+      dest.add n.load
+      inc n
+    else:
+      # Non-param entry (e.g. return-type-of-routine slot at end). Copy verbatim.
+      dest.addSubtree n
+      skip n
+  dest.add n.load  # closing ParRi of params
+
 proc emitImplProc(dest: var TokenBuf; implName: string; macroDecl: Cursor;
                   info: PackedLineInfo) =
-  ## Emit `(proc <implName> . . . (params <copied>) NimNode . . <body>)`.
+  ## Emit `(proc <implName> . . . (params <copied-and-rewritten>) NimNode . . <body>)`.
   let r = asRoutine(macroDecl, SkipInclBody)
   dest.copyInto(pool.tags.getOrIncl("proc"), info):
     dest.addIdent implName, info
     dest.addEmpty3 info                       # exported, pattern, typevars
-    # params: copy verbatim (the user's signature) — sem will resolve param
-    # type idents/syms freshly in the plugin module.
+    # params: copy verbatim, but swap (untyped)/(typed) types for NimNode so
+    # the body can call NimNode methods on them without losing the call-site
+    # "don't sem-check the arg" semantics (which the user's macro signature
+    # already provides via the untyped/typed metatype).
     if r.params.kind == DotToken:
       dest.copyInto(pool.tags.getOrIncl("params"), info):
         discard
     else:
-      dest.addSubtree r.params
+      copyParamsRewritingMetatypes(dest, r.params, info)
     emitNimNodeRetType(dest, info)
     dest.addEmpty2 info                       # pragmas, effects
     spliceBodyWithoutResult(dest, r.body)

@@ -1,15 +1,30 @@
-import std / [os, syncio]
-import nimonyplugins
+# Plugin that emits four `echo` calls — exercises the basic builder API
+# (the prior version used the now-removed `~` / `%~` string-template DSL).
+
+import plugins
 
 proc tr(n: NifCursor): NifBuilder =
+  result = createTree()
+  let info = n.info
   let head = if n.stmtKind == StmtsS: firstChild(n) else: n
-  let first = """(call echo $arg)""" %~ {"arg": ~head}
-  let second = """(call echo $msg)""" %~ {"msg": ~"seen"}
-  let third = """(call echo $count)""" %~ {"count": ~17}
-  let tail = nifFragment("""(call echo "done")""")
 
-  result = """(stmts $first $second $third $tail)""" %~
-    {"first": ~first, "second": ~second, "third": ~third, "tail": ~tail}
+  result.withTree StmtsS, info:
+    # echo <input>
+    result.withTree CallS, info:
+      result.addIdent "echo"
+      result.addSubtree head
+    # echo "seen"
+    result.withTree CallS, info:
+      result.addIdent "echo"
+      result.addStrLit "seen"
+    # echo 17
+    result.withTree CallS, info:
+      result.addIdent "echo"
+      result.addIntLit 17
+    # echo "done"
+    result.withTree CallS, info:
+      result.addIdent "echo"
+      result.addStrLit "done"
 
 var inp = loadPluginInput()
-writeFile os.paramStr(2), renderTree(tr(inp))
+saveTree tr(inp)

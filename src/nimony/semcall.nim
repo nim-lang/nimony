@@ -889,11 +889,16 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
     elif finalFn.kind == MacroY:
       # Run compiled macro plugin
       if finalFn.sym in c.compiledMacros:
-        # Serialize arguments to NIF
+        # Serialize arguments to NIF. Prefer `arg.orig` (raw, pre-sem AST) so
+        # macros that walk their bodies aren't tripped by sem-attached `(err
+        # …)` diagnostics or other sem rewrites the user never wrote.
         var argsBuf = createTokenBuf(30)
         argsBuf.addParLe StmtsS, cs.callNode.info
         for a in cs.args:
-          argsBuf.addSubtree a.n
+          if not cursorIsNil(a.orig):
+            argsBuf.addSubtree a.orig
+          else:
+            argsBuf.addSubtree a.n
         argsBuf.addParRi()
 
         # Run the macro plugin

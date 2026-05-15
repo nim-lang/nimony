@@ -1575,16 +1575,14 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     # Finalize expression
     dest.addParRi()
   of PluginP:
-    # `.plugin:` accepts either `"path"` (old form → pcNim2) or
-    # `("path", "<version>")` (new form). Parse + validate first, then emit
-    # so a bad version doesn't leave half a tree behind.
+    # `.plugin: "path"` — single-string form. (The historical
+    # `("path", "<version>")` tuple form, which selected between the Nim 2
+    # and Nimony compilers, was removed when the Nim 2 plugin path went away.)
     crucial.flags.incl pk
     let pragInfo = n.info
     inc n
     var path = StrId(0)
-    var ver = ""
     var pathInfo = n.info
-    var isTup = false
     var errMsg = ""
     var alreadyErr = false
     if hasParRi:
@@ -1592,25 +1590,6 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
         path = n.litId
         pathInfo = n.info
         inc n
-      elif n.exprKind == TupX:
-        isTup = true
-        inc n                          # past (tup
-        if n.kind == StringLit:
-          path = n.litId
-          pathInfo = n.info
-          inc n
-        else:
-          errMsg = "plugin path must be a string literal"
-          if n.kind == ParLe: skip n else: inc n
-        if errMsg.len == 0:
-          if n.kind == StringLit:
-            ver = pool.strings[n.litId]
-            inc n
-          else:
-            errMsg = "plugin version must be a string literal"
-            if n.kind == ParLe: skip n else: inc n
-        while n.kind != ParRi: skip n
-        inc n                          # close TupX
       elif n.exprKind == ErrX:
         # Re-sem path: a previous sem pass already produced an err. Pass
         # through without re-reporting.
@@ -1621,24 +1600,14 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
         dest.add passBuf
         dest.addParRi()
       else:
-        errMsg = "expected `string` or `(path, version)` tuple"
+        errMsg = "plugin path must be a string literal"
         if n.hasMore: skip n
     if not alreadyErr:
-      if path != StrId(0) and errMsg.len == 0:
-        let (_, ok) = parsePluginCompiler(ver)
-        if not ok:
-          errMsg = "unknown plugin compiler: '" & ver & "' (expected \"v2\" or \"nimony\")"
       dest.add parLeToken(pk, pragInfo)
       if errMsg.len > 0:
         buildErr c, dest, pathInfo, errMsg
       elif path != StrId(0):
-        if isTup:
-          dest.add parLeToken(TupX, pathInfo)
-          dest.add strToken(path, pathInfo)
-          dest.add strToken(pool.strings.getOrIncl(ver), pathInfo)
-          dest.addParRi()
-        else:
-          dest.add strToken(path, pathInfo)
+        dest.add strToken(path, pathInfo)
       dest.addParRi()
   of AlignP, BitsP, SizeP:
     dest.add parLeToken(pk, n.info)
@@ -1991,24 +1960,12 @@ proc semTypeSym(c: var SemContext; dest: var TokenBuf; s: Sym; info: PackedLineI
         let p = extractPragma(typ.pragmas, PluginP)
         if p != default(Cursor):
           var path = StrId(0)
-          var ver = ""
           var pathInfo = p.info
           if p.kind == StringLit:
             path = p.litId
             pathInfo = p.info
-          elif p.exprKind == TupX:
-            var t = p
-            inc t                          # past (tup
-            if t.kind == StringLit:
-              path = t.litId
-              pathInfo = t.info
-              inc t
-              if t.kind == StringLit:
-                ver = pool.strings[t.litId]
           if path != StrId(0) and path notin c.pluginBlacklist:
-            let (compiler, ok) = parsePluginCompiler(ver)
-            if ok:
-              c.pendingTypePlugins[s.name] = PluginRef(path: path, compiler: compiler, info: pathInfo)
+            c.pendingTypePlugins[s.name] = PluginRef(path: path, info: pathInfo)
       else:
         # remove symbol, inline type:
         dest.shrink dest.len-1
@@ -5006,7 +4963,7 @@ proc readBindSymRule(arg: Cursor): string =
 
 proc semBindSymName(c: var SemContext; dest: var TokenBuf; it: var Item) =
   ## `bindSym(t: var NifBuilder; name: string; rule: BindSymRule = brClosed)` —
-  ## sem-time magic for nim3plugins that resolves `name` in the *current*
+  ## sem-time magic for plugins that resolves `name` in the *current*
   ## (plugin module's def-site) scope and rewrites the call to a runtime
   ## helper that appends the resolved symbol(s) into `t`:
   ##
@@ -5086,7 +5043,7 @@ proc semBindSymName(c: var SemContext; dest: var TokenBuf; it: var Item) =
     nifText.add ")"
 
   # Synthesize: bindSymHelper(<t expr>, "<nifText>") and re-sem so the helper
-  # ident binds to `lib/nim3plugins.bindSymHelper` and the call type-checks.
+  # ident binds to `lib/plugins.bindSymHelper` and the call type-checks.
   var synthBuf = createTokenBuf(16 + tBuf.len)
   synthBuf.copyIntoKind CallS, tInfo:
     synthBuf.addIdent "bindSymHelper", tInfo
@@ -5914,61 +5871,31 @@ proc semPragmaLine(c: var SemContext; dest: var TokenBuf; it: var Item; isPragma
       dest.addParRi() # close (pragmas)
       dest.addParRi() # close (cast)
   of PluginP:
-    # `.plugin:` accepts either `"path"` (old form → pcNim2) or
-    # `("path", "<version>")` (new form). Parse first, validate, *then* emit
-    # — so a bad version doesn't leave a half-written tree behind.
+    # `.plugin: "path"` — single-string form. (The historical
+    # `("path", "<version>")` tuple form was removed when the Nim 2 plugin
+    # compile path went away.)
     let pragInfo = it.n.info
     inc it.n
     var path = StrId(0)
-    var ver = ""
     var pathInfo = it.n.info
-    var isTup = false
     var errMsg = ""
     if it.n.kind == StringLit:
       path = it.n.litId
       pathInfo = it.n.info
       inc it.n
-    elif it.n.exprKind == TupX:
-      isTup = true
-      inc it.n                          # past (tup
-      if it.n.kind == StringLit:
-        path = it.n.litId
-        pathInfo = it.n.info
-        inc it.n
-      else:
-        errMsg = "plugin path must be a string literal"
-        if it.n.kind == ParLe: skip it.n else: inc it.n
-      if errMsg.len == 0:
-        if it.n.kind == StringLit:
-          ver = pool.strings[it.n.litId]
-          inc it.n
-        else:
-          errMsg = "plugin version must be a string literal"
-          if it.n.kind == ParLe: skip it.n else: inc it.n
-      while it.n.kind != ParRi: skip it.n
-      inc it.n                          # close TupX
     else:
-      errMsg = "expected `string` or `(path, version)` tuple"
+      errMsg = "plugin path must be a string literal"
       if it.n.hasMore: skip it.n
     if path != StrId(0) and errMsg.len == 0:
-      let (compiler, ok) = parsePluginCompiler(ver)
-      if not ok:
-        errMsg = "unknown plugin compiler: '" & ver & "' (expected \"v2\" or \"nimony\")"
-      elif c.routine.inGeneric == 0 and path notin c.pluginBlacklist:
-        c.pendingModulePlugins.add PluginRef(path: path, compiler: compiler, info: pathInfo)
+      if c.routine.inGeneric == 0 and path notin c.pluginBlacklist:
+        c.pendingModulePlugins.add PluginRef(path: path, info: pathInfo)
     skipParRi it.n                      # close the original (plugin ...)
     dest.add parLeToken(PragmasS, pragInfo)
     dest.add parLeToken(PluginP, pragInfo)
     if errMsg.len > 0:
       buildErr c, dest, pathInfo, errMsg
     elif path != StrId(0):
-      if isTup:
-        dest.add parLeToken(TupX, pathInfo)
-        dest.add strToken(path, pathInfo)
-        dest.add strToken(pool.strings.getOrIncl(ver), pathInfo)
-        dest.addParRi()
-      else:
-        dest.add strToken(path, pathInfo)
+      dest.add strToken(path, pathInfo)
     dest.addParRi()                     # close (plugin
     dest.addParRi()                     # close (pragmas
   of PragmaP:

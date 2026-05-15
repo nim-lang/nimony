@@ -36,6 +36,8 @@ proc tagToNimNodeKind(tag: string): NimNodeKind =
   of "range": nnkRange
   # Statements
   of "stmts": nnkStmtList
+  of "expr": nnkStmtListExpr
+  of "unpackflat": nnkVarTuple
   of "asgn": nnkAsgn
   of "var": nnkVarSection
   of "let": nnkLetSection
@@ -141,13 +143,15 @@ proc nimNodeKindToTag(k: NimNodeKind): string =
   of nnkConv, nnkHiddenStdConv, nnkHiddenSubConv: "conv"
   of nnkIfExpr, nnkIfStmt: "if"
   of nnkWhenExpr, nnkWhenStmt: "when"
-  of nnkStmtList, nnkStmtListExpr: "stmts"
+  of nnkStmtList: "stmts"
+  of nnkStmtListExpr: "expr"
   of nnkBlockExpr, nnkBlockStmt: "block"
   of nnkAsgn, nnkFastAsgn: "asgn"
   of nnkVarSection: "var"
   of nnkLetSection: "let"
   of nnkConstSection: "const"
-  of nnkIdentDefs, nnkVarTuple: "param"  # close enough
+  of nnkIdentDefs: "param"  # close enough — unwrapped in var/let parents
+  of nnkVarTuple: "unpackflat"
   of nnkElifBranch: "elif"
   of nnkElse: "else"
   of nnkCaseStmt: "case"
@@ -300,6 +304,29 @@ proc toNif*(b: var Builder; n: NimNode) =
   of nnkNilLit:
     b.withTree "nil":
       discard
+  of nnkVarSection, nnkLetSection, nnkConstSection:
+    # NIF expects var/let/const children to be inline:
+    #   (var :name . . type value)        -- 5 slots: name, export, pragma, type, value
+    # not Nim's wrapped form:
+    #   (var (identdefs name type value)) -- 3 slots in IdentDefs: name, type, value
+    # Unwrap each nnkIdentDefs and pad with two empty slots (export marker
+    # and pragma) so the result matches what nifler emits.
+    let tag = nimNodeKindToTag(n.kind)
+    b.withTree tag:
+      for c in n.kids:
+        if c.kind == nnkIdentDefs and c.len == 3:
+          # name
+          b.toNif(c.kids[0])
+          # export marker (none)
+          b.addEmpty()
+          # pragmas (none)
+          b.addEmpty()
+          # type
+          b.toNif(c.kids[1])
+          # value
+          b.toNif(c.kids[2])
+        else:
+          b.toNif(c)
   else:
     let tag = nimNodeKindToTag(n.kind)
     if tag.len > 0:

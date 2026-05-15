@@ -5,7 +5,7 @@
 # local definition.
 import std / syncio
 
-template wrapEcho(s: string) {.plugin: ("deps/mplugin_bindsym", "nimony").}
+template wrapEcho(s: string) {.plugin: "deps/mplugin_bindsym".}
 
 # Even with a misleading local `echo` proc, the macro should bind to the
 # system one via bindSym.

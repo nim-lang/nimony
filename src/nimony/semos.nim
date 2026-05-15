@@ -336,8 +336,9 @@ proc runValidatorOnPlugin(c: var SemContext; nf: string) =
     return
   exec quoteShell(v) & " " & quoteShell(nf)
 
-proc compilePlugin(c: var SemContext; info: PackedLineInfo; nf, exefile: string;
-                   compiler: PluginCompiler) =
+proc compilePlugin(c: var SemContext; info: PackedLineInfo; nf, exefile: string) =
+  ## Build a plugin's `.nim` source as an executable. Plugins import
+  ## `lib/plugins.nim` and are compiled by Nimony itself.
   runValidatorOnPlugin(c, nf)
   let pluginDir = nimonyDir() / "src/nimony/lib"
   let pluginCache = exefile & "_d"
@@ -348,30 +349,17 @@ proc compilePlugin(c: var SemContext; info: PackedLineInfo; nf, exefile: string;
       createDir(Path(pluginCache))
   except:
     quit "FAILURE: cannot create directory " & pluginCache
-  case compiler
-  of pcNim2:
-    let cmd = "nim c -d:nimonyPlugin --nimcache:" & quoteShell(pluginCache) &
-      " -o:" & quoteShell(exefile) & " -p:" & quoteShell(pluginDir) &
-      " " & quoteShell(nf)
-    exec cmd
-  of pcNimony:
-    # Nimony-compiled plugins use `lib/nim3plugins.nim` (a nimony-ported
-    # mirror of `lib/nimonyplugins.nim`). Plugin authors who want this path
-    # switch their `import nimonyplugins` to `import nim3plugins`; everything
-    # else (the `.plugin: "path"` declaration syntax, the run-time IO
-    # contract) stays the same.
-    #
-    # `--nimcache:<pluginCache>` keeps the sub-compile's intermediate NIF
-    # artefacts in a per-plugin scratch dir (same convention pcNim2 uses) so
-    # parallel test workers don't fight over `nimcache/` entries.
-    let nimonyExe = findTool("nimony")
-    let srcLibPath = nimonyDir() / "src" / "lib"
-    let cmd = quoteShell(nimonyExe) &
-      " --nimcache:" & quoteShell(pluginCache) &
-      " --path:" & quoteShell(pluginDir) &
-      " --path:" & quoteShell(srcLibPath) &
-      " -o:" & quoteShell(exefile) & " c " & quoteShell(nf)
-    exec cmd
+  # `--nimcache:<pluginCache>` keeps the sub-compile's intermediate NIF
+  # artefacts in a per-plugin scratch dir so parallel test workers don't
+  # fight over `nimcache/` entries.
+  let nimonyExe = findTool("nimony")
+  let srcLibPath = nimonyDir() / "src" / "lib"
+  let cmd = quoteShell(nimonyExe) &
+    " --nimcache:" & quoteShell(pluginCache) &
+    " --path:" & quoteShell(pluginDir) &
+    " --path:" & quoteShell(srcLibPath) &
+    " -o:" & quoteShell(exefile) & " c " & quoteShell(nf)
+  exec cmd
 
 proc writeFileIfChanged(file, content: string) {.canRaise.} =
   if os.fileExists(file) and readFile(file) == content:
@@ -381,7 +369,7 @@ proc writeFileIfChanged(file, content: string) {.canRaise.} =
     writeFile file, content
 
 proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
-                pluginName: string; compiler: PluginCompiler;
+                pluginName: string;
                 input: string; additionalInput = "") =
   let p = splitFile(pluginName)
   let checksumA = if additionalInput.len > 0: "_" & computeChecksum(additionalInput) else: ""
@@ -393,7 +381,7 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
 
   let nf = resolveFile(c.g.config.paths, getFile(info), pluginName)
   if needsRecompile(nf, pluginExe):
-    compilePlugin(c, info, nf, pluginExe, compiler)
+    compilePlugin(c, info, nf, pluginExe)
 
   try:
     writeFileIfChanged(inputFile, input)

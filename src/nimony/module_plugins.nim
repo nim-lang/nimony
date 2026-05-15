@@ -25,13 +25,13 @@ proc handleTypePlugins*(c: var SemContext; dest: var TokenBuf) =
     types.addParRi()
 
     var destB = createTokenBuf(3000)
-    runPlugin(c, destB, p.info, pool.strings[p.path], p.compiler, inp.toString, types.toString)
+    runPlugin(c, destB, p.info, pool.strings[p.path], inp.toString, types.toString)
     inp = ensureMove destB
 
   for p in c.pendingModulePlugins:
     c.pluginBlacklist.incl(p.path)
     var destB = createTokenBuf(3000)
-    runPlugin(c, destB, p.info, pool.strings[p.path], p.compiler, inp.toString)
+    runPlugin(c, destB, p.info, pool.strings[p.path], inp.toString)
     inp = ensureMove destB
 
   c.pendingTypePlugins.clear()
