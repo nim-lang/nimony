@@ -865,7 +865,8 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
 
   if kind == MacroY and pass == checkBody:
     let macroDecl = cursorAt(dest, declStart)
-    let macroBinPath = compileMacroPlugin(c.g.config.nifcachePath, macroDecl, symId, info)
+    let macroBinPath = compileMacroPlugin(c.g.config.nifcachePath, macroDecl, symId, info,
+                                          c.commandLineArgs)
     endRead(dest)
     if macroBinPath.len > 0:
       c.compiledMacros[symId] = macroBinPath

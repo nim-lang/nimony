@@ -250,7 +250,8 @@ proc getMacroPluginPath*(nifcachePath: string; macroSym: SymId): string =
     result.add ".exe"
 
 proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymId;
-                         info: lineinfos.PackedLineInfo): string =
+                         info: lineinfos.PackedLineInfo;
+                         commandLineArgs: string): string =
   ## Build the plugin module straight from NIF (no Nim text round-trip), write
   ## it as a `.p.nif`, and have Nimony compile it through `s` (the NIF-input
   ## entry point — same one CTFE uses in `semos.runEval`).
@@ -284,7 +285,15 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
   # same per-worker directory we wrote it to. Without this, `nimony s` falls
   # back to its default `nimcache/` and can't find the deps file under
   # parallel test execution (CI uses `nimcache/.par/<n>/` per worker).
-  let cmd = quoteShell(nimonyExe) &
+  #
+  # Forward the outer compile's command-line args (notably `--cc`) so the
+  # nested build's nifmake-cmd signatures match the outer's. Otherwise
+  # nifmake's per-cmd staleness check sees a different argv for `nimsem ...
+  # m sysvq0asl.p.nif`, decides the existing `sysvq0asl.s.nif` is stale,
+  # and tries to overwrite it — which on Windows fails because the outer
+  # nimsem (currently paused waiting on this exec) still has it mmap'd.
+  # Same rationale as `semos.runProgram` / `semos.prepareEval`.
+  let cmd = quoteShell(nimonyExe) & commandLineArgs &
             " --path:" & quoteShell(srcLibPath) &
             " --nimcache:" & quoteShell(nifcachePath) &
             " -o:" & quoteShell(exePath) &
