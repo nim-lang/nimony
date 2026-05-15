@@ -14,7 +14,7 @@ proc tr(n: NifCursor): NifBuilder =
   var head = if n.stmtKind == StmtsS: firstChild(n) else: n
   result.withTree StmtsS, info:
     result.withTree CallS, info:
-      result.addSymUse bindSym("echo"), info
+      result.bindSym "echo"
       result.takeTree head
 
 var inp = loadPluginInput()

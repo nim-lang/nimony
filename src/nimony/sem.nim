@@ -5005,47 +5005,97 @@ proc readBindSymRule(arg: Cursor): string =
     result = ""
 
 proc semBindSymName(c: var SemContext; dest: var TokenBuf; it: var Item) =
-  ## `bindSymName(name: string): string` — sem-time magic that resolves `name`
-  ## in the *current* (module's def-site) scope and emits the fully-qualified
-  ## symbol name as a `StringLit`. Used by nim3plugins so plugin authors can
-  ## get a hygienic spelling of a system/imported symbol that survives the
-  ## plugin's IO round-trip and lands as a NIF `Symbol` token at the call
-  ## site (via `addSymUse(builder, name)`).
-  inc it.n                                # skip (bindSymName
+  ## `bindSym(t: var NifBuilder; name: string; rule: BindSymRule = brClosed)` —
+  ## sem-time magic for nim3plugins that resolves `name` in the *current*
+  ## (plugin module's def-site) scope and rewrites the call to a runtime
+  ## helper that appends the resolved symbol(s) into `t`:
+  ##
+  ##   bindSymHelper(<t expr>, "<NIF text>")
+  ##
+  ## where the NIF text is either a single fully-qualified symbol (one match)
+  ## or a `(cchoice …)` / `(ochoice …)` sym-choice subtree (multiple matches).
+  ## `brForceOpen` always wraps in `(ochoice …)`, even for a single match, so
+  ## call-site sem augments the candidate set.
+  ##
+  ## Round-tripping the symbol(s) through text keeps the magic simple — we
+  ## only need to splice the `t` argument into the synthesized call; the
+  ## actual symbol-token reconstruction happens at plugin runtime via
+  ## `parseNifBuffer`.
+  inc it.n                                # skip (bindSym
+
+  # First arg: the builder. Capture its tokens so we can re-emit it inside
+  # the synthesized call.
+  let tInfo = it.n.info
+  var tBuf = createTokenBuf(8)
+  tBuf.addSubtree it.n
+  skip it.n
+
+  # Second arg: the name string literal.
   let info = it.n.info
   let orig = it.n
   if it.n.kind != StringLit:
     c.buildErr dest, info,
-      "bindSymName expects a string literal, got: " & asNimCode(orig), orig
+      "bindSym expects a string literal as the name, got: " & asNimCode(orig), orig
     while it.n.kind != ParRi: skip it.n
     skipParRi it.n
     return
   let nameStr = pool.strings[it.n.litId]
   skip it.n                               # consume the StringLit
+
+  # Optional third arg: rule (default brClosed).
+  var ruleName = "brClosed"
+  if it.n.kind != ParRi:
+    let r = readBindSymRule(it.n)
+    if r.len > 0:
+      ruleName = r
+    skip it.n
   skipParRi it.n                          # consume )
 
   let identifier = pool.strings.getOrIncl(nameStr)
   var choiceBuf = createTokenBuf(8)
   let n = buildSymChoice(c, choiceBuf, identifier, info, FindAll)
   if n == 0:
-    c.buildErr dest, info, "bindSymName: undeclared identifier: '" & nameStr & "'", orig
+    c.buildErr dest, info, "bindSym: undeclared identifier: '" & nameStr & "'", orig
     return
-  var choice = beginRead(choiceBuf)
-  if choice.kind == ParLe:
-    inc choice                            # past (ochoice
-  if choice.kind != Symbol:
-    endRead(choiceBuf)
-    c.buildErr dest, info,
-      "bindSymName: cannot resolve '" & nameStr & "' to a symbol", orig
-    return
-  let resolvedSym = choice.symId
-  endRead(choiceBuf)
 
-  let beforeExpr = dest.len
-  dest.addStrLit pool.syms[resolvedSym], info
-  let expected = it.typ
-  it.typ = c.types.stringType
-  commonType c, dest, it, beforeExpr, expected
+  var resolved: seq[SymId] = @[]
+  var choice = beginRead(choiceBuf)
+  if choice.kind == Symbol:
+    resolved.add choice.symId
+  elif choice.kind == ParLe:
+    inc choice
+    while choice.kind == Symbol:
+      resolved.add choice.symId
+      inc choice
+  endRead(choiceBuf)
+  if resolved.len == 0:
+    c.buildErr dest, info, "bindSym: cannot resolve '" & nameStr & "' to a symbol", orig
+    return
+
+  let forceOpen = ruleName == "brForceOpen"
+  var nifText = ""
+  if resolved.len == 1 and not forceOpen:
+    nifText = pool.syms[resolved[0]]
+  else:
+    let tag = if ruleName == "brClosed": "cchoice" else: "ochoice"
+    nifText.add "("
+    nifText.add tag
+    for s in resolved:
+      nifText.add " "
+      nifText.add pool.syms[s]
+    nifText.add ")"
+
+  # Synthesize: bindSymHelper(<t expr>, "<nifText>") and re-sem so the helper
+  # ident binds to `lib/nim3plugins.bindSymHelper` and the call type-checks.
+  var synthBuf = createTokenBuf(16 + tBuf.len)
+  synthBuf.copyIntoKind CallS, tInfo:
+    synthBuf.addIdent "bindSymHelper", tInfo
+    synthBuf.addSubtree(beginRead(tBuf))
+    synthBuf.addStrLit nifText, info
+  synthBuf.addParRi()  # extra closer so the final `inc` after sem doesn't run off
+  var inner = Item(n: cursorAt(synthBuf, 0), typ: it.typ)
+  semExpr c, dest, inner
+  it.typ = inner.typ
 
 proc semBindSym(c: var SemContext; dest: var TokenBuf; it: var Item) =
   ## `bindSym(name: string; rule: BindSymRule = brClosed): NimNode` — resolve

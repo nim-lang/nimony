@@ -346,17 +346,44 @@ proc addSymUse*(t: var NifBuilder; s: string; info: LineInfo = NoLineInfo) =
   prepareMutation(t)
   t.p[].buf.addSymUse(pool.syms.getOrIncl(s), info)
 
-proc bindSym*(name: string): string {.magic: BindSymName.}
-  ## Hygienic symbol reference for nim3plugins-style plugins. At sem time
-  ## (when nimony compiles the plugin source) `name` is resolved in the
-  ## plugin module's *definition* scope and replaced with the fully-qualified
-  ## symbol name as a string literal. Pass the returned string to
-  ## `addSymUse(t, bindSym(...), info)` to emit a NIF Symbol token that
-  ## sem at the *user's* call site treats as already-resolved — so the
-  ## plugin's generated reference bypasses caller-site scope lookups,
-  ## preserving hygiene against shadowing.
+type
+  BindSymRule* = enum
+    ## Selector for `bindSym`'s third argument. Mirrors `lib/std/macros.nim`'s
+    ## enum of the same name so the macro and plugin paths share semantics.
+    brClosed     ## Default: candidates fixed at the plugin's def-site;
+                 ## sem at the call site won't add further overloads.
+    brOpen       ## Open: sem at the call site augments the choice with
+                 ## call-site visible overloads (full Nim-style mixin).
+    brForceOpen  ## Always emit a sym-choice subtree, even with one match,
+                 ## so call-site sem still augments the candidate set.
+
+proc bindSymHelper*(t: var NifBuilder; nifText: string) =
+  ## Runtime helper: parse `nifText` (a NIF source fragment) and append the
+  ## resulting tokens to `t`. Called by `bindSym`'s sem rewrite — not intended
+  ## for direct use.
+  prepareMutation(t)
+  t.p[].buf.add parseNifBuffer(nifText)
+
+proc bindSym*(t: var NifBuilder; name: string;
+              rule: BindSymRule = brClosed) {.magic: BindSymName.}
+  ## Hygienic symbol reference for nimony-compiled plugins.
   ##
-  ## `name` must be a string literal (sem rejects non-literal arguments).
+  ## At plugin sem time, `name` is resolved in the plugin module's *definition*
+  ## scope and the call is rewritten to `bindSymHelper(t, "<NIF text>")` where
+  ## the NIF text is either a single fully-qualified symbol (one match) or a
+  ## `(cchoice …)` / `(ochoice …)` sym-choice subtree (multiple matches).
+  ## At plugin runtime the helper appends those tokens to `t`.
+  ##
+  ## Single match emits one Symbol atom; multiple matches emit a `(cchoice …)`
+  ## (closed) or `(ochoice …)` (open) subtree. `brForceOpen` always wraps in
+  ## an `(ochoice …)`, even with one match, so call-site sem can still
+  ## augment the candidate set.
+  ##
+  ## Because the symbol is resolved against the *plugin module's* scope, the
+  ## emitted reference bypasses caller-site lookups and survives shadowing in
+  ## the user's module.
+  ##
+  ## `name` must be a string literal — sem rejects non-literal arguments.
 
 proc addEmptyNode*(t: var NifBuilder; info: LineInfo = NoLineInfo) =
   ## Appends a single empty placeholder node (`.`) to `t`.
@@ -779,7 +806,7 @@ proc isNifIdentStart(c: char): bool {.inline.} =
 proc isNifIdentChar(c: char): bool {.inline.} =
   c in {'a'..'z', 'A'..'Z', '0'..'9', '_'}
 
-proc parseNifBuffer(text: string): TokenBuf =
+proc parseNifBuffer*(text: string): TokenBuf =
   result = parseFromBuffer(text, "")
   if result.len > 0 and result[result.len-1].kind == EofToken:
     result.shrink(result.len-1)
