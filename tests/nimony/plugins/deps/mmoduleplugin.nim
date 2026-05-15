@@ -1,5 +1,4 @@
-
-import nimonyplugins
+import plugins
 
 proc trAux(t: var Replacer) =
   if t.isAtom:

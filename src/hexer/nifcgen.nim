@@ -1242,7 +1242,7 @@ proc isSimpleLiteral(nb: var Cursor): bool =
         DdotX, HaddrX, NewrefX, NewobjX, TupX, TupconstrX,
         SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX,
         DconvX, CallstrlitX, InfixX, PrefixX, HcallX,
-        CompilesX, DeclaredX, DefinedX, AstToStrX,
+        CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
         InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
         DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
@@ -1492,7 +1492,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         trExpr c, dest, n
       takeParRi dest, n
     of ErrX, NewobjX, NewrefX, SetconstrX, PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
-       InsetX, CardX, BracketX, CurlyX, TupX, CompilesX, DeclaredX, DefinedX, AstToStrX, HighX, LowX, TypeofX, UnpackX,
+       InsetX, CardX, BracketX, CurlyX, TupX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, UnpackX,
        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX, DefaulttupX, DefaultdistinctX, DoX, CchoiceX, OchoiceX,
        EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, CurlyatX, PragmaxX, QuotedX, TabconstrX,
        InstanceofX, ProccallX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX, DelayX, Delay0X, SuspendX:

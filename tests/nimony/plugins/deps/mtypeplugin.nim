@@ -1,7 +1,7 @@
 
 import std / [os, strutils, tables]
 
-import nimonyplugins
+import plugins
 
 
 template traverse*(n: var NifCursor, body: untyped) =
@@ -40,7 +40,7 @@ proc trAsgn(n: var NifCursor, o: var NifBuilder) =
         # `n` — the outer loop's `skip` below handles that.
         var dot = firstChild(n)
         if dot.kind == Symbol and dot.symId in knownInstances and
-           knownInstances[dot.symId] in knownOnChanged:
+           knownInstances.getOrQuit(dot.symId) in knownOnChanged:
           instance = dot
           skip dot                       # past receiver (atom)
           if dot.kind == Symbol:
@@ -52,7 +52,7 @@ proc trAsgn(n: var NifCursor, o: var NifBuilder) =
   o.takeTree(n)
   if emitOnChanged:
     o.withTree CallS, info:
-      o.addSymUse knownOnChanged[knownInstances[instance.symId]], info
+      o.addSymUse knownOnChanged.getOrQuit(knownInstances.getOrQuit(instance.symId)), info
       o.addSubtree(instance)
       o.addSubtree(access)
       o.addStrLit fieldName

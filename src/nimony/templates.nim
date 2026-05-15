@@ -98,15 +98,20 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
     while p.hasMore:
       if p.pragmaKind == PluginP:
         p.into PluginP:
+          # `.plugin: "path"` — single-string form only.
+          var path = StrId(0)
+          var pathInfo = p.info
           if p.kind == StringLit:
+            path = p.litId
+            pathInfo = p.info
+          if path != StrId(0):
             var b = createTokenBuf(30)
             b.addParLe StmtsS, args.info
             var a = args
             while a.hasMore:
               b.takeTree a
             b.addParRi()
-
-            runPlugin(c, dest, p.info, pool.strings[p.litId], b.toString)
+            runPlugin(c, dest, pathInfo, pool.strings[path], b.toString)
             result = true
           while p.hasMore: skip p
         if result: return

@@ -408,8 +408,14 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     result = c.builtins.boolType
   of NegX, NeginfX, NanX, InfX:
     result = c.builtins.floatType
-  of EnumtostrX, DefaultobjX, DefaulttupX, DefaultdistinctX, InternalTypeNameX, AstToStrX:
+  of EnumtostrX, DefaultobjX, DefaulttupX, DefaultdistinctX, InternalTypeNameX,
+     AstToStrX, BindSymNameX:
     result = c.builtins.stringType
+  of BindSymX:
+    # bindSym returns NimNode. By the time typenav is reached, sem has
+    # already rewritten the call to `newSymNode(...)`, so this branch
+    # mainly exists for case-completeness.
+    result = c.builtins.autoType
   of SizeofX, CardX, AlignofX, OffsetofX:
     result = c.builtins.intType
   of DelayX, Delay0X, SuspendX:

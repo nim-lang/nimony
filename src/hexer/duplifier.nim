@@ -125,7 +125,7 @@ proc constructsValue*(n: Cursor; derefConstructs = true): bool =
         LeX, LtX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX,
         QuotedX, DdotX, HaddrX, NewrefX, NewobjX, TupX, TupconstrX,
         SetconstrX, TabconstrX, AshrX, CallstrlitX, InfixX, PrefixX,
-        HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX,
+        HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
         InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
         DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX, Delay0X,
@@ -153,7 +153,7 @@ proc lvalueRoot(n: Cursor; hdrefs: var bool): SymId =
         QuotedX, DdotX, HaddrX, NewrefX, NewobjX, TupX, TupconstrX,
         SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX,
         CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, DeclaredX,
-        DefinedX, AstToStrX, InstanceofX, ProccallX, HighX, LowX,
+        DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX,
         TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
         IsmainmoduleX, DefaultobjX, DefaulttupX, DefaultdistinctX,
         DelayX, Delay0X, SuspendX, ExprX, DoX, PlussetX, MinussetX,
@@ -272,7 +272,7 @@ proc isSimpleExpression(n: var Cursor): bool =
         QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
         TupconstrX, SetconstrX, TabconstrX, AshrX, BaseobjX,
         CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, DeclaredX,
-        DefinedX, AstToStrX, InstanceofX, ProccallX, HighX, LowX,
+        DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX,
         TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
         IsmainmoduleX, DefaultobjX, DefaulttupX, DefaultdistinctX,
         DelayX, Delay0X, SuspendX, DoX, ArratX, TupatX, PlussetX,
@@ -668,8 +668,12 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
           takeToken c.dest, n
           c.typeCache.takeLocalHeader(c.dest, n, kind)
           inc nested
-        of ProcS, FuncS, ConverterS, MethodS, MacroS:
+        of ProcS, FuncS, ConverterS, MethodS:
           trProcDecl c, n, parentNodestroy = true
+        of MacroS:
+          # Macro bodies live in the out-of-process plugin binary; pass
+          # the whole decl through opaquely.
+          takeTree c.dest, n
         of ScopeS:
           c.typeCache.openScope()
           takeToken c.dest, n
@@ -698,7 +702,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
           HaddrX, NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
           TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX,
           InfixX, PrefixX, HcallX, CompilesX, DeclaredX, DefinedX,
-          AstToStrX, InstanceofX, ProccallX, HighX, LowX, TypeofX,
+          AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX, TypeofX,
           UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
           DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
           Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX, PlussetX,
@@ -1188,7 +1192,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
        AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
        PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX,
        EqX, NeqX, LeX, LtX, InfX, NeginfX, NanX, CompilesX, DeclaredX,
-       DefinedX, AstToStrX, HighX, LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, QuotedX,
+       DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, QuotedX,
        AddrX, HaddrX, AlignofX, OffsetofX, ErrX, OvfX, InstanceofX, InternalTypeNameX,
        InternalFieldPairsX, IsX:
       trSons c, n, WantNonOwner
@@ -1217,13 +1221,17 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         trAsgn c, n
       of LocalDecls:
         trLocal c, n, k
-      of ProcS, FuncS, ConverterS, MethodS, MacroS:
+      of ProcS, FuncS, ConverterS, MethodS:
         trProcDecl c, n
       of ScopeS:
         c.typeCache.openScope()
         trSons c, n, WantNonOwner
         c.typeCache.closeScope()
-      of BreakS, ContinueS, IteratorS:
+      of BreakS, ContinueS, IteratorS, MacroS, TemplateS:
+        # Macros are compiled into out-of-process plugins by `nimony`
+        # itself; templates are expanded at call-sites. Neither has a
+        # body that participates in the regular lowering pipeline, so
+        # pass the decl through verbatim.
         takeTree c.dest, n
       else:
         trSons c, n, WantNonOwner

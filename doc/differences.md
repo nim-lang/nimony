@@ -19,6 +19,8 @@
 - Macros are replaced by compiler plugins which will offer a different API.
 - Multi-methods are gone for good, use single dispatch methods.
 - Cyclic module dependencies are allowed if an explicit `cyclic` import statement is used: `import (path / module) {.cyclic.}`.
+- Nimony is case sensitive. Use the new `{.feature: "ignoreStyle".}` statement to enable Nim 2's partial case sensitivity on a per module basis.
+
 - The side-effect system works differently:
   - `func`, `iterator` and `converter` are treated as `noSideEffect` by default.
   - `proc` is treated as `sideEffect` by default.
@@ -56,10 +58,10 @@ Nimony currently lacks these features:
   - `tags` annotations are ignored. Tag mismatches should produce warnings in Nim 3 with the option to turn these warnings into errors.
   - `raises: []` is the new default and ignored. `raises: <list here>` is mapped to `.raises` (but this needs to be changed to an exception system compatible with Nim's).
   - `gcsafe` is ignored.
+- Closure iterators.
+- Implicit generics where routines can leave out the `[T]` section but instead are generic as they use a type class such as `SomeInt` are not supported in Nimony.
 
 
 # Open questions (the ugly)
 
-Nimony is case sensitive. It is unclear at this point if Nim 3 should keep Nim 2's partial case sensitivity as in my experience this feature didn't pull its weight: Libraries can still use wildly different styles like routines using UpperCase and partial case sensitivity doesn't help. Enforcing the style via the compiler seems to work better.
-
-Implicit generics where routines can leave out the `[T]` section but instead are generic as they use a type class such as `SomeInt` are not supported in Nimony and it is unclear if they should be supported by Nim 3.
+I am currently not aware of any "open questions", the design is complete.

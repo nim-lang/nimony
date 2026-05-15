@@ -21,7 +21,7 @@ import nimony_model, symtabs, builtintypes, decls, asthelpers,
   intervals, xints, typeprops,
   semdata, sembasics, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
   semuntyped, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec, langmodes,
-  features, identstyle
+  features, identstyle, macro_plugin
 
 import contracts_njvl
 
@@ -1544,7 +1544,7 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     if hasParRi and n.hasMore:
       semConstStrExprIgnoreTopLevel c, dest, n
     dest.addParRi()
-  of ImportcP, ImportcppP, ExportcP, HeaderP, DynlibP, PluginP:
+  of ImportcP, ImportcppP, ExportcP, HeaderP, DynlibP:
     crucial.flags.incl pk
     let info = n.info
     dest.add parLeToken(pk, info)
@@ -1574,6 +1574,41 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
       crucial.headerFileTok = dest[idx]
     # Finalize expression
     dest.addParRi()
+  of PluginP:
+    # `.plugin: "path"` — single-string form. (The historical
+    # `("path", "<version>")` tuple form, which selected between the Nim 2
+    # and Nimony compilers, was removed when the Nim 2 plugin path went away.)
+    crucial.flags.incl pk
+    let pragInfo = n.info
+    inc n
+    var path = StrId(0)
+    var pathInfo = n.info
+    var errMsg = ""
+    var alreadyErr = false
+    if hasParRi:
+      if n.kind == StringLit:
+        path = n.litId
+        pathInfo = n.info
+        inc n
+      elif n.exprKind == ErrX:
+        # Re-sem path: a previous sem pass already produced an err. Pass
+        # through without re-reporting.
+        alreadyErr = true
+        var passBuf = createTokenBuf(8)
+        passBuf.takeTree n
+        dest.add parLeToken(pk, pragInfo)
+        dest.add passBuf
+        dest.addParRi()
+      else:
+        errMsg = "plugin path must be a string literal"
+        if n.hasMore: skip n
+    if not alreadyErr:
+      dest.add parLeToken(pk, pragInfo)
+      if errMsg.len > 0:
+        buildErr c, dest, pathInfo, errMsg
+      elif path != StrId(0):
+        dest.add strToken(path, pathInfo)
+      dest.addParRi()
   of AlignP, BitsP, SizeP:
     dest.add parLeToken(pk, n.info)
     inc n
@@ -1923,9 +1958,14 @@ proc semTypeSym(c: var SemContext; dest: var TokenBuf; s: Sym; info: PackedLineI
         # types that should stay as symbols, see sigmatch.matchSymbol
         # but see if it triggers a module plugin:
         let p = extractPragma(typ.pragmas, PluginP)
-        if p != default(Cursor) and p.kind == StringLit:
-          if p.litId notin c.pluginBlacklist:
-            c.pendingTypePlugins[s.name] = (p.litId, p.info)
+        if p != default(Cursor):
+          var path = StrId(0)
+          var pathInfo = p.info
+          if p.kind == StringLit:
+            path = p.litId
+            pathInfo = p.info
+          if path != StrId(0) and path notin c.pluginBlacklist:
+            c.pendingTypePlugins[s.name] = PluginRef(path: path, info: pathInfo)
       else:
         # remove symbol, inline type:
         dest.shrink dest.len-1
@@ -2160,7 +2200,7 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
      BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
      TupconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
-     PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, InstanceofX, ProccallX, HighX,
+     PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX,
      LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX,
      DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
      PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
@@ -2370,7 +2410,7 @@ proc semAsgn(c: var SemContext; dest: var TokenBuf; it: var Item) =
      BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, HaddrX, NewrefX, NewobjX, TupX,
      TupconstrX, SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
-     PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, InstanceofX, ProccallX, HighX,
+     PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX,
      LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX,
      DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
      PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
@@ -4900,6 +4940,205 @@ proc semAstToStr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   it.typ = c.types.stringType
   commonType c, dest, it, beforeExpr, expected
 
+proc readBindSymRule(arg: Cursor): string =
+  ## Best-effort extraction of the second `bindSym` arg as a rule name.
+  ## Accepts an Ident, Symbol, or IntLit (0=brClosed, 1=brOpen, 2=brForceOpen)
+  ## form; falls back to "" if it can't be classified, which the caller
+  ## treats as `brClosed`.
+  case arg.kind
+  of Ident:
+    result = pool.strings[arg.litId]
+  of Symbol:
+    var s = pool.syms[arg.symId]
+    extractBasename s
+    result = s
+  of IntLit:
+    case pool.integers[arg.intId]
+    of 0: result = "brClosed"
+    of 1: result = "brOpen"
+    of 2: result = "brForceOpen"
+    else: result = ""
+  else:
+    result = ""
+
+proc semBindSymName(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  ## `bindSym(t: var NifBuilder; name: string; rule: BindSymRule = brClosed)` —
+  ## sem-time magic for plugins that resolves `name` in the *current*
+  ## (plugin module's def-site) scope and rewrites the call to a runtime
+  ## helper that appends the resolved symbol(s) into `t`:
+  ##
+  ##   bindSymHelper(<t expr>, "<NIF text>")
+  ##
+  ## where the NIF text is either a single fully-qualified symbol (one match)
+  ## or a `(cchoice …)` / `(ochoice …)` sym-choice subtree (multiple matches).
+  ## `brForceOpen` always wraps in `(ochoice …)`, even for a single match, so
+  ## call-site sem augments the candidate set.
+  ##
+  ## Round-tripping the symbol(s) through text keeps the magic simple — we
+  ## only need to splice the `t` argument into the synthesized call; the
+  ## actual symbol-token reconstruction happens at plugin runtime via
+  ## `parseNifBuffer`.
+  inc it.n                                # skip (bindSym
+
+  # First arg: the builder. Capture its tokens so we can re-emit it inside
+  # the synthesized call.
+  let tInfo = it.n.info
+  var tBuf = createTokenBuf(8)
+  tBuf.addSubtree it.n
+  skip it.n
+
+  # Second arg: the name string literal.
+  let info = it.n.info
+  let orig = it.n
+  if it.n.kind != StringLit:
+    c.buildErr dest, info,
+      "bindSym expects a string literal as the name, got: " & asNimCode(orig), orig
+    while it.n.kind != ParRi: skip it.n
+    skipParRi it.n
+    return
+  let nameStr = pool.strings[it.n.litId]
+  skip it.n                               # consume the StringLit
+
+  # Optional third arg: rule (default brClosed).
+  var ruleName = "brClosed"
+  if it.n.kind != ParRi:
+    let r = readBindSymRule(it.n)
+    if r.len > 0:
+      ruleName = r
+    skip it.n
+  skipParRi it.n                          # consume )
+
+  let identifier = pool.strings.getOrIncl(nameStr)
+  var choiceBuf = createTokenBuf(8)
+  let n = buildSymChoice(c, choiceBuf, identifier, info, FindAll)
+  if n == 0:
+    c.buildErr dest, info, "bindSym: undeclared identifier: '" & nameStr & "'", orig
+    return
+
+  var resolved: seq[SymId] = @[]
+  var choice = beginRead(choiceBuf)
+  if choice.kind == Symbol:
+    resolved.add choice.symId
+  elif choice.kind == ParLe:
+    inc choice
+    while choice.kind == Symbol:
+      resolved.add choice.symId
+      inc choice
+  endRead(choiceBuf)
+  if resolved.len == 0:
+    c.buildErr dest, info, "bindSym: cannot resolve '" & nameStr & "' to a symbol", orig
+    return
+
+  let forceOpen = ruleName == "brForceOpen"
+  var nifText = ""
+  if resolved.len == 1 and not forceOpen:
+    nifText = pool.syms[resolved[0]]
+  else:
+    let tag = if ruleName == "brClosed": "cchoice" else: "ochoice"
+    nifText.add "("
+    nifText.add tag
+    for s in resolved:
+      nifText.add " "
+      nifText.add pool.syms[s]
+    nifText.add ")"
+
+  # Synthesize: bindSymHelper(<t expr>, "<nifText>") and re-sem so the helper
+  # ident binds to `lib/plugins.bindSymHelper` and the call type-checks.
+  var synthBuf = createTokenBuf(16 + tBuf.len)
+  synthBuf.copyIntoKind CallS, tInfo:
+    synthBuf.addIdent "bindSymHelper", tInfo
+    synthBuf.addSubtree(beginRead(tBuf))
+    synthBuf.addStrLit nifText, info
+  synthBuf.addParRi()  # extra closer so the final `inc` after sem doesn't run off
+  var inner = Item(n: cursorAt(synthBuf, 0), typ: it.typ)
+  semExpr c, dest, inner
+  it.typ = inner.typ
+
+proc semBindSym(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  ## `bindSym(name: string; rule: BindSymRule = brClosed): NimNode` — resolve
+  ## `name` in the *current* (macro-definition) scope at sem time and replace
+  ## the call with either
+  ##   newSymNode("<full-sym-name>")           (single match)
+  ## or
+  ##   newSymChoiceNode(<rule>, ["<sym1>", …]) (multiple matches)
+  ## The plugin emits the result as `(sym …)` / `(cchoice …)` / `(ochoice …)`,
+  ## which sem at the macro call site treats as already-resolved (closed) or
+  ## as an open-overload set (open).
+  inc it.n                                # skip (bindSym
+  let info = it.n.info
+  let orig = it.n
+  if it.n.kind != StringLit:
+    c.buildErr dest, info,
+      "bindSym expects a string literal, got: " & asNimCode(orig), orig
+    skip it.n
+    while it.n.kind != ParRi: skip it.n
+    skipParRi it.n
+    return
+  let nameStr = pool.strings[it.n.litId]
+  skip it.n                               # consume the StringLit
+
+  # Optional second arg: rule (default brClosed).
+  var ruleName = "brClosed"
+  if it.n.kind != ParRi:
+    let r = readBindSymRule(it.n)
+    if r.len > 0:
+      ruleName = r
+    skip it.n
+  skipParRi it.n                          # consume )
+
+  # Look up `nameStr` in the macro's def scope (== current scope here).
+  let identifier = pool.strings.getOrIncl(nameStr)
+  var choiceBuf = createTokenBuf(8)
+  let n = buildSymChoice(c, choiceBuf, identifier, info, FindAll)
+  if n == 0:
+    c.buildErr dest, info, "bindSym: undeclared identifier: '" & nameStr & "'", orig
+    return
+
+  # Collect every matching symbol from the choice buffer. `buildSymChoice`
+  # writes either a single Symbol token or `(ochoice sym1 sym2 …)`.
+  var resolved: seq[SymId] = @[]
+  var choice = beginRead(choiceBuf)
+  if choice.kind == Symbol:
+    resolved.add choice.symId
+  elif choice.kind == ParLe:
+    inc choice
+    while choice.kind == Symbol:
+      resolved.add choice.symId
+      inc choice
+  endRead(choiceBuf)
+  if resolved.len == 0:
+    c.buildErr dest, info, "bindSym: cannot resolve '" & nameStr & "' to a symbol", orig
+    return
+
+  # Build the synthesized call in a scratch buffer and re-run it through
+  # `semExpr` so the helper Ident binds to `lib/std/macros.newSymNode` /
+  # `newSymChoiceNode` and the call is properly typed.
+  #
+  # Emission rules:
+  #   `brClosed`     single → newSymNode; multi → newSymChoiceNode(brClosed, …)
+  #   `brOpen`       single → newSymNode; multi → newSymChoiceNode(brOpen, …)
+  #   `brForceOpen`  always → newSymChoiceNode(brOpen, …) — even with one match,
+  #                  so sem at the call site augments the choice with
+  #                  call-site-visible overloads instead of treating it as
+  #                  already-resolved.
+  let forceOpen = ruleName == "brForceOpen"
+  var synthBuf = createTokenBuf(16)
+  if resolved.len == 1 and not forceOpen:
+    synthBuf.copyIntoKind CallS, info:
+      synthBuf.addIdent "newSymNode", info
+      synthBuf.addStrLit pool.syms[resolved[0]], info
+  else:
+    synthBuf.copyIntoKind CallS, info:
+      synthBuf.addIdent "newSymChoiceNode", info
+      synthBuf.addIdent ruleName, info
+      synthBuf.copyIntoKind BracketX, info:
+        for s in resolved:
+          synthBuf.addStrLit pool.syms[s], info
+  synthBuf.addParRi()  # extra closer so the final `inc` after sem doesn't run off
+  var inner = Item(n: cursorAt(synthBuf, 0), typ: it.typ)
+  semExpr c, dest, inner
+  it.typ = inner.typ
+
 proc semIsMainModule(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   inc it.n
@@ -5632,19 +5871,33 @@ proc semPragmaLine(c: var SemContext; dest: var TokenBuf; it: var Item; isPragma
       dest.addParRi() # close (pragmas)
       dest.addParRi() # close (cast)
   of PluginP:
-    dest.add parLeToken(PragmasS, it.n.info)
-    dest.add parLeToken(PluginP, it.n.info)
+    # `.plugin: "path"` — single-string form. (The historical
+    # `("path", "<version>")` tuple form was removed when the Nim 2 plugin
+    # compile path went away.)
+    let pragInfo = it.n.info
     inc it.n
+    var path = StrId(0)
+    var pathInfo = it.n.info
+    var errMsg = ""
     if it.n.kind == StringLit:
-      if c.routine.inGeneric == 0 and it.n.litId notin c.pluginBlacklist:
-        c.pendingModulePlugins.add (it.n.litId, it.n.info)
-      dest.add it.n
+      path = it.n.litId
+      pathInfo = it.n.info
       inc it.n
     else:
-      buildErr c, dest, it.n.info, "expected `string` but got: " & asNimCode(it.n)
+      errMsg = "plugin path must be a string literal"
       if it.n.hasMore: skip it.n
-    takeParRi dest, it.n
-    dest.addParRi()
+    if path != StrId(0) and errMsg.len == 0:
+      if c.routine.inGeneric == 0 and path notin c.pluginBlacklist:
+        c.pendingModulePlugins.add PluginRef(path: path, info: pathInfo)
+    skipParRi it.n                      # close the original (plugin ...)
+    dest.add parLeToken(PragmasS, pragInfo)
+    dest.add parLeToken(PluginP, pragInfo)
+    if errMsg.len > 0:
+      buildErr c, dest, pathInfo, errMsg
+    elif path != StrId(0):
+      dest.add strToken(path, pathInfo)
+    dest.addParRi()                     # close (plugin
+    dest.addParRi()                     # close (pragmas
   of PragmaP:
     dest.add parLeToken(PragmasS, it.n.info)
     dest.add parLeToken(PragmaP, it.n.info)
@@ -6348,6 +6601,10 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       semDeclared c, dest, it
     of AstToStrX:
       semAstToStr c, dest, it
+    of BindSymX:
+      semBindSym c, dest, it
+    of BindSymNameX:
+      semBindSymName c, dest, it
     of IsmainmoduleX:
       semIsMainModule c, dest, it
     of AtX:

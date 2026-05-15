@@ -70,6 +70,10 @@ type
     includedFiles*: seq[string] # will become part of the index file
     importedFiles*: seq[string] # likewise
 
+  PluginRef* = object
+    path*: StrId
+    info*: PackedLineInfo
+
   SemExpressionExecutor* = proc (c: var SemContext; expr: Cursor; expectedType: TypeCursor; result: var TokenBuf; info: PackedLineInfo): string {.nimcall.}
   SemStmtCallback* = proc (c: var SemContext; dest: var TokenBuf; n: Cursor) {.nimcall.}
   SemGetSize* = proc(c: var SemContext; n: Cursor; strict=false): xint {.nimcall.}
@@ -130,8 +134,8 @@ type
     unoverloadableMagics*: HashSet[StrId]
     debugAllowErrors*: bool
     pending*: TokenBuf
-    pendingTypePlugins*: Table[SymId, (StrId, PackedLineInfo)]
-    pendingModulePlugins*: seq[(StrId, PackedLineInfo)]
+    pendingTypePlugins*: Table[SymId, PluginRef]
+    pendingModulePlugins*: seq[PluginRef]
     pluginBlacklist*: HashSet[StrId] # make 1984 fiction again
     cachedTypeboundOps*: Table[(SymId, StrId), seq[SymId]]
     userPragmas*: Table[StrId, TokenBuf]
@@ -154,6 +158,7 @@ type
     genericInnerProcs*: HashSet[SymId] # these are special in that they must be instantiated in specific places
     expanded*: TokenBuf
     forwardDecls*: Table[StrId, seq[SymId]] # forward declaration candidates by name
+    compiledMacros*: Table[SymId, string] # mapping macro SymId to compiled plugin path
     matchedForwardDecls*: HashSet[SymId] ## Forward decls whose matching
       ## implementation has been seen. The proc-decl tokens are still in
       ## `dest` (because we've already moved past them when the match
@@ -210,3 +215,4 @@ proc typeToCursor*(c: var SemContext; buf: TokenBuf; start: int): TypeCursor =
 template emptyNode*(c: var SemContext): Cursor =
   # XXX find a better solution for this
   c.types.voidType
+

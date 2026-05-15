@@ -1,4 +1,4 @@
-import nimonyplugins
+import plugins
 
 proc addEcho(t: var NifBuilder; info: LineInfo; value: string) =
   t.withTree CallS, info:

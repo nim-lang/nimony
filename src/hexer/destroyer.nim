@@ -379,8 +379,12 @@ proc tr(c: var Context; n: var Cursor) =
       trWhile c, n
     of TryS:
       trTry c, n
-    of ProcS, FuncS, MacroS, MethodS, ConverterS:
+    of ProcS, FuncS, MethodS, ConverterS:
       trProcDecl c, n
+    of MacroS:
+      # Macros are out-of-process plugins compiled separately; their
+      # bodies don't participate in lowering.
+      takeTree c.dest, n
     of CallS, CmdS, IteratorS, TemplateS, TypeS, EmitS, AsgnS,
         ScopeS, WhenS, ContinueS, ForS, YldS, StmtsS, PragmasS,
         PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,

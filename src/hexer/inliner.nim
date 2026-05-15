@@ -322,8 +322,11 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trAsgn c, dest, n
       of LocalDecls:
         trLocalDecl c, dest, n
-      of ProcS, FuncS, MacroS, MethodS, ConverterS:
+      of ProcS, FuncS, MethodS, ConverterS:
         trProcDecl c, dest, n
+      of MacroS:
+        # Macro bodies live in the out-of-process plugin binary.
+        takeTree dest, n
       of ScopeS:
         c.typeCache.openScope()
         dest.add n

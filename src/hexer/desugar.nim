@@ -77,7 +77,7 @@ proc needsTemp(n: Cursor): bool =
         ConvX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX, QuotedX,
         HderefX, NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
         TabconstrX, AshrX, BaseobjX, HconvX, CallstrlitX, InfixX,
-        PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX,
+        PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
         InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
         DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
@@ -823,9 +823,9 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
               tr(c, dest, n)
       of LocalDecls:
         trLocal c, dest, n
-      of ProcS, FuncS, MacroS, MethodS, ConverterS:
+      of ProcS, FuncS, MethodS, ConverterS:
         trProc c, dest, n
-      of IteratorS, TemplateS, EmitS, BreakS, ContinueS,
+      of MacroS, IteratorS, TemplateS, EmitS, BreakS, ContinueS,
         ForS, IncludeS, ImportS, FromimportS, ImportexceptS,
         ExportS, CommentS,
         PragmasS:
@@ -888,7 +888,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         HaddrX, NewrefX, NewobjX, TupX, TupconstrX, TabconstrX,
         AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
         PrefixX, HcallX, CompilesX, DeclaredX, DefinedX,
-        AstToStrX, InstanceofX, ProccallX, HighX, LowX, UnpackX,
+        AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
         DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
         Delay0X, SuspendX, DoX, ArratX, TupatX, EmoveX,

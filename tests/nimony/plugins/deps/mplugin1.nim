@@ -1,5 +1,4 @@
-
-import nimonyplugins
+import plugins
 
 proc tr(n: NifCursor): NifBuilder =
   result = createTree()

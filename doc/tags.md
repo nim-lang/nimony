@@ -251,6 +251,8 @@
 | `(declared X)` | NimonyExpr | |
 | `(defined X)` | NimonyExpr | |
 | `(astToStr X)` | NimonyExpr | converts AST to string |
+| `(bindSym X)` | NimonyExpr | hygienic symbol reference inside a macro body: at sem time, resolves the string-literal argument in the macro's *definition* scope and replaces the call with a `(call newSymNode "<full-sym-name>")` so the plugin emits a NIF Symbol token that bypasses call-site lookup |
+| `(bindSymName X)` | NimonyExpr | plugin-side cousin of `bindSym`: at sem time, resolves the string-literal argument in the surrounding module's *definition* scope and replaces the call with a `StringLit` carrying the fully-qualified symbol name. Plugin authors feed the resulting string to `addSymUse(builder, name)` so the emitted NIF contains a resolved `Symbol` token. |
 | `(instanceof X T)` | NimonyExpr | only-fans operator for object privilege checking |
 | `(proccall  X X*)` | NimonyExpr | like the `call` tag but always a static call (no dynamic method) dispatch |
 | `(high X)` | NimonyExpr | |

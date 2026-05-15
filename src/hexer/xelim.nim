@@ -507,7 +507,7 @@ proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; 
        PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX,
        NewobjX, TupX, TupconstrX, SetconstrX, TabconstrX, AshrX,
        BaseobjX, HconvX, DconvX, CallstrlitX, InfixX, PrefixX,
-       HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX,
+       HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
        InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
        DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
@@ -839,12 +839,12 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addTarget tar
   of LocalDecls:
     trLocal c, dest, n
-  of ProcS, FuncS, MacroS, MethodS, ConverterS, IteratorS:
+  of ProcS, FuncS, MethodS, ConverterS, IteratorS:
     trProc c, dest, n
   of BlockS:
     var tar = Target(m: IsIgnored)
     trBlock c, dest, n, tar
-  of TemplateS, TypeS, EmitS, BreakS, ContinueS,
+  of MacroS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
      IncludeS, ImportS, FromimportS, ImportexceptS,
      ExportS, CommentS, AssumeS, AssertS,
      PragmasS, ImportasS, ExportexceptS, BindS, MixinS, UsingS:
@@ -989,7 +989,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
        OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX,
        NewrefX,
        AshrX, BaseobjX, HconvX, DconvX, CompilesX,
-       DeclaredX, DefinedX, AstToStrX, InstanceofX, HighX, LowX,
+       DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, HighX, LowX,
        TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
        IsmainmoduleX, DefaultobjX, DefaulttupX,
        DefaultdistinctX, Delay0X, SuspendX, DoX, ArratX, TupatX,

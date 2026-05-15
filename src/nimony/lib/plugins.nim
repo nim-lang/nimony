@@ -1,7 +1,16 @@
-## API for plugins.
+## API for Nimony plugins.
+##
+## Plugins are out-of-process executables that nimony compiles itself
+## (separate `bin/nimony c` invocation per plugin) and runs at sem time to
+## transform NIF trees attached via the `.plugin` pragma. Authors write
+## `import plugins` and use the `Replacer` API (preferred) or the
+## lower-level `NifBuilder` / `NifCursor` primitives.
+##
+## See `doc/plugins.md` for the full guide.
 
-import std / [assertions, hashes, syncio]
-from std / os import paramStr
+{.feature: "lenientnils".}
+
+import std / [assertions, hashes, syncio, cmdline, formatfloat]
 import ".." / ".." / "lib" / [nifcursors, nifstreams, lineinfos, bitabs]
 
 import ".." / [nimony_model, nif_annotations]
@@ -104,7 +113,7 @@ proc isValid*(info: LineInfo): bool {.inline.} =
 
 proc filePath*(info: LineInfo): string =
   ## Returns the source path stored in `info`, or `""` when unavailable.
-  if info.isValid:
+  if lineinfos.isValid(info):
     let rawInfo = unpack(pool.man, info)
     if rawInfo.file.isValid:
       result = pool.files[rawInfo.file]
@@ -116,16 +125,16 @@ proc filePath*(info: LineInfo): string =
 proc lineCol*(info: LineInfo): SourcePos =
   ## Returns the 1-based `(line, col)` stored in `info`, or `(0, 0)` when
   ## unavailable.
-  if info.isValid:
+  if lineinfos.isValid(info):
     let rawInfo = unpack(pool.man, info)
     result = SourcePos(line: int(rawInfo.line), col: int(rawInfo.col))
   else:
     result = SourcePos(line: 0, col: 0)
 
-proc `==`*(a, b: SymId): bool {.inline.} =
+func `==`*(a, b: SymId): bool {.inline.} =
   a.raw == b.raw
 
-proc hash*(x: SymId): Hash {.inline.} =
+func hash*(x: SymId): Hash {.inline.} =
   hash(x.raw)
 
 proc `$`*(x: SymId): string {.inline.} =
@@ -220,7 +229,10 @@ template withTree*(t: var NifBuilder; kind: NimonyType|NimonyExpr|NimonyStmt|Nim
   ## Appends a tree node of `kind` to `t`, runs `body` to emit its children, and
   ## closes the node afterwards.
   prepareMutation(t)
-  t.p[].buf.addParLe(kind, info)
+  # Use the generic parLeToken overload from nimony_model that does the
+  # TagId conversion via `cast[TagId](kind)` inside its body — nimony's
+  # cast rule allows it there.
+  t.p[].buf.add parLeToken(kind, info)
   body
   t.p[].buf.addParRi()
 
@@ -335,6 +347,45 @@ proc addSymUse*(t: var NifBuilder; s: string; info: LineInfo = NoLineInfo) =
   ## Appends a symbol-use atom named `s` to `t`.
   prepareMutation(t)
   t.p[].buf.addSymUse(pool.syms.getOrIncl(s), info)
+
+type
+  BindSymRule* = enum
+    ## Selector for `bindSym`'s third argument. Mirrors `lib/std/macros.nim`'s
+    ## enum of the same name so the macro and plugin paths share semantics.
+    brClosed     ## Default: candidates fixed at the plugin's def-site;
+                 ## sem at the call site won't add further overloads.
+    brOpen       ## Open: sem at the call site augments the choice with
+                 ## call-site visible overloads (full Nim-style mixin).
+    brForceOpen  ## Always emit a sym-choice subtree, even with one match,
+                 ## so call-site sem still augments the candidate set.
+
+proc bindSymHelper*(t: var NifBuilder; nifText: string) =
+  ## Runtime helper: parse `nifText` (a NIF source fragment) and append the
+  ## resulting tokens to `t`. Called by `bindSym`'s sem rewrite — not intended
+  ## for direct use.
+  prepareMutation(t)
+  t.p[].buf.add parseNifBuffer(nifText)
+
+proc bindSym*(t: var NifBuilder; name: string;
+              rule: BindSymRule = brClosed) {.magic: BindSymName.}
+  ## Hygienic symbol reference for nimony-compiled plugins.
+  ##
+  ## At plugin sem time, `name` is resolved in the plugin module's *definition*
+  ## scope and the call is rewritten to `bindSymHelper(t, "<NIF text>")` where
+  ## the NIF text is either a single fully-qualified symbol (one match) or a
+  ## `(cchoice …)` / `(ochoice …)` sym-choice subtree (multiple matches).
+  ## At plugin runtime the helper appends those tokens to `t`.
+  ##
+  ## Single match emits one Symbol atom; multiple matches emit a `(cchoice …)`
+  ## (closed) or `(ochoice …)` (open) subtree. `brForceOpen` always wraps in
+  ## an `(ochoice …)`, even with one match, so call-site sem can still
+  ## augment the candidate set.
+  ##
+  ## Because the symbol is resolved against the *plugin module's* scope, the
+  ## emitted reference bypasses caller-site lookups and survives shadowing in
+  ## the user's module.
+  ##
+  ## `name` must be a string literal — sem rejects non-literal arguments.
 
 proc addEmptyNode*(t: var NifBuilder; info: LineInfo = NoLineInfo) =
   ## Appends a single empty placeholder node (`.`) to `t`.
@@ -695,10 +746,13 @@ proc loadReplacer*(inputFile = paramStr(1)): Replacer =
 
 proc saveReplacer*(t: Replacer; filename = paramStr(2)) =
   ## Writes the Replacer's output to `filename` (default: `paramStr(2)`).
-  if t.dest.p == nil:
-    writeFile filename, ""
-  else:
-    writeFile filename, toString(t.dest.p[].buf)
+  try:
+    if t.dest.p == nil:
+      writeFile filename, ""
+    else:
+      writeFile filename, toString(t.dest.p[].buf)
+  except:
+    quit "FAILURE: cannot write " & filename
 
 # ── Existing API (retained for backwards compatibility) ───────────────────
 
@@ -724,131 +778,46 @@ proc renderTree*(tree: NifBuilder): string =
 proc saveTree*(tree: NifBuilder; filename: string) =
   ## Writes the complete contents of a mutable `NifBuilder` to `filename`.
   ## This preserves line info because it is intended for `.nif` output.
-  if tree.p == nil:
-    writeFile filename, ""
-  else:
-    writeFile filename, toString(tree.p[].buf)
+  try:
+    if tree.p == nil:
+      writeFile filename, ""
+    else:
+      writeFile filename, toString(tree.p[].buf)
+  except:
+    quit "FAILURE: cannot write " & filename
 
 proc saveTree*(tree: NifBuilder) =
   ## Writes the complete contents of a mutable `NifBuilder` to `paramStr(2)`.
   ## This preserves line info because it is intended for `.nif` output.
   saveTree(tree, paramStr(2))
 
-type
-  NifIdent* = distinct string ## Marker type used with `~` to request an
-                              ## identifier node instead of a string literal
-                              ## node.
-  NifBinding* = tuple[name: string, value: NifBuilder]
-
-proc ident*(s: string): NifIdent =
-  ## Marks `s` so that `~s` produces an identifier node rather than a string
-  ## literal node.
-  NifIdent(s)
-
-proc isNifIdentStart(c: char): bool {.inline.} =
-  c in {'a'..'z', 'A'..'Z', '_'}
-
-proc isNifIdentChar(c: char): bool {.inline.} =
-  c in {'a'..'z', 'A'..'Z', '0'..'9', '_'}
-
 proc parseNifBuffer(text: string): TokenBuf =
+  ## Internal helper used by `bindSymHelper` to parse a NIF source fragment
+  ## (e.g. `name.0.suffix` or `(cchoice s1 s2 …)`). Strips the trailing
+  ## `EofToken` so the resulting tokens concatenate cleanly into a builder.
   result = parseFromBuffer(text, "")
   if result.len > 0 and result[result.len-1].kind == EofToken:
     result.shrink(result.len-1)
 
-proc createErrorTree(info: PackedLineInfo; msg: string; orig: Cursor): NifBuilder =
-  var buf = createTokenBuf(8)
-  buf.buildTree ErrT, info:
-    buf.addSubtree(orig)
-    buf.addStrLit(msg, info)
-  result = createTree(buf)
-
-proc createErrorTree(info: PackedLineInfo; msg: string): NifBuilder =
-  var orig = createTokenBuf(1)
-  orig.addDotToken()
-  result = createErrorTree(info, msg, cursorAt(orig, 0))
-
-proc errorTree*(msg: string): NifBuilder =
-  ## Produces an `ErrT` tree with synthetic line info.
-  createErrorTree(NoLineInfo, msg)
-
-proc errorTree*(msg: string; at: NifCursor): NifBuilder =
-  ## Produces an `ErrT` tree located at `at` and embeds `at` as source.
-  if hasSubtree(at):
-    createErrorTree(at.info, msg, at.cursor)
-  else:
-    createErrorTree(NoLineInfo, msg)
-
-proc errorTree*(msg: string; at, orig: NifCursor): NifBuilder =
-  ## Produces an `ErrT` tree located at `at` and embeds `orig` as source.
-  let info = if hasSubtree(orig): orig.info else: NoLineInfo
-  createErrorTree(info, msg, orig.cursor)
-
-proc parseNifFragment(text: string): NifBuilder =
-  createTree(parseNifBuffer(text))
-
 proc createTree*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
-    kind: K; children: varargs[NifBuilder]): NifBuilder =
+    kind: K; children: openArray[NifBuilder]): NifBuilder =
   ## Produces a new tree node of `kind` containing `children`.
   result = createTree()
-  result.withTree kind, NoLineInfo:
-    for child in children:
-      result.add(child)
+  prepareMutation(result)
+  result.p[].buf.add parLeToken(kind, NoLineInfo)
+  for child in children:
+    result.add(child)
+  result.p[].buf.addParRi()
 
 proc createTree*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
-    kind: K; info: LineInfo; children: varargs[NifBuilder]): NifBuilder =
+    kind: K; info: LineInfo; children: openArray[NifBuilder]): NifBuilder =
   ## Produces a new tree node of `kind` and line info `info` containing `children`.
   result = createTree()
-  result.withTree kind, info:
-    for child in children:
-      result.add(child)
-
-proc lookupBinding(bindings: openArray[NifBinding]; name: string): int =
-  var i = bindings.len - 1
-  while i >= 0:
-    if bindings[i].name == name:
-      return i
-    dec i
-  result = -1
-
-proc appendParsedText(dest: var TokenBuf; text: string) =
-  if text.len > 0:
-    dest.add parseNifBuffer(text)
-
-proc appendTree(dest: var TokenBuf; tree: NifBuilder) =
-  if not tree.isEmpty:
-    dest.add tree.p[].buf
-
-proc parseNifTemplate(spec: string; bindings: openArray[NifBinding]): NifBuilder =
-  var buf = createTokenBuf(spec.len + bindings.len * 4)
-  var literal = newStringOfCap(spec.len)
-  var i = 0
-  while i < spec.len:
-    if spec[i] != '$':
-      literal.add spec[i]
-      inc i
-    elif i + 1 >= spec.len:
-      return errorTree("invalid nif substitution syntax")
-    elif spec[i + 1] == '$':
-      literal.add '$'
-      inc i, 2
-    elif isNifIdentStart(spec[i + 1]):
-      let start = i + 1
-      i = start + 1
-      while i < spec.len and isNifIdentChar(spec[i]):
-        inc i
-      appendParsedText(buf, literal)
-      setLen(literal, 0)
-      let binding = lookupBinding(bindings, substr(spec, start, i - 1))
-      if binding < 0:
-        return errorTree(
-          "missing nif substitution: " & substr(spec, start, i - 1))
-      appendTree(buf, bindings[binding].value)
-    else:
-      return errorTree("invalid nif substitution syntax")
-
-  appendParsedText(buf, literal)
-  result = createTree(buf)
+  prepareMutation(result)
+  result.p[].buf.add parLeToken(kind, info)
+  for child in children:
+    result.add(child)
+  result.p[].buf.addParRi()
 
 proc renderNode*(n: NifCursor): string =
   ## Renders the current token or subtree as raw NIF text for debugging.
@@ -857,123 +826,3 @@ proc renderNode*(n: NifCursor): string =
     result = "<bug: empty>"
   else:
     result = toString(n.cursor, false)
-
-proc strLitTree(s: string): NifBuilder =
-  var buf = createTokenBuf(1)
-  buf.addStrLit(s)
-  result = createTree(buf)
-
-proc identTree(s: string): NifBuilder =
-  var buf = createTokenBuf(1)
-  buf.addIdent(s)
-  result = createTree(buf)
-
-proc charLitTree(c: char): NifBuilder =
-  var buf = createTokenBuf(1)
-  buf.addCharLit(c)
-  result = createTree(buf)
-
-proc intLitTree(i: BiggestInt): NifBuilder =
-  var buf = createTokenBuf(1)
-  buf.addIntLit(i)
-  result = createTree(buf)
-
-proc uintLitTree(u: BiggestUInt): NifBuilder =
-  var buf = createTokenBuf(1)
-  buf.addUIntLit(u)
-  result = createTree(buf)
-
-proc floatLitTree(f: BiggestFloat): NifBuilder =
-  var buf = createTokenBuf(1)
-  buf.addFloatLit(f)
-  result = createTree(buf)
-
-proc boolTree(v: bool): NifBuilder =
-  var buf = createTokenBuf(2)
-  buf.addParLe(if v: TrueX else: FalseX)
-  buf.addParRi()
-  result = createTree(buf)
-
-proc `~`*(src: NifCursor): NifBuilder =
-  ## Copies the subtree rooted at `src` into a fresh `NifBuilder`.
-  result = createTree()
-  result.addSubtree(src)
-
-template `~`*(src: NifBuilder): NifBuilder =
-  ## Returns `src` unchanged.
-  src
-
-proc `~`*(src: string): NifBuilder =
-  ## Converts `src` into a string literal tree fragment.
-  strLitTree(src)
-
-proc `~`*(src: NifIdent): NifBuilder =
-  ## Converts `src` into an identifier tree fragment.
-  identTree(string(src))
-
-proc `~`*(src: char): NifBuilder =
-  ## Converts `src` into a character literal tree fragment.
-  charLitTree(src)
-
-proc `~`*(src: int): NifBuilder =
-  ## Converts `src` into a signed integer literal tree fragment.
-  intLitTree(BiggestInt(src))
-
-proc `~`*(src: int8): NifBuilder =
-  ## Converts `src` into a signed integer literal tree fragment.
-  intLitTree(BiggestInt(src))
-
-proc `~`*(src: int16): NifBuilder =
-  ## Converts `src` into a signed integer literal tree fragment.
-  intLitTree(BiggestInt(src))
-
-proc `~`*(src: int32): NifBuilder =
-  ## Converts `src` into a signed integer literal tree fragment.
-  intLitTree(BiggestInt(src))
-
-proc `~`*(src: int64): NifBuilder =
-  ## Converts `src` into a signed integer literal tree fragment.
-  intLitTree(BiggestInt(src))
-
-proc `~`*(src: uint): NifBuilder =
-  ## Converts `src` into an unsigned integer literal tree fragment.
-  uintLitTree(BiggestUInt(src))
-
-proc `~`*(src: uint8): NifBuilder =
-  ## Converts `src` into an unsigned integer literal tree fragment.
-  uintLitTree(BiggestUInt(src))
-
-proc `~`*(src: uint16): NifBuilder =
-  ## Converts `src` into an unsigned integer literal tree fragment.
-  uintLitTree(BiggestUInt(src))
-
-proc `~`*(src: uint32): NifBuilder =
-  ## Converts `src` into an unsigned integer literal tree fragment.
-  uintLitTree(BiggestUInt(src))
-
-proc `~`*(src: uint64): NifBuilder =
-  ## Converts `src` into an unsigned integer literal tree fragment.
-  uintLitTree(BiggestUInt(src))
-
-proc `~`*(src: float32): NifBuilder =
-  ## Converts `src` into a floating-point literal tree fragment.
-  floatLitTree(BiggestFloat(src))
-
-proc `~`*(src: float64): NifBuilder =
-  ## Converts `src` into a floating-point literal tree fragment.
-  floatLitTree(BiggestFloat(src))
-
-proc `~`*(src: bool): NifBuilder =
-  ## Converts `src` into a `true` or `false` keyword tree fragment.
-  boolTree(src)
-
-proc `%~`*(spec: string; bindings: openArray[NifBinding]): NifBuilder =
-  ## Parses `spec` as a NIF fragment after expanding `$name` placeholders with
-  ## the corresponding tree fragments from `bindings`.
-  ##
-  ## Use `$$` for a literal dollar sign.
-  parseNifTemplate(spec, bindings)
-
-proc nifFragment*(spec: string): NifBuilder =
-  ## Parses `spec` as a literal NIF fragment and returns it as a `NifBuilder`.
-  parseNifFragment(spec)

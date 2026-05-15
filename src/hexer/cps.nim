@@ -1389,11 +1389,11 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trLocal c, dest, n
       else:
         skip n
-    of ProcS, FuncS, MacroS, MethodS, ConverterS:
+    of ProcS, FuncS, MethodS, ConverterS:
       trCoroutine c, dest, n, NoSym
     of IteratorS:
       trCoroutine c, dest, n, IteratorY
-    of TemplateS, TypeS, EmitS, BreakS, ContinueS,
+    of MacroS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
       ForS, IncludeS, ImportS, FromimportS, ImportexceptS,
       ExportS, CommentS,
       PragmasS:
@@ -1439,7 +1439,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           HderefX, DdotX, HaddrX, NewrefX, NewobjX,
           TupX, TupconstrX, SetconstrX, TabconstrX,
           AshrX, BaseobjX, HconvX, DconvX, CompilesX,
-          DeclaredX, DefinedX, AstToStrX, InstanceofX,
+          DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX,
           HighX, LowX, UnpackX, FieldsX, FieldpairsX,
           EnumtostrX, IsmainmoduleX, DefaultobjX,
           DefaulttupX, DefaultdistinctX, ExprX, DoX,

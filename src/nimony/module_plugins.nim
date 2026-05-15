@@ -16,10 +16,8 @@ import ".." / gear2 / modnames
 proc handleTypePlugins*(c: var SemContext; dest: var TokenBuf) =
   var inp = move dest
 
-  for k, vInfo in c.pendingTypePlugins:
-    let v = vInfo[0]
-    let info = vInfo[1]
-    c.pluginBlacklist.incl(v)
+  for k, p in c.pendingTypePlugins:
+    c.pluginBlacklist.incl(p.path)
 
     var types = createTokenBuf(30)
     types.addParLe StmtsS, NoLineInfo
@@ -27,15 +25,13 @@ proc handleTypePlugins*(c: var SemContext; dest: var TokenBuf) =
     types.addParRi()
 
     var destB = createTokenBuf(3000)
-    runPlugin(c, destB, info, pool.strings[v], inp.toString, types.toString)
+    runPlugin(c, destB, p.info, pool.strings[p.path], inp.toString, types.toString)
     inp = ensureMove destB
 
-  for kInfo in c.pendingModulePlugins:
-    let k = kInfo[0]
-    let info = kInfo[1]
-    c.pluginBlacklist.incl(k)
+  for p in c.pendingModulePlugins:
+    c.pluginBlacklist.incl(p.path)
     var destB = createTokenBuf(3000)
-    runPlugin(c, destB, info, pool.strings[k], inp.toString)
+    runPlugin(c, destB, p.info, pool.strings[p.path], inp.toString)
     inp = ensureMove destB
 
   c.pendingTypePlugins.clear()
