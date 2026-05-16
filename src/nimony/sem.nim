@@ -5217,7 +5217,6 @@ proc tryExplicitRoutineInst(c: var SemContext; dest: var TokenBuf; syms: Cursor;
       let candidate = FnCandidate(kind: routine.kind, sym: sym, typ: routine.params)
       var m = createMatch(addr c)
       m.fn = candidate
-      applyScopeMatch m
       matchTypevars m, candidate, args
       buildTypeArgs(m)
       if not m.err:
