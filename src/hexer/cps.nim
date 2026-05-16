@@ -150,6 +150,7 @@ const
   EnvFieldName = "env.0"
   CallerFieldName = "caller.0"
   CalleeFieldName = "callee.0"
+  SlotFieldName = "slot.0"
   ResultParamName = "`result.0"
   ResultFieldName = "`result.0"
   CallerParamName = "`caller.0"
@@ -536,9 +537,9 @@ proc trCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ##   var it: Continuation = `iter.init.<suffix>`(args..., addr forLoopVar,
   ##                                                StopContinuation)
   ##   try:
-  ##     while isRunning(it):
+  ##     while true:
   ##       it = advance(it)
-  ##       if not isRunning(it): break
+  ##       if finished(it): break
   ##       <body>
   ##   finally:
   ##     finalizeCoroutine(addr it)
@@ -589,24 +590,35 @@ proc trCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
       emitStopContinuation(dest, info)
 
   # ---- emit try/while/finally ----
-  let isRunningSym = pool.syms.getOrIncl("isRunning.0." & SystemModuleSuffix)
+  let finishedSym = pool.syms.getOrIncl("finished.0." & SystemModuleSuffix)
   let advanceSym = pool.syms.getOrIncl("advance.0." & SystemModuleSuffix)
   let finalizeSym = pool.syms.getOrIncl("finalizeCoroutine.0." & SystemModuleSuffix)
+  let envFieldSym = pool.syms.getOrIncl(EnvFieldName)
+  let slotFieldSym = pool.syms.getOrIncl(SlotFieldName)
+
+  template emitItEnv(dest: var TokenBuf) =
+    dest.copyIntoKind DotX, info:
+      dest.addSymUse itSym, info
+      dest.addSymUse envFieldSym, info
+      dest.addIntLit 0, info # direct field of Continuation
 
   dest.addParLe TryS, info
   dest.copyIntoKind StmtsS, info:
     dest.addParLe WhileS, info
-    # cond: (call isRunning it)
-    dest.copyIntoKind CallS, info:
-      dest.addSymUse isRunningSym, info
-      dest.addSymUse itSym, info
+    # cond: (true) — break is the only exit
+    dest.addParPair TrueX, info
     # body: (stmts (asgn it (call advance it))
-    #              (if (elif (not (call isRunning it)) (stmts (break))))
-    #              <body>)
+    #              (if (elif (call finished it) (stmts (break))))
+    #              (if (elif (and (neq (pointer) it.env nil)
+    #                             (eq (pointer) it.env.slot
+    #                                           (cast (pointer) (haddr forLoopVar))))
+    #                        (stmts <user-body>))))
     # Order matters: the init wrapper returns AFTER state 0 (initialization)
     # but BEFORE the first `yield` writes to `*forLoopVar`. We advance first
     # to reach the next yield (or terminal state), check whether the iterator
-    # produced a value, then run the body.
+    # produced a value, then (if the yield was for *our* slot) run the body.
+    # The slot guard lets a custom scheduler interleave continuations across
+    # multiple for-loops without each body executing on sibling yields.
     dest.copyIntoKind StmtsS, info:
       dest.copyIntoKind AsgnS, info:
         dest.addSymUse itSym, info
@@ -615,17 +627,34 @@ proc trCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.addSymUse itSym, info
       dest.copyIntoKind IfS, info:
         dest.copyIntoKind ElifU, info:
-          dest.copyIntoKind NotX, info:
-            dest.copyIntoKind CallS, info:
-              dest.addSymUse isRunningSym, info
-              dest.addSymUse itSym, info
+          dest.copyIntoKind CallS, info:
+            dest.addSymUse finishedSym, info
+            dest.addSymUse itSym, info
           dest.copyIntoKind StmtsS, info:
             dest.copyIntoKind BreakS, info:
               dest.addDotToken()
-      # Second child of corofor is the inner-block (and any destroyer-injected
-      # cleanup that ended up alongside it).
-      while n.hasMore:
-        tr(c, dest, n)
+      dest.copyIntoKind IfS, info:
+        dest.copyIntoKind ElifU, info:
+          dest.copyIntoKind AndX, info:
+            dest.copyIntoKind NeqX, info:
+              dest.addParPair PointerT, info
+              emitItEnv(dest)
+              dest.addParPair NilX, info
+            dest.copyIntoKind EqX, info:
+              dest.addParPair PointerT, info
+              dest.copyIntoKind DotX, info:
+                dest.copyIntoKind DerefX, info:
+                  emitItEnv(dest)
+                dest.addSymUse slotFieldSym, info
+                dest.addIntLit 0, info # direct field of CoroutineBase
+              dest.copyIntoKind CastX, info:
+                dest.addParPair PointerT, info
+                dest.add addrBuf
+          dest.copyIntoKind StmtsS, info:
+            # Second child of corofor is the inner-block (and any destroyer-injected
+            # cleanup that ended up alongside it).
+            while n.hasMore:
+              tr(c, dest, n)
     dest.addParRi() # close while
   # finally: finalizeCoroutine(addr it)
   dest.copyIntoKind FinU, info:
@@ -1366,6 +1395,15 @@ proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId;
       init.copyIntoKind KvU, info:
         init.addSymUse pool.syms.getOrIncl(ResultFieldName), info
         init.addSymUse pool.syms.getOrIncl(ResultParamName), info
+      # Mirror the result-param-pointer into CoroutineBase.slot so the
+      # closure-iter trampoline can compare against `addr forLoopVar`
+      # without knowing the concrete coro type.
+      init.copyIntoKind KvU, info:
+        init.addSymUse pool.syms.getOrIncl(SlotFieldName), info
+        init.copyIntoKind CastX, info:
+          init.addParPair PointerT, info
+          init.addSymUse pool.syms.getOrIncl(ResultParamName), info
+        init.addIntLit 1, info # field is in superclass
     # final parameter is always the `caller` continuation:
     dest.copyIntoKind ParamU, info:
       dest.addSymDef pool.syms.getOrIncl(CallerParamName), info
