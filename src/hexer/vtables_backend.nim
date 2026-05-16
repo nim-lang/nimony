@@ -631,12 +631,12 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         of MacroS, TemplateS, TypeS:
           takeTree dest, n
         of CallS, CmdS, IteratorS, BlockS, EmitS, AsgnS, IfS, WhenS,
-           BreakS, ContinueS, ForS, WhileS, CaseS, RetS, YldS, StmtsS,
-           PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
-           FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
-           DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
-           CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS, BindS,
-           MixinS, UsingS, AsmS, DeferS, NoStmt:
+           BreakS, ContinueS, ForS, WhileS, CoroforS, CaseS, RetS,
+           YldS, StmtsS, PragmasS, PragmaxS, InclS, ExclS, IncludeS,
+           ImportS, ImportasS, FromimportS, ImportexceptS, ExportS,
+           ExportexceptS, CommentS, DiscardS, TryS, RaiseS, UnpackdeclS,
+           AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
+           StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS, NoStmt:
           dest.add n
           inc n
           inc nested
@@ -762,11 +762,11 @@ proc collectMethods(c: var Context; n: var Cursor) =
   of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS,
      LetS, CursorS, PatternvarS, ProcS, FuncS, IteratorS, ConverterS,
      MacroS, TemplateS, BlockS, EmitS, AsgnS, ScopeS, IfS, WhenS,
-     BreakS, ContinueS, ForS, WhileS, CaseS, RetS, YldS, PragmasS,
-     PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS,
-     ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS, TryS,
-     RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS,
-     PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS,
+     BreakS, ContinueS, ForS, WhileS, CoroforS, CaseS, RetS, YldS,
+     PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
+     FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
+     DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
+     InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS,
      DeferS, NoStmt:
     skip n
 

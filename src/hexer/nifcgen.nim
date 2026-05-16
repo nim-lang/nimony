@@ -1881,7 +1881,7 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
     of BlockS: trBlock c, dest, n
     of IfS: trIf c, dest, n
     of CaseS: trCase c, dest, n
-    of YldS, ForS, InclS, ExclS, DeferS, UnpackdeclS:
+    of YldS, ForS, CoroforS, InclS, ExclS, DeferS, UnpackdeclS:
       error c, "BUG: not eliminated: ", n
     of TryS:
       trTry c, dest, n

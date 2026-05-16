@@ -1965,7 +1965,7 @@ proc semTypeSym(c: var SemContext; dest: var TokenBuf; s: Sym; info: PackedLineI
             path = p.litId
             pathInfo = p.info
           if path != StrId(0) and path notin c.pluginBlacklist:
-            c.pendingTypePlugins[s.name] = PluginRef(path: path, info: pathInfo)
+            c.pendingTypePlugins[s.name] = PluginObj(path: path, info: pathInfo)
       else:
         # remove symbol, inline type:
         dest.shrink dest.len-1
@@ -5888,7 +5888,7 @@ proc semPragmaLine(c: var SemContext; dest: var TokenBuf; it: var Item; isPragma
       if it.n.hasMore: skip it.n
     if path != StrId(0) and errMsg.len == 0:
       if c.routine.inGeneric == 0 and path notin c.pluginBlacklist:
-        c.pendingModulePlugins.add PluginRef(path: path, info: pathInfo)
+        c.pendingModulePlugins.add PluginObj(path: path, info: pathInfo)
     skipParRi it.n                      # close the original (plugin ...)
     dest.add parLeToken(PragmasS, pragInfo)
     dest.add parLeToken(PluginP, pragInfo)
@@ -6384,6 +6384,9 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       of WhileS:
         toplevelGuard c:
           semWhile c, dest, it
+      of CoroforS:
+        buildErr c, dest, it.n.info, "`corofor` is a hexer-internal shape and must not appear in source"
+        skip it.n
       of VarS:
         toplevelGuard c:
           semLocal c, dest, it, VarY

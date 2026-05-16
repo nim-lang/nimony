@@ -375,17 +375,28 @@ proc tr(c: var Context; n: var Cursor) =
       trBlock c, n
     of LocalDecls:
       trLocal c, n
-    of WhileS:
+    of WhileS, CoroforS:
       trWhile c, n
     of TryS:
       trTry c, n
     of ProcS, FuncS, MethodS, ConverterS:
       trProcDecl c, n
+    of IteratorS:
+      # iterinliner passes only `.closure` iterators through to here. Their
+      # bodies need destroyer treatment (scope tracking, =destroy injection
+      # on locals) when the closure flag is actually set; non-closure iters
+      # would have been stripped by iterinliner.
+      var probe = n
+      let routine = asRoutine(probe, SkipExclBody)
+      if hasPragma(routine.pragmas, ClosureP):
+        trProcDecl c, n
+      else:
+        takeTree c.dest, n
     of MacroS:
       # Macros are out-of-process plugins compiled separately; their
       # bodies don't participate in lowering.
       takeTree c.dest, n
-    of CallS, CmdS, IteratorS, TemplateS, TypeS, EmitS, AsgnS,
+    of CallS, CmdS, TemplateS, TypeS, EmitS, AsgnS,
         ScopeS, WhenS, ContinueS, ForS, YldS, StmtsS, PragmasS,
         PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
         FromimportS, ImportexceptS, ExportS, ExportexceptS,

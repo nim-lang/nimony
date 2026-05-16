@@ -850,7 +850,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
           trTupleAsgn(c, dest, n)
         else:
           trSons(c, dest, n)
-      of CallS, CmdS, BlockS, IfS, WhenS, WhileS, RetS,
+      of CallS, CmdS, BlockS, IfS, WhenS, WhileS, CoroforS, RetS,
           YldS, PragmaxS, ImportasS, ExportexceptS, DiscardS,
           TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
           CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS,

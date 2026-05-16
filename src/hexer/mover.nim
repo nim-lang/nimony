@@ -320,9 +320,16 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
           if containsRoot(pc, x):
             otherUsage = pc # XXX Fixme: pc advanced to ')'
             return false
-        of IfS, WhenS, WhileS, ForS, CaseS, TryS, YldS, RaiseS, ExportS,
-           IncludeS, ImportS, FromimportS, ImportexceptS, CommentS, PragmasS,
-           ImportasS, ExportexceptS, BindS, MixinS, UsingS,
+        of YldS:
+          # bare `(yld .)` from closure-iter rewrite: a control-flow marker
+          # with no operand. Treat as a sequence point — value, if any, was
+          # already written by the preceding `(asgn result v)`.
+          if containsRoot(pc, x):
+            otherUsage = pc
+            return false
+        of IfS, WhenS, WhileS, ForS, CoroforS, CaseS, TryS, RaiseS,
+           ExportS, IncludeS, ImportS, FromimportS, ImportexceptS, CommentS,
+           PragmasS, ImportasS, ExportexceptS, BindS, MixinS, UsingS,
            UnpackdeclS, StaticstmtS, AsmS, DeferS:
           bug "statement not eliminated: " & $pc.stmtKind
         of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,

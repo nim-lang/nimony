@@ -724,6 +724,39 @@ proc tryVarargsConverter(c: var SemContext; convMatch: var Match; f: TypeCursor,
     result = true
     convMatch = ensureMove(match)
 
+proc runCompiledMacroPlugin(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState; finalFn: SymId) =
+  if finalFn in c.compiledMacros:
+    # Serialize arguments to NIF. Prefer `arg.orig` (raw, pre-sem AST) so
+    # macros that walk their bodies aren't tripped by sem-attached `(err
+    # …)` diagnostics or other sem rewrites the user never wrote.
+    var argsBuf = createTokenBuf(30)
+    argsBuf.addParLe StmtsS, cs.callNode.info
+    for a in cs.args:
+      if not cursorIsNil(a.orig):
+        argsBuf.addSubtree a.orig
+      else:
+        argsBuf.addSubtree a.n
+    argsBuf.addParRi()
+
+    # Run the macro plugin
+    var expandedInto = createTokenBuf(30)
+    let success = runMacroPlugin(c.g.config.nifcachePath, expandedInto,
+                                  cs.callNode.info, finalFn, argsBuf)
+    if success:
+      # Shrink dest to before the call and semcheck the expanded output
+      dest.shrink cs.beforeCall
+      expandedInto.addParRi() # extra token so final `inc` doesn't break
+      var a = Item(n: cursorAt(expandedInto, 0), typ: c.types.autoType)
+      inc c.routine.inInst
+      semExpr c, dest, a
+      dec c.routine.inInst
+      it.kind = a.kind
+      typeofCallIs c, dest, it, cs.beforeCall, a.typ
+    else:
+      buildErr c, dest, cs.callNode.info, "macro plugin execution failed"
+  else:
+    buildErr c, dest, cs.callNode.info, "macro '" & pool.syms[finalFn] & "' not compiled"
+
 proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState) =
   let genericArgs =
     if cs.hasGenericArgs: cursorAt(cs.genericDest, 0)
@@ -888,37 +921,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         buildErr c, dest, cs.callNode.info, "recursion limit exceeded for template expansions"
     elif finalFn.kind == MacroY:
       # Run compiled macro plugin
-      if finalFn.sym in c.compiledMacros:
-        # Serialize arguments to NIF. Prefer `arg.orig` (raw, pre-sem AST) so
-        # macros that walk their bodies aren't tripped by sem-attached `(err
-        # …)` diagnostics or other sem rewrites the user never wrote.
-        var argsBuf = createTokenBuf(30)
-        argsBuf.addParLe StmtsS, cs.callNode.info
-        for a in cs.args:
-          if not cursorIsNil(a.orig):
-            argsBuf.addSubtree a.orig
-          else:
-            argsBuf.addSubtree a.n
-        argsBuf.addParRi()
-
-        # Run the macro plugin
-        var expandedInto = createTokenBuf(30)
-        let success = runMacroPlugin(c.g.config.nifcachePath, expandedInto,
-                                      cs.callNode.info, finalFn.sym, argsBuf)
-        if success:
-          # Shrink dest to before the call and semcheck the expanded output
-          dest.shrink cs.beforeCall
-          expandedInto.addParRi() # extra token so final `inc` doesn't break
-          var a = Item(n: cursorAt(expandedInto, 0), typ: c.types.autoType)
-          inc c.routine.inInst
-          semExpr c, dest, a
-          dec c.routine.inInst
-          it.kind = a.kind
-          typeofCallIs c, dest, it, cs.beforeCall, a.typ
-        else:
-          buildErr c, dest, cs.callNode.info, "macro plugin execution failed"
-      else:
-        buildErr c, dest, cs.callNode.info, "macro '" & pool.syms[finalFn.sym] & "' not compiled"
+      runCompiledMacroPlugin(c, dest, it, cs, finalFn.sym)
     elif isMagic == MagicCallNeedsSemcheck:
       # semcheck produced magic expression
       var magicExprBuf = createTokenBuf(dest.len - cs.beforeCall)

@@ -629,11 +629,12 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
       of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS,
          LetS, CursorS, PatternvarS, ProcS, FuncS, IteratorS, ConverterS,
          MethodS, MacroS, TemplateS, TypeS, EmitS, AsgnS, ScopeS, WhenS,
-         BreakS, ContinueS, ForS, WhileS, RetS, YldS, StmtsS, PragmasS,
-         PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS,
-         ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS, RaiseS,
-         UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS, PrefixS,
-         HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS, NoStmt:
+         BreakS, ContinueS, ForS, WhileS, CoroforS, RetS, YldS, StmtsS,
+         PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
+         FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
+         DiscardS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
+         InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
+         AsmS, DeferS, NoStmt:
         trExprLoop c, n, tar
 
 proc trWhile(c: var ControlFlow; n: var Cursor) =
@@ -651,6 +652,29 @@ proc trWhile(c: var ControlFlow; n: var Cursor) =
   for t in tjmp: c.patch t
 
   trStmt(c, n) # transform body
+  for cont in thisBlock.contInstrs: c.patch cont
+  c.jmpBack(loopStart, info)
+
+  for f in thisBlock.breakInstrs: c.patch f
+  skipParRi n
+  c.currentBlock = c.currentBlock.parent
+
+proc trCoroFor(c: var ControlFlow; n: var Cursor) =
+  let info = n.info
+  inc n
+  let thisBlock = BlockOrLoop(kind: IsLoop, sym: SymId(0), parent: c.currentBlock)
+  c.currentBlock = thisBlock
+  let loopStart = c.genLabel()
+
+  # First child is the iter call. cps.nim will rewrite this into the init+advance
+  # trampoline; for CFG purposes treat it as a side-effecting expression whose
+  # result is discarded.
+  var aa = Target(m: IsAppend)
+  trExpr c, n, aa
+  if aa.t.len > 0:
+    c.dest.add aa
+
+  trStmt(c, n) # body
   for cont in thisBlock.contInstrs: c.patch cont
   c.jmpBack(loopStart, info)
 
@@ -980,6 +1004,8 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     skipParRi n
   of WhenS:
     bug "`when` statement should have been eliminated"
+  of CoroforS:
+    trCoroFor c, n
 
 proc toControlflow*(n: Cursor; keepReturns = false): TokenBuf =
   var c = ControlFlow(typeCache: createTypeCache(), keepReturns: keepReturns)

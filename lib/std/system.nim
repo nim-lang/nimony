@@ -281,6 +281,24 @@ proc complete*(c: Continuation) =
   while c.fn != nil:
     c = scheduler(c)
 
+proc isRunning*(c: Continuation): bool {.inline.} =
+  ## True while a coroutine still has a continuation to advance. Used by
+  ## the closure-iterator trampoline that the compiler emits for
+  ## `for x in closureIter(...)` loops.
+  c.fn != nil
+
+proc finalizeCoroutine*(c: var Continuation) =
+  ## Cancels and deallocates a coroutine frame that is still live (i.e.
+  ## the loop exited via `break`/`return`/exception before the iterator
+  ## completed). A no-op once the coroutine has run to completion since
+  ## its terminating state already freed the frame. Called from the
+  ## `finally` clause of the closure-iterator trampoline.
+  if c.env != nil and c.fn != nil:
+    cancel(c.env)
+    deallocFrame(c.env)
+    c.fn = nil
+    c.env = nil
+
 func `==`*[T: tuple|object](x, y: T): bool =
   ## Return true only if each fields of `x` and `y` are equal.
   for xf, yf in fields(x, y):

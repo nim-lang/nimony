@@ -70,7 +70,7 @@ type
     includedFiles*: seq[string] # will become part of the index file
     importedFiles*: seq[string] # likewise
 
-  PluginRef* = object
+  PluginObj* = object
     path*: StrId
     info*: PackedLineInfo
 
@@ -134,8 +134,8 @@ type
     unoverloadableMagics*: HashSet[StrId]
     debugAllowErrors*: bool
     pending*: TokenBuf
-    pendingTypePlugins*: Table[SymId, PluginRef]
-    pendingModulePlugins*: seq[PluginRef]
+    pendingTypePlugins*: Table[SymId, PluginObj]
+    pendingModulePlugins*: seq[PluginObj]
     pluginBlacklist*: HashSet[StrId] # make 1984 fiction again
     cachedTypeboundOps*: Table[(SymId, StrId), seq[SymId]]
     userPragmas*: Table[StrId, TokenBuf]

@@ -23,12 +23,12 @@ proc hasContinueStmt(c: Cursor): bool =
           GletS, TletS, LetS, CursorS, PatternvarS, ProcS, FuncS,
           IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
           BlockS, EmitS, AsgnS, ScopeS, IfS, WhenS, BreakS, ForS,
-          WhileS, CaseS, RetS, YldS, StmtsS, PragmasS, PragmaxS,
-          InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS,
-          ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS,
-          TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
-          InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS,
-          UsingS, AsmS, DeferS, NoStmt:
+          WhileS, CoroforS, CaseS, RetS, YldS, StmtsS, PragmasS,
+          PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
+          FromimportS, ImportexceptS, ExportS, ExportexceptS,
+          CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS,
+          AssertS, CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS,
+          BindS, MixinS, UsingS, AsmS, DeferS, NoStmt:
         inc nested
         inc c
     of ParRi:
@@ -346,7 +346,7 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
         ExportexceptS, CommentS, DiscardS, TryS, RaiseS,
         UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS,
         PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
-        AsmS, DeferS, NoStmt:
+        AsmS, DeferS, CoroforS, NoStmt:
       if c.substructureKind == KvU:
         # In KvU: first element is field name, don't substitute it
         dest.add c
@@ -411,11 +411,11 @@ proc inlineIteratorBody(e: var EContext; dest: var TokenBuf;
         TletS, LetS, CursorS, PatternvarS, ProcS, FuncS, IteratorS,
         ConverterS, MethodS, MacroS, TemplateS, TypeS, BlockS,
         EmitS, AsgnS, ScopeS, IfS, WhenS, BreakS, ContinueS, ForS,
-        WhileS, CaseS, RetS, PragmasS, PragmaxS, InclS, ExclS,
-        IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS,
-        ExportS, ExportexceptS, CommentS, DiscardS, TryS, RaiseS,
-        UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS,
-        PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
+        WhileS, CoroforS, CaseS, RetS, PragmasS, PragmaxS, InclS,
+        ExclS, IncludeS, ImportS, ImportasS, FromimportS,
+        ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS,
+        TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
+        InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
         AsmS, DeferS, NoStmt:
       dest.add c
       inc c
@@ -445,10 +445,10 @@ proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations
     of CallS, CmdS, GvarS, TvarS, ConstS, ResultS, GletS, TletS,
         ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS,
         TemplateS, TypeS, BlockS, EmitS, AsgnS, ScopeS, IfS,
-        WhenS, BreakS, ContinueS, ForS, WhileS, CaseS, RetS,
-        YldS, StmtsS, PragmasS, PragmaxS, InclS, ExclS, IncludeS,
-        ImportS, ImportasS, FromimportS, ImportexceptS, ExportS,
-        ExportexceptS, CommentS, DiscardS, TryS, RaiseS,
+        WhenS, BreakS, ContinueS, ForS, WhileS, CoroforS, CaseS,
+        RetS, YldS, StmtsS, PragmasS, PragmaxS, InclS, ExclS,
+        IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS,
+        ExportS, ExportexceptS, CommentS, DiscardS, TryS, RaiseS,
         UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS,
         PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
         AsmS, DeferS, NoStmt:
@@ -482,6 +482,159 @@ proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations
   else:
     takeTree(dest, c)
 
+proc rewriteYieldsAndCopy(e: var EContext; dest: var TokenBuf;
+                           c: var Cursor; resultSym: SymId) =
+  ## Walk one subtree from `c` into `dest`, rewriting each `(yld v)` (where v
+  ## is not the dot-token) into the sequence `(asgn resultSym v); (yld .)`.
+  ## Nested proc/iter/template/macro/type decls are passed through verbatim
+  ## (they have their own yield contexts, if any).
+  case c.kind
+  of ParLe:
+    let sk = c.stmtKind
+    if sk == YldS:
+      let info = c.info
+      let head = c.load()
+      inc c # past yld tag
+      if c.kind == DotToken:
+        # bare yield (void return) — leave as-is
+        dest.add head
+        dest.takeToken c # the dot token
+        dest.takeParRi c
+      else:
+        # (yld v) ⇒ (asgn resultSym v) ; (yld .)
+        dest.copyIntoKind AsgnS, info:
+          dest.addSymUse resultSym, info
+          dest.takeTree c # v
+        dest.add head
+        dest.addDotToken()
+        dest.takeParRi c # close original yld
+    elif sk in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS,
+                TemplateS, TypeS}:
+      dest.takeTree c
+    else:
+      dest.takeToken c
+      while c.hasMore:
+        rewriteYieldsAndCopy(e, dest, c, resultSym)
+      dest.takeParRi c
+  else:
+    dest.takeToken c
+
+proc rewriteClosureIter(e: var EContext; dest: var TokenBuf;
+                        c: var Cursor; retType: Cursor) =
+  ## Inject `(result :synth . . T .)` at the head of a `.closure` iterator's
+  ## body and rewrite every `(yld v)` to `(asgn synth v); (yld .)`. With this,
+  ## destroyer sees a typed asgn to a `result` local and injects the proper
+  ## `=destroy old; =copy/move new` hooks. cps.nim's existing ResultS handling
+  ## then lifts `synth` to `(deref env.result.0)`.
+  let synthResultSym = pool.syms.getOrIncl(
+    "`coroResult." & $getTmpId(e) & "." & e.main)
+
+  dest.takeToken c # IteratorS tag
+  for _ in 0..<BodyPos:
+    dest.takeTree c
+
+  # Now at body. Either DotToken (forward decl) or a (stmts ...).
+  if c.kind == DotToken:
+    dest.takeToken c
+    dest.takeParRi c
+    return
+  if c.stmtKind != StmtsS:
+    dest.takeTree c
+    dest.takeParRi c
+    return
+
+  dest.takeToken c # body's StmtsS opening
+
+  let info = c.info
+  dest.copyIntoKind ResultS, info:
+    dest.addSymDef synthResultSym, info
+    dest.addDotToken() # exported
+    dest.addDotToken() # pragmas
+    dest.copyTree retType
+    dest.addDotToken() # value
+
+  while c.hasMore:
+    rewriteYieldsAndCopy(e, dest, c, synthResultSym)
+
+  dest.takeParRi c # close body stmts
+  dest.takeParRi c # close iter decl
+
+proc emitCoroFor(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
+  ## Lower `for x in closureIter(args): body` into a `(corofor ...)` tag.
+  ## cps.nim later expands the corofor into the real trampoline; this proc
+  ## emits a pure-structural shape with no CPS-runtime symbols.
+  ##
+  ## Output (placed inside transformForStmt's existing outer block):
+  ##   (var :forLoopVar T .)                                     <-- sibling
+  ##   (corofor
+  ##     <iter-call verbatim>
+  ##     (block :coroInner.N (stmts <user-body>)))
+  ##
+  ## The for-loop var lives at the outer block's scope, NOT inside corofor's
+  ## body. This is essential for correct hook semantics: with the iter's
+  ## yield-write injecting `=destroy old; =copy new` on caller's slot,
+  ## per-iteration destroyer-injected `=destroy(forLoopVar)` would
+  ## double-destroy. By hoisting the decl, destroyer only injects `=destroy`
+  ## once at end-of-outer-block, after the trampoline.
+  ##
+  ## The inner block exists so `continue` can rewrite to `break coroInner`,
+  ## which cps.nim's expansion preserves so the trampoline can run
+  ## `it = advance(it)` after the body block ends.
+  var iterCur = forStmt.iter
+  if iterCur.exprKind == HderefX:
+    error e, "closure iterators returning var/lent are not yet supported"
+  if iterCur.exprKind notin CallKinds:
+    error e, "closure iterator must be invoked directly in a for-loop, got: ",
+      forStmt.iter
+  let info = iterCur.info
+  let forVars = getForVars(e, forStmt.vars)
+  if forVars.len != 1:
+    error e, "tuple unpacking in closure-iter for-loops is not yet supported"
+
+  let innerLab = pool.syms.getOrIncl("`coroInner." & $getTmpId(e))
+  e.continues.add innerLab
+
+  # Hoist the for-loop var declaration to the outer block scope (sibling
+  # of corofor) — see proc docstring.
+  dest.copyTree forVars[0]
+
+  let forLoopVarSym = asLocal(forVars[0]).name.symId
+
+  dest.add tagToken("corofor", info)
+  # Emit the iter call verbatim, but append `(haddr forLoopVarSym)` as a
+  # trailing arg so cps.nim can recover the result-slot pointer without
+  # having to peel the var-decl. Intermediate passes (xelim/destroyer/
+  # duplifier) treat the call as opaque, so the extra "arg" rides along
+  # without disturbing them.
+  var callCur = forStmt.iter
+  dest.takeToken callCur # (call tag
+  dest.takeTree callCur # iter sym
+  while callCur.hasMore:
+    dest.takeTree callCur
+  dest.copyIntoKind HaddrX, info:
+    dest.addSymUse forLoopVarSym, info
+  dest.addParRi() # close iter call
+
+  # body: (block :coroInner.N (stmts <user-body>))
+  dest.add tagToken($BlockS, info)
+  dest.add symdefToken(innerLab, info)
+  dest.add tagToken("stmts", info)
+
+  var bodyCur = forStmt.body
+  if bodyCur.stmtKind == StmtsS:
+    inc bodyCur
+    while bodyCur.hasMore:
+      transformStmt(e, dest, bodyCur)
+  else:
+    transformStmt(e, dest, bodyCur)
+
+  dest.addParRi() # close inner block body stmts
+  dest.addParRi() # close inner block
+
+  dest.addParRi() # close corofor
+
+  discard e.continues.pop()
+
 proc inlineIterator(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
   var iter = forStmt.iter
   if iter.exprKind == HderefX:
@@ -493,6 +646,9 @@ proc inlineIterator(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
   let res = tryLoadSym(iterSym)
   if res.status == LacksNothing:
     let routine = asRoutine(res.decl, SkipInclBody)
+    if hasPragma(routine.pragmas, ClosureP):
+      emitCoroFor(e, dest, forStmt)
+      return
     var params = routine.params
     inc params # (params
     inc iter # name
@@ -657,12 +813,18 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
     of ForS:
       transformForStmt(e, dest, c)
     of IteratorS:
-      var iter = c
-      inc iter
-      if isLocalDecl(iter.symId):
+      let routine = asRoutine(c, SkipExclBody)
+      let iterSym = routine.name.symId
+      let isClosureIter = hasPragma(routine.pragmas, ClosureP)
+      if isClosureIter:
+        # Inject `result: T` + rewrite `(yld v)` so destroyer/duplifier see
+        # a typed asgn and inject =destroy/=copy hooks. cps.nim then lifts
+        # `result` to `*env.result.0`.
+        rewriteClosureIter(e, dest, c, routine.retType)
+      elif isLocalDecl(iterSym):
         var buf = createTokenBuf()
         takeTree(buf, c)
-        publish iter.symId, buf
+        publish iterSym, buf
       else:
         skip(c)
     of TemplateS:
@@ -740,7 +902,7 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
         ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS,
         TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
         InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS,
-        UsingS, AsmS, DeferS, NoStmt:
+        UsingS, AsmS, DeferS, CoroforS, NoStmt:
       dest.add c
       inc c
       e.loop(dest, c):

@@ -158,6 +158,7 @@ type
     ContinueS = (ord(ContinueTagId), "continue")  ## `continue` statement
     ForS = (ord(ForTagId), "for")  ## for statement
     WhileS = (ord(WhileTagId), "while")  ## `while` statement
+    CoroforS = (ord(CoroforTagId), "corofor")  ## closure-iterator for loop, lowered shape used between iterinliner and cps; first child is the iterator call, second child is a `(stmts ...)` whose first inner statement is a `(var :forLoopVar T .)` declaration that receives each yielded value
     CaseS = (ord(CaseTagId), "case")  ## `case` statement
     RetS = (ord(RetTagId), "ret")  ## `return` instruction
     YldS = (ord(YldTagId), "yld")  ## yield statement
@@ -192,7 +193,7 @@ type
     DeferS = (ord(DeferTagId), "defer")  ## `defer` statement
 
 proc rawTagIsNimonyStmt*(raw: TagEnum): bool {.inline.} =
-  raw in {CallTagId, CmdTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ResultTagId, GletTagId, TletTagId, LetTagId, CursorTagId, PatternvarTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, BlockTagId, EmitTagId, AsgnTagId, ScopeTagId, IfTagId, WhenTagId, BreakTagId, ContinueTagId, ForTagId, WhileTagId, CaseTagId, RetTagId, YldTagId, StmtsTagId, PragmasTagId, PragmaxTagId, InclTagId, ExclTagId, IncludeTagId, ImportTagId, ImportasTagId, FromimportTagId, ImportexceptTagId, ExportTagId, ExportexceptTagId, CommentTagId, DiscardTagId, TryTagId, RaiseTagId, UnpackdeclTagId, AssumeTagId, AssertTagId, CallstrlitTagId, InfixTagId, PrefixTagId, HcallTagId, StaticstmtTagId, BindTagId, MixinTagId, UsingTagId, AsmTagId, DeferTagId}
+  raw in {CallTagId, CmdTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ResultTagId, GletTagId, TletTagId, LetTagId, CursorTagId, PatternvarTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, BlockTagId, EmitTagId, AsgnTagId, ScopeTagId, IfTagId, WhenTagId, BreakTagId, ContinueTagId, ForTagId, WhileTagId, CoroforTagId, CaseTagId, RetTagId, YldTagId, StmtsTagId, PragmasTagId, PragmaxTagId, InclTagId, ExclTagId, IncludeTagId, ImportTagId, ImportasTagId, FromimportTagId, ImportexceptTagId, ExportTagId, ExportexceptTagId, CommentTagId, DiscardTagId, TryTagId, RaiseTagId, UnpackdeclTagId, AssumeTagId, AssertTagId, CallstrlitTagId, InfixTagId, PrefixTagId, HcallTagId, StaticstmtTagId, BindTagId, MixinTagId, UsingTagId, AsmTagId, DeferTagId}
 
 type
   NimonyType* = enum

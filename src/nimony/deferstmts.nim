@@ -135,7 +135,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trBlock c, dest, n
         dest.takeParRi n
       dest.takeParRi n
-    of WhileS, BlockS:
+    of WhileS, BlockS, CoroforS:
       dest.takeToken n # while
       trStmt c, dest, n # condition or label
       trBlock c, dest, n
