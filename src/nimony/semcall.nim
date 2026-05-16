@@ -420,6 +420,10 @@ proc buildCallSource(buf: var TokenBuf; cs: CallState) =
     buf.addParLe(AtX, cs.callNode.info)
     for a in cs.args:
       buf.addSubtree a.n
+  of CurlyatCall:
+    buf.addParLe(CurlyatX, cs.callNode.info)
+    for a in cs.args:
+      buf.addSubtree a.n
   of DotAsgnCall:
     assert cs.args.len == 2
     buf.addParLe(AsgnS, cs.callNode.info)
@@ -437,6 +441,14 @@ proc buildCallSource(buf: var TokenBuf; cs: CallState) =
   of SubscriptAsgnCall:
     buf.addParLe(AsgnS, cs.callNode.info)
     buf.addParLe(AtX, cs.callNode.info)
+    let valueIndex = cs.args.len - 1
+    for i in 0 ..< valueIndex:
+      buf.addSubtree cs.args[i].n
+    buf.addParRi()
+    buf.addSubtree cs.args[valueIndex].n
+  of CurlyatAsgnCall:
+    buf.addParLe(AsgnS, cs.callNode.info)
+    buf.addParLe(CurlyatX, cs.callNode.info)
     let valueIndex = cs.args.len - 1
     for i in 0 ..< valueIndex:
       buf.addSubtree cs.args[i].n

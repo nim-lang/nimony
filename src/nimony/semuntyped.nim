@@ -582,7 +582,7 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
           semTemplType c, dest, n
       else:
         semTemplBodySons c, dest, n
-    of AtX:
+    of AtX, CurlyatX:
       # XXX generate `[]`/`{}` symchoice
       semTemplBodySons c, dest, n
     of DotX:

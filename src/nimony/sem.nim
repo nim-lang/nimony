@@ -216,8 +216,8 @@ type
 
   TransformedCallSource = enum
     RegularCall, MethodCall,
-    DotCall, SubscriptCall,
-    DotAsgnCall, SubscriptAsgnCall
+    DotCall, SubscriptCall, CurlyatCall,
+    DotAsgnCall, SubscriptAsgnCall, CurlyatAsgnCall
 
 proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag] = {})
 
@@ -2350,6 +2350,29 @@ proc semSubscriptAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info:
     semCall c, dest, call, {}, SubscriptAsgnCall
     it.typ = call.typ
 
+proc semCurlyatAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: PackedLineInfo) =
+  # `{}=` has no builtin meaning; always rewrite to a call to `{}=`:
+  inc it.n # tag of curlyat
+  var lhsBuf = createTokenBuf(4)
+  var lhs = Item(n: it.n, typ: c.types.autoType)
+  semExpr c, lhsBuf, lhs, {KeepMagics}
+  it.n = lhs.n
+  lhs.n = cursorAt(lhsBuf, 0)
+  var callBuf = createTokenBuf(16)
+  callBuf.addParLe(CallX, info)
+  callBuf.add identToken(pool.strings.getOrIncl("{}="), info)
+  callBuf.addSubtree lhs.n
+  while it.n.hasMore:
+    # arguments of the curly subscript:
+    callBuf.takeTree it.n
+  skipParRi it.n # end curlyat expression
+  callBuf.takeTree it.n # assignment value
+  callBuf.addParRi()
+  skipParRi it.n # end assignment
+  var call = Item(n: cursorAt(callBuf, 0), typ: it.typ)
+  semCall c, dest, call, {}, CurlyatAsgnCall
+  it.typ = call.typ
+
 proc semDotAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: PackedLineInfo) =
   # check if LHS is builtin subscript:
   let dotInfo = it.n.info
@@ -2402,11 +2425,13 @@ proc semAsgn(c: var SemContext; dest: var TokenBuf; it: var Item) =
   case it.n.exprKind
   of AtX:
     semSubscriptAsgn c, dest, it, info
+  of CurlyatX:
+    semCurlyatAsgn c, dest, it, info
   of DotX, DdotX:
     semDotAsgn c, dest, it, info
   of NoExpr, ErrX, SufX, DerefX, PatX, ParX, AddrX, NilX, InfX, NeginfX, NanX,
      FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX, KvX, OconstrX,
-     AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
+     AconstrX, BracketX, CurlyX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
      BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, HaddrX, NewrefX, NewobjX, TupX,
      TupconstrX, SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
@@ -5288,6 +5313,28 @@ proc semSubscript(c: var SemContext; dest: var TokenBuf; it: var Item) =
   lhs.n = cursorAt(lhsBuf, 0)
   semBuiltinSubscript(c, dest, it, lhs)
 
+proc semCurlyat(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  let info = it.n.info
+  inc it.n # tag
+  var lhsBuf = createTokenBuf(4)
+  var lhs = Item(n: it.n, typ: c.types.autoType)
+  semExpr c, lhsBuf, lhs, {KeepMagics}
+  it.n = lhs.n
+  lhs.n = cursorAt(lhsBuf, 0)
+
+  # `{}` has no builtin meaning; always rewrite to a call to `{}`:
+  var callBuf = createTokenBuf(16)
+  callBuf.addParLe(CallX, info)
+  callBuf.add identToken(pool.strings.getOrIncl("{}"), info)
+  callBuf.addSubtree lhs.n
+  while it.n.hasMore:
+    callBuf.takeTree it.n
+  callBuf.addParRi()
+  skipParRi it.n
+  var call = Item(n: cursorAt(callBuf, 0), typ: it.typ)
+  semCall c, dest, call, {}, CurlyatCall
+  it.typ = call.typ
+
 proc semTypedAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeExpr = dest.len
   let expected = it.typ
@@ -6681,7 +6728,9 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
         semDo c, dest, it, whichPass(c)
     of CompilesX:
       semCompiles c, dest, it
-    of CurlyatX, AlignofX, OffsetofX:
+    of CurlyatX:
+      semCurlyat c, dest, it
+    of AlignofX, OffsetofX:
       # XXX To implement
       buildErr c, dest, it.n.info, "to implement: " & $exprKind(it.n)
       takeToken dest, it.n
