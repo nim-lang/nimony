@@ -80,6 +80,22 @@ type
 
 proc createMatch*(context: ptr SemContext): Match = Match(context: context, firstVarargPosition: -1)
 
+proc applyScopeMatch*(m: var Match) =
+  ## Models an implicit `Scope` parameter on every routine. Same-module
+  ## calls pass `Scope` (exact match); cross-module calls pass
+  ## `ImportScope`, where `ImportScope = object of Scope` (subtype match,
+  ## depth 1). This is what makes overload resolution prefer locally
+  ## defined routines over imported ones, without a separate scope filter.
+  ## Module-of-origin is treated as another subtyping dimension and so
+  ## composes naturally with the existing match ranking: implicit
+  ## conversions still beat scope preference, because `convCosts` is
+  ## ordered before `inheritanceCosts` in `cmpMatches`.
+  if m.context == nil: return
+  if m.fn.sym == SymId(0): return
+  let modul = extractModule(pool.syms[m.fn.sym])
+  if modul.len != 0 and modul != m.context.thisModuleSuffix:
+    inc m.inheritanceCosts
+
 when not defined(nimony):
   proc concat(a: varargs[string]): string =
     result = a[0]
@@ -1569,6 +1585,7 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
                explicitTypeVars: Cursor) =
   assert fn.kind != NoSym or fn.sym == SymId(0)
   m.fn = fn
+  applyScopeMatch m
   matchTypevars m, fn, explicitTypeVars
 
   var f = fn.typ
