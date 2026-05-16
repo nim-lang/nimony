@@ -242,11 +242,6 @@ type
   CoroutineBase* = object of RootObj
     caller*: Continuation
     callee*: ptr CoroutineBase
-    slot*: pointer
-      ## Type-erased yield-slot pointer. For iterators set by the init
-      ## wrapper to the caller's `addr forLoopVar`; the trampoline body
-      ## compares against this to filter out yields from sibling coroutines
-      ## that share a scheduler. `nil` for passive (non-yielding) procs.
 
 method cancel*(coro: ptr CoroutineBase) =
   discard "to override"

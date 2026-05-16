@@ -150,7 +150,6 @@ const
   EnvFieldName = "env.0"
   CallerFieldName = "caller.0"
   CalleeFieldName = "callee.0"
-  SlotFieldName = "slot.0"
   ResultParamName = "`result.0"
   ResultFieldName = "`result.0"
   CallerParamName = "`caller.0"
@@ -595,18 +594,36 @@ proc trCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.add addrBuf
       emitStopContinuation(dest, info)
 
-  # ---- emit try/while/finally ----
-  let finishedSym = pool.syms.getOrIncl("finished.0." & SystemModuleSuffix)
-  let advanceSym = pool.syms.getOrIncl("advance.0." & SystemModuleSuffix)
-  let finalizeSym = pool.syms.getOrIncl("finalizeCoroutine.0." & SystemModuleSuffix)
   let envFieldSym = pool.syms.getOrIncl(EnvFieldName)
-  let slotFieldSym = pool.syms.getOrIncl(SlotFieldName)
 
   template emitItEnv(dest: var TokenBuf) =
     dest.copyIntoKind DotX, info:
       dest.addSymUse itSym, info
       dest.addSymUse envFieldSym, info
       dest.addIntLit 0, info # direct field of Continuation
+
+  # ---- emit `let myEnv = it.env` (snapshot of our frame pointer) ----
+  # Each `for x in iter()` owns exactly one heap-allocated coro frame, and
+  # the init wrapper returns a Continuation whose `env` points at that
+  # frame. We capture it once so the body-guard below can ask "is this yield
+  # coming from MY iter call?" — using the frame pointer as the identity
+  # token (no slot field required on CoroutineBase; pointer equality is
+  # what we need anyway).
+  let myEnvSym = pool.syms.getOrIncl("`coroEnv." & $c.currentProc.counter)
+  inc c.currentProc.counter
+  c.typeCache.registerLocal(myEnvSym, LetY, default(Cursor))
+  dest.copyIntoKind LetS, info:
+    dest.addSymDef myEnvSym, info
+    dest.addDotToken() # exported
+    dest.addDotToken() # pragmas
+    dest.copyIntoKind PtrT, info:
+      dest.addSymUse pool.syms.getOrIncl(RootObjName), info
+    emitItEnv(dest)
+
+  # ---- emit try/while/finally ----
+  let finishedSym = pool.syms.getOrIncl("finished.0." & SystemModuleSuffix)
+  let advanceSym = pool.syms.getOrIncl("advance.0." & SystemModuleSuffix)
+  let finalizeSym = pool.syms.getOrIncl("finalizeCoroutine.0." & SystemModuleSuffix)
 
   dest.addParLe TryS, info
   dest.copyIntoKind StmtsS, info:
@@ -615,16 +632,14 @@ proc trCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addParPair TrueX, info
     # body: (stmts (asgn it (call advance it))
     #              (if (elif (call finished it) (stmts (break))))
-    #              (if (elif (and (neq (pointer) it.env nil)
-    #                             (eq (pointer) it.env.slot
-    #                                           (cast (pointer) (haddr forLoopVar))))
-    #                        (stmts <user-body>))))
+    #              (if (elif (eq (pointer) it.env myEnv) (stmts <user-body>))))
     # Order matters: the init wrapper returns AFTER state 0 (initialization)
     # but BEFORE the first `yield` writes to `*forLoopVar`. We advance first
     # to reach the next yield (or terminal state), check whether the iterator
-    # produced a value, then (if the yield was for *our* slot) run the body.
-    # The slot guard lets a custom scheduler interleave continuations across
-    # multiple for-loops without each body executing on sibling yields.
+    # produced a value, then (if it came from OUR frame) run the body. The
+    # env-equality guard lets a custom scheduler interleave continuations
+    # across multiple for-loops without each body executing on sibling
+    # yields — `c.env` already gives us the identity token for free.
     dest.copyIntoKind StmtsS, info:
       dest.copyIntoKind AsgnS, info:
         dest.addSymUse itSym, info
@@ -641,21 +656,10 @@ proc trCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
               dest.addDotToken()
       dest.copyIntoKind IfS, info:
         dest.copyIntoKind ElifU, info:
-          dest.copyIntoKind AndX, info:
-            dest.copyIntoKind NeqX, info:
-              dest.addParPair PointerT, info
-              emitItEnv(dest)
-              dest.addParPair NilX, info
-            dest.copyIntoKind EqX, info:
-              dest.addParPair PointerT, info
-              dest.copyIntoKind DotX, info:
-                dest.copyIntoKind DerefX, info:
-                  emitItEnv(dest)
-                dest.addSymUse slotFieldSym, info
-                dest.addIntLit 0, info # direct field of CoroutineBase
-              dest.copyIntoKind CastX, info:
-                dest.addParPair PointerT, info
-                dest.add addrBuf
+          dest.copyIntoKind EqX, info:
+            dest.addParPair PointerT, info
+            emitItEnv(dest)
+            dest.addSymUse myEnvSym, info
           dest.copyIntoKind StmtsS, info:
             # Second child of corofor is the inner-block (and any destroyer-injected
             # cleanup that ended up alongside it).
@@ -1401,15 +1405,6 @@ proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId;
       init.copyIntoKind KvU, info:
         init.addSymUse pool.syms.getOrIncl(ResultFieldName), info
         init.addSymUse pool.syms.getOrIncl(ResultParamName), info
-      # Mirror the result-param-pointer into CoroutineBase.slot so the
-      # closure-iter trampoline can compare against `addr forLoopVar`
-      # without knowing the concrete coro type.
-      init.copyIntoKind KvU, info:
-        init.addSymUse pool.syms.getOrIncl(SlotFieldName), info
-        init.copyIntoKind CastX, info:
-          init.addParPair PointerT, info
-          init.addSymUse pool.syms.getOrIncl(ResultParamName), info
-        init.addIntLit 1, info # field is in superclass
     # final parameter is always the `caller` continuation:
     dest.copyIntoKind ParamU, info:
       dest.addSymDef pool.syms.getOrIncl(CallerParamName), info

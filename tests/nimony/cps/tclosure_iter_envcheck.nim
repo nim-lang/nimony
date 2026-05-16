@@ -1,10 +1,12 @@
-## Demonstrates the env-check the trampoline emits around the for-loop body:
-##   if isYieldFor(it, addr forLoopVar): <body>
+## Demonstrates the env-equality check the trampoline emits around the body:
+##   let myEnv = it.env             # the frame allocated by our init wrapper
+##   ...
+##   if it.env == myEnv: <body>
 ##
-## With a single iter and the default scheduler `it.env.slot` always matches
-## `addr forLoopVar`, so the check is invisible. To force a mismatch we install
-## a custom scheduler that, on the third advance, returns a manufactured
-## continuation whose `env.slot` points to a different location. With the check
+## With a single iter and the default scheduler `it.env` always matches
+## `myEnv`, so the check is invisible. To force a mismatch we install a
+## custom scheduler that, on the third advance, returns a manufactured
+## continuation pointing at a DIFFERENT `CoroutineBase`. With the check
 ## the body is skipped on that tick; without it, the body would fire again
 ## with `forLoopVar` still holding the previously-yielded value.
 ##
@@ -12,7 +14,7 @@
 ##   1
 ##   2
 ##
-## Without the env-check the trampoline would print 1, 2, 2 — the third line
+## Without the check the trampoline would print 1, 2, 2 — the third line
 ## coming from the decoy advance reusing the stale `forLoopVar`.
 
 import std / syncio
@@ -22,9 +24,7 @@ iterator gen(): int {.closure.} =
   yield 2
   yield 3  # never observed: the scheduler swaps in a decoy first
 
-var decoySlot: int = 999
 var decoyBase: CoroutineBase
-decoyBase.slot = cast[pointer](addr decoySlot)
 
 proc decoyStep(coro: ptr CoroutineBase): Continuation {.nimcall.} =
   result = Continuation(fn: nil, env: nil)
