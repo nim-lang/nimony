@@ -1133,6 +1133,51 @@ algorithm returns true:
   return "ambiguous"
   ```
 
+### Module-of-origin
+
+Overload resolution prefers a routine declared in the calling module
+over one that comes from an imported module. This rule is not a separate
+post-filter; it is encoded as another subtyping dimension that
+participates in the same category-matching algorithm described above.
+
+Conceptually, every routine has one extra implicit parameter of type
+`Scope`. The compiler synthesizes the corresponding argument at every
+call site:
+
+- when the routine is declared in the calling module, the argument has
+  type `Scope` and the parameter matches **exactly**;
+- when the routine is imported from another module, the argument has
+  type `ImportScope`, where `ImportScope = object of Scope`, and the
+  parameter matches as a **subtype** (depth 1).
+
+So `import` is treated as a form of inheritance between scopes, in the
+same spirit as Eiffel's inheritance between classes. No new ranking
+category is introduced; the existing rules do the work:
+
+- two candidates that tie on real-argument matches → the local one wins
+  because the imported one carries one extra unit of subtype distance;
+- a local candidate that would require an implicit conversion vs. an
+  imported candidate that matches exactly on its real arguments → the
+  imported candidate still wins, because the "conversion match"
+  category is ordered after "subtype match";
+- a local candidate that matches via subtyping on a real argument vs.
+  an imported candidate that matches exactly on its real arguments →
+  ambiguous, because each side contributes one unit of subtype distance
+  and the categories tie.
+
+  ```nim
+  # module m:
+  proc which*(x: int): string = "imported-int"
+  proc which*(x: float): string = "imported-float"
+
+  # caller:
+  import m
+  proc which(x: int): string = "local-int"
+
+  doAssert which(1) == "local-int"        # local wins the tie
+  doAssert which(1.0) == "imported-float" # conversion still beats scope
+  ```
+
 ### Second Trial: Structural type comparisons
 
 The "nesting" of a type's generic parameters is used in order to form a relation between two types. A type `G[A[T]]` is more specific than a type `G[T]` as it has more information about the type `T`. Thus for overload resolution the more specific type is preferred.

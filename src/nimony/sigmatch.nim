@@ -80,6 +80,41 @@ type
 
 proc createMatch*(context: ptr SemContext): Match = Match(context: context, firstVarargPosition: -1)
 
+proc scopeBump(m: Match): int =
+  ## Models an implicit `Scope` parameter on every routine. Same-module
+  ## calls pass `Scope` (exact match); cross-module calls pass
+  ## `ImportScope`, where `ImportScope = object of Scope` (subtype match,
+  ## depth 1). Returns the phantom parameter's contribution to
+  ## `inheritanceCosts`: 0 for a same-module candidate, 1 otherwise.
+  ##
+  ## Treating module-of-origin as a subtyping dimension makes overload
+  ## resolution prefer locally defined routines over imported ones
+  ## without a separate scope filter; the rule composes naturally with
+  ## the existing match ranking (implicit conversions still beat scope
+  ## preference because `convCosts` is ordered before `inheritanceCosts`
+  ## in `cmpMatches`).
+  ##
+  ## Evaluated lazily by `cmpMatches`, so unique-resolution call sites
+  ## pay nothing: only candidates that actually compete with another
+  ## successful match are inspected.
+  if m.context == nil or m.fn.sym == SymId(0): return 0
+  let s = pool.syms[m.fn.sym]
+  # Locate the dot that introduces the module suffix without allocating
+  # a substring. Mirrors `extractModule` in lib/symparser.nim: a trailing
+  # numeric segment means no module suffix at all (treated as local).
+  var i = s.len - 2
+  while i > 0:
+    if s[i] == '.':
+      if s[i+1] in {'0'..'9'}: return 0
+      let suf = m.context.thisModuleSuffix
+      let mLen = s.len - i - 1
+      if mLen != suf.len: return 1
+      for j in 0 ..< mLen:
+        if s[i+1+j] != suf[j]: return 1
+      return 0
+    dec i
+  return 0
+
 when not defined(nimony):
   proc concat(a: varargs[string]): string =
     result = a[0]
@@ -1665,11 +1700,16 @@ proc cmpMatches*(a, b: Match; preferIterators = false): DisambiguationResult =
     result = FirstWins
   elif a.intLitCosts > b.intLitCosts:
     result = SecondWins
-  elif a.inheritanceCosts < b.inheritanceCosts:
-    result = FirstWins
-  elif a.inheritanceCosts > b.inheritanceCosts:
-    result = SecondWins
   else:
+    # `inheritanceCosts` is the only ranking dimension the implicit
+    # `Scope` phantom parameter contributes to, so the scope bump is
+    # only consulted here (lazy, on demand).
+    let aInh = a.inheritanceCosts + scopeBump(a)
+    let bInh = b.inheritanceCosts + scopeBump(b)
+    if aInh < bInh:
+      return FirstWins
+    elif aInh > bInh:
+      return SecondWins
     let diff = a.inferred.len - b.inferred.len
     if diff < 0:
       result = FirstWins
