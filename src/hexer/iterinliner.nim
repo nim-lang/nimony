@@ -869,11 +869,18 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
       let routine = asRoutine(c, SkipExclBody)
       let iterSym = routine.name.symId
       let isClosureIter = hasPragma(routine.pragmas, ClosureP)
-      if isClosureIter:
+      let isGeneric = routine.typevars.substructureKind == TypevarsU
+      if isClosureIter and not isGeneric:
         # Inject `result: T` + rewrite `(yld v)` so destroyer/duplifier see
         # a typed asgn and inject =destroy/=copy hooks. cps.nim then lifts
-        # `result` to `*env.result.0`.
+        # `result` to `*env.result.0`. Generic closure-iter templates pass
+        # through unchanged — only concrete instances need this rewrite.
         rewriteClosureIter(e, dest, c, routine.retType)
+      elif isClosureIter:
+        # Generic template: pass through verbatim; cps.nim also leaves it
+        # alone so the dangling generic decl never references a coro frame
+        # type that nobody defines.
+        dest.takeTree c
       elif isLocalDecl(iterSym):
         var buf = createTokenBuf()
         takeTree(buf, c)

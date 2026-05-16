@@ -187,17 +187,23 @@ type
     shouldPublish: seq[tuple[sym: SymId, start: int]]
     coroTypes: TokenBuf
 
+proc coroNameStem(procId: SymId): string =
+  ## Returns the symbol's full name minus its trailing module suffix. Unlike
+  ## `extractVersionedBasename`, this preserves any intermediate `I<hash>`
+  ## segment for generic instances — necessary because two different
+  ## instantiations (e.g. `gen.12.Iaaaa.mod` and `gen.12.Ibbbb.mod`) would
+  ## otherwise produce identical stem `"gen.12"` and collide on every
+  ## synthesised wrapper / coro-type / state-proc / field name.
+  splitSymName(pool.syms[procId]).name
+
 proc coroTypeForProc(c: Context; procId: SymId): SymId =
-  let s = extractVersionedBasename(pool.syms[procId])
-  result = pool.syms.getOrIncl(s & ".coro." & c.thisModuleSuffix)
+  result = pool.syms.getOrIncl(coroNameStem(procId) & ".coro." & c.thisModuleSuffix)
 
 proc coroWrapperProc(c: Context; procId: SymId): SymId =
-  let s = extractVersionedBasename(pool.syms[procId])
-  result = pool.syms.getOrIncl(s & ".init." & c.thisModuleSuffix)
+  result = pool.syms.getOrIncl(coroNameStem(procId) & ".init." & c.thisModuleSuffix)
 
 proc stateToProcName(c: Context; sym: SymId; state: int): SymId =
-  let s = extractVersionedBasename(pool.syms[sym])
-  result = pool.syms.getOrIncl(s & ".s" & $state & "." & c.thisModuleSuffix)
+  result = pool.syms.getOrIncl(coroNameStem(sym) & ".s" & $state & "." & c.thisModuleSuffix)
 
 proc localToFieldname(c: var Context; local: SymId): SymId =
   var name = pool.syms[local]
@@ -513,10 +519,10 @@ proc coroWrapperForExternIter(iterSym: SymId): SymId =
   ## Mangle the closure iterator's init-wrapper symbol using the iterator's
   ## OWN module suffix (which may differ from the current module's). The
   ## wrapper is defined in the same module that declared the iterator.
-  let s = pool.syms[iterSym]
-  let modSuffix = extractModule(s)
-  let base = extractVersionedBasename(s)
-  result = pool.syms.getOrIncl(base & ".init." & modSuffix)
+  ## `splitSymName` preserves the `I<hash>` segment for generic instances
+  ## so two instantiations don't collide on a single wrapper.
+  let split = splitSymName(pool.syms[iterSym])
+  result = pool.syms.getOrIncl(split.name & ".init." & split.module)
 
 proc emitStopContinuation(dest: var TokenBuf; info: PackedLineInfo) =
   ## Emit `Continuation(fn: nil, env: nil)` — the sentinel "no caller"
@@ -1497,12 +1503,16 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
       if (kind == IteratorY and hasPragma(n, ClosureP)) or hasPragma(n, PassiveP):
         isCoroutine = true
         c.currentProc.kind = (if kind == IteratorY: IsIterator else: IsPassive)
-        # Closure iterators get lowered to a regular proc plus a state
-        # machine. Rewrite the tag emitted at the start of this decl so
-        # downstream passes (and NIFC) see a `proc`, not an `iterator`.
-        if kind == IteratorY:
-          dest[procStart] = parLeToken(ProcS, dest[procStart].info)
-        patchParamList c, dest, init, sym, paramsBegin, paramsEnd, origParams
+        # Only concrete coroutines get lowered: their signature gets the
+        # state-machine wrapper params and their tag becomes `proc`. Generic
+        # templates pass through unchanged — only their instances are CPS-
+        # transformed, otherwise the patched signature would reference a
+        # coro frame type that nobody emits (cf. the `gen.0.coro.<mod>`
+        # field-of-type-T crash in nifcgen).
+        if isConcrete:
+          if kind == IteratorY:
+            dest[procStart] = parLeToken(ProcS, dest[procStart].info)
+          patchParamList c, dest, init, sym, paramsBegin, paramsEnd, origParams
     elif i == TypevarsPos:
       isConcrete = n.substructureKind != TypevarsU
     # function declaration can have (delay) tag inside
@@ -1528,7 +1538,7 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
   dest.takeParRi n # ProcS
   discard c.procStack.pop()
   c.typeCache.closeScope()
-  if isCoroutine:
+  if isCoroutine and isConcrete:
     var coroTypes = move c.coroTypes
     generateCoroutineType(c, coroTypes, sym)
     c.coroTypes = move coroTypes
