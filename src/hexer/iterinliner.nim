@@ -582,23 +582,56 @@ proc emitCoroFor(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
   ## `it = advance(it)` after the body block ends.
   var iterCur = forStmt.iter
   if iterCur.exprKind == HderefX:
-    error e, "closure iterators returning var/lent are not yet supported"
+    # Iter returns var/lent — peel the deref; the call expression itself is
+    # what we lower. cps.nim's frame layout already wraps the synthesized
+    # `result` field in `ptr`, so the slot type for a `var T`-returning iter
+    # is `ptr (mut T)` and yield-writes lower to address-stores via existing
+    # sem/desugar machinery.
+    inc iterCur
   if iterCur.exprKind notin CallKinds:
     error e, "closure iterator must be invoked directly in a for-loop, got: ",
       forStmt.iter
   let info = iterCur.info
   let forVars = getForVars(e, forStmt.vars)
-  if forVars.len != 1:
-    error e, "tuple unpacking in closure-iter for-loops is not yet supported"
 
   let innerLab = pool.syms.getOrIncl("`coroInner." & $getTmpId(e))
   e.continues.add innerLab
 
-  # Hoist the for-loop var declaration to the outer block scope (sibling
-  # of corofor) — see proc docstring.
-  dest.copyTree forVars[0]
-
-  let forLoopVarSym = asLocal(forVars[0]).name.symId
+  # `forLoopVarSym` is the symbol whose `addr` is passed to the iter. For the
+  # single-var case it's the user's for-var itself. For multi-var (tuple
+  # unpacking) it's a synthesised hidden tuple-typed local; per-iteration the
+  # body opens with `(let userVar Ti (tupat hidden i))` bindings so the
+  # user-body sees its symbols pointing at fresh copies of the components.
+  let forLoopVarSym: SymId
+  if forVars.len == 1:
+    # Hoist the for-loop var declaration to the outer block scope (sibling
+    # of corofor) — see proc docstring.
+    dest.copyTree forVars[0]
+    forLoopVarSym = asLocal(forVars[0]).name.symId
+  else:
+    # Multi-var: allocate a hidden tuple var whose type is the iter's
+    # yield-type. cps.nim's frame wraps it in `ptr`, so this is what the
+    # iter writes through.
+    var symProbe = iterCur
+    inc symProbe # past Call tag
+    if symProbe.kind != Symbol:
+      error e, "closure iterator call must target a symbol, got: ", iterCur
+    let iterSym = symProbe.symId
+    let res = tryLoadSym(iterSym)
+    if res.status != LacksNothing:
+      error e, "could not load closure-iter sym: " & pool.syms[iterSym]
+    let routine = asRoutine(res.decl, SkipInclBody)
+    var retType = routine.retType
+    if retType.typeKind in {MutT, LentT}:
+      inc retType
+    forLoopVarSym = pool.syms.getOrIncl("`coroTup." & $getTmpId(e))
+    dest.addParLe LetS, info
+    dest.addSymDef forLoopVarSym, info
+    dest.addDotToken() # exported
+    dest.addDotToken() # pragmas
+    dest.copyTree retType
+    dest.addDotToken() # no initializer — iter writes through slot
+    dest.addParRi() # close let
 
   dest.add tagToken("corofor", info)
   # Emit the iter call verbatim, but append `(haddr forLoopVarSym)` as a
@@ -607,6 +640,8 @@ proc emitCoroFor(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
   # duplifier) treat the call as opaque, so the extra "arg" rides along
   # without disturbing them.
   var callCur = forStmt.iter
+  if callCur.exprKind == HderefX:
+    inc callCur # peel hderef for var/lent-returning iters
   dest.takeToken callCur # (call tag
   dest.takeTree callCur # iter sym
   while callCur.hasMore:
@@ -615,10 +650,28 @@ proc emitCoroFor(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
     dest.addSymUse forLoopVarSym, info
   dest.addParRi() # close iter call
 
-  # body: (block :coroInner.N (stmts <user-body>))
+  # body: (block :coroInner.N (stmts [unpack-binds] <user-body>))
   dest.add tagToken($BlockS, info)
   dest.add symdefToken(innerLab, info)
   dest.add tagToken("stmts", info)
+
+  if forVars.len > 1:
+    # For each user for-var: (let :userSym T (tupat hidden i)). Using a fresh
+    # let-binding per iteration mirrors what sem emitted (the user-vars are
+    # lets) and gives the user-body the components by-value-from-the-tuple.
+    for i, fv in forVars.pairs:
+      let local = asLocal(fv)
+      let userSym = local.name.symId
+      var typ = local.typ
+      dest.addParLe fv.stmtKind, fv.info
+      dest.addSymDef userSym, fv.info
+      dest.addDotToken() # exported
+      dest.addDotToken() # pragmas
+      dest.copyTree typ
+      dest.copyIntoKind TupatX, info:
+        dest.addSymUse forLoopVarSym, info
+        dest.addIntLit i, info
+      dest.addParRi() # close decl
 
   var bodyCur = forStmt.body
   if bodyCur.stmtKind == StmtsS:
