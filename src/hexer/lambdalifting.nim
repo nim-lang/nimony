@@ -140,7 +140,12 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trNil(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   inc n
-  if n.hasMore and procHasPragma(n, ClosureP):
+  # `(nil <Type>)` for a closure proctype lowers to a `{fnptr, env}` tuple
+  # constructor — that's the runtime shape of Nim closures. ItertypeT,
+  # despite also carrying the `closure` pragma, lowers via cps.trProctype
+  # to a plain function pointer (its init wrapper allocates the frame
+  # internally), so the tuple-constructor wrap doesn't apply there.
+  if n.hasMore and n.typeKind != ItertypeT and procHasPragma(n, ClosureP):
     # nil closure must be a tuple:
     dest.copyIntoKind TupconstrX, info:
       dest.takeTree n # type
