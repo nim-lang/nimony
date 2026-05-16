@@ -228,6 +228,10 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
      CstringT, PointerT, OrdinalT,
      UarrayT, VarargsT, RangetypeT, TypedescT,
      RoutineTypes:
+    # ItertypeT (part of RoutineTypes) is currently lowered to an opaque
+    # pointer (see nifcgen.trType), so trivial. When we promote
+    # `Iterator[T]` to a managed ref envelope, ItertypeT needs to split out
+    # of this branch and flip to `result = false` so destructor hooks run.
     result = true
   of RefT:
     result = false
@@ -247,7 +251,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
       skip tup
     result = true
   of NoType, ErrT, NiltT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, InvokeT,
-     TypekindT, UntypedT, TypedT, ItertypeT:
+     TypekindT, UntypedT, TypedT:
     echo "isTrivial: ", toString(typ, false)
     bug "bug in isTrival computation"
 

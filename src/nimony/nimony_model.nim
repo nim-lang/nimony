@@ -195,7 +195,7 @@ const
   CallKindsS* = {CallS, CallstrlitS, CmdS, PrefixS, InfixS, HcallS}
   ConvKinds* = {HconvX, ConvX, DconvX, CastX}
   TypeclassKinds* = {ConceptT, TypekindT, OrdinalT, OrT, AndT, NotT}
-  RoutineTypes* = {ProcT, FuncT, IteratorT, TemplateT, MacroT, ConverterT, MethodT, ProctypeT}
+  RoutineTypes* = {ProcT, FuncT, IteratorT, TemplateT, MacroT, ConverterT, MethodT, ProctypeT, ItertypeT}
 
 proc addParLe*[T: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|ControlFlowKind|CallConv|PragmaKind](
     dest: var TokenBuf; kind: T; info = NoLineInfo) =
@@ -363,11 +363,11 @@ template skipToLocalType*(n) =
 
 proc skipToReturnType*(n: var Cursor) =
   ## Advances `n` past the prefix slots so it points at the return type.
-  ## Handles both Nimony's compact proctype layout (`(proctype <NilTag> (params) RetType ...)`)
+  ## Handles Nimony's compact proctype/itertype layout (`(<tag> <NilTag> (params) RetType ...)`)
   ## and the proc-decl-shaped layout (`(proc Name Export Pattern Typevars (params) RetType ...)`).
   let skipKind = n.typeKind
   inc n # skip ParLe
-  if skipKind == ProctypeT:
+  if skipKind in {ProctypeT, ItertypeT}:
     skip n # nilability tag
     skip n # params
   else:

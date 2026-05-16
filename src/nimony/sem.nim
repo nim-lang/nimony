@@ -2281,13 +2281,18 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
         skipToLocalType n
       elif s.kind.isRoutine:
         var thisProc = asRoutine(n)
+        # Closure iterators surface as a first-class `itertype` value. Same
+        # shape as proctype (nilTag, params, retType, pragmas) — sigmatch /
+        # nifcgen route both through the same paths.
+        let isClosureIter =
+          s.kind == IteratorY and hasPragma(thisProc.pragmas, ClosureP)
         var procTypeBuf = createTokenBuf()
-        procTypeBuf.addParLe ProctypeT
+        procTypeBuf.addParLe (if isClosureIter: ItertypeT else: ProctypeT)
         procTypeBuf.addDotToken() # nilability tag (none — `nil`/`notnil` set later)
         procTypeBuf.addSubtree thisProc.params
         procTypeBuf.addSubtree thisProc.retType
         procTypeBuf.addSubtree thisProc.pragmas
-        procTypeBuf.addParRi() # end of proctype
+        procTypeBuf.addParRi() # end of (proc|iter)type
         n = beginRead(procTypeBuf)
       elif s.kind == ModuleY:
         if AllowModuleSym notin flags:
@@ -3327,7 +3332,15 @@ proc semForLoopVar(c: var SemContext; dest: var TokenBuf; it: var Item; loopvarT
 proc isIterator(c: var SemContext; dest: var TokenBuf; s: SymId): bool =
   let sym = fetchSym(c, s)
   let res = declToCursor(c, dest, sym)
-  result = res.status == LacksNothing and res.decl.symKind == IteratorY
+  if res.status != LacksNothing: return false
+  if res.decl.symKind == IteratorY:
+    return true
+  # First-class iter value: a local/param of `itertype`.
+  if res.decl.symKind in {LetY, VarY, CursorY, ParamY, ConstY, GletY, TletY, GvarY, TvarY}:
+    let local = asLocal(res.decl)
+    result = local.typ.typeKind == ItertypeT
+  else:
+    result = false
 
 proc semForLoopTupleVar(c: var SemContext; dest: var TokenBuf; it: var Item; tup: TypeCursor; loopvarTypeMod = NoType) =
   var tup = tup
@@ -6388,7 +6401,7 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
         of IntT, FloatT, CharT, BoolT, UIntT, VoidT, NiltT, AutoT, SymkindT,
             PtrT, RefT, MutT, OutT, LentT, SinkT, UarrayT, SetT, StaticT, TypedescT,
             TupleT, ArrayT, RangetypeT, VarargsT, UntypedT, TypedT,
-            CstringT, PointerT, TypekindT, OrdinalT, RoutineTypes, ItertypeT:
+            CstringT, PointerT, TypekindT, OrdinalT, RoutineTypes:
           # every valid local type expression
           semLocalTypeExpr c, dest, it
         of OrT, AndT, NotT, InvokeT:

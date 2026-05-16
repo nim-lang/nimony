@@ -59,11 +59,11 @@ proc isNominal*(t: TypeKind): bool {.inline.} =
 proc skipToParams*(c: var Cursor) =
   ## In-place: advance `c` past the prefix slots of a proctype or
   ## proc-decl-shaped cursor so it points at the params slot.
-  ## Proctype layout: `(proctype <NilTag> (params...) RetType <Pragmas>)`.
+  ## Proctype/itertype layout: `(<tag> <NilTag> (params...) RetType <Pragmas>)`.
   ## Proc-decl layout: `(proc Name ExportMarker Pattern Typevars (params...) ...)`.
   let kind = c.typeKind
   inc c # skip ParLe
-  if kind == ProctypeT:
+  if kind in {ProctypeT, ItertypeT}:
     skip c # nilability tag
   elif kind in RoutineTypes:
     skip c # name
