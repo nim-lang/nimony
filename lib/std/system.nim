@@ -281,11 +281,12 @@ proc complete*(c: Continuation) =
   while c.fn != nil:
     c = scheduler(c)
 
-proc isRunning*(c: Continuation): bool {.inline.} =
-  ## True while a coroutine still has a continuation to advance. Used by
-  ## the closure-iterator trampoline that the compiler emits for
-  ## `for x in closureIter(...)` loops.
-  c.fn != nil
+proc finished*(c: Continuation): bool {.inline.} =
+  ## True once a coroutine has run past its final yield. Compatible with
+  ## Nim's `finished` builtin: returns `true` when there are no more values
+  ## to produce. Used by the closure-iterator trampoline that the compiler
+  ## emits for `for x in closureIter(...)` loops.
+  c.fn == nil
 
 proc finalizeCoroutine*(c: var Continuation) =
   ## Cancels and deallocates a coroutine frame that is still live (i.e.

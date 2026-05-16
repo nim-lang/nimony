@@ -186,17 +186,23 @@ type
     shouldPublish: seq[tuple[sym: SymId, start: int]]
     coroTypes: TokenBuf
 
+proc coroNameStem(procId: SymId): string =
+  ## Returns the symbol's full name minus its trailing module suffix. Unlike
+  ## `extractVersionedBasename`, this preserves any intermediate `I<hash>`
+  ## segment for generic instances — necessary because two different
+  ## instantiations (e.g. `gen.12.Iaaaa.mod` and `gen.12.Ibbbb.mod`) would
+  ## otherwise produce identical stem `"gen.12"` and collide on every
+  ## synthesised wrapper / coro-type / state-proc / field name.
+  splitSymName(pool.syms[procId]).name
+
 proc coroTypeForProc(c: Context; procId: SymId): SymId =
-  let s = extractVersionedBasename(pool.syms[procId])
-  result = pool.syms.getOrIncl(s & ".coro." & c.thisModuleSuffix)
+  result = pool.syms.getOrIncl(coroNameStem(procId) & ".coro." & c.thisModuleSuffix)
 
 proc coroWrapperProc(c: Context; procId: SymId): SymId =
-  let s = extractVersionedBasename(pool.syms[procId])
-  result = pool.syms.getOrIncl(s & ".init." & c.thisModuleSuffix)
+  result = pool.syms.getOrIncl(coroNameStem(procId) & ".init." & c.thisModuleSuffix)
 
 proc stateToProcName(c: Context; sym: SymId; state: int): SymId =
-  let s = extractVersionedBasename(pool.syms[sym])
-  result = pool.syms.getOrIncl(s & ".s" & $state & "." & c.thisModuleSuffix)
+  result = pool.syms.getOrIncl(coroNameStem(sym) & ".s" & $state & "." & c.thisModuleSuffix)
 
 proc localToFieldname(c: var Context; local: SymId): SymId =
   var name = pool.syms[local]
@@ -512,10 +518,10 @@ proc coroWrapperForExternIter(iterSym: SymId): SymId =
   ## Mangle the closure iterator's init-wrapper symbol using the iterator's
   ## OWN module suffix (which may differ from the current module's). The
   ## wrapper is defined in the same module that declared the iterator.
-  let s = pool.syms[iterSym]
-  let modSuffix = extractModule(s)
-  let base = extractVersionedBasename(s)
-  result = pool.syms.getOrIncl(base & ".init." & modSuffix)
+  ## `splitSymName` preserves the `I<hash>` segment for generic instances
+  ## so two instantiations don't collide on a single wrapper.
+  let split = splitSymName(pool.syms[iterSym])
+  result = pool.syms.getOrIncl(split.name & ".init." & split.module)
 
 proc emitStopContinuation(dest: var TokenBuf; info: PackedLineInfo) =
   ## Emit `Continuation(fn: nil, env: nil)` — the sentinel "no caller"
@@ -536,9 +542,9 @@ proc trCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ##   var it: Continuation = `iter.init.<suffix>`(args..., addr forLoopVar,
   ##                                                StopContinuation)
   ##   try:
-  ##     while isRunning(it):
+  ##     while true:
   ##       it = advance(it)
-  ##       if not isRunning(it): break
+  ##       if finished(it): break
   ##       <body>
   ##   finally:
   ##     finalizeCoroutine(addr it)
@@ -588,25 +594,52 @@ proc trCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.add addrBuf
       emitStopContinuation(dest, info)
 
+  let envFieldSym = pool.syms.getOrIncl(EnvFieldName)
+
+  template emitItEnv(dest: var TokenBuf) =
+    dest.copyIntoKind DotX, info:
+      dest.addSymUse itSym, info
+      dest.addSymUse envFieldSym, info
+      dest.addIntLit 0, info # direct field of Continuation
+
+  # ---- emit `let myEnv = it.env` (snapshot of our frame pointer) ----
+  # Each `for x in iter()` owns exactly one heap-allocated coro frame, and
+  # the init wrapper returns a Continuation whose `env` points at that
+  # frame. We capture it once so the body-guard below can ask "is this yield
+  # coming from MY iter call?" — using the frame pointer as the identity
+  # token (no slot field required on CoroutineBase; pointer equality is
+  # what we need anyway).
+  let myEnvSym = pool.syms.getOrIncl("`coroEnv." & $c.currentProc.counter)
+  inc c.currentProc.counter
+  c.typeCache.registerLocal(myEnvSym, LetY, default(Cursor))
+  dest.copyIntoKind LetS, info:
+    dest.addSymDef myEnvSym, info
+    dest.addDotToken() # exported
+    dest.addDotToken() # pragmas
+    dest.copyIntoKind PtrT, info:
+      dest.addSymUse pool.syms.getOrIncl(RootObjName), info
+    emitItEnv(dest)
+
   # ---- emit try/while/finally ----
-  let isRunningSym = pool.syms.getOrIncl("isRunning.0." & SystemModuleSuffix)
+  let finishedSym = pool.syms.getOrIncl("finished.0." & SystemModuleSuffix)
   let advanceSym = pool.syms.getOrIncl("advance.0." & SystemModuleSuffix)
   let finalizeSym = pool.syms.getOrIncl("finalizeCoroutine.0." & SystemModuleSuffix)
 
   dest.addParLe TryS, info
   dest.copyIntoKind StmtsS, info:
     dest.addParLe WhileS, info
-    # cond: (call isRunning it)
-    dest.copyIntoKind CallS, info:
-      dest.addSymUse isRunningSym, info
-      dest.addSymUse itSym, info
+    # cond: (true) — break is the only exit
+    dest.addParPair TrueX, info
     # body: (stmts (asgn it (call advance it))
-    #              (if (elif (not (call isRunning it)) (stmts (break))))
-    #              <body>)
+    #              (if (elif (call finished it) (stmts (break))))
+    #              (if (elif (eq (pointer) it.env myEnv) (stmts <user-body>))))
     # Order matters: the init wrapper returns AFTER state 0 (initialization)
     # but BEFORE the first `yield` writes to `*forLoopVar`. We advance first
     # to reach the next yield (or terminal state), check whether the iterator
-    # produced a value, then run the body.
+    # produced a value, then (if it came from OUR frame) run the body. The
+    # env-equality guard lets a custom scheduler interleave continuations
+    # across multiple for-loops without each body executing on sibling
+    # yields — `c.env` already gives us the identity token for free.
     dest.copyIntoKind StmtsS, info:
       dest.copyIntoKind AsgnS, info:
         dest.addSymUse itSym, info
@@ -615,17 +648,23 @@ proc trCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.addSymUse itSym, info
       dest.copyIntoKind IfS, info:
         dest.copyIntoKind ElifU, info:
-          dest.copyIntoKind NotX, info:
-            dest.copyIntoKind CallS, info:
-              dest.addSymUse isRunningSym, info
-              dest.addSymUse itSym, info
+          dest.copyIntoKind CallS, info:
+            dest.addSymUse finishedSym, info
+            dest.addSymUse itSym, info
           dest.copyIntoKind StmtsS, info:
             dest.copyIntoKind BreakS, info:
               dest.addDotToken()
-      # Second child of corofor is the inner-block (and any destroyer-injected
-      # cleanup that ended up alongside it).
-      while n.hasMore:
-        tr(c, dest, n)
+      dest.copyIntoKind IfS, info:
+        dest.copyIntoKind ElifU, info:
+          dest.copyIntoKind EqX, info:
+            dest.addParPair PointerT, info
+            emitItEnv(dest)
+            dest.addSymUse myEnvSym, info
+          dest.copyIntoKind StmtsS, info:
+            # Second child of corofor is the inner-block (and any destroyer-injected
+            # cleanup that ended up alongside it).
+            while n.hasMore:
+              tr(c, dest, n)
     dest.addParRi() # close while
   # finally: finalizeCoroutine(addr it)
   dest.copyIntoKind FinU, info:
@@ -1459,12 +1498,16 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
       if (kind == IteratorY and hasPragma(n, ClosureP)) or hasPragma(n, PassiveP):
         isCoroutine = true
         c.currentProc.kind = (if kind == IteratorY: IsIterator else: IsPassive)
-        # Closure iterators get lowered to a regular proc plus a state
-        # machine. Rewrite the tag emitted at the start of this decl so
-        # downstream passes (and NIFC) see a `proc`, not an `iterator`.
-        if kind == IteratorY:
-          dest[procStart] = parLeToken(ProcS, dest[procStart].info)
-        patchParamList c, dest, init, sym, paramsBegin, paramsEnd, origParams
+        # Only concrete coroutines get lowered: their signature gets the
+        # state-machine wrapper params and their tag becomes `proc`. Generic
+        # templates pass through unchanged — only their instances are CPS-
+        # transformed, otherwise the patched signature would reference a
+        # coro frame type that nobody emits (cf. the `gen.0.coro.<mod>`
+        # field-of-type-T crash in nifcgen).
+        if isConcrete:
+          if kind == IteratorY:
+            dest[procStart] = parLeToken(ProcS, dest[procStart].info)
+          patchParamList c, dest, init, sym, paramsBegin, paramsEnd, origParams
     elif i == TypevarsPos:
       isConcrete = n.substructureKind != TypevarsU
     # function declaration can have (delay) tag inside
@@ -1490,7 +1533,7 @@ proc trCoroutine(c: var Context; dest: var TokenBuf; n: var Cursor; kind: SymKin
   dest.takeParRi n # ProcS
   discard c.procStack.pop()
   c.typeCache.closeScope()
-  if isCoroutine:
+  if isCoroutine and isConcrete:
     var coroTypes = move c.coroTypes
     generateCoroutineType(c, coroTypes, sym)
     c.coroTypes = move coroTypes
