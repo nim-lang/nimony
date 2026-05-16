@@ -305,7 +305,11 @@ proc trProcTypeBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   # NIFC proctype keeps the proc-decl shape with empty name/export/pattern/typevars
   # slots, so we emit `.` for slot 0 ourselves.
   dest.addDotToken() # name
-  let isProctype = n.typeKind == ProctypeT
+  # `(proctype <NilTag> ...)` and `(itertype <NilTag> ...)` share the same
+  # canonical shape — both project down to NIFC's proctype. The legacy
+  # 4-leading-dot proc-decl-shaped layouts (`(proc Name Export Pattern ...)`)
+  # have trailing effects/body slots we still need to consume.
+  let isCompactTypeForm = n.typeKind in {ProctypeT, ItertypeT}
   skipToParams n
   trParams c, dest, n
 
@@ -318,7 +322,7 @@ proc trProcTypeBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   closeGenPragmas dest, genPragmas
 
   # ignore effects and body slots only present in proc-decl-shaped layouts.
-  if not isProctype:
+  if not isCompactTypeForm:
     if n.hasMore:
       skip n
       if n.hasMore:
@@ -633,7 +637,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
           trAsNamedType(c, dest, arrCursor)
       skip n
       skipParRi c, n
-    of VoidT, NiltT, ConceptT, InvokeT, ItertypeT:
+    of VoidT, NiltT, ConceptT, InvokeT:
       error c, "unimplemented type: ", n
   else:
     error c, "type expected but got: ", n

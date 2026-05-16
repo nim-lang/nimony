@@ -314,12 +314,12 @@ proc semTemplType(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
   of DistinctT:
     semTemplBodySons c, dest, n
   of RoutineTypes:
-    # open scope for param decls
+    # open scope for param decls (ItertypeT also handled here — no params
+    # have decl-scope effect for type-form routine literals but the same
+    # walk is correct).
     openScope(c)
     semTemplBodySons c, dest, n
     closeScope(c)
-  of ItertypeT:
-    semTemplBodySons c, dest, n
   of NoType:
     case n.kind
     of Ident:

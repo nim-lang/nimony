@@ -191,7 +191,7 @@
 | `(nilt)` | NimonyType | `nilt` type |
 | `(concept .X .X X S*)` | NimonyType, NiflerKind | `concept` type: two reserved slots, a typevar symbol and the concept body statements |
 | `(distinct T)` | NimonyType, NiflerKind | `distinct` type |
-| `(itertype . (params...) T)` | NimonyType, NiflerKind | `itertype` type |
+| `(itertype .Any (params...) T P)`; `(itertype ...)` | NimonyType, NiflerKind | Nimony iterator type — first-class closure-iterator value at the type level. Shape mirrors `(proctype ...)`: slot 0 carries the nilability tag (`.` placeholder or one of `(notnil)`, `(nil)`, `(unchecked)`); remaining slots are params, return type, pragmas. |
 | `(rangetype T X X)` | NimonyType | `rangetype` type |
 | `(uarray T)` | NimonyType | `uarray` type |
 | `(set T)` | NimonyType | `set` type |

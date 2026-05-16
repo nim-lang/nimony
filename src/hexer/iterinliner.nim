@@ -2,7 +2,7 @@ import std / [assertions, tables, hashes, sets, syncio]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import hexer_context
-import ".." / nimony / [nimony_model, programs, decls]
+import ".." / nimony / [nimony_model, programs, decls, typenav]
 import duplifier
 
 
@@ -736,7 +736,13 @@ proc inlineIterator(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
     inlineIteratorBody(e, dest, transformedBody, forStmt, routine.retType)
     endRead(bodyBuf)
   else:
-    error e, "could not find symbol: " & pool.syms[iterSym]
+    # No global iter decl by this name — sem must have accepted the call
+    # because the target is a local of `itertype` (a first-class iter
+    # value, `let g: iterator(...)`). Route through emitCoroFor; cps's
+    # `trCoroFor` then expands the trampoline using the local as the
+    # already-typed function pointer (its typeCache, primed by earlier
+    # passes, distinguishes iter-decl vs iter-value targets).
+    emitCoroFor(e, dest, forStmt)
 
 proc transformForStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
   #[ Transforming a `for` statement is quite involved. We have:

@@ -731,7 +731,7 @@ proc extractProcProps*(c: var Cursor): ProcProperties =
 
 proc procTypeMatch(m: var Match; f, a: var Cursor) =
   assert f.typeKind in RoutineTypes
-  let fIsProctype = f.typeKind == ProctypeT
+  let fIsProctype = f.typeKind in {ProctypeT, ItertypeT}
   skipToParams f
   assert a.typeKind in RoutineTypes
   skipToParams a
@@ -1318,7 +1318,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
           m.error InvalidMatch, f, arg.typ
         skip f
     of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, AnumT, NiltT, AndT, NotT,
-        ConceptT, DistinctT, StaticT, ItertypeT, AutoT, SymkindT, TypekindT, OrdinalT:
+        ConceptT, DistinctT, StaticT, AutoT, SymkindT, TypekindT, OrdinalT:
       m.error UnhandledTypeBug, f, f
   else:
     m.error MismatchBug, f, arg.typ

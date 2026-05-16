@@ -906,15 +906,20 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         return
       let tk = typeKind(n)
       takeToken dest, n
-      let isProctype = tk == ProctypeT
+      # Type-form routine literals: `(proctype <NilTag> (params...) T ...)` and
+      # `(itertype <NilTag> (params...) T ...)`. Both have the same canonical
+      # head — a nilability tag in slot 0 — so the canonicalisation logic
+      # below treats them uniformly. `(proc ...)`/`(iterator ...)` decls (kept
+      # as 4-leading-dot legacy headers) take the `else` branch.
+      let isTypeForm = tk in {ProctypeT, ItertypeT}
       let nilTagPos = dest.len
       var sourceIsNewLayout = false
-      if isProctype:
-        # Detect input layout: nifler's source-form proctype has 4 leading
-        # `.` slots (name/export/pattern/generics) before `(params...)`. Sem
-        # may also feed back its own already-canonicalised proctype, where
-        # slot 0 is the nilability tag (`(notnil)`/`(nil)`/`(unchecked)`)
-        # or a single `.` placeholder before `(params...)`.
+      if isTypeForm:
+        # Detect input layout: nifler's source-form has 4 leading `.` slots
+        # (name/export/pattern/generics) before `(params...)`. Sem may also
+        # feed back its own already-canonicalised form, where slot 0 is the
+        # nilability tag (`(notnil)`/`(nil)`/`(unchecked)`) or a single `.`
+        # placeholder before `(params...)`.
         sourceIsNewLayout =
           n.substructureKind in {NotnilU, NilU, UncheckedU} or
           (n.kind == DotToken and (block:
@@ -948,7 +953,7 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       var crucial = default CrucialPragma
       semPragmas c, dest, n, crucial, ProcY
       var hasNilSuffix = false
-      if isProctype and not sourceIsNewLayout:
+      if isTypeForm and not sourceIsNewLayout:
         var n2 = n
         skip n2 # exceptions dot
         if n2.hasMore: skip n2 # body dot
@@ -958,7 +963,7 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         # consume the legacy trailing exceptions/body slots from input
         if n.kind == DotToken: inc n
         if n.kind == DotToken: inc n
-      elif not isProctype:
+      elif not isTypeForm:
         var n2 = n
         skip n2 # exceptions dot
         if n2.hasMore: skip n2 # body dot
@@ -979,9 +984,6 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       semInvoke c, dest, n
     of ErrT:
       takeTree dest, n
-    of ItertypeT:
-      c.buildErr dest, info, "itertype not supported"
-      skip n
   of DotToken:
     if context in {InReturnTypeDecl, InGenericConstraint}:
       takeToken dest, n

@@ -216,6 +216,7 @@ proc localToFieldname(c: var Context; local: SymId): SymId =
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
   {.ensuresNif: addedAny(dest).}
+proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
@@ -301,6 +302,13 @@ proc isPassive(c: var Context; s: SymId): bool =
   let typ = c.typeCache.lookupSymbol(s)
   if not cursorIsNil(typ) and procHasPragma(typ, PassiveP):
     return true
+  return false
+
+proc isClosureIter(s: SymId): bool =
+  let res = tryLoadSym(s)
+  if res.status == LacksNothing and res.decl.symKind == IteratorY:
+    let routine = asRoutine(res.decl)
+    return hasPragma(routine.pragmas, ClosureP)
   return false
 
 proc getNextState(buf: TokenBuf; n: Cursor): int =
@@ -582,14 +590,22 @@ proc trCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let itSym = pool.syms.getOrIncl("`coroIt." & $c.currentProc.counter)
   inc c.currentProc.counter
   c.typeCache.registerLocal(itSym, VarY, default(Cursor))
-  let wrapperSym = coroWrapperForExternIter(iterSym)
+  # Determine the call target:
+  # - iter DECL sym (global): route through its synthesised `.init` wrapper.
+  # - iter VALUE local (a let/var of itertype): the local already holds the
+  #   wrapper function pointer, so call it directly.
+  let localTyp = c.typeCache.lookupSymbol(iterSym)
+  let isIterValue =
+    not cursorIsNil(localTyp) and localTyp.typeKind == ItertypeT
+  let callTargetSym =
+    if isIterValue: iterSym else: coroWrapperForExternIter(iterSym)
   dest.copyIntoKind VarS, info:
     dest.addSymDef itSym, info
     dest.addDotToken() # exported
     dest.addDotToken() # pragmas
     dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
     dest.copyIntoKind CallS, info:
-      dest.addSymUse wrapperSym, info
+      dest.addSymUse callTargetSym, info
       dest.add argsBuf
       dest.add addrBuf
       emitStopContinuation(dest, info)
@@ -761,7 +777,12 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeTree dest, n # pragmas
       c.typeCache.registerLocal(sym, kind, n)
       let isPassive = procHasPragma(n, PassiveP)
-      tr c, dest, n # type
+      # Use trProctype for the type slot so inline itertypes / passive
+      # proctypes get the wrapper-signature rewrite — same coverage as
+      # cps.TypeS does for named typedefs. sem often inlines named iter
+      # types into use-site type slots, so without this the let's type
+      # disagrees with what `consume(g: MyIter)`-style param types get.
+      trProctype c, dest, n # type
       pcall = isPassiveCall(c, n)
       if pcall:
         callExpr = n
@@ -1434,10 +1455,22 @@ proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId;
 
 proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if n.kind == ParLe:
-    if n.typeKind == ProctypeT and procHasPragma(n, PassiveP):
+    # Coroutine-shaped types — passive proctypes and any itertype — need
+    # the same wrapper-signature rewrite the coroutine decls got. The init
+    # wrapper signature is `(args..., result: ptr T, caller: Continuation):
+    # Continuation`. ItertypeT also gets re-tagged to `proctype` so nifcgen
+    # emits a function pointer (the lowered state-machine entry point IS a
+    # regular proc — its init wrapper allocates the heap frame internally).
+    let nk = n.typeKind
+    let isPassiveProc = nk == ProctypeT and procHasPragma(n, PassiveP)
+    let isIterType = nk == ItertypeT
+    if isPassiveProc or isIterType:
       var info = n.info
-      # add caller for init function to the params end
-      dest.takeToken n        # proctype tag
+      if isIterType:
+        dest.addParLe ProctypeT, info   # rewrite itertype → proctype
+        inc n                            # consume original tag
+      else:
+        dest.takeToken n                # proctype tag (passive)
       dest.takeTree n         # nilability tag
       dest.takeToken n        # params tag
       while n.hasMore:
@@ -1549,6 +1582,13 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if isProc(c, n.symId) and isPassive(c, n.symId):
       dest.addSymUse coroWrapperProc(c, n.symId), n.info
       inc n
+    elif isClosureIter(n.symId):
+      # Closure iter sym used as a VALUE (not as a direct call target).
+      # Lower to its `.init` wrapper sym — that's what the rewritten
+      # itertype (cps.trProctype) expects to see at value positions, and
+      # what callers will dispatch through.
+      dest.addSymUse coroWrapperProc(c, n.symId), n.info
+      inc n
     else:
       let field = c.currentProc.localToEnv.getOrDefault(n.symId)
       if field.def != field.use or n.symId == c.currentProc.resultSym:
@@ -1581,7 +1621,27 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trCoroutine c, dest, n, NoSym
     of IteratorS:
       trCoroutine c, dest, n, IteratorY
-    of MacroS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
+    of TypeS:
+      # Type decls: rewrite the body via trProctype so itertype aliases
+      # like `type MyIter = iterator(args): T {.closure.}` get the
+      # wrapper-signature proctype at value/use sites. Then RE-PUBLISH the
+      # transformed typedecl so downstream `tryLoadSym(MyIter)` sees the
+      # rewritten form (nifcgen, eraiser, etc. read the published type at
+      # symbol-reference sites, not the in-buffer rewrite).
+      let typeStart = dest.len
+      var typeSym = SymId(0)
+      dest.takeToken n # TypeS tag
+      if n.kind == SymbolDef:
+        typeSym = n.symId
+      takeTree dest, n # name
+      takeTree dest, n # exported
+      takeTree dest, n # typevars
+      takeTree dest, n # pragmas
+      trProctype c, dest, n # body
+      dest.takeParRi n
+      if typeSym != SymId(0):
+        programs.publish(typeSym, dest, typeStart)
+    of MacroS, TemplateS, EmitS, BreakS, ContinueS,
       ForS, IncludeS, ImportS, FromimportS, ImportexceptS,
       ExportS, CommentS,
       PragmasS:
