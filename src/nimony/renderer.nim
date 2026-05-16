@@ -1989,7 +1989,17 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       put(g, tkParRi, ")")
       skipParRi(n)
 
-    of CurlyatX, IsmainmoduleX,
+    of CurlyatX:
+      inc n
+      gsub(g, n)
+      put(g, tkCurlyLe, "{")
+      gsub(g, n)
+      put(g, tkCurlyRi, "}")
+      while n.hasMore:
+        skip n
+      skipParRi(n)
+
+    of IsmainmoduleX,
         DoX, InternalTypeNameX, InternalFieldPairsX, FailedX:
       raiseAssert "todo"
 
