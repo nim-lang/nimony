@@ -18,17 +18,28 @@ const
 
 proc decodeSolution(c: var EContext; dest: var TokenBuf; s: seq[SearchNode]; i: int;
                     selector: SymId; info: PackedLineInfo) =
+  ## Conditions are bound to fresh `(var :tcc.N . (bool) <call>)`
+  ## locals before the `(if …)`. A bare `(call …)` inside an
+  ## `(elif …)` is in expression position — dce2's inliner splice
+  ## can't reach it, but the bound-form splice fires on the (var)
+  ## wrapping. That keeps `.inline` callees like `nimStrAtLe` and
+  ## `equalStrings` inlinable at string-case sites.
   case s[i].kind
   of ForkedSearch:
     let f = forked(s, i)
-
+    let tmp = pool.syms.getOrIncl("`tcc." & $c.getTmpId)
+    dest.copyIntoUnchecked "var", info:
+      dest.add symdefToken(tmp, info)
+      dest.addDotToken()                            # pragmas
+      dest.copyIntoUnchecked "bool", info: discard  # type
+      dest.copyIntoUnchecked "call", info:
+        dest.add symToken(pool.syms.getOrIncl(StrAtLeOp), info)
+        dest.add symToken(selector, info)
+        dest.add intToken(pool.integers.getOrIncl(f.best[1]), info)
+        dest.add charToken(f.best[0], info)
     dest.copyIntoUnchecked "if", info:
       dest.copyIntoUnchecked "elif", info:
-        dest.copyIntoUnchecked "call", info:
-          dest.add symToken(pool.syms.getOrIncl(StrAtLeOp), info)
-          dest.add symToken(selector, info)
-          dest.add intToken(pool.integers.getOrIncl(f.best[1]), info)
-          dest.add charToken(f.best[0], info)
+        dest.add symToken(tmp, info)
         dest.copyIntoUnchecked "stmts", info:
           decodeSolution c, dest, s, f.thenA, selector, info
       dest.copyIntoUnchecked "else", info:
@@ -36,16 +47,39 @@ proc decodeSolution(c: var EContext; dest: var TokenBuf; s: seq[SearchNode]; i: 
           decodeSolution c, dest, s, f.elseA, selector, info
 
   of LinearSearch:
-    dest.copyIntoUnchecked "if", info:
-      for x in s[i].choices:
-        dest.copyIntoUnchecked "elif", info:
-          dest.copyIntoUnchecked "call", info:
-            dest.add symToken(pool.syms.getOrIncl(EqStringsOp), info)
-            dest.add symToken(selector, info)
-            genStringLit c, dest, x[0], info
-          dest.copyIntoUnchecked "stmts", info:
-            dest.copyIntoUnchecked "jmp", info:
-              dest.add symToken(pool.syms.getOrIncl(x[1]), info)
+    # Nested if/else so we can bind each branch's call to its own
+    # temp while keeping short-circuit evaluation (later branches'
+    # calls don't run when an earlier branch matched). Each non-last
+    # branch opens `(if (elif tmp …) (else (stmts …)))`; the last
+    # opens just `(if (elif tmp …))`. The closing parens are paid
+    # off at the end.
+    let choices = s[i].choices
+    var pending = 0
+    for idx, x in choices:
+      let tmp = pool.syms.getOrIncl("`tcc." & $c.getTmpId)
+      dest.copyIntoUnchecked "var", info:
+        dest.add symdefToken(tmp, info)
+        dest.addDotToken()
+        dest.copyIntoUnchecked "bool", info: discard
+        dest.copyIntoUnchecked "call", info:
+          dest.add symToken(pool.syms.getOrIncl(EqStringsOp), info)
+          dest.add symToken(selector, info)
+          genStringLit c, dest, x[0], info
+      # Open `(if (elif tmp (stmts (jmp lab))))` — elif/stmts/jmp are
+      # fully closed; the surrounding (if needs a deferred close.
+      dest.add parLeToken(pool.tags.getOrIncl("if"), info)
+      dest.copyIntoUnchecked "elif", info:
+        dest.add symToken(tmp, info)
+        dest.copyIntoUnchecked "stmts", info:
+          dest.copyIntoUnchecked "jmp", info:
+            dest.add symToken(pool.syms.getOrIncl(x[1]), info)
+      inc pending                                   # close the (if
+      if idx + 1 < choices.len:
+        dest.add parLeToken(pool.tags.getOrIncl("else"), info)
+        dest.add parLeToken(pool.tags.getOrIncl("stmts"), info)
+        inc pending, 2                              # close (else (stmts
+    for _ in 0 ..< pending:
+      dest.addParRi()
 
 proc getSimpleStringLit(c: var EContext; n: var Cursor): StrId =
   if n.kind == StringLit:

@@ -46,7 +46,7 @@ proc isComplex(n: Cursor; goal: Goal): bool =
           # More than one son is always complex:
           return true
         inc nested
-      elif goal == TowardsNjvl and n.exprKind in (CallKinds+{AndX, OrX}):
+      elif goal in {TowardsNjvl, LowerCasts} and n.exprKind in (CallKinds+{AndX, OrX}):
         return true
       else:
         inc n
@@ -343,7 +343,7 @@ proc trAggregate(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Tar
   inc n
 
 proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
-  if tar.m in {IsAppend, IsEmpty} and c.goal == TowardsNjvl:
+  if tar.m in {IsAppend, IsEmpty} and c.goal in {TowardsNjvl, LowerCasts}:
     # bind to a temporary variable:
     let info = n.info
     let typ = getType(c, n)
@@ -486,15 +486,18 @@ proc trCondOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target
 
 proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; mustUseLabel: bool) =
   assert tar.m == IsEmpty
-  if c.goal == TowardsNjvl:
+  if c.goal in {TowardsNjvl, LowerCasts}:
     case n.exprKind
     of AndX:
-      if isComplex(n, c.goal) or mustUseLabel:
+      # `mustUseLabel` (cfvar lowering) is NJ-only. In `LowerCasts` mode we
+      # still want the binding/hoisting path inside `trAnd`'s `isComplex`
+      # branch, but never the cfvar form.
+      if mustUseLabel:
         trCondAnd c, dest, n, tar
       else:
         trAnd c, dest, n, tar
     of OrX:
-      if isComplex(n, c.goal) or mustUseLabel:
+      if mustUseLabel:
         trCondOr c, dest, n, tar
       else:
         trOr c, dest, n, tar
@@ -785,7 +788,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skipParRi n
 
   of DiscardS:
-    if c.goal == TowardsNjvl:
+    if c.goal in {TowardsNjvl, LowerCasts}:
       inc n
       if n.kind == DotToken:
         dest.takeToken n
@@ -829,14 +832,20 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # directly via trBoundExpr and emits the "was successful?" branching
     # after the store, which is both simpler and avoids borrow-checking
     # trouble caused by the extra temporary.
+    # `lhsIsResult` is the NJ-specific shortcut that keeps the call in
+    # place when the lhs is already a sym; nj.nim handles it via
+    # `trBoundExpr`. `LowerCasts` always binds — the dce2 inliner wants
+    # every call to appear as the value of a let/var binding.
     var lhsIsResult = false
     if c.goal == TowardsNjvl:
       let peek = n.firstSon
       lhsIsResult = peek.kind == Symbol
     tar.t.copyInto n:
       trExpr c, dest, n, tar
-      if c.goal == TowardsNjvl:
-        if lhsIsResult: tar.m = IsBound  # keep call in-place, no temp
+      if c.goal in {TowardsNjvl, LowerCasts}:
+        if c.goal == TowardsNjvl and lhsIsResult:
+          tar.m = IsBound
+        # else: tar.m stays IsAppend so trExprCall can bind
         trExpr c, dest, n, tar
       else:
         tar.m = IsBound

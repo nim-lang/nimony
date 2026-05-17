@@ -299,8 +299,17 @@ template into*(n: var Cursor; body: untyped) =
   ##
   ## Under `-d:virtualParRi` this sets a bounded `rem` from the parle's
   ## `jump` field so the body's `hasMore` checks terminate cheaply. The
-  ## body must consume all children (leaving `rem == 0`); the closing
-  ## `ParRi` (real or elided) is consumed by the epilogue.
+  ## body must consume all children (leaving `rem == 0` for sealed
+  ## scopes, or landing on a real `ParRi` for overflow scopes); the
+  ## closing `ParRi` (real or elided) is consumed by the epilogue.
+  ##
+  ## Overflow scopes (`jump == MaxJump`, i.e. subtree larger than the
+  ## 19-bit jump field can encode) seed `rem` with `high(int)` instead
+  ## of the exact count. That keeps `hasMore` (`rem > 0 and kind != ParRi`)
+  ## working uniformly — the loop falls out of the `rem` decrement before
+  ## it ever underflows and terminates on the real `ParRi` instead.
+  ## Using `-1` here was the bug that broke `detectToplevelDecls` on
+  ## modules whose top-level `(stmts …)` exceeded `MaxJump` tokens.
   assert n.kind == ParLe, "into requires cursor at ParLe"
   when defined(virtualParRi):
     let savedRem = n.rem
@@ -308,7 +317,7 @@ template into*(n: var Cursor; body: untyped) =
     let j        = jump(n.load)
     let isOverflow = j == MaxJump
     n.p = cast[ptr PackedToken](cast[uint](n.p) + sizeof(PackedToken).uint)
-    n.rem = if isOverflow: -1 else: int(j)
+    n.rem = if isOverflow: high(int) else: int(j)
     body
     if isOverflow:
       assert n.kind == ParRi, "into: overflow scope did not end at real ParRi"
@@ -318,11 +327,11 @@ template into*(n: var Cursor; body: untyped) =
       when defined(preserveRealParRi):
         if n.kind == ParRi:
           n.p = cast[ptr PackedToken](cast[uint](n.p) + sizeof(PackedToken).uint)
-    if savedRem >= 0:
-      let consumed = int((cast[uint](n.p) - cast[uint](savedP)) div sizeof(PackedToken).uint)
-      n.rem = if savedRem >= consumed: savedRem - consumed else: 0
-    else:
-      n.rem = -1
+    # Restore the outer scope's bound: subtract what the body consumed.
+    # `savedRem` is always non-negative now (overflow scopes contribute
+    # `high(int)` rather than `-1`), so the clamping handles both cases.
+    let consumed = int((cast[uint](n.p) - cast[uint](savedP)) div sizeof(PackedToken).uint)
+    n.rem = if savedRem >= consumed: savedRem - consumed else: 0
   else:
     inc n          # skip opening tag
     body
