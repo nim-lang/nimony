@@ -68,6 +68,7 @@ type
     closureProcs, createsEnv, escapes: HashSet[SymId]
     localToEnv: Table[SymId, EnvField]
     env: CurrentEnv
+    hasClosures: bool
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
   {.ensuresNif: addedAny(dest).}
@@ -100,6 +101,7 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
         if hasPragma(n, ClosureP):
           c.closureProcs.incl symId
           c.escapes.incl symId
+          c.hasClosures = true
       takeTree dest, n
     if isConcrete:
       tr(c, dest, n)
@@ -147,6 +149,7 @@ proc trNil(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # internally), so the tuple-constructor wrap doesn't apply there.
   if n.hasMore and n.typeKind != ItertypeT and procHasPragma(n, ClosureP):
     # nil closure must be a tuple:
+    c.hasClosures = true
     dest.copyIntoKind TupconstrX, info:
       dest.takeTree n # type
       if n.hasMore: skip n # might have another nil value
@@ -781,8 +784,12 @@ proc elimLambdas*(pass: var Pass) =
   tr c, pass.dest, n
   c.typeCache.closeScope()
 
-  # second pass: generate environments
-  if c.localToEnv.len > 0:
+  # second pass: generate environments and rewrite closure types/symbols.
+  # Triggered by captures OR any closure-proc declaration / closure-typed nil:
+  # pass 1's `trNil` wraps `(nil ClosureProc)` in a `tupconstr`, and `trProc`
+  # marks `.closure` procs whose usages need tuple wrappers — both require
+  # pass 2 to rewrite the surrounding proctypes/calls so types and values agree.
+  if c.localToEnv.len > 0 or c.hasClosures:
     # some closure usage has been found, so we need to generate environments
     c.typeCache.openScope()
     let cap = pass.dest.len
