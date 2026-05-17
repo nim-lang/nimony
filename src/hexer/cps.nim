@@ -145,6 +145,14 @@ const
   ContinuationProcName = "ContinuationProc.0." & SystemModuleSuffix
   ContinuationName = "Continuation.0." & SystemModuleSuffix
   RootObjName = "CoroutineBase.0." & SystemModuleSuffix
+    ## Misleadingly named: this is `CoroutineBase`, used for `(ptr CoroutineBase)`
+    ## throughout the coroutine internals. Kept for source compatibility —
+    ## the iter-value env slot uses `BareRootObjName` (real RootObj) instead.
+  BareRootObjName = "RootObj.0." & SystemModuleSuffix
+    ## The system's real `RootObj`. Used as the type of the iter-value
+    ## tuple's env slot so iter values have the same `(ref RootObj)` shape
+    ## as closure procs — the lifter then auto-generates destroy/copy/sink
+    ## hooks for iter values exactly like it does for closures.
   EnvParamName = "`this.0"
   FnFieldName = "fn.0"
   EnvFieldName = "env.0"
@@ -305,10 +313,17 @@ proc isPassive(c: var Context; s: SymId): bool =
   return false
 
 proc isClosureIter(s: SymId): bool =
+  ## True for any coroutine-shaped iter decl — `.closure` or `.passive`.
+  ## Cps's `tr` Symbol path uses this to rewrite the iter sym (as it
+  ## appears in value positions) to its wrapper sym. Both iter kinds need
+  ## that rewrite; they only diverge in whether the surrounding TYPE is
+  ## the iter-value tuple (lambdalifting handles only `.closure`) or a
+  ## plain wrapper proctype (cps's `trProctype` handles `.passive`).
   let res = tryLoadSym(s)
   if res.status == LacksNothing and res.decl.symKind == IteratorY:
     let routine = asRoutine(res.decl)
-    return hasPragma(routine.pragmas, ClosureP)
+    return hasPragma(routine.pragmas, ClosureP) or
+           hasPragma(routine.pragmas, PassiveP)
   return false
 
 proc getNextState(buf: TokenBuf; n: Cursor): int =
@@ -565,47 +580,72 @@ proc trCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   inc n # skip (corofor
 
-  # ---- first child: (call iter args... (haddr forLoopVar)) ----
+  # ---- first child: (call iter-or-tupat args... (haddr forLoopVar)) ----
   assert n.exprKind in CallKinds, "corofor: expected iter call as first child"
   inc n # past CallS tag
-  assert n.kind == Symbol, "corofor: iter call must target a symbol"
-  let iterSym = n.symId
-  inc n # past iter sym
-  # Collect the iter's original args into argsBuf; the trailing (haddr forLoopVar)
-  # is split off into addrBuf.
-  var argsBuf = createTokenBuf(8)
-  var addrBuf = createTokenBuf(4)
+  # Extract the call target. It can be:
+  #   - a Symbol pointing at an iter decl (rewrite to the wrapper sym), OR
+  #   - any other expression (e.g. a `(tupat g 0)` that lambdalifting's
+  #     `genCall` emitted when g is an iter-value local). In that case the
+  #     target IS already the wrapper fn ptr — use it verbatim.
+  var targetBuf = createTokenBuf(4)
+  if n.kind == Symbol and not isClosureIter(n.symId):
+    # Iter decl sym from another module: route through its init wrapper.
+    targetBuf.addSymUse coroWrapperForExternIter(n.symId), n.info
+    inc n
+  elif n.kind == Symbol:
+    # Iter decl sym from THIS module — same module-local wrapper.
+    targetBuf.addSymUse coroWrapperProc(c, n.symId), n.info
+    inc n
+  else:
+    # Pre-extracted wrapper fn-ptr expression (lambdalifting `(tupat g 0)`).
+    targetBuf.takeTree n
+  # Collect the iter's call args. Layout is `args... (haddr forLoopVar)
+  # [(tupat g 1)]` where:
+  #   - some of the `args...` may themselves be `(haddr ...)` (for iters
+  #     taking `var T` params, sem emits `(haddr arr)` as that arg);
+  #   - the `(haddr forLoopVar)` is the slot iterinliner adds for the
+  #     yield destination;
+  #   - the optional trailing `(tupat g 1)` is the env-arg lambdalifting's
+  #     `genCall` appended for iter-VALUE calls (closure-shape ABI).
+  # Gather each arg into its own buf, then peel a trailing TupatX
+  # (env-arg), then peel the next-trailing as the addr.
+  var argBufs: seq[TokenBuf] = @[]
   while n.hasMore:
-    var nxt = n
-    skip nxt
-    if not nxt.hasMore:
-      # last arg — must be (haddr forLoopVar)
-      assert n.exprKind == HaddrX, "corofor: last call arg must be (haddr ..)"
-      addrBuf.takeTree n
-    else:
-      argsBuf.takeTree n
+    var buf = createTokenBuf(4)
+    buf.takeTree n
+    argBufs.add(ensureMove buf)
   skipParRi n # close iter call
+
+  if argBufs.len > 0:
+    var probe = beginRead(argBufs[^1])
+    let lastIsTupat = probe.exprKind == TupatX
+    endRead(argBufs[^1])
+    if lastIsTupat:
+      discard argBufs.pop()  # drop env-arg
+  assert argBufs.len > 0, "corofor: iter call missing args"
+
+  var addrBuf = move argBufs[^1]
+  argBufs.setLen(argBufs.len - 1)
+  block:
+    var probe = beginRead(addrBuf)
+    assert probe.exprKind == HaddrX, "corofor: expected (haddr forLoopVar)"
+    endRead(addrBuf)
+  var argsBuf = createTokenBuf(8)
+  for i in 0 ..< argBufs.len:
+    argsBuf.add argBufs[i]
 
   # ---- emit `var it: Continuation = wrapper(args..., addr forLoopVar, Stop)` ----
   let itSym = pool.syms.getOrIncl("`coroIt." & $c.currentProc.counter)
   inc c.currentProc.counter
   c.typeCache.registerLocal(itSym, VarY, default(Cursor))
-  # Determine the call target:
-  # - iter DECL sym (global): route through its synthesised `.init` wrapper.
-  # - iter VALUE local (a let/var of itertype): the local already holds the
-  #   wrapper function pointer, so call it directly.
-  let localTyp = c.typeCache.lookupSymbol(iterSym)
-  let isIterValue =
-    not cursorIsNil(localTyp) and localTyp.typeKind == ItertypeT
-  let callTargetSym =
-    if isIterValue: iterSym else: coroWrapperForExternIter(iterSym)
   dest.copyIntoKind VarS, info:
     dest.addSymDef itSym, info
     dest.addDotToken() # exported
     dest.addDotToken() # pragmas
     dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
     dest.copyIntoKind CallS, info:
-      dest.addSymUse callTargetSym, info
+      dest.add targetBuf
       dest.add argsBuf
       dest.add addrBuf
       emitStopContinuation(dest, info)
@@ -1453,22 +1493,89 @@ proc patchParamList(c: var Context; dest, init: var TokenBuf; sym: SymId;
   # the return type is always `Continuation` too:
   dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
 
+proc emitIterValueTupleType(c: var Context; dest: var TokenBuf; iterSym: SymId; info: PackedLineInfo) =
+  ## Build the lowered iter-value tuple type for an iterator symbol:
+  ##   `(tuple (proctype <wrapper sig>) (ref RootObj))`
+  ## Reads the iter's decl to recover its original param list and return
+  ## type. Used at tupconstr sites where we materialise an iter value
+  ## (`var g: MyIter = countup`, `(nil ItertypeT)`). The env slot mirrors
+  ## the closure-proc tuple so the lifter handles destroy/copy/sink for
+  ## iter values uniformly — see `trProctype` for the matching emission.
+  let res = tryLoadSym(iterSym)
+  assert res.status == LacksNothing, "iter sym not loaded: " & pool.syms[iterSym]
+  let fn = asRoutine(res.decl)
+  dest.copyIntoKind TupleT, info:
+    dest.copyIntoKind ProctypeT, info:
+      dest.addDotToken() # nilability tag
+      dest.copyIntoKind ParamsU, info:
+        var p = fn.params
+        if p.kind != DotToken:
+          inc p
+          while p.hasMore:
+            assert p.substructureKind == ParamU
+            dest.takeToken p
+            dest.takeTree p # name
+            dest.takeTree p # exported
+            dest.takeTree p # pragmas
+            dest.takeTree p # type (param types are scalar in practice;
+                            # if they ever contain itertypes themselves
+                            # we'll need trProctype here)
+            dest.takeTree p # default value
+            dest.takeParRi p
+        # result becomes a ptr parameter (omitted when return type is void):
+        var ret = fn.retType
+        if not isVoidType(ret):
+          dest.copyIntoKind ParamU, info:
+            dest.addSymDef pool.syms.getOrIncl(ResultParamName), info
+            dest.addDotToken() # export
+            dest.addDotToken() # pragmas
+            dest.copyIntoKind PtrT, info:
+              dest.takeTree ret
+            dest.addDotToken() # default value
+        # caller parameter is always last:
+        dest.copyIntoKind ParamU, info:
+          dest.addSymDef pool.syms.getOrIncl(CallerParamName), info
+          dest.addDotToken() # export
+          dest.addDotToken() # pragmas
+          dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+          dest.addDotToken() # default value
+      dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+      # pragmas: carry `(closure)` so downstream phases still see the marker
+      dest.copyIntoKind PragmasU, info:
+        dest.copyIntoKind ClosureP, info: discard
+    dest.copyIntoKind RefT, info:
+      dest.addSymUse pool.syms.getOrIncl(BareRootObjName), info
+
 proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if n.kind == ParLe:
     # Coroutine-shaped types — passive proctypes and any itertype — need
     # the same wrapper-signature rewrite the coroutine decls got. The init
     # wrapper signature is `(args..., result: ptr T, caller: Continuation):
-    # Continuation`. ItertypeT also gets re-tagged to `proctype` so nifcgen
-    # emits a function pointer (the lowered state-machine entry point IS a
-    # regular proc — its init wrapper allocates the heap frame internally).
+    # Continuation`.
+    #
+    # Passive proctype: re-tagged to `proctype` so nifcgen emits a plain
+    # function pointer (the wrapper IS a regular proc).
+    #
+    # Itertype: lowered to a `(tuple <wrapper-proctype> (ref RootObj))`
+    # — STRUCTURALLY IDENTICAL to closure procs. The lifter then generates
+    # destroy/copy/sink hooks for iter values uniformly, no special case.
+    # The env slot is currently always nil for iter values (the wrapper still
+    # allocates a fresh `ptr CoroutineBase` frame on each call and the
+    # for-loop trampoline owns that frame via its local Continuation), but
+    # the ref slot is the right ABI for Nim-compat resumable semantics
+    # later. The internal `Continuation`/`ptr CoroutineBase`/`allocFrame`
+    # plumbing is unchanged — that path stays fast and unmanaged. Only the
+    # external value-type shape is unified with closure procs.
     let nk = n.typeKind
     let isPassiveProc = nk == ProctypeT and procHasPragma(n, PassiveP)
     let isIterType = nk == ItertypeT
     if isPassiveProc or isIterType:
       var info = n.info
       if isIterType:
-        dest.addParLe ProctypeT, info   # rewrite itertype → proctype
-        inc n                            # consume original tag
+        # open the (tuple … (ref RootObj)) wrapper
+        dest.addParLe TupleT, info
+        dest.addParLe ProctypeT, info   # element 0: the wrapper proctype
+        inc n                            # consume original itertype tag
       else:
         dest.takeToken n                # proctype tag (passive)
       dest.takeTree n         # nilability tag
@@ -1499,6 +1606,11 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
       while n.hasMore:
         trProctype(c, dest, n)
       dest.takeParRi n
+      if isIterType:
+        # proctype is already closed; add the env slot and close the tuple
+        dest.copyIntoKind RefT, info:
+          dest.addSymUse pool.syms.getOrIncl(BareRootObjName), info
+        dest.addParRi() # close tuple
     else:
       copyInto dest, n:
         while n.hasMore:
@@ -1583,10 +1695,12 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addSymUse coroWrapperProc(c, n.symId), n.info
       inc n
     elif isClosureIter(n.symId):
-      # Closure iter sym used as a VALUE (not as a direct call target).
-      # Lower to its `.init` wrapper sym — that's what the rewritten
-      # itertype (cps.trProctype) expects to see at value positions, and
-      # what callers will dispatch through.
+      # Post-lambdalifting an iter sym only ever appears in the fn slot of
+      # a lambdalifting-emitted iter-value tupconstr (lambdalifting
+      # deliberately puts the iter sym there so the duplifier and typenav
+      # can still resolve the symbol — the wrapper sym doesn't exist yet
+      # at that point). Rewrite to the wrapper sym now that cps is about
+      # to generate it.
       dest.addSymUse coroWrapperProc(c, n.symId), n.info
       inc n
     else:
@@ -1678,6 +1792,42 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trSuspend c, dest, n
       of TypeofX:
         takeTree dest, n
+      of HconvX, ConvX:
+        # `g == nil` / `g != nil` over a closure / iter value: sem emits
+        # `(hconv (pointer (nil)) g)` so NIFC can compare via a pointer cast.
+        # After lambdalifting the value is a `(tuple <proctype> (ref RootObj))`
+        # (closure-proc or iter-value shape — both are recognised here), so
+        # cast-to-pointer no longer typechecks. Peel off the fn-slot via
+        # tupat and convert that scalar instead. Nil-identity for both
+        # closure procs and iter values is fn-slot == nil today.
+        let info = n.info
+        let tag = n.exprKind
+        var inner = n
+        inc inner            # past tag
+        var dstType = inner
+        skip inner           # past target type
+        if inner.kind == Symbol or inner.exprKind in {TupatX, DotX}:
+          let srcTyp = c.typeCache.getType(inner, {SkipAliases})
+          var isFnEnvTuple = false
+          if srcTyp.typeKind == TupleT:
+            var t = srcTyp
+            inc t
+            if t.typeKind == ProctypeT and procHasPragma(t, ClosureP):
+              isFnEnvTuple = true
+          if (srcTyp.typeKind == ItertypeT or isFnEnvTuple) and
+              dstType.typeKind in {PtrT, PointerT}:
+            dest.addParLe tag, info
+            dest.takeTree dstType
+            dest.copyIntoKind TupatX, info:
+              takeTree dest, inner
+              dest.addIntLit 0, info
+            dest.addParRi()
+            n = inner
+            skipParRi n
+          else:
+            trSons c, dest, n
+        else:
+          trSons c, dest, n
       of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX,
           AddrX, NilX, InfX, NeginfX, NanX, FalseX,
           TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX,
@@ -1685,10 +1835,10 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
           MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX,
           BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX,
-          ConvX, CchoiceX, OchoiceX, PragmaxX, QuotedX,
+          CchoiceX, OchoiceX, PragmaxX, QuotedX,
           HderefX, DdotX, HaddrX, NewrefX, NewobjX,
           TupX, TupconstrX, SetconstrX, TabconstrX,
-          AshrX, BaseobjX, HconvX, DconvX, CompilesX,
+          AshrX, BaseobjX, DconvX, CompilesX,
           DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX,
           HighX, LowX, UnpackX, FieldsX, FieldpairsX,
           EnumtostrX, IsmainmoduleX, DefaultobjX,
