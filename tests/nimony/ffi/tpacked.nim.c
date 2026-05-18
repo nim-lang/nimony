@@ -460,7 +460,12 @@ void X60Qini_0_tpakvxko41(void){
   X60QiniGuard_0_tpakvxko41 = NIM_TRUE;
   X60Qini_0_sysvq0asl();
   X60Qini_0_assy765wm();
-  if ((!((x_1_tpakvxko41.c_0 == (NC8)'a') && (x_1_tpakvxko41.x_0 == IL64(123))))){
+  NB8 X60Qx_0;
+  if (x_1_tpakvxko41.c_0 == (NC8)'a'){
+    X60Qx_0 = (x_1_tpakvxko41.x_0 == IL64(123));}
+  else {
+    X60Qx_0 = NIM_FALSE;}
+  if ((!X60Qx_0)){
     write_0_syn1lfpjv(stdout, (string_0_sysvq0asl){
       .bytes_0 = 8390880602273963006ull, .more_0 = (&strlit_0_tpakvxko41)}
     );
