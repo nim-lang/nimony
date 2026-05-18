@@ -109,7 +109,7 @@ func `=destroy`*(s: string) {.exportc: "nimStrDestroy", inline.} =
     if arcDec(s.more.rc):
       dealloc(s.more)
 
-func `=copy`*(dest: var string; src: string) {.exportc: "nimStrCopy", inline, nodestroy.} =
+func `=copy`*(dest: var string; src: string) {.exportc: "nimStrCopy", nodestroy.} =
   let ssrc = ssLen(src)
   if ssrc <= PayloadSize:
     # short/medium: destroy dest heap block if any, then bitcopy
@@ -193,7 +193,7 @@ func transitionToLong(s: var string; sl: int; newLen: int) =
 
 # ---- mutation helpers ----
 
-func prepareMutation*(s: var string) {.inline.} =
+func prepareMutation*(s: var string) =
   ## Ensures s's data is uniquely owned (not shared with another string or static).
   let sl = ssLen(s)
   if sl == StaticSlen or (sl == HeapSlen and not arcIsUnique(s.more.rc)):
@@ -215,7 +215,7 @@ func prepareMutation*(s: var string) {.inline.} =
 # ---- beginStore / endStore for bulk writes ----
 
 func beginStore*(s: var string; newLen: int; start = 0): ptr UncheckedArray[char]
-    {.inline, noSideEffect, raises: [], tags: [].} =
+    {.noSideEffect, raises: [], tags: [].} =
   ## Sets s.len to `newLen` (new bytes are uninitialized), ensures unique
   ## ownership, and returns a pointer to s[start] for bulk writing.
   ## Call endStore(s) after writing to sync the inline cache.
@@ -495,7 +495,7 @@ func cmpShortInline(abytes, bbytes: uint; aslen, bslen: int): int {.inline.} =
   when defined(bigEndian): cmpShortInlineBE(abytes, bbytes, aslen, bslen)
   else: cmpShortInlineLE(abytes, bbytes, aslen, bslen)
 
-func cmpStringPtrs(a, b: ptr string): int {.inline.} =
+func cmpStringPtrs(a, b: ptr string): int =
   ## Compare via pointers to avoid struct copies in the hot path.
   let abytes = a.bytes
   let bbytes = b.bytes
@@ -536,7 +536,7 @@ func cmpStringPtrs(a, b: ptr string): int {.inline.} =
 
 # ---- comparison ----
 
-func equalStrings(a, b: string): bool {.inline.} =
+func equalStrings(a, b: string): bool =
   let abytes = a.bytes
   let bbytes = b.bytes
   let aslen = ssLenOf(abytes)
@@ -562,7 +562,7 @@ func `==`*(a, b: string): bool {.inline, semantics: "string.==".} =
 func nimStrAtLe(s: string; idx: int; ch: char): bool {.inline.} =
   result = idx < s.len and s[idx] <= ch
 
-func cmp*(a, b: string): int {.inline.} =
+func cmp*(a, b: string): int =
   ## Specialized comparison for strings.
   let abytes = a.bytes
   let bbytes = b.bytes
@@ -577,7 +577,7 @@ func `<`*(a, b: string): bool {.inline.} = cmp(a, b) < 0
 
 # ---- startsWith ----
 
-func startsWithImpl*(s, prefix: string): bool {.inline.} =
+func startsWithImpl*(s, prefix: string): bool =
   ## Returns true if `s` begins with `prefix`.
   ##
   ## Always opens with a register-only masked comparison of the first
@@ -691,7 +691,7 @@ func `&`*(x: char; y: string): string {.inline.} = result = charToString(x) & y
 func `&=`*(x: var string; y: string) {.inline.} = x.add y
 func `&=`*(x: var string; y: char) {.inline.} = x.add y
 
-func terminatingZero*(s: string): string =
+func terminatingZero*(s: string): string {.inline.} =
   result = s & "\0"
   result.shrink s.len
 
