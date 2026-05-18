@@ -392,10 +392,10 @@ proc trAsNamedType(c: var EContext; dest: var TokenBuf; n: var Cursor) =
 
     swap dest, buf
     c.pending.add buf
-    # Convert NifC type decl to Nim-gear2 type decl by
-    # inserting empty export marker and type vars
-    buf.insert [dotToken(NoLineInfo), dotToken(NoLineInfo)], 1
-    programs.publish val, buf
+    # No `programs.publish` here: nifcgen is the last hexer stage, so
+    # nothing downstream queries these synthesized type decls via
+    # `tryLoadSym`. nifcgen's own `trType` only consults the decl to
+    # detect `distinct` types, which synthesized object decls are never.
   # regardless of what we had to do, we still need to add the typename:
   if k == RefT:
     dest.add tagToken("ptr", info)
@@ -494,7 +494,13 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
         dest.add n
         inc n
     else:
-      error c, "could not find symbol: " & pool.syms[s]
+      # No decl found means this is a synthesized named type from
+      # `trAsNamedType` (e.g. `(ref T)` lowered to a generated object
+      # decl). Those are never `distinct`, so we don't need the decl —
+      # just emit the symbol; nifc resolves the reference against the
+      # type decl that `c.pending` appends to the module's output.
+      dest.add n
+      inc n
   of ParLe:
     case n.typeKind
     of NoType, ErrT, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypekindT, OrdinalT:
@@ -2245,20 +2251,35 @@ proc trToplevel(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         trLocal c, dest, n, tag, TraverseAll
       else:
         # Complex init with function calls: emit a no-init declaration at top
-        # level and place the actual init as an assignment inside the Init proc
-        # body so that any temp variables created by to_stmts remain in scope.
+        # level. The init goes into the Init proc body as `(var :tmp <type>
+        # <init>) (asgn h tmp)` — the let-bound form is what dce2's inliner
+        # (`trySpliceVarInit`) matches against. Emitting `(asgn h (call …))`
+        # would slip past every inliner pattern, leaving a dangling call to
+        # a `.inline` proc whose decl `markLive` had already dropped.
         let savedN = n
         trLocal c, dest, n, tag, TraverseSig
         var initN = savedN
         inc initN  # past gvar/glet tag -> at SymbolDef
         let (initSym, initInfo) = getSymDef(c, initN)
         skipExportMarker c, initN
-        skip initN  # past pragmas -> at type
+        skip initN  # past pragmas
+        let typeCursor = initN
         skip initN  # past type -> at init value
         swap dest, c.initBody
+        # (var :tmp . <type> <init>)
+        let tmpSym = pool.syms.getOrIncl("`init." & $c.localDeclCounters)
+        inc c.localDeclCounters
+        dest.addParLe VarS, initInfo
+        dest.addSymDef tmpSym, initInfo
+        dest.addDotToken()  # pragmas
+        var typeN = typeCursor
+        trType c, dest, typeN
+        trExpr c, dest, initN
+        dest.addParRi()
+        # (asgn h tmp)
         dest.addParLe AsgnS, initInfo
         dest.add symToken(initSym, initInfo)
-        trExpr c, dest, initN
+        dest.addSymUse tmpSym, initInfo
         dest.addParRi()
         swap dest, c.initBody
     elif sk == StmtsS:
