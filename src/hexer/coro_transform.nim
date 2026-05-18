@@ -196,6 +196,13 @@ proc coroWrapperForExternIter*(iterSym: SymId): SymId =
   let split = splitSymName(pool.syms[iterSym])
   result = pool.syms.getOrIncl(split.name & ".init." & split.module)
 
+proc coroTypeForExternIter*(iterSym: SymId): SymId =
+  ## Same idea as `coroWrapperForExternIter` but for the coroutine
+  ## frame type — uses the iter's OWN module suffix so cross-module
+  ## iter values reference the right `.coro` type.
+  let split = splitSymName(pool.syms[iterSym])
+  result = pool.syms.getOrIncl(split.name & ".coro." & split.module)
+
 proc publishWrapperSignature*(iterSym: SymId; moduleSuffix: string) =
   ## Publish a placeholder signature for an iter's init wrapper so
   ## downstream passes (eraiser / duplifier / destroyer) can resolve
