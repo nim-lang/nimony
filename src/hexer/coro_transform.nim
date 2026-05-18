@@ -196,6 +196,78 @@ proc coroWrapperForExternIter*(iterSym: SymId): SymId =
   let split = splitSymName(pool.syms[iterSym])
   result = pool.syms.getOrIncl(split.name & ".init." & split.module)
 
+proc publishWrapperSignature*(iterSym: SymId; moduleSuffix: string) =
+  ## Publish a placeholder signature for an iter's init wrapper so
+  ## downstream passes (eraiser / duplifier / destroyer) can resolve
+  ## the wrapper's type via `tryLoadSym` BEFORE cps generates the
+  ## actual wrapper body.
+  ##
+  ## Lambdalifting calls this when it expands a `.closure` iter
+  ## corofor into a trampoline that references the wrapper sym. Only
+  ## same-module iters need this — cross-module iters already have
+  ## their wrapper published by the iter's owning module's compile.
+  ##
+  ## The published signature shape is the same as what
+  ## `generateCoroutineHelpers` emits: original iter params, then
+  ## `(param result (ptr T))` if non-void, then
+  ## `(param caller Continuation)`, return type `Continuation`,
+  ## pragmas `(closure)`. Body is empty (`.`); cps's emission later
+  ## overrides this with the real body via `publishSignature` again.
+  let split = splitSymName(pool.syms[iterSym])
+  if split.module != moduleSuffix:
+    return  # foreign iter — wrapper published by its own module
+  let wrapperSym = pool.syms.getOrIncl(split.name & ".init." & split.module)
+  if tryLoadSym(wrapperSym).status == LacksNothing:
+    return  # already published (e.g. by an earlier corofor for the
+            # same iter, or by a previous compile)
+
+  let res = tryLoadSym(iterSym)
+  assert res.status == LacksNothing, "iter sym not loaded: " & pool.syms[iterSym]
+  let fn = asRoutine(res.decl)
+  let info = NoLineInfo
+
+  var buf = createTokenBuf(40)
+  buf.addParLe ProcS, info
+  buf.addSymDef wrapperSym, info
+  buf.addDotToken() # exported
+  buf.addDotToken() # pattern
+  buf.addDotToken() # typevars
+  buf.copyIntoKind ParamsU, info:
+    var p = fn.params
+    if p.kind != DotToken:
+      inc p
+      while p.hasMore:
+        assert p.substructureKind == ParamU
+        buf.takeToken p
+        buf.takeTree p # name
+        buf.takeTree p # exported
+        buf.takeTree p # pragmas
+        buf.takeTree p # type
+        buf.takeTree p # default value
+        buf.takeParRi p
+    var ret = fn.retType
+    if not isVoidType(ret):
+      buf.copyIntoKind ParamU, info:
+        buf.addSymDef pool.syms.getOrIncl(ResultParamName), info
+        buf.addDotToken() # export
+        buf.addDotToken() # pragmas
+        buf.copyIntoKind PtrT, info:
+          buf.takeTree ret
+        buf.addDotToken() # default value
+    buf.copyIntoKind ParamU, info:
+      buf.addSymDef pool.syms.getOrIncl(CallerParamName), info
+      buf.addDotToken() # export
+      buf.addDotToken() # pragmas
+      buf.addSymUse pool.syms.getOrIncl(ContinuationName), info
+      buf.addDotToken() # default value
+  buf.addSymUse pool.syms.getOrIncl(ContinuationName), info
+  buf.copyIntoKind PragmasU, info:
+    buf.copyIntoKind ClosureP, info: discard
+  buf.addDotToken() # effects
+  buf.addDotToken() # body — empty, cps replaces with the real body
+  buf.addParRi() # close proc
+  programs.publish(wrapperSym, buf, SemcheckSignatures)
+
 # ---------------------------------------------------------------------
 # Iter-value tuple-type emitters
 #

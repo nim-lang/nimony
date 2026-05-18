@@ -376,6 +376,164 @@ proc typedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv)
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor)
   {.ensuresNif: addedAny(dest).}
 
+proc isClosureCoroFor(n: Cursor): bool =
+  ## Peek at a `(corofor (call <target> …) …)` to decide whether this
+  ## corofor is for a `.closure` iter (lambdalifting handles) or a
+  ## `.passive` iter (cps handles, lambdalifting passes through).
+  ##
+  ## `.closure` iter values reach here as non-Symbol targets (e.g.
+  ## `(tupat g 0)` emitted by lambdalifting's iter-value tupconstr —
+  ## `.passive` iters never get iter-value treatment). Symbol targets
+  ## are resolved via `isClosureIterSym`.
+  assert n.stmtKind == CoroforS
+  var m = n
+  inc m  # past corofor tag
+  if m.exprKind notin CallKinds: return false
+  inc m  # past call tag
+  if m.kind == Symbol:
+    return isClosureIterSym(m.symId)
+  return true
+
+proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## Expand `(corofor (call closure-iter args... (haddr forLoopVar)) (block ...))`
+  ## into the trampoline. Mirrors `coro_transform.trCoroFor` but walks
+  ## the body via lambdalifting's `tre` (so closure captures inside
+  ## the for-loop body get rewritten to env accesses).
+  let info = n.info
+  inc n # skip (corofor
+
+  # ---- first child: (call iter-or-tupat args... (haddr forLoopVar)) ----
+  assert n.exprKind in CallKinds, "corofor: expected iter call as first child"
+  inc n # past CallS tag
+  # Extract the call target.
+  var targetBuf = createTokenBuf(4)
+  if n.kind == Symbol:
+    # Always route through the iter's init wrapper. `coroWrapperForExternIter`
+    # uses the iter sym's OWN module suffix, which works for both
+    # same-module and cross-module iters.
+    targetBuf.addSymUse coro_transform.coroWrapperForExternIter(n.symId), n.info
+    # Pre-publish a placeholder signature for the wrapper so
+    # downstream passes can resolve its type via `tryLoadSym`. cps
+    # generates the actual wrapper body later; this stub is just for
+    # the in-between passes (eraiser / duplifier / destroyer).
+    coro_transform.publishWrapperSignature(n.symId, c.thisModuleSuffix)
+    inc n
+  else:
+    # Pre-extracted wrapper fn-ptr expression (lambdalifting genCall's
+    # `(tupat g 0)` for iter-VALUE calls).
+    targetBuf.takeTree n
+
+  # Gather each arg into its own buf, then peel a trailing TupatX
+  # (env-arg from iter-value call), then peel the next-trailing as
+  # the addr.
+  var argBufs: seq[TokenBuf] = @[]
+  while n.hasMore:
+    var buf = createTokenBuf(4)
+    buf.takeTree n
+    argBufs.add(ensureMove buf)
+  skipParRi n # close iter call
+
+  if argBufs.len > 0:
+    var probe = beginRead(argBufs[^1])
+    let lastIsTupat = probe.exprKind == TupatX
+    endRead(argBufs[^1])
+    if lastIsTupat:
+      discard argBufs.pop()  # drop env-arg
+
+  assert argBufs.len > 0, "corofor: iter call missing args"
+  var addrBuf = move argBufs[^1]
+  argBufs.setLen(argBufs.len - 1)
+  block:
+    var probe = beginRead(addrBuf)
+    assert probe.exprKind == HaddrX, "corofor: expected (haddr forLoopVar)"
+    endRead(addrBuf)
+  var argsBuf = createTokenBuf(8)
+  for i in 0 ..< argBufs.len:
+    argsBuf.add argBufs[i]
+
+  # ---- emit `var it: Continuation = wrapper(args..., addr forLoopVar, Stop)` ----
+  let itSym = pool.syms.getOrIncl("`coroIt." & $c.counter & "." & c.thisModuleSuffix)
+  inc c.counter
+  c.typeCache.registerLocal(itSym, VarY, default(Cursor))
+  dest.copyIntoKind VarS, info:
+    dest.addSymDef itSym, info
+    dest.addDotToken() # exported
+    dest.addDotToken() # pragmas
+    dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+    dest.copyIntoKind CallS, info:
+      dest.add targetBuf
+      dest.add argsBuf
+      dest.add addrBuf
+      coro_transform.emitStopContinuation(dest, info)
+
+  let envFieldSym = pool.syms.getOrIncl(EnvFieldName)
+
+  template emitItEnv(dest: var TokenBuf) =
+    dest.copyIntoKind DotX, info:
+      dest.addSymUse itSym, info
+      dest.addSymUse envFieldSym, info
+      dest.addIntLit 0, info # direct field of Continuation
+
+  # ---- emit `let myEnv = it.env` (snapshot of our frame pointer) ----
+  let myEnvSym = pool.syms.getOrIncl("`coroEnv." & $c.counter & "." & c.thisModuleSuffix)
+  inc c.counter
+  c.typeCache.registerLocal(myEnvSym, LetY, default(Cursor))
+  dest.copyIntoKind LetS, info:
+    dest.addSymDef myEnvSym, info
+    dest.addDotToken() # exported
+    dest.addDotToken() # pragmas
+    dest.copyIntoKind PtrT, info:
+      dest.addSymUse pool.syms.getOrIncl(coro_transform.RootObjName), info
+    emitItEnv(dest)
+
+  # ---- emit try/while/finally ----
+  let finishedSym = pool.syms.getOrIncl("finished.0." & SystemModuleSuffix)
+  let advanceSym = pool.syms.getOrIncl("advance.0." & SystemModuleSuffix)
+  let finalizeSym = pool.syms.getOrIncl("finalizeCoroutine.0." & SystemModuleSuffix)
+
+  dest.addParLe TryS, info
+  dest.copyIntoKind StmtsS, info:
+    dest.addParLe WhileS, info
+    dest.addParPair TrueX, info
+    dest.copyIntoKind StmtsS, info:
+      dest.copyIntoKind AsgnS, info:
+        dest.addSymUse itSym, info
+        dest.copyIntoKind CallS, info:
+          dest.addSymUse advanceSym, info
+          dest.addSymUse itSym, info
+      dest.copyIntoKind IfS, info:
+        dest.copyIntoKind ElifU, info:
+          dest.copyIntoKind CallS, info:
+            dest.addSymUse finishedSym, info
+            dest.addSymUse itSym, info
+          dest.copyIntoKind StmtsS, info:
+            dest.copyIntoKind BreakS, info:
+              dest.addDotToken()
+      dest.copyIntoKind IfS, info:
+        dest.copyIntoKind ElifU, info:
+          dest.copyIntoKind EqX, info:
+            dest.addParPair PointerT, info
+            emitItEnv(dest)
+            dest.addSymUse myEnvSym, info
+          dest.copyIntoKind StmtsS, info:
+            # Body walk via lambdalifting's `tre` so captures get
+            # rewritten to env accesses. Second child of corofor is
+            # the inner-block (and any destroyer-injected cleanup
+            # alongside it).
+            while n.hasMore:
+              tre(c, dest, n)
+    dest.addParRi() # close while
+  # finally: finalizeCoroutine(addr it)
+  dest.copyIntoKind FinU, info:
+    dest.copyIntoKind StmtsS, info:
+      dest.copyIntoKind CallS, info:
+        dest.addSymUse finalizeSym, info
+        dest.copyIntoKind HaddrX, info:
+          dest.addSymUse itSym, info
+  dest.addParRi() # close try
+
+  skipParRi n # close (corofor
+
 proc treSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
     while n.hasMore:
@@ -766,8 +924,15 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       let repWith = c.localToEnv.getOrDefault(n.symId)
       if repWith.field != SymId(0):
+        # For stack-env local (`!needsHeap` + `EnvIsLocal`), `typedEnv`
+        # returns the env OBJECT directly — deref-ing it is a type
+        # error NIFC rejects. Mirror `treLocal`'s branch: only deref
+        # when the env is heap-ref-shaped.
         dest.copyIntoKind DotX, info:
-          dest.copyIntoKind DerefX, info:
+          if c.env.needsHeap:
+            dest.copyIntoKind DerefX, info:
+              dest.typedEnv info, c.env
+          else:
             dest.typedEnv info, c.env
           dest.addSymUse repWith.field, info
         inc n
@@ -791,7 +956,16 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.typeCache.openScope()
       treSons(c, dest, n)
       c.typeCache.closeScope()
-    of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS, CoroforS,
+    of CoroforS:
+      # `.closure` iter corofors are owned by lambdalifting — we expand
+      # them into the trampoline here so the body walk goes through
+      # `tre` (capture rewriting). `.passive` iter corofors pass
+      # through to cps's `coro_transform.trCoroFor`.
+      if isClosureCoroFor(n):
+        trClosureCoroFor c, dest, n
+      else:
+        treSons(c, dest, n)
+    of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS,
       CaseS, RetS, YldS, StmtsS, PragmaxS, InclS, ExclS, ImportasS,
       ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
       AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
