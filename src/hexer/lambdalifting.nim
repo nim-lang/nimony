@@ -44,6 +44,15 @@ import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters, typeprops]
 import hexer_context, passes
 include ".." / nimony / nif_annotations
+import coro_transform
+# Bring the iter-value tuple constants/helpers into scope as
+# unqualified names. `ResultParamName` / `CallerParamName` are the
+# canonical names; lambdalifting's old aliases (`IterResultParamName`,
+# `IterCallerParamName`) are gone — they were the same strings.
+# `BareRootObjName` is the real `RootObj` (the env-slot type); the
+# misleadingly-named `RootObjName` over in coro_transform is
+# `CoroutineBase` and is NOT the right thing for the env slot. Don't
+# confuse them.
 
 type
   EnvMode = enum
@@ -138,11 +147,6 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   while n.hasMore:
     tr(c, dest, n)
   dest.takeParRi(n)
-
-proc emitIterTupleTypeFromParams(dest: var TokenBuf; n: var Cursor;
-                                 info: PackedLineInfo)
-  ## Forward decl — defined below alongside the other iter-tuple helpers.
-  ## Needed here because `trNil` consumes iter-typed nil literals.
 
 proc itertypeNeedsTuple(n: Cursor): bool {.inline.} =
   ## True when an itertype's pragmas tag it as a `.closure` iter (Nim-style
@@ -314,168 +318,19 @@ when false:
     result = hasPragma(typ, ClosureP)
 
 const
-  RootObjName = "RootObj.0." & SystemModuleSuffix
+  # Lambdalifting-specific names (not in coro_transform).
   EnvParamName = "`ep.0"
   EnvLocalName = "`el.0"
-  # --- iter-value tuple support ---
-  # Itertype lowers to a `(tuple <wrapper-proctype> (ref RootObj))` here
-  # (lambdalifting time) so the lifter sees the tuple in the duplifier /
-  # destroyer pass and generates destroy/copy/sink hooks for the env slot.
-  # The wrapper-signature shape MUST match what cps's
-  # `generateCoroutineHelpers` emits for the actual wrapper proc — these
-  # constants and helpers mirror cps deliberately. If you change the
-  # wrapper signature on the cps side, change it here too.
-  ContinuationName = "Continuation.0." & SystemModuleSuffix
-  IterResultParamName = "`result.0"
-  IterCallerParamName = "`caller.0"
+
+# `RootObjName` / `coroWrapperProcName` / `emitIterTupleType*` /
+# `isClosureIterSym` / `isLiftedClosureTuple` now live in
+# `coro_transform`. The wrapper-signature shape is owned there too, so
+# both passes stay in lock-step automatically.
 
 proc addRootRef(dest: var TokenBuf; info: PackedLineInfo)
   {.ensuresNif: addedType(dest).} =
   dest.copyIntoKind RefT, info:
-    dest.addSymUse pool.syms.getOrIncl(RootObjName), info
-
-# --- iter-value tuple helpers (mirror cps) ---
-
-proc coroWrapperProcName(iterSym: SymId): SymId =
-  ## Same convention as cps.coroWrapperProc / coroWrapperForExternIter:
-  ## `<iter-stem>.init.<module-suffix>`. Lambdalifting embeds this sym in
-  ## the iter-value tupconstr; cps later generates the actual proc with
-  ## the matching signature.
-  let split = splitSymName(pool.syms[iterSym])
-  result = pool.syms.getOrIncl(split.name & ".init." & split.module)
-
-proc emitIterTupleTypeFromParams(dest: var TokenBuf; n: var Cursor; info: PackedLineInfo) =
-  ## Consume an (itertype ...) tree at `n` and emit
-  ##   `(tuple (proctype . (params <orig>... (param result ptr T) (param caller Continuation)) Continuation <pragmas>) (ref RootObj))`
-  ## Cursor is left past the closing ParRi of the input itertype.
-  ##
-  ## NOTE: the parameter types are copied verbatim (`takeTree`) on the
-  ## assumption that iter param types are scalar. If we ever support
-  ## nested itertypes in param positions we'll need to recurse via
-  ## treProcType here.
-  assert n.typeKind == ItertypeT
-  inc n                  # past itertype tag
-  if n.kind != ParRi:
-    skip n               # past nilability tag
-  dest.copyIntoKind TupleT, info:
-    dest.copyIntoKind ProctypeT, info:
-      dest.addDotToken() # nilability tag
-      dest.copyIntoKind ParamsU, info:
-        if n.substructureKind == ParamsU:
-          inc n
-          while n.hasMore:
-            assert n.substructureKind == ParamU
-            dest.takeToken n      # param tag
-            dest.takeTree n       # name
-            dest.takeTree n       # exported
-            dest.takeTree n       # pragmas
-            dest.takeTree n       # type (assumed scalar)
-            dest.takeTree n       # default value
-            dest.takeParRi n
-          inc n  # close (params ...)
-        elif n.kind == DotToken:
-          inc n
-        # result becomes a ptr parameter (skipped when return type is void):
-        let isVoid = isVoidType(n)
-        if not isVoid:
-          dest.copyIntoKind ParamU, info:
-            dest.addSymDef pool.syms.getOrIncl(IterResultParamName), info
-            dest.addDotToken() # export
-            dest.addDotToken() # pragmas
-            dest.copyIntoKind PtrT, info:
-              dest.takeTree n
-            dest.addDotToken() # default value
-        else:
-          skip n
-        # caller parameter is always last:
-        dest.copyIntoKind ParamU, info:
-          dest.addSymDef pool.syms.getOrIncl(IterCallerParamName), info
-          dest.addDotToken() # export
-          dest.addDotToken() # pragmas
-          dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
-          dest.addDotToken() # default value
-      dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
-      # Pragmas: ALWAYS emit `(pragmas (closure))` regardless of whether
-      # the source itertype was `.closure` or `.passive`. Two reasons:
-      #  (a) cps's `trProctype` re-walks types and treats ProctypeT with
-      #      `(pragmas (passive))` as an unlifted passive proctype — it
-      #      would wrap our already-lifted proctype in another result-ptr
-      #      + caller-Continuation param pair (extra 2 params), corrupting
-      #      the type symbol and breaking the C struct layout.
-      #  (b) `(closure)` is the canonical "this is a closure-shaped fn
-      #      pointer" marker used by `isClosure`, `isLiftedClosureTuple`,
-      #      cps's `HconvX` path, etc. Both `.closure` and `.passive` iter
-      #      values share the SAME tuple ABI, so they should share the
-      #      same lifted-tuple shape too. The `.closure` vs `.passive`
-      #      distinction lives on the iter DECL's pragmas — cps reads
-      #      that to decide the wrapper-proc body shape.
-      # Skip the source pragmas; emit normalized closure marker.
-      if n.hasMore: skip n
-      dest.copyIntoKind PragmasU, info:
-        dest.copyIntoKind ClosureP, info: discard
-      # drop anything else (effects/body slots)
-      while n.hasMore: skip n
-    dest.copyIntoKind RefT, info:
-      dest.addSymUse pool.syms.getOrIncl(RootObjName), info
-  skipParRi n            # close original (itertype …)
-
-proc emitIterTupleTypeFromSym(dest: var TokenBuf; iterSym: SymId; info: PackedLineInfo) =
-  ## Build the iter-value tuple type from an iterator sym's decl.
-  ## Used for the tupconstr at iter-sym-as-value and iter-nil sites.
-  let res = tryLoadSym(iterSym)
-  assert res.status == LacksNothing, "iter sym not loaded: " & pool.syms[iterSym]
-  let fn = asRoutine(res.decl)
-  dest.copyIntoKind TupleT, info:
-    dest.copyIntoKind ProctypeT, info:
-      dest.addDotToken() # nilability tag
-      dest.copyIntoKind ParamsU, info:
-        var p = fn.params
-        if p.kind != DotToken:
-          inc p
-          while p.hasMore:
-            assert p.substructureKind == ParamU
-            dest.takeToken p
-            dest.takeTree p # name
-            dest.takeTree p # exported
-            dest.takeTree p # pragmas
-            dest.takeTree p # type
-            dest.takeTree p # default value
-            dest.takeParRi p
-        var ret = fn.retType
-        if not isVoidType(ret):
-          dest.copyIntoKind ParamU, info:
-            dest.addSymDef pool.syms.getOrIncl(IterResultParamName), info
-            dest.addDotToken() # export
-            dest.addDotToken() # pragmas
-            dest.copyIntoKind PtrT, info:
-              dest.takeTree ret
-            dest.addDotToken() # default value
-        dest.copyIntoKind ParamU, info:
-          dest.addSymDef pool.syms.getOrIncl(IterCallerParamName), info
-          dest.addDotToken() # export
-          dest.addDotToken() # pragmas
-          dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
-          dest.addDotToken() # default value
-      dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
-      # Pragmas: always `(pragmas (closure))` — see the matching comment
-      # in emitIterTupleTypeFromParams. The lifted-tuple's pragma is the
-      # canonical "closure-shaped fn pointer" marker; .closure vs .passive
-      # distinction is on the iter DECL, not on the lifted tuple type.
-      dest.copyIntoKind PragmasU, info:
-        dest.copyIntoKind ClosureP, info: discard
-    dest.copyIntoKind RefT, info:
-      dest.addSymUse pool.syms.getOrIncl(RootObjName), info
-
-proc isClosureIterSym(s: SymId): bool =
-  ## True for `.closure` iter decls only — those are the ones that lower to
-  ## the iter-value tuple (Nim-compatible ref-based env). `.passive` iters
-  ## stay as plain function pointers via cps's `trProctype`, so they don't
-  ## go through the tupconstr emission in lambdalifting's tre Symbol path.
-  let res = tryLoadSym(s)
-  if res.status == LacksNothing and res.decl.symKind == IteratorY:
-    let routine = asRoutine(res.decl)
-    return hasPragma(routine.pragmas, ClosureP)
-  return false
+    dest.addSymUse pool.syms.getOrIncl(BareRootObjName), info
 
 type
   UntypedEnvMode = enum
@@ -518,20 +373,6 @@ proc typedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv)
         dest.addSymUse env.typ, info
       dest.addSymUse env.s, info
 
-proc isLiftedClosureTuple(n: Cursor): bool =
-  ## A `(tuple <proctype …> (ref RootObj))` is the shape both closure procs
-  ## and closure-iter values get lifted to. If we encounter one in tre's
-  ## walk, it's already lifted — recursing into it would re-trigger the
-  ## proctype-rewrite and produce nested tuples.
-  if n.typeKind != TupleT: return false
-  var t = n
-  inc t
-  if t.kind != ParLe or t.typeKind != ProctypeT: return false
-  skip t
-  if t.kind != ParLe or t.typeKind != RefT: return false
-  skip t
-  result = t.kind == ParRi
-
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor)
   {.ensuresNif: addedAny(dest).}
 
@@ -547,7 +388,7 @@ proc addEnvParam(dest: var TokenBuf; info: PackedLineInfo; envTyp: SymId) =
     dest.addDotToken() # no pragmas
     if envTyp == SymId(0):
       dest.copyIntoKind RefT, info:
-        dest.addSymUse pool.syms.getOrIncl(RootObjName), info
+        dest.addSymUse pool.syms.getOrIncl(BareRootObjName), info
     else:
       # to keep NIFC's type system happy we need a ptr type here
       # and then a cast in the body!
@@ -600,7 +441,7 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
             if n.hasMore: skip n
         skipParRi n
       copyIntoKind dest, RefT, info:
-        dest.addSymUse pool.syms.getOrIncl(RootObjName), info
+        dest.addSymUse pool.syms.getOrIncl(BareRootObjName), info
   else:
     let isProctypeInput = n.typeKind == ProctypeT
     dest.takeToken n
@@ -799,6 +640,12 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   #     body). `.passive` iter values are NOT iter-value tuples; cps's
   #     `trProctype` lowers them to plain function pointers, and they
   #     reach genCall as ordinary proctype calls — not wrapped.
+  #
+  # Iter SYM in static call position (`countup(1, 5)` inside a corofor)
+  # is NOT a closure-value call — coro_transform.trCoroFor rewrites
+  # this to a wrapper-proc call with explicit `StopContinuation`. We
+  # must not append an env-arg here, otherwise the trampoline expects
+  # the env-arg to be the addr-of-result and bails.
   let wantsEnv = isClosure(typ) or isLiftedClosureTuple(typ) or
                  (n.kind == Symbol and c.closureProcs.contains(n.symId))
   var isStatic = false
@@ -890,11 +737,18 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       # time, and downstream passes (duplifier, typenav) need to resolve the
       # symbol. cps later rewrites iter-sym-as-value to wrapper-sym; here in
       # the tupconstr fn slot the rewrite still happens via cps.tr's Symbol
-      # path. env slot starts nil — the wrapper allocates a fresh frame
-      # internally on each call. Important: this MUST come before the
-      # generic closure-proc branch because iter decls match
-      # `RoutineKinds`/`isClosure` too, but the env-injection path below
-      # would feed them the wrong shape.
+      # path.
+      #
+      # Env slot: starts nil — the wrapper allocates a fresh frame
+      # internally on each call. Eager value-owned-frame allocation
+      # (so `let z = g; advance(g)` advances `z` too) requires
+      # `.closure` iter state-machine generation to move from cps into
+      # lambdalifting; that's the next stage of the refactor and is
+      # not in place today.
+      #
+      # Important: this MUST come before the generic closure-proc branch
+      # because iter decls match `RoutineKinds`/`isClosure` too, but the
+      # env-injection path below would feed them the wrong shape.
       let iterSym = n.symId
       dest.copyIntoKind TupconstrX, info:
         emitIterTupleTypeFromSym(dest, iterSym, info)
@@ -1019,7 +873,7 @@ proc genObjectTypes(c: var Context; dest: var TokenBuf) =
       dest.addDotToken() # no pragmas
       dest.copyIntoKind ObjectT, NoLineInfo:
         # inherits from RootObj:
-        dest.addSymUse pool.syms.getOrIncl(RootObjName), NoLineInfo
+        dest.addSymUse pool.syms.getOrIncl(BareRootObjName), NoLineInfo
         for field in items fields:
           let beforeField = dest.len
           dest.copyIntoKind FldY, NoLineInfo:
