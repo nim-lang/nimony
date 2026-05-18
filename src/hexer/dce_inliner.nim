@@ -94,11 +94,26 @@ proc findForeignFile(c: InlinerCtx; modul, ext: string): string =
   if fileExists(parent): return parent
   return ""
 
+proc loadForeignAnalysis(c: var InlinerCtx; modul: string): bool =
+  ## Cheap: load only the `.dce.nif` sidecar (inline info, uses, offers).
+  ## Used by `lookupInlineInfo` to decide whether a call is splice-worthy
+  ## before paying the cost of parsing the full `.x.nif`. For a typical
+  ## module that calls many non-`.inline` procs from `sysvq0asl`, the
+  ## sidecar is ~17× smaller than the `.x.nif`; parsing the latter eagerly
+  ## here used to dominate dceEmit wall time on large builds.
+  if modul == c.moduleSuffix: return true
+  if c.infos == nil: return false
+  if modul in c.infos[]: return true
+  let dpath = findForeignFile(c, modul, ".dce.nif")
+  if dpath.len == 0: return false
+  c.infos[][modul] = readModuleAnalysis(dpath)
+  result = true
+
 proc loadForeign(c: var InlinerCtx; modul: string): bool =
-  ## Lazy-load the `.x.nif` and `.dce.nif` for `modul` so we can splice
-  ## its `.inline` procs and look up their `InlineInfo`. Returns false
-  ## when the files can't be located — the splice for the call is
-  ## skipped, the call stays as a normal call.
+  ## Lazy-load the foreign `.x.nif` (procedure bodies) — only called from
+  ## the actual splice path (`lookupBody`), after `shouldInlineCall` has
+  ## already approved the inline. The matching `.dce.nif` is loaded by
+  ## `loadForeignAnalysis`; we reuse it via the same cache.
   if modul == c.moduleSuffix: return true
   if modul in c.foreign: return true
   let xpath = findForeignFile(c, modul, ".x.nif")
@@ -108,12 +123,8 @@ proc loadForeign(c: var InlinerCtx; modul: string): bool =
   fm.buf = parseFromFile(xpath)
   indexProcBodies(fm.buf, fm.bodies)
   c.foreign[modul] = fm
-  # Pull in this module's analysis sidecar too — `isInlinable` consults
-  # `c.infos[modul]` for the `.inline` threshold check.
   if c.infos != nil and modul notin c.infos[]:
-    let dpath = findForeignFile(c, modul, ".dce.nif")
-    if dpath.len > 0:
-      c.infos[][modul] = readModuleAnalysis(dpath)
+    discard loadForeignAnalysis(c, modul)
   result = true
 
 proc lookupBody(c: var InlinerCtx; calleeSym: SymId; outCur: var Cursor): bool =
@@ -184,13 +195,15 @@ proc computeArgScores(argsStart: Cursor): seq[int] =
     skip a
 
 proc lookupInlineInfo(c: var InlinerCtx; calleeSym: SymId): InlineInfo =
-  ## Lazy-loads the foreign module's sidecar if needed, then returns
-  ## the InlineInfo (or `DefaultInlineInfo` if unknown).
+  ## Lazy-loads the foreign module's analysis sidecar (cheap — `.dce.nif`
+  ## only, no `.x.nif`) and returns the InlineInfo (or `DefaultInlineInfo`
+  ## if unknown). The full `.x.nif` is loaded later by `lookupBody`, only
+  ## once we've decided this call is actually splice-worthy.
   result = DefaultInlineInfo
   if c.infos == nil: return
   let modul = extractModule(pool.syms[calleeSym])
   if modul != c.moduleSuffix and modul notin c.infos[]:
-    discard loadForeign(c, modul)
+    discard loadForeignAnalysis(c, modul)
   if not c.infos[].hasKey(modul): return
   result = c.infos[][modul].inlineInfo.getOrDefault(calleeSym, DefaultInlineInfo)
 
