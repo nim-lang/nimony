@@ -30,6 +30,7 @@ type
     kind*: SymKind
     crossedProc*: int16
     typ*: Cursor
+    val*: Cursor
   ScopeKind* = enum
     OtherScope, ProcScope, UnusedScope
   TypeScope* {.acyclic.} = ref object
@@ -45,8 +46,9 @@ type
 proc createTypeCache*(bits: int = 64): TypeCache =
   TypeCache(builtins: createBuiltinTypes(bits))
 
-proc registerLocal*(c: var TypeCache; s: SymId; kind: SymKind; typ: Cursor) =
-  c.current.locals[s] = LocalInfo(kind: kind, typ: typ)
+proc registerLocal*(c: var TypeCache; s: SymId; kind: SymKind; typ: Cursor;
+                    val: Cursor = default(Cursor)) =
+  c.current.locals[s] = LocalInfo(kind: kind, typ: typ, val: val)
 
 proc openScope*(c: var TypeCache; kind = OtherScope) =
   c.current = TypeScope(locals: initTable[SymId, LocalInfo](), parent: c.current, kind: kind)
@@ -65,7 +67,7 @@ proc registerParams*(c: var TypeCache; routine: SymId; decl, params: Cursor) =
     inc p
     while p.hasMore:
       let r = takeLocal(p, SkipFinalParRi)
-      registerLocal(c, r.name.symId, ParamY, r.typ)
+      registerLocal(c, r.name.symId, ParamY, r.typ, r.val)
   c.current.locals[routine] = LocalInfo(kind: ProcY, typ: decl)
 
 proc openProcScope*(c: var TypeCache; routine: SymId; decl, params: Cursor) =
@@ -73,14 +75,15 @@ proc openProcScope*(c: var TypeCache; routine: SymId; decl, params: Cursor) =
   c.current = TypeScope(locals: initTable[SymId, LocalInfo](), parent: c.current, kind: ProcScope)
 
 proc getInitValueImpl(c: var TypeCache; s: SymId): Cursor =
+  ## Returns the init value for a constant. Restricted to `ConstY` for callers
+  ## that inline values (constant folding); use `getLocalInfo` / `LocalInfo.val`
+  ## directly to inspect ordinary let/var/pattern-var initializers.
   var it {.cursor.} = c.current
   while it != nil:
-    var res = it.locals.getOrDefault(s)
+    let res = it.locals.getOrDefault(s)
     if res.kind != NoSym:
       if res.kind == ConstY:
-        # we know the init value comes after the type:
-        skip res.typ
-        return res.typ
+        return res.val
       else:
         return default(Cursor)
     it = it.parent
@@ -176,8 +179,10 @@ proc registerLocals(c: var TypeCache; n: var Cursor) =
       inc n # name
       skip n, SkipExport # export marker
       skip n, SkipPragmas # pragmas
-      c.registerLocal name, cast[SymKind](k), n
+      let typ = n
       skip n, SkipType # type
+      let val = n
+      c.registerLocal name, cast[SymKind](k), typ, val
       skip n, SkipValue # init value
       skipParRi n
     else:
@@ -606,8 +611,9 @@ proc takeLocalHeader*(c: var TypeCache; dest: var TokenBuf; n: var Cursor; kind:
   takeTree dest, n # name
   takeTree dest, n # export marker
   takeTree dest, n # pragmas
-  c.registerLocal(name, kind, n)
+  let typ = n
   takeTree dest, n # type
+  c.registerLocal(name, kind, typ, n)
 
 proc registerLocalPtrOf*(c: var TypeCache; name: SymId; kind: SymKind; elemType: Cursor) =
   var buf = createTokenBuf(4)

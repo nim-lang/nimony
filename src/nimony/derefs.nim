@@ -262,11 +262,19 @@ proc skipToRoot(n: Cursor): Cursor =
   result = n
 
 proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
+  result = false
   let n = skipToRoot(n)
   if n.kind == Symbol:
-    let res = tryLoadSym(n.symId)
-    assert res.status == LacksNothing
-    let local = asLocal(res.decl)
+    # Use the type cache rather than `tryLoadSym` so that local symbols
+    # (anonymous ones like `n.2` lack a module suffix) cannot collide
+    # across modules through the shared `pool.syms` interning.
+    var local = c.typeCache.getLocalInfo(n.symId)
+    if local.kind == NoSym:
+      # Foreign module-suffixed symbol; safe to load from disk.
+      let res = tryLoadSym(n.symId)
+      if res.status == LacksNothing:
+        let l = asLocal(res.decl)
+        local = LocalInfo(kind: l.kind, typ: l.typ, val: l.val)
     case local.kind
     of ConstY:
       result = true
@@ -276,13 +284,14 @@ proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
         result = tk == LentT # see VarY case
       else:
         result = tk notin {MutT, OutT, LentT}
-        if result and isViewType(local.typ):
+        if result and isViewType(local.typ) and not cursorIsNil(local.val):
           # Special rule to make `toOpenArray` work:
           result = borrowsFromReadonly(c, local.val)
     of VarY, GvarY, TvarY:
       result = local.typ.typeKind == LentT
     of PatternvarY:
-      result = borrowsFromReadonly(c, local.val)
+      if not cursorIsNil(local.val):
+        result = borrowsFromReadonly(c, local.val)
     of ParamY:
       result = local.typ.typeKind notin {MutT, OutT, LentT, SinkT}
     else:
@@ -751,7 +760,7 @@ proc trLocal(c: var Context; n: var Cursor) =
     takeTree c.dest, n
   let typ = n
   takeTree c.dest, n
-  c.typeCache.registerLocal(name.symId, kind, typ)
+  c.typeCache.registerLocal(name.symId, kind, typ, n)
   if kind == PatternvarY:
     c.dest.addParLe(HaddrX, n.info)
     tr c, n, WantT
