@@ -499,52 +499,51 @@ proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   #   3. Pre-extracted expression (e.g. a `(tupat g 0)` already
   #      emitted by upstream genCall) — use verbatim and look for
   #      the trailing tupat env-arg further down.
+  # Track which branch we took for the target — this is the ONLY
+  # reliable signal for "does the arg list have an upstream env-arg?".
+  # Probing the last arg for TupatX is unsound: a regular arg like
+  # `(tupat someTuple 0)` would falsely match.
   var targetBuf = createTokenBuf(4)
-  var envArgBuf = createTokenBuf(0)
+  var valSymForEnv: SymId = SymId(0)  # case 2: synthesize env-arg from this
+  var valInfoForEnv: PackedLineInfo = default(PackedLineInfo)
+  var upstreamEnvArg = false           # case 3: env-arg is penultimate arg
   if n.kind == Symbol and isClosureIterSym(n.symId):
     targetBuf.addSymUse coro_transform.coroWrapperForExternIter(n.symId), n.info
     coro_transform.publishWrapperSignature(n.symId, c.thisModuleSuffix)
     inc n
   elif n.kind == Symbol:
-    let valSym = n.symId
-    let valInfo = n.info
-    targetBuf.copyIntoKind TupatX, valInfo:
-      targetBuf.addSymUse valSym, valInfo
-      targetBuf.addIntLit 0, valInfo
-    envArgBuf.copyIntoKind TupatX, valInfo:
-      envArgBuf.addSymUse valSym, valInfo
-      envArgBuf.addIntLit 1, valInfo
+    valSymForEnv = n.symId
+    valInfoForEnv = n.info
+    targetBuf.copyIntoKind TupatX, valInfoForEnv:
+      targetBuf.addSymUse valSymForEnv, valInfoForEnv
+      targetBuf.addIntLit 0, valInfoForEnv
     inc n
   else:
+    upstreamEnvArg = true
     targetBuf.takeTree n
 
-  # Gather each arg into its own buf, then peel a trailing TupatX
-  # (env-arg from upstream genCall pre-extraction, case 3 above), then
-  # peel the next-trailing as the addr.
-  var argBufs: seq[TokenBuf] = @[]
+  # Cursors are stable into the source buffer — walk once to count args
+  # and remember the cursor at each arg's start position; emit later
+  # via `addSubtree` from those cursor copies.
+  let argsStart = n
+  var lastArgPos = default(Cursor)
+  var penultimateArgPos = default(Cursor)
+  var argCount = 0
   while n.hasMore:
-    var buf = createTokenBuf(4)
-    buf.takeTree n
-    argBufs.add(ensureMove buf)
+    penultimateArgPos = lastArgPos
+    lastArgPos = n
+    skip n
+    inc argCount
   skipParRi n # close iter call
 
-  if envArgBuf.len == 0 and argBufs.len > 0:
-    var probe = beginRead(argBufs[^1])
-    let lastIsTupat = probe.exprKind == TupatX
-    endRead(argBufs[^1])
-    if lastIsTupat:
-      envArgBuf = argBufs.pop()  # save for caller.env below
-
-  assert argBufs.len > 0, "corofor: iter call missing args"
-  var addrBuf = move argBufs[^1]
-  argBufs.setLen(argBufs.len - 1)
-  block:
-    var probe = beginRead(addrBuf)
-    assert probe.exprKind == HaddrX, "corofor: expected (haddr forLoopVar)"
-    endRead(addrBuf)
-  var argsBuf = createTokenBuf(8)
-  for i in 0 ..< argBufs.len:
-    argsBuf.add argBufs[i]
+  # Structural invariant maintained by the corofor producer (sem/hexer
+  # genCall): `(haddr forLoopVar)` is the trailing arg, optionally
+  # preceded by an env-arg when the target was pre-extracted. We
+  # don't probe `lastArgPos.exprKind == HaddrX` — a regular iter arg
+  # of `addr` shape would falsely match.
+  let trailingCount = if upstreamEnvArg: 2 else: 1
+  assert argCount >= trailingCount, "corofor: iter call missing args"
+  let realArgCount = argCount - trailingCount
 
   # ---- emit `var it: Continuation = wrapper(args..., addr forLoopVar, callerCont)` ----
   # For iter-VALUE calls the callerCont's env is the iter value's
@@ -561,9 +560,12 @@ proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
     dest.copyIntoKind CallS, info:
       dest.add targetBuf
-      dest.add argsBuf
-      dest.add addrBuf
-      if envArgBuf.len > 0:
+      var w = argsStart
+      for i in 0 ..< realArgCount:
+        dest.takeTree w
+      var addrW = lastArgPos
+      dest.takeTree addrW
+      if upstreamEnvArg or valSymForEnv != SymId(0):
         # iter-value call: caller = `Continuation(fn: nil, env: addr(envSlot[]))`.
         # A bare `(cast (ptr CoroutineBase) ref)` would be a raw
         # bit-cast giving the ref-struct ptr (where the rc lives),
@@ -583,75 +585,29 @@ proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
                 dest.addSymUse pool.syms.getOrIncl(coro_transform.RootObjName), info
               dest.copyIntoKind HaddrX, info:
                 dest.copyIntoKind HderefX, info:
-                  dest.add envArgBuf
+                  if upstreamEnvArg:
+                    var envW = penultimateArgPos
+                    dest.takeTree envW
+                  else:
+                    dest.copyIntoKind TupatX, valInfoForEnv:
+                      dest.addSymUse valSymForEnv, valInfoForEnv
+                      dest.addIntLit 1, valInfoForEnv
       else:
         coro_transform.emitStopContinuation(dest, info)
 
-  let envFieldSym = pool.syms.getOrIncl(EnvFieldName)
-
-  template emitItEnv(dest: var TokenBuf) =
-    dest.copyIntoKind DotX, info:
-      dest.addSymUse itSym, info
-      dest.addSymUse envFieldSym, info
-      dest.addIntLit 0, info # direct field of Continuation
-
-  # ---- emit `let myEnv = it.env` (snapshot of our frame pointer) ----
+  # `myEnv` snapshot + try/while/finally — shared with cps's
+  # `.passive` expansion via `coro_transform.emitWhileBegin`/
+  # `emitWhileEnd`. The body walk uses `tre` (capture-rewriting), as
+  # opposed to cps's `tr` (passive-state-machine emission); that's the
+  # only behavioural difference between the two corofor expansions.
   let myEnvSym = pool.syms.getOrIncl("`coroEnv." & $c.counter & "." & c.thisModuleSuffix)
   inc c.counter
   c.typeCache.registerLocal(myEnvSym, LetY, default(Cursor))
-  dest.copyIntoKind LetS, info:
-    dest.addSymDef myEnvSym, info
-    dest.addDotToken() # exported
-    dest.addDotToken() # pragmas
-    dest.copyIntoKind PtrT, info:
-      dest.addSymUse pool.syms.getOrIncl(coro_transform.RootObjName), info
-    emitItEnv(dest)
 
-  # ---- emit try/while/finally ----
-  let finishedSym = pool.syms.getOrIncl("finished.0." & SystemModuleSuffix)
-  let advanceSym = pool.syms.getOrIncl("advance.0." & SystemModuleSuffix)
-  let finalizeSym = pool.syms.getOrIncl("finalizeCoroutine.0." & SystemModuleSuffix)
-
-  dest.addParLe TryS, info
-  dest.copyIntoKind StmtsS, info:
-    dest.addParLe WhileS, info
-    dest.addParPair TrueX, info
-    dest.copyIntoKind StmtsS, info:
-      dest.copyIntoKind AsgnS, info:
-        dest.addSymUse itSym, info
-        dest.copyIntoKind CallS, info:
-          dest.addSymUse advanceSym, info
-          dest.addSymUse itSym, info
-      dest.copyIntoKind IfS, info:
-        dest.copyIntoKind ElifU, info:
-          dest.copyIntoKind CallS, info:
-            dest.addSymUse finishedSym, info
-            dest.addSymUse itSym, info
-          dest.copyIntoKind StmtsS, info:
-            dest.copyIntoKind BreakS, info:
-              dest.addDotToken()
-      dest.copyIntoKind IfS, info:
-        dest.copyIntoKind ElifU, info:
-          dest.copyIntoKind EqX, info:
-            dest.addParPair PointerT, info
-            emitItEnv(dest)
-            dest.addSymUse myEnvSym, info
-          dest.copyIntoKind StmtsS, info:
-            # Body walk via lambdalifting's `tre` so captures get
-            # rewritten to env accesses. Second child of corofor is
-            # the inner-block (and any destroyer-injected cleanup
-            # alongside it).
-            while n.hasMore:
-              tre(c, dest, n)
-    dest.addParRi() # close while
-  # finally: finalizeCoroutine(addr it)
-  dest.copyIntoKind FinU, info:
-    dest.copyIntoKind StmtsS, info:
-      dest.copyIntoKind CallS, info:
-        dest.addSymUse finalizeSym, info
-        dest.copyIntoKind HaddrX, info:
-          dest.addSymUse itSym, info
-  dest.addParRi() # close try
+  coro_transform.emitWhileBegin(dest, info, itSym, myEnvSym)
+  while n.hasMore:
+    tre(c, dest, n)
+  coro_transform.emitWhileEnd(dest, info, itSym)
 
   skipParRi n # close (corofor
 

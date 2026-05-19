@@ -537,6 +537,18 @@ proc emitDeallocFrame*(c: var Context; dest: var TokenBuf; info: PackedLineInfo)
         dest.addSymUse pool.syms.getOrIncl(RootObjName), info
       dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
 
+proc emitStopContinuation*(dest: var TokenBuf; info: PackedLineInfo) =
+  ## Emit `Continuation(fn: nil, env: nil)` — the sentinel "no caller"
+  ## continuation passed to closure-iterator init wrappers.
+  dest.copyIntoKind OconstrX, info:
+    dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+    dest.copyIntoKind KvU, info:
+      dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
+      dest.addParPair NilX, info
+    dest.copyIntoKind KvU, info:
+      dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
+      dest.addParPair NilX, info
+
 proc emitFinalReturn*(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
   ## Emit the terminating return for a coroutine state machine.
   ##
@@ -574,16 +586,8 @@ proc emitFinalReturn*(c: var Context; dest: var TokenBuf; info: PackedLineInfo) 
           dest.addParPair NilX, info
         dest.copyIntoKind StmtsS, info:
           emitDeallocFrame(c, dest, info)
-    # return Continuation(fn: nil, env: nil)
     dest.copyIntoKind RetS, info:
-      dest.copyIntoKind OconstrX, info:
-        dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
-        dest.copyIntoKind KvU, info:
-          dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
-          dest.addParPair NilX, info
-        dest.copyIntoKind KvU, info:
-          dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
-          dest.addParPair NilX, info
+      emitStopContinuation(dest, info)
     return
   let tmpVar = pool.syms.getOrIncl("`tmpCaller." & $c.currentProc.counter)
   inc c.currentProc.counter
@@ -611,17 +615,82 @@ proc emitStackFrameTag*(c: var Context; dest: var TokenBuf; coroVar: SymId; info
       dest.addIntLit 1, info # field is in superclass
     dest.addParPair NilX, info
 
-proc emitStopContinuation*(dest: var TokenBuf; info: PackedLineInfo) =
-  ## Emit `Continuation(fn: nil, env: nil)` — the sentinel "no caller"
-  ## continuation passed to closure-iterator init wrappers.
-  dest.copyIntoKind OconstrX, info:
-    dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
-    dest.copyIntoKind KvU, info:
-      dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
-      dest.addParPair NilX, info
-    dest.copyIntoKind KvU, info:
-      dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
-      dest.addParPair NilX, info
+proc emitItEnv(dest: var TokenBuf; info: PackedLineInfo;
+               itSym, envFieldSym: SymId) =
+  dest.copyIntoKind DotX, info:
+    dest.addSymUse itSym, info
+    dest.addSymUse envFieldSym, info
+    dest.addIntLit 0, info # direct field of Continuation
+
+proc emitWhileBegin*(dest: var TokenBuf; info: PackedLineInfo;
+                     itSym, myEnvSym: SymId) =
+  ## Open half of the corofor trampoline (shared by cps's `.passive`
+  ## and lambdalifting's `.closure` expansions). Emits:
+  ##
+  ##   let myEnv = it.env
+  ##   try:
+  ##     while true:
+  ##       it = advance(it)
+  ##       if finished(it): break
+  ##       if it.env == myEnv:
+  ##         <body-stmts goes here — emit between begin and end>
+  ##
+  ## The caller follows with body emission, then `emitWhileEnd`.
+  let envFieldSym = pool.syms.getOrIncl(EnvFieldName)
+  let advanceSym = pool.syms.getOrIncl("advance.0." & SystemModuleSuffix)
+  let finishedSym = pool.syms.getOrIncl("finished.0." & SystemModuleSuffix)
+
+  dest.copyIntoKind LetS, info:
+    dest.addSymDef myEnvSym, info
+    dest.addDotToken() # exported
+    dest.addDotToken() # pragmas
+    dest.copyIntoKind PtrT, info:
+      dest.addSymUse pool.syms.getOrIncl(RootObjName), info
+    emitItEnv(dest, info, itSym, envFieldSym)
+
+  dest.addParLe TryS, info
+  dest.addParLe StmtsS, info     # outer try-body stmts
+  dest.addParLe WhileS, info
+  dest.addParPair TrueX, info
+  dest.addParLe StmtsS, info     # while-body stmts
+  dest.copyIntoKind AsgnS, info:
+    dest.addSymUse itSym, info
+    dest.copyIntoKind CallS, info:
+      dest.addSymUse advanceSym, info
+      dest.addSymUse itSym, info
+  dest.copyIntoKind IfS, info:
+    dest.copyIntoKind ElifU, info:
+      dest.copyIntoKind CallS, info:
+        dest.addSymUse finishedSym, info
+        dest.addSymUse itSym, info
+      dest.copyIntoKind StmtsS, info:
+        dest.copyIntoKind BreakS, info:
+          dest.addDotToken()
+  dest.addParLe IfS, info
+  dest.addParLe ElifU, info
+  dest.copyIntoKind EqX, info:
+    dest.addParPair PointerT, info
+    emitItEnv(dest, info, itSym, envFieldSym)
+    dest.addSymUse myEnvSym, info
+  dest.addParLe StmtsS, info     # body-stmts open
+
+proc emitWhileEnd*(dest: var TokenBuf; info: PackedLineInfo; itSym: SymId) =
+  ## Close half of the corofor trampoline. Balances `emitWhileBegin`'s
+  ## opens and emits `finally: finalizeCoroutine(addr it)`.
+  let finalizeSym = pool.syms.getOrIncl("finalizeCoroutine.0." & SystemModuleSuffix)
+  dest.addParRi()  # close body StmtsS
+  dest.addParRi()  # close ElifU
+  dest.addParRi()  # close IfS
+  dest.addParRi()  # close while-body StmtsS
+  dest.addParRi()  # close WhileS
+  dest.addParRi()  # close outer try-body StmtsS
+  dest.copyIntoKind FinU, info:
+    dest.copyIntoKind StmtsS, info:
+      dest.copyIntoKind CallS, info:
+        dest.addSymUse finalizeSym, info
+        dest.copyIntoKind HaddrX, info:
+          dest.addSymUse itSym, info
+  dest.addParRi()  # close try
 
 # ---------------------------------------------------------------------
 # trCoroFor — expand a `(corofor ...)` into the trampoline
@@ -646,7 +715,12 @@ proc trCoroFor*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # ---- first child: (call iter-or-tupat args... (haddr forLoopVar)) ----
   assert n.exprKind in CallKinds, "corofor: expected iter call as first child"
   inc n # past CallS tag
+  # The branch we take here is the ONLY reliable signal for whether
+  # the arg list has an upstream env-arg (case 3, non-Symbol target).
+  # Probing the last arg for TupatX is unsound: a regular `(tupat
+  # someTuple 0)` arg would falsely match.
   var targetBuf = createTokenBuf(4)
+  var upstreamEnvArg = false
   if n.kind == Symbol and not isClosureIter(n.symId):
     targetBuf.addSymUse coroWrapperForExternIter(n.symId), n.info
     inc n
@@ -654,31 +728,27 @@ proc trCoroFor*(c: var Context; dest: var TokenBuf; n: var Cursor) =
     targetBuf.addSymUse coroWrapperProc(c, n.symId), n.info
     inc n
   else:
+    upstreamEnvArg = true
     targetBuf.takeTree n
-  var argBufs: seq[TokenBuf] = @[]
+
+  # Cursors are stable — walk once to count args and remember the
+  # cursor at the last (haddr) position; emit later via `addSubtree`.
+  let argsStart = n
+  var lastArgPos = default(Cursor)
+  var argCount = 0
   while n.hasMore:
-    var buf = createTokenBuf(4)
-    buf.takeTree n
-    argBufs.add(ensureMove buf)
+    lastArgPos = n
+    skip n
+    inc argCount
   skipParRi n # close iter call
 
-  if argBufs.len > 0:
-    var probe = beginRead(argBufs[^1])
-    let lastIsTupat = probe.exprKind == TupatX
-    endRead(argBufs[^1])
-    if lastIsTupat:
-      discard argBufs.pop()  # drop env-arg
-  assert argBufs.len > 0, "corofor: iter call missing args"
-
-  var addrBuf = move argBufs[^1]
-  argBufs.setLen(argBufs.len - 1)
-  block:
-    var probe = beginRead(addrBuf)
-    assert probe.exprKind == HaddrX, "corofor: expected (haddr forLoopVar)"
-    endRead(addrBuf)
-  var argsBuf = createTokenBuf(8)
-  for i in 0 ..< argBufs.len:
-    argsBuf.add argBufs[i]
+  # Structural invariant from the corofor producer: trailing arg is
+  # `(haddr forLoopVar)`, optionally preceded by an env-arg when the
+  # target was pre-extracted. Don't probe `HaddrX` — a regular iter
+  # arg of `addr` shape would falsely match.
+  let trailingCount = if upstreamEnvArg: 2 else: 1
+  assert argCount >= trailingCount, "corofor: iter call missing args"
+  let realArgCount = argCount - trailingCount
 
   let itSym = pool.syms.getOrIncl("`coroIt." & $c.currentProc.counter)
   inc c.currentProc.counter
@@ -690,68 +760,21 @@ proc trCoroFor*(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
     dest.copyIntoKind CallS, info:
       dest.add targetBuf
-      dest.add argsBuf
-      dest.add addrBuf
+      var w = argsStart
+      for i in 0 ..< realArgCount:
+        dest.takeTree w
+      var addrW = lastArgPos
+      dest.takeTree addrW
       emitStopContinuation(dest, info)
-
-  let envFieldSym = pool.syms.getOrIncl(EnvFieldName)
-
-  template emitItEnv(dest: var TokenBuf) =
-    dest.copyIntoKind DotX, info:
-      dest.addSymUse itSym, info
-      dest.addSymUse envFieldSym, info
-      dest.addIntLit 0, info # direct field of Continuation
 
   let myEnvSym = pool.syms.getOrIncl("`coroEnv." & $c.currentProc.counter)
   inc c.currentProc.counter
   c.typeCache.registerLocal(myEnvSym, LetY, default(Cursor))
-  dest.copyIntoKind LetS, info:
-    dest.addSymDef myEnvSym, info
-    dest.addDotToken() # exported
-    dest.addDotToken() # pragmas
-    dest.copyIntoKind PtrT, info:
-      dest.addSymUse pool.syms.getOrIncl(RootObjName), info
-    emitItEnv(dest)
 
-  let finishedSym = pool.syms.getOrIncl("finished.0." & SystemModuleSuffix)
-  let advanceSym = pool.syms.getOrIncl("advance.0." & SystemModuleSuffix)
-  let finalizeSym = pool.syms.getOrIncl("finalizeCoroutine.0." & SystemModuleSuffix)
-
-  dest.addParLe TryS, info
-  dest.copyIntoKind StmtsS, info:
-    dest.addParLe WhileS, info
-    dest.addParPair TrueX, info
-    dest.copyIntoKind StmtsS, info:
-      dest.copyIntoKind AsgnS, info:
-        dest.addSymUse itSym, info
-        dest.copyIntoKind CallS, info:
-          dest.addSymUse advanceSym, info
-          dest.addSymUse itSym, info
-      dest.copyIntoKind IfS, info:
-        dest.copyIntoKind ElifU, info:
-          dest.copyIntoKind CallS, info:
-            dest.addSymUse finishedSym, info
-            dest.addSymUse itSym, info
-          dest.copyIntoKind StmtsS, info:
-            dest.copyIntoKind BreakS, info:
-              dest.addDotToken()
-      dest.copyIntoKind IfS, info:
-        dest.copyIntoKind ElifU, info:
-          dest.copyIntoKind EqX, info:
-            dest.addParPair PointerT, info
-            emitItEnv(dest)
-            dest.addSymUse myEnvSym, info
-          dest.copyIntoKind StmtsS, info:
-            while n.hasMore:
-              tr(c, dest, n)
-    dest.addParRi() # close while
-  dest.copyIntoKind FinU, info:
-    dest.copyIntoKind StmtsS, info:
-      dest.copyIntoKind CallS, info:
-        dest.addSymUse finalizeSym, info
-        dest.copyIntoKind HaddrX, info:
-          dest.addSymUse itSym, info
-  dest.addParRi() # close try
+  emitWhileBegin(dest, info, itSym, myEnvSym)
+  while n.hasMore:
+    tr(c, dest, n)
+  emitWhileEnd(dest, info, itSym)
 
   skipParRi n # close (corofor
 
