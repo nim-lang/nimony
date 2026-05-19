@@ -599,9 +599,30 @@ proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool) 
       b.addIntLit 0
       b.addIntLit -1  # all inputs
 
-  # Split DCE: liveness phase (single, fast) + per-module emit (parallel).
-  # `dceLive` reads every module's .dce.nif analysis, computes the global
-  # live set + generic-resolve table, writes a shared .live.nif.
+  # Split inline-then-DCE pipeline. Four named cmds:
+  #   crossInline  per module: splice cross-module `.inline` calls, write
+  #                <M>.xi.nif + <M>.di.nif (post-inline analysis).
+  #   dceLive      global: pure-reachability live set from post-inline
+  #                analyses, write <main>.live.nif.
+  #   dceDrop      per module: drop decls not in the live set, write
+  #                <M>.c.nif.
+  # Why split: liveness used to predict inlining (and break correctness
+  # when the inliner declined any splice). Now liveness measures the
+  # post-inline use-graph; inliner policy (depth cap, body budget, …) is
+  # free to evolve without touching liveness.
+  b.withTree "cmd":
+    b.addSymbolDef "crossInline"
+    b.addStrLit hexer
+    b.addStrLit "ci"
+    b.addStrLit "--bits:" & $bits
+    b.addStrLit cpuFlag
+    b.addKeyw "args"
+    b.withTree "input":
+      b.addIntLit 0  # M.x.nif
+    b.withTree "output":
+      b.addIntLit 0  # M.xi.nif
+      b.addIntLit 1  # M.di.nif
+
   b.withTree "cmd":
     b.addSymbolDef "dceLive"
     b.addStrLit hexer
@@ -614,19 +635,15 @@ proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool) 
       b.addIntLit -1
     b.addKeyw "output"
 
-  # `dceEmit` rewrites one .x.nif into .c.nif using the shared .live.nif.
-  # Independent across modules, so nifmake can run them in parallel.
-  # Output path is derived from `--outdir` + input modname (mirrors how
-  # `hexer c` derives outputs), so no explicit output slot here.
   b.withTree "cmd":
-    b.addSymbolDef "dceEmit"
+    b.addSymbolDef "dceDrop"
     b.addStrLit hexer
-    b.addStrLit "de"
+    b.addStrLit "drop"
     b.addStrLit "--bits:" & $bits
     b.addStrLit cpuFlag
     b.addKeyw "args"
     b.withTree "input":
-      b.addIntLit 0  # M.x.nif
+      b.addIntLit 0  # M.xi.nif
       b.addIntLit 1  # main.live.nif
 
 proc generateDocBuildFile(c: DepContext): string =
@@ -830,37 +847,53 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       let backendDir = c.config.nifcachePath / backend
       let liveFile = backendDir / c.rootNode.files[0].modname & ".live.nif"
 
-      # Split DCE — phase 1: collect every module's .dce.nif analysis,
+      # Phase 2: per-module cross-module inliner. Each `(do crossInline …)`
+      # is independent — parallelisable across cores. Produces post-inline
+      # `<M>.xi.nif` and post-inline analysis `<M>.di.nif`.
+      for i, n in pairs c.nodes:
+        let modname = n.files[0].modname
+        var baseDir = c.config.nifcachePath
+        if i == 0: baseDir = backendDir
+        b.withTree "do":
+          b.addIdent "crossInline"
+          b.withTree "input":
+            if i == 0:
+              b.addStrLit backendDir / modname & ".x.nif"
+            else:
+              b.addStrLit c.config.hexedFile(n.files[0])
+          b.withTree "output":
+            b.addStrLit baseDir / modname & ".xi.nif"
+          b.withTree "output":
+            b.addStrLit baseDir / modname & ".di.nif"
+
+      # Phase 3: collect every module's post-inline `.di.nif` analysis,
       # compute the global live set + generic-instance resolve table,
       # write the shared <main>.live.nif. Single small serial node.
       b.withTree "do":
         b.addIdent "dceLive"
         for i, n in pairs c.nodes:
-          # The .dce.nif sits next to its corresponding .x.nif.
-          var dceFile = ""
+          var diFile = ""
           if i == 0:
-            dceFile = backendDir / n.files[0].modname & ".dce.nif"
+            diFile = backendDir / n.files[0].modname & ".di.nif"
           else:
-            dceFile = c.config.nifcachePath / n.files[0].modname & ".dce.nif"
+            diFile = c.config.nifcachePath / n.files[0].modname & ".di.nif"
           b.withTree "input":
-            b.addStrLit dceFile
+            b.addStrLit diFile
         b.withTree "output":
           b.addStrLit liveFile
 
-      # Split DCE — phase 2: per-module emit. Each `(do dceEmit ...)` is
-      # independent (all share live.nif as a read-only input), so nifmake
-      # parallelises them across cores.
+      # Phase 4: per-module drop dead decls. Each `(do dceDrop …)` is
+      # independent — all share `live.nif` as a read-only input.
       for i, n in pairs c.nodes:
+        let modname = n.files[0].modname
+        var baseDir = c.config.nifcachePath
+        if i == 0: baseDir = backendDir
         b.withTree "do":
-          b.addIdent "dceEmit"
+          b.addIdent "dceDrop"
           b.withTree "args":
             b.addStrLit "--outdir:" & backendDir
           b.withTree "input":
-            # Root module's .x.nif is backend-specific (--isMain).
-            if i == 0:
-              b.addStrLit backendDir / n.files[0].modname & ".x.nif"
-            else:
-              b.addStrLit c.config.hexedFile(n.files[0])
+            b.addStrLit baseDir / modname & ".xi.nif"
           b.withTree "input":
             b.addStrLit liveFile
           b.withTree "output":

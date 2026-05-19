@@ -444,18 +444,28 @@ proc writeDceOutput*(buf: var TokenBuf; outfile, dottedSuffix: string) =
   prepDce(outfile, n, dottedSuffix)
   endRead(buf)
 
+proc analyzeModule*(buf: var TokenBuf): ModuleAnalysis =
+  ## Compute the per-module analysis (uses/offers/roots/inlineInfo) in
+  ## memory without writing the `.dce.nif` sidecar. Used by the hexer
+  ## same-module inliner pass to get `InlineInfo` without round-tripping
+  ## through disk.
+  result = ModuleAnalysis()
+  var n = beginRead(buf)
+  tr n, result, SymId(0)
+  endRead(buf)
+
 proc getInlineInfo*(modules: Table[string, ModuleAnalysis]; sym: SymId): InlineInfo =
   ## Look up inlining info for `sym` across all loaded modules.
   ## Returns `DefaultInlineInfo` when the symbol isn't tracked.
   let moduleName = extractModule(pool.syms[sym])
   if moduleName in modules:
-    result = modules[moduleName].inlineInfo.getOrDefault(sym, DefaultInlineInfo)
+    result = modules.getOrQuit(moduleName).inlineInfo.getOrDefault(sym, DefaultInlineInfo)
   else:
     result = DefaultInlineInfo
 
 proc hasInlineInfo*(modules: Table[string, ModuleAnalysis]; sym: SymId): bool =
   let moduleName = extractModule(pool.syms[sym])
-  modules.hasKey(moduleName) and modules[moduleName].inlineInfo.hasKey(sym)
+  modules.hasKey(moduleName) and modules.getOrQuit(moduleName).inlineInfo.hasKey(sym)
 
 proc shouldInline*(info: InlineInfo; argScores: openArray[int]): bool =
   ## Full-inlining decision: sum weighted argument scores against the

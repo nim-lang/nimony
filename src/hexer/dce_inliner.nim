@@ -36,10 +36,12 @@ type
   InlinerCtx* = object
     moduleSuffix*: string
     counter: int                            # fresh-name suffix
+    counterPrefix: string                   # disambiguates passes (hexer vs dce2)
     bodies: Table[SymId, int]               # same-module callee → offset in `src`
     src: ptr TokenBuf                       # the module's parsed buffer
     infos: ptr Table[string, ModuleAnalysis] # cross-module sidecars
     xnifDir: string                         # directory holding `.x.nif`/`.dce.nif`
+    maxDepth*: int                          # 0 = unlimited; cross-module mode sets a cap
     foreign: Table[string, ref ForeignModule]
       # Cached cross-module bodies. `ref` so growing the table doesn't
       # invalidate cursors that point into a previously-fetched buffer.
@@ -49,13 +51,25 @@ type
       # recurse forever. dce2 adds the callee sym before the recursive
       # `tr` and removes it after; `trySplice`/`trySpliceVarInit` bail
       # when the sym they were asked to splice is already in this set.
+      # `maxDepth`, when non-zero, additionally caps the chain length:
+      # cross-module bodies are pre-expanded against their same-module
+      # inlines (by the hexer-stage `intraModuleInline` pass), so a deep
+      # cross-module cascade is rarely a win and risks runaway growth.
 
 proc initInlinerCtx*(moduleSuffix: string; src: ptr TokenBuf;
                      infos: ptr Table[string, ModuleAnalysis];
-                     xnifDir = ""): InlinerCtx =
+                     xnifDir = ""; maxDepth = 0;
+                     counterPrefix = "i"): InlinerCtx =
+  ## `counterPrefix` is woven into fresh local sym names (`base.0i<n>`,
+  ## `returnLabel.0i<n>`). The hexer same-module pass uses `"h"` and
+  ## dce2's cross-module pass uses `"d"` so freshly-minted dce2 syms
+  ## can never collide with hexer-minted syms that survive in the
+  ## `.x.nif` body dce2 is rewriting.
   InlinerCtx(moduleSuffix: moduleSuffix, src: src, infos: infos,
              bodies: initTable[SymId, int](),
              xnifDir: xnifDir,
+             maxDepth: maxDepth,
+             counterPrefix: counterPrefix,
              foreign: initTable[string, ref ForeignModule](),
              inProgress: initHashSet[SymId]())
 
@@ -151,17 +165,18 @@ proc freshSym(c: var InlinerCtx; orig: SymId): SymId =
   ## have ≤ 1 dot (per `isLocalName`) so dce2's per-module rewrite emits
   ## them unconditionally instead of consulting the global live set —
   ## these syms were minted post-`markLive` and aren't tracked there.
-  ## The `i` prefix on the counter avoids colliding with existing
-  ## numeric-suffixed locals like `result.26`.
+  ## The `0<prefix>` prefix on the counter avoids colliding with existing
+  ## numeric-suffixed locals like `result.26`; the `prefix` further
+  ## disambiguates between the hexer-stage same-module pass and the
+  ## dce2-stage cross-module pass so the latter's fresh syms can't
+  ## collide with hexer-minted ones already baked into the `.x.nif`.
   inc c.counter
   let original = pool.syms[orig]
   var base = original
   let dotPos = base.find('.')
   if dotPos >= 0: base.setLen dotPos
-  # `.0i<n>`: the leading digit makes `extractModule` treat this as a
-  # local sym (no module suffix), and the `i` prefix avoids collision
-  # with the compiler's own `.<N>` local-counter scheme.
-  base.add ".0i"
+  base.add ".0"
+  base.add c.counterPrefix
   base.addInt c.counter
   result = pool.syms.getOrIncl(base)
 
@@ -410,7 +425,8 @@ proc emitBody(c: var InlinerCtx; dest: var TokenBuf; body: var Cursor;
     return
   let info = body.info
   inc c.counter
-  let returnLabel = pool.syms.getOrIncl("returnLabel.0i" & $c.counter)
+  let returnLabel = pool.syms.getOrIncl(
+    "returnLabel.0" & c.counterPrefix & $c.counter)
   dest.addParLe TagId(StmtsS), info
   inc body
   while body.kind != ParRi:
@@ -460,6 +476,7 @@ proc trySplice*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   if probe.kind != Symbol: return 0
   let calleeSym = probe.symId
   if calleeSym in c.inProgress: return 0     # cycle guard
+  if c.maxDepth > 0 and c.inProgress.len >= c.maxDepth: return 0
   var argsStart = probe
   inc argsStart                            # past callee sym, at first arg
   if not shouldInlineCall(c, calleeSym, argsStart): return 0
@@ -547,6 +564,7 @@ proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): in
   if callProbe.kind != Symbol: return 0
   let calleeSym = callProbe.symId
   if calleeSym in c.inProgress: return 0     # cycle guard
+  if c.maxDepth > 0 and c.inProgress.len >= c.maxDepth: return 0
   var argsStart = callProbe
   inc argsStart                            # past callee sym, at first arg
   if not shouldInlineCall(c, calleeSym, argsStart): return 0
@@ -609,3 +627,104 @@ proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): in
   n = entry
   skip n
   result = 2                               # `(var …)` + `(scope …)`
+
+# ---- Same-module inliner pass (called from hexer.nim) ----
+
+proc trIntra(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
+  ## Walks `n` and splices same-module `.inline` calls in-place.
+  ## Mirrors `dce2.tr`'s splice paths but without liveness / generic-
+  ## instance resolution — those are dce2's job. Cross-module callees
+  ## are naturally skipped: `c.infos` only holds this module, and
+  ## `c.xnifDir == ""` keeps `loadForeignAnalysis` from pulling foreign
+  ## sidecars in, so `lookupInlineInfo` returns `DefaultInlineInfo`
+  ## (threshold 100) for them and `shouldInlineCall` declines.
+  case n.kind
+  of ParLe:
+    let sk = n.stmtKind
+    case sk
+    of StmtsS, ScopeS:
+      dest.takeToken n
+      while n.hasMore:
+        if n.kind == ParLe and n.stmtKind == CallS:
+          var probe = n
+          inc probe
+          let calleeSym =
+            if probe.kind == Symbol: probe.symId else: SymId(0)
+          var spliced = createTokenBuf(32)
+          let nEmitted = trySplice(c, spliced, n)
+          if nEmitted > 0:
+            if calleeSym != SymId(0):
+              c.inProgress.incl calleeSym
+            var inner = beginRead(spliced)
+            for _ in 0 ..< nEmitted:
+              trIntra(c, dest, inner)
+            endRead(inner)
+            if calleeSym != SymId(0):
+              c.inProgress.excl calleeSym
+            continue
+        trIntra(c, dest, n)
+      dest.takeToken n
+    of VarS, GvarS, TvarS, ConstS, ProcS:
+      # `(var :tmp <pragmas> <type> (call …))` is the bound form `xelim`
+      # and the new nifcgen complex-init path emit; route it through the
+      # var-init splice. Other locals copy verbatim.
+      if sk == VarS:
+        var probe = n
+        inc probe
+        var calleeSym = SymId(0)
+        if probe.kind == SymbolDef:
+          inc probe          # name
+          skip probe         # pragmas
+          skip probe         # type
+          if probe.kind == ParLe and probe.stmtKind == CallS:
+            inc probe
+            if probe.kind == Symbol:
+              calleeSym = probe.symId
+        if calleeSym != SymId(0):
+          var spliced = createTokenBuf(32)
+          let nEmitted = trySpliceVarInit(c, spliced, n)
+          if nEmitted > 0:
+            c.inProgress.incl calleeSym
+            var inner = beginRead(spliced)
+            for _ in 0 ..< nEmitted:
+              trIntra(c, dest, inner)
+            endRead(inner)
+            c.inProgress.excl calleeSym
+            return
+      dest.takeToken n
+      while n.hasMore:
+        trIntra(c, dest, n)
+      dest.takeToken n
+    else:
+      dest.takeToken n
+      while n.hasMore:
+        trIntra(c, dest, n)
+      dest.takeToken n
+  of ParRi:
+    raiseAssert "ParRi should not be encountered here"
+  else:
+    dest.takeToken n
+
+proc intraModuleInline*(moduleSuffix: string; buf: var TokenBuf) =
+  ## Same-module inliner pass run as the last step of hexer's `expand`,
+  ## so the `.x.nif` we publish has each `.inline` proc body already
+  ## cascaded against its same-module callees. Cross-module splicing
+  ## (dce2) then needs at most one level of work per call site, since
+  ## the foreign body it pulls is already flat. This eliminates the
+  ## per-importer redundancy where the same cascade was re-walked once
+  ## per dceEmit process.
+  var ma = analyzeModule(buf)
+  var graphs = initTable[string, ModuleAnalysis]()
+  graphs[moduleSuffix] = ensureMove ma
+  # `xnifDir = ""` ⇒ `findForeignFile` returns "" ⇒ foreign analysis
+  # never gets loaded ⇒ shouldInlineCall sees DefaultInlineInfo for
+  # cross-module callees and declines them. So `trySplice` only fires
+  # on same-module `.inline` procs even without a sameModuleOnly flag.
+  var c = initInlinerCtx(moduleSuffix, addr buf, addr graphs,
+                         counterPrefix = "h")
+  collectProcBodies c
+  var n = beginRead(buf)
+  var dest = createTokenBuf(buf.len)
+  trIntra(c, dest, n)
+  endRead(buf)
+  buf = ensureMove(dest)

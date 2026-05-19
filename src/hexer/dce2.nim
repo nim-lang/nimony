@@ -42,93 +42,20 @@ proc translate(resolved: ResolveTable; sym: SymId): SymId =
   else:
     result = sym
 
-proc computeRecursiveInlines(graphs: Table[string, ModuleAnalysis]): HashSet[SymId] =
-  ## Walks the call graph restricted to `.inline` callees to find any
-  ## proc that can reach itself. Those procs *must* stay live: their
-  ## recursive call inside the spliced body is left as a normal call
-  ## by dce_inliner's cycle guard, so the original proc decl needs to
-  ## remain in the emitted IR.
-  result = initHashSet[SymId]()
-
-  proc inlineThresholdIsZero(s: SymId): bool =
-    let m = extractModule(pool.syms[s])
-    if m notin graphs: return false
-    let info = graphs[m].inlineInfo.getOrDefault(s, DefaultInlineInfo)
-    info.threshold == 0
-
-  proc reachesBack(start, current: SymId; visited: var HashSet[SymId]): bool =
-    if visited.containsOrIncl(current): return false
-    if not inlineThresholdIsZero(current): return false
-    let m = extractModule(pool.syms[current])
-    if current notin graphs[m].uses: return false
-    for dep in graphs[m].uses[current]:
-      if dep == start: return true
-      if reachesBack(start, dep, visited): return true
-    return false
-
-  for modName, ma in graphs:
-    for procSym, info in ma.inlineInfo:
-      if info.threshold == 0:
-        var visited = initHashSet[SymId]()
-        if reachesBack(procSym, procSym, visited):
-          result.incl procSym
-
-proc isAlwaysInlinedFor(callerMod: string; dep: SymId;
-                        depOwner: string;
-                        graphs: Table[string, ModuleAnalysis];
-                        recursiveInlines: HashSet[SymId]): bool =
-  ## Whether `dep` will be fully inlined out of every call site in
-  ## `callerMod`, leaving no need to emit a callable symbol for it.
-  ## Treats `dep` as eliminable iff:
-  ##   - it is `.inline` (threshold == 0); and
-  ##   - it isn't recursive (directly or via other `.inline` procs).
-  ##
-  ## Cross-module is now allowed: dce2's `loadForeign` lazily fetches
-  ## the foreign module's `.x.nif` so the splice fires wherever the
-  ## call shape is spliceable, and `stringcases.nim` no longer leaves
-  ## `(call …)` in `(elif …)` conditions (it binds each cond to a
-  ## `(var :tcc.N … (call …))` first so the bound-form splice reaches
-  ## it). Every `.inline` call site is now spliceable in principle, so
-  ## the safety-net cross-module restriction is gone.
-  discard callerMod
-  if dep in recursiveInlines: return false
-  if depOwner notin graphs: return false
-  let info = graphs[depOwner].inlineInfo.getOrDefault(dep, DefaultInlineInfo)
-  result = info.threshold == 0
-
-proc enqueueDep(dep: SymId; callerMod: string;
-                graphs: Table[string, ModuleAnalysis]; resolved: ResolveTable;
-                recursiveInlines: HashSet[SymId];
-                live: Table[string, HashSet[SymId]];
-                worklist: var seq[SymId];
-                expanded: var HashSet[SymId]) =
-  ## Treats `dep` as a use-edge from a caller in `callerMod`. If `dep`
-  ## is always-inlined into the caller, mark `dep` itself non-live and
-  ## propagate `dep`'s own uses upward instead — they become effective
-  ## uses of the caller once the splice runs. Otherwise mark `dep` live.
-  let translated = translate(resolved, dep)
-  let depOwner = extractModule(pool.syms[translated])
-  if depOwner.len == 0: return
-
-  if isAlwaysInlinedFor(callerMod, translated, depOwner, graphs,
-                        recursiveInlines):
-    # Always-inlined: don't mark live; expand transparently.
-    if expanded.containsOrIncl(translated): return  # avoid re-expanding
-    if translated in graphs[depOwner].uses:
-      for innerDep in graphs[depOwner].uses.getOrQuit(translated):
-        # The splice happens in `callerMod`; uses of `dep`'s body land
-        # in `callerMod` after splicing, so propagate them with that
-        # caller module.
-        enqueueDep(innerDep, callerMod, graphs, resolved,
-                   recursiveInlines, live, worklist, expanded)
-    return
-
-  if translated notin live.getOrQuit(depOwner):
-    worklist.add(translated)
-
 proc markLive(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTable): Table[string, HashSet[SymId]] =
+  ## Pure reachability: any sym reachable from a root via the use-graph
+  ## is live, regardless of `.inline` pragma. The inliner is a separate
+  ## concern — whether or not it ends up splicing every call to a given
+  ## `.inline` proc does not change that proc's liveness here. (The
+  ## former optimization that dropped fully-inlinable `.inline` decls
+  ## from the live set coupled the two passes by *predicting* the
+  ## inliner's behaviour from a pragma; any inliner policy that
+  ## declined some splices — depth caps, body-size budgets, unsupported
+  ## call shapes — silently broke that prediction and produced
+  ## dangling references at nifc-time. Decoupling here lets the inliner
+  ## evolve without correctness risk; a separate post-emit pass can
+  ## recover the size win for procs that ended up fully inlined out.)
   var worklist = newSeq[SymId](0)
-
   result = initTable[string, HashSet[SymId]]()
 
   for k, m in moduleGraphs:
@@ -136,221 +63,28 @@ proc markLive(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTabl
     for root in m.roots:
       worklist.add(root)
 
-  let recursiveInlines = computeRecursiveInlines(moduleGraphs)
-  var expanded = initHashSet[SymId]()
   while worklist.len > 0:
     let sym = translate(resolved, worklist.pop())
     let moduleName = extractModule(pool.syms[sym])
     assert moduleName.len > 0, "moduleName is empty for " & pool.syms[sym]
 
-    # Check if symbol is already live in its owning module
     if not result.getOrQuit(moduleName).containsOrIncl(sym):
-      # Process dependencies from the symbol's own module
       if moduleName in moduleGraphs:
         let graph = moduleGraphs.getOrQuit(moduleName)
         if sym in graph.uses:
           for dep in graph.uses.getOrQuit(sym):
-            enqueueDep(dep, moduleName, moduleGraphs, resolved,
-                       recursiveInlines, result, worklist, expanded)
+            let translated = translate(resolved, dep)
+            let depOwner = extractModule(pool.syms[translated])
+            if depOwner.len == 0: continue
+            if translated notin result.getOrQuit(depOwner):
+              worklist.add(translated)
 
 template toNifcName(sym: SymId): SymId = sym
 
-proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId];
-        resolved: ResolveTable; inliner: ptr InlinerCtx) =
-  case n.kind
-  of ParLe:
-    let stmtKind = n.stmtKind
-    case stmtKind
-    of TypeS:
-      # types are fundamentally different from procs when it comes to generic instantiations:
-      # We need to ensure **consistency** for types, but for procs we need to ensure **uniqueness**.
-      let head = n.load()
-      dest.add head
-      n.into:
-        if n.kind == SymbolDef:
-          let def = n.symId
-          let t = translate(resolved, def)
-          dest.addSymDef t.toNifcName, n.info
-          skip n # skip symbol def (atom)
-          while n.hasMore:
-            tr dest, n, alive, resolved, inliner
-        else:
-          # let errors propagate:
-          while n.hasMore:
-            tr dest, n, alive, resolved, inliner
-      dest.addParRi()
-
-    of ProcS, VarS, ConstS, GvarS, TvarS:
-      # Bound-call form: `(var :tmp <pragmas> <type> (call f arg…))`.
-      # When the call is to an inlinable proc, splice it with `tmp` as
-      # the result target. The splice emits two stmts (uninitialised var
-      # plus a (scope …) holding the inlined body) into a scratch buffer
-      # so we can re-process the result with `tr` — nested calls inside
-      # the inlined body get spliced too, which is what makes the
-      # residual-graph liveness analysis safe.
-      if stmtKind == VarS and inliner != nil:
-        # Peek into `(var :tmp <pragmas> <type> (call f arg…))` for the
-        # callee sym — same cycle guard as the StmtsS/ScopeS path.
-        var probe = n
-        inc probe                        # past `var` tag
-        if probe.kind == SymbolDef:
-          inc probe                      # past name
-          skip probe                     # pragmas
-          skip probe                     # type
-        var calleeSym = SymId(0)
-        if probe.kind == ParLe and probe.stmtKind == CallS:
-          inc probe                      # past `call`
-          if probe.kind == Symbol:
-            calleeSym = probe.symId
-        var spliced = createTokenBuf(32)
-        let nEmitted = trySpliceVarInit(inliner[], spliced, n)
-        if nEmitted > 0:
-          if calleeSym != SymId(0):
-            inliner[].inProgress.incl calleeSym
-          var inner = beginRead(spliced)
-          for _ in 0 ..< nEmitted:
-            tr dest, inner, alive, resolved, inliner
-          endRead(inner)
-          if calleeSym != SymId(0):
-            inliner[].inProgress.excl calleeSym
-          return
-      let head = n.load()
-      inc n
-      if n.kind == SymbolDef:
-        let def = n.symId
-        if isLocalName(pool.syms[def]):
-          dest.add head
-          dest.addSymDef def.toNifcName, n.info
-          inc n # skip symbol def
-          while n.hasMore:
-            tr dest, n, alive, resolved, inliner
-          dest.takeToken n
-        elif alive.contains(def):
-          let t = translate(resolved, def)
-          if t != def:
-            # we are a loser and need to add an `extern` declaration:
-            dest.add parLeToken(pool.tags.getOrIncl("imp"), head.info)
-
-            dest.add head
-            dest.addSymDef t.toNifcName, n.info
-            inc n # skip symbol def
-            var untilBody = if stmtKind == ProcS: 3 else: 2 # pragmas type (for procs: return type)
-            while n.hasMore and untilBody > 0:
-              dec untilBody
-              tr dest, n, alive, resolved, inliner
-            skip n # skip the body
-            # replace it with an empty body:
-            dest.addDotToken()
-            assert n.kind == ParRi
-            dest.takeToken n
-            dest.addParRi() # also close the "imp" declaration
-          else:
-            dest.add head
-            dest.addSymDef def.toNifcName, n.info
-            inc n # skip symbol def
-            while n.hasMore:
-              tr dest, n, alive, resolved, inliner
-            dest.takeToken n
-        else:
-          # skip it, it's dead
-          inc n # skip symbol def
-          while n.hasMore: skip n
-          inc n
-      else:
-        # let errors propagate:
-        dest.add head
-        while n.hasMore:
-          tr dest, n, alive, resolved, inliner
-        dest.takeToken n
-    of StmtsS, ScopeS:
-      # Statement-list parent: each child is in statement position, so
-      # candidates for the call splice. Anywhere else (e.g. an `(elif
-      # cond ...)` slot), a `(call ...)` is an *expression* and replacing
-      # it with a `(scope ...)` would produce invalid IR.
-      dest.takeToken n
-      while n.hasMore:
-        if inliner != nil and n.kind == ParLe and n.stmtKind == CallS:
-          # Peek the callee sym so we can guard against recursive
-          # `.inline` (direct or mutual). The guard is set around the
-          # recursive `tr` over the splice scratch buf — without it,
-          # `(call A)` inside A's spliced body would splice A again,
-          # forever.
-          var probe = n
-          inc probe
-          let calleeSym =
-            if probe.kind == Symbol: probe.symId else: SymId(0)
-          var spliced = createTokenBuf(32)
-          let nEmitted = trySplice(inliner[], spliced, n)
-          if nEmitted > 0:
-            if calleeSym != SymId(0):
-              inliner[].inProgress.incl calleeSym
-            var inner = beginRead(spliced)
-            for _ in 0 ..< nEmitted:
-              tr dest, inner, alive, resolved, inliner
-            endRead(inner)
-            if calleeSym != SymId(0):
-              inliner[].inProgress.excl calleeSym
-            continue
-        tr dest, n, alive, resolved, inliner
-      dest.takeToken n
-    else:
-      dest.takeToken n
-      while n.hasMore:
-        tr dest, n, alive, resolved, inliner
-      dest.takeToken n
-  of Symbol:
-    let t = translate(resolved, n.symId)
-    dest.addSymUse t.toNifcName, n.info
-    inc n
-  of SymbolDef:
-    let t = translate(resolved, n.symId)
-    dest.addSymDef t.toNifcName, n.info
-    inc n
-  of UnknownToken, EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
-    dest.takeToken n
-  of ParRi: raiseAssert "ParRi should not be encountered here"
-
-proc rewriteModule(file: string; live: HashSet[SymId]; resolved: ResolveTable;
-                   outdir: string; infos: ptr Table[string, ModuleAnalysis] = nil) =
-  var buf = parseFromFile(file)
-  let mp = splitModulePath(file)
-  let modName = mp.name
-  var inliner = initInlinerCtx(modName, addr buf, infos, mp.dir)
-  if infos != nil:
-    collectProcBodies inliner
-  var n = beginRead(buf)
-  var dest = createTokenBuf(buf.len)
-  tr dest, n, live, resolved, (if infos != nil: addr inliner else: nil)
-  endRead(buf)
-  let outPath =
-    if outdir.len > 0:
-      outdir / modName & ".c.nif"
-    else:
-      file.changeModuleExt ".c.nif"
-  try:
-    writeFile(dest, outPath, OnlyIfChanged)
-  except:
-    quit "could not write file: " & outPath
-
-proc deadCodeElimination*(files: openArray[string]; outdir: string) =
-  ## Single-shot DCE: read all .dce.nif analyses, compute global liveness,
-  ## then sequentially rewrite each module's .x.nif to .c.nif. Kept for
-  ## the single-process API; the build pipeline now goes through the split
-  ## `computeLiveSet` + `dceEmit` pair so the per-module rewrite step
-  ## parallelizes across modules.
-  var graphs = initTable[string, ModuleAnalysis]()
-  for file in files:
-    let modName = splitModulePath(file).name
-    graphs[modName] = readModuleAnalysis(file.changeModuleExt ".dce.nif")
-
-  let resolved = resolveSymbolConflicts(graphs)
-
-  let live = markLive(graphs, resolved)
-  for file in files:
-    let modName = splitModulePath(file).name
-    rewriteModule(file, live.getOrQuit(modName), resolved, outdir, addr graphs)
-
-# ---- Split DCE: liveness computation and per-module emit -----------------
+type
+  LiveSet* = object
+    resolved*: ResolveTable
+    live*: Table[string, HashSet[SymId]]
 
 const
   liveTag    = "live"      # `(live (sym Symbol Symbol …))` — per-module live syms
@@ -361,12 +95,12 @@ const
 proc writeLiveFile*(outfile: string; resolved: ResolveTable;
                     live: Table[string, HashSet[SymId]]) =
   ## Serialize the global DCE result to a single file consumed by all
-  ## downstream `dceEmit` invocations. Symbols are written with their
-  ## full module suffix (no abbreviation): the dotted-suffix shortcut
-  ## expands using the reader's `thisModule` which is derived from the
-  ## filename, but this file aggregates symbols from many modules — only
-  ## one expansion would be correct, all the others would be wrong. So
-  ## we pay the file-size cost rather than mis-expand.
+  ## downstream per-module `drop` invocations. Symbols are written with
+  ## their full module suffix (no abbreviation): the dotted-suffix
+  ## shortcut expands using the reader's `thisModule` which is derived
+  ## from the filename, but this file aggregates symbols from many
+  ## modules — only one expansion would be correct, all the others would
+  ## be wrong.
   var b = nifbuilder.open(outfile)
   b.withTree "stmts":
     b.withTree resolveTag:
@@ -381,11 +115,6 @@ proc writeLiveFile*(outfile: string; resolved: ResolveTable;
           for s in syms:
             b.addSymbol pool.syms[s], ""
   b.close()
-
-type
-  LiveSet* = object
-    resolved*: ResolveTable
-    live*: Table[string, HashSet[SymId]]
 
 proc readLiveFile*(infile: string): LiveSet =
   var buf = parseFromFile(infile)
@@ -439,33 +168,277 @@ proc readLiveFile*(infile: string): LiveSet =
       else:
         raiseAssert infile & ": expected (resolved|live …)"
 
-proc computeLiveSet*(dceFiles: openArray[string]; liveOut: string) =
-  ## Read the per-module `.dce.nif` analyses, compute the global
-  ## resolve table + live sets, and write them to `liveOut`. This is the
-  ## small serial step in the split DCE pipeline.
+# ---- Pass 1: cross-module inliner ---------------------------------------
+# Walks `(stmts …)` / `(scope …)` / `(var …)` children looking for spliceable
+# calls and uses `dce_inliner.trySplice` / `trySpliceVarInit` to expand them.
+# No liveness, no generic-instance translation — those happen in pass 2.
+
+proc trInline(dest: var TokenBuf; n: var Cursor; inliner: var InlinerCtx) =
+  case n.kind
+  of ParLe:
+    let stmtKind = n.stmtKind
+    case stmtKind
+    of VarS, ConstS, GvarS, TvarS:
+      # Bound-call form `(var :tmp <pragmas> <type> (call f arg…))` is
+      # how xelim and nifcgen's complex-init path bind a call result; the
+      # var-init splice rewrites it into a result-target inlining.
+      if stmtKind == VarS:
+        var probe = n
+        inc probe
+        if probe.kind == SymbolDef:
+          inc probe; skip probe; skip probe
+        var calleeSym = SymId(0)
+        if probe.kind == ParLe and probe.stmtKind == CallS:
+          inc probe
+          if probe.kind == Symbol:
+            calleeSym = probe.symId
+        if calleeSym != SymId(0):
+          var spliced = createTokenBuf(32)
+          let nEmitted = trySpliceVarInit(inliner, spliced, n)
+          if nEmitted > 0:
+            inliner.inProgress.incl calleeSym
+            var inner = beginRead(spliced)
+            for _ in 0 ..< nEmitted:
+              trInline(dest, inner, inliner)
+            endRead(inner)
+            inliner.inProgress.excl calleeSym
+            return
+      dest.takeToken n
+      while n.hasMore:
+        trInline(dest, n, inliner)
+      dest.takeToken n
+    of StmtsS, ScopeS:
+      # Direct-stmt-position call: candidate for the void splice.
+      dest.takeToken n
+      while n.hasMore:
+        if n.kind == ParLe and n.stmtKind == CallS:
+          var probe = n
+          inc probe
+          let calleeSym =
+            if probe.kind == Symbol: probe.symId else: SymId(0)
+          var spliced = createTokenBuf(32)
+          let nEmitted = trySplice(inliner, spliced, n)
+          if nEmitted > 0:
+            if calleeSym != SymId(0):
+              inliner.inProgress.incl calleeSym
+            var inner = beginRead(spliced)
+            for _ in 0 ..< nEmitted:
+              trInline(dest, inner, inliner)
+            endRead(inner)
+            if calleeSym != SymId(0):
+              inliner.inProgress.excl calleeSym
+            continue
+        trInline(dest, n, inliner)
+      dest.takeToken n
+    else:
+      dest.takeToken n
+      while n.hasMore:
+        trInline(dest, n, inliner)
+      dest.takeToken n
+  of ParRi:
+    raiseAssert "ParRi should not be encountered here"
+  else:
+    dest.takeToken n
+
+# ---- Pass 2: liveness-driven drop + generic-instance translation --------
+# Walks the *post-inline* buffer, drops decls not in `alive`, and renames
+# losing-instance syms to the canonical pick from `resolved`.
+
+proc trDrop(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId];
+            resolved: ResolveTable) =
+  case n.kind
+  of ParLe:
+    let stmtKind = n.stmtKind
+    case stmtKind
+    of TypeS:
+      # Types: ensure **consistency** (translate to canonical) so two
+      # modules that offer the same generic instance still typecheck
+      # against each other after merging.
+      let head = n.load()
+      dest.add head
+      n.into:
+        if n.kind == SymbolDef:
+          let def = n.symId
+          let t = translate(resolved, def)
+          dest.addSymDef t.toNifcName, n.info
+          skip n
+          while n.hasMore:
+            trDrop(dest, n, alive, resolved)
+        else:
+          while n.hasMore:
+            trDrop(dest, n, alive, resolved)
+      dest.addParRi()
+    of ProcS, VarS, ConstS, GvarS, TvarS:
+      let head = n.load()
+      inc n
+      if n.kind == SymbolDef:
+        let def = n.symId
+        if isLocalName(pool.syms[def]):
+          dest.add head
+          dest.addSymDef def.toNifcName, n.info
+          inc n
+          while n.hasMore:
+            trDrop(dest, n, alive, resolved)
+          dest.takeToken n
+        elif alive.contains(def):
+          let t = translate(resolved, def)
+          if t != def:
+            # Lost the generic-instance race — emit an `(imp …)` extern
+            # decl referencing the canonical pick from the winning module.
+            dest.add parLeToken(pool.tags.getOrIncl("imp"), head.info)
+            dest.add head
+            dest.addSymDef t.toNifcName, n.info
+            inc n
+            var untilBody = if stmtKind == ProcS: 3 else: 2
+            while n.hasMore and untilBody > 0:
+              dec untilBody
+              trDrop(dest, n, alive, resolved)
+            skip n
+            dest.addDotToken()
+            assert n.kind == ParRi
+            dest.takeToken n
+            dest.addParRi()
+          else:
+            dest.add head
+            dest.addSymDef def.toNifcName, n.info
+            inc n
+            while n.hasMore:
+              trDrop(dest, n, alive, resolved)
+            dest.takeToken n
+        else:
+          # Dead — drop the whole decl.
+          inc n
+          while n.hasMore: skip n
+          inc n
+      else:
+        dest.add head
+        while n.hasMore:
+          trDrop(dest, n, alive, resolved)
+        dest.takeToken n
+    else:
+      dest.takeToken n
+      while n.hasMore:
+        trDrop(dest, n, alive, resolved)
+      dest.takeToken n
+  of Symbol:
+    let t = translate(resolved, n.symId)
+    dest.addSymUse t.toNifcName, n.info
+    inc n
+  of SymbolDef:
+    let t = translate(resolved, n.symId)
+    dest.addSymDef t.toNifcName, n.info
+    inc n
+  of UnknownToken, EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
+    dest.takeToken n
+  of ParRi: raiseAssert "ParRi should not be encountered here"
+
+proc crossInline*(xnif, outXnif, outDce: string) =
+  ## Phase 2 (per module): cross-module inliner. Reads `M.x.nif` plus
+  ## whatever foreign modules' artefacts the inliner lazy-loads on demand
+  ## (`dce_inliner.loadForeign`/`loadForeignAnalysis`), splices every
+  ## inlinable call, then re-analyzes the result so dceLive sees the
+  ## post-inline use-graph.
+  var buf = parseFromFile(xnif)
+  let mp = splitModulePath(xnif)
+  let modName = mp.name
+  # The inliner consults `c.infos` for `.inline` thresholds. Seed it
+  # with this module's own pre-inline analysis from `hexer c`; foreign
+  # entries get filled in lazily by `loadForeignAnalysis`.
   var graphs = initTable[string, ModuleAnalysis]()
-  for file in dceFiles:
+  graphs[modName] = readModuleAnalysis(xnif.changeModuleExt ".dce.nif")
+  # Cross-module pass: foreign `.inline` bodies have already been
+  # cascaded against their same-module callees by `intraModuleInline`.
+  # A deep chain here only happens across module boundaries — rarely
+  # worth the explosion. Cap at 2 levels. Safe because liveness no
+  # longer predicts inlining: any call the cap leaves behind references
+  # a live decl by construction.
+  var inliner = initInlinerCtx(modName, addr buf, addr graphs, mp.dir,
+                               maxDepth = 2, counterPrefix = "d")
+  collectProcBodies inliner
+  var n = beginRead(buf)
+  var dest = createTokenBuf(buf.len)
+  trInline(dest, n, inliner)
+  endRead(buf)
+  try:
+    writeFile(dest, outXnif, OnlyIfChanged)
+  except:
+    quit "could not write file: " & outXnif
+  # Re-analyse the post-inline buffer so dceLive operates on the actual
+  # post-inline use-graph (no prediction).
+  writeDceOutput dest, outDce, "." & modName
+
+proc dropDead*(xinif, liveFile, outdir: string) =
+  ## Phase 4 (per module): DCE drop. Reads the post-inline `M.xi.nif`
+  ## plus the shared `liveFile`, drops decls not in the live set,
+  ## applies generic-instance translation, writes `M.c.nif`.
+  let ls = readLiveFile(liveFile)
+  let modName = splitModulePath(xinif).name
+  let liveForMod =
+    if ls.live.hasKey(modName): ls.live.getOrQuit(modName)
+    else: initHashSet[SymId]()
+  var buf = parseFromFile(xinif)
+  var n = beginRead(buf)
+  var dest = createTokenBuf(buf.len)
+  trDrop(dest, n, liveForMod, ls.resolved)
+  endRead(buf)
+  let outPath =
+    if outdir.len > 0: outdir / modName & ".c.nif"
+    else: xinif.changeModuleExt ".c.nif"
+  try:
+    writeFile(dest, outPath, OnlyIfChanged)
+  except:
+    quit "could not write file: " & outPath
+
+proc deadCodeElimination*(files: openArray[string]; outdir: string) =
+  ## Single-shot pipeline kept for the in-process API (tests, one-off
+  ## tools). Runs the four split phases sequentially in one process.
+  # Phase 2: per-module cross-inline + post-inline analysis.
+  var postInline = initTable[string, ModuleAnalysis]()
+  var inlinedBufs = initTable[string, TokenBuf]()
+  for file in files:
+    let mp = splitModulePath(file)
+    let modName = mp.name
+    var buf = parseFromFile(file)
+    var graphs = initTable[string, ModuleAnalysis]()
+    graphs[modName] = readModuleAnalysis(file.changeModuleExt ".dce.nif")
+    var inliner = initInlinerCtx(modName, addr buf, addr graphs, mp.dir,
+                                 maxDepth = 2, counterPrefix = "d")
+    collectProcBodies inliner
+    var n = beginRead(buf)
+    var dest = createTokenBuf(buf.len)
+    trInline(dest, n, inliner)
+    endRead(buf)
+    postInline[modName] = analyzeModule(dest)
+    inlinedBufs[modName] = ensureMove dest
+
+  # Phase 3: global liveness from post-inline analyses.
+  let resolved = resolveSymbolConflicts(postInline)
+  let live = markLive(postInline, resolved)
+
+  # Phase 4: drop dead, write per-module .c.nif.
+  for file in files:
+    let modName = splitModulePath(file).name
+    var dest = createTokenBuf(64)
+    var n = beginRead(inlinedBufs[modName])
+    trDrop(dest, n, live.getOrQuit(modName), resolved)
+    endRead(inlinedBufs[modName])
+    let outPath =
+      if outdir.len > 0: outdir / modName & ".c.nif"
+      else: file.changeModuleExt ".c.nif"
+    try:
+      writeFile(dest, outPath, OnlyIfChanged)
+    except:
+      quit "could not write file: " & outPath
+
+proc computeLiveSet*(diFiles: openArray[string]; liveOut: string) =
+  ## Phase 3: read per-module *post-inline* `.di.nif` analyses, compute
+  ## the global resolve table + live sets, write `liveOut`. Liveness is
+  ## pure reachability over the post-inline use-graph — no prediction.
+  var graphs = initTable[string, ModuleAnalysis]()
+  for file in diFiles:
     let modName = splitModulePath(file).name
     graphs[modName] = readModuleAnalysis(file)
 
   let resolved = resolveSymbolConflicts(graphs)
   let live = markLive(graphs, resolved)
   writeLiveFile(liveOut, resolved, live)
-
-proc dceEmit*(xnif, liveFile, outdir: string) =
-  ## Per-module emit: read `M.x.nif` plus the shared `liveFile`, write
-  ## `M.c.nif`. Multiple invocations run in parallel under the build
-  ## scheduler.
-  let ls = readLiveFile(liveFile)
-  let modName = splitModulePath(xnif).name
-  let liveForMod =
-    if ls.live.hasKey(modName): ls.live.getOrQuit(modName)
-    else: initHashSet[SymId]()
-  # Seed with this module's own `.dce.nif`. Cross-module callees are
-  # handled by `dce_inliner.loadForeign`, which lazy-loads the foreign
-  # module's `.dce.nif` (for `.inline` lookups) and `.x.nif` (for the
-  # body to splice) the first time we ask about a callee from there.
-  var graphs = initTable[string, ModuleAnalysis]()
-  let dceFile = xnif.changeModuleExt ".dce.nif"
-  graphs[modName] = readModuleAnalysis(dceFile)
-  rewriteModule(xnif, liveForMod, ls.resolved, outdir, addr graphs)

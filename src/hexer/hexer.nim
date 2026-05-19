@@ -127,19 +127,24 @@ proc handleCmdLine*() =
       expand files[0], bits, bigEndian, flags, isMain, outdir, appType
     of "d":
       deadCodeElimination(files, outdir)
+    of "ci":
+      # Phase 2 (per module): cross-module inliner.
+      # Args: <M.x.nif> <M.xi.nif-out> <M.di.nif-out>.
+      if files.len != 3:
+        quit "ci: expected <x.nif> <xi.nif-out> <di.nif-out>"
+      crossInline(files[0], files[1], files[2])
     of "dl":
-      # Compute the global live set + resolve table from a list of
-      # per-module `.dce.nif` analyses. Last argument is the output
-      # `.live.nif`; all preceding arguments are the input `.dce.nif`s.
+      # Phase 3 (global): liveness from post-inline `.di.nif` analyses.
+      # Args: <M1.di.nif> <M2.di.nif> … <live.nif-out>.
       if files.len < 2:
-        quit "dl: expected <dce-file>... <live-output>"
+        quit "dl: expected <di-file>... <live-output>"
       computeLiveSet(files.toOpenArray(0, files.len - 2), files[^1])
-    of "de":
-      # Per-module emit. Args: <M.x.nif> <main.live.nif>; outputs
-      # <outdir>/<M>.c.nif.
+    of "drop":
+      # Phase 4 (per module): drop dead decls from post-inline buffer.
+      # Args: <M.xi.nif> <live.nif>; outputs <outdir>/<M>.c.nif.
       if files.len != 2:
-        quit "de: expected <x.nif> <live.nif>"
-      dceEmit(files[0], files[1], outdir)
+        quit "drop: expected <xi.nif> <live.nif>"
+      dropDead(files[0], files[1], outdir)
     else:
       writeHelp()
 

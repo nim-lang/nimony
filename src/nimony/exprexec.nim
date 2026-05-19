@@ -162,6 +162,21 @@ when not defined(nimony):
   proc unravel(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf)
   proc entryPoint(c: var SynthesizeSerializerCtx; orig: TypeCursor; arg: Cursor)
 
+proc isSeqType(orig: TypeCursor; elemType: var Cursor): bool =
+  ## Check whether `orig` is `(at seq.0.<sysmod> T)` — the typed-Nimony
+  ## form for `seq[T]`. On match, set `elemType` to T.
+  result = false
+  var a = orig
+  if a.typeKind != AtT: return
+  inc a # past `at`
+  if a.kind != Symbol: return
+  var bn = pool.syms[a.symId]
+  extractBasename bn
+  if bn != "seq": return
+  inc a
+  elemType = a
+  result = true
+
 proc genStringCall(c: var SynthesizeSerializerCtx; name, arg: string) =
   c.dest.copyIntoKind CallS, c.info:
     c.dest.addSymUse pool.syms.getOrIncl(name & ".0." & writeNifModuleSuffix), c.info
@@ -361,6 +376,90 @@ proc unravelArray(c: var SynthesizeSerializerCtx;
       incIndexVar c, indexVar
   genParRiCall c
 
+proc unravelSeq(c: var SynthesizeSerializerCtx; orig: TypeCursor;
+                elementType: Cursor; param: TokenBuf) =
+  ## seq[T] is `object {len: int, data: ptr UncheckedArray[T]}`. Both
+  ## fields are private — outside seqimpl.nim a `(dot s data 0)` would
+  ## fail visibility re-check. The trailing `"x"` access token on the
+  ## emitted dot expressions (see `doc/tags.md` on `DotX`) certifies
+  ## the access was already type-checked with private-field visibility
+  ## (here: the serializer is generated *by the compiler*, so we have
+  ## that authority), and instructs the sub-compile sem to accept it.
+  # Follow the generic seq type symbol to its object body.
+  var seqSymCur = orig
+  inc seqSymCur  # past `at`
+  assert seqSymCur.kind == Symbol
+  let decl = tryLoadSym(seqSymCur.symId)
+  assert decl.status == LacksNothing
+  let td = asTypeDecl(decl.decl)
+  let typ = td.body
+  assert typ.typeKind == ObjectT,
+    "seq impl is expected to be an object, got: " & $typ.typeKind
+
+  # Locate the `len` and `data` field syms by basename. Field syms in
+  # the seq's instance carry instance-specific suffixes, so we don't
+  # hard-code anything.
+  var n = typ
+  inc n           # past `object`
+  skip n          # inheritance slot
+  var lenFieldSym = SymId(0)
+  var dataFieldSym = SymId(0)
+  while n.hasMore:
+    case n.substructureKind
+    of FldU, GfldU:
+      var fld = n
+      inc fld     # past `fld`
+      if fld.kind == SymbolDef:
+        let sym = fld.symId
+        var base = pool.syms[sym]
+        extractBasename base
+        if base == "len" and lenFieldSym == SymId(0):
+          lenFieldSym = sym
+        elif base == "data" and dataFieldSym == SymId(0):
+          dataFieldSym = sym
+    else: discard
+    skip n
+  assert lenFieldSym != SymId(0) and dataFieldSym != SymId(0),
+    "seq impl is expected to expose len/data fields"
+
+  let indexVar = pool.syms.getOrIncl("idx.0")
+  declareIndexVar c, indexVar
+
+  genStringCall(c, "writeNifParLe", "aconstr")
+  # Emit the original `seq[T]` type so the NIF reader reconstructs a
+  # seq rather than its lowered impl struct.
+  genStringCall(c, "writeNifRaw", toString(orig, false))
+
+  # `(dot <param> len 0 "x")` — read seq.len through the access token.
+  var lenBuf = createTokenBuf(8)
+  copyIntoKind lenBuf, DotX, c.info:
+    copyTree lenBuf, readonlyCursorAt(param, 0)
+    lenBuf.addSymUse lenFieldSym, c.info
+    lenBuf.addIntLit 0, c.info
+    lenBuf.addStrLit "x", c.info
+  freeze lenBuf
+
+  copyIntoKind c.dest, WhileS, c.info:
+    # `indexVar < seq.len`
+    copyIntoKind c.dest, LtX, c.info:
+      addIntType c
+      copyIntoSymUse c.dest, indexVar, c.info
+      c.dest.addSubtree readonlyCursorAt(lenBuf, 0)
+    copyIntoKind c.dest, StmtsS, c.info:
+      # `(pat (dot <param> data 0 "x") indexVar)` — read seq.data[idx].
+      var elemBuf = createTokenBuf(10)
+      copyIntoKind elemBuf, PatX, c.info:
+        copyIntoKind elemBuf, DotX, c.info:
+          copyTree elemBuf, readonlyCursorAt(param, 0)
+          elemBuf.addSymUse dataFieldSym, c.info
+          elemBuf.addIntLit 0, c.info
+          elemBuf.addStrLit "x", c.info
+        copyIntoSymUse elemBuf, indexVar, c.info
+      freeze elemBuf
+      unravel c, elementType, elemBuf
+      incIndexVar c, indexVar
+  genParRiCall c
+
 proc unravelSet(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) =
   assert orig.typeKind == SetT
   let baseType = orig.firstSon
@@ -453,6 +552,16 @@ proc unravel(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) 
     entryPoint(c, orig, readonlyCursorAt(param, 0))
     return
 
+  # seq[T] needs special handling before `toTypeImpl`: its lowered form
+  # is `object {len: int, data: ptr UncheckedArray[T]}`, and the
+  # generic object walk would request a serializer for the `ptr`
+  # field, which `unravel` rejects. Treat it as an array iteration via
+  # the seq's runtime length.
+  var seqElem = default(Cursor)
+  if isSeqType(orig, seqElem):
+    unravelSeq(c, orig, seqElem, param)
+    return
+
   let typ = toTypeImpl orig
   case typ.typeKind
   of ObjectT:
@@ -490,7 +599,12 @@ proc genProcDecl(c: var SynthesizeSerializerCtx; sym: SymId; typ: TypeCursor) =
     let beforeUnravel = c.dest.len
     unravel(c, typ, paramTreeA)
     if c.dest.len == beforeUnravel:
-      assert false, "empty serializer created"
+      # `unravel`'s unsupported-type case sets `c.errorMsg` instead of
+      # emitting anything; `executeExpr` propagates that to the caller
+      # as a proper error message. Anything *else* getting us here is a
+      # real bug — assert only when `errorMsg` is still empty so the
+      # user-facing error path stays unblocked.
+      assert c.errorMsg.len > 0, "empty serializer created"
   c.dest.addParRi() # close ProcS declaration
   # tell vtables.nim we need dynamic binding here:
   if c.routineKind == MethodY:

@@ -11,9 +11,11 @@ when defined(nimony):
   {.feature: "lenientnils".}
 
 import std / assertions
+from std / strutils import startsWith
 
 include ".." / lib / nifprelude
 import nimony_model, decls, programs, xints, semdata, renderer, builtintypes, typeprops, langmodes
+import ".." / lib / symparser
 
 type
   EvalContext* = object
@@ -1037,6 +1039,10 @@ proc findObjectField(objType: Cursor; fieldSym: SymId; typ: var Cursor; exported
       return true
   return false
 
+proc isSeqType(s: SymId): bool =
+  var bn = symparser.splitSymName(pool.syms[s])
+  result = bn.name.startsWith("seq.0.") and bn.module == SystemModuleSuffix
+
 proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
   if n.kind == ParLe and n.tagId == nifstreams.ErrT:
     buf.addSubtree n
@@ -1152,18 +1158,73 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
           buf.addParRi()
       else: err = true
     of BracketX, AconstrX:
-      if typ.typeKind == ArrayT: # XXX seq?
+      # `(aconstr <type> <elem>*)` is emitted both for `array[N, T]`
+      # constants and (via the synthesized seq serializer in
+      # `exprexec.unravelSeq`) for `seq[T]` constants. For arrays we
+      # produce the same shape annotated; for seqs we lower to an
+      # object constructor `(oconstr seq[T] (kv len N) (kv data nil))`
+      # — currently restricted to the empty case, since a non-empty
+      # const seq would need a static `data` pointer the AST has no
+      # representation for. This keeps the burden on the eval engine
+      # (no sem.semArrayConstr change needed): sem already accepts
+      # `(oconstr Sym (kv FieldSym Value))` and uses
+      # `findObjFieldConsiderVis(... bypassVis = true)` when the field
+      # name is a Symbol, so private `len`/`data` access checks out.
+      if typ.typeKind == ArrayT:
         buf.add parLeToken(AconstrX, n.info)
         buf.addSubtree typ
         var vals = n
         inc vals
         if exprKind == AconstrX:
           skip vals # skip type
-        inc typ # tag, get to element type
+        inc typ # past `array`, at element type
         while vals.hasMore:
           annotateConstantType(buf, typ, vals)
           skip vals
         buf.addParRi()
+      elif orig.kind == Symbol and isSeqType(orig.symId) and typ.typeKind == ObjectT:
+        # Locate the seq's `len` and `data` field syms.
+        var lenSym = SymId(0)
+        var dataSym = SymId(0)
+        var fld = typ
+        inc fld    # past `object`
+        skip fld   # inheritance
+        while fld.hasMore:
+          if fld.substructureKind in {FldU, GfldU}:
+            var fldCur = fld
+            inc fldCur
+            if fldCur.kind == SymbolDef:
+              var fname = pool.syms[fldCur.symId]
+              extractBasename fname
+              if fname == "len" and lenSym == SymId(0):
+                lenSym = fldCur.symId
+              elif fname == "data" and dataSym == SymId(0):
+                dataSym = fldCur.symId
+          skip fld
+        var vals = n
+        inc vals
+        if exprKind == AconstrX:
+          skip vals # skip type
+        if lenSym != SymId(0) and dataSym != SymId(0) and vals.kind == ParRi:
+          # Empty seq: emit (oconstr seq[T] (kv len 0) (kv data (nil)))
+          buf.add parLeToken(OconstrX, n.info)
+          buf.addSubtree orig
+          # (kv len 0)
+          buf.add parLeToken(KvU, n.info)
+          buf.addSymUse lenSym, n.info
+          buf.addIntLit 0, n.info
+          buf.addParRi()
+          # (kv data (nil))
+          buf.add parLeToken(KvU, n.info)
+          buf.addSymUse dataSym, n.info
+          buf.add parLeToken(NilX, n.info)
+          buf.addParRi()
+          buf.addParRi()
+          buf.addParRi()
+        else:
+          # Non-empty const seq has no AST representation today (the
+          # data pointer would need to be a static-allocation address).
+          err = true
       else: err = true
     of CurlyX, SetconstrX:
       if typ.typeKind == SetT:

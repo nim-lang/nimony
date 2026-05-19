@@ -18,7 +18,7 @@ include ".." / lib / compat2
 import ".." / lib / symparser
 import ".." / models / tags
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof, typeprops, langmodes, typekeys, nifconfig]
-import hexer_context, pipeline, dce1, lifter
+import hexer_context, pipeline, dce1, dce_inliner, lifter
 import  ".." / lib / [stringtrees]
 
 proc skipExportMarker(c: var EContext; n: var Cursor) =
@@ -1943,21 +1943,14 @@ proc transformInlineRoutines(c: var EContext; dest: var TokenBuf; n: var Cursor)
   while d.hasMore:
     trStmt c, dest, d, TraverseAll
 
-proc writeOutput(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo; destfileName: string): TokenBuf =
-  # Build the final output with stmts wrapper and includes
+proc buildOutput(dest: var TokenBuf; rootInfo: PackedLineInfo): TokenBuf =
+  # Build the final output with stmts wrapper. Returning the buf
+  # without writing lets the caller run the same-module inliner pass
+  # over it before serialising to disk.
   result = createTokenBuf()
   result.add tagToken("stmts", rootInfo)
-
-  # Add all the generated content
   result.add dest
-
-  # Close the stmts wrapper
   result.addParRi()
-
-  try:
-    writeFile result, destfileName, OnlyIfChanged
-  except:
-    quit "could not write file: " & destfileName
 
 proc initDynlib(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo) =
   # dynlib init:
@@ -2356,8 +2349,19 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
   skipParRi c, n
   let destfileName = c.dir / c.main & ".x.nif"
 
-  var outputBuf = writeOutput(c, cdest, rootInfo, destfileName)
+  var outputBuf = buildOutput(cdest, rootInfo)
   c.typeCache.closeScope()
 
-  # Use the in-memory buffer to avoid re-reading the file we just wrote
+  # Run the same-module inliner so the `.x.nif` we publish has each
+  # `.inline` proc body already cascaded against its same-module
+  # callees. Cross-module dceEmit then only does one-level splices.
+  intraModuleInline(c.main, outputBuf)
+
+  try:
+    writeFile outputBuf, destfileName, OnlyIfChanged
+  except:
+    quit "could not write file: " & destfileName
+
+  # Use the in-memory (post-inline) buffer for the analysis sidecar
+  # so its `uses` reflect the post-splice state.
   writeDceOutput outputBuf, c.dir / c.main & ".dce.nif", "." & c.main
