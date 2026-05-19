@@ -1582,8 +1582,9 @@ proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; m
     dest.addKeyVal genPragmas, "bits", intToken(prag.bits, pinfo), pinfo
   closeGenPragmas dest, genPragmas
 
-  c.typeCache.registerLocal(s, symKind, n)
+  let typAt = n
   trType c, dest, n
+  c.typeCache.registerLocal(s, symKind, typAt, n)
 
   if mode == TraverseSig:
     if localDecl.substructureKind == ParamU:
