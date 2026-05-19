@@ -220,7 +220,7 @@ proc lookupInlineInfo(c: var InlinerCtx; calleeSym: SymId): InlineInfo =
   if modul != c.moduleSuffix and modul notin c.infos[]:
     discard loadForeignAnalysis(c, modul)
   if not c.infos[].hasKey(modul): return
-  result = c.infos[][modul].inlineInfo.getOrDefault(calleeSym, DefaultInlineInfo)
+  result = c.infos[].getOrQuit(modul).inlineInfo.getOrDefault(calleeSym, DefaultInlineInfo)
 
 proc shouldInlineCall(c: var InlinerCtx; calleeSym: SymId;
                       argsStart: Cursor): bool =

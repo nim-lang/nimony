@@ -1040,8 +1040,13 @@ proc findObjectField(objType: Cursor; fieldSym: SymId; typ: var Cursor; exported
   return false
 
 proc isSeqType(s: SymId): bool =
-  var bn = symparser.splitSymName(pool.syms[s])
-  result = bn.name.startsWith("seq.0.") and bn.module == SystemModuleSuffix
+  ## The seq generic lives at `seq.0.<sysmod>`; per-call-site
+  ## instantiations land at `seq.0.I<hash>.<userMod>`. Both shapes
+  ## share the `seq` basename — match that, since the per-instance
+  ## module suffix varies and is what `findObjectField` hands us.
+  var bn = pool.syms[s]
+  extractBasename bn
+  result = bn == "seq"
 
 proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
   if n.kind == ParLe and n.tagId == nifstreams.ErrT:

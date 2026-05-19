@@ -419,9 +419,9 @@ proc deadCodeElimination*(files: openArray[string]; outdir: string) =
   for file in files:
     let modName = splitModulePath(file).name
     var dest = createTokenBuf(64)
-    var n = beginRead(inlinedBufs[modName])
+    var n = beginRead(inlinedBufs.getOrQuit(modName))
     trDrop(dest, n, live.getOrQuit(modName), resolved)
-    endRead(inlinedBufs[modName])
+    endRead(inlinedBufs.getOrQuit(modName))
     let outPath =
       if outdir.len > 0: outdir / modName & ".c.nif"
       else: file.changeModuleExt ".c.nif"
