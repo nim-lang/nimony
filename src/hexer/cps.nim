@@ -123,9 +123,9 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
             dest.addSymUse coroWrapperProc(c, n.symId), info
             inc n
           else:
-            tr(c, dest, n)
+            coroTr(c, dest, n)
           while n.hasMore:
-            tr(c, dest, n)
+            coroTr(c, dest, n)
           inc n
           if hasResult:
             dest.copyIntoKind AddrX, info:
@@ -168,7 +168,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
           inc n
           skip n # fn already handled
           while n.hasMore:
-            tr(c, dest, n)
+            coroTr(c, dest, n)
           inc n
           dest.copyIntoKind AddrX, info:
             dest.addSymUse coroVar, info
@@ -219,9 +219,9 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
         dest.addSymUse coroWrapperProc(c, n.symId), info
         inc n
       else:
-        tr(c, dest, n)
+        coroTr(c, dest, n)
       while n.hasMore:
-        tr(c, dest, n)
+        coroTr(c, dest, n)
       inc n
 
       if hasResult:
@@ -273,7 +273,7 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
     copyIntoKind dest, CallS, info:
       dest.addSymUse sym, info
       while n.hasMore:
-        tr(c, dest, n)
+        coroTr(c, dest, n)
       emitAllocFrame(c, dest, sym, info)
       # Pass StopContinuation as the caller so the child doesn't
       # resume anyone on finish.
@@ -383,7 +383,7 @@ proc transformToCps*(pass: var Pass) =
   assert n.stmtKind == StmtsS
   c.coroTypes.takeToken n
   while n.hasMore:
-    tr(c, pass.dest, n)
+    coroTr(c, pass.dest, n)
   for (sym, start) in c.shouldPublish:
     var buf = createTokenBuf(16)
     buf.copyTree pass.dest.cursorAt(start)

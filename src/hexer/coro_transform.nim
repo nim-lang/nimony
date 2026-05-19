@@ -40,7 +40,7 @@ include ".." / lib / compat2
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters, typeprops]
 import ".." / njvl / [nj, njvl_model]
-import hexer_context, passes
+import passes
 include ".." / nimony / nif_annotations
 
 ## Note: `ContinuationName` lives in `builtintypes` (re-imported via the
@@ -149,9 +149,13 @@ proc generateContinuationProcImpl*(): Cursor =
       return t.body
   return default(Cursor)
 
-proc tr*(c: var Context; dest: var TokenBuf; n: var Cursor)
+proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor)
   {.ensuresNif: addedAny(dest).}
-proc trSons*(c: var Context; dest: var TokenBuf; n: var Cursor)
+proc coroTrSons*(c: var Context; dest: var TokenBuf; n: var Cursor)
+  ## `coroTr` / `coroTrSons` (rather than the unqualified `tr` / `trSons`)
+  ## so they don't overload-collide with the `tr` / `trSons` that
+  ## `lambdalifting` and other consumers naturally name their local
+  ## body walkers.
 
 # ---------------------------------------------------------------------
 # Naming helpers
@@ -463,10 +467,10 @@ proc getNextState*(buf: TokenBuf; n: Cursor): int =
     inc pos
   return -1
 
-proc trSons*(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc coroTrSons*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
     while n.hasMore:
-      tr(c, dest, n)
+      coroTr(c, dest, n)
 
 # ---------------------------------------------------------------------
 # IR emitters — operate on (ptr CoroutineBase) frames via `this.0`
@@ -773,7 +777,7 @@ proc trCoroFor*(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   emitWhileBegin(dest, info, itSym, myEnvSym)
   while n.hasMore:
-    tr(c, dest, n)
+    coroTr(c, dest, n)
   emitWhileEnd(dest, info, itSym)
 
   skipParRi n # close (corofor
@@ -801,14 +805,14 @@ proc trCall*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.addSymDef tmpVar, info
           dest.addDotToken() # exported
           dest.addDotToken() # pragmas
-          tr c, dest, retType # type
+          coroTr c, dest, retType # type
           dest.addDotToken()
         c.hooks.trPassiveCall(c, dest, n, beginRead target)
         dest.addSymUse tmpVar, info
     else:
       c.hooks.trPassiveCall(c, dest, n, default(Cursor))
   else:
-    trSons(c, dest, n)
+    coroTrSons(c, dest, n)
 
 proc trLocalValue*(c: var Context; dest: var TokenBuf; n: var Cursor; lhs: Cursor) =
   if c.hooks.isPassiveCall(c, n):
@@ -816,7 +820,7 @@ proc trLocalValue*(c: var Context; dest: var TokenBuf; n: var Cursor; lhs: Curso
   else:
     dest.copyIntoKind AsgnS, n.info:
       dest.copyTree lhs
-      tr c, dest, n
+      coroTr c, dest, n
 
 proc trAsgn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var rhs = n.firstSon
@@ -824,13 +828,13 @@ proc trAsgn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if c.hooks.isPassiveCall(c, rhs):
     var lhsTransformed = createTokenBuf(6)
     inc n
-    tr c, lhsTransformed, n
+    coroTr c, lhsTransformed, n
     c.hooks.trPassiveCall(c, dest, n, beginRead lhsTransformed)
     skipParRi n
   else:
     copyInto dest, n:
-      tr c, dest, n
-      tr c, dest, n
+      coroTr c, dest, n
+      coroTr c, dest, n
 
 proc trLocal*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let sym = n.firstSon.symId
@@ -883,7 +887,7 @@ proc trLocal*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addSymUse coroWrapperProc(c, n.symId), info
         inc n
       else:
-        tr(c, dest, n)
+        coroTr(c, dest, n)
     if pcall:
       var symBuf = createTokenBuf(1)
       symBuf.addSymUse target.symId, info
@@ -945,7 +949,7 @@ proc returnValue*(c: var Context; dest: var TokenBuf; n: var Cursor; info: Packe
     inc n
   elif isVoidType(getType(c.typeCache, n)) and n.kind != Symbol:
     # void type for Symbol can happen for `raise` statements:
-    tr c, dest, n
+    coroTr c, dest, n
   else:
     dest.copyIntoKind AsgnS, info:
       dest.copyIntoKind DerefX, info:
@@ -953,7 +957,7 @@ proc returnValue*(c: var Context; dest: var TokenBuf; n: var Cursor; info: Packe
           dest.copyIntoKind DerefX, info:
             dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
           dest.addSymUse pool.syms.getOrIncl(ResultFieldName), info
-      tr c, dest, n
+      coroTr c, dest, n
   skipParRi n
 
 proc trYield*(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -1307,7 +1311,7 @@ proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: 
   dest.addParRi() # close proc decl
   newLocalProc c, dest, 0, c.procStack[^1]
   while n.hasMore:
-    tr c, dest, n
+    coroTr c, dest, n
   skipParRi n
 
 proc generateCoroutineType*(c: var Context; dest: var TokenBuf; sym: SymId) =
@@ -1335,14 +1339,38 @@ proc generateCoroutineType*(c: var Context; dest: var TokenBuf; sym: SymId) =
               dest.copyTree value.pragmas
             if key == c.currentProc.resultSym:
               dest.copyIntoKind PtrT, info:
-                tr c, dest, typ
+                coroTr c, dest, typ
             elif value.typeAsSym != SymId(0):
               dest.addSymUse value.typeAsSym, info
             else:
-              tr c, dest, typ
+              coroTr c, dest, typ
             dest.addDotToken() # default value
           programs.publish(value.field, dest, beforeField)
   programs.publish(objType, dest, beforeType)
+
+proc emitFreshFrameCall(c: var Context; d: var TokenBuf; sym: SymId; params: Cursor; hasResult: bool; info: PackedLineInfo) =
+  ## Identical to the original single-branch wrapper body: alloc a
+  ## fresh frame, delegate to the iter entry.
+  d.copyIntoKind RetS, info:
+    d.copyIntoKind ProccallX, info:
+      d.addSymUse sym, info
+      var p = params
+      if p.kind != DotToken:
+        inc p
+        while p.hasMore:
+          assert p.substructureKind == ParamU
+          inc p
+          d.addSymUse p.symId, info
+          skip p, SkipName # name
+          skip p, SkipExport # exported
+          skip p, SkipPragmas # pragmas
+          skip p, SkipType # type
+          skip p, SkipValue # default value
+          inc p # ParRi
+      emitAllocFrame(c, d, sym, info)
+      if hasResult:
+        d.addSymUse pool.syms.getOrIncl(ResultParamName), info
+      d.addSymUse pool.syms.getOrIncl(CallerParamName), info
 
 proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; iter: Cursor) =
   let newSym = coroWrapperProc(c, sym)
@@ -1378,7 +1406,7 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
         dest.takeTree n # exported
         dest.takeTree n # pragmas
         c.typeCache.registerLocal(paramSym, ParamY, n)
-        tr c, dest, n # type
+        coroTr c, dest, n # type
         dest.takeTree n # default value
         dest.takeParRi n # ParRi
     inc n
@@ -1405,35 +1433,11 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
 
   publishSignature dest, newSym, start
 
-  template emitFreshFrameCall(d: var TokenBuf) =
-    ## Identical to the original single-branch wrapper body: alloc a
-    ## fresh frame, delegate to the iter entry.
-    d.copyIntoKind RetS, info:
-      d.copyIntoKind ProccallX, info:
-        d.addSymUse sym, info
-        var p = params
-        if p.kind != DotToken:
-          inc p
-          while p.hasMore:
-            assert p.substructureKind == ParamU
-            inc p
-            d.addSymUse p.symId, info
-            skip p, SkipName # name
-            skip p, SkipExport # exported
-            skip p, SkipPragmas # pragmas
-            skip p, SkipType # type
-            skip p, SkipValue # default value
-            inc p # ParRi
-        emitAllocFrame(c, d, sym, info)
-        if hasResult:
-          d.addSymUse pool.syms.getOrIncl(ResultParamName), info
-        d.addSymUse pool.syms.getOrIncl(CallerParamName), info
-
   let isClosureIter = srcKind == IteratorY and hasPragma(asRoutine(iter).pragmas, ClosureP)
 
   dest.copyIntoKind StmtsS, info:
     if not isClosureIter:
-      emitFreshFrameCall(dest)
+      emitFreshFrameCall(c, dest, newSym, params, hasResult, info)
     else:
       let callerParam = pool.syms.getOrIncl(CallerParamName)
       let envFld = pool.syms.getOrIncl(EnvFieldName)
@@ -1450,7 +1454,7 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
               dest.addIntLit 0, info # direct field of Continuation
             dest.addParPair NilX, info
           dest.copyIntoKind StmtsS, info:
-            emitFreshFrameCall(dest)
+            emitFreshFrameCall(c, dest, newSym, params, hasResult, info)
         dest.copyIntoKind ElseU, info:
           dest.copyIntoKind StmtsS, info:
             let thisLocal = pool.syms.getOrIncl("`thisReuse." & $c.currentProc.counter & "." & c.thisModuleSuffix)
@@ -1747,7 +1751,7 @@ proc transformCoroutineDecl*(c: var Context; dest: var TokenBuf; n: var Cursor) 
       dest.add n
       inc n
     else:
-      trSons(c, dest, n)
+      coroTrSons(c, dest, n)
   else:
     takeTree dest, n
   dest.takeParRi n # ProcS
@@ -1764,7 +1768,7 @@ proc transformCoroutineDecl*(c: var Context; dest: var TokenBuf; n: var Cursor) 
 # Body-walking dispatcher — recursive `tr`
 # ---------------------------------------------------------------------
 
-proc tr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of DotToken, EofToken, Ident, SymbolDef,
      IntLit, UIntLit, FloatLit, CharLit, StringLit:
@@ -1831,14 +1835,14 @@ proc tr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trYield c, dest, n
     of RetS, RaiseS:
       if c.currentProc.kind == IsNormal:
-        trSons(c, dest, n)
+        coroTrSons(c, dest, n)
       else:
         trReturn c, dest, n
     of AsgnS:
       trAsgn c, dest, n
     of ScopeS:
       c.typeCache.openScope()
-      trSons(c, dest, n)
+      coroTrSons(c, dest, n)
       c.typeCache.closeScope()
     of CoroforS:
       trCoroFor c, dest, n
@@ -1892,9 +1896,9 @@ proc tr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             n = inner
             skipParRi n
           else:
-            trSons c, dest, n
+            coroTrSons c, dest, n
         else:
-          trSons c, dest, n
+          coroTrSons c, dest, n
       of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX,
           AddrX, NilX, InfX, NeginfX, NanX, FalseX,
           TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX,
@@ -1929,15 +1933,15 @@ proc tr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
                 if n.njvlKind in {MflagV, VflagV}:
                   trMflag c, dest, n   # hoisted outside while
                 else:
-                  tr c, beforeBuf, n
-            tr c, condBuf, n
+                  coroTr c, beforeBuf, n
+            coroTr c, condBuf, n
             assert n.stmtKind == StmtsS
             n.into:                               # stmts_body
               while n.hasMore:
                 if n.stmtKind == ContinueS:
                   skip n
                 else:
-                  tr c, bodyBuf, n
+                  coroTr c, bodyBuf, n
           dest.addParLe WhileS, info
           dest.add condBuf
           dest.addParLe StmtsS, info
@@ -1950,10 +1954,10 @@ proc tr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           inc n
           dest.copyIntoKind IfS, info:
             dest.copyIntoKind ElifU, info:
-              tr c, dest, n
-              tr c, dest, n
+              coroTr c, dest, n
+              coroTr c, dest, n
             dest.copyIntoKind ElseU, info:
-              tr c, dest, n
+              coroTr c, dest, n
           inc n
         of MflagV, VflagV:
           trMflag c, dest, n
@@ -1967,13 +1971,13 @@ proc tr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           if c.hooks.isPassiveCall(c, value):
             skip n
             var lhsTransformed = createTokenBuf(6)
-            tr c, lhsTransformed, n
+            coroTr c, lhsTransformed, n
             c.hooks.trPassiveCall(c, dest, value, beginRead lhsTransformed)
           else:
             var valueBuf = createTokenBuf(16)
-            tr c, valueBuf, n # value (first operand)
+            coroTr c, valueBuf, n # value (first operand)
             dest.copyIntoKind AsgnS, info:
-              tr c, dest, n   # dest (second operand)
+              coroTr c, dest, n   # dest (second operand)
               dest.add valueBuf
           skipParRi n
         of KillV, UnknownV:
@@ -1996,6 +2000,6 @@ proc tr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
               inc n
               skipParRi n
             else:
-              trSons(c, dest, n)
+              coroTrSons(c, dest, n)
   of ParRi:
     bug "unexpected ')' inside"
