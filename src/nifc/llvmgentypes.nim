@@ -24,56 +24,50 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): string =
     result = "void"
     skip n
   of IT:
-    inc n
-    if n.kind == IntLit:
-      result = "i" & integralBitsLLVM(n, c)
-      inc n
-    else:
-      result = "i" & $c.bits
-    # consume qualifiers
-    while n.hasMore:
-      skip n
-    skipParRi n
+    n.into:
+      if n.kind == IntLit:
+        result = "i" & integralBitsLLVM(n, c)
+        inc n
+      else:
+        result = "i" & $c.bits
+      while n.hasMore:
+        skip n
   of UT:
-    inc n
-    if n.kind == IntLit:
-      result = "i" & integralBitsLLVM(n, c)
-      inc n
-    else:
-      result = "i" & $c.bits
-    while n.hasMore:
-      skip n
-    skipParRi n
+    n.into:
+      if n.kind == IntLit:
+        result = "i" & integralBitsLLVM(n, c)
+        inc n
+      else:
+        result = "i" & $c.bits
+      while n.hasMore:
+        skip n
   of FT:
-    inc n
-    var bits = "64"
-    if n.kind == IntLit:
-      bits = integralBitsLLVM(n, c)
-      inc n
-    while n.hasMore:
-      skip n
-    skipParRi n
-    case bits
-    of "32": result = "float"
-    of "64": result = "double"
-    of "128": result = "fp128"
-    else: result = "double"
+    n.into:
+      var bits = "64"
+      if n.kind == IntLit:
+        bits = integralBitsLLVM(n, c)
+        inc n
+      while n.hasMore:
+        skip n
+      case bits
+      of "32": result = "float"
+      of "64": result = "double"
+      of "128": result = "fp128"
+      else: result = "double"
   of BoolT:
-    inc n
-    while n.hasMore:
-      skip n
-    skipParRi n
+    n.into:
+      while n.hasMore:
+        skip n
     result = "i8" # Use i8 for bool to match C ABI (i1 has different ABI)
   of CT:
-    inc n
-    if n.kind == IntLit:
-      result = "i" & integralBitsLLVM(n, c)
-      inc n
-    else:
-      result = "i8"
-    while n.hasMore:
-      skip n
-    skipParRi n
+    n.into:
+      if n.kind == IntLit:
+        result = "i" & integralBitsLLVM(n, c)
+        inc n
+      else:
+        result = "i8"
+      while n.hasMore:
+        skip n
   of NoType:
     if n.kind == Symbol:
       # Ensure the type definition is loaded for cross-module types
@@ -98,10 +92,10 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): string =
     result = "ptr"
     skip n
   of FlexarrayT:
-    inc n
-    let elemType = genTypeLLVM(c, n)
-    result = "[0 x " & elemType & "]"
-    skipParRi n
+    n.into:
+      let elemType = genTypeLLVM(c, n)
+      result = "[0 x " & elemType & "]"
+      while n.hasMore: skip n
   of ProctypeT:
     # Function pointers are just ptr in LLVM's opaque pointer world
     result = "ptr"
@@ -111,23 +105,22 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): string =
     skip n
   of EnumT:
     # Enum type encountered inline - use its underlying type
-    inc n
-    result = genTypeLLVM(c, n) # base type
-    while n.hasMore:
-      skip n
-    skipParRi n
+    n.into:
+      result = genTypeLLVM(c, n) # base type
+      while n.hasMore:
+        skip n
   of ArrayT:
-    inc n
-    let elemType = genTypeLLVM(c, n)
-    var sizeStr = "0"
-    if n.kind == IntLit:
-      sizeStr = $pool.integers[n.intId]
-      skip n
-    elif n.kind == UIntLit:
-      sizeStr = $pool.uintegers[n.uintId]
-      skip n
-    skipParRi n
-    result = "[" & sizeStr & " x " & elemType & "]"
+    n.into:
+      let elemType = genTypeLLVM(c, n)
+      var sizeStr = "0"
+      if n.kind == IntLit:
+        sizeStr = $pool.integers[n.intId]
+        skip n
+      elif n.kind == UIntLit:
+        sizeStr = $pool.uintegers[n.uintId]
+        skip n
+      result = "[" & sizeStr & " x " & elemType & "]"
+      while n.hasMore: skip n
   of ObjectT, UnionT:
     let typeDecl = tracebackTypeC(n)
     let decl = asTypeDecl(typeDecl)
@@ -210,33 +203,33 @@ proc typeSizeBits(c: var LLVMCode; n: Cursor): int =
   of ObjectT:
     # Sum of all field sizes (simplified, ignores padding)
     var nn = n
-    inc nn
-    if nn.kind == Symbol:
-      result = typeSizeBits(c, nn)
-      inc nn
-    elif nn.kind == DotToken:
-      result = 0
-      inc nn
-    else:
-      result = 0
-    while nn.hasMore:
-      if nn.substructureKind == FldU:
-        var fdecl = takeFieldDecl(nn)
-        result += typeSizeBits(c, fdecl.typ)
+    nn.into:
+      if nn.kind == Symbol:
+        result = typeSizeBits(c, nn)
+        inc nn
+      elif nn.kind == DotToken:
+        result = 0
+        inc nn
       else:
-        skip nn
+        result = 0
+      while nn.hasMore:
+        if nn.substructureKind == FldU:
+          var fdecl = takeFieldDecl(nn)
+          result += typeSizeBits(c, fdecl.typ)
+        else:
+          skip nn
   of UnionT:
     # Max of all field sizes
     var nn = n
-    inc nn
     result = 0
-    while nn.hasMore:
-      if nn.substructureKind == FldU:
-        var fdecl = takeFieldDecl(nn)
-        let sz = typeSizeBits(c, fdecl.typ)
-        if sz > result: result = sz
-      else:
-        skip nn
+    nn.into:
+      while nn.hasMore:
+        if nn.substructureKind == FldU:
+          var fdecl = takeFieldDecl(nn)
+          let sz = typeSizeBits(c, fdecl.typ)
+          if sz > result: result = sz
+        else:
+          skip nn
   of VoidT, VarargsT, ParamsT:
     result = 0
 
@@ -266,25 +259,33 @@ proc typeAlignBits(c: var LLVMCode; n: Cursor): int =
       result = c.bits
   of ObjectT, UnionT:
     var nn = n
-    inc nn
     if n.typeKind == ObjectT:
-      if nn.kind == Symbol:
-        result = typeAlignBits(c, nn)
-        inc nn
-      elif nn.kind == DotToken:
-        result = 0
-        inc nn
-      else:
-        result = 0
+      nn.into:
+        if nn.kind == Symbol:
+          result = typeAlignBits(c, nn)
+          inc nn
+        elif nn.kind == DotToken:
+          result = 0
+          inc nn
+        else:
+          result = 0
+        while nn.hasMore:
+          if nn.substructureKind == FldU:
+            var fdecl = takeFieldDecl(nn)
+            let a = typeAlignBits(c, fdecl.typ)
+            if a > result: result = a
+          else:
+            skip nn
     else:
       result = 0
-    while nn.hasMore:
-      if nn.substructureKind == FldU:
-        var fdecl = takeFieldDecl(nn)
-        let a = typeAlignBits(c, fdecl.typ)
-        if a > result: result = a
-      else:
-        skip nn
+      nn.into:
+        while nn.hasMore:
+          if nn.substructureKind == FldU:
+            var fdecl = takeFieldDecl(nn)
+            let a = typeAlignBits(c, fdecl.typ)
+            if a > result: result = a
+          else:
+            skip nn
   else:
     result = 8
 
@@ -331,7 +332,9 @@ proc recordDependencyImplLLVM(m: var MainModule; o: var TypeOrderLLVM;
     else:
       if not containsOrIncl(o.lookedAt, ch.toUniqueId()):
         var viaPointer = false
-        recordDependencyImplLLVM m, o, ch, ch.firstSon, viaPointer
+        var elemCur = ch
+        inc elemCur
+        recordDependencyImplLLVM m, o, ch, elemCur, viaPointer
       o.ordered.add (tracebackTypeC(ch), false)
   of EnumT:
     o.ordered.add (tracebackTypeC(ch), false)
@@ -365,46 +368,32 @@ proc recordDependencyLLVM(m: var MainModule; o: var TypeOrderLLVM; parent, child
 proc traverseObjectBodyLLVM(m: var MainModule; o: var TypeOrderLLVM; t: Cursor) =
   let kind = t.typeKind
   var n = t
-  inc n
-  if kind == ObjectT:
-    if n.kind == Symbol:
-      recordDependencyLLVM m, o, t, n
-      inc n
-    elif n.kind == DotToken:
-      inc n
-    else:
-      error m, "expected `Symbol` or `.` for inheritance but got: ", n
-  var nested = 1
-  while true:
-    case n.kind:
-    of ParRi:
-      dec nested
-      inc n
-      if nested == 0: break
-    of ParLe:
+  n.into:
+    if kind == ObjectT:
+      if n.kind == Symbol:
+        recordDependencyLLVM m, o, t, n
+        inc n
+      elif n.kind == DotToken:
+        inc n
+      else:
+        error m, "expected `Symbol` or `.` for inheritance but got: ", n
+    while n.hasMore:
       if n.substructureKind == FldU:
         let decl = takeFieldDecl(n)
         recordDependencyLLVM m, o, t, decl.typ
       elif n.typeKind in {ObjectT, UnionT}:
-        inc nested
-        if n.typeKind == ObjectT:
-          inc n
-          inc n # base
-        else:
-          inc n
+        traverseObjectBodyLLVM(m, o, n)
+        skip n
       else:
         error m, "unexpected node inside object: ", n
-    else:
-      error m, "unexpected token inside object: ", n
 
 proc traverseProctypeBodyLLVM(m: var MainModule; o: var TypeOrderLLVM; t: Cursor) =
   var n = t
   let procType = takeProcType(n)
-  var param = procType.params
   var viaPointer = true
-  if param.kind == ParLe:
-    param = param.firstSon
-    while param.hasMore:
+  if procType.params.kind == ParLe:
+    var param = procType.params
+    param.loopInto:
       let paramDecl = takeParamDecl(param)
       recordDependencyImplLLVM m, o, t, paramDecl.typ, viaPointer
   recordDependencyImplLLVM m, o, t, procType.returnType, viaPointer
@@ -445,34 +434,18 @@ proc traverseTypesLLVM(m: var MainModule; o: var TypeOrderLLVM) =
 proc genUnionBodyLLVM(c: var LLVMCode; n: var Cursor): string =
   ## Generate LLVM type for a union: a byte array sized to the largest member,
   ## with alignment matching the most-aligned member.
-  inc n # skip UnionT tag
   var maxSizeBits = 0
   var maxAlignBits = 8
-  var nested = 1
-  while true:
-    case n.kind
-    of ParRi:
-      dec nested
-      inc n
-      if nested == 0: break
-    of ParLe:
+  n.into:
+    while n.hasMore:
       if n.substructureKind == FldU:
         var decl = takeFieldDecl(n)
         let sz = typeSizeBits(c, decl.typ)
         let al = typeAlignBits(c, decl.typ)
         if sz > maxSizeBits: maxSizeBits = sz
         if al > maxAlignBits: maxAlignBits = al
-      elif n.typeKind in {ObjectT, UnionT}:
-        inc nested
-        if n.typeKind == ObjectT:
-          inc n
-          inc n # base
-        else:
-          inc n
       else:
         skip n
-    else:
-      skip n
   let sizeBytes = (maxSizeBits + 7) div 8
   let alignBytes = maxAlignBits div 8
   if sizeBytes == 0:
@@ -522,29 +495,22 @@ proc genObjectBodyLLVM(c: var LLVMCode; n: var Cursor): string =
   if kind == UnionT:
     return genUnionBodyLLVM(c, n)
 
-  inc n
   var fields: seq[string] = @[]
   var bitfieldAccum = 0'i64
   var bitfieldUnit = 0 # size of the current bitfield storage unit in bits
 
-  if kind == ObjectT:
-    if n.kind == DotToken:
-      inc n
-    elif n.kind == Symbol:
-      let baseName = mangleSym(c, n.symId)
-      fields.add "%" & baseName
-      inc n
-    else:
-      error c.m, "expected `Symbol` or `.` for inheritance but got: ", n
+  n.into:
+    if kind == ObjectT:
+      if n.kind == DotToken:
+        inc n
+      elif n.kind == Symbol:
+        let baseName = mangleSym(c, n.symId)
+        fields.add "%" & baseName
+        inc n
+      else:
+        error c.m, "expected `Symbol` or `.` for inheritance but got: ", n
 
-  var nested = 1
-  while true:
-    case n.kind:
-    of ParRi:
-      dec nested
-      inc n
-      if nested == 0: break
-    of ParLe:
+    while n.hasMore:
       if n.substructureKind == FldU:
         var decl = takeFieldDecl(n)
         let bits = extractBitfieldBits(decl.pragmas)
@@ -558,20 +524,15 @@ proc genObjectBodyLLVM(c: var LLVMCode; n: var Cursor): string =
       elif n.typeKind == ObjectT:
         flushBitfieldAccum(fields, bitfieldAccum)
         bitfieldUnit = 0
-        inc nested
-        inc n
-        inc n # base (must be DotToken for anonymous)
+        # Anonymous nested object — recurse (generates nested struct)
+        fields.add genObjectBodyLLVM(c, n)
       elif n.typeKind == UnionT:
         flushBitfieldAccum(fields, bitfieldAccum)
         bitfieldUnit = 0
-        var unionCur = n
-        fields.add genUnionBodyLLVM(c, unionCur)
-        inc nested
-        inc n
+        # Anonymous nested union
+        fields.add genUnionBodyLLVM(c, n)
       else:
         error c.m, "expected `fld` but got: ", n
-    else:
-      error c.m, "expected `fld` but got: ", n
 
   flushBitfieldAccum(fields, bitfieldAccum)
   result = "{ " & fields.join(", ") & " }"
@@ -586,81 +547,76 @@ proc fieldIndex(c: var LLVMCode; objBody: Cursor; fldSym: SymId): int =
 
   if objBody.typeKind == ObjectT:
     var body = objBody
-    inc body
-    if body.kind == Symbol:
-      inc body
-      result = 1 # base type occupies field 0
-    elif body.kind == DotToken:
-      inc body
-
-    var bitfieldAccum = 0'i64
-    var bitfieldUnit = 0
-    var nested = 1
-    while nested > 0:
-      case body.kind
-      of ParRi:
-        dec nested
+    body.into:
+      if body.kind == Symbol:
         inc body
-      of ParLe:
-        if body.substructureKind == FldU:
-          let decl = takeFieldDecl(body)
-          let bits = extractBitfieldBits(decl.pragmas)
-          if bits > 0:
-            let unitBits = typeSizeBits(c, decl.typ)
-            if bitfieldUnit == 0:
-              bitfieldUnit = unitBits
-            if unitBits != bitfieldUnit or bitfieldAccum + bits > bitfieldUnit:
-              # Overflow: flush current group, start new one
-              if bitfieldAccum > 0: inc result
-              bitfieldAccum = 0
-              bitfieldUnit = unitBits
-            if decl.name.kind == SymbolDef and decl.name.symId == fldSym:
-              return
-            bitfieldAccum += bits
-          else:
+        result = 1 # base type occupies field 0
+      elif body.kind == DotToken:
+        inc body
+
+      var bitfieldAccum = 0'i64
+      var bitfieldUnit = 0
+      while body.hasMore:
+        case body.kind
+        of ParLe:
+          if body.substructureKind == FldU:
+            let decl = takeFieldDecl(body)
+            let bits = extractBitfieldBits(decl.pragmas)
+            if bits > 0:
+              let unitBits = typeSizeBits(c, decl.typ)
+              if bitfieldUnit == 0:
+                bitfieldUnit = unitBits
+              if unitBits != bitfieldUnit or bitfieldAccum + bits > bitfieldUnit:
+                # Overflow: flush current group, start new one
+                if bitfieldAccum > 0: inc result
+                bitfieldAccum = 0
+                bitfieldUnit = unitBits
+              if decl.name.kind == SymbolDef and decl.name.symId == fldSym:
+                return
+              bitfieldAccum += bits
+            else:
+              if bitfieldAccum > 0:
+                inc result
+                bitfieldAccum = 0
+                bitfieldUnit = 0
+              if decl.name.kind == SymbolDef and decl.name.symId == fldSym:
+                return
+              inc result
+          elif body.typeKind == UnionT:
             if bitfieldAccum > 0:
               inc result
               bitfieldAccum = 0
               bitfieldUnit = 0
-            if decl.name.kind == SymbolDef and decl.name.symId == fldSym:
-              return
+            # The union is one LLVM field. Check if fldSym is inside it.
+            let unionIdx = result
+            var unionBody = body
+            skip unionBody # skip past the entire union
+            # Search for fldSym inside the union
+            var search = body
+            inc search # skip UnionT tag
+            while search.hasMore:
+              if search.substructureKind == FldU:
+                let fdecl = takeFieldDecl(search)
+                if fdecl.name.kind == SymbolDef and fdecl.name.symId == fldSym:
+                  return unionIdx
+              elif search.typeKind == ObjectT:
+                inc search # skip ObjectT
+                inc search # skip base
+              else:
+                skip search
+            body = unionBody
             inc result
-        elif body.typeKind == UnionT:
-          if bitfieldAccum > 0:
-            inc result
-            bitfieldAccum = 0
-            bitfieldUnit = 0
-          # The union is one LLVM field. Check if fldSym is inside it.
-          let unionIdx = result
-          var unionBody = body
-          skip unionBody # skip past the entire union
-          # Search for fldSym inside the union
-          var search = body
-          inc search # skip UnionT tag
-          while search.hasMore:
-            if search.substructureKind == FldU:
-              let fdecl = takeFieldDecl(search)
-              if fdecl.name.kind == SymbolDef and fdecl.name.symId == fldSym:
-                return unionIdx
-            elif search.typeKind == ObjectT:
-              inc search # skip ObjectT
-              inc search # skip base
-            else:
-              skip search
-          body = unionBody
-          inc result
-        elif body.typeKind == ObjectT:
-          if bitfieldAccum > 0:
-            inc result
-            bitfieldAccum = 0
-            bitfieldUnit = 0
-          inc nested
-          inc body
-          inc body # skip base
+          elif body.typeKind == ObjectT:
+            if bitfieldAccum > 0:
+              inc result
+              bitfieldAccum = 0
+              bitfieldUnit = 0
+            inc body
+            inc body # skip base
+          else:
+            skip body
         else:
-          skip body
-      else:
-        inc body
+          inc body
 
 proc genTypeDefLLVM(c: var LLVMCode; body: var Cursor; name: string;
                     packed: bool): string =
@@ -673,27 +629,25 @@ proc genTypeDefLLVM(c: var LLVMCode; body: var Cursor; name: string;
     else:
       result = "%" & name & " = type " & structBody & "\n"
   of ArrayT:
-    inc body
-    let elemType = genTypeLLVM(c, body)
-    # body now points to the array size
-    var sizeStr: string
-    if body.kind == IntLit:
-      sizeStr = $pool.integers[body.intId]
-    elif body.kind == UIntLit:
-      sizeStr = $pool.uintegers[body.uintId]
-    else:
-      sizeStr = "0"
-    skip body
-    skipParRi body
-    result = "%" & name & " = type [" & sizeStr & " x " & elemType & "]\n"
+    body.into:
+      let elemType = genTypeLLVM(c, body)
+      var sizeStr: string
+      if body.kind == IntLit:
+        sizeStr = $pool.integers[body.intId]
+      elif body.kind == UIntLit:
+        sizeStr = $pool.uintegers[body.uintId]
+      else:
+        sizeStr = "0"
+      skip body
+      result = "%" & name & " = type [" & sizeStr & " x " & elemType & "]\n"
+      while body.hasMore: skip body
   of EnumT:
     # Enums are just their underlying integer type, no struct wrapper
-    inc body
-    let baseType = genTypeLLVM(c, body)
-    while body.hasMore:
-      skip body
-    inc body
-    result = "%" & name & " = type " & baseType & "\n"
+    body.into:
+      let baseType = genTypeLLVM(c, body)
+      while body.hasMore:
+        skip body
+      result = "%" & name & " = type " & baseType & "\n"
   of ProctypeT:
     # Function types - generate the actual function type
     let procType = takeProcType(body)
@@ -705,8 +659,8 @@ proc genTypeDefLLVM(c: var LLVMCode; body: var Cursor; name: string;
       retType = genTypeLLVM(c, rt)
     var paramTypes: seq[string] = @[]
     if procType.params.kind == ParLe:
-      var p = procType.params.firstSon
-      while p.hasMore:
+      var p = procType.params
+      p.loopInto:
         let paramDecl = takeParamDecl(p)
         var t = paramDecl.typ
         paramTypes.add genTypeLLVM(c, t)
@@ -728,31 +682,24 @@ proc getStructFieldTypes(c: var LLVMCode; typeSym: Cursor): seq[LToken] =
         let unionBody = genTypeLLVMReadOnly(c, body)
         result.add c.tok(unionBody)
       elif body.typeKind == ObjectT:
-        inc body
-        if body.kind == Symbol:
-          let baseName = mangleToC(pool.syms[body.symId])
-          result.add c.tok("%" & baseName)
-          inc body
-        elif body.kind == DotToken:
-          inc body
-        var bitfieldAccum = 0'i64
-        var bitfieldUnit = 0
-        var nested = 1
-        template flushBf() =
-          if bitfieldAccum > 0:
-            var storeBits = 8
-            while storeBits < bitfieldAccum: storeBits *= 2
-            if storeBits > 64: storeBits = 64
-            result.add c.tok("i" & $storeBits)
-            bitfieldAccum = 0
-            bitfieldUnit = 0
-        while true:
-          case body.kind
-          of ParRi:
-            dec nested
+        body.into:
+          if body.kind == Symbol:
+            let baseName = mangleToC(pool.syms[body.symId])
+            result.add c.tok("%" & baseName)
             inc body
-            if nested == 0: break
-          of ParLe:
+          elif body.kind == DotToken:
+            inc body
+          var bitfieldAccum = 0'i64
+          var bitfieldUnit = 0
+          template flushBf() =
+            if bitfieldAccum > 0:
+              var storeBits = 8
+              while storeBits < bitfieldAccum: storeBits *= 2
+              if storeBits > 64: storeBits = 64
+              result.add c.tok("i" & $storeBits)
+              bitfieldAccum = 0
+              bitfieldUnit = 0
+          while body.hasMore:
             if body.substructureKind == FldU:
               var fdecl = takeFieldDecl(body)
               let bits = extractBitfieldBits(fdecl.pragmas)
@@ -770,16 +717,9 @@ proc getStructFieldTypes(c: var LLVMCode; typeSym: Cursor): seq[LToken] =
                 result.add c.tok(genTypeLLVM(c, t))
             elif body.typeKind in {ObjectT, UnionT}:
               flushBf()
-              inc nested
-              if body.typeKind == ObjectT:
-                inc body
-                inc body # base
-              else:
-                inc body
+              skip body
             else:
               inc body
-          else:
-            inc body
         flushBf()
 
 proc isPackedType(c: var LLVMCode; typeSym: Cursor): bool =
@@ -790,9 +730,10 @@ proc isPackedType(c: var LLVMCode; typeSym: Cursor): bool =
     if d != nil and d.kind == TypeY:
       let tdecl = asTypeDecl(d.pos)
       if tdecl.pragmas.substructureKind == PragmasU:
-        var p = tdecl.pragmas.firstSon
-        while p.hasMore:
-          if p.pragmaKind == PackedP: return true
+        var p = tdecl.pragmas
+        p.loopInto:
+          if p.pragmaKind == PackedP:
+            result = true
           skip p
 
 type
@@ -862,62 +803,60 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor; declaredType: Cursor): Type
       result = TypedConst(typ: "ptr", val: "null")
       skip n
     of OconstrC:
-      inc n
-      let typeSym = n
-      let fieldTypes = getStructFieldTypes(c, n)
-      let packed = isPackedType(c, n)
-      # Resolve the struct's field NIF types for recursive descent
-      var fieldNifTypes: seq[Cursor] = @[]
-      if n.kind == Symbol:
-        let d = c.m.getDeclOrNil(n.symId)
-        if d != nil and d.kind == TypeY:
-          let decl = asTypeDecl(d.pos)
-          var body = decl.body
-          if body.typeKind in {ObjectT, UnionT}:
-            inc body
-            if decl.body.typeKind == ObjectT:
-              if body.kind == Symbol:
-                fieldNifTypes.add body # base type
-                inc body
-              elif body.kind == DotToken:
-                inc body
-            while body.hasMore:
-              if body.substructureKind == FldU:
-                var fdecl = takeFieldDecl(body)
-                fieldNifTypes.add fdecl.typ
-              else:
-                skip body
-      skip n # type
-      var typeParts: seq[string] = @[]
-      var valParts: seq[string] = @[]
-      var fieldIdx = 0
-      while n.hasMore:
-        if n.substructureKind == KvU:
-          inc n
-          skip n # field name
-          let nifType = if fieldIdx < fieldNifTypes.len: fieldNifTypes[fieldIdx]
-                        else: declaredType # fallback
-          let tc = genGlobalConstr(c, n, nifType)
-          typeParts.add tc.typ
-          valParts.add tc.typ & " " & tc.val
-          if n.hasMore: skip n # optional inheritance depth
-          skipParRi n
-          inc fieldIdx
-        elif n.exprKind == OconstrC:
-          let nifType = if fieldIdx < fieldNifTypes.len: fieldNifTypes[fieldIdx]
-                        else: declaredType
-          let tc = genGlobalConstr(c, n, nifType)
-          typeParts.add tc.typ
-          valParts.add tc.typ & " " & tc.val
-          inc fieldIdx
-        else:
-          let nifType = if fieldIdx < fieldNifTypes.len: fieldNifTypes[fieldIdx]
-                        else: declaredType
-          let tc = genGlobalConstr(c, n, nifType)
-          typeParts.add tc.typ
-          valParts.add tc.typ & " " & tc.val
-          inc fieldIdx
-      skipParRi n
+      n.into:
+        let typeSym = n
+        let fieldTypes = getStructFieldTypes(c, n)
+        let packed = isPackedType(c, n)
+        # Resolve the struct's field NIF types for recursive descent
+        var fieldNifTypes: seq[Cursor] = @[]
+        if n.kind == Symbol:
+          let d = c.m.getDeclOrNil(n.symId)
+          if d != nil and d.kind == TypeY:
+            let decl = asTypeDecl(d.pos)
+            var body = decl.body
+            if body.typeKind in {ObjectT, UnionT}:
+              body.into:
+                if decl.body.typeKind == ObjectT:
+                  if body.kind == Symbol:
+                    fieldNifTypes.add body # base type
+                    inc body
+                  elif body.kind == DotToken:
+                    inc body
+                while body.hasMore:
+                  if body.substructureKind == FldU:
+                    var fdecl = takeFieldDecl(body)
+                    fieldNifTypes.add fdecl.typ
+                  else:
+                    skip body
+        skip n # type
+        var typeParts: seq[string] = @[]
+        var valParts: seq[string] = @[]
+        var fieldIdx = 0
+        while n.hasMore:
+          if n.substructureKind == KvU:
+            n.into:
+              skip n # field name
+              let nifType = if fieldIdx < fieldNifTypes.len: fieldNifTypes[fieldIdx]
+                            else: declaredType # fallback
+              let tc = genGlobalConstr(c, n, nifType)
+              typeParts.add tc.typ
+              valParts.add tc.typ & " " & tc.val
+              while n.hasMore: skip n # optional inheritance depth
+            inc fieldIdx
+          elif n.exprKind == OconstrC:
+            let nifType = if fieldIdx < fieldNifTypes.len: fieldNifTypes[fieldIdx]
+                          else: declaredType
+            let tc = genGlobalConstr(c, n, nifType)
+            typeParts.add tc.typ
+            valParts.add tc.typ & " " & tc.val
+            inc fieldIdx
+          else:
+            let nifType = if fieldIdx < fieldNifTypes.len: fieldNifTypes[fieldIdx]
+                          else: declaredType
+            let tc = genGlobalConstr(c, n, nifType)
+            typeParts.add tc.typ
+            valParts.add tc.typ & " " & tc.val
+            inc fieldIdx
       # Check if any field type differs from the declared struct field types
       var needsAnon = false
       for i in 0 ..< min(typeParts.len, fieldTypes.len):
@@ -939,66 +878,69 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor; declaredType: Cursor): Type
         else:
           result = TypedConst(typ: declTyp, val: "{ " & valStr & " }")
     of AconstrC:
-      inc n
-      let arrayTypeCursor = declaredType
-      var elemTypeCursor = declaredType
-      var elemType = ""
-      # Get element type from the declared array/flexarray type
-      if declaredType.typeKind == FlexarrayT:
-        elemType = genTypeLLVMReadOnly(c, declaredType.firstSon)
-        elemTypeCursor = declaredType.firstSon
-      elif declaredType.typeKind == ArrayT:
-        var at = declaredType
-        inc at
-        elemType = genTypeLLVMReadOnly(c, at)
-        elemTypeCursor = at
-      else:
-        # Named array type
-        if n.typeKind == FlexarrayT:
-          elemType = genTypeLLVMReadOnly(c, n.firstSon)
-          elemTypeCursor = n.firstSon
-        elif n.typeKind == ArrayT:
-          var at = n
+      n.into:
+        let arrayTypeCursor = declaredType
+        var elemTypeCursor = declaredType
+        var elemType = ""
+        # Get element type from the declared array/flexarray type
+        if declaredType.typeKind == FlexarrayT:
+          var et = declaredType
+          inc et
+          elemType = genTypeLLVMReadOnly(c, et)
+          elemTypeCursor = et
+        elif declaredType.typeKind == ArrayT:
+          var at = declaredType
           inc at
           elemType = genTypeLLVMReadOnly(c, at)
           elemTypeCursor = at
-        elif n.kind == Symbol:
-          let d = c.m.getDeclOrNil(n.symId)
-          if d != nil and d.kind == TypeY:
-            let tdecl = asTypeDecl(d.pos)
-            if tdecl.body.typeKind == ArrayT:
-              var at = tdecl.body
-              inc at
-              elemType = genTypeLLVMReadOnly(c, at)
-              elemTypeCursor = at
-      skip n # type
-      var elems: seq[string] = @[]
-      while n.hasMore:
-        let tc = genGlobalConstr(c, n, elemTypeCursor)
-        elems.add tc.typ & " " & tc.val
-      skipParRi n
-      let arrTyp = "[" & $elems.len & " x " & elemType & "]"
-      result = TypedConst(typ: arrTyp, val: "[ " & elems.join(", ") & " ]")
+        else:
+          # Named array type
+          if n.typeKind == FlexarrayT:
+            var et = n
+            inc et
+            elemType = genTypeLLVMReadOnly(c, et)
+            elemTypeCursor = et
+          elif n.typeKind == ArrayT:
+            var at = n
+            inc at
+            elemType = genTypeLLVMReadOnly(c, at)
+            elemTypeCursor = at
+          elif n.kind == Symbol:
+            let d = c.m.getDeclOrNil(n.symId)
+            if d != nil and d.kind == TypeY:
+              let tdecl = asTypeDecl(d.pos)
+              if tdecl.body.typeKind == ArrayT:
+                var at = tdecl.body
+                inc at
+                elemType = genTypeLLVMReadOnly(c, at)
+                elemTypeCursor = at
+        skip n # type
+        var elems: seq[string] = @[]
+        while n.hasMore:
+          let tc = genGlobalConstr(c, n, elemTypeCursor)
+          elems.add tc.typ & " " & tc.val
+        let arrTyp = "[" & $elems.len & " x " & elemType & "]"
+        result = TypedConst(typ: arrTyp, val: "[ " & elems.join(", ") & " ]")
     of CastC, ConvC:
-      inc n
-      skip n # type
-      result = genGlobalConstr(c, n, declaredType)
-      skipParRi n
+      n.into:
+        skip n # type
+        result = genGlobalConstr(c, n, declaredType)
+        while n.hasMore: skip n
     of SufC:
-      inc n
-      result = genGlobalConstr(c, n, declaredType)
-      skip n # suffix
-      skipParRi n
+      n.into:
+        result = genGlobalConstr(c, n, declaredType)
+        skip n # suffix
+        while n.hasMore: skip n
     of AddrC:
       # Address of a global symbol
-      inc n
-      if n.kind == Symbol:
-        let name = mangleSym(c, n.symId)
-        c.requestedSyms.incl n.symId
-        result = TypedConst(typ: "ptr", val: "@" & name)
-        inc n
-      else:
-        error c.m, "unsupported address constant; only plain symbols are currently handled: ", n
-      skipParRi n
+      n.into:
+        if n.kind == Symbol:
+          let name = mangleSym(c, n.symId)
+          c.requestedSyms.incl n.symId
+          result = TypedConst(typ: "ptr", val: "@" & name)
+          inc n
+        else:
+          error c.m, "unsupported address constant; only plain symbols are currently handled: ", n
+        while n.hasMore: skip n
     else:
       error c.m, "unhandled expression in global constant: ", n
