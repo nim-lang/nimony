@@ -490,7 +490,13 @@ proc genProcDecl(c: var SynthesizeSerializerCtx; sym: SymId; typ: TypeCursor) =
     let beforeUnravel = c.dest.len
     unravel(c, typ, paramTreeA)
     if c.dest.len == beforeUnravel:
-      assert false, "empty serializer created"
+      # `unravel`'s unsupported-type case sets `c.errorMsg` instead of
+      # emitting anything; `executeExpr` propagates that to the caller
+      # as a proper error message. Anything *else* getting us here is a
+      # real bug — assert only when `errorMsg` is still empty so the
+      # user-facing error path stays unblocked.
+      assert c.errorMsg.len > 0, "empty serializer created"
+
   c.dest.addParRi() # close ProcS declaration
   # tell vtables.nim we need dynamic binding here:
   if c.routineKind == MethodY:
