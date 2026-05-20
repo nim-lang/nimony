@@ -218,6 +218,11 @@ proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): P
 proc analyseCall(c: var Context; n: var Cursor)
 
 proc markedAs(t: Cursor; mark: NimonyOther): bool =
+  # See contracts_njvl.markedAs — sink/mut/lent/out wrappers don't
+  # change nilability, only how the value is passed.
+  var t = t
+  while t.typeKind in {SinkT, MutT, LentT, OutT}:
+    inc t
   result = false
   case t.typeKind
   of PtrT, RefT:
@@ -271,7 +276,7 @@ proc wantNotNil(c: var Context; n: Cursor) =
   case n.exprKind
   of NilX:
     buildErr(c, n.info, "expected non-nil value")
-  of AddrX:
+  of AddrX, HaddrX:
     discard "fine, addresses are not nil"
   else:
     let t = getType(c.typeCache, n)
@@ -604,7 +609,7 @@ proc addAsgnFact(c: var Context; fact: LeXplusC) =
 proc isNonNilExpr(n: Cursor): bool =
   ## Check if an expression is trivially non-nil.
   case n.exprKind
-  of AddrX:
+  of AddrX, HaddrX:
     result = true
   of ConvKinds:
     var inner = n

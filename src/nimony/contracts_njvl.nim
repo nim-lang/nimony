@@ -447,6 +447,13 @@ proc analyseCondition(c: var NjvlContext; pc: var Cursor): int =
 # --- Not-nil checking ---
 
 proc markedAs(t: Cursor; mark: NimonyOther): bool =
+  # Look through value-passing wrappers like `sink`/`mut`/`lent`/`out`:
+  # they don't change a value's nilability, only how it's passed. Without
+  # this, a `sink (ref T notnil)` parameter looked nilable, and NJ asked
+  # for a non-nil proof on a value the type system already guarantees.
+  var t = t
+  while t.typeKind in {SinkT, MutT, LentT, OutT}:
+    inc t
   result = false
   case t.typeKind
   of PtrT, RefT:
@@ -496,7 +503,9 @@ proc analysableRoot(c: var NjvlContext; n: Cursor): SymId =
 proc isNonNilExpr(c: var NjvlContext; n: Cursor): bool =
   ## Check if an expression is trivially non-nil without needing dataflow analysis.
   case n.exprKind
-  of AddrX:
+  of AddrX, HaddrX:
+    # `(haddr …)` is the synthesised hidden-address form (e.g. emitted
+    # for `var V` return lowering); semantically identical to `addr`.
     result = true
   of ConvKinds:
     # e.g. cstring("abc") — a conversion from a non-nil value is non-nil
@@ -522,8 +531,8 @@ proc wantNotNil(c: var NjvlContext; n: Cursor) =
   case n.exprKind
   of NilX:
     buildErr(c, n.info, "expected non-nil value")
-  of AddrX:
-    discard "fine, addresses are not nil"
+  of AddrX, HaddrX:
+    discard "fine, addresses (incl. hidden-addr from var-return lowering) are not nil"
   else:
     let t = getType(c.typeCache, n)
     if markedAs(t, NotnilU):
@@ -828,13 +837,6 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
         skip pc # skips type
         traverseExpr c, pc
         skipParRi pc
-      of NilX:
-        # `(nil)` / `(nil <Type>)` / `(nil <Type> <arg>)` — nil literal,
-        # possibly carrying its formal type subtree (which for itertype /
-        # closure-proctype contains raw param SymbolDefs that the generic
-        # expression walk would mis-classify). Nothing in here can hold
-        # free variables we'd want to track, so skip the whole subtree.
-        skip pc
       else:
         inc nested
         inc pc

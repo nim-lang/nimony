@@ -396,10 +396,10 @@ proc trAsNamedType(c: var EContext; dest: var TokenBuf; n: var Cursor) =
 
     swap dest, buf
     c.pending.add buf
-    # Convert NifC type decl to Nim-gear2 type decl by
-    # inserting empty export marker and type vars
-    buf.insert [dotToken(NoLineInfo), dotToken(NoLineInfo)], 1
-    programs.publish val, buf
+    # No `programs.publish` here: nifcgen is the last hexer stage, so
+    # nothing downstream queries these synthesized type decls via
+    # `tryLoadSym`. nifcgen's own `trType` only consults the decl to
+    # detect `distinct` types, which synthesized object decls are never.
   # regardless of what we had to do, we still need to add the typename:
   if k == RefT:
     dest.add tagToken("ptr", info)
@@ -498,7 +498,13 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
         dest.add n
         inc n
     else:
-      error c, "could not find symbol: " & pool.syms[s]
+      # No decl found means this is a synthesized named type from
+      # `trAsNamedType` (e.g. `(ref T)` lowered to a generated object
+      # decl). Those are never `distinct`, so we don't need the decl —
+      # just emit the symbol; nifc resolves the reference against the
+      # type decl that `c.pending` appends to the module's output.
+      dest.add n
+      inc n
   of ParLe:
     case n.typeKind
     of NoType, ErrT, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypekindT, OrdinalT:
