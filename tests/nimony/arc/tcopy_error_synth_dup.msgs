@@ -1,0 +1,1 @@
+tests/nimony/arc/tcopy_error_synth_dup.nim(16, 15) Error: '=dup' is not available for type <MyObj>
