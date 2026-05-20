@@ -21,7 +21,7 @@ const
   Version = "0.6.0"
   Usage = "hastur - tester tool for Nimony Version " & Version & """
 
-  (c) 2024-2025 Andreas Rumpf
+  (c) 2024-2026 Andreas Rumpf
 Usage:
   hastur [options] [command] [arguments]
 
@@ -40,7 +40,7 @@ Commands:
                        toolchain (nimony+nimsem+hexer share `programs.nim`),
                        runs `bootstrap`, then `boot --valgrind`. Use this
                        after touching any module the compiler itself imports.
-  all                  run all tests (also the default action).
+  all                  run all tests.
   nimony               run Nimony tests.
   examples             run examples (examples/ directory).
   nifc                 run NIFC tests.
@@ -1680,7 +1680,7 @@ proc handleCmdLine =
             args[^1].add val
     of cmdEnd: assert false, "cannot happen"
   if primaryCmd.len == 0:
-    primaryCmd = "all"
+    writeHelp()
 
   createDir binDir()
 
@@ -1814,10 +1814,11 @@ proc handleCmdLine =
       buildNimony()
       buildNifc()
     if args.len > 0:
-      if args[0].dirExists():
-        testDirCmd args[0], overwrite, forward
-      else:
-        test args[0], overwrite, findCategory(args[0]), forward
+      for arg in args:
+        if arg.dirExists():
+          testDirCmd arg, overwrite, forward
+        else:
+          test arg, overwrite, findCategory(arg), forward
     else:
       quit "`test` takes an argument"
   of "bug", "debug":
