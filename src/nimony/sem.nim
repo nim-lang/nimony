@@ -6857,228 +6857,34 @@ proc pruneMatchedForwardDecls(c: var SemContext; dest: var TokenBuf) =
     else:
       inc i
 
-const
-  ShardThresholdForSem* = 250_000
-    ## Token-count threshold per shard when sharding sem.nim. Picked to split
-    ## sem (~7.5K LOC, large post-sem token count) into a handful of
-    ## roughly-equal shards; heuristic tuning is out of scope for the first
-    ## cut. Only consulted when `enableSharding` is true — which today only
-    ## fires for the compiler's own sem.nim (see `decideShardingFromPath`).
-
-proc buildImportPreamble(c: var SemContext): TokenBuf =
-  ## The `(import (kv suffix "path") …)` block sem prepends to its output so
-  ## the hexer sees imports before any executable code. Extracted from the
-  ## old single-file writeOutput so each shard can share the same preamble.
-  result = createTokenBuf(c.importedModules.len * 5 + 2)
-  result.addParLe ImportS, NoLineInfo
-  let curWorkDir = onRaiseQuit os.getCurrentDir()
-  for _, i in c.importedModules:
-    if i.fromPlugin.len == 0:
-      let abs = i.path.toAbsolutePath
-      result.buildTree KvU, NoLineInfo:
-        result.addIdent moduleSuffix(abs, c.g.config.paths)
-        # Slash-normalise: paths in the .nif must use `/` regardless of OS so
-        # the file is byte-identical across Windows / Linux / macOS, and
-        # downstream consumers (dagon) compare prefixes uniformly.
-        result.addStrLit toUnixPath(abs.toRelativePath(curWorkDir))
-  result.addParRi()
-
-proc shardOutFile(baseOutfile: string; shardSuffix: string; baseSuffix: string): string =
-  ## Map a shard suffix to its `.s.nif` path. Shard 0 keeps the original
-  ## filename byte-for-byte; spillover shards get `<dir>/<base>_<i>.s.nif`.
-  ## String-tail surgery instead of `os.parentDir` — sem.nim's transitive
-  ## imports do not pull std/os in.
-  if shardSuffix == baseSuffix:
-    return baseOutfile
-  let tailLen = baseSuffix.len + ".s.nif".len
-  if baseOutfile.len <= tailLen:
-    return shardSuffix & ".s.nif"
-  baseOutfile.substr(0, baseOutfile.len - tailLen - 1) & shardSuffix & ".s.nif"
-
-proc planShardBoundaries(dest: TokenBuf; threshold: int): seq[int] =
-  ## Walks dest top-level children, accumulating per-child token sizes, and
-  ## returns the byte-offsets at which a new shard should *start*. Index 0
-  ## is always present (shard 0 starts right after the outer `(stmts …)`
-  ## opener at offset 1). Subsequent entries are positions where accumulated
-  ## size since the previous boundary first crossed `threshold` — meaning
-  ## the next top-level child becomes the first of the next shard.
-  ## When threshold isn't crossed, the returned seq has a single entry and
-  ## the caller writes the file unchanged (no rewrite, no split).
-  result = @[1] # right after outer ParLe
-  if dest.len == 0 or dest[0].kind != ParLe: return
-  var i = 1
-  var sizeSinceBoundary = 0
-  while i < dest.len:
-    if dest[i].kind == ParRi:
-      break  # outer stmts closer
-    let childStart = i
-    if dest[i].kind == ParLe:
-      var nesting = 0
-      while i < dest.len:
-        case dest[i].kind
-        of ParLe:
-          inc nesting
-          inc i
-        of ParRi:
-          dec nesting
-          inc i
-          if nesting == 0: break
-        else: inc i
-    else:
-      inc i
-    sizeSinceBoundary += i - childStart
-    if sizeSinceBoundary >= threshold and i < dest.len and dest[i].kind != ParRi:
-      result.add i  # next child starts a new shard
-      sizeSinceBoundary = 0
-
-proc buildSymRemap(dest: TokenBuf; boundaries: seq[int]; baseSuffix: string):
-    Table[SymId, SymId] =
-  ## Scan dest top-level children that fall into shard 1, 2, …, collect every
-  ## SymbolDef in those children, and build the old→new SymId mapping. Only
-  ## symbols whose module-suffix exactly matches `baseSuffix` are remapped
-  ## — anything else (e.g. cross-module references, system symbols) is
-  ## untouched. The new name appends `_<shardIdx>` to the suffix.
-  result = initTable[SymId, SymId]()
-  for shardIdx in 1 ..< boundaries.len:
-    let shardStart = boundaries[shardIdx]
-    let shardEnd =
-      if shardIdx + 1 < boundaries.len: boundaries[shardIdx + 1]
-      else: dest.len # walks to the closing ParRi; harmless — no symdefs there
-    var shardSuffix = baseSuffix
-    shardSuffix.add '_'
-    shardSuffix.add $shardIdx
-    for j in shardStart ..< shardEnd:
-      if dest[j].kind == SymbolDef:
-        let oldId = dest[j].symId
-        if oldId in result: continue
-        let oldName = pool.syms[oldId]
-        let owner = extractModule(oldName)
-        if owner != baseSuffix: continue
-        var newName = removeModule(oldName)
-        newName.add '.'
-        newName.add shardSuffix
-        result[oldId] = pool.syms.getOrIncl(newName)
-
-proc rewriteSyms(dest: var TokenBuf; remap: Table[SymId, SymId]) =
-  ## Single linear pass over the entire buffer; replaces Symbol and SymbolDef
-  ## tokens whose symId is in `remap` with the remapped symId. Other tokens
-  ## are left as-is. References anywhere in the file are caught — including
-  ## forward refs from shard 0 into shard 1, which is the whole point of
-  ## doing the rewrite as a post-sem pass instead of online.
-  if remap.len == 0: return
-  for i in 0 ..< dest.len:
-    let t = dest[i]
-    case t.kind
-    of Symbol:
-      let new = remap.getOrDefault(t.symId, SymId(0))
-      if new != SymId(0):
-        dest[i] = symToken(new, t.info)
-    of SymbolDef:
-      let new = remap.getOrDefault(t.symId, SymId(0))
-      if new != SymId(0):
-        dest[i] = symdefToken(new, t.info)
-    else:
-      discard
-
-proc partitionDestByBoundaries(dest: TokenBuf; boundaries: seq[int]): seq[TokenBuf] =
-  ## Slice the already-rewritten dest into one TokenBuf per shard. Each
-  ## shard wraps its slice in the same outer `(stmts …)` so it parses as a
-  ## standalone NIF module.
-  let nShards = boundaries.len
-  result = newSeq[TokenBuf](nShards)
-  assert dest.len > 0 and dest[0].kind == ParLe
-  let openTok = dest[0]
-  # The outer stmts closer is at the last non-trailing position; locate it
-  # once for use as each shard's terminator.
-  var closeIdx = dest.len - 1
-  while closeIdx > 0 and dest[closeIdx].kind != ParRi:
-    dec closeIdx
-  for i in 0 ..< nShards:
-    let sliceStart = boundaries[i]
-    let sliceEnd =
-      if i + 1 < nShards: boundaries[i + 1]
-      else: closeIdx
-    result[i] = createTokenBuf(sliceEnd - sliceStart + 4)
-    result[i].add openTok
-    for j in sliceStart ..< sliceEnd:
-      result[i].add dest[j]
-    result[i].addParRi()
-
 proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
   pruneMatchedForwardDecls(c, dest)
-
-  # Imports preamble: insert once into dest before any sharding decision.
-  # The sharder's boundaries are computed *after* this insert so shard 0
-  # naturally swallows the preamble (preamble is the first top-level child).
+  # Insert `(import (kv suffix "path") …)` at the beginning of the (stmts ...)
+  # so the hexer sees it before any executable code. The path is paired with
+  # the suffix so downstream tools (dagon doc-gen) have the source location
+  # without needing a separate manifest. Only consumer of the body today is
+  # `nifcgen`'s init-proc generation, which reads the suffix from each `kv`.
+  #
+  # Path is stored relative to CWD so the `.s.nif` is reproducible across
+  # checkouts (CI has a different absolute prefix than the dev's machine).
+  # Mirrors nifler's `--portablePaths` line-info convention.
   if c.importedModules.len != 0:
-    var importBuf = buildImportPreamble(c)
+    let curWorkDir = onRaiseQuit os.getCurrentDir()
+    var importBuf = createTokenBuf(c.importedModules.len * 5 + 2)
+    importBuf.addParLe ImportS, NoLineInfo
+    for _, i in c.importedModules:
+      if i.fromPlugin.len == 0:
+        let abs = i.path.toAbsolutePath
+        importBuf.buildTree KvU, NoLineInfo:
+          importBuf.addIdent moduleSuffix(abs, c.g.config.paths)
+          # Slash-normalise: paths in the .nif must use `/` regardless of OS
+          # so the file is byte-identical across Windows / Linux / macOS, and
+          # downstream consumers (dagon) compare prefixes uniformly.
+          importBuf.addStrLit toUnixPath(abs.toRelativePath(curWorkDir))
+    importBuf.addParRi()
     dest.insert importBuf, 1 # after the (stmts tag
-
-  # Sharding decision. Only fires for sem.nim (per `decideShardingFromPath`),
-  # and only if the post-sem token count crosses the threshold. For every
-  # other module — and for sem.nim builds where post-sem size happens to
-  # stay below threshold — the boundary plan is a singleton and we fall
-  # through to the byte-identical single-file write path below.
-  let boundaries =
-    if c.enableSharding: planShardBoundaries(dest, ShardThresholdForSem)
-    else: @[1]
-
-  if boundaries.len == 1:
-    onRaiseQuit writeFile(dest, outfile, OnlyIfChanged)
-    let root = dest[0].info
-    onRaiseQuit createIndex(outfile, root, true,
-      IndexSections(
-        converters: move c.converterIndexMap,
-        exportBuf: buildIndexExports(c)))
-    writeNewDepsFile c, outfile
-    return
-
-  # Multi-shard path. Rewrite SymDef / Sym tokens whose owner equals the
-  # base suffix and which fall into shard 1+; partition; write one `.s.nif`
-  # per shard plus the single umbrella `.s.idx.nif` (per user 2026-05-20:
-  # the index file currently just carries an interface checksum, no
-  # per-shard random-access offsets).
-  let remap = buildSymRemap(dest, boundaries, c.thisModuleSuffix)
-  rewriteSyms(dest, remap)
-  let shardBufs = partitionDestByBoundaries(dest, boundaries)
+  onRaiseQuit writeFile(dest, outfile, OnlyIfChanged)
   let root = dest[0].info
-
-  var shardSuffixes = newSeq[string](shardBufs.len)
-  for i in 0 ..< shardBufs.len:
-    var shardSuffix = c.thisModuleSuffix
-    if i > 0:
-      shardSuffix.add '_'
-      shardSuffix.add $i
-    shardSuffixes[i] = shardSuffix
-    let outpath = shardOutFile(outfile, shardSuffix, c.thisModuleSuffix)
-    onRaiseQuit writeFile(shardBufs[i], outpath, OnlyIfChanged)
-    # Spillover shards (i > 0) get their own checksum-only index. Required:
-    # `programs.load(<shard-suffix>)` (in any consumer — hexer, the importing
-    # module's nimsem, …) calls `readIndex` which `nifstreams.open`s the
-    # file unconditionally and aborts if missing. The umbrella index for
-    # shard 0 below carries the converters + exports + checksum of the
-    # logical module; spillover shards carry just their own per-shard
-    # checksum so cross-shard references resolve.
-    if i > 0:
-      onRaiseQuit createIndex(outpath, root, true, IndexSections())
-
-  # Shard manifest: a tiny plain-text file `<base>.s.shards.txt` listing
-  # every shard suffix this run produced (one per line). deps.nim reads it
-  # between nifmake runs to know how many per-shard hexer/nifc/cc
-  # invocations to emit. Plain text rather than a NIF file so we don't have
-  # to mint new tag IDs in `models/nifindex_tags.nim` for what is really a
-  # transient build-coordination artifact. Only written when sharding
-  # actually happens; non-sharded modules don't touch this file so
-  # deps.nim's manifest-absent path naturally falls back to the historical
-  # single-shard behaviour.
-  let manifestPath = changeModuleExt(outfile, ".s.shards.txt")
-  var manifestStr = ""
-  for s in shardSuffixes:
-    manifestStr.add s
-    manifestStr.add '\n'
-  onRaiseQuit writeFile(manifestPath, manifestStr)
-
-  # One umbrella index for the logical module; lives next to shard 0's file.
   onRaiseQuit createIndex(outfile, root, true,
     IndexSections(
       converters: move c.converterIndexMap,
@@ -7362,38 +7168,12 @@ proc reorderInnerGenericInstances(c: SemContext; dest: var TokenBuf) =
     else:
       inc i
 
-proc decideShardingFromPath*(path: string): bool =
-  ## Returns true only for sem.nim. Decides against the *original Nim source
-  ## basename*, not against the hashed moduleSuffix (which is "semj3ea9t" or
-  ## similar and would not match a naive `== "sem"` test). Critically:
-  ##
-  ##   * system.nim's basename is "system", not "sem" — it cannot match here.
-  ##   * The hardcoded `SystemModuleSuffix` ("sysvq0asl") doesn't appear in
-  ##     this comparison either, since we check the basename.
-  ##   * Any user module also named sem.nim would also shard. That is
-  ##     intentional per the design: the gate is on module name, not on a
-  ##     compiler-internal identity.
-  ##
-  ## DO NOT relax this to `startsWith("sem")` — that would catch system.nim
-  ## if a future refactor of the hash collides ("sys..." vs "sem..." are
-  ## currently distinct but the barrier should be load-bearing regardless).
-  result = extractModulename(path) == "sem"
-
 proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), kind: ToplevelScope)
 
   assert n0.stmtKind == StmtsS
   let path = getFile(n0.info) # gets current module path, maybe there is a better way
   addSelfModuleSym(c, path)
-
-  # Sharding gate. Off for every module except sem.nim. Belt-and-suspenders:
-  # also require `IsSystem` is not set, so even if a future change ever made
-  # the basename test match system.nim somehow, the system-module flag here
-  # would still veto it. `SystemModuleSuffix` is hardcoded everywhere; any
-  # split of system.nim would invalidate every other module's references
-  # into it. See user feedback 2026-05-20.
-  if IsSystem notin c.moduleFlags and decideShardingFromPath(path):
-    c.enableSharding = true
 
   if {SkipSystem, IsSystem} * c.moduleFlags == {}:
     let systemFile = ImportedFilename(path: stdlibFile("std/system"), name: "system", isSystem: true)
@@ -7462,14 +7242,6 @@ proc initSemContext(suffix: string; config: ProgramContext; moduleFlags: set[Mod
   result = SemContext(
     types: createBuiltinTypes(config.config.bits),
     thisModuleSuffix: suffix,
-    # Sharding is off at init time; the caller flips it on after
-    # `setupProgram` populates the buffer and the original file path
-    # becomes readable from the root cursor's line info. See `semcheckCore`
-    # for the actual gate. Keeping the default off ensures any code path
-    # that forgets to call the gate is safe — in particular system.nim
-    # (which must never shard) stays untouched even if a future refactor
-    # adds a new sem-entry-point without the gate.
-    enableSharding: false,
     moduleFlags: moduleFlags,
     g: config,
     phase: SemcheckTopLevelSyms,

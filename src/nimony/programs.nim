@@ -239,11 +239,37 @@ proc filterAllows*(f: ImportFilter; name: StrId): bool =
   of ImportExcept: result = name notin f.list
   of FromImport: result = name in f.list
 
+proc readShardSuffixesIfAny(suffix: string): seq[string] =
+  ## Look for `<suffix>.s.shards.txt` next to where `suffixToNif` would put
+  ## the `.s.nif`. Returns the full shard suffix list (including shard 0)
+  ## when sem.nim's post-sem sharder produced one; an empty seq otherwise.
+  ## Spillover-shard suffixes (`<base>_<i>`) do NOT have their own manifest,
+  ## so calling this with such a suffix correctly returns @[] and prevents
+  ## fan-out recursion.
+  result = @[]
+  let manifestPath = prog.main.dir / suffix & ".s.shards.txt"
+  if not fileExists(manifestPath): return
+  let contents =
+    try: readFile(manifestPath)
+    except: ""
+  if contents.len == 0: return
+  var i = 0
+  while i < contents.len:
+    var j = i
+    while j < contents.len and contents[j] != '\n': inc j
+    if j > i:
+      result.add contents.substr(i, j-1)
+    i = j + 1
+
 proc loadInterface*(suffix: string; iface: var Iface;
                     module: SymId; importTab: var OrderedTable[StrId, seq[SymId]];
                     converters: var Table[SymId, seq[SymId]];
                     exports: var seq[(string, ImportFilter)];
                     filter: ImportFilter) =
+  ## Sharding is transparent here: `load(suffix)` already merged sibling
+  ## shards' embedded indexes into a single `m.public` (and tagged each
+  ## entry with the shard it physically lives in). One walk over the
+  ## merged table reconstructs the full logical-module interface.
   let m = load(suffix)
   let alreadyLoaded = iface.len != 0
   var marker = filter.list

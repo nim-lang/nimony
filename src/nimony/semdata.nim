@@ -109,12 +109,6 @@ type
     instantiatedTypes*: Table[string, SymId]
     instantiatedProcs*: Table[(SymId, string), SymId]
     thisModuleSuffix*: string
-    enableSharding*: bool
-      ## True iff sem.nim should run the post-sem sharder. Decided once by
-      ## `decideShardingFromPath` after `setupProgram` has populated the
-      ## buffer (system.nim cannot match — see sharder gate). The sharder
-      ## itself is post-sem and self-contained, so sem proper is unaware
-      ## of this flag.
     moduleFlags*: set[ModuleFlag]
     features*: set[Feature]
     processedModules*: Table[string, SymId] # suffix to sym

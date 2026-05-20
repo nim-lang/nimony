@@ -18,7 +18,7 @@ when defined(nimony):
   {.feature: "lenientnils".}
   {.feature: "untyped".}
 import std/[os, tables, sets, syncio, hashes, assertions, strutils, times, formatfloat, dirs, paths]
-import semos, nifconfig, nimony_model, semdata, langmodes
+import semos, nifconfig, nimony_model, semdata, langmodes, sharding
 import ".." / gear2 / modnames
 import ".." / lib / [tooldirs, platform, nifindexes, symparser, docpaths, argsfinder]
 import ".." / models / nifindex_tags
@@ -48,11 +48,6 @@ proc semmedFile(config: NifConfig; f: FilePair; bundle: string; preserveDocs = f
   ## Mirrors the `.p.nif` / `.pc.nif` split so the doc and code-gen flows
   ## don't trample each other's post-sem artifact.
   config.nifcachePath / bundle / f.modname & (if preserveDocs: ".sc.nif" else: ".s.nif")
-proc shardsManifestFile(config: NifConfig; f: FilePair; bundle: string): string =
-  ## Sibling of `.s.nif` written by sem.nim's post-sem sharder when (and
-  ## only when) it produces more than one shard. Plain text, one shard
-  ## suffix per line. See `populateShardsFromManifest` in `traverseDeps`.
-  config.nifcachePath / bundle / f.modname & ".s.shards.txt"
 proc shardedSemmedFile(config: NifConfig; shardSuffix, bundle: string): string =
   ## `.s.nif` path for an individual shard (shard 0 is the base name, spillover
   ## shards are `<base>_<i>`). The single-shard case routes through
@@ -579,26 +574,6 @@ proc importSystem(c: var DepContext; current: Node) =
     existingNode = imported.id
   current.deps.add existingNode
 
-proc populateShardsFromManifest(c: var DepContext; current: Node) =
-  ## Only meaningful for the isFinal=true pass — that's when sem.nim has
-  ## already run and the shard manifest, if any, exists on disk. For
-  ## non-sharded modules (the common case) the manifest file doesn't
-  ## exist and `current.shards` keeps its singleton default.
-  if current.files.len == 0: return
-  let manifestPath = c.config.shardsManifestFile(current.files[0], current.plugin)
-  if not semos.fileExists(manifestPath): return
-  let contents = onRaiseQuit readFile(manifestPath)
-  var parsed: seq[string] = @[]
-  var i = 0
-  while i < contents.len:
-    var j = i
-    while j < contents.len and contents[j] != '\n': inc j
-    if j > i:
-      parsed.add contents.substr(i, j-1)
-    i = j + 1
-  if parsed.len > 0:
-    current.shards = parsed
-
 proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
   let depsFile: string
   if not c.isGeneratingFinal:
@@ -606,7 +581,6 @@ proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
     depsFile = c.config.depsFile(p, c.cmd == DoDoc)
   else:
     depsFile = c.config.deps2File(p)
-    populateShardsFromManifest c, current
 
   var stream = nifstreams.open(depsFile)
   try:
@@ -687,6 +661,7 @@ proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool) 
     b.withTree "input":
       b.addIntLit 0  # M.x.nif
       b.addIntLit 1  # main.live.nif
+
 
 proc generateDocBuildFile(c: DepContext): string =
   ## Doc backend: each per-module `dagon module` rule produces both a `.html`
@@ -932,6 +907,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
               b.addStrLit liveFile
             b.withTree "output":
               b.addStrLit c.config.shardedNifcFile(shard, backend)
+
 
       # Link executable: gather every shard's object file.
       b.withTree "do":
@@ -1444,6 +1420,22 @@ proc buildGraph*(config: sink NifConfig; project: string;
     c = initDepContext(config, project, nifler, true, forceRebuild, moduleFlags, cmd)
     let backend = c.config.nifcachePath / c.rootNode.files[0].modname
     onRaiseQuit createDir(path(backend))
+    # Sharding pass — runs inline between the frontend nifmake (which has
+    # already produced the umbrella `.s.nif` per module) and the backend
+    # nifmake. For modules whose source basename matches the gate
+    # (currently only sem.nim, see `sharding.shouldShard`), partitions
+    # the umbrella into `<modname>_<i>.s.nif` files; the backend build
+    # rules iterate `Node.shards` so each shard is a parallel
+    # hexer/dceEmit/nifc/cc invocation. The umbrella file is preserved
+    # untouched so cross-module / cross-shard symbol lookups via
+    # `programs.load` keep working without any sharding awareness.
+    for n in c.nodes:
+      if n.plugin.len > 0: continue
+      if n.files.len == 0: continue
+      if not sharding.shouldShard(n.files[0].nimFile): continue
+      let umbrellaPath = c.config.semmedFile(n.files[0], n.plugin)
+      if not semos.fileExists(umbrellaPath): continue
+      n.shards = sharding.shardSemFile(umbrellaPath, n.files[0].modname)
     let buildFinalFilename = generateFinalBuildFile(c, commandLineArgsNifc, passC, passL)
     # Linkers (gcc/clang/ld/ar) don't auto-create the output directory.
     # When the user passes `--out:bin/foo` or `--outdir:bin`, materialise

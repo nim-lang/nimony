@@ -6,7 +6,7 @@
 
 ## Create an index file for a NIF file.
 
-import std / [tables, assertions, hashes, syncio, strutils]
+import std / [tables, assertions, hashes, syncio, strutils, os]
 import bitabs, lineinfos, nifreader, nifstreams, nifcursors, nifchecksums, symparser, vfs
 
 when defined(nimony):
@@ -227,11 +227,12 @@ proc readSymbolSection(s: var Stream; tab: var seq[(string, string)]) =
       #t = next(s)
 
 proc readIndex*(indexName: string): NifIndex =
+  result = default(NifIndex)
+  if not fileExists(indexName): return
   var s = nifstreams.open(indexName)
   let res = processDirectives(s.r)
   assert res == Success
 
-  result = default(NifIndex)
   var t = next(s)
   if t.tag != TagId(IndexIdx):
     assert false, "expected 'index' tag"
