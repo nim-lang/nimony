@@ -48,6 +48,16 @@ proc semmedFile(config: NifConfig; f: FilePair; bundle: string; preserveDocs = f
   ## Mirrors the `.p.nif` / `.pc.nif` split so the doc and code-gen flows
   ## don't trample each other's post-sem artifact.
   config.nifcachePath / bundle / f.modname & (if preserveDocs: ".sc.nif" else: ".s.nif")
+proc shardsManifestFile(config: NifConfig; f: FilePair; bundle: string): string =
+  ## Sibling of `.s.nif` written by sem.nim's post-sem sharder when (and
+  ## only when) it produces more than one shard. Plain text, one shard
+  ## suffix per line. See `populateShardsFromManifest` in `traverseDeps`.
+  config.nifcachePath / bundle / f.modname & ".s.shards.txt"
+proc shardedSemmedFile(config: NifConfig; shardSuffix, bundle: string): string =
+  ## `.s.nif` path for an individual shard (shard 0 is the base name, spillover
+  ## shards are `<base>_<i>`). The single-shard case routes through
+  ## `semmedFile` and stays byte-identical; only sharded backends call this.
+  config.nifcachePath / bundle / shardSuffix & ".s.nif"
 proc docOutDir(config: NifConfig): string =
   ## User-facing destination for `nimony doc`. Honors `--outdir:DIR`; default
   ## is `htmldocs/` (matches Nim's convention).
@@ -72,6 +82,24 @@ proc docIdxFile(config: NifConfig; f: FilePair): string =
   ## hash so it can't collide regardless of source layout.
   config.nifcachePath / "docs" / f.modname & ".docidx"
 proc hexedFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".x.nif"
+proc shardedHexedFile(config: NifConfig; shardSuffix: string): string =
+  config.nifcachePath / shardSuffix & ".x.nif"
+proc shardedObjFile(config: NifConfig; shardSuffix, backendDir: string): string =
+  let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
+  base / shardSuffix & ".o"
+proc shardedNifcFile(config: NifConfig; shardSuffix, backendDir: string): string =
+  let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
+  base / shardSuffix & ".c.nif"
+proc shardedCFile(config: NifConfig; shardSuffix, backendDir: string): string =
+  let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
+  base / shardSuffix & ".c"
+proc shardedLlFile(config: NifConfig; shardSuffix, backendDir: string): string =
+  let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
+  base / shardSuffix & ".ll"
+proc shardedGenFile(config: NifConfig; shardSuffix, backendDir: string): string =
+  case config.backend
+  of backendC: config.shardedCFile(shardSuffix, backendDir)
+  of backendLLVM: config.shardedLlFile(shardSuffix, backendDir)
 proc nifcFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
   base / f.modname & ".c.nif"
@@ -140,6 +168,14 @@ type
     isSystem: bool
     plugin: string
     cyclicFiles: seq[int] ## indices into `files` that are cyclic module members (need separate outputs)
+    shards: seq[string]
+      ## Module suffixes this node produces. Defaults to `@[files[0].modname]`
+      ## for non-sharded modules (the historical 1:1 mapping). Sem.nim's
+      ## post-sem sharder writes a `<modname>.s.shards.txt` manifest listing
+      ## the shards it emitted; `populateShardsFromManifest` reads it
+      ## between the frontend and backend nifmake runs. Backend build rules
+      ## iterate this seq so a sharded module gets N parallel
+      ## hexer/nifc/cc invocations and the linker collects all N objects.
 
   Command* = enum
     DoCheck, # like `nim check`
@@ -236,7 +272,7 @@ proc importSingleFile(c: var DepContext; f1: string; info: PackedLineInfo;
   let existingNode = c.processedModules.getOrDefault(p.modname, -1)
   if existingNode == -1:
     var imported = Node(files: @[p], id: c.nodes.len, parent: current.id, isSystem: isSystem,
-                        plugin: current.plugin)
+                        plugin: current.plugin, shards: @[p.modname])
     current.deps.add imported.id
     c.processedModules[p.modname] = imported.id
     c.nodes.add imported
@@ -256,7 +292,8 @@ proc processPluginImport(c: var DepContext; f: ImportedFilename; info: PackedLin
   let existingNode = c.processedModules.getOrDefault(p.modname, -1)
   if existingNode == -1:
     var imported = Node(files: @[p], id: c.nodes.len,
-                        parent: current.id, isSystem: false, plugin: f.plugin)
+                        parent: current.id, isSystem: false, plugin: f.plugin,
+                        shards: @[p.modname])
     current.deps.add imported.id
     c.processedModules[p.modname] = imported.id
     c.nodes.add imported
@@ -534,12 +571,33 @@ proc importSystem(c: var DepContext; current: Node) =
   if existingNode == -1:
     #echo "NIFLING ", p.nimFile, " -> ", c.config.parsedFile(p)
     execNifler c, p
-    var imported = Node(files: @[p], id: c.nodes.len, parent: current.id, isSystem: true)
+    var imported = Node(files: @[p], id: c.nodes.len, parent: current.id, isSystem: true,
+                        shards: @[p.modname])
     c.nodes.add imported
     c.processedModules[p.modname] = imported.id
     traverseDeps c, p, imported
     existingNode = imported.id
   current.deps.add existingNode
+
+proc populateShardsFromManifest(c: var DepContext; current: Node) =
+  ## Only meaningful for the isFinal=true pass — that's when sem.nim has
+  ## already run and the shard manifest, if any, exists on disk. For
+  ## non-sharded modules (the common case) the manifest file doesn't
+  ## exist and `current.shards` keeps its singleton default.
+  if current.files.len == 0: return
+  let manifestPath = c.config.shardsManifestFile(current.files[0], current.plugin)
+  if not semos.fileExists(manifestPath): return
+  let contents = onRaiseQuit readFile(manifestPath)
+  var parsed: seq[string] = @[]
+  var i = 0
+  while i < contents.len:
+    var j = i
+    while j < contents.len and contents[j] != '\n': inc j
+    if j > i:
+      parsed.add contents.substr(i, j-1)
+    i = j + 1
+  if parsed.len > 0:
+    current.shards = parsed
 
 proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
   let depsFile: string
@@ -548,6 +606,7 @@ proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
     depsFile = c.config.depsFile(p, c.cmd == DoDoc)
   else:
     depsFile = c.config.deps2File(p)
+    populateShardsFromManifest c, current
 
   var stream = nifstreams.open(depsFile)
   try:
@@ -703,6 +762,20 @@ proc generateDocBuildFile(c: DepContext): string =
         b.addStrLit indexOut
   discard rootFlags  # silence unused warning if logging is later removed
 
+# Per-shard helper: produces the canonical `.x.nif` and `.dce.nif`
+# paths for one shard. Shard 0 of the root module is backend-specific
+# (the --isMain build sits in `backendDir/`). Every other shard
+# (whether sibling of root or any non-root module's only shard) lands
+# in the shared nifcache so non-main compilations don't see the
+# --isMain artifact.
+proc shardXAndDce(c: DepContext; nodeIdx, shardIdx: int; shard, backendDir: string):
+    (string, string) =
+  if nodeIdx == 0 and shardIdx == 0:
+    (backendDir / shard & ".x.nif", backendDir / shard & ".dce.nif")
+  else:
+    (c.config.nifcachePath / shard & ".x.nif",
+      c.config.nifcachePath / shard & ".dce.nif")
+
 proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, passL: string): string =
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".final.build.nif"
   var b = nifbuilder.open(result)
@@ -830,46 +903,39 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       let backendDir = c.config.nifcachePath / backend
       let liveFile = backendDir / c.rootNode.files[0].modname & ".live.nif"
 
-      # Split DCE — phase 1: collect every module's .dce.nif analysis,
-      # compute the global live set + generic-instance resolve table,
-      # write the shared <main>.live.nif. Single small serial node.
+      # Split DCE — phase 1: collect every module's per-shard .dce.nif
+      # analyses, compute the global live set + generic-instance resolve
+      # table, write the shared <main>.live.nif. Single small serial node.
       b.withTree "do":
         b.addIdent "dceLive"
         for i, n in pairs c.nodes:
-          # The .dce.nif sits next to its corresponding .x.nif.
-          var dceFile = ""
-          if i == 0:
-            dceFile = backendDir / n.files[0].modname & ".dce.nif"
-          else:
-            dceFile = c.config.nifcachePath / n.files[0].modname & ".dce.nif"
-          b.withTree "input":
-            b.addStrLit dceFile
+          for shardIdx, shard in pairs n.shards:
+            let (_, dceFile) = shardXAndDce(c, i, shardIdx, shard, backendDir)
+            b.withTree "input":
+              b.addStrLit dceFile
         b.withTree "output":
           b.addStrLit liveFile
 
-      # Split DCE — phase 2: per-module emit. Each `(do dceEmit ...)` is
+      # Split DCE — phase 2: per-shard emit. Each `(do dceEmit ...)` is
       # independent (all share live.nif as a read-only input), so nifmake
-      # parallelises them across cores.
+      # parallelises them across cores. Each shard gets its own .c.nif.
       for i, n in pairs c.nodes:
-        b.withTree "do":
-          b.addIdent "dceEmit"
-          b.withTree "args":
-            b.addStrLit "--outdir:" & backendDir
-          b.withTree "input":
-            # Root module's .x.nif is backend-specific (--isMain).
-            if i == 0:
-              b.addStrLit backendDir / n.files[0].modname & ".x.nif"
-            else:
-              b.addStrLit c.config.hexedFile(n.files[0])
-          b.withTree "input":
-            b.addStrLit liveFile
-          b.withTree "output":
-            b.addStrLit c.config.nifcFile(n.files[0], backend)
+        for shardIdx, shard in pairs n.shards:
+          let (xFile, _) = shardXAndDce(c, i, shardIdx, shard, backendDir)
+          b.withTree "do":
+            b.addIdent "dceEmit"
+            b.withTree "args":
+              b.addStrLit "--outdir:" & backendDir
+            b.withTree "input":
+              b.addStrLit xFile
+            b.withTree "input":
+              b.addStrLit liveFile
+            b.withTree "output":
+              b.addStrLit c.config.shardedNifcFile(shard, backend)
 
-      # Link executable
+      # Link executable: gather every shard's object file.
       b.withTree "do":
         b.addIdent "link"
-        # Input: all object files
         var objFiles = initHashSet[string]()
         for cfile in c.toBuild:
           let obj = c.config.nifcachePath / backend / cfile.obj
@@ -877,10 +943,11 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
             b.withTree "input":
               b.addStrLit obj
         for v in c.nodes:
-          let obj = c.config.objFile(v.files[0], backend)
-          if not objFiles.containsOrIncl(obj):
-            b.withTree "input":
-              b.addStrLit obj
+          for shard in v.shards:
+            let obj = c.config.shardedObjFile(shard, backend)
+            if not objFiles.containsOrIncl(obj):
+              b.withTree "input":
+                b.addStrLit obj
         b.withTree "output":
           b.addStrLit c.config.exeFile(c.rootNode.files[0], backend)
 
@@ -899,71 +966,63 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
               b.addStrLit obj
 
       for i, v in pairs c.nodes:
-        let obj = c.config.objFile(v.files[0], backend)
-        if not objFiles.containsOrIncl(obj):
-          b.withTree "do":
-            b.addIdent "cc"
-            b.withTree "input":
-              b.addStrLit c.config.genFile(v.files[0], backend)
-            b.withTree "output":
-              b.addStrLit obj
-
-        # Build C/LLVM IR files from .c.nif files
-        b.withTree "do":
-          b.addIdent "nifc"
-          b.withTree "args":
-            b.addStrLit "--nimcache:" & backendDir
-          if i == 0:
-            b.withTree "args":
-              b.addStrLit "--isMain"
-          b.withTree "input":
-            b.addStrLit c.config.nifcFile(v.files[0], backend)
-          b.withTree "output":
-            b.addStrLit c.config.genFile(v.files[0], backend)
-
-        # Build .x.nif files from .s.nif files via hexer.
-        # For the root module (i==0) the output is backend-specific so that
-        # its --isMain version does not overwrite the shared .x.nif that other
-        # compilations produce when this module is a non-main dependency.
-        b.withTree "do":
-          b.addIdent "hexer"
-          if i == 0:
-            b.withTree "args":
-              b.addStrLit "--isMain"
-            b.withTree "args":
-              b.addStrLit "--app:" & $c.config.appType
-            b.withTree "args":
-              b.addStrLit "--outdir:" & backendDir
-          b.withTree "input":
-            b.addStrLit c.config.semmedFile(v.files[0], v.plugin)
-          # Cross-module hexer dep: imports' `.s.idx.nif` carries both the
-          # interface checksum and inline-proc body hashes (see
-          # `processForChecksum`'s inline path). Listing imports' `.s.idx.nif`
-          # — and *not* the bulkier `.s.nif` — gives finer-grained incremental:
-          # a non-inline private body change in import A keeps A's
-          # `.s.idx.nif` byte-identical (mtime preserved), so B's hexer
-          # doesn't rerun. Same-module `.s.idx.nif` is intentionally omitted
-          # — hexer reads its own embedded index out of `.s.nif`.
-          var seenImports = initHashSet[string]()
-          for depIdx in v.deps:
-            let idxFile = c.config.indexFile(c.nodes[depIdx].files[0], c.nodes[depIdx].plugin)
-            if not seenImports.containsOrIncl(idxFile):
+        for shardIdx, shard in pairs v.shards:
+          let obj = c.config.shardedObjFile(shard, backend)
+          if not objFiles.containsOrIncl(obj):
+            b.withTree "do":
+              b.addIdent "cc"
               b.withTree "input":
-                b.addStrLit idxFile
-          b.withTree "output":
-            if i == 0:
-              b.addStrLit backendDir / v.files[0].modname & ".x.nif"
-            else:
-              b.addStrLit c.config.hexedFile(v.files[0])
-          # `.dce.nif` is emitted alongside `.x.nif` by `bin/hexer c`. It
-          # is consumed only by the split-DCE `dceLive` node, but listing
-          # it here lets nifmake track it as a real artifact and order
-          # `dceLive` after every per-module hexer.
-          b.withTree "output":
-            if i == 0:
-              b.addStrLit backendDir / v.files[0].modname & ".dce.nif"
-            else:
-              b.addStrLit c.config.nifcachePath / v.files[0].modname & ".dce.nif"
+                b.addStrLit c.config.shardedGenFile(shard, backend)
+              b.withTree "output":
+                b.addStrLit obj
+
+          # Build C/LLVM IR files from .c.nif files. --isMain is exclusive
+          # to the root module's shard 0 — that's the one that generates the
+          # `main()` entry point. Sibling shards of the root module are
+          # plain non-main translation units.
+          b.withTree "do":
+            b.addIdent "nifc"
+            b.withTree "args":
+              b.addStrLit "--nimcache:" & backendDir
+            if i == 0 and shardIdx == 0:
+              b.withTree "args":
+                b.addStrLit "--isMain"
+            b.withTree "input":
+              b.addStrLit c.config.shardedNifcFile(shard, backend)
+            b.withTree "output":
+              b.addStrLit c.config.shardedGenFile(shard, backend)
+
+          # Build .x.nif files from .s.nif files via hexer.
+          # Same `--isMain` rule as nifc: only root-module shard 0.
+          b.withTree "do":
+            b.addIdent "hexer"
+            if i == 0 and shardIdx == 0:
+              b.withTree "args":
+                b.addStrLit "--isMain"
+              b.withTree "args":
+                b.addStrLit "--app:" & $c.config.appType
+              b.withTree "args":
+                b.addStrLit "--outdir:" & backendDir
+            b.withTree "input":
+              b.addStrLit c.config.shardedSemmedFile(shard, v.plugin)
+            # Cross-module hexer dep: imports' `.s.idx.nif` (the umbrella
+            # index, unchanged across sharding — per user 2026-05-20 it
+            # carries just the interface checksum). One `.s.idx.nif` per
+            # imported logical module, not per shard.
+            var seenImports = initHashSet[string]()
+            for depIdx in v.deps:
+              let idxFile = c.config.indexFile(c.nodes[depIdx].files[0], c.nodes[depIdx].plugin)
+              if not seenImports.containsOrIncl(idxFile):
+                b.withTree "input":
+                  b.addStrLit idxFile
+            let (xOut, dceOut) = shardXAndDce(c, i, shardIdx, shard, backend)
+            b.withTree "output":
+              b.addStrLit xOut
+            # `.dce.nif` emitted alongside `.x.nif` by `bin/hexer c`. Listed
+            # here so nifmake tracks it as a real artifact and orders
+            # `dceLive` after every per-shard hexer.
+            b.withTree "output":
+              b.addStrLit dceOut
 
 proc cachedConfigFile(config: NifConfig): string =
   config.nifcachePath / "cachedconfigfile.txt"
@@ -1130,7 +1189,8 @@ proc initDepContext(config: sink NifConfig; project, nifler: string; isFinal, fo
     forceRebuild: forceRebuild, moduleFlags: moduleFlags, nimsem: findTool("nimsem"),
     cmd: cmd, isGeneratingFinal: isFinal)
   let p = result.toPair(project)
-  let root = Node(files: @[p], id: 0, parent: -1, active: 0, isSystem: IsSystem in moduleFlags)
+  let root = Node(files: @[p], id: 0, parent: -1, active: 0, isSystem: IsSystem in moduleFlags,
+                  shards: @[p.modname])
   result.rootNode = root
   result.nodes.add root
   result.processedModules[p.modname] = 0

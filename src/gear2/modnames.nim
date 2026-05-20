@@ -9,7 +9,7 @@ from std / os import splitFile, relativePath, isAbsolute, getCurrentDir, `/`
 
 include ".." / lib / compat2
 
-proc extractModulename(x: string): string = splitFile(x).name
+proc extractModulename*(x: string): string = splitFile(x).name
 
 const
   PrefixLen = 3 # we need to keep it short because it ends up everywhere in the produced C++ code
