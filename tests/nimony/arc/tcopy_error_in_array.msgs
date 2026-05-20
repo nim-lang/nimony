@@ -1,0 +1,1 @@
+tests/nimony/arc/tcopy_error_in_array.nim(17, 15) Error: '=dup' is not available for type <array[0..1, MyObj]>

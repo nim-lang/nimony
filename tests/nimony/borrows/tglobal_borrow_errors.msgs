@@ -1,0 +1,1 @@
+tests/nimony/borrows/tglobal_borrow_errors.nim(6, 23) Error: use of global/thread-local variable 'globalInt' in .noSideEffect context

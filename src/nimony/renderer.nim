@@ -1618,10 +1618,10 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       gcallsystem(g, n, "=copy")
 
     of SinkhX:
-       gcallsystem(g, n, "=sink")
+      gcallsystem(g, n, "=sink")
 
     of TraceX:
-       gcallsystem(g, n, "=sink")
+      gcallsystem(g, n, "=trace")
 
     of DefaultobjX, DefaulttupX, DefaultdistinctX:
       gcallsystem(g, n, "default")
