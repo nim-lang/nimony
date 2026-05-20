@@ -316,18 +316,16 @@ proc extractWasPragma(n: Cursor): string =
   result = ""
   if n.substructureKind == PragmasU:
     var p = n
-    var found = false
     p.loopInto:
-      if not found and p.pragmaKind == WasP:
+      if p.pragmaKind == WasP:
         p.into:
           if p.kind == StringLit:
             result = pool.strings[p.litId]
           elif p.kind == Ident:
             result = pool.strings[p.litId]
-          found = true
           while p.hasMore: skip p
-      else:
-        skip p
+        return
+      skip p
 
 proc emitDbgDeclare(c: var LLVMCode; localName: string; wasName: string;
                     info: PackedLineInfo) =
@@ -355,30 +353,26 @@ proc extractAlignValue(pragmas: Cursor): int64 =
   result = 0
   if pragmas.substructureKind == PragmasU:
     var p = pragmas
-    var found = false
     p.loopInto:
-      if not found and p.pragmaKind == AlignP:
+      if p.pragmaKind == AlignP:
         p.into:
           result = pool.integers[p.intId]
-          found = true
           while p.hasMore: skip p
-      else:
-        skip p
+        return
+      skip p
 
 proc extractBitfieldBits(pragmas: Cursor): int64 =
   ## Extract the (bits N) value from field pragmas, or 0 if none.
   result = 0
   if pragmas.substructureKind == PragmasU:
     var p = pragmas
-    var found = false
     p.loopInto:
-      if not found and p.pragmaKind == BitsP:
+      if p.pragmaKind == BitsP:
         p.into:
           result = pool.integers[p.intId]
-          found = true
           while p.hasMore: skip p
-      else:
-        skip p
+        return
+      skip p
 
 proc baseTypeOfObject*(m: var MainModule; objBody: Cursor): Cursor =
   ## For an object type with inheritance, return the cursor to the base type symbol.
@@ -582,7 +576,7 @@ proc parseProcPragmasLLVM(c: var LLVMCode; n: var Cursor): PragmaInfo =
         skip n
       of ImportcppP, ImportcP, ExportcP:
         n.into:
-          if n.hasMore and n.kind == StringLit:
+          if n.kind == StringLit:
             result.extern = n.litId
             inc n
           result.flags.incl pk

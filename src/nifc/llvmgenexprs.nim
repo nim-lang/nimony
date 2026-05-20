@@ -713,9 +713,8 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
         let baseTyp = genTypeLLVMReadOnly(c, enumBody)
         skip enumBody # skip base type
         # Search for the field
-        var foundEnumField = false
         while enumBody.hasMore:
-          if enumBody.kind == ParLe and enumBody.substructureKind == EfldU:
+          if enumBody.substructureKind == EfldU:
             enumBody.into:
               if enumBody.kind == SymbolDef and enumBody.symId == s:
                 inc enumBody
@@ -726,10 +725,8 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
                   result = LLValue(name: c.tok($pool.uintegers[enumBody.uintId]), typ: c.tok(baseTyp))
                 else:
                   result = LLValue(name: c.tok("0"), typ: c.tok(baseTyp))
-                foundEnumField = true
+                return
               while enumBody.hasMore: skip enumBody
-            if foundEnumField:
-              return
           else:
             skip enumBody
         result = LLValue(name: c.tok("0"), typ: c.tok(baseTyp))
@@ -958,7 +955,6 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       skip n
       suffix = n
       suffixStr = pool.strings[suffix.litId]
-      inc n
       while n.hasMore: skip n
     if value.kind == StringLit:
       genExprLLVM(c, value, result)
@@ -1014,7 +1010,7 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       c.emitLine "  store " & typ & " zeroinitializer, ptr " & c.str(tmp)
 
       while n.hasMore:
-        if n.kind == ParLe and n.substructureKind == KvU:
+        if n.substructureKind == KvU:
           n.into:
             let fldSym = n.symId
             skip n # field name (SymbolDef)

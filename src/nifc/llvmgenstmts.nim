@@ -346,7 +346,6 @@ proc genStoreLLVM(c: var LLVMCode; n: var Cursor) =
 
 proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
   ## Overflow-checked arithmetic using LLVM intrinsics
-  var handled = true
   var typ = ""
   var intrinsic = ""
   var bitsStr = $c.bits
@@ -363,37 +362,31 @@ proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
     of MulC: intrinsic.add "smul"
     else:
       # For div/mod we don't have LLVM intrinsics, fall through to regular op
-      skip n
-      skip n # target
       while n.hasMore: skip n
-      handled = false
+      return
 
-    if handled:
-      n.into: # operation tag
-        let isUnsigned = n.typeKind == UT
-        if isUnsigned:
-          intrinsic = intrinsic.replace("sadd", "uadd").replace("ssub", "usub").replace("smul", "umul")
+    n.into: # operation tag
+      let isUnsigned = n.typeKind == UT
+      if isUnsigned:
+        intrinsic = intrinsic.replace("sadd", "uadd").replace("ssub", "usub").replace("smul", "umul")
 
-        n.into: # type tag (IT or UT)
-          if n.kind == IntLit:
-            let bits = pool.integers[n.intId]
-            if bits != -1:
-              bitsStr = $bits
-            inc n
-          while n.hasMore: skip n
-
-        typ = "i" & bitsStr
-        intrinsic.add ".with.overflow." & typ
-
-        genExprLLVM(c, n, lhs)
-        genExprLLVM(c, n, rhs)
+      n.into: # type tag (IT or UT)
+        if n.kind == IntLit:
+          let bits = pool.integers[n.intId]
+          if bits != -1:
+            bitsStr = $bits
+          inc n
         while n.hasMore: skip n
 
-      genLvalueLLVM(c, n, target)
+      typ = "i" & bitsStr
+      intrinsic.add ".with.overflow." & typ
+
+      genExprLLVM(c, n, lhs)
+      genExprLLVM(c, n, rhs)
       while n.hasMore: skip n
 
-  if not handled:
-    return
+    genLvalueLLVM(c, n, target)
+    while n.hasMore: skip n
 
   # Call the intrinsic
   let result_struct = c.temp()
