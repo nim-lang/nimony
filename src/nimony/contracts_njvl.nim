@@ -837,6 +837,13 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
         skip pc # skips type
         traverseExpr c, pc
         skipParRi pc
+      of NilX:
+        # `(nil)` / `(nil <Type>)` / `(nil <Type> <arg>)` — nil literal,
+        # possibly carrying its formal type subtree (which for itertype /
+        # closure-proctype contains raw param SymbolDefs that the generic
+        # expression walk would mis-classify). Nothing in here can hold
+        # free variables we'd want to track, so skip the whole subtree.
+        skip pc
       else:
         inc nested
         inc pc
