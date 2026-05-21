@@ -95,7 +95,7 @@ Options:
                         and existing clones only)
   --deep                always clone with full history (default: shallow,
                         auto-promoted to deep when a commit hash is pinned)
-  --parallel:N|auto         run up to N git clones/fetches in parallel
+  --parallel:N|auto     run up to N git clones/fetches in parallel
                         (default: 1; auto = #cores). BFS dispatch order
                         is preserved per depth.
   --nimony              `search` only: restrict to GitHub topics `nimony`
