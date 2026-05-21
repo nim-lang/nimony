@@ -63,8 +63,8 @@ in `nim.cfg` is preserved across runs.
 
 import std / [os, osproc, parseopt, strutils, syncio, assertions, tables, deques, algorithm, json, sets, times, terminal, streams]
 
-include nifprelude
-import tooldirs
+include ".." / lib / nifprelude
+import ".." / lib / tooldirs
 
 const
   Version = "0.1.0"
