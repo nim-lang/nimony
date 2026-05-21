@@ -19,9 +19,6 @@ The system module is always imported implicitly.
 `string` and `seq` use value semantics. Assignment copies; strings
 are copy-on-write internally.
 
-- `concat` vs `&`: `&` allocates a new string per call. Use `concat`
-  when joining more than two pieces — it pre-calculates the total length
-  and allocates once.
 - `beginStore` / `endStore`: The safe way to do bulk writes into a
   string through a pointer. `beginStore(s, len, start)` returns a
   `ptr UncheckedArray[char]` pointing at position `start`; you may
