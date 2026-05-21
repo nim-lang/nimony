@@ -524,7 +524,6 @@ proc addObjectFieldsLLVM(c: var LLVMCode; n: var Cursor; fields: var seq[string]
         bitfieldUnit = 0
         var unionCur = n
         fields.add genUnionBodyLLVM(c, unionCur)
-        skip n
         addObjectFieldsLLVM(c, n, fields, bitfieldAccum, bitfieldUnit)
       elif n.typeKind == ObjectT:
         flushBitfieldAccum(fields, bitfieldAccum)
