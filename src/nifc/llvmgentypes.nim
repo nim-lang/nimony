@@ -444,6 +444,13 @@ proc genUnionBodyLLVM(c: var LLVMCode; n: var Cursor): string =
         let al = typeAlignBits(c, decl.typ)
         if sz > maxSizeBits: maxSizeBits = sz
         if al > maxAlignBits: maxAlignBits = al
+      elif n.typeKind in {ObjectT, UnionT}:
+        # Anonymous nested type inside union: compute its aggregate size/align
+        let sz = typeSizeBits(c, n)
+        let al = typeAlignBits(c, n)
+        if sz > maxSizeBits: maxSizeBits = sz
+        if al > maxAlignBits: maxAlignBits = al
+        skip n
       else:
         skip n
   let sizeBytes = (maxSizeBits + 7) div 8
@@ -488,28 +495,20 @@ proc accumulateBitfield(c: var LLVMCode; fields: var seq[string];
     bitfieldUnit = unitBits
   bitfieldAccum += bits
 
-proc genObjectBodyLLVM(c: var LLVMCode; n: var Cursor): string =
-  ## Generate the fields of an object as an LLVM struct body.
-  ## For unions, delegates to genUnionBodyLLVM.
+proc addObjectFieldsLLVM(c: var LLVMCode; n: var Cursor; fields: var seq[string];
+                         bitfieldAccum: var int64; bitfieldUnit: var int) =
+  ## Recursively collect LLVM field types from an Object/Union body into a
+  ## flat `fields` sequence. Uses `n.into` for scope management at each
+  ## nesting level — no manual ParRi counting needed.
   let kind = n.typeKind
-  if kind == UnionT:
-    return genUnionBodyLLVM(c, n)
-
-  var fields: seq[string] = @[]
-  var bitfieldAccum = 0'i64
-  var bitfieldUnit = 0 # size of the current bitfield storage unit in bits
-
   n.into:
     if kind == ObjectT:
-      if n.kind == DotToken:
-        inc n
-      elif n.kind == Symbol:
+      if n.kind == Symbol:
         let baseName = mangleSym(c, n.symId)
         fields.add "%" & baseName
         inc n
-      else:
-        error c.m, "expected `Symbol` or `.` for inheritance but got: ", n
-
+      elif n.kind == DotToken:
+        inc n
     while n.hasMore:
       if n.substructureKind == FldU:
         var decl = takeFieldDecl(n)
@@ -521,21 +520,101 @@ proc genObjectBodyLLVM(c: var LLVMCode; n: var Cursor): string =
           bitfieldUnit = 0
           var t = decl.typ
           fields.add genTypeLLVM(c, t)
-      elif n.typeKind == ObjectT:
-        flushBitfieldAccum(fields, bitfieldAccum)
-        bitfieldUnit = 0
-        # Anonymous nested object — recurse (generates nested struct)
-        fields.add genObjectBodyLLVM(c, n)
       elif n.typeKind == UnionT:
         flushBitfieldAccum(fields, bitfieldAccum)
         bitfieldUnit = 0
-        # Anonymous nested union
         fields.add genUnionBodyLLVM(c, n)
+      elif n.typeKind == ObjectT:
+        flushBitfieldAccum(fields, bitfieldAccum)
+        bitfieldUnit = 0
+        addObjectFieldsLLVM(c, n, fields, bitfieldAccum, bitfieldUnit)
       else:
         error c.m, "expected `fld` but got: ", n
 
+proc genObjectBodyLLVM(c: var LLVMCode; n: var Cursor): string =
+  ## Generate the fields of an object as an LLVM struct body.
+  ## For unions, delegates to genUnionBodyLLVM.
+  let kind = n.typeKind
+  if kind == UnionT:
+    return genUnionBodyLLVM(c, n)
+  var fields: seq[string] = @[]
+  var bitfieldAccum = 0'i64
+  var bitfieldUnit = 0
+  addObjectFieldsLLVM(c, n, fields, bitfieldAccum, bitfieldUnit)
   flushBitfieldAccum(fields, bitfieldAccum)
   result = "{ " & fields.join(", ") & " }"
+
+proc searchFieldIdx(c: var LLVMCode; body: var Cursor; fldSym: SymId;
+                    fieldIdx: var int; bitfieldAccum: var int64;
+                    bitfieldUnit: var int): bool =
+  ## Recursively search for `fldSym` in an Object/Union body, updating
+  ## `fieldIdx` to match the flat LLVM struct index. Returns true if found.
+  ## Uses `n.into` for scope management at each nesting level.
+  let kind = body.typeKind
+  result = false
+  body.into:
+    if kind == ObjectT:
+      if body.kind == Symbol:
+        inc body
+        fieldIdx = 1
+      elif body.kind == DotToken:
+        inc body
+    while body.hasMore and not result:
+      if body.substructureKind == FldU:
+        let decl = takeFieldDecl(body)
+        let bits = extractBitfieldBits(decl.pragmas)
+        if bits > 0:
+          let unitBits = typeSizeBits(c, decl.typ)
+          if bitfieldUnit == 0:
+            bitfieldUnit = unitBits
+          if unitBits != bitfieldUnit or bitfieldAccum + bits > bitfieldUnit:
+            if bitfieldAccum > 0: inc fieldIdx
+            bitfieldAccum = 0
+            bitfieldUnit = unitBits
+          if decl.name.kind == SymbolDef and decl.name.symId == fldSym:
+            return true
+          bitfieldAccum += bits
+        else:
+          if bitfieldAccum > 0:
+            inc fieldIdx
+            bitfieldAccum = 0
+            bitfieldUnit = 0
+          if decl.name.kind == SymbolDef and decl.name.symId == fldSym:
+            return true
+          inc fieldIdx
+      elif body.typeKind == UnionT:
+        if bitfieldAccum > 0:
+          inc fieldIdx
+          bitfieldAccum = 0
+          bitfieldUnit = 0
+        let unionIdx = fieldIdx
+        var unionBody = body
+        skip unionBody
+        var search = body
+        inc search
+        while search.hasMore:
+          if search.substructureKind == FldU:
+            let fdecl = takeFieldDecl(search)
+            if fdecl.name.kind == SymbolDef and fdecl.name.symId == fldSym:
+              fieldIdx = unionIdx
+              return true
+          elif search.typeKind == ObjectT:
+            inc search
+            inc search
+          else:
+            skip search
+        body = unionBody
+        inc fieldIdx
+      elif body.typeKind == ObjectT:
+        if bitfieldAccum > 0:
+          inc fieldIdx
+          bitfieldAccum = 0
+          bitfieldUnit = 0
+        if searchFieldIdx(c, body, fldSym, fieldIdx, bitfieldAccum, bitfieldUnit):
+          return true
+      else:
+        skip body
+  return false
 
 proc fieldIndex(c: var LLVMCode; objBody: Cursor; fldSym: SymId): int =
   ## Look up the LLVM struct field index for `fldSym` in object body `objBody`.
@@ -544,79 +623,10 @@ proc fieldIndex(c: var LLVMCode; objBody: Cursor; fldSym: SymId): int =
   result = 0
   if objBody.typeKind == UnionT:
     return 0
-
-  if objBody.typeKind == ObjectT:
-    var body = objBody
-    body.into:
-      if body.kind == Symbol:
-        inc body
-        result = 1 # base type occupies field 0
-      elif body.kind == DotToken:
-        inc body
-
-      var bitfieldAccum = 0'i64
-      var bitfieldUnit = 0
-      while body.hasMore:
-        case body.kind
-        of ParLe:
-          if body.substructureKind == FldU:
-            let decl = takeFieldDecl(body)
-            let bits = extractBitfieldBits(decl.pragmas)
-            if bits > 0:
-              let unitBits = typeSizeBits(c, decl.typ)
-              if bitfieldUnit == 0:
-                bitfieldUnit = unitBits
-              if unitBits != bitfieldUnit or bitfieldAccum + bits > bitfieldUnit:
-                # Overflow: flush current group, start new one
-                if bitfieldAccum > 0: inc result
-                bitfieldAccum = 0
-                bitfieldUnit = unitBits
-              if decl.name.kind == SymbolDef and decl.name.symId == fldSym:
-                return
-              bitfieldAccum += bits
-            else:
-              if bitfieldAccum > 0:
-                inc result
-                bitfieldAccum = 0
-                bitfieldUnit = 0
-              if decl.name.kind == SymbolDef and decl.name.symId == fldSym:
-                return
-              inc result
-          elif body.typeKind == UnionT:
-            if bitfieldAccum > 0:
-              inc result
-              bitfieldAccum = 0
-              bitfieldUnit = 0
-            # The union is one LLVM field. Check if fldSym is inside it.
-            let unionIdx = result
-            var unionBody = body
-            skip unionBody # skip past the entire union
-            # Search for fldSym inside the union
-            var search = body
-            inc search # skip UnionT tag
-            while search.hasMore:
-              if search.substructureKind == FldU:
-                let fdecl = takeFieldDecl(search)
-                if fdecl.name.kind == SymbolDef and fdecl.name.symId == fldSym:
-                  return unionIdx
-              elif search.typeKind == ObjectT:
-                inc search # skip ObjectT
-                inc search # skip base
-              else:
-                skip search
-            body = unionBody
-            inc result
-          elif body.typeKind == ObjectT:
-            if bitfieldAccum > 0:
-              inc result
-              bitfieldAccum = 0
-              bitfieldUnit = 0
-            inc body
-            inc body # skip base
-          else:
-            skip body
-        else:
-          inc body
+  var body = objBody
+  var bitfieldAccum = 0'i64
+  var bitfieldUnit = 0
+  discard searchFieldIdx(c, body, fldSym, result, bitfieldAccum, bitfieldUnit)
 
 proc genTypeDefLLVM(c: var LLVMCode; body: var Cursor; name: string;
                     packed: bool): string =
@@ -668,6 +678,55 @@ proc genTypeDefLLVM(c: var LLVMCode; body: var Cursor; name: string;
   else:
     result = ""
 
+proc collectStructFieldTypes(c: var LLVMCode; body: var Cursor; tokSeq: var seq[LToken]) =
+  ## Recursively collect LLVM field type tokens from an Object body into a
+  ## flat `tokSeq`. Matches the field order of (flattened) genObjectBodyLLVM.
+  let kind = body.typeKind
+  body.into:
+    if kind == ObjectT:
+      if body.kind == Symbol:
+        let baseName = mangleToC(pool.syms[body.symId])
+        tokSeq.add c.tok("%" & baseName)
+        inc body
+      elif body.kind == DotToken:
+        inc body
+    var bitfieldAccum = 0'i64
+    var bitfieldUnit = 0
+    template flushBf() =
+      if bitfieldAccum > 0:
+        var storeBits = 8
+        while storeBits < bitfieldAccum: storeBits *= 2
+        if storeBits > 64: storeBits = 64
+        tokSeq.add c.tok("i" & $storeBits)
+        bitfieldAccum = 0
+        bitfieldUnit = 0
+    while body.hasMore:
+      if body.substructureKind == FldU:
+        var fdecl = takeFieldDecl(body)
+        let bits = extractBitfieldBits(fdecl.pragmas)
+        if bits > 0:
+          let unitBits = typeSizeBits(c, fdecl.typ)
+          if bitfieldUnit == 0:
+            bitfieldUnit = unitBits
+          if unitBits != bitfieldUnit or bitfieldAccum + bits > bitfieldUnit:
+            flushBf()
+            bitfieldUnit = unitBits
+          bitfieldAccum += bits
+        else:
+          flushBf()
+          var t = fdecl.typ
+          tokSeq.add c.tok(genTypeLLVM(c, t))
+      elif body.typeKind == UnionT:
+        flushBf()
+        tokSeq.add c.tok(genTypeLLVMReadOnly(c, body))
+        skip body
+      elif body.typeKind == ObjectT:
+        flushBf()
+        collectStructFieldTypes(c, body, tokSeq)
+      else:
+        inc body
+    flushBf()
+
 proc getStructFieldTypes(c: var LLVMCode; typeSym: Cursor): seq[LToken] =
   ## Given a type symbol cursor, resolve the LLVM struct field types as LTokens.
   ## Accounts for bitfield grouping and union layout.
@@ -678,49 +737,10 @@ proc getStructFieldTypes(c: var LLVMCode; typeSym: Cursor): seq[LToken] =
       let decl = asTypeDecl(d.pos)
       var body = decl.body
       if body.typeKind == UnionT:
-        # Union is a single byte-array element; constant init uses the whole union type
         let unionBody = genTypeLLVMReadOnly(c, body)
         result.add c.tok(unionBody)
       elif body.typeKind == ObjectT:
-        body.into:
-          if body.kind == Symbol:
-            let baseName = mangleToC(pool.syms[body.symId])
-            result.add c.tok("%" & baseName)
-            inc body
-          elif body.kind == DotToken:
-            inc body
-          var bitfieldAccum = 0'i64
-          var bitfieldUnit = 0
-          template flushBf() =
-            if bitfieldAccum > 0:
-              var storeBits = 8
-              while storeBits < bitfieldAccum: storeBits *= 2
-              if storeBits > 64: storeBits = 64
-              result.add c.tok("i" & $storeBits)
-              bitfieldAccum = 0
-              bitfieldUnit = 0
-          while body.hasMore:
-            if body.substructureKind == FldU:
-              var fdecl = takeFieldDecl(body)
-              let bits = extractBitfieldBits(fdecl.pragmas)
-              if bits > 0:
-                let unitBits = typeSizeBits(c, fdecl.typ)
-                if bitfieldUnit == 0:
-                  bitfieldUnit = unitBits
-                if unitBits != bitfieldUnit or bitfieldAccum + bits > bitfieldUnit:
-                  flushBf()
-                  bitfieldUnit = unitBits
-                bitfieldAccum += bits
-              else:
-                flushBf()
-                var t = fdecl.typ
-                result.add c.tok(genTypeLLVM(c, t))
-            elif body.typeKind in {ObjectT, UnionT}:
-              flushBf()
-              skip body
-            else:
-              inc body
-        flushBf()
+        collectStructFieldTypes(c, body, result)
 
 proc isPackedType(c: var LLVMCode; typeSym: Cursor): bool =
   ## Check if a type symbol refers to a packed struct.
