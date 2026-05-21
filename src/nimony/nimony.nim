@@ -278,18 +278,18 @@ proc compileProgram(c: var CmdOptions) =
   of FullProject:
     makeDir(c.config.nifcachePath)
     # compile full project modules
-    buildGraph c.config, c.args[0], c.buildFlags,
+    buildGraph c.config, c.args[0].addFileExt(".nim"), c.buildFlags,
       c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, (if c.doRun: DoRun else: DoCompile),
       c.passC, c.passL, c.executableArgs
   of CheckProject:
     makeDir(c.config.nifcachePath)
     # check full project modules
-    buildGraph c.config, c.args[0], c.buildFlags,
+    buildGraph c.config, c.args[0].addFileExt(".nim"), c.buildFlags,
       c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, DoCheck, c.passC, c.passL, c.executableArgs
   of DocProject:
     makeDir(c.config.nifcachePath)
     # doc full project modules
-    buildGraph c.config, c.args[0], c.buildFlags,
+    buildGraph c.config, c.args[0].addFileExt(".nim"), c.buildFlags,
       c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, DoDoc, c.passC, c.passL, c.executableArgs
   of SemCheckNif:
     makeDir(c.config.nifcachePath)

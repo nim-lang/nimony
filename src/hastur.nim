@@ -1137,7 +1137,7 @@ const RunnableBootstrapModules = [
   "src/lib/argsfinder.nim",
 ]
 
-proc bootstrapTests() =
+proc tierTests() =
   ## Compile every module on `BootstrapModules` with `bin/nimony c`. Fails
   ## fast on the first regression so the offending module is obvious. On
   ## Windows the list collapses to the Tier 20 tip (`nimony.nim`) — its
@@ -1460,7 +1460,7 @@ proc selfcheckCmd() =
   echo "[selfcheck] step 1/3: rebuilding nimony toolchain"
   buildNimonyToolchain(showProgress = true)
   echo "[selfcheck] step 2/3: bootstrap (per-module compile check)"
-  bootstrapTests()
+  tierTests()
   echo "[selfcheck] step 3/3: boot --valgrind (3-stage self-host + valgrind smoke)"
   bootCmd("", withValgrind = true)
   echo "[selfcheck] all checks passed in ",
@@ -1714,7 +1714,7 @@ proc handleCmdLine =
       # validated against ELF.
       bootCmd("", withValgrind = false)
     else:
-      bootstrapTests()
+      tierTests()
 
   of "validate", "validator":
     buildValidator()
@@ -1723,9 +1723,9 @@ proc handleCmdLine =
   of "incremental":
     incrementalTests()
 
-  of "bootstrap":
+  of "tiers":
     buildNimony()
-    bootstrapTests()
+    tierTests()
 
   of "boot":
     buildNimony()
