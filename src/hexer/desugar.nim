@@ -722,6 +722,126 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addParRi()
     c.tempUseBufStack.shrink(oldBufStackLen)
 
+proc isConcat(s: SymId): bool =
+  let res = tryLoadSym(s)
+  if res.status != LacksNothing or not isRoutine(res.decl.symKind):
+    return false
+  let routine = asRoutine(res.decl)
+  result = hasPragmaOfValue(routine.pragmas, SemanticsP, "string.&")
+
+proc isStringConcatCall(n: Cursor): bool =
+  result = false
+  if n.exprKind in CallKinds:
+    var c = n
+    into c:
+      if n.kind == Symbol:
+        result = isConcat(c.symId)
+
+proc isChainedStringConcatCall(n: Cursor): bool =
+  ## True iff the outer call is `string.&` *and* at least one operand is
+  ## itself a `string.&` call — i.e. the chain length is at least 2 calls
+  ## (>= 3 leaves). A single `a & b` is left for the runtime to handle.
+  result = false
+  if isStringConcatCall(n):
+    var c = n
+    into c:
+      skip c, SkipExpr
+      if isStringConcatCall(c):
+        result = true
+      else:
+        skip c, SkipExpr
+        result = isStringConcatCall(c)
+
+proc collectConcatLeaves(c: var Context; leavesBuf: var TokenBuf;
+                         leafStarts: var seq[int]; n: var Cursor) =
+  ## Walks an arbitrarily-nested chain of `string.&` calls rooted at `n`
+  ## and records each non-`&` operand into `leavesBuf`, in left-to-right
+  ## order, with `leafStarts` indexing each leaf's beginning. Each leaf is
+  ## desugared in-place (full `tr` recursion).
+  into n:
+    skip n              # past fn symbol
+    for _ in 0..1:
+      if isStringConcatCall(n):
+        collectConcatLeaves(c, leavesBuf, leafStarts, n)
+      else:
+        leafStarts.add leavesBuf.len
+        tr(c, leavesBuf, n)
+
+proc emitLenSum(dest: var TokenBuf; lenSym: SymId;
+                leafCursors: openArray[Cursor]; lo, hi: int;
+                info: PackedLineInfo) =
+  ## Emit `len(leaf[lo]) + len(leaf[lo+1]) + ... + len(leaf[hi])`,
+  ## left-associated, as a single `int` expression.
+  if lo == hi:
+    copyIntoKind dest, CallX, info:
+      dest.add symToken(lenSym, info)
+      dest.addSubtree leafCursors[lo]
+  else:
+    addIntTypedOp dest, AddX, -1, info:
+      emitLenSum(dest, lenSym, leafCursors, lo, hi-1, info)
+      copyIntoKind dest, CallX, info:
+        dest.add symToken(lenSym, info)
+        dest.addSubtree leafCursors[hi]
+
+proc genStringConcatChain(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## Rewrites `a & b & c & d` (chain of `string.&` calls) into
+  ##   (expr
+  ##     (var :t0 . . string a)?  ...        # only for side-effectful leaves
+  ##     (var :tmp . . string (call newStringOfCap (add (i -1)
+  ##                              (call len leaf0) ... (call len leafN))))
+  ##     (call add tmp leaf0)
+  ##     ...
+  ##     (call add tmp leafN)
+  ##     tmp)
+  ## Side-effectful leaves are lifted to a local first so that `.len` and
+  ## the matching `.add` see the same value (no double evaluation).
+  let info = n.info
+  var leavesBuf = createTokenBuf(64)
+  var leafStarts: seq[int] = @[]
+  collectConcatLeaves(c, leavesBuf, leafStarts, n)
+
+  let stringType = c.typeCache.builtins.stringType
+  let oldBufStackLen = c.tempUseBufStack.len
+
+  dest.add parLeToken(ExprX, info)
+
+  var leafCursors = newSeqOfCap[Cursor](leafStarts.len)
+  for st in leafStarts:
+    let leafOrig = cursorAt(leavesBuf, st)
+    if needsTemp(leafOrig):
+      leafCursors.add liftTemp(c, dest, leafOrig, stringType, info)
+    else:
+      leafCursors.add leafOrig
+
+  # Forged symbol names — indices match declaration order across the
+  # system module's includes (setops/seqimpl/stringimpl/openarrays). If
+  # an overload with the same identifier is inserted earlier in system,
+  # these numbers must shift.
+  let newStrSym = pool.syms.getOrIncl("newStringOfCap.0." & SystemModuleSuffix)
+  let lenSym    = pool.syms.getOrIncl("len.5."           & SystemModuleSuffix)
+  let addSym    = pool.syms.getOrIncl("add.2."           & SystemModuleSuffix)
+
+  let tmp = declareTemp(c, dest, stringType, info)
+  copyIntoKind dest, CallX, info:
+    dest.add symToken(newStrSym, info)
+    emitLenSum(dest, lenSym, leafCursors, 0, leafCursors.len-1, info)
+  dest.addParRi()  # close (var :tmp . . string ...)
+
+  for lc in leafCursors:
+    copyIntoKind dest, CallS, info:
+      dest.add symToken(addSym, info)
+      # `add.2`'s first parameter is `var string`, so the call site must
+      # take the address of `tmp` — `derefs` (in sem) won't see this
+      # rewrite, so the wrap has to happen here.
+      copyIntoKind dest, HaddrX, info:
+        dest.add symToken(tmp, info)
+      dest.addSubtree lc
+
+  dest.add symToken(tmp, info)
+  dest.addParRi()  # close (expr ...)
+
+  c.tempUseBufStack.shrink(oldBufStackLen)
+
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Simplify (expr (expr ...)) to (expr (...)) so that our
   # controlflow graph can handle them easily:
@@ -878,19 +998,26 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
       takeParRi dest, n
     of ExprX:
       trExpr c, dest, n
+    of CallX, CallstrlitX, CmdX, PrefixX, InfixX, HcallX:
+      # CallKinds — check for a foldable chain of `string.&` before
+      # falling back to the generic son-recursion path.
+      if isChainedStringConcatCall(n):
+        genStringConcatChain(c, dest, n)
+      else:
+        trSons(c, dest, n)
     of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
         InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
         NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
         AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
         MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
-        BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX,
-        CmdX, CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX,
+        BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX,
+        CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX,
         HaddrX, NewrefX, NewobjX, TupX, TupconstrX, TabconstrX,
-        AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
-        PrefixX, HcallX, CompilesX, DeclaredX, DefinedX,
-        AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX, UnpackX,
+        AshrX, BaseobjX, HconvX, DconvX,
+        CompilesX, DeclaredX, DefinedX, ProccallX, DelayX,
+        AstToStrX, BindSymX, BindSymNameX, InstanceofX, HighX, LowX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
-        DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
+        DefaultobjX, DefaulttupX, DefaultdistinctX,
         Delay0X, SuspendX, DoX, ArratX, TupatX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
