@@ -85,7 +85,7 @@ proc prepDce(outputFilename: string; n: Cursor; dottedSuffix: string) =
   var a = ModuleAnalysis()
   tr n, a, SymId(0)
 
-  var b = nifbuilder.open(outputFilename)
+  var b = nifbuilder.open(outputFilename, writeMode = OnlyIfChanged)
   b.withTree "stmts":
     b.withTree rootName:
       for root in a.roots:

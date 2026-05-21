@@ -991,7 +991,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
               if not seenImports.containsOrIncl(idxFile):
                 b.withTree "input":
                   b.addStrLit idxFile
-            let (xOut, dceOut) = shardXAndDce(c, i, shardIdx, shard, backend)
+            let (xOut, dceOut) = shardXAndDce(c, i, shardIdx, shard, backendDir)
             b.withTree "output":
               b.addStrLit xOut
             # `.dce.nif` emitted alongside `.x.nif` by `bin/hexer c`. Listed

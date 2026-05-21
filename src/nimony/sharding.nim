@@ -47,7 +47,7 @@
 when defined(nimony):
   {.feature: "lenientnils".}
 
-import std / [os, syncio, assertions, tables, sets, hashes, formatfloat]
+import std / [os, syncio, assertions, tables, sets, hashes, formatfloat, times]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / [symparser, nifindexes]
@@ -205,13 +205,48 @@ proc buildShardBuf(buf: TokenBuf; decls: seq[TopLevelDecl]; declIndices: seq[int
       result.add rewriteToken(buf[j], remap)
   result.addParRi()
 
+proc shardPath(dir, baseSuffix: string; idx: int): string =
+  let shardSuffix =
+    if idx == 0: baseSuffix
+    else: baseSuffix & "_" & $idx
+  if dir.len > 0: dir / shardSuffix & ".s.nif"
+  else: shardSuffix & ".s.nif"
+
 proc shardSemFile*(umbrellaPath: string; baseSuffix: string): seq[string] =
   ## Partition `umbrellaPath` into shards. Writes `<baseSuffix>.s.nif`
   ## (shard 0, overwriting the umbrella) and `<baseSuffix>_<i>.s.nif`
   ## for i in 1..<N. Returns the seq of shard suffixes. When the file
   ## is below threshold, returns `@[baseSuffix]` and leaves the umbrella
-  ## untouched (the caller treats this as "no sharding").
+  ## untouched.
+  ##
+  ## Incremental short-circuit: if a previously-produced spillover
+  ## shard already exists on disk and is at least as recent as the
+  ## umbrella file, the sharder previously ran on the *current*
+  ## umbrella content (sem.nim didn't re-emit) so we just enumerate the
+  ## existing shards and return — no I/O, no mtime bumps, no
+  ## downstream cascade. This is the make-friendly way to avoid
+  ## rewriting per-shard `.s.nif` files on every deps.nim invocation;
+  ## the alternative (always partition) breaks nifmake's incremental
+  ## detection because the umbrella file at `<baseSuffix>.s.nif` is
+  ## both sem's output and shard 0's filename.
   result = @[baseSuffix]
+  let dir = parentDir(umbrellaPath)
+  let firstSpillover = shardPath(dir, baseSuffix, 1)
+  if fileExists(firstSpillover):
+    let umbrellaMtime = getLastModificationTime(umbrellaPath)
+    let firstSpilloverMtime = getLastModificationTime(firstSpillover)
+    if firstSpilloverMtime >= umbrellaMtime:
+      # Enumerate existing shards. Stop at the first gap.
+      var i = 1
+      var shards = newSeq[string]()
+      shards.add baseSuffix
+      while true:
+        let p = shardPath(dir, baseSuffix, i)
+        if not fileExists(p): break
+        shards.add baseSuffix & "_" & $i
+        inc i
+      return shards
+
   var buf = parseFromFile(umbrellaPath, sizeHint = 1024)
   if buf.len == 0 or buf[0].kind != ParLe: return
 
@@ -229,14 +264,11 @@ proc shardSemFile*(umbrellaPath: string; baseSuffix: string): seq[string] =
   let remap = buildRemap(decls, buf, plan)
 
   result = newSeq[string](plan.suffixes.len)
-  let dir = parentDir(umbrellaPath)
   for i in 0 ..< plan.suffixes.len:
     let shardSuffix = plan.suffixes[i]
     result[i] = shardSuffix
     let shardBuf = buildShardBuf(buf, decls, plan.decls[i], remap)
-    let outpath =
-      if dir.len > 0: dir / shardSuffix & ".s.nif"
-      else: shardSuffix & ".s.nif"
+    let outpath = shardPath(dir, baseSuffix, i)
     try:
       writeFile(shardBuf, outpath, OnlyIfChanged)
     except:
