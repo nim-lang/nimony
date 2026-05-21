@@ -953,7 +953,15 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       if isMagic == NonMagicCall and c.routine.inGeneric == 0 and
           isGeneric(getProcDecl(finalFn.sym)):
         let inst = c.requestRoutineInstance(finalFn.sym, matched.typeArgs, matched.inferred, cs.callNode.info)
-        dest[cs.beforeCall+1].setSymId inst.targetSym
+        # `addFn` emits the callee in different shapes — usually a
+        # single `Symbol` at `cs.beforeCall+1`, but a phantom-concept
+        # match yields an `Ident` or a `(cchoice …)` subtree (see
+        # `addFn`'s `fromConcept` path), and re-sem at instantiation
+        # time picks the actual overload. Patch the sym in place only
+        # when the slot is a real symbol token; otherwise leave the
+        # callee shape alone and rely on the later re-sem.
+        if dest[cs.beforeCall+1].kind == Symbol:
+          dest[cs.beforeCall+1].setSymId inst.targetSym
         var instReturnType = createTokenBuf(16)
         var subsReturnType = inst.returnType
         returnType = semReturnType(c, instReturnType, subsReturnType)

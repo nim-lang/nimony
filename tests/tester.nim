@@ -97,6 +97,6 @@ proc hasturTests(overwrite: bool) =
         args.add " --forward:--passL:-fuse-ld=lld"
   if overwrite:
     args.add " --overwrite"
-  exec "nim c -r src/hastur " & args
+  exec "nim c -r src/hastur " & args & " all"
 
 hasturTests(overwrite)
