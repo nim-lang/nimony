@@ -1064,6 +1064,11 @@ proc buildDagon(showProgress = false) =
   let exe = "dagon".addFileExt(ExeExt)
   robustMoveFile "src/dagon/" & exe, binDir() / exe
 
+proc buildNimpac(showProgress = false) =
+  exec nimcPrefix() & "src/nimpac/nimpac.nim", showProgress
+  let exe = "nimpac".addFileExt(ExeExt)
+  robustMoveFile "src/nimpac/" & exe, binDir() / exe
+
 # ---------------------------------------------------------------------------
 # Bootstrapping progress (see https://github.com/nim-lang/nimony/issues/1788).
 #
@@ -1768,6 +1773,7 @@ proc handleCmdLine =
       buildNj(showProgress)
       buildVl(showProgress)
       buildDagon(showProgress)
+      buildNimpac(showProgress)
     of "nifler":
       buildNifler(showProgress)
     of "nimony":
@@ -1788,6 +1794,8 @@ proc handleCmdLine =
       buildValidator(showProgress)
     of "dagon":
       buildDagon(showProgress)
+    of "nimpac":
+      buildNimpac(showProgress)
     else:
       writeHelp()
     removeDir "nimcache"
