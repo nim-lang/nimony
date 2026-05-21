@@ -730,12 +730,15 @@ proc isConcat(s: SymId): bool =
   result = hasPragmaOfValue(routine.pragmas, SemanticsP, "string.&")
 
 proc isStringConcatCall(n: Cursor): bool =
+  # Non-mutating peek: cannot use `into` here because the body would have
+  # to consume every child (the callee plus both args) just to satisfy the
+  # closing-ParRi assertion — wasteful for a one-token check.
   result = false
   if n.exprKind in CallKinds:
     var c = n
-    into c:
-      if n.kind == Symbol:
-        result = isConcat(c.symId)
+    inc c                       # past call tag
+    if c.kind == Symbol:
+      result = isConcat(c.symId)
 
 proc isChainedStringConcatCall(n: Cursor): bool =
   ## True iff the outer call is `string.&` *and* at least one operand is
@@ -744,13 +747,13 @@ proc isChainedStringConcatCall(n: Cursor): bool =
   result = false
   if isStringConcatCall(n):
     var c = n
-    into c:
-      skip c, SkipExpr
-      if isStringConcatCall(c):
-        result = true
-      else:
-        skip c, SkipExpr
-        result = isStringConcatCall(c)
+    inc c                       # past call tag
+    skip c                      # past callee
+    if isStringConcatCall(c):
+      result = true
+    else:
+      skip c                    # past first arg
+      result = isStringConcatCall(c)
 
 proc collectConcatLeaves(c: var Context; leavesBuf: var TokenBuf;
                          leafStarts: var seq[int]; n: var Cursor) =
