@@ -966,7 +966,9 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
       if impl.kind == ParLe and impl.tagId == nifstreams.ErrT:
         m.error InvalidMatch, f, a
       else:
-        if impl.typeKind in {EnumT, HoleyEnumT, AnumT}:
+        if impl.typeKind == DistinctT:
+          m.error InvalidMatch, f, a
+        elif impl.typeKind in {EnumT, HoleyEnumT, AnumT}:
           if arg.n.exprKind == OchoiceX:
             let matchedSym = tryMatchEnumChoice(arg.n, fs)
             if matchedSym != SymId(0):
