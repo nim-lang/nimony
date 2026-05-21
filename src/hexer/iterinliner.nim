@@ -699,7 +699,12 @@ proc inlineIterator(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
   let res = tryLoadSym(iterSym)
   if res.status == LacksNothing:
     let routine = asRoutine(res.decl, SkipInclBody)
-    if hasPragma(routine.pragmas, ClosureP):
+    if hasPragma(routine.pragmas, ClosureP) or hasPragma(routine.pragmas, PassiveP):
+      # `.closure` iters are the factory model (fresh frame per call); `.passive`
+      # iters share state via the iter-value's env slot (cps.trCoroFor stashes
+      # it.env into g.env at init so the same g sees the same frame across
+      # iterations of one for-loop). Both go through the coroutine trampoline;
+      # iter-inlining doesn't apply to either.
       emitCoroFor(e, dest, forStmt)
       return
     var params = routine.params
@@ -874,13 +879,15 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
     of IteratorS:
       let routine = asRoutine(c, SkipExclBody)
       let iterSym = routine.name.symId
-      let isClosureIter = hasPragma(routine.pragmas, ClosureP)
+      let isClosureIter = hasPragma(routine.pragmas, ClosureP) or
+                          hasPragma(routine.pragmas, PassiveP)
       let isGeneric = routine.typevars.substructureKind == TypevarsU
       if isClosureIter and not isGeneric:
         # Inject `result: T` + rewrite `(yld v)` so destroyer/duplifier see
         # a typed asgn and inject =destroy/=copy hooks. cps.nim then lifts
         # `result` to `*env.result.0`. Generic closure-iter templates pass
         # through unchanged — only concrete instances need this rewrite.
+        # `.passive` iters share the same lowering as `.closure` iters here.
         rewriteClosureIter(e, dest, c, routine.retType)
       elif isClosureIter:
         # Generic template: pass through verbatim; cps.nim also leaves it
