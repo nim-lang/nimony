@@ -146,6 +146,10 @@ elif defined(windows):
     result = int64(cast[uint32](f.dwLowDateTime)) or
              (int64(cast[uint32](f.dwHighDateTime)) shl 32)
 
+  proc rdFileSize(f: WIN32_FIND_DATA): int64 {.inline.} =
+    result = int64(cast[uint32](f.nFileSizeLow)) or
+             (int64(cast[uint32](f.nFileSizeHigh)) shl 32)
+
   proc getLastModificationTime*(file: string): int64 {.raises.} =
     ## Returns the file's last modification time as nanoseconds since the
     ## Unix epoch (1970-01-01 UTC). Raises `OSError` if the file does not
@@ -221,9 +225,9 @@ proc execShellCmd*(command: string): int {.tags: [ExecIOEffect].} =
 proc getFileSize*(file: string): int64 {.tags: [ReadIOEffect], raises.} =
   ## Returns the file size of `file` (in bytes).
   when defined(windows):
-    var a: WIN32_FIND_DATA
-    var resA = findFirstFile(file, a)
-    if resA == -1: raiseOSError(osLastError(), file)
+    var a {.noinit.}: WIN32_FIND_DATA
+    let resA = findFirstFile(file, a)
+    if resA == INVALID_HANDLE_VALUE: raiseOSError(osLastError(), file)
     try:
       result = rdFileSize(a)
     finally:
