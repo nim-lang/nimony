@@ -1430,12 +1430,11 @@ proc buildGraph*(config: sink NifConfig; project: string;
     # untouched so cross-module / cross-shard symbol lookups via
     # `programs.load` keep working without any sharding awareness.
     for n in c.nodes:
-      if n.plugin.len > 0: continue
-      if n.files.len == 0: continue
-      if not sharding.shouldShard(n.files[0].nimFile): continue
-      let umbrellaPath = c.config.semmedFile(n.files[0], n.plugin)
-      if not semos.fileExists(umbrellaPath): continue
-      n.shards = sharding.shardSemFile(umbrellaPath, n.files[0].modname)
+      if n.plugin.len == 0 and n.files.len > 0:
+        let umbrellaPath = c.config.semmedFile(n.files[0], n.plugin)
+        if sharding.shouldShard(umbrellaPath):
+          if semos.fileExists(umbrellaPath):
+            n.shards = sharding.shardFile(umbrellaPath, n.files[0].modname)
     let buildFinalFilename = generateFinalBuildFile(c, commandLineArgsNifc, passC, passL)
     # Linkers (gcc/clang/ld/ar) don't auto-create the output directory.
     # When the user passes `--out:bin/foo` or `--outdir:bin`, materialise

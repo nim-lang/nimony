@@ -54,15 +54,13 @@ import ".." / lib / [symparser, nifindexes]
 import nimony_model
 
 const
-  ShardThresholdForSem* = 60_000
+  ShardThresholdForSem = 60_000
     ## Token-count threshold per shard. Sem's post-sem `.s.nif` buffer
     ## is ~310K tokens (measured 2026-05-20); 60K yields ~5
     ## roughly-balanced shards.
 
-proc shouldShard*(nimFile: string): bool =
-  ## Gate: only sem.nim shards today. system.nim's basename is "system"
-  ## (not "sem") so it cannot match here.
-  splitFile(nimFile).name == "sem"
+proc shouldShard*(nifFile: string): bool =
+  false
 
 # ---- partitioning ---------------------------------------------------------
 
@@ -141,15 +139,15 @@ proc planShards(decls: seq[TopLevelDecl]; baseSuffix: string; threshold: int): S
       currentSize += d.size
   # Pass 2: hidden decls fill shard 0 then spill.
   for idx, d in pairs decls:
-    if d.exported: continue
-    if currentSize >= threshold:
-      # Start a new shard.
-      let nextIdx = result.decls.len
-      result.decls.add @[]
-      result.suffixes.add baseSuffix & "_" & $nextIdx
-      currentSize = 0
-    result.decls[^1].add idx
-    currentSize += d.size
+    if not d.exported:
+      if currentSize >= threshold:
+        # Start a new shard.
+        let nextIdx = result.decls.len
+        result.decls.add @[]
+        result.suffixes.add baseSuffix & "_" & $nextIdx
+        currentSize = 0
+      result.decls[^1].add idx
+      currentSize += d.size
 
 # ---- SymId rewriting ------------------------------------------------------
 
@@ -168,14 +166,14 @@ proc buildRemap(decls: seq[TopLevelDecl]; buf: TokenBuf;
       for j in d.start ..< d.stop:
         if buf[j].kind == SymbolDef:
           let oldId = buf[j].symId
-          if oldId in result: continue
-          let oldName = pool.syms[oldId]
-          let owner = extractModule(oldName)
-          if owner != plan.baseSuffix: continue
-          var newName = removeModule(oldName)
-          newName.add '.'
-          newName.add shardSuffix
-          result[oldId] = pool.syms.getOrIncl(newName)
+          if oldId notin result:
+            let oldName = pool.syms[oldId]
+            let owner = extractModule(oldName)
+            if owner == plan.baseSuffix:
+              var newName = removeModule(oldName)
+              newName.add '.'
+              newName.add shardSuffix
+              result[oldId] = pool.syms.getOrIncl(newName)
 
 proc rewriteToken(t: PackedToken; remap: Table[SymId, SymId]): PackedToken =
   ## Returns a token with its symId remapped (if applicable), otherwise
@@ -212,7 +210,7 @@ proc shardPath(dir, baseSuffix: string; idx: int): string =
   if dir.len > 0: dir / shardSuffix & ".s.nif"
   else: shardSuffix & ".s.nif"
 
-proc shardSemFile*(umbrellaPath: string; baseSuffix: string): seq[string] =
+proc shardFile*(umbrellaPath: string; baseSuffix: string): seq[string] =
   ## Partition `umbrellaPath` into shards. Writes `<baseSuffix>.s.nif`
   ## (shard 0, overwriting the umbrella) and `<baseSuffix>_<i>.s.nif`
   ## for i in 1..<N. Returns the seq of shard suffixes. When the file
@@ -233,9 +231,17 @@ proc shardSemFile*(umbrellaPath: string; baseSuffix: string): seq[string] =
   let dir = parentDir(umbrellaPath)
   let firstSpillover = shardPath(dir, baseSuffix, 1)
   if fileExists(firstSpillover):
-    let umbrellaMtime = getLastModificationTime(umbrellaPath)
-    let firstSpilloverMtime = getLastModificationTime(firstSpillover)
-    if firstSpilloverMtime >= umbrellaMtime:
+    # `getLastModificationTime` can raise on transient I/O errors; we
+    # don't actually care about those — a stat failure just means "no
+    # incremental shortcut available, partition the umbrella again."
+    var canShortCircuit = false
+    try:
+      let umbrellaMtime = getLastModificationTime(umbrellaPath)
+      let firstSpilloverMtime = getLastModificationTime(firstSpillover)
+      canShortCircuit = firstSpilloverMtime >= umbrellaMtime
+    except:
+      canShortCircuit = false
+    if canShortCircuit:
       # Enumerate existing shards. Stop at the first gap.
       var i = 1
       var shards = newSeq[string]()
