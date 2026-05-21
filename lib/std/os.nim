@@ -217,3 +217,20 @@ proc execShellCmd*(command: string): int {.tags: [ExecIOEffect].} =
     result = -202 # OOM
   else:
     result = exitStatusLikeShell(c_system(cc))
+
+proc getFileSize*(file: string): int64 {.tags: [ReadIOEffect], raises.} =
+  ## Returns the file size of `file` (in bytes).
+  when defined(windows):
+    var a: WIN32_FIND_DATA
+    var resA = findFirstFile(file, a)
+    if resA == -1: raiseOSError(osLastError(), file)
+    try:
+      result = rdFileSize(a)
+    finally:
+      discard findClose(resA)
+  else:
+    var rawInfo = default(Stat)
+    var filename = file
+    if stat(filename.toCString, rawInfo) < 0'i32:
+      raiseOSError(osLastError(), file)
+    result = int64(rawInfo.st_size)
