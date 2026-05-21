@@ -259,8 +259,8 @@ proc typeAlignBits(c: var LLVMCode; n: Cursor): int =
       result = c.bits
   of ObjectT, UnionT:
     var nn = n
-    if n.typeKind == ObjectT:
-      nn.into:
+    nn.into:
+      if n.typeKind == ObjectT:
         if nn.kind == Symbol:
           result = typeAlignBits(c, nn)
           inc nn
@@ -269,23 +269,15 @@ proc typeAlignBits(c: var LLVMCode; n: Cursor): int =
           inc nn
         else:
           result = 0
-        while nn.hasMore:
-          if nn.substructureKind == FldU:
-            var fdecl = takeFieldDecl(nn)
-            let a = typeAlignBits(c, fdecl.typ)
-            if a > result: result = a
-          else:
-            skip nn
-    else:
-      result = 0
-      nn.into:
-        while nn.hasMore:
-          if nn.substructureKind == FldU:
-            var fdecl = takeFieldDecl(nn)
-            let a = typeAlignBits(c, fdecl.typ)
-            if a > result: result = a
-          else:
-            skip nn
+      else:
+        result = 0
+      while nn.hasMore:
+        if nn.substructureKind == FldU:
+          var fdecl = takeFieldDecl(nn)
+          let a = typeAlignBits(c, fdecl.typ)
+          if a > result: result = a
+        else:
+          skip nn
   else:
     result = 8
 
@@ -431,28 +423,33 @@ proc traverseTypesLLVM(m: var MainModule; o: var TypeOrderLLVM) =
     if not found:
       o.ordered.insert((fd, true), 0)
 
+proc collectUnionFieldsLLVM(c: var LLVMCode; n: Cursor; maxSizeBits: var int;
+                            maxAlignBits: var int) =
+  ## Recursively collect max size and alignment from union/object fields.
+  ## Follows traverseObjectBodyLLVM pattern: takes `n` by value, enters via
+  ## `n.into` internally, so the caller's cursor is not advanced.
+  var nn = n
+  nn.into:
+    while nn.hasMore:
+      if nn.substructureKind == FldU:
+        var decl = takeFieldDecl(nn)
+        let sz = typeSizeBits(c, decl.typ)
+        let al = typeAlignBits(c, decl.typ)
+        if sz > maxSizeBits: maxSizeBits = sz
+        if al > maxAlignBits: maxAlignBits = al
+      elif nn.typeKind in {ObjectT, UnionT}:
+        collectUnionFieldsLLVM(c, nn, maxSizeBits, maxAlignBits)
+        skip nn
+      else:
+        skip nn
+
 proc genUnionBodyLLVM(c: var LLVMCode; n: var Cursor): string =
   ## Generate LLVM type for a union: a byte array sized to the largest member,
   ## with alignment matching the most-aligned member.
   var maxSizeBits = 0
   var maxAlignBits = 8
-  n.into:
-    while n.hasMore:
-      if n.substructureKind == FldU:
-        var decl = takeFieldDecl(n)
-        let sz = typeSizeBits(c, decl.typ)
-        let al = typeAlignBits(c, decl.typ)
-        if sz > maxSizeBits: maxSizeBits = sz
-        if al > maxAlignBits: maxAlignBits = al
-      elif n.typeKind in {ObjectT, UnionT}:
-        # Anonymous nested type inside union: compute its aggregate size/align
-        let sz = typeSizeBits(c, n)
-        let al = typeAlignBits(c, n)
-        if sz > maxSizeBits: maxSizeBits = sz
-        if al > maxAlignBits: maxAlignBits = al
-        skip n
-      else:
-        skip n
+  collectUnionFieldsLLVM(c, n, maxSizeBits, maxAlignBits)
+  skip n
   let sizeBytes = (maxSizeBits + 7) div 8
   let alignBytes = maxAlignBits div 8
   if sizeBytes == 0:
@@ -503,12 +500,14 @@ proc addObjectFieldsLLVM(c: var LLVMCode; n: var Cursor; fields: var seq[string]
   let kind = n.typeKind
   n.into:
     if kind == ObjectT:
-      if n.kind == Symbol:
+      if n.kind == DotToken:
+        inc n
+      elif n.kind == Symbol:
         let baseName = mangleSym(c, n.symId)
         fields.add "%" & baseName
         inc n
-      elif n.kind == DotToken:
-        inc n
+      else:
+        error c.m, "expected `Symbol` or `.` for inheritance but got: ", n
     while n.hasMore:
       if n.substructureKind == FldU:
         var decl = takeFieldDecl(n)
@@ -523,7 +522,10 @@ proc addObjectFieldsLLVM(c: var LLVMCode; n: var Cursor; fields: var seq[string]
       elif n.typeKind == UnionT:
         flushBitfieldAccum(fields, bitfieldAccum)
         bitfieldUnit = 0
-        fields.add genUnionBodyLLVM(c, n)
+        var unionCur = n
+        fields.add genUnionBodyLLVM(c, unionCur)
+        skip n
+        addObjectFieldsLLVM(c, n, fields, bitfieldAccum, bitfieldUnit)
       elif n.typeKind == ObjectT:
         flushBitfieldAccum(fields, bitfieldAccum)
         bitfieldUnit = 0
@@ -678,54 +680,53 @@ proc genTypeDefLLVM(c: var LLVMCode; body: var Cursor; name: string;
   else:
     result = ""
 
-proc collectStructFieldTypes(c: var LLVMCode; body: var Cursor; tokSeq: var seq[LToken]) =
-  ## Recursively collect LLVM field type tokens from an Object body into a
+proc collectStructFieldTypes(c: var LLVMCode; body: var Cursor; tokSeq: var seq[LToken];
+                             bitfieldAccum: var int64; bitfieldUnit: var int) =
+  ## Collect LLVM field type tokens from an Object/Union body into a
   ## flat `tokSeq`. Matches the field order of (flattened) genObjectBodyLLVM.
-  let kind = body.typeKind
-  body.into:
-    if kind == ObjectT:
-      if body.kind == Symbol:
-        let baseName = mangleToC(pool.syms[body.symId])
-        tokSeq.add c.tok("%" & baseName)
-        inc body
-      elif body.kind == DotToken:
-        inc body
-    var bitfieldAccum = 0'i64
-    var bitfieldUnit = 0
-    template flushBf() =
-      if bitfieldAccum > 0:
-        var storeBits = 8
-        while storeBits < bitfieldAccum: storeBits *= 2
-        if storeBits > 64: storeBits = 64
-        tokSeq.add c.tok("i" & $storeBits)
-        bitfieldAccum = 0
-        bitfieldUnit = 0
-    while body.hasMore:
-      if body.substructureKind == FldU:
-        var fdecl = takeFieldDecl(body)
-        let bits = extractBitfieldBits(fdecl.pragmas)
-        if bits > 0:
-          let unitBits = typeSizeBits(c, fdecl.typ)
-          if bitfieldUnit == 0:
-            bitfieldUnit = unitBits
-          if unitBits != bitfieldUnit or bitfieldAccum + bits > bitfieldUnit:
-            flushBf()
-            bitfieldUnit = unitBits
-          bitfieldAccum += bits
-        else:
+  template flushBf() =
+    if bitfieldAccum > 0:
+      var storeBits = 8
+      while storeBits < bitfieldAccum: storeBits *= 2
+      if storeBits > 64: storeBits = 64
+      tokSeq.add c.tok("i" & $storeBits)
+      bitfieldAccum = 0
+      bitfieldUnit = 0
+  while body.hasMore:
+    if body.substructureKind == FldU:
+      var fdecl = takeFieldDecl(body)
+      let bits = extractBitfieldBits(fdecl.pragmas)
+      if bits > 0:
+        let unitBits = typeSizeBits(c, fdecl.typ)
+        if bitfieldUnit == 0:
+          bitfieldUnit = unitBits
+        if unitBits != bitfieldUnit or bitfieldAccum + bits > bitfieldUnit:
           flushBf()
-          var t = fdecl.typ
-          tokSeq.add c.tok(genTypeLLVM(c, t))
-      elif body.typeKind == UnionT:
-        flushBf()
-        tokSeq.add c.tok(genTypeLLVMReadOnly(c, body))
-        skip body
-      elif body.typeKind == ObjectT:
-        flushBf()
-        collectStructFieldTypes(c, body, tokSeq)
+          bitfieldUnit = unitBits
+        bitfieldAccum += bits
       else:
-        inc body
-    flushBf()
+        flushBf()
+        var t = fdecl.typ
+        tokSeq.add c.tok(genTypeLLVM(c, t))
+    elif body.typeKind == UnionT:
+      flushBf()
+      tokSeq.add c.tok(genTypeLLVMReadOnly(c, body))
+      skip body
+    elif body.typeKind == ObjectT:
+      flushBf()
+      var nn = body
+      nn.into:
+        if nn.kind == Symbol:
+          let baseName = mangleToC(pool.syms[nn.symId])
+          tokSeq.add c.tok("%" & baseName)
+          inc nn
+        elif nn.kind == DotToken:
+          inc nn
+        collectStructFieldTypes(c, nn, tokSeq, bitfieldAccum, bitfieldUnit)
+      skip body
+    else:
+      inc body
+  flushBf()
 
 proc getStructFieldTypes(c: var LLVMCode; typeSym: Cursor): seq[LToken] =
   ## Given a type symbol cursor, resolve the LLVM struct field types as LTokens.
@@ -740,7 +741,16 @@ proc getStructFieldTypes(c: var LLVMCode; typeSym: Cursor): seq[LToken] =
         let unionBody = genTypeLLVMReadOnly(c, body)
         result.add c.tok(unionBody)
       elif body.typeKind == ObjectT:
-        collectStructFieldTypes(c, body, result)
+        var bitfieldAccum = 0'i64
+        var bitfieldUnit = 0
+        body.into:
+          if body.kind == Symbol:
+            let baseName = mangleToC(pool.syms[body.symId])
+            result.add c.tok("%" & baseName)
+            inc body
+          elif body.kind == DotToken:
+            inc body
+          collectStructFieldTypes(c, body, result, bitfieldAccum, bitfieldUnit)
 
 proc isPackedType(c: var LLVMCode; typeSym: Cursor): bool =
   ## Check if a type symbol refers to a packed struct.
