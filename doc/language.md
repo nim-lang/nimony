@@ -268,7 +268,7 @@ bytes. The index operation `s[i]` means the i-th *char* of `s`, not the
 i-th *unichar*.
 
 
-The `&` operator concatenates strings. It is currently not efficient to concatenate many strings as this operation generates many intermediate strings (copy operations), use `system.concat` instead: `concat("abc", a, "def")` instead of `"abc" & a & "def"`.
+The `&` operator concatenates strings.
 
 
 ## cstring type
