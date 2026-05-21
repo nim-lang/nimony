@@ -964,8 +964,18 @@ proc trYield*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # yield ex
   # -->
   # this.res[] = ex
-  # this.caller.fn = cast[ContinuationProc](nextState)  # .closure iters
+  # this.caller.fn = cast[ContinuationProc](nextState)  # .closure iters only
   # return Continuation(fn: stateToProcName(c, sym, nextState), env: this)
+  #
+  # The returned Continuation does NOT hand control to `this.caller` —
+  # for `.closure` iters that slot is not a return target. State procs
+  # are driven directly by the for-loop trampoline's `advance(it) =
+  # it.fn(it.env)`; the returned `(nextState, this)` is what the next
+  # `advance` invokes to resume. `this.caller.fn = nextState` is a
+  # separate cache used only by the wrapper's reuse branch when the
+  # iter VALUE is called as `g()` outside the loop (see
+  # `tclosure_iter_shared_state.nim`); `this.caller.env` is the
+  # ownership marker read by `emitFinalReturn`.
   let state = getNextState(c.currentProc.cf, n)
   assert state != -1
   let info = n.info
