@@ -294,9 +294,16 @@ proc finalizeCoroutine*(c: var Continuation) =
   ## completed). A no-op once the coroutine has run to completion since
   ## its terminating state already freed the frame. Called from the
   ## `finally` clause of the closure-iterator trampoline.
+  ##
+  ## For iter-VALUE-owned frames (the iter-value tuple's env slot owns
+  ## the frame as a `ref CoroType`), we run `cancel` but skip
+  ## `deallocFrame` — the ref's destructor frees the memory later when
+  ## the iter-value goes out of scope. The ownership marker is
+  ## `frame.caller.env`: nil ⇒ wrapper-allocated, non-nil ⇒ value-owned.
   if c.env != nil and c.fn != nil:
     cancel(c.env)
-    deallocFrame(c.env)
+    if c.env.caller.env == nil:
+      deallocFrame(c.env)
     c.fn = nil
     c.env = nil
 
