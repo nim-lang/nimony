@@ -1437,7 +1437,7 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
 
   dest.copyIntoKind StmtsS, info:
     if not isClosureIter:
-      emitFreshFrameCall(c, dest, newSym, params, hasResult, info)
+      emitFreshFrameCall(c, dest, sym, params, hasResult, info)
     else:
       let callerParam = pool.syms.getOrIncl(CallerParamName)
       let envFld = pool.syms.getOrIncl(EnvFieldName)
@@ -1454,7 +1454,7 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
               dest.addIntLit 0, info # direct field of Continuation
             dest.addParPair NilX, info
           dest.copyIntoKind StmtsS, info:
-            emitFreshFrameCall(c, dest, newSym, params, hasResult, info)
+            emitFreshFrameCall(c, dest, sym, params, hasResult, info)
         dest.copyIntoKind ElseU, info:
           dest.copyIntoKind StmtsS, info:
             let thisLocal = pool.syms.getOrIncl("`thisReuse." & $c.currentProc.counter & "." & c.thisModuleSuffix)
