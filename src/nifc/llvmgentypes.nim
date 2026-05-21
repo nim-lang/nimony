@@ -707,22 +707,10 @@ proc collectStructFieldTypes(c: var LLVMCode; body: var Cursor; tokSeq: var seq[
         flushBf()
         var t = fdecl.typ
         tokSeq.add c.tok(genTypeLLVM(c, t))
-    elif body.typeKind == UnionT:
+    elif body.typeKind in {ObjectT, UnionT}:
       flushBf()
-      tokSeq.add c.tok(genTypeLLVMReadOnly(c, body))
-      skip body
-    elif body.typeKind == ObjectT:
-      flushBf()
-      var nn = body
-      nn.into:
-        if nn.kind == Symbol:
-          let baseName = mangleToC(pool.syms[nn.symId])
-          tokSeq.add c.tok("%" & baseName)
-          inc nn
-        elif nn.kind == DotToken:
-          inc nn
-        collectStructFieldTypes(c, nn, tokSeq, bitfieldAccum, bitfieldUnit)
-      skip body
+      body.into:
+        collectStructFieldTypes(c, body, tokSeq, bitfieldAccum, bitfieldUnit)
     else:
       inc body
   flushBf()
