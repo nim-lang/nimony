@@ -1,7 +1,7 @@
 tests/nimony/errmsgs/tdistinctinfos.nim(4, 20) Trace: instantiation from here
 lib/std/system/comparisons.nim(110, 10) Error: Type mismatch at [position]
 WINBOOL(0) == 0
-[2] BUG: unhandled type: distinct (declared in lib/std/system/comparisons.nim(4, 1))
+[2] expected: WINBOOL but got: int64 (declared in lib/std/system/comparisons.nim(4, 1))
 [1] WINBOOL does not match constraint Enum (declared in lib/std/system/comparisons.nim(7, 1))
 [1] WINBOOL does not match constraint Enum (declared in lib/std/system/comparisons.nim(9, 1))
 [1] expected: pointer but got: WINBOOL (declared in lib/std/system/comparisons.nim(11, 1))
@@ -22,5 +22,5 @@ WINBOOL(0) == 0
 [1] expected: float64 but got: WINBOOL (declared in lib/std/system/comparisons.nim(105, 1))
 [1] expected: string but got: WINBOOL (declared in lib/std/system/stringimpl.nim(559, 1))
 [1] expected: openArray[T] but got: WINBOOL (declared in lib/std/system/openarrays.nim(71, 1))
-[1] WINBOOL does not match constraint T (declared in lib/std/system.nim(303, 1))
-[1] expected: seq[T] but got: WINBOOL (declared in lib/std/system.nim(309, 1))
+[1] WINBOOL does not match constraint T (declared in lib/std/system.nim(310, 1))
+[1] expected: seq[T] but got: WINBOOL (declared in lib/std/system.nim(316, 1))

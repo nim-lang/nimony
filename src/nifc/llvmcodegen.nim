@@ -316,14 +316,14 @@ proc extractWasPragma(n: Cursor): string =
   result = ""
   if n.substructureKind == PragmasU:
     var p = n
-    inc p
-    while p.hasMore:
+    p.loopInto:
       if p.pragmaKind == WasP:
-        inc p # enter (was
-        if p.kind == StringLit:
-          result = pool.strings[p.litId]
-        elif p.kind == Ident:
-          result = pool.strings[p.litId]
+        p.into:
+          if p.kind == StringLit:
+            result = pool.strings[p.litId]
+          elif p.kind == Ident:
+            result = pool.strings[p.litId]
+          while p.hasMore: skip p
         return
       skip p
 
@@ -352,11 +352,12 @@ proc extractAlignValue(pragmas: Cursor): int64 =
   ## Extract the (align N) value from pragmas, or 0 if none.
   result = 0
   if pragmas.substructureKind == PragmasU:
-    var p = pragmas.firstSon
-    while p.hasMore:
+    var p = pragmas
+    p.loopInto:
       if p.pragmaKind == AlignP:
-        inc p
-        result = pool.integers[p.intId]
+        p.into:
+          result = pool.integers[p.intId]
+          while p.hasMore: skip p
         return
       skip p
 
@@ -364,11 +365,12 @@ proc extractBitfieldBits(pragmas: Cursor): int64 =
   ## Extract the (bits N) value from field pragmas, or 0 if none.
   result = 0
   if pragmas.substructureKind == PragmasU:
-    var p = pragmas.firstSon
-    while p.hasMore:
+    var p = pragmas
+    p.loopInto:
       if p.pragmaKind == BitsP:
-        inc p
-        result = pool.integers[p.intId]
+        p.into:
+          result = pool.integers[p.intId]
+          while p.hasMore: skip p
         return
       skip p
 
@@ -402,25 +404,23 @@ proc genVarPragmasLLVM(c: var LLVMCode; n: var Cursor): set[NifcPragma] =
   if n.kind == DotToken:
     inc n
   elif n.substructureKind == PragmasU:
-    inc n
-    while n.hasMore:
+    n.loopInto:
       let pk = n.pragmaKind
       case pk
       of AlignP, AttrP, WasP:
         skip n
       of HeaderP:
-        inc n
-        if n.kind == StringLit:
-          inc n
-        else:
-          error c.m, "expected string literal in header pragma but got: ", n
-        skipParRi n
+        n.into:
+          if n.kind == StringLit:
+            inc n
+          else:
+            error c.m, "expected string literal in header pragma but got: ", n
+          while n.hasMore: skip n
       of StaticP, ImportcP, ImportcppP, ExportcP, NodeclP:
         result.incl pk
         skip n
       else:
         error c.m, "invalid pragma: ", n
-    inc n # ParRi
   else:
     error c.m, "expected pragmas but got: ", n
 
@@ -439,8 +439,8 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
     var isNodecl = false
     let alignVal = extractAlignValue(d.pragmas)
     if d.pragmas.substructureKind == PragmasU:
-      var p = d.pragmas.firstSon
-      while p.hasMore:
+      var p = d.pragmas
+      p.loopInto:
         case p.pragmaKind
         of ImportcP, ImportcppP:
           externName = nifmodules.externName(lit, p)
@@ -562,8 +562,7 @@ proc parseProcPragmasLLVM(c: var LLVMCode; n: var Cursor): PragmaInfo =
   if n.kind == DotToken:
     inc n
   elif n.substructureKind == PragmasU:
-    inc n
-    while n.hasMore:
+    n.loopInto:
       let pk = n.pragmaKind
       case pk
       of NoPragma, AlignP, BitsP, VectorP, StaticP, PackedP:
@@ -576,28 +575,26 @@ proc parseProcPragmasLLVM(c: var LLVMCode; n: var Cursor): PragmaInfo =
         result.flags.incl NodeclP
         skip n
       of ImportcppP, ImportcP, ExportcP:
-        inc n
-        if n.kind == StringLit:
-          result.extern = n.litId
-          inc n
-        result.flags.incl pk
-        skipParRi n
+        n.into:
+          if n.kind == StringLit:
+            result.extern = n.litId
+            inc n
+          result.flags.incl pk
+          while n.hasMore: skip n
       of HeaderP:
-        inc n
-        if n.kind != StringLit:
-          error c.m, "expected string literal in header pragma but got: ", n
-        else:
-          # LLVM doesn't need header includes, but we still consume the token
-          inc n
-        skipParRi n
+        n.into:
+          if n.kind != StringLit:
+            error c.m, "expected string literal in header pragma but got: ", n
+          else:
+            inc n
+          while n.hasMore: skip n
       of SelectanyP:
         result.flags.incl pk
         skip n
       of WasP:
-        inc n
-        result.wasName = toString(n, false)
-        skip n
-        skipParRi n
+        n.into:
+          result.wasName = toString(n, false)
+          while n.hasMore: skip n
       of ErrsP, RaisesP:
         skip n
       of InlineP:
@@ -608,7 +605,6 @@ proc parseProcPragmasLLVM(c: var LLVMCode; n: var Cursor): PragmaInfo =
         skip n
       of AttrP:
         skip n # ignore attributes for now
-    inc n # ParRi
   else:
     error c.m, "expected proc pragmas but got: ", n
 
@@ -631,14 +627,12 @@ proc genParamPragmasLLVM(c: var LLVMCode; n: var Cursor) =
   if n.kind == DotToken:
     inc n
   elif n.substructureKind == PragmasU:
-    inc n
-    while n.hasMore:
+    n.loopInto:
       case n.pragmaKind
       of AttrP, WasP:
         skip n
       else:
         error c.m, "invalid pragma: ", n
-    inc n # ParRi
   else:
     error c.m, "expected pragmas but got: ", n
 
@@ -677,8 +671,8 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
   var paramNames: seq[string] = @[]
   var paramWasNames: seq[string] = @[]
   if prc.params.kind != DotToken:
-    var p = prc.params.firstSon
-    while p.hasMore:
+    var p = prc.params
+    p.loopInto:
       assert p.substructureKind == ParamU
       var d = takeParamDecl(p)
       if d.name.kind == SymbolDef:
@@ -693,8 +687,6 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
         genParamPragmasLLVM(c, d.pragmas)
       else:
         error c.m, "expected SymbolDef but got: ", d.name
-    # skip the ParRi of params
-    discard
 
   if {NodeclP, HeaderP} * prag.flags != {}:
     # Don't generate anything for nodecl/header-only procs
@@ -823,16 +815,13 @@ proc genToplevelLLVM(c: var LLVMCode; n: var Cursor) =
     c.body = move oldBody
     c.currentProc = oldProc
   of StmtsS:
-    inc n
-    while n.hasMore: genToplevelLLVM c, n
-    skipParRi n
+    n.loopInto: genToplevelLLVM c, n
   else:
     error c.m, "expected top level construct but got: ", n
 
 proc traverseCodeLLVM(c: var LLVMCode; n: var Cursor) =
   if n.stmtKind == StmtsS:
-    inc n
-    while n.hasMore: genToplevelLLVM(c, n)
+    n.loopInto: genToplevelLLVM(c, n)
     genImportedSymsLLVM c
   else:
     error c.m, "expected `stmts` but got: ", n
@@ -849,8 +838,8 @@ proc generateLLVMTypes(c: var LLVMCode) =
       var packed = false
       # Check for nodecl/header/packed pragmas
       if decl.pragmas.substructureKind == PragmasU:
-        var p = decl.pragmas.firstSon
-        while p.hasMore:
+        var p = decl.pragmas
+        p.loopInto:
           case p.pragmaKind
           of NodeclP, HeaderP:
             skipDecl = true
