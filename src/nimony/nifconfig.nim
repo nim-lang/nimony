@@ -72,6 +72,12 @@ type
     backendC = "c"
     backendLLVM = "llvm"
 
+  OptLevel* = enum
+    optDebug   # default: -O1 (debug-friendly but avoids dumb codegen)
+    optNone    # --opt:none: -O0
+    optSize    # --opt:size: -Os
+    optSpeed   # --opt:speed: -O3
+
   NifConfig* = object
     defines*: seq[string]
     paths*, nimblePaths*: seq[string]
@@ -87,6 +93,7 @@ type
     ccKey*: string
     appType*: AppType
     backend*: Backend
+    optLevel*: OptLevel
     noValidate*: bool # skip running the validator on plugin sources
     verbose*: bool    # --verbose: dump NJ IR on contract/init failures
     outFile*: string  # filename portion set by `--out:PATH` / `-o:PATH`
