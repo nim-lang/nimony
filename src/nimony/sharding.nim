@@ -54,13 +54,16 @@ import ".." / lib / [symparser, nifindexes]
 import nimony_model
 
 const
-  ShardThresholdForSem = 60_000
+  ShardTokenThreshold = 60_000
     ## Token-count threshold per shard. Sem's post-sem `.s.nif` buffer
     ## is ~310K tokens (measured 2026-05-20); 60K yields ~5
     ## roughly-balanced shards.
 
-proc shouldShard*(nifFile: string): bool =
-  false
+proc shouldShard*(nifFile: string): bool {.inline.} =
+  try:
+    result = getFileSize(nifFile) > 100*1024
+  except:
+    result = false
 
 # ---- partitioning ---------------------------------------------------------
 
@@ -262,9 +265,9 @@ proc shardFile*(umbrellaPath: string; baseSuffix: string): seq[string] =
   let decls = collectTopLevelDecls(buf, exported)
   var total = 0
   for d in decls: total += d.size
-  if total < ShardThresholdForSem: return
+  if total < ShardTokenThreshold: return
 
-  let plan = planShards(decls, baseSuffix, ShardThresholdForSem)
+  let plan = planShards(decls, baseSuffix, ShardTokenThreshold)
   if plan.decls.len == 1: return  # everything fit into shard 0
 
   let remap = buildRemap(decls, buf, plan)
