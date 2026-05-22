@@ -509,8 +509,33 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
     case n.typeKind
     of NoType, ErrT, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypekindT, OrdinalT:
       error c, "type expected but got: ", n
-    of IntT, UIntT, FloatT, CharT, BoolT, AutoT, SymkindT, VarargsT:
+    of IntT, UIntT, FloatT, CharT, BoolT, AutoT, SymkindT:
       takeTree dest, n
+    of VarargsT:
+      # `(varargs T conv? "openArray.0.I<key>.<mod>")` — Nim 2 typed
+      # varargs. The trailing string literal is a mangle hint planted by
+      # `semcompat.compatRewriteParam` naming the openArray instance Sym
+      # for T. Emit that Sym directly so NIFC sees an openArray-shaped
+      # value in the param's type slot; sem instantiates the instance,
+      # so the hint resolves to a real decl in `.s.nif`.
+      #
+      # Bare `(varargs)` — `{.varargs.}` proc pragma form on C importc
+      # procs — passes through unchanged so NIFC's `...` ellipsis fires.
+      let info = n.info
+      var probe = n
+      inc probe
+      var hint = default(Cursor)
+      while probe.hasMore:
+        if probe.kind == StringLit:
+          hint = probe
+          break
+        skip probe
+      if cursorIsNil(hint):
+        takeTree dest, n
+      else:
+        let hintSym = pool.syms.getOrIncl(pool.strings[hint.litId])
+        dest.add symToken(hintSym, info)
+        skip n
     of MutT, LentT:
       dest.add tagToken("ptr", n.info)
       inc n

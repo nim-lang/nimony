@@ -1207,6 +1207,23 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
       if isObjectType(f) and isObjectType(a):
         # specialized to handle inheritance
         matchObjectTypes m, f, a, NoType
+      elif a.typeKind == VarargsT and isSomeOpenArrayType(f):
+        # `varargs[U]` argument satisfies an `openArray[T]` formal — Nim 2
+        # treats them as the same family at the body-iteration layer
+        # (same iterator, same `[]`, same `len`). Bind the openArray's
+        # type variable to the varargs element type.
+        var aElem = a
+        inc aElem
+        if aElem.kind == ParRi:
+          # bare `(varargs)` has no element type — can't satisfy openArray[T]
+          m.error InvalidMatch, f, a
+          skip f
+        else:
+          var fHead = f
+          inc fHead   # past `(invoke`
+          inc fHead   # past openArray symbol → at element T
+          linearMatch m, fHead, aElem
+          skip f       # advance the outer cursor past the whole invoke
       else:
         # handled in linearMatch
         linearMatch m, f, a
@@ -1511,20 +1528,56 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: CallArg) =
           m.args.addParRi()
           dec m.opened
 
-proc singleArg(m: var Match; f: var Cursor; arg: CallArg) =
-  if arg.typ.typeKind == AutoT and isEmptyContainer(arg.n):
-    matchEmptyContainer(m, f, arg)
-    return
-  if arg.typ.typeKind == AutoT and isEmptyOpenArrayCall(arg.n):
-    if isSomeOpenArrayType(f):
-      # always match generated empty openarray converter call
-      # argument will be instantiated after the call matches
+proc varargsMatch(m: var Match; f: var Cursor; arg: CallArg) =
+  # `(varargs T [conv])` — match each call-site arg against the element
+  # type T. `sigmatchLoop` keeps `f` parked on the varargs param across
+  # successive args, so this proc is reached once per varargs arg.
+  # Short-circuit cases that accept the arg verbatim:
+  #   * bare `(varargs)` from the `{.varargs.}` pragma (no element type;
+  #     used by C importc procs and by the legacy template-`unpack` form)
+  #   * `varargs[typed]`
+  #   * `varargs[untyped]` — additionally `useArg` picks `arg.orig` here,
+  #     preserving the raw pre-sem AST for template bodies.
+  #   * the arg is already an `openArray[T]` — a previously bundled
+  #     varargs call coming back through re-sem (template expansion).
+  #     We deliberately leave `firstVarargPosition` unset so
+  #     `compatBundleVarargsInMatch` recognises "already bundled" by the
+  #     absence of a varargs span to wrap.
+  # The `varargs[T, conv]` converter form is still handled by the
+  # converter-retry path in `resolveOverloads` — it kicks in only when
+  # the direct element match below has set `m.err`.
+  var elem = f
+  inc elem
+  if elem.kind == ParRi or elem.typeKind in {UntypedT, TypedT}:
+    if m.firstVarargPosition < 0:
+      m.firstVarargPosition = m.args.len
+    m.useArg arg, elem
+  else:
+    let argTyp = skipModifier(arg.typ)
+    var aElem = default(Cursor)
+    if isSomeOpenArrayType(argTyp, aElem):
+      # `openArray[T']` (`Symbol` or `(invoke openArray T')`) — accept
+      # when T' matches `elem`. Mark the slot start so
+      # `compatBundleVarargsInMatch` sees the pre-bundled subtree at
+      # `firstVarargPosition` and skips re-wrapping it.
+      var fElem = elem
+      let argsSave = m.args.len
+      let errSave = m.err
+      linearMatch m, fElem, aElem
       if not m.err:
-        m.args.addSubtree arg.n
-      return
-    else:
-      # should not happen, but still match as normal to give proper error
-      discard
+        if m.firstVarargPosition < 0:
+          m.firstVarargPosition = m.args.len
+        m.useArg arg, argTyp
+        return
+      # element type didn't match — undo and fall through to per-element
+      m.args.shrink argsSave
+      m.err = errSave
+    if m.firstVarargPosition < 0:
+      m.firstVarargPosition = m.args.len
+    var elemMut = elem
+    singleArg(m, elemMut, arg)
+
+proc singleArgCore(m: var Match; f: var Cursor; arg: CallArg) =
   let fOrig = f
   singleArgImpl(m, f, arg)
   if not m.err:
@@ -1532,6 +1585,27 @@ proc singleArg(m: var Match; f: var Cursor; arg: CallArg) =
     while m.opened > 0:
       m.args.addParRi()
       dec m.opened
+
+proc singleArg(m: var Match; f: var Cursor; arg: CallArg) =
+  if arg.typ.typeKind == AutoT:
+    if isEmptyContainer(arg.n):
+      matchEmptyContainer(m, f, arg)
+    elif isEmptyOpenArrayCall(arg.n):
+      if isSomeOpenArrayType(f):
+        # always match generated empty openarray converter call
+        # argument will be instantiated after the call matches
+        if not m.err:
+          m.args.addSubtree arg.n
+        return
+      else:
+        # should not happen, but still match as normal to give proper error
+        singleArgCore(m, f, arg)
+    else:
+      singleArgCore(m, f, arg)
+  elif f.typeKind == VarargsT:
+    varargsMatch(m, f, arg)
+  else:
+    singleArgCore(m, f, arg)
 
 proc typematch*(m: var Match; formal: Cursor; arg: Item) =
   m.argInfo = arg.n.info

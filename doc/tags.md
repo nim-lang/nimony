@@ -134,7 +134,7 @@
 | `(noinline)` | NifcPragma, NimonyPragma | `noinline` proc annotation |
 | `(closure)` | NimonyPragma | `closure` proc annotation; not a calling convention anymore, simply annotates a proc as a closure |
 | `(attr STR)` | NifcPragma | general attribute annotation |
-| `(varargs T)`; `(varargs T Y)` | NimonyPragma, NimonyType, NifcType | `varargs` type/proc annotation: Nimony carries the element type and an optional transformer symbol (e.g. `` `$` ``); NIFC keeps only the element type |
+| `(varargs T X. STR)`; `(varargs T Y)` | NimonyPragma, NimonyType, NifcType | `varargs` type/proc annotation: Nimony carries the element type and an optional transformer symbol (e.g. `` `$` ``); NIFC keeps only the element type |
 | `(was STR)` | NifcPragma | |
 | `(selectany)` | NifcPragma, NimonyPragma | |
 | `(pragmas (pragma ...)*)` | NifcOther, NimonyOther, NimonyStmt, NiflerKind | begin of pragma section |

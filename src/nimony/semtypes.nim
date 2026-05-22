@@ -863,12 +863,18 @@ proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       takeToken dest, n
       if n.hasMore:
         semLocalTypeImpl c, dest, n, InLocalDecl
-        if n.hasMore:
+        if n.hasMore and n.kind != StringLit:
           # optional converter
           var it = Item(n: n, typ: c.types.autoType)
           semExpr c, dest, it, {KeepMagics, AllowOverloads}
           # XXX Check the expression is a symchoice or a sym
           n = it.n
+        if n.kind == StringLit:
+          # openArray mangle hint from `compatAnnotateVarargsParam`. Re-emit
+          # verbatim so the published signature keeps it; hexer reads the
+          # hint and resolves the openArray instance Sym at codegen time.
+          dest.add n
+          inc n
       takeParRi dest, n
     of ObjectT:
       if tryTypeClass(c, dest, n):

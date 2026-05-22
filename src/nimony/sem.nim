@@ -1013,6 +1013,7 @@ proc semLocalTypeExpr(c: var SemContext; dest: var TokenBuf; it: var Item)
 proc semReturnType(c: var SemContext; dest: var TokenBuf; n: var Cursor): TypeCursor =
   result = semLocalType(c, dest, n, InReturnTypeDecl)
 
+include semcompat
 include semcall
 
 proc objBody(td: TypeDecl): Cursor {.inline.} =
