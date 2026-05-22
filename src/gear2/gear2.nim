@@ -188,8 +188,8 @@ proc commandCheck(graph: ModuleGraph) =
   #let dest = moduleSuffix(toFullPath(conf, module.fileIdx))
   #toNif(conf, module.ast, conf.nimcacheDir / dest.addFileExt".nif")
 
-proc processCmdLine(pass: TCmdLinePass, cmd: string; config: ConfigRef) =
-  var p = parseopt.initOptParser(cmd)
+proc processCmdLine(pass: TCmdLinePass; config: ConfigRef) =
+  var p = parseopt.initOptParser()
   var argsCount = 0
 
   config.commandLine.setLen 0
