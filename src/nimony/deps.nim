@@ -751,6 +751,15 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       # Add -fPIC for shared libraries
       if c.config.appType == appLib:
         b.addStrLit "-fPIC"
+      # Optimization level. Even the default ("debug") gets -O1: in
+      # practice it produces code that's just as easy to step through
+      # as -O0, while letting the C compiler skip the truly silly
+      # codegen patterns (per-statement spills, dead stores, etc.).
+      case c.config.optLevel
+      of optDebug: b.addStrLit "-O1"
+      of optNone:  b.addStrLit "-O0"
+      of optSize:  b.addStrLit "-Os"
+      of optSpeed: b.addStrLit "-O3"
       if passC.len > 0:
         for arg in passC.split(' '):
           if arg.len > 0:
