@@ -62,9 +62,9 @@ proc updateLoop*(dest: var Sha1State; n: var Cursor; inlineT: TagId; foundInline
     of ParRi:
       dec nested
     else: discard
+    inc n
     if nested <= 0:
       break
-    inc n
 
 proc computeChecksum*(n: Cursor): string =
   var checksum = newSha1State()
@@ -78,9 +78,9 @@ proc computeChecksum*(n: Cursor): string =
     of ParRi:
       dec nested
     else: discard
+    inc n
     if nested <= 0:
       break
-    inc n
   let final = SecureHash checksum.finalize()
   result = $final
 
