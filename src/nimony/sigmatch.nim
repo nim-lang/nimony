@@ -1716,28 +1716,11 @@ proc mutualGenericMatch(a, b: Match): DisambiguationResult =
   assert bParams.substructureKind == ParamsU
   inc aParams
   inc bParams
-  let varToverloads = c != nil and VarToverloadsFeature in c.features
   while aParams.hasMore and bParams.hasMore:
     let aParam = takeLocal(aParams, SkipFinalParRi)
     let bParam = takeLocal(bParams, SkipFinalParRi)
     var aFormal = aParam.typ
     var bFormal = bParam.typ
-    if varToverloads:
-      # Mirror old Nim's `sumGeneric` +1 for `tyVar`: a `var T` (or `out T`)
-      # formal is more specific than a plain-`T` formal of the same base.
-      # This is the whole point of the `varToverloads` gate — let two
-      # routines that differ only in `var` on a parameter coexist as
-      # distinct overloads, with the `var` one preferred at the call site.
-      let aIsMut = aFormal.typeKind in {MutT, OutT}
-      let bIsMut = bFormal.typeKind in {MutT, OutT}
-      if aIsMut and not bIsMut:
-        if result == SecondWins: return NobodyWins
-        result = FirstWins
-        continue
-      elif bIsMut and not aIsMut:
-        if result == FirstWins: return NobodyWins
-        result = SecondWins
-        continue
     var ma = createMatch(c)
     singleArg ma, aFormal, CallArg(n: emptyNode(c[]), typ: bParam.typ)
     var mb = createMatch(c)
@@ -1748,10 +1731,27 @@ proc mutualGenericMatch(a, b: Match): DisambiguationResult =
       # b is more specific
       if result == FirstWins: return NobodyWins
       result = SecondWins
-    if bMatch == GenericMatch and aMatch == NoMatch:
+    elif bMatch == GenericMatch and aMatch == NoMatch:
       # a is more specific
       if result == SecondWins: return NobodyWins
       result = FirstWins
+    else:
+      if c != nil and VarToverloadsFeature in c.features:
+        # Mirror old Nim's `sumGeneric` +1 for `tyVar`: a `var T` (or `out T`)
+        # formal is more specific than a plain-`T` formal of the same base.
+        # This is the whole point of the `varToverloads` gate — let two
+        # routines that differ only in `var` on a parameter coexist as
+        # distinct overloads, with the `var` one preferred at the call site.
+        aFormal = aParam.typ
+        bFormal = bParam.typ
+        let aIsMut = aFormal.typeKind in {MutT, OutT}
+        let bIsMut = bFormal.typeKind in {MutT, OutT}
+        if aIsMut and not bIsMut:
+          if result == SecondWins: return NobodyWins
+          result = FirstWins
+        elif bIsMut and not aIsMut:
+          if result == FirstWins: return NobodyWins
+          result = SecondWins
 
 proc cmpMatches*(a, b: Match; preferIterators = false): DisambiguationResult =
   assert not a.err
