@@ -3373,6 +3373,8 @@ proc semForLoopTupleVar(c: var SemContext; dest: var TokenBuf; it: var Item; tup
 
 include semfields
 
+include semcompat
+
 proc isIteratorCall(c: var SemContext; dest: var TokenBuf; beforeCall: int): bool {.inline.} =
   result = dest.len > beforeCall+1
   if result:
@@ -7191,6 +7193,10 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     dest.add c.expanded
     dest.addParRi()
 
+  # Nim 2 compat lowering runs before `instantiateGenerics` so the
+  # openArray[T] instances it requests are processed in the same pass.
+  compatRewrite c, dest
+
   instantiateGenerics c, dest
   for val in c.typeInstDecls:
     let s = fetchSym(c, val)
@@ -7262,6 +7268,10 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
     dest.addParLe CommentS, c.expanded[0].info
     dest.add c.expanded
     dest.addParRi()
+
+  # Nim 2 compat lowering runs before `instantiateGenerics` so the
+  # openArray[T] instances it requests are processed in the same pass.
+  compatRewrite c, dest
 
   instantiateGenerics c, dest
   for val in c.typeInstDecls:

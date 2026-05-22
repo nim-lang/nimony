@@ -826,6 +826,23 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
         put(g, tkBracketRi, "]")
       skipParRi(n)
 
+    of VarargsT:
+      put(g, tkSymbol, "varargs")
+      inc n
+      if n.kind != ParRi:
+        put(g, tkBracketLe, "[")
+        gtype(g, n, c)
+        if n.kind != ParRi and n.kind != StringLit:
+          # optional converter (the trailing StringLit, if any, is the
+          # openArray mangle hint planted by `semcompat` — skip silently)
+          put(g, tkComma, ",")
+          put(g, tkSpaces, Space)
+          gsub(g, n, c)
+        if n.kind == StringLit:
+          inc n
+        put(g, tkBracketRi, "]")
+      skipParRi(n)
+
     of RefT:
       put(g, tkRef, "ref")
       inc n

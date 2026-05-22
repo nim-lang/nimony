@@ -705,7 +705,9 @@ proc varargsHasConverter(t: Cursor): bool =
   assert t.typeKind == VarargsT
   inc t
   skip t
-  result = t.hasMore
+  # Trailing StringLit is the openArray mangle hint planted by
+  # `semcompat.compatRewriteParam`, not a converter.
+  result = t.hasMore and t.kind != StringLit
 
 proc tryVarargsConverter(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: CallArg): bool =
   result = false

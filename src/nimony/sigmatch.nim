@@ -1146,6 +1146,23 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
       if isObjectType(f) and isObjectType(a):
         # specialized to handle inheritance
         matchObjectTypes m, f, a, NoType
+      elif a.typeKind == VarargsT and isSomeOpenArrayType(f):
+        # `varargs[U]` argument satisfies an `openArray[T]` formal — Nim 2
+        # treats them as the same family at the body-iteration layer
+        # (same iterator, same `[]`, same `len`). Bind the openArray's
+        # type variable to the varargs element type.
+        var aElem = a
+        inc aElem
+        if aElem.kind == ParRi:
+          # bare `(varargs)` has no element type — can't satisfy openArray[T]
+          m.error InvalidMatch, f, a
+          skip f
+        else:
+          var fHead = f
+          inc fHead   # past `(invoke`
+          inc fHead   # past openArray symbol → at element T
+          linearMatch m, fHead, aElem
+          skip f       # advance the outer cursor past the whole invoke
       else:
         # handled in linearMatch
         linearMatch m, f, a
@@ -1451,6 +1468,29 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: CallArg) =
           dec m.opened
 
 proc singleArg(m: var Match; f: var Cursor; arg: CallArg) =
+  if f.typeKind == VarargsT:
+    # `(varargs T [conv])` — match each call-site arg against the element
+    # type T. `sigmatchLoop` keeps `f` parked on the varargs param across
+    # successive args, so this proc is reached once per varargs arg.
+    # Three short-circuit cases accept the arg verbatim:
+    #   * bare `(varargs)` from the `{.varargs.}` pragma (no element type;
+    #     used by C importc procs and by the legacy template-`unpack` form)
+    #   * `varargs[typed]`
+    #   * `varargs[untyped]` — additionally `useArg` picks `arg.orig` here,
+    #     preserving the raw pre-sem AST for template bodies.
+    # The `varargs[T, conv]` converter form is still handled by the
+    # converter-retry path in `resolveOverloads` — it kicks in only when
+    # the direct element match below has set `m.err`.
+    if m.firstVarargPosition < 0:
+      m.firstVarargPosition = m.args.len
+    var elem = f
+    inc elem
+    if elem.kind == ParRi or elem.typeKind in {UntypedT, TypedT}:
+      m.useArg arg, elem
+      return
+    var elemMut = elem
+    singleArg(m, elemMut, arg)
+    return
   if arg.typ.typeKind == AutoT and isEmptyContainer(arg.n):
     matchEmptyContainer(m, f, arg)
     return
