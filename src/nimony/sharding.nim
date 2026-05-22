@@ -70,13 +70,18 @@ proc shouldShard*(nifFile: string): bool {.inline.} =
 type
   TopLevelDecl = object
     start, stop: int       # half-open range into the parsed umbrella buf
-    firstSym: SymId        # first SymbolDef inside, or SymId(0) if none
-    exported: bool         # true iff `firstSym` is in the umbrella's `(x …)` list
-    size: int              # stop - start (token count)
+    exported: bool         # true iff its first SymbolDef is in the umbrella's `(x …)` list
+
+  Shard = object
+    suffix: string
+    declIndices: seq[int]
+    tokenCount: int        # running sum of (stop-start) over chosen decls
+
+proc size(d: TopLevelDecl): int {.inline.} = d.stop - d.start
 
 proc collectTopLevelDecls(buf: TokenBuf; exportedSyms: HashSet[SymId]): seq[TopLevelDecl] =
-  ## Walks dest top-level children. For each, records its byte range,
-  ## first SymbolDef, and whether that sym is exported.
+  ## Walks buf top-level children. For each, records its byte range and
+  ## whether its first SymbolDef is exported.
   result = @[]
   if buf.len == 0 or buf[0].kind != ParLe: return
   var i = 1
@@ -102,9 +107,8 @@ proc collectTopLevelDecls(buf: TokenBuf; exportedSyms: HashSet[SymId]): seq[TopL
     else:
       inc i
     result.add TopLevelDecl(
-      start: start, stop: i, firstSym: firstSym,
-      exported: firstSym != SymId(0) and firstSym in exportedSyms,
-      size: i - start)
+      start: start, stop: i,
+      exported: firstSym != SymId(0) and firstSym in exportedSyms)
 
 proc loadExportedSyms(umbrellaPath: string): HashSet[SymId] =
   ## Reads the umbrella's embedded `.index` block and collects every
@@ -120,63 +124,55 @@ proc loadExportedSyms(umbrellaPath: string): HashSet[SymId] =
 
 # ---- shard plan -----------------------------------------------------------
 
-type
-  ShardPlan = object
-    decls: seq[seq[int]]   # indices into `decls[]` per shard (0..N-1)
-    suffixes: seq[string]  # shard suffix per shard
-    baseSuffix: string
+proc shardSuffix(baseSuffix: string; idx: int): string =
+  if idx == 0: baseSuffix
+  else: baseSuffix & "_" & $idx
 
-proc planShards(decls: seq[TopLevelDecl]; baseSuffix: string; threshold: int): ShardPlan =
+proc planShards(decls: seq[TopLevelDecl]; baseSuffix: string;
+                threshold: int): seq[Shard] =
   ## Bin-packs decls into shards. Every exported decl goes into shard 0
-  ## (the umbrella). Hidden decls fill the remaining capacity of shard
-  ## 0 up to `threshold`, then spill into shards 1, 2, … as each shard
-  ## crosses its own threshold.
-  var initial: seq[seq[int]] = @[]
-  initial.add newSeq[int]()
-  result = ShardPlan(decls: initial, suffixes: @[baseSuffix], baseSuffix: baseSuffix)
-  var currentSize = 0
-  # Pass 1: exports → shard 0.
+  ## (the umbrella). The total token count and threshold pick a target
+  ## shard count N; hidden decls are placed in original order, filling
+  ## each shard up to `total/N` before spilling. Picking the target
+  ## upfront keeps the last shard from being a tiny tail.
+  var total = 0
+  for d in decls: total += d.size
+  let shardCount = max(1, (total + threshold - 1) div threshold)
+  let target = (total + shardCount - 1) div shardCount
+
+  result = @[Shard(suffix: baseSuffix)]
   for idx, d in pairs decls:
     if d.exported:
-      result.decls[0].add idx
-      currentSize += d.size
-  # Pass 2: hidden decls fill shard 0 then spill.
+      result[0].declIndices.add idx
+      result[0].tokenCount += d.size
   for idx, d in pairs decls:
     if not d.exported:
-      if currentSize >= threshold:
-        # Start a new shard.
-        let nextIdx = result.decls.len
-        result.decls.add @[]
-        result.suffixes.add baseSuffix & "_" & $nextIdx
-        currentSize = 0
-      result.decls[^1].add idx
-      currentSize += d.size
+      if result[^1].tokenCount >= target and result.len < shardCount:
+        result.add Shard(suffix: shardSuffix(baseSuffix, result.len))
+      result[^1].declIndices.add idx
+      result[^1].tokenCount += d.size
 
 # ---- SymId rewriting ------------------------------------------------------
 
 proc buildRemap(decls: seq[TopLevelDecl]; buf: TokenBuf;
-                plan: ShardPlan): Table[SymId, SymId] =
+                shards: seq[Shard]; baseSuffix: string): Table[SymId, SymId] =
   ## For every top-level decl that's been routed to a shard with index
   ## > 0, collect every SymbolDef in the decl whose current suffix is
   ## the base suffix and map it to a freshly-interned name using the
   ## shard's suffix. Refs to those symbols (anywhere in any shard's
   ## buffer) will be rewritten via this table.
   result = initTable[SymId, SymId]()
-  for shardIdx in 1 ..< plan.decls.len:
-    let shardSuffix = plan.suffixes[shardIdx]
-    for declIdx in plan.decls[shardIdx]:
+  for shardIdx in 1 ..< shards.len:
+    let shard = shards[shardIdx]
+    for declIdx in shard.declIndices:
       let d = decls[declIdx]
       for j in d.start ..< d.stop:
         if buf[j].kind == SymbolDef:
           let oldId = buf[j].symId
           if oldId notin result:
-            let oldName = pool.syms[oldId]
-            let owner = extractModule(oldName)
-            if owner == plan.baseSuffix:
-              var newName = removeModule(oldName)
-              newName.add '.'
-              newName.add shardSuffix
-              result[oldId] = pool.syms.getOrIncl(newName)
+            let split = splitSymName(pool.syms[oldId])
+            if split.module == baseSuffix:
+              result[oldId] = pool.syms.getOrIncl(split.name & "." & shard.suffix)
 
 proc rewriteToken(t: PackedToken; remap: Table[SymId, SymId]): PackedToken =
   ## Returns a token with its symId remapped (if applicable), otherwise
@@ -192,26 +188,32 @@ proc rewriteToken(t: PackedToken; remap: Table[SymId, SymId]): PackedToken =
 
 # ---- shard emit -----------------------------------------------------------
 
-proc buildShardBuf(buf: TokenBuf; decls: seq[TopLevelDecl]; declIndices: seq[int];
+proc buildShardBuf(buf: TokenBuf; decls: seq[TopLevelDecl]; shard: Shard;
                    remap: Table[SymId, SymId]): TokenBuf =
   ## Build one shard's TokenBuf: wrap the chosen decls in the same
   ## outer `(stmts …)` shape as the umbrella, applying the global
-  ## SymId remap as we copy.
+  ## SymId remap as we copy. Pre-sized to avoid reallocations.
   assert buf.len > 0 and buf[0].kind == ParLe
-  result = createTokenBuf(64)
+  result = createTokenBuf(shard.tokenCount + 2)
   result.add buf[0]  # (stmts …) opener with the umbrella's info
-  for declIdx in declIndices:
-    let d = decls[declIdx]
-    for j in d.start ..< d.stop:
-      result.add rewriteToken(buf[j], remap)
+  if remap.len == 0:
+    # Shard 0 / no-remap case: tight inner loop with no per-token
+    # case-dispatch.
+    for declIdx in shard.declIndices:
+      let d = decls[declIdx]
+      for j in d.start ..< d.stop:
+        result.add buf[j]
+  else:
+    for declIdx in shard.declIndices:
+      let d = decls[declIdx]
+      for j in d.start ..< d.stop:
+        result.add rewriteToken(buf[j], remap)
   result.addParRi()
 
 proc shardPath(dir, baseSuffix: string; idx: int): string =
-  let shardSuffix =
-    if idx == 0: baseSuffix
-    else: baseSuffix & "_" & $idx
-  if dir.len > 0: dir / shardSuffix & ".s.nif"
-  else: shardSuffix & ".s.nif"
+  let suffix = shardSuffix(baseSuffix, idx)
+  if dir.len > 0: dir / suffix & ".s.nif"
+  else: suffix & ".s.nif"
 
 proc shardFile*(umbrellaPath: string; baseSuffix: string): seq[string] =
   ## Partition `umbrellaPath` into shards. Writes `<baseSuffix>.s.nif`
@@ -246,37 +248,31 @@ proc shardFile*(umbrellaPath: string; baseSuffix: string): seq[string] =
       canShortCircuit = false
     if canShortCircuit:
       # Enumerate existing shards. Stop at the first gap.
+      var shards = @[baseSuffix]
       var i = 1
-      var shards = newSeq[string]()
-      shards.add baseSuffix
-      while true:
-        let p = shardPath(dir, baseSuffix, i)
-        if not fileExists(p): break
-        shards.add baseSuffix & "_" & $i
+      while fileExists(shardPath(dir, baseSuffix, i)):
+        shards.add shardSuffix(baseSuffix, i)
         inc i
       return shards
 
   var buf = parseFromFile(umbrellaPath, sizeHint = 1024)
   if buf.len == 0 or buf[0].kind != ParLe: return
 
-  # Quick size check: if total decl-token count is below threshold,
-  # don't bother sharding at all.
   let exported = loadExportedSyms(umbrellaPath)
   let decls = collectTopLevelDecls(buf, exported)
   var total = 0
   for d in decls: total += d.size
   if total < ShardTokenThreshold: return
 
-  let plan = planShards(decls, baseSuffix, ShardTokenThreshold)
-  if plan.decls.len == 1: return  # everything fit into shard 0
+  let shards = planShards(decls, baseSuffix, ShardTokenThreshold)
+  if shards.len == 1: return  # everything fit into shard 0
 
-  let remap = buildRemap(decls, buf, plan)
+  let remap = buildRemap(decls, buf, shards, baseSuffix)
 
-  result = newSeq[string](plan.suffixes.len)
-  for i in 0 ..< plan.suffixes.len:
-    let shardSuffix = plan.suffixes[i]
-    result[i] = shardSuffix
-    let shardBuf = buildShardBuf(buf, decls, plan.decls[i], remap)
+  result = newSeq[string](shards.len)
+  for i, shard in pairs shards:
+    result[i] = shard.suffix
+    let shardBuf = buildShardBuf(buf, decls, shard, remap)
     let outpath = shardPath(dir, baseSuffix, i)
     try:
       writeFile(shardBuf, outpath, OnlyIfChanged)
