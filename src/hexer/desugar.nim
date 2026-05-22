@@ -6,6 +6,7 @@ else:
   {.pragma: untyped.}
 
 import std / [assertions, tables, hashes, sets, syncio]
+from std / strutils import startsWith
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters]
@@ -737,7 +738,7 @@ proc isStringConcatCall(n: Cursor): bool =
   if n.exprKind in CallKinds:
     var c = n
     inc c                       # past call tag
-    if c.kind == Symbol:
+    if c.kind == Symbol and startsWith(pool.syms[c.symId], "&."):
       result = isConcat(c.symId)
 
 proc isChainedStringConcatCall(n: Cursor): bool =

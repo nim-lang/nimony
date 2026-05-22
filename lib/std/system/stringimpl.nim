@@ -130,7 +130,7 @@ func `=copy`*(dest: var string; src: string) {.exportc: "nimStrCopy", nodestroy.
     copyMem(addr dest.bytes, addr src.bytes, sizeof(string))
 
 func `=dup`*(s: string): string {.exportc: "nimStrDup", inline, nodestroy.} =
-  if ssLen(s) == HeapSlen:
+  if ssLenOf(s.bytes) == HeapSlen:
     arcInc(s.more.rc)
   result = string(bytes: s.bytes, more: s.more)
 

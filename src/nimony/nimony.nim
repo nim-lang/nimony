@@ -81,6 +81,9 @@ Options:
   --linker:LINKER           set the linker
   --app:console|gui|lib|staticlib
                             set the application type (default: console)
+  --opt:speed|size|none     C compiler optimization level
+                            (default: -O1, opt:speed -> -O3, opt:size -> -Os,
+                             opt:none -> -O0)
   --novalidate              skip running the plugin validator on plugin sources
   --verbose                 dump NJVL IR (and other diagnostics) on contract
                             analysis failures

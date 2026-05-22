@@ -141,5 +141,12 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     config.noValidate = true
   of "verbose":
     config.verbose = true
+  of "opt":
+    forwardArg = false
+    case normalize(val)
+    of "speed": config.optLevel = optSpeed
+    of "size":  config.optLevel = optSize
+    of "none":  config.optLevel = optNone
+    else: quit "invalid value for --opt; expected speed, size, or none"
   else:
     result = false
