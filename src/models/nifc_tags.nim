@@ -107,7 +107,7 @@ type
     ArrayT = (ord(ArrayTagId), "array")  ## `array` type constructor (element type, index type/range)
     FlexarrayT = (ord(FlexarrayTagId), "flexarray")  ## `flexarray` type constructor
     AptrT = (ord(AptrTagId), "aptr")  ## "pointer to array of" type constructor
-    VarargsT = (ord(VarargsTagId), "varargs")  ## `varargs` type/proc annotation: Nimony carries the element type and an optional transformer symbol (e.g. `` `$` ``); NIFC keeps only the element type
+    VarargsT = (ord(VarargsTagId), "varargs")  ## `varargs` type/proc annotation: Nimony carries the element type and an optional transformer symbol (e.g. `` `$` ``); a trailing `STR` literal is the openArray mangle hint planted by `semcompat.compatRewriteParam` for hexer to resolve to the openArray instance Sym; NIFC keeps only the element type
 
 proc rawTagIsNifcType*(raw: TagEnum): bool {.inline.} =
   raw in {ParamsTagId, UnionTagId, ObjectTagId, EnumTagId, ProctypeTagId, ITagId, UTagId, FTagId, CTagId, BoolTagId, VoidTagId, PtrTagId, ArrayTagId, FlexarrayTagId, AptrTagId, VarargsTagId}
