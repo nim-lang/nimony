@@ -42,8 +42,6 @@
 
 # included from sem.nim
 
-const OpenArrayHeadName = "openArray.0." & SystemModuleSuffix
-
 proc compatOpenArrayInstance(c: var SemContext; elemType: Cursor;
                              info: PackedLineInfo): TypeCursor =
   ## Build `(invoke openArray elemType)` and instantiate it. Returns the
@@ -64,12 +62,15 @@ proc compatVarargsElem(paramType: Cursor): Cursor =
   ## If `paramType` is a typed `(varargs T …)`, return a cursor at T.
   ## Returns a nil cursor for the bare `(varargs)` pragma form so callers
   ## can leave that case alone.
-  if paramType.typeKind != VarargsT: return default(Cursor)
-  var elem = paramType
-  inc elem
-  if elem.kind == ParRi:
-    return default(Cursor)
-  result = elem
+  if paramType.typeKind != VarargsT:
+    result = default(Cursor)
+  else:
+    var elem = paramType
+    inc elem
+    if elem.kind == ParRi:
+      result = default(Cursor)
+    else:
+      result = elem
 
 proc compatVarargsParamElem*(fn: FnCandidate): Cursor =
   ## Walk `fn`'s param list; if any param is a typed `(varargs T …)`,
@@ -79,25 +80,25 @@ proc compatVarargsParamElem*(fn: FnCandidate): Cursor =
   var f = fn.typ
   if f.typeKind in RoutineTypes:
     skipToParams f
-  if f.substructureKind != ParamsU: return
-  loopInto f:
-    if f.symKind == ParamY:
-      let p = asLocal(f)
-      let elem = compatVarargsElem(p.typ)
-      if not cursorIsNil(elem):
-        return elem
-    skip f
+  if f.substructureKind == ParamsU:
+    loopInto f:
+      if f.symKind == ParamY:
+        let p = asLocal(f)
+        let elem = compatVarargsElem(p.typ)
+        if not cursorIsNil(elem):
+          return elem
+      skip f
 
 proc compatVarargsHasHint(paramType: Cursor): bool =
   ## True if `(varargs T conv? "hint")` already carries the openArray
   ## mangle hint that `compatAnnotateVarargsParam` injects. Keeps the
   ## annotation idempotent across template re-sem / generic re-instantiation.
-  if paramType.typeKind != VarargsT: return false
-  var c = paramType
   result = false
-  loopInto c:
-    if c.kind == StringLit: return true
-    skip c
+  if paramType.typeKind == VarargsT:
+    var c = paramType
+    loopInto c:
+      if c.kind == StringLit: result = true
+      skip c
 
 proc compatToOpenArrayTypevars(): (SymId, SymId) =
   ## Return the SymIds of `toOpenArray.0[I, T]`'s typevars in declaration
@@ -105,20 +106,20 @@ proc compatToOpenArrayTypevars(): (SymId, SymId) =
   result = (SymId(0), SymId(0))
   let origin = pool.syms.getOrIncl("toOpenArray.0." & SystemModuleSuffix)
   let res = tryLoadSym(origin)
-  if res.status != LacksNothing: return
-  let routine = asRoutine(res.decl)
-  var tv = routine.typevars
-  if tv.substructureKind != TypevarsU: return
-  inc tv
-  if tv.kind == ParLe and tv.symKind == TypevarY:
-    var inner = tv
-    inc inner
-    result[0] = inner.symId
-    skip tv
-  if tv.kind == ParLe and tv.symKind == TypevarY:
-    var inner = tv
-    inc inner
-    result[1] = inner.symId
+  if res.status == LacksNothing:
+    let routine = asRoutine(res.decl)
+    var tv = routine.typevars
+    if tv.substructureKind == TypevarsU:
+      inc tv
+      if tv.kind == ParLe and tv.symKind == TypevarY:
+        var inner = tv
+        inc inner
+        result[0] = inner.symId
+        skip tv
+      if tv.kind == ParLe and tv.symKind == TypevarY:
+        var inner = tv
+        inc inner
+        result[1] = inner.symId
 
 proc compatAnnotateVarargsParam*(c: var SemContext; dest: var TokenBuf;
                                  typeStart: int) =
@@ -129,54 +130,50 @@ proc compatAnnotateVarargsParam*(c: var SemContext; dest: var TokenBuf;
   ## to instantiate, or the hint is already present).
   if typeStart >= dest.len: return
   let typeCursor = cursorAt(dest, typeStart)
-  if typeCursor.typeKind != VarargsT:
+  if typeCursor.typeKind != VarargsT or compatVarargsHasHint(typeCursor):
     endRead(dest)
-    return
-  if compatVarargsHasHint(typeCursor):
-    endRead(dest)
-    return
-  let info = typeCursor.info
-  var elem = typeCursor
-  inc elem
-  if elem.kind == ParRi:
-    # bare `(varargs)` — nothing to instantiate
-    endRead(dest)
-    return
+  else:
+    let info = typeCursor.info
+    var elem = typeCursor
+    inc elem
+    if elem.hasMore:
+      # Capture children of the original `(varargs …)` into a fresh buffer so
+      # the in-place `replace` can read its source without aliasing `dest`.
+      # `loopInto` is required: under `-d:virtualParRi` the closing `)` is
+      # elided when sealed, so a bare `while c.hasMore` walks past the
+      # varargs subtree into adjacent param-decl tokens.
+      var rebuilt = createTokenBuf(16)
+      rebuilt.addParLe(VarargsT, info)
+      var inner = typeCursor
+      loopInto inner:
+        takeTree rebuilt, inner
+      endRead(dest)
 
-  # Capture children of the original `(varargs …)` into a fresh buffer so
-  # the in-place `replace` can read its source without aliasing `dest`.
-  # `loopInto` is required: under `-d:virtualParRi` the closing `)` is
-  # elided when sealed, so a bare `while c.hasMore` walks past the
-  # varargs subtree into adjacent param-decl tokens.
-  var rebuilt = createTokenBuf(16)
-  rebuilt.addParLe(VarargsT, info)
-  var inner = typeCursor
-  loopInto inner:
-    takeTree rebuilt, inner
-  endRead(dest)
+      var elemCursor = cursorAt(rebuilt, 0)
+      inc elemCursor    # past `(varargs` to the element type
+      let inst = compatOpenArrayInstance(c, elemCursor, info)
+      endRead(rebuilt)
+      let hintStr =
+        if inst.kind == Symbol: pool.syms[inst.symId]
+        else: ""
+      rebuilt.addStrLit hintStr, info
+      rebuilt.addParRi()
 
-  var elemCursor = cursorAt(rebuilt, 0)
-  inc elemCursor    # past `(varargs` to the element type
-  let inst = compatOpenArrayInstance(c, elemCursor, info)
-  endRead(rebuilt)
-  let hintStr =
-    if inst.kind == Symbol: pool.syms[inst.symId]
-    else: ""
-  rebuilt.addStrLit hintStr, info
-  rebuilt.addParRi()
-
-  dest.replace beginRead(rebuilt), typeStart
+      dest.replace beginRead(rebuilt), typeStart
+    else:
+      # bare `(varargs)` — nothing to instantiate
+      endRead(dest)
 
 proc compatVarargsSlotIsBundled(m: Match; start: int): bool =
   ## True if the tail at `start` starts with an
   ## `(hcall <toOpenArray.0…instance> …)` subtree — sigmatch accepted a
   ## pre-bundled `openArray[T]` arg verbatim. Bundling again would
   ## double-wrap.
-  if start >= m.args.len: return false
-  if m.args[start].kind != ParLe: return false
-  if m.args[start].exprKind != HcallX: return false
-  if start + 1 >= m.args.len or m.args[start + 1].kind != Symbol: return false
-  result = pool.syms[m.args[start + 1].symId].startsWith("toOpenArray.")
+  result = false
+  if start < m.args.len:
+    if m.args[start].exprKind == HcallX:
+      if start + 1 < m.args.len and m.args[start + 1].kind == Symbol:
+        result = pool.syms[m.args[start + 1].symId].startsWith("toOpenArray.")
 
 proc compatBundleVarargsInMatch*(c: var SemContext; m: var Match;
                                  elemType: Cursor; info: PackedLineInfo) =
@@ -186,60 +183,58 @@ proc compatBundleVarargsInMatch*(c: var SemContext; m: var Match;
   ## `addArgsInstConverters` writes the bundled form into `dest`. No-ops
   ## when no varargs slot was matched, or the slot already holds a
   ## previous `toOpenArray.0` bundle (template body re-sem).
-  if m.firstVarargPosition < 0: return
   let start = m.firstVarargPosition
-  if compatVarargsSlotIsBundled(m, start): return
+  if start >= 0 and not compatVarargsSlotIsBundled(m, start):
+    # Move the flat args out of `m.args` into a `(stmts …)` scratch wrapper
+    # so an iterator over them terminates at the closing `)` rather than
+    # walking off the end. (Without the wrapper, `hasMore` — which only
+    # checks `kind != ParRi` outside `virtualParRi` — would read past
+    # buffer end into undefined memory.)
+    var flat = createTokenBuf(max(8, m.args.len - start + 2))
+    flat.addParLe(StmtsS, info)
+    for i in start ..< m.args.len:
+      flat.add m.args[i]
+    flat.addParRi()
+    m.args.shrink start
 
-  # Move the flat args out of `m.args` into a `(stmts …)` scratch wrapper
-  # so an iterator over them terminates at the closing `)` rather than
-  # walking off the end. (Without the wrapper, `hasMore` — which only
-  # checks `kind != ParRi` outside `virtualParRi` — would read past
-  # buffer end into undefined memory.)
-  var flat = createTokenBuf(max(8, m.args.len - start + 2))
-  flat.addParLe(StmtsS, info)
-  for i in start ..< m.args.len:
-    flat.add m.args[i]
-  flat.addParRi()
-  m.args.shrink start
+    var argCursor = beginRead(flat)
+    var argTrees: seq[TokenBuf] = @[]
+    loopInto argCursor:
+      var ab = createTokenBuf(8)
+      takeTree ab, argCursor
+      argTrees.add ab
+    let n = argTrees.len
 
-  var argCursor = beginRead(flat)
-  var argTrees: seq[TokenBuf] = @[]
-  loopInto argCursor:
-    var ab = createTokenBuf(8)
-    takeTree ab, argCursor
-    argTrees.add ab
-  let n = argTrees.len
+    var rangeBuf = createTokenBuf(8)
+    rangeBuf.addParLe(RangetypeT, info)
+    rangeBuf.addSubtree c.types.intType
+    rangeBuf.addIntLit(0, info)
+    rangeBuf.addIntLit(n - 1, info)
+    rangeBuf.addParRi()
+    let rangeType = typeToCursor(c, rangeBuf, 0)
 
-  var rangeBuf = createTokenBuf(8)
-  rangeBuf.addParLe(RangetypeT, info)
-  rangeBuf.addSubtree c.types.intType
-  rangeBuf.addIntLit(0, info)
-  rangeBuf.addIntLit(n - 1, info)
-  rangeBuf.addParRi()
-  let rangeType = typeToCursor(c, rangeBuf, 0)
+    var elemBuf = createTokenBuf(8)
+    elemBuf.addSubtree elemType
+    let elemTypeC = typeToCursor(c, elemBuf, 0)
 
-  var elemBuf = createTokenBuf(8)
-  elemBuf.addSubtree elemType
-  let elemTypeC = typeToCursor(c, elemBuf, 0)
+    let (iSym, tSym) = compatToOpenArrayTypevars()
+    let origin = pool.syms.getOrIncl("toOpenArray.0." & SystemModuleSuffix)
+    var inferred = initTable[SymId, Cursor]()
+    inferred[iSym] = rangeType
+    inferred[tSym] = elemTypeC
+    var typeArgs = createTokenBuf(8)
+    typeArgs.addSubtree rangeType
+    typeArgs.addSubtree elemTypeC
+    let inst = c.requestRoutineInstance(origin, typeArgs, inferred, info)
 
-  let (iSym, tSym) = compatToOpenArrayTypevars()
-  let origin = pool.syms.getOrIncl("toOpenArray.0." & SystemModuleSuffix)
-  var inferred = initTable[SymId, Cursor]()
-  inferred[iSym] = rangeType
-  inferred[tSym] = elemTypeC
-  var typeArgs = createTokenBuf(8)
-  typeArgs.addSubtree rangeType
-  typeArgs.addSubtree elemTypeC
-  let inst = c.requestRoutineInstance(origin, typeArgs, inferred, info)
-
-  m.args.addParLe(HcallX, info)
-  m.args.add symToken(inst.targetSym, info)
-  m.args.addParLe(AconstrX, info)
-  m.args.addParLe(ArrayT, info)
-  m.args.addSubtree elemTypeC
-  m.args.addSubtree rangeType
-  m.args.addParRi()
-  for ab in argTrees:
-    m.args.add ab
-  m.args.addParRi()
-  m.args.addParRi()
+    m.args.addParLe(HcallX, info)
+    m.args.add symToken(inst.targetSym, info)
+    m.args.addParLe(AconstrX, info)
+    m.args.addParLe(ArrayT, info)
+    m.args.addSubtree elemTypeC
+    m.args.addSubtree rangeType
+    m.args.addParRi()
+    for ab in argTrees:
+      m.args.add ab
+    m.args.addParRi()
+    m.args.addParRi()

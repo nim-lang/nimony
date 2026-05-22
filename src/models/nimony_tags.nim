@@ -221,7 +221,7 @@ type
     VoidT = (ord(VoidTagId), "void")  ## `void` return type
     PtrT = (ord(PtrTagId), "ptr")  ## `ptr` type contructor; the `(unchecked)` pragma relaxes nil checking on deref
     ArrayT = (ord(ArrayTagId), "array")  ## `array` type constructor (element type, index type/range)
-    VarargsT = (ord(VarargsTagId), "varargs")  ## `varargs` type/proc annotation: Nimony carries the element type and an optional transformer symbol (e.g. `` `$` ``); a trailing `STR` literal is the openArray mangle hint planted by `semcompat.compatRewriteParam` for hexer to resolve to the openArray instance Sym; NIFC keeps only the element type
+    VarargsT = (ord(VarargsTagId), "varargs")  ## `varargs` type/proc annotation: Nimony carries the element type and an optional transformer symbol (e.g. `` `$` ``); NIFC keeps only the element type
     StaticT = (ord(StaticTagId), "static")  ## `static` type or annotation
     TupleT = (ord(TupleTagId), "tuple")  ## `tuple` type
     OnumT = (ord(OnumTagId), "onum")  ## enum with holes type
@@ -295,7 +295,7 @@ type
     InlineP = (ord(InlineTagId), "inline")  ## `inline` proc annotation
     NoinlineP = (ord(NoinlineTagId), "noinline")  ## `noinline` proc annotation
     ClosureP = (ord(ClosureTagId), "closure")  ## `closure` proc annotation; not a calling convention anymore, simply annotates a proc as a closure
-    VarargsP = (ord(VarargsTagId), "varargs")  ## `varargs` type/proc annotation: Nimony carries the element type and an optional transformer symbol (e.g. `` `$` ``); a trailing `STR` literal is the openArray mangle hint planted by `semcompat.compatRewriteParam` for hexer to resolve to the openArray instance Sym; NIFC keeps only the element type
+    VarargsP = (ord(VarargsTagId), "varargs")  ## `varargs` type/proc annotation: Nimony carries the element type and an optional transformer symbol (e.g. `` `$` ``); NIFC keeps only the element type
     SelectanyP = (ord(SelectanyTagId), "selectany")
     AlignP = (ord(AlignTagId), "align")
     BitsP = (ord(BitsTagId), "bits")

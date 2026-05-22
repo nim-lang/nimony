@@ -52,6 +52,7 @@ const
   ExceptionName* = "Exception.0." & SystemModuleSuffix
   ExcThreadVarName* = "exc.0." & SystemModuleSuffix
   ContinuationName* = "Continuation.0." & SystemModuleSuffix
+  OpenArrayHeadName* = "openArray.0." & SystemModuleSuffix
 
 proc createBuiltinTypes*(bits: int): BuiltinTypes =
   result = BuiltinTypes(mem: createTokenBuf(30))
