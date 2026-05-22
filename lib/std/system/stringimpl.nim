@@ -130,11 +130,6 @@ func `=copy`*(dest: var string; src: string) {.exportc: "nimStrCopy", nodestroy.
     copyMem(addr dest.bytes, addr src.bytes, sizeof(string))
 
 func `=dup`*(s: string): string {.exportc: "nimStrDup", inline, nodestroy.} =
-  # `ssLenOf(s.bytes)` instead of `ssLen(s)`: same byte read but expressed
-  # as a foldable mask instead of a type-punned pointer load. Lets gcc
-  # constant-propagate the heap check when `s` comes from a known-inline
-  # literal — without this it conservatively keeps the `arcInc` branch
-  # live and warns about the NIL `s.more.rc` access (treassign.nim main3).
   if ssLenOf(s.bytes) == HeapSlen:
     arcInc(s.more.rc)
   result = string(bytes: s.bytes, more: s.more)
