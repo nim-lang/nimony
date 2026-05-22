@@ -9,7 +9,8 @@ import std / [sets, tables, assertions]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 
-import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes, renderer, asthelpers
+import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes, renderer, asthelpers,
+  features
 import ".." / lib / symparser
 import ".." / models / tags
 
@@ -41,6 +42,7 @@ type
     UnavailableSubtypeRelation
     NotImplementedConcept
     ImplicitConversionNotMutable
+    VarNeeded
     UnhandledTypeBug
     MismatchBug
     MissingExplicitGenericParameter
@@ -178,6 +180,9 @@ proc getErrorMsg*(m: Match): string =
     "'concept' is not implemented"
   of ImplicitConversionNotMutable:
     concat("implicit conversion to ", typeToString(m.error.expected), " is not mutable")
+  of VarNeeded:
+    concat("expression is not a mutable lvalue, cannot be passed to ",
+      typeToString(m.error.expected), " parameter")
   of UnhandledTypeBug:
     concat("BUG: unhandled type: ", pool.tags[m.error.expected.tagId])
   of MismatchBug:
@@ -1117,6 +1122,51 @@ proc getTupleFieldTypeSkipTypedesc(c: Cursor): Cursor =
   if result.typeKind == TypedescT:
     inc result
 
+proc isMutableLvalue(n: Cursor): bool =
+  ## True for expressions that resolve to a mutable storage location, i.e.
+  ## that can be passed to a `var T` / `out T` parameter. Mirrors old Nim's
+  ## `isLValue` (assignable lvalue): VarY-class symbols and paths through
+  ## them, params declared `var`/`out`/`lent`, and paths rooted at a call
+  ## returning `var T` / `lent T`. Excludes `let`/`const` (addressable but
+  ## not assignable). Local to sigmatch — derefs.nim's `isAddressable` is
+  ## too permissive (accepts LetY) and lives behind a circular import.
+  result = false
+  var n = n
+  while true:
+    case n.exprKind
+    of DotX, AtX, ArratX, TupatX, ParX, PatX, DdotX:
+      inc n
+    of DconvX:
+      inc n
+      skip n # type
+    of BaseobjX:
+      inc n
+      skip n # intlit
+      skip n # type
+    of CallKinds:
+      inc n # past CallKinds tag
+      if n.kind != Symbol: return false
+      let r = tryLoadSym(n.symId)
+      if r.status != LacksNothing: return false
+      var decl = r.decl
+      if decl.typeKind notin RoutineTypes: return false
+      skipToReturnType decl
+      return decl.typeKind in {MutT, LentT}
+    else: break
+  if n.kind notin {Symbol, SymbolDef}:
+    return false
+  let res = tryLoadSym(n.symId)
+  if res.status != LacksNothing: return false
+  let local = asLocal(res.decl)
+  case local.kind
+  of VarY, GvarY, TvarY, ResultY, CursorY, PatternvarY:
+    result = true
+  of ParamY:
+    # plain-`T` params are immutable copies; `var`/`out`/`lent` aren't
+    result = local.typ.typeKind in {MutT, OutT, LentT}
+  else:
+    result = false
+
 proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
   case f.kind
   of Symbol:
@@ -1131,6 +1181,15 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         inc a
       else:
         m.skippedMod = f.typeKind
+        if fk in {MutT, OutT} and m.context != nil and
+            VarToverloadsFeature in m.context.features and
+            not isMutableLvalue(arg.n):
+          # Mirror old Nim's `kVarNeeded`: a `var T`/`out T` formal cannot
+          # consume a non-lvalue arg. Without this rejection the new
+          # `mutualGenericMatch` tiebreaker would always pick the `var T`
+          # overload, leaving the immutable case for a later pass to
+          # diagnose.
+          m.error VarNeeded, f, arg.typ
       inc f
       singleArgImpl m, f, CallArg(n: arg.n, typ: a, orig: arg.orig)
       expectParRi m, f
@@ -1657,11 +1716,28 @@ proc mutualGenericMatch(a, b: Match): DisambiguationResult =
   assert bParams.substructureKind == ParamsU
   inc aParams
   inc bParams
+  let varToverloads = c != nil and VarToverloadsFeature in c.features
   while aParams.hasMore and bParams.hasMore:
     let aParam = takeLocal(aParams, SkipFinalParRi)
     let bParam = takeLocal(bParams, SkipFinalParRi)
     var aFormal = aParam.typ
     var bFormal = bParam.typ
+    if varToverloads:
+      # Mirror old Nim's `sumGeneric` +1 for `tyVar`: a `var T` (or `out T`)
+      # formal is more specific than a plain-`T` formal of the same base.
+      # This is the whole point of the `varToverloads` gate — let two
+      # routines that differ only in `var` on a parameter coexist as
+      # distinct overloads, with the `var` one preferred at the call site.
+      let aIsMut = aFormal.typeKind in {MutT, OutT}
+      let bIsMut = bFormal.typeKind in {MutT, OutT}
+      if aIsMut and not bIsMut:
+        if result == SecondWins: return NobodyWins
+        result = FirstWins
+        continue
+      elif bIsMut and not aIsMut:
+        if result == FirstWins: return NobodyWins
+        result = SecondWins
+        continue
     var ma = createMatch(c)
     singleArg ma, aFormal, CallArg(n: emptyNode(c[]), typ: bParam.typ)
     var mb = createMatch(c)

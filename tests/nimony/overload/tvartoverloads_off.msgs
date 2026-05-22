@@ -1,0 +1,1 @@
+tests/nimony/overload/tvartoverloads_off.nim(8, 12) Error: ambiguous call: 'foo'

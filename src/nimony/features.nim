@@ -20,6 +20,11 @@ type
       ## Nim-2-style "style insensitivity": identifier lookup ignores
       ## underscores and ASCII case after the first character. Strictly a
       ## sem-frontend toggle; hexer / nifc / nifmake are unaffected.
+    VarToverloadsFeature
+      ## Nim-2-style overloading by `var T`: when two routines differ only
+      ## in whether a parameter is `var T` or `T`, prefer the `var T`
+      ## overload (mirrors `sumGeneric` +1 for `tyVar` in old Nim's
+      ## `complexDisambiguation`).
 
 proc normalizeFeatureName(s: string): string =
   result = newStringOfCap(s.len)
@@ -38,4 +43,5 @@ proc parseFeature*(s: string): Feature =
   of "autoclosures": AutoClosuresFeature
   of "lenientnils": LenientNilsFeature
   of "ignorestyle": IgnoreStyleFeature
+  of "vartoverloads": VarToverloadsFeature
   else: InvalidFeature
