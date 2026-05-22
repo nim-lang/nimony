@@ -909,6 +909,15 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
     # only merge symbols defined in args to scope if we did not match a macro/template:
     closeArgsScope c, cs, merge = finalFn.kind notin {MacroY, TemplateY}
     let isMagic = c.addFn(dest, finalFn, cs.fn.n, m[idx])
+    if finalFn.kind notin {TemplateY, MacroY}:
+      # Nim 2 compat: if a typed-varargs slot matched, replace the flat
+      # tail of `m.args` with the openArray bundle so the next line emits
+      # `(call f (hcall toOpenArray.0[I,T] (aconstr …)))` straight into
+      # `dest`. Skipped for templates (`firstVarargMatch` substitution
+      # needs the flat args) and macros (their plugin reads `cs.args`).
+      let varargsElem = compatVarargsParamElem(m[idx].fn)
+      if not cursorIsNil(varargsElem):
+        compatBundleVarargsInMatch c, m[idx], varargsElem, cs.callNode.info
     addArgsInstConverters(c, dest, m[idx], cs.args)
     takeParRi dest, it.n
     buildTypeArgs(m[idx])

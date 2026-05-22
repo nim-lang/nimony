@@ -220,6 +220,8 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
         n = it.n
         if kind != PatternvarY:
           patchType c, dest, it.typ, beforeType
+    if kind == ParamY:
+      compatAnnotateVarargsParam c, dest, beforeType
   else:
     bug "semLocal"
 

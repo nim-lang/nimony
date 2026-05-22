@@ -210,6 +210,11 @@ proc cursorIsNil*(c: Cursor): bool {.inline.} =
   result = c.p == nil
 
 proc hasCurrentToken*(c: Cursor): bool {.inline.} =
+  ## True if `c` points at a readable token. Validator-only — exists so
+  ## the grammar checker can survive malformed input that runs the cursor
+  ## off the end. Regular traversal code should use `hasMore` instead;
+  ## it accepts well-formed input where every open paren has its matching
+  ## close, and stays a token-kind check rather than a pointer check.
   result = c.p != nil and c.rem > 0
 
 when defined(virtualParRi):

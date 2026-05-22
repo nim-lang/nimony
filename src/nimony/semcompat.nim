@@ -6,44 +6,39 @@
 
 ## Nim 2 compatibility shims.
 ##
-## Lowering pass that rewrites Nim source-level constructs to forms the
-## later pipeline understands without per-construct knowledge.
+## Local helpers — *not* a post-sem pass. The two responsibilities below
+## hook into the sites in sem that naturally emit the affected tokens, so
+## the rest of the buffer is never re-walked.
 ##
-## Current responsibilities:
+## Responsibilities:
 ##
-## - `varargs[T]` parameter types lower to the corresponding
-##   `openArray[T]` instance Symbol.
-## - Call sites with a `varargs[T]` formal slot have their trailing
-##   flat args bundled into `(hcall toOpenArray.0[I,T] (aconstr (array
-##   T (rangetype int 0 N-1)) e₁ … eₙ))` — the same shape sem already
-##   produces for explicit `f([1, 2, 3])` against an `openArray[int]`
-##   formal, so derefs/hexer/NIFC need no new handling. Empty case
-##   yields an empty range `0..-1`. The `toOpenArray.0` generic
-##   converter is instantiated via `requestRoutineInstance` so the
-##   hcall references the resulting instance SymId (matching sem's
-##   normal converter-insertion pattern).
-## - Bare `(varargs)` (the `{.varargs.}` pragma form for C importc
-##   procs) is left untouched — NIFC's `...` ellipsis is reserved for
-##   that case.
+## - **Param-type annotation.** `compatAnnotateVarargsParam` runs inside
+##   `semLocal` after a param's type has been emitted. If the type is
+##   `(varargs T conv?)` it rewrites it in place to
+##   `(varargs T conv? "openArray.0.I<key>.<mod>")` — the trailing string
+##   literal names the openArray instance Sym for hexer to resolve at
+##   codegen time. sem instantiates the openArray[T] instance as a side
+##   effect, so the hint always resolves to a real decl in `.s.nif`.
 ##
-## XXX cross-module: this rewrites the param's *published* signature,
-## so a module importing a `proc f*(xs: varargs[int])` sees an
-## `openArray[int]` formal and its sigmatch refuses flat int lists.
-## Single-module varargs procs work end-to-end. The cross-module fix
-## (defer the type rewrite to a hexer pass so `.s.nif` keeps the
-## varargs slot for cross-module sigmatch) needs a way to find or
-## synthesize the openArray-shaped struct from hexer — punted for a
-## follow-up. See conversation notes in `feedback_varargs_cross_module.md`.
+## - **Call-site bundling.** `compatBundleVarargsInMatch` runs inside
+##   `resolveOverloads` after the best candidate is picked. For non-
+##   template calls with a typed-varargs slot it rewrites the tail of
+##   `m.args` (from `m.firstVarargPosition` onward) into a single
+##   `(hcall toOpenArray.0[I,T] (aconstr (array T (rangetype int 0 N-1)) e₁ … eₙ))`
+##   bundle. After the rewrite `addArgsInstConverters` emits the bundle
+##   normally, so derefs/hexer/NIFC see the same shape sem produces for
+##   `f([1, 2, 3])` against an `openArray[int]` formal. Empty case yields
+##   an empty range `0..-1`. Templates skip bundling — their `unpack` /
+##   `firstVarargMatch` substitution needs the flat args in `dest`; any
+##   varargs calls in the *expanded* body get re-resolved through
+##   `resolveOverloads` and bundled there.
 ##
-## Future responsibilities:
+## Bare `(varargs)` — the `{.varargs.}` pragma form on C importc procs —
+## is left untouched; NIFC's `...` ellipsis handles it.
 ##
-## - Implicit generics (`proc f(x: T)` → `proc f[T](x: T)`). Same
-##   walking + rewriting machinery applies, so it lives here next to
-##   the varargs rewrite.
-##
-## Included from sem.nim because we need access to `semLocalType` and
-## the existing instantiation machinery (`c.procRequests`,
-## `c.typeInstDecls`).
+## Included from sem.nim because the helpers need access to
+## `semLocalType` and the existing instantiation machinery
+## (`c.procRequests`, `c.typeInstDecls`).
 
 # included from sem.nim
 
@@ -65,10 +60,8 @@ proc compatOpenArrayInstance(c: var SemContext; elemType: Cursor;
   var src = cursorAt(invokeBuf, 0)
   result = semLocalType(c, scratch, src)
 
-proc compatRewriteImpl(c: var SemContext; dest: var TokenBuf; src: var Cursor)
-
 proc compatVarargsElem(paramType: Cursor): Cursor =
-  ## If `paramType` is a typed `(varargs T)`, return a cursor at T.
+  ## If `paramType` is a typed `(varargs T …)`, return a cursor at T.
   ## Returns a nil cursor for the bare `(varargs)` pragma form so callers
   ## can leave that case alone.
   if paramType.typeKind != VarargsT: return default(Cursor)
@@ -78,38 +71,37 @@ proc compatVarargsElem(paramType: Cursor): Cursor =
     return default(Cursor)
   result = elem
 
+proc compatVarargsParamElem*(fn: FnCandidate): Cursor =
+  ## Walk `fn`'s param list; if any param is a typed `(varargs T …)`,
+  ## return a cursor at T. Nil cursor when the routine has no
+  ## typed-varargs slot (bare `{.varargs.}` C importc procs included).
+  result = default(Cursor)
+  var f = fn.typ
+  if f.typeKind in RoutineTypes:
+    skipToParams f
+  if f.substructureKind != ParamsU: return
+  loopInto f:
+    if f.symKind == ParamY:
+      let p = asLocal(f)
+      let elem = compatVarargsElem(p.typ)
+      if not cursorIsNil(elem):
+        return elem
+    skip f
+
 proc compatVarargsHasHint(paramType: Cursor): bool =
   ## True if `(varargs T conv? "hint")` already carries the openArray
-  ## mangle hint that `compatRewriteParam` injects. Makes the rewrite
-  ## idempotent for template re-instantiation.
+  ## mangle hint that `compatAnnotateVarargsParam` injects. Keeps the
+  ## annotation idempotent across template re-sem / generic re-instantiation.
   if paramType.typeKind != VarargsT: return false
   var c = paramType
-  inc c
-  while c.hasMore:
+  result = false
+  loopInto c:
     if c.kind == StringLit: return true
     skip c
-  result = false
-
-proc compatIsAlreadyWrapped(src: Cursor): bool =
-  ## True if the varargs slot's first arg is a previously-emitted
-  ## bundle — a single `(hcall <toOpenArray.0[I,T]-instance> …)`
-  ## followed by the call's closing paren. Lets `compatRewriteCall`
-  ## short-circuit on re-sem of an already-rewritten template body.
-  result = false
-  if src.exprKind != HcallX: return
-  var c = src
-  inc c
-  if c.kind != Symbol: return
-  let name = pool.syms[c.symId]
-  if not name.startsWith("toOpenArray.0."): return
-  var probe = src
-  skip probe
-  result = probe.kind == ParRi
 
 proc compatToOpenArrayTypevars(): (SymId, SymId) =
-  ## Return the SymIds of `toOpenArray.0[I, T]`'s typevars in
-  ## declaration order. Mirrors `openarrays.nim`'s
-  ## `converter toOpenArray*[I, T]…`.
+  ## Return the SymIds of `toOpenArray.0[I, T]`'s typevars in declaration
+  ## order. Mirrors `openarrays.nim`'s `converter toOpenArray*[I, T]…`.
   result = (SymId(0), SymId(0))
   let origin = pool.syms.getOrIncl("toOpenArray.0." & SystemModuleSuffix)
   let res = tryLoadSym(origin)
@@ -128,16 +120,95 @@ proc compatToOpenArrayTypevars(): (SymId, SymId) =
     inc inner
     result[1] = inner.symId
 
-proc compatBundleVarargs(c: var SemContext; dest: var TokenBuf;
-                         src: var Cursor; elemType: Cursor;
-                         info: PackedLineInfo) =
-  ## See module-level docstring.
-  var argBufs: seq[TokenBuf] = @[]
-  while src.hasCurrentToken and src.kind != ParRi:
+proc compatAnnotateVarargsParam*(c: var SemContext; dest: var TokenBuf;
+                                 typeStart: int) =
+  ## After `semLocalType` emits a param's type at `dest[typeStart…]`,
+  ## inspect it; if it's `(varargs T conv?)` without the hint, splice in
+  ## `(varargs T conv? "openArray.0.I<key>.<mod>")`. No-op otherwise (the
+  ## type isn't varargs, the bare `{.varargs.}` form has no element type
+  ## to instantiate, or the hint is already present).
+  if typeStart >= dest.len: return
+  let typeCursor = cursorAt(dest, typeStart)
+  if typeCursor.typeKind != VarargsT:
+    endRead(dest)
+    return
+  if compatVarargsHasHint(typeCursor):
+    endRead(dest)
+    return
+  let info = typeCursor.info
+  var elem = typeCursor
+  inc elem
+  if elem.kind == ParRi:
+    # bare `(varargs)` — nothing to instantiate
+    endRead(dest)
+    return
+
+  # Capture children of the original `(varargs …)` into a fresh buffer so
+  # the in-place `replace` can read its source without aliasing `dest`.
+  # `loopInto` is required: under `-d:virtualParRi` the closing `)` is
+  # elided when sealed, so a bare `while c.hasMore` walks past the
+  # varargs subtree into adjacent param-decl tokens.
+  var rebuilt = createTokenBuf(16)
+  rebuilt.addParLe(VarargsT, info)
+  var inner = typeCursor
+  loopInto inner:
+    takeTree rebuilt, inner
+  endRead(dest)
+
+  var elemCursor = cursorAt(rebuilt, 0)
+  inc elemCursor    # past `(varargs` to the element type
+  let inst = compatOpenArrayInstance(c, elemCursor, info)
+  endRead(rebuilt)
+  let hintStr =
+    if inst.kind == Symbol: pool.syms[inst.symId]
+    else: ""
+  rebuilt.addStrLit hintStr, info
+  rebuilt.addParRi()
+
+  dest.replace beginRead(rebuilt), typeStart
+
+proc compatVarargsSlotIsBundled(m: Match; start: int): bool =
+  ## True if the tail at `start` starts with an
+  ## `(hcall <toOpenArray.0…instance> …)` subtree — sigmatch accepted a
+  ## pre-bundled `openArray[T]` arg verbatim. Bundling again would
+  ## double-wrap.
+  if start >= m.args.len: return false
+  if m.args[start].kind != ParLe: return false
+  if m.args[start].exprKind != HcallX: return false
+  if start + 1 >= m.args.len or m.args[start + 1].kind != Symbol: return false
+  result = pool.syms[m.args[start + 1].symId].startsWith("toOpenArray.")
+
+proc compatBundleVarargsInMatch*(c: var SemContext; m: var Match;
+                                 elemType: Cursor; info: PackedLineInfo) =
+  ## Replace the flat varargs args at the tail of `m.args` (from
+  ## `m.firstVarargPosition`) with the openArray bundle. Called from
+  ## `resolveOverloads` after the best candidate is picked, so
+  ## `addArgsInstConverters` writes the bundled form into `dest`. No-ops
+  ## when no varargs slot was matched, or the slot already holds a
+  ## previous `toOpenArray.0` bundle (template body re-sem).
+  if m.firstVarargPosition < 0: return
+  let start = m.firstVarargPosition
+  if compatVarargsSlotIsBundled(m, start): return
+
+  # Move the flat args out of `m.args` into a `(stmts …)` scratch wrapper
+  # so an iterator over them terminates at the closing `)` rather than
+  # walking off the end. (Without the wrapper, `hasMore` — which only
+  # checks `kind != ParRi` outside `virtualParRi` — would read past
+  # buffer end into undefined memory.)
+  var flat = createTokenBuf(max(8, m.args.len - start + 2))
+  flat.addParLe(StmtsS, info)
+  for i in start ..< m.args.len:
+    flat.add m.args[i]
+  flat.addParRi()
+  m.args.shrink start
+
+  var argCursor = beginRead(flat)
+  var argTrees: seq[TokenBuf] = @[]
+  loopInto argCursor:
     var ab = createTokenBuf(8)
-    compatRewriteImpl(c, ab, src)
-    argBufs.add ab
-  let n = argBufs.len
+    takeTree ab, argCursor
+    argTrees.add ab
+  let n = argTrees.len
 
   var rangeBuf = createTokenBuf(8)
   rangeBuf.addParLe(RangetypeT, info)
@@ -161,181 +232,14 @@ proc compatBundleVarargs(c: var SemContext; dest: var TokenBuf;
   typeArgs.addSubtree elemTypeC
   let inst = c.requestRoutineInstance(origin, typeArgs, inferred, info)
 
-  dest.addParLe(HcallX, info)
-  dest.add symToken(inst.targetSym, info)
-  dest.addParLe(AconstrX, info)
-  dest.addParLe(ArrayT, info)
-  dest.addSubtree elemTypeC
-  dest.addSubtree rangeType
-  dest.addParRi()
-  for ab in argBufs:
-    dest.add ab
-  dest.addParRi()
-  dest.addParRi()
-
-proc compatRewriteCall(c: var SemContext; dest: var TokenBuf; src: var Cursor) =
-  let info = src.info
-  takeToken dest, src
-  if not src.hasCurrentToken or src.kind != Symbol:
-    while src.hasCurrentToken and src.kind != ParRi:
-      compatRewriteImpl(c, dest, src)
-    if src.hasCurrentToken and src.kind == ParRi:
-      takeParRi dest, src
-    return
-  let calleeSym = src.symId
-  takeToken dest, src
-  let res = tryLoadSym(calleeSym)
-  var fnParams = default(Cursor)
-  if res.status == LacksNothing and isRoutine(res.decl.symKind):
-    # Walk to the `params` slot manually rather than via `asRoutine` —
-    # `skip` can run off partially-published decls (e.g. proc declared
-    # inside an untyped template body). The 4 slots before params are
-    # name / export / pattern / typevars.
-    var probe = res.decl
-    inc probe
-    var slotsConsumed = 0
-    var depth = 0
-    while probe.hasCurrentToken and slotsConsumed < 4:
-      case probe.kind
-      of ParLe:
-        inc depth
-        inc probe
-      of ParRi:
-        if depth == 0: break
-        dec depth
-        inc probe
-        if depth == 0: inc slotsConsumed
-      of EofToken:
-        break
-      else:
-        inc probe
-        if depth == 0: inc slotsConsumed
-    if probe.hasCurrentToken and slotsConsumed == 4:
-      fnParams = probe
-  if not cursorIsNil(fnParams) and fnParams.kind == ParLe and
-      fnParams.substructureKind == ParamsU:
-    inc fnParams
-    while src.hasCurrentToken and src.kind != ParRi:
-      if fnParams.kind == ParRi:
-        compatRewriteImpl(c, dest, src)
-        continue
-      let param = takeLocal(fnParams, SkipFinalParRi)
-      let elem = compatVarargsElem(param.typ)
-      if not cursorIsNil(elem):
-        if compatIsAlreadyWrapped(src):
-          compatRewriteImpl(c, dest, src)
-        else:
-          compatBundleVarargs(c, dest, src, elem, info)
-        break
-      compatRewriteImpl(c, dest, src)
-    while fnParams.kind != ParRi:
-      let param = takeLocal(fnParams, SkipFinalParRi)
-      let elem = compatVarargsElem(param.typ)
-      if not cursorIsNil(elem):
-        var dummy = src
-        compatBundleVarargs(c, dest, dummy, elem, info)
-  else:
-    while src.hasCurrentToken and src.kind != ParRi:
-      compatRewriteImpl(c, dest, src)
-  if src.hasCurrentToken and src.kind == ParRi:
-    takeParRi dest, src
-
-proc compatRewriteParam(c: var SemContext; dest: var TokenBuf; src: var Cursor) =
-  takeToken dest, src
-  takeTree dest, src    # name
-  takeTree dest, src    # export marker
-  takeTree dest, src    # pragmas
-
-  if src.typeKind == VarargsT and not compatVarargsHasHint(src):
-    let info = src.info
-    var elem = src
-    inc elem
-    if elem.kind != ParRi:
-      # Keep `(varargs T conv?)` as-is, but append the openArray instance
-      # Sym name as a string-literal "mangle hint" so hexer can rewrite
-      # `(varargs T … "hint")` → the openArray Sym at codegen time without
-      # duplicating sem's `instToString`/`uhashBase36` mangling. The hint
-      # is invisible to sigmatch (which only reads T) and to derefs (which
-      # only checks the tag), so `.s.nif` stays varargs-shaped — fixes the
-      # cross-module sigmatch gap noted in this file's docstring.
-      let inst = compatOpenArrayInstance(c, elem, info)
-      let hintStr =
-        if inst.kind == Symbol: pool.syms[inst.symId]
-        else: ""
-      dest.addParLe(VarargsT, info)
-      var inner = src
-      inc inner
-      while inner.hasMore:
-        dest.addSubtree inner
-        skip inner
-      dest.addStrLit hintStr, info
-      dest.addParRi()
-      skip src
-    else:
-      # Bare `(varargs)` — `{.varargs.}` pragma form on C importc procs;
-      # leave it untouched. NIFC handles it via `...` ellipsis.
-      takeTree dest, src
-  else:
-    takeTree dest, src
-  if src.kind == ParRi:
-    takeParRi dest, src
-  else:
-    takeTree dest, src
-    takeParRi dest, src
-
-proc compatRewriteRoutine(c: var SemContext; dest: var TokenBuf; src: var Cursor) =
-  takeToken dest, src
-  takeTree dest, src    # name
-  takeTree dest, src    # export marker
-  takeTree dest, src    # pattern
-  takeTree dest, src    # typevars
-  if src.substructureKind == ParamsU:
-    takeToken dest, src
-    while src.kind != ParRi:
-      if src.symKind == ParamY:
-        compatRewriteParam(c, dest, src)
-      else:
-        takeTree dest, src
-    takeParRi dest, src
-  else:
-    takeTree dest, src
-  takeTree dest, src    # return type
-  takeTree dest, src    # pragmas
-  takeTree dest, src    # effects
-  while src.kind != ParRi:
-    compatRewriteImpl(c, dest, src)
-  takeParRi dest, src
-
-proc compatRewriteImpl(c: var SemContext; dest: var TokenBuf; src: var Cursor) =
-  case src.kind
-  of ParLe:
-    case src.stmtKind
-    of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS:
-      compatRewriteRoutine(c, dest, src)
-      return
-    else: discard
-    if src.exprKind in CallKinds or src.stmtKind in CallKindsS:
-      compatRewriteCall(c, dest, src)
-      return
-    takeToken dest, src
-    while src.hasMore:
-      compatRewriteImpl(c, dest, src)
-    if src.kind == ParRi:
-      takeParRi dest, src
-  of ParRi:
-    bug "compatRewriteImpl: unexpected ParRi"
-  else:
-    takeToken dest, src
-
-proc compatRewrite*(c: var SemContext; buf: var TokenBuf) =
-  if buf.len == 0: return
-  var src = beginRead(buf)
-  var dest = createTokenBuf(buf.len)
-  if src.hasCurrentToken and src.kind == ParLe:
-    takeToken dest, src
-    while src.hasCurrentToken and src.kind != ParRi:
-      compatRewriteImpl(c, dest, src)
-    if src.hasCurrentToken and src.kind == ParRi:
-      takeParRi dest, src
-  endRead buf
-  buf = ensureMove(dest)
+  m.args.addParLe(HcallX, info)
+  m.args.add symToken(inst.targetSym, info)
+  m.args.addParLe(AconstrX, info)
+  m.args.addParLe(ArrayT, info)
+  m.args.addSubtree elemTypeC
+  m.args.addSubtree rangeType
+  m.args.addParRi()
+  for ab in argTrees:
+    m.args.add ab
+  m.args.addParRi()
+  m.args.addParRi()

@@ -1472,22 +1472,48 @@ proc singleArg(m: var Match; f: var Cursor; arg: CallArg) =
     # `(varargs T [conv])` — match each call-site arg against the element
     # type T. `sigmatchLoop` keeps `f` parked on the varargs param across
     # successive args, so this proc is reached once per varargs arg.
-    # Three short-circuit cases accept the arg verbatim:
+    # Short-circuit cases that accept the arg verbatim:
     #   * bare `(varargs)` from the `{.varargs.}` pragma (no element type;
     #     used by C importc procs and by the legacy template-`unpack` form)
     #   * `varargs[typed]`
     #   * `varargs[untyped]` — additionally `useArg` picks `arg.orig` here,
     #     preserving the raw pre-sem AST for template bodies.
+    #   * the arg is already an `openArray[T]` — a previously bundled
+    #     varargs call coming back through re-sem (template expansion).
+    #     We deliberately leave `firstVarargPosition` unset so
+    #     `compatBundleVarargsInMatch` recognises "already bundled" by the
+    #     absence of a varargs span to wrap.
     # The `varargs[T, conv]` converter form is still handled by the
     # converter-retry path in `resolveOverloads` — it kicks in only when
     # the direct element match below has set `m.err`.
-    if m.firstVarargPosition < 0:
-      m.firstVarargPosition = m.args.len
     var elem = f
     inc elem
     if elem.kind == ParRi or elem.typeKind in {UntypedT, TypedT}:
+      if m.firstVarargPosition < 0:
+        m.firstVarargPosition = m.args.len
       m.useArg arg, elem
       return
+    let argTyp = skipModifier(arg.typ)
+    var aElem = default(Cursor)
+    if isSomeOpenArrayType(argTyp, aElem):
+      # `openArray[T']` (`Symbol` or `(invoke openArray T')`) — accept
+      # when T' matches `elem`. Mark the slot start so
+      # `compatBundleVarargsInMatch` sees the pre-bundled subtree at
+      # `firstVarargPosition` and skips re-wrapping it.
+      var fElem = elem
+      let argsSave = m.args.len
+      let errSave = m.err
+      linearMatch m, fElem, aElem
+      if not m.err:
+        if m.firstVarargPosition < 0:
+          m.firstVarargPosition = m.args.len
+        m.useArg arg, argTyp
+        return
+      # element type didn't match — undo and fall through to per-element
+      m.args.shrink argsSave
+      m.err = errSave
+    if m.firstVarargPosition < 0:
+      m.firstVarargPosition = m.args.len
     var elemMut = elem
     singleArg(m, elemMut, arg)
     return
