@@ -31,3 +31,13 @@ const
   b: seq[int] = @[4, 5, 6]
 assert a[0] == 1 and a[2] == 3
 assert b[0] == 4 and b[2] == 6
+
+# Empty seq: `@[]` expands to `newSeqUninit[T](0)` where T is bound from
+# the context type. evalCall preserves the instantiation's type arg as
+# `(at newSeqUninit T)` so the sub-compile can re-instantiate (the
+# instantiated stub itself doesn't cross the boundary).
+const
+  empty: seq[int] = @[]
+  emptyStr: seq[string] = @[]
+assert empty.len == 0
+assert emptyStr.len == 0
