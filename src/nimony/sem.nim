@@ -786,7 +786,14 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
   let key = typeToCanon(typeArgs, 0)
   var targetSym = c.instantiatedProcs.getOrDefault((origin, key))
   if targetSym == SymId(0):
-    let targetSym = newSymId(c, origin)
+    # Use the `.I<hash>.<mod>` instantiation naming convention (same as
+    # type instantiations via `newInstSymId`). Mixing in plain `newSymId`
+    # produced names like `@.0.<userMod>` that are indistinguishable from
+    # regular module-local procs, so `isInstantiation` can't detect them
+    # and downstream consumers (e.g. `exprexec.collectUsedSymsFromExpr`)
+    # can't tell the body-less stub apart from a real local proc.
+    let instSuffix = instToSuffix(typeArgs, 0)
+    let targetSym = newInstSymId(c, origin, instSuffix)
     var signature = createTokenBuf(30)
     let decl = getProcDecl(origin)
     assert decl.typevars.substructureKind == TypevarsU, pool.syms[origin]
@@ -3984,6 +3991,15 @@ proc semArrayConstr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   if t.typeKind == ArrayT:
     elem.typ = t
     inc elem.typ
+  elif t.typeKind == UarrayT:
+    # `(aconstr (uarray T) e1 …)` is the internal IR for a static array
+    # literal of unspecified length (used by exprexec's ptr-to-nif rule
+    # wrapped in `addr` to form the seq's `data` pointer). Element type
+    # is the uarray's inner T; hexer's nifcgen hoists the literal to an
+    # anonymous module-level static array and rewrites the surrounding
+    # `addr` to point at it.
+    elem.typ = t
+    inc elem.typ # past uarray tag → element type
   else:
     c.buildErr dest, info, "expected array type for array constructor, got: " & typeToString(t)
   while elem.n.hasMore:
@@ -5786,7 +5802,13 @@ proc semAddr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   it.n = arg.n
   takeParRi dest, it.n
   let a = cursorAt(dest, beforeArg)
-  if isAddressable(a) or arg.typ.typeKind in {MutT, LentT}:
+  # `UarrayT` admits internal-only aconstr literals such as
+  # `(aconstr (uarray T) e1 …)` emitted by exprexec's ptr-to-nif rule;
+  # `addr` then wraps them into a pointer that hexer's nifcgen hoists to
+  # an anonymous module-level static. Users can't normally produce a
+  # `UarrayT`-typed value (it's a size-unknown internal type), so this
+  # arm doesn't widen the addr-of-literal surface for hand-written code.
+  if isAddressable(a) or arg.typ.typeKind in {MutT, LentT, UarrayT}:
     endRead dest
   else:
     let asStr = asNimCode(a)
@@ -7251,7 +7273,8 @@ proc initSemContext(suffix: string; config: ProgramContext; moduleFlags: set[Mod
     executeExpr: exprexec.executeExpr,
     semStmtCallback: semStmtCallback,
     semGetSize: semGetSize,
-    forceInstantiate: forceInstantiateCallback)
+    forceInstantiate: forceInstantiateCallback,
+    semInstantiateType: instantiateType)
   for magic in ["typeof", "compiles", "defined", "declared"]:
     result.unoverloadableMagics.incl(pool.strings.getOrIncl(magic))
 

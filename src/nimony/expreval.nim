@@ -14,6 +14,7 @@ import std / assertions
 
 include ".." / lib / nifprelude
 import nimony_model, decls, programs, xints, semdata, renderer, builtintypes, typeprops, langmodes
+import ".." / lib / symparser
 
 type
   EvalContext* = object
@@ -593,6 +594,12 @@ proc evalCast(c: var EvalContext; typ, val, nOrig: Cursor): Cursor =
   elif dtk in {PointerT, PtrT, RefT, CstringT}:
     if val.exprKind == NilX:
       result = val
+    elif val.exprKind == AddrX:
+      # `cast[ptr U](addr X)` is a pure pointer retag at compile time —
+      # preserve the cast wrapper so the new (declared) pointer type flows
+      # to codegen. NIFC turns it into `(U*)&X`, which C accepts as a
+      # constant initializer for a static.
+      result = nOrig
     else:
       cannotEval nOrig
   else:
@@ -864,6 +871,17 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
           return
       takeParRi buf, n
       result = cursorAt(buf, 0)
+    of AddrX:
+      # Pass-through: `addr X` folds to itself, preserving the inner
+      # symbol/path verbatim. Recursing into `eval` would replace a `ConstY`
+      # symbol with its initializer (see the Symbol arm above) — losing the
+      # very reference we want to address. NIFC accepts `&staticSym` as a
+      # constant initializer for a static, so no further lowering is needed
+      # to make `const p = addr someConst` work end-to-end.
+      # `HaddrX` is the hidden mutable-borrow form (yields `var T`/MutT, not
+      # `ptr T`) and intentionally not handled here.
+      result = n
+      skip n
     of CallKinds:
       result = evalCall(c, n)
       skip n
@@ -1122,6 +1140,26 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
     of NilX:
       case typ.typeKind
       of PointerT, PtrT, RefT, CstringT, RoutineTypes, NiltT:
+        buf.addSubtree n
+      else: err = true
+    of AddrX:
+      # `addr X` is a valid pointer constant when the target type is a
+      # plain pointer. Element-type checking has already happened in
+      # `semAddr`; here we only need to validate the constant's shape
+      # against the declared pointer kind.
+      # `HaddrX` carries a `var T` (MutT) type — not a `ptr T` constant —
+      # so it is intentionally not accepted here.
+      case typ.typeKind
+      of PtrT, PointerT:
+        buf.addSubtree n
+      else: err = true
+    of CastX:
+      # `cast[ptr U](addr X)` keeps its cast wrapper through eval; the
+      # cast carries the user-declared pointer type that codegen needs.
+      # Validate that we're slotting it into a pointer-typed const and
+      # pass the whole expression through.
+      case typ.typeKind
+      of PtrT, PointerT:
         buf.addSubtree n
       else: err = true
     of NanX, InfX, NeginfX:

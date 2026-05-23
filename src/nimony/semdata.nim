@@ -78,6 +78,7 @@ type
   SemStmtCallback* = proc (c: var SemContext; dest: var TokenBuf; n: Cursor) {.nimcall.}
   SemGetSize* = proc(c: var SemContext; n: Cursor; strict=false): xint {.nimcall.}
   ForceInstantiate* = proc (c: var SemContext; dest: var TokenBuf) {.nimcall.}
+  SemInstantiateType* = proc (c: var SemContext; typ: Cursor; bindings: Table[SymId, Cursor]): Cursor {.nimcall.}
 
   MethodIndexEntry* = object
     fn*: SymId
@@ -152,6 +153,7 @@ type
     semStmtCallback*: SemStmtCallback
     semGetSize*: SemGetSize
     forceInstantiate*: ForceInstantiate
+    semInstantiateType*: SemInstantiateType
     passL*: seq[string]
     passC*: seq[string]
     importSnippets*: TokenBuf ## NIF snippets for import statements (with absolute paths), for use by exprexec
@@ -183,8 +185,27 @@ proc typeToCanon*(buf: TokenBuf; start: int): string =
     of EofToken: result.add " eof"
     of DotToken: result.add '.'
     of Symbol, SymbolDef:
-      result.add " s"
-      result.addInt buf[i].symId.int
+      # An instantiated sym like `seq.0.Iabc.modA` has its module suffix
+      # appended at *creation* time, so the same logical instantiation
+      # `seq[Foo]` can appear as `seq.0.Iabc.modA` or `seq.0.Iabc.modB`
+      # depending on where in the program it was first instantiated.
+      # When such a sym appears as a *typeArg* to another generic
+      # instantiation, the two forms have different `symId`s but are
+      # semantically the same — DCE merges them at link time via
+      # `removeModule(name)` as the key, and `instToSuffix` (the hash
+      # that builds the *new* instantiation's name) likewise strips the
+      # module. Without matching canonicalization here, the proc-instance
+      # cache (`c.instantiatedProcs`) misses for typeArgs that differ
+      # only in module suffix, while `newInstSymId` still produces the
+      # same name — so we get two definitions of the same proc.
+      let s = pool.syms[buf[i].symId]
+      if isInstantiation(s):
+        result.add " s\""
+        result.add removeModule(s)
+        result.add '"'
+      else:
+        result.add " s"
+        result.addInt buf[i].symId.int
     of CharLit:
       result.add " c"
       result.addInt buf[i].uoperand.int
