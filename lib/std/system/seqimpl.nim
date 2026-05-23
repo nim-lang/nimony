@@ -174,14 +174,6 @@ func `[]`*[T](s: seq[T]; i: uint): var T {.requires: (i < s.len.uint), inline.} 
 func `[]=`*[T](s: var seq[T]; i: uint; elem: sink T) {.requires: (i < s.len.uint), inline.} =
   (s.data[int i]) = elem
 
-template unsafeStaticSeq*[I, T](a: array[I, T]): seq[T] =
-  ## Wraps a static array as a `seq[T]` without copying. The seq's `data`
-  ## field points directly at `a` (which must outlive the seq). Intended
-  ## for `const` initializers: `const c: seq[int] = unsafeStaticSeq(myArr)`.
-  ## The field accesses are hygiene-checked here in system; the OconstrX
-  ## extension (kv key as Symbol) lets the expansion re-sem in any module.
-  seq[T](len: a.len, data: cast[ptr UncheckedArray[T]](addr a))
-
 func `@`*[I, T](a: array[I, T]): seq[T] {.nodestroy.} =
   ## Copies an array into a new sequence (`@[1,2]` builds `seq` literals via array constructors).
   result = newSeqUninit[T](a.len)
