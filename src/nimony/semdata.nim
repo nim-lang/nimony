@@ -78,6 +78,7 @@ type
   SemStmtCallback* = proc (c: var SemContext; dest: var TokenBuf; n: Cursor) {.nimcall.}
   SemGetSize* = proc(c: var SemContext; n: Cursor; strict=false): xint {.nimcall.}
   ForceInstantiate* = proc (c: var SemContext; dest: var TokenBuf) {.nimcall.}
+  SemInstantiateType* = proc (c: var SemContext; typ: Cursor; bindings: Table[SymId, Cursor]): Cursor {.nimcall.}
 
   MethodIndexEntry* = object
     fn*: SymId
@@ -152,6 +153,7 @@ type
     semStmtCallback*: SemStmtCallback
     semGetSize*: SemGetSize
     forceInstantiate*: ForceInstantiate
+    semInstantiateType*: SemInstantiateType
     passL*: seq[string]
     passC*: seq[string]
     importSnippets*: TokenBuf ## NIF snippets for import statements (with absolute paths), for use by exprexec

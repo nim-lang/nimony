@@ -786,7 +786,14 @@ proc requestRoutineInstance(c: var SemContext; origin: SymId;
   let key = typeToCanon(typeArgs, 0)
   var targetSym = c.instantiatedProcs.getOrDefault((origin, key))
   if targetSym == SymId(0):
-    let targetSym = newSymId(c, origin)
+    # Use the `.I<hash>.<mod>` instantiation naming convention (same as
+    # type instantiations via `newInstSymId`). Mixing in plain `newSymId`
+    # produced names like `@.0.<userMod>` that are indistinguishable from
+    # regular module-local procs, so `isInstantiation` can't detect them
+    # and downstream consumers (e.g. `exprexec.collectUsedSymsFromExpr`)
+    # can't tell the body-less stub apart from a real local proc.
+    let instSuffix = instToSuffix(typeArgs, 0)
+    let targetSym = newInstSymId(c, origin, instSuffix)
     var signature = createTokenBuf(30)
     let decl = getProcDecl(origin)
     assert decl.typevars.substructureKind == TypevarsU, pool.syms[origin]
@@ -3984,6 +3991,19 @@ proc semArrayConstr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   if t.typeKind == ArrayT:
     elem.typ = t
     inc elem.typ
+  elif t.typeKind == PtrT:
+    # `(aconstr (ptr (uarray T)) e1 …)` is the internal IR for a
+    # static-data pointer (used by exprexec's ptr-to-nif rule). Element
+    # type is the uarray's inner T; hexer's nifcgen hoists the expression
+    # to an anonymous module-level static array and substitutes
+    # `(cast (ptr (uarray T)) (addr <anon>))`.
+    var inner = t
+    inc inner # past ptr tag
+    if inner.typeKind == UarrayT:
+      elem.typ = inner
+      inc elem.typ # past uarray tag → element type
+    else:
+      c.buildErr dest, info, "expected array type for array constructor, got: " & typeToString(t)
   else:
     c.buildErr dest, info, "expected array type for array constructor, got: " & typeToString(t)
   while elem.n.hasMore:
@@ -7253,7 +7273,8 @@ proc initSemContext(suffix: string; config: ProgramContext; moduleFlags: set[Mod
     executeExpr: exprexec.executeExpr,
     semStmtCallback: semStmtCallback,
     semGetSize: semGetSize,
-    forceInstantiate: forceInstantiateCallback)
+    forceInstantiate: forceInstantiateCallback,
+    semInstantiateType: instantiateType)
   for magic in ["typeof", "compiles", "defined", "declared"]:
     result.unoverloadableMagics.incl(pool.strings.getOrIncl(magic))
 

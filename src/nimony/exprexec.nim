@@ -54,6 +54,10 @@ type
     requests: seq[GenProcRequest]
     usedModules: HashSet[string]
     errorMsg: string
+    semCtx: ptr SemContext   # used to resolve `InvokeT` types via sem's
+                             # `instantiateType` (kept as a ptr so this
+                             # struct stays trivially-copyable; the SemContext
+                             # outlives `executeExpr`'s whole call).
 
 proc collectSyms(n: Cursor; stack: var seq[SymId]) =
   assert n.hasMore, "cursor at end?"
@@ -161,6 +165,7 @@ proc requestProc(c: var SynthesizeSerializerCtx; t: TypeCursor): SymId =
 when not defined(nimony):
   proc unravel(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf)
   proc entryPoint(c: var SynthesizeSerializerCtx; orig: TypeCursor; arg: Cursor)
+  proc unravelPtrUarrayField(c: var SynthesizeSerializerCtx; fieldType: Cursor; param: TokenBuf)
 
 proc genStringCall(c: var SynthesizeSerializerCtx; name, arg: string) =
   c.dest.copyIntoKind CallS, c.info:
@@ -201,13 +206,27 @@ proc unravelObjField(c: var SynthesizeSerializerCtx; n: var Cursor; param: Token
   assert r.kind in {FldY, GfldY}
   # create `paramA.field` because we need to do `paramA.field = paramB.field` etc.
   let fieldType = r.typ
-  let a = accessObjField(c, param, r.name, needsDeref, depth = depth)
 
   genStringCall(c, "writeNifParLe", "kv")
   genStringCall(c, "writeNifRaw", " ")
   genStringCall(c, "writeNifSymbol", pool.syms[r.name.symId])
 
-  entryPoint(c, fieldType, readonlyCursorAt(a, 0))
+  # ptr-to-nif special case: a `ptr UncheckedArray[T]` field can't be
+  # serialised structurally — there's no pointer value that survives the
+  # sub-compile boundary. Instead, dump the pointed-to data by iterating
+  # the parent through `len`/`[]`, emitting an aconstr with type slot
+  # `(ptr (uarray T))` which nifcgen hoists to a static.
+  var isPtrUarray = false
+  if fieldType.typeKind == PtrT:
+    var inner = fieldType
+    inc inner
+    if inner.typeKind == UarrayT:
+      isPtrUarray = true
+  if isPtrUarray:
+    unravelPtrUarrayField(c, fieldType, param)
+  else:
+    let a = accessObjField(c, param, r.name, needsDeref, depth = depth)
+    entryPoint(c, fieldType, readonlyCursorAt(a, 0))
   genParRiCall c
 
 proc unravelObjFields(c: var SynthesizeSerializerCtx; n: var Cursor; param: TokenBuf; needsDeref: bool; depth: int) =
@@ -361,6 +380,50 @@ proc unravelArray(c: var SynthesizeSerializerCtx;
       incIndexVar c, indexVar
   genParRiCall c
 
+proc unravelPtrUarrayField(c: var SynthesizeSerializerCtx;
+                            fieldType: Cursor; param: TokenBuf) =
+  ## ptr-to-nif for a `ptr UncheckedArray[T]` field. Emits runtime code
+  ## that writes `(aconstr (ptr (uarray T)) e1 ... eN)` to NIF. The
+  ## length comes from `len(param)` and elements from `param[i]` at
+  ## runtime; both must resolve in the sub-compile (true for seq and
+  ## string). Hexer's nifcgen pass then hoists the aconstr to an anon
+  ## module-level static.
+  var ft = fieldType
+  inc ft # past ptr tag
+  assert ft.typeKind == UarrayT
+  inc ft # past uarray tag
+  let baseType = ft
+
+  let indexVar = pool.syms.getOrIncl("idx.0")
+  declareIndexVar c, indexVar
+
+  genStringCall(c, "writeNifParLe", "aconstr")
+  genStringCall(c, "writeNifRaw", toString(fieldType, false))
+
+  copyIntoKind c.dest, WhileS, c.info:
+    # while idx < len(param):
+    copyIntoKind c.dest, LtX, c.info:
+      addIntType c
+      copyIntoSymUse c.dest, indexVar, c.info
+      copyIntoKind c.dest, CallS, c.info:
+        c.dest.addIdent "len", c.info
+        c.dest.add param
+    copyIntoKind c.dest, StmtsS, c.info:
+      # entryPoint(baseType, param[idx]) — emitted as `(call [] param idx)`
+      # so the sub-compile resolves it against the user-defined `[]`
+      # overload. Using `(arrat …)` would only work for raw arrays, not
+      # for objects (seq, string, …) that route subscript through `[]`.
+      var elemAccess = createTokenBuf(8)
+      copyIntoKind elemAccess, CallS, c.info:
+        elemAccess.addIdent "[]", c.info
+        copyTree elemAccess, param
+        copyIntoSymUse elemAccess, indexVar, c.info
+      freeze elemAccess
+      entryPoint(c, baseType, readonlyCursorAt(elemAccess, 0))
+      incIndexVar c, indexVar
+
+  genParRiCall c
+
 proc unravelSet(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) =
   assert orig.typeKind == SetT
   let baseType = orig.firstSon
@@ -453,7 +516,24 @@ proc unravel(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) 
     entryPoint(c, orig, readonlyCursorAt(param, 0))
     return
 
-  let typ = toTypeImpl orig
+  var typ = toTypeImpl orig
+  # `(invok Base arg1 arg2 …)` — generic instantiation. Resolve via sem's
+  # own `instantiateType` callback, which substitutes typevars and
+  # canonicalises the result. Routing through sem keeps the substitution
+  # rule in one place (rather than re-implementing it here).
+  var instBuf: TokenBuf
+  if typ.typeKind == InvokeT and c.semCtx != nil and
+      c.semCtx.semInstantiateType != nil:
+    # `(invok Base arg1 arg2 …)` → ask sem to resolve it. `semLocalType`
+    # (inside `instantiateType`) routes through the eager-instantiation
+    # path in `semtypes.semInvoke`, producing a fresh Symbol that points
+    # at the materialised object/tuple body. We then `toTypeImpl` to
+    # follow that Symbol to the body for the walk below.
+    let emptyBindings = initTable[SymId, Cursor]()
+    let inst = c.semCtx.semInstantiateType(c.semCtx[], typ, emptyBindings)
+    instBuf = createTokenBuf(8)
+    instBuf.addSubtree inst
+    typ = toTypeImpl(beginRead(instBuf))
   case typ.typeKind
   of ObjectT:
     if orig.kind == Symbol and hasRtti(orig.symId):
@@ -547,7 +627,17 @@ proc collectUsedSymsFromExpr(c: var SynthesizeSerializerCtx; s: var SemContext; 
     let sym = stack.pop()
     if sym in inlineDefs: continue
     if not handledSyms.containsOrIncl(sym):
-      let owner = extractModule(pool.syms[sym])
+      let symStr = pool.syms[sym]
+      if isInstantiation(symStr):
+        # Instantiated generic procs/types don't cross sub-compile
+        # boundaries — they're stored header-only here. After
+        # `rewriteSymsToIdents` the call becomes an ident lookup; the
+        # sub-compile finds the generic original in its imported scopes
+        # and re-instantiates on its own. Inlining the header-only stub
+        # would miscompile (e.g. an instantiated `@` with empty body
+        # returns garbage and the loop iterates billions of times).
+        continue
+      let owner = extractModule(symStr)
       if owner == c.thisModuleSuffix:
         let res = tryLoadSym(sym)
         if res.status == LacksNothing:
@@ -571,7 +661,8 @@ proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
     routineKind: ProcY, bits: s.g.config.bits, errorMsg: "",
     thisModuleSuffix: s.thisModuleSuffix,
     newModuleSuffix: s.thisModuleSuffix.substr(0, 2) &
-      computeChecksum(mangle(expr, Frontend, s.g.config.bits)))
+      computeChecksum(mangle(expr, Frontend, s.g.config.bits)),
+    semCtx: addr s)
 
   c.dest.addParLe StmtsS, info
 

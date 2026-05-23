@@ -593,6 +593,14 @@ proc evalCast(c: var EvalContext; typ, val, nOrig: Cursor): Cursor =
   elif dtk in {PointerT, PtrT, RefT, CstringT}:
     if val.exprKind == NilX:
       result = val
+    elif val.exprKind == AddrX:
+      # `cast[ptr U](addr X)` is a pure pointer retag at compile time —
+      # preserve the cast wrapper so the new (declared) pointer type flows
+      # to codegen. NIFC turns it into `(U*)&X`, which C accepts as a
+      # constant initializer for a static.
+      var buf = createTokenBuf(nOrig.span)
+      buf.addSubtree nOrig
+      result = cursorAt(buf, 0)
     else:
       cannotEval nOrig
   else:
@@ -864,6 +872,20 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
           return
       takeParRi buf, n
       result = cursorAt(buf, 0)
+    of AddrX:
+      # Pass-through: `addr X` folds to itself, preserving the inner
+      # symbol/path verbatim. Recursing into `eval` would replace a `ConstY`
+      # symbol with its initializer (see the Symbol arm above) — losing the
+      # very reference we want to address. NIFC accepts `&staticSym` as a
+      # constant initializer for a static, so no further lowering is needed
+      # to make `const p = addr someConst` work end-to-end.
+      # `HaddrX` is the hidden mutable-borrow form (yields `var T`/MutT, not
+      # `ptr T`) and intentionally not handled here.
+      let orig = n
+      var buf = createTokenBuf(orig.span)
+      buf.addSubtree orig
+      skip n
+      result = cursorAt(buf, 0)
     of CallKinds:
       result = evalCall(c, n)
       skip n
@@ -1124,6 +1146,26 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
       of PointerT, PtrT, RefT, CstringT, RoutineTypes, NiltT:
         buf.addSubtree n
       else: err = true
+    of AddrX:
+      # `addr X` is a valid pointer constant when the target type is a
+      # plain pointer. Element-type checking has already happened in
+      # `semAddr`; here we only need to validate the constant's shape
+      # against the declared pointer kind.
+      # `HaddrX` carries a `var T` (MutT) type — not a `ptr T` constant —
+      # so it is intentionally not accepted here.
+      case typ.typeKind
+      of PtrT, PointerT:
+        buf.addSubtree n
+      else: err = true
+    of CastX:
+      # `cast[ptr U](addr X)` keeps its cast wrapper through eval; the
+      # cast carries the user-declared pointer type that codegen needs.
+      # Validate that we're slotting it into a pointer-typed const and
+      # pass the whole expression through.
+      case typ.typeKind
+      of PtrT, PointerT:
+        buf.addSubtree n
+      else: err = true
     of NanX, InfX, NeginfX:
       if typ.typeKind == FloatT:
         buf.addSubtree n
@@ -1164,6 +1206,28 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
           annotateConstantType(buf, typ, vals)
           skip vals
         buf.addParRi()
+      elif typ.typeKind == PtrT and exprKind == AconstrX:
+        # `(aconstr (ptr (uarray T)) e1 ... eN)` is the internal IR for a
+        # static-data pointer initializer (used to materialise const seqs
+        # and the like). Hexer's nifcgen pass hoists it to an anonymous
+        # module-level array const and rewrites to `(cast (ptr (uarray T))
+        # (addr <anon>))`. Here we just accept the shape against any
+        # `ptr T` const target whose inner element type matches the
+        # aconstr's element type.
+        var inner = typ
+        inc inner
+        if inner.typeKind == UarrayT:
+          inc inner # skip uarray tag, point at element type
+          buf.add parLeToken(AconstrX, n.info)
+          buf.addSubtree typ
+          var vals = n
+          inc vals
+          skip vals # skip the aconstr's own type slot
+          while vals.hasMore:
+            annotateConstantType(buf, inner, vals)
+            skip vals
+          buf.addParRi()
+        else: err = true
       else: err = true
     of CurlyX, SetconstrX:
       if typ.typeKind == SetT:
