@@ -1548,11 +1548,17 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
 
         # Emit `(cast (ptr T) (addr anonName))` — NIFC needs the
         # explicit cast because `addr` of an array gives `ptr (array T N)`
-        # and the receiving field is `ptr T`.
+        # and the receiving field is `ptr T`. Route the `(ptr T)` type
+        # slot through `trType` so nominal element types (tuples, named
+        # objects) get lifted via `trAsNamedType`; NIFC rejects nominal
+        # types appearing inline in an expression.
+        var ptrTypeBuf = createTokenBuf(8)
+        ptrTypeBuf.add tagToken("ptr", info)
+        ptrTypeBuf.add elemTypeBuf
+        ptrTypeBuf.addParRi()
         dest.add tagToken("cast", info)
-        dest.add tagToken("ptr", info)
-        dest.add elemTypeBuf
-        dest.addParRi() # close ptr
+        var ptrTypeCur = cursorAt(ptrTypeBuf, 0)
+        trType(c, dest, ptrTypeCur)
         dest.add tagToken("addr", info)
         dest.add symToken(anonName, info)
         dest.addParRi() # close addr
