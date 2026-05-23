@@ -22,13 +22,18 @@ const
   PnakBin = "bin" / "pnak"
 
 proc sh(cmd: string; cwd = "") =
-  let final = if cwd.len > 0: "cd " & quoteShell(cwd) & " && " & cmd else: cmd
-  if execShellCmd(final) != 0:
-    quit "FAILURE: " & final
+  ## Run `cmd`, optionally inside `cwd`. The earlier `cd <cwd> && <cmd>`
+  ## form broke on Windows: Nim's `execCmdEx` did not route the compound
+  ## through `cmd.exe`, so `cd` was looked up as a literal executable and
+  ## CreateProcess failed. `osproc`'s `workingDir` parameter does the same
+  ## job portably.
+  let (output, code) = execCmdEx(cmd, workingDir = cwd)
+  if code != 0:
+    stderr.write output
+    quit "FAILURE (cwd=" & cwd & "): " & cmd
 
 proc shCapture(cmd: string; cwd = ""): (string, int) =
-  let final = if cwd.len > 0: "cd " & quoteShell(cwd) & " && " & cmd else: cmd
-  result = execCmdEx(final)
+  execCmdEx(cmd, workingDir = cwd)
 
 proc setupFakeUpstream(dir: string) =
   ## Create a minimal git repository that pnak can clone via file://.
