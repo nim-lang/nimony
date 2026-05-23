@@ -178,23 +178,7 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
     # itself via `rewriteSymsToIdents`.
     var evaluatedCall = createTokenBuf(16)
     evaluatedCall.addParLe CallS, n.info
-    # If the callee is an instantiated generic (e.g. `newSeqUninit.0.I<hash>.<mod>`
-    # produced by sem-expanding `@[]`), emit `(at <origin> <typeArgs>)` instead of
-    # the bare sym so the type args survive `rewriteSymsToIdents`. Header-only
-    # instantiated decls don't cross the sub-compile boundary; the sub-compile
-    # re-instantiates from the generic origin (which is in the imported scope).
-    if isInstantiation(pool.syms[routine.name.symId]) and routine.typevars.typeKind == InvokeT:
-      evaluatedCall.addParLe AtX, n.info
-      var tv = routine.typevars
-      inc tv # past `invok` tag
-      evaluatedCall.addSymUse tv.symId, n.info # origin sym (rewriteSymsToIdents strips to basename)
-      inc tv # past origin
-      while tv.hasMore:
-        evaluatedCall.addSubtree tv
-        skip tv
-      evaluatedCall.addParRi() # close at
-    else:
-      evaluatedCall.addSymUse routine.name.symId, n.info
+    evaluatedCall.addSymUse routine.name.symId, n.info
     while args.hasMore:
       evaluatedCall.takeTree args
     evaluatedCall.addParRi()

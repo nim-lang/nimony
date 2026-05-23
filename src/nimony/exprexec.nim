@@ -77,9 +77,74 @@ proc collectSyms(n: Cursor; stack: var seq[SymId]) =
       else: discard
       inc n
 
+proc instantiationTypevars(sym: SymId): Cursor =
+  ## Returns the instantiated proc/type decl's `typevars` slot if `sym`
+  ## is a generic instance (typevars is an `InvokeT` recording the origin
+  ## and the type args). Returns `default(Cursor)` otherwise. Procs use
+  ## counter-based names that don't match `isInstantiation`, so this
+  ## decl-based check is the reliable cross-kind detector.
+  result = default(Cursor)
+  let res = tryLoadSym(sym)
+  if res.status == LacksNothing:
+    let decl = res.decl
+    if isRoutine(decl.symKind):
+      let tv = asRoutine(decl).typevars
+      if tv.typeKind == InvokeT:
+        result = tv
+    elif decl.symKind == TypeY:
+      let tv = asTypeDecl(decl).typevars
+      if tv.typeKind == InvokeT:
+        result = tv
+
+proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: PackedLineInfo) =
+  ## Strip an instantiated/non-instantiated Symbol to its basename Ident.
+  ## For an instantiated Symbol, also emit the surrounding `(at <basename>
+  ## <typeArgs>)` so the sub-compile can re-instantiate from the generic
+  ## origin. The type args themselves may contain instantiated Symbols;
+  ## those are rewritten recursively (an arg subtree is walked and each
+  ## Symbol inside passes through this same path).
+  let typevars = instantiationTypevars(sym)
+  if not cursorIsNil(typevars):
+    buf.add parLeToken(AtX, info)
+    var tv = typevars
+    inc tv # past `invok` tag
+    # Origin sym → recurse (it may also be instantiated, e.g. nested generics).
+    emitSymAsIdent(buf, tv.symId, info)
+    inc tv
+    # Type args: each arg is a subtree (may contain Symbols).
+    while tv.hasMore:
+      var argCur = tv
+      var argNested = 0
+      while true:
+        case argCur.kind
+        of Symbol:
+          emitSymAsIdent(buf, argCur.symId, argCur.info)
+        of ParLe:
+          buf.add argCur
+          inc argNested
+        of ParRi:
+          buf.add argCur
+          dec argNested
+          if argNested == 0:
+            inc argCur
+            break
+        else:
+          buf.add argCur
+        inc argCur
+        if argNested == 0: break
+      skip tv
+    buf.addParRi()
+    return
+  var basename = pool.syms[sym]
+  extractBasename basename
+  buf.add identToken(pool.strings.getOrIncl(basename), info)
+
 proc rewriteSymsToIdents*(c: var SynthesizeSerializerCtx) =
   ## Convert all Symbols and SymbolDefs to Idents so that the semchecker can resolve them fresh.
   ## Also eliminates choice nodes (ochoice, cchoice) by turning them back to idents.
+  ## For instantiated Symbols, emit `(at <basename> <typeArgs>)` so the
+  ## sub-compile can re-instantiate (header-only stubs don't cross the
+  ## boundary; the generic origin is in the imported scope).
   ## This allows the compiled code to go through the full nimony pipeline.
   var newDest = createTokenBuf(c.dest.len)
   var n = beginRead(c.dest)
@@ -87,21 +152,13 @@ proc rewriteSymsToIdents*(c: var SynthesizeSerializerCtx) =
   while true:
     case n.kind
     of Symbol, SymbolDef:
-      let sym = n.symId
-      var name = pool.syms[sym]
-      extractBasename name
-      let identId = pool.strings.getOrIncl(name)
-      newDest.add identToken(identId, n.info)
+      emitSymAsIdent(newDest, n.symId, n.info)
       inc n
     of ParLe:
       if n.exprKind in {OchoiceX, CchoiceX}:
         inc n
         if n.kind == Symbol:
-          let sym = n.symId
-          var name = pool.syms[sym]
-          extractBasename name
-          let identId = pool.strings.getOrIncl(name)
-          newDest.add identToken(identId, n.info)
+          emitSymAsIdent(newDest, n.symId, n.info)
           while n.hasMore: skip n
           consumeParRi n
         else:
