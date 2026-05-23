@@ -1344,6 +1344,106 @@ proc trFieldname(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   else:
     trExpr c, dest, n
 
+proc trAddrAconstrUarray(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+  ## Lowers `(addr (aconstr (uarray T) e1 ... eN))` — the shape exprexec's
+  ## ptr-to-nif rule emits for a `ptr UncheckedArray[T]` const-init value.
+  ## The aconstr-uarray is a synthetic "inline array literal of unknown
+  ## length"; wrapped in `addr` it forms the seq's `data` pointer. Two
+  ## things happen here:
+  ##   1. The elements are hoisted to an anonymous module-level static
+  ##      array (NIFC requires named array types; we go through
+  ##      `trAsNamedType` for both the const's type slot and the
+  ##      aconstr's). The const decl lands in `strLitBuf` so it
+  ##      precedes the user's const-init (which references it).
+  ##   2. The expression site emits `(cast (ptr T) (addr <anon>))`. The
+  ##      explicit cast is needed because `addr` of an array gives
+  ##      `ptr (array T N)` and the receiving field is `ptr T`; the
+  ##      `(ptr T)` slot goes through `trType` so a nominal element
+  ##      type (tuple, named object) gets lifted too.
+  let info = n.info
+  var aconstr = n
+  inc aconstr # past `addr` tag
+  inc aconstr # past `aconstr` tag — now at the `(uarray T)` type slot
+  var elemType = aconstr
+  inc elemType # past `uarray` tag → element type
+  var elemTypeBuf = createTokenBuf(8)
+  elemTypeBuf.addSubtree elemType
+
+  # Skip past the uarray type tree to reach the element values, and count them.
+  var scan = aconstr
+  skip scan
+  var elemCount = 0
+  block:
+    var s = scan
+    while s.hasMore:
+      inc elemCount
+      skip s
+
+  # Build `(array T N)` once and reuse via cursors for both the const's
+  # declared type and the inner aconstr's type slot.
+  var arrTypeBuf = createTokenBuf(8)
+  arrTypeBuf.add tagToken("array", info)
+  arrTypeBuf.add elemTypeBuf
+  arrTypeBuf.addIntLit(elemCount, info)
+  arrTypeBuf.addParRi()
+
+  let anonName = pool.syms.getOrIncl("anonArr." & $c.strLitCounter & "." & c.main)
+  inc c.strLitCounter
+
+  var constBuf = createTokenBuf(30)
+  constBuf.add tagToken("const", info)
+  constBuf.add symdefToken(anonName, info)
+  constBuf.addDotToken() # no pragmas
+  block:
+    var arrCur = cursorAt(arrTypeBuf, 0)
+    trAsNamedType(c, constBuf, arrCur)
+  constBuf.add tagToken("aconstr", info)
+  block:
+    var arrCur = cursorAt(arrTypeBuf, 0)
+    trAsNamedType(c, constBuf, arrCur)
+  swap dest, constBuf
+  var elemCur = scan
+  while elemCur.hasMore:
+    trExpr(c, dest, elemCur)
+  swap dest, constBuf
+  constBuf.addParRi() # close aconstr
+  constBuf.addParRi() # close const
+  c.strLitBuf.add constBuf
+
+  # Advance caller's cursor past the whole `(addr (aconstr ...))`.
+  inc n # past `addr` tag
+  inc n # past `aconstr` tag
+  skip n # past uarray type slot
+  while n.hasMore:
+    skip n # elements
+  skipParRi(c, n) # close aconstr
+  skipParRi(c, n) # close addr
+
+  # Emit `(cast (ptr T) (addr <anon>))` at the original site.
+  var ptrTypeBuf = createTokenBuf(8)
+  ptrTypeBuf.add tagToken("ptr", info)
+  ptrTypeBuf.add elemTypeBuf
+  ptrTypeBuf.addParRi()
+  dest.add tagToken("cast", info)
+  var ptrTypeCur = cursorAt(ptrTypeBuf, 0)
+  trType(c, dest, ptrTypeCur)
+  dest.add tagToken("addr", info)
+  dest.add symToken(anonName, info)
+  dest.addParRi() # close addr
+  dest.addParRi() # close cast
+
+proc isAddrOfAconstrUarray(n: Cursor): bool =
+  ## True when `n` points at `(addr (aconstr (uarray T) …))`. Used to
+  ## detect the static-uarray-pointer shape produced by exprexec.
+  var inner = n
+  inc inner # past addr tag
+  if inner.exprKind == AconstrX:
+    var typSlot = inner
+    inc typSlot # past aconstr tag
+    result = typSlot.typeKind == UarrayT
+  else:
+    result = false
+
 proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of EofToken, ParRi:
@@ -1470,101 +1570,10 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         skip n
       takeParRi dest, n
     of HaddrX, AddrX:
-      let info = n.info
-      # `(addr (aconstr (uarray T) e1 ... eN))` — exprexec's ptr-to-nif
-      # rule emits this shape for `ptr UncheckedArray[T]` const-init data.
-      # The aconstr-uarray is a synthetic "inline array literal of
-      # unknown length"; wrapped in `addr` it forms the seq's `data`
-      # pointer. Hoist the elements into an anonymous module-level static
-      # array (via `trAsNamedType` for the array type) and replace the
-      # whole expression with `(cast (ptr T) (addr <anon>))`. Mirrors the
-      # SSO long-string hoist via `strLitBuf`.
-      var inner = n
-      inc inner # past addr tag
-      var isUarrayConstr = false
-      if inner.exprKind == AconstrX:
-        var typSlot = inner
-        inc typSlot # past aconstr tag
-        if typSlot.typeKind == UarrayT:
-          isUarrayConstr = true
-      if isUarrayConstr:
-        var aconstr = n
-        inc aconstr # past addr tag
-        inc aconstr # past aconstr tag
-        # Element type from `(uarray T)`
-        var elemType = aconstr
-        inc elemType # past uarray tag
-        var elemTypeBuf = createTokenBuf(8)
-        elemTypeBuf.addSubtree elemType
-        # Skip past the uarray type tree to reach the elements.
-        var scan = aconstr
-        skip scan
-        var elemCount = 0
-        var scanCount = scan
-        while scanCount.hasMore:
-          inc elemCount
-          skip scanCount
-
-        # Build the array type `(array T N)` and turn it into a named
-        # type (NIFC requires array types to be named).
-        var arrTypeBuf = createTokenBuf(8)
-        arrTypeBuf.add tagToken("array", info)
-        arrTypeBuf.add elemTypeBuf
-        arrTypeBuf.addIntLit(elemCount, info)
-        arrTypeBuf.addParRi()
-
-        # Mint anon-array sym; emit the const decl into `strLitBuf` so it
-        # precedes the user's const-init (which references it).
-        let anonName = pool.syms.getOrIncl("anonArr." & $c.strLitCounter & "." & c.main)
-        inc c.strLitCounter
-        var constBuf = createTokenBuf(30)
-        constBuf.add tagToken("const", info)
-        constBuf.add symdefToken(anonName, info)
-        constBuf.addDotToken() # no pragmas
-        block:
-          var arrCur = cursorAt(arrTypeBuf, 0)
-          trAsNamedType(c, constBuf, arrCur)
-        constBuf.add tagToken("aconstr", info)
-        block:
-          var arrCur = cursorAt(arrTypeBuf, 0)
-          trAsNamedType(c, constBuf, arrCur)
-        swap dest, constBuf
-        var elemCur = scan
-        while elemCur.hasMore:
-          trExpr(c, dest, elemCur)
-        swap dest, constBuf
-        constBuf.addParRi() # close aconstr
-        constBuf.addParRi() # close const
-        c.strLitBuf.add constBuf
-
-        # Advance our cursor past the whole `(addr (aconstr ...))`.
-        inc n # past addr tag
-        inc n # past aconstr tag
-        skip n # past uarray type slot
-        while n.hasMore:
-          skip n # elements
-        skipParRi(c, n) # close aconstr
-        skipParRi(c, n) # close addr
-
-        # Emit `(cast (ptr T) (addr anonName))` — NIFC needs the
-        # explicit cast because `addr` of an array gives `ptr (array T N)`
-        # and the receiving field is `ptr T`. Route the `(ptr T)` type
-        # slot through `trType` so nominal element types (tuples, named
-        # objects) get lifted via `trAsNamedType`; NIFC rejects nominal
-        # types appearing inline in an expression.
-        var ptrTypeBuf = createTokenBuf(8)
-        ptrTypeBuf.add tagToken("ptr", info)
-        ptrTypeBuf.add elemTypeBuf
-        ptrTypeBuf.addParRi()
-        dest.add tagToken("cast", info)
-        var ptrTypeCur = cursorAt(ptrTypeBuf, 0)
-        trType(c, dest, ptrTypeCur)
-        dest.add tagToken("addr", info)
-        dest.add symToken(anonName, info)
-        dest.addParRi() # close addr
-        dest.addParRi() # close cast
+      if isAddrOfAconstrUarray(n):
+        trAddrAconstrUarray(c, dest, n)
       else:
-        dest.add tagToken("addr", info)
+        dest.add tagToken("addr", n.info)
         inc n
         trExpr(c, dest, n)
         takeParRi dest, n

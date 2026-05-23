@@ -599,9 +599,7 @@ proc evalCast(c: var EvalContext; typ, val, nOrig: Cursor): Cursor =
       # preserve the cast wrapper so the new (declared) pointer type flows
       # to codegen. NIFC turns it into `(U*)&X`, which C accepts as a
       # constant initializer for a static.
-      var buf = createTokenBuf(nOrig.span)
-      buf.addSubtree nOrig
-      result = cursorAt(buf, 0)
+      result = nOrig
     else:
       cannotEval nOrig
   else:
@@ -882,11 +880,8 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       # to make `const p = addr someConst` work end-to-end.
       # `HaddrX` is the hidden mutable-borrow form (yields `var T`/MutT, not
       # `ptr T`) and intentionally not handled here.
-      let orig = n
-      var buf = createTokenBuf(orig.span)
-      buf.addSubtree orig
+      result = n
       skip n
-      result = cursorAt(buf, 0)
     of CallKinds:
       result = evalCall(c, n)
       skip n

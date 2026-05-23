@@ -96,20 +96,28 @@ proc instantiationTypevars(sym: SymId): Cursor =
       if tv.typeKind == InvokeT:
         result = tv
 
-proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: PackedLineInfo) =
+proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: PackedLineInfo;
+                    thisMod: string) =
   ## Strip an instantiated/non-instantiated Symbol to its basename Ident.
   ## For an instantiated Symbol, also emit the surrounding `(at <basename>
   ## <typeArgs>)` so the sub-compile can re-instantiate from the generic
   ## origin. The type args themselves may contain instantiated Symbols;
   ## those are rewritten recursively (an arg subtree is walked and each
   ## Symbol inside passes through this same path).
+  ##
+  ## *Foreign type Symbols* are kept verbatim as Symbol tokens — Symbol
+  ## references in NIF resolve via direct pool lookup in the sub-compile
+  ## (no ident-name resolution, so no visibility check). That lets the
+  ## generated serializer reference private types from other modules
+  ## (e.g. `HashEntry` in `std/tables`) without those libraries needing
+  ## to re-export them just for the const-eval machinery.
   let typevars = instantiationTypevars(sym)
   if not cursorIsNil(typevars):
     buf.add parLeToken(AtX, info)
     var tv = typevars
     inc tv # past `invok` tag
     # Origin sym → recurse (it may also be instantiated, e.g. nested generics).
-    emitSymAsIdent(buf, tv.symId, info)
+    emitSymAsIdent(buf, tv.symId, info, thisMod)
     inc tv
     # Type args: each arg is a subtree (may contain Symbols).
     while tv.hasMore:
@@ -118,7 +126,7 @@ proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: PackedLineInfo) =
       while true:
         case argCur.kind
         of Symbol:
-          emitSymAsIdent(buf, argCur.symId, argCur.info)
+          emitSymAsIdent(buf, argCur.symId, argCur.info, thisMod)
         of ParLe:
           buf.add argCur
           inc argNested
@@ -135,7 +143,15 @@ proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: PackedLineInfo) =
       skip tv
     buf.addParRi()
     return
-  var basename = pool.syms[sym]
+  let symStr = pool.syms[sym]
+  let owner = extractModule(symStr)
+  if owner.len > 0 and owner != thisMod:
+    let res = tryLoadSym(sym)
+    if res.status == LacksNothing and res.decl.symKind == TypeY:
+      # Foreign type — keep as Symbol so visibility is bypassed.
+      buf.add symToken(sym, info)
+      return
+  var basename = symStr
   extractBasename basename
   buf.add identToken(pool.strings.getOrIncl(basename), info)
 
@@ -149,16 +165,24 @@ proc rewriteSymsToIdents*(c: var SynthesizeSerializerCtx) =
   var newDest = createTokenBuf(c.dest.len)
   var n = beginRead(c.dest)
   var nested = 0
+  let thisMod = c.thisModuleSuffix
   while true:
     case n.kind
-    of Symbol, SymbolDef:
-      emitSymAsIdent(newDest, n.symId, n.info)
+    of Symbol:
+      emitSymAsIdent(newDest, n.symId, n.info, thisMod)
+      inc n
+    of SymbolDef:
+      # SymbolDefs only appear at decl sites; always strip to basename
+      # so the sub-compile creates fresh decls via re-semchecking.
+      var basename = pool.syms[n.symId]
+      extractBasename basename
+      newDest.add identToken(pool.strings.getOrIncl(basename), n.info)
       inc n
     of ParLe:
       if n.exprKind in {OchoiceX, CchoiceX}:
         inc n
         if n.kind == Symbol:
-          emitSymAsIdent(newDest, n.symId, n.info)
+          emitSymAsIdent(newDest, n.symId, n.info, thisMod)
           while n.hasMore: skip n
           consumeParRi n
         else:
