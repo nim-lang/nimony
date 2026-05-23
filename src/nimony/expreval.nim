@@ -1151,7 +1151,40 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
       # so it is intentionally not accepted here.
       case typ.typeKind
       of PtrT, PointerT:
-        buf.addSubtree n
+        # Special-case `(addr (aconstr (uarray T) e1 ... eN))` (the shape
+        # exprexec's ptr-to-nif rule emits): recurse element-wise so any
+        # inner OconstrX gets its inline-body type slot replaced with the
+        # element type's Symbol. Without this, sem later sees an oconstr
+        # with `(object . ...)` as its type slot and rejects with
+        # "expected type symbol for object constructor".
+        var inner = n
+        inc inner # past addr tag
+        var isAconstrUarray = false
+        if inner.exprKind == AconstrX:
+          var t = inner
+          inc t # past aconstr tag
+          if t.typeKind == UarrayT:
+            isAconstrUarray = true
+        if isAconstrUarray:
+          var aconstr = n
+          inc aconstr # past addr tag
+          var typSlot = aconstr
+          inc typSlot # past aconstr tag → uarray T
+          var elemType = typSlot
+          inc elemType # past uarray tag → element type
+          buf.add parLeToken(AddrX, n.info)
+          buf.add parLeToken(AconstrX, aconstr.info)
+          buf.addSubtree typSlot
+          var vals = aconstr
+          inc vals # past aconstr tag
+          skip vals # past uarray type slot
+          while vals.hasMore:
+            annotateConstantType(buf, elemType, vals)
+            skip vals
+          buf.addParRi() # close aconstr
+          buf.addParRi() # close addr
+        else:
+          buf.addSubtree n
       else: err = true
     of CastX:
       # `cast[ptr U](addr X)` keeps its cast wrapper through eval; the
