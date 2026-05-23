@@ -1,0 +1,1 @@
+tests/nimony/exceptions/tnested_heap_with_fin.nim(21, 5) Error: nested heap-based exception handling inside a `try` with a `finally` clause is not yet supported; restructure to avoid the nested `try`/`except`, or drop the outer `finally`

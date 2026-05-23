@@ -913,6 +913,71 @@ proc emitRefExceptionType(dest: var TokenBuf; info: PackedLineInfo) =
   dest.copyIntoKind RefT, info:
     dest.addSymUse pool.syms.getOrIncl(ExceptionName), info
 
+proc findNestedTryWithExcept(start: Cursor): PackedLineInfo =
+  ## Walk the subtree at `start` (a single tree) looking for a
+  ## `(try ... (except ...))`. Returns the info of the offending `try`,
+  ## or `NoLineInfo` if none. Does NOT descend into nested routines —
+  ## they have their own try contexts.
+  result = NoLineInfo
+  var n = start
+  if n.kind != ParLe: return
+  var nested = 0
+  while true:
+    case n.kind
+    of ParLe:
+      if n.stmtKind == TryS:
+        var probe = n
+        inc probe          # past `try` tag
+        skip probe         # past body
+        if probe.substructureKind == ExceptU:
+          return n.info
+      if n.symKind in {ProcY, FuncY, MethodY, ConverterY,
+                       IteratorY, MacroY, TemplateY}:
+        skip n             # don't descend into nested routines
+        continue
+      inc nested
+      inc n
+    of ParRi:
+      dec nested
+      inc n
+      if nested == 0: return
+    else:
+      inc n
+
+proc tryHasFinClause(tryAfterTag: Cursor): bool =
+  ## `tryAfterTag` points just after the `try` tag (i.e. at the body).
+  var n = tryAfterTag
+  skip n                   # body
+  while n.substructureKind == ExceptU:
+    skip n
+  result = n.substructureKind == FinU
+
+proc diagNestedHeapTryWithFinally(c: var Context; tryStart: Cursor) =
+  ## When a heap-based exception `try` has a `(fin ...)` clause AND one of
+  ## its handler bodies contains a nested `try`-with-`except`, the
+  ## destroyer's `trRaise` scope-walk inlines the outer finally before the
+  ## nested raise even though the inner `except` will catch it locally — so
+  ## the outer finally fires spuriously. This is a known structural
+  ## limitation parked behind 0.4; refuse the pattern up front with a clear
+  ## message rather than letting it compile into wrong runtime behavior.
+  var probe = tryStart
+  inc probe                # past `(try` tag
+  if not tryHasFinClause(probe): return
+  skip probe               # past body
+  while probe.substructureKind == ExceptU:
+    var armCur = probe
+    inc armCur             # past `(except`
+    let arm = parseExceptArm(armCur)
+    if not arm.isCatchAll:
+      let bad = findNestedTryWithExcept(arm.bodyStart)
+      if bad != NoLineInfo:
+        buildLocalErr c.dest, bad,
+          "nested heap-based exception handling inside a `try` with a " &
+          "`finally` clause is not yet supported; restructure to avoid " &
+          "the nested `try`/`except`, or drop the outer `finally`"
+        return
+    skip probe             # past the whole `(except ...)`
+
 proc trTryCollapsed(c: var Context; n: var Cursor) =
   ## Lower a try with ref-typed except arms into a single catchall
   ## `(except . (stmts (let :err ...) (if ...)))`, leaving any `(fin ...)`
@@ -920,6 +985,7 @@ proc trTryCollapsed(c: var Context; n: var Cursor) =
   ## error codes `exc` is nil and every arm falls through to the else, where
   ## we re-raise so the original `errorTracker` value is preserved.
   let info = n.info
+  diagNestedHeapTryWithFinally(c, n)
   takeToken c, n  # take '(try' tag
 
   # Allow raises inside the try body — there is at least one except arm:
