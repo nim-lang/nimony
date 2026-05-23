@@ -6036,12 +6036,12 @@ proc semPragmaLine(c: var SemContext; dest: var TokenBuf; it: var Item; isPragma
     let s = evalConstStrExpr(c, dest, it.n, c.types.stringType)
     if s != StrId(0):
       dest.shrink start
-      let feature = parseFeature(pool.strings[s])
-      if feature == InvalidFeature:
+      let features = parseFeatures(pool.strings[s])
+      if features == {}:
         skipUntilEnd it.n
         buildErr c, dest, info, "unknown `feature`"
       else:
-        c.features.incl feature
+        c.features.incl features
         skipParRi it.n
     else:
       skipUntilEnd it.n
@@ -6553,18 +6553,16 @@ proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
               if probe.pragmaKind == FeatureP:
                 inc probe # skip (feature
                 if probe.kind == StringLit:
-                  let feature = parseFeature(pool.strings[probe.litId])
-                  if feature != InvalidFeature:
-                    c.features.incl feature
+                  let features = parseFeatures(pool.strings[probe.litId])
+                  c.features.incl features
                 break
               else:
                 break
             elif probe.pragmaKind == FeatureP:
               inc probe # skip (feature
               if probe.kind == StringLit:
-                let feature = parseFeature(pool.strings[probe.litId])
-                if feature != InvalidFeature:
-                  c.features.incl feature
+                let features = parseFeatures(pool.strings[probe.litId])
+                c.features.incl features
               break
             else:
               skip probe

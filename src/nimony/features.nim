@@ -33,15 +33,18 @@ proc normalizeFeatureName(s: string): string =
     elif ch >= 'A' and ch <= 'Z': result.add chr(ord(ch) + (ord('a') - ord('A')))
     else: result.add ch
 
-proc parseFeature*(s: string): Feature =
+proc parseFeatures*(s: string): set[Feature] =
   case normalizeFeatureName(s)
-  of "resemchoice": ResemChoiceFeature
-  of "untyped": UntypedFeature
-  of "canraise": CanRaiseFeature
-  of "lenientconverters": LenientConvertersFeature
-  of "earlymagics": EarlyMagicsFeature
-  of "autoclosures": AutoClosuresFeature
-  of "lenientnils": LenientNilsFeature
-  of "ignorestyle": IgnoreStyleFeature
-  of "vartoverloads": VarToverloadsFeature
-  else: InvalidFeature
+  of "resemchoice": {ResemChoiceFeature}
+  of "untyped": {UntypedFeature}
+  of "canraise": {CanRaiseFeature}
+  of "lenientconverters": {LenientConvertersFeature}
+  of "earlymagics": {EarlyMagicsFeature}
+  of "autoclosures": {AutoClosuresFeature}
+  of "lenientnils": {LenientNilsFeature}
+  of "ignorestyle": {IgnoreStyleFeature}
+  of "vartoverloads": {VarToverloadsFeature}
+  of "v2": {UntypedFeature, LenientConvertersFeature, EarlyMagicsFeature,
+            AutoClosuresFeature, LenientNilsFeature, IgnoreStyleFeature,
+            VarToverloadsFeature}
+  else: {}

@@ -1,4 +1,4 @@
-## Nimony Package Control.
+## Pnakotic Nimony Archive Kontrol
 ## (c) 2026 Andreas Rumpf
 
 ##[
@@ -48,14 +48,14 @@ non-empty line is a path -- absolute, or relative to the deps directory --
 to where the package actually lives. This is Nimble's `.nimble-link`
 feature, indispensable for hacking on several packages at once.
 
-When a link is present nimpac will not clone or checkout: it parses
+When a link is present pnak will not clone or checkout: it parses
 the linked package's `.nimble` to discover transitive dependencies,
 then references the linked location from the generated `nim.cfg`.
 
 nimony.paths generation
-------------------
+-----------------------
 
-After resolution nimpac (re-)writes a managed block in `nim.cfg` next
+After resolution pnak (re-)writes a managed block in `nim.cfg` next
 to the input `.nimble`, with one `--path:` directive per resolved
 package. The block is delimited by sentinel comments so user content
 in `nim.cfg` is preserved across runs.
@@ -68,11 +68,11 @@ import ".." / lib / tooldirs
 
 const
   Version = "0.1.0"
-  Usage = "Nimpac - Nimony package control. Version " & Version & """
+  Usage = "pnak - Pnakotic Nimony Archive Kontrol. Version " & Version & """
 
   (c) 2026 Andreas Rumpf
 Usage:
-  nimpac [options] [command] [args]
+  pnak [options] [command] [args]
 
 Commands:
   fetch [.nimble]       (default) clone or update the dependency closure
@@ -84,7 +84,7 @@ Commands:
   translate <pkg> <ver> walk <pkg>'s .nimble history and print the SHA
                         of the latest commit whose `version = "..."`
                         equals <ver>. Pipe it into a `requires` line:
-                          requires "<url>#$(nimpac translate <pkg> <ver>)"
+                          requires "<url>#$(pnak translate <pkg> <ver>)"
 
 Options:
   --depsdir:DIR         where to put the cloned packages (default: deps)
@@ -138,10 +138,10 @@ proc say(kind: MsgKind; parts: varargs[string, `$`]) =
   ## or `NO_COLOR` is set.
   const
     Prefix: array[MsgKind, string] = [
-      mInfo:  "[nimpac] ",
-      mNote:  "[nimpac] note: ",
-      mWarn:  "[nimpac] warning: ",
-      mError: "[nimpac] error: "]
+      mInfo:  "[pnak] ",
+      mNote:  "[pnak] note: ",
+      mWarn:  "[pnak] warning: ",
+      mError: "[pnak] error: "]
     Color: array[MsgKind, ForegroundColor] = [
       mInfo:  fgCyan,
       mNote:  fgBlue,
@@ -213,7 +213,7 @@ proc parseNimbleViaNifler(nimbleFile: string): TokenBuf =
   let nifler = findTool("nifler")
   if nifler.len == 0 or not fileExists(nifler):
     quit "cannot find nifler tool; build it with `hastur build nifler`"
-  let outFile = getTempDir() / "nimpac_" &
+  let outFile = getTempDir() / "pnak_" &
                 extractFilename(nimbleFile).changeFileExt("nif")
   let cmd = quoteShell(nifler) & " parse " &
             quoteShell(nimbleFile) & " " & quoteShell(outFile)
@@ -413,7 +413,7 @@ type
     description: string
 
 proc packagesRepoDir(): string =
-  getCacheDir() / "nimpac" / "packages"
+  getCacheDir() / "pnak" / "packages"
 
 proc packagesCachePath(): string =
   packagesRepoDir() / "packages.json"
@@ -843,8 +843,8 @@ type
     NimCfg, NimonyPaths
 
 const
-  CfgBegin = "# >>> nimpac begin (managed block — do not edit) <<<"
-  CfgEnd = "# <<< nimpac end >>>"
+  CfgBegin = "# >>> pnak begin (managed block — do not edit) <<<"
+  CfgEnd = "# <<< pnak end >>>"
 
 proc cfgPathSpec(c: Context; r: Resolved; cfgDir: string): string =
   ## Path to use in a `--path:` directive — relative to `cfgDir` when
@@ -939,7 +939,7 @@ proc nimbleVersionAt(repo, commit, relPath: string): string =
   extractNimbleVersion(output)
 
 proc lookupRepoDir(name: string): string =
-  getCacheDir() / "nimpac" / "lookups" / name
+  getCacheDir() / "pnak" / "lookups" / name
 
 proc translateCmd(c: var Context; pkg, version: string) =
   ## Resolve `<pkg>` to a URL, fully clone it into the lookup cache, then
@@ -1007,7 +1007,7 @@ proc searchCmd(c: var Context; terms: seq[string]) =
         if not seenUrls.containsOrIncl(p.url):
           printPkg(p, "github")
   if seenUrls.len == 0:
-    stdout.writeLine "[nimpac] no matches for ", terms.join(" ")
+    stdout.writeLine "[pnak] no matches for ", terms.join(" ")
 
 proc handleCmdLine() =
   var action = ""
@@ -1066,7 +1066,7 @@ proc handleCmdLine() =
     createDir(ctx.depsDir)
     let rootSpec = parseNimble(nimbleFile)
     fetchAll(ctx, rootSpec)
-    echo "[nimpac] resolved ", ctx.resolved.len, " package(s) into ", ctx.depsDir
+    echo "[pnak] resolved ", ctx.resolved.len, " package(s) into ", ctx.depsDir
 
     if not noCfg:
       let cfgPath =
@@ -1082,7 +1082,7 @@ proc handleCmdLine() =
     updatePackagesRepo(force = true)
   of "translate":
     if args.len != 2:
-      quit "translate: usage: nimpac translate <name|url> <version>"
+      quit "translate: usage: pnak translate <name|url> <version>"
     translateCmd(ctx, args[0], args[1])
   else:
     quit "Invalid action: " & action
