@@ -4135,6 +4135,8 @@ The following features are available:
 | `"resemchoice"` | Re-resolves overloaded choice nodes during generic instantiation. |
 | `"earlymagics"` | Resolves magic procs before overload resolution. For compatibility with Nim 2. |
 | `"ignoreStyle"` | Be compatible with Nim 2's style insensitivity rules. |
+| `"varToverloads"` | Allow for overloading via `var T`. For compatibility with Nim 2. |
+| `"v2"`  | meta feature: Enable all features that help for compatibility with Nim 2. |
 
 
 ### noreturn pragma
