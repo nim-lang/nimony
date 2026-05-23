@@ -1064,10 +1064,10 @@ proc buildDagon(showProgress = false) =
   let exe = "dagon".addFileExt(ExeExt)
   robustMoveFile "src/dagon/" & exe, binDir() / exe
 
-proc buildNimpac(showProgress = false) =
-  exec nimcPrefix() & "src/nimpac/nimpac.nim", showProgress
-  let exe = "nimpac".addFileExt(ExeExt)
-  robustMoveFile "src/nimpac/" & exe, binDir() / exe
+proc buildPnak(showProgress = false) =
+  exec nimcPrefix() & "src/pnak/pnak.nim", showProgress
+  let exe = "pnak".addFileExt(ExeExt)
+  robustMoveFile "src/pnak/" & exe, binDir() / exe
 
 # ---------------------------------------------------------------------------
 # Bootstrapping progress (see https://github.com/nim-lang/nimony/issues/1788).
@@ -1774,7 +1774,7 @@ proc handleCmdLine =
       buildNj(showProgress)
       buildVl(showProgress)
       buildDagon(showProgress)
-      buildNimpac(showProgress)
+      buildPnak(showProgress)
     of "nifler":
       buildNifler(showProgress)
     of "nimony":
@@ -1795,8 +1795,8 @@ proc handleCmdLine =
       buildValidator(showProgress)
     of "dagon":
       buildDagon(showProgress)
-    of "nimpac":
-      buildNimpac(showProgress)
+    of "pnak":
+      buildPnak(showProgress)
     else:
       writeHelp()
     removeDir "nimcache"
