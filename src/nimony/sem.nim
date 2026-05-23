@@ -3991,19 +3991,15 @@ proc semArrayConstr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   if t.typeKind == ArrayT:
     elem.typ = t
     inc elem.typ
-  elif t.typeKind == PtrT:
-    # `(aconstr (ptr (uarray T)) e1 …)` is the internal IR for a
-    # static-data pointer (used by exprexec's ptr-to-nif rule). Element
-    # type is the uarray's inner T; hexer's nifcgen hoists the expression
-    # to an anonymous module-level static array and substitutes
-    # `(cast (ptr (uarray T)) (addr <anon>))`.
-    var inner = t
-    inc inner # past ptr tag
-    if inner.typeKind == UarrayT:
-      elem.typ = inner
-      inc elem.typ # past uarray tag → element type
-    else:
-      c.buildErr dest, info, "expected array type for array constructor, got: " & typeToString(t)
+  elif t.typeKind == UarrayT:
+    # `(aconstr (uarray T) e1 …)` is the internal IR for a static array
+    # literal of unspecified length (used by exprexec's ptr-to-nif rule
+    # wrapped in `addr` to form the seq's `data` pointer). Element type
+    # is the uarray's inner T; hexer's nifcgen hoists the literal to an
+    # anonymous module-level static array and rewrites the surrounding
+    # `addr` to point at it.
+    elem.typ = t
+    inc elem.typ # past uarray tag → element type
   else:
     c.buildErr dest, info, "expected array type for array constructor, got: " & typeToString(t)
   while elem.n.hasMore:
@@ -5806,7 +5802,13 @@ proc semAddr(c: var SemContext; dest: var TokenBuf; it: var Item) =
   it.n = arg.n
   takeParRi dest, it.n
   let a = cursorAt(dest, beforeArg)
-  if isAddressable(a) or arg.typ.typeKind in {MutT, LentT}:
+  # `UarrayT` admits internal-only aconstr literals such as
+  # `(aconstr (uarray T) e1 …)` emitted by exprexec's ptr-to-nif rule;
+  # `addr` then wraps them into a pointer that hexer's nifcgen hoists to
+  # an anonymous module-level static. Users can't normally produce a
+  # `UarrayT`-typed value (it's a size-unknown internal type), so this
+  # arm doesn't widen the addr-of-literal surface for hand-written code.
+  if isAddressable(a) or arg.typ.typeKind in {MutT, LentT, UarrayT}:
     endRead dest
   else:
     let asStr = asNimCode(a)

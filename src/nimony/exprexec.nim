@@ -383,22 +383,26 @@ proc unravelArray(c: var SynthesizeSerializerCtx;
 proc unravelPtrUarrayField(c: var SynthesizeSerializerCtx;
                             fieldType: Cursor; param: TokenBuf) =
   ## ptr-to-nif for a `ptr UncheckedArray[T]` field. Emits runtime code
-  ## that writes `(aconstr (ptr (uarray T)) e1 ... eN)` to NIF. The
+  ## that writes `(addr (aconstr (uarray T) e1 ... eN))` to NIF — the
+  ## aconstr is the inline array data and `addr` lifts it to a pointer,
+  ## matching how `addr` of a literal would compose naturally. The
   ## length comes from `len(param)` and elements from `param[i]` at
   ## runtime; both must resolve in the sub-compile (true for seq and
-  ## string). Hexer's nifcgen pass then hoists the aconstr to an anon
-  ## module-level static.
+  ## string). Hexer's nifcgen pass hoists the aconstr to an anon
+  ## module-level static and rewrites `addr` to point at it.
   var ft = fieldType
   inc ft # past ptr tag
   assert ft.typeKind == UarrayT
+  let uarrayType = ft # (uarray T) — used as the aconstr's type slot
   inc ft # past uarray tag
   let baseType = ft
 
   let indexVar = pool.syms.getOrIncl("idx.0")
   declareIndexVar c, indexVar
 
+  genStringCall(c, "writeNifParLe", "addr")
   genStringCall(c, "writeNifParLe", "aconstr")
-  genStringCall(c, "writeNifRaw", toString(fieldType, false))
+  genStringCall(c, "writeNifRaw", toString(uarrayType, false))
 
   copyIntoKind c.dest, WhileS, c.info:
     # while idx < len(param):
@@ -422,7 +426,8 @@ proc unravelPtrUarrayField(c: var SynthesizeSerializerCtx;
       entryPoint(c, baseType, readonlyCursorAt(elemAccess, 0))
       incIndexVar c, indexVar
 
-  genParRiCall c
+  genParRiCall c # close aconstr
+  genParRiCall c # close addr
 
 proc unravelSet(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) =
   assert orig.typeKind == SetT

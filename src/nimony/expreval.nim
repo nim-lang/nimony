@@ -1206,28 +1206,6 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
           annotateConstantType(buf, typ, vals)
           skip vals
         buf.addParRi()
-      elif typ.typeKind == PtrT and exprKind == AconstrX:
-        # `(aconstr (ptr (uarray T)) e1 ... eN)` is the internal IR for a
-        # static-data pointer initializer (used to materialise const seqs
-        # and the like). Hexer's nifcgen pass hoists it to an anonymous
-        # module-level array const and rewrites to `(cast (ptr (uarray T))
-        # (addr <anon>))`. Here we just accept the shape against any
-        # `ptr T` const target whose inner element type matches the
-        # aconstr's element type.
-        var inner = typ
-        inc inner
-        if inner.typeKind == UarrayT:
-          inc inner # skip uarray tag, point at element type
-          buf.add parLeToken(AconstrX, n.info)
-          buf.addSubtree typ
-          var vals = n
-          inc vals
-          skip vals # skip the aconstr's own type slot
-          while vals.hasMore:
-            annotateConstantType(buf, inner, vals)
-            skip vals
-          buf.addParRi()
-        else: err = true
       else: err = true
     of CurlyX, SetconstrX:
       if typ.typeKind == SetT:
