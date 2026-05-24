@@ -59,7 +59,20 @@ const
 type
   ScopeKind = enum
     Other
-    OtherPreventFinally
+      ## Default. If `finallySection` is set (only for `except`-body
+      ## scopes), `leaveScope` inlines it — this is what makes the
+      ## raise→except→finally path emit the finally.
+    CaughtLocally
+      ## Body scope of a `try` with an `except` arm. The raise is caught
+      ## by that except, so the (own) finally runs naturally afterward;
+      ## `leaveScope` skips it, and `trRaise` stops walking outward at
+      ## this scope so an *outer* try's finally is not inlined either.
+    TryFinOnlyBody
+      ## Body scope of a `try`/`finally` *without* `except`. On normal
+      ## exit (`trScope`) the surrounding `(fin ...)` clause is emitted
+      ## naturally by `trTry`, so we skip; on raise the raise propagates
+      ## past the try and `trRaise` must inline the finally before the
+      ## jump.
     WhileOrBlock
   DestructorOp = object
     destroyProc: SymId
@@ -138,8 +151,27 @@ proc createFreshVars(c: var Context; n: Cursor): TokenBuf =
       result.add n
       inc n
 
-proc leaveScope(c: var Context; s: Scope; kind = Other) =
-  if kind != OtherPreventFinally and s.finallySection != default(Cursor):
+proc leaveScope(c: var Context; s: Scope; kind = Other; raising = false) =
+  ## Walk-out of one scope: optionally inline the scope's finally body and
+  ## run destructors. The "inline finally" decision is the subtle part:
+  ##   - `CaughtLocally`: never inline. A raise here will be caught by
+  ##     this try's `except`; the finally runs naturally afterward.
+  ##   - `TryFinOnlyBody`: inline only when leaving via a raise (the raise
+  ##     propagates past the try and `nifcgen`'s straight-line emission
+  ##     of the finally won't run before the raise jump). Skip on normal
+  ##     exit, where `trTry` emits the finally clause itself.
+  ##   - `Other` (or any other kind) with a `finallySection`: inline. The
+  ##     only scope that has its `finallySection` set under `Other` is an
+  ##     `except`-body; inlining the outer finally at its end is what
+  ##     makes the raise→except→finally path actually run the finally
+  ##     (nifcgen's else-branch structure only runs it on the no-raise
+  ##     path).
+  let inlineFin =
+    case kind
+    of CaughtLocally: false
+    of TryFinOnlyBody: raising
+    of Other, WhileOrBlock: s.finallySection != default(Cursor)
+  if inlineFin:
     var freshVars = createFreshVars(c, s.finallySection)
     var n = beginRead(freshVars)
     tr c, n
@@ -190,22 +222,19 @@ proc trReturn(c: var Context; n: var Cursor) =
 
 proc trRaise(c: var Context; n: var Cursor) =
   #[
-  Consider:
-
-    try:
-      s1
-      raise
-    except:
-      echo "e"
-    finally:
-      echo "fin"
-
-    We do not want to duplicate the finally here since
-    it will run after the `except` block no matter what.
+  Walk enclosing scopes, inlining each scope's finally before the raise
+  jump. Stop at the first `CaughtLocally` scope: that scope is the body
+  of a `try` with an `except` arm, so the raise is caught right there and
+  cannot reach any outer finally. Without this stop, a nested
+  `try`-with-`except` inside an outer `try`'s `except`-body would
+  spuriously inline the outer finally before the raise lands on the
+  inner handler — see `tnested_heap_with_fin.nim`.
   ]#
   var it = addr(c.currentScope)
   while it != nil:
-    leaveScope(c, it[], it.kind)
+    leaveScope(c, it[], it.kind, raising = true)
+    if it.kind == CaughtLocally:
+      break
     it = it.parent
   takeTree c.dest, n
 
@@ -347,7 +376,17 @@ proc trTry(c: var Context; n: var Cursor) =
     skip nn
   copyInto(c.dest, n):
     let fin = if nn.substructureKind == FinU: nn.firstSon else: default(Cursor)
-    trNestedScope c, n, OtherPreventFinally, fin
+    # Body kind depends on whether an `except` arm exists:
+    #   - has except: raise from the body is caught by that except, so the
+    #     finally runs naturally afterward (no duplication) and there's no
+    #     reason to walk past this scope.
+    #   - no except (plain try/finally): raise propagates past the try and
+    #     the finally must be inlined before the raise jump. Use
+    #     `TryFinOnlyBody` so `leaveScope` inlines the finally on raise
+    #     but not on normal exit (where `trTry` emits the finally clause
+    #     itself).
+    let bodyKind = if hasExcept: CaughtLocally else: TryFinOnlyBody
+    trNestedScope c, n, bodyKind, fin
     while n.substructureKind == ExceptU:
       copyInto(c.dest, n):
         takeTree c.dest, n # `E as e`
