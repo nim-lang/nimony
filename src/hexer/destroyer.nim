@@ -151,51 +151,46 @@ proc createFreshVars(c: var Context; n: Cursor): TokenBuf =
       result.add n
       inc n
 
-proc leaveScopeImpl(c: var Context; s: Scope; kind: ScopeKind; raising: bool; fin: Cursor) =
+proc leaveScope(c: var Context; sptr: ptr Scope; kind = Other; raising = false) =
   ## Walk-out of one scope: optionally inline the scope's finally body and
-  ## run destructors. The "inline finally" decision is the subtle part:
+  ## run destructors.
+  ##
+  ## `sptr` is taken as `ptr Scope` (not `var Scope` — Nimony's borrow
+  ## checker would reject passing a field of `c` as both `var Context`
+  ## and `var Scope`) so we can detach `sptr.finallySection` during the
+  ## inline. The detach is what prevents infinite recursion: a raise
+  ## inside the inlined finally body re-enters `trRaise`, walks the same
+  ## `c.currentScope` chain that still links back to `sptr^`, and would
+  ## otherwise inline this same finally forever. The restore at the end
+  ## puts the finally back so subsequent branches of an enclosing
+  ## `if`/`case` still see it on their normal exit.
+  ##
+  ## "Inline finally" decision per scope kind:
   ##   - `CaughtLocally`: never inline. A raise here will be caught by
   ##     this try's `except`; the finally runs naturally afterward.
-  ##   - `TryFinOnlyBody`: inline only when leaving via a raise (the raise
-  ##     propagates past the try and `nifcgen`'s straight-line emission
-  ##     of the finally won't run before the raise jump). Skip on normal
-  ##     exit, where `trTry` emits the finally clause itself.
-  ##   - `Other` (or any other kind) with a `finallySection`: inline. The
-  ##     only scope that has its `finallySection` set under `Other` is an
+  ##   - `TryFinOnlyBody`: inline only when leaving via a raise (the
+  ##     raise propagates past the try and `nifcgen`'s straight-line
+  ##     emission of the finally won't run before the raise jump). Skip
+  ##     on normal exit, where `trTry` emits the finally clause itself.
+  ##   - `Other`/`WhileOrBlock` with a `finallySection`: inline. The only
+  ##     scope that has its `finallySection` set under `Other` is an
   ##     `except`-body; inlining the outer finally at its end is what
   ##     makes the raise→except→finally path actually run the finally
   ##     (nifcgen's else-branch structure only runs it on the no-raise
   ##     path).
-  ##
-  ## `fin` is the finally body the caller wants to inline; it is passed
-  ## explicitly (rather than read from `s.finallySection`) so the caller
-  ## can simultaneously clear `s.finallySection` on the live scope in the
-  ## chain. That clearing is what stops the recursive `trRaise` triggered
-  ## by a raise inside the inlined finally body from re-entering this
-  ## same scope and inlining forever.
+  let savedFin = sptr.finallySection
+  sptr.finallySection = default(Cursor)
   let inlineFin =
     case kind
     of CaughtLocally: false
-    of TryFinOnlyBody: raising and fin != default(Cursor)
-    of Other, WhileOrBlock: fin != default(Cursor)
+    of TryFinOnlyBody: raising and savedFin != default(Cursor)
+    of Other, WhileOrBlock: savedFin != default(Cursor)
   if inlineFin:
-    var freshVars = createFreshVars(c, fin)
+    var freshVars = createFreshVars(c, savedFin)
     var n = beginRead(freshVars)
     tr c, n
-  for i in countdown(s.destroyOps.high, 0):
-    callDestroy c, s.destroyOps[i].destroyProc, s.destroyOps[i].arg
-
-template leaveScope(c: var Context; sptr: ptr Scope; kind = Other; raising = false) =
-  ## Walk-out helper that prevents recursive re-entry: temporarily detaches
-  ## `sptr.finallySection`, calls `leaveScopeImpl` with the saved value,
-  ## then restores. The detach window covers the inlined finally body's
-  ## traversal — any raise inside it walks `c.currentScope`, which still
-  ## links back to `sptr^`, and would otherwise inline this same finally
-  ## forever. The restore lets subsequent branches of an enclosing
-  ## `if`/`case` still see the finally on their normal exit.
-  let savedFin = sptr.finallySection
-  sptr.finallySection = default(Cursor)
-  leaveScopeImpl(c, sptr[], kind, raising, savedFin)
+  for i in countdown(sptr.destroyOps.high, 0):
+    callDestroy c, sptr.destroyOps[i].destroyProc, sptr.destroyOps[i].arg
   sptr.finallySection = savedFin
 
 proc leaveNamedBlock(c: var Context; label: SymId) =
