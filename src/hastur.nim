@@ -26,7 +26,7 @@ Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|hexer|nifc|nifmake|nj|vl|validator|dagon]   build selected tools (default: all).
+  build [all|nimony|nifler|hexer|nifc|nifmake|nj|vl|validator|dagon|pnak]   build selected tools (default: all).
   bootstrap            compile every module on the bootstrap list with nimony.
   boot [options]       Self-host the *full* nimony toolchain (nimony,
                        nimsem, hexer). `bin0/` is a fresh copy of the
@@ -47,6 +47,7 @@ Commands:
   nj                   run NJ (Nimony Jump Elimination) tests.
   vl                   run VL (Versioned Locations) tests.
   dagon                run Dagon doc-generator tests (tests/dagon/).
+  pnak                 run pnak package-fetcher tests (tests/pnak/).
   incremental          verify nifmake's mtime-based incremental rebuilds via
                        the `--report` machine-readable summary.
   test <file>/<dir>    run test <file> or <dir>.
@@ -1587,6 +1588,43 @@ proc dagontests(overwrite: bool) =
   else:
     echo "SUCCESS."
 
+proc runPnakTest(c: var TestCounters; testFile: string) =
+  ## Compile and run a self-contained pnak integration test. The test is a
+  ## normal Nim program that drives the `bin/pnak` binary as a subprocess
+  ## and exits non-zero on failure — no assertions sidecar needed.
+  inc c.total
+  let basename = splitFile(testFile).name
+  let outdir = nimcacheDir / "pnaktests" / basename
+  removeDir outdir
+  createDir outdir
+  let exe = outdir / basename.addFileExt(ExeExt)
+  let compileCmd = nimcPrefix() & "--nimcache:" & quoteShell(outdir) &
+                   " -o:" & quoteShell(exe) & " " & quoteShell(testFile)
+  if execShellCmd(compileCmd) != 0:
+    failure c, testFile, "nim c failed (cmd: " & compileCmd & ")"
+    return
+  let (output, exit) = execCmdEx(exe)
+  if exit != 0:
+    failure c, testFile, "exit " & $exit, output
+
+proc pnaktests() =
+  ## Run every `t*.nim` under `tests/pnak/`. The tests are self-contained
+  ## integration tests of the `pnak` binary (BFS clone + `nimony.paths`
+  ## generation); they stage a local file:// upstream and stay offline.
+  const TestDir = "tests/pnak"
+  let t0 = epochTime()
+  var c = TestCounters(total: 0, failures: 0)
+  if dirExists(TestDir):
+    for x in walkDir(TestDir, relative = true):
+      if x.kind == pcFile and x.path.endsWith(".nim") and x.path.startsWith("t"):
+        runPnakTest c, TestDir / x.path
+  echo c.total - c.failures, " / ", c.total, " pnak tests successful in ",
+       formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if c.failures > 0:
+    quit "FAILURE: Some pnak tests failed."
+  else:
+    echo "SUCCESS."
+
 import install
 
 proc syncCmd(newBranch: string) =
@@ -1733,6 +1771,8 @@ proc handleCmdLine =
     buildValidator()
     validatorTests()
     incrementalTests()
+    buildPnak()
+    pnaktests()
     when defined(linux) or defined(macosx):
       # Self-host boot: build the toolchain with itself and confirm the
       # stages match (modulo build-time stamps). Windows / Linux-i386
@@ -1841,6 +1881,9 @@ proc handleCmdLine =
     buildNimony()
     buildDagon()
     dagontests(overwrite)
+  of "pnak":
+    buildPnak()
+    pnaktests()
   of "test":
     if not skipBuild:
       buildNimony()

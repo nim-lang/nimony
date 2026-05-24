@@ -77,7 +77,7 @@ Usage:
 Commands:
   fetch [.nimble]       (default) clone or update the dependency closure
                         of the given .nimble file (or the .nimble file in
-                        the current directory) and rewrite nim.cfg.
+                        the current directory) and rewrite nimony.paths.
   search <terms>        search packages.json + GitHub for matching Nim
                         packages and print candidates.
   refresh               re-download packages.json into the cache.
@@ -88,7 +88,7 @@ Commands:
 
 Options:
   --depsdir:DIR         where to put the cloned packages (default: deps)
-  --cfg:FILE            nim.cfg path to patch (default: nimony.paths next to
+  --cfg:FILE            nimony.paths path to patch (default: nimony.paths next to
                         the input .nimble; can also be a nim.cfg path)
   --nocfg               skip nimony.paths/nim.cfg generation
   --offline             do not touch the network (cached packages.json
