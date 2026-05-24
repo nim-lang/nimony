@@ -1773,16 +1773,7 @@ proc handleCmdLine =
     incrementalTests()
     buildPnak()
     pnaktests()
-    when defined(linux) or defined(macosx):
-      # Self-host boot: build the toolchain with itself and confirm the
-      # stages match (modulo build-time stamps). Windows / Linux-i386
-      # still surface codegen issues we haven't worked through.
-      # `--valgrind` is skipped on macOS (no valgrind there); the
-      # bootstrapped binary is exercised by the self-compile passes
-      # themselves.
-      bootCmd("", withValgrind = false)
-    else:
-      tierTests()
+    bootCmd("", withValgrind = false)
 
   of "validate", "validator":
     buildValidator()
