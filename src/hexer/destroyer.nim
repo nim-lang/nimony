@@ -151,7 +151,7 @@ proc createFreshVars(c: var Context; n: Cursor): TokenBuf =
       result.add n
       inc n
 
-proc leaveScope(c: var Context; s: var Scope; kind = Other; raising = false) =
+proc leaveScopeImpl(c: var Context; s: Scope; kind: ScopeKind; raising: bool; fin: Cursor) =
   ## Walk-out of one scope: optionally inline the scope's finally body and
   ## run destructors. The "inline finally" decision is the subtle part:
   ##   - `CaughtLocally`: never inline. A raise here will be caught by
@@ -166,25 +166,37 @@ proc leaveScope(c: var Context; s: var Scope; kind = Other; raising = false) =
   ##     makes the raise→except→finally path actually run the finally
   ##     (nifcgen's else-branch structure only runs it on the no-raise
   ##     path).
+  ##
+  ## `fin` is the finally body the caller wants to inline; it is passed
+  ## explicitly (rather than read from `s.finallySection`) so the caller
+  ## can simultaneously clear `s.finallySection` on the live scope in the
+  ## chain. That clearing is what stops the recursive `trRaise` triggered
+  ## by a raise inside the inlined finally body from re-entering this
+  ## same scope and inlining forever.
   let inlineFin =
     case kind
     of CaughtLocally: false
-    of TryFinOnlyBody: raising
-    of Other, WhileOrBlock: s.finallySection != default(Cursor)
+    of TryFinOnlyBody: raising and fin != default(Cursor)
+    of Other, WhileOrBlock: fin != default(Cursor)
   if inlineFin:
-    # Clear `finallySection` on the actual scope while inlining: if the
-    # finally body itself raises, the recursive `trRaise` walks the same
-    # scope chain (c.currentScope doesn't move) and would otherwise
-    # re-enter this branch forever — see the boot-stage regression on
-    # nimsem with deeply nested try/raise patterns.
-    let savedFin = s.finallySection
-    s.finallySection = default(Cursor)
-    var freshVars = createFreshVars(c, savedFin)
+    var freshVars = createFreshVars(c, fin)
     var n = beginRead(freshVars)
     tr c, n
-    s.finallySection = savedFin
   for i in countdown(s.destroyOps.high, 0):
     callDestroy c, s.destroyOps[i].destroyProc, s.destroyOps[i].arg
+
+template leaveScope(c: var Context; sptr: ptr Scope; kind = Other; raising = false) =
+  ## Walk-out helper that prevents recursive re-entry: temporarily detaches
+  ## `sptr.finallySection`, calls `leaveScopeImpl` with the saved value,
+  ## then restores. The detach window covers the inlined finally body's
+  ## traversal — any raise inside it walks `c.currentScope`, which still
+  ## links back to `sptr^`, and would otherwise inline this same finally
+  ## forever. The restore lets subsequent branches of an enclosing
+  ## `if`/`case` still see the finally on their normal exit.
+  let savedFin = sptr.finallySection
+  sptr.finallySection = default(Cursor)
+  leaveScopeImpl(c, sptr[], kind, raising, savedFin)
+  sptr.finallySection = savedFin
 
 proc leaveNamedBlock(c: var Context; label: SymId) =
   #[ Consider:
@@ -196,20 +208,20 @@ proc leaveNamedBlock(c: var Context; label: SymId) =
   ]#
   var it = addr(c.currentScope)
   while it != nil and it.label != label:
-    leaveScope(c, it[])
+    leaveScope(c, it)
     it = it.parent
   if it != nil and it.label == label:
-    leaveScope(c, it[])
+    leaveScope(c, it)
   else:
     bug "do not know which block to leave"
 
 proc leaveAnonBlock(c: var Context) =
   var it = addr(c.currentScope)
   while it != nil and it.kind != WhileOrBlock:
-    leaveScope(c, it[])
+    leaveScope(c, it)
     it = it.parent
   if it != nil and it.kind == WhileOrBlock:
-    leaveScope(c, it[])
+    leaveScope(c, it)
   else:
     bug "do not know which block to leave"
 
@@ -224,7 +236,7 @@ proc trBreak(c: var Context; n: var Cursor) =
 proc trReturn(c: var Context; n: var Cursor) =
   var it = addr(c.currentScope)
   while it != nil:
-    leaveScope(c, it[])
+    leaveScope(c, it)
     it = it.parent
   takeTree c.dest, n
 
@@ -240,7 +252,7 @@ proc trRaise(c: var Context; n: var Cursor) =
   ]#
   var it = addr(c.currentScope)
   while it != nil:
-    leaveScope(c, it[], it.kind, raising = true)
+    leaveScope(c, it, it.kind, raising = true)
     if it.kind == CaughtLocally:
       break
     it = it.parent
@@ -270,7 +282,7 @@ proc trScope(c: var Context; body: var Cursor; kind = Other) =
           tr c, body
     else:
       tr c, body
-    leaveScope(c, c.currentScope, kind)
+    leaveScope(c, addr(c.currentScope), kind)
 
 proc registerSinkParameters(c: var Context; params: Cursor) =
   var p = params
@@ -471,12 +483,7 @@ proc injectDestructors*(pass: var Pass; lifter: ref LiftingCtx) =
     while n.hasMore:
       tr(c, n)
 
-    # copy the scope into a local to avoid aliasing `c` with a borrow of
-    # one of its fields; `leaveScope` only consults this entry-scope and
-    # any temporary mutation it makes (clearing `finallySection` during
-    # finally inlining) is local to this throwaway copy.
-    var scope = c.currentScope
-    leaveScope c, scope
+    leaveScope c, addr(c.currentScope)
   c.dest.addParRi()
   genMissingHooks lifter[]
   pass.dest = ensureMove c.dest
