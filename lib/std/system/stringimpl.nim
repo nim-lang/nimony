@@ -165,10 +165,17 @@ func ensureUniqueLong(s: var string; oldLen, newLen: int) =
       p.rc = 0
       p.fullLen = newLen
       p.capImpl = newCap
-      let old = s.more
-      copyMem(addr p.data[0], addr old.data[0], min(oldLen, newCap))
-      if isHeap and arcDec(old.rc):
-        dealloc(old)
+      if isHeap:
+        let old = s.more
+        copyMem(addr p.data[0], addr old.data[0], min(oldLen, newCap))
+        if arcDec(old.rc):
+          dealloc(old)
+      else:
+        # Static long string: full data lives in s.more.data; the inline
+        # cache only holds the first AlwaysAvail bytes, so reading from it
+        # would copy 7 valid chars and then run off into s.more's pointer
+        # bytes (the bug that corrupted index files on Windows bootstrap).
+        copyMem(addr p.data[0], addr s.more.data[0], min(oldLen, newCap))
       s.more = p
       setSSLen(s, HeapSlen)
       # Sync inline cache after creating new block (use oldLen since new data may not exist yet)
