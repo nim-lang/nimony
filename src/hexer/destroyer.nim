@@ -59,7 +59,20 @@ const
 type
   ScopeKind = enum
     Other
-    OtherPreventFinally
+      ## Default. If `finallySection` is set (only for `except`-body
+      ## scopes), `leaveScope` inlines it — this is what makes the
+      ## raise→except→finally path emit the finally.
+    CaughtLocally
+      ## Body scope of a `try` with an `except` arm. The raise is caught
+      ## by that except, so the (own) finally runs naturally afterward;
+      ## `leaveScope` skips it, and `trRaise` stops walking outward at
+      ## this scope so an *outer* try's finally is not inlined either.
+    TryFinOnlyBody
+      ## Body scope of a `try`/`finally` *without* `except`. On normal
+      ## exit (`trScope`) the surrounding `(fin ...)` clause is emitted
+      ## naturally by `trTry`, so we skip; on raise the raise propagates
+      ## past the try and `trRaise` must inline the finally before the
+      ## jump.
     WhileOrBlock
   DestructorOp = object
     destroyProc: SymId
@@ -138,13 +151,47 @@ proc createFreshVars(c: var Context; n: Cursor): TokenBuf =
       result.add n
       inc n
 
-proc leaveScope(c: var Context; s: Scope; kind = Other) =
-  if kind != OtherPreventFinally and s.finallySection != default(Cursor):
-    var freshVars = createFreshVars(c, s.finallySection)
+proc leaveScope(c: var Context; sptr: ptr Scope; kind = Other; raising = false) =
+  ## Walk-out of one scope: optionally inline the scope's finally body and
+  ## run destructors.
+  ##
+  ## `sptr` is taken as `ptr Scope` (not `var Scope` — Nimony's borrow
+  ## checker would reject passing a field of `c` as both `var Context`
+  ## and `var Scope`) so we can detach `sptr.finallySection` during the
+  ## inline. The detach is what prevents infinite recursion: a raise
+  ## inside the inlined finally body re-enters `trRaise`, walks the same
+  ## `c.currentScope` chain that still links back to `sptr^`, and would
+  ## otherwise inline this same finally forever. The restore at the end
+  ## puts the finally back so subsequent branches of an enclosing
+  ## `if`/`case` still see it on their normal exit.
+  ##
+  ## "Inline finally" decision per scope kind:
+  ##   - `CaughtLocally`: never inline. A raise here will be caught by
+  ##     this try's `except`; the finally runs naturally afterward.
+  ##   - `TryFinOnlyBody`: inline only when leaving via a raise (the
+  ##     raise propagates past the try and `nifcgen`'s straight-line
+  ##     emission of the finally won't run before the raise jump). Skip
+  ##     on normal exit, where `trTry` emits the finally clause itself.
+  ##   - `Other`/`WhileOrBlock` with a `finallySection`: inline. The only
+  ##     scope that has its `finallySection` set under `Other` is an
+  ##     `except`-body; inlining the outer finally at its end is what
+  ##     makes the raise→except→finally path actually run the finally
+  ##     (nifcgen's else-branch structure only runs it on the no-raise
+  ##     path).
+  let savedFin = sptr.finallySection
+  sptr.finallySection = default(Cursor)
+  let inlineFin =
+    case kind
+    of CaughtLocally: false
+    of TryFinOnlyBody: raising and savedFin != default(Cursor)
+    of Other, WhileOrBlock: savedFin != default(Cursor)
+  if inlineFin:
+    var freshVars = createFreshVars(c, savedFin)
     var n = beginRead(freshVars)
     tr c, n
-  for i in countdown(s.destroyOps.high, 0):
-    callDestroy c, s.destroyOps[i].destroyProc, s.destroyOps[i].arg
+  for i in countdown(sptr.destroyOps.high, 0):
+    callDestroy c, sptr.destroyOps[i].destroyProc, sptr.destroyOps[i].arg
+  sptr.finallySection = savedFin
 
 proc leaveNamedBlock(c: var Context; label: SymId) =
   #[ Consider:
@@ -156,20 +203,20 @@ proc leaveNamedBlock(c: var Context; label: SymId) =
   ]#
   var it = addr(c.currentScope)
   while it != nil and it.label != label:
-    leaveScope(c, it[])
+    leaveScope(c, it)
     it = it.parent
   if it != nil and it.label == label:
-    leaveScope(c, it[])
+    leaveScope(c, it)
   else:
     bug "do not know which block to leave"
 
 proc leaveAnonBlock(c: var Context) =
   var it = addr(c.currentScope)
   while it != nil and it.kind != WhileOrBlock:
-    leaveScope(c, it[])
+    leaveScope(c, it)
     it = it.parent
   if it != nil and it.kind == WhileOrBlock:
-    leaveScope(c, it[])
+    leaveScope(c, it)
   else:
     bug "do not know which block to leave"
 
@@ -184,28 +231,25 @@ proc trBreak(c: var Context; n: var Cursor) =
 proc trReturn(c: var Context; n: var Cursor) =
   var it = addr(c.currentScope)
   while it != nil:
-    leaveScope(c, it[])
+    leaveScope(c, it)
     it = it.parent
   takeTree c.dest, n
 
 proc trRaise(c: var Context; n: var Cursor) =
   #[
-  Consider:
-
-    try:
-      s1
-      raise
-    except:
-      echo "e"
-    finally:
-      echo "fin"
-
-    We do not want to duplicate the finally here since
-    it will run after the `except` block no matter what.
+  Walk enclosing scopes, inlining each scope's finally before the raise
+  jump. Stop at the first `CaughtLocally` scope: that scope is the body
+  of a `try` with an `except` arm, so the raise is caught right there and
+  cannot reach any outer finally. Without this stop, a nested
+  `try`-with-`except` inside an outer `try`'s `except`-body would
+  spuriously inline the outer finally before the raise lands on the
+  inner handler — see `tnested_heap_with_fin.nim`.
   ]#
   var it = addr(c.currentScope)
   while it != nil:
-    leaveScope(c, it[], it.kind)
+    leaveScope(c, it, it.kind, raising = true)
+    if it.kind == CaughtLocally:
+      break
     it = it.parent
   takeTree c.dest, n
 
@@ -233,7 +277,7 @@ proc trScope(c: var Context; body: var Cursor; kind = Other) =
           tr c, body
     else:
       tr c, body
-    leaveScope(c, c.currentScope, kind)
+    leaveScope(c, addr(c.currentScope), kind)
 
 proc registerSinkParameters(c: var Context; params: Cursor) =
   var p = params
@@ -347,7 +391,17 @@ proc trTry(c: var Context; n: var Cursor) =
     skip nn
   copyInto(c.dest, n):
     let fin = if nn.substructureKind == FinU: nn.firstSon else: default(Cursor)
-    trNestedScope c, n, OtherPreventFinally, fin
+    # Body kind depends on whether an `except` arm exists:
+    #   - has except: raise from the body is caught by that except, so the
+    #     finally runs naturally afterward (no duplication) and there's no
+    #     reason to walk past this scope.
+    #   - no except (plain try/finally): raise propagates past the try and
+    #     the finally must be inlined before the raise jump. Use
+    #     `TryFinOnlyBody` so `leaveScope` inlines the finally on raise
+    #     but not on normal exit (where `trTry` emits the finally clause
+    #     itself).
+    let bodyKind = if hasExcept: CaughtLocally else: TryFinOnlyBody
+    trNestedScope c, n, bodyKind, fin
     while n.substructureKind == ExceptU:
       copyInto(c.dest, n):
         takeTree c.dest, n # `E as e`
@@ -424,10 +478,7 @@ proc injectDestructors*(pass: var Pass; lifter: ref LiftingCtx) =
     while n.hasMore:
       tr(c, n)
 
-    # pass the scope by value to avoid aliasing `c` with a borrow of one of
-    # its fields; `leaveScope` only reads from it.
-    let scope = c.currentScope
-    leaveScope c, scope
+    leaveScope c, addr(c.currentScope)
   c.dest.addParRi()
   genMissingHooks lifter[]
   pass.dest = ensureMove c.dest

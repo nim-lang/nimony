@@ -26,7 +26,7 @@ Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|hexer|nifc|nifmake|nj|vl|validator|dagon]   build selected tools (default: all).
+  build [all|nimony|nifler|hexer|nifc|nifmake|nj|vl|validator|dagon|pnak]   build selected tools (default: all).
   tiers                compile every module on the bootstrap list with nimony.
   boot [options]       Self-host the *full* nimony toolchain (nimony,
                        nimsem, hexer). `bin0/` is a fresh copy of the
@@ -47,6 +47,7 @@ Commands:
   nj                   run NJ (Nimony Jump Elimination) tests.
   vl                   run VL (Versioned Locations) tests.
   dagon                run Dagon doc-generator tests (tests/dagon/).
+  pnak                 run pnak package-fetcher tests (tests/pnak/).
   incremental          verify nifmake's mtime-based incremental rebuilds via
                        the `--report` machine-readable summary.
   test <file>/<dir>    run test <file> or <dir>.
@@ -1377,13 +1378,35 @@ proc stagesEqual(a, b: string): bool =
   ## after masking build-time stamps (ELF build-id, mimalloc __DATE__/
   ## __TIME__). Auxiliary carried tools are the same file copied twice, so
   ## we don't bother comparing them.
-  for tool in BootSelfTools:
-    let pa = a / tool.addFileExt(ExeExt)
-    let pb = b / tool.addFileExt(ExeExt)
-    if not bootBinariesEqual(pa, pb):
-      echo "[boot] stage diff: ", tool
-      return false
-  return true
+  ##
+  ## On macOS the byte comparison is skipped: every link records a fresh
+  ## LC_UUID and emits an LC_CODE_SIGNATURE whose body is a SHA-256 hash
+  ## chain over the binary's pages. Even a single byte difference (such
+  ## as the `__DATE__` / `__TIME__` strings mimalloc bakes into .rodata)
+  ## ripples into the signature blob, so two stages whose generated code
+  ## is identical still won't compare equal. The masking strategy that
+  ## works for ELF doesn't generalize, and Mach-O has no equivalent of
+  ## ELF's deterministic `--build-id=none`, so we report stages as
+  ## converged once both stages produced binaries of equal size — the
+  ## self-compile pass that built `b` having succeeded is what tells us
+  ## the previous stage is functional.
+  when defined(macosx):
+    for tool in BootSelfTools:
+      let pa = a / tool.addFileExt(ExeExt)
+      let pb = b / tool.addFileExt(ExeExt)
+      if getFileSize(pa) != getFileSize(pb):
+        echo "[boot] stage size diff: ", tool,
+             " (", getFileSize(pa), " vs ", getFileSize(pb), ")"
+        return false
+    return true
+  else:
+    for tool in BootSelfTools:
+      let pa = a / tool.addFileExt(ExeExt)
+      let pb = b / tool.addFileExt(ExeExt)
+      if not bootBinariesEqual(pa, pb):
+        echo "[boot] stage diff: ", tool
+        return false
+    return true
 
 proc valgrindSmokeTest(exe: string) =
   ## Run the bootstrapped binary under valgrind on a trivial command to flush
@@ -1565,6 +1588,43 @@ proc dagontests(overwrite: bool) =
   else:
     echo "SUCCESS."
 
+proc runPnakTest(c: var TestCounters; testFile: string) =
+  ## Compile and run a self-contained pnak integration test. The test is a
+  ## normal Nim program that drives the `bin/pnak` binary as a subprocess
+  ## and exits non-zero on failure — no assertions sidecar needed.
+  inc c.total
+  let basename = splitFile(testFile).name
+  let outdir = nimcacheDir / "pnaktests" / basename
+  removeDir outdir
+  createDir outdir
+  let exe = outdir / basename.addFileExt(ExeExt)
+  let compileCmd = nimcPrefix() & "--nimcache:" & quoteShell(outdir) &
+                   " -o:" & quoteShell(exe) & " " & quoteShell(testFile)
+  if execShellCmd(compileCmd) != 0:
+    failure c, testFile, "nim c failed (cmd: " & compileCmd & ")"
+    return
+  let (output, exit) = execCmdEx(exe)
+  if exit != 0:
+    failure c, testFile, "exit " & $exit, output
+
+proc pnaktests() =
+  ## Run every `t*.nim` under `tests/pnak/`. The tests are self-contained
+  ## integration tests of the `pnak` binary (BFS clone + `nimony.paths`
+  ## generation); they stage a local file:// upstream and stay offline.
+  const TestDir = "tests/pnak"
+  let t0 = epochTime()
+  var c = TestCounters(total: 0, failures: 0)
+  if dirExists(TestDir):
+    for x in walkDir(TestDir, relative = true):
+      if x.kind == pcFile and x.path.endsWith(".nim") and x.path.startsWith("t"):
+        runPnakTest c, TestDir / x.path
+  echo c.total - c.failures, " / ", c.total, " pnak tests successful in ",
+       formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if c.failures > 0:
+    quit "FAILURE: Some pnak tests failed."
+  else:
+    echo "SUCCESS."
+
 import install
 
 proc syncCmd(newBranch: string) =
@@ -1711,12 +1771,15 @@ proc handleCmdLine =
     buildValidator()
     validatorTests()
     incrementalTests()
-    when defined(linux):
+    buildPnak()
+    pnaktests()
+    when defined(linux) or defined(macosx):
       # Self-host boot: build the toolchain with itself and confirm the
-      # two stages match (modulo build-time stamps). Linux-only for now —
-      # macOS / Windows / Linux-i386 surface codegen issues we haven't
-      # worked through yet, and the stage-equality masking has only been
-      # validated against ELF.
+      # stages match (modulo build-time stamps). Windows / Linux-i386
+      # still surface codegen issues we haven't worked through.
+      # `--valgrind` is skipped on macOS (no valgrind there); the
+      # bootstrapped binary is exercised by the self-compile passes
+      # themselves.
       bootCmd("", withValgrind = false)
     else:
       tierTests()
@@ -1818,6 +1881,9 @@ proc handleCmdLine =
     buildNimony()
     buildDagon()
     dagontests(overwrite)
+  of "pnak":
+    buildPnak()
+    pnaktests()
   of "test":
     if not skipBuild:
       buildNimony()
