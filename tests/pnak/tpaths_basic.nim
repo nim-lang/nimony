@@ -53,10 +53,20 @@ srcDir = "src"
   sh "git -c user.email=t@example.com -c user.name=t add -A", dir
   sh "git -c user.email=t@example.com -c user.name=t commit -q -m init", dir
 
+proc toFileUrl(p: string): string =
+  ## Build an RFC-8089-style `file:///` URL. The path is normalised to
+  ## forward slashes so the resulting URL parses as a plain Nim string
+  ## literal — on Windows the raw backslashes in an absolute path would
+  ## otherwise be interpreted as `\a`, `\n`, ... escape sequences by
+  ## nifler and fail with `invalid character constant`.
+  var path = p.absolutePath.replace('\\', '/')
+  if not path.startsWith('/'): path = "/" & path  # e.g. D:/... → /D:/...
+  result = "file://" & path
+
 proc setupProject(projectDir, upstreamDir: string) =
   removeDir projectDir
   createDir projectDir
-  let url = "file://" & upstreamDir.absolutePath
+  let url = toFileUrl(upstreamDir)
   writeFile projectDir / "myapp.nimble", """
 version = "0.1.0"
 license = "MIT"
