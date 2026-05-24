@@ -151,7 +151,7 @@ proc createFreshVars(c: var Context; n: Cursor): TokenBuf =
       result.add n
       inc n
 
-proc leaveScope(c: var Context; s: Scope; kind = Other; raising = false) =
+proc leaveScope(c: var Context; s: var Scope; kind = Other; raising = false) =
   ## Walk-out of one scope: optionally inline the scope's finally body and
   ## run destructors. The "inline finally" decision is the subtle part:
   ##   - `CaughtLocally`: never inline. A raise here will be caught by
@@ -172,9 +172,17 @@ proc leaveScope(c: var Context; s: Scope; kind = Other; raising = false) =
     of TryFinOnlyBody: raising
     of Other, WhileOrBlock: s.finallySection != default(Cursor)
   if inlineFin:
-    var freshVars = createFreshVars(c, s.finallySection)
+    # Clear `finallySection` on the actual scope while inlining: if the
+    # finally body itself raises, the recursive `trRaise` walks the same
+    # scope chain (c.currentScope doesn't move) and would otherwise
+    # re-enter this branch forever — see the boot-stage regression on
+    # nimsem with deeply nested try/raise patterns.
+    let savedFin = s.finallySection
+    s.finallySection = default(Cursor)
+    var freshVars = createFreshVars(c, savedFin)
     var n = beginRead(freshVars)
     tr c, n
+    s.finallySection = savedFin
   for i in countdown(s.destroyOps.high, 0):
     callDestroy c, s.destroyOps[i].destroyProc, s.destroyOps[i].arg
 
@@ -463,9 +471,11 @@ proc injectDestructors*(pass: var Pass; lifter: ref LiftingCtx) =
     while n.hasMore:
       tr(c, n)
 
-    # pass the scope by value to avoid aliasing `c` with a borrow of one of
-    # its fields; `leaveScope` only reads from it.
-    let scope = c.currentScope
+    # copy the scope into a local to avoid aliasing `c` with a borrow of
+    # one of its fields; `leaveScope` only consults this entry-scope and
+    # any temporary mutation it makes (clearing `finallySection` during
+    # finally inlining) is local to this throwaway copy.
+    var scope = c.currentScope
     leaveScope c, scope
   c.dest.addParRi()
   genMissingHooks lifter[]
