@@ -653,7 +653,7 @@ when defined(windows):
 
     result.fProcessHandle = procInfo.hProcess
     result.fThreadHandle = procInfo.hThread
-    result.id = Handle procInfo.dwProcessId
+    result.id = cast[Handle](uint64(procInfo.dwProcessId))
     result.exitFlag = false
 
   proc closeThreadAndProcessHandle(p: Process) {.raises.} =

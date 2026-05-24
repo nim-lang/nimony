@@ -27,7 +27,7 @@ Usage:
 
 Commands:
   build [all|nimony|nifler|hexer|nifc|nifmake|nj|vl|validator|dagon|pnak]   build selected tools (default: all).
-  bootstrap            compile every module on the bootstrap list with nimony.
+  tiers                compile every module on the bootstrap list with nimony.
   boot [options]       Self-host the *full* nimony toolchain (nimony,
                        nimsem, hexer). `bin0/` is a fresh copy of the
                        host-Nim-built toolchain; `binN/` is `binN-1/`'s
@@ -38,7 +38,7 @@ Commands:
                        `nimony c` invocation.
   selfcheck            full compiler regression check: rebuilds the nimony
                        toolchain (nimony+nimsem+hexer share `programs.nim`),
-                       runs `bootstrap`, then `boot --valgrind`. Use this
+                       runs `tiers`, then `boot --valgrind`. Use this
                        after touching any module the compiler itself imports.
   all                  run all tests.
   nimony               run Nimony tests.
