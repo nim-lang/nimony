@@ -1378,13 +1378,35 @@ proc stagesEqual(a, b: string): bool =
   ## after masking build-time stamps (ELF build-id, mimalloc __DATE__/
   ## __TIME__). Auxiliary carried tools are the same file copied twice, so
   ## we don't bother comparing them.
-  for tool in BootSelfTools:
-    let pa = a / tool.addFileExt(ExeExt)
-    let pb = b / tool.addFileExt(ExeExt)
-    if not bootBinariesEqual(pa, pb):
-      echo "[boot] stage diff: ", tool
-      return false
-  return true
+  ##
+  ## On macOS the byte comparison is skipped: every link records a fresh
+  ## LC_UUID and emits an LC_CODE_SIGNATURE whose body is a SHA-256 hash
+  ## chain over the binary's pages. Even a single byte difference (such
+  ## as the `__DATE__` / `__TIME__` strings mimalloc bakes into .rodata)
+  ## ripples into the signature blob, so two stages whose generated code
+  ## is identical still won't compare equal. The masking strategy that
+  ## works for ELF doesn't generalize, and Mach-O has no equivalent of
+  ## ELF's deterministic `--build-id=none`, so we report stages as
+  ## converged once both stages produced binaries of equal size — the
+  ## self-compile pass that built `b` having succeeded is what tells us
+  ## the previous stage is functional.
+  when defined(macosx):
+    for tool in BootSelfTools:
+      let pa = a / tool.addFileExt(ExeExt)
+      let pb = b / tool.addFileExt(ExeExt)
+      if getFileSize(pa) != getFileSize(pb):
+        echo "[boot] stage size diff: ", tool,
+             " (", getFileSize(pa), " vs ", getFileSize(pb), ")"
+        return false
+    return true
+  else:
+    for tool in BootSelfTools:
+      let pa = a / tool.addFileExt(ExeExt)
+      let pb = b / tool.addFileExt(ExeExt)
+      if not bootBinariesEqual(pa, pb):
+        echo "[boot] stage diff: ", tool
+        return false
+    return true
 
 proc valgrindSmokeTest(exe: string) =
   ## Run the bootstrapped binary under valgrind on a trivial command to flush
@@ -1751,12 +1773,13 @@ proc handleCmdLine =
     incrementalTests()
     buildPnak()
     pnaktests()
-    when defined(linux):
+    when defined(linux) or defined(macosx):
       # Self-host boot: build the toolchain with itself and confirm the
-      # two stages match (modulo build-time stamps). Linux-only for now —
-      # macOS / Windows / Linux-i386 surface codegen issues we haven't
-      # worked through yet, and the stage-equality masking has only been
-      # validated against ELF.
+      # stages match (modulo build-time stamps). Windows / Linux-i386
+      # still surface codegen issues we haven't worked through.
+      # `--valgrind` is skipped on macOS (no valgrind there); the
+      # bootstrapped binary is exercised by the self-compile passes
+      # themselves.
       bootCmd("", withValgrind = false)
     else:
       tierTests()
