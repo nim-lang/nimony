@@ -2067,6 +2067,7 @@ proc gsub(g: var SrcGen; n: var Cursor, fromStmtList = false, isTopLevel = false
 
 proc renderTree(n: Cursor, renderFlags: RenderFlags = {}, renderType = false): string =
   var g: SrcGen = initSrcGen(renderFlags)
+  let orig = n
   var n = n
   if renderType:
     var c: Context = initContext()
@@ -2075,7 +2076,7 @@ proc renderTree(n: Cursor, renderFlags: RenderFlags = {}, renderType = false): s
     gsub(g, n, isTopLevel = true)
   result = g.buf
   if result.len == 0:
-    result = toString(n, false)
+    result = toString(orig, false)
 
 proc asNimCode*(n: Cursor; renderFlags: RenderFlags = {}): string =
   var m0: PackedLineInfo = NoLineInfo
