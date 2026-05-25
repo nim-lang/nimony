@@ -1,1 +1,3 @@
 tests/nimony/overload/tvartoverloads_off.nim(8, 12) Error: ambiguous call: 'foo'
+proc (x: int64): string (declared in tests/nimony/overload/tvartoverloads_off.nim(4, 1))
+proc (x: var int64): string (declared in tests/nimony/overload/tvartoverloads_off.nim(5, 1))
