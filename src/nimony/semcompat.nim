@@ -183,16 +183,28 @@ proc compatBundleVarargsInMatch*(c: var SemContext; m: var Match;
   ## `addArgsInstConverters` writes the bundled form into `dest`. No-ops
   ## when no varargs slot was matched, or the slot already holds a
   ## previous `toOpenArray.0` bundle (template body re-sem).
+  ##
+  ## When the varargs param has trailing non-varargs params after it
+  ## (non-tail varargs), `m.varargsEndPosition` marks where the varargs
+  ## slot ends; tokens after that belong to the trailing params and are
+  ## preserved verbatim.
   let start = m.firstVarargPosition
   if start >= 0 and not compatVarargsSlotIsBundled(m, start):
-    # Move the flat args out of `m.args` into a `(stmts …)` scratch wrapper
-    # so an iterator over them terminates at the closing `)` rather than
-    # walking off the end. (Without the wrapper, `hasMore` — which only
+    let endPos =
+      if m.varargsEndPosition >= 0: m.varargsEndPosition else: m.args.len
+    # Save trailing args (for non-tail varargs) — these belong to params
+    # following the varargs slot and must end up after the bundle.
+    var trailing = createTokenBuf(max(8, m.args.len - endPos))
+    for i in endPos ..< m.args.len:
+      trailing.add m.args[i]
+    # Move the flat varargs args out of `m.args` into a `(stmts …)` scratch
+    # wrapper so an iterator over them terminates at the closing `)` rather
+    # than walking off the end. (Without the wrapper, `hasMore` — which only
     # checks `kind != ParRi` outside `virtualParRi` — would read past
     # buffer end into undefined memory.)
-    var flat = createTokenBuf(max(8, m.args.len - start + 2))
+    var flat = createTokenBuf(max(8, endPos - start + 2))
     flat.addParLe(StmtsS, info)
-    for i in start ..< m.args.len:
+    for i in start ..< endPos:
       flat.add m.args[i]
     flat.addParRi()
     m.args.shrink start
@@ -238,3 +250,6 @@ proc compatBundleVarargsInMatch*(c: var SemContext; m: var Match;
       m.args.add ab
     m.args.addParRi()
     m.args.addParRi()
+
+    if trailing.len > 0:
+      m.args.add trailing

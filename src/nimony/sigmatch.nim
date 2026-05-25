@@ -78,9 +78,11 @@ type
     context: ptr SemContext
     error: MatchError
     firstVarargPosition*: int
+    varargsEndPosition*: int
     genericConverter*, refineArgType*, insertedParam*: bool
 
-proc createMatch*(context: ptr SemContext): Match = Match(context: context, firstVarargPosition: -1)
+proc createMatch*(context: ptr SemContext): Match =
+  Match(context: context, firstVarargPosition: -1, varargsEndPosition: -1)
 
 proc scopeBump(m: Match): int =
   ## Models an implicit `Scope` parameter on every routine. Same-module
@@ -1643,7 +1645,10 @@ proc classifyMatch*(m: Match): TypeRelation {.inline.} =
 
 proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[CallArg]) =
   var i = 0
-  var isVarargs = false
+  # Trailing non-varargs params after the varargs slot, lazily computed
+  # the first time the varargs branch is hit (so signatures without
+  # varargs pay nothing). `< 0` means "not yet scanned".
+  var trailingParams = -1
   while f.hasMore:
     m.skippedMod = NoType
 
@@ -1656,8 +1661,25 @@ proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[CallArg]) =
       if i >= args.len: break
       skip f
     else:
-      isVarargs = true
-      if i >= args.len: break
+      if trailingParams < 0:
+        var scanF = f
+        skip scanF
+        trailingParams = 0
+        while scanF.hasMore:
+          inc trailingParams
+          skip scanF
+      if i >= args.len or (trailingParams > 0 and args.len - i <= trailingParams):
+        # Done with the varargs slot: either out of args (tail varargs
+        # exhausted, or non-tail varargs with all remaining args bound to
+        # trailing params), or remaining args are reserved for the
+        # trailing non-varargs params.
+        if m.firstVarargPosition < 0:
+          m.firstVarargPosition = m.args.len
+        if trailingParams > 0:
+          m.varargsEndPosition = m.args.len
+        skip f
+        if i >= args.len: break
+        continue
     if args[i].n.kind == DotToken:
       # default parameter
       if param.val.kind != DotToken:
@@ -1673,10 +1695,6 @@ proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[CallArg]) =
       if m.err: break
     inc m.pos
     inc i
-  if isVarargs:
-    if m.firstVarargPosition < 0:
-      m.firstVarargPosition = m.args.len
-    skip f
 
 
 iterator typeVars(fn: SymId): SymId {.sideEffect.} =
