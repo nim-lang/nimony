@@ -1013,6 +1013,14 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       if cs.fnName != StrId(0):
         errorMsg.add pool.strings[cs.fnName]
       errorMsg.add "'"
+      # Add proc signatures and location for each match
+      for i in 0..<m.len:
+        errorMsg.add "\n"
+        errorMsg.add typeToString(m[i].fn.typ, {renderNoBody})
+        if m[i].fn.sym != NoSymId:
+          let res = tryLoadSym(m[i].fn.sym)
+          if res.status == LacksNothing:
+            errorMsg.add " (declared in " & res.decl.info.infoToStr & ")"
     elif cs.source in {DotCall, DotAsgnCall} and cs.fnName != StrId(0):
       errorMsg = "undeclared field: '"
       if cs.fnName != StrId(0):
