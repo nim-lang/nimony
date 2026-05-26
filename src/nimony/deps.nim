@@ -564,6 +564,16 @@ proc rootPath(c: DepContext): string =
   result = absoluteParentDir(c.rootNode.files[0].nimFile)
   result = onRaiseQuit relativePath(result, onRaiseQuit os.getCurrentDir())
 
+proc sharedObjDir(): string =
+  ## Project-wide cache for object files produced from `{.build("C", ...).}`
+  ## pragmas (currently just `vendor/mimalloc/src/static.c`). These TUs don't
+  ## depend on per-project state, so compiling them once and reusing the .o
+  ## across nimcaches saves ~4-5 s per cold build on Windows.
+  result = parentDir(stdlibDir()) / "nimcache_static"
+
+proc sharedObjFile(cfile: CFile): string =
+  sharedObjDir() / cfile.obj
+
 proc defineNiflerCmd(b: var Builder; nifler: string; preserveDocs = false) =
   b.withTree "cmd":
     b.addSymbolDef "nifler"
@@ -881,7 +891,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
         # Input: all object files
         var objFiles = initHashSet[string]()
         for cfile in c.toBuild:
-          let obj = c.config.nifcachePath / backend / cfile.obj
+          let obj = sharedObjFile(cfile)
           if not objFiles.containsOrIncl(obj):
             b.withTree "input":
               b.addStrLit obj
@@ -894,9 +904,12 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
           b.addStrLit c.config.exeFile(c.rootNode.files[0], backend)
 
       objFiles = initHashSet[string]()
-      # Build object files from C files with custom args
+      # Build object files from C files with custom args. Outputs land in
+      # `<nimony-root>/nimcache_static/` so the same .o is reused across
+      # projects — these TUs (currently just mimalloc's `static.c`) don't
+      # depend on the user's project at all.
       for cfile in c.toBuild:
-        let obj = c.config.nifcachePath / backend / cfile.obj
+        let obj = sharedObjFile(cfile)
         if not objFiles.containsOrIncl(obj):
           b.withTree "do":
             b.addIdent "cc"
@@ -1393,6 +1406,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
     c = initDepContext(config, project, nifler, true, forceRebuild, moduleFlags, cmd)
     let backend = c.config.nifcachePath / c.rootNode.files[0].modname
     onRaiseQuit createDir(path(backend))
+    onRaiseQuit createDir(path(sharedObjDir()))
     let buildFinalFilename = generateFinalBuildFile(c, commandLineArgsNifc, passC, passL)
     # Linkers (gcc/clang/ld/ar) don't auto-create the output directory.
     # When the user passes `--out:bin/foo` or `--outdir:bin`, materialise
