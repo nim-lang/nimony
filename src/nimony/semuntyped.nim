@@ -361,7 +361,15 @@ proc semTemplLocal(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor; k: SymK
   addDecl(c, dest, local.name, local.pragmas, k, nameStart, declStart)
   takeTree dest, n # exported
   semTemplPragmas c, dest, n # pragmas
-  semTemplType c, dest, n # type
+  if k == ConstY and n.kind == DotToken:
+    # const without explicit type: emit (auto) so the type slot is non-empty
+    # in the stored generic/template body; the actual type is inferred
+    # at instantiation time when semLocal processes the (auto) placeholder.
+    dest.add parLeToken(AutoT, n.info)
+    dest.addParRi()
+    inc n
+  else:
+    semTemplType c, dest, n # type
   semTemplBody c, dest, n # value
   takeParRi dest, n
 
