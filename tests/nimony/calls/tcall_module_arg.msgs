@@ -1,0 +1,12 @@
+tests/nimony/calls/tcall_module_arg.nim(5, 1) Trace: instantiation from here
+lib/std/syncio.nim(144, 5) Error: Type mismatch at [position]
+write stdout, syncio
+[2] expected: string but got: (module) (declared in lib/std/syncio.nim(48, 1))
+[2] expected: bool but got: (module) (declared in lib/std/syncio.nim(51, 1))
+[2] expected: int64 but got: (module) (declared in lib/std/syncio.nim(55, 1))
+[2] expected: int32 but got: (module) (declared in lib/std/syncio.nim(58, 1))
+[2] expected: uint64 but got: (module) (declared in lib/std/syncio.nim(61, 1))
+[2] expected: uint32 but got: (module) (declared in lib/std/syncio.nim(64, 1))
+[2] (module) does not match constraint T (declared in lib/std/syncio.nim(67, 1))
+[2] expected: char but got: (module) (declared in lib/std/syncio.nim(70, 1))
+[2] expected: float64 but got: (module) (declared in lib/std/syncio.nim(73, 1))
