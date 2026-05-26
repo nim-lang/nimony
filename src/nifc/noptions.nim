@@ -34,7 +34,6 @@ type
     appType*: AppType
 
   State* = object
-    selects*: seq[string] # names of modules with functions with selectany pragmas
     config*: ConfigRef
     bits*: int
 

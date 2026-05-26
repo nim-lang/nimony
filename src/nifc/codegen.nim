@@ -235,8 +235,6 @@ include gentypes
 
 # Procs
 
-include selectany
-
 type
   PragmaInfo = object
     flags: set[NifcPragma]
@@ -603,16 +601,12 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
         c.protos.add c.code[i]
       c.protos.add Token Semicolon
 
-    if SelectanyP in prag.flags:
-      genRoutineGuardBegin(c, name)
     c.add CurlyLe
     let beforeBody = c.code.len
     genStmt c, prc.body
     if c.currentProc.needsOverflowFlag:
       addOverflowDecl c, c.code, beforeBody
     c.add CurlyRi
-    if SelectanyP in prag.flags:
-      genRoutineGuardEnd(c)
   c.m.closeScope()
   c.inToplevel = true
   c.currentProc = oldProc
@@ -732,7 +726,6 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
 
   if c.headerFile.len > 0:
     let selectHeader = outp.changeFileExt(".h")
-    s.selects.add selectHeader
     var hbuf = ""
     for x in items(c.headerFile):
       hbuf.add c.tokens[x]
