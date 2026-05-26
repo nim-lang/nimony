@@ -725,11 +725,17 @@ proc trCoroFor*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # someTuple 0)` arg would falsely match.
   var targetBuf = createTokenBuf(4)
   var upstreamEnvArg = false
-  if n.kind == Symbol and not isClosureIter(n.symId):
-    targetBuf.addSymUse coroWrapperForExternIter(n.symId), n.info
+  if n.kind == Symbol and isClosureIter(n.symId):
+    # Direct `.passive` (or `.closure`) iter DECL call — route through the
+    # iter's init wrapper.
+    targetBuf.addSymUse coroWrapperProc(c, n.symId), n.info
     inc n
   elif n.kind == Symbol:
-    targetBuf.addSymUse coroWrapperProc(c, n.symId), n.info
+    # Iter-VALUE local: a `.passive` iter value is a bare function pointer
+    # to the wrapper (no env tuple — see cps's `trProctype`), so call it
+    # directly. The wrapper always allocates a fresh frame, so no caller
+    # env is needed; `emitStopContinuation` below supplies the sentinel.
+    targetBuf.addSymUse n.symId, n.info
     inc n
   else:
     upstreamEnvArg = true
@@ -881,9 +887,12 @@ proc trLocal*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         callExpr = n
         dest.addDotToken()
         skip n
-      elif isPassive:
-        # `n` is at the rhs Symbol (a .passive proc) — rewrite to its
-        # init wrapper, NOT `target.symId` (that's the local var).
+      elif isPassive and n.kind == Symbol:
+        # rhs is a `.passive` proc/iter sym used as a value — rewrite to
+        # its init wrapper, NOT `target.symId` (that's the local var).
+        # A non-Symbol rhs (e.g. `nil`, or another value of the same
+        # type) is left to `coroTr`: the lowered passive type is a bare
+        # wrapper proctype, so a plain `(nil)` is already well-typed.
         dest.addSymUse coroWrapperProc(c, n.symId), info
         inc n
       else:
@@ -1876,11 +1885,12 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of HconvX, ConvX:
         # `g == nil` / `g != nil` over a closure / iter value: sem
         # emits `(hconv (pointer (nil)) g)` so NIFC can compare via a
-        # pointer cast. After lambdalifting the value is a
-        # `(tuple <proctype> (ref RootObj))` (closure-proc or
-        # iter-value shape — both are recognised here), so
-        # cast-to-pointer no longer typechecks. Peel off the fn-slot
-        # via tupat and convert that scalar instead.
+        # pointer cast. For a `.closure` iter / closure proc the value is
+        # a `(tuple <proctype> (ref RootObj))`, so cast-to-pointer no
+        # longer typechecks — peel off the fn-slot via tupat and convert
+        # that scalar instead. A `.passive` iter value is a bare wrapper
+        # proctype (no tuple, see `trProctype`), so it converts to
+        # pointer directly and must NOT be field-extracted.
         let info = n.info
         let tag = n.exprKind
         var inner = n
@@ -1895,7 +1905,9 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             inc t
             if t.typeKind == ProctypeT and procHasPragma(t, ClosureP):
               isFnEnvTuple = true
-          if (srcTyp.typeKind == ItertypeT or isFnEnvTuple) and
+          let isClosureIterType = srcTyp.typeKind == ItertypeT and
+              not procHasPragma(srcTyp, PassiveP)
+          if (isClosureIterType or isFnEnvTuple) and
               dstType.typeKind in {PtrT, PointerT}:
             dest.addParLe tag, info
             dest.takeTree dstType

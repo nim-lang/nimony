@@ -303,16 +303,26 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if n.kind == ParLe:
     let nk = n.typeKind
     let isPassiveProc = nk == ProctypeT and procHasPragma(n, PassiveP)
-    let isIterType = nk == ItertypeT
-    if isPassiveProc or isIterType:
+    # An itertype is a coroutine-shaped value type. `.closure` iter values
+    # carry a captured environment, so they lower to a
+    # `(tuple <wrapper-proctype> (ref RootObj))` — same runtime shape as
+    # closure procs. `.passive` iters have NO environment (their wrapper
+    # always allocates a fresh frame, see `generateCoroutineHelpers`), so
+    # — exactly like a `.passive` proc — they lower to a bare wrapper
+    # proctype function pointer, NOT a tuple.
+    let isClosureIterType = nk == ItertypeT and not procHasPragma(n, PassiveP)
+    let isPassiveIterType = nk == ItertypeT and procHasPragma(n, PassiveP)
+    if isPassiveProc or isClosureIterType or isPassiveIterType:
       var info = n.info
-      if isIterType:
+      if isClosureIterType:
         # open the (tuple … (ref RootObj)) wrapper
         dest.addParLe TupleT, info
-        dest.addParLe ProctypeT, info   # element 0: the wrapper proctype
-        inc n                            # consume original itertype tag
+      if isPassiveProc:
+        dest.takeToken n                # proctype tag (passive proc)
       else:
-        dest.takeToken n                # proctype tag (passive)
+        # itertype → wrapper proctype (both `.closure` and `.passive`)
+        dest.addParLe ProctypeT, info
+        inc n                            # consume original itertype tag
       dest.takeTree n         # nilability tag
       dest.takeToken n        # params tag
       while n.hasMore:
@@ -341,7 +351,7 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
       while n.hasMore:
         trProctype(c, dest, n)
       dest.takeParRi n
-      if isIterType:
+      if isClosureIterType:
         # proctype is already closed; add the env slot and close the tuple
         dest.copyIntoKind RefT, info:
           dest.addSymUse pool.syms.getOrIncl(BareRootObjName), info
