@@ -13,14 +13,6 @@ import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
 import codegen, llvmcodegen, noptions, symparser
 import ".." / lib / vfs
 
-when defined(windows):
-  import bat
-else:
-  import makefile
-
-when defined(enableAsm):
-  import amd64 / genasm
-
 const
   Version = "0.2.0"
   Usage = "NIFC Compiler. Version " & Version & """
@@ -29,7 +21,7 @@ const
 Usage:
   nifc [options] [command] [arguments]
 Command:
-  c|cpp|n|llvm file.nif [file2.nif]    convert NIF files to C|C++|ASM|LLVM IR
+  c|cpp|llvm file.nif [file2.nif]    convert NIF files to C|C++|LLVM IR
 
 Options:
   -r, --run                 run the makefile and the compiled program
@@ -48,12 +40,6 @@ Options:
 
 proc writeHelp() = quit(Usage, QuitSuccess)
 proc writeVersion() = quit(Version & "\n", QuitSuccess)
-
-proc genMakeCmd(config: ConfigRef, makefilePath: string): string =
-  when defined(windows):
-    result = expandFilename(makefilePath)
-  else:
-    result = "make -f " & makefilePath
 
 proc generateBackend(s: var State; action: Action; files: seq[string]; flags: set[GenFlag]) =
   assert action in {atC, atCpp}
@@ -212,29 +198,10 @@ proc handleCmdLine() =
       of atNone:
         quit "targets are not specified"
 
-    if s.selects.len > 0:
-      var h = open(s.config.nifcacheDir / "select_any.h", fmWrite)
-      for x in s.selects:
-        write h, "#include \"" & extractFilename(x) & "\"\n"
-      h.close()
     let appName = actionTable[currentAction][^1].splitModulePath.name
     if s.config.outputFile == "":
       s.config.outputFile = appName
 
-    if not compileOnly:
-      when defined(windows):
-        let makefilePath = s.config.nifcacheDir / "Makefile." & appName & ".bat"
-        generateBatMakefile(s, makefilePath, s.config.outputFile, actionTable)
-      else:
-        let makefilePath = s.config.nifcacheDir / "Makefile." & appName
-        generateMakefile(s, makefilePath, s.config.outputFile, actionTable)
-      if toRun:
-        let makeCmd = genMakeCmd(s.config, makefilePath)
-        let (output, exitCode) = execCmdEx(makeCmd)
-        if exitCode != 0:
-          quit "execution of an external program failed: " & output
-        if execCmd("./" & appName) != 0:
-          quit "execution of an external program failed: " & appName
   else:
     writeHelp()
 
