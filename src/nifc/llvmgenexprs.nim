@@ -156,62 +156,64 @@ proc genAtomicCall(c: var LLVMCode; externName: string; args: seq[LLValue]; retT
   of "__atomic_exchange_n":
     # __atomic_exchange_n(ptr, val, memorder) -> LLVM: atomicrmw xchg
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = atomicrmw xchg ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering
+    c.emitLine "  " & c.str(t) & " = atomicrmw xchg ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering & ", align " & align
     result = LLValue(name: t, typ: c.tok(retType))
   of "__atomic_compare_exchange_n":
     # __atomic_compare_exchange_n(ptr, expected_ptr, desired, weak, succ_order, fail_order)
     # -> LLVM: cmpxchg ptr, old, new ordering ordering
+    let valTyp = c.str(args[2].typ)
+    let valAlign = atomicAlign(c, args[2].typ)
     let loadExpected = c.temp()
-    c.emitLine "  " & c.str(loadExpected) & " = load " & retType & ", ptr " & c.str(args[1].name)
+    c.emitLine "  " & c.str(loadExpected) & " = load " & valTyp & ", ptr " & c.str(args[1].name)
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = cmpxchg ptr " & c.str(args[0].name) & ", " & retType & " " & c.str(loadExpected) & ", " & c.str(args[2].typ) & " " & c.str(args[2].name) & " " & ordering & " " & ordering
+    c.emitLine "  " & c.str(t) & " = cmpxchg ptr " & c.str(args[0].name) & ", " & valTyp & " " & c.str(loadExpected) & ", " & valTyp & " " & c.str(args[2].name) & " " & ordering & " " & ordering & ", align " & valAlign
     # cmpxchg returns {T, i1}; extract the success flag
     let success = c.temp()
-    c.emitLine "  " & c.str(success) & " = extractvalue { " & retType & ", i1 } " & c.str(t) & ", 1"
+    c.emitLine "  " & c.str(success) & " = extractvalue { " & valTyp & ", i1 } " & c.str(t) & ", 1"
     # Store back the old value into the expected pointer on failure
     let oldVal = c.temp()
-    c.emitLine "  " & c.str(oldVal) & " = extractvalue { " & retType & ", i1 } " & c.str(t) & ", 0"
-    c.emitLine "  store " & retType & " " & c.str(oldVal) & ", ptr " & c.str(args[1].name)
+    c.emitLine "  " & c.str(oldVal) & " = extractvalue { " & valTyp & ", i1 } " & c.str(t) & ", 0"
+    c.emitLine "  store " & valTyp & " " & c.str(oldVal) & ", ptr " & c.str(args[1].name)
     let r = c.temp()
     c.emitLine "  " & c.str(r) & " = zext i1 " & c.str(success) & " to i8"
     result = LLValue(name: r, typ: LToken(I8Token))
   of "__atomic_add_fetch":
     # __atomic_add_fetch(ptr, val, memorder) -> atomicrmw add, then add
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = atomicrmw add ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering
+    c.emitLine "  " & c.str(t) & " = atomicrmw add ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering & ", align " & align
     let r = c.temp()
     c.emitLine "  " & c.str(r) & " = add " & retType & " " & c.str(t) & ", " & c.str(args[1].name)
     result = LLValue(name: r, typ: c.tok(retType))
   of "__atomic_sub_fetch":
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = atomicrmw sub ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering
+    c.emitLine "  " & c.str(t) & " = atomicrmw sub ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering & ", align " & align
     let r = c.temp()
     c.emitLine "  " & c.str(r) & " = sub " & retType & " " & c.str(t) & ", " & c.str(args[1].name)
     result = LLValue(name: r, typ: c.tok(retType))
   of "__atomic_fetch_add":
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = atomicrmw add ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering
+    c.emitLine "  " & c.str(t) & " = atomicrmw add ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering & ", align " & align
     result = LLValue(name: t, typ: c.tok(retType))
   of "__atomic_fetch_sub":
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = atomicrmw sub ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering
+    c.emitLine "  " & c.str(t) & " = atomicrmw sub ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering & ", align " & align
     result = LLValue(name: t, typ: c.tok(retType))
   of "__atomic_fetch_and":
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = atomicrmw and ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering
+    c.emitLine "  " & c.str(t) & " = atomicrmw and ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering & ", align " & align
     result = LLValue(name: t, typ: c.tok(retType))
   of "__atomic_fetch_or":
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = atomicrmw or ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering
+    c.emitLine "  " & c.str(t) & " = atomicrmw or ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering & ", align " & align
     result = LLValue(name: t, typ: c.tok(retType))
   of "__atomic_fetch_xor":
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = atomicrmw xor ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering
+    c.emitLine "  " & c.str(t) & " = atomicrmw xor ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering & ", align " & align
     result = LLValue(name: t, typ: c.tok(retType))
   of "__atomic_test_and_set":
     # atomicrmw xchg ptr, i8 1
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = atomicrmw xchg ptr " & c.str(args[0].name) & ", i8 1 " & ordering
+    c.emitLine "  " & c.str(t) & " = atomicrmw xchg ptr " & c.str(args[0].name) & ", i8 1 " & ordering & ", align 1"
     let r = c.temp()
     c.emitLine "  " & c.str(r) & " = icmp ne i8 " & c.str(t) & ", 0"
     let r2 = c.temp()
@@ -219,7 +221,7 @@ proc genAtomicCall(c: var LLVMCode; externName: string; args: seq[LLValue]; retT
     result = LLValue(name: r2, typ: LToken(I8Token))
   of "__atomic_clear":
     # store atomic i8 0, ptr p
-    c.emitLine "  store atomic i8 0, ptr " & c.str(args[0].name) & " " & ordering
+    c.emitLine "  store atomic i8 0, ptr " & c.str(args[0].name) & " " & ordering & ", align 1"
     result = LLValue(name: LToken(EmptyToken), typ: LToken(VoidToken))
   of "__atomic_thread_fence":
     c.emitLine "  fence " & ordering
