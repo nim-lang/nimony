@@ -89,10 +89,32 @@ import trackers, patchsets, nifrender
 
 # ---- candidate predicate --------------------------------------------------
 
+proc throughPointer(c: Cursor): bool =
+  ## Walk an lvalue access chain (`dot`/`at`) down to its root. True iff it
+  ## bottoms out at a *pointer indirection* (`deref`/`pat`) rather than a plain
+  ## `Symbol`.
+  ##
+  ## Address-CSE only pays off when the address depends on a runtime pointer
+  ## value: caching it then avoids re-loading the pointer (and re-walking the
+  ## chain). A chain rooted at a local/global symbol — `myLocal.a.b.arr[4]` —
+  ## is just a (compile-time-constant or cheaply scaled) offset from a stack /
+  ## static slot, which the C compiler folds into the addressing mode for free.
+  ## Caching *that* address replaces a free offset with a pointer plus a load
+  ## through it, i.e. a pessimisation, so such chains are not candidates.
+  var n = c
+  while n.kind == ParLe:
+    case n.exprKind
+    of DerefC, PatC: return true
+    of DotC, AtC: n = n.firstSon   # walk to the base
+    else: return false             # call result, conv, … — leave it alone
+  return false                     # Symbol / literal root → trivial offset
+
 proc isCSECandidate(c: Cursor): bool =
   if c.kind != ParLe: return false
   case c.exprKind
-  of DotC, AtC: true
+  of DotC, AtC:
+    # Only worthwhile when the access reaches through a pointer.
+    throughPointer(c)
   of DerefC:
     # Caching `addr(deref(x))` where x is a bare Symbol is useless:
     # the temp would be just x again. Require a non-trivial pointer.
@@ -580,30 +602,54 @@ when isMainModule:
   discard pool.syms.getOrIncl("fld.0.M")
   discard pool.syms.getOrIncl("side.0.M")
   discard pool.syms.getOrIncl("c.0.M")
+  discard pool.syms.getOrIncl("p.0.M")     # a pointer
+  discard pool.syms.getOrIncl("fld2.0.M")
 
-  block dot_address_shared:
-    var buf = parse(
+  template assertUnchanged(input: string) =
+    var buf = parse(input)
+    let before = render(buf)
+    runCSE buf
+    assertRender(buf, before)
+
+  # Stack/static-rooted access chains are NOT CSE candidates: their address is
+  # a constant/scaled offset from a known slot, so caching it would only add a
+  # pointer plus an indirection.
+  block stack_rooted_not_cached:
+    assertUnchanged(
       "(stmts (asgn y.0.M (dot x.0.M fld.0.M)) (asgn z.0.M (dot x.0.M fld.0.M)))")
+
+  block nested_stack_rooted_not_cached:
+    # `x.fld.fld2[4]` — a compile-time offset from the stack slot `x`.
+    assertUnchanged(
+      "(stmts (asgn y.0.M (at (dot (dot x.0.M fld.0.M) fld2.0.M) 4)) (asgn z.0.M (at (dot (dot x.0.M fld.0.M) fld2.0.M) 4)))")
+
+  # The chains below reach through a pointer (`deref p`), so the cached address
+  # pins a runtime pointer value — that is when address-CSE pays off.
+  block deref_dot_shared:
+    var buf = parse(
+      "(stmts (asgn y.0.M (dot (deref p.0.M) fld.0.M)) (asgn z.0.M (dot (deref p.0.M) fld.0.M)))")
     runCSE buf
     assertRender(buf, """
 (stmts
 (var :cse.t.1.M . .
 (addr
-(dot x.0.M fld.0.M)))
+(dot
+(deref p.0.M)fld.0.M)))
 (asgn y.0.M
 (deref cse.t.1.M))
 (asgn z.0.M
 (deref cse.t.1.M)))""")
 
-  block at_address_shared:
+  block deref_at_shared:
     var buf = parse(
-      "(stmts (asgn y.0.M (at a.0.M i.0.M)) (asgn z.0.M (at a.0.M i.0.M)))")
+      "(stmts (asgn y.0.M (at (deref p.0.M) i.0.M)) (asgn z.0.M (at (deref p.0.M) i.0.M)))")
     runCSE buf
     assertRender(buf, """
 (stmts
 (var :cse.t.1.M . .
 (addr
-(at a.0.M i.0.M)))
+(at
+(deref p.0.M)i.0.M)))
 (asgn y.0.M
 (deref cse.t.1.M))
 (asgn z.0.M
@@ -611,13 +657,14 @@ when isMainModule:
 
   block call_does_not_invalidate:
     var buf = parse(
-      "(stmts (asgn y.0.M (dot x.0.M fld.0.M)) (call side.0.M) (asgn z.0.M (dot x.0.M fld.0.M)))")
+      "(stmts (asgn y.0.M (dot (deref p.0.M) fld.0.M)) (call side.0.M) (asgn z.0.M (dot (deref p.0.M) fld.0.M)))")
     runCSE buf
     assertRender(buf, """
 (stmts
 (var :cse.t.1.M . .
 (addr
-(dot x.0.M fld.0.M)))
+(dot
+(deref p.0.M)fld.0.M)))
 (asgn y.0.M
 (deref cse.t.1.M))
 (call side.0.M)
@@ -626,52 +673,57 @@ when isMainModule:
 
   block addr_then_call_invalidates:
     # i's address was taken; the call could modify i → cache cleared,
-    # the second `a[i]` gets its own temp.
+    # the second `(*p)[i]` gets its own temp.
     var buf = parse(
-      "(stmts (asgn y.0.M (at a.0.M i.0.M)) (call side.0.M (addr i.0.M)) (asgn z.0.M (at a.0.M i.0.M)))")
+      "(stmts (asgn y.0.M (at (deref p.0.M) i.0.M)) (call side.0.M (addr i.0.M)) (asgn z.0.M (at (deref p.0.M) i.0.M)))")
     runCSE buf
     assertRender(buf, """
 (stmts
 (var :cse.t.1.M . .
 (addr
-(at a.0.M i.0.M)))
+(at
+(deref p.0.M)i.0.M)))
 (asgn y.0.M
 (deref cse.t.1.M))
 (call side.0.M
 (addr i.0.M))
 (var :cse.t.2.M . .
 (addr
-(at a.0.M i.0.M)))
+(at
+(deref p.0.M)i.0.M)))
 (asgn z.0.M
 (deref cse.t.2.M)))""")
 
   block asgn_to_index_invalidates:
     var buf = parse(
-      "(stmts (asgn y.0.M (at a.0.M i.0.M)) (asgn i.0.M 5) (asgn z.0.M (at a.0.M i.0.M)))")
+      "(stmts (asgn y.0.M (at (deref p.0.M) i.0.M)) (asgn i.0.M 5) (asgn z.0.M (at (deref p.0.M) i.0.M)))")
     runCSE buf
     assertRender(buf, """
 (stmts
 (var :cse.t.1.M . .
 (addr
-(at a.0.M i.0.M)))
+(at
+(deref p.0.M)i.0.M)))
 (asgn y.0.M
 (deref cse.t.1.M))
 (asgn i.0.M 5)
 (var :cse.t.2.M . .
 (addr
-(at a.0.M i.0.M)))
+(at
+(deref p.0.M)i.0.M)))
 (asgn z.0.M
 (deref cse.t.2.M)))""")
 
   block unrelated_asgn_does_not_invalidate:
     var buf = parse(
-      "(stmts (asgn y.0.M (dot x.0.M fld.0.M)) (asgn z.0.M 7) (asgn a.0.M (dot x.0.M fld.0.M)))")
+      "(stmts (asgn y.0.M (dot (deref p.0.M) fld.0.M)) (asgn z.0.M 7) (asgn a.0.M (dot (deref p.0.M) fld.0.M)))")
     runCSE buf
     assertRender(buf, """
 (stmts
 (var :cse.t.1.M . .
 (addr
-(dot x.0.M fld.0.M)))
+(dot
+(deref p.0.M)fld.0.M)))
 (asgn y.0.M
 (deref cse.t.1.M))
 (asgn z.0.M 7)
@@ -680,25 +732,27 @@ when isMainModule:
 
   block single_use_still_introduces_temp:
     # Documented limitation of the eager strategy.
-    var buf = parse("(stmts (asgn y.0.M (dot x.0.M fld.0.M)))")
+    var buf = parse("(stmts (asgn y.0.M (dot (deref p.0.M) fld.0.M)))")
     runCSE buf
     assertRender(buf, """
 (stmts
 (var :cse.t.1.M . .
 (addr
-(dot x.0.M fld.0.M)))
+(dot
+(deref p.0.M)fld.0.M)))
 (asgn y.0.M
 (deref cse.t.1.M)))""")
 
   block nested_in_arithmetic:
     var buf = parse(
-      "(stmts (asgn y.0.M (add (i 32) (dot x.0.M fld.0.M) 1)) (asgn z.0.M (add (i 32) (dot x.0.M fld.0.M) 2)))")
+      "(stmts (asgn y.0.M (add (i 32) (dot (deref p.0.M) fld.0.M) 1)) (asgn z.0.M (add (i 32) (dot (deref p.0.M) fld.0.M) 2)))")
     runCSE buf
     assertRender(buf, """
 (stmts
 (var :cse.t.1.M . .
 (addr
-(dot x.0.M fld.0.M)))
+(dot
+(deref p.0.M)fld.0.M)))
 (asgn y.0.M
 (add
 (i 32)
@@ -710,20 +764,22 @@ when isMainModule:
 
   block loop_clears_cache:
     var buf = parse(
-      "(stmts (asgn y.0.M (dot x.0.M fld.0.M)) (while c.0.M (stmts)) (asgn z.0.M (dot x.0.M fld.0.M)))")
+      "(stmts (asgn y.0.M (dot (deref p.0.M) fld.0.M)) (while c.0.M (stmts)) (asgn z.0.M (dot (deref p.0.M) fld.0.M)))")
     runCSE buf
     assertRender(buf, """
 (stmts
 (var :cse.t.1.M . .
 (addr
-(dot x.0.M fld.0.M)))
+(dot
+(deref p.0.M)fld.0.M)))
 (asgn y.0.M
 (deref cse.t.1.M))
 (while c.0.M
 (stmts))
 (var :cse.t.2.M . .
 (addr
-(dot x.0.M fld.0.M)))
+(dot
+(deref p.0.M)fld.0.M)))
 (asgn z.0.M
 (deref cse.t.2.M)))""")
 
@@ -731,13 +787,14 @@ when isMainModule:
 
   block dominance_into_branch:
     var buf = parse(
-      "(stmts (asgn y.0.M (dot x.0.M fld.0.M)) (if (elif c.0.M (asgn z.0.M (dot x.0.M fld.0.M)))))")
+      "(stmts (asgn y.0.M (dot (deref p.0.M) fld.0.M)) (if (elif c.0.M (asgn z.0.M (dot (deref p.0.M) fld.0.M)))))")
     runCSE buf
     assertRender(buf, """
 (stmts
 (var :cse.t.1.M . .
 (addr
-(dot x.0.M fld.0.M)))
+(dot
+(deref p.0.M)fld.0.M)))
 (asgn y.0.M
 (deref cse.t.1.M))
 (if
@@ -747,13 +804,14 @@ when isMainModule:
 
   block dominance_into_both_branches:
     var buf = parse(
-      "(stmts (asgn y.0.M (dot x.0.M fld.0.M)) (if (elif c.0.M (asgn z.0.M (dot x.0.M fld.0.M))) (else (asgn a.0.M (dot x.0.M fld.0.M)))))")
+      "(stmts (asgn y.0.M (dot (deref p.0.M) fld.0.M)) (if (elif c.0.M (asgn z.0.M (dot (deref p.0.M) fld.0.M))) (else (asgn a.0.M (dot (deref p.0.M) fld.0.M)))))")
     runCSE buf
     assertRender(buf, """
 (stmts
 (var :cse.t.1.M . .
 (addr
-(dot x.0.M fld.0.M)))
+(dot
+(deref p.0.M)fld.0.M)))
 (asgn y.0.M
 (deref cse.t.1.M))
 (if
@@ -766,7 +824,7 @@ when isMainModule:
 
   block dominance_within_branch:
     var buf = parse(
-      "(stmts (if (elif c.0.M (stmts (asgn y.0.M (dot x.0.M fld.0.M)) (asgn z.0.M (dot x.0.M fld.0.M))))))")
+      "(stmts (if (elif c.0.M (stmts (asgn y.0.M (dot (deref p.0.M) fld.0.M)) (asgn z.0.M (dot (deref p.0.M) fld.0.M))))))")
     runCSE buf
     assertRender(buf, """
 (stmts
@@ -775,7 +833,8 @@ when isMainModule:
 (stmts
 (var :cse.t.1.M . .
 (addr
-(dot x.0.M fld.0.M)))
+(dot
+(deref p.0.M)fld.0.M)))
 (asgn y.0.M
 (deref cse.t.1.M))
 (asgn z.0.M
@@ -785,13 +844,14 @@ when isMainModule:
     # Pre-if first occurrence, branch use, post-if use → all three
     # share one temp because no branch invalidates the cache.
     var buf = parse(
-      "(stmts (asgn y.0.M (dot x.0.M fld.0.M)) (if (elif c.0.M (asgn z.0.M (dot x.0.M fld.0.M)))) (asgn a.0.M (dot x.0.M fld.0.M)))")
+      "(stmts (asgn y.0.M (dot (deref p.0.M) fld.0.M)) (if (elif c.0.M (asgn z.0.M (dot (deref p.0.M) fld.0.M)))) (asgn a.0.M (dot (deref p.0.M) fld.0.M)))")
     runCSE buf
     assertRender(buf, """
 (stmts
 (var :cse.t.1.M . .
 (addr
-(dot x.0.M fld.0.M)))
+(dot
+(deref p.0.M)fld.0.M)))
 (asgn y.0.M
 (deref cse.t.1.M))
 (if
