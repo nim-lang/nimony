@@ -15,7 +15,7 @@ from std / os import changeFileExt, splitFile, extractFilename, fileExists
 import ".." / lib / vfs
 
 include ".." / lib / nifprelude
-import mangler, nifc_model, noptions, typenav, symparser, nifmodules
+import mangler, nifc_model, noptions, typenav, symparser, nifmodules, cimportsyms
 
 type
   LToken = distinct uint32
@@ -479,7 +479,7 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
       skip d.value
       return
 
-    let name = if externName != StrId(0): pool.strings[externName]
+    var name = if externName != StrId(0): pool.strings[externName]
                else: mangleToC(pool.syms[lit])
 
     var t = d.typ
@@ -488,7 +488,23 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
     let alignSuffix = if alignVal > 0: ", align " & $alignVal else: ""
     let tls = if vk == IsThreadlocal: "thread_local " else: ""
     if toExtern or isImport:
-      c.addTo(c.globals, "@" & name & " = external " & tls & "global " & typ & alignSuffix & "\n")
+      # Resolve C macros for importc symbols
+      if isImport and externName != StrId(0):
+        let entry = resolveImportMacro(pool.strings[externName])
+        case entry.kind
+        of imkReplace:
+          name = entry.resolvedName
+        of imkConstant:
+          c.addTo(c.globals, "@" & pool.strings[externName] & " = private constant " & typ & " " & entry.constVal & "\n")
+          skip d.value
+          return
+        of imkCall:
+          c.addTo(c.externs, "declare " & typ & " @" & entry.callFuncName & "()\n")
+          skip d.value
+          return
+      if name notin c.declaredExterns:
+        c.declaredExterns.incl name
+        c.addTo(c.globals, "@" & name & " = external " & tls & "global " & typ & alignSuffix & "\n")
     else:
       if d.value.kind != DotToken:
         var v = d.value
