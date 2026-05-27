@@ -708,8 +708,9 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       let symType = getType(c.m, n)
       let decl = c.m.getDeclOrNil(s)
       inc n
-      # Check if this is an enum field — resolve to its integer constant
-      if symType.typeKind == EnumT:
+      # Check if this is an enum field — resolve to its integer constant.
+      # Skip variables/globals of enum type: they need a load, not constant folding.
+      if symType.typeKind == EnumT and decl != nil and decl.kind notin {VarY, GvarY, TvarY}:
         var enumBody = symType
         inc enumBody # skip EnumT tag
         let baseTyp = genTypeLLVMReadOnly(c, enumBody)
