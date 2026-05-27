@@ -64,30 +64,35 @@ export patchsets
 # ---- Runtime helpers ------------------------------------------------------
 
 proc subtreeEqual*(a, b: Cursor): bool =
-  ## Token-by-token structural equality of two subtrees. Works under
-  ## `-d:virtualParRi` because the depth is tracked by the sequence of
-  ## ParLe/ParRi tokens both walks observe identically.
-  result = false
-  if a.kind != b.kind: return
-  if a.kind != ParLe:
-    return a.kind == b.kind and a.uoperand == b.uoperand
+  ## Structural equality of two subtrees. virtualParRi-safe: it bounds each
+  ## subtree with `skip` (which uses the jump fields) instead of counting
+  ## explicit `ParRi` tokens to balance depth. Under `-d:virtualParRi` a
+  ## sealed scope's closing paren is elided, so the old depth-balanced walk
+  ## never returned to depth 0 and ran off the end of the cursor's window
+  ## (`c.rem` underflow). Comparing the two subtrees' real-token spans
+  ## position-by-position avoids that: identical token sequences ⇔
+  ## identical structure (ParLe carry their tag; jump fields match for
+  ## equal structure; atoms carry their interned payload in `uoperand`).
+  var aEnd = a
+  skip aEnd
+  var bEnd = b
+  skip bEnd
+  let n = cursorToPosition(a, aEnd)
+  if n != cursorToPosition(b, bEnd): return false   # different token counts
   var x = a
   var y = b
-  var depth = 0
-  while true:
-    if x.kind != y.kind: return
-    case x.kind
-    of ParLe:
-      if x.tagId != y.tagId: return
-      inc depth
-      inc x; inc y
-    of ParRi:
-      dec depth
-      consumeParRi x; consumeParRi y
-      if depth == 0: return true
+  var i = 0
+  while i < n:
+    if x.kind != y.kind: return false
+    if x.kind == ParLe:
+      if x.tagId != y.tagId: return false
     else:
-      if x.uoperand != y.uoperand: return
-      inc x; inc y
+      if x.uoperand != y.uoperand: return false
+    inc i
+    if i < n:                       # never advance past the last token
+      inc x
+      inc y
+  return true
 
 const NullaryConstTags* = ["true", "false", "nil", "inf", "neginf", "nan"]
 
@@ -542,6 +547,16 @@ proc emitRuleProc(idx: int; rule: Rule;
   let ctxIdent = ident("ctx")
   let nIdent = ident("n")
 
+  # `-d:rewriterDebug` makes each rule announce when it fires, naming the
+  # rule index and its LHS root tag plus the buffer position it rewrote.
+  let ruleLabel = newLit("rule " & $idx & " (" & rule.rootTag & ")")
+  let debugNode =
+    when defined(rewriterDebug):
+      quote do:
+        debugEcho "[rewriter] fired ", `ruleLabel`, " @pos ", `posIdent`
+    else:
+      newStmtList()
+
   result = quote do:
     proc `procName`(`nIdent`: Cursor; `ctxIdent`: var `walkerCtxType`): bool =
       `captureDecls`
@@ -556,6 +571,7 @@ proc emitRuleProc(idx: int; rule: Rule;
       `ctxIdent`.synth.add `synthIdent`
       let `posIdent` = cursorToPosition(`ctxIdent`.orig[], `nIdent`)
       `ctxIdent`.patchset.addSubst(`posIdent`, cursorAt(`ctxIdent`.synth[^1], 0))
+      `debugNode`
       `ctxIdent`.fired = true
       return true
 

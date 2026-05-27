@@ -67,8 +67,12 @@ import trackers, patchsets, nifrender
 # position. Defined locally so the `Tracker[SymId, Cursor]` generic in
 # this module picks it up via mixin lookup.
 proc `==`*(a, b: Cursor): bool {.inline.} =
-  let av = a.hasMore
-  let bv = b.hasMore
+  # `cursorIsNil` (not `hasMore`): these are *stored binding* cursors that may
+  # be `default(Cursor)` (p == nil). `hasMore` would dereference such a cursor
+  # when virtualParRi is off (no `rem > 0` short-circuit); the nil test only
+  # inspects the pointer.
+  let av = not cursorIsNil(a)
+  let bv = not cursorIsNil(b)
   if not av and not bv: return true
   if not av or not bv: return false
   let ta = a.load
@@ -93,12 +97,21 @@ type
     constants: Tracker[SymId, Cursor]
     addrTaken: HashSet[SymId]
     patchset: Patchset
+    useCount: Table[SymId, int]      ## Symbol-token uses per sym (pre-scanned)
+    substCount: Table[SymId, int]    ## uses we actually substituted away
+    delCandidates: Table[SymId, int] ## local-var sym -> its decl position
+    dotBuf: TokenBuf                 ## a single DotToken: replaces a deleted decl
 
 proc createContext(orig: ptr TokenBuf): Context =
-  Context(orig: orig,
+  result = Context(orig: orig,
           constants: initTracker[SymId, Cursor](),
           addrTaken: initHashSet[SymId](),
-          patchset: initPatchset(orig))
+          patchset: initPatchset(orig),
+          useCount: initTable[SymId, int](),
+          substCount: initTable[SymId, int](),
+          delCandidates: initTable[SymId, int](),
+          dotBuf: createTokenBuf(2))
+  result.dotBuf.addDotToken()
 
 # ---- subtree inspection ---------------------------------------------------
 
@@ -172,7 +185,7 @@ proc invalidateAddrTaken(c: var Context) =
   ## call or write through a pointer could have modified any of them.
   var toClear: seq[SymId] = @[]
   for s in c.addrTaken:
-    if c.constants[s].hasMore: toClear.add s
+    if not cursorIsNil(c.constants[s]): toClear.add s
   for s in toClear:
     c.constants[s] = default(Cursor)
   for s in c.addrTaken:
@@ -189,7 +202,7 @@ proc effectiveBinding(c: Context; rhs: Cursor): Cursor =
   ## returns `rhs` itself when substitutable, otherwise `default(Cursor)`.
   if rhs.kind == Symbol:
     let prior = c.constants[rhs.symId]
-    if prior.hasMore: return prior
+    if not cursorIsNil(prior): return prior
     return rhs
   if isSubstitutable(rhs):
     return rhs
@@ -207,11 +220,27 @@ proc clearAll(c: var Context) = c.constants.clearAll()
 
 # ---- patch recording (phase 1 walk) ---------------------------------------
 
+proc countUses(c: Cursor; useCount: var Table[SymId, int]) =
+  ## Count every `Symbol` (use) token in the single tree at `c`. `SymbolDef`
+  ## (the definition site) is intentionally excluded. Mode-agnostic: walks
+  ## via `loopInto`/`skip`, so it works with or without `-d:virtualParRi`.
+  case c.kind
+  of Symbol:
+    useCount.mgetOrPut(c.symId, 0) += 1
+  of ParLe:
+    var n = c
+    n.loopInto:
+      countUses(n, useCount)
+      skip n
+  else: discard
+
 proc recordSubstitution(c: var Context; useCur: Cursor; binding: Cursor) =
   ## Record that the token at `useCur`'s position should be replaced
   ## with the subtree at `binding` during the apply phase.
   let usePos = cursorToPosition(c.orig[], useCur)
   c.patchset.addSubst(usePos, binding)
+  if useCur.kind == Symbol:
+    c.substCount.mgetOrPut(useCur.symId, 0) += 1
 
 # ---- main traversal -------------------------------------------------------
 
@@ -222,7 +251,7 @@ proc trExpr(c: var Context; n: var Cursor) =
   of Symbol:
     let s = n.symId
     let binding = c.constants[s]
-    if binding.hasMore and isSubstitutable(binding):
+    if not cursorIsNil(binding) and isSubstitutable(binding):
       recordSubstitution(c, n, binding)
     inc n
   of ParLe:
@@ -261,6 +290,8 @@ proc trExpr(c: var Context; n: var Cursor) =
     inc n
 
 proc trVar(c: var Context; n: var Cursor) =
+  let kind = n.stmtKind
+  let defPos = cursorToPosition(c.orig[], n)
   let d = takeVarDecl(n)
   if d.value.kind != DotToken:
     var v = d.value
@@ -268,7 +299,14 @@ proc trVar(c: var Context; n: var Cursor) =
   if d.name.kind == SymbolDef:
     let s = d.name.symId
     if d.value.kind != DotToken:
-      c.constants[s] = effectiveBinding(c, d.value)
+      let binding = effectiveBinding(c, d.value)
+      c.constants[s] = binding
+      # Dead-binding elimination: a *local* `var` bound to a pure, substitutable
+      # value is a deletion candidate. If, after the walk, every use of it was
+      # substituted (subst == total occurrences), the decl is dead. Restricted
+      # to `VarS` — globals/threadvars/consts may be referenced externally.
+      if kind == VarS and not cursorIsNil(binding):
+        c.delCandidates[s] = defPos
     else:
       c.constants[s] = default(Cursor)
 
@@ -441,8 +479,15 @@ proc runCopyPropagation*(buf: var TokenBuf) =
   ## `buf` has every redundant `Symbol` use replaced by its bound
   ## leaf-literal / `Symbol` / nullary-constant subtree.
   var ctx = createContext(addr buf)
+  countUses(beginRead(buf), ctx.useCount)
   var n = beginRead(buf)
   tr(ctx, n)
+  # Delete every candidate decl whose uses were *all* propagated away. A decl
+  # with a surviving non-substituted occurrence (reassignment, `addr`, a
+  # `dot`/`at` base, or a read past an invalidation) keeps `subst < total`.
+  for s, defPos in ctx.delCandidates:
+    if ctx.substCount.getOrDefault(s) == ctx.useCount.getOrDefault(s):
+      ctx.patchset.addSubst(defPos, cursorAt(ctx.dotBuf, 0))
   if not ctx.patchset.isEmpty:
     var newBuf = ctx.patchset.apply()
     buf = ensureMove(newBuf)
@@ -469,13 +514,12 @@ when isMainModule:
   discard pool.syms.getOrIncl("side.0.M")
 
   block simple_literal_propagation:
+    # x's single use is propagated, so its (now dead) decl is deleted.
     var buf = parse(
       "(stmts (var :x.0.M . (i 32) 5) (call use.0.M x.0.M))")
     runCopyPropagation buf
     assertRender(buf, """
-(stmts
-(var :x.0.M .
-(i 32)5)
+(stmts .
 (call use.0.M 5))""")
 
   block reassignment_clears:
@@ -506,26 +550,23 @@ when isMainModule:
       "(stmts (var :x.0.M . (i 32) 5) (call use.0.M (add (i 32) x.0.M x.0.M)))")
     runCopyPropagation buf
     assertRender(buf, """
-(stmts
-(var :x.0.M .
-(i 32)5)
+(stmts .
 (call use.0.M
 (add
 (i 32)5 5)))""")
 
   block chained_propagation:
+    # a → 5 and b → a → 5; both decls become dead and are deleted.
     var buf = parse(
       "(stmts (var :a.0.M . (i 32) 5) (var :b.0.M . (i 32) a.0.M) (call use.0.M b.0.M))")
     runCopyPropagation buf
     assertRender(buf, """
-(stmts
-(var :a.0.M .
-(i 32)5)
-(var :b.0.M .
-(i 32)5)
+(stmts . .
 (call use.0.M 5))""")
 
   block symbol_to_symbol_propagation:
+    # a keeps its (impure) call binding; b aliases a and is deleted, its use
+    # rewritten to a.
     var buf = parse(
       "(stmts (var :a.0.M . (i 32) (call side.0.M)) (var :b.0.M . (i 32) a.0.M) (call use.0.M b.0.M))")
     runCopyPropagation buf
@@ -533,9 +574,7 @@ when isMainModule:
 (stmts
 (var :a.0.M .
 (i 32)
-(call side.0.M))
-(var :b.0.M .
-(i 32)a.0.M)
+(call side.0.M)).
 (call use.0.M a.0.M))""")
 
   block symbol_propagation_invalidated:
@@ -547,10 +586,7 @@ when isMainModule:
       "(stmts (var :x.0.M . (bool) (true)) (call use.0.M x.0.M))")
     runCopyPropagation buf
     assertRender(buf, """
-(stmts
-(var :x.0.M .
-(bool)
-(true))
+(stmts .
 (call use.0.M
 (true)))""")
 
@@ -559,23 +595,18 @@ when isMainModule:
       "(stmts (var :x.0.M . (ptr (i 32)) (nil)) (call use.0.M x.0.M))")
     runCopyPropagation buf
     assertRender(buf, """
-(stmts
-(var :x.0.M .
-(ptr
-(i 32))
-(nil))
+(stmts .
 (call use.0.M
 (nil)))""")
 
   block call_does_not_clear_unaddressed:
-    # x's address is never taken → call cannot mutate it; binding survives.
+    # x's address is never taken → call cannot mutate it; binding survives the
+    # call, the use is propagated, and the dead decl is deleted.
     var buf = parse(
       "(stmts (var :x.0.M . (i 32) 5) (call side.0.M) (call use.0.M x.0.M))")
     runCopyPropagation buf
     assertRender(buf, """
-(stmts
-(var :x.0.M .
-(i 32)5)
+(stmts .
 (call side.0.M)
 (call use.0.M 5))""")
 
@@ -588,9 +619,7 @@ when isMainModule:
       "(stmts (var :x.0.M . (i 32) 5) (while c.0.M (call use.0.M x.0.M)) (call use.0.M x.0.M))")
     runCopyPropagation buf
     assertRender(buf, """
-(stmts
-(var :x.0.M .
-(i 32)5)
+(stmts .
 (while c.0.M
 (call use.0.M 5))
 (call use.0.M 5))""")
@@ -600,16 +629,15 @@ when isMainModule:
       "(stmts (var :x.0.M . (i 32) 5) (while c.0.M (asgn x.0.M 9)) (call use.0.M x.0.M))")
 
   block loop_only_invalidates_written_one:
-    # y survives the loop (no write to y), x doesn't (assigned inside).
+    # y survives the loop (no write to y) → propagated and its dead decl
+    # deleted; x is written inside the loop, so its decl and use both stay.
     var buf = parse(
       "(stmts (var :x.0.M . (i 32) 5) (var :y.0.M . (i 32) 9) (while c.0.M (asgn x.0.M 0)) (call use.0.M y.0.M x.0.M))")
     runCopyPropagation buf
     assertRender(buf, """
 (stmts
 (var :x.0.M .
-(i 32)5)
-(var :y.0.M .
-(i 32)9)
+(i 32)5).
 (while c.0.M
 (asgn x.0.M 0))
 (call use.0.M 9 x.0.M))""")

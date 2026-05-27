@@ -101,8 +101,11 @@ proc apply*(p: var Patchset; sizeHint = -1): TokenBuf =
   let cap = if sizeHint > 0: sizeHint else: p.orig[].len + p.patches.len * 4
   result = createTokenBuf(cap)
   var n = beginRead(p.orig[])
-  while n.hasMore:
-    applyOne(p, result, n)
+  # The buffer is a single outermost block (the module / proc-body `(stmts …)`).
+  # Rebuild that one root tree; `applyOne` descends into its children with the
+  # scope-bounded `hasMore` loop. (Looping `while n.hasMore` over the raw buffer
+  # here would run the cursor off the end once the root tree is consumed.)
+  applyOne(p, result, n)
 
 # ---- self-tests ----------------------------------------------------------
 

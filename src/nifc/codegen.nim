@@ -477,7 +477,15 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
   var d = takeVarDecl(n)
   if d.name.kind == SymbolDef:
     let lit = d.name.symId
-    c.m.registerLocal(lit, d.typ)
+    # Infer the variable's type from its initializer when the explicit type
+    # slot is empty. NIFC has no general var-type inference; the tree
+    # optimizers (cse / induction_variables) synthesize `(var :t . . (addr
+    # expr))` without spelling out the pointer type, and without this the
+    # empty slot degrades to `void`, so the `(deref t)` uses produce invalid C.
+    var typ = d.typ
+    if typ.kind == DotToken and d.value.kind != DotToken:
+      typ = getType(c.m, d.value)
+    c.m.registerLocal(lit, typ)
     var skipDecl = false
     let name = mangleDecl(c, d.name, d.pragmas, skipDecl)
     let beforeDecl = c.code.len
@@ -487,7 +495,7 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
 
     if vk == IsThreadlocal:
       c.add "__thread "
-    genType c, d.typ, name, isConst = vk == IsConst
+    genType c, typ, name, isConst = vk == IsConst
     let flags = genVarPragmas(c, d.pragmas)
     if not toExtern and (StaticP in flags or useStatic):
       c.code.insert(Token(StaticKeyword), beforeDecl)

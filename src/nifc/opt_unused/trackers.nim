@@ -152,7 +152,15 @@ proc enterSibling*[K, V](t: var Tracker[K, V]) =
 proc leaveSibling*[K, V](t: var Tracker[K, V]) =
   ## End the current sibling as a fall-through branch. Its writes are kept
   ## in the log so that `joinSiblings` can merge them.
-  assert t.groups.len > 0 and t.groups[^1].sibOpen, "no sibling open"
+  ##
+  ## If the sibling is already closed, the branch terminated abnormally — a
+  ## `gotoLabel` (an embedded `jmp`) consumed it, routed its state to the
+  ## label and dropped it from this group. Such a branch does *not* reach
+  ## the join, so there is nothing to fall through: treat the call as a
+  ## no-op. This lets walkers call `leaveSibling` structurally after every
+  ## branch body without first detecting whether the body ended in a jump.
+  assert t.groups.len > 0, "leaveSibling outside any openSiblings"
+  if not t.groups[^1].sibOpen: return
   let start = t.groups[^1].curSibStart
   t.revertFrom start
   t.groups[^1].sibStarts.add start

@@ -44,8 +44,8 @@ proc render*(buf: var TokenBuf): string =
   ## adds the explicit closing parens).
   var b = nifbuilder.open(buf.len * 20, compact = true)
   var c = beginRead(buf)
-  while c.hasMore:
-    emit(c, b)
+  # Emit the single outermost block; `emit` descends into its children.
+  emit(c, b)
   result = b.extract()
   # nifbuilder always emits a leading newline before the first tree;
   # drop it so the result lines up with `"""…"""` literals that don't

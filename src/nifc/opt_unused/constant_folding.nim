@@ -90,7 +90,7 @@ proc fold(c: var Context; n: var Cursor): FoldResult
 proc foldBinaryTyped(c: var Context; n: var Cursor; op: NifcExpr;
                      pos: int; info: PackedLineInfo): FoldResult =
   result = FoldResult(kind: NoFold)
-  var l, r: FoldResult
+  var l, r = FoldResult(kind: NoFold)
   n.into:
     if n.hasMore: skip n                       # type
     if n.hasMore: l = fold(c, n)
@@ -113,7 +113,7 @@ proc foldBinaryTyped(c: var Context; n: var Cursor; op: NifcExpr;
 proc foldUnaryTyped(c: var Context; n: var Cursor; op: NifcExpr;
                     pos: int; info: PackedLineInfo): FoldResult =
   result = FoldResult(kind: NoFold)
-  var inner: FoldResult
+  var inner = FoldResult(kind: NoFold)
   n.into:
     if n.hasMore: skip n                       # type
     if n.hasMore: inner = fold(c, n)
@@ -129,7 +129,7 @@ proc foldUnaryTyped(c: var Context; n: var Cursor; op: NifcExpr;
 proc foldCmpTyped(c: var Context; n: var Cursor; op: NifcExpr;
                   pos: int; info: PackedLineInfo): FoldResult =
   result = FoldResult(kind: NoFold)
-  var l, r: FoldResult
+  var l, r = FoldResult(kind: NoFold)
   n.into:
     if n.hasMore: skip n                       # type
     if n.hasMore: l = fold(c, n)
@@ -148,7 +148,7 @@ proc foldCmpTyped(c: var Context; n: var Cursor; op: NifcExpr;
 proc foldBoolBin(c: var Context; n: var Cursor; op: NifcExpr;
                  pos: int; info: PackedLineInfo): FoldResult =
   result = FoldResult(kind: NoFold)
-  var l, r: FoldResult
+  var l, r = FoldResult(kind: NoFold)
   n.into:
     if n.hasMore: l = fold(c, n)
     if n.hasMore: r = fold(c, n)
@@ -164,7 +164,7 @@ proc foldBoolBin(c: var Context; n: var Cursor; op: NifcExpr;
 proc foldNot(c: var Context; n: var Cursor;
              pos: int; info: PackedLineInfo): FoldResult =
   result = FoldResult(kind: NoFold)
-  var inner: FoldResult
+  var inner = FoldResult(kind: NoFold)
   n.into:
     if n.hasMore: inner = fold(c, n)
     while n.hasMore: skip n
@@ -216,8 +216,8 @@ proc runConstantFolding*(buf: var TokenBuf) =
   ## rebuild `buf` with each foldable expression replaced by its result.
   var ctx = createContext(addr buf)
   var n = beginRead(buf)
-  while n.hasMore:
-    discard fold(ctx, n)
+  # Fold the single outermost block (`fold` recurses into its children).
+  discard fold(ctx, n)
   if not ctx.patchset.isEmpty:
     var newBuf = ctx.patchset.apply()
     buf = ensureMove(newBuf)

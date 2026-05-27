@@ -75,6 +75,13 @@ proc hexedFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f
 proc nifcFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
   base / f.modname & ".c.nif"
+proc optimizedFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
+  ## The tree-optimizer rewrites `<modname>.c.nif` into this; `nifc` consumes
+  ## it instead. The extra extension keeps the input intact and still extracts
+  ## to the same `modname` (splitModulePath stops at the first dot), so nifc's
+  ## derived output filename is unchanged.
+  let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
+  base / f.modname & ".oc.nif"
 
 proc cFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
@@ -723,6 +730,13 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
     # Command definitions
     let nifc = findTool("nifc")
     let hexer = findTool("hexer")
+    # The experimental NIFC tree optimizer runs only when optimization is
+    # actually requested (`--opt:speed` / `--opt:size`); default/debug builds
+    # are byte-for-byte unaffected.
+    let useOptimizer = c.config.optLevel in {optSpeed, optSize}
+    var optimizer = ""
+    if useOptimizer:
+      optimizer = findTool("optimizer")
 
     # Command for nifc (code generation)
     b.withTree "cmd":
@@ -737,6 +751,14 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
           if arg.len > 0:
             b.addStrLit arg
       b.addKeyw "input"
+
+    # Command for the tree optimizer: `optimizer <input.c.nif> <output.oc.nif>`.
+    if useOptimizer:
+      b.withTree "cmd":
+        b.addSymbolDef "optimize"
+        b.addStrLit optimizer
+        b.addKeyw "input"
+        b.addKeyw "output"
 
     # Command for hexer
     defineHexerCmds(b, hexer, c.config.bits, platform.CPU[c.config.targetCPU].endian == bigEndian)
@@ -930,6 +952,22 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
             b.withTree "output":
               b.addStrLit obj
 
+        # Optionally run the tree optimizer on the DCE'd `.c.nif`, producing
+        # `.oc.nif`; nifc then consumes that. Skipped entirely unless
+        # `useOptimizer`, in which case nifc reads the plain `.c.nif`.
+        var nifcInput: string
+        if useOptimizer:
+          let optimized = c.config.optimizedFile(v.files[0], backend)
+          b.withTree "do":
+            b.addIdent "optimize"
+            b.withTree "input":
+              b.addStrLit c.config.nifcFile(v.files[0], backend)
+            b.withTree "output":
+              b.addStrLit optimized
+          nifcInput = optimized
+        else:
+          nifcInput = c.config.nifcFile(v.files[0], backend)
+
         # Build C/LLVM IR files from .c.nif files
         b.withTree "do":
           b.addIdent "nifc"
@@ -939,7 +977,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
             b.withTree "args":
               b.addStrLit "--isMain"
           b.withTree "input":
-            b.addStrLit c.config.nifcFile(v.files[0], backend)
+            b.addStrLit nifcInput
           b.withTree "output":
             b.addStrLit c.config.genFile(v.files[0], backend)
 
