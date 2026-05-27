@@ -747,8 +747,10 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
           return
         of imkCall:
           let typ = genTypeLLVMReadOnly(c, symType)
+          let cp = c.temp()
+          c.emitLine "  " & c.str(cp) & " = call ptr @" & entry.callFuncName & "()"
           let t = c.temp()
-          c.emitLine "  " & c.str(t) & " = call " & typ & " @" & entry.callFuncName & "()"
+          c.emitLine "  " & c.str(t) & " = load " & typ & ", ptr " & c.str(cp)
           result = LLValue(name: t, typ: c.tok(typ))
           return
       let typ = genTypeLLVMReadOnly(c, symType)
