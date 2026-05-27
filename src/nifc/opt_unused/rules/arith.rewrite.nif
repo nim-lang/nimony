@@ -1,0 +1,18 @@
+(rules
+  (rule (lhs (add T X 0))               (rhs X))
+  (rule (lhs (add T 0 X))               (rhs X))
+  (rule (lhs (sub T X 0))               (rhs X))
+  (rule (lhs (sub T X (same X))) (rhs 0))
+  (rule (lhs (mul T X 1))               (rhs X))
+  (rule (lhs (mul T 1 X))               (rhs X))
+  (rule (lhs (mul T (pure X) 0))        (rhs 0))
+  (rule (lhs (mul T 0 (pure X)))        (rhs 0))
+  (rule (lhs (and (true) X))            (rhs X))
+  (rule (lhs (or (false) X))            (rhs X))
+  (rule (lhs (not (not X)))             (rhs X))
+  (rule (lhs (deref (addr X)))          (rhs X))
+  (rule
+    (lhs (mul T X (int K)))
+    (when (isPow2 K))
+    (rhs (shl T X (int K))))
+)

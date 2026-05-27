@@ -1,0 +1,617 @@
+#
+#
+#           NIFC Copy / Constant Propagation
+#        (c) Copyright 2026 Andreas Rumpf
+#
+#    See the file "license.txt", included in this
+#    distribution, for details about the copyright.
+#
+
+## Two-phase copy propagation for NIFC:
+##
+## 1. **Walk** — traverse the program with a `Tracker[SymId, Cursor]`
+##    keeping each local's current binding (a leaf literal, a `Symbol`,
+##    or a nullary `ParLe` constant such as `(true)`). At every value-
+##    position use of a tracked symbol, record a **patch** keyed by the
+##    use's buffer position; the patch's value is a `Cursor` pointing at
+##    the source subtree to splice in.
+##
+## 2. **Apply** — rebuild the buffer by walking the original token by
+##    token; at every position present in the patch table, splice the
+##    source subtree via `addSubtree`; otherwise copy the token. This
+##    allows multi-token substitutions like `(true)` that a single-token
+##    in-place overwrite cannot handle.
+##
+## ## Control-flow awareness
+##
+## - `if` / `case` use the tracker's structured `joinSiblings` —
+##   branched bindings to the same value merge because we define a
+##   content-aware `==` for `Cursor`.
+## - **Loops** are modelled as a 2-sibling group (no-iteration +
+##   body-iteration). A pre-scan of the body's writes and address-takings
+##   clears those symbols at the start of the body sibling, so the body
+##   walks under the same conservative state every iteration would see.
+##   Variables never written in the body keep their pre-loop bindings —
+##   *inside* the loop and after it.
+## - Forward `(jmp L)` / `(lab L)` route through the tracker's label
+##   merge primitives.
+##
+## ## Local variables vs. function calls
+##
+## A statement-level `(call …)` cannot mutate a local whose address has
+## never been taken. We maintain a `addrTaken` set (monotonic, updated
+## whenever an `(addr x)` is seen — including in pre-scans of loops) and
+## a call only invalidates symbols in that set. Bindings to ordinary
+## (non-addressed) locals survive calls intact.
+##
+## ## What is substitutable
+##
+## A binding's RHS is recorded as a `Cursor` and may be substituted
+## later iff it is:
+## - a single-token leaf (`Symbol`, `IntLit`, `UIntLit`, `FloatLit`,
+##   `CharLit`, `StringLit`), or
+## - a nullary `ParLe` constant: `(true)`, `(false)`, `(nil)`, `(inf)`,
+##   `(neginf)`, `(nan)`.
+##
+## Other multi-token expressions (e.g. `(neg 5)`, `(sizeof T)`) could be
+## supported with the same machinery — left as a follow-up. Calls,
+## derefs and similar impure / lvalue forms are deliberately excluded.
+
+import std / [tables, sets, hashes, assertions]
+include "../../lib" / nifprelude
+import nifstreams, nifcursors
+import ".." / nifc_model
+import trackers, patchsets, nifrender
+
+# Compare cursors by the *token value* they point at, not by buffer
+# position. Defined locally so the `Tracker[SymId, Cursor]` generic in
+# this module picks it up via mixin lookup.
+proc `==`*(a, b: Cursor): bool {.inline.} =
+  let av = a.hasMore
+  let bv = b.hasMore
+  if not av and not bv: return true
+  if not av or not bv: return false
+  let ta = a.load
+  let tb = b.load
+  ta.kind == tb.kind and ta.uoperand == tb.uoperand
+
+const NullaryParLeTags = {TrueC, FalseC, NilC, InfC, NeginfC, NanC}
+const LeafLiteralKinds = {IntLit, UIntLit, FloatLit, CharLit, StringLit}
+
+proc isSubstitutable(c: Cursor): bool =
+  ## True iff the subtree rooted at `c` may be cloned into a value
+  ## position safely.
+  case c.kind
+  of Symbol: true
+  of IntLit, UIntLit, FloatLit, CharLit, StringLit: true
+  of ParLe: c.exprKind in NullaryParLeTags
+  else: false
+
+type
+  Context = object
+    orig: ptr TokenBuf
+    constants: Tracker[SymId, Cursor]
+    addrTaken: HashSet[SymId]
+    patchset: Patchset
+
+proc createContext(orig: ptr TokenBuf): Context =
+  Context(orig: orig,
+          constants: initTracker[SymId, Cursor](),
+          addrTaken: initHashSet[SymId](),
+          patchset: initPatchset(orig))
+
+# ---- subtree inspection ---------------------------------------------------
+
+proc bindingReferences(cur: Cursor; target: SymId): bool =
+  ## Does the subtree rooted at `cur` mention `Symbol target`?
+  if not cur.hasMore: return false
+  case cur.kind
+  of Symbol:
+    return cur.symId == target
+  of ParLe:
+    var n = cur
+    var found = false
+    n.loopInto:
+      if not found and bindingReferences(n, target):
+        found = true
+      skip n
+    return found
+  else:
+    return false
+
+proc firstSymbolIn(c: Cursor): SymId =
+  ## The first `Symbol` token in the subtree rooted at `c`, or
+  ## `SymId(0)` if there is none.
+  if not c.hasMore: return SymId(0)
+  case c.kind
+  of Symbol:
+    return c.symId
+  of ParLe:
+    var n = c
+    var found = SymId(0)
+    n.loopInto:
+      if found == SymId(0):
+        let inner = firstSymbolIn(n)
+        if inner != SymId(0): found = inner
+      skip n
+    return found
+  else:
+    return SymId(0)
+
+proc preScanWrites(start: Cursor; writes, addrs: var HashSet[SymId]) =
+  ## Walk the subtree at `start`. Add every `Symbol` LHS of an `asgn` /
+  ## `store` to `writes`. Add the first `Symbol` inside every `(addr …)`
+  ## to `addrs`. Recurses into nested subtrees.
+  if not start.hasMore: return
+  if start.kind != ParLe: return
+  if start.stmtKind in {AsgnS, StoreS}:
+    let lhs = start.firstSon
+    if lhs.kind == Symbol:
+      writes.incl lhs.symId
+  if start.exprKind == AddrC:
+    let s = firstSymbolIn(start.firstSon)
+    if s != SymId(0): addrs.incl s
+  var n = start
+  n.loopInto:
+    preScanWrites(n, writes, addrs)
+    skip n
+
+# ---- tracker maintenance --------------------------------------------------
+
+proc invalidateReferencing(c: var Context; target: SymId) =
+  ## Clear every tracker entry whose binding subtree references `target`.
+  var toClear: seq[SymId] = @[]
+  for k, cur in c.constants.pairs:
+    if bindingReferences(cur, target):
+      toClear.add k
+  for k in toClear:
+    c.constants[k] = default(Cursor)
+
+proc invalidateAddrTaken(c: var Context) =
+  ## Drop bindings for every symbol whose address has been taken — a
+  ## call or write through a pointer could have modified any of them.
+  var toClear: seq[SymId] = @[]
+  for s in c.addrTaken:
+    if c.constants[s].hasMore: toClear.add s
+  for s in toClear:
+    c.constants[s] = default(Cursor)
+  for s in c.addrTaken:
+    invalidateReferencing(c, s)
+
+proc markAddrTaken(c: var Context; s: SymId) =
+  c.addrTaken.incl s
+  c.constants[s] = default(Cursor)
+  invalidateReferencing(c, s)
+
+proc effectiveBinding(c: Context; rhs: Cursor): Cursor =
+  ## What should a new binding to `rhs` actually store? Chains through
+  ## an existing binding when `rhs` is a tracked `Symbol`, otherwise
+  ## returns `rhs` itself when substitutable, otherwise `default(Cursor)`.
+  if rhs.kind == Symbol:
+    let prior = c.constants[rhs.symId]
+    if prior.hasMore: return prior
+    return rhs
+  if isSubstitutable(rhs):
+    return rhs
+  return default(Cursor)
+
+# ---- branch-state forwarding ----------------------------------------------
+
+proc openSiblings(c: var Context) = c.constants.openSiblings()
+proc enterSibling(c: var Context) = c.constants.enterSibling()
+proc leaveSibling(c: var Context) = c.constants.leaveSibling()
+proc joinSiblings(c: var Context) = c.constants.joinSiblings()
+proc gotoLabel(c: var Context; L: LabelId) = c.constants.gotoLabel L
+proc landLabel(c: var Context; L: LabelId) = c.constants.landLabel L
+proc clearAll(c: var Context) = c.constants.clearAll()
+
+# ---- patch recording (phase 1 walk) ---------------------------------------
+
+proc recordSubstitution(c: var Context; useCur: Cursor; binding: Cursor) =
+  ## Record that the token at `useCur`'s position should be replaced
+  ## with the subtree at `binding` during the apply phase.
+  let usePos = cursorToPosition(c.orig[], useCur)
+  c.patchset.addSubst(usePos, binding)
+
+# ---- main traversal -------------------------------------------------------
+
+proc tr(c: var Context; n: var Cursor)   # forward
+
+proc trExpr(c: var Context; n: var Cursor) =
+  case n.kind
+  of Symbol:
+    let s = n.symId
+    let binding = c.constants[s]
+    if binding.hasMore and isSubstitutable(binding):
+      recordSubstitution(c, n, binding)
+    inc n
+  of ParLe:
+    case n.exprKind
+    of AddrC:
+      let lvalue = n.firstSon
+      let s = firstSymbolIn(lvalue)
+      if s != SymId(0):
+        markAddrTaken(c, s)
+      skip n
+    of DerefC:
+      # Operand is a pointer expression — recurse to substitute symbols
+      # inside it.
+      n.into:
+        if n.hasMore: trExpr(c, n)
+        while n.hasMore: skip n
+    of AtC:
+      # `(at arr idx)` — arr is an lvalue (skip), idx is a value.
+      n.into:
+        if n.hasMore: skip n            # arr
+        if n.hasMore: trExpr(c, n)      # idx
+        while n.hasMore: skip n
+    of DotC:
+      # `(dot obj field …)` — obj is an lvalue; field/extras are
+      # declarations, never substitutable here. Skip the whole thing.
+      skip n
+    of CallC:
+      n.into:
+        if n.hasMore: skip n            # callee — leave as-is
+        while n.hasMore: trExpr(c, n)   # args
+      invalidateAddrTaken c
+    else:
+      n.loopInto:
+        trExpr(c, n)
+  else:
+    inc n
+
+proc trVar(c: var Context; n: var Cursor) =
+  let d = takeVarDecl(n)
+  if d.value.kind != DotToken:
+    var v = d.value
+    trExpr(c, v)
+  if d.name.kind == SymbolDef:
+    let s = d.name.symId
+    if d.value.kind != DotToken:
+      c.constants[s] = effectiveBinding(c, d.value)
+    else:
+      c.constants[s] = default(Cursor)
+
+proc trAsgn(c: var Context; n: var Cursor) =
+  n.into:
+    let lhsStart = n
+    skip n
+    let rhsStart = n
+    skip n
+    while n.hasMore: skip n
+
+  var r = rhsStart
+  trExpr(c, r)
+
+  if lhsStart.kind == Symbol:
+    let s = lhsStart.symId
+    invalidateReferencing(c, s)
+    c.constants[s] = effectiveBinding(c, rhsStart)
+  else:
+    # Complex LHS (`(at …)`, `(deref …)`, `(dot …)`). Walk it so any
+    # value sub-positions (e.g. an array index) get substituted.
+    var l = lhsStart
+    if lhsStart.kind == ParLe:
+      trExpr(c, l)
+    # Conservatively assume the complex write may go through a pointer
+    # to any address-taken local.
+    invalidateAddrTaken c
+
+proc trCallStmt(c: var Context; n: var Cursor) =
+  n.into:
+    if n.hasMore: skip n              # callee
+    while n.hasMore: trExpr(c, n)
+  invalidateAddrTaken c
+
+proc trIf(c: var Context; n: var Cursor) =
+  openSiblings c
+  n.loopInto:
+    case n.substructureKind
+    of ElifU:
+      n.into:
+        if n.hasMore: trExpr(c, n)    # condition
+        enterSibling c
+        if n.hasMore: tr(c, n)        # body
+        while n.hasMore: skip n
+        leaveSibling c
+    of ElseU:
+      n.into:
+        enterSibling c
+        if n.hasMore: tr(c, n)
+        while n.hasMore: skip n
+        leaveSibling c
+    else:
+      skip n
+  joinSiblings c
+
+proc trCase(c: var Context; n: var Cursor) =
+  n.into:
+    if n.hasMore: trExpr(c, n)        # selector
+    openSiblings c
+    while n.hasMore:
+      case n.substructureKind
+      of OfU:
+        n.into:
+          if n.hasMore: skip n        # ranges
+          enterSibling c
+          if n.hasMore: tr(c, n)
+          while n.hasMore: skip n
+          leaveSibling c
+      of ElseU:
+        n.into:
+          enterSibling c
+          if n.hasMore: tr(c, n)
+          while n.hasMore: skip n
+          leaveSibling c
+      else:
+        skip n
+    joinSiblings c
+
+proc trLoopBody(c: var Context; n: var Cursor) =
+  ## Walks `(while cond body)` or `(loop pre cond body after)` children.
+  case n.stmtKind
+  of WhileS:
+    n.into:
+      if n.hasMore: trExpr(c, n)      # condition
+      if n.hasMore: tr(c, n)          # body
+      while n.hasMore: skip n
+  of LoopS:
+    n.into:
+      if n.hasMore: tr(c, n)          # before-cond
+      if n.hasMore: trExpr(c, n)      # cond
+      if n.hasMore: tr(c, n)          # body
+      if n.hasMore: tr(c, n)          # after
+      while n.hasMore: skip n
+  else:
+    skip n
+
+proc trLoop(c: var Context; n: var Cursor) =
+  # Pre-scan to find Symbol writes and addr-takings inside the loop.
+  var writes = initHashSet[SymId]()
+  var newAddrs = initHashSet[SymId]()
+  preScanWrites(n, writes, newAddrs)
+  for s in newAddrs: markAddrTaken(c, s)
+
+  openSiblings c
+
+  # Sibling 1: loop body does not execute. No state changes.
+  enterSibling c
+  leaveSibling c
+
+  # Sibling 2: loop body executes (at least once). Clear writes and any
+  # address-taken locals (calls/pointer-stores in the body may mutate
+  # them) before walking — so substitutions inside the body see the same
+  # conservative state every iteration would.
+  enterSibling c
+  for s in writes:
+    c.constants[s] = default(Cursor)
+    invalidateReferencing(c, s)
+  invalidateAddrTaken c
+  trLoopBody(c, n)
+  leaveSibling c
+
+  joinSiblings c
+
+proc trJmp(c: var Context; n: var Cursor) =
+  var probe = n
+  inc probe
+  if probe.kind == Symbol:
+    gotoLabel(c, LabelId(probe.symId.uint32))
+  skip n
+
+proc trLab(c: var Context; n: var Cursor) =
+  var probe = n
+  inc probe
+  if probe.kind == SymbolDef:
+    landLabel(c, LabelId(probe.symId.uint32))
+  skip n
+
+proc trBreakOrRet(c: var Context; n: var Cursor) =
+  skip n
+  clearAll c
+
+proc tr(c: var Context; n: var Cursor) =
+  if not n.hasMore: return
+  case n.kind
+  of ParLe:
+    case n.stmtKind
+    of VarS, GvarS, TvarS, ConstS: trVar(c, n)
+    of AsgnS, StoreS:              trAsgn(c, n)
+    of CallS:                      trCallStmt(c, n)
+    of IfS:                        trIf(c, n)
+    of CaseS:                      trCase(c, n)
+    of WhileS, LoopS:              trLoop(c, n)
+    of JmpS:                       trJmp(c, n)
+    of LabS:                       trLab(c, n)
+    of BreakS, RetS, RaiseS:       trBreakOrRet(c, n)
+    of StmtsS, ScopeS:
+      n.loopInto:
+        tr(c, n)
+    else:
+      trExpr(c, n)
+  of Symbol:
+    trExpr(c, n)
+  else:
+    inc n
+
+# ---- public entry point --------------------------------------------------
+
+proc runCopyPropagation*(buf: var TokenBuf) =
+  ## Two-phase in-place copy/constant propagation. After this call,
+  ## `buf` has every redundant `Symbol` use replaced by its bound
+  ## leaf-literal / `Symbol` / nullary-constant subtree.
+  var ctx = createContext(addr buf)
+  var n = beginRead(buf)
+  tr(ctx, n)
+  if not ctx.patchset.isEmpty:
+    var newBuf = ctx.patchset.apply()
+    buf = ensureMove(newBuf)
+
+# ---- self-tests ----------------------------------------------------------
+
+when isMainModule:
+  proc parse(src: string): TokenBuf =
+    var stream = nifstreams.openFromBuffer(src, "M")
+    result = fromStream(stream)
+
+  template assertUnchanged(input: string) =
+    var buf = parse(input)
+    let before = render(buf)
+    runCopyPropagation buf
+    assertRender(buf, before)
+
+  discard pool.syms.getOrIncl("x.0.M")
+  discard pool.syms.getOrIncl("y.0.M")
+  discard pool.syms.getOrIncl("a.0.M")
+  discard pool.syms.getOrIncl("b.0.M")
+  discard pool.syms.getOrIncl("c.0.M")
+  discard pool.syms.getOrIncl("use.0.M")
+  discard pool.syms.getOrIncl("side.0.M")
+
+  block simple_literal_propagation:
+    var buf = parse(
+      "(stmts (var :x.0.M . (i 32) 5) (call use.0.M x.0.M))")
+    runCopyPropagation buf
+    assertRender(buf, """
+(stmts
+(var :x.0.M .
+(i 32)5)
+(call use.0.M 5))""")
+
+  block reassignment_clears:
+    assertUnchanged(
+      "(stmts (var :x.0.M . (i 32) 5) (asgn x.0.M (call side.0.M)) (call use.0.M x.0.M))")
+
+  block branch_agreement:
+    var buf = parse(
+      "(stmts (var :x.0.M . (i 32) 5) (if (elif c.0.M (asgn x.0.M 5)) (else (asgn x.0.M 5))) (call use.0.M x.0.M))")
+    runCopyPropagation buf
+    assertRender(buf, """
+(stmts
+(var :x.0.M .
+(i 32)5)
+(if
+(elif c.0.M
+(asgn x.0.M 5))
+(else
+(asgn x.0.M 5)))
+(call use.0.M 5))""")
+
+  block branch_disagreement:
+    assertUnchanged(
+      "(stmts (var :x.0.M . (i 32) 5) (if (elif c.0.M (asgn x.0.M 6)) (else (asgn x.0.M 7))) (call use.0.M x.0.M))")
+
+  block propagation_into_expression:
+    var buf = parse(
+      "(stmts (var :x.0.M . (i 32) 5) (call use.0.M (add (i 32) x.0.M x.0.M)))")
+    runCopyPropagation buf
+    assertRender(buf, """
+(stmts
+(var :x.0.M .
+(i 32)5)
+(call use.0.M
+(add
+(i 32)5 5)))""")
+
+  block chained_propagation:
+    var buf = parse(
+      "(stmts (var :a.0.M . (i 32) 5) (var :b.0.M . (i 32) a.0.M) (call use.0.M b.0.M))")
+    runCopyPropagation buf
+    assertRender(buf, """
+(stmts
+(var :a.0.M .
+(i 32)5)
+(var :b.0.M .
+(i 32)5)
+(call use.0.M 5))""")
+
+  block symbol_to_symbol_propagation:
+    var buf = parse(
+      "(stmts (var :a.0.M . (i 32) (call side.0.M)) (var :b.0.M . (i 32) a.0.M) (call use.0.M b.0.M))")
+    runCopyPropagation buf
+    assertRender(buf, """
+(stmts
+(var :a.0.M .
+(i 32)
+(call side.0.M))
+(var :b.0.M .
+(i 32)a.0.M)
+(call use.0.M a.0.M))""")
+
+  block symbol_propagation_invalidated:
+    assertUnchanged(
+      "(stmts (var :a.0.M . (i 32) (call side.0.M)) (var :b.0.M . (i 32) a.0.M) (asgn a.0.M 9) (call use.0.M b.0.M))")
+
+  block true_literal_propagation:
+    var buf = parse(
+      "(stmts (var :x.0.M . (bool) (true)) (call use.0.M x.0.M))")
+    runCopyPropagation buf
+    assertRender(buf, """
+(stmts
+(var :x.0.M .
+(bool)
+(true))
+(call use.0.M
+(true)))""")
+
+  block nil_literal_propagation:
+    var buf = parse(
+      "(stmts (var :x.0.M . (ptr (i 32)) (nil)) (call use.0.M x.0.M))")
+    runCopyPropagation buf
+    assertRender(buf, """
+(stmts
+(var :x.0.M .
+(ptr
+(i 32))
+(nil))
+(call use.0.M
+(nil)))""")
+
+  block call_does_not_clear_unaddressed:
+    # x's address is never taken → call cannot mutate it; binding survives.
+    var buf = parse(
+      "(stmts (var :x.0.M . (i 32) 5) (call side.0.M) (call use.0.M x.0.M))")
+    runCopyPropagation buf
+    assertRender(buf, """
+(stmts
+(var :x.0.M .
+(i 32)5)
+(call side.0.M)
+(call use.0.M 5))""")
+
+  block call_clears_addressed:
+    assertUnchanged(
+      "(stmts (var :x.0.M . (i 32) 5) (call side.0.M (addr x.0.M)) (call use.0.M x.0.M))")
+
+  block loop_preserves_unwritten_binding:
+    var buf = parse(
+      "(stmts (var :x.0.M . (i 32) 5) (while c.0.M (call use.0.M x.0.M)) (call use.0.M x.0.M))")
+    runCopyPropagation buf
+    assertRender(buf, """
+(stmts
+(var :x.0.M .
+(i 32)5)
+(while c.0.M
+(call use.0.M 5))
+(call use.0.M 5))""")
+
+  block loop_invalidates_written_binding:
+    assertUnchanged(
+      "(stmts (var :x.0.M . (i 32) 5) (while c.0.M (asgn x.0.M 9)) (call use.0.M x.0.M))")
+
+  block loop_only_invalidates_written_one:
+    # y survives the loop (no write to y), x doesn't (assigned inside).
+    var buf = parse(
+      "(stmts (var :x.0.M . (i 32) 5) (var :y.0.M . (i 32) 9) (while c.0.M (asgn x.0.M 0)) (call use.0.M y.0.M x.0.M))")
+    runCopyPropagation buf
+    assertRender(buf, """
+(stmts
+(var :x.0.M .
+(i 32)5)
+(var :y.0.M .
+(i 32)9)
+(while c.0.M
+(asgn x.0.M 0))
+(call use.0.M 9 x.0.M))""")
+
+  echo "copy_propagation.nim: all self-tests passed"
