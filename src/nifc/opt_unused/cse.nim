@@ -84,7 +84,8 @@ import std / [tables, sets, hashes, assertions, strutils, formatfloat]
 include "../../lib" / nifprelude
 import nifstreams, nifcursors
 import ".." / nifc_model
-import ".." / ".." / hexer / funcsummary
+from ".." / ".." / hexer / funcsummary import FunctionSummary,
+  FunctionSummaryTable, paramDirectEscapes, paramMayWrite
 import ".." / ".." / models / tags
 import trackers, patchsets, nifrender
 
@@ -271,6 +272,8 @@ proc preScanWrites(start: Cursor; writes, addrs: var HashSet[SymId]) =
     skip n
 
 # ---- cache invalidation ---------------------------------------------------
+
+proc markAddrTaken(c: var Context; s: SymId)
 
 proc invalidateMentioning(c: var Context; target: SymId) =
   var toClear: seq[string] = @[]

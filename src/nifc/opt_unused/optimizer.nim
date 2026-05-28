@@ -34,7 +34,8 @@ import nifstreams, nifcursors
 import nifreader   # extractModuleSuffix
 import ".." / nifc_model
 import nifrender   # render (used to detect per-pass changes)
-import ".." / ".." / hexer / funcsummary
+from ".." / ".." / hexer / funcsummary import FunctionSummaryTable,
+  collectFunctionSummaries
 import intermodinliner, copy_propagation, constant_folding, cse, induction_variables
 
 type

@@ -279,7 +279,7 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
         skip n
       of WasP:
         genWasPragma c, n
-      of ErrsP, RaisesP:
+      of ErrsP, RaisesP, SmryP:
         skip n
       of InlineP:
         result.flags.incl pk

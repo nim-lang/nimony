@@ -136,6 +136,7 @@ type
     InlineP = (ord(InlineTagId), "inline")  ## `inline` proc annotation
     NoinlineP = (ord(NoinlineTagId), "noinline")  ## `noinline` proc annotation
     AttrP = (ord(AttrTagId), "attr")  ## general attribute annotation
+    SmryP = (ord(SmryTagId), "smry")  ## function-summary annotation; effects include `read`, `write`, `writeGlobal`, `callsUnknown`, `raises`; parameter flags include `read`, `write`, `directEscape`, `returned`
     WasP = (ord(WasTagId), "was")
     SelectanyP = (ord(SelectanyTagId), "selectany")
     AlignP = (ord(AlignTagId), "align")
@@ -152,7 +153,7 @@ type
     PackedP = (ord(PackedTagId), "packed")  ## `packed` pragma
 
 proc rawTagIsNifcPragma*(raw: TagEnum): bool {.inline.} =
-  raw in {InlineTagId, NoinlineTagId, AttrTagId, WasTagId, SelectanyTagId, AlignTagId, BitsTagId, VectorTagId, NodeclTagId, RaisesTagId, ErrsTagId, StaticTagId, ImportcTagId, ImportcppTagId, ExportcTagId, HeaderTagId, PackedTagId}
+  raw in {InlineTagId, NoinlineTagId, AttrTagId, SmryTagId, WasTagId, SelectanyTagId, AlignTagId, BitsTagId, VectorTagId, NodeclTagId, RaisesTagId, ErrsTagId, StaticTagId, ImportcTagId, ImportcppTagId, ExportcTagId, HeaderTagId, PackedTagId}
 
 type
   NifcTypeQualifier* = enum
