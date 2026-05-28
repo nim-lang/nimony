@@ -358,6 +358,25 @@ proc trExpr(c: var Context; n: var Cursor) =
         if n.hasMore: skip n            # callee — leave as-is
         while n.hasMore: trExpr(c, n)   # args
       invalidateAddrTaken c
+    of OconstrC:
+      # `(oconstr T (kv field val) (kv field val) …)`. The `field` token
+      # is a declaration reference (the struct field), NOT a value — and
+      # because NIF interns identifiers by string, a local variable that
+      # happens to share a name with the field gets the same SymId. If we
+      # walked the field slot as a value we'd substitute the field name
+      # to the local's binding, producing a `(kv someLocal …)` whose
+      # codegen emits `.someLocal = …` against a struct that has no such
+      # field. Walk the value slot of each kv only.
+      n.into:
+        if n.hasMore: skip n            # type
+        while n.hasMore:
+          if n.kind == ParLe and n.substructureKind == KvU:
+            n.into:
+              if n.hasMore: skip n          # field name (declaration ref)
+              if n.hasMore: trExpr(c, n)    # value
+              while n.hasMore: skip n       # optional inherited-depth IntLit
+          else:
+            skip n
     else:
       n.loopInto:
         trExpr(c, n)
