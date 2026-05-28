@@ -495,12 +495,9 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
         of imkReplace:
           name = entry.resolvedName
         of imkConstant:
-          c.addTo(c.globals, "@" & pool.strings[externName] & " = private constant " & typ & " " & entry.constVal & "\n")
-          skip d.value
           return
         of imkCall:
           c.addTo(c.externs, "declare ptr @" & entry.callFuncName & "()\n")
-          skip d.value
           return
       if name notin c.declaredExterns:
         c.declaredExterns.incl name
