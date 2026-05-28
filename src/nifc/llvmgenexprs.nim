@@ -1076,12 +1076,18 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       typ = genTypeLLVM(c, n)
       expectedLen = fixedArrayLen(c, arrayTypeCursor)
 
+      # Get declared element LLVM type for insertvalue type annotation
+      var elemBody = navigateToObjectBody(c.m, arrayTypeCursor)
+      inc elemBody
+      let elemLLVMType = genTypeLLVMReadOnly(c, elemBody)
+      let elemTok = c.tok(elemLLVMType)
+
       var current = "undef"
       var idx = 0
       while n.hasMore:
         var elemVal = LLValue(); genExprLLVM(c, n, elemVal)
         let t = c.temp()
-        c.emitLine "  " & c.str(t) & " = insertvalue " & typ & " " & current & ", " & c.str(elemVal.typ) & " " & c.str(elemVal.name) & ", " & $idx
+        c.emitLine "  " & c.str(t) & " = insertvalue " & typ & " " & current & ", " & c.str(elemTok) & " " & c.str(elemVal.name) & ", " & $idx
         current = c.str(t)
         inc idx
       if expectedLen >= 0 and idx != expectedLen:
