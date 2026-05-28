@@ -34,6 +34,7 @@ import nifstreams, nifcursors
 import nifreader   # extractModuleSuffix
 import ".." / nifc_model
 import nifrender   # render (used to detect per-pass changes)
+import ".." / ".." / hexer / funcsummary
 import intermodinliner, copy_propagation, constant_folding, cse, induction_variables
 
 type
@@ -47,19 +48,21 @@ const PassNames = ["copy_propagation", "constant_folding", "cse",
 
 # ---- one body through the pipeline ----------------------------------------
 
-proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats) =
+proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
+                  summaries: ptr FunctionSummaryTable) =
   template stage(i: int; call: untyped) =
     let before = render(buf)
     call
     if render(buf) != before: inc st.changed[i]
   stage 0: runCopyPropagation buf
   stage 1: runConstantFolding buf
-  stage 2: runCSE(buf, suffix)
+  stage 2: runCSE(buf, suffix, summaries)
   stage 3: runInductionVariables(buf, suffix)
 
 # ---- module rebuild --------------------------------------------------------
 
-proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stats) =
+proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stats;
+                 summaries: ptr FunctionSummaryTable) =
   ## Copy the single tree/token at `n` into `dest`, replacing a proc body
   ## with its optimized version. Children are iterated with the scope-bounded
   ## `hasMore` loop inside `into`; the caller hands us one root tree at a time.
@@ -79,7 +82,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
         var body = createTokenBuf(64)
         var bc = d.body
         body.addSubtree bc
-        optimizeBody(body, suffix, st)
+        optimizeBody(body, suffix, st, summaries)
         var rb = beginRead(body)
         dest.addSubtree rb
       else:
@@ -89,7 +92,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
       dest.addParLe(tag, info)
       n.into:
         while n.hasMore:
-          rebuildTree(dest, n, suffix, st)
+          rebuildTree(dest, n, suffix, st, summaries)
       dest.addParRi()
   else:
     dest.add n
@@ -99,11 +102,12 @@ proc optimizeModule(input: var TokenBuf; suffix, xnifDir: string;
                     st: var Stats): TokenBuf =
   if runInterModuleInliner(input, suffix, xnifDir):
     inc st.intermodChanged
+  var summaries = collectFunctionSummaries(input)
   result = createTokenBuf(input.len + input.len div 8)
   var n = beginRead(input)
   # Special-case the outermost block: the buffer is one module-level
   # `(stmts …)`, so rebuild that single root tree.
-  rebuildTree(result, n, suffix, st)
+  rebuildTree(result, n, suffix, st, addr summaries)
 
 # ---- well-formedness check -------------------------------------------------
 

@@ -14,7 +14,7 @@ include ".." / lib / compat2
 import ".." / nimony / [nimony_model, programs, decls]
 import hexer_context, iterinliner, desugar, xelim, duplifier, lifter, destroyer,
   constparams, vtables_backend, eraiser, lambdalifting, cps, passes,
-  arcopt, intramodinliner
+  arcopt, funcsummary, intramodinliner
 when defined(verifyArc):
   import std / syncio
   import ".." / nimony / verify_arc
@@ -131,4 +131,5 @@ proc optimizeNifcOutput*(buf: var TokenBuf; moduleSuffix: string; bits: int) =
   ## has emitted the final NIFC module, so they never see pre-NIFC constructs
   ## such as try/finally.
   runArcopt(buf, moduleSuffix, bits)
+  annotateFunctionSummaries(buf)
   intraModuleInline(moduleSuffix, buf)

@@ -84,6 +84,7 @@ import std / [tables, sets, hashes, assertions, strutils, formatfloat]
 include "../../lib" / nifprelude
 import nifstreams, nifcursors
 import ".." / nifc_model
+import ".." / ".." / hexer / funcsummary
 import ".." / ".." / models / tags
 import trackers, patchsets, nifrender
 
@@ -140,8 +141,10 @@ type
     stmtStack: seq[int]       ## buffer positions of the enclosing hoist anchor
     tempCounter: int
     moduleSuffix: string
+    summaries: ptr FunctionSummaryTable
 
-proc createContext(orig: ptr TokenBuf; moduleSuffix: string): Context =
+proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
+                   summaries: ptr FunctionSummaryTable): Context =
   Context(orig: orig,
           cache: initTracker[string, CachedEntry](),
           addrTaken: initHashSet[SymId](),
@@ -149,7 +152,8 @@ proc createContext(orig: ptr TokenBuf; moduleSuffix: string): Context =
           synth: @[],
           stmtStack: @[],
           tempCounter: 0,
-          moduleSuffix: moduleSuffix)
+          moduleSuffix: moduleSuffix,
+          summaries: summaries)
 
 proc currentStmtPos(c: Context): int {.inline.} =
   if c.stmtStack.len > 0: c.stmtStack[^1] else: -1
@@ -289,6 +293,41 @@ proc invalidateForCall(c: var Context) =
   for key in toClear:
     c.cache[key] = default(CachedEntry)
 
+proc callSummary(c: Context; call: Cursor; summary: var FunctionSummary): bool =
+  if c.summaries == nil: return false
+  if call.kind != ParLe: return false
+  let callee = call.firstSon
+  if callee.kind != Symbol: return false
+  if not c.summaries[].hasKey(callee.symId): return false
+  summary = c.summaries[].getOrQuit(callee.symId)
+  result = true
+
+proc invalidateForCall(c: var Context; call: Cursor) =
+  var summary = FunctionSummary()
+  if not callSummary(c, call, summary):
+    invalidateForCall c
+    return
+
+  var args = call.firstSon
+  skip args
+  var argIndex = 0
+  var affected = initHashSet[SymId]()
+  while args.kind != ParRi:
+    let s = firstSymbolIn(args)
+    if s != SymId(0):
+      if paramDirectEscapes(summary, argIndex):
+        markAddrTaken(c, s)
+      if paramMayWrite(summary, argIndex) and s in c.addrTaken:
+        affected.incl s
+    skip args
+    inc argIndex
+
+  if summary.writesGlobal or summary.callsUnknown:
+    invalidateForCall c
+  else:
+    for s in affected:
+      invalidateMentioning(c, s)
+
 # ---- synthesis ------------------------------------------------------------
 
 proc addVarDecl(c: var Context; tempSym: SymId; expr: Cursor;
@@ -381,10 +420,11 @@ proc trExpr(c: var Context; n: var Cursor) =
       if s != SymId(0): markAddrTaken(c, s)
       skip n
     of CallC:
+      let call = n
       n.into:
         if n.hasMore: skip n               # callee
         while n.hasMore: trExpr(c, n)
-      invalidateForCall c
+      invalidateForCall(c, call)
     of DotC, AtC, DerefC:
       if isCSECandidate(n):
         handleCandidate(c, n)
@@ -431,10 +471,11 @@ proc trAsgn(c: var Context; n: var Cursor) =
   else: discard
 
 proc trCallStmt(c: var Context; n: var Cursor) =
+  let call = n
   n.into:
     if n.hasMore: skip n
     while n.hasMore: trExpr(c, n)
-  invalidateForCall c
+  invalidateForCall(c, call)
 
 proc trIf(c: var Context; n: var Cursor) =
   openBranches c
@@ -563,12 +604,13 @@ proc tr(c: var Context; n: var Cursor) =
 
 # ---- public entry --------------------------------------------------------
 
-proc runCSE*(buf: var TokenBuf; moduleSuffix = "M") =
+proc runCSE*(buf: var TokenBuf; moduleSuffix = "M";
+             summaries: ptr FunctionSummaryTable = nil) =
   ## Two-phase address-CSE for `buf`. Rewrites repeated address-yielding
   ## memory chains (`x.field[i]`, `arr[idx]`, `(deref complex-ptr)`) to
   ## share a single hoisted `(var :t . . (addr <expr>))` and use
   ## `(deref t)` at every occurrence.
-  var ctx = createContext(addr buf, moduleSuffix)
+  var ctx = createContext(addr buf, moduleSuffix, summaries)
   var n = beginRead(buf)
   tr(ctx, n)
   if not ctx.patchset.isEmpty:
