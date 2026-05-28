@@ -476,6 +476,13 @@ proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCurso
       result = LLValue(name: val.name, typ: destTok)
       return
   else:
+    # Check structural equivalence: if both resolve to the same anonymous
+    # LLVM type (e.g. [256 x i64]), just re-type without an instruction.
+    var destResolved = navigateToObjectBody(c.m, destTypeCursor)
+    let anonDestType = genTypeLLVMReadOnly(c, destResolved)
+    if anonDestType == srcStr:
+      result = LLValue(name: val.name, typ: destTok)
+      return
     c.emitLine "  " & c.str(t) & " = bitcast " & srcStr & " " & c.str(val.name) & " to " & destType
 
   result = LLValue(name: t, typ: destTok)
