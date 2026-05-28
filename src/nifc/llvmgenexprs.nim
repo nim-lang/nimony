@@ -612,7 +612,8 @@ proc genSizeofLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
 
 proc isGlobalSym(c: var LLVMCode; s: SymId): bool =
   let d = c.m.getDeclOrNil(s)
-  result = d != nil and d.kind in {GvarY, TvarY, ConstY, ProcY}
+  result = (d != nil and d.kind in {GvarY, TvarY, ConstY, ProcY}) or
+           s in c.emittedConsts
 
 proc genLvalueLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   ## Generate an lvalue (pointer to storage location).
