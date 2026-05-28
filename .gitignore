@@ -1,4 +1,5 @@
 bin/
+/bin[0-9]*/
 nimcache/
 nimblecache/
 htmldocs/

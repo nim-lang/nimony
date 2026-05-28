@@ -33,18 +33,18 @@
 ## `if` / `case` are walked as:
 ##
 ## ```
-## t.openSiblings()
+## t.openBranches()
 ## for each branch:
-##   t.enterSibling()
+##   t.openBranch()
 ##   ...walk branch body...
-##   t.leaveSibling()         # or t.gotoLabel(L) if the branch ends in a jump
-## t.joinSiblings()
+##   t.closeBranch()         # or t.gotoLabel(L) if the branch ends in a jump
+## t.closeBranches()
 ## ```
 ##
 ## ## Forward jumps and labels
 ##
 ## A branch that ends in `jmp L` calls `gotoLabel L` instead of
-## `leaveSibling`; its delta is stashed under `L` and dropped from the
+## `closeBranch`; its delta is stashed under `L` and dropped from the
 ## current sibling group's contribution. When the walker reaches the matching
 ## `lab L`, it calls `landLabel L`, which folds the stashed deltas plus the
 ## current fall-through state together with the same intersection rule.
@@ -70,18 +70,26 @@ type
     prev, next: V
 
   SibGroup = object
-    sibStarts: seq[int]   ## one entry per closed fall-through sibling; each
+    sibStarts: seq[int]   ## one entry per closed fall-through branch; each
                           ## value is the index into `log` at which that
-                          ## sibling's slice begins. The slice ends at the
-                          ## next entry, or at the open sibling's start, or
-                          ## at `log.len` if no sibling is currently open.
+                          ## branch's slice begins. The slice ends at the
+                          ## next entry, or at the open branch's start, or
+                          ## at `log.len` if no branch is currently open.
     sibOpen: bool
     curSibStart: int      ## valid only if `sibOpen`
+    exhaustive: bool      ## true once `openFinalBranch` was called — tells
+                          ## `closeBranches` that *some* branch in this group
+                          ## is guaranteed to execute, so the join does *not*
+                          ## need to add an implicit empty "no branch matched"
+                          ## path. Without it, branches are non-exhaustive
+                          ## (`if` without `else`, `case` without `else`) and
+                          ## the join folds an implicit empty branch in so
+                          ## inner-branch bindings can't leak past the group.
 
   Tracker*[K, V] = object
     base: Table[K, V]                 ## current view (non-default entries only)
     log: seq[LogEntry[K, V]]          ## append-only journal of writes
-    groups: seq[SibGroup]             ## stack of open `openSiblings` scopes
+    groups: seq[SibGroup]             ## stack of open `openBranches` scopes
     labels: Table[LabelId, seq[Table[K, V]]]  ## incoming deltas per label
 
 proc initTracker*[K, V](): Tracker[K, V] =
@@ -138,39 +146,79 @@ proc finalValues[K, V](t: Tracker[K, V]; lo, hi: int): Table[K, V] =
     if e.key notin result:
       result[e.key] = e.next
 
-# ---- sibling-group operations ---------------------------------------------
+# ---- branch-group operations ----------------------------------------------
+#
+# Branching constructs (`if`/`case`/…) are walked as:
+#
+#   openBranches t
+#   for each branch:
+#     openBranch t          # or `openFinalBranch t` on an else / wildcard `of`
+#     ...walk branch body...
+#     closeBranch t         # or `gotoLabel t L` if the branch ended in `jmp`
+#   closeBranches t
+#
+# `openFinalBranch` is `openBranch` plus a flag that tells `closeBranches`
+# the group is exhaustive — no implicit "no branch matched" path. Without
+# any `openFinalBranch` call the group is non-exhaustive and `closeBranches`
+# folds in an empty implicit branch so per-branch writes (a binding to an
+# inner-scope sym, a `wasMoved` bit, …) can't leak past the construct as if
+# the branch always executed.
 
-proc openSiblings*[K, V](t: var Tracker[K, V]) =
-  t.groups.add SibGroup(sibStarts: @[], sibOpen: false, curSibStart: 0)
+proc openBranches*[K, V](t: var Tracker[K, V]) =
+  t.groups.add SibGroup(sibStarts: @[], sibOpen: false, curSibStart: 0,
+                        exhaustive: false)
 
-proc enterSibling*[K, V](t: var Tracker[K, V]) =
-  assert t.groups.len > 0, "enterSibling outside any openSiblings"
-  assert not t.groups[^1].sibOpen, "previous sibling not closed"
+proc openBranch*[K, V](t: var Tracker[K, V]) =
+  assert t.groups.len > 0, "openBranch outside any openBranches"
+  assert not t.groups[^1].sibOpen, "previous branch not closed"
   t.groups[^1].sibOpen = true
   t.groups[^1].curSibStart = t.log.len
 
-proc leaveSibling*[K, V](t: var Tracker[K, V]) =
-  ## End the current sibling as a fall-through branch. Its writes are kept
-  ## in the log so that `joinSiblings` can merge them.
+proc openFinalBranch*[K, V](t: var Tracker[K, V]) =
+  ## Like `openBranch`, but marks the enclosing group as exhaustive — at
+  ## least one branch always runs. Pass this for the `else` / wildcard `of`
+  ## arm so `closeBranches` doesn't fold in an implicit empty branch.
+  assert t.groups.len > 0, "openFinalBranch outside any openBranches"
+  t.groups[^1].exhaustive = true
+  openBranch(t)
+
+proc closeBranch*[K, V](t: var Tracker[K, V]) =
+  ## End the current branch as a fall-through. Its writes are kept in the
+  ## log so that `closeBranches` can merge them.
   ##
-  ## If the sibling is already closed, the branch terminated abnormally — a
+  ## If the branch is already closed, it terminated abnormally — a
   ## `gotoLabel` (an embedded `jmp`) consumed it, routed its state to the
   ## label and dropped it from this group. Such a branch does *not* reach
   ## the join, so there is nothing to fall through: treat the call as a
-  ## no-op. This lets walkers call `leaveSibling` structurally after every
+  ## no-op. This lets walkers call `closeBranch` structurally after every
   ## branch body without first detecting whether the body ended in a jump.
-  assert t.groups.len > 0, "leaveSibling outside any openSiblings"
+  assert t.groups.len > 0, "closeBranch outside any openBranches"
   if not t.groups[^1].sibOpen: return
   let start = t.groups[^1].curSibStart
   t.revertFrom start
   t.groups[^1].sibStarts.add start
   t.groups[^1].sibOpen = false
 
-proc joinSiblings*[K, V](t: var Tracker[K, V]) =
-  ## Merge all fall-through siblings of the innermost group into one delta
+proc maybeAddImplicitEmptyBranch[K, V](t: var Tracker[K, V]) =
+  ## Internal: called from the close-branches paths. When the group is *not*
+  ## exhaustive (no `openFinalBranch` was issued) and at least one branch
+  ## reached the join, fold in an empty implicit branch — the "no branch
+  ## matched" fall-through. With no writes of its own it contributes the
+  ## pre-group base value for every key the real branches touched, so any
+  ## key the real branches set to a different value disagrees with it and
+  ## collapses to `default(V)` at the join.
+  if t.groups.len == 0: return
+  if t.groups[^1].exhaustive: return
+  if t.groups[^1].sibStarts.len == 0: return
+  openBranch(t)
+  closeBranch(t)
+
+proc closeBranches*[K, V](t: var Tracker[K, V]) =
+  ## Merge all fall-through branches of the innermost group into one delta
   ## and apply it to the enclosing scope.
-  assert t.groups.len > 0, "joinSiblings without openSiblings"
-  assert not t.groups[^1].sibOpen, "current sibling not closed"
+  assert t.groups.len > 0, "closeBranches without openBranches"
+  assert not t.groups[^1].sibOpen, "current branch not closed"
+  maybeAddImplicitEmptyBranch(t)
   let grp = t.groups.pop()
   let n = grp.sibStarts.len
   let groupLogStart =
@@ -192,7 +240,7 @@ proc joinSiblings*[K, V](t: var Tracker[K, V]) =
     if grp.sibOpen: grp.curSibStart   # unreachable given assert above
     else:
       # The last fall-through sibling's slice extends to the end of the log
-      # (no further entries were added after its leaveSibling).
+      # (no further entries were added after its closeBranch).
       t.log.len
 
   # Gather every key touched in any sibling.
@@ -229,17 +277,20 @@ proc joinSiblings*[K, V](t: var Tracker[K, V]) =
 
 # ---- additive join (set-union for HashSet values) -------------------------
 
-proc combineBranchesAdditiveValues*[K, T](t: var Tracker[K, HashSet[T]]) =
-  ## Alternative to `joinSiblings`: at the join, each cell's post-state is
-  ## the **union** of all contributing siblings' final sets (and the pre-
-  ## group base value for siblings that did not touch the cell). Use when
+proc closeBranchesAdditive*[K, T](t: var Tracker[K, HashSet[T]]) =
+  ## Alternative to `closeBranches`: at the join, each cell's post-state is
+  ## the **union** of all contributing branches' final sets (and the pre-
+  ## group base value for branches that did not touch the cell). Use when
   ## the cell's value is a monotonic accumulator — e.g., the set of
   ## `=wasMoved` positions that may pair with a downstream `=destroy`.
   ##
-  ## The sibling-collection machinery is the same as `joinSiblings`; only
-  ## the per-cell merge rule differs.
-  assert t.groups.len > 0, "combineBranchesAdditiveValues without openSiblings"
-  assert not t.groups[^1].sibOpen, "current sibling not closed"
+  ## The branch-collection machinery is the same as `closeBranches`; only
+  ## the per-cell merge rule differs. Exhaustiveness handling is identical:
+  ## a non-exhaustive group gets an implicit empty branch (whose empty set
+  ## contributes nothing to the union, but is included for symmetry).
+  assert t.groups.len > 0, "closeBranchesAdditive without openBranches"
+  assert not t.groups[^1].sibOpen, "current branch not closed"
+  maybeAddImplicitEmptyBranch(t)
   let grp = t.groups.pop()
   let n = grp.sibStarts.len
   let groupLogStart =
@@ -289,7 +340,7 @@ proc gotoLabel*[K, V](t: var Tracker[K, V]; L: LabelId) =
   ## The current branch jumps to `L`. Stash an absolute snapshot of the
   ## current state under `L`. If we are inside an open sibling, that sibling
   ## is consumed: its log slice is dropped and it will not contribute to the
-  ## enclosing `joinSiblings`.
+  ## enclosing `closeBranches`.
   t.labels.mgetOrPut(L, @[]).add t.snapshotCurrent()
   if t.groups.len > 0 and t.groups[^1].sibOpen:
     let start = t.groups[^1].curSibStart
@@ -344,66 +395,84 @@ proc landLabel*[K, V](t: var Tracker[K, V]; L: LabelId; arity: int = -1) =
 # ---- self-tests ------------------------------------------------------------
 
 when isMainModule:
-  block intersect_bool:
+  block intersect_bool_exhaustive:
+    # Two branches modelling `if c: … else: …` — exhaustive (one always runs),
+    # so the second branch is `openFinalBranch`.
     var t = initTracker[int, bool]()
-    t.openSiblings()
-    t.enterSibling()
+    t.openBranches()
+    t.openBranch()
     t[1] = true
     t[2] = true
-    t.leaveSibling()
-    t.enterSibling()
+    t.closeBranch()
+    t.openFinalBranch()
     t[1] = true
     t[3] = true
-    t.leaveSibling()
-    t.joinSiblings()
-    doAssert t[1] == true            # agreed
+    t.closeBranch()
+    t.closeBranches()
+    doAssert t[1] == true            # agreed across both branches
     doAssert t[2] == false           # only in branch 0
     doAssert t[3] == false           # only in branch 1
 
+  block non_exhaustive_drops_branch_writes:
+    # `if c: x = 10` — without `openFinalBranch`, the group is non-exhaustive;
+    # the implicit empty branch's pre-value disagrees with the branch's 10,
+    # so x collapses to `default(int) = 0` at the join.
+    var t = initTracker[int, int]()
+    t[1] = 5                         # pre-branch fact
+    t.openBranches()
+    t.openBranch()
+    t[1] = 10                        # only branch's write
+    t.closeBranch()
+    t.closeBranches()
+    doAssert t[1] == 0               # implicit empty branch ⇒ default
+
   block disagreement_drops:
+    # `if c: x = false else: …` (else doesn't touch x). With openFinalBranch
+    # on the else, branches are exhaustive; the disagreement still collapses.
     var t = initTracker[int, bool]()
     t[1] = true                      # pre-branch fact
-    t.openSiblings()
-    t.enterSibling()
+    t.openBranches()
+    t.openBranch()
     t[1] = false                     # branch 0 clears it
-    t.leaveSibling()
-    t.enterSibling()
+    t.closeBranch()
+    t.openFinalBranch()
     # branch 1 leaves it as true
-    t.leaveSibling()
-    t.joinSiblings()
+    t.closeBranch()
+    t.closeBranches()
     doAssert t[1] == false           # disagreement → default
 
   block nested:
     var t = initTracker[int, bool]()
-    t.openSiblings()
-    t.enterSibling()
-    t.openSiblings()
-    t.enterSibling()
+    t.openBranches()
+    t.openBranch()
+    t.openBranches()
+    t.openBranch()
     t[1] = true
-    t.leaveSibling()
-    t.enterSibling()
+    t.closeBranch()
+    t.openFinalBranch()
     t[1] = true
-    t.leaveSibling()
-    t.joinSiblings()                 # inner agrees on 1
+    t.closeBranch()
+    t.closeBranches()                # inner agrees on 1
     doAssert t[1] == true
-    t.leaveSibling()
-    t.enterSibling()
+    t.closeBranch()
+    t.openFinalBranch()
     t[1] = true
-    t.leaveSibling()
-    t.joinSiblings()                 # outer also agrees
+    t.closeBranch()
+    t.closeBranches()                # outer also agrees
     doAssert t[1] == true
 
   block goto_and_label:
+    # Models `if c: …; goto L else: …; L:`. The else makes the if exhaustive.
     var t = initTracker[int, bool]()
     let L = LabelId(1)
-    t.openSiblings()
-    t.enterSibling()
+    t.openBranches()
+    t.openBranch()
     t[1] = true
     t.gotoLabel L                    # branch 0 jumps with 1=true
-    t.enterSibling()
+    t.openFinalBranch()
     t[1] = true
-    t.leaveSibling()                 # branch 1 falls through with 1=true
-    t.joinSiblings()                 # only branch 1 contributes → 1=true
+    t.closeBranch()                  # branch 1 falls through with 1=true
+    t.closeBranches()                # only branch 1 contributes → 1=true
     doAssert t[1] == true
     t.landLabel L, arity = 1         # merge in branch 0's snapshot
     doAssert t[1] == true            # both agreed → still true
@@ -411,14 +480,14 @@ when isMainModule:
   block goto_disagreement:
     var t = initTracker[int, bool]()
     let L = LabelId(2)
-    t.openSiblings()
-    t.enterSibling()
+    t.openBranches()
+    t.openBranch()
     t[1] = true
     t.gotoLabel L                    # branch 0 jumps with 1=true
-    t.enterSibling()
+    t.openFinalBranch()
     t[2] = true                      # branch 1 has 2 but not 1
-    t.leaveSibling()
-    t.joinSiblings()
+    t.closeBranch()
+    t.closeBranches()
     doAssert t[1] == false
     doAssert t[2] == true
     t.landLabel L, arity = 1
@@ -429,16 +498,16 @@ when isMainModule:
     var t = initTracker[int, HashSet[int]]()
     # Pre-group: cell 1 has {100}
     t[1] = toHashSet([100])
-    t.openSiblings()
-    t.enterSibling()
+    t.openBranches()
+    t.openBranch()
     # Branch 0 adds 200
     t[1] = toHashSet([100, 200])
-    t.leaveSibling()
-    t.enterSibling()
+    t.closeBranch()
+    t.openBranch()
     # Branch 1 adds 300
     t[1] = toHashSet([100, 300])
-    t.leaveSibling()
-    t.combineBranchesAdditiveValues()
+    t.closeBranch()
+    t.closeBranchesAdditive()
     let final = t[1]
     doAssert 100 in final and 200 in final and 300 in final, $final
     doAssert final.len == 3
@@ -446,15 +515,15 @@ when isMainModule:
   block additive_with_clear_in_one_branch:
     var t = initTracker[int, HashSet[int]]()
     t[1] = toHashSet([100])           # pre-group: {100}
-    t.openSiblings()
-    t.enterSibling()
+    t.openBranches()
+    t.openBranch()
     t[1] = initHashSet[int]()         # branch 0 clears
     t[1] = toHashSet([200])           # branch 0 adds 200
-    t.leaveSibling()
-    t.enterSibling()
+    t.closeBranch()
+    t.openBranch()
     # branch 1 inherits {100}
-    t.leaveSibling()
-    t.combineBranchesAdditiveValues()
+    t.closeBranch()
+    t.closeBranchesAdditive()
     let final = t[1]
     # union of {200} (A's final) and {100} (B inherits) = {100, 200}
     doAssert 100 in final and 200 in final, $final
@@ -463,14 +532,14 @@ when isMainModule:
     var t = initTracker[int, bool]()
     t[1] = true
     t[2] = true
-    t.openSiblings()
-    t.enterSibling()
+    t.openBranches()
+    t.openBranch()
     t.clearAll()
     doAssert t[1] == false
-    t.leaveSibling()
-    t.enterSibling()
-    t.leaveSibling()
-    t.joinSiblings()
+    t.closeBranch()
+    t.openBranch()
+    t.closeBranch()
+    t.closeBranches()
     # Branch 0 cleared 1; branch 1 kept it. Disagreement → cleared.
     doAssert t[1] == false
     doAssert t[2] == false

@@ -24,7 +24,7 @@
 ##
 ## ## Control-flow awareness
 ##
-## - `if` / `case` use the tracker's structured `joinSiblings` —
+## - `if` / `case` use the tracker's structured `closeBranches` —
 ##   branched bindings to the same value merge because we define a
 ##   content-aware `==` for `Cursor`.
 ## - **Loops** are modelled as a 2-sibling group (no-iteration +
@@ -61,6 +61,7 @@ import std / [tables, sets, hashes, assertions]
 include "../../lib" / nifprelude
 import nifstreams, nifcursors
 import ".." / nifc_model
+import ".." / ".." / models / tags        # DiscardTagId
 import trackers, patchsets, nifrender
 
 # Compare cursors by the *token value* they point at, not by buffer
@@ -92,6 +93,22 @@ proc isSubstitutable(c: Cursor): bool =
   else: false
 
 type
+  PendingCall = object
+    ## A `(var :tmp T (call …))` whose fate is still being decided.
+    ## - Consumed by its single use → fuse: rewrite that use to the call
+    ##   subtree and replace the decl with a dot.
+    ## - Survives the whole walk with use-count 0 → replace decl with
+    ##   `(discard call)` so the side effect still runs.
+    ## - Otherwise (used in a non-substitutable position, or invalidated
+    ##   by an intervening event) → left untouched.
+    defPos: int            ## position of the `(var :tmp …)` decl in `orig`
+    callCur: Cursor        ## cursor at the call expression (for splicing)
+    mentionedSyms: HashSet[SymId]
+                           ## every `Symbol` referenced in the call subtree.
+                           ## Used to invalidate the pending binding when
+                           ## something that could touch one of those syms
+                           ## happens between the bind and the consumer.
+
   Context = object
     orig: ptr TokenBuf
     constants: Tracker[SymId, Cursor]
@@ -100,7 +117,12 @@ type
     useCount: Table[SymId, int]      ## Symbol-token uses per sym (pre-scanned)
     substCount: Table[SymId, int]    ## uses we actually substituted away
     delCandidates: Table[SymId, int] ## local-var sym -> its decl position
+    pending: Table[SymId, PendingCall]
+                                     ## live call-init local-var bindings
+                                     ## awaiting their consumer (the fuse) or
+                                     ## an invalidating event.
     dotBuf: TokenBuf                 ## a single DotToken: replaces a deleted decl
+    synth: seq[TokenBuf]             ## stable storage for `(discard call)` synths
 
 proc createContext(orig: ptr TokenBuf): Context =
   result = Context(orig: orig,
@@ -110,7 +132,9 @@ proc createContext(orig: ptr TokenBuf): Context =
           useCount: initTable[SymId, int](),
           substCount: initTable[SymId, int](),
           delCandidates: initTable[SymId, int](),
-          dotBuf: createTokenBuf(2))
+          pending: initTable[SymId, PendingCall](),
+          dotBuf: createTokenBuf(2),
+          synth: @[])
   result.dotBuf.addDotToken()
 
 # ---- subtree inspection ---------------------------------------------------
@@ -131,6 +155,20 @@ proc bindingReferences(cur: Cursor; target: SymId): bool =
     return found
   else:
     return false
+
+proc collectSyms(cur: Cursor; outSyms: var HashSet[SymId]) =
+  ## Add every `Symbol` token in the subtree rooted at `cur` to `outSyms`.
+  ## (`SymbolDef` is intentionally excluded — it's a definition, not a read.)
+  if not cur.hasMore: return
+  case cur.kind
+  of Symbol:
+    outSyms.incl cur.symId
+  of ParLe:
+    var n = cur
+    n.loopInto:
+      collectSyms(n, outSyms)
+      skip n
+  else: discard
 
 proc firstSymbolIn(c: Cursor): SymId =
   ## The first `Symbol` token in the subtree rooted at `c`, or
@@ -191,10 +229,29 @@ proc invalidateAddrTaken(c: var Context) =
   for s in c.addrTaken:
     invalidateReferencing(c, s)
 
+proc invalidatePendingForSym(c: var Context; s: SymId) =
+  ## Drop any pending call-binding whose tmp is `s` or whose call mentions
+  ## `s`. Called when something writes `s` or takes its address — either
+  ## could change what the pending call would now observe / produce.
+  var toDel: seq[SymId] = @[]
+  for tmp, info in c.pending:
+    if tmp == s or s in info.mentionedSyms:
+      toDel.add tmp
+  for tmp in toDel:
+    c.pending.del tmp
+
+proc clearPending(c: var Context) =
+  ## Drop all pending bindings — used when control flow leaves straight-line
+  ## execution (branch entry, loop, jmp/lab, break/ret). A pending binding
+  ## whose consumer is on a different control-flow path would reorder the
+  ## call's side effect with respect to the divergence.
+  c.pending.clear()
+
 proc markAddrTaken(c: var Context; s: SymId) =
   c.addrTaken.incl s
   c.constants[s] = default(Cursor)
   invalidateReferencing(c, s)
+  invalidatePendingForSym(c, s)
 
 proc effectiveBinding(c: Context; rhs: Cursor): Cursor =
   ## What should a new binding to `rhs` actually store? Chains through
@@ -210,13 +267,26 @@ proc effectiveBinding(c: Context; rhs: Cursor): Cursor =
 
 # ---- branch-state forwarding ----------------------------------------------
 
-proc openSiblings(c: var Context) = c.constants.openSiblings()
-proc enterSibling(c: var Context) = c.constants.enterSibling()
-proc leaveSibling(c: var Context) = c.constants.leaveSibling()
-proc joinSiblings(c: var Context) = c.constants.joinSiblings()
-proc gotoLabel(c: var Context; L: LabelId) = c.constants.gotoLabel L
-proc landLabel(c: var Context; L: LabelId) = c.constants.landLabel L
-proc clearAll(c: var Context) = c.constants.clearAll()
+proc openBranches(c: var Context) =
+  # Entering a branch group means the next code we walk might or might not
+  # run; carrying a pending call-binding across it would reorder the call's
+  # side effect relative to whichever side of the divergence wins. Drop
+  # them on entry.
+  c.constants.openBranches()
+  clearPending c
+proc openBranch(c: var Context) = c.constants.openBranch()
+proc openFinalBranch(c: var Context) = c.constants.openFinalBranch()
+proc closeBranch(c: var Context) = c.constants.closeBranch()
+proc closeBranches(c: var Context) = c.constants.closeBranches()
+proc gotoLabel(c: var Context; L: LabelId) =
+  c.constants.gotoLabel L
+  clearPending c
+proc landLabel(c: var Context; L: LabelId) =
+  c.constants.landLabel L
+  clearPending c
+proc clearAll(c: var Context) =
+  c.constants.clearAll()
+  clearPending c
 
 # ---- patch recording (phase 1 walk) ---------------------------------------
 
@@ -279,6 +349,11 @@ proc trExpr(c: var Context; n: var Cursor) =
       # declarations, never substitutable here. Skip the whole thing.
       skip n
     of CallC:
+      # A `(call …)` in expression position can only touch locals whose
+      # address has been taken — and we maintain the invariant that no
+      # pending entry references such a sym (see `trVar`), so it can't
+      # invalidate a pending binding. Only the live-binding tracker needs
+      # the addrTaken sweep.
       n.into:
         if n.hasMore: skip n            # callee — leave as-is
         while n.hasMore: trExpr(c, n)   # args
@@ -293,6 +368,34 @@ proc trVar(c: var Context; n: var Cursor) =
   let kind = n.stmtKind
   let defPos = cursorToPosition(c.orig[], n)
   let d = takeVarDecl(n)
+  # Call-init local with a substitution-safe call expression: register as
+  # pending and SKIP walking the call's contents. Reason: the call subtree
+  # may later be spliced verbatim (fuse) or wrapped in `(discard …)`
+  # (unused), and `addSubtree` does not re-apply patches to the source.
+  # Patches recorded inside the call would silently drop, but `substCount`
+  # would still have been incremented — and that wrongly trips dead-decl
+  # deletion for syms whose only "substituted" use was inside the moved
+  # call. Skipping the walk costs intra-call substitutions in the rarer
+  # survives-as-is case; the fuse/discard cases stay correct.
+  if kind == VarS and d.name.kind == SymbolDef and
+     d.value.kind == ParLe and d.value.exprKind == CallC:
+    var mentioned = initHashSet[SymId]()
+    collectSyms(d.value, mentioned)
+    # Invariant: pending entries reference no address-taken sym, so
+    # subsequent calls / writes through pointers can't change what the
+    # pending call would observe — eliminates O(pending) per-call
+    # invalidation passes.
+    var safe = true
+    for sm in mentioned:
+      if sm in c.addrTaken:
+        safe = false
+        break
+    if safe:
+      let s = d.name.symId
+      c.pending[s] = PendingCall(defPos: defPos, callCur: d.value,
+                                 mentionedSyms: mentioned)
+      c.constants[s] = default(Cursor)
+      return
   if d.value.kind != DotToken:
     var v = d.value
     trExpr(c, v)
@@ -318,72 +421,104 @@ proc trAsgn(c: var Context; n: var Cursor) =
     skip n
     while n.hasMore: skip n
 
-  var r = rhsStart
-  trExpr(c, r)
-
-  if lhsStart.kind == Symbol:
+  # `(asgn lhs tmp)` where `tmp` is a pending call-init local with use-count
+  # 1 fuses to `(asgn lhs (call …))` — same call, no temp. Recording the
+  # `lhs → tmp` alias in the tracker for this shape is the original copy-prop
+  # bug: `tmp` is short-lived (scoped to the bind site), and propagating it
+  # into later `lhs` uses leaked an inner-scope symbol past its scope. With
+  # the fuse there is no `tmp` in the output.
+  let canFuse = lhsStart.kind == Symbol and rhsStart.kind == Symbol and
+                rhsStart.symId in c.pending and
+                c.useCount.getOrDefault(rhsStart.symId) == 1
+  if canFuse:
+    let tmp = rhsStart.symId
+    let info = c.pending[tmp]
+    # Fuse: rewrite this asgn's RHS Symbol token to the call subtree, and
+    # replace the original `(var :tmp …)` decl with a dot.
+    c.patchset.addSubst(cursorToPosition(c.orig[], rhsStart), info.callCur)
+    c.patchset.addSubst(info.defPos, cursorAt(c.dotBuf, 0))
+    c.substCount.mgetOrPut(tmp, 0) += 1
+    c.pending.del tmp
     let s = lhsStart.symId
     invalidateReferencing(c, s)
-    c.constants[s] = effectiveBinding(c, rhsStart)
+    c.constants[s] = default(Cursor)         # asgn now reads a call result
+    invalidatePendingForSym(c, s)            # asgn writes to s
   else:
-    # Complex LHS (`(at …)`, `(deref …)`, `(dot …)`). Walk it so any
-    # value sub-positions (e.g. an array index) get substituted.
-    var l = lhsStart
-    if lhsStart.kind == ParLe:
-      trExpr(c, l)
-    # Conservatively assume the complex write may go through a pointer
-    # to any address-taken local.
-    invalidateAddrTaken c
+    var r = rhsStart
+    trExpr(c, r)
+    if lhsStart.kind == Symbol:
+      let s = lhsStart.symId
+      invalidateReferencing(c, s)
+      c.constants[s] = effectiveBinding(c, rhsStart)
+      invalidatePendingForSym(c, s)
+    else:
+      # Complex LHS (`(at …)`, `(deref …)`, `(dot …)`). Walk it so any
+      # value sub-positions (e.g. an array index) get substituted.
+      var l = lhsStart
+      if lhsStart.kind == ParLe:
+        trExpr(c, l)
+      # Conservatively assume the complex write may go through a pointer
+      # to any address-taken local.
+      invalidateAddrTaken c
+      # Extract the LHS's root local and drop pending entries that mention
+      # it. For `(deref p)` this is `p` — slightly overkill, but harmless:
+      # by the pending invariant no entry mentions an addr-taken sym, so
+      # the deref write cannot affect any pending call's observed value.
+      let root = firstSymbolIn(lhsStart)
+      if root != SymId(0):
+        invalidatePendingForSym(c, root)
 
 proc trCallStmt(c: var Context; n: var Cursor) =
   n.into:
     if n.hasMore: skip n              # callee
     while n.hasMore: trExpr(c, n)
   invalidateAddrTaken c
+  # No pending invalidation: by the pending invariant (no mentioned sym is
+  # address-taken), a call cannot touch what any pending call would read.
 
 proc trIf(c: var Context; n: var Cursor) =
-  openSiblings c
+  openBranches c
   n.loopInto:
     case n.substructureKind
     of ElifU:
       n.into:
         if n.hasMore: trExpr(c, n)    # condition
-        enterSibling c
+        openBranch c
         if n.hasMore: tr(c, n)        # body
         while n.hasMore: skip n
-        leaveSibling c
+        closeBranch c
     of ElseU:
       n.into:
-        enterSibling c
+        openFinalBranch c             # else makes the group exhaustive
         if n.hasMore: tr(c, n)
         while n.hasMore: skip n
-        leaveSibling c
+        closeBranch c
     else:
       skip n
-  joinSiblings c
+  closeBranches c
 
 proc trCase(c: var Context; n: var Cursor) =
   n.into:
     if n.hasMore: trExpr(c, n)        # selector
-    openSiblings c
+    openBranches c
     while n.hasMore:
       case n.substructureKind
       of OfU:
         n.into:
           if n.hasMore: skip n        # ranges
-          enterSibling c
+          openBranch c
           if n.hasMore: tr(c, n)
           while n.hasMore: skip n
-          leaveSibling c
+          closeBranch c
       of ElseU:
         n.into:
-          enterSibling c
+          openFinalBranch c
           if n.hasMore: tr(c, n)
           while n.hasMore: skip n
-          leaveSibling c
+          closeBranch c
       else:
         skip n
-    joinSiblings c
+    closeBranches c
 
 proc trLoopBody(c: var Context; n: var Cursor) =
   ## Walks `(while cond body)` or `(loop pre cond body after)` children.
@@ -410,25 +545,25 @@ proc trLoop(c: var Context; n: var Cursor) =
   preScanWrites(n, writes, newAddrs)
   for s in newAddrs: markAddrTaken(c, s)
 
-  openSiblings c
+  openBranches c
 
   # Sibling 1: loop body does not execute. No state changes.
-  enterSibling c
-  leaveSibling c
+  openBranch c
+  closeBranch c
 
   # Sibling 2: loop body executes (at least once). Clear writes and any
   # address-taken locals (calls/pointer-stores in the body may mutate
   # them) before walking — so substitutions inside the body see the same
   # conservative state every iteration would.
-  enterSibling c
+  openBranch c
   for s in writes:
     c.constants[s] = default(Cursor)
     invalidateReferencing(c, s)
   invalidateAddrTaken c
   trLoopBody(c, n)
-  leaveSibling c
+  closeBranch c
 
-  joinSiblings c
+  closeBranches c
 
 proc trJmp(c: var Context; n: var Cursor) =
   var probe = n
@@ -488,6 +623,28 @@ proc runCopyPropagation*(buf: var TokenBuf) =
   for s, defPos in ctx.delCandidates:
     if ctx.substCount.getOrDefault(s) == ctx.useCount.getOrDefault(s):
       ctx.patchset.addSubst(defPos, cursorAt(ctx.dotBuf, 0))
+  # Unconsumed pending call-init bindings. Those still in `ctx.pending` at
+  # this point survived the walk without being consumed (no single-read
+  # fuse fired) and without invalidation. With `use-count == 0` (truly
+  # unused) we drop the binding but keep the call as `(discard call)`;
+  # otherwise we leave the var decl as-is (the use was non-substitutable —
+  # `addr`, an `asgn` LHS, a `dot`/`at` base — so removing the local would
+  # break that reference). Pre-size `synth` so growth can't invalidate the
+  # cursors the patchset stores.
+  var discardCount = 0
+  for s, _ in ctx.pending:
+    if ctx.useCount.getOrDefault(s) == 0: inc discardCount
+  if discardCount > 0:
+    ctx.synth = newSeqOfCap[TokenBuf](discardCount)
+    for s, info in ctx.pending:
+      if ctx.useCount.getOrDefault(s) == 0:
+        var buf2 = createTokenBuf(16)
+        buf2.addParLe TagId(ord(DiscardTagId)), info.callCur.info
+        var cc = info.callCur
+        buf2.addSubtree cc
+        buf2.addParRi()
+        ctx.synth.add buf2
+        ctx.patchset.addSubst(info.defPos, cursorAt(ctx.synth[^1], 0))
   if not ctx.patchset.isEmpty:
     var newBuf = ctx.patchset.apply()
     buf = ensureMove(newBuf)

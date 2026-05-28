@@ -9,14 +9,14 @@
 
 ## External tool that runs the NIFC tree-optimization passes over a module.
 ##
-## The flow-sensitive passes (`arcopt`, `copy_propagation`, `cse`) analyse a
+## The flow-sensitive passes (`copy_propagation`, `cse`) analyse a
 ## single procedure body, so the driver walks the module and applies the
 ## pipeline to every `(proc … body)` body in turn, leaving declarations,
 ## types and headers untouched. The whole-program passes (`constant_folding`,
 ## `induction_variables`) are run on the same body so the whole pipeline is a
 ## single per-body sequence:
 ##
-##   arcopt → copy_propagation → constant_folding → cse → induction_variables
+##   copy_propagation → constant_folding → cse → induction_variables
 ##
 ## Usage:
 ##
@@ -34,15 +34,16 @@ import nifstreams, nifcursors
 import nifreader   # extractModuleSuffix
 import ".." / nifc_model
 import nifrender   # render (used to detect per-pass changes)
-import arcopt, copy_propagation, constant_folding, cse, induction_variables
+import intermodinliner, copy_propagation, constant_folding, cse, induction_variables
 
 type
   Stats = object
     procs, bodies: int
-    changed: array[5, int]   # per-pass: how many bodies each pass altered
+    changed: array[4, int]   # per-pass: how many bodies each pass altered
+    intermodChanged: int
 
-const PassNames = ["arcopt", "copy_propagation", "constant_folding",
-                   "cse", "induction_variables"]
+const PassNames = ["copy_propagation", "constant_folding", "cse",
+                   "induction_variables"]
 
 # ---- one body through the pipeline ----------------------------------------
 
@@ -51,11 +52,10 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats) =
     let before = render(buf)
     call
     if render(buf) != before: inc st.changed[i]
-  stage 0: runArcopt buf
-  stage 1: runCopyPropagation buf
-  stage 2: runConstantFolding buf
-  stage 3: runCSE(buf, suffix)
-  stage 4: runInductionVariables(buf, suffix)
+  stage 0: runCopyPropagation buf
+  stage 1: runConstantFolding buf
+  stage 2: runCSE(buf, suffix)
+  stage 3: runInductionVariables(buf, suffix)
 
 # ---- module rebuild --------------------------------------------------------
 
@@ -95,7 +95,10 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
     dest.add n
     inc n
 
-proc optimizeModule(input: var TokenBuf; suffix: string; st: var Stats): TokenBuf =
+proc optimizeModule(input: var TokenBuf; suffix, xnifDir: string;
+                    st: var Stats): TokenBuf =
+  if runInterModuleInliner(input, suffix, xnifDir):
+    inc st.intermodChanged
   result = createTokenBuf(input.len + input.len div 8)
   var n = beginRead(input)
   # Special-case the outermost block: the buffer is one module-level
@@ -118,7 +121,12 @@ proc processFile(input, output: string; verify, stats: bool): bool =
   let suffix = extractModuleSuffix(input)
   var src = parseFromFile(input, 4000)
   var st = Stats()
-  var optimized = optimizeModule(src, suffix, st)
+  # `.x.nif` files of *other* modules sit alongside (and one level up from)
+  # the `.c.nif` we're reading; the inliner's `findForeignFile` searches
+  # both. For non-main modules `<nimcache>/M.x.nif` is one dir up from the
+  # `<nimcache>/<backend>/M.c.nif` input.
+  let xnifDir = splitFile(input).dir
+  var optimized = optimizeModule(src, suffix, xnifDir, st)
 
   if not wellFormed(optimized):
     echo "  ", extractFilename(input), ": ** MALFORMED after optimization **"
@@ -128,6 +136,7 @@ proc processFile(input, output: string; verify, stats: bool): bool =
 
   if stats:
     var parts: seq[string] = @[]
+    if st.intermodChanged > 0: parts.add "intermodinliner=" & $st.intermodChanged
     for i in 0 ..< PassNames.len:
       if st.changed[i] > 0: parts.add PassNames[i] & "=" & $st.changed[i]
     echo "  ", extractFilename(input), ": ", st.procs, " procs, ",

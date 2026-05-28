@@ -2076,7 +2076,7 @@ proc transformInlineRoutines(c: var EContext; dest: var TokenBuf; n: var Cursor)
   while d.hasMore:
     trStmt c, dest, d, TraverseAll
 
-proc writeOutput(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo; destfileName: string): TokenBuf =
+proc makeOutput(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo): TokenBuf =
   # Build the final output with stmts wrapper and includes
   result = createTokenBuf()
   result.add tagToken("stmts", rootInfo)
@@ -2086,11 +2086,6 @@ proc writeOutput(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo; 
 
   # Close the stmts wrapper
   result.addParRi()
-
-  try:
-    writeFile result, destfileName, OnlyIfChanged
-  except:
-    quit "could not write file: " & destfileName
 
 proc initDynlib(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo) =
   # dynlib init:
@@ -2474,7 +2469,12 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
   skipParRi c, n
   let destfileName = c.dir / c.main & ".x.nif"
 
-  var outputBuf = writeOutput(c, cdest, rootInfo, destfileName)
+  var outputBuf = makeOutput(c, cdest, rootInfo)
+  optimizeNifcOutput(outputBuf, c.main, c.bits)
+  try:
+    writeFile outputBuf, destfileName, OnlyIfChanged
+  except:
+    quit "could not write file: " & destfileName
   c.typeCache.closeScope()
 
   # Use the in-memory buffer to avoid re-reading the file we just wrote

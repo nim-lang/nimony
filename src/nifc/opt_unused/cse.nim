@@ -72,7 +72,7 @@
 ##
 ## ## Branch handling
 ##
-## `if` / `case` use the tracker's `joinSiblings` (intersection on a
+## `if` / `case` use the tracker's `closeBranches` (intersection on a
 ## `(tempSym, exprPos)` pair — so entries cached pre-branch with both
 ## branches leaving them untouched survive). A first occurrence in one
 ## branch and a second in another do not merge — this MVP lazily but
@@ -327,10 +327,11 @@ proc addSubstPatch(c: var Context; pos: int; synthIdx: int) =
 
 # ---- branch-state forwarding ----------------------------------------------
 
-proc openSiblings(c: var Context) = c.cache.openSiblings()
-proc enterSibling(c: var Context) = c.cache.enterSibling()
-proc leaveSibling(c: var Context) = c.cache.leaveSibling()
-proc joinSiblings(c: var Context) = c.cache.joinSiblings()
+proc openBranches(c: var Context) = c.cache.openBranches()
+proc openBranch(c: var Context) = c.cache.openBranch()
+proc openFinalBranch(c: var Context) = c.cache.openFinalBranch()
+proc closeBranch(c: var Context) = c.cache.closeBranch()
+proc closeBranches(c: var Context) = c.cache.closeBranches()
 proc gotoLabel(c: var Context; L: LabelId) = c.cache.gotoLabel L
 proc landLabel(c: var Context; L: LabelId) = c.cache.landLabel L
 proc clearCache(c: var Context) = c.cache.clearAll()
@@ -436,62 +437,48 @@ proc trCallStmt(c: var Context; n: var Cursor) =
   invalidateForCall c
 
 proc trIf(c: var Context; n: var Cursor) =
-  openSiblings c
-  var hasElse = false
+  openBranches c
   n.loopInto:
     case n.substructureKind
     of ElifU:
       n.into:
         if n.hasMore: trExpr(c, n)
-        enterSibling c
+        openBranch c
         if n.hasMore: tr(c, n)
         while n.hasMore: skip n
-        leaveSibling c
+        closeBranch c
     of ElseU:
-      hasElse = true
       n.into:
-        enterSibling c
+        openFinalBranch c             # else makes the group exhaustive
         if n.hasMore: tr(c, n)
         while n.hasMore: skip n
-        leaveSibling c
+        closeBranch c
     else:
       skip n
-  if not hasElse:
-    # An if without else has an implicit "no cond matched, no body ran"
-    # path. Model it as an empty sibling so the join intersects against
-    # the pre-if state too — otherwise body-local writes would be
-    # treated as unconditional.
-    enterSibling c
-    leaveSibling c
-  joinSiblings c
+  closeBranches c
 
 proc trCase(c: var Context; n: var Cursor) =
   n.into:
     if n.hasMore: trExpr(c, n)
-    openSiblings c
-    var hasElse = false
+    openBranches c
     while n.hasMore:
       case n.substructureKind
       of OfU:
         n.into:
           if n.hasMore: skip n
-          enterSibling c
+          openBranch c
           if n.hasMore: tr(c, n)
           while n.hasMore: skip n
-          leaveSibling c
+          closeBranch c
       of ElseU:
-        hasElse = true
         n.into:
-          enterSibling c
+          openFinalBranch c
           if n.hasMore: tr(c, n)
           while n.hasMore: skip n
-          leaveSibling c
+          closeBranch c
       else:
         skip n
-    if not hasElse:
-      enterSibling c
-      leaveSibling c
-    joinSiblings c
+    closeBranches c
 
 proc trLoopBody(c: var Context; n: var Cursor) =
   case n.stmtKind
@@ -516,14 +503,14 @@ proc trLoop(c: var Context; n: var Cursor) =
   preScanWrites(n, writes, addrs)
   for s in addrs: markAddrTaken(c, s)
 
-  openSiblings c
-  enterSibling c
-  leaveSibling c
-  enterSibling c
+  openBranches c
+  openBranch c
+  closeBranch c
+  openBranch c
   clearCache c
   trLoopBody(c, n)
-  leaveSibling c
-  joinSiblings c
+  closeBranch c
+  closeBranches c
 
 proc trJmp(c: var Context; n: var Cursor) =
   var probe = n

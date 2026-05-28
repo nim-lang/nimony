@@ -24,7 +24,7 @@
 ##   elided — including the branched case where different branches contain
 ##   different `=wasMoved` positions. The positions tracker is combined
 ##   across siblings by **set union** at joins
-##   (`combineBranchesAdditiveValues`).
+##   (`closeBranchesAdditive`).
 ## - Tainting: any `Symbol` use or assignment observes the currently
 ##   tracked positions for that symbol and marks them as `tainted`. A
 ##   tainted position is never elided even if it later appears in the
@@ -90,21 +90,25 @@ proc taintCurrent(c: var Context; sym: SymId) =
 
 # ---- branch-state forwarding to both trackers -----------------------------
 
-proc openSiblings(c: var Context) =
-  c.moved.openSiblings()
-  c.positions.openSiblings()
+proc openBranches(c: var Context) =
+  c.moved.openBranches()
+  c.positions.openBranches()
 
-proc enterSibling(c: var Context) =
-  c.moved.enterSibling()
-  c.positions.enterSibling()
+proc openBranch(c: var Context) =
+  c.moved.openBranch()
+  c.positions.openBranch()
 
-proc leaveSibling(c: var Context) =
-  c.moved.leaveSibling()
-  c.positions.leaveSibling()
+proc openFinalBranch(c: var Context) =
+  c.moved.openFinalBranch()
+  c.positions.openFinalBranch()
 
-proc joinSiblings(c: var Context) =
-  c.moved.joinSiblings()                       # intersection on bools
-  c.positions.combineBranchesAdditiveValues()  # union on sets
+proc closeBranch(c: var Context) =
+  c.moved.closeBranch()
+  c.positions.closeBranch()
+
+proc closeBranches(c: var Context) =
+  c.moved.closeBranches()              # intersection on bools
+  c.positions.closeBranchesAdditive()  # union on sets
 
 proc gotoLabel(c: var Context; L: LabelId) =
   ## Conservative for the positions tracker: clear all sets. The moved bit
@@ -222,44 +226,44 @@ proc trAsgn(c: var Context; n: var Cursor) =
     trExpr(c, n)
 
 proc trIf(c: var Context; n: var Cursor) =
-  openSiblings c
+  openBranches c
   n.loopInto:
     case n.substructureKind
     of ElifU:
       n.into:
         trExpr(c, n)                   # condition
-        enterSibling c
+        openBranch c
         tr(c, n)                       # body
-        leaveSibling c
+        closeBranch c
     of ElseU:
       n.into:
-        enterSibling c
+        openFinalBranch c              # else makes the if exhaustive
         tr(c, n)
-        leaveSibling c
+        closeBranch c
     else:
       skip n
-  joinSiblings c
+  closeBranches c
 
 proc trCase(c: var Context; n: var Cursor) =
   n.into:
     trExpr(c, n)                       # selector
-    openSiblings c
+    openBranches c
     while n.hasMore:
       case n.substructureKind
       of OfU:
         n.into:
           skip n                       # ranges (constants — no clearing)
-          enterSibling c
+          openBranch c
           tr(c, n)
-          leaveSibling c
+          closeBranch c
       of ElseU:
         n.into:
-          enterSibling c
+          openFinalBranch c
           tr(c, n)
-          leaveSibling c
+          closeBranch c
       else:
         skip n
-    joinSiblings c
+    closeBranches c
 
 proc trLoop(c: var Context; n: var Cursor) =
   ## A loop is conservatively opaque: clear all facts on entry and exit.

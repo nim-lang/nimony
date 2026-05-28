@@ -13,7 +13,8 @@ include ".." / lib / compat2
 
 import ".." / nimony / [nimony_model, programs, decls]
 import hexer_context, iterinliner, desugar, xelim, duplifier, lifter, destroyer,
-  constparams, vtables_backend, eraiser, lambdalifting, cps, passes
+  constparams, vtables_backend, eraiser, lambdalifting, cps, passes,
+  arcopt, intramodinliner
 when defined(verifyArc):
   import std / syncio
   import ".." / nimony / verify_arc
@@ -124,3 +125,10 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   pass.finishPass()
 
   result = ensureMove(pass.dest)
+
+proc optimizeNifcOutput*(buf: var TokenBuf; moduleSuffix: string; bits: int) =
+  ## Optimizations over the generated NIFC tree. These run after `nifcgen`
+  ## has emitted the final NIFC module, so they never see pre-NIFC constructs
+  ## such as try/finally.
+  runArcopt(buf, moduleSuffix, bits)
+  intraModuleInline(moduleSuffix, buf)
