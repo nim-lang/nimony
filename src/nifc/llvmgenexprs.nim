@@ -754,7 +754,9 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
           name = entry.resolvedName  # use real symbol name for the load
         of imkConstant:
           let typ = genTypeLLVMReadOnly(c, symType)
-          result = LLValue(name: c.tok(entry.constVal), typ: c.tok(typ))
+          let t = c.temp()
+          c.emitLine "  " & c.str(t) & " = trunc i" & $c.bits & " " & entry.constVal & " to " & typ
+          result = LLValue(name: t, typ: c.tok(typ))
           return
         of imkCall:
           let typ = genTypeLLVMReadOnly(c, symType)
