@@ -158,6 +158,7 @@ type
     generatedTypes*: HashSet[SymId]
     requestedSyms*: HashSet[SymId]
     declaredExterns*: HashSet[string] # to avoid duplicate extern declarations
+    emittedConsts*: HashSet[SymId] # local consts emitted as global constants
     inToplevel: bool
     currentProc: LLVMCurrentProc
     strLitCounter*: int       # global counter for string literal names
@@ -500,6 +501,8 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
         let zeroVal = if d.typ.typeKind in {PtrT, AptrT, ProctypeT}: "null" else: "zeroinitializer"
         let linkage = if vk == IsConst: "constant" else: "global"
         c.addTo(c.globals, "@" & name & " = " & tls & linkage & " " & typ & " " & zeroVal & alignSuffix & "\n")
+    if vk == IsConst:
+      c.emittedConsts.incl lit
   else:
     error c.m, "expected SymbolDef but got: ", d.name
 

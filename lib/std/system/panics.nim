@@ -5,8 +5,12 @@ proc die(value: int32) {.importc: "exit", header: "<stdlib.h>".}
 # Yes, that is a tiny bit of duplication from syncio.nim. Get over it.
 type
   RawCFile {.importc: "FILE", header: "<stdio.h>".} = object
-var
-  cstderr {.importc: "stderr", header: "<stdio.h>".}: ptr RawCFile
+when defined(macos) or defined(macosx):
+  var
+    cstderr {.importc: "__stderrp", header: "<stdio.h>".}: ptr RawCFile
+else:
+  var
+    cstderr {.importc: "stderr", header: "<stdio.h>".}: ptr RawCFile
 
 proc c_fwrite(buf: pointer; size, n: uint; f: ptr RawCFile): uint {.
   importc: "fwrite", header: "<stdio.h>".}
