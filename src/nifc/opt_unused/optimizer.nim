@@ -112,13 +112,14 @@ proc optimizeModule(input: var TokenBuf; suffix, xnifDir: string;
 
 # ---- well-formedness check -------------------------------------------------
 
-proc wellFormed(buf: var TokenBuf): bool =
-  result = true
-  try:
-    var n = beginRead(buf)
-    skip n                  # skip the single outermost block; asserts on overrun
-  except CatchableError, Defect:
-    result = false
+proc checkWellFormed(buf: var TokenBuf) =
+  ## Walk every top-level tree; `skip` asserts (and aborts) on a malformed
+  ## buffer. A pass that produces garbage is a bug, so we let it crash loudly
+  ## rather than swallowing the failure and silently skipping the file.
+  var n = beginRead(buf)
+  while n.hasMore:
+    skip n
+  endRead(buf)
 
 # ---- per-file driver -------------------------------------------------------
 
@@ -133,9 +134,7 @@ proc processFile(input, output: string; verify, stats: bool): bool =
   let xnifDir = splitFile(input).dir
   var optimized = optimizeModule(src, suffix, xnifDir, st)
 
-  if not wellFormed(optimized):
-    echo "  ", extractFilename(input), ": ** MALFORMED after optimization **"
-    return false
+  checkWellFormed(optimized)
 
   writeFile(optimized, output)
 
@@ -151,9 +150,7 @@ proc processFile(input, output: string; verify, stats: bool): bool =
   result = true
   if verify:
     var back = parseFromFile(output, 4000)
-    if not wellFormed(back):
-      echo "  ", extractFilename(output), ": ** reload FAILED **"
-      result = false
+    checkWellFormed(back)
 
 # ---- CLI -------------------------------------------------------------------
 

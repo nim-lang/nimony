@@ -375,19 +375,12 @@ proc optimizeArc*(pass: var Pass) =
   opt(c, n, pass.dest)
 
 proc runArcoptBody(buf: var TokenBuf; moduleSuffix = ""; bits = 0) =
-  var backup = createTokenBuf(buf.len)
-  var backupRead = beginRead(buf)
-  backup.addSubtree backupRead
-  endRead(buf)
   var input = createTokenBuf(buf.len)
   swap(input, buf)
-  try:
-    var pass = initPass(ensureMove(input), moduleSuffix, "arcopt", bits)
-    optimizeArc(pass)
-    pass.finishPass()
-    buf = ensureMove(pass.dest)
-  except CatchableError, Defect:
-    buf = ensureMove(backup)
+  var pass = initPass(ensureMove(input), moduleSuffix, "arcopt", bits)
+  optimizeArc(pass)
+  pass.finishPass()
+  buf = ensureMove(pass.dest)
 
 proc runArcoptTree(dest: var TokenBuf; n: var Cursor; moduleSuffix: string; bits: int) =
   case n.kind

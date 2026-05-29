@@ -34,14 +34,13 @@ proc copyBuf(src: var TokenBuf): TokenBuf =
 
 proc wellFormed(buf: var TokenBuf): bool =
   ## A pass over every top-level tree via `skip`; trips an assertion on a
-  ## malformed buffer (unbalanced / overrun), which we catch.
+  ## malformed buffer (unbalanced / overrun). We do NOT catch that assertion:
+  ## a malformed buffer is a pass bug and must surface loudly.
   result = true
-  try:
-    var n = beginRead(buf)
-    while n.hasMore:
-      skip n
-  except CatchableError, Defect:
-    result = false
+  var n = beginRead(buf)
+  while n.hasMore:
+    skip n
+  endRead(buf)
 
 proc rec(n: var Cursor; acc: var seq[TokenBuf]) =
   ## Recursive descent collecting every ProcS body (incl. nested procs).
@@ -73,12 +72,12 @@ var totalCrashes = 0
 var totalMalformed = 0
 
 template guard(label: string; body: untyped) =
+  ## Runs one pass. Crashes are NOT swallowed: a pass that raises is a bug
+  ## and aborts the fuzz run so the failure is impossible to miss. `label`
+  ## is kept so the surrounding echo trail shows which pass was in flight.
+  discard label
   inc totalPasses
-  try:
-    body
-  except CatchableError, Defect:
-    inc totalCrashes
-    echo "    !! CRASH ", label, ": ", getCurrentExceptionMsg()
+  body
 
 proc reportPass(label: string; before, after: var TokenBuf) =
   let changed = before.len != after.len
