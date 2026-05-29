@@ -1,0 +1,8 @@
+(.nif27)
+(stmts
+ (proc :exit.c (params (param :code.0 . (i 32))) . (pragmas (importc "exit")) (stmts .))
+ (proc :main.0 (params) (i 32) (pragmas (exportc "main")) (stmts
+   (var :i.0 . (i 64) 3)
+   (while (neq i.0 0)
+     (stmts (asgn i.0 (sub (i 64) i.0 1))))
+   (call exit.c i.0))))

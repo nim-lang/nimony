@@ -1,0 +1,6 @@
+(.nif27)
+(stmts
+ (proc :write.c (params (param :fd.0 . (i 32)) (param :buf.0 . (ptr (c 8))) (param :n.0 . (i 64))) (i 64) (pragmas (importc "write")) (stmts .))
+ (proc :main.0 (params) (i 32) (pragmas (exportc "main")) (stmts
+   (call write.c 1 "hi\0A" 3)
+   (ret 0))))

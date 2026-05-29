@@ -1,0 +1,12 @@
+(.nif27)
+(stmts
+ (type :Pair.0 . (object . (fld :a.0 . (i 64)) (fld :b.0 . (i 64))))
+ (proc :exit.c (params (param :code.0 . (i 32))) . (pragmas (importc "exit")) (stmts .))
+ (proc :main.0 (params) (i 32) (pragmas (exportc "main"))
+  (stmts
+   (var :obj.0 . Pair.0 .)
+   (asgn (dot obj.0 a.0) 40)
+   (var :p.0 . (ptr (i 64)) (addr (dot obj.0 a.0)))
+   (var :y.0 . (i 64) (deref p.0))
+   (asgn (deref p.0) 42)
+   (call exit.c (dot obj.0 a.0)))))

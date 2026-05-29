@@ -1,0 +1,15 @@
+(.nif27)
+(stmts
+ (type :Vec3.0 . (object . (fld :x.0 . (i 64)) (fld :y.0 . (i 64)) (fld :z.0 . (i 64))))
+ (proc :exit.c (params (param :code.0 . (i 32))) . (pragmas (importc "exit")) (stmts .))
+ (proc :mk.0 (params) Vec3.0 .
+  (stmts
+   (var :r.0 . Vec3.0 .)
+   (asgn (dot r.0 x.0) 40)
+   (asgn (dot r.0 y.0) 2)
+   (asgn (dot r.0 z.0) 100)
+   (ret r.0)))
+ (proc :main.0 (params) (i 32) (pragmas (exportc "main"))
+  (stmts
+   (var :v.0 . Vec3.0 (call mk.0))
+   (call exit.c (add (i 64) (dot v.0 x.0) (dot v.0 y.0))))))

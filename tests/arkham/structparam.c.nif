@@ -1,0 +1,11 @@
+(.nif27)
+(stmts
+ (type :Point.0 . (object . (fld :px.0 . (i 64)) (fld :py.0 . (i 64))))
+ (proc :exit.c (params (param :code.0 . (i 32))) . (pragmas (importc "exit")) (stmts .))
+ (proc :sum.0 (params (param :p.0 . Point.0)) (i 64) .
+  (stmts
+   (ret (add (i 64) (dot p.0 px.0) (dot p.0 py.0)))))
+ (proc :main.0 (params) (i 32) (pragmas (exportc "main"))
+  (stmts
+   (var :q.0 . Point.0 (oconstr Point.0 (kv px.0 40) (kv py.0 2)))
+   (call exit.c (call sum.0 q.0)))))
