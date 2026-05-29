@@ -158,6 +158,7 @@ type
     generatedTypes*: HashSet[SymId]
     requestedSyms*: HashSet[SymId]
     declaredExterns*: HashSet[string] # to avoid duplicate extern declarations
+    varargsFuncTypes*: Table[string, string]    # name -> function-type-signature
     emittedConsts*: HashSet[SymId] # local consts emitted as global constants
     inToplevel: bool
     currentProc: LLVMCurrentProc
@@ -670,6 +671,7 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
     retType = genTypeLLVM(c, rt)
 
   # Generate parameter list
+  var isVarargs: bool = false
   var paramTypes: seq[string] = @[]
   var paramNames: seq[string] = @[]
   var paramWasNames: seq[string] = @[]
@@ -684,12 +686,17 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
         var t = d.typ
         let paramType = genTypeLLVM(c, t)
         paramTypes.add paramType
-        let paramName = mangleToC(pool.syms[s])
-        paramNames.add paramName
-        paramWasNames.add extractWasPragma(d.pragmas)
-        genParamPragmasLLVM(c, d.pragmas)
+        if d.typ.typeKind != VarargsT:
+          let paramName = mangleToC(pool.syms[s])
+          paramNames.add paramName
+          paramWasNames.add extractWasPragma(d.pragmas)
+          genParamPragmasLLVM(c, d.pragmas)
+        else:
+          isVarargs = true
       else:
         error c.m, "expected SymbolDef but got: ", d.name
+
+  var sig = "(" & paramTypes.join(", ") & ")"
 
   if {NodeclP, HeaderP} * prag.flags != {}:
     # Don't generate anything for nodecl/header-only procs
@@ -699,18 +706,15 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
     let externName = name
     if externName notin c.declaredExterns:
       c.declaredExterns.incl externName
-      var decl = "declare " & retType & " @" & externName & "("
-      for i, pt in paramTypes:
-        if i > 0: decl.add ", "
-        decl.add pt
-      decl.add ")\n"
-      c.addTo(c.externs, decl)
+      if isVarargs: c.varargsFuncTypes["@" & externName] = sig
+      c.addTo(c.externs, "declare " & retType & " @" & externName & sig & "\n")
   else:
     # Function definition
     let displayName = if prag.wasName.len > 0: prag.wasName else: name
     let spId = createSubprogram(c, displayName, procInfo)
     c.currentProc.subprogramId = spId
 
+    if isVarargs: c.varargsFuncTypes["@" & name] = sig
     let ccStr = callingConvToLLVM(prag.callConv)
     var funcHeader = "define "
     if ccStr != "":
@@ -718,7 +722,10 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
     funcHeader.add retType & " @" & name & "("
     for i, pt in paramTypes:
       if i > 0: funcHeader.add ", "
-      funcHeader.add pt & " %" & paramNames[i] & ".param"
+      if pt == "...":
+        funcHeader.add "..."
+      else:
+        funcHeader.add pt & " %" & paramNames[i] & ".param"
     funcHeader.add ")"
     if InlineP in prag.flags:
       funcHeader.add " alwaysinline"
