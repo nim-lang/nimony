@@ -28,13 +28,22 @@ type
     fspCur               ## Seek relative to current position
     fspEnd               ## Seek relative to end
 
-var
-  stdin* {.importc: "stdin", header: "<stdio.h>".}: File
-    ## Standard input file handle.
-  stdout* {.importc: "stdout", header: "<stdio.h>".}: File
-    ## Standard output file handle.
-  stderr* {.importc: "stderr", header: "<stdio.h>".}: File
-    ## Standard error file handle.
+when defined(macos) or defined(macosx):
+  var
+    stdin* {.importc: "__stdinp", header: "<stdio.h>".}: File
+      ## Standard input file handle.
+    stdout* {.importc: "__stdoutp", header: "<stdio.h>".}: File
+      ## Standard output file handle.
+    stderr* {.importc: "__stderrp", header: "<stdio.h>".}: File
+      ## Standard error file handle.
+else:
+  var
+    stdin* {.importc: "stdin", header: "<stdio.h>".}: File
+      ## Standard input file handle.
+    stdout* {.importc: "stdout", header: "<stdio.h>".}: File
+      ## Standard output file handle.
+    stderr* {.importc: "stderr", header: "<stdio.h>".}: File
+      ## Standard error file handle.
 
 proc c_fputc(c: int32; f: File): int32 {.
   importc: "fputc", header: "<stdio.h>".}
@@ -100,7 +109,10 @@ proc failed*(f: File): bool {.inline.} =
 proc c_setvbuf(f: File; buffer: pointer; mode: int32; size: uint): int32 {.
   importc: "setvbuf", header: "<stdio.h>".}
 
-var IOFBF {.importc: "_IOFBF", header: "<stdio.h>".}: int32
+when defined(macos) or defined(macosx) or defined(linux) or defined(windows):
+  const IOFBF = 0'i32
+else:
+  var IOFBF {.importc: "_IOFBF", header: "<stdio.h>".}: int32
 
 proc open*(f: out File; filename: string;
            mode: FileMode = fmRead;

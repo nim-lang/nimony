@@ -711,7 +711,7 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     of Symbol:
       let s = n.symId
       c.requestedSyms.incl s
-      var name = mangleSym(c, s)
+      let name = mangleSym(c, s)
       # Look up the type from the scope before advancing
       let symType = getType(c.m, n)
       let decl = c.m.getDeclOrNil(s)
@@ -746,26 +746,6 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
         let typ = genTypeLLVMReadOnly(c, symType)
         result = LLValue(name: c.tok("@" & name), typ: c.tok(typ))
         return
-      # Check if this importc symbol is a C macro that needs resolution
-      if decl != nil and decl.extern != StrId(0):
-        let entry = resolveImportMacro(pool.strings[decl.extern])
-        case entry.kind
-        of imkReplace:
-          name = entry.resolvedName  # use real symbol name for the load
-        of imkConstant:
-          let typ = genTypeLLVMReadOnly(c, symType)
-          let t = c.temp()
-          c.emitLine "  " & c.str(t) & " = trunc i" & $c.bits & " " & entry.constVal & " to " & typ
-          result = LLValue(name: t, typ: c.tok(typ))
-          return
-        of imkCall:
-          let typ = genTypeLLVMReadOnly(c, symType)
-          let cp = c.temp()
-          c.emitLine "  " & c.str(cp) & " = call ptr @" & entry.callFuncName & "()"
-          let t = c.temp()
-          c.emitLine "  " & c.str(t) & " = load " & typ & ", ptr " & c.str(cp)
-          result = LLValue(name: t, typ: c.tok(typ))
-          return
       let typ = genTypeLLVMReadOnly(c, symType)
       let prefix = if isGlobalSym(c, s): "@" else: "%"
       let t = c.temp()
