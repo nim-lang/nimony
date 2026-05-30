@@ -404,13 +404,14 @@ proc genCallWithType(c: var LLVMCode; n: var Cursor; retType: string; result: va
       return
 
   let argStr = args.mapIt(c.str(it.typ) & " " & c.str(it.name)).join(", ")
+  let funcType = if calleeName in c.varargsFuncTypes: c.varargsFuncTypes[calleeName] & " " else: ""
 
   if retType == "void":
-    c.emitLineDbg "  call void " & calleeName & "(" & argStr & ")", callInfo
+    c.emitLineDbg "  call void " & funcType & calleeName & "(" & argStr & ")", callInfo
     result = LLValue(name: LToken(EmptyToken), typ: LToken(VoidToken))
   else:
     let t = c.temp()
-    c.emitLineDbg "  " & c.str(t) & " = call " & retType & " " & calleeName & "(" & argStr & ")", callInfo
+    c.emitLineDbg "  " & c.str(t) & " = call " & retType & " " & funcType & calleeName & "(" & argStr & ")", callInfo
     result = LLValue(name: t, typ: c.tok(retType))
 
 proc genCallLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
