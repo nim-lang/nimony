@@ -9,7 +9,7 @@
 ## `AsmSlot` (kind + size + align). Drives register-class and width decisions
 ## in the register allocator and code generator.
 
-import std / [assertions, tables]
+import std / [assertions]
 import nifcore
 import nifcdecl
 
@@ -73,7 +73,7 @@ proc classifyResult*(s: AsmSlot): ResultClass =
   of AMem: (if s.size > 16: RcIndirect else: RcGpr)
   else: RcGpr
 
-proc typeBits(c: Cursor): int =
+proc typeBits*(c: Cursor): int =
   ## First child of a `(i N)` / `(u N)` / `(f N)` / `(c N)` type is the bit count.
   var t = c
   inc t   # past the type head → first child
@@ -98,99 +98,13 @@ proc typeToSlot*(c: Cursor): AsmSlot =
   else:
     AsmSlot(kind: AMem, size: 0, align: 1)           # object/array/union/void/…
 
-# ── aggregate layout (shared by the allocator + the code generator) ─────────
-# arkham computes its own object layout (mirroring nifasm's) for ABI decisions.
-# `typeDecls` maps a named type to its `(type …)` declaration cursor.
+# ── aggregate layout descriptors ────────────────────────────────────────────
+# The name-resolving size/layout queries (`typeSizeAlign`, `aggrLayout`, …) live
+# in `programs.nim` since they must follow named types across modules; slots
+# keeps only the pure, structural pieces.
 
 type
   FieldInfo* = tuple[name: string, off, size: int]
-
-proc typeSizeAlign*(td: Table[string, Cursor]; c: Cursor): (int, int)
-
-proc objSizeAlign(td: Table[string, Cursor]; bodyc: Cursor): (int, int) =
-  var oc = bodyc
-  var off = 0
-  var maxAl = 1
-  oc.into:
-    skip oc                                   # base / inheritance
-    while oc.hasMore:
-      oc.into:                                # (fld :name pragmas type)
-        inc oc; skip oc                       # name, field-pragmas
-        let (fsz, fal) = typeSizeAlign(td, oc)
-        skip oc                               # consume the field type
-        off = align(off, fal) + fsz
-        if fal > maxAl: maxAl = fal
-  result = (align(off, maxAl), maxAl)
-
-proc typeSizeAlign*(td: Table[string, Cursor]; c: Cursor): (int, int) =
-  ## Size and alignment (bytes) of a NIFC type, mirroring nifasm's layout.
-  case c.kind
-  of Symbol:
-    let nm = symName(c)
-    if not td.hasKey(nm): raiseAssert "arkham: unknown type " & nm
-    var d = td[nm]
-    d.into:
-      inc d; skip d                           # name, type-pragmas
-      let r = typeSizeAlign(td, d); skip d
-      result = r
-  of TagLit:
-    case c.typeKind
-    of IT, UT, FT, CT:
-      let bits = typeBits(c)
-      let bytes = (if bits > 0: bits else: 64) div 8
-      result = (bytes, bytes)
-    of BoolT: result = (1, 1)
-    of PtrT, AptrT, ProctypeT: result = (8, 8)
-    of ObjectT: result = objSizeAlign(td, c)
-    of EnumT:                               # collapses to its base integer type
-      var t = c
-      t.into:
-        result = typeSizeAlign(td, t); skip t
-        while t.hasMore: skip t             # efld members
-    of ArrayT:
-      var t = c
-      t.into:
-        let (esz, eal) = typeSizeAlign(td, t); skip t
-        let n = if t.kind == IntLit: int(intVal(t)) else: 0
-        result = (esz * n, eal)
-    else: raiseAssert "arkham: cannot size type " & $c.typeKind
-  else: raiseAssert "arkham: malformed type for sizing"
-
-proc aggrByteSize*(td: Table[string, Cursor]; typeName: string): int =
-  var d = td[typeName]
-  d.into:
-    inc d; skip d                             # name, type-pragmas
-    let r = typeSizeAlign(td, d); skip d
-    result = r[0]
-
-proc aggrWordCount*(td: Table[string, Cursor]; typeName: string): int =
-  ## Number of 8-byte GPRs a ≤16-byte aggregate occupies (1 or 2).
-  let sz = aggrByteSize(td, typeName)
-  assert sz <= 16, "arkham v1: >16-byte aggregate ABI (by-ref / x8) not yet supported"
-  (sz + 7) div 8
-
-proc aggrLayout*(td: Table[string, Cursor]; typeName: string): seq[FieldInfo] =
-  result = @[]
-  var d = td[typeName]
-  var body: Cursor
-  d.into:
-    inc d; skip d                             # name, type-pragmas
-    body = d; skip d                          # the body
-  assert body.kind == TagLit and body.typeKind == ObjectT,
-    "arkham: aggregate ABI requires an object type: " & typeName
-  var oc = body
-  var off = 0
-  oc.into:
-    skip oc                                   # base / inheritance
-    while oc.hasMore:
-      oc.into:                                # (fld :name pragmas type)
-        let fn = symName(oc); inc oc
-        skip oc                               # field-pragmas
-        let (fsz, fal) = typeSizeAlign(td, oc)
-        skip oc
-        off = align(off, fal)
-        result.add (name: fn, off: off, size: fsz)
-        off += fsz
 
 proc fieldAtOffset*(lay: seq[FieldInfo]; byteOff: int): string =
   for f in lay:

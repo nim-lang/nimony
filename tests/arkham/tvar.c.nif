@@ -1,8 +1,13 @@
 (.nif27)
 (stmts
- (tvar :t.0 . (i 64) 40)
+ (tvar :tg.0 . (i 64) 5)
+ (tvar :th.0 . (i 64) .)
  (proc :exit.c (params (param :code.0 . (i 32))) . (pragmas (importc "exit")) (stmts .))
+ (proc :bump.0 (params) . .
+  (stmts
+   (asgn th.0 (add (i 64) th.0 3))))
  (proc :main.0 (params) (i 32) (pragmas (exportc "main"))
   (stmts
-   (asgn t.0 (add (i 64) t.0 2))
-   (call exit.c t.0))))
+   (call bump.0)
+   (asgn tg.0 (add (i 64) tg.0 th.0))
+   (call exit.c tg.0))))

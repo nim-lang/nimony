@@ -40,12 +40,25 @@ const
   IntCalleeSaved* = [X19, X20, X21, X22, X23, X24, X25, X26, X27, X28]
   ## Caller-saved set clobbered across any call (incl. an extcall).
   IntCallerSaved* = {X0..X17}
-  FloatTempRegs* = [V9, V10, V11, V12, V13, V14, V15]
+  ## Caller-saved SIMD/FP scratch: v16–v31 are fully caller-saved (and v0–v7
+  ## are argument/return registers, also caller-saved). arkham keeps float
+  ## values in these; a float that must survive a call (v8–v15 callee-saved)
+  ## is not yet supported.
+  FloatTempRegs* = [V16, V17, V18, V19, V20, V21, V22, V23,
+                    V24, V25, V26, V27, V28, V29, V30, V31]
+  ## Callee-saved (low 64 bits of v8–v15) — reserved for a future FP frame.
   FloatCalleeSaved* = [V8, V9, V10, V11, V12, V13, V14, V15]
 
   ## Never allocate: x16/x17 (IP0/IP1 veneers), x18 (Darwin platform reg),
   ## x8 (indirect result), fp/lr/sp.
   ReservedRegs* = {X8, X16, X17, X18, X29, X30, SP, NoReg}
+
+  ## The GPRs a call clobbers under the C/AAPCS64 convention — the caller-saved
+  ## volatiles arkham manages (args x0–x7 + temps x9–x15, and x8). Emitted as the
+  ## proc's `(clobber …)` so the ABI is declared at the signature rather than
+  ## re-derived; x16/x17 (assembler veneers) and x18 (platform) are excluded.
+  ConvClobbersGpr* = [X0, X1, X2, X3, X4, X5, X6, X7, X8,
+                      X9, X10, X11, X12, X13, X14, X15]
 
 proc regName*(r: Reg): string =
   case r

@@ -17,7 +17,7 @@
 ## Ported from `src/wip/native/analyser.nim` to the nifcore cursor API; keyed
 ## by symbol *name* (nifcore has no stable SymId for inline-short symbols).
 
-import std / [tables, assertions]
+import std / [tables, sets, assertions]
 import nifcore
 import nifcdecl
 import slots
@@ -40,6 +40,7 @@ type
     inLoops, inAddr, inAsgnTarget, inArrayIndex: int
     res: ProcAnalysis
     scopes: seq[Scope]
+    tvars: HashSet[string]     ## thread-local var names: a reference acts like a call
 
 const
   LoopWeight = 3   ## assume a loop body runs ~3× for weighting purposes
@@ -88,6 +89,11 @@ proc analyse(c: var Context; n: var Cursor) =
       if (c.inAddr + c.inArrayIndex) > 0:
         # arrays / address-taken locals cannot live in a register
         e.props.incl AddrTaken
+    elif vn in c.tvars:
+      # A thread-local access lowers to the TLV thunk call (clobbers x0/lr), so
+      # treat it like a call: the proc needs a frame and its locals/params must
+      # avoid the volatile argument registers.
+      c.scopes[^1].hasCall = true
     inc n
   of IntLit, UIntLit, FloatLit, CharLit, StrLit, Ident, SymbolDef, DotToken:
     inc n
@@ -159,9 +165,10 @@ proc analyseParams(c: var Context; params: var Cursor) =
         while params.hasMore: skip params   # pragmas, type
         # (rest consumed by into epilogue)
 
-proc analyseProc*(procDecl: Cursor): ProcAnalysis =
-  ## `procDecl` is at a `(proc name params rettype pragmas body)`.
-  var c = Context()
+proc analyseProc*(procDecl: Cursor; tvars: HashSet[string] = initHashSet[string]()): ProcAnalysis =
+  ## `procDecl` is at a `(proc name params rettype pragmas body)`. `tvars` names
+  ## the module's thread-locals so their uses force a call-like analysis.
+  var c = Context(tvars: tvars)
   c.scopes.add Scope()                  # the always-present outermost scope
   var n = procDecl
   assert n.stmtKind == ProcS

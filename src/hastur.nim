@@ -1557,7 +1557,19 @@ proc arkhamtests(overwrite: bool) =
   let nifasmExe = binDir() / "nifasm".addFileExt(ExeExt)
   let workDir = nimcacheDir / "arkham"
   createDir workDir
+  # Foreign helper modules (`mod_*.c.nif`) are not standalone tests: compile each
+  # to `<workDir>/<name>.s.nif` so nifasm can auto-import it when a cross-module
+  # test references its symbols (`Foo.0.mod_xlib` → loads `mod_xlib.s.nif`).
+  for file in walkFiles("tests/arkham/mod_*.c.nif"):
+    let base = extractFilename(file)
+    let modName = base[0 ..< base.len - ".c.nif".len]
+    let s = workDir / (modName & ".s.nif")
+    let (mo, mc) = execCmdEx(quoteShell(arkhamExe) & " -o:" & quoteShell(s) & " " & quoteShell(file))
+    if mc != 0:
+      inc c.total
+      failure c, file, "arkham (foreign module) failed:\n" & mo
   for file in walkFiles("tests/arkham/*.c.nif"):
+    if extractFilename(file).startsWith("mod_"): continue   # foreign helper, not standalone
     inc c.total
     let stem = file[0 ..< file.len - ".c.nif".len]
     let base = extractFilename(stem)

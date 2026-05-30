@@ -26,13 +26,14 @@
 ## prologue/epilogue. Weight-based stealing is a later refinement.
 
 import std / [tables, assertions]
-import nifcore, nifcdecl, slots, machine, analyser
+import nifcore, nifcdecl, slots, machine, analyser, programs
 
 type
   RegAlloc* = object
     locs*: seq[Location]              ## indexed by cursorToPosition
     symPos*: Table[string, int]       ## local/param name → its def position
-    usedCallee*: set[Reg]             ## callee-saved regs to save in prologue
+    usedCallee*: set[Reg]             ## callee-saved GPRs to save in prologue
+    usedCalleeF*: set[FReg]           ## callee-saved SIMD regs (v8–v15) to save in prologue
     frameSize*: int                   ## bytes of stack frame for spilled slots
     hasStackVars*: bool               ## proc has nifasm-managed `(s)` aggregate vars
     sealed*: set[Reg]                 ## registers pinned to an in-flight ABI
@@ -44,8 +45,10 @@ type
     ra: RegAlloc
     buf: ptr TokenBuf
     an: ptr ProcAnalysis
-    typeDecls: Table[string, Cursor]  ## named type → its decl (for aggregate sizing)
+    prog: ptr Program                 ## program (for cross-module type resolution / sizing)
     freeVol, freeCallee: set[Reg]
+    freeVolF: set[FReg]               ## caller-saved SIMD/FP scratch pool (v16–v31)
+    freeCalleeF: set[FReg]            ## callee-saved SIMD pool (v8–v15)
     scopeVars: seq[seq[string]]       ## register-eligible locals per open scope
                                       ## (steal candidates; freed by current loc)
 
@@ -63,14 +66,36 @@ proc takeReg(b: var Builder; pool: var set[Reg]; cands: openArray[Reg]): Reg =
       return r
   result = NoReg
 
+proc takeFReg(b: var Builder; pool: var set[FReg]; cands: openArray[FReg]): FReg =
+  ## Take the first free SIMD register from `cands` out of `pool`.
+  for f in cands:
+    if f in pool:
+      excl pool, f
+      return f
+  result = NoFReg
+
 proc spill(b: var Builder; slot: AsmSlot): Location =
   b.ra.frameSize += align(max(slot.size, 1), 8)
   result = stackLoc(-b.ra.frameSize, slot)
 
 proc allocStorage(b: var Builder; slot: AsmSlot; props: VarProps): Location =
   ## Decide where one local/param lives. Records reg use for scope freeing.
-  if AddrTaken in props or not slot.inRegClass or slot.isFloat:
-    return b.spill(slot)             # TODO: real FP register allocation
+  if slot.isFloat:
+    # Floats in a call-free region use caller-saved scratch (v16–v31); those
+    # live across a call use callee-saved (v8–v15), saved in the prologue.
+    # Address-taken floats fall back to a (codegen-unsupported) slot.
+    if AddrTaken in props: return b.spill(slot)
+    var f: FReg
+    if AllRegs in props:
+      f = b.takeFReg(b.freeVolF, FloatTempRegs)
+      if f == NoFReg: f = b.takeFReg(b.freeCalleeF, FloatCalleeSaved)
+    else:
+      f = b.takeFReg(b.freeCalleeF, FloatCalleeSaved)
+    if f == NoFReg: return b.spill(slot)
+    if f in {V8..V15}: b.ra.usedCalleeF.incl f
+    return fregLoc(f, slot)
+  if AddrTaken in props or not slot.inRegClass:
+    return b.spill(slot)
   var r: Reg
   if AllRegs in props:
     r = b.takeReg(b.freeVol, IntTempRegs)
@@ -86,6 +111,10 @@ proc giveBack(b: var Builder; r: Reg) {.inline.} =
   if r in {X19..X28}: b.freeCallee.incl r
   elif r != NoReg: b.freeVol.incl r
 
+proc giveBackF(b: var Builder; f: FReg) {.inline.} =
+  if f in {V8..V15}: b.freeCalleeF.incl f
+  elif f != NoFReg: b.freeVolF.incl f
+
 proc weightOf(b: Builder; name: string): int {.inline.} =
   b.an.vars.getOrDefault(name).weight
 
@@ -99,6 +128,7 @@ proc closeScope(b: var Builder) =
   for v in b.scopeVars.pop():
     let loc = b.ra.locs[b.ra.symPos[v]]
     if loc.kind == InReg: b.giveBack loc.r
+    elif loc.kind == InFReg: b.giveBackF loc.f
 
 proc record(b: var Builder; pos: int; name: string; loc: Location) =
   b.ra.symPos[name] = pos
@@ -127,7 +157,10 @@ proc trySteal(b: var Builder; curName: string; curSlot: AsmSlot;
   if bestReg == NoReg: return fallback      # nothing colder to steal from
   # evict the victim to the (current's) stack slot; current takes its register
   let vpos = b.ra.symPos[bestV]
-  b.ra.locs[vpos] = stackLoc(fallback.offset, b.ra.locs[vpos].typ)
+  # The victim moves to a nifasm-managed `(s)` slot, addressed by its own name
+  # (offsets are nifasm's job). `fallback`'s numeric offset is irrelevant now.
+  b.ra.locs[vpos] = namedStackLoc(bestV, b.ra.locs[vpos].typ)
+  b.ra.hasStackVars = true
   if bestReg in {X19..X28}: b.ra.usedCallee.incl bestReg
   result = regLoc(bestReg, curSlot)
 
@@ -137,7 +170,7 @@ proc allocVarDecl(b: var Builder; n: var Cursor) =
     assert n.kind == SymbolDef
     let name = symName(n); inc n
     skip n                                   # pragmas
-    let slot = typeToSlot(n); skip n         # type
+    let slot = slotOf(b.prog[], n); skip n  # type (resolves named types)
     if n.hasMore: skip n                     # value (analysed in pass 1)
     if slot.kind == AMem:
       # an aggregate (object/array/named type): a nifasm-managed `(s)` stack
@@ -151,6 +184,13 @@ proc allocVarDecl(b: var Builder; n: var Cursor) =
       if loc.kind == OnStack and AddrTaken notin props and
          slot.inRegClass and not slot.isFloat:
         loc = b.trySteal(name, slot, props, loc)  # hot var evicts a colder one
+      if loc.kind == OnStack:
+        # A spilled (or address-taken) scalar — integer/pointer (`(s) (i 64)`) or
+        # float (`(s) (f N)`) — lives in a nifasm-managed slot addressed by name,
+        # same frame as aggregates, so nifasm computes the offset. (Floats don't
+        # participate in `trySteal` eviction yet; they spill directly here.)
+        loc = namedStackLoc(name, slot)
+        b.ra.hasStackVars = true
       b.record(pos, name, loc)
       b.scopeVars[^1].add name
 
@@ -175,6 +215,7 @@ proc walk(b: var Builder; n: var Cursor) =
 proc allocParams(b: var Builder; params: var Cursor; hasCall: bool) =
   if params.kind != TagLit: return
   var intIdx = 0
+  var fidx = 0
   params.into:
     while params.hasMore:
       params.into:
@@ -182,16 +223,14 @@ proc allocParams(b: var Builder; params: var Cursor; hasCall: bool) =
         assert params.kind == SymbolDef
         let name = symName(params); inc params
         skip params                          # pragmas
-        let typeCur = params
-        let slot = typeToSlot(params); skip params  # type
+        let slot = slotOf(b.prog[], params); skip params  # type (resolves named)
         # Classify an aggregate param: ≤16B by-value (a `(s)` stack home filled
         # from its GPR(s)) vs >16B by-reference (a pointer, like a scalar).
         var aggrSmall = false
         var aggrByRef = false
         var aggrWords = 0
         if slot.kind == AMem:
-          let tn = if typeCur.kind == Symbol: symName(typeCur) else: ""
-          let sz = if tn.len > 0: aggrByteSize(b.typeDecls, tn) else: 0
+          let sz = slot.size                  # filled by slotOf (named or inline)
           if sz >= 1 and sz <= 16: (aggrSmall = true; aggrWords = (sz + 7) div 8)
           else: aggrByRef = true
         if aggrSmall:
@@ -205,8 +244,29 @@ proc allocParams(b: var Builder; params: var Cursor; hasCall: bool) =
           let effSlot = if aggrByRef: AsmSlot(kind: AUInt, size: 8, align: 8) else: slot
           let props = b.an.vars.getOrDefault(name).props
           var loc: Location
-          if effSlot.isFloat or not effSlot.inRegClass:
-            loc = b.spill(effSlot)             # TODO: float params
+          if effSlot.isFloat:
+            # A float parameter arrives in v{fidx}. In a leaf proc it stays
+            # there; if the proc makes calls it moves to a callee-saved register
+            # (v8–v15) so it survives them; if address-taken it spills to a slot.
+            # Either way the incoming register is consumed, so `fidx` advances in
+            # lockstep with emitParamMoves (the >8-float case is still TODO).
+            if fidx < FloatArgRegs.len:
+              if AddrTaken in props:
+                loc = b.spill(effSlot)           # address taken → must be on the stack
+              elif hasCall:
+                let f = b.takeFReg(b.freeCalleeF, FloatCalleeSaved)
+                if f != NoFReg:
+                  b.ra.usedCalleeF.incl f
+                  loc = fregLoc(f, effSlot)
+                else:
+                  loc = b.spill(effSlot)
+              else:
+                loc = fregLoc(FloatArgRegs[fidx], effSlot)
+              inc fidx
+            else:
+              loc = b.spill(effSlot)             # >8 float args: stack-passed (TODO)
+          elif not effSlot.inRegClass:
+            loc = b.spill(effSlot)
           elif intIdx < IntArgRegs.len:
             let arg = IntArgRegs[intIdx]
             if AddrTaken in props and not aggrByRef:
@@ -225,20 +285,41 @@ proc allocParams(b: var Builder; params: var Cursor; hasCall: bool) =
               loc = regLoc(arg, effSlot)       # leaf proc: stay in the arg reg
             inc intIdx
           else:
-            loc = b.spill(effSlot)             # stack-passed argument
+            # The 9th integer/pointer parameter onward arrives on the caller's
+            # stack (AAPCS64). arkham gives it a callee-saved register home that
+            # the prologue loads from the incoming arg slot before SP is lowered
+            # for locals, so it survives the whole proc. Address-taken or
+            # out-of-register stack params aren't supported yet.
+            if AddrTaken in props:
+              raiseAssert "arkham v1: address-taken >8th parameter"
+            let r = b.takeReg(b.freeCallee, IntCalleeSaved)
+            if r == NoReg:
+              raiseAssert "arkham v1: out of callee-saved registers for >8th parameter"
+            b.ra.usedCallee.incl r
+            loc = regLoc(r, effSlot)
+            inc intIdx
+          if loc.kind == OnStack and slot.kind != AMem:
+            # An address-taken scalar param (integer or float): a nifasm `(s)`
+            # slot the prologue fills from the incoming arg register (int or SIMD;
+            # see emitParamMoves).
+            loc = namedStackLoc(name, effSlot)
+            b.ra.hasStackVars = true
           b.record(pos, name, loc)
 
 proc allocateProc*(buf: var TokenBuf; procDecl: Cursor; an: ProcAnalysis;
-                   typeDecls: Table[string, Cursor];
+                   prog: var Program;
                    presealed: set[Reg] = {}): RegAlloc =
   ## Allocate storage for the params and locals of `procDecl`. `presealed`
-  ## registers are reserved for the whole proc (never allocated/stolen).
-  var b = Builder(buf: addr buf, an: addr an, typeDecls: typeDecls)
+  ## registers are reserved for the whole proc (never allocated/stolen). `prog`
+  ## is taken by `var` because resolving a cross-module type may load a module.
+  var b = Builder(buf: addr buf, an: addr an, prog: addr prog)
   b.ra.locs = newSeq[Location](buf.len)
   b.ra.symPos = initTable[string, int]()
   b.ra.sealed = presealed
   for r in IntTempRegs: b.freeVol.incl r
   for r in IntCalleeSaved: b.freeCallee.incl r
+  for f in FloatTempRegs: b.freeVolF.incl f
+  for f in FloatCalleeSaved: b.freeCalleeF.incl f
   var n = procDecl
   assert n.stmtKind == ProcS
   b.openScope()

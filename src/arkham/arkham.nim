@@ -26,8 +26,12 @@ Options:
 """
 
 proc run(input, output: string) =
-  var buf = parseFromFile(input, sharedTags = createNifcTagPool())
-  writeFile(output, generate(buf))
+  # One shared tag pool across the main module and any foreign modules the
+  # program model loads on demand, so tag ordinals (hence stmtKind/typeKind
+  # decoding) line up across modules.
+  let tags = createNifcTagPool()
+  var buf = parseFromFile(input, sharedTags = tags)
+  writeFile(output, generate(buf, input, tags))
 
 proc main() =
   var input, output = ""
