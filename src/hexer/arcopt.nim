@@ -245,8 +245,9 @@ proc analyse(c: var Con; b: var BasicBlock; n: var Cursor) =
         var le = n
         skip n
         if n.hasMore:
-          var ri = n
-          analyse(c, b, ri)
+          # analyse the rhs (advancing `n` so the scope is consumed) before
+          # the lhs, mirroring evaluation order for wasMoved tracking.
+          analyse(c, b, n)
           analyse(c, b, le)
     of IfS:
       let exhaustive = isExhaustive(n, ElseU)
