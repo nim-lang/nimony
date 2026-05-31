@@ -40,10 +40,18 @@
 
 import std / [tables, sets, assertions]
 include "../../lib" / nifprelude
-import nifstreams, nifcursors
+# nifstreams / nifcursors come from the included nifprelude; bare-importing them
+# resolves to the wrong path under nimony boot. The self-tests still qualify
+# `nifstreams.openFromBuffer` via the included import.
 import ".." / nifc_model
 import "../.." / lib / symparser
-import trackers, patchsets, nifrender
+import trackers, patchsets
+# `nifrender` (render / assertRender) is only used by the host-Nim self-tests
+# below; exclude it under nimony (guarded by `defined(nimony)`, which nifler can
+# evaluate when building the boot dependency graph — `isMainModule` cannot) so
+# nimony need not self-compile it during boot (it relies on host-only `doAssert`).
+when not defined(nimony):
+  import nifrender
 
 type
   Context = object
@@ -124,6 +132,23 @@ proc landLabel(c: var Context; L: LabelId) =
 proc clearAllFacts(c: var Context) =
   c.moved.clearAll()
   c.positions.clearAll()
+
+proc resetPerProc(c: var Context) =
+  ## Fresh state at a proc boundary. NIFC locals (`x.0`, `result.0`, …) are
+  ## unique only within a proc, so the SymId-keyed `moved`/`positions` trackers
+  ## must not carry across procs or two procs' identically-named locals would
+  ## alias. `tainted` is position-keyed (no cross-proc aliasing) but reset too.
+  c.moved.clearAll()
+  c.positions.clearAll()
+  c.tainted = initHashSet[int]()
+
+proc markDiverged(c: var Context) =
+  ## The current path leaves the block (`return`/`raise`/`break`). The trackers
+  ## remember it (see `Tracker.markDiverged`) and drop this branch from the
+  ## enclosing join at `closeBranch`; full divergence propagates outward on its
+  ## own, so the walker never computes divergence itself.
+  c.moved.markDiverged()
+  c.positions.markDiverged()
 
 # ---- hook-symbol recognition ----------------------------------------------
 
@@ -226,6 +251,8 @@ proc trAsgn(c: var Context; n: var Cursor) =
     trExpr(c, n)
 
 proc trIf(c: var Context; n: var Cursor) =
+  ## `closeBranch` drops any branch whose body diverged; `closeBranches`
+  ## propagates "every arm diverged" outward — see `trackers.markDiverged`.
   openBranches c
   n.loopInto:
     case n.substructureKind
@@ -233,7 +260,7 @@ proc trIf(c: var Context; n: var Cursor) =
       n.into:
         trExpr(c, n)                   # condition
         openBranch c
-        tr(c, n)                       # body
+        tr(c, n)                       # body (may set the diverged flag)
         closeBranch c
     of ElseU:
       n.into:
@@ -288,16 +315,33 @@ proc trLab(c: var Context; n: var Cursor) =
   skip n
 
 proc trBreakOrRet(c: var Context; n: var Cursor) =
-  ## `break` / `ret` / `raise` end straight-line flow. Clear facts so they
-  ## cannot leak into following dead code.
+  ## `break` / `ret` / `raise` leave the block: mark the path diverged so the
+  ## enclosing branch is dropped from its join. Also clear facts so nothing
+  ## leaks into following dead code on paths that are not inside a branch.
   skip n
+  markDiverged c
   clearAllFacts c
 
 proc tr(c: var Context; n: var Cursor) =
+  ## Walk one statement/node, updating tracker state. Divergence is recorded in
+  ## the trackers' `pathDiverged` flag (set by `markDiverged`/`gotoLabel`, reset
+  ## per branch), not returned — so nesting and joins are handled by the
+  ## tracker as it sees `openBranch`/`closeBranch`/`closeBranches` in order.
   if not n.hasMore: return
   case n.kind
   of ParLe:
     case n.stmtKind
+    of ProcS:
+      # `(proc name params rettype pragmas body)`. Analyse the body with fresh
+      # per-proc state; NIFC has no nested procs, so no re-entrancy. Module
+      # top-level reaches here through the enclosing `(stmts …)`.
+      resetPerProc c
+      n.into:
+        while n.hasMore:
+          if n.kind == ParLe and n.stmtKind in {StmtsS, ScopeS}:
+            tr(c, n)             # the body
+          else:
+            skip n               # name / params / rettype / pragmas
     of CallS:                trCall(c, n)
     of AsgnS, StoreS:        trAsgn(c, n)
     of IfS:                  trIf(c, n)
@@ -322,10 +366,17 @@ proc tr(c: var Context; n: var Cursor) =
 
 # ---- public entry point ----------------------------------------------------
 
-proc runArcopt*(buf: var TokenBuf) =
+proc runArcopt*(buf: var TokenBuf; moduleSuffix = ""; bits = 0) =
   ## Two-phase: walk `buf` to identify elidable `=destroy(x)` (and the
   ## paired `=wasMoved(x)` calls) and record substitution patches; then
   ## rebuild `buf` with each elided call replaced by a single `DotToken`.
+  ##
+  ## Runs on already-generated NIFC, where `try`/`finally` has been lowered to
+  ## explicit control flow — so there is no finally-specific handling to do.
+  ## `moduleSuffix`/`bits` are accepted for pipeline call-site compatibility
+  ## but unused: the pass works on absolute buffer positions and is
+  ## width-agnostic. `tr` resets state at each `(proc …)`; a buffer that is a
+  ## bare statement list (the self-tests) is analysed as a single body.
   var ctx = createContext(addr buf)
   var n = beginRead(buf)
   tr(ctx, n)
@@ -406,5 +457,48 @@ when isMainModule:
 (call use.0.M x.0.M).))
 (else
 (stmts))).)""")
+
+  block diverging_branch_preserves_fallthrough_move:
+    # `=wasMoved(x); if c: return; =destroy(x)`. The `if` has no else and the
+    # only branch diverges, so it contributes nothing to the join: the move
+    # established before the `if` survives to the destroy on the fall-through
+    # path, and the pair is elided. (Before divergence handling the returning
+    # branch folded in as a conservative fall-through and blocked this.)
+    var buf = parse(
+      "(stmts (call =wasMoved.0.M x.0.M) (if (elif c.0.M (stmts (ret)))) (call =destroy.0.M x.0.M))")
+    runArcopt buf
+    assertRender(buf, """
+(stmts .
+(if
+(elif c.0.M
+(stmts
+(ret)))).)""")
+
+  block diverging_branch_move_does_not_leak_to_join:
+    # `if c: =wasMoved(x); return else: <nothing>; =destroy(x)`. The move is on
+    # the diverging branch only; the else path reaches the destroy with x NOT
+    # moved, so nothing may be elided.
+    assertUnchanged(
+      "(stmts (if (elif c.0.M (stmts (call =wasMoved.0.M x.0.M) (ret))) (else (stmts))) (call =destroy.0.M x.0.M))")
+
+  block per_proc_reset_and_elision:
+    # Two procs each with their own `x.0.M` local; the pair elides inside each,
+    # and per-proc reset keeps proc 1's move from leaking into proc 2.
+    discard pool.syms.getOrIncl("f.0.M")
+    discard pool.syms.getOrIncl("g.0.M")
+    var buf = parse(
+      "(stmts " &
+        "(proc f.0.M . . . (stmts (call =wasMoved.0.M x.0.M) (call =destroy.0.M x.0.M))) " &
+        "(proc g.0.M . . . (stmts (call =destroy.0.M x.0.M))))")
+    runArcopt buf
+    # proc f: pair elided to dots. proc g: lone destroy (no preceding move,
+    # and no leak from f) stays.
+    assertRender(buf, """
+(stmts
+(proc f.0.M . . .
+(stmts . .))
+(proc g.0.M . . .
+(stmts
+(call =destroy.0.M x.0.M))))""")
 
   echo "arcopt.nim: all self-tests passed"

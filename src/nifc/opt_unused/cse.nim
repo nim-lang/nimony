@@ -274,6 +274,7 @@ proc preScanWrites(start: Cursor; writes, addrs: var HashSet[SymId]) =
 # ---- cache invalidation ---------------------------------------------------
 
 proc markAddrTaken(c: var Context; s: SymId)
+proc clearCache(c: var Context)
 
 proc invalidateMentioning(c: var Context; target: SymId) =
   var toClear: seq[string] = @[]
@@ -306,30 +307,41 @@ proc callSummary(c: Context; call: Cursor; summary: var FunctionSummary): bool =
   result = true
 
 proc invalidateForCall(c: var Context; call: Cursor) =
+  ## Every cached entry is a `loadsAPointer` chain: its address is a function
+  ## of one or more pointer values held in memory. A callee that writes to
+  ## memory can change any of those pointers, and without alias analysis we
+  ## cannot prove the write misses a cached chain. So the cache survives a
+  ## call ONLY when the callee is provably write-free; otherwise we drop it.
+  ## (The earlier `s in c.addrTaken` gate was unsound — a callee writes
+  ## through a *pointer argument* regardless of whether the caller took the
+  ## address of anything, e.g. `setLen(s)` reallocating `s`'s buffer leaves a
+  ## cached `addr(s.data[i])` dangling.)
   var summary = FunctionSummary()
   if not callSummary(c, call, summary):
-    invalidateForCall c
+    clearCache c               # unknown callee: assume it writes memory
     return
 
+  if summary.writesGlobal or summary.callsUnknown:
+    clearCache c
+    return
+
+  # Mark escaping pointer args as addr-taken (kept for symbol-level reasoning
+  # by `invalidateMentioning` elsewhere), and detect any write-through-pointer.
   var args = call.firstSon
   skip args
   var argIndex = 0
-  var affected = initHashSet[SymId]()
+  var mayWrite = false
   while args.kind != ParRi:
     let s = firstSymbolIn(args)
-    if s != SymId(0):
-      if paramDirectEscapes(summary, argIndex):
-        markAddrTaken(c, s)
-      if paramMayWrite(summary, argIndex) and s in c.addrTaken:
-        affected.incl s
+    if s != SymId(0) and paramDirectEscapes(summary, argIndex):
+      markAddrTaken(c, s)
+    if paramMayWrite(summary, argIndex):
+      mayWrite = true
     skip args
     inc argIndex
 
-  if summary.writesGlobal or summary.callsUnknown:
-    invalidateForCall c
-  else:
-    for s in affected:
-      invalidateMentioning(c, s)
+  if mayWrite:
+    clearCache c
 
 # ---- synthesis ------------------------------------------------------------
 
@@ -402,6 +414,18 @@ proc handleCandidate(c: var Context; n: Cursor) =
     if stmtPos < 0:
       # No hoist anchor — can't introduce a temp; skip.
       return
+    # If the hoist anchor is a loop statement, this candidate lives in the
+    # loop's *condition* (the body's own statements would be the anchor
+    # instead). Hoisting the address before the loop computes it ONCE, but the
+    # condition re-evaluates every iteration — so a body that mutates the
+    # underlying pointer (e.g. `while c.scope.up != nil: c.scope = c.scope.up`)
+    # would keep reading the stale, pre-loop address and never terminate.
+    # The hoist model can't express "recompute per iteration", so don't CSE
+    # condition candidates at all; the same expression inside the body still
+    # gets CSE'd normally (anchored to a body statement, inside the loop).
+    let anchor = cursorAt(c.orig[], stmtPos)
+    if anchor.stmtKind in {WhileS, LoopS}:
+      return
     let tempSym = freshTempSym(c)
     let varIdx = addVarDecl(c, tempSym, n, info)
     addInsertPatch(c, stmtPos, varIdx)
@@ -468,9 +492,16 @@ proc trAsgn(c: var Context; n: var Cursor) =
   of ParLe:
     var l = lhsStart
     trExpr(c, l)
-    # Complex LHS writes through a pointer — only addrTaken cache
-    # entries are at risk.
-    invalidateForCall c
+    # A store *through a pointer* — `(asgn (dot p f) …)`, `(asgn (at a i) …)`,
+    # `(asgn (deref p) …)` — writes to a memory location we cannot
+    # disambiguate without alias analysis. Every cached entry is a
+    # `loadsAPointer` chain whose address depends on a pointer value held in
+    # memory, so such a store may invalidate any of them (e.g. rewriting
+    # `p.next` makes a cached `addr(p.next.field)` stale). The previous
+    # `invalidateForCall` here was a no-op whenever no local had its address
+    # taken, so a loop that advanced via a through-pointer store kept reusing
+    # the stale address and never terminated. Be conservative: drop the cache.
+    clearCache c
   else: discard
 
 proc trCallStmt(c: var Context; n: var Cursor) =

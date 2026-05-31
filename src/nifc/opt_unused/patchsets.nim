@@ -39,7 +39,8 @@
 
 import std / [tables, assertions]
 include "../../lib" / nifprelude
-import nifstreams, nifcursors
+# nifstreams / nifcursors come from the included nifprelude; do not bare-import
+# them (a bare `import nifstreams` resolves to the wrong path under nimony boot).
 
 type
   PatchKind* = enum pkInsert, pkSubst
@@ -70,7 +71,9 @@ proc applyOne(p: var Patchset; dest: var TokenBuf; n: var Cursor) =
   let pos = cursorToPosition(p.orig[], n)
   var substituted = false
   if pos in p.patches:
-    for patch in p.patches[pos]:
+    # `getOrDefault` (not `[]`) so this stays non-raising under nimony's
+    # raises-discipline; the key is present here (`pos in p.patches`).
+    for patch in p.patches.getOrDefault(pos):
       case patch.kind
       of pkInsert:
         dest.addSubtree patch.src

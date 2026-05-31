@@ -14,7 +14,12 @@ include ".." / lib / compat2
 import ".." / nimony / [nimony_model, programs, decls]
 import hexer_context, iterinliner, desugar, xelim, duplifier, lifter, destroyer,
   constparams, vtables_backend, eraiser, lambdalifting, cps, passes,
-  arcopt, funcsummary, intramodinliner
+  funcsummary, intramodinliner
+# arcopt runs on final NIFC (try/finally already lowered). Use the tracker-based
+# pass from opt_unused (the arcopt.md design); the older hexer/arcopt.nim is
+# retired and no longer imported. opt_unused/trackers.nim uses
+# `{.feature: "untyped".}` so its generic Tracker is nimony-self-compilable.
+import ".." / nifc / opt_unused / arcopt
 when defined(verifyArc):
   import std / syncio
   import ".." / nimony / verify_arc

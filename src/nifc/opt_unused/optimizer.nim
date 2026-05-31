@@ -47,6 +47,41 @@ type
 const PassNames = ["copy_propagation", "constant_folding", "cse",
                    "induction_variables"]
 
+# DEBUG bisection scaffolding: `NIFC_OPT_DISABLE=cp,cf,cse,iv,imi` turns off
+# individual rewrites (and the inter-module inliner). Remove before commit.
+let disabled = block:
+  var s: seq[string] = @[]
+  for x in getEnv("NIFC_OPT_DISABLE").split(','):
+    if x.len > 0: s.add x.strip
+  s
+proc off(name: string): bool = name in disabled
+
+# `copy_propagation`, `constant_folding` and `cse` are DISABLED by default and
+# left out of the live pipeline (their sources are kept for reference only):
+#   * copy_propagation duplicates the inter-module inliner's dest-routing —
+#     "a known value flows to a known location" is the inliner's job;
+#   * constant_folding is a weaker, hand-rolled second copy of `evalexpr`;
+#   * cse caches an *address* and re-derefs it later, which is unsound without
+#     alias analysis (seq growth / realloc / variable reseating invalidate the
+#     cached pointer; clobber-on-call heuristics only paper over it).
+# Opt a pass back in for experiments with e.g. `NIFC_OPT_ENABLE=cp,cse`.
+let enabledExtra = block:
+  var s: seq[string] = @[]
+  for x in getEnv("NIFC_OPT_ENABLE").split(','):
+    if x.len > 0: s.add x.strip
+  s
+proc optIn(name: string): bool = name in enabledExtra
+
+# DEBUG: `NIFC_OPT_MODULES=suf1,suf2` restricts ALL optimization to those
+# module suffixes (empty = all). Used to pin a miscompile to one module.
+let optModules = block:
+  var s: seq[string] = @[]
+  for x in getEnv("NIFC_OPT_MODULES").split(','):
+    if x.len > 0: s.add x.strip
+  s
+proc optAllowed(suffix: string): bool =
+  optModules.len == 0 or suffix in optModules
+
 # ---- one body through the pipeline ----------------------------------------
 
 proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
@@ -55,10 +90,12 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
     let before = render(buf)
     call
     if render(buf) != before: inc st.changed[i]
-  stage 0: runCopyPropagation buf
-  stage 1: runConstantFolding buf
-  stage 2: runCSE(buf, suffix, summaries)
-  stage 3: runInductionVariables(buf, suffix)
+  # cp/cf/cse: off by default (see note above), opt-in via NIFC_OPT_ENABLE.
+  if optIn("cp")  and not off("cp"):  stage 0: runCopyPropagation buf
+  if optIn("cf")  and not off("cf"):  stage 1: runConstantFolding buf
+  if optIn("cse") and not off("cse"): stage 2: runCSE(buf, suffix, summaries)
+  # iv/imi: live passes, on unless explicitly disabled for bisection.
+  if not off("iv"):  stage 3: runInductionVariables(buf, suffix)
 
 # ---- module rebuild --------------------------------------------------------
 
@@ -101,7 +138,13 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
 
 proc optimizeModule(input: var TokenBuf; suffix, xnifDir: string;
                     st: var Stats): TokenBuf =
-  if runInterModuleInliner(input, suffix, xnifDir):
+  if not optAllowed(suffix):
+    # Pass module through untouched (debug module-filter).
+    result = createTokenBuf(input.len)
+    var n0 = beginRead(input)
+    result.addSubtree n0
+    return
+  if not off("imi") and runInterModuleInliner(input, suffix, xnifDir):
     inc st.intermodChanged
   var summaries = collectFunctionSummaries(input)
   result = createTokenBuf(input.len + input.len div 8)
@@ -117,7 +160,10 @@ proc checkWellFormed(buf: var TokenBuf) =
   ## buffer. A pass that produces garbage is a bug, so we let it crash loudly
   ## rather than swallowing the failure and silently skipping the file.
   var n = beginRead(buf)
-  while n.hasMore:
+  # Drain to exhaustion: a single-root `(stmts …)` buffer leaves the cursor at
+  # `rem == 0` after the last `skip`, so use the exhaustion-safe primitive
+  # rather than `hasMore` (which only stops at a closing `ParRi`).
+  while n.hasCurrentToken:
     skip n
   endRead(buf)
 

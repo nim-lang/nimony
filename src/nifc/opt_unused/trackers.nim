@@ -58,11 +58,20 @@
 
 import std / [tables, sets, hashes, assertions]
 
+when defined(nimony):
+  # `Tracker[K, V]` uses `default(V)` and `==(V, V)` over an unconstrained
+  # generic parameter. nimony eagerly semchecks generic bodies and can't yet
+  # resolve those against the concrete overload set; the `untyped` feature
+  # defers that resolution to instantiation time (where `V` is `bool` /
+  # `HashSet[int]`). Needed so this module is self-compilable during boot
+  # (it is pulled in via the hexer arcopt pass).
+  {.feature: "untyped".}
+
 type
   LabelId* = distinct uint32
 
-proc `==`*(a, b: LabelId): bool {.borrow.}
-proc hash*(a: LabelId): Hash {.borrow.}
+func `==`*(a, b: LabelId): bool {.borrow.}
+func hash*(a: LabelId): Hash {.borrow.}
 
 type
   LogEntry[K, V] = object
@@ -91,6 +100,13 @@ type
     log: seq[LogEntry[K, V]]          ## append-only journal of writes
     groups: seq[SibGroup]             ## stack of open `openBranches` scopes
     labels: Table[LabelId, seq[Table[K, V]]]  ## incoming deltas per label
+    pathDiverged: bool                ## did the current straight-line path
+                                      ## already leave the block (return / raise
+                                      ## / break / a fully-diverging inner
+                                      ## construct)? Sticky within a path, reset
+                                      ## at each `openBranch`. When set at
+                                      ## `closeBranch`, the branch is dropped
+                                      ## from the join instead of folded in.
 
 proc initTracker*[K, V](): Tracker[K, V] =
   Tracker[K, V]()
@@ -146,6 +162,18 @@ proc finalValues[K, V](t: Tracker[K, V]; lo, hi: int): Table[K, V] =
     if e.key notin result:
       result[e.key] = e.next
 
+proc consumeOpenSibling[K, V](t: var Tracker[K, V]) =
+  ## If we are inside an open sibling, drop it: revert its writes and discard
+  ## its log slice so it does NOT contribute to the enclosing `closeBranches`.
+  ## A consumed sibling reaches no join along the fall-through edge. Shared by
+  ## `gotoLabel` (state routes to a label instead) and `closeBranch` on a
+  ## diverged path (state reaches no join at all).
+  if t.groups.len > 0 and t.groups[^1].sibOpen:
+    let start = t.groups[^1].curSibStart
+    t.revertFrom start
+    t.log.setLen start
+    t.groups[^1].sibOpen = false
+
 # ---- branch-group operations ----------------------------------------------
 #
 # Branching constructs (`if`/`case`/…) are walked as:
@@ -168,11 +196,26 @@ proc openBranches*[K, V](t: var Tracker[K, V]) =
   t.groups.add SibGroup(sibStarts: @[], sibOpen: false, curSibStart: 0,
                         exhaustive: false)
 
+proc markDiverged*[K, V](t: var Tracker[K, V]) =
+  ## The walker reached an unconditional `return` / `raise` / `break`: the
+  ## current straight-line path leaves the enclosing block. The flag is sticky
+  ## (further statements on this path are dead) and is read by `closeBranch`,
+  ## which drops a diverged branch from the join. Reset at the next
+  ## `openBranch`. `closeBranches` re-derives it for the enclosing path, so a
+  ## construct whose every branch diverged propagates outward automatically —
+  ## the walker never has to compute or thread divergence itself.
+  t.pathDiverged = true
+
+proc diverged*[K, V](t: Tracker[K, V]): bool {.inline.} =
+  ## Whether the current path has diverged (see `markDiverged`).
+  t.pathDiverged
+
 proc openBranch*[K, V](t: var Tracker[K, V]) =
   assert t.groups.len > 0, "openBranch outside any openBranches"
   assert not t.groups[^1].sibOpen, "previous branch not closed"
   t.groups[^1].sibOpen = true
   t.groups[^1].curSibStart = t.log.len
+  t.pathDiverged = false               # each branch is a fresh path
 
 proc openFinalBranch*[K, V](t: var Tracker[K, V]) =
   ## Like `openBranch`, but marks the enclosing group as exhaustive — at
@@ -183,17 +226,24 @@ proc openFinalBranch*[K, V](t: var Tracker[K, V]) =
   openBranch(t)
 
 proc closeBranch*[K, V](t: var Tracker[K, V]) =
-  ## End the current branch as a fall-through. Its writes are kept in the
-  ## log so that `closeBranches` can merge them.
+  ## End the current branch.
   ##
-  ## If the branch is already closed, it terminated abnormally — a
-  ## `gotoLabel` (an embedded `jmp`) consumed it, routed its state to the
-  ## label and dropped it from this group. Such a branch does *not* reach
-  ## the join, so there is nothing to fall through: treat the call as a
-  ## no-op. This lets walkers call `closeBranch` structurally after every
-  ## branch body without first detecting whether the body ended in a jump.
+  ## - If the path diverged (`markDiverged`), the branch reaches no join:
+  ##   consume it — revert its writes and drop its slice so it does not
+  ##   contribute to `closeBranches`. This is the "branches that jumped away
+  ##   do not appear in the join list" rule from arcopt.md, applied to
+  ##   `return`/`raise`/`break` as well as to fully-diverging inner constructs.
+  ## - Otherwise keep its writes in the log so `closeBranches` can merge them.
+  ##
+  ## If the branch is already closed it terminated via `gotoLabel` (an embedded
+  ## `jmp`), which consumed it; treat the call as a no-op. This lets walkers
+  ## call `closeBranch` structurally after every branch body without first
+  ## detecting how the body ended.
   assert t.groups.len > 0, "closeBranch outside any openBranches"
   if not t.groups[^1].sibOpen: return
+  if t.pathDiverged:
+    t.consumeOpenSibling()
+    return
   let start = t.groups[^1].curSibStart
   t.revertFrom start
   t.groups[^1].sibStarts.add start
@@ -221,6 +271,11 @@ proc closeBranches*[K, V](t: var Tracker[K, V]) =
   maybeAddImplicitEmptyBranch(t)
   let grp = t.groups.pop()
   let n = grp.sibStarts.len
+  # The construct diverges on every path iff it was exhaustive (a branch always
+  # runs) and no branch fell through to the join — every arm returned/broke/
+  # jumped. Propagate that to the enclosing path so a containing branch is
+  # itself dropped from its join.
+  t.pathDiverged = grp.exhaustive and n == 0
   let groupLogStart =
     if n > 0: grp.sibStarts[0]
     else: t.log.len
@@ -293,6 +348,7 @@ proc closeBranchesAdditive*[K, T](t: var Tracker[K, HashSet[T]]) =
   maybeAddImplicitEmptyBranch(t)
   let grp = t.groups.pop()
   let n = grp.sibStarts.len
+  t.pathDiverged = grp.exhaustive and n == 0   # see `closeBranches`
   let groupLogStart =
     if n > 0: grp.sibStarts[0]
     else: t.log.len
@@ -320,7 +376,8 @@ proc closeBranchesAdditive*[K, T](t: var Tracker[K, HashSet[T]]) =
     for k in touched:
       let v = sibFinal.getOrDefault(k, sibBaseFallback.getOrDefault(k))
       for elem in v:
-        merged[k].incl elem
+        # `mgetOrPut` (not `[]`) to stay non-raising; `k` was pre-seeded above.
+        merged.mgetOrPut(k, initHashSet[T]()).incl elem
 
   t.log.setLen groupLogStart
 
@@ -338,15 +395,12 @@ proc snapshotCurrent[K, V](t: Tracker[K, V]): Table[K, V] =
 
 proc gotoLabel*[K, V](t: var Tracker[K, V]; L: LabelId) =
   ## The current branch jumps to `L`. Stash an absolute snapshot of the
-  ## current state under `L`. If we are inside an open sibling, that sibling
-  ## is consumed: its log slice is dropped and it will not contribute to the
-  ## enclosing `closeBranches`.
+  ## current state under `L`, then consume the open sibling (its state has
+  ## been routed to `L`, so it must not also fall through to the join). The
+  ## path after an unconditional jump is diverged.
   t.labels.mgetOrPut(L, @[]).add t.snapshotCurrent()
-  if t.groups.len > 0 and t.groups[^1].sibOpen:
-    let start = t.groups[^1].curSibStart
-    t.revertFrom start
-    t.log.setLen start
-    t.groups[^1].sibOpen = false
+  t.consumeOpenSibling()
+  t.pathDiverged = true
 
 proc landLabel*[K, V](t: var Tracker[K, V]; L: LabelId; arity: int = -1) =
   ## Merge every incoming snapshot of `L` with the current fall-through
@@ -384,13 +438,16 @@ proc landLabel*[K, V](t: var Tracker[K, V]; L: LabelId; arity: int = -1) =
   # must be cleared.
   var toClear: seq[K] = @[]
   for k in t.base.keys:
-    if k notin merged or merged[k] == default(V):
+    if k notin merged or merged.getOrDefault(k) == default(V):
       toClear.add k
   for k in toClear:
     t[k] = default(V)
   for k, v in merged.pairs:
     if v != default(V) and t.base.getOrDefault(k) != v:
       t[k] = v
+  # A landed label is a reachable join (incoming jumps target it), so the path
+  # is live again even if the fall-through into it had diverged.
+  t.pathDiverged = false
 
 # ---- self-tests ------------------------------------------------------------
 
@@ -543,5 +600,58 @@ when isMainModule:
     # Branch 0 cleared 1; branch 1 kept it. Disagreement → cleared.
     doAssert t[1] == false
     doAssert t[2] == false
+
+  block diverged_branch_excluded_from_join:
+    # `if c: x=true; return else: y=true`. The elif diverges, so only the else
+    # contributes: y survives unintersected, x does not leak, and the construct
+    # itself does not diverge (the else falls through).
+    var t = initTracker[int, bool]()
+    t.openBranches()
+    t.openBranch()
+    t[1] = true                      # x
+    t.markDiverged()                 # ... return
+    t.closeBranch()                  # consumed — excluded from the join
+    t.openFinalBranch()
+    t[2] = true                      # y
+    t.closeBranch()                  # falls through
+    t.closeBranches()
+    doAssert t[2] == true            # else's write kept (not diluted by elif)
+    doAssert t[1] == false           # diverged elif's write did not leak
+    doAssert not t.diverged          # else fell through ⇒ construct is live
+
+  block diverged_branch_preserves_pre_construct_facts:
+    # `x=true; if c: return`  (no else). The only branch diverges; the
+    # non-exhaustive fall-through (c false) keeps the pre-`if` fact, and the
+    # construct does not diverge.
+    var t = initTracker[int, bool]()
+    t[1] = true
+    t.openBranches()
+    t.openBranch()
+    t.markDiverged()
+    t.closeBranch()
+    t.closeBranches()
+    doAssert t[1] == true            # pre-if fact survives the conditional return
+    doAssert not t.diverged
+
+  block all_branches_diverge_propagates_outward:
+    # An inner `if c: return else: return` diverges on every path; the tracker
+    # must remember this so the enclosing branch is itself dropped from the
+    # OUTER join — without the walker computing divergence.
+    var t = initTracker[int, bool]()
+    t.openBranches()                 # OUTER group
+    t.openBranch()                   # outer branch 0
+    t.openBranches()                 # inner if/else, both arms diverge
+    t.openBranch(); t.markDiverged(); t.closeBranch()
+    t.openFinalBranch(); t.markDiverged(); t.closeBranch()
+    t.closeBranches()                # inner fully diverges ⇒ pathDiverged
+    doAssert t.diverged              # propagated to the enclosing path
+    t[1] = true                      # dead write on the diverged outer branch
+    t.closeBranch()                  # outer branch 0 consumed (diverged)
+    t.openFinalBranch()              # outer else
+    t[2] = true
+    t.closeBranch()
+    t.closeBranches()
+    doAssert t[2] == true            # only the live outer-else contributes
+    doAssert t[1] == false           # dead branch's write excluded
 
   echo "trackers.nim: all self-tests passed"
