@@ -1397,8 +1397,16 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         if not matched:
           m.error InvalidMatch, f, arg.typ
         skip f
+    of TypekindT, OrdinalT, ConceptT, SymkindT:
+      let fOrig = f
+      var f2 = f
+      let a = skipModifier(arg.typ)
+      if matchTypeConstraint(m, f2, a):
+        f = f2
+      else:
+        m.error InvalidMatch, fOrig, a
     of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, AnumT, NiltT, AndT, NotT,
-        ConceptT, DistinctT, StaticT, AutoT, SymkindT, TypekindT, OrdinalT:
+        DistinctT, StaticT, AutoT:
       m.error UnhandledTypeBug, f, f
   else:
     m.error MismatchBug, f, arg.typ
@@ -1642,6 +1650,26 @@ proc classifyMatch*(m: Match): TypeRelation {.inline.} =
     # maybe a better way to track this
     return GenericMatch
   result = EqualMatch
+
+proc isTypeclassConstraint(f: TypeCursor): bool =
+  var f = f
+  if f.kind == Symbol:
+    f = typeImpl(f.symId)
+  result = f.typeKind in TypeclassKinds
+
+proc isMatchForIs*(m: Match; formal: TypeCursor): bool =
+  ## Whether `typematch(formal, arg)` should make `arg is formal` true.
+  ## Unlike overload resolution, `is` requires exact types unless the
+  ## formal is a typeclass / union constraint.
+  if m.err:
+    return false
+  case classifyMatch(m)
+  of NoMatch:
+    return false
+  of EqualMatch, GenericMatch, SubtypeMatch:
+    return true
+  of IntLitMatch, IntConvMatch, ConvertibleMatch:
+    return isTypeclassConstraint(formal)
 
 proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[CallArg]) =
   var i = 0

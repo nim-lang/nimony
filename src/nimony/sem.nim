@@ -6270,6 +6270,10 @@ proc semIs(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeExpr = dest.len
   let info = it.n.info
   let orig = it.n
+  var lhsExpr = orig
+  inc lhsExpr
+  var rhsExpr = lhsExpr
+  skip rhsExpr
   inc it.n
   var lhs = Item(n: it.n, typ: c.types.autoType)
   semExpr c, dest, lhs
@@ -6288,15 +6292,19 @@ proc semIs(c: var SemContext; dest: var TokenBuf; it: var Item) =
     rhs = semLocalType(c, dest, it.n)
   skipParRi it.n
   dest.shrink beforeExpr # delete LHS and RHS
-  if containsGenericParams(lhs.typ) or containsGenericParams(rhs):
+  if c.routine.inGeneric > 0 or containsGenericParams(lhs.typ) or containsGenericParams(rhs):
+    # Keep the unpreprocessed operand expressions so template/generic
+    # instantiation can substitute formals and re-run `semIs`. Defer whenever
+    # `inGeneric > 0` too: in template bodies operands can still be `untyped`,
+    # which would make `containsGenericParams` false and wrongly fold to `false`.
     dest.add orig
-    dest.addSubtree lhs.typ
-    dest.addSubtree rhs
+    dest.addSubtree lhsExpr
+    dest.addSubtree rhsExpr
     dest.addParRi()
   else:
     var m = createMatch(addr c)
     typematch m, rhs, lhs
-    if classifyMatch(m) >= SubtypeMatch:
+    if isMatchForIs(m, rhs):
       dest.addParPair(TrueX, info)
     else:
       dest.addParPair(FalseX, info)
