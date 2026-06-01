@@ -179,6 +179,7 @@ include "system/setops"
 
 include "system/ctypes"
 
+include "system/atomintrin"
 include "system/memory"
 include "system/seqimpl"
 include "system/stringimpl"
