@@ -61,6 +61,19 @@ type
     b = 2
     c = 3
 
+  DenseEnum = enum
+    x = 0
+    y = 1
+    z = 2
+
+  SmallEnum {.size: 1.} = enum
+    p, q, r
+
+  SizeEnum {.size: sizeof(cint).} = enum
+    a = 0
+    b = 1
+    c = 2
+
 template testOrdinalEnum(T: typedesc) =
   assert T is enum
   assert T is OrdinalEnum
@@ -78,6 +91,9 @@ template testHoleyEnum(T: typedesc) =
   assert T isnot bool
 
 testOrdinalEnum EnumWithoutHoles
+testOrdinalEnum DenseEnum
+testOrdinalEnum SmallEnum
+testOrdinalEnum SizeEnum
 testHoleyEnum EnumWithHoles
 
 
