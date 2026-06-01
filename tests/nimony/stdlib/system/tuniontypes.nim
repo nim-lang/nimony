@@ -42,17 +42,26 @@ testFloat float
 testFloat float32
 testFloat float64
 
-# `enum` union from `system/basic_types` (OrdinalEnum | HoleyEnum)
+assert bool isnot SomeSignedInt
+assert bool isnot SomeUnsignedInt
+assert bool isnot SomeInteger
+assert bool isnot SomeFloat
+assert bool isnot SomeNumber
+assert bool is SomeOrdinal
+
+
+# `enum` union from `system/basic_types`
 
 type
-  NormalEnum = enum
+  EnumWithoutHoles = enum
     e0, e1, e2
-  HoleyEnumType = enum
+
+  EnumWithHoles = enum
     a = 0
     b = 2
     c = 3
 
-template testNormalEnum(T: typedesc) =
+template testOrdinalEnum(T: typedesc) =
   assert T is enum
   assert T is OrdinalEnum
   assert T isnot HoleyEnum
@@ -68,11 +77,11 @@ template testHoleyEnum(T: typedesc) =
   assert T isnot int
   assert T isnot bool
 
-testNormalEnum NormalEnum
-testHoleyEnum HoleyEnumType
+testOrdinalEnum EnumWithoutHoles
+testHoleyEnum EnumWithHoles
 
-# Non-enum ordinals: in SomeOrdinal but not in the `enum` union
-assert bool is SomeOrdinal
+
+# Non-enum ordinals (in SomeOrdinal but not in the `enum` union)
+
 assert bool isnot enum
-assert int is SomeOrdinal
 assert int isnot enum
