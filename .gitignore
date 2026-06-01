@@ -1,7 +1,15 @@
 bin/
-/bin[0-9]*/
+bin0/
+bin1/
+bin2/
+bin3/
 nimcache/
 nimblecache/
+nimcache_static/
 htmldocs/
-*.exe
+src/hastur
 src/nifc/nifc_grammar.nim
+src/nifgram/nifgram
+src/lib/nifindexes
+tests/tester
+*.exe

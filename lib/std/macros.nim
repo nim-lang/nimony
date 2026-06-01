@@ -9,7 +9,7 @@
 
 {.feature: "lenientnils".}
 import std/[syncio, assertions, strutils, math, formatfloat, cmdline]
-import nifreader, nifbuilder
+import ../../src/lib/[nifbuilder, nifreader]
 
 type
   NimNodeKind* = enum
