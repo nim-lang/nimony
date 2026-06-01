@@ -1699,6 +1699,11 @@ proc semPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: va
     else:
       buildErr c, dest, n.info, "expected `cast` pragma expression"
     dest.addParRi()
+  of ProfilerP, StacktraceP, GcsafeP:
+    # accepted for Nim source compatibility; semantically ignored by Nimony
+    inc n
+    if hasParRi:
+      while n.hasMore: skip n
   of UncheckedAssignP:
     buildErr c, dest, n.info, "`uncheckedAssign` is only valid inside `{.cast(uncheckedAssign).}:` pragma blocks"
     inc n
