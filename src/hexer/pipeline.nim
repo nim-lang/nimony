@@ -14,12 +14,15 @@ include ".." / lib / compat2
 import ".." / nimony / [nimony_model, programs, decls]
 import hexer_context, iterinliner, desugar, xelim, duplifier, lifter, destroyer,
   constparams, vtables_backend, eraiser, lambdalifting, cps, passes,
-  funcsummary, intramodinliner
-# arcopt runs on final NIFC (try/finally already lowered). Use the tracker-based
-# pass from opt_unused (the arcopt.md design); the older hexer/arcopt.nim is
-# retired and no longer imported. opt_unused/trackers.nim uses
-# `{.feature: "untyped".}` so its generic Tracker is nimony-self-compilable.
-import ".." / nifc / opt_unused / arcopt
+  funcsummary, intramodinliner, arcopt
+# `arcopt` runs on the final NIFC (try/finally already lowered to explicit
+# control flow). It is the BasicBlock-based pass ported from the battle-tested
+# `nim/compiler/optimizer.nim`: a stack of basic blocks each owning a pending
+# `=wasMoved` list, cleared on return/break/loop and intersected only at
+# exhaustive joins. (The earlier tracker-based `opt_unused/arcopt.nim` unioned
+# positions across joins and propagated moved-state into nested branches, which
+# let a diverging branch's destroy elide a parent `=wasMoved` → double-free;
+# it has been removed in favour of this one.)
 when defined(verifyArc):
   import std / syncio
   import ".." / nimony / verify_arc

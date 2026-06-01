@@ -12,7 +12,9 @@ import nifstreams, nifcursors
 import ".." / nifc_model
 import ".." / ".." / models / tags   # `*TagId` enumerators for genRewriter
 import nifrender
-import arcopt, copy_propagation, constant_folding, cse, induction_variables
+import copy_propagation, constant_folding, cse, induction_variables
+# NOTE: arcopt moved to `hexer/arcopt.nim` (BasicBlock design) and is no longer
+# part of the opt_unused fuzz set.
 
 # ---- rewriter instantiation ----------------------------------------------
 import rewriter
@@ -119,18 +121,12 @@ proc fuzzFile(fn: string) =
   # Flow-sensitive passes, per proc body.
   var bodies = collectProcBodies(base)
   echo "  proc bodies: ", bodies.len
-  var arcChanged, cpChanged, cseChanged = 0
-  var arcBad, cpBad, cseBad = 0
+  var cpChanged, cseChanged = 0
+  var cpBad, cseBad = 0
   for i in 0 ..< bodies.len:
     # Compare by rendered content, not token count: copy-prop replaces one
     # symbol token with one literal/symbol token, so a length delta misses it.
     let before = render(bodies[i])
-    block:
-      var b = copyBuf(bodies[i])
-      guard "arcopt#" & $i:
-        runArcopt b
-        if render(b) != before: inc arcChanged
-        if not wellFormed(b): inc arcBad
     block:
       var b = copyBuf(bodies[i])
       guard "copy_propagation#" & $i:
@@ -143,8 +139,6 @@ proc fuzzFile(fn: string) =
         runCSE(b, "M")
         if render(b) != before: inc cseChanged
         if not wellFormed(b): inc cseBad
-  echo "    arcopt:           changed ", arcChanged, "/", bodies.len,
-       (if arcBad > 0: "  ** " & $arcBad & " MALFORMED **" else: "")
   echo "    copy_propagation: changed ", cpChanged, "/", bodies.len,
        (if cpBad > 0: "  ** " & $cpBad & " MALFORMED **" else: "")
   echo "    cse:              changed ", cseChanged, "/", bodies.len,
