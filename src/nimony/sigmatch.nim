@@ -1306,6 +1306,9 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         expectPtrParRi m, f
       else:
         m.error InvalidMatch, f, a
+    of TypekindT:
+      if not matchTypeConstraint(m, f, arg.typ):
+        m.error InvalidMatch, f, arg.typ
     of TypedescT:
       # do not skip modifier
       var a = arg.typ
@@ -1398,7 +1401,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
           m.error InvalidMatch, f, arg.typ
         skip f
     of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, AnumT, NiltT, AndT, NotT,
-        DistinctT, StaticT, AutoT, TypekindT, OrdinalT, ConceptT, SymkindT:
+        DistinctT, StaticT, AutoT, OrdinalT, ConceptT, SymkindT:
       m.error UnhandledTypeBug, f, f
   else:
     m.error MismatchBug, f, arg.typ
