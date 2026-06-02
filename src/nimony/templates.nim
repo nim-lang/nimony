@@ -5,8 +5,21 @@
 # distribution, for details about the copyright.
 
 ## This module implements the template expansion mechanism.
+##
+## Formerly textually `include`d into sem.nim; now a separate module. Template
+## expansion is purely a token-substitution pass — it does not re-enter the sem
+## dispatcher — so this module needs no callbacks into the core.
 
-# included from sem.nim
+when defined(nimony):
+  {.feature: "lenientnils".}
+  {.feature: "untyped".}
+import std / [tables, sets, assertions]
+include ".." / lib / nifprelude
+include ".." / lib / compat2
+import ".." / lib / symparser
+import ".." / models / tags
+import nimony_model, symtabs, decls, programs,
+  semdata, sembasics, semos, semuntyped
 
 type
   ExpansionContext = object

@@ -21,7 +21,7 @@ import ".." / lib / [tooldirs, argsfinder]
 
 import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
-import sem, nifconfig, semos, semdata, deps, langmodes, cli
+import semmain, sem, nifconfig, semos, semdata, deps, langmodes, cli
 
 include ".." / lib / compat2
 

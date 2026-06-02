@@ -11,7 +11,7 @@ import std / [parseopt, sets, strutils, os, assertions, syncio]
 import ".." / gear2 / modnames
 import ".." / lib / [argsfinder, symparser, nifcursors, nifstreams, nifreader,
                      nifbuilder, nifindexes, tooldirs, vfs]
-import sem, nifconfig, semos, semdata, indexgen, programs,
+import semmain, sem, nifconfig, semos, semdata, indexgen, programs,
        derefs, deps, idetools, cli, langmodes
 
 const
