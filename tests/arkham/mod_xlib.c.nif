@@ -1,4 +1,0 @@
-(.nif27)
-(stmts
- (type :Color.0.mod_xlib . (enum (i 32) (efld :Red.0.mod_xlib 0) (efld :Green.0.mod_xlib 1) (efld :Blue.0.mod_xlib 2)))
- (type :Point.0.mod_xlib . (object . (fld :px.0.mod_xlib . (i 64)) (fld :py.0.mod_xlib . (i 64)))))

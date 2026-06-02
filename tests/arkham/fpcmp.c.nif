@@ -1,9 +1,0 @@
-(.nif27)
-(stmts
- (proc :exit.c (params (param :code.0 . (i 32))) . (pragmas (importc "exit")) (stmts .))
- (proc :main.0 (params) (i 32) (pragmas (exportc "main"))
-  (stmts
-   (var :a.0 . (f 64) 2.5)
-   (var :b.0 . (f 64) 7.5)
-   (if (elif (lt a.0 b.0) (stmts (call exit.c 11)))
-       (else (stmts (call exit.c 22)))))))

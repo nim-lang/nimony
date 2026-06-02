@@ -48,8 +48,6 @@ Commands:
   vl                   run VL (Versioned Locations) tests.
   dagon                run Dagon doc-generator tests (tests/dagon/).
   pnak                 run pnak package-fetcher tests (tests/pnak/).
-  arkham               run arkham native arm64 codegen tests (tests/arkham/);
-                       needs the sibling `nativenif` repo for nifasm.
   incremental          verify nifmake's mtime-based incremental rebuilds via
                        the `--report` machine-readable summary.
   test <file>/<dir>    run test <file> or <dir>.
@@ -1047,22 +1045,6 @@ proc buildNifc(showProgress = false) =
   let exe = "nifc".addFileExt(ExeExt)
   robustMoveFile "src/nifc/" & exe, binDir() / exe
 
-const NativeNifDir = "../nativenif"
-  ## Sibling repo holding `nifasm` (the typed arm64 assembler/linker that
-  ## consumes arkham's asm-NIF). arkham also imports its generated enums.
-
-proc buildNifasm(showProgress = false) =
-  createDir binDir()
-  exec nimcPrefix() & (NativeNifDir / "src/nifasm/nifasm.nim"), showProgress
-  let exe = "nifasm".addFileExt(ExeExt)
-  robustMoveFile NativeNifDir / "src/nifasm" / exe, binDir() / exe
-
-proc buildArkham(showProgress = false) =
-  ## arkham (native arm64 codegen for NIFC) + nifasm, which assembles/links its
-  ## output. arkham's nim.cfg already emits the binary into `bin/`.
-  buildNifasm(showProgress)
-  exec nimcPrefix() & "src/arkham/arkham.nim", showProgress
-
 proc buildOptimizer(showProgress = false) =
   exec nimcPrefix() & "src/nifc/opt_unused/optimizer.nim", showProgress
   let exe = "optimizer".addFileExt(ExeExt)
@@ -1546,63 +1528,6 @@ proc nifctests(overwrite: bool) =
   execNifc " c -r --linedir:on " & issues
   execNifc " cpp -r --linedir:off " & issues
 
-proc arkhamtests(overwrite: bool) =
-  ## Each `tests/arkham/*.c.nif` is hand-written NIFC: arkham generates arm64
-  ## asm-NIF, nifasm assembles+links it to a native executable, and we check the
-  ## run's exit code (`<stem>.exitcode`, default 0) and stdout (`<stem>.output`,
-  ## default empty). With `overwrite`, the expected files are refreshed.
-  let t0 = epochTime()
-  var c = TestCounters(total: 0, failures: 0)
-  let arkhamExe = binDir() / "arkham".addFileExt(ExeExt)
-  let nifasmExe = binDir() / "nifasm".addFileExt(ExeExt)
-  let workDir = nimcacheDir / "arkham"
-  createDir workDir
-  # Foreign helper modules (`mod_*.c.nif`) are not standalone tests: compile each
-  # to `<workDir>/<name>.s.nif` so nifasm can auto-import it when a cross-module
-  # test references its symbols (`Foo.0.mod_xlib` → loads `mod_xlib.s.nif`).
-  for file in walkFiles("tests/arkham/mod_*.c.nif"):
-    let base = extractFilename(file)
-    let modName = base[0 ..< base.len - ".c.nif".len]
-    let s = workDir / (modName & ".s.nif")
-    let (mo, mc) = execCmdEx(quoteShell(arkhamExe) & " -o:" & quoteShell(s) & " " & quoteShell(file))
-    if mc != 0:
-      inc c.total
-      failure c, file, "arkham (foreign module) failed:\n" & mo
-  for file in walkFiles("tests/arkham/*.c.nif"):
-    if extractFilename(file).startsWith("mod_"): continue   # foreign helper, not standalone
-    inc c.total
-    let stem = file[0 ..< file.len - ".c.nif".len]
-    let base = extractFilename(stem)
-    let z = workDir / (base & ".asm.nif")
-    let exe = workDir / (base & ".out")
-    let (ao, ac) = execCmdEx(quoteShell(arkhamExe) & " -o:" & quoteShell(z) & " " & quoteShell(file))
-    if ac != 0:
-      failure c, file, "arkham (codegen) failed:\n" & ao
-      continue
-    let (no, nc) = execCmdEx(quoteShell(nifasmExe) & " -o:" & quoteShell(exe) & " " & quoteShell(z))
-    if nc != 0:
-      failure c, file, "nifasm (assemble/link) failed:\n" & no
-      continue
-    let (po, pc) = execCmdEx(quoteShell(exe))
-    # exit code
-    let ecFile = stem & ".exitcode"
-    let expectedCode = if ecFile.fileExists(): parseInt(readFile(ecFile).strip) else: 0
-    if pc != expectedCode:
-      if overwrite:
-        (if pc != 0: writeFile(ecFile, $pc) elif ecFile.fileExists(): removeFile(ecFile))
-      else:
-        failure c, file, "exitcode " & $expectedCode, "exitcode " & $pc & "\n" & po
-    # stdout
-    let outFile = stem & ".output"
-    let expectedOut = if outFile.fileExists(): readFile(outFile).strip else: ""
-    if po.strip != expectedOut:
-      if overwrite:
-        (if po.strip.len > 0: writeFile(outFile, po.strip) elif outFile.fileExists(): removeFile(outFile))
-      else:
-        failure c, file, expectedOut, po.strip
-  echo c.total - c.failures, " / ", c.total, " arkham tests successful in ",
-       formatFloat(epochTime() - t0, ffDecimal, precision = 2), "s."
-
 proc hexertests(overwrite: bool) =
   let mod1 = "tests/hexer/mod1"
   let helloworld = "tests/hexer/hexer_helloworld"
@@ -1935,8 +1860,6 @@ proc handleCmdLine =
       buildDagon(showProgress)
     of "pnak":
       buildPnak(showProgress)
-    of "arkham":
-      buildArkham(showProgress)
     else:
       writeHelp()
     removeDir "nimcache"
@@ -1961,11 +1884,6 @@ proc handleCmdLine =
   of "pnak":
     buildPnak()
     pnaktests()
-  of "arkham":
-    if not dirExists(NativeNifDir):
-      quitWithText "arkham tests need the sibling `nativenif` repo at " & NativeNifDir
-    buildArkham()
-    arkhamtests(overwrite)
   of "test":
     if not skipBuild:
       buildNimony()

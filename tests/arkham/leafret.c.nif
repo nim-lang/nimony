@@ -1,6 +1,0 @@
-(.nif27)
-(stmts
- (proc :main.0 (params) (i 32) (pragmas (exportc "main")) (stmts
-   (var :x.0 . (i 64) 40)
-   (var :y.0 . (i 64) 2)
-   (ret (add (i 64) x.0 y.0)))))
