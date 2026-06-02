@@ -1397,16 +1397,8 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         if not matched:
           m.error InvalidMatch, f, arg.typ
         skip f
-    of TypekindT, OrdinalT, ConceptT, SymkindT:
-      let fOrig = f
-      var f2 = f
-      let a = skipModifier(arg.typ)
-      if matchTypeConstraint(m, f2, a):
-        f = f2
-      else:
-        m.error InvalidMatch, fOrig, a
     of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, AnumT, NiltT, AndT, NotT,
-        DistinctT, StaticT, AutoT:
+        DistinctT, StaticT, AutoT, TypekindT, OrdinalT, ConceptT, SymkindT:
       m.error UnhandledTypeBug, f, f
   else:
     m.error MismatchBug, f, arg.typ
@@ -1651,7 +1643,7 @@ proc classifyMatch*(m: Match): TypeRelation {.inline.} =
     return GenericMatch
   result = EqualMatch
 
-proc isTypeclassConstraint(f: TypeCursor): bool =
+proc isTypeclassConstraint*(f: TypeCursor): bool =
   var f = f
   if f.kind == Symbol:
     f = typeImpl(f.symId)

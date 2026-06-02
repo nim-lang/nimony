@@ -6303,8 +6303,14 @@ proc semIs(c: var SemContext; dest: var TokenBuf; it: var Item) =
     dest.addParRi()
   else:
     var m = createMatch(addr c)
-    typematch m, rhs, lhs
-    if isMatchForIs(m, rhs):
+    let matched =
+      if isTypeclassConstraint(rhs):
+        var formal = rhs
+        matchesConstraint(m, formal, lhs.typ)
+      else:
+        typematch m, rhs, lhs
+        isMatchForIs(m, rhs)
+    if matched:
       dest.addParPair(TrueX, info)
     else:
       dest.addParPair(FalseX, info)
