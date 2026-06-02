@@ -564,7 +564,7 @@ type
     of lvField: base, field: string
     of lvElem, lvDeref: cur: Cursor
 
-proc parseLvalue(g: var CodeGen; c: var Cursor): Lvalue =
+proc asLvalue(g: var CodeGen; c: var Cursor): Lvalue =
   ## Classify and consume an lvalue (Symbol / dot / at / deref). The slot records
   ## float-ness/width for the caller. Scalar callers (genInto/genIntoF/genAsgn)
   ## use the load/store family; `emitAddr` additionally handles `lvAggrVar` (an
@@ -884,7 +884,7 @@ proc genIntoF(g: var CodeGen; c: var Cursor; dest: FReg; bits: int) =
     g.giveBack tmp
     inc c
   of Symbol:
-    let l = g.parseLvalue(c)
+    let l = g.asLvalue(c)
     g.emitLoadF(l, dest, bits)
   of TagLit:
     case c.exprKind
@@ -903,11 +903,11 @@ proc genIntoF(g: var CodeGen; c: var Cursor; dest: FReg; bits: int) =
       g.genCall(c)                            # float result lands in v0 …
       g.fmovF(dest, FloatRet, bits)           # … move it to the destination
     of DotC:                                  # float struct field: dest ← [base+off]
-      let l = g.parseLvalue(c); g.emitLoadF(l, dest, bits)
+      let l = g.asLvalue(c); g.emitLoadF(l, dest, bits)
     of AtC:                                   # float array element: dest ← arr[idx]
-      let l = g.parseLvalue(c); g.emitLoadF(l, dest, bits)
+      let l = g.asLvalue(c); g.emitLoadF(l, dest, bits)
     of DerefC:                                # `(deref p)` → dest ← [p]
-      let l = g.parseLvalue(c); g.emitLoadF(l, dest, bits)
+      let l = g.asLvalue(c); g.emitLoadF(l, dest, bits)
     else: raiseAssert "arkham v1: float expression not supported: " & $c.exprKind
   else:
     raiseAssert "arkham v1: float operand not supported: " & $c.kind
@@ -921,7 +921,7 @@ proc genInto(g: var CodeGen; c: var Cursor; dest: Reg) =
     g.rodata.add (nm, strVal(c))
     g.emAdr(dest, nm); inc c
   of Symbol:
-    let l = g.parseLvalue(c)
+    let l = g.asLvalue(c)
     g.emitLoad(l, dest)
   of TagLit:
     case c.exprKind
@@ -946,15 +946,15 @@ proc genInto(g: var CodeGen; c: var Cursor; dest: Reg) =
       g.genCall(c)                          # result lands in x0 …
       g.movReg(dest, IntRet)                # … move it to the destination
     of DotC:                                # field load: dest ← [base+offset]
-      let l = g.parseLvalue(c); g.emitLoad(l, dest)
+      let l = g.asLvalue(c); g.emitLoad(l, dest)
     of DerefC:                              # `(deref p)` → dest ← [p]
-      let l = g.parseLvalue(c); g.emitLoad(l, dest)
+      let l = g.asLvalue(c); g.emitLoad(l, dest)
     of AddrC:                               # `(addr lvalue)` → dest ← &lvalue
       c.into:
         g.genAddr(c, dest)
         while c.hasMore: skip c             # (cppref)?
     of AtC:                                 # `(at arr idx)` → dest ← arr[idx]
-      let l = g.parseLvalue(c); g.emitLoad(l, dest)
+      let l = g.asLvalue(c); g.emitLoad(l, dest)
     else: raiseAssert "arkham v1: expression not supported: " & $c.exprKind
   else:
     raiseAssert "arkham v1: operand not supported: " & $c.kind
@@ -962,7 +962,7 @@ proc genInto(g: var CodeGen; c: var Cursor; dest: Reg) =
 proc genAddr(g: var CodeGen; c: var Cursor; dest: Reg) =
   ## `dest ← &lvalue`, with `c` positioned at the lvalue. Parse the addressing
   ## mode once, then let `emitAddr` form the address.
-  let l = g.parseLvalue(c)
+  let l = g.asLvalue(c)
   g.emitAddr(l, dest)
 
 # ── calls ────────────────────────────────────────────────────────────────────
@@ -1817,7 +1817,7 @@ proc genAsgn(g: var CodeGen; c: var Cursor) =
       if srcT: g.giveBack srcA
       if dstT: g.giveBack dstA
     else:
-      let l = g.parseLvalue(c)              # classify + consume lvalue; c → rvalue
+      let l = g.asLvalue(c)              # classify + consume lvalue; c → rvalue
       let bits = if slot.size == 4: 32 else: 64
       case l.kind
       of lvReg: g.genInto(c, l.r)           # compute the rhs straight into the home reg
