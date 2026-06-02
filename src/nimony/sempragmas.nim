@@ -15,6 +15,7 @@
 when defined(nimony):
   {.feature: "lenientnils".}
   {.feature: "untyped".}
+  import std / syncio
 import std / [tables, sets, hashes, assertions, strutils]
 from std/os import changeFileExt, getCurrentDir, isAbsolute, absolutePath, normalizedPath, splitFile, extractFilename, `/`
 include ".." / lib / nifprelude
