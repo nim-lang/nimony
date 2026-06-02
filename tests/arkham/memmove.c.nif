@@ -1,0 +1,13 @@
+(.nif27)
+(stmts
+ (proc :exit.c (params (param :code.0 . (i 32))) . (pragmas (importc "exit")) (stmts .))
+ (proc :memmove.c (params (param :d.0 . (ptr (i 64))) (param :s.0 . (ptr (i 64))) (param :n.0 . (i 64))) (ptr (i 64)) (pragmas (importc "memmove")) (stmts .))
+ (proc :main.0 (params) (i 32) (pragmas (exportc "main"))
+  (stmts
+   (var :a.0 . (array (i 64) 4) .)
+   (asgn (at a.0 0) 40)
+   (asgn (at a.0 1) 0)
+   (asgn (at a.0 2) 2)
+   (asgn (at a.0 3) 0)
+   (call memmove.c (addr (at a.0 1)) (addr (at a.0 0)) 24)
+   (call exit.c (add (i 64) (at a.0 1) (at a.0 3))))))

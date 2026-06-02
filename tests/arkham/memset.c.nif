@@ -1,0 +1,12 @@
+(.nif27)
+(stmts
+ (proc :exit.c (params (param :code.0 . (i 32))) . (pragmas (importc "exit")) (stmts .))
+ (proc :memset.c (params (param :d.0 . (ptr (i 64))) (param :v.0 . (i 32)) (param :n.0 . (i 64))) (ptr (i 64)) (pragmas (importc "memset")) (stmts .))
+ (proc :main.0 (params) (i 32) (pragmas (exportc "main"))
+  (stmts
+   (var :buf.0 . (array (i 64) 2) .)
+   (asgn (at buf.0 0) 999)
+   (asgn (at buf.0 1) 999)
+   (call memset.c (addr (at buf.0 0)) 0 16)
+   (asgn (at buf.0 0) 42)
+   (call exit.c (add (i 64) (at buf.0 0) (at buf.0 1))))))

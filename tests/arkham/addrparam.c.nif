@@ -1,0 +1,12 @@
+(.nif27)
+(stmts
+ (proc :exit.c (params (param :code.0 . (i 32))) . (pragmas (importc "exit")) (stmts .))
+ (proc :addtwo.0 (params (param :v.0 . (i 64))) (i 64) .
+  (stmts
+   (var :p.0 . (ptr (i 64)) (addr v.0))
+   (asgn (deref p.0) (add (i 64) (deref p.0) 2))
+   (ret v.0)))
+ (proc :main.0 (params) (i 32) (pragmas (exportc "main"))
+  (stmts
+   (var :r.0 . (i 64) (call addtwo.0 40))
+   (call exit.c r.0))))

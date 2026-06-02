@@ -1,0 +1,17 @@
+(.nif27)
+(stmts
+ (gvar :v.0 . (i 64) .)
+ (proc :exit.c (params (param :code.0 . (i 32))) . (pragmas (importc "exit")) (stmts .))
+ (proc :asn.0 (params (param :p.0 . (ptr (i 64))) (param :val.0 . (i 64)) (param :mo.0 . (i 32))) . (pragmas (importc "__atomic_store_n")) (stmts .))
+ (proc :axc.0 (params (param :p.0 . (ptr (i 64))) (param :val.0 . (i 64)) (param :mo.0 . (i 32))) (i 64) (pragmas (importc "__atomic_exchange_n")) (stmts .))
+ (proc :afo.0 (params (param :p.0 . (ptr (i 64))) (param :val.0 . (i 64)) (param :mo.0 . (i 32))) (i 64) (pragmas (importc "__atomic_fetch_or")) (stmts .))
+ (proc :asf.0 (params (param :p.0 . (ptr (i 64))) (param :val.0 . (i 64)) (param :mo.0 . (i 32))) (i 64) (pragmas (importc "__atomic_sub_fetch")) (stmts .))
+ (proc :tf.0 (params (param :mo.0 . (i 32))) . (pragmas (importc "__atomic_thread_fence")) (stmts .))
+ (proc :main.0 (params) (i 32) (pragmas (exportc "main"))
+  (stmts
+   (call asn.0 (addr v.0) 8 0)
+   (var :old.0 . (i 64) (call axc.0 (addr v.0) 5 0))
+   (var :ored.0 . (i 64) (call afo.0 (addr v.0) 2 0))
+   (var :newv.0 . (i 64) (call asf.0 (addr v.0) 3 0))
+   (call tf.0 0)
+   (call exit.c (add (i 64) old.0 (add (i 64) ored.0 newv.0))))))

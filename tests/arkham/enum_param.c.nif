@@ -1,0 +1,9 @@
+(.nif27)
+(stmts
+ (type :Color.0 . (enum (i 32) (efld :Red.0 0) (efld :Green.0 1) (efld :Blue.0 2)))
+ (proc :exit.c (params (param :code.0 . (i 32))) . (pragmas (importc "exit")) (stmts .))
+ (proc :f.0 (params (param :c.0 . Color.0)) (i 64) . (stmts
+   (ret (add (i 64) c.0 40))))
+ (proc :main.0 (params) (i 32) (pragmas (exportc "main")) (stmts
+   (var :x.0 . (i 64) (call f.0 2))
+   (call exit.c x.0))))

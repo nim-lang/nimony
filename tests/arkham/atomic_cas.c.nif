@@ -1,0 +1,12 @@
+(.nif27)
+(stmts
+ (gvar :v.0 . (i 64) .)
+ (gvar :expg.0 . (i 64) 7)
+ (proc :exit.c (params (param :code.0 . (i 32))) . (pragmas (importc "exit")) (stmts .))
+ (proc :asn.0 (params (param :p.0 . (ptr (i 64))) (param :val.0 . (i 64)) (param :mo.0 . (i 32))) . (pragmas (importc "__atomic_store_n")) (stmts .))
+ (proc :acx.0 (params (param :p.0 . (ptr (i 64))) (param :ep.0 . (ptr (i 64))) (param :des.0 . (i 64)) (param :wk.0 . (bool)) (param :so.0 . (i 32)) (param :fo.0 . (i 32))) (bool) (pragmas (importc "__atomic_compare_exchange_n")) (stmts .))
+ (proc :main.0 (params) (i 32) (pragmas (exportc "main"))
+  (stmts
+   (call asn.0 (addr v.0) 99 0)
+   (var :ok.0 . (bool) (call acx.0 (addr v.0) (addr expg.0) 1 (false) 0 0))
+   (call exit.c expg.0))))

@@ -1,0 +1,249 @@
+(.nif27)
+(stmts
+ (arch arm64)
+ (imp "/usr/lib/libSystem.B.dylib")
+ (extproc :exit.0 "_exit")
+ (proc :main.0
+  (params)
+  (result)
+  (clobber)
+  (stmts
+   (stp
+    (x29)
+    (x30)
+    (sp)-16)
+   (stp
+    (x19)
+    (x20)
+    (sp)-16)
+   (stp
+    (x21)
+    (x22)
+    (sp)-16)
+   (stp
+    (x23)
+    (x24)
+    (sp)-16)
+   (stp
+    (x25)
+    (x26)
+    (sp)-16)
+   (stp
+    (x27)
+    (x28)
+    (sp)-16)
+   (sub
+    (sp)
+    (ssize))
+   (mov
+    (x19)2)
+   (mov
+    (x20)2)
+   (mov
+    (x21)2)
+   (mov
+    (x22)2)
+   (mov
+    (x23)2)
+   (mov
+    (x24)2)
+   (mov
+    (x25)2)
+   (mov
+    (x26)2)
+   (mov
+    (x27)2)
+   (mov
+    (x28)2)
+   (var :a10.0
+    (s)
+    (i 64))
+   (mov
+    (x9)2)
+   (mov a10.0
+    (x9))
+   (var :a11.0
+    (s)
+    (i 64))
+   (mov
+    (x9)2)
+   (mov a11.0
+    (x9))
+   (var :a12.0
+    (s)
+    (i 64))
+   (mov
+    (x9)2)
+   (mov a12.0
+    (x9))
+   (var :a13.0
+    (s)
+    (i 64))
+   (mov
+    (x9)2)
+   (mov a13.0
+    (x9))
+   (var :a14.0
+    (s)
+    (i 64))
+   (mov
+    (x9)2)
+   (mov a14.0
+    (x9))
+   (var :a15.0
+    (s)
+    (i 64))
+   (mov
+    (x9)2)
+   (mov a15.0
+    (x9))
+   (var :a16.0
+    (s)
+    (i 64))
+   (mov
+    (x9)2)
+   (mov a16.0
+    (x9))
+   (var :a17.0
+    (s)
+    (i 64))
+   (mov
+    (x9)2)
+   (mov a17.0
+    (x9))
+   (var :a18.0
+    (s)
+    (i 64))
+   (mov
+    (x9)2)
+   (mov a18.0
+    (x9))
+   (var :a19.0
+    (s)
+    (i 64))
+   (mov
+    (x9)2)
+   (mov a19.0
+    (x9))
+   (var :a20.0
+    (s)
+    (i 64))
+   (mov
+    (x9)2)
+   (mov a20.0
+    (x9))
+   (mov
+    (x0)
+    (x19))
+   (add
+    (x0)
+    (x20))
+   (add
+    (x0)
+    (x21))
+   (add
+    (x0)
+    (x22))
+   (add
+    (x0)
+    (x23))
+   (add
+    (x0)
+    (x24))
+   (add
+    (x0)
+    (x25))
+   (add
+    (x0)
+    (x26))
+   (add
+    (x0)
+    (x27))
+   (add
+    (x0)
+    (x28))
+   (mov
+    (x9)a10.0)
+   (add
+    (x0)
+    (x9))
+   (mov
+    (x9)a11.0)
+   (add
+    (x0)
+    (x9))
+   (mov
+    (x9)a12.0)
+   (add
+    (x0)
+    (x9))
+   (mov
+    (x9)a13.0)
+   (add
+    (x0)
+    (x9))
+   (mov
+    (x9)a14.0)
+   (add
+    (x0)
+    (x9))
+   (mov
+    (x9)a15.0)
+   (add
+    (x0)
+    (x9))
+   (mov
+    (x9)a16.0)
+   (add
+    (x0)
+    (x9))
+   (mov
+    (x9)a17.0)
+   (add
+    (x0)
+    (x9))
+   (mov
+    (x9)a18.0)
+   (add
+    (x0)
+    (x9))
+   (mov
+    (x9)a19.0)
+   (add
+    (x0)
+    (x9))
+   (mov
+    (x9)a20.0)
+   (add
+    (x0)
+    (x9))
+   (prepare exit.0
+    (extcall))
+   (add
+    (sp)
+    (ssize))
+   (ldp
+    (x27)
+    (x28)
+    (sp)16)
+   (ldp
+    (x25)
+    (x26)
+    (sp)16)
+   (ldp
+    (x23)
+    (x24)
+    (sp)16)
+   (ldp
+    (x21)
+    (x22)
+    (sp)16)
+   (ldp
+    (x19)
+    (x20)
+    (sp)16)
+   (ldp
+    (x29)
+    (x30)
+    (sp)16)
+   (ret))))

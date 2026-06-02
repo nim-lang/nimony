@@ -1,0 +1,12 @@
+(.nif27)
+(stmts
+ (type :FPoint.0 . (object . (fld :fx.0 . (f 64)) (fld :fy.0 . (f 64))))
+ (proc :exit.c (params (param :code.0 . (i 32))) . (pragmas (importc "exit")) (stmts .))
+ (proc :main.0 (params) (i 32) (pragmas (exportc "main"))
+  (stmts
+   (var :p.0 . FPoint.0 .)
+   (asgn (dot p.0 fx.0) 3.5)
+   (asgn (dot p.0 fy.0) 8.5)
+   (var :s.0 . (f 64) (add (f 64) (dot p.0 fx.0) (dot p.0 fy.0)))
+   (var :r.0 . (i 64) (conv (i 64) s.0))
+   (call exit.c r.0))))

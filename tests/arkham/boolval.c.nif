@@ -1,0 +1,14 @@
+(.nif27)
+(stmts
+ (proc :exit.c (params (param :code.0 . (i 32))) . (pragmas (importc "exit")) (stmts .))
+ (proc :main.0 (params) (i 32) (pragmas (exportc "main"))
+  (stmts
+   (var :a.0 . (i 64) 3)
+   (var :b.0 . (i 64) 7)
+   (var :r.0 . (i 64) (lt a.0 b.0))
+   (asgn r.0 (add (i 64) r.0 (eq a.0 3)))
+   (asgn r.0 (add (i 64) r.0 (and (lt a.0 b.0) (neq b.0 3))))
+   (asgn r.0 (add (i 64) r.0 (or (le b.0 a.0) (eq a.0 3))))
+   (asgn r.0 (mul (i 64) r.0 10))
+   (asgn r.0 (add (i 64) r.0 2))
+   (call exit.c r.0))))
