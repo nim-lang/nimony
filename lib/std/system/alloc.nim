@@ -140,7 +140,10 @@ type
     data {.align: MemAlign.}: UncheckedArray[byte]      # start of usable memory
 
   HeapLinks = object
-    len: int
+    count: int  # NOT `len`: a `len`-named field would share the system module's
+                # `len.N` symbol counter (makeFieldSym/makeGlobalSym both use
+                # c.globals) and shift the string `len` overload the compiler
+                # hardcodes as `len.5` in hexer/desugar.nim.
     chunks: array[30, (PBigChunk, int)]
     next: ptr HeapLinks
 
@@ -378,18 +381,18 @@ when not UseDestructors:
 
 proc addHeapLink(a: var MemRegion; p: PBigChunk, size: int): ptr HeapLinks =
   var it = addr(a.heapLinks)
-  while it != nil and it.len >= it.chunks.len: it = it.next
+  while it != nil and it.count >= it.chunks.len: it = it.next
   if it == nil:
     var n = cast[ptr HeapLinks](llAlloc(a, sizeof(HeapLinks)))
     n.next = a.heapLinks.next
     a.heapLinks.next = n
     n.chunks[0] = (p, size)
-    n.len = 1
+    n.count = 1
     result = n
   else:
-    let L = it.len
+    let L = it.count
     it.chunks[L] = (p, size)
-    inc it.len
+    inc it.count
     result = it
 
 when not UseDestructors:
@@ -1214,7 +1217,7 @@ proc deallocOsPages(a: var MemRegion) =
   var it = addr(a.heapLinks)
   while true:
     let next = it.next
-    for i in 0..it.len-1:
+    for i in 0..it.count-1:
       let (p, size) = it.chunks[i]
       when defined(debugHeapLinks):
         cprintf("owner %p; dealloc A: %p size: %ld; next: %p\n", addr(a),
