@@ -35,10 +35,13 @@ when defined(posix):
                                             ## For other file types, the use of this field is
                                             ## unspecified.
       st_mode* {.importc: "st_mode".} : Mode        ## Mode of file (see below).
-      st_mtime* {.importc: "st_mtime".} : int64     ## Time of last data modification (seconds since epoch).
       when defined(osx):
+        # On macOS `st_mtime` is a macro that expands to `st_mtimespec.tv_sec`,
+        # so declaring it as a separate field would alias `st_mtim` and trigger
+        # a `-Winitializer-overrides` warning whenever a `Stat` value is zeroed.
         st_mtim* {.importc: "st_mtimespec".} : Timespec ## Time of last data modification with nanosecond precision.
       else:
+        st_mtime* {.importc: "st_mtime".} : int64     ## Time of last data modification (seconds since epoch).
         st_mtim* {.importc: "st_mtim".} : Timespec      ## Time of last data modification with nanosecond precision.
 
 
@@ -53,6 +56,10 @@ when defined(posix):
 
 
   include posix_other
+
+  when defined(osx):
+    template st_mtime*(s: Stat): int64 = int64(s.st_mtim.tv_sec)
+      ## Time of last data modification (seconds since epoch).
 
   proc fcntl*(a1: cint, a2: cint): cint {.varargs, importc, header: "<fcntl.h>", sideEffect.}
   proc open*(a1: cstring; a2: cint; mode: Mode): cint {.importc: "open", header: "<fcntl.h>", sideEffect.}
