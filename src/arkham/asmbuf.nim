@@ -20,15 +20,19 @@ import std / tables
 import nifcore, nifcoreparse
 import model                 # nifasm: A64Inst, NifasmDecl, NifasmType, NifasmExpr
 import machine               # arkham: Reg, regName
-export A64Inst, NifasmDecl, NifasmType, NifasmExpr, X64Flag
+export A64Inst, X64Inst, NifasmDecl, NifasmType, NifasmExpr, X64Flag
 
 type
   AsmBuf* = object
     buf: TokenBuf
     ids: Table[string, TagId]   ## spelling → interned tag id (cache)
+    renderReg*: proc (r: Reg): string {.nimcall.}  ## GPR slot → arch spelling shim
 
 proc initAsmBuf*(): AsmBuf =
-  AsmBuf(buf: createTokenBuf(256), ids: initTable[string, TagId]())
+  ## Defaults the register shim to AArch64 spellings; the x86-64 backend
+  ## overrides `renderReg` after construction.
+  AsmBuf(buf: createTokenBuf(256), ids: initTable[string, TagId](),
+         renderReg: regName)
 
 proc openS(a: var AsmBuf; spelling: string) {.inline.} =
   a.buf.openTag a.ids.mgetOrPut(spelling, a.buf.tags.registerTag(spelling))
@@ -48,8 +52,9 @@ proc keyword*[T: enum](a: var AsmBuf; t: T) {.inline.} =
   a.openS($t); a.close()
 
 proc reg*(a: var AsmBuf; r: Reg) {.inline.} =
-  ## A register operand `(xN)` — a childless tag named after the register.
-  a.openS(regName r); a.close()
+  ## A register operand `(xN)`/`(rax)` — a childless tag named after the
+  ## register via the (per-target) `renderReg` shim.
+  a.openS(a.renderReg r); a.close()
 
 proc dreg*(a: var AsmBuf; f: FReg) {.inline.} =
   ## A double-precision fp register operand `(dN)` (the 64-bit view of `vN`).
@@ -62,6 +67,11 @@ proc sreg*(a: var AsmBuf; f: FReg) {.inline.} =
 proc freg*(a: var AsmBuf; f: FReg; bits: int) {.inline.} =
   ## An fp register operand sized by `bits` (32 → `(sN)`, else `(dN)`).
   if bits == 32: a.sreg f else: a.dreg f
+
+proc xmmReg*(a: var AsmBuf; f: FReg) {.inline.} =
+  ## An x86-64 SSE register operand `(xmmN)`. Unlike AArch64's `(sN)`/`(dN)`, the
+  ## precision is carried by the instruction (movss vs movsd), not the register.
+  a.openS("xmm" & $ord(f)); a.close()
 
 proc sym*(a: var AsmBuf; s: string) {.inline.} = a.buf.addSymUse s     # use
 proc symDef*(a: var AsmBuf; s: string) {.inline.} = a.buf.addSymDef s  # :def

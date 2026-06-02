@@ -5,60 +5,67 @@
 #    See the file "license.txt", included in this distribution.
 #
 
-## AArch64 / Darwin machine model: registers, the AAPCS64 register classes,
-## and the typed `Location` abstraction the register allocator fills in.
+## AArch64 / Darwin backend machine model: the AAPCS64 register classes, the
+## `regName` shim that renders the abstract register slots to AArch64 spellings,
+## and the `aarch64Machine` description handed to the (arch-neutral) register
+## allocator. The slot enums and `MachineDesc`/`Location` types live in
+## `machinedesc` and are re-exported, so downstream modules keep importing
+## `machine`.
 
-import slots
-
-type
-  Reg* = enum   ## general-purpose registers; ord matches the hardware number
-    X0, X1, X2, X3, X4, X5, X6, X7, X8, X9, X10, X11, X12, X13, X14, X15,
-    X16, X17, X18, X19, X20, X21, X22, X23, X24, X25, X26, X27, X28, X29, X30,
-    SP, NoReg
-
-  FReg* = enum  ## FP/SIMD registers
-    V0, V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15,
-    V16, V17, V18, V19, V20, V21, V22, V23, V24, V25, V26, V27, V28, V29, V30, V31,
-    NoFReg
+import slots, machinedesc
+export machinedesc
 
 const
-  FP* = X29   ## frame pointer
-  LR* = X30   ## link register
+  FP* = R29   ## frame pointer
+  LR* = R30   ## link register
 
   # ── AAPCS64 / Darwin register classes ──────────────────────────────────
-  IntArgRegs*   = [X0, X1, X2, X3, X4, X5, X6, X7]   ## int args + return (x0)
-  FloatArgRegs* = [V0, V1, V2, V3, V4, V5, V6, V7]   ## fp args + return (v0)
-  IntRet*   = X0
-  FloatRet* = V0
-  IndirectResultReg* = X8
+  IntArgRegs*   = [R0, R1, R2, R3, R4, R5, R6, R7]   ## int args + return (x0)
+  FloatArgRegs* = [F0, F1, F2, F3, F4, F5, F6, F7]   ## fp args + return (v0)
+  IntRet*   = R0
+  FloatRet* = F0
+  IndirectResultReg* = R8
 
   ## Volatile (caller-saved) scratch usable for temporaries that do not
   ## need to survive a call. (x0–x7 are also volatile but reserved here for
   ## arg/return shuffling; x16/x17/x18 are reserved by the platform.)
-  IntTempRegs* = [X9, X10, X11, X12, X13, X14, X15]
+  IntTempRegs* = [R9, R10, R11, R12, R13, R14, R15]
   ## Callee-saved: for values that must survive a call.
-  IntCalleeSaved* = [X19, X20, X21, X22, X23, X24, X25, X26, X27, X28]
+  IntCalleeSaved* = [R19, R20, R21, R22, R23, R24, R25, R26, R27, R28]
   ## Caller-saved set clobbered across any call (incl. an extcall).
-  IntCallerSaved* = {X0..X17}
+  IntCallerSaved* = {R0..R17}
   ## Caller-saved SIMD/FP scratch: v16–v31 are fully caller-saved (and v0–v7
   ## are argument/return registers, also caller-saved). arkham keeps float
   ## values in these; a float that must survive a call (v8–v15 callee-saved)
   ## is not yet supported.
-  FloatTempRegs* = [V16, V17, V18, V19, V20, V21, V22, V23,
-                    V24, V25, V26, V27, V28, V29, V30, V31]
+  FloatTempRegs* = [F16, F17, F18, F19, F20, F21, F22, F23,
+                    F24, F25, F26, F27, F28, F29, F30, F31]
   ## Callee-saved (low 64 bits of v8–v15) — reserved for a future FP frame.
-  FloatCalleeSaved* = [V8, V9, V10, V11, V12, V13, V14, V15]
+  FloatCalleeSaved* = [F8, F9, F10, F11, F12, F13, F14, F15]
 
   ## Never allocate: x16/x17 (IP0/IP1 veneers), x18 (Darwin platform reg),
   ## x8 (indirect result), fp/lr/sp.
-  ReservedRegs* = {X8, X16, X17, X18, X29, X30, SP, NoReg}
+  ReservedRegs* = {R8, R16, R17, R18, R29, R30, SP, NoReg}
 
   ## The GPRs a call clobbers under the C/AAPCS64 convention — the caller-saved
   ## volatiles arkham manages (args x0–x7 + temps x9–x15, and x8). Emitted as the
   ## proc's `(clobber …)` so the ABI is declared at the signature rather than
   ## re-derived; x16/x17 (assembler veneers) and x18 (platform) are excluded.
-  ConvClobbersGpr* = [X0, X1, X2, X3, X4, X5, X6, X7, X8,
-                      X9, X10, X11, X12, X13, X14, X15]
+  ConvClobbersGpr* = [R0, R1, R2, R3, R4, R5, R6, R7, R8,
+                      R9, R10, R11, R12, R13, R14, R15]
+
+  ## The AArch64 / AAPCS64 register file and calling convention, as the
+  ## arch-neutral register allocator consumes it.
+  aarch64Machine* = MachineDesc(
+    intArgRegs: @IntArgRegs,
+    floatArgRegs: @FloatArgRegs,
+    intTempRegs: @IntTempRegs,
+    intCalleeSaved: @IntCalleeSaved,
+    floatTempRegs: @FloatTempRegs,
+    floatCalleeSaved: @FloatCalleeSaved,
+    intCalleeSavedSet: {R19..R28},
+    floatCalleeSavedSet: {F8..F15},
+    aggrByRefThreshold: 16)
 
 proc regName*(r: Reg): string =
   case r
@@ -69,39 +76,6 @@ proc regName*(r: Reg): string =
 proc regName*(f: FReg): string =
   if f == NoFReg: "<nofreg>" else: "v" & $ord(f)
 
-type
-  LocKind* = enum
-    Undef          ## the dontCare target (fill me in)
-    InReg          ## value in a GPR
-    InFReg         ## value in an FP/SIMD register
-    OnStack        ## value in a frame slot at `offset` (from the frame base)
-    NamedStack     ## an aggregate stack var managed by nifasm, addressed by name
-    Imm            ## a known immediate (constant / target hint)
-
-  Location* = object
-    typ*: AsmSlot
-    case kind*: LocKind
-    of Undef: discard
-    of InReg: r*: Reg
-    of InFReg: f*: FReg
-    of OnStack: offset*: int
-    of NamedStack: name*: string
-    of Imm: ival*: int64
-
-const
-  dontCare* = Location(kind: Undef)
-
-proc regLoc*(r: Reg; typ: AsmSlot): Location {.inline.} =
-  Location(kind: InReg, r: r, typ: typ)
-proc fregLoc*(f: FReg; typ: AsmSlot): Location {.inline.} =
-  Location(kind: InFReg, f: f, typ: typ)
-proc stackLoc*(offset: int; typ: AsmSlot): Location {.inline.} =
-  Location(kind: OnStack, offset: offset, typ: typ)
-proc namedStackLoc*(name: string; typ: AsmSlot): Location {.inline.} =
-  Location(kind: NamedStack, name: name, typ: typ)
-proc immLoc*(ival: int64; typ: AsmSlot): Location {.inline.} =
-  Location(kind: Imm, ival: ival, typ: typ)
-
 proc `$`*(loc: Location): string =
   case loc.kind
   of Undef: "undef"
@@ -110,8 +84,3 @@ proc `$`*(loc: Location): string =
   of OnStack: "[fp," & $loc.offset & "]"
   of NamedStack: "&" & loc.name
   of Imm: "#" & $loc.ival
-
-proc sameReg*(a, b: Location): bool {.inline.} =
-  ## True if both name the same physical register (for move coalescing).
-  (a.kind == InReg and b.kind == InReg and a.r == b.r) or
-  (a.kind == InFReg and b.kind == InFReg and a.f == b.f)

@@ -114,18 +114,23 @@ proc parsePragmas(c: var Cursor; importcN, exportcN: var string) =
   else:
     skip c
 
-proc abiScalarType(c: Cursor): bool =
+proc resolveType*(p: var Program; c: Cursor): Cursor
+
+proc abiScalarType(p: var Program; c: Cursor): bool =
   ## A type that travels in a single GPR with no layout resolution needed:
-  ## a primitive non-float scalar (`(i N)`/`(u N)`/`(c N)`/`(bool)`) or a pointer
-  ## (`(ptr …)`/`(aptr …)`/`(proctype …)`). Floats, aggregates and *named* types
-  ## (enums/objects, possibly cross-module) conservatively answer false so they
-  ## keep the manual marshalling path.
-  if c.kind != TagLit: return false
-  case c.typeKind
-  of IT, UT, CT, BoolT, PtrT, AptrT, ProctypeT: true
+  ## a primitive non-float scalar (`(i N)`/`(u N)`/`(c N)`/`(bool)`), a pointer
+  ## (`(ptr …)`/`(aptr …)`/`(proctype …)`), or a named type that resolves to one of
+  ## those — notably an `enum`, which collapses to its base integer. Floats and
+  ## aggregates (objects/unions/arrays) conservatively answer false so they keep
+  ## the manual marshalling path.
+  var t = c
+  if t.kind == Symbol: t = resolveType(p, t)
+  if t.kind != TagLit: return false
+  case t.typeKind
+  of IT, UT, CT, BoolT, PtrT, AptrT, ProctypeT, EnumT: true
   else: false
 
-proc isDeclarativeAbi*(decl: Cursor): bool =
+proc isDeclarativeAbi*(p: var Program; decl: Cursor): bool =
   ## Whether `decl`'s call boundary maps onto the simple declarative scheme:
   ## every parameter is a single-GPR scalar/pointer and the result is void or a
   ## single-GPR scalar. The first 8 scalar params travel in x0–x7; any beyond
@@ -142,13 +147,13 @@ proc isDeclarativeAbi*(decl: Cursor): bool =
           pc.into:                            # (param :name pragmas type)
             inc pc                            # name
             skip pc                           # pragmas
-            ok = abiScalarType(pc)
+            ok = abiScalarType(p, pc)
             while pc.hasMore: skip pc          # type (+ anything else)
           if not ok: return false
     skip c                                    # params
     # return type: void, or a single-GPR scalar
     if not (c.kind == DotToken or (c.kind == TagLit and c.typeKind == VoidT)) and
-       not abiScalarType(c):
+       not abiScalarType(p, c):
       return false
     while c.hasMore: skip c                   # return type, pragmas, body
   result = true
@@ -214,7 +219,7 @@ proc collect*(buf: var TokenBuf; inputPath: string; tags: TagPool): Program =
           let asmN = if entry: "main.0" else: pname
           result.callTarget[pname] = CallTarget(asmName: asmN, extern: false,
                                                 retFloat: retFloat, retType: retType,
-                                                declarative: isDeclarativeAbi(procStart))
+                                                declarative: isDeclarativeAbi(result, procStart))
           result.procs.add ProcInfo(asmName: asmN, decl: procStart, isEntry: entry)
       else:
         skip c

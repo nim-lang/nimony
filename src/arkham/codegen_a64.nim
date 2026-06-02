@@ -23,38 +23,20 @@ import std / [assertions, tables, sets, strformat]
 import nifcore, nifcdecl
 import slots, machine, analyser, register_allocator, programs
 import asmbuf
+import codegen_common
 
 const DarwinLibSystem = "/usr/lib/libSystem.B.dylib"
 
-type
-  CodeGen = object
-    ab: AsmBuf
-    ra: RegAlloc
-    buf: ptr TokenBuf
-    prog: Program                           ## the whole program (cross-module type env)
-    callTarget: Table[string, CallTarget]
-    globals: Table[string, Cursor]          ## global var name → its decl cursor
-    tvars: Table[string, Cursor]            ## thread-local var name → its decl cursor (macOS TLV)
-    tvarNames: HashSet[string]              ## tvar names, for the per-proc analyser
-    freeTmp: set[Reg]                       ## volatile temps free for scratch
-    freeFTmp: set[FReg]                      ## volatile SIMD/FP temps free for scratch
-    retIsFloat: bool                         ## current proc returns a float (in v0)
-    retFloatBits: int                        ## width (32/64) of the float return type
-    rodata: seq[(string, string)]           ## module-level string literals
-    hasFrame: bool                          ## current proc needs a stack frame
-    frameRegs: seq[Reg]                     ## callee-saved GPRs to save (even count)
-    frameFRegs: seq[FReg]                   ## callee-saved SIMD regs to save (even count)
-    labelCount: int                         ## fresh-label counter
-    loopEnds: seq[string]                   ## stack of enclosing-loop end labels (for `break`)
-    retAggrName: string                     ## current proc's aggregate return type (or "")
-    retIndirect: bool                       ## return type is >16B (x8 indirect result)
-    indirectReg: Reg                        ## callee-saved reg holding the x8 dest pointer
-    varType: Table[string, string]          ## aggregate var/param name → its type name
-    symType: Table[string, Cursor]          ## local/param name → its NIFC type cursor (for getType)
+# The `CodeGen` state object and the NIFC type/lvalue analysis live in
+# `codegen_common`; this module is the AArch64 instruction-selection backend.
 
 # ── low-level emit helpers ──────────────────────────────────────────────────
 
-proc emReg(g: var CodeGen; r: Reg) {.inline.} = g.ab.reg r   # `(xN)`
+proc emReg(g: var CodeGen; r: Reg) {.inline.} =
+  ## A value GPR operand: a named register local → its typed name; otherwise the
+  ## raw `(xN)` tag (transient scratch, params, etc.).
+  if g.regLocal.hasKey(r): g.ab.sym g.regLocal[r]
+  else: g.ab.reg r
 
 proc movImm(g: var CodeGen; d: Reg; v: int64) =
   g.ab.tree MovA64: g.emReg d; g.ab.intLit v
@@ -95,7 +77,9 @@ proc genTlvAddr(g: var CodeGen; name: string; dest: Reg) =
     g.ab.sym name
 
 proc emPair(g: var CodeGen; op: A64Inst; r1, r2: Reg; off: int) =
-  g.ab.tree op: g.emReg r1; g.emReg r2; g.emReg SP; g.ab.intLit off
+  # stp/ldp save/restore *physical* callee-saved registers (which may also be
+  # named-local homes), so emit raw register nodes, not the local names.
+  g.ab.tree op: g.ab.reg r1; g.ab.reg r2; g.ab.reg SP; g.ab.intLit off
 
 proc emFPair(g: var CodeGen; op: A64Inst; f1, f2: FReg; off: int) =
   g.ab.tree op: g.ab.dreg f1; g.ab.dreg f2; g.emReg SP; g.ab.intLit off
@@ -203,8 +187,6 @@ proc genAddr(g: var CodeGen; c: var Cursor; dest: Reg)
 proc materializeCond(g: var CodeGen; c: var Cursor; dest: Reg)
 proc genReg(g: var CodeGen; c: var Cursor): tuple[r: Reg, temp: bool]
 proc genFReg(g: var CodeGen; c: var Cursor; bits: int): tuple[f: FReg, temp: bool]
-proc isFloatExpr(g: var CodeGen; c: Cursor): bool
-proc floatBits(g: var CodeGen; c: Cursor): int
 proc structToRegs(g: var CodeGen; varName, typeName: string; firstArg: int)
 proc regsToStruct(g: var CodeGen; varName, typeName: string; firstArg: int)
 proc aggrAddr(g: var CodeGen; c: var Cursor): tuple[r: Reg, temp: bool]
@@ -321,26 +303,47 @@ proc emFloatScalarStore(g: var CodeGen; name: string; src: FReg; bits: int) =
   ## `[slot] ← src` — store to a spilled float's `(s)` var.
   g.ab.tree FstrA64: (g.ab.sym name; g.emFReg(src, bits))
 
-proc genReg(g: var CodeGen; c: var Cursor): tuple[r: Reg, temp: bool] =
-  ## Evaluate `c` into *some* register. A symbol already in a register is used
-  ## in place (no copy); otherwise a scratch register is borrowed (caller must
-  ## `giveBack`).
-  if c.kind == Symbol:
+proc forceReg(g: var CodeGen; v: Val): tuple[r: Reg, owns: bool] =
+  ## Ensure `v` is in a register (an immediate is loaded into a fresh temp).
+  case v.kind
+  of vkReg: (v.r, v.ownsR)
+  of vkImm:
+    let t = g.borrowTmp(); g.movImm(t, v.imm); (t, true)
+  else: raiseAssert "arkham: cannot force a value of kind " & $v.kind & " into a register"
+
+proc place(g: var CodeGen; v: Val; dest: Reg) =
+  ## Materialize `v` into `dest`, releasing any owned scratch it occupied.
+  case v.kind
+  of vkImm: g.movImm(dest, v.imm)
+  of vkReg:
+    g.movReg(dest, v.r)
+    if v.ownsR and v.r != dest: g.giveBack v.r
+  else: raiseAssert "arkham: cannot place a value of kind " & $v.kind
+
+proc genVal(g: var CodeGen; c: var Cursor): Val =
+  ## The dont-care evaluator: produce `c`'s value where it naturally lives — a
+  ## literal as an immediate, a register-resident local in place — materializing
+  ## a computed value into a freshly borrowed scratch register (owned by the
+  ## returned descriptor). The counterpart of `genInto(…, dest)`.
+  case c.kind
+  of IntLit:
+    result = Val(kind: vkImm, imm: intVal(c)); inc c
+  of Symbol:
     let loc = g.ra.locationOfSym(symName(c))
     if loc.kind == InReg:
-      result = (loc.r, false); inc c; return
-  let r = g.borrowTmp()
-  g.genInto(c, r)
-  result = (r, true)
+      result = Val(kind: vkReg, r: loc.r, ownsR: false); inc c
+    else:
+      let t = g.borrowTmp(); g.genInto(c, t)   # a global/etc → loaded into a scratch
+      result = Val(kind: vkReg, r: t, ownsR: true)
+  else:
+    let t = g.borrowTmp(); g.genInto(c, t)     # a computed value → a scratch reg
+    result = Val(kind: vkReg, r: t, ownsR: true)
 
-proc isSignedType(c: Cursor): bool =
-  ## NIFC arithmetic carries its result type as the first child; treat it as
-  ## signed unless it is an unsigned/char integer. (A `case` disambiguates the
-  ## NifcType enum members, which share spellings with nifasm's NifasmType.)
-  if c.kind != TagLit: return true
-  case c.typeKind
-  of UT, CT: false
-  else: true
+proc genReg(g: var CodeGen; c: var Cursor): tuple[r: Reg, temp: bool] =
+  ## `forceReg(genVal …)`: evaluate `c` into *some* register — a register-
+  ## resident symbol in place, else a borrowed scratch the caller must `giveBack`.
+  let (r, owns) = g.forceReg(g.genVal(c))
+  result = (r, owns)
 
 proc genBin(g: var CodeGen; c: var Cursor; dest: Reg;
             signedOp: A64Inst; unsignedOp = NoA64Inst) =
@@ -350,27 +353,52 @@ proc genBin(g: var CodeGen; c: var Cursor; dest: Reg;
     let op = if unsignedOp != NoA64Inst and not isSignedType(c): unsignedOp
              else: signedOp
     skip c                                  # the result type
-    g.genInto(c, dest)                      # a → dest
-    if op in {AddA64, SubA64} and c.kind == IntLit and intVal(c) >= 0 and intVal(c) <= 0xFFFF:
-      g.binImm(op, dest, intVal(c)); inc c  # dest op= small immediate
+    # The right operand is a descriptor (immediate folds into `op dest, #imm`;
+    # a register is used in place). If it lives in `dest`, evaluating `a` into
+    # `dest` would clobber it, so save it to a scratch first.
+    var bPeek = c
+    skip bPeek
+    var b: Val
+    if g.operandInReg(bPeek, dest):
+      let saved = g.borrowTmp()
+      g.movReg(saved, dest)                 # preserve b before `a` clobbers dest
+      g.genInto(c, dest)                    # a → dest
+      skip c                                # consume b
+      b = Val(kind: vkReg, r: saved, ownsR: true)
     else:
-      let (br, bt) = g.genReg(c)
+      g.genInto(c, dest)                    # a → dest
+      b = g.genVal(c)                       # b stays where it naturally lives
+    if op in {AddA64, SubA64} and b.kind == vkImm and b.imm >= 0 and b.imm <= 0xFFFF:
+      g.binImm(op, dest, b.imm)             # dest op= small immediate
+    else:
+      let (br, owns) = g.forceReg(b)
       g.binReg(op, dest, br)                # dest op= b
-      if bt: g.giveBack br
+      if owns: g.giveBack br
 
 proc genMod(g: var CodeGen; c: var Cursor; dest: Reg) =
   ## `(mod Type a b)` → `dest = a - (a div b)*b` (nifasm has no `msub`).
   c.into:
     let signed = isSignedType(c); skip c
+    # Save `b` first if it lives in `dest` (else `genInto(a, dest)` clobbers it).
+    var bPeek = c
+    skip bPeek
+    var bSaved = NoReg
+    if g.operandInReg(bPeek, dest):
+      bSaved = g.borrowTmp()
+      g.movReg(bSaved, dest)
     g.genInto(c, dest)                      # dest = a
-    let (br, bt) = g.genReg(c)              # br = b
+    var br: Reg
+    var bt = false
+    if bSaved != NoReg: (br = bSaved; skip c)   # br = b (saved); consume b
+    else: (let t = g.genReg(c); br = t.r; bt = t.temp)  # br = b
     let q = g.borrowTmp()
     g.movReg(q, dest)                       # q = a
     g.binReg(if signed: SdivA64 else: UdivA64, q, br)  # q = a div b
     g.binReg(MulA64, q, br)                 # q = (a div b)*b
     g.binReg(SubA64, dest, q)               # dest = a - q
     g.giveBack q
-    if bt: g.giveBack br
+    if bSaved != NoReg: g.giveBack bSaved
+    elif bt: g.giveBack br
 
 proc genNeg(g: var CodeGen; c: var Cursor; dest: Reg) =
   ## `(neg Type a)` → `dest = -a`.
@@ -395,15 +423,6 @@ proc genNot(g: var CodeGen; c: var Cursor; dest: Reg) =
     g.binReg(SubA64, dest, br)
     if bt: g.giveBack br
 
-proc intTypeWidth(c: Cursor): int =
-  ## Bit width of an integer/char type; 64 for pointer/bool/other (register width).
-  if c.kind != TagLit: return 64
-  case c.typeKind
-  of IT, UT, CT:
-    var t = c; inc t
-    if t.kind == IntLit and intVal(t) > 0: int(intVal(t)) else: 64
-  else: 64
-
 proc extendTo(g: var CodeGen; dest: Reg; width: int; signed: bool) =
   ## Normalize the low `width` bits of `dest` to its full 64-bit register form
   ## (sign- or zero-extended). No-op for 64-bit. nifasm has no sxtb/uxtb, so we
@@ -414,195 +433,6 @@ proc extendTo(g: var CodeGen; dest: Reg; width: int; signed: bool) =
   let sh = 64 - width
   let down = if signed: "asr" else: "lsr"
   g.ab.splice &"(lsl ({d}) {sh}) ({down} ({d}) {sh})"
-
-proc slotWidthSigned(s: AsmSlot): tuple[width: int, signed: bool] =
-  ## A scalar slot's significant bit width and signedness (for extension).
-  case s.kind
-  of AInt:  (s.size * 8, true)
-  of AUInt: (s.size * 8, false)
-  of ABool: (8, false)
-  else:     (64, true)                      # float/aggregate: no widening extend
-
-proc srcWidthSigned(g: var CodeGen; c: Cursor): tuple[width: int, signed: bool] =
-  ## Best-effort source scalar (bit width, signedness) of the expression at `c`,
-  ## *without* consuming it — used to pick sign- vs zero-extension when a
-  ## conversion *widens*. Unknown → (64, true): treated as full register width,
-  ## i.e. no widening extension is applied (the pre-source-aware behaviour).
-  case c.kind
-  of Symbol:
-    let nm = symName(c)
-    let loc = g.ra.locationOfSym(nm)
-    if loc.kind != Undef:
-      return slotWidthSigned(loc.typ)        # a local/param: the allocator knows it
-    var decl: Cursor                          # a global / thread-local: read its decl type
-    if g.globals.hasKey(nm): decl = g.globals[nm]
-    elif g.tvars.hasKey(nm): decl = g.tvars[nm]
-    else: return (64, true)
-    var d = decl
-    d.into:
-      inc d; skip d                           # name, pragmas
-      return slotWidthSigned(slotOf(g.prog, d))
-  of TagLit:
-    case c.exprKind
-    of AddC, SubC, MulC, DivC, ModC, ShlC, ShrC,
-       BitandC, BitorC, BitxorC, BitnotC, NegC, ConvC, CastC:
-      var t = c                               # these carry their result type first
-      t.into:
-        return slotWidthSigned(slotOf(g.prog, t))
-    else: return (64, true)
-  else: return (64, true)
-
-proc isPtrType(c: Cursor): bool =
-  ## A `case` (not an `in {…}` set) so the discriminant type picks nifcdecl's
-  ## `NifcType.PtrT`, not nifasm's same-spelled `NifasmType` member.
-  if c.kind != TagLit: return false
-  case c.typeKind
-  of PtrT, AptrT, ProctypeT: true
-  else: false
-
-proc getType(g: var CodeGen; c: Cursor): Cursor =
-  ## The structural NIFC type cursor of expression `c` (arkham's analog of
-  ## `typenav.getType`). Symbols resolve through `symType` / the global/tvar
-  ## decls; `dot`/`at`/`deref` navigate into the base's object/array/pointer
-  ## type; typed nodes (arith, conv, cast, call) read their carried type. This is
-  ## the single source of truth for "is this float?" — no per-form special cases.
-  case c.kind
-  of Symbol:
-    let nm = symName(c)
-    if g.symType.hasKey(nm): return g.symType[nm]
-    var decl: Cursor
-    if g.globals.hasKey(nm): decl = g.globals[nm]
-    elif g.tvars.hasKey(nm): decl = g.tvars[nm]
-    else: raiseAssert "arkham: getType — unknown symbol " & nm
-    var d = decl
-    d.into:
-      inc d; skip d                           # name, pragmas
-      result = d                              # the declared type (a copy)
-      while d.hasMore: skip d
-  of TagLit:
-    case c.exprKind
-    of AddC, SubC, MulC, DivC, ModC, ShlC, ShrC, BitandC, BitorC, BitxorC,
-       BitnotC, NegC, NotC, ConvC, CastC:
-      var t = c
-      t.into:
-        result = t                            # the carried result/target type
-        while t.hasMore: skip t
-    of DotC:
-      var t = c
-      t.into:
-        let objTy = resolveType(g.prog, g.getType(t)); inc t   # base's object type
-        result = fieldType(g.prog, objTy, symName(t)); inc t
-        while t.hasMore: skip t
-    of AtC:
-      var t = c
-      t.into:
-        let arrTy = resolveType(g.prog, g.getType(t)); inc t   # array/aptr type
-        result = innerType(g.prog, arrTy)
-        while t.hasMore: skip t
-    of DerefC:
-      var t = c
-      t.into:
-        let ptrTy = resolveType(g.prog, g.getType(t))          # pointer type
-        result = innerType(g.prog, ptrTy)
-        while t.hasMore: skip t
-    of CallC:
-      var t = c
-      t.into:
-        result = g.callTarget.getOrDefault(symName(t)).retType
-        while t.hasMore: skip t
-    else: raiseAssert "arkham: getType — unsupported expression " & $c.exprKind
-  else: raiseAssert "arkham: getType — literal has no stored type"
-
-proc exprSlot(g: var CodeGen; c: Cursor): AsmSlot =
-  ## The classified slot of any expression — `getType` for structural forms,
-  ## with literals/`addr` (which carry no type cursor) handled directly.
-  case c.kind
-  of FloatLit: AsmSlot(kind: AFloat, size: 8, align: 8)   # default f64; width refined by context
-  of IntLit, UIntLit: AsmSlot(kind: AInt, size: 8, align: 8)
-  of CharLit: AsmSlot(kind: AUInt, size: 1, align: 1)
-  of StrLit: AsmSlot(kind: AUInt, size: 8, align: 8)      # a pointer
-  of Symbol: slotOf(g.prog, g.getType(c))
-  of TagLit:
-    if c.exprKind == AddrC: AsmSlot(kind: AUInt, size: 8, align: 8)  # &lvalue → a pointer
-    else: slotOf(g.prog, g.getType(c))
-  else: AsmSlot(kind: AMem)
-
-proc isFloatExpr(g: var CodeGen; c: Cursor): bool =
-  ## Whether `c` has floating-point type (so it flows through the SIMD path).
-  g.exprSlot(c).kind == AFloat
-
-proc floatBits(g: var CodeGen; c: Cursor): int =
-  ## Bit width (32 or 64) of a float expression; 64 when undeterminable (e.g. a
-  ## bare literal — the caller's context width should be used instead).
-  if g.exprSlot(c).size == 4: 32 else: 64
-
-# ── unified lvalue model (addressing modes) ─────────────────────────────────
-# A single descriptor for "where a scalar value lives", parsed once from a NIFC
-# lvalue cursor and consumed by one load/store family — the analogue of TCC's
-# `SValue` + `load()`/`store()`. This collapses the per-form (symbol / global /
-# thread-local / field / element / deref) × per-direction (load / store) × int/
-# float matrix that used to be spread across genInto / genIntoF / genAsgn.
-
-type
-  LvalKind = enum
-    lvReg          ## scalar in a GPR (register-resident local)
-    lvFReg         ## scalar in a SIMD register (float local)
-    lvGlobal       ## module-level global: address via `(adr name)`
-    lvTvar         ## thread-local: address via the macOS TLV thunk
-    lvStackScalar  ## spilled scalar `(s)` slot, addressed by name
-    lvAggrVar      ## aggregate stack var (only an address; no scalar load/store)
-    lvField        ## `(dot base field)` memory operand
-    lvElem         ## `(at arr idx)` — re-emitted from the captured cursor
-    lvDeref        ## `(deref p)` — pointer recomputed from the captured cursor
-
-  Lvalue = object
-    slot: AsmSlot                ## float-ness / width (caller picks int vs float path)
-    case kind: LvalKind
-    of lvReg: r: Reg
-    of lvFReg: f: FReg
-    of lvGlobal, lvTvar, lvStackScalar, lvAggrVar: name: string
-    of lvField: base, field: string
-    of lvElem, lvDeref: cur: Cursor
-
-proc asLvalue(g: var CodeGen; c: var Cursor): Lvalue =
-  ## Classify and consume an lvalue (Symbol / dot / at / deref). The slot records
-  ## float-ness/width for the caller. Scalar callers (genInto/genIntoF/genAsgn)
-  ## use the load/store family; `emitAddr` additionally handles `lvAggrVar` (an
-  ## aggregate stack var — only its address is meaningful).
-  let slot = g.exprSlot(c)
-  case c.kind
-  of Symbol:
-    let nm = symName(c); inc c
-    if g.tvars.hasKey(nm):
-      result = Lvalue(kind: lvTvar, name: nm, slot: slot)
-    elif g.globals.hasKey(nm):
-      result = Lvalue(kind: lvGlobal, name: nm, slot: slot)
-    else:
-      let loc = g.ra.locationOfSym(nm)
-      case loc.kind
-      of InReg: result = Lvalue(kind: lvReg, r: loc.r, slot: slot)
-      of InFReg: result = Lvalue(kind: lvFReg, f: loc.f, slot: slot)
-      of NamedStack:
-        if loc.typ.kind == AMem:
-          result = Lvalue(kind: lvAggrVar, name: nm, slot: slot)
-        else:
-          result = Lvalue(kind: lvStackScalar, name: nm, slot: slot)
-      else: raiseAssert "arkham v1: symbol is not an lvalue: " & nm
-  of TagLit:
-    case c.exprKind
-    of DotC:
-      var base, field: string
-      c.into:
-        base = symName(c); inc c
-        field = symName(c); inc c
-        while c.hasMore: skip c              # depth / access selector
-      result = Lvalue(kind: lvField, base: base, field: field, slot: slot)
-    of AtC:
-      result = Lvalue(kind: lvElem, cur: c, slot: slot); skip c
-    of DerefC:
-      result = Lvalue(kind: lvDeref, cur: c, slot: slot); skip c
-    else: raiseAssert "arkham v1: not an lvalue: " & $c.exprKind
-  else: raiseAssert "arkham v1: not an lvalue: " & $c.kind
 
 proc derefPtr(g: var CodeGen; l: Lvalue): tuple[r: Reg, temp: bool] =
   ## Recompute the pointer of a captured `(deref p)` lvalue into a register.
@@ -967,9 +797,6 @@ proc genAddr(g: var CodeGen; c: var Cursor; dest: Reg) =
 
 # ── calls ────────────────────────────────────────────────────────────────────
 
-proc retIsVoid(t: Cursor): bool {.inline.} =
-  t.kind == DotToken or (t.kind == TagLit and t.typeKind == VoidT)
-
 proc genCall(g: var CodeGen; c: var Cursor) =
   ## `(call f arg…)` — internal `(call)` or external `(extcall)`. Integer/
   ## pointer args go straight into x0,x1,… left-to-right (no nested calls — the
@@ -1003,7 +830,7 @@ proc genCall(g: var CodeGen; c: var Cursor) =
           if idx < IntArgRegs.len:
             g.genInto(c, IntArgRegs[idx])      # value → x{idx}
             g.ab.tree MovA64:
-              g.ab.tree ArgX: g.ab.sym ("p." & $idx)
+              g.ab.tree ArgX: g.ab.sym paramName(idx)
               g.emReg IntArgRegs[idx]
             g.ra.seal IntArgRegs[idx]; sealedHere.incl IntArgRegs[idx]
           else:
@@ -1020,7 +847,7 @@ proc genCall(g: var CodeGen; c: var Cursor) =
             g.ab.tree MovA64:
               g.ab.tree MemX:
                 g.emReg SP
-                g.ab.tree ArgX: g.ab.sym ("p." & $stackArgIdx[k])
+                g.ab.tree ArgX: g.ab.sym paramName(stackArgIdx[k])
               g.emReg stackTmps[k]
         g.ab.keyword CallA64
         if stackTmps.len > 0:
@@ -1190,6 +1017,31 @@ proc copyStructThroughPtr(g: var CodeGen; srcVar, typeName: string; ptrReg: Reg)
     g.ab.tree MovA64: (g.emPtrFieldMem(ptrReg, typeName, f.name); g.emReg tmp)
     g.giveBack tmp
 
+# ── named register locals (typed nifasm vars; transient scratch stays `(xN)`) ─
+
+proc emRegLocalVar(g: var CodeGen; name: string; r: Reg; typeCur: Cursor) =
+  ## `(var :name (reg) type)` + bind `r` to `name` for its scope. arkham keeps
+  ## scalars 64-bit in registers (width/signedness via explicit extends), so an
+  ## int/uint/bool/char local is declared `(i 64)`; a pointer keeps `(ptr T)`.
+  g.ab.open NifasmDecl.VarD
+  g.ab.symDef name
+  g.ab.reg r
+  let rt = resolveType(g.prog, typeCur)
+  if isPtrType(rt):
+    var tc = typeCur
+    g.genTypeBody(tc)
+  else: g.ab.intType(64)
+  g.ab.close()
+  g.regLocal[r] = name
+  g.scopeLocals[^1].add (name: name, reg: r)
+
+proc enterScope(g: var CodeGen) = g.scopeLocals.add @[]
+
+proc exitScope(g: var CodeGen) =
+  for it in g.scopeLocals.pop():
+    g.ab.tree KillA64: g.ab.sym it.name
+    g.regLocal.del it.reg
+
 proc genVarDecl(g: var CodeGen; c: var Cursor) =
   ## `(var :name pragmas type value)`. Scalars land in their allocated register;
   ## aggregates become a nifasm-managed `(var :name (s) type)` stack var, with
@@ -1254,6 +1106,7 @@ proc genVarDecl(g: var CodeGen; c: var Cursor) =
           if srcT: g.giveBack srcA
           g.giveBack dstA
     of InReg:
+      g.emRegLocalVar(name, loc.r, typeCur)   # (var :name (reg) type) — typed for nifasm
       if c.kind == DotToken: inc c          # no initializer
       else: g.genInto(c, loc.r)
     of InFReg:
@@ -1851,9 +1704,11 @@ proc genStmt(g: var CodeGen; c: var Cursor) =
     genCase(g, c)
   of BreakS:
     genBreak(g, c)
-  of ScopeS:
+  of ScopeS:                                # only `scope` is a fresh scope
+    g.enterScope()
     c.into:
       while c.hasMore: genStmt(g, c)
+    g.exitScope()
   of RetS:
     # (ret e?): place the value in x0 (or x0:x1 for a ≤16B aggregate), restore
     # the frame, then return.
@@ -2034,7 +1889,7 @@ proc emitSignature(g: var CodeGen; decl: Cursor; declarative: bool) =
                 inc c                         # name → use positional p{idx}
                 skip c                        # pragmas
                 g.ab.tree ParamD:
-                  g.ab.symDef ("p." & $idx)
+                  g.ab.symDef paramName(idx)
                   if idx < IntArgRegs.len:
                     g.emReg IntArgRegs[idx]   # x0–x7
                   else:
@@ -2064,6 +1919,8 @@ proc genProc(g: var CodeGen; info: ProcInfo) =
   let an = analyseProc(info.decl, g.tvarNames)
   g.varType = initTable[string, string]()     # per-proc (symbol names recycle)
   g.symType = initTable[string, Cursor]()
+  g.regLocal = initTable[Reg, string]()        # per-proc named-local bindings
+  g.scopeLocals = @[]
   # Determine the aggregate return convention BEFORE allocation: a named object
   # ≤16B → x0[:x1]; >16B → x8 indirect result (callee writes through the caller-
   # supplied pointer, which we park in x19 for the proc's lifetime).
@@ -2082,16 +1939,16 @@ proc genProc(g: var CodeGen; info: ProcInfo) =
     elif rc.kind == TagLit and rc.typeKind == FT:
       g.retIsFloat = true                     # float return → v0
       g.retFloatBits = if slotOf(g.prog, rc).size == 4: 32 else: 64
-  let preseal = if g.retIndirect: {X19} else: {}
-  g.ra = allocateProc(g.buf[], info.decl, an, g.prog, preseal)
+  let preseal = if g.retIndirect: {R19} else: {}
+  g.ra = allocateProc(g.buf[], info.decl, an, g.prog, aarch64Machine, preseal)
   if g.retIndirect:
-    g.indirectReg = X19
-    g.ra.usedCallee.incl X19                  # saved/restored like any callee reg
+    g.indirectReg = R19
+    g.ra.usedCallee.incl R19                  # saved/restored like any callee reg
   g.initFreeTmp()
   g.computeFrame(an.hasCall)
   g.ab.tree ProcD:
     g.ab.symDef info.asmName                  # "main.0" for the entry
-    g.emitSignature(info.decl, isDeclarativeAbi(info.decl))
+    g.emitSignature(info.decl, isDeclarativeAbi(g.prog, info.decl))
     g.ab.tree StmtsA64:
       if g.hasFrame: framePush(g)
       # Read incoming stack args while SP still points at the caller's argument
@@ -2103,12 +1960,14 @@ proc genProc(g: var CodeGen; info: ProcInfo) =
         g.movReg(g.indirectReg, IndirectResultReg)
       g.emitParamMoves(info.decl)
       if info.isEntry: g.emitGlobalInits()    # run module-level var initializers
+      g.enterScope()                          # the proc body's scope (register locals)
       var c = info.decl
       c.into:
         inc c; skip c; skip c; skip c         # name, params, return type, pragmas
         if c.stmtKind == StmtsS:
           c.into:
             while c.hasMore: genStmt(g, c)
+      g.exitScope()                           # `kill` the proc's register locals
       # Fallthrough epilogue: a void proc whose body has no explicit `(ret)`
       # must still restore the frame and return (unreachable dead code after an
       # explicit `ret`, harmless).
@@ -2192,11 +2051,11 @@ proc emitGlobalInits(g: var CodeGen) =
           g.giveBack v
       while c.hasMore: skip c
 
-proc generate*(buf: var TokenBuf; inputPath: string; tags: TagPool): string =
+proc generateA64*(buf: var TokenBuf; inputPath: string; tags: TagPool): string =
   ## Compile a parsed NIFC module to AArch64 / Darwin asm-NIF text. `inputPath`
   ## and `tags` let the program model load *other* modules on demand to resolve
   ## cross-module symbols (`Foo.0.othermod`).
-  var g = CodeGen(ab: initAsmBuf(), buf: addr buf)
+  var g = CodeGen(ab: initAsmBuf(), buf: addr buf, md: aarch64Machine)
   g.prog = collect(buf, inputPath, tags)
   g.callTarget = g.prog.callTarget
   g.globals = g.prog.globals

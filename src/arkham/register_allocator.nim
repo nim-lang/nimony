@@ -23,10 +23,10 @@
 ##  * out of registers                               → stack slot
 ## A register is returned to its pool when its scope closes (sibling scopes
 ## reuse it); the union of callee-saved registers ever used drives the
-## prologue/epilogue. Weight-based stealing is a later refinement.
+## prologue/epilogue.
 
 import std / [tables, assertions]
-import nifcore, nifcdecl, slots, machine, analyser, programs
+import nifcore, nifcdecl, slots, machinedesc, analyser, programs
 
 type
   RegAlloc* = object
@@ -46,6 +46,7 @@ type
     buf: ptr TokenBuf
     an: ptr ProcAnalysis
     prog: ptr Program                 ## program (for cross-module type resolution / sizing)
+    md: MachineDesc                   ## target register file + ABI (arch-neutral driver)
     freeVol, freeCallee: set[Reg]
     freeVolF: set[FReg]               ## caller-saved SIMD/FP scratch pool (v16–v31)
     freeCalleeF: set[FReg]            ## callee-saved SIMD pool (v8–v15)
@@ -87,32 +88,32 @@ proc allocStorage(b: var Builder; slot: AsmSlot; props: VarProps): Location =
     if AddrTaken in props: return b.spill(slot)
     var f: FReg
     if AllRegs in props:
-      f = b.takeFReg(b.freeVolF, FloatTempRegs)
-      if f == NoFReg: f = b.takeFReg(b.freeCalleeF, FloatCalleeSaved)
+      f = b.takeFReg(b.freeVolF, b.md.floatTempRegs)
+      if f == NoFReg: f = b.takeFReg(b.freeCalleeF, b.md.floatCalleeSaved)
     else:
-      f = b.takeFReg(b.freeCalleeF, FloatCalleeSaved)
+      f = b.takeFReg(b.freeCalleeF, b.md.floatCalleeSaved)
     if f == NoFReg: return b.spill(slot)
-    if f in {V8..V15}: b.ra.usedCalleeF.incl f
+    if f in b.md.floatCalleeSavedSet: b.ra.usedCalleeF.incl f
     return fregLoc(f, slot)
   if AddrTaken in props or not slot.inRegClass:
     return b.spill(slot)
   var r: Reg
   if AllRegs in props:
-    r = b.takeReg(b.freeVol, IntTempRegs)
-    if r == NoReg: r = b.takeReg(b.freeCallee, IntCalleeSaved)
+    r = b.takeReg(b.freeVol, b.md.intTempRegs)
+    if r == NoReg: r = b.takeReg(b.freeCallee, b.md.intCalleeSaved)
   else:
     # may be live across a call → must be callee-saved (or stack)
-    r = b.takeReg(b.freeCallee, IntCalleeSaved)
+    r = b.takeReg(b.freeCallee, b.md.intCalleeSaved)
   if r == NoReg: return b.spill(slot)
-  if r in {X19..X28}: b.ra.usedCallee.incl r
+  if r in b.md.intCalleeSavedSet: b.ra.usedCallee.incl r
   result = regLoc(r, slot)
 
 proc giveBack(b: var Builder; r: Reg) {.inline.} =
-  if r in {X19..X28}: b.freeCallee.incl r
+  if r in b.md.intCalleeSavedSet: b.freeCallee.incl r
   elif r != NoReg: b.freeVol.incl r
 
 proc giveBackF(b: var Builder; f: FReg) {.inline.} =
-  if f in {V8..V15}: b.freeCalleeF.incl f
+  if f in b.md.floatCalleeSavedSet: b.freeCalleeF.incl f
   elif f != NoFReg: b.freeVolF.incl f
 
 proc weightOf(b: Builder; name: string): int {.inline.} =
@@ -150,7 +151,7 @@ proc trySteal(b: var Builder; curName: string; curSlot: AsmSlot;
       let vloc = b.ra.locs[b.ra.symPos[v]]
       if vloc.kind != InReg: continue
       if vloc.r in b.ra.sealed: continue        # pinned to an in-flight ABI call
-      if calleeOnly and vloc.r notin {X19..X28}: continue
+      if calleeOnly and vloc.r notin b.md.intCalleeSavedSet: continue
       let vw = b.weightOf(v)
       if vw < bestW:
         bestW = vw; bestV = v; bestReg = vloc.r
@@ -161,7 +162,7 @@ proc trySteal(b: var Builder; curName: string; curSlot: AsmSlot;
   # (offsets are nifasm's job). `fallback`'s numeric offset is irrelevant now.
   b.ra.locs[vpos] = namedStackLoc(bestV, b.ra.locs[vpos].typ)
   b.ra.hasStackVars = true
-  if bestReg in {X19..X28}: b.ra.usedCallee.incl bestReg
+  if bestReg in b.md.intCalleeSavedSet: b.ra.usedCallee.incl bestReg
   result = regLoc(bestReg, curSlot)
 
 proc allocVarDecl(b: var Builder; n: var Cursor) =
@@ -200,11 +201,14 @@ proc walk(b: var Builder; n: var Cursor) =
     skip n                                   # nested decls allocate separately
   of VarS, GvarS, TvarS, ConstS:
     allocVarDecl(b, n)
-  of StmtsS, ScopeS:
+  of ScopeS:                                 # only a `scope` opens a fresh scope
     openScope(b)
     n.into:
       while n.hasMore: walk(b, n)
     closeScope(b)
+  of StmtsS:                                  # a statement list — NOT a fresh scope
+    n.into:
+      while n.hasMore: walk(b, n)
   else:
     if n.kind == TagLit:
       n.into:
@@ -231,7 +235,7 @@ proc allocParams(b: var Builder; params: var Cursor; hasCall: bool) =
         var aggrWords = 0
         if slot.kind == AMem:
           let sz = slot.size                  # filled by slotOf (named or inline)
-          if sz >= 1 and sz <= 16: (aggrSmall = true; aggrWords = (sz + 7) div 8)
+          if sz >= 1 and sz <= b.md.aggrByRefThreshold: (aggrSmall = true; aggrWords = (sz + 7) div 8)
           else: aggrByRef = true
         if aggrSmall:
           # (No early `continue`/`return`: that skips the `into` epilogue.)
@@ -250,32 +254,32 @@ proc allocParams(b: var Builder; params: var Cursor; hasCall: bool) =
             # (v8–v15) so it survives them; if address-taken it spills to a slot.
             # Either way the incoming register is consumed, so `fidx` advances in
             # lockstep with emitParamMoves (the >8-float case is still TODO).
-            if fidx < FloatArgRegs.len:
+            if fidx < b.md.floatArgRegs.len:
               if AddrTaken in props:
                 loc = b.spill(effSlot)           # address taken → must be on the stack
               elif hasCall:
-                let f = b.takeFReg(b.freeCalleeF, FloatCalleeSaved)
+                let f = b.takeFReg(b.freeCalleeF, b.md.floatCalleeSaved)
                 if f != NoFReg:
                   b.ra.usedCalleeF.incl f
                   loc = fregLoc(f, effSlot)
                 else:
                   loc = b.spill(effSlot)
               else:
-                loc = fregLoc(FloatArgRegs[fidx], effSlot)
+                loc = fregLoc(b.md.floatArgRegs[fidx], effSlot)
               inc fidx
             else:
               loc = b.spill(effSlot)             # >8 float args: stack-passed (TODO)
           elif not effSlot.inRegClass:
             loc = b.spill(effSlot)
-          elif intIdx < IntArgRegs.len:
-            let arg = IntArgRegs[intIdx]
+          elif intIdx < b.md.intArgRegs.len:
+            let arg = b.md.intArgRegs[intIdx]
             if AddrTaken in props and not aggrByRef:
               loc = b.spill(effSlot)           # address taken → must be on the stack
             elif hasCall or aggrByRef:
               # Live across a call (the incoming arg reg is volatile), or a by-ref
               # pointer that must survive repeated field loads in the body: give
               # it a callee-saved home so the prologue can `mov home, argReg`.
-              let r = b.takeReg(b.freeCallee, IntCalleeSaved)
+              let r = b.takeReg(b.freeCallee, b.md.intCalleeSaved)
               if r != NoReg:
                 b.ra.usedCallee.incl r
                 loc = regLoc(r, effSlot)
@@ -292,7 +296,7 @@ proc allocParams(b: var Builder; params: var Cursor; hasCall: bool) =
             # out-of-register stack params aren't supported yet.
             if AddrTaken in props:
               raiseAssert "arkham v1: address-taken >8th parameter"
-            let r = b.takeReg(b.freeCallee, IntCalleeSaved)
+            let r = b.takeReg(b.freeCallee, b.md.intCalleeSaved)
             if r == NoReg:
               raiseAssert "arkham v1: out of callee-saved registers for >8th parameter"
             b.ra.usedCallee.incl r
@@ -307,19 +311,20 @@ proc allocParams(b: var Builder; params: var Cursor; hasCall: bool) =
           b.record(pos, name, loc)
 
 proc allocateProc*(buf: var TokenBuf; procDecl: Cursor; an: ProcAnalysis;
-                   prog: var Program;
+                   prog: var Program; md: MachineDesc;
                    presealed: set[Reg] = {}): RegAlloc =
-  ## Allocate storage for the params and locals of `procDecl`. `presealed`
-  ## registers are reserved for the whole proc (never allocated/stolen). `prog`
-  ## is taken by `var` because resolving a cross-module type may load a module.
-  var b = Builder(buf: addr buf, an: addr an, prog: addr prog)
+  ## Allocate storage for the params and locals of `procDecl`. `md` describes the
+  ## target register file + ABI. `presealed` registers are reserved for the whole
+  ## proc (never allocated/stolen). `prog` is taken by `var` because resolving a
+  ## cross-module type may load a module.
+  var b = Builder(buf: addr buf, an: addr an, prog: addr prog, md: md)
   b.ra.locs = newSeq[Location](buf.len)
   b.ra.symPos = initTable[string, int]()
   b.ra.sealed = presealed
-  for r in IntTempRegs: b.freeVol.incl r
-  for r in IntCalleeSaved: b.freeCallee.incl r
-  for f in FloatTempRegs: b.freeVolF.incl f
-  for f in FloatCalleeSaved: b.freeCalleeF.incl f
+  for r in md.intTempRegs: b.freeVol.incl r
+  for r in md.intCalleeSaved: b.freeCallee.incl r
+  for f in md.floatTempRegs: b.freeVolF.incl f
+  for f in md.floatCalleeSaved: b.freeCalleeF.incl f
   var n = procDecl
   assert n.stmtKind == ProcS
   b.openScope()
