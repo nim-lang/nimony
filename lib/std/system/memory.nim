@@ -1,15 +1,20 @@
 ## Low-level memory primitives and the default allocator for Nimony.
 ##
-## The allocator is a literal port of Nim 2's `lib/system/{alloc,osalloc}.nim`
+## The default allocator is the mimalloc shim (`include mimalloc`). A native
+## allocator — a literal port of Nim 2's `lib/system/{alloc,osalloc}.nim`
 ## (page-chunk TLSF: segregated small cells, coalescing big chunks, huge mmap;
-## owner-stamped lock-free deferred free for cross-thread deallocations). The
-## user-facing `alloc`/`dealloc`/`realloc`/`allocatedSize` wrappers are `func`
-## (noSideEffect) so they remain usable inside the `func`s of pure data
+## owner-stamped lock-free deferred free for cross-thread deallocations) — is
+## available behind `-d:nimNativeAlloc`. It is not yet the default: it still
+## regresses a couple of arc tests (see project notes), so mimalloc stays the
+## default until those are root-caused.
+##
+## The user-facing `alloc`/`dealloc`/`realloc`/`allocatedSize` wrappers are
+## `func` (noSideEffect) so they remain usable inside the `func`s of pure data
 ## structures (see seqimpl.nim / stringimpl.nim). Mutating the per-thread heap
 ## is an implementation detail invisible to callers, so each wrapper launders
 ## the side-effecting MemRegion proc through `{.cast(noSideEffect).}`.
 ##
-## Compile with `-d:nimUseMimalloc` to fall back to the mimalloc shim.
+## Compile with `-d:nimNativeAlloc` to use the native ported allocator.
 
 # --- C memory intrinsics (needed by the allocator, hence defined first) ----
 func c_memcpy(dest, src: pointer; size: csize_t) {.importc: "memcpy", header: "<string.h>".}
@@ -28,7 +33,7 @@ func zeroMem*(dest: pointer; size: int) {.inline.} =
   ## Sets `size` bytes at `dest` to zero.
   c_memset(dest, 0, csize_t size)
 
-when defined(nimUseMimalloc):
+when not defined(nimNativeAlloc):
   include mimalloc
 else:
   # ----------------------------------------------------------------------
