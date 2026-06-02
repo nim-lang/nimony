@@ -34,6 +34,45 @@ const
   MaxNestedTemplates* = 100
 
 type
+  Item* = object
+    ## A semchecked expression together with its type. Lives here (rather than
+    ## in sigmatch) so that the `SemContext` callback typedefs below can name it
+    ## without creating an import cycle (sigmatch already imports semdata).
+    n*, typ*: Cursor
+    kind*: SymKind
+
+  SemFlag* = enum
+    KeepMagics
+    AllowOverloads
+    PreferIterators
+    AllowUndeclared
+    AllowModuleSym
+    AllowEmpty
+    InTypeContext
+    BypassFieldVis  ## input (dot ...) already carried an access-token
+                    ## certifying the field access was hygiene-checked in
+                    ## the field's owner module; skip the visibility check
+                    ## during re-semcheck
+    BypassGuardedCheck  ## input (dot ...) had a resolved Symbol for the field,
+                        ## meaning it was already validated in a prior semcheck pass
+
+  TypeDeclContext* = enum
+    InLocalDecl, InTypeSection, InReturnTypeDecl, AllowValues,
+    InGenericConstraint, InInvokeHead
+
+  CrucialPragma* = object
+    ## Pragma summary collected while sem-checking a routine/type's pragmas.
+    ## Fields are exported so the pragma module (sempragmas) and the sem core
+    ## can share it across the module boundary.
+    sym*: SymId
+    magic*, externName*: string
+    bits*: int
+    size*: int  ## value of `{.size: X.}` pragma in bytes; 0 if not set
+    hasVarargs*: PackedLineInfo
+    flags*: set[PragmaKind]
+    raisesType*: TypeCursor  # Type from .raises pragma
+    headerFileTok*: PackedToken
+
   ImportedModule* = object
     path*: string
     fromPlugin*: string
@@ -79,6 +118,15 @@ type
   SemGetSize* = proc(c: var SemContext; n: Cursor; strict=false): xint {.nimcall.}
   ForceInstantiate* = proc (c: var SemContext; dest: var TokenBuf) {.nimcall.}
   SemInstantiateType* = proc (c: var SemContext; typ: Cursor; bindings: Table[SymId, Cursor]): Cursor {.nimcall.}
+  # Callbacks into the sem core, used by separately-compiled handler modules
+  # (e.g. semmagics) to break the otherwise mutual recursion with sem.nim.
+  SemExprCallbackT* = proc (c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag]) {.nimcall.}
+  SemStmtCallbackT* = proc (c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: bool) {.nimcall.}
+  CommonTypeCallbackT* = proc (c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: int; expected: TypeCursor) {.nimcall.}
+  SemLocalTypeImplCallbackT* = proc (c: var SemContext; dest: var TokenBuf; n: var Cursor; context: TypeDeclContext; exported: bool; ownerSym: SymId) {.nimcall.}
+  # Additional core entry points needed by the pragma module (sempragmas).
+  DeclareResultCallbackT* = proc (c: var SemContext; dest: var TokenBuf; info: PackedLineInfo): SymId {.nimcall.}
+  SemEmitCallbackT* = proc (c: var SemContext; dest: var TokenBuf; it: var Item) {.nimcall.}
 
   MethodIndexEntry* = object
     fn*: SymId
@@ -154,6 +202,12 @@ type
     semGetSize*: SemGetSize
     forceInstantiate*: ForceInstantiate
     semInstantiateType*: SemInstantiateType
+    semExprCB*: SemExprCallbackT
+    semStmtCB*: SemStmtCallbackT
+    commonTypeCB*: CommonTypeCallbackT
+    semLocalTypeImplCB*: SemLocalTypeImplCallbackT
+    declareResultCB*: DeclareResultCallbackT
+    semEmitCB*: SemEmitCallbackT
     passL*: seq[string]
     passC*: seq[string]
     importSnippets*: TokenBuf ## NIF snippets for import statements (with absolute paths), for use by exprexec

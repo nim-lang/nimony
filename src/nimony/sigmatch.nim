@@ -15,10 +15,6 @@ import ".." / lib / symparser
 import ".." / models / tags
 
 type
-  Item* = object
-    n*, typ*: Cursor
-    kind*: SymKind
-
   CallArg* = object
     n*, typ*: Cursor
     orig*: Cursor ## original tree before semchecking, used for untyped args
