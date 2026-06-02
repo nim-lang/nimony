@@ -6292,7 +6292,7 @@ proc semIs(c: var SemContext; dest: var TokenBuf; it: var Item) =
     rhs = semLocalType(c, dest, it.n)
   skipParRi it.n
   dest.shrink beforeExpr # delete LHS and RHS
-  if c.routine.inGeneric > 0 or containsGenericParams(lhs.typ) or containsGenericParams(rhs):
+  if containsGenericParams(lhs.typ) or containsGenericParams(rhs):
     # Keep the unpreprocessed operand expressions so template/generic
     # instantiation can substitute formals and re-run `semIs`. Defer whenever
     # `inGeneric > 0` too: in template bodies operands can still be `untyped`,
