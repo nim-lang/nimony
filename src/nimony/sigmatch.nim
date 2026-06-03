@@ -1035,8 +1035,9 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
         else:
           inc m.intLitCosts
       else:
-        # sameKind is true
-        inc m.intConvCosts
+        # sameKind is true — prefer the smallest widening (e.g. int8 -> int32
+        # over int8 -> int64 when both overloads are in play).
+        m.intConvCosts += cmp
       inc m.opened
   else:
     m.error InvalidMatch, f, a
