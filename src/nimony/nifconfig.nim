@@ -100,6 +100,9 @@ type
                       # (empty = derive from module basename).
     outDir*: string   # directory portion set by `--out:DIR/NAME` (its
                       # dir half) and/or `--outdir:DIR`. Empty = cwd.
+    checkFlags*: string  # active check modes as a `genFlags` string (e.g. "br"),
+                         # forwarded to `hexer c` so nifcgen injects only the
+                         # requested runtime checks (empty = none).
 
 proc addDefine*(config: var NifConfig; symbol: string) =
   config.defines.addUnique symbol
@@ -114,7 +117,9 @@ proc initNifConfig*(baseDir: sink string): NifConfig =
     targetOS: platform.nameToOS(hostOS),
     cc: "gcc",
     linker: "",
-    appType: appConsole # console is the default
+    appType: appConsole, # console is the default
+    checkFlags: "br"     # = genFlags(DefaultSettings) (BoundCheck + RangeCheck);
+                         # the normal compile path overrides from `--boundchecks` etc.
   )
 
 proc setTargetCPU*(config: var NifConfig; symbol: string): bool =

@@ -28,7 +28,19 @@ type
     fspCur               ## Seek relative to current position
     fspEnd               ## Seek relative to end
 
-when defined(macos) or defined(macosx):
+when defined(nimNativeIo):
+  # Freestanding IO: the standard handles are the raw OS file descriptors
+  # (0/1/2) reinterpreted as a `File`. All IO goes through the `read`/`write`
+  # syscalls, which arkham lowers to bare `syscall` instructions — so no libc
+  # `FILE*`/stdio is linked and the result is a self-contained static binary.
+  let
+    stdin* = cast[File](0)
+      ## Standard input file handle (fd 0).
+    stdout* = cast[File](1)
+      ## Standard output file handle (fd 1).
+    stderr* = cast[File](2)
+      ## Standard error file handle (fd 2).
+elif defined(macos) or defined(macosx):
   var
     stdin* {.importc: "__stdinp", header: "<stdio.h>".}: File
       ## Standard input file handle.
@@ -54,8 +66,14 @@ proc c_fread(buf: pointer; size, n: uint; f: File): uint {.
 
 proc fprintf(f: File; fmt: cstring) {.varargs, importc: "fprintf", header: "<stdio.h>".}
 
-proc write*(f: File; s: string) =
-  discard c_fwrite(readRawData(s), 1'u, s.len.uint, f)
+when defined(nimNativeIo):
+  proc sysWrite(fd: int32; buf: pointer; n: uint): int {.importc: "write".}
+
+  proc write*(f: File; s: string) =
+    discard sysWrite(int32(cast[int](f)), readRawData(s), s.len.uint)
+else:
+  proc write*(f: File; s: string) =
+    discard c_fwrite(readRawData(s), 1'u, s.len.uint, f)
 
 proc write*(f: File; b: bool) =
   if b: write f, "true"
@@ -76,8 +94,13 @@ proc write*(f: File; x: uint32) =
 proc write*[T: enum](f: File; x: T) =
   write f, $x
 
-proc write*(f: File; c: char) =
-  discard c_fputc(int32(c), f)
+when defined(nimNativeIo):
+  proc write*(f: File; c: char) =
+    var ch = c
+    discard sysWrite(int32(cast[int](f)), addr ch, 1'u)
+else:
+  proc write*(f: File; c: char) =
+    discard c_fputc(int32(c), f)
 
 proc write*(f: File; x: float) =
   ## Writes data to a file (overloaded for different types).
