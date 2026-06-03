@@ -1,4 +1,4 @@
-## Robustness driver for the opt_unused passes: load a NIFC `.x.nif`
+## Robustness driver for the Shoggoth passes: load a NIFC `.x.nif`
 ## module, run every optimizer (whole-module for the recursive passes,
 ## per-proc-body for the flow-sensitive ones), and check that each pass
 ## (a) does not crash and (b) leaves a structurally well-formed buffer.
@@ -14,7 +14,7 @@ import ".." / ".." / models / tags   # `*TagId` enumerators for genRewriter
 import nifrender
 import copy_propagation, constant_folding, cse, induction_variables
 # NOTE: arcopt moved to `hexer/arcopt.nim` (BasicBlock design) and is no longer
-# part of the opt_unused fuzz set.
+# part of the Shoggoth fuzz set.
 
 # ---- rewriter instantiation ----------------------------------------------
 import rewriter

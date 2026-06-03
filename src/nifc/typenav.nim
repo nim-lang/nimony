@@ -42,13 +42,24 @@ proc typeOfField*(m: var MainModule; n: var Cursor; fld: SymId; sel = FieldType)
     let tk = n.typeKind
     if tk in {ObjectT, UnionT}:
       n.into:
+        var hasBase = false
+        var baseSym = default(SymId)
         if tk == ObjectT:
-          skip n # inheritance
+          if n.kind == Symbol:
+            hasBase = true
+            baseSym = n.symId
+          skip n # inheritance reference
         var done = false
         while n.hasMore and not done:
           result = typeOfField(m, n, fld, sel)
           if not cursorIsNil(result): done = true
         while n.hasMore: skip n  # mop up if we broke early
+        if cursorIsNil(result) and hasBase:
+          # inherited field: search the base object's fields recursively
+          let d = m.getDeclOrNil(baseSym)
+          if d != nil and d.pos.stmtKind == TypeS:
+            var baseBody = asTypeDecl(d.pos).body
+            result = typeOfField(m, baseBody, fld, sel)
 
 proc getTypeImpl(m: var MainModule; n: Cursor): Cursor =
   case n.kind

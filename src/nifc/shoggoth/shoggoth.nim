@@ -20,7 +20,7 @@
 ##
 ## Usage:
 ##
-##   optimizer [options] <input.nif> [<output.nif>]
+##   shoggoth [options] <input.nif> [<output.nif>]
 ##
 ## With no `<output>` the file is rewritten in place. Options:
 ##
@@ -214,7 +214,7 @@ proc main =
     else: positional.add a
 
   if positional.len == 0:
-    quit "usage: optimizer [--outdir:DIR] [--verify] [--stats] <input.nif> [<output.nif>]"
+    quit "usage: shoggoth [--outdir:DIR] [--verify] [--stats] <input.nif> [<output.nif>]"
 
   var ok = true
   if outdir.len > 0:

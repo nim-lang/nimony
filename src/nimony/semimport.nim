@@ -1,6 +1,38 @@
-# included in sem.nim
+#       Nimony
+# (c) Copyright 2024 Andreas Rumpf
+#
+# See the file "license.txt", included in this
+# distribution, for details about the copyright.
 
-proc semInclude(c: var SemContext; dest: var TokenBuf; it: var Item) =
+## Semantic checking of `import` / `include` / `export` statements.
+##
+## Formerly textually `include`d into sem.nim; now a separate module. It only
+## re-enters the sem core through two callbacks (`semExprCB`, `semStmtCB`); the
+## thin shims below restore the `semExpr` / `semStmt` names so the bodies read
+## as they did inside sem.nim.
+
+when defined(nimony):
+  {.feature: "lenientnils".}
+  {.feature: "untyped".}
+import std / [tables, sets, hashes, assertions]
+include ".." / lib / nifprelude
+include ".." / lib / compat2
+import ".." / lib / symparser
+import ".." / gear2 / modnames
+import nimony_model, symtabs, builtintypes, decls, asthelpers, programs,
+  reporters, nifconfig, semdata, sembasics, semchecks, semos
+
+# --- thin shims forwarding into the sem core via SemContext callbacks ---
+
+proc semExpr(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag] = {}) =
+  c.semExprCB(c, dest, it, flags)
+
+proc semStmt(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: bool) =
+  c.semStmtCB(c, dest, n, isNewScope)
+
+# --- handlers (moved verbatim from sem.nim) ---
+
+proc semInclude*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   var files: seq[ImportedFilename] = @[]
   var hasError = false
   let info = it.n.info
@@ -40,7 +72,7 @@ proc semInclude(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
   producesVoid c, dest, info, it.typ
 
-proc importSingleFile(c: var SemContext; dest: var TokenBuf; f1: ImportedFilename; origin: string;
+proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilename; origin: string;
                       mode: ImportFilter; exports: var seq[(string, ImportFilter)];
                       info: PackedLineInfo): SymId =
   let f2 = resolveFile(c.g.config.paths, origin, f1.path)
@@ -75,7 +107,7 @@ proc importSingleFile(c: var SemContext; dest: var TokenBuf; f1: ImportedFilenam
     c.importSnippets.buildTree ImportS, info:
       c.importSnippets.addStrLit f2.toAbsolutePath
 
-proc importSingleFile(c: var SemContext; dest: var TokenBuf; f1: ImportedFilename; origin: string;
+proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilename; origin: string;
                       filter: ImportFilter;
                       info: PackedLineInfo) =
   var exports: seq[(string, ImportFilter)] = @[] # ignored
@@ -178,7 +210,7 @@ proc takeImportedName(x: var Cursor; names: var HashSet[StrId];
   else:
     names.incl ident
 
-proc semImport(c: var SemContext; dest: var TokenBuf; it: var Item) =
+proc semImport*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   var x = it.n
   skip it.n
@@ -195,7 +227,7 @@ proc semImport(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
   producesVoid c, dest, info, it.typ
 
-proc semImportExcept(c: var SemContext; dest: var TokenBuf; it: var Item) =
+proc semImportExcept*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   var x = it.n
   skip it.n
@@ -215,7 +247,7 @@ proc semImportExcept(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
   producesVoid c, dest, info, it.typ
 
-proc semFromImport(c: var SemContext; dest: var TokenBuf; it: var Item) =
+proc semFromImport*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   var x = it.n
   skip it.n
@@ -239,7 +271,7 @@ proc semFromImport(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
   producesVoid c, dest, info, it.typ
 
-proc findModuleSymbol(n: Cursor): SymId =
+proc findModuleSymbol*(n: Cursor): SymId =
   result = SymId(0)
   if n.kind == Symbol:
     let res = tryLoadSym(n.symId)
@@ -333,7 +365,7 @@ proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: PackedLin
                 registerExportName(c, moduleSym, pool.strings.getOrIncl(fname))
             skip enumBody
 
-proc semExport(c: var SemContext; dest: var TokenBuf; it: var Item) =
+proc semExport*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   var x = it.n
   skip it.n
@@ -389,7 +421,7 @@ proc doExportExcept(c: var SemContext; dest: var TokenBuf; moduleSym, sym: SymId
     c.exports[moduleSym] = ImportFilter(kind: ImportExcept, list: initHashSet[StrId]())
     c.exports.getOrQuit(moduleSym).list.incl strId
 
-proc semExportExcept(c: var SemContext; dest: var TokenBuf; it: var Item) =
+proc semExportExcept*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   var x = it.n
   skip it.n

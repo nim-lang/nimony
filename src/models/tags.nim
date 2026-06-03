@@ -334,6 +334,9 @@ type
     SizeTagId
     UncheckedAccessTagId
     UncheckedAssignTagId
+    ProfilerTagId
+    StacktraceTagId
+    GcsafeTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
     ("InvalidTagId", 0),
@@ -667,5 +670,8 @@ const
     ("methods", 328),
     ("size", 329),
     ("uncheckedAccess", 330),
-    ("uncheckedAssign", 331)
+    ("uncheckedAssign", 331),
+    ("profiler", 332),
+    ("stacktrace", 333),
+    ("gcsafe", 334)
   ]

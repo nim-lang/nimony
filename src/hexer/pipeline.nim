@@ -19,7 +19,7 @@ import hexer_context, iterinliner, desugar, xelim, duplifier, lifter, destroyer,
 # control flow). It is the BasicBlock-based pass ported from the battle-tested
 # `nim/compiler/optimizer.nim`: a stack of basic blocks each owning a pending
 # `=wasMoved` list, cleared on return/break/loop and intersected only at
-# exhaustive joins. (The earlier tracker-based `opt_unused/arcopt.nim` unioned
+# exhaustive joins. (The earlier tracker-based `shoggoth/arcopt.nim` unioned
 # positions across joins and propagated moved-state into nested branches, which
 # let a diverging branch's destroy elide a parent `=wasMoved` → double-free;
 # it has been removed in favour of this one.)

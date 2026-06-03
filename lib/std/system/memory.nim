@@ -1,13 +1,22 @@
-include mimalloc
+## Low-level memory primitives and the default allocator for Nimony.
+##
+## The default allocator is the mimalloc shim (`include mimalloc`). A native
+## allocator — a literal port of Nim 2's `lib/system/{alloc,osalloc}.nim`
+## (page-chunk TLSF: segregated small cells, coalescing big chunks, huge mmap;
+## owner-stamped lock-free deferred free for cross-thread deallocations) — is
+## available behind `-d:nimNativeAlloc`. It is not yet the default: it still
+## regresses a couple of arc tests (see project notes), so mimalloc stays the
+## default until those are root-caused.
+##
+## The user-facing `alloc`/`dealloc`/`realloc`/`allocatedSize` wrappers are
+## `func` (noSideEffect) so they remain usable inside the `func`s of pure data
+## structures (see seqimpl.nim / stringimpl.nim). Mutating the per-thread heap
+## is an implementation detail invisible to callers, so each wrapper launders
+## the side-effecting MemRegion proc through `{.cast(noSideEffect).}`.
+##
+## Compile with `-d:nimNativeAlloc` to use the native ported allocator.
 
-func allocFixed*(size: int): pointer =
-  ## Allocates `size` bytes of uninitialized memory.
-  result = mi_malloc(size.csize_t)
-
-func deallocFixed*(p: pointer) =
-  ## Frees memory allocated by `allocFixed`.
-  mi_free(p)
-
+# --- C memory intrinsics (needed by the allocator, hence defined first) ----
 func c_memcpy(dest, src: pointer; size: csize_t) {.importc: "memcpy", header: "<string.h>".}
 func c_memcmp(a, b: pointer; size: csize_t): cint {.importc: "memcmp", header: "<string.h>".}
 func c_memset(dest: pointer; val: cint; size: csize_t) {.importc: "memset", header: "<string.h>".}
@@ -24,6 +33,128 @@ func zeroMem*(dest: pointer; size: int) {.inline.} =
   ## Sets `size` bytes at `dest` to zero.
   c_memset(dest, 0, csize_t size)
 
+when not defined(nimNativeAlloc):
+  include mimalloc
+else:
+  # ----------------------------------------------------------------------
+  # Prelude: the handful of symbols the ported allocator expects from the
+  # rest of Nim's `system`/`mmdisp`. (Constants come from Nim's bitmasks.nim.)
+  # ----------------------------------------------------------------------
+  const
+    PageShift = 12
+    PageSize = 1 shl PageShift
+    PageMask = PageSize - 1
+    MemAlign = 16
+    BitsPerPage = PageSize div MemAlign
+    UnitsPerPage = BitsPerPage div (sizeof(int) * 8)
+    TrunkShift = 9
+    BitsPerTrunk = 1 shl TrunkShift
+    TrunkMask = BitsPerTrunk - 1
+    IntsPerTrunk = BitsPerTrunk div (sizeof(int) * 8)
+  when sizeof(int) == 8:
+    const IntShift = 6
+  else:
+    const IntShift = 5
+  const IntMask = (1 shl IntShift) - 1
+
+  const
+    overwriteFree = false
+    coalescRight = true
+    coalescLeft = true
+    logAlloc = false
+    hasThreadSupport = true    # owner-stamped lock-free deferred free
+    reallyOsDealloc = false    # keep pages mapped (matches Nim's macosx/arm default)
+    UseDestructors = true      # Nimony is always destructor-based; selects the
+                               # gcDestructors code paths in the ported alloc.nim
+
+  template sysAssert(cond, msg: untyped) = discard
+
+  proc c_abort() {.importc: "abort", header: "<stdlib.h>".}
+  proc raiseOutOfMem() {.noinline.} =
+    # Reached only when the OS itself refuses to map pages; nothing to recover.
+    c_abort()
+
+  template `+!`(p: pointer; x: int): pointer = cast[pointer](cast[int](p) + x)
+  template `-!`(p: pointer; x: int): pointer = cast[pointer](cast[int](p) - x)
+
+  proc align(address, alignment: int): int {.inline.} =
+    result = (address + (alignment - 1)) and not (alignment - 1)
+
+  # unsigned-wraparound operators the allocator relies on
+  template `+%`(x, y: int): int = cast[int](cast[uint](x) + cast[uint](y))
+  template `-%`(x, y: int): int = cast[int](cast[uint](x) - cast[uint](y))
+  template `*%`(x, y: int): int = cast[int](cast[uint](x) * cast[uint](y))
+  template `%%`(x, y: int): int = cast[int](cast[uint](x) mod cast[uint](y))
+  template `<%`(x, y: int): bool = cast[uint](x) < cast[uint](y)
+  template `<=%`(x, y: int): bool = cast[uint](x) <= cast[uint](y)
+  template `>%`(x, y: int): bool = cast[uint](x) > cast[uint](y)
+
+  # The atomics the deferred-free path needs under `hasThreadSupport`
+  # (`atomicLoadN`/`atomicStoreN`/`atomicExchangeN`/`atomicCompareExchangeN`
+  # + `ATOMIC_*` orders) come from `system/atomintrin`, included earlier. The
+  # explicit-`ptr T` builtin style also sidesteps Nimony's var-aliasing
+  # rejection on `atomicCompareExchangeN(addr head, addr elem.next, ...)`.
+
+  # alloc.nim's dirty templates and intrusive generics carry per-routine
+  # `{.untyped.}` so their bodies are checked at instantiation. We deliberately
+  # do NOT enable the `untyped` feature module-wide here — it would leak into
+  # seqimpl/stringimpl/arcops and miscompile their `{.cast(noSideEffect).}`.
+
+  # --- the ported allocator (alloc.nim itself `include`s osalloc) ----------
+  include "alloc"
+
+  # --- user-facing API: `func` over a per-thread global MemRegion ----------
+  var allocator {.threadvar.}: MemRegion
+
+  func alloc*(size: int): pointer =
+    ## Allocates `size` bytes of uninitialized memory.
+    {.cast(noSideEffect).}:
+      result = alloc(allocator, size)
+
+  func alloc0*(size: int): pointer =
+    ## Allocates `size` bytes of zero-initialized memory.
+    {.cast(noSideEffect).}:
+      result = alloc0(allocator, size)
+
+  func realloc*(p: pointer; size: int): pointer =
+    ## Grows or shrinks the allocation `p` to `size` bytes, preserving contents.
+    {.cast(noSideEffect).}:
+      result = realloc(allocator, p, size)
+
+  func dealloc*(p: pointer) =
+    ## Frees memory previously returned by `alloc`/`alloc0`/`realloc`.
+    {.cast(noSideEffect).}:
+      dealloc(allocator, p)
+
+  func allocatedSize*(p: pointer): int =
+    ## Usable bytes of the allocation `p` (what seq/string capacity relies on).
+    {.cast(noSideEffect).}:
+      result = ptrSize(p)
+
+  proc getOccupiedMem*(): int =
+    ## Bytes owned by the current thread's heap that currently hold data.
+    result = getOccupiedMem(allocator)
+
+  proc getFreeMem*(): int =
+    ## Bytes owned by the current thread's heap that are free for reuse.
+    result = getFreeMem(allocator)
+
+  proc getTotalMem*(): int =
+    ## Total bytes the current thread's heap has obtained from the OS.
+    result = getTotalMem(allocator)
+
+# --- fixed-size allocation (emitted by the compiler for `ref` objects) -----
+func allocFixed*(size: int): pointer =
+  ## Allocates `size` bytes of uninitialized memory (compiler `new`/ref hook).
+  ## Not `inline`: the compiler emits cross-module references to this symbol
+  ## from generated `=destroy` hooks, so it must have external linkage.
+  result = alloc(size)
+
+func deallocFixed*(p: pointer) =
+  ## Frees memory allocated by `allocFixed`.
+  dealloc(p)
+
+# --- out-of-memory handling ------------------------------------------------
 var
   missingBytes {.threadvar.}: int
 

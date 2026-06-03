@@ -1,34 +1,6 @@
-
-type AtomMemModel* = distinct cint
-
-var ATOMIC_RELAXED* {.importc: "__ATOMIC_RELAXED", nodecl.}: AtomMemModel
-  ## No barriers or synchronization.
-var ATOMIC_CONSUME* {.importc: "__ATOMIC_CONSUME", nodecl.}: AtomMemModel
-  ## Data dependency only for both barrier and
-  ## synchronization with another thread.
-var ATOMIC_ACQUIRE* {.importc: "__ATOMIC_ACQUIRE", nodecl.}: AtomMemModel
-  ## Barrier to hoisting of code and synchronizes with
-  ## release (or stronger)
-  ## semantic stores from another thread.
-var ATOMIC_RELEASE* {.importc: "__ATOMIC_RELEASE", nodecl.}: AtomMemModel
-  ## Barrier to sinking of code and synchronizes with
-  ## acquire (or stronger)
-  ## semantic loads from another thread.
-var ATOMIC_ACQ_REL* {.importc: "__ATOMIC_ACQ_REL", nodecl.}: AtomMemModel
-  ## Full barrier in both directions and synchronizes
-  ## with acquire loads
-  ## and release stores in another thread.
-var ATOMIC_SEQ_CST* {.importc: "__ATOMIC_SEQ_CST", nodecl.}: AtomMemModel
-  ## Full barrier in both directions and synchronizes
-  ## with acquire loads
-  ## and release stores in all threads.
-
-func atomicAddFetch*[T](p: ptr T, val: T, mem: AtomMemModel): T {.
-  importc: "__atomic_add_fetch", nodecl.}
-func atomicSubFetch*[T](p: ptr T, val: T, mem: AtomMemModel): T {.
-  importc: "__atomic_sub_fetch", nodecl.}
-func atomicLoadN*[T](p: ptr T, mem: AtomMemModel): T {.
-  importc: "__atomic_load_n", nodecl.}
+# The `__atomic_*` builtin layer (`AtomMemModel`, `ATOMIC_*`, `atomic*Fetch`,
+# `atomicLoadN`, ...) lives in `system/atomintrin`, included earlier so both
+# this module and the allocator share one set of declarations.
 
 func arcInc*(memLoc: var int) {.inline.} =
   ## Atomically increments the reference count.

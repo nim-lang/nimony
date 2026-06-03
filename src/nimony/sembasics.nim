@@ -355,6 +355,31 @@ proc makeLocalSym*(c: var SemContext; result: var string) =
   result.add '.'
   result.addInt counter[]
 
+proc newSymId*(c: var SemContext; s: SymId): SymId =
+  var isGlobal = false
+  var name = extractBasename(pool.syms[s], isGlobal)
+  if isGlobal:
+    c.makeGlobalSym(name)
+  else:
+    c.makeLocalSym(name)
+  result = pool.syms.getOrIncl(name)
+
+proc classifyType*(c: var SemContext; n: Cursor): TypeKind =
+  result = typeKind(n)
+
+proc hasErrorSince*(dest: TokenBuf; start: int): bool =
+  ## True when `dest[start..]` already contains an `(err ...)` node. Used to
+  ## avoid stacking a redundant follow-up error on top of one semExpr already
+  ## produced (e.g. `auto`-typed expression from an undeclared identifier).
+  let errTag = pool.tags.getOrIncl("err")
+  var i = start
+  result = false
+  while i < dest.len:
+    if dest[i].kind == ParLe and dest[i].tagId == errTag:
+      result = true
+      break
+    inc i
+
 proc makeTemplateSym*(c: var SemContext; result: var string) =
   ## Make a fresh symbol for a name introduced by a template body. Templates
   ## need a separate mechanism from `makeLocalSym` so that cross-module

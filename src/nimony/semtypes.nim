@@ -697,7 +697,7 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
       nn = n
       result = true
 
-proc semLocalTypeImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor;
+proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
                       context: TypeDeclContext; exported: bool = false; ownerSym: SymId = SymId(0)) =
   let info = n.info
   case n.kind

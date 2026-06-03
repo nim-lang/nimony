@@ -76,7 +76,7 @@ proc nifcFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
   base / f.modname & ".c.nif"
 proc optimizedFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
-  ## The tree-optimizer rewrites `<modname>.c.nif` into this; `nifc` consumes
+  ## Shoggoth rewrites `<modname>.c.nif` into this; `nifc` consumes
   ## it instead. The extra extension keeps the input intact and still extracts
   ## to the same `modname` (splitModulePath stops at the first dot), so nifc's
   ## derived output filename is unchanged.
@@ -730,13 +730,13 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
     # Command definitions
     let nifc = findTool("nifc")
     let hexer = findTool("hexer")
-    # The experimental NIFC tree optimizer runs only when optimization is
+    # The experimental Shoggoth optimizer runs only when optimization is
     # actually requested (`--opt:speed` / `--opt:size`); default/debug builds
     # are byte-for-byte unaffected.
     let useOptimizer = c.config.optLevel in {optSpeed, optSize}
-    var optimizer = ""
+    var shoggoth = ""
     if useOptimizer:
-      optimizer = findTool("optimizer")
+      shoggoth = findTool("shoggoth")
 
     # Command for nifc (code generation)
     b.withTree "cmd":
@@ -752,11 +752,11 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
             b.addStrLit arg
       b.addKeyw "input"
 
-    # Command for the tree optimizer: `optimizer <input.c.nif> <output.oc.nif>`.
+    # Command for the tree optimizer: `shoggoth <input.c.nif> <output.oc.nif>`.
     if useOptimizer:
       b.withTree "cmd":
         b.addSymbolDef "optimize"
-        b.addStrLit optimizer
+        b.addStrLit shoggoth
         b.addKeyw "input"
         b.addKeyw "output"
 
@@ -952,7 +952,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
             b.withTree "output":
               b.addStrLit obj
 
-        # Optionally run the tree optimizer on the DCE'd `.c.nif`, producing
+        # Optionally run Shoggoth on the DCE'd `.c.nif`, producing
         # `.oc.nif`; nifc then consumes that. Skipped entirely unless
         # `useOptimizer`, in which case nifc reads the plain `.c.nif`.
         var nifcInput: string

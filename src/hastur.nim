@@ -26,7 +26,7 @@ Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|hexer|nifc|optimizer|nifmake|nj|vl|validator|dagon|pnak]   build selected tools (default: all).
+  build [all|nimony|nifler|hexer|nifc|shoggoth|nifmake|nj|vl|validator|dagon|pnak]   build selected tools (default: all).
   tiers                compile every module on the bootstrap list with nimony.
   boot [options]       Self-host the *full* nimony toolchain (nimony,
                        nimsem, hexer). `bin0/` is a fresh copy of the
@@ -1045,10 +1045,10 @@ proc buildNifc(showProgress = false) =
   let exe = "nifc".addFileExt(ExeExt)
   robustMoveFile "src/nifc/" & exe, binDir() / exe
 
-proc buildOptimizer(showProgress = false) =
-  exec nimcPrefix() & "src/nifc/opt_unused/optimizer.nim", showProgress
-  let exe = "optimizer".addFileExt(ExeExt)
-  robustMoveFile "src/nifc/opt_unused/" & exe, binDir() / exe
+proc buildShoggoth(showProgress = false) =
+  exec nimcPrefix() & "src/nifc/shoggoth/shoggoth.nim", showProgress
+  let exe = "shoggoth".addFileExt(ExeExt)
+  robustMoveFile "src/nifc/shoggoth/" & exe, binDir() / exe
 
 proc buildHexer(showProgress = false) =
   exec nimcPrefix() & "src/hexer/hexer.nim", showProgress
@@ -1212,7 +1212,7 @@ const BootSelfTools = ["nimsem", "hexer", "nimony"]
   ## hexer are needed by every later `nimony c` call, so they go first;
   ## nimony itself goes last because it's the one each *next* stage will
   ## drive with.
-const BootCarryTools = ["nifler", "nifc", "nifmake", "validator", "optimizer"]
+const BootCarryTools = ["nifler", "nifc", "nifmake", "validator", "shoggoth"]
   ## Tools copied from `bin/` into each stage dir. They're tier-0 for
   ## bootstrap purposes (host-Nim-built throughout) but `nimony c` shells
   ## to them, so each stage dir needs its own copy.
@@ -1759,7 +1759,7 @@ proc handleCmdLine =
     buildNimsem()
     buildNimony()
     buildNifc()
-    buildOptimizer()
+    buildShoggoth()
     buildHexer()
     buildNifmake()
     nimonytests(overwrite, forward)
@@ -1829,7 +1829,7 @@ proc handleCmdLine =
       buildNimsem(showProgress)
       buildNimony(showProgress)
       buildNifc(showProgress)
-      buildOptimizer(showProgress)
+      buildShoggoth(showProgress)
       buildHexer(showProgress)
       buildNifmake(showProgress)
       buildNj(showProgress)
@@ -1844,8 +1844,8 @@ proc handleCmdLine =
       buildHexer(showProgress)
     of "nifc":
       buildNifc(showProgress)
-    of "optimizer":
-      buildOptimizer(showProgress)
+    of "shoggoth":
+      buildShoggoth(showProgress)
     of "hexer":
       buildHexer(showProgress)
     of "nifmake":
