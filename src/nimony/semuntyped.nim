@@ -498,6 +498,30 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
               error "illformed AST", n
               skip n  # avoid infinite loop on illformed
         dest.addParRi()
+      of WhenS:
+        dest.add n
+        n.into WhenS:
+          while n.hasMore:
+            case n.substructureKind
+            of ElifU:
+              dest.add n
+              n.into ElifU:
+                openScope c
+                semTemplBody c, dest, n
+                semTemplBody c, dest, n
+                closeScope c
+              dest.addParRi()
+            of ElseU:
+              dest.add n
+              n.into ElseU:
+                openScope c
+                semTemplBody c, dest, n
+                closeScope c
+              dest.addParRi()
+            else:
+              error "illformed AST", n
+              skip n
+        dest.addParRi()
       of WhileS:
         takeToken dest, n
         semTemplBody c, dest, n

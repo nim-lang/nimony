@@ -2634,8 +2634,12 @@ proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: When
           leaveUnresolved = true
       if leaveUnresolved:
         # might have been set above
-        var ctx = createUntypedContext(addr c, UntypedGeneric)
+        let mode = if c.routine.kind == TemplateY: UntypedTemplate else: UntypedGeneric
+        let dirty = c.routine.kind == TemplateY and DirtyP in c.routine.pragmas
+        var ctx = createUntypedContext(addr c, mode, dirty)
+        openScope c
         semTemplBody ctx, dest, it.n
+        closeScope c
       else:
         takeTree dest, it.n
       takeParRi dest, it.n
@@ -2655,8 +2659,12 @@ proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: When
       consumeParRi it.n
       return
     else:
-      var ctx = createUntypedContext(addr c, UntypedGeneric)
+      let mode = if c.routine.kind == TemplateY: UntypedTemplate else: UntypedGeneric
+      let dirty = c.routine.kind == TemplateY and DirtyP in c.routine.pragmas
+      var ctx = createUntypedContext(addr c, mode, dirty)
+      openScope c
       semTemplBody ctx, dest, it.n
+      closeScope c
     takeParRi dest, it.n
   takeParRi dest, it.n
   if not leaveUnresolved:
@@ -6271,6 +6279,15 @@ proc semInternalTypeName(c: var SemContext; dest: var TokenBuf; it: var Item) =
   it.typ = c.types.stringType
   commonType c, dest, it, beforeExpr, expected
 
+proc isBareTypedescParamType(t: TypeCursor): bool =
+  ## `(typekind (typedesc))`, the type of a `T: typedesc` formal.
+  var t = t
+  if t.typeKind == TypekindT:
+    inc t
+    result = t.typeKind == TypedescT
+  else:
+    result = false
+
 proc semIs(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeExpr = dest.len
   let info = it.n.info
@@ -6297,7 +6314,10 @@ proc semIs(c: var SemContext; dest: var TokenBuf; it: var Item) =
     rhs = semLocalType(c, dest, it.n)
   skipParRi it.n
   dest.shrink beforeExpr # delete LHS and RHS
-  if containsGenericParams(lhs.typ) or containsGenericParams(rhs):
+  let deferIsFold =
+    containsGenericParams(lhs.typ) or containsGenericParams(rhs) or
+    (c.routine.inGeneric > 0 and isBareTypedescParamType(lhs.typ))
+  if deferIsFold:
     # Keep the unpreprocessed operand expressions so template/generic
     # instantiation can substitute formals and re-run `semIs`. Defer whenever
     # `inGeneric > 0` too: in template bodies operands can still be `untyped`,
