@@ -82,6 +82,52 @@ proc findMatchingForwardDecl*(c: var SemContext; symId: SymId; implDecl: Cursor)
         result = fwdSym
         return
 
+proc copyRoutineDeclAt(dest: TokenBuf; start: int): TokenBuf =
+  result = createTokenBuf(30)
+  if start < 0 or start >= dest.len: return
+  var pos = start
+  var nested = 0
+  while pos < dest.len:
+    result.add dest[pos]
+    case dest[pos].kind
+    of ParLe: inc nested
+    of ParRi:
+      dec nested
+      if nested == 0: break
+    else: discard
+    inc pos
+
+proc checkRoutineRedefinition(c: var SemContext; dest: var TokenBuf; declStart: int;
+                              symId: SymId; kind: SymKind; hasBody: bool; info: PackedLineInfo): string =
+  ## Reject a routine declaration whose signature matches an existing overload,
+  ## mirroring Nim's `searchForProc` / `wrongRedefinition` (see procfind.nim).
+  ## Forward declarations with empty bodies are exempt.
+  result = ""
+  if kind notin RoutineKinds: return
+  let lit = symToIdent(symId)
+  var newBuf = copyRoutineDeclAt(dest, declStart)
+  var newDecl = beginRead(newBuf)
+  try:
+    var scope = c.currentScope.up
+    if scope == nil: scope = c.currentScope
+    let ignoreStyle = IgnoreStyleFeature in c.features
+    while scope != nil:
+      for k in stylesOfScope(scope, lit, ignoreStyle):
+        for sym in scope.tab.getOrDefault(k):
+          if sym.name == symId or sym.kind != kind: continue
+          block checkOne:
+            let loaded = tryLoadSym(sym.name)
+            if loaded.status != LacksNothing: continue
+            if not signaturesMatch(loaded.decl, newDecl): continue
+            let otherIsForward = asRoutine(loaded.decl, SkipInclBody).body.kind == DotToken
+            if otherIsForward and (not hasBody or otherIsForward): continue
+            result = "redefinition of '" & pool.strings[lit] &
+              "'; previous declaration here: " & infoToStr(loaded.decl.info)
+            return
+      scope = scope.up
+  finally:
+    endRead(newDecl)
+
 proc processBodyStatements(c: var SemContext; dest: var TokenBuf; it: var Item;
                            lastSonInfo: var PackedLineInfo; beforeLastSon: var int) =
   ## Process all statements in the proc body, treating the last one as an expression.
@@ -886,7 +932,16 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
         semBodyCheckBody(c, dest, it, kind, crucial, symId,
                          beforeGenericParams, beforeParams, hookName, info)
       of checkSignatures:
-        dest.takeTree it.n
+        let hasBody = it.n.kind != DotToken
+        let redefMsg = checkRoutineRedefinition(c, dest, declStart, symId, kind, hasBody, info)
+        if redefMsg.len > 0:
+          dest.buildTree StmtsS, info:
+            dest.buildTree ErrT, info:
+              dest.add dotToken(info)
+              dest.add strToken(pool.strings.getOrIncl(redefMsg), info)
+          skip it.n
+        else:
+          dest.takeTree it.n
         c.closeScope() # close parameter scope
       of checkConceptProc:
         c.closeScope() # close parameter scope
