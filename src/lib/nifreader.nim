@@ -80,6 +80,12 @@ when not defined(nimony):
     assert s.len > 0
     cast[ptr UncheckedArray[char]](addr s[0])
 
+  proc readRawDataStable*(s: var string; start = 0): ptr UncheckedArray[char] {.inline.} =
+    ## Nim strings are always heap-backed, so the data pointer is already stable
+    ## across moves — no SSO promotion needed; this is just `readRawData`.
+    if s.len == 0: nil
+    else: cast[ptr UncheckedArray[char]](addr s[start])
+
 proc close*(r: var Reader) =
   ## Release the backend's read handle (mmap unmap, LMDB read txn
   ## close, …) via the explicit VfsBlob close API.
@@ -566,10 +572,18 @@ proc open*(filename: string): Reader =
   readDirectives result
 
 proc openFromBuffer*(buf: sink string; thisModule: sink string): Reader =
+  ## The Reader keeps `buf` alive as the owner of the source bytes. `buf` may be
+  ## a short SSO string whose chars live *inline* in the string object; a plain
+  ## `readRawData` pointer into it would dangle the moment the Reader is moved
+  ## into its caller (and into the wrapping Stream), since the inline bytes move
+  ## with the object. `readRawDataStable` pins `buf` to its heap representation,
+  ## whose payload address survives those moves, so the cached `r.p`/`r.eof`
+  ## stay valid for as long as the Reader (and thus `buf`) is alive.
   result = Reader(buf: ensureMove buf, thisModule: ensureMove thisModule)
-  result.p = readRawData result.buf
-  result.eof = result.p +! result.buf.len
-  result.f = initBlob(cast[pointer](result.p), result.buf.len)
+  let n = result.buf.len
+  result.p = readRawDataStable(result.buf)
+  result.eof = result.p +! n
+  result.f = initBlob(cast[pointer](result.p), n)
   readDirectives result
 
 proc processDirectives*(r: var Reader): DirectivesResult =

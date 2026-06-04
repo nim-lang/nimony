@@ -242,7 +242,7 @@ when not defined(windows):
     if poDaemon in options:
       discard posix_spawnattr_setpgroup(attr, Pid 0)
 
-    var flags: cshort = cshort(0x40)    # POSIX_SPAWN_SETSIGMASK
+    var flags: cshort = cshort(0x08)    # POSIX_SPAWN_SETSIGMASK
     if poDaemon in options:
       flags = flags or cshort(0x02)     # POSIX_SPAWN_SETPGROUP
     discard posix_spawnattr_setflags(attr, flags)

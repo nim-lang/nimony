@@ -134,6 +134,7 @@
 | `(noinline)` | NifcPragma, NimonyPragma | `noinline` proc annotation |
 | `(closure)` | NimonyPragma | `closure` proc annotation; not a calling convention anymore, simply annotates a proc as a closure |
 | `(attr STR)` | NifcPragma | general attribute annotation |
+| `(smry EFFECT* (param INT PARAMFLAG*)*)` | NifcPragma | function-summary annotation; effects include `read`, `write`, `writeGlobal`, `callsUnknown`, `raises`; parameter flags include `read`, `write`, `directEscape`, `returned` |
 | `(varargs T X. STR)`; `(varargs T Y)` | NimonyPragma, NimonyType, NifcType | `varargs` type/proc annotation: Nimony carries the element type and an optional transformer symbol (e.g. `` `$` ``); NIFC keeps only the element type |
 | `(was STR)` | NifcPragma | |
 | `(selectany)` | NifcPragma, NimonyPragma | |

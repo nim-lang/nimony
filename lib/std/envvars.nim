@@ -126,7 +126,7 @@ else:
       # environ is needed, the _NSGetEnviron() routine, defined in
       # <crt_externs.h>, can be used to retrieve the address of environ
       # at runtime.
-      proc NSGetEnviron(): ptr cstringArray {.
+      proc NSGetEnviron(): pointer {.
         importc: "_NSGetEnviron", header: "<crt_externs.h>".}
     elif defined(haiku):
       var gEnv {.importc: "environ", header: "<stdlib.h>".}: cstringArray
@@ -138,7 +138,7 @@ else:
       if not envComputed:
         environment = @[]
         when useNSGetEnviron:
-          var gEnv = NSGetEnviron()[]
+          var gEnv = cast[ptr cstringArray](NSGetEnviron())[]
         var i = 0
         while gEnv[i] != nil:
           add environment, $gEnv[i]

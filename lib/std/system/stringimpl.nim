@@ -198,6 +198,20 @@ func transitionToLong(s: var string; sl: int; newLen: int) =
   else:
     strOom s, LongStringDataOffset + newCap
 
+func readRawDataStable*(s: var string; start = 0): ptr UncheckedArray[char] =
+  ## Like `readRawData`, but the returned pointer stays valid across moves and
+  ## copies of `s` (as long as `s` stays alive and is not reassigned). A
+  ## short/medium string keeps its chars *inline* in the string object, so a
+  ## plain `readRawData` pointer dangles the moment the object is moved; this
+  ## promotes `s` to its heap (long) representation first, whose payload address
+  ## is independent of where the string object itself lives. Use this whenever an
+  ## interior pointer must outlive the current scope of the owning string (e.g.
+  ## a cursor cached alongside the buffer it points into).
+  let sl = ssLen(s)
+  if sl > 0 and sl <= PayloadSize:
+    transitionToLong(s, sl, sl)
+  result = cast[ptr UncheckedArray[char]](cast[uint](rawData(s)) + uint(start))
+
 # ---- mutation helpers ----
 
 func prepareMutation*(s: var string) =
