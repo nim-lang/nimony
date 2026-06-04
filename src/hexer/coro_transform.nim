@@ -1215,7 +1215,12 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       skip n
       var elseCur = n
       skip n
-      if elseCur.kind != DotToken:
+      # Else-branch presence: in NJVL the missing-else case can present as
+      # either a `DotToken` placeholder *or* the parent's closing `ParRi`
+      # (when the `ite` was emitted with the else slot elided rather than
+      # explicitly filled with `.`). Treating ParRi as "no else" prevents
+      # `elseCur.into:` from asserting on a non-ParLe cursor.
+      if elseCur.kind == ParLe:
         emitJump dest, lelse, info
         emitLabel dest, lelse, info
         elseCur.into:
