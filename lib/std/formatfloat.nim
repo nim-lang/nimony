@@ -2,7 +2,7 @@ const bufsize = 65  # Buffer size used in formatfloat in Nim 2
 
 func c_snprintf(str: out array[bufsize, char]; n: uint; fmt: cstring): int32 {.header: "<stdio.h>",
                                     importc: "snprintf", varargs, noSideEffect.}
-func c_strtod(str: cstring; endptr: ptr cstring): float64 {.header: "<stdlib.h>",
+func c_strtod(str: cstring; endptr: nil ptr cstring): float64 {.header: "<stdlib.h>",
                                     importc: "strtod", noSideEffect.}
 
 # Shortest `%g` precision (1..17) whose output round-trips back to `x`. 17 sig
@@ -21,8 +21,7 @@ func addFloat*(result: var string; x: float) =
     # holding the chosen rendering. Non-finite `x` (nan/inf, reachable via `$`)
     # never compares equal and simply falls through at prec 17.
     n = c_snprintf(buf, bufsize.uint, gfmts[prec], x).int
-    var endp {.noinit.}: cstring
-    if c_strtod(cast[cstring](addr buf[0]), addr endp) == x:
+    if c_strtod(cast[cstring](addr buf[0]), nil) == x:
       break
   # A NIF FloatLit must carry a '.'/'e'/'E' or it re-tokenizes as an IntLit;
   # `%g` prints whole-valued finite floats as bare integers ("0", "1", "100").
