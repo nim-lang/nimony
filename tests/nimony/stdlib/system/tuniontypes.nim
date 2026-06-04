@@ -2,29 +2,29 @@ import std/assertions
 
 # Numeric union types from `system/basic_types`
 
-template testSignedInt(T: typedesc) =
-  assert T is SomeSignedInt
-  assert T isnot SomeUnsignedInt
-  assert T is SomeInteger
-  assert T isnot SomeFloat
-  assert T is SomeNumber
-  assert T is SomeOrdinal
+template testSignedInt[T](x: typedesc[T]) =
+  assert x is SomeSignedInt
+  assert x isnot SomeUnsignedInt
+  assert x is SomeInteger
+  assert x isnot SomeFloat
+  assert x is SomeNumber
+  assert x is SomeOrdinal
 
-template testUnsignedInt(T: typedesc) =
+template testUnsignedInt[T](x: typedesc[T]) =
   assert T isnot SomeSignedInt
-  assert T is SomeUnsignedInt
-  assert T is SomeInteger
-  assert T isnot SomeFloat
-  assert T is SomeNumber
-  assert T is SomeOrdinal
+  assert x is SomeUnsignedInt
+  assert x is SomeInteger
+  assert x isnot SomeFloat
+  assert x is SomeNumber
+  assert x is SomeOrdinal
 
-template testFloat(T: typedesc) =
-  assert T isnot SomeSignedInt
-  assert T isnot SomeUnsignedInt
-  assert T isnot SomeInteger
-  assert T is SomeFloat
-  assert T is SomeNumber
-  assert T isnot SomeOrdinal
+template testFloat[T](x: typedesc[T]) =
+  assert x isnot SomeSignedInt
+  assert x isnot SomeUnsignedInt
+  assert x isnot SomeInteger
+  assert x is SomeFloat
+  assert x is SomeNumber
+  assert x isnot SomeOrdinal
 
 testSignedInt int
 testSignedInt int8
@@ -74,21 +74,21 @@ type
     b = 1
     c = 2
 
-template testOrdinalEnum(T: typedesc) =
-  assert T is enum
-  assert T is OrdinalEnum
-  assert T isnot HoleyEnum
-  assert T is SomeOrdinal
-  assert T isnot int
-  assert T isnot bool
+template testOrdinalEnum[T](x: typedesc[T]) =
+  assert x is enum
+  assert x is OrdinalEnum
+  assert x isnot HoleyEnum
+  assert x is SomeOrdinal
+  assert x isnot int
+  assert x isnot bool
 
-template testHoleyEnum(T: typedesc) =
-  assert T is enum
-  assert T is HoleyEnum
-  assert T isnot OrdinalEnum
-  assert T is SomeOrdinal
-  assert T isnot int
-  assert T isnot bool
+template testHoleyEnum[T](x: typedesc[T]) =
+  assert x is enum
+  assert x is HoleyEnum
+  assert x isnot OrdinalEnum
+  assert x is SomeOrdinal
+  assert x isnot int
+  assert x isnot bool
 
 testOrdinalEnum EnumWithoutHoles
 testOrdinalEnum DenseEnum
