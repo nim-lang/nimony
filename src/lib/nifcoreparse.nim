@@ -181,6 +181,98 @@ proc toString*(b: var TokenBuf; sizeHint = 0): string =
     emitValue(bld, c, cur, parents, b.tags, b.pool)
   result = bld.extract()
 
+# ── toModuleString (full file with embedded index) ─────────────────────────
+
+proc emitValueIndexed(bld: var Builder; c: var Cursor; cur: var NifLineInfo;
+                      parents: var seq[NifLineInfo]; tags: TagPool; pool: Pool;
+                      index: var Builder; dottedSuffix: string;
+                      mostRecentOffset, previousOffset: var int;
+                      rootInfo: NifLineInfo) =
+  ## Like `emitValue`, but also records an index entry for every *global*
+  ## SymbolDef. The recorded offset is that of the most recently opened tag (the
+  ## declaration's `(`), delta-encoded against the previous entry — mirroring
+  ## `nifstreams.toModuleString` so the embedded index is byte-compatible with the
+  ## canonical reader (`nifindexes.readEmbeddedIndex`).
+  let li = rawLineInfo(c)
+  let abs = if li.isValid: li else: cur
+  if li.isValid: cur = li
+  case c.kind
+  of TagLit:
+    mostRecentOffset = bld.offset            # offset of this `(`
+    bld.addTree(tags.tags[c.cursorTagId])
+    emitRelLineInfo(bld, abs, parents[^1], pool)
+    parents.add abs
+    c.into:
+      while c.hasMore:
+        emitValueIndexed(bld, c, cur, parents, tags, pool, index, dottedSuffix,
+                         mostRecentOffset, previousOffset, rootInfo)
+    discard parents.pop()
+    bld.endTree()
+  of SymbolDef:
+    let name = symName(c, pool)
+    let isGlobal = bld.addSymbolDefRetIsGlobal(name, dottedSuffix)
+    emitRelLineInfo(bld, abs, parents[^1], pool)
+    c.inc
+    if isGlobal:
+      # Hidden if the next sibling is the empty export marker (`.`), else exported.
+      if c.kind == DotToken: index.addTree "h"
+      else: index.addTree "x"
+      # Record the indexed compound's PARENT info (parents[^2]); on lookup `parse`
+      # seeds its parent stack with this and the first token it reads — the
+      # compound's `(` — carries the diff. (See nifstreams.toModuleString.)
+      let parentInfo = if parents.len >= 2: parents[^2] else: rootInfo
+      emitRelLineInfo(index, parentInfo, rootInfo, pool)
+      index.addSymbol(name, dottedSuffix)
+      index.addIntLit(mostRecentOffset - previousOffset)
+      previousOffset = mostRecentOffset
+      index.endTree()
+  of Symbol:
+    bld.addSymbol(symName(c, pool), dottedSuffix)
+    emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+  of DotToken:
+    bld.addEmpty(); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+  of Ident:
+    bld.addIdent(strVal(c, pool)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+  of StrLit:
+    bld.addStrLit(strVal(c, pool)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+  of CharLit:
+    bld.addCharLit(charLit(c)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+  of IntLit:
+    bld.addIntLit(intVal(c)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+  of UIntLit:
+    bld.addUIntLit(uintVal(c)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+  of FloatLit:
+    bld.addFloatLit(floatVal(c)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+  of ExtendedSuffix, LineInfoLit:
+    assert false, "suffix token is not a value head"
+
+proc toModuleString*(b: var TokenBuf; dottedSuffix = ""; sizeHint = 0): string =
+  ## Like `toString` but emits a full module file: the `(.nif27)` header with a
+  ## patched `.indexat`, the body, and a trailing `(.index …)` mapping each global
+  ## SymbolDef to its declaration's byte offset. `dottedSuffix` (e.g. `.mymod`)
+  ## compresses self-module symbol suffixes to a trailing dot (the reader re-
+  ## expands via its `thisModule`). Mirrors `nifstreams.toModuleString` so the
+  ## output is byte-compatible with the canonical tooling (`reindex`).
+  var bld = nifbuilder.open(if sizeHint > 0: sizeHint else: b.len * 20)
+  let patchPos = bld.addHeader27()
+  var c = b.beginRead()
+  var cur = NoNifLineInfo
+  var parents = @[NoNifLineInfo]
+  var index = nifbuilder.open(b.len * 2)
+  index.addTree ".index"
+  let rootInfo = rawLineInfo(c)
+  if rootInfo.isValid:
+    emitRelLineInfo(index, rootInfo, NoNifLineInfo, b.pool)
+  var mostRecentOffset = 0
+  var previousOffset = 0
+  while c.hasMore:
+    emitValueIndexed(bld, c, cur, parents, b.tags, b.pool, index, dottedSuffix,
+                     mostRecentOffset, previousOffset, rootInfo)
+  bld.patchIndexAt(patchPos, bld.offset)
+  result = bld.extract()
+  index.endTree()
+  result.add index.extract()
+
 when isMainModule:
   import std / syncio
   proc sameTokens(a, b: var TokenBuf): bool =
