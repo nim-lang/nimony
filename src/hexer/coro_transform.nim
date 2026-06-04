@@ -1977,6 +1977,9 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.addParRi()
           dest.addParRi()
         of IteV, ItecV:
+          # `nj.nim` can emit a trailing 4th slot (a leftover DotToken from
+          # guard-closing); drain any extra children so the closing `)` isn't
+          # left for the outer loop, which would drop the following siblings.
           var info = n.info
           inc n
           dest.copyIntoKind IfS, info:
@@ -1985,7 +1988,9 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
               coroTr c, dest, n
             dest.copyIntoKind ElseU, info:
               coroTr c, dest, n
-          inc n
+          while n.kind != ParRi:
+            skip n
+          skipParRi n
         of MflagV, VflagV:
           trMflag c, dest, n
         of JtrueV:
