@@ -13,7 +13,16 @@ include ".." / lib / compat2
 
 import ".." / nimony / [nimony_model, programs, decls]
 import hexer_context, iterinliner, desugar, xelim, duplifier, lifter, destroyer,
-  constparams, vtables_backend, eraiser, lambdalifting, cps, passes
+  constparams, vtables_backend, eraiser, lambdalifting, cps, passes,
+  funcsummary, intramodinliner, arcopt
+# `arcopt` runs on the final NIFC (try/finally already lowered to explicit
+# control flow). It is the BasicBlock-based pass ported from the battle-tested
+# `nim/compiler/optimizer.nim`: a stack of basic blocks each owning a pending
+# `=wasMoved` list, cleared on return/break/loop and intersected only at
+# exhaustive joins. (The earlier tracker-based `shoggoth/arcopt.nim` unioned
+# positions across joins and propagated moved-state into nested branches, which
+# let a diverging branch's destroy elide a parent `=wasMoved` → double-free;
+# it has been removed in favour of this one.)
 when defined(verifyArc):
   import std / syncio
   import ".." / nimony / verify_arc
@@ -124,3 +133,11 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   pass.finishPass()
 
   result = ensureMove(pass.dest)
+
+proc optimizeNifcOutput*(buf: var TokenBuf; moduleSuffix: string; bits: int) =
+  ## Optimizations over the generated NIFC tree. These run after `nifcgen`
+  ## has emitted the final NIFC module, so they never see pre-NIFC constructs
+  ## such as try/finally.
+  runArcopt(buf, moduleSuffix, bits)
+  annotateFunctionSummaries(buf)
+  intraModuleInline(moduleSuffix, buf)

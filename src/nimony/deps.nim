@@ -75,6 +75,13 @@ proc hexedFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f
 proc nifcFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
   base / f.modname & ".c.nif"
+proc optimizedFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
+  ## Shoggoth rewrites `<modname>.c.nif` into this; `nifc` consumes
+  ## it instead. The extra extension keeps the input intact and still extracts
+  ## to the same `modname` (splitModulePath stops at the first dot), so nifc's
+  ## derived output filename is unchanged.
+  let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
+  base / f.modname & ".oc.nif"
 
 proc cFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
@@ -586,7 +593,7 @@ proc defineNiflerCmd(b: var Builder; nifler: string; preserveDocs = false) =
     b.addKeyw "input"
     b.addKeyw "output"
 
-proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool) =
+proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool; checkFlags: string) =
   let cpuFlag = if bigEndian: "--cpu:be" else: "--cpu:le"
   b.withTree "cmd":
     b.addSymbolDef "hexer"
@@ -594,6 +601,9 @@ proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool) 
     b.addStrLit "c"
     b.addStrLit "--bits:" & $bits
     b.addStrLit cpuFlag
+    # Forward the active check modes so nifcgen injects only the requested
+    # runtime checks (e.g. `--boundchecks:off` ⇒ no `nimUcheckB` in `(at …)`).
+    b.addStrLit "--flags:" & checkFlags
     b.addKeyw "args"
     b.withTree "input":
       b.addIntLit 0
@@ -723,6 +733,13 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
     # Command definitions
     let nifc = findTool("nifc")
     let hexer = findTool("hexer")
+    # The experimental Shoggoth optimizer runs only when optimization is
+    # actually requested (`--opt:speed` / `--opt:size`); default/debug builds
+    # are byte-for-byte unaffected.
+    let useOptimizer = c.config.optLevel in {optSpeed, optSize}
+    var shoggoth = ""
+    if useOptimizer:
+      shoggoth = findTool("shoggoth")
 
     # Command for nifc (code generation)
     b.withTree "cmd":
@@ -738,8 +755,16 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
             b.addStrLit arg
       b.addKeyw "input"
 
+    # Command for the tree optimizer: `shoggoth <input.c.nif> <output.oc.nif>`.
+    if useOptimizer:
+      b.withTree "cmd":
+        b.addSymbolDef "optimize"
+        b.addStrLit shoggoth
+        b.addKeyw "input"
+        b.addKeyw "output"
+
     # Command for hexer
-    defineHexerCmds(b, hexer, c.config.bits, platform.CPU[c.config.targetCPU].endian == bigEndian)
+    defineHexerCmds(b, hexer, c.config.bits, platform.CPU[c.config.targetCPU].endian == bigEndian, c.config.checkFlags)
 
     # Command for C/LLVM compiler (object files)
     b.withTree "cmd":
@@ -930,6 +955,22 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
             b.withTree "output":
               b.addStrLit obj
 
+        # Optionally run Shoggoth on the DCE'd `.c.nif`, producing
+        # `.oc.nif`; nifc then consumes that. Skipped entirely unless
+        # `useOptimizer`, in which case nifc reads the plain `.c.nif`.
+        var nifcInput: string
+        if useOptimizer:
+          let optimized = c.config.optimizedFile(v.files[0], backend)
+          b.withTree "do":
+            b.addIdent "optimize"
+            b.withTree "input":
+              b.addStrLit c.config.nifcFile(v.files[0], backend)
+            b.withTree "output":
+              b.addStrLit optimized
+          nifcInput = optimized
+        else:
+          nifcInput = c.config.nifcFile(v.files[0], backend)
+
         # Build C/LLVM IR files from .c.nif files
         b.withTree "do":
           b.addIdent "nifc"
@@ -939,7 +980,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
             b.withTree "args":
               b.addStrLit "--isMain"
           b.withTree "input":
-            b.addStrLit c.config.nifcFile(v.files[0], backend)
+            b.addStrLit nifcInput
           b.withTree "output":
             b.addStrLit c.config.genFile(v.files[0], backend)
 
@@ -1201,7 +1242,7 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
       b.addKeyw "args"
       b.addKeyw "input"
 
-    defineHexerCmds(b, findTool("hexer"), config.bits, platform.CPU[config.targetCPU].endian == bigEndian)
+    defineHexerCmds(b, findTool("hexer"), config.bits, platform.CPU[config.targetCPU].endian == bigEndian, config.checkFlags)
 
     b.withTree "cmd":
       b.addSymbolDef "cc"
