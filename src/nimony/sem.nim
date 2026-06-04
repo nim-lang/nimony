@@ -593,7 +593,22 @@ proc requestRoutineInstance*(c: var SemContext; origin: SymId;
     # regular module-local procs, so `isInstantiation` can't detect them
     # and downstream consumers (e.g. `exprexec.collectUsedSymsFromExpr`)
     # can't tell the body-less stub apart from a real local proc.
-    let instSuffix = instToSuffix(typeArgs, 0)
+    #
+    # Hash the canonical instantiation `(invok origin typeArgs)`, not the bare
+    # `typeArgs`: two distinct generic routines that share a base name and are
+    # instantiated with identical args — e.g. `Table.[]=` and `Tracker.[]=` over
+    # `[SymId, HashSet[int]]` — would otherwise both mint `[]=.0.I<hash>.<mod>`
+    # and collide in codegen. `newInstSymId` keeps only the base name
+    # (`removeModule(origin)`), so the routine identity must enter through the
+    # suffix. This mirrors the type-instance path, whose suffix is hashed over
+    # the `(head args)` invocation (and so already distinguishes heads), and the
+    # `(invok …)` shape is the same one written into the signature's pattern
+    # below, from which the origin remains recoverable for DCE.
+    var instKey = createTokenBuf(typeArgs.len + 3)
+    instKey.buildTree InvokeT, info:
+      instKey.add symToken(origin, info)
+      instKey.add typeArgs
+    let instSuffix = instToSuffix(instKey, 0)
     let targetSym = newInstSymId(c, origin, instSuffix)
     var signature = createTokenBuf(30)
     let decl = getProcDecl(origin)

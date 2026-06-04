@@ -599,7 +599,7 @@ proc parseProcPragmasLLVM(c: var LLVMCode; n: var Cursor): PragmaInfo =
         n.into:
           result.wasName = toString(n, false)
           while n.hasMore: skip n
-      of ErrsP, RaisesP:
+      of ErrsP, RaisesP, SmryP:
         skip n
       of InlineP:
         result.flags.incl pk

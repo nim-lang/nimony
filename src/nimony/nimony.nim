@@ -267,6 +267,9 @@ proc compileProgram(c: var CmdOptions) =
 
   if c.checkModes != DefaultSettings:
     c.commandLineArgs.add " --flags:" & genFlags(c.checkModes)
+  # Forward the active check modes to the hexer code generator too (nifcgen
+  # injects bound/range-check calls); without this it always used DefaultSettings.
+  c.config.checkFlags = genFlags(c.checkModes)
 
   semos.setupPaths(c.config)
 

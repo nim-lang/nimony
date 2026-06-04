@@ -349,12 +349,29 @@ proc atomPointer(c: var GeneratedCode; n: var Cursor; name: string; isConst: boo
     while n.hasMore:
       c.add getPtrQualifier(c, n, isCppRef)
       skip n
-  genType c, elem
-  if isCppRef:
-    c.add "&"
+  if elem.typeKind == FlexarrayT:
+    # `ptr (flexarray T)` must use the parenthesised declarator form
+    # `T (*name)[]`. The naive `genType elem; *; name` would produce
+    # `T[] *name`, which C parses as "array of pointers" — a type error
+    # at the decl site, or worse, silently wrong.
+    var inner = elem
+    inner.into:
+      genType c, inner
+      while inner.hasMore: skip inner
+    c.add Space
+    c.add ParLe
+    if isCppRef: c.add "&" else: c.add Star
+    maybeAddName(c, name, isConst)
+    c.add ParRi
+    c.add BracketLe
+    c.add BracketRi
   else:
-    c.add Star
-  maybeAddName(c, name, isConst)
+    genType c, elem
+    if isCppRef:
+      c.add "&"
+    else:
+      c.add Star
+    maybeAddName(c, name, isConst)
 
 proc genProcType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false) =
   let decl = takeProcType(n)

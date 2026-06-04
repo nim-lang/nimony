@@ -48,6 +48,15 @@ func containsOrIncl*(s: var IntSet; x: int): bool =
   if not result:
     tr.a[b] = tr.a[b] or (1'u shl c)
 
+iterator items*(s: IntSet): int =
+  for a, tr in s.t.pairs:
+    for b in 0'u..<TrunkSize:
+      let word = tr.a[b]
+      if word != 0'u:
+        for c in 0'u..<UIntSize:
+          if (word and (1'u shl c)) != 0'u:
+            yield int(a * BitsPerTrunk + b * UIntSize + c)
+
 when isMainModule:
   import std/assertions
 
