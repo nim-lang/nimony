@@ -18,7 +18,7 @@ barFieldY.0 = 456
 (oconstr Foo.0.tni7snh9s
  (kv fooFieldX.0 123))(oconstr Bar.0.tni7snh9s
  (kv barFieldX.0 "bar field X")
- (kv barFieldY.0 321))(oconstr FooBar.0.tni7snh9s
+ (kv barFieldY.0 321.0))(oconstr FooBar.0.tni7snh9s
  (kv foo.0
   (oconstr Foo.0.tni7snh9s
    (kv fooFieldX.0 321)))
