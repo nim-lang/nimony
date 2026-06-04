@@ -934,11 +934,10 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
         let hasBody = it.n.kind != DotToken
         let redefMsg = checkRoutineRedefinition(c, dest, declStart, symId, kind, hasBody, info)
         if redefMsg.len > 0:
-          dest.addParLe(StmtsS, info)
-          dest.buildTree ErrT, info:
-            dest.add dotToken(info)
-            dest.add strToken(pool.strings.getOrIncl(redefMsg), info)
-          dest.addParRi()
+          dest.buildTree StmtsS, info:
+            dest.buildTree ErrT, info:
+              dest.add dotToken(info)
+              dest.add strToken(pool.strings.getOrIncl(redefMsg), info)
           skip it.n
         else:
           dest.takeTree it.n
