@@ -10,6 +10,15 @@
 # included from llvmcodegen.nim
 # Generates LLVM IR for statements.
 
+type
+  CaseBranch = object
+    ## Used by genSwitchLLVM. Declared at module scope rather than inside
+    ## the proc's `n.into:` block so the type isn't re-instantiated each
+    ## time the template expands — two distinct types from the same
+    ## source location confuse later type-equality checks.
+    values: seq[string]
+    label: string
+
 proc getVirtualGuardLLVM(c: var LLVMCode; n: Cursor): (SymId, bool) =
   result = (SymId(0), false)
   var n = n
@@ -182,10 +191,6 @@ proc genSwitchLLVM(c: var LLVMCode; n: var Cursor) =
     let endLabel = c.label()
     var defaultLabel = c.str(endLabel)
 
-    # First pass: collect all case branches
-    type CaseBranch = object
-      values: seq[string]
-      label: string
 
     var branches: seq[CaseBranch] = @[]
     var defaultBranch: string = ""

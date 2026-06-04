@@ -987,7 +987,14 @@ proc robustMoveFile(src, dest: string) =
 var release = false
 
 proc nimcPrefix(): string =
-  (if release: "nim c -d:release " else: "nim c ")
+  # `--warningAsError:ProveInit:off` and `--warningAsError:Uninit:off`:
+  # Nimony's `src/config.nims` promotes these warnings to errors, but Nim
+  # 2.2.10's host stdlib (typedthreads.nim, deques.nim) trips them on
+  # patterns that aren't actionable from our side. Without these overrides,
+  # any tool using `createThread` (hastur itself) or `initDeque` (pnak)
+  # fails to build on Nim 2.2.10.
+  (if release: "nim c -d:release " else: "nim c ") &
+    "--warningAsError:ProveInit:off --warningAsError:Uninit:off "
 
 proc validatePassesFlag(): string =
   ## Enable the phase-aware IR validator only when running on CI. GitHub Actions
