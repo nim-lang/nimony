@@ -984,6 +984,49 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
         else:
           singleArgImpl(m, impl, arg)
 
+proc numericTypeBits(context: ptr SemContext; t: Cursor): int =
+  var c = skipModifier(t)
+  if c.typeKind == RangetypeT:
+    inc c
+  if c.typeKind in {IntT, UIntT, FloatT} and c.kind == ParLe:
+    inc c
+    if c.kind == IntLit or c.kind == InlineInt:
+      result = typebits(context.g.config, c.load)
+    else:
+      result = -1
+  else:
+    result = -1
+
+proc platformIntegralBits(context: ptr SemContext; unsigned: bool): int =
+  if unsigned:
+    numericTypeBits(context, context.types.uintType)
+  else:
+    numericTypeBits(context, context.types.intType)
+
+proc platformFloatBits(context: ptr SemContext): int =
+  numericTypeBits(context, context.types.floatType)
+
+proc incNumericWidenCost(m: var Match; forig: Cursor) =
+  let bits = numericTypeBits(m.context, forig)
+  case forig.typeKind
+  of FloatT:
+    if bits >= 0 and bits == platformFloatBits(m.context):
+      inc m.intConvCosts
+    else:
+      inc m.convCosts
+  of IntT:
+    if bits >= 0 and bits == platformIntegralBits(m.context, false):
+      inc m.intConvCosts
+    else:
+      inc m.convCosts
+  of UIntT:
+    if bits >= 0 and bits == platformIntegralBits(m.context, true):
+      inc m.intConvCosts
+    else:
+      inc m.convCosts
+  else:
+    inc m.convCosts
+
 proc checkIntLitRange(context: ptr SemContext; f: Cursor; intLit: Cursor): bool =
   if f.typeKind == FloatT:
     result = true
@@ -1027,12 +1070,14 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
       m.args.addSubtree forig
       if isIntLit:
         if forig.typeKind == FloatT:
-          inc m.convCosts
+          incNumericWidenCost m, forig
+        elif numericTypeBits(m.context, forig) ==
+            platformIntegralBits(m.context, forig.typeKind == UIntT):
+          inc m.intConvCosts
         else:
           inc m.intLitCosts
       else:
-        # sameKind is true
-        inc m.intConvCosts
+        incNumericWidenCost m, forig
       inc m.opened
   else:
     m.error InvalidMatch, f, a
