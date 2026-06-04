@@ -115,15 +115,14 @@ proc checkRoutineRedefinition(c: var SemContext; dest: var TokenBuf; declStart: 
       for k in stylesOfScope(scope, lit, ignoreStyle):
         for sym in scope.tab.getOrDefault(k):
           if sym.name == symId or sym.kind != kind: continue
-          block checkOne:
-            let loaded = tryLoadSym(sym.name)
-            if loaded.status != LacksNothing: continue
-            if not signaturesMatch(loaded.decl, newDecl): continue
-            let otherIsForward = asRoutine(loaded.decl, SkipInclBody).body.kind == DotToken
-            if otherIsForward and (not hasBody or otherIsForward): continue
-            result = "redefinition of '" & pool.strings[lit] &
-              "'; previous declaration here: " & infoToStr(loaded.decl.info)
-            return
+          let loaded = tryLoadSym(sym.name)
+          if loaded.status != LacksNothing: continue
+          if not signaturesMatch(loaded.decl, newDecl): continue
+          let otherIsForward = asRoutine(loaded.decl, SkipInclBody).body.kind == DotToken
+          if otherIsForward and (not hasBody or otherIsForward): continue
+          result = "redefinition of '" & pool.strings[lit] &
+            "'; previous declaration here: " & infoToStr(loaded.decl.info)
+          return
       scope = scope.up
   finally:
     endRead(newDecl)
@@ -935,10 +934,11 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
         let hasBody = it.n.kind != DotToken
         let redefMsg = checkRoutineRedefinition(c, dest, declStart, symId, kind, hasBody, info)
         if redefMsg.len > 0:
-          dest.buildTree StmtsS, info:
-            dest.buildTree ErrT, info:
-              dest.add dotToken(info)
-              dest.add strToken(pool.strings.getOrIncl(redefMsg), info)
+          dest.addParLe(StmtsS, info)
+          dest.buildTree ErrT, info:
+            dest.add dotToken(info)
+            dest.add strToken(pool.strings.getOrIncl(redefMsg), info)
+          dest.addParRi()
           skip it.n
         else:
           dest.takeTree it.n
