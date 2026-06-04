@@ -101,18 +101,14 @@ proc indexProcBodies(buf: var TokenBuf; bodies: var Table[SymId, int]) =
   ## Walks the top-level `(stmts …)` and records `(proc :sym …)` decls
   ## by sym → byte offset into `buf`.
   var n = beginRead(buf)
-  if n.stmtKind != StmtsS:
-    endRead(buf)
-    return
-  inc n
-  while n.kind != ParRi:
-    if n.kind == ParLe and n.stmtKind == ProcS:
-      let off = cursorToPosition(buf, n)
-      var p = n
-      inc p
-      if p.kind == SymbolDef:
-        bodies[p.symId] = off
-    skip n
+  if n.stmtKind == StmtsS:
+    n.into:
+      while n.hasMore:
+        if n.kind == ParLe and n.stmtKind == ProcS:
+          let nameCur = n.firstSon            # the (proc :sym …) name child
+          if nameCur.kind == SymbolDef:
+            bodies[nameCur.symId] = cursorToPosition(buf, n)
+        skip n
   endRead(buf)
 
 proc collectProcBodies*(c: var InlinerCtx) =
