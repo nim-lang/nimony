@@ -21,6 +21,7 @@ import std/monotimes
 import std/nifply
 import std/os
 import std/oserrors
+import std/parsejson
 import std/parseopt
 import std/parseutils
 import std/pathnorm
