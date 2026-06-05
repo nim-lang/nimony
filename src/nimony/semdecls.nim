@@ -82,30 +82,15 @@ proc findMatchingForwardDecl*(c: var SemContext; symId: SymId; implDecl: Cursor)
         result = fwdSym
         return
 
-proc copyRoutineDeclAt(dest: TokenBuf; start: int): TokenBuf =
-  result = createTokenBuf(30)
-  if start < 0 or start >= dest.len: return
-  var pos = start
-  var nested = 0
-  while pos < dest.len:
-    result.add dest[pos]
-    case dest[pos].kind
-    of ParLe: inc nested
-    of ParRi:
-      dec nested
-      if nested == 0: break
-    else: discard
-    inc pos
-
 proc checkRoutineRedefinition(c: var SemContext; dest: var TokenBuf; declStart: int;
                               symId: SymId; kind: SymKind; hasBody: bool; info: PackedLineInfo): string =
   ## Reject a routine declaration whose signature matches an existing overload,
   ## mirroring Nim's `searchForProc` / `wrongRedefinition` (see procfind.nim).
   ## Forward declarations with empty bodies are exempt.
   result = ""
+  if declStart < 0 or declStart >= dest.len: return
   let lit = symToIdent(symId)
-  var newBuf = copyRoutineDeclAt(dest, declStart)
-  var newDecl = beginRead(newBuf)
+  var newDecl = cursorAt(dest, declStart)
   try:
     var scope = c.currentScope.up
     if scope == nil: scope = c.currentScope
