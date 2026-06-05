@@ -145,7 +145,8 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
         dest.addSymUse contVar, info
     else:
       # Stack-allocate the callee's frame (statically known callee).
-      # Tag callee.callee with bit 0 so deallocFrame is a nop.
+      # Null callee.callee (see emitStackFrameTag) so deallocFrame is a
+      # nop — `callee == nil` marks the frame as stack-allocated.
       let coroVar = pool.syms.getOrIncl("`coroVar." & $c.currentProc.counter)
       inc c.currentProc.counter
       var sym = n.firstSon.symId
