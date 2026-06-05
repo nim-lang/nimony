@@ -364,14 +364,6 @@ proc analyzeModule*(buf: var TokenBuf): ModuleAnalysis =
         skip n
   endRead(buf)
 
-# Old name kept for the splice's eligibility precheck — semantically
-# "is this proc ever considered inlinable?", used by the cycle guard
-# and the dce_inliner's body lookup. The per-callsite decision goes
-# through `shouldInlineCall` instead.
-proc isInlinable(c: var InlinerCtx; calleeSym: SymId): bool =
-  let info = lookupInlineInfo(c, calleeSym)
-  result = info.threshold == 0
-
 proc collectParams(params: Cursor; outSyms: var seq[SymId];
 
                    outTypes: var seq[Cursor]) =
