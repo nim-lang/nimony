@@ -10,11 +10,11 @@
 ## Inter-module inliner for generated NIFC.
 ##
 ## Hexer's `intramodinliner` annotates each `.inline` proc's pragma with a
-## threshold followed by per-parameter weights (see `dce_inliner`'s
+## threshold followed by per-parameter weights (see `intramodinliner`'s
 ## `computeInlineInfo`). This pass consumes those annotations and splices
 ## qualifying calls at NIFC level — both same-module and cross-module:
 ## cross-module bodies live in the matching `.x.nif` files, picked up via
-## `dce_inliner`'s lazy foreign-module loader (`xnifDir` plus a one-level-up
+## `intramodinliner`'s lazy foreign-module loader (`xnifDir` plus a one-level-up
 ## search, so the main module's `.x.nif` inside `<nimcache>/<backend>/` and
 ## non-main modules' `.x.nif` directly in `<nimcache>/` are both found).
 ##
@@ -31,7 +31,7 @@ import std / [tables, assertions, os]
 include "../../lib" / nifprelude
 import nifstreams, nifcursors
 import ".." / nifc_model
-import ".." / ".." / hexer / dce_inliner
+import ".." / ".." / hexer / intramodinliner
 import ".." / ".." / lib / symparser
 
 # ---- partial-inline detection --------------------------------------------
@@ -107,7 +107,7 @@ proc runInterModuleInliner*(buf: var TokenBuf; suffix: string;
                             xnifDir: string): bool =
   ## Returns true when `buf` was changed.
   ##
-  ## Reuses `dce_inliner.trIntra`, which already calls `trySplice` /
+  ## Reuses `intramodinliner.trIntra`, which already calls `trySplice` /
   ## `trySpliceVarInit` at every statement-position call and bound-form
   ## `(var :t … (call …))`. The cross-module body fetch is automatic once
   ## `xnifDir` is set — `lookupBody` resolves the callee's module via the
