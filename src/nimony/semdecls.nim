@@ -103,7 +103,6 @@ proc checkRoutineRedefinition(c: var SemContext; dest: var TokenBuf; declStart: 
   ## mirroring Nim's `searchForProc` / `wrongRedefinition` (see procfind.nim).
   ## Forward declarations with empty bodies are exempt.
   result = ""
-  if kind notin RoutineKinds: return
   let lit = symToIdent(symId)
   var newBuf = copyRoutineDeclAt(dest, declStart)
   var newDecl = beginRead(newBuf)
