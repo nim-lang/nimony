@@ -146,7 +146,7 @@ in the plugin rather than a malformed NIF tree at runtime.
 
 1. The compiler finds the `.plugin` pragma and resolves the path relative to the
    source file containing the pragma string literal.
-2. The plugin is compiled with **Nim 2** (not Nimony): `nim c -d:nimonyPlugin plugin.nim`.
+2. The plugin is compiled with Nimony.
    The compiled executable is cached in the nimcache directory and reused until the source changes.
 3. At the call site, the compiler writes the input AST to a `.nif` file and invokes
    the plugin executable as a subprocess.
@@ -155,9 +155,6 @@ in the plugin rather than a malformed NIF tree at runtime.
 
 Plugins are deterministic: same input produces same output. The compiler caches
 results and skips re-execution when possible.
-
-**Note:** Plugins are compiled with Nim 2 because Nimony is not yet considered
-stable enough to compile itself.
 
 
 ## Plugin search
@@ -443,46 +440,6 @@ proc renderTree*(tree: NifBuilder): string        # debug rendering (no line inf
 ```
 
 
-### NIF templates and interpolation
-
-For quick tree construction, use NIF string templates with `%~` interpolation:
-
-```nim
-let greeting = """(call echo $msg)""" %~ {"msg": ~"hello"}
-```
-
-The `$name` placeholders are replaced with tree fragments from the bindings. The `~`
-operator converts Nim values to tree fragments:
-
-| Expression | Produces |
-|-----------|----------|
-| `~node` | Copy of `Node` subtree |
-| `~tree` | The `NifBuilder` unchanged |
-| `~"hello"` | String literal |
-| `~ident("foo")` | Identifier (not a string literal) |
-| `~42` | Integer literal |
-| `~3.14` | Float literal |
-| `~'x'` | Character literal |
-| `~true` | Boolean keyword node |
-
-Use `$$` for a literal dollar sign.
-
-Templates compose naturally:
-
-```nim
-let first = """(call echo $arg)""" %~ {"arg": ~n}
-let second = """(call echo $msg)""" %~ {"msg": ~"done"}
-
-result = """(stmts $a $b)""" %~ {"a": ~first, "b": ~second}
-```
-
-For templates without substitutions, use `nifFragment`:
-
-```nim
-let tail = nifFragment("""(call echo "done")""")
-```
-
-
 ### Error reporting
 
 ```nim
@@ -514,42 +471,42 @@ output atomically, making cursor/builder mismatches impossible:
 ```nim
 import plugins
 
-proc trAux(t: var Replacer) =
-  if t.isAtom:
-    keep t, Any             # pass through leaf tokens
+proc trAux(r: var Replacer) =
+  if r.isAtom:
+    keep r, Any             # pass through leaf tokens
   else:
-    case t.stmtKind
+    case r.stmtKind
     of SomeStmtToTransform:
       # ... custom transformation ...
     else:
-      loopKeepTag t:       # descend and recurse
-        trAux t
+      loopKeepTag r:       # descend and recurse
+        trAux r
 
-var t = loadReplacer()
-loopKeepTag t:             # enter top-level (stmts ...) and recurse
-  trAux t
-saveReplacer(t)
+var r = loadReplacer()
+loopKeepTag r:             # enter top-level (stmts ...) and recurse
+  trAux r
+saveReplacer(r)
 ```
 
 The core operations are:
-- `keep t, Kind` — copy one child verbatim, asserting its kind
-- `drop t, Kind` — skip one child without emitting, asserting its kind
-- `replace t, node` — skip one child, emit a replacement (NifCursor or NifBuilder)
-- `keepTag t:` — descend into a compound node (copy tag, process children, close)
-- `loopKeepTag t:` — copy tag, iterate all children, close
-- `peek t:` — read-ahead analysis without consuming (cursor is restored)
-- `getCursor(t)` / `setCursor(t, c)` — snapshot/restore cursor for analysis
+- `keep r, Kind` — copy one child verbatim, asserting its kind
+- `drop r, Kind` — skip one child without emitting, asserting its kind
+- `replace r, node` — skip one child, emit a replacement (NifCursor or NifBuilder)
+- `keepTag r:` — descend into a compound node (copy tag, process children, close)
+- `loopKeepTag r:` — copy tag, iterate all children, close
+- `peek r:` — read-ahead analysis without consuming (cursor is restored)
+- `getCursor(r)` / `setCursor(r, c)` — snapshot/restore cursor for analysis
 
-Kind annotations are mandatory: `keep t, Expr`, `drop t, Type`, `keep t, AsgnS`.
+Kind annotations are mandatory: `keep r, Expr`, `drop r, Type`, `keep r, AsgnS`.
 Use `Any` when the child can be anything, or specific tags like `AsgnS`, `MutT`
 when the grammar dictates a fixed child.
 
-Use `t.dest` for direct builder access when emitting new nodes:
+Use `r.dest` for direct builder access when emitting new nodes:
 
 ```nim
-t.dest.withTree CallS, info:
-  t.dest.addSymUse sym, info
-  t.dest.addStrLit "hello"
+r.dest.withTree CallS, info:
+  r.dest.addSymUse sym, info
+  r.dest.addStrLit "hello"
 ```
 
 ### Low-level API
@@ -581,7 +538,7 @@ The key low-level operations are:
 ### Traversal and transformation templates
 
 Templates for tree traversal (read-only) and transformation (read+write).
-The `skipHead`/`loopSkipHead` templates are for pure analysis; the
+The `into`/`loopInto` templates are for pure analysis; the
 `keepTag`/`loopKeepTag` templates copy the node tag to the output.
 
 | Template | Type | Purpose |
@@ -590,5 +547,5 @@ The `skipHead`/`loopSkipHead` templates are for pure analysis; the
 | `into n:` | `NifCursor` | enter node, run body for children, leave |
 | `loopInto n:` | `NifCursor` | enter node, iterate all children, leave |
 | `balancedTokens n:` | `NifCursor` | deep-scan all compound nodes in subtree |
-| `keepTag t:` | `Replacer` | copy tag to output, run body, close + skip `)` |
-| `loopKeepTag t:` | `Replacer` | copy tag, iterate all children, close + skip `)` |
+| `keepTag r:` | `Replacer` | copy tag to output, run body, close + skip `)` |
+| `loopKeepTag r:` | `Replacer` | copy tag, iterate all children, close + skip `)` |

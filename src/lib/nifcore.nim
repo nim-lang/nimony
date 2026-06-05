@@ -41,6 +41,15 @@
 ## Pool ownership is per-`TokenBuf` by default; pass `sharedPool` to
 ## `createTokenBuf` to thread the same intern tables through many trees.
 
+when defined(nimony):
+  # Generic bodies (e.g. `createTags[E: enum]`) and `untyped`-pool templates
+  # are sem-checked at instantiation, Nim-2 style — matches how this file
+  # compiles under host Nim. Unknown pragma on host Nim, hence the guard.
+  {.feature: "untyped".}
+  # `ref` fields/returns are nilable here (e.g. `pool`/`tags` return nil for
+  # an ownerless cursor); opt out of Nimony's strict not-nil analysis.
+  {.feature: "lenientnils".}
+
 import std / [assertions, hashes]
 import bitabs, lineinfos
 export bitabs  # adapters touching pool.strings / tags need getOrIncl etc.
@@ -608,7 +617,10 @@ type
     tags*: TagPool                # tags (typically per-adapter)
 
 proc `=copy`(dest: var TokenBuf; src: TokenBuf) {.error.}
-proc `=wasMoved`(dest: var TokenBuf) {.inline.} =
+proc `=wasMoved`(dest: var TokenBuf) {.nodestroy, inline.} =
+  # `nodestroy`: this hook establishes the moved-from state and may run on
+  # uninitialized storage (Nimony does not zero-init `result`), so the field
+  # writes below must be raw stores — never destroy the prior (garbage) value.
   dest.data = nil
   dest.len = 0
   dest.cap = 0
