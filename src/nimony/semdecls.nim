@@ -93,7 +93,6 @@ proc checkRoutineRedefinition(c: var SemContext; dest: var TokenBuf; declStart: 
   var newDecl = cursorAt(dest, declStart)
   try:
     var scope = c.currentScope.up
-    if scope == nil: scope = c.currentScope
     let ignoreStyle = IgnoreStyleFeature in c.features
     while scope != nil:
       for k in stylesOfScope(scope, lit, ignoreStyle):
