@@ -113,6 +113,10 @@ proc runInterModuleInliner*(buf: var TokenBuf; suffix: string;
   ## `xnifDir` is set — `lookupBody` resolves the callee's module via the
   ## symbol name (`extractModule`) and lazy-loads the foreign `.x.nif`.
   var infos = initTable[string, ModuleAnalysis]()
+  # Record the current module's OWN inline info so same-module `.inline` callees
+  # are recognised — `lookupInlineInfo` only consults `infos`, and the foreign
+  # path never populates the suffix we're processing.
+  infos[suffix] = analyzeModule(buf)
   var ctx = initInlinerCtx(suffix, addr buf, addr infos,
                            xnifDir = xnifDir,
                            maxDepth = 4,

@@ -340,8 +340,6 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
       skip pr
   if not hasInline:
     return
-  if pd.body.kind == ParLe and subtreeTokenCount(pd.body, 20) > 20:
-    return
 
   result.threshold = 0
   var lookup = initTable[SymId, int]()
@@ -355,16 +353,15 @@ proc analyzeModule*(buf: var TokenBuf): ModuleAnalysis =
   result = ModuleAnalysis(inlineInfo: initTable[SymId, InlineInfo]())
   var n = beginRead(buf)
   if n.stmtKind == StmtsS:
-    inc n
-    while n.kind != ParRi:
-      if n.kind == ParLe and n.stmtKind == ProcS:
-        var p = n
-        inc p
-        if p.kind == SymbolDef:
-          let info = computeInlineInfo(n)
-          if info.threshold == 0:
-            result.inlineInfo[p.symId] = info
-      skip n
+    n.into:
+      while n.hasMore:
+        if n.kind == ParLe and n.stmtKind == ProcS:
+          let nameCur = n.firstSon
+          if nameCur.kind == SymbolDef:
+            let info = computeInlineInfo(n)
+            if info.threshold == 0:
+              result.inlineInfo[nameCur.symId] = info
+        skip n
   endRead(buf)
 
 # Old name kept for the splice's eligibility precheck — semantically
