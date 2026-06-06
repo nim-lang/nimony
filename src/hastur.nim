@@ -450,6 +450,48 @@ proc warmupSharedCache(): string =
     # printing them per-category just adds noise.
     echo "warmup compiled in ", formatFloat(dt, ffDecimal, precision=2), "s."
 
+var sharedObjectsPrebuilt = false
+  ## `nimcache_static/` holds object files that don't depend on per-project
+  ## state and are reused across every build — currently just mimalloc's
+  ## `static.o`. nifmake's `needsRebuild` is purely mtime-based, so when that
+  ## `.o` is missing on a cold cache every parallel worker independently
+  ## decides to (re)compile `static.c` into the same shared path at once.
+  ## The concurrent `cc … -o static.o` writes clobber each other and a
+  ## half-written object links with `undefined reference to mi_malloc`. We
+  ## build it once, serially, before any worker starts; thereafter the file
+  ## exists and every worker's staleness check skips it.
+
+proc prebuildSharedObjects() =
+  ## Compile a trivial program once so the shared `nimcache_static/` object
+  ## files exist before the parallel pool launches. Idempotent across the
+  ## many `parallelTestDir` calls in a single `hastur` run (only the first
+  ## does real work; once `static.o` is present the build is a no-op).
+  if sharedObjectsPrebuilt: return
+  sharedObjectsPrebuilt = true
+  let nimony = "bin" / "nimony".addFileExt(ExeExt)
+  if not fileExists(nimony):
+    return
+  let cache = nimcacheDir / "prebuild_static"
+  let src = cache / "prebuild_static.nim"
+  try:
+    createDir cache
+    # Any program that pulls in `system` triggers the mimalloc `static.c`
+    # build pragma; a bare `discard` is enough.
+    writeFile(src, "discard\n")
+  except OSError, IOError:
+    return
+  var cmd = nimony.quoteShell & " c --silentMake --nimcache:" & cache.quoteShell
+  # Match `testFile`'s per-platform flags so the prebuilt `static.o` is the
+  # exact artifact the tests want (valgrind-tracked mimalloc on Linux).
+  when defined(linux):
+    cmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\""
+  cmd.add ' ' & src.quoteShell
+  if execShellCmd(cmd) != 0:
+    # Non-fatal: if this fails the tests still run, just without the
+    # pre-built shared object (and may hit the original race). Surface it so
+    # the cause is visible rather than silently degrading.
+    stderr.writeLine "prebuild: shared object compile failed: " & cmd
+
 var warmupCopySeconds: float = 0
   ## Aggregate prefill cost across one parallel run, reported alongside
   ## the test counts.
@@ -547,6 +589,7 @@ proc parallelTestDir(c: var TestCounters; files: openArray[string];
   ## are streamed in completion order; final pass/fail counts go into
   ## the shared `c`.
   let hastur = getAppFilename()
+  prebuildSharedObjects()
   let warmupCache = warmupSharedCache()
   warmupCopySeconds = 0
   let parallelStart = epochTime()
