@@ -147,7 +147,7 @@ func `=copy`*[T](dest: var seq[T]; src: seq[T]) {.nodestroy.} =
 func add*[T](s: var seq[T]; elem: sink T) {.inline, nodestroy.} =
   ## Appends `elem` to the end of `s`, growing storage if necessary.
   let L = s.len
-  if s.capInBytes <= L * sizeof(T):
+  if s.capInBytes < (L * sizeof(T)) + sizeof(T):
     if not resize(s, 1):
       # It is our responsibility to destroy the `sink` element if
       # it could not be added:
