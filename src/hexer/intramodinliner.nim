@@ -220,14 +220,17 @@ proc scoreArg(a: Cursor): int =
     else: return 0                  # complex expression
   else: return 0
 
-proc computeArgScores(argsStart: Cursor): seq[int] =
-  ## Walks the args of a `(call f arg…)` (starting *past* the callee
-  ## sym) and builds the per-arg score vector for `shouldInline`.
+proc computeArgScores(callNode: Cursor): seq[int] =
+  ## Walks the args of a `(call f arg…)` and builds the per-arg score
+  ## vector for `shouldInline`. Uses `into` so the walk is bounded by the
+  ## call's own subtree (the closing `)` is virtual under `virtualParRi`).
   result = @[]
-  var a = argsStart
-  while a.kind != ParRi:
-    result.add scoreArg(a)
-    skip a
+  var a = callNode
+  a.into:
+    skip a                                # past the callee sym
+    while a.hasMore:
+      result.add scoreArg(a)
+      skip a
 
 proc lookupInlineInfo(c: var InlinerCtx; calleeSym: SymId): InlineInfo =
   ## Lazy-loads the foreign module's analysis sidecar (cheap — `.dce.nif`
@@ -243,7 +246,7 @@ proc lookupInlineInfo(c: var InlinerCtx; calleeSym: SymId): InlineInfo =
   result = c.infos[].getOrQuit(modul).inlineInfo.getOrDefault(calleeSym, DefaultInlineInfo)
 
 proc shouldInlineCall(c: var InlinerCtx; calleeSym: SymId;
-                      argsStart: Cursor): bool =
+                      callNode: Cursor): bool =
   ## Decides whether to splice a call to `calleeSym` at this call site.
   ## `.inline` (threshold 0) always wins; `.noinline` (threshold
   ## ≥ 10000) always loses; everything else goes through the per-call
@@ -251,21 +254,21 @@ proc shouldInlineCall(c: var InlinerCtx; calleeSym: SymId;
   let info = lookupInlineInfo(c, calleeSym)
   if info.threshold == 0: return true
   if info.threshold >= 10000: return false
-  let scores = computeArgScores(argsStart)
+  let scores = computeArgScores(callNode)
   result = shouldInline(info, scores)
 
 proc collectParamSyms(params: Cursor): seq[SymId] =
   result = @[]
   if params.kind != ParLe: return @[]
   var p = params
-  inc p
-  while p.kind != ParRi:
-    if p.substructureKind == ParamU:
-      var q = p
-      inc q
-      if q.kind == SymbolDef:
-        result.add q.symId
-    skip p
+  p.into:
+    while p.hasMore:
+      if p.substructureKind == ParamU:
+        var q = p
+        inc q
+        if q.kind == SymbolDef:
+          result.add q.symId
+      skip p
 
 proc weightOfUse(n: Cursor): int =
   case n.exprKind
@@ -332,12 +335,11 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
   var hasInline = false
   if pd.pragmas.kind == ParLe:
     var pr = pd.pragmas
-    inc pr
-    while pr.kind != ParRi:
-      if pr.kind == ParLe and pr.pragmaKind == InlineP:
-        hasInline = true
-        break
-      skip pr
+    pr.into:                            # scan all pragmas (no early break: the
+      while pr.hasMore:                 # `into` epilogue needs the scope drained)
+        if pr.kind == ParLe and pr.pragmaKind == InlineP:
+          hasInline = true
+        skip pr
   if not hasInline:
     return
 
@@ -371,19 +373,19 @@ proc collectParams(params: Cursor; outSyms: var seq[SymId];
   outTypes.setLen 0
   if params.kind != ParLe: return
   var p = params
-  inc p
-  while p.kind != ParRi:
-    if p.substructureKind == ParamU:
-      var inner = p
-      inc inner                      # past `param` tag
-      if inner.kind != SymbolDef:
-        skip p
-        continue
-      outSyms.add inner.symId
-      inc inner                      # past symdef
-      skip inner                     # pragmas
-      outTypes.add inner             # NIFC (param :name <pragmas> <type>)
-    skip p
+  p.into:
+    while p.hasMore:
+      if p.substructureKind == ParamU:
+        var inner = p
+        inc inner                      # past `param` tag
+        if inner.kind != SymbolDef:
+          skip p
+          continue
+        outSyms.add inner.symId
+        inc inner                      # past symdef
+        skip inner                     # pragmas
+        outTypes.add inner             # NIFC (param :name <pragmas> <type>)
+      skip p
 
 proc emitRenamed(dest: var TokenBuf; body: var Cursor;
                  rename: Table[SymId, SymId]) =
@@ -559,6 +561,23 @@ proc emitBody(c: var InlinerCtx; dest: var TokenBuf; body: var Cursor;
   dest.addParRi()                           # close (stmts …)
   inc body                                  # past body's ParRi
 
+proc seedRenameWalk(c: var InlinerCtx; n: var Cursor;
+                    rename: var Table[SymId, SymId]) =
+  ## Descend one ParLe subtree, minting a fresh sym for each SymbolDef,
+  ## advancing `n` past the subtree. `into` makes this bound-safe whether
+  ## the closing `)` is real or virtual (`virtualParRi`).
+  n.into:
+    while n.hasMore:
+      case n.kind
+      of SymbolDef:
+        if not rename.hasKey(n.symId):
+          rename[n.symId] = c.freshSym(n.symId)
+        inc n
+      of ParLe:
+        seedRenameWalk(c, n, rename)
+      else:
+        inc n
+
 proc seedRenameFromBody(c: var InlinerCtx; body: Cursor;
                        rename: var Table[SymId, SymId]) =
   ## Walk every token in the body and mint a fresh sym for each
@@ -566,24 +585,7 @@ proc seedRenameFromBody(c: var InlinerCtx; body: Cursor;
   ## inline copies in the same scope.
   if body.kind != ParLe: return
   var n = body
-  var nesting = 0
-  while true:
-    case n.kind
-    of ParLe:
-      inc nesting
-      inc n
-    of ParRi:
-      dec nesting
-      inc n
-      if nesting == 0: return
-    of SymbolDef:
-      if not rename.hasKey(n.symId):
-        rename[n.symId] = c.freshSym(n.symId)
-      inc n
-    of EofToken:
-      return
-    else:
-      inc n
+  seedRenameWalk(c, n, rename)
 
 proc trySplice*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   ## If `n` points at a `(call f arg…)` statement we can inline, emit
@@ -599,9 +601,7 @@ proc trySplice*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   let calleeSym = probe.symId
   if calleeSym in c.inProgress: return 0     # cycle guard
   if c.maxDepth > 0 and c.inProgress.len >= c.maxDepth: return 0
-  var argsStart = probe
-  inc argsStart                            # past callee sym, at first arg
-  if not shouldInlineCall(c, calleeSym, argsStart): return 0
+  if not shouldInlineCall(c, calleeSym, entry): return 0
   var pcur = default(Cursor)
   if not lookupBody(c, calleeSym, pcur): return 0
   let pd = takeProcDecl(pcur)
@@ -610,13 +610,15 @@ proc trySplice*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   var pTypes: seq[Cursor] = @[]
   collectParams(pd.params, pSyms, pTypes)
 
-  # Arity check against the call's actual arguments.
-  var argScan = probe
-  inc argScan                              # past callee sym
+  # Arity check against the call's actual arguments. `into` bounds the walk
+  # to the call's own subtree (its closing `)` is virtual under virtualParRi).
+  var argScan = entry
   var argCount = 0
-  while argScan.kind != ParRi:
-    skip argScan
-    inc argCount
+  argScan.into:
+    skip argScan                           # past callee sym
+    while argScan.hasMore:
+      skip argScan
+      inc argCount
   if argCount != pSyms.len: return 0
 
   # All checks passed — build the rename table and emit unconditionally.
@@ -687,9 +689,7 @@ proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): in
   let calleeSym = callProbe.symId
   if calleeSym in c.inProgress: return 0     # cycle guard
   if c.maxDepth > 0 and c.inProgress.len >= c.maxDepth: return 0
-  var argsStart = callProbe
-  inc argsStart                            # past callee sym, at first arg
-  if not shouldInlineCall(c, calleeSym, argsStart): return 0
+  if not shouldInlineCall(c, calleeSym, valueCursor): return 0
   var pcur = default(Cursor)
   if not lookupBody(c, calleeSym, pcur): return 0
   let pd = takeProcDecl(pcur)
@@ -698,12 +698,15 @@ proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): in
   var pTypes: seq[Cursor] = @[]
   collectParams(pd.params, pSyms, pTypes)
 
-  var argScan = callProbe
-  inc argScan                              # past callee sym
+  # `into` bounds the arity walk to the call's own subtree (its closing `)`
+  # is virtual under virtualParRi).
+  var argScan = valueCursor
   var argCount = 0
-  while argScan.kind != ParRi:
-    skip argScan
-    inc argCount
+  argScan.into:
+    skip argScan                           # past callee sym
+    while argScan.hasMore:
+      skip argScan
+      inc argCount
   if argCount != pSyms.len: return 0
 
   # All checks passed — emit unconditionally.
