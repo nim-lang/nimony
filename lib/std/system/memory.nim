@@ -29,11 +29,14 @@ func moveMem*(dest, src: pointer; size: int) =
   ## Copies `size` bytes from `src` to `dest`, correctly handling the case
   ## where the two regions overlap (unlike `copyMem`).
   ##
-  ## Implemented on top of `copyMem`/`memcpy` so the backend only has to
-  ## support one memory-copy intrinsic: the non-overlapping case (the common
-  ## one) goes straight through `copyMem`; overlapping regions fall back to a
-  ## byte loop running in the direction that does not clobber bytes still to be
-  ## read.
+  ## Implemented entirely on top of `copyMem`/`memcpy` so the backend only has
+  ## to support one memory-copy intrinsic. Disjoint regions (the common case)
+  ## go straight through a single `copyMem`. Overlapping regions are copied in
+  ## chunks that bounce through a small stack buffer: `src -> tmp -> dest`. The
+  ## temporary is disjoint from both regions, so each `copyMem` is well-defined;
+  ## the chunks are still processed in the direction that does not clobber bytes
+  ## that later chunks still have to read (front-to-back when `dest` is below
+  ## `src`, back-to-front otherwise).
   if size <= 0 or dest == src: return
   let d = cast[uint](dest)
   let s = cast[uint](src)
@@ -41,20 +44,27 @@ func moveMem*(dest, src: pointer; size: int) =
     # regions are disjoint: a single memcpy is safe and fast
     c_memcpy(dest, src, csize_t size)
   else:
+    const ChunkSize = 256
+    var tmp {.noinit.}: array[ChunkSize, byte]
     let dp = cast[ptr UncheckedArray[byte]](dest)
     let sp = cast[ptr UncheckedArray[byte]](src)
     if d < s:
-      # dest below src: copy front-to-back (each write stays below later reads)
-      var i = 0
-      while i < size:
-        dp[i] = sp[i]
-        inc i
+      # dest below src: each chunk's dest write stays below the next chunk's
+      # src read, so go front-to-back.
+      var off = 0
+      while off < size:
+        let c = min(ChunkSize, size - off)
+        c_memcpy(addr tmp[0], addr sp[off], csize_t c)
+        c_memcpy(addr dp[off], addr tmp[0], csize_t c)
+        inc off, c
     else:
-      # dest above src: copy back-to-front
-      var i = size - 1
-      while i >= 0:
-        dp[i] = sp[i]
-        dec i
+      # dest above src: go back-to-front.
+      var off = size
+      while off > 0:
+        let c = min(ChunkSize, off)
+        off -= c
+        c_memcpy(addr tmp[0], addr sp[off], csize_t c)
+        c_memcpy(addr dp[off], addr tmp[0], csize_t c)
 
 func cmpMem*(a, b: pointer; size: int): int {.inline.} =
   ## Lexicographically compares `size` bytes at `a` and `b`.
