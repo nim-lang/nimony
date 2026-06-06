@@ -461,11 +461,20 @@ var sharedObjectsPrebuilt = false
   ## build it once, serially, before any worker starts; thereafter the file
   ## exists and every worker's staleness check skips it.
 
-proc prebuildSharedObjects() =
+proc prebuildSharedObjects(forward: string) =
   ## Compile a trivial program once so the shared `nimcache_static/` object
   ## files exist before the parallel pool launches. Idempotent across the
   ## many `parallelTestDir` calls in a single `hastur` run (only the first
   ## does real work; once `static.o` is present the build is a no-op).
+  ##
+  ## `forward` MUST be the same flag string the test workers pass to nimony
+  ## (e.g. `--cc:clang` on Windows CI). `static.o` lands in the shared
+  ## `nimcache_static/` and is keyed only by mtime, so once we build it the
+  ## workers reuse it verbatim — if we built it with a different compiler than
+  ## the workers link with, the result is an ABI mismatch. Concretely: on
+  ## Windows the tester forwards `--cc:clang` (clang uses native PE TLS); a
+  ## prebuild with the default gcc emits gthr/emulated-TLS `static.o`, and the
+  ## clang+lld worker link then fails with `undefined symbol: pthread_*`.
   if sharedObjectsPrebuilt: return
   sharedObjectsPrebuilt = true
   let nimony = "bin" / "nimony".addFileExt(ExeExt)
@@ -481,6 +490,11 @@ proc prebuildSharedObjects() =
   except OSError, IOError:
     return
   var cmd = nimony.quoteShell & " c --silentMake --nimcache:" & cache.quoteShell
+  # Same compiler/link flags the workers use (`--cc:`, `--passL:` …), so the
+  # shared `static.o` matches the toolchain the workers link with.
+  if forward.len > 0:
+    cmd.add ' '
+    cmd.add forward
   # Match `testFile`'s per-platform flags so the prebuilt `static.o` is the
   # exact artifact the tests want (valgrind-tracked mimalloc on Linux).
   when defined(linux):
@@ -589,7 +603,7 @@ proc parallelTestDir(c: var TestCounters; files: openArray[string];
   ## are streamed in completion order; final pass/fail counts go into
   ## the shared `c`.
   let hastur = getAppFilename()
-  prebuildSharedObjects()
+  prebuildSharedObjects(forward)
   let warmupCache = warmupSharedCache()
   warmupCopySeconds = 0
   let parallelStart = epochTime()
