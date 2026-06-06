@@ -121,9 +121,10 @@ proc pushCompletion(c: IoCompletion) =
 
 proc deliver(c: IoCompletion; cont: Continuation) {.inline.} =
   if cont.fn != nil:
-    # Resume the suspended passive proc by submitting its continuation
-    # back to the threadpool.
-    submit(cont)
+    # Resume the suspended passive proc by submitting its continuation back to
+    # the threadpool. Spread by fd so resumes don't all funnel into stripe 0
+    # (the default hint) — that serialises drains and starves the other workers.
+    submit(cont, int(c.fd))
   else:
     pushCompletion(c)
 
