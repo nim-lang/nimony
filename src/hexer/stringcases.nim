@@ -22,13 +22,27 @@ proc decodeSolution(c: var EContext; dest: var TokenBuf; s: seq[SearchNode]; i: 
   of ForkedSearch:
     let f = forked(s, i)
 
+    # Hoist the `nimStrAtLe` probe into a `(var :tmp (bool) (call …))` instead
+    # of nesting it in the `elif` condition. `nimStrAtLe` is `.inline`, but the
+    # inliner (shoggoth's `intermodinliner`) only splices calls at statement /
+    # var-init position — a call buried in the `elif` condition is opaque to it
+    # (the same pipeline-ordering issue the array bound checks had). The bound
+    # form below is exactly what the inliner's `trySpliceVarInit` recognises.
+    let condTmp = pool.syms.getOrIncl("`tc." & $c.getTmpId)
+    dest.copyIntoUnchecked "var", info:
+      dest.add symdefToken(condTmp, info)
+      dest.addDotToken() # pragmas
+      dest.add tagToken("bool", info)
+      dest.addParRi()
+      dest.copyIntoUnchecked "call", info:
+        dest.add symToken(pool.syms.getOrIncl(StrAtLeOp), info)
+        dest.add symToken(selector, info)
+        dest.add intToken(pool.integers.getOrIncl(f.best[1]), info)
+        dest.add charToken(f.best[0], info)
+
     dest.copyIntoUnchecked "if", info:
       dest.copyIntoUnchecked "elif", info:
-        dest.copyIntoUnchecked "call", info:
-          dest.add symToken(pool.syms.getOrIncl(StrAtLeOp), info)
-          dest.add symToken(selector, info)
-          dest.add intToken(pool.integers.getOrIncl(f.best[1]), info)
-          dest.add charToken(f.best[0], info)
+        dest.add symToken(condTmp, info)
         dest.copyIntoUnchecked "stmts", info:
           decodeSolution c, dest, s, f.thenA, selector, info
       dest.copyIntoUnchecked "else", info:
