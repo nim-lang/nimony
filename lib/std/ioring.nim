@@ -15,7 +15,7 @@
 #   echo "client fd=", comps[0].result
 #   shutdownPool()
 
-import std / [atomics, threadpool]
+import std / [atomics, threadpool, assertions, ticketlocks]
 export threadpool.initPool, threadpool.shutdownPool, threadpool.poolStopped
 
 when defined(windows):
@@ -141,7 +141,7 @@ proc onFdReady(self: ptr IoHandler; events: uint32) {.nimcall.} =
         if c.result < 0:
           c.result = -1
       of opAccept:
-        var clientAddr: Sockaddr_storage
+        var clientAddr = default(Sockaddr_storage)
         var addrLen = SockLen(sizeof(clientAddr))
         let clientFd = accept(fd, cast[ptr SockAddr](addr clientAddr), addr addrLen)
         c.result = clientFd
@@ -248,6 +248,7 @@ proc pollCompletions*(comps: var openArray[IoCompletion]): int =
 
 proc waitCompletions*(comps: var openArray[IoCompletion]): int =
   ## Block until at least one completion is ready.
+  result = 0
   while true:
     result = pollCompletions(comps)
     if result > 0: return
@@ -288,7 +289,7 @@ proc listenTcp*(port: uint16; backlog = 128): cint =
     assert fd >= 0, "socket() failed"
     var yes: cint = 1
     discard setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, addr yes, SockLen(sizeof(yes)))
-    var addr4: Sockaddr_in
+    var addr4 = default(Sockaddr_in)
     addr4.sin_family = cushort(AF_INET)
     addr4.sin_port = htons(port)
     addr4.sin_addr.s_addr = INADDR_ANY
