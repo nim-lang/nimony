@@ -906,6 +906,65 @@ proc trTupleAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   dest.addParRi()     # close stmts
 
+proc trArrAt(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## Lower the array-index bound check here rather than in `nifcgen`. Sem
+  ## attaches the (compile-time) bounds to `(arrat arr idx [hi [lo]])`; we
+  ## rewrite that to `(arrat arr <checkedIndex>)` where `<checkedIndex>` is
+  ## either a `(call nimIcheckAB …)`/`(call nimIcheckB …)` (bound checks on)
+  ## or the bare/`(sub …)`-adjusted index (checks off). Doing it in desugar —
+  ## before the `xelim` passes — lets `xelim` hoist the check call into a
+  ## `(var :tmp … (call …))`, which is the only shape the intra-module
+  ## inliner can splice; emitted late in `nifcgen` the call stays buried in
+  ## the `(at …)` index expression and never gets inlined.
+  let info = n.info
+  dest.add parLeToken(ArratX, info)
+  inc n
+  tr(c, dest, n)  # array operand
+  # `isUnsigned` is decided from the index's type, exactly as nifcgen did.
+  let isUnsigned = getType(c.typeCache, n).typeKind in {UIntT, CharT}
+  var idxBuf = createTokenBuf(8)
+  tr(c, idxBuf, n)
+  if n.hasMore:
+    # `(arrat arr idx hi [lo])` — `hi` is the inclusive upper bound, `lo`
+    # the optional lower bound. nimIcheckAB(i, a, b) wants (i, lo, hi).
+    var hiBuf = createTokenBuf(8)
+    tr(c, hiBuf, n)
+    if n.hasMore:
+      var loBuf = createTokenBuf(8)
+      tr(c, loBuf, n)
+      if BoundCheck in c.activeChecks:
+        let p = pool.syms.getOrIncl(
+          (if isUnsigned: "nimUcheckAB" else: "nimIcheckAB") & ".0." & SystemModuleSuffix)
+        copyIntoKind dest, CallX, info:
+          dest.addSymUse p, info
+          dest.add idxBuf
+          dest.add loBuf
+          dest.add hiBuf
+      else:
+        # The subtraction is needed regardless of checks: NIFC arrays are
+        # zero-based, so a `lo..hi` Nim array indexes at `i - lo`.
+        if isUnsigned:
+          addUIntTypedOp dest, SubX, -1, info:
+            dest.add idxBuf
+            dest.add loBuf
+        else:
+          addIntTypedOp dest, SubX, -1, info:
+            dest.add idxBuf
+            dest.add loBuf
+    else:
+      if BoundCheck in c.activeChecks:
+        let p = pool.syms.getOrIncl(
+          (if isUnsigned: "nimUcheckB" else: "nimIcheckB") & ".0." & SystemModuleSuffix)
+        copyIntoKind dest, CallX, info:
+          dest.addSymUse p, info
+          dest.add idxBuf
+          dest.add hiBuf
+      else:
+        dest.add idxBuf
+  else:
+    dest.add idxBuf
+  takeParRi dest, n
+
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   case n.kind
   of DotToken, UnknownToken, EofToken, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StringLit:
@@ -988,6 +1047,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
       genCard(c, dest, n)
     of TypeofX:
       takeTree dest, n
+    of ArratX:
+      trArrAt(c, dest, n)
     of DdotX:
       dest.add tagToken("dot", n.info)
       dest.add tagToken("deref", n.info)
@@ -1022,7 +1083,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         AstToStrX, BindSymX, BindSymNameX, InstanceofX, HighX, LowX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
         DefaultobjX, DefaulttupX, DefaultdistinctX,
-        Delay0X, SuspendX, DoX, ArratX, TupatX, EmoveX,
+        Delay0X, SuspendX, DoX, TupatX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
         EnvpX, KvX:
