@@ -25,6 +25,37 @@ func copyMem*(dest, src: pointer; size: int) {.inline.} =
   ## Copies `size` bytes from `src` to `dest`. The regions must not overlap.
   c_memcpy(dest, src, csize_t size)
 
+func moveMem*(dest, src: pointer; size: int) =
+  ## Copies `size` bytes from `src` to `dest`, correctly handling the case
+  ## where the two regions overlap (unlike `copyMem`).
+  ##
+  ## Implemented on top of `copyMem`/`memcpy` so the backend only has to
+  ## support one memory-copy intrinsic: the non-overlapping case (the common
+  ## one) goes straight through `copyMem`; overlapping regions fall back to a
+  ## byte loop running in the direction that does not clobber bytes still to be
+  ## read.
+  if size <= 0 or dest == src: return
+  let d = cast[uint](dest)
+  let s = cast[uint](src)
+  if d + uint(size) <= s or s + uint(size) <= d:
+    # regions are disjoint: a single memcpy is safe and fast
+    c_memcpy(dest, src, csize_t size)
+  else:
+    let dp = cast[ptr UncheckedArray[byte]](dest)
+    let sp = cast[ptr UncheckedArray[byte]](src)
+    if d < s:
+      # dest below src: copy front-to-back (each write stays below later reads)
+      var i = 0
+      while i < size:
+        dp[i] = sp[i]
+        inc i
+    else:
+      # dest above src: copy back-to-front
+      var i = size - 1
+      while i >= 0:
+        dp[i] = sp[i]
+        dec i
+
 func cmpMem*(a, b: pointer; size: int): int {.inline.} =
   ## Lexicographically compares `size` bytes at `a` and `b`.
   result = c_memcmp(a, b, csize_t size)

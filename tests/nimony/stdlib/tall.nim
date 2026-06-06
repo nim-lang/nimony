@@ -14,6 +14,7 @@ import std/fenv
 import std/formatfloat
 import std/hashes
 import std/intsets
+import std/lexbase
 import std/locks
 import std/math
 import std/memfiles

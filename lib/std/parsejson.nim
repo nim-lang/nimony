@@ -11,15 +11,16 @@
 ## and exported by the `json` standard library
 ## module, but can also be used in its own right.
 ##
-## This is a port of Nim's `std/parsejson` to Nimony. Instead of the
-## `lexbase`/buffered-stream machinery it reads the whole input stream into a
-## buffer up front; the public interface is otherwise the same. Because Nimony
+## This is a port of Nim's `std/parsejson` to Nimony. It keeps the original
+## design: `JsonParser` inherits from `lexbase.BaseLexer`, so it parses straight
+## off a `Stream` with a fixed-size, sentinel-terminated buffer (good for
+## embedded / streaming use) instead of slurping the whole input. Because Nimony
 ## models exceptions as `ErrorCode` values (without an attached message), the
 ## `JsonKindError`/`JsonParsingError` exception types are gone: `raiseParseErr`
 ## raises a plain `ValueError`. The helpful message is still available through
 ## `errorMsg`/`errorMsgExpected`.
 
-import std/[strutils, streams, unicode, parseutils, assertions]
+import std/[strutils, lexbase, streams, unicode, parseutils, assertions]
 
 type
   JsonEventKind* = enum ## enumeration of all events that may occur when parsing
@@ -69,7 +70,7 @@ type
     stateEof, stateStart, stateObject, stateArray, stateExpectArrayComma,
     stateExpectObjectComma, stateExpectColon, stateExpectValue
 
-  JsonParser* = object ## the parser object.
+  JsonParser* = object of BaseLexer ## the parser object.
     a*: string
     tok*: TokKind
     kind: JsonEventKind
@@ -77,16 +78,8 @@ type
     state: seq[ParserState]
     filename: string
     rawStringLiterals: bool
-    # buffered lexer state (formerly provided by `lexbase.BaseLexer`):
-    input: Stream
-    buf: string
-    bufpos: int
-    lineNumber: int
-    lineStart: int
 
 const
-  EndOfFile = '\0' ## end of file marker
-
   errorMessages*: array[JsonError, string] = [
     "no error",
     "invalid token",
@@ -124,47 +117,22 @@ proc handleHexChar(c: char, x: var int): bool {.inline.} =
   else:
     result = false
 
-proc handleCR(my: var JsonParser, pos: int): int =
-  ## Call this after scanning over a `'\c'` at `pos`; returns the position to
-  ## continue scanning from.
-  inc(my.lineNumber)
-  result = pos + 1
-  if my.buf[result] == '\L': inc(result)
-  my.lineStart = result
-
-proc handleLF(my: var JsonParser, pos: int): int =
-  ## Call this after scanning over a `'\L'` at `pos`; returns the position to
-  ## continue scanning from.
-  inc(my.lineNumber)
-  result = pos + 1
-  my.lineStart = result
-
 proc open*(my: var JsonParser, input: Stream, filename: string;
            rawStringLiterals = false) {.raises.} =
   ## initializes the parser with an input stream. `Filename` is only used
   ## for nice error messages. If `rawStringLiterals` is true, string literals
   ## are kept with their surrounding quotes and escape sequences in them are
   ## left untouched too.
-  my.input = input
-  my.buf = readAll(input)
-  my.buf.add EndOfFile # sentinel
-  my.bufpos = 0
-  my.lineNumber = 1 # lines start at 1
-  my.lineStart = 0
-  # skip an optional UTF-8 BOM:
-  if my.buf.len >= 4 and my.buf[0] == '\xEF' and my.buf[1] == '\xBB' and
-      my.buf[2] == '\xBF':
-    my.bufpos = 3
-    my.lineStart = 3
+  lexbase.open(my, input)
   my.filename = filename
   my.state = @[stateStart]
   my.kind = jsonError
   my.a = ""
   my.rawStringLiterals = rawStringLiterals
 
-proc close*(my: var JsonParser) {.raises.} =
+proc close*(my: var JsonParser) {.inline, raises.} =
   ## closes the parser `my` and its associated input stream.
-  close(my.input)
+  lexbase.close(my)
 
 proc str*(my: JsonParser): string {.inline.} =
   ## returns the character data for the events: `jsonInt`, `jsonFloat`,
@@ -191,7 +159,7 @@ proc kind*(my: JsonParser): JsonEventKind {.inline.} =
 
 proc getColumn*(my: JsonParser): int {.inline.} =
   ## get the current column the parser has arrived at.
-  result = abs(my.bufpos - my.lineStart)
+  result = getColNumber(my, my.bufpos)
 
 proc getLine*(my: JsonParser): int {.inline.} =
   ## get the current line the parser has arrived at.
@@ -223,7 +191,7 @@ proc parseEscapedUTF16*(buf: openArray[char], pos: var int): int =
     else:
       return -1
 
-proc parseString(my: var JsonParser): TokKind =
+proc parseString(my: var JsonParser): TokKind {.raises.} =
   result = tkString
   var pos = my.bufpos + 1
   if my.rawStringLiterals:
@@ -300,17 +268,17 @@ proc parseString(my: var JsonParser): TokKind =
         add(my.a, my.buf[pos])
         inc(pos)
     of '\c':
-      pos = handleCR(my, pos)
+      pos = lexbase.handleCR(my, pos)
       add(my.a, '\c')
     of '\L':
-      pos = handleLF(my, pos)
+      pos = lexbase.handleLF(my, pos)
       add(my.a, '\L')
     else:
       add(my.a, my.buf[pos])
       inc(pos)
   my.bufpos = pos # store back
 
-proc skip(my: var JsonParser) =
+proc skip(my: var JsonParser) {.raises.} =
   var pos = my.bufpos
   while true:
     case my.buf[pos]
@@ -323,10 +291,10 @@ proc skip(my: var JsonParser) =
           of '\0':
             break
           of '\c':
-            pos = handleCR(my, pos)
+            pos = lexbase.handleCR(my, pos)
             break
           of '\L':
-            pos = handleLF(my, pos)
+            pos = lexbase.handleLF(my, pos)
             break
           else:
             inc(pos)
@@ -339,9 +307,9 @@ proc skip(my: var JsonParser) =
             my.err = errEOC_Expected
             break
           of '\c':
-            pos = handleCR(my, pos)
+            pos = lexbase.handleCR(my, pos)
           of '\L':
-            pos = handleLF(my, pos)
+            pos = lexbase.handleLF(my, pos)
           of '*':
             inc(pos)
             if my.buf[pos] == '/':
@@ -354,9 +322,9 @@ proc skip(my: var JsonParser) =
     of ' ', '\t':
       inc(pos)
     of '\c':
-      pos = handleCR(my, pos)
+      pos = lexbase.handleCR(my, pos)
     of '\L':
-      pos = handleLF(my, pos)
+      pos = lexbase.handleLF(my, pos)
     else:
       break
   my.bufpos = pos
@@ -399,7 +367,7 @@ proc parseName(my: var JsonParser) =
       inc(pos)
   my.bufpos = pos
 
-proc getTok*(my: var JsonParser): TokKind =
+proc getTok*(my: var JsonParser): TokKind {.raises.} =
   setLen(my.a, 0)
   skip(my) # skip whitespace, comments
   case my.buf[my.bufpos]
@@ -444,7 +412,7 @@ proc getTok*(my: var JsonParser): TokKind =
   my.tok = result
 
 
-proc next*(my: var JsonParser) =
+proc next*(my: var JsonParser) {.raises.} =
   ## retrieves the first/next event. This controls the parser.
   var tk = getTok(my)
   var i = my.state.len-1
