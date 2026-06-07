@@ -14,6 +14,7 @@ import std/fenv
 import std/formatfloat
 import std/hashes
 import std/intsets
+import std/lexbase
 import std/locks
 import std/math
 import std/memfiles
@@ -21,6 +22,7 @@ import std/monotimes
 import std/nifply
 import std/os
 import std/oserrors
+import std/parsejson
 import std/parseopt
 import std/parseutils
 import std/pathnorm

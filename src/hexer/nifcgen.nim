@@ -1293,6 +1293,17 @@ proc getCompilerProc(c: var EContext; name: string; isInline=false): string =
   result = name & ".0." & SystemModuleSuffix
 
 proc trArrAt(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+  # The array-index bound check (and the zero-base `i - lo` adjustment) is
+  # normally lowered earlier, in `hexer/desugar.trArrAt`, so the check call
+  # can be hoisted by `xelim` and inlined — desugar strips the bound children,
+  # so the common path reaches here as a bare `(arrat arr index)` and falls
+  # straight through the `n.hasMore` guard below.
+  #
+  # The fallback that follows is still required: closure-iterator lowering
+  # (lambdalifting / coro_transform) splices iterator bodies that never pass
+  # through desugar, so a *bounded* `(arrat arr index hi [lo])` can still
+  # arrive here. Those get checked inline as before — correct, just not
+  # inline-spliceable (rare enough not to matter).
   dest.add parLeToken(AtX, n.info) # NIFC uses the `at` token for array indexing
   inc n
   trExpr(c, dest, n)

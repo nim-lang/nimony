@@ -513,12 +513,34 @@ proc unravelObjFields(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf
         discard
     n = scan
 
-proc baseobjOf(c: var LiftingCtx; typ: Cursor; x: TokenBuf): TokenBuf =
+proc baseobjOf(c: var LiftingCtx; typ: Cursor; x: TokenBuf; paramPos = 0): TokenBuf =
   result = createTokenBuf(6)
+  # When `x` is a `var T` parameter (a pointer in the backend) it must be
+  # dereferenced before taking its base subobject, exactly like field access in
+  # `accessObjField`; otherwise codegen emits `x.Q` on a pointer instead of
+  # `x->Q`.
+  let nd = needsDeref(c, x, paramPos)
   copyIntoKind result, BaseobjX, c.info:
     copyTree result, typ
     result.add intToken(pool.integers.getOrIncl(+1), c.info)
+    if nd:
+      result.addParLe HderefX, c.info
     copyTree result, x
+    if nd:
+      result.addParRi()
+
+proc parentParamB(c: var LiftingCtx; parent: Cursor; paramB: TokenBuf): TokenBuf =
+  ## The second argument for the parent (base-object) hook call. For the
+  ## two-location hooks (`=copy`/`=sink`/`=dup`) the second parameter is also a
+  ## `T`, so it gets the same base-object conversion as the first. For `=trace`
+  ## the second parameter is the environment *pointer* and must be passed
+  ## through unchanged (wrapping it in `(baseobj ...)` would emit a `.Q` field
+  ## access on a `void*`); `=destroy`/`=wasMoved` ignore it.
+  if c.op in {attachedCopy, attachedSink, attachedDup}:
+    result = baseobjOf(c, parent, paramB, paramPos = 1)
+  else:
+    result = createTokenBuf(paramB.len)
+    copyTree result, paramB
 
 proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf; depth: int) =
   var n = n
@@ -541,7 +563,7 @@ proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf; depth: i
     else:
       let fn = lift(c, parent)
       # Use static dispatch for parent calls to avoid infinite recursion with vtable dispatch
-      maybeCallHook c, fn, baseobjOf(c, parent, paramA), baseobjOf(c, parent, paramB), forceStatic = true
+      maybeCallHook c, fn, baseobjOf(c, parent, paramA), parentParamB(c, parent, paramB), forceStatic = true
 
   skip n # inheritance is gone
   unravelObjFields c, n, paramA, paramB, depth
@@ -549,7 +571,7 @@ proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf; depth: i
   if hasParent and c.op == attachedDestroy:
     # For destruction, destroy derived fields first, then the base class.
     let fn = lift(c, parent)
-    maybeCallHook c, fn, baseobjOf(c, parent, paramA), baseobjOf(c, parent, paramB), forceStatic = true
+    maybeCallHook c, fn, baseobjOf(c, parent, paramA), parentParamB(c, parent, paramB), forceStatic = true
 
 proc unravelTuple(c: var LiftingCtx;
                   n: Cursor; paramA, paramB: TokenBuf) =

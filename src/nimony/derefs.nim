@@ -1331,7 +1331,21 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       tr c, n, e
       takeParRi c, n
     of BaseobjX:
-      trSons c, n, WantT
+      if e.wantMutable:
+        # Passing a derived location to a `var Base` parameter: take the
+        # address of the base subobject (`(haddr (baseobj ...))`), otherwise
+        # the base portion is passed by value and codegen dereferences a
+        # non-pointer. Mirror `trLocation`'s mutable handling, including the
+        # readonly check so a `let`-rooted up-conversion is rejected.
+        if borrowsFromReadonly(c, n):
+          cannotPassToVar c.dest, n.info, n
+          skip n
+        else:
+          c.dest.addParLe(HaddrX, n.info)
+          trSons c, n, WantT
+          c.dest.addParRi()
+      else:
+        trSons c, n, WantT
     of ParX:
       trSons c, n, e
     of CopyX, WasmovedX, SinkhX, TraceX:

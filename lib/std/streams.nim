@@ -408,7 +408,11 @@ proc ssReadDataStr(s: Stream; buffer: var string;
   let want = slice.b + 1 - slice.a
   result = if want < avail: want else: avail
   if result > 0:
-    let dest = beginStore(buffer, slice.a + result, slice.a)
+    # Size the buffer to the requested slice end (`slice.b + 1`), not to the
+    # number of bytes actually read: a short read near EOF must not shrink the
+    # caller's buffer (lexbase relies on a fixed-size buffer). This matches
+    # `fsReadDataStr` and the `readDataStr` fallback.
+    let dest = beginStore(buffer, slice.b + 1, slice.a)
     copyMem(dest, readRawData(ss.data, ss.pos), result)
     endStore(buffer)
     inc ss.pos, result
