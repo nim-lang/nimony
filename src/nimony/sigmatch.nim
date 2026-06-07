@@ -1776,8 +1776,6 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
   matchTypevars m, fn, explicitTypeVars
 
   var f = fn.typ
-  if f.typeKind in TypeModifiers:
-    f = f.skipModifier
   if f.typeKind in RoutineTypes:
     skipToParams f
   assert f.substructureKind == ParamsU

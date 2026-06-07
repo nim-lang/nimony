@@ -74,8 +74,6 @@ proc skipToParams*(c: var Cursor) =
 proc skipProcTypeToParams*(t: Cursor): Cursor =
   ## Pure version: returns a cursor advanced past the prefix slots.
   result = t
-  if result.typeKind in TypeModifiers:
-    result = result.skipModifier
   if result.typeKind in RoutineTypes:
     skipToParams result
 

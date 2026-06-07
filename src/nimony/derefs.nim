@@ -585,7 +585,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   inc n
   let tt = getType(c.typeCache, n)
   let calleeKind = tt.stmtKind
-  let fnType = skipProcTypeToParams(tt)
+  let fnType = skipProcTypeToParams(tt.skipModifier)
   assert fnType.isParamsTag
   var retType = fnType
   skip retType
