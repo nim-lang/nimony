@@ -1036,7 +1036,7 @@ proc semProc(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind;
     skip a
     typeBuf.addSubtree a # return type
     skip a
-    typeBuf.addDotToken() # pragmas slot (dot = no pragmas)
+    typeBuf.addSubtree a # pragmas
     typeBuf.addParRi()
     it.typ = typeToCursor(c, typeBuf, 0)
 
