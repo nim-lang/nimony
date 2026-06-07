@@ -246,7 +246,7 @@ proc unregisterFd*(fd: cint) =
 # --- Worker loop ---
 
 proc workerLoop(arg: pointer) {.nimcall.} =
-  let threadIdx = cast[ptr int](arg)[]
+  let threadIdx = cast[int](arg)   # index passed by value via the pointer slot (see initPool)
   var taskBuf {.noinit.}: array[BulkSize, Task]
   when hasEpoll:
     var ioEvents {.noinit.}: array[MaxIoEvents, EpollEvent]
@@ -309,11 +309,15 @@ proc initPool*() =
   elif hasKqueue:
     gIoFd = kqueue()
     assert gIoFd >= 0, "kqueue failed"
-  var indexes = default array[WorkerCount, int]
   for i in 0 ..< WorkerCount:
-    indexes[i] = i
     try:
-      create workers[i], workerLoop, addr indexes[i]
+      # Pass the worker index BY VALUE through the pointer slot. It used to be
+      # `addr indexes[i]` into a stack-local array that dangled the moment
+      # initPool returned — run()'s sleep frame then reused that memory and the
+      # workers read garbage thread indices (valgrind: uninitialised value in
+      # tryBulkDequeue/workerLoop, origin the reused frame). No storage, no
+      # lifetime, no race.
+      create workers[i], workerLoop, cast[pointer](i)
     except:
       discard
 
