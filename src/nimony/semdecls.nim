@@ -1015,30 +1015,12 @@ proc semProc(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind;
     semProcImpl c, anons, it, kind, pass, name
     dest.add parLeToken(ExprX, info)
     dest.add parLeToken(StmtsS, info)
+    let anonTypePos = dest.len
     dest.add anons
     dest.addParRi()
     dest.add symToken(name, info)
     dest.addParRi()
-    # build a proper type for it.typ (not the full proc declaration)
-    var typeBuf = createTokenBuf()
-    var a = beginRead(anons)
-    let typeTag =
-      if TypeKind(a.tagId) == IteratorT: ItertypeT
-      else: ProctypeT
-    inc a # skip ParLe tag
-    for _ in 0..3: skip a # skip name, export, pattern, typevars
-    typeBuf.add parLeToken(typeTag, info)
-    let defaultMark =
-      if LenientNilsFeature notin c.features: NotnilU
-      else: UncheckedU
-    typeBuf.addParPair defaultMark, info
-    typeBuf.addSubtree a # params
-    skip a
-    typeBuf.addSubtree a # return type
-    skip a
-    typeBuf.addSubtree a # pragmas
-    typeBuf.addParRi()
-    it.typ = typeToCursor(c, typeBuf, 0)
+    it.typ = typeToCursor(c, dest, anonTypePos)
 
   else:
     semProcImpl c, dest, it, kind, pass
