@@ -785,7 +785,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         let sym = f.symId
         let s = fetchSym(c, sym)
         let typ = fetchCallableType(c, dest, f, s)
-        if typ.typeKind in RoutineTypes:
+        if typ.skipModifier.typeKind in RoutineTypes:
           let candidate = FnCandidate(kind: s.kind, sym: sym, typ: typ)
           m.add createMatch(addr c)
           sigmatchNamedArgs(m[^1], candidate, cs.args, genericArgs, cs.hasNamedArgs)
@@ -817,8 +817,8 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
     # Keep in mind that proc vars are a thing:
     let sym = if cs.fn.n.kind == Symbol: cs.fn.n.symId else: SymId(0)
     let typ = cs.fn.typ
-    if typ.typeKind in RoutineTypes:
-      let candidate = FnCandidate(kind: cs.fnKind, sym: sym, typ: typ)
+    if typ.skipModifier.typeKind in RoutineTypes:
+      let candidate = FnCandidate(kind: cs.fnKind, sym: sym, typ: typ.skipModifier)
       m.add createMatch(addr c)
       sigmatchNamedArgs(m[^1], candidate, cs.args, genericArgs, cs.hasNamedArgs)
       considerTypeboundOps(c, m, cs.fnName, cs.args, genericArgs, cs.hasNamedArgs)
