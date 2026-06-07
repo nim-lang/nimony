@@ -117,7 +117,7 @@ template `>`*(x, y: untyped): untyped =
   ## "is greater" operator. This is the same as `y < x`.
   y < x
 
-type Orderable = concept
+type Orderable* = concept
   proc `<=`(x, y: Self): bool
 
 proc min*(x, y: int8): int8 {.noSideEffect, inline.} =
