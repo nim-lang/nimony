@@ -170,17 +170,25 @@ proc getFilename*(my: JsonParser): string {.inline.} =
   ## get the filename of the file that the parser processes.
   result = my.filename
 
-proc errorMsg*(my: JsonParser): string {.raises.} =
-  ## returns a helpful error message for the event `jsonError`
-  assert(my.kind == jsonError)
-  result = "$1($2, $3) Error: $4" % [
-    my.filename, $getLine(my), $getColumn(my), errorMessages[my.err]]
+proc errorMsgFor*(my: JsonParser, err: JsonError): string =
+  ## Format a diagnostic for a *specific* `JsonError`, in the
+  ## `<file>(<line>, <col>) Error: <msg>` form. Non-raising (plain string
+  ## concatenation, no `%`) so the whole parse stack stays `raises`-free. The
+  ## caller passes the error explicitly because `my.err` is sticky (it keeps the
+  ## first error), whereas an in-tree placeholder wants the message for the error
+  ## at *its own* position.
+  result = my.filename & "(" & $getLine(my) & ", " & $getColumn(my) &
+           ") Error: " & errorMessages[err]
 
-proc errorMsgExpected*(my: JsonParser, e: string): string {.raises.} =
+proc errorMsg*(my: JsonParser): string =
+  ## returns a helpful error message for the current error state
+  result = errorMsgFor(my, my.err)
+
+proc errorMsgExpected*(my: JsonParser, e: string): string =
   ## returns an error message "`e` expected" in the same format as the
   ## other error messages
-  result = "$1($2, $3) Error: $4" % [
-    my.filename, $getLine(my), $getColumn(my), e & " expected"]
+  result = my.filename & "(" & $getLine(my) & ", " & $getColumn(my) &
+           ") Error: " & e & " expected"
 
 proc parseEscapedUTF16*(buf: openArray[char], pos: var int): int =
   result = 0

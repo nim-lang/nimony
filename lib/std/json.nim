@@ -12,6 +12,7 @@
 ## Encoding (a JSON value as a `nifcore` tag-stream)::
 ##
 ##   null   → (null)              # 1 TagLit, empty body
+##   <err>  → (null "message")    # parse error: a null carrying a diagnostic
 ##   true   → (true)
 ##   false  → (false)
 ##   42     → IntLit 42           # inline atom
@@ -116,9 +117,16 @@ proc createJsonTree*(sharedPool: Pool = nil): JsonTree =
 #
 # The whole parse path is `raises`-free: `lexbase` collects IO failures in
 # `ioError`, and `parsejson` collects syntax errors in `err`/`kind` state. So we
-# call `open`/`getTok`/`eat`/`close` directly — no exceptions to guard. Malformed
-# input yields a truncated / null-placeholder tree; callers can detect it via the
-# parser state (TODO: surface `hasError` / `ioError` through `parseJson`).
+# call `open`/`getTok`/`close` directly — no exceptions to guard.
+#
+# Errors are propagated *through the tree itself*. Wherever a value was expected
+# but the input was malformed, the parser emits a `(null "<diagnostic>")` in that
+# slot (see `emitError`). Under NIF rules that is still a perfectly valid `null`:
+# a reader that never looks inside sees `JNull` and keeps going, so a broken
+# document degrades gracefully rather than raising or silently truncating. Code
+# that cares calls `isError` / `errorMsg` (per node) or `errorMsg(tree)` /
+# `hasError(tree)` (whole document) to recover the first diagnostic and its
+# source position. No separate error channel; the bad spot is marked in place.
 
 proc emitInfo(p: var JsonParser; t: var JsonTree; mode: LineInfoMode;
               file: FileId) {.inline.} =
@@ -129,25 +137,59 @@ proc emitInfo(p: var JsonParser; t: var JsonTree; mode: LineInfoMode;
     let col = if mode == KeepColumnInfo: int32(getColumn(p)) else: 0'i32
     t.buf.appendLineInfo(file, int32(getLine(p)), col)
 
+proc emitError(p: var JsonParser; t: var JsonTree; mode: LineInfoMode;
+               file: FileId; err: JsonError) =
+  ## Emit an error placeholder — `(null "<diagnostic>")` — in the value slot the
+  ## parser failed on. The node reads as an ordinary `JNull` to everything that
+  ## does not look inside; `isError` / `errorMsg` recover the message. `setError`
+  ## also records the (first) error in the parser state, keeping `hasError(p)`
+  ## true. The message is built for *this* `err`, not the sticky `p.err`, so each
+  ## placeholder names the error at its own position.
+  setError(p, err)
+  t.buf.openTag JKNull.tagId
+  emitInfo(p, t, mode, file)
+  t.buf.addStrLit errorMsgFor(p, err)
+  t.buf.closeTag()
+
+proc emitErrorKv(p: var JsonParser; t: var JsonTree; mode: LineInfoMode;
+                 file: FileId; err: JsonError) =
+  ## Wrap an `emitError` placeholder in an empty-keyed `kv` so it can sit in an
+  ## object body without breaking the `(kv …)`-per-member invariant `pairs`
+  ## relies on. Used for object-level failures (bad key, missing `}`).
+  t.buf.openTag JKKv.tagId
+  t.buf.addStrLit ""
+  emitError(p, t, mode, file, err)
+  t.buf.closeTag()
+
 proc parseValue(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: FileId)
 
 proc parseObject(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: FileId) =
   t.buf.openTag JKObject.tagId
   emitInfo(p, t, mode, file)
   discard getTok(p)
+  var truncated = false
   while p.tok != tkCurlyRi and p.tok != tkEof:
     if p.tok != tkString:
-      break                 # malformed key — soft-stop (error is in parser state)
+      emitErrorKv(p, t, mode, file, errStringExpected)   # malformed key
+      truncated = true
+      break
     t.buf.openTag JKKv.tagId
     t.buf.addStrLit p.a
     emitInfo(p, t, mode, file)
     discard getTok(p)
-    eat(p, tkColon)
-    parseValue(p, t, mode, file)
+    if p.tok == tkColon:
+      discard getTok(p)
+      parseValue(p, t, mode, file)
+    else:
+      emitError(p, t, mode, file, errColonExpected)      # value slot ← error null
     t.buf.closeTag()        # close kv
     if p.tok != tkComma: break
     discard getTok(p)
-  eat(p, tkCurlyRi)
+  if not truncated:
+    if p.tok == tkCurlyRi:
+      discard getTok(p)
+    elif p.tok == tkEof:
+      emitErrorKv(p, t, mode, file, errCurlyRiExpected)  # mark truncation in-tree
   t.buf.closeTag()          # close oconstr
 
 proc parseArray(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: FileId) =
@@ -158,7 +200,10 @@ proc parseArray(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: Fi
     parseValue(p, t, mode, file)
     if p.tok != tkComma: break
     discard getTok(p)
-  eat(p, tkBracketRi)
+  if p.tok == tkBracketRi:
+    discard getTok(p)
+  elif p.tok == tkEof:
+    emitError(p, t, mode, file, errBracketRiExpected)    # mark truncation in-tree
   t.buf.closeTag()
 
 proc parseValue(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: FileId) =
@@ -185,8 +230,9 @@ proc parseValue(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: Fi
   of tkCurlyLe:   parseObject(p, t, mode, file)
   of tkBracketLe: parseArray(p, t, mode, file)
   else:
-    # malformed value — emit a null placeholder and advance to avoid looping
-    t.buf.openTag JKNull.tagId; emitInfo(p, t, mode, file); t.buf.closeTag()
+    # no value here — emit a (null "expr expected") placeholder and advance so
+    # the caller's loop makes progress instead of spinning on the bad token.
+    emitError(p, t, mode, file, errExprExpected)
     discard getTok(p)
 
 proc parseInto(stream: Stream; filename: string; lineInfo: LineInfoMode;
@@ -276,6 +322,66 @@ proc getBool*(c: Cursor; default = false): bool =
     of JKFalse: return false
     else: discard
   default
+
+# ── Error inspection ──────────────────────────────────────────────────────────
+# A parse error is stored as a `null` carrying a diagnostic string: `(null
+# "msg")`. To any reader that does not look inside it is a plain `JNull`, so a
+# malformed document still traverses cleanly. These helpers are the *opt-in*
+# channel that surfaces the diagnostic.
+
+proc errorMsg*(c: Cursor): string =
+  ## If the node at `c` is an error placeholder (a `null` with a diagnostic
+  ## string child, `(null "msg")`), return that message; otherwise `""`. A clean
+  ## `null` — and any other node — yields `""`.
+  result = ""
+  if nifcore.kind(c) == TagLit and jsonKind(c.cursorTagId) == JKNull:
+    var c2 = c
+    c2.into:
+      while c2.hasMore:
+        if nifcore.kind(c2) == StrLit: result = strVal(c2)
+        c2.skip
+
+proc isError*(c: Cursor): bool {.inline.} =
+  ## True when the node at `c` is an error placeholder (see `errorMsg`).
+  errorMsg(c).len > 0
+
+proc firstErrorMsg(c: Cursor): string =
+  ## Depth-first search for the first error placeholder under `c`; `""` if clean.
+  if isError(c): return errorMsg(c)
+  result = ""
+  case kind(c)
+  of JArray:
+    var c2 = c
+    c2.into:
+      while c2.hasMore:
+        let m = firstErrorMsg(c2)
+        if m.len > 0: return m
+        c2.skip
+  of JObject:
+    var c2 = c
+    c2.into:
+      while c2.hasMore:
+        # each member is a (kv key value); descend into the value
+        var kv = c2
+        kv.into:
+          kv.inc                       # skip key
+          let m = firstErrorMsg(kv)
+          if m.len > 0: return m       # early-out: leaves `kv`'s `into` unbalanced,
+                                       # but we exit the proc, so its assert is skipped
+          kv.skip
+        c2.skip
+  else: discard
+
+proc errorMsg*(t: var JsonTree): string =
+  ## The first error message embedded anywhere in the document (depth-first), or
+  ## `""` if it parsed cleanly. Ignore it and malformed nodes simply read as
+  ## `null`; consult it for the diagnostic and source position of the first
+  ## failure.
+  firstErrorMsg(t.root)
+
+proc hasError*(t: var JsonTree): bool {.inline.} =
+  ## True when the document contains any parse error (see `errorMsg`).
+  errorMsg(t).len > 0
 
 proc len*(c: Cursor): int =
   ## Number of elements (array) or members (object). 0 for scalars.
@@ -560,6 +666,47 @@ when isMainModule:
     block typed_with_discriminator:
       var tree = toJson(Box(v: 7), JsonOptions(typeFieldName: "type"))
       check $tree, """{"type":"Box","v":7}"""
+
+    block error_as_null:
+      # A malformed value becomes (null "msg"): still a JNull, still prints null,
+      # but the diagnostic is recoverable.
+      var t = parseJson("xyz")
+      check kind(t.root), JNull       # reads as null to anything not looking
+      check $t, "null"
+      check isError(t.root), true     # ... but the error is recoverable
+      check hasError(t), true
+      check getStr(t.root), ""        # scalar readers degrade to defaults
+
+    block clean_null_is_not_error:
+      var t = parseJson("null")
+      check kind(t.root), JNull
+      check isError(t.root), false
+      check hasError(t), false
+      check errorMsg(t), ""
+
+    block error_inside_array:
+      var t = parseJson("[1, nul, 3]")
+      check kind(t.root), JArray
+      check len(t.root), 3
+      check $t, "[1,null,3]"          # truncation-free print, errors look like null
+      check hasError(t), true         # ... yet detectable
+      var c = t.root
+      var seen = 0
+      for el in items(c):
+        if isError(el): inc seen
+      check seen, 1
+
+    block error_inside_object:
+      var t = parseJson("""{"a": 1, "b": nope}""")
+      check kind(t.root), JObject
+      check hasError(t), true
+      check isError(t{"b"}), true
+      check isError(t{"a"}), false
+
+    block truncated_object:
+      var t = parseJson("""{"a": 1""")  # missing closing brace
+      check kind(t.root), JObject
+      check hasError(t), true
 
     echo "json self-tests passed"
 
