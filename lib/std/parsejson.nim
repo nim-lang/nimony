@@ -118,7 +118,7 @@ proc handleHexChar(c: char, x: var int): bool {.inline.} =
     result = false
 
 proc open*(my: var JsonParser, input: Stream, filename: string;
-           rawStringLiterals = false) {.raises.} =
+           rawStringLiterals = false) =
   ## initializes the parser with an input stream. `Filename` is only used
   ## for nice error messages. If `rawStringLiterals` is true, string literals
   ## are kept with their surrounding quotes and escape sequences in them are
@@ -127,10 +127,11 @@ proc open*(my: var JsonParser, input: Stream, filename: string;
   my.filename = filename
   my.state = @[stateStart]
   my.kind = jsonError
+  my.err = errNone
   my.a = ""
   my.rawStringLiterals = rawStringLiterals
 
-proc close*(my: var JsonParser) {.inline, raises.} =
+proc close*(my: var JsonParser) {.inline.} =
   ## closes the parser `my` and its associated input stream.
   lexbase.close(my)
 
@@ -169,17 +170,25 @@ proc getFilename*(my: JsonParser): string {.inline.} =
   ## get the filename of the file that the parser processes.
   result = my.filename
 
-proc errorMsg*(my: JsonParser): string {.raises.} =
-  ## returns a helpful error message for the event `jsonError`
-  assert(my.kind == jsonError)
-  result = "$1($2, $3) Error: $4" % [
-    my.filename, $getLine(my), $getColumn(my), errorMessages[my.err]]
+proc errorMsgFor*(my: JsonParser, err: JsonError): string =
+  ## Format a diagnostic for a *specific* `JsonError`, in the
+  ## `<file>(<line>, <col>) Error: <msg>` form. Non-raising (plain string
+  ## concatenation, no `%`) so the whole parse stack stays `raises`-free. The
+  ## caller passes the error explicitly because `my.err` is sticky (it keeps the
+  ## first error), whereas an in-tree placeholder wants the message for the error
+  ## at *its own* position.
+  result = my.filename & "(" & $getLine(my) & ", " & $getColumn(my) &
+           ") Error: " & errorMessages[err]
 
-proc errorMsgExpected*(my: JsonParser, e: string): string {.raises.} =
+proc errorMsg*(my: JsonParser): string =
+  ## returns a helpful error message for the current error state
+  result = errorMsgFor(my, my.err)
+
+proc errorMsgExpected*(my: JsonParser, e: string): string =
   ## returns an error message "`e` expected" in the same format as the
   ## other error messages
-  result = "$1($2, $3) Error: $4" % [
-    my.filename, $getLine(my), $getColumn(my), e & " expected"]
+  result = my.filename & "(" & $getLine(my) & ", " & $getColumn(my) &
+           ") Error: " & e & " expected"
 
 proc parseEscapedUTF16*(buf: openArray[char], pos: var int): int =
   result = 0
@@ -191,7 +200,7 @@ proc parseEscapedUTF16*(buf: openArray[char], pos: var int): int =
     else:
       return -1
 
-proc parseString(my: var JsonParser): TokKind {.raises.} =
+proc parseString(my: var JsonParser): TokKind =
   result = tkString
   var pos = my.bufpos + 1
   if my.rawStringLiterals:
@@ -278,7 +287,7 @@ proc parseString(my: var JsonParser): TokKind {.raises.} =
       inc(pos)
   my.bufpos = pos # store back
 
-proc skip(my: var JsonParser) {.raises.} =
+proc skip(my: var JsonParser) =
   var pos = my.bufpos
   while true:
     case my.buf[pos]
@@ -367,7 +376,7 @@ proc parseName(my: var JsonParser) =
       inc(pos)
   my.bufpos = pos
 
-proc getTok*(my: var JsonParser): TokKind {.raises.} =
+proc getTok*(my: var JsonParser): TokKind =
   setLen(my.a, 0)
   skip(my) # skip whitespace, comments
   case my.buf[my.bufpos]
@@ -412,7 +421,7 @@ proc getTok*(my: var JsonParser): TokKind {.raises.} =
   my.tok = result
 
 
-proc next*(my: var JsonParser) {.raises.} =
+proc next*(my: var JsonParser) =
   ## retrieves the first/next event. This controls the parser.
   var tk = getTok(my)
   var i = my.state.len-1
@@ -529,13 +538,24 @@ proc next*(my: var JsonParser) {.raises.} =
       my.kind = jsonError
       my.err = errExprExpected
 
-proc raiseParseErr*(p: JsonParser, msg: string) {.noinline, noreturn, raises.} =
-  ## raises a `ValueError` exception.
-  ##
-  ## Nimony exceptions carry no message, so `msg` only documents the call site;
-  ## use `errorMsgExpected(p, msg)` to obtain the human-readable text.
-  raise ValueError
+proc setError*(p: var JsonParser; err = errInvalidToken) {.inline.} =
+  ## Record a syntax error in the parser's state instead of raising. After this,
+  ## `kind(p)` is `jsonError` and `hasError(p)` is true. The parser *collects*
+  ## errors rather than raising, so callers (e.g. `std/json`) stay
+  ## exception-free; inspect the state with `hasError` / `errorMsg`.
+  p.kind = jsonError
+  if p.err == errNone: p.err = err
 
-proc eat*(p: var JsonParser, tok: TokKind) {.raises.} =
+proc hasError*(my: JsonParser): bool {.inline.} =
+  ## True once the parser has recorded a syntax error (see `setError`).
+  my.err != errNone
+
+proc raiseParseErr*(p: var JsonParser, msg: string) {.noinline.} =
+  ## Records a syntax error in `p`'s state. Despite the historical name it no
+  ## longer raises — `msg` only documents the expectation; use
+  ## `errorMsgExpected(p, msg)` for the human-readable text.
+  setError(p)
+
+proc eat*(p: var JsonParser, tok: TokKind) =
   if p.tok == tok: discard getTok(p)
-  else: raiseParseErr(p, tokToStr[tok])
+  else: setError(p, errInvalidToken)

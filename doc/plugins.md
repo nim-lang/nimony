@@ -454,11 +454,7 @@ parameter provides source location; `orig` embeds the original source for contex
 
 ### Validation
 
-The API automatically validates trees constructed via `createTree(kind, children...)`,
-`%~`, and `nifFragment`. If a constructed tree has wrong structure (e.g. missing
-children for a `CallS` node), it is replaced with an `ErrT` node describing the problem.
-Trees built manually via `addParLe`/`addParRi` are not validated.
-
+The compiler performs a validation of the plugin code. If the plugin code is invalid, it is rejected. The details of this validation process are still work-in-progress and deliberately not documented yet.
 
 ## Typical plugin structure
 
