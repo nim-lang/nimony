@@ -46,12 +46,26 @@ type
     lineStart: int               # index of last line start in buffer
     offsetBase*: int             # use `offsetBase + bufpos` to get the offset
     refillChars: set[char]
+    ioError*: bool               ## Set when a stream read/close failed. The
+                                 ## buffer is then treated as ended (EOF); the
+                                 ## lexer never raises — IO trouble is collected
+                                 ## here in state, like syntax errors upstream.
 
-proc close*(L: var BaseLexer) {.raises.} =
+proc close*(L: var BaseLexer) =
   ## closes the base lexer. This closes `L`'s associated stream too.
-  close(L.input)
+  try: close(L.input)
+  except: L.ioError = true
 
-proc fillBuffer(L: var BaseLexer) {.raises.} =
+proc readChunk(L: var BaseLexer; lo, hi: int): int =
+  ## Non-raising stream read into `L.buf[lo..hi]`. On IO failure records
+  ## `L.ioError` and returns 0, so the buffer ends cleanly instead of unwinding.
+  result = 0
+  try:
+    result = readDataStr(L.input, L.buf, lo .. hi)
+  except:
+    L.ioError = true
+
+proc fillBuffer(L: var BaseLexer) =
   var
     charsRead, toCopy, s: int # all are in characters,
                               # not bytes (in case this
@@ -67,7 +81,7 @@ proc fillBuffer(L: var BaseLexer) {.raises.} =
     let p = beginStore(L.buf, L.buf.len)
     moveMem(p, addr p[L.sentinel + 1], toCopy)
     endStore(L.buf)
-  charsRead = readDataStr(L.input, L.buf, toCopy .. toCopy + L.sentinel)
+  charsRead = readChunk(L, toCopy, toCopy + L.sentinel)
   s = toCopy + charsRead
   if charsRead < L.sentinel + 1:
     L.buf[s] = EndOfFile # set end marker
@@ -87,14 +101,14 @@ proc fillBuffer(L: var BaseLexer) {.raises.} =
         # double the buffer's size and try again:
         oldBufLen = L.buf.len
         L.buf.setLen(L.buf.len * 2)
-        charsRead = readDataStr(L.input, L.buf, oldBufLen .. L.buf.len - 1)
+        charsRead = readChunk(L, oldBufLen, L.buf.len - 1)
         if charsRead < oldBufLen:
           L.buf[oldBufLen + charsRead] = EndOfFile
           L.sentinel = oldBufLen + charsRead
           break
         s = L.buf.len - 1
 
-proc fillBaseLexer(L: var BaseLexer, pos: int): int {.raises.} =
+proc fillBaseLexer(L: var BaseLexer, pos: int): int =
   assert(pos <= L.sentinel)
   if pos < L.sentinel:
     result = pos + 1 # nothing to do
@@ -104,7 +118,7 @@ proc fillBaseLexer(L: var BaseLexer, pos: int): int {.raises.} =
     L.bufpos = 0
     result = 0
 
-proc handleCR*(L: var BaseLexer, pos: int): int {.raises.} =
+proc handleCR*(L: var BaseLexer, pos: int): int =
   ## Call this if you scanned over `'\c'` in the buffer; it returns the
   ## position to continue the scanning from. `pos` must be the position
   ## of the `'\c'`.
@@ -115,7 +129,7 @@ proc handleCR*(L: var BaseLexer, pos: int): int {.raises.} =
     result = fillBaseLexer(L, result)
   L.lineStart = result
 
-proc handleLF*(L: var BaseLexer, pos: int): int {.raises.} =
+proc handleLF*(L: var BaseLexer, pos: int): int =
   ## Call this if you scanned over `'\L'` in the buffer; it returns the
   ## position to continue the scanning from. `pos` must be the position
   ## of the `'\L'`.
@@ -124,7 +138,7 @@ proc handleLF*(L: var BaseLexer, pos: int): int {.raises.} =
   result = fillBaseLexer(L, pos) #L.lastNL := result-1; // BUGFIX: was: result;
   L.lineStart = result
 
-proc handleRefillChar*(L: var BaseLexer, pos: int): int {.raises.} =
+proc handleRefillChar*(L: var BaseLexer, pos: int): int =
   ## Call this if a terminator character other than a new line is scanned
   ## at `pos`; it returns the position to continue the scanning from.
   assert(L.buf[pos] in L.refillChars)
@@ -136,7 +150,7 @@ proc skipUtf8Bom(L: var BaseLexer) =
     inc(L.lineStart, 3)
 
 proc open*(L: var BaseLexer, input: Stream, bufLen: int = 8192;
-           refillChars: set[char] = NewLines) {.raises.} =
+           refillChars: set[char] = NewLines) =
   ## inits the BaseLexer with a stream to read from.
   assert(bufLen > 0)
   assert(input != nil)

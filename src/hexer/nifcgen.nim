@@ -1097,41 +1097,59 @@ proc genStringLit(c: var EContext; dest: var TokenBuf; s: string; info: PackedLi
     if s.len <= alwaysAvail:
       dest.addParPair(NilX, info)
     else:
-      # Emit a static LongString const to strLitBuf
-      let litName = pool.syms.getOrIncl("strlit." & $c.strLitCounter & "." & c.main)
-      inc c.strLitCounter
+      # Reference a static LongString const, named by *content* and deduped per
+      # module. The disambiguator is a hash of the string, NOT a per-module
+      # counter: a counter makes the symbol's number depend on every other literal
+      # in the module, so editing an unrelated literal (or recompiling a module on
+      # its own) renumbers consts that *other* modules' inline-proc copies already
+      # reference by name — a stale cross-module reference that fails to link. A
+      # content hash is stable: the name changes only when the string does.
+      #
+      # The name is a plain `<c.main>`-owned global, deliberately NOT the
+      # `strlit.0.I<hash>.<module>` instantiation form. The instantiation form
+      # would let DCE collapse identical strings program-wide (one def, losers
+      # extern), but that hooks `resolveSymbolConflicts`, which assumes a
+      # whole-program module set; the compile-time-eval path is a *partial* build
+      # and resolves the canonical owner to a module it never emits, dangling the
+      # reference. A self-contained per-module copy is correct in every build mode.
+      #
+      # `strLits` keeps emission to one const per distinct string per module.
+      var litName = c.strLits.getOrDefault(s)
+      if litName == SymId(0):
+        litName = pool.syms.getOrIncl("strlit." & $uint64(hash(s)) & "." & c.main)
+        c.strLits[s] = litName
 
-      c.strLitBuf.add tagToken("const", info)
-      c.strLitBuf.add symdefToken(litName, info)
-      c.strLitBuf.addDotToken() # no pragmas
-      # type: LongString
-      c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringName), info)
-      # value: (oconstr LongStringName (kv fullLen len) (kv rc 0) (kv capImpl 0) (kv data "s"))
-      c.strLitBuf.add tagToken("oconstr", info)
-      c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringName), info)
+        c.strLitBuf.add tagToken("const", info)
+        c.strLitBuf.add symdefToken(litName, info)
+        c.strLitBuf.addDotToken() # no pragmas
+        # type: LongString
+        c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringName), info)
+        # value: (oconstr LongStringName (kv fullLen len) (kv rc 0) (kv capImpl 0) (kv data "s"))
+        c.strLitBuf.add tagToken("oconstr", info)
+        c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringName), info)
 
-      c.strLitBuf.add parLeToken(KvU, info)
-      c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringFullLenField), info)
-      c.strLitBuf.addIntLit(s.len, info)
-      c.strLitBuf.addParRi() # "kv"
+        c.strLitBuf.add parLeToken(KvU, info)
+        c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringFullLenField), info)
+        c.strLitBuf.addIntLit(s.len, info)
+        c.strLitBuf.addParRi() # "kv"
 
-      c.strLitBuf.add parLeToken(KvU, info)
-      c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringRcField), info)
-      c.strLitBuf.addIntLit(0, info)
-      c.strLitBuf.addParRi() # "kv"
+        c.strLitBuf.add parLeToken(KvU, info)
+        c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringRcField), info)
+        c.strLitBuf.addIntLit(0, info)
+        c.strLitBuf.addParRi() # "kv"
 
-      c.strLitBuf.add parLeToken(KvU, info)
-      c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringCapImplField), info)
-      c.strLitBuf.addIntLit(0, info)
-      c.strLitBuf.addParRi() # "kv"
+        c.strLitBuf.add parLeToken(KvU, info)
+        c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringCapImplField), info)
+        c.strLitBuf.addIntLit(0, info)
+        c.strLitBuf.addParRi() # "kv"
 
-      c.strLitBuf.add parLeToken(KvU, info)
-      c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringDataField), info)
-      c.strLitBuf.addStrLit(s)
-      c.strLitBuf.addParRi() # "kv"
+        c.strLitBuf.add parLeToken(KvU, info)
+        c.strLitBuf.add symToken(pool.syms.getOrIncl(LongStringDataField), info)
+        c.strLitBuf.addStrLit(s)
+        c.strLitBuf.addParRi() # "kv"
 
-      c.strLitBuf.addParRi() # "oconstr"
-      c.strLitBuf.addParRi() # "const"
+        c.strLitBuf.addParRi() # "oconstr"
+        c.strLitBuf.addParRi() # "const"
 
       # Reference the LongString via addr
       dest.add tagToken("addr", info)
