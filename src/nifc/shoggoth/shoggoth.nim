@@ -199,14 +199,23 @@ proc processFile(input, output: string; verify, stats: bool): bool =
     checkWellFormed(back)
 
 # ---- CLI -------------------------------------------------------------------
+#
+# Subcommands:
+#   shoggoth c   [--outdir:DIR] [--verify] [--stats] <input.nif> [<output.nif>]
+#       optimize NIFC modules (the build invokes this via `shoggoth c …`).
+#   shoggoth pat [--from:NIF] [--keep] [--shoggoth] <file.nim> [<substr>]
+#       pattern-by-example: compile a .nim with nimony and print its NIFC procs.
+# For backward compatibility, a first argument that is neither `c` nor `pat`
+# is treated as the start of the `c` argument list.
 
-proc main =
+import patextract  # exposes `patMain`; keeps its nifcore world isolated from ours
+
+proc optimizeMain(args: seq[string]) =
   var positional: seq[string] = @[]
   var outdir = ""
   var verify = false
   var stats = false
-  for i in 1 .. paramCount():
-    let a = paramStr(i)
+  for a in args:
     if a.startsWith("--outdir:"): outdir = a["--outdir:".len .. ^1]
     elif a == "--verify": verify = true
     elif a == "--stats": stats = true
@@ -214,7 +223,7 @@ proc main =
     else: positional.add a
 
   if positional.len == 0:
-    quit "usage: shoggoth [--outdir:DIR] [--verify] [--stats] <input.nif> [<output.nif>]"
+    quit "usage: shoggoth c [--outdir:DIR] [--verify] [--stats] <input.nif> [<output.nif>]"
 
   var ok = true
   if outdir.len > 0:
@@ -230,5 +239,19 @@ proc main =
       if not processFile(inp, inp, verify, stats): ok = false
 
   if not ok: quit 1
+
+proc main =
+  var rest: seq[string] = @[]
+  for i in 2 .. paramCount(): rest.add paramStr(i)
+  let sub = if paramCount() >= 1: paramStr(1) else: ""
+  case sub
+  of "c":   optimizeMain(rest)
+  of "pat": patMain(rest)
+  of "":    quit "usage: shoggoth <c|pat> …"
+  else:
+    # back-compat: `shoggoth <input.nif> [<output.nif>]` == `shoggoth c …`
+    var all: seq[string] = @[]
+    for i in 1 .. paramCount(): all.add paramStr(i)
+    optimizeMain(all)
 
 main()

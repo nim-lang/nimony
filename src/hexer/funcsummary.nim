@@ -47,14 +47,14 @@ proc collectParamSyms(params: Cursor): seq[SymId] =
   result = @[]
   if params.kind != ParLe: return
   var p = params
-  inc p
-  while p.kind != ParRi:
-    if p.substructureKind == ParamU:
-      var q = p
-      inc q
-      if q.kind == SymbolDef:
-        result.add q.symId
-    skip p
+  p.into:
+    while p.hasMore:
+      if p.substructureKind == ParamU:
+        var q = p
+        inc q
+        if q.kind == SymbolDef:
+          result.add q.symId
+      skip p
 
 proc firstSymbolIn(c: Cursor): SymId =
   if not c.hasMore: return SymId(0)
@@ -239,15 +239,15 @@ proc collectProcAnalyses(buf: var TokenBuf): Table[SymId, ProcAnalysis] =
   result = initTable[SymId, ProcAnalysis]()
   var n = beginRead(buf)
   if n.stmtKind == StmtsS:
-    inc n
-    while n.kind != ParRi:
-      if n.kind == ParLe and n.stmtKind == ProcS:
-        let p = n
-        var d = n
-        inc d
-        if d.kind == SymbolDef:
-          result[d.symId] = computeProcAnalysis(p)
-      skip n
+    n.into:
+      while n.hasMore:
+        if n.kind == ParLe and n.stmtKind == ProcS:
+          let p = n
+          var d = n
+          inc d
+          if d.kind == SymbolDef:
+            result[d.symId] = computeProcAnalysis(p)
+        skip n
   endRead(buf)
 
 proc readParamSummary(n: var Cursor; outSummary: var FunctionSummary) =
@@ -296,26 +296,26 @@ proc readSummary(n: var Cursor; outSummary: var FunctionSummary): bool =
 proc readSummaryPragma*(pragmas: Cursor; outSummary: var FunctionSummary): bool =
   if pragmas.kind != ParLe: return false
   var p = pragmas
-  inc p
-  while p.kind != ParRi:
-    if p.kind == ParLe and p.pragmaKind == SmryP:
-      return readSummary(p, outSummary)
-    skip p
+  p.into:
+    while p.hasMore:
+      if p.kind == ParLe and p.pragmaKind == SmryP:
+        return readSummary(p, outSummary)
+      skip p
   result = false
 
 proc collectFunctionSummaries*(buf: var TokenBuf): FunctionSummaryTable =
   result = initTable[SymId, FunctionSummary]()
   var n = beginRead(buf)
   if n.stmtKind == StmtsS:
-    inc n
-    while n.kind != ParRi:
-      if n.kind == ParLe and n.stmtKind == ProcS:
-        let d = takeProcDecl(n)
-        var summary = FunctionSummary()
-        if d.name.kind == SymbolDef and readSummaryPragma(d.pragmas, summary):
-          result[d.name.symId] = summary
-      else:
-        skip n
+    n.into:
+      while n.hasMore:
+        if n.kind == ParLe and n.stmtKind == ProcS:
+          let d = takeProcDecl(n)
+          var summary = FunctionSummary()
+          if d.name.kind == SymbolDef and readSummaryPragma(d.pragmas, summary):
+            result[d.name.symId] = summary
+        else:
+          skip n
   endRead(buf)
 
 proc addSummaryPragma(dest: var TokenBuf; summary: FunctionSummary; info: PackedLineInfo) =
