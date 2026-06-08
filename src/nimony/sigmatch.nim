@@ -10,7 +10,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 
 import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes, renderer, asthelpers,
-  features
+  features, symtabs
 import ".." / lib / symparser
 import ".." / models / tags
 
@@ -251,10 +251,66 @@ proc isEnumType*(n: Cursor): bool =
     result = false
 
 proc isConcept(s: SymId): bool =
-  #let impl = typeImpl(s)
-  # XXX Model Concept in the grammar
-  #result = impl.tag == ConceptT
-  result = false
+  isConceptSym(s)
+
+proc conceptRoutineBasename(routine: Cursor): StrId =
+  var prc = routine
+  assert prc.symKind in RoutineKinds
+  inc prc
+  assert prc.kind == SymbolDef
+  var name = pool.syms[prc.symId]
+  extractBasename(name)
+  pool.strings.getOrIncl(name)
+
+proc selfSymInConcept(body: Cursor): SymId =
+  ## The `Self` slot in the concept header and the `Self` referenced in
+  ## requirement signatures can be different syms after sema; prefer the
+  ## one used in the requirements since that is what matching must bind.
+  var ops = conceptStmtsSlot(body)
+  if ops.stmtKind == StmtsS:
+    ops.into StmtsS:
+      while ops.hasMore:
+        if ops.symKind in RoutineKinds:
+          var prc = ops
+          skipToParams prc
+          if prc.substructureKind == ParamsU:
+            prc.into ParamsU:
+              if prc.hasMore:
+                let param = takeLocal(prc, SkipFinalParRi)
+                if param.typ.kind == Symbol:
+                  let s = param.typ.symId
+                  let res = tryLoadSym(s)
+                  if res.status == LacksNothing and res.decl.symKind == TypevarY:
+                    return s
+        skip ops
+  let selfSlot = conceptSelfSlot(body)
+  if selfSlot.symKind != TypevarY:
+    return SymId(0)
+  var s = selfSlot
+  inc s
+  if s.kind == SymbolDef:
+    s.symId
+  else:
+    SymId(0)
+
+iterator visibleNamedSyms(c: ptr SemContext; basename: StrId): SymId {.sideEffect.} =
+  let ignoreStyle = IgnoreStyleFeature in c.features
+  var it = c.currentScope
+  while it.up != nil:
+    it = it.up
+  for k in stylesOfScope(it, basename, ignoreStyle):
+    for sym in it.tab.getOrDefault(k):
+      yield sym.name
+  for realName in stylesOfImport(c.importTab, basename, ignoreStyle):
+    for moduleId in c.importTab.getOrDefault(realName):
+      let m = addr c.importedModules.getOrQuit(moduleId)
+      for k in stylesOfIface(m[].iface, realName, ignoreStyle):
+        for defId in m[].iface.getOrDefault(k):
+          yield defId
+
+proc matchConceptRoutineSig(m: var Match; conceptR, implR: Cursor): bool
+proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; routine: Cursor; a: Cursor): bool
+proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): bool
 
 type LinearMatchFlag = enum
   ExactBits ## do not normalize bits
@@ -284,7 +340,10 @@ proc matchSymbolConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   # check if symbol has typeclass behavior:
   if typeImpl.kind == TypeY:
     if typeImpl.body.typeKind == ConceptT:
-      return matchesConstraint(m, typeImpl.body, a)
+      if a.kind == Symbol and isConceptSym(a.symId):
+        if conceptExtends(a.symId, fs):
+          return true
+      return matchConceptBody(m, fs, typeImpl.body, a)
     if typeImpl.typevars.substructureKind == TypevarsU:
       # matching generic base symbol, acts as typeclass
       # XXX does not consider inheritance
@@ -313,10 +372,7 @@ proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
   case f.typeKind
   of ConceptT:
-    # XXX Use some algorithm here that can cache the result
-    # so that it can remember e.g. "int fulfils Fibable". For
-    # now this should be good enough for our purposes:
-    result = true
+    result = matchConceptBody(m, SymId(0), f, a)
     skip f
   of TypekindT:
     var aTag = a
@@ -474,6 +530,155 @@ proc matchesConstraint(m: var Match; f: SymId; a: Cursor): bool =
   var typevar = asTypevar(res.decl)
   assert typevar.kind == TypevarY
   result = matchesConstraint(m, typevar.typ, a)
+
+proc skipTypeSourceAnnot(n: var Cursor) =
+  ## Drop module/path slots in a type spelling before structural compare.
+  while n.kind == StringLit:
+    skip n
+  while n.kind == Symbol:
+    var name = pool.syms[n.symId]
+    if ',' in name or '/' in name or '~' in name:
+      skip n
+    else:
+      break
+
+proc conceptReturnTypesMatch(m: var Match; cRet, aRet: Cursor): bool =
+  var c = cRet
+  var a = aRet
+  if matchesConstraint(m, c, a):
+    return true
+  if sameTreesButIgnoreSymIds(cRet, aRet):
+    return true
+  c = cRet
+  a = aRet
+  if c.kind == ParLe and a.kind == ParLe and c.tagId == a.tagId:
+    inc c
+    inc a
+    skipTypeSourceAnnot c
+    skipTypeSourceAnnot a
+    return tryLinearMatch(m, c, a)
+  false
+
+proc matchConceptRoutineSig(m: var Match; conceptR, implR: Cursor): bool =
+  var cf = conceptR
+  var ca = implR
+  skipToParams cf
+  skipToParams ca
+  if cf.substructureKind != ParamsU or ca.substructureKind != ParamsU:
+    return false
+  cf.into ParamsU:
+    ca.into ParamsU:
+      while cf.hasMore and ca.hasMore:
+        let cTyp = takeLocal(cf, SkipFinalParRi).typ
+        let aTyp = takeLocal(ca, SkipFinalParRi).typ
+        var cTypMatch = cTyp
+        if not matchesConstraint(m, cTypMatch, aTyp):
+          return false
+      if cf.hasMore:
+        return false
+      while ca.hasMore:
+        let extra = takeLocal(ca, SkipFinalParRi)
+        if extra.val.kind == DotToken:
+          return false
+  var cRet = conceptR
+  var aRet = implR
+  skipToParams cRet
+  skip cRet, AnyType
+  skipToParams aRet
+  skip aRet, AnyType
+  conceptReturnTypesMatch(m, cRet, aRet)
+
+iterator conceptRoutineCandidates(m: var Match; conceptSym: SymId; basename: StrId): SymId {.sideEffect.} =
+  var seen = initHashSet[SymId]()
+  if m.context != nil:
+    let ignoreStyle = IgnoreStyleFeature in m.context.features
+    if conceptSym != SymId(0):
+      let modSuffix = extractModule(pool.syms[conceptSym])
+      if modSuffix != "":
+        for cand in loadSyms(modSuffix, basename):
+          if seen.containsOrIncl(cand):
+            yield cand
+      for moduleId, im in m.context.importedModules:
+        discard moduleId
+        for k in stylesOfIface(im.iface, basename, ignoreStyle):
+          for defId in im.iface.getOrDefault(k):
+            if seen.containsOrIncl(defId):
+              yield defId
+    for cand in visibleNamedSyms(m.context, basename):
+      if seen.containsOrIncl(cand):
+        yield cand
+
+proc conceptRequirementInBody(routine: Cursor; actualBody: Cursor): bool =
+  let basename = conceptRoutineBasename(routine)
+  for abody in conceptHierarchyBodies(actualBody):
+    var ops = conceptStmtsSlot(abody)
+    if ops.stmtKind != StmtsS:
+      continue
+    ops.into StmtsS:
+      while ops.hasMore:
+        if ops.symKind in RoutineKinds:
+          if conceptRoutineBasename(ops) == basename:
+            if conceptRoutinesSameShape(routine, ops):
+              return true
+        skip ops
+  false
+
+proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; routine: Cursor; a: Cursor): bool =
+  if m.context == nil:
+    return true
+  if a.kind == Symbol and isConceptSym(a.symId):
+    return conceptRequirementInBody(routine, getTypeSection(a.symId).body)
+  let selfSym = selfSymInConcept(body)
+  var savedSelf = default(Cursor)
+  var hadSelf = false
+  if selfSym != SymId(0):
+    hadSelf = m.inferred.hasKey(selfSym)
+    if hadSelf:
+      savedSelf = m.inferred.getOrQuit(selfSym)
+    m.inferred[selfSym] = a
+  try:
+    let basename = conceptRoutineBasename(routine)
+    for cand in conceptRoutineCandidates(m, conceptSym, basename):
+      let res = tryLoadSym(cand)
+      if res.status != LacksNothing:
+        continue
+      if res.decl.symKind notin RoutineKinds:
+        continue
+      if matchConceptRoutineSig(m, routine, res.decl):
+        return true
+    false
+  finally:
+    if selfSym != SymId(0):
+      if hadSelf:
+        m.inferred[selfSym] = savedSelf
+      else:
+        m.inferred.del(selfSym)
+
+proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): bool =
+  let actualIsConcept = a.kind == Symbol and isConceptSym(a.symId)
+  if conceptHasParents(conceptParentsSlot(body)):
+    for parent in conceptParentSyms(conceptParentsSlot(body)):
+      var parentCur = createTokenBuf(4)
+      parentCur.add symToken(parent, NoLineInfo)
+      var pc = beginRead(parentCur)
+      if not matchSymbolConstraint(m, pc, a):
+        return false
+  # Until concrete-type requirement matching is complete, standalone concepts
+  # match any concrete type (legacy stub behaviour). Concept-to-concept
+  # subsumption always checks requirements structurally.
+  if not actualIsConcept and not conceptHasParents(conceptParentsSlot(body)):
+    return true
+  for cbody in conceptHierarchyBodies(body):
+    var ops = conceptStmtsSlot(cbody)
+    if ops.stmtKind != StmtsS:
+      continue
+    ops.into StmtsS:
+      while ops.hasMore:
+        if ops.symKind in RoutineKinds:
+          if not conceptRoutineAvailable(m, conceptSym, cbody, ops, a):
+            return false
+        skip ops
+  true
 
 proc isTypevar(s: SymId): bool =
   let res = tryLoadSym(s)
@@ -959,7 +1164,12 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
     var f = f
     matchObjectTypes m, f, a, NoType
   elif isConcept(fs):
-    m.error NotImplementedConcept, f, a
+    if a.kind == Symbol and isConceptSym(a.symId):
+      if not conceptExtends(a.symId, fs) and
+         not matchConceptBody(m, fs, getTypeSection(fs).body, a):
+        m.error InvalidMatch, f, a
+    elif not matchConceptBody(m, fs, getTypeSection(fs).body, a):
+      m.error InvalidMatch, f, a
   else:
     # fast check that works for aliases too:
     if a.kind == Symbol and sameSymbol(a.symId, fs):

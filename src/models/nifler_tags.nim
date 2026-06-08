@@ -82,7 +82,7 @@ type
     RefL = (ord(RefTagId), "ref")  ## `ref` type; the `(unchecked)` pragma relaxes nil checking on deref
     MutL = (ord(MutTagId), "mut")  ## `mut` type
     OutL = (ord(OutTagId), "out")  ## `out` type
-    ConceptL = (ord(ConceptTagId), "concept")  ## `concept` type: two reserved slots, a typevar symbol and the concept body statements
+    ConceptL = (ord(ConceptTagId), "concept")  ## `concept` type: two reserved slots, optional parent concepts (`.` / sym / `(and ...)`), a `Self` typevar, and the concept body statements
     DistinctL = (ord(DistinctTagId), "distinct")  ## `distinct` type
     ItertypeL = (ord(ItertypeTagId), "itertype")  ## Nimony iterator type — first-class closure-iterator value at the type level. Shape mirrors `(proctype ...)`: slot 0 carries the nilability tag (`.` placeholder or one of `(notnil)`, `(nil)`, `(unchecked)`); remaining slots are params, return type, pragmas.
     QuotedL = (ord(QuotedTagId), "quoted")  ## name in backticks

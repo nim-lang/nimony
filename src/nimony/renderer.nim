@@ -733,18 +733,54 @@ proc takeNumberType(g: var SrcGen, n: var Cursor, typ: string) =
 
   put(g, tkSymbol, name)
 
+proc gconceptParents(g: var SrcGen, n: var Cursor) =
+  if n.typeKind == AndT:
+    var first = true
+    n.into:
+      while n.hasMore:
+        if not first:
+          gcomma(g)
+        else:
+          first = false
+        gtype(g, n, initContext())
+    skip n
+  elif n.exprKind == ParX:
+    var first = true
+    n.into:
+      while n.hasMore:
+        if not first:
+          gcomma(g)
+        else:
+          first = false
+        gtype(g, n, initContext())
+    skip n
+  elif n.kind == DotToken:
+    skip n
+  else:
+    gtype(g, n, initContext())
+
 proc gconcept(g: var SrcGen, n: var Cursor, c: Context) =
   putWithSpace(g, tkConcept, "concept")
-
-  indentNL(g)
   inc n
   skip n
   skip n
-  skip n, SkipGenParams # typevars
-  gstmts(g, n, c)
-  skipParRi(n)
-
-  dedent(g)
+  if n.kind != DotToken:
+    putWithSpace(g, tkOf, "of")
+    gconceptParents(g, n)
+  else:
+    skip n
+  skip n, SkipGenParams
+  if n.stmtKind == StmtsS:
+    var probe = n
+    inc probe
+    if probe.kind != ParRi:
+      indentNL(g)
+      gstmts(g, n, c)
+      dedent(g)
+    else:
+      skipParRi(n)
+  else:
+    skip n
 
 proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
   case n.kind

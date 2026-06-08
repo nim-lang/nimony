@@ -1,0 +1,1 @@
+tests/nimony/concepts/tconceptcycle.nim(1, 25) Error: concept inheritance cycle detected

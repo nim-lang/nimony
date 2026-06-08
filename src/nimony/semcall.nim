@@ -192,29 +192,37 @@ iterator findConceptsInConstraint(typ: Cursor): Cursor {.sideEffect.} =
       skip typ
     if nested == 0: break
 
+proc conceptMethodAlreadyListed(cands: FnCandidates; routine: Cursor): bool =
+  for existing in cands.a:
+    if existing.fromConcept and conceptRoutinesSameShape(existing.typ, routine):
+      return true
+  false
+
+proc collectConceptMethods(c: var SemContext; fn: StrId; concpt: Cursor; cands: var FnCandidates) =
+  for body in conceptHierarchyBodies(concpt):
+    var ops = body
+    assert ops.typeKind == ConceptT
+    skipConceptHeader ops
+    if ops.stmtKind == StmtsS:
+      ops.into StmtsS:
+        while ops.hasMore:
+          let sk = ops.symKind
+          if sk in RoutineKinds:
+            var prc = ops
+            inc prc
+            if prc.kind == SymbolDef and sameIdent(prc.symId, fn):
+              var d = ops
+              if not conceptMethodAlreadyListed(cands, d):
+                cands.addUnique FnCandidate(kind: sk, sym: prc.symId, typ: d, fromConcept: true)
+          skip ops
+
 proc maybeAddConceptMethods(c: var SemContext; fn: StrId; typevar: SymId; cands: var FnCandidates) =
   let res = tryLoadSym(typevar)
   assert res.status == LacksNothing
   let local = asLocal(res.decl)
   if local.kind == TypevarY and local.typ.kind != DotToken:
     for concpt in findConceptsInConstraint(local.typ):
-      var ops = concpt
-      ops.into:  # (concept …)
-        skip ops # .
-        skip ops # .
-        skip ops #   (typevar Self ...)
-        if ops.stmtKind == StmtsS:
-          ops.into StmtsS:
-            while ops.hasMore:
-              let sk = ops.symKind
-              if sk in RoutineKinds:
-                var prc = ops
-                inc prc # (proc
-                if prc.kind == SymbolDef and sameIdent(prc.symId, fn):
-                  var d = ops
-                  #skipToParams d
-                  cands.addUnique FnCandidate(kind: sk, sym: prc.symId, typ: d, fromConcept: true)
-              skip ops
+      collectConceptMethods c, fn, concpt, cands
 
 proc hasAttachedParam(params: Cursor; typ: SymId): bool =
   result = false

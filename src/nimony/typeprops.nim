@@ -2,6 +2,7 @@ import std/assertions
 from std/strutils import startsWith
 include ".." / lib / nifprelude
 import nimony_model, decls, xints, semdata, programs, nifconfig
+import ".." / lib / symparser
 import ".." / models / tags
 
 const
@@ -644,6 +645,145 @@ proc toTypeImpl*(n: Cursor): Cursor =
         result = local.body
     else:
       bug "could not load: " & pool.syms[result.symId]
+
+proc isConceptSym*(s: SymId): bool =
+  let section = getTypeSection(s)
+  result = section.kind == TypeY and section.body.typeKind == ConceptT
+
+proc conceptParentsSlot*(body: Cursor): Cursor =
+  ## `(concept S0 S1 Parents ...)` — cursor at `Parents` (after two reserved slots).
+  result = body
+  assert result.typeKind == ConceptT
+  inc result
+  skip result
+  skip result
+
+proc conceptHasParents*(parents: Cursor): bool =
+  parents.kind != DotToken
+
+iterator conceptParentSyms*(parents: Cursor): SymId {.sideEffect.} =
+  var p = parents
+  if p.kind == DotToken:
+    discard
+  elif p.typeKind == AndT:
+    p.into:
+      while p.hasMore:
+        if p.kind == Symbol:
+          yield p.symId
+        skip p
+  elif p.kind == Symbol:
+    yield p.symId
+  elif p.exprKind == ParX:
+    p.into:
+      while p.hasMore:
+        if p.kind == Symbol:
+          yield p.symId
+        skip p
+  else:
+    bug "illformed concept parents: ", p
+
+proc conceptSelfSlot*(body: Cursor): Cursor =
+  result = conceptParentsSlot(body)
+  skip result
+
+proc conceptStmtsSlot*(body: Cursor): Cursor =
+  result = conceptSelfSlot(body)
+  skip result
+
+proc skipConceptHeader*(n: var Cursor) =
+  ## Skip `(concept . . Parents Self)` leaving `n` at `(stmts ...)`.
+  assert n.typeKind == ConceptT
+  inc n
+  skip n
+  skip n
+  skip n
+  skip n
+
+proc conceptAncestorContains*(conceptSym, target: SymId): bool {.sideEffect.} =
+  if conceptSym == SymId(0) or target == SymId(0):
+    return false
+  if conceptSym == target:
+    return true
+  if not isConceptSym(conceptSym):
+    return false
+  let body = getTypeSection(conceptSym).body
+  for p in conceptParentSyms(conceptParentsSlot(body)):
+    if conceptAncestorContains(p, target):
+      return true
+  false
+
+proc conceptExtends*(sub, sup: SymId): bool {.sideEffect.} =
+  if sub == sup:
+    return true
+  if not isConceptSym(sub) or not isConceptSym(sup):
+    return false
+  let body = getTypeSection(sub).body
+  for p in conceptParentSyms(conceptParentsSlot(body)):
+    if p == sup or conceptExtends(p, sup):
+      return true
+  false
+
+proc collectConceptHierarchyBodies*(body: Cursor; result: var seq[Cursor]) {.sideEffect.} =
+  result.add body
+  for p in conceptParentSyms(conceptParentsSlot(body)):
+    collectConceptHierarchyBodies(getTypeSection(p).body, result)
+
+iterator conceptHierarchyBodies*(body: Cursor): Cursor {.sideEffect.} =
+  var bodies: seq[Cursor] = @[]
+  collectConceptHierarchyBodies(body, bodies)
+  for b in bodies:
+    yield b
+
+proc symNameId(s: SymId): StrId =
+  var name = pool.syms[s]
+  extractBasename name
+  pool.strings.getOrIncl(name)
+
+proc sameTreesButIgnoreSymIds*(a, b: Cursor): bool =
+  ## Like `sameTrees` but maps symbols back to their base identifier names.
+  var a = a
+  var b = b
+  var nested = 0
+  let isAtom = a.kind != ParLe
+  while true:
+    let aIsName = a.kind in {Symbol, SymbolDef, Ident}
+    let bIsName = b.kind in {Symbol, SymbolDef, Ident}
+    if aIsName and bIsName:
+      let aName = if a.kind == Ident: a.litId else: symNameId(a.symId)
+      let bName = if b.kind == Ident: b.litId else: symNameId(b.symId)
+      if aName != bName: return false
+    elif aIsName or bIsName:
+      return false
+    elif a.kind != b.kind:
+      return false
+    else:
+      case a.kind
+      of ParLe:
+        if a.tagId != b.tagId: return false
+        inc nested
+      of ParRi:
+        dec nested
+        if nested == 0: return true
+      of IntLit:
+        if a.intId != b.intId: return false
+      of UIntLit:
+        if a.uintId != b.uintId: return false
+      of FloatLit:
+        if a.floatId != b.floatId: return false
+      of StringLit:
+        if a.litId != b.litId: return false
+      of CharLit, UnknownToken:
+        if a.uoperand != b.uoperand: return false
+      of DotToken, EofToken: discard
+      of Symbol, SymbolDef, Ident: discard
+    if isAtom: return true
+    inc a
+    inc b
+  return false
+
+proc conceptRoutinesSameShape*(a, b: Cursor): bool =
+  ## Compare concept requirement routines, ignoring symbol ids (e.g. distinct `Self` syms).
+  sameTreesButIgnoreSymIds(a, b)
 
 when isMainModule:
   when false: # tests sum of products
