@@ -91,11 +91,13 @@ type
     readBuf: pointer
     readLen: int
     readCont: Continuation  ## Continuation to resume on read completion.
+    readRes: nil ptr int    ## Optional: completion result written here before resume.
     hasRead: bool
     writeId: SeqNum
     writeBuf: pointer
     writeLen: int
     writeCont: Continuation ## Continuation to resume on write completion.
+    writeRes: nil ptr int   ## Optional: completion result written here before resume.
     hasWrite: bool
     registered: bool    # whether fd is in the poller (for epoll ADD vs MOD)
 
@@ -119,9 +121,10 @@ proc pushCompletion(c: IoCompletion) =
 
 proc deliver(c: IoCompletion; cont: Continuation) {.inline.} =
   if cont.fn != nil:
-    # Resume the suspended passive proc by submitting its continuation
-    # back to the threadpool.
-    submit(cont)
+    # Resume the suspended passive proc by submitting its continuation back to
+    # the threadpool. Spread by fd so resumes don't all funnel into stripe 0
+    # (the default hint) — that serialises drains and starves the other workers.
+    submit(cont, int(c.fd))
   else:
     pushCompletion(c)
 
@@ -146,6 +149,12 @@ proc onFdReady(self: ptr IoHandler; events: uint32) {.nimcall.} =
         let clientFd = accept(fd, cast[ptr SockAddr](addr clientAddr), addr addrLen)
         c.result = clientFd
       of opWrite: discard
+      # Continuation-resume path otherwise drops c.result; thread it back via
+      # the caller's result pointer so the resumed passive proc sees the count.
+      let rrp = slot.readRes
+      if rrp != nil:
+        rrp[] = c.result
+      slot.readRes = nil
       let cont = slot.readCont
       slot.hasRead = false
       slot.readCont = Continuation(fn: nil, env: nil)
@@ -157,6 +166,10 @@ proc onFdReady(self: ptr IoHandler; events: uint32) {.nimcall.} =
       c.result = posixWrite(fd, slot.writeBuf, slot.writeLen.csize_t)
       if c.result < 0:
         c.result = -1
+      let wrp = slot.writeRes
+      if wrp != nil:
+        wrp[] = c.result
+      slot.writeRes = nil
       let cont = slot.writeCont
       slot.hasWrite = false
       slot.writeCont = Continuation(fn: nil, env: nil)
@@ -187,10 +200,12 @@ proc armSlot(fd: cint) =
     slot.registered = true
 
 proc submitRead*(fd: cint; buf: pointer; len: int;
-                 cont = Continuation(fn: nil, env: nil)): SeqNum =
+                 cont = Continuation(fn: nil, env: nil);
+                 resPtr: nil ptr int = nil): SeqNum =
   ## Submit a read request. If `cont` has a non-nil fn, the continuation
   ## is resumed on a worker thread when the read completes. Otherwise
-  ## the completion goes to the shared CQ.
+  ## the completion goes to the shared CQ. If `resPtr` is non-nil the byte
+  ## count is written there before the continuation is resumed.
   result = nextSeqNum()
   let slot = addr fdSlots[fd]
   slot.handler.fd = fd
@@ -200,13 +215,16 @@ proc submitRead*(fd: cint; buf: pointer; len: int;
   slot.readBuf = buf
   slot.readLen = len
   slot.readCont = cont
+  slot.readRes = resPtr
   slot.hasRead = true
   armSlot(fd)
 
 proc submitWrite*(fd: cint; buf: pointer; len: int;
-                  cont = Continuation(fn: nil, env: nil)): SeqNum =
+                  cont = Continuation(fn: nil, env: nil);
+                  resPtr: nil ptr int = nil): SeqNum =
   ## Submit a write request. If `cont` has a non-nil fn, the continuation
   ## is resumed when the write completes. Otherwise completion goes to CQ.
+  ## If `resPtr` is non-nil the byte count is written there before resume.
   result = nextSeqNum()
   let slot = addr fdSlots[fd]
   slot.handler.fd = fd
@@ -215,12 +233,15 @@ proc submitWrite*(fd: cint; buf: pointer; len: int;
   slot.writeBuf = buf
   slot.writeLen = len
   slot.writeCont = cont
+  slot.writeRes = resPtr
   slot.hasWrite = true
   armSlot(fd)
 
 proc submitAccept*(listenFd: cint;
-                   cont = Continuation(fn: nil, env: nil)): SeqNum =
+                   cont = Continuation(fn: nil, env: nil);
+                   resPtr: nil ptr int = nil): SeqNum =
   ## Submit an accept request. Completion's `result` is the new client fd.
+  ## If `resPtr` is non-nil the new client fd is written there before resume.
   result = nextSeqNum()
   let slot = addr fdSlots[listenFd]
   slot.handler.fd = listenFd
@@ -230,6 +251,7 @@ proc submitAccept*(listenFd: cint;
   slot.readBuf = nil
   slot.readLen = 0
   slot.readCont = cont
+  slot.readRes = resPtr
   slot.hasRead = true
   armSlot(listenFd)
 
@@ -274,6 +296,8 @@ proc closeFd*(fd: cint) =
   slot.hasWrite = false
   slot.readCont = Continuation(fn: nil, env: nil)
   slot.writeCont = Continuation(fn: nil, env: nil)
+  slot.readRes = nil
+  slot.writeRes = nil
   when defined(posix):
     discard posixClose(fd)
 
