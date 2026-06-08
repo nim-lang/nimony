@@ -8,13 +8,13 @@ proc signaturesMatch(forwardDecl: Cursor; implDecl: Cursor): bool =
   let fwd = asRoutine(forwardDecl)
   let impl = asRoutine(implDecl)
   # Compare generic params (typevars)
-  if not sameTreesButIgnoreSymIds(fwd.typevars, impl.typevars):
+  if not sameTrees(fwd.typevars, impl.typevars, ignoreSymIds = true):
     return false
   # Compare params
-  if not sameTreesButIgnoreSymIds(fwd.params, impl.params):
+  if not sameTrees(fwd.params, impl.params, ignoreSymIds = true):
     return false
   # Compare return type
-  if not sameTreesButIgnoreSymIds(fwd.retType, impl.retType):
+  if not sameTrees(fwd.retType, impl.retType, ignoreSymIds = true):
     return false
   return true
 

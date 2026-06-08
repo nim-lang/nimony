@@ -542,7 +542,7 @@ proc conceptReturnTypesMatch(m: var Match; cRet, aRet: Cursor): bool =
   var a = aRet
   if matchesConstraint(m, c, a):
     return true
-  if sameTreesButIgnoreSymIds(cRet, aRet):
+  if sameTrees(cRet, aRet, ignoreSymIds = true):
     return true
   c = cRet
   a = aRet
@@ -606,7 +606,7 @@ iterator conceptRoutineCandidates(m: var Match; conceptSym: SymId; basename: Str
 proc conceptRequirementInBody(routine: Cursor; actualBody: Cursor): bool =
   let basename = conceptRoutineBasename(routine)
   for _, req in conceptHierarchyRoutines(actualBody):
-    if conceptRoutineBasename(req) == basename and sameTreesButIgnoreSymIds(routine, req):
+    if conceptRoutineBasename(req) == basename and sameTrees(routine, req, ignoreSymIds = true):
       return true
   false
 

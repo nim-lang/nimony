@@ -2,7 +2,6 @@ import std/[assertions, sets]
 from std/strutils import startsWith
 include ".." / lib / nifprelude
 import nimony_model, decls, xints, semdata, programs, nifconfig
-import ".." / lib / symparser
 import ".." / models / tags
 
 const
@@ -734,53 +733,6 @@ iterator conceptHierarchyRoutines*(body: Cursor): (Cursor, Cursor) {.sideEffect.
           if ops.symKind in RoutineKinds:
             yield (cbody, ops)
           skip ops
-
-proc symNameId(s: SymId): StrId =
-  var name = pool.syms[s]
-  extractBasename name
-  pool.strings.getOrIncl(name)
-
-proc sameTreesButIgnoreSymIds*(a, b: Cursor): bool =
-  ## Like `sameTrees` but maps symbols back to their base identifier names.
-  var a = a
-  var b = b
-  var nested = 0
-  let isAtom = a.kind != ParLe
-  while true:
-    let aIsName = a.kind in {Symbol, SymbolDef, Ident}
-    let bIsName = b.kind in {Symbol, SymbolDef, Ident}
-    if aIsName and bIsName:
-      let aName = if a.kind == Ident: a.litId else: symNameId(a.symId)
-      let bName = if b.kind == Ident: b.litId else: symNameId(b.symId)
-      if aName != bName: return false
-    elif aIsName or bIsName:
-      return false
-    elif a.kind != b.kind:
-      return false
-    else:
-      case a.kind
-      of ParLe:
-        if a.tagId != b.tagId: return false
-        inc nested
-      of ParRi:
-        dec nested
-        if nested == 0: return true
-      of IntLit:
-        if a.intId != b.intId: return false
-      of UIntLit:
-        if a.uintId != b.uintId: return false
-      of FloatLit:
-        if a.floatId != b.floatId: return false
-      of StringLit:
-        if a.litId != b.litId: return false
-      of CharLit, UnknownToken:
-        if a.uoperand != b.uoperand: return false
-      of DotToken, EofToken: discard
-      of Symbol, SymbolDef, Ident: discard
-    if isAtom: return true
-    inc a
-    inc b
-  return false
 
 when isMainModule:
   when false: # tests sum of products
