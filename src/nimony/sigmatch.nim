@@ -36,7 +36,6 @@ type
     ClosureMismatch
     PassiveMismatch
     UnavailableSubtypeRelation
-    NotImplementedConcept
     ImplicitConversionNotMutable
     VarNeeded
     UnhandledTypeBug
@@ -174,8 +173,6 @@ proc getErrorMsg*(m: Match): string =
     "`.passive` mismatch"
   of UnavailableSubtypeRelation:
     "subtype relation not available for `out` parameters"
-  of NotImplementedConcept:
-    "'concept' is not implemented"
   of ImplicitConversionNotMutable:
     concat("implicit conversion to ", typeToString(m.error.expected), " is not mutable")
   of VarNeeded:
@@ -249,6 +246,9 @@ proc isEnumType*(n: Cursor): bool =
     result = impl.kind == TypeY and impl.body.typeKind in {EnumT, HoleyEnumT, AnumT}
   else:
     result = false
+
+proc isConceptType(a: Cursor): bool {.inline.} =
+  a.kind == Symbol and isConceptSym(a.symId)
 
 proc conceptRoutineBasename(routine: Cursor): StrId =
   var prc = routine
@@ -611,7 +611,7 @@ proc conceptRequirementInBody(routine: Cursor; actualBody: Cursor): bool =
   false
 
 proc matchConceptSym(m: var Match; conceptSym: SymId; a: Cursor): bool =
-  if a.kind == Symbol and isConceptSym(a.symId):
+  if isConceptType(a):
     if conceptExtends(a.symId, conceptSym):
       return true
   matchConceptBody(m, conceptSym, getTypeSection(conceptSym).body, a)
@@ -619,7 +619,7 @@ proc matchConceptSym(m: var Match; conceptSym: SymId; a: Cursor): bool =
 proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; routine: Cursor; a: Cursor): bool =
   if m.context == nil:
     return true
-  if a.kind == Symbol and isConceptSym(a.symId):
+  if isConceptType(a):
     return conceptRequirementInBody(routine, getTypeSection(a.symId).body)
   let selfSym = selfSymInConcept(body)
   var savedSelf = default(Cursor)
@@ -648,7 +648,7 @@ proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; rout
         m.inferred.del(selfSym)
 
 proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): bool =
-  let actualIsConcept = a.kind == Symbol and isConceptSym(a.symId)
+  let actualIsConcept = isConceptType(a)
   let parents = conceptParentsSlot(body)
   let hasParents = conceptHasParents(parents)
   if hasParents:
@@ -1149,9 +1149,7 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
     var f = f
     matchObjectTypes m, f, a, NoType
   elif isConceptSym(fs):
-    let fBody = getTypeSection(fs).body
-    if not (a.kind == Symbol and isConceptSym(a.symId) and conceptExtends(a.symId, fs)) and
-       not matchConceptBody(m, fs, fBody, a):
+    if not matchConceptSym(m, fs, a):
       m.error InvalidMatch, f, a
   else:
     # fast check that works for aliases too:
