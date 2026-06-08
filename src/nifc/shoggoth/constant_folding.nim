@@ -41,7 +41,7 @@ include "../../lib" / nifprelude
 import nifstreams, nifcursors
 import ".." / nifc_model
 import ".." / ".." / models / tags
-import patchsets
+import patchsets_legacy
 
 type
   FoldKind = enum NoFold, FoldInt, FoldBool

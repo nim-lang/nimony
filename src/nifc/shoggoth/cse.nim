@@ -87,7 +87,7 @@ import ".." / nifc_model
 from ".." / ".." / hexer / funcsummary import FunctionSummary,
   FunctionSummaryTable, paramDirectEscapes, paramMayWrite
 import ".." / ".." / models / tags
-import trackers, patchsets, nifrender
+import trackers, patchsets_legacy, nifrender
 
 # ---- candidate predicate --------------------------------------------------
 

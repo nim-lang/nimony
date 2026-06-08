@@ -20,7 +20,7 @@
 import std / [os, assertions, strutils, syncio]
 import ".." / ".." / "lib" / nifcoreparse   # parse/serialize; re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # createNifcTagPool, stmtKind, takeProcDecl
-import induction_variables_nc                 # runInductionVariables (live pass)
+import induction_variables                     # runInductionVariables (live pass)
 import imi_bridge                             # runImi (inter-module inliner, via nifcursors)
 
 type

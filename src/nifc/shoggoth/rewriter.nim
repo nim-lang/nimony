@@ -58,8 +58,8 @@ include "../../lib" / nifprelude
 import nifstreams, nifcursors
 import ".." / nifc_model
 import ".." / ".." / models / tags  # `TagEnum` and the `*TagId` enumerators
-import patchsets
-export patchsets
+import patchsets_legacy
+export patchsets_legacy
 
 # ---- Runtime helpers ------------------------------------------------------
 

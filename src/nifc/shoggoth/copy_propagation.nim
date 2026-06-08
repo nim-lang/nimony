@@ -62,7 +62,7 @@ include "../../lib" / nifprelude
 import nifstreams, nifcursors
 import ".." / nifc_model
 import ".." / ".." / models / tags        # DiscardTagId
-import trackers, patchsets, nifrender
+import trackers, patchsets_legacy, nifrender
 
 # Compare cursors by the *token value* they point at, not by buffer
 # position. Defined locally so the `Tracker[SymId, Cursor]` generic in
