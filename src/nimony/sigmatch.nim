@@ -307,7 +307,7 @@ iterator visibleNamedSyms(c: ptr SemContext; basename: StrId): SymId {.sideEffec
 
 proc matchConceptRoutineSig(m: var Match; conceptR, implR: Cursor): bool
 proc matchConceptSym(m: var Match; conceptSym: SymId; a: Cursor): bool
-proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; routine: Cursor; a: Cursor): bool
+proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; routine: Cursor; a: Cursor; actualBody: Cursor): bool
 proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): bool
 
 type LinearMatchFlag = enum
@@ -616,11 +616,11 @@ proc matchConceptSym(m: var Match; conceptSym: SymId; a: Cursor): bool =
       return true
   matchConceptBody(m, conceptSym, getTypeSection(conceptSym).body, a)
 
-proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; routine: Cursor; a: Cursor): bool =
+proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; routine: Cursor; a: Cursor; actualBody: Cursor): bool =
   if m.context == nil:
     return true
   if isConceptType(a):
-    return conceptRequirementInBody(routine, getTypeSection(a.symId).body)
+    return conceptRequirementInBody(routine, actualBody)
   let selfSym = selfSymInConcept(body)
   var savedSelf = default(Cursor)
   var hadSelf = false
@@ -649,6 +649,7 @@ proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; rout
 
 proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): bool =
   let actualIsConcept = isConceptType(a)
+  let actualBody = if actualIsConcept: getTypeSection(a.symId).body else: default(Cursor)
   let parents = conceptParentsSlot(body)
   let hasParents = conceptHasParents(parents)
   if hasParents:
@@ -661,7 +662,7 @@ proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor):
   if not actualIsConcept and not hasParents:
     return true
   for cbody, routine in conceptHierarchyRoutines(body):
-    if not conceptRoutineAvailable(m, conceptSym, cbody, routine, a):
+    if not conceptRoutineAvailable(m, conceptSym, cbody, routine, a, actualBody):
       return false
   true
 
