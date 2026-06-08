@@ -807,9 +807,11 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       assert cs.fnName != StrId(0)
       buildErr c, dest, cs.fn.n.info, "attempt to call routine: '" & pool.strings[cs.fnName] & "'"
   elif cs.fn.n.kind == Ident:
-    # error should have been given above already:
-    # buildErr c, dest, fn.n.info, "attempt to call undeclared routine"
-    discard
+    # Callee stayed as an `Ident` because `AllowUndeclared` was set (typical
+    # for dot-call desugaring and generic bodies). Still run ADL / concept
+    # lookup on the argument types so e.g. `t.one()` → `one(t)` can match a
+    # concept requirement without a real `one` in scope yet.
+    considerTypeboundOps(c, m, cs.fnName, cs.args, genericArgs, cs.hasNamedArgs)
   elif cs.fn.typ.typeKind == TypedescT and cs.args.len == 1:
     closeArgsScope c, cs
     semConvFromCall c, dest, it, cs
