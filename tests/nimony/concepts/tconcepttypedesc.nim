@@ -1,5 +1,3 @@
-import std/syncio
-
 type
   Foo = concept
     proc one(_: typedesc[Self]): Self

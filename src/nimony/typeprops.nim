@@ -683,15 +683,6 @@ proc conceptStmtsSlot*(body: Cursor): Cursor =
   result = conceptSelfSlot(body)
   skip result
 
-proc skipConceptHeader*(n: var Cursor) =
-  ## Skip `(concept . . Parents Self)` leaving `n` at `(stmts ...)`.
-  assert n.typeKind == ConceptT
-  inc n
-  skip n
-  skip n
-  skip n
-  skip n
-
 proc conceptExtends*(sub, sup: SymId): bool {.sideEffect.} =
   if sub == SymId(0) or sup == SymId(0):
     return false
@@ -713,13 +704,10 @@ proc collectConceptHierarchyBodiesImpl(body: Cursor; result: var seq[Cursor];
       visited.incl p
       collectConceptHierarchyBodiesImpl(getTypeSection(p).body, result, visited)
 
-proc collectConceptHierarchyBodies*(body: Cursor; result: var seq[Cursor]) {.sideEffect.} =
-  var visited = initHashSet[SymId]()
-  collectConceptHierarchyBodiesImpl(body, result, visited)
-
 iterator conceptHierarchyBodies*(body: Cursor): Cursor {.sideEffect.} =
   var bodies: seq[Cursor] = @[]
-  collectConceptHierarchyBodies(body, bodies)
+  var visited = initHashSet[SymId]()
+  collectConceptHierarchyBodiesImpl(body, bodies, visited)
   for b in bodies:
     yield b
 
