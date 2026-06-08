@@ -1,4 +1,4 @@
-import std/assertions
+import std/[assertions, sets]
 from std/strutils import startsWith
 include ".." / lib / nifprelude
 import nimony_model, decls, xints, semdata, programs, nifconfig
@@ -665,15 +665,9 @@ iterator conceptParentSyms*(parents: Cursor): SymId {.sideEffect.} =
   var p = parents
   if p.kind == DotToken:
     discard
-  elif p.typeKind == AndT:
-    p.into:
-      while p.hasMore:
-        if p.kind == Symbol:
-          yield p.symId
-        skip p
   elif p.kind == Symbol:
     yield p.symId
-  elif p.exprKind == ParX:
+  elif p.typeKind == AndT or p.exprKind == ParX:
     p.into:
       while p.hasMore:
         if p.kind == Symbol:
@@ -699,23 +693,12 @@ proc skipConceptHeader*(n: var Cursor) =
   skip n
   skip n
 
-proc conceptAncestorContains*(conceptSym, target: SymId): bool {.sideEffect.} =
-  if conceptSym == SymId(0) or target == SymId(0):
-    return false
-  if conceptSym == target:
-    return true
-  if not isConceptSym(conceptSym):
-    return false
-  let body = getTypeSection(conceptSym).body
-  for p in conceptParentSyms(conceptParentsSlot(body)):
-    if conceptAncestorContains(p, target):
-      return true
-  false
-
 proc conceptExtends*(sub, sup: SymId): bool {.sideEffect.} =
+  if sub == SymId(0) or sup == SymId(0):
+    return false
   if sub == sup:
     return true
-  if not isConceptSym(sub) or not isConceptSym(sup):
+  if not isConceptSym(sub):
     return false
   let body = getTypeSection(sub).body
   for p in conceptParentSyms(conceptParentsSlot(body)):
@@ -723,16 +706,34 @@ proc conceptExtends*(sub, sup: SymId): bool {.sideEffect.} =
       return true
   false
 
-proc collectConceptHierarchyBodies*(body: Cursor; result: var seq[Cursor]) {.sideEffect.} =
+proc collectConceptHierarchyBodiesImpl(body: Cursor; result: var seq[Cursor];
+                                      visited: var HashSet[SymId]) {.sideEffect.} =
   result.add body
   for p in conceptParentSyms(conceptParentsSlot(body)):
-    collectConceptHierarchyBodies(getTypeSection(p).body, result)
+    if p notin visited:
+      visited.incl p
+      collectConceptHierarchyBodiesImpl(getTypeSection(p).body, result, visited)
+
+proc collectConceptHierarchyBodies*(body: Cursor; result: var seq[Cursor]) {.sideEffect.} =
+  var visited = initHashSet[SymId]()
+  collectConceptHierarchyBodiesImpl(body, result, visited)
 
 iterator conceptHierarchyBodies*(body: Cursor): Cursor {.sideEffect.} =
   var bodies: seq[Cursor] = @[]
   collectConceptHierarchyBodies(body, bodies)
   for b in bodies:
     yield b
+
+iterator conceptHierarchyRoutines*(body: Cursor): (Cursor, Cursor) {.sideEffect.} =
+  ## Yields `(conceptBody, requirementRoutine)` from the hierarchy (deduplicated).
+  for cbody in conceptHierarchyBodies(body):
+    var ops = conceptStmtsSlot(cbody)
+    if ops.stmtKind == StmtsS:
+      ops.into StmtsS:
+        while ops.hasMore:
+          if ops.symKind in RoutineKinds:
+            yield (cbody, ops)
+          skip ops
 
 proc symNameId(s: SymId): StrId =
   var name = pool.syms[s]
@@ -780,10 +781,6 @@ proc sameTreesButIgnoreSymIds*(a, b: Cursor): bool =
     inc a
     inc b
   return false
-
-proc conceptRoutinesSameShape*(a, b: Cursor): bool =
-  ## Compare concept requirement routines, ignoring symbol ids (e.g. distinct `Self` syms).
-  sameTreesButIgnoreSymIds(a, b)
 
 when isMainModule:
   when false: # tests sum of products

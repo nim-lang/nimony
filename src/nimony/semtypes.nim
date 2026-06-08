@@ -185,7 +185,7 @@ proc semOneConceptParent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
   if not isConceptSym(ps):
     c.buildErr dest, info, "concept can only inherit from other concepts, got: " & typeToString(parentType)
     return
-  if ps == ownerSym or conceptAncestorContains(ps, ownerSym):
+  if ps == ownerSym or conceptExtends(ps, ownerSym):
     c.buildErr dest, info, "concept inheritance cycle detected"
     return
   for existing in parents:

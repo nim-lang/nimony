@@ -250,9 +250,6 @@ proc isEnumType*(n: Cursor): bool =
   else:
     result = false
 
-proc isConcept(s: SymId): bool =
-  isConceptSym(s)
-
 proc conceptRoutineBasename(routine: Cursor): StrId =
   var prc = routine
   assert prc.symKind in RoutineKinds
@@ -309,6 +306,7 @@ iterator visibleNamedSyms(c: ptr SemContext; basename: StrId): SymId {.sideEffec
           yield defId
 
 proc matchConceptRoutineSig(m: var Match; conceptR, implR: Cursor): bool
+proc matchConceptSym(m: var Match; conceptSym: SymId; a: Cursor): bool
 proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; routine: Cursor; a: Cursor): bool
 proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): bool
 
@@ -340,10 +338,7 @@ proc matchSymbolConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   # check if symbol has typeclass behavior:
   if typeImpl.kind == TypeY:
     if typeImpl.body.typeKind == ConceptT:
-      if a.kind == Symbol and isConceptSym(a.symId):
-        if conceptExtends(a.symId, fs):
-          return true
-      return matchConceptBody(m, fs, typeImpl.body, a)
+      return matchConceptSym(m, fs, a)
     if typeImpl.typevars.substructureKind == TypevarsU:
       # matching generic base symbol, acts as typeclass
       # XXX does not consider inheritance
@@ -610,18 +605,16 @@ iterator conceptRoutineCandidates(m: var Match; conceptSym: SymId; basename: Str
 
 proc conceptRequirementInBody(routine: Cursor; actualBody: Cursor): bool =
   let basename = conceptRoutineBasename(routine)
-  for abody in conceptHierarchyBodies(actualBody):
-    var ops = conceptStmtsSlot(abody)
-    if ops.stmtKind != StmtsS:
-      continue
-    ops.into StmtsS:
-      while ops.hasMore:
-        if ops.symKind in RoutineKinds:
-          if conceptRoutineBasename(ops) == basename:
-            if conceptRoutinesSameShape(routine, ops):
-              return true
-        skip ops
+  for _, req in conceptHierarchyRoutines(actualBody):
+    if conceptRoutineBasename(req) == basename and sameTreesButIgnoreSymIds(routine, req):
+      return true
   false
+
+proc matchConceptSym(m: var Match; conceptSym: SymId; a: Cursor): bool =
+  if a.kind == Symbol and isConceptSym(a.symId):
+    if conceptExtends(a.symId, conceptSym):
+      return true
+  matchConceptBody(m, conceptSym, getTypeSection(conceptSym).body, a)
 
 proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; routine: Cursor; a: Cursor): bool =
   if m.context == nil:
@@ -656,28 +649,20 @@ proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; rout
 
 proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): bool =
   let actualIsConcept = a.kind == Symbol and isConceptSym(a.symId)
-  if conceptHasParents(conceptParentsSlot(body)):
-    for parent in conceptParentSyms(conceptParentsSlot(body)):
-      var parentCur = createTokenBuf(4)
-      parentCur.add symToken(parent, NoLineInfo)
-      var pc = beginRead(parentCur)
-      if not matchSymbolConstraint(m, pc, a):
+  let parents = conceptParentsSlot(body)
+  let hasParents = conceptHasParents(parents)
+  if hasParents:
+    for parent in conceptParentSyms(parents):
+      if not matchConceptSym(m, parent, a):
         return false
   # Until concrete-type requirement matching is complete, standalone concepts
   # match any concrete type (legacy stub behaviour). Concept-to-concept
   # subsumption always checks requirements structurally.
-  if not actualIsConcept and not conceptHasParents(conceptParentsSlot(body)):
+  if not actualIsConcept and not hasParents:
     return true
-  for cbody in conceptHierarchyBodies(body):
-    var ops = conceptStmtsSlot(cbody)
-    if ops.stmtKind != StmtsS:
-      continue
-    ops.into StmtsS:
-      while ops.hasMore:
-        if ops.symKind in RoutineKinds:
-          if not conceptRoutineAvailable(m, conceptSym, cbody, ops, a):
-            return false
-        skip ops
+  for cbody, routine in conceptHierarchyRoutines(body):
+    if not conceptRoutineAvailable(m, conceptSym, cbody, routine, a):
+      return false
   true
 
 proc isTypevar(s: SymId): bool =
@@ -1163,12 +1148,10 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
   elif isObjectType(fs):
     var f = f
     matchObjectTypes m, f, a, NoType
-  elif isConcept(fs):
-    if a.kind == Symbol and isConceptSym(a.symId):
-      if not conceptExtends(a.symId, fs) and
-         not matchConceptBody(m, fs, getTypeSection(fs).body, a):
-        m.error InvalidMatch, f, a
-    elif not matchConceptBody(m, fs, getTypeSection(fs).body, a):
+  elif isConceptSym(fs):
+    let fBody = getTypeSection(fs).body
+    if not (a.kind == Symbol and isConceptSym(a.symId) and conceptExtends(a.symId, fs)) and
+       not matchConceptBody(m, fs, fBody, a):
       m.error InvalidMatch, f, a
   else:
     # fast check that works for aliases too:

@@ -194,27 +194,17 @@ iterator findConceptsInConstraint(typ: Cursor): Cursor {.sideEffect.} =
 
 proc conceptMethodAlreadyListed(cands: FnCandidates; routine: Cursor): bool =
   for existing in cands.a:
-    if existing.fromConcept and conceptRoutinesSameShape(existing.typ, routine):
+    if existing.fromConcept and sameTreesButIgnoreSymIds(existing.typ, routine):
       return true
   false
 
 proc collectConceptMethods(c: var SemContext; fn: StrId; concpt: Cursor; cands: var FnCandidates) =
-  for body in conceptHierarchyBodies(concpt):
-    var ops = body
-    assert ops.typeKind == ConceptT
-    skipConceptHeader ops
-    if ops.stmtKind == StmtsS:
-      ops.into StmtsS:
-        while ops.hasMore:
-          let sk = ops.symKind
-          if sk in RoutineKinds:
-            var prc = ops
-            inc prc
-            if prc.kind == SymbolDef and sameIdent(prc.symId, fn):
-              var d = ops
-              if not conceptMethodAlreadyListed(cands, d):
-                cands.addUnique FnCandidate(kind: sk, sym: prc.symId, typ: d, fromConcept: true)
-          skip ops
+  for _, routine in conceptHierarchyRoutines(concpt):
+    var prc = routine
+    inc prc
+    if prc.kind == SymbolDef and sameIdent(prc.symId, fn):
+      if not conceptMethodAlreadyListed(cands, routine):
+        cands.addUnique FnCandidate(kind: routine.symKind, sym: prc.symId, typ: routine, fromConcept: true)
 
 proc maybeAddConceptMethods(c: var SemContext; fn: StrId; typevar: SymId; cands: var FnCandidates) =
   let res = tryLoadSym(typevar)
