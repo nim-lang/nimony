@@ -795,7 +795,10 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
           c.impls.add always(symId)
       inc pc
     of SymbolDef:
-      bug "symbol definition in expression"
+      # SymbolDef can appear inside type expressions embedded in expressions
+      # (e.g., `proc(x: int)` within `seq[proc(x: int)]` in `@[]`). The NJVL
+      # converter passes them through; simply skip them here.
+      inc pc
     of EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit, UnknownToken:
       inc pc
     of ParRi:
