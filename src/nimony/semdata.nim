@@ -239,7 +239,13 @@ proc typeToCanon*(buf: TokenBuf; start: int): string =
     of UnknownToken: result.add " unknown"
     of EofToken: result.add " eof"
     of DotToken: result.add '.'
-    of Symbol, SymbolDef:
+    of SymbolDef:
+      # Param names inside proctypes get fresh symIds per declaration,
+      # but param names do not affect type identity. Use a fixed marker
+      # so that e.g. two `seq[proc(x: int)]` type trees produce the same
+      # canonical key regardless of the internal symId allocation for `x`.
+      result.add " !symdef"
+    of Symbol:
       # An instantiated sym like `seq.0.Iabc.modA` has its module suffix
       # appended at *creation* time, so the same logical instantiation
       # `seq[Foo]` can appear as `seq.0.Iabc.modA` or `seq.0.Iabc.modB`

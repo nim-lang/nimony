@@ -760,11 +760,24 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
     of ExprX:
       let orig = n
       inc n # tag
-      result = eval(c, n)
-      if n.kind == ParRi:
-        inc n
+      var foldable = true
+      while n.stmtKind == StmtsS:
+        var inner = n
+        inc inner
+        if inner.kind == ParRi:   # empty `(stmts)` → skip it
+          skip n
+        else:
+          foldable = false
+          break
+      if foldable and n.kind != ParRi:
+        result = propagateError eval(c, n)   # the trailing value
+        if n.kind == ParRi:
+          inc n
+        else:
+          foldable = false
       else:
-        # was not a trivial ExprX, so we could not evaluate it
+        foldable = false
+      if not foldable:
         cannotEval orig
     of NegX:
       evalUnOp(c, n, `-`)

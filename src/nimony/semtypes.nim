@@ -948,7 +948,13 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
           for _ in 0..3:
             if n.kind == DotToken: inc n
       else:
-        wantDot c, dest, n # name
+        # ProcT/IteratorT decls from semProcImpl carry a SymbolDef for the name
+        # slot, not a DotToken. Skip it and emit a placeholder DotToken.
+        if n.kind == SymbolDef:
+          dest.addDotToken()
+          inc n
+        else:
+          wantDot c, dest, n # name
         wantDot c, dest, n # export marker
         wantDot c, dest, n # pattern
         wantDot c, dest, n # generics
@@ -978,7 +984,7 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         if n.kind == ParRi:
           dest.addDotToken()
         else:
-          wantDot c, dest, n # body
+          skip n # body
       # close it here so that pragmas like `requires` can refer to the params:
       c.closeScope()
       if hasNilSuffix:
