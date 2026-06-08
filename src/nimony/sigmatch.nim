@@ -984,46 +984,21 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
         else:
           singleArgImpl(m, impl, arg)
 
-proc numericTypeBits(context: ptr SemContext; t: Cursor): int =
-  var c = skipModifier(t)
-  if c.typeKind == RangetypeT:
-    inc c
-  if c.typeKind in {IntT, UIntT, FloatT} and c.kind == ParLe:
-    inc c
-    if c.kind == IntLit or c.kind == InlineInt:
-      result = typebits(context.g.config, c.load)
-    else:
-      result = -1
-  else:
-    result = -1
+proc isPlatformNumeric(context: ptr SemContext; kind: TypeKind; bits: Cursor): bool =
+  let plat = case kind
+  of IntT: context.types.intType
+  of UIntT: context.types.uintType
+  of FloatT: context.types.floatType
+  else: return false
+  var p = plat
+  inc p
+  cmpTypeBits(context, bits, p) == 0
 
-proc platformIntegralBits(context: ptr SemContext; unsigned: bool): int =
-  if unsigned:
-    numericTypeBits(context, context.types.uintType)
-  else:
-    numericTypeBits(context, context.types.intType)
-
-proc platformFloatBits(context: ptr SemContext): int =
-  numericTypeBits(context, context.types.floatType)
-
-proc incNumericWidenCost(m: var Match; forig: Cursor) =
-  let bits = numericTypeBits(m.context, forig)
-  case forig.typeKind
-  of FloatT:
-    if bits >= 0 and bits == platformFloatBits(m.context):
-      inc m.intConvCosts
-    else:
-      inc m.convCosts
-  of IntT:
-    if bits >= 0 and bits == platformIntegralBits(m.context, false):
-      inc m.intConvCosts
-    else:
-      inc m.convCosts
-  of UIntT:
-    if bits >= 0 and bits == platformIntegralBits(m.context, true):
-      inc m.intConvCosts
-    else:
-      inc m.convCosts
+proc incIntegralWidenCost(m: var Match; kind: TypeKind; bits: Cursor; intLit = false) =
+  if isPlatformNumeric(m.context, kind, bits):
+    inc m.intConvCosts
+  elif intLit and kind in {IntT, UIntT}:
+    inc m.intLitCosts
   else:
     inc m.convCosts
 
@@ -1068,16 +1043,7 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
     else:
       m.args.addParLe HconvX, m.argInfo
       m.args.addSubtree forig
-      if isIntLit:
-        if forig.typeKind == FloatT:
-          incNumericWidenCost m, forig
-        elif numericTypeBits(m.context, forig) ==
-            platformIntegralBits(m.context, forig.typeKind == UIntT):
-          inc m.intConvCosts
-        else:
-          inc m.intLitCosts
-      else:
-        incNumericWidenCost m, forig
+      incIntegralWidenCost m, forig.typeKind, f, isIntLit
       inc m.opened
   else:
     m.error InvalidMatch, f, a
