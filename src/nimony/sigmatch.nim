@@ -75,6 +75,7 @@ type
     firstVarargPosition*: int
     varargsEndPosition*: int
     genericConverter*, refineArgType*, insertedParam*: bool
+    conceptRoutineSigMatch*: bool
 
 proc createMatch*(context: ptr SemContext): Match =
   Match(context: context, firstVarargPosition: -1, varargsEndPosition: -1)
@@ -566,6 +567,8 @@ proc skipTypeSourceAnnot(n: var Cursor) =
 proc conceptReturnTypesMatch(m: var Match; cRet, aRet: Cursor): bool =
   var c = cRet
   var a = aRet
+  if m.conceptRoutineSigMatch and tryLinearMatch(m, c, a):
+    return true
   if matchesConstraint(m, c, a):
     return true
   if sameTrees(cRet, aRet, ignoreSymIds = true):
@@ -581,11 +584,14 @@ proc conceptReturnTypesMatch(m: var Match; cRet, aRet: Cursor): bool =
   false
 
 proc matchConceptRoutineSig(m: var Match; conceptR, implR: Cursor): bool =
+  let oldConceptRoutineSigMatch = m.conceptRoutineSigMatch
+  m.conceptRoutineSigMatch = true
   var cf = conceptR
   var ca = implR
   skipToParams cf
   skipToParams ca
   if cf.substructureKind != ParamsU or ca.substructureKind != ParamsU:
+    m.conceptRoutineSigMatch = oldConceptRoutineSigMatch
     return false
   cf.into ParamsU:
     ca.into ParamsU:
@@ -594,12 +600,15 @@ proc matchConceptRoutineSig(m: var Match; conceptR, implR: Cursor): bool =
         let aTyp = takeLocal(ca, SkipFinalParRi).typ
         var cTypMatch = cTyp
         if not matchesConstraint(m, cTypMatch, aTyp):
+          m.conceptRoutineSigMatch = oldConceptRoutineSigMatch
           return false
       if cf.hasMore:
+        m.conceptRoutineSigMatch = oldConceptRoutineSigMatch
         return false
       while ca.hasMore:
         let extra = takeLocal(ca, SkipFinalParRi)
         if extra.val.kind == DotToken:
+          m.conceptRoutineSigMatch = oldConceptRoutineSigMatch
           return false
   var cRet = conceptR
   var aRet = implR
@@ -607,7 +616,8 @@ proc matchConceptRoutineSig(m: var Match; conceptR, implR: Cursor): bool =
   skip cRet, AnyType
   skipToParams aRet
   skip aRet, AnyType
-  conceptReturnTypesMatch(m, cRet, aRet)
+  result = conceptReturnTypesMatch(m, cRet, aRet)
+  m.conceptRoutineSigMatch = oldConceptRoutineSigMatch
 
 iterator conceptRoutineCandidates(m: var Match; conceptSym: SymId; basename: StrId): SymId {.sideEffect.} =
   var seen = initHashSet[SymId]()
@@ -665,13 +675,24 @@ proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; rout
       savedSelf.add (selfSym, m.inferred.getOrDefault(selfSym, default(Cursor)))
     m.inferred[selfSym] = a
   let basename = conceptRoutineBasename(routine)
+  let inferenceBase = m.inferred
   for cand in conceptRoutineCandidates(m, conceptSym, basename):
     let res = tryLoadSym(cand)
     if res.status != LacksNothing:
       continue
     if res.decl.symKind notin RoutineKinds:
       continue
-    if matchConceptRoutineSig(m, routine, res.decl):
+    m.inferred = inferenceBase
+    for selfSym in selfSyms:
+      m.inferred[selfSym] = a
+    let oldErr = m.err
+    let oldHasError = m.hasError
+    m.err = false
+    m.hasError = false
+    let sigMatch = matchConceptRoutineSig(m, routine, res.decl)
+    m.err = oldErr
+    m.hasError = oldHasError
+    if sigMatch:
       restoreConceptSelfInference(m, selfSyms, savedSelf)
       return true
   restoreConceptSelfInference(m, selfSyms, savedSelf)
@@ -801,6 +822,28 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
         m.inferred[fs] = a # NOTICE: Can introduce modifiers for a type var!
         inc f
         skip a
+      else:
+        m.error(ConstraintMismatch, f, a)
+        break
+    elif m.conceptRoutineSigMatch and a.kind == Symbol and isTypevar(a.symId):
+      let aSym = a.symId
+      if m.concreteMatch:
+        if matchesConstraint(m, aSym, f):
+          inc a
+          skip f
+        else:
+          m.error(ConstraintMismatch, f, a)
+          break
+      elif m.inferred.contains(aSym):
+        var prev = m.inferred.getOrQuit(aSym)
+        m.concreteMatch = true
+        linearMatch(m, f, prev, flags)
+        m.concreteMatch = false
+        inc a
+      elif matchesConstraint(m, aSym, f):
+        m.inferred[aSym] = f
+        skip f
+        inc a
       else:
         m.error(ConstraintMismatch, f, a)
         break
