@@ -447,6 +447,8 @@ proc genStmtLLVM(c: var LLVMCode; n: var Cursor) =
   of StmtsS:
     n.loopInto:
       genStmtLLVM(c, n)
+      if c.currentProc.needsTerminator:
+        while n.hasMore: skip n
   of ScopeS:
     genScopeLLVM c, n
   of CallS:
