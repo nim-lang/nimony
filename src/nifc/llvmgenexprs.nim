@@ -510,6 +510,25 @@ proc genAddrLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   # The lvalue is already a pointer
   result = LLValue(name: lval.name, typ: LToken(PtrToken))
 
+proc genFieldPtrLLVM(c: var LLVMCode; objBody: Cursor; fldSym: SymId;
+                     gepType, gepTarget: string): LToken =
+  ## Generate GEP to a field, using two-level GEP for union branch fields.
+  let access = fieldAccessLLVM(c, objBody, fldSym)
+  if access.isBranch:
+    let unionPtr = c.temp()
+    c.emitLine "  " & c.str(unionPtr) &
+        " = getelementptr inbounds " & gepType &
+        ", ptr " & gepTarget & ", i32 0, i32 " & $access.index
+    result = c.temp()
+    c.emitLine "  " & c.str(result) &
+        " = getelementptr inbounds " & access.branchType &
+        ", ptr " & c.str(unionPtr) & ", i32 0, i32 " & $access.branchIndex
+  else:
+    result = c.temp()
+    c.emitLine "  " & c.str(result) &
+        " = getelementptr inbounds " & gepType &
+        ", ptr " & gepTarget & ", i32 0, i32 " & $access.index
+
 proc genDotLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   ## Field access: (dot obj field inheritanceDepth?)
   var objType: Cursor
@@ -550,11 +569,7 @@ proc genDotLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       curBody = navigateToObjectBody(c.m, curType)
       gepType = genTypeLLVMReadOnly(c, curType)
 
-  # Look up the field index in the resolved object body
-  let fldIdx = fieldIndex(c, curBody, fldSym)
-
-  let t = c.temp()
-  c.emitLine "  " & c.str(t) & " = getelementptr inbounds " & gepType & ", ptr " & gepTarget & ", i32 0, i32 " & $fldIdx
+  let t = genFieldPtrLLVM(c, curBody, fldSym, gepType, gepTarget)
   result = LLValue(name: t, typ: LToken(PtrToken))
 
 proc genAtLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
@@ -1043,9 +1058,7 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
                 curType = baseTypeCursor
                 curBody = navigateToObjectBody(c.m, curType)
                 gepType = genTypeLLVMReadOnly(c, curType)
-            let fldIdx = fieldIndex(c, curBody, fldSym)
-            let fldPtr = c.temp()
-            c.emitLine "  " & c.str(fldPtr) & " = getelementptr inbounds " & gepType & ", ptr " & gepTarget & ", i32 0, i32 " & $fldIdx
+            let fldPtr = genFieldPtrLLVM(c, curBody, fldSym, gepType, gepTarget)
             c.emitLine "  store " & c.str(fieldVal.typ) & " " & c.str(fieldVal.name) & ", ptr " & c.str(fldPtr)
             while n.hasMore: skip n
         else:

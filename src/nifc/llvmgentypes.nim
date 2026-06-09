@@ -423,11 +423,18 @@ proc traverseTypesLLVM(m: var MainModule; o: var TypeOrderLLVM) =
     if not found:
       o.ordered.insert((fd, true), 0)
 
-proc collectUnionFieldsLLVM(c: var LLVMCode; n: Cursor; maxSizeBits: var int;
-                            maxAlignBits: var int) =
-  ## Recursively collect max size and alignment from union/object fields.
-  ## Follows traverseObjectBodyLLVM pattern: takes `n` by value, enters via
-  ## `n.into` internally, so the caller's cursor is not advanced.
+type
+  UnionCandidate = object
+    typ*: string        # LLVM type string of this member
+    sizeBits*: int
+    alignBits*: int
+
+proc genObjectBodyLLVM(c: var LLVMCode; n: var Cursor): string
+proc genUnionBodyLLVM(c: var LLVMCode; n: var Cursor): string
+
+proc collectUnionCandidates(c: var LLVMCode; n: Cursor;
+    candidates: var seq[UnionCandidate]) =
+  ## Collect LLVM type, size, and alignment for each union member.
   var nn = n
   nn.into:
     while nn.hasMore:
@@ -435,37 +442,58 @@ proc collectUnionFieldsLLVM(c: var LLVMCode; n: Cursor; maxSizeBits: var int;
         var decl = takeFieldDecl(nn)
         let sz = typeSizeBits(c, decl.typ)
         let al = typeAlignBits(c, decl.typ)
-        if sz > maxSizeBits: maxSizeBits = sz
-        if al > maxAlignBits: maxAlignBits = al
-      elif nn.typeKind in {ObjectT, UnionT}:
-        collectUnionFieldsLLVM(c, nn, maxSizeBits, maxAlignBits)
+        var t = decl.typ
+        candidates.add UnionCandidate(
+          typ: genTypeLLVM(c, t),
+          sizeBits: sz,
+          alignBits: al)
+      elif nn.typeKind == ObjectT:
+        var obj = nn
+        candidates.add UnionCandidate(
+          typ: genObjectBodyLLVM(c, obj),
+          sizeBits: typeSizeBits(c, nn),
+          alignBits: typeAlignBits(c, nn))
+        skip nn
+      elif nn.typeKind == UnionT:
+        var u = nn
+        candidates.add UnionCandidate(
+          typ: genUnionBodyLLVM(c, u),
+          sizeBits: typeSizeBits(c, nn),
+          alignBits: typeAlignBits(c, nn))
         skip nn
       else:
         skip nn
 
 proc genUnionBodyLLVM(c: var LLVMCode; n: var Cursor): string =
-  ## Generate LLVM type for a union: a byte array sized to the largest member,
-  ## with alignment matching the most-aligned member.
-  var maxSizeBits = 0
-  var maxAlignBits = 8
-  collectUnionFieldsLLVM(c, n, maxSizeBits, maxAlignBits)
+  ## Generate LLVM type for a union using a representative member type
+  ## (max alignment; ties broken by max size) with padding to union ABI size.
+  var candidates: seq[UnionCandidate] = @[]
+  collectUnionCandidates(c, n, candidates)
   skip n
-  let sizeBytes = (maxSizeBits + 7) div 8
-  let alignBytes = maxAlignBits div 8
-  if sizeBytes == 0:
-    result = "{ }"
-  elif alignBytes <= 1:
+  if candidates.len == 0:
+    return "{ }"
+  # Compute max size + max align across all candidates
+  var maxSize = candidates[0].sizeBits
+  var maxAlign = candidates[0].alignBits
+  var repIdx = 0
+  for i in 1 ..< candidates.len:
+    if candidates[i].sizeBits > maxSize: maxSize = candidates[i].sizeBits
+    if candidates[i].alignBits > maxAlign: maxAlign = candidates[i].alignBits
+    if candidates[i].alignBits > candidates[repIdx].alignBits or
+       (candidates[i].alignBits == candidates[repIdx].alignBits and
+        candidates[i].sizeBits > candidates[repIdx].sizeBits):
+      repIdx = i
+  let sizeBytes = (maxSize + 7) div 8
+  let alignBytes = maxAlign div 8
+  let repSizeBytes = (candidates[repIdx].sizeBits + 7) div 8
+  if alignBytes <= 1:
     result = "{ [" & $sizeBytes & " x i8] }"
   else:
-    # Use an aligned integer as first element to force alignment,
-    # then fill the remainder with i8.
-    let alignType = "i" & $maxAlignBits
-    let alignTypeBytes = alignBytes
-    let remainBytes = sizeBytes - alignTypeBytes
-    if remainBytes <= 0:
-      result = "{ " & alignType & " }"
+    let paddingBytes = sizeBytes - repSizeBytes
+    if paddingBytes <= 0:
+      result = "{ " & candidates[repIdx].typ & " }"
     else:
-      result = "{ " & alignType & ", [" & $remainBytes & " x i8] }"
+      result = "{ " & candidates[repIdx].typ & ", [" & $paddingBytes & " x i8] }"
 
 proc flushBitfieldAccum(fields: var seq[string]; bitfieldAccum: var int64) =
   ## Emit the accumulated bitfield group as an integer field and reset.
@@ -522,9 +550,7 @@ proc addObjectFieldsLLVM(c: var LLVMCode; n: var Cursor; fields: var seq[string]
       elif n.typeKind == UnionT:
         flushBitfieldAccum(fields, bitfieldAccum)
         bitfieldUnit = 0
-        var unionCur = n
-        fields.add genUnionBodyLLVM(c, unionCur)
-        addObjectFieldsLLVM(c, n, fields, bitfieldAccum, bitfieldUnit)
+        fields.add genUnionBodyLLVM(c, n)
       elif n.typeKind == ObjectT:
         flushBitfieldAccum(fields, bitfieldAccum)
         bitfieldUnit = 0
@@ -545,19 +571,27 @@ proc genObjectBodyLLVM(c: var LLVMCode; n: var Cursor): string =
   flushBitfieldAccum(fields, bitfieldAccum)
   result = "{ " & fields.join(", ") & " }"
 
+type
+  FieldAccess* = object
+    isBranch*: bool
+    index*: int
+    branchType*: string
+    branchIndex*: int
+
 proc searchFieldIdx(c: var LLVMCode; body: var Cursor; fldSym: SymId;
-                    fieldIdx: var int; bitfieldAccum: var int64;
+                    access: var FieldAccess; bitfieldAccum: var int64;
                     bitfieldUnit: var int): bool =
   ## Recursively search for `fldSym` in an Object/Union body, updating
-  ## `fieldIdx` to match the flat LLVM struct index. Returns true if found.
-  ## Uses `n.into` for scope management at each nesting level.
+  ## `access.index` to match the flat LLVM struct index, and setting
+  ## `access.isBranch` + branch info for fields inside union branches.
+  ## Returns true if found.
   let kind = body.typeKind
   result = false
   body.into:
     if kind == ObjectT:
       if body.kind == Symbol:
         inc body
-        fieldIdx = 1
+        access.index = 1
       elif body.kind == DotToken:
         inc body
     while body.hasMore and not result:
@@ -569,7 +603,7 @@ proc searchFieldIdx(c: var LLVMCode; body: var Cursor; fldSym: SymId;
           if bitfieldUnit == 0:
             bitfieldUnit = unitBits
           if unitBits != bitfieldUnit or bitfieldAccum + bits > bitfieldUnit:
-            if bitfieldAccum > 0: inc fieldIdx
+            if bitfieldAccum > 0: inc access.index
             bitfieldAccum = 0
             bitfieldUnit = unitBits
           if decl.name.kind == SymbolDef and decl.name.symId == fldSym:
@@ -577,18 +611,18 @@ proc searchFieldIdx(c: var LLVMCode; body: var Cursor; fldSym: SymId;
           bitfieldAccum += bits
         else:
           if bitfieldAccum > 0:
-            inc fieldIdx
+            inc access.index
             bitfieldAccum = 0
             bitfieldUnit = 0
           if decl.name.kind == SymbolDef and decl.name.symId == fldSym:
             return true
-          inc fieldIdx
+          inc access.index
       elif body.typeKind == UnionT:
         if bitfieldAccum > 0:
-          inc fieldIdx
+          inc access.index
           bitfieldAccum = 0
           bitfieldUnit = 0
-        let unionIdx = fieldIdx
+        let unionIdx = access.index
         var unionBody = body
         skip unionBody
         var search = body
@@ -597,21 +631,32 @@ proc searchFieldIdx(c: var LLVMCode; body: var Cursor; fldSym: SymId;
           if search.substructureKind == FldU:
             let fdecl = takeFieldDecl(search)
             if fdecl.name.kind == SymbolDef and fdecl.name.symId == fldSym:
-              fieldIdx = unionIdx
+              access.index = unionIdx
+              var ft = fdecl.typ
+              access = FieldAccess(isBranch: true, index: unionIdx,
+                  branchType: "{ " & genTypeLLVM(c, ft) & " }",
+                  branchIndex: 0)
               return true
           elif search.typeKind == ObjectT:
-            inc search
-            inc search
+            var branchCur = search
+            let brType = genObjectBodyLLVM(c, branchCur)
+            var innerAccess = FieldAccess()
+            var brBfAccum = 0'i64
+            var brBfUnit = 0
+            if searchFieldIdx(c, search, fldSym, innerAccess, brBfAccum, brBfUnit):
+              access = FieldAccess(isBranch: true, index: unionIdx,
+                  branchType: brType, branchIndex: innerAccess.index)
+              return true
           else:
             skip search
         body = unionBody
-        inc fieldIdx
+        inc access.index
       elif body.typeKind == ObjectT:
         if bitfieldAccum > 0:
-          inc fieldIdx
+          inc access.index
           bitfieldAccum = 0
           bitfieldUnit = 0
-        if searchFieldIdx(c, body, fldSym, fieldIdx, bitfieldAccum, bitfieldUnit):
+        if searchFieldIdx(c, body, fldSym, access, bitfieldAccum, bitfieldUnit):
           return true
       else:
         skip body
@@ -627,7 +672,24 @@ proc fieldIndex(c: var LLVMCode; objBody: Cursor; fldSym: SymId): int =
   var body = objBody
   var bitfieldAccum = 0'i64
   var bitfieldUnit = 0
-  discard searchFieldIdx(c, body, fldSym, result, bitfieldAccum, bitfieldUnit)
+  var access = FieldAccess()
+  discard searchFieldIdx(c, body, fldSym, access, bitfieldAccum, bitfieldUnit)
+  result = access.index
+
+proc fieldAccessLLVM(c: var LLVMCode; objBody: Cursor; fldSym: SymId): FieldAccess =
+  ## Look up field access info for `fldSym` in object body `objBody`.
+  ## Returns `FieldAccess` with `isBranch = true` for fields inside union
+  ## branches, requiring two-level GEP.
+  ## Named union: all fields are at index 0 (single-level GEP).
+  if objBody.typeKind == UnionT:
+    result = FieldAccess(index: 0)
+    return result
+  var body = objBody
+  var bitfieldAccum = 0'i64
+  var bitfieldUnit = 0
+  result = FieldAccess()
+  discard searchFieldIdx(c, body, fldSym, result, bitfieldAccum,
+                         bitfieldUnit)
 
 proc genTypeDefLLVM(c: var LLVMCode; body: var Cursor; name: string;
                     packed: bool): string =
@@ -707,7 +769,10 @@ proc collectStructFieldTypes(c: var LLVMCode; body: var Cursor; tokSeq: var seq[
         flushBf()
         var t = fdecl.typ
         tokSeq.add c.tok(genTypeLLVM(c, t))
-    elif body.typeKind in {ObjectT, UnionT}:
+    elif body.typeKind == UnionT:
+      flushBf()
+      tokSeq.add c.tok(genUnionBodyLLVM(c, body))
+    elif body.typeKind == ObjectT:
       flushBf()
       body.into:
         collectStructFieldTypes(c, body, tokSeq, bitfieldAccum, bitfieldUnit)
