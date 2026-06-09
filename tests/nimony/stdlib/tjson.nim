@@ -106,6 +106,20 @@ proc main() =
     check kind(t.root), JObject
     check hasError(t), true
 
+  block int_out_of_range:
+    # Integers outside int64 must not abort the parse (libclang/opir emit C's
+    # UINT64_MAX etc.); they fall back to a float atom instead.
+    var hi = parseJson("[9223372036854775807]")    # int64.high
+    for v in items(hi.root): check kind(v), JInt
+    var lo = parseJson("[-9223372036854775808]")   # int64.low
+    for v in items(lo.root): check kind(v), JInt
+    var over = parseJson("[9223372036854775808]")  # int64.high + 1
+    for v in items(over.root): check kind(v), JFloat
+    var under = parseJson("[-9223372036854775809]")# int64.low - 1
+    for v in items(under.root): check kind(v), JFloat
+    var umax = parseJson("[18446744073709551615]") # uint64.max
+    for v in items(umax.root): check kind(v), JFloat
+
   echo "json self-tests passed"
 
 main()

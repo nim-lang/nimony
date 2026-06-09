@@ -218,14 +218,43 @@ proc parseArray(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: Fi
     emitError(p, t, mode, file, errBracketRiExpected)    # mark truncation in-tree
   t.buf.closeTag()
 
+proc fitsInt64(s: string): bool =
+  ## True if the decimal integer literal `s` is representable as `int64`.
+  ## JSON forbids leading zeros, so a pure digit-count + overflow-guarded
+  ## accumulation is exact. Used to fall back to a float for out-of-range
+  ## integers (e.g. C's `UINT64_MAX` in libclang/opir output) instead of
+  ## aborting the whole parse.
+  var i = 0
+  var neg = false
+  if i < s.len and (s[i] == '-' or s[i] == '+'):
+    neg = s[i] == '-'; inc i
+  var acc: uint64 = 0
+  let limit = if neg: uint64(high(int64)) + 1'u64 else: uint64(high(int64))
+  while i < s.len:
+    let c = s[i]
+    if c < '0' or c > '9': return true   # non-digit: leave to the int parser
+    let d = uint64(ord(c) - ord('0'))
+    if acc > (limit - d) div 10'u64: return false
+    acc = acc * 10'u64 + d
+    inc i
+  return true
+
 proc parseValue(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: FileId) =
   case p.tok
   of tkString:
     t.buf.addStrLit p.a; emitInfo(p, t, mode, file); discard getTok(p)
   of tkInt:
-    var v: BiggestInt = 0
-    discard parseBiggestInt(p.a, v)
-    t.buf.addIntLit int64(v); emitInfo(p, t, mode, file); discard getTok(p)
+    if fitsInt64(p.a):
+      var v: BiggestInt = 0
+      discard parseBiggestInt(p.a, v)
+      t.buf.addIntLit int64(v)
+    else:
+      # Out-of-range for int64 (e.g. UINT64_MAX): store as float rather than
+      # abort. Lossy for magnitudes > 2^53, but never aborts the parse.
+      var f: BiggestFloat = 0.0
+      discard parseBiggestFloat(p.a, f)
+      t.buf.addFloatLit float64(f)
+    emitInfo(p, t, mode, file); discard getTok(p)
   of tkFloat:
     var v: BiggestFloat = 0.0
     discard parseBiggestFloat(p.a, v)
