@@ -1172,23 +1172,27 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       inc c.currentProc.labelCounter
   of LoopV:
     if containsSuspensionPoint(c, n):
+      var beforeLoopState = c.currentProc.labelCounter
+      inc c.currentProc.labelCounter
+      var afterLoopState = c.currentProc.labelCounter
+      inc c.currentProc.labelCounter
       n.into:                                       # (loop ...)
         assert n.stmtKind == StmtsS
+        var preludeBuf = createTokenBuf(16)
         n.into:                                     # stmts_before
-          while n.hasMore:
-            dest.takeTree n # copy all mflags, it will be handled later
-        var beforeLoopState = c.currentProc.labelCounter
-        inc c.currentProc.labelCounter
-        var afterLoopState = c.currentProc.labelCounter
-        inc c.currentProc.labelCounter
+          while n.hasMore and n.njvlKind in {MflagV, VflagV}:
+            dest.takeTree n                         # flag decls: once, above the loop
+          while n.hasMore:                          # rotated prelude: lowered, spliced below
+            trGoto c, preludeBuf, n
         emitJump dest, beforeLoopState, info
         emitLabel dest, beforeLoopState, info
-        dest.copyIntoKind IfS, info:
+        dest.copyIntoKind IfS, info:                # loop-continue test (cond first)
           dest.copyIntoKind ElifU, info:
             dest.copyIntoKind NotX, info:
               dest.takeTree n
             dest.copyIntoKind StmtsS, info:
               emitJump dest, afterLoopState, info
+        dest.add preludeBuf                         # prelude: each iteration, after the test
         assert n.stmtKind == StmtsS
         n.into:                                     # stmts_body
           while n.hasMore:
