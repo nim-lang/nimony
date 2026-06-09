@@ -8,3 +8,12 @@ type
 
 template getTwo[T: Foo](t: typedesc[T]): T =
   t.one() + one(t)
+
+# must work in inherited concepts as well
+
+type
+  Bar = concept of Foo
+    proc `-`(a, b: Self): Self
+
+template getZero[T: Bar](t: typedesc[T]): T =
+  t.one() - one(t)

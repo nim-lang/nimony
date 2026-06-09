@@ -1,7 +1,6 @@
 import std/syncio
 
-type
-  Foo = concept
+type Foo = concept
     proc one(_: typedesc[Self]): Self
     proc `+`(a, b: Self): Self
 
@@ -31,3 +30,14 @@ func addOne[T: Foo](a: T): T =
 
 echo 3.addOne()
 echo addOne(3)
+
+# must work in inherited concepts as well
+
+type Bar = concept of Foo
+  proc `-`(a, b: Self): Self
+
+template getZero[T: Bar](t: typedesc[T]): T =
+  t.one() - one(t)
+
+echo int.getZero()
+echo getZero(int)

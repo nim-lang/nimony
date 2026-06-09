@@ -259,27 +259,34 @@ proc conceptRoutineBasename(routine: Cursor): StrId =
   extractBasename(name)
   pool.strings.getOrIncl(name)
 
-proc selfSymInConcept(body: Cursor): SymId =
-  ## The `Self` slot in the concept header and the `Self` referenced in
-  ## requirement signatures can be different syms after sema; prefer the
-  ## one used in the requirements since that is what matching must bind.
-  var ops = conceptStmtsSlot(body)
-  if ops.stmtKind == StmtsS:
-    ops.into StmtsS:
-      while ops.hasMore:
-        if ops.symKind in RoutineKinds:
-          var prc = ops
-          skipToParams prc
-          if prc.substructureKind == ParamsU:
-            prc.into ParamsU:
-              if prc.hasMore:
-                let param = takeLocal(prc, SkipFinalParRi)
-                if param.typ.kind == Symbol:
-                  let s = param.typ.symId
-                  let res = tryLoadSym(s)
-                  if res.status == LacksNothing and res.decl.symKind == TypevarY:
-                    return s
-        skip ops
+proc collectSelfSymsInType(typ: Cursor; result: var seq[SymId]) =
+  ## Collect every `Self` typevar referenced inside a type tree.
+  var typ = typ
+  var nested = 0
+  while nested >= 0:
+    case typ.kind
+    of Symbol:
+      let res = tryLoadSym(typ.symId)
+      if res.status == LacksNothing and res.decl.symKind == TypevarY:
+        if typ.symId notin result:
+          result.add typ.symId
+      inc typ
+      if nested == 0:
+        return
+    of ParLe:
+      inc nested
+      inc typ
+    of ParRi:
+      dec nested
+      inc typ
+      if nested == 0:
+        return
+    else:
+      inc typ
+      if nested == 0:
+        return
+
+proc conceptSelfSymFromSlot(body: Cursor): SymId =
   let selfSlot = conceptSelfSlot(body)
   if selfSlot.symKind != TypevarY:
     return SymId(0)
@@ -289,6 +296,25 @@ proc selfSymInConcept(body: Cursor): SymId =
     s.symId
   else:
     SymId(0)
+
+proc conceptSelfSyms(body: Cursor; routine: Cursor): seq[SymId] =
+  ## The `Self` slot in the concept header and the `Self` referenced in
+  ## requirement signatures can be different syms after sema; bind them all.
+  result = @[]
+  var prc = routine
+  skipToParams prc
+  if prc.substructureKind == ParamsU:
+    prc.into ParamsU:
+      while prc.hasMore:
+        let param = takeLocal(prc, SkipFinalParRi)
+        collectSelfSymsInType(param.typ, result)
+  var ret = routine
+  skipToParams ret
+  skip ret, AnyType
+  collectSelfSymsInType(ret, result)
+  let headerSelf = conceptSelfSymFromSlot(body)
+  if headerSelf != SymId(0) and headerSelf notin result:
+    result.add headerSelf
 
 iterator visibleNamedSyms(c: ptr SemContext; basename: StrId): SymId {.sideEffect.} =
   let ignoreStyle = IgnoreStyleFeature in c.features
@@ -591,16 +617,16 @@ iterator conceptRoutineCandidates(m: var Match; conceptSym: SymId; basename: Str
       let modSuffix = extractModule(pool.syms[conceptSym])
       if modSuffix != "":
         for cand in loadSyms(modSuffix, basename):
-          if seen.containsOrIncl(cand):
+          if not seen.containsOrIncl(cand):
             yield cand
       for moduleId, im in m.context.importedModules:
         discard moduleId
         for k in stylesOfIface(im.iface, basename, ignoreStyle):
           for defId in im.iface.getOrDefault(k):
-            if seen.containsOrIncl(defId):
+            if not seen.containsOrIncl(defId):
               yield defId
     for cand in visibleNamedSyms(m.context, basename):
-      if seen.containsOrIncl(cand):
+      if not seen.containsOrIncl(cand):
         yield cand
 
 proc conceptRequirementInBody(routine: Cursor; actualBody: Cursor): bool =
@@ -616,36 +642,40 @@ proc matchConceptSym(m: var Match; conceptSym: SymId; a: Cursor): bool =
       return true
   matchConceptBody(m, conceptSym, getTypeSection(conceptSym).body, a)
 
+proc restoreConceptSelfInference(m: var Match; selfSyms: seq[SymId];
+                                 savedSelf: openArray[(SymId, Cursor)]) =
+  var restored = initHashSet[SymId]()
+  for entry in savedSelf:
+    let (selfSym, saved) = entry
+    m.inferred[selfSym] = saved
+    restored.incl selfSym
+  for selfSym in selfSyms:
+    if selfSym notin restored:
+      m.inferred.del(selfSym)
+
 proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; routine: Cursor; a: Cursor; actualBody: Cursor): bool =
   if m.context == nil:
     return true
   if isConceptType(a):
     return conceptRequirementInBody(routine, actualBody)
-  let selfSym = selfSymInConcept(body)
-  var savedSelf = default(Cursor)
-  var hadSelf = false
-  if selfSym != SymId(0):
-    hadSelf = m.inferred.hasKey(selfSym)
-    if hadSelf:
-      savedSelf = m.inferred.getOrQuit(selfSym)
+  let selfSyms = conceptSelfSyms(body, routine)
+  var savedSelf: seq[(SymId, Cursor)] = @[]
+  for selfSym in selfSyms:
+    if m.inferred.hasKey(selfSym):
+      savedSelf.add (selfSym, m.inferred.getOrDefault(selfSym, default(Cursor)))
     m.inferred[selfSym] = a
-  try:
-    let basename = conceptRoutineBasename(routine)
-    for cand in conceptRoutineCandidates(m, conceptSym, basename):
-      let res = tryLoadSym(cand)
-      if res.status != LacksNothing:
-        continue
-      if res.decl.symKind notin RoutineKinds:
-        continue
-      if matchConceptRoutineSig(m, routine, res.decl):
-        return true
-    false
-  finally:
-    if selfSym != SymId(0):
-      if hadSelf:
-        m.inferred[selfSym] = savedSelf
-      else:
-        m.inferred.del(selfSym)
+  let basename = conceptRoutineBasename(routine)
+  for cand in conceptRoutineCandidates(m, conceptSym, basename):
+    let res = tryLoadSym(cand)
+    if res.status != LacksNothing:
+      continue
+    if res.decl.symKind notin RoutineKinds:
+      continue
+    if matchConceptRoutineSig(m, routine, res.decl):
+      restoreConceptSelfInference(m, selfSyms, savedSelf)
+      return true
+  restoreConceptSelfInference(m, selfSyms, savedSelf)
+  false
 
 proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): bool =
   let actualIsConcept = isConceptType(a)
