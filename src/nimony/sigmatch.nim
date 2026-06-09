@@ -75,7 +75,6 @@ type
     firstVarargPosition*: int
     varargsEndPosition*: int
     genericConverter*, refineArgType*, insertedParam*: bool
-    conceptRoutineSigMatch*: bool
 
 proc createMatch*(context: ptr SemContext): Match =
   Match(context: context, firstVarargPosition: -1, varargsEndPosition: -1)
@@ -339,6 +338,9 @@ proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor):
 
 type LinearMatchFlag = enum
   ExactBits ## do not normalize bits
+  InferActualTypevar ## infer impl typevars from concrete concept types
+
+const ConstraintMatchFlags = {InferActualTypevar}
 
 proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {})
 
@@ -388,7 +390,7 @@ proc matchSymbolConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   f = fOrig
   var a = a
   # XXX this means conversions are not allowed, i.e. T: cstring cannot match "abc"
-  result = tryLinearMatch(m, f, a)
+  result = tryLinearMatch(m, f, a, ConstraintMatchFlags)
 
 proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
@@ -427,7 +429,7 @@ proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
     # match as a regular type:
     var a = a
     # XXX this means conversions are not allowed, i.e. T: cstring cannot match "abc"
-    result = tryLinearMatch(m, f, a)
+    result = tryLinearMatch(m, f, a, ConstraintMatchFlags)
 
 proc matchSingleConstraint(m: var Match; f: var Cursor; a: Cursor): bool {.inline.} =
   if f.kind == Symbol:
@@ -567,7 +569,7 @@ proc skipTypeSourceAnnot(n: var Cursor) =
 proc conceptReturnTypesMatch(m: var Match; cRet, aRet: Cursor): bool =
   var c = cRet
   var a = aRet
-  if m.conceptRoutineSigMatch and tryLinearMatch(m, c, a):
+  if tryLinearMatch(m, c, a, ConstraintMatchFlags):
     return true
   if matchesConstraint(m, c, a):
     return true
@@ -580,18 +582,15 @@ proc conceptReturnTypesMatch(m: var Match; cRet, aRet: Cursor): bool =
     inc a
     skipTypeSourceAnnot c
     skipTypeSourceAnnot a
-    return tryLinearMatch(m, c, a)
+    return tryLinearMatch(m, c, a, ConstraintMatchFlags)
   false
 
 proc matchConceptRoutineSig(m: var Match; conceptR, implR: Cursor): bool =
-  let oldConceptRoutineSigMatch = m.conceptRoutineSigMatch
-  m.conceptRoutineSigMatch = true
   var cf = conceptR
   var ca = implR
   skipToParams cf
   skipToParams ca
   if cf.substructureKind != ParamsU or ca.substructureKind != ParamsU:
-    m.conceptRoutineSigMatch = oldConceptRoutineSigMatch
     return false
   cf.into ParamsU:
     ca.into ParamsU:
@@ -600,15 +599,12 @@ proc matchConceptRoutineSig(m: var Match; conceptR, implR: Cursor): bool =
         let aTyp = takeLocal(ca, SkipFinalParRi).typ
         var cTypMatch = cTyp
         if not matchesConstraint(m, cTypMatch, aTyp):
-          m.conceptRoutineSigMatch = oldConceptRoutineSigMatch
           return false
       if cf.hasMore:
-        m.conceptRoutineSigMatch = oldConceptRoutineSigMatch
         return false
       while ca.hasMore:
         let extra = takeLocal(ca, SkipFinalParRi)
         if extra.val.kind == DotToken:
-          m.conceptRoutineSigMatch = oldConceptRoutineSigMatch
           return false
   var cRet = conceptR
   var aRet = implR
@@ -616,8 +612,7 @@ proc matchConceptRoutineSig(m: var Match; conceptR, implR: Cursor): bool =
   skip cRet, AnyType
   skipToParams aRet
   skip aRet, AnyType
-  result = conceptReturnTypesMatch(m, cRet, aRet)
-  m.conceptRoutineSigMatch = oldConceptRoutineSigMatch
+  conceptReturnTypesMatch(m, cRet, aRet)
 
 iterator conceptRoutineCandidates(m: var Match; conceptSym: SymId; basename: StrId): SymId {.sideEffect.} =
   var seen = initHashSet[SymId]()
@@ -825,7 +820,7 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
       else:
         m.error(ConstraintMismatch, f, a)
         break
-    elif m.conceptRoutineSigMatch and a.kind == Symbol and isTypevar(a.symId):
+    elif InferActualTypevar in flags and a.kind == Symbol and isTypevar(a.symId):
       let aSym = a.symId
       if m.concreteMatch:
         if matchesConstraint(m, aSym, f):
