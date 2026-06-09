@@ -929,32 +929,40 @@ const
   CfgBegin = "# >>> pnak begin (managed block — do not edit) <<<"
   CfgEnd = "# <<< pnak end >>>"
 
-proc cfgPathSpec(c: Context; r: Resolved; cfgDir: string): string =
-  ## Path to use in a `--path:` directive — relative to `cfgDir` when
-  ## possible (so the project is movable), else absolute.
-  let target = if r.srcDir.len > 0: r.dir / r.srcDir else: r.dir
+proc cfgPathSpecOf(target, cfgDir: string): string =
+  ## Path to use in a `--path:` directive — relative to `cfgDir` so the
+  ## project stays movable, including `..` for sibling link targets (a
+  ## sibling checkout is the normal co-development layout). Falls back to
+  ## absolute only when no relative path exists (e.g. a different drive).
   result = relativePath(target.normalizedPath(),
                         cfgDir.absolutePath, '/')
-  if result.startsWith("..") or isAbsolute(result):
-    # outside cfgDir (typical for link-file targets) — keep absolute form
+  if result.len == 0 or isAbsolute(result):
     result = target.normalizedPath()
 
-proc generateBlock(c: Context; cfgPath: string; kind: ConfigKind): string =
+proc cfgPathSpec(c: Context; r: Resolved; cfgDir: string): string =
+  let target = if r.srcDir.len > 0: r.dir / r.srcDir else: r.dir
+  result = cfgPathSpecOf(target, cfgDir)
+
+proc emitPath(result: var string; p: string; kind: ConfigKind) =
+  case kind
+  of NimCfg: result.add "--path:\"" & p & "\"\n"
+  of NimonyPaths: result.add p & "\n"
+
+proc generateBlock(c: Context; cfgPath, rootDir, rootSrcDir: string;
+                   kind: ConfigKind): string =
   let cfgDir = cfgPath.parentDir
   result = CfgBegin & "\n"
-  # Sort by name for deterministic output across runs.
+  # The consuming package's own source dir first, so its modules resolve
+  # without a separate hand-maintained entry.
+  let rootTarget = if rootSrcDir.len > 0: rootDir / rootSrcDir else: rootDir
+  emitPath(result, cfgPathSpecOf(rootTarget, cfgDir), kind)
+  # Then the resolved dependencies, sorted by name for deterministic output.
   var names: seq[string] = @[]
   for k in c.resolved.keys: names.add k
   names.sort(cmp[string])
   for name in names:
     let r = c.resolved[name]
-    let p = cfgPathSpec(c, r, cfgDir)
-    case kind
-    of NimCfg:
-      result.add "--path:\"" & p & "\"\n"
-    of NimonyPaths:
-      result.add p
-      result.add "\n"
+    emitPath(result, cfgPathSpec(c, r, cfgDir), kind)
   result.add CfgEnd & "\n"
 
 proc patchNimCfg(cfgPath, blockText: string) =
@@ -1201,7 +1209,8 @@ proc handleCmdLine() =
         if cfgFile.len > 0: cfgFile
         else: cfgAnchor / "nimony.paths"
       let kind = if cfgPath.endsWith(".cfg"): NimCfg else: NimonyPaths
-      patchNimCfg(cfgPath, generateBlock(ctx, cfgPath, kind))
+      patchNimCfg(cfgPath, generateBlock(ctx, cfgPath, cfgAnchor,
+                                         rootSpec.srcDir, kind))
   of "pin":
     # Resolve the full closure from the `.nimble` truth, then freeze it into
     # a `pnak.nif` lockfile listing every direct and indirect dependency at
