@@ -995,10 +995,10 @@ proc isPlatformNumeric(context: ptr SemContext; kind: TypeKind; bits: Cursor): b
   cmpTypeBits(context, bits, p) == 0
 
 proc incIntegralWidenCost(m: var Match; kind: TypeKind; bits: Cursor; intLit = false) =
-  if isPlatformNumeric(m.context, kind, bits):
-    inc m.intConvCosts
-  elif intLit and kind in {IntT, UIntT}:
+  if intLit and kind in {IntT, UIntT}:
     inc m.intLitCosts
+  elif isPlatformNumeric(m.context, kind, bits):
+    inc m.intConvCosts
   else:
     inc m.convCosts
 
