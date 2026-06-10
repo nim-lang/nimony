@@ -604,13 +604,22 @@ proc matchConceptParamTypes(m: var Match; conceptTyp, implTyp: Cursor): bool =
     return true
   false
 
-proc conceptRoutineKindsCompatible*(requirement, implementation: SymKind): bool {.inline.} =
-  ## A `func` or `template` implementation may satisfy a `proc` requirement,
-  ## but not vice versa. `func` requirements accept only `func` implementations.
+proc routineHasNoSideEffect(routine: Cursor): bool {.inline.} =
+  let r = asRoutine(routine)
+  whichEffect(routine.stmtKind, r.pragmas) == HasNoSideEffect
+
+proc conceptRoutineKindsCompatible*(requirement, implementation: SymKind;
+                                   implementationDecl: Cursor = default(Cursor)): bool {.inline.} =
+  ## A `func` or `template` implementation may satisfy a `proc` requirement.
+  ## A `proc` with the `noSideEffect` pragma may satisfy a `func` requirement.
   if requirement == implementation:
     return true
   if requirement == ProcY and implementation in {FuncY, TemplateY}:
     return true
+  if requirement == FuncY and implementation == ProcY:
+    if cursorIsNil(implementationDecl):
+      return false
+    return routineHasNoSideEffect(implementationDecl)
   false
 
 proc conceptRoutinesEquivalentKinds*(a, b: SymKind): bool {.inline.} =
@@ -641,7 +650,7 @@ proc sameConceptRoutineTrees*(requirement, candidate: Cursor;
   let kindsOk = if equivKinds:
     conceptRoutinesEquivalentKinds(requirement.symKind, candidate.symKind)
   else:
-    conceptRoutineKindsCompatible(requirement.symKind, candidate.symKind)
+    conceptRoutineKindsCompatible(requirement.symKind, candidate.symKind, candidate)
   if not kindsOk:
     return false
   if conceptRoutineBasename(requirement) != conceptRoutineBasename(candidate):
@@ -661,7 +670,7 @@ proc sameConceptRoutineTrees*(requirement, candidate: Cursor;
   sameTrees(rReq, rCand, ignoreSymIds = true)
 
 proc matchConceptRoutineSig(m: var Match; conceptR, implR: Cursor): bool =
-  if not conceptRoutineKindsCompatible(conceptR.symKind, implR.symKind):
+  if not conceptRoutineKindsCompatible(conceptR.symKind, implR.symKind, implR):
     return false
   var cf = conceptR
   var ca = implR
