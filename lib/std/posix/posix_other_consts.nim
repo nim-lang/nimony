@@ -406,17 +406,29 @@ var SIGABRT* {.importc: "SIGABRT", header: "<signal.h>".}: cint
 var SIGALRM* {.importc: "SIGALRM", header: "<signal.h>".}: cint
 var SIGBUS* {.importc: "SIGBUS", header: "<signal.h>".}: cint
 var SIGCHLD* {.importc: "SIGCHLD", header: "<signal.h>".}: cint
-var SIGCONT* {.importc: "SIGCONT", header: "<signal.h>".}: cint
+when defined(linux):
+  const SIGCONT* = cint(18)
+else:
+  var SIGCONT* {.importc: "SIGCONT", header: "<signal.h>".}: cint
 var SIGFPE* {.importc: "SIGFPE", header: "<signal.h>".}: cint
 var SIGHUP* {.importc: "SIGHUP", header: "<signal.h>".}: cint
 var SIGILL* {.importc: "SIGILL", header: "<signal.h>".}: cint
 var SIGINT* {.importc: "SIGINT", header: "<signal.h>".}: cint
-var SIGKILL* {.importc: "SIGKILL", header: "<signal.h>".}: cint
+when defined(linux):
+  const SIGKILL* = cint(9)
+else:
+  var SIGKILL* {.importc: "SIGKILL", header: "<signal.h>".}: cint
 var SIGPIPE* {.importc: "SIGPIPE", header: "<signal.h>".}: cint
 var SIGQUIT* {.importc: "SIGQUIT", header: "<signal.h>".}: cint
 var SIGSEGV* {.importc: "SIGSEGV", header: "<signal.h>".}: cint
-var SIGSTOP* {.importc: "SIGSTOP", header: "<signal.h>".}: cint
-var SIGTERM* {.importc: "SIGTERM", header: "<signal.h>".}: cint
+when defined(linux):
+  const SIGSTOP* = cint(19)
+else:
+  var SIGSTOP* {.importc: "SIGSTOP", header: "<signal.h>".}: cint
+when defined(linux):
+  const SIGTERM* = cint(15)
+else:
+  var SIGTERM* {.importc: "SIGTERM", header: "<signal.h>".}: cint
 var SIGTSTP* {.importc: "SIGTSTP", header: "<signal.h>".}: cint
 var SIGTTIN* {.importc: "SIGTTIN", header: "<signal.h>".}: cint
 var SIGTTOU* {.importc: "SIGTTOU", header: "<signal.h>".}: cint
@@ -586,11 +598,17 @@ var ST_RDONLY* {.importc: "ST_RDONLY", header: "<sys/statvfs.h>".}: cint
 var ST_NOSUID* {.importc: "ST_NOSUID", header: "<sys/statvfs.h>".}: cint
 
 # <sys/wait.h>
-var WNOHANG* {.importc: "WNOHANG", header: "<sys/wait.h>".}: cint
+when defined(linux):
+  const WNOHANG* = cint(1)
+else:
+  var WNOHANG* {.importc: "WNOHANG", header: "<sys/wait.h>".}: cint
 var WUNTRACED* {.importc: "WUNTRACED", header: "<sys/wait.h>".}: cint
 var WEXITED* {.importc: "WEXITED", header: "<sys/wait.h>".}: cint
 var WSTOPPED* {.importc: "WSTOPPED", header: "<sys/wait.h>".}: cint
-var WCONTINUED* {.importc: "WCONTINUED", header: "<sys/wait.h>".}: cint
+when defined(linux):
+  const WCONTINUED* = cint(8)
+else:
+  var WCONTINUED* {.importc: "WCONTINUED", header: "<sys/wait.h>".}: cint
 var WNOWAIT* {.importc: "WNOWAIT", header: "<sys/wait.h>".}: cint
 var P_ALL* {.importc: "P_ALL", header: "<sys/wait.h>".}: cint
 var P_PID* {.importc: "P_PID", header: "<sys/wait.h>".}: cint

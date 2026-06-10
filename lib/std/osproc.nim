@@ -191,8 +191,8 @@ when not defined(windows):
     var pStderr {.noinit.}: array[0..1, cint]
 
     if poParentStreams notin options:
-      if pipe(pStdin) != 0'i32 or pipe(pStdout) != 0'i32 or
-         pipe(pStderr) != 0'i32:
+      if pipe(addr pStdin[0]) != 0'i32 or pipe(addr pStdout[0]) != 0'i32 or
+         pipe(addr pStderr[0]) != 0'i32:
         raiseOSError(osLastError())
 
     # Build argv
@@ -215,86 +215,121 @@ when not defined(windows):
       if env == nil: envToCStringArray()
       else: envToCStringArray(env)
 
-    var fops: Tposix_spawn_file_actions = default(Tposix_spawn_file_actions)
-    var attr: Tposix_spawnattr = default(Tposix_spawnattr)
+    var pid: Pid = Pid 0
+    when defined(nimNativeIo):
+      # Freestanding: no posix_spawn (libc-only). Use fork + exec (raw syscalls).
+      if poEchoCmd in options:
+        echo command, " ", joinArgs(args, " ")
+      let argvC = cast[CCharArray](sysArgs)
+      let envpC = cast[CCharArray](sysEnv)
+      var wd = workingDir
+      pid = fork()
+      if pid == Pid(0):
+        # --- child: wire up the pipe ends, optional chdir/pgroup, then exec ---
+        if poParentStreams notin options:
+          discard dup2(pStdin[readIdx], 0'i32)
+          discard dup2(pStdout[writeIdx], 1'i32)
+          if poStdErrToStdOut in options:
+            discard dup2(pStdout[writeIdx], 2'i32)
+          else:
+            discard dup2(pStderr[writeIdx], 2'i32)
+          discard close(pStdin[readIdx]); discard close(pStdin[writeIdx])
+          discard close(pStdout[readIdx]); discard close(pStdout[writeIdx])
+          discard close(pStderr[readIdx]); discard close(pStderr[writeIdx])
+        if poDaemon in options:
+          discard setpgid(Pid(0), Pid(0))
+        if wd.len > 0 and chdir(wd.toCString) != 0'i32:
+          exitnow(127'i32)
+        if poUsePath in options:
+          discard execvp(syscmd.toCString, argvC)
+        else:
+          discard execve(syscmd.toCString, argvC, envpC)
+        exitnow(127'i32)   # reached only if exec failed
+      # --- parent ---
+      deallocCStringArray(sysArgs, argsRaw.len)
+      deallocCStringArray(sysEnv, countCStringArray(sysEnv))
+      if pid.int < 0:
+        raiseOSError(osLastError())
+    else:
+      var fops: Tposix_spawn_file_actions = default(Tposix_spawn_file_actions)
+      var attr: Tposix_spawnattr = default(Tposix_spawnattr)
 
-    proc cleanup(sysArgs, sysEnv: cstringArray; argsLen: int;
-                 fops: var Tposix_spawn_file_actions;
-                 attr: var Tposix_spawnattr) =
+      proc cleanup(sysArgs, sysEnv: cstringArray; argsLen: int;
+                   fops: var Tposix_spawn_file_actions;
+                   attr: var Tposix_spawnattr) =
+        discard posix_spawn_file_actions_destroy(fops)
+        discard posix_spawnattr_destroy(attr)
+        deallocCStringArray(sysArgs, argsLen)
+        deallocCStringArray(sysEnv, countCStringArray(sysEnv))
+
+      var chckErr = posix_spawn_file_actions_init(fops)
+      if chckErr != 0'i32:
+        cleanup(sysArgs, sysEnv, argsRaw.len, fops, attr)
+        raiseOSError(OSErrorCode(chckErr))
+      chckErr = posix_spawnattr_init(attr)
+      if chckErr != 0'i32:
+        cleanup(sysArgs, sysEnv, argsRaw.len, fops, attr)
+        raiseOSError(OSErrorCode(chckErr))
+
+      var mask: Sigset = default(Sigset)
+      discard sigemptyset(mask)
+      discard posix_spawnattr_setsigmask(attr, mask)
+
+      if poDaemon in options:
+        discard posix_spawnattr_setpgroup(attr, Pid 0)
+
+      var flags: cshort = cshort(0x08)    # POSIX_SPAWN_SETSIGMASK
+      if poDaemon in options:
+        flags = flags or cshort(0x02)     # POSIX_SPAWN_SETPGROUP
+      discard posix_spawnattr_setflags(attr, flags)
+
+      if poParentStreams notin options:
+        discard posix_spawn_file_actions_addclose(fops, pStdin[writeIdx])
+        discard posix_spawn_file_actions_adddup2(fops, pStdin[readIdx],
+                                                 cint(readIdx))
+        discard posix_spawn_file_actions_addclose(fops, pStdout[readIdx])
+        discard posix_spawn_file_actions_adddup2(fops, pStdout[writeIdx],
+                                                 cint(writeIdx))
+        discard posix_spawn_file_actions_addclose(fops, pStderr[readIdx])
+        if poStdErrToStdOut in options:
+          discard posix_spawn_file_actions_adddup2(fops, pStdout[writeIdx],
+                                                   2'i32)
+        else:
+          discard posix_spawn_file_actions_adddup2(fops, pStderr[writeIdx],
+                                                   2'i32)
+
+      # posix_spawn inherits cwd: chdir manually around the spawn.
+      var savedCwd = ""
+      if workingDir.len > 0:
+        savedCwd = getCurrentDir()
+        var wd = workingDir
+        if chdir(wd.toCString) != 0'i32:
+          cleanup(sysArgs, sysEnv, argsRaw.len, fops, attr)
+          raiseOSError(osLastError())
+
+      if poEchoCmd in options:
+        echo command, " ", joinArgs(args, " ")
+
+      var res: cint = 0'i32
+      let argvC = cast[CCharArray](sysArgs)
+      let envpC = cast[CCharArray](sysEnv)
+      if poUsePath in options:
+        res = posix_spawnp(pid, syscmd.toCString, fops, attr, argvC, envpC)
+      else:
+        res = posix_spawn(pid, syscmd.toCString, fops, attr, argvC, envpC)
+
       discard posix_spawn_file_actions_destroy(fops)
       discard posix_spawnattr_destroy(attr)
-      deallocCStringArray(sysArgs, argsLen)
+
+      if savedCwd.len > 0:
+        var cwd = savedCwd
+        discard chdir(cwd.toCString)
+
+      deallocCStringArray(sysArgs, argsRaw.len)
       deallocCStringArray(sysEnv, countCStringArray(sysEnv))
 
-    var chckErr = posix_spawn_file_actions_init(fops)
-    if chckErr != 0'i32:
-      cleanup(sysArgs, sysEnv, argsRaw.len, fops, attr)
-      raiseOSError(OSErrorCode(chckErr))
-    chckErr = posix_spawnattr_init(attr)
-    if chckErr != 0'i32:
-      cleanup(sysArgs, sysEnv, argsRaw.len, fops, attr)
-      raiseOSError(OSErrorCode(chckErr))
-
-    var mask: Sigset = default(Sigset)
-    discard sigemptyset(mask)
-    discard posix_spawnattr_setsigmask(attr, mask)
-
-    if poDaemon in options:
-      discard posix_spawnattr_setpgroup(attr, Pid 0)
-
-    var flags: cshort = cshort(0x08)    # POSIX_SPAWN_SETSIGMASK
-    if poDaemon in options:
-      flags = flags or cshort(0x02)     # POSIX_SPAWN_SETPGROUP
-    discard posix_spawnattr_setflags(attr, flags)
-
-    if poParentStreams notin options:
-      discard posix_spawn_file_actions_addclose(fops, pStdin[writeIdx])
-      discard posix_spawn_file_actions_adddup2(fops, pStdin[readIdx],
-                                               cint(readIdx))
-      discard posix_spawn_file_actions_addclose(fops, pStdout[readIdx])
-      discard posix_spawn_file_actions_adddup2(fops, pStdout[writeIdx],
-                                               cint(writeIdx))
-      discard posix_spawn_file_actions_addclose(fops, pStderr[readIdx])
-      if poStdErrToStdOut in options:
-        discard posix_spawn_file_actions_adddup2(fops, pStdout[writeIdx],
-                                                 2'i32)
-      else:
-        discard posix_spawn_file_actions_adddup2(fops, pStderr[writeIdx],
-                                                 2'i32)
-
-    # posix_spawn inherits cwd: chdir manually around the spawn.
-    var savedCwd = ""
-    if workingDir.len > 0:
-      savedCwd = getCurrentDir()
-      var wd = workingDir
-      if chdir(wd.toCString) != 0'i32:
-        cleanup(sysArgs, sysEnv, argsRaw.len, fops, attr)
-        raiseOSError(osLastError())
-
-    if poEchoCmd in options:
-      echo command, " ", joinArgs(args, " ")
-
-    var pid: Pid = Pid 0
-    var res: cint = 0'i32
-    let argvC = cast[CCharArray](sysArgs)
-    let envpC = cast[CCharArray](sysEnv)
-    if poUsePath in options:
-      res = posix_spawnp(pid, syscmd.toCString, fops, attr, argvC, envpC)
-    else:
-      res = posix_spawn(pid, syscmd.toCString, fops, attr, argvC, envpC)
-
-    discard posix_spawn_file_actions_destroy(fops)
-    discard posix_spawnattr_destroy(attr)
-
-    if savedCwd.len > 0:
-      var cwd = savedCwd
-      discard chdir(cwd.toCString)
-
-    deallocCStringArray(sysArgs, argsRaw.len)
-    deallocCStringArray(sysEnv, countCStringArray(sysEnv))
-
-    if res != 0'i32:
-      raiseOSError(OSErrorCode(res))
+      if res != 0'i32:
+        raiseOSError(OSErrorCode(res))
 
     result = Process(options: options, exitFlag: false, id: pid,
                      inHandle: 0'i32, outHandle: 0'i32, errHandle: 0'i32,
@@ -428,18 +463,23 @@ when not defined(windows):
 
   proc createStream(handle: var FileHandle; mode: FileMode): FileStream
       {.raises.} =
-    # Turn a pipe fd into a FILE* for use with FileStream.
+    # Turn a pipe fd into a buffered File for use with FileStream.
     var f: File = default(File)
-    let modeC =
-      case mode
-      of fmRead: cstring"rb"
-      of fmWrite: cstring"wb"
-      else: cstring"rb"
-    proc c_fdopen(fd: cint; mode: cstring): File {.
-      importc: "fdopen", header: "<stdio.h>".}
-    f = c_fdopen(handle, modeC)
-    if f == nil:
-      raiseOSError(osLastError())
+    when defined(nimNativeIo):
+      # Freestanding: build a native File around the raw fd (no libc fdopen).
+      if not open(f, handle, mode):
+        raiseOSError(osLastError())
+    else:
+      let modeC =
+        case mode
+        of fmRead: cstring"rb"
+        of fmWrite: cstring"wb"
+        else: cstring"rb"
+      proc c_fdopen(fd: cint; mode: cstring): File {.
+        importc: "fdopen", header: "<stdio.h>".}
+      f = c_fdopen(handle, modeC)
+      if f == nil:
+        raiseOSError(osLastError())
     result = newFileStream(f)
 
   proc inputStream*(p: Process): Stream {.raises, tags: [].} =
@@ -460,15 +500,24 @@ when not defined(windows):
       p.errStream = createStream(p.errHandle, fmRead)
     result = p.errStream
 
-  proc csystem(cmd: cstring): cint {.nodecl, importc: "system",
-                                     header: "<stdlib.h>".}
+  when not defined(nimNativeIo):
+    proc csystem(cmd: cstring): cint {.nodecl, importc: "system",
+                                       header: "<stdlib.h>".}
 
   proc execCmd*(command: string): int {.raises,
       tags: [ExecIOEffect, ReadIOEffect, RootEffect].} =
     ## Executes `command` and returns its error code.
-    var cmd = command
-    let tmp = csystem(cmd.toCString)
-    result = if tmp == -1: tmp else: exitStatusLikeShell(tmp)
+    when defined(nimNativeIo):
+      # Freestanding: no libc `system()`. Run via /bin/sh -c with inherited
+      # standard streams (matching `system()` semantics) and wait.
+      var p = startProcess(command,
+        options = {poEvalCommand, poParentStreams, poUsePath})
+      result = waitForExit(p)
+      close(p)
+    else:
+      var cmd = command
+      let tmp = csystem(cmd.toCString)
+      result = if tmp == -1: tmp else: exitStatusLikeShell(tmp)
 
 # ---------------------------------------------------------------------------
 # Windows backend

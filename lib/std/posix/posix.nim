@@ -364,14 +364,61 @@ when defined(posix):
   proc WIFSTOPPED*(s:cint) : bool = (s and 0xff) == 0x7f
   proc WIFCONTINUED*(s:cint) : bool = s == WCONTINUED
 
-  when not defined(nimNativeIo):
-    # osproc-only bindings; their importc types (Sigset / Tposix_spawn*)
-    # would pull <signal.h>/<spawn.h> (→ transitive <unistd.h>) into the
-    # freestanding posix.c and clash with the bare directory syscalls.
-    # Native osproc is a separate follow-up.
-    # -------- Process / pipe / exec bindings needed by std/osproc --------
-    type
-      Pid* {.importc: "pid_t", header: "<sys/types.h>".} = cint
+  # -------- Process / pipe / exec bindings needed by std/osproc --------
+  # The syscall-based subset (pipe/dup2/fork/exec/waitpid/kill/...) is provided
+  # in BOTH modes; under -d:nimNativeIo it is header-stripped so the
+  # freestanding posix.c pulls no libc headers, and native osproc drives a
+  # fork+exec path. The posix_spawn / sigset_t family are libc-only opaque
+  # types (they would pull <spawn.h>/<signal.h> → transitive <unistd.h>), so
+  # they stay behind `when not defined(nimNativeIo)`.
+  when defined(nimNativeIo):
+    type Pid* = cint
+  else:
+    type Pid* {.importc: "pid_t", header: "<sys/types.h>".} = cint
+
+  # Use plain C `char` so that `char**` lines up with libc's expectation
+  # (Nimony's `cstring` is `NC8*` / unsigned char*, which triggers
+  # `-Wincompatible-pointer-types` on posix_spawn / execvp / execve).
+  type CChar* {.importc: "char", nodecl.} = int8
+  type CCharArray* = nil ptr UncheckedArray[nil ptr CChar]
+
+  when defined(nimNativeIo):
+    proc pipe*(a: ptr cint): cint {.importc: "pipe", sideEffect.}
+    proc dup2*(oldfd, newfd: cint): cint {.importc: "dup2", sideEffect.}
+    proc fork*(): Pid {.importc: "fork", sideEffect.}
+    proc execvp*(file: cstring; argv: CCharArray): cint {.importc: "execvp", sideEffect.}
+    proc execve*(path: cstring; argv, env: CCharArray): cint {.importc: "execve", sideEffect.}
+    proc waitpid*(pid: Pid; status: var cint; options: cint): Pid {.importc: "waitpid", sideEffect.}
+    proc kill*(pid: Pid; sig: cint): cint {.importc: "kill", sideEffect.}
+    proc setpgid*(pid, pgid: Pid): cint {.importc: "setpgid", sideEffect.}
+    proc exitnow*(status: cint) {.importc: "_exit", noreturn.}
+    proc read*(fildes: cint; buf: pointer; nbyte: int): int {.importc: "read", sideEffect.}
+    proc write*(fildes: cint; buf: pointer; nbyte: int): int {.importc: "write", sideEffect.}
+    var posix_environ* {.importc: "environ".}: ptr UncheckedArray[cstring]
+  else:
+    proc pipe*(a: ptr cint): cint {.
+      importc, header: "<unistd.h>", sideEffect.}
+    proc dup2*(oldfd, newfd: cint): cint {.
+      importc, header: "<unistd.h>", sideEffect.}
+    proc fork*(): Pid {.importc, header: "<unistd.h>", sideEffect.}
+    proc execvp*(file: cstring; argv: CCharArray): cint {.
+      importc, header: "<unistd.h>", sideEffect.}
+    proc execve*(path: cstring; argv, env: CCharArray): cint {.
+      importc, header: "<unistd.h>", sideEffect.}
+    proc waitpid*(pid: Pid; status: var cint; options: cint): Pid {.
+      importc, header: "<sys/wait.h>", sideEffect.}
+    proc kill*(pid: Pid; sig: cint): cint {.
+      importc, header: "<signal.h>", sideEffect.}
+    proc setpgid*(pid, pgid: Pid): cint {.
+      importc, header: "<unistd.h>", sideEffect.}
+    proc exitnow*(status: cint) {.
+      importc: "_exit", header: "<unistd.h>", noreturn.}
+    proc read*(fildes: cint; buf: pointer; nbyte: int): int {.
+      importc, header: "<unistd.h>", sideEffect.}
+    proc write*(fildes: cint; buf: pointer; nbyte: int): int {.
+      importc, header: "<unistd.h>", sideEffect.}
+
+    # --- posix_spawn / signal-set family (libc-only; native osproc uses fork+exec) ---
     when defined(osx):
       # On macOS these are typedef'd to scalar types (`__uint32_t` for
       # `sigset_t`, `void *` for the spawn handles); declaring them as
@@ -392,34 +439,6 @@ when defined(posix):
             header: "<spawn.h>", final, pure.} = object
         Tposix_spawn_file_actions* {.importc: "posix_spawn_file_actions_t",
             header: "<spawn.h>", final, pure.} = object
-
-    proc pipe*(a: var array[0..1, cint]): cint {.
-      importc, header: "<unistd.h>", sideEffect.}
-    proc dup2*(oldfd, newfd: cint): cint {.
-      importc, header: "<unistd.h>", sideEffect.}
-    proc fork*(): Pid {.importc, header: "<unistd.h>", sideEffect.}
-    # Use plain C `char` so that `char**` lines up with libc's expectation
-    # (Nimony's `cstring` is `NC8*` / unsigned char*, which triggers
-    # `-Wincompatible-pointer-types` on posix_spawn / execvp / execve).
-    type CChar* {.importc: "char", nodecl.} = int8
-    type CCharArray* = nil ptr UncheckedArray[nil ptr CChar]
-
-    proc execvp*(file: cstring; argv: CCharArray): cint {.
-      importc, header: "<unistd.h>", sideEffect.}
-    proc execve*(path: cstring; argv, env: CCharArray): cint {.
-      importc, header: "<unistd.h>", sideEffect.}
-    proc waitpid*(pid: Pid; status: var cint; options: cint): Pid {.
-      importc, header: "<sys/wait.h>", sideEffect.}
-    proc kill*(pid: Pid; sig: cint): cint {.
-      importc, header: "<signal.h>", sideEffect.}
-    proc setpgid*(pid, pgid: Pid): cint {.
-      importc, header: "<unistd.h>", sideEffect.}
-    proc exitnow*(status: cint) {.
-      importc: "_exit", header: "<unistd.h>", noreturn.}
-    proc read*(fildes: cint; buf: pointer; nbyte: int): int {.
-      importc, header: "<unistd.h>", sideEffect.}
-    proc write*(fildes: cint; buf: pointer; nbyte: int): int {.
-      importc, header: "<unistd.h>", sideEffect.}
 
     # posix_spawn
     proc posix_spawn*(pid: var Pid; path: cstring;

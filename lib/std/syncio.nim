@@ -33,8 +33,8 @@ when defined(nimNativeIo):
   # manages the memory for us). All IO goes through the `read`/`write`/`open`/
   # `close`/`lseek` syscalls, which arkham lowers to bare `syscall`
   # instructions — so no libc `FILE*`/stdio is linked and the result is a
-  # self-contained static binary. The one remaining libc touch point is float
-  # formatting (`formatfloat`'s `snprintf`), which a native dtoa will replace.
+  # self-contained static binary. Float formatting now goes through the native
+  # dtoa in `system` (`addFloat`), so it no longer needs libc either.
   type
     FileFlag = enum
       ffReadable, ffWritable, ffEof, ffError
@@ -133,6 +133,19 @@ when defined(nimNativeIo):
     flushImpl stderr
 
   setExitFlush flushStdStreams
+
+  proc open*(f: var File; fd: cint; mode: FileMode = fmRead): bool =
+    ## Wraps an already-open OS file descriptor in a buffered `File` — the
+    ## native replacement for libc `fdopen`. Used by `osproc` to turn a pipe
+    ## end into a stream. Returns false for an invalid (negative) `fd`.
+    if fd < 0'i32: return false
+    var fileFlags: set[FileFlag]
+    case mode
+    of fmRead: fileFlags = {ffReadable}
+    of fmWrite, fmAppend: fileFlags = {ffWritable}
+    of fmReadWrite, fmReadWriteExisting: fileFlags = {ffReadable, ffWritable}
+    f = newFile(fd, fileFlags)
+    result = true
 else:
   when defined(macos) or defined(macosx):
     var
@@ -200,14 +213,12 @@ proc write*(f: File; c: char) =
 
 proc write*(f: File; x: float) =
   ## Writes data to a file (overloaded for different types).
-  when defined(nimNativeIo):
-    # `formatfloat` (snprintf) is the lone remaining libc dependency; a native
-    # dtoa will eventually make this fully freestanding too.
-    var s = ""
-    s.addFloat x
-    write f, s
-  else:
-    fprintf(f, cstring"%g", x)
+  # `addFloat` (the bundled Schubfach/Dragonbox dtoa in `system`) renders the
+  # shortest round-tripping decimal, so float output no longer touches libc
+  # `snprintf` and matches `$x`.
+  var s = ""
+  s.addFloat x
+  write f, s
 
 when defined(nimNativeIo):
   proc close*(f: File) =

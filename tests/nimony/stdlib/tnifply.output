@@ -4,10 +4,10 @@ Foo.0.tni7snh9s
 Bar.0.tni7snh9s
 fooFieldX.0 = 123
 barFieldX.0 = bar field
-barFieldY.0 = 456
+barFieldY.0 = 456.0
 fooFieldX.0 = 123
 barFieldX.0 = bar field
-barFieldY.0 = 456
+barFieldY.0 = 456.0
 "hello"
 123
 123u
