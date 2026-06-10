@@ -755,11 +755,12 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
             b.addStrLit arg
       b.addKeyw "input"
 
-    # Command for the tree optimizer: `shoggoth <input.c.nif> <output.oc.nif>`.
+    # Command for the tree optimizer: `shoggoth c <input.c.nif> <output.oc.nif>`.
     if useOptimizer:
       b.withTree "cmd":
         b.addSymbolDef "optimize"
         b.addStrLit shoggoth
+        b.addStrLit "c"
         b.addKeyw "input"
         b.addKeyw "output"
 

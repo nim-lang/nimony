@@ -414,39 +414,39 @@ proc emitRenamed(dest: var TokenBuf; body: var Cursor;
       dest.add body
     inc body
   of ParLe:
+    # `into` bounds `body` to this scope so the child loop terminates at the
+    # real-or-virtual `)`; `addParRi` emits a fresh closer (the source `)` is
+    # elided under `-d:virtualParRi`).
     if body.substructureKind == KvU:
       # `(kv field value [depth])` — field name slot is verbatim.
       dest.add body
-      inc body                              # past `kv` tag
-      if body.kind != ParRi:
-        dest.add body                       # field name — no rename
-        inc body
-      while body.kind != ParRi:
-        emitRenamed(dest, body, rename)
-      dest.add body
-      inc body
+      into body:                            # past `kv` tag
+        if body.hasMore:
+          dest.add body                     # field name — no rename
+          inc body
+        while body.hasMore:
+          emitRenamed(dest, body, rename)
+      dest.addParRi()
       return
     if body.exprKind == DotC:
       # `(dot obj field [depth])` — field slot (the 2nd child) is
       # verbatim; obj and the optional depth are renameable.
       dest.add body
-      inc body                              # past `dot` tag
-      if body.kind != ParRi:
-        emitRenamed(dest, body, rename)    # obj
-      if body.kind != ParRi:
-        dest.add body                       # field — no rename
-        inc body
-      while body.kind != ParRi:
-        emitRenamed(dest, body, rename)    # depth, etc.
-      dest.add body
-      inc body
+      into body:                            # past `dot` tag
+        if body.hasMore:
+          emitRenamed(dest, body, rename)   # obj
+        if body.hasMore:
+          dest.add body                     # field — no rename
+          inc body
+        while body.hasMore:
+          emitRenamed(dest, body, rename)   # depth, etc.
+      dest.addParRi()
       return
     dest.add body
-    inc body
-    while body.kind != ParRi:
-      emitRenamed(dest, body, rename)
-    dest.add body
-    inc body
+    into body:
+      while body.hasMore:
+        emitRenamed(dest, body, rename)
+    dest.addParRi()
   of ParRi:
     discard
   else:
@@ -478,20 +478,21 @@ proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
       dest.add body
     inc body
   of ParLe:
+    # See `emitRenamed`: `into` bounds the scope (the closing `)` may be
+    # virtual under `-d:virtualParRi`), `addParRi` emits a fresh closer.
     if body.stmtKind == RetS:
       let info = body.info
-      inc body                              # past `ret` tag
-      if body.kind != DotToken and targetSym != SymId(0):
-        dest.addParLe TagId(AsgnS), info
-        dest.addSymUse targetSym, info
-        emitRenamed(dest, body, rename)    # the returned expression
-        dest.addParRi()
-      else:
-        skip body                           # discard the value
+      into body:                            # enter (ret …)
+        if body.hasMore and body.kind != DotToken and targetSym != SymId(0):
+          dest.addParLe TagId(AsgnS), info
+          dest.addSymUse targetSym, info
+          emitRenamed(dest, body, rename)  # the returned expression
+          dest.addParRi()
+        else:
+          while body.hasMore: skip body     # discard the value
       dest.addParLe TagId(JmpS), info
       dest.addSymUse returnLabel, info
       dest.addParRi()
-      inc body                              # past `(ret …)`'s closing ParRi
       return
     if body.substructureKind == KvU:
       # See `emitRenamed`: field-name slot of `(kv …)` is verbatim to
@@ -499,34 +500,31 @@ proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
       # Inner subtrees still get the ret-rewrite treatment in case the
       # value side hides a `(ret …)`.
       dest.add body
-      inc body
-      if body.kind != ParRi:
-        dest.add body                       # field name — verbatim
-        inc body
-      while body.kind != ParRi:
-        emitRenamedWithRet(dest, body, rename, targetSym, returnLabel)
-      dest.add body
-      inc body
+      into body:
+        if body.hasMore:
+          dest.add body                     # field name — verbatim
+          inc body
+        while body.hasMore:
+          emitRenamedWithRet(dest, body, rename, targetSym, returnLabel)
+      dest.addParRi()
       return
     if body.exprKind == DotC:
       dest.add body
-      inc body
-      if body.kind != ParRi:
-        emitRenamedWithRet(dest, body, rename, targetSym, returnLabel)
-      if body.kind != ParRi:
-        dest.add body                       # field — verbatim
-        inc body
-      while body.kind != ParRi:
-        emitRenamedWithRet(dest, body, rename, targetSym, returnLabel)
-      dest.add body
-      inc body
+      into body:
+        if body.hasMore:
+          emitRenamedWithRet(dest, body, rename, targetSym, returnLabel)
+        if body.hasMore:
+          dest.add body                     # field — verbatim
+          inc body
+        while body.hasMore:
+          emitRenamedWithRet(dest, body, rename, targetSym, returnLabel)
+      dest.addParRi()
       return
     dest.add body
-    inc body
-    while body.kind != ParRi:
-      emitRenamedWithRet(dest, body, rename, targetSym, returnLabel)
-    dest.add body
-    inc body
+    into body:
+      while body.hasMore:
+        emitRenamedWithRet(dest, body, rename, targetSym, returnLabel)
+    dest.addParRi()
   of ParRi:
     discard
   else:
@@ -552,14 +550,13 @@ proc emitBody(c: var InlinerCtx; dest: var TokenBuf; body: var Cursor;
   let returnLabel = pool.syms.getOrIncl(
     "returnLabel.0" & c.counterPrefix & $c.counter)
   dest.addParLe TagId(StmtsS), info
-  inc body
-  while body.kind != ParRi:
-    emitRenamedWithRet(dest, body, rename, targetSym, returnLabel)
+  into body:                                # bounded: source `)` may be virtual
+    while body.hasMore:
+      emitRenamedWithRet(dest, body, rename, targetSym, returnLabel)
   dest.addParLe TagId(LabS), info
   dest.addSymDef returnLabel, info
   dest.addParRi()
   dest.addParRi()                           # close (stmts …)
-  inc body                                  # past body's ParRi
 
 proc seedRenameWalk(c: var InlinerCtx; n: var Cursor;
                     rename: var Table[SymId, SymId]) =
@@ -770,27 +767,33 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
     let sk = n.stmtKind
     case sk
     of StmtsS, ScopeS:
-      dest.takeToken n
-      while n.hasMore:
-        if n.kind == ParLe and n.stmtKind == CallS:
-          var probe = n
-          inc probe
-          let calleeSym =
-            if probe.kind == Symbol: probe.symId else: SymId(0)
-          var spliced = createTokenBuf(32)
-          let nEmitted = trySplice(c, spliced, n)
-          if nEmitted > 0:
-            if calleeSym != SymId(0):
-              c.inProgress.incl calleeSym
-            var inner = beginRead(spliced)
-            for _ in 0 ..< nEmitted:
-              trIntra(c, dest, inner)
-            endRead(inner)
-            if calleeSym != SymId(0):
-              c.inProgress.excl calleeSym
-            continue
-        trIntra(c, dest, n)
-      dest.takeToken n
+      # Bound the cursor to this scope with `into` so the child loop stops at
+      # the (real or virtual) closing `)`; under `-d:virtualParRi` a sealed
+      # scope has no `ParRi` token, so a raw `while n.hasMore` over an
+      # unbounded `rem` would walk into siblings. Emit a fresh closer with
+      # `addParRi` (the source `)` may be elided).
+      dest.add n
+      into n:
+        while n.hasMore:
+          if n.kind == ParLe and n.stmtKind == CallS:
+            var probe = n
+            inc probe
+            let calleeSym =
+              if probe.kind == Symbol: probe.symId else: SymId(0)
+            var spliced = createTokenBuf(32)
+            let nEmitted = trySplice(c, spliced, n)
+            if nEmitted > 0:
+              if calleeSym != SymId(0):
+                c.inProgress.incl calleeSym
+              var inner = beginRead(spliced)
+              for _ in 0 ..< nEmitted:
+                trIntra(c, dest, inner)
+              endRead(inner)
+              if calleeSym != SymId(0):
+                c.inProgress.excl calleeSym
+              continue
+          trIntra(c, dest, n)
+      dest.addParRi()
     of VarS, GvarS, TvarS, ConstS, ProcS:
       # `(var :tmp <pragmas> <type> (call …))` is the bound form `xelim`
       # and the new nifcgen complex-init path emit; route it through the
@@ -818,15 +821,17 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
             endRead(inner)
             c.inProgress.excl calleeSym
             return
-      dest.takeToken n
-      while n.hasMore:
-        trIntra(c, dest, n)
-      dest.takeToken n
+      dest.add n
+      into n:
+        while n.hasMore:
+          trIntra(c, dest, n)
+      dest.addParRi()
     else:
-      dest.takeToken n
-      while n.hasMore:
-        trIntra(c, dest, n)
-      dest.takeToken n
+      dest.add n
+      into n:
+        while n.hasMore:
+          trIntra(c, dest, n)
+      dest.addParRi()
   of ParRi:
     raiseAssert "ParRi should not be encountered here"
   else:

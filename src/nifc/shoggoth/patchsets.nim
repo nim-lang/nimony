@@ -1,46 +1,21 @@
 #
 #
-#           NIFC Patchset
+#           NIFC Patchset (nifcore)
 #        (c) Copyright 2026 Andreas Rumpf
 #
 #    See the file "license.txt", included in this
 #    distribution, for details about the copyright.
 #
 
-## A `Patchset` records position-keyed token rewrites against a source
-## `TokenBuf` and applies them in one pass by rebuilding the buffer.
-##
-## Two patch kinds are supported:
-##
-## - `pkInsert` — splice the source subtree *before* the original token
-##   at the position. Multiple inserts at the same position are emitted
-##   in registration order.
-## - `pkSubst` — replace the entire subtree at the position with the
-##   source subtree. At most one substitute per position is honored
-##   (later substitutes at the same position are silently dropped).
-##
-## A position may carry any combination: only inserts (emitted before
-## the original); only a substitute (replaces the original); or inserts
-## followed by a substitute (emitted in order, then the substitute
-## replaces the original).
-##
-## Source subtrees are referenced by `Cursor`. The caller owns whatever
-## buffer the cursor points into and is responsible for keeping it
-## alive until `apply` returns. A cursor at a single-token leaf (a
-## `Symbol`, a literal, or a bare `DotToken`) substitutes that one
-## token; a cursor at a `ParLe` substitutes the whole subtree (via
-## `addSubtree`, so jump fields are recomputed correctly in the
-## rebuilt buffer).
-##
-## The apply pass does **not** recurse into substituted subtrees to
-## look for further patches. Callers that need chained expansion
-## should resolve chains at registration time and store a terminal
-## cursor.
+## nifcore `Patchset`: records position-keyed token rewrites against a source
+## `TokenBuf` and applies them in one rebuild pass.
+## See `patchsets_legacy.nim` (the parked nifcursors original) for the full
+## semantics; the only structural
+## difference here is that nifcore has no ParRi token — a substituted/rebuilt
+## subtree is reopened with `openTag`/`closeTag` so jump fields are recomputed.
 
 import std / [tables, assertions]
-include "../../lib" / nifprelude
-# nifstreams / nifcursors come from the included nifprelude; do not bare-import
-# them (a bare `import nifstreams` resolves to the wrong path under nimony boot).
+import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
 
 type
   PatchKind* = enum pkInsert, pkSubst
@@ -54,9 +29,7 @@ type
     patches: Table[int, seq[Patch]]
 
 proc initPatchset*(orig: ptr TokenBuf): Patchset =
-  ## Create a patchset bound to `orig`. Positions passed to
-  ## `addInsert` / `addSubst` are interpreted as token indices into
-  ## `orig[]`.
+  ## Create a patchset bound to `orig`. Positions are token indices into `orig[]`.
   Patchset(orig: orig, patches: initTable[int, seq[Patch]]())
 
 proc isEmpty*(p: Patchset): bool {.inline.} = p.patches.len == 0
@@ -71,8 +44,6 @@ proc applyOne(p: var Patchset; dest: var TokenBuf; n: var Cursor) =
   let pos = cursorToPosition(p.orig[], n)
   var substituted = false
   if pos in p.patches:
-    # `getOrDefault` (not `[]`) so this stays non-raising under nimony's
-    # raises-discipline; the key is present here (`pos in p.patches`).
     for patch in p.patches.getOrDefault(pos):
       case patch.kind
       of pkInsert:
@@ -85,106 +56,84 @@ proc applyOne(p: var Patchset; dest: var TokenBuf; n: var Cursor) =
       skip n
       return
   case n.kind
-  of ParLe:
-    dest.add n
+  of TagLit:
+    # Reopen the tag and recurse so `closeTag` recomputes the jump after any
+    # inserts/substitutions changed the child count.
+    let tag = n.cursorTagId
+    let li = rawLineInfo(n)
+    dest.openTag tag
+    if li.isValid: dest.appendLineInfo li
     n.loopInto:
       applyOne(p, dest, n)
-    dest.addParRi()
-  of Symbol:
-    dest.add n
-    inc n
+    dest.closeTag()
   else:
-    dest.add n
+    dest.addSubtree n
     inc n
 
 proc apply*(p: var Patchset; sizeHint = -1): TokenBuf =
-  ## Rebuild `orig` with every patch applied. The result is a fresh
-  ## `TokenBuf` that the caller may move into a `var TokenBuf`
-  ## parameter.
+  ## Rebuild `orig` with every patch applied. Result shares `orig`'s pool/tags
+  ## so spliced subtrees (which also share them) copy in bulk.
   let cap = if sizeHint > 0: sizeHint else: p.orig[].len + p.patches.len * 4
-  result = createTokenBuf(cap)
+  result = createTokenBuf(cap, p.orig[].pool, p.orig[].tags)
   var n = beginRead(p.orig[])
-  # The buffer is a single outermost block (the module / proc-body `(stmts …)`).
-  # Rebuild that one root tree; `applyOne` descends into its children with the
-  # scope-bounded `hasMore` loop. (Looping `while n.hasMore` over the raw buffer
-  # here would run the cursor off the end once the root tree is consumed.)
+  # Single outermost block (module / proc-body `(stmts …)`); rebuild that one
+  # root tree — `applyOne` descends into its children with the bounded loop.
   applyOne(p, result, n)
 
 # ---- self-tests ----------------------------------------------------------
 
 when isMainModule:
   proc parse(src: string): TokenBuf =
-    var stream = nifstreams.openFromBuffer(src, "M")
-    result = fromStream(stream)
+    parseFromBuffer(src, "M", 100)
 
-  proc dumpKinds(buf: var TokenBuf): string =
-    result = ""
+  proc countKind(buf: var TokenBuf; k: NifKind): int =
+    result = 0
     var c = beginRead(buf)
     while c.hasMore:
-      if result.len > 0: result.add ' '
-      result.add $c.kind
+      if c.kind == k: inc result
       inc c
 
-  proc countKind(buf: TokenBuf; k: NifKind): int =
-    result = 0
-    for i in 0 ..< buf.len:
-      if buf[i].kind == k: inc result
-
-  discard pool.syms.getOrIncl("x.0.M")
-  discard pool.syms.getOrIncl("y.0.M")
-
   block subst_call_with_dot:
-    # Replace the inner (call ...) with a single DotToken — same shape
-    # arcopt would produce for an elided wasMoved.
     var buf = parse("(stmts (call x.0.M) (call y.0.M))")
-    var dotBuf = createTokenBuf(2)
+    var dotBuf = createTokenBuf(2, buf.pool, buf.tags)
     dotBuf.addDotToken()
     var ps = initPatchset(addr buf)
-    # Position 1 is the (call ParLe for the first call.
-    ps.addSubst(1, cursorAt(dotBuf, 0))
+    ps.addSubst(1, cursorAt(dotBuf, 0))        # pos 1 = first (call
     var newBuf = ps.apply()
-    doAssert countKind(newBuf, DotToken) == 1, dumpKinds(newBuf)
-    # First call's tokens are gone; second call survives intact.
-    doAssert countKind(newBuf, ParLe) == 2, dumpKinds(newBuf)  # outer stmts + second call
+    doAssert countKind(newBuf, DotToken) == 1
+    doAssert countKind(newBuf, TagLit) == 2    # outer stmts + second call
 
   block insert_var_before_call:
-    # Insert a synthesized (var :v . . 5) before the first call.
     var buf = parse("(stmts (call x.0.M))")
-    var synth = createTokenBuf(8)
-    synth.addParLe(TagId(0), NoLineInfo)   # any tag — just a structure
+    var synth = createTokenBuf(8, buf.pool, buf.tags)
+    synth.openTag TagId(0)
     synth.addDotToken()
-    synth.addParRi()
+    synth.closeTag()
     var ps = initPatchset(addr buf)
-    # Position 1 is the (call ParLe.
     ps.addInsert(1, cursorAt(synth, 0))
     var newBuf = ps.apply()
-    # Outer stmts now contains two children: the inserted subtree and
-    # the original call.
-    doAssert countKind(newBuf, ParLe) == 3, dumpKinds(newBuf)  # stmts + synth + call
+    doAssert countKind(newBuf, TagLit) == 3    # stmts + synth + call
 
   block multiple_inserts_at_same_pos:
     var buf = parse("(stmts (call x.0.M))")
-    var s1 = createTokenBuf(2); s1.addDotToken()
-    var s2 = createTokenBuf(2); s2.addDotToken()
+    var s1 = createTokenBuf(2, buf.pool, buf.tags); s1.addDotToken()
+    var s2 = createTokenBuf(2, buf.pool, buf.tags); s2.addDotToken()
     var ps = initPatchset(addr buf)
     ps.addInsert(1, cursorAt(s1, 0))
     ps.addInsert(1, cursorAt(s2, 0))
     var newBuf = ps.apply()
-    # Two dots inserted before the call, plus the call itself.
-    doAssert countKind(newBuf, DotToken) == 2, dumpKinds(newBuf)
-    doAssert countKind(newBuf, ParLe) == 2, dumpKinds(newBuf)  # stmts + call
+    doAssert countKind(newBuf, DotToken) == 2
+    doAssert countKind(newBuf, TagLit) == 2    # stmts + call
 
   block insert_then_subst:
-    # Insert a dot, then substitute the call with a different dot.
     var buf = parse("(stmts (call x.0.M))")
-    var s1 = createTokenBuf(2); s1.addDotToken()
-    var s2 = createTokenBuf(2); s2.addDotToken()
+    var s1 = createTokenBuf(2, buf.pool, buf.tags); s1.addDotToken()
+    var s2 = createTokenBuf(2, buf.pool, buf.tags); s2.addDotToken()
     var ps = initPatchset(addr buf)
     ps.addInsert(1, cursorAt(s1, 0))
     ps.addSubst(1, cursorAt(s2, 0))
     var newBuf = ps.apply()
-    doAssert countKind(newBuf, DotToken) == 2, dumpKinds(newBuf)
-    # The original call is gone.
-    doAssert countKind(newBuf, ParLe) == 1, dumpKinds(newBuf)  # just the outer stmts
+    doAssert countKind(newBuf, DotToken) == 2
+    doAssert countKind(newBuf, TagLit) == 1    # just the outer stmts
 
   echo "patchsets.nim: all self-tests passed"

@@ -368,6 +368,11 @@ proc emitLineInfo(b: var Builder; info, parentInfo: PackedLineInfo) =
 proc toString*(tree: openArray[PackedToken]; produceLineInfo = true): string =
   var b = nifbuilder.open(tree.len * 20)
   var stack: seq[PackedLineInfo] = @[]
+  when defined(virtualParRi):
+    # Sealed scopes have their closing `)` elided from the buffer; reconstruct
+    # it from the jump field. `endsAt[k]` is the index of the last token of an
+    # open sealed scope, after which its synthetic `)` must be emitted.
+    var endsAt: seq[int] = @[]
   for n in 0 ..< tree.len:
     let info = tree[n].info
     let k = tree[n].kind
@@ -405,6 +410,15 @@ proc toString*(tree: openArray[PackedToken]; produceLineInfo = true): string =
       emitLineInfo(b, info, if stack.len > 0: stack[^1] else: NoLineInfo)
     if k == ParLe:
       stack.add info
+      when defined(virtualParRi):
+        let j = jump(tree[n])
+        if j != MaxJump: endsAt.add(n + int(j))
+    when defined(virtualParRi):
+      # Emit synthetic closers for every sealed scope ending at this token.
+      while endsAt.len > 0 and endsAt[^1] == n:
+        discard endsAt.pop()
+        if stack.len > 0: discard stack.pop()
+        b.endTree()
   result = b.extract()
 
 proc toModuleString*(tree: openArray[PackedToken]; dottedSuffix = ""; produceLineInfo = true): string =
@@ -412,6 +426,9 @@ proc toModuleString*(tree: openArray[PackedToken]; dottedSuffix = ""; produceLin
   var b = nifbuilder.open(tree.len * 20)
   let patchPos = b.addHeader27()
   var stack: seq[PackedLineInfo] = @[]
+  when defined(virtualParRi):
+    # See `toString`: reconstruct elided `)` of sealed scopes from jumps.
+    var endsAt: seq[int] = @[]
   var mostRecentOffset = 0
   var previousOffset = 0
   var index = nifbuilder.open(tree.len * 2)
@@ -474,6 +491,15 @@ proc toModuleString*(tree: openArray[PackedToken]; dottedSuffix = ""; produceLin
       emitLineInfo(b, info, if stack.len > 0: stack[^1] else: NoLineInfo)
     if k == ParLe:
       stack.add info
+      when defined(virtualParRi):
+        let j = jump(tree[n])
+        if j != MaxJump: endsAt.add(n + int(j))
+    when defined(virtualParRi):
+      # Emit synthetic closers for every sealed scope ending at this token.
+      while endsAt.len > 0 and endsAt[^1] == n:
+        discard endsAt.pop()
+        if stack.len > 0: discard stack.pop()
+        b.endTree()
 
   b.patchIndexAt(patchPos, b.offset)
   result = b.extract()
