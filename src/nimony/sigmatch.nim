@@ -995,9 +995,7 @@ proc isPlatformNumeric(context: ptr SemContext; kind: TypeKind; bits: Cursor): b
   cmpTypeBits(context, bits, p) == 0
 
 proc incIntegralWidenCost(m: var Match; kind: TypeKind; bits: Cursor; intLit = false, floatLit = false) =
-  if intLit and kind in {IntT, UIntT}:
-    inc m.intLitCosts
-  elif intLit and kind == FloatT:
+  if intLit and kind in {IntT, UIntT, FloatT}:
     inc m.intLitCosts
   elif floatLit and kind == FloatT:
     inc m.intLitCosts
@@ -1017,16 +1015,13 @@ proc checkFloatLitRange(context: ptr SemContext; f: Cursor; floatLit: Cursor): b
   if f.typeKind in {IntT, UIntT}:
     result = false
   else:
-    let val = pool.floats[floatLit.floatId]
     var f = f
     inc f # skip to size
-    let size = typebits(f.load)
-    case size
-    of 32:
+    let bits = typebits(f.load)
+    if bits == 32:
+      let val = pool.floats[floatLit.floatId]
       let val32 = val.float32
       result = $val == $val32
-    of 64:
-      result = true
     else:
       result = true
 
