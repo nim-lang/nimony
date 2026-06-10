@@ -466,7 +466,7 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
         var arg = beginRead(argBuf)
         var constraintMatch = constraint
         if not matchesConstraint(m, constraintMatch, arg):
-          c.buildErr dest, argInfo, "type " & typeToString(arg) & " does not match constraint: " & typeToString(constraint)
+          c.buildErr dest, argInfo, constraintMismatchMsg(m, constraint, arg)
           ok = false
           addArg = false
     if addArg:

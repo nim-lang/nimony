@@ -711,6 +711,60 @@ proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; rout
   restoreConceptSelfInference(m, selfSyms, savedSelf)
   false
 
+proc collectMissingConceptRequirements(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): seq[Cursor] =
+  let actualIsConcept = isConceptType(a)
+  let actualBody = if actualIsConcept: getTypeSection(a.symId).body else: default(Cursor)
+  let parents = conceptParentsSlot(body)
+  if conceptHasParents(parents):
+    for parent in conceptParentSyms(parents):
+      let parentBody = getTypeSection(parent).body
+      let parentMissing = collectMissingConceptRequirements(m, parent, parentBody, a)
+      if parentMissing.len > 0:
+        return parentMissing
+  if not actualIsConcept and not conceptHasParents(conceptParentsSlot(body)):
+    return @[]
+  result = @[]
+  for cbody, routine in conceptHierarchyRoutines(body):
+    if not conceptRoutineAvailable(m, conceptSym, cbody, routine, a, actualBody):
+      result.add routine
+
+proc collectMissingConceptRequirementsFromConstraint(m: var Match; f: Cursor; a: Cursor): seq[Cursor] =
+  var f = f
+  var a = a
+  if f.kind == DotToken:
+    return @[]
+  if a.kind == Symbol:
+    let res = tryLoadSym(a.symId)
+    assert res.status == LacksNothing
+    if res.decl.symKind == TypevarY:
+      var typevar = asTypevar(res.decl)
+      return collectMissingConceptRequirementsFromConstraint(m, f, typevar.typ)
+  if f.kind == Symbol:
+    if isConceptSym(f.symId):
+      let body = getTypeSection(f.symId).body
+      return collectMissingConceptRequirements(m, f.symId, body, a)
+    let res = tryLoadSym(f.symId)
+    if res.status == LacksNothing and res.decl.symKind == TypevarY:
+      var typevar = asTypevar(res.decl)
+      return collectMissingConceptRequirementsFromConstraint(m, typevar.typ, a)
+  if f.typeKind == ConceptT:
+    return collectMissingConceptRequirements(m, SymId(0), f, a)
+  @[]
+
+proc constraintMismatchMsg*(m: var Match; constraint, arg: Cursor): string =
+  result = "type " & typeToString(arg) & " does not match constraint: " & typeToString(constraint)
+  let missing = collectMissingConceptRequirementsFromConstraint(m, constraint, arg)
+  if missing.len > 0:
+    result.add "; missing required "
+    if missing.len == 1:
+      result.add "proc: "
+    else:
+      result.add "procs: "
+    for i, routine in missing:
+      if i > 0:
+        result.add ", "
+      result.add asNimCode(routine, {renderNoBody})
+
 proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): bool =
   let actualIsConcept = isConceptType(a)
   let actualBody = if actualIsConcept: getTypeSection(a.symId).body else: default(Cursor)
