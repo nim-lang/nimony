@@ -8,7 +8,7 @@ proc printF64(a: float64) = echo a
 printI32 1'i32 + 2
 printI64 1 + 3
 
-printF32 1.0'f32 + 4.12
+printF32 1.0'f32 + 4.5
 printF32 1.0'f32 + 5
 printF64 1.0 + 6.0
 printF64 1.0 + 7

@@ -4,7 +4,7 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-import std / [sets, tables, assertions, formatfloat]
+import std / [sets, tables, assertions]
 
 include ".." / lib / nifprelude
 include ".." / lib / compat2
@@ -1020,8 +1020,7 @@ proc checkFloatLitRange(context: ptr SemContext; f: Cursor; floatLit: Cursor): b
     let bits = typebits(f.load)
     if bits == 32:
       let val = pool.floats[floatLit.floatId]
-      let val32 = val.float32
-      result = $val == $val32
+      result = val == val.float32.float64
     else:
       result = true
 
