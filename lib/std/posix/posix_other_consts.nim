@@ -43,8 +43,12 @@ var EHOSTUNREACH* {.importc: "EHOSTUNREACH", header: "<errno.h>".}: cint
 var EIDRM* {.importc: "EIDRM", header: "<errno.h>".}: cint
 var EILSEQ* {.importc: "EILSEQ", header: "<errno.h>".}: cint
 var EINPROGRESS* {.importc: "EINPROGRESS", header: "<errno.h>".}: cint
-var EINTR* {.importc: "EINTR", header: "<errno.h>".}: cint
-var EINVAL* {.importc: "EINVAL", header: "<errno.h>".}: cint
+when defined(linux):
+  const EINTR* = cint(4)
+  const EINVAL* = cint(22)
+else:
+  var EINTR* {.importc: "EINTR", header: "<errno.h>".}: cint
+  var EINVAL* {.importc: "EINVAL", header: "<errno.h>".}: cint
 var EIO* {.importc: "EIO", header: "<errno.h>".}: cint
 var EISCONN* {.importc: "EISCONN", header: "<errno.h>".}: cint
 var EISDIR* {.importc: "EISDIR", header: "<errno.h>".}: cint
@@ -79,7 +83,10 @@ var ENOTSOCK* {.importc: "ENOTSOCK", header: "<errno.h>".}: cint
 var ENOTSUP* {.importc: "ENOTSUP", header: "<errno.h>".}: cint
 var ENOTTY* {.importc: "ENOTTY", header: "<errno.h>".}: cint
 var ENXIO* {.importc: "ENXIO", header: "<errno.h>".}: cint
-var EOPNOTSUPP* {.importc: "EOPNOTSUPP", header: "<errno.h>".}: cint
+when defined(linux):
+  const EOPNOTSUPP* = cint(95)
+else:
+  var EOPNOTSUPP* {.importc: "EOPNOTSUPP", header: "<errno.h>".}: cint
 var EOVERFLOW* {.importc: "EOVERFLOW", header: "<errno.h>".}: cint
 var EPERM* {.importc: "EPERM", header: "<errno.h>".}: cint
 var EPIPE* {.importc: "EPIPE", header: "<errno.h>".}: cint
@@ -116,20 +123,32 @@ var FD_CLOEXEC* {.importc: "FD_CLOEXEC", header: "<fcntl.h>".}: cint
 var F_RDLCK* {.importc: "F_RDLCK", header: "<fcntl.h>".}: cint
 var F_UNLCK* {.importc: "F_UNLCK", header: "<fcntl.h>".}: cint
 var F_WRLCK* {.importc: "F_WRLCK", header: "<fcntl.h>".}: cint
-var O_CREAT* {.importc: "O_CREAT", header: "<fcntl.h>".}: cint
+when defined(linux):
+  const O_CREAT* = cint(0o100)
+else:
+  var O_CREAT* {.importc: "O_CREAT", header: "<fcntl.h>".}: cint
 var O_EXCL* {.importc: "O_EXCL", header: "<fcntl.h>".}: cint
 var O_NOCTTY* {.importc: "O_NOCTTY", header: "<fcntl.h>".}: cint
-var O_TRUNC* {.importc: "O_TRUNC", header: "<fcntl.h>".}: cint
+when defined(linux):
+  const O_TRUNC* = cint(0o1000)
+else:
+  var O_TRUNC* {.importc: "O_TRUNC", header: "<fcntl.h>".}: cint
 var O_APPEND* {.importc: "O_APPEND", header: "<fcntl.h>".}: cint
 var O_DSYNC* {.importc: "O_DSYNC", header: "<fcntl.h>".}: cint
 var O_NONBLOCK* {.importc: "O_NONBLOCK", header: "<fcntl.h>".}: cint
 var O_RSYNC* {.importc: "O_RSYNC", header: "<fcntl.h>".}: cint
 var O_SYNC* {.importc: "O_SYNC", header: "<fcntl.h>".}: cint
 var O_ACCMODE* {.importc: "O_ACCMODE", header: "<fcntl.h>".}: cint
-var O_RDONLY* {.importc: "O_RDONLY", header: "<fcntl.h>".}: cint
-var O_RDWR* {.importc: "O_RDWR", header: "<fcntl.h>".}: cint
-var O_WRONLY* {.importc: "O_WRONLY", header: "<fcntl.h>".}: cint
-var O_CLOEXEC* {.importc: "O_CLOEXEC", header: "<fcntl.h>".}: cint
+when defined(linux):
+  const O_RDONLY* = cint(0)
+  const O_RDWR* = cint(2)
+  const O_WRONLY* = cint(1)
+  const O_CLOEXEC* = cint(0o2000000)
+else:
+  var O_RDONLY* {.importc: "O_RDONLY", header: "<fcntl.h>".}: cint
+  var O_RDWR* {.importc: "O_RDWR", header: "<fcntl.h>".}: cint
+  var O_WRONLY* {.importc: "O_WRONLY", header: "<fcntl.h>".}: cint
+  var O_CLOEXEC* {.importc: "O_CLOEXEC", header: "<fcntl.h>".}: cint
 when defined(nuttx):
   var O_DIRECT* {.importc: "O_DIRECT", header: "<fcntl.h>".}: cint
   var O_PATH* {.importc: "O_PATH", header: "<fcntl.h>".}: cint
@@ -440,22 +459,33 @@ var IPC_SET* {.importc: "IPC_SET", header: "<sys/ipc.h>".}: cint
 var IPC_STAT* {.importc: "IPC_STAT", header: "<sys/ipc.h>".}: cint
 
 # <sys/mman.h>
-var PROT_READ* {.importc: "PROT_READ", header: "<sys/mman.h>".}: cint
-var PROT_WRITE* {.importc: "PROT_WRITE", header: "<sys/mman.h>".}: cint
+when defined(linux):
+  const PROT_READ* = cint(1)
+  const PROT_WRITE* = cint(2)
+else:
+  var PROT_READ* {.importc: "PROT_READ", header: "<sys/mman.h>".}: cint
+  var PROT_WRITE* {.importc: "PROT_WRITE", header: "<sys/mman.h>".}: cint
 var PROT_EXEC* {.importc: "PROT_EXEC", header: "<sys/mman.h>".}: cint
 var PROT_NONE* {.importc: "PROT_NONE", header: "<sys/mman.h>".}: cint
 var MAP_ANONYMOUS* {.importc: "MAP_ANONYMOUS", header: "<sys/mman.h>".}: cint
 var MAP_FIXED_NOREPLACE* {.importc: "MAP_FIXED_NOREPLACE", header: "<sys/mman.h>".}: cint
 var MAP_NORESERVE* {.importc: "MAP_NORESERVE", header: "<sys/mman.h>".}: cint
-var MAP_SHARED* {.importc: "MAP_SHARED", header: "<sys/mman.h>".}: cint
-var MAP_PRIVATE* {.importc: "MAP_PRIVATE", header: "<sys/mman.h>".}: cint
+when defined(linux):
+  const MAP_SHARED* = cint(1)
+  const MAP_PRIVATE* = cint(2)
+else:
+  var MAP_SHARED* {.importc: "MAP_SHARED", header: "<sys/mman.h>".}: cint
+  var MAP_PRIVATE* {.importc: "MAP_PRIVATE", header: "<sys/mman.h>".}: cint
 var MAP_FIXED* {.importc: "MAP_FIXED", header: "<sys/mman.h>".}: cint
 var MS_ASYNC* {.importc: "MS_ASYNC", header: "<sys/mman.h>".}: cint
 var MS_SYNC* {.importc: "MS_SYNC", header: "<sys/mman.h>".}: cint
 var MS_INVALIDATE* {.importc: "MS_INVALIDATE", header: "<sys/mman.h>".}: cint
 var MCL_CURRENT* {.importc: "MCL_CURRENT", header: "<sys/mman.h>".}: cint
 var MCL_FUTURE* {.importc: "MCL_FUTURE", header: "<sys/mman.h>".}: cint
-var MAP_FAILED* {.importc: "MAP_FAILED", header: "<sys/mman.h>".}: pointer
+when defined(linux):
+  let MAP_FAILED* = cast[pointer](-1)
+else:
+  var MAP_FAILED* {.importc: "MAP_FAILED", header: "<sys/mman.h>".}: pointer
 var POSIX_MADV_NORMAL* {.importc: "POSIX_MADV_NORMAL", header: "<sys/mman.h>".}: cint
 var POSIX_MADV_SEQUENTIAL* {.importc: "POSIX_MADV_SEQUENTIAL", header: "<sys/mman.h>".}: cint
 var POSIX_MADV_RANDOM* {.importc: "POSIX_MADV_RANDOM", header: "<sys/mman.h>".}: cint
@@ -531,7 +561,10 @@ var S_IFREG* {.importc: "S_IFREG", header: "<sys/stat.h>".}: cint
 var S_IFSOCK* {.importc: "S_IFSOCK", header: "<sys/stat.h>".}: cint
 var S_IRGRP* {.importc: "S_IRGRP", header: "<sys/stat.h>".}: cint
 var S_IROTH* {.importc: "S_IROTH", header: "<sys/stat.h>".}: cint
-var S_IRUSR* {.importc: "S_IRUSR", header: "<sys/stat.h>".}: cint
+when defined(linux):
+  const S_IRUSR* = cint(0o400)
+else:
+  var S_IRUSR* {.importc: "S_IRUSR", header: "<sys/stat.h>".}: cint
 var S_IRWXG* {.importc: "S_IRWXG", header: "<sys/stat.h>".}: cint
 var S_IRWXO* {.importc: "S_IRWXO", header: "<sys/stat.h>".}: cint
 var S_IRWXU* {.importc: "S_IRWXU", header: "<sys/stat.h>".}: cint
@@ -540,7 +573,10 @@ var S_ISUID* {.importc: "S_ISUID", header: "<sys/stat.h>".}: cint
 var S_ISVTX* {.importc: "S_ISVTX", header: "<sys/stat.h>".}: cint
 var S_IWGRP* {.importc: "S_IWGRP", header: "<sys/stat.h>".}: cint
 var S_IWOTH* {.importc: "S_IWOTH", header: "<sys/stat.h>".}: cint
-var S_IWUSR* {.importc: "S_IWUSR", header: "<sys/stat.h>".}: cint
+when defined(linux):
+  const S_IWUSR* = cint(0o200)
+else:
+  var S_IWUSR* {.importc: "S_IWUSR", header: "<sys/stat.h>".}: cint
 var S_IXGRP* {.importc: "S_IXGRP", header: "<sys/stat.h>".}: cint
 var S_IXOTH* {.importc: "S_IXOTH", header: "<sys/stat.h>".}: cint
 var S_IXUSR* {.importc: "S_IXUSR", header: "<sys/stat.h>".}: cint
@@ -576,9 +612,14 @@ var IONBF* {.importc: "_IONBF", header: "<stdio.h>".}: cint
 var CLOCKS_PER_SEC* {.importc: "CLOCKS_PER_SEC", header: "<time.h>".}: clong
 var CLOCK_PROCESS_CPUTIME_ID* {.importc: "CLOCK_PROCESS_CPUTIME_ID", header: "<time.h>".}: cint
 var CLOCK_THREAD_CPUTIME_ID* {.importc: "CLOCK_THREAD_CPUTIME_ID", header: "<time.h>".}: cint
-var CLOCK_REALTIME* {.importc: "CLOCK_REALTIME", header: "<time.h>".}: cint
-var TIMER_ABSTIME* {.importc: "TIMER_ABSTIME", header: "<time.h>".}: cint
-var CLOCK_MONOTONIC* {.importc: "CLOCK_MONOTONIC", header: "<time.h>".}: cint
+when defined(linux):
+  const CLOCK_REALTIME* = cint(0)
+  const CLOCK_MONOTONIC* = cint(1)
+  const TIMER_ABSTIME* = cint(1)
+else:
+  var CLOCK_REALTIME* {.importc: "CLOCK_REALTIME", header: "<time.h>".}: cint
+  var TIMER_ABSTIME* {.importc: "TIMER_ABSTIME", header: "<time.h>".}: cint
+  var CLOCK_MONOTONIC* {.importc: "CLOCK_MONOTONIC", header: "<time.h>".}: cint
 
 # <unistd.h>
 var POSIX_ASYNC_IO* {.importc: "_POSIX_ASYNC_IO", header: "<unistd.h>".}: cint

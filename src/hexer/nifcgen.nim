@@ -2345,6 +2345,12 @@ proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo) 
   dest.add tagToken("call", rootInfo)
   dest.add symToken(initSym, rootInfo)
   dest.addParRi() # call
+  # (call nimFlushStdStreams) — flush buffered std streams on normal exit, so
+  # output is not lost when `main` returns without going through `quit`. A
+  # no-op unless `syncio` installed a flush (e.g. under -d:nimNativeIo).
+  dest.add tagToken("call", rootInfo)
+  dest.add symToken(pool.syms.getOrIncl(getCompilerProc(c, "nimFlushStdStreams")), rootInfo)
+  dest.addParRi() # call
   # (ret 0)
   dest.add tagToken("ret", rootInfo)
   dest.addIntLit(0, rootInfo)

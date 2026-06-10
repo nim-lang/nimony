@@ -5,44 +5,77 @@
 
 # Workaround https://github.com/nim-lang/nimony/issues/985
 when defined(posix):
+  # Included first so `Time`/`Timespec` (and the posix consts) are defined
+  # before `Stat` references `Timespec` — nimony does not resolve that forward
+  # reference across the conditional `type` sections below.
+  include posix_other
+
   type
-    Mode* {.importc: "mode_t", header: "<sys/types.h>".} = (
-      when defined(android) or defined(macos) or defined(macosx) or
-          (defined(bsd) and not defined(openbsd) and not defined(netbsd)):
-        uint16
-      else:
-        uint32
-    )
-
-    Off* {.importc: "off_t", header: "<sys/types.h>".} = int64
-
     InAddrScalar* = uint32
-
     Sighandler = proc (a: cint) {.noconv.}
 
-    Dev* {.importc: "dev_t", header: "<sys/types.h>".} = uint
-    Ino* {.importc: "ino_t", header: "<sys/types.h>".} = uint
+  when defined(nimNativeIo) and defined(amd64):
+    # Hardcoded Linux/amd64 ABI so the freestanding/native build needs no
+    # <sys/types.h>/<sys/stat.h>. `struct stat` is 144 bytes; only the fields
+    # other modules actually read are exposed — the rest are correctly-sized
+    # private padding so `fstat` writes land at the right offsets.
+    type
+      Mode* = uint32   ## mode_t
+      Off* = int64     ## off_t
+      Dev* = uint      ## dev_t
+      Ino* = uint      ## ino_t
 
-    Stat* {.importc: "struct stat",
-             header: "<sys/stat.h>", final, pure.} = object ## struct stat
-      st_dev* {.importc: "st_dev".} : Dev          ## Device ID of device containing file.
-      st_ino* {.importc: "st_ino".} : Ino          ## File serial number.
-      st_size* {.importc: "st_size".} : Off  ## For regular files, the file size in bytes.
-                                            ## For symbolic links, the length in bytes of the
-                                            ## pathname contained in the symbolic link.
-                                            ## For a shared memory object, the length in bytes.
-                                            ## For a typed memory object, the length in bytes.
-                                            ## For other file types, the use of this field is
-                                            ## unspecified.
-      st_mode* {.importc: "st_mode".} : Mode        ## Mode of file (see below).
-      when defined(osx):
-        # On macOS `st_mtime` is a macro that expands to `st_mtimespec.tv_sec`,
-        # so declaring it as a separate field would alias `st_mtim` and trigger
-        # a `-Winitializer-overrides` warning whenever a `Stat` value is zeroed.
-        st_mtim* {.importc: "st_mtimespec".} : Timespec ## Time of last data modification with nanosecond precision.
-      else:
-        st_mtime* {.importc: "st_mtime".} : int64     ## Time of last data modification (seconds since epoch).
-        st_mtim* {.importc: "st_mtim".} : Timespec      ## Time of last data modification with nanosecond precision.
+      Stat* {.pure.} = object ## Linux/amd64 `struct stat`
+        st_dev*: Dev              # offset 0
+        st_ino*: Ino              # 8
+        st_nlink: uint            # 16
+        st_mode*: Mode            # 24
+        st_uid: uint32            # 28
+        st_gid: uint32            # 32
+        pad0: int32               # 36
+        st_rdev: Dev              # 40
+        st_size*: Off             # 48
+        st_blksize: int64         # 56
+        st_blocks: int64          # 64
+        st_atim: Timespec         # 72
+        st_mtim*: Timespec        # 88
+        st_ctim: Timespec         # 104
+        glibcReserved: array[3, int64]  # 120 .. 143
+  else:
+    type
+      Mode* {.importc: "mode_t", header: "<sys/types.h>".} = (
+        when defined(android) or defined(macos) or defined(macosx) or
+            (defined(bsd) and not defined(openbsd) and not defined(netbsd)):
+          uint16
+        else:
+          uint32
+      )
+
+      Off* {.importc: "off_t", header: "<sys/types.h>".} = int64
+
+      Dev* {.importc: "dev_t", header: "<sys/types.h>".} = uint
+      Ino* {.importc: "ino_t", header: "<sys/types.h>".} = uint
+
+      Stat* {.importc: "struct stat",
+               header: "<sys/stat.h>", final, pure.} = object ## struct stat
+        st_dev* {.importc: "st_dev".} : Dev          ## Device ID of device containing file.
+        st_ino* {.importc: "st_ino".} : Ino          ## File serial number.
+        st_size* {.importc: "st_size".} : Off  ## For regular files, the file size in bytes.
+                                              ## For symbolic links, the length in bytes of the
+                                              ## pathname contained in the symbolic link.
+                                              ## For a shared memory object, the length in bytes.
+                                              ## For a typed memory object, the length in bytes.
+                                              ## For other file types, the use of this field is
+                                              ## unspecified.
+        st_mode* {.importc: "st_mode".} : Mode        ## Mode of file (see below).
+        when defined(osx):
+          # On macOS `st_mtime` is a macro that expands to `st_mtimespec.tv_sec`,
+          # so declaring it as a separate field would alias `st_mtim` and trigger
+          # a `-Winitializer-overrides` warning whenever a `Stat` value is zeroed.
+          st_mtim* {.importc: "st_mtimespec".} : Timespec ## Time of last data modification with nanosecond precision.
+        else:
+          st_mtime* {.importc: "st_mtime".} : int64     ## Time of last data modification (seconds since epoch).
+          st_mtim* {.importc: "st_mtim".} : Timespec      ## Time of last data modification with nanosecond precision.
 
 
   const StatHasNanoseconds* = defined(linux) or defined(freebsd) or
@@ -55,18 +88,32 @@ when defined(posix):
 
 
 
-  include posix_other
-
-  when defined(osx):
+  when defined(osx) or (defined(nimNativeIo) and defined(amd64)):
     template st_mtime*(s: Stat): int64 = int64(s.st_mtim.tv_sec)
       ## Time of last data modification (seconds since epoch).
 
   proc fcntl*(a1: cint, a2: cint): cint {.varargs, importc, header: "<fcntl.h>", sideEffect.}
-  proc open*(a1: cstring; a2: cint; mode: Mode): cint {.importc: "open", header: "<fcntl.h>", sideEffect.}
-  proc open*(a1: cstring; a2: cint): cint {.importc: "open", header: "<fcntl.h>", sideEffect.}
+  # Under -d:nimNativeIo these syscalls are declared header-less (bare names),
+  # so the C backend links the thin wrapper and arkham lowers them to bare
+  # `syscall` instructions — no <fcntl.h>/<unistd.h>/<sys/stat.h>/<sys/mman.h>.
+  when defined(nimNativeIo):
+    # Single variadic decl (matching C's real `open(const char*, int, ...)`):
+    # two bare same-named prototypes would collide, and a header is no longer
+    # pulled to provide the variadic signature for us. `open(fc, flags)` and
+    # `open(fc, flags, mode)` both resolve to this.
+    proc open*(a1: cstring; a2: cint): cint {.importc: "open", varargs, sideEffect.}
+  else:
+    proc open*(a1: cstring; a2: cint; mode: Mode): cint {.importc: "open", header: "<fcntl.h>", sideEffect.}
+    proc open*(a1: cstring; a2: cint): cint {.importc: "open", header: "<fcntl.h>", sideEffect.}
 
-  proc ftruncate*(a1: cint, a2: Off): cint {.importc: "ftruncate", header: "<unistd.h>".}
-  when defined(osx):              # 2001 POSIX evidently does not concern Apple
+  when defined(nimNativeIo):
+    proc ftruncate*(a1: cint, a2: Off): cint {.importc: "ftruncate".}
+  else:
+    proc ftruncate*(a1: cint, a2: Off): cint {.importc: "ftruncate", header: "<unistd.h>".}
+  when defined(nimNativeIo):
+    discard # no posix_fallocate (a libc func, not a syscall); memfiles etc.
+            # fall back to a plain ftruncate via `when declared(posix_fallocate)`.
+  elif defined(osx):              # 2001 POSIX evidently does not concern Apple
     type FStore {.importc: "fstore_t", header: "<fcntl.h>", bycopy.} = object
       fst_flags {.importc.}: uint32     ## IN: flags word
       fst_posmode {.importc.}: cint     ## IN: indicates offset field
@@ -88,34 +135,88 @@ when defined(posix):
     proc posix_fallocate*(a1: cint, a2, a3: Off): cint {.
       importc: "posix_fallocate", header: "<fcntl.h>".}
 
-  proc close*(a1: cint): cint {.importc: "close", header: "<unistd.h>".}
+  when defined(nimNativeIo):
+    proc close*(a1: cint): cint {.importc: "close".}
+  else:
+    proc close*(a1: cint): cint {.importc: "close", header: "<unistd.h>".}
 
-  proc fstat*(a1: cint, a2: var Stat): cint {.importc: "fstat", header: "<sys/stat.h>", sideEffect.}
-  proc lstat*(a1: cstring, a2: var Stat): cint {.importc, header: "<sys/stat.h>", sideEffect.}
-  proc stat*(a1: cstring, a2: var Stat): cint {.importc, header: "<sys/stat.h>".}
+  when defined(nimNativeIo):
+    proc fstat*(a1: cint, a2: var Stat): cint {.importc: "fstat", sideEffect.}
+    proc lstat*(a1: cstring, a2: var Stat): cint {.importc: "lstat", sideEffect.}
+    proc stat*(a1: cstring, a2: var Stat): cint {.importc: "stat".}
+  else:
+    proc fstat*(a1: cint, a2: var Stat): cint {.importc: "fstat", header: "<sys/stat.h>", sideEffect.}
+    proc lstat*(a1: cstring, a2: var Stat): cint {.importc, header: "<sys/stat.h>", sideEffect.}
+    proc stat*(a1: cstring, a2: var Stat): cint {.importc, header: "<sys/stat.h>".}
 
 
-  proc S_ISBLK*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
-    ## Test for a block special file.
-  proc S_ISCHR*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
-    ## Test for a character special file.
-  proc S_ISDIR*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
-    ## Test for a directory.
-  proc S_ISFIFO*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
-    ## Test for a pipe or FIFO special file.
-  proc S_ISREG*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
-    ## Test for a regular file.
-  proc S_ISLNK*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
-    ## Test for a symbolic link.
-  proc S_ISSOCK*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
-    ## Test for a socket.
+  when defined(nimNativeIo):
+    # The libc `S_IS*` are header macros, so under -d:nimNativeIo we reimplement
+    # them natively from the file-type bits (`st_mode and S_IFMT`). The S_IF*
+    # values are standard POSIX and identical across Linux/amd64+arm64.
+    template fileType(m: Mode): uint32 = uint32(m) and 0o170000'u32 # S_IFMT
+    proc S_ISBLK*(m: Mode): bool = fileType(m) == 0o060000'u32  ## block special
+    proc S_ISCHR*(m: Mode): bool = fileType(m) == 0o020000'u32  ## char special
+    proc S_ISDIR*(m: Mode): bool = fileType(m) == 0o040000'u32  ## directory
+    proc S_ISFIFO*(m: Mode): bool = fileType(m) == 0o010000'u32 ## FIFO/pipe
+    proc S_ISREG*(m: Mode): bool = fileType(m) == 0o100000'u32  ## regular file
+    proc S_ISLNK*(m: Mode): bool = fileType(m) == 0o120000'u32  ## symlink
+    proc S_ISSOCK*(m: Mode): bool = fileType(m) == 0o140000'u32 ## socket
+  else:
+    proc S_ISBLK*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
+      ## Test for a block special file.
+    proc S_ISCHR*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
+      ## Test for a character special file.
+    proc S_ISDIR*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
+      ## Test for a directory.
+    proc S_ISFIFO*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
+      ## Test for a pipe or FIFO special file.
+    proc S_ISREG*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
+      ## Test for a regular file.
+    proc S_ISLNK*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
+      ## Test for a symbolic link.
+    proc S_ISSOCK*(m: Mode): bool {.importc, header: "<sys/stat.h>".}
+      ## Test for a socket.
 
-  proc mmap*(a1: nil pointer, a2: int, a3, a4, a5: cint, a6: Off): pointer {.
-    importc: "mmap", header: "<sys/mman.h>".}
-  proc munmap*(a1: nil pointer, a2: int): cint {.importc: "munmap", header: "<sys/mman.h>".}
+  when defined(nimNativeIo):
+    proc mmap*(a1: nil pointer, a2: int, a3, a4, a5: cint, a6: Off): pointer {.
+      importc: "mmap".}
+    proc munmap*(a1: nil pointer, a2: int): cint {.importc: "munmap".}
+  else:
+    proc mmap*(a1: nil pointer, a2: int, a3, a4, a5: cint, a6: Off): pointer {.
+      importc: "mmap", header: "<sys/mman.h>".}
+    proc munmap*(a1: nil pointer, a2: int): cint {.importc: "munmap", header: "<sys/mman.h>".}
 
-  proc clock_gettime*(a1: ClockId, a2: var Timespec): cint {.
-    importc, header: "<time.h>", sideEffect.}
+  when not defined(nimNativeIo):
+    var errnoVar {.importc: "errno", header: "<errno.h>".}: cint
+
+  template pcall*(x: untyped): clong {.untyped.} =
+    ## Normalizes a syscall-style call to the Linux raw convention: returns the
+    ## non-negative result on success, or `-errno` on failure. Hides whether the
+    ## error is signalled by the raw syscall's negative return (freestanding /
+    ## arkham, `-d:nimNativeIo`) or by libc's `-1` + the `errno` global.
+    when defined(nimNativeIo):
+      clong(x)
+    else:
+      let r = clong(x)
+      if r < 0: clong(-errnoVar) else: r
+
+  template mmapFailed*(p: pointer): bool =
+    ## True if an `mmap` result indicates failure. The kernel signals failure as
+    ## an address in `[-4095, -1]`; libc maps that to `MAP_FAILED` (`(void*)-1`,
+    ## itself in range), so one range check covers both conventions.
+    cast[int](p) >= -4095 and cast[int](p) <= -1
+
+  template mmapErrno*(p: pointer): cint =
+    ## `errno` for a failed `mmap` (see `mmapFailed`).
+    when defined(nimNativeIo): cint(-cast[int](p))
+    else: errnoVar
+
+  when defined(nimNativeIo):
+    proc clock_gettime*(a1: ClockId, a2: var Timespec): cint {.importc: "clock_gettime", sideEffect.}
+  else:
+    proc clock_gettime*(a1: ClockId, a2: var Timespec): cint {.
+      importc, header: "<time.h>", sideEffect.}
 
   proc getcwd*(a1: cstring, a2: int): cstring {.importc, header: "<unistd.h>", sideEffect.}
   proc chdir*(path: cstring): cint {.importc, header: "<unistd.h>", sideEffect.}
@@ -277,5 +378,8 @@ when defined(posix):
   proc strerror*(errnum: cint): cstring {.
     importc, header: "<string.h>", sideEffect.}
 
-  proc nanosleep*(req: var Timespec; rem: var Timespec): cint {.
-    importc, header: "<time.h>", sideEffect.}
+  when defined(nimNativeIo):
+    proc nanosleep*(req: var Timespec; rem: var Timespec): cint {.importc: "nanosleep", sideEffect.}
+  else:
+    proc nanosleep*(req: var Timespec; rem: var Timespec): cint {.
+      importc, header: "<time.h>", sideEffect.}
