@@ -189,6 +189,15 @@ when defined(posix):
 
   when not defined(nimNativeIo):
     var errnoVar {.importc: "errno", header: "<errno.h>".}: cint
+  else:
+    var errno*: cint = 0
+      ## Native errno maintained by this module's freestanding syscall wrappers
+      ## (currently the directory ops). Mirrors libc's `errno` so consumers like
+      ## `std/dirs` can keep reporting errors via `posixToErrorCode(errno)`
+      ## without pulling `<errno.h>`. NOTE: on the C-backend native build the
+      ## bare-importc syscalls below still set libc's `errno`, not this one, so
+      ## error codes are only fully accurate on the raw-syscall (arkham) target
+      ## — happy paths work in both (see `pcall`'s caveat).
 
   template pcall*(x: untyped): clong {.untyped.} =
     ## Normalizes a syscall-style call to the Linux raw convention: returns the
@@ -218,8 +227,12 @@ when defined(posix):
     proc clock_gettime*(a1: ClockId, a2: var Timespec): cint {.
       importc, header: "<time.h>", sideEffect.}
 
-  proc getcwd*(a1: cstring, a2: int): cstring {.importc, header: "<unistd.h>", sideEffect.}
-  proc chdir*(path: cstring): cint {.importc, header: "<unistd.h>", sideEffect.}
+  when defined(nimNativeIo):
+    proc getcwd*(a1: cstring, a2: int): cstring {.importc: "getcwd", sideEffect.}
+    proc chdir*(path: cstring): cint {.importc: "chdir", sideEffect.}
+  else:
+    proc getcwd*(a1: cstring, a2: int): cstring {.importc, header: "<unistd.h>", sideEffect.}
+    proc chdir*(path: cstring): cint {.importc, header: "<unistd.h>", sideEffect.}
 
   proc realpath*(path, resolved: cstring): cstring {.importc, header: "<stdlib.h>", sideEffect.}
 
@@ -231,19 +244,101 @@ when defined(posix):
     proc symlink*(a1, a2: cstring): cint = -1
 
   # Directory operations
-  type
-    DIR* {.importc: "DIR", header: "<dirent.h>", incompleteStruct.} = object
-    Dirent* {.importc: "struct dirent", header: "<dirent.h>".} = object
-      d_type* {.importc: "d_type".}: uint8
-      d_name* {.importc: "d_name".}: array[256, char]
+  when defined(nimNativeIo) and defined(linux):
+    # `opendir`/`readdir`/`closedir` are libc functions (`DIR` is an opaque libc
+    # buffer), not syscalls, so under -d:nimNativeIo we reimplement them on top
+    # of open(2) + getdents64(2) + close(2). `Dirent` keeps the same two fields
+    # (`d_type`, `d_name`) the consumers read, but with a native layout — its
+    # bytes are copied out of the raw `struct linux_dirent64` records.
+    const
+      O_DIRECTORY = cint(0o200000)  ## asm-generic O_DIRECTORY (shared amd64/arm64)
+      dentBufSize = 4096
 
-  proc opendir*(name: cstring): nil ptr DIR {.importc, header: "<dirent.h>", sideEffect.}
-  proc closedir*(dirp: nil ptr DIR): cint {.importc, header: "<dirent.h>", sideEffect.}
-  proc readdir*(dirp: nil ptr DIR): nil ptr Dirent {.importc, header: "<dirent.h>", sideEffect.}
+    type
+      Dirent* {.pure.} = object
+        d_type*: uint8
+        d_name*: array[256, char]
 
-  proc mkdir*(path: cstring, mode: Mode): cint {.importc, header: "<sys/stat.h>", sideEffect.}
-  proc rmdir*(path: cstring): cint {.importc, header: "<unistd.h>", sideEffect.}
-  proc unlink*(path: cstring): cint {.importc, header: "<unistd.h>", sideEffect.}
+      DIR* {.pure.} = object
+        fd: cint
+        bpos: int32        ## read cursor into `buf`
+        nread: int32       ## valid bytes currently in `buf`
+        ent: Dirent        ## scratch entry returned by `readdir`
+        buf: array[dentBufSize, byte]
+
+    # Linux `getdents64`; not a libc-portable name historically, so declared as
+    # a bare syscall wrapper (links to glibc's getdents64 on the C backend).
+    proc getdents64(fd: cint; dirp: pointer; count: int): clong {.importc: "getdents64", sideEffect.}
+
+    proc opendir*(name: cstring): nil ptr DIR {.sideEffect.} =
+      let fd = open(name, O_RDONLY or O_DIRECTORY or O_CLOEXEC)
+      if fd < 0:
+        errno = cint(-fd)
+        return nil
+      result = cast[ptr DIR](alloc0(sizeof(DIR)))
+      result.fd = fd
+      result.bpos = 0
+      result.nread = 0
+
+    proc closedir*(dirp: nil ptr DIR): cint {.sideEffect.} =
+      if dirp == nil:
+        errno = cint(9)  # EBADF
+        return cint(-1)
+      let fd = dirp.fd
+      dealloc(dirp)
+      result = close(fd)
+
+    proc readdir*(dirp: nil ptr DIR): nil ptr Dirent {.sideEffect.} =
+      if dirp == nil:
+        errno = cint(9)  # EBADF
+        return nil
+      while true:
+        if dirp.bpos >= dirp.nread:
+          let n = getdents64(dirp.fd, addr dirp.buf[0], dentBufSize)
+          if n < 0:
+            errno = cint(int(-n))
+            return nil
+          if n == 0:
+            errno = cint(0)  # genuine end of directory
+            return nil
+          dirp.nread = int32(n)
+          dirp.bpos = 0
+        # One `struct linux_dirent64` starts at buf[bpos]:
+        #   d_ino  @0 (u64), d_off @8 (s64), d_reclen @16 (u16),
+        #   d_type @18 (u8), d_name @19 (NUL-terminated, variable length).
+        let base = cast[uint](addr dirp.buf[0]) + uint(dirp.bpos)
+        let reclen = cast[ptr uint16](base + 16'u)[]
+        dirp.ent.d_type = cast[ptr uint8](base + 18'u)[]
+        let namePtr = cast[ptr UncheckedArray[char]](base + 19'u)
+        dirp.bpos += int32(reclen)
+        var i = 0
+        while i < 255 and namePtr[i] != '\0':
+          dirp.ent.d_name[i] = namePtr[i]
+          inc i
+        dirp.ent.d_name[i] = '\0'
+        return addr dirp.ent
+  else:
+    type
+      DIR* {.importc: "DIR", header: "<dirent.h>", incompleteStruct.} = object
+      Dirent* {.importc: "struct dirent", header: "<dirent.h>".} = object
+        d_type* {.importc: "d_type".}: uint8
+        d_name* {.importc: "d_name".}: array[256, char]
+
+    proc opendir*(name: cstring): nil ptr DIR {.importc, header: "<dirent.h>", sideEffect.}
+    proc closedir*(dirp: nil ptr DIR): cint {.importc, header: "<dirent.h>", sideEffect.}
+    proc readdir*(dirp: nil ptr DIR): nil ptr Dirent {.importc, header: "<dirent.h>", sideEffect.}
+
+  when defined(nimNativeIo):
+    # `mkdir`'s <sys/stat.h> would re-declare `stat`/`lstat` (whose native
+    # bare-importc prototypes use our hardcoded `struct stat`) → conflicting
+    # types. All three are syscalls, so strip the headers.
+    proc mkdir*(path: cstring, mode: Mode): cint {.importc: "mkdir", sideEffect.}
+    proc rmdir*(path: cstring): cint {.importc: "rmdir", sideEffect.}
+    proc unlink*(path: cstring): cint {.importc: "unlink", sideEffect.}
+  else:
+    proc mkdir*(path: cstring, mode: Mode): cint {.importc, header: "<sys/stat.h>", sideEffect.}
+    proc rmdir*(path: cstring): cint {.importc, header: "<unistd.h>", sideEffect.}
+    proc unlink*(path: cstring): cint {.importc, header: "<unistd.h>", sideEffect.}
 
   # POSIX d_type constants
   const
@@ -269,110 +364,115 @@ when defined(posix):
   proc WIFSTOPPED*(s:cint) : bool = (s and 0xff) == 0x7f
   proc WIFCONTINUED*(s:cint) : bool = s == WCONTINUED
 
-  # -------- Process / pipe / exec bindings needed by std/osproc --------
-  type
-    Pid* {.importc: "pid_t", header: "<sys/types.h>".} = cint
-  when defined(osx):
-    # On macOS these are typedef'd to scalar types (`__uint32_t` for
-    # `sigset_t`, `void *` for the spawn handles); declaring them as
-    # opaque `object` makes nimony emit `(T){}` compound literals which
-    # clang rejects for scalar types. The pointer typedefs are nullable
-    # at the C level, so map to `nil pointer` (which has a `default()`
-    # overload).
+  when not defined(nimNativeIo):
+    # osproc-only bindings; their importc types (Sigset / Tposix_spawn*)
+    # would pull <signal.h>/<spawn.h> (→ transitive <unistd.h>) into the
+    # freestanding posix.c and clash with the bare directory syscalls.
+    # Native osproc is a separate follow-up.
+    # -------- Process / pipe / exec bindings needed by std/osproc --------
     type
-      Sigset* {.importc: "sigset_t", header: "<signal.h>".} = uint32
-      Tposix_spawnattr* {.importc: "posix_spawnattr_t",
-          header: "<spawn.h>".} = nil pointer
-      Tposix_spawn_file_actions* {.importc: "posix_spawn_file_actions_t",
-          header: "<spawn.h>".} = nil pointer
-  else:
-    type
-      Sigset* {.importc: "sigset_t", header: "<signal.h>", final, pure.} = object
-      Tposix_spawnattr* {.importc: "posix_spawnattr_t",
-          header: "<spawn.h>", final, pure.} = object
-      Tposix_spawn_file_actions* {.importc: "posix_spawn_file_actions_t",
-          header: "<spawn.h>", final, pure.} = object
+      Pid* {.importc: "pid_t", header: "<sys/types.h>".} = cint
+    when defined(osx):
+      # On macOS these are typedef'd to scalar types (`__uint32_t` for
+      # `sigset_t`, `void *` for the spawn handles); declaring them as
+      # opaque `object` makes nimony emit `(T){}` compound literals which
+      # clang rejects for scalar types. The pointer typedefs are nullable
+      # at the C level, so map to `nil pointer` (which has a `default()`
+      # overload).
+      type
+        Sigset* {.importc: "sigset_t", header: "<signal.h>".} = uint32
+        Tposix_spawnattr* {.importc: "posix_spawnattr_t",
+            header: "<spawn.h>".} = nil pointer
+        Tposix_spawn_file_actions* {.importc: "posix_spawn_file_actions_t",
+            header: "<spawn.h>".} = nil pointer
+    else:
+      type
+        Sigset* {.importc: "sigset_t", header: "<signal.h>", final, pure.} = object
+        Tposix_spawnattr* {.importc: "posix_spawnattr_t",
+            header: "<spawn.h>", final, pure.} = object
+        Tposix_spawn_file_actions* {.importc: "posix_spawn_file_actions_t",
+            header: "<spawn.h>", final, pure.} = object
 
-  proc pipe*(a: var array[0..1, cint]): cint {.
-    importc, header: "<unistd.h>", sideEffect.}
-  proc dup2*(oldfd, newfd: cint): cint {.
-    importc, header: "<unistd.h>", sideEffect.}
-  proc fork*(): Pid {.importc, header: "<unistd.h>", sideEffect.}
-  # Use plain C `char` so that `char**` lines up with libc's expectation
-  # (Nimony's `cstring` is `NC8*` / unsigned char*, which triggers
-  # `-Wincompatible-pointer-types` on posix_spawn / execvp / execve).
-  type CChar* {.importc: "char", nodecl.} = int8
-  type CCharArray* = nil ptr UncheckedArray[nil ptr CChar]
+    proc pipe*(a: var array[0..1, cint]): cint {.
+      importc, header: "<unistd.h>", sideEffect.}
+    proc dup2*(oldfd, newfd: cint): cint {.
+      importc, header: "<unistd.h>", sideEffect.}
+    proc fork*(): Pid {.importc, header: "<unistd.h>", sideEffect.}
+    # Use plain C `char` so that `char**` lines up with libc's expectation
+    # (Nimony's `cstring` is `NC8*` / unsigned char*, which triggers
+    # `-Wincompatible-pointer-types` on posix_spawn / execvp / execve).
+    type CChar* {.importc: "char", nodecl.} = int8
+    type CCharArray* = nil ptr UncheckedArray[nil ptr CChar]
 
-  proc execvp*(file: cstring; argv: CCharArray): cint {.
-    importc, header: "<unistd.h>", sideEffect.}
-  proc execve*(path: cstring; argv, env: CCharArray): cint {.
-    importc, header: "<unistd.h>", sideEffect.}
-  proc waitpid*(pid: Pid; status: var cint; options: cint): Pid {.
-    importc, header: "<sys/wait.h>", sideEffect.}
-  proc kill*(pid: Pid; sig: cint): cint {.
-    importc, header: "<signal.h>", sideEffect.}
-  proc setpgid*(pid, pgid: Pid): cint {.
-    importc, header: "<unistd.h>", sideEffect.}
-  proc exitnow*(status: cint) {.
-    importc: "_exit", header: "<unistd.h>", noreturn.}
-  proc read*(fildes: cint; buf: pointer; nbyte: int): int {.
-    importc, header: "<unistd.h>", sideEffect.}
-  proc write*(fildes: cint; buf: pointer; nbyte: int): int {.
-    importc, header: "<unistd.h>", sideEffect.}
+    proc execvp*(file: cstring; argv: CCharArray): cint {.
+      importc, header: "<unistd.h>", sideEffect.}
+    proc execve*(path: cstring; argv, env: CCharArray): cint {.
+      importc, header: "<unistd.h>", sideEffect.}
+    proc waitpid*(pid: Pid; status: var cint; options: cint): Pid {.
+      importc, header: "<sys/wait.h>", sideEffect.}
+    proc kill*(pid: Pid; sig: cint): cint {.
+      importc, header: "<signal.h>", sideEffect.}
+    proc setpgid*(pid, pgid: Pid): cint {.
+      importc, header: "<unistd.h>", sideEffect.}
+    proc exitnow*(status: cint) {.
+      importc: "_exit", header: "<unistd.h>", noreturn.}
+    proc read*(fildes: cint; buf: pointer; nbyte: int): int {.
+      importc, header: "<unistd.h>", sideEffect.}
+    proc write*(fildes: cint; buf: pointer; nbyte: int): int {.
+      importc, header: "<unistd.h>", sideEffect.}
 
-  # posix_spawn
-  proc posix_spawn*(pid: var Pid; path: cstring;
-                    file_actions: var Tposix_spawn_file_actions;
-                    attrp: var Tposix_spawnattr;
-                    argv, envp: CCharArray): cint {.
-    importc, header: "<spawn.h>", sideEffect.}
-  proc posix_spawnp*(pid: var Pid; file: cstring;
-                     file_actions: var Tposix_spawn_file_actions;
-                     attrp: var Tposix_spawnattr;
-                     argv, envp: CCharArray): cint {.
-    importc, header: "<spawn.h>", sideEffect.}
-  proc posix_spawn_file_actions_init*(
-      fops: var Tposix_spawn_file_actions): cint {.
-    importc, header: "<spawn.h>".}
-  proc posix_spawn_file_actions_destroy*(
-      fops: var Tposix_spawn_file_actions): cint {.
-    importc, header: "<spawn.h>".}
-  proc posix_spawn_file_actions_addclose*(
-      fops: var Tposix_spawn_file_actions; fildes: cint): cint {.
-    importc, header: "<spawn.h>".}
-  proc posix_spawn_file_actions_adddup2*(
-      fops: var Tposix_spawn_file_actions; fildes, newfildes: cint): cint {.
-    importc, header: "<spawn.h>".}
-  proc posix_spawn_file_actions_addchdir_np*(
-      fops: var Tposix_spawn_file_actions; path: cstring): cint {.
-    importc, header: "<spawn.h>".}
-  proc posix_spawnattr_init*(attr: var Tposix_spawnattr): cint {.
-    importc, header: "<spawn.h>".}
-  proc posix_spawnattr_destroy*(attr: var Tposix_spawnattr): cint {.
-    importc, header: "<spawn.h>".}
-  proc posix_spawnattr_setflags*(attr: var Tposix_spawnattr;
-                                 flags: cshort): cint {.
-    importc, header: "<spawn.h>".}
-  proc posix_spawnattr_setpgroup*(attr: var Tposix_spawnattr;
-                                  pgroup: Pid): cint {.
-    importc, header: "<spawn.h>".}
-  proc posix_spawnattr_setsigmask*(attr: var Tposix_spawnattr;
-                                   mask: var Sigset): cint {.
-    importc, header: "<spawn.h>".}
-  proc posix_spawnattr_setsigdefault*(attr: var Tposix_spawnattr;
-                                      mask: var Sigset): cint {.
-    importc, header: "<spawn.h>".}
-  proc sigemptyset*(mask: var Sigset): cint {.
-    importc, header: "<signal.h>".}
-  proc sigfillset*(mask: var Sigset): cint {.
-    importc, header: "<signal.h>".}
-  proc sigaddset*(mask: var Sigset; sig: cint): cint {.
-    importc, header: "<signal.h>".}
+    # posix_spawn
+    proc posix_spawn*(pid: var Pid; path: cstring;
+                      file_actions: var Tposix_spawn_file_actions;
+                      attrp: var Tposix_spawnattr;
+                      argv, envp: CCharArray): cint {.
+      importc, header: "<spawn.h>", sideEffect.}
+    proc posix_spawnp*(pid: var Pid; file: cstring;
+                       file_actions: var Tposix_spawn_file_actions;
+                       attrp: var Tposix_spawnattr;
+                       argv, envp: CCharArray): cint {.
+      importc, header: "<spawn.h>", sideEffect.}
+    proc posix_spawn_file_actions_init*(
+        fops: var Tposix_spawn_file_actions): cint {.
+      importc, header: "<spawn.h>".}
+    proc posix_spawn_file_actions_destroy*(
+        fops: var Tposix_spawn_file_actions): cint {.
+      importc, header: "<spawn.h>".}
+    proc posix_spawn_file_actions_addclose*(
+        fops: var Tposix_spawn_file_actions; fildes: cint): cint {.
+      importc, header: "<spawn.h>".}
+    proc posix_spawn_file_actions_adddup2*(
+        fops: var Tposix_spawn_file_actions; fildes, newfildes: cint): cint {.
+      importc, header: "<spawn.h>".}
+    proc posix_spawn_file_actions_addchdir_np*(
+        fops: var Tposix_spawn_file_actions; path: cstring): cint {.
+      importc, header: "<spawn.h>".}
+    proc posix_spawnattr_init*(attr: var Tposix_spawnattr): cint {.
+      importc, header: "<spawn.h>".}
+    proc posix_spawnattr_destroy*(attr: var Tposix_spawnattr): cint {.
+      importc, header: "<spawn.h>".}
+    proc posix_spawnattr_setflags*(attr: var Tposix_spawnattr;
+                                   flags: cshort): cint {.
+      importc, header: "<spawn.h>".}
+    proc posix_spawnattr_setpgroup*(attr: var Tposix_spawnattr;
+                                    pgroup: Pid): cint {.
+      importc, header: "<spawn.h>".}
+    proc posix_spawnattr_setsigmask*(attr: var Tposix_spawnattr;
+                                     mask: var Sigset): cint {.
+      importc, header: "<spawn.h>".}
+    proc posix_spawnattr_setsigdefault*(attr: var Tposix_spawnattr;
+                                        mask: var Sigset): cint {.
+      importc, header: "<spawn.h>".}
+    proc sigemptyset*(mask: var Sigset): cint {.
+      importc, header: "<signal.h>".}
+    proc sigfillset*(mask: var Sigset): cint {.
+      importc, header: "<signal.h>".}
+    proc sigaddset*(mask: var Sigset; sig: cint): cint {.
+      importc, header: "<signal.h>".}
 
-  # environ
-  var posix_environ* {.importc: "environ", header: "<unistd.h>".}:
-    ptr UncheckedArray[cstring]
+    # environ
+    var posix_environ* {.importc: "environ", header: "<unistd.h>".}:
+      ptr UncheckedArray[cstring]
 
   # errno
   proc strerror*(errnum: cint): cstring {.
