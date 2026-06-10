@@ -194,7 +194,7 @@ iterator findConceptsInConstraint(typ: Cursor): Cursor {.sideEffect.} =
 
 proc conceptMethodAlreadyListed(cands: FnCandidates; routine: Cursor): bool =
   for existing in cands.a:
-    if existing.fromConcept and sameTrees(existing.typ, routine, ignoreSymIds = true):
+    if existing.fromConcept and sameConceptRoutineTrees(routine, existing.typ, equivKinds = true):
       return true
   false
 

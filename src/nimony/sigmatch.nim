@@ -604,7 +604,65 @@ proc matchConceptParamTypes(m: var Match; conceptTyp, implTyp: Cursor): bool =
     return true
   false
 
+proc conceptRoutineKindsCompatible*(requirement, implementation: SymKind): bool {.inline.} =
+  ## A `func` or `template` implementation may satisfy a `proc` requirement,
+  ## but not vice versa. `func` requirements accept only `func` implementations.
+  if requirement == implementation:
+    return true
+  if requirement == ProcY and implementation in {FuncY, TemplateY}:
+    return true
+  false
+
+proc conceptRoutinesEquivalentKinds*(a, b: SymKind): bool {.inline.} =
+  ## For deduplicating concept requirements that differ only by proc/func.
+  conceptRoutineKindsCompatible(a, b) or conceptRoutineKindsCompatible(b, a)
+
+proc sameConceptRoutineParamTypes(aParams, bParams: Cursor): bool =
+  var a = aParams
+  var b = bParams
+  if a.substructureKind != ParamsU or b.substructureKind != ParamsU:
+    return false
+  a.into ParamsU:
+    b.into ParamsU:
+      while a.hasMore and b.hasMore:
+        let aTyp = takeLocal(a, SkipFinalParRi).typ
+        let bTyp = takeLocal(b, SkipFinalParRi).typ
+        if not sameTrees(aTyp, bTyp, ignoreSymIds = true):
+          return false
+      return not a.hasMore and not b.hasMore
+  false
+
+proc sameConceptRoutineTrees*(requirement, candidate: Cursor;
+                              equivKinds = false): bool =
+  ## Compare concept routine requirements by basename, kind, and signature shape.
+  ## Parameter names are ignored; only types and return type matter.
+  if requirement.symKind notin RoutineKinds or candidate.symKind notin RoutineKinds:
+    return false
+  let kindsOk = if equivKinds:
+    conceptRoutinesEquivalentKinds(requirement.symKind, candidate.symKind)
+  else:
+    conceptRoutineKindsCompatible(requirement.symKind, candidate.symKind)
+  if not kindsOk:
+    return false
+  if conceptRoutineBasename(requirement) != conceptRoutineBasename(candidate):
+    return false
+  var rReq = requirement
+  var rCand = candidate
+  skipToParams rReq
+  skipToParams rCand
+  if not sameConceptRoutineParamTypes(rReq, rCand):
+    return false
+  rReq = requirement
+  rCand = candidate
+  skipToParams rReq
+  skip rReq, AnyType
+  skipToParams rCand
+  skip rCand, AnyType
+  sameTrees(rReq, rCand, ignoreSymIds = true)
+
 proc matchConceptRoutineSig(m: var Match; conceptR, implR: Cursor): bool =
+  if not conceptRoutineKindsCompatible(conceptR.symKind, implR.symKind):
+    return false
   var cf = conceptR
   var ca = implR
   skipToParams cf
@@ -653,9 +711,8 @@ iterator conceptRoutineCandidates(m: var Match; conceptSym: SymId; basename: Str
         yield cand
 
 proc conceptRequirementInBody(routine: Cursor; actualBody: Cursor): bool =
-  let basename = conceptRoutineBasename(routine)
   for _, req in conceptHierarchyRoutines(actualBody):
-    if conceptRoutineBasename(req) == basename and sameTrees(routine, req, ignoreSymIds = true):
+    if sameConceptRoutineTrees(routine, req):
       return true
   false
 
