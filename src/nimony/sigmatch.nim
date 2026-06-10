@@ -984,6 +984,24 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
         else:
           singleArgImpl(m, impl, arg)
 
+proc isPlatformNumeric(context: ptr SemContext; kind: TypeKind; bits: Cursor): bool =
+  let plat = case kind
+  of IntT: context.types.intType
+  of UIntT: context.types.uintType
+  of FloatT: context.types.floatType
+  else: return false
+  var p = plat
+  inc p
+  cmpTypeBits(context, bits, p) == 0
+
+proc incIntegralWidenCost(m: var Match; kind: TypeKind; bits: Cursor; intLit = false) =
+  if intLit and kind in {IntT, UIntT}:
+    inc m.intLitCosts
+  elif isPlatformNumeric(m.context, kind, bits):
+    inc m.intConvCosts
+  else:
+    inc m.convCosts
+
 proc checkIntLitRange(context: ptr SemContext; f: Cursor; intLit: Cursor): bool =
   if f.typeKind == FloatT:
     result = true
@@ -1025,14 +1043,7 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
     else:
       m.args.addParLe HconvX, m.argInfo
       m.args.addSubtree forig
-      if isIntLit:
-        if forig.typeKind == FloatT:
-          inc m.convCosts
-        else:
-          inc m.intLitCosts
-      else:
-        # sameKind is true
-        inc m.intConvCosts
+      incIntegralWidenCost m, forig.typeKind, f, isIntLit
       inc m.opened
   else:
     m.error InvalidMatch, f, a
