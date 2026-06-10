@@ -16,7 +16,7 @@
 | `(nan T?)`             | NifcExpr, NimonyExpr | NaN floating point value |
 | `(false)`              | NifcExpr, NimonyExpr | boolean `false` value |
 | `(true)`               | NifcExpr, NimonyExpr | boolean `true` value |
-| `(and X X)`            | NifcExpr, NimonyExpr, NimonyType | boolean `and` operation |
+| `(and X X)`; `(and Y Y+)` | NifcExpr, NimonyExpr, NimonyType | boolean `and` operation; `Y+` form is also used for concept parent lists with more than two parents |
 | `(or X X)`             | NifcExpr, NimonyExpr, NimonyType | boolean `or` operation |
 | `(xor X X)`            | NimonyExpr | boolean `xor` operation |
 | `(not X)`              | NifcExpr, NimonyExpr, NimonyType | boolean `not` operation |
