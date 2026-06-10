@@ -571,7 +571,15 @@ proc conceptReturnTypesMatch(m: var Match; cRet, aRet: Cursor): bool =
   var a = aRet
   if tryLinearMatch(m, c, a, ConstraintMatchFlags):
     return true
+  c = cRet
+  a = aRet
+  if tryLinearMatch(m, a, c, ConstraintMatchFlags):
+    return true
   if matchesConstraint(m, c, a):
+    return true
+  c = cRet
+  a = aRet
+  if matchesConstraint(m, a, c):
     return true
   if sameTrees(cRet, aRet, ignoreSymIds = true):
     return true
@@ -583,6 +591,17 @@ proc conceptReturnTypesMatch(m: var Match; cRet, aRet: Cursor): bool =
     skipTypeSourceAnnot c
     skipTypeSourceAnnot a
     return tryLinearMatch(m, c, a, ConstraintMatchFlags)
+  false
+
+proc matchConceptParamTypes(m: var Match; conceptTyp, implTyp: Cursor): bool =
+  var c = conceptTyp
+  var i = implTyp
+  if tryLinearMatch(m, c, i, ConstraintMatchFlags):
+    return true
+  c = conceptTyp
+  i = implTyp
+  if tryLinearMatch(m, i, c, ConstraintMatchFlags):
+    return true
   false
 
 proc matchConceptRoutineSig(m: var Match; conceptR, implR: Cursor): bool =
@@ -597,8 +616,7 @@ proc matchConceptRoutineSig(m: var Match; conceptR, implR: Cursor): bool =
       while cf.hasMore and ca.hasMore:
         let cTyp = takeLocal(cf, SkipFinalParRi).typ
         let aTyp = takeLocal(ca, SkipFinalParRi).typ
-        var cTypMatch = cTyp
-        if not matchesConstraint(m, cTypMatch, aTyp):
+        if not matchConceptParamTypes(m, cTyp, aTyp):
           return false
       if cf.hasMore:
         return false
