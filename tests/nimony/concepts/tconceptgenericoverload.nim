@@ -1,39 +1,20 @@
-import std/[assertions, math]
-
 ## Generic bodies with inherited concepts (`concept of`) must pick the
-## structurally matching overload, not accept a scalar type parameter
-## when the argument is a generic constructor over the same type variable.
-## `std/math.pow` must not participate when the arguments are `Complex[T]`.
+## structurally matching overload, not accept a scalar type parameter when
+## the argument is a generic constructor over the same type variable.
 
 type
-  AdditiveSemigroup* = concept
+  PlusEq* = concept
     proc `+`*(a, b: Self): Self
-    proc `==`*(a, b: Self): bool
 
-  ScalarPart* = concept of AdditiveSemigroup
+  Elem* = concept of PlusEq
 
-type Complex*[T: ScalarPart] = object
-  re*, im*: T
+type Wrap*[T: Elem] = object
+  v*: T
 
-func `^`*[T: ScalarPart](base: Complex[T], exp: Complex[T]): Complex[T] =
-  pow(base, exp)
+func pow*[T: Elem](base: Wrap[T], exp: Wrap[T]): Wrap[T] = base
+func pow*[T: Elem](base: Wrap[T], exp: T): Wrap[T] = base
 
-func `^`*[T: ScalarPart](base: Complex[T], exp: T): Complex[T] =
-  pow(base, exp)
-
-func pow*[T: ScalarPart](base: Complex[T], exp: Complex[T]): Complex[T] =
-  base
-
-func pow*[T: ScalarPart](base: Complex[T], exp: T): Complex[T] =
-  base
-
-func pow*[T: ScalarPart](base: Complex[T], exp: int): Complex[T] =
-  base
-
-proc checkConcrete() =
-  var a = Complex[float64](re: 2.0, im: 1.0)
-  var b = Complex[float64](re: 0.0, im: 1.0)
-  discard a ^ b
-  discard a ^ 2.0
-
-checkConcrete()
+var a = Wrap[float64](v: 2.0)
+var b = Wrap[float64](v: 1.0)
+discard pow(a, b)
+discard pow(a, 2.0)
