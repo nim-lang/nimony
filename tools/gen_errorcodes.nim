@@ -321,12 +321,12 @@ type
 
   toWindows.add """  else: 1124'i32"""
 
-  var outf = open(ErrorcodesDir / "src/errorcodes.nim", fmWrite)
+  var outf = open(ErrorcodesDir / "errorcodes.nim", fmWrite)
   outf.writeLine Header
   outf.writeLine enumDecl
   outf.close
 
-  outf = open(ErrorcodesDir / "src/errorcodes_posix.nim", fmWrite)
+  outf = open(ErrorcodesDir / "errorcodes_posix.nim", fmWrite)
   outf.writeLine Header
   outf.writeLine importErrorCodes()
   if bakedOSes.len == 0:
@@ -352,7 +352,7 @@ type
     outf.writeLine body
   outf.close
 
-  outf = open(ErrorcodesDir / "src/errorcodes_http.nim", fmWrite)
+  outf = open(ErrorcodesDir / "errorcodes_http.nim", fmWrite)
   outf.writeLine Header
   outf.writeLine importErrorCodes()
   outf.writeLine fromHttp
@@ -361,7 +361,7 @@ type
   outf.close
 
   when onWindowsHost:
-    outf = open(ErrorcodesDir / "src/errorcodes_windows.nim", fmWrite)
+    outf = open(ErrorcodesDir / "errorcodes_windows.nim", fmWrite)
     outf.writeLine Header
     outf.writeLine importErrorCodes()
     outf.writeLine fromWindows
@@ -370,7 +370,7 @@ type
     outf.close
   else:
     if winSymbols.len > 0:
-      echo "note: not a Windows host — left src/errorcodes_windows.nim untouched ",
+      echo "note: not a Windows host — left errorcodes_windows.nim untouched ",
            "(rerun on Windows to refresh ", winSymbols.len, " symbolic value(s))"
 
 main()
