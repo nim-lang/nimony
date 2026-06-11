@@ -234,7 +234,7 @@ func chr*(u: range[0..255]): char {.inline.} =
 
 include "system/formatfloat"
 
-include "../../vendor/errorcodes/src" / errorcodes
+include "errorcodes/errorcodes"
 
 var localErr* {.threadvar.}: ErrorCode
 

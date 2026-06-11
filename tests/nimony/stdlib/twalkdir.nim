@@ -1,8 +1,9 @@
 import std/[dirs, paths, syncio, assertions]
 
-# Exercises createDir/removeDir/removeFile and walkDir (opendir/readdir/closedir).
-# Also serves as the regression test for the freestanding (-d:nimNativeIo)
-# directory iteration that reimplements those on top of getdents64(2).
+# Exercises createDir/removeDir/removeFile and walkDir (opendir/readdir/closedir
+# on POSIX, FindFirstFile/FindNextFile/FindClose on Windows). Also serves as the
+# regression test for the freestanding (-d:nimNativeIo) directory iteration that
+# reimplements those on top of getdents64(2) on Linux.
 
 proc main {.raises.} =
   let base = path("twalkdir_testdir")
@@ -33,8 +34,7 @@ proc main {.raises.} =
   removeDir(base)
   echo "ok"
 
-when not defined(windows):
-  try:
-    main()
-  except:
-    quit "walkDir test failed"
+try:
+  main()
+except:
+  quit "walkDir test failed"

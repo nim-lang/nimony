@@ -108,7 +108,7 @@ Nim and Nimony model exceptions completely differently:
 | Opt-out / opt-in | `{.raises: [].}` to disable | `{.raises.}` to enable |
 
 The `ErrorCode` enum lives in
-[vendor/errorcodes/src/errorcodes.nim](../vendor/errorcodes/src/errorcodes.nim)
+[errorcodes.nim](errorcodes.nim)
 and contains a flat list of error values: `Success`, `IOError`,
 `OSError`, `ValueError`, `KeyError`, `EndOfStreamError`, `OutOfMemError`,
 …. There is no inheritance; raising allocates nothing.
