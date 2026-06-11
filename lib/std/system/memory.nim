@@ -110,10 +110,9 @@ else:
 
   template sysAssert(cond, msg: untyped) = discard
 
-  proc c_abort() {.importc: "abort", header: "<stdlib.h>".}
   proc raiseOutOfMem() {.noinline.} =
     # Reached only when the OS itself refuses to map pages; nothing to recover.
-    c_abort()
+    cAbort()
 
   template `+!`(p: pointer; x: int): pointer = cast[pointer](cast[int](p) + x)
   template `-!`(p: pointer; x: int): pointer = cast[pointer](cast[int](p) - x)

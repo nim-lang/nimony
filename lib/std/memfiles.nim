@@ -63,13 +63,15 @@ proc setFileSize(fh: OsFileHandle, newFileSize = -1, oldSize = -1): OSErrorCode 
       when declared(posix_fallocate):
         while (e = posix_fallocate(fh, 0, newFileSize); e == EINTR):
           discard
-      if (e == EINVAL or e == EOPNOTSUPP) and ftruncate(fh, newFileSize) == -1:
-        result = osLastError() # fallback arguable; Most portable BUT allows SEGV
+      if e == EINVAL or e == EOPNOTSUPP:
+        # fallback arguable; Most portable BUT allows SEGV
+        let r = pcall(ftruncate(fh, newFileSize))
+        if r < 0: result = OSErrorCode(int32(0 - r))
       elif e != 0:
-        result = osLastError()
+        result = OSErrorCode(e) # posix_fallocate returns the error code directly
     else: # shrink the file
-      if ftruncate(fh.cint, newFileSize) == -1:
-        result = osLastError()
+      let r = pcall(ftruncate(fh.cint, newFileSize))
+      if r < 0: result = OSErrorCode(int32(0 - r))
 
 proc open*(filename: string, mode: FileMode = fmRead,
            mappedSize = -1, offset = 0, newFileSize = -1,
@@ -188,7 +190,7 @@ proc open*(filename: string, mode: FileMode = fmRead,
   else:
     template fail(errCode: OSErrorCode, msg: string) =
       rollback()
-      if result.handle != -1: discard close(result.handle)
+      if result.handle >= 0: discard close(result.handle)
       raiseOSError(errCode, msg)
 
     var flags = (if readonly: O_RDONLY else: O_RDWR) or O_CLOEXEC
@@ -200,8 +202,8 @@ proc open*(filename: string, mode: FileMode = fmRead,
       let fc = filename.toCString()
       if fc.isNil:
         raise OutOfMemError
-      result.handle = open(fc, flags, permissionsMode)
-      if result.handle != -1:
+      result.handle = cint(pcall(open(fc, flags, permissionsMode)))
+      if result.handle >= 0:
         if (let e = setFileSize(result.handle, newFileSize);
             e != 0.OSErrorCode): fail(e, "error setting file size")
     else:
@@ -209,19 +211,20 @@ proc open*(filename: string, mode: FileMode = fmRead,
       let fc = filename.toCString()
       if fc.isNil:
         raise OutOfMemError
-      result.handle = open(fc, flags)
+      result.handle = cint(pcall(open(fc, flags)))
 
-    if result.handle == -1:
-      fail(osLastError(), "error opening file")
+    if result.handle < 0:
+      fail(OSErrorCode(int32(0 - result.handle)), "error opening file")
 
     if mappedSize != -1: # XXX Logic here differs from `when windows` branch ..
       result.size = mappedSize # .. which always fstats&Uses min(mappedSize, st).
     else: # if newFileSize!=-1: result.size=newFileSize # if trust setFileSize
       var stat: Stat = default(Stat) # ^^.. BUT some FSes (eg. Linux HugeTLBfs) round to 2MiB.
-      if fstat(result.handle, stat) != -1:
+      let sr = pcall(fstat(result.handle, stat))
+      if sr >= 0:
         result.size = stat.st_size.int # int may be 32-bit-unsafe for 2..<4 GiB
       else:
-        fail(osLastError(), "error getting file size")
+        fail(OSErrorCode(int32(0 - sr)), "error getting file size")
 
     result.flags = if mapFlags == cint(-1): MAP_SHARED else: mapFlags
     # Ensure exactly one of MAP_PRIVATE cr MAP_SHARED is set
@@ -230,11 +233,11 @@ proc open*(filename: string, mode: FileMode = fmRead,
 
     let pr = if readonly: PROT_READ else: PROT_READ or PROT_WRITE
     result.mem = mmap(nil, result.size, pr, result.flags, result.handle, offset)
-    if result.mem == cast[pointer](MAP_FAILED):
-      fail(osLastError(), "file mapping failed")
+    if mmapFailed(result.mem):
+      fail(OSErrorCode(mmapErrno(result.mem)), "file mapping failed")
 
-    if not allowRemap and result.handle != -1:
-      if close(result.handle) == 0:
+    if not allowRemap and result.handle >= 0:
+      if pcall(close(result.handle)) >= 0:
         result.handle = -1
 
 proc close*(f: var MemFile) {.raises.} =
@@ -255,10 +258,14 @@ proc close*(f: var MemFile) {.raises.} =
       if error:
         lastErr = osLastError()
   else:
-    error = munmap(f.mem, f.size) != 0
-    lastErr = osLastError()
-    if f.handle != -1:
-      error = (close(f.handle) != 0) or error
+    let mr = pcall(munmap(f.mem, f.size))
+    error = mr < 0
+    lastErr = if mr < 0: OSErrorCode(int32(0 - mr)) else: OSErrorCode(0)
+    if f.handle >= 0:
+      let cr = pcall(close(f.handle))
+      if cr < 0:
+        error = true
+        lastErr = OSErrorCode(int32(0 - cr))
 
   f.size = 0
   f.mem = nil

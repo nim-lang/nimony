@@ -1863,6 +1863,14 @@ proc handleCmdLine =
     for a in items(args):
       if bootArgs.len > 0: bootArgs.add ' '
       bootArgs.add quoteShell(a)
+    # `--forward:<flag>` is appended verbatim to every stage's `nimony c`
+    # command line. Unlike positional `args`, getopt keeps the value intact
+    # (dashes and all), so this is the way to forward flags like
+    # `-d:nimNativeAlloc` that must survive unmangled into nimony (and thus
+    # into nimsem, where the `when defined(...)` is evaluated).
+    if forward.len > 0:
+      if bootArgs.len > 0: bootArgs.add ' '
+      bootArgs.add forward
     bootCmd(bootArgs, withValgrind)
 
   of "selfcheck":

@@ -1,25 +1,43 @@
 ## Tiny support for basic error reporting.
 
-proc die(value: int32) {.importc: "exit", header: "<stdlib.h>".}
+when defined(nimNativeIo):
+  # Freestanding: error text goes straight to fd 2 via the `write` syscall and
+  # termination funnels through `cExit` (see `system/exits`), so the crash path
+  # links no libc stdio.
+  proc cWriteErr(fd: cint; buf: pointer; n: uint): int {.importc: "write".}
 
-# Yes, that is a tiny bit of duplication from syncio.nim. Get over it.
-type
-  RawCFile {.importc: "FILE", header: "<stdio.h>".} = object
-when defined(macos) or defined(macosx):
-  var
-    cstderr {.importc: "__stderrp", header: "<stdio.h>".}: ptr RawCFile
+  proc writeErr(s: string) =
+    discard cWriteErr(2'i32, readRawData(s), s.len.uint)
+  proc writeErr(s: cstring) =
+    var n = 0
+    let p = cast[ptr UncheckedArray[char]](s)
+    while p[n] != '\0': inc n
+    discard cWriteErr(2'i32, p, n.uint)
+  proc writeErr(x: int64) = writeErr($x)
+  proc writeErr(x: uint64) = writeErr($x)
+
+  proc die(value: int32) {.noreturn.} = cExit(value.int)
 else:
-  var
-    cstderr {.importc: "stderr", header: "<stdio.h>".}: ptr RawCFile
+  proc die(value: int32) {.importc: "exit", header: "<stdlib.h>".}
 
-proc c_fwrite(buf: pointer; size, n: uint; f: ptr RawCFile): uint {.
-  importc: "fwrite", header: "<stdio.h>".}
-proc fprintf(f: ptr RawCFile; fmt: cstring) {.varargs, importc: "fprintf", header: "<stdio.h>".}
+  # Yes, that is a tiny bit of duplication from syncio.nim. Get over it.
+  type
+    RawCFile {.importc: "FILE", header: "<stdio.h>".} = object
+  when defined(macos) or defined(macosx):
+    var
+      cstderr {.importc: "__stderrp", header: "<stdio.h>".}: ptr RawCFile
+  else:
+    var
+      cstderr {.importc: "stderr", header: "<stdio.h>".}: ptr RawCFile
 
-proc writeErr(x: int64) = fprintf(cstderr, cstring"%lld", x)
-proc writeErr(x: uint64) = fprintf(cstderr, cstring"%llu", x)
-proc writeErr(s: string) = discard c_fwrite(readRawData(s), 1'u, s.len.uint, cstderr)
-proc writeErr(s: cstring) = discard c_fwrite(s, 1'u, s.len.uint, cstderr)
+  proc c_fwrite(buf: pointer; size, n: uint; f: ptr RawCFile): uint {.
+    importc: "fwrite", header: "<stdio.h>".}
+  proc fprintf(f: ptr RawCFile; fmt: cstring) {.varargs, importc: "fprintf", header: "<stdio.h>".}
+
+  proc writeErr(x: int64) = fprintf(cstderr, cstring"%lld", x)
+  proc writeErr(x: uint64) = fprintf(cstderr, cstring"%llu", x)
+  proc writeErr(s: string) = discard c_fwrite(readRawData(s), 1'u, s.len.uint, cstderr)
+  proc writeErr(s: cstring) = discard c_fwrite(s, 1'u, s.len.uint, cstderr)
 
 proc panic*(s: string) {.noinline.} =
   writeErr s

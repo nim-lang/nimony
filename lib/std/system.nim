@@ -179,6 +179,7 @@ include "system/setops"
 
 include "system/ctypes"
 
+include "system/exits"
 include "system/atomintrin"
 include "system/memory"
 include "system/seqimpl"
@@ -230,6 +231,8 @@ template isNil*(s: cstring): bool = s == nil
 func chr*(u: range[0..255]): char {.inline.} =
   ## Converts `u` to a `char`, same as `char(u)`.
   char(u.int)
+
+include "system/formatfloat"
 
 include "../../vendor/errorcodes/src" / errorcodes
 

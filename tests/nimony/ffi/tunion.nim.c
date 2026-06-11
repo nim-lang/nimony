@@ -429,6 +429,7 @@ typedef union Foo_0_tun261nex{
   NC8 c_0;}
 Foo_0_tun261nex;
 extern void X60Qini_0_sysvq0asl(void);
+extern void nimFlushStdStreams(void);
 Foo_0_tun261nex x_1_tun261nex;
 NB8 X60QiniGuard_0_tun261nex;
 NI32 cmdCount;
@@ -443,4 +444,5 @@ NI32 main(NI32 X60Qargc_0_tun261nex, char** X60Qargv_0_tun261nex){
   cmdCount = X60Qargc_0_tun261nex;
   cmdLine = ((NC8**)X60Qargv_0_tun261nex);
   X60Qini_0_tun261nex();
+  nimFlushStdStreams();
   return IL64(0);}

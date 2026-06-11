@@ -24,7 +24,10 @@ when defined(windows):
 else:
   import "../../vendor/errorcodes/src" / errorcodes_posix
 
-  var errno {.importc: "errno", header: "<errno.h>".}: cint
+  when not defined(nimNativeIo):
+    var errno {.importc: "errno", header: "<errno.h>".}: cint
+  # else: `errno` comes from posix/posix (a native global maintained by the
+  # freestanding directory wrappers), so we don't pull <errno.h>.
 {.feature: "lenientnils".}
 
 proc tryCreateFinalDir*(dir: Path): ErrorCode =
