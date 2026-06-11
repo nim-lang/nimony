@@ -69,6 +69,8 @@ type
     argInfo: PackedLineInfo
     pos, opened: int
     inheritanceCosts, intLitCosts, intConvCosts, convCosts: int
+    exactMatches*, genericMatches*: int
+    callArgs*: seq[CallArg]
     returnType*: Cursor
     context: ptr SemContext
     error: MatchError
@@ -926,6 +928,25 @@ proc matchNilAnnotations(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor) =
 
 proc procTypeMatch(m: var Match; f, a: var Cursor)
 
+proc rematchInferredTypevar(m: var Match; fs: SymId; prev: Cursor;
+                            f, a: var Cursor; fOrig, aOrig: Cursor;
+                            flags: set[LinearMatchFlag] = {}) =
+  ## Rematch a later argument against a type variable already inferred
+  ## from an earlier parameter. A scalar typevar binding (e.g. `T` from
+  ## `Complex[T]`) must not be widened via concept constraints to accept
+  ## a generic constructor over the same variable (`Complex[T]`).
+  if prev.kind == Symbol and isTypevar(prev.symId) and a.typeKind == InvokeT:
+    m.errorTypevar InvalidRematch, prev, a, fs
+  elif prev.kind == Symbol and isTypevar(prev.symId) and sameTrees(prev, a):
+    inc f
+    skip a
+  else:
+    m.concreteMatch = true
+    var prev2 = prev
+    linearMatch(m, prev2, a, flags)
+    m.concreteMatch = false
+    inc f
+
 proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {}) =
   let fOrig = f
   let aOrig = a
@@ -944,13 +965,9 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
           m.error(ConstraintMismatch, f, a)
           break
       elif m.inferred.contains(fs):
-        # rematch?
         var prev = m.inferred.getOrQuit(fs)
-        # mark that the match is to a given type from the outside context:
-        m.concreteMatch = true
-        linearMatch(m, prev, a, flags) # skips a
-        m.concreteMatch = false # was already false because of `elif`
-        inc f
+        rematchInferredTypevar(m, fs, prev, f, a, fOrig, aOrig, flags)
+        if m.err: break
       elif matchesConstraint(m, fs, a):
         m.inferred[fs] = a # NOTICE: Can introduce modifiers for a type var!
         inc f
@@ -1342,12 +1359,15 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
       if not matchesConstraint(m, fs, a):
         m.error ConstraintMismatch, f, a
     elif m.inferred.contains(fs):
-      # used to call typevarRematch
       var prev = m.inferred.getOrQuit(fs)
-      # mark that the match is to a given type from the outside context:
-      m.concreteMatch = true
-      singleArgImpl(m, prev, arg)
-      m.concreteMatch = false # was already false because of `elif`
+      if prev.kind == Symbol and isTypevar(prev.symId) and a.typeKind == InvokeT:
+        m.errorTypevar InvalidRematch, prev, a, fs
+      elif prev.kind == Symbol and isTypevar(prev.symId) and sameTrees(prev, a):
+        discard "same typevar binding"
+      else:
+        m.concreteMatch = true
+        singleArgImpl(m, prev, arg)
+        m.concreteMatch = false
     elif matchesConstraint(m, fs, a):
       m.inferred[fs] = a
     else:
@@ -2085,6 +2105,29 @@ proc isMatchForIs*(m: Match; formal: TypeCursor): bool =
   of IntLitMatch, IntConvMatch, ConvertibleMatch:
     return isTypeclassConstraint(formal)
 
+type MatchSnapshot = object
+  inferredLen: int
+  convCosts, intConvCosts, intLitCosts, inheritanceCosts: int
+
+proc snapshotMatch(m: Match): MatchSnapshot =
+  result.inferredLen = m.inferred.len
+  result.convCosts = m.convCosts
+  result.intConvCosts = m.intConvCosts
+  result.intLitCosts = m.intLitCosts
+  result.inheritanceCosts = m.inheritanceCosts
+
+proc recordParamMatch(m: var Match; before: MatchSnapshot) =
+  ## Mirror old Nim's per-parameter `exactMatches` / `genericMatches`.
+  let newInference = m.inferred.len - before.inferredLen
+  let convDelta = (m.convCosts - before.convCosts) +
+                  (m.intConvCosts - before.intConvCosts) +
+                  (m.intLitCosts - before.intLitCosts) +
+                  abs(m.inheritanceCosts - before.inheritanceCosts)
+  if newInference > 0:
+    inc m.genericMatches
+  elif convDelta == 0:
+    inc m.exactMatches
+
 proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[CallArg]) =
   var i = 0
   # Trailing non-varargs params after the varargs slot, lazily computed
@@ -2133,8 +2176,10 @@ proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[CallArg]) =
         break
     else:
       m.argInfo = args[i].n.info
+      let before = snapshotMatch(m)
       singleArg m, ftyp, args[i]
       if m.err: break
+      recordParamMatch m, before
     inc m.pos
     inc i
 
@@ -2199,6 +2244,9 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
                explicitTypeVars: Cursor) =
   assert fn.kind != NoSym or fn.sym == SymId(0)
   m.fn = fn
+  m.callArgs.setLen 0
+  for arg in args:
+    m.callArgs.add arg
   matchTypevars m, fn, explicitTypeVars
 
   var f = fn.typ
@@ -2238,8 +2286,28 @@ type
     FirstWins,
     SecondWins
 
+proc relationSpecificity(r: TypeRelation): int =
+  ## Lower is more specific. Used to compare formals against the same arg.
+  case r
+  of EqualMatch: 0
+  of SubtypeMatch: 1
+  of IntLitMatch: 2
+  of GenericMatch: 3
+  of IntConvMatch: 4
+  of ConvertibleMatch: 5
+  of NoMatch: 6
+
+proc formalRelationToArg(c: ptr SemContext; formal: Cursor; arg: CallArg): TypeRelation =
+  var ma = createMatch(c)
+  var f = formal
+  singleArg ma, f, arg
+  if ma.err:
+    return NoMatch
+  classifyMatch(ma)
+
 proc mutualGenericMatch(a, b: Match): DisambiguationResult =
-  # same goal as `checkGeneric` in old compiler
+  # same goal as `checkGeneric` in old compiler, but compare each formal
+  # against the call-site argument type rather than crosswise formals.
   result = NobodyWins
   let c = a.context
   var aParams = a.fn.typ
@@ -2250,42 +2318,56 @@ proc mutualGenericMatch(a, b: Match): DisambiguationResult =
   assert bParams.substructureKind == ParamsU
   inc aParams
   inc bParams
+  var ai = 0
   while aParams.hasMore and bParams.hasMore:
     let aParam = takeLocal(aParams, SkipFinalParRi)
     let bParam = takeLocal(bParams, SkipFinalParRi)
-    var aFormal = aParam.typ
-    var bFormal = bParam.typ
-    var ma = createMatch(c)
-    singleArg ma, aFormal, CallArg(n: emptyNode(c[]), typ: bParam.typ)
-    var mb = createMatch(c)
-    singleArg mb, bFormal, CallArg(n: emptyNode(c[]), typ: aParam.typ)
-    let aMatch = classifyMatch(ma)
-    let bMatch = classifyMatch(mb)
-    if aMatch == GenericMatch and bMatch == NoMatch:
-      # b is more specific
-      if result == FirstWins: return NobodyWins
-      result = SecondWins
-    elif bMatch == GenericMatch and aMatch == NoMatch:
-      # a is more specific
-      if result == SecondWins: return NobodyWins
-      result = FirstWins
-    else:
-      if c != nil and VarToverloadsFeature in c.features:
-        # Mirror old Nim's `sumGeneric` +1 for `tyVar`: a `var T` (or `out T`)
-        # formal is more specific than a plain-`T` formal of the same base.
-        # This is the whole point of the `varToverloads` gate — let two
-        # routines that differ only in `var` on a parameter coexist as
-        # distinct overloads, with the `var` one preferred at the call site.
-        aFormal = aParam.typ
-        bFormal = bParam.typ
-        let aIsMut = aFormal.typeKind in {MutT, OutT}
-        let bIsMut = bFormal.typeKind in {MutT, OutT}
-        if aIsMut and not bIsMut:
-          if result == SecondWins: return NobodyWins
-          result = FirstWins
-        elif bIsMut and not aIsMut:
+    let aFormal = aParam.typ
+    let bFormal = bParam.typ
+    if ai < a.callArgs.len:
+      let callArg = a.callArgs[ai]
+      let aRank = relationSpecificity(formalRelationToArg(c, aFormal, callArg))
+      let bRank = relationSpecificity(formalRelationToArg(c, bFormal, callArg))
+      if aRank < bRank:
+        if result == SecondWins: return NobodyWins
+        result = FirstWins
+      elif bRank < aRank:
+        if result == FirstWins: return NobodyWins
+        result = SecondWins
+      else:
+        # Same specificity against the call arg — fall back to old Nim's
+        # cross-formal `checkGeneric` comparison for this parameter.
+        var ma = createMatch(c)
+        var aFormalCross = aFormal
+        singleArg ma, aFormalCross, CallArg(n: emptyNode(c[]), typ: bFormal)
+        var mb = createMatch(c)
+        var bFormalCross = bFormal
+        singleArg mb, bFormalCross, CallArg(n: emptyNode(c[]), typ: aFormal)
+        let aMatch = classifyMatch(ma)
+        let bMatch = classifyMatch(mb)
+        if aMatch == GenericMatch and bMatch == NoMatch:
           if result == FirstWins: return NobodyWins
           result = SecondWins
+        elif bMatch == GenericMatch and aMatch == NoMatch:
+          if result == SecondWins: return NobodyWins
+          result = FirstWins
+    if c != nil and VarToverloadsFeature in c.features:
+      # Mirror old Nim's `sumGeneric` +1 for `tyVar`: a `var T` (or `out T`)
+      # formal is more specific than a plain-`T` formal of the same base.
+      # This is the whole point of the `varToverloads` gate — let two
+      # routines that differ only in `var` on a parameter coexist as
+      # distinct overloads, with the `var` one preferred at the call site.
+      var aMutFormal = aFormal
+      var bMutFormal = bFormal
+      let aIsMut = aMutFormal.typeKind in {MutT, OutT}
+      let bIsMut = bMutFormal.typeKind in {MutT, OutT}
+      if aIsMut and not bIsMut:
+        if result == SecondWins: return NobodyWins
+        result = FirstWins
+      elif bIsMut and not aIsMut:
+        if result == FirstWins: return NobodyWins
+        result = SecondWins
+    inc ai
 
 proc cmpMatches*(a, b: Match; preferIterators = false): DisambiguationResult =
   assert not a.err
@@ -2300,6 +2382,14 @@ proc cmpMatches*(a, b: Match; preferIterators = false): DisambiguationResult =
       result = SecondWins
     else:
       result = FirstWins
+  elif a.exactMatches > b.exactMatches:
+    result = FirstWins
+  elif a.exactMatches < b.exactMatches:
+    result = SecondWins
+  elif a.genericMatches < b.genericMatches:
+    result = FirstWins
+  elif a.genericMatches > b.genericMatches:
+    result = SecondWins
   elif a.convCosts < b.convCosts:
     result = FirstWins
   elif a.convCosts > b.convCosts:
