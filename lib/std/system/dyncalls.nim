@@ -31,13 +31,6 @@ when defined(windows):
   proc GetLastError(): int32 {.importc, header: "<windows.h>", nodecl.}
   const ERROR_BAD_EXE_FORMAT = 193
 
-  func `%%`(x, y: int): int {.inline.} =
-    ## Treats `x` and `y` as unsigned and compute the modulo of `x` and `y`.
-    ##
-    ## The result is truncated to fit into the result.
-    ## This implements modulo arithmetic. No overflow errors are possible.
-    cast[int](cast[uint](x) mod cast[uint](y))
-
 proc nimLoadLibraryError(path: string) =
   # carefully written to avoid memory allocation:
   const prefix = "could not load: "
@@ -179,7 +172,7 @@ elif defined(windows) or defined(dos):
         m = m + 3
       decorated[m + 1] = '\x00'
       while true:
-        decorated[m] = chr(ord('0') + (k %% 10))
+        decorated[m] = chr(ord('0') + (k mod 10))   # k is always >= 0 here
         dec(m)
         k = k div 10
         if k == 0: break

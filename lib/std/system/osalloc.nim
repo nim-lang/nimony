@@ -156,13 +156,15 @@ elif defined(posix) and not defined(StandaloneHeapSize):
 
 elif defined(windows) and not defined(StandaloneHeapSize):
   const
-    MEM_RESERVE = 0x2000
-    MEM_COMMIT = 0x1000
-    MEM_TOP_DOWN = 0x100000
-    PAGE_READWRITE = 0x04
+    # Typed `int32` to match `VirtualAlloc`/`VirtualFree`'s flag params (Nimony
+    # does not implicitly narrow the default `int` literals to `int32`).
+    MEM_RESERVE = 0x2000'i32
+    MEM_COMMIT = 0x1000'i32
+    MEM_TOP_DOWN = 0x100000'i32
+    PAGE_READWRITE = 0x04'i32
 
-    MEM_DECOMMIT = 0x4000
-    MEM_RELEASE = 0x8000
+    MEM_DECOMMIT = 0x4000'i32
+    MEM_RELEASE = 0x8000'i32
 
   proc virtualAlloc(lpAddress: pointer, dwSize: int, flAllocationType,
                     flProtect: int32): pointer {.

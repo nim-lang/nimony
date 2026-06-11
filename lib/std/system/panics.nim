@@ -1,20 +1,44 @@
 ## Tiny support for basic error reporting.
 
 when defined(nimNativeIo):
-  # Freestanding: error text goes straight to fd 2 via the `write` syscall and
-  # termination funnels through `cExit` (see `system/exits`), so the crash path
-  # links no libc stdio.
-  proc cWriteErr(fd: cint; buf: pointer; n: uint): int {.importc: "write".}
+  # Freestanding: error text goes straight to stderr and termination funnels
+  # through `cExit` (see `system/exits`), so the crash path links no libc stdio.
+  when defined(windows):
+    # Windows stderr is a kernel32 `HANDLE`; write to it via `WriteFile`.
+    type WinHandle = pointer
+    const STD_ERROR_HANDLE = 0xFFFFFFF4'u32   # (DWORD)-12
+    proc cGetStdHandle(nStdHandle: uint32): WinHandle {.stdcall,
+      importc: "GetStdHandle", header: "<windows.h>".}
+    proc cWriteErrFile(h: WinHandle; buf: pointer; n: uint32;
+                       written: ptr uint32; overlapped: pointer): int32 {.
+      stdcall, importc: "WriteFile", header: "<windows.h>".}
 
-  proc writeErr(s: string) =
-    discard cWriteErr(2'i32, readRawData(s), s.len.uint)
-  proc writeErr(s: cstring) =
-    var n = 0
-    let p = cast[ptr UncheckedArray[char]](s)
-    while p[n] != '\0': inc n
-    discard cWriteErr(2'i32, p, n.uint)
-  proc writeErr(x: int64) = writeErr($x)
-  proc writeErr(x: uint64) = writeErr($x)
+    proc writeErr(s: string) =
+      var written: uint32 = 0
+      discard cWriteErrFile(cGetStdHandle(STD_ERROR_HANDLE), readRawData(s),
+                            s.len.uint32, addr written, nil)
+    proc writeErr(s: cstring) =
+      var n = 0
+      let p = cast[ptr UncheckedArray[char]](s)
+      while p[n] != '\0': inc n
+      var written: uint32 = 0
+      discard cWriteErrFile(cGetStdHandle(STD_ERROR_HANDLE), p, n.uint32,
+                            addr written, nil)
+    proc writeErr(x: int64) = writeErr($x)
+    proc writeErr(x: uint64) = writeErr($x)
+  else:
+    # POSIX: error text goes straight to fd 2 via the `write` syscall.
+    proc cWriteErr(fd: cint; buf: pointer; n: uint): int {.importc: "write".}
+
+    proc writeErr(s: string) =
+      discard cWriteErr(2'i32, readRawData(s), s.len.uint)
+    proc writeErr(s: cstring) =
+      var n = 0
+      let p = cast[ptr UncheckedArray[char]](s)
+      while p[n] != '\0': inc n
+      discard cWriteErr(2'i32, p, n.uint)
+    proc writeErr(x: int64) = writeErr($x)
+    proc writeErr(x: uint64) = writeErr($x)
 
   proc die(value: int32) {.noreturn.} = cExit(value.int)
 else:
