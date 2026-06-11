@@ -994,8 +994,10 @@ proc isPlatformNumeric(context: ptr SemContext; kind: TypeKind; bits: Cursor): b
   inc p
   cmpTypeBits(context, bits, p) == 0
 
-proc incIntegralWidenCost(m: var Match; kind: TypeKind; bits: Cursor; intLit = false) =
-  if intLit and kind in {IntT, UIntT}:
+proc incIntegralWidenCost(m: var Match; kind: TypeKind; bits: Cursor; intLit = false, floatLit = false) =
+  if intLit and kind in {IntT, UIntT, FloatT}:
+    inc m.intLitCosts
+  elif floatLit and kind == FloatT:
     inc m.intLitCosts
   elif isPlatformNumeric(m.context, kind, bits):
     inc m.intConvCosts
@@ -1008,6 +1010,19 @@ proc checkIntLitRange(context: ptr SemContext; f: Cursor; intLit: Cursor): bool 
   else:
     let i = createXint(pool.integers[intLit.intId])
     result = i >= firstOrd(context[], f) and i <= lastOrd(context[], f)
+
+proc checkFloatLitRange(context: ptr SemContext; f: Cursor; floatLit: Cursor): bool =
+  if f.typeKind in {IntT, UIntT}:
+    result = false
+  else:
+    var f = f
+    inc f # skip to size
+    let bits = typebits(f.load)
+    if bits == 32:
+      let val = pool.floats[floatLit.floatId]
+      result = val == val.float32.float64
+    else:
+      result = true
 
 proc skipExpr*(n: Cursor): Cursor =
   result = n
@@ -1025,8 +1040,10 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
   let ex = skipExpr(arg.n)
   let isIntLit = f.typeKind != CharT and
     ex.kind == IntLit and sameTrees(a, m.context.types.intType)
+  let isFloatLit = f.typeKind != CharT and
+    ex.kind == FloatLit and sameTrees(a, m.context.types.floatType)
   let sameKind = f.tag == a.tag
-  if sameKind or isIntLit:
+  if sameKind or isIntLit or isFloatLit:
     inc a
   else:
     m.error InvalidMatch, f, a
@@ -1036,14 +1053,14 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
   let cmp = cmpTypeBits(m.context, f, a)
   if cmp == 0 and sameKind:
     discard "same types"
-  elif cmp > 0 or (isIntLit and checkIntLitRange(m.context, forig, ex)):
+  elif cmp > 0 or (isIntLit and checkIntLitRange(m.context, forig, ex)) or (isFloatLit and checkFloatLitRange(m.context, forig, ex)):
     # f has more bits than a, great!
     if m.skippedMod in {MutT, OutT}:
       m.error ImplicitConversionNotMutable, forig, forig
     else:
       m.args.addParLe HconvX, m.argInfo
       m.args.addSubtree forig
-      incIntegralWidenCost m, forig.typeKind, f, isIntLit
+      incIntegralWidenCost m, forig.typeKind, f, isIntLit, isFloatLit
       inc m.opened
   else:
     m.error InvalidMatch, f, a
