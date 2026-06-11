@@ -30,27 +30,45 @@ proc nimFlushStdStreams*() {.exportc: "nimFlushStdStreams".} =
   ## (system is always imported) and a no-op unless `syncio` installed a flush.
   gExitFlush()
 
-const SIGABRT = 6'i32   ## Linux signal number, stable across x86_64/arm64.
-
 when defined(nimNativeIo):
-  proc cKill(pid, sig: cint): cint {.importc: "kill".}
-  proc cGetpid(): cint {.importc: "getpid".}
-  proc cExitSys(code: cint) {.importc: "_exit", noreturn.}
+  when defined(windows):
+    # Freestanding Windows: terminate through kernel32 `ExitProcess` — no libc
+    # and no POSIX signals. `<windows.h>`/kernel32 is the OS API, not the C
+    # runtime, so this stays the direct counterpart of the Linux syscall path.
+    proc cExitProcess(uExitCode: uint32) {.stdcall, importc: "ExitProcess",
+                                           header: "<windows.h>", noreturn.}
 
-  proc cExit*(code: int) {.noreturn.} =
-    ## Normal process termination: flush the standard streams, then `_exit`.
-    gExitFlush()
-    cExitSys(code.int32)
+    proc cExit*(code: int) {.noreturn.} =
+      ## Normal process termination: flush the standard streams, then exit.
+      gExitFlush()
+      cExitProcess(uint32(code))
 
-  proc cAbort*() {.noreturn.} =
-    ## Abnormal termination, modelled on glibc `abort()`: flush the standard
-    ## streams, raise `SIGABRT` (default disposition → core dump / debugger
-    ## trap), and `_exit(127)` as a last resort if the signal was ignored.
-    ## We omit glibc's unblock / reset-handler / re-raise dance because this
-    ## freestanding runtime installs no `SIGABRT` handler and never blocks it.
-    gExitFlush()
-    discard cKill(cGetpid(), SIGABRT)
-    cExitSys(127'i32)
+    proc cAbort*() {.noreturn.} =
+      ## Abnormal termination. Windows has no `SIGABRT`, so we flush the
+      ## standard streams and exit with a non-zero status — the closest
+      ## libc-free analog of glibc `abort()` (minus the signal/core-dump dance).
+      gExitFlush()
+      cExitProcess(127'u32)
+  else:
+    const SIGABRT = 6'i32   ## Linux signal number, stable across x86_64/arm64.
+    proc cKill(pid, sig: cint): cint {.importc: "kill".}
+    proc cGetpid(): cint {.importc: "getpid".}
+    proc cExitSys(code: cint) {.importc: "_exit", noreturn.}
+
+    proc cExit*(code: int) {.noreturn.} =
+      ## Normal process termination: flush the standard streams, then `_exit`.
+      gExitFlush()
+      cExitSys(code.int32)
+
+    proc cAbort*() {.noreturn.} =
+      ## Abnormal termination, modelled on glibc `abort()`: flush the standard
+      ## streams, raise `SIGABRT` (default disposition → core dump / debugger
+      ## trap), and `_exit(127)` as a last resort if the signal was ignored.
+      ## We omit glibc's unblock / reset-handler / re-raise dance because this
+      ## freestanding runtime installs no `SIGABRT` handler and never blocks it.
+      gExitFlush()
+      discard cKill(cGetpid(), SIGABRT)
+      cExitSys(127'i32)
 else:
   proc cExitLibc(code: cint) {.importc: "exit", header: "<stdlib.h>", noreturn.}
   proc cAbortLibc() {.importc: "abort", header: "<stdlib.h>", noreturn.}

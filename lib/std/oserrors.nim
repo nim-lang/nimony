@@ -12,9 +12,9 @@ else:
 
 
 when defined(windows):
-  import "../../vendor/errorcodes/src" / errorcodes_windows
+  import errorcodes / errorcodes_windows
 else:
-  import "../../vendor/errorcodes/src" / errorcodes_posix
+  import errorcodes / errorcodes_posix
 
 func raiseOSError*(errorCode: OSErrorCode, additionalInfo = "") {.noinline, raises, noreturn.} =
   ## Raises an `OSError exception <system.html#OSError>`_.

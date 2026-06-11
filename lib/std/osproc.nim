@@ -612,7 +612,7 @@ when defined(windows):
     if createPipe(rdHandle, wrHandle, sa, 0'u32).isFail:
       raiseOSError(osLastError())
 
-  proc startProcess(command: string; workingDir: string = "";
+  proc startProcess*(command: string; workingDir: string = "";
                     args: openArray[string] = [];
                     env: nil StringTableRef = nil;
                     options: set[ProcessOption] = {poStdErrToStdOut}):
@@ -684,8 +684,13 @@ when defined(windows):
     var flags: DWORD = NORMAL_PRIORITY_CLASS or CREATE_UNICODE_ENVIRONMENT
     if poDaemon in options: flags = flags or CREATE_NO_WINDOW
 
+    # `envWide` is `nil` (inherit the parent environment) unless a custom `env`
+    # was supplied; either way it goes through as `lpEnvironment` so that a
+    # custom environment actually reaches the child (CREATE_UNICODE_ENVIRONMENT
+    # is set above, and the block was built wide accordingly).
     let success = createProcessW(nil, cmdWide.toWideCString, nil, nil,
-                                 WINBOOL 1, flags, nil,
+                                 WINBOOL 1, flags,
+                                 cast[pointer](envWide.toWideCString),
                                  cwdWide.toWideCString, si, procInfo)
     let lastError = osLastError()
 
