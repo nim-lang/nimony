@@ -41,6 +41,39 @@ when defined(posix):
         st_mtim*: Timespec        # 88
         st_ctim: Timespec         # 104
         glibcReserved: array[3, int64]  # 120 .. 143
+  elif defined(nimNativeIo) and defined(osx):
+    # Hardcoded macOS (`__DARWIN_64_BIT_INO_T`) `struct stat` so the
+    # freestanding build needs no <sys/types.h>/<sys/stat.h>. The layout is the
+    # same on arm64 and x86_64 (both use the 64-bit-inode ABI); `struct stat`
+    # is 144 bytes. Only the fields other modules read are exposed by name —
+    # the rest are correctly-sized private padding so `fstat` writes land at the
+    # right offsets.
+    type
+      Mode* = uint16   ## mode_t
+      Off* = int64     ## off_t
+      Dev* = int32     ## dev_t
+      Ino* = uint64    ## ino_t
+
+      Stat* {.pure.} = object ## macOS `struct stat`
+        st_dev*: Dev              # offset 0
+        st_mode*: Mode            # 4
+        st_nlink: uint16          # 6
+        st_ino*: Ino              # 8
+        st_uid: uint32            # 16
+        st_gid: uint32            # 20
+        st_rdev: Dev              # 24
+        pad0: int32               # 28 (pad to 8-align the timespecs)
+        st_atim: Timespec         # 32
+        st_mtim*: Timespec        # 48
+        st_ctim: Timespec         # 64
+        st_birthtim: Timespec     # 80
+        st_size*: Off             # 96
+        st_blocks: int64          # 104
+        st_blksize: int32         # 112
+        st_flags: uint32          # 116
+        st_gen: uint32            # 120
+        st_lspare: int32          # 124
+        st_qspare: array[2, int64]  # 128 .. 143
   else:
     type
       Mode* {.importc: "mode_t", header: "<sys/types.h>".} = (
@@ -92,7 +125,10 @@ when defined(posix):
     template st_mtime*(s: Stat): int64 = int64(s.st_mtim.tv_sec)
       ## Time of last data modification (seconds since epoch).
 
-  proc fcntl*(a1: cint, a2: cint): cint {.varargs, importc, header: "<fcntl.h>", sideEffect.}
+  when defined(nimNativeIo):
+    proc fcntl*(a1: cint, a2: cint): cint {.varargs, importc: "fcntl", sideEffect.}
+  else:
+    proc fcntl*(a1: cint, a2: cint): cint {.varargs, importc, header: "<fcntl.h>", sideEffect.}
   # Under -d:nimNativeIo these syscalls are declared header-less (bare names),
   # so the C backend links the thin wrapper and arkham lowers them to bare
   # `syscall` instructions — no <fcntl.h>/<unistd.h>/<sys/stat.h>/<sys/mman.h>.
@@ -234,12 +270,18 @@ when defined(posix):
     proc getcwd*(a1: cstring, a2: int): cstring {.importc, header: "<unistd.h>", sideEffect.}
     proc chdir*(path: cstring): cint {.importc, header: "<unistd.h>", sideEffect.}
 
-  proc realpath*(path, resolved: cstring): cstring {.importc, header: "<stdlib.h>", sideEffect.}
+  when defined(nimNativeIo):
+    proc realpath*(path, resolved: cstring): cstring {.importc: "realpath", sideEffect.}
+  else:
+    proc realpath*(path, resolved: cstring): cstring {.importc, header: "<stdlib.h>", sideEffect.}
 
   when not defined(nintendoswitch):
-    proc readlink*(a1, a2: cstring, a3: int): int {.importc, header: "<unistd.h>".}
-
-    proc symlink*(a1, a2: cstring): cint {.importc, header: "<unistd.h>".}
+    when defined(nimNativeIo):
+      proc readlink*(a1, a2: cstring, a3: int): int {.importc: "readlink".}
+      proc symlink*(a1, a2: cstring): cint {.importc: "symlink".}
+    else:
+      proc readlink*(a1, a2: cstring, a3: int): int {.importc, header: "<unistd.h>".}
+      proc symlink*(a1, a2: cstring): cint {.importc, header: "<unistd.h>".}
   else:
     proc symlink*(a1, a2: cstring): cint = -1
 
@@ -317,6 +359,31 @@ when defined(posix):
           inc i
         dirp.ent.d_name[i] = '\0'
         return addr dirp.ent
+  elif defined(nimNativeIo) and defined(osx):
+    # macOS provides no stable raw directory syscall: the `getdirentries(2)`
+    # syscall returns the legacy 32-bit-inode record, while everything modern
+    # speaks the 64-bit-inode `struct dirent`. Rather than reimplement that, we
+    # call libSystem's `opendir`/`readdir`/`closedir` header-free (real symbols,
+    # so they link with no <dirent.h>) — consistent with how this module already
+    # binds `open`/`close`/`stat` on macOS, where libSystem is mandatory anyway.
+    # `Dirent` mirrors the arm64 64-bit-inode layout so `d_type`/`d_name` overlay
+    # the record libSystem hands back.
+    type
+      Dirent* {.pure.} = object ## macOS `struct dirent` (64-bit inode)
+        d_ino: uint64             # offset 0
+        d_seekoff: uint64         # 8
+        d_reclen: uint16          # 16
+        d_namlen: uint16          # 18
+        d_type*: uint8            # 20
+        d_name*: array[1024, char]  # 21
+
+      DIR* {.pure.} = object ## opaque libSystem directory stream; only ever
+                             ## handled by pointer, never dereferenced here
+        opaque: pointer
+
+    proc opendir*(name: cstring): nil ptr DIR {.importc: "opendir", sideEffect.}
+    proc closedir*(dirp: nil ptr DIR): cint {.importc: "closedir", sideEffect.}
+    proc readdir*(dirp: nil ptr DIR): nil ptr Dirent {.importc: "readdir", sideEffect.}
   else:
     type
       DIR* {.importc: "DIR", header: "<dirent.h>", incompleteStruct.} = object
@@ -353,7 +420,10 @@ when defined(posix):
     DT_WHT* = 14'u8
 
 
-  proc sysconf*(a1: cint): int {.importc, header: "<unistd.h>".}
+  when defined(nimNativeIo):
+    proc sysconf*(a1: cint): int {.importc: "sysconf".}
+  else:
+    proc sysconf*(a1: cint): int {.importc, header: "<unistd.h>".}
 
   # <sys/wait.h>
   proc WEXITSTATUS*(s: cint): cint =  (s and 0xff00) shr 8
@@ -494,8 +564,11 @@ when defined(posix):
       ptr UncheckedArray[cstring]
 
   # errno
-  proc strerror*(errnum: cint): cstring {.
-    importc, header: "<string.h>", sideEffect.}
+  when defined(nimNativeIo):
+    proc strerror*(errnum: cint): cstring {.importc: "strerror", sideEffect.}
+  else:
+    proc strerror*(errnum: cint): cstring {.
+      importc, header: "<string.h>", sideEffect.}
 
   when defined(nimNativeIo):
     proc nanosleep*(req: var Timespec; rem: var Timespec): cint {.importc: "nanosleep", sideEffect.}

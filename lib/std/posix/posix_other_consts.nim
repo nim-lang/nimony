@@ -85,6 +85,8 @@ var ENOTTY* {.importc: "ENOTTY", header: "<errno.h>".}: cint
 var ENXIO* {.importc: "ENXIO", header: "<errno.h>".}: cint
 when defined(linux):
   const EOPNOTSUPP* = cint(95)
+elif defined(osx):
+  const EOPNOTSUPP* = cint(102)
 else:
   var EOPNOTSUPP* {.importc: "EOPNOTSUPP", header: "<errno.h>".}: cint
 var EOVERFLOW* {.importc: "EOVERFLOW", header: "<errno.h>".}: cint
@@ -125,12 +127,16 @@ var F_UNLCK* {.importc: "F_UNLCK", header: "<fcntl.h>".}: cint
 var F_WRLCK* {.importc: "F_WRLCK", header: "<fcntl.h>".}: cint
 when defined(linux):
   const O_CREAT* = cint(0o100)
+elif defined(osx):
+  const O_CREAT* = cint(0x200)
 else:
   var O_CREAT* {.importc: "O_CREAT", header: "<fcntl.h>".}: cint
 var O_EXCL* {.importc: "O_EXCL", header: "<fcntl.h>".}: cint
 var O_NOCTTY* {.importc: "O_NOCTTY", header: "<fcntl.h>".}: cint
 when defined(linux):
   const O_TRUNC* = cint(0o1000)
+elif defined(osx):
+  const O_TRUNC* = cint(0x400)
 else:
   var O_TRUNC* {.importc: "O_TRUNC", header: "<fcntl.h>".}: cint
 var O_APPEND* {.importc: "O_APPEND", header: "<fcntl.h>".}: cint
@@ -144,6 +150,11 @@ when defined(linux):
   const O_RDWR* = cint(2)
   const O_WRONLY* = cint(1)
   const O_CLOEXEC* = cint(0o2000000)
+elif defined(osx):
+  const O_RDONLY* = cint(0)
+  const O_RDWR* = cint(2)
+  const O_WRONLY* = cint(1)
+  const O_CLOEXEC* = cint(0x1000000)
 else:
   var O_RDONLY* {.importc: "O_RDONLY", header: "<fcntl.h>".}: cint
   var O_RDWR* {.importc: "O_RDWR", header: "<fcntl.h>".}: cint
@@ -408,14 +419,16 @@ var SIGBUS* {.importc: "SIGBUS", header: "<signal.h>".}: cint
 var SIGCHLD* {.importc: "SIGCHLD", header: "<signal.h>".}: cint
 when defined(linux):
   const SIGCONT* = cint(18)
+elif defined(osx):
+  const SIGCONT* = cint(19)
 else:
   var SIGCONT* {.importc: "SIGCONT", header: "<signal.h>".}: cint
 var SIGFPE* {.importc: "SIGFPE", header: "<signal.h>".}: cint
 var SIGHUP* {.importc: "SIGHUP", header: "<signal.h>".}: cint
 var SIGILL* {.importc: "SIGILL", header: "<signal.h>".}: cint
 var SIGINT* {.importc: "SIGINT", header: "<signal.h>".}: cint
-when defined(linux):
-  const SIGKILL* = cint(9)
+when defined(linux) or defined(osx):
+  const SIGKILL* = cint(9)  ## same on Linux and macOS
 else:
   var SIGKILL* {.importc: "SIGKILL", header: "<signal.h>".}: cint
 var SIGPIPE* {.importc: "SIGPIPE", header: "<signal.h>".}: cint
@@ -423,10 +436,12 @@ var SIGQUIT* {.importc: "SIGQUIT", header: "<signal.h>".}: cint
 var SIGSEGV* {.importc: "SIGSEGV", header: "<signal.h>".}: cint
 when defined(linux):
   const SIGSTOP* = cint(19)
+elif defined(osx):
+  const SIGSTOP* = cint(17)
 else:
   var SIGSTOP* {.importc: "SIGSTOP", header: "<signal.h>".}: cint
-when defined(linux):
-  const SIGTERM* = cint(15)
+when defined(linux) or defined(osx):
+  const SIGTERM* = cint(15)  ## same on Linux and macOS
 else:
   var SIGTERM* {.importc: "SIGTERM", header: "<signal.h>".}: cint
 var SIGTSTP* {.importc: "SIGTSTP", header: "<signal.h>".}: cint
@@ -471,7 +486,7 @@ var IPC_SET* {.importc: "IPC_SET", header: "<sys/ipc.h>".}: cint
 var IPC_STAT* {.importc: "IPC_STAT", header: "<sys/ipc.h>".}: cint
 
 # <sys/mman.h>
-when defined(linux):
+when defined(linux) or defined(osx):
   const PROT_READ* = cint(1)
   const PROT_WRITE* = cint(2)
 else:
@@ -482,7 +497,7 @@ var PROT_NONE* {.importc: "PROT_NONE", header: "<sys/mman.h>".}: cint
 var MAP_ANONYMOUS* {.importc: "MAP_ANONYMOUS", header: "<sys/mman.h>".}: cint
 var MAP_FIXED_NOREPLACE* {.importc: "MAP_FIXED_NOREPLACE", header: "<sys/mman.h>".}: cint
 var MAP_NORESERVE* {.importc: "MAP_NORESERVE", header: "<sys/mman.h>".}: cint
-when defined(linux):
+when defined(linux) or defined(osx):
   const MAP_SHARED* = cint(1)
   const MAP_PRIVATE* = cint(2)
 else:
@@ -573,8 +588,8 @@ var S_IFREG* {.importc: "S_IFREG", header: "<sys/stat.h>".}: cint
 var S_IFSOCK* {.importc: "S_IFSOCK", header: "<sys/stat.h>".}: cint
 var S_IRGRP* {.importc: "S_IRGRP", header: "<sys/stat.h>".}: cint
 var S_IROTH* {.importc: "S_IROTH", header: "<sys/stat.h>".}: cint
-when defined(linux):
-  const S_IRUSR* = cint(0o400)
+when defined(linux) or defined(osx):
+  const S_IRUSR* = cint(0o400)  ## standard POSIX file-mode bit (same everywhere)
 else:
   var S_IRUSR* {.importc: "S_IRUSR", header: "<sys/stat.h>".}: cint
 var S_IRWXG* {.importc: "S_IRWXG", header: "<sys/stat.h>".}: cint
@@ -585,8 +600,8 @@ var S_ISUID* {.importc: "S_ISUID", header: "<sys/stat.h>".}: cint
 var S_ISVTX* {.importc: "S_ISVTX", header: "<sys/stat.h>".}: cint
 var S_IWGRP* {.importc: "S_IWGRP", header: "<sys/stat.h>".}: cint
 var S_IWOTH* {.importc: "S_IWOTH", header: "<sys/stat.h>".}: cint
-when defined(linux):
-  const S_IWUSR* = cint(0o200)
+when defined(linux) or defined(osx):
+  const S_IWUSR* = cint(0o200)  ## standard POSIX file-mode bit (same everywhere)
 else:
   var S_IWUSR* {.importc: "S_IWUSR", header: "<sys/stat.h>".}: cint
 var S_IXGRP* {.importc: "S_IXGRP", header: "<sys/stat.h>".}: cint
