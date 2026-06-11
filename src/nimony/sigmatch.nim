@@ -557,17 +557,6 @@ proc matchesConstraint(m: var Match; f: SymId; a: Cursor): bool =
   assert typevar.kind == TypevarY
   result = matchesConstraint(m, typevar.typ, a)
 
-proc skipTypeSourceAnnot(n: var Cursor) =
-  ## Drop module/path slots in a type spelling before structural compare.
-  while n.kind == StringLit:
-    skip n
-  while n.kind == Symbol:
-    var name = pool.syms[n.symId]
-    if ',' in name or '/' in name or '~' in name:
-      skip n
-    else:
-      break
-
 proc conceptReturnTypesMatch(m: var Match; cRet, aRet: Cursor): bool =
   var c = cRet
   var a = aRet
@@ -588,10 +577,11 @@ proc conceptReturnTypesMatch(m: var Match; cRet, aRet: Cursor): bool =
   c = cRet
   a = aRet
   if c.kind == ParLe and a.kind == ParLe and c.tagId == a.tagId:
+    let kind = c.typeKind
     inc c
     inc a
-    skipTypeSourceAnnot c
-    skipTypeSourceAnnot a
+    skipTypeSourceAnnot(c, kind)
+    skipTypeSourceAnnot(a, kind)
     return tryLinearMatch(m, c, a, ConstraintMatchFlags)
   false
 
@@ -2110,11 +2100,12 @@ type MatchSnapshot = object
   convCosts, intConvCosts, intLitCosts, inheritanceCosts: int
 
 proc snapshotMatch(m: Match): MatchSnapshot =
-  result.inferredLen = m.inferred.len
-  result.convCosts = m.convCosts
-  result.intConvCosts = m.intConvCosts
-  result.intLitCosts = m.intLitCosts
-  result.inheritanceCosts = m.inheritanceCosts
+  MatchSnapshot(
+    inferredLen: m.inferred.len,
+    convCosts: m.convCosts,
+    intConvCosts: m.intConvCosts,
+    intLitCosts: m.intLitCosts,
+    inheritanceCosts: m.inheritanceCosts)
 
 proc recordParamMatch(m: var Match; before: MatchSnapshot) =
   ## Mirror old Nim's per-parameter `exactMatches` / `genericMatches`.

@@ -7,7 +7,7 @@
 ## Helpers for declarative constructs like `let` statements or `proc` declarations.
 
 import std / [assertions, syncio]
-import ".." / lib / [nifcursors, nifstreams, lineinfos]
+include ".." / lib / nifprelude
 import ".." / nimony / [nimony_model, reporters]
 
 include ".." / lib / compat2
@@ -70,6 +70,52 @@ proc skipToParams*(c: var Cursor) =
     skip c # export marker
     skip c # pattern
     skip c # generics
+
+proc isProctypeNilabilitySlot(n: Cursor): bool {.inline.} =
+  ## True when `n` is the nilability slot in a canonical proctype/itertype.
+  ## Mirrors the `sourceIsNewLayout` probe in `semtypes.semLocalTypeImpl`.
+  if isNilAnnotation(n): return true
+  if n.kind == DotToken:
+    var probe = n
+    inc probe
+    return probe.substructureKind == ParamsU
+  false
+
+proc skipRoutineTypePrefixChildren*(n: var Cursor; kind: TypeKind) =
+  ## Advance past prefix children of a routine type whose opening `ParLe`
+  ## has already been consumed. Skips nifler's legacy four bookkeeping
+  ## slots and portable source-path `StringLit`s; leaves the nilability
+  ## tag and params untouched.
+  if kind in {ProctypeT, ItertypeT}:
+    for _ in 0..3:
+      if isProctypeNilabilitySlot(n): break
+      case n.kind
+      of DotToken, StringLit:
+        skip n
+      of Ident:
+        if pool.strings[n.litId] == "x":
+          skip n, SkipExport
+        else:
+          break
+      of ParLe:
+        if n.substructureKind == ParamsU: break
+        skip n, SkipExport
+      else:
+        break
+  elif kind in RoutineTypes:
+    skip n, SkipName
+    skip n, SkipExport
+    skip n, SkipGenParams
+    skip n, SkipGenParams
+
+proc skipTypeSourceAnnot*(n: var Cursor; parentKind: TypeKind) =
+  ## Drop module/path/reserved slots in a type spelling before structural
+  ## compare. Bookkeeping slots are not part of type identity.
+  if parentKind in RoutineTypes:
+    skipRoutineTypePrefixChildren(n, parentKind)
+  else:
+    while n.kind == StringLit:
+      skip n
 
 proc skipProcTypeToParams*(t: Cursor): Cursor =
   ## Pure version: returns a cursor advanced past the prefix slots.
