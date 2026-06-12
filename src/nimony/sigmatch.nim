@@ -69,7 +69,6 @@ type
     argInfo: PackedLineInfo
     pos, opened: int
     inheritanceCosts, intLitCosts, intConvCosts, convCosts: int
-    exactMatches*, genericMatches*: int
     callArgs*: seq[CallArg]
     returnType*: Cursor
     context: ptr SemContext
@@ -1937,30 +1936,6 @@ proc isMatchForIs*(m: Match; formal: TypeCursor): bool =
   of IntLitMatch, IntConvMatch, ConvertibleMatch:
     return isTypeclassConstraint(formal)
 
-type MatchSnapshot = object
-  inferredLen: int
-  convCosts, intConvCosts, intLitCosts, inheritanceCosts: int
-
-proc snapshotMatch(m: Match): MatchSnapshot =
-  MatchSnapshot(
-    inferredLen: m.inferred.len,
-    convCosts: m.convCosts,
-    intConvCosts: m.intConvCosts,
-    intLitCosts: m.intLitCosts,
-    inheritanceCosts: m.inheritanceCosts)
-
-proc recordParamMatch(m: var Match; before: MatchSnapshot) =
-  ## Mirror old Nim's per-parameter `exactMatches` / `genericMatches`.
-  let newInference = m.inferred.len - before.inferredLen
-  let convDelta = (m.convCosts - before.convCosts) +
-                  (m.intConvCosts - before.intConvCosts) +
-                  (m.intLitCosts - before.intLitCosts) +
-                  abs(m.inheritanceCosts - before.inheritanceCosts)
-  if newInference > 0:
-    inc m.genericMatches
-  elif convDelta == 0:
-    inc m.exactMatches
-
 proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[CallArg]) =
   var i = 0
   # Trailing non-varargs params after the varargs slot, lazily computed
@@ -2009,10 +1984,8 @@ proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[CallArg]) =
         break
     else:
       m.argInfo = args[i].n.info
-      let before = snapshotMatch(m)
       singleArg m, ftyp, args[i]
       if m.err: break
-      recordParamMatch m, before
     inc m.pos
     inc i
 
@@ -2215,14 +2188,6 @@ proc cmpMatches*(a, b: Match; preferIterators = false): DisambiguationResult =
       result = SecondWins
     else:
       result = FirstWins
-  elif a.exactMatches > b.exactMatches:
-    result = FirstWins
-  elif a.exactMatches < b.exactMatches:
-    result = SecondWins
-  elif a.genericMatches < b.genericMatches:
-    result = FirstWins
-  elif a.genericMatches > b.genericMatches:
-    result = SecondWins
   elif a.convCosts < b.convCosts:
     result = FirstWins
   elif a.convCosts > b.convCosts:
