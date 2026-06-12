@@ -515,8 +515,8 @@ proc conceptReturnTypesMatch(m: var Match; cRet, aRet: Cursor): bool =
     let kind = c.typeKind
     inc c
     inc a
-    skipTypeSourceAnnot(c, kind)
-    skipTypeSourceAnnot(a, kind)
+    skipRoutineDeclPrefix(c, kind)
+    skipRoutineDeclPrefix(a, kind)
     return tryLinearMatch(m, c, a, ConstraintMatchFlags)
   false
 
