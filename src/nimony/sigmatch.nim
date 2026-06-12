@@ -10,7 +10,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 
 import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes, renderer, asthelpers,
-  features
+  features, symtabs, sigconcepts
 import ".." / lib / symparser
 import ".." / models / tags
 
@@ -36,7 +36,6 @@ type
     ClosureMismatch
     PassiveMismatch
     UnavailableSubtypeRelation
-    NotImplementedConcept
     ImplicitConversionNotMutable
     VarNeeded
     UnhandledTypeBug
@@ -65,6 +64,10 @@ type
     args*, typeArgs*: TokenBuf
     err*, flipped*: bool
     concreteMatch: bool
+    ignoreConstraints: bool ## tie-breaking only: let a typevar formal bind any
+                            ## arg regardless of its constraint, so relative
+                            ## specificity ("concrete beats typevar") is decided
+                            ## structurally from the two signatures
     hasError: bool # mark that error message was set
     skippedMod: TypeKind
     argInfo: PackedLineInfo
@@ -150,6 +153,25 @@ proc error0Typevar(m: var Match; k: MatchErrorKind; typevar: SymId) =
   m.error = MatchError(info: m.argInfo, kind: k,
                        typeVar: typevar, pos: m.pos+1)
 
+proc constraintToString(c: Cursor): string =
+  ## For a typevar formal, render its *constraint* (e.g. `Comparable`) rather
+  ## than its name, so a mismatch reads "T does not match constraint Comparable"
+  ## instead of the unhelpful "T does not match constraint T". Only ever called
+  ## on the error-reporting path, so the extra `tryLoadSym` costs nothing in the
+  ## common case.
+  if c.kind == Symbol:
+    let res = tryLoadSym(c.symId)
+    if res.status == LacksNothing and res.decl.symKind == TypevarY:
+      let tv = asTypevar(res.decl)
+      # Render only a *named* constraint (a concept like `Comparable`), where
+      # `typeToString` is a simple symbol lookup. Structural typeclasses such
+      # as `(ordinal)` or `(or …)` don't render standalone (gtype skips into
+      # the closing `)`), and `.` means unconstrained — both fall back to the
+      # typevar's own name.
+      if tv.typ.kind == Symbol:
+        return typeToString(tv.typ)
+  typeToString(c)
+
 proc getErrorMsg*(m: Match): string =
   case m.error.kind
   of InvalidMatch:
@@ -159,7 +181,7 @@ proc getErrorMsg*(m: Match): string =
       typeToString(m.error.expected), " but got ", typeToString(m.error.got))
   of ConstraintMismatch:
     concat(typeToString(m.error.got), " does not match constraint ",
-      typeToString(m.error.expected))
+      constraintToString(m.error.expected))
   of FormalTypeNotAtEndBug:
     "BUG: formal type not at end!"
   of FormalParamsMismatch:
@@ -174,8 +196,6 @@ proc getErrorMsg*(m: Match): string =
     "`.passive` mismatch"
   of UnavailableSubtypeRelation:
     "subtype relation not available for `out` parameters"
-  of NotImplementedConcept:
-    "'concept' is not implemented"
   of ImplicitConversionNotMutable:
     concat("implicit conversion to ", typeToString(m.error.expected), " is not mutable")
   of VarNeeded:
@@ -250,14 +270,14 @@ proc isEnumType*(n: Cursor): bool =
   else:
     result = false
 
-proc isConcept(s: SymId): bool =
-  #let impl = typeImpl(s)
-  # XXX Model Concept in the grammar
-  #result = impl.tag == ConceptT
-  result = false
+proc matchConceptSym(m: var Match; conceptSym: SymId; a: Cursor): bool
+proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): bool
 
 type LinearMatchFlag = enum
   ExactBits ## do not normalize bits
+  InferActualTypevar ## infer impl typevars from concrete concept types
+
+const ConstraintMatchFlags = {InferActualTypevar}
 
 proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {})
 
@@ -284,7 +304,7 @@ proc matchSymbolConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   # check if symbol has typeclass behavior:
   if typeImpl.kind == TypeY:
     if typeImpl.body.typeKind == ConceptT:
-      return matchesConstraint(m, typeImpl.body, a)
+      return matchConceptSym(m, fs, a)
     if typeImpl.typevars.substructureKind == TypevarsU:
       # matching generic base symbol, acts as typeclass
       # XXX does not consider inheritance
@@ -307,16 +327,13 @@ proc matchSymbolConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   f = fOrig
   var a = a
   # XXX this means conversions are not allowed, i.e. T: cstring cannot match "abc"
-  result = tryLinearMatch(m, f, a)
+  result = tryLinearMatch(m, f, a, ConstraintMatchFlags)
 
 proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
   result = false
   case f.typeKind
   of ConceptT:
-    # XXX Use some algorithm here that can cache the result
-    # so that it can remember e.g. "int fulfils Fibable". For
-    # now this should be good enough for our purposes:
-    result = true
+    result = matchConceptBody(m, SymId(0), f, a)
     skip f
   of TypekindT:
     var aTag = a
@@ -349,7 +366,7 @@ proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
     # match as a regular type:
     var a = a
     # XXX this means conversions are not allowed, i.e. T: cstring cannot match "abc"
-    result = tryLinearMatch(m, f, a)
+    result = tryLinearMatch(m, f, a, ConstraintMatchFlags)
 
 proc matchSingleConstraint(m: var Match; f: var Cursor; a: Cursor): bool {.inline.} =
   if f.kind == Symbol:
@@ -475,6 +492,200 @@ proc matchesConstraint(m: var Match; f: SymId; a: Cursor): bool =
   assert typevar.kind == TypevarY
   result = matchesConstraint(m, typevar.typ, a)
 
+proc conceptReturnTypesMatch(m: var Match; cRet, aRet: Cursor): bool =
+  var c = cRet
+  var a = aRet
+  if tryLinearMatch(m, c, a, ConstraintMatchFlags):
+    return true
+  c = cRet
+  a = aRet
+  if tryLinearMatch(m, a, c, ConstraintMatchFlags):
+    return true
+  if matchesConstraint(m, c, a):
+    return true
+  c = cRet
+  a = aRet
+  if matchesConstraint(m, a, c):
+    return true
+  if sameTreesButIgnoreSymIds(cRet, aRet):
+    return true
+  c = cRet
+  a = aRet
+  if c.kind == ParLe and a.kind == ParLe and c.tagId == a.tagId:
+    let kind = c.typeKind
+    inc c
+    inc a
+    skipRoutineDeclPrefix(c, kind)
+    skipRoutineDeclPrefix(a, kind)
+    return tryLinearMatch(m, c, a, ConstraintMatchFlags)
+  false
+
+proc matchConceptParamTypes(m: var Match; conceptTyp, implTyp: Cursor): bool =
+  var c = conceptTyp
+  var i = implTyp
+  if tryLinearMatch(m, c, i, ConstraintMatchFlags):
+    return true
+  c = conceptTyp
+  i = implTyp
+  if tryLinearMatch(m, i, c, ConstraintMatchFlags):
+    return true
+  false
+
+proc matchConceptRoutineSig(m: var Match; conceptR, implR: Cursor): bool =
+  if not conceptRoutineKindsCompatible(conceptR.symKind, implR.symKind, implR):
+    return false
+  var cf = conceptR
+  var ca = implR
+  skipToParams cf
+  skipToParams ca
+  if cf.substructureKind != ParamsU or ca.substructureKind != ParamsU:
+    return false
+  cf.into ParamsU:
+    ca.into ParamsU:
+      while cf.hasMore and ca.hasMore:
+        let cTyp = takeLocal(cf, SkipFinalParRi).typ
+        let aTyp = takeLocal(ca, SkipFinalParRi).typ
+        if not matchConceptParamTypes(m, cTyp, aTyp):
+          return false
+      if cf.hasMore:
+        return false
+      while ca.hasMore:
+        let extra = takeLocal(ca, SkipFinalParRi)
+        if extra.val.kind == DotToken:
+          return false
+  # The `into` blocks advanced `cf`/`ca` past the params subtree, so they now
+  # sit on the return types — no need to re-skip from the routine head.
+  conceptReturnTypesMatch(m, cf, ca)
+
+proc matchConceptSym(m: var Match; conceptSym: SymId; a: Cursor): bool =
+  if isConceptType(a):
+    if conceptExtends(a.symId, conceptSym):
+      return true
+  matchConceptBody(m, conceptSym, getTypeSection(conceptSym).body, a)
+
+proc restoreConceptSelfInference(m: var Match; selfSyms: seq[SymId];
+                                 savedSelf: openArray[(SymId, Cursor)]) =
+  var restored = initHashSet[SymId]()
+  for entry in savedSelf:
+    let (selfSym, saved) = entry
+    m.inferred[selfSym] = saved
+    restored.incl selfSym
+  for selfSym in selfSyms:
+    if selfSym notin restored:
+      m.inferred.del(selfSym)
+
+proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; routine: Cursor; a: Cursor; actualBody: Cursor): bool =
+  if m.context == nil:
+    return true
+  if isConceptType(a):
+    return conceptRequirementInBody(routine, actualBody)
+  let selfSyms = conceptSelfSyms(body, routine)
+  var savedSelf: seq[(SymId, Cursor)] = @[]
+  for selfSym in selfSyms:
+    if m.inferred.hasKey(selfSym):
+      savedSelf.add (selfSym, m.inferred.getOrDefault(selfSym, default(Cursor)))
+    m.inferred[selfSym] = a
+  let basename = conceptRoutineBasename(routine)
+  let inferenceBase = m.inferred
+  for cand in conceptRoutineCandidates(m.context, conceptSym, basename):
+    let res = tryLoadSym(cand)
+    if res.status != LacksNothing:
+      continue
+    if res.decl.symKind notin RoutineKinds:
+      continue
+    m.inferred = inferenceBase
+    for selfSym in selfSyms:
+      m.inferred[selfSym] = a
+    let oldErr = m.err
+    let oldHasError = m.hasError
+    m.err = false
+    m.hasError = false
+    let sigMatch = matchConceptRoutineSig(m, routine, res.decl)
+    m.err = oldErr
+    m.hasError = oldHasError
+    if sigMatch:
+      restoreConceptSelfInference(m, selfSyms, savedSelf)
+      return true
+  restoreConceptSelfInference(m, selfSyms, savedSelf)
+  false
+
+proc collectMissingConceptRequirements(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): seq[Cursor] =
+  let actualIsConcept = isConceptType(a)
+  let actualBody = if actualIsConcept: getTypeSection(a.symId).body else: default(Cursor)
+  let parents = conceptParentsSlot(body)
+  let hasParents = conceptHasParents(parents)
+  if hasParents:
+    for parent in conceptParentSyms(parents):
+      let parentBody = getTypeSection(parent).body
+      let parentMissing = collectMissingConceptRequirements(m, parent, parentBody, a)
+      if parentMissing.len > 0:
+        return parentMissing
+  if not actualIsConcept and not hasParents:
+    return @[]
+  result = @[]
+  for cbody, routine in conceptHierarchyRoutines(body):
+    if not conceptRoutineAvailable(m, conceptSym, cbody, routine, a, actualBody):
+      result.add routine
+
+proc collectMissingConceptRequirementsFromConstraint(m: var Match; f: Cursor; a: Cursor): seq[Cursor] =
+  var f = f
+  var a = a
+  if f.kind == DotToken:
+    return @[]
+  if a.kind == Symbol:
+    let res = tryLoadSym(a.symId)
+    assert res.status == LacksNothing
+    if res.decl.symKind == TypevarY:
+      var typevar = asTypevar(res.decl)
+      return collectMissingConceptRequirementsFromConstraint(m, f, typevar.typ)
+  if f.kind == Symbol:
+    if isConceptSym(f.symId):
+      let body = getTypeSection(f.symId).body
+      return collectMissingConceptRequirements(m, f.symId, body, a)
+    let res = tryLoadSym(f.symId)
+    if res.status == LacksNothing and res.decl.symKind == TypevarY:
+      var typevar = asTypevar(res.decl)
+      return collectMissingConceptRequirementsFromConstraint(m, typevar.typ, a)
+  if f.typeKind == ConceptT:
+    return collectMissingConceptRequirements(m, SymId(0), f, a)
+  @[]
+
+proc constraintMismatchMsg*(m: var Match; constraint, arg: Cursor): string =
+  result = "type " & typeToString(arg) & " does not match constraint: " & typeToString(constraint)
+  let missing = collectMissingConceptRequirementsFromConstraint(m, constraint, arg)
+  if missing.len > 0:
+    result.add "; missing required "
+    if missing.len == 1:
+      result.add "proc: "
+    else:
+      result.add "procs: "
+    for i, routine in missing:
+      if i > 0:
+        result.add ", "
+      result.add asNimCode(routine, {renderNoBody})
+
+proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): bool =
+  let actualIsConcept = isConceptType(a)
+  let actualBody = if actualIsConcept: getTypeSection(a.symId).body else: default(Cursor)
+  let parents = conceptParentsSlot(body)
+  let hasParents = conceptHasParents(parents)
+  if hasParents:
+    for parent in conceptParentSyms(parents):
+      if not matchConceptSym(m, parent, a):
+        return false
+  # Until concrete-type requirement matching is complete, standalone concepts
+  # match any concrete type (legacy stub behaviour). Concept-to-concept
+  # subsumption always checks requirements structurally.
+  if not actualIsConcept and not hasParents:
+    # An unconstrained typevar reaches us as an empty (`.`) constraint: it
+    # provably fulfils no requirement, so it must not satisfy the concept
+    # (issue #755). Genuine concrete types stay leniently accepted.
+    return a.kind != DotToken
+  for cbody, routine in conceptHierarchyRoutines(body):
+    if not conceptRoutineAvailable(m, conceptSym, cbody, routine, a, actualBody):
+      return false
+  true
+
 proc isTypevar(s: SymId): bool =
   let res = tryLoadSym(s)
   assert res.status == LacksNothing
@@ -551,6 +762,25 @@ proc matchNilAnnotations(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor) =
 
 proc procTypeMatch(m: var Match; f, a: var Cursor)
 
+proc rematchInferredTypevar(m: var Match; fs: SymId; prev: Cursor;
+                            f, a: var Cursor; fOrig, aOrig: Cursor;
+                            flags: set[LinearMatchFlag] = {}) =
+  ## Rematch a later argument against a type variable already inferred
+  ## from an earlier parameter. A scalar typevar binding (e.g. `T` from
+  ## `Complex[T]`) must not be widened via concept constraints to accept
+  ## a generic constructor over the same variable (`Complex[T]`).
+  if prev.kind == Symbol and isTypevar(prev.symId) and a.typeKind == InvokeT:
+    m.errorTypevar InvalidRematch, prev, a, fs
+  elif prev.kind == Symbol and isTypevar(prev.symId) and sameTrees(prev, a):
+    inc f
+    skip a
+  else:
+    m.concreteMatch = true
+    var prev2 = prev
+    linearMatch(m, prev2, a, flags)
+    m.concreteMatch = false
+    inc f
+
 proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {}) =
   let fOrig = f
   let aOrig = a
@@ -569,17 +799,35 @@ proc linearMatch(m: var Match; f, a: var Cursor; flags: set[LinearMatchFlag] = {
           m.error(ConstraintMismatch, f, a)
           break
       elif m.inferred.contains(fs):
-        # rematch?
         var prev = m.inferred.getOrQuit(fs)
-        # mark that the match is to a given type from the outside context:
-        m.concreteMatch = true
-        linearMatch(m, prev, a, flags) # skips a
-        m.concreteMatch = false # was already false because of `elif`
-        inc f
+        rematchInferredTypevar(m, fs, prev, f, a, fOrig, aOrig, flags)
+        if m.err: break
       elif matchesConstraint(m, fs, a):
         m.inferred[fs] = a # NOTICE: Can introduce modifiers for a type var!
         inc f
         skip a
+      else:
+        m.error(ConstraintMismatch, f, a)
+        break
+    elif InferActualTypevar in flags and a.kind == Symbol and isTypevar(a.symId):
+      let aSym = a.symId
+      if m.concreteMatch:
+        if matchesConstraint(m, aSym, f):
+          inc a
+          skip f
+        else:
+          m.error(ConstraintMismatch, f, a)
+          break
+      elif m.inferred.contains(aSym):
+        var prev = m.inferred.getOrQuit(aSym)
+        m.concreteMatch = true
+        linearMatch(m, f, prev, flags)
+        m.concreteMatch = false
+        inc a
+      elif matchesConstraint(m, aSym, f):
+        m.inferred[aSym] = f
+        skip f
+        inc a
       else:
         m.error(ConstraintMismatch, f, a)
         break
@@ -945,21 +1193,29 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
       if not matchesConstraint(m, fs, a):
         m.error ConstraintMismatch, f, a
     elif m.inferred.contains(fs):
-      # used to call typevarRematch
       var prev = m.inferred.getOrQuit(fs)
-      # mark that the match is to a given type from the outside context:
-      m.concreteMatch = true
-      singleArgImpl(m, prev, arg)
-      m.concreteMatch = false # was already false because of `elif`
-    elif matchesConstraint(m, fs, a):
+      if prev.kind == Symbol and isTypevar(prev.symId) and a.typeKind == InvokeT:
+        m.errorTypevar InvalidRematch, prev, a, fs
+      elif prev.kind == Symbol and isTypevar(prev.symId) and sameTrees(prev, a):
+        discard "same typevar binding"
+      else:
+        m.concreteMatch = true
+        singleArgImpl(m, prev, arg)
+        m.concreteMatch = false
+    elif m.ignoreConstraints or matchesConstraint(m, fs, a):
+      # `ignoreConstraints` is set only by `mutualGenericMatch`'s crosswise
+      # specificity probe: there the candidates already matched the real call,
+      # so we measure which formal is more specialized without re-validating
+      # the constraint (a concrete `int` arg need not satisfy `T`'s concept).
       m.inferred[fs] = a
     else:
       m.error ConstraintMismatch, f, a
   elif isObjectType(fs):
     var f = f
     matchObjectTypes m, f, a, NoType
-  elif isConcept(fs):
-    m.error NotImplementedConcept, f, a
+  elif isConceptSym(fs):
+    if not matchConceptSym(m, fs, a):
+      m.error InvalidMatch, f, a
   else:
     # fast check that works for aliases too:
     if a.kind == Symbol and sameSymbol(a.symId, fs):
@@ -1840,8 +2096,27 @@ type
     FirstWins,
     SecondWins
 
+proc isTypevarFormal(f: Cursor): bool {.inline.} =
+  f.kind == Symbol and isTypevar(f.symId)
+
+proc crosswiseRelation(c: ptr SemContext; formal, otherFormal: Cursor): TypeRelation =
+  ## Does `formal` accept a value typed as `otherFormal`? Used to rank the two
+  ## formals' specificity. Against a *concrete* `otherFormal` we set
+  ## `ignoreConstraints` so a typevar formal binds it regardless of its
+  ## constraint — "concrete beats typevar" must hold even when the concrete
+  ## type doesn't satisfy the constraint (e.g. `int` vs `T: StrictElem`).
+  ## Against another *typevar* we keep the constraint, so constraint
+  ## subsumption still decides (e.g. `OrdinalEnum ⊂ Ordinal`).
+  var m = createMatch(c)
+  m.ignoreConstraints = not isTypevarFormal(otherFormal)
+  var f = formal
+  singleArg m, f, CallArg(n: emptyNode(c[]), typ: otherFormal)
+  classifyMatch(m)
+
 proc mutualGenericMatch(a, b: Match): DisambiguationResult =
-  # same goal as `checkGeneric` in old compiler
+  # same goal as `checkGeneric` in old compiler: compare the two formals
+  # crosswise. A concrete type is more specific than a typevar, which is
+  # derivable from the signatures alone (the call argument is irrelevant here).
   result = NobodyWins
   let c = a.context
   var aParams = a.fn.typ
@@ -1855,39 +2130,32 @@ proc mutualGenericMatch(a, b: Match): DisambiguationResult =
   while aParams.hasMore and bParams.hasMore:
     let aParam = takeLocal(aParams, SkipFinalParRi)
     let bParam = takeLocal(bParams, SkipFinalParRi)
-    var aFormal = aParam.typ
-    var bFormal = bParam.typ
-    var ma = createMatch(c)
-    singleArg ma, aFormal, CallArg(n: emptyNode(c[]), typ: bParam.typ)
-    var mb = createMatch(c)
-    singleArg mb, bFormal, CallArg(n: emptyNode(c[]), typ: aParam.typ)
-    let aMatch = classifyMatch(ma)
-    let bMatch = classifyMatch(mb)
+    let aFormal = aParam.typ
+    let bFormal = bParam.typ
+    let aMatch = crosswiseRelation(c, aFormal, bFormal)
+    let bMatch = crosswiseRelation(c, bFormal, aFormal)
     if aMatch == GenericMatch and bMatch == NoMatch:
-      # b is more specific
+      # a accepts b's formal but not vice versa: b is more specific
       if result == FirstWins: return NobodyWins
       result = SecondWins
     elif bMatch == GenericMatch and aMatch == NoMatch:
       # a is more specific
       if result == SecondWins: return NobodyWins
       result = FirstWins
-    else:
-      if c != nil and VarToverloadsFeature in c.features:
-        # Mirror old Nim's `sumGeneric` +1 for `tyVar`: a `var T` (or `out T`)
-        # formal is more specific than a plain-`T` formal of the same base.
-        # This is the whole point of the `varToverloads` gate — let two
-        # routines that differ only in `var` on a parameter coexist as
-        # distinct overloads, with the `var` one preferred at the call site.
-        aFormal = aParam.typ
-        bFormal = bParam.typ
-        let aIsMut = aFormal.typeKind in {MutT, OutT}
-        let bIsMut = bFormal.typeKind in {MutT, OutT}
-        if aIsMut and not bIsMut:
-          if result == SecondWins: return NobodyWins
-          result = FirstWins
-        elif bIsMut and not aIsMut:
-          if result == FirstWins: return NobodyWins
-          result = SecondWins
+    elif c != nil and VarToverloadsFeature in c.features:
+      # Mirror old Nim's `sumGeneric` +1 for `tyVar`: a `var T` (or `out T`)
+      # formal is more specific than a plain-`T` formal of the same base.
+      # This is the whole point of the `varToverloads` gate — let two
+      # routines that differ only in `var` on a parameter coexist as
+      # distinct overloads, with the `var` one preferred at the call site.
+      let aIsMut = aFormal.typeKind in {MutT, OutT}
+      let bIsMut = bFormal.typeKind in {MutT, OutT}
+      if aIsMut and not bIsMut:
+        if result == SecondWins: return NobodyWins
+        result = FirstWins
+      elif bIsMut and not aIsMut:
+        if result == FirstWins: return NobodyWins
+        result = SecondWins
 
 proc cmpMatches*(a, b: Match; preferIterators = false): DisambiguationResult =
   assert not a.err

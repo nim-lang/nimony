@@ -168,28 +168,98 @@ proc declareConceptSelf(c: var SemContext; dest: var TokenBuf; info: PackedLineI
     dest.addDotToken() # value
   publish c, dest, result, declStart
 
-proc semConceptType(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
+proc semOneConceptParent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
+                         ownerSym: SymId; parents: var seq[SymId]) =
+  let info = n.info
+  let before = dest.len
+  semLocalTypeImpl c, dest, n, InLocalDecl
+  let parentType = cursorAt(dest, before)
+  if parentType.kind != Symbol:
+    endRead(dest)
+    dest.shrink before
+    c.buildErr dest, info, "concept can only inherit from other concepts"
+    return
+  let ps = parentType.symId
+  endRead(dest)
+  dest.shrink before
+  if not isConceptSym(ps):
+    c.buildErr dest, info, "concept can only inherit from other concepts, got: " & typeToString(parentType)
+    return
+  if ps == ownerSym or conceptExtends(ps, ownerSym):
+    c.buildErr dest, info, "concept inheritance cycle detected"
+    return
+  for existing in parents:
+    if existing == ps:
+      return
+  parents.add ps
+
+proc semConceptParents(c: var SemContext; dest: var TokenBuf; n: var Cursor;
+                      ownerSym: SymId): bool =
+  let info = n.info
+  if n.kind == DotToken:
+    takeToken dest, n
+    return false
+  var parents: seq[SymId] = @[]
+  if n.exprKind == ParX:
+    n.into ParX:
+      while n.hasMore:
+        semOneConceptParent c, dest, n, ownerSym, parents
+  else:
+    semOneConceptParent c, dest, n, ownerSym, parents
+  if parents.len == 0:
+    dest.addDotToken()
+  elif parents.len == 1:
+    dest.add symToken(parents[0], info)
+  else:
+    dest.addParLe(AndT, info)
+    for p in parents:
+      dest.add symToken(p, info)
+    dest.addParRi()
+  result = parents.len > 0
+
+proc semConceptType(c: var SemContext; dest: var TokenBuf; n: var Cursor; ownerSym: SymId) =
   takeToken dest, n
+  # Nifler layout: `(concept S0 S1 Parents Body)` with two reserved slots.
   wantDot c, dest, n
   wantDot c, dest, n
-  declareConceptSelf c, dest, n.info
-  skip n # skip dot or previous `Self` declaration
-  if n.stmtKind != StmtsS:
-    bug "(stmts) expected, but got: ", n
-  takeToken dest, n
-  let oldScopeKind = c.currentScope.kind
-  withNewScope c:
-    # make syms of routines in toplevel concept also toplevel:
-    c.currentScope.kind = oldScopeKind
-    while true:
-      let k = n.symKind
-      if k in RoutineKinds:
-        var it = Item(n: n, typ: c.types.voidType)
-        semProc(c, dest, it, k, checkConceptProc)
-        n = it.n
-      else:
-        break
-  takeParRi dest, n
+  let hasParents = semConceptParents(c, dest, n, ownerSym)
+  if n.symKind == TypevarY:
+    takeTree dest, n
+  else:
+    declareConceptSelf c, dest, n.info
+  let bodyInfo = n.info
+  if n.stmtKind == StmtsS:
+    takeToken dest, n
+    let oldScopeKind = c.currentScope.kind
+    var hasLocalReqs = false
+    withNewScope c:
+      # make syms of routines in toplevel concept also toplevel:
+      c.currentScope.kind = oldScopeKind
+      while n.hasMore:
+        let k = n.symKind
+        if k in RoutineKinds:
+          hasLocalReqs = true
+          var it = Item(n: n, typ: c.types.voidType)
+          semProc(c, dest, it, k, checkConceptProc)
+          n = it.n
+        elif n.stmtKind == CommentS:
+          takeTree dest, n
+        else:
+          buildErr c, dest, n.info, "illformed AST inside concept: " & asNimCode(n)
+          skip n
+    takeParRi dest, n
+    if not hasParents and not hasLocalReqs:
+      c.buildErr dest, bodyInfo, "concept must declare at least one requirement or inherit from another concept"
+  elif n.kind == DotToken:
+    if not hasParents:
+      c.buildErr dest, bodyInfo, "concept must declare at least one requirement or inherit from another concept"
+    else:
+      skip n
+      dest.addParLe(StmtsS, bodyInfo)
+      dest.addParRi()
+  else:
+    bug "(stmts) or empty body expected, but got: ", n
+    skip n
   takeParRi dest, n
 
 proc copyPragmasWithoutHooks(dest: var TokenBuf; pragmas: Cursor) =
@@ -396,7 +466,7 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
         var arg = beginRead(argBuf)
         var constraintMatch = constraint
         if not matchesConstraint(m, constraintMatch, arg):
-          c.buildErr dest, argInfo, "type " & typeToString(arg) & " does not match constraint: " & typeToString(constraint)
+          c.buildErr dest, argInfo, constraintMismatchMsg(m, constraint, arg)
           ok = false
           addArg = false
     if addArg:
@@ -896,7 +966,7 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         c.buildErr dest, info, "`concept` type must be defined in a `type` section"
         skip n
       else:
-        semConceptType c, dest, n
+        semConceptType c, dest, n, ownerSym
     of DistinctT:
       if tryTypeClass(c, dest, n):
         discard

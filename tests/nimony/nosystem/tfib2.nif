@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 3286             )
+(.indexat 3292             )
 (stmts@,2,tests/nimony/nosystem/tfib2.nim
  (type@2,1 :int.0.
   (i 64).
@@ -74,8 +74,8 @@
   (pragmas@U
    (magic@2 "LeF64"@7)). .)
  (type@A,H :Fibable.0.~8 . . .
-  (concept@2 . .
-   (typevar :Self.0. . . . .)
+  (concept@2 . . .
+   (typevar~8,1 :Self.0. . . . .)
    (stmts~8,1
     (proc :<=.2.@5 . . .
      (params@9
@@ -158,8 +158,8 @@
  (x \2D.1. 172)
  (x <=.1. 172)
  (h Fibable.0. 169)
- (h@C,H Self.0. 48)
- (h@4,I <=.2. 44)
+ (h@C,H Self.0. 50)
+ (h@4,I <=.2. 48)
  (h@4,I \2B.2. 135)
  (h@4,I \2D.2. 135)
  (h fib.0. 138)

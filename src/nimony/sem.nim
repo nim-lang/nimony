@@ -17,7 +17,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / [symparser, nifindexes, docpaths]
 import nimony_model, symtabs, builtintypes, decls, asthelpers,
-  programs, sigmatch, magics, reporters, nifconfig,
+  programs, sigconcepts, sigmatch, magics, reporters, nifconfig,
   intervals, xints, typeprops,
   semdata, sembasics, semchecks, semconst, semmagics, semimport, templates, sempragmas, semos, expreval, semborrow, enumtostr, derefs, sizeof, renderer,
   semuntyped, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec, langmodes,

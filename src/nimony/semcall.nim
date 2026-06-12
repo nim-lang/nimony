@@ -192,29 +192,27 @@ iterator findConceptsInConstraint(typ: Cursor): Cursor {.sideEffect.} =
       skip typ
     if nested == 0: break
 
+proc conceptMethodAlreadyListed(cands: FnCandidates; routine: Cursor): bool =
+  for existing in cands.a:
+    if existing.fromConcept and sameConceptRoutineTrees(routine, existing.typ, equivKinds = true):
+      return true
+  false
+
+proc collectConceptMethods(c: var SemContext; fn: StrId; concpt: Cursor; cands: var FnCandidates) =
+  for _, routine in conceptHierarchyRoutines(concpt):
+    var prc = routine
+    inc prc
+    if prc.kind == SymbolDef and sameIdent(prc.symId, fn):
+      if not conceptMethodAlreadyListed(cands, routine):
+        cands.addUnique FnCandidate(kind: routine.symKind, sym: prc.symId, typ: routine, fromConcept: true)
+
 proc maybeAddConceptMethods(c: var SemContext; fn: StrId; typevar: SymId; cands: var FnCandidates) =
   let res = tryLoadSym(typevar)
   assert res.status == LacksNothing
   let local = asLocal(res.decl)
   if local.kind == TypevarY and local.typ.kind != DotToken:
     for concpt in findConceptsInConstraint(local.typ):
-      var ops = concpt
-      ops.into:  # (concept …)
-        skip ops # .
-        skip ops # .
-        skip ops #   (typevar Self ...)
-        if ops.stmtKind == StmtsS:
-          ops.into StmtsS:
-            while ops.hasMore:
-              let sk = ops.symKind
-              if sk in RoutineKinds:
-                var prc = ops
-                inc prc # (proc
-                if prc.kind == SymbolDef and sameIdent(prc.symId, fn):
-                  var d = ops
-                  #skipToParams d
-                  cands.addUnique FnCandidate(kind: sk, sym: prc.symId, typ: d, fromConcept: true)
-              skip ops
+      collectConceptMethods c, fn, concpt, cands
 
 proc hasAttachedParam(params: Cursor; typ: SymId): bool =
   result = false
@@ -799,9 +797,11 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       assert cs.fnName != StrId(0)
       buildErr c, dest, cs.fn.n.info, "attempt to call routine: '" & pool.strings[cs.fnName] & "'"
   elif cs.fn.n.kind == Ident:
-    # error should have been given above already:
-    # buildErr c, dest, fn.n.info, "attempt to call undeclared routine"
-    discard
+    # Callee stayed as an `Ident` because `AllowUndeclared` was set (typical
+    # for dot-call desugaring and generic bodies). Still run ADL / concept
+    # lookup on the argument types so e.g. `t.one()` → `one(t)` can match a
+    # concept requirement without a real `one` in scope yet.
+    considerTypeboundOps(c, m, cs.fnName, cs.args, genericArgs, cs.hasNamedArgs)
   elif cs.fn.typ.typeKind == TypedescT and cs.args.len == 1:
     closeArgsScope c, cs
     semConvFromCall c, dest, it, cs

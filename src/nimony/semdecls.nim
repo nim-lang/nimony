@@ -1,49 +1,5 @@
 # included in sem.nim
 
-proc sameTreesButIgnoreSymIds(a, b: Cursor): bool =
-  ## Like sameTrees but maps symbols back to their base identifier names.
-  ## Used for forward declaration matching.
-  var a = a
-  var b = b
-  var nested = 0
-  let isAtom = a.kind != ParLe
-  while true:
-    # Handle symbol/ident comparison specially
-    let aIsName = a.kind in {Symbol, SymbolDef, Ident}
-    let bIsName = b.kind in {Symbol, SymbolDef, Ident}
-    if aIsName and bIsName:
-      let aName = if a.kind == Ident: a.litId else: symToIdent(a.symId)
-      let bName = if b.kind == Ident: b.litId else: symToIdent(b.symId)
-      if aName != bName: return false
-    elif aIsName or bIsName:
-      return false  # one is name, other is not
-    elif a.kind != b.kind:
-      return false
-    else:
-      case a.kind
-      of ParLe:
-        if a.tagId != b.tagId: return false
-        inc nested
-      of ParRi:
-        dec nested
-        if nested == 0: return true
-      of IntLit:
-        if a.intId != b.intId: return false
-      of UIntLit:
-        if a.uintId != b.uintId: return false
-      of FloatLit:
-        if a.floatId != b.floatId: return false
-      of StringLit:
-        if a.litId != b.litId: return false
-      of CharLit, UnknownToken:
-        if a.uoperand != b.uoperand: return false
-      of DotToken, EofToken: discard
-      of Symbol, SymbolDef, Ident: discard  # handled above
-    if isAtom: return true
-    inc a
-    inc b
-  return false
-
 proc signaturesMatch(forwardDecl: Cursor; implDecl: Cursor): bool =
   ## Check if two routine declarations have compatible signatures.
   ## Compares NIF tokens directly, mapping symbols back to identifiers.

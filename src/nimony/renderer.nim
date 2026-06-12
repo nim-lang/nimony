@@ -733,18 +733,40 @@ proc takeNumberType(g: var SrcGen, n: var Cursor, typ: string) =
 
   put(g, tkSymbol, name)
 
+proc gconceptParents(g: var SrcGen, n: var Cursor) =
+  if n.typeKind == AndT or n.exprKind == ParX:
+    var first = true
+    n.into:
+      while n.hasMore:
+        if not first:
+          gcomma(g)
+        else:
+          first = false
+        gtype(g, n, initContext())
+    skip n
+  elif n.kind == DotToken:
+    skip n
+  else:
+    gtype(g, n, initContext())
+
 proc gconcept(g: var SrcGen, n: var Cursor, c: Context) =
   putWithSpace(g, tkConcept, "concept")
-
-  indentNL(g)
   inc n
   skip n
   skip n
-  skip n, SkipGenParams # typevars
-  gstmts(g, n, c)
-  skipParRi(n)
-
-  dedent(g)
+  if n.kind != DotToken:
+    putWithSpace(g, tkOf, "of")
+    gconceptParents(g, n)
+  else:
+    skip n
+  skip n, SkipGenParams
+  if n.stmtKind == StmtsS:
+    # `gstmts` enters the `(stmts)`, indents, renders any requirements and
+    # consumes the closing `)`. An empty body (e.g. `concept of Base`) renders
+    # nothing — the pending indent is undone before any token is emitted.
+    gstmts(g, n, c, doIndent = true)
+  else:
+    skip n
 
 proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
   case n.kind

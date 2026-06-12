@@ -1,4 +1,4 @@
-import std/assertions
+import std/[assertions, sets]
 from std/strutils import startsWith
 include ".." / lib / nifprelude
 import nimony_model, decls, xints, semdata, programs, nifconfig
@@ -644,6 +644,83 @@ proc toTypeImpl*(n: Cursor): Cursor =
         result = local.body
     else:
       bug "could not load: " & pool.syms[result.symId]
+
+proc isConceptSym*(s: SymId): bool =
+  let section = getTypeSection(s)
+  result = section.kind == TypeY and section.body.typeKind == ConceptT
+
+proc conceptParentsSlot*(body: Cursor): Cursor =
+  ## `(concept S0 S1 Parents ...)` — cursor at `Parents` (after two reserved slots).
+  result = body
+  assert result.typeKind == ConceptT
+  inc result
+  skip result
+  skip result
+
+proc conceptHasParents*(parents: Cursor): bool =
+  parents.kind != DotToken
+
+iterator conceptParentSyms*(parents: Cursor): SymId {.sideEffect.} =
+  var p = parents
+  if p.kind == DotToken:
+    discard
+  elif p.kind == Symbol:
+    yield p.symId
+  elif p.typeKind == AndT or p.exprKind == ParX:
+    p.into:
+      while p.hasMore:
+        if p.kind == Symbol:
+          yield p.symId
+        skip p
+  else:
+    bug "illformed concept parents: ", p
+
+proc conceptSelfSlot*(body: Cursor): Cursor =
+  result = conceptParentsSlot(body)
+  skip result
+
+proc conceptStmtsSlot*(body: Cursor): Cursor =
+  result = conceptSelfSlot(body)
+  skip result
+
+proc conceptExtends*(sub, sup: SymId): bool {.sideEffect.} =
+  if sub == SymId(0) or sup == SymId(0):
+    return false
+  if sub == sup:
+    return true
+  if not isConceptSym(sub):
+    return false
+  let body = getTypeSection(sub).body
+  for p in conceptParentSyms(conceptParentsSlot(body)):
+    if p == sup or conceptExtends(p, sup):
+      return true
+  false
+
+proc collectConceptHierarchyBodiesImpl(body: Cursor; result: var seq[Cursor];
+                                      visited: var HashSet[SymId]) {.sideEffect.} =
+  result.add body
+  for p in conceptParentSyms(conceptParentsSlot(body)):
+    if p notin visited:
+      visited.incl p
+      collectConceptHierarchyBodiesImpl(getTypeSection(p).body, result, visited)
+
+iterator conceptHierarchyBodies*(body: Cursor): Cursor {.sideEffect.} =
+  var bodies: seq[Cursor] = @[]
+  var visited = initHashSet[SymId]()
+  collectConceptHierarchyBodiesImpl(body, bodies, visited)
+  for b in bodies:
+    yield b
+
+iterator conceptHierarchyRoutines*(body: Cursor): (Cursor, Cursor) {.sideEffect.} =
+  ## Yields `(conceptBody, requirementRoutine)` from the hierarchy (deduplicated).
+  for cbody in conceptHierarchyBodies(body):
+    var ops = conceptStmtsSlot(cbody)
+    if ops.stmtKind == StmtsS:
+      ops.into StmtsS:
+        while ops.hasMore:
+          if ops.symKind in RoutineKinds:
+            yield (cbody, ops)
+          skip ops
 
 when isMainModule:
   when false: # tests sum of products

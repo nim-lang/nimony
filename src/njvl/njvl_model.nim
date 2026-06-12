@@ -6,6 +6,7 @@
 
 import std / assertions
 include ".." / lib / nifprelude
+include ".." / lib / compat2
 
 import ".." / models / [tags, njvl_tags]
 export njvl_tags
@@ -51,7 +52,7 @@ proc rollback*[T](t: var IteTracker[T]; cp: int) {.inline.} =
 proc add*[T](t: var IteTracker[T]; item: sink T) {.inline.} =
   t.data.add item
 
-proc contains*[T](t: IteTracker[T]; item: T): bool {.inline.} =
+proc contains*[T: Equatable](t: IteTracker[T]; item: T): bool {.inline.} =
   item in t.data
 
 iterator since*[T](t: IteTracker[T]; cp: int): lent T =
@@ -75,7 +76,7 @@ proc thenDone*[T](t: var IteTracker[T]; s: var SplitPoint[T]) =
   for item in t.since(s.cp): s.thenData.add item
   t.rollback(s.cp)
 
-proc join*[T](t: var IteTracker[T]; s: SplitPoint[T]) =
+proc join*[T: Equatable](t: var IteTracker[T]; s: SplitPoint[T]) =
   ## Call after the else-branch: conservative merge keeping only the intersection.
   ## Items written in only one branch are tracked via writeSets and resolved
   ## through the mflag implication mechanism inside guard ites.

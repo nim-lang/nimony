@@ -1,0 +1,1 @@
+tests/nimony/concepts/tconceptinheritbad.nim(1, 23) Error: concept can only inherit from other concepts

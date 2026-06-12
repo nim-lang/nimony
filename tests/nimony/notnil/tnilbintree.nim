@@ -27,7 +27,7 @@ proc append*[Ty: Comparable](root: var nil BinaryTree[Ty], n: BinaryTree[Ty]) =
           return
         it = it.ri
 
-proc append*[Ty](root: var BinaryTree[Ty], data: sink Ty) =
+proc append*[Ty: Comparable](root: var BinaryTree[Ty], data: sink Ty) =
   append(root, newNode(data))
 
 type
@@ -40,7 +40,7 @@ proc toString[T: Stringable](n: nil BinaryTree[T]; result: var string) =
   toString n.le, result
   toString n.ri, result
 
-proc `$`*[T](n: BinaryTree[T]): string =
+proc `$`*[T: Stringable](n: BinaryTree[T]): string =
   result = ""
   toString n, result
 

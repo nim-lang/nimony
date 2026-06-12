@@ -232,7 +232,7 @@ type
     LentT = (ord(LentTagId), "lent")  ## `lent` type
     SinkT = (ord(SinkTagId), "sink")  ## `sink` type
     NiltT = (ord(NiltTagId), "nilt")  ## `nilt` type
-    ConceptT = (ord(ConceptTagId), "concept")  ## `concept` type: two reserved slots, a typevar symbol and the concept body statements
+    ConceptT = (ord(ConceptTagId), "concept")  ## `concept` type: two reserved slots, optional parent concepts (`.` / sym / `(and ...)`), a `Self` typevar, and the concept body statements
     DistinctT = (ord(DistinctTagId), "distinct")  ## `distinct` type
     ItertypeT = (ord(ItertypeTagId), "itertype")  ## Nimony iterator type — first-class closure-iterator value at the type level. Shape mirrors `(proctype ...)`: slot 0 carries the nilability tag (`.` placeholder or one of `(notnil)`, `(nil)`, `(unchecked)`); remaining slots are params, return type, pragmas.
     RangetypeT = (ord(RangetypeTagId), "rangetype")  ## `rangetype` type

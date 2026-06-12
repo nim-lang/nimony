@@ -7,7 +7,7 @@
 ## Helpers for declarative constructs like `let` statements or `proc` declarations.
 
 import std / [assertions, syncio]
-import ".." / lib / [nifcursors, nifstreams, lineinfos]
+include ".." / lib / nifprelude
 import ".." / nimony / [nimony_model, reporters]
 
 include ".." / lib / compat2
@@ -70,6 +70,20 @@ proc skipToParams*(c: var Cursor) =
     skip c # export marker
     skip c # pattern
     skip c # generics
+
+proc skipRoutineDeclPrefix*(n: var Cursor; parentKind: TypeKind) =
+  ## `n` sits just past a type's opening `ParLe`. Advance past the leading
+  ## bookkeeping that is not part of the type's identity, so two same-tag
+  ## types can be compared structurally from a common point. Only routine
+  ## *decls* carry such slots (name/export/pattern/generics before the
+  ## params); proctype/itertype keep their nilability tag in slot 0 (it
+  ## participates in the comparison) and every other type starts at its
+  ## first structural child.
+  if parentKind in RoutineTypes and parentKind notin {ProctypeT, ItertypeT}:
+    skip n # name
+    skip n # export marker
+    skip n # pattern
+    skip n # generics
 
 proc skipProcTypeToParams*(t: Cursor): Cursor =
   ## Pure version: returns a cursor advanced past the prefix slots.

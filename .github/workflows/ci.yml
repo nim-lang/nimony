@@ -206,6 +206,21 @@ jobs:
           version: ${{ matrix.target.nim_branch }}
           architecture: ${{ matrix.target.cpu }}
 
+      - name: Overlay current Nim compiler source (devel parser fixes)
+        shell: bash
+        run: |
+          # setup-nim installs a *prebuilt nightly binary* from nim-lang/nightlies,
+          # not the live `devel` tree. That nightly can lag real `devel` by weeks
+          # (it has been frozen since 2026-05-06). Nifler compiles Nim's own
+          # `compiler/parser.nim` (resolved through `--path:$nim`, see
+          # src/nifler/nim.cfg), so a stale nightly cannot parse newer syntax such
+          # as `type C = concept of D`. The nightly's `bin/nim` is fine as the
+          # bootstrap compiler; we only need fresh *compiler sources* overlaid on
+          # top so parser fixes land when Nifler is (re)built.
+          git clone --depth 1 --branch ${{ matrix.target.nim_branch }} \
+            https://github.com/nim-lang/Nim nim-src
+          cp -a nim-src/compiler/. nim/compiler/
+
       - name: Cache host-Nim build artifacts
         uses: actions/cache@v5
         with:
