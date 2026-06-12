@@ -734,17 +734,7 @@ proc takeNumberType(g: var SrcGen, n: var Cursor, typ: string) =
   put(g, tkSymbol, name)
 
 proc gconceptParents(g: var SrcGen, n: var Cursor) =
-  if n.typeKind == AndT:
-    var first = true
-    n.into:
-      while n.hasMore:
-        if not first:
-          gcomma(g)
-        else:
-          first = false
-        gtype(g, n, initContext())
-    skip n
-  elif n.exprKind == ParX:
+  if n.typeKind == AndT or n.exprKind == ParX:
     var first = true
     n.into:
       while n.hasMore:

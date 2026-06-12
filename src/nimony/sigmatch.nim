@@ -10,7 +10,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 
 import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes, renderer, asthelpers,
-  features, symtabs
+  features, symtabs, sigconcepts
 import ".." / lib / symparser
 import ".." / models / tags
 
@@ -249,93 +249,7 @@ proc isEnumType*(n: Cursor): bool =
   else:
     result = false
 
-proc isConceptType(a: Cursor): bool {.inline.} =
-  a.kind == Symbol and isConceptSym(a.symId)
-
-proc conceptRoutineBasename(routine: Cursor): StrId =
-  var prc = routine
-  assert prc.symKind in RoutineKinds
-  inc prc
-  assert prc.kind == SymbolDef
-  var name = pool.syms[prc.symId]
-  extractBasename(name)
-  pool.strings.getOrIncl(name)
-
-proc collectSelfSymsInType(typ: Cursor; result: var seq[SymId]) =
-  ## Collect every `Self` typevar referenced inside a type tree.
-  var typ = typ
-  var nested = 0
-  while nested >= 0:
-    case typ.kind
-    of Symbol:
-      let res = tryLoadSym(typ.symId)
-      if res.status == LacksNothing and res.decl.symKind == TypevarY:
-        if typ.symId notin result:
-          result.add typ.symId
-      inc typ
-      if nested == 0:
-        return
-    of ParLe:
-      inc nested
-      inc typ
-    of ParRi:
-      dec nested
-      inc typ
-      if nested == 0:
-        return
-    else:
-      inc typ
-      if nested == 0:
-        return
-
-proc conceptSelfSymFromSlot(body: Cursor): SymId =
-  let selfSlot = conceptSelfSlot(body)
-  if selfSlot.symKind != TypevarY:
-    return SymId(0)
-  var s = selfSlot
-  inc s
-  if s.kind == SymbolDef:
-    s.symId
-  else:
-    SymId(0)
-
-proc conceptSelfSyms(body: Cursor; routine: Cursor): seq[SymId] =
-  ## The `Self` slot in the concept header and the `Self` referenced in
-  ## requirement signatures can be different syms after sema; bind them all.
-  result = @[]
-  var prc = routine
-  skipToParams prc
-  if prc.substructureKind == ParamsU:
-    prc.into ParamsU:
-      while prc.hasMore:
-        let param = takeLocal(prc, SkipFinalParRi)
-        collectSelfSymsInType(param.typ, result)
-  var ret = routine
-  skipToParams ret
-  skip ret, AnyType
-  collectSelfSymsInType(ret, result)
-  let headerSelf = conceptSelfSymFromSlot(body)
-  if headerSelf != SymId(0) and headerSelf notin result:
-    result.add headerSelf
-
-iterator visibleNamedSyms(c: ptr SemContext; basename: StrId): SymId {.sideEffect.} =
-  let ignoreStyle = IgnoreStyleFeature in c.features
-  var it = c.currentScope
-  while it.up != nil:
-    it = it.up
-  for k in stylesOfScope(it, basename, ignoreStyle):
-    for sym in it.tab.getOrDefault(k):
-      yield sym.name
-  for realName in stylesOfImport(c.importTab, basename, ignoreStyle):
-    for moduleId in c.importTab.getOrDefault(realName):
-      let m = addr c.importedModules.getOrQuit(moduleId)
-      for k in stylesOfIface(m[].iface, realName, ignoreStyle):
-        for defId in m[].iface.getOrDefault(k):
-          yield defId
-
-proc matchConceptRoutineSig(m: var Match; conceptR, implR: Cursor): bool
 proc matchConceptSym(m: var Match; conceptSym: SymId; a: Cursor): bool
-proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; routine: Cursor; a: Cursor; actualBody: Cursor): bool
 proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): bool
 
 type LinearMatchFlag = enum
@@ -572,7 +486,7 @@ proc conceptReturnTypesMatch(m: var Match; cRet, aRet: Cursor): bool =
   a = aRet
   if matchesConstraint(m, a, c):
     return true
-  if sameTrees(cRet, aRet, ignoreSymIds = true):
+  if sameTreesButIgnoreSymIds(cRet, aRet):
     return true
   c = cRet
   a = aRet
@@ -596,71 +510,6 @@ proc matchConceptParamTypes(m: var Match; conceptTyp, implTyp: Cursor): bool =
     return true
   false
 
-proc routineHasNoSideEffect(routine: Cursor): bool {.inline.} =
-  let r = asRoutine(routine)
-  whichEffect(routine.stmtKind, r.pragmas) == HasNoSideEffect
-
-proc conceptRoutineKindsCompatible*(requirement, implementation: SymKind;
-                                   implementationDecl: Cursor = default(Cursor)): bool {.inline.} =
-  ## A `func` or `template` implementation may satisfy a `proc` requirement.
-  ## A `proc` with the `noSideEffect` pragma may satisfy a `func` requirement.
-  if requirement == implementation:
-    return true
-  if requirement == ProcY and implementation in {FuncY, TemplateY}:
-    return true
-  if requirement == FuncY and implementation == ProcY:
-    if cursorIsNil(implementationDecl):
-      return false
-    return routineHasNoSideEffect(implementationDecl)
-  false
-
-proc conceptRoutinesEquivalentKinds*(a, b: SymKind): bool {.inline.} =
-  ## For deduplicating concept requirements that differ only by proc/func.
-  conceptRoutineKindsCompatible(a, b) or conceptRoutineKindsCompatible(b, a)
-
-proc sameConceptRoutineParamTypes(aParams, bParams: Cursor): bool =
-  var a = aParams
-  var b = bParams
-  if a.substructureKind != ParamsU or b.substructureKind != ParamsU:
-    return false
-  a.into ParamsU:
-    b.into ParamsU:
-      while a.hasMore and b.hasMore:
-        let aTyp = takeLocal(a, SkipFinalParRi).typ
-        let bTyp = takeLocal(b, SkipFinalParRi).typ
-        if not sameTrees(aTyp, bTyp, ignoreSymIds = true):
-          return false
-      return not a.hasMore and not b.hasMore
-  false
-
-proc sameConceptRoutineTrees*(requirement, candidate: Cursor;
-                              equivKinds = false): bool =
-  ## Compare concept routine requirements by basename, kind, and signature shape.
-  ## Parameter names are ignored; only types and return type matter.
-  if requirement.symKind notin RoutineKinds or candidate.symKind notin RoutineKinds:
-    return false
-  let kindsOk = if equivKinds:
-    conceptRoutinesEquivalentKinds(requirement.symKind, candidate.symKind)
-  else:
-    conceptRoutineKindsCompatible(requirement.symKind, candidate.symKind, candidate)
-  if not kindsOk:
-    return false
-  if conceptRoutineBasename(requirement) != conceptRoutineBasename(candidate):
-    return false
-  var rReq = requirement
-  var rCand = candidate
-  skipToParams rReq
-  skipToParams rCand
-  if not sameConceptRoutineParamTypes(rReq, rCand):
-    return false
-  rReq = requirement
-  rCand = candidate
-  skipToParams rReq
-  skip rReq, AnyType
-  skipToParams rCand
-  skip rCand, AnyType
-  sameTrees(rReq, rCand, ignoreSymIds = true)
-
 proc matchConceptRoutineSig(m: var Match; conceptR, implR: Cursor): bool =
   if not conceptRoutineKindsCompatible(conceptR.symKind, implR.symKind, implR):
     return false
@@ -683,39 +532,9 @@ proc matchConceptRoutineSig(m: var Match; conceptR, implR: Cursor): bool =
         let extra = takeLocal(ca, SkipFinalParRi)
         if extra.val.kind == DotToken:
           return false
-  var cRet = conceptR
-  var aRet = implR
-  skipToParams cRet
-  skip cRet, AnyType
-  skipToParams aRet
-  skip aRet, AnyType
-  conceptReturnTypesMatch(m, cRet, aRet)
-
-iterator conceptRoutineCandidates(m: var Match; conceptSym: SymId; basename: StrId): SymId {.sideEffect.} =
-  var seen = initHashSet[SymId]()
-  if m.context != nil:
-    let ignoreStyle = IgnoreStyleFeature in m.context.features
-    if conceptSym != SymId(0):
-      let modSuffix = extractModule(pool.syms[conceptSym])
-      if modSuffix != "":
-        for cand in loadSyms(modSuffix, basename):
-          if not seen.containsOrIncl(cand):
-            yield cand
-      for moduleId, im in m.context.importedModules:
-        discard moduleId
-        for k in stylesOfIface(im.iface, basename, ignoreStyle):
-          for defId in im.iface.getOrDefault(k):
-            if not seen.containsOrIncl(defId):
-              yield defId
-    for cand in visibleNamedSyms(m.context, basename):
-      if not seen.containsOrIncl(cand):
-        yield cand
-
-proc conceptRequirementInBody(routine: Cursor; actualBody: Cursor): bool =
-  for _, req in conceptHierarchyRoutines(actualBody):
-    if sameConceptRoutineTrees(routine, req):
-      return true
-  false
+  # The `into` blocks advanced `cf`/`ca` past the params subtree, so they now
+  # sit on the return types — no need to re-skip from the routine head.
+  conceptReturnTypesMatch(m, cf, ca)
 
 proc matchConceptSym(m: var Match; conceptSym: SymId; a: Cursor): bool =
   if isConceptType(a):
@@ -747,7 +566,7 @@ proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; rout
     m.inferred[selfSym] = a
   let basename = conceptRoutineBasename(routine)
   let inferenceBase = m.inferred
-  for cand in conceptRoutineCandidates(m, conceptSym, basename):
+  for cand in conceptRoutineCandidates(m.context, conceptSym, basename):
     let res = tryLoadSym(cand)
     if res.status != LacksNothing:
       continue
@@ -773,13 +592,14 @@ proc collectMissingConceptRequirements(m: var Match; conceptSym: SymId; body: Cu
   let actualIsConcept = isConceptType(a)
   let actualBody = if actualIsConcept: getTypeSection(a.symId).body else: default(Cursor)
   let parents = conceptParentsSlot(body)
-  if conceptHasParents(parents):
+  let hasParents = conceptHasParents(parents)
+  if hasParents:
     for parent in conceptParentSyms(parents):
       let parentBody = getTypeSection(parent).body
       let parentMissing = collectMissingConceptRequirements(m, parent, parentBody, a)
       if parentMissing.len > 0:
         return parentMissing
-  if not actualIsConcept and not conceptHasParents(conceptParentsSlot(body)):
+  if not actualIsConcept and not hasParents:
     return @[]
   result = @[]
   for cbody, routine in conceptHierarchyRoutines(body):

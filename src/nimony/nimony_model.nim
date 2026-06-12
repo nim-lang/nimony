@@ -265,22 +265,58 @@ proc symNameId(s: SymId): StrId =
   extractBasename name
   pool.strings.getOrIncl(name)
 
-proc sameTrees*(a, b: Cursor; ignoreSymIds = false): bool =
+proc sameTrees*(a, b: Cursor): bool =
   var a = a
   var b = b
   var nested = 0
   let isAtom = a.kind != ParLe
   while true:
-    let aIsName = ignoreSymIds and a.kind in {Symbol, SymbolDef, Ident}
-    let bIsName = ignoreSymIds and b.kind in {Symbol, SymbolDef, Ident}
+    if a.kind != b.kind: return false
+    case a.kind
+    of ParLe:
+      if a.tagId != b.tagId: return false
+      inc nested
+    of ParRi:
+      dec nested
+      if nested == 0: return true
+    of Symbol, SymbolDef:
+      if a.symId != b.symId: return false
+    of IntLit:
+      if a.intId != b.intId: return false
+    of UIntLit:
+      if a.uintId != b.uintId: return false
+    of FloatLit:
+      if a.floatId != b.floatId: return false
+    of StringLit, Ident:
+      if a.litId != b.litId: return false
+    of CharLit, UnknownToken:
+      if a.uoperand != b.uoperand: return false
+    of DotToken, EofToken: discard "nothing else to compare"
+    if isAtom: return true
+    inc a
+    inc b
+  return false
+
+proc sameTreesButIgnoreSymIds*(a, b: Cursor): bool =
+  ## Like `sameTrees` but maps symbols back to their base identifier names.
+  ## Used for forward declaration matching and concept requirement comparison.
+  var a = a
+  var b = b
+  var nested = 0
+  let isAtom = a.kind != ParLe
+  while true:
+    # Handle symbol/ident comparison specially
+    let aIsName = a.kind in {Symbol, SymbolDef, Ident}
+    let bIsName = b.kind in {Symbol, SymbolDef, Ident}
     if aIsName and bIsName:
       let aName = if a.kind == Ident: a.litId else: symNameId(a.symId)
       let bName = if b.kind == Ident: b.litId else: symNameId(b.symId)
       if aName != bName: return false
     elif aIsName or bIsName:
+      return false  # one is name, other is not
+    elif a.kind != b.kind:
       return false
     else:
-      if a.kind != b.kind: return false
       case a.kind
       of ParLe:
         if a.tagId != b.tagId: return false
@@ -288,19 +324,18 @@ proc sameTrees*(a, b: Cursor; ignoreSymIds = false): bool =
       of ParRi:
         dec nested
         if nested == 0: return true
-      of Symbol, SymbolDef:
-        if a.symId != b.symId: return false
       of IntLit:
         if a.intId != b.intId: return false
       of UIntLit:
         if a.uintId != b.uintId: return false
       of FloatLit:
         if a.floatId != b.floatId: return false
-      of StringLit, Ident:
+      of StringLit:
         if a.litId != b.litId: return false
       of CharLit, UnknownToken:
         if a.uoperand != b.uoperand: return false
-      of DotToken, EofToken: discard "nothing else to compare"
+      of DotToken, EofToken: discard
+      of Symbol, SymbolDef, Ident: discard  # handled above
     if isAtom: return true
     inc a
     inc b
