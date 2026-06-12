@@ -64,12 +64,15 @@ type
     args*, typeArgs*: TokenBuf
     err*, flipped*: bool
     concreteMatch: bool
+    ignoreConstraints: bool ## tie-breaking only: let a typevar formal bind any
+                            ## arg regardless of its constraint, so relative
+                            ## specificity ("concrete beats typevar") is decided
+                            ## structurally from the two signatures
     hasError: bool # mark that error message was set
     skippedMod: TypeKind
     argInfo: PackedLineInfo
     pos, opened: int
     inheritanceCosts, intLitCosts, intConvCosts, convCosts: int
-    callArgs*: seq[CallArg]
     returnType*: Cursor
     context: ptr SemContext
     error: MatchError
@@ -1199,7 +1202,11 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
         m.concreteMatch = true
         singleArgImpl(m, prev, arg)
         m.concreteMatch = false
-    elif matchesConstraint(m, fs, a):
+    elif m.ignoreConstraints or matchesConstraint(m, fs, a):
+      # `ignoreConstraints` is set only by `mutualGenericMatch`'s crosswise
+      # specificity probe: there the candidates already matched the real call,
+      # so we measure which formal is more specialized without re-validating
+      # the constraint (a concrete `int` arg need not satisfy `T`'s concept).
       m.inferred[fs] = a
     else:
       m.error ConstraintMismatch, f, a
@@ -2050,9 +2057,6 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
                explicitTypeVars: Cursor) =
   assert fn.kind != NoSym or fn.sym == SymId(0)
   m.fn = fn
-  m.callArgs.setLen 0
-  for arg in args:
-    m.callArgs.add arg
   matchTypevars m, fn, explicitTypeVars
 
   var f = fn.typ
@@ -2092,28 +2096,27 @@ type
     FirstWins,
     SecondWins
 
-proc relationSpecificity(r: TypeRelation): int =
-  ## Lower is more specific. Used to compare formals against the same arg.
-  case r
-  of EqualMatch: 0
-  of SubtypeMatch: 1
-  of IntLitMatch: 2
-  of GenericMatch: 3
-  of IntConvMatch: 4
-  of ConvertibleMatch: 5
-  of NoMatch: 6
+proc isTypevarFormal(f: Cursor): bool {.inline.} =
+  f.kind == Symbol and isTypevar(f.symId)
 
-proc formalRelationToArg(c: ptr SemContext; formal: Cursor; arg: CallArg): TypeRelation =
-  var ma = createMatch(c)
+proc crosswiseRelation(c: ptr SemContext; formal, otherFormal: Cursor): TypeRelation =
+  ## Does `formal` accept a value typed as `otherFormal`? Used to rank the two
+  ## formals' specificity. Against a *concrete* `otherFormal` we set
+  ## `ignoreConstraints` so a typevar formal binds it regardless of its
+  ## constraint — "concrete beats typevar" must hold even when the concrete
+  ## type doesn't satisfy the constraint (e.g. `int` vs `T: StrictElem`).
+  ## Against another *typevar* we keep the constraint, so constraint
+  ## subsumption still decides (e.g. `OrdinalEnum ⊂ Ordinal`).
+  var m = createMatch(c)
+  m.ignoreConstraints = not isTypevarFormal(otherFormal)
   var f = formal
-  singleArg ma, f, arg
-  if ma.err:
-    return NoMatch
-  classifyMatch(ma)
+  singleArg m, f, CallArg(n: emptyNode(c[]), typ: otherFormal)
+  classifyMatch(m)
 
 proc mutualGenericMatch(a, b: Match): DisambiguationResult =
-  # same goal as `checkGeneric` in old compiler, but compare each formal
-  # against the call-site argument type rather than crosswise formals.
+  # same goal as `checkGeneric` in old compiler: compare the two formals
+  # crosswise. A concrete type is more specific than a typevar, which is
+  # derivable from the signatures alone (the call argument is irrelevant here).
   result = NobodyWins
   let c = a.context
   var aParams = a.fn.typ
@@ -2124,56 +2127,35 @@ proc mutualGenericMatch(a, b: Match): DisambiguationResult =
   assert bParams.substructureKind == ParamsU
   inc aParams
   inc bParams
-  var ai = 0
   while aParams.hasMore and bParams.hasMore:
     let aParam = takeLocal(aParams, SkipFinalParRi)
     let bParam = takeLocal(bParams, SkipFinalParRi)
     let aFormal = aParam.typ
     let bFormal = bParam.typ
-    if ai < a.callArgs.len:
-      let callArg = a.callArgs[ai]
-      let aRank = relationSpecificity(formalRelationToArg(c, aFormal, callArg))
-      let bRank = relationSpecificity(formalRelationToArg(c, bFormal, callArg))
-      if aRank < bRank:
-        if result == SecondWins: return NobodyWins
-        result = FirstWins
-      elif bRank < aRank:
-        if result == FirstWins: return NobodyWins
-        result = SecondWins
-      else:
-        # Same specificity against the call arg — fall back to old Nim's
-        # cross-formal `checkGeneric` comparison for this parameter.
-        var ma = createMatch(c)
-        var aFormalCross = aFormal
-        singleArg ma, aFormalCross, CallArg(n: emptyNode(c[]), typ: bFormal)
-        var mb = createMatch(c)
-        var bFormalCross = bFormal
-        singleArg mb, bFormalCross, CallArg(n: emptyNode(c[]), typ: aFormal)
-        let aMatch = classifyMatch(ma)
-        let bMatch = classifyMatch(mb)
-        if aMatch == GenericMatch and bMatch == NoMatch:
-          if result == FirstWins: return NobodyWins
-          result = SecondWins
-        elif bMatch == GenericMatch and aMatch == NoMatch:
-          if result == SecondWins: return NobodyWins
-          result = FirstWins
-    if c != nil and VarToverloadsFeature in c.features:
+    let aMatch = crosswiseRelation(c, aFormal, bFormal)
+    let bMatch = crosswiseRelation(c, bFormal, aFormal)
+    if aMatch == GenericMatch and bMatch == NoMatch:
+      # a accepts b's formal but not vice versa: b is more specific
+      if result == FirstWins: return NobodyWins
+      result = SecondWins
+    elif bMatch == GenericMatch and aMatch == NoMatch:
+      # a is more specific
+      if result == SecondWins: return NobodyWins
+      result = FirstWins
+    elif c != nil and VarToverloadsFeature in c.features:
       # Mirror old Nim's `sumGeneric` +1 for `tyVar`: a `var T` (or `out T`)
       # formal is more specific than a plain-`T` formal of the same base.
       # This is the whole point of the `varToverloads` gate — let two
       # routines that differ only in `var` on a parameter coexist as
       # distinct overloads, with the `var` one preferred at the call site.
-      var aMutFormal = aFormal
-      var bMutFormal = bFormal
-      let aIsMut = aMutFormal.typeKind in {MutT, OutT}
-      let bIsMut = bMutFormal.typeKind in {MutT, OutT}
+      let aIsMut = aFormal.typeKind in {MutT, OutT}
+      let bIsMut = bFormal.typeKind in {MutT, OutT}
       if aIsMut and not bIsMut:
         if result == SecondWins: return NobodyWins
         result = FirstWins
       elif bIsMut and not aIsMut:
         if result == FirstWins: return NobodyWins
         result = SecondWins
-    inc ai
 
 proc cmpMatches*(a, b: Match; preferIterators = false): DisambiguationResult =
   assert not a.err
