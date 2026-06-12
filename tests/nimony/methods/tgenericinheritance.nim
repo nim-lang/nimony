@@ -38,7 +38,7 @@ let baseFloat = GenericObj[float](x: 4.56)
 let inherit1Float = InheritGeneric1[float](x: 7.89, y: 10.11)
 let inherit2 = InheritGeneric2(x: 12, z: "abc")
 
-proc test[T](x: GenericObj[T]) =
+proc test[T: Writeable](x: GenericObj[T]) =
   foo(x)
 
 test(baseInt)

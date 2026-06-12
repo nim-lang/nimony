@@ -65,3 +65,23 @@ when not defined(nimony):
   proc getOrQuit*[A, B](t: OrderedTable[A, B]; k: A): B =
     if not t.hasKey(k): quit "getOrQuit: missing key"
     result = t[k]
+
+when not defined(nimony):
+  # Nimony's `system` defines these as enforcing concepts (`Equatable` requires
+  # `==`, `Comparable` requires `==`/`<`, etc.); host Nim has no such concepts.
+  # Dual-compiled compiler source can still carry the constraints (so it stays
+  # checked-generics-clean under Nimony) because here they are universal-match
+  # typeclasses — `concept x` with an empty body matches every type. Not
+  # exported: a constraint is only needed locally where it is written, and
+  # re-exporting a type from an `include`d shim would create cross-module
+  # ambiguity.
+  type
+    Equatable = concept x
+    Comparable = concept x
+    ComparableAndNegatable = concept x
+    Arithmetic = concept x
+    Orderable = concept x
+    Keyable = concept x
+    Hashable = concept x
+    HasDefault = concept x
+    HasWriteErr = concept x

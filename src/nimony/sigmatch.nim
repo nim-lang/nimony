@@ -151,6 +151,25 @@ proc error0Typevar(m: var Match; k: MatchErrorKind; typevar: SymId) =
   m.error = MatchError(info: m.argInfo, kind: k,
                        typeVar: typevar, pos: m.pos+1)
 
+proc constraintToString(c: Cursor): string =
+  ## For a typevar formal, render its *constraint* (e.g. `Comparable`) rather
+  ## than its name, so a mismatch reads "T does not match constraint Comparable"
+  ## instead of the unhelpful "T does not match constraint T". Only ever called
+  ## on the error-reporting path, so the extra `tryLoadSym` costs nothing in the
+  ## common case.
+  if c.kind == Symbol:
+    let res = tryLoadSym(c.symId)
+    if res.status == LacksNothing and res.decl.symKind == TypevarY:
+      let tv = asTypevar(res.decl)
+      # Render only a *named* constraint (a concept like `Comparable`), where
+      # `typeToString` is a simple symbol lookup. Structural typeclasses such
+      # as `(ordinal)` or `(or …)` don't render standalone (gtype skips into
+      # the closing `)`), and `.` means unconstrained — both fall back to the
+      # typevar's own name.
+      if tv.typ.kind == Symbol:
+        return typeToString(tv.typ)
+  typeToString(c)
+
 proc getErrorMsg*(m: Match): string =
   case m.error.kind
   of InvalidMatch:
@@ -160,7 +179,7 @@ proc getErrorMsg*(m: Match): string =
       typeToString(m.error.expected), " but got ", typeToString(m.error.got))
   of ConstraintMismatch:
     concat(typeToString(m.error.got), " does not match constraint ",
-      typeToString(m.error.expected))
+      constraintToString(m.error.expected))
   of FormalTypeNotAtEndBug:
     "BUG: formal type not at end!"
   of FormalParamsMismatch:
@@ -656,7 +675,10 @@ proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor):
   # match any concrete type (legacy stub behaviour). Concept-to-concept
   # subsumption always checks requirements structurally.
   if not actualIsConcept and not hasParents:
-    return true
+    # An unconstrained typevar reaches us as an empty (`.`) constraint: it
+    # provably fulfils no requirement, so it must not satisfy the concept
+    # (issue #755). Genuine concrete types stay leniently accepted.
+    return a.kind != DotToken
   for cbody, routine in conceptHierarchyRoutines(body):
     if not conceptRoutineAvailable(m, conceptSym, cbody, routine, a, actualBody):
       return false

@@ -859,7 +859,7 @@ func gcd*[T: Arithmetic](x, y: T): T =
     swap x, y
   abs x
 
-func gcd*[T](x: openArray[T]): T =
+func gcd*[T: Arithmetic](x: openArray[T]): T =
   ## Computes the greatest common (positive) divisor of the elements of `x`.
   ##
   ## **See also:**
@@ -882,7 +882,7 @@ func lcm*[T: Arithmetic](x, y: T): T {.inline.} =
 
   x div gcd(x, y) * y
 
-func lcm*[T](x: openArray[T]): T =
+func lcm*[T: Arithmetic](x: openArray[T]): T =
   ## Computes the least common multiple of the elements of `x`.
   ##
   ## **See also:**
