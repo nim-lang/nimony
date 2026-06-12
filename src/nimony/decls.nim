@@ -71,48 +71,22 @@ proc skipToParams*(c: var Cursor) =
     skip c # pattern
     skip c # generics
 
-proc isProctypeNilabilitySlot(n: Cursor): bool {.inline.} =
-  ## True when `n` is the nilability slot in a canonical proctype/itertype.
-  ## Mirrors the `sourceIsNewLayout` probe in `semtypes.semLocalTypeImpl`.
-  if isNilAnnotation(n): return true
-  if n.kind == DotToken:
-    var probe = n
-    inc probe
-    return probe.substructureKind == ParamsU
-  false
-
-proc skipRoutineTypePrefixChildren*(n: var Cursor; kind: TypeKind) =
-  ## Advance past prefix children of a routine type whose opening `ParLe`
-  ## has already been consumed. Skips nifler's legacy four bookkeeping
-  ## slots and portable source-path `StringLit`s; leaves the nilability
-  ## tag and params untouched.
-  if kind in {ProctypeT, ItertypeT}:
-    for _ in 0..3:
-      if isProctypeNilabilitySlot(n): break
-      case n.kind
-      of DotToken, StringLit:
-        skip n
-      of Ident:
-        if pool.strings[n.litId] == "x":
-          skip n, SkipExport
-        else:
-          break
-      of ParLe:
-        if n.substructureKind == ParamsU: break
-        skip n, SkipExport
-      else:
-        break
-  elif kind in RoutineTypes:
-    skip n, SkipName
-    skip n, SkipExport
-    skip n, SkipGenParams
-    skip n, SkipGenParams
-
 proc skipTypeSourceAnnot*(n: var Cursor; parentKind: TypeKind) =
-  ## Drop module/path/reserved slots in a type spelling before structural
-  ## compare. Bookkeeping slots are not part of type identity.
-  if parentKind in RoutineTypes:
-    skipRoutineTypePrefixChildren(n, parentKind)
+  ## `n` sits just past a type's opening `ParLe`. Advance past the leading
+  ## bookkeeping that is not part of the type's identity, so two same-tag
+  ## types can be compared structurally from a common point.
+  ##  - proctype/itertype `(<tag> <NilTag> (params) …)`: nothing to drop — the
+  ##    nilability tag is slot 0 and participates in the comparison.
+  ##  - proc/iterator *decl* `(<tag> Name Export Pattern Generics (params) …)`:
+  ##    skip the four bookkeeping slots down to the params.
+  ##  - anything else: drop leading source-path `StringLit`s.
+  if parentKind in {ProctypeT, ItertypeT}:
+    discard
+  elif parentKind in RoutineTypes:
+    skip n # name
+    skip n # export marker
+    skip n # pattern
+    skip n # generics
   else:
     while n.kind == StringLit:
       skip n
