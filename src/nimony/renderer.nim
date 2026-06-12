@@ -761,14 +761,10 @@ proc gconcept(g: var SrcGen, n: var Cursor, c: Context) =
     skip n
   skip n, SkipGenParams
   if n.stmtKind == StmtsS:
-    var probe = n
-    inc probe
-    if probe.kind != ParRi:
-      indentNL(g)
-      gstmts(g, n, c)
-      dedent(g)
-    else:
-      skipParRi(n)
+    # `gstmts` enters the `(stmts)`, indents, renders any requirements and
+    # consumes the closing `)`. An empty body (e.g. `concept of Base`) renders
+    # nothing — the pending indent is undone before any token is emitted.
+    gstmts(g, n, c, doIndent = true)
   else:
     skip n
 
