@@ -89,10 +89,19 @@ proc cFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
 proc llFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
   base / f.modname & ".ll"
+proc asmFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
+  ## arkham rewrites `<modname>.c.nif` (or `.oc.nif`) into this typed asm-NIF.
+  ## nifasm consumes the main module's file (by path) and resolves the dependent
+  ## modules from disk by suffix, trying `<suffix>.asm.nif` then `<suffix>.nif`
+  ## (see nifasm's `openForeignModule`). Each carries an embedded `(.index)` so
+  ## no reindex pass is needed.
+  let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
+  base / f.modname & ".asm.nif"
 proc genFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   case config.backend
   of backendC: config.cFile(f, backendDir)
   of backendLLVM: config.llFile(f, backendDir)
+  of backendNative: config.asmFile(f, backendDir)
 proc objFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
   base / f.modname & ".o"
@@ -737,23 +746,36 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
     # actually requested (`--opt:speed` / `--opt:size`); default/debug builds
     # are byte-for-byte unaffected.
     let useOptimizer = c.config.optLevel in {optSpeed, optSize}
+    let native = c.config.backend == backendNative
     var shoggoth = ""
     if useOptimizer:
       shoggoth = findTool("shoggoth")
 
-    # Command for nifc (code generation)
-    b.withTree "cmd":
-      b.addSymbolDef "nifc"
-      b.addStrLit nifc
-      b.addStrLit $c.config.backend
-      b.addStrLit "--compileOnly"
-      b.addStrLit "--bits:" & $c.config.bits
-      b.addKeyw "args"
-      if commandLineArgsNifc.len > 0:
-        for arg in commandLineArgsNifc.split(' '):
-          if arg.len > 0:
-            b.addStrLit arg
-      b.addKeyw "input"
+    if native:
+      # Native backend: arkham (NIFC -> typed asm-NIF) replaces nifc. Output is
+      # passed as the single token `-o:<path>` (the colon form; `addFilename`
+      # concatenates the `-o:` prefix directly onto the output path).
+      b.withTree "cmd":
+        b.addSymbolDef "arkham"
+        b.addStrLit findTool("arkham")
+        b.addStrLit "-a:" & c.config.arkhamArch
+        b.withTree "output":
+          b.addStrLit "-o:"
+        b.addKeyw "input"
+    else:
+      # Command for nifc (code generation)
+      b.withTree "cmd":
+        b.addSymbolDef "nifc"
+        b.addStrLit nifc
+        b.addStrLit $c.config.backend
+        b.addStrLit "--compileOnly"
+        b.addStrLit "--bits:" & $c.config.bits
+        b.addKeyw "args"
+        if commandLineArgsNifc.len > 0:
+          for arg in commandLineArgsNifc.split(' '):
+            if arg.len > 0:
+              b.addStrLit arg
+        b.addKeyw "input"
 
     # Command for the tree optimizer: `shoggoth c <input.c.nif> <output.oc.nif>`.
     if useOptimizer:
@@ -810,7 +832,19 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       b.addKeyw "output"
 
     # Command for linking/archiving
-    if c.cmd in {DoCompile, DoRun}:
+    if c.cmd in {DoCompile, DoRun} and native:
+      # nifasm is the native linker: it takes the *main* module's `.asm.nif`
+      # (`(input 0 0)`) and pulls the dependent `.asm.nif` modules from disk by
+      # suffix via the shared NIF module loader. `-o:` is the colon form.
+      b.withTree "cmd":
+        b.addSymbolDef "link"
+        b.addStrLit findTool("nifasm")
+        b.withTree "output":
+          b.addStrLit "-o:"
+        b.withTree "input":
+          b.addIntLit 0
+          b.addIntLit 0  # only the main module's .asm.nif on the command line
+    elif c.cmd in {DoCompile, DoRun}:
       case c.config.appType
       of appStaticLib:
         # Static library: use ar to create archive
@@ -914,18 +948,34 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       # Link executable
       b.withTree "do":
         b.addIdent "link"
-        # Input: all object files
         var objFiles = initHashSet[string]()
-        for cfile in c.toBuild:
-          let obj = sharedObjFile(cfile)
-          if not objFiles.containsOrIncl(obj):
-            b.withTree "input":
-              b.addStrLit obj
-        for v in c.nodes:
-          let obj = c.config.objFile(v.files[0], backend)
-          if not objFiles.containsOrIncl(obj):
-            b.withTree "input":
-              b.addStrLit obj
+        if native:
+          # nifasm links from the *main* module's `.asm.nif` (input[0]) and
+          # discovers the dependent modules by suffix on disk. List every
+          # module's `.asm.nif` as an input (root first) so they are all built
+          # before nifasm runs, even though only input[0] reaches its command
+          # line (see the `link` cmd's `(input 0 0)`).
+          let mainAsm = c.config.asmFile(c.rootNode.files[0], backend)
+          b.withTree "input":
+            b.addStrLit mainAsm
+          objFiles.incl mainAsm
+          for v in c.nodes:
+            let a = c.config.asmFile(v.files[0], backend)
+            if not objFiles.containsOrIncl(a):
+              b.withTree "input":
+                b.addStrLit a
+        else:
+          # Input: all object files
+          for cfile in c.toBuild:
+            let obj = sharedObjFile(cfile)
+            if not objFiles.containsOrIncl(obj):
+              b.withTree "input":
+                b.addStrLit obj
+          for v in c.nodes:
+            let obj = c.config.objFile(v.files[0], backend)
+            if not objFiles.containsOrIncl(obj):
+              b.withTree "input":
+                b.addStrLit obj
         b.withTree "output":
           b.addStrLit c.config.exeFile(c.rootNode.files[0], backend)
 
@@ -933,32 +983,35 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       # Build object files from C files with custom args. Outputs land in
       # `<nimony-root>/nimcache_static/` so the same .o is reused across
       # projects — these TUs (currently just mimalloc's `static.c`) don't
-      # depend on the user's project at all.
-      for cfile in c.toBuild:
-        let obj = sharedObjFile(cfile)
-        if not objFiles.containsOrIncl(obj):
-          b.withTree "do":
-            b.addIdent "cc"
-            b.withTree "input":
-              b.addStrLit cfile.name
-            b.withTree "args":
-              b.addStrLit cfile.customArgs
-            b.withTree "output":
-              b.addStrLit obj
+      # depend on the user's project at all. The native backend has no C
+      # objects at all (arkham/nifasm go straight to machine code).
+      if not native:
+        for cfile in c.toBuild:
+          let obj = sharedObjFile(cfile)
+          if not objFiles.containsOrIncl(obj):
+            b.withTree "do":
+              b.addIdent "cc"
+              b.withTree "input":
+                b.addStrLit cfile.name
+              b.withTree "args":
+                b.addStrLit cfile.customArgs
+              b.withTree "output":
+                b.addStrLit obj
 
       for i, v in pairs c.nodes:
-        let obj = c.config.objFile(v.files[0], backend)
-        if not objFiles.containsOrIncl(obj):
-          b.withTree "do":
-            b.addIdent "cc"
-            b.withTree "input":
-              b.addStrLit c.config.genFile(v.files[0], backend)
-            b.withTree "output":
-              b.addStrLit obj
+        if not native:
+          let obj = c.config.objFile(v.files[0], backend)
+          if not objFiles.containsOrIncl(obj):
+            b.withTree "do":
+              b.addIdent "cc"
+              b.withTree "input":
+                b.addStrLit c.config.genFile(v.files[0], backend)
+              b.withTree "output":
+                b.addStrLit obj
 
-        # Optionally run Shoggoth on the DCE'd `.c.nif`, producing
-        # `.oc.nif`; nifc then consumes that. Skipped entirely unless
-        # `useOptimizer`, in which case nifc reads the plain `.c.nif`.
+        # Optionally run Shoggoth on the DCE'd `.c.nif`, producing `.oc.nif`;
+        # the codegen (nifc or arkham) consumes that. Skipped entirely unless
+        # `useOptimizer`, in which case the plain `.c.nif` is read.
         var nifcInput: string
         if useOptimizer:
           let optimized = c.config.optimizedFile(v.files[0], backend)
@@ -972,18 +1025,37 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
         else:
           nifcInput = c.config.nifcFile(v.files[0], backend)
 
-        # Build C/LLVM IR files from .c.nif files
-        b.withTree "do":
-          b.addIdent "nifc"
-          b.withTree "args":
-            b.addStrLit "--nimcache:" & backendDir
-          if i == 0:
+        if native:
+          # arkham: per-module NIFC -> typed asm-NIF. arkham additionally loads
+          # imported modules' `.c.nif` on demand (cross-module type/sig
+          # resolution), so list those as dependency inputs to order them before
+          # this module's codegen. Only input[0] (this module's nifcInput)
+          # reaches arkham's command line (the `arkham` cmd uses `(input)`).
+          b.withTree "do":
+            b.addIdent "arkham"
+            b.withTree "input":
+              b.addStrLit nifcInput
+            var seenDeps = initHashSet[string]()
+            for depIdx in v.deps:
+              let depNif = c.config.nifcFile(c.nodes[depIdx].files[0], backend)
+              if not seenDeps.containsOrIncl(depNif):
+                b.withTree "input":
+                  b.addStrLit depNif
+            b.withTree "output":
+              b.addStrLit c.config.asmFile(v.files[0], backend)
+        else:
+          # Build C/LLVM IR files from .c.nif files
+          b.withTree "do":
+            b.addIdent "nifc"
             b.withTree "args":
-              b.addStrLit "--isMain"
-          b.withTree "input":
-            b.addStrLit nifcInput
-          b.withTree "output":
-            b.addStrLit c.config.genFile(v.files[0], backend)
+              b.addStrLit "--nimcache:" & backendDir
+            if i == 0:
+              b.withTree "args":
+                b.addStrLit "--isMain"
+            b.withTree "input":
+              b.addStrLit nifcInput
+            b.withTree "output":
+              b.addStrLit c.config.genFile(v.files[0], backend)
 
         # Build .x.nif files from .s.nif files via hexer.
         # For the root module (i==0) the output is backend-specific so that
