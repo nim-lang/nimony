@@ -30,12 +30,15 @@ template `<-`(a, b) =
     copyMem(addr(a), addr(b), sizeof(T))
 
 proc mergeAlt[T](a, b: var openArray[T], lo, m, hi: int;
-                             cmp: proc (x, y: T): int;
-                             order: SortOrder) =
+                 cmp: proc (x, y: T): int;
+                 order: SortOrder) {.nodestroy.} =
   # Optimization: If max(left) <= min(right) there is nothing to do!
   # 1 2 3 4 ## 5 6 7 8
   # -> O(n) for sorted arrays.
   # On random data this saves up to 40% of mergeAlt calls.
+
+  # It has `nodestroy` pragma so that destructor is not called with uninitialized values on `b`
+  # when assigning values to it.
   if cmp(a[m], a[m+1]) * order <= 0: return
   var j = lo
   # copy a[j..m] into b:
@@ -71,9 +74,9 @@ proc mergeAlt[T](a, b: var openArray[T], lo, m, hi: int;
   else:
     if k < j: copyMem(addr(a[k]), addr(b[i]), sizeof(T)*(j-k))
 
-proc sort*[T: HasDefault](a: var openArray[T];
-                          cmp: proc (x, y: T): int;
-                          order = SortOrder.Ascending) =
+proc sort*[T](a: var openArray[T];
+              cmp: proc (x, y: T): int;
+              order = SortOrder.Ascending) =
   ## Default Nim sort (an implementation of merge sort). The sorting
   ## is guaranteed to be stable (that is, equal elements stay in the same order)
   ## and the worst case is guaranteed to be O(n log n).
@@ -115,7 +118,7 @@ proc sort*[T: HasDefault](a: var openArray[T];
     sort(d, myCmp)
     assert d == ["fo", "qux", "boo", "barr"]
   var n = a.len
-  var b = newSeq[T](n div 2)
+  var b = newSeqUninit[T](n div 2)
   var s = 1
   while s < n:
     var m = n-1-s
@@ -124,8 +127,8 @@ proc sort*[T: HasDefault](a: var openArray[T];
       dec(m, s*2)
     s = s*2
 
-proc sorted*[T: HasDefault](a: openArray[T]; cmp: proc(x, y: T): int;
-                            order = SortOrder.Ascending): seq[T] =
+proc sorted*[T](a: openArray[T]; cmp: proc(x, y: T): int;
+                order = SortOrder.Ascending): seq[T] {.nodestroy.} =
   ## Returns `a` sorted by `cmp` in the specified `order`.
   ##
   ## **See also:**
@@ -141,7 +144,7 @@ proc sorted*[T: HasDefault](a: openArray[T]; cmp: proc(x, y: T): int;
     assert b == @[1, 2, 3, 4, 5]
     assert c == @[5, 4, 3, 2, 1]
     assert d == @["adam", "brian", "cat", "dande"]
-  result = newSeq[T](a.len)
+  result = newSeqUninit[T](a.len)
   for i in 0 .. a.high:
     result[i] = a[i]
   sort(result, cmp, order)
