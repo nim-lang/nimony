@@ -174,11 +174,24 @@ func `$`*(x: char): string =
   result = newString(1)
   result[0] = x
 
+func substrEq(s: string, pos: int, substr: string): bool =
+  var length = substr.len
+  if length > 0:
+    var i = 0
+    while i < length and pos + i < s.len and s[pos + i] == substr[i]:
+      inc i
+    i == length
+  else:
+    false
+
 template stringHasSep(s: string, index: int, seps: set[char]): bool =
   s[index] in seps
 
 template stringHasSep(s: string, index: int, sep: char): bool =
   s[index] == sep
+
+template stringHasSep(s: string, index: int, sep: string): bool =
+  s.substrEq(index, sep)
 
 template splitCommon(s, sep, maxsplit, sepLen) {.untyped.} =
   ## Common code for split procs
@@ -194,6 +207,11 @@ template splitCommon(s, sep, maxsplit, sepLen) {.untyped.} =
     if splits == 0: break
     dec(splits)
     inc(last, sepLen)
+
+template accResult(iter: untyped) {.untyped.} =
+  result = @[]
+  for x in iter:
+    result.add x
 
 iterator split*(s: string; seps: set[char] = Whitespace;
                 maxsplit: int = -1): string =
@@ -252,6 +270,37 @@ iterator split*(s: string; sep: char; maxsplit: int = -1): string =
   ## Substrings are separated by the character `sep`.
   splitCommon(s, sep, maxsplit, 1)
 
+iterator split*(s: string; sep: string; maxsplit: int = -1): string =
+  ## Splits the string `s` into substrings using the separator `sep`.
+  let sepLen = if sep.len == 0: 1 else: sep.len
+  splitCommon(s, sep, maxsplit, sepLen)
+
+iterator splitLines*(s: string; keepEol = false): string =
+  ## Splits the string `s` into its containing lines.
+  ## Supports LF, CR, and CR-LF line endings.
+  var first = 0
+  var last = 0
+  var eolpos = 0
+  while true:
+    while last < s.len and s[last] notin {'\c', '\l'}:
+      inc last
+
+    eolpos = last
+    if last < s.len:
+      if s[last] == '\l':
+        inc last
+      elif s[last] == '\c':
+        inc last
+        if last < s.len and s[last] == '\l':
+          inc last
+
+    yield substr(s, first, if keepEol: last - 1 else: eolpos - 1)
+
+    if eolpos == last:
+      break
+
+    first = last
+
 iterator splitWhitespace*(s: string; maxsplit: int = -1): string =
   ## Splits the string `s` at whitespace, stripping leading and trailing
   ## whitespace and collapsing runs of whitespace (no empty substrings are
@@ -274,6 +323,26 @@ iterator splitWhitespace*(s: string; maxsplit: int = -1): string =
       yield substr(s, first, last-1)
       if splits == 0: break
       dec(splits)
+
+func split*(s: string; seps: set[char] = Whitespace; maxsplit: int = -1): seq[string] =
+  ## The same as the `split` iterator, but returns a sequence of substrings.
+  accResult(split(s, seps, maxsplit))
+
+func split*(s: string; sep: char; maxsplit: int = -1): seq[string] =
+  ## The same as the `split` iterator, but returns a sequence of substrings.
+  accResult(split(s, sep, maxsplit))
+
+func split*(s: string; sep: string; maxsplit: int = -1): seq[string] =
+  ## The same as the `split` iterator, but returns a sequence of substrings.
+  accResult(split(s, sep, maxsplit))
+
+func splitLines*(s: string; keepEol = false): seq[string] =
+  ## The same as the `splitLines` iterator, but returns a sequence of substrings.
+  accResult(splitLines(s, keepEol))
+
+func splitWhitespace*(s: string; maxsplit: int = -1): seq[string] =
+  ## The same as the `splitWhitespace` iterator, but returns a sequence of substrings.
+  accResult(splitWhitespace(s, maxsplit))
 
 func delete*(s: var string, slice: Slice[int]) =
   ## Deletes the items `s[slice]`.

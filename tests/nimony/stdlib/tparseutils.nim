@@ -31,6 +31,15 @@ block: # parseHex
   assert parseHex("123def", num, start = 2, maxLen = 2) == 2
   assert num == 0x3d
 
+block: # skipUntil
+  assert skipUntil("Hello World", {'W', 'e'}) == 1
+  assert skipUntil("Hello World", {'W'}) == 6
+  assert skipUntil("Hello World", {'W', 'd'}) == 6
+  assert skipUntil("Hello World", 'o') == 4
+  assert skipUntil("Hello World", 'o', 4) == 0
+  assert skipUntil("Hello World", 'W') == 6
+  assert skipUntil("Hello World", 'w') == 11
+
 block:
   var ret: int64 = 3'i64
   assert parseBiggestInt("0", ret) == 1
