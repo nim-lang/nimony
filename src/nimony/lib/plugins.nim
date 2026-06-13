@@ -348,6 +348,54 @@ proc addSymUse*(t: var NifBuilder; s: string; info: LineInfo = NoLineInfo) =
   prepareMutation(t)
   t.p[].buf.addSymUse(pool.syms.getOrIncl(s), info)
 
+proc addErrorMessage(t: var NifBuilder; msg: string; info: LineInfo) =
+  prepareMutation(t)
+  t.p[].buf.addStrLit(msg, info)
+
+proc buildErrorTree(info: LineInfo; msg: string; orig: NifCursor): NifBuilder =
+  result = createTree()
+  result.addParLe("err", info)
+  result.addSubtree(orig)
+  result.addErrorMessage(msg, info)
+  result.addParRi()
+
+proc buildErrorTree(info: LineInfo; msg: string): NifBuilder =
+  result = createTree()
+  result.addParLe("err", info)
+  result.addDotToken()
+  result.addErrorMessage(msg, info)
+  result.addParRi()
+
+proc errorTree*(msg: string): NifBuilder =
+  ## Builds a compiler error tree with no original expression attached.
+  buildErrorTree(NoLineInfo, msg)
+
+proc errorTree*(msg: string; info: LineInfo): NifBuilder =
+  ## Builds a compiler error tree at `info` with no original expression attached.
+  buildErrorTree(info, msg)
+
+proc errorTree*(msg: string; at: NifCursor): NifBuilder =
+  ## Builds a compiler error tree reported at `at`, attaching `at`.
+  if hasSubtree(at):
+    buildErrorTree(at.info, msg, at)
+  else:
+    buildErrorTree(at.info, msg)
+
+proc errorTree*(msg: string; at, orig: NifCursor): NifBuilder =
+  ## Builds a compiler error tree reported at `at`, attaching `orig`.
+  if hasSubtree(orig):
+    buildErrorTree(at.info, msg, orig)
+  else:
+    buildErrorTree(at.info, msg)
+
+proc parseNifBuffer(text: string): TokenBuf =
+  # Internal helper used by `bindSymHelper` to parse a NIF source fragment
+  # (e.g. `name.0.suffix` or `(cchoice s1 s2 …)`). Strips the trailing
+  # `EofToken` so the resulting tokens concatenate cleanly into a builder.
+  result = parseFromBuffer(text, "")
+  if result.len > 0 and result[result.len-1].kind == EofToken:
+    result.shrink(result.len-1)
+
 type
   BindSymRule* = enum
     ## Selector for `bindSym`'s third argument. Mirrors `lib/std/macros.nim`'s
@@ -790,14 +838,6 @@ proc saveTree*(tree: NifBuilder) =
   ## Writes the complete contents of a mutable `NifBuilder` to `paramStr(2)`.
   ## This preserves line info because it is intended for `.nif` output.
   saveTree(tree, paramStr(2))
-
-proc parseNifBuffer(text: string): TokenBuf =
-  ## Internal helper used by `bindSymHelper` to parse a NIF source fragment
-  ## (e.g. `name.0.suffix` or `(cchoice s1 s2 …)`). Strips the trailing
-  ## `EofToken` so the resulting tokens concatenate cleanly into a builder.
-  result = parseFromBuffer(text, "")
-  if result.len > 0 and result[result.len-1].kind == EofToken:
-    result.shrink(result.len-1)
 
 proc createTree*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
     kind: K; children: openArray[NifBuilder]): NifBuilder =
