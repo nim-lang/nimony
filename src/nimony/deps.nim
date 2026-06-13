@@ -603,7 +603,9 @@ proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool; 
     b.addStrLit cpuFlag
     # Forward the active check modes so nifcgen injects only the requested
     # runtime checks (e.g. `--boundchecks:off` ⇒ no `nimUcheckB` in `(at …)`).
-    b.addStrLit "--flags:" & checkFlags
+    # A bare `--flags` means "no checks" (e.g. `-d:danger`): with a trailing
+    # `--flags:` parseopt would consume the next argument as its value.
+    b.addStrLit (if checkFlags.len > 0: "--flags:" & checkFlags else: "--flags")
     b.addKeyw "args"
     b.withTree "input":
       b.addIntLit 0
