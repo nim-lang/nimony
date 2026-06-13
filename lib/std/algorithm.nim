@@ -29,26 +29,23 @@ template `<-`(a, b) =
   else:
     copyMem(addr(a), addr(b), sizeof(T))
 
-proc mergeAlt[T](a, b: var openArray[T], lo, m, hi: int;
+proc mergeAlt[T](a: var openArray[T]; b: var seq[T];
+                 lo, m, hi: int;
                  cmp: proc (x, y: T): int;
-                 order: SortOrder) {.nodestroy.} =
+                 order: SortOrder) =
   # Optimization: If max(left) <= min(right) there is nothing to do!
   # 1 2 3 4 ## 5 6 7 8
   # -> O(n) for sorted arrays.
   # On random data this saves up to 40% of mergeAlt calls.
-
-  # It has `nodestroy` pragma so that destructor is not called with uninitialized values on `b`
-  # when assigning values to it.
   if cmp(a[m], a[m+1]) * order <= 0: return
   var j = lo
   # copy a[j..m] into b:
   assert j <= m
   #when onlySafeCode:
   when true:
-    var bb = 0
+    b.shrink(0)
     while j <= m:
-      b[bb] <- a[j]
-      inc(bb)
+      b.add a[j]
       inc(j)
   else:
     copyMem(addr(b[0]), addr(a[j]), sizeof(T)*(m-j+1))
@@ -118,7 +115,7 @@ proc sort*[T](a: var openArray[T];
     sort(d, myCmp)
     assert d == ["fo", "qux", "boo", "barr"]
   var n = a.len
-  var b = newSeqUninit[T](n div 2)
+  var b = newSeqOfCap[T](n div 2)
   var s = 1
   while s < n:
     var m = n-1-s
@@ -128,7 +125,7 @@ proc sort*[T](a: var openArray[T];
     s = s*2
 
 proc sorted*[T](a: openArray[T]; cmp: proc(x, y: T): int;
-                order = SortOrder.Ascending): seq[T] {.nodestroy.} =
+                order = SortOrder.Ascending): seq[T] =
   ## Returns `a` sorted by `cmp` in the specified `order`.
   ##
   ## **See also:**
@@ -144,9 +141,9 @@ proc sorted*[T](a: openArray[T]; cmp: proc(x, y: T): int;
     assert b == @[1, 2, 3, 4, 5]
     assert c == @[5, 4, 3, 2, 1]
     assert d == @["adam", "brian", "cat", "dande"]
-  result = newSeqUninit[T](a.len)
+  result = newSeqOfCap[T](a.len)
   for i in 0 .. a.high:
-    result[i] = `=dup`(a[i])
+    result.add a[i]
   sort(result, cmp, order)
 
 proc isSorted*[T](a: openArray[T];

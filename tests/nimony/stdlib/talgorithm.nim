@@ -24,3 +24,5 @@ block:
 block:
   assert isSorted([1, 2, 3], myCmpInt)
   assert not isSorted([3, 2, 1], myCmpInt)
+  assert isSorted(["a", "bc", "def", "ghij"], myCmpStr)
+  assert not isSorted(["aaa", "bb", "c"], myCmpStr)
