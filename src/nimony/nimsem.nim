@@ -134,7 +134,9 @@ proc handleCmdLine() =
       if forwardArg:
         commandLineArgs.add " --" & key
         if val.len > 0:
-          commandLineArgs.add ":" & quoteShell(val)
+          # Raw value: see the matching comment in nimony.nim. These args end
+          # up as StringLits in the `.build.nif`, which nifmake quotes once.
+          commandLineArgs.add ":" & val
 
     of cmdEnd: assert false, "cannot happen"
   semos.setupPaths(config)

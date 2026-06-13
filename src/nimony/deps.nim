@@ -942,7 +942,13 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
             b.withTree "input":
               b.addStrLit cfile.name
             b.withTree "args":
-              b.addStrLit cfile.customArgs
+              # `customArgs` is a free-form string holding several flags
+              # (e.g. `-DMI_STATS=1 -I.../mimalloc/include`). nifmake quotes
+              # each StringLit as one shell argument, so emit one StringLit
+              # per whitespace-separated flag — otherwise the whole string is
+              # passed as a single malformed argument and the `-I` is lost.
+              for flag in splitWhitespace(cfile.customArgs):
+                b.addStrLit flag
             b.withTree "output":
               b.addStrLit obj
 

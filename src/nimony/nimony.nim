@@ -246,11 +246,17 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
         if forwardArg:
           c.commandLineArgs.add " --" & key
           if val.len > 0:
-            c.commandLineArgs.add ":" & quoteShell(val)
+            # Store the raw value: it is emitted into the `.build.nif` as
+            # individual StringLits which nifmake shell-quotes exactly once.
+            # Pre-quoting here would double-quote (e.g. `--usages:f,3,10`'s
+            # comma triggers quoteShell, then nifmake quotes again and the
+            # literal quotes reach the tool). The forwarded compiler flags are
+            # shell-safe unquoted, so `selfExec`'s raw splice is fine too.
+            c.commandLineArgs.add ":" & val
         if forwardArgNifc:
           c.commandLineArgsNifc.add " --" & key
           if val.len > 0:
-            c.commandLineArgsNifc.add ":" & quoteShell(val)
+            c.commandLineArgsNifc.add ":" & val
 
     of cmdEnd: assert false, "cannot happen"
 

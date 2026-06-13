@@ -114,12 +114,14 @@ type
     b, deps: Builder
     portablePaths: bool
     depsEnabled, lineInfoEnabled, preserveDocs: bool
-    whenCondStack: seq[PNode]
+    whenCondStack: seq[tuple[cond: PNode, negated: bool]]
       ## Conjunction of `when`-branch conditions covering the current AST
       ## traversal point. Pushed when entering an elif branch's body, popped
       ## on exit. Imports emitted while this stack is non-empty get the
       ## conditions written into their `(when ...)` marker in the deps file
       ## so the dep analyzer can evaluate them and skip dead branches.
+      ## `negated` entries (an `else` branch carries the negation of every
+      ## prior elif condition) are wrapped in `(prefix not ...)` at emission.
 
 proc absLineInfo(i: TLineInfo; c: var TranslationContext) =
   var fp = toFullPath(c.conf, i.fileIndex)
@@ -260,7 +262,9 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
   of nkNone:
     assert false, "unexpected nkNone"
   of nkEmpty:
-    assert allowEmpty, "unexpected nkEmpty"
+    assert allowEmpty, "unexpected nkEmpty in parent " &
+      (if parent != nil: $parent.kind & " at " & $parent.info.line & ":" &
+        $parent.info.col else: "nil")
     c.b.addEmpty 1
   of nkNilLit:
     c.b.addTree "nil"
@@ -558,8 +562,10 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     relLineInfo(n, parent, c)
     attachDocComment(n, c)
 
-    if n.kind == nkIteratorDef and n[0].kind == nkEmpty:
-      # Anonymous iterator expression
+    if n[0].kind == nkEmpty:
+      # Anonymous routine expression: `(func(x: int): bool = ...)` parses as
+      # nkFuncDef with an empty name (unlike `proc` lambdas -> nkLambda);
+      # same for anonymous iterators
       c.b.addEmpty # name placeholder
       for i in 0..<n.len:
         toNif(n[i], n, c, allowEmpty = true)
@@ -713,8 +719,14 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
         # can evaluate the condition against the active set of `defined(...)`
         # symbols and skip the import when the branch is statically dead.
         c.b.addTree "when"
-        for cond in c.whenCondStack:
-          toNif(cond, nil, c)
+        for entry in c.whenCondStack:
+          if entry.negated:
+            c.b.addTree "prefix"
+            c.b.addIdent "not"
+            toNif(entry.cond, nil, c)
+            c.b.endTree()
+          else:
+            toNif(entry.cond, nil, c)
         c.b.endTree()
       for i in 0..<n.len:
         toNif(n[i], nil, c)
@@ -764,10 +776,13 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     relLineInfo(n, parent, c)
     # Walk children manually so we can push each branch's condition onto
     # `whenCondStack` before recursing into the body. Imports nested in the
-    # body then carry the condition into the deps file. We deliberately do
-    # NOT track an `else` branch's "negate priors" condition: an else with
-    # an import always shows up in the dep schedule, which is the
-    # conservative-safe direction for cross-compilation.
+    # body then carry the condition into the deps file. An `else` branch
+    # carries the NEGATION of every prior elif condition: emitting its
+    # imports unguarded ("conservative") schedules platform-dead modules
+    # for compilation — chronicles' `when not defined(js): ... else: import
+    # jsconsole` made the build compile jsconsole, which refuses to compile
+    # on C targets.
+    var priorConds: seq[PNode] = @[]
     for i in 0..<n.len:
       let branch = n[i]
       case branch.kind
@@ -776,9 +791,10 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
         relLineInfo(branch, n, c)
         if branch.len >= 2:
           toNif(branch[0], branch, c)  # condition (also serialised here)
-          c.whenCondStack.add branch[0]
+          c.whenCondStack.add (branch[0], false)
           toNif(branch[1], branch, c)  # body
           discard c.whenCondStack.pop()
+          priorConds.add branch[0]
           for j in 2 ..< branch.len:
             toNif(branch[j], branch, c)
         else:
@@ -786,7 +802,11 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
             toNif(branch[j], branch, c)
         c.b.endTree()
       else:
+        for cond in priorConds:
+          c.whenCondStack.add (cond, true)
         toNif(branch, n, c)
+        for cond in priorConds:
+          discard c.whenCondStack.pop()
     c.b.endTree()
   of nkCast:
     c.b.addTree(nodeKindTranslation(n.kind))

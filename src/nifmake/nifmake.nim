@@ -117,7 +117,10 @@ proc expandCommand(cmd: Command; inputs, outputs, args: seq[string]; baseDir: st
       break  # sentinel emitted by `parseCommandDefinition`'s trailing addParRi
     of StringLit:
       addSpace(result)
-      result.add pool.strings[n.litId]
+      # each StringLit is one argument; without quoting an argument
+      # containing a space (e.g. a forwarded `--define:key=a b` or a path)
+      # splits into several (tool names and filenames are quoted already)
+      result.add quoteShell(pool.strings[n.litId])
       inc n
     of ParLe:
       let tag = pool.tags[n.tag]
@@ -125,7 +128,7 @@ proc expandCommand(cmd: Command; inputs, outputs, args: seq[string]; baseDir: st
         # Add explicit arguments from the .nif file
         for i in 0..<args.len:
           addSpace(result)
-          result.add args[i]
+          result.add quoteShell(args[i])
         # Add tool-specific arguments (from .args files)
         for arg in toolArgs:
           addSpace(result)
