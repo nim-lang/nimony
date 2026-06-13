@@ -28,7 +28,7 @@ when defined(nimony):
 ## wraps a `MDB_txn`; a sandbox adapter would wrap whatever its source
 ## blob is and refuse to provide one for paths outside the allow-list.
 
-import std / [memfiles, syncio, monotimes, times]
+import std / [memfiles, syncio, times]
 
 # --- profiling --------------------------------------------------------
 #
@@ -77,7 +77,7 @@ type
     OnlyIfChanged
 
 when defined(nimony):
-  import std / [os, dirs, paths, times]
+  import std / [os, dirs, paths]
   # Nimony's stdlib procs are `.raises`. Wrap them so vfs.nim stays
   # non-raising (the rest of the compiler is wired that way).
   proc unixModTime(p: string): int64 =
@@ -98,7 +98,7 @@ when defined(nimony):
   proc openMmapImpl(p: string): MemFile =
     try: memfiles.open(p) except: quit "vfs: open failed: " & p
 else:
-  import std / [os, times]
+  import std / [os]
   proc unixModTime(path: string): int64 =
     let t = getLastModificationTime(path)
     toUnix(t) * nanosPerSec + int64(t.nanosecond)
