@@ -252,6 +252,29 @@ iterator split*(s: string; sep: char; maxsplit: int = -1): string =
   ## Substrings are separated by the character `sep`.
   splitCommon(s, sep, maxsplit, 1)
 
+iterator splitWhitespace*(s: string; maxsplit: int = -1): string =
+  ## Splits the string `s` at whitespace, stripping leading and trailing
+  ## whitespace and collapsing runs of whitespace (no empty substrings are
+  ## produced). If `maxsplit` is positive, at most `maxsplit` splits are made.
+  ##
+  ##   ```nim
+  ##   for word in splitWhitespace("  foo \t bar  baz  "):
+  ##     writeLine(stdout, word)
+  ##   ```
+  ##
+  ## ...generates "foo", "bar", "baz".
+  var last = 0
+  var splits = maxsplit
+  while last < len(s):
+    while last < len(s) and s[last] in Whitespace: inc(last)
+    var first = last
+    while last < len(s) and s[last] notin Whitespace: inc(last)
+    if first <= last-1:
+      if splits == 0: last = len(s)
+      yield substr(s, first, last-1)
+      if splits == 0: break
+      dec(splits)
+
 func delete*(s: var string, slice: Slice[int]) =
   ## Deletes the items `s[slice]`.
   ##
