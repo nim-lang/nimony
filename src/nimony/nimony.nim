@@ -48,6 +48,10 @@ Command:
 
 Options:
   -d, --define:SYMBOL       define a symbol for conditional compilation
+  -d:release                build in release mode (implies --opt:speed;
+                            runtime checks stay on)
+  -d:danger                 build in danger mode (implies --opt:speed and
+                            turns every runtime check off)
   -p, --path:PATH           add PATH to the search path
   -f, --forcebuild          force a rebuild
   --ff                      force a full build
@@ -195,6 +199,19 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
           if mode == FromArgsFile:
             quit "`--path` in `.args` file is forbidden. Use a `nimony.paths` file instead."
           c.config.paths.add val
+        elif (keyNorm == "define" or keyNorm == "d") and
+             (normalize(val) == "release" or normalize(val) == "danger"):
+          # `-d:release` / `-d:danger`: define the symbol (so `defined(release)`
+          # / `defined(danger)` work here and — via forwarding (forwardArg stays
+          # true) — in nimsem and the stdlib) and apply the implied build
+          # settings. Mirroring Nim, `release` only raises the optimization level
+          # while keeping runtime checks; `danger` additionally turns every
+          # runtime check off. Later explicit `--opt:`/`--boundchecks:` still win,
+          # since options are processed left to right.
+          c.config.addDefine val
+          c.config.optLevel = optSpeed
+          if normalize(val) == "danger":
+            c.checkModes = {}
         elif parseCommonOption(key, val, c.config, c.moduleFlags, forwardArg, forwardArgNifc,
                               helpMsg = Usage, versionMsg = Version & "\n"):
           discard "handled by common CLI parser"
@@ -272,7 +289,12 @@ proc compileProgram(c: var CmdOptions) =
     quit "too many command line arguments"
 
   if c.checkModes != DefaultSettings:
-    c.commandLineArgs.add " --flags:" & genFlags(c.checkModes)
+    let flags = genFlags(c.checkModes)
+    # Emit a bare `--flags` when no checks are active (e.g. `-d:danger`): a
+    # trailing `--flags:` would make parseopt swallow the following `m` command
+    # as its value. Append `:value` only when there is one, matching how every
+    # other forwarded option is built below.
+    c.commandLineArgs.add (if flags.len > 0: " --flags:" & flags else: " --flags")
   # Forward the active check modes to the hexer code generator too (nifcgen
   # injects bound/range-check calls); without this it always used DefaultSettings.
   c.config.checkFlags = genFlags(c.checkModes)
