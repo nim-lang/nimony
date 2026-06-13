@@ -146,7 +146,7 @@ proc sorted*[T](a: openArray[T]; cmp: proc(x, y: T): int;
     assert d == @["adam", "brian", "cat", "dande"]
   result = newSeqUninit[T](a.len)
   for i in 0 .. a.high:
-    result[i] = a[i]
+    result[i] = `=dup`(a[i])
   sort(result, cmp, order)
 
 proc isSorted*[T](a: openArray[T];
