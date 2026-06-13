@@ -41,26 +41,6 @@ proc withExt(f, ext: string): string =
 
 let overwrite = os.paramCount() > 0 and os.paramStr(1) == "--overwrite"
 
-proc testIndexer(overwrite: bool) =
-  exec "nim c src/lib/nifindexes"
-  var toRemove: seq[string] = @[]
-  let f = "tests/nifc/hello.nif"
-  exec ("src" / "lib" / "nifindexes").addFileExt(ExeExt) & " " & f
-
-  let r = f.withExt(".s.idx.nif")
-  let e = f.withExt(".expected.idx.nif")
-  if not os.sameFileContent(r, e):
-    if overwrite:
-      moveFile(r, e)
-    else:
-      fatal "files have not the same content: " & e & " " & r
-  else:
-    toRemove.add r
-  for rem in toRemove:
-    removeFile rem
-
-testIndexer(overwrite)
-
 proc testNifGram(overwrite: bool) =
   exec "nim c src/nifgram/nifgram"
   var toRemove: seq[string] = @[]

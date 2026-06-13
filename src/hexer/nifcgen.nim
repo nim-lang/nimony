@@ -1097,26 +1097,30 @@ proc genStringLit(c: var EContext; dest: var TokenBuf; s: string; info: PackedLi
     if s.len <= alwaysAvail:
       dest.addParPair(NilX, info)
     else:
-      # Reference a static LongString const, named by *content* and deduped per
-      # module. The disambiguator is a hash of the string, NOT a per-module
-      # counter: a counter makes the symbol's number depend on every other literal
-      # in the module, so editing an unrelated literal (or recompiling a module on
-      # its own) renumbers consts that *other* modules' inline-proc copies already
-      # reference by name — a stale cross-module reference that fails to link. A
-      # content hash is stable: the name changes only when the string does.
+      # Reference a static LongString const, named by *content* via the
+      # `strlit.0.I<hash>.<module>` instantiation form. Two properties matter:
       #
-      # The name is a plain `<c.main>`-owned global, deliberately NOT the
-      # `strlit.0.I<hash>.<module>` instantiation form. The instantiation form
-      # would let DCE collapse identical strings program-wide (one def, losers
-      # extern), but that hooks `resolveSymbolConflicts`, which assumes a
-      # whole-program module set; the compile-time-eval path is a *partial* build
-      # and resolves the canonical owner to a module it never emits, dangling the
-      # reference. A self-contained per-module copy is correct in every build mode.
+      # 1. The disambiguator is a hash of the string, NOT a per-module counter.
+      #    A counter makes the symbol's number depend on every other literal in
+      #    the module, so editing an unrelated literal (or recompiling a module
+      #    on its own) renumbers consts that *other* modules' inline-proc copies
+      #    already reference by name — a stale cross-module reference that fails
+      #    to link. A content hash is stable: the name changes only when the
+      #    string does.
+      #
+      # 2. The instantiation form (`isInstantiation` → true) lets DCE's
+      #    `resolveSymbolConflicts` collapse identical strings program-wide: one
+      #    module keeps the definition, the rest drop their copies and reference
+      #    the winner. This holds in partial builds too (e.g. the compile-time-
+      #    eval sub-compile) because the winner is always chosen from the modules
+      #    actually in that build, and the cross-module `extern` for it is emitted
+      #    by nifc into the `protos` section ahead of any const that takes its
+      #    address (see `genForeignDataDecl` in nifc/codegen.nim).
       #
       # `strLits` keeps emission to one const per distinct string per module.
       var litName = c.strLits.getOrDefault(s)
       if litName == SymId(0):
-        litName = pool.syms.getOrIncl("strlit." & $uint64(hash(s)) & "." & c.main)
+        litName = pool.syms.getOrIncl("strlit.0.I" & $uint64(hash(s)) & "." & c.main)
         c.strLits[s] = litName
 
         c.strLitBuf.add tagToken("const", info)

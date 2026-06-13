@@ -619,6 +619,20 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
   c.inToplevel = true
   c.currentProc = oldProc
 
+template genForeignDataDecl(body: untyped) =
+  # Foreign var/const/gvar/tvar `extern` declarations are emitted by `genVar`
+  # into `c.data` via `moveToDataSection`. But `genImportedSyms` runs *after*
+  # `genToplevel` has already filled `c.data` with this module's own consts —
+  # so the `extern` would land after a sibling const that takes its address
+  # (e.g. `more = &strlit…` for a deduped long-string literal). C rejects the
+  # forward reference. Relocate the just-emitted declaration to `c.protos`,
+  # which is written before `c.data`, so the `extern` always precedes its use.
+  let before = c.data.len
+  body
+  for i in before ..< c.data.len:
+    c.protos.add c.data[i]
+  setLen c.data, before
+
 proc genImportedSyms(c: var GeneratedCode) =
   # needs a good old fixpoint iteration as we expand the graph of imported symbols.
   while true:
@@ -632,11 +646,11 @@ proc genImportedSyms(c: var GeneratedCode) =
       of VarS:
         discard "we need to ignore local variables of the form x.0.suffix here which are still produced sometimes by Nimony..."
       of GvarS:
-        genVar c, n, IsGlobal, true
+        genForeignDataDecl: genVar c, n, IsGlobal, true
       of TvarS:
-        genVar c, n, IsThreadlocal, true
+        genForeignDataDecl: genVar c, n, IsThreadlocal, true
       of ConstS:
-        genVar c, n, IsConst, true
+        genForeignDataDecl: genVar c, n, IsConst, true
       else:
         discard "uninteresting symbol"
 

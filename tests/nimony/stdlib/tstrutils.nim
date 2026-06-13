@@ -112,6 +112,20 @@ block: # split iterator
   assert testSplit(s1, Digits, 3) == @["foo", "bar", "", "baz456"]
   assert testSplit(s1, Digits, 4) == @["foo", "bar", "", "baz", "56"]
 
+block: # split funcs
+  assert split("a,b,c", ',') == @["a", "b", "c"]
+  assert split("a,b;c", {',', ';'}) == @["a", "b", "c"]
+  assert split("a--b--c", "--") == @["a", "b", "c"]
+  assert split("empty seps return unsplit s", {}) == @["empty seps return unsplit s"]
+  assert split("empty sep returns unsplit s", "") == @["empty sep returns unsplit s"]
+  assert splitWhitespace("  foo \t bar  baz  ") == @["foo", "bar", "baz"]
+
+block: # splitLines
+  assert splitLines("\nthis\nis\nan\n\nexample\n") ==
+    @["", "this", "is", "an", "", "example", ""]
+  assert splitLines("a\r\nb\nc\r") == @["a", "b", "c", ""]
+  assert splitLines("a\r\nb\n", keepEol = true) == @["a\r\n", "b\n", ""]
+
 block: # delete
   try:
     block:

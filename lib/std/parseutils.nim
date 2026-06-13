@@ -383,3 +383,27 @@ func skipIgnoreCase*(s, token: openArray[char]): int =
   while result < s.len and result < token.len and
       toLower(s[result]) == toLower(token[result]): inc(result)
   if result != token.len: result = 0
+
+func skipUntil*(s: openArray[char], until: set[char]): int {.inline.} =
+  ## Skips all characters until one char from the set `until` is found
+  ## or the end is reached.
+  ## Returns number of characters skipped.
+  result = 0
+  while result < s.len and s[result] notin until: inc(result)
+
+func skipUntil*(s: openArray[char], until: char): int {.inline.} =
+  ## Skips all characters until the char `until` is found or the end is reached.
+  ## Returns number of characters skipped.
+  result = 0
+  while result < s.len and s[result] != until: inc(result)
+
+func skipUntil*(s: string, until: set[char], start = 0): int {.inline.} =
+  ## Skips all characters until one char from the set `until` is found
+  ## or the end is reached.
+  ## Returns number of characters skipped.
+  skipUntil(s.toOpenArray(start, s.high), until)
+
+func skipUntil*(s: string, until: char, start = 0): int {.inline.} =
+  ## Skips all characters until the char `until` is found or the end is reached.
+  ## Returns number of characters skipped.
+  skipUntil(s.toOpenArray(start, s.high), until)

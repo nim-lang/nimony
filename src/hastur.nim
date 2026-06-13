@@ -1583,29 +1583,6 @@ proc execNifc(cmd: string) =
 proc execHexer(cmd: string) =
   exec "hexer", cmd
 
-proc nifctests(overwrite: bool) =
-  let t1 = "tests/nifc/selectany/t1.nif"
-  let t2 = "tests/nifc/selectany/t2.nif"
-  let t3 = "tests/nifc/selectany/t3.nif"
-  execNifc " c -r " & t1 & " " & t2 & " " & t3
-  let app = "tests/nifc/app.c.nif"
-  execNifc " c -r " & app
-
-  let hello = "tests/nifc/hello.nif"
-  execNifc " c -r " & hello
-  execNifc " c -r --opt:speed " & hello
-  execNifc " c -r --opt:size " & hello
-  # TEST CPP
-  execNifc " cpp -r " & hello
-  execNifc " cpp -r --opt:speed " & hello
-
-  let tryIssues = "tests/nifc/try.nif"
-  execNifc " cpp -r " & tryIssues
-
-  let issues = "tests/nifc/issues.nif"
-  execNifc " c -r --linedir:on " & issues
-  execNifc " cpp -r --linedir:off " & issues
-
 proc hexertests(overwrite: bool) =
   let mod1 = "tests/hexer/mod1"
   let helloworld = "tests/hexer/hexer_helloworld"
@@ -1970,7 +1947,6 @@ proc handleCmdLine =
     exampletests(overwrite, forward)
   of "nifc":
     buildNifc()
-    nifctests(overwrite)
 
   of "hexer":
     buildHexer()

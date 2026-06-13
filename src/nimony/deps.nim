@@ -612,7 +612,9 @@ proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool; 
     b.addStrLit cpuFlag
     # Forward the active check modes so nifcgen injects only the requested
     # runtime checks (e.g. `--boundchecks:off` ⇒ no `nimUcheckB` in `(at …)`).
-    b.addStrLit "--flags:" & checkFlags
+    # A bare `--flags` means "no checks" (e.g. `-d:danger`): with a trailing
+    # `--flags:` parseopt would consume the next argument as its value.
+    b.addStrLit (if checkFlags.len > 0: "--flags:" & checkFlags else: "--flags")
     b.addKeyw "args"
     b.withTree "input":
       b.addIntLit 0
@@ -994,7 +996,13 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
               b.withTree "input":
                 b.addStrLit cfile.name
               b.withTree "args":
-                b.addStrLit cfile.customArgs
+                # `customArgs` is a free-form string holding several flags
+                # (e.g. `-DMI_STATS=1 -I.../mimalloc/include`). nifmake quotes
+                # each StringLit as one shell argument, so emit one StringLit
+                # per whitespace-separated flag — otherwise the whole string is
+                # passed as a single malformed argument and the `-I` is lost.
+                for flag in splitWhitespace(cfile.customArgs):
+                  b.addStrLit flag
               b.withTree "output":
                 b.addStrLit obj
 
