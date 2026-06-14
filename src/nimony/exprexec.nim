@@ -767,7 +767,7 @@ proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
 
   c.dest.copyIntoKind CallS, info:
     c.dest.addSymUse pool.syms.getOrIncl("setup.0." & writeNifModuleSuffix), info
-    c.dest.addStrLit s.g.config.nifcachePath / c.newModuleSuffix & ".out.nif", info
+    c.dest.addStrLit toAbsolutePath(s.g.config.nifcachePath / c.newModuleSuffix & ".out.nif"), info
 
   var retTypeBuf = createTokenBuf(4)
   retTypeBuf.addSubtree expectedType
@@ -778,7 +778,15 @@ proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
     if isVoidType(retType):
       c.dest.addSubtree expr
     else:
-      entryPoint(c, retType, expr)
+      # Const-eval snippets may call `.raises` stdlib (e.g. `readFile`). A
+      # catch-all `except` arm gives the body `CanRaise` in NJVL/derefs.
+      c.dest.copyIntoKind TryS, info:
+        c.dest.copyIntoKind StmtsS, info:
+          entryPoint(c, retType, expr)
+        c.dest.copyIntoKind ExceptU, info:
+          c.dest.addDotToken()
+          c.dest.copyIntoKind StmtsS, info:
+            discard
 
   c.dest.copyIntoKind CallS, info:
     c.dest.addSymUse pool.syms.getOrIncl("teardown.0." & writeNifModuleSuffix), info
@@ -791,5 +799,6 @@ proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
   if c.errorMsg.len > 0:
     result = ensureMove c.errorMsg
   else:
-    result = runEval(s, dest, c.newModuleSuffix, c.dest, c.usedModules)
+    let sourceDir = absoluteParentDir(getFile(info))
+    result = runEval(s, dest, c.newModuleSuffix, c.dest, c.usedModules, sourceDir)
 
