@@ -1227,14 +1227,27 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       if elseCur.kind == ParLe:
         emitJump dest, lelse, info
         emitLabel dest, lelse, info
-        elseCur.into:
-          while elseCur.hasMore:
-            trGoto c, dest, elseCur
+        # A branch is usually a `(stmts ...)` list whose children we lower
+        # one by one. But NJ can place a single statement directly in a
+        # branch slot — e.g. the guard `ite` synthesised for an `else: break`
+        # ends up as the else of `if cond: body else: break`. Descending into
+        # such a node with `into` would lower its *children* (emitting the
+        # ite's condition as a bare `(not g)` statement nifc rejects); lower
+        # it as one statement instead.
+        if elseCur.stmtKind == StmtsS:
+          elseCur.into:
+            while elseCur.hasMore:
+              trGoto c, dest, elseCur
+        else:
+          trGoto c, dest, elseCur
       emitJump dest, lend, info
       emitLabel dest, lthen, info
-      thenCur.into:
-        while thenCur.hasMore:
-          trGoto c, dest, thenCur
+      if thenCur.stmtKind == StmtsS:
+        thenCur.into:
+          while thenCur.hasMore:
+            trGoto c, dest, thenCur
+      else:
+        trGoto c, dest, thenCur
       emitJump dest, lend, info
       emitLabel dest, lend, info
       skipParRi n
