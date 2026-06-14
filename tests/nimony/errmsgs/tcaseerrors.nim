@@ -19,3 +19,9 @@ case c
 of cstring"abc", cstring"def": discard
 of cstring"ghi", cstring"jkl", c: discard
 of cstring"mno", cstring"abc": discard
+
+case b
+of 123: discard
+of 456:
+  foo()
+else: discard
