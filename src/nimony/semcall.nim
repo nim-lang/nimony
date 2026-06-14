@@ -1136,7 +1136,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       assert res.status == LacksNothing
       if isRoutine(res.decl.symKind) and isGeneric(asRoutine(res.decl)):
         treatAsGenericInst = true
-    if not treatAsGenericInst and atHasTypeArgs(c, cs.fn.n):
+    if not treatAsGenericInst and lhs.kind != TypeY and atHasTypeArgs(c, cs.fn.n):
       treatAsGenericInst = true
     if treatAsGenericInst:
       cs.hasGenericArgs = true
