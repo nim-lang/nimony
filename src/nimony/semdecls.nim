@@ -893,7 +893,9 @@ proc findMacroInvocs(c: SemContext; n: Cursor; kind: SymKind): seq[Cursor] =
           if n.exprKind == CallX:
             inc n
           let name = getIdent(n)
-          if name != StrId(0) and not (name in c.userPragmas and not hasParRi):
+          if name != StrId(0) and
+              not isCustomPragmaTemplate(c, name) and
+              not (name in c.userPragmas and not hasParRi):
             result.add start
             n = start
             skip n
