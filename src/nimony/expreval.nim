@@ -120,11 +120,30 @@ template cannotEval(n: Cursor) {.dirty.} =
 
 proc eval*(c: var EvalContext; n: var Cursor): Cursor
 
+proc findObjectField(objType: Cursor; fieldSym: SymId; typ: var Cursor; exported: var bool): bool
+
 proc evalCall(c: var EvalContext; n: Cursor): Cursor =
   var callee = n
   inc callee
   if callee.kind != Symbol:
-    cannotEval(n)
+    # Only explicit generic instantiation `(at T U ...)` needs the sub-compile.
+    # Other non-symbol callees (e.g. infix `shl` before overload resolution)
+    # are handled elsewhere or via `cannotEval` + `semEnumOrdinalValue`.
+    if callee.exprKind != AtX:
+      cannotEval(n)
+      return
+    if c.c == nil or c.c.executeExpr == nil:
+      cannotEval(n)
+      return
+    var resultBuf = createTokenBuf(12)
+    let retType =
+      if not cursorIsNil(c.expectedType): skipModifier(c.expectedType)
+      else: c.c[].types.autoType
+    let errorMsg = c.c.executeExpr(c.c[], n, retType, resultBuf, n.info)
+    if errorMsg.len == 0:
+      result = cursorAt(resultBuf, 0)
+    else:
+      result = c.error("cannot evaluate expression at compile time: " & asNimCode(n) & "\n\n" & errorMsg, n.info)
     return
   let res = tryLoadSym(callee.symId)
   if res.status != LacksNothing or not isRoutine(res.decl.symKind):
@@ -185,8 +204,11 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
 
     var resultBuf = createTokenBuf(12)
     assert c.c.executeExpr != nil
+    let retType =
+      if not cursorIsNil(c.expectedType): skipModifier(c.expectedType)
+      else: skipModifier(routine.retType)
     let errorMsg = c.c.executeExpr(c.c[], cursorAt(evaluatedCall, 0),
-                                   routine.retType, resultBuf, n.info)
+                                   retType, resultBuf, n.info)
     if errorMsg.len == 0:
       result = cursorAt(resultBuf, 0)
     else:
@@ -606,6 +628,7 @@ proc evalCast(c: var EvalContext; typ, val, nOrig: Cursor): Cursor =
     cannotEval nOrig
 
 proc eval*(c: var EvalContext; n: var Cursor): Cursor =
+  result = default(Cursor)
   template propagateError(r: Cursor): Cursor =
     let val = r
     if val.kind == ParLe and val.tagId == nifstreams.ErrT:
@@ -868,12 +891,26 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       var buf = createTokenBuf(16)
       buf.add n
       inc n
+      var objBody = skipModifier(n)
+      if objBody.kind == Symbol:
+        let res = tryLoadSym(objBody.symId)
+        if res.status == LacksNothing:
+          objBody = asTypeDecl(res.decl).body
       takeTree buf, n # type
+      let savedExpected = c.expectedType
       while n.hasMore:
         if n.substructureKind == KvU:
           buf.takeToken n # kv
+          var fieldSym = SymId(0)
+          if n.kind == Symbol:
+            fieldSym = n.symId
           buf.takeToken n # field sym/ident
+          var fieldType = default(Cursor)
+          var fieldExported = false
+          if findObjectField(objBody, fieldSym, fieldType, fieldExported):
+            c.expectedType = fieldType
           let v = propagateError eval(c, n)
+          c.expectedType = savedExpected
           buf.addSubtree v
           if n.hasMore:
             # optional inheritance level
@@ -927,7 +964,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         let info = n.info
         var resultBuf = createTokenBuf(12)
         let exprStart = n
-        let errMsg = c.c.executeExpr(c.c[], exprStart, c.expectedType, resultBuf, info)
+        let errMsg = c.c.executeExpr(c.c[], exprStart, skipModifier(c.expectedType), resultBuf, info)
         skip n
         if errMsg.len == 0:
           result = cursorAt(resultBuf, 0)
