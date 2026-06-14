@@ -41,13 +41,16 @@ proc foundSymbol(tok: PackedToken; mode: TrackMode) =
       r.addInt info.col
       stdout.writeLine(r)
 
-type IdeContext = object
-  toTrack: PackedLineInfo
-  trackMode: TrackMode
-  sym: SymId
-  tokenLen: int
-  typeCache: TypeCache
-  currentDotLhs: Cursor
+type
+  SearchKind = enum skOther, skField, skDot
+  IdeContext = object
+    toTrack: PackedLineInfo
+    trackMode: TrackMode
+    sym: SymId
+    tokenLen: int
+    typeCache: TypeCache
+    currentDotLhs: Cursor
+    searchKind: SearchKind
 
 proc findField(c: var IdeContext, n: var Cursor, name: string, nameSym: SymId) =
   inc n
@@ -78,7 +81,6 @@ proc tr(c: var IdeContext, n: var Cursor) =
         tr(c, n)
       else:
         tr(c, n)
-        # n.skip()
 
     tr(c, n) # body
 
@@ -87,11 +89,22 @@ proc tr(c: var IdeContext, n: var Cursor) =
 
     c.typeCache.closeScope()
 
+  of TypeS:
+    inc n # ParLe
+    if n.symId == c.sym and c.trackMode == TrackDef and c.searchKind notin {skField, skDot}:
+      foundSymbol(n.load, c.trackMode)
+
+    while n.kind != ParRi:
+      tr(c, n)
+
+    assert n.kind == ParRi
+    inc n
+
   of VarS, LetS, ConstS:
     let symKind = n.symKind
     inc n # ParLe
     let sym = n.symId
-    if sym == c.sym:
+    if sym == c.sym and c.trackMode == TrackDef and c.searchKind notin {skField, skDot}:
       foundSymbol(n.load, c.trackMode)
     inc n # sym
     inc n # exported
@@ -120,13 +133,17 @@ proc tr(c: var IdeContext, n: var Cursor) =
         tr(c, n)
       assert n.kind == ParRi
       inc n
+
+    of OconstrX:
+      skip n
+
     else:
       case n.substructureKind
       of ParamU:
         let symKind = n.symKind
         inc n # ParLe
         let sym = n.symId
-        if sym == c.sym:
+        if sym == c.sym and c.trackMode == TrackDef and c.searchKind notin {skField, skDot}:
           foundSymbol(n.load, c.trackMode)
         inc n # sym
         inc n # exported
@@ -140,8 +157,13 @@ proc tr(c: var IdeContext, n: var Cursor) =
       else:
         case n.kind
         of Symbol, SymbolDef:
-          if n.symId == c.sym and lineInfoMatch(n.info, c.toTrack, c.tokenLen):
+          if n.symId == c.sym and c.trackMode == TrackUsages and c.searchKind in {skField, skDot} and not c.currentDotLhs.cursorIsNil:
+            # todo: This should check the type of the lhs to make sure it matches the type we're looking for
+            foundSymbol(n.load, c.trackMode)
+          elif n.symId == c.sym and c.trackMode == TrackUsages and c.searchKind == skOther and c.currentDotLhs.cursorIsNil:
+            foundSymbol(n.load, c.trackMode)
 
+          elif n.symId == c.sym and lineInfoMatch(n.info, c.toTrack, c.tokenLen):
             if not c.currentDotLhs.cursorIsNil:
               # Symbol is right hand side of DotX or DdotX, look up field in type of lhs
               var typ = c.typeCache.getType(c.currentDotLhs, {SkipAliases})
@@ -164,9 +186,29 @@ proc tr(c: var IdeContext, n: var Cursor) =
         else:
           inc n
 
-proc findLocal(file: string; sym: SymId; toTrack: PackedLineInfo; mode: TrackMode) =
+proc getParent(n: Cursor): Cursor =
+  result = n
+  unsafeDec result
+  var depth = 1
+  while depth > 0:
+    case result.kind
+    of ParLe:
+      dec depth
+      if depth == 0:
+        break
+    of ParRi:
+      inc depth
+    else:
+      discard
+    unsafeDec result
+
+proc findLocal(file: string; sym: SymId; toTrack: PackedLineInfo; mode: TrackMode, offset: int) =
   var buf = parseFromFile(file)
+
   var n = beginRead(buf)
+
+  var symCursor = buf.cursorAt(offset)
+  let container = symCursor.getParent()
 
   var name = pool.syms[sym]
   extractBasename name
@@ -179,6 +221,15 @@ proc findLocal(file: string; sym: SymId; toTrack: PackedLineInfo; mode: TrackMod
   c.typeCache = createTypeCache()
   c.typeCache.openScope()
 
+  if container.substructureKind == FldU:
+    c.searchKind = skField
+  elif container.exprKind in {DotX, DdotX}:
+    var firstChild = container
+    inc firstChild
+    if symCursor != firstChild:
+      # When the searched for symbol is not the left hand side but the right hand side then we're searching for a field
+      c.searchKind = skDot
+
   tr(c, n)
 
 proc usages*(files: openArray[string]; config: NifConfig) =
@@ -190,6 +241,7 @@ proc usages*(files: openArray[string]; config: NifConfig) =
   var isLocalSym = false
   var symId = SymId 0
   var symFile = ""
+  var symOffset = 0
 
   let moduleName = moduleSuffix(config.toTrack.filename, config.paths)
   let nifFile = config.nifcachePath / moduleName & ".s.nif"
@@ -197,6 +249,7 @@ proc usages*(files: openArray[string]; config: NifConfig) =
   var s = nifstreams.open(nifFile)
   try:
     discard processDirectives(s.r)
+    var i = 0
     while true:
       let tok = next(s)
       case tok.kind
@@ -209,9 +262,8 @@ proc usages*(files: openArray[string]; config: NifConfig) =
           if name[][i] == '.':
             inc dots
           if dots == 0: inc tokenLen
-        let i = unpack(pool.man, tok.info)
-        let t = unpack(pool.man, requestedInfo)
         if lineInfoMatch(tok.info, requestedInfo, tokenLen):
+          symOffset = i
           isLocalSym = dots < 2
           symId = tok.symId
           symFile = nifFile
@@ -219,6 +271,8 @@ proc usages*(files: openArray[string]; config: NifConfig) =
       of EofToken: break
       of UnknownToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit, ParLe, ParRi:
         discard "proceed"
+
+      inc i
   finally:
     close(s)
 
@@ -227,7 +281,7 @@ proc usages*(files: openArray[string]; config: NifConfig) =
   elif isLocalSym:
     # Set path so files are found when resolving symbols
     prog.main.dir = nifFile.splitPath.head
-    findLocal(symFile, symId, requestedInfo, config.toTrack.mode)
+    findLocal(symFile, symId, requestedInfo, config.toTrack.mode, symOffset)
   else:
     for file in files:
       var s = nifstreams.open(file)
