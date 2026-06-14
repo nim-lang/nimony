@@ -1094,6 +1094,18 @@ proc unoverloadableMagicCall(c: var SemContext; dest: var TokenBuf; it: var Item
   semExpr c, dest, magicCall, cs.flags
   it.typ = magicCall.typ
 
+proc atHasTypeArgs(c: var SemContext; n: Cursor): bool =
+  ## True when `n` points at type arguments inside `(at Op Type ...)`.
+  ## Distinguishes explicit generic instantiation from value subscripting
+  ## `(at arr index)` where the next son is a value.
+  if not n.hasMore or n.kind == ParRi: return false
+  if n.kind == Symbol:
+    let res = tryLoadSym(n.symId)
+    return res.status == LacksNothing and res.decl.symKind == TypeY
+  if n.kind == ParLe:
+    return typeKind(n) != NoType
+  false
+
 proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall) =
   var cs = CallState(
     beforeCall: dest.len,
@@ -1118,22 +1130,27 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     var maybeRoutine = lhs.n
     if maybeRoutine.exprKind in {OchoiceX, CchoiceX}:
       inc maybeRoutine
+    var treatAsGenericInst = false
     if maybeRoutine.kind == Symbol:
       let res = tryLoadSym(maybeRoutine.symId)
       assert res.status == LacksNothing
       if isRoutine(res.decl.symKind) and isGeneric(asRoutine(res.decl)):
-        cs.hasGenericArgs = true
-        cs.genericDest = createTokenBuf(16)
-        swap dest, cs.genericDest
-        while cs.fn.n.hasMore:
-          semLocalTypeImpl c, dest, cs.fn.n, AllowValues
-        takeParRi dest, cs.fn.n
-        swap dest, cs.genericDest
-        it.n = cs.fn.n
-        dest.addSubtree lhs.n
-        cs.fn.typ = lhs.typ
-        cs.fn.kind = lhs.kind
-        cs.fnName = getFnIdent(c, dest)
+        treatAsGenericInst = true
+    if not treatAsGenericInst and lhs.kind != TypeY and atHasTypeArgs(c, cs.fn.n):
+      treatAsGenericInst = true
+    if treatAsGenericInst:
+      cs.hasGenericArgs = true
+      cs.genericDest = createTokenBuf(16)
+      swap dest, cs.genericDest
+      while cs.fn.n.hasMore:
+        semLocalTypeImpl c, dest, cs.fn.n, AllowValues
+      takeParRi dest, cs.fn.n
+      swap dest, cs.genericDest
+      it.n = cs.fn.n
+      dest.addSubtree lhs.n
+      cs.fn.typ = lhs.typ
+      cs.fn.kind = lhs.kind
+      cs.fnName = getFnIdent(c, dest)
     if not cs.hasGenericArgs:
       semBuiltinSubscript(c, dest, cs.fn, lhs)
       cs.fnName = getFnIdent(c, dest)
