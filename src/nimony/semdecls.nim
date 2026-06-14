@@ -18,6 +18,58 @@ proc signaturesMatch(forwardDecl: Cursor; implDecl: Cursor): bool =
     return false
   return true
 
+proc sigTreeToCanon(decl: Cursor): string =
+  ## Canonical string for a NIF subtree, mapping symbols to base names.
+  ## Matches the comparison semantics of `sameTreesButIgnoreSymIds`.
+  result = ""
+  var c = decl
+  var nested = 0
+  let isAtom = c.kind != ParLe
+  while true:
+    case c.kind
+    of Symbol, SymbolDef, Ident:
+      result.add 'N'
+      let name = if c.kind == Ident: c.litId else: symToIdent(c.symId)
+      result.addInt name.int
+    of ParLe:
+      result.add '('
+      result.addInt c.tagId.int
+      inc nested
+    of ParRi:
+      result.add ')'
+      dec nested
+      if nested == 0: break
+    of IntLit:
+      result.add 'i'
+      result.addInt c.intId.int
+    of UIntLit:
+      result.add 'u'
+      result.addInt c.uintId.int
+    of FloatLit:
+      result.add 'f'
+      result.addInt c.floatId.int
+    of StringLit:
+      result.add 's'
+      result.addInt c.litId.int
+    of CharLit, UnknownToken:
+      result.add 'c'
+      result.addInt c.uoperand.int
+    of DotToken:
+      result.add '.'
+    of EofToken:
+      result.add 'E'
+    if isAtom: break
+    inc c
+
+proc routineSigToCanon(decl: Cursor): string =
+  ## Canonical string for a routine's typevars, params, and return type.
+  if decl.kind != ParLe or not isRoutine(symKind decl):
+    return ""
+  let r = asRoutine(decl)
+  result = sigTreeToCanon(r.typevars)
+  result.add sigTreeToCanon(r.params)
+  result.add sigTreeToCanon(r.retType)
+
 proc addForwardDecl*(c: var SemContext; symId: SymId) =
   ## Register a forward declaration candidate.
   let lit = symToIdent(symId)
@@ -37,6 +89,49 @@ proc findMatchingForwardDecl*(c: var SemContext; symId: SymId; implDecl: Cursor)
       if signaturesMatch(res.decl, implDecl):
         result = fwdSym
         return
+
+proc cachedRoutineSig(c: var SemContext; symId: SymId): string =
+  ## Lookup a routine's canonical signature, loading and caching on demand.
+  if symId in c.routineSigCache:
+    return c.routineSigCache.getOrDefault(symId)
+  let loaded = tryLoadSym(symId)
+  if loaded.status != LacksNothing:
+    return ""
+  result = routineSigToCanon(loaded.decl)
+  c.routineSigCache[symId] = result
+
+proc checkRoutineRedefinition(c: var SemContext; dest: var TokenBuf; declStart: int;
+                              symId: SymId; kind: SymKind; hasBody: bool; info: PackedLineInfo): string =
+  ## Reject a routine declaration whose signature matches an existing overload,
+  ## mirroring Nim's `searchForProc` / `wrongRedefinition` (see procfind.nim).
+  ## Forward declarations with empty bodies are exempt.
+  result = ""
+  if declStart < 0 or declStart >= dest.len: return
+  let lit = symToIdent(symId)
+  var newDecl = cursorAt(dest, declStart)
+  try:
+    let newSig = routineSigToCanon(newDecl)
+    var bySig = initTable[string, seq[Sym]]()
+    var scope = c.currentScope.up
+    let ignoreStyle = IgnoreStyleFeature in c.features
+    while scope != nil:
+      for k in stylesOfScope(scope, lit, ignoreStyle):
+        for sym in scope.tab.getOrDefault(k):
+          if sym.name == symId or sym.kind != kind: continue
+          let sig = cachedRoutineSig(c, sym.name)
+          if sig.len == 0: continue
+          bySig.mgetOrPut(sig, @[]).add sym
+      scope = scope.up
+    for sym in bySig.getOrDefault(newSig):
+      let loaded = tryLoadSym(sym.name)
+      if loaded.status != LacksNothing: continue
+      let otherIsForward = asRoutine(loaded.decl, SkipInclBody).body.kind == DotToken
+      if otherIsForward and (not hasBody or otherIsForward): continue
+      result = "redefinition of '" & pool.strings[lit] &
+        "'; previous declaration here: " & infoToStr(loaded.decl.info)
+      return
+  finally:
+    endRead(newDecl)
 
 proc processBodyStatements(c: var SemContext; dest: var TokenBuf; it: var Item;
                            lastSonInfo: var PackedLineInfo; beforeLastSon: var int) =
@@ -827,6 +922,9 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
     if pass == checkSignatures:
       handleForwardDeclarations(c, dest, declStart, symId, crucial, hasBody = it.n.kind != DotToken)
 
+    var sigDecl = cursorAt(dest, declStart)
+    c.routineSigCache[symId] = routineSigToCanon(sigDecl)
+    endRead(dest)
     publishSignature dest, symId, declStart
     let hookName = getHookName(symId)
     let hk = hookToKind(hookName)
@@ -842,7 +940,17 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
         semBodyCheckBody(c, dest, it, kind, crucial, symId,
                          beforeGenericParams, beforeParams, hookName, info)
       of checkSignatures:
-        dest.takeTree it.n
+        let hasBody = it.n.kind != DotToken
+        let redefMsg = checkRoutineRedefinition(c, dest, declStart, symId, kind, hasBody, info)
+        if redefMsg.len > 0:
+          dest.addParLe(StmtsS, info)
+          dest.buildTree ErrT, info:
+            dest.add dotToken(info)
+            dest.add strToken(pool.strings.getOrIncl(redefMsg), info)
+          dest.addParRi()
+          skip it.n
+        else:
+          dest.takeTree it.n
         c.closeScope() # close parameter scope
       of checkConceptProc:
         c.closeScope() # close parameter scope
