@@ -26,7 +26,7 @@ Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|hexer|nifc|shoggoth|nifmake|nj|vl|validator|dagon|pnak]   build selected tools (default: all).
+  build [all|nimony|nifler|hexer|nifc|shoggoth|nifmake|nj|vl|validator|dagon|pnak|arkham|nifasm|native]   build selected tools (default: all).
   tiers                compile every module on the bootstrap list with nimony.
   boot [options]       Self-host the *full* nimony toolchain (nimony,
                        nimsem, hexer). `bin0/` is a fresh copy of the
@@ -1114,6 +1114,20 @@ proc buildShoggoth(showProgress = false) =
   let exe = "shoggoth".addFileExt(ExeExt)
   robustMoveFile "src/nifc/shoggoth/" & exe, binDir() / exe
 
+proc buildArkham(showProgress = false) =
+  ## `arkham` (NIFC -> typed asm-NIF native codegen) lives in the sibling
+  ## `../nativenif` repo and reuses nimony's NIF libraries via its committed
+  ## sibling-relative `nim.cfg`. We assume the checkout exists (the `dist/`
+  ## auto-clone is a later step). arkham's own `nim.cfg` already sets
+  ## `--outdir:bin`; we pass it explicitly so the result is deterministic
+  ## regardless of the current directory.
+  exec nimcPrefix() & "--outdir:" & binDir() & " ../nativenif/src/arkham/arkham.nim", showProgress
+
+proc buildNifasm(showProgress = false) =
+  ## `nifasm` (asm-NIF -> static, libc-free ELF/Mach-O/PE executable; also the
+  ## linker) — sibling repo, same assume-exists arrangement as `buildArkham`.
+  exec nimcPrefix() & "--outdir:" & binDir() & " ../nativenif/src/nifasm/nifasm.nim", showProgress
+
 proc buildHexer(showProgress = false) =
   exec nimcPrefix() & "src/hexer/hexer.nim", showProgress
   let exe = "hexer".addFileExt(ExeExt)
@@ -1894,6 +1908,18 @@ proc handleCmdLine =
     of "nifc":
       buildNifc(showProgress)
     of "shoggoth":
+      buildShoggoth(showProgress)
+    of "arkham":
+      buildArkham(showProgress)
+    of "nifasm":
+      buildNifasm(showProgress)
+    of "native":
+      # The C-free native toolchain used by `nimony n`: arkham + nifasm (from
+      # the sibling `../nativenif`) plus shoggoth (the opt-gated NIFC optimizer
+      # that also feeds the native path). Kept out of the default `all` build so
+      # the sibling-repo dependency stays opt-in.
+      buildArkham(showProgress)
+      buildNifasm(showProgress)
       buildShoggoth(showProgress)
     of "hexer":
       buildHexer(showProgress)

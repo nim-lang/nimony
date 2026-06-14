@@ -71,6 +71,7 @@ type
   Backend* = enum
     backendC = "c"
     backendLLVM = "llvm"
+    backendNative = "native"  # C-free: NIFC -> arkham -> nifasm (static, libc-free)
 
   OptLevel* = enum
     optDebug   # default: -O1 (debug-friendly but avoids dumb codegen)
@@ -106,6 +107,13 @@ type
 
 proc addDefine*(config: var NifConfig; symbol: string) =
   config.defines.addUnique symbol
+
+proc arkhamArch*(config: NifConfig): string =
+  ## The `-a:` value arkham expects for `config.targetCPU` (native backend).
+  case config.targetCPU
+  of cpuAmd64, cpuI386: "x64"
+  of cpuArm64, cpuArm: "arm64"
+  else: "x64"  # only x64/arm64 are supported targets; default to host-class x64
 
 proc initNifConfig*(baseDir: sink string): NifConfig =
   result = NifConfig(

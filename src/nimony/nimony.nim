@@ -41,6 +41,8 @@ Usage:
 Command:
   c project.nim               compile the full project via C backend
   l project.nim               compile the full project via LLVM backend
+  n project.nim               compile the full project via the native backend
+                              (arkham + nifasm; static, libc-free executable)
   check project.nim           check the full project for errors; can be
                               combined with `--usages`, `--def` for
                               editor integration
@@ -121,6 +123,15 @@ proc dispatchBasicCommand(key: string; config: var NifConfig): Command =
     FullProject
   of "l":
     config.backend = backendLLVM
+    FullProject
+  of "n":
+    # Native backend: NIFC -> arkham -> nifasm, producing a static, libc-free
+    # executable. arkham emits raw syscalls and nifasm writes a static image
+    # with no dynamic linker, so the standard library must be compiled in its
+    # native-allocator + libc-free configuration.
+    config.backend = backendNative
+    config.addDefine "nimNativeAlloc"
+    config.addDefine "nimNativeIo"
     FullProject
   of "check":
     CheckProject
@@ -278,6 +289,8 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
     of cmdEnd: assert false, "cannot happen"
 
 proc compileProgram(c: var CmdOptions) =
+  if c.config.backend == backendNative and c.config.appType notin {appConsole, appGui}:
+    quit "the native backend supports executables only (no --app:lib/staticlib)"
   if c.config.backend == backendLLVM:
     if c.config.linker.len == 0:
       c.config.linker = "clang"
@@ -298,6 +311,14 @@ proc compileProgram(c: var CmdOptions) =
   # Forward the active check modes to the hexer code generator too (nifcgen
   # injects bound/range-check calls); without this it always used DefaultSettings.
   c.config.checkFlags = genFlags(c.checkModes)
+
+  # The native backend needs the libc-free, native-allocator stdlib. The `n`
+  # command already recorded these in `config.defines` (cache key), but the
+  # `when defined(...)` gates live in nimsem, which only sees defines that are
+  # *forwarded on its command line* (config.defines is not enough) — so inject
+  # them the same way a user's `-d:` does.
+  if c.config.backend == backendNative:
+    c.commandLineArgs.add " --define:nimNativeAlloc --define:nimNativeIo"
 
   semos.setupPaths(c.config)
 
