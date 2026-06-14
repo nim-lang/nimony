@@ -50,7 +50,9 @@ proc tryCreateFinalDir*(dir: Path): ErrorCode =
 proc createDir*(dir: Path) {.raises.} =
   ## Creates a new directory `dir`. If the directory already exists, no error is raised.
   ## This can be used to create a nested directory structure directly.
-  for d in parentDirs(dir, fromRoot=false, inclusive=true):
+  # fromRoot=true: parents must be created root-first; the default leaf-first
+  # order makes the first mkdir fail with ENOENT for any nested path.
+  for d in parentDirs(dir, fromRoot=true, inclusive=true):
     let res = tryCreateFinalDir(d)
     if res == Success or res == NameExists:
       discard "fine"
