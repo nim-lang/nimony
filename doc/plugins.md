@@ -444,12 +444,15 @@ proc renderTree*(tree: NifBuilder): string        # debug rendering (no line inf
 
 ```nim
 proc errorTree*(msg: string): NifBuilder
-proc errorTree*(msg: string; at: Node): NifBuilder
-proc errorTree*(msg: string; at, orig: Node): NifBuilder
+proc errorTree*(msg: string; info: LineInfo): NifBuilder
+proc errorTree*(msg: string; at: NifCursor): NifBuilder
+proc errorTree*(msg: string; at, orig: NifCursor): NifBuilder
 ```
 
-Return an `ErrT` node that the compiler reports as a compile-time error. The `at`
-parameter provides source location; `orig` embeds the original source for context.
+Return an `ErrT` node that the compiler reports as a compile-time error. The
+`info` overload provides source location only; `at` provides both source location
+and embedded source context; `orig` lets the diagnostic location and embedded
+source context differ.
 
 
 ### Validation

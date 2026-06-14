@@ -17,7 +17,6 @@
 ##     {.ensuresNif: addedExpr(dest).}
 ##
 ## Procs annotated with ensuresNif must have unique names (no overloading).
-## Use `include` not `import` since custom pragmas can't be exported.
 
 template ensuresNif*(x: untyped) {.pragma.}
 template requiresNif*(x: untyped) {.pragma.}
@@ -33,6 +32,7 @@ template addedDef*(x: untyped): untyped = x     ## Adds one SymbolDef child
 template addedSym*(x: untyped): untyped = x     ## Adds one symbol use child
 template addedLit*(x: untyped): untyped = x     ## Adds one literal child
 template addedAny*(x: untyped): untyped = x     ## Adds one child of unknown kind
+template addedNested*(x: untyped): untyped = x  ## Adds one nested substructure child
 template addedDot*(x: untyped): untyped = x     ## Adds one DotToken
 template addedNothing*(x: untyped): untyped = x ## Adds nothing to dest
 

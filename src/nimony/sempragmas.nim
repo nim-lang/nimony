@@ -23,7 +23,8 @@ include ".." / lib / compat2
 import ".." / lib / symparser
 import nimony_model, builtintypes, decls, asthelpers, programs,
   magics, nifconfig, semdata, sembasics,
-  semchecks, semconst, semos, renderer, features, pragmacanon, identstyle
+  semchecks, semconst, semos, renderer, features, pragmacanon, identstyle,
+  symtabs
 
 # --- thin shims forwarding into the sem core via SemContext callbacks ---
 # (const-eval entry points — semBoolExpr, semConstIntExpr, … — come directly
@@ -47,6 +48,35 @@ proc semLocalType(c: var SemContext; dest: var TokenBuf; n: var Cursor; context 
   result = typeToCursor(c, dest, insertPos)
 
 # --- handlers (moved verbatim from sem.nim) ---
+
+proc symbolIsCustomPragmaTemplate(s: SymId): bool =
+  let loaded = tryLoadSym(s)
+  result = loaded.status == LacksNothing and
+           loaded.decl.symKind == TemplateY and
+           hasPragma(asRoutine(loaded.decl).pragmas, PragmaP)
+
+proc isCustomPragmaTemplate*(c: SemContext; name: StrId): bool =
+  if name in c.customPragmaTemplates:
+    return true
+
+  let ignoreStyle = IgnoreStyleFeature in c.features
+  var scope = c.currentScope
+  while scope != nil:
+    for k in stylesOfScope(scope, name, ignoreStyle):
+      for sym in scope.tab.getOrDefault(k):
+        if sym.kind == TemplateY and symbolIsCustomPragmaTemplate(sym.name):
+          return true
+    scope = scope.up
+
+  for realName in stylesOfImport(c.importTab, name, ignoreStyle):
+    for moduleId in c.importTab.getOrDefault(realName):
+      if c.importedModules.hasKey(moduleId):
+        let imported = c.importedModules.getOrQuit(moduleId)
+        for foreignName in stylesOfIface(imported.iface, realName, ignoreStyle):
+          for symId in imported.iface.getOrDefault(foreignName):
+            if symbolIsCustomPragmaTemplate(symId):
+              return true
+  result = false
 
 proc semProposition*(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: PragmaKind) =
   let prevPhase = c.phase
@@ -111,7 +141,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
         while read.hasMore:
           semPragma c, dest, read, crucial, kind
         endRead(pragBuf[])
-      elif name != StrId(0) and name in c.customPragmaTemplates:
+      elif name != StrId(0) and c.isCustomPragmaTemplate(name):
         # Pragma that resolves to a `template X(args) {.pragma.}` declaration.
         # Accept with or without arguments and drop silently — matches Nim's
         # treatment of templates marked `sfCustomPragma` used as annotations.
@@ -345,16 +375,23 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     else:
       buildErr c, dest, n.info, "`callConv` pragma takes a calling convention identifier"
   of EmitP, BuildP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP, PassLP, PassCP:
-    if pk == PragmaP and kind == TemplateY and not hasParRi and crucial.sym != SymId(0):
+    if pk == PragmaP and kind == TemplateY and crucial.sym != SymId(0):
       # `template X(args) {.pragma.}` declares `X` as a custom pragma. The
       # body is not expanded at attachment sites — the annotation is
       # recorded as a known custom-pragma name that will be silently
       # accepted (and dropped) wherever it is later attached. Mirrors Nim's
       # `sfCustomPragma`.
-      var basename = pool.syms[crucial.sym]
-      extractBasename basename
-      c.customPragmaTemplates.incl pool.strings.getOrIncl(basename)
+      let info = n.info
       inc n
+      if hasParRi and n.hasMore:
+        buildErr c, dest, info, "`pragma` takes no arguments"
+        while n.hasMore: skip n
+      else:
+        var basename = pool.syms[crucial.sym]
+        extractBasename basename
+        c.customPragmaTemplates.incl pool.strings.getOrIncl(basename)
+        dest.add parLeToken(PragmaP, info)
+        dest.addParRi()
     else:
       buildErr c, dest, n.info, "pragma not supported"
       inc n
