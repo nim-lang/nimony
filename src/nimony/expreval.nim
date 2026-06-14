@@ -120,19 +120,25 @@ template cannotEval(n: Cursor) {.dirty.} =
 
 proc eval*(c: var EvalContext; n: var Cursor): Cursor
 
+proc findObjectField(objType: Cursor; fieldSym: SymId; typ: var Cursor; exported: var bool): bool
+
 proc evalCall(c: var EvalContext; n: Cursor): Cursor =
   var callee = n
   inc callee
   if callee.kind != Symbol:
-    # Callee is `(at T U ...)`, a dot-call, etc. Forward the whole call to
-    # the sub-compile instead of requiring a resolved `Symbol` here.
+    # Only explicit generic instantiation `(at T U ...)` needs the sub-compile.
+    # Other non-symbol callees (e.g. infix `shl` before overload resolution)
+    # are handled elsewhere or via `cannotEval` + `semEnumOrdinalValue`.
+    if callee.exprKind != AtX:
+      cannotEval(n)
+      return
     if c.c == nil or c.c.executeExpr == nil:
       cannotEval(n)
       return
     var resultBuf = createTokenBuf(12)
     let retType =
       if not cursorIsNil(c.expectedType): skipModifier(c.expectedType)
-      else: default(Cursor)
+      else: c.c[].types.autoType
     let errorMsg = c.c.executeExpr(c.c[], n, retType, resultBuf, n.info)
     if errorMsg.len == 0:
       result = cursorAt(resultBuf, 0)
@@ -885,12 +891,26 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       var buf = createTokenBuf(16)
       buf.add n
       inc n
+      var objBody = skipModifier(n)
+      if objBody.kind == Symbol:
+        let res = tryLoadSym(objBody.symId)
+        if res.status == LacksNothing:
+          objBody = asTypeDecl(res.decl).body
       takeTree buf, n # type
+      let savedExpected = c.expectedType
       while n.hasMore:
         if n.substructureKind == KvU:
           buf.takeToken n # kv
+          var fieldSym = SymId(0)
+          if n.kind == Symbol:
+            fieldSym = n.symId
           buf.takeToken n # field sym/ident
+          var fieldType = default(Cursor)
+          var fieldExported = false
+          if findObjectField(objBody, fieldSym, fieldType, fieldExported):
+            c.expectedType = fieldType
           let v = propagateError eval(c, n)
+          c.expectedType = savedExpected
           buf.addSubtree v
           if n.hasMore:
             # optional inheritance level

@@ -770,7 +770,10 @@ proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
     c.dest.addStrLit toAbsolutePath(s.g.config.nifcachePath / c.newModuleSuffix & ".out.nif"), info
 
   var retTypeBuf = createTokenBuf(4)
-  retTypeBuf.addSubtree expectedType
+  if cursorIsNil(expectedType):
+    retTypeBuf.addSubtree s.types.autoType
+  else:
+    retTypeBuf.addSubtree expectedType
   var retType = cursorAt(retTypeBuf, 0)
 
   c.dest.copyIntoKind StmtsS, info:

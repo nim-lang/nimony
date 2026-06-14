@@ -423,8 +423,12 @@ proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string]
   let exe = nimcachePath / modname / splitFile(file).name.addFileExt(ExeExt)
   # The child may start in `sourceDir`; keep the exe path absolute so it
   # still resolves against the outer compile's cwd, not the module dir.
-  let exeToRun =
-    if sourceDir.len > 0: os.absolutePath(exe) else: exe
+  var exeToRun = exe
+  if sourceDir.len > 0:
+    try:
+      exeToRun = os.absolutePath(exe)
+    except:
+      return (output: "failed to resolve exe path: " & exe, exitCode: -1)
   let runCmd = quoteShell(exeToRun)
   try:
     result = execCmdEx(runCmd, workingDir = sourceDir)
