@@ -5,3 +5,4 @@ tests/nimony/errmsgs/tcaseerrors.nim(12, 19) Error: cannot evaluate symbol at co
 tests/nimony/errmsgs/tcaseerrors.nim(13, 4) Error: value already handled
 tests/nimony/errmsgs/tcaseerrors.nim(20, 32) Error: cannot evaluate symbol at compile time: c.0.tcagl87gf1
 tests/nimony/errmsgs/tcaseerrors.nim(21, 25) Error: value already handled
+tests/nimony/errmsgs/tcaseerrors.nim(26, 6) Error: undeclared identifier: 'foo'

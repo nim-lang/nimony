@@ -403,20 +403,37 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
     close s
 
 proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string];
-                commandLineArgs: string): tuple[output: string, exitCode: int] =
-  # Use nimony s to compile and run the .p.nif file through the full pipeline.
-  # Forward the outer compile's CLI args so the nested build's nifmake-cmd
-  # signatures match — see `prepareEval` for the same rationale (mismatched
-  # `--cc` makes nifmake think `sysvq0asl.s.nif` is stale and try to rewrite
-  # it while the outer nimsem still has it mmap'd).
+                commandLineArgs: string;
+                sourceDir = ""): tuple[output: string, exitCode: int] =
+  # Compile the .p.nif through the full pipeline, then run the resulting
+  # binary. Compilation must keep the outer cwd (nimcache paths are relative
+  # to the invoking compile). Only the execution step uses `workingDir` so
+  # relative paths like `doc/version.md` resolve next to the caller module.
   let nimonyExe = findTool("nimony")
-  var cmd = quoteShell(nimonyExe) & commandLineArgs &
+  let compileCmd = quoteShell(nimonyExe) & commandLineArgs &
     " --nimcache:" & quoteShell(nimcachePath) &
-    " s -r " & quoteShell(file)
+    " s " & quoteShell(file)
   try:
-    result = execCmdEx(cmd)
+    result = execCmdEx(compileCmd)
   except:
-    result = (output: "failed to run: " & cmd, exitCode: -1)
+    result = (output: "failed to run: " & compileCmd, exitCode: -1)
+  if result.exitCode != 0: return
+
+  let modname = extractModuleSuffix(file)
+  let exe = nimcachePath / modname / splitFile(file).name.addFileExt(ExeExt)
+  # The child may start in `sourceDir`; keep the exe path absolute so it
+  # still resolves against the outer compile's cwd, not the module dir.
+  var exeToRun = exe
+  if sourceDir.len > 0:
+    try:
+      exeToRun = os.absolutePath(exe)
+    except:
+      return (output: "failed to resolve exe path: " & exe, exitCode: -1)
+  let runCmd = quoteShell(exeToRun)
+  try:
+    result = execCmdEx(runCmd, workingDir = sourceDir)
+  except:
+    result = (output: "failed to run: " & runCmd, exitCode: -1)
 
 const
   writeNifModuleSuffix* = "wriwhv7qv"
@@ -446,7 +463,8 @@ proc prepareEval*(c: var SemContext): string =
         return "failed to run: " & cmd
   return ""
 
-proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf; usedModules: HashSet[string]): string =
+proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: TokenBuf;
+               usedModules: HashSet[string]; sourceDir = ""): string =
   ## Returns an error message if the evaluation failed, "" on success.
   let progfile = c.g.config.nifcachePath / srcName.addFileExt(".p.nif")
   try:
@@ -464,7 +482,7 @@ proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: Token
     writeFile deps, depsFile
 
     let (output, exitCode) = runProgram(progfile, c.g.config.nifcachePath, usedModules,
-                                        c.commandLineArgs)
+                                        c.commandLineArgs, sourceDir)
     if exitCode != 0:
       result = ensureMove(output)
     else:

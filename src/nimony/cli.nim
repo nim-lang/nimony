@@ -118,11 +118,13 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     let f = val.splitFile
     config.outFile = f.name & f.ext
     config.outDir = f.dir
+    forwardArg = false
     forwardArgNifc = false
   of "outdir":
     # `--outdir:DIR` — output directory, mirrors Nim. Combine with
     # `--out:NAME` (in that order) to control both name and location.
     config.outDir = val
+    forwardArg = false
     forwardArgNifc = false
   of "usages":
     if config.toTrack.mode == TrackNone:

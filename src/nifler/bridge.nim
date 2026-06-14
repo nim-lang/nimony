@@ -437,8 +437,8 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
       c.b.endTree()
   of nkOfBranch:
     c.b.addTree(OfL)
-    c.b.addTree(RangesL)
     relLineInfo(n, parent, c)
+    c.b.addTree(RangesL)
     for i in 0..<n.len-1:
       toNif(n[i], n, c)
     c.b.endTree()
