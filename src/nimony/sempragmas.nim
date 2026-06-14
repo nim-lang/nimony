@@ -51,8 +51,9 @@ proc semLocalType(c: var SemContext; dest: var TokenBuf; n: var Cursor; context 
 
 proc symbolIsCustomPragmaTemplate(s: SymId): bool =
   let loaded = tryLoadSym(s)
-  if loaded.status == LacksNothing and loaded.decl.symKind == TemplateY:
-    result = hasPragma(asRoutine(loaded.decl).pragmas, PragmaP)
+  result = loaded.status == LacksNothing and
+           loaded.decl.symKind == TemplateY and
+           hasPragma(asRoutine(loaded.decl).pragmas, PragmaP)
 
 proc isCustomPragmaTemplate*(c: SemContext; name: StrId): bool =
   if name in c.customPragmaTemplates:
@@ -75,6 +76,7 @@ proc isCustomPragmaTemplate*(c: SemContext; name: StrId): bool =
           for symId in imported.iface.getOrDefault(foreignName):
             if symbolIsCustomPragmaTemplate(symId):
               return true
+  result = false
 
 proc semProposition*(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: PragmaKind) =
   let prevPhase = c.phase
