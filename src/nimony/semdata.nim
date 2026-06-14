@@ -224,11 +224,35 @@ type
     deferredCyclicImports*: seq[(string, SymId)] # (module suffix, module sym) for cyclic imports to resolve after phase1
     inTypeInst*: int # > 0 means we're inside a generic type instantiation
 
-proc typeToCanon*(buf: TokenBuf; start: int): string =
+proc typeToCanon*(buf: TokenBuf; start: int; stripNil = false): string =
+  ## Serialize a type tree to a canonical string key.
+  ##
+  ## `stripNil` drops `notnil`/`nil`/`unchecked` annotations so that types
+  ## differing only in a pointer/cstring's nil-ness map to the same key. The
+  ## backend mangle (typekeys.mangleImpl) already strips them, so they share
+  ## one C type; callers that key *code-generating* instance caches
+  ## (`instantiatedTypes`, `instantiatedProcs`) pass `stripNil = true` to avoid
+  ## emitting two structurally-identical instances the backend then can't tell
+  ## apart (e.g. `seq[cstring]` instantiated from a bare `(cstring)` and from
+  ## `(cstring (unchecked))` under `lenientnils`). It is left off for the
+  ## general type cache (`typeMem`/`typeToCursor`), which the nil-checker
+  ## relies on to keep notnil and nilable types distinct.
   result = ""
-  for i in start..<buf.len:
+  var i = start
+  while i < buf.len:
     case buf[i].kind
     of ParLe:
+      if stripNil and buf[i].substructureKind in {NotnilU, NilU, UncheckedU}:
+        var depth = 0
+        while i < buf.len:
+          if buf[i].kind == ParLe: inc depth
+          elif buf[i].kind == ParRi:
+            dec depth
+            if depth == 0:
+              inc i
+              break
+          inc i
+        continue
       result.add '('
       result.addInt buf[i].tagId.int
     of ParRi: result.add ')'
@@ -278,6 +302,7 @@ proc typeToCanon*(buf: TokenBuf; start: int): string =
     of FloatLit:
       result.add " f"
       result.addInt buf[i].floatId.int
+    inc i
 
 proc typeToCursor*(c: var SemContext; buf: TokenBuf; start: int): TypeCursor =
   let key = typeToCanon(buf, start)

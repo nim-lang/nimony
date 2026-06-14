@@ -584,7 +584,7 @@ proc requestRoutineInstance*(c: var SemContext; origin: SymId;
                             typeArgs: TokenBuf;
                             inferred: Table[SymId, Cursor];
                             info: PackedLineInfo): ProcInstance =
-  let key = typeToCanon(typeArgs, 0)
+  let key = typeToCanon(typeArgs, 0, stripNil = true)
   var targetSym = c.instantiatedProcs.getOrDefault((origin, key))
   if targetSym == SymId(0):
     # Use the `.I<hash>.<mod>` instantiation naming convention (same as

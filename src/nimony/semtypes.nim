@@ -485,7 +485,7 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
       not isNominal(decl.body.typeKind)):
     # we have to be eager in generic type instantiations so that type-checking
     # can do its job properly:
-    let key = typeToCanon(dest, typeStart)
+    let key = typeToCanon(dest, typeStart, stripNil = true)
     var sym = Sym(kind: TypeY, name: SymId(0), pos: InvalidPos) # pos unused by semTypeSym
     if c.instantiatedTypes.hasKey(key):
       let cachedSym = c.instantiatedTypes.getOrQuit(key)
