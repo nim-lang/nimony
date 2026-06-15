@@ -800,7 +800,7 @@ proc validatorTests() =
     "src/hexer/desugar.nim",
     "src/hexer/cps.nim",
     "src/hexer/duplifier.nim",
-    "src/hexer/nifcgen.nim",
+    "src/hexer/lengcgen.nim",
     "src/hexer/eraiser.nim",
     #"src/hexer/vtables_backend.nim", # TODO: tool can't track writes to different buffers yet
     "src/hexer/iterinliner.nim",
@@ -1203,7 +1203,7 @@ const BootstrapModules = [
   "src/hexer/vtables_backend.nim",
   "src/hexer/dce2.nim",
 
-  # Tier 17 tips. `hexer.nim` subsumes `nifcgen.nim` via its import set.
+  # Tier 17 tips. `hexer.nim` subsumes `lengcgen.nim` via its import set.
   "src/hexer/hexer.nim",
   "src/nimony/indexgen.nim",
   "src/nimony/idetools.nim",
@@ -1819,7 +1819,7 @@ proc handleCmdLine =
     buildNifmake()
     nimonytests(overwrite, forward)
     exampletests(overwrite, forward)
-    #nifctests(overwrite)
+    #lengctests(overwrite)
     #hexertests(overwrite)
     buildControlflow()
     controlflowTests("controlflow", overwrite)
