@@ -792,6 +792,31 @@ func lgamma*(x: float64): float64 {.importc: "lgamma".} =
   ## * `gamma func <#gamma,float64>`_ for gamma function
 {.pop.}
 
+func cot*(x: float32): float32 = 1.0'f32 / tan(x)
+func cot*(x: float64): float64 = 1.0 / tan(x)
+func sec*(x: float32): float32 = 1.0'f32 / cos(x)
+func sec*(x: float64): float64 = 1.0 / cos(x)
+func csc*(x: float32): float32 = 1.0'f32 / sin(x)
+func csc*(x: float64): float64 = 1.0 / sin(x)
+func coth*(x: float32): float32 = 1.0'f32 / tanh(x)
+func coth*(x: float64): float64 = 1.0 / tanh(x)
+func sech*(x: float32): float32 = 1.0'f32 / cosh(x)
+func sech*(x: float64): float64 = 1.0 / cosh(x)
+func csch*(x: float32): float32 = 1.0'f32 / sinh(x)
+func csch*(x: float64): float64 = 1.0 / sinh(x)
+func arccot*(x: float32): float32 = arctan(1.0'f32 / x)
+func arccot*(x: float64): float64 = arctan(1.0 / x)
+func arcsec*(x: float32): float32 = arccos(1.0'f32 / x)
+func arcsec*(x: float64): float64 = arccos(1.0 / x)
+func arccsc*(x: float32): float32 = arcsin(1.0'f32 / x)
+func arccsc*(x: float64): float64 = arcsin(1.0 / x)
+func arccoth*(x: float32): float32 = arctanh(1.0'f32 / x)
+func arccoth*(x: float64): float64 = arctanh(1.0 / x)
+func arcsech*(x: float32): float32 = arccosh(1.0'f32 / x)
+func arcsech*(x: float64): float64 = arccosh(1.0 / x)
+func arccsch*(x: float32): float32 = arcsinh(1.0'f32 / x)
+func arccsch*(x: float64): float64 = arcsinh(1.0 / x)
+
 func splitDecimal*[T: SomeFloat and Arithmetic and HasDefault](x: T): tuple[intpart: T, floatpart: T] {.untyped.} =
   ## Breaks `x` into an integer and a fractional part.
   ##
