@@ -1,6 +1,6 @@
 #
 #
-#           NIFC Compiler
+#           Leng Compiler
 #        (c) Copyright 2024 Andreas Rumpf
 #
 #    See the file "license.txt", included in this
@@ -23,7 +23,7 @@ proc zeroVal(typ: LToken): string {.inline.} =
 proc isFloatType(t: LToken): bool {.inline.} =
   t == LToken(FloatToken) or t == LToken(DoubleToken) or t == LToken(Fp128Token)
 
-proc scalarTypeKind(c: var LLVMCode; typ: Cursor): NifcType =
+proc scalarTypeKind(c: var LLVMCode; typ: Cursor): LengType =
   var t = navigateToObjectBody(c.m, typ)
   if t.typeKind == EnumT:
     inc t
@@ -422,13 +422,13 @@ proc genCallExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   ## Call expression, alias for genCallLLVM.
   genCallLLVM(c, n, result)
 
-proc isNifcInt(tk: NifcType): bool {.inline.} =
+proc isLengInt(tk: LengType): bool {.inline.} =
   tk in {IT, UT, CT, BoolT, EnumT}
 
-proc isNifcFloat(tk: NifcType): bool {.inline.} =
+proc isLengFloat(tk: LengType): bool {.inline.} =
   tk == FT
 
-proc isNifcPtr(tk: NifcType): bool {.inline.} =
+proc isLengPtr(tk: LengType): bool {.inline.} =
   tk in {PtrT, AptrT, ProctypeT}
 
 proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCursor: Cursor;
@@ -444,26 +444,26 @@ proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCurso
   let t = c.temp()
   let srcStr = c.str(val.typ)
 
-  if isNifcPtr(srcTK) and isNifcPtr(destTK):
+  if isLengPtr(srcTK) and isLengPtr(destTK):
     # Opaque pointers collapse all pointee types to `ptr`.
     result = LLValue(name: val.name, typ: destTok)
     return
-  elif isNifcPtr(destTK) and isNifcInt(srcTK):
+  elif isLengPtr(destTK) and isLengInt(srcTK):
     c.emitLine "  " & c.str(t) & " = inttoptr " & srcStr & " " & c.str(val.name) & " to ptr"
-  elif isNifcInt(destTK) and isNifcPtr(srcTK):
+  elif isLengInt(destTK) and isLengPtr(srcTK):
     c.emitLine "  " & c.str(t) & " = ptrtoint ptr " & c.str(val.name) & " to " & destType
-  elif isNifcFloat(srcTK) and isNifcFloat(destTK):
+  elif isLengFloat(srcTK) and isLengFloat(destTK):
     let srcBits = typeSizeBits(c, srcTypeCursor)
     let destBits = typeSizeBits(c, destTypeCursor)
     if srcBits < destBits:
       c.emitLine "  " & c.str(t) & " = fpext " & srcStr & " " & c.str(val.name) & " to " & destType
     else:
       c.emitLine "  " & c.str(t) & " = fptrunc " & srcStr & " " & c.str(val.name) & " to " & destType
-  elif isNifcFloat(srcTK) and isNifcInt(destTK):
+  elif isLengFloat(srcTK) and isLengInt(destTK):
     c.emitLine "  " & c.str(t) & " = fptosi " & srcStr & " " & c.str(val.name) & " to " & destType
-  elif isNifcInt(srcTK) and isNifcFloat(destTK):
+  elif isLengInt(srcTK) and isLengFloat(destTK):
     c.emitLine "  " & c.str(t) & " = sitofp " & srcStr & " " & c.str(val.name) & " to " & destType
-  elif isNifcInt(srcTK) and isNifcInt(destTK):
+  elif isLengInt(srcTK) and isLengInt(destTK):
     let srcBits = typeSizeBits(c, srcTypeCursor)
     let destBits = typeSizeBits(c, destTypeCursor)
     if srcBits < destBits:
@@ -664,11 +664,11 @@ proc genLvalueLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     genDotLLVM(c, n, result)
   of ErrvC:
     # Error flag is a global
-    result = LLValue(name: c.tok("@NIFC_ERR_"), typ: LToken(PtrToken))
+    result = LLValue(name: c.tok("@LENGC_ERR_"), typ: LToken(PtrToken))
     skip n
   of OvfC:
     # Overflow flag
-    result = LLValue(name: c.tok("@NIFC_OVF_"), typ: LToken(PtrToken))
+    result = LLValue(name: c.tok("@LENGC_OVF_"), typ: LToken(PtrToken))
     skip n
   of BaseobjC:
     # Base object access as lvalue: base is always at offset 0 in the struct,

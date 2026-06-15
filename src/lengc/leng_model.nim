@@ -8,8 +8,8 @@
 
 import std / [assertions, syncio]
 include "../lib" / nifprelude
-import ".." / models / [nifc_tags, callconv_tags, tags]
-export nifc_tags, callconv_tags
+import ".." / models / [leng_tags, callconv_tags, tags]
+export leng_tags, callconv_tags
 
 proc bug*(msg: string) {.noreturn.} =
   when defined(debug):
@@ -17,7 +17,7 @@ proc bug*(msg: string) {.noreturn.} =
   quit "BUG: " & msg
 
 proc skipParRi*(n: var Cursor) =
-  # XXX: Give NIFC some better error reporting.
+  # XXX: Give Leng some better error reporting.
   if n.kind == ParRi:
     consumeParRi n
   else:
@@ -27,38 +27,38 @@ proc skipParRi*(n: var Cursor) =
 
 template tagEnum*(c: Cursor): TagEnum = cast[TagEnum](tag(c))
 
-proc stmtKind*(c: Cursor): NifcStmt {.inline.} =
-  if c.kind == ParLe and rawTagIsNifcStmt(tagEnum(c)):
-    result = cast[NifcStmt](tagEnum(c))
+proc stmtKind*(c: Cursor): LengStmt {.inline.} =
+  if c.kind == ParLe and rawTagIsLengStmt(tagEnum(c)):
+    result = cast[LengStmt](tagEnum(c))
   else:
     result = NoStmt
 
-proc pragmaKind*(c: Cursor): NifcPragma {.inline.} =
+proc pragmaKind*(c: Cursor): LengPragma {.inline.} =
   if c.kind == ParLe:
     let e = tagEnum(c)
-    if rawTagIsNifcPragma(e):
-      result = cast[NifcPragma](e)
+    if rawTagIsLengPragma(e):
+      result = cast[LengPragma](e)
     else:
       result = NoPragma
   elif c.kind == Ident:
     let tagId = pool.tags.getOrIncl(pool.strings[c.litId])
-    if rawTagIsNifcPragma(cast[TagEnum](tagId)):
-      result = cast[NifcPragma](tagId)
+    if rawTagIsLengPragma(cast[TagEnum](tagId)):
+      result = cast[LengPragma](tagId)
     else:
       result = NoPragma
   else:
     result = NoPragma
 
-proc substructureKind*(c: Cursor): NifcOther {.inline.} =
-  if c.kind == ParLe and rawTagIsNifcOther(tagEnum(c)):
-    result = cast[NifcOther](tag(c))
+proc substructureKind*(c: Cursor): LengOther {.inline.} =
+  if c.kind == ParLe and rawTagIsLengOther(tagEnum(c)):
+    result = cast[LengOther](tag(c))
   else:
     result = NoSub
 
-proc typeKind*(c: Cursor): NifcType {.inline.} =
+proc typeKind*(c: Cursor): LengType {.inline.} =
   if c.kind == ParLe:
-    if rawTagIsNifcType(tagEnum(c)):
-      result = cast[NifcType](tag(c))
+    if rawTagIsLengType(tagEnum(c)):
+      result = cast[LengType](tag(c))
     else:
       result = NoType
   elif c.kind == DotToken:
@@ -66,9 +66,9 @@ proc typeKind*(c: Cursor): NifcType {.inline.} =
   else:
     result = NoType
 
-proc typeQual*(c: Cursor): NifcTypeQualifier {.inline.} =
-  if c.kind == ParLe and rawTagIsNifcTypeQualifier(tagEnum(c)):
-    result = cast[NifcTypeQualifier](tag(c))
+proc typeQual*(c: Cursor): LengTypeQualifier {.inline.} =
+  if c.kind == ParLe and rawTagIsLengTypeQualifier(tagEnum(c)):
+    result = cast[LengTypeQualifier](tag(c))
   else:
     result = NoQualifier
 
@@ -87,19 +87,19 @@ proc callConvKind*(c: Cursor): CallConv {.inline.} =
   else:
     result = NoCallConv
 
-proc exprKind*(c: Cursor): NifcExpr {.inline.} =
+proc exprKind*(c: Cursor): LengExpr {.inline.} =
   if c.kind == ParLe:
-    if rawTagIsNifcExpr(tagEnum(c)):
-      result = cast[NifcExpr](tag(c))
+    if rawTagIsLengExpr(tagEnum(c)):
+      result = cast[LengExpr](tag(c))
     else:
       result = NoExpr
   else:
     result = NoExpr
 
-proc symKind*(c: Cursor): NifcSym {.inline.} =
+proc symKind*(c: Cursor): LengSym {.inline.} =
   if c.kind == ParLe:
-    if rawTagIsNifcSym(tagEnum(c)):
-      result = cast[NifcSym](tagEnum(c))
+    if rawTagIsLengSym(tagEnum(c)):
+      result = cast[LengSym](tagEnum(c))
     else:
       result = NoSym
   else:
@@ -112,12 +112,12 @@ proc tracebackTypeC*(n: Cursor): Cursor =
     unsafeDec result
 
 
-proc tagToken*(t: NifcType; info = NoLineInfo): PackedToken =
+proc tagToken*(t: LengType; info = NoLineInfo): PackedToken =
   result = tagToken(TagId(t), info)
 
 # Backwards-compat alias for callers that still use the old name; the body
 # now goes through `tagToken` so the new (kind|tag|jump) layout is used.
-template parLeToken*(t: NifcType; info = NoLineInfo): PackedToken =
+template parLeToken*(t: LengType; info = NoLineInfo): PackedToken =
   tagToken(t, info)
 
 # Read helpers:
@@ -243,8 +243,8 @@ proc takeVarDecl*(n: var Cursor): VarDecl =
 
 # ── Tag-typed intent overloads (mirrors nimony_model's pattern) ─────────────
 
-type NifcTagKind* =
-  NifcStmt | NifcExpr | NifcType | NifcOther | NifcPragma | NifcSym
+type LengTagKind* =
+  LengStmt | LengExpr | LengType | LengOther | LengPragma | LengSym
 
 # See `nimony_model.nim`'s `tagDispatch` for the rationale: tag-class
 # templates dispatch via `when expected is X` and use `==`/`$` operators
@@ -255,32 +255,32 @@ when defined(nimony):
 else:
   {.pragma: tagDispatch.}
 
-template kindMatches(c: Cursor; expected: NifcTagKind): bool {.tagDispatch.} =
-  when expected is NifcStmt:    c.stmtKind == expected
-  elif expected is NifcExpr:    c.exprKind == expected
-  elif expected is NifcType:    c.typeKind == expected
-  elif expected is NifcOther:   c.substructureKind == expected
-  elif expected is NifcPragma:  c.pragmaKind == expected
-  elif expected is NifcSym:     c.symKind == expected
+template kindMatches(c: Cursor; expected: LengTagKind): bool {.tagDispatch.} =
+  when expected is LengStmt:    c.stmtKind == expected
+  elif expected is LengExpr:    c.exprKind == expected
+  elif expected is LengType:    c.typeKind == expected
+  elif expected is LengOther:   c.substructureKind == expected
+  elif expected is LengPragma:  c.pragmaKind == expected
+  elif expected is LengSym:     c.symKind == expected
   else:                         false
 
-template skip*(c: var Cursor; expected: NifcTagKind) {.tagDispatch.} =
+template skip*(c: var Cursor; expected: LengTagKind) {.tagDispatch.} =
   assert kindMatches(c, expected),
     "skip " & $expected & ": cursor at kind=" & $c.kind
   skip c
 
-template inc*(c: var Cursor; expected: NifcTagKind) {.tagDispatch.} =
+template inc*(c: var Cursor; expected: LengTagKind) {.tagDispatch.} =
   assert kindMatches(c, expected),
     "inc " & $expected & ": cursor at kind=" & $c.kind
   inc c
 
-template into*(c: var Cursor; expected: NifcTagKind; body: untyped) {.tagDispatch.} =
+template into*(c: var Cursor; expected: LengTagKind; body: untyped) {.tagDispatch.} =
   assert kindMatches(c, expected),
     "into " & $expected & ": cursor at kind=" & $c.kind
   into c:
     body
 
-template loopInto*(c: var Cursor; expected: NifcTagKind; body: untyped) {.tagDispatch.} =
+template loopInto*(c: var Cursor; expected: LengTagKind; body: untyped) {.tagDispatch.} =
   assert kindMatches(c, expected),
     "loopInto " & $expected & ": cursor at kind=" & $c.kind
   loopInto c:

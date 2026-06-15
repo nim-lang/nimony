@@ -21,7 +21,7 @@
 
 import std / [tables, strutils, assertions, sets, syncio]
 include ".." / lib / nifprelude
-import ".." / models / [tags, nimony_tags, nifc_tags, callconv_tags]
+import ".." / models / [tags, nimony_tags, leng_tags, callconv_tags]
 import ".." / nimony / nimony_model
 import tags_grammar
 import ".." / nimony / reporters  # infoToStr
@@ -32,7 +32,7 @@ import ".." / nimony / reporters  # infoToStr
 
 const
   rawTagsMd = staticRead("../../doc/tags.md")
-  ## The grammar for Nimony/NIFC tags; single source of truth.
+  ## The grammar for Nimony/Leng tags; single source of truth.
 
 let
   grammar* = parseTagsMdFromString(rawTagsMd)
@@ -45,7 +45,7 @@ let
 type
   PhaseKind* = enum
     phasePostSem        ## after `src/nimony/sem.nim`
-    phasePostNifcgen    ## after hexer -> NIFC
+    phasePostLengcgen   ## after hexer -> Leng
 
   Phase* = object
     name*: string
@@ -61,17 +61,17 @@ proc postSemAllowed(raw: TagEnum): bool =
     rawTagIsNimonySym(raw) or rawTagIsNimonyPragma(raw) or
     rawTagIsCallConv(raw)
 
-proc postNifcgenAllowed(raw: TagEnum): bool =
-  rawTagIsNifcExpr(raw) or rawTagIsNifcStmt(raw) or
-    rawTagIsNifcType(raw) or rawTagIsNifcOther(raw) or
-    rawTagIsNifcSym(raw) or rawTagIsNifcPragma(raw) or
-    rawTagIsNifcTypeQualifier(raw) or rawTagIsCallConv(raw)
+proc postLengcgenAllowed(raw: TagEnum): bool =
+  rawTagIsLengExpr(raw) or rawTagIsLengStmt(raw) or
+    rawTagIsLengType(raw) or rawTagIsLengOther(raw) or
+    rawTagIsLengSym(raw) or rawTagIsLengPragma(raw) or
+    rawTagIsLengTypeQualifier(raw) or rawTagIsCallConv(raw)
 
 proc postSemPhase*(): Phase =
   Phase(name: "post-sem", kind: phasePostSem, allowed: postSemAllowed)
 
-proc postNifcgenPhase*(): Phase =
-  Phase(name: "post-nifcgen", kind: phasePostNifcgen, allowed: postNifcgenAllowed)
+proc postLengcgenPhase*(): Phase =
+  Phase(name: "post-lengcgen", kind: phasePostLengcgen, allowed: postLengcgenAllowed)
 
 # ---------------------------------------------------------------------------
 # Cursor classification
@@ -134,9 +134,9 @@ proc classifyCursor(c: Cursor; preferStmt: bool; inType: bool): ChildKind =
     ckY
   of ParLe:
     let raw = tagEnum(c)
-    let isExpr = rawTagIsNimonyExpr(raw) or rawTagIsNifcExpr(raw)
-    let isStmt = rawTagIsNimonyStmt(raw) or rawTagIsNifcStmt(raw)
-    let isType = rawTagIsNimonyType(raw) or rawTagIsNifcType(raw)
+    let isExpr = rawTagIsNimonyExpr(raw) or rawTagIsLengExpr(raw)
+    let isStmt = rawTagIsNimonyStmt(raw) or rawTagIsLengStmt(raw)
+    let isType = rawTagIsNimonyType(raw) or rawTagIsLengType(raw)
     if inType:
       if isType:
         return ckT
@@ -151,11 +151,11 @@ proc classifyCursor(c: Cursor; preferStmt: bool; inType: bool): ChildKind =
       ckS
     elif isType:
       ckT
-    elif rawTagIsNimonyOther(raw) or rawTagIsNifcOther(raw) or
-         rawTagIsNimonyPragma(raw) or rawTagIsNifcPragma(raw) or
-         rawTagIsNifcTypeQualifier(raw) or rawTagIsCallConv(raw):
+    elif rawTagIsNimonyOther(raw) or rawTagIsLengOther(raw) or
+         rawTagIsNimonyPragma(raw) or rawTagIsLengPragma(raw) or
+         rawTagIsLengTypeQualifier(raw) or rawTagIsCallConv(raw):
       ckNested
-    elif rawTagIsNimonySym(raw) or rawTagIsNifcSym(raw):
+    elif rawTagIsNimonySym(raw) or rawTagIsLengSym(raw):
       ckY
     else:
       ckAny
@@ -365,7 +365,7 @@ proc checkParLe(ctx: var ValidatorCtx; c: var Cursor;
   if not matched and inType and matchesTypeContext(tag, kinds):
     matched = true
   if not matched and parentTag == "pragmas":
-    let isPragmaKind = rawTagIsNimonyPragma(raw) or rawTagIsNifcPragma(raw)
+    let isPragmaKind = rawTagIsNimonyPragma(raw) or rawTagIsLengPragma(raw)
     if matchesPragmaContext(tag, kinds, isPragmaKind):
       matched = true
   if not matched and tag in grammar:

@@ -3,10 +3,10 @@
 import tags
 
 type
-  NifcExpr* = enum
+  LengExpr* = enum
     NoExpr
     SufC = (ord(SufTagId), "suf")  ## literal with suffix annotation
-    AtC = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped NIFC form); also used for generic proc/type instantiation `(at callee T1 T2 ...)`
+    AtC = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)`
     DerefC = (ord(DerefTagId), "deref")  ## pointer deref operation
     DotC = (ord(DotTagId), "dot")  ## object field selection; optional integer is the inheritance depth of the field; optional trailing `STRLIT` is an *access token* (carrying `"x"` like an export marker) — when present, the expression was already type-checked in a scope with access to the field, so re-check at expansion/serialization sites must accept the access even if the field is private. Emitted by sem when a template body or `.semantics` serializer is type-checked in the field's defining module and later expanded/consumed elsewhere.
     PatC = (ord(PatTagId), "pat")  ## pointer indexing operation
@@ -18,7 +18,7 @@ type
     NanC = (ord(NanTagId), "nan")  ## NaN floating point value
     FalseC = (ord(FalseTagId), "false")  ## boolean `false` value
     TrueC = (ord(TrueTagId), "true")  ## boolean `true` value
-    AndC = (ord(AndTagId), "and")  ## boolean `and` operation
+    AndC = (ord(AndTagId), "and")  ## boolean `and` operation; `Y+` form is also used for concept parent lists with more than two parents
     OrC = (ord(OrTagId), "or")  ## boolean `or` operation
     NotC = (ord(NotTagId), "not")  ## boolean `not` operation
     NegC = (ord(NegTagId), "neg")  ## negation operation
@@ -47,13 +47,13 @@ type
     ConvC = (ord(ConvTagId), "conv")  ## type conversion
     CallC = (ord(CallTagId), "call")  ## call operation
     BaseobjC = (ord(BaseobjTagId), "baseobj")  ## object conversion to base type
-    ErrvC = (ord(ErrvTagId), "errv")  ## error flag for `NIFC`
+    ErrvC = (ord(ErrvTagId), "errv")  ## error flag for Leng
 
-proc rawTagIsNifcExpr*(raw: TagEnum): bool {.inline.} =
+proc rawTagIsLengExpr*(raw: TagEnum): bool {.inline.} =
   raw in {SufTagId, AtTagId, DerefTagId, DotTagId, PatTagId, ParTagId, AddrTagId, NilTagId, InfTagId, NeginfTagId, NanTagId, FalseTagId, TrueTagId, AndTagId, OrTagId, NotTagId, NegTagId, SizeofTagId, AlignofTagId, OffsetofTagId, OconstrTagId, AconstrTagId, OvfTagId, AddTagId, SubTagId, MulTagId, DivTagId, ModTagId, ShrTagId, ShlTagId, BitandTagId, BitorTagId, BitxorTagId, BitnotTagId, EqTagId, NeqTagId, LeTagId, LtTagId, CastTagId, ConvTagId, CallTagId, BaseobjTagId, ErrvTagId}
 
 type
-  NifcStmt* = enum
+  LengStmt* = enum
     NoStmt
     CallS = (ord(CallTagId), "call")  ## call operation
     GvarS = (ord(GvarTagId), "gvar")  ## global variable declaration
@@ -86,17 +86,17 @@ type
     MflagS = (ord(MflagTagId), "mflag")  ## declare a new **materialized** control flow flag `D` of type `bool` initialized to `false`
     VflagS = (ord(VflagTagId), "vflag")  ## declare a new **virtual** control flow flag `D` of type `bool` initialized to `false`
 
-proc rawTagIsNifcStmt*(raw: TagEnum): bool {.inline.} =
+proc rawTagIsLengStmt*(raw: TagEnum): bool {.inline.} =
   raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, StoreTagId, KeepovfTagId, ScopeTagId, IfTagId, BreakTagId, WhileTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId, IteTagId, ItecTagId, LoopTagId, JtrueTagId, MflagTagId, VflagTagId}
 
 type
-  NifcType* = enum
+  LengType* = enum
     NoType
     ParamsT = (ord(ParamsTagId), "params")  ## list of proc parameters, also used as a "proc type"
-    UnionT = (ord(UnionTagId), "union")  ## first one is Nifc union declaration, second one is Nimony union pragma
+    UnionT = (ord(UnionTagId), "union")  ## first one is Leng union declaration, second one is Nimony union pragma
     ObjectT = (ord(ObjectTagId), "object")  ## object type declaration
     EnumT = (ord(EnumTagId), "enum")  ## enum type declaration
-    ProctypeT = (ord(ProctypeTagId), "proctype")  ## Nimony proc type. Slot 0 carries the nilability tag — either a `.` placeholder or one of `(notnil)`, `(nil)`, `(unchecked)`. NIFC proc type, same shape as `(proc D ...)` with anonymous name slot (varargs spec; effects/body slots present but unused).
+    ProctypeT = (ord(ProctypeTagId), "proctype")  ## Nimony proc type. Slot 0 carries the nilability tag — either a `.` placeholder or one of `(notnil)`, `(nil)`, `(unchecked)`. Leng proc type, same shape as `(proc D ...)` with anonymous name slot (varargs spec; effects/body slots present but unused).
     IT = (ord(ITagId), "i")  ## `int` builtin type
     UT = (ord(UTagId), "u")  ## `uint` builtin type; size in bits followed by optional attributes (`(importc ...)`, `(header ...)`, etc.)
     FT = (ord(FTagId), "f")  ## `float` builtin type
@@ -107,13 +107,13 @@ type
     ArrayT = (ord(ArrayTagId), "array")  ## `array` type constructor (element type, index type/range)
     FlexarrayT = (ord(FlexarrayTagId), "flexarray")  ## `flexarray` type constructor
     AptrT = (ord(AptrTagId), "aptr")  ## "pointer to array of" type constructor
-    VarargsT = (ord(VarargsTagId), "varargs")  ## `varargs` type/proc annotation: Nimony carries the element type and an optional transformer symbol (e.g. `` `$` ``); NIFC keeps only the element type
+    VarargsT = (ord(VarargsTagId), "varargs")  ## `varargs` type/proc annotation: Nimony carries the element type and an optional transformer symbol (e.g. `` `$` ``); Leng keeps only the element type
 
-proc rawTagIsNifcType*(raw: TagEnum): bool {.inline.} =
+proc rawTagIsLengType*(raw: TagEnum): bool {.inline.} =
   raw in {ParamsTagId, UnionTagId, ObjectTagId, EnumTagId, ProctypeTagId, ITagId, UTagId, FTagId, CTagId, BoolTagId, VoidTagId, PtrTagId, ArrayTagId, FlexarrayTagId, AptrTagId, VarargsTagId}
 
 type
-  NifcOther* = enum
+  LengOther* = enum
     NoSub
     KvU = (ord(KvTagId), "kv")  ## key-value pair; optional INTLIT indicates field is in an inherited object
     RangeU = (ord(RangeTagId), "range")  ## `(range a b)` construct
@@ -127,11 +127,11 @@ type
     OfU = (ord(OfTagId), "of")  ## `of` branch within a `case` statement
     PragmasU = (ord(PragmasTagId), "pragmas")  ## begin of pragma section
 
-proc rawTagIsNifcOther*(raw: TagEnum): bool {.inline.} =
+proc rawTagIsLengOther*(raw: TagEnum): bool {.inline.} =
   raw in {KvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, EfldTagId, FldTagId, ElifTagId, ElseTagId, OfTagId, PragmasTagId}
 
 type
-  NifcPragma* = enum
+  LengPragma* = enum
     NoPragma
     InlineP = (ord(InlineTagId), "inline")  ## `inline` proc annotation
     NoinlineP = (ord(NoinlineTagId), "noinline")  ## `noinline` proc annotation
@@ -152,22 +152,22 @@ type
     HeaderP = (ord(HeaderTagId), "header")  ## `header` pragma
     PackedP = (ord(PackedTagId), "packed")  ## `packed` pragma
 
-proc rawTagIsNifcPragma*(raw: TagEnum): bool {.inline.} =
+proc rawTagIsLengPragma*(raw: TagEnum): bool {.inline.} =
   raw in {InlineTagId, NoinlineTagId, AttrTagId, SmryTagId, WasTagId, SelectanyTagId, AlignTagId, BitsTagId, VectorTagId, NodeclTagId, RaisesTagId, ErrsTagId, StaticTagId, ImportcTagId, ImportcppTagId, ExportcTagId, HeaderTagId, PackedTagId}
 
 type
-  NifcTypeQualifier* = enum
+  LengTypeQualifier* = enum
     NoQualifier
-    AtomicQ = (ord(AtomicTagId), "atomic")  ## `atomic` type qualifier for NIFC
-    RoQ = (ord(RoTagId), "ro")  ## `readonly` (= `const`) type qualifier for NIFC
-    RestrictQ = (ord(RestrictTagId), "restrict")  ## type qualifier for NIFC
-    CpprefQ = (ord(CpprefTagId), "cppref")  ## type qualifier for NIFC that provides a C++ reference
+    AtomicQ = (ord(AtomicTagId), "atomic")  ## `atomic` type qualifier for Leng
+    RoQ = (ord(RoTagId), "ro")  ## `readonly` (= `const`) type qualifier for Leng
+    RestrictQ = (ord(RestrictTagId), "restrict")  ## type qualifier for Leng
+    CpprefQ = (ord(CpprefTagId), "cppref")  ## type qualifier for Leng that provides a C++ reference
 
-proc rawTagIsNifcTypeQualifier*(raw: TagEnum): bool {.inline.} =
+proc rawTagIsLengTypeQualifier*(raw: TagEnum): bool {.inline.} =
   raw >= AtomicTagId and raw <= CpprefTagId
 
 type
-  NifcSym* = enum
+  LengSym* = enum
     NoSym
     GvarY = (ord(GvarTagId), "gvar")  ## global variable declaration
     TvarY = (ord(TvarTagId), "tvar")  ## thread local variable declaration
@@ -182,6 +182,6 @@ type
     MflagY = (ord(MflagTagId), "mflag")  ## declare a new **materialized** control flow flag `D` of type `bool` initialized to `false`
     VflagY = (ord(VflagTagId), "vflag")  ## declare a new **virtual** control flow flag `D` of type `bool` initialized to `false`
 
-proc rawTagIsNifcSym*(raw: TagEnum): bool {.inline.} =
+proc rawTagIsLengSym*(raw: TagEnum): bool {.inline.} =
   raw in {GvarTagId, TvarTagId, VarTagId, ParamTagId, ConstTagId, EfldTagId, FldTagId, ProcTagId, TypeTagId, LabTagId, MflagTagId, VflagTagId}
 

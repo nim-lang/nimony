@@ -1,6 +1,6 @@
 #
 #
-#           NIFC Compiler
+#           Leng Compiler
 #        (c) Copyright 2024 Andreas Rumpf
 #
 #    See the file "license.txt", included in this
@@ -34,7 +34,7 @@ proc getVirtualGuardLLVM(c: var LLVMCode; n: Cursor): (SymId, bool) =
 
 proc genOnErrorLLVM(c: var LLVMCode; n: var Cursor) =
   let errVal = c.temp()
-  c.emitLine "  " & c.str(errVal) & " = load i8, ptr @NIFC_ERR_"
+  c.emitLine "  " & c.str(errVal) & " = load i8, ptr @LENGC_ERR_"
   let cond = c.temp()
   c.emitLine "  " & c.str(cond) & " = icmp ne i8 " & c.str(errVal) & ", 0"
   let thenLabel = c.label()

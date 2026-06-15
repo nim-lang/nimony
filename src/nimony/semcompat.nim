@@ -26,7 +26,7 @@
 ##   `m.args` (from `m.firstVarargPosition` onward) into a single
 ##   `(hcall toOpenArray.0[I,T] (aconstr (array T (rangetype int 0 N-1)) e₁ … eₙ))`
 ##   bundle. After the rewrite `addArgsInstConverters` emits the bundle
-##   normally, so derefs/hexer/NIFC see the same shape sem produces for
+##   normally, so derefs/hexer/lengc see the same shape sem produces for
 ##   `f([1, 2, 3])` against an `openArray[int]` formal. Empty case yields
 ##   an empty range `0..-1`. Templates skip bundling — their `unpack` /
 ##   `firstVarargMatch` substitution needs the flat args in `dest`; any
@@ -34,7 +34,7 @@
 ##   `resolveOverloads` and bundled there.
 ##
 ## Bare `(varargs)` — the `{.varargs.}` pragma form on C importc procs —
-## is left untouched; NIFC's `...` ellipsis handles it.
+## is left untouched; Leng's `...` ellipsis handles it.
 ##
 ## Included from sem.nim because the helpers need access to
 ## `semLocalType` and the existing instantiation machinery

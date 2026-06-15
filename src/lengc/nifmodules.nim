@@ -8,7 +8,7 @@
 
 include ".." / lib / nifprelude
 import std / [assertions, tables, strutils]
-import symparser, nifindexes, nifc_model, noptions
+import symparser, nifindexes, leng_model, noptions
 
 type
   NifModule = ref object
@@ -17,7 +17,7 @@ type
 
   Definition* = object
     pos*: Cursor # points into MainModule.src
-    kind*: NifcSym
+    kind*: LengSym
     extern*: StrId # extracted from the pragmas and store here as it is so frequently queried
     isImport*: bool # true for importc/importcpp, false for exportc-only
     buf: TokenBuf # can be empty for symbols that are in the main module
@@ -191,7 +191,7 @@ proc parse*(r: var Reader; m: var MainModule; parentInfo: PackedLineInfo): bool 
   of FloatLit:
     m.src.add floatToken(pool.floats.getOrIncl(parseFloat(r.decodeStr t)), currentInfo)
 
-proc processToplevelDecl(m: var MainModule; n: var Cursor; kind: NifcSym; pragmasAt: int) =
+proc processToplevelDecl(m: var MainModule; n: var Cursor; kind: LengSym; pragmasAt: int) =
   let decl = n
   let s = decl.firstSon.symId
   var isImport = false

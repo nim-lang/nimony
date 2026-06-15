@@ -1,6 +1,6 @@
 #
 #
-#           NIFC Compiler
+#           Leng Compiler
 #        (c) Copyright 2024 Andreas Rumpf
 #
 #    See the file "license.txt", included in this
@@ -9,7 +9,7 @@
 
 # included from codegen.nim
 
-## Generates C types from NIFC types.
+## Generates C types from Leng types.
 
 type
   TypeList = object
@@ -588,7 +588,7 @@ proc genEnumDecl(c: var GeneratedCode; n: var Cursor; name: string) =
         error c.m, "expected `efld` but got: ", n
         skip n  # avoid infinite loop on unexpected input
 
-proc parseTypePragmas(c: var GeneratedCode; n: Cursor): set[NifcPragma] =
+proc parseTypePragmas(c: var GeneratedCode; n: Cursor): set[LengPragma] =
   result = {}
   var n = n
   if n.substructureKind == PragmasU:

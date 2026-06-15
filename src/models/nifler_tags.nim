@@ -7,7 +7,7 @@ type
     None
     ErrL = (ord(ErrTagId), "err")  ## indicates an error
     SufL = (ord(SufTagId), "suf")  ## literal with suffix annotation
-    AtL = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped NIFC form); also used for generic proc/type instantiation `(at callee T1 T2 ...)`
+    AtL = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)`
     DerefL = (ord(DerefTagId), "deref")  ## pointer deref operation
     DotL = (ord(DotTagId), "dot")  ## object field selection; optional integer is the inheritance depth of the field; optional trailing `STRLIT` is an *access token* (carrying `"x"` like an export marker) — when present, the expression was already type-checked in a scope with access to the field, so re-check at expansion/serialization sites must accept the access even if the field is private. Emitted by sem when a template body or `.semantics` serializer is type-checked in the field's defining module and later expanded/consumed elsewhere.
     ParL = (ord(ParTagId), "par")  ## syntactic parenthesis
@@ -57,7 +57,7 @@ type
     ParamsL = (ord(ParamsTagId), "params")  ## list of proc parameters, also used as a "proc type"
     ObjectL = (ord(ObjectTagId), "object")  ## object type declaration
     EnumL = (ord(EnumTagId), "enum")  ## enum type declaration
-    ProctypeL = (ord(ProctypeTagId), "proctype")  ## Nimony proc type. Slot 0 carries the nilability tag — either a `.` placeholder or one of `(notnil)`, `(nil)`, `(unchecked)`. NIFC proc type, same shape as `(proc D ...)` with anonymous name slot (varargs spec; effects/body slots present but unused).
+    ProctypeL = (ord(ProctypeTagId), "proctype")  ## Nimony proc type. Slot 0 carries the nilability tag — either a `.` placeholder or one of `(notnil)`, `(nil)`, `(unchecked)`. Leng proc type, same shape as `(proc D ...)` with anonymous name slot (varargs spec; effects/body slots present but unused).
     PtrL = (ord(PtrTagId), "ptr")  ## `ptr` type contructor; the `(unchecked)` pragma relaxes nil checking on deref
     PragmasL = (ord(PragmasTagId), "pragmas")  ## begin of pragma section
     PragmaxL = (ord(PragmaxTagId), "pragmax")  ## pragma expressions
@@ -82,7 +82,7 @@ type
     RefL = (ord(RefTagId), "ref")  ## `ref` type; the `(unchecked)` pragma relaxes nil checking on deref
     MutL = (ord(MutTagId), "mut")  ## `mut` type
     OutL = (ord(OutTagId), "out")  ## `out` type
-    ConceptL = (ord(ConceptTagId), "concept")  ## `concept` type: two reserved slots, optional parent concepts (`.` / sym / `(and ...)`), a `Self` typevar, and the concept body statements
+    ConceptL = (ord(ConceptTagId), "concept")  ## `concept` type: two reserved slots, optional parent concepts (`.` / sym / `(and ...)`), a `Self` typevar `D`, and the concept body statements `S*` (body may be empty when parents are present)
     DistinctL = (ord(DistinctTagId), "distinct")  ## `distinct` type
     ItertypeL = (ord(ItertypeTagId), "itertype")  ## Nimony iterator type — first-class closure-iterator value at the type level. Shape mirrors `(proctype ...)`: slot 0 carries the nilability tag (`.` placeholder or one of `(notnil)`, `(nil)`, `(unchecked)`); remaining slots are params, return type, pragmas.
     QuotedL = (ord(QuotedTagId), "quoted")  ## name in backticks

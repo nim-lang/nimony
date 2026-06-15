@@ -1,6 +1,6 @@
 #
 #
-#           NIFC Compiler
+#           Leng Compiler
 #        (c) Copyright 2024 Andreas Rumpf
 #
 #    See the file "license.txt", included in this

@@ -15,7 +15,7 @@ include ".." / lib / compat2
 
 import ".." / lib / symparser
 import dce1
-import ".." / nifc / [nifc_model]
+import ".." / lengc / [leng_model]
 
 type
   ResolveTable = Table[string, SymId]
@@ -72,7 +72,7 @@ proc markLive(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTabl
             if sowner.len > 0 and s notin result.getOrQuit(sowner):
               worklist.add(s)
 
-template toNifcName(sym: SymId): SymId = sym
+template toLengName(sym: SymId): SymId = sym
 
 proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: ResolveTable) =
   case n.kind
@@ -88,7 +88,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
         if n.kind == SymbolDef:
           let def = n.symId
           let t = translate(resolved, def)
-          dest.addSymDef t.toNifcName, n.info
+          dest.addSymDef t.toLengName, n.info
           skip n # skip symbol def (atom)
           while n.hasMore:
             tr dest, n, alive, resolved
@@ -105,7 +105,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
         let def = n.symId
         if isLocalName(pool.syms[def]):
           dest.add head
-          dest.addSymDef def.toNifcName, n.info
+          dest.addSymDef def.toLengName, n.info
           inc n # skip symbol def
           while n.hasMore:
             tr dest, n, alive, resolved
@@ -117,7 +117,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
             dest.add parLeToken(pool.tags.getOrIncl("imp"), head.info)
 
             dest.add head
-            dest.addSymDef t.toNifcName, n.info
+            dest.addSymDef t.toLengName, n.info
             inc n # skip symbol def
             var untilBody = if stmtKind == ProcS: 3 else: 2 # pragmas type (for procs: return type)
             while n.hasMore and untilBody > 0:
@@ -131,7 +131,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
             dest.addParRi() # also close the "imp" declaration
           else:
             dest.add head
-            dest.addSymDef def.toNifcName, n.info
+            dest.addSymDef def.toLengName, n.info
             inc n # skip symbol def
             while n.hasMore:
               tr dest, n, alive, resolved
@@ -154,11 +154,11 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
       dest.takeToken n
   of Symbol:
     let t = translate(resolved, n.symId)
-    dest.addSymUse t.toNifcName, n.info
+    dest.addSymUse t.toLengName, n.info
     inc n
   of SymbolDef:
     let t = translate(resolved, n.symId)
-    dest.addSymDef t.toNifcName, n.info
+    dest.addSymDef t.toLengName, n.info
     inc n
   of UnknownToken, EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
     dest.takeToken n

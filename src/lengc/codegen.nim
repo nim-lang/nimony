@@ -1,6 +1,6 @@
 #
 #
-#           NIFC Compiler
+#           Leng Compiler
 #        (c) Copyright 2024 Andreas Rumpf
 #
 #    See the file "license.txt", included in this
@@ -16,7 +16,7 @@ import ".." / lib / vfs
 from std / sequtils import insert
 
 include ".." / lib / nifprelude
-import mangler, nifc_model, cprelude, noptions, typenav, symparser, nifmodules
+import mangler, leng_model, cprelude, noptions, typenav, symparser, nifmodules
 
 type
   Token = distinct uint32
@@ -67,8 +67,8 @@ type
     TryKeyword = "try "
     CatchKeyword = "catch ("
     ThrowKeyword = "throw"
-    ErrToken = "NIFC_ERR_"
-    OvfToken = "NIFC_OVF_"
+    ErrToken = "LENGC_ERR_"
+    OvfToken = "LENGC_OVF_"
     ThreadVarToken = "NIM_THREADVAR "
     AnonStruct = "struct "
     AnonUnion = "union "
@@ -237,7 +237,7 @@ include gentypes
 
 type
   PragmaInfo = object
-    flags: set[NifcPragma]
+    flags: set[LengPragma]
     extern, attr: StrId
     callConv: CallConv
 
@@ -345,7 +345,7 @@ proc genParam(c: var GeneratedCode; n: var Cursor) =
   else:
     error c.m, "expected SymbolDef but got: ", d.name
 
-proc genVarPragmas(c: var GeneratedCode; n: var Cursor): set[NifcPragma] =
+proc genVarPragmas(c: var GeneratedCode; n: var Cursor): set[LengPragma] =
   result = {}
   if n.kind == DotToken:
     inc n
@@ -478,7 +478,7 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
   if d.name.kind == SymbolDef:
     let lit = d.name.symId
     # Infer the variable's type from its initializer when the explicit type
-    # slot is empty. NIFC has no general var-type inference; the tree
+    # slot is empty. Leng has no general var-type inference; the tree
     # optimizers (cse / induction_variables) synthesize `(var :t . . (addr
     # expr))` without spelling out the pointer type, and without this the
     # empty slot degrades to `void`, so the `(deref t)` uses produce invalid C.

@@ -292,7 +292,7 @@ proc runInductionVariables*(buf: var TokenBuf; moduleSuffix = "M") =
 
 when isMainModule:
   proc parse(src: string): TokenBuf =
-    parseFromBuffer(src, "M", 100, sharedTags = createNifcTagPool())
+    parseFromBuffer(src, "M", 100, sharedTags = createLengTagPool())
 
   proc canon(src: string): string =
     var b = parse(src)

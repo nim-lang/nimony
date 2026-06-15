@@ -72,13 +72,13 @@ proc docIdxFile(config: NifConfig; f: FilePair): string =
   ## hash so it can't collide regardless of source layout.
   config.nifcachePath / "docs" / f.modname & ".docidx"
 proc hexedFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".x.nif"
-proc nifcFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
+proc lengcFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
   base / f.modname & ".c.nif"
 proc optimizedFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
-  ## Shoggoth rewrites `<modname>.c.nif` into this; `nifc` consumes
+  ## Shoggoth rewrites `<modname>.c.nif` into this; `lengc` consumes
   ## it instead. The extra extension keeps the input intact and still extracts
-  ## to the same `modname` (splitModulePath stops at the first dot), so nifc's
+  ## to the same `modname` (splitModulePath stops at the first dot), so lengc's
   ## derived output filename is unchanged.
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
   base / f.modname & ".oc.nif"
@@ -734,7 +734,7 @@ proc generateDocBuildFile(c: DepContext): string =
         b.addStrLit indexOut
   discard rootFlags  # silence unused warning if logging is later removed
 
-proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, passL: string): string =
+proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, passL: string): string =
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".final.build.nif"
   var b = nifbuilder.open(result)
   defer: b.close()
@@ -742,7 +742,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
   b.addHeader()
   b.withTree "stmts":
     # Command definitions
-    let nifc = findTool("nifc")
+    let lengc = findTool("lengc")
     let hexer = findTool("hexer")
     # The experimental Shoggoth optimizer runs only when optimization is
     # actually requested (`--opt:speed` / `--opt:size`); default/debug builds
@@ -754,7 +754,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
       shoggoth = findTool("shoggoth")
 
     if native:
-      # Native backend: arkham (NIFC -> typed asm-NIF) replaces nifc. Output is
+      # Native backend: arkham (Leng -> typed asm-NIF) replaces lengc. Output is
       # passed as the single token `-o:<path>` (the colon form; `addFilename`
       # concatenates the `-o:` prefix directly onto the output path).
       b.withTree "cmd":
@@ -765,16 +765,16 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
           b.addStrLit "-o:"
         b.addKeyw "input"
     else:
-      # Command for nifc (code generation)
+      # Command for lengc (code generation)
       b.withTree "cmd":
-        b.addSymbolDef "nifc"
-        b.addStrLit nifc
+        b.addSymbolDef "lengc"
+        b.addStrLit lengc
         b.addStrLit $c.config.backend
         b.addStrLit "--compileOnly"
         b.addStrLit "--bits:" & $c.config.bits
         b.addKeyw "args"
-        if commandLineArgsNifc.len > 0:
-          for arg in commandLineArgsNifc.split(' '):
+        if commandLineArgsLengc.len > 0:
+          for arg in commandLineArgsLengc.split(' '):
             if arg.len > 0:
               b.addStrLit arg
         b.addKeyw "input"
@@ -945,7 +945,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
           b.withTree "input":
             b.addStrLit liveFile
           b.withTree "output":
-            b.addStrLit c.config.nifcFile(n.files[0], backend)
+            b.addStrLit c.config.lengcFile(n.files[0], backend)
 
       # Link executable
       b.withTree "do":
@@ -1018,34 +1018,34 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
                 b.addStrLit obj
 
         # Optionally run Shoggoth on the DCE'd `.c.nif`, producing `.oc.nif`;
-        # the codegen (nifc or arkham) consumes that. Skipped entirely unless
+        # the codegen (lengc or arkham) consumes that. Skipped entirely unless
         # `useOptimizer`, in which case the plain `.c.nif` is read.
-        var nifcInput: string
+        var lengcInput: string
         if useOptimizer:
           let optimized = c.config.optimizedFile(v.files[0], backend)
           b.withTree "do":
             b.addIdent "optimize"
             b.withTree "input":
-              b.addStrLit c.config.nifcFile(v.files[0], backend)
+              b.addStrLit c.config.lengcFile(v.files[0], backend)
             b.withTree "output":
               b.addStrLit optimized
-          nifcInput = optimized
+          lengcInput = optimized
         else:
-          nifcInput = c.config.nifcFile(v.files[0], backend)
+          lengcInput = c.config.lengcFile(v.files[0], backend)
 
         if native:
-          # arkham: per-module NIFC -> typed asm-NIF. arkham additionally loads
+          # arkham: per-module Leng -> typed asm-NIF. arkham additionally loads
           # imported modules' `.c.nif` on demand (cross-module type/sig
           # resolution), so list those as dependency inputs to order them before
-          # this module's codegen. Only input[0] (this module's nifcInput)
+          # this module's codegen. Only input[0] (this module's lengcInput)
           # reaches arkham's command line (the `arkham` cmd uses `(input)`).
           b.withTree "do":
             b.addIdent "arkham"
             b.withTree "input":
-              b.addStrLit nifcInput
+              b.addStrLit lengcInput
             var seenDeps = initHashSet[string]()
             for depIdx in v.deps:
-              let depNif = c.config.nifcFile(c.nodes[depIdx].files[0], backend)
+              let depNif = c.config.lengcFile(c.nodes[depIdx].files[0], backend)
               if not seenDeps.containsOrIncl(depNif):
                 b.withTree "input":
                   b.addStrLit depNif
@@ -1054,14 +1054,14 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsNifc: string; passC, p
         else:
           # Build C/LLVM IR files from .c.nif files
           b.withTree "do":
-            b.addIdent "nifc"
+            b.addIdent "lengc"
             b.withTree "args":
               b.addStrLit "--nimcache:" & backendDir
             if i == 0:
               b.withTree "args":
                 b.addStrLit "--isMain"
             b.withTree "input":
-              b.addStrLit nifcInput
+              b.addStrLit lengcInput
             b.withTree "output":
               b.addStrLit c.config.genFile(v.files[0], backend)
 
@@ -1316,8 +1316,8 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
         b.addIntLit 0  # main parsed file
 
     b.withTree "cmd":
-      b.addSymbolDef "nifc"
-      b.addStrLit findTool("nifc")
+      b.addSymbolDef "lengc"
+      b.addStrLit findTool("lengc")
       b.addStrLit "c"
       b.addStrLit "--compileOnly"
       b.addKeyw "args"
@@ -1435,7 +1435,7 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
     for objFile in requiredObjFiles: objFiles.add(config.nifcachePath / objFile)
     for i, nifFile in pairs allNifFiles:
       b.withTree "do":
-        b.addIdent "nifc"
+        b.addIdent "lengc"
         if i == 0:
           b.withTree "args":
             b.addStrLit "--isMain"
@@ -1474,7 +1474,7 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
 
 proc buildGraph*(config: sink NifConfig; project: string;
     flags: set[BuildFlag];
-    commandLineArgs, commandLineArgsNifc: string; moduleFlags: set[ModuleFlag]; cmd: Command;
+    commandLineArgs, commandLineArgsLengc: string; moduleFlags: set[ModuleFlag]; cmd: Command;
     passC, passL: string, executableArgs: string) =
   let nifler = findTool("nifler")
   let nifmake = findTool("nifmake")
@@ -1529,7 +1529,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
     let backend = c.config.nifcachePath / c.rootNode.files[0].modname
     onRaiseQuit createDir(path(backend))
     onRaiseQuit createDir(path(sharedObjDir()))
-    let buildFinalFilename = generateFinalBuildFile(c, commandLineArgsNifc, passC, passL)
+    let buildFinalFilename = generateFinalBuildFile(c, commandLineArgsLengc, passC, passL)
     # Linkers (gcc/clang/ld/ar) don't auto-create the output directory.
     # When the user passes `--out:bin/foo` or `--outdir:bin`, materialise
     # `bin/` here. Nim does the same in `prepareToWriteOutput`.

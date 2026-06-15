@@ -60,7 +60,7 @@ jobs:
           Add-MpPreference -ExclusionPath "${{ github.workspace }}" -ErrorAction SilentlyContinue
           Add-MpPreference -ExclusionPath "$env:USERPROFILE\nimcache" -ErrorAction SilentlyContinue
           Add-MpPreference -ExclusionPath "$env:TEMP" -ErrorAction SilentlyContinue
-          foreach ($p in @('nim.exe','nimony.exe','nimsem.exe','hexer.exe','nifc.exe','nifler.exe','nifmake.exe','nj.exe','vl.exe','validator.exe','dagon.exe','controlflow.exe','contracts.exe','hastur.exe','tester.exe','gcc.exe','g++.exe','ld.exe','as.exe','ar.exe','make.exe')) {
+          foreach ($p in @('nim.exe','nimony.exe','nimsem.exe','hexer.exe','lengc.exe','nifler.exe','nifmake.exe','nj.exe','vl.exe','validator.exe','dagon.exe','controlflow.exe','contracts.exe','hastur.exe','tester.exe','gcc.exe','g++.exe','ld.exe','as.exe','ar.exe','make.exe')) {
             Add-MpPreference -ExclusionProcess $p -ErrorAction SilentlyContinue
           }
 

@@ -619,7 +619,7 @@ proc evalCast(c: var EvalContext; typ, val, nOrig: Cursor): Cursor =
     elif val.exprKind == AddrX:
       # `cast[ptr U](addr X)` is a pure pointer retag at compile time —
       # preserve the cast wrapper so the new (declared) pointer type flows
-      # to codegen. NIFC turns it into `(U*)&X`, which C accepts as a
+      # to codegen. Lengc turns it into `(U*)&X`, which C accepts as a
       # constant initializer for a static.
       result = nOrig
     else:
@@ -925,7 +925,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       # Pass-through: `addr X` folds to itself, preserving the inner
       # symbol/path verbatim. Recursing into `eval` would replace a `ConstY`
       # symbol with its initializer (see the Symbol arm above) — losing the
-      # very reference we want to address. NIFC accepts `&staticSym` as a
+      # very reference we want to address. Leng accepts `&staticSym` as a
       # constant initializer for a static, so no further lowering is needed
       # to make `const p = addr someConst` work end-to-end.
       # `HaddrX` is the hidden mutable-borrow form (yields `var T`/MutT, not

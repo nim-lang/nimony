@@ -123,8 +123,8 @@ proc handleCmdLine() =
 
     of cmdLongOption, cmdShortOption:
       var forwardArg = true
-      var forwardArgNifc = false  # nimsem doesn't use this, but needed for parseCommonOption
-      if parseCommonOption(key, val, config, moduleFlags, forwardArg, forwardArgNifc,
+      var forwardArgLengc = false  # nimsem doesn't use this, but needed for parseCommonOption
+      if parseCommonOption(key, val, config, moduleFlags, forwardArg, forwardArgLengc,
                           helpMsg = Usage, versionMsg = Version & "\n"):
         discard "handled by common CLI parser"
       else:

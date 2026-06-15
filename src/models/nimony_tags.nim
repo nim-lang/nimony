@@ -7,7 +7,7 @@ type
     NoExpr
     ErrX = (ord(ErrTagId), "err")  ## indicates an error
     SufX = (ord(SufTagId), "suf")  ## literal with suffix annotation
-    AtX = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped NIFC form); also used for generic proc/type instantiation `(at callee T1 T2 ...)`
+    AtX = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)`
     DerefX = (ord(DerefTagId), "deref")  ## pointer deref operation
     DotX = (ord(DotTagId), "dot")  ## object field selection; optional integer is the inheritance depth of the field; optional trailing `STRLIT` is an *access token* (carrying `"x"` like an export marker) — when present, the expression was already type-checked in a scope with access to the field, so re-check at expansion/serialization sites must accept the access even if the field is private. Emitted by sem when a template body or `.semantics` serializer is type-checked in the field's defining module and later expanded/consumed elsewhere.
     PatX = (ord(PatTagId), "pat")  ## pointer indexing operation
@@ -19,7 +19,7 @@ type
     NanX = (ord(NanTagId), "nan")  ## NaN floating point value
     FalseX = (ord(FalseTagId), "false")  ## boolean `false` value
     TrueX = (ord(TrueTagId), "true")  ## boolean `true` value
-    AndX = (ord(AndTagId), "and")  ## boolean `and` operation
+    AndX = (ord(AndTagId), "and")  ## boolean `and` operation; `Y+` form is also used for concept parent lists with more than two parents
     OrX = (ord(OrTagId), "or")  ## boolean `or` operation
     XorX = (ord(XorTagId), "xor")  ## boolean `xor` operation
     NotX = (ord(NotTagId), "not")  ## boolean `not` operation
@@ -199,8 +199,8 @@ type
   NimonyType* = enum
     NoType
     ErrT = (ord(ErrTagId), "err")  ## indicates an error
-    AtT = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped NIFC form); also used for generic proc/type instantiation `(at callee T1 T2 ...)`
-    AndT = (ord(AndTagId), "and")  ## boolean `and` operation
+    AtT = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)`
+    AndT = (ord(AndTagId), "and")  ## boolean `and` operation; `Y+` form is also used for concept parent lists with more than two parents
     OrT = (ord(OrTagId), "or")  ## boolean `or` operation
     NotT = (ord(NotTagId), "not")  ## boolean `not` operation
     ProcT = (ord(ProcTagId), "proc")  ## proc declaration
@@ -212,7 +212,7 @@ type
     TemplateT = (ord(TemplateTagId), "template")  ## template declaration
     ObjectT = (ord(ObjectTagId), "object")  ## object type declaration
     EnumT = (ord(EnumTagId), "enum")  ## enum type declaration
-    ProctypeT = (ord(ProctypeTagId), "proctype")  ## Nimony proc type. Slot 0 carries the nilability tag — either a `.` placeholder or one of `(notnil)`, `(nil)`, `(unchecked)`. NIFC proc type, same shape as `(proc D ...)` with anonymous name slot (varargs spec; effects/body slots present but unused).
+    ProctypeT = (ord(ProctypeTagId), "proctype")  ## Nimony proc type. Slot 0 carries the nilability tag — either a `.` placeholder or one of `(notnil)`, `(nil)`, `(unchecked)`. Leng proc type, same shape as `(proc D ...)` with anonymous name slot (varargs spec; effects/body slots present but unused).
     IT = (ord(ITagId), "i")  ## `int` builtin type
     UT = (ord(UTagId), "u")  ## `uint` builtin type; size in bits followed by optional attributes (`(importc ...)`, `(header ...)`, etc.)
     FT = (ord(FTagId), "f")  ## `float` builtin type
@@ -221,7 +221,7 @@ type
     VoidT = (ord(VoidTagId), "void")  ## `void` return type
     PtrT = (ord(PtrTagId), "ptr")  ## `ptr` type contructor; the `(unchecked)` pragma relaxes nil checking on deref
     ArrayT = (ord(ArrayTagId), "array")  ## `array` type constructor (element type, index type/range)
-    VarargsT = (ord(VarargsTagId), "varargs")  ## `varargs` type/proc annotation: Nimony carries the element type and an optional transformer symbol (e.g. `` `$` ``); NIFC keeps only the element type
+    VarargsT = (ord(VarargsTagId), "varargs")  ## `varargs` type/proc annotation: Nimony carries the element type and an optional transformer symbol (e.g. `` `$` ``); Leng keeps only the element type
     StaticT = (ord(StaticTagId), "static")  ## `static` type or annotation
     TupleT = (ord(TupleTagId), "tuple")  ## `tuple` type
     OnumT = (ord(OnumTagId), "onum")  ## enum with holes type
@@ -232,7 +232,7 @@ type
     LentT = (ord(LentTagId), "lent")  ## `lent` type
     SinkT = (ord(SinkTagId), "sink")  ## `sink` type
     NiltT = (ord(NiltTagId), "nilt")  ## `nilt` type
-    ConceptT = (ord(ConceptTagId), "concept")  ## `concept` type: two reserved slots, optional parent concepts (`.` / sym / `(and ...)`), a `Self` typevar, and the concept body statements
+    ConceptT = (ord(ConceptTagId), "concept")  ## `concept` type: two reserved slots, optional parent concepts (`.` / sym / `(and ...)`), a `Self` typevar `D`, and the concept body statements `S*` (body may be empty when parents are present)
     DistinctT = (ord(DistinctTagId), "distinct")  ## `distinct` type
     ItertypeT = (ord(ItertypeTagId), "itertype")  ## Nimony iterator type — first-class closure-iterator value at the type level. Shape mirrors `(proctype ...)`: slot 0 carries the nilability tag (`.` placeholder or one of `(notnil)`, `(nil)`, `(unchecked)`); remaining slots are params, return type, pragmas.
     RangetypeT = (ord(RangetypeTagId), "rangetype")  ## `rangetype` type
@@ -291,11 +291,11 @@ type
     CastP = (ord(CastTagId), "cast")  ## `cast` operation (typed cast expression, or `{.cast(pragma).}` pragma form)
     CursorP = (ord(CursorTagId), "cursor")  ## cursor variable declaration
     EmitP = (ord(EmitTagId), "emit")  ## emit statement
-    UnionP = (ord(UnionTagId), "union")  ## first one is Nifc union declaration, second one is Nimony union pragma
+    UnionP = (ord(UnionTagId), "union")  ## first one is Leng union declaration, second one is Nimony union pragma
     InlineP = (ord(InlineTagId), "inline")  ## `inline` proc annotation
     NoinlineP = (ord(NoinlineTagId), "noinline")  ## `noinline` proc annotation
     ClosureP = (ord(ClosureTagId), "closure")  ## `closure` proc annotation; not a calling convention anymore, simply annotates a proc as a closure
-    VarargsP = (ord(VarargsTagId), "varargs")  ## `varargs` type/proc annotation: Nimony carries the element type and an optional transformer symbol (e.g. `` `$` ``); NIFC keeps only the element type
+    VarargsP = (ord(VarargsTagId), "varargs")  ## `varargs` type/proc annotation: Nimony carries the element type and an optional transformer symbol (e.g. `` `$` ``); Leng keeps only the element type
     SelectanyP = (ord(SelectanyTagId), "selectany")
     AlignP = (ord(AlignTagId), "align")
     BitsP = (ord(BitsTagId), "bits")

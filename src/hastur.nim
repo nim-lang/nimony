@@ -1,4 +1,4 @@
-## Hastur - Tester tool for Nimony and its related subsystems (NIFC etc).
+## Hastur - Tester tool for Nimony and its related subsystems (Leng etc).
 ## (c) 2024-2025 Andreas Rumpf
 
 when defined(windows):
@@ -26,7 +26,7 @@ Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|hexer|nifc|shoggoth|nifmake|nj|vl|validator|dagon|pnak|arkham|nifasm|native]   build selected tools (default: all).
+  build [all|nimony|nifler|hexer|lengc|shoggoth|nifmake|nj|vl|validator|dagon|pnak|arkham|nifasm|native]   build selected tools (default: all).
   tiers                compile every module on the bootstrap list with nimony.
   boot [options]       Self-host the *full* nimony toolchain (nimony,
                        nimsem, hexer). `bin0/` is a fresh copy of the
@@ -43,7 +43,7 @@ Commands:
   all                  run all tests.
   nimony               run Nimony tests.
   examples             run examples (examples/ directory).
-  nifc                 run NIFC tests.
+  lengc                 run Leng tests.
   nj                   run NJ (Nimony Jump Elimination) tests.
   vl                   run VL (Versioned Locations) tests.
   dagon                run Dagon doc-generator tests (tests/dagon/).
@@ -75,7 +75,7 @@ Options:
   --release             build in release mode
   --jobs:N|auto         run up to N tests in parallel (auto = #cores)
   --cachedir:PATH       use PATH instead of `nimcache/` for intermediates
-  --no-build            skip rebuilding nimony/nifc before `test`
+  --no-build            skip rebuilding nimony/lengc before `test`
   --valgrind            for `boot`: build with -DMI_TRACK_VALGRIND=1 so
                         mimalloc plays nicely with valgrind, then run a
                         valgrind smoke test on the bootstrapped binary.
@@ -214,7 +214,7 @@ var parallelJobs* = 1
 
 var skipBuild* = false
   ## Set by the parallel test runner on its worker invocations: the
-  ## parent has already rebuilt nimony / nifc before kicking off the
+  ## parent has already rebuilt nimony / lengc before kicking off the
   ## pool, so each worker skips the rebuild. Otherwise every worker
   ## spends seconds re-running `nim c` for nothing.
 
@@ -800,7 +800,7 @@ proc validatorTests() =
     "src/hexer/desugar.nim",
     "src/hexer/cps.nim",
     "src/hexer/duplifier.nim",
-    "src/hexer/nifcgen.nim",
+    "src/hexer/lengcgen.nim",
     "src/hexer/eraiser.nim",
     #"src/hexer/vtables_backend.nim", # TODO: tool can't track writes to different buffers yet
     "src/hexer/iterinliner.nim",
@@ -1104,18 +1104,18 @@ proc buildVl(showProgress = false) =
   let exe = "vl".addFileExt(ExeExt)
   robustMoveFile "src/njvl/" & exe, binDir() / exe
 
-proc buildNifc(showProgress = false) =
-  exec nimcPrefix() & "src/nifc/nifc.nim", showProgress
-  let exe = "nifc".addFileExt(ExeExt)
-  robustMoveFile "src/nifc/" & exe, binDir() / exe
+proc buildLengc(showProgress = false) =
+  exec nimcPrefix() & "src/lengc/lengc.nim", showProgress
+  let exe = "lengc".addFileExt(ExeExt)
+  robustMoveFile "src/lengc/" & exe, binDir() / exe
 
 proc buildShoggoth(showProgress = false) =
-  exec nimcPrefix() & "src/nifc/shoggoth/shoggoth.nim", showProgress
+  exec nimcPrefix() & "src/lengc/shoggoth/shoggoth.nim", showProgress
   let exe = "shoggoth".addFileExt(ExeExt)
-  robustMoveFile "src/nifc/shoggoth/" & exe, binDir() / exe
+  robustMoveFile "src/lengc/shoggoth/" & exe, binDir() / exe
 
 proc buildArkham(showProgress = false) =
-  ## `arkham` (NIFC -> typed asm-NIF native codegen) lives in the sibling
+  ## `arkham` (Leng -> typed asm-NIF native codegen) lives in the sibling
   ## `../nativenif` repo and reuses nimony's NIF libraries via its committed
   ## sibling-relative `nim.cfg`. We assume the checkout exists (the `dist/`
   ## auto-clone is a later step). arkham's own `nim.cfg` already sets
@@ -1203,7 +1203,7 @@ const BootstrapModules = [
   "src/hexer/vtables_backend.nim",
   "src/hexer/dce2.nim",
 
-  # Tier 17 tips. `hexer.nim` subsumes `nifcgen.nim` via its import set.
+  # Tier 17 tips. `hexer.nim` subsumes `lengcgen.nim` via its import set.
   "src/hexer/hexer.nim",
   "src/nimony/indexgen.nim",
   "src/nimony/idetools.nim",
@@ -1290,7 +1290,7 @@ const BootSelfTools = ["nimsem", "hexer", "nimony"]
   ## hexer are needed by every later `nimony c` call, so they go first;
   ## nimony itself goes last because it's the one each *next* stage will
   ## drive with.
-const BootCarryTools = ["nifler", "nifc", "nifmake", "validator", "shoggoth"]
+const BootCarryTools = ["nifler", "lengc", "nifmake", "validator", "shoggoth"]
   ## Tools copied from `bin/` into each stage dir. They're tier-0 for
   ## bootstrap purposes (host-Nim-built throughout) but `nimony c` shells
   ## to them, so each stage dir needs its own copy.
@@ -1577,8 +1577,8 @@ proc selfcheckCmd() =
   echo "[selfcheck] all checks passed in ",
        formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
 
-proc execNifc(cmd: string) =
-  exec "nifc", cmd
+proc execLengc(cmd: string) =
+  exec "lengc", cmd
 
 proc execHexer(cmd: string) =
   exec "hexer", cmd
@@ -1590,7 +1590,7 @@ proc hexertests(overwrite: bool) =
   createIndex mod1 & ".nif", false, NoLineInfo
   execHexer "c " & mod1 & ".nif"
   execHexer "c " & helloworld & ".nif"
-  execNifc " c -r " & mod1 & ".c.nif " & helloworld & ".c.nif"
+  execLengc " c -r " & mod1 & ".c.nif " & helloworld & ".c.nif"
 
 proc runDagonTest(c: var TestCounters; testFile: string) =
   ## Drive `nimony doc <testFile>` into a per-test outdir, then check every
@@ -1813,13 +1813,13 @@ proc handleCmdLine =
   of "all":
     buildNimsem()
     buildNimony()
-    buildNifc()
+    buildLengc()
     buildShoggoth()
     buildHexer()
     buildNifmake()
     nimonytests(overwrite, forward)
     exampletests(overwrite, forward)
-    #nifctests(overwrite)
+    #lengctests(overwrite)
     #hexertests(overwrite)
     buildControlflow()
     controlflowTests("controlflow", overwrite)
@@ -1891,7 +1891,7 @@ proc handleCmdLine =
       buildNifler(showProgress)
       buildNimsem(showProgress)
       buildNimony(showProgress)
-      buildNifc(showProgress)
+      buildLengc(showProgress)
       buildShoggoth(showProgress)
       buildHexer(showProgress)
       buildNifmake(showProgress)
@@ -1905,8 +1905,8 @@ proc handleCmdLine =
       buildNimsem(showProgress)
       buildNimony(showProgress)
       buildHexer(showProgress)
-    of "nifc":
-      buildNifc(showProgress)
+    of "lengc":
+      buildLengc(showProgress)
     of "shoggoth":
       buildShoggoth(showProgress)
     of "arkham":
@@ -1915,7 +1915,7 @@ proc handleCmdLine =
       buildNifasm(showProgress)
     of "native":
       # The C-free native toolchain used by `nimony n`: arkham + nifasm (from
-      # the sibling `../nativenif`) plus shoggoth (the opt-gated NIFC optimizer
+      # the sibling `../nativenif`) plus shoggoth (the opt-gated Leng optimizer
       # that also feeds the native path). Kept out of the default `all` build so
       # the sibling-repo dependency stays opt-in.
       buildArkham(showProgress)
@@ -1945,8 +1945,8 @@ proc handleCmdLine =
   of "examples":
     buildNimony()
     exampletests(overwrite, forward)
-  of "nifc":
-    buildNifc()
+  of "lengc":
+    buildLengc()
 
   of "hexer":
     buildHexer()
@@ -1961,7 +1961,7 @@ proc handleCmdLine =
   of "test":
     if not skipBuild:
       buildNimony()
-      buildNifc()
+      buildLengc()
     if args.len > 0:
       for arg in args:
         if arg.dirExists():

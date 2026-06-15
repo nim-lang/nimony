@@ -1,6 +1,6 @@
 #
 #
-#           NIFC Compiler
+#           Leng Compiler
 #        (c) Copyright 2024 Andreas Rumpf
 #
 #    See the file "license.txt", included in this
@@ -8,7 +8,7 @@
 #
 
 # included from llvmcodegen.nim
-# Generates LLVM IR types from NIFC types.
+# Generates LLVM IR types from Leng types.
 
 proc integralBitsLLVM(t: Cursor; c: LLVMCode): string {.inline.} =
   let res = pool.integers[t.intId]

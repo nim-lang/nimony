@@ -1,13 +1,13 @@
 #
 #
-#           NIFC Compiler
+#           Leng Compiler
 #        (c) Copyright 2024 Andreas Rumpf
 #
 #    See the file "license.txt", included in this
 #    distribution, for details about the copyright.
 #
 
-## Name mangling. See nifc-spec.md for details.
+## Name mangling. See leng-spec.md for details.
 
 from std / strutils import toOctal, replace, endsWith
 

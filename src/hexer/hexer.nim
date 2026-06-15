@@ -44,7 +44,7 @@ Hexer accepts Nimony's grammar.
 
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
 import ".." / nimony / [langmodes, nifconfig]
-import nifcgen, lifter, duplifier, destroyer, inliner, constparams, dce2
+import lengcgen, lifter, duplifier, destroyer, inliner, constparams, dce2
 import ".." / lib / vfs
 
 const
@@ -55,7 +55,7 @@ const
 Usage:
   hexer [options] [command]
 Command:
-  c file.nif                compile semchecked NIF file to NIFC
+  c file.nif                compile semchecked NIF file to Leng
   d file1.nif file2.nif ... perform dead code elimination for the given NIF files
 
 Options:

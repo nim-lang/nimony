@@ -8,7 +8,7 @@ nimblecache/
 nimcache_static/
 htmldocs/
 src/hastur
-src/nifc/nifc_grammar.nim
+src/lengc/lengc_grammar.nim
 src/nifgram/nifgram
 src/lib/nifindexes
 tests/tester

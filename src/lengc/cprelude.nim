@@ -337,7 +337,7 @@ typedef NU8 NU;
 // Test to see if Nim and the C compiler agree on the size of a pointer.
 NIM_STATIC_ASSERT(sizeof(NI) == sizeof(void*) && NIM_INTBITS == sizeof(NI)*8, "Pointer size mismatch between Nim and C/C++ backend. You probably need to setup the backend compiler for target CPU.");
 
-N_INLINE(NB8, _Qnifc_div_sll_overflow)(long long int a, long long int b, long long int *res) {
+N_INLINE(NB8, _Qlengc_div_sll_overflow)(long long int a, long long int b, long long int *res) {
   if (b == 0) {
     *res = 0;
     return NIM_TRUE;
@@ -350,7 +350,7 @@ N_INLINE(NB8, _Qnifc_div_sll_overflow)(long long int a, long long int b, long lo
   return NIM_FALSE;
 }
 
-N_INLINE(NB8, _Qnifc_div_sl_overflow)(long int a, long int b, long int *res) {
+N_INLINE(NB8, _Qlengc_div_sl_overflow)(long int a, long int b, long int *res) {
   if (b == 0) {
     *res = 0;
     return NIM_TRUE;
@@ -363,7 +363,7 @@ N_INLINE(NB8, _Qnifc_div_sl_overflow)(long int a, long int b, long int *res) {
   return NIM_FALSE;
 }
 
-N_INLINE(NB8, _Qnifc_div_ull_overflow)(unsigned long long int a, unsigned long long int b, unsigned long long int *res) {
+N_INLINE(NB8, _Qlengc_div_ull_overflow)(unsigned long long int a, unsigned long long int b, unsigned long long int *res) {
   if (b == 0) {
     *res = 0;
     return NIM_TRUE; /* Overflow: division by zero */
@@ -372,7 +372,7 @@ N_INLINE(NB8, _Qnifc_div_ull_overflow)(unsigned long long int a, unsigned long l
   return NIM_FALSE;
 }
 
-N_INLINE(NB8, _Qnifc_div_ul_overflow)(unsigned long int a, unsigned long int b, unsigned long int *res) {
+N_INLINE(NB8, _Qlengc_div_ul_overflow)(unsigned long int a, unsigned long int b, unsigned long int *res) {
   if (b == 0) {
     *res = 0;
     return NIM_TRUE;
@@ -381,7 +381,7 @@ N_INLINE(NB8, _Qnifc_div_ul_overflow)(unsigned long int a, unsigned long int b, 
   return NIM_FALSE;
 }
 
-N_INLINE(NB8, _Qnifc_mod_sll_overflow)(long long int a, long long int b, long long int *res) {
+N_INLINE(NB8, _Qlengc_mod_sll_overflow)(long long int a, long long int b, long long int *res) {
   if (b == 0) {
     *res = 0;
     return NIM_TRUE;
@@ -394,7 +394,7 @@ N_INLINE(NB8, _Qnifc_mod_sll_overflow)(long long int a, long long int b, long lo
   return NIM_FALSE;
 }
 
-N_INLINE(NB8, _Qnifc_mod_sl_overflow)(long int a, long int b, long int *res) {
+N_INLINE(NB8, _Qlengc_mod_sl_overflow)(long int a, long int b, long int *res) {
   if (b == 0) {
     *res = 0;
     return NIM_TRUE;
@@ -407,7 +407,7 @@ N_INLINE(NB8, _Qnifc_mod_sl_overflow)(long int a, long int b, long int *res) {
   return NIM_FALSE;
 }
 
-N_INLINE(NB8, _Qnifc_mod_ull_overflow)(unsigned long long int a, unsigned long long int b, unsigned long long int *res) {
+N_INLINE(NB8, _Qlengc_mod_ull_overflow)(unsigned long long int a, unsigned long long int b, unsigned long long int *res) {
   if (b == 0) {
     *res = 0;
     return NIM_TRUE;
@@ -416,7 +416,7 @@ N_INLINE(NB8, _Qnifc_mod_ull_overflow)(unsigned long long int a, unsigned long l
   return NIM_FALSE;
 }
 
-N_INLINE(NB8, _Qnifc_mod_ul_overflow)(unsigned long int a, unsigned long int b, unsigned long int *res) {
+N_INLINE(NB8, _Qlengc_mod_ul_overflow)(unsigned long int a, unsigned long int b, unsigned long int *res) {
   if (b == 0) {
     *res = 0;
     return NIM_TRUE;

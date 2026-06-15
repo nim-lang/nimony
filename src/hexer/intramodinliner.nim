@@ -25,7 +25,7 @@ import std / [tables, assertions, os, sets, hashes]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / symparser
-import ".." / nifc / [nifc_model]
+import ".." / lengc / [leng_model]
 
 type
   InlineWeights* = seq[int]

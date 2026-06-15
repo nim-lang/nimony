@@ -19,7 +19,7 @@ type
     IgnoreStyleFeature
       ## Nim-2-style "style insensitivity": identifier lookup ignores
       ## underscores and ASCII case after the first character. Strictly a
-      ## sem-frontend toggle; hexer / nifc / nifmake are unaffected.
+      ## sem-frontend toggle; hexer / lengc / nifmake are unaffected.
     VarToverloadsFeature
       ## Nim-2-style overloading by `var T`: when two routines differ only
       ## in whether a parameter is `var T` or `T`, prefer the `var T`

@@ -9,7 +9,7 @@
 import std / [tables, assertions]
 include "../lib" / nifprelude
 
-import nifc_model, nifmodules
+import leng_model, nifmodules
 
 proc isImportC*(m: var MainModule; n: Cursor): bool =
   if n.kind in {Symbol, SymbolDef}:

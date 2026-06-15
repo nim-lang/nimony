@@ -101,7 +101,7 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
       # the same generic with the same arguments would otherwise produce
       # mangle keys that differ only in the inner instance's owning
       # module — and the `c.newTypes` cache + `genericTypeName` (used by
-      # nifcgen.trAsNamedType *and* duplifier.injectDup) would mint a
+      # lengcgen.trAsNamedType *and* duplifier.injectDup) would mint a
       # separate `(type :\`t.0.I<key>...)` per importer. The strip applies
       # in both `Frontend` and `Backend` modes because the two callers
       # disagree about which mode they pass — keeping the names aligned

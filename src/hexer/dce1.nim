@@ -12,7 +12,7 @@
 import std / [assertions, tables, hashes, sets, syncio]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / nifc / [nifc_model]
+import ".." / lengc / [leng_model]
 
 import ".." / lib / symparser
 
