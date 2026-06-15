@@ -76,3 +76,16 @@ proc execProcessGeneric2*[T](
   discard
 
 execProcessGeneric2("def")
+
+proc testToSeq[T](x: openArray[T]): seq[T] = @x
+block:
+  let aint = [1, 2, 3]
+  assert aint.testToSeq == @[1, 2, 3]
+  let astr = ["foo", "bar"]
+  assert astr.testToSeq == @["foo", "bar"]
+
+block:
+  let sint = @[3, 2, 1]
+  assert sint.testToSeq == @[3, 2, 1]
+  let sstr = @["bar", "foo"]
+  assert sstr.testToSeq == @["bar", "foo"]
