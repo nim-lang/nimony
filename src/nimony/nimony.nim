@@ -125,7 +125,7 @@ proc dispatchBasicCommand(key: string; config: var NifConfig): Command =
     config.backend = backendLLVM
     FullProject
   of "n":
-    # Native backend: NIFC -> arkham -> nifasm, producing a static, libc-free
+    # Native backend: Leng -> arkham -> nifasm, producing a static, libc-free
     # executable. arkham emits raw syscalls and nifasm writes a static image
     # with no dynamic linker, so the standard library must be compiled in its
     # native-allocator + libc-free configuration.
@@ -157,7 +157,7 @@ type
     checkModes: set[CheckMode]
     config: NifConfig
     commandLineArgs: string
-    commandLineArgsNifc: string
+    commandLineArgsLengc: string
     passC: string
     passL: string
     executableArgs: string
@@ -172,7 +172,7 @@ proc createCmdOptions(baseDir: sink string): CmdOptions =
     moduleFlags: {},
     config: initNifConfig(baseDir),
     commandLineArgs: "",
-    commandLineArgsNifc: "",
+    commandLineArgsLengc: "",
     isChild: false,
     passC: "",
     passL: "",
@@ -202,7 +202,7 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
           c.executableArgs.add ":" & quoteShell(val)
       else:
         var forwardArg = true
-        var forwardArgNifc = false
+        var forwardArgLengc = false
         # Handle special cases first, then try common parser
         let keyNorm = normalize(key)
         if keyNorm == "path" or keyNorm == "p":
@@ -223,7 +223,7 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
           c.config.optLevel = optSpeed
           if normalize(val) == "danger":
             c.checkModes = {}
-        elif parseCommonOption(key, val, c.config, c.moduleFlags, forwardArg, forwardArgNifc,
+        elif parseCommonOption(key, val, c.config, c.moduleFlags, forwardArg, forwardArgLengc,
                               helpMsg = Usage, versionMsg = Version & "\n"):
           discard "handled by common CLI parser"
         else:
@@ -281,10 +281,10 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
             # literal quotes reach the tool). The forwarded compiler flags are
             # shell-safe unquoted, so `selfExec`'s raw splice is fine too.
             c.commandLineArgs.add ":" & val
-        if forwardArgNifc:
-          c.commandLineArgsNifc.add " --" & key
+        if forwardArgLengc:
+          c.commandLineArgsLengc.add " --" & key
           if val.len > 0:
-            c.commandLineArgsNifc.add ":" & val
+            c.commandLineArgsLengc.add ":" & val
 
     of cmdEnd: assert false, "cannot happen"
 
@@ -334,23 +334,23 @@ proc compileProgram(c: var CmdOptions) =
     makeDir(c.config.nifcachePath)
     # compile full project modules
     buildGraph c.config, c.args[0].addFileExt(".nim"), c.buildFlags,
-      c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, (if c.doRun: DoRun else: DoCompile),
+      c.commandLineArgs, c.commandLineArgsLengc, c.moduleFlags, (if c.doRun: DoRun else: DoCompile),
       c.passC, c.passL, c.executableArgs
   of CheckProject:
     makeDir(c.config.nifcachePath)
     # check full project modules
     buildGraph c.config, c.args[0].addFileExt(".nim"), c.buildFlags,
-      c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, DoCheck, c.passC, c.passL, c.executableArgs
+      c.commandLineArgs, c.commandLineArgsLengc, c.moduleFlags, DoCheck, c.passC, c.passL, c.executableArgs
   of DocProject:
     makeDir(c.config.nifcachePath)
     # doc full project modules
     buildGraph c.config, c.args[0].addFileExt(".nim"), c.buildFlags,
-      c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, DoDoc, c.passC, c.passL, c.executableArgs
+      c.commandLineArgs, c.commandLineArgsLengc, c.moduleFlags, DoDoc, c.passC, c.passL, c.executableArgs
   of SemCheckNif:
     makeDir(c.config.nifcachePath)
     # compile full project modules
     buildGraph c.config, c.args[0], c.buildFlags,
-      c.commandLineArgs, c.commandLineArgsNifc, c.moduleFlags, (if c.doRun: DoRun else: DoCompile),
+      c.commandLineArgs, c.commandLineArgsLengc, c.moduleFlags, (if c.doRun: DoRun else: DoCompile),
       c.passC, c.passL, c.executableArgs
 
 when isMainModule:

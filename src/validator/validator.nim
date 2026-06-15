@@ -714,7 +714,7 @@ proc hasIntentArg(n: Cursor): bool =
   ## TagClass enum, a per-language tag enum value like `IfS`/`ProcS`/…, a
   ## qualified `EnumName.Value`, or a legacy string literal).
   ##
-  ## Per-language tag enums (NimonyStmt, NifcStmt, …) have hundreds of
+  ## Per-language tag enums (NimonyStmt, LengStmt, …) have hundreds of
   ## values, so we can't enumerate them. We accept *any* Ident or qualified
   ## reference as a candidate intent — the runtime assertion in the
   ## inc/skip/into overload catches wrong values. The validator's job is

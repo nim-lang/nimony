@@ -39,7 +39,7 @@
 import std / [tables, sets, hashes, assertions]
 include "../../lib" / nifprelude
 import nifstreams, nifcursors
-import ".." / nifc_model
+import ".." / leng_model
 import ".." / ".." / models / tags
 import patchsets_legacy
 
@@ -87,7 +87,7 @@ proc recordBool(c: var Context; pos: int; value: bool; info: PackedLineInfo) =
 
 proc fold(c: var Context; n: var Cursor): FoldResult
 
-proc foldBinaryTyped(c: var Context; n: var Cursor; op: NifcExpr;
+proc foldBinaryTyped(c: var Context; n: var Cursor; op: LengExpr;
                      pos: int; info: PackedLineInfo): FoldResult =
   result = FoldResult(kind: NoFold)
   var l, r = FoldResult(kind: NoFold)
@@ -110,7 +110,7 @@ proc foldBinaryTyped(c: var Context; n: var Cursor; op: NifcExpr;
   recordInt(c, pos, v, info)
   result = FoldResult(kind: FoldInt, i: v)
 
-proc foldUnaryTyped(c: var Context; n: var Cursor; op: NifcExpr;
+proc foldUnaryTyped(c: var Context; n: var Cursor; op: LengExpr;
                     pos: int; info: PackedLineInfo): FoldResult =
   result = FoldResult(kind: NoFold)
   var inner = FoldResult(kind: NoFold)
@@ -126,7 +126,7 @@ proc foldUnaryTyped(c: var Context; n: var Cursor; op: NifcExpr;
   recordInt(c, pos, v, info)
   result = FoldResult(kind: FoldInt, i: v)
 
-proc foldCmpTyped(c: var Context; n: var Cursor; op: NifcExpr;
+proc foldCmpTyped(c: var Context; n: var Cursor; op: LengExpr;
                   pos: int; info: PackedLineInfo): FoldResult =
   result = FoldResult(kind: NoFold)
   var l, r = FoldResult(kind: NoFold)
@@ -145,7 +145,7 @@ proc foldCmpTyped(c: var Context; n: var Cursor; op: NifcExpr;
   recordBool(c, pos, v, info)
   result = FoldResult(kind: FoldBool, b: v)
 
-proc foldBoolBin(c: var Context; n: var Cursor; op: NifcExpr;
+proc foldBoolBin(c: var Context; n: var Cursor; op: LengExpr;
                  pos: int; info: PackedLineInfo): FoldResult =
   result = FoldResult(kind: NoFold)
   var l, r = FoldResult(kind: NoFold)

@@ -71,7 +71,7 @@ type
   Backend* = enum
     backendC = "c"
     backendLLVM = "llvm"
-    backendNative = "native"  # C-free: NIFC -> arkham -> nifasm (static, libc-free)
+    backendNative = "native"  # C-free: Leng -> arkham -> nifasm (static, libc-free)
 
   OptLevel* = enum
     optDebug   # default: -O1 (debug-friendly but avoids dumb codegen)

@@ -1,6 +1,6 @@
 #
 #
-#           NIFC Address CSE
+#           Lengc Address CSE
 #        (c) Copyright 2026 Andreas Rumpf
 #
 #    See the file "license.txt", included in this
@@ -8,7 +8,7 @@
 #
 
 ## Two-phase common-subexpression elimination for **address-yielding**
-## memory chains in NIFC.
+## memory chains in Lengc.
 ##
 ## The traditional "value CSE" of `(x.field[i].fieldB)` is fragile: every
 ## intervening call or write through an aliased pointer can change the
@@ -83,7 +83,7 @@
 import std / [tables, sets, hashes, assertions, strutils, formatfloat]
 include "../../lib" / nifprelude
 import nifstreams, nifcursors
-import ".." / nifc_model
+import ".." / leng_model
 from ".." / ".." / hexer / funcsummary import FunctionSummary,
   FunctionSummaryTable, paramDirectEscapes, paramMayWrite
 import ".." / ".." / models / tags
@@ -354,7 +354,7 @@ proc addVarDecl(c: var Context; tempSym: SymId; expr: Cursor;
   buf.addParLe(TagId(ord(VarTagId)), info)
   buf.addSymDef tempSym, info
   buf.addDotToken()           # pragmas
-  buf.addDotToken()           # type — inferred from initializer (allowed by NIFC)
+  buf.addDotToken()           # type — inferred from initializer (allowed by Leng)
   buf.addParLe(TagId(ord(AddrTagId)), info)
   buf.addSubtree expr
   buf.addParRi()              # close addr
@@ -605,7 +605,7 @@ proc trBreakOrRet(c: var Context; n: var Cursor) =
   skip n
   clearCache c
 
-proc isHoistAnchor(sk: NifcStmt): bool {.inline.} =
+proc isHoistAnchor(sk: LengStmt): bool {.inline.} =
   sk notin {NoStmt, StmtsS, ScopeS}
 
 proc tr(c: var Context; n: var Cursor) =

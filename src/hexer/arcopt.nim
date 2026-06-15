@@ -18,7 +18,7 @@ when defined(nimony):
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / nimony / [nimony_model, programs]
-from ".." / nifc / nifc_model import takeProcDecl
+from ".." / lengc / leng_model import takeProcDecl
 import ".." / lib / symparser
 import passes
 

@@ -1,33 +1,33 @@
 #
-#           NIFC tag decoding for `nifcore` cursors
+#           Leng tag decoding for `nifcore` cursors
 #        (c) Copyright 2026 Andreas Rumpf
 #
 #    See the file "license.txt", included in this distribution, for
 #    details about the copyright.
 #
 
-## The `nifcore` counterpart of `nifc/nifc_model`: tag decoders and declaration
+## The `nifcore` counterpart of `lengc/leng_model`: tag decoders and declaration
 ## readers over **nifcore** cursors (no separate ParLe/ParRi; subtrees are
 ## bounded by jump fields). Originally `arkham/nifcdecl` in the `nativenif`
-## repo; moved here so the shoggoth NIFC optimizer and arkham's code generators
+## repo; moved here so the shoggoth Leng optimizer and arkham's code generators
 ## share a single source (arkham already builds against nimony's `src/lib`).
 ##
-## It reuses the canonical, NIF-API-independent enums from `models/nifc_tags`
-## (`NifcStmt`, `NifcExpr`, `NifcType`, `NifcPragma`, `NifcOther`, `NifcSym`, …)
+## It reuses the canonical, NIF-API-independent enums from `models/leng_tags`
+## (`LengStmt`, `LengExpr`, `LengType`, `LengPragma`, `LengOther`, `LengSym`, …)
 ## whose ordinals are the master tag ordinals. To make a parsed `nifcore`
 ## buffer's `cursorTagId` line up with those ordinals, seed the buffer's
 ## `TagPool` from the same master `TagData` (just like `nifstreams` seeds its
-## global pool). Then `cast[NifcStmt](tagId)` works exactly as in `nifc_model`
+## global pool). Then `cast[LengStmt](tagId)` works exactly as in `leng_model`
 ## — but over `nifcore` cursors, keeping the enums clear of any NIF-API
 ## coupling.
 
 import std / assertions
 import nifcore
-import ".." / models / [nifc_tags, callconv_tags, tags]
-export nifc_tags, callconv_tags
+import ".." / models / [leng_tags, callconv_tags, tags]
+export leng_tags, callconv_tags
 
-proc createNifcTagPool*(): TagPool =
-  ## A `nifcore` tag pool seeded so each NIFC tag's `TagId` equals its master
+proc createLengTagPool*(): TagPool =
+  ## A `nifcore` tag pool seeded so each Leng tag's `TagId` equals its master
   ## `TagEnum` ordinal. Pass to `parseFromFile`/`parseFromBuffer` as
   ## `sharedTags` so `tagEnum`/`stmtKind`/… can decode by ordinal.
   result = newTagPool()
@@ -41,39 +41,39 @@ template tagEnumOf*(c: Cursor): TagEnum =
   (if c.kind == TagLit: cast[TagEnum](uint32(c.cursorTagId)) else: InvalidTagId)
 
 template tagEnum*(c: Cursor): TagEnum =
-  ## `nifc_model`-compatible spelling of `tagEnumOf`.
+  ## `leng_model`-compatible spelling of `tagEnumOf`.
   tagEnumOf(c)
 
 # ── tag-class decoders ──────────────────────────────────────────────────────
 
-proc stmtKind*(c: Cursor): NifcStmt {.inline.} =
+proc stmtKind*(c: Cursor): LengStmt {.inline.} =
   let e = tagEnumOf(c)
-  if rawTagIsNifcStmt(e): cast[NifcStmt](e) else: NoStmt
+  if rawTagIsLengStmt(e): cast[LengStmt](e) else: NoStmt
 
-proc exprKind*(c: Cursor): NifcExpr {.inline.} =
+proc exprKind*(c: Cursor): LengExpr {.inline.} =
   let e = tagEnumOf(c)
-  if rawTagIsNifcExpr(e): cast[NifcExpr](e) else: NoExpr
+  if rawTagIsLengExpr(e): cast[LengExpr](e) else: NoExpr
 
-proc pragmaKind*(c: Cursor): NifcPragma {.inline.} =
+proc pragmaKind*(c: Cursor): LengPragma {.inline.} =
   let e = tagEnumOf(c)
-  if rawTagIsNifcPragma(e): cast[NifcPragma](e) else: NoPragma
+  if rawTagIsLengPragma(e): cast[LengPragma](e) else: NoPragma
 
-proc substructureKind*(c: Cursor): NifcOther {.inline.} =
+proc substructureKind*(c: Cursor): LengOther {.inline.} =
   let e = tagEnumOf(c)
-  if rawTagIsNifcOther(e): cast[NifcOther](e) else: NoSub
+  if rawTagIsLengOther(e): cast[LengOther](e) else: NoSub
 
-proc typeKind*(c: Cursor): NifcType {.inline.} =
+proc typeKind*(c: Cursor): LengType {.inline.} =
   if c.kind == DotToken: return VoidT       # an empty type slot reads as void
   let e = tagEnumOf(c)
-  if rawTagIsNifcType(e): cast[NifcType](e) else: NoType
+  if rawTagIsLengType(e): cast[LengType](e) else: NoType
 
-proc symKind*(c: Cursor): NifcSym {.inline.} =
+proc symKind*(c: Cursor): LengSym {.inline.} =
   let e = tagEnumOf(c)
-  if rawTagIsNifcSym(e): cast[NifcSym](e) else: NoSym
+  if rawTagIsLengSym(e): cast[LengSym](e) else: NoSym
 
-proc typeQual*(c: Cursor): NifcTypeQualifier {.inline.} =
+proc typeQual*(c: Cursor): LengTypeQualifier {.inline.} =
   let e = tagEnumOf(c)
-  if rawTagIsNifcTypeQualifier(e): cast[NifcTypeQualifier](e) else: NoQualifier
+  if rawTagIsLengTypeQualifier(e): cast[LengTypeQualifier](e) else: NoQualifier
 
 proc callConvKind*(c: Cursor): CallConv {.inline.} =
   let e = tagEnumOf(c)
@@ -87,12 +87,12 @@ proc elementType*(n: Cursor): Cursor {.inline.} =
   result = n
   inc result
 
-# NB: `nifc_model.tracebackTypeC` is intentionally not ported — it walks
+# NB: `leng_model.tracebackTypeC` is intentionally not ported — it walks
 # *backwards* via `unsafeDec`, which `nifcore` has no primitive for, and no
 # current consumer needs it. Add a backward primitive to `nifcore` first if a
 # caller appears.
 
-# ── declaration readers (mirror nifc_model; already in into/skip/hasMore idiom)
+# ── declaration readers (mirror leng_model; already in into/skip/hasMore idiom)
 
 type
   TypeDecl* = object
@@ -210,10 +210,10 @@ proc takeVarDecl*(n: var Cursor): VarDecl =
     result.value = n
     skip n
 
-# ── Tag-typed intent overloads (mirrors nifc_model / nimony_model) ───────────
+# ── Tag-typed intent overloads (mirrors leng_model / nimony_model) ───────────
 
-type NifcTagKind* =
-  NifcStmt | NifcExpr | NifcType | NifcOther | NifcPragma | NifcSym
+type LengTagKind* =
+  LengStmt | LengExpr | LengType | LengOther | LengPragma | LengSym
 
 # See `nimony_model.nim`'s `tagDispatch` for the rationale: tag-class
 # templates dispatch via `when expected is X` and use `==`/`$` operators that
@@ -224,32 +224,32 @@ when defined(nimony):
 else:
   {.pragma: tagDispatch.}
 
-template kindMatches(c: Cursor; expected: NifcTagKind): bool {.tagDispatch.} =
-  when expected is NifcStmt:    c.stmtKind == expected
-  elif expected is NifcExpr:    c.exprKind == expected
-  elif expected is NifcType:    c.typeKind == expected
-  elif expected is NifcOther:   c.substructureKind == expected
-  elif expected is NifcPragma:  c.pragmaKind == expected
-  elif expected is NifcSym:     c.symKind == expected
+template kindMatches(c: Cursor; expected: LengTagKind): bool {.tagDispatch.} =
+  when expected is LengStmt:    c.stmtKind == expected
+  elif expected is LengExpr:    c.exprKind == expected
+  elif expected is LengType:    c.typeKind == expected
+  elif expected is LengOther:   c.substructureKind == expected
+  elif expected is LengPragma:  c.pragmaKind == expected
+  elif expected is LengSym:     c.symKind == expected
   else:                         false
 
-template skip*(c: var Cursor; expected: NifcTagKind) {.tagDispatch.} =
+template skip*(c: var Cursor; expected: LengTagKind) {.tagDispatch.} =
   assert kindMatches(c, expected),
     "skip " & $expected & ": cursor at kind=" & $c.kind
   skip c
 
-template inc*(c: var Cursor; expected: NifcTagKind) {.tagDispatch.} =
+template inc*(c: var Cursor; expected: LengTagKind) {.tagDispatch.} =
   assert kindMatches(c, expected),
     "inc " & $expected & ": cursor at kind=" & $c.kind
   inc c
 
-template into*(c: var Cursor; expected: NifcTagKind; body: untyped) {.tagDispatch.} =
+template into*(c: var Cursor; expected: LengTagKind; body: untyped) {.tagDispatch.} =
   assert kindMatches(c, expected),
     "into " & $expected & ": cursor at kind=" & $c.kind
   into c:
     body
 
-template loopInto*(c: var Cursor; expected: NifcTagKind; body: untyped) {.tagDispatch.} =
+template loopInto*(c: var Cursor; expected: LengTagKind; body: untyped) {.tagDispatch.} =
   assert kindMatches(c, expected),
     "loopInto " & $expected & ": cursor at kind=" & $c.kind
   loopInto c:

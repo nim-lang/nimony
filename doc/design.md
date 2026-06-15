@@ -37,7 +37,7 @@ The phases of compilation are:
 9. Inject destructors (hexer).
 10. Map builtins like `new` and `+` to "compiler procs" (hexer).
 11. Translate exception handling (hexer).
-12. Generate NIFC code (hexer).
+12. Generate Leng code (hexer).
 
 These phases have been collected into different tools with dedicated names.
 
@@ -107,33 +107,19 @@ As previously mentioned, the hexer also does:
 - Iterator inlining.
 - Eliminate closures by performing "lambda lifting".
 - Inject pointer derefs and implement "pass by reference".
-- Translate exception handling constructs to NIFC's supported error handling.
-- The final NIFC code generation.
+- Translate exception handling constructs to Leng's supported error handling.
+- The final Leng code generation.
 
 <div style="page-break-after: always;"></div>
 
-### NIFC code generator
+### Leng code generator
 
-The primary task left for the NIFC generator is "expansion". It performs backend tasks that need to operate on multiple NIF files at once:
+The primary task left for the Leng generator is "expansion". It performs backend tasks that need to operate on multiple NIF files at once:
 
 - It copies used imported symbols into the current NIF file. As a fix point operation
   until no foreign symbols are left.
 - `importc`'ed symbols are replaced by their `.c` variants.
 - `importc`'ed symbols might lead to `(incl "file.h")` injections.
-- Nim types must be translated to NIFC types.
+- Nim types must be translated to Leng types.
 - Types and procs must be moved to toplevel statements.
 
-
-## NIFC: C/C++ Backends based on NIF
-
-NIFC is a dialect of NIF designed to be very close to C. Its benefits are:
-
-- NIFC is easier to generate than generating C/C++ code directly because:
-  1. It uses NIF's regular syntax.
-  2. It allows for an arbitrary order of declarations without the need for forward declarations.
-- NIFC improves upon C's quirky array and pointer type confusion by clearly distinguishing
-  between `array` which is always a value type, `ptr` which always points to a
-  single element and `aptr` which points to an array of elements.
-- Inheritance is modelled directly in the type system as opposed to C's quirky type aliasing
-  rule that is concerned with aliasings between a struct and its first element.
-- NIFC can also produce C++ code without information loss because inheritance and exception handling are directly supported.

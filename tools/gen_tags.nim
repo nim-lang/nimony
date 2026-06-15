@@ -9,7 +9,7 @@ type
   EnumList = enum
     NiflerKind,
     CallConv,
-    NifcExpr, NifcStmt, NifcType, NifcOther, NifcPragma, NifcTypeQualifier, NifcSym,
+    LengExpr, LengStmt, LengType, LengOther, LengPragma, LengTypeQualifier, LengSym,
     NimonyExpr, NimonyStmt, NimonyType, NimonyOther, NimonyPragma, NimonySym, HookKind, ControlFlowKind,
     NifIndexKind,
     NjvlKind
@@ -18,13 +18,13 @@ proc toSuffix(e: EnumList): (string, string) =
   case e
   of NiflerKind: ("L", "None")
   of CallConv: ("", "NoCallConv")
-  of NifcExpr: ("C", "NoExpr")
-  of NifcStmt: ("S", "NoStmt")
-  of NifcType: ("T", "NoType")
-  of NifcOther: ("U", "NoSub")
-  of NifcPragma: ("P", "NoPragma")
-  of NifcTypeQualifier: ("Q", "NoQualifier")
-  of NifcSym: ("Y", "NoSym")
+  of LengExpr: ("C", "NoExpr")
+  of LengStmt: ("S", "NoStmt")
+  of LengType: ("T", "NoType")
+  of LengOther: ("U", "NoSub")
+  of LengPragma: ("P", "NoPragma")
+  of LengTypeQualifier: ("Q", "NoQualifier")
+  of LengSym: ("Y", "NoSym")
   of NimonyExpr: ("X", "NoExpr")
   of NimonyStmt: ("S", "NoStmt")
   of NimonyType: ("T", "NoType")
@@ -163,7 +163,7 @@ proc genTags(inp: File) =
 
   writeModel "src/models/nifler", enumDecls, NiflerKind, NiflerKind
   writeModel "src/models/callconv", enumDecls, CallConv, CallConv
-  writeModel "src/models/nifc", enumDecls, NifcExpr, NifcSym
+  writeModel "src/models/leng", enumDecls, LengExpr, LengSym
   writeModel "src/models/nimony", enumDecls, NimonyExpr, ControlFlowKind
   writeModel "src/models/nifindex", enumDecls, NifIndexKind, NifIndexKind
   writeModel "src/models/njvl", enumDecls, NjvlKind, NjvlKind

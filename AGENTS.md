@@ -5,10 +5,10 @@ pipeline is split into tools and phases:
 
 - Nifler: parses Nim to NIF.
 - Nimony: semantic checking and front-end lowering.
-- Hexer: lowering passes and NIFC generation.
-- NIFC: C/C++ backend based on NIF.
+- Hexer: lowering passes and Leng generation.
+- Lengc: C/C++ backend based on NIF.
 
-When debugging compiler behavior, assume `nifler`, `nifmake`, and `nifc` are
+When debugging compiler behavior, assume `nifler`, `nifmake`, and `lengc` are
 stable. Most problems tend to be in `Nimony` or `Hexer`.
 
 ## Quick Debug Workflow
@@ -25,8 +25,8 @@ stable. Most problems tend to be in `Nimony` or `Hexer`.
 ## Where to Look
 
 - `src/nimony/` for semantic analysis and front-end phases.
-- `src/hexer/` for lowering passes and NIFC generation steps.
-- `src/nifler/` and `src/nifc/` only when evidence points there.
+- `src/hexer/` for lowering passes and Leng generation steps.
+- `src/nifler/` and `src/lengc/` only when evidence points there.
 - `src/hastur.nim` for test/build tooling and command behavior.
 
 ## Debugging Tips

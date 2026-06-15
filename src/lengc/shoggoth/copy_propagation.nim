@@ -60,7 +60,7 @@
 import std / [tables, sets, hashes, assertions]
 include "../../lib" / nifprelude
 import nifstreams, nifcursors
-import ".." / nifc_model
+import ".." / leng_model
 import ".." / ".." / models / tags        # DiscardTagId
 import trackers, patchsets_legacy, nifrender
 

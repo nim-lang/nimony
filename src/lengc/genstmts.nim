@@ -1,6 +1,6 @@
 #
 #
-#           NIFC Compiler
+#           Leng Compiler
 #        (c) Copyright 2024 Andreas Rumpf
 #
 #    See the file "license.txt", included in this
@@ -61,7 +61,7 @@ proc genIf(c: var GeneratedCode; n: var Cursor) =
 proc getVirtualGuard(c: var GeneratedCode; n: Cursor): (SymId, bool) =
   result = (SymId(0), false)
   var n = n
-  # NIFC requirement: The last usage of a virtual flag
+  # Leng requirement: The last usage of a virtual flag
   # must be annotated with (lab).
   if n.exprKind == NotC:
     inc n
@@ -434,10 +434,10 @@ proc genKeepOverflow(c: var GeneratedCode; n: var Cursor) =
       gcc.add "mul"
     of DivC:
       gcc.add "div_"
-      prefix = "_Qnifc_"
+      prefix = "_Qlengc_"
     of ModC:
       gcc.add "mod_"
-      prefix = "_Qnifc_"
+      prefix = "_Qlengc_"
     else:
       error c.m, "expected arithmetic operation but got: ", n
     var isLongLong = false

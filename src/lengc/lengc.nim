@@ -1,13 +1,13 @@
 #
 #
-#           NIFC Compiler
+#           Leng Compiler
 #        (c) Copyright 2024 Andreas Rumpf
 #
 #    See the file "license.txt", included in this
 #    distribution, for details about the copyright.
 #
 
-## NIFC driver program.
+## Leng driver program.
 
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
 import codegen, llvmcodegen, noptions, symparser
@@ -15,11 +15,11 @@ import ".." / lib / vfs
 
 const
   Version = "0.2.0"
-  Usage = "NIFC Compiler. Version " & Version & """
+  Usage = "Leng Compiler. Version " & Version & """
 
   (c) 2024 Andreas Rumpf
 Usage:
-  nifc [options] [command] [arguments]
+  lengc [options] [command] [arguments]
 Command:
   c|cpp|llvm file.nif [file2.nif]    convert NIF files to C|C++|LLVM IR
 
@@ -207,4 +207,4 @@ proc handleCmdLine() =
 
 when isMainModule:
   handleCmdLine()
-  dumpVfsProfile("nifc")
+  dumpVfsProfile("lengc")

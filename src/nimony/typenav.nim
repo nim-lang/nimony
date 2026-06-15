@@ -95,7 +95,7 @@ proc getInitValueImpl(c: var TypeCache; s: SymId): Cursor =
     elif local.kind == EfldY:
       # Enum field values are stored as `(tup <ord> <str>)`; the caller wants
       # the ordinal literal so constant folding can inline it at use sites
-      # (e.g. a `case` label emitted by NIFC must be an integer constant).
+      # (e.g. a `case` label emitted by Lengc must be an integer constant).
       result = local.val
       if result.kind == ParLe and result.exprKind == TupX:
         inc result

@@ -15,7 +15,7 @@ include ".." / lib / compat2
 
 import ".." / lib / symparser
 import dce1
-import ".." / nifc / [nifc_model]
+import ".." / lengc / [leng_model]
 
 type
   ResolveTable = Table[string, SymId]

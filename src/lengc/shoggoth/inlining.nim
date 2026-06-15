@@ -12,7 +12,7 @@
 
 import std / [tables, assertions]
 include "../../lib" / nifprelude
-import nifstreams, nifcursors, nifc_model
+import nifstreams, nifcursors, leng_model
 import ".." / lib / symparser
 import "../../nimony" / [nimony_model, decls, programs, typenav, sizeof]
 

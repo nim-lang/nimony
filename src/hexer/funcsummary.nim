@@ -14,7 +14,7 @@
 import std / [assertions, tables]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / nifc / [nifc_model]
+import ".." / lengc / [leng_model]
 
 type
   ParamSummary* = object

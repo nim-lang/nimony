@@ -1652,7 +1652,7 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
         var thisProc = asRoutine(n)
         # Closure iterators surface as a first-class `itertype` value. Same
         # shape as proctype (nilTag, params, retType, pragmas) — sigmatch /
-        # nifcgen route both through the same paths.
+        # lengcgen route both through the same paths.
         let isClosureIter =
           s.kind == IteratorY and hasPragma(thisProc.pragmas, ClosureP)
         var procTypeBuf = createTokenBuf()
@@ -3356,7 +3356,7 @@ proc semArrayConstr(c: var SemContext; dest: var TokenBuf; it: var Item) =
     # `(aconstr (uarray T) e1 …)` is the internal IR for a static array
     # literal of unspecified length (used by exprexec's ptr-to-nif rule
     # wrapped in `addr` to form the seq's `data` pointer). Element type
-    # is the uarray's inner T; hexer's nifcgen hoists the literal to an
+    # is the uarray's inner T; hexer's lengcgen hoists the literal to an
     # anonymous module-level static array and rewrites the surrounding
     # `addr` to point at it.
     elem.typ = t

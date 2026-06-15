@@ -38,15 +38,15 @@ proc parseTrack(s: string; mode: TrackMode): TrackPosition =
 
 proc parseCommonOption*(key, val: string; config: var NifConfig;
                         moduleFlags: var set[ModuleFlag];
-                        forwardArg: var bool; forwardArgNifc: var bool;
+                        forwardArg: var bool; forwardArgLengc: var bool;
                         helpMsg = ""; versionMsg = ""): bool =
   ## Parses common command-line options shared between nimony and nimsem.
   ## Returns true if the option was recognized and handled.
   ## Sets forwardArg to true if the option should be forwarded to sub-tools.
-  ## Sets forwardArgNifc to true if the option should be forwarded to nifc.
+  ## Sets forwardArgLengc to true if the option should be forwarded to lengc.
   ## Optional helpMsg and versionMsg provide custom help/version text.
   forwardArg = true
-  forwardArgNifc = false
+  forwardArgLengc = false
   result = true
 
   case normalize(key)
@@ -82,7 +82,7 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
       quit "unknown OS: " & val
   of "app":
     forwardArg = true  # Must forward to nimsem for defines to work!
-    forwardArgNifc = true
+    forwardArgLengc = true
     case normalize(val)
     of "console":
       config.appType = appConsole
@@ -103,7 +103,7 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     config.baseDir = val
   of "nimcache":
     config.nifcachePath = val
-    forwardArgNifc = false
+    forwardArgLengc = false
   of "out", "o":
     # `--out:PATH` (alias `-o:PATH`) sets the executable's output path,
     # mirroring Nim. The path is split into a directory portion and
@@ -119,13 +119,13 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     config.outFile = f.name & f.ext
     config.outDir = f.dir
     forwardArg = false
-    forwardArgNifc = false
+    forwardArgLengc = false
   of "outdir":
     # `--outdir:DIR` — output directory, mirrors Nim. Combine with
     # `--out:NAME` (in that order) to control both name and location.
     config.outDir = val
     forwardArg = false
-    forwardArgNifc = false
+    forwardArgLengc = false
   of "usages":
     if config.toTrack.mode == TrackNone:
       config.toTrack = parseTrack(val, TrackUsages)

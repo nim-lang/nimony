@@ -1,11 +1,11 @@
-NIFC dialect
+Leng dialect
 ============
 
-NIFC is a dialect of [NIF](https://github.com/nim-lang/nifspec/blob/master/doc/nif-spec.md) designed to be very close to C. Its benefits are:
+Leng is a dialect of [NIF](https://github.com/nim-lang/nifspec/blob/master/doc/nif-spec.md) designed to be good midlevel IR where generics have been instantiated etc. Its benefits are:
 
 - Easier to generate than generating C/C++ code directly.
 - Has all the NIF related tooling support.
-- NIFC improves upon C's quirky array and pointer type confusion by clearly distinguishing
+- Leng improves upon C's quirky array and pointer type confusion by clearly distinguishing
   between `array` which is always a value type, `ptr` which always points to a
   single element and `aptr` which points to an array of elements.
 - Inheritance is modelled directly in the type system as opposed to C's quirky type aliasing
@@ -16,13 +16,13 @@ NIFC is a dialect of [NIF](https://github.com/nim-lang/nifspec/blob/master/doc/n
 Module system
 -------------
 
-NIFC uses NIF's module system. Read the [nifspec.md](https://github.com/nim-lang/nifspec/blob/master/doc/nif-spec.md) for more details.
+Leng uses NIF's module system. Read the [nifspec.md](https://github.com/nim-lang/nifspec/blob/master/doc/nif-spec.md) for more details.
 
 
 Name mangling
 -------------
 
-Name mangling is performed by NIFC. The following assumptions are made:
+Name mangling is performed by Leng. The following assumptions are made:
 
 - A NIF symbol has the form `identifier.<number>.modulesuffix` (if it is a top level entry)
   or `identifier.<number>` (for a local symbol). For example `replace.2.strutils` would be the
@@ -73,7 +73,7 @@ or not!) are encoded via this table:
 Grammar
 -------
 
-Generated NIFC code must adhere to this grammar. For better readability `'('` and `')'` are written
+Generated Leng code must adhere to this grammar. For better readability `'('` and `')'` are written
 without quotes and `[]` is used for grouping.
 
 ```
@@ -272,8 +272,8 @@ Notes:
 - `case` is mapped to a `switch` but the generation of `break` is handled
   automatically.
 - `ro` stands for `readonly` and is C's notion of the `const` type qualifier.
-  Not to be confused with NIFC's `const` which introduces a named constant.
-- C allows for `typedef` within proc bodies. NIFC does not, a type declaration must
+  Not to be confused with Leng's `const` which introduces a named constant.
+- C allows for `typedef` within proc bodies. Leng does not, a type declaration must
   always occur at the top level.
 - String literals within `emit` produce verbatim C code, not a C string literal.
 - For `array` the element type comes before the number of elements.
@@ -289,11 +289,11 @@ Notes:
   final executable file.
 - `attr "abc"` annotates a symbol with `__attribute__(abc)`.
 - `cast` is mapped to a C type cast. Bit reinterpretation casts (e.g. `int` to `float`)
-  are lowered to `copyMem` calls before reaching NIFC.
+  are lowered to `copyMem` calls before reaching Leng.
 - `conv` is a value preserving type conversion between numeric types.
 - `array` is mapped to a struct with an array inside so that arrays gain value semantics.
   Hence arrays can only be used within a `type` environment and are nominal types.
-  A NIFC code generator has to ensure that e.g. `(type :MyArray.T . (array T 4))` is only
+  A Leng code generator has to ensure that e.g. `(type :MyArray.T . (array T 4))` is only
   emitted once.
 - `type` can only be used to introduce a name for a nominal type (that is a type which
   is only compatible to itself) or for a proc type for code compression purposes. Arbitrary
@@ -311,8 +311,8 @@ Notes:
 Scopes
 ------
 
-NIFC effectively has the same scoping rules as C: C's `{ ... }` curly brackets introduce
-a new local scope and so does NIFC's `StmtList` non-terminal. The grammar indicates with
+Leng effectively has the same scoping rules as C: C's `{ ... }` curly brackets introduce
+a new local scope and so does Leng's `StmtList` non-terminal. The grammar indicates with
 a `SCOPE` keyword that otherwise has no meaning and should be ignored by a parser.
 
 Extra scopes can be introduced with the `(scope ...)` construct which produces `{}`. Note
@@ -325,7 +325,7 @@ Scopes can be used by primitive code generators to produce significantly better 
 Inheritance
 -----------
 
-NIFC directly supports inheritance in its object system. However, no runtime checks are implied
+Leng directly supports inheritance in its object system. However, no runtime checks are implied
 and RTTI must be implemented manually, if required.
 
 - The `object` declaration allows for inheritance. Its first child is the
@@ -338,21 +338,21 @@ and RTTI must be implemented manually, if required.
 Declaration order
 -----------------
 
-NIFC allows for an arbitrary order of declarations without the need for forward declarations.
+Leng allows for an arbitrary order of declarations without the need for forward declarations.
 
 
 Include files
 -------------
 
-NIFC generates the required include files by inspecting the `(header)` pragmas.
+Leng generates the required include files by inspecting the `(header)` pragmas.
 
 
 Exceptions
 ----------
 
-NIFC supports two kinds of exception handling primitives.
+Leng supports two kinds of exception handling primitives.
 
-- `try` and `raise` Constructs: These must be used in C++ mode and are translated into their C++ equivalents. It is the NIFC caller’s responsibility to ensure they are not emitted when C++ support is disabled. The `try` construct follows the format `(try <actions> <onerr> <finally>)`. The `raise` construct can generate a C++ `throw` statement.
+- `try` and `raise` Constructs: These must be used in C++ mode and are translated into their C++ equivalents. It is the Leng caller’s responsibility to ensure they are not emitted when C++ support is disabled. The `try` construct follows the format `(try <actions> <onerr> <finally>)`. The `raise` construct can generate a C++ `throw` statement.
 
 - `errv` and `onerr` Constructs: These have to be used when C++ code is not generated. Calls that may raise an exception must be wrapped in `(onerr)`. The format is `(onerr <action> <f> <args>)`, where action is typically a `jmp` instruction. In C++ exception handling mode, action should always be a dot `.`. The special variable `(errv)` of type `bool` can be set using `(asgn)` and queried like other locations, e.g., `(asgn (errv) (true)) # set the error bit`.
 
@@ -362,7 +362,7 @@ Functions can and must be annotated with a `(raises)` pragma to indicate that th
 Overflow checking
 -----------------
 
-NIFC supports overflow checking for arithmetic operations. The `(ovf)` tag is used
+Leng supports overflow checking for arithmetic operations. The `(ovf)` tag is used
 to access the overflow flag. Arithmetic operations subject to overflow checking must
 be done with the `(keepovf)` construct:
 
@@ -392,7 +392,7 @@ This is not optional! It is required for reliable native code generation.
 NJ instructions
 ---------------
 
-NIFC has grown support for NJ ("No Jumps") instructions. These are lower-level control flow
+Leng has grown support for NJ ("No Jumps") instructions. These are lower-level control flow
 primitives that can be more efficient than structured `if`/`while` statements.
 
 ### store
