@@ -2510,7 +2510,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
   let destfileName = c.dir / c.main & ".x.nif"
 
   var outputBuf = makeOutput(c, cdest, rootInfo)
-  optimizeNifcOutput(outputBuf, c.main, c.bits)
+  optimizeLengOutput(outputBuf, c.main, c.bits)
   try:
     writeFile outputBuf, destfileName, OnlyIfChanged
   except:

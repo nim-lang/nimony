@@ -134,9 +134,9 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
 
   result = ensureMove(pass.dest)
 
-proc optimizeNifcOutput*(buf: var TokenBuf; moduleSuffix: string; bits: int) =
-  ## Optimizations over the generated NIFC tree. These run after `nifcgen`
-  ## has emitted the final NIFC module, so they never see pre-NIFC constructs
+proc optimizeLengOutput*(buf: var TokenBuf; moduleSuffix: string; bits: int) =
+  ## Optimizations over the generated Lengc tree. These run after `lengcgen`
+  ## has emitted the final Lengc module, so they never see pre-Leng constructs
   ## such as try/finally.
   runArcopt(buf, moduleSuffix, bits)
   annotateFunctionSummaries(buf)

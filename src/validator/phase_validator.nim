@@ -32,7 +32,7 @@ import ".." / nimony / reporters  # infoToStr
 
 const
   rawTagsMd = staticRead("../../doc/tags.md")
-  ## The grammar for Nimony/NIFC tags; single source of truth.
+  ## The grammar for Nimony/Leng tags; single source of truth.
 
 let
   grammar* = parseTagsMdFromString(rawTagsMd)
@@ -45,7 +45,7 @@ let
 type
   PhaseKind* = enum
     phasePostSem        ## after `src/nimony/sem.nim`
-    phasePostNifcgen    ## after hexer -> NIFC
+    phasePostLengcgen   ## after hexer -> Leng
 
   Phase* = object
     name*: string
@@ -61,7 +61,7 @@ proc postSemAllowed(raw: TagEnum): bool =
     rawTagIsNimonySym(raw) or rawTagIsNimonyPragma(raw) or
     rawTagIsCallConv(raw)
 
-proc postNifcgenAllowed(raw: TagEnum): bool =
+proc postLengcgenAllowed(raw: TagEnum): bool =
   rawTagIsLengExpr(raw) or rawTagIsLengStmt(raw) or
     rawTagIsLengType(raw) or rawTagIsLengOther(raw) or
     rawTagIsLengSym(raw) or rawTagIsLengPragma(raw) or
@@ -70,8 +70,8 @@ proc postNifcgenAllowed(raw: TagEnum): bool =
 proc postSemPhase*(): Phase =
   Phase(name: "post-sem", kind: phasePostSem, allowed: postSemAllowed)
 
-proc postNifcgenPhase*(): Phase =
-  Phase(name: "post-nifcgen", kind: phasePostNifcgen, allowed: postNifcgenAllowed)
+proc postLengcgenPhase*(): Phase =
+  Phase(name: "post-lengcgen", kind: phasePostLengcgen, allowed: postLengcgenAllowed)
 
 # ---------------------------------------------------------------------------
 # Cursor classification

@@ -19,7 +19,7 @@
 
 import std / [os, assertions, strutils, syncio]
 import ".." / ".." / "lib" / nifcoreparse   # parse/serialize; re-exports nifcore
-import ".." / ".." / "lib" / nifcdecl        # createNifcTagPool, stmtKind, takeProcDecl
+import ".." / ".." / "lib" / nifcdecl        # createLengTagPool, stmtKind, takeProcDecl
 import induction_variables                     # runInductionVariables (live pass)
 import imi_bridge                             # runImi (inter-module inliner, via nifcursors)
 
@@ -109,12 +109,12 @@ proc processFile*(input, output: string; verify = false): Stats =
   let imiNif = runImi(input, suffix, splitFile(input).dir, imiChanged)
   if imiChanged: inc st.intermodChanged
   # 2. Reparse into nifcore for the per-body passes.
-  var src = parseFromBuffer(imiNif, suffix, 4000, sharedTags = createNifcTagPool())
+  var src = parseFromBuffer(imiNif, suffix, 4000, sharedTags = createLengTagPool())
   var optimized = optimizeModule(src, suffix, st)
   checkWellFormed(optimized)
   writeFile(output, toModuleString(optimized, "." & extractModuleSuffix(output)))
   if verify:
-    var back = parseFromFile(output, 4000, sharedTags = createNifcTagPool())
+    var back = parseFromFile(output, 4000, sharedTags = createLengTagPool())
     checkWellFormed(back)
   result = st
 
@@ -122,10 +122,10 @@ when isMainModule:
   # Round-trip self-test: with `optimizeBody` an identity stage, a rebuilt
   # module must serialize byte-identically to the parsed original.
   proc origText(s: string): string =
-    var b = parseFromBuffer(s, "t", 100, sharedTags = createNifcTagPool())
+    var b = parseFromBuffer(s, "t", 100, sharedTags = createLengTagPool())
     toString(b)
   proc rebuiltText(s: string): string =
-    var b = parseFromBuffer(s, "t", 100, sharedTags = createNifcTagPool())
+    var b = parseFromBuffer(s, "t", 100, sharedTags = createLengTagPool())
     var st = Stats()
     var o = optimizeModule(b, "t", st)
     toString(o)
