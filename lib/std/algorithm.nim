@@ -141,9 +141,7 @@ proc sorted*[T](a: openArray[T]; cmp: proc(x, y: T): int;
     assert b == @[1, 2, 3, 4, 5]
     assert c == @[5, 4, 3, 2, 1]
     assert d == @["adam", "brian", "cat", "dande"]
-  result = newSeqOfCap[T](a.len)
-  for i in 0 .. a.high:
-    result.add a[i]
+  result = @a
   sort(result, cmp, order)
 
 proc isSorted*[T](a: openArray[T];
