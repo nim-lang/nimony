@@ -18,6 +18,13 @@ func `=destroy`*[T](s: seq[T]) =
       inc i
     dealloc s.data
 
+func destroyUninit*[T](s: var seq[T]) {.inline.} =
+  ## Call this only if all elements of `s` are uninitialized
+  if s.data != nil:
+    dealloc s.data
+    s.data = nil
+    s.len = 0
+
 func `=wasMoved`*[T](s: var seq[T]) {.inline.} =
   s.len = 0
   s.data = nil

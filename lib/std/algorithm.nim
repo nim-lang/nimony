@@ -20,16 +20,7 @@ func `*`*(x: int; order: SortOrder): int {.inline.} =
   var y = order.ord - 1
   result = (x xor y) - y
 
-template `<-`(a, b) =
-  #when defined(gcDestructors):
-  when true:
-    a = move b
-  elif onlySafeCode:
-    shallowCopy(a, b)
-  else:
-    copyMem(addr(a), addr(b), sizeof(T))
-
-proc mergeAlt[T](a: var openArray[T]; b: var seq[T];
+proc mergeAlt[T](a, b: var openArray[T];
                  lo, m, hi: int;
                  cmp: proc (x, y: T): int;
                  order: SortOrder) =
@@ -37,15 +28,19 @@ proc mergeAlt[T](a: var openArray[T]; b: var seq[T];
   # 1 2 3 4 ## 5 6 7 8
   # -> O(n) for sorted arrays.
   # On random data this saves up to 40% of mergeAlt calls.
+
+  # all values in `b` is uninitialized
+  # don't call destructor to `b[i]`
   if cmp(a[m], a[m+1]) * order <= 0: return
   var j = lo
-  # copy a[j..m] into b:
+  # move a[j..m] into b:
   assert j <= m
   #when onlySafeCode:
   when true:
-    b.shrink(0)
+    var bb = 0
     while j <= m:
-      b.add a[j]
+      swap b[bb], a[j]
+      inc(bb)
       inc(j)
   else:
     copyMem(addr(b[0]), addr(a[j]), sizeof(T)*(m-j+1))
@@ -55,21 +50,23 @@ proc mergeAlt[T](a: var openArray[T]; b: var seq[T];
   # copy proper element back:
   while k < j and j <= hi:
     if cmp(b[i], a[j]) * order <= 0:
-      a[k] <- b[i]
+      swap a[k], b[i]
       inc(i)
     else:
-      a[k] <- a[j]
+      swap a[k], a[j]
       inc(j)
     inc(k)
   # copy rest of b:
   #when onlySafeCode:
   when true:
     while k < j:
-      a[k] <- b[i]
+      swap a[k], b[i]
       inc(k)
       inc(i)
   else:
     if k < j: copyMem(addr(a[k]), addr(b[i]), sizeof(T)*(j-k))
+
+  # all uninitialized values moved from `b` to `a` returned to `b`
 
 proc sort*[T](a: var openArray[T];
               cmp: proc (x, y: T): int;
@@ -114,8 +111,9 @@ proc sort*[T](a: var openArray[T];
       else: -1
     sort(d, myCmp)
     assert d == ["fo", "qux", "boo", "barr"]
+
   var n = a.len
-  var b = newSeqOfCap[T](n div 2)
+  var b = newSeqUninit[T](n div 2)
   var s = 1
   while s < n:
     var m = n-1-s
@@ -123,6 +121,8 @@ proc sort*[T](a: var openArray[T];
       mergeAlt(a, b, max(m-s+1, 0), m, m+s, cmp, order)
       dec(m, s*2)
     s = s*2
+
+  destroyUninit(b)
 
 proc sorted*[T](a: openArray[T]; cmp: proc(x, y: T): int;
                 order = SortOrder.Ascending): seq[T] =
