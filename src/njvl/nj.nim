@@ -9,12 +9,12 @@
 
 ## Compiles Nimony IR to a simpler IR called [NJVL](doc/njvl.md) that does not contain jumps.
 
-import std / [tables, hashes, sets, assertions, syncio]
+import std / [tables, hashes, sets, assertions, syncio, algorithm]
 when defined(nimony):
   {.feature: "lenientnils".}
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes]
+import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes, xints]
 import ".." / hexer / [xelim, mover, passes]
 import njvl_model
 
@@ -1026,6 +1026,180 @@ proc trGuardedStmtsBlock(c: var Context; dest: var TokenBuf; n: var Cursor; hasP
   trGuardedStmts c, b, dest, n, false
   closeBasicBlock c, b, dest
 
+const
+  CaseBinarySearchThreshold = 16
+    ## Lower the linear `of`-comparison chain to a balanced binary-search tree
+    ## once a case has more than this many discrete searchable branches. The
+    ## linear chain produces an N-deep nested `ite` which makes the recursive
+    ## NJVL passes (vl.nim trIte, contracts_njvl traverseIte) and nifc genstmts
+    ## overflow the call-depth limit for very large enums (e.g. Vulkan's
+    ## 1145-member VkStructureType). A balanced tree nests only O(log N) deep.
+
+type
+  CaseEntry = object
+    val: xint        ## ordinal value of this branch (used to sort)
+    valTok: Cursor   ## cursor at the single value token inside `(ranges <val>)`
+    body: Cursor     ## cursor at the branch body (the statement after `ranges`)
+
+proc litOrdinal(val: Cursor): xint =
+  ## Ordinal value of a case label. Labels are integer/char literals, or enum
+  ## fields still in symbolic form (NJVL runs before enum fields are lowered to
+  ## their ordinals). Anything else — a range, a conversion, a non-constant
+  ## expression — yields NaN so we fall back to the linear lowering.
+  case val.kind
+  of CharLit: result = createXint(uint64(val.uoperand))
+  of IntLit: result = createXint(pool.integers[val.intId])
+  of UIntLit: result = createXint(pool.uintegers[val.uintId])
+  of Symbol:
+    # Enum field: its declaration is `(efld … (tup <counter> <name>))`; the
+    # counter is the ordinal. Mirrors expreval.nim's Symbol/EfldY handling.
+    let res = tryLoadSym(val.symId)
+    if res.status == LacksNothing and res.decl.symKind == EfldY:
+      var fv = asLocal(res.decl).val
+      if fv.kind == ParLe: # (tup <counter> <name>)
+        inc fv             # -> counter
+        result = litOrdinal(fv)
+      else:
+        result = createNaN()
+    else:
+      result = createNaN()
+  else: result = createNaN()
+
+proc declaresSymbol(body: Cursor): bool =
+  ## True if `body` contains any symbol definition. The catch-all body is
+  ## duplicated at every no-match leaf of the search tree, so it must not
+  ## introduce a local (that would define the same SymId several times). When
+  ## it does we fall back to the linear lowering, which emits it once.
+  var n = body
+  if n.kind != ParLe: return false
+  var nested = 0
+  while true:
+    case n.kind
+    of SymbolDef: return true
+    of ParLe: inc nested
+    of ParRi:
+      dec nested
+      if nested == 0: break
+    else: discard
+    inc n
+  return false
+
+proc emitGuardedInto(c: var Context; dest: var TokenBuf; body: Cursor; info: PackedLineInfo) =
+  ## Emit one branch/catch-all body into an already-open `(stmts ...)`.
+  ## `body` is a fresh cursor copy, so the catch-all may be emitted at every
+  ## no-match leaf without disturbing the caller's cursor.
+  openScope c
+  var nn = body
+  trGuardedStmtsBlock c, dest, nn, true
+  closeScope c, dest, info
+
+proc emitCmp(c: var Context; dest: var TokenBuf; op: ExprKind; selector: SymId;
+             selectorType, valTok: Cursor; info: PackedLineInfo) =
+  ## Emit `(op selectorType selector value)`, matching `buildCaseCondition`.
+  dest.copyIntoKind op, info:
+    dest.copyTree selectorType
+    dest.addSymUse selector, info
+    dest.copyTree valTok
+
+proc emitCaseTree(c: var Context; dest: var TokenBuf; entries: seq[CaseEntry];
+                  lo, hi: int; selector: SymId; selectorType, catchAll: Cursor;
+                  info: PackedLineInfo; isRoot: bool)
+
+proc emitEqNode(c: var Context; dest: var TokenBuf; entries: seq[CaseEntry];
+                pivot, hi: int; selector: SymId; selectorType, catchAll: Cursor;
+                info: PackedLineInfo; isRoot: bool) =
+  ## Emit `(ite (eq sel entries[pivot]) (stmts body) (stmts <search pivot+1..hi>))`.
+  ## The else searches the values above the pivot; an empty range there falls
+  ## through to the catch-all.
+  dest.add tagToken((if isRoot: "itec" else: "ite"), info)
+  emitCmp c, dest, EqX, selector, selectorType, entries[pivot].valTok, info
+  dest.copyIntoKind StmtsS, info:
+    emitGuardedInto c, dest, entries[pivot].body, info
+  dest.copyIntoKind StmtsS, info:
+    emitCaseTree c, dest, entries, pivot+1, hi, selector, selectorType, catchAll, info, false
+  dest.addParRi()
+
+proc emitCaseTree(c: var Context; dest: var TokenBuf; entries: seq[CaseEntry];
+                  lo, hi: int; selector: SymId; selectorType, catchAll: Cursor;
+                  info: PackedLineInfo; isRoot: bool) =
+  ## Emit a balanced binary-search dispatch over `entries[lo..hi]` (sorted by
+  ## ordinal) into the current open `(stmts ...)`. The build recursion is
+  ## O(log N) deep and the emitted `ite` nesting is O(log N) deep, so the
+  ## downstream recursive passes no longer overflow.
+  if lo > hi:
+    # Empty interval: the selector matched no branch -> run the catch-all.
+    emitGuardedInto c, dest, catchAll, info
+    return
+  if lo == hi:
+    # Single value: (ite (eq sel v) (stmts body) (stmts catchAll))
+    emitEqNode c, dest, entries, lo, hi, selector, selectorType, catchAll, info, isRoot
+    return
+  let mid = (lo + hi) div 2
+  # (ite (lt sel pivot)
+  #    (stmts <left subtree, values below pivot>)
+  #    (stmts (ite (eq sel pivot) (stmts body) (stmts <right subtree>))))
+  dest.add tagToken((if isRoot: "itec" else: "ite"), info)
+  emitCmp c, dest, LtX, selector, selectorType, entries[mid].valTok, info
+  dest.copyIntoKind StmtsS, info:
+    emitCaseTree c, dest, entries, lo, mid-1, selector, selectorType, catchAll, info, false
+  dest.copyIntoKind StmtsS, info:
+    emitEqNode c, dest, entries, mid, hi, selector, selectorType, catchAll, info, false
+  dest.addParRi() # lt node
+
+proc tryBinarySearchCase(c: var Context; dest: var TokenBuf; n: var Cursor;
+                         selector: SymId; selectorType: Cursor;
+                         finalBranch: Cursor; info: PackedLineInfo): bool =
+  ## If the case is a large ordinal dispatch over discrete single values, emit a
+  ## balanced binary-search tree and advance `n` past the whole case. Returns
+  ## false (without touching `dest`/`n`) for ranges, multi-value branches, too
+  ## few branches, or anything else — the caller then uses the linear lowering.
+  var entries: seq[CaseEntry] = @[]
+  var catchAll = default(Cursor)
+  var haveCatchAll = false
+  var scan = n
+  while scan.substructureKind == OfU:
+    var br = scan
+    inc br # into `of` -> at `(ranges`
+    if br.substructureKind != RangesU:
+      return false
+    var rg = br
+    inc rg # into `ranges` -> first value
+    let valTok = rg
+    let ordv = litOrdinal(rg)
+    skip rg # past the value
+    let singleVal = rg.kind == ParRi and not ordv.isNaN # exactly one ordinal, no range
+    skip br # past `ranges` -> body
+    let body = br
+    if scan == finalBranch:
+      catchAll = body
+      haveCatchAll = true
+    elif singleVal:
+      entries.add CaseEntry(val: ordv, valTok: valTok, body: body)
+    else:
+      return false
+    skip scan # past the whole `of`
+  if scan.substructureKind == ElseU:
+    var eb = scan
+    inc eb # into `else` -> body
+    catchAll = eb
+    haveCatchAll = true
+    skip scan # past the whole `else`
+  if not haveCatchAll or entries.len <= CaseBinarySearchThreshold:
+    return false
+  # The catch-all is duplicated at the search tree's no-match leaves, so it must
+  # not declare locals (which would define the same SymId more than once).
+  if declaresSymbol(catchAll):
+    return false
+
+  sort(entries, proc (a, b: CaseEntry): int =
+    if a.val < b.val: -1 elif a.val == b.val: 0 else: 1)
+
+  emitCaseTree c, dest, entries, 0, entries.high, selector, selectorType,
+               catchAll, info, isRoot = true
+  n = scan
+  skipParRi n # close `case`
+  return true
+
 proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   inc n  # skip 'case'
@@ -1058,6 +1232,11 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
       skip nn
     if nn.substructureKind == ElseU:
       finalBranch = default(Cursor)
+
+  # Large ordinal cases get a balanced binary-search dispatch so the recursive
+  # downstream passes don't overflow; everything else uses the linear chain.
+  if tryBinarySearchCase(c, dest, n, selector, selectorType, finalBranch, info):
+    return
 
   # Generate nested ite for each of-branch
   var iteCount = 0
