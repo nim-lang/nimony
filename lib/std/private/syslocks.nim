@@ -99,6 +99,174 @@ elif defined(genode):
   func broadcastSysCond*(cond: var SysCond) {.
     noSideEffect, importcpp.}
 
+elif defined(nimNativeIo):
+  # Freestanding, libc-header-free locks built directly on the kernel futex
+  # primitive instead of pthread. `SysLock`/`SysCond` are plain 32-bit words, so
+  # there is no opaque libc struct to `importc` and no fixed ABI layout to track.
+  # The uncontended paths are pure userspace atomics; only contention enters the
+  # kernel — matching how this build already binds raw syscalls in `posix.nim`.
+  #
+  # Mutex: Drepper's 3-state futex mutex ("Futexes Are Tricky", mutex3).
+  # Condvar: the sequence-counter algorithm (generation bumped per signal; the
+  # futex compare-and-wait closes the release/wait race, spurious wakeups are
+  # permitted by condvar semantics).
+  import std / atomics
+
+  type
+    SysLock* = object
+      state: uint32  ## 0 = free, 1 = locked (no waiters), 2 = locked (waiters)
+      recursive: bool  ## set via `setSysLockType` for RLock
+      owner: int       ## owning thread token while held (0 = none); recursive only
+      count: int       ## recursion depth; recursive only
+    SysCond* = object
+      gen: uint32    ## generation counter, bumped on every signal/broadcast
+    SysLockAttr* = object
+      recursive: bool
+    SysCondAttr* = object
+    SysLockType* = distinct cint
+
+  const SysLockType_Reentrant* = SysLockType(1)
+
+  # A thread-local byte gives every thread a unique, non-zero address to use as
+  # its identity token — no `gettid` syscall and no pthread dependency.
+  var tlsSelf {.threadvar.}: byte
+  proc selfToken(): int {.inline.} = cast[int](addr tlsSelf)
+
+  when defined(linux):
+    proc syscall(n: clong): clong {.varargs, importc: "syscall", sideEffect.}
+    when defined(amd64):
+      const NR_futex = clong(202)
+    else:
+      const NR_futex = clong(98)  # arm64 and other modern 64-bit Linux ABIs
+    const
+      FUTEX_WAIT_PRIVATE = clong(128)  # FUTEX_WAIT or FUTEX_PRIVATE_FLAG
+      FUTEX_WAKE_PRIVATE = clong(129)  # FUTEX_WAKE or FUTEX_PRIVATE_FLAG
+
+    proc futexWait(p: var uint32; expected: uint32) {.inline.} =
+      # Blocks while `p == expected`; returns spuriously, callers re-check.
+      discard syscall(NR_futex, addr p, FUTEX_WAIT_PRIVATE, clong(expected), nil)
+    proc futexWake(p: var uint32; all: bool) {.inline.} =
+      let count = if all: clong(high(int32)) else: clong(1)
+      discard syscall(NR_futex, addr p, FUTEX_WAKE_PRIVATE, count)
+
+  elif defined(osx):
+    # Darwin's `__ulock_*` (libsystem_kernel) — the same primitive libdispatch
+    # and libc++ use. Bare header-free `importc`: they are real libSystem symbols
+    # so they link with no `<sys/ulock.h>` (which is private anyway). `ULF_NO_ERRNO`
+    # makes them return `-errno` directly, so no libc `errno` TLS is touched.
+    const
+      UL_COMPARE_AND_WAIT = uint32(1)
+      ULF_WAKE_ALL = uint32(0x00000100)
+      ULF_NO_ERRNO = uint32(0x01000000)
+    proc ulock_wait(operation: uint32; ad: pointer; value: uint64;
+                    timeout: uint32): cint {.importc: "__ulock_wait", sideEffect.}
+    proc ulock_wake(operation: uint32; ad: pointer; wakeValue: uint64): cint {.
+      importc: "__ulock_wake", sideEffect.}
+
+    proc futexWait(p: var uint32; expected: uint32) {.inline.} =
+      discard ulock_wait(UL_COMPARE_AND_WAIT or ULF_NO_ERRNO, addr p,
+                         uint64(expected), 0'u32)
+    proc futexWake(p: var uint32; all: bool) {.inline.} =
+      let op = if all: UL_COMPARE_AND_WAIT or ULF_WAKE_ALL or ULF_NO_ERRNO
+               else: UL_COMPARE_AND_WAIT or ULF_NO_ERRNO
+      discard ulock_wake(op, addr p, 0'u64)
+
+  # ---- mutex3 core (non-reentrant) ----
+  proc lockSlow(L: var SysLock; c: var uint32) {.inline.} =
+    if c != 2'u32:
+      c = atomicExchange(L.state, 2'u32, moAcquire)
+    while c != 0'u32:
+      futexWait(L.state, 2'u32)
+      c = atomicExchange(L.state, 2'u32, moAcquire)
+
+  proc rawAcquire(L: var SysLock) {.inline.} =
+    var c = 0'u32
+    if not atomicCompareExchange(L.state, c, 1'u32, moAcquire, moRelaxed):
+      lockSlow(L, c)
+
+  proc rawTryAcquire(L: var SysLock): bool {.inline.} =
+    var expected = 0'u32
+    result = atomicCompareExchange(L.state, expected, 1'u32, moAcquire, moRelaxed)
+
+  proc rawRelease(L: var SysLock) {.inline.} =
+    if atomicFetchSub(L.state, 1'u32, moRelease) != 1'u32:
+      atomicStore(L.state, 0'u32, moRelease)
+      futexWake(L.state, false)
+
+  # ---- public lock API (adds reentrancy for RLock) ----
+  # `std/rlocks` declares its wrappers as `func`, so these must be `noSideEffect`
+  # like the pthread branch's `importc` ops; the underlying syscalls/atomics are
+  # cast accordingly (the same convention `posix.nim` uses for raw syscalls).
+  proc initSysLock*(L: var SysLock, attr: ptr SysLockAttr = nil) {.noSideEffect.} =
+    L.state = 0'u32
+    L.owner = 0
+    L.count = 0
+    L.recursive = attr != nil and attr.recursive
+
+  proc deinitSys*(L: SysLock) {.noSideEffect.} = discard
+
+  proc acquireSys*(L: var SysLock) {.noSideEffect.} =
+    {.cast(noSideEffect).}:
+      if L.recursive:
+        let me = selfToken()
+        if atomicLoad(L.owner, moRelaxed) == me:
+          inc L.count
+          return
+        rawAcquire(L)
+        atomicStore(L.owner, me, moRelaxed)
+        L.count = 1
+      else:
+        rawAcquire(L)
+
+  proc tryAcquireSys*(L: var SysLock): bool {.noSideEffect.} =
+    {.cast(noSideEffect).}:
+      if L.recursive:
+        let me = selfToken()
+        if atomicLoad(L.owner, moRelaxed) == me:
+          inc L.count
+          return true
+        if rawTryAcquire(L):
+          atomicStore(L.owner, me, moRelaxed)
+          L.count = 1
+          return true
+        return false
+      else:
+        result = rawTryAcquire(L)
+
+  proc releaseSys*(L: var SysLock) {.noSideEffect.} =
+    {.cast(noSideEffect).}:
+      if L.recursive:
+        dec L.count
+        if L.count > 0: return
+        atomicStore(L.owner, 0, moRelaxed)  # clear owner before the futex word
+        rawRelease(L)
+      else:
+        rawRelease(L)
+
+  # ---- rlocks attribute machinery (used by std/rlocks under `posix`) ----
+  proc initSysLockAttr*(a: var SysLockAttr) {.noSideEffect.} = a.recursive = false
+  proc setSysLockType*(a: var SysLockAttr, t: SysLockType) {.noSideEffect.} =
+    a.recursive = cint(t) == cint(SysLockType_Reentrant)
+
+  # ---- condition variables (sequence-counter futex) ----
+  proc initSysCond*(cond: var SysCond, cond_attr: ptr SysCondAttr = nil) =
+    cond.gen = 0'u32
+  proc deinitSysCond*(cond: SysCond) = discard
+
+  proc waitSysCond*(cond: var SysCond, lock: var SysLock) =
+    let observed = atomicLoad(cond.gen, moAcquire)
+    releaseSys(lock)
+    futexWait(cond.gen, observed)
+    acquireSys(lock)
+
+  proc signalSysCond*(cond: var SysCond) =
+    discard atomicFetchAdd(cond.gen, 1'u32, moRelease)
+    futexWake(cond.gen, false)
+
+  proc broadcastSysCond*(cond: var SysCond) =
+    discard atomicFetchAdd(cond.gen, 1'u32, moRelease)
+    futexWake(cond.gen, true)
+
 else:
   type
     SysLockObj {.importc: "pthread_mutex_t", pure, final,
