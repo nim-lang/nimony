@@ -209,6 +209,13 @@ proc isTrivialTypeDecl(c: var LiftingCtx; n: Cursor): bool =
     if result and c.op == attachedWasMoved and hasRtti(r.pragmas):
       # We set the RTTI field in `=wasMoved` so objects with a vtable are not trivial.
       result = false
+  of DistinctT:
+    # A `distinct T` with no hooks of its own inherits the triviality of its
+    # base type: `distinct string` is non-trivial (it owns the same heap
+    # buffer) and needs the base type's `=destroy`/`=dup`. Without this the
+    # `else` branch below treated every named distinct as trivial, so the
+    # duplifier moved instead of copied — a use-after-free for resource types.
+    result = isTrivial(c, r.body.firstSon)
   else:
     result = true
 
@@ -789,7 +796,13 @@ proc unravelDispatch(c: var LiftingCtx; orig: TypeCursor; paramA, paramB: TokenB
         c.routineKind = MethodY
     unravelObj c, typ, paramA, paramB, 0
   of DistinctT:
-    unravelDispatch(c, typ.firstSon, paramA, paramB)
+    # A `distinct T` shares `T`'s representation, so its hook is `T`'s hook.
+    # Use `unravel` (not a recursive `unravelDispatch`) so that a base type
+    # with a hand-written hook — e.g. `distinct string`, whose resources live
+    # in `string`'s custom `=destroy`/`=dup` and not in any reachable field —
+    # actually calls that hook. The plain field-recursion produced an empty
+    # body for such types and silently moved the buffer.
+    unravel(c, typ.firstSon, paramA, paramB)
   of TupleT:
     unravelTuple c, typ, paramA, paramB
   of ArrayT:
