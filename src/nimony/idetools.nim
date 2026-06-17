@@ -43,26 +43,37 @@ proc foundSymbol(tok: PackedToken; mode: TrackMode) =
 
 type
   SearchKind = enum skOther, skField, skDot
+
+  Usage = object
+    n: Cursor
+    containingType: Cursor
+      ## For field definitions: type containing the field
+      ## For dot expressions: type of lhs
+      ## For bare identifiers: nil
+
   IdeContext = object
     toTrack: PackedLineInfo
     trackMode: TrackMode
-    sym: SymId
-    tokenLen: int
-    typeCache: TypeCache
-    currentDotLhs: Cursor
     searchKind: SearchKind
+    sym: SymId
+    tokenLen: int # Length of identifier (excluding nif suffixes)
+    typeCache: TypeCache
+    currentDotLhs: Cursor # Points to the left hand side of dot expression while traversing dot expressions
+    currentType: Cursor # Points to the type being traversed, used while processing fields contained in that type
+    usages: seq[Usage]
 
-proc findField(c: var IdeContext, n: var Cursor, name: string, nameSym: SymId) =
+proc findAndAddFieldDefinition(c: var IdeContext, n: var Cursor, name: string, nameSym: SymId, containingType: Cursor) =
   inc n
   while n.kind != ParRi:
     if n.substructureKind == FldU:
       var sym = n
       inc sym
       if sym.kind == SymbolDef and sym.symId == nameSym:
-        foundSymbol(sym.load, c.trackMode)
+        c.usages.add(Usage(n: sym, containingType: containingType))
     skip n
 
 proc tr(c: var IdeContext, n: var Cursor) =
+  ## Traverse the tree and collect definitions and usages matching the sym in the context
   case n.stmtKind
   of ScopeS, StmtsS:
     c.typeCache.openScope()
@@ -81,31 +92,28 @@ proc tr(c: var IdeContext, n: var Cursor) =
         tr(c, n)
       else:
         tr(c, n)
-
     tr(c, n) # body
-
     assert n.kind == ParRi
-    inc n
-
+    inc n # ParRi
     c.typeCache.closeScope()
 
   of TypeS:
     inc n # ParLe
-    if n.symId == c.sym and c.trackMode == TrackDef and c.searchKind notin {skField, skDot}:
-      foundSymbol(n.load, c.trackMode)
-
+    if n.symId == c.sym:
+      c.usages.add(Usage(n: n, containingType: c.currentType))
+    let t = c.currentType
+    c.currentType = n
     while n.kind != ParRi:
       tr(c, n)
-
-    assert n.kind == ParRi
-    inc n
+    inc n # ParRi
+    c.currentType = t
 
   of VarS, LetS, ConstS:
     let symKind = n.symKind
     inc n # ParLe
     let sym = n.symId
-    if sym == c.sym and c.trackMode == TrackDef and c.searchKind notin {skField, skDot}:
-      foundSymbol(n.load, c.trackMode)
+    if sym == c.sym and c.searchKind notin {skField, skDot}:
+      c.usages.add(Usage(n: n, containingType: c.currentType))
     inc n # sym
     inc n # exported
     inc n # pragmas
@@ -132,7 +140,7 @@ proc tr(c: var IdeContext, n: var Cursor) =
       while n.kind != ParRi:
         tr(c, n)
       assert n.kind == ParRi
-      inc n
+      inc n # ParRi
 
     of OconstrX:
       skip n
@@ -143,8 +151,8 @@ proc tr(c: var IdeContext, n: var Cursor) =
         let symKind = n.symKind
         inc n # ParLe
         let sym = n.symId
-        if sym == c.sym and c.trackMode == TrackDef and c.searchKind notin {skField, skDot}:
-          foundSymbol(n.load, c.trackMode)
+        if sym == c.sym and c.searchKind notin {skField, skDot}:
+          c.usages.add(Usage(n: n, containingType: c.currentType))
         inc n # sym
         inc n # exported
         inc n # pragmas
@@ -152,30 +160,36 @@ proc tr(c: var IdeContext, n: var Cursor) =
         tr(c, n) # type
         tr(c, n) # value
         assert n.kind == ParRi
-        inc n
+        inc n # ParRi
+
+      of FldU:
+        inc n # ParLe
+        if n.symId == c.sym and c.trackMode == TrackUsages and c.searchKind in {skField, skDot}:
+          c.usages.add(Usage(n: n, containingType: c.currentType))
+        # skip remaining children
+        while n.kind != ParRi:
+          tr(c, n)
+        assert n.kind == ParRi
+        inc n # ParRi
 
       else:
         case n.kind
-        of Symbol, SymbolDef:
-          if n.symId == c.sym and c.trackMode == TrackUsages and c.searchKind in {skField, skDot} and not c.currentDotLhs.cursorIsNil:
-            # todo: This should check the type of the lhs to make sure it matches the type we're looking for
-            foundSymbol(n.load, c.trackMode)
-          elif n.symId == c.sym and c.trackMode == TrackUsages and c.searchKind == skOther and c.currentDotLhs.cursorIsNil:
-            foundSymbol(n.load, c.trackMode)
+        of Symbol:
+          if n.symId == c.sym and c.searchKind in {skField, skDot} and not c.currentDotLhs.cursorIsNil:
+            var containingType = c.typeCache.getType(c.currentDotLhs, {SkipAliases})
+            if containingType.typeKind in {RefT, PtrT}:
+              inc containingType
 
-          elif n.symId == c.sym and lineInfoMatch(n.info, c.toTrack, c.tokenLen):
-            if not c.currentDotLhs.cursorIsNil:
-              # Symbol is right hand side of DotX or DdotX, look up field in type of lhs
-              var typ = c.typeCache.getType(c.currentDotLhs, {SkipAliases})
-              if typ.typeKind in {RefT, PtrT}:
-                inc typ
+            if containingType.kind == Symbol and lineInfoMatch(n.info, c.toTrack, c.tokenLen):
+              # Add definition of field, only happens once because of the matching line info check
+              let typeDefinition = getTypeSection(containingType.symId)
+              var typeBody = typeDefinition.body
+              findAndAddFieldDefinition(c, typeBody, pool.syms[c.sym], c.sym, containingType)
 
-              if typ.kind == Symbol:
-                let typeDefinition = getTypeSection(typ.symId)
-                var typeBody = typeDefinition.body
-                findField(c, typeBody, pool.syms[c.sym], c.sym)
-            else:
-              foundSymbol(n.load, c.trackMode)
+            c.usages.add(Usage(n: n, containingType: containingType))
+
+          elif n.symId == c.sym and c.searchKind notin {skField, skDot} and c.currentDotLhs.cursorIsNil:
+            c.usages.add(Usage(n: n))
 
           inc n
 
@@ -187,6 +201,7 @@ proc tr(c: var IdeContext, n: var Cursor) =
           inc n
 
 proc getParent(n: Cursor): Cursor =
+  ## Walk cursor backwards until reaching the start of the parent of n
   result = n
   unsafeDec result
   var depth = 1
@@ -230,7 +245,24 @@ proc findLocal(file: string; sym: SymId; toTrack: PackedLineInfo; mode: TrackMod
       # When the searched for symbol is not the left hand side but the right hand side then we're searching for a field
       c.searchKind = skDot
 
+  # Collect definitions and usages matching the symbol. In case of field access this might return
+  # extra things that need to be filtered below
   tr(c, n)
+
+  var expectedContainingType = Cursor()
+  if c.searchKind in {skDot, skField}:
+    for usage in c.usages:
+      if lineInfoMatch(usage.n.info, c.toTrack, c.tokenLen):
+        expectedContainingType = usage.containingType
+        break
+
+  for usage in c.usages:
+    # Filter based on expectedContainingType if set
+    if not expectedContainingType.cursorIsNil and
+        (usage.containingType.cursorIsNil or usage.containingType.symId != expectedContainingType.symId):
+      continue
+
+    foundSymbol(usage.n.load, c.trackMode)
 
 proc usages*(files: openArray[string]; config: NifConfig) =
   # This is comparable to a linking step: We iterate over all `.idetools.nif` files to see
