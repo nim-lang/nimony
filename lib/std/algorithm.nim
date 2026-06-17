@@ -70,7 +70,7 @@ proc mergeAlt[T](a, b: var openArray[T];
 
 proc sort*[T](a: var openArray[T];
               cmp: proc (x, y: T): int;
-              order = SortOrder.Ascending) =
+              order = SortOrder.Ascending) {.nodestroy.} =
   ## Default Nim sort (an implementation of merge sort). The sorting
   ## is guaranteed to be stable (that is, equal elements stay in the same order)
   ## and the worst case is guaranteed to be O(n log n).
@@ -122,7 +122,8 @@ proc sort*[T](a: var openArray[T];
       dec(m, s*2)
     s = s*2
 
-  destroyUninit(b)
+  # dealloc `b` without calling `=destroy` as all elements of `b` is uninitialized
+  dealloc b.rawData
 
 proc sorted*[T](a: openArray[T]; cmp: proc(x, y: T): int;
                 order = SortOrder.Ascending): seq[T] =
