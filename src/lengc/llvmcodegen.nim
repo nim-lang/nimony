@@ -291,7 +291,7 @@ proc dbgLocation(c: var LLVMCode; info: PackedLineInfo): string =
     if fileId == c.currentProc.subprogramFileId:
       c.currentProc.subprogramId
     else:
-      c.addMetadata("!DILexicalBlockFile(scope: !" & $c.currentProc.subprogramId &
+      c.addMetadata("distinct !DILexicalBlockFile(scope: !" & $c.currentProc.subprogramId &
         ", file: !" & $fileId & ", discriminator: 0)")
   let locId = c.addMetadata("!DILocation(line: " & $rawInfo.line &
     ", column: " & $(rawInfo.col + 1) &

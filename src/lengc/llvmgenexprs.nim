@@ -81,6 +81,7 @@ proc unsignedBinOp(c: var LLVMCode; n: var Cursor; signedOp, unsignedOp: string;
 
 proc cmpOp(c: var LLVMCode; n: var Cursor; signedPred, unsignedPred: string; result: var LLValue) =
   ## Comparison op: (op lhs rhs) → i1
+  let cmpInfo = n.info
   n.into:
     let lhsExpr = n
     let lhsType = getType(c.m, lhsExpr)
@@ -97,13 +98,13 @@ proc cmpOp(c: var LLVMCode; n: var Cursor; signedPred, unsignedPred: string; res
         of "slt": "olt"
         of "sle": "ole"
         else: signedPred
-      c.emitLine "  " & c.str(t) & " = fcmp " & fpPred & " " & typ & " " & c.str(lhs.name) & ", " & c.str(rhs.name)
+      c.emitLineDbg "  " & c.str(t) & " = fcmp " & fpPred & " " & typ & " " & c.str(lhs.name) & ", " & c.str(rhs.name), cmpInfo
     else:
       let pred = if unsignedPred != "" and lhsTK in {UT, CT, BoolT}:
                    unsignedPred
                  else:
                    signedPred
-      c.emitLine "  " & c.str(t) & " = icmp " & pred & " " & typ & " " & c.str(lhs.name) & ", " & c.str(rhs.name)
+      c.emitLineDbg "  " & c.str(t) & " = icmp " & pred & " " & typ & " " & c.str(lhs.name) & ", " & c.str(rhs.name), cmpInfo
     result = LLValue(name: t, typ: LToken(I8Token))
     while n.hasMore: skip n
 
@@ -839,6 +840,7 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   of LtC: genBoolCmpOp(c, n, "slt", "ult", result)
   of AndC:
     # Short-circuit AND: (and lhs rhs) — rhs only evaluated if lhs is true
+    let andInfo = n.info
     let res = c.temp()
     var lhs = LLValue()
     var rhs = LLValue()
@@ -847,19 +849,19 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       c.emitLine "  store i8 0, ptr " & c.str(res)
       genExprLLVM(c, n, lhs)
       let lhsBool = c.temp()
-      c.emitLine "  " & c.str(lhsBool) & " = icmp ne " & c.str(lhs.typ) & " " & c.str(lhs.name) & ", " & zeroVal(lhs.typ)
+      c.emitLineDbg "  " & c.str(lhsBool) & " = icmp ne " & c.str(lhs.typ) & " " & c.str(lhs.name) & ", " & zeroVal(lhs.typ), andInfo
       let rhsLabel = c.label()
       let endLabel = c.label()
-      c.emitLine "  br i1 " & c.str(lhsBool) & ", label %" & c.str(rhsLabel) & ", label %" & c.str(endLabel)
+      c.emitLineDbg "  br i1 " & c.str(lhsBool) & ", label %" & c.str(rhsLabel) & ", label %" & c.str(endLabel), andInfo
       c.emitLine c.str(rhsLabel) & ":"
       c.currentProc.needsTerminator = false
       genExprLLVM(c, n, rhs)
       let rhsBool = c.temp()
-      c.emitLine "  " & c.str(rhsBool) & " = icmp ne " & c.str(rhs.typ) & " " & c.str(rhs.name) & ", " & zeroVal(rhs.typ)
+      c.emitLineDbg "  " & c.str(rhsBool) & " = icmp ne " & c.str(rhs.typ) & " " & c.str(rhs.name) & ", " & zeroVal(rhs.typ), andInfo
       let rhsExt = c.temp()
       c.emitLine "  " & c.str(rhsExt) & " = zext i1 " & c.str(rhsBool) & " to i8"
       c.emitLine "  store i8 " & c.str(rhsExt) & ", ptr " & c.str(res)
-      c.emitLine "  br label %" & c.str(endLabel)
+      c.emitLineDbg "  br label %" & c.str(endLabel), andInfo
       c.emitLine c.str(endLabel) & ":"
       c.currentProc.needsTerminator = false
       let r = c.temp()
@@ -868,6 +870,7 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       while n.hasMore: skip n
   of OrC:
     # Short-circuit OR: (or lhs rhs) — rhs only evaluated if lhs is false
+    let orInfo = n.info
     let res = c.temp()
     var lhs = LLValue()
     var rhs = LLValue()
@@ -876,19 +879,19 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       c.emitLine "  store i8 1, ptr " & c.str(res)
       genExprLLVM(c, n, lhs)
       let lhsBool = c.temp()
-      c.emitLine "  " & c.str(lhsBool) & " = icmp ne " & c.str(lhs.typ) & " " & c.str(lhs.name) & ", " & zeroVal(lhs.typ)
+      c.emitLineDbg "  " & c.str(lhsBool) & " = icmp ne " & c.str(lhs.typ) & " " & c.str(lhs.name) & ", " & zeroVal(lhs.typ), orInfo
       let rhsLabel = c.label()
       let endLabel = c.label()
-      c.emitLine "  br i1 " & c.str(lhsBool) & ", label %" & c.str(endLabel) & ", label %" & c.str(rhsLabel)
+      c.emitLineDbg "  br i1 " & c.str(lhsBool) & ", label %" & c.str(endLabel) & ", label %" & c.str(rhsLabel), orInfo
       c.emitLine c.str(rhsLabel) & ":"
       c.currentProc.needsTerminator = false
       genExprLLVM(c, n, rhs)
       let rhsBool = c.temp()
-      c.emitLine "  " & c.str(rhsBool) & " = icmp ne " & c.str(rhs.typ) & " " & c.str(rhs.name) & ", " & zeroVal(rhs.typ)
+      c.emitLineDbg "  " & c.str(rhsBool) & " = icmp ne " & c.str(rhs.typ) & " " & c.str(rhs.name) & ", " & zeroVal(rhs.typ), orInfo
       let rhsExt = c.temp()
       c.emitLine "  " & c.str(rhsExt) & " = zext i1 " & c.str(rhsBool) & " to i8"
       c.emitLine "  store i8 " & c.str(rhsExt) & ", ptr " & c.str(res)
-      c.emitLine "  br label %" & c.str(endLabel)
+      c.emitLineDbg "  br label %" & c.str(endLabel), orInfo
       c.emitLine c.str(endLabel) & ":"
       c.currentProc.needsTerminator = false
       let r = c.temp()
@@ -896,13 +899,14 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       result = LLValue(name: r, typ: LToken(I8Token))
       while n.hasMore: skip n
   of NotC:
+    let notInfo = n.info
     var val = LLValue()
     n.into:
       genExprLLVM(c, n, val)
       while n.hasMore: skip n
     let t1 = c.temp()
     let t2 = c.temp()
-    c.emitLine "  " & c.str(t1) & " = icmp eq " & c.str(val.typ) & " " & c.str(val.name) & ", " & zeroVal(val.typ)
+    c.emitLineDbg "  " & c.str(t1) & " = icmp eq " & c.str(val.typ) & " " & c.str(val.name) & ", " & zeroVal(val.typ), notInfo
     c.emitLine "  " & c.str(t2) & " = zext i1 " & c.str(t1) & " to i8"
     result = LLValue(name: t2, typ: LToken(I8Token))
   of CastC, ConvC:
@@ -1117,10 +1121,11 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
 
 proc genCondLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   ## Generate a condition expression, returning an i1 value for branch instructions.
+  let condInfo = n.info
   genExprLLVM(c, n, result)
   if c.str(result.typ) == "i1":
     return
   # Convert to i1 by comparing with 0
   let t = c.temp()
-  c.emitLine "  " & c.str(t) & " = icmp ne " & c.str(result.typ) & " " & c.str(result.name) & ", " & zeroVal(result.typ)
+  c.emitLineDbg "  " & c.str(t) & " = icmp ne " & c.str(result.typ) & " " & c.str(result.name) & ", " & zeroVal(result.typ), condInfo
   result = LLValue(name: t, typ: c.tok("i1"))

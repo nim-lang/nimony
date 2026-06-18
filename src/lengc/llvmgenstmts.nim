@@ -33,37 +33,40 @@ proc getVirtualGuardLLVM(c: var LLVMCode; n: Cursor): (SymId, bool) =
         result = (n.symId, isLast)
 
 proc genOnErrorLLVM(c: var LLVMCode; n: var Cursor) =
+  let onErrInfo = n.info
   let errVal = c.temp()
   c.emitLine "  " & c.str(errVal) & " = load i8, ptr @LENGC_ERR_"
   let cond = c.temp()
-  c.emitLine "  " & c.str(cond) & " = icmp ne i8 " & c.str(errVal) & ", 0"
+  c.emitLineDbg "  " & c.str(cond) & " = icmp ne i8 " & c.str(errVal) & ", 0", onErrInfo
   let thenLabel = c.label()
   let endLabel = c.label()
-  c.emitLine "  br i1 " & c.str(cond) & ", label %" & c.str(thenLabel) & ", label %" & c.str(endLabel)
+  c.emitLineDbg "  br i1 " & c.str(cond) & ", label %" & c.str(thenLabel) & ", label %" & c.str(endLabel), onErrInfo
   c.emitLine c.str(thenLabel) & ":"
   c.currentProc.needsTerminator = false
   genStmtLLVM c, n
   if not c.currentProc.needsTerminator:
-    c.emitLine "  br label %" & c.str(endLabel)
+    c.emitLineDbg "  br label %" & c.str(endLabel), onErrInfo
   c.emitLine c.str(endLabel) & ":"
   c.currentProc.needsTerminator = false
 
 proc genIfLLVM(c: var LLVMCode; n: var Cursor) =
+  let ifInfo = n.info
   var endLabel = c.label()
   var needsEnd = false
   n.loopInto:
+    let branchInfo = n.info
     case n.substructureKind
     of ElifU:
       n.into:
         var cond = LLValue(); genCondLLVM(c, n, cond)
         let thenLabel = c.label()
         let elseLabel = c.label()
-        c.emitLine "  br i1 " & c.str(cond.name) & ", label %" & c.str(thenLabel) & ", label %" & c.str(elseLabel)
+        c.emitLineDbg "  br i1 " & c.str(cond.name) & ", label %" & c.str(thenLabel) & ", label %" & c.str(elseLabel), branchInfo
         c.emitLine c.str(thenLabel) & ":"
         c.currentProc.needsTerminator = false
         genStmtLLVM c, n
         if not c.currentProc.needsTerminator:
-          c.emitLine "  br label %" & c.str(endLabel)
+          c.emitLineDbg "  br label %" & c.str(endLabel), branchInfo
         c.emitLine c.str(elseLabel) & ":"
         c.currentProc.needsTerminator = false
         needsEnd = true
@@ -72,7 +75,7 @@ proc genIfLLVM(c: var LLVMCode; n: var Cursor) =
       n.into:
         genStmtLLVM c, n
         if not c.currentProc.needsTerminator:
-          c.emitLine "  br label %" & c.str(endLabel)
+          c.emitLineDbg "  br label %" & c.str(endLabel), branchInfo
         needsEnd = true
         while n.hasMore: skip n
     else:
@@ -80,12 +83,13 @@ proc genIfLLVM(c: var LLVMCode; n: var Cursor) =
 
   if needsEnd:
     if not c.currentProc.needsTerminator:
-      c.emitLine "  br label %" & c.str(endLabel)
+      c.emitLineDbg "  br label %" & c.str(endLabel), ifInfo
     c.emitLine c.str(endLabel) & ":"
     c.currentProc.needsTerminator = false
 
 proc genIteLLVM(c: var LLVMCode; n: var Cursor) =
   ## If-then-else: (ite cond then else?)
+  let iteInfo = n.info
   n.into:
 
     # Check for virtual flag optimization
@@ -95,7 +99,7 @@ proc genIteLLVM(c: var LLVMCode; n: var Cursor) =
       genStmtLLVM c, n # then-part always taken
       if isLast:
         let labelName = mangleToC(pool.syms[vflag])
-        c.emitLine "  br label %" & labelName
+        c.emitLineDbg "  br label %" & labelName, iteInfo
         c.emitLine labelName & ":"
         c.currentProc.needsTerminator = false
       skip n # else-part ignored
@@ -106,23 +110,23 @@ proc genIteLLVM(c: var LLVMCode; n: var Cursor) =
       let endLabel = c.label()
 
       if n.kind != DotToken:
-        c.emitLine "  br i1 " & c.str(cond.name) & ", label %" & c.str(thenLabel) & ", label %" & c.str(elseLabel)
+        c.emitLineDbg "  br i1 " & c.str(cond.name) & ", label %" & c.str(thenLabel) & ", label %" & c.str(elseLabel), iteInfo
       else:
-        c.emitLine "  br i1 " & c.str(cond.name) & ", label %" & c.str(thenLabel) & ", label %" & c.str(endLabel)
+        c.emitLineDbg "  br i1 " & c.str(cond.name) & ", label %" & c.str(thenLabel) & ", label %" & c.str(endLabel), iteInfo
 
       c.emitLine c.str(thenLabel) & ":"
       c.currentProc.needsTerminator = false
       genStmtLLVM c, n
 
       if not c.currentProc.needsTerminator:
-        c.emitLine "  br label %" & c.str(endLabel)
+        c.emitLineDbg "  br label %" & c.str(endLabel), iteInfo
 
       if n.kind != DotToken:
         c.emitLine c.str(elseLabel) & ":"
         c.currentProc.needsTerminator = false
         genStmtLLVM c, n
         if not c.currentProc.needsTerminator:
-          c.emitLine "  br label %" & c.str(endLabel)
+          c.emitLineDbg "  br label %" & c.str(endLabel), iteInfo
       else:
         inc n
 
@@ -131,16 +135,17 @@ proc genIteLLVM(c: var LLVMCode; n: var Cursor) =
     while n.hasMore: skip n
 
 proc genWhileLLVM(c: var LLVMCode; n: var Cursor) =
+  let whileInfo = n.info
   n.into:
     let condLabel = c.label()
     let bodyLabel = c.label()
     let endLabel = c.label()
 
-    c.emitLine "  br label %" & c.str(condLabel)
+    c.emitLineDbg "  br label %" & c.str(condLabel), whileInfo
     c.emitLine c.str(condLabel) & ":"
 
     var cond = LLValue(); genCondLLVM(c, n, cond)
-    c.emitLine "  br i1 " & c.str(cond.name) & ", label %" & c.str(bodyLabel) & ", label %" & c.str(endLabel)
+    c.emitLineDbg "  br i1 " & c.str(cond.name) & ", label %" & c.str(bodyLabel) & ", label %" & c.str(endLabel), whileInfo
 
     c.emitLine c.str(bodyLabel) & ":"
     c.currentProc.needsTerminator = false
@@ -149,7 +154,7 @@ proc genWhileLLVM(c: var LLVMCode; n: var Cursor) =
     discard c.currentProc.breakStack.pop()
 
     if not c.currentProc.needsTerminator:
-      c.emitLine "  br label %" & c.str(condLabel)
+      c.emitLineDbg "  br label %" & c.str(condLabel), whileInfo
 
     c.emitLine c.str(endLabel) & ":"
     c.currentProc.needsTerminator = false
@@ -157,12 +162,13 @@ proc genWhileLLVM(c: var LLVMCode; n: var Cursor) =
 
 proc genLoopLLVM(c: var LLVMCode; n: var Cursor) =
   ## Loop: (loop preCondStmts condition body)
+  let loopInfo = n.info
   n.into:
     let headerLabel = c.label()
     let bodyLabel = c.label()
     let endLabel = c.label()
 
-    c.emitLine "  br label %" & c.str(headerLabel)
+    c.emitLineDbg "  br label %" & c.str(headerLabel), loopInfo
     c.emitLine c.str(headerLabel) & ":"
     c.currentProc.needsTerminator = false
 
@@ -170,7 +176,7 @@ proc genLoopLLVM(c: var LLVMCode; n: var Cursor) =
     genStmtLLVM c, n
     # Condition
     var cond = LLValue(); genCondLLVM(c, n, cond)
-    c.emitLine "  br i1 " & c.str(cond.name) & ", label %" & c.str(bodyLabel) & ", label %" & c.str(endLabel)
+    c.emitLineDbg "  br i1 " & c.str(cond.name) & ", label %" & c.str(bodyLabel) & ", label %" & c.str(endLabel), loopInfo
 
     c.emitLine c.str(bodyLabel) & ":"
     c.currentProc.needsTerminator = false
@@ -179,7 +185,7 @@ proc genLoopLLVM(c: var LLVMCode; n: var Cursor) =
     discard c.currentProc.breakStack.pop()
 
     if not c.currentProc.needsTerminator:
-      c.emitLine "  br label %" & c.str(headerLabel)
+      c.emitLineDbg "  br label %" & c.str(headerLabel), loopInfo
 
     c.emitLine c.str(endLabel) & ":"
     c.currentProc.needsTerminator = false
@@ -241,6 +247,7 @@ proc genSwitchLLVM(c: var LLVMCode; n: var Cursor) =
     var branchIdx = 0
     c.currentProc.breakStack.add endLabel
     while n.hasMore:
+      let branchInfo = n.info
       case n.substructureKind
       of OfU:
         n.into:
@@ -249,7 +256,7 @@ proc genSwitchLLVM(c: var LLVMCode; n: var Cursor) =
           c.currentProc.needsTerminator = false
           genStmtLLVM c, n
           if not c.currentProc.needsTerminator:
-            c.emitLine "  br label %" & c.str(endLabel)
+            c.emitLineDbg "  br label %" & c.str(endLabel), branchInfo
           while n.hasMore: skip n
         inc branchIdx
       of ElseU:
@@ -258,7 +265,7 @@ proc genSwitchLLVM(c: var LLVMCode; n: var Cursor) =
           c.currentProc.needsTerminator = false
           genStmtLLVM c, n
           if not c.currentProc.needsTerminator:
-            c.emitLine "  br label %" & c.str(endLabel)
+            c.emitLineDbg "  br label %" & c.str(endLabel), branchInfo
           while n.hasMore: skip n
       else:
         error c.m, "`case` expects `of` or `else` but got: ", n
@@ -268,12 +275,13 @@ proc genSwitchLLVM(c: var LLVMCode; n: var Cursor) =
     c.currentProc.needsTerminator = false
 
 proc genLabelLLVM(c: var LLVMCode; n: var Cursor) =
+  let labelInfo = n.info
   n.into:
     if n.kind == SymbolDef:
       let name = mangleToC(pool.syms[n.symId])
       # End current basic block
       if not c.currentProc.needsTerminator:
-        c.emitLine "  br label %" & name
+        c.emitLineDbg "  br label %" & name, labelInfo
       c.emitLine name & ":"
       c.currentProc.needsTerminator = false
       inc n
@@ -282,10 +290,11 @@ proc genLabelLLVM(c: var LLVMCode; n: var Cursor) =
     while n.hasMore: skip n
 
 proc genGotoLLVM(c: var LLVMCode; n: var Cursor) =
+  let gotoInfo = n.info
   n.into:
     if n.kind == Symbol:
       let name = mangleToC(pool.syms[n.symId])
-      c.emitLine "  br label %" & name
+      c.emitLineDbg "  br label %" & name, gotoInfo
       c.currentProc.needsTerminator = true
       inc n
     else:
@@ -324,6 +333,7 @@ proc genVflagDeclLLVM(c: var LLVMCode; n: var Cursor) =
     while n.hasMore: skip n
 
 proc genJtrueLLVM(c: var LLVMCode; n: var Cursor) =
+  let jtrueInfo = n.info
   n.loopInto:
     if n.kind == Symbol:
       let s = n.symId
@@ -333,7 +343,7 @@ proc genJtrueLLVM(c: var LLVMCode; n: var Cursor) =
       if n.kind == ParRi:
         # Last symbol is a goto target
         let name = mangleToC(pool.syms[s])
-        c.emitLine "  br label %" & name
+        c.emitLineDbg "  br label %" & name, jtrueInfo
         c.currentProc.needsTerminator = true
     else:
       error c.m, "expected Symbol but got: ", n
@@ -351,6 +361,7 @@ proc genStoreLLVM(c: var LLVMCode; n: var Cursor) =
 
 proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
   ## Overflow-checked arithmetic using LLVM intrinsics
+  let ovfInfo = n.info
   var typ = ""
   var intrinsic = ""
   var bitsStr = $c.bits
@@ -412,7 +423,7 @@ proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
   let currentOvf = c.temp()
   c.emitLine "  " & c.str(currentOvf) & " = load i8, ptr @LENGC_OVF_"
   let currentOvfBool = c.temp()
-  c.emitLine "  " & c.str(currentOvfBool) & " = icmp ne i8 " & c.str(currentOvf) & ", 0"
+  c.emitLineDbg "  " & c.str(currentOvfBool) & " = icmp ne i8 " & c.str(currentOvf) & ", 0", ovfInfo
   let combinedOvf = c.temp()
   c.emitLine "  " & c.str(combinedOvf) & " = or i1 " & c.str(currentOvfBool) & ", " & c.str(ovfFlag)
   let newOvfByte = c.temp()
@@ -499,10 +510,11 @@ proc genStmtLLVM(c: var LLVMCode; n: var Cursor) =
   of LoopS:
     genLoopLLVM c, n
   of BreakS:
+    let breakInfo = n.info
     n.into:
       if c.currentProc.breakStack.len > 0:
         let target = c.currentProc.breakStack[^1]
-        c.emitLine "  br label %" & c.str(target)
+        c.emitLineDbg "  br label %" & c.str(target), breakInfo
       else:
         c.emitLine "  unreachable ; break outside loop"
       c.currentProc.needsTerminator = true
