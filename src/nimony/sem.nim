@@ -4282,7 +4282,7 @@ proc tryExplicitRoutineInst(c: var SemContext; dest: var TokenBuf; syms: Cursor;
     dest.shrink exprStart
     let inst = c.requestRoutineInstance(lastMatch.fn.sym, lastMatch.typeArgs, lastMatch.inferred, info)
     dest.add symToken(inst.targetSym, info)
-    it.typ = asRoutine(inst.procType).params
+    it.typ = inst.procType
     it.kind = lastMatch.fn.kind
     it.n = argRead
     result = true
