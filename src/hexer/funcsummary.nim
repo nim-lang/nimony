@@ -233,7 +233,8 @@ proc handleRet(a: var ProcAnalysis; n: var Cursor) =
   var c = n
   inc c
   if c.kind != ParRi and c.kind != DotToken:
-    for r in exprRoots(a, c):
+    let roots = exprRoots(a, c)
+    for r in roots:
       ufUnion(a.uf, a.nParams, r)              # result aliases the returned graph
       markReadElem(a, r)
     var rc = c
@@ -291,7 +292,8 @@ proc walkStmt(a: var ProcAnalysis; n: var Cursor) =
       walkStmt(a, n)
   else:
     if n.exprKind == AddrC:
-      for r in exprRoots(a, n.firstSon): markEscapeElem(a, r)
+      let escRoots = exprRoots(a, n.firstSon)
+      for r in escRoots: markEscapeElem(a, r)
     n.loopInto:
       walkStmt(a, n)
 
@@ -349,7 +351,7 @@ proc applyCallee(a: var ProcAnalysis; call: CallFact; callee: FunctionSummary) =
   var byCls = initTable[uint32, int]()        # callee class -> a representative caller element
   for k in 0 ..< callee.params.len:
     let pe = callee.params[k]
-    let roots = if k < call.argRoots.len: call.argRoots[k] else: @[]
+    let roots = if k < call.argRoots.len: call.argRoots[k] else: newSeq[int]()
     if pe.writes or pe.slotWritten:
       if roots.len == 0: a.writesGlobal = true
       else:
