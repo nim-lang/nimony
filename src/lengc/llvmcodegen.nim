@@ -11,7 +11,7 @@
 # dependent on LLVM's changing C++ API.
 
 import std / [assertions, syncio, sets, intsets, formatfloat, packedsets, strutils, sequtils, tables]
-from std / os import changeFileExt, splitFile, extractFilename, fileExists
+from std / os import changeFileExt, splitFile, extractFilename, fileExists, getCurrentDir, absolutePath
 import ".." / lib / vfs
 
 include ".." / lib / nifprelude
@@ -135,6 +135,7 @@ type
     needsTerminator*: bool  # whether the current basic block needs a terminator
     breakStack*: seq[LToken]  # stack of loop-end labels for `break`
     subprogramId*: int  # metadata ID of the current DISubprogram
+    subprogramFileId*: int  # DIFile metadata ID for the subprogram's file
     retType*: LToken  # LLVM IR return type token
     retTypeCursor*: Cursor  # NIF type cursor for the return type
 
@@ -261,7 +262,8 @@ proc initDebugInfo(c: var LLVMCode; filename: string) =
   ## Initialize debug metadata: compile unit and primary file.
   let (dir, name, ext) = splitFile(filename)
   let fullName = name & ext
-  let directory = if dir == "": "." else: dir
+  let directory = if dir == "": getCurrentDir() else: absolutePath(dir)
+  echo "dir: " & dir & " directory: " & directory
   let fileId = c.addMetadata("!DIFile(filename: \"" & fullName & "\", directory: \"" & directory & "\")")
   let cuId = c.addMetadata("distinct !DICompileUnit(language: DW_LANG_C99, file: !" & $fileId &
     ", producer: \"lengc\", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)")
@@ -275,7 +277,7 @@ proc getOrCreateDIFile(c: var LLVMCode; fid: FileId): int =
   let path = pool.files[fid]
   let (dir, name, ext) = splitFile(path)
   let fullName = name & ext
-  let directory = if dir == "": "." else: dir
+  let directory = if dir == "": getCurrentDir() else: absolutePath(dir)
   result = c.addMetadata("!DIFile(filename: \"" & fullName & "\", directory: \"" & directory & "\")")
   c.debug.fileIds[key] = result
 
@@ -285,9 +287,15 @@ proc dbgLocation(c: var LLVMCode; info: PackedLineInfo): string =
   let rawInfo = unpack(pool.man, info)
   if not rawInfo.file.isValid: return ""
   let fileId = getOrCreateDIFile(c, rawInfo.file)
+  let scopeId =
+    if fileId == c.currentProc.subprogramFileId:
+      c.currentProc.subprogramId
+    else:
+      c.addMetadata("!DILexicalBlockFile(scope: !" & $c.currentProc.subprogramId &
+        ", file: !" & $fileId & ", discriminator: 0)")
   let locId = c.addMetadata("!DILocation(line: " & $rawInfo.line &
     ", column: " & $(rawInfo.col + 1) &
-    ", scope: !" & $c.currentProc.subprogramId & ")")
+    ", scope: !" & $scopeId & ")")
   result = ", !dbg !" & $locId
 
 proc createSubprogram(c: var LLVMCode; name: string; info: PackedLineInfo): int =
@@ -307,6 +315,7 @@ proc createSubprogram(c: var LLVMCode; name: string; info: PackedLineInfo): int 
     ", type: !" & $subroutineTypeId &
     ", scopeLine: " & $line &
     ", spFlags: DISPFlagDefinition, unit: !" & $c.debug.cuId & ")")
+  c.currentProc.subprogramFileId = fileId
 
 proc emitLineDbg(c: var LLVMCode; s: string; info: PackedLineInfo) =
   ## Emit an instruction line with debug location metadata attached.

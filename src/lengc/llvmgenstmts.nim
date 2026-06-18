@@ -410,14 +410,14 @@ proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
 
   # If overflow occurred, set the overflow flag
   let currentOvf = c.temp()
-  c.emitLine "  " & c.str(currentOvf) & " = load i8, ptr @NIFC_OVF_"
+  c.emitLine "  " & c.str(currentOvf) & " = load i8, ptr @LENGC_OVF_"
   let currentOvfBool = c.temp()
   c.emitLine "  " & c.str(currentOvfBool) & " = icmp ne i8 " & c.str(currentOvf) & ", 0"
   let combinedOvf = c.temp()
   c.emitLine "  " & c.str(combinedOvf) & " = or i1 " & c.str(currentOvfBool) & ", " & c.str(ovfFlag)
   let newOvfByte = c.temp()
   c.emitLine "  " & c.str(newOvfByte) & " = zext i1 " & c.str(combinedOvf) & " to i8"
-  c.emitLine "  store i8 " & c.str(newOvfByte) & ", ptr @NIFC_OVF_"
+  c.emitLine "  store i8 " & c.str(newOvfByte) & ", ptr @LENGC_OVF_"
 
   # Declare the intrinsic if not already done
   let declStr = "declare { " & typ & ", i1 } @" & intrinsic & "(" & typ & ", " & typ & ")"
@@ -448,7 +448,7 @@ proc genStmtLLVM(c: var LLVMCode; n: var Cursor) =
     n.loopInto:
       genStmtLLVM(c, n)
       if c.currentProc.needsTerminator:
-        while n.hasMore: skip n
+        while n.hasMore and n.stmtKind != LabS: skip n
   of ScopeS:
     genScopeLLVM c, n
   of CallS:

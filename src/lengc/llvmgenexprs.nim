@@ -379,8 +379,14 @@ proc genCallWithType(c: var LLVMCode; n: var Cursor; retType: string; result: va
       calleeSym = n.symId
       c.requestedSyms.incl calleeSym
       calleeExtern = getExternName(c, calleeSym)
-      calleeName = "@" & mangleSym(c, calleeSym)
-      inc n
+      let decl = c.m.getDeclOrNil(calleeSym)
+      if decl != nil and decl.kind == ProcY:
+        calleeName = "@" & mangleSym(c, calleeSym)
+        inc n
+      else:
+        # Function pointer variable: load it first, then call through the loaded value.
+        var callee = LLValue(); genExprLLVM(c, n, callee)
+        calleeName = c.str(callee.name)
     else:
       var callee = LLValue(); genExprLLVM(c, n, callee)
       calleeName = c.str(callee.name)
