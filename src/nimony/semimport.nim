@@ -80,6 +80,9 @@ proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilena
     c.buildErr dest, info, "file not found: " & f2
     return
   let suffix = moduleSuffix(f2, c.g.config.paths)
+  let effectiveName =
+    if f1.name != "": f1.name
+    else: moduleNameFromPath(f2)
   result = SymId(0)
   if not c.processedModules.contains(suffix):
     c.meta.importedFiles.add f2
@@ -87,18 +90,18 @@ proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilena
       if (c.canSelfExec or c.inWhen > 0) and needsRecompile(f2, suffixToNif suffix):
         selfExec c, f2, (if f1.isSystem: " --isSystem" else: "")
 
-    let moduleName = pool.strings.getOrIncl(f1.name)
+    let moduleName = pool.strings.getOrIncl(effectiveName)
     result = identToSym(c, moduleName, ModuleY)
     c.processedModules[suffix] = result
-    let s = Sym(kind: ModuleY, name: result, pos: ImportedPos)
-    if f1.name != "":
-      c.currentScope.addOverloadable(moduleName, s)
     var moduleDecl = createTokenBuf(2)
     moduleDecl.addParLe(ModuleY, info)
     moduleDecl.addParRi()
     publish result, moduleDecl, SemcheckBodies
   else:
     result = c.processedModules.getOrQuit(suffix)
+  let moduleName = pool.strings.getOrIncl(effectiveName)
+  let s = Sym(kind: ModuleY, name: result, pos: ImportedPos)
+  c.currentScope.addOverloadable(moduleName, s)
   let module = addr c.importedModules.mgetOrPut(result, ImportedModule(path: f2, fromPlugin: f1.plugin))
   loadInterface suffix, module.iface, result, c.importTab, c.converters,
                 exports, mode
