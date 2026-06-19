@@ -141,7 +141,7 @@ proc currentStmtPos(c: Context): int {.inline.} =
 
 proc freshTempName(c: var Context): string =
   inc c.tempCounter
-  result = "cse.t." & $c.tempCounter & "." & c.moduleSuffix
+  result = "`cse." & $c.tempCounter
 
 # ---- expression hashing ---------------------------------------------------
 
@@ -911,14 +911,14 @@ when isMainModule:
     # Value CSE caches even stack-rooted loads (the load is eliminated).
     chk(
       "(stmts (asgn y.0.M (dot x.0.M fld.0.M)) (asgn z.0.M (dot x.0.M fld.0.M)))",
-      "(stmts (var :cse.t.1.M . . (dot x.0.M fld.0.M)) " &
-      "(asgn y.0.M cse.t.1.M) (asgn z.0.M cse.t.1.M))")
+      "(stmts (var :`cse.1 . . (dot x.0.M fld.0.M)) " &
+      "(asgn y.0.M `cse.1) (asgn z.0.M `cse.1))")
 
   block deref_dot_shared:
     chk(
       "(stmts (asgn y.0.M (dot (deref (deref pp.0.M)) fld.0.M)) (asgn z.0.M (dot (deref (deref pp.0.M)) fld.0.M)))",
-      "(stmts (var :cse.t.1.M . . (dot (deref (deref pp.0.M)) fld.0.M)) " &
-      "(asgn y.0.M cse.t.1.M) (asgn z.0.M cse.t.1.M))")
+      "(stmts (var :`cse.1 . . (dot (deref (deref pp.0.M)) fld.0.M)) " &
+      "(asgn y.0.M `cse.1) (asgn z.0.M `cse.1))")
 
   block call_unknown_prevents_cse:
     # Unknown callee (no summary) clears the cache between the two occurrences,
@@ -934,8 +934,8 @@ when isMainModule:
   block unrelated_asgn_does_not_invalidate:
     chk(
       "(stmts (asgn y.0.M (dot (deref (deref pp.0.M)) fld.0.M)) (asgn z.0.M 7) (asgn a.0.M (dot (deref (deref pp.0.M)) fld.0.M)))",
-      "(stmts (var :cse.t.1.M . . (dot (deref (deref pp.0.M)) fld.0.M)) " &
-      "(asgn y.0.M cse.t.1.M) (asgn z.0.M 7) (asgn a.0.M cse.t.1.M))")
+      "(stmts (var :`cse.1 . . (dot (deref (deref pp.0.M)) fld.0.M)) " &
+      "(asgn y.0.M `cse.1) (asgn z.0.M 7) (asgn a.0.M `cse.1))")
 
   block store_disjoint_survives:
     # A store through `qq` does not kill a cached load through `pp`: alias
@@ -944,9 +944,9 @@ when isMainModule:
       "(stmts (asgn y.0.M (dot (deref (deref pp.0.M)) fld.0.M)) " &
       "(asgn (dot (deref (deref qq.0.M)) g.0.M) v.0.M) " &
       "(asgn z.0.M (dot (deref (deref pp.0.M)) fld.0.M)))",
-      "(stmts (var :cse.t.1.M . . (dot (deref (deref pp.0.M)) fld.0.M)) " &
-      "(asgn y.0.M cse.t.1.M) (asgn (dot (deref (deref qq.0.M)) g.0.M) v.0.M) " &
-      "(asgn z.0.M cse.t.1.M))")
+      "(stmts (var :`cse.1 . . (dot (deref (deref pp.0.M)) fld.0.M)) " &
+      "(asgn y.0.M `cse.1) (asgn (dot (deref (deref qq.0.M)) g.0.M) v.0.M) " &
+      "(asgn z.0.M `cse.1))")
 
   block store_aliasing_prevents_cse:
     # Same shape as `store_disjoint_survives` but the store is through `pp` (same
@@ -966,17 +966,17 @@ when isMainModule:
       "(asgn (at (dot (deref a.0.M) arr.0.M) i.0.M) b.0.M) " &
       "(asgn z.0.M (at (dot (deref a.0.M) arr.0.M) i.0.M)))",
       "(stmts " &
-      "(var :cse.t.1.M . . (addr (at (dot (deref a.0.M) arr.0.M) i.0.M))) " &
-      "(asgn y.0.M (deref cse.t.1.M)) " &
-      "(asgn (deref cse.t.1.M) b.0.M) " &
-      "(asgn z.0.M (deref cse.t.1.M)))")
+      "(var :`cse.1 . . (addr (at (dot (deref a.0.M) arr.0.M) i.0.M))) " &
+      "(asgn y.0.M (deref `cse.1)) " &
+      "(asgn (deref `cse.1) b.0.M) " &
+      "(asgn z.0.M (deref `cse.1)))")
 
   block dominance_into_both_branches:
     chk(
       "(stmts (asgn y.0.M (dot (deref (deref pp.0.M)) fld.0.M)) (if (elif c.0.M (asgn z.0.M (dot (deref (deref pp.0.M)) fld.0.M))) (else (asgn a.0.M (dot (deref (deref pp.0.M)) fld.0.M)))))",
-      "(stmts (var :cse.t.1.M . . (dot (deref (deref pp.0.M)) fld.0.M)) " &
-      "(asgn y.0.M cse.t.1.M) " &
-      "(if (elif c.0.M (asgn z.0.M cse.t.1.M)) (else (asgn a.0.M cse.t.1.M))))")
+      "(stmts (var :`cse.1 . . (dot (deref (deref pp.0.M)) fld.0.M)) " &
+      "(asgn y.0.M `cse.1) " &
+      "(if (elif c.0.M (asgn z.0.M `cse.1)) (else (asgn a.0.M `cse.1))))")
 
   block loop_prevents_cse_across:
     # A loop body may run any number of times, so the cache is cleared across it
@@ -1018,9 +1018,9 @@ when isMainModule:
       "(stmts (asgn y.0.M (dot (deref (deref qq.0.M)) fld.0.M)) " &
       "(call f.0.M pp.0.M) " &
       "(asgn z.0.M (dot (deref (deref qq.0.M)) fld.0.M)))",
-      "(stmts (var :cse.t.1.M . . (dot (deref (deref qq.0.M)) fld.0.M)) " &
-      "(asgn y.0.M cse.t.1.M) (call f.0.M pp.0.M) " &
-      "(asgn z.0.M cse.t.1.M))")
+      "(stmts (var :`cse.1 . . (dot (deref (deref qq.0.M)) fld.0.M)) " &
+      "(asgn y.0.M `cse.1) (call f.0.M pp.0.M) " &
+      "(asgn z.0.M `cse.1))")
 
   block summary_written_prevents_cse:
     # Same shape as `summary_disjoint_survives` but the load is rooted at the

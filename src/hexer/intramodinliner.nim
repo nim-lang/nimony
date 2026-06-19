@@ -387,8 +387,57 @@ proc collectParams(params: Cursor; outSyms: var seq[SymId];
         outTypes.add inner             # NIFC (param :name <pragmas> <type>)
       skip p
 
+type
+  Bindings = object
+    rename: Table[SymId, SymId]      ## original param/local sym -> fresh sym
+    subst: Table[SymId, Cursor]      ## read-only param sym -> argument subtree
+                                     ## to splice at uses (no copy emitted)
+
+proc firstSymbolIn(c: Cursor): SymId =
+  ## The access root: the first `Symbol` in `c`, or `SymId(0)`.
+  result = SymId(0)
+  var n = c
+  if n.kind == Symbol:
+    result = n.symId
+  elif n.kind == ParLe:
+    n.into:
+      while n.hasMore:
+        if result == SymId(0):
+          let inner = firstSymbolIn(n)
+          if inner != SymId(0): result = inner
+        skip n
+
+proc isSubstitutableArg(c: Cursor): bool =
+  ## A literal or nullary constant — stable across the whole body, so it can be
+  ## spliced at every use instead of bound to a parameter copy. (Symbol args are
+  ## NOT included: the inliner cannot prove the caller's variable is unmodified
+  ## during the body without alias info.)
+  case c.kind
+  of IntLit, UIntLit, FloatLit, CharLit, StringLit: true
+  of ParLe: c.exprKind in {TrueC, FalseC, NilC, InfC, NeginfC, NanC}
+  else: false
+
+proc scanParamUsage(c: Cursor; params: HashSet[SymId];
+                    assigned, addrTaken: var HashSet[SymId]) =
+  ## Record which parameters are an assignment target's root, or have their
+  ## address taken, anywhere in the body — those cannot be replaced by a value.
+  if c.kind != ParLe: return
+  if c.stmtKind in {AsgnS, StoreS}:
+    var dst = c.firstSon
+    if c.stmtKind == StoreS: skip dst        # `(store value dest)` — dest is 2nd
+    let s = firstSymbolIn(dst)
+    if s in params: assigned.incl s
+  elif c.exprKind == AddrC:
+    let s = firstSymbolIn(c.firstSon)
+    if s in params: addrTaken.incl s
+  var n = c
+  n.into:
+    while n.hasMore:
+      scanParamUsage(n, params, assigned, addrTaken)
+      skip n
+
 proc emitRenamed(dest: var TokenBuf; body: var Cursor;
-                 rename: Table[SymId, SymId]) =
+                 bnd: Bindings) =
   ## Copy `body` (one subtree) into `dest`, applying `rename` to every
   ## SymbolDef and Symbol that is in the table.
   ##
@@ -402,14 +451,17 @@ proc emitRenamed(dest: var TokenBuf; body: var Cursor;
   ## rewrite the field reference too and break the constructor.
   case body.kind
   of SymbolDef:
-    if rename.hasKey(body.symId):
-      dest.addSymDef rename.getOrQuit(body.symId), body.info
+    if bnd.rename.hasKey(body.symId):
+      dest.addSymDef bnd.rename.getOrQuit(body.symId), body.info
     else:
       dest.add body
     inc body
   of Symbol:
-    if rename.hasKey(body.symId):
-      dest.addSymUse rename.getOrQuit(body.symId), body.info
+    if bnd.subst.hasKey(body.symId):
+      var s = bnd.subst.getOrQuit(body.symId)
+      dest.addSubtree s
+    elif bnd.rename.hasKey(body.symId):
+      dest.addSymUse bnd.rename.getOrQuit(body.symId), body.info
     else:
       dest.add body
     inc body
@@ -425,7 +477,7 @@ proc emitRenamed(dest: var TokenBuf; body: var Cursor;
           dest.add body                     # field name — no rename
           inc body
         while body.hasMore:
-          emitRenamed(dest, body, rename)
+          emitRenamed(dest, body, bnd)
       dest.addParRi()
       return
     if body.exprKind == DotC:
@@ -434,18 +486,18 @@ proc emitRenamed(dest: var TokenBuf; body: var Cursor;
       dest.add body
       into body:                            # past `dot` tag
         if body.hasMore:
-          emitRenamed(dest, body, rename)   # obj
+          emitRenamed(dest, body, bnd)   # obj
         if body.hasMore:
           dest.add body                     # field — no rename
           inc body
         while body.hasMore:
-          emitRenamed(dest, body, rename)   # depth, etc.
+          emitRenamed(dest, body, bnd)   # depth, etc.
       dest.addParRi()
       return
     dest.add body
     into body:
       while body.hasMore:
-        emitRenamed(dest, body, rename)
+        emitRenamed(dest, body, bnd)
     dest.addParRi()
   of ParRi:
     discard
@@ -454,7 +506,7 @@ proc emitRenamed(dest: var TokenBuf; body: var Cursor;
     inc body
 
 proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
-                        rename: Table[SymId, SymId];
+                        bnd: Bindings;
                         targetSym: SymId; returnLabel: SymId) =
   ## Like `emitRenamed`, but rewrites every `(ret X)` found anywhere in
   ## the subtree to either:
@@ -466,14 +518,17 @@ proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
   ## the body's last statement.
   case body.kind
   of SymbolDef:
-    if rename.hasKey(body.symId):
-      dest.addSymDef rename.getOrQuit(body.symId), body.info
+    if bnd.rename.hasKey(body.symId):
+      dest.addSymDef bnd.rename.getOrQuit(body.symId), body.info
     else:
       dest.add body
     inc body
   of Symbol:
-    if rename.hasKey(body.symId):
-      dest.addSymUse rename.getOrQuit(body.symId), body.info
+    if bnd.subst.hasKey(body.symId):
+      var s = bnd.subst.getOrQuit(body.symId)
+      dest.addSubtree s
+    elif bnd.rename.hasKey(body.symId):
+      dest.addSymUse bnd.rename.getOrQuit(body.symId), body.info
     else:
       dest.add body
     inc body
@@ -486,7 +541,7 @@ proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
         if body.hasMore and body.kind != DotToken and targetSym != SymId(0):
           dest.addParLe TagId(AsgnS), info
           dest.addSymUse targetSym, info
-          emitRenamed(dest, body, rename)  # the returned expression
+          emitRenamed(dest, body, bnd)  # the returned expression
           dest.addParRi()
         else:
           while body.hasMore: skip body     # discard the value
@@ -505,25 +560,25 @@ proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
           dest.add body                     # field name — verbatim
           inc body
         while body.hasMore:
-          emitRenamedWithRet(dest, body, rename, targetSym, returnLabel)
+          emitRenamedWithRet(dest, body, bnd, targetSym, returnLabel)
       dest.addParRi()
       return
     if body.exprKind == DotC:
       dest.add body
       into body:
         if body.hasMore:
-          emitRenamedWithRet(dest, body, rename, targetSym, returnLabel)
+          emitRenamedWithRet(dest, body, bnd, targetSym, returnLabel)
         if body.hasMore:
           dest.add body                     # field — verbatim
           inc body
         while body.hasMore:
-          emitRenamedWithRet(dest, body, rename, targetSym, returnLabel)
+          emitRenamedWithRet(dest, body, bnd, targetSym, returnLabel)
       dest.addParRi()
       return
     dest.add body
     into body:
       while body.hasMore:
-        emitRenamedWithRet(dest, body, rename, targetSym, returnLabel)
+        emitRenamedWithRet(dest, body, bnd, targetSym, returnLabel)
     dest.addParRi()
   of ParRi:
     discard
@@ -532,7 +587,7 @@ proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
     inc body
 
 proc emitBody(c: var InlinerCtx; dest: var TokenBuf; body: var Cursor;
-              rename: Table[SymId, SymId]; targetSym: SymId) =
+              bnd: Bindings; targetSym: SymId) =
   ## Emit the proc body's outer `(stmts …)` with renames, rewriting
   ## every `(ret X)` into a `(jmp returnLabel)` (optionally preceded by
   ## `(asgn targetSym X)` for a bound non-void splice), and append the
@@ -543,7 +598,7 @@ proc emitBody(c: var InlinerCtx; dest: var TokenBuf; body: var Cursor;
   ## that cost buys us uniform handling of arbitrarily-many `(ret X)`
   ## points so no body shape disqualifies the splice.
   if body.kind != ParLe or body.stmtKind != StmtsS:
-    emitRenamed(dest, body, rename)
+    emitRenamed(dest, body, bnd)
     return
   let info = body.info
   inc c.counter
@@ -552,11 +607,27 @@ proc emitBody(c: var InlinerCtx; dest: var TokenBuf; body: var Cursor;
   dest.addParLe TagId(StmtsS), info
   into body:                                # bounded: source `)` may be virtual
     while body.hasMore:
-      emitRenamedWithRet(dest, body, rename, targetSym, returnLabel)
+      emitRenamedWithRet(dest, body, bnd, targetSym, returnLabel)
   dest.addParLe TagId(LabS), info
   dest.addSymDef returnLabel, info
   dest.addParRi()
   dest.addParRi()                           # close (stmts …)
+
+proc bindingsFor(pSyms: seq[SymId]; argCursors: seq[Cursor];
+                 body: Cursor; rename: Table[SymId, SymId]): Bindings =
+  ## Bundle the param→fresh-sym rename with the set of params that can be
+  ## replaced by their argument value (read-only, not addr-taken, substitutable
+  ## argument) — those need no `(var :p = arg)` copy.
+  result = Bindings(rename: rename, subst: initTable[SymId, Cursor]())
+  var paramSet = initHashSet[SymId]()
+  for s in pSyms: paramSet.incl s
+  var assigned = initHashSet[SymId]()
+  var addrTaken = initHashSet[SymId]()
+  scanParamUsage(body, paramSet, assigned, addrTaken)
+  for i in 0 ..< pSyms.len:
+    if isSubstitutableArg(argCursors[i]) and
+       pSyms[i] notin assigned and pSyms[i] notin addrTaken:
+      result.subst[pSyms[i]] = argCursors[i]
 
 proc seedRenameWalk(c: var InlinerCtx; n: var Cursor;
                     rename: var Table[SymId, SymId]) =
@@ -625,23 +696,34 @@ proc trySplice*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   seedRenameFromBody(c, pd.body, rename)
 
   let info = entry.info
+
+  # Capture each argument cursor, then decide which params can be substituted
+  # directly (read-only, not addr-taken, substitutable arg) instead of copied.
+  var argCursors: seq[Cursor] = @[]
+  var ac = probe
+  inc ac                                   # past callee sym
+  for i in 0 ..< pSyms.len:
+    argCursors.add ac
+    skip ac
+  let bnd = bindingsFor(pSyms, argCursors, pd.body, rename)
+
   dest.addParLe TagId(ScopeS), info
 
-  # Param bindings: NIFC `(var :p_fresh <pragmas> <type> <value>)`.
-  var arg = probe
-  inc arg                                  # past callee sym
+  # Param bindings: NIFC `(var :p_fresh <pragmas> <type> <value>)`. Substituted
+  # params get no binding — their argument is spliced at each use.
   for i in 0 ..< pSyms.len:
+    if bnd.subst.hasKey(pSyms[i]): continue
     dest.addParLe TagId(VarS), info
     dest.addSymDef rename.getOrQuit(pSyms[i]), info
     dest.addDotToken()                     # pragmas
     var t = pTypes[i]
     dest.takeTree t                        # parameter type
-    dest.takeTree arg                      # initializer
+    dest.addSubtree argCursors[i]          # initializer
     dest.addParRi()                        # close (var …)
 
   # Splice the body. Void splice: every (ret …) becomes (jmp returnLabel).
   var body = pd.body
-  emitBody(c, dest, body, rename, SymId(0))
+  emitBody(c, dest, body, bnd, SymId(0))
 
   dest.addParRi()                          # close (scope …)
 
@@ -725,23 +807,30 @@ proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): in
   dest.addParRi()
 
   # 2. Emit the inlined body wrapped in a (scope …) with param bindings.
+  var argCursors: seq[Cursor] = @[]
+  var ac = callProbe
+  inc ac                                   # past callee sym
+  for i in 0 ..< pSyms.len:
+    argCursors.add ac
+    skip ac
+  let bnd = bindingsFor(pSyms, argCursors, pd.body, rename)
+
   dest.addParLe TagId(ScopeS), info
 
-  var arg = callProbe
-  inc arg                                  # past callee sym
   for i in 0 ..< pSyms.len:
+    if bnd.subst.hasKey(pSyms[i]): continue
     dest.addParLe TagId(VarS), info
     dest.addSymDef rename.getOrQuit(pSyms[i]), info
     dest.addDotToken()                     # pragmas
     var t = pTypes[i]
     dest.takeTree t
-    dest.takeTree arg
+    dest.addSubtree argCursors[i]
     dest.addParRi()
 
   # Splice the body; every `(ret X)` becomes `(asgn tmpSym X) (jmp …)`,
   # with a matching `(lab …)` appended at the tail.
   var body = pd.body
-  emitBody(c, dest, body, rename, tmpSym)
+  emitBody(c, dest, body, bnd, tmpSym)
 
   dest.addParRi()                          # close (scope …)
 
