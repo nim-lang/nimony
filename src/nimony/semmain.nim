@@ -23,7 +23,7 @@ include ".." / lib / compat2
 import ".." / lib / [symparser, nifindexes, docpaths]
 import ".." / gear2 / modnames
 import ".." / models / nifindex_tags
-import nimony_model, symtabs, builtintypes, decls, programs, sigmatch,
+import nimony_model, symtabs, builtintypes, decls, programs, sigmatch, conceptcache,
   reporters, nifconfig, xints, semdata, sembasics,
   semos, langmodes, derefs, vtables_frontend,
   contracts_fir, exprexec, semimport, module_plugins, sem
@@ -568,6 +568,7 @@ proc initSemContext(suffix: string; config: ProgramContext; moduleFlags: set[Mod
     semLocalTypeImplCB: semLocalTypeImpl,
     declareResultCB: declareResult,
     semEmitCB: semEmit)
+  initConceptCache(result)
   for magic in ["typeof", "compiles", "defined", "declared"]:
     result.unoverloadableMagics.incl(pool.strings.getOrIncl(magic))
 
@@ -696,6 +697,7 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
       writeOutput modules[i].c, modules[i].dest, modules[i].outfile
     else:
       quit 1
+  printConceptProfile()
 
 proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFlags: set[ModuleFlag];
                commandLineArgs: sink string; canSelfExec: bool) =
@@ -732,3 +734,4 @@ proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFla
     writeOutput c, dest, outfile
   else:
     quit 1
+  printConceptProfile()

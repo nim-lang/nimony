@@ -257,6 +257,7 @@ proc semConceptParents(c: var SemContext; dest: var TokenBuf; n: var Cursor;
   result = parents.len > 0
 
 proc semConceptType(c: var SemContext; dest: var TokenBuf; n: var Cursor; ownerSym: SymId) =
+  let conceptStart = dest.len
   dest.takeInto n:
     # Nifler layout: `(concept S0 S1 Parents Body)` with two reserved slots.
     wantDot c, dest, n
@@ -298,6 +299,7 @@ proc semConceptType(c: var SemContext; dest: var TokenBuf; n: var Cursor; ownerS
     else:
       bug "(stmts) or empty body expected, but got: ", n
       skip n
+  onConceptDeclSem(c, ownerSym, dest, conceptStart)
 
 proc copyPragmasWithoutHooks(dest: var TokenBuf; pragmas: Cursor) =
   var n = pragmas
