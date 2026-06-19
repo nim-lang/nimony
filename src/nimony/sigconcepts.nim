@@ -20,6 +20,23 @@ import ".." / lib / symparser
 proc isConceptType*(a: Cursor): bool {.inline.} =
   a.kind == Symbol and isConceptSym(a.symId)
 
+proc conceptTargetNeedsStrictCheck*(a: Cursor): bool =
+  ## Standalone concepts keep lenient matching for generic typevars and for
+  ## all types except user `distinct` types. Distinct types must satisfy
+  ## requirements structurally so they cannot inherit base-type operators
+  ## silently; other types (including `string` objects and ranges) keep the
+  ## legacy acceptance until full requirement matching is complete.
+  if a.kind == DotToken:
+    return false
+  if a.kind == Symbol:
+    let res = tryLoadSym(a.symId)
+    if res.status == LacksNothing and res.decl.symKind == TypevarY:
+      return false
+  var t = a
+  if t.kind == Symbol:
+    t = typeImpl(t.symId)
+  t.typeKind == DistinctT
+
 proc conceptRoutineBasename*(routine: Cursor): StrId =
   var prc = routine
   assert prc.symKind in RoutineKinds
