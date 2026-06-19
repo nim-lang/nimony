@@ -349,16 +349,30 @@ proc compilePlugin(c: var SemContext; info: PackedLineInfo; nf, exefile: string)
       createDir(Path(pluginCache))
   except:
     quit "FAILURE: cannot create directory " & pluginCache
-  # `--nimcache:<pluginCache>` keeps the sub-compile's intermediate NIF
-  # artefacts in a per-plugin scratch dir so parallel test workers don't
-  # fight over `nimcache/` entries.
+  # Forward outer user search paths and defines so plugin self-compilation
+  # computes the same module identities for user modules. Internal Nimony
+  # library paths are supplied below and deliberately not forwarded from the
+  # caller's path file.
+  # Do not forward the raw command line: it can contain `--base`, which would
+  # make plugin child compiles read caller-local nimony.paths files.
   let nimonyExe = findTool("nimony")
   let srcLibPath = nimonyDir() / "src" / "lib"
-  let cmd = quoteShell(nimonyExe) &
+  var cmd = quoteShell(nimonyExe) &
     " --nimcache:" & quoteShell(pluginCache) &
-    " --path:" & quoteShell(pluginDir) &
     " --path:" & quoteShell(srcLibPath) &
-    " -o:" & quoteShell(exefile) & " c " & quoteShell(nf)
+    " --path:" & quoteShell(pluginDir)
+  for path in c.g.config.paths:
+    if path != stdlibDir() and path != pluginDir and path != srcLibPath:
+      cmd.add " --path:"
+      cmd.add quoteShell(path)
+  for define in c.g.config.defines:
+    if define != "nimony":
+      cmd.add " --define:"
+      cmd.add quoteShell(define)
+  cmd.add " -o:"
+  cmd.add quoteShell(exefile)
+  cmd.add " c "
+  cmd.add quoteShell(nf)
   exec cmd
 
 proc writeFileIfChanged(file, content: string) {.canRaise.} =
