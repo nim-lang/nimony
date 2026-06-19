@@ -21,6 +21,7 @@ import std / [os, assertions, strutils, syncio]
 import ".." / ".." / "lib" / nifcoreparse   # parse/serialize; re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # createLengTagPool, stmtKind, takeProcDecl
 import induction_variables                     # runInductionVariables (live pass)
+import cse                                     # runCSE + collectFunctionSummaries
 import imi_bridge                             # runImi (inter-module inliner, via nifcursors)
 
 type
@@ -42,12 +43,20 @@ proc extractModuleSuffix(filename: string): string =
     elif not skip:
       result.add c
 
-proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats) =
+proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
+                  summaries: ptr FunctionSummaryTable) =
   ## Per-body optimization pipeline. The nifcore passes plug in here as they
-  ## are ported.
-  runInductionVariables(buf, suffix)
+  ## are ported. The suffix is made unique per body (`st.bodies` is the body's
+  ## index in the module): the passes name synthesized temps `<kind>.<n>.<suffix>`
+  ## with a per-body counter, so without a per-body suffix two procs' first temps
+  ## would collide on one module-pool symbol and the C codegen — which declares
+  ## each symbol once — would leave later functions' uses undeclared.
+  let bodySuffix = suffix & "." & $st.bodies
+  runInductionVariables(buf, bodySuffix)
+  runCSE(buf, bodySuffix, summaries)
 
-proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stats) =
+proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stats;
+                 summaries: ptr FunctionSummaryTable) =
   ## Copy the tree/token at `n` into `dest`, replacing each proc body with its
   ## optimized version. `dest` shares `n`'s pool+tags, so `addSubtree` is a
   ## bulk, line-info-preserving copy; reopened tags re-stamp their own info.
@@ -67,7 +76,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
         inc st.bodies
         var body = createTokenBuf(64, dest.pool, dest.tags)
         body.addSubtree d.body
-        optimizeBody(body, suffix, st)
+        optimizeBody(body, suffix, st, summaries)
         var rb = body.beginRead()
         dest.addSubtree rb
       else:
@@ -80,7 +89,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
       if li.isValid: dest.appendLineInfo li
       n.into:
         while n.hasMore:
-          rebuildTree(dest, n, suffix, st)
+          rebuildTree(dest, n, suffix, st, summaries)
       dest.closeTag()
   else:
     dest.addSubtree n
@@ -88,9 +97,10 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
 
 proc optimizeModule*(src: var TokenBuf; suffix: string; st: var Stats): TokenBuf =
   ## Rebuild the single module-level root tree (`(stmts …)`), optimizing bodies.
+  var summaries = collectFunctionSummaries(src)   # once per module; cse runs per body
   result = createTokenBuf(src.len + src.len div 8, src.pool, src.tags)
   var n = src.beginRead()
-  rebuildTree(result, n, suffix, st)
+  rebuildTree(result, n, suffix, st, addr summaries)
 
 proc checkWellFormed(buf: var TokenBuf) =
   ## Drain every top-level tree to exhaustion; `skip` would crash on a
