@@ -657,23 +657,29 @@ proc conceptParentsSlot*(body: Cursor): Cursor =
   skip result
   skip result
 
+proc conceptParentsWellFormed*(parents: Cursor): bool =
+  ## False when parent sem produced an `(err ...)` node or other garbage.
+  parents.kind == DotToken or parents.kind == Symbol or
+    parents.typeKind == AndT or parents.exprKind == ParX
+
 proc conceptHasParents*(parents: Cursor): bool =
-  parents.kind != DotToken
+  conceptParentsWellFormed(parents) and parents.kind != DotToken
 
 iterator conceptParentSyms*(parents: Cursor): SymId {.sideEffect.} =
   var p = parents
-  if p.kind == DotToken:
-    discard
-  elif p.kind == Symbol:
-    yield p.symId
-  elif p.typeKind == AndT or p.exprKind == ParX:
-    p.into:
-      while p.hasMore:
-        if p.kind == Symbol:
-          yield p.symId
-        skip p
-  else:
-    bug "illformed concept parents: ", p
+  if conceptParentsWellFormed(p):
+    if p.kind == DotToken:
+      discard
+    elif p.kind == Symbol:
+      yield p.symId
+    elif p.typeKind == AndT or p.exprKind == ParX:
+      p.into:
+        while p.hasMore:
+          if p.kind == Symbol:
+            yield p.symId
+          skip p
+    else:
+      bug "illformed concept parents: ", p
 
 proc conceptSelfSlot*(body: Cursor): Cursor =
   result = conceptParentsSlot(body)

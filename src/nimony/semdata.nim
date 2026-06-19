@@ -137,6 +137,9 @@ type
 
   Classes* = Table[SymId, ClassEntry]
 
+  ConceptCache* = ref object of RootObj
+    ## Opaque concept-match cache; implementation in conceptcache.nim.
+
   SemContext* = object
     #dest*: TokenBuf
     routine*: SemRoutine
@@ -195,6 +198,7 @@ type
     pendingModulePlugins*: seq[PluginObj]
     pluginBlacklist*: HashSet[StrId] # make 1984 fiction again
     cachedTypeboundOps*: Table[(SymId, StrId), seq[SymId]]
+    conceptCache*: ConceptCache
     userPragmas*: Table[StrId, TokenBuf]
     customPragmaTemplates*: HashSet[StrId]
       ## Names of templates declared with `{.pragma.}`. Such templates can

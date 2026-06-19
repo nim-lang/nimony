@@ -20,7 +20,7 @@ include ".." / lib / compat2
 import ".." / lib / symparser
 import ".." / gear2 / modnames
 import nimony_model, symtabs, builtintypes, decls, asthelpers, programs,
-  reporters, nifconfig, semdata, sembasics, semchecks, semos
+  reporters, nifconfig, semdata, sembasics, semchecks, semos, conceptcache
 
 # --- thin shims forwarding into the sem core via SemContext callbacks ---
 
@@ -192,6 +192,8 @@ proc doImports(c: var SemContext; dest: var TokenBuf; files: seq[ImportedFilenam
   let origin = getFile(info)
   for f in files:
     importSingleFileConsiderExports c, dest, f, origin, mode, info
+  if files.len > 0:
+    onConceptImportsChanged(c)
 
 template maybeCyclic(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
   if x.kind == ParLe and x.exprKind == PragmaxX:

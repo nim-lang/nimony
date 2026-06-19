@@ -23,6 +23,7 @@ import nimony_model, symtabs, builtintypes, decls, asthelpers,
   semuntyped, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec, langmodes,
   features, identstyle, macro_plugin
 
+import conceptcache
 import contracts_njvl
 
 import ".." / gear2 / modnames
