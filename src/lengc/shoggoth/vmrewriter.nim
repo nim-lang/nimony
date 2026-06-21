@@ -21,7 +21,7 @@
 ##   winning rule's registers.
 ## - The dynamic predicates `(pure X)` and `(same X)` are runtime **guards** on
 ##   transition refinements (`isPureSubtree` / `subtreeEqual`).
-## - Accept states carry an **ordered** list of rules; `when` predicates run at
+## - Accept states carry an **ordered** list of rules; `WHEN` predicates run at
 ##   accept time and a failing rule falls through to the next candidate.
 ##
 ## Deferred: an `Open(tag)` that competes with a `Wild`/`Pure`/`Same` at the same
@@ -38,12 +38,12 @@ type
     ## cursor's tag maps to this enum by a single subtraction + cast (the
     ## nifcore fast-tag idiom). `rtOther` = any tag outside the vocabulary
     ## (i.e. a concrete pattern tag like `add`).
-    rtRules, rtRule, rtLhs, rtRhs, rtWhen,
+    rtRules, rtRule, rtIf, rtDo, rtWhen,
     rtAny, rtInt, rtSym, rtLit, rtPure, rtSame,
     rtOther
 
 const
-  RuleTokNames = ["rules", "rule", "lhs", "rhs", "when",
+  RuleTokNames = ["rules", "rule", "IF", "DO", "WHEN",
                   "any", "int", "sym", "lit", "pure", "same"]
   MetaToks = {rtAny, rtInt, rtSym, rtLit, rtPure, rtSame}
   NullaryConstTags = ["true", "false", "nil", "inf", "neginf", "nan"]
@@ -447,18 +447,18 @@ proc parseRule(e: Engine; c: Cursor) =
   var rc = c
   rc.into:
     while rc.hasMore:
-      assert rc.kind == TagLit, "rule body: expected (lhs …)/(rhs …)/(when …)"
+      assert rc.kind == TagLit, "rule body: expected (IF …)/(DO …)/(WHEN …)"
       case ruleTok(e, rc)
-      of rtLhs:
+      of rtIf:
         var l = rc
         l.into:
           assert l.kind == TagLit and ruleTok(e, l) == rtOther,
-            "LHS root must be a concrete tag"
+            "IF root must be a concrete tag"
           rule.rootTag = cursorTagId(l)
           compilePat(e, rule, l, rule.patBuf)   # emits (rootTag <kids…>) into patBuf
         compiled = true
         skip rc
-      of rtRhs:
+      of rtDo:
         var r = rc
         r.into:
           rule.rhs = r
@@ -466,7 +466,7 @@ proc parseRule(e: Engine; c: Cursor) =
         haveRhs = true
         skip rc
       of rtWhen:
-        assert compiled, "(when …) must follow (lhs …)"
+        assert compiled, "(WHEN …) must follow (IF …)"
         var wc = rc
         wc.into:
           while wc.hasMore:
@@ -475,11 +475,11 @@ proc parseRule(e: Engine; c: Cursor) =
             var slots: seq[int] = @[]
             call.into:
               while call.hasMore:
-                assert call.kind == Ident, "(when …) args must be captured names"
+                assert call.kind == Ident, "(WHEN …) args must be captured names"
                 let argName = strVal(call)
                 let s = e.pool.syms.getOrIncl(argName)
                 assert s in rule.capIndex,
-                  "(when …) references unbound name: " & argName
+                  "(WHEN …) references unbound name: " & argName
                 slots.add rule.capIndex[s]
                 call.inc
             rule.sideConds.add SideCond(pred: predTag, slots: slots)
@@ -487,8 +487,8 @@ proc parseRule(e: Engine; c: Cursor) =
         skip rc
       else:
         raise newException(ValueError, "unknown rule section: " & tagNameOf(rc))
-  assert compiled, "rule missing (lhs …)"
-  assert haveRhs, "rule missing (rhs …)"
+  assert compiled, "rule missing (IF …)"
+  assert haveRhs, "rule missing (DO …)"
   e.rules.add ensureMove(rule)
 
 proc parseRules(e: Engine) =
@@ -607,7 +607,7 @@ proc runScope(e: Engine; dfaIdx: int; c0: Cursor; rem0: int;
     state = refine.dest
   result = e.dfas[dfaIdx].states[state].accepts
 
-# ---- RHS template emission ------------------------------------------------
+# ---- DO template emission ------------------------------------------------
 
 proc emitRhs(e: Engine; t: var Cursor; dest: var TokenBuf; caps: seq[Cursor];
              capIndex: Table[SymId, int]; info: NifLineInfo) =
@@ -616,7 +616,7 @@ proc emitRhs(e: Engine; t: var Cursor; dest: var TokenBuf; caps: seq[Cursor];
   case t.kind
   of Ident:
     let s = t.pool.syms.getOrIncl(strVal(t))
-    assert s in capIndex, "RHS references unbound name: " & strVal(t)
+    assert s in capIndex, "DO references unbound name: " & strVal(t)
     dest.addSubtree caps[capIndex[s]]
     inc t
   of IntLit:   dest.addIntLit intVal(t);   dest.appendLineInfo info; inc t
@@ -630,7 +630,7 @@ proc emitRhs(e: Engine; t: var Cursor; dest: var TokenBuf; caps: seq[Cursor];
     if ruleTok(e, t) in MetaToks:
       let childName = metaChildName(t)
       let s = t.pool.syms.getOrIncl(childName)
-      assert s in capIndex, "RHS meta references unbound name: " & childName
+      assert s in capIndex, "DO meta references unbound name: " & childName
       dest.addSubtree caps[capIndex[s]]
       skip t
     else:
@@ -641,7 +641,7 @@ proc emitRhs(e: Engine; t: var Cursor; dest: var TokenBuf; caps: seq[Cursor];
           emitRhs(e, t, dest, caps, capIndex, info)
       dest.closeTag()
   else:
-    raise newException(ValueError, "unsupported RHS token: " & $t.kind)
+    raise newException(ValueError, "unsupported DO token: " & $t.kind)
 
 # ---- driver ---------------------------------------------------------------
 
