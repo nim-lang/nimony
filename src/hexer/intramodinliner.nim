@@ -393,20 +393,6 @@ type
     subst: Table[SymId, Cursor]      ## read-only param sym -> argument subtree
                                      ## to splice at uses (no copy emitted)
 
-proc firstSymbolIn(c: Cursor): SymId =
-  ## The access root: the first `Symbol` in `c`, or `SymId(0)`.
-  result = SymId(0)
-  var n = c
-  if n.kind == Symbol:
-    result = n.symId
-  elif n.kind == ParLe:
-    n.into:
-      while n.hasMore:
-        if result == SymId(0):
-          let inner = firstSymbolIn(n)
-          if inner != SymId(0): result = inner
-        skip n
-
 proc isSubstitutableArg(c: Cursor): bool =
   ## A literal or nullary constant — stable across the whole body, so it can be
   ## spliced at every use instead of bound to a parameter copy. (Symbol args are
@@ -425,10 +411,10 @@ proc scanParamUsage(c: Cursor; params: HashSet[SymId];
   if c.stmtKind in {AsgnS, StoreS}:
     var dst = c.firstSon
     if c.stmtKind == StoreS: skip dst        # `(store value dest)` — dest is 2nd
-    let s = firstSymbolIn(dst)
+    let s = rootOf(dst)
     if s in params: assigned.incl s
   elif c.exprKind == AddrC:
-    let s = firstSymbolIn(c.firstSon)
+    let s = rootOf(c.firstSon)
     if s in params: addrTaken.incl s
   var n = c
   n.into:

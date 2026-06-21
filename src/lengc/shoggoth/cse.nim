@@ -214,23 +214,6 @@ proc expressionMentionsAny(cur: Cursor; targets: HashSet[SymId]): bool =
   else:
     return false
 
-proc firstSymbolIn(c: Cursor): SymId =
-  if not c.hasMore: return SymId(0)
-  case c.kind
-  of Symbol:
-    return symId(c)
-  of TagLit:
-    var n = c
-    var found = SymId(0)
-    n.loopInto:
-      if found == SymId(0):
-        let inner = firstSymbolIn(n)
-        if inner != SymId(0): found = inner
-      skip n
-    return found
-  else:
-    return SymId(0)
-
 proc preScanWrites(start: Cursor; writes, addrs: var HashSet[SymId]) =
   if not start.hasMore: return
   if start.kind != TagLit: return
@@ -239,7 +222,7 @@ proc preScanWrites(start: Cursor; writes, addrs: var HashSet[SymId]) =
     if lhs.kind == Symbol:
       writes.incl symId(lhs)
   if start.exprKind == AddrC:
-    let s = firstSymbolIn(child0(start))
+    let s = rootOf(child0(start))
     if s != SymId(0): addrs.incl s
   var n = start
   n.loopInto:
@@ -298,7 +281,7 @@ proc invalidateForStore(c: var Context; lhs: Cursor) =
   ## cached loads whose chain may alias it — i.e. read memory in the same alias
   ## class as `lhs`'s base — instead of clearing the whole cache. The *address*
   ## temp of `lhs` itself survives: writing a location does not move its address.
-  let s = firstSymbolIn(lhs)
+  let s = rootOf(lhs)
   if s == SymId(0):
     clearCache c                 # indeterminate target → conservative
     return
@@ -354,7 +337,7 @@ proc invalidateForCall(c: var Context; call: Cursor) =
   ca.into:
     if ca.hasMore: skip ca         # callee
     while ca.hasMore:
-      let s = firstSymbolIn(ca)
+      let s = rootOf(ca)
       argSyms.add s
       if s != SymId(0) and argIndex < summary.params.len and
          summary.params[argIndex].escapes:
@@ -555,7 +538,7 @@ proc trExpr(c: var Context; n: var Cursor) =
   of TagLit:
     case n.exprKind
     of AddrC:
-      let s = firstSymbolIn(child0(n))
+      let s = rootOf(child0(n))
       if s != SymId(0): markAddrTaken(c, s)
       skip n
     of CallC:

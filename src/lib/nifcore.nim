@@ -618,6 +618,24 @@ template loopInto*(c: var Cursor; body: untyped) =
   into c:
     while c.hasMore: body
 
+proc rootOf*(c: Cursor): SymId =
+  ## The access root of an lvalue: the first `Symbol` in the subtree at `c`
+  ## — `x` in `x.f[i]` — or `SymId(0)` if there is none.
+  if not c.hasMore: return SymId(0)
+  case c.kind
+  of Symbol:
+    result = symId(c)
+  of TagLit:
+    result = SymId(0)
+    var n = c
+    n.loopInto:
+      if result == SymId(0):
+        let inner = rootOf(n)
+        if inner != SymId(0): result = inner
+      skip n
+  else:
+    result = SymId(0)
+
 # ── TokenBuf ─────────────────────────────────────────────────────────────
 
 type
