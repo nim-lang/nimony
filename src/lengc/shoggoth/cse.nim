@@ -66,11 +66,6 @@ proc paramMayWrite(s: FunctionSummary; idx: int): bool {.inline.} =
 
 # ---- nifcore helpers ------------------------------------------------------
 
-proc symId(c: Cursor): SymId =
-  ## Canonical buffer-local id of the symbol at `c`. nifcore interns per buffer
-  ## (and inlines short names), so go through the name for a stable id.
-  c.pool.syms.getOrIncl(symName(c))
-
 proc child0(c: Cursor): Cursor {.inline.} =
   ## Cursor at the first child of the TagLit `c`.
   result = c

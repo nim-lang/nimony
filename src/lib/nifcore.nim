@@ -463,6 +463,19 @@ proc symName*(c: Cursor; pool: Pool): string =
 
 proc symName*(c: Cursor): string {.inline.} = symName(c, c.pool)
 
+proc symId*(c: Cursor; pool: Pool): SymId =
+  ## Stable pool id of the Symbol/SymbolDef at `c` — the inverse of `symName`.
+  ## A pool-ref token already carries its id, so use it directly; only an inline
+  ## short name (stored in the token itself) has to be interned.
+  assert c.kind in {Symbol, SymbolDef}, "symId on " & $c.kind
+  let payload = c.load.uoperand
+  if (payload and StrInlineFlag) != 0'u32:
+    pool.syms.getOrIncl(readInlineStr(payload))
+  else:
+    SymId(combinedPayload(c) shr 1)
+
+proc symId*(c: Cursor): SymId {.inline.} = symId(c, c.pool)
+
 # Int/UInt/Float: pure-inline via chainable ExtendedSuffix.
 #
 #   IntLit  payload: 28-bit signed (one token); 56-bit signed with one

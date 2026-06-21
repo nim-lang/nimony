@@ -40,13 +40,6 @@ proc createContext(orig: ptr TokenBuf; moduleSuffix: string): Context =
           tempCounter: 0,
           moduleSuffix: moduleSuffix)
 
-proc symId(c: Cursor): SymId =
-  ## Canonical buffer-local id of the symbol at `c`. nifcore interns symbols
-  ## per buffer (and inlines short names), so go through the name to get a
-  ## stable, comparable id.
-  let p = c.pool
-  result = p.syms.getOrIncl(symName(c))
-
 proc freshTempName(c: var Context): string =
   inc c.tempCounter
   result = "iv.p." & $c.tempCounter & "." & c.moduleSuffix

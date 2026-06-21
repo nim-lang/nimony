@@ -32,9 +32,6 @@ type
   Aliasing* = object
     parent: Table[SymId, SymId]   ## union-find; a symbol absent here is its own root
 
-proc symId(c: Cursor): SymId {.inline.} =
-  c.pool.syms.getOrIncl(symName(c))
-
 proc firstChild(c: Cursor): Cursor {.inline.} =
   result = c
   inc result

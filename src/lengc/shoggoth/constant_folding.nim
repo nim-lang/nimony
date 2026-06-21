@@ -1,6 +1,6 @@
 #
 #
-#           NIFC Constant Folding
+#           Lengc Constant Folding
 #        (c) Copyright 2026 Andreas Rumpf
 #
 #    See the file "license.txt", included in this
