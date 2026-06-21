@@ -75,7 +75,7 @@ proc findAndAddFieldDefinition(c: var IdeContext, n: var Cursor, name: string, n
 proc tr(c: var IdeContext, n: var Cursor) =
   ## Traverse the tree and collect definitions and usages matching the sym in the context
   case n.stmtKind
-  of ScopeS, StmtsS:
+  of ScopeS:
     c.typeCache.openScope()
     n.loopInto():
       tr(c, n)
@@ -217,13 +217,13 @@ proc getParent(n: Cursor): Cursor =
       discard
     unsafeDec result
 
-proc findLocal(file: string; sym: SymId; toTrack: PackedLineInfo; mode: TrackMode, offset: int) =
+proc findLocal(file: string; sym: SymId; toTrack: PackedLineInfo; mode: TrackMode, offset: int, parentOffset: int) =
   var buf = parseFromFile(file)
 
   var n = beginRead(buf)
 
   var symCursor = buf.cursorAt(offset)
-  let container = symCursor.getParent()
+  var symParent = buf.cursorAt(parentOffset)
 
   var name = pool.syms[sym]
   extractBasename name
@@ -236,10 +236,10 @@ proc findLocal(file: string; sym: SymId; toTrack: PackedLineInfo; mode: TrackMod
   c.typeCache = createTypeCache()
   c.typeCache.openScope()
 
-  if container.substructureKind == FldU:
+  if symParent.substructureKind == FldU:
     c.searchKind = skField
-  elif container.exprKind in {DotX, DdotX}:
-    var firstChild = container
+  elif symParent.exprKind in {DotX, DdotX}:
+    var firstChild = symParent
     inc firstChild
     if symCursor != firstChild:
       # When the searched for symbol is not the left hand side but the right hand side then we're searching for a field
@@ -274,11 +274,13 @@ proc usages*(files: openArray[string]; config: NifConfig) =
   var symId = SymId 0
   var symFile = ""
   var symOffset = 0
+  var symParentOffset = 0
 
   let moduleName = moduleSuffix(config.toTrack.filename, config.paths)
   let nifFile = config.nifcachePath / moduleName & ".s.nif"
 
   var s = nifstreams.open(nifFile)
+  var parentStarts = newSeqOfCap[int](100)
   try:
     discard processDirectives(s.r)
     var i = 0
@@ -296,12 +298,17 @@ proc usages*(files: openArray[string]; config: NifConfig) =
           if dots == 0: inc tokenLen
         if lineInfoMatch(tok.info, requestedInfo, tokenLen):
           symOffset = i
+          symParentOffset = parentStarts[^1]
           isLocalSym = dots < 2
           symId = tok.symId
           symFile = nifFile
           break
       of EofToken: break
-      of UnknownToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit, ParLe, ParRi:
+      of ParLe:
+        parentStarts.add(i)
+      of ParRi:
+        discard parentStarts.pop()
+      of UnknownToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
         discard "proceed"
 
       inc i
@@ -313,7 +320,7 @@ proc usages*(files: openArray[string]; config: NifConfig) =
   elif isLocalSym:
     # Set path so files are found when resolving symbols
     prog.main.dir = nifFile.splitPath.head
-    findLocal(symFile, symId, requestedInfo, config.toTrack.mode, symOffset)
+    findLocal(symFile, symId, requestedInfo, config.toTrack.mode, symOffset, symParentOffset)
   else:
     for file in files:
       var s = nifstreams.open(file)
