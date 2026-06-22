@@ -133,21 +133,29 @@ elif defined(nimNativeIo):
   proc selfToken(): int {.inline.} = cast[int](addr tlsSelf)
 
   when defined(linux):
-    proc syscall(n: clong): clong {.varargs, importc: "syscall", sideEffect.}
-    when defined(amd64):
-      const NR_futex = clong(202)
-    else:
-      const NR_futex = clong(98)  # arm64 and other modern 64-bit Linux ABIs
     const
       FUTEX_WAIT_PRIVATE = clong(128)  # FUTEX_WAIT or FUTEX_PRIVATE_FLAG
       FUTEX_WAKE_PRIVATE = clong(129)  # FUTEX_WAKE or FUTEX_PRIVATE_FLAG
 
+    # We can't go through the generic libc `syscall(number, …)` wrapper here: that
+    # number-as-first-argument form is a calling convention arkham's raw-syscall
+    # path doesn't model (its path is the named-importc → syscall-number-table
+    # mechanism, which bakes the number in and maps args straight to the kernel ABI
+    # registers — uaddr→rdi/x0, op→rsi/x1, val→rdx/x2, timeout→r10/x3). The futex
+    # arguments line up with that ABI exactly, so we declare a *named* `futex` proc
+    # for arkham to recognize. There is no libc `futex` symbol, but arkham doesn't
+    # link libc — the name only has to match the table row arkham adds for it. (This
+    # branch is `nimNativeIo`-only, i.e. the arkham backend; the C/libc build uses
+    # the pthread branch below, so no real `futex` symbol is ever needed.)
+    proc futex(uaddr: ptr uint32; op, val: clong; timeout: pointer): clong {.
+      importc: "futex", sideEffect.}
+
     proc futexWait(p: var uint32; expected: uint32) {.inline.} =
       # Blocks while `p == expected`; returns spuriously, callers re-check.
-      discard syscall(NR_futex, addr p, FUTEX_WAIT_PRIVATE, clong(expected), nil)
+      discard futex(addr p, FUTEX_WAIT_PRIVATE, clong(expected), nil)
     proc futexWake(p: var uint32; all: bool) {.inline.} =
       let count = if all: clong(high(int32)) else: clong(1)
-      discard syscall(NR_futex, addr p, FUTEX_WAKE_PRIVATE, count)
+      discard futex(addr p, FUTEX_WAKE_PRIVATE, count, nil)
 
   elif defined(osx):
     # Darwin's `__ulock_*` (libsystem_kernel) — the same primitive libdispatch
