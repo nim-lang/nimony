@@ -22,6 +22,7 @@ import ".." / ".." / "lib" / nifcoreparse   # parse/serialize; re-exports nifcor
 import ".." / ".." / "lib" / nifcdecl        # createLengTagPool, stmtKind, takeProcDecl
 import induction_variables                     # runInductionVariables (live pass)
 import cse                                     # runCSE + collectFunctionSummaries
+import copyprop                                # runCopyProp (copy prop + dead-store elim)
 import imi_bridge                             # runImi (inter-module inliner, via nifcursors)
 
 type
@@ -52,6 +53,9 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   ## would collide on one module-pool symbol and the C codegen — which declares
   ## each symbol once — would leave later functions' uses undeclared.
   let bodySuffix = suffix & "." & $st.bodies
+  # Copy propagation first: it cleans up the `var y = x` / dead-store residue the
+  # (inter-module) inliner leaves behind, so the later passes see simpler code.
+  runCopyProp(buf)
   runInductionVariables(buf, bodySuffix)
   runCSE(buf, bodySuffix, summaries)
 

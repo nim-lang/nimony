@@ -350,6 +350,20 @@ template loopInto*(n: var Cursor; body: untyped) =
     while n.hasMore:
       body
 
+proc rootOf*(c: Cursor): SymId =
+  ## The access root of an lvalue: the first `Symbol` in the subtree at `c`
+  ## — `x` in `x.f[i]` — or `SymId(0)` if there is none.
+  result = SymId(0)
+  var n = c
+  if n.kind == Symbol:
+    result = n.symId
+  elif n.kind == ParLe:
+    n.loopInto:
+      if result == SymId(0):
+        let inner = rootOf(n)
+        if inner != SymId(0): result = inner
+      skip n
+
 template balancedTokens*(n: var Cursor; body: untyped) =
   ## Deep-scans all `ParLe` nodes in the subtree rooted at `n`.
   ## Inside `body`, `n` is positioned at each `ParLe` node in turn.
