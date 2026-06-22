@@ -81,7 +81,7 @@ type
 # nifcore compatibility shims: the nifcursors world had a global `pool` and
 # packed line info; here a StrLit carries its StrId in its own buffer's pool,
 # and line info is a plain NifLineInfo on the cursor.
-proc litId(c: Cursor): StrId {.inline.} = c.pool.strings.getOrIncl(strVal(c))
+proc litId(c: Cursor): StrId {.inline.} = strId(c)
 proc info(c: Cursor): NifLineInfo {.inline.} = rawLineInfo(c)
 proc firstSon(c: Cursor): Cursor {.inline.} =
   result = c

@@ -460,6 +460,20 @@ proc strVal*(c: Cursor; pool: Pool): string =
 
 proc strVal*(c: Cursor): string {.inline.} = strVal(c, c.pool)
 
+proc strId*(c: Cursor; pool: Pool): StrId =
+  ## Stable pool id of the StrLit/Ident at `c` — the inverse of `strVal`.
+  ## A pool-ref token already carries its id, so use it directly; only an inline
+  ## short string (stored in the token itself) has to be interned. Mirrors
+  ## `symId` and avoids the decode-then-reintern round trip of `strings[strVal]`.
+  assert c.kind in {StrLit, Ident}, "strId on " & $c.kind
+  let payload = c.load.uoperand
+  if (payload and StrInlineFlag) != 0'u32:
+    pool.strings.getOrIncl(readInlineStr(payload))
+  else:
+    StrId(combinedPayload(c) shr 1)
+
+proc strId*(c: Cursor): StrId {.inline.} = strId(c, c.pool)
+
 proc symName*(c: Cursor; pool: Pool): string =
   assert c.kind in {Symbol, SymbolDef}, "symName on " & $c.kind
   let payload = c.load.uoperand
