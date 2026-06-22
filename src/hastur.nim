@@ -43,6 +43,9 @@ Commands:
   all                  run all tests.
   nimony               run Nimony tests.
   examples             run examples (examples/ directory).
+  native               run the curated native-backend regression set through
+                       `nimony n` (arkham + nifasm, from the sibling
+                       `../nativenif` checkout). See `NativeTestDirs`/`Files`.
   lengc                 run Leng tests.
   nj                   run NJ (Nimony Jump Elimination) tests.
   vl                   run VL (Versioned Locations) tests.
@@ -229,6 +232,15 @@ proc execNimony(cmd: string; cat: Category): (string, int) =
     if nimcacheDir != "nimcache": "--nimcache:" & quoteShell(nimcacheDir) & " "
     else: ""
   result = execLocal("nimony", toCommand(cat) & " " & cacheArg & cmd)
+
+proc execNimonyNative(cmd: string): (string, int) =
+  ## Compile with the C-FREE NATIVE backend (`nimony n` → arkham emits typed asm-NIF,
+  ## nifasm links a static libc-free executable). Mirrors `execNimony` but selects the
+  ## `n` command instead of `c`/`m`.
+  let cacheArg =
+    if nimcacheDir != "nimcache": "--nimcache:" & quoteShell(nimcacheDir) & " "
+    else: ""
+  result = execLocal("nimony", "n --silentMake --isMain " & cacheArg & cmd)
 
 const
   HasturSessionFile = "hastur_session.txt"
@@ -723,6 +735,93 @@ proc nimonytests(overwrite: bool; forward: string) =
   echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
     quit "FAILURE: Some tests failed."
+  else:
+    echo "SUCCESS."
+
+# ── native-backend regression set ────────────────────────────────────────────
+# The C-FREE native path (`nimony n` → arkham + nifasm, sibling `../nativenif`) is
+# still incomplete, so we can't run the whole suite through it. Instead this is an
+# explicit ALLOW-LIST of what is known to run correctly natively — a regression
+# guard: a native miscompile that diverges from the (spec-pinned) result is caught.
+# Grow it as the backend gains features (the same record-what-works philosophy as
+# the rest of hastur). `NativeTestDirs` are directories that pass IN FULL (negative
+# `.msgs` tests auto-skipped); `NativeTestFiles` are individual passers from
+# otherwise-partial directories.
+const
+  NativeTestDirs = [
+    "tests/nimony/arc",        # full ARC suite — byte-identical to the C backend
+    "tests/nimony/closures"
+  ]
+  NativeTestFiles = [
+    # cps/* — closures & continuation-passing (indirect calls through fn-ptr values)
+    "tests/nimony/cps/tbasicpassive",
+    "tests/nimony/cps/tclosure",
+    "tests/nimony/cps/tclosure_iter_basic",
+    "tests/nimony/cps/tclosure_iter_body_capture",
+    "tests/nimony/cps/tclosure_iter_break",
+    "tests/nimony/cps/tclosure_iter_envcheck",
+    "tests/nimony/cps/tclosure_iter_string",
+    "tests/nimony/cps/tclosure_iter_var",
+    "tests/nimony/cps/tfirstpassive",
+    "tests/nimony/cps/tif",
+    "tests/nimony/cps/tmethods",
+    "tests/nimony/cps/tnestedloops",
+    "tests/nimony/cps/trecursive",
+    "tests/nimony/cps/tsuspend",
+    "tests/nimony/cps/tsuspend_resume",
+    "tests/nimony/cps/ttry"
+  ]
+
+proc nativeTestFile(c: var TestCounters; file: string; overwrite: bool) =
+  ## Compile `file` with the C-FREE native backend (`nimony n`), run it, and check
+  ## stdout/exit against the SAME `.output`/`.exitcode` spec the C tests use — so a
+  ## native miscompile that diverges from the (already C-validated) spec is caught as
+  ## a regression. Negative/compile-error tests (`.msgs` carrying `Error:`) have no
+  ## runnable program and are skipped.
+  let msgs = file.changeFileExt(".msgs")
+  if msgs.fileExists() and readFile(msgs).contains(ErrorKeyword):
+    return
+  inc c.total
+  let (compilerOutput, compilerExitCode) = execNimonyNative(quoteShell(file))
+  if compilerExitCode != 0:
+    failure c, file, "native compiler exitcode 0",
+      removeMakeErrors(compilerOutput) & "\nexitcode " & $compilerExitCode
+    return
+  let exe = file.generatedExeFile()
+  if not exe.fileExists():
+    failure c, file, "native executable", "missing: " & exe
+    return
+  let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
+  var output = file.changeFileExt(".output")
+  if testProgramExitCode != 0:
+    output = file.changeFileExt(".exitcode")
+    if not output.fileExists():
+      failure c, file, "test program exitcode 0",
+        "exitcode " & $testProgramExitCode & "\n" & testProgramOutput
+      return
+  if output.fileExists():
+    let outputSpec = readFile(output).strip
+    if outputSpec != testProgramOutput.strip:
+      if overwrite:
+        writeFile(output, testProgramOutput)
+      failure c, file, outputSpec, testProgramOutput
+
+proc nativetests(overwrite: bool) =
+  ## Run the native-backend regression set (`NativeTestDirs` + `NativeTestFiles`)
+  ## through `nimony n`. Requires the sibling `../nativenif` checkout (arkham/nifasm).
+  let t0 = epochTime()
+  var c = TestCounters(total: 0, failures: 0)
+  for dir in NativeTestDirs:
+    var files: seq[string] = @[]
+    for x in walkDir(dir):
+      if x.kind == pcFile and x.path.endsWith(".nim"): files.add x.path
+    sort files
+    for f in files: nativeTestFile c, f, overwrite
+  for f in NativeTestFiles:
+    nativeTestFile c, f.addFileExt(".nim"), overwrite
+  echo c.total - c.failures, " / ", c.total, " native tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if c.failures > 0:
+    quit "FAILURE: Some native tests failed."
   else:
     echo "SUCCESS."
 
@@ -1942,6 +2041,19 @@ proc handleCmdLine =
   of "nimony":
     buildNimony()
     nimonytests(overwrite, forward)
+  of "native":
+    # Run the curated native-backend regression set through `nimony n`. Build the
+    # front end AND the C-free native toolchain (arkham + nifasm + shoggoth live in
+    # the sibling `../nativenif`; nifmake drives the `n` pipeline).
+    buildNifler()
+    buildNimsem()
+    buildNimony()
+    buildHexer()
+    buildNifmake()
+    buildShoggoth()
+    buildArkham()
+    buildNifasm()
+    nativetests(overwrite)
   of "examples":
     buildNimony()
     exampletests(overwrite, forward)

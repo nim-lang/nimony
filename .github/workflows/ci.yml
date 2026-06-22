@@ -70,6 +70,18 @@ jobs:
           path: nif
           submodules: false
 
+      - name: Checkout nativenif (sibling of nif)
+        # The C-free native backend (`nimony n`) lives in the separate `nativenif`
+        # repo: arkham (Leng -> typed asm-NIF) + nifasm (asm-NIF -> static libc-free
+        # ELF). hastur builds them from `../nativenif` RELATIVE TO nimony's root, so
+        # the checkout must sit NEXT TO `nif/` in the workspace — the same sibling
+        # layout used on developer machines (`projects/nimony` + `projects/nativenif`).
+        uses: actions/checkout@v6
+        with:
+          repository: nim-lang/nativenif
+          path: nativenif
+          submodules: false
+
       - name: Install Linux dependency (Linux)
         if: runner.os == 'Linux' && matrix.target.cpu == 'amd64'
         shell: bash
@@ -255,3 +267,13 @@ jobs:
         run: |
           cd nif
           nim c -r tests/tester.nim
+
+      - name: Run native backend tests (Linux amd64)
+        # The native path emits a static, libc-free x86-64 ELF — only meaningful on
+        # Linux amd64. `hastur native` builds the front end + arkham/nifasm (from the
+        # sibling `../nativenif` checked out above) and runs the curated regression
+        # set (full ARC suite + closures + cps) through `nimony n`.
+        if: runner.os == 'Linux' && matrix.target.cpu == 'amd64'
+        run: |
+          cd nif
+          nim c -r src/hastur native
