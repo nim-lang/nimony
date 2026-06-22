@@ -64,18 +64,23 @@ jobs:
             Add-MpPreference -ExclusionProcess $p -ErrorAction SilentlyContinue
           }
 
-      - name: Checkout nif
+      - name: Checkout nimony
+        # Check out into `nimony/` (NOT `nif/`): the native backend's arkham/nifasm
+        # `nim.cfg` reuse nimony's NIF libraries via `../../../nimony/src/lib`, so the
+        # repo's working-tree directory MUST be named `nimony` for that sibling-relative
+        # path to resolve — the same layout developer machines use.
         uses: actions/checkout@v6
         with:
-          path: nif
+          path: nimony
           submodules: false
 
-      - name: Checkout nativenif (sibling of nif)
+      - name: Checkout nativenif (sibling of nimony)
         # The C-free native backend (`nimony n`) lives in the separate `nativenif`
         # repo: arkham (Leng -> typed asm-NIF) + nifasm (asm-NIF -> static libc-free
-        # ELF). hastur builds them from `../nativenif` RELATIVE TO nimony's root, so
-        # the checkout must sit NEXT TO `nif/` in the workspace — the same sibling
-        # layout used on developer machines (`projects/nimony` + `projects/nativenif`).
+        # ELF). hastur builds them from `../nativenif` RELATIVE TO nimony's root, and
+        # their `nim.cfg` reach back into `../../../nimony/src/lib`, so the checkout must
+        # sit NEXT TO `nimony/` in the workspace — the same sibling layout developer
+        # machines use (`projects/nimony` + `projects/nativenif`).
         uses: actions/checkout@v6
         with:
           repository: nim-lang/nativenif
@@ -236,23 +241,23 @@ jobs:
       - name: Cache host-Nim build artifacts
         uses: actions/cache@v5
         with:
-          # `nif/bin/` holds the built tools. The two `nim` paths are Nim's
+          # `nimony/bin/` holds the built tools. The two `nim` paths are Nim's
           # default per-project cache locations: `~/.cache/nim/<name>_d/` on
           # POSIX and `~/nimcache/<name>_d/` on Windows (see compiler/options.nim
           # `getOsCacheDir`). Caching both lets `hastur build all` short-circuit
           # to a near-no-op when source hasn't changed; on partial hits the
           # incremental rebuild still benefits from the prior cache.
           path: |
-            nif/bin
+            nimony/bin
             ~/.cache/nim
             ~/nimcache
-          key: hastur-${{ runner.os }}-${{ matrix.target.cpu }}-${{ matrix.target.nim_branch }}-${{ hashFiles('nif/src/**/*.nim', 'nif/src/**/*.cfg', 'nif/src/**/*.nims') }}
+          key: hastur-${{ runner.os }}-${{ matrix.target.cpu }}-${{ matrix.target.nim_branch }}-${{ hashFiles('nimony/src/**/*.nim', 'nimony/src/**/*.cfg', 'nimony/src/**/*.nims') }}
           restore-keys: |
             hastur-${{ runner.os }}-${{ matrix.target.cpu }}-${{ matrix.target.nim_branch }}-
 
       - name: Test Building nimony
         run: |
-          cd nif
+          cd nimony
           nim c -r src/hastur build all
 
       - name: Run tester
@@ -265,7 +270,7 @@ jobs:
           # Empty on Linux/macOS so the existing default toolchains kick in.
           NIMONY_CC: ${{ runner.os == 'Windows' && 'clang' || '' }}
         run: |
-          cd nif
+          cd nimony
           nim c -r tests/tester.nim
 
       - name: Run native backend tests (Linux amd64)
@@ -275,5 +280,5 @@ jobs:
         # set (full ARC suite + closures + cps) through `nimony n`.
         if: runner.os == 'Linux' && matrix.target.cpu == 'amd64'
         run: |
-          cd nif
+          cd nimony
           nim c -r src/hastur native
