@@ -1916,7 +1916,10 @@ proc trTry(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   var hasExcept = false
   var tryLab: SymId = NoSymId
   if nn.substructureKind == ExceptU:
-    tryLab = pool.syms.getOrIncl("`lab." & $getTmpId(c))
+    # Use a distinct prefix from iterinliner's anonymous block break labels
+    # (`lab.N` via elimForLoops) so try/except lowering does not reuse the
+    # same C label as the enclosing block's break target.
+    tryLab = pool.syms.getOrIncl("`exlab." & $getTmpId(c))
     c.exceptLabels.add tryLab
     hasExcept = true
   trStmt c, dest, n
