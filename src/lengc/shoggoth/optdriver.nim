@@ -54,9 +54,11 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   ## would collide on one module-pool symbol and the C codegen — which declares
   ## each symbol once — would leave later functions' uses undeclared.
   let bodySuffix = suffix & "." & $st.bodies
-  # SROA first: explode non-escaping local objects the inliner left behind into
-  # per-field scalars, then copy propagation cleans up the resulting scalar copies
-  # and dead stores, so the later passes see simpler, scalar code.
+  # SROA first: fold field projections off inline constructors (`T(f: a).f` → `a`),
+  # then explode non-escaping local objects into per-field scalars; copy
+  # propagation then cleans up the resulting scalar copies and dead stores, so the
+  # later passes see simpler, scalar code.
+  runConstructorProjection(buf)
   runScalarize(buf, bodySuffix)
   runCopyProp(buf)
   runInductionVariables(buf, bodySuffix)

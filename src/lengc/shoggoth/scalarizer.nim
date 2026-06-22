@@ -62,6 +62,87 @@ proc child0(c: Cursor): Cursor {.inline.} =
   result = c
   inc result
 
+# ---- inline constructor projection ----------------------------------------
+#
+# `(dot (oconstr T (kv f v)…) f)` → `v`. This is SROA for an object that is
+# *never bound to a var* — a temporary the source projected one field out of.
+# It needs no escape analysis (an inline constructor result is single-use by
+# construction) and no flow analysis. Dropping the unprojected `kv` values is
+# sound because xelim only leaves an `oconstr` inline when none of its children
+# is a call (`isComplex`, xelim.nim) — so every dropped value is pure and dead.
+# A constructor with an inheritance/base part is left alone, mirroring the
+# var-based pass.
+
+proc projectField(oconstr: Cursor; field: SymId; val: var Cursor): bool =
+  ## True (and sets `val` to a cursor at the value) iff `oconstr` is
+  ## `(oconstr T (kv f v)…)` with no base part and a `kv` keyed by `field`.
+  var found = false
+  var bail = false
+  var oc = oconstr
+  oc.into:
+    if oc.hasMore: skip oc                          # type T
+    while oc.hasMore:
+      if not found and not bail and oc.kind == TagLit and
+         oc.substructureKind == KvU:
+        var kv = oc
+        var fSym = SymId(0)
+        var v = default(Cursor)
+        var haveV = false
+        kv.into:
+          if kv.hasMore:
+            if kv.kind == Symbol: fSym = symId(kv)
+            skip kv                                 # field name
+          if kv.hasMore:
+            v = kv; haveV = true
+            skip kv                                 # value
+          while kv.hasMore: skip kv                 # optional inherited-depth int
+        if fSym == field and haveV:
+          val = v; found = true
+        skip oc
+      elif not found and not bail and oc.kind == TagLit:
+        bail = true                                 # base/inheritance part → bail
+        skip oc
+      else:
+        skip oc                                     # consume the rest (rem == 0)
+  result = found and not bail
+
+proc collectProjections(orig: ptr TokenBuf; ps: var Patchset; n: Cursor): int =
+  ## Record a subst for each `(dot (oconstr …) field)` whose field is present.
+  ## Does not recurse into a folded node, so nested/chained `a.f.g` collapse one
+  ## layer per `runConstructorProjection` round (fixpoint handles the rest).
+  result = 0
+  if n.kind != TagLit: return
+  if n.exprKind == DotC:
+    let base = child0(n)
+    if base.kind == TagLit and base.exprKind == OconstrC:
+      var f = base
+      skip f                                        # past the oconstr to the field
+      if f.kind == Symbol:
+        var val = default(Cursor)
+        if projectField(base, symId(f), val):
+          ps.addSubst(cursorToPosition(orig[], n), val)
+          return 1                                  # whole dot replaced
+  var m = n
+  m.loopInto:
+    result += collectProjections(orig, ps, m)
+    skip m
+
+proc runConstructorProjection*(buf: var TokenBuf) =
+  ## Fold field projections off inline (never-bound) object constructors.
+  ## Iterated to a fixpoint so chains (`T(a: U(x: 1)).a.x`) collapse fully;
+  ## each round removes at least one `oconstr`, so it terminates. Mints no new
+  ## symbols, so (unlike `runScalarize`) it needs no suffix.
+  var rounds = 0
+  while rounds < 100:
+    inc rounds
+    var ps = initPatchset(addr buf)
+    let folded = block:
+      let n = beginRead(buf)
+      collectProjections(addr buf, ps, n)
+    if folded == 0: break
+    var nb = ps.apply()
+    buf = ensureMove(nb)
+
 # ---- context --------------------------------------------------------------
 
 type
@@ -395,5 +476,65 @@ when isMainModule:
       "(asgn r.0.M (dot (dot o.0.M inner.0.M) x.0.M)))",
       "(stmts (var :`sroa.1.M . . q.0.M) " &
       "(asgn r.0.M (dot `sroa.1.M x.0.M)))")
+
+  # ---- #3: inline constructor projection ----------------------------------
+
+  template chkProj(input, expected: string) =
+    var buf = parse(input)
+    runConstructorProjection buf
+    let got = toString(buf)
+    let want = canon(expected)
+    doAssert got == want, "MISMATCH\n  got:  " & got & "\n  want: " & want
+
+  template assertProjUnchanged(input: string) =
+    var buf = parse(input)
+    let before = toString(buf)
+    runConstructorProjection buf
+    doAssert toString(buf) == before, "expected unchanged:\n  " & input
+
+  block project_first_field:
+    chkProj(
+      "(stmts (asgn x.0.M (dot (oconstr T.0.M (kv f.0.M 1) (kv g.0.M 2)) f.0.M)))",
+      "(stmts (asgn x.0.M 1))")
+
+  block project_second_field_drops_first:
+    chkProj(
+      "(stmts (asgn x.0.M (dot (oconstr T.0.M (kv f.0.M 1) (kv g.0.M 2)) g.0.M)))",
+      "(stmts (asgn x.0.M 2))")
+
+  block project_chain_collapses:
+    # `T(a: U(x: 7)).a.x` → 7, exercising the fixpoint (two rounds).
+    chkProj(
+      "(stmts (asgn r.0.M (dot (dot (oconstr T.0.M " &
+      "(kv a.0.M (oconstr U.0.M (kv x.0.M 7)))) a.0.M) x.0.M)))",
+      "(stmts (asgn r.0.M 7))")
+
+  block project_symbol_value:
+    chkProj(
+      "(stmts (asgn x.0.M (dot (oconstr T.0.M (kv f.0.M y.0.M)) f.0.M)))",
+      "(stmts (asgn x.0.M y.0.M))")
+
+  block project_absent_field_unchanged:
+    # field `g` is not in the constructor (other variant arm) → leave it alone.
+    assertProjUnchanged(
+      "(stmts (asgn x.0.M (dot (oconstr T.0.M (kv f.0.M 1)) g.0.M)))")
+
+  block project_base_part_unchanged:
+    # a constructor with an inheritance/base part is left alone.
+    assertProjUnchanged(
+      "(stmts (asgn x.0.M (dot (oconstr T.0.M (oconstr Base.0.M (kv b.0.M 1)) " &
+      "(kv f.0.M 2)) f.0.M)))")
+
+  block projection_then_scalarize_compose:
+    # projection feeds the var-based pass: the folded value becomes the scalar.
+    var buf = parse(
+      "(stmts (var :o.0.M . . (oconstr T.0.M " &
+      "(kv f.0.M (dot (oconstr U.0.M (kv x.0.M 5)) x.0.M)))) " &
+      "(asgn r.0.M (dot o.0.M f.0.M)))")
+    runConstructorProjection buf
+    runScalarize buf
+    let got = toString(buf)
+    let want = canon("(stmts (var :`sroa.1.M . . 5) (asgn r.0.M `sroa.1.M))")
+    doAssert got == want, "MISMATCH\n  got:  " & got & "\n  want: " & want
 
   echo "scalarizer.nim: all self-tests passed"
