@@ -491,13 +491,19 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
       n.into:  # (passL …)
         while n.hasMore:
           assert n.kind == StringLit
-          c.passL.add pool.strings[n.litId]
+          # A single `{.passL.}` value may hold several flags (e.g.
+          # `-framework Foundation`). nifmake quotes each StringLit as ONE argv
+          # token, so split into whitespace-separated flags here — otherwise the
+          # linker sees `-framework Foundation` as a single unknown argument.
+          for flag in splitWhitespace(pool.strings[n.litId]):
+            c.passL.add flag
           inc n
     elif n.tagId == TagId(PassCP):
       n.into:  # (passC …)
         while n.hasMore:
           assert n.kind == StringLit
-          c.passC.add pool.strings[n.litId]
+          for flag in splitWhitespace(pool.strings[n.litId]):
+            c.passC.add flag
           inc n
     else:
       skip n
@@ -749,6 +755,19 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
     # are byte-for-byte unaffected.
     let useOptimizer = c.config.optLevel in {optSpeed, optSize}
     let native = c.config.backend == backendNative
+    # A native program that uses the `.compile`/`{.build…}` pragma (in ANY module)
+    # is finished by the system linker, so nifasm's relocatable object can be
+    # combined with the foreign `.o`s (e.g. Objective-C) and any frameworks. Plain
+    # native programs keep the static, libc-free "nifasm is the linker" path.
+    # (Written as plain `var`s rather than `and`/`if`-expression `let`s: the
+    # self-hosted compiler's initialization analysis can't yet prove the temp
+    # such expressions lower to is always assigned.)
+    var nativeSysLink = false
+    if native and c.toBuild.len > 0: nativeSysLink = true
+    # The foreign objects and frameworks need a real driver; clang knows how to
+    # compile `.m`/`.c`, pull in libobjc, resolve `-framework`, and supply the crt.
+    var sysLinker = c.config.linker
+    if sysLinker.len == 0: sysLinker = "clang"
     var shoggoth = ""
     if useOptimizer:
       shoggoth = findTool("shoggoth")
@@ -796,6 +815,10 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
       b.addSymbolDef "cc"
       if c.config.backend == backendLLVM:
         b.addStrLit "clang"
+      elif nativeSysLink:
+        # Compiles the `.compile`d TUs (e.g. Objective-C `.m`); same driver that
+        # links them, so the toolchain/ABI matches.
+        b.addStrLit sysLinker
       else:
         b.addStrLit c.config.cc
       b.addStrLit "-c"
@@ -834,7 +857,37 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
       b.addKeyw "output"
 
     # Command for linking/archiving
-    if c.cmd in {DoCompile, DoRun} and native:
+    if c.cmd in {DoCompile, DoRun} and nativeSysLink:
+      # Two commands: nifasm emits a relocatable object (it still bundles every
+      # module's `.asm.nif`, reachable from the main one via `(input 0 0)`), and
+      # the system linker combines that object with the `.compile`d foreign `.o`s
+      # and any `-framework`/`-l` flags (passL) into the final executable.
+      b.withTree "cmd":
+        b.addSymbolDef "nifasmObj"
+        b.addStrLit findTool("nifasm")
+        b.addStrLit "--emit-obj"
+        b.withTree "output":
+          b.addStrLit "-o:"
+        b.withTree "input":
+          b.addIntLit 0
+          b.addIntLit 0  # only the main module's .asm.nif on the command line
+      b.withTree "cmd":
+        b.addSymbolDef "link"
+        b.addStrLit sysLinker
+        b.addStrLit "-o"
+        b.addKeyw "output"
+        b.withTree "input":
+          b.addIntLit 0
+          b.addIntLit -1  # nifasm object + every `.compile` object
+        b.withTree "argsext":
+          b.addStrLit ".linker.args"
+        if passL.len > 0:
+          for arg in passL.split(' '):
+            if arg.len > 0:
+              b.addStrLit arg
+        for i in c.passL:
+          b.addStrLit i
+    elif c.cmd in {DoCompile, DoRun} and native:
       # nifasm is the native linker: it takes the *main* module's `.asm.nif`
       # (`(input 0 0)`) and pulls the dependent `.asm.nif` modules from disk by
       # suffix via the shared NIF module loader. `-o:` is the colon form.
@@ -948,46 +1001,80 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
             b.addStrLit c.config.lengcFile(n.files[0], backend)
 
       # Link executable
-      b.withTree "do":
-        b.addIdent "link"
-        var objFiles = initHashSet[string]()
-        if native:
-          # nifasm links from the *main* module's `.asm.nif` (input[0]) and
-          # discovers the dependent modules by suffix on disk. List every
-          # module's `.asm.nif` as an input (root first) so they are all built
-          # before nifasm runs, even though only input[0] reaches its command
-          # line (see the `link` cmd's `(input 0 0)`).
+      var objFiles = initHashSet[string]()
+      if nativeSysLink:
+        # First nifasm bundles every module's `.asm.nif` into one relocatable
+        # object (it reads only the main one's path and pulls the rest by suffix;
+        # the others are listed purely to order them before nifasm runs).
+        let nativeObj = c.config.objFile(c.rootNode.files[0], backend)
+        b.withTree "do":
+          b.addIdent "nifasmObj"
+          var asmInputs = initHashSet[string]()
           let mainAsm = c.config.asmFile(c.rootNode.files[0], backend)
           b.withTree "input":
             b.addStrLit mainAsm
-          objFiles.incl mainAsm
+          asmInputs.incl mainAsm
           for v in c.nodes:
             let a = c.config.asmFile(v.files[0], backend)
-            if not objFiles.containsOrIncl(a):
+            if not asmInputs.containsOrIncl(a):
               b.withTree "input":
                 b.addStrLit a
-        else:
-          # Input: all object files
+          b.withTree "output":
+            b.addStrLit nativeObj
+        # Then the system linker combines that object with the `.compile` objects.
+        b.withTree "do":
+          b.addIdent "link"
+          b.withTree "input":
+            b.addStrLit nativeObj
+          objFiles.incl nativeObj
           for cfile in c.toBuild:
             let obj = sharedObjFile(cfile)
             if not objFiles.containsOrIncl(obj):
               b.withTree "input":
                 b.addStrLit obj
-          for v in c.nodes:
-            let obj = c.config.objFile(v.files[0], backend)
-            if not objFiles.containsOrIncl(obj):
-              b.withTree "input":
-                b.addStrLit obj
-        b.withTree "output":
-          b.addStrLit c.config.exeFile(c.rootNode.files[0], backend)
+          b.withTree "output":
+            b.addStrLit c.config.exeFile(c.rootNode.files[0], backend)
+      else:
+        b.withTree "do":
+          b.addIdent "link"
+          if native:
+            # nifasm links from the *main* module's `.asm.nif` (input[0]) and
+            # discovers the dependent modules by suffix on disk. List every
+            # module's `.asm.nif` as an input (root first) so they are all built
+            # before nifasm runs, even though only input[0] reaches its command
+            # line (see the `link` cmd's `(input 0 0)`).
+            let mainAsm = c.config.asmFile(c.rootNode.files[0], backend)
+            b.withTree "input":
+              b.addStrLit mainAsm
+            objFiles.incl mainAsm
+            for v in c.nodes:
+              let a = c.config.asmFile(v.files[0], backend)
+              if not objFiles.containsOrIncl(a):
+                b.withTree "input":
+                  b.addStrLit a
+          else:
+            # Input: all object files
+            for cfile in c.toBuild:
+              let obj = sharedObjFile(cfile)
+              if not objFiles.containsOrIncl(obj):
+                b.withTree "input":
+                  b.addStrLit obj
+            for v in c.nodes:
+              let obj = c.config.objFile(v.files[0], backend)
+              if not objFiles.containsOrIncl(obj):
+                b.withTree "input":
+                  b.addStrLit obj
+          b.withTree "output":
+            b.addStrLit c.config.exeFile(c.rootNode.files[0], backend)
 
       objFiles = initHashSet[string]()
-      # Build object files from C files with custom args. Outputs land in
-      # `<nimony-root>/nimcache_static/` so the same .o is reused across
-      # projects — these TUs (currently just mimalloc's `static.c`) don't
-      # depend on the user's project at all. The native backend has no C
-      # objects at all (arkham/nifasm go straight to machine code).
-      if not native:
+      # Build object files from `.compile`d source files with custom args. Outputs
+      # land in `<nimony-root>/nimcache_static/` so the same .o is reused across
+      # projects — these TUs (mimalloc's `static.c`, or a user's Objective-C
+      # source) don't depend on the user's project. A plain native build has no
+      # such TUs (arkham/nifasm go straight to machine code); only a native build
+      # that uses the `.compile` pragma (`nativeSysLink`) compiles them.
+      if (not native) or nativeSysLink:
         for cfile in c.toBuild:
           let obj = sharedObjFile(cfile)
           if not objFiles.containsOrIncl(obj):

@@ -374,7 +374,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
         inc n
     else:
       buildErr c, dest, n.info, "`callConv` pragma takes a calling convention identifier"
-  of EmitP, BuildP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP, PassLP, PassCP:
+  of EmitP, BuildP, CompileP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP, PassLP, PassCP:
     if pk == PragmaP and kind == TemplateY and crucial.sym != SymId(0):
       # `template X(args) {.pragma.}` declares `X` as a custom pragma. The
       # body is not expanded at attachment sites — the annotation is
@@ -515,42 +515,75 @@ proc semCastInnerPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
     if n.kind == ParLe: skip n
     else: inc n
 
+proc readPragmaStrings(c: var SemContext; dest: var TokenBuf; it: var Item): seq[string] =
+  ## Collect the string-literal arguments of a statement pragma like `build`/
+  ## `compile`, advancing `it.n` past the whole `(tag …)` node.
+  result = newSeq[string]()
+  inc it.n
+  while it.n.hasMore:
+    if it.n.kind != StringLit:
+      buildErr c, dest, it.n.info, "expected `string` but got: " & asNimCode(it.n)
+      skip it.n
+    else:
+      result.add pool.strings[it.n.litId]
+      inc it.n
+  skipParRi it.n
+
+proc addBuildTarget(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
+                    lang, rawName, rawArgs: string) =
+  ## Resolve a `build`/`compile` source path (relative to the pragma's own file)
+  ## and record a `(tup lang name args)` entry in `c.toBuild`. `deps.nim` reuses
+  ## these via `(build …)` to compile and link the foreign object.
+  # XXX: Relative paths in makefile are relative to current working directory, not the location of the makefile.
+  let curWorkDir = onRaiseQuit os.getCurrentDir()
+  let currentDir = absoluteParentDir(info.getFile)
+  var name = replaceSubs(rawName, currentDir, c.g.config).toAbsolutePath(currentDir)
+  let customArgs = replaceSubs(rawArgs, currentDir, c.g.config)
+  if not semos.fileExists(name):
+    buildErr c, dest, info, "cannot find: " & name
+  name = name.toRelativePath(curWorkDir)
+  c.toBuild.buildTree TupX, info:
+    c.toBuild.addStrLit lang, info
+    c.toBuild.addStrLit name, info
+    c.toBuild.addStrLit customArgs, info
+
 proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragmaBlock: bool) =
   case it.n.pragmaKind
   of BuildP:
     let info = it.n.info
-    inc it.n
-    var args = newSeq[string]()
-    while it.n.hasMore:
-      if it.n.kind != StringLit:
-        buildErr c, dest, it.n.info, "expected `string` but got: " & asNimCode(it.n)
-        skip it.n
-      else:
-        args.add pool.strings[it.n.litId]
-        inc it.n
-
-    skipParRi it.n
-
+    let args = readPragmaStrings(c, dest, it)
     if args.len != 2 and args.len != 3:
       buildErr c, dest, info, "build expected 2 or 3 parameters"
-
-    # XXX: Relative paths in makefile are relative to current working directory, not the location of the makefile.
-    let curWorkDir = onRaiseQuit os.getCurrentDir()
-    let currentDir = absoluteParentDir(info.getFile)
-
-    # Extract build pragma arguments
-    let compileType = args[0]
-    var name = replaceSubs(args[1], currentDir, c.g.config).toAbsolutePath(currentDir)
-    let customArgs = if args.len == 3: replaceSubs(args[2], currentDir, c.g.config) else: ""
-
-    if not semos.fileExists(name):
-      buildErr c, dest, info, "cannot find: " & name
-    name = name.toRelativePath(curWorkDir)
-
-    c.toBuild.buildTree TupX, info:
-      c.toBuild.addStrLit compileType, info
-      c.toBuild.addStrLit name, info
-      c.toBuild.addStrLit customArgs, info
+    else:
+      addBuildTarget c, dest, info, args[0], args[1],
+        (if args.len == 3: args[2] else: "")
+  of CompileP:
+    # Nim-compatible `{.compile("file"[, "flags"]).}`. Unlike `build` there is no
+    # explicit language argument: it is inferred from the file extension and
+    # forced via `-x` (which precedes the input in the `cc` command), so e.g. an
+    # Objective-C `.m` file is compiled correctly regardless of the C compiler's
+    # own extension heuristics.
+    let info = it.n.info
+    let args = readPragmaStrings(c, dest, it)
+    if args.len != 1 and args.len != 2:
+      buildErr c, dest, info, "compile expected 1 or 2 parameters"
+    else:
+      let userArgs = if args.len == 2: args[1] else: ""
+      let ext = args[0].splitFile.ext.toLowerAscii
+      # Plain `var`s (not a tuple-`let` bound to a `case`-expression): the
+      # self-hosted compiler's initialization analysis is conservative about the
+      # temporaries such expressions lower to.
+      var lang = "C"
+      var xflag = ""
+      case ext
+      of ".m": lang = "ObjC"; xflag = "-x objective-c"
+      of ".mm": lang = "ObjCpp"; xflag = "-x objective-c++"
+      of ".cpp", ".cc", ".cxx", ".c++": lang = "Cpp"; xflag = "-x c++"
+      else: discard
+      var customArgs = userArgs
+      if xflag.len > 0:
+        customArgs = if userArgs.len > 0: xflag & " " & userArgs else: xflag
+      addBuildTarget c, dest, info, lang, args[0], customArgs
   of EmitP:
     semEmit c, dest, it
   of AssumeP:
