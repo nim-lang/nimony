@@ -30,7 +30,7 @@ proc traverseObjectBody(m: var MainModule; o: var TypeOrder; t: Cursor)
 proc traverseProctypeBody(m: var MainModule; o: var TypeOrder; t: Cursor)
 
 proc usesHeader(pragmas: Cursor): bool =
-  if pragmas.kind == ParLe:
+  if pragmas.kind == TagLit:
     var p = pragmas
     p.into:
       while p.hasMore:
@@ -43,7 +43,11 @@ proc usesHeader(pragmas: Cursor): bool =
   return false
 
 proc recordDependencyImpl(m: var MainModule; o: var TypeOrder; parent, child: Cursor;
-                          viaPointer: var bool) =
+                          viaPointer: var bool; typeDecl: Cursor = default(Cursor)) =
+  # `typeDecl` is the enclosing named `(type …)` declaration whose body `child`
+  # is — threaded down from the caller (the Symbol branch / top level) to stand
+  # in for the nifcursors-only `tracebackTypeC`, which walked the buffer
+  # backwards (impossible with forward-only nifcore cursors).
   var ch = child
   while true:
     case ch.typeKind
@@ -65,18 +69,18 @@ proc recordDependencyImpl(m: var MainModule; o: var TypeOrder; parent, child: Cu
     else:
       if not containsOrIncl(o.lookedAt, obj.toUniqueId()):
         traverseObjectBody(m, o, obj)
-      o.ordered.add tracebackTypeC(ch), decl
+      o.ordered.add typeDecl, decl
   of ArrayT:
     if viaPointer:
       o.forwardedDecls.add parent, TypedefStruct
     else:
       if not containsOrIncl(o.lookedAt, ch.toUniqueId()):
         var viaPointer = false
-        recordDependencyImpl m, o, ch, ch.firstSon, viaPointer
-      o.ordered.add tracebackTypeC(ch), TypedefStruct
+        recordDependencyImpl m, o, ch, ch.firstSon, viaPointer, typeDecl
+      o.ordered.add typeDecl, TypedefStruct
   of EnumT:
     # enums do not depend on anything so always safe to generate them
-    o.ordered.add tracebackTypeC(ch), TypedefKeyword
+    o.ordered.add typeDecl, TypedefKeyword
   of ProctypeT:
     # Function-pointer typedefs in C don't have a separate "forward
     # declaration" form: `typedef X X;` is just a self-typedef and the
@@ -90,7 +94,7 @@ proc recordDependencyImpl(m: var MainModule; o: var TypeOrder; parent, child: Cu
     # `typedef X60Qt_… X60Qt_…;` lines that gcc rightly rejected.
     if not containsOrIncl(o.lookedAt, ch.toUniqueId()):
       traverseProctypeBody(m, o, ch)
-    o.ordered.add tracebackTypeC(ch), TypedefKeyword
+    o.ordered.add typeDecl, TypedefKeyword
   else:
     if ch.kind == Symbol:
       # follow the symbol to its definition:
@@ -113,12 +117,12 @@ proc recordDependencyImpl(m: var MainModule; o: var TypeOrder; parent, child: Cu
           # For `viaPointer` we must traverse it (possibly again), in a shallow manner or
           # else we might miss crucial forward declarations. This case is triggered
           # by the `Continuation` type.
-          recordDependencyImpl m, o, n, decl.body, viaPointer
+          recordDependencyImpl m, o, n, decl.body, viaPointer, n
         elif not alreadyFullyProcessed:
           # First time seeing this type for full processing (not via pointer).
           # Mark it as fully processed before recursing to handle cycles.
           o.lookedAtBodies.incl decl.name.symId
-          recordDependencyImpl m, o, n, decl.body, viaPointer
+          recordDependencyImpl m, o, n, decl.body, viaPointer, n
     else:
       discard "uninteresting type as we only focus on the required struct declarations"
 
@@ -141,7 +145,7 @@ proc traverseObjectBody(m: var MainModule; o: var TypeOrder; t: Cursor) =
         error m, "expected `Symbol` or `.` for inheritance but got: ", n
     while n.hasMore:
       case n.kind:
-      of ParLe:
+      of TagLit:
         if n.substructureKind == FldU:
           let decl = takeFieldDecl(n)
           recordDependency m, o, t, decl.typ
@@ -161,7 +165,7 @@ proc traverseProctypeBody(m: var MainModule; o: var TypeOrder; t: Cursor) =
   var param = procType.params
   # we only have weak deps to the param types:
   var viaPointer = true
-  if param.kind == ParLe:
+  if param.kind == TagLit:
     param.into:
       while param.hasMore:
         let paramDecl = takeParamDecl(param)
@@ -194,7 +198,7 @@ proc traverseTypes(m: var MainModule; o: var TypeOrder) =
     inc i
 
 proc integralBits(t: Cursor): string {.inline.} =
-  let res = pool.integers[t.intId]
+  let res = intVal(t)
   if res == -1:
     result = ""
   else: # 8, 16, 32, 64 etc.
@@ -237,7 +241,7 @@ proc genFieldPragmas(c: var GeneratedCode; n: var Cursor; bits: var BiggestInt) 
       case n.pragmaKind
       of AlignP:
         n.into:
-          c.add " NIM_ALIGN(" & $pool.integers[n.intId] & ")"
+          c.add " NIM_ALIGN(" & $intVal(n) & ")"
           skip n
           while n.hasMore: skip n
       of WasP:
@@ -249,7 +253,7 @@ proc genFieldPragmas(c: var GeneratedCode; n: var Cursor; bits: var BiggestInt) 
           while n.hasMore: skip n
       of BitsP:
         n.into:
-          bits = pool.integers[n.intId]
+          bits = intVal(n)
           skip n
           while n.hasMore: skip n
       of ExportcP, ImportcP, ImportcppP, NodeclP:
@@ -320,7 +324,7 @@ proc atomNumber(c: var GeneratedCode; n: var Cursor; typeName, name: string; isC
         case n.pragmaKind
         of HeaderP:
           n.into:
-            if n.kind == StringLit:
+            if n.kind == StrLit:
               inclHeader c, n.litId
               inc n
             else:
@@ -328,8 +332,8 @@ proc atomNumber(c: var GeneratedCode; n: var Cursor; typeName, name: string; isC
             while n.hasMore: skip n
         of ImportcP, ImportcppP:
           n.into:
-            if n.kind == StringLit:
-              s = pool.strings[n.litId]
+            if n.kind == StrLit:
+              s = c.m.pool.strings[n.litId]
               inc n
             else:
               error c.m, "importc/importcpp type requires a string literal but got: ", n
@@ -376,7 +380,7 @@ proc atomPointer(c: var GeneratedCode; n: var Cursor; name: string; isConst: boo
 proc genProcType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false) =
   let decl = takeProcType(n)
   var lastCallConv = NoCallConv
-  if decl.pragmas.kind == ParLe:
+  if decl.pragmas.kind == TagLit:
     var p = decl.pragmas
     p.into:
       while p.hasMore:
@@ -413,7 +417,7 @@ proc genProcType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false
     c.add ParRi
   c.add ParLe
   var i = 0
-  if decl.params.kind == ParLe:
+  if decl.params.kind == TagLit:
     var p = decl.params
     p.into:
       while p.hasMore:
@@ -429,9 +433,9 @@ proc genProcType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false
 proc mangleSym(c: var GeneratedCode; s: SymId): string =
   let x = c.m.getDeclOrNil(s)
   if x != nil and x.extern != StrId(0):
-    result = pool.strings[x.extern]
+    result = c.m.pool.strings[x.extern]
   else:
-    result = mangleToC(pool.syms[s])
+    result = mangleToC(c.m.pool.syms[s])
 
 proc genType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false) =
   case n.typeKind
@@ -471,7 +475,7 @@ proc genType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false) =
     error c.m, "nominal type not allowed here: ", n
 
 proc mangleField(c: var GeneratedCode; s: SymId; pragmas: Cursor; skipDecl: var bool): string =
-  if pragmas.kind == ParLe:
+  if pragmas.kind == TagLit:
     var p = pragmas
     result = ""
     p.into:
@@ -479,17 +483,17 @@ proc mangleField(c: var GeneratedCode; s: SymId; pragmas: Cursor; skipDecl: var 
         case p.pragmaKind
         of ImportcP, ImportcppP:
           let litId = externName(s, p)
-          result = pool.strings[litId] # but keep looping to detect HeaderP
+          result = c.m.pool.strings[litId] # but keep looping to detect HeaderP
         of ExportcP:
           let litId = externName(s, p)
-          result = pool.strings[litId]
+          result = c.m.pool.strings[litId]
         of HeaderP, NodeclP:
           skipDecl = true
         else:
           discard
         skip p
     if result.len > 0: return result
-  result = mangleToC(pool.syms[s])
+  result = mangleToC(c.m.pool.syms[s])
 
 proc mangleDecl(c: var GeneratedCode; n, pragmas: Cursor; skipDecl: var bool): string =
   if n.kind == SymbolDef:
@@ -512,7 +516,7 @@ proc genObjectOrUnionBody(c: var GeneratedCode; n: var Cursor) =
 
     while n.hasMore:
       case n.kind:
-      of ParLe:
+      of TagLit:
         if n.substructureKind == FldU:
           var decl = takeFieldDecl(n)
           var skipDecl = false
@@ -560,7 +564,7 @@ proc genEnumDecl(c: var GeneratedCode; n: var Cursor; name: string) =
       if n.substructureKind == EfldU:
         n.into:
           if n.kind == SymbolDef:
-            let enumFieldName = mangleToC(pool.syms[n.symId])
+            let enumFieldName = mangleToC(c.m.pool.syms[n.symId])
             inc n
             c.add "#define "
             c.add enumFieldName
@@ -572,10 +576,10 @@ proc genEnumDecl(c: var GeneratedCode; n: var Cursor; name: string) =
             c.add ParRi
             case n.kind
             of IntLit:
-              c.genIntLit n.intId
+              c.genIntLit intVal(n)
               inc n
             of UIntLit:
-              c.genUIntLit n.uintId
+              c.genUIntLit uintVal(n)
               inc n
             else:
               error c.m, "expected `Number` but got: ", n
@@ -600,7 +604,7 @@ proc parseTypePragmas(c: var GeneratedCode; n: Cursor): set[LengPragma] =
         skip n
       of HeaderP:
         n.into:
-          if n.kind != StringLit:
+          if n.kind != StrLit:
             error c.m, "expected string literal in header pragma but got: ", n
           else:
             inclHeader(c, n.litId)
@@ -648,8 +652,8 @@ proc generateTypes(c: var GeneratedCode; o: TypeOrder) =
         genType c, n, "a"
         c.add BracketLe
         case n.kind
-        of IntLit: c.genIntLit n.intId
-        of UIntLit: c.genUIntLit n.uintId
+        of IntLit: c.genIntLit intVal(n)
+        of UIntLit: c.genUIntLit uintVal(n)
         else: error c.m, "array size must be an int literal, but got: ", n
         c.add BracketRi
         c.add Semicolon

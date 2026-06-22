@@ -1,74 +1,156 @@
-#       Nif library
-# (c) Copyright 2026 Andreas Rumpf
 #
-# See the file "license.txt", included in this
-# distribution, for details about the copyright.
+#
+#        Lengc set-of-modules handling — nifcore port
+#        (c) Copyright 2026 Andreas Rumpf
+#
+#    See the file "license.txt", included in this
+#    distribution, for details about the copyright.
+#
 
-## NIF set-of-modules handling.
+## NIF set-of-modules handling on the **nifcore** stack — the nifcore port of
+## `lengc/nifmodules.nim`. Loads foreign declarations lazily, IC-style: a
+## module's `.nif` file is opened once, its embedded index (`(.index (x sym
+## offset) …)`) read, and each requested declaration materialized on demand by
+## seeking the reader to the indexed offset and parsing exactly one subtree.
+##
+## Compared to the nifcursors original this is simpler: `nifcoreparse.parse`
+## replaces the hand-rolled recursive token copier, and `nifstreams` drops out
+## entirely — `nifreader.Reader` already provides `jumpTo`/`offset`, and the
+## embedded index is read at the raw-token level with no pool involvement.
 
-include ".." / lib / nifprelude
-import std / [assertions, tables, strutils]
-import symparser, nifindexes, leng_model, noptions
+import std / [assertions, tables]
+import ".." / "lib" / nifcoreparse        # re-exports nifcore + parse
+import ".." / "lib" / nifcdecl              # stmtKind/symKind/pragmaKind, decls
+import ".." / "lib" / nifreader as rd       # Reader, jumpTo, indexStartsAt
+import ".." / "lib" / symparser             # splitSymName, splitModulePath, basename
+import noptions                              # ConfigRef
+
+type
+  NifIndexEntry = object
+    offset: int
+    info: NifLineInfo
+
+proc readEmbeddedIndex(r: var rd.Reader): Table[string, NifIndexEntry] =
+  ## Read the simple embedded index `(.index (x sym offset) …)` directly off the
+  ## reader. Offsets are stored as deltas; accumulate them. Restores the
+  ## reader's position afterwards so a whole-file parse can still run.
+  result = initTable[string, NifIndexEntry]()
+  let indexPos = indexStartsAt(r)
+  if indexPos <= 0: return result
+  let contentPos = rd.offset(r)
+  rd.jumpTo(r, indexPos)
+
+  var previousOffset = 0
+  var t = default(rd.ExpandedToken)
+  rd.next(r, t)
+  if t.tk == rd.ParLe and rd.decodeStr(r, t) == ".index":
+    rd.next(r, t)
+    while t.tk notin {rd.EofToken, rd.ParRi}:
+      if t.tk == rd.ParLe:
+        let info =
+          if t.filename.len > 0:
+            NifLineInfo(file: NoFile, line: int32(t.pos.line), col: int32(t.pos.col))
+          else:
+            NoNifLineInfo
+        rd.next(r, t)                       # into the entry: the symbol
+        var key = ""
+        if t.tk == rd.Symbol:
+          key = rd.decodeStr(r, t)
+        rd.next(r, t)                       # the offset
+        if t.tk == rd.IntLit:
+          let off = int(rd.decodeInt(t)) + previousOffset
+          result[key] = NifIndexEntry(offset: off, info: info)
+          previousOffset = off
+        rd.next(r, t)                       # closing ParRi
+        if t.tk == rd.ParRi:
+          rd.next(r, t)
+      else:
+        rd.next(r, t)
+
+  rd.jumpTo(r, contentPos)
 
 type
   NifModule = ref object
-    stream: nifstreams.Stream
-    index: Table[string, NifIndexEntry]  # Simple embedded index for offsets
+    reader: rd.Reader
+    index: Table[string, NifIndexEntry]
 
   Definition* = object
-    pos*: Cursor # points into MainModule.src
+    pos*: Cursor            ## points into this Definition's own `buf` (or MainModule.src)
     kind*: LengSym
-    extern*: StrId # extracted from the pragmas and store here as it is so frequently queried
-    isImport*: bool # true for importc/importcpp, false for exportc-only
-    buf: TokenBuf # can be empty for symbols that are in the main module
+    extern*: StrId          ## importc/exportc name, cached (frequently queried)
+    isImport*: bool         ## true for importc/importcpp, false for exportc-only
+    buf: TokenBuf           ## empty for symbols that live in the main module
 
-  NifProgram* = object # a NIF program is a set of NIF modules
+  NifProgram = object
     mods: Table[string, NifModule]
     scheme: SplittedModulePath
 
-proc setupNifProgram*(scheme: sink SplittedModulePath): NifProgram =
-  result = NifProgram(scheme: scheme, mods: initTable[string, NifModule]())
+  TypeScope* {.acyclic.} = ref object
+    locals*: Table[SymId, Cursor]
+    parent*: TypeScope
 
-proc lookupDeclaration(c: var NifProgram; s: SplittedSymName): TokenBuf =
+  MainModule* = object
+    src*: TokenBuf
+    pool*: Pool
+    tags*: TagPool
+    types*: seq[Cursor]                  ## points into MainModule.src
+    filename*: string
+    config*: ConfigRef
+    mem*: seq[TokenBuf]                  ## intermediate results (computed types)
+    builtinTypes*: Table[string, Cursor]
+    current*: TypeScope
+    defs: Table[SymId, Definition]
+    typeBodyToDecl: Table[int, Cursor]   ## body `toUniqueId` -> its `(type …)` decl
+    prog: NifProgram
+    requestedForeignSyms*: seq[Cursor]
+
+proc lookupDeclaration(c: var MainModule; s: SplittedSymName): TokenBuf =
   if s.module == "":
     raiseAssert "Cannot lookup declaration without module name: " & s.name
+  var m: NifModule
+  if not c.prog.mods.hasKey(s.module):
+    c.prog.scheme.name = s.module
+    var reader = rd.open($c.prog.scheme)
+    discard rd.processDirectives(reader)
+    let index = readEmbeddedIndex(reader)
+    m = NifModule(reader: reader, index: index)
+    c.prog.mods[s.module] = m
   else:
-    var m: NifModule
-    if not c.mods.hasKey(s.module):
-      c.scheme.name = s.module
-      var stream = nifstreams.open($c.scheme)
-      let index = readEmbeddedIndex(stream)
-      m = NifModule(stream: stream, index: index)
-      c.mods[s.module] = m
-    else:
-      m = c.mods[s.module]
+    m = c.prog.mods[s.module]
 
-    let entry = m.index.getOrDefault($s)
-    if entry.offset == 0:
-      raiseAssert "Symbol not found in NIF module: " & $s
-    else:
-      result = createTokenBuf()
-      m.stream.r.jumpTo entry.offset
-      nifcursors.parse(m.stream, result, entry.info)
+  let entry = m.index.getOrDefault($s)
+  if entry.offset == 0:
+    raiseAssert "Symbol not found in NIF module: " & $s
+  result = createTokenBuf(64, c.pool, c.tags)
+  rd.jumpTo(m.reader, entry.offset)
+  nifcoreparse.parse(m.reader, result, entry.info)
+
+proc firstChild(c: Cursor): Cursor {.inline.} =
+  result = c
+  inc result
 
 proc externName*(s: SymId; n: Cursor): StrId =
-  let nn = n.firstSon
-  if nn.kind == StringLit:
-    result = nn.litId
+  ## Extract the importc/exportc name from a pragma node `n` (or fall back to the
+  ## symbol's basename). Pool-free: uses the cursor's own buffer pool.
+  let nn = firstChild(n)
+  let p = n.pool
+  if nn.kind == StrLit:
+    result = p.strings.getOrIncl(strVal(nn, p))
   else:
-    var base = pool.syms[s]
+    var base = p.syms[s]
     extractBasename base
-    result = pool.strings.getOrIncl(base)
+    result = p.strings.getOrIncl(base)
 
-proc extractExtern(n: var Cursor; pragmasAt: int; isImport: var bool): StrId =
+proc extractExtern(c: var MainModule; n: var Cursor; pragmasAt: int;
+                   isImport: var bool): StrId =
   result = StrId(0)
   isImport = false
-  n.into:  # enter toplevel (type/proc/var/...)
+  n.into:  # enter the toplevel (type/proc/var/…)
     if n.kind != SymbolDef:
       raiseAssert "Expected SymbolDef after toplevel declaration"
     let symId = n.symId
     inc n
-    for i in 1..<pragmasAt: skip n
+    for i in 1 ..< pragmasAt: skip n
     if n.substructureKind == PragmasU:
       n.into:
         while n.hasMore:
@@ -85,30 +167,24 @@ proc extractExtern(n: var Cursor; pragmasAt: int; isImport: var bool): StrId =
     while n.hasMore:
       skip n
 
-type
-  TypeScope* {.acyclic.} = ref object
-    locals*: Table[SymId, Cursor]
-    parent*: TypeScope
+proc registerTypeBody(c: var MainModule; declPos: Cursor) =
+  ## Map a `(type …)` decl's body position to the decl, so `tracebackTypeC` can
+  ## recover the decl from a body cursor without walking the buffer backwards.
+  c.typeBodyToDecl[asTypeDecl(declPos).body.toUniqueId()] = declPos
 
-  MainModule* = object
-    src*: TokenBuf
-    types*: seq[Cursor] # points into MainModule.src
-    filename*: string
-    config*: ConfigRef
-    mem*: seq[TokenBuf] # for intermediate results such as computed types
-    builtinTypes*: Table[string, Cursor]
-    current*: TypeScope
-    defs: Table[SymId, Definition]
-    prog: NifProgram
-    requestedForeignSyms*: seq[Cursor]
+proc tracebackTypeC*(c: var MainModule; n: Cursor): Cursor =
+  ## The nifcore replacement for the nifcursors backward walk: given a type
+  ## *body* cursor, return its enclosing `(type …)` declaration. Returns
+  ## `default(Cursor)` for an unregistered body (e.g. an anonymous inline type).
+  c.typeBodyToDecl.getOrDefault(n.toUniqueId(), default(Cursor))
 
 proc getDeclOrNil*(c: var MainModule; s: SymId): ptr Definition =
   if not c.defs.hasKey(s):
-    let splitted = splitSymName(pool.syms[s])
+    let splitted = splitSymName(c.pool.syms[s])
     if splitted.module == "": return nil
-    var buf = lookupDeclaration(c.prog, splitted)
+    var buf = lookupDeclaration(c, splitted)
     let pos = beginRead(buf)
-    if pos.firstSon.kind == SymbolDef:
+    if firstChild(pos).kind == SymbolDef:
       let sk = pos.symKind
       var extern = StrId(0)
       var isImport = false
@@ -116,13 +192,15 @@ proc getDeclOrNil*(c: var MainModule; s: SymId): ptr Definition =
       case sk
       of TypeY:
         c.types.add pos
-        extern = extractExtern(n, 1, isImport)
+        registerTypeBody(c, pos)
+        extern = extractExtern(c, n, 1, isImport)
       of ProcY:
-        extern = extractExtern(n, 3, isImport)
+        extern = extractExtern(c, n, 3, isImport)
       of VarY, ConstY, GvarY, TvarY:
-        extern = extractExtern(n, 1, isImport)
+        extern = extractExtern(c, n, 1, isImport)
       else: discard
-      c.defs[s] = Definition(pos: pos, kind: sk, extern: extern, isImport: isImport, buf: ensureMove(buf))
+      c.defs[s] = Definition(pos: pos, kind: sk, extern: extern,
+                             isImport: isImport, buf: ensureMove(buf))
       c.requestedForeignSyms.add pos
     else:
       raiseAssert "Expected SymbolDef after toplevel declaration"
@@ -130,10 +208,9 @@ proc getDeclOrNil*(c: var MainModule; s: SymId): ptr Definition =
 
 proc getExtern*(c: var MainModule; s: SymId): StrId =
   let d = c.getDeclOrNil(s)
-  if d != nil:
-    result = d.extern
-  else:
-    result = StrId(0)
+  result = if d != nil: d.extern else: StrId(0)
+
+# ---- scopes ---------------------------------------------------------------
 
 proc registerLocal*(c: var MainModule; s: SymId; typ: Cursor) =
   c.current.locals[s] = typ
@@ -144,99 +221,103 @@ proc openScope*(c: var MainModule) =
 proc closeScope*(c: var MainModule) =
   c.current = c.current.parent
 
-proc parse*(r: var Reader; m: var MainModule; parentInfo: PackedLineInfo): bool =
-  var t = default(ExpandedToken)
-  next(r, t)
-  var currentInfo = parentInfo
-  if t.filename.len == 0:
-    # relative file position
-    if t.pos.line != 0 or t.pos.col != 0:
-      let rawInfo = unpack(pool.man, parentInfo)
-      if rawInfo.file.isValid:
-        currentInfo = pack(pool.man, rawInfo.file, rawInfo.line+t.pos.line, rawInfo.col+t.pos.col)
-  else:
-    # absolute file position:
-    let fileId = pool.files.getOrIncl(decodeFilename t)
-    currentInfo = pack(pool.man, fileId, t.pos.line, t.pos.col)
+# ---- module loading -------------------------------------------------------
 
-  result = true
-  case t.tk
-  of EofToken, ParRi:
-    result = false
-  of ParLe:
-    let tag = pool.tags.getOrIncl(r.decodeStr t)
-    copyInto(m.src, tag, currentInfo):
-      while true:
-        let progress = parse(r, m, currentInfo)
-        if not progress: break
-  of UnknownToken:
-    copyInto m.src, ErrT, currentInfo:
-      m.src.addStrLit r.decodeStr(t), currentInfo
-  of DotToken:
-    m.src.addDotToken()
-  of Ident:
-    m.src.addIdent r.decodeStr(t), currentInfo
-  of Symbol:
-    m.src.add symToken(pool.syms.getOrIncl(r.decodeStr t), currentInfo)
-  of SymbolDef:
-    m.src.add symdefToken(pool.syms.getOrIncl(r.decodeStr t), currentInfo)
-  of StringLit:
-    m.src.addStrLit r.decodeStr(t), currentInfo
-  of CharLit:
-    m.src.add charToken(decodeChar(t), currentInfo)
-  of IntLit:
-    m.src.addIntLit parseBiggestInt(r.decodeStr t), currentInfo
-  of UIntLit:
-    m.src.addUIntLit parseBiggestUInt(r.decodeStr t), currentInfo
-  of FloatLit:
-    m.src.add floatToken(pool.floats.getOrIncl(parseFloat(r.decodeStr t)), currentInfo)
-
-proc processToplevelDecl(m: var MainModule; n: var Cursor; kind: LengSym; pragmasAt: int) =
+proc processToplevelDecl(c: var MainModule; n: var Cursor; kind: LengSym;
+                         pragmasAt: int) =
   let decl = n
-  let s = decl.firstSon.symId
+  let s = firstChild(decl).symId
   var isImport = false
-  let extern = extractExtern(n, pragmasAt, isImport)
-  m.defs[s] = Definition(pos: decl, kind: kind, extern: extern, isImport: isImport)
+  let extern = extractExtern(c, n, pragmasAt, isImport)
+  c.defs[s] = Definition(pos: decl, kind: kind, extern: extern, isImport: isImport)
 
-proc detectToplevelDecls(m: var MainModule) =
-  var n = cursorAt(m.src, 0)
-  if n.kind != ParLe: return
-  # The src buffer starts with a (stmts ...) wrapper. Walk its children.
+proc detectToplevelDecls(c: var MainModule) =
+  var n = cursorAt(c.src, 0)
+  if n.kind != TagLit: return
+  # the src buffer starts with a (stmts …) wrapper; walk its children.
   n.into:
     while n.hasMore:
-      case n.kind
-      of ParLe:
+      if n.kind == TagLit:
         case n.stmtKind
         of TypeS:
-          m.types.add n
-          processToplevelDecl(m, n, TypeY, 1)
+          c.types.add n
+          registerTypeBody(c, n)
+          processToplevelDecl(c, n, TypeY, 1)
         of ProcS:
-          processToplevelDecl(m, n, ProcY, 3)
-        of VarS, ConstS, GvarS, TvarS:
-          processToplevelDecl(m, n, n.symKind, 1)
+          processToplevelDecl(c, n, ProcY, 3)
         else:
-          skip n
+          case n.symKind
+          of VarY, ConstY, GvarY, TvarY:
+            processToplevelDecl(c, n, n.symKind, 1)
+          else:
+            skip n
       else:
         inc n
 
-proc parse(r: var Reader; filename: string): MainModule =
-  # empirically, (size div 7) is a good estimate for the number of nodes
-  # in the file:
-  let nodeCount = r.fileSize div 7
-  result = MainModule(src: createTokenBuf(nodeCount), prog: setupNifProgram(splitModulePath(filename)))
-  discard parse(r, result, NoLineInfo)
-  freeze(result.src)
-  detectToplevelDecls(result)
+proc densify(dest: var TokenBuf; n: var Cursor; cur: var NifLineInfo) =
+  ## Copy the tree at `n` into `dest`, stamping *every* head token with its
+  ## effective line info. nifcore stores line info sparsely (only when it
+  ## changes); the nifcursors world propagated it to every node, and the
+  ## backends rely on `info(n)` being valid at each statement/expression (e.g.
+  ## LLVM `!dbg` / C `#line`). Densifying once at load restores that invariant
+  ## for all backends with no per-call-site changes. `cur` is the running
+  ## sequential (depth-first) line info, matching how nifcursors propagated it —
+  ## a node inherits the most recent info *in stream order*, not its parent's.
+  let raw = rawLineInfo(n)
+  if raw.isValid: cur = raw
+  let eff = cur
+  case n.kind
+  of TagLit:
+    let tag = n.cursorTagId
+    dest.openTag tag
+    if eff.isValid: dest.appendLineInfo eff
+    n.into:
+      while n.hasMore: densify(dest, n, cur)
+    dest.closeTag()
+  of DotToken:
+    dest.addDotToken();          (if eff.isValid: dest.appendLineInfo eff); inc n
+  of Ident:
+    dest.addIdent strVal(n);     (if eff.isValid: dest.appendLineInfo eff); inc n
+  of Symbol:
+    dest.addSymUse symName(n);   (if eff.isValid: dest.appendLineInfo eff); inc n
+  of SymbolDef:
+    dest.addSymDef symName(n);   (if eff.isValid: dest.appendLineInfo eff); inc n
+  of StrLit:
+    dest.addStrLit strVal(n);    (if eff.isValid: dest.appendLineInfo eff); inc n
+  of CharLit:
+    dest.addCharLit charLit(n);  (if eff.isValid: dest.appendLineInfo eff); inc n
+  of IntLit:
+    dest.addIntLit intVal(n);    (if eff.isValid: dest.appendLineInfo eff); inc n
+  of UIntLit:
+    dest.addUIntLit uintVal(n);  (if eff.isValid: dest.appendLineInfo eff); inc n
+  of FloatLit:
+    dest.addFloatLit floatVal(n);(if eff.isValid: dest.appendLineInfo eff); inc n
+  of ExtendedSuffix, LineInfoLit:
+    inc n  # absorbed into the head token's own value/info; never freestanding
 
 proc load*(filename: string): MainModule =
-  var r = nifreader.open(filename)
-  case nifreader.processDirectives(r)
-  of Success:
-    discard
-  of WrongHeader:
-    quit "nif files must start with Version directive"
-  of WrongMeta:
-    quit "the format of meta information is wrong!"
-  result = parse(r, filename)
-  result.filename = filename
-  r.close
+  var r = rd.open(filename)
+  case rd.processDirectives(r)
+  of rd.Success: discard
+  of rd.WrongHeader: quit "nif files must start with Version directive"
+  of rd.WrongMeta: quit "the format of meta information is wrong!"
+  let nodeCount = rd.fileSize(r) div 7
+  # Parse with a canonical Leng tag pool so interned TagIds equal the master
+  # ordinals that `stmtKind`/`typeKind`/`symKind` decode against (otherwise a
+  # fresh pool assigns IDs in encounter order and every kind reads as None).
+  var raw = createTokenBuf(nodeCount, nil, createLengTagPool())
+  nifcoreparse.parse(r, raw)
+  rd.close(r)
+  # Densify line info so `info(n)` is valid at every node (see `densify`). The
+  # densified buffer MUST share `raw`'s pool/tags: line info carries a `FileId`
+  # interned in that pool, so copying it across pools would dangle.
+  result = MainModule(src: createTokenBuf(nodeCount, raw.pool, raw.tags),
+                      current: TypeScope(locals: initTable[SymId, Cursor]()),
+                      filename: filename,
+                      prog: NifProgram(scheme: splitModulePath(filename)))
+  var rc = beginRead(raw)
+  var curInfo = NoNifLineInfo
+  densify(result.src, rc, curInfo)
+  result.pool = result.src.pool
+  result.tags = result.src.tags
+  detectToplevelDecls(result)

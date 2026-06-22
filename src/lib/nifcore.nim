@@ -328,6 +328,13 @@ proc tags*(c: Cursor): TagPool {.inline.} =
   ## consulting `c.tags` directly.
   if c.owner != nil: c.owner.tags else: nil
 
+proc toUniqueId*(c: Cursor): int {.inline.} =
+  ## A stable identity for the cursor's *position*: two cursors over the same
+  ## buffer at the same token share it, distinct positions differ. Suitable as a
+  ## `HashSet[int]`/`IntSet` key (e.g. type-traversal dedup). Not stable across
+  ## buffers or runs — it is the underlying token pointer reinterpreted.
+  cast[int](c.p)
+
 when defined(nimAllowNonVarDestructor) and defined(gcDestructors):
   proc `=destroy`*(c: Cursor) {.inline.} =
     if c.owner != nil: decRcAndFree(c.owner)

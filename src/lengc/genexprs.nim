@@ -102,19 +102,19 @@ proc genField(c: var GeneratedCode; fld: Cursor; objBody: Cursor; objTypeIsImpor
     let s = fld.symId
     var t = objBody
     let pragmas = typeOfField(c.m, t, s, FieldPragmas)
-    if not cursorIsNil(pragmas) and pragmas.kind == ParLe:
+    if not cursorIsNil(pragmas) and pragmas.kind == TagLit:
       var p = pragmas
       p.into:
         while p.hasMore:
           case p.pragmaKind
           of ImportcP, ImportcppP, ExportcP:
             let litId = externName(s, p)
-            c.add pool.strings[litId]
+            c.add c.m.pool.strings[litId]
             return
           else:
             discard
           skip p
-    var x = pool.syms[s]
+    var x = c.m.pool.syms[s]
     if objTypeIsImported:
       extractBasename x
       c.add x
@@ -168,7 +168,7 @@ proc genLvalue(c: var GeneratedCode; n: var Cursor) =
       var fld = n
       skip n
       if n.hasMore and n.kind == IntLit:
-        var inh = pool.integers[n.intId]
+        var inh = intVal(n)
         inc n
         while inh > 0:
           c.add ".Q"
@@ -205,7 +205,7 @@ proc objConstrType(c: var GeneratedCode; n: var Cursor) =
     skip n
 
 proc suffixToType(c: var GeneratedCode; suffix: Cursor) =
-  case pool.strings[suffix.litId]
+  case c.m.pool.strings[suffix.litId]
   of "i64":
     c.add "NI64"
   of "i32":
@@ -272,19 +272,19 @@ proc genCond(c: var GeneratedCode; n: var Cursor) =
     c.add ParRi
 
 proc genx(c: var GeneratedCode; n: var Cursor) =
-  if n.exprKind != AddrC and n.kind != StringLit:
+  if n.exprKind != AddrC and n.kind != StrLit:
     c.flags.excl gfInCallImportC
   case n.exprKind
   of NoExpr:
     case n.kind
     of IntLit:
-      genIntLit c, n.intId
+      genIntLit c, intVal(n)
       inc n
     of UIntLit:
-      genUIntLit c, n.uintId
+      genUIntLit c, uintVal(n)
       inc n
     of FloatLit:
-      c.add $pool.floats[n.floatId]
+      c.add $floatVal(n)
       inc n
     of CharLit:
       let ch = n.charLit
@@ -294,10 +294,10 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
       s.add "'"
       c.add s
       inc n
-    of StringLit:
+    of StrLit:
       if gfInCallImportC notin c.flags and gfInFlexArray notin c.flags:
         c.add "(NC8*)"
-      c.add makeCString(pool.strings[n.litId])
+      c.add makeCString(c.m.pool.strings[n.litId])
       inc n
     else:
       genLvalue c, n
@@ -353,7 +353,7 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
             if depth.hasMore and depth.hasMore:
               # inheritance depth
               assert depth.kind == IntLit
-              let d = pool.integers[depth.intId]
+              let d = intVal(depth)
               for _ in 0 ..< d:
                 c.add "Q"
                 c.add Dot
@@ -382,7 +382,7 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
   of BaseobjC:
     n.into:
       skip n # type not interesting for us
-      var counter = pool.integers[n.intId]
+      var counter = intVal(n)
       skip n
       c.genx n
       while counter > 0:
@@ -454,7 +454,7 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
       suffix = n
       skip n
       while n.hasMore: skip n
-    if value.kind == StringLit:
+    if value.kind == StrLit:
       genx c, value
     else:
       suffixConv c, value, suffix
