@@ -94,7 +94,7 @@ proc genIteLLVM(c: var LLVMCode; n: var Cursor) =
       skip n # skip condition
       genStmtLLVM c, n # then-part always taken
       if isLast:
-        let labelName = mangleToC(pool.syms[vflag])
+        let labelName = mangleToC(c.m.pool.syms[vflag])
         c.emitLine "  br label %" & labelName
         c.emitLine labelName & ":"
         c.currentProc.needsTerminator = false
@@ -270,7 +270,7 @@ proc genSwitchLLVM(c: var LLVMCode; n: var Cursor) =
 proc genLabelLLVM(c: var LLVMCode; n: var Cursor) =
   n.into:
     if n.kind == SymbolDef:
-      let name = mangleToC(pool.syms[n.symId])
+      let name = mangleToC(c.m.pool.syms[n.symId])
       # End current basic block
       if not c.currentProc.needsTerminator:
         c.emitLine "  br label %" & name
@@ -284,7 +284,7 @@ proc genLabelLLVM(c: var LLVMCode; n: var Cursor) =
 proc genGotoLLVM(c: var LLVMCode; n: var Cursor) =
   n.into:
     if n.kind == Symbol:
-      let name = mangleToC(pool.syms[n.symId])
+      let name = mangleToC(c.m.pool.syms[n.symId])
       c.emitLine "  br label %" & name
       c.currentProc.needsTerminator = true
       inc n
@@ -304,7 +304,7 @@ proc genMflagDeclLLVM(c: var LLVMCode; n: var Cursor) =
     if n.kind == SymbolDef:
       let s = n.symId
       c.m.registerLocal(s, createIntegralType(c.m, "(bool)"))
-      let name = mangleToC(pool.syms[s])
+      let name = mangleToC(c.m.pool.syms[s])
       c.addAlloca(c.tok("%" & name), LToken(I8Token))
       c.emitLine "  store i8 0, ptr %" & name
       inc n
@@ -330,9 +330,9 @@ proc genJtrueLLVM(c: var LLVMCode; n: var Cursor) =
       if not c.currentProc.vflags.contains(s):
         error c.m, "virtual flag not declared: ", n
       inc n
-      if n.kind == ParRi:
+      if not n.hasMore:
         # Last symbol is a goto target
-        let name = mangleToC(pool.syms[s])
+        let name = mangleToC(c.m.pool.syms[s])
         c.emitLine "  br label %" & name
         c.currentProc.needsTerminator = true
     else:
@@ -377,7 +377,7 @@ proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
 
       n.into: # type tag (IT or UT)
         if n.kind == IntLit:
-          let bits = pool.integers[n.intId]
+          let bits = intVal(n)
           if bits != -1:
             bitsStr = $bits
           inc n
@@ -430,8 +430,8 @@ proc genEmitStmtLLVM(c: var LLVMCode; n: var Cursor) =
   n.into:
     var comment = "; emit: "
     while n.hasMore:
-      if n.kind == StringLit:
-        comment.add pool.strings[n.litId]
+      if n.kind == StrLit:
+        comment.add c.m.pool.strings[n.litId]
         inc n
       else:
         skip n

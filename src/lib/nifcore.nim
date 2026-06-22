@@ -328,6 +328,13 @@ proc tags*(c: Cursor): TagPool {.inline.} =
   ## consulting `c.tags` directly.
   if c.owner != nil: c.owner.tags else: nil
 
+proc toUniqueId*(c: Cursor): int {.inline.} =
+  ## A stable identity for the cursor's *position*: two cursors over the same
+  ## buffer at the same token share it, distinct positions differ. Suitable as a
+  ## `HashSet[int]`/`IntSet` key (e.g. type-traversal dedup). Not stable across
+  ## buffers or runs — it is the underlying token pointer reinterpreted.
+  cast[int](c.p)
+
 when defined(nimAllowNonVarDestructor) and defined(gcDestructors):
   proc `=destroy`*(c: Cursor) {.inline.} =
     if c.owner != nil: decRcAndFree(c.owner)
@@ -802,20 +809,24 @@ template emitChained(b: var TokenBuf; kind: NifKind; bits: uint64) =
       b.add extendedSuffixToken(uint32(bits shr (PayloadBits * 2)))
 
 proc addIntLit*(b: var TokenBuf; v: int64) =
-  ## Pure inline. Writer picks the shortest carrier:
-  ##   28-bit signed (one token)  for |v| < 2^27,
-  ##   56-bit signed (two tokens) for |v| < 2^55,
-  ##   84-bit budget (three tokens) for the rest of int64.
-  ## A negative `v` is sign-extended into the chosen width before
-  ## chunking, so the reader's sign-extend-from-width gives back `v`.
-  let bits =
-    if v >= -(1'i64 shl 27) and v < (1'i64 shl 27):
-      uint64(cast[uint32](v)) and uint64(PayloadMask)
-    elif v >= -(1'i64 shl 55) and v < (1'i64 shl 55):
-      cast[uint64](v) and ((1'u64 shl (PayloadBits * 2)) - 1'u64)
-    else:
-      cast[uint64](v)
-  emitChained(b, IntLit, bits)
+  ## Pure inline. Writer picks the shortest carrier whose SIGNED width holds `v`:
+  ##   28-bit (one token)    for v in [-2^27, 2^27),
+  ##   56-bit (two tokens)   for v in [-2^55, 2^55),
+  ##   84-bit (three tokens) otherwise.
+  ## The token COUNT must follow the chosen *signed* width, not `v`'s unsigned
+  ## magnitude: a positive `v` whose top carrier bit is set (e.g. 2^27 ≤ v < 2^28)
+  ## still needs the wider carrier, or the reader's sign-extend-from-width would
+  ## read it back negative. (Hence this does NOT go through `emitChained`, which
+  ## trims by magnitude — correct for unsigned/float, wrong for signed.)
+  let bits = cast[uint64](v)
+  b.add NifToken(toX(IntLit, uint32(bits and uint64(PayloadMask))))
+  if v >= -(1'i64 shl 27) and v < (1'i64 shl 27):
+    discard                                   # 28-bit: one token suffices
+  elif v >= -(1'i64 shl 55) and v < (1'i64 shl 55):
+    b.add extendedSuffixToken(uint32((bits shr PayloadBits) and uint64(PayloadMask)))
+  else:
+    b.add extendedSuffixToken(uint32((bits shr PayloadBits) and uint64(PayloadMask)))
+    b.add extendedSuffixToken(uint32(bits shr (PayloadBits * 2)))
 
 proc addUIntLit*(b: var TokenBuf; v: uint64) =
   emitChained(b, UIntLit, v)

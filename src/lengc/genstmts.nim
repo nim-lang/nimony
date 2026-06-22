@@ -11,8 +11,8 @@
 
 proc genEmitStmt(c: var GeneratedCode; n: var Cursor) =
   n.loopInto:
-    if n.kind == StringLit:
-      c.add pool.strings[n.litId]
+    if n.kind == StrLit:
+      c.add c.m.pool.strings[n.litId]
       inc n
     else:
       genx c, n
@@ -94,7 +94,7 @@ proc genIte(c: var GeneratedCode; n: var Cursor) =
       c.genStmt n # then-part is always taken
       # emit the label:
       if isLast:
-        c.add mangleToC(pool.syms[vflag])
+        c.add mangleToC(c.m.pool.syms[vflag])
         c.add Colon
         c.add Semicolon
       skip n      # else-part is always ignored
@@ -290,7 +290,7 @@ proc genCaseCond(c: var GeneratedCode; n: var Cursor) =
 proc genLabel(c: var GeneratedCode; n: var Cursor) =
   n.into:
     if n.kind == SymbolDef:
-      let name = mangleToC(pool.syms[n.symId])
+      let name = mangleToC(c.m.pool.syms[n.symId])
       c.add name
       c.add Colon
       c.add Semicolon
@@ -302,7 +302,7 @@ proc genLabel(c: var GeneratedCode; n: var Cursor) =
 proc genGoto(c: var GeneratedCode; n: var Cursor) =
   n.into:
     if n.kind == Symbol:
-      let name = mangleToC(pool.syms[n.symId])
+      let name = mangleToC(c.m.pool.syms[n.symId])
       c.add GotoKeyword
       c.add name
       c.add Semicolon
@@ -368,7 +368,7 @@ proc genMflagDecl(c: var GeneratedCode; n: var Cursor) =
       c.m.registerLocal(s, createIntegralType(c.m, "(bool)"))
       c.add "NB8"
       c.add Space
-      c.add mangleToC(pool.syms[s])
+      c.add mangleToC(c.m.pool.syms[s])
       c.add Semicolon
       inc n
     else:
@@ -398,7 +398,7 @@ proc genJtrue(c: var GeneratedCode; n: var Cursor) =
         if not n.hasMore:
           # last symbol becomes a target goto:
           c.add GotoKeyword
-          c.add mangleToC(pool.syms[s])
+          c.add mangleToC(c.m.pool.syms[s])
           c.add Semicolon
       else:
         error c.m, "expected Symbol but got: ", n
@@ -450,7 +450,7 @@ proc genKeepOverflow(c: var GeneratedCode; n: var Cursor) =
         error c.m, "expected integer type but got: ", n
       n.into:  # (i bits) | (u bits)
         if n.kind == IntLit:
-          let bits = pool.integers[n.intId]
+          let bits = intVal(n)
           if bits == 64 or (bits == -1 and c.bits == 64):
             gcc.add "ll"
             isLongLong = true

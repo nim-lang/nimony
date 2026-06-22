@@ -11,7 +11,7 @@
 # Generates LLVM IR types from Leng types.
 
 proc integralBitsLLVM(t: Cursor; c: LLVMCode): string {.inline.} =
-  let res = pool.integers[t.intId]
+  let res = intVal(t)
   if res == -1:
     result = $c.bits
   else:
@@ -80,7 +80,7 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): string =
           inc n
           return
       # Use mangleToC for type references to match type definitions
-      let name = mangleToC(pool.syms[n.symId])
+      let name = mangleToC(c.m.pool.syms[n.symId])
       result = "%" & name
       inc n
     elif n.kind == DotToken:
@@ -114,19 +114,22 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): string =
       let elemType = genTypeLLVM(c, n)
       var sizeStr = "0"
       if n.kind == IntLit:
-        sizeStr = $pool.integers[n.intId]
+        sizeStr = $intVal(n)
         skip n
       elif n.kind == UIntLit:
-        sizeStr = $pool.uintegers[n.uintId]
+        sizeStr = $uintVal(n)
         skip n
       result = "[" & sizeStr & " x " & elemType & "]"
       while n.hasMore: skip n
   of ObjectT, UnionT:
-    let typeDecl = tracebackTypeC(n)
-    let decl = asTypeDecl(typeDecl)
-    if decl.name.kind == SymbolDef:
-      discard c.m.getDeclOrNil(decl.name.symId)
-      result = "%" & mangleToC(pool.syms[decl.name.symId])
+    let typeDecl = tracebackTypeC(c.m, n)
+    if not cursorIsNil(typeDecl) and typeDecl.stmtKind == TypeS:
+      let decl = asTypeDecl(typeDecl)
+      if decl.name.kind == SymbolDef:
+        discard c.m.getDeclOrNil(decl.name.symId)
+        result = "%" & mangleToC(c.m.pool.syms[decl.name.symId])
+      else:
+        result = "ptr"
     else:
       result = "ptr"
     skip n
@@ -146,9 +149,9 @@ proc fixedArrayLen(c: var LLVMCode; n: Cursor): int =
     inc t
     skip t
     if t.kind == IntLit:
-      result = int(pool.integers[t.intId])
+      result = int(intVal(t))
     elif t.kind == UIntLit:
-      result = int(pool.uintegers[t.uintId])
+      result = int(uintVal(t))
 
 proc typeSizeBits(c: var LLVMCode; n: Cursor): int =
   ## Estimate the size of a type in bits for union layout computation.
@@ -157,7 +160,7 @@ proc typeSizeBits(c: var LLVMCode; n: Cursor): int =
     var nn = n
     inc nn
     if nn.kind == IntLit:
-      let bits = pool.integers[nn.intId]
+      let bits = intVal(nn)
       result = if bits == -1: c.bits else: int(bits)
     else:
       result = c.bits
@@ -165,7 +168,7 @@ proc typeSizeBits(c: var LLVMCode; n: Cursor): int =
     var nn = n
     inc nn
     if nn.kind == IntLit:
-      let bits = pool.integers[nn.intId]
+      let bits = intVal(nn)
       result = if bits == -1: 64 else: int(bits)
     else:
       result = 64
@@ -186,9 +189,9 @@ proc typeSizeBits(c: var LLVMCode; n: Cursor): int =
     skip nn
     var count = 0
     if nn.kind == IntLit:
-      count = int(pool.integers[nn.intId])
+      count = int(intVal(nn))
     elif nn.kind == UIntLit:
-      count = int(pool.uintegers[nn.uintId])
+      count = int(uintVal(nn))
     result = elemBits * count
   of NoType:
     if n.kind == Symbol:
@@ -317,7 +320,7 @@ proc recordDependencyImplLLVM(m: var MainModule; o: var TypeOrderLLVM;
     else:
       if not containsOrIncl(o.lookedAt, obj.toUniqueId()):
         traverseObjectBodyLLVM(m, o, obj)
-      o.ordered.add (tracebackTypeC(ch), false)
+      o.ordered.add (tracebackTypeC(m, ch), false)
   of ArrayT:
     if viaPointer:
       o.forwardedDecls.add parent
@@ -327,16 +330,16 @@ proc recordDependencyImplLLVM(m: var MainModule; o: var TypeOrderLLVM;
         var elemCur = ch
         inc elemCur
         recordDependencyImplLLVM m, o, ch, elemCur, viaPointer
-      o.ordered.add (tracebackTypeC(ch), false)
+      o.ordered.add (tracebackTypeC(m, ch), false)
   of EnumT:
-    o.ordered.add (tracebackTypeC(ch), false)
+    o.ordered.add (tracebackTypeC(m, ch), false)
   of ProctypeT:
     if viaPointer:
       o.forwardedDecls.add parent
     else:
       if not containsOrIncl(o.lookedAt, ch.toUniqueId()):
         traverseProctypeBodyLLVM(m, o, ch)
-      o.ordered.add (tracebackTypeC(ch), false)
+      o.ordered.add (tracebackTypeC(m, ch), false)
   else:
     if ch.kind == Symbol:
       let id = ch.symId
@@ -383,7 +386,7 @@ proc traverseProctypeBodyLLVM(m: var MainModule; o: var TypeOrderLLVM; t: Cursor
   var n = t
   let procType = takeProcType(n)
   var viaPointer = true
-  if procType.params.kind == ParLe:
+  if procType.params.kind == TagLit:
     var param = procType.params
     param.loopInto:
       let paramDecl = takeParamDecl(param)
@@ -706,9 +709,9 @@ proc genTypeDefLLVM(c: var LLVMCode; body: var Cursor; name: string;
       let elemType = genTypeLLVM(c, body)
       var sizeStr: string
       if body.kind == IntLit:
-        sizeStr = $pool.integers[body.intId]
+        sizeStr = $intVal(body)
       elif body.kind == UIntLit:
-        sizeStr = $pool.uintegers[body.uintId]
+        sizeStr = $uintVal(body)
       else:
         sizeStr = "0"
       skip body
@@ -731,7 +734,7 @@ proc genTypeDefLLVM(c: var LLVMCode; body: var Cursor; name: string;
       var rt = procType.returnType
       retType = genTypeLLVM(c, rt)
     var paramTypes: seq[string] = @[]
-    if procType.params.kind == ParLe:
+    if procType.params.kind == TagLit:
       var p = procType.params
       p.loopInto:
         let paramDecl = takeParamDecl(p)
@@ -797,7 +800,7 @@ proc getStructFieldTypes(c: var LLVMCode; typeSym: Cursor): seq[LToken] =
         var bitfieldUnit = 0
         body.into:
           if body.kind == Symbol:
-            let baseName = mangleToC(pool.syms[body.symId])
+            let baseName = mangleToC(c.m.pool.syms[body.symId])
             result.add c.tok("%" & baseName)
             inc body
           elif body.kind == DotToken:
@@ -830,23 +833,23 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor; declaredType: Cursor): Type
   case n.kind
   of IntLit:
     let typ = genTypeLLVMReadOnly(c, declaredType)
-    result = TypedConst(typ: typ, val: $pool.integers[n.intId])
+    result = TypedConst(typ: typ, val: $intVal(n))
     inc n
   of UIntLit:
     let typ = genTypeLLVMReadOnly(c, declaredType)
-    result = TypedConst(typ: typ, val: $pool.uintegers[n.uintId])
+    result = TypedConst(typ: typ, val: $uintVal(n))
     inc n
   of FloatLit:
     let typ = genTypeLLVMReadOnly(c, declaredType)
-    result = TypedConst(typ: typ, val: $pool.floats[n.floatId])
+    result = TypedConst(typ: typ, val: $floatVal(n))
     inc n
   of CharLit:
     let typ = genTypeLLVMReadOnly(c, declaredType)
     result = TypedConst(typ: typ, val: $ord(n.charLit))
     inc n
-  of StringLit:
+  of StrLit:
     # String data for flexarray fields — actual byte content
-    let s = pool.strings[n.litId]
+    let s = c.m.pool.strings[n.litId]
     inc n
     if s.len == 0:
       result = TypedConst(typ: "[0 x i8]", val: "zeroinitializer")
