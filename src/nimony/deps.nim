@@ -491,13 +491,19 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
       n.into:  # (passL …)
         while n.hasMore:
           assert n.kind == StringLit
-          c.passL.add pool.strings[n.litId]
+          # A single `{.passL.}` value may hold several flags (e.g.
+          # `-framework Foundation`). nifmake quotes each StringLit as ONE argv
+          # token, so split into whitespace-separated flags here — otherwise the
+          # linker sees `-framework Foundation` as a single unknown argument.
+          for flag in splitWhitespace(pool.strings[n.litId]):
+            c.passL.add flag
           inc n
     elif n.tagId == TagId(PassCP):
       n.into:  # (passC …)
         while n.hasMore:
           assert n.kind == StringLit
-          c.passC.add pool.strings[n.litId]
+          for flag in splitWhitespace(pool.strings[n.litId]):
+            c.passC.add flag
           inc n
     else:
       skip n
@@ -753,10 +759,15 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
     # is finished by the system linker, so nifasm's relocatable object can be
     # combined with the foreign `.o`s (e.g. Objective-C) and any frameworks. Plain
     # native programs keep the static, libc-free "nifasm is the linker" path.
-    let nativeSysLink = native and c.toBuild.len > 0
+    # (Written as plain `var`s rather than `and`/`if`-expression `let`s: the
+    # self-hosted compiler's initialization analysis can't yet prove the temp
+    # such expressions lower to is always assigned.)
+    var nativeSysLink = false
+    if native and c.toBuild.len > 0: nativeSysLink = true
     # The foreign objects and frameworks need a real driver; clang knows how to
     # compile `.m`/`.c`, pull in libobjc, resolve `-framework`, and supply the crt.
-    let sysLinker = if c.config.linker.len > 0: c.config.linker else: "clang"
+    var sysLinker = c.config.linker
+    if sysLinker.len == 0: sysLinker = "clang"
     var shoggoth = ""
     if useOptimizer:
       shoggoth = findTool("shoggoth")
