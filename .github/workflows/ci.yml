@@ -65,7 +65,7 @@ jobs:
           }
 
       - name: Checkout nif
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           path: nif
           submodules: false
