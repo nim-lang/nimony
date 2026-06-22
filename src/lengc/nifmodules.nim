@@ -23,66 +23,18 @@ import ".." / "lib" / nifcoreparse        # re-exports nifcore + parse
 import ".." / "lib" / nifcdecl              # stmtKind/symKind/pragmaKind, decls
 import ".." / "lib" / nifreader as rd       # Reader, jumpTo, indexStartsAt
 import ".." / "lib" / symparser             # splitSymName, splitModulePath, basename
+import ".." / "lib" / foreignmodules         # shared lazy loader (ForeignModule)
 import noptions                              # ConfigRef
 
 type
-  NifIndexEntry = object
-    offset: int
-    info: NifLineInfo
-
-proc readEmbeddedIndex(r: var rd.Reader): Table[string, NifIndexEntry] =
-  ## Read the simple embedded index `(.index (x sym offset) …)` directly off the
-  ## reader. Offsets are stored as deltas; accumulate them. Restores the
-  ## reader's position afterwards so a whole-file parse can still run.
-  result = initTable[string, NifIndexEntry]()
-  let indexPos = indexStartsAt(r)
-  if indexPos <= 0: return result
-  let contentPos = rd.offset(r)
-  rd.jumpTo(r, indexPos)
-
-  var previousOffset = 0
-  var t = default(rd.ExpandedToken)
-  rd.next(r, t)
-  if t.tk == rd.ParLe and rd.decodeStr(r, t) == ".index":
-    rd.next(r, t)
-    while t.tk notin {rd.EofToken, rd.ParRi}:
-      if t.tk == rd.ParLe:
-        let info =
-          if t.filename.len > 0:
-            NifLineInfo(file: NoFile, line: int32(t.pos.line), col: int32(t.pos.col))
-          else:
-            NoNifLineInfo
-        rd.next(r, t)                       # into the entry: the symbol
-        var key = ""
-        if t.tk == rd.Symbol:
-          key = rd.decodeStr(r, t)
-        rd.next(r, t)                       # the offset
-        if t.tk == rd.IntLit:
-          let off = int(rd.decodeInt(t)) + previousOffset
-          result[key] = NifIndexEntry(offset: off, info: info)
-          previousOffset = off
-        rd.next(r, t)                       # closing ParRi
-        if t.tk == rd.ParRi:
-          rd.next(r, t)
-      else:
-        rd.next(r, t)
-
-  rd.jumpTo(r, contentPos)
-
-type
-  NifModule = ref object
-    reader: rd.Reader
-    index: Table[string, NifIndexEntry]
-
   Definition* = object
-    pos*: Cursor            ## points into this Definition's own `buf` (or MainModule.src)
+    pos*: Cursor            ## points into the owning ForeignModule's decl buffer
     kind*: LengSym
     extern*: StrId          ## importc/exportc name, cached (frequently queried)
     isImport*: bool         ## true for importc/importcpp, false for exportc-only
-    buf: TokenBuf           ## empty for symbols that live in the main module
 
   NifProgram = object
-    mods: Table[string, NifModule]
+    mods: Table[string, ForeignModule]   ## module suffix -> lazily-opened module
     scheme: SplittedModulePath
 
   TypeScope* {.acyclic.} = ref object
@@ -104,26 +56,24 @@ type
     prog: NifProgram
     requestedForeignSyms*: seq[Cursor]
 
-proc lookupDeclaration(c: var MainModule; s: SplittedSymName): TokenBuf =
+proc loadForeign(c: var MainModule; s: SplittedSymName): Cursor =
+  ## Resolve a foreign symbol's declaration through the shared `ForeignModule`
+  ## lazy loader: open (and cache) the owning module, then jump to the symbol's
+  ## indexed offset and parse just that one decl. The cursor stays valid because
+  ## the `ForeignModule` owns the per-decl buffer.
   if s.module == "":
     raiseAssert "Cannot lookup declaration without module name: " & s.name
-  var m: NifModule
-  if not c.prog.mods.hasKey(s.module):
-    c.prog.scheme.name = s.module
-    var reader = rd.open($c.prog.scheme)
-    discard rd.processDirectives(reader)
-    let index = readEmbeddedIndex(reader)
-    m = NifModule(reader: reader, index: index)
-    c.prog.mods[s.module] = m
-  else:
+  var m: ForeignModule
+  if c.prog.mods.hasKey(s.module):
     m = c.prog.mods[s.module]
-
-  let entry = m.index.getOrDefault($s)
-  if entry.offset == 0:
-    raiseAssert "Symbol not found in NIF module: " & $s
-  result = createTokenBuf(64, c.pool, c.tags)
-  rd.jumpTo(m.reader, entry.offset)
-  nifcoreparse.parse(m.reader, result, entry.info)
+  else:
+    c.prog.scheme.name = s.module
+    m = openForeignModule($c.prog.scheme)
+    c.prog.mods[s.module] = m
+  let key = $s
+  if not hasDecl(m, key):
+    raiseAssert "Symbol not found in NIF module: " & key
+  result = getDecl(m, key, c.tags, c.pool)   # share the main module's pool (SymId-keyed)
 
 proc firstChild(c: Cursor): Cursor {.inline.} =
   result = c
@@ -182,8 +132,7 @@ proc getDeclOrNil*(c: var MainModule; s: SymId): ptr Definition =
   if not c.defs.hasKey(s):
     let splitted = splitSymName(c.pool.syms[s])
     if splitted.module == "": return nil
-    var buf = lookupDeclaration(c, splitted)
-    let pos = beginRead(buf)
+    let pos = loadForeign(c, splitted)
     if firstChild(pos).kind == SymbolDef:
       let sk = pos.symKind
       var extern = StrId(0)
@@ -200,7 +149,7 @@ proc getDeclOrNil*(c: var MainModule; s: SymId): ptr Definition =
         extern = extractExtern(c, n, 1, isImport)
       else: discard
       c.defs[s] = Definition(pos: pos, kind: sk, extern: extern,
-                             isImport: isImport, buf: ensureMove(buf))
+                             isImport: isImport)
       c.requestedForeignSyms.add pos
     else:
       raiseAssert "Expected SymbolDef after toplevel declaration"
