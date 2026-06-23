@@ -99,7 +99,10 @@ proc getSizeObject(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; ite
               var cOf = createSizeofValue(c.strict)
               n.into StmtsU:
                 while n.hasMore:
-                  discard getSizeObject(cOf, cache, iter, n, ptrSize, pragmas)
+                  if n.substructureKind == NilU:
+                    skip n # empty branch body
+                  else:
+                    discard getSizeObject(cOf, cache, iter, n, ptrSize, pragmas)
               finish cOf
               combineCaseObject(cCase, cOf)
               while n.hasMore: skip n
@@ -108,7 +111,10 @@ proc getSizeObject(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; ite
               var cElse = createSizeofValue(c.strict)
               n.into StmtsU:
                 while n.hasMore:
-                  discard getSizeObject(cElse, cache, iter, n, ptrSize, pragmas)
+                  if n.substructureKind == NilU:
+                    skip n # empty branch body
+                  else:
+                    discard getSizeObject(cElse, cache, iter, n, ptrSize, pragmas)
               finish cElse
               combineCaseObject(cCase, cElse)
               while n.hasMore: skip n
