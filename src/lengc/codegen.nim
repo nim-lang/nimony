@@ -81,7 +81,7 @@ type
 # nifcore compatibility shims: the nifcursors world had a global `pool` and
 # packed line info; here a StrLit carries its StrId in its own buffer's pool,
 # and line info is a plain NifLineInfo on the cursor.
-proc litId(c: Cursor): StrId {.inline.} = c.pool.strings.getOrIncl(strVal(c))
+proc litId(c: Cursor): StrId {.inline.} = strId(c)
 proc info(c: Cursor): NifLineInfo {.inline.} = rawLineInfo(c)
 proc firstSon(c: Cursor): Cursor {.inline.} =
   result = c
@@ -503,7 +503,7 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
     # empty slot degrades to `void`, so the `(deref t)` uses produce invalid C.
     var typ = d.typ
     if typ.kind == DotToken and d.value.kind != DotToken:
-      typ = getType(c.m, d.value)
+      typ = getNominalType(c.m, d.value)
     c.m.registerLocal(lit, typ)
     var skipDecl = false
     let name = mangleDecl(c, d.name, d.pragmas, skipDecl)

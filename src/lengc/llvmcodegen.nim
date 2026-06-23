@@ -22,7 +22,7 @@ import ".." / lib / symparser
 import typenav, nifmodules                 # nifcore MainModule + getType (local)
 
 # nifcore compatibility shims (see shoggoth/codegen.nim for rationale).
-proc litId(c: Cursor): StrId {.inline.} = c.pool.strings.getOrIncl(strVal(c))
+proc litId(c: Cursor): StrId {.inline.} = strId(c)
 proc info(c: Cursor): NifLineInfo {.inline.} = rawLineInfo(c)
 proc firstSon(c: Cursor): Cursor {.inline.} =
   result = c

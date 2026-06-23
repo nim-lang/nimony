@@ -31,6 +31,20 @@ proc isImportC*(m: var MainModule; n: Cursor): bool =
   else:
     result = false
 
+proc registerParams*(c: var MainModule; params: Cursor) =
+  ## Register a routine's parameters in the current scope (their types feed
+  ## `getType`). `params` is the `(params (param :name pragmas type) …)` node, or
+  ## `.` for a parameterless routine.
+  if params.kind != TagLit: return
+  var p = params
+  p.loopInto:
+    if p.substructureKind == ParamU:
+      let d = takeParamDecl(p)
+      if d.name.kind == SymbolDef:
+        registerLocal(c, d.name.symId, d.typ)
+    else:
+      skip p
+
 # ---- synthesized types ----------------------------------------------------
 
 proc createIntegralType*(c: var MainModule; name: string): Cursor =

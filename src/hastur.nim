@@ -201,6 +201,7 @@ type
             # for line, col, filename extraction (useful for nimsuggest-like tests)
     Compat # compatibility mode tests
     Valgrind # valgrind tests
+    Optimized # tests compiled with --opt:speed (exercise the shoggoth passes)
 
 var nimcacheDir* = "nimcache"
   ## Directory used for compiler intermediates. Per-test parallel runs
@@ -222,6 +223,7 @@ proc toCommand(cat: Category): string =
   case cat
   of Basics: "m"
   of Tracked: "check --silentMake"
+  of Optimized: "c --silentMake --opt:speed"
   of Normal, Compat, Valgrind: "c --silentMake"
 
 proc execNimony(cmd: string; cat: Category): (string, int) =
@@ -349,7 +351,7 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category;
   inc c.total
   var nimonycmd = "--isMain"
   case cat
-  of Normal, Valgrind: discard
+  of Normal, Valgrind, Optimized: discard
   of Basics:
     nimonycmd.add " --noSystem"
   of Tracked:
@@ -690,6 +692,7 @@ proc parseCategory(path: string): Category =
   of "nosystem": Basics
   of "compat": Compat
   of "valgrind": Valgrind
+  of "opt": Optimized
   else: Normal
 
 proc findCategory(path: string): Category =

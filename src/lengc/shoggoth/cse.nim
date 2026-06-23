@@ -39,6 +39,8 @@ import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind/pragmaKind, tag
 import ".." / ".." / "models" / tags          # *TagId ordinals for synthesis
 import trackers, patchsets
 import aliasing                               # intra-proc Steensgaard alias classes
+import ".." / nifmodules                      # MainModule (type context, threaded through)
+import ".." / typenav                         # getType — to skip value-CSE of aggregates
 
 # ---- function summaries (alias-aware; pure data, mirrors hexer/funcsummary) -
 # These are read from `(smry …)` pragmas in the buffer by the nifcore loader
@@ -115,6 +117,7 @@ type
     moduleSuffix: string
     summaries: ptr FunctionSummaryTable
     aa: Aliasing                ## intra-proc alias partition of this body
+    m: ptr MainModule           ## module type context; nil ⇒ no type-based skips
 
 proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
                    summaries: ptr FunctionSummaryTable): Context =
@@ -477,6 +480,16 @@ proc substUse(c: var Context; exprPos: int; tempName: string; addrMode: bool) =
   addSubstPatch(c, exprPos,
     (if addrMode: addDerefSynth(c, tempName) else: addSymUseSynth(c, tempName)))
 
+proc isAggregateLoad(c: var Context; n: Cursor): bool =
+  ## True if the value loaded by `n` has object/union/array type. Caching such a
+  ## load copies the whole aggregate into a temp — a pessimization, not a saving
+  ## (the load it would replace is a struct copy, and the materialized temp would
+  ## need its aggregate type spelled out). Needs the type context; without it
+  ## (`m == nil`, e.g. the self-tests) we keep the old, type-agnostic behavior.
+  if c.m == nil: return false
+  let t = getType(c.m[], n)             # navigates nominal → object/array body
+  result = t.typeKind in {ObjectT, UnionT, ArrayT}
+
 proc handleCandidate(c: var Context; n: Cursor): bool =
   ## Lazy CSE. The *first* occurrence is only recorded — no temp yet — so
   ## single-use expressions are left untouched. On the *second* occurrence the
@@ -487,6 +500,11 @@ proc handleCandidate(c: var Context; n: Cursor): bool =
   ## assignment target (in `writeTargets`) is cached by ADDRESS (`var t = addr L`;
   ## every read/write becomes `(deref t)`); everything else by value.
   let key = hashExpr(n)
+  # Don't *value*-CSE an aggregate load: it copies the whole object/array. An
+  # lvalue that is also a write target is address-CSE'd (caches a cheap pointer),
+  # so it stays eligible — only plain value loads are skipped here.
+  if key notin c.writeTargets and isAggregateLoad(c, n):
+    return false
   let exprPos = cursorToPosition(c.orig[], n)
   let entry = c.cache[key]
   if not entry.hasFirst:
@@ -565,11 +583,26 @@ proc trExpr(c: var Context; n: var Cursor) =
     inc n
 
 proc trVar(c: var Context; n: var Cursor) =
+  var nameStart = default(Cursor)
+  var typeStart = default(Cursor)
   n.into:
-    if n.hasMore: skip n                    # name
+    if n.hasMore:
+      nameStart = n
+      skip n                                # name
     if n.hasMore: skip n                    # pragmas
-    if n.hasMore: skip n                    # type
+    if n.hasMore:
+      typeStart = n
+      skip n                                # type
     while n.hasMore: trExpr(c, n)           # initializer
+  # Register the local's declared type so a later `getType` on a load through it
+  # resolves (mirrors the alias pass / C backend). `computeAliasing` discards
+  # scope-nested locals when it closes their scope, so we re-register here as we
+  # descend; body symIds are unique, so a flat registration needs no scoping.
+  # Empty type slots (optimizer temps) are left unregistered — `getType` then
+  # falls through to its error type, which is simply not an aggregate.
+  if c.m != nil and nameStart.kind == SymbolDef and
+     not cursorIsNil(typeStart) and typeStart.kind != DotToken:
+    c.m[].registerLocal(nameStart.symId, typeStart)
   # Var decls don't write existing symbols; nothing to invalidate.
 
 proc trAsgn(c: var Context; n: var Cursor) =
@@ -843,12 +876,16 @@ proc collectWriteTargets(c: var Context; n: var Cursor) =
 # ---- public entry --------------------------------------------------------
 
 proc runCSE*(buf: var TokenBuf; moduleSuffix = "M";
-             summaries: ptr FunctionSummaryTable = nil) =
+             summaries: ptr FunctionSummaryTable = nil;
+             m: ptr MainModule = nil) =
   ## Two-phase CSE for a single proc `buf` (a Leng body has no nested procs).
   ## `summaries` is the module-level table from `collectFunctionSummaries` run
-  ## once on the whole module; nil ⇒ every call conservatively clears.
+  ## once on the whole module; nil ⇒ every call conservatively clears. `m` is the
+  ## module type context (proc params already registered in the current scope) —
+  ## nil falls back to the coarse, type-agnostic alias partition.
   var ctx = createContext(addr buf, moduleSuffix, summaries)
-  ctx.aa = computeAliasing(buf)   # alias pre-pass: drives precise invalidation
+  ctx.m = m                          # type context: skip value-CSE of aggregates
+  ctx.aa = computeAliasing(buf, m)   # alias pre-pass: drives precise invalidation
   block:
     var wn = beginRead(buf)
     collectWriteTargets(ctx, wn)  # decide address- vs value-CSE per expression
