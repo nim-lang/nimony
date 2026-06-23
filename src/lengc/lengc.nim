@@ -10,7 +10,9 @@
 ## Leng driver program.
 
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
-import codegen, llvmcodegen, noptions, symparser
+import codegen, llvmcodegen          # nifcore backends (local to shoggoth/)
+import noptions
+import ".." / lib / symparser
 import ".." / lib / vfs
 
 const
