@@ -78,39 +78,39 @@ proc addRaiseStmt(dest: var TokenBuf; target: SymId; info: PackedLineInfo) =
         copyIntoKind dest, RaiseS, info:
           dest.addSymUse target, info
 
+proc collectTupleLocals(n: var Cursor; hasRaisesPragma: var bool; res: var HashSet[SymId]) =
+  case n.kind
+  of ParLe:
+    if n.exprKind == FailedX and n.firstSon.kind == Symbol:
+      res.incl n.firstSon.symId
+      n.into:
+        while n.hasMore: collectTupleLocals(n, hasRaisesPragma, res)
+    elif n.pragmaKind == RaisesP:
+      hasRaisesPragma = true
+      n.into:
+        while n.hasMore: collectTupleLocals(n, hasRaisesPragma, res)
+    elif n.stmtKind == ResultS and n.firstSon.kind == SymbolDef:
+      if hasRaisesPragma:
+        res.incl n.firstSon.symId
+      n.into:
+        while n.hasMore: collectTupleLocals(n, hasRaisesPragma, res)
+    elif n.symKind in RoutineKinds:
+      # do not descend into nested routines
+      skip n
+    else:
+      n.into:
+        while n.hasMore: collectTupleLocals(n, hasRaisesPragma, res)
+  of ParRi:
+    raiseAssert "BUG: unexpected ParRi in eraiser.collectTupleLocals"
+  else:
+    inc n
+
 proc localsThatBecomeTuples*(n: Cursor): HashSet[SymId] =
-  # n must be a routine!
+  # n must be a routine body!
   result = initHashSet[SymId]()
-  var nested = 0
   var n = n
   var hasRaisesPragma = false
-  while true:
-    case n.kind
-    of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
-      inc n
-    of ParLe:
-      if n.exprKind == FailedX and n.firstSon.kind == Symbol:
-        result.incl n.firstSon.symId
-        inc nested
-        inc n
-      elif n.pragmaKind == RaisesP:
-        hasRaisesPragma = true
-        inc nested
-        inc n
-      elif n.stmtKind == ResultS and n.firstSon.kind == SymbolDef:
-        if hasRaisesPragma:
-          result.incl n.firstSon.symId
-        inc nested
-        inc n
-      elif n.symKind in RoutineKinds:
-        skip n
-      else:
-        inc nested
-        inc n
-    of ParRi:
-      dec nested
-      inc n
-    if nested == 0: break
+  collectTupleLocals(n, hasRaisesPragma, result)
 
 proc callCanRaise*(typeCache: var TypeCache; n: Cursor): bool =
   var fnType = skipProcTypeToParams(getType(typeCache, n.firstSon))
@@ -186,46 +186,41 @@ proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.closeScope()
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  var nested = 0
-  while true:
-    case n.kind
-    of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
-      dest.add n
-      inc n
-    of ParLe:
-      let ek = n.exprKind
-      case ek
-      of CallKinds:
-        trCall c, dest, n, false
-      of TypeofX:
+  case n.kind
+  of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
+    takeToken dest, n
+  of ParLe:
+    let ek = n.exprKind
+    case ek
+    of CallKinds:
+      trCall c, dest, n, false
+    of TypeofX:
+      takeTree dest, n
+    else:
+      case n.stmtKind
+      of AsgnS:
+        trAssign c, dest, n
+      of ProcS, FuncS, MethodS, ConverterS:
+        trProcDecl c, dest, n
+      of LocalDecls:
+        trLocal c, dest, n
+      of ScopeS:
+        trScope c, dest, n
+      of MacroS, TemplateS, TypeS:
         takeTree dest, n
-      else:
-        case n.stmtKind
-        of AsgnS:
-          trAssign c, dest, n
-        of ProcS, FuncS, MethodS, ConverterS:
-          trProcDecl c, dest, n
-        of LocalDecls:
-          trLocal c, dest, n
-        of ScopeS:
-          trScope c, dest, n
-        of MacroS, TemplateS, TypeS:
-          takeTree dest, n
-        of CallS, CmdS, IteratorS, BlockS, EmitS, IfS, WhenS, BreakS,
-           ContinueS, ForS, WhileS, CoroforS, CaseS, RetS, YldS, StmtsS,
-           PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
-           FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
-           DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
-           CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS, BindS,
-           MixinS, UsingS, AsmS, DeferS, NoStmt:
-          dest.add n
-          inc n
-          inc nested
-    of ParRi:
-      dest.add n
-      inc n
-      dec nested
-    if nested == 0: break
+      of CallS, CmdS, IteratorS, BlockS, EmitS, IfS, WhenS, BreakS,
+         ContinueS, ForS, WhileS, CoroforS, CaseS, RetS, YldS, StmtsS,
+         PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
+         FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
+         DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
+         CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS, BindS,
+         MixinS, UsingS, AsmS, DeferS, NoStmt:
+        # generic container: copy the head and recurse into the children
+        copyInto dest, n:
+          while n.hasMore:
+            tr c, dest, n
+  of ParRi:
+    raiseAssert "BUG: unexpected ParRi in eraiser.tr"
 
 proc injectRaisingCalls*(pass: var Pass; ptrSize: int; needsXelim: var bool) =
   var n = pass.n  # Extract cursor locally
