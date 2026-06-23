@@ -679,11 +679,35 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
           while n.hasMore:
             trOnlyEssentials c, n
         c.typeCache.closeScope()
-      else:
+      of CallS, CmdS, IteratorS, TemplateS, TypeS, BlockS,
+          EmitS, AsgnS, IfS, WhenS, BreakS, ContinueS, ForS,
+          WhileS, CoroforS, CaseS, RetS, YldS, StmtsS, PragmasS,
+          PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
+          FromimportS, ImportexceptS, ExportS, ExportexceptS,
+          CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS,
+          AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
+          StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
+          NoStmt:
         # generic statement: copy the head and recurse into the children
         copyInto c.dest, n:
           while n.hasMore: trOnlyEssentials c, n
-    else:
+    of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
+        InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
+        NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
+        AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
+        MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
+        BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
+        CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, DdotX,
+        HaddrX, NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
+        TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX,
+        InfixX, PrefixX, HcallX, CompilesX, DeclaredX, DefinedX,
+        AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX, TypeofX,
+        UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
+        DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
+        Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX, PlussetX,
+        MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
+        InsetX, CardX, EmoveX, InternalTypeNameX,
+        InternalFieldPairsX, FailedX, IsX, EnvpX, KvX:
       # all other expression kinds: copy the head and recurse into the children
       copyInto c.dest, n:
         while n.hasMore: trOnlyEssentials c, n

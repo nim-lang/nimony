@@ -190,7 +190,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
     takeToken dest, n
   of ParLe:
-    case n.exprKind
+    let ek = n.exprKind
+    case ek
     of CallKinds:
       trCall c, dest, n, false
     of TypeofX:
@@ -207,7 +208,13 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trScope c, dest, n
       of MacroS, TemplateS, TypeS:
         takeTree dest, n
-      else:
+      of CallS, CmdS, IteratorS, BlockS, EmitS, IfS, WhenS, BreakS,
+         ContinueS, ForS, WhileS, CoroforS, CaseS, RetS, YldS, StmtsS,
+         PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
+         FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
+         DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
+         CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS, BindS,
+         MixinS, UsingS, AsmS, DeferS, NoStmt:
         # generic container: copy the head and recurse into the children
         copyInto dest, n:
           while n.hasMore:
