@@ -741,7 +741,7 @@ proc nimonytests(overwrite: bool; forward: string) =
 # ── native-backend regression set ────────────────────────────────────────────
 # The C-FREE native path (`nimony n` → arkham + nifasm, sibling `../nativenif`) is
 # still incomplete, so we can't run the whole suite through it. Instead this is an
-# explicit ALLOW-LIST of what is known to run correctly natively — a regression
+# explicit whitelist of what is known to run correctly natively — a regression
 # guard: a native miscompile that diverges from the (spec-pinned) result is caught.
 # Grow it as the backend gains features (the same record-what-works philosophy as
 # the rest of hastur). `NativeTestDirs` are directories that pass IN FULL (negative
@@ -773,11 +773,6 @@ const
   ]
 
 proc nativeTestFile(c: var TestCounters; file: string; overwrite: bool) =
-  ## Compile `file` with the C-FREE native backend (`nimony n`), run it, and check
-  ## stdout/exit against the SAME `.output`/`.exitcode` spec the C tests use — so a
-  ## native miscompile that diverges from the (already C-validated) spec is caught as
-  ## a regression. Negative/compile-error tests (`.msgs` carrying `Error:`) have no
-  ## runnable program and are skipped.
   let msgs = file.changeFileExt(".msgs")
   if msgs.fileExists() and readFile(msgs).contains(ErrorKeyword):
     return
@@ -2045,11 +2040,6 @@ proc handleCmdLine =
     # Run the curated native-backend regression set through `nimony n`. Build the
     # front end AND the C-free native toolchain (arkham + nifasm + shoggoth live in
     # the sibling `../nativenif`; nifmake drives the `n` pipeline).
-    buildNifler()
-    buildNimsem()
-    buildNimony()
-    buildHexer()
-    buildNifmake()
     buildShoggoth()
     buildArkham()
     buildNifasm()

@@ -75,12 +75,6 @@ jobs:
           submodules: false
 
       - name: Checkout nativenif (sibling of nimony)
-        # The C-free native backend (`nimony n`) lives in the separate `nativenif`
-        # repo: arkham (Leng -> typed asm-NIF) + nifasm (asm-NIF -> static libc-free
-        # ELF). hastur builds them from `../nativenif` RELATIVE TO nimony's root, and
-        # their `nim.cfg` reach back into `../../../nimony/src/lib`, so the checkout must
-        # sit NEXT TO `nimony/` in the workspace — the same sibling layout developer
-        # machines use (`projects/nimony` + `projects/nativenif`).
         uses: actions/checkout@v6
         with:
           repository: nim-lang/nativenif
