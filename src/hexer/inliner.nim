@@ -310,51 +310,44 @@ proc trLocalDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     doInline(c, dest, r.val, routine, Target(kind: TargetIsSym, sym: r.name.symId))
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  var nested = 0
-  while true:
-    case n.kind
-    of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
-      dest.add n
-      inc n
-    of ParLe:
-      case n.stmtKind
-      of AsgnS:
-        trAsgn c, dest, n
-      of LocalDecls:
-        trLocalDecl c, dest, n
-      of ProcS, FuncS, MethodS, ConverterS:
-        trProcDecl c, dest, n
-      of MacroS:
-        # Macro bodies live in the out-of-process plugin binary.
-        takeTree dest, n
-      of ScopeS:
-        c.typeCache.openScope()
-        dest.add n
-        inc n
+  case n.kind
+  of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
+    takeToken dest, n
+  of ParLe:
+    case n.stmtKind
+    of AsgnS:
+      trAsgn c, dest, n
+    of LocalDecls:
+      trLocalDecl c, dest, n
+    of ProcS, FuncS, MethodS, ConverterS:
+      trProcDecl c, dest, n
+    of MacroS:
+      # Macro bodies live in the out-of-process plugin binary.
+      takeTree dest, n
+    of ScopeS:
+      c.typeCache.openScope()
+      copyInto dest, n:
         while n.hasMore:
           tr c, dest, n
-        c.typeCache.closeScope()
-      else:
-        if n.exprKind in CallKinds:
-          var routine = default(Routine)
-          let inlineCall = shouldInlineCall(c, n, routine)
-          if inlineCall:
-            doInline(c, dest, n, routine, Target(kind: TargetIsNone))
-          else:
-            dest.add n
-            inc nested
-            inc n
-        elif isDeclarative(n):
-          takeTree dest, n
+      c.typeCache.closeScope()
+    else:
+      if n.exprKind in CallKinds:
+        var routine = default(Routine)
+        let inlineCall = shouldInlineCall(c, n, routine)
+        if inlineCall:
+          doInline(c, dest, n, routine, Target(kind: TargetIsNone))
         else:
-          dest.add n
-          inc nested
-          inc n
-    of ParRi:
-      dest.add n
-      dec nested
-      inc n
-    if nested == 0: break
+          # generic call: copy the head and recurse into the arguments
+          copyInto dest, n:
+            while n.hasMore: tr c, dest, n
+      elif isDeclarative(n):
+        takeTree dest, n
+      else:
+        # generic container: copy the head and recurse into the children
+        copyInto dest, n:
+          while n.hasMore: tr c, dest, n
+  of ParRi:
+    raiseAssert "BUG: unexpected ParRi in inliner.tr"
 
 proc inlineCalls*(n: Cursor; thisModuleSuffix: string; ptrSize: int): TokenBuf =
   var c = createInliner(thisModuleSuffix, ptrSize)

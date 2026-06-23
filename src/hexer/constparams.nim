@@ -455,83 +455,69 @@ proc trObjConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   takeParRi dest, n
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  var nested = 0
-  while true:
-    case n.kind
-    of Symbol:
-      if c.constRefParams.contains(n.symId):
-        copyIntoKind dest, DerefX, n.info:
-          dest.add n
-      elif (n.symId == c.resultSym and c.canRaise) or c.tupleVars.contains(n.symId):
-        let info = n.info
-        copyIntoKind dest, TupatX, info:
-          dest.addSymUse n.symId, info
-          dest.addIntLit 1, info
-      else:
+  case n.kind
+  of Symbol:
+    if c.constRefParams.contains(n.symId):
+      copyIntoKind dest, DerefX, n.info:
         dest.add n
-      inc n
-    of SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
+    elif (n.symId == c.resultSym and c.canRaise) or c.tupleVars.contains(n.symId):
+      let info = n.info
+      copyIntoKind dest, TupatX, info:
+        dest.addSymUse n.symId, info
+        dest.addIntLit 1, info
+    else:
       dest.add n
-      inc n
-    of ParLe:
-      let ek = n.exprKind
-      case ek
-      of CallKinds:
-        trCall c, dest, n, false
-      of PragmaxX:
-        trPragmaBlock c, dest, n
-      of AddX, SubX, MulX, DivX, ModX:
-        if c.keepOverflowFlag:
-          checkedArithOp c, dest, n
-        else:
-          dest.add n
-          inc n
-          inc nested
-      of DotX:
-        dest.takeToken n
-        tr c, dest, n
-        while n.hasMore:
-          dest.takeTree n
-        dest.takeParRi n
-      of OconstrX:
-        trObjConstr c, dest, n
-      of FailedX:
-        trFailed c, dest, n
+    inc n
+  of SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
+    takeToken dest, n
+  of ParLe:
+    case n.exprKind
+    of CallKinds:
+      trCall c, dest, n, false
+    of PragmaxX:
+      trPragmaBlock c, dest, n
+    of AddX, SubX, MulX, DivX, ModX:
+      if c.keepOverflowFlag:
+        checkedArithOp c, dest, n
       else:
-        case n.stmtKind
-        of ProcS, FuncS, MethodS, ConverterS:
-          trProcDecl c, dest, n
-        of LocalDecls - {ResultS}:
-          trLocal c, dest, n
-        of ResultS:
-          trResultDecl c, dest, n
-        of ScopeS:
-          trScope c, dest, n
-        of AsgnS:
-          trAsgn c, dest, n
-        of RetS:
-          trRet c, dest, n
-        of RaiseS:
-          trRaise c, dest, n
-        of TryS:
-          trTry c, dest, n
-        of MacroS, TemplateS, TypeS:
-          takeTree dest, n
-        of CallS, CmdS, IteratorS, BlockS, EmitS, IfS, WhenS, BreakS,
-           ContinueS, ForS, WhileS, CoroforS, CaseS, YldS, StmtsS,
-           PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS,
-           ImportasS, FromimportS, ImportexceptS, ExportS, ExportexceptS,
-           CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
-           InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
-           AsmS, DeferS, NoStmt:
-          dest.add n
-          inc n
-          inc nested
-    of ParRi:
-      dest.add n
-      inc n
-      dec nested
-    if nested == 0: break
+        copyInto dest, n:
+          while n.hasMore: tr c, dest, n
+    of DotX:
+      dest.takeToken n
+      tr c, dest, n
+      while n.hasMore:
+        dest.takeTree n
+      dest.takeParRi n
+    of OconstrX:
+      trObjConstr c, dest, n
+    of FailedX:
+      trFailed c, dest, n
+    else:
+      case n.stmtKind
+      of ProcS, FuncS, MethodS, ConverterS:
+        trProcDecl c, dest, n
+      of LocalDecls - {ResultS}:
+        trLocal c, dest, n
+      of ResultS:
+        trResultDecl c, dest, n
+      of ScopeS:
+        trScope c, dest, n
+      of AsgnS:
+        trAsgn c, dest, n
+      of RetS:
+        trRet c, dest, n
+      of RaiseS:
+        trRaise c, dest, n
+      of TryS:
+        trTry c, dest, n
+      of MacroS, TemplateS, TypeS:
+        takeTree dest, n
+      else:
+        # generic container: copy the head and recurse into the children
+        copyInto dest, n:
+          while n.hasMore: tr c, dest, n
+  of ParRi:
+    raiseAssert "BUG: unexpected ParRi in constparams.tr"
 
 proc injectConstParamDerefs*(pass: var Pass; ptrSize: int; needsXelim: var bool) =
   var n = pass.n  # Extract cursor locally

@@ -118,38 +118,36 @@ proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId) =
 when not defined(nimony):
   proc tr(c: var Context; n: var Cursor)
 
+proc freshVars(n: var Cursor; newVars: var Table[SymId, SymId]; idgen: var int;
+               dest: var TokenBuf) =
+  case n.kind
+  of Symbol:
+    let repl = newVars.getOrDefault(n.symId, n.symId)
+    dest.add symToken(repl, n.info)
+    inc n
+  of ParLe:
+    let isLocalDecl = n.stmtKind in {VarS, LetS, CursorS, PatternvarS}
+    copyInto dest, n:
+      if isLocalDecl and n.kind == SymbolDef:
+        let repl = pool.syms.getOrIncl("`ffv." & $idgen)
+        newVars[n.symId] = repl
+        dest.add symdefToken(repl, n.info)
+        inc idgen
+        inc n
+      while n.hasMore:
+        freshVars(n, newVars, idgen, dest)
+  of UIntLit, StringLit, IntLit, FloatLit, CharLit, SymbolDef, UnknownToken, EofToken, DotToken, Ident:
+    dest.add n
+    inc n
+  of ParRi:
+    raiseAssert "BUG: unexpected ParRi in destroyer.createFreshVars"
+
 proc createFreshVars(c: var Context; n: Cursor): TokenBuf =
   var n = n
-  var nested = 0
   var newVars = initTable[SymId, SymId]()
   var idgen = 0
   result = createTokenBuf(30)
-  while true:
-    case n.kind
-    of Symbol:
-      let repl = newVars.getOrDefault(n.symId, n.symId)
-      result.add symToken(repl, n.info)
-      inc n
-    of ParRi:
-      result.add n
-      dec nested
-      if nested == 0: break
-      inc n
-    of ParLe:
-      result.add n
-      let isLocalDecl = n.stmtKind in {VarS, LetS, CursorS, PatternvarS}
-      inc n
-      inc nested
-      if isLocalDecl:
-        if n.kind == SymbolDef:
-          let repl = pool.syms.getOrIncl("`ffv." & $idgen)
-          newVars[n.symId] = repl
-          result.add symdefToken(repl, n.info)
-          inc idgen
-          inc n
-    of UIntLit, StringLit, IntLit, FloatLit, CharLit, SymbolDef, UnknownToken, EofToken, DotToken, Ident:
-      result.add n
-      inc n
+  freshVars(n, newVars, idgen, result)
 
 proc leaveScope(c: var Context; sptr: ptr Scope; kind = Other; raising = false) =
   ## Walk-out of one scope: optionally inline the scope's finally body and
