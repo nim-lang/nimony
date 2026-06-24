@@ -334,6 +334,7 @@
 | `(profiler X)` | NimonyPragma | `profiler` pragma; accepted for Nim source compatibility, semantically ignored |
 | `(stacktrace X)` | NimonyPragma | `stackTrace` pragma; accepted for Nim source compatibility, semantically ignored |
 | `(gcsafe)` | NimonyPragma | `gcsafe` pragma; accepted for Nim source compatibility, semantically ignored |
+| `(used)` | NimonyPragma | `used` pragma; accepted for Nim source compatibility, semantically ignored |
 | `(compile STR)`; `(compile STR STR)` | NimonyPragma | `compile` pragma (Nim-compatible alias of `build`; the source language is inferred from the file extension, e.g. `.m` → Objective-C) |
 
 ### unpackflat, unpacktup, unpackdecl

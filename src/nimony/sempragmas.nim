@@ -323,7 +323,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     else:
       buildErr c, dest, n.info, "expected `cast` pragma expression"
     dest.addParRi()
-  of ProfilerP, StacktraceP, GcsafeP:
+  of ProfilerP, StacktraceP, GcsafeP, UsedP:
     # accepted for Nim source compatibility; semantically ignored by Nimony
     inc n
     if hasParRi:
