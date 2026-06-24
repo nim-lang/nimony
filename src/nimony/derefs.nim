@@ -379,7 +379,7 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
   template recurse =
     while n.hasMore:
       checkForDangerousLocations c, n
-    inc n # skip ParRi
+    skipParRi n
 
   case n.kind
   of Symbol, UnknownToken, EofToken, DotToken, Ident, SymbolDef, StringLit, CharLit, IntLit, UIntLit, FloatLit:
@@ -479,6 +479,12 @@ proc trProcDecl(c: var Context; n: var Cursor) =
     var body = n
     tr c, n, c.r.returnExpects
     if c.r.dangerousLocations.len > 0:
+      # NOTE(nifcore port): reopens the body `(stmts)` just emitted by `tr` to
+      # append the deferred dangerous-location checks. Relies on the closing `)`
+      # being the last physical token in `c.dest`. Under virtual ParRi that token
+      # is elided (folded into the matching ParLe's jump field), so `len - 1`
+      # no longer points at it. Rework before flipping `-d:virtualParRi`: have
+      # `tr` leave the body open, or rebuild the stmts subtree explicitly.
       c.dest.shrink c.dest.len - 1
       checkForDangerousLocations c, body
       c.dest.addParRi()
@@ -514,7 +520,7 @@ proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
       fnType = previousFormalParam
     tr c, n, e
   while fnType.hasMore: skip fnType
-  inc fnType # skip ParRi
+  skipParRi fnType
   # skip return type:
   skip fnType
   # now at the pragmas position:
@@ -622,7 +628,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
       takeParRi c, n
     else:
       while n.hasMore: skip n
-      inc n # skip ParRi without emitting into callBuf
+      skipParRi n # skip ')' without emitting into callBuf
       swap c.dest, callBuf # restore original dest; discard partial callBuf
       cannotPassToVar c.dest, info, callExpr
       return
@@ -632,7 +638,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
       takeParRi c, n
     else:
       while n.hasMore: skip n
-      inc n # skip ParRi without emitting into callBuf
+      skipParRi n # skip ')' without emitting into callBuf
       swap c.dest, callBuf # restore original dest; discard partial callBuf
       cannotPassToVar c.dest, info, callExpr
       return
