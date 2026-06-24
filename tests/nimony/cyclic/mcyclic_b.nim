@@ -1,5 +1,7 @@
 import tcyclic_a {.cyclic.}
 
+type B* = object
+
 proc fromB*(): int = 2
 
-proc useA*(): int = fromA()
+proc useA*(a: A): int = fromA()
