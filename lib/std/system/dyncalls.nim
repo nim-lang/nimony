@@ -212,4 +212,23 @@ elif defined(nintendoswitch) or defined(freertos) or defined(zephyr) or defined(
 else:
   die "no implementation for dyncalls"
 
+proc nimDynlibLoadStep(prev: LibHandle; cand: cstring): LibHandle {.exportc: "nimDynlibLoadStep".} =
+  ## One step of a compile-time-expanded dynlib name pattern: keep the first
+  ## candidate that loaded, otherwise try loading `cand`. The code generator
+  ## expands a pattern such as `libX11.so(|.6)` into a left-nested chain of
+  ## these calls, so the alternatives are tried in order at startup.
+  if prev != nil: result = prev
+  else: result = nimLoadLibrary(cand)
+
+proc nimDynlibCheck(lib: LibHandle; path: cstring): LibHandle {.exportc: "nimDynlibCheck".} =
+  ## Final check wrapped around the candidate chain: abort with a useful
+  ## message if none of the candidate names could be loaded. `path` is the
+  ## original (unexpanded) pattern, for diagnostics.
+  if lib == nil:
+    writeErr("could not load: ")
+    writeErr(path)
+    writeErr("\n")
+    die(1)
+  result = lib
+
 # {.pop.}
