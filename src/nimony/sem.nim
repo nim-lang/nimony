@@ -2780,6 +2780,65 @@ proc isIdentCall(c: var SemContext; dest: var TokenBuf; beforeCall: int): bool {
     else:
       result = false
 
+proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
+                      beforeCall: int; info: PackedLineInfo): bool =
+  ## When a `for` loop's iterator resolves to a routine with a `.plugin`
+  ## pragma, invoke the plugin with the for-loop context instead of doing
+  ## normal iterator resolution. The plugin receives:
+  ##   (stmts <iter-name> <call-args...> <loop-vars> <loop-body>)
+  ## and its output replaces the entire for loop, then gets re-semanticked.
+  result = false
+  if dest.len <= beforeCall + 1: return
+  let callKind =
+    if dest[beforeCall].kind == ParLe and rawTagIsNimonyExpr(tagEnum(dest[beforeCall])):
+      cast[NimonyExpr](tagEnum(dest[beforeCall]))
+    else:
+      NoExpr
+  if callKind notin CallKinds: return
+  if dest[beforeCall + 1].kind != Symbol: return
+  let sym = fetchSym(c, dest[beforeCall + 1].symId)
+  let res = declToCursor(c, dest, sym)
+  if res.status != LacksNothing: return
+  if not isRoutine(res.decl.symKind): return
+  let routine = asRoutine(res.decl, SkipExclBody)
+  let pluginPragma = extractPragma(routine.pragmas, PluginP)
+  if cursorIsNil(pluginPragma) or pluginPragma.kind != StringLit: return
+  let pluginPath = pool.strings[pluginPragma.litId]
+  let pathInfo = pluginPragma.info
+
+  var iterName = ""
+  if routine.name.kind == SymbolDef:
+    iterName = pool.syms[routine.name.symId]
+    extractBasename iterName
+
+  # Extract the sem'd call from dest so we can pass the call args to the plugin
+  var callBuf = createTokenBuf(dest.len - beforeCall)
+  for tok in beforeCall ..< dest.len: callBuf.add dest[tok]
+  dest.shrink beforeCall - 1
+
+  # Build plugin input: (stmts <iter-name> <call-args...> <loop-vars> <body>)
+  var b = createTokenBuf(30)
+  b.addParLe StmtsS, info
+  b.add identToken(pool.strings.getOrIncl(iterName), info)
+  var callC = beginRead(callBuf)
+  if callC.kind == ParLe and cast[NimonyExpr](tagEnum(callC)) in CallKinds:
+    callC.into:
+      skip callC # fn symbol or sym-choice
+      while callC.hasMore:
+        b.takeTree callC
+  b.takeTree it.n # loop vars
+  b.takeTree it.n # loop body
+  b.addParRi()
+  inc it.n # skip the for's closing ')'
+
+  # Run plugin, then re-sem the output into dest
+  var pluginOutput = createTokenBuf(30)
+  runPlugin(c, pluginOutput, pathInfo, pluginPath, b.toString)
+  var expandedItem = Item(n: cursorAt(pluginOutput, 0), typ: c.types.autoType)
+  semExpr c, dest, expandedItem
+  producesNoReturn c, dest, info, it.typ
+  result = true
+
 proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   let orig = it.n
@@ -2789,6 +2848,8 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeCall = dest.len
   semExpr c, dest, iterCall, {PreferIterators, KeepMagics}
   it.n = iterCall.n
+  if tryForLoopPlugin(c, dest, it, beforeCall, info):
+    return
   var isMacroLike = false
   if dest[beforeCall].exprKind == ErrX:
     discard "already produced an error"

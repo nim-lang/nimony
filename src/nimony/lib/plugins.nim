@@ -839,6 +839,33 @@ proc templateArgs*(n: NifCursor): NifCursor =
     result = firstChild(result)
     skip result # advance past the template name to the first real argument
 
+proc forLoopVars*(n: NifCursor): NifCursor =
+  ## Returns a cursor at the loop variables of a for-loop plugin input.
+  ##
+  ## For-loop plugin input has the shape
+  ## `(stmts <iter-name> <call-args...> <loop-vars> <loop-body>)`.
+  ## The loop-vars child is an `(unpackflat …)` or `(unpacktup …)` subtree.
+  ## This proc scans past the iter name and call args to find it.
+  result = n
+  if result.stmtKind == StmtsS:
+    result = firstChild(result)
+  skip result # iter name
+  while result.kind == ParLe and result.tagText notin ["unpackflat", "unpacktup"]:
+    skip result # call args
+  # result is now at the (unpackflat/unpacktup) node, or at ')' if none
+
+proc forLoopBody*(n: NifCursor): NifCursor =
+  ## Returns a cursor at the loop body of a for-loop plugin input.
+  ##
+  ## For-loop plugin input has the shape
+  ## `(stmts <iter-name> <call-args...> <loop-vars> <loop-body>)`.
+  ## This proc scans past the iter name, call args, and loop vars to reach
+  ## the body subtree.
+  result = forLoopVars(n)
+  if result.kind != ParRi:
+    skip result # skip loop vars
+    # result is now at the body (or at ')' if there is none)
+
 proc renderTree*(tree: NifBuilder): string =
   ## Renders the complete contents of `tree` as raw NIF text for debugging.
   ## Unlike `saveTree`, this omits line info and may contain multiple
