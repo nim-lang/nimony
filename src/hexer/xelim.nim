@@ -73,6 +73,9 @@ type
     typeCache: TypeCache
     thisModuleSuffix: string
     goal: Goal
+    coroMode: bool  ## TowardsFinalIr for the coroutine transform: lower `and`/`or`
+                    ## to the structured bool-temp form (no Cx `lab`/`jmp`, which
+                    ## the backend can't take in suspension-free code).
 
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor)
@@ -543,8 +546,9 @@ proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; 
     of AndX:
       # `mustUseLabel` (cfvar lowering) is NJ-only. In `LowerCasts` and
       # `TowardsFinalIr` mode we still want the binding/hoisting path inside
-      # `trAnd`'s `isComplex` branch, but never the cfvar form.
-      if c.goal == TowardsFinalIr and condPassthroughSafe(n):
+      # `trAnd`'s `isComplex` branch, but never the cfvar form. `coroMode` forces
+      # the structured bool-temp form (no Cx `lab`/`jmp` for the backend).
+      if c.goal == TowardsFinalIr and not c.coroMode and condPassthroughSafe(n):
         tar.t.copyTree n
         skip n
       elif mustUseLabel:
@@ -552,7 +556,7 @@ proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; 
       else:
         trAnd c, dest, n, tar
     of OrX:
-      if c.goal == TowardsFinalIr and condPassthroughSafe(n):
+      if c.goal == TowardsFinalIr and not c.coroMode and condPassthroughSafe(n):
         tar.t.copyTree n
         skip n
       elif mustUseLabel:
@@ -1102,7 +1106,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   of ParRi:
     bug "unexpected ')' inside"
 
-proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
+proc lowerExprs*(pass: var Pass; goal = ElimExprs; coroMode = false) =
   var n = pass.n  # Extract cursor locally
   # Inherit the temp counter across passes via `pass.nextTemp` — `lowerExprs`
   # runs three times in `pipeline.transform` (xelim1, xelim2, xelim_final);
@@ -1110,7 +1114,7 @@ proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
   # Lengc-emitted C names clash within a single function. `pool.syms.getOrIncl`
   # is identity-by-name, so two semantically distinct temps would otherwise
   # share an identifier.
-  var c = Context(counter: pass.nextTemp, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix, goal: goal)
+  var c = Context(counter: pass.nextTemp, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix, goal: goal, coroMode: coroMode)
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS, $n.kind
   pass.dest.add n

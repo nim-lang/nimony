@@ -389,7 +389,8 @@ proc transformToCps*(pass: var Pass) =
   var c = Context(thisModuleSuffix: pass.moduleSuffix,
     typeCache: createTypeCache(), coroTypes: createTokenBuf(10),
     continuationProcImpl: generateContinuationProcImpl(),
-    hooks: passiveHooks())
+    hooks: passiveHooks(),
+    fromFinalIr: defined(coroFinalIr))
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS
   c.coroTypes.takeToken n

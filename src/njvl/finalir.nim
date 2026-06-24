@@ -54,12 +54,17 @@ type
     blockName: SymId   # source block name for `break label`, or NoSymId
     isLoop: bool       # loops are also the target of an unnamed `break`
     used: bool         # did any `jmp`/`break` target this exit?
+    head: SymId        # in `flatten` mode: the loop-head `(lab)` a `continue`
+                       # back-jumps to (NoSymId for blocks / non-flatten)
 
   CurrentProc = object
     resultSym: SymId
     returnType: Cursor
     tmpCounter: int
     exits: seq[Exit]
+    raiseTargets: seq[SymId]  # in `flatten` mode: the `(lab)` an enclosing
+                              # `try`'s handler/finally lands a `raise` on, so
+                              # `try` is eliminated to flat `lab`/`jmp`
 
   Context* = object
     typeCache: TypeCache
@@ -67,6 +72,17 @@ type
     thisModuleSuffix: string
     current: CurrentProc
     callFirstArgs: Table[SymId, TokenBuf] ## first argument of a local's init call (for for-loop borrow tracking)
+    flatten: bool      ## emit *fully* flat `lab`/`jmp` — `loop`/`continue` and
+                       ## every `if` become labels and (back-)jumps instead of
+                       ## `loop`/`ite` constructs. Used by the coroutine
+                       ## state-machine transform so it needs no second
+                       ## translate-to-labels pass. NOT valid Final IR (it has
+                       ## back-edges); never fed to the contract analysis.
+    noCx: bool         ## keep `if a and b` as a structured `(ite (and a b) …)`
+                       ## instead of the two-target `lab`/`jmp` condition compiler.
+                       ## The coroutine transform wants no stray control-flow
+                       ## labels in suspension-free code (the backend has no `jmp`);
+                       ## the contract analysis keeps Cx for its linear and/or path.
 
 proc addParLe*(dest: var TokenBuf; kind: NjvlKind; info = NoLineInfo) =
   dest.add parLeToken(cast[TagId](kind), info)
@@ -130,6 +146,25 @@ proc trScopedBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trStmt c, dest, n
     closeScope c, dest, info
     dest.addParRi()
+
+proc trInlineBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## Like `trScopedBody` but *without* the `(stmts …)` wrapper — the scope's
+  ## `kill`s are emitted inline. Used where the wrapper would be redundant
+  ## nesting: a plain grouping statement, and the label-delimited bodies of the
+  ## flat (`flatten`) form. The `kill`s carry the scope semantics; the contract
+  ## analysis (and the coroutine state-split) only ever recurse through a
+  ## `(stmts)`, so removing it changes nothing but the nesting.
+  let info = n.info
+  openScope c
+  if n.stmtKind in {StmtsS, ScopeS}:
+    inc n
+    while n.hasMore:
+      trStmt c, dest, n
+    closeScope c, dest, info
+    skipParRi n
+  else:
+    trStmt c, dest, n
+    closeScope c, dest, info
 
 # ------------------------------------------------------------------ expressions
 
@@ -361,13 +396,13 @@ proc genIfViaCx(c: var Context; dest: var TokenBuf; n: var Cursor;
   inc n                        # skip `elif`
   genCond c, dest, n, thenL, elseL, thenL
   emitLab dest, thenL, info
-  trScopedBody c, dest, n      # then-branch
+  trInlineBody c, dest, n      # then-branch (label-delimited, no wrapper)
   skipParRi n                  # end of `elif`
   if hasElse:
     emitJmp dest, endL, info
     emitLab dest, elseL, info
     inc n                      # skip `else`
-    trScopedBody c, dest, n    # else-branch
+    trInlineBody c, dest, n    # else-branch (label-delimited, no wrapper)
     skipParRi n                # end of `else`
   emitLab dest, endL, info
   skipParRi n                  # end of `if`
@@ -379,8 +414,10 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
   assert n.substructureKind == ElifU
   var condPeek = n
   inc condPeek               # at the condition
-  if condIsComplex(condPeek):
-    # Short-circuit `and`/`or`: use the two-target condition compiler.
+  if c.flatten or (condIsComplex(condPeek) and not c.noCx):
+    # `flatten`: every `if` is lowered to flat `lab`/`jmp`. Otherwise only
+    # short-circuit `and`/`or` use the two-target condition compiler (unless
+    # `noCx`, where the structured `(ite (and …) …)` is kept for the backend).
     genIfViaCx c, dest, n, info
     return
 
@@ -401,6 +438,45 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
   skipParRi n                # end of `if`
   dest.addParRi()            # close `ite`
 
+proc trCaseFlat(c: var Context; dest: var TokenBuf; n: var Cursor;
+                info: PackedLineInfo) =
+  ## `flatten` mode: keep the multi-way `case` as the jump table, but each arm
+  ## `(jmp branchL)` to a flat body region emitted *after* the dispatch, every
+  ## body ending `(jmp endL)`. This is the case analogue of `genIfViaCx`. `n` is
+  ## at the `case` tag. (Cases are exhaustive post-sem, so the dispatch always
+  ## selects an arm — control never falls past it into the first body.)
+  let endL = freshLabel(c, "´sx.")
+  dest.add tagToken("case", info)
+  inc n
+  trExpr c, dest, n          # selector
+  var bodies = createTokenBuf(64)
+  while n.substructureKind == OfU:
+    let branchL = freshLabel(c, "´sw.")
+    dest.add n               # `(of`
+    inc n
+    takeTree dest, n         # ranges (pure constants)
+    dest.copyIntoKind StmtsS, info: # dispatch arm: (stmts (jmp branchL))
+      emitJmp dest, branchL, info
+    dest.addParRi()          # close `of`
+    emitLab bodies, branchL, info
+    trInlineBody c, bodies, n      # the real body, flat, after the dispatch
+    emitJmp bodies, endL, info
+    skipParRi n              # close `of` (input)
+  if n.substructureKind == ElseU:
+    let branchL = freshLabel(c, "´sw.")
+    dest.add n               # `(else`
+    inc n
+    dest.copyIntoKind StmtsS, info:
+      emitJmp dest, branchL, info
+    dest.addParRi()          # close `else`
+    emitLab bodies, branchL, info
+    trInlineBody c, bodies, n
+    emitJmp bodies, endL, info
+    skipParRi n              # close `else` (input)
+  dest.takeParRi n           # close `case`
+  dest.add bodies            # the flat body regions
+  emitLab dest, endL, info
+
 proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # `case` is kept as a construct (doc/final_ir.md). We only translate the
   # selector and the branch bodies; `ranges` hold pure constants after xelim
@@ -408,6 +484,9 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   # Touch the selector type so typenav stays consistent across the switch.
   discard c.typeCache.getType(n.firstSon)
+  if c.flatten:
+    trCaseFlat c, dest, n, info
+    return
   dest.add tagToken("case", info)
   inc n
   trExpr c, dest, n          # selector
@@ -446,11 +525,21 @@ proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
   emitJmp dest, c.current.exits[target].name, info
   skipParRi n
 
+proc innermostLoopHead(c: Context): SymId =
+  ## The head label of the innermost enclosing loop (`flatten` mode only).
+  for i in countdown(c.current.exits.len - 1, 0):
+    if c.current.exits[i].isLoop:
+      return c.current.exits[i].head
+  result = NoSymId
+
 proc trContinue(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # The single backward transfer: the loop's back-edge to its header.
   let info = n.info
-  dest.copyIntoKind ContinueV, info:
-    dest.addDotToken() # no `join` information yet
+  if c.flatten:
+    emitJmp dest, innermostLoopHead(c), info
+  else:
+    dest.copyIntoKind ContinueV, info:
+      dest.addDotToken() # no `join` information yet
   skip n
 
 proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -475,6 +564,13 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # `raise` stays primitive: it is type-dispatched by `except` and crosses
   # `finally`. A bare `(raise .)` re-raises the in-flight exception.
   let info = n.info
+  if c.flatten and c.current.raiseTargets.len > 0:
+    # `flatten`: inside a `try`, a raise is a forward `jmp` to that region's
+    # handler/finally (the `(try)` construct is eliminated). The exception value
+    # is dropped — the bare `except`s the coroutine path handles don't read it.
+    emitJmp dest, c.current.raiseTargets[^1], info
+    skip n
+    return
   inc n
   dest.add tagToken("raise", info)
   if n.kind == ParRi:
@@ -496,7 +592,7 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   inc n # name or empty
   let exitL = freshLabel(c, "´blk.")
   c.current.exits.add Exit(name: exitL, blockName: blockName, isLoop: false)
-  trScopedBody c, dest, n
+  trInlineBody c, dest, n   # `body (lab blockExit)` — no wrapper needed
   let used = c.current.exits[^1].used
   c.current.exits.shrink(c.current.exits.len - 1)
   skipParRi n # close `block`
@@ -510,6 +606,27 @@ proc trLoopFromBody(c: var Context; dest: var TokenBuf; n: var Cursor;
   ## trailing `(lab loopExit)`.
   let info = n.info
   let exitL = freshLabel(c, "´lx.")
+  if c.flatten:
+    # Flat form: `(lab head) <body> (jmp head)` — the back-edge is an explicit
+    # backward `jmp`, and `(lab loopExit)` (if any `break` targets it) follows.
+    let headL = freshLabel(c, "´lh.")
+    c.current.exits.add Exit(name: exitL, isLoop: true, head: headL)
+    openScope c
+    emitLab dest, headL, info
+    if forBorrow.len > 0:
+      dest.add forBorrow
+    assert n.stmtKind in {StmtsS, ScopeS}, $n.kind
+    inc n # into the body statement list
+    while n.hasMore:
+      trStmt c, dest, n
+    skipParRi n # end of body statement list
+    closeScope c, dest, info # kills run on the back-edge path
+    emitJmp dest, headL, info # the back-edge
+    let used = c.current.exits[^1].used
+    c.current.exits.shrink(c.current.exits.len - 1)
+    if used:
+      emitLab dest, exitL, info
+    return
   c.current.exits.add Exit(name: exitL, isLoop: true)
   openScope c
   dest.addParLe LoopV, info
@@ -625,10 +742,68 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   trLoopFromBody c, dest, n, borrowBuf
   skipParRi n # close `for`
 
+proc trTryFlat(c: var Context; dest: var TokenBuf; n: var Cursor;
+               info: PackedLineInfo) =
+  ## `flatten` mode: eliminate the `(try …)` construct, lowering it to flat
+  ## `lab`/`jmp`. A `raise` in the body jumps to the handler (`except`) or, if
+  ## none, the `finally`; the handler/finally then fall to the merge. (Limitation:
+  ## a body that raises with only a `finally` and no `except` runs the cleanup
+  ## then continues rather than re-propagating — not exercised by the tests; the
+  ## general finally-on-every-exit threading is the Side-PC concern.)
+  inc n # skip `try`
+  var scan = n
+  skip scan                                   # past the body
+  let hasExcept = scan.substructureKind == ExceptU
+  while scan.substructureKind == ExceptU: skip scan
+  let hasFin = scan.substructureKind == FinU
+  let endL = freshLabel(c, "´ty.")
+  let handlerL = if hasExcept: freshLabel(c, "´th.") else: NoSymId
+  let finallyL = if hasFin: freshLabel(c, "´tf.") else: NoSymId
+  let afterBody = if hasFin: finallyL else: endL
+
+  # body — raises land on the handler, or the finally if there is no handler.
+  let bodyTgt = if hasExcept: handlerL elif hasFin: finallyL else: NoSymId
+  if bodyTgt != NoSymId: c.current.raiseTargets.add bodyTgt
+  trInlineBody c, dest, n
+  if bodyTgt != NoSymId: discard c.current.raiseTargets.pop()
+  emitJmp dest, afterBody, info
+
+  if hasExcept:
+    emitLab dest, handlerL, info
+    # a raise inside a handler runs the finally, else propagates to the outer.
+    let handlerTgt =
+      if hasFin: finallyL
+      elif c.current.raiseTargets.len > 0: c.current.raiseTargets[^1]
+      else: NoSymId
+    while n.substructureKind == ExceptU:
+      inc n # into `except`
+      while n.hasMore and n.stmtKind notin {StmtsS, ScopeS}:
+        if isLocal(n.symKind):
+          let local = asLocal(n)
+          c.typeCache.registerLocal(local.name.symId, n.symKind, local.typ)
+        skip n # type pattern / bound exc var — dropped (no `(try)` to carry it)
+      if handlerTgt != NoSymId: c.current.raiseTargets.add handlerTgt
+      trInlineBody c, dest, n
+      if handlerTgt != NoSymId: discard c.current.raiseTargets.pop()
+      skipParRi n # close `except`
+    emitJmp dest, afterBody, info
+
+  if hasFin:
+    emitLab dest, finallyL, info
+    inc n # skip `fin`
+    trInlineBody c, dest, n
+    skipParRi n # close `fin`
+
+  emitLab dest, endL, info
+  skipParRi n # close `try`
+
 proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # `try`/`except`/`fin` are kept as regions: a `fin` must run on *every* exit
   # crossing it, so it cannot be lowered to a `jmp` (doc/final_ir.md).
   let info = n.info
+  if c.flatten:
+    trTryFlat c, dest, n, info
+    return
   dest.add tagToken("try", info)
   inc n
   trScopedBody c, dest, n # try body
@@ -693,7 +868,9 @@ proc trCfVarDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.stmtKind
   of StmtsS, ScopeS:
-    trScopedBody c, dest, n
+    # A nested grouping statement needs no `(stmts)` wrapper of its own — splice
+    # its children into the parent (kills still emitted) to avoid `(stmts (stmts …))`.
+    trInlineBody c, dest, n
   of AsgnS:
     trAsgn c, dest, n
   of IfS:
@@ -738,11 +915,16 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       trExpr c, dest, n
 
-proc toFinalIr*(pass: var Pass) =
+proc toFinalIr*(pass: var Pass; flatten = false; noCx = false) =
+  ## With `flatten`, `loop`/`continue` and every `if` are lowered to flat
+  ## `lab`/`jmp` (back-edges included) — the form the coroutine state-machine
+  ## transform wants, so it needs no second translate-to-labels pass. The
+  ## result is NOT analyzable Final IR (it has back-edges); the contract
+  ## analysis must use the default (`flatten = false`).
   var c = Context(counter: 0, typeCache: createTypeCache(),
-                  thisModuleSuffix: pass.moduleSuffix)
+                  thisModuleSuffix: pass.moduleSuffix, flatten: flatten, noCx: noCx)
   c.openScope()
-  lowerExprs(pass, TowardsFinalIr)
+  lowerExprs(pass, TowardsFinalIr, coroMode = noCx)
   pass.prepareForNext("finalir")
   var n = pass.n
   assert n.stmtKind == StmtsS, $n.kind
@@ -758,16 +940,22 @@ when isMainModule:
   from std/os import paramStr, paramCount
   import std/syncio
   import ".." / lib / symparser
-  let infile = paramStr(1)
+  var flatten = false
+  var infile = ""
+  var outfile = ""
+  for i in 1 .. paramCount():
+    let a = paramStr(i)
+    if a == "--flatten": flatten = true
+    elif infile.len == 0: infile = a
+    else: outfile = a
   var owningBuf = createTokenBuf(300)
   let n = setupProgram(infile, infile.changeModuleExt".finalir.nif", owningBuf)
   var initialBuf = createTokenBuf(300)
   initialBuf.addSubtree(n)
   var pass = initPass(move initialBuf, "main", "xelim_finalir", 0)
-  toFinalIr(pass)
+  toFinalIr(pass, flatten = flatten)
   let output = pass.dest.toString(false)
-  if paramCount() >= 2:
-    let outfile = paramStr(2)
+  if outfile.len > 0:
     var f = syncio.open(outfile, fmWrite)
     try:
       syncio.write(f, output)
