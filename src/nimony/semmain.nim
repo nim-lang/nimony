@@ -489,9 +489,9 @@ proc addIfAbsent[T](s: var seq[T]; x: T) =
   s.add x
 
 proc resolveCyclicImports(c: var SemContext) =
-  ## After phase2 of all cycle group members, populate importTab and iface
-  ## for deferred cyclic imports by scanning prog.mem.
-  ## (Proc symbols are published to prog.mem only during phase2, not phase1.)
+  ## Populate importTab and iface for deferred cyclic imports by scanning
+  ## prog.mem. Call after phase1 (type symbols) and again after phase2 (proc
+  ## symbols). Uses addIfAbsent so repeated calls are safe.
   for (targetSuffix, moduleSym) in c.deferredCyclicImports:
     let module = addr c.importedModules.mgetOrPut(moduleSym, ImportedModule())
     for symId in prog.mem.symIds:
@@ -585,7 +585,8 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
                         commandLineArgs: string; canSelfExec: bool) =
   ## Semantic check multiple modules that form a cycle group.
   ## All modules are processed through each phase together:
-  ## phase1(all) -> resolve cyclic imports -> phase2(all) -> phase3(all).
+  ## phase1(all) -> resolve cyclic imports -> phase2(all) ->
+  ## resolve cyclic imports -> phase3(all).
   let sharedConfig = ProgramContext(config: config)
   if SkipSystem in moduleFlags:
     programs.publishStringType()
@@ -621,13 +622,19 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
     modules[i].buf1 = ensureMove buf1
     modules[i].moduleLineInfo = lineInfo
 
+  # After phase1: resolve deferred cyclic imports from prog.mem
+  # (type symbols are published during phase1, not phase2)
+  for i in 0..<modules.len:
+    if modules[i].c.deferredCyclicImports.len > 0:
+      resolveCyclicImports(modules[i].c)
+
   # Phase 2: Check signatures for ALL modules
   # This publishes proc symbols to prog.mem via publishSignature
   for i in 0..<modules.len:
     var buf2 = phase2(modules[i].c, modules[i].buf1, modules[i].moduleLineInfo)
     modules[i].buf1 = ensureMove buf2
 
-  # After phase2: resolve deferred cyclic imports from prog.mem
+  # After phase2: resolve deferred cyclic imports from prog.mem again
   # (proc symbols are only published during phase2, not phase1)
   for i in 0..<modules.len:
     if modules[i].c.deferredCyclicImports.len > 0:
