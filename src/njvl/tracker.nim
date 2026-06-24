@@ -50,6 +50,11 @@
 ## | loop back-edge                 | `gotoContinue` + `dropContinue`         |
 
 import std / [tables, hashes, sets]
+# Concept constraints (`Keyable`/`Hashable`/`HasDefault`/`Equatable`) keep the
+# generic procs checked-generics-clean under Nimony (strict generics resolve
+# `hash`/`==`/`default` at definition time). Under host Nim these come from the
+# universal-match shims in `compat2`.
+include ".." / lib / compat2
 
 type
   ExitKind* = enum
@@ -64,9 +69,11 @@ type
     kind*: ExitKind
     label*: L      ## meaningful only when `kind == ekLabel`
 
-  JoinProc*[T] = proc (a, b: T): T {.closure.}
+  JoinProc*[T] = proc (a, b: T): T {.nimcall.}
     ## The lattice join (⊔). Must be commutative, associative and idempotent —
-    ## the multi-join relies on `join(x, x) == x`.
+    ## the multi-join relies on `join(x, x) == x`. A plain `nimcall` (the join
+    ## never captures) — Nimony rejects a `.closure` field here, and it is also
+    ## one fewer indirection.
 
   JournalEntry[T, L] = object
     ## One undo record for a mutation of `exits` — `(key, its prior presence,
@@ -97,77 +104,79 @@ type
     thenState: T
     thenDelta: seq[JournalEntry[T, L]] ## the then-branch's net exit contributions
 
-proc hash*[L](k: ExitKey[L]): Hash =
+func hash*[L: Hashable](k: ExitKey[L]): Hash =
   result = hash(ord(k.kind))
   if k.kind == ekLabel:
     result = result !& hash(k.label)
   result = !$result
 
-proc `==`*[L](a, b: ExitKey[L]): bool =
-  a.kind == b.kind and (a.kind != ekLabel or a.label == b.label)
+# `==` is left to the structural object equality: a custom `[L]`-generic `==`
+# is ambiguous with system's generic `==[T]` under Nimony, and the non-label
+# keys always carry `default(L)` in `label`, so field-wise equality already
+# matches the intended "same kind (and same label, when a label)" semantics.
 
 proc labelKey*[L](label: L): ExitKey[L] {.inline.} =
   ExitKey[L](kind: ekLabel, label: label)
 
 # --------------------------------------------------------------- construction
 
-proc initTracker*[T, L](initial: T; join: JoinProc[T]): Tracker[T, L] =
+proc initTracker*[T: HasDefault, L: Keyable and HasDefault](initial: T; join: JoinProc[T]): Tracker[T, L] =
   ## Start a tracker at a reachable program point with state `initial`.
   Tracker[T, L](live: true, state: initial,
                 exits: initTable[ExitKey[L], T](), join: join)
 
 # ------------------------------------------------------ journaled exits access
 
-proc jPut[T, L](tr: var Tracker[T, L]; key: ExitKey[L]; val: sink T) =
+proc jPut[T: HasDefault, L: Keyable and HasDefault](tr: var Tracker[T, L]; key: ExitKey[L]; val: sink T) =
   ## Set `exits[key] = val`, recording the prior cell for undo.
   if key in tr.exits:
-    tr.journal.add JournalEntry[T, L](key: key, had: true, old: tr.exits[key])
+    tr.journal.add JournalEntry[T, L](key: key, had: true, old: getOrDefault(tr.exits, key))
   else:
     tr.journal.add JournalEntry[T, L](key: key, had: false)
   tr.exits[key] = val
 
-proc jDel[T, L](tr: var Tracker[T, L]; key: ExitKey[L]) =
+proc jDel[T: HasDefault, L: Keyable and HasDefault](tr: var Tracker[T, L]; key: ExitKey[L]) =
   ## Delete `exits[key]` (if present), recording the prior value for undo.
   if key in tr.exits:
-    tr.journal.add JournalEntry[T, L](key: key, had: true, old: tr.exits[key])
+    tr.journal.add JournalEntry[T, L](key: key, had: true, old: getOrDefault(tr.exits, key))
     tr.exits.del key
 
 # ----------------------------------------------------------------- leaving
 
-proc leaveVia[T, L](tr: var Tracker[T, L]; key: ExitKey[L]) =
+proc leaveVia[T: HasDefault, L: Keyable and HasDefault](tr: var Tracker[T, L]; key: ExitKey[L]) =
   ## Internal: record the current state at `key` and stop falling through.
   ## A `jmp`/`return`/`raise` from a dead point is unreachable — ignored.
   if tr.live:
     if key in tr.exits:
-      jPut(tr, key, tr.join(tr.exits[key], tr.state))
+      jPut(tr, key, tr.join(getOrDefault(tr.exits, key), tr.state))
     else:
       jPut(tr, key, tr.state)
     tr.live = false
 
-proc gotoLabel*[T, L](tr: var Tracker[T, L]; label: L) {.inline.} =
+proc gotoLabel*[T: HasDefault, L: Keyable and HasDefault](tr: var Tracker[T, L]; label: L) {.inline.} =
   ## `(jmp L)` — a forward structural transfer (loop-`break` included).
   leaveVia(tr, labelKey(label))
 
-proc gotoReturn*[T, L](tr: var Tracker[T, L]) {.inline.} =
+proc gotoReturn*[T: HasDefault, L: Keyable and HasDefault](tr: var Tracker[T, L]) {.inline.} =
   ## `return` — a primitive exit bound by the proc root.
   leaveVia(tr, ExitKey[L](kind: ekReturn))
 
-proc gotoRaise*[T, L](tr: var Tracker[T, L]) {.inline.} =
+proc gotoRaise*[T: HasDefault, L: Keyable and HasDefault](tr: var Tracker[T, L]) {.inline.} =
   ## `raise` — a primitive exit bound by the nearest enclosing `except`.
   leaveVia(tr, ExitKey[L](kind: ekRaise))
 
-proc gotoContinue*[T, L](tr: var Tracker[T, L]) {.inline.} =
+proc gotoContinue*[T: HasDefault, L: Keyable and HasDefault](tr: var Tracker[T, L]) {.inline.} =
   ## `continue` — the loop back-edge, bound by its `loop` header.
   leaveVia(tr, ExitKey[L](kind: ekContinue))
 
 # ------------------------------------------------------------------ binding
 
-proc bindKey[T, L](tr: var Tracker[T, L]; key: ExitKey[L]) =
+proc bindKey[T: HasDefault, L: Keyable and HasDefault](tr: var Tracker[T, L]; key: ExitKey[L]) =
   ## Consume `key`: join its accumulated state into fall-through (the multi-join)
   ## and remove it from the pending set. Because forward `jmp`s are seen before
   ## their `lab`, every contributor is already present at this point.
   if key in tr.exits:
-    let landed = tr.exits[key]
+    let landed = getOrDefault(tr.exits, key)
     jDel(tr, key)
     if tr.live:
       tr.state = tr.join(tr.state, landed)
@@ -175,21 +184,21 @@ proc bindKey[T, L](tr: var Tracker[T, L]; key: ExitKey[L]) =
       tr.state = landed
       tr.live = true
 
-proc bindLabel*[T, L](tr: var Tracker[T, L]; label: L) {.inline.} =
+proc bindLabel*[T: HasDefault, L: Keyable and HasDefault](tr: var Tracker[T, L]; label: L) {.inline.} =
   ## `(lab L)` — the multi-join. `arity(L)` is exactly
   ## `ord(was live before) + count of jmps to L`, all carried by the summary.
   bindKey(tr, labelKey(label))
 
-proc bindReturn*[T, L](tr: var Tracker[T, L]) {.inline.} =
+proc bindReturn*[T: HasDefault, L: Keyable and HasDefault](tr: var Tracker[T, L]) {.inline.} =
   ## The proc root joins every `return` into the final fall-through state.
   bindKey(tr, ExitKey[L](kind: ekReturn))
 
-proc bindRaise*[T, L](tr: var Tracker[T, L]) {.inline.} =
+proc bindRaise*[T: HasDefault, L: Keyable and HasDefault](tr: var Tracker[T, L]) {.inline.} =
   ## Join any pending `raise` into fall-through (used after an `except` body
   ## has re-merged, or at the proc root for a `.raises` proc).
   bindKey(tr, ExitKey[L](kind: ekRaise))
 
-proc dropContinue*[T, L](tr: var Tracker[T, L]) {.inline.} =
+proc dropContinue*[T: HasDefault, L: Keyable and HasDefault](tr: var Tracker[T, L]) {.inline.} =
   ## The loop header consumes the back-edge. A one-pass forward analysis
   ## discards it (the cyclic join, if any, is the loop's local fixpoint);
   ## acyclic forward exits to `loopExit` resolve via `bindLabel`.
@@ -197,17 +206,17 @@ proc dropContinue*[T, L](tr: var Tracker[T, L]) {.inline.} =
 
 # ------------------------------------------------------------ except / finally
 
-proc takeRaise*[T, L](tr: var Tracker[T, L]): tuple[reached: bool, state: T] =
+proc takeRaise*[T: HasDefault, L: Keyable and HasDefault](tr: var Tracker[T, L]): tuple[reached: bool, state: T] =
   ## Pull (and remove) the accumulated `raise` state — the entry state for an
   ## `except` handler. `reached == false` ⇒ no `raise` crossed the `try` body.
   let key = ExitKey[L](kind: ekRaise)
   if key in tr.exits:
-    result = (true, tr.exits[key])
+    result = (true, getOrDefault(tr.exits, key))
     jDel(tr, key)
   else:
     result = (false, default(T))
 
-proc mapStates*[T, L](tr: var Tracker[T, L]; f: proc (s: T): T) =
+proc mapStates*[T: HasDefault, L: Keyable and HasDefault](tr: var Tracker[T, L]; f: proc (s: T): T) =
   ## `finally`: run the cleanup's transfer over *every* component — the
   ## fall-through and each pending exit alike. "The cleanup runs on every exit"
   ## as one line of the traversal; nested `try`s give LIFO for free.
@@ -216,17 +225,17 @@ proc mapStates*[T, L](tr: var Tracker[T, L]; f: proc (s: T): T) =
   var keys: seq[ExitKey[L]] = @[]
   for k in tr.exits.keys: keys.add k
   for k in keys:
-    jPut(tr, k, f(tr.exits[k]))
+    jPut(tr, k, f(getOrDefault(tr.exits, k)))
 
 # ---------------------------------------------------------------- branching
 
-proc splitBranch*[T, L](tr: var Tracker[T, L]): Branch[T, L] =
+proc splitBranch*[T: HasDefault, L: Keyable and HasDefault](tr: var Tracker[T, L]): Branch[T, L] =
   ## Begin an `ite`: remember the journal position so the else-branch can be
   ## rolled back to the same baseline the then-branch started from. No table
   ## copy — only a checkpoint.
   Branch[T, L](baseLive: tr.live, baseState: tr.state, cp: tr.journal.len)
 
-proc commitThen*[T, L](tr: var Tracker[T, L]; b: var Branch[T, L]) =
+proc commitThen*[T: HasDefault, L: Keyable and HasDefault](tr: var Tracker[T, L]; b: var Branch[T, L]) =
   ## Call after the then-branch: capture its *delta* (the distinct exit keys it
   ## touched, with their post-then values), then roll `exits` back to the
   ## baseline via the journal so the else-branch starts clean.
@@ -241,7 +250,7 @@ proc commitThen*[T, L](tr: var Tracker[T, L]; b: var Branch[T, L]) =
     let k = tr.journal[i].key
     if not containsOrIncl(seen, k):
       if k in tr.exits:
-        b.thenDelta.add JournalEntry[T, L](key: k, had: true, old: tr.exits[k])
+        b.thenDelta.add JournalEntry[T, L](key: k, had: true, old: getOrDefault(tr.exits, k))
       else:
         b.thenDelta.add JournalEntry[T, L](key: k, had: false)
     dec i
@@ -254,7 +263,7 @@ proc commitThen*[T, L](tr: var Tracker[T, L]; b: var Branch[T, L]) =
   tr.live = b.baseLive
   tr.state = b.baseState
 
-proc mergeBranches*[T, L](tr: var Tracker[T, L]; b: Branch[T, L]) =
+proc mergeBranches*[T: HasDefault, L: Keyable and HasDefault](tr: var Tracker[T, L]; b: Branch[T, L]) =
   ## Call after the else-branch: join the then-branch (in `b`) with the current
   ## else-branch (in `tr`). `fallthrough` survives iff *some* arm falls through;
   ## `exits` are joined key-wise over the union. A branch that always leaves has
@@ -265,7 +274,7 @@ proc mergeBranches*[T, L](tr: var Tracker[T, L]; b: Branch[T, L]) =
       # the then-branch left an exit at `e.key` with value `e.old`; join it into
       # the else-branch's (journaled, so an enclosing `ite` can still undo it).
       if e.key in tr.exits:
-        jPut(tr, e.key, tr.join(tr.exits[e.key], e.old))
+        jPut(tr, e.key, tr.join(getOrDefault(tr.exits, e.key), e.old))
       else:
         jPut(tr, e.key, e.old)
   let elseLive = tr.live
@@ -284,22 +293,22 @@ proc reachable*[T, L](tr: Tracker[T, L]): bool {.inline.} =
   ## Is fall-through reachable here? `false` after an unconditional leave.
   tr.live
 
-proc pending*[T, L](tr: Tracker[T, L]; key: ExitKey[L]): bool {.inline.} =
+proc pending*[T, L: Keyable](tr: Tracker[T, L]; key: ExitKey[L]): bool {.inline.} =
   ## Is there an as-yet-unbound exit to `key`? A `raise` still pending at the
   ## proc root is a `.raises: []` violation — detected by the same traversal.
   key in tr.exits
 
 when isMainModule:
-  import std / assertions
+  import std / [assertions, syncio]
 
   # Demo state: the set of locals proven initialized at a program point.
   # The lattice join is *intersection* (a var is init after a merge only if it
   # was init on every incoming path).
   type Inits = HashSet[int]
-  proc isect(a, b: Inits): Inits = a * b
+  proc isect(a, b: Inits): Inits = intersection(a, b)
 
   proc newTr(initial: Inits = initHashSet[int]()): Tracker[Inits, int] =
-    initTracker[Inits, int](initial, proc (a, b: Inits): Inits = isect(a, b))
+    initTracker[Inits, int](initial, isect)
 
   # 1) Guard-clause: `if cond: r = 1; jmp L else: r = 2`  /  L: use r
   #    r is init on both the jmp-out path and the fall-through, so init at L.

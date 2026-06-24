@@ -124,7 +124,10 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     pk = pragmaKindByStyle(n.litId)
   case pk
   of NoPragma:
-    if kind.isRoutine and (let cc = callConvKind(n); cc != NoCallConv):
+    # `cc` bound inside the `and` is only conditionally initialized, which the
+    # init analysis cannot see through; compute it up front so it is always set.
+    let cc = if kind.isRoutine: callConvKind(n) else: NoCallConv
+    if cc != NoCallConv:
       dest.addParLe(cc, n.info)
       inc n
       dest.addParRi()

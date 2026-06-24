@@ -93,7 +93,9 @@ proc jSwapRemove(f: var Facts; i: int) =
   let removed = f.x[i]
   if f.journaling: f.journal.add JEntry(op: jDel, idx: i, val: removed)
   let last = f.x.len - 1
-  if i != last: f.x[i] = f.x[last]
+  if i != last:
+    let lastVal = f.x[last]   # copy out before the in-place overwrite (borrow-clean)
+    f.x[i] = lastVal
   f.x.setLen last
 
 proc rollbackTo*(f: var Facts; cp: int) =
@@ -106,8 +108,9 @@ proc rollbackTo*(f: var Facts; cp: int) =
     of jMod: f.x[e.idx] = e.val
     of jDel:
       if e.idx < f.x.len:
-        f.x.add f.x[e.idx]      # move the swapped-in element back to the end
-        f.x[e.idx] = e.val      # ... and restore the removed value
+        let swapped = f.x[e.idx] # copy out before growing `f.x` (borrow-clean)
+        f.x.add swapped          # move the swapped-in element back to the end
+        f.x[e.idx] = e.val       # ... and restore the removed value
       else:
         f.x.add e.val           # idx had been the last slot; nothing was moved
     dec i

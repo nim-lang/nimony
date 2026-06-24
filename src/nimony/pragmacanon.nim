@@ -35,9 +35,14 @@ proc isChecked*(c: var CheckedPragmas; n: Cursor; kind: SymKind): bool =
         result = pk in c.pragmas
         if not result:
           c.pragmas.incl pk
-    elif kind.isRoutine and (let cc = callConvKind(n2); cc != NoCallConv):
-      result = c.callconv != NoCallConv
-      if not result:
-        c.callconv = cc
-    elif (let ident = getIdent(n2); ident != StrId(0)):
-      result = c.idents.containsOrIncl(ident)
+    else:
+      # `cc` is assigned on both arms so its init is provable; binding it inside
+      # the `and` (`kind.isRoutine and (let cc = …)`) leaves it only conditionally
+      # initialized, which the init analysis (correctly) cannot see through.
+      let cc = if kind.isRoutine: callConvKind(n2) else: NoCallConv
+      if cc != NoCallConv:
+        result = c.callconv != NoCallConv
+        if not result:
+          c.callconv = cc
+      elif (let ident = getIdent(n2); ident != StrId(0)):
+        result = c.idents.containsOrIncl(ident)
