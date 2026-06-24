@@ -850,7 +850,7 @@ proc forLoopVars*(n: NifCursor): NifCursor =
   if result.stmtKind == StmtsS:
     result = firstChild(result)
   skip result # iter name
-  while result.kind == ParLe and result.tagText notin ["unpackflat", "unpacktup"]:
+  while result.kind == ParLe and result.otherKind notin {UnpackflatU, UnpacktupU}:
     skip result # call args
   # result is now at the (unpackflat/unpacktup) node, or at ')' if none
 

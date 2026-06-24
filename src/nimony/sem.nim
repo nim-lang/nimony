@@ -2798,11 +2798,6 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
   if cursorIsNil(pp) or pp.kind != StringLit: return
   result = true
 
-  var iterName = ""
-  if routine.name.kind == SymbolDef:
-    iterName = pool.syms[routine.name.symId]
-    extractBasename iterName
-
   # Extract the sem'd call from dest so we can pass the call args to the plugin
   var callBuf = createTokenBuf(dest.len - beforeCall)
   for tok in beforeCall ..< dest.len: callBuf.add dest[tok]
@@ -2811,7 +2806,7 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
   # Build plugin input: (stmts <iter-name> <call-args...> <loop-vars> <body>)
   var b = createTokenBuf(30)
   b.addParLe StmtsS, info
-  b.add identToken(pool.strings.getOrIncl(iterName), info)
+  b.add identToken(symToIdent(routine.name.symId), info)
   var callC = beginRead(callBuf)
   callC.into:
     skip callC # fn symbol or sym-choice
@@ -2828,7 +2823,6 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
   var expandedItem = Item(n: cursorAt(pluginOutput, 0), typ: c.types.autoType)
   semExpr c, dest, expandedItem
   producesNoReturn c, dest, info, it.typ
-  result = true
 
 proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
