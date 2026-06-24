@@ -79,11 +79,10 @@ type
                                        # body we are currently analysing (used
                                        # for the --verbose dump)
 
-proc isectInits(a, b: InitSet): InitSet = a * b
+proc isectInits(a, b: InitSet): InitSet = intersection(a, b)
 
 proc newInitTracker(): Tracker[InitSet, SymId] =
-  initTracker[InitSet, SymId](initHashSet[SymId](),
-    proc (a, b: InitSet): InitSet = isectInits(a, b))
+  initTracker[InitSet, SymId](initHashSet[SymId](), isectInits)
 
 proc markInit(c: var NjvlContext; symId: SymId) {.inline.} =
   c.tr.state.incl symId
@@ -1112,12 +1111,17 @@ proc traverseLoop(c: var NjvlContext; n: var Cursor) =
   ## break state via `bindKeyBoth`.
   inc n # skip loop tag
   let cp = c.facts.checkpoint()
+  let savedBorrows = c.activeBorrows.len
   traverseStmt c, n        # the body `(stmts ...)`; ends by leaving
   bindKeyBoth(c, contKey()) # the loop header consumes the back-edge
   # The loop never falls through; reset working facts to the pre-loop base. A
   # following `(lab loopExit)` collapses them to "know nothing" (sound: a loop
   # proves nothing about its mutated vars afterwards).
   c.facts.rollbackTo cp
+  # Borrows taken *inside* the body are loop-local (a `var p = addr coll[i]`
+  # cannot outlive the iteration), so drop them — otherwise a later mutation of
+  # the borrowed container after the loop is wrongly seen as still-borrowed.
+  c.activeBorrows.setLen(savedBorrows)
   skipParRi n
 
 proc traverseLabel(c: var NjvlContext; n: var Cursor) =
