@@ -39,7 +39,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters, typeprops]
-import ".." / njvl / [nj, njvl_model, finalir]
+import ".." / njvl / [nj, njvl_model]
 import passes
 include ".." / nimony / nif_annotations
 
@@ -96,11 +96,9 @@ type
     flattenDepth*: int
       ## >0 while lowering the body of a suspension-containing construct: every
       ## `lab`/`jmp` inside genuinely crosses a state, so it is relabelled to int.
-    loopHeads*: seq[int]
-      ## state labels of the enclosing flattened loops; `(continue)` back-jumps here.
     loopExits*: seq[SymId]
-      ## exit labels of the enclosing suspension-free finalir loops being rebuilt
-      ## as `(while)`: a `(jmp exit)` to the innermost is a structured `(break)`.
+      ## exit labels of the enclosing suspension-free loops being rebuilt as
+      ## `(while)`: a `(jmp exit)` to the innermost is a structured `(break)`.
     loopExitLabs*: HashSet[SymId]
       ## every such exit label, so its trailing `(lab exit)` is dropped (the
       ## `(while)` exits naturally) rather than emitted as an unknown statement.
@@ -151,10 +149,6 @@ type
     shouldPublish*: seq[tuple[sym: SymId, start: int]]
     coroTypes*: TokenBuf
     hooks*: Hooks
-    fromFinalIr*: bool
-      ## Source the state machine from `toFinalIr(flatten=true)` (flat
-      ## `lab`/`jmp`) instead of `eliminateJumps` (NJ cfvars). The body walk
-      ## then only relabels and inserts suspension states — no flattening.
 
 proc generateContinuationProcImpl*(): Cursor =
   ## Load the `ContinuationProc` typedef body from system, returned as
@@ -1209,11 +1203,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       dest.takeTree n  # pure control-flow goto: keep `(jmp sym)` for the backend
   of ContinueV:
-    if c.fromFinalIr and c.currentProc.loopHeads.len > 0:
-      emitJump dest, c.currentProc.loopHeads[^1], info  # back-edge of a flattened loop
-      skip n
-    else:
-      skip n           # NJ handles the back-edge via the loop structure
+    skip n             # NJ handles the back-edge via the loop structure
   of StoreV:
     dest.takeToken n
     var addLabel = c.hooks.isPassiveCall(c, n)
@@ -1224,27 +1214,6 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       emitLabel dest, c.currentProc.labelCounter, info
       inc c.currentProc.labelCounter
   of LoopV:
-    if c.fromFinalIr:
-      if not containsSuspensionPoint(c, n):
-        dest.takeTree n  # suspension-free loop: backend handles continue/break
-        return
-      # finalir loop `(loop (stmts <body> (continue)))` containing a suspension:
-      # `(lab head) <body> … (jmp head)` (the `(continue)` becomes the back-edge,
-      # `break` is a `(jmp exitSym)` relabelled to a state inside flattenDepth).
-      let head = c.currentProc.labelCounter
-      inc c.currentProc.labelCounter
-      emitLabel dest, head, info
-      c.currentProc.loopHeads.add head
-      inc c.currentProc.flattenDepth
-      inc n # `loop`
-      inc n # body `stmts`
-      while n.hasMore:
-        trGoto c, dest, n
-      skipParRi n # close body `stmts`
-      skipParRi n # close `loop`
-      dec c.currentProc.flattenDepth
-      discard c.currentProc.loopHeads.pop()
-      return
     if containsSuspensionPoint(c, n):
       var beforeLoopState = c.currentProc.labelCounter
       inc c.currentProc.labelCounter
@@ -1380,12 +1349,8 @@ proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: 
   wrapper.addParLe StmtsS, NoLineInfo
   wrapper.copyTree iter
   wrapper.addParRi()
-  var pass = initPass(ensureMove wrapper, c.thisModuleSuffix,
-    (if c.fromFinalIr: "xelim_finalir" else: "eliminateJumps"), 0)
-  if c.fromFinalIr:
-    toFinalIr(pass, flatten = false, noCx = true)
-  else:
-    eliminateJumps(pass, raisesResolved = true)
+  var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "eliminateJumps", 0)
+  eliminateJumps(pass, raisesResolved = true, usePc = true)
   block extractBody:
     var wholeResult = ensureMove(pass.dest)
     var nExt = beginRead(wholeResult)
@@ -2033,37 +1998,6 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           FailedX, IsX, EnvpX, KvX, NoExpr:
         case n.njvlKind
         of LoopV:
-          if c.fromFinalIr:
-            # finalir loop `(loop (stmts <body> (continue)))` (suspension-free —
-            # trGoto flattens the others) → `(while (true) (stmts <body>))`. The
-            # `(continue)` is the implicit back-edge; a `break` is a `(jmp exit)`
-            # to the `(lab exit)` that trails the loop — rebuilt as `(break)`.
-            var info = n.info
-            var afterLoop = n
-            skip afterLoop
-            var exit = NoSymId
-            if afterLoop.kind == ParLe and pool.tags[afterLoop.tagId] == "lab" and
-               afterLoop.firstSon.kind != IntLit:
-              exit = afterLoop.firstSon.symId
-              c.currentProc.loopExits.add exit
-              c.currentProc.loopExitLabs.incl exit
-            var bodyBuf = createTokenBuf(64)
-            n.into:                               # (loop ...)
-              n.into:                             # body stmts
-                while n.hasMore:
-                  if n.stmtKind == ContinueS:
-                    skip n
-                  else:
-                    coroTr c, bodyBuf, n
-            if exit != NoSymId:
-              discard c.currentProc.loopExits.pop()
-            dest.addParLe WhileS, info
-            dest.copyIntoKind TrueX, info: discard
-            dest.addParLe StmtsS, info
-            dest.add bodyBuf
-            dest.addParRi()
-            dest.addParRi()
-            return
           var beforeBuf = createTokenBuf(32)
           var condBuf = createTokenBuf(16)
           var bodyBuf = createTokenBuf(64)
