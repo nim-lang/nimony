@@ -7,6 +7,8 @@ type
     NoVTag
     StoreV = (ord(StoreTagId), "store")  ## `asgn` with reversed operands that reflects evaluation order
     ContinueV = (ord(ContinueTagId), "continue")  ## `continue` statement
+    LabV = (ord(LabTagId), "lab")  ## label, target of a `jmp` instruction
+    JmpV = (ord(JmpTagId), "jmp")  ## jump/goto instruction
     IteV = (ord(IteTagId), "ite")  ## if-then-else followed by `join` information followed by an optional label
     ItecV = (ord(ItecTagId), "itec")  ## if-then-else (that was a `case`)
     LoopV = (ord(LoopTagId), "loop")  ## `loop` components are (before-cond, cond, loop-body, after)
@@ -21,5 +23,5 @@ type
     AssertV = (ord(AssertTagId), "assert")  ## `assert` pragma/annotation
 
 proc rawTagIsNjvlKind*(raw: TagEnum): bool {.inline.} =
-  raw in {StoreTagId, ContinueTagId, IteTagId, ItecTagId, LoopTagId, VTagId, EtupatTagId, UnknownTagId, JtrueTagId, MflagTagId, VflagTagId, KillTagId, AssumeTagId, AssertTagId}
+  raw in {StoreTagId, ContinueTagId, LabTagId, JmpTagId, IteTagId, ItecTagId, LoopTagId, VTagId, EtupatTagId, UnknownTagId, JtrueTagId, MflagTagId, VflagTagId, KillTagId, AssumeTagId, AssertTagId}
 

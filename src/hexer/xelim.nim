@@ -20,9 +20,14 @@ include ".." / nimony / nif_annotations
 
 type
   Goal* = enum
-    ElimExprs   # normal mode: eliminate expressions
-    TowardsNjvl # goal mode: prepare for transformation into njvl
-    LowerCasts  # lower cast expressions: bind both source and result to variables
+    ElimExprs    # normal mode: eliminate expressions
+    TowardsNjvl  # goal mode: prepare for transformation into njvl
+    LowerCasts   # lower cast expressions: bind both source and result to variables
+    TowardsFinalIr # goal mode: prepare for the Final IR (doc/final_ir.md).
+                   # Like `TowardsNjvl` (calls bind to locations), but `and`/`or`
+                   # are lowered to the label/jump-friendly if-with-bool-temp form
+                   # (`trAnd`/`trOr`) instead of the cfvar (`mflag`/`jtrue`) form —
+                   # Final IR never introduces a single cfvar.
 
 proc isComplex(n: Cursor; goal: Goal): bool =
   var nested = 0
@@ -46,7 +51,7 @@ proc isComplex(n: Cursor; goal: Goal): bool =
           # More than one son is always complex:
           return true
         inc nested
-      elif goal in {TowardsNjvl, LowerCasts} and n.exprKind in (CallKinds+{AndX, OrX}):
+      elif goal in {TowardsNjvl, LowerCasts, TowardsFinalIr} and n.exprKind in (CallKinds+{AndX, OrX}):
         return true
       else:
         inc n
@@ -343,7 +348,7 @@ proc trAggregate(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Tar
   inc n
 
 proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
-  if tar.m in {IsAppend, IsEmpty} and c.goal in {TowardsNjvl, LowerCasts}:
+  if tar.m in {IsAppend, IsEmpty} and c.goal in {TowardsNjvl, LowerCasts, TowardsFinalIr}:
     # bind to a temporary variable:
     let info = n.info
     let typ = getType(c, n)
@@ -484,20 +489,52 @@ proc trCondOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target
 
   skipParRi n
 
+proc condPassthroughSafe(n: Cursor): bool =
+  ## True if an `and`/`or` condition subtree contains only short-circuit nodes
+  ## and *pure* leaves that finalir can emit inline — no calls and no
+  ## statement-expressions. Such a tree is handed to finalir verbatim so its
+  ## two-target condition compiler (Cx) can lower it to shared `(lab)`/`(jmp)`
+  ## merges (linear). A subtree with a call in a leaf must instead keep the
+  ## bool-temp lowering here, because short-circuit evaluation requires the
+  ## call to be hoisted *into* the branch, which Cx-in-finalir does not do.
+  var n = n
+  if n.kind != ParLe: return false
+  var nested = 0
+  while true:
+    case n.kind
+    of ParLe:
+      if n.exprKind in CallKinds: return false
+      if n.exprKind == ExprX: return false
+      if n.stmtKind in {IfS, CaseS, TryS, BlockS, WhileS, ForS, StmtsS}:
+        return false
+      inc nested
+    of ParRi:
+      dec nested
+    else: discard
+    inc n
+    if nested == 0: break
+  result = true
+
 proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; mustUseLabel: bool) =
   assert tar.m == IsEmpty
-  if c.goal in {TowardsNjvl, LowerCasts}:
+  if c.goal in {TowardsNjvl, LowerCasts, TowardsFinalIr}:
     case n.exprKind
     of AndX:
-      # `mustUseLabel` (cfvar lowering) is NJ-only. In `LowerCasts` mode we
-      # still want the binding/hoisting path inside `trAnd`'s `isComplex`
-      # branch, but never the cfvar form.
-      if mustUseLabel:
+      # `mustUseLabel` (cfvar lowering) is NJ-only. In `LowerCasts` and
+      # `TowardsFinalIr` mode we still want the binding/hoisting path inside
+      # `trAnd`'s `isComplex` branch, but never the cfvar form.
+      if c.goal == TowardsFinalIr and condPassthroughSafe(n):
+        tar.t.copyTree n
+        skip n
+      elif mustUseLabel:
         trCondAnd c, dest, n, tar
       else:
         trAnd c, dest, n, tar
     of OrX:
-      if mustUseLabel:
+      if c.goal == TowardsFinalIr and condPassthroughSafe(n):
+        tar.t.copyTree n
+        skip n
+      elif mustUseLabel:
         trCondOr c, dest, n, tar
       else:
         trOr c, dest, n, tar
@@ -791,7 +828,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skipParRi n
 
   of DiscardS:
-    if c.goal in {TowardsNjvl, LowerCasts}:
+    if c.goal in {TowardsNjvl, LowerCasts, TowardsFinalIr}:
       inc n
       if n.kind == DotToken:
         dest.takeToken n
@@ -835,18 +872,19 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # directly via trBoundExpr and emits the "was successful?" branching
     # after the store, which is both simpler and avoids borrow-checking
     # trouble caused by the extra temporary.
-    # `lhsIsResult` is the NJ-specific shortcut that keeps the call in
-    # place when the lhs is already a sym; nj.nim handles it via
-    # `trBoundExpr`. `LowerCasts` always binds — the dce2 inliner wants
-    # every call to appear as the value of a let/var binding.
+    # `lhsIsResult` is the shortcut that keeps the call in place when the lhs
+    # is already a sym; both nj.nim and finalir.nim handle it via
+    # `trBoundExpr` (a call binds directly to its destination — doc/final_ir.md).
+    # `LowerCasts` always binds — the dce2 inliner wants every call to appear
+    # as the value of a let/var binding.
     var lhsIsResult = false
-    if c.goal == TowardsNjvl:
+    if c.goal in {TowardsNjvl, TowardsFinalIr}:
       let peek = n.firstSon
       lhsIsResult = peek.kind == Symbol
     tar.t.copyInto n:
       trExpr c, dest, n, tar
-      if c.goal in {TowardsNjvl, LowerCasts}:
-        if c.goal == TowardsNjvl and lhsIsResult:
+      if c.goal in {TowardsNjvl, LowerCasts, TowardsFinalIr}:
+        if c.goal in {TowardsNjvl, TowardsFinalIr} and lhsIsResult:
           tar.m = IsBound
         # else: tar.m stays IsAppend so trExprCall can bind
         trExpr c, dest, n, tar
