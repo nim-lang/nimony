@@ -120,6 +120,17 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
           if path != StrId(0):
             var b = createTokenBuf(30)
             b.addParLe StmtsS, args.info
+            # Pass the invoked template's name as the first child of the input
+            # so a single shared plugin can dispatch on which template was
+            # called. The name is emitted as a bare identifier; the plugin
+            # reads it with `templateName` and skips to the real call-site
+            # arguments with `templateArgs` (see the `plugins` module).
+            if temp.name.kind == SymbolDef:
+              var nameStr = pool.syms[temp.name.symId]
+              extractBasename nameStr
+              b.add identToken(pool.strings.getOrIncl(nameStr), args.info)
+            elif temp.name.kind == Ident:
+              b.add identToken(temp.name.litId, args.info)
             var a = args
             while a.hasMore:
               b.takeTree a

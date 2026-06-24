@@ -814,6 +814,31 @@ proc loadPluginInput*(filename = paramStr(1)): NifCursor =
   finally:
     close(inp)
 
+proc templateName*(n: NifCursor): string =
+  ## Returns the name of the template that triggered this template-plugin run.
+  ##
+  ## Template-plugin input has the shape `(stmts <template-name> <arg1> …)`:
+  ## the compiler prepends the invoked template's name as a bare identifier so
+  ## that a single shared plugin can dispatch on which template was called.
+  ## This proc reads that leading name. Returns `""` when the input does not
+  ## carry a leading identifier (e.g. for module or type plugins).
+  var n = n
+  if n.stmtKind == StmtsS:
+    n = firstChild(n)
+  result = if n.kind == Ident: n.identText else: ""
+
+proc templateArgs*(n: NifCursor): NifCursor =
+  ## Returns a cursor positioned at the first call-site argument of a
+  ## template-plugin input, skipping the `(stmts` wrapper and the leading
+  ## template name. Use `result.hasMore` to iterate the remaining arguments.
+  ##
+  ## For input `(stmts <template-name> <arg1> <arg2> …)` the result points at
+  ## `<arg1>`. When there are no arguments it is positioned at the closing `)`.
+  result = n
+  if result.stmtKind == StmtsS:
+    result = firstChild(result)
+    skip result # advance past the template name to the first real argument
+
 proc renderTree*(tree: NifBuilder): string =
   ## Renders the complete contents of `tree` as raw NIF text for debugging.
   ## Unlike `saveTree`, this omits line info and may contain multiple
