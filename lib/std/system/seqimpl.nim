@@ -258,3 +258,14 @@ func pop*[T](s: var seq[T]): T {.requires: (s.len > 0), inline, nodestroy.} =
   let L = s.len-1
   result = s[L]
   s.len = L
+
+func delete*[T](s: var seq[T]; idx: int) {.requires: (idx >= 0 and idx < s.len), nodestroy.} =
+  ## Deletes index `idx`, shifting subsequent elements down by one so order is
+  ## preserved (O(n)). Unlike `del`, which reorders the tail in O(1).
+  let L = s.len
+  `=destroy`(s.data[idx])
+  var i = idx
+  while i < L-1:
+    (s.data[i]) = s.data[i+1]
+    inc i
+  dec s.len
