@@ -128,7 +128,8 @@ proc trExprInto(c: var Context; dest: var TokenBuf; n: var Cursor; v: SymId) =
       dest.addSymUse v, info
       dest.addTarget tar
 
-proc hoistDeclsFromExprX(outerDest, transformed: var TokenBuf; n: var Cursor) =
+proc hoistDeclsFromExprX(outerDest, transformed: var TokenBuf; n: var Cursor;
+                         markNoinit = false) =
   ## Copy the subtree at `n` into `transformed`. If the subtree is an
   ## `(expr (stmts decls…) val…)`, top-level `let`/`var`/`cursor` decls
   ## inside the leading `(stmts …)` are *hoisted*: an uninitialised
@@ -136,6 +137,14 @@ proc hoistDeclsFromExprX(outerDest, transformed: var TokenBuf; n: var Cursor) =
   ## decl is rewritten as `(asgn sym init)` so the initialiser still runs
   ## at the original control-flow point. `n` is advanced past the consumed
   ## subtree.
+  ##
+  ## With `markNoinit`, the hoisted `var` carries `.noinit`. The decl came from
+  ## a `let` in a short-circuited `and`/`or` operand: the value is always
+  ## assigned before any use that the surrounding `if`/`elif` body can reach
+  ## (the body runs only when that operand was evaluated). The init analysis
+  ## cannot see that correlation through the hoist, so the tag tells it to treat
+  ## the slot as initialised — used only on the Final-IR (analysis) path, so
+  ## codegen still gets the plain zero-initialised slot.
   if n.kind != ParLe or n.exprKind != ExprX:
     transformed.takeTree n
     return
@@ -156,7 +165,19 @@ proc hoistDeclsFromExprX(outerDest, transformed: var TokenBuf; n: var Cursor) =
       outerDest.addParLe(VarS, info)
       outerDest.add symdefToken(sym, symInfo)
       outerDest.addSubtree local.exported
-      outerDest.addSubtree local.pragmas
+      if markNoinit:
+        outerDest.addParLe(PragmasS, info)
+        outerDest.addParLe(NoinitP, info)
+        outerDest.addParRi()
+        if local.pragmas.kind == ParLe:  # keep any original pragmas too
+          var p = local.pragmas
+          inc p
+          while p.kind != ParRi:
+            outerDest.addSubtree p
+            skip p
+        outerDest.addParRi()
+      else:
+        outerDest.addSubtree local.pragmas
       outerDest.addSubtree local.typ
       outerDest.addDotToken()          # uninitialised
       outerDest.addParRi()
@@ -181,7 +202,7 @@ proc trOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     # scope so they remain visible after the `or` lowering — same idea as
     # `trAnd` below; see the comment there.
     var rhs = createTokenBuf(16)
-    hoistDeclsFromExprX(dest, rhs, n)
+    hoistDeclsFromExprX(dest, rhs, n, markNoinit = c.goal == TowardsFinalIr)
     var rhsCursor = beginRead(rhs)
     copyIntoKind dest, IfS, info:
       copyIntoKind dest, ElifU, info:
@@ -215,7 +236,7 @@ proc trAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     # and the original initialiser is rewritten into an `asgn` that runs
     # only when `x` is true (preserving short-circuit evaluation).
     var rhs = createTokenBuf(16)
-    hoistDeclsFromExprX(dest, rhs, n)
+    hoistDeclsFromExprX(dest, rhs, n, markNoinit = c.goal == TowardsFinalIr)
     var rhsCursor = beginRead(rhs)
     copyIntoKind dest, IfS, info:
       copyIntoKind dest, ElifU, info:
