@@ -178,3 +178,13 @@ func cmp*[T: Comparable](x, y: T): int =
   if x == y: return 0
   if x < y: return -1
   return 1
+
+proc clamp*[T: Orderable](x, a, b: T): T {.inline.} =
+  ## Limits the value `x` within the interval `[a, b]`.
+  ##   ```nim
+  ##   assert((1.4).clamp(0.0, 1.0) == 1.0)
+  ##   assert((0.5).clamp(0.0, 1.0) == 0.5)
+  ##   ```
+  if x <= a: a
+  elif b <= x: b
+  else: x
