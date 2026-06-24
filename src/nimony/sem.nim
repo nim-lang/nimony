@@ -2353,7 +2353,7 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
             buildErr c, dest, it.n.info, "too many bindings for sum type branch"
           inc it.n
           inc fieldIdx
-        inc it.n # skip call ParRi
+        skipParRi it.n # skip call ')'
       elif it.n.exprKind == CurlyX:
         inc it.n # skip curly tag
         var firstEfld = SymId(0)
@@ -2380,7 +2380,7 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
                   buildErr c, dest, it.n.info,
                     "branches in set pattern must come from the same `of` declaration"
           inc it.n
-        inc it.n # skip curly ParRi
+        skipParRi it.n # skip curly ')'
         if firstEfld != SymId(0):
           var fieldIdx = 0
           while it.n.hasMore:
@@ -2397,7 +2397,7 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
         else:
           while it.n.hasMore:
             inc it.n
-        inc it.n # skip call ParRi
+        skipParRi it.n # skip call ')'
       else:
         buildErr c, dest, info, "identifier expected for sum type branch name"
         while it.n.hasMore: skip it.n
@@ -3948,7 +3948,7 @@ proc semSumTypeObjConstr(c: var SemContext; dest: var TokenBuf; it: var Item;
     objBuf.addSubtree it.n
     skip it.n
   objBuf.addParRi()
-  inc it.n
+  skipParRi it.n
   var objConstr = Item(n: cursorAt(objBuf, 0), typ: expected)
   semObjConstr c, dest, objConstr
   it.typ = objConstr.typ
