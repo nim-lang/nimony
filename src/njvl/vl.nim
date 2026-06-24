@@ -290,7 +290,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of ContinueV:
     # we produce a filled `continue` statement in trLoop
     skip n
-  of AssumeV, AssertV, VV:
+  of AssumeV, AssertV, VV, LabV, JmpV:
     takeTree dest, n
   of NoVTag, EtupatV:
     case n.stmtKind

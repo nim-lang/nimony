@@ -21,14 +21,41 @@ type
     a*, b*: VarId
     c*: xint
 
+  JOp = enum jAdd, jMod, jDel
+  JEntry = object
+    op: JOp
+    idx: int            ## slot index (jMod/jDel)
+    val: LeXplusC       ## previous value at `idx` (jMod) / removed value (jDel)
+
   Facts* = object
     x: seq[LeXplusC]
+    journal: seq[JEntry]   ## append-only undo log; populated only when `journaling`
+    journaling: bool       ## opt-in: enables O(writes) checkpoint/rollback
 
   RestorePoint* = object
     snapshot: seq[LeXplusC]
 
 const
   InvalidVarId* = VarId(-1)
+
+# --- Journaled checkpoint / rollback (an undo log, not a whole-state copy) ---
+#
+# A `Tracker`-style journal (cf. `lengc/shoggoth/trackers.nim`): every mutation
+# logs how to undo it, so saving/restoring across a branch is O(writes-since)
+# instead of copying the whole fact set. This is what keeps a deeply-nested
+# `if/elif` chain from costing O(depth * facts) memory.
+
+proc enableJournaling*(f: var Facts) {.inline.} =
+  f.journaling = true
+
+proc checkpoint*(f: Facts): int {.inline.} =
+  ## A token for `rollbackTo`. Cheap (just the log length).
+  f.journal.len
+
+proc snapshotFacts*(f: Facts): Facts =
+  ## A plain (non-journaling) copy of the fact set — used only where two branch
+  ## states must coexist (the `merge` at a real confluence), never per frame.
+  Facts(x: f.x)
 
 proc isValid*(x: LeXplusC): bool {.inline.} =
   result = x.a != InvalidVarId and x.b != InvalidVarId and not isNaN(x.c)
@@ -52,8 +79,57 @@ but it works.
 
 ]#
 
+proc jAppend(f: var Facts; v: LeXplusC) {.inline.} =
+  if f.journaling: f.journal.add JEntry(op: jAdd)
+  f.x.add v
+
+proc jSet(f: var Facts; i: int; v: LeXplusC) {.inline.} =
+  if f.journaling: f.journal.add JEntry(op: jMod, idx: i, val: f.x[i])
+  f.x[i] = v
+
+proc jSwapRemove(f: var Facts; i: int) =
+  ## Order-independent removal (facts are a set): move the last element into
+  ## the hole. Reversible from the logged `(idx, removed)` alone.
+  let removed = f.x[i]
+  if f.journaling: f.journal.add JEntry(op: jDel, idx: i, val: removed)
+  let last = f.x.len - 1
+  if i != last: f.x[i] = f.x[last]
+  f.x.setLen last
+
+proc rollbackTo*(f: var Facts; cp: int) =
+  ## Undo every mutation logged since `cp` (a `checkpoint`). O(writes-since).
+  var i = f.journal.len - 1
+  while i >= cp:
+    let e = f.journal[i]
+    case e.op
+    of jAdd: f.x.setLen(f.x.len - 1)
+    of jMod: f.x[e.idx] = e.val
+    of jDel:
+      if e.idx < f.x.len:
+        f.x.add f.x[e.idx]      # move the swapped-in element back to the end
+        f.x[e.idx] = e.val      # ... and restore the removed value
+      else:
+        f.x.add e.val           # idx had been the last slot; nothing was moved
+    dec i
+  f.journal.setLen cp
+
+proc removeFactAt*(f: var Facts; i: int) {.inline.} =
+  ## Journaled, order-independent removal of slot `i` (the element swapped into
+  ## `i` must be re-examined by the caller).
+  f.jSwapRemove i
+
+proc clearJournaled*(f: var Facts) =
+  ## Drop all facts except the `v0 <= v0` anchor — "know nothing" — journaled,
+  ## so it is undoable inside an enclosing branch.
+  var i = 0
+  while i < f.x.len:
+    if f.x[i].a == VarId(0) and f.x[i].b == VarId(0):
+      inc i
+    else:
+      f.jSwapRemove(i)          # element swapped into `i` still needs checking
+
 proc add*(f: var Facts; elem: LeXplusC) =
-  f.x.add elem
+  f.jAppend elem
 
 proc isNotNil*(a: VarId): LeXplusC =
   LeXplusC(a: VarId(0), b: a, c: createXint(-1'i64))
@@ -68,7 +144,7 @@ proc restore*(f: var Facts; r: RestorePoint) =
 
 proc addLeFact*(f: var Facts; a, b: VarId; c: xint = createXint(0'i64)) =
   # add to the knowledge base that `a <= b + c`.
-  f.x.add LeXplusC(a: a, b: b, c: c)
+  f.jAppend LeXplusC(a: a, b: b, c: c)
 
 proc query*(a, b: VarId; c: xint = createXint(0'i64)): LeXplusC =
   result = LeXplusC(a: a, b: b, c: c)
@@ -98,7 +174,9 @@ proc negateFact*(f: var LeXplusC) =
 
 proc negateFacts*(f: var Facts; start: int) =
   for i in start ..< f.x.len:
-    negateFact(f.x[i])
+    var v = f.x[i]
+    negateFact(v)
+    f.jSet i, v
 
 proc variableChangedByDiff*(f: var Facts; x: VarId; diff: xint) =
   # after `inc x` we know that x is now bigger by 1 so all
@@ -106,15 +184,16 @@ proc variableChangedByDiff*(f: var Facts; x: VarId; diff: xint) =
   for i in 0 ..< f.x.len:
     if f.x[i].a == x:
       if f.x[i].b == x: discard "nothing to do; x <= x + c <-> x+1 <= x+1 + c"
-      else: f.x[i].c = f.x[i].c + diff
+      else:
+        var v = f.x[i]; v.c = v.c + diff; f.jSet i, v
     elif f.x[i].b == x:
-      f.x[i].c = f.x[i].c - diff
+      var v = f.x[i]; v.c = v.c - diff; f.jSet i, v
 
 proc invalidateFactsAbout*(f: var Facts; x: VarId) =
   var i = 0
   while i < f.x.len:
     if f.x[i].a == x or f.x[i].b == x:
-      del f.x, i
+      f.jSwapRemove i        # order-independent; element swapped into i rechecked
     else:
       inc i
 
