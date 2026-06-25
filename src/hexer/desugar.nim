@@ -820,9 +820,11 @@ proc genStringConcatChain(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Forged symbol names — indices match declaration order across the
   # system module's includes (setops/seqimpl/stringimpl/openarrays). If
   # an overload with the same identifier is inserted earlier in system,
-  # these numbers must shift.
+  # these numbers must shift. (`len(string)` is `len.4`, not `.5`: object
+  # fields no longer share the global per-name counter, so the `len` field
+  # of `seq`/`openArray` no longer pushes the `len` overloads up by one.)
   let newStrSym = pool.syms.getOrIncl("newStringOfCap.0." & SystemModuleSuffix)
-  let lenSym    = pool.syms.getOrIncl("len.5."           & SystemModuleSuffix)
+  let lenSym    = pool.syms.getOrIncl("len.4."           & SystemModuleSuffix)
   let addSym    = pool.syms.getOrIncl("add.2."           & SystemModuleSuffix)
 
   let tmp = declareTemp(c, dest, stringType, info)

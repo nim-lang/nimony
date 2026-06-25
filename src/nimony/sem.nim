@@ -4087,24 +4087,15 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
         c.buildErr dest, fieldInfo, "identifier expected for object field"
         skipUntilEnd it.n
       else:
-        var hasFieldSym = false
-        var field = ObjField(level: -1)
-        if fieldNameCursor.kind == Symbol:
-          let sym = fieldNameCursor.symId
-          let res = tryLoadSym(sym)
-          if res.status == LacksNothing and res.decl.substructureKind in {FldU, GfldU}:
-            # trust that it belongs to this object for now
-            # level is either given or 0
-            hasFieldSym = true
-            field = ObjField(sym: sym, typ: asLocal(res.decl).typ, level: 0)
-          else:
-            # field syms are nested inside the owning type so `tryLoadSym`
-            # often cannot resolve them. The Symbol form means a prior
-            # semcheck pass already validated visibility, so look up by name
-            # but skip the visibility check.
-            field = findObjFieldConsiderVis(c, decl, fieldName, bindings, bypassVis = true)
-        else:
-          field = findObjFieldConsiderVis(c, decl, fieldName, bindings)
+        # A field is never a free-standing global symbol: it lives in its owning
+        # object type's scope. Always resolve it by name against `decl` (the type
+        # being constructed) rather than trusting a carried field sym via
+        # `tryLoadSym` — a carried sym can be stale (e.g. an earlier instantiation
+        # numbered the field differently than the canonical decl). The Symbol form
+        # means a prior semcheck pass already validated visibility, so bypass the
+        # visibility check in that case.
+        let hasFieldSym = fieldNameCursor.kind == Symbol
+        var field = findObjFieldConsiderVis(c, decl, fieldName, bindings, bypassVis = hasFieldSym)
         if field.level >= 0:
           if field.sym in setFieldPositions:
             c.buildErr dest, fieldInfo, "field already set: " & pool.strings[fieldName]
