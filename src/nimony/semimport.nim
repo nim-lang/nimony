@@ -83,6 +83,7 @@ proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilena
   let effectiveName =
     if f1.name != "": f1.name
     else: moduleNameFromPath(f2)
+  let moduleName = pool.strings.getOrIncl(effectiveName)
   result = SymId(0)
   if not c.processedModules.contains(suffix):
     c.meta.importedFiles.add f2
@@ -90,7 +91,6 @@ proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilena
       if (c.canSelfExec or c.inWhen > 0) and needsRecompile(f2, suffixToNif suffix):
         selfExec c, f2, (if f1.isSystem: " --isSystem" else: "")
 
-    let moduleName = pool.strings.getOrIncl(effectiveName)
     result = identToSym(c, moduleName, ModuleY)
     c.processedModules[suffix] = result
     var moduleDecl = createTokenBuf(2)
@@ -99,7 +99,6 @@ proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilena
     publish result, moduleDecl, SemcheckBodies
   else:
     result = c.processedModules.getOrQuit(suffix)
-  let moduleName = pool.strings.getOrIncl(effectiveName)
   let s = Sym(kind: ModuleY, name: result, pos: ImportedPos)
   c.currentScope.addOverloadable(moduleName, s)
   let module = addr c.importedModules.mgetOrPut(result, ImportedModule(path: f2, fromPlugin: f1.plugin))
@@ -292,6 +291,15 @@ proc findModuleSymbol*(n: Cursor): SymId =
           while n.hasMore: skip n, AnyExpr  # mop-up so into closes cleanly
           return
         inc n, AnyExpr
+
+proc dotLhsModuleSym*(lhs: Item): SymId =
+  ## Module symbol for a dot lhs, or 0 when a local binding shadows module
+  ## qualification. Needed because importSingleFile always registers the
+  ## module name in scope (93c6b9d0) while semExpr may leave `Item.kind` unset.
+  if isNonOverloadable(lhs.kind) and lhs.kind != ModuleY:
+    result = SymId(0)
+  else:
+    result = findModuleSymbol(lhs.n)
 
 proc semExportSymbol(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
