@@ -245,14 +245,14 @@ jobs:
             nimony/bin
             ~/.cache/nim
             ~/nimcache
-          key: hastur-${{ runner.os }}-${{ matrix.target.cpu }}-${{ matrix.target.nim_branch }}-${{ hashFiles('nimony/src/**/*.nim', 'nimony/src/**/*.cfg', 'nimony/src/**/*.nims') }}
+          key: hastur-release-${{ runner.os }}-${{ matrix.target.cpu }}-${{ matrix.target.nim_branch }}-${{ hashFiles('nimony/src/**/*.nim', 'nimony/src/**/*.cfg', 'nimony/src/**/*.nims') }}
           restore-keys: |
-            hastur-${{ runner.os }}-${{ matrix.target.cpu }}-${{ matrix.target.nim_branch }}-
+            hastur-release-${{ runner.os }}-${{ matrix.target.cpu }}-${{ matrix.target.nim_branch }}-
 
       - name: Test Building nimony
         run: |
           cd nimony
-          nim c -r src/hastur build all
+          nim c -r src/hastur --release build all
 
       - name: Run tester
         if: matrix.target.cpu != 'i386' # TODO: enables i386
@@ -275,4 +275,4 @@ jobs:
         if: runner.os == 'Linux' && matrix.target.cpu == 'amd64'
         run: |
           cd nimony
-          nim c -r src/hastur native
+          nim c -r src/hastur --release native

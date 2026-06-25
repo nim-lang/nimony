@@ -77,6 +77,10 @@ proc hasturTests(overwrite: bool) =
         args.add " --forward:--passL:-fuse-ld=lld"
   if overwrite:
     args.add " --overwrite"
+  # GitHub Actions (and most CI) set `CI=true`. Release-built host tools
+  # compile tests much faster with no coverage loss for regression runs.
+  if os.getEnv("CI").len > 0:
+    args = "--release " & args
   exec "nim c -r src/hastur " & args & " all"
 
 hasturTests(overwrite)
