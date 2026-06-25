@@ -80,6 +80,10 @@ proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilena
     c.buildErr dest, info, "file not found: " & f2
     return
   let suffix = moduleSuffix(f2, c.g.config.paths)
+  let effectiveName =
+    if f1.name != "": f1.name
+    else: moduleNameFromPath(f2)
+  let moduleName = pool.strings.getOrIncl(effectiveName)
   result = SymId(0)
   if not c.processedModules.contains(suffix):
     c.meta.importedFiles.add f2
@@ -87,18 +91,16 @@ proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilena
       if (c.canSelfExec or c.inWhen > 0) and needsRecompile(f2, suffixToNif suffix):
         selfExec c, f2, (if f1.isSystem: " --isSystem" else: "")
 
-    let moduleName = pool.strings.getOrIncl(f1.name)
     result = identToSym(c, moduleName, ModuleY)
     c.processedModules[suffix] = result
-    let s = Sym(kind: ModuleY, name: result, pos: ImportedPos)
-    if f1.name != "":
-      c.currentScope.addOverloadable(moduleName, s)
     var moduleDecl = createTokenBuf(2)
     moduleDecl.addParLe(ModuleY, info)
     moduleDecl.addParRi()
     publish result, moduleDecl, SemcheckBodies
   else:
     result = c.processedModules.getOrQuit(suffix)
+  let s = Sym(kind: ModuleY, name: result, pos: ImportedPos)
+  c.currentScope.addOverloadable(moduleName, s)
   let module = addr c.importedModules.mgetOrPut(result, ImportedModule(path: f2, fromPlugin: f1.plugin))
   loadInterface suffix, module.iface, result, c.importTab, c.converters,
                 exports, mode
@@ -180,7 +182,7 @@ proc cyclicImport(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
           else:
             moduleSym = c.processedModules.getOrQuit(suffix)
           discard c.importedModules.mgetOrPut(moduleSym, ImportedModule(path: f2))
-          # Defer the actual interface loading until after phase2
+          # Defer the actual interface loading until after phase1/phase2
           c.deferredCyclicImports.add (suffix, moduleSym)
     else:
       # Non-cyclic import in same statement; skip it (should not happen in practice)
@@ -289,6 +291,15 @@ proc findModuleSymbol*(n: Cursor): SymId =
           while n.hasMore: skip n, AnyExpr  # mop-up so into closes cleanly
           return
         inc n, AnyExpr
+
+proc dotLhsModuleSym*(lhs: Item): SymId =
+  ## Module symbol for a dot lhs, or 0 when a local binding shadows module
+  ## qualification. Needed because importSingleFile always registers the
+  ## module name in scope (93c6b9d0) while semExpr may leave `Item.kind` unset.
+  if isNonOverloadable(lhs.kind) and lhs.kind != ModuleY:
+    result = SymId(0)
+  else:
+    result = findModuleSymbol(lhs.n)
 
 proc semExportSymbol(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   let info = n.info

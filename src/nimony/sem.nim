@@ -1025,6 +1025,14 @@ proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Ite
     c.buildErr dest, info, "identifier after `.` expected"
     result = InvalidDot
   else:
+    # Module-qualified `module.sym` before type-based dispatch; see dotLhsModuleSym.
+    let moduleSym = dotLhsModuleSym(lhs)
+    if moduleSym != SymId(0):
+      result = MatchedDotSym
+      dest.shrink exprStart
+      let s = semQualifiedIdent(c, dest, moduleSym, fieldName, info)
+      semExprSym c, dest, it, s, exprStart, flags
+      return
     let t = skipModifier(lhs.typ)
     var root = t
     var doDeref = false # maybe arbitrary number of derefs for compat mode
@@ -1073,15 +1081,6 @@ proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Ite
           dest.add identToken(fieldName, info)
       else:
         dest.add identToken(fieldName, info)
-    elif lhs.kind == ModuleY:
-      # this is a qualified identifier, i.e. module.name
-      # consider matched even if undeclared
-      result = MatchedDotSym
-      dest.shrink exprStart
-      let module = findModuleSymbol(lhs.n)
-      let s = semQualifiedIdent(c, dest, module, fieldName, info)
-      semExprSym c, dest, it, s, exprStart, flags
-      return
     elif t.typeKind == TupleT:
       var tup = t
       var i = 0
@@ -1156,7 +1155,10 @@ proc semDot(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[SemF
   skipParRi it.n
   # now interpret the dot expression:
   let state = tryBuiltinDot(c, dest, it, lhs, fieldName, info, innerFlags)
-  if state == FailedDot:
+  if state == FailedDot and dotLhsModuleSym(lhs) != SymId(0):
+    dest.shrink exprStart
+    c.buildErr dest, info, "undeclared identifier in module: '" & pool.strings[fieldName] & "'"
+  elif state == FailedDot:
     # attempt a dot call, i.e. build b(a) from a.b
     dest.shrink exprStart
     var callBuf = createTokenBuf(16)

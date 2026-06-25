@@ -1,0 +1,3 @@
+import mexportreimportfoo
+
+export mexportreimportfoo
