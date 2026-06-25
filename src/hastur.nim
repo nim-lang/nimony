@@ -340,7 +340,15 @@ proc compareValgrindOutput(s1: string, s2: string): bool =
       return false
   return true
 
+let hasValgrind = findExe("valgrind").len > 0
+  ## Whether the `valgrind` binary (and, by extension, its dev headers) is
+  ## available. mimalloc no longer hard-depends on valgrind, so the suite must
+  ## run without it: when absent we neither pass `-DMI_TRACK_VALGRIND=1` (which
+  ## would need `<valgrind/valgrind.h>` to compile) nor run the leak checks —
+  ## the `.valgrind` tests simply skip rather than failing the whole run.
+
 proc testValgrind(c: var TestCounters; file: string; overwrite: bool; cat: Category; exe: string) =
+  if not hasValgrind: return
   let valgrind = file.changeFileExt(".valgrind")
   let hasValgrindFile = valgrind.fileExists()
   if cat == Valgrind or hasValgrindFile:
@@ -378,7 +386,12 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category;
     nimonycmd.add ' '
     nimonycmd.add forward
   when defined(linux):
-    nimonycmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\" "
+    # Only request valgrind-tracked mimalloc when valgrind is actually present;
+    # the flag pulls in `<valgrind/valgrind.h>`, which a valgrind-less box lacks.
+    if hasValgrind:
+      nimonycmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\" "
+    else:
+      nimonycmd.add " "
   else:
     nimonycmd.add " "
   let (compilerOutput, compilerExitCode) = execNimony(nimonycmd & quoteShell(file), cat)
@@ -518,8 +531,20 @@ proc prebuildSharedObjects(forward: string) =
     cmd.add forward
   # Match `testFile`'s per-platform flags so the prebuilt `static.o` is the
   # exact artifact the tests want (valgrind-tracked mimalloc on Linux).
+  #
+  # mimalloc's build pragma no longer bakes in `-DMI_TRACK_VALGRIND=1` (that
+  # made the valgrind dev headers a hard build dependency for every nimony
+  # program); valgrind tracking is now requested purely via this `--passC`.
+  # But the shared `static.o` is keyed only by mtime, so a prior *non*-valgrind
+  # build (e.g. a plain `bin/nimony c foo.nim`) can leave a stale, untracked
+  # `static.o` that nifmake would happily reuse — silently running the valgrind
+  # tests against non-tracked mimalloc. Delete it so this valgrind-tracked
+  # variant is always freshly produced.
   when defined(linux):
-    cmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\""
+    if hasValgrind:
+      try: removeFile("nimcache_static" / "static.o")
+      except OSError: discard
+      cmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\""
   cmd.add ' ' & src.quoteShell
   if execShellCmd(cmd) != 0:
     # Non-fatal: if this fails the tests still run, just without the
