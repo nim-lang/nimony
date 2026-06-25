@@ -11,7 +11,14 @@ import bitabs, nifreader, nifstreams, nifcursors
 when defined(nimony):
   import std / sha1
 else:
-  import "$nim"/dist/checksums/src/checksums/sha1
+  # `std/sha1` is `{.deprecated.}` in favor of the `checksums` package, but it is
+  # the only SHA-1 module guaranteed to ship in `lib/std` on every Nim 2.x and
+  # devel install. The previous `$nim/dist/checksums/...` path only exists in a
+  # git/devel layout, so a released Nim 2 (as the docs require) failed with
+  # "cannot open file". It is the same SHA-1 fork, so digests are identical.
+  {.push warning[Deprecated]: off.}
+  import std / sha1
+  {.pop.}
 
 proc update(dest: var Sha1State; n: PackedToken) =
   case n.kind
