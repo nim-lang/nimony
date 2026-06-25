@@ -12,7 +12,12 @@ import bitabs, lineinfos, nifreader, nifstreams, nifcursors, nifchecksums, sympa
 when defined(nimony):
   import std / sha1
 else:
-  import "$nim"/dist/checksums/src/checksums/sha1
+  # See `nifchecksums.nim`: `std/sha1` is the portable choice that ships in
+  # `lib/std` on every Nim 2.x (the `$nim/dist/checksums/...` path only exists in
+  # a git/devel layout). Same SHA-1 fork → identical digests.
+  {.push warning[Deprecated]: off.}
+  import std / sha1
+  {.pop.}
 import ".." / models / [tags, nifindex_tags]
 
 include compat2
