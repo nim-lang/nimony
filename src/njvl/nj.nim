@@ -228,7 +228,11 @@ proc declarePc(c: var Context; dest: var TokenBuf) =
     dest.addDotToken() # pragmas
     dest.copyTree c.typeCache.builtins.intType
     dest.addIntLit(PcNotLeaving, NoLineInfo)
-  c.typeCache.registerLocal(s, VarY, c.typeCache.builtins.intType)
+  # Bind the type cursor to a local first: passing `c.typeCache.builtins.intType`
+  # directly would alias the mutable `c.typeCache` receiver (var) with an
+  # immutable arg borrowed from inside it, which the borrow checker rejects.
+  let intType = c.typeCache.builtins.intType
+  c.typeCache.registerLocal(s, VarY, intType)
 
 proc setPc(c: Context; dest: var TokenBuf; targetIdx: int; info: PackedLineInfo) =
   ## `pc = targetIdx` — replaces a `(jtrue …)` leaving scopes down to `targetIdx`.
