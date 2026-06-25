@@ -108,50 +108,50 @@ proc sameTreesIgnoreArrayIndexes*(a, b: Cursor): bool =
     inc b
   return false
 
-proc containsUsage(tree: var Cursor; x: Cursor): bool =
+proc disjointDirectField(tree: Cursor; r: SymId; x: Cursor): bool =
+  ## True if `tree` is a *direct* field/index access of the moved root `r` that
+  ## is statically disjoint from `x`'s own field/index — i.e. `tree` is
+  ## `(dot r other)` while `x` is `(dot r field)` with `other != field`, or the
+  ## tuple equivalent `(tupat r J)` vs `(tupat r K)` with `J != K`. Such a
+  ## location can never alias `x`, so the scan may skip it whole. Only the
+  ## direct shapes off a bare root qualify; anything nested or through a deref
+  ## returns false, so the conservative scan still runs (and still catches
+  ## whole-object reads and deref-of-root).
+  ##
+  ## Both `(dot OBJ FIELD …)` and `(tupat OBJ INDEX)` lay out as: token 0 is the
+  ## accessor tag, token 1 is OBJ, token 2 is the selector (the field symbol, or
+  ## the index literal). OBJ here is required to be the bare root symbol `r`, so
+  ## each OBJ is a single token and one `inc` steps tag→OBJ, another OBJ→selector.
   result = false
-  var nested = 0
-  while true:
-    if sameTreesIgnoreArrayIndexes(tree, x):
-      result = true
-    case tree.kind
-    of ParLe:
-      if tree.exprKind == DotX:
-        inc tree
-        if containsUsage(tree, x):
-          result = true
-        while tree.hasMore:
-          skip tree
-      elif tree.substructureKind == KvU:
-        inc tree
-        skip tree
+  if tree.kind == ParLe and x.kind == ParLe and tree.exprKind == x.exprKind:
+    var treeObj = tree
+    inc treeObj                 # tree: accessor tag -> OBJ
+    var xObj = x
+    inc xObj                    # x:    accessor tag -> OBJ
+    let bothRootedAtR =
+      treeObj.kind == Symbol and treeObj.symId == r and
+      xObj.kind == Symbol and xObj.symId == r
+    if bothRootedAtR:
+      var treeSel = treeObj
+      inc treeSel               # tree: OBJ -> selector
+      var xSel = xObj
+      inc xSel                  # x:    OBJ -> selector
+      case tree.exprKind
+      of DotX:                  # disjoint iff the two field names differ
+        result = treeSel.kind == Symbol and xSel.kind == Symbol and
+                 treeSel.symId != xSel.symId
+      of TupatX:                # disjoint iff the two tuple indices differ
+        result = treeSel.kind == IntLit and xSel.kind == IntLit and
+                 pool.integers[treeSel.intId] != pool.integers[xSel.intId]
       else:
-        inc tree
-      inc nested
-    of ParRi:
-      inc tree
-      dec nested
-    else:
-      inc tree
-    if nested == 0: break
-
-proc tupleFieldOf(x: Cursor): int =
-  ## If `x` is `(tupat sym idx)`, return `idx`. Otherwise -1.
-  ## Used by `containsRoot` to skip disjoint tuple-field accesses: a future
-  ## `(tupat tmp 1)` is not a usage of `(tupat tmp 0)` because the fields
-  ## are statically disjoint locations.
-  if x.kind != ParLe or x.exprKind != TupatX: return -1
-  var n = x
-  inc n
-  if n.kind != Symbol: return -1
-  inc n
-  if n.kind == IntLit:
-    return int pool.integers[n.intId]
-  return -1
+        discard
 
 proc containsRoot(tree: var Cursor; x: Cursor): bool =
+  ## True if `tree` contains a read whose location can alias `x` (the location
+  ## being moved out of): the whole root `r`, the exact field, a sub-path, or a
+  ## read through a deref of `r`. Statically-disjoint sibling fields/indices of
+  ## `r` are skipped — they cannot alias `x` (see `disjointDirectField`).
   let r = rootOf(x)
-  let xField = tupleFieldOf(x)
   # scan loop also correct for `r == NoSymId`:
   var nested = 0
   result = false
@@ -163,26 +163,21 @@ proc containsRoot(tree: var Cursor; x: Cursor): bool =
         result = true
       inc tree
     of ParLe:
-      if tree.exprKind == DotX:
+      if disjointDirectField(tree, r, x):
+        # A sibling field/index that cannot alias `x`: skip the whole subtree.
+        # `skip` consumed its matching `)` too, so `nested` is unchanged;
+        # replicate the loop's terminator before continuing, or a disjoint path
+        # that *is* the top-level scanned expression would run the scan off the
+        # end into the following CF instructions.
+        skip tree
+        if nested == 0: break
+        continue
+      elif tree.exprKind == DotX:
         inc tree
         if containsRoot(tree, x):
           result = true
         while tree.hasMore:
           skip tree
-      elif tree.exprKind == TupatX and xField >= 0:
-        # `x` is a specific tuple field of `r`. A future `(tupat r J)` with
-        # `J != xField` accesses a *disjoint* location and does not block
-        # the move out of `x`. Skip the whole tupat subtree in that case.
-        var probe = tree
-        inc probe
-        if probe.kind == Symbol and probe.symId == r:
-          inc probe
-          if probe.kind == IntLit and int(pool.integers[probe.intId]) != xField:
-            skip tree
-            continue
-        # Otherwise (different root, non-literal index, or matching index)
-        # fall back to the conservative scan.
-        inc tree
       elif tree.substructureKind == KvU:
         inc tree
         skip tree # key ignored for object construction!
@@ -270,7 +265,12 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
       #echo "PC IS: ", pool.tags[pc.tag]
       if pc.cfKind == IteF:
         inc pc
-        if containsUsage(pc, x):
+        # `containsRoot` (not `containsUsage`): an `if` condition that reads the
+        # whole root — or derefs it — after a partial move of `x = a.field`
+        # still uses the moved location; `containsUsage` matched only the exact
+        # path and missed it. `containsRoot` is sound here and skips truly
+        # disjoint sibling fields (see `disjointDirectField`).
+        if containsRoot(pc, x):
           otherUsage = pc
           return false
         # now 2 goto instructions follow:
@@ -289,14 +289,14 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
             # the path leads to a redefinition of 's' --> sink 's'.
             break
           skip pc # skip left-hand-side
-          # right-hand-side is a simple use expression. Use `containsRoot` (not
-          # `containsUsage`): when `x` is a partial path like `a.field`, a later
+          # right-hand-side is a simple use expression. Use `containsRoot`, not
+          # `containsUsage`: when `x` is a partial path like `a.field`, a later
           # *whole-object* read of `a` (e.g. `c = (emove a)`) still reads the
-          # moved field, but `containsUsage` only matches the exact path and
-          # would miss it — wrongly sinking `a.field` and leaving the object
-          # `a` is later moved from with an emptied field. `containsRoot` matches
-          # any use of the root (and already treats disjoint tuple fields as
-          # non-conflicting), consistent with every other statement branch here.
+          # moved field, but `containsUsage` only matched the exact path and
+          # missed it — wrongly sinking `a.field` so the later whole-object move
+          # restored an emptied field. `containsRoot` is sound (it also catches
+          # deref-of-root) and lets a disjoint sibling read `a.other` through
+          # (see `disjointDirectField`).
           if containsRoot(pc, x):
             # only partially writes to 's' --> can't sink 's', so this def reads 's'
             # or maybe writes to 's' --> can't sink 's'
