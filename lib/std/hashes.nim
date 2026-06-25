@@ -44,6 +44,13 @@ func hash*[A: Hashable, B: Hashable, C: Hashable](x: (A, B, C)): Hash {.inline.}
   result = hash(x[0]) !& hash(x[1]) !& hash(x[2])
   result = !$result
 
+func hash*[T: Hashable](x: seq[T]): Hash =
+  ## Computes a hash value for `x`, mixing each element's hash in order.
+  result = 0'u
+  for a in items(x):
+    result = result !& hash(a)
+  result = !$result
+
 #[
 func hash*[T: object](x: T): Hash {.inline.} =
   result = 0'u
