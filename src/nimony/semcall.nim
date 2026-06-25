@@ -1180,7 +1180,11 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     # now interpret the dot expression:
     let dotState = tryBuiltinDot(c, dest, cs.fn, lhs, fieldName, dotInfo,
                                   dotFlags)
-    if dotState == FailedDot or
+    if dotState == FailedDot and dotLhsModuleSym(lhs) != SymId(0):
+      dest.shrink dotStart
+      buildErr c, dest, dotInfo, "undeclared identifier in module: '" &
+                 pool.strings[fieldName] & "'"
+    elif dotState == FailedDot or
         # also ignore non-proc fields:
         (dotState == MatchedDotField and cs.fn.typ.typeKind notin RoutineTypes):
       cs.source = MethodCall

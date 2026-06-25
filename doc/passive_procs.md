@@ -82,8 +82,7 @@ Each call to `scheduler(c)` executes one state transition. The default scheduler
 This matters for calls from regular, non-passive code: the compiler drives the passive
 call to completion via the trampoline. In other words, the call is mediated by the active
 scheduler rather than by a direct stack call. With the default scheduler this behaves like
-ordinary synchronous execution. With a custom scheduler it can also make progress on other
-runnable continuations or IO work according to that scheduler's policy.
+ordinary synchronous execution.
 
 ### Custom schedulers
 
@@ -95,8 +94,42 @@ type Scheduler* = proc (c: Continuation): Continuation {.nimcall.}
 proc setScheduler*(handler: Scheduler)
 ```
 
-A custom scheduler can interleave multiple coroutines, integrate with a thread pool,
-or bridge to an IO event loop.
+A custom scheduler can integrate with a thread pool or bridge to an IO event loop.
+Interleaving unrelated continuations belongs at enqueue/resume boundaries (for example
+`submit` on the thread pool), not by keeping `complete()` running across unreturned
+regular-proc stack frames.
+
+#### Scheduler contract
+
+When a coroutine **suspends** (`suspend()` returns `Continuation(fn: nil, env: nil)`) or
+**yields** to other work, the scheduler must let the current trampoline stop so that C
+stack frames can unwind:
+
+1. **Store** the continuation that should resume later (for example in an IoRing slot via
+   `delay()`, or on the thread-pool run queue).
+2. **Return** `Continuation(fn: nil, env: nil)` from the scheduler step so that `complete()`
+   exits and any regular proc between two passive calls can return.
+3. **Resume** later from a clean entry point (for example `submit(cont)` on a pool worker).
+
+Running many steps synchronously inside one `complete()` call is fine when the chain is
+entirely passive (heap-allocated CPS frames) and the scheduler is driving a single logical
+call to completion. The default `trivialTick` scheduler does exactly this.
+
+A scheduler must **not** dispatch unrelated continuations inside `complete()` while a
+regular proc on the hardware stack has not yet returned. A pathological example is a scheduler
+that, on every `suspend()`, pops the next continuation from a shared queue and feeds it
+back into the same `complete()` loop. If the call chain is
+`passive → regular → passive`, each nested `complete()` leaves the regular proc's stack
+frame alive, so thousands of such interleavings can overflow the hardware stack even though
+passive-to-passive depth is bounded by the heap. The production thread pool avoids this
+by taking one continuation step per dequeue, not going through `setScheduler`, and not
+resubmitting after `suspend()`.
+
+Practical rule: **on suspend or when handing off, enqueue and return**; interleave at
+`submit()` boundaries where stacks are clean. Do not put regular procs between two
+suspending passive calls on hot paths — or mark those intermediaries `{.passive.}` as
+well so the chain stays on heap-allocated frames.
+
 
 ## Language vs Scheduler Boundary
 
@@ -114,6 +147,8 @@ Language-level semantics:
 
 Scheduler/runtime policy:
 
+- On `suspend()` or yield: enqueue the continuation and return so hardware stack frames unwind
+  before unrelated work runs (see **Scheduler contract** above).
 - Fairness and run-queue strategy.
 - Thread-pool work stealing and placement.
 - IO backend details (`epoll`, `kqueue`, `io_uring`, etc.).
@@ -267,7 +302,7 @@ the environment, passes its address to the init function, and then drives the pa
 completion via `complete()`:
 
 ```nim
-var coroVar: FooCoroutine   # on the caller's C stack
+var coroVar: FooCoroutine   # on the caller's hardware stack
 let contVar = `foo`(args, addr coroVar, stopContinuation)
 complete(contVar)
 ```
@@ -281,8 +316,9 @@ This means:
   points) calls `deallocFrame` inline. The nil-caller check makes this a no-op for the
   stack-allocated frame — no double-free or invalid-free.
 - A passive proc that suspends returns to the trampoline before reaching `deallocFrame`.
-  The `complete()` loop eventually calls the final state function, which calls `deallocFrame`
-  — again a no-op for the stack frame (the nil-caller check still holds).
+  With a conforming scheduler, `complete()` exits on `suspend()` so the regular caller's
+  stack frame can unwind; when the coroutine later runs to completion, `deallocFrame` is
+  again a no-op for the stack frame (the nil-caller check still holds).
 
 Note: This optimization only applies to regular procedure calls. For
 passive methods, dynamic dispatch prevents the inlining strategy above,

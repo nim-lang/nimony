@@ -819,7 +819,7 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
            TagsP, DeprecatedP, SideEffectP, KeepOverflowFlagP, SemanticsP,
            BaseP, FinalP, PragmaP, CursorP, PassiveP, PluginP, MethodsP, CastP, SizeP,
            FeatureP, UncheckedAssignP, UncheckedAccessP,
-           ProfilerP, StacktraceP, GcsafeP:
+           ProfilerP, StacktraceP, GcsafeP, UsedP:
           skip n
         of BuildP, CompileP, EmitP, PushP, PopP, PassLP, PassCP, CallConvP:
           bug "unreachable"
@@ -2124,13 +2124,71 @@ proc makeOutput(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo): 
   # Close the stmts wrapper
   result.addParRi()
 
+proc libCandidates(s: string; dest: var seq[string]) =
+  ## Expand a dynlib name pattern like "libX11.so(|.6)" into the concrete
+  ## candidate names to try, mirroring Nim's `system/dynlib.libCandidates`.
+  ## A single `(a|b|...)` group is expanded here; recursion handles any
+  ## further groups in the resulting names.
+  var le = -1
+  for i in 0 ..< s.len:
+    if s[i] == '(':
+      le = i
+      break
+  var ri = -1
+  if le >= 0:
+    for i in le+1 ..< s.len:
+      if s[i] == ')':
+        ri = i
+        break
+  if le >= 0 and ri > le:
+    let prefix = substr(s, 0, le-1)
+    let suffix = substr(s, ri+1)
+    var start = le+1
+    var i = le+1
+    while i <= ri:
+      if i == ri or s[i] == '|':
+        libCandidates(prefix & substr(s, start, i-1) & suffix, dest)
+        start = i+1
+      inc i
+  else:
+    dest.add s
+
+proc emitDynlibLoad(dest: var TokenBuf; loadSym, stepSym: SymId;
+                    candidates: seq[string]; idx: int; info: PackedLineInfo) =
+  ## Emit the left-nested load expression for candidates[0..idx]:
+  ##   nimDynlibLoadStep(... nimLoadLibrary(c0) ..., c_idx)
+  ## so the alternatives are tried in declared order, keeping the first hit.
+  if idx <= 0:
+    dest.add tagToken("call", info)
+    dest.add symToken(loadSym, info)
+    dest.addStrLit candidates[0]
+    dest.addParRi()
+  else:
+    dest.add tagToken("call", info)
+    dest.add symToken(stepSym, info)
+    emitDynlibLoad(dest, loadSym, stepSym, candidates, idx-1, info)
+    dest.addStrLit candidates[idx]
+    dest.addParRi()
+
 proc initDynlib(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo) =
   # dynlib init:
   for key, vals in c.dynlibs:
     let dynlib = pool.strings[key]
     var tmp = pool.syms.getOrIncl "Dl." & dynlib & "." & $getTmpId(c) & "." & c.main
 
-    # nimLoadLibrary
+    # Expand the dynlib name pattern at compile time (e.g. "libX11.so(|.6)"
+    # -> ["libX11.so", "libX11.so.6"]) and load the library handle from the
+    # first candidate that succeeds. The whole expression lives in `tmp`'s
+    # initializer (never referenced at top level), so the library load stays
+    # subject to dead-code elimination: if every proc pulled from it is dead,
+    # `tmp` is dead too and nothing is loaded.
+    var candidates: seq[string] = @[]
+    libCandidates(dynlib, candidates)
+
+    let loadSym = pool.syms.getOrIncl(getCompilerProc(c, "nimLoadLibrary", false))
+    let stepSym = pool.syms.getOrIncl(getCompilerProc(c, "nimDynlibLoadStep", false))
+    let checkSym = pool.syms.getOrIncl(getCompilerProc(c, "nimDynlibCheck", false))
+
     dest.add tagToken("gvar", rootInfo)
     dest.add symdefToken(tmp, rootInfo)
     dest.addDotToken()
@@ -2138,12 +2196,14 @@ proc initDynlib(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo) =
     dest.add tagToken("void", rootInfo)
     dest.addParRi()
     dest.addParRi()
+    # value: nimDynlibCheck(<candidate chain>, "<original pattern>")
     dest.add tagToken("call", rootInfo)
-    dest.add symToken(pool.syms.getOrIncl(getCompilerProc(c, "nimLoadLibrary", false)), rootInfo)
+    dest.add symToken(checkSym, rootInfo)
+    emitDynlibLoad(dest, loadSym, stepSym, candidates, candidates.len-1, rootInfo)
     dest.addStrLit dynlib
-    dest.addParRi()
+    dest.addParRi()   # close nimDynlibCheck call
 
-    dest.addParRi()
+    dest.addParRi()   # close gvar
 
     # nimGetProcAddr
     for (varName, val, typeSym) in vals:

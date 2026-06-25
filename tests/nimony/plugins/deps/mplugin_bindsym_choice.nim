@@ -13,19 +13,20 @@ import plugins
 proc tr(n: NifCursor): NifBuilder =
   result = createTree()
   let info = n.info
-  # Input shape: (stmts <bufRef> <strLit>) — the two template args flattened
-  # into a stmts container. Re-emit as
+  # Input shape: (stmts <template-name> <bufRef> <strLit>) — the two template
+  # args flattened into a stmts container, preceded by the invoked template's
+  # name. Re-emit as
   #   (stmts (asgn <bufRef> (call (cchoice & & &) <bufRef> <strLit>)))
   # where the cchoice resolves to system's `&(string, string)` at call-site
   # sem. We use `&` so all three overloads live in `system` — overloads from
   # the plugin's def-site that the user's compile can't import would
   # otherwise leak into the choice and break cross-module resolution.
   assert n.stmtKind == StmtsS
-  var args = firstChild(n)
+  var args = templateArgs(n)
   result.withTree StmtsS, info:
     result.withTree AsgnS, info:
       result.takeTree args  # bufRef as the asgn lhs
-      args = firstChild(n)  # rewind to read both args again for the rhs
+      args = templateArgs(n)  # rewind to read both args again for the rhs
       result.withTree CallS, info:
         result.bindSym "&"
         result.takeTree args

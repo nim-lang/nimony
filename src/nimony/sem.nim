@@ -1025,6 +1025,14 @@ proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Ite
     c.buildErr dest, info, "identifier after `.` expected"
     result = InvalidDot
   else:
+    # Module-qualified `module.sym` before type-based dispatch; see dotLhsModuleSym.
+    let moduleSym = dotLhsModuleSym(lhs)
+    if moduleSym != SymId(0):
+      result = MatchedDotSym
+      dest.shrink exprStart
+      let s = semQualifiedIdent(c, dest, moduleSym, fieldName, info)
+      semExprSym c, dest, it, s, exprStart, flags
+      return
     let t = skipModifier(lhs.typ)
     var root = t
     var doDeref = false # maybe arbitrary number of derefs for compat mode
@@ -1073,15 +1081,6 @@ proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Ite
           dest.add identToken(fieldName, info)
       else:
         dest.add identToken(fieldName, info)
-    elif lhs.kind == ModuleY:
-      # this is a qualified identifier, i.e. module.name
-      # consider matched even if undeclared
-      result = MatchedDotSym
-      dest.shrink exprStart
-      let module = findModuleSymbol(lhs.n)
-      let s = semQualifiedIdent(c, dest, module, fieldName, info)
-      semExprSym c, dest, it, s, exprStart, flags
-      return
     elif t.typeKind == TupleT:
       var tup = t
       var i = 0
@@ -1156,7 +1155,10 @@ proc semDot(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[SemF
   skipParRi it.n
   # now interpret the dot expression:
   let state = tryBuiltinDot(c, dest, it, lhs, fieldName, info, innerFlags)
-  if state == FailedDot:
+  if state == FailedDot and dotLhsModuleSym(lhs) != SymId(0):
+    dest.shrink exprStart
+    c.buildErr dest, info, "undeclared identifier in module: '" & pool.strings[fieldName] & "'"
+  elif state == FailedDot:
     # attempt a dot call, i.e. build b(a) from a.b
     dest.shrink exprStart
     var callBuf = createTokenBuf(16)
@@ -2353,7 +2355,7 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
             buildErr c, dest, it.n.info, "too many bindings for sum type branch"
           inc it.n
           inc fieldIdx
-        inc it.n # skip call ParRi
+        skipParRi it.n # skip call ')'
       elif it.n.exprKind == CurlyX:
         inc it.n # skip curly tag
         var firstEfld = SymId(0)
@@ -2380,7 +2382,7 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
                   buildErr c, dest, it.n.info,
                     "branches in set pattern must come from the same `of` declaration"
           inc it.n
-        inc it.n # skip curly ParRi
+        skipParRi it.n # skip curly ')'
         if firstEfld != SymId(0):
           var fieldIdx = 0
           while it.n.hasMore:
@@ -2397,7 +2399,7 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
         else:
           while it.n.hasMore:
             inc it.n
-        inc it.n # skip call ParRi
+        skipParRi it.n # skip call ')'
       else:
         buildErr c, dest, info, "identifier expected for sum type branch name"
         while it.n.hasMore: skip it.n
@@ -2780,6 +2782,50 @@ proc isIdentCall(c: var SemContext; dest: var TokenBuf; beforeCall: int): bool {
     else:
       result = false
 
+proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
+                      beforeCall: int; info: PackedLineInfo): bool =
+  ## When a `for` loop's iterator resolves to a routine with a `.plugin`
+  ## pragma, invoke the plugin with the for-loop context instead of doing
+  ## normal iterator resolution. The plugin receives:
+  ##   (stmts <iter-name> <call-args...> <loop-vars> <loop-body>)
+  ## and its output replaces the entire for loop, then gets re-semanticked.
+  result = false
+  if dest.len <= beforeCall + 1 or
+     dest[beforeCall].exprKind notin CallKinds or
+     dest[beforeCall + 1].kind != Symbol: return
+  let res = declToCursor(c, dest, fetchSym(c, dest[beforeCall + 1].symId))
+  if res.status != LacksNothing or not isRoutine(res.decl.symKind): return
+  let routine = asRoutine(res.decl, SkipExclBody)
+  let pp = extractPragma(routine.pragmas, PluginP)
+  if cursorIsNil(pp) or pp.kind != StringLit: return
+  result = true
+
+  # Extract the sem'd call from dest so we can pass the call args to the plugin
+  var callBuf = createTokenBuf(dest.len - beforeCall)
+  for tok in beforeCall ..< dest.len: callBuf.add dest[tok]
+  dest.shrink beforeCall - 1
+
+  # Build plugin input: (stmts <iter-name> <call-args...> <loop-vars> <body>)
+  var b = createTokenBuf(30)
+  b.addParLe StmtsS, info
+  b.add identToken(symToIdent(routine.name.symId), info)
+  var callC = beginRead(callBuf)
+  callC.into:
+    skip callC # fn symbol or sym-choice
+    while callC.hasMore:
+      b.takeTree callC
+  b.takeTree it.n # loop vars
+  b.takeTree it.n # loop body
+  b.addParRi()
+  inc it.n # skip the for's closing ')'
+
+  # Run plugin, then re-sem the output into dest
+  var pluginOutput = createTokenBuf(30)
+  runPlugin(c, pluginOutput, pp.info, pool.strings[pp.litId], b.toString)
+  var expandedItem = Item(n: cursorAt(pluginOutput, 0), typ: c.types.autoType)
+  semExpr c, dest, expandedItem
+  producesNoReturn c, dest, info, it.typ
+
 proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   let orig = it.n
@@ -2789,6 +2835,8 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeCall = dest.len
   semExpr c, dest, iterCall, {PreferIterators, KeepMagics}
   it.n = iterCall.n
+  if tryForLoopPlugin(c, dest, it, beforeCall, info):
+    return
   var isMacroLike = false
   if dest[beforeCall].exprKind == ErrX:
     discard "already produced an error"
@@ -3948,7 +3996,7 @@ proc semSumTypeObjConstr(c: var SemContext; dest: var TokenBuf; it: var Item;
     objBuf.addSubtree it.n
     skip it.n
   objBuf.addParRi()
-  inc it.n
+  skipParRi it.n
   var objConstr = Item(n: cursorAt(objBuf, 0), typ: expected)
   semObjConstr c, dest, objConstr
   it.typ = objConstr.typ

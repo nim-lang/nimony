@@ -1251,3 +1251,21 @@ func contains*(s: string, chars: set[char]): bool =
   ## See also:
   ## * `find func<#find,string,set[char],Natural,int>`_
   return find(s, chars) >= 0
+
+func parseBiggestInt*(s: string): BiggestInt {.raises.} =
+  ## Parses a decimal integer value contained in `s`.
+  ##
+  ## `ValueError` is raised if `s` is not a valid integer.
+  result = BiggestInt(0)
+  let L = parseutils.parseBiggestInt(s, result)
+  if L != s.len or L == 0:
+    raise ValueError
+
+func parseInt*(s: string): int {.raises.} =
+  ## Parses a decimal integer value contained in `s`.
+  ##
+  ## `ValueError` is raised if `s` is not a valid integer.
+  ##   ```nim
+  ##   assert parseInt("-0042") == -42
+  ##   ```
+  result = int(parseBiggestInt(s))

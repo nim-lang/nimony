@@ -452,6 +452,14 @@ func `..`*[T, U](a: sink T; b: sink U): HSlice[T, U] {.inline.} =
   ##   ```
   result = HSlice[T, U](a: a, b: b)
 
+func `..<`*[T, U: Ordinal](a: sink T; b: sink U): HSlice[T, U] {.inline.} =
+  ## Binary `..<` operator that constructs the half-open interval `[a, b)`,
+  ## i.e. it is equivalent to `a .. pred(b)`.
+  ##
+  ## This is the *value* form used by slice indexing such as `s[a ..< b]`;
+  ## the for-loop form `for i in a ..< b` resolves to the `..<` iterator.
+  result = HSlice[T, U](a: a, b: pred(b))
+
 type
   BackwardsIndex* = distinct int ## Type constructed by `^` for reversed
                                  ## array/string/seq access.
@@ -467,6 +475,42 @@ template `[]`*[T](s: openArray[T]; i: BackwardsIndex): var T =
 
 template `[]`*(s: string; i: BackwardsIndex): var char =
   s[s.len - int(i)]
+
+template `..^`*(a, b: untyped): untyped =
+  ## A shortcut for `a .. ^b`. Note that `a .. ^b` would be tokenized as
+  ## `a` `..^` `b` anyway, so this operator must exist for that to parse.
+  a .. ^b
+
+# ---- slice indexing ----
+# These live here (rather than in `system/stringimpl` or `system/seqimpl`)
+# because they read `HSlice`'s `a`/`b` fields, and `HSlice` is declared above
+# in this file *after* those includes. A field read placed textually before
+# the type's declaration binds to the wrong same-named field.
+
+func `[]`*(s: string; x: HSlice[int, int]): string {.inline.} =
+  ## Slice indexing: returns the substring for the inclusive range `x.a .. x.b`
+  ## (a fresh copy). Works with `s[a .. b]` and `s[a ..< b]`.
+  result = substr(s, x.a, x.b)
+
+func `[]`*(s: string; x: HSlice[int, BackwardsIndex]): string {.inline.} =
+  ## Slice indexing with a backwards upper bound, e.g. `s[a .. ^1]`.
+  result = substr(s, x.a, s.len - int(x.b))
+
+func `[]`*[T](s: seq[T]; x: HSlice[int, int]): seq[T] {.nodestroy.} =
+  ## Slice indexing: returns a fresh `seq` with copies of the elements in the
+  ## inclusive range `x.a .. x.b`. Works with `s[a .. b]` and `s[a ..< b]`.
+  let a = max(x.a, 0)
+  let b = min(x.b, s.len - 1)
+  let n = if b >= a: (b - a) + 1 else: 0
+  result = newSeqUninit[T](n)
+  var i = 0
+  while i < n:
+    (result.rawData[i]) = `=dup`(s.rawData[a+i])
+    inc i
+
+func `[]`*[T](s: seq[T]; x: HSlice[int, BackwardsIndex]): seq[T] {.inline.} =
+  ## Slice indexing with a backwards upper bound, e.g. `s[a .. ^1]`.
+  result = s[x.a .. (s.len - int(x.b))]
 
 type
   TypeOfMode* = enum ## Possible modes of `typeof`.
