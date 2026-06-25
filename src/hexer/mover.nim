@@ -289,8 +289,15 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
             # the path leads to a redefinition of 's' --> sink 's'.
             break
           skip pc # skip left-hand-side
-          # right-hand-side is a simple use expression:
-          if containsUsage(pc, x):
+          # right-hand-side is a simple use expression. Use `containsRoot` (not
+          # `containsUsage`): when `x` is a partial path like `a.field`, a later
+          # *whole-object* read of `a` (e.g. `c = (emove a)`) still reads the
+          # moved field, but `containsUsage` only matches the exact path and
+          # would miss it — wrongly sinking `a.field` and leaving the object
+          # `a` is later moved from with an emptied field. `containsRoot` matches
+          # any use of the root (and already treats disjoint tuple fields as
+          # non-conflicting), consistent with every other statement branch here.
+          if containsRoot(pc, x):
             # only partially writes to 's' --> can't sink 's', so this def reads 's'
             # or maybe writes to 's' --> can't sink 's'
             otherUsage = pc # XXX Fixme: pc advanced to ')'
