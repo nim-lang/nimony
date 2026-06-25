@@ -140,7 +140,7 @@ proc dispatchBasicCommand(key: string; config: var NifConfig): Command =
   of "doc":
     DocProject
   else:
-    quit "command expected"
+    quit "invalid command, " & key
 
 type
   CmdMode = enum
@@ -205,7 +205,10 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
         var forwardArgLengc = false
         # Handle special cases first, then try common parser
         let keyNorm = normalize(key)
-        if keyNorm == "path" or keyNorm == "p":
+        if keyNorm == "help":
+          echo Usage
+          quit(QuitSuccess)
+        elif keyNorm == "path" or keyNorm == "p":
           # Special handling for --path due to FromArgsFile check
           if mode == FromArgsFile:
             quit "`--path` in `.args` file is forbidden. Use a `nimony.paths` file instead."
@@ -297,7 +300,7 @@ proc compileProgram(c: var CmdOptions) =
   elif c.config.linker.len == 0 and c.config.cc.len > 0:
     c.config.linker = c.config.cc
   if c.args.len == 0:
-    quit "too few command line arguments"
+    quit "too few command line arguments, try --help"
   elif c.args.len > 2 - int(c.cmd in {FullProject, CheckProject, DocProject}):
     quit "too many command line arguments"
 
