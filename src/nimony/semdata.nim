@@ -153,6 +153,13 @@ type
     instantiatedFrom*: seq[PackedLineInfo]
     importTab*: OrderedTable[StrId, seq[SymId]] ## mapping of identifiers to modules containing the identifier
     globals*, locals*: Table[string, int]
+    fieldCounts*: Table[string, int]
+      ## Per-name field counts for the object type currently being declared.
+      ## Unlike `globals`/`locals` this is NOT a monotonic counter: a field is
+      ## numbered `.0` within its owning type, bumped only when an ancestor type
+      ## already declares the same name (so a field's SymId is independent of the
+      ## global counter / semcheck order). `semObjectType` saves/restores it so
+      ## nested anonymous object types each get their own numbering.
     types*: BuiltinTypes
     typeMem*: Table[string, TokenBuf]
     instantiatedTypes*: Table[string, SymId]

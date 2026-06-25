@@ -23,10 +23,10 @@
   (stmts@2,1
    (type@9 :Foo.1.~4 . . .
     (object@2 .
-     (fld~9,1 :val.1 . . T.1.@5 .)))
+     (fld~9,1 :val.0 . . T.1.@5 .)))
    (var@4,2 :obj.1 . . Foo.1.@6
     (oconstr@9 Foo.1.~3
-     (kv@4 val.1~3 x.1@2)))))
+     (kv@4 val.0~3 x.1@2)))))
  (stmts@2,9
   (type@9 :Foo.2.~4 . .
    (pragmas)
