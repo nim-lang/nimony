@@ -1615,8 +1615,13 @@ proc traverseToplevel(c: var NjvlContext; n: var Cursor) =
         traverseToplevel c, n
   of PragmaxS:
     inc n
-    skip n
-    traverseToplevel c, n
+    skip n # pragmas
+    # A pragma block (e.g. `{.cast(uncheckedAccess).}:`) carries a whole body,
+    # not a single statement — traverse every child before closing, as the
+    # non-toplevel `traverseStmt` already does. Consuming only one left the
+    # cursor on the next statement and tripped `skipParRi`.
+    while n.hasMore:
+      traverseToplevel c, n
     skipParRi n
   of ProcS, FuncS, IteratorS, ConverterS, MethodS:
     inc c.nestedProcs
