@@ -358,8 +358,12 @@ proc testValgrind(c: var TestCounters; file: string; overwrite: bool; cat: Categ
 
         failure c, file, valgrindSpec, testProgramOutput
 
+proc echoTestSuccess(file: string) =
+  echo "SUCCESS ", file
+
 proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category; forward: string) =
   #echo "TESTING ", file
+  let failuresBefore = c.failures
   inc c.total
   var nimonycmd = "--isMain"
   case cat
@@ -430,6 +434,9 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category;
       if ast.fileExists():
         let nif = generatedFile(file, ".s.nif")
         diffFiles c, file, ast, nif, overwrite
+
+  if c.failures == failuresBefore:
+    echoTestSuccess(file)
 
 proc canRunParallel(cat: Category): bool {.inline.} =
   ## `Compat` and `Basics` reset `nimcache/` around the loop and so are
@@ -1056,8 +1063,6 @@ proc test(t: string; overwrite: bool; cat: Category; forward: string) =
   testFile c, t, overwrite, cat, forward
   if c.failures > 0:
     quit "FAILURE: Test failed."
-  else:
-    echo "SUCCESS."
 
 proc testDirCmd(dir: string; overwrite: bool; forward: string) =
   var c = TestCounters(total: 0, failures: 0)
