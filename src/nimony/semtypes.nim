@@ -42,7 +42,7 @@ proc semObjectComponent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     buildErr c, dest, n.info, "illformed AST inside object: " & asNimCode(n)
     skip n
 
-proc countInheritedFieldNames(c: var SemContext; objType: Cursor; counts: var Table[string, int]; depth = 0) =
+proc countInheritedFieldNames(objType: Cursor; counts: var Table[string, int]; depth = 0) =
   ## Walk `objType`'s base chain, counting field names (by basename) so that a
   ## field shadowing an inherited one continues the numbering (`.1`, `.2`, …).
   ## For a non-inheriting object this leaves `counts` empty, so every field is
@@ -73,14 +73,14 @@ proc countInheritedFieldNames(c: var SemContext; objType: Cursor; counts: var Ta
       counts[name] = counts.getOrDefault(name, 0) + 1
     skip n # advance past this whole field
   if baseType.kind != DotToken:
-    countInheritedFieldNames(c, baseType, counts, depth+1)
+    countInheritedFieldNames(baseType, counts, depth+1)
 
 proc semObjectType(c: var SemContext; dest: var TokenBuf; n: var Cursor;
                    state: var SemObjectState) =
   # `c.fieldCounts` is scoped to the object type being declared. Save and clear
   # it so a nested anonymous object type (an inline field type) gets its own
   # numbering; restore the outer object's counts on exit.
-  var savedFieldCounts: Table[string, int]
+  var savedFieldCounts = initTable[string, int]()
   swap savedFieldCounts, c.fieldCounts
   takeToken dest, n
   # inherits from?
@@ -97,7 +97,7 @@ proc semObjectType(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     else:
       # seed the field-name counts from the base chain so a shadowing field
       # continues the numbering (`.1`, …); fresh names start at `.0`.
-      countInheritedFieldNames(c, inheritsFrom, c.fieldCounts)
+      countInheritedFieldNames(inheritsFrom, c.fieldCounts)
       endRead(dest)
   if n.kind == DotToken:
     takeToken dest, n
