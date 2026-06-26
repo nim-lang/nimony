@@ -2783,12 +2783,19 @@ proc isIdentCall(c: var SemContext; dest: var TokenBuf; beforeCall: int): bool {
       result = false
 
 proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
-                      beforeCall: int; info: PackedLineInfo): bool =
+                      beforeCall: int; info: PackedLineInfo;
+                      loopVarType: TypeCursor): bool =
   ## When a `for` loop's iterator resolves to a routine with a `.plugin`
   ## pragma, invoke the plugin with the for-loop context instead of doing
   ## normal iterator resolution. The plugin receives:
   ##   (stmts <iter-name> <call-args...> <loop-vars> <loop-body>)
   ## and its output replaces the entire for loop, then gets re-semanticked.
+  ##
+  ## The loop var(s) and body are fully sem-checked first — the loop var is
+  ## typed against the iterator's element type (`loopVarType`), which is
+  ## known from the plugin iterator's declared yield type — so the plugin
+  ## receives a *typed* body, consistent with Nimony's typed templates and
+  ## macros. This lets plugins do type- and effect-aware transformations.
   result = false
   if dest.len <= beforeCall + 1 or
      dest[beforeCall].exprKind notin CallKinds or
@@ -2805,6 +2812,42 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
   for tok in beforeCall ..< dest.len: callBuf.add dest[tok]
   dest.shrink beforeCall - 1
 
+  # Type the loop variable(s) against the iterator's element type and
+  # sem-check the loop body into a temporary buffer, so the plugin gets a
+  # fully typed `(loop-vars) (body)` pair. This mirrors the normal iterator
+  # path's var/body handling (see `semFor`).
+  var vb = createTokenBuf(30)
+  withNewScope c:
+    case substructureKind(it.n)
+    of UnpackflatU:
+      takeToken vb, it.n
+      var n2 = it.n
+      skip n2
+      let hasMultiVars = n2.hasMore
+      if hasMultiVars:
+        if loopVarType.skipModifier.typeKind == TupleT:
+          semForLoopTupleVar c, vb, it, loopVarType
+        else:
+          while it.n.hasMore:
+            semForLoopVar c, vb, it, c.types.autoType
+      else:
+        semForLoopVar c, vb, it, loopVarType
+      takeParRi vb, it.n
+    of UnpacktupU:
+      takeToken vb, it.n
+      if loopVarType.skipModifier.typeKind == TupleT:
+        semForLoopTupleVar c, vb, it, loopVarType
+      else:
+        buildErr c, vb, it.n.info, "tuple types expected, but got: " & $loopVarType
+      takeParRi vb, it.n
+    else:
+      buildErr c, vb, it.n.info, "illformed AST: `unpackflat` or `unpacktup` inside `for` expected"
+      skip it.n
+    inc c.routine.inLoop
+    semStmt c, vb, it.n, true
+    dec c.routine.inLoop
+  inc it.n # skip the for's closing ')'
+
   # Build plugin input: (stmts <iter-name> <call-args...> <loop-vars> <body>)
   var b = createTokenBuf(30)
   b.addParLe StmtsS, info
@@ -2814,10 +2857,10 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
     skip callC # fn symbol or sym-choice
     while callC.hasMore:
       b.takeTree callC
-  b.takeTree it.n # loop vars
-  b.takeTree it.n # loop body
+  var vbC = beginRead(vb)
+  b.takeTree vbC # loop vars (typed)
+  b.takeTree vbC # loop body (typed)
   b.addParRi()
-  inc it.n # skip the for's closing ')'
 
   # Run plugin, then re-sem the output into dest
   var pluginOutput = createTokenBuf(30)
@@ -2835,7 +2878,7 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeCall = dest.len
   semExpr c, dest, iterCall, {PreferIterators, KeepMagics}
   it.n = iterCall.n
-  if tryForLoopPlugin(c, dest, it, beforeCall, info):
+  if tryForLoopPlugin(c, dest, it, beforeCall, info, iterCall.typ):
     return
   var isMacroLike = false
   if dest[beforeCall].exprKind == ErrX:
