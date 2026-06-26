@@ -264,10 +264,10 @@ proc suspend*() {.magic: "Suspend".}
   ## `return Continuation(fn: nil, env: this)`.
 
 proc trivialTick(c: Continuation): Continuation =
-  if c.fn != nil:
-    result = c.fn(c.env)
-  else:
-    result = c
+  result = c.fn(c.env)
+
+
+
 
 type
   Scheduler* = proc (c: Continuation): Continuation {.nimcall.}
