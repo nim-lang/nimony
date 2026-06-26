@@ -13,7 +13,7 @@ proc worker(x: int) {.passive.} =
 proc driver(n: int) {.passive.} =
   var i = 0
   while i < n:
-    var child = delay(worker(i))
+    let child = delay(worker(i))
     complete(child)
     i = i + 1
 

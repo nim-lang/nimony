@@ -2,9 +2,14 @@ before io
 after delay
 start
 1
+2
+end
 before loop
 loop 0
+loop 1
+after loop
 before branch
+after branch
 before branch
 x != 0
 after branch

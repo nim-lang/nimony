@@ -100,8 +100,7 @@ proc emitCompleteFromNormal(c: var Context; dest: var TokenBuf;
                             contVar: SymId; info: PackedLineInfo) =
   dest.copyIntoKind CallS, info:
     dest.addSymUse pool.syms.getOrIncl("complete.0." & SystemModuleSuffix), info
-    dest.copyIntoKind HaddrX, info:
-      dest.addSymUse contVar, info
+    dest.addSymUse contVar, info
 
 proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cursor) =
   let typ = c.typeCache.getType(n.firstSon, {SkipAliases})
