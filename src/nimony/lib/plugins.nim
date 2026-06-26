@@ -828,50 +828,38 @@ proc loadTypeDefinitions*(): NifCursor =
 proc pluginName*(n: NifCursor): string =
   ## Returns the name of the symbol that triggered this plugin run.
   ##
-  ## Template-plugin input has the shape `(stmts <template-name> <arg1> ...)`
-  ## and for-loop plugin input has the shape
-  ## `(stmts <iter-name> <call-args...> <loop-vars> <loop-body>)`.
-  ## In both cases the compiler prepends the invoked symbol's name as a bare
-  ## identifier so that a single shared plugin can dispatch on which template
-  ## or iterator was called. This proc reads that leading name.
+  ## Template-plugin and for-loop-plugin input has the shape
+  ## `(call <name> <args...>)`. Module-plugin input has the shape
+  ## `(stmts <module-name> ...module body...)`. In all cases the compiler
+  ## prepends the triggering symbol's name as a bare identifier.
   ##
-  ## Returns `""` when the input does not carry a leading identifier
-  ## (e.g. for module or type plugins).
+  ## Returns `""` when the input does not carry a leading identifier.
   var n = n
-  if n.stmtKind == StmtsS:
+  if n.stmtKind == StmtsS or n.exprKind == CallX:
     n = firstChild(n)
   result = if n.kind == Ident: n.identText else: ""
 
-template templateName*(n: NifCursor): string =
-  ## Deprecated alias for `pluginName`.
-  pluginName(n)
-
 proc pluginCallArgs*(n: NifCursor): NifCursor =
   ## Returns a cursor positioned at the first call-site argument of a
-  ## template-plugin or for-loop-plugin input, skipping the `(stmts` wrapper
+  ## template-plugin or for-loop-plugin input, skipping the `(call` wrapper
   ## and the leading symbol name. Use `result.hasMore` to iterate.
   ##
-  ## For template input `(stmts <name> <arg1> <arg2> ...)` the result points
-  ## at `<arg1>`. For for-loop input the result points at the first iterator
-  ## call argument. When there are no arguments it is positioned at `)`.
+  ## For input `(call <name> <arg1> <arg2> ...)` the result points at
+  ## `<arg1>`. When there are no arguments it is positioned at `)`.
   result = n
-  if result.stmtKind == StmtsS:
+  if result.stmtKind == StmtsS or result.exprKind == CallX:
     result = firstChild(result)
     skip result # advance past the name to the first real argument
-
-template templateArgs*(n: NifCursor): NifCursor =
-  ## Deprecated alias for `pluginCallArgs`.
-  pluginCallArgs(n)
 
 proc forLoopVars*(n: NifCursor): NifCursor =
   ## Returns a cursor at the loop variables of a for-loop plugin input.
   ##
   ## For-loop plugin input has the shape
-  ## `(stmts <iter-name> <call-args...> <loop-vars> <loop-body>)`.
+  ## `(call <iter-name> <call-args...> <loop-vars> <loop-body>)`.
   ## The loop-vars child is an `(unpackflat …)` or `(unpacktup …)` subtree.
   ## This proc scans past the iter name and call args to find it.
   result = n
-  if result.stmtKind == StmtsS:
+  if result.exprKind == CallX:
     result = firstChild(result)
   skip result # iter name
   while result.kind == ParLe and result.otherKind notin {UnpackflatU, UnpacktupU}:

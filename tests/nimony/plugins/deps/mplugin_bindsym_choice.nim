@@ -21,7 +21,7 @@ proc tr(n: NifCursor): NifBuilder =
   # sem. We use `&` so all three overloads live in `system` — overloads from
   # the plugin's def-site that the user's compile can't import would
   # otherwise leak into the choice and break cross-module resolution.
-  assert n.stmtKind == StmtsS
+  assert n.exprKind == CallX
   var args = pluginCallArgs(n)
   result.withTree StmtsS, info:
     result.withTree AsgnS, info:
