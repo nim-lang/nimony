@@ -283,9 +283,11 @@ proc advance*(c: Continuation): Continuation =
   ## to be called directly. Used by the compiler to run a coroutine.
   result = scheduler(c)
 
-proc complete*(c: Continuation) =
-  ## Used by the compiler to run a coroutine until completion.
-  var c = c
+proc complete*(c: var Continuation) =
+  ## Used by the compiler to run a coroutine until completion. Updates `c`
+  ## in place so callers can test `parked(c)` / `finished(c)` afterward.
+  ## Bare `suspend()` transitions synchronously; only `delay(); suspend()`
+  ## parks and may stop the loop until an external scheduler resumes.
   while not finished(c):
     let prev = c
     c = scheduler(c)

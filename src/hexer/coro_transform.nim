@@ -134,6 +134,9 @@ type
     shouldPublish*: seq[tuple[sym: SymId, start: int]]
     coroTypes*: TokenBuf
     hooks*: Hooks
+    awaitingSuspendPark*: bool
+      ## Set by `(delay0)`; consumed by the following `(suspend)` to
+      ## decide between real parking and a synchronous state transition.
 
 proc generateContinuationProcImpl*(): Cursor =
   ## Load the `ContinuationProc` typedef body from system, returned as
@@ -915,6 +918,7 @@ proc declareContinuationResult*(c: var Context; dest: var TokenBuf; info: Packed
     dest.addDotToken() # default value
 
 proc newLocalProc*(c: var Context; dest: var TokenBuf; state: int; sym: SymId) =
+  c.awaitingSuspendPark = false
   const info = NoLineInfo
   let procBegin = dest.len
   dest.addParLe ProcS, info

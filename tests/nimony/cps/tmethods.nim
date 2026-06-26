@@ -28,8 +28,8 @@ var q = MyObject2()
 q.a()
 q.inherited()
 q.sus()
-cont.complete()
-cont.complete()
+complete(cont)
+complete(cont)
 
 type
   Base = ref object of RootObj
