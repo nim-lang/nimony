@@ -635,14 +635,14 @@ proc emitWhileBegin*(dest: var TokenBuf; info: PackedLineInfo;
   ##   try:
   ##     while true:
   ##       it = advance(it)
-  ##       if finished(it): break
+  ##       if stopping(it): break
   ##       if it.env == myEnv:
   ##         <body-stmts goes here — emit between begin and end>
   ##
   ## The caller follows with body emission, then `emitWhileEnd`.
   let envFieldSym = pool.syms.getOrIncl(EnvFieldName)
   let advanceSym = pool.syms.getOrIncl("advance.0." & SystemModuleSuffix)
-  let finishedSym = pool.syms.getOrIncl("finished.0." & SystemModuleSuffix)
+  let stoppingSym = pool.syms.getOrIncl("stopping.0." & SystemModuleSuffix)
 
   dest.copyIntoKind LetS, info:
     dest.addSymDef myEnvSym, info
@@ -665,7 +665,7 @@ proc emitWhileBegin*(dest: var TokenBuf; info: PackedLineInfo;
   dest.copyIntoKind IfS, info:
     dest.copyIntoKind ElifU, info:
       dest.copyIntoKind CallS, info:
-        dest.addSymUse finishedSym, info
+        dest.addSymUse stoppingSym, info
         dest.addSymUse itSym, info
       dest.copyIntoKind StmtsS, info:
         dest.copyIntoKind BreakS, info:

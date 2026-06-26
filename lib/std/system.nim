@@ -260,10 +260,14 @@ func delay*(x: typed): Continuation {.magic: "Delay".}
   ## this call. Think of it as a `toTask` builtin.
 
 proc suspend*() {.magic: "Suspend".}
-  ## Suspends the current coroutine. In CPS, this inserts `return Continuation(fn: nil, env: nil)`.
+  ## Parks the current coroutine. In CPS, this inserts
+  ## `return Continuation(fn: nil, env: this)`.
 
 proc trivialTick(c: Continuation): Continuation =
-  result = c.fn(c.env)
+  if c.fn != nil:
+    result = c.fn(c.env)
+  else:
+    result = c
 
 type
   Scheduler* = proc (c: Continuation): Continuation {.nimcall.}
@@ -282,29 +286,45 @@ proc advance*(c: Continuation): Continuation =
 proc complete*(c: Continuation) =
   ## Used by the compiler to run a coroutine until completion.
   var c = c
-  while c.fn != nil:
+  while not finished(c):
+    let prev = c
     c = scheduler(c)
+    if parked(c) and c == prev:
+      break
+
+proc parked*(c: Continuation): bool {.inline.} =
+  ## True when a coroutine has parked via `suspend()` and not yet been
+  ## resumed. The `env` field identifies the coroutine frame.
+  c.fn == nil and c.env != nil
+
+proc stopping*(c: Continuation): bool {.inline.} =
+  ## True when a coroutine has no next step: either finished or parked.
+  c.fn == nil
 
 proc finished*(c: Continuation): bool {.inline.} =
-  ## True once a coroutine has run past its final yield. Compatible with
+  ## True once a coroutine has run to completion. Compatible with
   ## Nim's `finished` builtin: returns `true` when there are no more values
   ## to produce. Used by the closure-iterator trampoline that the compiler
   ## emits for `for x in closureIter(...)` loops.
-  c.fn == nil
+  ##
+  ## Parked continuations (`suspend`) are not finished: they have
+  ## `fn == nil` but a non-nil `env`.
+  c.fn == nil and c.env == nil
 
 proc finalizeCoroutine*(c: var Continuation) =
   ## Cancels and deallocates a coroutine frame that is still live (i.e.
   ## the loop exited via `break`/`return`/exception before the iterator
-  ## completed). A no-op once the coroutine has run to completion since
-  ## its terminating state already freed the frame. Called from the
-  ## `finally` clause of the closure-iterator trampoline.
+  ## completed, or the coroutine is parked). A no-op once the coroutine
+  ## has run to completion since its terminating state already freed the
+  ## frame. Called from the `finally` clause of the closure-iterator
+  ## trampoline.
   ##
   ## For iter-VALUE-owned frames (the iter-value tuple's env slot owns
   ## the frame as a `ref CoroType`), we run `cancel` but skip
   ## `deallocFrame` — the ref's destructor frees the memory later when
   ## the iter-value goes out of scope. The ownership marker is
   ## `frame.caller.env`: nil ⇒ wrapper-allocated, non-nil ⇒ value-owned.
-  if c.env != nil and c.fn != nil:
+  if c.env != nil:
     cancel(c.env)
     if c.env.caller.env == nil:
       deallocFrame(c.env)

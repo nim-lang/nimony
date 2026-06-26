@@ -95,7 +95,7 @@ type
     DefaultdistinctX = (ord(DefaultdistinctTagId), "defaultdistinct")
     DelayX = (ord(DelayTagId), "delay")  ## `delay(fn args)` builtin for delayed continuation creation
     Delay0X = (ord(Delay0TagId), "delay0")  ## `delay()` no-arg: capture current coroutine's own continuation
-    SuspendX = (ord(SuspendTagId), "suspend")  ## `suspend()` magic proc: suspends the coroutine and returns Continuation(nil, nil)
+    SuspendX = (ord(SuspendTagId), "suspend")  ## `suspend()` magic proc: parks the coroutine and returns Continuation(nil, env)
     ExprX = (ord(ExprTagId), "expr")
     DoX = (ord(DoTagId), "do")  ## `do` expression
     ArratX = (ord(ArratTagId), "arrat")  ## two optional exprs: `high` boundary and the `low` boundary (if != 0)

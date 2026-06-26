@@ -245,9 +245,10 @@ proc trDelay0(c: var Context; dest: var TokenBuf; n: var Cursor) =
   skipParRi n  # skip ParRi of delay0
 
 proc trSuspend(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## `(suspend)` — suspends the coroutine by returning
-  ## `Continuation(nil, nil)`. This stops the trampoline. To resume,
-  ## use `delay()` to capture the continuation.
+  ## `(suspend)` — parks the coroutine by returning
+  ## `Continuation(fn: nil, env: this)`. This stops the trampoline but
+  ## preserves coroutine identity. To resume, use `delay()` to capture the
+  ## continuation and hand it to a scheduler / IO backend.
   let info = n.info
   inc n      # skip suspend tag
   skipParRi n  # skip ParRi of suspend
@@ -259,7 +260,10 @@ proc trSuspend(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addParPair NilX, info
       dest.copyIntoKind KvU, info:
         dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
-        dest.addParPair NilX, info
+        dest.copyIntoKind CastX, info:
+          dest.copyIntoKind PtrT, info:
+            dest.addSymUse pool.syms.getOrIncl(RootObjName), info
+          dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
 
 proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## `(delay fn args)` — fn-args form; typenav returns
