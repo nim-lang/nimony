@@ -144,7 +144,19 @@ type
     metadata*: seq[string]     # accumulated metadata nodes
     fileIds*: Table[int, int]  # FileId (as int) -> DIFile metadata id
     cuId*: int                 # DICompileUnit metadata id
+    diTypeCache*: Table[SymId, int]        # SymId -> DIType metadata id
+    diBasicTypeCache*: Table[string, int]  # "i32"/"float"/… -> DIBasicType id
 
+const
+  DW_ATE_address = 1
+  DW_ATE_boolean = 2
+  DW_ATE_float = 4
+  DW_ATE_signed = 5
+  DW_ATE_signed_char = 6
+  DW_ATE_unsigned = 7
+  DW_ATE_unsigned_char = 8
+
+type
   LLVMCode* = object
     m: MainModule
     tokens: BiTable[LToken, string]
@@ -238,6 +250,15 @@ proc mangleSym(c: var LLVMCode; s: SymId): string =
   else:
     result = mangleToC(pool.syms[s])
 
+proc nifSymBaseName*(symId: SymId): string =
+  ## Extract the original Nim identifier from a NIF symbol like
+  ## ``myVar.0.module`` → ``myVar``.
+  let full = pool.syms[symId]
+  var isGlobal = false
+  result = extractBasename(full, isGlobal)
+  if result.len == 0:
+    result = full
+
 proc symTok(c: var LLVMCode; s: SymId): LToken {.used.} =
   ## Mangle a symbol and return its token.
   c.tok(mangleSym(c, s))
@@ -259,15 +280,19 @@ proc addMetadata(c: var LLVMCode; node: string): int =
   inc c.debug.nextMetadataId
 
 proc initDebugInfo(c: var LLVMCode; filename: string) =
-  ## Initialize debug metadata: compile unit and primary file.
-  let (dir, name, ext) = splitFile(filename)
-  let fullName = name & ext
-  let directory = if dir == "": getCurrentDir() else: absolutePath(dir)
-  echo "dir: " & dir & " directory: " & directory
-  let fileId = c.addMetadata("!DIFile(filename: \"" & fullName & "\", directory: \"" & directory & "\")")
-  let cuId = c.addMetadata("distinct !DICompileUnit(language: DW_LANG_C99, file: !" & $fileId &
-    ", producer: \"lengc\", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)")
-  c.debug.cuId = cuId
+  ## Debug metadata is initialized lazily: the first call to
+  ## ``getOrCreateDIFile`` creates the DICompileUnit using the first
+  ## real source file as its file reference.
+
+proc genDIBasicType(c: var LLVMCode; name: string; sizeBits, encoding: int): int =
+  ## Get or create a DIBasicType metadata node. Cached by name+size+encoding.
+  let key = name & ":" & $sizeBits & ":" & $encoding
+  result = c.debug.diBasicTypeCache.getOrDefault(key)
+  if result != 0: return
+  result = c.addMetadata("!DIBasicType(name: \"" & name &
+    "\", size: " & $sizeBits &
+    ", encoding: " & $encoding & ")")
+  c.debug.diBasicTypeCache[key] = result
 
 proc getOrCreateDIFile(c: var LLVMCode; fid: FileId): int =
   ## Get or create a DIFile metadata node for the given FileId.
@@ -280,6 +305,10 @@ proc getOrCreateDIFile(c: var LLVMCode; fid: FileId): int =
   let directory = if dir == "": getCurrentDir() else: absolutePath(dir)
   result = c.addMetadata("!DIFile(filename: \"" & fullName & "\", directory: \"" & directory & "\")")
   c.debug.fileIds[key] = result
+  # First real source file → create the compile unit using this file
+  if c.debug.cuId == 0:
+    c.debug.cuId = c.addMetadata("distinct !DICompileUnit(language: DW_LANG_C99, file: !" &
+      $result & ", producer: \"lengc\", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)")
 
 proc dbgLocation(c: var LLVMCode; info: PackedLineInfo): string =
   ## Return a `, !dbg !N` suffix for the given source location, or "" if invalid.
@@ -300,6 +329,7 @@ proc dbgLocation(c: var LLVMCode; info: PackedLineInfo): string =
 
 proc createSubprogram(c: var LLVMCode; name: string; info: PackedLineInfo): int =
   ## Create a DISubprogram metadata node for a function.
+  ## Call ``updateSubprogramType`` afterwards to set the real signature.
   var fileId = 0
   var line = 0
   if info.isValid:
@@ -316,6 +346,55 @@ proc createSubprogram(c: var LLVMCode; name: string; info: PackedLineInfo): int 
     ", scopeLine: " & $line &
     ", spFlags: DISPFlagDefinition, unit: !" & $c.debug.cuId & ")")
   c.currentProc.subprogramFileId = fileId
+
+proc updateSubprogramType(c: var LLVMCode; spId: int;
+                          retDIType: int; paramDITypes: seq[int]) =
+  ## Rewrite the DISubprogram metadata at `spId` to use a
+  ## DISubroutineType with the real signature.
+  if spId == 0: return
+  # Build the new subroutine type
+  var typesStr = ""
+  if retDIType != 0:
+    typesStr = "!" & $retDIType
+  for pt in paramDITypes:
+    if typesStr.len > 0: typesStr.add ", "
+    typesStr.add "!" & $pt
+  let stId = c.addMetadata("!DISubroutineType(types: !{" & typesStr & "})")
+
+  # Rebuild the subprogram metadata entry
+  let old = c.debug.metadata[spId]
+  # The old entry looks like:
+  #   distinct !DISubprogram(name: "...", scope: !N, file: !N,
+  #       line: N, type: !N, scopeLine: N,
+  #       spFlags: DISPFlagDefinition, unit: !N)
+  # We extract the fields before `type:` and after the old type id,
+  # then splice in the new type id.
+  var
+    prefix = ""
+    suffix = ""
+    inType = false
+    afterType = false
+    braceDepth = 0
+    i = 0
+  while i < old.len:
+    if not afterType:
+      if not inType and old[i] == 't' and i + 6 < old.len and
+         old[i..i+5] == "type: ":
+        inType = true
+        prefix = old[0..<i]
+        i += 6  # skip "type: "
+        # skip "!" if present
+        if i < old.len and old[i] == '!': i += 1
+        # skip old type id digits
+        while i < old.len and old[i] in {'0'..'9'}: i += 1
+        afterType = true
+        suffix = old[i..^1]
+      else:
+        i += 1
+    else:
+      break
+  if afterType:
+    c.debug.metadata[spId] = prefix & "type: !" & $stId & suffix
 
 proc emitLineDbg(c: var LLVMCode; s: string; info: PackedLineInfo) =
   ## Emit an instruction line with debug location metadata attached.
@@ -338,18 +417,23 @@ proc extractWasPragma(n: Cursor): string =
         return
       skip p
 
-proc emitDbgDeclare(c: var LLVMCode; localName: string; wasName: string;
-                    info: PackedLineInfo) =
-  ## Emit a #dbg_declare for a local variable with its original name.
-  if wasName.len == 0: return
+proc emitDbgDeclare(c: var LLVMCode; localName: string; symId: SymId;
+                    wasName: string; info: PackedLineInfo; diType: int = 0) =
+  ## Emit a #dbg_declare for a local variable.
+  ## Debug name: ``wasName`` (pragma) > ``nifSymBaseName(symId)``.
   if not info.isValid: return
   let rawInfo = unpack(pool.man, info)
   if not rawInfo.file.isValid: return
+  let debugName = if wasName.len > 0: wasName else: nifSymBaseName(symId)
   let fileId = getOrCreateDIFile(c, rawInfo.file)
-  let varId = c.addMetadata("!DILocalVariable(name: \"" & wasName &
+  var varMetadata = "!DILocalVariable(name: \"" & debugName &
     "\", scope: !" & $c.currentProc.subprogramId &
     ", file: !" & $fileId &
-    ", line: " & $rawInfo.line & ")")
+    ", line: " & $rawInfo.line
+  if diType != 0:
+    varMetadata.add ", type: !" & $diType
+  varMetadata.add ")"
+  let varId = c.addMetadata(varMetadata)
   let locId = c.addMetadata("!DILocation(line: " & $rawInfo.line &
     ", column: " & $(rawInfo.col + 1) &
     ", scope: !" & $c.currentProc.subprogramId & ")")
@@ -399,6 +483,10 @@ proc baseTypeOfObject*(m: var MainModule; objBody: Cursor): Cursor =
 
 include llvmgentypes
 
+# ---- DWARF debug type generation ----
+
+include llvmditypes
+
 # ---- Expression generation ----
 
 include llvmgenexprs
@@ -439,11 +527,43 @@ type
   VarKindLLVM = enum
     IsLocal, IsGlobal, IsThreadlocal, IsConst
 
+proc emitGlobalDbgVar(c: var LLVMCode; name: string; varInfo: PackedLineInfo;
+                      symId: SymId; diType: int): string =
+  ## Create DIGlobalVariable + DIGlobalVariableExpression metadata for a
+  ## global variable and return the `, !dbgv !N` suffix for the declaration.
+  if c.debug.cuId == 0: return ""
+  var fileId = 0
+  var line = 0
+  if varInfo.isValid:
+    let rawInfo = unpack(pool.man, varInfo)
+    if rawInfo.file.isValid:
+      fileId = getOrCreateDIFile(c, rawInfo.file)
+      line = rawInfo.line
+  if fileId == 0:
+    fileId = c.currentProc.subprogramFileId
+  if fileId == 0: return ""
+  if diType <= 1: return ""
+  let displayName = nifSymBaseName(symId)
+  let gvId = c.addMetadata("distinct !DIGlobalVariable(name: \"" & displayName &
+    "\", scope: !" & $c.debug.cuId &
+    ", file: !" & $fileId &
+    ", line: " & $line &
+    ", type: !" & $diType &
+    ", isLocal: false, isDefinition: true)")
+  let gveId = c.addMetadata("distinct !DIGlobalVariableExpression(var: !" &
+    $gvId & ", expr: !DIExpression())")
+  result = ", !dbgv !" & $gveId
+
 proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExtern = false) =
+  let varInfo = n.info
   var d = takeVarDecl(n)
   if d.name.kind == SymbolDef:
     let lit = d.name.symId
     c.m.registerLocal(lit, d.typ)
+    # Generate DI type early (before genTypeLLVM consumes the cursor copy)
+    var diType = 0
+    if not toExtern:
+      diType = genDITypeReadOnly(c, d.typ)
 
     var externName = StrId(0)
     var isImport = false
@@ -498,6 +618,8 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
 
     let alignSuffix = if alignVal > 0: ", align " & $alignVal else: ""
     let tls = if vk == IsThreadlocal: "thread_local " else: ""
+    let dbgvSuffix = if not toExtern and not isImport:
+                       emitGlobalDbgVar(c, name, varInfo, lit, diType) else: ""
     if toExtern or isImport:
       c.addTo(c.globals, "@" & name & " = external " & tls & "global " & typ & alignSuffix & "\n")
     else:
@@ -505,12 +627,12 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
         var v = d.value
         let tc = genGlobalConstr(c, v, d.typ)
         let linkage = if vk == IsConst: "constant" else: "global"
-        c.addTo(c.globals, "@" & name & " = " & tls & linkage & " " & tc.typ & " " & tc.val & alignSuffix & "\n")
+        c.addTo(c.globals, "@" & name & " = " & tls & linkage & " " & tc.typ & " " & tc.val & alignSuffix & dbgvSuffix & "\n")
       else:
         skip d.value
         let zeroVal = if d.typ.typeKind in {PtrT, AptrT, ProctypeT}: "null" else: "zeroinitializer"
         let linkage = if vk == IsConst: "constant" else: "global"
-        c.addTo(c.globals, "@" & name & " = " & tls & linkage & " " & typ & " " & zeroVal & alignSuffix & "\n")
+        c.addTo(c.globals, "@" & name & " = " & tls & linkage & " " & typ & " " & zeroVal & alignSuffix & dbgvSuffix & "\n")
     if vk == IsConst:
       c.emittedConsts.incl lit
   else:
@@ -532,11 +654,12 @@ proc genLocalVarDeclLLVM(c: var LLVMCode; n: var Cursor) =
 
     let name = mangleToC(pool.syms[lit])
     var t = d.typ
+    let diType = genDITypeReadOnly(c, t)
     let typ = genTypeLLVM(c, t)
     let localName = "%" & name
     c.addAlloca(c.tok(localName), c.tok(typ), alignVal)
 
-    emitDbgDeclare(c, localName, wasName, varInfo)
+    emitDbgDeclare(c, localName, lit, wasName, varInfo, diType)
 
     if d.value.kind != DotToken:
       if d.value.stmtKind == OnerrS:
@@ -684,6 +807,8 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
   var paramTypes: seq[string] = @[]
   var paramNames: seq[string] = @[]
   var paramWasNames: seq[string] = @[]
+  var paramSyms: seq[SymId] = @[]
+  var paramDITypes: seq[int] = @[]
   if prc.params.kind != DotToken:
     var p = prc.params
     p.loopInto:
@@ -699,6 +824,8 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
           let paramName = mangleToC(pool.syms[s])
           paramNames.add paramName
           paramWasNames.add extractWasPragma(d.pragmas)
+          paramSyms.add s
+          paramDITypes.add genDITypeReadOnly(c, d.typ)
           genParamPragmasLLVM(c, d.pragmas)
         else:
           isVarargs = true
@@ -755,10 +882,18 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
       let allocaName = "%" & pn
       c.addAlloca(c.tok(allocaName), c.tok(paramTypes[i]))
       c.emitLine "  store " & paramTypes[i] & " %" & pn & ".param, ptr " & allocaName
-      emitDbgDeclare(c, allocaName, paramWasNames[i], procInfo)
+      let pdi = if i < paramDITypes.len: paramDITypes[i] else: 0
+      let psym = if i < paramSyms.len: paramSyms[i] else: SymId(0)
+      emitDbgDeclare(c, allocaName, psym, paramWasNames[i], procInfo, pdi)
 
     # Generate body
     genStmtLLVM c, prc.body
+
+    # Update subprogram type with real signature
+    var retDi: int = 0
+    if prc.returnType.kind != DotToken:
+      retDi = genDITypeReadOnly(c, prc.returnType)
+    updateSubprogramType(c, spId, retDi, paramDITypes)
 
     # Add implicit return if needed
     if c.currentProc.needsTerminator:
