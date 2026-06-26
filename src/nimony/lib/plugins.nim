@@ -829,25 +829,26 @@ proc pluginName*(n: NifCursor): string =
   ## Returns the name of the symbol that triggered this plugin run.
   ##
   ## Template-plugin and for-loop-plugin input has the shape
-  ## `(call <name> <args...>)`. Module-plugin input has the shape
-  ## `(stmts <module-name> ...module body...)`. In all cases the compiler
-  ## prepends the triggering symbol's name as a bare identifier.
+  ## `(stmts <name> <args...>)`. Module-plugin input has the shape
+  ## `(stmts ...module body...)` (no name prefix). This proc reads the
+  ## leading identifier when present.
   ##
-  ## Returns `""` when the input does not carry a leading identifier.
+  ## Returns `""` when the input does not carry a leading identifier
+  ## (e.g. for module or type plugins).
   var n = n
-  if n.stmtKind == StmtsS or n.exprKind == CallX:
+  if n.stmtKind == StmtsS:
     n = firstChild(n)
   result = if n.kind == Ident: n.identText else: ""
 
 proc pluginCallArgs*(n: NifCursor): NifCursor =
   ## Returns a cursor positioned at the first call-site argument of a
-  ## template-plugin or for-loop-plugin input, skipping the `(call` wrapper
+  ## template-plugin or for-loop-plugin input, skipping the `(stmts` wrapper
   ## and the leading symbol name. Use `result.hasMore` to iterate.
   ##
-  ## For input `(call <name> <arg1> <arg2> ...)` the result points at
+  ## For input `(stmts <name> <arg1> <arg2> ...)` the result points at
   ## `<arg1>`. When there are no arguments it is positioned at `)`.
   result = n
-  if result.stmtKind == StmtsS or result.exprKind == CallX:
+  if result.stmtKind == StmtsS:
     result = firstChild(result)
     skip result # advance past the name to the first real argument
 
@@ -855,11 +856,11 @@ proc forLoopVars*(n: NifCursor): NifCursor =
   ## Returns a cursor at the loop variables of a for-loop plugin input.
   ##
   ## For-loop plugin input has the shape
-  ## `(call <iter-name> <call-args...> <loop-vars> <loop-body>)`.
+  ## `(stmts <iter-name> <call-args...> <loop-vars> <loop-body>)`.
   ## The loop-vars child is an `(unpackflat …)` or `(unpacktup …)` subtree.
   ## This proc scans past the iter name and call args to find it.
   result = n
-  if result.exprKind == CallX:
+  if result.stmtKind == StmtsS:
     result = firstChild(result)
   skip result # iter name
   while result.kind == ParLe and result.otherKind notin {UnpackflatU, UnpacktupU}:

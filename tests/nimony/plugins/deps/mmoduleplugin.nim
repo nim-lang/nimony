@@ -13,8 +13,5 @@ proc trAux(t: var Replacer) =
 
 var t = loadReplacer()
 loopKeepTag t:
-  if t.kind == Ident:
-    drop t, Any # skip the module name prefix
-  else:
-    trAux t
+  trAux t
 saveReplacer(t)

@@ -2848,9 +2848,9 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
     dec c.routine.inLoop
   inc it.n # skip the for's closing ')'
 
-  # Build plugin input: (call <iter-name> <call-args...> <loop-vars> <body>)
+  # Build plugin input: (stmts <iter-name> <call-args...> <loop-vars> <body>)
   var b = createTokenBuf(30)
-  b.addParLe CallX, info
+  b.addParLe StmtsS, info
   b.add identToken(symToIdent(routine.name.symId), info)
   var callC = beginRead(callBuf)
   callC.into:
