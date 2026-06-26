@@ -25,11 +25,12 @@ const
     ## saturating the pool.
 
   ParMaxChunks* = StripeCount * StripeSize
-    ## Hard ceiling on concurrent chunk runners. The pool queue holds at most
-    ## `StripeCount * StripeSize` tasks and `submit` *silently drops* the rest
-    ## (a dropped runner never signals the join, which would then deadlock). A
-    ## `||` loop submits every chunk up front, so its chunk count must stay
-    ## within this bound; `parGrain` coarsens a too-fine grain to guarantee it.
+    ## Soft ceiling on concurrent chunk runners, = the pool queue capacity.
+    ## `submit` is non-lossy (it caller-runs once the queue is full), so going
+    ## over this no longer deadlocks — but the excess chunks would then run
+    ## inline on the submitting thread, serialising them. Capping the chunk
+    ## count here keeps every chunk genuinely pool-scheduled; `parGrain`
+    ## coarsens a too-fine grain to stay within it.
 
 type
   ParJoin* = object
@@ -70,9 +71,10 @@ proc parGrain*(iters, chunkSize: int): int =
   ## Iterations per chunk. A positive `chunkSize` is honoured (the programmer
   ## tunes it to the body's cost-per-iteration), but coarsened up if it would
   ## need more than `ParMaxChunks` runners — so a tiny grain over a huge range
-  ## can never overrun the pool queue. `0` derives a grain that yields about
-  ## `ParDefaultChunks` chunks (one per worker), adapting to the machine. Always
-  ## `>= 1` for a non-empty range, so a chunk is never empty.
+  ## stays pool-scheduled instead of spilling onto the submitting thread. `0`
+  ## derives a grain that yields about `ParDefaultChunks` chunks (one per
+  ## worker), adapting to the machine. Always `>= 1` for a non-empty range, so a
+  ## chunk is never empty.
   if iters <= 0: return 0
   # Smallest grain that keeps `ceil(iters/grain) <= ParMaxChunks`.
   let minGrain = (iters + ParMaxChunks - 1) div ParMaxChunks   # ceil
@@ -111,19 +113,26 @@ proc parChunkDone*(j: ptr ParJoin) =
   discard atomicFetchSub(j.remaining, 1, moAcquireRelease)
 
 proc parWait*(j: var ParJoin) =
-  ## Block until every chunk runner has finished. v1 is an active spin (the
-  ## joining thread also lets the pool's workers make progress); a passive,
-  ## I/O-parking join that frees the joining worker is a planned enhancement.
+  ## Block until every chunk runner has finished. While waiting the thread
+  ## *helps* run pool tasks (`poolHelp`) rather than idle-spinning, so a chunk
+  ## body that itself opens a parallel `||` (recursive fork-join, e.g. parallel
+  ## fib) keeps making progress instead of every worker deadlocking in a join
+  ## with its sub-tasks stuck unrun in the queue. When nothing is queued our
+  ## sub-tasks are already in flight, so we just spin for their completion. (A
+  ## passive, I/O-parking join that frees the joining worker entirely is still a
+  ## planned enhancement.)
   while atomicLoad(j.remaining, moAcquire) > 0:
-    discard
+    if not poolHelp():
+      discard
 
 proc parSubmit*(c: Continuation; hint = 0) {.inline.} =
   ## Hand a chunk runner's continuation to the worker pool, spreading chunks
   ## across stripes by index (`hint`, the chunk number) so a many-chunk loop
-  ## does not pile into one stripe. `threadpool.submit` silently drops a task
-  ## when its stripe is full, and a dropped runner never signals the join — so
-  ## without this the loop would deadlock. Re-exported so the `||` plugin only
-  ## needs symbols visible through `import std/parfor`.
+  ## does not pile into one stripe. `threadpool.submit` is non-lossy (it
+  ## caller-runs on a full queue), so this no longer guards against dropped
+  ## runners — but the spread still avoids needlessly caller-running chunks on
+  ## the submitting thread and balances load. Re-exported so the `||` plugin
+  ## only needs symbols visible through `import std/parfor`.
   submit(c, hint)
 
 iterator `||`*(a, b: int; step: Positive = 1; chunkSize = 0): int {.plugin: "deps/parfor".}

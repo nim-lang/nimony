@@ -109,11 +109,15 @@ proc child(n: NifCursor; idx: int): NifCursor =
 
 proc lvalueBase(n: NifCursor): SymId =
   ## Innermost base symbol of an lvalue, peeling index/field/deref layers.
-  var c = n
-  while true:
-    if not (c.kind == ParLe and c.exprKind in PeelKinds): break
-    c = firstChild(c)
-  result = if c.kind == Symbol: c.symId else: default(SymId)
+  ## Recursive (descent terminates at a leaf) rather than a `while` with a
+  ## `firstChild` reassignment, which the termination checker doesn't recognise
+  ## as progress.
+  if n.kind == ParLe and n.exprKind in PeelKinds:
+    result = lvalueBase(firstChild(n))
+  elif n.kind == Symbol:
+    result = n.symId
+  else:
+    result = default(SymId)
 
 proc analyzeIndex(idx: NifCursor; loopSym: SymId): tuple[ok: bool, off: int] =
   ## Accepts `i`, `i + c`, `c + i`, `i - c` (with `c` an integer literal).
