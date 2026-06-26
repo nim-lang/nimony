@@ -52,22 +52,40 @@ proc ensureParPool*() =
 
 # --- range chunking --------------------------------------------------------
 
-proc parChunkCount*(a, b, hint: int): int =
-  ## Number of chunks to split `[a, b)` into. `hint <= 0` selects
-  ## `ParDefaultChunks`. Never produces empty chunks: at most one element per
-  ## chunk, so a 3-element range never spawns 8 runners.
-  let n = b - a
-  if n <= 0: return 0
-  let w = if hint <= 0: ParDefaultChunks else: hint
-  result = if w < n: w else: n
+proc parIterCount*(a, b, step: int): int =
+  ## Number of iterations of the inclusive strided range `a, a+step, …, ≤ b`
+  ## (Nim's `||` yields `a, a+step, …`). Zero for an empty range or a
+  ## non-positive `step`.
+  if step <= 0 or b < a: return 0
+  result = (b - a) div step + 1
 
-proc parChunkLo*(a, b, chunks, k: int): int =
-  ## Lower bound (inclusive) of chunk `k` of `chunks` over `[a, b)`.
-  a + (b - a) * k div chunks
+proc parGrain*(iters, chunkSize: int): int =
+  ## Iterations per chunk. A positive `chunkSize` is honoured directly (the
+  ## programmer tunes it to the body's cost-per-iteration); `0` derives a grain
+  ## that yields about `ParDefaultChunks` chunks (one per worker), so the split
+  ## adapts to the machine. Always `>= 1` for a non-empty range, so a chunk is
+  ## never empty.
+  if iters <= 0: return 0
+  if chunkSize > 0: return chunkSize
+  result = (iters + ParDefaultChunks - 1) div ParDefaultChunks   # ceil
 
-proc parChunkHi*(a, b, chunks, k: int): int =
-  ## Upper bound (exclusive) of chunk `k` of `chunks` over `[a, b)`.
-  a + (b - a) * (k + 1) div chunks
+proc parChunkCount*(iters, grain: int): int =
+  ## Number of `grain`-sized chunks needed to cover `iters` iterations,
+  ## `ceil(iters / grain)`.
+  if iters <= 0 or grain <= 0: return 0
+  result = (iters + grain - 1) div grain   # ceil
+
+proc parChunkLo*(grain, k: int): int =
+  ## First iteration index (inclusive) of chunk `k`: `k * grain`. Chunks are
+  ## fixed-size half-open `[lo, hi)` ranges over the *iteration-index* space; the
+  ## chunk runner maps each index `j` back to the value `a + j*step`.
+  k * grain
+
+proc parChunkHi*(iters, grain, k: int): int =
+  ## One past the last iteration index of chunk `k`: `min((k+1)*grain, iters)`
+  ## (the final chunk is short when `grain` does not divide `iters`).
+  let hi = (k + 1) * grain
+  result = if hi < iters: hi else: iters
 
 # --- join lifecycle --------------------------------------------------------
 
@@ -93,10 +111,18 @@ proc parSubmit*(c: Continuation) {.inline.} =
   ## `import std/parfor`.
   submit(c)
 
-iterator `||`*(a, b: int; n = 0): int {.plugin: "deps/parfor".}
+iterator `||`*(a, b: int; step: Positive = 1; chunkSize = 0): int {.plugin: "deps/parfor".}
   ## Parallel range `for` loop. `for i in a || b: x[i] = f(input[i])` runs the
-  ## body for every `i` in `[a, b)` across the worker pool, joining at the
-  ## loop's closing. `n` overrides the chunk count (default: one per worker).
+  ## body for every `i` in the *inclusive* range `a .. b` across the worker pool,
+  ## joining at the loop's closing — matching Nim's standard `||`, which yields
+  ## `a, a+step, …, ≤ b`. `step` is the iteration stride (default 1).
+  ##
+  ## `chunkSize` is the grain: how many iterations each parallel runner handles.
+  ## Tune it to the body's cost-per-iteration (a property you know) rather than
+  ## the worker count (which varies between machines); the number of runners
+  ## falls out as `ceil(iters / chunkSize)`. `0` (the default) derives a grain
+  ## giving about one chunk per worker. Pass it by name to skip `step`:
+  ## `for i in `||`(a, b, chunkSize = 64): …`.
   ##
   ## The body must write only `x[i]`-style outputs at the iteration index and
   ## must not read those outputs back; under that contract iterations are

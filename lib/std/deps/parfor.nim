@@ -5,29 +5,35 @@
 ##
 ##   (stmts
 ##     (call ensureParPool)
-##     (var pforA … <a>) (var pforB … <b>) (var pforN … <n|0>)
+##     (var pforA … <a>) (var pforB … <b>)
+##     (var pforStep … <step>) (var pforChunkSize … <chunkSize>)
 ##     (var pforJ … (call default ParJoin))
-##     (var pforChunks … (call parChunkCount pforA pforB pforN))
+##     (var pforIters … (call parIterCount pforA pforB pforStep))
+##     (var pforGrain … (call parGrain pforIters pforChunkSize))
+##     (var pforChunks … (call parChunkCount pforIters pforGrain))
 ##     (call parBegin pforJ pforChunks)
 ##     (proc pforChunk … {.passive, closure.} (params pforLo pforHi)
 ##       (stmts
-##         (var pforI … pforLo)
-##         (while (infix < pforI pforHi)
-##           (stmts <BODY[i→pforI]> (asgn pforI (infix + pforI 1))))
+##         (var pforIt … pforLo)
+##         (while (infix < pforIt pforHi)
+##           (stmts
+##             (let pforI … (infix + pforA (infix * pforIt pforStep)))
+##             <BODY[i→pforI]> (asgn pforIt (infix + pforIt 1))))
 ##         (call parChunkDone (call addr pforJ))))
 ##     (var pforK … 0)
 ##     (while (infix < pforK pforChunks)
 ##       (stmts
-##         (let pforLo2 … (call parChunkLo pforA pforB pforChunks pforK))
-##         (let pforHi2 … (call parChunkHi pforA pforB pforChunks pforK))
+##         (let pforLo2 … (call parChunkLo pforGrain pforK))
+##         (let pforHi2 … (call parChunkHi pforIters pforGrain pforK))
 ##         (call parSubmit (call delay (call pforChunk pforLo2 pforHi2)))
 ##         (asgn pforK (infix + pforK 1))))
 ##     (call parWait pforJ))
 ##
-## The body is spliced typed; the loop variable (a resolved `Symbol`) is
-## substituted by the fresh ident `pforI`, which re-sem binds to the chunk
-## runner's local counter. Outer reads (`input`) and the disjoint output
-## (`x[i]`) are captured by the closure.
+## `pforLo`/`pforHi` chunk the *iteration index* space `[0, pforIters)`; the
+## runner maps each index back to `pforA + j*pforStep`. The body is spliced
+## typed; the loop variable (a resolved `Symbol`) is substituted by the fresh
+## ident `pforI`. Outer reads (`input`) and the disjoint output (`x[i]`) are
+## captured by the closure.
 
 import plugins
 
@@ -323,9 +329,13 @@ proc transform(n: NifCursor): NifBuilder =
   if loopSym == default(SymId):
     return errorTree("`||` parallel-for: could not resolve the loop variable", info)
 
+  # Overload resolution fills the `step`/`chunks` defaults and normalises any
+  # named args into declaration order, so a resolved `||` always arrives with
+  # all four positional args (a, b, step, chunks) — the plugin needs no
+  # default-handling logic of its own.
   let args = collectArgs(n)
-  if args.len < 2:
-    return errorTree("`||` parallel-for expects `a || b`", info)
+  if args.len < 4:
+    return errorTree("`||` parallel-for expects `a || b` (optionally with step / chunks)", info)
 
   # Static race-rule check: reject any body that isn't provably data-race free.
   let raceErr = raceCheck(loopSym, forLoopBody(n))
@@ -340,22 +350,35 @@ proc transform(n: NifCursor): NifBuilder =
     # ensureParPool()
     result.beginCall("ensureParPool"); result.addParRi()
 
-    # var pforA = <a>; var pforB = <b>; var pforN = <n|0>
+    # var pforA = <a>; var pforB = <b>; var pforStep = <step>; var pforChunkSize = <chunkSize>
     result.beginVar("var", "pforA"); result.addSubtree(args[0]); result.addParRi()
     result.beginVar("var", "pforB"); result.addSubtree(args[1]); result.addParRi()
-    result.beginVar("var", "pforN")
-    if args.len >= 3: result.addSubtree(args[2]) else: result.addIntLit(0)
-    result.addParRi()
+    result.beginVar("var", "pforStep"); result.addSubtree(args[2]); result.addParRi()
+    result.beginVar("var", "pforChunkSize"); result.addSubtree(args[3]); result.addParRi()
 
     # var pforJ = default(ParJoin)
     result.beginVar("var", "pforJ")
     result.beginCall("default"); result.addIdent("ParJoin"); result.addParRi()
     result.addParRi()
 
-    # var pforChunks = parChunkCount(pforA, pforB, pforN)
+    # var pforIters = parIterCount(pforA, pforB, pforStep)
+    result.beginVar("var", "pforIters")
+    result.beginCall("parIterCount")
+    result.addIdent("pforA"); result.addIdent("pforB"); result.addIdent("pforStep")
+    result.addParRi()
+    result.addParRi()
+
+    # var pforGrain = parGrain(pforIters, pforChunkSize)
+    result.beginVar("var", "pforGrain")
+    result.beginCall("parGrain")
+    result.addIdent("pforIters"); result.addIdent("pforChunkSize")
+    result.addParRi()
+    result.addParRi()
+
+    # var pforChunks = parChunkCount(pforIters, pforGrain)
     result.beginVar("var", "pforChunks")
     result.beginCall("parChunkCount")
-    result.addIdent("pforA"); result.addIdent("pforB"); result.addIdent("pforN")
+    result.addIdent("pforIters"); result.addIdent("pforGrain")
     result.addParRi()
     result.addParRi()
 
@@ -383,15 +406,25 @@ proc transform(n: NifCursor): NifBuilder =
     result.addParRi()
     result.addDotToken()                # effects
     result.withTree StmtsS, info:
-      # var pforI = pforLo
-      result.beginVar("var", "pforI"); result.addIdent("pforLo"); result.addParRi()
-      # while pforI < pforHi: <body>; pforI = pforI + 1
+      # pforLo/pforHi are iteration indices; map each back to `pforA + j*pforStep`.
+      # var pforIt = pforLo
+      result.beginVar("var", "pforIt"); result.addIdent("pforLo"); result.addParRi()
+      # while pforIt < pforHi:
+      #   let pforI = pforA + pforIt * pforStep; <body>; pforIt = pforIt + 1
       result.addParLe("while")
-      result.emitInfix("<", "pforI", "pforHi")
+      result.emitInfix("<", "pforIt", "pforHi")
       result.withTree StmtsS, info:
+        # let pforI = pforA + pforIt * pforStep
+        result.beginVar("let", "pforI")
+        result.addParLe("infix"); result.addIdent("+"); result.addIdent("pforA")
+        result.addParLe("infix"); result.addIdent("*")
+        result.addIdent("pforIt"); result.addIdent("pforStep")
+        result.addParRi()               # /inner infix
+        result.addParRi()               # /outer infix
+        result.addParRi()               # /let
         var body = forLoopBody(n)
         emitBody(result, body, loopSym)
-        result.emitIncr("pforI")
+        result.emitIncr("pforIt")
       result.addParRi()                 # /while
       # parChunkDone(addr pforJ)
       result.beginCall("parChunkDone")
@@ -408,13 +441,11 @@ proc transform(n: NifCursor): NifBuilder =
     result.withTree StmtsS, info:
       result.beginVar("let", "pforLo2")
       result.beginCall("parChunkLo")
-      result.addIdent("pforA"); result.addIdent("pforB")
-      result.addIdent("pforChunks"); result.addIdent("pforK")
+      result.addIdent("pforGrain"); result.addIdent("pforK")
       result.addParRi(); result.addParRi()
       result.beginVar("let", "pforHi2")
       result.beginCall("parChunkHi")
-      result.addIdent("pforA"); result.addIdent("pforB")
-      result.addIdent("pforChunks"); result.addIdent("pforK")
+      result.addIdent("pforIters"); result.addIdent("pforGrain"); result.addIdent("pforK")
       result.addParRi(); result.addParRi()
       # parSubmit(delay(pforChunk(pforLo2, pforHi2)))
       result.beginCall("parSubmit")
