@@ -3129,7 +3129,7 @@ proc semDelay(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
 proc semSuspend(c: var SemContext; dest: var TokenBuf; it: var Item) =
   # suspend() -> (suspend)
-  # Creates a suspension point and returns Continuation(nil, nil)
+  # Creates a suspension point and returns Continuation(nil, env)
   let beforeExpr = dest.len
   let expected = it.typ
   let info = it.n.info

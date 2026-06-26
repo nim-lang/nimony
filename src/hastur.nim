@@ -804,6 +804,7 @@ const
     "tests/nimony/cps/trecursive",
     "tests/nimony/cps/tsuspend",
     "tests/nimony/cps/tsuspend_resume",
+    "tests/nimony/cps/tparkstate",
     "tests/nimony/cps/ttry"
   ]
 

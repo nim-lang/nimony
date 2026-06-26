@@ -101,15 +101,17 @@ regular-proc stack frames.
 
 #### Scheduler contract
 
-When a coroutine **suspends** (`suspend()` returns `Continuation(fn: nil, env: nil)`) or
+When a coroutine **parks** (`suspend()` returns `Continuation(fn: nil, env: frame)`) or
 **yields** to other work, the scheduler must let the current trampoline stop so that C
 stack frames can unwind:
 
 1. **Store** the continuation that should resume later (for example in an IoRing slot via
    `delay()`, or on the thread-pool run queue).
-2. **Return** `Continuation(fn: nil, env: nil)` from the scheduler step so that `complete()`
-   exits and any regular proc between two passive calls can return.
-3. **Resume** later from a clean entry point (for example `submit(cont)` on a pool worker).
+2. **Return** the parked continuation (or let `trivialTick` pass it through) so that
+   `complete()` can detect parking via `parked(c)` and exit; a regular proc between
+   two passive calls can then return.
+3. **Resume** later from a clean entry point (for example `submit(cont)` on a pool worker
+   or `complete(delayCont)` on the captured resume continuation).
 
 Running many steps synchronously inside one `complete()` call is fine when the chain is
 entirely passive (heap-allocated CPS frames) and the scheduler is driving a single logical
@@ -199,8 +201,8 @@ handles the suspension mechanics. There are no callbacks, no `await`, no future 
 The scheduler bridges passive procs to the OS event loop:
 
 1. A passive proc calls `ioWait(fd)`.
-2. `ioWait` stores the current continuation in the IoRing's slot for that fd and returns
-   `Continuation(fn: nil, env: nil)` — this stops the trampoline.
+2. `ioWait` stores the current continuation in the IoRing's slot for that fd and parks
+   via `suspend()` — `Continuation(fn: nil, env: this)`.
 3. The IoRing polls (`epoll`/`kqueue`/`io_uring`) for ready file descriptors.
 4. When an fd becomes ready, the IoRing retrieves the stored continuation and feeds it
    back into `complete()` or `advance()`, resuming the coroutine from where it left off.
@@ -221,10 +223,13 @@ each handler written as a simple sequential loop.
   will later resume on the same thread that captured it. Always used together with a
   following `suspend()` call, with setup code (e.g. registering with an IO backend) in
   between.
-- `suspend()` stops the trampoline by returning `Continuation(fn: nil, env: nil)`. Always
-  paired with a preceding `delay()` that captures the resume point first. The code between
-  `delay()` and `suspend()` is the **setup window** — it runs synchronously before
-  suspension and must not contain calls to other passive procs.
+- `suspend()` parks the coroutine by returning `Continuation(fn: nil, env: this)`.
+  This stops the trampoline but preserves coroutine identity so schedulers can
+  distinguish **parked** (`fn == nil`, `env != nil`) from **finished**
+  (`fn == nil`, `env == nil`). Always paired with a preceding `delay()` that
+  captures the resume point first. The code between `delay()` and `suspend()` is
+  the **setup window** — it runs synchronously before suspension and must not
+  contain calls to other passive procs.
 - `advance(c)` single-steps through one state transition. Useful for interleaving
   coroutines manually.
 
