@@ -748,6 +748,29 @@ proc add*(b: var TokenBuf; t: NifToken) {.inline.} =
   b.data[b.len] = t
   inc b.len
 
+# ── Raw bulk token access (for binary serialization, see bif.nim) ────────
+# These expose the contiguous token storage for direct block I/O. They bypass
+# all structural bookkeeping (jumps, openTags, suffix chains) — the caller must
+# hand over / consume a stream that is already well-formed. The pools are
+# serialized separately; because token payloads only reference *pool ids*
+# (assigned 1,2,… in intern order), a loader that re-interns the pool values in
+# the same order reproduces identical ids, so the raw token words stay valid.
+
+proc rawTokenPtr*(b: TokenBuf): pointer {.inline.} =
+  ## Pointer to the first token word; `len(b) * sizeof(NifToken)` bytes follow.
+  b.data
+
+proc growRawUninit*(b: var TokenBuf; count: int): pointer =
+  ## Grow storage to hold exactly `count` tokens, set `len = count`, and return
+  ## the storage pointer so the caller can fill it directly (e.g. `readBuffer`).
+  ## The contents are left uninitialized. Binary loaders only.
+  if b.owner != nil: prepareMutation(b)
+  if count > b.cap:
+    b.cap = count
+    b.data = cast[Storage](realloc(b.data, sizeof(NifToken) * b.cap))
+  b.len = count
+  b.data
+
 # ── Builder API (interns, emits suffix on overflow) ──────────────────────
 
 proc appendLineInfo*(b: var TokenBuf; file: FileId; line, col: int32) =
