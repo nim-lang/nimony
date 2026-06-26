@@ -25,7 +25,7 @@
 ##       (stmts
 ##         (let pforLo2 … (call parChunkLo pforGrain pforK))
 ##         (let pforHi2 … (call parChunkHi pforIters pforGrain pforK))
-##         (call parSubmit (call delay (call pforChunk pforLo2 pforHi2)))
+##         (call parSubmit (call delay (call pforChunk pforLo2 pforHi2)) pforK)
 ##         (asgn pforK (infix + pforK 1))))
 ##     (call parWait pforJ))
 ##
@@ -447,12 +447,16 @@ proc transform(n: NifCursor): NifBuilder =
       result.beginCall("parChunkHi")
       result.addIdent("pforIters"); result.addIdent("pforGrain"); result.addIdent("pforK")
       result.addParRi(); result.addParRi()
-      # parSubmit(delay(pforChunk(pforLo2, pforHi2)))
+      # parSubmit(delay(pforChunk(pforLo2, pforHi2)), pforK)  -- pforK spreads
+      # chunks across stripes so they aren't dropped on a full single stripe.
       result.beginCall("parSubmit")
       result.beginCall("delay")
       result.beginCall("pforChunk")
       result.addIdent("pforLo2"); result.addIdent("pforHi2")
-      result.addParRi(); result.addParRi(); result.addParRi()
+      result.addParRi()                 # /pforChunk
+      result.addParRi()                 # /delay
+      result.addIdent("pforK")
+      result.addParRi()                 # /parSubmit
       result.emitIncr("pforK")
     result.addParRi()                   # /while
 

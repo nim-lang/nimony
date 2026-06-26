@@ -21,8 +21,15 @@ import std / [atomics, threadpool]
 const
   ParDefaultChunks* = WorkerCount
     ## Default number of chunks when the `||` loop does not pass an explicit
-    ## count (`a || b` rather than `a || b || n`). One chunk per worker keeps
-    ## scheduling overhead low while saturating the pool.
+    ## `chunkSize`. One chunk per worker keeps scheduling overhead low while
+    ## saturating the pool.
+
+  ParMaxChunks* = StripeCount * StripeSize
+    ## Hard ceiling on concurrent chunk runners. The pool queue holds at most
+    ## `StripeCount * StripeSize` tasks and `submit` *silently drops* the rest
+    ## (a dropped runner never signals the join, which would then deadlock). A
+    ## `||` loop submits every chunk up front, so its chunk count must stay
+    ## within this bound; `parGrain` coarsens a too-fine grain to guarantee it.
 
 type
   ParJoin* = object
@@ -60,14 +67,19 @@ proc parIterCount*(a, b, step: int): int =
   result = (b - a) div step + 1
 
 proc parGrain*(iters, chunkSize: int): int =
-  ## Iterations per chunk. A positive `chunkSize` is honoured directly (the
-  ## programmer tunes it to the body's cost-per-iteration); `0` derives a grain
-  ## that yields about `ParDefaultChunks` chunks (one per worker), so the split
-  ## adapts to the machine. Always `>= 1` for a non-empty range, so a chunk is
-  ## never empty.
+  ## Iterations per chunk. A positive `chunkSize` is honoured (the programmer
+  ## tunes it to the body's cost-per-iteration), but coarsened up if it would
+  ## need more than `ParMaxChunks` runners — so a tiny grain over a huge range
+  ## can never overrun the pool queue. `0` derives a grain that yields about
+  ## `ParDefaultChunks` chunks (one per worker), adapting to the machine. Always
+  ## `>= 1` for a non-empty range, so a chunk is never empty.
   if iters <= 0: return 0
-  if chunkSize > 0: return chunkSize
-  result = (iters + ParDefaultChunks - 1) div ParDefaultChunks   # ceil
+  # Smallest grain that keeps `ceil(iters/grain) <= ParMaxChunks`.
+  let minGrain = (iters + ParMaxChunks - 1) div ParMaxChunks   # ceil
+  if chunkSize > 0:
+    result = max(chunkSize, minGrain)
+  else:
+    result = (iters + ParDefaultChunks - 1) div ParDefaultChunks   # ceil
 
 proc parChunkCount*(iters, grain: int): int =
   ## Number of `grain`-sized chunks needed to cover `iters` iterations,
@@ -105,11 +117,14 @@ proc parWait*(j: var ParJoin) =
   while atomicLoad(j.remaining, moAcquire) > 0:
     discard
 
-proc parSubmit*(c: Continuation) {.inline.} =
-  ## Hand a chunk runner's continuation to the worker pool. A thin re-export of
-  ## `threadpool.submit` so the `||` plugin only needs symbols visible through
-  ## `import std/parfor`.
-  submit(c)
+proc parSubmit*(c: Continuation; hint = 0) {.inline.} =
+  ## Hand a chunk runner's continuation to the worker pool, spreading chunks
+  ## across stripes by index (`hint`, the chunk number) so a many-chunk loop
+  ## does not pile into one stripe. `threadpool.submit` silently drops a task
+  ## when its stripe is full, and a dropped runner never signals the join — so
+  ## without this the loop would deadlock. Re-exported so the `||` plugin only
+  ## needs symbols visible through `import std/parfor`.
+  submit(c, hint)
 
 iterator `||`*(a, b: int; step: Positive = 1; chunkSize = 0): int {.plugin: "deps/parfor".}
   ## Parallel range `for` loop. `for i in a || b: x[i] = f(input[i])` runs the
