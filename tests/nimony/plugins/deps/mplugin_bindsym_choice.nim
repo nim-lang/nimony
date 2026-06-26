@@ -22,11 +22,11 @@ proc tr(n: NifCursor): NifBuilder =
   # the plugin's def-site that the user's compile can't import would
   # otherwise leak into the choice and break cross-module resolution.
   assert n.stmtKind == StmtsS
-  var args = templateArgs(n)
+  var args = pluginCallArgs(n)
   result.withTree StmtsS, info:
     result.withTree AsgnS, info:
       result.takeTree args  # bufRef as the asgn lhs
-      args = templateArgs(n)  # rewind to read both args again for the rhs
+      args = pluginCallArgs(n)  # rewind to read both args again for the rhs
       result.withTree CallS, info:
         result.bindSym "&"
         result.takeTree args

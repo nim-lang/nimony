@@ -37,7 +37,7 @@ proc loopVarSym(n: NifCursor): SymId =
 
 proc transform(n: NifCursor): NifBuilder =
   let info = n.info
-  let mode = templateName(n)
+  let mode = pluginName(n)
   result = createTree()
 
   if mode == "unroll3":

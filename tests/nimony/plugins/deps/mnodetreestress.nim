@@ -19,7 +19,7 @@ proc makeProgram(info: LineInfo): NifCursor =
   result = snapshot(tree)
 
 proc tr(n: NifCursor): NifBuilder =
-  var input = templateArgs(n)
+  var input = pluginCallArgs(n)
 
   let info = input.info
   var source = makeProgram(info)

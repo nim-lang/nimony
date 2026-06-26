@@ -1,5 +1,5 @@
 
-import std / [os, strutils, tables]
+import std / [strutils, tables]
 
 import plugins
 
@@ -123,7 +123,7 @@ proc tr(n: NifCursor): NifBuilder =
 
 
 var inp = loadPluginInput()
-var inpTypes = loadPluginInput(os.paramStr(3))
+var inpTypes = loadTypeDefinitions()
 
 typesTr(inpTypes)
-saveTree tr(inp), os.paramStr(2)
+saveTree tr(inp)
