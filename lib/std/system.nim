@@ -182,6 +182,14 @@ include "system/ctypes"
 include "system/exits"
 include "system/atomintrin"
 include "system/memory"
+
+template linear*() {.pragma.}
+  ## Marks an indexed accessor (`[]=`, or a `var T`-returning `[]`) as *linear*:
+  ## for distinct keys it yields distinct, non-aliasing, stable locations and
+  ## never invalidates a previously obtained location. `std/parfor`'s `||` uses
+  ## this to allow parallel `c[i] = …` writes. `seq`/array indexing is linear;
+  ## `Table` indexing is not (it may rehash and relocate other slots).
+
 include "system/seqimpl"
 include "system/stringimpl"
 include "system/openarrays"

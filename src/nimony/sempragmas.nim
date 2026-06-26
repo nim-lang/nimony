@@ -55,17 +55,17 @@ proc symbolIsCustomPragmaTemplate(s: SymId): bool =
            loaded.decl.symKind == TemplateY and
            hasPragma(asRoutine(loaded.decl).pragmas, PragmaP)
 
-proc isCustomPragmaTemplate*(c: SemContext; name: StrId): bool =
-  if name in c.customPragmaTemplates:
-    return true
-
+proc customPragmaSym*(c: SemContext; name: StrId): SymId =
+  ## The symbol of the `template name {.pragma.}` custom pragma in scope, or
+  ## `NoSymId`. Used to preserve a custom pragma annotation as `(pragma <sym>)`
+  ## on a decl (so plugins can introspect it) instead of dropping it.
   let ignoreStyle = IgnoreStyleFeature in c.features
   var scope = c.currentScope
   while scope != nil:
     for k in stylesOfScope(scope, name, ignoreStyle):
       for sym in scope.tab.getOrDefault(k):
         if sym.kind == TemplateY and symbolIsCustomPragmaTemplate(sym.name):
-          return true
+          return sym.name
     scope = scope.up
 
   for realName in stylesOfImport(c.importTab, name, ignoreStyle):
@@ -75,8 +75,22 @@ proc isCustomPragmaTemplate*(c: SemContext; name: StrId): bool =
         for foreignName in stylesOfIface(imported.iface, realName, ignoreStyle):
           for symId in imported.iface.getOrDefault(foreignName):
             if symbolIsCustomPragmaTemplate(symId):
-              return true
-  result = false
+              return symId
+  result = NoSymId
+
+proc isCustomPragmaTemplate*(c: SemContext; name: StrId): bool =
+  name in c.customPragmaTemplates or customPragmaSym(c, name) != NoSymId
+
+proc isPreservedCustomPragma(n: Cursor): bool =
+  ## True when `n` is a previously-preserved custom-pragma attachment
+  ## `(pragma <sym>)` (the `pragma` tag with a symbol child), as opposed to the
+  ## bare `(pragma)` marker on a custom-pragma template declaration.
+  if n.kind == ParLe and n.pragmaKind == PragmaP:
+    var probe = n
+    inc probe
+    result = probe.kind == Symbol
+  else:
+    result = false
 
 proc semProposition*(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: PragmaKind) =
   let prevPhase = c.phase
@@ -141,13 +155,18 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
         while read.hasMore:
           semPragma c, dest, read, crucial, kind
         endRead(pragBuf[])
-      elif name != StrId(0) and c.isCustomPragmaTemplate(name):
-        # Pragma that resolves to a `template X(args) {.pragma.}` declaration.
-        # Accept with or without arguments and drop silently — matches Nim's
-        # treatment of templates marked `sfCustomPragma` used as annotations.
+      elif name != StrId(0) and (let psym = c.customPragmaSym(name); psym != NoSymId):
+        # Pragma that resolves to a `template X {.pragma.}` declaration. Unlike
+        # Nim (which drops `sfCustomPragma`), preserve it as `(pragma <sym>)`
+        # so it survives into the serialized decl and plugins can introspect it
+        # (e.g. `.linear`). Arguments are not yet supported and are dropped.
+        let info = n.info
         inc n
         if hasParRi:
           while n.hasMore: skip n
+        dest.add parLeToken(PragmaP, info)
+        dest.add symToken(psym, info)
+        dest.addParRi()
       else:
         buildErr c, dest, n.info, "expected pragma"
         inc n
@@ -392,6 +411,19 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
         c.customPragmaTemplates.incl pool.strings.getOrIncl(basename)
         dest.add parLeToken(PragmaP, info)
         dest.addParRi()
+    elif pk == PragmaP and isPreservedCustomPragma(n):
+      # An already-preserved custom-pragma attachment `(pragma <sym>)`, seen
+      # again when a decl's pragmas are re-sem'd across phases / instantiation.
+      # Re-emit it so it stays introspectable and idempotent. Consume only the
+      # opening tag and the children here, leaving the pragma's own `)` for the
+      # shared `if hasParRi: ... skipParRi n` epilogue below; taking the whole
+      # tree would let that epilogue skip the *next* `)` (the enclosing
+      # `pragmas` closer) and swallow the routine body.
+      dest.add parLeToken(PragmaP, n.info)
+      inc n
+      while n.kind != ParRi:
+        takeTree dest, n
+      dest.addParRi()
     else:
       buildErr c, dest, n.info, "pragma not supported"
       inc n
