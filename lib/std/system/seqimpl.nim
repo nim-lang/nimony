@@ -166,12 +166,12 @@ func rawData*[T](s: seq[T]): ptr UncheckedArray[T] {.inline.} =
 
 func `[]`*[T](s: seq[T]; i: int): var T {.requires: (i < s.len and i >= 0), inline.} = s.data[i]
 
-func `[]=`*[T](s: var seq[T]; i: int; elem: sink T) {.requires: (i < s.len and i >= 0), inline.} =
+func `[]=`*[T](s: var seq[T]; i: int; elem: sink T) {.requires: (i < s.len and i >= 0), inline, linear.} =
   (s.data[i]) = elem
 
 func `[]`*[T](s: seq[T]; i: uint): var T {.requires: (i < s.len.uint), inline.} = s.data[int i]
 
-func `[]=`*[T](s: var seq[T]; i: uint; elem: sink T) {.requires: (i < s.len.uint), inline.} =
+func `[]=`*[T](s: var seq[T]; i: uint; elem: sink T) {.requires: (i < s.len.uint), inline, linear.} =
   (s.data[int i]) = elem
 
 func `@`*[I, T](a: array[I, T]): seq[T] {.nodestroy.} =

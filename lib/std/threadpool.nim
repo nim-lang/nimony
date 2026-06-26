@@ -145,16 +145,42 @@ var
 
 # --- Submit / dequeue ---
 
+proc tryEnqueue(s: int; t: Task): bool {.inline.} =
+  ## Push `t` onto stripe `s` if it has room; `false` when the stripe is full.
+  let i = s and (StripeCount - 1)
+  stripes[i].L.acquire()
+  result = stripes[i].count < StripeSize
+  if result:
+    stripes[i].data[stripes[i].tail] = t
+    stripes[i].tail = (stripes[i].tail + 1) and (StripeSize - 1)
+    inc stripes[i].count
+  stripes[i].L.release()
+
 proc submit*(t: Task; hint = 0) =
-  ## Submit a task to the pool. If the stripe is full the task is
-  ## dropped -- callers should track this externally if needed.
-  let s = hint and (StripeCount - 1)
-  stripes[s].L.acquire()
-  if stripes[s].count < StripeSize:
-    stripes[s].data[stripes[s].tail] = t
-    stripes[s].tail = (stripes[s].tail + 1) and (StripeSize - 1)
-    inc stripes[s].count
-  stripes[s].L.release()
+  ## Submit a task to the pool. **Non-lossy with "caller-runs" backpressure:**
+  ## try the hinted stripe, then the others (absorbing bursts); if *every*
+  ## stripe is full, run the continuation inline — trampolining it on the
+  ## calling thread and handing the remainder back to the pool the moment a
+  ## slot frees — rather than dropping it or blocking.
+  ##
+  ## Why caller-runs and not a blocking wait: workers re-submit continuations
+  ## from inside the trampoline (see `workerLoop`). A blocking `submit` could
+  ## park every worker on a full queue with none left to drain it -> deadlock.
+  ## Caller-runs instead guarantees forward progress (a producer that outruns
+  ## the pool simply does the work), so the queue stays bounded at
+  ## `StripeCount*StripeSize` and no submitter ever stalls.
+  let h = hint and (StripeCount - 1)
+  if tryEnqueue(h, t): return
+  for off in 1 ..< StripeCount:
+    if tryEnqueue(h + off, t): return
+  # Saturated: run it here. `c.fn` returns the next continuation, or one whose
+  # `fn` is nil when the task completes or parks (I/O will resume a parked one).
+  var c = t.con
+  while true:
+    let next = c.fn(c.env)
+    if next.fn == nil: break
+    if tryEnqueue(h, toTask(next)): break
+    c = next
 
 proc submit*(c: Continuation; hint = 0) {.inline.} =
   ## Convenience: submit a bare continuation as a task.
@@ -169,6 +195,32 @@ proc tryBulkDequeue(stripe: int; buf: var array[BulkSize, Task]): int =
     stripes[s].head = (stripes[s].head + 1) and (StripeSize - 1)
   dec stripes[s].count, result
   stripes[s].L.release()
+
+proc drainOnce(startStripe: int): bool =
+  ## Dequeue the first non-empty stripe (searching from `startStripe`, for
+  ## locality) and trampoline its tasks on the calling thread, re-submitting any
+  ## continuation that yields more work. Returns true if a batch ran. Shared by
+  ## the worker loop and `poolHelp`.
+  var buf {.noinit.}: array[BulkSize, Task]
+  for attempt in 0 ..< StripeCount:
+    let s = (startStripe + attempt) and (StripeCount - 1)
+    let n = tryBulkDequeue(s, buf)
+    if n > 0:
+      for i in 0 ..< n:
+        let c = buf[i].con
+        let next = c.fn(c.env)
+        if next.fn != nil:
+          submit(next, s)
+      return true
+  result = false
+
+proc poolHelp*(): bool {.inline.} =
+  ## Run one batch of queued tasks on the calling thread. A thread blocked on a
+  ## join (e.g. `parWait`) calls this instead of idle-spinning, so it *helps*
+  ## drain the pool. Without it, nested parallel regions deadlock: every worker
+  ## ends up spin-waiting in a join while the sub-tasks it needs sit unrun in
+  ## the queue (fork-join work-donation). Returns true if any task ran.
+  drainOnce(0)
 
 # --- I/O registration ---
 
@@ -247,28 +299,14 @@ proc unregisterFd*(fd: cint) =
 
 proc workerLoop(arg: pointer) {.nimcall.} =
   let threadIdx = cast[int](arg)   # index passed by value via the pointer slot (see initPool)
-  var taskBuf {.noinit.}: array[BulkSize, Task]
   when hasEpoll:
     var ioEvents {.noinit.}: array[MaxIoEvents, EpollEvent]
   elif hasKqueue:
     var ioEvents {.noinit.}: array[MaxIoEvents, KEvent]
   while not atomicLoad(stopFlag, moRelaxed):
-    # 1. Bulk-drain tasks: own stripe first, then steal from others.
-    var busy = false
-    for attempt in 0 ..< StripeCount:
-      let s = (threadIdx + attempt) and (StripeCount - 1)
-      let n = tryBulkDequeue(s, taskBuf)
-      if n > 0:
-        for i in 0 ..< n:
-          # Trampoline: run the continuation. If it returns a non-nil
-          # continuation (i.e. the passive proc yielded more work),
-          # re-submit it.
-          let c = taskBuf[i].con
-          let next = c.fn(c.env)
-          if next.fn != nil:
-            submit(next, threadIdx)
-        busy = true
-        break
+    # 1. Bulk-drain tasks: own stripe first, then steal from others. Trampolines
+    #    each continuation, re-submitting any that yield more work.
+    let busy = drainOnce(threadIdx)
 
     # 2. Poll I/O.
     #    Non-blocking when busy; 1ms wait when idle.

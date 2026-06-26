@@ -863,7 +863,11 @@ proc forLoopVars*(n: NifCursor): NifCursor =
   if result.stmtKind == StmtsS:
     result = firstChild(result)
   skip result # iter name
-  while result.kind == ParLe and result.otherKind notin {UnpackflatU, UnpacktupU}:
+  # Call args may be bare atoms (a `Symbol`/literal) or subtrees, so scan by
+  # exclusion: stop at the loop-vars node or at the closing `)`. (Scanning for
+  # `ParLe` only would stop at the first atom argument.)
+  while result.kind != ParRi and
+        not (result.kind == ParLe and result.otherKind in {UnpackflatU, UnpacktupU}):
     skip result # call args
   # result is now at the (unpackflat/unpacktup) node, or at ')' if none
 
