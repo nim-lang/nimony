@@ -806,6 +806,9 @@ proc saveReplacer*(t: Replacer; filename = paramStr(2)) =
 
 proc loadPluginInput*(filename = paramStr(1)): NifCursor =
   ## Loads a NIF file and returns a root `NifCursor` for reading it.
+  ##
+  ## For type plugins, use `loadTypeDefinitions()` to read the second input
+  ## file (`paramStr(3)`) that carries the triggering type definitions.
   var inp = nifstreams.open(filename)
   try:
     var tree = createTree(fromStream(inp))
@@ -814,30 +817,51 @@ proc loadPluginInput*(filename = paramStr(1)): NifCursor =
   finally:
     close(inp)
 
-proc templateName*(n: NifCursor): string =
-  ## Returns the name of the template that triggered this template-plugin run.
+proc loadTypeDefinitions*(): NifCursor =
+  ## Loads the type-definitions input for a type plugin (`paramStr(3)`).
   ##
-  ## Template-plugin input has the shape `(stmts <template-name> <arg1> …)`:
-  ## the compiler prepends the invoked template's name as a bare identifier so
-  ## that a single shared plugin can dispatch on which template was called.
-  ## This proc reads that leading name. Returns `""` when the input does not
-  ## carry a leading identifier (e.g. for module or type plugins).
+  ## Type plugins receive two input files: the full module AST via
+  ## `loadPluginInput()` and the triggering type definitions via this proc.
+  ## The result has the shape `(stmts <type-sym1> <type-sym2> ...)`.
+  loadPluginInput(paramStr(3))
+
+proc pluginName*(n: NifCursor): string =
+  ## Returns the name of the symbol that triggered this plugin run.
+  ##
+  ## Template-plugin input has the shape `(stmts <template-name> <arg1> ...)`
+  ## and for-loop plugin input has the shape
+  ## `(stmts <iter-name> <call-args...> <loop-vars> <loop-body>)`.
+  ## In both cases the compiler prepends the invoked symbol's name as a bare
+  ## identifier so that a single shared plugin can dispatch on which template
+  ## or iterator was called. This proc reads that leading name.
+  ##
+  ## Returns `""` when the input does not carry a leading identifier
+  ## (e.g. for module or type plugins).
   var n = n
   if n.stmtKind == StmtsS:
     n = firstChild(n)
   result = if n.kind == Ident: n.identText else: ""
 
-proc templateArgs*(n: NifCursor): NifCursor =
+template templateName*(n: NifCursor): string =
+  ## Deprecated alias for `pluginName`.
+  pluginName(n)
+
+proc pluginCallArgs*(n: NifCursor): NifCursor =
   ## Returns a cursor positioned at the first call-site argument of a
-  ## template-plugin input, skipping the `(stmts` wrapper and the leading
-  ## template name. Use `result.hasMore` to iterate the remaining arguments.
+  ## template-plugin or for-loop-plugin input, skipping the `(stmts` wrapper
+  ## and the leading symbol name. Use `result.hasMore` to iterate.
   ##
-  ## For input `(stmts <template-name> <arg1> <arg2> …)` the result points at
-  ## `<arg1>`. When there are no arguments it is positioned at the closing `)`.
+  ## For template input `(stmts <name> <arg1> <arg2> ...)` the result points
+  ## at `<arg1>`. For for-loop input the result points at the first iterator
+  ## call argument. When there are no arguments it is positioned at `)`.
   result = n
   if result.stmtKind == StmtsS:
     result = firstChild(result)
-    skip result # advance past the template name to the first real argument
+    skip result # advance past the name to the first real argument
+
+template templateArgs*(n: NifCursor): NifCursor =
+  ## Deprecated alias for `pluginCallArgs`.
+  pluginCallArgs(n)
 
 proc forLoopVars*(n: NifCursor): NifCursor =
   ## Returns a cursor at the loop variables of a for-loop plugin input.
@@ -889,6 +913,14 @@ proc saveTree*(tree: NifBuilder; filename: string) =
 proc saveTree*(tree: NifBuilder) =
   ## Writes the complete contents of a mutable `NifBuilder` to `paramStr(2)`.
   ## This preserves line info because it is intended for `.nif` output.
+  ##
+  ## **Re-semantacking contract**: template and for-loop plugin output is
+  ## re-semantacked by the compiler — identifiers are resolved, types are
+  ## checked, and calls are instantiated just like normal source. This means
+  ## the output can use raw identifiers (e.g. `addIdent "echo"`). Module and
+  ## type plugin output is NOT re-semantacked — it must already be fully
+  ## semanticked NIF (resolved symbols, typed expressions) because it
+  ## directly replaces the module body.
   saveTree(tree, paramStr(2))
 
 proc createTree*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](

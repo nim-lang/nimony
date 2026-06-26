@@ -6,7 +6,7 @@ import plugins
 proc tr(n: NifCursor): NifBuilder =
   result = createTree()
   let info = n.info
-  let head = templateArgs(n)
+  let head = pluginCallArgs(n)
 
   result.withTree StmtsS, info:
     # echo <input>

@@ -3,8 +3,8 @@ import plugins
 # A single shared plugin that dispatches on which template invoked it.
 proc dispatch(n: NifCursor): NifBuilder =
   let info = n.info
-  let mode = templateName(n)
-  var args = templateArgs(n)
+  let mode = pluginName(n)
+  var args = pluginCallArgs(n)
   result = createTree()
   result.withTree StmtsS, info:
     case mode

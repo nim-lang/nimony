@@ -2,7 +2,7 @@ import plugins
 import runtime
 
 proc generate*(input: NifCursor): NifBuilder =
-  let arg = templateArgs(input)
+  let arg = pluginCallArgs(input)
   result = createTree()
   result.withTree CallX, NoLineInfo:
     result.bindSym("accept")

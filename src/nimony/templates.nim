@@ -122,8 +122,8 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
             b.addParLe StmtsS, args.info
             # Pass the invoked template's name as the first child of the input
             # so a single shared plugin can dispatch on which template was
-            # called. The plugin reads it with `templateName` and skips to
-            # the real call-site arguments with `templateArgs`.
+            # called. The plugin reads it with `pluginName` and skips to
+            # the real call-site arguments with `pluginCallArgs`.
             b.add identToken(symToIdent(temp.name.symId), args.info)
             var a = args
             while a.hasMore:
