@@ -858,6 +858,21 @@ proc pluginCallArgs*(n: NifCursor): NifCursor =
     result = firstChild(result)
     skip result # advance past the name to the first real argument
 
+proc forLoopCallArgs*(n: NifCursor): NifCursor =
+  ## Returns a cursor at the `(callargs ...)` node of a for-loop plugin input.
+  ## Enter it with `.into:` to iterate the call arguments:
+  ##
+  ## .. code-block:: nim
+  ##   var c = forLoopCallArgs(n)
+  ##   c.into:
+  ##     while c.kind != ParRi:
+  ##       process(c)
+  ##       skip c
+  result = n
+  if result.otherKind == ForcallU:
+    result = firstChild(result) # name
+    skip result                  # → (callargs ...
+
 proc forLoopVars*(n: NifCursor): NifCursor =
   ## Returns a cursor at the loop variables of a for-loop plugin input.
   ##

@@ -52,10 +52,7 @@ proc loopVarSym(n: NifCursor): SymId =
 
 proc collectArgs(n: NifCursor): seq[NifCursor] =
   result = @[]
-  var c = n
-  if c.otherKind == ForcallU:
-    c = firstChild(c) # name
-    skip c             # → (callargs ...
+  var c = forLoopCallArgs(n)
   c.into:
     while c.kind != ParRi:
       result.add c
