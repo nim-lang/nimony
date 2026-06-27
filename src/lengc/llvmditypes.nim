@@ -203,8 +203,8 @@ proc genDITypeForSymbol(c: var LLVMCode; symId: SymId): int =
     # Cycle: emit placeholder and cache it
     let d = c.m.getDeclOrNil(symId)
     let typeName = if d != nil and d.kind == TypeY:
-                     pool.syms[asTypeDecl(d.pos).name.symId]
-                   else: pool.syms[symId]
+                     nifSymBaseName(asTypeDecl(d.pos).name.symId)
+                   else: nifSymBaseName(symId)
     result = c.addMetadata("!DICompositeType(tag: DW_TAG_structure_type" &
       ", name: \"" & typeName & "\", elements: !{}, size: 0)")
     c.debug.diTypeCache[symId] = result
@@ -214,7 +214,7 @@ proc genDITypeForSymbol(c: var LLVMCode; symId: SymId): int =
   let d = c.m.getDeclOrNil(symId)
   if d != nil and d.kind == TypeY:
     let decl = asTypeDecl(d.pos)
-    let typeName = pool.syms[decl.name.symId]
+    let typeName = nifSymBaseName(decl.name.symId)
     # Set sentinel before recursing to break cycles
     c.debug.diTypeCache[symId] = -1
     let underlying = genDITypeReadOnly(c, decl.body)
@@ -265,7 +265,7 @@ proc genDICompositeType(c: var LLVMCode; n: var Cursor): int =
 
   let tag = if decl.body.typeKind == UnionT: "DW_TAG_union_type"
             else: "DW_TAG_structure_type"
-  let typeName = pool.syms[symId]
+  let typeName = nifSymBaseName(symId)
   let totalSize = typeSizeBits(c, decl.body)
   let totalAlign = typeAlignBits(c, decl.body)
 
@@ -300,7 +300,7 @@ proc genDICompositeType(c: var LLVMCode; n: var Cursor): int =
     while body.hasMore:
       if body.substructureKind == FldU:
         var fd = takeFieldDecl(body)
-        let fieldName = pool.syms[fd.name.symId]
+        let fieldName = nifSymBaseName(fd.name.symId)
         let fieldType = genDITypeReadOnly(c, fd.typ)
         if fieldType != 0:
           let fieldSize = typeSizeBits(c, fd.typ)

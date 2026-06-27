@@ -134,9 +134,12 @@ type
     vflags*: HashSet[SymId]
     needsTerminator*: bool  # whether the current basic block needs a terminator
     breakStack*: seq[LToken]  # stack of loop-end labels for `break`
-    subprogramId*: int  # metadata ID of the current DISubprogram
+    spName*: string      # function name (for rebuilding DISubprogram)
+    spLine*: int          # line number
+    spScopeLine*: int     # scope line
+    subprogramId*: int    # metadata ID of the current DISubprogram
     subprogramFileId*: int  # DIFile metadata ID for the subprogram's file
-    retType*: LToken  # LLVM IR return type token
+    retType*: LToken      # LLVM IR return type token
     retTypeCursor*: Cursor  # NIF type cursor for the return type
     retainedNodes*: seq[int]  # DILocalVariable metadata IDs for retainedNodes
 
@@ -342,8 +345,8 @@ proc dbgLocation(c: var LLVMCode; info: PackedLineInfo): string =
   result = ", !dbg !" & $locId
 
 proc createSubprogram(c: var LLVMCode; name: string; info: PackedLineInfo): int =
-  ## Create a DISubprogram metadata node for a function.
-  ## Call ``updateSubprogramType`` afterwards to set the real signature.
+  ## Create a DISubprogram placeholder; call ``finalizeSubprogram`` later
+  ## to set the real signature + retainedNodes in one shot.
   var fileId = 0
   var line = 0
   if info.isValid:
@@ -351,62 +354,44 @@ proc createSubprogram(c: var LLVMCode; name: string; info: PackedLineInfo): int 
     if rawInfo.file.isValid:
       fileId = getOrCreateDIFile(c, rawInfo.file)
       line = rawInfo.line
-  let subroutineTypeId = c.addMetadata("!DISubroutineType(types: !{})")
-  result = c.addMetadata("distinct !DISubprogram(name: \"" & name &
-    "\", scope: !" & $fileId &
-    ", file: !" & $fileId &
-    ", line: " & $line &
-    ", type: !" & $subroutineTypeId &
-    ", scopeLine: " & $line &
-    ", spFlags: DISPFlagDefinition, unit: !" & $c.debug.cuId & ")")
+  # Save parts for finalizeSubprogram
+  c.currentProc.spName = name
+  c.currentProc.spLine = line
+  c.currentProc.spScopeLine = line
   c.currentProc.subprogramFileId = fileId
+  # Create placeholder (content replaced later by finalizeSubprogram)
+  result = c.addMetadata("")
 
-proc updateSubprogramType(c: var LLVMCode; spId: int;
-                          retDIType: int; paramDITypes: seq[int]) =
-  ## Rewrite the DISubprogram metadata at `spId` to use a
-  ## DISubroutineType with the real signature.
+proc finalizeSubprogram(c: var LLVMCode; spId: int;
+                         paramDITypes, retainedNodes: seq[int]) =
+  ## Build the complete !DISubprogram metadata in one shot.
   if spId == 0: return
-  # Build the new subroutine type (param types only, matching LLVM C API convention).
+  let fid = c.currentProc.subprogramFileId
+
+  # Build DISubroutineType (param types only)
   var typesStr = ""
   for i, pt in paramDITypes:
     if i > 0: typesStr.add ", "
     typesStr.add "!" & $pt
   let stId = c.addMetadata("!DISubroutineType(types: !{" & typesStr & "})")
 
-  # Rebuild the subprogram metadata entry
-  let old = c.debug.metadata[spId]
-  # The old entry looks like:
-  #   distinct !DISubprogram(name: "...", scope: !N, file: !N,
-  #       line: N, type: !N, scopeLine: N,
-  #       spFlags: DISPFlagDefinition, unit: !N)
-  # We extract the fields before `type:` and after the old type id,
-  # then splice in the new type id.
-  var
-    prefix = ""
-    suffix = ""
-    inType = false
-    afterType = false
-    braceDepth = 0
-    i = 0
-  while i < old.len:
-    if not afterType:
-      if not inType and old[i] == 't' and i + 6 < old.len and
-         old[i..i+5] == "type: ":
-        inType = true
-        prefix = old[0..<i]
-        i += 6  # skip "type: "
-        # skip "!" if present
-        if i < old.len and old[i] == '!': i += 1
-        # skip old type id digits
-        while i < old.len and old[i] in {'0'..'9'}: i += 1
-        afterType = true
-        suffix = old[i..^1]
-      else:
-        i += 1
-    else:
-      break
-  if afterType:
-    c.debug.metadata[spId] = prefix & "type: !" & $stId & suffix
+  # Build retainedNodes list
+  var rnList = ""
+  for i, rn in retainedNodes:
+    if i > 0: rnList.add ", "
+    rnList.add "!" & $rn
+  let rnId = c.addMetadata("!{" & rnList & "}")
+
+  # One-shot assembly
+  let finalSp = "distinct !DISubprogram(name: \"" & c.currentProc.spName &
+    "\", scope: !" & $fid &
+    ", file: !" & $fid &
+    ", line: " & $c.currentProc.spLine &
+    ", type: !" & $stId &
+    ", scopeLine: " & $c.currentProc.spScopeLine &
+    ", spFlags: DISPFlagDefinition, unit: !" & $c.debug.cuId &
+    ", retainedNodes: !" & $rnId & ")"
+  c.debug.metadata[spId] = finalSp
 
 proc emitLineDbg(c: var LLVMCode; s: string; info: PackedLineInfo) =
   ## Emit an instruction line with debug location metadata attached.
@@ -914,19 +899,8 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
     # Generate body
     genStmtLLVM c, prc.body
 
-    # Update subprogram type with real signature (param types only)
-    updateSubprogramType(c, spId, 0, paramDITypes)
-
-    # Update retainedNodes in DISubprogram
-    if c.currentProc.retainedNodes.len > 0:
-      var rnList = ""
-      for i, rn in c.currentProc.retainedNodes:
-        if i > 0: rnList.add ", "
-        rnList.add "!" & $rn
-      let rnId = c.addMetadata("!{" & rnList & "}")
-      let oldSp = c.debug.metadata[spId]
-      # Append retainedNodes before the closing ")"
-      c.debug.metadata[spId] = oldSp[0..^2] & ", retainedNodes: !" & $rnId & ")"
+    # Finalize DISubprogram: type + retainedNodes in one shot
+    finalizeSubprogram(c, spId, paramDITypes, c.currentProc.retainedNodes)
 
     # Add implicit return if needed
     if c.currentProc.needsTerminator:
