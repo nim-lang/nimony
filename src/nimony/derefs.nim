@@ -1067,7 +1067,12 @@ proc trTry(c: var Context; n: var Cursor) =
   var nn = n
   skip nn
   let oldProps = c.r.props
-  if nn.substructureKind == ExceptU or nn.substructureKind == FinU:
+  # Only an `except` clause catches and thus permits raising calls in the body.
+  # A bare `finally` (e.g. from `defer`) does NOT catch — a raise still escapes —
+  # so a try/finally must not grant `CanRaise`, otherwise a raising call slips
+  # through in a proc not declared `.raises`. `except` always precedes `fin` in
+  # the NIF, so the first post-body clause being `ExceptU` means "has an except".
+  if nn.substructureKind == ExceptU:
     c.r.props.incl CanRaise
   # now can raise in the `try` block:
   tr c, n, WantT
