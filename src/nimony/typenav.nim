@@ -411,7 +411,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of FalseX, TrueX, AndX, OrX, XorX, NotX, DefinedX, DeclaredX, IsmainmoduleX, EqX, NeqX, LeX, LtX,
      EqsetX, LesetX, LtsetX, InsetX, OvfX, CompilesX, InstanceofX, FailedX, IsX:
     result = c.builtins.boolType
-  of NegX, NeginfX, NanX, InfX:
+  of NeginfX, NanX, InfX:
     result = c.builtins.floatType
   of EnumtostrX, DefaultobjX, DefaulttupX, DefaultdistinctX, InternalTypeNameX,
      AstToStrX, BindSymNameX:
@@ -425,7 +425,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     result = c.builtins.intType
   of DelayX, Delay0X, SuspendX:
     result = c.builtins.continuationType
-  of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
+  of AddX, SubX, MulX, DivX, ModX, ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX, NegX,
      PlussetX, MinussetX, MulsetX, XorsetX,
      CastX, ConvX, HconvX, DconvX, BaseobjX,
      OconstrX, NewobjX, AconstrX, SetconstrX, TupconstrX, NewrefX:
