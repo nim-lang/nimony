@@ -4,7 +4,7 @@ import plugins
 proc dispatch(n: NifCursor): NifBuilder =
   let info = n.info
   let mode = pluginName(n)
-  var args = pluginCallArgs(n)
+  var args = callArgs(n)
   result = createTree()
   result.withTree StmtsS, info:
     case mode

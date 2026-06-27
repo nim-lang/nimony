@@ -841,20 +841,14 @@ proc pluginName*(n: NifCursor): string =
     n = firstChild(n)
   result = if n.kind == Ident: n.identText else: ""
 
-proc pluginCallArgs*(n: NifCursor): NifCursor =
-  ## Returns a cursor positioned at the first call-site argument of a
-  ## template-plugin or for-loop-plugin input. Use `result.hasMore` to iterate.
+proc callArgs*(n: NifCursor): NifCursor =
+  ## Returns a cursor at the first call-site argument of a template-plugin
+  ## input `(stmts <name> <arg1> <arg2> ...)`. Skips the `(stmts` wrapper
+  ## and the leading name. Use `result.hasMore` to iterate.
   ##
-  ## For template input `(stmts <name> <arg1> ...)` the result points at
-  ## `<arg1>`. For for-loop input `(forcall <name> (callargs <arg1> ...) ...)`
-  ## the result points at `<arg1>` inside the `(callargs ...)` group.
-  ## When there are no arguments it is positioned at `)`.
+  ## For for-loop plugins, use `forLoopCallArgs` instead.
   result = n
-  if result.otherKind == ForcallU:
-    result = firstChild(result) # name
-    skip result                  # → (callargs ...
-    result = firstChild(result)  # → first arg
-  elif result.stmtKind == StmtsS:
+  if result.stmtKind == StmtsS:
     result = firstChild(result)
     skip result # advance past the name to the first real argument
 

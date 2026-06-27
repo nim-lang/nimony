@@ -7,7 +7,7 @@ import plugins
 proc tr(n: NifCursor): NifBuilder =
   result = createTree()
   let info = n.info
-  let head = pluginCallArgs(n)
+  let head = callArgs(n)
 
   result.withTree StmtsS, info:
     # echo "seen"   — built via an explicit ident head and a string literal arg
