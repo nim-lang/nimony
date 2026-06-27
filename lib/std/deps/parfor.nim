@@ -51,12 +51,15 @@ proc loopVarSym(n: NifCursor): SymId =
   result = default(SymId)
 
 proc collectArgs(n: NifCursor): seq[NifCursor] =
-  ## The `||` call arguments (a, b, step, chunkSize, workload) as cursors.
-  var c = pluginCallArgs(n)
   result = @[]
-  while c.kind != ParRi:
-    result.add c
-    skip c
+  var c = n
+  if c.otherKind == ForcallU:
+    c = firstChild(c) # name
+    skip c             # → (callargs ...
+  c.into:
+    while c.kind != ParRi:
+      result.add c
+      skip c
 
 # ── static race-rule checker ─────────────────────────────────────────────────
 # Runs over the *typed* body before lowering and rejects anything not provably
