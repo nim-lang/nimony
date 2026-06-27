@@ -4268,15 +4268,33 @@ The pragma takes two to four string arguments:
    pragma appears in (the same rule the `.plugin` pragma uses).
 3. an optional string of extra **arguments** forwarded to every invocation of
    the tool.
-4. an optional **linker** tool — the path to a second tool's source (built by
-   the same builder). When *any* module in the project supplies a linker, it
-   *overrides* the final link step: instead of the built-in linker, that tool is
-   run and handed a *manifest* describing the whole project — the app-type
-   (`console`/`gui`/`lib`/`staticlib`), every object file and every routed
-   backend artifact (each tagged with its kind), and the global link flags. The
-   linker reads the manifest and links, bundles, or ignores entries as it sees
-   fit (for example: link the objects, and embed or drop the `.spv` artifacts).
-   Programs that supply no linker keep the built-in link step unchanged.
+4. an optional string of per-file **link flags**. Unlike `.passL`, which is
+   global, these are scoped to *this* module: they are attached to the module's
+   object in the link manifest and passed to the linker together with that file
+   (for example a GPU module that declares `"-lvulkan"` here). They do *not*
+   change the link step itself — overriding the linker is the job of the separate
+   `.bundle` pragma below.
+
+### Bundle pragma
+
+The `bundle`:idx: pragma *overrides the final link step* with a custom link
+driver. When *any* module in the project supplies a `.bundle`, that tool is run
+instead of the built-in linker and is handed a *manifest* describing the whole
+project — the app-type (`console`/`gui`/`lib`/`staticlib`), every object file and
+every routed backend artifact (each tagged with its kind, and carrying any
+per-file link flags), and the global link flags. The link driver reads the
+manifest and links, bundles, or ignores entries as it sees fit (for example: link
+the objects, and embed or drop the `.spv` artifacts). Programs that supply no
+`.bundle` keep the built-in link step unchanged.
+
+  ```nim
+  {.bundle("nimony c", "deps/mylinker.nim").}
+  ```
+
+It takes two to three string arguments — the **builder**, the **tool** (the link
+driver's source path), and an optional string of extra **arguments** forwarded to
+the tool — resolved exactly like the corresponding `.build` arguments. The first
+`.bundle` in the project wins.
 
 A backend tool is *not* a plugin. A plugin runs inside the compiler during
 semantic analysis and rewrites the program's syntax tree; a backend tool is a

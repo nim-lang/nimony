@@ -1242,6 +1242,13 @@ proc buildShoggoth(showProgress = false) =
   let exe = "shoggoth".addFileExt(ExeExt)
   robustMoveFile "src/lengc/shoggoth/" & exe, binDir() / exe
 
+proc buildNiflink(showProgress = false) =
+  ## `niflink` (the C-backend link driver) reads a link manifest NIF and links
+  ## the project; built on the nifcore API.
+  exec nimcPrefix() & "src/niflink/niflink.nim", showProgress
+  let exe = "niflink".addFileExt(ExeExt)
+  robustMoveFile "src/niflink/" & exe, binDir() / exe
+
 proc buildArkham(showProgress = false) =
   ## `arkham` (Leng -> typed asm-NIF native codegen) lives in the sibling
   ## `../nativenif` repo and reuses nimony's NIF libraries via its committed
@@ -2021,6 +2028,7 @@ proc handleCmdLine =
       buildNimony(showProgress)
       buildLengc(showProgress)
       buildShoggoth(showProgress)
+      buildNiflink(showProgress)
       buildHexer(showProgress)
       buildNifmake(showProgress)
       buildNj(showProgress)
@@ -2037,6 +2045,8 @@ proc handleCmdLine =
       buildLengc(showProgress)
     of "shoggoth":
       buildShoggoth(showProgress)
+    of "niflink":
+      buildNiflink(showProgress)
     of "arkham":
       buildArkham(showProgress)
     of "nifasm":

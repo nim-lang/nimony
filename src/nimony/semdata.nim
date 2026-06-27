@@ -187,6 +187,7 @@ type
     exports*: OrderedTable[SymId, ImportFilter] # module syms to export filter
     freshSyms*: HashSet[SymId] ## symdefs that should count as new for semchecking
     toBuild*: TokenBuf
+    toBundle*: TokenBuf ## `.bundle` custom-linker entries (link-step override)
     unoverloadableMagics*: HashSet[StrId]
     debugAllowErrors*: bool
     pending*: TokenBuf
