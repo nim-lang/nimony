@@ -174,6 +174,19 @@ type
   CFile = object
     name, obj, customArgs: string
 
+  BackendTool = object
+    ## A `{.build(builder, tool[, args]).}` custom-backend routing entry: the
+    ## module `modFile` has its Leng IR piped through `toolName` (a program built
+    ## by `builder` ∈ {nimony, nim} from `toolSrc`). Built like a plugin (on
+    ## demand) but scheduled like a tool (a node in the nifmake DAG).
+    builder: string    ## generic builder command, e.g. "nimony c" / "nim c"
+    toolSrc: string    ## the tool's Nim source path
+    toolName: string   ## derived exe basename (the nifmake command name)
+    args: string       ## extra args forwarded to the tool invocation
+    modFile: FilePair  ## the module whose `.c.nif` is routed through the tool
+    linkerSrc: string  ## optional custom-linker tool source ("" = none); when any
+                       ## module supplies one it overrides the final link step
+
   DepContext = object
     forceRebuild: bool
     cmd: Command
@@ -187,6 +200,7 @@ type
     isGeneratingFinal: bool
     foundPlugins: HashSet[string]
     toBuild: seq[CFile]
+    backendTools: seq[BackendTool]
     passL: seq[string]
     passC: seq[string]
 
@@ -452,7 +466,7 @@ proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
         processPluginImport c, f, info, current
       break
 
-proc processBuild(c: var DepContext; it: var Cursor) =
+proc processBuild(c: var DepContext; it: var Cursor; current: Node) =
   it.into:  # (build …)
     while it.hasMore:
       assert it.exprKind == TupX
@@ -464,13 +478,28 @@ proc processBuild(c: var DepContext; it: var Cursor) =
         inc x
         assert x.kind == StringLit
         let path = pool.strings[x.litId]
-        let obj = splitFile(path).name & ".o"
         inc x
         assert x.kind == StringLit
         let args = pool.strings[x.litId]
         inc x
+        var linkerSrc = ""        # optional 4th field (`.build` linker tool)
+        if x.kind == StringLit:
+          linkerSrc = pool.strings[x.litId]
+          inc x
         while x.hasMore: skip x
-        c.toBuild.add CFile(name: path, obj: obj, customArgs: args)
+        if typ in ["C", "ObjC", "Cpp", "ObjCpp"]:
+          # `.compile` foreign source -> object file, linked into the program.
+          # The first field is a C-family language (set by `addBuildTarget`).
+          let obj = splitFile(path).name & ".o"
+          c.toBuild.add CFile(name: path, obj: obj, customArgs: args)
+        else:
+          # `{.build(builder, tool, args[, linker]).}` — a custom backend routes
+          # THIS module's Leng IR through `tool`. The first field is the generic
+          # builder command (e.g. `"nimony c"`), distinct from a `.compile`
+          # language token above.
+          c.backendTools.add BackendTool(builder: typ, toolSrc: path,
+            toolName: splitFile(path).name, args: args, modFile: current.files[0],
+            linkerSrc: linkerSrc)
 
 proc processDep(c: var DepContext; n: var Cursor; current: Node) =
   case stmtKind(n)
@@ -486,7 +515,7 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
     skip n
   of NoStmt:
     if n.tagId == TagId(BuildIdx):
-      processBuild c, n
+      processBuild c, n, current
     elif n.tagId == TagId(PassLP):
       n.into:  # (passL …)
         while n.hasMore:
@@ -740,6 +769,53 @@ proc generateDocBuildFile(c: DepContext): string =
         b.addStrLit indexOut
   discard rootFlags  # silence unused warning if logging is later removed
 
+proc wantTool(name, src, builder, nifcachePath: string;
+              toolExe, toolBuild, toolBuilderCmd, builderCmdName: var Table[string, string]) =
+  ## Register a backend tool (a routing tool or a custom linker) for build/command
+  ## emission: reuse a prebuilt `bin/` copy if present, else compile it from
+  ## source on demand. Mutates the shared tables `generateFinalBuildFile` walks to
+  ## emit the builder commands, routing commands, and tool-build nodes.
+  if toolExe.hasKey(name): return
+  let found = findTool(name)
+  if semos.fileExists(found):
+    toolExe[name] = found                      # prebuilt / known -> use as-is
+  else:
+    toolExe[name] = nifcachePath / name.addFileExt(ExeExt)
+    toolBuild[name] = src
+    toolBuilderCmd[name] = builder
+    if not builderCmdName.hasKey(builder):
+      builderCmdName[builder] = "builderCmd" & $builderCmdName.len
+
+proc writeLinkManifest(path, exe, apptype: string;
+                       objs, artifacts, flags: seq[string]): string =
+  ## Write the manifest NIF a custom linker (`{.build(…, linker).}`) consumes:
+  ## every project artifact (objects + routed backend outputs), the app-type, and
+  ## the global link flags. The linker reads this and links/bundles/filters as it
+  ## sees fit (e.g. link the `obj`s, embed or ignore the backend `artifact`s).
+  var b = nifbuilder.open(path)
+  b.addHeader()
+  b.withTree "link":
+    b.withTree "apptype":
+      b.addStrLit apptype
+    b.withTree "output":
+      b.addStrLit exe
+    for o in objs:
+      b.withTree "file":
+        b.addStrLit o
+        b.withTree "kind":
+          b.addStrLit "obj"
+    for a in artifacts:
+      b.withTree "file":
+        b.addStrLit a
+        b.withTree "kind":
+          b.addStrLit "artifact"
+    if flags.len > 0:
+      b.withTree "flags":
+        for f in flags:
+          b.addStrLit f
+  b.close()
+  result = path
+
 proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, passL: string): string =
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".final.build.nif"
   var b = nifbuilder.open(result)
@@ -855,6 +931,52 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
       b.addKeyw "input"
       b.addStrLit "-o"
       b.addKeyw "output"
+
+    # Commands for custom backends (`{.build(builder, tool[, args]).}`): each
+    # module routes its Leng IR through `tool`, an external program compiled on
+    # demand by the *generic* `builder` command (e.g. `"nimony c"`, `"nim c"`,
+    # `"nimony c --path:…"`). Nothing about the builder or tool names is
+    # hardcoded: the builder's first token is the program (resolved via
+    # `findTool`, so `nimony` -> `bin/`, `nim` -> PATH), the rest is passed
+    # verbatim, and the tool exe is written via `-o:` (accepted by both nim and
+    # nimony). A tool already present in `bin/` (a known name) is used as-is.
+    var backendToolExe = initTable[string, string]()      # toolName -> exe path
+    var backendToolBuild = initTable[string, string]()    # toolName -> source (only if we build it)
+    var backendToolBuilderCmd = initTable[string, string]() # toolName -> builder command string
+    var builderCmdName = initTable[string, string]()      # builder string -> nifmake cmd name
+    var customLinkerName = ""   # "" = no custom linker; else overrides the link step
+    for bt in c.backendTools:
+      wantTool(bt.toolName, bt.toolSrc, bt.builder, c.config.nifcachePath,
+               backendToolExe, backendToolBuild, backendToolBuilderCmd, builderCmdName)
+      # The first module supplying a linker tool wins; it overrides the link step.
+      if bt.linkerSrc.len > 0 and customLinkerName.len == 0:
+        customLinkerName = splitFile(bt.linkerSrc).name
+        wantTool(customLinkerName, bt.linkerSrc, bt.builder, c.config.nifcachePath,
+                 backendToolExe, backendToolBuild, backendToolBuilderCmd, builderCmdName)
+    if c.backendTools.len > 0:
+      # One build command per distinct builder string: `<prog> <rest…> -o:<exe> <src>`.
+      for builder, cmdName in builderCmdName:
+        let toks = builder.splitWhitespace
+        b.withTree "cmd":
+          b.addSymbolDef cmdName
+          b.addStrLit toks[0]                 # program; expandCommand resolves via findTool
+          for i in 1 ..< toks.len:            # subcommand + flags, verbatim
+            b.addStrLit toks[i]
+          b.withTree "output":
+            b.addStrLit "-o:"
+          b.addKeyw "input"
+      # Routing command per distinct tool: `<toolExe> <args> <module.c.nif> <out>`.
+      # The tool exe is also a `(do …)` input (so nifmake builds it first), but is
+      # referenced by index `(input 0 0)` so only the Leng IR reaches the cmdline.
+      for tn, exe in backendToolExe:
+        b.withTree "cmd":
+          b.addSymbolDef tn
+          b.addStrLit exe
+          b.addKeyw "args"
+          b.withTree "input":
+            b.addIntLit 0
+            b.addIntLit 0
+          b.addKeyw "output"
 
     # Command for linking/archiving
     if c.cmd in {DoCompile, DoRun} and nativeSysLink:
@@ -1000,9 +1122,72 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
           b.withTree "output":
             b.addStrLit c.config.lengcFile(n.files[0], backend)
 
+      # Custom-backend nodes: build each tool once (depth 0) — routing tools AND
+      # the custom linker (every entry in `backendToolBuild`) — then route every
+      # `.build` module's Leng IR through its routing tool (depth 1, parallel).
+      # nifmake orders the tool build before its uses via the exe output->input
+      # edge.
+      for toolName, src in backendToolBuild:
+        b.withTree "do":
+          b.addIdent builderCmdName[backendToolBuilderCmd[toolName]]
+          b.withTree "input":
+            b.addStrLit src
+          b.withTree "output":
+            b.addStrLit backendToolExe[toolName]
+      for bt in c.backendTools:
+        let lengcInput = c.config.lengcFile(bt.modFile, backend)
+        let artifact = lengcInput & "." & bt.toolName & ".out.nif"
+        b.withTree "do":
+          b.addIdent bt.toolName
+          b.withTree "args":
+            for flag in splitWhitespace(bt.args):
+              b.addStrLit flag
+          b.withTree "input":
+            b.addStrLit lengcInput
+          b.withTree "input":
+            b.addStrLit backendToolExe[bt.toolName]
+          b.withTree "output":
+            b.addStrLit artifact
+
       # Link executable
       var objFiles = initHashSet[string]()
-      if nativeSysLink:
+      if customLinkerName.len > 0:
+        # A `{.build(…, linker).}` module overrides the link step: instead of the
+        # built-in `link`/`nifasm` node, run the custom linker tool and hand it a
+        # manifest NIF describing every project artifact + the app-type. The
+        # objects/artifacts are listed as inputs purely to order them before the
+        # linker runs; the linker command reads only the manifest (`(input 0 0)`).
+        let exe = c.config.exeFile(c.rootNode.files[0], backend)
+        var objs: seq[string] = @[]
+        if not native:
+          for cfile in c.toBuild: objs.add sharedObjFile(cfile)
+          for v in c.nodes: objs.add c.config.objFile(v.files[0], backend)
+        var artifacts: seq[string] = @[]
+        for bt in c.backendTools:
+          artifacts.add c.config.lengcFile(bt.modFile, backend) & "." & bt.toolName & ".out.nif"
+        var flags: seq[string] = @[]
+        if passL.len > 0:
+          for f in passL.split(' '):
+            if f.len > 0: flags.add f
+        for f in c.passL: flags.add f
+        let manifest = backendDir / (c.rootNode.files[0].modname & ".linkmanifest.nif")
+        discard writeLinkManifest(manifest, exe, $c.config.appType, objs, artifacts, flags)
+        b.withTree "do":
+          b.addIdent customLinkerName
+          b.withTree "input":                 # input 0: the manifest the linker reads
+            b.addStrLit manifest
+          for o in objs:                       # ordering: objects must be built first
+            if not objFiles.containsOrIncl(o):
+              b.withTree "input":
+                b.addStrLit o
+          for a in artifacts:                  # ordering: routed backend artifacts
+            b.withTree "input":
+              b.addStrLit a
+          b.withTree "input":                  # ordering: the linker tool itself
+            b.addStrLit backendToolExe[customLinkerName]
+          b.withTree "output":
+            b.addStrLit exe
+      elif nativeSysLink:
         # First nifasm bundles every module's `.asm.nif` into one relocatable
         # object (it reads only the main one's path and pulls the rest by suffix;
         # the others are listed purely to order them before nifasm runs).

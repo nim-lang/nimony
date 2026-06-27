@@ -563,7 +563,7 @@ proc readPragmaStrings(c: var SemContext; dest: var TokenBuf; it: var Item): seq
 
 proc addBuildTarget(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
                     lang, rawName, rawArgs: string) =
-  ## Resolve a `build`/`compile` source path (relative to the pragma's own file)
+  ## Resolve a `compile` source path (relative to the pragma's own file)
   ## and record a `(tup lang name args)` entry in `c.toBuild`. `deps.nim` reuses
   ## these via `(build …)` to compile and link the foreign object.
   # XXX: Relative paths in makefile are relative to current working directory, not the location of the makefile.
@@ -579,16 +579,61 @@ proc addBuildTarget(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
     c.toBuild.addStrLit name, info
     c.toBuild.addStrLit customArgs, info
 
+proc addBackendTool(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
+                    builder, rawTool, rawArgs, rawLinker: string) =
+  ## Record a `{.build(builder, tool[, args[, linker]]).}` custom-backend entry:
+  ## the module carrying this pragma has its Leng IR (`.c.nif`) piped through
+  ## `tool` — a standalone program compiled on demand by the generic `builder`
+  ## command (e.g. `"nimony c"`, `"nim c"`, `"nimony c --path:…"`; the first
+  ## token is the compiler, the rest is passed through verbatim, so neither the
+  ## builder nor its subcommand is hardcoded). The optional `linker` is the
+  ## source of a custom linker tool (built by the same `builder`): when *any*
+  ## module supplies one, it overrides the final link step — `deps.nim` then runs
+  ## that tool, handing it a manifest NIF describing every project artifact plus
+  ## the app-type, and the tool links/bundles as it sees fit. It is stored as
+  ## `(tup builder toolSource args linker)` in `c.toBuild`, sharing the
+  ## `(build …)` channel with `.compile`; `deps.nim`/`processBuild` tells the two
+  ## apart by the first field carrying a space-separated builder command vs a
+  ## single C/ObjC/Cpp language token. The tool is a *backend*, not a *plugin*:
+  ## built like a plugin (compiled on demand) but scheduled like a tool (an
+  ## external process that is a node in the build DAG).
+  let curWorkDir = onRaiseQuit os.getCurrentDir()
+  let currentDir = absoluteParentDir(info.getFile)
+  var tool = replaceSubs(rawTool, currentDir, c.g.config).toAbsolutePath(currentDir)
+  let customArgs = replaceSubs(rawArgs, currentDir, c.g.config)
+  if not semos.fileExists(tool):
+    buildErr c, dest, info, "build: cannot find tool source: " & tool
+  tool = tool.toRelativePath(curWorkDir)
+  var linker = ""
+  if rawLinker.len > 0:
+    linker = replaceSubs(rawLinker, currentDir, c.g.config).toAbsolutePath(currentDir)
+    if not semos.fileExists(linker):
+      buildErr c, dest, info, "build: cannot find linker tool source: " & linker
+    linker = linker.toRelativePath(curWorkDir)
+  c.toBuild.buildTree TupX, info:
+    c.toBuild.addStrLit builder, info
+    c.toBuild.addStrLit tool, info
+    c.toBuild.addStrLit customArgs, info
+    c.toBuild.addStrLit linker, info
+
 proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragmaBlock: bool) =
   case it.n.pragmaKind
   of BuildP:
+    # Repurposed: `{.build(builder, tool[, args]).}` routes this module's Leng IR
+    # through a custom backend `tool` (built by `builder`). NOT the old foreign-
+    # source `.build` — that single use (mimalloc) moved to the standard
+    # `.compile`.
     let info = it.n.info
     let args = readPragmaStrings(c, dest, it)
-    if args.len != 2 and args.len != 3:
-      buildErr c, dest, info, "build expected 2 or 3 parameters"
+    if args.len < 2 or args.len > 4:
+      buildErr c, dest, info, "build expected 2 to 4 parameters: (builder, tool[, args[, linker]])"
+    elif args[0].len == 0:
+      buildErr c, dest, info,
+        "build: the builder command (e.g. \"nimony c\" or \"nim c\") must not be empty"
     else:
-      addBuildTarget c, dest, info, args[0], args[1],
-        (if args.len == 3: args[2] else: "")
+      addBackendTool c, dest, info, args[0], args[1],
+        (if args.len >= 3: args[2] else: ""),
+        (if args.len >= 4: args[3] else: "")
   of CompileP:
     # Nim-compatible `{.compile("file"[, "flags"]).}`. Unlike `build` there is no
     # explicit language argument: it is inferred from the file extension and

@@ -4240,6 +4240,64 @@ initialized within the `var` section. (Every thread-local variable needs to
 be replicated at thread creation.)
 
 
+### Build pragma
+
+The `build`:idx: pragma routes a module's generated intermediate representation
+through a *custom backend*: an external tool that turns the module's IR into a
+backend-specific artifact (for example a GPU kernel binary). It is the seam
+through which alternative code generators are plugged in, without changing the
+compiler itself.
+
+  ```nim
+  {.build("nimony c", "deps/mybackend.nim").}
+  ```
+
+The pragma takes two to four string arguments:
+
+1. the **builder** — the command used to build the tool from its source, for
+   example `"nim c"` or `"nimony c"`. It is a plain command string, not a fixed
+   set of names: the first token is the compiler (resolved like any tool — a
+   name in Nimony's `bin/`, otherwise looked up on the `PATH`), and the rest is
+   passed through verbatim, so extra flags or a different subcommand work without
+   the compiler knowing about them (`"nimony c --path:../lib"` is fine). Use
+   `"nim c"` for a tool that still depends on Nim 2 (the existing native code
+   generators are written this way) and `"nimony c"` for a self-hosted tool;
+   porting a tool from one to the other is a one-string change. The builder must
+   accept `-o:<path>` to set the output executable (both `nim` and `nimony` do).
+2. the **tool** — the path to the tool's source file, relative to the file the
+   pragma appears in (the same rule the `.plugin` pragma uses).
+3. an optional string of extra **arguments** forwarded to every invocation of
+   the tool.
+4. an optional **linker** tool — the path to a second tool's source (built by
+   the same builder). When *any* module in the project supplies a linker, it
+   *overrides* the final link step: instead of the built-in linker, that tool is
+   run and handed a *manifest* describing the whole project — the app-type
+   (`console`/`gui`/`lib`/`staticlib`), every object file and every routed
+   backend artifact (each tagged with its kind), and the global link flags. The
+   linker reads the manifest and links, bundles, or ignores entries as it sees
+   fit (for example: link the objects, and embed or drop the `.spv` artifacts).
+   Programs that supply no linker keep the built-in link step unchanged.
+
+A backend tool is *not* a plugin. A plugin runs inside the compiler during
+semantic analysis and rewrites the program's syntax tree; a backend tool is a
+standalone program that runs *after* code generation, reading the module's IR
+and writing an artifact. In short, a backend is *built* like a plugin (compiled
+on demand) but *scheduled* like a tool: it becomes a node in the build graph, so
+it is rebuilt only when its inputs change and runs in parallel with the rest of
+the build.
+
+Tool resolution mirrors the plugin mechanism: if an executable of the tool's
+name already exists in Nimony's `bin/` directory (or is a known system tool), it
+is used directly; otherwise the source is compiled on demand by the named
+builder. The compiled tool, and every module routed through it, are ordinary
+build-graph nodes, so a custom backend inherits Nimony's incremental and
+parallel compilation for free.
+
+The `build` pragma is a module-level statement: it applies to the whole module
+in which it appears, and each invocation of the tool receives that module's IR
+as its input and the destination artifact as its output.
+
+
 ## Plugins
 
 Plugins are Nimony's metaprogramming mechanism, replacing Nim 2's macro system.
