@@ -1425,7 +1425,7 @@ const BootSelfTools = ["nimsem", "hexer", "nimony"]
   ## hexer are needed by every later `nimony c` call, so they go first;
   ## nimony itself goes last because it's the one each *next* stage will
   ## drive with.
-const BootCarryTools = ["nifler", "lengc", "nifmake", "validator", "shoggoth"]
+const BootCarryTools = ["nifler", "lengc", "niflink", "nifmake", "validator", "shoggoth"]
   ## Tools copied from `bin/` into each stage dir. They're tier-0 for
   ## bootstrap purposes (host-Nim-built throughout) but `nimony c` shells
   ## to them, so each stage dir needs its own copy.

@@ -1131,11 +1131,15 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
       # edge.
       for toolName, src in backendToolBuild:
         b.withTree "do":
-          b.addIdent builderCmdName[backendToolBuilderCmd[toolName]]
+          # `getOrDefault` (non-raising): every key is guaranteed present (the
+          # tool was just registered via `wantTool`), so the `.raises` `[]` —
+          # which would escape this proc's `defer` and force it to be `.raises` —
+          # is avoided. Same for the other tool-table lookups below.
+          b.addIdent builderCmdName.getOrDefault(backendToolBuilderCmd.getOrDefault(toolName))
           b.withTree "input":
             b.addStrLit src
           b.withTree "output":
-            b.addStrLit backendToolExe[toolName]
+            b.addStrLit backendToolExe.getOrDefault(toolName)
       for bt in c.backendTools:
         let lengcInput = c.config.lengcFile(bt.modFile, backend)
         let artifact = lengcInput & "." & bt.toolName & ".out.nif"
@@ -1147,7 +1151,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
           b.withTree "input":
             b.addStrLit lengcInput
           b.withTree "input":
-            b.addStrLit backendToolExe[bt.toolName]
+            b.addStrLit backendToolExe.getOrDefault(bt.toolName)
           b.withTree "output":
             b.addStrLit artifact
 
@@ -1160,12 +1164,26 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         # every project artifact + the app-type, and reads only that (`(input 0
         # 0)`); the objects/artifacts are listed as inputs purely to order them
         # before the link runs.
-        let linkNode = if customLinkerName.len > 0: customLinkerName else: "link"
+        # Plain `var` rather than an `if`-expression `let`: the self-hosted
+        # compiler's initialization analysis can't prove the temp such an
+        # expression lowers to is always assigned (see the similar note above).
+        var linkNode = "link"
+        if customLinkerName.len > 0: linkNode = customLinkerName
         let exe = c.config.exeFile(c.rootNode.files[0], backend)
         var objs: seq[string] = @[]
         if not native:
-          for cfile in c.toBuild: objs.add sharedObjFile(cfile)
-          for v in c.nodes: objs.add c.config.objFile(v.files[0], backend)
+          # Dedup by path: a `.compile` shared object (e.g. mimalloc's
+          # `nimcache_static/static.o`) can be contributed by several modules'
+          # `toBuild`, and linking the same `.o` twice yields duplicate-symbol
+          # errors. The manifest niflink actually links is built from `objs`, so
+          # the dedup must happen here (not only on the DO-node ordering inputs).
+          var seenObjs = initHashSet[string]()
+          for cfile in c.toBuild:
+            let o = sharedObjFile(cfile)
+            if not seenObjs.containsOrIncl(o): objs.add o
+          for v in c.nodes:
+            let o = c.config.objFile(v.files[0], backend)
+            if not seenObjs.containsOrIncl(o): objs.add o
         var artifacts: seq[string] = @[]
         for bt in c.backendTools:
           artifacts.add c.config.lengcFile(bt.modFile, backend) & "." & bt.toolName & ".out.nif"
@@ -1206,7 +1224,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
               b.addStrLit a
           if customLinkerName.len > 0:          # ordering: a custom linker is built first
             b.withTree "input":
-              b.addStrLit backendToolExe[customLinkerName]
+              b.addStrLit backendToolExe.getOrDefault(customLinkerName)
           b.withTree "output":
             b.addStrLit exe
       elif nativeSysLink:
