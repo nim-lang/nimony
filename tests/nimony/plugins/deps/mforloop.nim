@@ -25,8 +25,10 @@ proc emitSubst(o: var NifBuilder; n: var NifCursor; loopSym: SymId; val: int) =
 
 proc loopVarSym(n: NifCursor): SymId =
   ## Extracts the loop variable's symbol from the for-loop plugin input.
-  ## Input shape: `(stmts <iter> <args...> (unpackflat (let (symdef x) …)) <body>)`.
+  ## Input shape: `(forcall <iter> (callargs ...) (loopvars (unpackflat ...)) <body>)`.
   var vars = forLoopVars(n)
+  if vars.kind == ParLe and vars.otherKind == LoopvarsU:
+    vars = firstChild(vars)        # (unpackflat …) or (unpacktup …)
   if vars.kind == ParLe and vars.tagText == "unpackflat":
     vars = firstChild(vars)        # (let …)
     if vars.kind == ParLe:

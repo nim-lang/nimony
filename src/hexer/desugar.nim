@@ -1004,7 +1004,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
                 TypevarU, EfldU, FldU, WhenU, ElifU, ElseU,
                 TypevarsU, CaseU, StmtsU, ParamsU, PragmasU,
                 EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU,
-                FinU, UncheckedU, GfldU, NoSub:
+                FinU, UncheckedU, GfldU, CallargsU, LoopvarsU, ForcallU, NoSub:
               tr(c, dest, n)
       of LocalDecls:
         trLocal c, dest, n

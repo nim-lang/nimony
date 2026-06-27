@@ -178,6 +178,9 @@
 | `(kill Y)` | ControlFlowKind, NjvlKind | some.var is about to disappear (scope exit) |
 | `(unpackflat ...)` | NimonyOther, NiflerKind | unpack into flat variable list |
 | `(unpacktup ...)` | NimonyOther, NiflerKind | unpack tuple |
+| `(callargs X*)` | NimonyOther | grouped call arguments in a for-loop plugin input |
+| `(loopvars ...)` | NimonyOther | grouped loop variables in a for-loop plugin input |
+| `(forcall <name> (callargs X*) (loopvars ...) S)` | NimonyOther | for-loop plugin input: the iterator name, grouped call arguments, grouped loop variables, and the loop body |
 | `(unpackdecl S+)` | NimonyStmt, NiflerKind | unpack var/let/const declaration |
 | `(except .Y X)` | NimonyOther, NiflerKind | except subsection |
 | `(fin S)` | NimonyOther, NiflerKind | finally subsection |

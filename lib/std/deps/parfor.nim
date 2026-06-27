@@ -40,8 +40,10 @@ import plugins
 # ── input navigation ───────────────────────────────────────────────────────
 
 proc loopVarSym(n: NifCursor): SymId =
-  ## The resolved loop-variable symbol, from `(unpackflat (let (symdef i) …))`.
+  ## The resolved loop-variable symbol, from `(loopvars (unpackflat (let (symdef i) …)))`.
   var vars = forLoopVars(n)
+  if vars.kind == ParLe and vars.otherKind == LoopvarsU:
+    vars = firstChild(vars)          # (unpackflat …) or (unpacktup …)
   if vars.kind == ParLe and vars.tagText == "unpackflat":
     vars = firstChild(vars)          # (let …)
     if vars.kind == ParLe:
@@ -51,17 +53,10 @@ proc loopVarSym(n: NifCursor): SymId =
   result = default(SymId)
 
 proc collectArgs(n: NifCursor): seq[NifCursor] =
-  ## The `||` call arguments (a, b, optional n) as cursors, in order. Args may
-  ## be bare atoms (`Symbol`/literal) or subtrees.
-  var c = n
-  if c.stmtKind == StmtsS:
-    c = firstChild(c)
-  skip c   # iter name
+  ## The `||` call arguments (a, b, step, chunkSize, workload) as cursors.
+  var c = pluginCallArgs(n)
   result = @[]
-  while true:
-    if c.kind == ParRi: break
-    if c.kind == ParLe and c.otherKind in {UnpackflatU, UnpacktupU}:
-      break   # reached the loop-vars node; args are done
+  while c.kind != ParRi:
     result.add c
     skip c
 

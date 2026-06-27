@@ -358,7 +358,7 @@ proc trIf(c: var Context; n: var Cursor) =
       of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
           TypevarU, EfldU, FldU, WhenU, TypevarsU, CaseU, OfU,
           StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
-          UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, NoSub:
+          UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, LoopvarsU, ForcallU, NoSub:
         takeTree c.dest, n
 
 proc trCase(c: var Context; n: var Cursor) =
@@ -376,7 +376,7 @@ proc trCase(c: var Context; n: var Cursor) =
       of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
           TypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
           StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
-          UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, NoSub:
+          UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, LoopvarsU, ForcallU, NoSub:
         takeTree c.dest, n
 
 proc trTry(c: var Context; n: var Cursor) =
