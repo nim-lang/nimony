@@ -269,10 +269,10 @@ proc mangleSym(c: var LLVMCode; s: SymId): string =
   else:
     result = mangleToC(c.m.pool.syms[s])
 
-proc nifSymBaseName*(symId: SymId): string =
+proc nifSymBaseName*(c: var LLVMCode; symId: SymId): string =
   ## Extract the original Nim identifier from a NIF symbol like
   ## ``myVar.0.module`` → ``myVar``.
-  let full = pool.syms[symId]
+  let full = c.m.pool.syms[symId]
   var isGlobal = false
   result = extractBasename(full, isGlobal)
   if result.len == 0:
@@ -357,9 +357,8 @@ proc dbgLocation(c: var LLVMCode; info: NifLineInfo): string =
     ", scope: !" & $scopeId & ")")
   result = ", !dbg !" & $locId
 
-proc createSubprogram(c: var LLVMCode; name: string; info: PackedLineInfo): int =
-  ## Create a DISubprogram placeholder; call ``finalizeSubprogram`` later
-  ## to set the real signature + retainedNodes in one shot.
+proc createSubprogram(c: var LLVMCode; name: string; info: NifLineInfo): int =
+  ## Create a DISubprogram metadata node for a function.
   var fileId = 0
   var line = 0
   if info.isValid:
@@ -426,10 +425,10 @@ proc extractWasPragma(n: Cursor): string =
       skip p
 
 proc emitDbgDeclare(c: var LLVMCode; localName: string; symId: SymId;
-                    wasName: string; info: PackedLineInfo; diType: int = 0;
+                    wasName: string; info: NifLineInfo; diType: int = 0;
                     argNo: int = 0; llvmTyp: string = "") =
   ## Emit a #dbg_declare for a local variable.
-  ## Debug name: ``wasName`` (pragma) > ``nifSymBaseName(symId)``.
+  ## Debug name: ``wasName`` (pragma) > ``nifSymBaseName(c, symId)``.
   ## argNo > 0 → function parameter (1-based argument number).
   if not info.isValid: return
   let rawInfo = info
@@ -439,7 +438,7 @@ proc emitDbgDeclare(c: var LLVMCode; localName: string; symId: SymId;
   if useType == 0:
     let bits = bitsFromLLVMType(llvmTyp, c.bits)
     useType = genDIBasicType(c, "int " & $bits, bits, DW_ATE_signed)
-  let debugName = if wasName.len > 0: wasName else: nifSymBaseName(symId)
+  let debugName = if wasName.len > 0: wasName else: nifSymBaseName(c, symId)
   let fileId = getOrCreateDIFile(c, rawInfo.file)
   var varMetadata = "!DILocalVariable(name: \"" & debugName & "\""
   if argNo > 0:
@@ -543,23 +542,21 @@ type
   VarKindLLVM = enum
     IsLocal, IsGlobal, IsThreadlocal, IsConst
 
-proc emitGlobalDbgVar(c: var LLVMCode; name: string; varInfo: PackedLineInfo;
+proc emitGlobalDbgVar(c: var LLVMCode; name: string; varInfo: NifLineInfo;
                       symId: SymId; diType: int): string =
   ## Create DIGlobalVariable + DIGlobalVariableExpression metadata for a
   ## global variable and return the `, !dbg !N` suffix for the declaration.
   if c.debug.cuId == 0: return ""
   var fileId = 0
   var line = 0
-  if varInfo.isValid:
-    let rawInfo = unpack(pool.man, varInfo)
-    if rawInfo.file.isValid:
-      fileId = getOrCreateDIFile(c, rawInfo.file)
-      line = rawInfo.line
+  if varInfo.isValid and varInfo.file.isValid:
+    fileId = getOrCreateDIFile(c, varInfo.file)
+    line = int(varInfo.line)
   if fileId == 0:
     fileId = c.currentProc.subprogramFileId
   if fileId == 0: return ""
   if diType == 0: return ""
-  let displayName = nifSymBaseName(symId)
+  let displayName = nifSymBaseName(c, symId)
   let gvId = c.addMetadata("distinct !DIGlobalVariable(name: \"" & displayName &
     "\", scope: !" & $c.debug.cuId &
     ", file: !" & $fileId &

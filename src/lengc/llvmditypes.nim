@@ -38,7 +38,7 @@ proc genDITypeImpl(c: var LLVMCode; n: var Cursor): int =
     n.into:
       var bits = c.bits
       if n.kind == IntLit:
-        let b = pool.integers[n.intId]
+        let b = intVal(n)
         if b != -1: bits = int(b)
         inc n
       result = genDIBasicType(c, "int " & $bits, bits, DW_ATE_signed)
@@ -47,7 +47,7 @@ proc genDITypeImpl(c: var LLVMCode; n: var Cursor): int =
     n.into:
       var bits = c.bits
       if n.kind == IntLit:
-        let b = pool.integers[n.intId]
+        let b = intVal(n)
         if b != -1: bits = int(b)
         inc n
       result = genDIBasicType(c, "uint " & $bits, bits, DW_ATE_unsigned)
@@ -56,7 +56,7 @@ proc genDITypeImpl(c: var LLVMCode; n: var Cursor): int =
     n.into:
       var bits = 8
       if n.kind == IntLit:
-        let b = pool.integers[n.intId]
+        let b = intVal(n)
         if b != -1: bits = int(b)
         inc n
       result = genDIBasicType(c, "char", bits, DW_ATE_signed_char)
@@ -65,7 +65,7 @@ proc genDITypeImpl(c: var LLVMCode; n: var Cursor): int =
     n.into:
       var bits = 64
       if n.kind == IntLit:
-        let b = pool.integers[n.intId]
+        let b = intVal(n)
         if b != -1: bits = int(b)
         inc n
       let name = if bits == 32: "float" elif bits == 128: "fp128" else: "double"
@@ -110,10 +110,10 @@ proc genDITypeImpl(c: var LLVMCode; n: var Cursor): int =
       let et = genDIType(c, n)
       var sz = 0
       if n.kind == IntLit:
-        sz = int(pool.integers[n.intId])
+        sz = int(intVal(n))
         skip n
       elif n.kind == UIntLit:
-        sz = int(pool.uintegers[n.uintId])
+        sz = int(uintVal(n))
         skip n
       let subrange = c.addMetadata("!DISubrange(count: " & $sz & ")")
       result = c.addMetadata("!DICompositeType(tag: DW_TAG_array_type" &
@@ -129,14 +129,14 @@ proc genDITypeImpl(c: var LLVMCode; n: var Cursor): int =
       while n.hasMore:
         if n.substructureKind == EfldU:
           n.into:
-            let enumName = pool.syms[n.symId]
+            let enumName = c.m.pool.syms[n.symId]
             inc n
             var val = 0
             if n.kind == IntLit:
-              val = int(pool.integers[n.intId])
+              val = int(intVal(n))
               inc n
             elif n.kind == UIntLit:
-              val = int(pool.uintegers[n.uintId])
+              val = int(uintVal(n))
               inc n
             let en = c.addMetadata("!DIEnumerator(name: \"" & enumName &
               "\", value: " & $val & ")")
@@ -203,8 +203,8 @@ proc genDITypeForSymbol(c: var LLVMCode; symId: SymId): int =
     # Cycle: emit placeholder and cache it
     let d = c.m.getDeclOrNil(symId)
     let typeName = if d != nil and d.kind == TypeY:
-                     nifSymBaseName(asTypeDecl(d.pos).name.symId)
-                   else: nifSymBaseName(symId)
+                     nifSymBaseName(c, asTypeDecl(d.pos).name.symId)
+                   else: nifSymBaseName(c, symId)
     result = c.addMetadata("!DICompositeType(tag: DW_TAG_structure_type" &
       ", name: \"" & typeName & "\", elements: !{}, size: 0)")
     c.debug.diTypeCache[symId] = result
@@ -214,7 +214,7 @@ proc genDITypeForSymbol(c: var LLVMCode; symId: SymId): int =
   let d = c.m.getDeclOrNil(symId)
   if d != nil and d.kind == TypeY:
     let decl = asTypeDecl(d.pos)
-    let typeName = nifSymBaseName(decl.name.symId)
+    let typeName = nifSymBaseName(c, decl.name.symId)
     # Set sentinel before recursing to break cycles
     c.debug.diTypeCache[symId] = -1
     let underlying = genDITypeReadOnly(c, decl.body)
@@ -242,7 +242,7 @@ proc genDICompositeType(c: var LLVMCode; n: var Cursor): int =
   ## Generate DICompositeType for ObjectT or UnionT.
   ## Walks ``decl.body`` (not the inline cursor) — matches
   ## ``addObjectFieldsLLVM`` / ``genObjectBodyLLVM`` pattern exactly.
-  let td = tracebackTypeC(n)
+  let td = tracebackTypeC(c.m, n)
   let decl = asTypeDecl(td)
   let symId = decl.name.symId
 
@@ -265,7 +265,7 @@ proc genDICompositeType(c: var LLVMCode; n: var Cursor): int =
 
   let tag = if decl.body.typeKind == UnionT: "DW_TAG_union_type"
             else: "DW_TAG_structure_type"
-  let typeName = nifSymBaseName(symId)
+  let typeName = nifSymBaseName(c, symId)
   let totalSize = typeSizeBits(c, decl.body)
   let totalAlign = typeAlignBits(c, decl.body)
 
@@ -273,11 +273,9 @@ proc genDICompositeType(c: var LLVMCode; n: var Cursor): int =
   let declInfo = decl.name.info
   var declFileId = 0
   var declLine = 0
-  if declInfo.isValid:
-    let ri = unpack(pool.man, declInfo)
-    if ri.file.isValid:
-      declFileId = getOrCreateDIFile(c, ri.file)
-      declLine = ri.line
+  if declInfo.isValid and declInfo.file.isValid:
+    declFileId = getOrCreateDIFile(c, declInfo.file)
+    declLine = int(declInfo.line)
 
   # Walk the canonical body from the declaration (pattern from addObjectFieldsLLVM)
   var members: seq[int] = @[]
@@ -300,7 +298,7 @@ proc genDICompositeType(c: var LLVMCode; n: var Cursor): int =
     while body.hasMore:
       if body.substructureKind == FldU:
         var fd = takeFieldDecl(body)
-        let fieldName = nifSymBaseName(fd.name.symId)
+        let fieldName = nifSymBaseName(c, fd.name.symId)
         let fieldType = genDITypeReadOnly(c, fd.typ)
         if fieldType != 0:
           let fieldSize = typeSizeBits(c, fd.typ)
@@ -312,11 +310,9 @@ proc genDICompositeType(c: var LLVMCode; n: var Cursor): int =
           let fInfo = fd.name.info
           var fFileId = 0
           var fLine = 0
-          if fInfo.isValid:
-            let fri = unpack(pool.man, fInfo)
-            if fri.file.isValid:
-              fFileId = getOrCreateDIFile(c, fri.file)
-              fLine = fri.line
+          if fInfo.isValid and fInfo.file.isValid:
+            fFileId = getOrCreateDIFile(c, fInfo.file)
+            fLine = int(fInfo.line)
           var mStr = "!DIDerivedType(tag: DW_TAG_member" &
             ", name: \"" & fieldName & "\""
           if fFileId != 0:

@@ -98,7 +98,7 @@ proc genIteLLVM(c: var LLVMCode; n: var Cursor) =
       skip n # skip condition
       genStmtLLVM c, n # then-part always taken
       if isLast:
-        let labelName = mangleToC(pool.syms[vflag])
+        let labelName = mangleToC(c.m.pool.syms[vflag])
         c.emitLineDbg "  br label %" & labelName, iteInfo
         c.emitLine labelName & ":"
         c.currentProc.needsTerminator = false
@@ -293,7 +293,7 @@ proc genGotoLLVM(c: var LLVMCode; n: var Cursor) =
   let gotoInfo = n.info
   n.into:
     if n.kind == Symbol:
-      let name = mangleToC(pool.syms[n.symId])
+      let name = mangleToC(c.m.pool.syms[n.symId])
       c.emitLineDbg "  br label %" & name, gotoInfo
       c.currentProc.needsTerminator = true
       inc n
@@ -342,7 +342,7 @@ proc genJtrueLLVM(c: var LLVMCode; n: var Cursor) =
       inc n
       if not n.hasMore:
         # Last symbol is a goto target
-        let name = mangleToC(pool.syms[s])
+        let name = mangleToC(c.m.pool.syms[s])
         c.emitLineDbg "  br label %" & name, jtrueInfo
         c.currentProc.needsTerminator = true
     else:
