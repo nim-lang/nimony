@@ -216,10 +216,10 @@ proc drainOnce(startStripe: int): bool =
 
 proc poolHelp*(): bool {.inline.} =
   ## Run one batch of queued tasks on the calling thread. A thread blocked on a
-  ## join (e.g. `parWait`) calls this instead of idle-spinning, so it *helps*
-  ## drain the pool. Without it, nested parallel regions deadlock: every worker
-  ## ends up spin-waiting in a join while the sub-tasks it needs sit unrun in
-  ## the queue (fork-join work-donation). Returns true if any task ran.
+  ## join (`parWait`) calls this instead of idle-spinning, so it *helps* drain
+  ## the pool — without it, nested parallel regions deadlock once every worker
+  ## is spin-waiting in a join with its sub-tasks unrun in the queue (fork-join
+  ## work-donation). Returns true if any task ran.
   drainOnce(0)
 
 # --- I/O registration ---
@@ -295,47 +295,56 @@ proc unregisterFd*(fd: cint) =
     kevs[1].flags = EV_DELETE
     discard kevent(gIoFd, addr kevs[0], 2, nil, 0, nil)
 
+# --- I/O polling ---
+
+proc poolPollIo*(timeoutMs: cint): bool =
+  ## Poll the shared I/O instance once and dispatch every ready handler on the
+  ## calling thread. `timeoutMs` is how long to block waiting for an event (`0`
+  ## = non-blocking peek). Returns true if at least one handler fired. Safe to
+  ## call from any thread (oneshot semantics: each event goes to exactly one
+  ## caller) — used both by the worker loop and by `parWait` so a thread blocked
+  ## on a join can still advance the I/O its parked chunks are waiting on.
+  result = false
+  when hasEpoll:
+    var ioEvents {.noinit.}: array[MaxIoEvents, EpollEvent]
+    let n = epoll_wait(gIoFd, addr ioEvents[0], MaxIoEvents.cint, timeoutMs)
+    for i in 0 ..< n:
+      let h = cast[ptr IoHandler](ioEvents[i].data.p)
+      if h != nil:
+        h.cb(h, ioEvents[i].events)
+    result = n > 0
+  elif hasKqueue:
+    var ioEvents {.noinit.}: array[MaxIoEvents, KEvent]
+    var ts = default Timespec
+    if timeoutMs > 0:
+      ts.tv_nsec = 1_000_000  # 1 ms (we only ever pass 0 or 1)
+    let n = kevent(gIoFd, nil, 0, addr ioEvents[0], MaxIoEvents.cint, addr ts)
+    for i in 0 ..< n:
+      let h = cast[ptr IoHandler](ioEvents[i].udata)
+      if h != nil:
+        let evMask = case ioEvents[i].filter
+          of EVFILT_READ: EvRead
+          of EVFILT_WRITE: EvWrite
+          else: 0u32
+        h.cb(h, evMask)
+    result = n > 0
+  else:
+    if timeoutMs > 0:
+      when defined(windows):
+        sleep(timeoutMs.uint32)
+      else:
+        discard usleepMicroseconds(timeoutMs.uint32 * 1000'u32)
+
 # --- Worker loop ---
 
 proc workerLoop(arg: pointer) {.nimcall.} =
   let threadIdx = cast[int](arg)   # index passed by value via the pointer slot (see initPool)
-  when hasEpoll:
-    var ioEvents {.noinit.}: array[MaxIoEvents, EpollEvent]
-  elif hasKqueue:
-    var ioEvents {.noinit.}: array[MaxIoEvents, KEvent]
   while not atomicLoad(stopFlag, moRelaxed):
     # 1. Bulk-drain tasks: own stripe first, then steal from others. Trampolines
     #    each continuation, re-submitting any that yield more work.
     let busy = drainOnce(threadIdx)
-
-    # 2. Poll I/O.
-    #    Non-blocking when busy; 1ms wait when idle.
-    when hasEpoll:
-      let timeout: cint = if busy: 0 else: 1
-      let n = epoll_wait(gIoFd, addr ioEvents[0], MaxIoEvents.cint, timeout)
-      for i in 0 ..< n:
-        let h = cast[ptr IoHandler](ioEvents[i].data.p)
-        if h != nil:
-          h.cb(h, ioEvents[i].events)
-    elif hasKqueue:
-      var ts = default Timespec
-      if not busy:
-        ts.tv_nsec = 1_000_000  # 1 ms
-      let n = kevent(gIoFd, nil, 0, addr ioEvents[0], MaxIoEvents.cint, addr ts)
-      for i in 0 ..< n:
-        let h = cast[ptr IoHandler](ioEvents[i].udata)
-        if h != nil:
-          let evMask = case ioEvents[i].filter
-            of EVFILT_READ: EvRead
-            of EVFILT_WRITE: EvWrite
-            else: 0u32
-          h.cb(h, evMask)
-    else:
-      if not busy:
-        when defined(windows):
-          sleep(1'u32) # 1 ms; Win32 `Sleep` uses milliseconds
-        else:
-          discard usleepMicroseconds(1000'u32) # 1 ms
+    # 2. Poll I/O — non-blocking when we just ran work, 1ms wait when idle.
+    discard poolPollIo(if busy: 0.cint else: 1.cint)
 
 # --- Lifecycle ---
 

@@ -33,9 +33,20 @@ const
     ## coarsens a too-fine grain to stay within it.
 
 type
+  Workload* = enum
+    ## A hint about a parallel `for` body's typical cost, so the join can pick
+    ## the right waiting strategy. It is a hint, not a contract — any value stays
+    ## correct; it only affects how the joining thread spends its time.
+    MixedBound   ## may do both CPU and I/O (the safe default): help-drain *and*
+                 ## poll I/O while waiting.
+    CpuBound     ## pure compute, never parks on I/O: help-drain only, skip the
+                 ## I/O poll (no wasted syscalls; chunks never park).
+    IoBound      ## dominated by I/O waits: currently treated like `MixedBound`;
+                 ## reserved for finer-grained, poll-heavy handling later.
+
   ParJoin* = object
-    ## Completion barrier for a single parallel-for loop. `remaining` counts
-    ## chunk runners that have not yet finished; each runner decrements it on
+    ## Completion barrier for one parallel-for loop. `remaining` counts chunk
+    ## runners that have not yet finished; each runner decrements it on
     ## completion and the joining thread waits for it to reach zero.
     remaining*: int   ## accessed atomically
 
@@ -112,18 +123,20 @@ proc parChunkDone*(j: ptr ParJoin) =
   ## chunk runner the plugin emits.
   discard atomicFetchSub(j.remaining, 1, moAcquireRelease)
 
-proc parWait*(j: var ParJoin) =
-  ## Block until every chunk runner has finished. While waiting the thread
-  ## *helps* run pool tasks (`poolHelp`) rather than idle-spinning, so a chunk
-  ## body that itself opens a parallel `||` (recursive fork-join, e.g. parallel
-  ## fib) keeps making progress instead of every worker deadlocking in a join
-  ## with its sub-tasks stuck unrun in the queue. When nothing is queued our
-  ## sub-tasks are already in flight, so we just spin for their completion. (A
-  ## passive, I/O-parking join that frees the joining worker entirely is still a
-  ## planned enhancement.)
+proc parWait*(j: var ParJoin; workload = MixedBound) =
+  ## Block until every chunk runner has finished. While waiting the thread acts
+  ## as a temporary worker: it first *helps* drain pool tasks (`poolHelp`) so a
+  ## chunk body that opens its own `||` (recursive fork-join) keeps making
+  ## progress instead of deadlocking. When there is no CPU work to run it *polls
+  ## I/O* (`poolPollIo`) so a join whose chunks are all parked on I/O still
+  ## advances them — without that, nested joins where every worker is waiting
+  ## would deadlock with no thread left polling the event loop.
+  ##
+  ## `CpuBound` skips the I/O poll: such chunks never park, so there is nothing
+  ## in the event loop and the joiner just spins for the in-flight CPU work.
   while atomicLoad(j.remaining, moAcquire) > 0:
-    if not poolHelp():
-      discard
+    if not poolHelp() and workload != CpuBound:
+      discard poolPollIo(0.cint)
 
 proc parSubmit*(c: Continuation; hint = 0) {.inline.} =
   ## Hand a chunk runner's continuation to the worker pool, spreading chunks
@@ -135,7 +148,8 @@ proc parSubmit*(c: Continuation; hint = 0) {.inline.} =
   ## only needs symbols visible through `import std/parfor`.
   submit(c, hint)
 
-iterator `||`*(a, b: int; step: Positive = 1; chunkSize = 0): int {.plugin: "deps/parfor".}
+iterator `||`*(a, b: int; step: Positive = 1; chunkSize = 0;
+               workload = MixedBound): int {.plugin: "deps/parfor".}
   ## Parallel range `for` loop. `for i in a || b: x[i] = f(input[i])` runs the
   ## body for every `i` in the *inclusive* range `a .. b` across the worker pool,
   ## joining at the loop's closing — matching Nim's standard `||`, which yields
@@ -147,6 +161,11 @@ iterator `||`*(a, b: int; step: Positive = 1; chunkSize = 0): int {.plugin: "dep
   ## falls out as `ceil(iters / chunkSize)`. `0` (the default) derives a grain
   ## giving about one chunk per worker. Pass it by name to skip `step`:
   ## `for i in `||`(a, b, chunkSize = 64): …`.
+  ##
+  ## `workload` hints at the body's typical cost (`MixedBound` / `CpuBound` /
+  ## `IoBound`) so the join can wait efficiently — e.g. `CpuBound` skips the I/O
+  ## poll. It is a hint only; every value is correct. Pass it by name:
+  ## `for i in `||`(0, n, workload = CpuBound): …`.
   ##
   ## The body must write only `x[i]`-style outputs at the iteration index and
   ## must not read those outputs back; under that contract iterations are

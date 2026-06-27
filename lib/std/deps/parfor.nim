@@ -6,12 +6,12 @@
 ##   (stmts
 ##     (call ensureParPool)
 ##     (var pforA … <a>) (var pforB … <b>)
-##     (var pforStep … <step>) (var pforChunkSize … <chunkSize>)
+##     (var pforStep … <step>) (var pforChunkSize … <chunkSize>) (var pforWorkload … <workload>)
 ##     (var pforJ … (call default ParJoin))
 ##     (var pforIters … (call parIterCount pforA pforB pforStep))
 ##     (var pforGrain … (call parGrain pforIters pforChunkSize))
-##     (var pforChunks … (call parChunkCount pforIters pforGrain))
-##     (call parBegin pforJ pforChunks)
+##     (var pforTotal … (call parChunkCount pforIters pforGrain))
+##     (call parBegin pforJ pforTotal)
 ##     (proc pforChunk … {.passive, closure.} (params pforLo pforHi)
 ##       (stmts
 ##         (var pforIt … pforLo)
@@ -21,13 +21,13 @@
 ##             <BODY[i→pforI]> (asgn pforIt (infix + pforIt 1))))
 ##         (call parChunkDone (call addr pforJ))))
 ##     (var pforK … 0)
-##     (while (infix < pforK pforChunks)
+##     (while (infix < pforK pforTotal)
 ##       (stmts
 ##         (let pforLo2 … (call parChunkLo pforGrain pforK))
 ##         (let pforHi2 … (call parChunkHi pforIters pforGrain pforK))
 ##         (call parSubmit (call delay (call pforChunk pforLo2 pforHi2)) pforK)
 ##         (asgn pforK (infix + pforK 1))))
-##     (call parWait pforJ))
+##     (call parWait pforJ pforWorkload))
 ##
 ## `pforLo`/`pforHi` chunk the *iteration index* space `[0, pforIters)`; the
 ## runner maps each index back to `pforA + j*pforStep`. The body is spliced
@@ -333,13 +333,13 @@ proc transform(n: NifCursor): NifBuilder =
   if loopSym == default(SymId):
     return errorTree("`||` parallel-for: could not resolve the loop variable", info)
 
-  # Overload resolution fills the `step`/`chunks` defaults and normalises any
-  # named args into declaration order, so a resolved `||` always arrives with
-  # all four positional args (a, b, step, chunks) — the plugin needs no
-  # default-handling logic of its own.
+  # Overload resolution fills the `step`/`chunkSize`/`workload` defaults and
+  # normalises any named args into declaration order, so a resolved `||` always
+  # arrives with all five positional args (a, b, step, chunkSize, workload) —
+  # the plugin needs no default-handling logic of its own.
   let args = collectArgs(n)
-  if args.len < 4:
-    return errorTree("`||` parallel-for expects `a || b` (optionally with step / chunks)", info)
+  if args.len < 5:
+    return errorTree("`||` parallel-for expects `a || b` (optionally with step / chunkSize / workload)", info)
 
   # Static race-rule check: reject any body that isn't provably data-race free.
   let raceErr = raceCheck(loopSym, forLoopBody(n))
@@ -354,11 +354,12 @@ proc transform(n: NifCursor): NifBuilder =
     # ensureParPool()
     result.beginCall("ensureParPool"); result.addParRi()
 
-    # var pforA = <a>; var pforB = <b>; var pforStep = <step>; var pforChunkSize = <chunkSize>
+    # var pforA = <a>; pforB = <b>; pforStep = <step>; pforChunkSize = <chunkSize>; pforWorkload = <workload>
     result.beginVar("var", "pforA"); result.addSubtree(args[0]); result.addParRi()
     result.beginVar("var", "pforB"); result.addSubtree(args[1]); result.addParRi()
     result.beginVar("var", "pforStep"); result.addSubtree(args[2]); result.addParRi()
     result.beginVar("var", "pforChunkSize"); result.addSubtree(args[3]); result.addParRi()
+    result.beginVar("var", "pforWorkload"); result.addSubtree(args[4]); result.addParRi()
 
     # var pforJ = default(ParJoin)
     result.beginVar("var", "pforJ")
@@ -379,16 +380,16 @@ proc transform(n: NifCursor): NifBuilder =
     result.addParRi()
     result.addParRi()
 
-    # var pforChunks = parChunkCount(pforIters, pforGrain)
-    result.beginVar("var", "pforChunks")
+    # var pforTotal = parChunkCount(pforIters, pforGrain)
+    result.beginVar("var", "pforTotal")
     result.beginCall("parChunkCount")
     result.addIdent("pforIters"); result.addIdent("pforGrain")
     result.addParRi()
     result.addParRi()
 
-    # parBegin(pforJ, pforChunks)
+    # parBegin(pforJ, pforTotal)
     result.beginCall("parBegin")
-    result.addIdent("pforJ"); result.addIdent("pforChunks")
+    result.addIdent("pforJ"); result.addIdent("pforTotal")
     result.addParRi()
 
     # proc pforChunk(pforLo, pforHi: int) {.passive, closure.} = ...
@@ -439,9 +440,14 @@ proc transform(n: NifCursor): NifBuilder =
     # var pforK = 0
     result.beginVar("var", "pforK"); result.addIntLit(0); result.addParRi()
 
-    # while pforK < pforChunks: spawn chunk; pforK = pforK + 1
+    # while pforK < pforTotal:
+    #   let pforLo2 = parChunkLo(pforGrain, pforK)
+    #   let pforHi2 = parChunkHi(pforIters, pforGrain, pforK)
+    #   parSubmit(delay(pforChunk(pforLo2, pforHi2)), pforK)   -- pforK spreads
+    #     chunks across stripes; submit-all-then-`parWait` is the structured join.
+    #   pforK = pforK + 1
     result.addParLe("while")
-    result.emitInfix("<", "pforK", "pforChunks")
+    result.emitInfix("<", "pforK", "pforTotal")
     result.withTree StmtsS, info:
       result.beginVar("let", "pforLo2")
       result.beginCall("parChunkLo")
@@ -451,8 +457,6 @@ proc transform(n: NifCursor): NifBuilder =
       result.beginCall("parChunkHi")
       result.addIdent("pforIters"); result.addIdent("pforGrain"); result.addIdent("pforK")
       result.addParRi(); result.addParRi()
-      # parSubmit(delay(pforChunk(pforLo2, pforHi2)), pforK)  -- pforK spreads
-      # chunks across stripes so they aren't dropped on a full single stripe.
       result.beginCall("parSubmit")
       result.beginCall("delay")
       result.beginCall("pforChunk")
@@ -464,8 +468,10 @@ proc transform(n: NifCursor): NifBuilder =
       result.emitIncr("pforK")
     result.addParRi()                   # /while
 
-    # parWait(pforJ)
-    result.beginCall("parWait"); result.addIdent("pforJ"); result.addParRi()
+    # parWait(pforJ, pforWorkload)
+    result.beginCall("parWait")
+    result.addIdent("pforJ"); result.addIdent("pforWorkload")
+    result.addParRi()
   result.addParRi()                     # /block
 
 let input = loadPluginInput()
