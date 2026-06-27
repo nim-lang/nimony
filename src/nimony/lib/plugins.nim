@@ -830,7 +830,7 @@ proc pluginName*(n: NifCursor): string =
   ##
   ## Template-plugin input has the shape `(stmts <name> <args...>)`.
   ## For-loop-plugin input has the shape
-  ## `(forcall <name> (callargs ...) (loopvars ...) <body>)`.
+  ## `(forcall <name> (callargs ...) (unpackflat ...) <body>)`.
   ## In both cases the compiler prepends the invoked symbol's name as a bare
   ## identifier so that a single shared plugin can dispatch.
   ##
@@ -862,21 +862,21 @@ proc forLoopVars*(n: NifCursor): NifCursor =
   ## Returns a cursor at the loop variables of a for-loop plugin input.
   ##
   ## For-loop plugin input has the shape
-  ## `(forcall <iter-name> (callargs ...) (loopvars ...) <body>)`.
-  ## The loop-vars child is a `(loopvars ...)` subtree containing the
-  ## `(unpackflat …)` or `(unpacktup …)` node.
+  ## `(forcall <iter-name> (callargs ...) (unpackflat ...) <body>)`.
+  ## The result points directly at the `(unpackflat …)` or `(unpacktup …)`
+  ## subtree.
   result = n
   if result.otherKind == ForcallU:
     result = firstChild(result) # name
     skip result                  # (callargs ...)
-    skip result                  # → (loopvars ...)
-  # result is now at the (loopvars ...) node, or at ')' if none
+    skip result                  # → (unpackflat ...) or (unpacktup ...)
+  # result is now at the loop vars node, or at ')' if none
 
 proc forLoopBody*(n: NifCursor): NifCursor =
   ## Returns a cursor at the loop body of a for-loop plugin input.
   ##
   ## For-loop plugin input has the shape
-  ## `(forcall <iter-name> (callargs ...) (loopvars ...) <body>)`.
+  ## `(forcall <iter-name> (callargs ...) (unpackflat ...) <body>)`.
   ## This proc scans past the iter name, call args, and loop vars to reach
   ## the body subtree.
   result = forLoopVars(n)

@@ -40,10 +40,8 @@ import plugins
 # ── input navigation ───────────────────────────────────────────────────────
 
 proc loopVarSym(n: NifCursor): SymId =
-  ## The resolved loop-variable symbol, from `(loopvars (unpackflat (let (symdef i) …)))`.
+  ## The resolved loop-variable symbol, from `(unpackflat (let (symdef i) …))`.
   var vars = forLoopVars(n)
-  if vars.kind == ParLe and vars.otherKind == LoopvarsU:
-    vars = firstChild(vars)          # (unpackflat …) or (unpacktup …)
   if vars.kind == ParLe and vars.tagText == "unpackflat":
     vars = firstChild(vars)          # (let …)
     if vars.kind == ParLe:

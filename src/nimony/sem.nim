@@ -86,7 +86,7 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
             while it.hasMore: skip it
         of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, EfldU, FldU,
            WhenU, TypevarsU, CaseU, OfU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
-           UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, LoopvarsU, ForcallU:
+           UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, ForcallU:
           error "illformed AST: `elif` or `else` inside `if` expected, got ", it
           skip it  # avoid infinite loop on illformed
     # all branches are discardable
@@ -115,7 +115,7 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
             while it.hasMore: skip it
         of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, EfldU, FldU,
            WhenU, TypevarsU, CaseU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
-           UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, LoopvarsU, ForcallU:
+           UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, ForcallU:
           error "illformed AST: `of`, `elif` or `else` inside `case` expected, got ", it
           skip it
     # all branches are discardable
@@ -2849,7 +2849,7 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
   inc it.n # skip the for's closing ')'
 
   # Build plugin input:
-  # (forcall <iter-name> (callargs <arg1> ...) (loopvars ...) <body>)
+  # (forcall <iter-name> (callargs <arg1> ...) (unpackflat ...) <body>)
   var b = createTokenBuf(30)
   b.addParLe ForcallU, info
   b.add identToken(symToIdent(routine.name.symId), info)
@@ -2861,9 +2861,9 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
     while callC.hasMore:
       b.takeTree callC
   b.addParRi()
-  # (loopvars ...) and body
+  # loop vars and body
   var vbC = beginRead(vb)
-  b.takeTree vbC # loop vars (typed)
+  b.takeTree vbC # loop vars (typed, unpackflat/unpacktup)
   b.takeTree vbC # loop body (typed)
   b.addParRi()
 
@@ -3702,7 +3702,7 @@ proc caseBranchMatchesExpr(c: var SemContext; dest: var TokenBuf; branch, matche
     of NoSub, NilU, NotnilU, KvU, VvU, RangesU, ParamU, TypevarU, EfldU, FldU,
        WhenU, ElifU, ElseU, TypevarsU, CaseU, OfU, StmtsU, ParamsU, PragmasU,
        EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU,
-       CallargsU, LoopvarsU, ForcallU:
+       CallargsU, ForcallU:
       if sameTrees(branch, matched):
         return true
       skip branch
@@ -3781,7 +3781,7 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, EfldU, FldU,
          WhenU, ElifU, TypevarsU, CaseU, StmtsU, ParamsU, PragmasU,
          EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU,
-         CallargsU, LoopvarsU, ForcallU:
+         CallargsU, ForcallU:
         error "illformed AST inside case object: ", n
 
   if selectorSymId notin setFields:

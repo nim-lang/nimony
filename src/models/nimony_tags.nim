@@ -280,13 +280,12 @@ type
     UnpackflatU = (ord(UnpackflatTagId), "unpackflat")  ## unpack into flat variable list
     UnpacktupU = (ord(UnpacktupTagId), "unpacktup")  ## unpack tuple
     CallargsU = (ord(CallargsTagId), "callargs")  ## grouped call arguments in a for-loop plugin input
-    LoopvarsU = (ord(LoopvarsTagId), "loopvars")  ## grouped loop variables in a for-loop plugin input
-    ForcallU = (ord(ForcallTagId), "forcall")  ## for-loop plugin input: the iterator name, grouped call arguments, grouped loop variables, and the loop body
+    ForcallU = (ord(ForcallTagId), "forcall")  ## for-loop plugin input: the iterator name, grouped call arguments, loop variables, and the loop body
     ExceptU = (ord(ExceptTagId), "except")  ## except subsection
     FinU = (ord(FinTagId), "fin")  ## finally subsection
 
 proc rawTagIsNimonyOther*(raw: TagEnum): bool {.inline.} =
-  raw in {NilTagId, NotnilTagId, UncheckedTagId, KvTagId, VvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, EfldTagId, FldTagId, GfldTagId, WhenTagId, ElifTagId, ElseTagId, TypevarsTagId, CaseTagId, OfTagId, StmtsTagId, ParamsTagId, PragmasTagId, EitherTagId, JoinTagId, UnpackflatTagId, UnpacktupTagId, CallargsTagId, LoopvarsTagId, ForcallTagId, ExceptTagId, FinTagId}
+  raw in {NilTagId, NotnilTagId, UncheckedTagId, KvTagId, VvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, EfldTagId, FldTagId, GfldTagId, WhenTagId, ElifTagId, ElseTagId, TypevarsTagId, CaseTagId, OfTagId, StmtsTagId, ParamsTagId, PragmasTagId, EitherTagId, JoinTagId, UnpackflatTagId, UnpacktupTagId, CallargsTagId, ForcallTagId, ExceptTagId, FinTagId}
 
 type
   NimonyPragma* = enum

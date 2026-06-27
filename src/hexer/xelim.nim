@@ -574,7 +574,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
          TypevarU, EfldU, FldU, WhenU, TypevarsU, CaseU, OfU,
          StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
-         UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, LoopvarsU,
+         UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU,
          ForcallU, NoSub:
         # Bug: just copy the thing around
         takeTree dest, n
@@ -618,7 +618,7 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
     of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
        TypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
        StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
-       UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, LoopvarsU,
+       UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU,
        ForcallU, NoSub:
       # Bug: just copy the thing around
       takeTree dest, n
@@ -657,7 +657,7 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
          TypevarU, EfldU, FldU, WhenU, ElifU, ElseU, TypevarsU,
          CaseU, OfU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
-         UnpackflatU, UnpacktupU, UncheckedU, GfldU, CallargsU, LoopvarsU,
+         UnpackflatU, UnpacktupU, UncheckedU, GfldU, CallargsU,
          ForcallU, NoSub:
         # Bug: just copy the thing around
         takeTree dest, n
