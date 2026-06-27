@@ -837,7 +837,12 @@ proc writeLinkManifest(path, exe, apptype: string;
   ## with optional per-file link flags, the app-type, and the global link flags.
   ## The linker reads this and links/bundles/filters as it sees fit (e.g. link the
   ## `obj`s, embed or ignore the backend `artifact`s).
-  var b = nifbuilder.open(path)
+  ##
+  ## Written `OnlyIfChanged`: the manifest is an input of the link nifmake node,
+  ## so rewriting it with a fresh mtime on every `nimony c` would re-fire the
+  ## link even on a no-op build. Preserving the mtime when the bytes are
+  ## identical keeps the backend incremental.
+  var b = nifbuilder.open(path, writeMode = OnlyIfChanged)
   b.addHeader()
   b.withTree "link":
     b.withTree "apptype":
