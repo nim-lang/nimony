@@ -379,16 +379,16 @@ proc transform(n: NifCursor): NifBuilder =
     result.addParRi()
     result.addParRi()
 
-    # var pforChunks = parChunkCount(pforIters, pforGrain)
-    result.beginVar("var", "pforChunks")
+    # var pforTotal = parChunkCount(pforIters, pforGrain)
+    result.beginVar("var", "pforTotal")
     result.beginCall("parChunkCount")
     result.addIdent("pforIters"); result.addIdent("pforGrain")
     result.addParRi()
     result.addParRi()
 
-    # parBegin(pforJ, pforChunks)
+    # parBegin(pforJ, pforTotal)
     result.beginCall("parBegin")
-    result.addIdent("pforJ"); result.addIdent("pforChunks")
+    result.addIdent("pforJ"); result.addIdent("pforTotal")
     result.addParRi()
 
     # proc pforChunk(pforLo, pforHi: int) {.passive, closure.} = ...
@@ -439,9 +439,14 @@ proc transform(n: NifCursor): NifBuilder =
     # var pforK = 0
     result.beginVar("var", "pforK"); result.addIntLit(0); result.addParRi()
 
-    # while pforK < pforChunks: spawn chunk; pforK = pforK + 1
+    # while pforK < pforTotal:
+    #   let pforLo2 = parChunkLo(pforGrain, pforK)
+    #   let pforHi2 = parChunkHi(pforIters, pforGrain, pforK)
+    #   parSubmit(delay(pforChunk(pforLo2, pforHi2)), pforK)   -- pforK spreads
+    #     chunks across stripes; submit-all-then-`parWait` is the structured join.
+    #   pforK = pforK + 1
     result.addParLe("while")
-    result.emitInfix("<", "pforK", "pforChunks")
+    result.emitInfix("<", "pforK", "pforTotal")
     result.withTree StmtsS, info:
       result.beginVar("let", "pforLo2")
       result.beginCall("parChunkLo")
@@ -451,8 +456,6 @@ proc transform(n: NifCursor): NifBuilder =
       result.beginCall("parChunkHi")
       result.addIdent("pforIters"); result.addIdent("pforGrain"); result.addIdent("pforK")
       result.addParRi(); result.addParRi()
-      # parSubmit(delay(pforChunk(pforLo2, pforHi2)), pforK)  -- pforK spreads
-      # chunks across stripes so they aren't dropped on a full single stripe.
       result.beginCall("parSubmit")
       result.beginCall("delay")
       result.beginCall("pforChunk")

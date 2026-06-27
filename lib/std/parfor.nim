@@ -34,8 +34,8 @@ const
 
 type
   ParJoin* = object
-    ## Completion barrier for a single parallel-for loop. `remaining` counts
-    ## chunk runners that have not yet finished; each runner decrements it on
+    ## Completion barrier for one parallel-for loop. `remaining` counts chunk
+    ## runners that have not yet finished; each runner decrements it on
     ## completion and the joining thread waits for it to reach zero.
     remaining*: int   ## accessed atomically
 
@@ -113,17 +113,16 @@ proc parChunkDone*(j: ptr ParJoin) =
   discard atomicFetchSub(j.remaining, 1, moAcquireRelease)
 
 proc parWait*(j: var ParJoin) =
-  ## Block until every chunk runner has finished. While waiting the thread
-  ## *helps* run pool tasks (`poolHelp`) rather than idle-spinning, so a chunk
-  ## body that itself opens a parallel `||` (recursive fork-join, e.g. parallel
-  ## fib) keeps making progress instead of every worker deadlocking in a join
-  ## with its sub-tasks stuck unrun in the queue. When nothing is queued our
-  ## sub-tasks are already in flight, so we just spin for their completion. (A
-  ## passive, I/O-parking join that frees the joining worker entirely is still a
-  ## planned enhancement.)
+  ## Block until every chunk runner has finished. While waiting the thread acts
+  ## as a temporary worker: it first *helps* drain pool tasks (`poolHelp`) so a
+  ## chunk body that opens its own `||` (recursive fork-join) keeps making
+  ## progress instead of deadlocking; when there is no CPU work to run it *polls
+  ## I/O* (`poolPollIo`) so a join whose chunks are all parked on I/O still
+  ## advances them — without that, nested joins where every worker is waiting
+  ## would deadlock with no thread left polling the event loop.
   while atomicLoad(j.remaining, moAcquire) > 0:
     if not poolHelp():
-      discard
+      discard poolPollIo(0.cint)
 
 proc parSubmit*(c: Continuation; hint = 0) {.inline.} =
   ## Hand a chunk runner's continuation to the worker pool, spreading chunks
