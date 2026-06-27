@@ -1,0 +1,1 @@
+tests/nimony/concepts/tconceptstandalonebad.nim(17, 12) Error: type Foo does not match constraint: Comparable; missing required proc: func >(a: Self, b: Self)

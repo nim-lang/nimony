@@ -806,6 +806,9 @@ proc saveReplacer*(t: Replacer; filename = paramStr(2)) =
 
 proc loadPluginInput*(filename = paramStr(1)): NifCursor =
   ## Loads a NIF file and returns a root `NifCursor` for reading it.
+  ##
+  ## For type plugins, use `loadTypeDefinitions()` to read the second input
+  ## file (`paramStr(3)`) that carries the triggering type definitions.
   var inp = nifstreams.open(filename)
   try:
     var tree = createTree(fromStream(inp))
@@ -813,6 +816,72 @@ proc loadPluginInput*(filename = paramStr(1)): NifCursor =
     # tree is destroyed here, but NifCursor's cursor keeps data alive via COW
   finally:
     close(inp)
+
+proc loadTypeDefinitions*(): NifCursor =
+  ## Loads the type-definitions input for a type plugin (`paramStr(3)`).
+  ##
+  ## Type plugins receive two input files: the full module AST via
+  ## `loadPluginInput()` and the triggering type definitions via this proc.
+  ## The result has the shape `(stmts <type-sym1> <type-sym2> ...)`.
+  loadPluginInput(paramStr(3))
+
+proc pluginName*(n: NifCursor): string =
+  ## Returns the name of the symbol that triggered this plugin run.
+  ##
+  ## Template-plugin and for-loop-plugin input has the shape
+  ## `(stmts <name> <args...>)`. Module-plugin input has the shape
+  ## `(stmts ...module body...)` (no name prefix). This proc reads the
+  ## leading identifier when present.
+  ##
+  ## Returns `""` when the input does not carry a leading identifier
+  ## (e.g. for module or type plugins).
+  var n = n
+  if n.stmtKind == StmtsS:
+    n = firstChild(n)
+  result = if n.kind == Ident: n.identText else: ""
+
+proc pluginCallArgs*(n: NifCursor): NifCursor =
+  ## Returns a cursor positioned at the first call-site argument of a
+  ## template-plugin or for-loop-plugin input, skipping the `(stmts` wrapper
+  ## and the leading symbol name. Use `result.hasMore` to iterate.
+  ##
+  ## For input `(stmts <name> <arg1> <arg2> ...)` the result points at
+  ## `<arg1>`. When there are no arguments it is positioned at `)`.
+  result = n
+  if result.stmtKind == StmtsS:
+    result = firstChild(result)
+    skip result # advance past the name to the first real argument
+
+proc forLoopVars*(n: NifCursor): NifCursor =
+  ## Returns a cursor at the loop variables of a for-loop plugin input.
+  ##
+  ## For-loop plugin input has the shape
+  ## `(stmts <iter-name> <call-args...> <loop-vars> <loop-body>)`.
+  ## The loop-vars child is an `(unpackflat …)` or `(unpacktup …)` subtree.
+  ## This proc scans past the iter name and call args to find it.
+  result = n
+  if result.stmtKind == StmtsS:
+    result = firstChild(result)
+  skip result # iter name
+  # Call args may be bare atoms (a `Symbol`/literal) or subtrees, so scan by
+  # exclusion: stop at the loop-vars node or at the closing `)`. (Scanning for
+  # `ParLe` only would stop at the first atom argument.)
+  while result.kind != ParRi and
+        not (result.kind == ParLe and result.otherKind in {UnpackflatU, UnpacktupU}):
+    skip result # call args
+  # result is now at the (unpackflat/unpacktup) node, or at ')' if none
+
+proc forLoopBody*(n: NifCursor): NifCursor =
+  ## Returns a cursor at the loop body of a for-loop plugin input.
+  ##
+  ## For-loop plugin input has the shape
+  ## `(stmts <iter-name> <call-args...> <loop-vars> <loop-body>)`.
+  ## This proc scans past the iter name, call args, and loop vars to reach
+  ## the body subtree.
+  result = forLoopVars(n)
+  if result.kind != ParRi:
+    skip result # skip loop vars
+    # result is now at the body (or at ')' if there is none)
 
 proc renderTree*(tree: NifBuilder): string =
   ## Renders the complete contents of `tree` as raw NIF text for debugging.
@@ -837,6 +906,14 @@ proc saveTree*(tree: NifBuilder; filename: string) =
 proc saveTree*(tree: NifBuilder) =
   ## Writes the complete contents of a mutable `NifBuilder` to `paramStr(2)`.
   ## This preserves line info because it is intended for `.nif` output.
+  ##
+  ## **Re-semantacking contract**: template and for-loop plugin output is
+  ## re-semantacked by the compiler — identifiers are resolved, types are
+  ## checked, and calls are instantiated just like normal source. This means
+  ## the output can use raw identifiers (e.g. `addIdent "echo"`). Module and
+  ## type plugin output is NOT re-semantacked — it must already be fully
+  ## semanticked NIF (resolved symbols, typed expressions) because it
+  ## directly replaces the module body.
   saveTree(tree, paramStr(2))
 
 proc createTree*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](

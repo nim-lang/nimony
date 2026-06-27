@@ -601,50 +601,37 @@ proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.closeScope()
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  var nested = 0
-  while true:
-    case n.kind
-    of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
-      dest.add n
-      inc n
-    of ParLe:
-      let ek = n.exprKind
-      case ek
-      of CallKinds - {ProccallX}:
-        trCall c, dest, n, false
-      of ProccallX:
-        trProcCall c, dest, n
-      of OconstrX:
-        trObjConstr c, dest, n
-      of BaseobjX:
-        trBaseobj c, dest, n
-      of InstanceofX:
-        trInstanceof c, dest, n
+  case n.kind
+  of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
+    takeToken dest, n
+  of ParLe:
+    case n.exprKind
+    of CallKinds - {ProccallX}:
+      trCall c, dest, n, false
+    of ProccallX:
+      trProcCall c, dest, n
+    of OconstrX:
+      trObjConstr c, dest, n
+    of BaseobjX:
+      trBaseobj c, dest, n
+    of InstanceofX:
+      trInstanceof c, dest, n
+    else:
+      case n.stmtKind
+      of ProcS, FuncS, MethodS, ConverterS:
+        trProcDecl c, dest, n
+      of LocalDecls:
+        trLocal c, dest, n
+      of ScopeS:
+        trScope c, dest, n
+      of MacroS, TemplateS, TypeS:
+        takeTree dest, n
       else:
-        case n.stmtKind
-        of ProcS, FuncS, MethodS, ConverterS:
-          trProcDecl c, dest, n
-        of LocalDecls:
-          trLocal c, dest, n
-        of ScopeS:
-          trScope c, dest, n
-        of MacroS, TemplateS, TypeS:
-          takeTree dest, n
-        of CallS, CmdS, IteratorS, BlockS, EmitS, AsgnS, IfS, WhenS,
-           BreakS, ContinueS, ForS, WhileS, CoroforS, CaseS, RetS,
-           YldS, StmtsS, PragmasS, PragmaxS, InclS, ExclS, IncludeS,
-           ImportS, ImportasS, FromimportS, ImportexceptS, ExportS,
-           ExportexceptS, CommentS, DiscardS, TryS, RaiseS, UnpackdeclS,
-           AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
-           StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS, NoStmt:
-          dest.add n
-          inc n
-          inc nested
-    of ParRi:
-      dest.add n
-      inc n
-      dec nested
-    if nested == 0: break
+        # generic container: copy the head and recurse into the children
+        copyInto dest, n:
+          while n.hasMore: tr c, dest, n
+  of ParRi:
+    raiseAssert "BUG: unexpected ParRi in vtables_backend.tr"
 
 proc processMethod(c: var Context; m: MethodDecl; methodName: string) =
   let sig = methodKey(methodName, m.paramRest)

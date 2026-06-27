@@ -136,7 +136,7 @@ type
     InlineP = (ord(InlineTagId), "inline")  ## `inline` proc annotation
     NoinlineP = (ord(NoinlineTagId), "noinline")  ## `noinline` proc annotation
     AttrP = (ord(AttrTagId), "attr")  ## general attribute annotation
-    SmryP = (ord(SmryTagId), "smry")  ## function-summary annotation; effects include `read`, `write`, `writeGlobal`, `callsUnknown`, `raises`; parameter flags include `read`, `write`, `directEscape`, `returned`
+    SmryP = (ord(SmryTagId), "smry")  ## alias-aware function-summary annotation: a Steensgaard-style partition of the parameters, the result and an implicit "outside" world. `EFFECT` idents: `writeGlobal`, `readGlobal`, `callsUnknown`, `raises`. Each `(param INDEX CLS PARAMFLAG*)` carries the parameter index, its partition class `CLS` (parameters with equal `CLS` may alias; `CLS` is the smallest param index in the class) and `PARAMFLAG` idents `reads`/`writes` (the call may read/write through the parameter's reachable graph), `slot` (a `var` parameter whose own binding is reassigned, not just its pointee) and `escapes` (the graph is stored into a global or passed to a callee with no summary). `RESULT` (`result INT (resultEscapes)?`) is the partition class the return value joins — omitted means the result is its own fresh class — and whether that graph escapes.
     WasP = (ord(WasTagId), "was")
     SelectanyP = (ord(SelectanyTagId), "selectany")
     AlignP = (ord(AlignTagId), "align")

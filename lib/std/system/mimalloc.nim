@@ -1,7 +1,12 @@
-when defined(linux):
-  {.build("C", "${path}/../../../vendor/mimalloc/src/static.c", "-DMI_STATS=1 -DMI_TRACK_VALGRIND=1 -I${path}/../../../vendor/mimalloc/include").}
-else:
-  {.build("C", "${path}/../../../vendor/mimalloc/src/static.c", "-DMI_STATS=1 -I${path}/../../../vendor/mimalloc/include").}
+# NOTE: valgrind tracking (`-DMI_TRACK_VALGRIND=1`) is deliberately NOT baked in
+# here. It would force `static.c` to `#include <valgrind/valgrind.h>`, making the
+# valgrind dev headers a hard build dependency for *every* nimony program on Linux
+# (reported as "nimony does not build without valgrind installed"). The test/boot
+# paths that actually want valgrind-tracked mimalloc inject `-DMI_TRACK_VALGRIND=1`
+# via `--passC` (see hastur's `testFile`, `prebuildSharedObjects`, and
+# `boot --valgrind`); that flag flows into the same `cc` command that compiles
+# `static.c`, so tracking is preserved exactly where it's wanted.
+{.build("C", "${path}/../../../vendor/mimalloc/src/static.c", "-DMI_STATS=1 -I${path}/../../../vendor/mimalloc/include").}
 when defined(arm):
   {.passL:"-latomic".}
 

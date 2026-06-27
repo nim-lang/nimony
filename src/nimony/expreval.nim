@@ -204,9 +204,14 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
 
     var resultBuf = createTokenBuf(12)
     assert c.c.executeExpr != nil
-    let retType =
-      if not cursorIsNil(c.expectedType): skipModifier(c.expectedType)
-      else: skipModifier(routine.retType)
+    # Prefer the routine's concrete return type so nested calls inside a
+    # distinct conversion (e.g. `Answer(int.fourtytwo)`) are not serialised
+    # with the outer const's type. Keep `expectedType` for generic return
+    # types such as `@[]` → `newSeqUninit[T](0)` where T comes from context.
+    var retType = skipModifier(routine.retType)
+    if retType.typeKind == AutoT or containsGenericParams(retType):
+      if not cursorIsNil(c.expectedType):
+        retType = skipModifier(c.expectedType)
     let errorMsg = c.c.executeExpr(c.c[], cursorAt(evaluatedCall, 0),
                                    retType, resultBuf, n.info)
     if errorMsg.len == 0:
@@ -724,6 +729,9 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       skip n
       let val = propagateError eval(c, n)
       skipParRi n
+      if isDistinct:
+        result = val
+        return
       if targetType.typeKind == CstringT and val.kind == StringLit:
         result = val
       elif targetType.typeKind == FloatT:

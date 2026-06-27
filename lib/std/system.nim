@@ -182,6 +182,14 @@ include "system/ctypes"
 include "system/exits"
 include "system/atomintrin"
 include "system/memory"
+
+template linear*() {.pragma.}
+  ## Marks an indexed accessor (`[]=`, or a `var T`-returning `[]`) as *linear*:
+  ## for distinct keys it yields distinct, non-aliasing, stable locations and
+  ## never invalidates a previously obtained location. `std/parfor`'s `||` uses
+  ## this to allow parallel `c[i] = …` writes. `seq`/array indexing is linear;
+  ## `Table` indexing is not (it may rehash and relocate other slots).
+
 include "system/seqimpl"
 include "system/stringimpl"
 include "system/openarrays"
@@ -260,10 +268,14 @@ func delay*(x: typed): Continuation {.magic: "Delay".}
   ## this call. Think of it as a `toTask` builtin.
 
 proc suspend*() {.magic: "Suspend".}
-  ## Suspends the current coroutine. In CPS, this inserts `return Continuation(fn: nil, env: nil)`.
+  ## Parks the current coroutine. In CPS, this inserts
+  ## `return Continuation(fn: nil, env: this)`.
 
 proc trivialTick(c: Continuation): Continuation =
   result = c.fn(c.env)
+
+
+
 
 type
   Scheduler* = proc (c: Continuation): Continuation {.nimcall.}
@@ -280,31 +292,50 @@ proc advance*(c: Continuation): Continuation =
   result = scheduler(c)
 
 proc complete*(c: Continuation) =
-  ## Used by the compiler to run a coroutine until completion.
+  ## Used by the compiler to run a coroutine until it has no next step
+  ## (`stopping`): it either finishes or parks (`delay(); suspend()`) to await
+  ## an external scheduler. With the default trivial scheduler a park simply
+  ## stops the loop; a real scheduler resumes parked continuations and drives
+  ## them onward. Takes `c` by value so a coroutine may reassign the variable
+  ## it was driven from (e.g. to reschedule via `delay(call)`). Bare
+  ## `suspend()` transitions synchronously, so it does not stop the loop.
   var c = c
-  while c.fn != nil:
+  while not stopping(c):
     c = scheduler(c)
 
+proc parked*(c: Continuation): bool {.inline.} =
+  ## True when a coroutine has parked via `suspend()` and not yet been
+  ## resumed. The `env` field identifies the coroutine frame.
+  c.fn == nil and c.env != nil
+
+proc stopping*(c: Continuation): bool {.inline.} =
+  ## True when a coroutine has no next step: either finished or parked.
+  c.fn == nil
+
 proc finished*(c: Continuation): bool {.inline.} =
-  ## True once a coroutine has run past its final yield. Compatible with
+  ## True once a coroutine has run to completion. Compatible with
   ## Nim's `finished` builtin: returns `true` when there are no more values
   ## to produce. Used by the closure-iterator trampoline that the compiler
   ## emits for `for x in closureIter(...)` loops.
-  c.fn == nil
+  ##
+  ## Parked continuations (`suspend`) are not finished: they have
+  ## `fn == nil` but a non-nil `env`.
+  c.fn == nil and c.env == nil
 
 proc finalizeCoroutine*(c: var Continuation) =
   ## Cancels and deallocates a coroutine frame that is still live (i.e.
   ## the loop exited via `break`/`return`/exception before the iterator
-  ## completed). A no-op once the coroutine has run to completion since
-  ## its terminating state already freed the frame. Called from the
-  ## `finally` clause of the closure-iterator trampoline.
+  ## completed, or the coroutine is parked). A no-op once the coroutine
+  ## has run to completion since its terminating state already freed the
+  ## frame. Called from the `finally` clause of the closure-iterator
+  ## trampoline.
   ##
   ## For iter-VALUE-owned frames (the iter-value tuple's env slot owns
   ## the frame as a `ref CoroType`), we run `cancel` but skip
   ## `deallocFrame` — the ref's destructor frees the memory later when
   ## the iter-value goes out of scope. The ownership marker is
   ## `frame.caller.env`: nil ⇒ wrapper-allocated, non-nil ⇒ value-owned.
-  if c.env != nil and c.fn != nil:
+  if c.env != nil:
     cancel(c.env)
     if c.env.caller.env == nil:
       deallocFrame(c.env)
@@ -452,6 +483,14 @@ func `..`*[T, U](a: sink T; b: sink U): HSlice[T, U] {.inline.} =
   ##   ```
   result = HSlice[T, U](a: a, b: b)
 
+func `..<`*[T, U: Ordinal](a: sink T; b: sink U): HSlice[T, U] {.inline.} =
+  ## Binary `..<` operator that constructs the half-open interval `[a, b)`,
+  ## i.e. it is equivalent to `a .. pred(b)`.
+  ##
+  ## This is the *value* form used by slice indexing such as `s[a ..< b]`;
+  ## the for-loop form `for i in a ..< b` resolves to the `..<` iterator.
+  result = HSlice[T, U](a: a, b: pred(b))
+
 type
   BackwardsIndex* = distinct int ## Type constructed by `^` for reversed
                                  ## array/string/seq access.
@@ -467,6 +506,42 @@ template `[]`*[T](s: openArray[T]; i: BackwardsIndex): var T =
 
 template `[]`*(s: string; i: BackwardsIndex): var char =
   s[s.len - int(i)]
+
+template `..^`*(a, b: untyped): untyped =
+  ## A shortcut for `a .. ^b`. Note that `a .. ^b` would be tokenized as
+  ## `a` `..^` `b` anyway, so this operator must exist for that to parse.
+  a .. ^b
+
+# ---- slice indexing ----
+# These live here (rather than in `system/stringimpl` or `system/seqimpl`)
+# because they read `HSlice`'s `a`/`b` fields, and `HSlice` is declared above
+# in this file *after* those includes. A field read placed textually before
+# the type's declaration binds to the wrong same-named field.
+
+func `[]`*(s: string; x: HSlice[int, int]): string {.inline.} =
+  ## Slice indexing: returns the substring for the inclusive range `x.a .. x.b`
+  ## (a fresh copy). Works with `s[a .. b]` and `s[a ..< b]`.
+  result = substr(s, x.a, x.b)
+
+func `[]`*(s: string; x: HSlice[int, BackwardsIndex]): string {.inline.} =
+  ## Slice indexing with a backwards upper bound, e.g. `s[a .. ^1]`.
+  result = substr(s, x.a, s.len - int(x.b))
+
+func `[]`*[T](s: seq[T]; x: HSlice[int, int]): seq[T] {.nodestroy.} =
+  ## Slice indexing: returns a fresh `seq` with copies of the elements in the
+  ## inclusive range `x.a .. x.b`. Works with `s[a .. b]` and `s[a ..< b]`.
+  let a = max(x.a, 0)
+  let b = min(x.b, s.len - 1)
+  let n = if b >= a: (b - a) + 1 else: 0
+  result = newSeqUninit[T](n)
+  var i = 0
+  while i < n:
+    (result.rawData[i]) = `=dup`(s.rawData[a+i])
+    inc i
+
+func `[]`*[T](s: seq[T]; x: HSlice[int, BackwardsIndex]): seq[T] {.inline.} =
+  ## Slice indexing with a backwards upper bound, e.g. `s[a .. ^1]`.
+  result = s[x.a .. (s.len - int(x.b))]
 
 type
   TypeOfMode* = enum ## Possible modes of `typeof`.

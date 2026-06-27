@@ -28,26 +28,22 @@ when defined(verifyArc):
   import ".." / nimony / verify_arc
 
 proc publishHooks*(n: var Cursor) =
-  var nested = 0
-  while true:
-    case n.kind
-    of ParLe:
-      case n.stmtKind
-      of ProcS, FuncS, MacroS, MethodS, ConverterS:
-        let decl = asRoutine(n)
-        var dest = createTokenBuf()
-        takeTree(dest, n)
-        let sym = decl.name.symId
-        publish sym, dest
-      else:
-        inc n
-        inc nested
-    of ParRi:
-      inc n
-      dec nested
+  case n.kind
+  of ParLe:
+    case n.stmtKind
+    of ProcS, FuncS, MacroS, MethodS, ConverterS:
+      let decl = asRoutine(n)
+      var dest = createTokenBuf()
+      takeTree(dest, n)
+      let sym = decl.name.symId
+      publish sym, dest
     else:
-      inc n
-    if nested == 0: break
+      n.into:
+        while n.hasMore: publishHooks(n)
+  of ParRi:
+    raiseAssert "BUG: unexpected ParRi in publishHooks"
+  else:
+    inc n
 
 proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): TokenBuf =
   # Prepare initial buffer from elimForLoops

@@ -95,7 +95,7 @@ type
     DefaultdistinctX = (ord(DefaultdistinctTagId), "defaultdistinct")
     DelayX = (ord(DelayTagId), "delay")  ## `delay(fn args)` builtin for delayed continuation creation
     Delay0X = (ord(Delay0TagId), "delay0")  ## `delay()` no-arg: capture current coroutine's own continuation
-    SuspendX = (ord(SuspendTagId), "suspend")  ## `suspend()` magic proc: suspends the coroutine and returns Continuation(nil, nil)
+    SuspendX = (ord(SuspendTagId), "suspend")  ## `suspend()` magic proc: parks the coroutine and returns Continuation(nil, env)
     ExprX = (ord(ExprTagId), "expr")
     DoX = (ord(DoTagId), "do")  ## `do` expression
     ArratX = (ord(ArratTagId), "arrat")  ## two optional exprs: `high` boundary and the `low` boundary (if != 0)
@@ -358,9 +358,11 @@ type
     ProfilerP = (ord(ProfilerTagId), "profiler")  ## `profiler` pragma; accepted for Nim source compatibility, semantically ignored
     StacktraceP = (ord(StacktraceTagId), "stacktrace")  ## `stackTrace` pragma; accepted for Nim source compatibility, semantically ignored
     GcsafeP = (ord(GcsafeTagId), "gcsafe")  ## `gcsafe` pragma; accepted for Nim source compatibility, semantically ignored
+    UsedP = (ord(UsedTagId), "used")  ## `used` pragma; accepted for Nim source compatibility, semantically ignored
+    CompileP = (ord(CompileTagId), "compile")  ## `compile` pragma (Nim-compatible alias of `build`; the source language is inferred from the file extension, e.g. `.m` → Objective-C)
 
 proc rawTagIsNimonyPragma*(raw: TagEnum): bool {.inline.} =
-  raw in {CastTagId, CursorTagId, EmitTagId, UnionTagId, InlineTagId, NoinlineTagId, ClosureTagId, VarargsTagId, SelectanyTagId, AlignTagId, BitsTagId, NodeclTagId, RaisesTagId, UntypedTagId, MagicTagId, ImportcTagId, ImportcppTagId, DynlibTagId, ExportcTagId, HeaderTagId, ThreadvarTagId, GlobalTagId, DiscardableTagId, NoreturnTagId, BorrowTagId, NoSideEffectTagId, NodestroyTagId, PluginTagId, BycopyTagId, ByrefTagId, NoinitTagId, RequiresTagId, EnsuresTagId, AssumeTagId, AssertTagId, BuildTagId, FeatureTagId, StringTagId, ViewTagId, IncompleteStructTagId, InjectTagId, GensymTagId, DirtyTagId, ErrorTagId, ReportTagId, TagsTagId, DeprecatedTagId, SideEffectTagId, KeepOverflowFlagTagId, SemanticsTagId, InheritableTagId, BaseTagId, PureTagId, FinalTagId, AcyclicTagId, PragmaTagId, PackedTagId, PassiveTagId, PushTagId, CallConvTagId, PopTagId, PassLTagId, PassCTagId, MethodsTagId, SizeTagId, UncheckedAccessTagId, UncheckedAssignTagId, ProfilerTagId, StacktraceTagId, GcsafeTagId}
+  raw in {CastTagId, CursorTagId, EmitTagId, UnionTagId, InlineTagId, NoinlineTagId, ClosureTagId, VarargsTagId, SelectanyTagId, AlignTagId, BitsTagId, NodeclTagId, RaisesTagId, UntypedTagId, MagicTagId, ImportcTagId, ImportcppTagId, DynlibTagId, ExportcTagId, HeaderTagId, ThreadvarTagId, GlobalTagId, DiscardableTagId, NoreturnTagId, BorrowTagId, NoSideEffectTagId, NodestroyTagId, PluginTagId, BycopyTagId, ByrefTagId, NoinitTagId, RequiresTagId, EnsuresTagId, AssumeTagId, AssertTagId, BuildTagId, FeatureTagId, StringTagId, ViewTagId, IncompleteStructTagId, InjectTagId, GensymTagId, DirtyTagId, ErrorTagId, ReportTagId, TagsTagId, DeprecatedTagId, SideEffectTagId, KeepOverflowFlagTagId, SemanticsTagId, InheritableTagId, BaseTagId, PureTagId, FinalTagId, AcyclicTagId, PragmaTagId, PackedTagId, PassiveTagId, PushTagId, CallConvTagId, PopTagId, PassLTagId, PassCTagId, MethodsTagId, SizeTagId, UncheckedAccessTagId, UncheckedAssignTagId, ProfilerTagId, StacktraceTagId, GcsafeTagId, UsedTagId, CompileTagId}
 
 type
   NimonySym* = enum

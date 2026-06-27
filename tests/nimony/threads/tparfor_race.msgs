@@ -1,0 +1,1 @@
+tests/nimony/threads/tparfor_race.nim(10, 7) Error: `||` writes `x[i]` inside a nested loop — a single `i` then spans a range of indices and adjacent chunks race; hoist the write out of the inner loop

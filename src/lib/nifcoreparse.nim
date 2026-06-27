@@ -30,16 +30,23 @@ type
 
 proc resolveInfo(b: var TokenBuf; tok: rd.ExpandedToken;
                  parents: seq[Parent]): NifLineInfo {.inline.} =
-  ## Absolute file/line/col for `tok`. Absolute when the token carries a
-  ## filename; otherwise relative to the enclosing tag (parents[^1]).
+  ## Absolute file/line/col for `tok`, plus any `#…#` comment. Absolute when
+  ## the token carries a filename; otherwise relative to the enclosing tag
+  ## (parents[^1]). A comment is only carried when the file resolves (line info
+  ## is the comment's vehicle); in the IC use it always rides a positioned sym.
+  var comment = StrId(0)
+  if tok.comment.len != 0:
+    comment = b.pool.strings.getOrIncl(rd.decodeComment(tok))
   if tok.filename.len != 0:
     let f = b.pool.filenames.getOrIncl(rd.decodeFilename(tok))
-    result = NifLineInfo(file: f, line: tok.pos.line, col: tok.pos.col)
+    result = NifLineInfo(file: f, line: tok.pos.line, col: tok.pos.col,
+                         comment: comment)
   else:
     let p = parents[^1]
     result = NifLineInfo(file: p.file,
                          line: p.line + tok.pos.line,
-                         col:  p.col + tok.pos.col)
+                         col:  p.col + tok.pos.col,
+                         comment: comment)
 
 proc parse*(r: var rd.Reader; b: var TokenBuf;
             parentSeed: NifLineInfo = NoNifLineInfo) =
@@ -115,10 +122,13 @@ proc parseFromFile*(filename: string; sizeHint = 100;
 
 # ── toString ─────────────────────────────────────────────────────────────
 
-proc emitRelLineInfo(bld: var Builder; abs, parent: NifLineInfo; pool: Pool) =
+proc emitRelLineInfo(bld: var Builder; abs, parent: NifLineInfo; pool: Pool;
+                     emitComment = true) =
   ## Emit a NIF27 line-info suffix for `abs`, relative to the enclosing tag's
   ## `parent` info when they share a file (absolute, with filename, otherwise).
-  ## Mirrors `nifstreams.emitLineInfo`.
+  ## Mirrors `nifstreams.emitLineInfo`. When `abs` carries a `comment` and
+  ## `emitComment` is set, also append it as a `#…#` decoration (the embedded
+  ## index passes `emitComment = false` to keep its format comment-free).
   if not abs.file.isValid: return
   var line = abs.line
   var col = abs.col
@@ -131,6 +141,8 @@ proc emitRelLineInfo(bld: var Builder; abs, parent: NifLineInfo; pool: Pool) =
   else:
     fileStr = pool.filenames[abs.file]
   bld.attachLineInfo(col, line, fileStr)
+  if emitComment and uint32(abs.comment) != 0'u32:
+    bld.attachComment(pool.strings[abs.comment])
 
 proc emitValue(bld: var Builder; c: var Cursor; cur: var NifLineInfo;
                parents: var seq[NifLineInfo]; tags: TagPool; pool: Pool) =
@@ -139,7 +151,9 @@ proc emitValue(bld: var Builder; c: var Cursor; cur: var NifLineInfo;
   ## inherits it); `parents` holds enclosing-tag infos for relative encoding.
   let li = rawLineInfo(c)
   let abs = if li.isValid: li else: cur
-  if li.isValid: cur = li
+  if li.isValid:
+    cur = li
+    cur.comment = StrId(0)   # a comment is a one-shot decoration, never inherited
   case c.kind
   of TagLit:
     bld.addTree(tags.tags[c.cursorTagId])
@@ -195,7 +209,9 @@ proc emitValueIndexed(bld: var Builder; c: var Cursor; cur: var NifLineInfo;
   ## canonical reader (`nifindexes.readEmbeddedIndex`).
   let li = rawLineInfo(c)
   let abs = if li.isValid: li else: cur
-  if li.isValid: cur = li
+  if li.isValid:
+    cur = li
+    cur.comment = StrId(0)   # a comment is a one-shot decoration, never inherited
   case c.kind
   of TagLit:
     mostRecentOffset = bld.offset            # offset of this `(`
@@ -221,7 +237,7 @@ proc emitValueIndexed(bld: var Builder; c: var Cursor; cur: var NifLineInfo;
       # seeds its parent stack with this and the first token it reads — the
       # compound's `(` — carries the diff. (See nifstreams.toModuleString.)
       let parentInfo = if parents.len >= 2: parents[^2] else: rootInfo
-      emitRelLineInfo(index, parentInfo, rootInfo, pool)
+      emitRelLineInfo(index, parentInfo, rootInfo, pool, emitComment = false)
       index.addSymbol(name, dottedSuffix)
       index.addIntLit(mostRecentOffset - previousOffset)
       previousOffset = mostRecentOffset

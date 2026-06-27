@@ -119,7 +119,7 @@ proc getExternName(c: var LLVMCode; s: SymId): string =
   ## Get the importc name for a symbol, or "" if not imported.
   let d = c.m.getDeclOrNil(s)
   if d != nil and d.extern != StrId(0) and d.isImport:
-    result = pool.strings[d.extern]
+    result = c.m.pool.strings[d.extern]
   else:
     result = ""
 
@@ -552,7 +552,7 @@ proc genDotLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
 
     # Get inheritance depth
     if n.kind == IntLit:
-      inhDepth = int(pool.integers[n.intId])
+      inhDepth = int(intVal(n))
       inc n
     while n.hasMore: skip n
 
@@ -698,24 +698,24 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   of NoExpr:
     case n.kind
     of IntLit:
-      let i = pool.integers[n.intId]
+      let i = intVal(n)
       inc n
       result = LLValue(name: c.tok($i), typ: c.tok("i" & $c.bits))
     of UIntLit:
-      let i = pool.uintegers[n.uintId]
+      let i = uintVal(n)
       inc n
       result = LLValue(name: c.tok($i), typ: c.tok("i" & $c.bits))
     of FloatLit:
-      let f = pool.floats[n.floatId]
+      let f = floatVal(n)
       inc n
       result = LLValue(name: c.tok($f), typ: c.tok("double"))
     of CharLit:
       let ch = n.charLit
       inc n
       result = LLValue(name: c.tok($ord(ch)), typ: LToken(I8Token))
-    of StringLit:
+    of StrLit:
       # Create a global string constant and return pointer to it
-      let s = pool.strings[n.litId]
+      let s = c.m.pool.strings[n.litId]
       inc n
       let globalName = "@.str." & $c.strLitCounter
       inc c.strLitCounter
@@ -754,9 +754,9 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
                 inc enumBody
                 # Next is the value (IntLit or UIntLit)
                 if enumBody.kind == IntLit:
-                  result = LLValue(name: c.tok($pool.integers[enumBody.intId]), typ: c.tok(baseTyp))
+                  result = LLValue(name: c.tok($intVal(enumBody)), typ: c.tok(baseTyp))
                 elif enumBody.kind == UIntLit:
-                  result = LLValue(name: c.tok($pool.uintegers[enumBody.uintId]), typ: c.tok(baseTyp))
+                  result = LLValue(name: c.tok($uintVal(enumBody)), typ: c.tok(baseTyp))
                 else:
                   result = LLValue(name: c.tok("0"), typ: c.tok(baseTyp))
                 return
@@ -991,9 +991,9 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       value = n
       skip n
       suffix = n
-      suffixStr = pool.strings[suffix.litId]
+      suffixStr = c.m.pool.strings[suffix.litId]
       while n.hasMore: skip n
-    if value.kind == StringLit:
+    if value.kind == StrLit:
       genExprLLVM(c, value, result)
     else:
       var val = LLValue(); genExprLLVM(c, value, val)
@@ -1052,7 +1052,7 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
             let fldSym = n.symId
             skip n # field name (SymbolDef)
             var fieldVal = LLValue(); genExprLLVM(c, n, fieldVal)
-            let inhDepth = if n.hasMore and n.kind == IntLit: (let d = int(pool.integers[n.intId]); skip n; d) else: 0
+            let inhDepth = if n.hasMore and n.kind == IntLit: (let d = int(intVal(n)); skip n; d) else: 0
             # Navigate to the field — objTypeCursor is the type symbol itself
             var curType = objTypeCursor
             var curBody = navigateToObjectBody(c.m, curType)

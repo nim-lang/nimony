@@ -96,6 +96,12 @@ proc passiveCallHook(c: var Context; n: Cursor): bool =
 # Passive call / delay / suspend emitters
 # ---------------------------------------------------------------------
 
+proc emitCompleteFromNormal(c: var Context; dest: var TokenBuf;
+                            contVar: SymId; info: PackedLineInfo) =
+  dest.copyIntoKind CallS, info:
+    dest.addSymUse pool.syms.getOrIncl("complete.0." & SystemModuleSuffix), info
+    dest.addSymUse contVar, info
+
 proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cursor) =
   let typ = c.typeCache.getType(n.firstSon, {SkipAliases})
   let retType = getType(c.typeCache, n)
@@ -139,10 +145,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
             dest.copyIntoKind KvU, info:
               dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
               dest.addParPair NilX, info
-      # complete(contVar):
-      dest.copyIntoKind CallS, info:
-        dest.addSymUse pool.syms.getOrIncl("complete.0." & SystemModuleSuffix), info
-        dest.addSymUse contVar, info
+      emitCompleteFromNormal(c, dest, contVar, info)
     else:
       # Stack-allocate the callee's frame (statically known callee).
       # Null callee.callee (see emitStackFrameTag) so deallocFrame is a
@@ -187,10 +190,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
               dest.addParPair NilX, info
       # Tag as stack-allocated:
       emitStackFrameTag(c, dest, coroVar, info)
-      # complete(contVar):
-      dest.copyIntoKind CallS, info:
-        dest.addSymUse pool.syms.getOrIncl("complete.0." & SystemModuleSuffix), info
-        dest.addSymUse contVar, info
+      emitCompleteFromNormal(c, dest, contVar, info)
   of IsIterator, IsPassive:
     # passive call from within a passive proc:
     # The callee's frame is heap-allocated via allocFrame; the callee
@@ -237,6 +237,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
 
 proc trDelay0(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## `(delay0)` — no-arg form: jump to the NEXT suspension point.
+  c.awaitingSuspendPark = true
   let info = n.info
   inc n      # skip delay0 tag
   var state = getNextState(c.currentProc.cf, n)
@@ -245,21 +246,31 @@ proc trDelay0(c: var Context; dest: var TokenBuf; n: var Cursor) =
   skipParRi n  # skip ParRi of delay0
 
 proc trSuspend(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## `(suspend)` — suspends the coroutine by returning
-  ## `Continuation(nil, nil)`. This stops the trampoline. To resume,
-  ## use `delay()` to capture the continuation.
+  ## `(suspend)` — parks only after a preceding `(delay0)` in the same
+  ## state (`Continuation(fn: nil, env: this)`). A bare `suspend()` is a
+  ## synchronous transition to the next state so `complete()` can drive on.
   let info = n.info
   inc n      # skip suspend tag
+  let state = getNextState(c.currentProc.cf, n)
   skipParRi n  # skip ParRi of suspend
+  let park = c.awaitingSuspendPark
+  c.awaitingSuspendPark = false
   dest.copyIntoKind RetS, info:
-    dest.copyIntoKind OconstrX, info:
-      dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
-      dest.copyIntoKind KvU, info:
-        dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
-        dest.addParPair NilX, info
-      dest.copyIntoKind KvU, info:
-        dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
-        dest.addParPair NilX, info
+    if park:
+      dest.copyIntoKind OconstrX, info:
+        dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+        dest.copyIntoKind KvU, info:
+          dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
+          dest.addParPair NilX, info
+        dest.copyIntoKind KvU, info:
+          dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
+          dest.copyIntoKind CastX, info:
+            dest.copyIntoKind PtrT, info:
+              dest.addSymUse pool.syms.getOrIncl(RootObjName), info
+            dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+    else:
+      assert state != -1
+      contNextState(c, dest, state, info)
 
 proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## `(delay fn args)` — fn-args form; typenav returns

@@ -43,6 +43,9 @@ Commands:
   all                  run all tests.
   nimony               run Nimony tests.
   examples             run examples (examples/ directory).
+  native               run the curated native-backend regression set through
+                       `nimony n` (arkham + nifasm, from the sibling
+                       `../nativenif` checkout). See `NativeTestDirs`/`Files`.
   lengc                 run Leng tests.
   nj                   run NJ (Nimony Jump Elimination) tests.
   vl                   run VL (Versioned Locations) tests.
@@ -201,6 +204,7 @@ type
             # for line, col, filename extraction (useful for nimsuggest-like tests)
     Compat # compatibility mode tests
     Valgrind # valgrind tests
+    Optimized # tests compiled with --opt:speed (exercise the shoggoth passes)
 
 var nimcacheDir* = "nimcache"
   ## Directory used for compiler intermediates. Per-test parallel runs
@@ -222,6 +226,7 @@ proc toCommand(cat: Category): string =
   case cat
   of Basics: "m"
   of Tracked: "check --silentMake"
+  of Optimized: "c --silentMake --opt:speed"
   of Normal, Compat, Valgrind: "c --silentMake"
 
 proc execNimony(cmd: string; cat: Category): (string, int) =
@@ -229,6 +234,15 @@ proc execNimony(cmd: string; cat: Category): (string, int) =
     if nimcacheDir != "nimcache": "--nimcache:" & quoteShell(nimcacheDir) & " "
     else: ""
   result = execLocal("nimony", toCommand(cat) & " " & cacheArg & cmd)
+
+proc execNimonyNative(cmd: string): (string, int) =
+  ## Compile with the C-FREE NATIVE backend (`nimony n` → arkham emits typed asm-NIF,
+  ## nifasm links a static libc-free executable). Mirrors `execNimony` but selects the
+  ## `n` command instead of `c`/`m`.
+  let cacheArg =
+    if nimcacheDir != "nimcache": "--nimcache:" & quoteShell(nimcacheDir) & " "
+    else: ""
+  result = execLocal("nimony", "n --silentMake --isMain " & cacheArg & cmd)
 
 const
   HasturSessionFile = "hastur_session.txt"
@@ -326,7 +340,15 @@ proc compareValgrindOutput(s1: string, s2: string): bool =
       return false
   return true
 
+let hasValgrind = findExe("valgrind").len > 0
+  ## Whether the `valgrind` binary (and, by extension, its dev headers) is
+  ## available. mimalloc no longer hard-depends on valgrind, so the suite must
+  ## run without it: when absent we neither pass `-DMI_TRACK_VALGRIND=1` (which
+  ## would need `<valgrind/valgrind.h>` to compile) nor run the leak checks —
+  ## the `.valgrind` tests simply skip rather than failing the whole run.
+
 proc testValgrind(c: var TestCounters; file: string; overwrite: bool; cat: Category; exe: string) =
+  if not hasValgrind: return
   let valgrind = file.changeFileExt(".valgrind")
   let hasValgrindFile = valgrind.fileExists()
   if cat == Valgrind or hasValgrindFile:
@@ -344,12 +366,16 @@ proc testValgrind(c: var TestCounters; file: string; overwrite: bool; cat: Categ
 
         failure c, file, valgrindSpec, testProgramOutput
 
+proc echoTestSuccess(file: string) =
+  echo "SUCCESS ", file
+
 proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category; forward: string) =
   #echo "TESTING ", file
+  let failuresBefore = c.failures
   inc c.total
   var nimonycmd = "--isMain"
   case cat
-  of Normal, Valgrind: discard
+  of Normal, Valgrind, Optimized: discard
   of Basics:
     nimonycmd.add " --noSystem"
   of Tracked:
@@ -360,7 +386,12 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category;
     nimonycmd.add ' '
     nimonycmd.add forward
   when defined(linux):
-    nimonycmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\" "
+    # Only request valgrind-tracked mimalloc when valgrind is actually present;
+    # the flag pulls in `<valgrind/valgrind.h>`, which a valgrind-less box lacks.
+    if hasValgrind:
+      nimonycmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\" "
+    else:
+      nimonycmd.add " "
   else:
     nimonycmd.add " "
   let (compilerOutput, compilerExitCode) = execNimony(nimonycmd & quoteShell(file), cat)
@@ -416,6 +447,9 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category;
       if ast.fileExists():
         let nif = generatedFile(file, ".s.nif")
         diffFiles c, file, ast, nif, overwrite
+
+  if c.failures == failuresBefore:
+    echoTestSuccess(file)
 
 proc canRunParallel(cat: Category): bool {.inline.} =
   ## `Compat` and `Basics` reset `nimcache/` around the loop and so are
@@ -497,8 +531,20 @@ proc prebuildSharedObjects(forward: string) =
     cmd.add forward
   # Match `testFile`'s per-platform flags so the prebuilt `static.o` is the
   # exact artifact the tests want (valgrind-tracked mimalloc on Linux).
+  #
+  # mimalloc's build pragma no longer bakes in `-DMI_TRACK_VALGRIND=1` (that
+  # made the valgrind dev headers a hard build dependency for every nimony
+  # program); valgrind tracking is now requested purely via this `--passC`.
+  # But the shared `static.o` is keyed only by mtime, so a prior *non*-valgrind
+  # build (e.g. a plain `bin/nimony c foo.nim`) can leave a stale, untracked
+  # `static.o` that nifmake would happily reuse — silently running the valgrind
+  # tests against non-tracked mimalloc. Delete it so this valgrind-tracked
+  # variant is always freshly produced.
   when defined(linux):
-    cmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\""
+    if hasValgrind:
+      try: removeFile("nimcache_static" / "static.o")
+      except OSError: discard
+      cmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\""
   cmd.add ' ' & src.quoteShell
   if execShellCmd(cmd) != 0:
     # Non-fatal: if this fails the tests still run, just without the
@@ -690,6 +736,7 @@ proc parseCategory(path: string): Category =
   of "nosystem": Basics
   of "compat": Compat
   of "valgrind": Valgrind
+  of "opt": Optimized
   else: Normal
 
 proc findCategory(path: string): Category =
@@ -723,6 +770,89 @@ proc nimonytests(overwrite: bool; forward: string) =
   echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
     quit "FAILURE: Some tests failed."
+  else:
+    echo "SUCCESS."
+
+# ── native-backend regression set ────────────────────────────────────────────
+# The C-FREE native path (`nimony n` → arkham + nifasm, sibling `../nativenif`) is
+# still incomplete, so we can't run the whole suite through it. Instead this is an
+# explicit whitelist of what is known to run correctly natively — a regression
+# guard: a native miscompile that diverges from the (spec-pinned) result is caught.
+# Grow it as the backend gains features (the same record-what-works philosophy as
+# the rest of hastur). `NativeTestDirs` are directories that pass IN FULL (negative
+# `.msgs` tests auto-skipped); `NativeTestFiles` are individual passers from
+# otherwise-partial directories.
+const
+  NativeTestDirs = [
+    "tests/nimony/arc",        # full ARC suite — byte-identical to the C backend
+    "tests/nimony/closures"
+  ]
+  NativeTestFiles = [
+    # cps/* — closures & continuation-passing (indirect calls through fn-ptr values)
+    "tests/nimony/cps/tbasicpassive",
+    "tests/nimony/cps/tclosure",
+    "tests/nimony/cps/tclosure_iter_basic",
+    "tests/nimony/cps/tclosure_iter_body_capture",
+    "tests/nimony/cps/tclosure_iter_break",
+    "tests/nimony/cps/tclosure_iter_envcheck",
+    "tests/nimony/cps/tclosure_iter_string",
+    "tests/nimony/cps/tclosure_iter_var",
+    "tests/nimony/cps/tfirstpassive",
+    "tests/nimony/cps/tif",
+    "tests/nimony/cps/tmethods",
+    "tests/nimony/cps/tnestedloops",
+    "tests/nimony/cps/trecursive",
+    "tests/nimony/cps/tsuspend",
+    "tests/nimony/cps/tsuspend_resume",
+    "tests/nimony/cps/tparkstate",
+    "tests/nimony/cps/ttry"
+  ]
+
+proc nativeTestFile(c: var TestCounters; file: string; overwrite: bool) =
+  let msgs = file.changeFileExt(".msgs")
+  if msgs.fileExists() and readFile(msgs).contains(ErrorKeyword):
+    return
+  inc c.total
+  let (compilerOutput, compilerExitCode) = execNimonyNative(quoteShell(file))
+  if compilerExitCode != 0:
+    failure c, file, "native compiler exitcode 0",
+      removeMakeErrors(compilerOutput) & "\nexitcode " & $compilerExitCode
+    return
+  let exe = file.generatedExeFile()
+  if not exe.fileExists():
+    failure c, file, "native executable", "missing: " & exe
+    return
+  let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
+  var output = file.changeFileExt(".output")
+  if testProgramExitCode != 0:
+    output = file.changeFileExt(".exitcode")
+    if not output.fileExists():
+      failure c, file, "test program exitcode 0",
+        "exitcode " & $testProgramExitCode & "\n" & testProgramOutput
+      return
+  if output.fileExists():
+    let outputSpec = readFile(output).strip
+    if outputSpec != testProgramOutput.strip:
+      if overwrite:
+        writeFile(output, testProgramOutput)
+      failure c, file, outputSpec, testProgramOutput
+
+proc nativetests(overwrite: bool) =
+  ## Run the native-backend regression set (`NativeTestDirs` + `NativeTestFiles`)
+  ## through `nimony n`. Requires the sibling `../nativenif` checkout (arkham/nifasm).
+  let t0 = epochTime()
+  var c = TestCounters(total: 0, failures: 0)
+  for dir in NativeTestDirs:
+    var files: seq[string] = @[]
+    for x in walkDir(dir):
+      if x.kind == pcFile and x.path.endsWith(".nim"): files.add x.path
+    sort files
+    for f in files: nativeTestFile c, f, overwrite
+  for f in NativeTestFiles:
+    nativeTestFile c, f.addFileExt(".nim"), overwrite
+  echo c.total - c.failures, " / ", c.total, " native tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if c.failures > 0:
+    quit "FAILURE: Some native tests failed."
   else:
     echo "SUCCESS."
 
@@ -959,8 +1089,6 @@ proc test(t: string; overwrite: bool; cat: Category; forward: string) =
   testFile c, t, overwrite, cat, forward
   if c.failures > 0:
     quit "FAILURE: Test failed."
-  else:
-    echo "SUCCESS."
 
 proc testDirCmd(dir: string; overwrite: bool; forward: string) =
   var c = TestCounters(total: 0, failures: 0)
@@ -1942,6 +2070,14 @@ proc handleCmdLine =
   of "nimony":
     buildNimony()
     nimonytests(overwrite, forward)
+  of "native":
+    # Run the curated native-backend regression set through `nimony n`. Build the
+    # front end AND the C-free native toolchain (arkham + nifasm + shoggoth live in
+    # the sibling `../nativenif`; nifmake drives the `n` pipeline).
+    buildShoggoth()
+    buildArkham()
+    buildNifasm()
+    nativetests(overwrite)
   of "examples":
     buildNimony()
     exampletests(overwrite, forward)

@@ -157,6 +157,18 @@ proc extendedSuffixToken*(high28: uint32): NifToken {.inline.} =
 # Common matches nimony's `lineinfos` field sizes (line 14, col 7); file is
 # trimmed 10→7. Any field past its common width bumps the whole value to the
 # overflow layout.
+#
+# An optional `#comment#` decoration (a `StrId` into `pool.strings`) rides as
+# one further `ExtendedSuffix` after the position word. To keep the layout
+# selectable structurally (still no flag bit), a comment ALWAYS forces the
+# overflow position layout, so the count `k` of `ExtendedSuffix` words trailing
+# the `LineInfoLit` decodes unambiguously:
+#   k == 0  →  common position, no comment
+#   k == 1  →  overflow position, no comment   (the two pre-comment cases)
+#   k >= 2  →  overflow position (word 0) + comment id in words 1.. (28-bit
+#             chunks, low first; a 2nd word only for ids past 2^28)
+# The head-skip walk (`tokenWidth`, `kind >= ExtendedSuffix`) already absorbs
+# these extra words, so navigation needs no change.
 
 const
   LiColBitsC*  = 7'u32
@@ -176,9 +188,13 @@ type
   NifLineInfo* = object
     file*: FileId
     line*, col*: int32
+    comment*: StrId
+      ## Optional NIF `#…#` decoration on the head, interned in `pool.strings`
+      ## (`StrId(0)` = none). Carried in the `LineInfoLit` suffix; see below.
 
 const
-  NoNifLineInfo* = NifLineInfo(file: NoFile, line: 0'i32, col: 0'i32)
+  NoNifLineInfo* = NifLineInfo(file: NoFile, line: 0'i32, col: 0'i32,
+                               comment: StrId(0))
 
 proc isValid*(x: NifLineInfo): bool {.inline.} = x.file.isValid
 
@@ -328,6 +344,13 @@ proc tags*(c: Cursor): TagPool {.inline.} =
   ## consulting `c.tags` directly.
   if c.owner != nil: c.owner.tags else: nil
 
+proc toUniqueId*(c: Cursor): int {.inline.} =
+  ## A stable identity for the cursor's *position*: two cursors over the same
+  ## buffer at the same token share it, distinct positions differ. Suitable as a
+  ## `HashSet[int]`/`IntSet` key (e.g. type-traversal dedup). Not stable across
+  ## buffers or runs — it is the underlying token pointer reinterpreted.
+  cast[int](c.p)
+
 when defined(nimAllowNonVarDestructor) and defined(gcDestructors):
   proc `=destroy`*(c: Cursor) {.inline.} =
     if c.owner != nil: decRcAndFree(c.owner)
@@ -453,6 +476,20 @@ proc strVal*(c: Cursor; pool: Pool): string =
 
 proc strVal*(c: Cursor): string {.inline.} = strVal(c, c.pool)
 
+proc strId*(c: Cursor; pool: Pool): StrId =
+  ## Stable pool id of the StrLit/Ident at `c` — the inverse of `strVal`.
+  ## A pool-ref token already carries its id, so use it directly; only an inline
+  ## short string (stored in the token itself) has to be interned. Mirrors
+  ## `symId` and avoids the decode-then-reintern round trip of `strings[strVal]`.
+  assert c.kind in {StrLit, Ident}, "strId on " & $c.kind
+  let payload = c.load.uoperand
+  if (payload and StrInlineFlag) != 0'u32:
+    pool.strings.getOrIncl(readInlineStr(payload))
+  else:
+    StrId(combinedPayload(c) shr 1)
+
+proc strId*(c: Cursor): StrId {.inline.} = strId(c, c.pool)
+
 proc symName*(c: Cursor; pool: Pool): string =
   assert c.kind in {Symbol, SymbolDef}, "symName on " & $c.kind
   let payload = c.load.uoperand
@@ -462,6 +499,19 @@ proc symName*(c: Cursor; pool: Pool): string =
     pool.syms[SymId(combinedPayload(c) shr 1)]
 
 proc symName*(c: Cursor): string {.inline.} = symName(c, c.pool)
+
+proc symId*(c: Cursor; pool: Pool): SymId =
+  ## Stable pool id of the Symbol/SymbolDef at `c` — the inverse of `symName`.
+  ## A pool-ref token already carries its id, so use it directly; only an inline
+  ## short name (stored in the token itself) has to be interned.
+  assert c.kind in {Symbol, SymbolDef}, "symId on " & $c.kind
+  let payload = c.load.uoperand
+  if (payload and StrInlineFlag) != 0'u32:
+    pool.syms.getOrIncl(readInlineStr(payload))
+  else:
+    SymId(combinedPayload(c) shr 1)
+
+proc symId*(c: Cursor): SymId {.inline.} = symId(c, c.pool)
 
 # Int/UInt/Float: pure-inline via chainable ExtendedSuffix.
 #
@@ -526,31 +576,47 @@ proc cursorJump*(c: Cursor): uint64 {.inline.} =
 
 proc rawLineInfo*(c: Cursor): NifLineInfo =
   ## Decode the `LineInfoLit` trailing the value at `c`, if present, returning
-  ## a `FileId` (resolve against `pool.filenames`) plus line/col. Returns
-  ## `NoNifLineInfo` when the head carries no line info. The `LineInfoLit`
-  ## sits after the value's `ExtendedSuffix` chain (`valueWidth`); the file is
-  ## interned, so cross-pool readers must map the `FileId` via the right pool.
+  ## a `FileId` (resolve against `pool.filenames`) plus line/col, and an
+  ## optional `comment` `StrId` (a NIF `#…#` decoration; `StrId(0)` = none).
+  ## Returns `NoNifLineInfo` when the head carries no line info. The
+  ## `LineInfoLit` sits after the value's `ExtendedSuffix` chain (`valueWidth`);
+  ## file and comment are interned, so cross-pool readers must map them via the
+  ## right pool. Layout is selected structurally by the count `k` of
+  ## `ExtendedSuffix` words trailing the `LineInfoLit` (see the section header):
+  ## `k==0` common/no-comment, `k==1` wide/no-comment, `k>=2` wide + comment.
   # Walk past the value carrier's own ExtendedSuffix chain.
   var off = 1
   while c.rem > off and peekAhead(c, off).kind == ExtendedSuffix: inc off
   if c.rem <= off or peekAhead(c, off).kind != LineInfoLit:
     return NoNifLineInfo
   let lit = peekAhead(c, off)
-  if c.rem > off + 1 and peekAhead(c, off + 1).kind == ExtendedSuffix:
-    # overflow layout: col 10 | file 14 | line 32 across 56 bits
-    let combined = uint64(lit.uoperand) or
-                   (uint64(peekAhead(c, off + 1).uoperand) shl PayloadBits)
-    result = NifLineInfo(
-      col:  int32(combined and LiColMaskX),
-      file: FileId((combined shr LiColBitsX) and LiFileMaskX),
-      line: int32((combined shr (LiColBitsX + LiFileBitsX)) and LiLineMaskX))
-  else:
+  # Count the ExtendedSuffix words trailing the LineInfoLit (position + comment).
+  var ext = off + 1
+  while c.rem > ext and peekAhead(c, ext).kind == ExtendedSuffix: inc ext
+  let extCount = ext - (off + 1)
+  if extCount == 0:
     # common layout: col 7 | file 7 | line 14 in 28 bits
     let p = lit.uoperand
     result = NifLineInfo(
       col:  int32(p and LiColMaxC),
       file: FileId((p shr LiColBitsC) and LiFileMaxC),
       line: int32((p shr (LiColBitsC + LiFileBitsC)) and LiLineMaxC))
+  else:
+    # overflow layout: col 10 | file 14 | line 32 across 56 bits (lit + word 0)
+    let combined = uint64(lit.uoperand) or
+                   (uint64(peekAhead(c, off + 1).uoperand) shl PayloadBits)
+    result = NifLineInfo(
+      col:  int32(combined and LiColMaskX),
+      file: FileId((combined shr LiColBitsX) and LiFileMaskX),
+      line: int32((combined shr (LiColBitsX + LiFileBitsX)) and LiLineMaskX))
+    # Words 1.. hold the comment StrId as 28-bit chunks, low first.
+    if extCount >= 2:
+      var cid = 0'u64
+      var shift = 0'u64
+      for i in 1 ..< extCount:
+        cid = cid or (uint64(peekAhead(c, off + 1 + i).uoperand) shl shift)
+        shift += uint64(PayloadBits)
+      result.comment = StrId(cid)
 
 proc lineInfoFile*(c: Cursor): string =
   ## The filename for the value's line info, resolved against `c.pool.filenames`.
@@ -604,6 +670,24 @@ template into*(c: var Cursor; body: untyped) =
 template loopInto*(c: var Cursor; body: untyped) =
   into c:
     while c.hasMore: body
+
+proc rootOf*(c: Cursor): SymId =
+  ## The access root of an lvalue: the first `Symbol` in the subtree at `c`
+  ## — `x` in `x.f[i]` — or `SymId(0)` if there is none.
+  if not c.hasMore: return SymId(0)
+  case c.kind
+  of Symbol:
+    result = symId(c)
+  of TagLit:
+    result = SymId(0)
+    var n = c
+    n.loopInto:
+      if result == SymId(0):
+        let inner = rootOf(n)
+        if inner != SymId(0): result = inner
+      skip n
+  else:
+    result = SymId(0)
 
 # ── TokenBuf ─────────────────────────────────────────────────────────────
 
@@ -696,29 +780,62 @@ proc add*(b: var TokenBuf; t: NifToken) {.inline.} =
   b.data[b.len] = t
   inc b.len
 
+# ── Raw bulk token access (for binary serialization, see bif.nim) ────────
+# These expose the contiguous token storage for direct block I/O. They bypass
+# all structural bookkeeping (jumps, openTags, suffix chains) — the caller must
+# hand over / consume a stream that is already well-formed. The pools are
+# serialized separately; because token payloads only reference *pool ids*
+# (assigned 1,2,… in intern order), a loader that re-interns the pool values in
+# the same order reproduces identical ids, so the raw token words stay valid.
+
+proc rawTokenPtr*(b: TokenBuf): pointer {.inline.} =
+  ## Pointer to the first token word; `len(b) * sizeof(NifToken)` bytes follow.
+  b.data
+
+proc growRawUninit*(b: var TokenBuf; count: int): pointer =
+  ## Grow storage to hold exactly `count` tokens, set `len = count`, and return
+  ## the storage pointer so the caller can fill it directly (e.g. `readBuffer`).
+  ## The contents are left uninitialized. Binary loaders only.
+  if b.owner != nil: prepareMutation(b)
+  if count > b.cap:
+    b.cap = count
+    b.data = cast[Storage](realloc(b.data, sizeof(NifToken) * b.cap))
+  b.len = count
+  b.data
+
 # ── Builder API (interns, emits suffix on overflow) ──────────────────────
 
-proc appendLineInfo*(b: var TokenBuf; file: FileId; line, col: int32) =
+proc appendLineInfo*(b: var TokenBuf; file: FileId; line, col: int32;
+                     comment = StrId(0)) =
   ## Append a `LineInfoLit` suffix (plus one `ExtendedSuffix` on overflow) to
   ## the head token / `openTag` just emitted — call it *immediately* after, so
   ## it lands as that head's trailing suffix. Implements no policy: the caller
   ## decides when the position actually changed (emit-on-change). No-op when
   ## `file` is invalid. The filename must already be interned in `b.pool.filenames`.
+  ## Optionally attach `comment` (a `StrId` into `b.pool.strings`, `StrId(0)` =
+  ## none) — a NIF `#…#` decoration on this head. A non-zero comment forces the
+  ## overflow position layout and rides as one further `ExtendedSuffix` (a second
+  ## only for ids past 2^28), so `rawLineInfo` recovers it unambiguously.
   if not file.isValid: return
   var line = line
   var col = col
   if line < 0'i32: line = 0'i32
   if col < 0'i32: col = 0'i32
-  if fitsCommonLineInfo(file, line, col):
+  let cid = uint32(comment)
+  if cid == 0'u32 and fitsCommonLineInfo(file, line, col):
     b.add NifToken(toX(LineInfoLit, encodeLineInfoCommon(file, line, col)))
   else:
     assert uint64(uint32(file)) <= LiFileMaskX, "too many files for LineInfoLit"
     let combined = encodeLineInfoWide(file, line, col)
     b.add NifToken(toX(LineInfoLit, uint32(combined and uint64(PayloadMask))))
     b.add extendedSuffixToken(uint32((combined shr PayloadBits) and uint64(PayloadMask)))
+    if cid != 0'u32:
+      b.add extendedSuffixToken(cid and PayloadMask)
+      if uint64(cid) > uint64(PayloadMask):
+        b.add extendedSuffixToken(cid shr PayloadBits)
 
 proc appendLineInfo*(b: var TokenBuf; info: NifLineInfo) {.inline.} =
-  appendLineInfo(b, info.file, info.line, info.col)
+  appendLineInfo(b, info.file, info.line, info.col, info.comment)
 
 template addSuffixIfNeeded(b: var TokenBuf; payload: uint64) =
   ## Emit an ExtendedSuffix token carrying `payload`'s high 28 bits if
@@ -771,20 +888,24 @@ template emitChained(b: var TokenBuf; kind: NifKind; bits: uint64) =
       b.add extendedSuffixToken(uint32(bits shr (PayloadBits * 2)))
 
 proc addIntLit*(b: var TokenBuf; v: int64) =
-  ## Pure inline. Writer picks the shortest carrier:
-  ##   28-bit signed (one token)  for |v| < 2^27,
-  ##   56-bit signed (two tokens) for |v| < 2^55,
-  ##   84-bit budget (three tokens) for the rest of int64.
-  ## A negative `v` is sign-extended into the chosen width before
-  ## chunking, so the reader's sign-extend-from-width gives back `v`.
-  let bits =
-    if v >= -(1'i64 shl 27) and v < (1'i64 shl 27):
-      uint64(cast[uint32](v)) and uint64(PayloadMask)
-    elif v >= -(1'i64 shl 55) and v < (1'i64 shl 55):
-      cast[uint64](v) and ((1'u64 shl (PayloadBits * 2)) - 1'u64)
-    else:
-      cast[uint64](v)
-  emitChained(b, IntLit, bits)
+  ## Pure inline. Writer picks the shortest carrier whose SIGNED width holds `v`:
+  ##   28-bit (one token)    for v in [-2^27, 2^27),
+  ##   56-bit (two tokens)   for v in [-2^55, 2^55),
+  ##   84-bit (three tokens) otherwise.
+  ## The token COUNT must follow the chosen *signed* width, not `v`'s unsigned
+  ## magnitude: a positive `v` whose top carrier bit is set (e.g. 2^27 ≤ v < 2^28)
+  ## still needs the wider carrier, or the reader's sign-extend-from-width would
+  ## read it back negative. (Hence this does NOT go through `emitChained`, which
+  ## trims by magnitude — correct for unsigned/float, wrong for signed.)
+  let bits = cast[uint64](v)
+  b.add NifToken(toX(IntLit, uint32(bits and uint64(PayloadMask))))
+  if v >= -(1'i64 shl 27) and v < (1'i64 shl 27):
+    discard                                   # 28-bit: one token suffices
+  elif v >= -(1'i64 shl 55) and v < (1'i64 shl 55):
+    b.add extendedSuffixToken(uint32((bits shr PayloadBits) and uint64(PayloadMask)))
+  else:
+    b.add extendedSuffixToken(uint32((bits shr PayloadBits) and uint64(PayloadMask)))
+    b.add extendedSuffixToken(uint32(bits shr (PayloadBits * 2)))
 
 proc addUIntLit*(b: var TokenBuf; v: uint64) =
   emitChained(b, UIntLit, v)
@@ -894,13 +1015,16 @@ proc subtreeWidth*(c: Cursor): int =
     tokenWidth(c)
 
 proc reinternLineInfo(dest: var TokenBuf; c: Cursor): NifLineInfo =
-  ## Map the source head's trailing line info into `dest`'s `filenames` pool.
-  ## Returns `NoNifLineInfo` when the head has none.
+  ## Map the source head's trailing line info into `dest`'s pools — the filename
+  ## and, if present, the `#comment#` string. Returns `NoNifLineInfo` when none.
   let li = rawLineInfo(c)
   if not li.isValid: return NoNifLineInfo
   let fname = if c.pool != nil: c.pool.filenames[li.file] else: ""
+  var comment = StrId(0)
+  if uint32(li.comment) != 0'u32 and c.pool != nil:
+    comment = dest.pool.strings.getOrIncl(c.pool.strings[li.comment])
   result = NifLineInfo(file: dest.pool.filenames.getOrIncl(fname),
-                       line: li.line, col: li.col)
+                       line: li.line, col: li.col, comment: comment)
 
 proc addAcrossPools(dest: var TokenBuf; c: var Cursor) =
   ## Internal: copy one value (atom or whole TagLit subtree) from `c`
@@ -1178,6 +1302,47 @@ when isMainModule:
       test c.kind, CharLit; test charLit(c), 'z'
       test rawLineInfo(c).isValid, false    # no line info present
       c.inc
+
+  block line_info_with_comment:
+    var b = createTokenBuf(16)
+    let f = b.pool.filenames.getOrIncl("c.nim")
+    let doc = b.pool.strings.getOrIncl("## a doc comment")
+    # comment on a head whose position would fit the common layout → forced wide
+    b.addStrLit "x";          b.appendLineInfo f, 10'i32, 4'i32, doc
+    # comment alongside a value that has its OWN ExtendedSuffix chain
+    b.addIntLit 1'i64 shl 40; b.appendLineInfo f, 11'i32, 2'i32, doc
+    # line info without a comment still reports comment 0
+    b.addStrLit "y";          b.appendLineInfo f, 12'i32, 1'i32
+
+    var c = b.beginRead()
+    block:
+      test c.kind, StrLit; test strVal(c), "x"
+      let li = rawLineInfo(c)
+      test li.file.uint32, f.uint32; test li.line, 10'i32; test li.col, 4'i32
+      test li.comment.uint32, doc.uint32
+      test b.pool.strings[li.comment], "## a doc comment"
+      c.inc
+    block:
+      test c.kind, IntLit; test intVal(c), 1'i64 shl 40
+      let li = rawLineInfo(c)            # comment read past the value's suffix
+      test li.line, 11'i32; test li.col, 2'i32; test li.comment.uint32, doc.uint32
+      c.inc
+    block:
+      test c.kind, StrLit; test strVal(c), "y"
+      let li = rawLineInfo(c)
+      test li.line, 12'i32; test li.comment.uint32, 0'u32   # no comment
+      c.inc
+
+    # cross-pool copy of the first value must re-intern the comment string
+    var dest = createTokenBuf(16)
+    var cc = b.beginRead()
+    dest.addSubtree cc                    # different pools → addAcrossPools
+    var d = dest.beginRead()
+    test d.kind, StrLit; test strVal(d), "x"
+    let dli = rawLineInfo(d)
+    test (dli.comment.uint32 != 0'u32), true
+    test dest.pool.strings[dli.comment], "## a doc comment"
+    test dli.line, 10'i32; test dli.col, 4'i32
 
   block line_info_on_tags_and_cross_pool:
     var src = createTokenBuf(8)

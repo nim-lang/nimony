@@ -61,7 +61,7 @@ proc buildSymChoiceForDot(c: var SemContext; dest: var TokenBuf; identifier: Str
     dest.shrink oldLen
     dest.add identToken(identifier, info)
 
-proc isNonOverloadable(t: SymKind): bool {.inline.} =
+proc isNonOverloadable*(t: SymKind): bool {.inline.} =
   t in {LetY, VarY, ParamY, TypevarY, ConstY, TypeY, ResultY, FldY, GfldY, CursorY, PatternvarY, BlockY, GletY, TletY, GvarY, TvarY}
 
 proc buildSymChoiceForSelfModule*(c: var SemContext; dest: var TokenBuf;
@@ -344,10 +344,17 @@ proc makeGlobalSym*(c: var SemContext; result: var string) =
   result.add c.thisModuleSuffix
 
 proc makeFieldSym*(c: var SemContext; result: var string) =
-  var counter = addr c.globals.mgetOrPut(result, -1)
+  # Fields are scoped to their owning object type, so they are NOT numbered with
+  # a global running counter (which made the same field diverge — `a.0` vs `a.2`
+  # — depending on semcheck order). Within a type a field is `.0`; the number is
+  # only bumped when an ancestor type already declares the same field name.
+  # `c.fieldCounts` holds the seed counts for the object currently being
+  # declared (set up and torn down by `semObjectType`).
+  var counter = addr c.fieldCounts.mgetOrPut(result, 0)
+  let n = counter[]
   counter[] += 1
   result.add '.'
-  result.addInt counter[]
+  result.addInt n
 
 proc makeLocalSym*(c: var SemContext; result: var string) =
   var counter = addr c.locals.mgetOrPut(result, -1)

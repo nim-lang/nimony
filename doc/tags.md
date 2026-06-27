@@ -134,7 +134,7 @@
 | `(noinline)` | LengPragma, NimonyPragma | `noinline` proc annotation |
 | `(closure)` | NimonyPragma | `closure` proc annotation; not a calling convention anymore, simply annotates a proc as a closure |
 | `(attr STR)` | LengPragma | general attribute annotation |
-| `(smry EFFECT* (param INT PARAMFLAG*)*)` | LengPragma | function-summary annotation; effects include `read`, `write`, `writeGlobal`, `callsUnknown`, `raises`; parameter flags include `read`, `write`, `directEscape`, `returned` |
+| `(smry EFFECT* (param INT INT PARAMFLAG*)* RESULT?)` | LengPragma | alias-aware function-summary annotation: a Steensgaard-style partition of the parameters, the result and an implicit "outside" world. `EFFECT` idents: `writeGlobal`, `readGlobal`, `callsUnknown`, `raises`. Each `(param INDEX CLS PARAMFLAG*)` carries the parameter index, its partition class `CLS` (parameters with equal `CLS` may alias; `CLS` is the smallest param index in the class) and `PARAMFLAG` idents `reads`/`writes` (the call may read/write through the parameter's reachable graph), `slot` (a `var` parameter whose own binding is reassigned, not just its pointee) and `escapes` (the graph is stored into a global or passed to a callee with no summary). `RESULT` (`result INT (resultEscapes)?`) is the partition class the return value joins — omitted means the result is its own fresh class — and whether that graph escapes. |
 | `(varargs T X. STR)`; `(varargs T Y)` | NimonyPragma, NimonyType, LengType | `varargs` type/proc annotation: Nimony carries the element type and an optional transformer symbol (e.g. `` `$` ``); Leng keeps only the element type |
 | `(was STR)` | LengPragma | |
 | `(selectany)` | LengPragma, NimonyPragma | |
@@ -270,7 +270,7 @@
 | `(defaultdistinct T)` | NimonyExpr | |
 | `(delay X X*)` | NimonyExpr | `delay(fn args)` builtin for delayed continuation creation |
 | `(delay0)` | NimonyExpr | `delay()` no-arg: capture current coroutine's own continuation |
-| `(suspend)` | NimonyExpr | `suspend()` magic proc: suspends the coroutine and returns Continuation(nil, nil) |
+| `(suspend)` | NimonyExpr | `suspend()` magic proc: parks the coroutine and returns Continuation(nil, env) |
 | `(expr XS+ X)` | NimonyExpr, NiflerKind | |
 | `(do (params...)+ T X)` | NimonyExpr, NiflerKind | `do` expression |
 | `(arrat X X X? X?)` | NimonyExpr | two optional exprs: `high` boundary and the `low` boundary (if != 0) |
@@ -334,6 +334,8 @@
 | `(profiler X)` | NimonyPragma | `profiler` pragma; accepted for Nim source compatibility, semantically ignored |
 | `(stacktrace X)` | NimonyPragma | `stackTrace` pragma; accepted for Nim source compatibility, semantically ignored |
 | `(gcsafe)` | NimonyPragma | `gcsafe` pragma; accepted for Nim source compatibility, semantically ignored |
+| `(used)` | NimonyPragma | `used` pragma; accepted for Nim source compatibility, semantically ignored |
+| `(compile STR)`; `(compile STR STR)` | NimonyPragma | `compile` pragma (Nim-compatible alias of `build`; the source language is inferred from the file extension, e.g. `.m` → Objective-C) |
 
 ### unpackflat, unpacktup, unpackdecl
 

@@ -15,8 +15,13 @@ from std / os import changeFileExt, splitFile, extractFilename, fileExists
 import ".." / lib / vfs
 from std / sequtils import insert
 
-include ".." / lib / nifprelude
-import mangler, leng_model, cprelude, noptions, typenav, symparser, nifmodules
+import ".." / lib / nifcoreparse   # re-exports nifcore
+import ".." / lib / nifcdecl        # leng_model replacement (stmtKind/decls/tags)
+import mangler
+import cprelude
+import noptions
+import ".." / lib / symparser
+import typenav, nifmodules                 # nifcore MainModule + getType (local)
 
 type
   Token = distinct uint32
@@ -72,6 +77,20 @@ type
     ThreadVarToken = "NIM_THREADVAR "
     AnonStruct = "struct "
     AnonUnion = "union "
+
+# nifcore compatibility shims: the nifcursors world had a global `pool` and
+# packed line info; here a StrLit carries its StrId in its own buffer's pool,
+# and line info is a plain NifLineInfo on the cursor.
+proc litId(c: Cursor): StrId {.inline.} = strId(c)
+proc info(c: Cursor): NifLineInfo {.inline.} = rawLineInfo(c)
+proc firstSon(c: Cursor): Cursor {.inline.} =
+  result = c
+  inc result
+proc toString(c: Cursor; spaces: bool): string =
+  ## nifcore render shim for the nifcursors `toString(Cursor, bool)`.
+  var buf = createTokenBuf(8, c.pool, c.tags)
+  buf.addSubtree c
+  result = nifcoreparse.toString(buf)
 
 proc fillTokenTable(tab: var BiTable[Token, string]) =
   for e in EmptyToken..high(PredefinedToken):
@@ -159,24 +178,26 @@ proc writeTokenSeq(f: var CppFile; s: seq[Token]; c: GeneratedCode) =
     else:
       write f, c.tokens[x]
 
+proc render(m: MainModule; n: Cursor): string =
+  var buf = createTokenBuf(8, m.pool, m.tags)
+  buf.addSubtree n
+  result = toString(buf)
+
 proc error(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
-  let info = n.info
+  let info = rawLineInfo(n)
   if info.isValid:
-    let rawInfo = unpack(pool.man, info)
-    if rawInfo.file.isValid:
-      write stdout, pool.files[rawInfo.file]
-      write stdout, "(" & $rawInfo.line & ", " & $(rawInfo.col+1) & ") "
+    write stdout, m.pool.filenames[info.file]
+    write stdout, "(" & $info.line & ", " & $(info.col+1) & ") "
   write stdout, "[Error] "
   write stdout, msg
-  writeLine stdout, toString(n, false)
+  writeLine stdout, render(m, n)
   when defined(debug):
     echo getStackTrace()
   quit 1
 
 # Atoms
 
-proc genIntLit(c: var GeneratedCode; litId: IntId) =
-  let i = pool.integers[litId]
+proc genIntLit(c: var GeneratedCode; i: int64) =
   if i > low(int32) and i <= high(int32) and c.bits != 64:
     c.add $i
   elif i == low(int32) and c.bits != 64:
@@ -189,8 +210,7 @@ proc genIntLit(c: var GeneratedCode; litId: IntId) =
   else:
     c.add "(IL64(-9223372036854775807) - IL64(1))"
 
-proc genUIntLit(c: var GeneratedCode; litId: UIntId) =
-  let i = pool.uintegers[litId]
+proc genUIntLit(c: var GeneratedCode; i: uint64) =
   if i <= high(uint32) and c.bits != 64:
     c.add $i
     c.add "u"
@@ -214,7 +234,7 @@ proc callingConvToStr(cc: CallConv): string =
   of Nimcall: "N_NIMCALL"
 
 proc inclHeader(c: var GeneratedCode; lit: StrId) =
-  let headerAsStr {.cursor.} = pool.strings[lit]
+  let headerAsStr {.cursor.} = c.m.pool.strings[lit]
   let header = c.tokens.getOrIncl(headerAsStr)
   if headerAsStr.len > 0 and not c.includedHeaders.containsOrIncl(int header):
     if headerAsStr[0] == '#':
@@ -260,14 +280,14 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
         skip n
       of ImportcppP, ImportcP, ExportcP:
         n.into:
-          if n.hasMore and n.kind == StringLit:
+          if n.hasMore and n.kind == StrLit:
             result.extern = n.litId
             inc n
           result.flags.incl pk
           while n.hasMore: skip n
       of HeaderP:
         n.into:
-          if n.kind != StringLit:
+          if n.kind != StrLit:
             error c.m, "expected string literal in header pragma but got: ", n
           else:
             inclHeader(c, n.litId)
@@ -289,7 +309,7 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
         skip n
       of AttrP:
         n.into:
-          if n.kind != StringLit:
+          if n.kind != StrLit:
             error c.m, "expected string literal in attr pragma but got: ", n
           else:
             result.attr = n.litId
@@ -303,12 +323,12 @@ proc genSymDef(c: var GeneratedCode; n: Cursor; prag: PragmaInfo): string =
     let lit = n.symId
     if {ImportcP, ImportcppP, ExportcP} * prag.flags != {}:
       if prag.extern != StrId(0):
-        result = pool.strings[prag.extern]
+        result = c.m.pool.strings[prag.extern]
       else:
-        result = pool.syms[lit]
+        result = c.m.pool.syms[lit]
         extractBasename(result)
     else:
-      result = mangleToC(pool.syms[lit])
+      result = mangleToC(c.m.pool.syms[lit])
     c.add result
   else:
     result = ""
@@ -323,7 +343,7 @@ proc genParamPragmas(c: var GeneratedCode; n: var Cursor) =
       case n.pragmaKind
       of AttrP:
         n.into:
-          c.add " __attribute__((" & pool.strings[n.litId] & "))"
+          c.add " __attribute__((" & c.m.pool.strings[n.litId] & "))"
           inc n
           while n.hasMore: skip n
       of WasP:
@@ -355,19 +375,19 @@ proc genVarPragmas(c: var GeneratedCode; n: var Cursor): set[LengPragma] =
       case pk
       of AlignP:
         n.into:
-          c.add " NIM_ALIGN(" & $pool.integers[n.intId] & ")"
+          c.add " NIM_ALIGN(" & $intVal(n) & ")"
           inc n
           while n.hasMore: skip n
       of AttrP:
         n.into:
-          c.add " __attribute__((" & pool.strings[n.litId] & "))"
+          c.add " __attribute__((" & c.m.pool.strings[n.litId] & "))"
           skip n
           while n.hasMore: skip n
       of WasP:
         genWasPragma c, n
       of HeaderP:
         n.into:
-          if n.kind != StringLit:
+          if n.kind != StrLit:
             error c.m, "expected string literal in header pragma but got: ", n
           else:
             inclHeader(c, n.litId)
@@ -382,11 +402,10 @@ proc genVarPragmas(c: var GeneratedCode; n: var Cursor): set[LengPragma] =
   else:
     error c.m, "expected pragmas but got: ", n
 
-proc genCLineDir(c: var GeneratedCode; info: PackedLineInfo) =
+proc genCLineDir(c: var GeneratedCode; info: NifLineInfo) =
   if optLineDir in c.m.config.options and info.isValid:
-    let rawInfo = unpack(pool.man, info)
-    let id = rawInfo.file
-    let line = rawInfo.line
+    let id = info.file
+    let line = info.line
     let name = "FX_" & $(int id)
     c.add LineDirKeyword
     c.add $line
@@ -418,7 +437,7 @@ type
 
 proc isLiteral(n: var Cursor): bool =
   case n.kind
-  of IntLit, UIntLit, FloatLit, CharLit, StringLit, DotToken:
+  of IntLit, UIntLit, FloatLit, CharLit, StrLit, DotToken:
     result = true
     inc n
   else:
@@ -484,7 +503,7 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
     # empty slot degrades to `void`, so the `(deref t)` uses produce invalid C.
     var typ = d.typ
     if typ.kind == DotToken and d.value.kind != DotToken:
-      typ = getType(c.m, d.value)
+      typ = getNominalType(c.m, d.value)
     c.m.registerLocal(lit, typ)
     var skipDecl = false
     let name = mangleDecl(c, d.name, d.pragmas, skipDecl)
@@ -567,7 +586,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
       genType c, prc.returnType
     c.add Comma
     if prag.attr != StrId(0):
-      c.add "__attribute__((" & pool.strings[prag.attr] & ")) "
+      c.add "__attribute__((" & c.m.pool.strings[prag.attr] & ")) "
     name = genSymDef(c, prc.name, prag)
     c.add ParRi
   else:
@@ -577,7 +596,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
       genType c, prc.returnType
     c.add Space
     if prag.attr != StrId(0):
-      c.add "__attribute__((" & pool.strings[prag.attr] & ")) "
+      c.add "__attribute__((" & c.m.pool.strings[prag.attr] & ")) "
     name = genSymDef(c, prc.name, prag)
 
   c.add ParLe
@@ -698,7 +717,7 @@ proc traverseCode(c: var GeneratedCode; n: var Cursor) =
 proc writeLineDir(f: var CppFile, c: var GeneratedCode) =
   for id in items(c.fileIds):
     let name = "FX_" & $(int id)
-    let def = "#define " & name & " \"" & pool.files[id] & "\""
+    let def = "#define " & name & " \"" & c.m.pool.filenames[id] & "\""
     write f, def
     write f, "\n"
 

@@ -134,6 +134,9 @@ type
     shouldPublish*: seq[tuple[sym: SymId, start: int]]
     coroTypes*: TokenBuf
     hooks*: Hooks
+    awaitingSuspendPark*: bool
+      ## Set by `(delay0)`; consumed by the following `(suspend)` to
+      ## decide between real parking and a synchronous state transition.
 
 proc generateContinuationProcImpl*(): Cursor =
   ## Load the `ContinuationProc` typedef body from system, returned as
@@ -635,14 +638,14 @@ proc emitWhileBegin*(dest: var TokenBuf; info: PackedLineInfo;
   ##   try:
   ##     while true:
   ##       it = advance(it)
-  ##       if finished(it): break
+  ##       if stopping(it): break
   ##       if it.env == myEnv:
   ##         <body-stmts goes here — emit between begin and end>
   ##
   ## The caller follows with body emission, then `emitWhileEnd`.
   let envFieldSym = pool.syms.getOrIncl(EnvFieldName)
   let advanceSym = pool.syms.getOrIncl("advance.0." & SystemModuleSuffix)
-  let finishedSym = pool.syms.getOrIncl("finished.0." & SystemModuleSuffix)
+  let stoppingSym = pool.syms.getOrIncl("stopping.0." & SystemModuleSuffix)
 
   dest.copyIntoKind LetS, info:
     dest.addSymDef myEnvSym, info
@@ -665,7 +668,7 @@ proc emitWhileBegin*(dest: var TokenBuf; info: PackedLineInfo;
   dest.copyIntoKind IfS, info:
     dest.copyIntoKind ElifU, info:
       dest.copyIntoKind CallS, info:
-        dest.addSymUse finishedSym, info
+        dest.addSymUse stoppingSym, info
         dest.addSymUse itSym, info
       dest.copyIntoKind StmtsS, info:
         dest.copyIntoKind BreakS, info:
@@ -915,6 +918,7 @@ proc declareContinuationResult*(c: var Context; dest: var TokenBuf; info: Packed
     dest.addDotToken() # default value
 
 proc newLocalProc*(c: var Context; dest: var TokenBuf; state: int; sym: SymId) =
+  c.awaitingSuspendPark = false
   const info = NoLineInfo
   let procBegin = dest.len
   dest.addParLe ProcS, info

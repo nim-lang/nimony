@@ -621,7 +621,8 @@ proc collectMissingConceptRequirements(m: var Match; conceptSym: SymId; body: Cu
       if parentMissing.len > 0:
         return parentMissing
   if not actualIsConcept and not hasParents:
-    return @[]
+    if not conceptTargetNeedsStrictCheck(a):
+      return @[]
   result = @[]
   for cbody, routine in conceptHierarchyRoutines(body):
     if not conceptRoutineAvailable(m, conceptSym, cbody, routine, a, actualBody):
@@ -673,14 +674,9 @@ proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor):
     for parent in conceptParentSyms(parents):
       if not matchConceptSym(m, parent, a):
         return false
-  # Until concrete-type requirement matching is complete, standalone concepts
-  # match any concrete type (legacy stub behaviour). Concept-to-concept
-  # subsumption always checks requirements structurally.
   if not actualIsConcept and not hasParents:
-    # An unconstrained typevar reaches us as an empty (`.`) constraint: it
-    # provably fulfils no requirement, so it must not satisfy the concept
-    # (issue #755). Genuine concrete types stay leniently accepted.
-    return a.kind != DotToken
+    if not conceptTargetNeedsStrictCheck(a):
+      return a.kind != DotToken
   for cbody, routine in conceptHierarchyRoutines(body):
     if not conceptRoutineAvailable(m, conceptSym, cbody, routine, a, actualBody):
       return false

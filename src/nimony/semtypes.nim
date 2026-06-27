@@ -42,8 +42,46 @@ proc semObjectComponent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     buildErr c, dest, n.info, "illformed AST inside object: " & asNimCode(n)
     skip n
 
+proc countInheritedFieldNames(objType: Cursor; counts: var Table[string, int]; depth = 0) =
+  ## Walk `objType`'s base chain, counting field names (by basename) so that a
+  ## field shadowing an inherited one continues the numbering (`.1`, `.2`, …).
+  ## For a non-inheriting object this leaves `counts` empty, so every field is
+  ## numbered `.0` — independent of semcheck order.
+  if depth > 50: return # guard against malformed inheritance cycles
+  var t = objType
+  if t.typeKind in {RefT, PtrT}: inc t
+  discard skipInvoke(t) # field names do not depend on the generic arguments
+  if t.kind != Symbol: return
+  let res = tryLoadSym(t.symId)
+  if res.status != LacksNothing: return
+  let decl = asTypeDecl(res.decl)
+  if decl.kind != TypeY: return
+  var body = decl.body
+  if body.typeKind in {RefT, PtrT}: inc body
+  if body.typeKind != ObjectT: return
+  var n = body
+  inc n # into (object
+  let baseType = n
+  skip n # skip inheritance slot
+  var iter = initObjFieldIter()
+  while nextField(iter, n):
+    var f = n
+    inc f # skip fld/gfld tag
+    if f.kind == SymbolDef:
+      var name = pool.syms[f.symId]
+      extractBasename(name)
+      counts[name] = counts.getOrDefault(name, 0) + 1
+    skip n # advance past this whole field
+  if baseType.kind != DotToken:
+    countInheritedFieldNames(baseType, counts, depth+1)
+
 proc semObjectType(c: var SemContext; dest: var TokenBuf; n: var Cursor;
                    state: var SemObjectState) =
+  # `c.fieldCounts` is scoped to the object type being declared. Save and clear
+  # it so a nested anonymous object type (an inline field type) gets its own
+  # numbering; restore the outer object's counts on exit.
+  var savedFieldCounts = initTable[string, int]()
+  swap savedFieldCounts, c.fieldCounts
   takeToken dest, n
   # inherits from?
   if n.kind == DotToken:
@@ -57,6 +95,9 @@ proc semObjectType(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       dest.shrink beforeType
       c.buildErr dest, n.info, "cannot inherit from type: " & asNimCode(inheritsFrom)
     else:
+      # seed the field-name counts from the base chain so a shadowing field
+      # continues the numbering (`.1`, …); fresh names start at `.0`.
+      countInheritedFieldNames(inheritsFrom, c.fieldCounts)
       endRead(dest)
   if n.kind == DotToken:
     takeToken dest, n
@@ -69,6 +110,7 @@ proc semObjectType(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       while n.hasMore:
         semObjectComponent c, dest, n, state
   takeParRi dest, n
+  swap c.fieldCounts, savedFieldCounts
 
 proc semTupleType(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   dest.add parLeToken(TupleT, n.info)

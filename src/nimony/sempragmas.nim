@@ -55,17 +55,17 @@ proc symbolIsCustomPragmaTemplate(s: SymId): bool =
            loaded.decl.symKind == TemplateY and
            hasPragma(asRoutine(loaded.decl).pragmas, PragmaP)
 
-proc isCustomPragmaTemplate*(c: SemContext; name: StrId): bool =
-  if name in c.customPragmaTemplates:
-    return true
-
+proc customPragmaSym*(c: SemContext; name: StrId): SymId =
+  ## The symbol of the `template name {.pragma.}` custom pragma in scope, or
+  ## `NoSymId`. Used to preserve a custom pragma annotation as `(pragma <sym>)`
+  ## on a decl (so plugins can introspect it) instead of dropping it.
   let ignoreStyle = IgnoreStyleFeature in c.features
   var scope = c.currentScope
   while scope != nil:
     for k in stylesOfScope(scope, name, ignoreStyle):
       for sym in scope.tab.getOrDefault(k):
         if sym.kind == TemplateY and symbolIsCustomPragmaTemplate(sym.name):
-          return true
+          return sym.name
     scope = scope.up
 
   for realName in stylesOfImport(c.importTab, name, ignoreStyle):
@@ -75,8 +75,22 @@ proc isCustomPragmaTemplate*(c: SemContext; name: StrId): bool =
         for foreignName in stylesOfIface(imported.iface, realName, ignoreStyle):
           for symId in imported.iface.getOrDefault(foreignName):
             if symbolIsCustomPragmaTemplate(symId):
-              return true
-  result = false
+              return symId
+  result = NoSymId
+
+proc isCustomPragmaTemplate*(c: SemContext; name: StrId): bool =
+  name in c.customPragmaTemplates or customPragmaSym(c, name) != NoSymId
+
+proc isPreservedCustomPragma(n: Cursor): bool =
+  ## True when `n` is a previously-preserved custom-pragma attachment
+  ## `(pragma <sym>)` (the `pragma` tag with a symbol child), as opposed to the
+  ## bare `(pragma)` marker on a custom-pragma template declaration.
+  if n.kind == ParLe and n.pragmaKind == PragmaP:
+    var probe = n
+    inc probe
+    result = probe.kind == Symbol
+  else:
+    result = false
 
 proc semProposition*(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: PragmaKind) =
   let prevPhase = c.phase
@@ -141,13 +155,18 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
         while read.hasMore:
           semPragma c, dest, read, crucial, kind
         endRead(pragBuf[])
-      elif name != StrId(0) and c.isCustomPragmaTemplate(name):
-        # Pragma that resolves to a `template X(args) {.pragma.}` declaration.
-        # Accept with or without arguments and drop silently — matches Nim's
-        # treatment of templates marked `sfCustomPragma` used as annotations.
+      elif name != StrId(0) and (let psym = c.customPragmaSym(name); psym != NoSymId):
+        # Pragma that resolves to a `template X {.pragma.}` declaration. Unlike
+        # Nim (which drops `sfCustomPragma`), preserve it as `(pragma <sym>)`
+        # so it survives into the serialized decl and plugins can introspect it
+        # (e.g. `.linear`). Arguments are not yet supported and are dropped.
+        let info = n.info
         inc n
         if hasParRi:
           while n.hasMore: skip n
+        dest.add parLeToken(PragmaP, info)
+        dest.add symToken(psym, info)
+        dest.addParRi()
       else:
         buildErr c, dest, n.info, "expected pragma"
         inc n
@@ -323,7 +342,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     else:
       buildErr c, dest, n.info, "expected `cast` pragma expression"
     dest.addParRi()
-  of ProfilerP, StacktraceP, GcsafeP:
+  of ProfilerP, StacktraceP, GcsafeP, UsedP:
     # accepted for Nim source compatibility; semantically ignored by Nimony
     inc n
     if hasParRi:
@@ -374,7 +393,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
         inc n
     else:
       buildErr c, dest, n.info, "`callConv` pragma takes a calling convention identifier"
-  of EmitP, BuildP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP, PassLP, PassCP:
+  of EmitP, BuildP, CompileP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP, PassLP, PassCP:
     if pk == PragmaP and kind == TemplateY and crucial.sym != SymId(0):
       # `template X(args) {.pragma.}` declares `X` as a custom pragma. The
       # body is not expanded at attachment sites — the annotation is
@@ -392,6 +411,19 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
         c.customPragmaTemplates.incl pool.strings.getOrIncl(basename)
         dest.add parLeToken(PragmaP, info)
         dest.addParRi()
+    elif pk == PragmaP and isPreservedCustomPragma(n):
+      # An already-preserved custom-pragma attachment `(pragma <sym>)`, seen
+      # again when a decl's pragmas are re-sem'd across phases / instantiation.
+      # Re-emit it so it stays introspectable and idempotent. Consume only the
+      # opening tag and the children here, leaving the pragma's own `)` for the
+      # shared `if hasParRi: ... skipParRi n` epilogue below; taking the whole
+      # tree would let that epilogue skip the *next* `)` (the enclosing
+      # `pragmas` closer) and swallow the routine body.
+      dest.add parLeToken(PragmaP, n.info)
+      inc n
+      while n.kind != ParRi:
+        takeTree dest, n
+      dest.addParRi()
     else:
       buildErr c, dest, n.info, "pragma not supported"
       inc n
@@ -515,42 +547,75 @@ proc semCastInnerPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
     if n.kind == ParLe: skip n
     else: inc n
 
+proc readPragmaStrings(c: var SemContext; dest: var TokenBuf; it: var Item): seq[string] =
+  ## Collect the string-literal arguments of a statement pragma like `build`/
+  ## `compile`, advancing `it.n` past the whole `(tag …)` node.
+  result = newSeq[string]()
+  inc it.n
+  while it.n.hasMore:
+    if it.n.kind != StringLit:
+      buildErr c, dest, it.n.info, "expected `string` but got: " & asNimCode(it.n)
+      skip it.n
+    else:
+      result.add pool.strings[it.n.litId]
+      inc it.n
+  skipParRi it.n
+
+proc addBuildTarget(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
+                    lang, rawName, rawArgs: string) =
+  ## Resolve a `build`/`compile` source path (relative to the pragma's own file)
+  ## and record a `(tup lang name args)` entry in `c.toBuild`. `deps.nim` reuses
+  ## these via `(build …)` to compile and link the foreign object.
+  # XXX: Relative paths in makefile are relative to current working directory, not the location of the makefile.
+  let curWorkDir = onRaiseQuit os.getCurrentDir()
+  let currentDir = absoluteParentDir(info.getFile)
+  var name = replaceSubs(rawName, currentDir, c.g.config).toAbsolutePath(currentDir)
+  let customArgs = replaceSubs(rawArgs, currentDir, c.g.config)
+  if not semos.fileExists(name):
+    buildErr c, dest, info, "cannot find: " & name
+  name = name.toRelativePath(curWorkDir)
+  c.toBuild.buildTree TupX, info:
+    c.toBuild.addStrLit lang, info
+    c.toBuild.addStrLit name, info
+    c.toBuild.addStrLit customArgs, info
+
 proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragmaBlock: bool) =
   case it.n.pragmaKind
   of BuildP:
     let info = it.n.info
-    inc it.n
-    var args = newSeq[string]()
-    while it.n.hasMore:
-      if it.n.kind != StringLit:
-        buildErr c, dest, it.n.info, "expected `string` but got: " & asNimCode(it.n)
-        skip it.n
-      else:
-        args.add pool.strings[it.n.litId]
-        inc it.n
-
-    skipParRi it.n
-
+    let args = readPragmaStrings(c, dest, it)
     if args.len != 2 and args.len != 3:
       buildErr c, dest, info, "build expected 2 or 3 parameters"
-
-    # XXX: Relative paths in makefile are relative to current working directory, not the location of the makefile.
-    let curWorkDir = onRaiseQuit os.getCurrentDir()
-    let currentDir = absoluteParentDir(info.getFile)
-
-    # Extract build pragma arguments
-    let compileType = args[0]
-    var name = replaceSubs(args[1], currentDir, c.g.config).toAbsolutePath(currentDir)
-    let customArgs = if args.len == 3: replaceSubs(args[2], currentDir, c.g.config) else: ""
-
-    if not semos.fileExists(name):
-      buildErr c, dest, info, "cannot find: " & name
-    name = name.toRelativePath(curWorkDir)
-
-    c.toBuild.buildTree TupX, info:
-      c.toBuild.addStrLit compileType, info
-      c.toBuild.addStrLit name, info
-      c.toBuild.addStrLit customArgs, info
+    else:
+      addBuildTarget c, dest, info, args[0], args[1],
+        (if args.len == 3: args[2] else: "")
+  of CompileP:
+    # Nim-compatible `{.compile("file"[, "flags"]).}`. Unlike `build` there is no
+    # explicit language argument: it is inferred from the file extension and
+    # forced via `-x` (which precedes the input in the `cc` command), so e.g. an
+    # Objective-C `.m` file is compiled correctly regardless of the C compiler's
+    # own extension heuristics.
+    let info = it.n.info
+    let args = readPragmaStrings(c, dest, it)
+    if args.len != 1 and args.len != 2:
+      buildErr c, dest, info, "compile expected 1 or 2 parameters"
+    else:
+      let userArgs = if args.len == 2: args[1] else: ""
+      let ext = args[0].splitFile.ext.toLowerAscii
+      # Plain `var`s (not a tuple-`let` bound to a `case`-expression): the
+      # self-hosted compiler's initialization analysis is conservative about the
+      # temporaries such expressions lower to.
+      var lang = "C"
+      var xflag = ""
+      case ext
+      of ".m": lang = "ObjC"; xflag = "-x objective-c"
+      of ".mm": lang = "ObjCpp"; xflag = "-x objective-c++"
+      of ".cpp", ".cc", ".cxx", ".c++": lang = "Cpp"; xflag = "-x c++"
+      else: discard
+      var customArgs = userArgs
+      if xflag.len > 0:
+        customArgs = if userArgs.len > 0: xflag & " " & userArgs else: xflag
+      addBuildTarget c, dest, info, lang, args[0], customArgs
   of EmitP:
     semEmit c, dest, it
   of AssumeP:

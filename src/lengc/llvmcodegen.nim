@@ -14,8 +14,23 @@ import std / [assertions, syncio, sets, intsets, formatfloat, packedsets, struti
 from std / os import changeFileExt, splitFile, extractFilename, fileExists, getCurrentDir, absolutePath
 import ".." / lib / vfs
 
-include ".." / lib / nifprelude
-import mangler, leng_model, noptions, typenav, symparser, nifmodules
+import ".." / lib / nifcoreparse   # re-exports nifcore
+import ".." / lib / nifcdecl        # leng_model replacement
+import mangler
+import noptions
+import ".." / lib / symparser
+import typenav, nifmodules                 # nifcore MainModule + getType (local)
+
+# nifcore compatibility shims (see shoggoth/codegen.nim for rationale).
+proc litId(c: Cursor): StrId {.inline.} = strId(c)
+proc info(c: Cursor): NifLineInfo {.inline.} = rawLineInfo(c)
+proc firstSon(c: Cursor): Cursor {.inline.} =
+  result = c
+  inc result
+proc toString(c: Cursor; spaces: bool): string =
+  var buf = createTokenBuf(8, c.pool, c.tags)
+  buf.addSubtree c
+  result = nifcoreparse.toString(buf)
 
 type
   LToken = distinct uint32
@@ -190,12 +205,10 @@ proc initLLVMCode*(m: sink MainModule; flags: set[LLVMGenFlag]; bits: int): LLVM
   fillTokenTable(result.tokens)
 
 proc error(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
-  let info = n.info
+  let info = rawLineInfo(n)
   if info.isValid:
-    let rawInfo = unpack(pool.man, info)
-    if rawInfo.file.isValid:
-      write stdout, pool.files[rawInfo.file]
-      write stdout, "(" & $rawInfo.line & ", " & $(rawInfo.col+1) & ") "
+    write stdout, m.pool.filenames[info.file]
+    write stdout, "(" & $info.line & ", " & $(info.col+1) & ") "
   write stdout, "[Error] "
   write stdout, msg
   writeLine stdout, toString(n, false)
@@ -252,9 +265,9 @@ proc addAlloca(c: var LLVMCode; name, typ: LToken; align: int64 = 0) =
 proc mangleSym(c: var LLVMCode; s: SymId): string =
   let x = c.m.getDeclOrNil(s)
   if x != nil and x.extern != StrId(0):
-    result = pool.strings[x.extern]
+    result = c.m.pool.strings[x.extern]
   else:
-    result = mangleToC(pool.syms[s])
+    result = mangleToC(c.m.pool.syms[s])
 
 proc nifSymBaseName*(symId: SymId): string =
   ## Extract the original Nim identifier from a NIF symbol like
@@ -316,7 +329,7 @@ proc getOrCreateDIFile(c: var LLVMCode; fid: FileId): int =
   let key = int(fid)
   if key in c.debug.fileIds:
     return c.debug.fileIds[key]
-  let path = pool.files[fid]
+  let path = c.m.pool.filenames[fid]
   let (dir, name, ext) = splitFile(path)
   let fullName = name & ext
   let directory = if dir == "": getCurrentDir() else: absolutePath(dir)
@@ -327,10 +340,10 @@ proc getOrCreateDIFile(c: var LLVMCode; fid: FileId): int =
     c.debug.cuId = c.addMetadata("distinct !DICompileUnit(language: DW_LANG_C99, file: !" &
       $result & ", producer: \"lengc\", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)")
 
-proc dbgLocation(c: var LLVMCode; info: PackedLineInfo): string =
+proc dbgLocation(c: var LLVMCode; info: NifLineInfo): string =
   ## Return a `, !dbg !N` suffix for the given source location, or "" if invalid.
   if not info.isValid: return ""
-  let rawInfo = unpack(pool.man, info)
+  let rawInfo = info
   if not rawInfo.file.isValid: return ""
   let fileId = getOrCreateDIFile(c, rawInfo.file)
   let scopeId =
@@ -350,7 +363,7 @@ proc createSubprogram(c: var LLVMCode; name: string; info: PackedLineInfo): int 
   var fileId = 0
   var line = 0
   if info.isValid:
-    let rawInfo = unpack(pool.man, info)
+    let rawInfo = info
     if rawInfo.file.isValid:
       fileId = getOrCreateDIFile(c, rawInfo.file)
       line = rawInfo.line
@@ -393,7 +406,7 @@ proc finalizeSubprogram(c: var LLVMCode; spId: int;
     ", retainedNodes: !" & $rnId & ")"
   c.debug.metadata[spId] = finalSp
 
-proc emitLineDbg(c: var LLVMCode; s: string; info: PackedLineInfo) =
+proc emitLineDbg(c: var LLVMCode; s: string; info: NifLineInfo) =
   ## Emit an instruction line with debug location metadata attached.
   let dbg = dbgLocation(c, info)
   c.body.add c.tokens.getOrIncl(s & dbg & "\n")
@@ -406,10 +419,8 @@ proc extractWasPragma(n: Cursor): string =
     p.loopInto:
       if p.pragmaKind == WasP:
         p.into:
-          if p.kind == StringLit:
-            result = pool.strings[p.litId]
-          elif p.kind == Ident:
-            result = pool.strings[p.litId]
+          if p.kind in {StrLit, Ident}:
+            result = strVal(p)
           while p.hasMore: skip p
         return
       skip p
@@ -421,7 +432,7 @@ proc emitDbgDeclare(c: var LLVMCode; localName: string; symId: SymId;
   ## Debug name: ``wasName`` (pragma) > ``nifSymBaseName(symId)``.
   ## argNo > 0 → function parameter (1-based argument number).
   if not info.isValid: return
-  let rawInfo = unpack(pool.man, info)
+  let rawInfo = info
   if not rawInfo.file.isValid: return
   # Fall back to generic int type when DI type generation fails (returns 0).
   var useType = diType
@@ -456,7 +467,7 @@ proc extractAlignValue(pragmas: Cursor): int64 =
     p.loopInto:
       if p.pragmaKind == AlignP:
         p.into:
-          result = pool.integers[p.intId]
+          result = intVal(p)
           while p.hasMore: skip p
         return
       skip p
@@ -469,7 +480,7 @@ proc extractBitfieldBits(pragmas: Cursor): int64 =
     p.loopInto:
       if p.pragmaKind == BitsP:
         p.into:
-          result = pool.integers[p.intId]
+          result = intVal(p)
           while p.hasMore: skip p
         return
       skip p
@@ -515,7 +526,7 @@ proc genVarPragmasLLVM(c: var LLVMCode; n: var Cursor): set[LengPragma] =
         skip n
       of HeaderP:
         n.into:
-          if n.kind == StringLit:
+          if n.kind == StrLit:
             inc n
           else:
             error c.m, "expected string literal in header pragma but got: ", n
@@ -595,7 +606,7 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
     if isNodecl and isImport and externName != StrId(0):
       # C preprocessor constants (e.g. __ATOMIC_*) don't exist as LLVM symbols;
       # emit as private constants with known values
-      let extName = pool.strings[externName]
+      let extName = c.m.pool.strings[externName]
       var t = d.typ
       let typ = genTypeLLVM(c, t)
       case extName
@@ -616,8 +627,8 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
       skip d.value
       return
 
-    let name = if externName != StrId(0): pool.strings[externName]
-               else: mangleToC(pool.syms[lit])
+    let name = if externName != StrId(0): c.m.pool.strings[externName]
+               else: mangleToC(c.m.pool.syms[lit])
 
     var t = d.typ
     let typ = genTypeLLVM(c, t)
@@ -658,7 +669,7 @@ proc genLocalVarDeclLLVM(c: var LLVMCode; n: var Cursor) =
       skip d.value
       return
 
-    let name = mangleToC(pool.syms[lit])
+    let name = mangleToC(c.m.pool.syms[lit])
     var t = d.typ
     let diType = genDITypeReadOnly(c, t)
     let typ = genTypeLLVM(c, t)
@@ -718,14 +729,14 @@ proc parseProcPragmasLLVM(c: var LLVMCode; n: var Cursor): PragmaInfo =
         skip n
       of ImportcppP, ImportcP, ExportcP:
         n.into:
-          if n.kind == StringLit:
+          if n.kind == StrLit:
             result.extern = n.litId
             inc n
           result.flags.incl pk
           while n.hasMore: skip n
       of HeaderP:
         n.into:
-          if n.kind != StringLit:
+          if n.kind != StrLit:
             error c.m, "expected string literal in header pragma but got: ", n
           else:
             inc n
@@ -755,12 +766,12 @@ proc genSymDefLLVM(c: var LLVMCode; n: Cursor; prag: PragmaInfo): string =
     let lit = n.symId
     if {ImportcP, ImportcppP, ExportcP} * prag.flags != {}:
       if prag.extern != StrId(0):
-        result = pool.strings[prag.extern]
+        result = c.m.pool.strings[prag.extern]
       else:
-        result = pool.syms[lit]
+        result = c.m.pool.syms[lit]
         extractBasename(result)
     else:
-      result = mangleToC(pool.syms[lit])
+      result = mangleToC(c.m.pool.syms[lit])
   else:
     result = ""
     error c.m, "expected SymbolDef but got: ", n
@@ -827,7 +838,7 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
         let paramType = genTypeLLVM(c, t)
         paramTypes.add paramType
         if d.typ.typeKind != VarargsT:
-          let paramName = mangleToC(pool.syms[s])
+          let paramName = mangleToC(c.m.pool.syms[s])
           paramNames.add paramName
           paramWasNames.add extractWasPragma(d.pragmas)
           paramSyms.add s
@@ -1010,7 +1021,7 @@ proc generateLLVMTypes(c: var LLVMCode) =
           skip p
       if skipDecl: continue
 
-      let name = mangleToC(pool.syms[decl.name.symId])
+      let name = mangleToC(c.m.pool.syms[decl.name.symId])
       if isForward:
         c.addTo(c.types, "%" & name & " = type opaque\n")
       else:
