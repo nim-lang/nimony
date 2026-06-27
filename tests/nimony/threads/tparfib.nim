@@ -9,7 +9,7 @@ proc pfib(n: int): int =
   if n < 2:
     return n
   var r = [0, 0]                 # the two sub-results; array of size 2
-  for i in 0 || 1:               # i = 0, 1 in parallel
+  for i in `||`(0, 1, workload = CpuBound):   # i = 0, 1 in parallel; pure compute
     r[i] = pfib(n - 1 - i)       # r[0] = pfib(n-1), r[1] = pfib(n-2)
   result = r[0] + r[1]
 
