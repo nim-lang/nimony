@@ -42,7 +42,7 @@ import plugins
 proc loopVarSym(n: NifCursor): SymId =
   ## The resolved loop-variable symbol, from `(unpackflat (let (symdef i) …))`.
   var vars = forLoopVars(n)
-  if vars.kind == ParLe and vars.tagText == "unpackflat":
+  if vars.kind == ParLe and vars.otherKind == UnpackflatU:
     vars = firstChild(vars)          # (let …)
     if vars.kind == ParLe:
       vars = firstChild(vars)        # (symdef i)
@@ -51,19 +51,12 @@ proc loopVarSym(n: NifCursor): SymId =
   result = default(SymId)
 
 proc collectArgs(n: NifCursor): seq[NifCursor] =
-  ## The `||` call arguments (a, b, optional n) as cursors, in order. Args may
-  ## be bare atoms (`Symbol`/literal) or subtrees.
-  var c = n
-  if c.stmtKind == StmtsS:
-    c = firstChild(c)
-  skip c   # iter name
   result = @[]
-  while true:
-    if c.kind == ParRi: break
-    if c.kind == ParLe and c.otherKind in {UnpackflatU, UnpacktupU}:
-      break   # reached the loop-vars node; args are done
-    result.add c
-    skip c
+  var c = forLoopCallArgs(n)
+  c.into:
+    while c.kind != ParRi:
+      result.add c
+      skip c
 
 # ── static race-rule checker ─────────────────────────────────────────────────
 # Runs over the *typed* body before lowering and rejects anything not provably
