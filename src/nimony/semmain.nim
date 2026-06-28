@@ -94,6 +94,9 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
     if c.toBuild.len != 0:
       deps.buildTree TagId(BuildIdx), NoLineInfo:
         deps.add c.toBuild
+    if c.toBundle.len != 0:
+      deps.buildTree TagId(BundleIdx), NoLineInfo:
+        deps.add c.toBundle
     if c.passL.len != 0:
       deps.buildTree TagId(PassLP), NoLineInfo:
         for i in c.passL:

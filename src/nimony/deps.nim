@@ -174,6 +174,28 @@ type
   CFile = object
     name, obj, customArgs: string
 
+  BackendTool = object
+    ## A `{.build(builder, tool[, args[, linkflags]]).}` custom-backend routing
+    ## entry: the module `modFile` has its Leng IR piped through `toolName` (a
+    ## program built by `builder` from `toolSrc`). Built like a plugin (on demand)
+    ## but scheduled like a tool (a node in the nifmake DAG).
+    builder: string    ## generic builder command, e.g. "nimony c" / "nim c"
+    toolSrc: string    ## the tool's Nim source path
+    toolName: string   ## derived exe basename (the nifmake command name)
+    args: string       ## extra args forwarded to the tool invocation
+    modFile: FilePair  ## the module whose `.c.nif` is routed through the tool
+    linkFlags: string  ## optional per-file link flags scoped to this module's
+                       ## object in the link manifest ("" = none)
+
+  Bundle = object
+    ## A `{.bundle(builder, tool[, args]).}` custom-linker entry: when any module
+    ## supplies one it overrides the final link step. `toolName` (built by
+    ## `builder` from `toolSrc`) is handed the project link manifest + `args`.
+    builder: string
+    toolSrc: string
+    toolName: string
+    args: string
+
   DepContext = object
     forceRebuild: bool
     cmd: Command
@@ -187,6 +209,8 @@ type
     isGeneratingFinal: bool
     foundPlugins: HashSet[string]
     toBuild: seq[CFile]
+    backendTools: seq[BackendTool]
+    bundles: seq[Bundle]
     passL: seq[string]
     passC: seq[string]
 
@@ -452,7 +476,7 @@ proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
         processPluginImport c, f, info, current
       break
 
-proc processBuild(c: var DepContext; it: var Cursor) =
+proc processBuild(c: var DepContext; it: var Cursor; current: Node) =
   it.into:  # (build …)
     while it.hasMore:
       assert it.exprKind == TupX
@@ -464,13 +488,51 @@ proc processBuild(c: var DepContext; it: var Cursor) =
         inc x
         assert x.kind == StringLit
         let path = pool.strings[x.litId]
-        let obj = splitFile(path).name & ".o"
         inc x
         assert x.kind == StringLit
         let args = pool.strings[x.litId]
         inc x
+        var linkFlags = ""        # optional 4th field (`.build` per-file link flags)
+        if x.kind == StringLit:
+          linkFlags = pool.strings[x.litId]
+          inc x
         while x.hasMore: skip x
-        c.toBuild.add CFile(name: path, obj: obj, customArgs: args)
+        if typ in ["C", "ObjC", "Cpp", "ObjCpp"]:
+          # `.compile` foreign source -> object file, linked into the program.
+          # The first field is a C-family language (set by `addBuildTarget`).
+          let obj = splitFile(path).name & ".o"
+          c.toBuild.add CFile(name: path, obj: obj, customArgs: args)
+        else:
+          # `{.build(builder, tool, args[, linkflags]).}` — a custom backend routes
+          # THIS module's Leng IR through `tool`. The first field is the generic
+          # builder command (e.g. `"nimony c"`), distinct from a `.compile`
+          # language token above.
+          c.backendTools.add BackendTool(builder: typ, toolSrc: path,
+            toolName: splitFile(path).name, args: args, modFile: current.files[0],
+            linkFlags: linkFlags)
+
+proc processBundle(c: var DepContext; it: var Cursor) =
+  ## Read a `(bundle (tup builder tool args)…)` node (`.bundle` pragma): a custom
+  ## linker tool that overrides the final link step.
+  it.into:  # (bundle …)
+    while it.hasMore:
+      assert it.exprKind == TupX
+      var x = it
+      skip it
+      x.into TupX:
+        assert x.kind == StringLit
+        let builder = pool.strings[x.litId]
+        inc x
+        assert x.kind == StringLit
+        let path = pool.strings[x.litId]
+        inc x
+        var args = ""
+        if x.kind == StringLit:
+          args = pool.strings[x.litId]
+          inc x
+        while x.hasMore: skip x
+        c.bundles.add Bundle(builder: builder, toolSrc: path,
+          toolName: splitFile(path).name, args: args)
 
 proc processDep(c: var DepContext; n: var Cursor; current: Node) =
   case stmtKind(n)
@@ -486,7 +548,9 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
     skip n
   of NoStmt:
     if n.tagId == TagId(BuildIdx):
-      processBuild c, n
+      processBuild c, n, current
+    elif n.tagId == TagId(BundleIdx):
+      processBundle c, n
     elif n.tagId == TagId(PassLP):
       n.into:  # (passL …)
         while n.hasMore:
@@ -740,6 +804,67 @@ proc generateDocBuildFile(c: DepContext): string =
         b.addStrLit indexOut
   discard rootFlags  # silence unused warning if logging is later removed
 
+proc wantTool(name, src, builder, nifcachePath: string;
+              toolExe, toolBuild, toolBuilderCmd, builderCmdName: var Table[string, string]) =
+  ## Register a backend tool (a routing tool or a custom linker) for build/command
+  ## emission: reuse a prebuilt `bin/` copy if present, else compile it from
+  ## source on demand. Mutates the shared tables `generateFinalBuildFile` walks to
+  ## emit the builder commands, routing commands, and tool-build nodes.
+  if toolExe.hasKey(name): return
+  let found = findTool(name)
+  if semos.fileExists(found):
+    toolExe[name] = found                      # prebuilt / known -> use as-is
+  else:
+    toolExe[name] = nifcachePath / name.addFileExt(ExeExt)
+    toolBuild[name] = src
+    toolBuilderCmd[name] = builder
+    if not builderCmdName.hasKey(builder):
+      builderCmdName[builder] = "builderCmd" & $builderCmdName.len
+
+type
+  ManifestFile = object
+    ## One `(file …)` entry of the link manifest. `flags` are link flags scoped to
+    ## THIS file (from a `.build` module's 4th slot), passed to the linker next to
+    ## it — distinct from the manifest's global `(flags …)` (`passL`).
+    path: string
+    kind: string          ## "obj" | "artifact"
+    flags: seq[string]
+
+proc writeLinkManifest(path, exe, apptype: string;
+                       files: seq[ManifestFile]; flags: seq[string]): string =
+  ## Write the manifest NIF a linker (the default `niflink`, or a `{.bundle.}`
+  ## tool) consumes: every project artifact (objects + routed backend outputs)
+  ## with optional per-file link flags, the app-type, and the global link flags.
+  ## The linker reads this and links/bundles/filters as it sees fit (e.g. link the
+  ## `obj`s, embed or ignore the backend `artifact`s).
+  ##
+  ## Written `OnlyIfChanged`: the manifest is an input of the link nifmake node,
+  ## so rewriting it with a fresh mtime on every `nimony c` would re-fire the
+  ## link even on a no-op build. Preserving the mtime when the bytes are
+  ## identical keeps the backend incremental.
+  var b = nifbuilder.open(path, writeMode = OnlyIfChanged)
+  b.addHeader()
+  b.withTree "link":
+    b.withTree "apptype":
+      b.addStrLit apptype
+    b.withTree "output":
+      b.addStrLit exe
+    for f in files:
+      b.withTree "file":
+        b.addStrLit f.path
+        b.withTree "kind":
+          b.addStrLit f.kind
+        if f.flags.len > 0:
+          b.withTree "flags":
+            for fl in f.flags:
+              b.addStrLit fl
+    if flags.len > 0:
+      b.withTree "flags":
+        for f in flags:
+          b.addStrLit f
+  b.close()
+  result = path
+
 proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, passL: string): string =
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".final.build.nif"
   var b = nifbuilder.open(result)
@@ -856,6 +981,55 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
       b.addStrLit "-o"
       b.addKeyw "output"
 
+    # Commands for custom backends (`{.build(builder, tool[, args]).}`): each
+    # module routes its Leng IR through `tool`, an external program compiled on
+    # demand by the *generic* `builder` command (e.g. `"nimony c"`, `"nim c"`,
+    # `"nimony c --path:…"`). Nothing about the builder or tool names is
+    # hardcoded: the builder's first token is the program (resolved via
+    # `findTool`, so `nimony` -> `bin/`, `nim` -> PATH), the rest is passed
+    # verbatim, and the tool exe is written via `-o:` (accepted by both nim and
+    # nimony). A tool already present in `bin/` (a known name) is used as-is.
+    var backendToolExe = initTable[string, string]()      # toolName -> exe path
+    var backendToolBuild = initTable[string, string]()    # toolName -> source (only if we build it)
+    var backendToolBuilderCmd = initTable[string, string]() # toolName -> builder command string
+    var builderCmdName = initTable[string, string]()      # builder string -> nifmake cmd name
+    var customLinkerName = ""   # "" = no custom linker; else overrides the link step
+    var customLinkerArgs = ""
+    for bt in c.backendTools:
+      wantTool(bt.toolName, bt.toolSrc, bt.builder, c.config.nifcachePath,
+               backendToolExe, backendToolBuild, backendToolBuilderCmd, builderCmdName)
+    # A `{.bundle.}` module overrides the link step; the first one wins.
+    for bn in c.bundles:
+      if customLinkerName.len == 0:
+        customLinkerName = bn.toolName
+        customLinkerArgs = bn.args
+        wantTool(bn.toolName, bn.toolSrc, bn.builder, c.config.nifcachePath,
+                 backendToolExe, backendToolBuild, backendToolBuilderCmd, builderCmdName)
+    if c.backendTools.len > 0 or c.bundles.len > 0:
+      # One build command per distinct builder string: `<prog> <rest…> -o:<exe> <src>`.
+      for builder, cmdName in builderCmdName:
+        let toks = builder.splitWhitespace
+        b.withTree "cmd":
+          b.addSymbolDef cmdName
+          b.addStrLit toks[0]                 # program; expandCommand resolves via findTool
+          for i in 1 ..< toks.len:            # subcommand + flags, verbatim
+            b.addStrLit toks[i]
+          b.withTree "output":
+            b.addStrLit "-o:"
+          b.addKeyw "input"
+      # Routing command per distinct tool: `<toolExe> <args> <module.c.nif> <out>`.
+      # The tool exe is also a `(do …)` input (so nifmake builds it first), but is
+      # referenced by index `(input 0 0)` so only the Leng IR reaches the cmdline.
+      for tn, exe in backendToolExe:
+        b.withTree "cmd":
+          b.addSymbolDef tn
+          b.addStrLit exe
+          b.addKeyw "args"
+          b.withTree "input":
+            b.addIntLit 0
+            b.addIntLit 0
+          b.addKeyw "output"
+
     # Command for linking/archiving
     if c.cmd in {DoCompile, DoRun} and nativeSysLink:
       # Two commands: nifasm emits a relocatable object (it still bundles every
@@ -900,63 +1074,18 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
           b.addIntLit 0
           b.addIntLit 0  # only the main module's .asm.nif on the command line
     elif c.cmd in {DoCompile, DoRun}:
-      case c.config.appType
-      of appStaticLib:
-        # Static library: use ar to create archive
-        b.withTree "cmd":
-          b.addSymbolDef "link"
-          b.addStrLit "ar"
-          b.addStrLit "rcs"
-          b.addKeyw "output"
-          b.withTree "input":
-            b.addIntLit 0
-            b.addIntLit -1  # all inputs
-      of appLib:
-        # Dynamic library: use linker with -shared
-        b.withTree "cmd":
-          b.addSymbolDef "link"
-          b.addStrLit c.config.linker
-          b.addStrLit "-shared"
-          b.addStrLit "-o"
-          b.addKeyw "output"
-          b.withTree "input":
-            b.addIntLit 0
-            b.addIntLit -1  # all inputs
-          b.withTree "argsext":
-            b.addStrLit ".linker.args"
-          # See cc command above: clang's native PE TLS is broken when laid
-          # out by ld.bfd. LLD lays out the .tls$ section the way the loader
-          # actually expects, so native TLS survives to runtime — and we
-          # keep the fast `gs:0x58` path instead of falling back to
-          # emulated-TLS function calls.
-          if extractCCKey(c.config.linker) == "clang" and c.config.targetOS == osWindows:
-            b.addStrLit "-fuse-ld=lld"
-          if passL.len > 0:
-            for arg in passL.split(' '):
-              if arg.len > 0:
-                b.addStrLit arg
-          for i in c.passL:
-            b.addStrLit i
-      of appConsole, appGui:
-        # Executable: use linker normally
-        b.withTree "cmd":
-          b.addSymbolDef "link"
-          b.addStrLit c.config.linker
-          b.addStrLit "-o"
-          b.addKeyw "output"
-          b.withTree "input":
-            b.addIntLit 0
-            b.addIntLit -1  # all inputs
-          b.withTree "argsext":
-            b.addStrLit ".linker.args"
-          if extractCCKey(c.config.linker) == "clang" and c.config.targetOS == osWindows:
-            b.addStrLit "-fuse-ld=lld"
-          if passL.len > 0:
-            for arg in passL.split(' '):
-              if arg.len > 0:
-                b.addStrLit arg
-          for i in c.passL:
-            b.addStrLit i
+      # Plain C/LLVM backend: `niflink` is the default linker. It reads the link
+      # manifest (input 0) — every object, the app-type, and the link flags — and
+      # compiles/links/archives itself, so the old per-app-type `ar` / `-shared` /
+      # exe branches collapse into this one node. (A `{.build(…, linker).}` module
+      # overrides it with its own tool.)
+      b.withTree "cmd":
+        b.addSymbolDef "link"
+        b.addStrLit findTool("niflink")
+        b.withTree "input":
+          b.addIntLit 0
+          b.addIntLit 0  # only the manifest reaches niflink's command line
+        b.addKeyw "output"
 
     # Build rules
     if c.cmd in {DoCompile, DoRun}:
@@ -1000,9 +1129,110 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
           b.withTree "output":
             b.addStrLit c.config.lengcFile(n.files[0], backend)
 
+      # Custom-backend nodes: build each tool once (depth 0) — routing tools AND
+      # the custom linker (every entry in `backendToolBuild`) — then route every
+      # `.build` module's Leng IR through its routing tool (depth 1, parallel).
+      # nifmake orders the tool build before its uses via the exe output->input
+      # edge.
+      for toolName, src in backendToolBuild:
+        b.withTree "do":
+          # `getOrDefault` (non-raising): every key is guaranteed present (the
+          # tool was just registered via `wantTool`), so the `.raises` `[]` —
+          # which would escape this proc's `defer` and force it to be `.raises` —
+          # is avoided. Same for the other tool-table lookups below.
+          b.addIdent builderCmdName.getOrDefault(backendToolBuilderCmd.getOrDefault(toolName))
+          b.withTree "input":
+            b.addStrLit src
+          b.withTree "output":
+            b.addStrLit backendToolExe.getOrDefault(toolName)
+      for bt in c.backendTools:
+        let lengcInput = c.config.lengcFile(bt.modFile, backend)
+        let artifact = lengcInput & "." & bt.toolName & ".out.nif"
+        b.withTree "do":
+          b.addIdent bt.toolName
+          b.withTree "args":
+            for flag in splitWhitespace(bt.args):
+              b.addStrLit flag
+          b.withTree "input":
+            b.addStrLit lengcInput
+          b.withTree "input":
+            b.addStrLit backendToolExe.getOrDefault(bt.toolName)
+          b.withTree "output":
+            b.addStrLit artifact
+
       # Link executable
       var objFiles = initHashSet[string]()
-      if nativeSysLink:
+      if customLinkerName.len > 0 or (not native and not nativeSysLink):
+        # Manifest-based link. The plain C/LLVM backend links through the default
+        # `link` command (== `niflink`); a `{.bundle.}` module overrides it with
+        # its own tool. Either way the linker is handed a manifest NIF describing
+        # every project artifact + the app-type, and reads only that (`(input 0
+        # 0)`); the objects/artifacts are listed as inputs purely to order them
+        # before the link runs.
+        # Plain `var` rather than an `if`-expression `let`: the self-hosted
+        # compiler's initialization analysis can't prove the temp such an
+        # expression lowers to is always assigned (see the similar note above).
+        var linkNode = "link"
+        if customLinkerName.len > 0: linkNode = customLinkerName
+        let exe = c.config.exeFile(c.rootNode.files[0], backend)
+        var objs: seq[string] = @[]
+        if not native:
+          # Dedup by path: a `.compile` shared object (e.g. mimalloc's
+          # `nimcache_static/static.o`) can be contributed by several modules'
+          # `toBuild`, and linking the same `.o` twice yields duplicate-symbol
+          # errors. The manifest niflink actually links is built from `objs`, so
+          # the dedup must happen here (not only on the DO-node ordering inputs).
+          var seenObjs = initHashSet[string]()
+          for cfile in c.toBuild:
+            let o = sharedObjFile(cfile)
+            if not seenObjs.containsOrIncl(o): objs.add o
+          for v in c.nodes:
+            let o = c.config.objFile(v.files[0], backend)
+            if not seenObjs.containsOrIncl(o): objs.add o
+        var artifacts: seq[string] = @[]
+        for bt in c.backendTools:
+          artifacts.add c.config.lengcFile(bt.modFile, backend) & "." & bt.toolName & ".out.nif"
+        # Manifest entries: each object plus, for a `.build` module, its 4th-slot
+        # per-file link flags scoped to that object; routed backend outputs follow
+        # as `artifact` entries (ignored by a plain C linker, embeddable by a
+        # custom one).
+        var mfiles: seq[ManifestFile] = @[]
+        for o in objs:
+          var ff: seq[string] = @[]
+          for bt in c.backendTools:
+            if bt.linkFlags.len > 0 and c.config.objFile(bt.modFile, backend) == o:
+              for fl in splitWhitespace(bt.linkFlags): ff.add fl
+          mfiles.add ManifestFile(path: o, kind: "obj", flags: ff)
+        for a in artifacts:
+          mfiles.add ManifestFile(path: a, kind: "artifact", flags: @[])
+        var flags: seq[string] = @[]
+        if passL.len > 0:
+          for f in passL.split(' '):
+            if f.len > 0: flags.add f
+        for f in c.passL: flags.add f
+        let manifest = backendDir / (c.rootNode.files[0].modname & ".linkmanifest.nif")
+        discard writeLinkManifest(manifest, exe, $c.config.appType, mfiles, flags)
+        b.withTree "do":
+          b.addIdent linkNode
+          if customLinkerName.len > 0 and customLinkerArgs.len > 0:
+            b.withTree "args":
+              for a in splitWhitespace(customLinkerArgs):
+                b.addStrLit a
+          b.withTree "input":                 # input 0: the manifest the linker reads
+            b.addStrLit manifest
+          for o in objs:                       # ordering: objects must be built first
+            if not objFiles.containsOrIncl(o):
+              b.withTree "input":
+                b.addStrLit o
+          for a in artifacts:                  # ordering: routed backend artifacts
+            b.withTree "input":
+              b.addStrLit a
+          if customLinkerName.len > 0:          # ordering: a custom linker is built first
+            b.withTree "input":
+              b.addStrLit backendToolExe.getOrDefault(customLinkerName)
+          b.withTree "output":
+            b.addStrLit exe
+      elif nativeSysLink:
         # First nifasm bundles every module's `.asm.nif` into one relocatable
         # object (it reads only the main one's path and pulls the rest by suffix;
         # the others are listed purely to order them before nifasm runs).
@@ -1035,35 +1265,22 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
           b.withTree "output":
             b.addStrLit c.config.exeFile(c.rootNode.files[0], backend)
       else:
+        # Native backend (no custom linker): nifasm links from the *main*
+        # module's `.asm.nif` (input[0]) and discovers the dependent modules by
+        # suffix on disk. List every module's `.asm.nif` as an input (root first)
+        # so they are all built before nifasm runs, even though only input[0]
+        # reaches its command line (see the `link` cmd's `(input 0 0)`).
         b.withTree "do":
           b.addIdent "link"
-          if native:
-            # nifasm links from the *main* module's `.asm.nif` (input[0]) and
-            # discovers the dependent modules by suffix on disk. List every
-            # module's `.asm.nif` as an input (root first) so they are all built
-            # before nifasm runs, even though only input[0] reaches its command
-            # line (see the `link` cmd's `(input 0 0)`).
-            let mainAsm = c.config.asmFile(c.rootNode.files[0], backend)
-            b.withTree "input":
-              b.addStrLit mainAsm
-            objFiles.incl mainAsm
-            for v in c.nodes:
-              let a = c.config.asmFile(v.files[0], backend)
-              if not objFiles.containsOrIncl(a):
-                b.withTree "input":
-                  b.addStrLit a
-          else:
-            # Input: all object files
-            for cfile in c.toBuild:
-              let obj = sharedObjFile(cfile)
-              if not objFiles.containsOrIncl(obj):
-                b.withTree "input":
-                  b.addStrLit obj
-            for v in c.nodes:
-              let obj = c.config.objFile(v.files[0], backend)
-              if not objFiles.containsOrIncl(obj):
-                b.withTree "input":
-                  b.addStrLit obj
+          let mainAsm = c.config.asmFile(c.rootNode.files[0], backend)
+          b.withTree "input":
+            b.addStrLit mainAsm
+          objFiles.incl mainAsm
+          for v in c.nodes:
+            let a = c.config.asmFile(v.files[0], backend)
+            if not objFiles.containsOrIncl(a):
+              b.withTree "input":
+                b.addStrLit a
           b.withTree "output":
             b.addStrLit c.config.exeFile(c.rootNode.files[0], backend)
 

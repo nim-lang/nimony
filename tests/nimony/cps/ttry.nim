@@ -34,6 +34,8 @@ proc tier1d() {.passive.} =
   try:
     raiser(1)
     echo "tier1d: ok"
+  except:
+    echo "tier1d: caught"
   finally:
     echo "tier1d: finally"
 

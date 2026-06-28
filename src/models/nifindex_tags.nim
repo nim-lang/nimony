@@ -29,7 +29,8 @@ type
     ExportexceptIdx = (ord(ExportexceptTagId), "exportexcept")  ## `exportexcept` statement
     BuildIdx = (ord(BuildTagId), "build")  ## `build` pragma
     IndexIdx = (ord(IndexTagId), "index")  ## index section
+    BundleIdx = (ord(BundleTagId), "bundle")  ## `bundle` pragma: a custom linker command override `(builder, tool[, args])`; the `tool` is built on demand by `builder` and replaces the final link step, consuming the project's link manifest
 
 proc rawTagIsNifIndexKind*(raw: TagEnum): bool {.inline.} =
-  raw in {KvTagId, VvTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, GletTagId, TletTagId, LetTagId, CursorTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, InlineTagId, ExportTagId, FromexportTagId, ExportexceptTagId, BuildTagId, IndexTagId}
+  raw in {KvTagId, VvTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, GletTagId, TletTagId, LetTagId, CursorTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, InlineTagId, ExportTagId, FromexportTagId, ExportexceptTagId, BuildTagId, IndexTagId, BundleTagId}
 

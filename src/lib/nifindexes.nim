@@ -95,7 +95,7 @@ proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
             skip n
         while n.hasMore: skip n
         consumeParRi n
-      of NoIndexTag, InlineIdx, KvIdx, VvIdx, BuildIdx, IndexIdx,
+      of NoIndexTag, InlineIdx, KvIdx, VvIdx, BuildIdx, BundleIdx, IndexIdx,
          ExportIdx, FromexportIdx, ExportexceptIdx:
         inc n
         inc nested
