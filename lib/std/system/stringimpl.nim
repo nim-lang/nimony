@@ -136,7 +136,14 @@ func `=dup`*(s: string): string {.exportc: "nimStrDup", inline, nodestroy.} =
 
 # ---- cstring length ----
 
-func strlen(a: cstring): csize_t {.importc: "strlen", header: "<string.h>".}
+when defined(nimNativeIo):
+  func strlen(a: cstring): csize_t =
+    ## Freestanding (`nimony n`, libc-free): scan for the NUL terminator directly.
+    var i = 0
+    while a[i] != '\0': inc i
+    result = csize_t(i)
+else:
+  func strlen(a: cstring): csize_t {.importc: "strlen", header: "<string.h>".}
 
 func len*(a: cstring): int {.inline.} =
   if a == nil: 0

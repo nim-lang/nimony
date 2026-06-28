@@ -133,11 +133,14 @@ when defined(posix):
   # so the C backend links the thin wrapper and arkham lowers them to bare
   # `syscall` instructions — no <fcntl.h>/<unistd.h>/<sys/stat.h>/<sys/mman.h>.
   when defined(nimNativeIo):
-    # Single variadic decl (matching C's real `open(const char*, int, ...)`):
-    # two bare same-named prototypes would collide, and a header is no longer
-    # pulled to provide the variadic signature for us. `open(fc, flags)` and
-    # `open(fc, flags, mode)` both resolve to this.
-    proc open*(a1: cstring; a2: cint): cint {.importc: "open", varargs, sideEffect.}
+    # A single FIXED-ARITY decl with a defaulted `mode`. A `varargs` form would be
+    # monomorphized by sem into separate 2- and 3-argument variants that both
+    # `importc "open"` — and `nimony n` lowers each importc syscall to ONE register-
+    # signature stub keyed by the C name, so two different arities would collapse to
+    # a single stub and the shorter call would leave a declared arg unbound. With a
+    # default, `open(fc, flags)` and `open(fc, flags, mode)` are the SAME 3-arg call
+    # (the kernel ignores `mode` unless O_CREAT is set in `a2`).
+    proc open*(a1: cstring; a2: cint; mode: Mode = 0): cint {.importc: "open", sideEffect.}
   else:
     proc open*(a1: cstring; a2: cint; mode: Mode): cint {.importc: "open", header: "<fcntl.h>", sideEffect.}
     proc open*(a1: cstring; a2: cint): cint {.importc: "open", header: "<fcntl.h>", sideEffect.}
