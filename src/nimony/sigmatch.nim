@@ -612,8 +612,13 @@ proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; rout
     return true
   if isConceptType(a):
     return conceptRequirementInBody(routine, actualBody)
-  rememberRoutineImpl(m.context, conceptSym, conceptRequirementSym(routine), a):
-    conceptRoutineAvailableCore(m, conceptSym, body, routine, a, actualBody)
+  let reqSym = conceptRequirementSym(routine)
+  let (hit, cachedImpl) = tryRoutineImplFromCache(m.context, conceptSym, reqSym, a)
+  if hit:
+    return cachedImpl.found
+  let implRes = conceptRoutineAvailableCore(m, conceptSym, body, routine, a, actualBody)
+  storeRoutineImpl(m.context, conceptSym, reqSym, a, implRes)
+  implRes.found
 
 proc collectMissingConceptRequirements(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): seq[Cursor] =
   var cachedMissing = default(seq[Cursor])
@@ -702,7 +707,13 @@ proc matchConceptBodyCore(m: var Match; conceptSym: SymId; body: Cursor; a: Curs
         result.missing.add rs
 
 proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): bool =
-  rememberBodyCheck(m.context, conceptSym, a, matchConceptBodyCore(m, conceptSym, body, a)).satisfied
+  let (hit, cached) = tryBodyCheckFromCache(m.context, conceptSym, a)
+  if hit:
+    return cached.satisfied
+  conceptBodyChecks()
+  let res = matchConceptBodyCore(m, conceptSym, body, a)
+  storeBodyCheck(m.context, conceptSym, a, res)
+  res.satisfied
 
 proc isTypevar(s: SymId): bool =
   let res = tryLoadSym(s)
