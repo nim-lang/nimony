@@ -345,6 +345,9 @@ pool. Consequently, `SymId` values are directly comparable across the main input
 type-definition input, and generated builders, and Nimony enum ordinals map
 directly to `TagId`.
 
+`SymId` and `TagId` are pool-local numeric handles. Use `symText` and `tagText`
+when textual names are needed; `$id` is intentionally not a text lookup.
+
 **Navigation:**
 
 | Proc | Description |
@@ -549,6 +552,6 @@ The `into`/`loopInto` templates are for pure analysis; the
 | `hasMore(n)` | `NifCursor` | true while the bounded cursor has more values |
 | `into n:` | `NifCursor` | enter a `TagLit`, run the body for its children, leave |
 | `loopInto n:` | `NifCursor` | enter node, iterate all children, leave |
-| `balancedTokens n:` | `NifCursor` | deep-scan all compound nodes in subtree |
+| `balancedTokens n:` | `NifCursor` | scan descendant compound nodes, then advance past the subtree |
 | `keepTag r:` | `Replacer` | copy tag to output, run body, seal tree and advance |
 | `loopKeepTag r:` | `Replacer` | copy tag, iterate all children, seal tree and advance |

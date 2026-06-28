@@ -150,9 +150,10 @@ proc emitRelLineInfo(bld: var Builder; abs, parent: NifLineInfo; pool: Pool;
   if emitComment and uint32(abs.comment) != 0'u32:
     bld.attachComment(pool.strings[abs.comment])
 
-proc emitValue(bld: var Builder; c: var Cursor; cur: var NifLineInfo;
-               parents: var seq[NifLineInfo]; tags: TagPool; pool: Pool;
-               includeLineInfo: bool) =
+proc emitValueWithLineInfo(bld: var Builder; c: var Cursor;
+                           cur: var NifLineInfo;
+                           parents: var seq[NifLineInfo];
+                           tags: TagPool; pool: Pool) =
   ## Emit one value (atom or whole TagLit subtree), advancing `c` past it.
   ## `cur` is the running absolute line info (a head with no `LineInfoLit`
   ## inherits it); `parents` holds enclosing-tag infos for relative encoding.
@@ -161,37 +162,81 @@ proc emitValue(bld: var Builder; c: var Cursor; cur: var NifLineInfo;
   if li.isValid:
     cur = li
     cur.comment = StrId(0)   # a comment is a one-shot decoration, never inherited
-  template emitInfo() =
-    if includeLineInfo:
-      emitRelLineInfo(bld, abs, parents[^1], pool)
   case c.kind
   of TagLit:
     bld.addTree(tags.tags[c.cursorTagId])
-    emitInfo()
+    emitRelLineInfo(bld, abs, parents[^1], pool)
     parents.add abs
     c.into:
       while c.hasMore:
-        emitValue(bld, c, cur, parents, tags, pool, includeLineInfo)
+        emitValueWithLineInfo(bld, c, cur, parents, tags, pool)
     discard parents.pop()
     bld.endTree()
   of DotToken:
-    bld.addEmpty(); emitInfo(); c.inc
+    bld.addEmpty(); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
   of Ident:
-    bld.addIdent(strVal(c, pool)); emitInfo(); c.inc
+    bld.addIdent(strVal(c, pool))
+    emitRelLineInfo(bld, abs, parents[^1], pool)
+    c.inc
   of StrLit:
-    bld.addStrLit(strVal(c, pool)); emitInfo(); c.inc
+    bld.addStrLit(strVal(c, pool))
+    emitRelLineInfo(bld, abs, parents[^1], pool)
+    c.inc
   of Symbol:
-    bld.addSymbol(symName(c, pool)); emitInfo(); c.inc
+    bld.addSymbol(symName(c, pool))
+    emitRelLineInfo(bld, abs, parents[^1], pool)
+    c.inc
   of SymbolDef:
-    bld.addSymbolDef(symName(c, pool)); emitInfo(); c.inc
+    bld.addSymbolDef(symName(c, pool))
+    emitRelLineInfo(bld, abs, parents[^1], pool)
+    c.inc
   of CharLit:
-    bld.addCharLit(charLit(c)); emitInfo(); c.inc
+    bld.addCharLit(charLit(c))
+    emitRelLineInfo(bld, abs, parents[^1], pool)
+    c.inc
   of IntLit:
-    bld.addIntLit(intVal(c)); emitInfo(); c.inc
+    bld.addIntLit(intVal(c))
+    emitRelLineInfo(bld, abs, parents[^1], pool)
+    c.inc
   of UIntLit:
-    bld.addUIntLit(uintVal(c)); emitInfo(); c.inc
+    bld.addUIntLit(uintVal(c))
+    emitRelLineInfo(bld, abs, parents[^1], pool)
+    c.inc
   of FloatLit:
-    bld.addFloatLit(floatVal(c)); emitInfo(); c.inc
+    bld.addFloatLit(floatVal(c))
+    emitRelLineInfo(bld, abs, parents[^1], pool)
+    c.inc
+  of ExtendedSuffix, LineInfoLit:
+    assert false, "suffix token is not a value head"
+
+proc emitValueWithoutLineInfo(bld: var Builder; c: var Cursor;
+                              tags: TagPool; pool: Pool) =
+  ## Fast diagnostic serializer: no location decoding or parent stack.
+  case c.kind
+  of TagLit:
+    bld.addTree(tags.tags[c.cursorTagId])
+    c.into:
+      while c.hasMore:
+        emitValueWithoutLineInfo(bld, c, tags, pool)
+    bld.endTree()
+  of DotToken:
+    bld.addEmpty(); c.inc
+  of Ident:
+    bld.addIdent(strVal(c, pool)); c.inc
+  of StrLit:
+    bld.addStrLit(strVal(c, pool)); c.inc
+  of Symbol:
+    bld.addSymbol(symName(c, pool)); c.inc
+  of SymbolDef:
+    bld.addSymbolDef(symName(c, pool)); c.inc
+  of CharLit:
+    bld.addCharLit(charLit(c)); c.inc
+  of IntLit:
+    bld.addIntLit(intVal(c)); c.inc
+  of UIntLit:
+    bld.addUIntLit(uintVal(c)); c.inc
+  of FloatLit:
+    bld.addFloatLit(floatVal(c)); c.inc
   of ExtendedSuffix, LineInfoLit:
     assert false, "suffix token is not a value head"
 
@@ -201,10 +246,14 @@ proc toString*(b: var TokenBuf; sizeHint = 0;
   ## Set `includeLineInfo` to false for location-free diagnostic rendering.
   var bld = nifbuilder.open(if sizeHint > 0: sizeHint else: b.len * 8)
   var c = b.beginRead()
-  var cur = NoNifLineInfo
-  var parents = @[NoNifLineInfo]
-  while c.hasMore:
-    emitValue(bld, c, cur, parents, b.tags, b.pool, includeLineInfo)
+  if includeLineInfo:
+    var cur = NoNifLineInfo
+    var parents = @[NoNifLineInfo]
+    while c.hasMore:
+      emitValueWithLineInfo(bld, c, cur, parents, b.tags, b.pool)
+  else:
+    while c.hasMore:
+      emitValueWithoutLineInfo(bld, c, b.tags, b.pool)
   result = bld.extract()
 
 proc toString*(node: Cursor; sizeHint = 0;
@@ -215,9 +264,12 @@ proc toString*(node: Cursor; sizeHint = 0;
   var bld = nifbuilder.open(
     if sizeHint > 0: sizeHint else: subtreeWidth(node) * 8)
   var c = node
-  var cur = NoNifLineInfo
-  var parents = @[NoNifLineInfo]
-  emitValue(bld, c, cur, parents, node.tags, node.pool, includeLineInfo)
+  if includeLineInfo:
+    var cur = NoNifLineInfo
+    var parents = @[NoNifLineInfo]
+    emitValueWithLineInfo(bld, c, cur, parents, node.tags, node.pool)
+  else:
+    emitValueWithoutLineInfo(bld, c, node.tags, node.pool)
   result = bld.extract()
 
 # ── toModuleString (full file with embedded index) ─────────────────────────

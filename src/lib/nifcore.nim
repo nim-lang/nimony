@@ -1098,6 +1098,31 @@ proc addSubtree*(dest: var TokenBuf; c: Cursor) =
     var c = c
     addAcrossPools(dest, c)
 
+proc addBuffer*(dest: var TokenBuf; src: var TokenBuf) =
+  ## Append all complete top-level values from `src` to `dest`.
+  ##
+  ## Matching pools permit one bulk copy. Otherwise values are re-interned
+  ## through `addSubtree`. `dest` and `src` must be distinct buffers.
+  assert src.openTags.len == 0, "addBuffer with unclosed source tags"
+  assert dest.data != src.data, "cannot append a TokenBuf to itself"
+  if src.len == 0:
+    return
+  if dest.pool == src.pool and dest.tags == src.tags:
+    if dest.owner != nil:
+      prepareMutation(dest)
+    if dest.len + src.len > dest.cap:
+      dest.cap = max(dest.cap div 2 + dest.cap, dest.len + src.len)
+      dest.data = cast[Storage](
+        realloc(dest.data, sizeof(NifToken) * dest.cap))
+    copyMem(addr dest.data[dest.len], src.data,
+            src.len * sizeof(NifToken))
+    dest.len += src.len
+  else:
+    var c = src.beginRead()
+    while c.hasMore:
+      dest.addSubtree(c)
+      c.skip()
+
 # ── Self-test ────────────────────────────────────────────────────────────
 
 when isMainModule:

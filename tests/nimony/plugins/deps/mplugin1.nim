@@ -2,6 +2,41 @@ import plugins
 import std / assertions
 
 proc tr(n: NifCursor): NifBuilder =
+  assert n.tagText == "stmts"
+
+  var sample = createTree()
+  sample.withTree StmtsS, NoLineInfo:
+    sample.withTree CallS, NoLineInfo:
+      sample.addIdent "echo"
+  var scan = snapshot(sample)
+  var nestedTags = 0
+  scan.balancedTokens:
+    inc nestedTags
+    assert scan.stmtKind == CallS
+  assert nestedTags == 1
+  assert not scan.hasMore
+  assert scan.tag.tagText == "err"
+
+  var safeError = errorTree("exhausted cursor", scan)
+  assert renderTree(safeError) == "(err . \"exhausted cursor\")"
+
+  var symbols = createTree()
+  symbols.addSymUse("plugin.symbol")
+  let symbolCursor = snapshot(symbols)
+  assert symbolCursor.symId.symText == "plugin.symbol"
+
+  var unknownPragmas = createTree()
+  for i in 0 ..< 600:
+    unknownPragmas.addIdent("unknownPragma" & $i)
+  var unknown = snapshot(unknownPragmas)
+  while unknown.hasMore:
+    assert unknown.pragmaKind == NoPragma
+    unknown.skip()
+  var customTag = createTree()
+  customTag.openTree("customAfterPragmaLookups")
+  customTag.closeTree()
+  assert renderTree(customTag) == "(customAfterPragmaLookups)"
+
   result = createTree()
   let info = n.info
   var head = callArgs(n)

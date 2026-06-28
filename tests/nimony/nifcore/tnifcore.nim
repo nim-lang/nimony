@@ -42,6 +42,32 @@ proc main =
   var symCursor = syms.beginRead()
   assert symCursor.symId == sym
   assert symCursor.symName == "already.interned"
+
+  var source = createTokenBuf(sharedPool = syms.pool,
+                              sharedTags = syms.tags)
+  source.addIdent("first")
+  source.addIdent("second")
+  var appended = createTokenBuf(sharedPool = syms.pool,
+                                sharedTags = syms.tags)
+  appended.addIdent("prefix")
+  appended.addBuffer(source)
+  var appendedCursor = appended.beginRead()
+  assert appendedCursor.strVal == "prefix"
+  appendedCursor.skip()
+  assert appendedCursor.strVal == "first"
+  appendedCursor.skip()
+  assert appendedCursor.strVal == "second"
+  appendedCursor.skip()
+  assert not appendedCursor.hasMore
+
+  var foreign = createTokenBuf()
+  foreign.addIdent("foreign")
+  appended.addBuffer(foreign)
+  appendedCursor = appended.beginRead()
+  appendedCursor.skip()
+  appendedCursor.skip()
+  appendedCursor.skip()
+  assert appendedCursor.strVal == "foreign"
   echo "ok"
 
 main()
