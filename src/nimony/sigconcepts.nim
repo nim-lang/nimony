@@ -16,10 +16,11 @@ include ".." / lib / compat2
 
 import nimony_model, decls, programs, semdata, typeprops, features, symtabs, conceptcache
 
-export conceptcache.rememberBodyCheck, rememberRoutineImpl, tryMissingFromBodyCache,
-  getConceptMetadata, conceptRequirementSym, isOpenTypevar, ConceptBodyResult,
-  ConceptRoutineImplResult, matchConceptRoutineSigCalls, conceptRoutineAvailableCalls,
-  storeBodyCheck, bodyResultFromMissing
+export conceptcache.tryBodyCheckFromCache, tryRoutineImplFromCache, tryCandidatesFromCache,
+  tryMissingFromBodyCache, getConceptMetadata, conceptRequirementSym, isOpenTypevar,
+  ConceptBodyResult, ConceptRoutineImplResult, matchConceptRoutineSigCalls,
+  conceptRoutineAvailableCalls, storeBodyCheck, storeRoutineImpl, storeCandidates,
+  bodyResultFromMissing, conceptBodyChecks
 import ".." / lib / symparser
 
 proc isConceptType*(a: Cursor): bool {.inline.} =
@@ -135,11 +136,14 @@ iterator conceptRoutineCandidates*(c: ptr SemContext; conceptSym: SymId; basenam
         yield cand
 
 proc collectConceptRoutineCandidates*(c: ptr SemContext; conceptSym: SymId; basename: StrId): seq[SymId] =
-  rememberCandidates(c, conceptSym, basename):
-    var result = default(seq[SymId])
-    for cand in conceptRoutineCandidates(c, conceptSym, basename):
-      result.add cand
-    result
+  let (hit, cached) = tryCandidatesFromCache(c, conceptSym, basename)
+  if hit:
+    return cached
+  conceptCandidateScans()
+  result = default(seq[SymId])
+  for cand in conceptRoutineCandidates(c, conceptSym, basename):
+    result.add cand
+  storeCandidates(c, conceptSym, basename, result)
 
 proc routineHasNoSideEffect*(routine: Cursor): bool {.inline.} =
   let r = asRoutine(routine)
