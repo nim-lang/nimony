@@ -29,15 +29,15 @@ export charLit
 export nif_annotations
 
 type
-  NifBuilder* = nifcore.TokenBuf
-  NifCursor* = nifcore.Cursor
-  LineInfo* = nifcore.NifLineInfo
+  NifBuilder* = nifcore.TokenBuf ## Move-only builder for generated NIF output.
+  NifCursor* = nifcore.Cursor ## Reference-counted, bounded NIF read cursor.
+  LineInfo* = nifcore.NifLineInfo ## Source location attached to a NIF value.
 
-  SourcePos* = object
-    line*: int
-    col*: int
+  SourcePos* = object ## Decoded source position.
+    line*: int ## One-based source line, or zero when unavailable.
+    col*: int ## One-based source column, or zero when unavailable.
 
-const NoLineInfo* = NoNifLineInfo
+const NoLineInfo* = NoNifLineInfo ## Source location for synthetic output.
 
 proc createPluginTags(): TagPool =
   result = newTagPool()
@@ -56,30 +56,62 @@ proc appendInfo(buf: var NifBuilder; info: LineInfo) {.inline.} =
     buf.appendLineInfo(info)
 
 proc hasSubtree(n: NifCursor): bool {.inline.} = n.hasMore
-proc isEmpty*(tree: NifBuilder): bool {.inline.} = tree.len == 0
+proc isEmpty*(tree: NifBuilder): bool {.inline.} =
+  ## Returns whether `tree` contains no NIF values.
+  tree.len == 0
+
 proc info*(n: NifCursor): LineInfo {.inline.} =
-  ## Returns no line info for an exhausted bounded cursor.
+  ## Returns the current value's source location, or `NoLineInfo` at exhaustion.
   if n.hasMore: n.rawLineInfo else: NoLineInfo
+
 proc filePath*(info: LineInfo): string {.inline.} =
+  ## Returns the source path stored in `info`, or `""` when unavailable.
   if info.file.isValid: pluginPool.filenames[info.file] else: ""
+
 proc lineCol*(info: LineInfo): SourcePos {.inline.} =
+  ## Decodes the one-based line and column stored in `info`.
   SourcePos(line: int(info.line), col: int(info.col))
 
-proc symText*(n: NifCursor): string {.inline.} = n.symName
-proc symText*(s: SymId): string {.inline.} = pluginPool.syms[s]
-proc identText*(n: NifCursor): string {.inline.} = n.strVal
-proc stringValue*(n: NifCursor): string {.inline.} = n.strVal
+proc symText*(n: NifCursor): string {.inline.} =
+  ## Returns the current `Symbol` or `SymbolDef` name.
+  n.symName
+
+proc symText*(s: SymId): string {.inline.} =
+  ## Resolves a plugin-pool symbol handle to its name.
+  pluginPool.syms[s]
+
+proc identText*(n: NifCursor): string {.inline.} =
+  ## Returns the current `Ident` text.
+  n.strVal
+
+proc stringValue*(n: NifCursor): string {.inline.} =
+  ## Returns the current `StrLit` contents.
+  n.strVal
+
 proc intValue*(n: NifCursor): BiggestInt {.inline.} =
+  ## Returns the current signed integer literal.
   BiggestInt(n.intVal)
+
 proc uintValue*(n: NifCursor): BiggestUInt {.inline.} =
+  ## Returns the current unsigned integer literal.
   BiggestUInt(n.uintVal)
+
 proc floatValue*(n: NifCursor): BiggestFloat {.inline.} =
+  ## Returns the current floating-point literal.
   BiggestFloat(n.floatVal)
 
-proc tagId*(n: NifCursor): TagId {.inline.} = n.cursorTagId
+proc tagId*(n: NifCursor): TagId {.inline.} =
+  ## Returns the current `TagLit`'s raw tag handle.
+  n.cursorTagId
+
 proc tagText*(n: NifCursor): string {.inline.} =
+  ## Returns the current `TagLit`'s textual tag name.
   n.tags.tags[n.cursorTagId]
-proc tagText*(tag: TagId): string {.inline.} = pluginTags.tags[tag]
+
+proc tagText*(tag: TagId): string {.inline.} =
+  ## Resolves a plugin-pool tag handle to its textual name.
+  pluginTags.tags[tag]
+
 proc tag*(n: NifCursor): TagId {.inline.} =
   ## Returns the error tag for atoms and exhausted cursors.
   if n.hasMore and n.kind == TagLit:
@@ -94,20 +126,29 @@ proc rawTag(n: NifCursor): TagEnum {.inline.} =
   if id <= uint32(high(TagEnum)): cast[TagEnum](id) else: InvalidTagId
 
 proc stmtKind*(n: NifCursor): NimonyStmt {.inline.} =
+  ## Returns the current statement tag, or `NoStmt`.
   let t = rawTag(n)
   if rawTagIsNimonyStmt(t): cast[NimonyStmt](t) else: NoStmt
+
 proc exprKind*(n: NifCursor): NimonyExpr {.inline.} =
+  ## Returns the current expression tag, or `NoExpr`.
   let t = rawTag(n)
   if rawTagIsNimonyExpr(t): cast[NimonyExpr](t) else: NoExpr
+
 proc typeKind*(n: NifCursor): NimonyType {.inline.} =
+  ## Returns the current type tag; `DotToken` is treated as `VoidT`.
   if n.kind == DotToken: VoidT
   else:
     let t = rawTag(n)
     if rawTagIsNimonyType(t): cast[NimonyType](t) else: NoType
+
 proc otherKind*(n: NifCursor): NimonyOther {.inline.} =
+  ## Returns the current substructure tag, or `NoSub`.
   let t = rawTag(n)
   if rawTagIsNimonyOther(t): cast[NimonyOther](t) else: NoSub
+
 proc pragmaKind*(n: NifCursor): NimonyPragma {.inline.} =
+  ## Returns the current pragma tag or identifier kind, or `NoPragma`.
   var t = InvalidTagId
   if n.kind == TagLit:
     t = rawTag(n)
@@ -121,9 +162,11 @@ template tagIdFor(kind: untyped): untyped =
   TagId(uint32(kind))
 
 proc createTree*(): NifBuilder =
+  ## Creates an empty plugin builder using the shared plugin pools.
   nifcore.createTokenBuf(sharedPool = pluginPool, sharedTags = pluginTags)
 
 proc snapshot*(tree: var NifBuilder): NifCursor =
+  ## Returns a stable read cursor at the first value in non-empty `tree`.
   assert not tree.isEmpty, "cannot snapshot empty NifBuilder"
   tree.beginRead()
 
@@ -132,6 +175,7 @@ template withTree*(
     kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma;
     info: LineInfo;
     body: untyped) =
+  ## Emits a tagged tree around the values produced by `body`.
   t.openTag(tagIdFor(kind))
   appendInfo(t, info)
   body
@@ -139,21 +183,27 @@ template withTree*(
 
 proc openTree*(t: var NifBuilder; tag: TagId;
                info: LineInfo = NoLineInfo) =
+  ## Opens a tree using an existing plugin-pool tag handle.
   t.openTag(tag)
   appendInfo(t, info)
 
 proc openTree*(t: var NifBuilder; tag: string;
                info: LineInfo = NoLineInfo) =
+  ## Opens a tree using a textual tag, interning it when necessary.
   t.openTag(pluginTags.tags.getOrIncl(tag))
   appendInfo(t, info)
 
-proc closeTree*(t: var NifBuilder) = t.closeTag()
+proc closeTree*(t: var NifBuilder) =
+  ## Seals the most recently opened tree.
+  t.closeTag()
 
 proc takeTree*(t: var NifBuilder; n: var NifCursor) =
+  ## Copies the current value or subtree into `t` and advances `n`.
   t.addSubtree(n)
   n.skip()
 
 template copyInto*(t: var NifBuilder; n: var NifCursor; body: untyped) =
+  ## Copies `n`'s tag, transforms its children with `body`, and advances `n`.
   assert n.kind == TagLit, "copyInto requires cursor at TagLit"
   let copiedTag = n.tagId
   let copiedInfo = n.info
@@ -163,15 +213,18 @@ template copyInto*(t: var NifBuilder; n: var NifCursor; body: untyped) =
   t.closeTree()
 
 proc addTree*(t: var NifBuilder; child: sink NifBuilder) =
+  ## Consumes and appends every complete top-level value from `child`.
   t.addBuffer(child)
 
 proc addSymUse*(t: var NifBuilder; s: SymId;
                 info: LineInfo = NoLineInfo) =
+  ## Appends a symbol use from a plugin-pool symbol handle.
   nifcore.addSymUse(t, s)
   appendInfo(t, info)
 
 proc addSymUse*(t: var NifBuilder; s: string;
                 info: LineInfo) =
+  ## Appends a symbol use from its textual name with source information.
   nifcore.addSymUse(t, s)
   appendInfo(t, info)
 
@@ -222,9 +275,7 @@ proc parseNifBuffer(text: string): nifcore.TokenBuf =
                            sharedTags = pluginTags)
 
 type
-  BindSymRule* = enum
-    ## Selector for `bindSym`'s third argument. Mirrors `lib/std/macros.nim`'s
-    ## enum of the same name so the macro and plugin paths share semantics.
+  BindSymRule* = enum ## Controls call-site lookup for `bindSym`.
     brClosed     ## Default: candidates fixed at the plugin's def-site;
                  ## sem at the call site won't add further overloads.
     brOpen       ## Open: sem at the call site augments the choice with
@@ -338,8 +389,7 @@ proc eqIdent*(n: NifCursor; name: string): bool =
 # single object with balanced operations for tree transformations.
 
 type
-  ChildKind* = enum
-    ## Category of a NIF child for `keep`/`drop` assertions.
+  ChildKind* = enum ## Category asserted by `keep`, `drop`, and `replace`.
     Any       ## matches any token or subtree
     Expr      ## value expression (TagLit with expr tag, or Symbol/literal)
     Type      ## type expression (TagLit with type tag, or DotToken for void)
@@ -350,10 +400,7 @@ type
     Lit       ## literal (IntLit, UIntLit, FloatLit, StrLit, CharLit)
     Nested    ## nested substructure (params, pragmas, etc.)
 
-  Replacer* = object
-    ## Primary abstraction for NIF tree transformations. Bundles an output
-    ## builder and an input cursor with balanced operations that consume
-    ## input and produce output atomically.
+  Replacer* = object ## Input/output state for balanced NIF transformations.
     dest*: NifBuilder   ## Output builder — public for direct emit-only access.
     src: NifCursor      ## Input cursor — use getCursor/setCursor for raw access.
 
@@ -363,25 +410,81 @@ proc isAtom*(t: Replacer): bool {.inline.} =
   t.src.kind != TagLit
 
 # Delegated cursor accessors:
-proc kind*(t: Replacer): NifKind {.inline.} = t.src.kind
-proc info*(t: Replacer): LineInfo {.inline.} = t.src.info
-proc stmtKind*(t: Replacer): NimonyStmt {.inline.} = t.src.stmtKind
-proc exprKind*(t: Replacer): NimonyExpr {.inline.} = t.src.exprKind
-proc typeKind*(t: Replacer): NimonyType {.inline.} = t.src.typeKind
-proc otherKind*(t: Replacer): NimonyOther {.inline.} = t.src.otherKind
-proc pragmaKind*(t: Replacer): NimonyPragma {.inline.} = t.src.pragmaKind
-proc symId*(t: Replacer): SymId {.inline.} = t.src.symId
-proc symText*(t: Replacer): string {.inline.} = t.src.symText
-proc identText*(t: Replacer): string {.inline.} = t.src.identText
-proc stringValue*(t: Replacer): string {.inline.} = t.src.stringValue
-proc charLit*(t: Replacer): char {.inline.} = t.src.charLit
-proc intValue*(t: Replacer): BiggestInt {.inline.} = t.src.intValue
-proc uintValue*(t: Replacer): BiggestUInt {.inline.} = t.src.uintValue
-proc floatValue*(t: Replacer): BiggestFloat {.inline.} = t.src.floatValue
-proc tagId*(t: Replacer): TagId {.inline.} = t.src.tagId
-proc tagText*(t: Replacer): string {.inline.} = t.src.tagText
-proc tag*(t: Replacer): TagId {.inline.} = t.src.tag
-proc eqIdent*(t: Replacer; name: string): bool {.inline.} = t.src.eqIdent(name)
+proc kind*(t: Replacer): NifKind {.inline.} =
+  ## Returns the source cursor's raw NIF kind.
+  t.src.kind
+
+proc info*(t: Replacer): LineInfo {.inline.} =
+  ## Returns the source cursor's location.
+  t.src.info
+
+proc stmtKind*(t: Replacer): NimonyStmt {.inline.} =
+  ## Returns the source cursor's statement kind.
+  t.src.stmtKind
+
+proc exprKind*(t: Replacer): NimonyExpr {.inline.} =
+  ## Returns the source cursor's expression kind.
+  t.src.exprKind
+
+proc typeKind*(t: Replacer): NimonyType {.inline.} =
+  ## Returns the source cursor's type kind.
+  t.src.typeKind
+
+proc otherKind*(t: Replacer): NimonyOther {.inline.} =
+  ## Returns the source cursor's substructure kind.
+  t.src.otherKind
+
+proc pragmaKind*(t: Replacer): NimonyPragma {.inline.} =
+  ## Returns the source cursor's pragma kind.
+  t.src.pragmaKind
+
+proc symId*(t: Replacer): SymId {.inline.} =
+  ## Returns the source cursor's symbol handle.
+  t.src.symId
+
+proc symText*(t: Replacer): string {.inline.} =
+  ## Returns the source cursor's symbol text.
+  t.src.symText
+
+proc identText*(t: Replacer): string {.inline.} =
+  ## Returns the source cursor's identifier text.
+  t.src.identText
+
+proc stringValue*(t: Replacer): string {.inline.} =
+  ## Returns the source cursor's string literal.
+  t.src.stringValue
+
+proc charLit*(t: Replacer): char {.inline.} =
+  ## Returns the source cursor's character literal.
+  t.src.charLit
+
+proc intValue*(t: Replacer): BiggestInt {.inline.} =
+  ## Returns the source cursor's signed integer literal.
+  t.src.intValue
+
+proc uintValue*(t: Replacer): BiggestUInt {.inline.} =
+  ## Returns the source cursor's unsigned integer literal.
+  t.src.uintValue
+
+proc floatValue*(t: Replacer): BiggestFloat {.inline.} =
+  ## Returns the source cursor's floating-point literal.
+  t.src.floatValue
+
+proc tagId*(t: Replacer): TagId {.inline.} =
+  ## Returns the source cursor's raw tag handle.
+  t.src.tagId
+
+proc tagText*(t: Replacer): string {.inline.} =
+  ## Returns the source cursor's textual tag.
+  t.src.tagText
+
+proc tag*(t: Replacer): TagId {.inline.} =
+  ## Returns the source cursor's tag or the error tag for an atom.
+  t.src.tag
+
+proc eqIdent*(t: Replacer; name: string): bool {.inline.} =
+  ## Returns whether the source cursor names `name`.
+  t.src.eqIdent(name)
 
 # ── Kind checking ─────────────────────────────────────────────────────────
 

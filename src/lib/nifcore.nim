@@ -554,6 +554,7 @@ proc floatVal*(c: Cursor): float64 {.inline.} =
   cast[float64](combinedPayload(c))
 
 proc charLit*(c: Cursor): char {.inline.} =
+  ## Returns the character stored in the `CharLit` at `c`.
   assert c.kind == CharLit
   char(c.load.uoperand)
 
@@ -847,8 +848,13 @@ template addSuffixIfNeeded(b: var TokenBuf; payload: uint64) =
 template lowBits(x: uint32): uint32 = x and PayloadMask
 template lowBits(x: uint64): uint32 = uint32(x and uint64(PayloadMask))
 
-proc addDotToken*(b: var TokenBuf) {.inline.} = b.add dotToken()
-proc addCharLit*(b: var TokenBuf; c: char) {.inline.} = b.add charToken(c)
+proc addDotToken*(b: var TokenBuf) {.inline.} =
+  ## Appends an empty dot placeholder.
+  b.add dotToken()
+
+proc addCharLit*(b: var TokenBuf; c: char) {.inline.} =
+  ## Appends a character literal.
+  b.add charToken(c)
 
 proc encodeInlineStr(s: string): uint32 {.inline.} =
   ## Pack up to 3 bytes of `s` into the inline-string layout.
@@ -868,12 +874,19 @@ template addStringLike(b: var TokenBuf; kind: NifKind; s: string; pool: untyped)
     addSuffixIfNeeded(b, payload)
 
 proc addStrLit*(b: var TokenBuf; s: string) =
+  ## Appends a string literal, using inline storage when possible.
   addStringLike(b, StrLit, s, b.pool.strings)
+
 proc addIdent*(b: var TokenBuf; s: string) =
+  ## Appends an identifier, using inline storage when possible.
   addStringLike(b, Ident,  s, b.pool.strings)
+
 proc addSymUse*(b: var TokenBuf; s: string) =
+  ## Appends a symbol use, interning `s` when it does not fit inline.
   addStringLike(b, Symbol, s, b.pool.syms)
+
 proc addSymDef*(b: var TokenBuf; s: string) =
+  ## Appends a symbol definition, interning `s` when it does not fit inline.
   addStringLike(b, SymbolDef, s, b.pool.syms)
 
 proc addSymUse*(b: var TokenBuf; id: SymId) =
@@ -919,9 +932,11 @@ proc addIntLit*(b: var TokenBuf; v: int64) =
     b.add extendedSuffixToken(uint32(bits shr (PayloadBits * 2)))
 
 proc addUIntLit*(b: var TokenBuf; v: uint64) =
+  ## Appends an unsigned integer literal using the shortest token chain.
   emitChained(b, UIntLit, v)
 
 proc addFloatLit*(b: var TokenBuf; v: float64) =
+  ## Appends a floating-point literal using its exact bit representation.
   emitChained(b, FloatLit, cast[uint64](v))
 
 # ── Open / close tags (the only mutations that touch `openTags`) ─────────
