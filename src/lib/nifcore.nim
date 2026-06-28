@@ -374,7 +374,7 @@ proc `=copy`*(dest: var Cursor; src: Cursor) {.inline.} =
     if src.owner != nil: inc src.owner.rc
     dest.owner = src.owner
     dest.p = src.p
-    dest.rem = src.rem
+  dest.rem = src.rem
 
 proc `=dup`*(src: Cursor): Cursor {.nodestroy, inline.} =
   result = Cursor(owner: src.owner, p: src.p, rem: src.rem)

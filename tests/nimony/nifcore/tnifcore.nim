@@ -60,6 +60,20 @@ proc main =
   appendedCursor.skip()
   assert not appendedCursor.hasMore
 
+  # Assignment must copy the cursor's bound even when both cursors point at
+  # the same token in the same owner.
+  var boundedSource = createTokenBuf(sharedPool = syms.pool,
+                                     sharedTags = syms.tags)
+  boundedSource.buildTree tStmts:
+    boundedSource.addIdent("inside")
+  boundedSource.addIdent("outside")
+  var boundedRoot = boundedSource.beginRead()
+  var bounded = boundedRoot.childCursor()
+  var unbounded = boundedSource.cursorAt(1)
+  unbounded = bounded
+  unbounded.skip()
+  assert not unbounded.hasMore
+
   var foreign = createTokenBuf()
   foreign.addIdent("foreign")
   appended.addBuffer(foreign)

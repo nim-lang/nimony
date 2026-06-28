@@ -936,6 +936,24 @@ proc extractWhileParRiVar(n: Cursor): Cursor =
     return varLv
   default(Cursor)
 
+proc extractWhileHasMoreVar(n: Cursor): Cursor =
+  ## If `n` is at `(while CURSOR.hasMore BODY)`, return `CURSOR`.
+  ## CURSOR can be a bare ident (`n`) or a nested dot (`it.n`).
+  var c = n
+  if c.kind != ParLe or pool.tags[c.tag] != "while":
+    return default(Cursor)
+  inc c # skip (while
+  if c.kind != ParLe or pool.tags[c.tag] != "dot":
+    return default(Cursor)
+  inc c # skip (dot
+  let varLv = extractLvalue(c)
+  if cursorIsNil(varLv):
+    return default(Cursor)
+  skip c # skip receiver
+  if c.kind != Ident or pool.strings[c.litId] != "hasMore":
+    return default(Cursor)
+  result = varLv
+
 proc isParRiSkipCall(n: Cursor; lv: Cursor): bool =
   ## Check if `n` is at a call/cmd that skips the ParRi for the given lvalue.
   ## Matches: (cmd inc N lv), (cmd skipParRi N lv), etc.
@@ -1097,7 +1115,7 @@ proc stmtMustAdvanceCursor(n: Cursor; lv: Cursor;
 
 proc whileBodyMustAdvanceCursor(whileNode: Cursor; lv: Cursor;
                                 varCursorCallees: HashSet[string]): bool =
-  ## For `while n.kind != ParRi`, require body-level guaranteed progress.
+  ## For cursor-bounded loops, require body-level guaranteed progress.
   var c = whileNode
   if c.kind != ParLe or pool.tags[c.tag] != "while": return false
   inc c, SkipTag
@@ -1124,7 +1142,8 @@ proc scanWhileRecurse(ctx: var CheckContext; n: Cursor; insideCopyInto: bool;
 proc scanWhileInStmts(ctx: var CheckContext; stmtsNode: Cursor; insideCopyInto: bool;
                       varCursorCallees: HashSet[string]) =
   ## Scan children of a stmts node. For each child:
-  ## - If it's a while-ParRi loop, check that ParRi is consumed after it
+  ## - If it is a cursor loop, prove that every body path advances the cursor
+  ## - For a while-ParRi loop, also check that ParRi is consumed after it
   ## - If it's a copyInto call, recurse into its body with insideCopyInto=true
   ## - Otherwise recurse normally
   var child = stmtsNode
@@ -1133,19 +1152,28 @@ proc scanWhileInStmts(ctx: var CheckContext; stmtsNode: Cursor; insideCopyInto: 
     if child.kind == ParLe:
       let childTag = pool.tags[child.tag]
       if childTag == "while":
-        let varLv = extractWhileParRiVar(child)
+        let parRiLv = extractWhileParRiVar(child)
+        var varLv = parRiLv
+        if cursorIsNil(varLv):
+          varLv = extractWhileHasMoreVar(child)
         if not cursorIsNil(varLv):
           let varStr = lvalueToStr(varLv)
-          # Termination proof for while n.hasMore:
+          let loopLabel =
+            if cursorIsNil(parRiLv):
+              "while " & varStr & ".hasMore"
+            else:
+              "while " & varStr & ".kind != ParRi"
+          # Termination proof for bounded cursor loops:
           # every iteration path in the body must advance/delegate `n`.
           if not whileBodyMustAdvanceCursor(child, varLv, varCursorCallees):
-            addWarning(ctx, child.info, "while " & varStr & ".kind != ParRi",
+            addWarning(ctx, child.info, loopLabel,
               "cursor progress is not guaranteed on all body paths (expected guaranteed `inc/skip " &
               varStr & "` or guaranteed delegated advancement via calls that take `" & varStr & "`)")
 
           # Existing structural safety check: if loop contributes to dest, ensure the
           # trailing ParRi gets consumed after the loop.
-          if not insideCopyInto and whileBodyContributesDest(child):
+          if not cursorIsNil(parRiLv) and not insideCopyInto and
+              whileBodyContributesDest(child):
             let whileInfo = child.info
             var afterWhile = child
             skip afterWhile
@@ -1172,7 +1200,7 @@ proc scanWhileInStmts(ctx: var CheckContext; stmtsNode: Cursor; insideCopyInto: 
             discard # accepted scanner loop with nested counting + progress + break
           else:
             addWarning(ctx, child.info, "while",
-              "termination proof not recognized: expected `while n.kind != ParRi` with progress/delegation, `while x > 0 and ...` with `dec x`, or common `while true` scanner form")
+              "termination proof not recognized: expected `while n.hasMore` or `while n.kind != ParRi` with progress/delegation, `while x > 0 and ...` with `dec x`, or common `while true` scanner form")
         # Recurse into the while body to find nested patterns
         scanWhileRecurse(ctx, child, insideCopyInto, varCursorCallees)
       elif childTag in CallTags:
@@ -1200,8 +1228,8 @@ proc buildVarCursorCalleeSet(procs: openArray[ProcMeta]): HashSet[string] =
       result.incl p.name
 
 proc scanWhileParRiCompletion(ctx: var CheckContext; procs: openArray[ProcMeta]; buf: var TokenBuf) =
-  ## Scan for `while n.kind != ParRi` loops and check that the ParRi is consumed.
-  ## Loops inside `copyInto` bodies are exempted (the template handles the ParRi).
+  ## Prove cursor progress in bounded and ParRi loops. For ParRi loops, also
+  ## check that the trailing token is consumed; copyInto handles it internally.
   let varCursorCallees = buildVarCursorCalleeSet(procs)
   var n = beginRead(buf)
   scanWhileRecurse(ctx, n, false, varCursorCallees)

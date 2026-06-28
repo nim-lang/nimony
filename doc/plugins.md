@@ -266,8 +266,8 @@ that uses the type. This enables type-driven code transformations similar to
 Nim 2's term rewriting macros.
 
 The type plugin receives two inputs:
-- `paramStr(1)`: the module AST
-- `paramStr(3)`: the type definition(s) that triggered the plugin
+- `loadPluginInput()`: the module AST
+- `loadTypeDefinitions()`: the type definition(s) that triggered the plugin
 
 ```nim
 # listener.nim
@@ -328,10 +328,11 @@ import plugins
 proc loadPluginInput*(filename = paramStr(1)): NifCursor
 ```
 
-Returns a `NifCursor` positioned at the root of the NIF tree. For type plugins, load
-the type definitions with `loadPluginInput(paramStr(3))`. Plugin inputs are
-densified while loading, so every positioned value carries its effective source
-location rather than only nifcore's sparse line-info changes.
+Returns a `NifCursor` positioned at the root of the NIF tree. Type plugins use
+`loadPluginInput()` for the module and `loadTypeDefinitions()` for the
+definitions that triggered the plugin. Plugin inputs are densified while
+loading, so every positioned value carries its effective source location rather
+than only nifcore's sparse line-info changes.
 
 
 ### NifCursor — reading NIF trees
@@ -422,7 +423,7 @@ snapshot transparently detaches its token storage.
 
 | Proc | Description |
 |------|-------------|
-| `takeTree(t, n)` | Move current subtree from `n` into `t`, advancing `n` |
+| `takeTree(t, n)` | Copy the current subtree from `n` into `t`, advancing `n` |
 | `addSubtree(t, n)` | Copy subtree from `n` into `t` without advancing |
 | `addTree(t, child)` | Consume and append an entire child builder |
 
@@ -497,7 +498,7 @@ saveReplacer(r)
 The core operations are:
 - `keep r, Kind` — copy one child verbatim, asserting its kind
 - `drop r, Kind` — skip one child without emitting, asserting its kind
-- `replace r, node` — skip one child, emit a replacement (NifCursor or NifBuilder)
+- `replace r, Kind, node` — skip one child of `Kind`, emit a replacement (`NifCursor` or `NifBuilder`)
 - `keepTag r:` — descend into a compound node (copy tag, process children, close)
 - `loopKeepTag r:` — copy tag, iterate all children, close
 - `peek r:` — read-ahead analysis without consuming (cursor is restored)
@@ -526,7 +527,8 @@ import plugins
 proc transform(n: NifCursor): NifBuilder =
   result = createTree()
   var n = n
-  if n.stmtKind == StmtsS: inc n
+  if n.stmtKind == StmtsS:
+    n = firstChild(n)
   result.withTree StmtsS, n.info:
     while n.hasMore:
       result.takeTree n
