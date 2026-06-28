@@ -988,6 +988,16 @@ proc beginRead*(b: var TokenBuf): Cursor =
                   p: addr(b.data[0]),
                   rem: b.len)
 
+proc childCursor*(c: Cursor): Cursor =
+  ## Returns a bounded cursor over the children of the `TagLit` at `c`.
+  ## The input cursor is not advanced.
+  assert c.kind == TagLit, "childCursor requires cursor at TagLit"
+  result = c
+  let headWidth = tokenWidth(result)
+  result.p = cast[ptr NifToken](cast[uint](result.p) +
+                                uint(headWidth) * sizeof(NifToken).uint)
+  result.rem = int c.cursorJump
+
 proc endRead*(c: var Cursor) {.inline.} =
   if c.owner != nil: decRcAndFree(c.owner)
   `=wasMoved`(c)

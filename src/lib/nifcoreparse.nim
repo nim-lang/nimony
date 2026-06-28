@@ -145,7 +145,8 @@ proc emitRelLineInfo(bld: var Builder; abs, parent: NifLineInfo; pool: Pool;
     bld.attachComment(pool.strings[abs.comment])
 
 proc emitValue(bld: var Builder; c: var Cursor; cur: var NifLineInfo;
-               parents: var seq[NifLineInfo]; tags: TagPool; pool: Pool) =
+               parents: var seq[NifLineInfo]; tags: TagPool; pool: Pool;
+               includeLineInfo: bool) =
   ## Emit one value (atom or whole TagLit subtree), advancing `c` past it.
   ## `cur` is the running absolute line info (a head with no `LineInfoLit`
   ## inherits it); `parents` holds enclosing-tag infos for relative encoding.
@@ -154,45 +155,49 @@ proc emitValue(bld: var Builder; c: var Cursor; cur: var NifLineInfo;
   if li.isValid:
     cur = li
     cur.comment = StrId(0)   # a comment is a one-shot decoration, never inherited
+  template emitInfo() =
+    if includeLineInfo:
+      emitRelLineInfo(bld, abs, parents[^1], pool)
   case c.kind
   of TagLit:
     bld.addTree(tags.tags[c.cursorTagId])
-    emitRelLineInfo(bld, abs, parents[^1], pool)
+    emitInfo()
     parents.add abs
     c.into:
       while c.hasMore:
-        emitValue(bld, c, cur, parents, tags, pool)
+        emitValue(bld, c, cur, parents, tags, pool, includeLineInfo)
     discard parents.pop()
     bld.endTree()
   of DotToken:
-    bld.addEmpty(); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+    bld.addEmpty(); emitInfo(); c.inc
   of Ident:
-    bld.addIdent(strVal(c, pool)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+    bld.addIdent(strVal(c, pool)); emitInfo(); c.inc
   of StrLit:
-    bld.addStrLit(strVal(c, pool)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+    bld.addStrLit(strVal(c, pool)); emitInfo(); c.inc
   of Symbol:
-    bld.addSymbol(symName(c, pool)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+    bld.addSymbol(symName(c, pool)); emitInfo(); c.inc
   of SymbolDef:
-    bld.addSymbolDef(symName(c, pool)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+    bld.addSymbolDef(symName(c, pool)); emitInfo(); c.inc
   of CharLit:
-    bld.addCharLit(charLit(c)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+    bld.addCharLit(charLit(c)); emitInfo(); c.inc
   of IntLit:
-    bld.addIntLit(intVal(c)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+    bld.addIntLit(intVal(c)); emitInfo(); c.inc
   of UIntLit:
-    bld.addUIntLit(uintVal(c)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+    bld.addUIntLit(uintVal(c)); emitInfo(); c.inc
   of FloatLit:
-    bld.addFloatLit(floatVal(c)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+    bld.addFloatLit(floatVal(c)); emitInfo(); c.inc
   of ExtendedSuffix, LineInfoLit:
     assert false, "suffix token is not a value head"
 
-proc toString*(b: var TokenBuf; sizeHint = 0): string =
+proc toString*(b: var TokenBuf; sizeHint = 0;
+               includeLineInfo = true): string =
   ## Canonical NIF text for the whole buffer (one or more top-level values).
   var bld = nifbuilder.open(if sizeHint > 0: sizeHint else: b.len * 8)
   var c = b.beginRead()
   var cur = NoNifLineInfo
   var parents = @[NoNifLineInfo]
   while c.hasMore:
-    emitValue(bld, c, cur, parents, b.tags, b.pool)
+    emitValue(bld, c, cur, parents, b.tags, b.pool, includeLineInfo)
   result = bld.extract()
 
 # ── toModuleString (full file with embedded index) ─────────────────────────

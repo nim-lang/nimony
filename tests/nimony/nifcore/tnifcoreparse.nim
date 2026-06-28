@@ -29,6 +29,13 @@ proc main =
       "(nested (a (b (c (d .)))))"]:
     var b1 = parseFromBuffer(s, "t")
     assert roundTrips(b1)
+
+  var positioned = createTokenBuf()
+  positioned.addIdent("hello")
+  let file = positioned.pool.filenames.getOrIncl("source.nim")
+  positioned.appendLineInfo(file, 12, 3)
+  assert toString(positioned, includeLineInfo = false) == "hello"
+  assert toString(positioned).len > "hello".len
   echo "ok"
 
 main()
