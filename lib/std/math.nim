@@ -38,23 +38,65 @@ when defined(posix) and not defined(genode) and not defined(macosx):
 
 const CMathHeader = "<math.h>"
 
-{.push header: CMathHeader.}
-# These are C macros and can take both float and double type values.
-func c_signbit[T: SomeFloat](x: T): int {.importc: "signbit".}
-func c_fpclassify[T: SomeFloat](x: T): int {.importc: "fpclassify".}
-func c_isnan[T: SomeFloat](x: T): int {.importc: "isnan".}
+when defined(nimNativeIo):
+  # Freestanding (`nimony n`, libc-free): the C `<math.h>` macros are not available,
+  # so `signbit`/`fpclassify`/`isnan` are implemented directly on the IEEE-754 bit
+  # pattern. The `c_fp*` codes are arbitrary but self-consistent with `c_fpclassify`.
+  const
+    c_fpNormal = 0
+    c_fpSubnormal = 1
+    c_fpZero = 2
+    c_fpInfinite = 3
+    c_fpNan = 4
+  func c_signbit[T: SomeFloat](x: T): int =
+    when T is float32: result = (if (cast[uint32](x) shr 31) != 0'u32: 1 else: 0)
+    else: result = (if (cast[uint64](x) shr 63) != 0'u64: 1 else: 0)
+  func c_isnan[T: SomeFloat](x: T): int =
+    when T is float32:
+      let b = cast[uint32](x)
+      result = (if ((b shr 23) and 0xFF'u32) == 0xFF'u32 and (b and 0x7FFFFF'u32) != 0'u32: 1 else: 0)
+    else:
+      let b = cast[uint64](x)
+      result = (if ((b shr 52) and 0x7FF'u64) == 0x7FF'u64 and (b and 0xFFFFFFFFFFFFF'u64) != 0'u64: 1 else: 0)
+  func c_fpclassify[T: SomeFloat](x: T): int =
+    when T is float32:
+      let b = cast[uint32](x)
+      let exp = (b shr 23) and 0xFF'u32
+      let mant = b and 0x7FFFFF'u32
+      result =
+        if exp == 0xFF'u32: (if mant == 0'u32: c_fpInfinite else: c_fpNan)
+        elif exp == 0'u32: (if mant == 0'u32: c_fpZero else: c_fpSubnormal)
+        else: c_fpNormal
+    else:
+      let b = cast[uint64](x)
+      let exp = (b shr 52) and 0x7FF'u64
+      let mant = b and 0xFFFFFFFFFFFFF'u64
+      result =
+        if exp == 0x7FF'u64: (if mant == 0'u64: c_fpInfinite else: c_fpNan)
+        elif exp == 0'u64: (if mant == 0'u64: c_fpZero else: c_fpSubnormal)
+        else: c_fpNormal
+  {.push header: CMathHeader.}
+  func c_frexp(x: float32; exponent: ptr cint): float32 {.importc: "frexpf".}
+  func c_frexp(x: float64; exponent: ptr cint): float64 {.importc: "frexp".}
+  {.pop.}
+else:
+  {.push header: CMathHeader.}
+  # These are C macros and can take both float and double type values.
+  func c_signbit[T: SomeFloat](x: T): int {.importc: "signbit".}
+  func c_fpclassify[T: SomeFloat](x: T): int {.importc: "fpclassify".}
+  func c_isnan[T: SomeFloat](x: T): int {.importc: "isnan".}
 
-func c_frexp(x: float32; exponent: ptr cint): float32 {.importc: "frexpf".}
-func c_frexp(x: float64; exponent: ptr cint): float64 {.importc: "frexp".}
-{.pop.}
+  func c_frexp(x: float32; exponent: ptr cint): float32 {.importc: "frexpf".}
+  func c_frexp(x: float64; exponent: ptr cint): float64 {.importc: "frexp".}
+  {.pop.}
 
-# use push pragma when it is supported
-let
-  c_fpNormal    {.importc: "FP_NORMAL", header: CMathHeader.}: int
-  c_fpSubnormal {.importc: "FP_SUBNORMAL", header: CMathHeader.}: int
-  c_fpZero      {.importc: "FP_ZERO", header: CMathHeader.}: int
-  c_fpInfinite  {.importc: "FP_INFINITE", header: CMathHeader.}: int
-  c_fpNan       {.importc: "FP_NAN", header: CMathHeader.}: int
+  # use push pragma when it is supported
+  let
+    c_fpNormal    {.importc: "FP_NORMAL", header: CMathHeader.}: int
+    c_fpSubnormal {.importc: "FP_SUBNORMAL", header: CMathHeader.}: int
+    c_fpZero      {.importc: "FP_ZERO", header: CMathHeader.}: int
+    c_fpInfinite  {.importc: "FP_INFINITE", header: CMathHeader.}: int
+    c_fpNan       {.importc: "FP_NAN", header: CMathHeader.}: int
 
 type
   FloatClass* = enum ## Describes the class a floating point value belongs to.

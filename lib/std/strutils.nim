@@ -156,8 +156,16 @@ func endsWith*(s: string; c: char): bool {.inline.} =
   ## True if `s` is non-empty and its last character is `c`.
   if s.len > 0: s[s.len-1] == c else: false
 
-func strlen*(x: cstring): int {.importc: "strlen", header: "<string.h>".}
-  ## Length of the C string `x` (not counting the terminating zero); `0` when `x` is nil.
+when defined(nimNativeIo):
+  func strlen*(x: cstring): int =
+    ## Length of the C string `x` (not counting the terminating zero).
+    ## Freestanding (`nimony n`, libc-free): scan for the NUL terminator directly.
+    var i = 0
+    while x[i] != '\0': inc i
+    result = i
+else:
+  func strlen*(x: cstring): int {.importc: "strlen", header: "<string.h>".}
+    ## Length of the C string `x` (not counting the terminating zero); `0` when `x` is nil.
 
 func `$`*(x: cstring): string =
   ## Copies a nil-terminated C string into a Nim `string`.
