@@ -35,6 +35,13 @@ proc main =
   c.inc
 
   c.endRead()
+
+  var syms = createTokenBuf()
+  let sym = syms.pool.syms.getOrIncl("already.interned")
+  syms.addSymUse(sym)
+  var symCursor = syms.beginRead()
+  assert symCursor.symId == sym
+  assert symCursor.symName == "already.interned"
   echo "ok"
 
 main()

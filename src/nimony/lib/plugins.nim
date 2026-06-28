@@ -158,8 +158,8 @@ proc addTree*(t: var NifBuilder; child: sink NifBuilder) =
       c.skip()
 
 proc addSymUse*(t: var NifBuilder; s: SymId;
-                info: LineInfo = NoLineInfo) =
-  nifcore.addSymUse(t, pluginPool.syms[s])
+                info: LineInfo) =
+  nifcore.addSymUse(t, s)
   appendInfo(t, info)
 
 proc addSymUse*(t: var NifBuilder; s: string;
@@ -592,54 +592,14 @@ template peek*(t: var Replacer; body: untyped) =
 
 # ── Entry points ──────────────────────────────────────────────────────────
 
-proc densify(dest: var NifBuilder; n: var NifCursor; cur: var LineInfo) =
-  let raw = n.rawLineInfo
-  if raw.isValid:
-    cur = raw
-  let effective = cur
-  cur.comment = StrId(0)
-  case n.kind
-  of TagLit:
-    dest.openTag(n.cursorTagId)
-    appendInfo(dest, effective)
-    n.into:
-      while n.hasMore:
-        densify(dest, n, cur)
-    dest.closeTag()
-  of DotToken:
-    dest.addDotToken(); appendInfo(dest, effective); n.inc()
-  of Ident:
-    dest.addIdent(n.strVal); appendInfo(dest, effective); n.inc()
-  of Symbol:
-    dest.addSymUse(n.symName); appendInfo(dest, effective); n.inc()
-  of SymbolDef:
-    dest.addSymDef(n.symName); appendInfo(dest, effective); n.inc()
-  of StrLit:
-    dest.addStrLit(n.strVal); appendInfo(dest, effective); n.inc()
-  of CharLit:
-    dest.addCharLit(n.charLit); appendInfo(dest, effective); n.inc()
-  of IntLit:
-    dest.addIntLit(n.intVal); appendInfo(dest, effective); n.inc()
-  of UIntLit:
-    dest.addUIntLit(n.uintVal); appendInfo(dest, effective); n.inc()
-  of FloatLit:
-    dest.addFloatLit(n.floatVal); appendInfo(dest, effective); n.inc()
-  of ExtendedSuffix, LineInfoLit:
-    assert false, "NIF suffix cannot be a value head"
-
-proc loadDenseTree(filename: string): NifBuilder =
-  var sparse = parseFromFile(filename, sharedPool = pluginPool,
-                             sharedTags = pluginTags)
-  result = createTree()
-  var n = sparse.beginRead()
-  var cur = NoLineInfo
-  while n.hasMore:
-    densify(result, n, cur)
+proc loadPluginTree(filename: string): NifBuilder =
+  parseFromFile(filename, sharedPool = pluginPool, sharedTags = pluginTags,
+                denseLineInfo = true)
 
 proc loadReplacer*(inputFile = paramStr(1)): Replacer =
   ## Loads the input NIF file and returns a `Replacer` ready for
   ## transformation. The cursor is positioned at the root of the input tree.
-  var tree = loadDenseTree(inputFile)
+  var tree = loadPluginTree(inputFile)
   result = Replacer(dest: createTree(), src: snapshot(tree))
 
 proc saveReplacer*(t: var Replacer; filename = paramStr(2)) =
@@ -659,7 +619,7 @@ proc loadPluginInput*(filename = paramStr(1)): NifCursor =
   ##
   ## For type plugins, use `loadTypeDefinitions()` to read the second input
   ## file (`paramStr(3)`) that carries the triggering type definitions.
-  var tree = loadDenseTree(filename)
+  var tree = loadPluginTree(filename)
   result = snapshot(tree)
 
 proc loadTypeDefinitions*(): NifCursor =
@@ -800,6 +760,4 @@ proc renderNode*(n: NifCursor): string =
   if not hasSubtree(n):
     result = "<bug: empty>"
   else:
-    var tree = createTree()
-    tree.addSubtree(n)
-    result = nifcoreparse.toString(tree, includeLineInfo = false)
+    result = nifcoreparse.toString(n, includeLineInfo = false)

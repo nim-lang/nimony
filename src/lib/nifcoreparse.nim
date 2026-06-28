@@ -11,7 +11,8 @@
 ## `openTag`/`closeTag`, and atoms drive the builder. The reader's relative
 ## line positions are resolved to absolute file/line/col (against a parent
 ## stack, exactly like `nifstreams.rawNext`) and emitted as a sparse
-## `LineInfoLit` suffix only where the position changes.
+## `LineInfoLit` suffix only where the position changes. Callers that need
+## random-access effective locations can request dense line info while parsing.
 ##
 ## Note: NIF `#comment#` decorations are not carried into the token buffer —
 ## the codegen path has no use for them.
@@ -49,18 +50,21 @@ proc resolveInfo(b: var TokenBuf; tok: rd.ExpandedToken;
                          comment: comment)
 
 proc parse*(r: var rd.Reader; b: var TokenBuf;
-            parentSeed: NifLineInfo = NoNifLineInfo) =
+            parentSeed: NifLineInfo = NoNifLineInfo;
+            denseLineInfo = false) =
   ## Read one complete NIF tree (or until EOF) from `r` into `b`. `parentSeed`
   ## seeds the parent line-info stack so the first token's relative position
   ## resolves against the right origin (index-jumped reads pass the indexed
   ## compound's parent info; whole-file reads pass `NoNifLineInfo`).
+  ## With `denseLineInfo`, every positioned value receives its effective
+  ## location instead of only changes in the location stream.
   var parents = @[(file: parentSeed.file, line: parentSeed.line,
                    col: parentSeed.col)]
   var last = NoNifLineInfo
   var nested = 0
   var tok = default(rd.ExpandedToken)
   template emit(info: NifLineInfo) =
-    if info.isValid and info != last:
+    if info.isValid and (denseLineInfo or info != last):
       b.appendLineInfo info
       last = info
   while true:
@@ -107,18 +111,20 @@ proc parse*(r: var rd.Reader; b: var TokenBuf;
 
 proc parseFromBuffer*(input: string; thisModule: sink string;
                       sizeHint = 100; sharedPool: Pool = nil;
-                      sharedTags: TagPool = nil): TokenBuf =
+                      sharedTags: TagPool = nil;
+                      denseLineInfo = false): TokenBuf =
   var r = rd.openFromBuffer(input, thisModule)
   result = createTokenBuf(sizeHint, sharedPool, sharedTags)
-  parse(r, result)
+  parse(r, result, denseLineInfo = denseLineInfo)
 
 proc parseFromFile*(filename: string; sizeHint = 100;
                     sharedPool: Pool = nil;
-                    sharedTags: TagPool = nil): TokenBuf =
+                    sharedTags: TagPool = nil;
+                    denseLineInfo = false): TokenBuf =
   var r = rd.open(filename)
   discard rd.processDirectives(r)
   result = createTokenBuf(sizeHint, sharedPool, sharedTags)
-  parse(r, result)
+  parse(r, result, denseLineInfo = denseLineInfo)
 
 # ── toString ─────────────────────────────────────────────────────────────
 
@@ -192,12 +198,26 @@ proc emitValue(bld: var Builder; c: var Cursor; cur: var NifLineInfo;
 proc toString*(b: var TokenBuf; sizeHint = 0;
                includeLineInfo = true): string =
   ## Canonical NIF text for the whole buffer (one or more top-level values).
+  ## Set `includeLineInfo` to false for location-free diagnostic rendering.
   var bld = nifbuilder.open(if sizeHint > 0: sizeHint else: b.len * 8)
   var c = b.beginRead()
   var cur = NoNifLineInfo
   var parents = @[NoNifLineInfo]
   while c.hasMore:
     emitValue(bld, c, cur, parents, b.tags, b.pool, includeLineInfo)
+  result = bld.extract()
+
+proc toString*(node: Cursor; sizeHint = 0;
+               includeLineInfo = true): string =
+  ## Canonical NIF text for the value or subtree at `node`.
+  if not node.hasMore:
+    return ""
+  var bld = nifbuilder.open(
+    if sizeHint > 0: sizeHint else: subtreeWidth(node) * 8)
+  var c = node
+  var cur = NoNifLineInfo
+  var parents = @[NoNifLineInfo]
+  emitValue(bld, c, cur, parents, node.tags, node.pool, includeLineInfo)
   result = bld.extract()
 
 # ── toModuleString (full file with embedded index) ─────────────────────────
