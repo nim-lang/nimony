@@ -202,14 +202,21 @@ proc takeTree*(t: var NifBuilder; n: var NifCursor) =
   t.addSubtree(n)
   n.skip()
 
+proc enterPluginScope(n: var NifCursor): nifcore.CursorScope =
+  nifcore.enterScope(n)
+
+proc leavePluginScope(n: var NifCursor; scope: nifcore.CursorScope) =
+  nifcore.leaveScope(n, scope)
+
 template copyInto*(t: var NifBuilder; n: var NifCursor; body: untyped) =
   ## Copies `n`'s tag, transforms its children with `body`, and advances `n`.
   assert n.kind == TagLit, "copyInto requires cursor at TagLit"
   let copiedTag = n.tagId
   let copiedInfo = n.info
   t.openTree(copiedTag, copiedInfo)
-  nifcore.into n:
-    body
+  let inputScope = enterPluginScope(n)
+  body
+  leavePluginScope(n, inputScope)
   t.closeTree()
 
 proc addTree*(t: var NifBuilder; child: sink NifBuilder) =
@@ -673,8 +680,9 @@ template replaceHead*(t: var Replacer;
   ## scopes.
   assert t.src.kind == TagLit, "replaceHead requires cursor at TagLit"
   t.dest.withTree(tag, info):
-    nifcore.into t.src:
-      body
+    let inputScope = enterPluginScope(t.src)
+    body
+    leavePluginScope(t.src, inputScope)
 
 # ── Cursor access for analysis ────────────────────────────────────────────
 

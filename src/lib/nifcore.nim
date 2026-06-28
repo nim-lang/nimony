@@ -321,6 +321,11 @@ type
     p: ptr NifToken
     rem: int
 
+  CursorScope* = object ## Saved outer bounds for bounded cursor traversal.
+    savedP: ptr NifToken
+    savedRem: int
+    bodyLen: int
+
 template decRcAndFree(owner: CursorOwner) =
   dec owner.rc
   if owner.rc == 0:
@@ -647,26 +652,35 @@ template hasMore*(c: Cursor): bool =
   ## sentinel: `rem` does all the work.
   c.rem > 0
 
-template into*(c: var Cursor; body: untyped) =
-  ## Enter the current TagLit, iterate its body, then restore the outer
-  ## scope's bound. Body MUST consume exactly the children (leave
-  ## `rem == 0`) — without a ParRi marker, `rem` is the only signal.
-  # `c.load.kind` not `c.kind`: adapters often define their own `kind*` proc
-  # which would shadow nifcore.kind at the template's instantiation site.
+proc enterScope*(c: var Cursor): CursorScope =
+  ## Enters the current `TagLit` body and returns its saved outer bounds.
+  ## Pair with `leaveScope` after consuming every child.
   assert c.load.kind == TagLit, "into requires cursor at TagLit"
-  let savedRem  = c.rem
-  let savedP    = c.p
-  let bodyLen   = int c.cursorJump
+  result = CursorScope(savedP: c.p, savedRem: c.rem,
+                       bodyLen: int(c.cursorJump))
   let headWidth = tokenWidth(c)
   c.p = cast[ptr NifToken](cast[uint](c.p) +
                            uint(headWidth) * sizeof(NifToken).uint)
-  c.rem = bodyLen
-  body
-  assert c.rem == 0, "into: body did not consume all " & $bodyLen &
+  c.rem = result.bodyLen
+
+proc leaveScope*(c: var Cursor; scope: CursorScope) =
+  ## Leaves a scope opened by `enterScope`.
+  ## The cursor must have consumed the complete bounded body.
+  assert c.rem == 0, "into: body did not consume all " & $scope.bodyLen &
                      " children (left " & $c.rem & ")"
-  let consumed = int((cast[uint](c.p) - cast[uint](savedP)) div
+  let consumed = int((cast[uint](c.p) - cast[uint](scope.savedP)) div
                      sizeof(NifToken).uint)
-  c.rem = if savedRem >= consumed: savedRem - consumed else: 0
+  c.rem = if scope.savedRem >= consumed:
+            scope.savedRem - consumed
+          else:
+            0
+
+template into*(c: var Cursor; body: untyped) =
+  ## Enters the current `TagLit`, runs `body`, then restores the outer bounds.
+  ## `body` must consume every child.
+  let cursorScope = enterScope(c)
+  body
+  leaveScope(c, cursorScope)
 
 template loopInto*(c: var Cursor; body: untyped) =
   into c:
