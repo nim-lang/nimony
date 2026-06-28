@@ -42,9 +42,9 @@ import plugins
 proc loopVarSym(n: NifCursor): SymId =
   ## The resolved loop-variable symbol, from `(unpackflat (let (symdef i) …))`.
   var vars = forLoopVars(n)
-  if vars.kind == ParLe and vars.otherKind == UnpackflatU:
+  if vars.kind == TagLit and vars.otherKind == UnpackflatU:
     vars = firstChild(vars)          # (let …)
-    if vars.kind == ParLe:
+    if vars.kind == TagLit:
       vars = firstChild(vars)        # (symdef i)
     if vars.kind == SymbolDef:
       return vars.symId
@@ -54,7 +54,7 @@ proc collectArgs(n: NifCursor): seq[NifCursor] =
   result = @[]
   var c = forLoopCallArgs(n)
   c.into:
-    while c.kind != ParRi:
+    while c.hasMore:
       result.add c
       skip c
 
@@ -105,7 +105,7 @@ proc lvalueBase(n: NifCursor): SymId =
   ## Recursive (descent terminates at a leaf) rather than a `while` with a
   ## `firstChild` reassignment, which the termination checker doesn't recognise
   ## as progress.
-  if n.kind == ParLe and n.exprKind in PeelKinds:
+  if n.kind == TagLit and n.exprKind in PeelKinds:
     result = lvalueBase(firstChild(n))
   elif n.kind == Symbol:
     result = n.symId
@@ -116,7 +116,7 @@ proc analyzeIndex(idx: NifCursor; loopSym: SymId): tuple[ok: bool, off: int] =
   ## Accepts `i`, `i + c`, `c + i`, `i - c` (with `c` an integer literal).
   if idx.kind == Symbol and idx.symId == loopSym:
     return (true, 0)
-  if idx.kind == ParLe and (idx.exprKind == AddX or idx.exprKind == SubX):
+  if idx.kind == TagLit and (idx.exprKind == AddX or idx.exprKind == SubX):
     var op1 = firstChild(idx)   # type child
     skip op1                    # → first operand
     var op2 = op1
@@ -145,16 +145,16 @@ proc collectLocals(c: var Ctx; n: var NifCursor) =
   if n.kind == SymbolDef:
     c.locals.add n.symId
     skip n
-  elif n.kind == ParLe:
+  elif n.kind == TagLit:
     n.into:
-      while n.kind != ParRi:
+      while n.hasMore:
         collectLocals(c, n)
   else:
     skip n
 
 proc handleAsgn(c: var Ctx; lhs: NifCursor; depth: int) =
   let base = lvalueBase(lhs)
-  if lhs.kind == ParLe and lhs.exprKind in IndexKinds:
+  if lhs.kind == TagLit and lhs.exprKind in IndexKinds:
     if base != default(SymId) and has(c.locals, base):
       discard "private per-iteration buffer — safe"
     elif base == c.loopSym:
@@ -188,21 +188,21 @@ proc handleAsgn(c: var Ctx; lhs: NifCursor; depth: int) =
 proc checkWrites(c: var Ctx; n: var NifCursor; depth: int) =
   if c.err.len > 0:
     skip n; return
-  if n.kind != ParLe:
+  if n.kind != TagLit:
     skip n; return
   let sk = n.stmtKind
   if sk == AsgnS:
     handleAsgn(c, child(n, 0), depth)
     n.into:
-      while n.kind != ParRi:
+      while n.hasMore:
         checkWrites(c, n, depth)
   elif sk == ForS or sk == WhileS:
     n.into:
-      while n.kind != ParRi:
+      while n.hasMore:
         checkWrites(c, n, depth + 1)
   else:
     n.into:
-      while n.kind != ParRi:
+      while n.hasMore:
         checkWrites(c, n, depth)
 
 proc readErr(s: SymId): string =
@@ -215,10 +215,10 @@ proc checkReads(c: var Ctx; n: var NifCursor)
 proc checkWriteLhs(c: var Ctx; n: var NifCursor) =
   ## Walk an asgn LHS: the output write-base symbol is allowed, but every index
   ## / bound / field sub-expression is a read.
-  if n.kind == ParLe and n.exprKind in IndexKinds:
+  if n.kind == TagLit and n.exprKind in IndexKinds:
     n.into:
       var first = true
-      while n.kind != ParRi:
+      while n.hasMore:
         if first:
           if n.kind == Symbol and has(c.outBases, n.symId):
             skip n
@@ -240,11 +240,11 @@ proc checkReads(c: var Ctx; n: var NifCursor) =
     skip n
   of SymbolDef:
     skip n
-  of ParLe:
+  of TagLit:
     if n.stmtKind == AsgnS:
       n.into:
         var first = true
-        while n.kind != ParRi:
+        while n.hasMore:
           if first:
             checkWriteLhs(c, n)
             first = false
@@ -252,7 +252,7 @@ proc checkReads(c: var Ctx; n: var NifCursor) =
             checkReads(c, n)
     else:
       n.into:
-        while n.kind != ParRi:
+        while n.hasMore:
           checkReads(c, n)
   else:
     skip n
@@ -273,9 +273,9 @@ proc raceCheck(loopSym: SymId; body: NifCursor): string =
 
 proc emitBody(o: var NifBuilder; n: var NifCursor; loopSym: SymId) =
   ## Copy the typed body, replacing each use of `loopSym` with `(ident pforI)`.
-  if n.kind == ParLe:
+  if n.kind == TagLit:
     o.copyInto(n):
-      while n.kind != ParRi:
+      while n.hasMore:
         emitBody(o, n, loopSym)
   elif n.kind == Symbol and n.symId == loopSym:
     o.addIdent("pforI")
@@ -287,34 +287,34 @@ proc emitBody(o: var NifBuilder; n: var NifCursor; loopSym: SymId) =
 # ── builder helpers (nifler "nim-parsed" dialect) ────────────────────────────
 
 proc beginCall(o: var NifBuilder; fn: string) =
-  ## Opens `(call <fn>` — caller emits the args and a matching `addParRi`.
-  o.addParLe("call")
+  ## Opens `(call <fn>`; the caller emits arguments and closes the tree.
+  o.openTree("call")
   o.addIdent(fn)
 
 proc beginVar(o: var NifBuilder; tag, name: string) =
   ## Opens `(<tag> <name> . . .` (a `var`/`let` decl) — caller emits the
-  ## initializer expression and a matching `addParRi`.
-  o.addParLe(tag)
+  ## initializer expression and closes the tree.
+  o.openTree(tag)
   o.addIdent(name)
   o.addEmptyNode3()   # exported, pragmas, type
 
 proc emitInfix(o: var NifBuilder; op, lhs, rhs: string) =
-  o.addParLe("infix")
+  o.openTree("infix")
   o.addIdent(op)
   o.addIdent(lhs)
   o.addIdent(rhs)
-  o.addParRi()
+  o.closeTree()
 
 proc emitIncr(o: var NifBuilder; name: string) =
   ## `(asgn name (infix + name 1))`
-  o.addParLe("asgn")
+  o.openTree("asgn")
   o.addIdent(name)
-  o.addParLe("infix")
+  o.openTree("infix")
   o.addIdent("+")
   o.addIdent(name)
   o.addIntLit(1)
-  o.addParRi()
-  o.addParRi()
+  o.closeTree()
+  o.closeTree()
 
 # ── transform ────────────────────────────────────────────────────────────────
 
@@ -341,97 +341,97 @@ proc transform(n: NifCursor): NifBuilder =
 
   # Wrap in a `block` so the helper locals (pforA, pforJ, pforChunk, …) get a
   # fresh scope -- several `||` loops can then coexist in one routine.
-  result.addParLe("block")
+  result.openTree("block")
   result.addDotToken()
   result.withTree StmtsS, info:
     # ensureParPool()
-    result.beginCall("ensureParPool"); result.addParRi()
+    result.beginCall("ensureParPool"); result.closeTree()
 
     # var pforA = <a>; pforB = <b>; pforStep = <step>; pforChunkSize = <chunkSize>; pforWorkload = <workload>
-    result.beginVar("var", "pforA"); result.addSubtree(args[0]); result.addParRi()
-    result.beginVar("var", "pforB"); result.addSubtree(args[1]); result.addParRi()
-    result.beginVar("var", "pforStep"); result.addSubtree(args[2]); result.addParRi()
-    result.beginVar("var", "pforChunkSize"); result.addSubtree(args[3]); result.addParRi()
-    result.beginVar("var", "pforWorkload"); result.addSubtree(args[4]); result.addParRi()
+    result.beginVar("var", "pforA"); result.addSubtree(args[0]); result.closeTree()
+    result.beginVar("var", "pforB"); result.addSubtree(args[1]); result.closeTree()
+    result.beginVar("var", "pforStep"); result.addSubtree(args[2]); result.closeTree()
+    result.beginVar("var", "pforChunkSize"); result.addSubtree(args[3]); result.closeTree()
+    result.beginVar("var", "pforWorkload"); result.addSubtree(args[4]); result.closeTree()
 
     # var pforJ = default(ParJoin)
     result.beginVar("var", "pforJ")
-    result.beginCall("default"); result.addIdent("ParJoin"); result.addParRi()
-    result.addParRi()
+    result.beginCall("default"); result.addIdent("ParJoin"); result.closeTree()
+    result.closeTree()
 
     # var pforIters = parIterCount(pforA, pforB, pforStep)
     result.beginVar("var", "pforIters")
     result.beginCall("parIterCount")
     result.addIdent("pforA"); result.addIdent("pforB"); result.addIdent("pforStep")
-    result.addParRi()
-    result.addParRi()
+    result.closeTree()
+    result.closeTree()
 
     # var pforGrain = parGrain(pforIters, pforChunkSize)
     result.beginVar("var", "pforGrain")
     result.beginCall("parGrain")
     result.addIdent("pforIters"); result.addIdent("pforChunkSize")
-    result.addParRi()
-    result.addParRi()
+    result.closeTree()
+    result.closeTree()
 
     # var pforTotal = parChunkCount(pforIters, pforGrain)
     result.beginVar("var", "pforTotal")
     result.beginCall("parChunkCount")
     result.addIdent("pforIters"); result.addIdent("pforGrain")
-    result.addParRi()
-    result.addParRi()
+    result.closeTree()
+    result.closeTree()
 
     # parBegin(pforJ, pforTotal)
     result.beginCall("parBegin")
     result.addIdent("pforJ"); result.addIdent("pforTotal")
-    result.addParRi()
+    result.closeTree()
 
     # proc pforChunk(pforLo, pforHi: int) {.passive, closure.} = ...
-    result.addParLe("proc")
+    result.openTree("proc")
     result.addIdent("pforChunk")
     result.addEmptyNode3()              # exported, pattern, generics
-    result.addParLe("params")
+    result.openTree("params")
     block:
-      result.addParLe("param"); result.addIdent("pforLo")
+      result.openTree("param"); result.addIdent("pforLo")
       result.addEmptyNode2(); result.addIdent("int"); result.addDotToken()
-      result.addParRi()
-      result.addParLe("param"); result.addIdent("pforHi")
+      result.closeTree()
+      result.openTree("param"); result.addIdent("pforHi")
       result.addEmptyNode2(); result.addIdent("int"); result.addDotToken()
-      result.addParRi()
-    result.addParRi()                   # /params
+      result.closeTree()
+    result.closeTree()                   # /params
     result.addDotToken()                # return type (void)
-    result.addParLe("pragmas")
+    result.openTree("pragmas")
     result.addIdent("passive"); result.addIdent("closure")
-    result.addParRi()
+    result.closeTree()
     result.addDotToken()                # effects
     result.withTree StmtsS, info:
       # pforLo/pforHi are iteration indices; map each back to `pforA + j*pforStep`.
       # var pforIt = pforLo
-      result.beginVar("var", "pforIt"); result.addIdent("pforLo"); result.addParRi()
+      result.beginVar("var", "pforIt"); result.addIdent("pforLo"); result.closeTree()
       # while pforIt < pforHi:
       #   let pforI = pforA + pforIt * pforStep; <body>; pforIt = pforIt + 1
-      result.addParLe("while")
+      result.openTree("while")
       result.emitInfix("<", "pforIt", "pforHi")
       result.withTree StmtsS, info:
         # let pforI = pforA + pforIt * pforStep
         result.beginVar("let", "pforI")
-        result.addParLe("infix"); result.addIdent("+"); result.addIdent("pforA")
-        result.addParLe("infix"); result.addIdent("*")
+        result.openTree("infix"); result.addIdent("+"); result.addIdent("pforA")
+        result.openTree("infix"); result.addIdent("*")
         result.addIdent("pforIt"); result.addIdent("pforStep")
-        result.addParRi()               # /inner infix
-        result.addParRi()               # /outer infix
-        result.addParRi()               # /let
+        result.closeTree()               # /inner infix
+        result.closeTree()               # /outer infix
+        result.closeTree()               # /let
         var body = forLoopBody(n)
         emitBody(result, body, loopSym)
         result.emitIncr("pforIt")
-      result.addParRi()                 # /while
+      result.closeTree()                 # /while
       # parChunkDone(addr pforJ)
       result.beginCall("parChunkDone")
-      result.beginCall("addr"); result.addIdent("pforJ"); result.addParRi()
-      result.addParRi()
-    result.addParRi()                   # /proc
+      result.beginCall("addr"); result.addIdent("pforJ"); result.closeTree()
+      result.closeTree()
+    result.closeTree()                   # /proc
 
     # var pforK = 0
-    result.beginVar("var", "pforK"); result.addIntLit(0); result.addParRi()
+    result.beginVar("var", "pforK"); result.addIntLit(0); result.closeTree()
 
     # while pforK < pforTotal:
     #   let pforLo2 = parChunkLo(pforGrain, pforK)
@@ -439,33 +439,33 @@ proc transform(n: NifCursor): NifBuilder =
     #   parSubmit(delay(pforChunk(pforLo2, pforHi2)), pforK)   -- pforK spreads
     #     chunks across stripes; submit-all-then-`parWait` is the structured join.
     #   pforK = pforK + 1
-    result.addParLe("while")
+    result.openTree("while")
     result.emitInfix("<", "pforK", "pforTotal")
     result.withTree StmtsS, info:
       result.beginVar("let", "pforLo2")
       result.beginCall("parChunkLo")
       result.addIdent("pforGrain"); result.addIdent("pforK")
-      result.addParRi(); result.addParRi()
+      result.closeTree(); result.closeTree()
       result.beginVar("let", "pforHi2")
       result.beginCall("parChunkHi")
       result.addIdent("pforIters"); result.addIdent("pforGrain"); result.addIdent("pforK")
-      result.addParRi(); result.addParRi()
+      result.closeTree(); result.closeTree()
       result.beginCall("parSubmit")
       result.beginCall("delay")
       result.beginCall("pforChunk")
       result.addIdent("pforLo2"); result.addIdent("pforHi2")
-      result.addParRi()                 # /pforChunk
-      result.addParRi()                 # /delay
+      result.closeTree()                 # /pforChunk
+      result.closeTree()                 # /delay
       result.addIdent("pforK")
-      result.addParRi()                 # /parSubmit
+      result.closeTree()                 # /parSubmit
       result.emitIncr("pforK")
-    result.addParRi()                   # /while
+    result.closeTree()                   # /while
 
     # parWait(pforJ, pforWorkload)
     result.beginCall("parWait")
     result.addIdent("pforJ"); result.addIdent("pforWorkload")
-    result.addParRi()
-  result.addParRi()                     # /block
+    result.closeTree()
+  result.closeTree()                     # /block
 
 let input = loadPluginInput()
 saveTree transform(input)
