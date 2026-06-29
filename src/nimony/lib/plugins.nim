@@ -118,11 +118,9 @@ proc tag*(n: NifCursor): TagId {.inline.} =
 
 proc rawTag(n: NifCursor): TagEnum {.inline.} =
   if n.kind != TagLit or n.tags != pluginTags:
-    result = InvalidTagId
-  else:
-    let id = uint32(n.cursorTagId)
-    result = if id <= uint32(high(TagEnum)): cast[TagEnum](id)
-             else: result = InvalidTagId
+    return InvalidTagId
+  let id = uint32(n.cursorTagId)
+  if id <= uint32(high(TagEnum)): cast[TagEnum](id) else: InvalidTagId
 
 proc stmtKind*(n: NifCursor): NimonyStmt {.inline.} =
   ## Returns the current statement tag, or `NoStmt`.
