@@ -1,0 +1,120 @@
+#
+#
+#            Nim's Runtime Library
+#        (c) Copyright 2024 Nim contributors
+#
+#    See the file "copying.txt", included in this
+#    distribution, for details about the copyright.
+#
+
+## Operations on sequences (and `openArray`s), in the spirit of functional
+## programming: `map`, `filter`, `zip`, folds and friends.
+##
+## This is the Nimony port. It currently covers the callback- and
+## value-oriented core; the `mapIt`/`filterIt` template family is not ported
+## yet.
+
+import std/[assertions]
+
+func repeat*[T](x: T; n: Natural): seq[T] =
+  ## Returns a sequence with `x` repeated `n` times.
+  runnableExamples:
+    assert repeat(5, 3) == @[5, 5, 5]
+    assert repeat("a", 2) == @["a", "a"]
+  result = @[]
+  for i in 0 ..< n:
+    result.add x
+
+# NOTE: `concat` is intentionally not provided yet — `system` exposes a greedy
+# `concat*()` varargs string template that wins/!breaks overload resolution for
+# a `seq` overload. Resolving that cleanly is left to a follow-up.
+
+func count*[T: Equatable](s: openArray[T]; x: T): int =
+  ## Returns the number of occurrences of `x` in `s`.
+  runnableExamples:
+    assert count(@[1, 2, 2, 3, 2], 2) == 3
+  result = 0
+  for i in 0 ..< s.len:
+    if s[i] == x: inc result
+
+# `find` and `contains` for `openArray[T: Equatable]` already live in
+# `system` (openarrays); they are intentionally not redefined here.
+
+func deduplicate*[T: Equatable](s: openArray[T]): seq[T] =
+  ## Returns `s` with consecutive and non-consecutive duplicates removed,
+  ## preserving first-seen order.
+  runnableExamples:
+    assert deduplicate(@[1, 2, 2, 3, 1]) == @[1, 2, 3]
+  result = @[]
+  for i in 0 ..< s.len:
+    var seen = false
+    for j in 0 ..< result.len:
+      if result[j] == s[i]: seen = true
+    if not seen: result.add s[i]
+
+func minIndex*[T: Comparable](s: openArray[T]): int =
+  ## Returns the index of the minimum element of `s` (0 for an empty `s`).
+  runnableExamples:
+    assert minIndex(@[3, 1, 2]) == 1
+  result = 0
+  for i in 1 ..< s.len:
+    if s[i] < s[result]: result = i
+
+func maxIndex*[T: Comparable](s: openArray[T]): int =
+  ## Returns the index of the maximum element of `s` (0 for an empty `s`).
+  runnableExamples:
+    assert maxIndex(@[3, 1, 2]) == 0
+  result = 0
+  for i in 1 ..< s.len:
+    if s[result] < s[i]: result = i
+
+proc map*[T, S](s: openArray[T]; op: proc (x: T): S): seq[S] =
+  ## Returns a new sequence with `op` applied to every element of `s`.
+  runnableExamples:
+    proc dbl(x: int): int = x * 2
+    assert map(@[1, 2, 3], dbl) == @[2, 4, 6]
+  result = @[]
+  for i in 0 ..< s.len:
+    result.add op(s[i])
+
+proc filter*[T](s: openArray[T]; pred: proc (x: T): bool): seq[T] =
+  ## Returns the elements of `s` for which `pred` returns true.
+  runnableExamples:
+    proc isEven(x: int): bool = x mod 2 == 0
+    assert filter(@[1, 2, 3, 4], isEven) == @[2, 4]
+  result = @[]
+  for i in 0 ..< s.len:
+    if pred(s[i]): result.add s[i]
+
+proc keepIf*[T](s: var seq[T]; pred: proc (x: T): bool) =
+  ## In-place variant of `filter`: keeps only the elements for which `pred`
+  ## returns true.
+  runnableExamples:
+    proc isEven(x: int): bool = x mod 2 == 0
+    var data = @[1, 2, 3, 4, 5]
+    keepIf(data, isEven)
+    assert data == @[2, 4]
+  var kept: seq[T] = @[]
+  for i in 0 ..< s.len:
+    if pred(s[i]): kept.add s[i]
+  s = kept
+
+proc all*[T](s: openArray[T]; pred: proc (x: T): bool): bool =
+  ## Whether `pred` is true for every element (true for an empty `s`).
+  runnableExamples:
+    proc isEven(x: int): bool = x mod 2 == 0
+    assert all(@[2, 4, 6], isEven)
+    assert not all(@[2, 3, 6], isEven)
+  for i in 0 ..< s.len:
+    if not pred(s[i]): return false
+  return true
+
+proc any*[T](s: openArray[T]; pred: proc (x: T): bool): bool =
+  ## Whether `pred` is true for at least one element (false for an empty `s`).
+  runnableExamples:
+    proc isEven(x: int): bool = x mod 2 == 0
+    assert any(@[1, 3, 4], isEven)
+    assert not any(@[1, 3, 5], isEven)
+  for i in 0 ..< s.len:
+    if pred(s[i]): return true
+  return false
