@@ -132,10 +132,18 @@ proc resolveFile*(paths: openArray[string]; origin: string; toResolve: string): 
     else:
       result = val / nimFile.substr(i)
   else:
-    result = splitFile(origin).dir / nimFile
+    # Package-dir fallback: `import foo` resolves to `foo.nim` OR, failing that,
+    # `foo/foo.nim` (e.g. std/posix ships as std/posix/posix.nim). Mirrors Nim.
+    let pkgFile = toResolve / splitFile(toResolve).name.addFileExt(".nim")
+    template tryDir(d: string) =
+      result = d / nimFile
+      if not os.fileExists(result):
+        let pkg = d / pkgFile
+        if os.fileExists(pkg): result = pkg
+    tryDir(splitFile(origin).dir)
     var i = 0
     while not os.fileExists(result) and i < paths.len:
-      result = paths[i] / nimFile
+      tryDir(paths[i])
       inc i
 
 type
