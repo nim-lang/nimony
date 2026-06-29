@@ -321,6 +321,11 @@ type
     p: ptr NifToken
     rem: int
 
+  CursorScope* = object ## Saved outer bounds for bounded cursor traversal.
+    savedP: ptr NifToken
+    savedRem: int
+    bodyLen: int
+
 template decRcAndFree(owner: CursorOwner) =
   dec owner.rc
   if owner.rc == 0:
@@ -369,7 +374,7 @@ proc `=copy`*(dest: var Cursor; src: Cursor) {.inline.} =
     if src.owner != nil: inc src.owner.rc
     dest.owner = src.owner
     dest.p = src.p
-    dest.rem = src.rem
+  dest.rem = src.rem
 
 proc `=dup`*(src: Cursor): Cursor {.nodestroy, inline.} =
   result = Cursor(owner: src.owner, p: src.p, rem: src.rem)
@@ -554,6 +559,7 @@ proc floatVal*(c: Cursor): float64 {.inline.} =
   cast[float64](combinedPayload(c))
 
 proc charLit*(c: Cursor): char {.inline.} =
+  ## Returns the character stored in the `CharLit` at `c`.
   assert c.kind == CharLit
   char(c.load.uoperand)
 
@@ -646,26 +652,35 @@ template hasMore*(c: Cursor): bool =
   ## sentinel: `rem` does all the work.
   c.rem > 0
 
-template into*(c: var Cursor; body: untyped) =
-  ## Enter the current TagLit, iterate its body, then restore the outer
-  ## scope's bound. Body MUST consume exactly the children (leave
-  ## `rem == 0`) — without a ParRi marker, `rem` is the only signal.
-  # `c.load.kind` not `c.kind`: adapters often define their own `kind*` proc
-  # which would shadow nifcore.kind at the template's instantiation site.
+proc enterScope*(c: var Cursor): CursorScope =
+  ## Enters the current `TagLit` body and returns its saved outer bounds.
+  ## Pair with `leaveScope` after consuming every child.
   assert c.load.kind == TagLit, "into requires cursor at TagLit"
-  let savedRem  = c.rem
-  let savedP    = c.p
-  let bodyLen   = int c.cursorJump
+  result = CursorScope(savedP: c.p, savedRem: c.rem,
+                       bodyLen: int(c.cursorJump))
   let headWidth = tokenWidth(c)
   c.p = cast[ptr NifToken](cast[uint](c.p) +
                            uint(headWidth) * sizeof(NifToken).uint)
-  c.rem = bodyLen
-  body
-  assert c.rem == 0, "into: body did not consume all " & $bodyLen &
+  c.rem = result.bodyLen
+
+proc leaveScope*(c: var Cursor; scope: CursorScope) =
+  ## Leaves a scope opened by `enterScope`.
+  ## The cursor must have consumed the complete bounded body.
+  assert c.rem == 0, "into: body did not consume all " & $scope.bodyLen &
                      " children (left " & $c.rem & ")"
-  let consumed = int((cast[uint](c.p) - cast[uint](savedP)) div
+  let consumed = int((cast[uint](c.p) - cast[uint](scope.savedP)) div
                      sizeof(NifToken).uint)
-  c.rem = if savedRem >= consumed: savedRem - consumed else: 0
+  c.rem = if scope.savedRem >= consumed:
+            scope.savedRem - consumed
+          else:
+            0
+
+template into*(c: var Cursor; body: untyped) =
+  ## Enters the current `TagLit`, runs `body`, then restores the outer bounds.
+  ## `body` must consume every child.
+  let cursorScope = enterScope(c)
+  body
+  leaveScope(c, cursorScope)
 
 template loopInto*(c: var Cursor; body: untyped) =
   into c:
@@ -847,8 +862,13 @@ template addSuffixIfNeeded(b: var TokenBuf; payload: uint64) =
 template lowBits(x: uint32): uint32 = x and PayloadMask
 template lowBits(x: uint64): uint32 = uint32(x and uint64(PayloadMask))
 
-proc addDotToken*(b: var TokenBuf) {.inline.} = b.add dotToken()
-proc addCharLit*(b: var TokenBuf; c: char) {.inline.} = b.add charToken(c)
+proc addDotToken*(b: var TokenBuf) {.inline.} =
+  ## Appends an empty dot placeholder.
+  b.add dotToken()
+
+proc addCharLit*(b: var TokenBuf; c: char) {.inline.} =
+  ## Appends a character literal.
+  b.add charToken(c)
 
 proc encodeInlineStr(s: string): uint32 {.inline.} =
   ## Pack up to 3 bytes of `s` into the inline-string layout.
@@ -868,13 +888,31 @@ template addStringLike(b: var TokenBuf; kind: NifKind; s: string; pool: untyped)
     addSuffixIfNeeded(b, payload)
 
 proc addStrLit*(b: var TokenBuf; s: string) =
+  ## Appends a string literal, using inline storage when possible.
   addStringLike(b, StrLit, s, b.pool.strings)
+
 proc addIdent*(b: var TokenBuf; s: string) =
+  ## Appends an identifier, using inline storage when possible.
   addStringLike(b, Ident,  s, b.pool.strings)
+
 proc addSymUse*(b: var TokenBuf; s: string) =
+  ## Appends a symbol use, interning `s` when it does not fit inline.
   addStringLike(b, Symbol, s, b.pool.syms)
+
 proc addSymDef*(b: var TokenBuf; s: string) =
+  ## Appends a symbol definition, interning `s` when it does not fit inline.
   addStringLike(b, SymbolDef, s, b.pool.syms)
+
+proc addSymUse*(b: var TokenBuf; id: SymId) =
+  ## Emit a symbol already interned in `b.pool`. Short symbols remain inline;
+  ## longer symbols reuse `id` without a second hash-table lookup.
+  let s = b.pool.syms[id]
+  if s.len <= StrInlineMaxLen:
+    b.add NifToken(toX(Symbol, encodeInlineStr(s)))
+  else:
+    let payload = uint64(uint32(id)) shl 1
+    b.add NifToken(toX(Symbol, lowBits(payload)))
+    addSuffixIfNeeded(b, payload)
 
 template emitChained(b: var TokenBuf; kind: NifKind; bits: uint64) =
   ## Emit a value carrier (kinded token plus 0/1/2 ExtendedSuffix
@@ -908,9 +946,11 @@ proc addIntLit*(b: var TokenBuf; v: int64) =
     b.add extendedSuffixToken(uint32(bits shr (PayloadBits * 2)))
 
 proc addUIntLit*(b: var TokenBuf; v: uint64) =
+  ## Appends an unsigned integer literal using the shortest token chain.
   emitChained(b, UIntLit, v)
 
 proc addFloatLit*(b: var TokenBuf; v: float64) =
+  ## Appends a floating-point literal using its exact bit representation.
   emitChained(b, FloatLit, cast[uint64](v))
 
 # ── Open / close tags (the only mutations that touch `openTags`) ─────────
@@ -987,6 +1027,16 @@ proc beginRead*(b: var TokenBuf): Cursor =
   result = Cursor(owner: b.owner,
                   p: addr(b.data[0]),
                   rem: b.len)
+
+proc childCursor*(c: Cursor): Cursor =
+  ## Returns a bounded cursor over the children of the `TagLit` at `c`.
+  ## The input cursor is not advanced.
+  assert c.kind == TagLit, "childCursor requires cursor at TagLit"
+  result = c
+  let headWidth = tokenWidth(result)
+  result.p = cast[ptr NifToken](cast[uint](result.p) +
+                                uint(headWidth) * sizeof(NifToken).uint)
+  result.rem = int c.cursorJump
 
 proc endRead*(c: var Cursor) {.inline.} =
   if c.owner != nil: decRcAndFree(c.owner)
@@ -1076,6 +1126,44 @@ proc addSubtree*(dest: var TokenBuf; c: Cursor) =
     assert c.pool != nil and c.tags != nil
     var c = c
     addAcrossPools(dest, c)
+
+proc addBufferSamePool*(dest: var TokenBuf; src: TokenBuf) =
+  ## Append a closed buffer that shares `dest`'s literal and tag pools.
+  ##
+  ## The source is borrowed and remains usable. Matching pools make the
+  ## append one bulk copy without constructing a read cursor.
+  assert src.openTags.len == 0, "addBufferSamePool with unclosed source tags"
+  assert dest.data != src.data, "cannot append a TokenBuf to itself"
+  assert dest.pool == src.pool and dest.tags == src.tags,
+         "addBufferSamePool requires matching pools"
+  if src.len == 0:
+    return
+  if dest.owner != nil:
+    prepareMutation(dest)
+  if dest.len + src.len > dest.cap:
+    dest.cap = max(dest.cap div 2 + dest.cap, dest.len + src.len)
+    dest.data = cast[Storage](
+      realloc(dest.data, sizeof(NifToken) * dest.cap))
+  copyMem(addr dest.data[dest.len], src.data,
+          src.len * sizeof(NifToken))
+  dest.len += src.len
+
+proc addBuffer*(dest: var TokenBuf; src: var TokenBuf) =
+  ## Append all complete top-level values from `src` to `dest`.
+  ##
+  ## Matching pools permit one bulk copy. Otherwise values are re-interned
+  ## through `addSubtree`. `dest` and `src` must be distinct buffers.
+  assert src.openTags.len == 0, "addBuffer with unclosed source tags"
+  assert dest.data != src.data, "cannot append a TokenBuf to itself"
+  if src.len == 0:
+    return
+  if dest.pool == src.pool and dest.tags == src.tags:
+    dest.addBufferSamePool(src)
+  else:
+    var c = src.beginRead()
+    while c.hasMore:
+      dest.addSubtree(c)
+      c.skip()
 
 # ── Self-test ────────────────────────────────────────────────────────────
 

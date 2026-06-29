@@ -2033,6 +2033,7 @@ proc handleCmdLine =
       buildNifmake(showProgress)
       buildNj(showProgress)
       buildVl(showProgress)
+      buildValidator(showProgress)
       buildDagon(showProgress)
       buildPnak(showProgress)
     of "nifler":

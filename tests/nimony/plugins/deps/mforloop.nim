@@ -12,9 +12,9 @@ import plugins
 
 proc emitSubst(o: var NifBuilder; n: var NifCursor; loopSym: SymId; val: int) =
   ## Copies `n` to `o`, replacing every use of `loopSym` with the literal `val`.
-  if n.kind == ParLe:
+  if n.kind == TagLit:
     o.copyInto(n):
-      while n.kind != ParRi:
+      while n.hasMore:
         emitSubst(o, n, loopSym, val)
   elif n.kind == Symbol and n.symId == loopSym:
     o.addIntLit(val)
@@ -27,9 +27,9 @@ proc loopVarSym(n: NifCursor): SymId =
   ## Extracts the loop variable's symbol from the for-loop plugin input.
   ## Input shape: `(forcall <iter> (callargs ...) (unpackflat ...) <body>)`.
   var vars = forLoopVars(n)
-  if vars.kind == ParLe and vars.otherKind == UnpackflatU:
+  if vars.kind == TagLit and vars.otherKind == UnpackflatU:
     vars = firstChild(vars)        # (let …)
-    if vars.kind == ParLe:
+    if vars.kind == TagLit:
       vars = firstChild(vars)      # (symdef x)
     if vars.kind == SymbolDef:
       return vars.symId

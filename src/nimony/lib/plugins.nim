@@ -9,362 +9,249 @@
 ## See `doc/plugins.md` for the full guide.
 
 {.feature: "lenientnils".}
+{.feature: "untyped".}
 
-import std / [assertions, hashes, syncio, cmdline, formatfloat]
-import ".." / ".." / "lib" / [nifcursors, nifstreams, lineinfos, bitabs]
-
-import ".." / [nimony_model, nif_annotations]
-export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther, NifKind, NoLineInfo
+import std / [assertions, hashes, syncio, cmdline]
+import ".." / ".." / "lib" / nifcore except symId, `$`, addSymUse
+import ".." / ".." / "lib" / nifcoreparse except symId, `$`, addSymUse
+import ".." / ".." / "lib" / bitabs
+import ".." / ".." / "models" / [tags, nimony_tags]
+import ".." / nif_annotations
+export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther
+export NifKind, SymId, TagId
+export DotToken, CharLit, StrLit, IntLit, UIntLit, FloatLit
+export Symbol, SymbolDef, Ident, TagLit
+export isValid, hash
+export skip, hasMore, into, loopInto
+export addSubtree, addDotToken, addStrLit, addIntLit, addUIntLit
+export addIdent, addCharLit, addFloatLit, addSymDef
+export charLit
 export nif_annotations
 
 type
-  NifBuilderObj = object
-    rc: int
-    buf: TokenBuf
+  NifBuilder* = nifcore.TokenBuf ## Move-only builder for generated NIF output.
+  NifCursor* = nifcore.Cursor ## Reference-counted, bounded NIF read cursor.
+  LineInfo* = nifcore.NifLineInfo ## Source location attached to a NIF value.
 
-  NifBuilderOwner = ptr NifBuilderObj
+  SourcePos* = object ## Decoded source position.
+    line*: int ## One-based source line, or zero when unavailable.
+    col*: int ## One-based source column, or zero when unavailable.
 
-  NifBuilder* = object ## Mutable NIF builder used by plugins to assemble output.
-                 ## Copying a tree shares the underlying payload until the next
-                 ## mutation detaches it.
-    p: NifBuilderOwner
+const NoLineInfo* = NoNifLineInfo ## Source location for synthetic output.
 
-  LineInfo* = PackedLineInfo ## Packed source location metadata attached to NIF
-                             ## tokens. Use `NoLineInfo` for synthetic output.
+proc createPluginTags(): TagPool =
+  result = newTagPool()
+  for tag in low(TagEnum)..high(TagEnum):
+    if tag != InvalidTagId:
+      let id = result.registerTag(TagData[tag][0])
+      assert uint32(id) == uint32(tag),
+        "Nimony tag pool is not ordinal-aligned for " & TagData[tag][0]
 
-  SourcePos* = object ## Decoded source position for plugin-facing APIs.
-    line*: int
-    col*: int
+let
+  pluginPool = newPool()
+  pluginTags = createPluginTags()
 
-  NifCursor* = object ## Read handle into a frozen NIF tree.
-                 ## A `NifCursor` behaves like a cursor positioned at one token or
-                 ## subtree. Copying a `NifCursor` retains the underlying tree
-                 ## snapshot automatically.
-    cursor: Cursor
+proc appendInfo(buf: var NifBuilder; info: LineInfo) {.inline.} =
+  if info.isValid:
+    buf.appendLineInfo(info)
 
-  SymId* = object ## Symbol identifier. Use with `addSymUse` / `addSymDef` to
-                  ## emit symbol references and definitions in the output.
-    raw: nifstreams.SymId
-
-  TagId* = object ## Tag identifier for NIF tree nodes (e.g. `Stmt`, `Expr`).
-                  ## Use with `parLeToken` to open a tagged subtree.
-    raw: nifstreams.TagId
-
-proc `=destroy`*(x: NifBuilder) =
-  if x.p != nil:
-    dec x.p.rc
-    if x.p.rc == 0:
-      `=destroy`(x.p[].buf)
-      dealloc(x.p)
-
-proc `=wasMoved`*(x: var NifBuilder) =
-  x.p = nil
-
-proc `=copy`*(dest: var NifBuilder; src: NifBuilder) =
-  if dest.p != src.p:
-    `=destroy`(dest)
-    if src.p != nil:
-      inc src.p.rc
-    dest.p = src.p
-
-proc `=dup`*(x: NifBuilder): NifBuilder {.nodestroy.} =
-  result = NifBuilder(p: x.p)
-  if result.p != nil:
-    inc result.p.rc
-
-proc initNifBuilderObj(buf: sink TokenBuf): NifBuilderOwner =
-  result = cast[NifBuilderOwner](alloc0(sizeof(NifBuilderObj)))
-  result.rc = 1
-  result.buf = ensureMove(buf)
-
-proc copyBuffer(buf: TokenBuf): TokenBuf =
-  result = createTokenBuf(max(buf.len, 4))
-  result.add buf
-
-proc hasSubtree(n: NifCursor): bool {.inline.} =
-  n.cursor.hasMore
-
-proc createTree(buf: sink TokenBuf): NifBuilder =
-  result = NifBuilder(p: initNifBuilderObj(buf))
-
-proc prepareMutation(t: var NifBuilder) =
-  if t.p == nil:
-    t = createTree(createTokenBuf())
-  elif t.p.rc > 1:
-    let oldP = t.p
-    t.p = initNifBuilderObj(copyBuffer(oldP.buf))
-    dec oldP.rc
-
+proc hasSubtree(n: NifCursor): bool {.inline.} = n.hasMore
 proc isEmpty*(tree: NifBuilder): bool {.inline.} =
-  ## Returns true when `tree` does not currently contain any tokens.
-  tree.p == nil or tree.p[].buf.len == 0
-
-proc kind*(n: NifCursor): NifKind {.inline.} =
-  ## Returns the raw NIF token kind at the current position.
-  n.cursor.kind
+  ## Returns whether `tree` contains no NIF values.
+  tree.len == 0
 
 proc info*(n: NifCursor): LineInfo {.inline.} =
-  ## Returns the packed line info stored on the current token.
-  n.cursor.info
+  ## Returns the current value's source location, or `NoLineInfo` at exhaustion.
+  if n.hasMore: n.rawLineInfo else: NoLineInfo
 
-proc isValid*(info: LineInfo): bool {.inline.} =
-  ## Returns true when `info` refers to a real source location.
-  lineinfos.isValid(info)
-
-proc filePath*(info: LineInfo): string =
+proc filePath*(info: LineInfo): string {.inline.} =
   ## Returns the source path stored in `info`, or `""` when unavailable.
-  if lineinfos.isValid(info):
-    let rawInfo = unpack(pool.man, info)
-    if rawInfo.file.isValid:
-      result = pool.files[rawInfo.file]
-    else:
-      result = ""
-  else:
-    result = ""
+  if info.file.isValid: pluginPool.filenames[info.file] else: ""
 
-proc lineCol*(info: LineInfo): SourcePos =
-  ## Returns the 1-based `(line, col)` stored in `info`, or `(0, 0)` when
-  ## unavailable.
-  if lineinfos.isValid(info):
-    let rawInfo = unpack(pool.man, info)
-    result = SourcePos(line: int(rawInfo.line), col: int(rawInfo.col))
-  else:
-    result = SourcePos(line: 0, col: 0)
-
-func `==`*(a, b: SymId): bool {.inline.} =
-  a.raw == b.raw
-
-func hash*(x: SymId): Hash {.inline.} =
-  hash(x.raw)
-
-proc `$`*(x: SymId): string {.inline.} =
-  pool.syms[x.raw]
-
-proc `$`*(x: TagId): string {.inline.} =
-  ## Renders `x` as its textual NIF tag name.
-  pool.tags[x.raw]
-
-proc symText*(s: SymId): string {.inline.} =
-  ## Returns the symbol text stored in the plugin-facing symbol handle.
-  pool.syms[s.raw]
-
-proc tagText*(t: TagId): string {.inline.} =
-  ## Returns the textual NIF tag name for `t`.
-  pool.tags[t.raw]
-
-proc symId*(n: NifCursor): SymId {.inline.} =
-  ## Returns the symbol id of the current token as an opaque handle.
-  ## The current token must be a `Symbol` or `SymbolDef`.
-  SymId(raw: n.cursor.symId)
+proc lineCol*(info: LineInfo): SourcePos {.inline.} =
+  ## Decodes the one-based line and column stored in `info`.
+  SourcePos(line: int(info.line), col: int(info.col))
 
 proc symText*(n: NifCursor): string {.inline.} =
-  ## Returns the symbol text of the current `Symbol` or `SymbolDef` token.
-  pool.syms[n.cursor.symId]
+  ## Returns the current `Symbol` or `SymbolDef` name.
+  n.symName
+
+proc symText*(s: SymId): string {.inline.} =
+  ## Resolves a plugin-pool symbol handle to its name.
+  pluginPool.syms[s]
 
 proc identText*(n: NifCursor): string {.inline.} =
-  ## Returns the identifier text of the current `Ident` token.
-  pool.strings[n.cursor.litId]
+  ## Returns the current `Ident` text.
+  n.strVal
 
 proc stringValue*(n: NifCursor): string {.inline.} =
-  ## Returns the string contents of the current `StringLit` token.
-  pool.strings[n.cursor.litId]
-
-proc charLit*(n: NifCursor): char {.inline.} =
-  ## Returns the character stored in the current `CharLit` token.
-  n.cursor.charLit
+  ## Returns the current `StrLit` contents.
+  n.strVal
 
 proc intValue*(n: NifCursor): BiggestInt {.inline.} =
-  ## Returns the integer value stored in the current `IntLit` token.
-  pool.integers[n.cursor.intId]
+  ## Returns the current signed integer literal.
+  BiggestInt(n.intVal)
 
 proc uintValue*(n: NifCursor): BiggestUInt {.inline.} =
-  ## Returns the unsigned integer value stored in the current `UIntLit` token.
-  pool.uintegers[n.cursor.uintId]
+  ## Returns the current unsigned integer literal.
+  BiggestUInt(n.uintVal)
 
 proc floatValue*(n: NifCursor): BiggestFloat {.inline.} =
-  ## Returns the floating-point value stored in the current `FloatLit` token.
-  pool.floats[n.cursor.floatId]
-
-proc stmtKind*(n: NifCursor): NimonyStmt {.inline.} =
-  ## Returns the current statement kind, or `NoStmt` when the current token is
-  ## not a statement node.
-  n.cursor.stmtKind
-
-proc exprKind*(n: NifCursor): NimonyExpr {.inline.} =
-  ## Returns the current expression kind, or `NoExpr` when the current token is
-  ## not an expression node.
-  n.cursor.exprKind
-
-proc typeKind*(n: NifCursor): NimonyType {.inline.} =
-  ## Returns the current type kind.
-  ## `DotToken` is treated as `VoidT`; non-type nodes return `NoType`.
-  n.cursor.typeKind
-
-proc otherKind*(n: NifCursor): NimonyOther {.inline.} =
-  ## Returns the current "other/substructure" kind, or `NoSub` for non-matching
-  ## nodes.
-  n.cursor.substructureKind
-
-proc pragmaKind*(n: NifCursor): NimonyPragma {.inline.} =
-  ## Returns the current pragma kind, or `NoPragma` for non-matching nodes.
-  n.cursor.pragmaKind
-
-proc createTree*(): NifBuilder =
-  ## Creates an empty mutable `NifBuilder`.
-  createTree(createTokenBuf())
-
-proc snapshot*(tree: var NifBuilder): NifCursor =
-  ## Returns a read-only snapshot positioned at the first top-level token of
-  ## `tree`.
-  ##
-  ## The returned `NifCursor` keeps the underlying data alive automatically via
-  ## the Cursor's COW mechanism. The original tree remains writable and
-  ## detaches on the next mutation.
-  ##
-  ## `tree` must not be empty; use `isEmpty` first when that is expected.
-  assert not tree.isEmpty, "cannot snapshot empty NifBuilder"
-  result = NifCursor(cursor: beginRead(tree.p[].buf))
-
-template withTree*(t: var NifBuilder; kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma; info: LineInfo; body: untyped) =
-  ## Appends a tree node of `kind` to `t`, runs `body` to emit its children, and
-  ## closes the node afterwards.
-  prepareMutation(t)
-  # Use the generic parLeToken overload from nimony_model that does the
-  # TagId conversion via `cast[TagId](kind)` inside its body — nimony's
-  # cast rule allows it there.
-  t.p[].buf.add parLeToken(kind, info)
-  body
-  t.p[].buf.addParRi()
+  ## Returns the current floating-point literal.
+  BiggestFloat(n.floatVal)
 
 proc tagId*(n: NifCursor): TagId {.inline.} =
-  ## Returns the raw tag id of the current token.
-  ## The current token must be a `ParLe`.
-  TagId(raw: n.cursor.tagId)
+  ## Returns the current `TagLit`'s raw tag handle.
+  n.cursorTagId
 
 proc tagText*(n: NifCursor): string {.inline.} =
-  ## Returns the tag text of the current `ParLe` token.
-  pool.tags[n.cursor.tagId]
+  ## Returns the current `TagLit`'s textual tag name.
+  n.tags.tags[n.cursorTagId]
+
+proc tagText*(tag: TagId): string {.inline.} =
+  ## Resolves a plugin-pool tag handle to its textual name.
+  pluginTags.tags[tag]
 
 proc tag*(n: NifCursor): TagId {.inline.} =
-  ## Returns the raw tag id for the current tree node, or `ErrT` if the
-  ## current token is not a `ParLe`.
-  TagId(raw: n.cursor.tag)
+  ## Returns the error tag for atoms and exhausted cursors.
+  if n.hasMore and n.kind == TagLit:
+    n.cursorTagId
+  else:
+    TagId(uint32(ErrTagId))
 
-proc addParLe*(t: var NifBuilder; tag: TagId; info: LineInfo = NoLineInfo) =
-  ## Appends an opening tree token with raw tag id `tag` to `t`.
-  ## Use `addParLe(tagText, ...)` when constructing nodes from textual tag
-  ## names instead of existing ids.
-  prepareMutation(t)
-  t.p[].buf.addParLe(tag.raw, info)
+proc rawTag(n: NifCursor): TagEnum {.inline.} =
+  if n.kind != TagLit or n.tags != pluginTags:
+    return InvalidTagId
+  let id = uint32(n.cursorTagId)
+  if id <= uint32(high(TagEnum)): cast[TagEnum](id) else: InvalidTagId
 
-proc addParLe*(t: var NifBuilder; tag: string; info: LineInfo = NoLineInfo) =
-  ## Appends an opening tree token with textual tag `tag` to `t`.
-  prepareMutation(t)
-  t.p[].buf.addParLe(pool.tags.getOrIncl(tag), info)
+proc stmtKind*(n: NifCursor): NimonyStmt {.inline.} =
+  ## Returns the current statement tag, or `NoStmt`.
+  let t = rawTag(n)
+  if rawTagIsNimonyStmt(t): cast[NimonyStmt](t) else: NoStmt
 
-proc addParRi*(t: var NifBuilder) =
-  ## Appends a closing tree token (`)`) to `t`.
-  prepareMutation(t)
-  t.p[].buf.addParRi()
+proc exprKind*(n: NifCursor): NimonyExpr {.inline.} =
+  ## Returns the current expression tag, or `NoExpr`.
+  let t = rawTag(n)
+  if rawTagIsNimonyExpr(t): cast[NimonyExpr](t) else: NoExpr
+
+proc typeKind*(n: NifCursor): NimonyType {.inline.} =
+  ## Returns the current type tag; `DotToken` is treated as `VoidT`.
+  if n.kind == DotToken: VoidT
+  else:
+    let t = rawTag(n)
+    if rawTagIsNimonyType(t): cast[NimonyType](t) else: NoType
+
+proc otherKind*(n: NifCursor): NimonyOther {.inline.} =
+  ## Returns the current substructure tag, or `NoSub`.
+  let t = rawTag(n)
+  if rawTagIsNimonyOther(t): cast[NimonyOther](t) else: NoSub
+
+proc pragmaKind*(n: NifCursor): NimonyPragma {.inline.} =
+  ## Returns the current pragma tag or identifier kind, or `NoPragma`.
+  var t = InvalidTagId
+  if n.kind == TagLit:
+    t = rawTag(n)
+  elif n.kind == Ident:
+    let id = uint32(pluginTags.tags.getKeyId(n.identText))
+    if id <= uint32(high(TagEnum)):
+      t = cast[TagEnum](id)
+  if rawTagIsNimonyPragma(t): cast[NimonyPragma](t) else: NoPragma
+
+template tagIdFor(kind: untyped): untyped =
+  TagId(uint32(kind))
+
+proc createTree*(): NifBuilder =
+  ## Creates an empty plugin builder using the shared plugin pools.
+  nifcore.createTokenBuf(sharedPool = pluginPool, sharedTags = pluginTags)
+
+proc snapshot*(tree: var NifBuilder): NifCursor =
+  ## Returns a stable read cursor at the first value in non-empty `tree`.
+  assert not tree.isEmpty, "cannot snapshot empty NifBuilder"
+  tree.beginRead()
+
+template withTree*(
+    t: var NifBuilder;
+    kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma;
+    info: LineInfo;
+    body: untyped) =
+  ## Emits a tagged tree around the values produced by `body`.
+  t.openTag(tagIdFor(kind))
+  appendInfo(t, info)
+  body
+  t.closeTag()
+
+proc openTree*(t: var NifBuilder; tag: TagId;
+               info: LineInfo = NoLineInfo) =
+  ## Opens a tree using an existing plugin-pool tag handle.
+  t.openTag(tag)
+  appendInfo(t, info)
+
+proc openTree*(t: var NifBuilder; tag: string;
+               info: LineInfo = NoLineInfo) =
+  ## Opens a tree using a textual tag, interning it when necessary.
+  t.openTag(pluginTags.tags.getOrIncl(tag))
+  appendInfo(t, info)
+
+proc closeTree*(t: var NifBuilder) =
+  ## Seals the most recently opened tree.
+  t.closeTag()
 
 proc takeTree*(t: var NifBuilder; n: var NifCursor) =
-  ## Copies the current token or subtree from `n` into `t` and advances `n`
-  ## past the copied fragment.
-  prepareMutation(t)
-  t.p[].buf.takeTree(n.cursor)
+  ## Copies the current value or subtree into `t` and advances `n`.
+  t.addSubtree(n)
+  n.skip()
+
+proc enterPluginScope(n: var NifCursor): nifcore.CursorScope =
+  nifcore.enterScope(n)
+
+proc leavePluginScope(n: var NifCursor; scope: nifcore.CursorScope) =
+  nifcore.leaveScope(n, scope)
 
 template copyInto*(t: var NifBuilder; n: var NifCursor; body: untyped) =
-  ## Copies the opening tag from `n` into `t`, processes children via `body`
-  ## (which must consume them through `take*` / `skip` / nested `copyInto`),
-  ## then closes the node in `t` and advances `n` past the matching `)`.
-  ##
-  ## Delegates to nifprims's `into`, so it remains correct under virtual
-  ## ParRi (sealed-jump) and overflow scopes.
-  ##
-  ## .. code-block:: nim
-  ##   o.copyInto(n):
-  ##     while n.hasMore:
-  ##       transform(n, o)
-  assert n.kind == ParLe, "copyInto requires cursor at ParLe"
-  prepareMutation(t)
-  t.p[].buf.add n.cursor
-  nifcursors.into n.cursor:
-    body
-  t.p[].buf.addParRi()
+  ## Copies `n`'s tag, transforms its children with `body`, and advances `n`.
+  assert n.kind == TagLit, "copyInto requires cursor at TagLit"
+  let copiedTag = n.tagId
+  let copiedInfo = n.info
+  t.openTree(copiedTag, copiedInfo)
+  let inputScope = enterPluginScope(n)
+  body
+  leavePluginScope(n, inputScope)
+  t.closeTree()
 
-proc addSubtree*(t: var NifBuilder; n: NifCursor) =
-  ## Copies the current token or subtree from `n` into `t` without advancing it.
-  prepareMutation(t)
-  t.p[].buf.addSubtree(n.cursor)
+proc addTree*(t: var NifBuilder; child: NifBuilder) =
+  ## Appends every complete top-level value from `child`.
+  t.addBufferSamePool(child)
 
-proc add*(t: var NifBuilder; child: NifBuilder) =
-  ## Appends the complete contents of `child` to `t`.
-  if not child.isEmpty:
-    prepareMutation(t)
-    t.p[].buf.add child.p[].buf
+proc addSymUse*(t: var NifBuilder; s: SymId;
+                info: LineInfo = NoLineInfo) =
+  ## Appends a symbol use from a plugin-pool symbol handle.
+  nifcore.addSymUse(t, s)
+  appendInfo(t, info)
 
-proc addDotToken*(t: var NifBuilder) =
-  ## Appends a dot placeholder token (`.`) to `t`.
-  prepareMutation(t)
-  t.p[].buf.addDotToken()
-
-proc addStrLit*(t: var NifBuilder; s: string) =
-  ## Appends a string literal atom to `t`.
-  prepareMutation(t)
-  t.p[].buf.addStrLit(s)
-
-proc addIntLit*(t: var NifBuilder; i: BiggestInt) =
-  ## Appends a signed integer literal atom to `t`.
-  prepareMutation(t)
-  t.p[].buf.addIntLit(i)
-
-proc addUIntLit*(t: var NifBuilder; i: BiggestUInt) =
-  ## Appends an unsigned integer literal atom to `t`.
-  prepareMutation(t)
-  t.p[].buf.addUIntLit(i)
-
-proc addIdent*(t: var NifBuilder; ident: string) =
-  ## Appends an identifier atom to `t`.
-  prepareMutation(t)
-  t.p[].buf.addIdent(ident)
-
-proc addCharLit*(t: var NifBuilder; c: char) =
-  ## Appends a character literal atom to `t`.
-  prepareMutation(t)
-  t.p[].buf.addCharLit(c)
-
-proc addFloatLit*(t: var NifBuilder; f: BiggestFloat) =
-  ## Appends a floating-point literal atom to `t`.
-  prepareMutation(t)
-  t.p[].buf.addFloatLit(f)
-
-proc addSymUse*(t: var NifBuilder; s: SymId; info: LineInfo = NoLineInfo) =
-  ## Appends a symbol-use atom named by the opaque handle `s` to `t`.
-  prepareMutation(t)
-  t.p[].buf.addSymUse(s.raw, info)
-
-proc addSymUse*(t: var NifBuilder; s: string; info: LineInfo = NoLineInfo) =
-  ## Appends a symbol-use atom named `s` to `t`.
-  prepareMutation(t)
-  t.p[].buf.addSymUse(pool.syms.getOrIncl(s), info)
+proc addSymUse*(t: var NifBuilder; s: string;
+                info: LineInfo) =
+  ## Appends a symbol use from its textual name with source information.
+  nifcore.addSymUse(t, s)
+  appendInfo(t, info)
 
 proc addErrorMessage(t: var NifBuilder; msg: string; info: LineInfo) =
-  prepareMutation(t)
-  t.p[].buf.addStrLit(msg, info)
+  t.addStrLit(msg)
+  appendInfo(t, info)
 
 proc buildErrorTree(info: LineInfo; msg: string; orig: NifCursor): NifBuilder =
   result = createTree()
-  result.addParLe("err", info)
+  result.openTree("err", info)
   result.addSubtree(orig)
   result.addErrorMessage(msg, info)
-  result.addParRi()
+  result.closeTree()
 
 proc buildErrorTree(info: LineInfo; msg: string): NifBuilder =
   result = createTree()
-  result.addParLe("err", info)
+  result.openTree("err", info)
   result.addDotToken()
   result.addErrorMessage(msg, info)
-  result.addParRi()
+  result.closeTree()
 
 proc errorTree*(msg: string): NifBuilder =
   ## Builds a compiler error tree with no original expression attached.
@@ -388,18 +275,14 @@ proc errorTree*(msg: string; at, orig: NifCursor): NifBuilder =
   else:
     buildErrorTree(at.info, msg)
 
-proc parseNifBuffer(text: string): TokenBuf =
+proc parseNifBuffer(text: string): nifcore.TokenBuf =
   # Internal helper used by `bindSymHelper` to parse a NIF source fragment
-  # (e.g. `name.0.suffix` or `(cchoice s1 s2 …)`). Strips the trailing
-  # `EofToken` so the resulting tokens concatenate cleanly into a builder.
-  result = parseFromBuffer(text, "")
-  if result.len > 0 and result[result.len-1].kind == EofToken:
-    result.shrink(result.len-1)
+  # (e.g. `name.0.suffix` or `(cchoice s1 s2 …)`).
+  result = parseFromBuffer(text, "", sharedPool = pluginPool,
+                           sharedTags = pluginTags)
 
 type
-  BindSymRule* = enum
-    ## Selector for `bindSym`'s third argument. Mirrors `lib/std/macros.nim`'s
-    ## enum of the same name so the macro and plugin paths share semantics.
+  BindSymRule* = enum ## Controls call-site lookup for `bindSym`.
     brClosed     ## Default: candidates fixed at the plugin's def-site;
                  ## sem at the call site won't add further overloads.
     brOpen       ## Open: sem at the call site augments the choice with
@@ -411,8 +294,8 @@ proc bindSymHelper*(t: var NifBuilder; nifText: string) =
   ## Runtime helper: parse `nifText` (a NIF source fragment) and append the
   ## resulting tokens to `t`. Called by `bindSym`'s sem rewrite — not intended
   ## for direct use.
-  prepareMutation(t)
-  t.p[].buf.add parseNifBuffer(nifText)
+  var parsed = parseNifBuffer(nifText)
+  t.addBuffer(parsed)
 
 proc bindSym*(t: var NifBuilder; name: string;
               rule: BindSymRule = brClosed) {.magic: BindSymName.}
@@ -437,81 +320,66 @@ proc bindSym*(t: var NifBuilder; name: string;
 
 proc addEmptyNode*(t: var NifBuilder; info: LineInfo = NoLineInfo) =
   ## Appends a single empty placeholder node (`.`) to `t`.
-  prepareMutation(t)
-  t.p[].buf.addEmpty(info)
+  t.addDotToken()
+  appendInfo(t, info)
 
 proc addEmptyNode2*(t: var NifBuilder; info: LineInfo = NoLineInfo) =
   ## Appends two empty placeholder nodes (`. .`) to `t`.
-  prepareMutation(t)
-  t.p[].buf.addEmpty2(info)
+  t.addDotToken()
+  appendInfo(t, info)
+  t.addDotToken()
+  appendInfo(t, info)
 
 proc addEmptyNode3*(t: var NifBuilder; info: LineInfo = NoLineInfo) =
   ## Appends three empty placeholder nodes (`. . .`) to `t`.
-  prepareMutation(t)
-  t.p[].buf.addEmpty3(info)
+  t.addDotToken()
+  appendInfo(t, info)
+  t.addDotToken()
+  appendInfo(t, info)
+  t.addDotToken()
+  appendInfo(t, info)
 
 proc addEmptyNode4*(t: var NifBuilder; info: LineInfo = NoLineInfo) =
   ## Appends four empty placeholder nodes (`. . . .`) to `t`.
-  prepareMutation(t)
-  t.p[].buf.addEmpty3(info)
-  t.p[].buf.addEmpty(info)
-
-proc skip*(n: var NifCursor) =
-  ## Skips the current token or, if positioned on `ParLe`, the entire subtree.
-  skip n.cursor
+  t.addDotToken()
+  appendInfo(t, info)
+  t.addDotToken()
+  appendInfo(t, info)
+  t.addDotToken()
+  appendInfo(t, info)
+  t.addDotToken()
+  appendInfo(t, info)
 
 proc firstChild*(n: NifCursor): NifCursor {.inline.} =
   ## Returns a cursor positioned at the first child of `n`. `n` must be at
-  ## a `ParLe`. The returned cursor's bounded `rem` is set to the sub-scope's
+  ## a `TagLit`. The returned cursor's bounded `rem` is set to the sub-scope's
   ## body count so it can be used both for read-only `~` / `takeTree`
   ## extraction *and* for bounded iteration (`while c.hasMore: …`). `n`
   ## itself is unchanged.
-  ## a `ParLe`.
-  result = NifCursor(cursor: firstSon(n.cursor))
+  result = nifcore.childCursor(n)
 
 # ── Traversal templates ──────────────────────────────────────────────────
 # Pure traversal helpers for reading/analyzing a tree without producing output.
 
-template hasMore*(n: NifCursor): bool =
-  ## True while there are more children before the closing `)`.
-  n.cursor.hasMore
-
-template into*(n: var NifCursor; body: untyped) =
-  ## Enters the current node, runs `body` to process the children, then
-  ## advances past the (real or virtual) closing `)`. Delegates to nifprims
-  ## so the bounded-scope and overflow paths are handled correctly.
-  ##
-  ## .. code-block:: nim
-  ##   n.into:
-  ##     while n.hasMore:
-  ##       analyze(n)
-  ##       skip n
-  nifcursors.into n.cursor:
-    body
-
-template loopInto*(n: var NifCursor; body: untyped) =
-  ## Enters a node, iterates all children, then advances past `)`.
-  ## The body must advance `n` on every iteration.
-  ##
-  ## .. code-block:: nim
-  ##   n.loopInto:
-  ##     analyze(n)
-  ##     skip n
-  into n:
-    while n.hasMore:
-      body
-
 template balancedTokens*(n: var NifCursor; body: untyped) =
-  ## Deep-scans all `ParLe` nodes in the subtree rooted at `n`.
-  ## Inside `body`, `n` is positioned at each `ParLe` node in turn.
+  ## Deep-scans all `TagLit` nodes in the subtree rooted at `n`.
+  ## Inside `body`, `n` is positioned at each `TagLit` node in turn.
   ## `body` must **not** advance `n` — the template handles traversal.
   ##
   ## .. code-block:: nim
   ##   n.balancedTokens:
   ##     if n.stmtKind == IfS:
   ##       foundIf = true
-  nifcursors.balancedTokens n.cursor:
-    body
+  let outerCursor = n
+  if n.hasMore and n.kind == TagLit:
+    var scan = firstChild(n)
+    while scan.hasMore:
+      if scan.kind == TagLit:
+        n = scan
+        body
+      scan.inc()
+    n = outerCursor
+    n.skip()
 
 proc eqIdent*(n: NifCursor; name: string): bool =
   ## Returns true when `n` matches `name` exactly.
@@ -528,50 +396,102 @@ proc eqIdent*(n: NifCursor; name: string): bool =
 # single object with balanced operations for tree transformations.
 
 type
-  ChildKind* = enum
-    ## Category of a NIF child for `keep`/`drop` assertions.
+  ChildKind* = enum ## Category asserted by `keep`, `drop`, and `replace`.
     Any       ## matches any token or subtree
-    Expr      ## value expression (ParLe with expr tag, or Symbol/literal)
-    Type      ## type expression (ParLe with type tag, or DotToken for void)
-    Stmt      ## statement (ParLe with stmt tag)
+    Expr      ## value expression (TagLit with expr tag, or Symbol/literal)
+    Type      ## type expression (TagLit with type tag, or DotToken for void)
+    Stmt      ## statement (TagLit with stmt tag)
     Def       ## SymbolDef
     Sym       ## Symbol use
     Dot       ## DotToken (empty placeholder)
-    Lit       ## literal (IntLit, UIntLit, FloatLit, StringLit, CharLit)
+    Lit       ## literal (IntLit, UIntLit, FloatLit, StrLit, CharLit)
     Nested    ## nested substructure (params, pragmas, etc.)
 
-  Replacer* = object
-    ## Primary abstraction for NIF tree transformations. Bundles an output
-    ## builder and an input cursor with balanced operations that consume
-    ## input and produce output atomically.
+  Replacer* = object ## Input/output state for balanced NIF transformations.
     dest*: NifBuilder   ## Output builder — public for direct emit-only access.
     src: NifCursor      ## Input cursor — use getCursor/setCursor for raw access.
 
 proc isAtom*(t: Replacer): bool {.inline.} =
-  ## True when the cursor is at a leaf token (not ParLe). Atoms cannot be
+  ## True when the cursor is at a leaf token (not TagLit). Atoms cannot be
   ## entered with `keepTag`.
-  t.src.kind != ParLe
+  t.src.kind != TagLit
 
 # Delegated cursor accessors:
-proc kind*(t: Replacer): NifKind {.inline.} = t.src.kind
-proc info*(t: Replacer): LineInfo {.inline.} = t.src.info
-proc stmtKind*(t: Replacer): NimonyStmt {.inline.} = t.src.stmtKind
-proc exprKind*(t: Replacer): NimonyExpr {.inline.} = t.src.exprKind
-proc typeKind*(t: Replacer): NimonyType {.inline.} = t.src.typeKind
-proc otherKind*(t: Replacer): NimonyOther {.inline.} = t.src.otherKind
-proc pragmaKind*(t: Replacer): NimonyPragma {.inline.} = t.src.pragmaKind
-proc symId*(t: Replacer): SymId {.inline.} = t.src.symId
-proc symText*(t: Replacer): string {.inline.} = t.src.symText
-proc identText*(t: Replacer): string {.inline.} = t.src.identText
-proc stringValue*(t: Replacer): string {.inline.} = t.src.stringValue
-proc charLit*(t: Replacer): char {.inline.} = t.src.charLit
-proc intValue*(t: Replacer): BiggestInt {.inline.} = t.src.intValue
-proc uintValue*(t: Replacer): BiggestUInt {.inline.} = t.src.uintValue
-proc floatValue*(t: Replacer): BiggestFloat {.inline.} = t.src.floatValue
-proc tagId*(t: Replacer): TagId {.inline.} = t.src.tagId
-proc tagText*(t: Replacer): string {.inline.} = t.src.tagText
-proc tag*(t: Replacer): TagId {.inline.} = t.src.tag
-proc eqIdent*(t: Replacer; name: string): bool {.inline.} = t.src.eqIdent(name)
+proc kind*(t: Replacer): NifKind {.inline.} =
+  ## Returns the source cursor's raw NIF kind.
+  t.src.kind
+
+proc info*(t: Replacer): LineInfo {.inline.} =
+  ## Returns the source cursor's location.
+  t.src.info
+
+proc stmtKind*(t: Replacer): NimonyStmt {.inline.} =
+  ## Returns the source cursor's statement kind.
+  t.src.stmtKind
+
+proc exprKind*(t: Replacer): NimonyExpr {.inline.} =
+  ## Returns the source cursor's expression kind.
+  t.src.exprKind
+
+proc typeKind*(t: Replacer): NimonyType {.inline.} =
+  ## Returns the source cursor's type kind.
+  t.src.typeKind
+
+proc otherKind*(t: Replacer): NimonyOther {.inline.} =
+  ## Returns the source cursor's substructure kind.
+  t.src.otherKind
+
+proc pragmaKind*(t: Replacer): NimonyPragma {.inline.} =
+  ## Returns the source cursor's pragma kind.
+  t.src.pragmaKind
+
+proc symId*(t: Replacer): SymId {.inline.} =
+  ## Returns the source cursor's symbol handle.
+  t.src.symId
+
+proc symText*(t: Replacer): string {.inline.} =
+  ## Returns the source cursor's symbol text.
+  t.src.symText
+
+proc identText*(t: Replacer): string {.inline.} =
+  ## Returns the source cursor's identifier text.
+  t.src.identText
+
+proc stringValue*(t: Replacer): string {.inline.} =
+  ## Returns the source cursor's string literal.
+  t.src.stringValue
+
+proc charLit*(t: Replacer): char {.inline.} =
+  ## Returns the source cursor's character literal.
+  t.src.charLit
+
+proc intValue*(t: Replacer): BiggestInt {.inline.} =
+  ## Returns the source cursor's signed integer literal.
+  t.src.intValue
+
+proc uintValue*(t: Replacer): BiggestUInt {.inline.} =
+  ## Returns the source cursor's unsigned integer literal.
+  t.src.uintValue
+
+proc floatValue*(t: Replacer): BiggestFloat {.inline.} =
+  ## Returns the source cursor's floating-point literal.
+  t.src.floatValue
+
+proc tagId*(t: Replacer): TagId {.inline.} =
+  ## Returns the source cursor's raw tag handle.
+  t.src.tagId
+
+proc tagText*(t: Replacer): string {.inline.} =
+  ## Returns the source cursor's textual tag.
+  t.src.tagText
+
+proc tag*(t: Replacer): TagId {.inline.} =
+  ## Returns the source cursor's tag or the error tag for an atom.
+  t.src.tag
+
+proc eqIdent*(t: Replacer; name: string): bool {.inline.} =
+  ## Returns whether the source cursor names `name`.
+  t.src.eqIdent(name)
 
 # ── Kind checking ─────────────────────────────────────────────────────────
 
@@ -580,13 +500,13 @@ proc matchesChildKind(n: NifCursor; k: ChildKind): bool =
   of Any: true
   of Expr:
     case n.kind
-    of ParLe: n.exprKind != NoExpr
-    of Symbol, Ident, IntLit, UIntLit, FloatLit, StringLit, CharLit: true
+    of TagLit: n.exprKind != NoExpr
+    of Symbol, Ident, IntLit, UIntLit, FloatLit, StrLit, CharLit: true
     else: false
   of Type:
-    n.kind == DotToken or (n.kind == ParLe and n.typeKind != NoType)
+    n.kind == DotToken or (n.kind == TagLit and n.typeKind != NoType)
   of Stmt:
-    n.kind == ParLe and n.stmtKind != NoStmt
+    n.kind == TagLit and n.stmtKind != NoStmt
   of Def:
     n.kind == SymbolDef
   of Sym:
@@ -594,9 +514,9 @@ proc matchesChildKind(n: NifCursor; k: ChildKind): bool =
   of Dot:
     n.kind == DotToken
   of Lit:
-    n.kind in {IntLit, UIntLit, FloatLit, StringLit, CharLit}
+    n.kind in {IntLit, UIntLit, FloatLit, StrLit, CharLit}
   of Nested:
-    n.kind == ParLe and n.exprKind == NoExpr and n.stmtKind == NoStmt and
+    n.kind == TagLit and n.exprKind == NoExpr and n.stmtKind == NoStmt and
         n.typeKind == NoType
 
 proc assertChild(n: NifCursor; k: ChildKind) {.inline.} =
@@ -691,11 +611,12 @@ proc replace*(t: var Replacer; expected: ChildKind; replacement: NifCursor) =
   t.src.skip()
   t.dest.addSubtree(replacement)
 
-proc replace*(t: var Replacer; expected: ChildKind; replacement: NifBuilder) =
+proc replace*(t: var Replacer; expected: ChildKind;
+              replacement: NifBuilder) =
   ## Skip one child from input, emit replacement builder tree instead.
   assertChild(t.src, expected)
   t.src.skip()
-  t.dest.add(replacement)
+  t.dest.addTree(replacement)
 
 proc replace*(t: var Replacer; expected: NimonyStmt; replacement: NifCursor) =
   ## Skip one child, asserting a specific statement tag, emit replacement.
@@ -703,11 +624,12 @@ proc replace*(t: var Replacer; expected: NimonyStmt; replacement: NifCursor) =
   t.src.skip()
   t.dest.addSubtree(replacement)
 
-proc replace*(t: var Replacer; expected: NimonyStmt; replacement: NifBuilder) =
+proc replace*(t: var Replacer; expected: NimonyStmt;
+              replacement: NifBuilder) =
   ## Skip one child, asserting a specific statement tag, emit replacement.
   assertTag(t.src, expected)
   t.src.skip()
-  t.dest.add(replacement)
+  t.dest.addTree(replacement)
 
 proc replace*(t: var Replacer; expected: NimonyExpr; replacement: NifCursor) =
   ## Skip one child, asserting a specific expression tag, emit replacement.
@@ -715,11 +637,12 @@ proc replace*(t: var Replacer; expected: NimonyExpr; replacement: NifCursor) =
   t.src.skip()
   t.dest.addSubtree(replacement)
 
-proc replace*(t: var Replacer; expected: NimonyExpr; replacement: NifBuilder) =
+proc replace*(t: var Replacer; expected: NimonyExpr;
+              replacement: NifBuilder) =
   ## Skip one child, asserting a specific expression tag, emit replacement.
   assertTag(t.src, expected)
   t.src.skip()
-  t.dest.add(replacement)
+  t.dest.addTree(replacement)
 
 proc replace*(t: var Replacer; expected: NimonyType; replacement: NifCursor) =
   ## Skip one child, asserting a specific type tag, emit replacement.
@@ -727,16 +650,17 @@ proc replace*(t: var Replacer; expected: NimonyType; replacement: NifCursor) =
   t.src.skip()
   t.dest.addSubtree(replacement)
 
-proc replace*(t: var Replacer; expected: NimonyType; replacement: NifBuilder) =
+proc replace*(t: var Replacer; expected: NimonyType;
+              replacement: NifBuilder) =
   ## Skip one child, asserting a specific type tag, emit replacement.
   assertTag(t.src, expected)
   t.src.skip()
-  t.dest.add(replacement)
+  t.dest.addTree(replacement)
 
 template keepTag*(t: var Replacer; body: untyped) =
   ## Copy the opening tag from input to output, run `body` for children,
-  ## close the node and advance past the input's closing `)`.
-  assert t.src.kind == ParLe, "keepTag requires cursor at ParLe"
+  ## close the output node and advance past the input subtree.
+  assert t.src.kind == TagLit, "keepTag requires cursor at TagLit"
   t.dest.copyInto(t.src):
     body
 
@@ -754,10 +678,11 @@ template replaceHead*(t: var Replacer;
   ## Enters the input tree via `into`, runs `body`
   ## (which must consume the children), then closes both input and output
   ## scopes.
-  assert t.src.kind == ParLe, "replaceHead requires cursor at ParLe"
+  assert t.src.kind == TagLit, "replaceHead requires cursor at TagLit"
   t.dest.withTree(tag, info):
-    nifcursors.into t.src.cursor:
-      body
+    let inputScope = enterPluginScope(t.src)
+    body
+    leavePluginScope(t.src, inputScope)
 
 # ── Cursor access for analysis ────────────────────────────────────────────
 
@@ -782,40 +707,35 @@ template peek*(t: var Replacer; body: untyped) =
 
 # ── Entry points ──────────────────────────────────────────────────────────
 
+proc loadPluginTree(filename: string): NifBuilder =
+  parseFromFile(filename, sharedPool = pluginPool, sharedTags = pluginTags,
+                denseLineInfo = true)
+
 proc loadReplacer*(inputFile = paramStr(1)): Replacer =
   ## Loads the input NIF file and returns a `Replacer` ready for
   ## transformation. The cursor is positioned at the root of the input tree.
-  var inp = nifstreams.open(inputFile)
-  try:
-    var tree = createTree(fromStream(inp))
-    result = Replacer(dest: createTree(), src: snapshot(tree))
-  finally:
-    close(inp)
+  var tree = loadPluginTree(inputFile)
+  result = Replacer(dest: createTree(), src: snapshot(tree))
 
-proc saveReplacer*(t: Replacer; filename = paramStr(2)) =
+proc saveReplacer*(t: var Replacer; filename = paramStr(2)) =
   ## Writes the Replacer's output to `filename` (default: `paramStr(2)`).
   try:
-    if t.dest.p == nil:
+    if t.dest.isEmpty:
       writeFile filename, ""
     else:
-      writeFile filename, toString(t.dest.p[].buf)
+      writeFile filename, nifcoreparse.toString(t.dest)
   except:
     quit "FAILURE: cannot write " & filename
 
-# ── Existing API (retained for backwards compatibility) ───────────────────
+# ── Plugin input helpers ───────────────────────────────────────────────────
 
 proc loadPluginInput*(filename = paramStr(1)): NifCursor =
   ## Loads a NIF file and returns a root `NifCursor` for reading it.
   ##
   ## For type plugins, use `loadTypeDefinitions()` to read the second input
   ## file (`paramStr(3)`) that carries the triggering type definitions.
-  var inp = nifstreams.open(filename)
-  try:
-    var tree = createTree(fromStream(inp))
-    result = snapshot(tree)
-    # tree is destroyed here, but NifCursor's cursor keeps data alive via COW
-  finally:
-    close(inp)
+  var tree = loadPluginTree(filename)
+  result = snapshot(tree)
 
 proc loadTypeDefinitions*(): NifCursor =
   ## Loads the type-definitions input for a type plugin (`paramStr(3)`).
@@ -859,7 +779,7 @@ proc forLoopCallArgs*(n: NifCursor): NifCursor =
   ## .. code-block:: nim
   ##   var c = forLoopCallArgs(n)
   ##   c.into:
-  ##     while c.kind != ParRi:
+  ##     while c.hasMore:
   ##       process(c)
   ##       skip c
   result = n
@@ -879,7 +799,7 @@ proc forLoopVars*(n: NifCursor): NifCursor =
     result = firstChild(result) # name
     skip result                  # (callargs ...)
     skip result                  # → (unpackflat ...) or (unpacktup ...)
-  # result is now at the loop vars node, or at ')' if none
+  # result is now at the loop vars node, or exhausted if none
 
 proc forLoopBody*(n: NifCursor): NifCursor =
   ## Returns a cursor at the loop body of a for-loop plugin input.
@@ -889,31 +809,35 @@ proc forLoopBody*(n: NifCursor): NifCursor =
   ## This proc scans past the iter name, call args, and loop vars to reach
   ## the body subtree.
   result = forLoopVars(n)
-  if result.kind != ParRi:
+  if result.hasMore:
     skip result # skip loop vars
-    # result is now at the body (or at ')' if there is none)
+    # result is now at the body (or exhausted if there is none)
 
-proc renderTree*(tree: NifBuilder): string =
+proc renderTree*(tree: var NifBuilder): string =
   ## Renders the complete contents of `tree` as raw NIF text for debugging.
   ## Unlike `saveTree`, this omits line info and may contain multiple
   ## top-level fragments when the tree is still under construction.
-  if tree.p == nil:
+  if tree.isEmpty:
     result = ""
   else:
-    result = toString(tree.p[].buf, false)
+    result = nifcoreparse.toString(tree, includeLineInfo = false)
 
-proc saveTree*(tree: NifBuilder; filename: string) =
-  ## Writes the complete contents of a mutable `NifBuilder` to `filename`.
-  ## This preserves line info because it is intended for `.nif` output.
+proc writeTree(tree: var NifBuilder; filename: string) =
   try:
-    if tree.p == nil:
+    if tree.isEmpty:
       writeFile filename, ""
     else:
-      writeFile filename, toString(tree.p[].buf)
+      writeFile filename, nifcoreparse.toString(tree)
   except:
     quit "FAILURE: cannot write " & filename
 
-proc saveTree*(tree: NifBuilder) =
+proc saveTree*(tree: sink NifBuilder; filename: string) =
+  ## Writes the complete contents of a mutable `NifBuilder` to `filename`.
+  ## This preserves line info because it is intended for `.nif` output.
+  var output = ensureMove(tree)
+  writeTree(output, filename)
+
+proc saveTree*(tree: sink NifBuilder) =
   ## Writes the complete contents of a mutable `NifBuilder` to `paramStr(2)`.
   ## This preserves line info because it is intended for `.nif` output.
   ##
@@ -924,27 +848,8 @@ proc saveTree*(tree: NifBuilder) =
   ## type plugin output is NOT re-semantacked — it must already be fully
   ## semanticked NIF (resolved symbols, typed expressions) because it
   ## directly replaces the module body.
-  saveTree(tree, paramStr(2))
-
-proc createTree*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
-    kind: K; children: openArray[NifBuilder]): NifBuilder =
-  ## Produces a new tree node of `kind` containing `children`.
-  result = createTree()
-  prepareMutation(result)
-  result.p[].buf.add parLeToken(kind, NoLineInfo)
-  for child in children:
-    result.add(child)
-  result.p[].buf.addParRi()
-
-proc createTree*[K: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma](
-    kind: K; info: LineInfo; children: openArray[NifBuilder]): NifBuilder =
-  ## Produces a new tree node of `kind` and line info `info` containing `children`.
-  result = createTree()
-  prepareMutation(result)
-  result.p[].buf.add parLeToken(kind, info)
-  for child in children:
-    result.add(child)
-  result.p[].buf.addParRi()
+  var output = ensureMove(tree)
+  writeTree(output, paramStr(2))
 
 proc renderNode*(n: NifCursor): string =
   ## Renders the current token or subtree as raw NIF text for debugging.
@@ -952,4 +857,4 @@ proc renderNode*(n: NifCursor): string =
   if not hasSubtree(n):
     result = "<bug: empty>"
   else:
-    result = toString(n.cursor, false)
+    result = nifcoreparse.toString(n, includeLineInfo = false)

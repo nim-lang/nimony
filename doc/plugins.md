@@ -7,11 +7,12 @@ compiler through NIF files.
 
 ## Overview
 
-There are four kinds of plugins:
+There are five kinds of plugins:
 
 | Kind | Declaration | Scope |
 |------|-------------|-------|
 | **Template plugin** | `template foo(...) {.plugin: "path".}` | Invoked at each call site |
+| **For-loop plugin** | `iterator foo(...) {.plugin: "path".}` | Rewrites a `for` loop using the iterator |
 | **Module plugin** | `{.plugin: "path".}` as statement | Transforms the entire module |
 | **Type plugin** | `type T {.plugin: "path".} = ...` | Invoked for every module that uses `T` |
 | **Import plugin** | `import (path/foo) {.plugin: "std/v2".}` | Imports the module `path/foo` **from the plugin** `std/v2` |
@@ -43,15 +44,14 @@ And in `deps/mplugin1.nim`:
 ```nim
 import plugins
 
-proc transform(n: Node): NifBuilder =
+proc transform(n: NifCursor): NifBuilder =
   result = createTree()
   let info = n.info
-  var n = n
-  if n.stmtKind == StmtsS: inc n
+  var arg = callArgs(n)
   result.withTree StmtsS, info:
     result.withTree CallS, info:
       result.addIdent "echo"
-      result.takeTree n
+      result.takeTree arg
 
 var inp = loadPluginInput()
 saveTree transform(inp)
@@ -126,16 +126,13 @@ an expression, or a substructure) and only then call the appropriate accessor.
 
 ### Building with the enum classes
 
-`createTree` and `withTree` accept any of the five enum types directly:
+`withTree` accepts any of the five enum types directly:
 
 ```nim
 result.withTree StmtsS, info:                 # NimonyStmt
   result.withTree CallX, info:                # NimonyExpr
     result.addIdent "echo"
     result.addStrLit "hello"
-
-let t = createTree(ObjectT,                    # NimonyType
-  createTree(FldU, nameSym, intType))          # NimonyOther
 ```
 
 Passing the enum rather than a raw string means a typo becomes a compile error
@@ -189,13 +186,13 @@ template generateEcho(s: string) {.plugin: "deps/mplugin1".}
 generateEcho("Hello, world!")
 ```
 
-The input `Node` is wrapped in a `StmtsS` node containing the arguments. A typical
-plugin starts by skipping past this wrapper:
+The input is wrapped in a `StmtsS` node containing the template name and
+arguments. Use `callArgs` to obtain a bounded cursor over the arguments:
 
 ```nim
-var n = loadPluginInput()
-if n.stmtKind == StmtsS: inc n
-# n now points to the first argument
+let input = loadPluginInput()
+var args = callArgs(input)
+# args now points to the first argument
 ```
 
 A template plugin can also accept a code block via `typed` parameters:
@@ -231,17 +228,16 @@ For example, stripping all top-level `block` statements:
 ```nim
 import plugins
 
-proc transform(n: Node): NifBuilder =
+proc transform(n: NifCursor): NifBuilder =
   result = createTree()
   let info = n.info
-  var n = n
-  if n.stmtKind == StmtsS: inc n
+  var body = firstChild(n)
   result.withTree StmtsS, info:
-    while n.kind != ParRi:
-      if n.kind == ParLe and n.stmtKind == BlockS:
-        skip n  # remove it
+    while body.hasMore:
+      if body.kind == TagLit and body.stmtKind == BlockS:
+        skip body  # remove it
       else:
-        result.takeTree n
+        result.takeTree body
 
 var inp = loadPluginInput()
 saveTree transform(inp)
@@ -270,8 +266,8 @@ that uses the type. This enables type-driven code transformations similar to
 Nim 2's term rewriting macros.
 
 The type plugin receives two inputs:
-- `paramStr(1)`: the module AST
-- `paramStr(3)`: the type definition(s) that triggered the plugin
+- `loadPluginInput()`: the module AST
+- `loadTypeDefinitions()`: the type definition(s) that triggered the plugin
 
 ```nim
 # listener.nim
@@ -329,16 +325,27 @@ import plugins
 ### Reading input
 
 ```nim
-proc loadPluginInput*(filename = paramStr(1)): Node
+proc loadPluginInput*(filename = paramStr(1)): NifCursor
 ```
 
-Returns a `Node` positioned at the root of the NIF tree. For type plugins, load
-the type definitions with `loadPluginInput(paramStr(3))`.
+Returns a `NifCursor` positioned at the root of the NIF tree. Type plugins use
+`loadPluginInput()` for the module and `loadTypeDefinitions()` for the
+definitions that triggered the plugin.
 
 
-### Node — reading NIF trees
+### NifCursor — reading NIF trees
 
-A `Node` is a read-only cursor into a frozen NIF tree. It advances forward only.
+A `NifCursor` is a reference-counted, read-only cursor into a frozen NIF tree.
+It advances forward only. Child cursors are bounded by `nifcore` jump counts;
+there is no closing-token value.
+
+All inputs and builders in one plugin process share a pre-seeded literal and tag
+pool. Consequently, `SymId` values are directly comparable across the main input,
+type-definition input, and generated builders, and Nimony enum ordinals map
+directly to `TagId`.
+
+`SymId` and `TagId` are pool-local numeric handles. Use `symText` and `tagText`
+when textual names are needed; `$id` is intentionally not a text lookup.
 
 **Navigation:**
 
@@ -351,14 +358,14 @@ A `Node` is a read-only cursor into a frozen NIF tree. It advances forward only.
 
 | Proc | Returns | Description |
 |------|---------|-------------|
-| `kind(n)` | `NifKind` | Raw token kind (`ParLe`, `ParRi`, `Symbol`, `Ident`, `IntLit`, ...) |
+| `kind(n)` | `NifKind` | Raw token kind (`TagLit`, `Symbol`, `Ident`, `StrLit`, `IntLit`, ...) |
 | `info(n)` | `LineInfo` | Source location |
 | `stmtKind(n)` | `NimonyStmt` | Statement kind (`VarS`, `ProcS`, `CallS`, ...) or `NoStmt` |
 | `exprKind(n)` | `NimonyExpr` | Expression kind (`CallX`, `DotX`, `AddX`, ...) or `NoExpr` |
 | `typeKind(n)` | `NimonyType` | Type kind (`ObjectT`, `ArrayT`, ...) or `NoType` |
 | `otherKind(n)` | `NimonyOther` | Substructure kind or `NoSub` |
 | `pragmaKind(n)` | `NimonyPragma` | Pragma kind or `NoPragma` |
-| `tagId(n)` | `TagId` | Raw NIF tag id for `ParLe` tokens |
+| `tagId(n)` | `TagId` | Raw NIF tag id for `TagLit` tokens |
 | `tagText(n)` | `string` | Textual tag name |
 | `symId(n)` | `SymId` | Opaque symbol handle |
 | `symText(n)` | `string` | Symbol text |
@@ -381,26 +388,25 @@ A `Node` is a read-only cursor into a frozen NIF tree. It advances forward only.
 
 ### NifBuilder — building NIF output
 
-A `NifBuilder` is a mutable builder. Copy-on-write semantics: copying a tree shares
-the buffer until the next mutation detaches it.
+A `NifBuilder` is a move-only alias for `nifcore.TokenBuf`. It cannot be copied.
+`snapshot(tree)` returns a reference-counted cursor; mutating the builder after a
+snapshot transparently detaches its token storage.
 
 **Creating trees:**
 
 | Proc | Description |
 |------|-------------|
 | `createTree()` | Empty mutable tree |
-| `createTree(kind, children...)` | Tree node of `kind` containing `children` |
-| `createTree(kind, info, children...)` | Same, with line info |
-| `snapshot(tree)` | Read-only `Node` into the tree (keeps tree alive) |
+| `snapshot(tree)` | Read-only `NifCursor` into the tree (keeps tree alive) |
 | `isEmpty(tree)` | True when tree has no tokens |
 
 **Appending tokens:**
 
 | Proc | Description |
 |------|-------------|
-| `addParLe(t, tag, info)` | Opening `(tag` with optional line info |
-| `addParLe(t, tagString, info)` | Same, from textual tag name |
-| `addParRi(t)` | Closing `)` |
+| `openTree(t, tag, info)` | Begin a tagged tree with optional line info |
+| `openTree(t, tagString, info)` | Same, from a textual tag name |
+| `closeTree(t)` | Close the most recently opened tree |
 | `addIdent(t, name)` | Identifier |
 | `addSymUse(t, sym, info)` | Symbol reference (from `SymId` or string) |
 | `addStrLit(t, s)` | String literal |
@@ -415,9 +421,9 @@ the buffer until the next mutation detaches it.
 
 | Proc | Description |
 |------|-------------|
-| `takeTree(t, n)` | Move current subtree from `n` into `t`, advancing `n` |
+| `takeTree(t, n)` | Copy the current subtree from `n` into `t`, advancing `n` |
 | `addSubtree(t, n)` | Copy subtree from `n` into `t` without advancing |
-| `add(t, child)` | Append entire `child` tree to `t` |
+| `addTree(t, child)` | Append an entire child builder without consuming it |
 
 **Structured building:**
 
@@ -434,9 +440,9 @@ result.withTree StmtsS, info:
 ### Writing output
 
 ```nim
-proc saveTree*(tree: NifBuilder)                  # writes to paramStr(2)
-proc saveTree*(tree: NifBuilder; filename: string)
-proc renderTree*(tree: NifBuilder): string        # debug rendering (no line info)
+proc saveTree*(tree: sink NifBuilder)                  # writes to paramStr(2)
+proc saveTree*(tree: sink NifBuilder; filename: string)
+proc renderTree*(tree: var NifBuilder): string         # debug rendering (no line info)
 ```
 
 
@@ -490,7 +496,7 @@ saveReplacer(r)
 The core operations are:
 - `keep r, Kind` — copy one child verbatim, asserting its kind
 - `drop r, Kind` — skip one child without emitting, asserting its kind
-- `replace r, node` — skip one child, emit a replacement (NifCursor or NifBuilder)
+- `replace r, Kind, node` — skip one child of `Kind`, emit a replacement (`NifCursor` or borrowed `NifBuilder`)
 - `keepTag r:` — descend into a compound node (copy tag, process children, close)
 - `loopKeepTag r:` — copy tag, iterate all children, close
 - `peek r:` — read-ahead analysis without consuming (cursor is restored)
@@ -519,7 +525,8 @@ import plugins
 proc transform(n: NifCursor): NifBuilder =
   result = createTree()
   var n = n
-  if n.stmtKind == StmtsS: inc n
+  if n.stmtKind == StmtsS:
+    n = firstChild(n)
   result.withTree StmtsS, n.info:
     while n.hasMore:
       result.takeTree n
@@ -531,7 +538,7 @@ saveTree transform(inp)
 The key low-level operations are:
 - `takeTree` to pass nodes through unchanged
 - `skip` to remove nodes
-- `withTree`/`addParLe`/`addParRi` to construct new nodes
+- `withTree` or `openTree`/`closeTree` to construct new nodes
 - `addSubtree` to duplicate nodes
 
 ### Traversal and transformation templates
@@ -542,9 +549,9 @@ The `into`/`loopInto` templates are for pure analysis; the
 
 | Template | Type | Purpose |
 |---|---|---|
-| `hasMore(n)` | `NifCursor` | true while there are more children before `)` |
-| `into n:` | `NifCursor` | enter node, run body for children, leave |
+| `hasMore(n)` | `NifCursor` | true while the bounded cursor has more values |
+| `into n:` | `NifCursor` | enter a `TagLit`, run the body for its children, leave |
 | `loopInto n:` | `NifCursor` | enter node, iterate all children, leave |
-| `balancedTokens n:` | `NifCursor` | deep-scan all compound nodes in subtree |
-| `keepTag r:` | `Replacer` | copy tag to output, run body, close + skip `)` |
-| `loopKeepTag r:` | `Replacer` | copy tag, iterate all children, close + skip `)` |
+| `balancedTokens n:` | `NifCursor` | scan descendant compound nodes, then advance past the subtree |
+| `keepTag r:` | `Replacer` | copy tag to output, run body, close tree and advance |
+| `loopKeepTag r:` | `Replacer` | copy tag, iterate all children, close tree and advance |
