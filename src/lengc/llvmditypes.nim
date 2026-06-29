@@ -98,14 +98,14 @@ proc genDITypeImpl(c: var LLVMCode; n: var Cursor): int =
     n.into:
       let et = genDIType(c, n)
       let subrange = c.addMetadata("!DISubrange(count: -1)")
-      let totalSize = 0  # flexarray has unknown size for DWARF
+      let totalSize = 0 # flexarray has unknown size for DWARF
       result = c.addMetadata("!DICompositeType(tag: DW_TAG_array_type" &
         ", elements: !{!" & $subrange & "}" &
         ", baseType: !" & $et &
         ", size: " & $totalSize & ")")
       while n.hasMore: skip n
   of ArrayT:
-    let totalSize = typeSizeBits(c, n)  # capture before entering
+    let totalSize = typeSizeBits(c, n) # capture before entering
     n.into:
       let et = genDIType(c, n)
       var sz = 0
@@ -122,9 +122,9 @@ proc genDITypeImpl(c: var LLVMCode; n: var Cursor): int =
         ", size: " & $totalSize & ")")
       while n.hasMore: skip n
   of EnumT:
-    let enumSize = typeSizeBits(c, n)   # capture BEFORE n.into
+    let enumSize = typeSizeBits(c, n) # capture BEFORE n.into
     n.into:
-      let base = genDIType(c, n)  # underlying integer type
+      let base = genDIType(c, n) # underlying integer type
       var enumerators: seq[int] = @[]
       while n.hasMore:
         if n.substructureKind == EfldU:

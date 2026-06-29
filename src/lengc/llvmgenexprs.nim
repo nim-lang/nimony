@@ -39,7 +39,8 @@ proc pointeeType(c: var LLVMCode; typ: Cursor): Cursor =
 
 proc genCallExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue)
 
-proc signedBinOp(c: var LLVMCode; n: var Cursor; op: string; result: var LLValue) =
+proc signedBinOp(c: var LLVMCode; n: var Cursor; op: string;
+    result: var LLValue) =
   ## Typed binary op: (op type lhs rhs)
   n.into:
     let typCursor = n
@@ -54,11 +55,13 @@ proc signedBinOp(c: var LLVMCode; n: var Cursor; op: string; result: var LLValue
     if rhs.typ != typTok:
       coerceValueLLVM(c, rhs, srcRhs, typCursor, true, rhs)
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = " & op & " " & typ & " " & c.str(lhs.name) & ", " & c.str(rhs.name)
+    c.emitLine "  " & c.str(t) & " = " & op & " " & typ & " " & c.str(
+        lhs.name) & ", " & c.str(rhs.name)
     result = LLValue(name: t, typ: typTok)
     while n.hasMore: skip n
 
-proc unsignedBinOp(c: var LLVMCode; n: var Cursor; signedOp, unsignedOp: string; result: var LLValue) =
+proc unsignedBinOp(c: var LLVMCode; n: var Cursor; signedOp, unsignedOp: string;
+    result: var LLValue) =
   ## Binary op that differs for signed/unsigned: checks the NIF type tag.
   n.into:
     let isUnsigned = n.typeKind == UT
@@ -75,11 +78,13 @@ proc unsignedBinOp(c: var LLVMCode; n: var Cursor; signedOp, unsignedOp: string;
       coerceValueLLVM(c, rhs, srcRhs, typCursor, true, rhs)
     let t = c.temp()
     let op = if isUnsigned: unsignedOp else: signedOp
-    c.emitLine "  " & c.str(t) & " = " & op & " " & typ & " " & c.str(lhs.name) & ", " & c.str(rhs.name)
+    c.emitLine "  " & c.str(t) & " = " & op & " " & typ & " " & c.str(
+        lhs.name) & ", " & c.str(rhs.name)
     result = LLValue(name: t, typ: typTok)
     while n.hasMore: skip n
 
-proc cmpOp(c: var LLVMCode; n: var Cursor; signedPred, unsignedPred: string; result: var LLValue) =
+proc cmpOp(c: var LLVMCode; n: var Cursor; signedPred, unsignedPred: string;
+    result: var LLValue) =
   ## Comparison op: (op lhs rhs) → i1
   let cmpInfo = n.info
   n.into:
@@ -98,17 +103,20 @@ proc cmpOp(c: var LLVMCode; n: var Cursor; signedPred, unsignedPred: string; res
         of "slt": "olt"
         of "sle": "ole"
         else: signedPred
-      c.emitLineDbg "  " & c.str(t) & " = fcmp " & fpPred & " " & typ & " " & c.str(lhs.name) & ", " & c.str(rhs.name), cmpInfo
+      c.emitLineDbg "  " & c.str(t) & " = fcmp " & fpPred & " " & typ & " " &
+          c.str(lhs.name) & ", " & c.str(rhs.name), cmpInfo
     else:
       let pred = if unsignedPred != "" and lhsTK in {UT, CT, BoolT}:
                    unsignedPred
                  else:
                    signedPred
-      c.emitLineDbg "  " & c.str(t) & " = icmp " & pred & " " & typ & " " & c.str(lhs.name) & ", " & c.str(rhs.name), cmpInfo
+      c.emitLineDbg "  " & c.str(t) & " = icmp " & pred & " " & typ & " " &
+          c.str(lhs.name) & ", " & c.str(rhs.name), cmpInfo
     result = LLValue(name: t, typ: LToken(I8Token))
     while n.hasMore: skip n
 
-proc genBoolCmpOp(c: var LLVMCode; n: var Cursor; signedPred, unsignedPred: string; result: var LLValue) =
+proc genBoolCmpOp(c: var LLVMCode; n: var Cursor; signedPred,
+    unsignedPred: string; result: var LLValue) =
   ## Like cmpOp but extends result to i8 for NIF bool compatibility.
   var cmp = LLValue(); cmpOp(c, n, signedPred, unsignedPred, cmp)
   let t = c.temp()
@@ -140,7 +148,8 @@ proc atomicAlign(c: var LLVMCode; typ: LToken): string {.inline.} =
   elif typ == LToken(I64Token): "8"
   else: $(c.bits div 8)
 
-proc genAtomicCall(c: var LLVMCode; externName: string; args: seq[LLValue]; retType: string; result: var LLValue) =
+proc genAtomicCall(c: var LLVMCode; externName: string; args: seq[LLValue];
+    retType: string; result: var LLValue) =
   ## Translate __atomic_* GCC builtins to LLVM atomic instructions.
   let ordering = memoryOrderToLLVM(args[^1]) # last arg is always memory order
   let align = atomicAlign(c, c.tok(retType))
@@ -148,16 +157,21 @@ proc genAtomicCall(c: var LLVMCode; externName: string; args: seq[LLValue]; retT
   of "__atomic_load_n":
     # __atomic_load_n(ptr, memorder) -> LLVM: load atomic type, ptr p ordering
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = load atomic " & retType & ", ptr " & c.str(args[0].name) & " " & ordering & ", align " & align
+    c.emitLine "  " & c.str(t) & " = load atomic " & retType & ", ptr " & c.str(
+        args[0].name) & " " & ordering & ", align " & align
     result = LLValue(name: t, typ: c.tok(retType))
   of "__atomic_store_n":
     # __atomic_store_n(ptr, val, memorder) -> LLVM: store atomic type val, ptr p ordering
-    c.emitLine "  store atomic " & c.str(args[1].typ) & " " & c.str(args[1].name) & ", ptr " & c.str(args[0].name) & " " & ordering & ", align " & align
+    c.emitLine "  store atomic " & c.str(args[1].typ) & " " & c.str(args[
+        1].name) & ", ptr " & c.str(args[0].name) & " " & ordering &
+        ", align " & align
     result = LLValue(name: LToken(EmptyToken), typ: LToken(VoidToken))
   of "__atomic_exchange_n":
     # __atomic_exchange_n(ptr, val, memorder) -> LLVM: atomicrmw xchg
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = atomicrmw xchg ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering & ", align " & align
+    c.emitLine "  " & c.str(t) & " = atomicrmw xchg ptr " & c.str(args[
+        0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " &
+        ordering & ", align " & align
     result = LLValue(name: t, typ: c.tok(retType))
   of "__atomic_compare_exchange_n":
     # __atomic_compare_exchange_n(ptr, expected_ptr, desired, weak, succ_order, fail_order)
@@ -165,56 +179,79 @@ proc genAtomicCall(c: var LLVMCode; externName: string; args: seq[LLValue]; retT
     let valTyp = c.str(args[2].typ)
     let valAlign = atomicAlign(c, args[2].typ)
     let loadExpected = c.temp()
-    c.emitLine "  " & c.str(loadExpected) & " = load " & valTyp & ", ptr " & c.str(args[1].name)
+    c.emitLine "  " & c.str(loadExpected) & " = load " & valTyp & ", ptr " &
+        c.str(args[1].name)
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = cmpxchg ptr " & c.str(args[0].name) & ", " & valTyp & " " & c.str(loadExpected) & ", " & valTyp & " " & c.str(args[2].name) & " " & ordering & " " & ordering & ", align " & valAlign
+    c.emitLine "  " & c.str(t) & " = cmpxchg ptr " & c.str(args[0].name) &
+        ", " & valTyp & " " & c.str(loadExpected) & ", " & valTyp & " " & c.str(
+        args[2].name) & " " & ordering & " " & ordering & ", align " & valAlign
     # cmpxchg returns {T, i1}; extract the success flag
     let success = c.temp()
-    c.emitLine "  " & c.str(success) & " = extractvalue { " & valTyp & ", i1 } " & c.str(t) & ", 1"
+    c.emitLine "  " & c.str(success) & " = extractvalue { " & valTyp &
+        ", i1 } " & c.str(t) & ", 1"
     # Store back the old value into the expected pointer on failure
     let oldVal = c.temp()
-    c.emitLine "  " & c.str(oldVal) & " = extractvalue { " & valTyp & ", i1 } " & c.str(t) & ", 0"
-    c.emitLine "  store " & valTyp & " " & c.str(oldVal) & ", ptr " & c.str(args[1].name)
+    c.emitLine "  " & c.str(oldVal) & " = extractvalue { " & valTyp &
+        ", i1 } " & c.str(t) & ", 0"
+    c.emitLine "  store " & valTyp & " " & c.str(oldVal) & ", ptr " & c.str(
+        args[1].name)
     let r = c.temp()
     c.emitLine "  " & c.str(r) & " = zext i1 " & c.str(success) & " to i8"
     result = LLValue(name: r, typ: LToken(I8Token))
   of "__atomic_add_fetch":
     # __atomic_add_fetch(ptr, val, memorder) -> atomicrmw add, then add
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = atomicrmw add ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering & ", align " & align
+    c.emitLine "  " & c.str(t) & " = atomicrmw add ptr " & c.str(args[0].name) &
+        ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering &
+        ", align " & align
     let r = c.temp()
-    c.emitLine "  " & c.str(r) & " = add " & retType & " " & c.str(t) & ", " & c.str(args[1].name)
+    c.emitLine "  " & c.str(r) & " = add " & retType & " " & c.str(t) & ", " &
+        c.str(args[1].name)
     result = LLValue(name: r, typ: c.tok(retType))
   of "__atomic_sub_fetch":
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = atomicrmw sub ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering & ", align " & align
+    c.emitLine "  " & c.str(t) & " = atomicrmw sub ptr " & c.str(args[0].name) &
+        ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering &
+        ", align " & align
     let r = c.temp()
-    c.emitLine "  " & c.str(r) & " = sub " & retType & " " & c.str(t) & ", " & c.str(args[1].name)
+    c.emitLine "  " & c.str(r) & " = sub " & retType & " " & c.str(t) & ", " &
+        c.str(args[1].name)
     result = LLValue(name: r, typ: c.tok(retType))
   of "__atomic_fetch_add":
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = atomicrmw add ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering & ", align " & align
+    c.emitLine "  " & c.str(t) & " = atomicrmw add ptr " & c.str(args[0].name) &
+        ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering &
+        ", align " & align
     result = LLValue(name: t, typ: c.tok(retType))
   of "__atomic_fetch_sub":
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = atomicrmw sub ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering & ", align " & align
+    c.emitLine "  " & c.str(t) & " = atomicrmw sub ptr " & c.str(args[0].name) &
+        ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering &
+        ", align " & align
     result = LLValue(name: t, typ: c.tok(retType))
   of "__atomic_fetch_and":
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = atomicrmw and ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering & ", align " & align
+    c.emitLine "  " & c.str(t) & " = atomicrmw and ptr " & c.str(args[0].name) &
+        ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering &
+        ", align " & align
     result = LLValue(name: t, typ: c.tok(retType))
   of "__atomic_fetch_or":
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = atomicrmw or ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering & ", align " & align
+    c.emitLine "  " & c.str(t) & " = atomicrmw or ptr " & c.str(args[0].name) &
+        ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering &
+        ", align " & align
     result = LLValue(name: t, typ: c.tok(retType))
   of "__atomic_fetch_xor":
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = atomicrmw xor ptr " & c.str(args[0].name) & ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering & ", align " & align
+    c.emitLine "  " & c.str(t) & " = atomicrmw xor ptr " & c.str(args[0].name) &
+        ", " & c.str(args[1].typ) & " " & c.str(args[1].name) & " " & ordering &
+        ", align " & align
     result = LLValue(name: t, typ: c.tok(retType))
   of "__atomic_test_and_set":
     # atomicrmw xchg ptr, i8 1
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = atomicrmw xchg ptr " & c.str(args[0].name) & ", i8 1 " & ordering & ", align 1"
+    c.emitLine "  " & c.str(t) & " = atomicrmw xchg ptr " & c.str(args[
+        0].name) & ", i8 1 " & ordering & ", align 1"
     let r = c.temp()
     c.emitLine "  " & c.str(r) & " = icmp ne i8 " & c.str(t) & ", 0"
     let r2 = c.temp()
@@ -222,7 +259,8 @@ proc genAtomicCall(c: var LLVMCode; externName: string; args: seq[LLValue]; retT
     result = LLValue(name: r2, typ: LToken(I8Token))
   of "__atomic_clear":
     # store atomic i8 0, ptr p
-    c.emitLine "  store atomic i8 0, ptr " & c.str(args[0].name) & " " & ordering & ", align 1"
+    c.emitLine "  store atomic i8 0, ptr " & c.str(args[0].name) & " " &
+        ordering & ", align 1"
     result = LLValue(name: LToken(EmptyToken), typ: LToken(VoidToken))
   of "__atomic_thread_fence":
     c.emitLine "  fence " & ordering
@@ -239,21 +277,26 @@ proc genAtomicCall(c: var LLVMCode; externName: string; args: seq[LLValue]; retT
       result = LLValue(name: LToken(EmptyToken), typ: LToken(VoidToken))
     else:
       let t = c.temp()
-      c.emitLine "  " & c.str(t) & " = call " & retType & " @" & externName & "(" & argStr & ")"
+      c.emitLine "  " & c.str(t) & " = call " & retType & " @" & externName &
+          "(" & argStr & ")"
       result = LLValue(name: t, typ: c.tok(retType))
 
-proc genMemIntrinsicCall(c: var LLVMCode; externName: string; args: seq[LLValue]; retType: string; result: var LLValue) =
+proc genMemIntrinsicCall(c: var LLVMCode; externName: string; args: seq[
+    LLValue]; retType: string; result: var LLValue) =
   ## Translate memcpy/memset/memcmp to LLVM intrinsics or instructions.
   case externName
   of "memcpy":
     # memcpy(dest, src, size) -> llvm.memcpy.p0.p0.i64
-    c.emitLine "  call void @llvm.memcpy.p0.p0.i64(ptr " & c.str(args[0].name) & ", ptr " & c.str(args[1].name) & ", i64 " & c.str(args[2].name) & ", i1 false)"
+    c.emitLine "  call void @llvm.memcpy.p0.p0.i64(ptr " & c.str(args[0].name) &
+        ", ptr " & c.str(args[1].name) & ", i64 " & c.str(args[2].name) & ", i1 false)"
     if "llvm.memcpy.p0.p0.i64" notin c.declaredExterns:
       c.declaredExterns.incl "llvm.memcpy.p0.p0.i64"
       c.addTo(c.externs, "declare void @llvm.memcpy.p0.p0.i64(ptr noalias nocapture writeonly, ptr noalias nocapture readonly, i64, i1 immarg)\n")
     result = LLValue(name: args[0].name, typ: LToken(PtrToken)) # memcpy returns dest
   of "memmove":
-    c.emitLine "  call void @llvm.memmove.p0.p0.i64(ptr " & c.str(args[0].name) & ", ptr " & c.str(args[1].name) & ", i64 " & c.str(args[2].name) & ", i1 false)"
+    c.emitLine "  call void @llvm.memmove.p0.p0.i64(ptr " & c.str(args[
+        0].name) & ", ptr " & c.str(args[1].name) & ", i64 " & c.str(args[
+        2].name) & ", i1 false)"
     if "llvm.memmove.p0.p0.i64" notin c.declaredExterns:
       c.declaredExterns.incl "llvm.memmove.p0.p0.i64"
       c.addTo(c.externs, "declare void @llvm.memmove.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)\n")
@@ -262,8 +305,10 @@ proc genMemIntrinsicCall(c: var LLVMCode; externName: string; args: seq[LLValue]
     # memset(dest, val, size) -> llvm.memset.p0.i64
     # Note: LLVM memset takes i8 val, C memset takes int val
     let val8 = c.temp()
-    c.emitLine "  " & c.str(val8) & " = trunc " & c.str(args[1].typ) & " " & c.str(args[1].name) & " to i8"
-    c.emitLine "  call void @llvm.memset.p0.i64(ptr " & c.str(args[0].name) & ", i8 " & c.str(val8) & ", i64 " & c.str(args[2].name) & ", i1 false)"
+    c.emitLine "  " & c.str(val8) & " = trunc " & c.str(args[1].typ) & " " &
+        c.str(args[1].name) & " to i8"
+    c.emitLine "  call void @llvm.memset.p0.i64(ptr " & c.str(args[0].name) &
+        ", i8 " & c.str(val8) & ", i64 " & c.str(args[2].name) & ", i1 false)"
     if "llvm.memset.p0.i64" notin c.declaredExterns:
       c.declaredExterns.incl "llvm.memset.p0.i64"
       c.addTo(c.externs, "declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)\n")
@@ -271,7 +316,9 @@ proc genMemIntrinsicCall(c: var LLVMCode; externName: string; args: seq[LLValue]
   of "memcmp":
     # memcmp(a, b, size) -> call i32 @memcmp(ptr, ptr, i64)
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = call i32 @memcmp(ptr " & c.str(args[0].name) & ", ptr " & c.str(args[1].name) & ", i64 " & c.str(args[2].name) & ")"
+    c.emitLine "  " & c.str(t) & " = call i32 @memcmp(ptr " & c.str(args[
+        0].name) & ", ptr " & c.str(args[1].name) & ", i64 " & c.str(args[
+        2].name) & ")"
     if "memcmp" notin c.declaredExterns:
       c.declaredExterns.incl "memcmp"
       c.addTo(c.externs, "declare i32 @memcmp(ptr nocapture, ptr nocapture, i64)\n")
@@ -284,7 +331,8 @@ proc genMemIntrinsicCall(c: var LLVMCode; externName: string; args: seq[LLValue]
       result = LLValue(name: LToken(EmptyToken), typ: LToken(VoidToken))
     else:
       let t = c.temp()
-      c.emitLine "  " & c.str(t) & " = call " & retType & " @" & externName & "(" & argStr & ")"
+      c.emitLine "  " & c.str(t) & " = call " & retType & " @" & externName &
+          "(" & argStr & ")"
       result = LLValue(name: t, typ: c.tok(retType))
 
 const
@@ -306,13 +354,15 @@ const
     "__builtin_expect"
   ]
 
-proc genGccBuiltinCall(c: var LLVMCode; externName: string; args: seq[LLValue]; retType: string; result: var LLValue) =
+proc genGccBuiltinCall(c: var LLVMCode; externName: string; args: seq[LLValue];
+    retType: string; result: var LLValue) =
   ## Translate GCC __builtin_* functions to LLVM intrinsics.
   case externName
   of "__builtin_ctzll":
     # count trailing zeros i64 → llvm.cttz.i64(val, is_zero_poison=false)
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = call i64 @llvm.cttz.i64(i64 " & c.str(args[0].name) & ", i1 false)"
+    c.emitLine "  " & c.str(t) & " = call i64 @llvm.cttz.i64(i64 " & c.str(args[
+        0].name) & ", i1 false)"
     if retType == "i32":
       let r = c.temp()
       c.emitLine "  " & c.str(r) & " = trunc i64 " & c.str(t) & " to i32"
@@ -321,11 +371,13 @@ proc genGccBuiltinCall(c: var LLVMCode; externName: string; args: seq[LLValue]; 
       result = LLValue(name: t, typ: c.tok("i64"))
   of "__builtin_ctz":
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = call i32 @llvm.cttz.i32(i32 " & c.str(args[0].name) & ", i1 false)"
+    c.emitLine "  " & c.str(t) & " = call i32 @llvm.cttz.i32(i32 " & c.str(args[
+        0].name) & ", i1 false)"
     result = LLValue(name: t, typ: c.tok("i32"))
   of "__builtin_clzll":
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = call i64 @llvm.ctlz.i64(i64 " & c.str(args[0].name) & ", i1 false)"
+    c.emitLine "  " & c.str(t) & " = call i64 @llvm.ctlz.i64(i64 " & c.str(args[
+        0].name) & ", i1 false)"
     if retType == "i32":
       let r = c.temp()
       c.emitLine "  " & c.str(r) & " = trunc i64 " & c.str(t) & " to i32"
@@ -334,11 +386,13 @@ proc genGccBuiltinCall(c: var LLVMCode; externName: string; args: seq[LLValue]; 
       result = LLValue(name: t, typ: c.tok("i64"))
   of "__builtin_clz":
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = call i32 @llvm.ctlz.i32(i32 " & c.str(args[0].name) & ", i1 false)"
+    c.emitLine "  " & c.str(t) & " = call i32 @llvm.ctlz.i32(i32 " & c.str(args[
+        0].name) & ", i1 false)"
     result = LLValue(name: t, typ: c.tok("i32"))
   of "__builtin_popcountll":
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = call i64 @llvm.ctpop.i64(i64 " & c.str(args[0].name) & ")"
+    c.emitLine "  " & c.str(t) & " = call i64 @llvm.ctpop.i64(i64 " & c.str(
+        args[0].name) & ")"
     if retType == "i32":
       let r = c.temp()
       c.emitLine "  " & c.str(r) & " = trunc i64 " & c.str(t) & " to i32"
@@ -347,19 +401,23 @@ proc genGccBuiltinCall(c: var LLVMCode; externName: string; args: seq[LLValue]; 
       result = LLValue(name: t, typ: c.tok("i64"))
   of "__builtin_popcount":
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = call i32 @llvm.ctpop.i32(i32 " & c.str(args[0].name) & ")"
+    c.emitLine "  " & c.str(t) & " = call i32 @llvm.ctpop.i32(i32 " & c.str(
+        args[0].name) & ")"
     result = LLValue(name: t, typ: c.tok("i32"))
   of "__builtin_bswap16":
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = call i16 @llvm.bswap.i16(i16 " & c.str(args[0].name) & ")"
+    c.emitLine "  " & c.str(t) & " = call i16 @llvm.bswap.i16(i16 " & c.str(
+        args[0].name) & ")"
     result = LLValue(name: t, typ: c.tok("i16"))
   of "__builtin_bswap32":
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = call i32 @llvm.bswap.i32(i32 " & c.str(args[0].name) & ")"
+    c.emitLine "  " & c.str(t) & " = call i32 @llvm.bswap.i32(i32 " & c.str(
+        args[0].name) & ")"
     result = LLValue(name: t, typ: c.tok("i32"))
   of "__builtin_bswap64":
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = call i64 @llvm.bswap.i64(i64 " & c.str(args[0].name) & ")"
+    c.emitLine "  " & c.str(t) & " = call i64 @llvm.bswap.i64(i64 " & c.str(
+        args[0].name) & ")"
     result = LLValue(name: t, typ: c.tok("i64"))
   of "__builtin_expect":
     # __builtin_expect(val, expected) — just return val, it's a branch hint
@@ -367,7 +425,8 @@ proc genGccBuiltinCall(c: var LLVMCode; externName: string; args: seq[LLValue]; 
   else:
     discard
 
-proc genCallWithType(c: var LLVMCode; n: var Cursor; retType: string; result: var LLValue) =
+proc genCallWithType(c: var LLVMCode; n: var Cursor; retType: string;
+    result: var LLValue) =
   ## Generate a call where we know the return type from context.
   ## Intercepts special C functions and emits LLVM native instructions.
   let callInfo = n.info
@@ -411,14 +470,16 @@ proc genCallWithType(c: var LLVMCode; n: var Cursor; retType: string; result: va
       return
 
   let argStr = args.mapIt(c.str(it.typ) & " " & c.str(it.name)).join(", ")
-  let funcType = if calleeName in c.varargsFuncTypes: c.varargsFuncTypes[calleeName] & " " else: ""
+  let funcType = if calleeName in c.varargsFuncTypes: c.varargsFuncTypes[
+      calleeName] & " " else: ""
 
   if retType == "void":
     c.emitLineDbg "  call void " & funcType & calleeName & "(" & argStr & ")", callInfo
     result = LLValue(name: LToken(EmptyToken), typ: LToken(VoidToken))
   else:
     let t = c.temp()
-    c.emitLineDbg "  " & c.str(t) & " = call " & retType & " " & funcType & calleeName & "(" & argStr & ")", callInfo
+    c.emitLineDbg "  " & c.str(t) & " = call " & retType & " " & funcType &
+        calleeName & "(" & argStr & ")", callInfo
     result = LLValue(name: t, typ: c.tok(retType))
 
 proc genCallLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
@@ -456,30 +517,38 @@ proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCurso
     result = LLValue(name: val.name, typ: destTok)
     return
   elif isLengPtr(destTK) and isLengInt(srcTK):
-    c.emitLine "  " & c.str(t) & " = inttoptr " & srcStr & " " & c.str(val.name) & " to ptr"
+    c.emitLine "  " & c.str(t) & " = inttoptr " & srcStr & " " & c.str(
+        val.name) & " to ptr"
   elif isLengInt(destTK) and isLengPtr(srcTK):
     c.emitLine "  " & c.str(t) & " = ptrtoint ptr " & c.str(val.name) & " to " & destType
   elif isLengFloat(srcTK) and isLengFloat(destTK):
     let srcBits = typeSizeBits(c, srcTypeCursor)
     let destBits = typeSizeBits(c, destTypeCursor)
     if srcBits < destBits:
-      c.emitLine "  " & c.str(t) & " = fpext " & srcStr & " " & c.str(val.name) & " to " & destType
+      c.emitLine "  " & c.str(t) & " = fpext " & srcStr & " " & c.str(
+          val.name) & " to " & destType
     else:
-      c.emitLine "  " & c.str(t) & " = fptrunc " & srcStr & " " & c.str(val.name) & " to " & destType
+      c.emitLine "  " & c.str(t) & " = fptrunc " & srcStr & " " & c.str(
+          val.name) & " to " & destType
   elif isLengFloat(srcTK) and isLengInt(destTK):
-    c.emitLine "  " & c.str(t) & " = fptosi " & srcStr & " " & c.str(val.name) & " to " & destType
+    c.emitLine "  " & c.str(t) & " = fptosi " & srcStr & " " & c.str(val.name) &
+        " to " & destType
   elif isLengInt(srcTK) and isLengFloat(destTK):
-    c.emitLine "  " & c.str(t) & " = sitofp " & srcStr & " " & c.str(val.name) & " to " & destType
+    c.emitLine "  " & c.str(t) & " = sitofp " & srcStr & " " & c.str(val.name) &
+        " to " & destType
   elif isLengInt(srcTK) and isLengInt(destTK):
     let srcBits = typeSizeBits(c, srcTypeCursor)
     let destBits = typeSizeBits(c, destTypeCursor)
     if srcBits < destBits:
       if isCast or srcTK in {UT, CT, BoolT}:
-        c.emitLine "  " & c.str(t) & " = zext " & srcStr & " " & c.str(val.name) & " to " & destType
+        c.emitLine "  " & c.str(t) & " = zext " & srcStr & " " & c.str(
+            val.name) & " to " & destType
       else:
-        c.emitLine "  " & c.str(t) & " = sext " & srcStr & " " & c.str(val.name) & " to " & destType
+        c.emitLine "  " & c.str(t) & " = sext " & srcStr & " " & c.str(
+            val.name) & " to " & destType
     elif srcBits > destBits:
-      c.emitLine "  " & c.str(t) & " = trunc " & srcStr & " " & c.str(val.name) & " to " & destType
+      c.emitLine "  " & c.str(t) & " = trunc " & srcStr & " " & c.str(
+          val.name) & " to " & destType
     else:
       result = LLValue(name: val.name, typ: destTok)
       return
@@ -491,7 +560,8 @@ proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCurso
     if anonDestType == srcStr:
       result = LLValue(name: val.name, typ: destTok)
       return
-    c.emitLine "  " & c.str(t) & " = bitcast " & srcStr & " " & c.str(val.name) & " to " & destType
+    c.emitLine "  " & c.str(t) & " = bitcast " & srcStr & " " & c.str(
+        val.name) & " to " & destType
 
   result = LLValue(name: t, typ: destTok)
 
@@ -567,7 +637,8 @@ proc genDotLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   # Navigate through inheritance chain via GEP field 0
   for i in 0 ..< inhDepth:
     let t = c.temp()
-    c.emitLine "  " & c.str(t) & " = getelementptr inbounds " & gepType & ", ptr " & gepTarget & ", i32 0, i32 0"
+    c.emitLine "  " & c.str(t) & " = getelementptr inbounds " & gepType &
+        ", ptr " & gepTarget & ", i32 0, i32 0"
     gepTarget = c.str(t)
     # Resolve base type for next iteration
     let baseTypeCursor = baseTypeOfObject(c.m, curBody)
@@ -594,7 +665,8 @@ proc genAtLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
 
   # GEP to index into the array
   let t = c.temp()
-  c.emitLine "  " & c.str(t) & " = getelementptr inbounds " & arrTypeName & ", ptr " & c.str(arr.name) & ", i32 0, " & c.str(idx.typ) & " " & c.str(idx.name)
+  c.emitLine "  " & c.str(t) & " = getelementptr inbounds " & arrTypeName &
+      ", ptr " & c.str(arr.name) & ", i32 0, " & c.str(idx.typ) & " " & c.str(idx.name)
   result = LLValue(name: t, typ: LToken(PtrToken))
 
 proc genPatLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
@@ -617,7 +689,8 @@ proc genPatLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   let elemType = genTypeLLVMReadOnly(c, elemCursor)
 
   let t = c.temp()
-  c.emitLine "  " & c.str(t) & " = getelementptr " & elemType & ", ptr " & c.str(base.name) & ", " & c.str(idx.typ) & " " & c.str(idx.name)
+  c.emitLine "  " & c.str(t) & " = getelementptr " & elemType & ", ptr " &
+      c.str(base.name) & ", " & c.str(idx.typ) & " " & c.str(idx.name)
   result = LLValue(name: t, typ: LToken(PtrToken))
 
 proc genSizeofLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
@@ -729,7 +802,8 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
           escaped.add "0123456789ABCDEF"[o and 0xF]
         else:
           escaped.add ch
-      c.addTo(c.globals, globalName & " = private unnamed_addr constant [" & $(s.len + 1) & " x i8] c\"" & escaped & "\\00\"\n")
+      c.addTo(c.globals, globalName & " = private unnamed_addr constant [" & $(
+          s.len + 1) & " x i8] c\"" & escaped & "\\00\"\n")
       result = LLValue(name: c.tok(globalName), typ: LToken(PtrToken))
     of Symbol:
       let s = n.symId
@@ -741,7 +815,8 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       inc n
       # Check if this is an enum field — resolve to its integer constant.
       # Skip variables/globals of enum type: they need a load, not constant folding.
-      if symType.typeKind == EnumT and decl != nil and decl.kind notin {VarY, GvarY, TvarY}:
+      if symType.typeKind == EnumT and decl != nil and decl.kind notin {VarY,
+          GvarY, TvarY}:
         var enumBody = symType
         inc enumBody # skip EnumT tag
         let baseTyp = genTypeLLVMReadOnly(c, enumBody)
@@ -792,7 +867,8 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     result = LLValue(name: LToken(NullToken), typ: LToken(PtrToken))
   of InfC:
     skip n
-    result = LLValue(name: c.tok("0x7FF0000000000000"), typ: c.tok("double")) # +inf in IEEE 754
+    result = LLValue(name: c.tok("0x7FF0000000000000"), typ: c.tok(
+        "double")) # +inf in IEEE 754
   of NegInfC:
     skip n
     result = LLValue(name: c.tok("0xFFF0000000000000"), typ: c.tok("double")) # -inf
@@ -849,15 +925,18 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       c.emitLine "  store i8 0, ptr " & c.str(res)
       genExprLLVM(c, n, lhs)
       let lhsBool = c.temp()
-      c.emitLineDbg "  " & c.str(lhsBool) & " = icmp ne " & c.str(lhs.typ) & " " & c.str(lhs.name) & ", " & zeroVal(lhs.typ), andInfo
+      c.emitLineDbg "  " & c.str(lhsBool) & " = icmp ne " & c.str(lhs.typ) &
+          " " & c.str(lhs.name) & ", " & zeroVal(lhs.typ), andInfo
       let rhsLabel = c.label()
       let endLabel = c.label()
-      c.emitLineDbg "  br i1 " & c.str(lhsBool) & ", label %" & c.str(rhsLabel) & ", label %" & c.str(endLabel), andInfo
+      c.emitLineDbg "  br i1 " & c.str(lhsBool) & ", label %" & c.str(
+          rhsLabel) & ", label %" & c.str(endLabel), andInfo
       c.emitLine c.str(rhsLabel) & ":"
       c.currentProc.needsTerminator = false
       genExprLLVM(c, n, rhs)
       let rhsBool = c.temp()
-      c.emitLineDbg "  " & c.str(rhsBool) & " = icmp ne " & c.str(rhs.typ) & " " & c.str(rhs.name) & ", " & zeroVal(rhs.typ), andInfo
+      c.emitLineDbg "  " & c.str(rhsBool) & " = icmp ne " & c.str(rhs.typ) &
+          " " & c.str(rhs.name) & ", " & zeroVal(rhs.typ), andInfo
       let rhsExt = c.temp()
       c.emitLine "  " & c.str(rhsExt) & " = zext i1 " & c.str(rhsBool) & " to i8"
       c.emitLine "  store i8 " & c.str(rhsExt) & ", ptr " & c.str(res)
@@ -879,15 +958,18 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       c.emitLine "  store i8 1, ptr " & c.str(res)
       genExprLLVM(c, n, lhs)
       let lhsBool = c.temp()
-      c.emitLineDbg "  " & c.str(lhsBool) & " = icmp ne " & c.str(lhs.typ) & " " & c.str(lhs.name) & ", " & zeroVal(lhs.typ), orInfo
+      c.emitLineDbg "  " & c.str(lhsBool) & " = icmp ne " & c.str(lhs.typ) &
+          " " & c.str(lhs.name) & ", " & zeroVal(lhs.typ), orInfo
       let rhsLabel = c.label()
       let endLabel = c.label()
-      c.emitLineDbg "  br i1 " & c.str(lhsBool) & ", label %" & c.str(endLabel) & ", label %" & c.str(rhsLabel), orInfo
+      c.emitLineDbg "  br i1 " & c.str(lhsBool) & ", label %" & c.str(
+          endLabel) & ", label %" & c.str(rhsLabel), orInfo
       c.emitLine c.str(rhsLabel) & ":"
       c.currentProc.needsTerminator = false
       genExprLLVM(c, n, rhs)
       let rhsBool = c.temp()
-      c.emitLineDbg "  " & c.str(rhsBool) & " = icmp ne " & c.str(rhs.typ) & " " & c.str(rhs.name) & ", " & zeroVal(rhs.typ), orInfo
+      c.emitLineDbg "  " & c.str(rhsBool) & " = icmp ne " & c.str(rhs.typ) &
+          " " & c.str(rhs.name) & ", " & zeroVal(rhs.typ), orInfo
       let rhsExt = c.temp()
       c.emitLine "  " & c.str(rhsExt) & " = zext i1 " & c.str(rhsBool) & " to i8"
       c.emitLine "  store i8 " & c.str(rhsExt) & ", ptr " & c.str(res)
@@ -906,7 +988,8 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       while n.hasMore: skip n
     let t1 = c.temp()
     let t2 = c.temp()
-    c.emitLineDbg "  " & c.str(t1) & " = icmp eq " & c.str(val.typ) & " " & c.str(val.name) & ", " & zeroVal(val.typ), notInfo
+    c.emitLineDbg "  " & c.str(t1) & " = icmp eq " & c.str(val.typ) & " " &
+        c.str(val.name) & ", " & zeroVal(val.typ), notInfo
     c.emitLine "  " & c.str(t2) & " = zext i1 " & c.str(t1) & " to i8"
     result = LLValue(name: t2, typ: LToken(I8Token))
   of CastC, ConvC:
@@ -975,7 +1058,8 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     let fldIdx = fieldIndex(c, objBody, fldSym)
     let t1 = c.temp()
     let t2 = c.temp()
-    c.emitLine "  " & c.str(t1) & " = getelementptr " & typ & ", ptr null, i32 0, i32 " & $fldIdx
+    c.emitLine "  " & c.str(t1) & " = getelementptr " & typ &
+        ", ptr null, i32 0, i32 " & $fldIdx
     c.emitLine "  " & c.str(t2) & " = ptrtoint ptr " & c.str(t1) & " to i" & $c.bits
     result = LLValue(name: t2, typ: c.tok("i" & $c.bits))
   of ParC:
@@ -1016,7 +1100,8 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       else:
         let t = c.temp()
         if isFloatType(targetTok):
-          c.emitLine "  " & c.str(t) & " = sitofp " & c.str(val.typ) & " " & c.str(val.name) & " to " & c.str(targetTok)
+          c.emitLine "  " & c.str(t) & " = sitofp " & c.str(val.typ) & " " &
+              c.str(val.name) & " to " & c.str(targetTok)
         else:
           # Integer literal (always c.bits wide) to target integer
           let destBits = case suffixStr
@@ -1025,9 +1110,11 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
             of "i32", "u32": 32
             else: 64
           if c.bits < destBits:
-            c.emitLine "  " & c.str(t) & " = sext " & c.str(val.typ) & " " & c.str(val.name) & " to " & c.str(targetTok)
+            c.emitLine "  " & c.str(t) & " = sext " & c.str(val.typ) & " " &
+                c.str(val.name) & " to " & c.str(targetTok)
           elif c.bits > destBits:
-            c.emitLine "  " & c.str(t) & " = trunc " & c.str(val.typ) & " " & c.str(val.name) & " to " & c.str(targetTok)
+            c.emitLine "  " & c.str(t) & " = trunc " & c.str(val.typ) & " " &
+                c.str(val.name) & " to " & c.str(targetTok)
           else:
             result = val
             return
@@ -1052,7 +1139,8 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
             let fldSym = n.symId
             skip n # field name (SymbolDef)
             var fieldVal = LLValue(); genExprLLVM(c, n, fieldVal)
-            let inhDepth = if n.hasMore and n.kind == IntLit: (let d = int(intVal(n)); skip n; d) else: 0
+            let inhDepth = if n.hasMore and n.kind == IntLit: (let d = int(
+                intVal(n)); skip n; d) else: 0
             # Navigate to the field — objTypeCursor is the type symbol itself
             var curType = objTypeCursor
             var curBody = navigateToObjectBody(c.m, curType)
@@ -1061,7 +1149,8 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
             var gepType = objTypeName
             for i in 0 ..< inhDepth:
               let g = c.temp()
-              c.emitLine "  " & c.str(g) & " = getelementptr inbounds " & gepType & ", ptr " & gepTarget & ", i32 0, i32 0"
+              c.emitLine "  " & c.str(g) & " = getelementptr inbounds " &
+                  gepType & ", ptr " & gepTarget & ", i32 0, i32 0"
               gepTarget = c.str(g)
               let baseTypeCursor = baseTypeOfObject(c.m, curBody)
               if not cursorIsNil(baseTypeCursor):
@@ -1069,14 +1158,17 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
                 curBody = navigateToObjectBody(c.m, curType)
                 gepType = genTypeLLVMReadOnly(c, curType)
             let fldPtr = genFieldPtrLLVM(c, curBody, fldSym, gepType, gepTarget)
-            c.emitLine "  store " & c.str(fieldVal.typ) & " " & c.str(fieldVal.name) & ", ptr " & c.str(fldPtr)
+            c.emitLine "  store " & c.str(fieldVal.typ) & " " & c.str(
+                fieldVal.name) & ", ptr " & c.str(fldPtr)
             while n.hasMore: skip n
         else:
           # Non-KV child: base object constructor or vtable pointer — store at field 0
           var baseVal = LLValue(); genExprLLVM(c, n, baseVal)
           let basePtr = c.temp()
-          c.emitLine "  " & c.str(basePtr) & " = getelementptr inbounds " & typ & ", ptr " & c.str(tmp) & ", i32 0, i32 0"
-          c.emitLine "  store " & c.str(baseVal.typ) & " " & c.str(baseVal.name) & ", ptr " & c.str(basePtr)
+          c.emitLine "  " & c.str(basePtr) & " = getelementptr inbounds " &
+              typ & ", ptr " & c.str(tmp) & ", i32 0, i32 0"
+          c.emitLine "  store " & c.str(baseVal.typ) & " " & c.str(
+              baseVal.name) & ", ptr " & c.str(basePtr)
     let loaded = c.temp()
     c.emitLine "  " & c.str(loaded) & " = load " & typ & ", ptr " & c.str(tmp)
     result = LLValue(name: loaded, typ: c.tok(typ))
@@ -1101,7 +1193,8 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       while n.hasMore:
         var elemVal = LLValue(); genExprLLVM(c, n, elemVal)
         let t = c.temp()
-        c.emitLine "  " & c.str(t) & " = insertvalue " & typ & " " & current & ", " & c.str(elemTok) & " " & c.str(elemVal.name) & ", " & $idx
+        c.emitLine "  " & c.str(t) & " = insertvalue " & typ & " " & current &
+            ", " & c.str(elemTok) & " " & c.str(elemVal.name) & ", " & $idx
         current = c.str(t)
         inc idx
       if expectedLen >= 0 and idx != expectedLen:
@@ -1127,5 +1220,6 @@ proc genCondLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     return
   # Convert to i1 by comparing with 0
   let t = c.temp()
-  c.emitLineDbg "  " & c.str(t) & " = icmp ne " & c.str(result.typ) & " " & c.str(result.name) & ", " & zeroVal(result.typ), condInfo
+  c.emitLineDbg "  " & c.str(t) & " = icmp ne " & c.str(result.typ) & " " &
+      c.str(result.name) & ", " & zeroVal(result.typ), condInfo
   result = LLValue(name: t, typ: c.tok("i1"))

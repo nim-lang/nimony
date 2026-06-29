@@ -10,16 +10,18 @@
 # We produce LLVM IR as text (.ll files) so that we are not
 # dependent on LLVM's changing C++ API.
 
-import std / [assertions, syncio, sets, intsets, formatfloat, packedsets, strutils, sequtils, tables]
-from std / os import changeFileExt, splitFile, extractFilename, fileExists, getCurrentDir, absolutePath
+import std / [assertions, syncio, sets, intsets, formatfloat, packedsets,
+    strutils, sequtils, tables]
+from std / os import changeFileExt, splitFile, extractFilename, fileExists,
+    getCurrentDir, absolutePath
 import ".." / lib / vfs
 
-import ".." / lib / nifcoreparse   # re-exports nifcore
-import ".." / lib / nifcdecl        # leng_model replacement
+import ".." / lib / nifcoreparse # re-exports nifcore
+import ".." / lib / nifcdecl # leng_model replacement
 import mangler
 import noptions
 import ".." / lib / symparser
-import typenav, nifmodules                 # nifcore MainModule + getType (local)
+import typenav, nifmodules # nifcore MainModule + getType (local)
 
 # nifcore compatibility shims (see shoggoth/codegen.nim for rationale).
 proc litId(c: Cursor): StrId {.inline.} = strId(c)
@@ -139,34 +141,34 @@ type
     gfMainModule
 
   LLValue* = object
-    name*: LToken  # e.g. "%t5", "@global", "42", "null"
-    typ*: LToken   # e.g. "i32", "ptr", "double", "void"
+    name*: LToken # e.g. "%t5", "@global", "42", "null"
+    typ*: LToken  # e.g. "i32", "ptr", "double", "void"
 
   LLVMCurrentProc* = object
-    allocas*: seq[LToken]  # alloca instructions for the entry block
+    allocas*: seq[LToken]    # alloca instructions for the entry block
     nextTemp*: int
     nextLabel*: int
     vflags*: HashSet[SymId]
-    needsTerminator*: bool  # whether the current basic block needs a terminator
-    breakStack*: seq[LToken]  # stack of loop-end labels for `break`
-    spName*: string      # function name (for rebuilding DISubprogram)
-    spLine*: int          # line number
-    spScopeLine*: int     # scope line
-    subprogramId*: int    # metadata ID of the current DISubprogram
-    subprogramFileId*: int  # DIFile metadata ID for the subprogram's file
-    retType*: LToken      # LLVM IR return type token
-    retTypeCursor*: Cursor  # NIF type cursor for the return type
-    retainedNodes*: seq[int]  # DILocalVariable metadata IDs for retainedNodes
+    needsTerminator*: bool   # whether the current basic block needs a terminator
+    breakStack*: seq[LToken] # stack of loop-end labels for `break`
+    spName*: string          # function name (for rebuilding DISubprogram)
+    spLine*: int             # line number
+    spScopeLine*: int        # scope line
+    subprogramId*: int       # metadata ID of the current DISubprogram
+    subprogramFileId*: int   # DIFile metadata ID for the subprogram's file
+    retType*: LToken         # LLVM IR return type token
+    retTypeCursor*: Cursor   # NIF type cursor for the return type
+    retainedNodes*: seq[int] # DILocalVariable metadata IDs for retainedNodes
 
   DebugInfo* = object
     nextMetadataId*: int
-    metadata*: seq[string]     # accumulated metadata nodes
-    fileIds*: Table[int, int]  # FileId (as int) -> DIFile metadata id
-    cuId*: int                 # DICompileUnit metadata id
-    diTypeCache*: Table[SymId, int]        # SymId -> DIType metadata id
-    diBasicTypeCache*: Table[string, int]  # "i32"/"float"/… -> DIBasicType id
-    compositeTypeDone*: HashSet[SymId]     # symIds with fully built DICompositeType
-    globalExprs*: seq[int]    # DIGlobalVariableExpression IDs for DICompileUnit globals
+    metadata*: seq[string]                # accumulated metadata nodes
+    fileIds*: Table[int, int]             # FileId (as int) -> DIFile metadata id
+    cuId*: int                            # DICompileUnit metadata id
+    diTypeCache*: Table[SymId, int]       # SymId -> DIType metadata id
+    diBasicTypeCache*: Table[string, int] # "i32"/"float"/… -> DIBasicType id
+    compositeTypeDone*: HashSet[SymId]    # symIds with fully built DICompositeType
+    globalExprs*: seq[int] # DIGlobalVariableExpression IDs for DICompileUnit globals
 
 const
   DW_ATE_address = 1
@@ -181,25 +183,26 @@ type
   LLVMCode* = object
     m: MainModule
     tokens: BiTable[LToken, string]
-    types*: seq[LToken]       # type declarations
-    globals*: seq[LToken]     # global variable declarations
-    externs*: seq[LToken]     # external function declarations
-    funcBodies*: seq[LToken]  # function definitions
-    initBody*: seq[LToken]    # global constructor body
-    body*: seq[LToken]        # current function body being built
+    types*: seq[LToken]                      # type declarations
+    globals*: seq[LToken]                    # global variable declarations
+    externs*: seq[LToken]                    # external function declarations
+    funcBodies*: seq[LToken]                 # function definitions
+    initBody*: seq[LToken]                   # global constructor body
+    body*: seq[LToken]                       # current function body being built
     bits: int
     flags: set[LLVMGenFlag]
     generatedTypes*: HashSet[SymId]
     requestedSyms*: HashSet[SymId]
-    declaredExterns*: HashSet[string] # to avoid duplicate extern declarations
-    varargsFuncTypes*: Table[string, string]    # name -> function-type-signature
-    emittedConsts*: HashSet[SymId] # local consts emitted as global constants
+    declaredExterns*: HashSet[string]        # to avoid duplicate extern declarations
+    varargsFuncTypes*: Table[string, string] # name -> function-type-signature
+    emittedConsts*: HashSet[SymId]           # local consts emitted as global constants
     inToplevel: bool
     currentProc: LLVMCurrentProc
-    strLitCounter*: int       # global counter for string literal names
+    strLitCounter*: int                      # global counter for string literal names
     debug*: DebugInfo
 
-proc initLLVMCode*(m: sink MainModule; flags: set[LLVMGenFlag]; bits: int): LLVMCode =
+proc initLLVMCode*(m: sink MainModule; flags: set[LLVMGenFlag];
+    bits: int): LLVMCode =
   result = LLVMCode(m: m, flags: flags, bits: bits, inToplevel: true,
                     tokens: initBiTable[LToken, string]())
   fillTokenTable(result.tokens)
@@ -302,6 +305,7 @@ proc initDebugInfo(c: var LLVMCode; filename: string) =
   ## Debug metadata is initialized lazily: the first call to
   ## ``getOrCreateDIFile`` creates the DICompileUnit using the first
   ## real source file as its file reference.
+  pass
 
 proc bitsFromLLVMType(llvmType: string; defaultBits: int): int =
   ## Extract bit width from LLVM type string, e.g. "i32" → 32, "ptr" → defaultBits.
@@ -314,7 +318,8 @@ proc bitsFromLLVMType(llvmType: string; defaultBits: int): int =
   else:
     result = defaultBits
 
-proc genDIBasicType(c: var LLVMCode; name: string; sizeBits, encoding: int): int =
+proc genDIBasicType(c: var LLVMCode; name: string; sizeBits,
+    encoding: int): int =
   ## Get or create a DIBasicType metadata node. Cached by name+size+encoding.
   let key = name & ":" & $sizeBits & ":" & $encoding
   result = c.debug.diBasicTypeCache.getOrDefault(key)
@@ -333,7 +338,8 @@ proc getOrCreateDIFile(c: var LLVMCode; fid: FileId): int =
   let (dir, name, ext) = splitFile(path)
   let fullName = name & ext
   let directory = if dir == "": getCurrentDir() else: absolutePath(dir)
-  result = c.addMetadata("!DIFile(filename: \"" & fullName & "\", directory: \"" & directory & "\")")
+  result = c.addMetadata("!DIFile(filename: \"" & fullName &
+      "\", directory: \"" & directory & "\")")
   c.debug.fileIds[key] = result
   # First real source file → create the compile unit using this file
   if c.debug.cuId == 0:
@@ -350,7 +356,8 @@ proc dbgLocation(c: var LLVMCode; info: NifLineInfo): string =
     if fileId == c.currentProc.subprogramFileId:
       c.currentProc.subprogramId
     else:
-      c.addMetadata("!DILexicalBlockFile(scope: !" & $c.currentProc.subprogramId &
+      c.addMetadata("!DILexicalBlockFile(scope: !" &
+          $c.currentProc.subprogramId &
         ", file: !" & $fileId & ", discriminator: 0)")
   let locId = c.addMetadata("!DILocation(line: " & $rawInfo.line &
     ", column: " & $(rawInfo.col + 1) &
@@ -452,7 +459,8 @@ proc emitDbgDeclare(c: var LLVMCode; localName: string; symId: SymId;
   let locId = c.addMetadata("!DILocation(line: " & $rawInfo.line &
     ", column: " & $(rawInfo.col + 1) &
     ", scope: !" & $c.currentProc.subprogramId & ")")
-  c.emitLine "  #dbg_declare(ptr " & localName & ", !" & $varId & ", !DIExpression(), !" & $locId & ")"
+  c.emitLine "  #dbg_declare(ptr " & localName & ", !" & $varId &
+      ", !DIExpression(), !" & $locId & ")"
 
 proc writeTokenSeq(f: var string; s: seq[LToken]; c: LLVMCode) =
   for x in s:
@@ -568,7 +576,8 @@ proc emitGlobalDbgVar(c: var LLVMCode; name: string; varInfo: NifLineInfo;
   c.debug.globalExprs.add gveId
   result = ", !dbg !" & $gveId
 
-proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExtern = false) =
+proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM;
+    toExtern = false) =
   let varInfo = n.info
   var d = takeVarDecl(n)
   if d.name.kind == SymbolDef:
@@ -635,18 +644,22 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM; toExt
     let dbgvSuffix = if not toExtern and not isImport:
                        emitGlobalDbgVar(c, name, varInfo, lit, diType) else: ""
     if toExtern or isImport:
-      c.addTo(c.globals, "@" & name & " = external " & tls & "global " & typ & alignSuffix & "\n")
+      c.addTo(c.globals, "@" & name & " = external " & tls & "global " & typ &
+          alignSuffix & "\n")
     else:
       if d.value.kind != DotToken:
         var v = d.value
         let tc = genGlobalConstr(c, v, d.typ)
         let linkage = if vk == IsConst: "constant" else: "global"
-        c.addTo(c.globals, "@" & name & " = " & tls & linkage & " " & tc.typ & " " & tc.val & alignSuffix & dbgvSuffix & "\n")
+        c.addTo(c.globals, "@" & name & " = " & tls & linkage & " " & tc.typ &
+            " " & tc.val & alignSuffix & dbgvSuffix & "\n")
       else:
         skip d.value
-        let zeroVal = if d.typ.typeKind in {PtrT, AptrT, ProctypeT}: "null" else: "zeroinitializer"
+        let zeroVal = if d.typ.typeKind in {PtrT, AptrT,
+            ProctypeT}: "null" else: "zeroinitializer"
         let linkage = if vk == IsConst: "constant" else: "global"
-        c.addTo(c.globals, "@" & name & " = " & tls & linkage & " " & typ & " " & zeroVal & alignSuffix & dbgvSuffix & "\n")
+        c.addTo(c.globals, "@" & name & " = " & tls & linkage & " " & typ &
+            " " & zeroVal & alignSuffix & dbgvSuffix & "\n")
     if vk == IsConst:
       c.emittedConsts.incl lit
   else:
@@ -681,15 +694,18 @@ proc genLocalVarDeclLLVM(c: var LLVMCode; n: var Cursor) =
         inc onErr
         var onErrAction = onErr
         var val = LLValue(); genCallExprLLVM(c, d.value, val)
-        c.emitLineDbg "  store " & c.str(val.typ) & " " & c.str(val.name) & ", ptr " & localName, varInfo
+        c.emitLineDbg "  store " & c.str(val.typ) & " " & c.str(val.name) &
+            ", ptr " & localName, varInfo
         if onErrAction.kind != DotToken:
           genOnErrorLLVM(c, onErrAction)
       else:
         var val = LLValue(); genExprLLVM(c, d.value, val)
-        c.emitLineDbg "  store " & c.str(val.typ) & " " & c.str(val.name) & ", ptr " & localName, varInfo
+        c.emitLineDbg "  store " & c.str(val.typ) & " " & c.str(val.name) &
+            ", ptr " & localName, varInfo
     else:
       inc d.value
-      let zeroVal = if d.typ.typeKind in {PtrT, AptrT, ProctypeT}: "null" else: "zeroinitializer"
+      let zeroVal = if d.typ.typeKind in {PtrT, AptrT,
+          ProctypeT}: "null" else: "zeroinitializer"
       c.emitLineDbg "  store " & typ & " " & zeroVal & ", ptr " & localName, varInfo
   else:
     error c.m, "expected SymbolDef but got: ", d.name
@@ -705,7 +721,7 @@ type
     flags: set[LengPragma]
     extern: StrId
     callConv: CallConv
-    wasName: string  # original proc name from (was ...) pragma
+    wasName: string # original proc name from (was ...) pragma
 
 proc parseProcPragmasLLVM(c: var LLVMCode; n: var Cursor): PragmaInfo =
   result = PragmaInfo()
@@ -800,7 +816,8 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
   c.m.openScope()
   c.inToplevel = false
   let oldProc = c.currentProc
-  c.currentProc = LLVMCurrentProc(nextTemp: 0, nextLabel: 0, needsTerminator: false)
+  c.currentProc = LLVMCurrentProc(nextTemp: 0, nextLabel: 0,
+      needsTerminator: false)
 
   let procInfo = n.info
   var prc = takeProcDecl(n)
@@ -902,7 +919,8 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
       c.emitLine "  store " & paramTypes[i] & " %" & pn & ".param, ptr " & allocaName
       let pdi = if i < paramDITypes.len: paramDITypes[i] else: 0
       let psym = if i < paramSyms.len: paramSyms[i] else: SymId(0)
-      emitDbgDeclare(c, allocaName, psym, paramWasNames[i], procInfo, pdi, argNo = i+1, llvmTyp = paramTypes[i])
+      emitDbgDeclare(c, allocaName, psym, paramWasNames[i], procInfo, pdi,
+          argNo = i+1, llvmTyp = paramTypes[i])
 
     # Generate body
     genStmtLLVM c, prc.body
@@ -917,7 +935,8 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
       if prc.returnType.kind == DotToken:
         c.emitLineDbg "  ret void", procInfo
       else:
-        let zeroVal = if prc.returnType.typeKind in {PtrT, AptrT, ProctypeT}: "null" else: "zeroinitializer"
+        let zeroVal = if prc.returnType.typeKind in {PtrT, AptrT,
+            ProctypeT}: "null" else: "zeroinitializer"
         c.emitLineDbg "  ret " & retType & " " & zeroVal, procInfo
 
     # Assemble function: header string + alloca tokens + body tokens + closing
@@ -1027,7 +1046,7 @@ proc generateLLVMTypes(c: var LLVMCode) =
         if typeDef != "":
           c.addTo(c.types, typeDef)
 
-proc generateLLVMCode*(s: var State, inp, outp: string; flags: set[LLVMGenFlag]) =
+proc generateLLVMCode*(s: var State; inp, outp: string; flags: set[LLVMGenFlag]) =
   var m = load(inp)
   m.config = s.config
   var c = initLLVMCode(m, flags, s.bits)
@@ -1065,7 +1084,7 @@ proc generateLLVMCode*(s: var State, inp, outp: string; flags: set[LLVMGenFlag])
   writeTokenSeq f, c.globals, c
   if c.globals.len > 0: f.add "\n"
 
-  # Error and overflow flags  
+  # Error and overflow flags
   if gfMainModule in c.flags:
     f.add "@LENGC_ERR_ = thread_local global i8 0\n"
     f.add "@LENGC_OVF_ = thread_local global i8 0\n\n"

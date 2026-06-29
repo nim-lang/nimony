@@ -40,7 +40,8 @@ proc genOnErrorLLVM(c: var LLVMCode; n: var Cursor) =
   c.emitLineDbg "  " & c.str(cond) & " = icmp ne i8 " & c.str(errVal) & ", 0", onErrInfo
   let thenLabel = c.label()
   let endLabel = c.label()
-  c.emitLineDbg "  br i1 " & c.str(cond) & ", label %" & c.str(thenLabel) & ", label %" & c.str(endLabel), onErrInfo
+  c.emitLineDbg "  br i1 " & c.str(cond) & ", label %" & c.str(thenLabel) &
+      ", label %" & c.str(endLabel), onErrInfo
   c.emitLine c.str(thenLabel) & ":"
   c.currentProc.needsTerminator = false
   genStmtLLVM c, n
@@ -61,7 +62,8 @@ proc genIfLLVM(c: var LLVMCode; n: var Cursor) =
         var cond = LLValue(); genCondLLVM(c, n, cond)
         let thenLabel = c.label()
         let elseLabel = c.label()
-        c.emitLineDbg "  br i1 " & c.str(cond.name) & ", label %" & c.str(thenLabel) & ", label %" & c.str(elseLabel), branchInfo
+        c.emitLineDbg "  br i1 " & c.str(cond.name) & ", label %" & c.str(
+            thenLabel) & ", label %" & c.str(elseLabel), branchInfo
         c.emitLine c.str(thenLabel) & ":"
         c.currentProc.needsTerminator = false
         genStmtLLVM c, n
@@ -110,9 +112,11 @@ proc genIteLLVM(c: var LLVMCode; n: var Cursor) =
       let endLabel = c.label()
 
       if n.kind != DotToken:
-        c.emitLineDbg "  br i1 " & c.str(cond.name) & ", label %" & c.str(thenLabel) & ", label %" & c.str(elseLabel), iteInfo
+        c.emitLineDbg "  br i1 " & c.str(cond.name) & ", label %" & c.str(
+            thenLabel) & ", label %" & c.str(elseLabel), iteInfo
       else:
-        c.emitLineDbg "  br i1 " & c.str(cond.name) & ", label %" & c.str(thenLabel) & ", label %" & c.str(endLabel), iteInfo
+        c.emitLineDbg "  br i1 " & c.str(cond.name) & ", label %" & c.str(
+            thenLabel) & ", label %" & c.str(endLabel), iteInfo
 
       c.emitLine c.str(thenLabel) & ":"
       c.currentProc.needsTerminator = false
@@ -145,7 +149,8 @@ proc genWhileLLVM(c: var LLVMCode; n: var Cursor) =
     c.emitLine c.str(condLabel) & ":"
 
     var cond = LLValue(); genCondLLVM(c, n, cond)
-    c.emitLineDbg "  br i1 " & c.str(cond.name) & ", label %" & c.str(bodyLabel) & ", label %" & c.str(endLabel), whileInfo
+    c.emitLineDbg "  br i1 " & c.str(cond.name) & ", label %" & c.str(
+        bodyLabel) & ", label %" & c.str(endLabel), whileInfo
 
     c.emitLine c.str(bodyLabel) & ":"
     c.currentProc.needsTerminator = false
@@ -176,7 +181,8 @@ proc genLoopLLVM(c: var LLVMCode; n: var Cursor) =
     genStmtLLVM c, n
     # Condition
     var cond = LLValue(); genCondLLVM(c, n, cond)
-    c.emitLineDbg "  br i1 " & c.str(cond.name) & ", label %" & c.str(bodyLabel) & ", label %" & c.str(endLabel), loopInfo
+    c.emitLineDbg "  br i1 " & c.str(cond.name) & ", label %" & c.str(
+        bodyLabel) & ", label %" & c.str(endLabel), loopInfo
 
     c.emitLine c.str(bodyLabel) & ":"
     c.currentProc.needsTerminator = false
@@ -235,10 +241,12 @@ proc genSwitchLLVM(c: var LLVMCode; n: var Cursor) =
         error c.m, "`case` expects `of` or `else` but got: ", n
 
     # Emit switch instruction
-    var switchInstr = "  switch " & c.str(switchVal.typ) & " " & c.str(switchVal.name) & ", label %" & defaultLabel & " [\n"
+    var switchInstr = "  switch " & c.str(switchVal.typ) & " " & c.str(
+        switchVal.name) & ", label %" & defaultLabel & " [\n"
     for branch in branches:
       for v in branch.values:
-        switchInstr.add "    " & c.str(switchVal.typ) & " " & v & ", label %" & branch.label & "\n"
+        switchInstr.add "    " & c.str(switchVal.typ) & " " & v & ", label %" &
+            branch.label & "\n"
     switchInstr.add "  ]\n"
     c.emitLine switchInstr
 
@@ -356,7 +364,8 @@ proc genStoreLLVM(c: var LLVMCode; n: var Cursor) =
     skip n
     var target = LLValue(); genLvalueLLVM(c, n, target)
     var val = LLValue(); genExprLLVM(c, rhs, val)
-    c.emitLineDbg "  store " & c.str(val.typ) & " " & c.str(val.name) & ", ptr " & c.str(target.name), storeInfo
+    c.emitLineDbg "  store " & c.str(val.typ) & " " & c.str(val.name) &
+        ", ptr " & c.str(target.name), storeInfo
     while n.hasMore: skip n
 
 proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
@@ -384,7 +393,8 @@ proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
     n.into: # operation tag
       let isUnsigned = n.typeKind == UT
       if isUnsigned:
-        intrinsic = intrinsic.replace("sadd", "uadd").replace("ssub", "usub").replace("smul", "umul")
+        intrinsic = intrinsic.replace("sadd", "uadd").replace("ssub",
+            "usub").replace("smul", "umul")
 
       n.into: # type tag (IT or UT)
         if n.kind == IntLit:
@@ -406,32 +416,39 @@ proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
 
   # Call the intrinsic
   let result_struct = c.temp()
-  c.emitLine "  " & c.str(result_struct) & " = call { " & typ & ", i1 } @" & intrinsic & "(" & typ & " " & c.str(lhs.name) & ", " & typ & " " & c.str(rhs.name) & ")"
+  c.emitLine "  " & c.str(result_struct) & " = call { " & typ & ", i1 } @" &
+      intrinsic & "(" & typ & " " & c.str(lhs.name) & ", " & typ & " " & c.str(
+      rhs.name) & ")"
 
   # Extract the result value
   let resultVal = c.temp()
-  c.emitLine "  " & c.str(resultVal) & " = extractvalue { " & typ & ", i1 } " & c.str(result_struct) & ", 0"
+  c.emitLine "  " & c.str(resultVal) & " = extractvalue { " & typ & ", i1 } " &
+      c.str(result_struct) & ", 0"
 
   # Store the result
   c.emitLine "  store " & typ & " " & c.str(resultVal) & ", ptr " & c.str(target.name)
 
   # Extract the overflow flag
   let ovfFlag = c.temp()
-  c.emitLine "  " & c.str(ovfFlag) & " = extractvalue { " & typ & ", i1 } " & c.str(result_struct) & ", 1"
+  c.emitLine "  " & c.str(ovfFlag) & " = extractvalue { " & typ & ", i1 } " &
+      c.str(result_struct) & ", 1"
 
   # If overflow occurred, set the overflow flag
   let currentOvf = c.temp()
   c.emitLine "  " & c.str(currentOvf) & " = load i8, ptr @LENGC_OVF_"
   let currentOvfBool = c.temp()
-  c.emitLineDbg "  " & c.str(currentOvfBool) & " = icmp ne i8 " & c.str(currentOvf) & ", 0", ovfInfo
+  c.emitLineDbg "  " & c.str(currentOvfBool) & " = icmp ne i8 " & c.str(
+      currentOvf) & ", 0", ovfInfo
   let combinedOvf = c.temp()
-  c.emitLine "  " & c.str(combinedOvf) & " = or i1 " & c.str(currentOvfBool) & ", " & c.str(ovfFlag)
+  c.emitLine "  " & c.str(combinedOvf) & " = or i1 " & c.str(currentOvfBool) &
+      ", " & c.str(ovfFlag)
   let newOvfByte = c.temp()
   c.emitLine "  " & c.str(newOvfByte) & " = zext i1 " & c.str(combinedOvf) & " to i8"
   c.emitLine "  store i8 " & c.str(newOvfByte) & ", ptr @LENGC_OVF_"
 
   # Declare the intrinsic if not already done
-  let declStr = "declare { " & typ & ", i1 } @" & intrinsic & "(" & typ & ", " & typ & ")"
+  let declStr = "declare { " & typ & ", i1 } @" & intrinsic & "(" & typ & ", " &
+      typ & ")"
   if intrinsic notin c.declaredExterns:
     c.declaredExterns.incl intrinsic
     c.addTo(c.externs, declStr & "\n")
@@ -497,7 +514,8 @@ proc genStmtLLVM(c: var LLVMCode; n: var Cursor) =
     n.into:
       var lval = LLValue(); genLvalueLLVM(c, n, lval)
       var rval = LLValue(); genExprLLVM(c, n, rval)
-      c.emitLineDbg "  store " & c.str(rval.typ) & " " & c.str(rval.name) & ", ptr " & c.str(lval.name), asgnInfo
+      c.emitLineDbg "  store " & c.str(rval.typ) & " " & c.str(rval.name) &
+          ", ptr " & c.str(lval.name), asgnInfo
       while n.hasMore: skip n
   of StoreS:
     genStoreLLVM c, n
@@ -544,7 +562,8 @@ proc genStmtLLVM(c: var LLVMCode; n: var Cursor) =
       while n.hasMore: skip n
   of DiscardS:
     n.into:
-      var discardVal = LLValue(); genExprLLVM(c, n, discardVal) # evaluate for side effects, discard result
+      var discardVal = LLValue(); genExprLLVM(c, n,
+          discardVal) # evaluate for side effects, discard result
       while n.hasMore: skip n
   of TryS:
     # Exception handling - simplified version using LLVM's landingpad

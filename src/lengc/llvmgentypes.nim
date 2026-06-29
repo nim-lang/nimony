@@ -356,7 +356,8 @@ proc recordDependencyImplLLVM(m: var MainModule; o: var TypeOrderLLVM;
           o.lookedAtBodies.incl decl.name.symId
           recordDependencyImplLLVM m, o, n, decl.body, viaPointer
 
-proc recordDependencyLLVM(m: var MainModule; o: var TypeOrderLLVM; parent, child: Cursor) =
+proc recordDependencyLLVM(m: var MainModule; o: var TypeOrderLLVM; parent,
+    child: Cursor) =
   var viaPointer = false
   recordDependencyImplLLVM m, o, parent, child, viaPointer
 
@@ -428,7 +429,7 @@ proc traverseTypesLLVM(m: var MainModule; o: var TypeOrderLLVM) =
 
 type
   UnionCandidate = object
-    typ*: string        # LLVM type string of this member
+    typ*: string # LLVM type string of this member
     sizeBits*: int
     alignBits*: int
 
@@ -679,7 +680,8 @@ proc fieldIndex(c: var LLVMCode; objBody: Cursor; fldSym: SymId): int =
   discard searchFieldIdx(c, body, fldSym, access, bitfieldAccum, bitfieldUnit)
   result = access.index
 
-proc fieldAccessLLVM(c: var LLVMCode; objBody: Cursor; fldSym: SymId): FieldAccess =
+proc fieldAccessLLVM(c: var LLVMCode; objBody: Cursor;
+    fldSym: SymId): FieldAccess =
   ## Look up field access info for `fldSym` in object body `objBody`.
   ## Returns `FieldAccess` with `isBranch = true` for fields inside union
   ## branches, requiring two-level GEP.
@@ -823,10 +825,11 @@ proc isPackedType(c: var LLVMCode; typeSym: Cursor): bool =
 
 type
   TypedConst = object
-    typ: string  # LLVM type (may differ from declared type for flexarrays)
-    val: string  # LLVM constant value
+    typ: string # LLVM type (may differ from declared type for flexarrays)
+    val: string # LLVM constant value
 
-proc genGlobalConstr(c: var LLVMCode; n: var Cursor; declaredType: Cursor): TypedConst =
+proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
+    declaredType: Cursor): TypedConst =
   ## Generate a constant value together with its actual LLVM type.
   ## The actual type may differ from the declared type when flexarray fields
   ## have concrete initializers (e.g. [0 x i8] becomes [16 x i8]).
