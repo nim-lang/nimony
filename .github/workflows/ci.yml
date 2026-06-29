@@ -249,11 +249,6 @@ jobs:
           restore-keys: |
             hastur-release-${{ runner.os }}-${{ matrix.target.cpu }}-${{ matrix.target.nim_branch }}-
 
-      - name: Create dist/nimony symlink for Nim compiler
-        run: |
-          mkdir -p nim/dist
-          ln -sf ../../nimony nim/dist/nimony
-
       - name: Test Building nimony
         run: |
           cd nimony
