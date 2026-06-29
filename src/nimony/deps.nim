@@ -1776,6 +1776,12 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
   exec(nifmakeCmd)
   exec(exeFile)
 
+proc progArg(flags: set[BuildFlag]; lo, hi: int): string =
+  # nifmake itself routes the bar (terminal-only); we only suppress it where
+  # nimony asked for silence or machine-readable output.
+  if SilentMake in flags or Report in flags: ""
+  else: "--progress:" & $lo & ":" & $hi & " "
+
 proc buildGraph*(config: sink NifConfig; project: string;
     flags: set[BuildFlag];
     commandLineArgs, commandLineArgsLengc: string; moduleFlags: set[ModuleFlag]; cmd: Command;
@@ -1803,7 +1809,14 @@ proc buildGraph*(config: sink NifConfig; project: string;
     (if Report in flags: " --report" else: "") &
     " --base:" & quoteShell(config.baseDir) &
     " -j run "
-  exec nifmakeCommand & quoteShell(buildFilename)
+
+  # `nimony c` drives nifmake once for the frontend and once more for the
+  # backend (or docs); `DoCheck` stops after the frontend. Hand each invocation
+  # a slice of the 0..100% range so nifmake's live bar reads as one continuous
+  # indicator across the separate processes instead of restarting per phase.
+  let twoPhase = cmd != DoCheck
+
+  exec nifmakeCommand & progArg(flags, 0, if twoPhase: 50 else: 100) & quoteShell(buildFilename)
 
   if cmd == DoDoc:
     c = initDepContext(config, project, nifler, true, forceRebuild, moduleFlags, cmd)
@@ -1822,7 +1835,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
       if parent.len > 0 and parent != docOut:
         onRaiseQuit createDir(path(parent))
     let buildDocFilename = generateDocBuildFile(c)
-    exec nifmakeCommand & quoteShell(buildDocFilename)
+    exec nifmakeCommand & progArg(flags, 50, 100) & quoteShell(buildDocFilename)
     return
 
   if cmd != DoCheck:
@@ -1834,6 +1847,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
     onRaiseQuit createDir(path(backend))
     onRaiseQuit createDir(path(sharedObjDir()))
     let buildFinalFilename = generateFinalBuildFile(c, commandLineArgsLengc, passC, passL)
+    # second (backend) phase: 50..100%
     # Linkers (gcc/clang/ld/ar) don't auto-create the output directory.
     # When the user passes `--out:bin/foo` or `--outdir:bin`, materialise
     # `bin/` here. Nim does the same in `prepareToWriteOutput`.
@@ -1841,7 +1855,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
     let exeOutDir = exeOutPath.parentDir
     if exeOutDir.len > 0:
       onRaiseQuit createDir(path(exeOutDir))
-    exec nifmakeCommand & quoteShell(buildFinalFilename)
+    exec nifmakeCommand & progArg(flags, 50, 100) & quoteShell(buildFinalFilename)
 
   if Stats in flags:
     # Walk every source module in the dep graph and sum line counts. Counting

@@ -32,7 +32,7 @@
 ## Invocation: `niflink <manifest.nif> [output]` (an explicit `output` argument
 ## overrides the manifest's `(output …)`).
 
-import std / os
+import std / [os, syncio, strutils]
 import ".." / "lib" / [nifcore, nifcoreparse]
 
 type
@@ -114,6 +114,50 @@ proc parseManifest(path: string): Manifest =
       else:
         inc c
 
+proc runTool(prog: string; args: seq[string]; spillBase: string): int =
+  ## Run `prog args…`. The object list can outgrow the OS command-line limit
+  ## (Windows' `cmd.exe` caps it near 8 KB), so a long command is spilled to a
+  ## file. The thresholds and the per-OS strategy mirror Nim's
+  ## `preventLinkCmdMaxCmdLen` in `compiler/extccomp.nim`, which has the scars:
+  ##   * Windows / Linux: a `@response-file` the compiler driver expands. GCC's
+  ##     response-file parser treats `\` as an escape, so Windows paths must use
+  ##     forward slashes (clang/gcc accept them) — we flip `\`→`/`, not escape.
+  ##   * macOS: Apple's linker has no `@file`, so we hand the whole command to a
+  ##     shell script instead.
+  const MaxInlineCmdLen = when defined(windows): 8_000
+                          elif defined(macosx): 260_000
+                          else: 32_000
+  var inline = prog
+  for a in args: inline.add " " & quoteShell(a)
+  if inline.len <= MaxInlineCmdLen:
+    return execShellCmd(inline)
+
+  when defined(macosx):
+    let script = spillBase & "_link.sh"
+    try:
+      writeFile(script, inline)
+    except:
+      quit "niflink: cannot write link script: " & script
+    var shell = getEnv("SHELL")
+    if shell.len == 0: shell = "/bin/sh"
+    result = execShellCmd(shell & " " & quoteShell(script))
+    try: removeFile(script)
+    except: discard
+  else:
+    let rsp = spillBase & "_linkerArgs.txt"
+    var content = ""
+    for a in args: content.add quoteShell(a) & "\n"
+    # The driver we invoke is always gcc/clang here, whose response-file parser
+    # mangles backslashes — use forward slashes (valid for paths on Windows).
+    content = content.replace('\\', '/')
+    try:
+      writeFile(rsp, content)
+    except:
+      quit "niflink: cannot write response file: " & rsp
+    result = execShellCmd(prog & " @" & quoteShell(rsp))
+    try: removeFile(rsp)
+    except: discard
+
 proc main =
   if paramCount() < 1:
     quit "usage: niflink <manifest.nif> [output]"
@@ -137,24 +181,25 @@ proc main =
 
   if m.apptype == "staticlib":
     # `ar` does not take link flags; only the objects are archived.
-    var cmd = getEnv("AR", "ar") & " rcs " & quoteShell(output)
-    for o in objs: cmd.add " " & quoteShell(o.path)
-    quit execShellCmd(cmd)
+    var args = @["rcs", output]
+    for o in objs: args.add o.path
+    quit runTool(getEnv("AR", "ar"), args, output)
   else:
-    var cmd = cc
+    var args: seq[string] = @[]
     # Each object is followed by its own per-file link flags, so library
     # dependencies declared by a `.build` module resolve in the right order.
     for o in objs:
-      cmd.add " " & quoteShell(o.path)
-      for f in o.flags: cmd.add " " & quoteShell(f)
-    if m.apptype == "lib": cmd.add " -shared"
+      args.add o.path
+      for f in o.flags: args.add f
+    if m.apptype == "lib": args.add "-shared"
     # On Windows the toolchain links with clang, whose native PE TLS layout is
     # mishandled by ld.bfd; LLD lays out `.tls$` the way the loader expects, so
     # native TLS survives to runtime. Mirror the old link step's `-fuse-ld=lld`.
     when defined(windows):
-      cmd.add " -fuse-ld=lld"
-    for f in m.flags: cmd.add " " & quoteShell(f)
-    cmd.add " -o " & quoteShell(output)
-    quit execShellCmd(cmd)
+      args.add "-fuse-ld=lld"
+    for f in m.flags: args.add f
+    args.add "-o"
+    args.add output
+    quit runTool(cc, args, output)
 
 main()
