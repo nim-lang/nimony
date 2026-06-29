@@ -14,9 +14,9 @@ import std / [assertions, hashes, syncio, cmdline]
 import ".." / ".." / "lib" / nifcore except symId, `$`, addSymUse
 import ".." / ".." / "lib" / nifcoreparse except symId, `$`, addSymUse
 import ".." / ".." / "lib" / bitabs
-import ".." / ".." / "models" / [tags, nimony_tags]
+import ".." / ".." / "models" / [tags, nimony_tags, plugin_tags]
 import ".." / nif_annotations
-export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther
+export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther, NimonySym
 export NifKind, SymId, TagId
 export DotToken, CharLit, StrLit, IntLit, UIntLit, FloatLit
 export Symbol, SymbolDef, Ident, TagLit
@@ -36,7 +36,15 @@ type
     line*: int ## One-based source line, or zero when unavailable.
     col*: int ## One-based source column, or zero when unavailable.
 
+  GenSym* = object
+    ## Handle for a fresh symbol emitted by a plugin.
+    slot: int
+    name: string
+    kind: NimonySym
+
 const NoLineInfo* = NoNifLineInfo ## Source location for synthetic output.
+
+var nextGenSymSlot = 0
 
 proc createPluginTags(): TagPool =
   result = newTagPool()
@@ -226,6 +234,34 @@ proc addSymUse*(t: var NifBuilder; s: string;
   ## Appends a symbol use from its textual name with source information.
   nifcore.addSymUse(t, s)
   appendInfo(t, info)
+
+proc genSym*(kind: NimonySym; name = "tmp"): GenSym =
+  ## Creates a fresh-symbol handle for definitions and uses in plugin output.
+  assert kind != NoSym, "genSym requires a declaration kind"
+  result = GenSym(slot: nextGenSymSlot, name: name, kind: kind)
+  inc nextGenSymSlot
+
+proc genSym*(name = "tmp"): GenSym =
+  ## Creates a fresh local `let` symbol handle.
+  genSym(LetY, name)
+
+proc addGenSym(t: var NifBuilder; marker: PluginKind; s: GenSym;
+               info: LineInfo) =
+  t.openTree(cast[TagId](marker), info)
+  t.addIntLit s.slot
+  t.addStrLit s.name
+  t.addStrLit tagText(cast[TagId](s.kind))
+  t.closeTree()
+
+proc addSymDef*(t: var NifBuilder; s: GenSym;
+                info: LineInfo = NoLineInfo) =
+  ## Appends a definition of the fresh symbol represented by `s`.
+  t.addGenSym(PluginSymDefK, s, info)
+
+proc addSymUse*(t: var NifBuilder; s: GenSym;
+                info: LineInfo = NoLineInfo) =
+  ## Appends a use of the fresh symbol represented by `s`.
+  t.addGenSym(PluginSymUseK, s, info)
 
 proc addErrorMessage(t: var NifBuilder; msg: string; info: LineInfo) =
   t.addStrLit(msg)

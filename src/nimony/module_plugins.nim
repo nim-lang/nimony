@@ -9,7 +9,7 @@
 import std / [tables, sets, hashes, syncio, formatfloat, assertions, strutils]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import nimony_model, semdata, semos
+import nimony_model, semdata, semplugins
 
 import ".." / gear2 / modnames
 

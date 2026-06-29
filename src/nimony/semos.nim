@@ -381,9 +381,9 @@ proc writeFileIfChanged(file, content: string) {.canRaise.} =
   else:
     writeFile file, content
 
-proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
-                pluginName: string;
-                input: string; additionalInput = "") =
+proc runPluginOutput*(c: var SemContext; dest: var TokenBuf;
+                      info: PackedLineInfo; pluginName: string;
+                      input: string; additionalInput = "") =
   let p = splitFile(pluginName)
   let checksumA = if additionalInput.len > 0: "_" & computeChecksum(additionalInput) else: ""
   let basename = c.g.config.nifcachePath / p.name & "_" & computeChecksum(input) & checksumA
