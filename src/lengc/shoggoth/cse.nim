@@ -85,19 +85,25 @@ type
   CachedEntry = object
     hasFirst: bool       # a first occurrence has been recorded
     firstExprPos: int    # position in `orig` of the first occurrence
-    anchorStack: seq[int] # enclosing hoist-anchor statements at the first
-                          # occurrence (innermost last); the decl is hoisted at
-                          # the deepest anchor common to all occurrences
+    firstStmtPos: int    # position of the statement directly enclosing the first
+                         # occurrence — the (sound) decl-insertion point
+    anchorStack: seq[int] # the first occurrence's enclosing hoist anchors
+                          # (scope/if/case/loop = C `{}` blocks); a later
+                          # occurrence is only reused when this is a prefix of its
+                          # own anchor stack, i.e. it lies inside the same block as
+                          # the decl (otherwise the temp would be out of scope)
 
-  PendingDecl = object   # a materialized temp whose decl is hoisted at the end,
-    tempName: string     # so its position can move up as further occurrences in
-    exprPos: int         # shallower scopes appear
+  PendingDecl = object   # a materialized temp; its decl is emitted at flush time
+    tempName: string
+    exprPos: int         # the first occurrence's expression position
     addrMode: bool
-    commonStack: seq[int] # deepest hoist-anchor common to all occurrences
-    firstStack: seq[int] # the first (earliest) occurrence's anchor stack
-    minOuter: int        # earliest outermost anchor across occurrences (used
-                         # when they share no anchor → hoist at the body level)
-    hoistPos: int
+    hoistPos: int        # = first occurrence's `firstStmtPos` (dominates every
+                         # cache-flow-matched occurrence, and follows all stores
+                         # that precede the first use in its block)
+    usePositions: seq[int] # occurrence positions to rewrite to the temp; applied
+                           # at flush (NOT eagerly) so a temp whose hoist position
+                           # turns out unsound can be dropped without leaving
+                           # dangling uses
 
   Context = object
     orig: ptr TokenBuf
@@ -113,11 +119,18 @@ type
     patchset: Patchset
     synth: seq[TokenBuf]
     stmtStack: seq[int]
+    curStmt: int                ## position of the innermost block's CURRENT child
+                                ## statement — the decl-insertion point that
+                                ## dominates the first occurrence and sits AFTER
+                                ## every store/decl preceding it in that block
     tempCounter: int
     moduleSuffix: string
     summaries: ptr FunctionSummaryTable
     aa: Aliasing                ## intra-proc alias partition of this body
     m: ptr MainModule           ## module type context; nil ⇒ no type-based skips
+    localDefPos: Table[SymId, int]  ## local symbol → position of its `(var …)` decl,
+                                    ## so a cached load is never hoisted above the
+                                    ## declaration of a local it reads
 
 proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
                    summaries: ptr FunctionSummaryTable): Context =
@@ -130,9 +143,11 @@ proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
           patchset: initPatchset(orig),
           synth: @[],
           stmtStack: @[],
+          curStmt: -1,
           tempCounter: 0,
           moduleSuffix: moduleSuffix,
-          summaries: summaries)
+          summaries: summaries,
+          localDefPos: initTable[SymId, int]())
 
 proc currentStmtPos(c: Context): int {.inline.} =
   if c.stmtStack.len > 0: c.stmtStack[^1] else: -1
@@ -373,16 +388,38 @@ proc invalidateForCall(c: var Context; call: Cursor) =
 proc synthBuf(c: var Context; cap: int): TokenBuf =
   createTokenBuf(cap, c.orig[].pool, c.orig[].tags)
 
+proc emitTempType(c: var Context; buf: var TokenBuf; valueExpr: Cursor; ptrWrap: bool) =
+  ## Spell out the temp's declared type from the type context, instead of leaving
+  ## the slot empty (`.`) for the C backend to re-infer. Leng's `getNominalType`-
+  ## based var-type inference (`codegen.genVarDecl`) fails — yielding `(err)` in a
+  ## type position — when the initializer is a load through a field of an
+  ## inter-module-inlined *foreign* object, whose type the backend cannot navigate
+  ## in this module's context. The optimizer's own type context CAN resolve it, so
+  ## we bake the result in here. `ptrWrap` wraps it as `(ptr T)` for the
+  ## address-cache form (`var t = addr L`). Falls back to `.` when unresolvable
+  ## (the candidate gate already rejects such loads, so this is belt-and-braces).
+  if c.m != nil:
+    let t = getNominalType(c.m[], valueExpr)
+    if not (t.kind == TagLit and t.typeKind == NoType):
+      if ptrWrap:
+        buf.openTag TagId(ord(PtrTagId))
+        buf.addSubtree t
+        buf.closeTag()
+      else:
+        buf.addSubtree t
+      return
+  buf.addDotToken()
+
 proc addValueVarDecl(c: var Context; tempName: string; expr: Cursor;
                      info: NifLineInfo): int =
-  ## Synthesize `(var :tempName . . <expr>)` — caches the value of `expr`.
+  ## Synthesize `(var :tempName . <type> <expr>)` — caches the value of `expr`.
   result = c.synth.len
   var buf = synthBuf(c, 16)
   buf.openTag TagId(ord(VarTagId))
   if info.isValid: buf.appendLineInfo info
   buf.addSymDef tempName
   buf.addDotToken()           # pragmas
-  buf.addDotToken()           # type — inferred from initializer
+  emitTempType(c, buf, expr, ptrWrap = false)   # declared type
   buf.addSubtree expr
   buf.closeTag()              # var
   c.synth.add ensureMove(buf)
@@ -404,7 +441,7 @@ proc addAddrVarDecl(c: var Context; tempName: string; expr: Cursor;
   if info.isValid: buf.appendLineInfo info
   buf.addSymDef tempName
   buf.addDotToken()           # pragmas
-  buf.addDotToken()           # type — inferred from initializer
+  emitTempType(c, buf, expr, ptrWrap = true)    # declared type: (ptr typeof expr)
   buf.openTag TagId(ord(AddrTagId))
   buf.addSubtree expr
   buf.closeTag()              # addr
@@ -449,46 +486,53 @@ proc markAddrTaken(c: var Context; s: SymId) =
 
 proc tr(c: var Context; n: var Cursor)   # forward
 
-proc commonPrefix(a, b: seq[int]): seq[int] =
-  result = @[]
-  var i = 0
-  while i < a.len and i < b.len and a[i] == b[i]:
-    result.add a[i]
-    inc i
-
-proc outerAnchor(stack: seq[int]): int {.inline.} =
-  if stack.len > 0: stack[0] else: high(int)
-
-proc hoistPosOf(c: var Context; common, firstStack: seq[int]; minOuter: int): int =
-  ## Where to insert the decl. If the deepest common anchor is a *branching*
-  ## construct (the occurrences are in different branches), hoist before it —
-  ## the shared deps are computed before the branch. If it is a *sequential*
-  ## block (a `scope`) the occurrences are sequential within it, so hoist before
-  ## the earliest one's child-statement (after any local dep declared in the
-  ## block), NOT before the block. With no common anchor, hoist at the body level.
-  if common.len == 0:
-    return (if minOuter < high(int): minOuter else: -1)
-  let deepest = common[^1]
-  let a = cursorAt(c.orig[], deepest)
-  if a.stmtKind in {IfS, CaseS, WhileS, LoopS, IteS, ItecS}:
-    return deepest                       # before the branching construct
-  if firstStack.len > common.len:
-    return firstStack[common.len]        # before the earliest child in the block
-  result = deepest
-
 proc substUse(c: var Context; exprPos: int; tempName: string; addrMode: bool) =
   addSubstPatch(c, exprPos,
     (if addrMode: addDerefSynth(c, tempName) else: addSymUseSynth(c, tempName)))
 
-proc isAggregateLoad(c: var Context; n: Cursor): bool =
-  ## True if the value loaded by `n` has object/union/array type. Caching such a
-  ## load copies the whole aggregate into a temp — a pessimization, not a saving
-  ## (the load it would replace is a struct copy, and the materialized temp would
-  ## need its aggregate type spelled out). Needs the type context; without it
-  ## (`m == nil`, e.g. the self-tests) we keep the old, type-agnostic behavior.
-  if c.m == nil: return false
+type
+  LoadTypeClass = enum
+    ltcScalar      ## a value type we can materialize a temp for
+    ltcAggregate   ## object/union/array — caching copies the whole thing
+    ltcUnknown     ## type navigation failed (`(err)` sentinel)
+
+proc classifyLoad(c: var Context; n: Cursor): LoadTypeClass =
+  ## Classify the value loaded by `n` for value-CSE eligibility. Needs the type
+  ## context; without it (`m == nil`, e.g. the self-tests) we assume scalar.
+  ##
+  ## `ltcAggregate`: object/union/array — caching copies the whole aggregate into
+  ## a temp (a pessimization), and the temp would need its aggregate type spelled.
+  ##
+  ## `ltcUnknown`: `getType` returned its `(err)` sentinel (a non-type tag) — the
+  ## value's type cannot be navigated, so a hoisted `(var :t . . load)` would force
+  ## the C backend to *infer* a type it equally cannot resolve, emitting `(err)` in
+  ## a type position. This happens after inter-module inlining splices a foreign
+  ## body whose loads reference types not in this module's context. We must not
+  ## value-CSE such a load.
+  if c.m == nil: return ltcScalar
   let t = getType(c.m[], n)             # navigates nominal → object/array body
-  result = t.typeKind in {ObjectT, UnionT, ArrayT}
+  if t.typeKind in {ObjectT, UnionT, ArrayT}: ltcAggregate
+  elif t.kind == TagLit and t.typeKind == NoType: ltcUnknown
+  else: ltcScalar
+
+proc latestLocalDef(c: Context; start: Cursor): int =
+  ## The largest declaration position among the locals read anywhere in the
+  ## expression subtree `start` (-1 if it reads none we track). A temp caching
+  ## this expression must be hoisted *after* this position; otherwise its decl
+  ## would reference a not-yet-declared local. Field selectors and other symbols
+  ## that are not local-var decls are simply absent from `localDefPos`.
+  result = -1
+  let startPos = cursorToPosition(c.orig[], start)
+  var e = start
+  skip e
+  let endPos = cursorToPosition(c.orig[], e)
+  var i = startPos
+  while i < endPos:
+    let tok = cursorAt(c.orig[], i)
+    if tok.kind == Symbol:
+      let p = c.localDefPos.getOrDefault(tok.symId, -1)
+      if p > result: result = p
+    inc i
 
 proc handleCandidate(c: var Context; n: Cursor): bool =
   ## Lazy CSE. The *first* occurrence is only recorded — no temp yet — so
@@ -502,54 +546,69 @@ proc handleCandidate(c: var Context; n: Cursor): bool =
   let key = hashExpr(n)
   # Don't *value*-CSE an aggregate load: it copies the whole object/array. An
   # lvalue that is also a write target is address-CSE'd (caches a cheap pointer),
-  # so it stays eligible — only plain value loads are skipped here.
-  if key notin c.writeTargets and isAggregateLoad(c, n):
+  # so it stays eligible — only plain value loads are skipped here. A load whose
+  # type cannot be navigated is never CSE'd (in either mode): the materialized
+  # temp's inferred type would be `(err)` and break the C backend.
+  let cls = classifyLoad(c, n)
+  if cls == ltcUnknown: return false
+  if key notin c.writeTargets and cls == ltcAggregate:
     return false
   let exprPos = cursorToPosition(c.orig[], n)
   let entry = c.cache[key]
   if not entry.hasFirst:
+    if c.curStmt < 0: return false         # no enclosing statement → nowhere to hoist
     let stmtPos = c.currentStmtPos
-    if stmtPos < 0: return false           # no hoist anchor
-    let anchor = cursorAt(c.orig[], stmtPos)
-    if anchor.stmtKind in {WhileS, LoopS}:
+    if stmtPos >= 0 and cursorAt(c.orig[], stmtPos).stmtKind in {WhileS, LoopS}:
       # Loop-condition candidate: hoisting before the loop would compute a stale
       # pre-loop value every iteration. Don't CSE here.
       return false
     c.cache[key] = CachedEntry(hasFirst: true, firstExprPos: exprPos,
-                               anchorStack: c.stmtStack)
+                               firstStmtPos: c.curStmt, anchorStack: c.stmtStack)
     return false                           # recorded only — not yet a temp
-  # Second-or-later occurrence.
+  # Second-or-later occurrence. The cache is flow-sensitive and intersects at
+  # branch joins, so this occurrence is dominated by the first; the first's
+  # enclosing statement is therefore a valid, dominating decl site — no widening.
+  # But the decl lives in the first occurrence's block, so this use must lie
+  # inside that same block (its anchor stack a prefix of ours) or the temp would
+  # be out of scope. If not, skip — a later occurrence in the right block may match.
+  block:
+    let a = entry.anchorStack
+    if a.len > c.stmtStack.len: return false
+    for i in 0 ..< a.len:
+      if a[i] != c.stmtStack[i]: return false
   let addrMode = key in c.writeTargets
   let fp = entry.firstExprPos
   var tempName: string
   if c.materialized.hasKey(fp):
     tempName = c.materialized.getOrDefault(fp)
-    var pd = c.pending.getOrDefault(fp)    # widen the hoist to enclose this use
-    pd.commonStack = commonPrefix(pd.commonStack, c.stmtStack)
-    pd.minOuter = min(pd.minOuter, outerAnchor(c.stmtStack))
-    pd.hoistPos = hoistPosOf(c, pd.commonStack, pd.firstStack, pd.minOuter)
+    var pd = c.pending.getOrDefault(fp)
+    pd.usePositions.add exprPos
     c.pending[fp] = pd
   else:
     tempName = freshTempName(c)
     c.materialized[fp] = tempName
-    let common = commonPrefix(entry.anchorStack, c.stmtStack)
-    let mo = min(outerAnchor(entry.anchorStack), outerAnchor(c.stmtStack))
     c.pending[fp] = PendingDecl(tempName: tempName, exprPos: fp, addrMode: addrMode,
-                                commonStack: common, firstStack: entry.anchorStack,
-                                minOuter: mo,
-                                hoistPos: hoistPosOf(c, common, entry.anchorStack, mo))
-    substUse(c, fp, tempName, addrMode)     # rewrite the first occurrence too
-  substUse(c, exprPos, tempName, addrMode)
+                                hoistPos: entry.firstStmtPos,
+                                usePositions: @[fp, exprPos]) # first + this occurrence
   result = true
 
 proc flushPending(c: var Context) =
-  ## Emit each materialized temp's decl at its final (shallowest) hoist position.
+  ## Emit each materialized temp's decl at its final (shallowest) hoist position,
+  ## then rewrite its occurrences. A temp is DROPPED (decl + all rewrites) when its
+  ## hoist position would precede the declaration of a local its expression reads:
+  ## the cached expression's free locals must all be in scope at the decl site.
+  ## Because the rewrites are applied here (not eagerly), dropping leaves the
+  ## original expressions untouched and correct.
   for fp, pd in c.pending:
     if pd.hoistPos < 0: continue
     let firstCur = cursorAt(c.orig[], pd.exprPos)
+    if pd.hoistPos <= latestLocalDef(c, firstCur):
+      continue                              # unsound hoist — keep the originals
     let varIdx = if pd.addrMode: addAddrVarDecl(c, pd.tempName, firstCur, rawLineInfo(firstCur))
                  else: addValueVarDecl(c, pd.tempName, firstCur, rawLineInfo(firstCur))
     c.patchset.addInsert(pd.hoistPos, synthCursor(c, varIdx))
+    for pos in pd.usePositions:
+      substUse(c, pos, pd.tempName, pd.addrMode)
 
 proc trExpr(c: var Context; n: var Cursor) =
   case n.kind
@@ -583,6 +642,7 @@ proc trExpr(c: var Context; n: var Cursor) =
     inc n
 
 proc trVar(c: var Context; n: var Cursor) =
+  let declPos = cursorToPosition(c.orig[], n)
   var nameStart = default(Cursor)
   var typeStart = default(Cursor)
   n.into:
@@ -600,9 +660,13 @@ proc trVar(c: var Context; n: var Cursor) =
   # descend; body symIds are unique, so a flat registration needs no scoping.
   # Empty type slots (optimizer temps) are left unregistered — `getType` then
   # falls through to its error type, which is simply not an aggregate.
-  if c.m != nil and nameStart.kind == SymbolDef and
-     not cursorIsNil(typeStart) and typeStart.kind != DotToken:
-    c.m[].registerLocal(nameStart.symId, typeStart)
+  if nameStart.kind == SymbolDef:
+    # Remember where this local is declared so `handleCandidate` never hoists a
+    # cached load above the declaration of a local it reads (which would emit a
+    # use of an out-of-scope symbol).
+    c.localDefPos[nameStart.symId] = declPos
+    if c.m != nil and not cursorIsNil(typeStart) and typeStart.kind != DotToken:
+      c.m[].registerLocal(nameStart.symId, typeStart)
   # Var decls don't write existing symbols; nothing to invalidate.
 
 proc trAsgn(c: var Context; n: var Cursor) =
@@ -755,7 +819,10 @@ proc tr(c: var Context; n: var Cursor) =
     of BreakS, RetS, RaiseS:       trBreakOrRet(c, n)
     of StmtsS, ScopeS:
       n.loopInto:
+        let savedStmt = c.curStmt
+        c.curStmt = cursorToPosition(c.orig[], n)   # this block's current child
         tr(c, n)
+        c.curStmt = savedStmt
     else:
       trExpr(c, n)
     if pushed:

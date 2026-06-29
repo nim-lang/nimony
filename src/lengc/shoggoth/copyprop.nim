@@ -164,9 +164,26 @@ proc trExpr(c: var Context; n: var Cursor) =
         if n.hasMore: skip n             # callee
         while n.hasMore: trExpr(c, n)    # args
       # A call cannot touch a non-addr-taken local, so nothing to invalidate.
+    of DotC:
+      # `(dot OBJ FIELD inheritance)`: only OBJ is a value expression. FIELD is a
+      # field-selector symbol — NEVER a value read. A local var can share a field's
+      # symbol name (e.g. a `f.0` temp alongside a `:f.0` object field), so blindly
+      # substituting it would rewrite genuine field selectors and produce accesses
+      # to a non-existent member.
+      n.into:
+        if n.hasMore: trExpr(c, n)       # object expression
+        if n.hasMore: skip n             # field selector — leave untouched
+        while n.hasMore: skip n          # inheritance depth (IntLit)
     else:
-      n.loopInto:
-        trExpr(c, n)
+      if n.substructureKind == KvU:
+        # `(kv FIELD VALUE)` inside an object constructor: FIELD is a field
+        # selector (same hazard as in `dot`), only VALUE carries a value.
+        n.into:
+          if n.hasMore: skip n           # field selector — leave untouched
+          while n.hasMore: trExpr(c, n)  # value(s)
+      else:
+        n.loopInto:
+          trExpr(c, n)
   else:
     inc n
 
