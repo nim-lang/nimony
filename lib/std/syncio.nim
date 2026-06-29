@@ -654,3 +654,10 @@ else:
     ## operations. The file's first byte has the index zero.
     if c_fseek(f, pos, int32(relativeTo)) != 0'i32:
       raise IOError
+
+proc slurp*(path: string): string =
+  ## Reads a file into a string. For compatibility with Nim 2.
+  try:
+    result = readFile(path)
+  except:
+    result = ""

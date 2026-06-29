@@ -47,8 +47,10 @@ import ".." / nimony / [langmodes, nifconfig]
 import lengcgen, lifter, duplifier, destroyer, inliner, constparams, dce2
 import ".." / lib / vfs
 
+include ".." / lib / compat2
+
 const
-  Version = "0.2.0"
+  Version = slurp("../../doc/version.md")
   Usage = "Hexer Compiler. Version " & Version & """
 
   (c) 2024-2025 Andreas Rumpf

@@ -602,8 +602,11 @@ Examples:
 """
   quit(0)
 
+const
+  Version = slurp("../../doc/version.md")
+
 proc writeVersion() =
-  echo "nifmake 0.2.0"
+  echo "nifmake " & Version
   quit(0)
 
 proc printReport(profile: ProfileData) =
