@@ -685,17 +685,17 @@ proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cur
   inc n
   trExpr c, dest, n
 
-  openScope c
-  var b = BasicBlock(openElseBranches: 0, hasParLe: false, leavesWith: -1)
-  trGuardedStmts c, b, dest, n, true
-  closeBasicBlock c, b, dest
+  var b = BasicBlock(openElseBranches: 0, hasParLe: true, leavesWith: -1)
+  dest.copyIntoKind StmtsS, info:
+    openScope c
+    trGuardedStmts c, b, dest, n, true
+    closeBasicBlock c, b, dest
   skipParRi n # end of `elif`
 
   if n.hasMore:
     # --- Case 1: Explicit else branch ---
     assert n.substructureKind == ElseU
     inc n
-    openScope c
     var oldActive = false
     if b.leavesWith >= 0:
       # The then-branch ended with a leaving statement (break/return/raise)
@@ -706,9 +706,11 @@ proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cur
       oldActive = c.current.guards[b.leavesWith].active
       c.current.guards[b.leavesWith].active = false
 
-    var thenB = BasicBlock(openElseBranches: 0, hasParLe: false, leavesWith: -1)
-    trGuardedStmts c, thenB, dest, n, true
-    closeBasicBlock c, thenB, dest
+    dest.copyIntoKind StmtsS, info:
+      openScope c
+      var thenB = BasicBlock(openElseBranches: 0, hasParLe: true, leavesWith: -1)
+      trGuardedStmts c, thenB, dest, n, true
+      closeBasicBlock c, thenB, dest
     skipParRi n
     dest.takeParRi n # "ite"
 
