@@ -19,7 +19,7 @@ include ".." / lib / compat2
 import ".." / lib / symparser
 import ".." / models / tags
 import nimony_model, symtabs, decls, programs,
-  semdata, sembasics, semplugins, semuntyped
+  semdata, sembasics, semos, semuntyped
 
 type
   ExpansionContext = object

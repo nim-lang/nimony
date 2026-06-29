@@ -13,6 +13,7 @@ from std / osproc import execCmdEx
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / [nifchecksums, nifindexes, tooldirs, argsfinder, symparser]
+import ".." / lib / nifreader as rd
 
 import nimony_model, symtabs, builtintypes, decls, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig,
@@ -381,9 +382,41 @@ proc writeFileIfChanged(file, content: string) {.canRaise.} =
   else:
     writeFile file, content
 
-proc runPluginOutput*(c: var SemContext; dest: var TokenBuf;
-                      info: PackedLineInfo; pluginName: string;
-                      input: string; additionalInput = "") =
+const PluginTempBase = "tmp"
+
+proc addUnusedName(input, name: string): string =
+  result = "(.unusedname " & name & ")\n"
+  result.add input
+
+proc registerGeneratedSymbols(c: var SemContext;
+                              firstName, nextName: string) =
+  if nextName.len == 0:
+    return
+
+  var firstBase = ""
+  var nextBase = ""
+  var firstDisamb = 0
+  var nextDisamb = 0
+  assert splitLocalSymName(firstName, firstBase, firstDisamb),
+    "invalid .unusedname passed to plugin"
+  assert splitLocalSymName(nextName, nextBase, nextDisamb) and
+    nextBase == firstBase and nextDisamb >= firstDisamb,
+    "invalid .unusedname returned by plugin"
+
+  for disamb in firstDisamb ..< nextDisamb:
+    let name = firstBase & "." & $disamb
+    c.freshSyms.incl pool.syms.getOrIncl(name)
+
+  if nextDisamb > firstDisamb:
+    let lastUsed = nextDisamb - 1
+    if c.locals.getOrDefault(firstBase, -1) < lastUsed:
+      c.locals[firstBase] = lastUsed
+
+proc runPluginOutput(c: var SemContext; dest: var TokenBuf;
+                     info: PackedLineInfo; pluginName: string;
+                     input: string; additionalInput: string): string =
+  ## Builds and runs a plugin, parses its output into `dest`, and returns the
+  ## output's `.unusedname` hint (or `""` when an older plugin omitted it).
   let p = splitFile(pluginName)
   let checksumA = if additionalInput.len > 0: "_" & computeChecksum(additionalInput) else: ""
   let basename = c.g.config.nifcachePath / p.name & "_" & computeChecksum(input) & checksumA
@@ -411,9 +444,24 @@ proc runPluginOutput*(c: var SemContext; dest: var TokenBuf;
     exec cmd
   var s = nifstreams.open(outputFile)
   try:
+    result = rd.firstUnusedName(s.r)
     parse s, dest, NoLineInfo
   finally:
     close s
+
+proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
+                pluginName: string; input: string; additionalInput = "") =
+  ## Runs a plugin with a NIF `.unusedname` hint and registers every generated
+  ## local symbol as fresh for subsequent semantic checking.
+  let firstName = PluginTempBase & "." &
+    $(c.locals.getOrDefault(PluginTempBase, -1) + 1)
+  let pluginInput = addUnusedName(input, firstName)
+  let pluginAdditionalInput =
+    if additionalInput.len > 0: addUnusedName(additionalInput, firstName)
+    else: ""
+  let nextName = runPluginOutput(c, dest, info, pluginName, pluginInput,
+                                 pluginAdditionalInput)
+  registerGeneratedSymbols(c, firstName, nextName)
 
 proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string];
                 commandLineArgs: string;

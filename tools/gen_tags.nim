@@ -12,8 +12,7 @@ type
     LengExpr, LengStmt, LengType, LengOther, LengPragma, LengTypeQualifier, LengSym,
     NimonyExpr, NimonyStmt, NimonyType, NimonyOther, NimonyPragma, NimonySym, HookKind, ControlFlowKind,
     NifIndexKind,
-    NjvlKind,
-    PluginKind
+    NjvlKind
 
 proc toSuffix(e: EnumList): (string, string) =
   case e
@@ -36,7 +35,6 @@ proc toSuffix(e: EnumList): (string, string) =
   of HookKind: ("H", "NoHook")
   of NifIndexKind: ("Idx", "NoIndexTag")
   of NjvlKind: ("V", "NoVTag")
-  of PluginKind: ("K", "NoPluginKind")
 
 proc shortcutToEnumList(shortcut: string): EnumList =
   try:
@@ -169,7 +167,6 @@ proc genTags(inp: File) =
   writeModel "src/models/nimony", enumDecls, NimonyExpr, ControlFlowKind
   writeModel "src/models/nifindex", enumDecls, NifIndexKind, NifIndexKind
   writeModel "src/models/njvl", enumDecls, NjvlKind, NjvlKind
-  writeModel "src/models/plugin", enumDecls, PluginKind, PluginKind
 
 proc main =
   var inp = open("doc/tags.md", fmRead)

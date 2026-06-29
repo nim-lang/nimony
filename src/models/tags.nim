@@ -342,8 +342,6 @@ type
     UsedTagId
     CompileTagId
     BundleTagId
-    PluginSymDefTagId
-    PluginSymUseTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
     ("InvalidTagId", 0),
@@ -685,7 +683,5 @@ const
     ("gcsafe", 336),
     ("used", 337),
     ("compile", 338),
-    ("bundle", 339),
-    ("pluginSymDef", 340),
-    ("pluginSymUse", 341)
+    ("bundle", 339)
   ]

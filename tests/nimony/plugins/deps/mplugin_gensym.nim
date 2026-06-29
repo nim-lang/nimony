@@ -3,8 +3,8 @@ import plugins
 proc expand(n: NifCursor): NifBuilder =
   let info = n.info
   var arg = callArgs(n)
-  # The compiler resolves this handle independently for every insertion.
-  let generated = genSym("generated")
+  let generated = genSym()
+  let copied = genSym()
 
   result = createTree()
   result.withTree StmtsS, info:
@@ -12,9 +12,13 @@ proc expand(n: NifCursor): NifBuilder =
       result.addSymDef generated, info
       result.addEmptyNode3(info)
       result.takeTree arg
+    result.withTree LetS, info:
+      result.addSymDef copied, info
+      result.addEmptyNode3(info)
+      result.addSymUse generated, info
     result.withTree CallS, info:
       result.addIdent "echo"
-      result.addSymUse generated, info
+      result.addSymUse copied, info
 
 let input = loadPluginInput()
 saveTree expand(input)

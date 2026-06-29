@@ -3,7 +3,10 @@ import std / syncio
 template echoThroughFreshSymbol(value: untyped) {.
     plugin: "deps/mplugin_gensym".}
 
-let generated = "outer"
-echoThroughFreshSymbol("generated")
-echoThroughFreshSymbol("generated")
-echo generated
+proc main =
+  let tmp = "outer"
+  echoThroughFreshSymbol("generated")
+  echoThroughFreshSymbol("generated")
+  echo tmp
+
+main()
