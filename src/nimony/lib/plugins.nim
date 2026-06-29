@@ -51,8 +51,7 @@ let
   pluginTags = createPluginTags()
 
 proc appendInfo(buf: var NifBuilder; info: LineInfo) {.inline.} =
-  if info.isValid:
-    buf.appendLineInfo(info)
+  buf.appendLineInfo(info)
 
 proc isEmpty*(tree: NifBuilder): bool {.inline.} =
   ## Returns whether `tree` contains no NIF values.
@@ -60,7 +59,7 @@ proc isEmpty*(tree: NifBuilder): bool {.inline.} =
 
 proc info*(n: NifCursor): LineInfo {.inline.} =
   ## Returns the current value's source location, or `NoLineInfo` at exhaustion.
-  if n.hasMore: n.rawLineInfo else: NoLineInfo
+  n.rawLineInfo
 
 proc filePath*(info: LineInfo): string {.inline.} =
   ## Returns the source path stored in `info`, or `""` when unavailable.
@@ -119,9 +118,11 @@ proc tag*(n: NifCursor): TagId {.inline.} =
 
 proc rawTag(n: NifCursor): TagEnum {.inline.} =
   if n.kind != TagLit or n.tags != pluginTags:
-    return InvalidTagId
-  let id = uint32(n.cursorTagId)
-  if id <= uint32(high(TagEnum)): cast[TagEnum](id) else: InvalidTagId
+    result = InvalidTagId
+  else:
+    let id = uint32(n.cursorTagId)
+    result = if id <= uint32(high(TagEnum)): cast[TagEnum](id)
+             else: result = InvalidTagId
 
 proc stmtKind*(n: NifCursor): NimonyStmt {.inline.} =
   ## Returns the current statement tag, or `NoStmt`.
@@ -206,9 +207,7 @@ proc leavePluginScope(n: var NifCursor; scope: nifcore.CursorScope) =
 template copyInto*(t: var NifBuilder; n: var NifCursor; body: untyped) =
   ## Copies `n`'s tag, transforms its children with `body`, and advances `n`.
   assert n.kind == TagLit, "copyInto requires cursor at TagLit"
-  let copiedTag = n.tagId
-  let copiedInfo = n.info
-  t.openTree(copiedTag, copiedInfo)
+  t.openTree(n.tagId, n.info)
   let inputScope = enterPluginScope(n)
   body
   leavePluginScope(n, inputScope)
