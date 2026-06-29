@@ -8,7 +8,6 @@
 ##
 ## See `doc/plugins.md` for the full guide.
 
-{.feature: "lenientnils".}
 {.feature: "untyped".}
 
 import std / [assertions, hashes, syncio, cmdline]
@@ -55,7 +54,6 @@ proc appendInfo(buf: var NifBuilder; info: LineInfo) {.inline.} =
   if info.isValid:
     buf.appendLineInfo(info)
 
-proc hasSubtree(n: NifCursor): bool {.inline.} = n.hasMore
 proc isEmpty*(tree: NifBuilder): bool {.inline.} =
   ## Returns whether `tree` contains no NIF values.
   tree.len == 0
@@ -117,7 +115,7 @@ proc tag*(n: NifCursor): TagId {.inline.} =
   if n.hasMore and n.kind == TagLit:
     n.cursorTagId
   else:
-    TagId(uint32(ErrTagId))
+    cast[TagId](ErrTagId)
 
 proc rawTag(n: NifCursor): TagEnum {.inline.} =
   if n.kind != TagLit or n.tags != pluginTags:
@@ -158,9 +156,6 @@ proc pragmaKind*(n: NifCursor): NimonyPragma {.inline.} =
       t = cast[TagEnum](id)
   if rawTagIsNimonyPragma(t): cast[NimonyPragma](t) else: NoPragma
 
-template tagIdFor(kind: untyped): untyped =
-  TagId(uint32(kind))
-
 proc createTree*(): NifBuilder =
   ## Creates an empty plugin builder using the shared plugin pools.
   nifcore.createTokenBuf(sharedPool = pluginPool, sharedTags = pluginTags)
@@ -176,7 +171,7 @@ template withTree*(
     info: LineInfo;
     body: untyped) =
   ## Emits a tagged tree around the values produced by `body`.
-  t.openTag(tagIdFor(kind))
+  t.openTag(cast[TagId](kind))
   appendInfo(t, info)
   body
   t.closeTag()
@@ -202,21 +197,15 @@ proc takeTree*(t: var NifBuilder; n: var NifCursor) =
   t.addSubtree(n)
   n.skip()
 
-proc enterPluginScope(n: var NifCursor): nifcore.CursorScope =
-  nifcore.enterScope(n)
-
-proc leavePluginScope(n: var NifCursor; scope: nifcore.CursorScope) =
-  nifcore.leaveScope(n, scope)
-
 template copyInto*(t: var NifBuilder; n: var NifCursor; body: untyped) =
   ## Copies `n`'s tag, transforms its children with `body`, and advances `n`.
   assert n.kind == TagLit, "copyInto requires cursor at TagLit"
   let copiedTag = n.tagId
   let copiedInfo = n.info
   t.openTree(copiedTag, copiedInfo)
-  let inputScope = enterPluginScope(n)
+  let inputScope = nifcore.enterScope(n)
   body
-  leavePluginScope(n, inputScope)
+  nifcore.leaveScope(n, inputScope)
   t.closeTree()
 
 proc addTree*(t: var NifBuilder; child: NifBuilder) =
@@ -263,14 +252,14 @@ proc errorTree*(msg: string; info: LineInfo): NifBuilder =
 
 proc errorTree*(msg: string; at: NifCursor): NifBuilder =
   ## Builds a compiler error tree reported at `at`, attaching `at`.
-  if hasSubtree(at):
+  if at.hasMore:
     buildErrorTree(at.info, msg, at)
   else:
     buildErrorTree(at.info, msg)
 
 proc errorTree*(msg: string; at, orig: NifCursor): NifBuilder =
   ## Builds a compiler error tree reported at `at`, attaching `orig`.
-  if hasSubtree(orig):
+  if orig.hasMore:
     buildErrorTree(at.info, msg, orig)
   else:
     buildErrorTree(at.info, msg)
@@ -294,8 +283,7 @@ proc bindSymHelper*(t: var NifBuilder; nifText: string) =
   ## Runtime helper: parse `nifText` (a NIF source fragment) and append the
   ## resulting tokens to `t`. Called by `bindSym`'s sem rewrite — not intended
   ## for direct use.
-  var parsed = parseNifBuffer(nifText)
-  t.addBuffer(parsed)
+  t.addTree(parseNifBuffer(nifText))
 
 proc bindSym*(t: var NifBuilder; name: string;
               rule: BindSymRule = brClosed) {.magic: BindSymName.}
@@ -325,30 +313,18 @@ proc addEmptyNode*(t: var NifBuilder; info: LineInfo = NoLineInfo) =
 
 proc addEmptyNode2*(t: var NifBuilder; info: LineInfo = NoLineInfo) =
   ## Appends two empty placeholder nodes (`. .`) to `t`.
-  t.addDotToken()
-  appendInfo(t, info)
-  t.addDotToken()
-  appendInfo(t, info)
+  t.addEmptyNode(info)
+  t.addEmptyNode(info)
 
 proc addEmptyNode3*(t: var NifBuilder; info: LineInfo = NoLineInfo) =
   ## Appends three empty placeholder nodes (`. . .`) to `t`.
-  t.addDotToken()
-  appendInfo(t, info)
-  t.addDotToken()
-  appendInfo(t, info)
-  t.addDotToken()
-  appendInfo(t, info)
+  t.addEmptyNode2(info)
+  t.addEmptyNode(info)
 
 proc addEmptyNode4*(t: var NifBuilder; info: LineInfo = NoLineInfo) =
   ## Appends four empty placeholder nodes (`. . . .`) to `t`.
-  t.addDotToken()
-  appendInfo(t, info)
-  t.addDotToken()
-  appendInfo(t, info)
-  t.addDotToken()
-  appendInfo(t, info)
-  t.addDotToken()
-  appendInfo(t, info)
+  t.addEmptyNode2(info)
+  t.addEmptyNode2(info)
 
 proc firstChild*(n: NifCursor): NifCursor {.inline.} =
   ## Returns a cursor positioned at the first child of `n`. `n` must be at
@@ -680,9 +656,9 @@ template replaceHead*(t: var Replacer;
   ## scopes.
   assert t.src.kind == TagLit, "replaceHead requires cursor at TagLit"
   t.dest.withTree(tag, info):
-    let inputScope = enterPluginScope(t.src)
+    let inputScope = nifcore.enterScope(t.src)
     body
-    leavePluginScope(t.src, inputScope)
+    nifcore.leaveScope(t.src, inputScope)
 
 # ── Cursor access for analysis ────────────────────────────────────────────
 
@@ -848,7 +824,7 @@ proc saveTree*(tree: sink NifBuilder) =
 proc renderNode*(n: NifCursor): string =
   ## Renders the current token or subtree as raw NIF text for debugging.
   ## This omits line info and only covers the subtree rooted at `n`.
-  if not hasSubtree(n):
+  if not n.hasMore:
     result = "<bug: empty>"
   else:
     result = nifcoreparse.toString(n, includeLineInfo = false)
