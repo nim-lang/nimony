@@ -251,6 +251,7 @@ jobs:
 
       - name: Create dist/nimony symlink for Nim compiler
         run: |
+          rm -rf nim/dist/nimony
           mkdir -p nim/dist
           ln -sf "${{ github.workspace }}/nimony" nim/dist/nimony
 
@@ -260,15 +261,23 @@ jobs:
           echo "${{ github.workspace }}"
           echo "=== nim/ type ==="
           ls -la nim
-          echo "=== nim/dist/nimony symlink ==="
+          readlink -f nim 2>/dev/null || readlink nim 2>/dev/null || echo "not a symlink"
+          echo "=== nim/dist/nimony ==="
           ls -la nim/dist/nimony
-          readlink nim/dist/nimony || true
-          echo "=== does bif resolve? ==="
+          echo "=== nim/dist/nimony/src/lib/bif.nim ==="
           ls -la nim/dist/nimony/src/lib/bif.nim || echo "NOT FOUND"
           echo "=== nimony/src/lib/bif.nim ==="
           ls -la nimony/src/lib/bif.nim || echo "NOT FOUND"
-          echo "=== nim/compiler/ast2nif.nim line 29 ==="
+          echo "=== ast2nif.nim line 29 ==="
           sed -n '29p' nim/compiler/ast2nif.nim || echo "NOT FOUND"
+          echo "=== which nim ==="
+          which nim
+          echo "=== nim path ==="
+          nim e --hints:off - 2>/dev/null <<'NIMEOF' || true
+          echo getAppDir()
+          NIMEOF
+          echo "=== nifler nim.cfg ==="
+          cat nimony/src/nifler/nim.cfg
 
       - name: Test Building nimony
         run: |
