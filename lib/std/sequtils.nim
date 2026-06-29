@@ -168,10 +168,10 @@ func unzip*[S, T](s: openArray[(S, T)]): (seq[S], seq[T]) =
 # inject their loop bindings with `{.inject.}` (`it` for the element; `a`/`b`
 # for the fold accumulator and current element).
 #
-# NOTE: `mapIt`/`filterIt`/`toSeq` are deliberately *not* provided yet. They must
-# build a result `seq` whose element type is inferred via `typeof` inside the
-# template, and Nimony currently leaves that as a bare `seq` ("got seq but
-# wanted seq"). Worth a follow-up once template `typeof` element inference lands.
+# `mapIt`/`filterIt`/`keepItIf` infer their result element type via `typeof`
+# inside the template (see below). `toSeq` is still deferred: it must infer the
+# element type of an arbitrary iterable, which needs `for it {.inject.} in iter`
+# (not yet accepted on a for-loop variable).
 
 template foldl*(s, operation: untyped): untyped {.untyped.} =
   ## Left-associative fold. `a` is the accumulator (seeded with the first
@@ -230,3 +230,34 @@ template countIt*(s, pred: untyped): int {.untyped.} =
     let it {.inject.} = s[i]
     if pred: inc res
   res
+
+template mapIt*(s, op: untyped): untyped {.untyped.} =
+  ## Returns a new sequence with `op` (referencing the injected `it`) applied to
+  ## every element. The result element type is `typeof(op)`.
+  ## Example: `mapIt(@[1, 2, 3], it * 10) == @[10, 20, 30]`.
+  var res: seq[typeof((block:
+    let it {.inject.} = s[0]
+    op))] = @[]
+  for i in 0 ..< s.len:
+    let it {.inject.} = s[i]
+    res.add(op)
+  res
+
+template filterIt*(s, pred: untyped): untyped {.untyped.} =
+  ## Returns the elements for which `pred` (referencing the injected `it`) holds.
+  ## Example: `filterIt(@[1, 2, 3, 4], it mod 2 == 0) == @[2, 4]`.
+  var res: seq[typeof(s[0])] = @[]
+  for i in 0 ..< s.len:
+    let it {.inject.} = s[i]
+    if pred: res.add(it)
+  res
+
+template keepItIf*(s, pred: untyped) {.untyped.} =
+  ## In-place `filterIt`: keeps only the elements of the seq `s` for which
+  ## `pred` (referencing the injected `it`) holds.
+  ## Example: `keepItIf(data, it mod 2 == 1)`.
+  var res: seq[typeof(s[0])] = @[]
+  for i in 0 ..< s.len:
+    let it {.inject.} = s[i]
+    if pred: res.add(it)
+  s = res

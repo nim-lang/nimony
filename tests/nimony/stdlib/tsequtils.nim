@@ -37,5 +37,11 @@ proc main =
   assert allIt(@[2, 4, 6], it mod 2 == 0)
   assert not allIt(@[2, 3], it mod 2 == 0)
   assert countIt(@[1, 2, 3, 4, 6], it mod 2 == 0) == 3
+  assert mapIt(@[1, 2, 3], it * 10) == @[10, 20, 30]
+  assert mapIt(@[1, 2, 3], $it) == @["1", "2", "3"]
+  assert filterIt(@[1, 2, 3, 4], it mod 2 == 0) == @[2, 4]
+  var kdata = @[1, 2, 3, 4, 5]
+  keepItIf(kdata, it mod 2 == 1)
+  assert kdata == @[1, 3, 5]
 
 main()
