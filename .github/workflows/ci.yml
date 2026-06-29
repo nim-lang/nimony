@@ -254,6 +254,22 @@ jobs:
           mkdir -p nim/dist
           ln -sf "${{ github.workspace }}/nimony" nim/dist/nimony
 
+      - name: Debug dist/nimony symlink
+        run: |
+          echo "=== workspace ==="
+          echo "${{ github.workspace }}"
+          echo "=== nim/ type ==="
+          ls -la nim
+          echo "=== nim/dist/nimony symlink ==="
+          ls -la nim/dist/nimony
+          readlink nim/dist/nimony || true
+          echo "=== does bif resolve? ==="
+          ls -la nim/dist/nimony/src/lib/bif.nim || echo "NOT FOUND"
+          echo "=== nimony/src/lib/bif.nim ==="
+          ls -la nimony/src/lib/bif.nim || echo "NOT FOUND"
+          echo "=== nim/compiler/ast2nif.nim line 29 ==="
+          sed -n '29p' nim/compiler/ast2nif.nim || echo "NOT FOUND"
+
       - name: Test Building nimony
         run: |
           cd nimony
