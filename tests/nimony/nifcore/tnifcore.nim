@@ -51,6 +51,10 @@ proc main =
                                 sharedTags = syms.tags)
   appended.addIdent("prefix")
   appended.addBuffer(source)
+  var sourceCursor = source.beginRead()
+  assert sourceCursor.strVal == "first"
+  sourceCursor.skip()
+  assert sourceCursor.strVal == "second"
   var appendedCursor = appended.beginRead()
   assert appendedCursor.strVal == "prefix"
   appendedCursor.skip()

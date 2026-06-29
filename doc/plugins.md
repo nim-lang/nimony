@@ -423,7 +423,7 @@ snapshot transparently detaches its token storage.
 |------|-------------|
 | `takeTree(t, n)` | Copy the current subtree from `n` into `t`, advancing `n` |
 | `addSubtree(t, n)` | Copy subtree from `n` into `t` without advancing |
-| `addTree(t, child)` | Consume and append an entire child builder |
+| `addTree(t, child)` | Append an entire child builder without consuming it |
 
 **Structured building:**
 
@@ -496,7 +496,7 @@ saveReplacer(r)
 The core operations are:
 - `keep r, Kind` — copy one child verbatim, asserting its kind
 - `drop r, Kind` — skip one child without emitting, asserting its kind
-- `replace r, Kind, node` — skip one child of `Kind`, emit a replacement (`NifCursor` or `NifBuilder`)
+- `replace r, Kind, node` — skip one child of `Kind`, emit a replacement (`NifCursor` or borrowed `NifBuilder`)
 - `keepTag r:` — descend into a compound node (copy tag, process children, close)
 - `loopKeepTag r:` — copy tag, iterate all children, close
 - `peek r:` — read-ahead analysis without consuming (cursor is restored)

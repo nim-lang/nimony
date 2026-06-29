@@ -1,8 +1,21 @@
 import plugins
 import std / assertions
 
+proc replaceBorrows(t: var Replacer; replacement: NifBuilder) =
+  ## Compile-time regression: builder replacement must remain usable.
+  replace(t, Expr, replacement)
+  assert not replacement.isEmpty
+
 proc tr(n: NifCursor): NifBuilder =
   assert n.tagText == "stmts"
+
+  var child = createTree()
+  child.addIntLit 7
+  var children = createTree()
+  children.addTree(child)
+  children.addTree(child)
+  assert renderTree(children) == "7 7"
+  assert renderTree(child) == "7"
 
   var sample = createTree()
   sample.withTree StmtsS, NoLineInfo:

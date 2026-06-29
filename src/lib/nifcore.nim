@@ -1127,6 +1127,27 @@ proc addSubtree*(dest: var TokenBuf; c: Cursor) =
     var c = c
     addAcrossPools(dest, c)
 
+proc addBufferSamePool*(dest: var TokenBuf; src: TokenBuf) =
+  ## Append a closed buffer that shares `dest`'s literal and tag pools.
+  ##
+  ## The source is borrowed and remains usable. Matching pools make the
+  ## append one bulk copy without constructing a read cursor.
+  assert src.openTags.len == 0, "addBufferSamePool with unclosed source tags"
+  assert dest.data != src.data, "cannot append a TokenBuf to itself"
+  assert dest.pool == src.pool and dest.tags == src.tags,
+         "addBufferSamePool requires matching pools"
+  if src.len == 0:
+    return
+  if dest.owner != nil:
+    prepareMutation(dest)
+  if dest.len + src.len > dest.cap:
+    dest.cap = max(dest.cap div 2 + dest.cap, dest.len + src.len)
+    dest.data = cast[Storage](
+      realloc(dest.data, sizeof(NifToken) * dest.cap))
+  copyMem(addr dest.data[dest.len], src.data,
+          src.len * sizeof(NifToken))
+  dest.len += src.len
+
 proc addBuffer*(dest: var TokenBuf; src: var TokenBuf) =
   ## Append all complete top-level values from `src` to `dest`.
   ##
@@ -1137,15 +1158,7 @@ proc addBuffer*(dest: var TokenBuf; src: var TokenBuf) =
   if src.len == 0:
     return
   if dest.pool == src.pool and dest.tags == src.tags:
-    if dest.owner != nil:
-      prepareMutation(dest)
-    if dest.len + src.len > dest.cap:
-      dest.cap = max(dest.cap div 2 + dest.cap, dest.len + src.len)
-      dest.data = cast[Storage](
-        realloc(dest.data, sizeof(NifToken) * dest.cap))
-    copyMem(addr dest.data[dest.len], src.data,
-            src.len * sizeof(NifToken))
-    dest.len += src.len
+    dest.addBufferSamePool(src)
   else:
     var c = src.beginRead()
     while c.hasMore:

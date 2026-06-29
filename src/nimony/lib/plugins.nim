@@ -219,9 +219,9 @@ template copyInto*(t: var NifBuilder; n: var NifCursor; body: untyped) =
   leavePluginScope(n, inputScope)
   t.closeTree()
 
-proc addTree*(t: var NifBuilder; child: sink NifBuilder) =
-  ## Consumes and appends every complete top-level value from `child`.
-  t.addBuffer(child)
+proc addTree*(t: var NifBuilder; child: NifBuilder) =
+  ## Appends every complete top-level value from `child`.
+  t.addBufferSamePool(child)
 
 proc addSymUse*(t: var NifBuilder; s: SymId;
                 info: LineInfo = NoLineInfo) =
@@ -612,11 +612,11 @@ proc replace*(t: var Replacer; expected: ChildKind; replacement: NifCursor) =
   t.dest.addSubtree(replacement)
 
 proc replace*(t: var Replacer; expected: ChildKind;
-              replacement: sink NifBuilder) =
+              replacement: NifBuilder) =
   ## Skip one child from input, emit replacement builder tree instead.
   assertChild(t.src, expected)
   t.src.skip()
-  t.dest.addTree(ensureMove(replacement))
+  t.dest.addTree(replacement)
 
 proc replace*(t: var Replacer; expected: NimonyStmt; replacement: NifCursor) =
   ## Skip one child, asserting a specific statement tag, emit replacement.
@@ -625,11 +625,11 @@ proc replace*(t: var Replacer; expected: NimonyStmt; replacement: NifCursor) =
   t.dest.addSubtree(replacement)
 
 proc replace*(t: var Replacer; expected: NimonyStmt;
-              replacement: sink NifBuilder) =
+              replacement: NifBuilder) =
   ## Skip one child, asserting a specific statement tag, emit replacement.
   assertTag(t.src, expected)
   t.src.skip()
-  t.dest.addTree(ensureMove(replacement))
+  t.dest.addTree(replacement)
 
 proc replace*(t: var Replacer; expected: NimonyExpr; replacement: NifCursor) =
   ## Skip one child, asserting a specific expression tag, emit replacement.
@@ -638,11 +638,11 @@ proc replace*(t: var Replacer; expected: NimonyExpr; replacement: NifCursor) =
   t.dest.addSubtree(replacement)
 
 proc replace*(t: var Replacer; expected: NimonyExpr;
-              replacement: sink NifBuilder) =
+              replacement: NifBuilder) =
   ## Skip one child, asserting a specific expression tag, emit replacement.
   assertTag(t.src, expected)
   t.src.skip()
-  t.dest.addTree(ensureMove(replacement))
+  t.dest.addTree(replacement)
 
 proc replace*(t: var Replacer; expected: NimonyType; replacement: NifCursor) =
   ## Skip one child, asserting a specific type tag, emit replacement.
@@ -651,11 +651,11 @@ proc replace*(t: var Replacer; expected: NimonyType; replacement: NifCursor) =
   t.dest.addSubtree(replacement)
 
 proc replace*(t: var Replacer; expected: NimonyType;
-              replacement: sink NifBuilder) =
+              replacement: NifBuilder) =
   ## Skip one child, asserting a specific type tag, emit replacement.
   assertTag(t.src, expected)
   t.src.skip()
-  t.dest.addTree(ensureMove(replacement))
+  t.dest.addTree(replacement)
 
 template keepTag*(t: var Replacer; body: untyped) =
   ## Copy the opening tag from input to output, run `body` for children,
