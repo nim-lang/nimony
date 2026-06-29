@@ -22,6 +22,9 @@ proc roundTrips(b1: var TokenBuf): bool =
   if not result: echo "round-trip MISMATCH:\n", txt
 
 proc main =
+  var empty = createTokenBuf()
+  assert toString(empty) == ""
+
   for s in [
       "(stmts (call foo 42 \"hi\") (asgn x 3.14) (ret -7))",
       "(proc :myproc.0 . . (params (param x.1 (i +32))) (i +32) (stmts (ret 0)))",

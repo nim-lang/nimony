@@ -8,7 +8,6 @@
 ##
 ## See `doc/plugins.md` for the full guide.
 
-{.feature: "lenientnils".}
 {.feature: "untyped".}
 
 import std / [assertions, hashes, syncio, cmdline]
@@ -52,17 +51,15 @@ let
   pluginTags = createPluginTags()
 
 proc appendInfo(buf: var NifBuilder; info: LineInfo) {.inline.} =
-  if info.isValid:
-    buf.appendLineInfo(info)
+  buf.appendLineInfo(info)
 
-proc hasSubtree(n: NifCursor): bool {.inline.} = n.hasMore
 proc isEmpty*(tree: NifBuilder): bool {.inline.} =
   ## Returns whether `tree` contains no NIF values.
   tree.len == 0
 
 proc info*(n: NifCursor): LineInfo {.inline.} =
   ## Returns the current value's source location, or `NoLineInfo` at exhaustion.
-  if n.hasMore: n.rawLineInfo else: NoLineInfo
+  n.rawLineInfo
 
 proc filePath*(info: LineInfo): string {.inline.} =
   ## Returns the source path stored in `info`, or `""` when unavailable.
@@ -117,7 +114,7 @@ proc tag*(n: NifCursor): TagId {.inline.} =
   if n.hasMore and n.kind == TagLit:
     n.cursorTagId
   else:
-    TagId(uint32(ErrTagId))
+    cast[TagId](ErrTagId)
 
 proc rawTag(n: NifCursor): TagEnum {.inline.} =
   if n.kind != TagLit or n.tags != pluginTags:
@@ -158,9 +155,6 @@ proc pragmaKind*(n: NifCursor): NimonyPragma {.inline.} =
       t = cast[TagEnum](id)
   if rawTagIsNimonyPragma(t): cast[NimonyPragma](t) else: NoPragma
 
-template tagIdFor(kind: untyped): untyped =
-  TagId(uint32(kind))
-
 proc createTree*(): NifBuilder =
   ## Creates an empty plugin builder using the shared plugin pools.
   nifcore.createTokenBuf(sharedPool = pluginPool, sharedTags = pluginTags)
@@ -176,7 +170,7 @@ template withTree*(
     info: LineInfo;
     body: untyped) =
   ## Emits a tagged tree around the values produced by `body`.
-  t.openTag(tagIdFor(kind))
+  t.openTag(cast[TagId](kind))
   appendInfo(t, info)
   body
   t.closeTag()
@@ -211,9 +205,7 @@ proc leavePluginScope(n: var NifCursor; scope: nifcore.CursorScope) =
 template copyInto*(t: var NifBuilder; n: var NifCursor; body: untyped) =
   ## Copies `n`'s tag, transforms its children with `body`, and advances `n`.
   assert n.kind == TagLit, "copyInto requires cursor at TagLit"
-  let copiedTag = n.tagId
-  let copiedInfo = n.info
-  t.openTree(copiedTag, copiedInfo)
+  t.openTree(n.tagId, n.info)
   let inputScope = enterPluginScope(n)
   body
   leavePluginScope(n, inputScope)
@@ -263,14 +255,14 @@ proc errorTree*(msg: string; info: LineInfo): NifBuilder =
 
 proc errorTree*(msg: string; at: NifCursor): NifBuilder =
   ## Builds a compiler error tree reported at `at`, attaching `at`.
-  if hasSubtree(at):
+  if at.hasMore:
     buildErrorTree(at.info, msg, at)
   else:
     buildErrorTree(at.info, msg)
 
 proc errorTree*(msg: string; at, orig: NifCursor): NifBuilder =
   ## Builds a compiler error tree reported at `at`, attaching `orig`.
-  if hasSubtree(orig):
+  if orig.hasMore:
     buildErrorTree(at.info, msg, orig)
   else:
     buildErrorTree(at.info, msg)
@@ -294,8 +286,7 @@ proc bindSymHelper*(t: var NifBuilder; nifText: string) =
   ## Runtime helper: parse `nifText` (a NIF source fragment) and append the
   ## resulting tokens to `t`. Called by `bindSym`'s sem rewrite — not intended
   ## for direct use.
-  var parsed = parseNifBuffer(nifText)
-  t.addBuffer(parsed)
+  t.addTree(parseNifBuffer(nifText))
 
 proc bindSym*(t: var NifBuilder; name: string;
               rule: BindSymRule = brClosed) {.magic: BindSymName.}
@@ -325,30 +316,18 @@ proc addEmptyNode*(t: var NifBuilder; info: LineInfo = NoLineInfo) =
 
 proc addEmptyNode2*(t: var NifBuilder; info: LineInfo = NoLineInfo) =
   ## Appends two empty placeholder nodes (`. .`) to `t`.
-  t.addDotToken()
-  appendInfo(t, info)
-  t.addDotToken()
-  appendInfo(t, info)
+  t.addEmptyNode(info)
+  t.addEmptyNode(info)
 
 proc addEmptyNode3*(t: var NifBuilder; info: LineInfo = NoLineInfo) =
   ## Appends three empty placeholder nodes (`. . .`) to `t`.
-  t.addDotToken()
-  appendInfo(t, info)
-  t.addDotToken()
-  appendInfo(t, info)
-  t.addDotToken()
-  appendInfo(t, info)
+  t.addEmptyNode2(info)
+  t.addEmptyNode(info)
 
 proc addEmptyNode4*(t: var NifBuilder; info: LineInfo = NoLineInfo) =
   ## Appends four empty placeholder nodes (`. . . .`) to `t`.
-  t.addDotToken()
-  appendInfo(t, info)
-  t.addDotToken()
-  appendInfo(t, info)
-  t.addDotToken()
-  appendInfo(t, info)
-  t.addDotToken()
-  appendInfo(t, info)
+  t.addEmptyNode2(info)
+  t.addEmptyNode2(info)
 
 proc firstChild*(n: NifCursor): NifCursor {.inline.} =
   ## Returns a cursor positioned at the first child of `n`. `n` must be at
@@ -720,10 +699,7 @@ proc loadReplacer*(inputFile = paramStr(1)): Replacer =
 proc saveReplacer*(t: var Replacer; filename = paramStr(2)) =
   ## Writes the Replacer's output to `filename` (default: `paramStr(2)`).
   try:
-    if t.dest.isEmpty:
-      writeFile filename, ""
-    else:
-      writeFile filename, nifcoreparse.toString(t.dest)
+    writeFile filename, nifcoreparse.toString(t.dest)
   except:
     quit "FAILURE: cannot write " & filename
 
@@ -808,26 +784,23 @@ proc forLoopBody*(n: NifCursor): NifCursor =
   ## `(forcall <iter-name> (callargs ...) (unpackflat ...) <body>)`.
   ## This proc scans past the iter name, call args, and loop vars to reach
   ## the body subtree.
-  result = forLoopVars(n)
-  if result.hasMore:
-    skip result # skip loop vars
-    # result is now at the body (or exhausted if there is none)
+  result = n
+  if result.otherKind == ForcallU:
+    result = firstChild(result)
+    skip result # iterator name
+    skip result # call arguments
+    skip result # loop variables
+  # result is now at the body (or exhausted if there is none)
 
 proc renderTree*(tree: var NifBuilder): string =
   ## Renders the complete contents of `tree` as raw NIF text for debugging.
   ## Unlike `saveTree`, this omits line info and may contain multiple
   ## top-level fragments when the tree is still under construction.
-  if tree.isEmpty:
-    result = ""
-  else:
-    result = nifcoreparse.toString(tree, includeLineInfo = false)
+  result = nifcoreparse.toString(tree, includeLineInfo = false)
 
 proc writeTree(tree: var NifBuilder; filename: string) =
   try:
-    if tree.isEmpty:
-      writeFile filename, ""
-    else:
-      writeFile filename, nifcoreparse.toString(tree)
+    writeFile filename, nifcoreparse.toString(tree)
   except:
     quit "FAILURE: cannot write " & filename
 
@@ -854,7 +827,7 @@ proc saveTree*(tree: sink NifBuilder) =
 proc renderNode*(n: NifCursor): string =
   ## Renders the current token or subtree as raw NIF text for debugging.
   ## This omits line info and only covers the subtree rooted at `n`.
-  if not hasSubtree(n):
+  if not n.hasMore:
     result = "<bug: empty>"
   else:
     result = nifcoreparse.toString(n, includeLineInfo = false)
