@@ -1,0 +1,1 @@
+tests/nimony/plugins/tgpucheck_bad.nim(9, 41) Error: gpu proc 'kernel' may only call gpu procs, but calls 'plain'
