@@ -330,9 +330,7 @@ proc loadPluginInput*(filename = paramStr(1)): NifCursor
 
 Returns a `NifCursor` positioned at the root of the NIF tree. Type plugins use
 `loadPluginInput()` for the module and `loadTypeDefinitions()` for the
-definitions that triggered the plugin. Plugin inputs are densified while
-loading, so every positioned value carries its effective source location rather
-than only nifcore's sparse line-info changes.
+definitions that triggered the plugin.
 
 
 ### NifCursor — reading NIF trees
@@ -408,7 +406,7 @@ snapshot transparently detaches its token storage.
 |------|-------------|
 | `openTree(t, tag, info)` | Begin a tagged tree with optional line info |
 | `openTree(t, tagString, info)` | Same, from a textual tag name |
-| `closeTree(t)` | Seal the most recently opened tree |
+| `closeTree(t)` | Close the most recently opened tree |
 | `addIdent(t, name)` | Identifier |
 | `addSymUse(t, sym, info)` | Symbol reference (from `SymId` or string) |
 | `addStrLit(t, s)` | String literal |
@@ -555,5 +553,5 @@ The `into`/`loopInto` templates are for pure analysis; the
 | `into n:` | `NifCursor` | enter a `TagLit`, run the body for its children, leave |
 | `loopInto n:` | `NifCursor` | enter node, iterate all children, leave |
 | `balancedTokens n:` | `NifCursor` | scan descendant compound nodes, then advance past the subtree |
-| `keepTag r:` | `Replacer` | copy tag to output, run body, seal tree and advance |
-| `loopKeepTag r:` | `Replacer` | copy tag, iterate all children, seal tree and advance |
+| `keepTag r:` | `Replacer` | copy tag to output, run body, close tree and advance |
+| `loopKeepTag r:` | `Replacer` | copy tag, iterate all children, close tree and advance |

@@ -659,7 +659,7 @@ proc replace*(t: var Replacer; expected: NimonyType;
 
 template keepTag*(t: var Replacer; body: untyped) =
   ## Copy the opening tag from input to output, run `body` for children,
-  ## seal the output node and advance past the input subtree.
+  ## close the output node and advance past the input subtree.
   assert t.src.kind == TagLit, "keepTag requires cursor at TagLit"
   t.dest.copyInto(t.src):
     body
