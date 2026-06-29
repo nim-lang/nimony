@@ -720,10 +720,7 @@ proc loadReplacer*(inputFile = paramStr(1)): Replacer =
 proc saveReplacer*(t: var Replacer; filename = paramStr(2)) =
   ## Writes the Replacer's output to `filename` (default: `paramStr(2)`).
   try:
-    if t.dest.isEmpty:
-      writeFile filename, ""
-    else:
-      writeFile filename, nifcoreparse.toString(t.dest)
+    writeFile filename, nifcoreparse.toString(t.dest)
   except:
     quit "FAILURE: cannot write " & filename
 
@@ -808,26 +805,23 @@ proc forLoopBody*(n: NifCursor): NifCursor =
   ## `(forcall <iter-name> (callargs ...) (unpackflat ...) <body>)`.
   ## This proc scans past the iter name, call args, and loop vars to reach
   ## the body subtree.
-  result = forLoopVars(n)
-  if result.hasMore:
-    skip result # skip loop vars
-    # result is now at the body (or exhausted if there is none)
+  result = n
+  if result.otherKind == ForcallU:
+    result = firstChild(result)
+    skip result # iterator name
+    skip result # call arguments
+    skip result # loop variables
+  # result is now at the body (or exhausted if there is none)
 
 proc renderTree*(tree: var NifBuilder): string =
   ## Renders the complete contents of `tree` as raw NIF text for debugging.
   ## Unlike `saveTree`, this omits line info and may contain multiple
   ## top-level fragments when the tree is still under construction.
-  if tree.isEmpty:
-    result = ""
-  else:
-    result = nifcoreparse.toString(tree, includeLineInfo = false)
+  result = nifcoreparse.toString(tree, includeLineInfo = false)
 
 proc writeTree(tree: var NifBuilder; filename: string) =
   try:
-    if tree.isEmpty:
-      writeFile filename, ""
-    else:
-      writeFile filename, nifcoreparse.toString(tree)
+    writeFile filename, nifcoreparse.toString(tree)
   except:
     quit "FAILURE: cannot write " & filename
 
