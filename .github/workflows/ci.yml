@@ -120,7 +120,7 @@ jobs:
       - name: Restore MinGW-W64 (Windows) from cache
         if: runner.os == 'Windows'
         id: windows-mingw-cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: external/mingw-${{ matrix.target.cpu }}
           # Bump the suffix when changing MINGW_URL below — the old cache
@@ -131,7 +131,7 @@ jobs:
       - name: Restore Nim DLLs dependencies (Windows) from cache
         if: runner.os == 'Windows'
         id: windows-dlls-cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: external/dlls-${{ matrix.target.cpu }}
           key: 'dlls-${{ matrix.target.cpu }}'
@@ -233,7 +233,7 @@ jobs:
           cp -a nim-src/compiler/. nim/compiler/
 
       - name: Cache host-Nim build artifacts
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           # `nimony/bin/` holds the built tools. The two `nim` paths are Nim's
           # default per-project cache locations: `~/.cache/nim/<name>_d/` on
