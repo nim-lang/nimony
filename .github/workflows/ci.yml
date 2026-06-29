@@ -75,7 +75,7 @@ jobs:
           submodules: false
 
       - name: Checkout nativenif (sibling of nimony)
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: nim-lang/nativenif
           path: nativenif
