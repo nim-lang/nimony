@@ -1312,7 +1312,14 @@ proc exprToType(c: var SemContext; dest: var TokenBuf; exprType: Cursor; start: 
     dest.shrink start
     var base = exprType
     inc base
-    dest.addSubtree base
+    if base.kind == ParRi:
+      # A bare `typedesc` carrying no concrete base type, e.g. a `T: typedesc`
+      # parameter used as a type (`proc f(T: typedesc): Box[T]`). nimony has no
+      # implicit-generic `typedesc` params, so there is nothing to inline here.
+      # Report it instead of tripping the `addSubtree` "cursor at end?" assert.
+      c.buildErr dest, info, "'typedesc' without a concrete type cannot be used as a type; use an explicit generic parameter such as `proc f[T](x: typedesc[T])`"
+    else:
+      dest.addSubtree base
   of ErrT, AutoT:
     # propagate error
     discard
