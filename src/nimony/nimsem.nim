@@ -15,7 +15,7 @@ import semmain, sem, nifconfig, semos, semdata, indexgen, programs,
        derefs, deps, idetools, cli, langmodes
 
 const
-  Version = "0.2"
+  Version = slurp("../../doc/version.md")
   Usage = "Nimsem Semantic Checker. Version " & Version & """
 
   (c) 2024-2025 Andreas Rumpf

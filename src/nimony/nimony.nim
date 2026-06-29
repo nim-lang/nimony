@@ -32,7 +32,7 @@ template makeDir(p: string) =
     onRaiseQuit createDir(Path(p))
 
 const
-  Version = "0.2.0"
+  Version = slurp("../../doc/version.md")
   Usage = "Nimony Compiler. Version " & Version & """
 
   (c) 2024-2025 Andreas Rumpf

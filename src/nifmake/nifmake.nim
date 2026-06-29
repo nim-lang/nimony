@@ -8,7 +8,7 @@
 ## and incremental compilation. Nifmake can run a dependency graph as specified
 ## by a .nif file or it can translate this file to a Makefile.
 
-import std/[assertions, os, strutils, sequtils, tables, hashes, times, monotimes, sets, parseopt, syncio, osproc, algorithm]
+import std/[assertions, os, strutils, sequtils, tables, hashes, times, monotimes, sets, parseopt, syncio, osproc, algorithm, terminal]
 import ".." / lib / [bitabs, lineinfos, nifreader, tooldirs, argsfinder, vfs, nifcursors, nifstreams]
 
 # Inspired by https://gittup.org/tup/build_system_rules_and_algorithms.pdf
@@ -77,7 +77,7 @@ type
     cmdRun, cmdMakefile, cmdHelp, cmdVersion
 
   CliOption = enum
-    Parallel, Force, Verbose, Profile, Report
+    Parallel, Force, Verbose, Profile, Report, Progress
 
   ProfileData* = object
     parseTime: float
@@ -318,13 +318,72 @@ type
   CmdStatus = enum
     Enqueued, Running, Finished
 
-proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil): bool =
+  Progressor = object
+    ## Live percentage indicator. `total` is the number of nodes we expect to
+    ## (re)build this run; `done` counts the ones that actually ran. The shown
+    ## percentage is remapped into `[lo, hi]` so a caller that runs nifmake in
+    ## several phases (Nimony's frontend/backend split) can hand each phase a
+    ## sub-range and present one continuous 0..100% bar across processes.
+    active: bool
+    done, total, lo, hi: int
+
+proc nodeLabel(dag: Dag; node: Node): string =
+  ## Short human-facing label for the artifact a node produces.
+  if node.outputs.len > 0: extractFilename(node.outputs[0])
+  else: dag.commands[node.cmdIdx].name
+
+proc countToBuild(dag: var Dag; sortedNodes: seq[int]; opt: set[CliOption]): int =
+  ## Estimate how many nodes will run, propagating staleness along the DAG:
+  ## a node rebuilds if it is stale itself or any dependency will rebuild.
+  ## `sortedNodes` is depth-ordered (deps first), so a single forward pass
+  ## suffices. This is an upper bound — a dependency written `OnlyIfChanged`
+  ## may not actually re-trigger its dependents — so the bar can finish a hair
+  ## early; the caller forces the final reading to `hi`.
+  result = 0
+  var willBuild = newSeq[bool](dag.nodes.len)
+  for nodeId in sortedNodes:
+    var w = Force in opt or needsRebuild(dag.nodes[nodeId])
+    if not w:
+      for depId in dag.nodes[nodeId].deps:
+        if willBuild[depId]: w = true; break
+    willBuild[nodeId] = w
+    if w: inc result
+
+proc draw(p: Progressor; label: string) =
+  if not p.active: return
+  let frac = if p.total <= 0: 100 else: clamp(p.done * 100 div p.total, 0, 100)
+  let pct = p.lo + frac * (p.hi - p.lo) div 100
+  # `\r` rewinds to column 0, `\e[K` clears any leftover from a longer label.
+  stdout.write "\r[" & align($pct, 3) & "%] " & label & "\e[K"
+  stdout.flushFile()
+
+proc finish(p: Progressor) =
+  if not p.active: return
+  p.draw(if p.hi >= 100: "done" else: "")
+  # Only the final phase (`hi == 100`) closes the line; earlier phases leave the
+  # cursor parked so the next nifmake process overwrites the same line via `\r`.
+  if p.hi >= 100:
+    stdout.write "\n"
+    stdout.flushFile()
+
+proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
+            progressLo = 0; progressHi = 100): bool =
   ## Execute the DAG in topological order
   result = true
   let sortStart = if profile != nil: getMonoTime() else: MonoTime()
   let sortedNodes = topologicalSort(dag)
   if profile != nil:
     profile[].dagSetupTime = toSeconds(getMonoTime() - sortStart)
+
+  # The live bar is routed only where it makes sense: it needs an interactive
+  # terminal, and it must not corrupt `--verbose`'s line output or `--report`'s
+  # machine-readable stdout.
+  var prog = Progressor(
+    active: Progress in opt and Verbose notin opt and Report notin opt and isatty(stdout),
+    done: 0, total: 0, lo: progressLo, hi: progressHi)
+  if prog.active:
+    prog.total = countToBuild(dag, sortedNodes, opt)
+    prog.draw("")  # paint the starting reading (lo%) right away
 
   if Parallel in opt:
     var i = 0
@@ -333,6 +392,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil): 
       var commands: seq[string] = @[]
       var nodeIds: seq[int] = @[]
       var cmdNames: seq[string] = @[]
+      var labels: seq[string] = @[]  # captured by afterRunEvent (can't capture `dag`)
 
       # Collect all commands at the current depth
       while i < sortedNodes.len and dag.nodes[sortedNodes[i]].depth == currentDepth:
@@ -348,6 +408,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil): 
           commands.add(expandedCmd)
           nodeIds.add(sortedNodes[i])
           cmdNames.add(dag.commands[node.cmdIdx].name)
+          labels.add(nodeLabel(dag, node[]))
         inc i
 
       # Execute all commands at this depth in parallel
@@ -363,6 +424,8 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil): 
 
         proc afterRunEvent(idx: int; p: Process) =
           progress[idx] = Finished
+          inc prog.done
+          prog.draw(labels[idx])
           if profile != nil:
             let sec = toSeconds(getMonoTime() - startTimes[idx])
             profile[].recordCmdTime(cmdNames[idx], sec)
@@ -371,6 +434,9 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil): 
         if profile != nil:
           profile[].execWallTime += toSeconds(getMonoTime() - depthStart)
         if maxExitCode != 0:
+          if prog.active:
+            stdout.write "\n"
+            stdout.flushFile()
           for i, p in pairs(progress):
             if p == Running:
               failed commands[i]
@@ -392,8 +458,13 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil): 
         if not executeCommand(expandedCmd):
           if profile != nil:
             profile[].recordCmdTime(cmdName, toSeconds(getMonoTime() - start))
+          if prog.active:
+            stdout.write "\n"
+            stdout.flushFile()
           failed expandedCmd
           return false
+        inc prog.done
+        prog.draw(nodeLabel(dag, node[]))
         if profile != nil:
           let sec = toSeconds(getMonoTime() - start)
           profile[].recordCmdTime(cmdName, sec)
@@ -401,6 +472,8 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil): 
       else:
         if Verbose in opt:
           echo "Up to date: ", node.outputs.join(", ")
+
+  prog.finish()
 
 proc mescape(p: string): string =
   when defined(windows):
@@ -589,6 +662,11 @@ Options:
   --verbose             Show verbose output
   --base:<dir>          Use <dir> as base directory for `.args` files.
                         If not set, no `.args` files are processed.
+  --progress[:LO:HI]    Show a live percentage indicator while building (only
+                        on an interactive terminal; ignored with --verbose and
+                        --report). The optional LO:HI range remaps the bar so a
+                        caller running several builds can show one continuous
+                        0..100% bar across them.
   --profile             Print timing profile of executed commands to stderr.
   --report              Print machine-readable per-command invocation
                         counts to stdout, e.g.
@@ -602,8 +680,11 @@ Examples:
 """
   quit(0)
 
+const
+  Version = slurp("../../doc/version.md")
+
 proc writeVersion() =
-  echo "nifmake 0.2.0"
+  echo "nifmake " & Version
   quit(0)
 
 proc printReport(profile: ProfileData) =
@@ -656,6 +737,8 @@ proc main() =
     outputMakefile = "Makefile"
     opt: set[CliOption] = {}
     baseDir = ""
+    progressLo = 0
+    progressHi = 100
 
   for kind, key, val in getopt():
     case kind
@@ -682,6 +765,20 @@ proc main() =
       of "base": baseDir = val
       of "profile": opt.incl Profile
       of "report": opt.incl Report
+      of "progress":
+        opt.incl Progress
+        # Optional `--progress:LO:HI` remaps the bar into a sub-range so a
+        # multi-phase caller gets one continuous 0..100% indicator.
+        if val.len > 0:
+          let parts = val.split(':')
+          if parts.len == 2:
+            try:
+              progressLo = parseInt(parts[0])
+              progressHi = parseInt(parts[1])
+            except ValueError:
+              quit "invalid --progress range: " & val
+          else:
+            quit "invalid --progress range: " & val
       else:
         echo "Unknown option: --", key
         quit(1)
@@ -700,13 +797,13 @@ proc main() =
       let parseStart = getMonoTime()
       var dag = parseNifFile(inputFile, baseDir)
       profile.parseTime = toSeconds(getMonoTime() - parseStart)
-      let ok = runDag(dag, opt, addr profile)
+      let ok = runDag(dag, opt, addr profile, progressLo, progressHi)
       if Profile in opt: printProfile(profile)
       if Report in opt: printReport(profile)
       if not ok: quit 1
     else:
       var dag = parseNifFile(inputFile, baseDir)
-      if not runDag(dag, opt):
+      if not runDag(dag, opt, nil, progressLo, progressHi):
         quit 1
 
   of cmdMakefile:
