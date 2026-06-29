@@ -1361,10 +1361,18 @@ proc semTypeSym(c: var SemContext; dest: var TokenBuf; s: Sym; info: PackedLineI
           typeclassBuf.addParRi()
           typeclassBuf.addParRi()
           replace(dest, cursorAt(typeclassBuf, 0), start)
-        elif magic in {CstringT, PointerT} and LenientNilsFeature notin c.features:
-          # add default notnil for pointer-like magic types:
+        elif magic in {CstringT, PointerT}:
+          # Pointer-like magic types must carry an explicit nilability
+          # annotation so they unify with the syntactic path in
+          # `semLocalTypeImpl` (which adds the same default). Otherwise a bare
+          # `(cstring)` and a `(cstring (unchecked))` are structurally distinct
+          # and fragment generic instances (e.g. `seq[cstring]`) into
+          # incompatible C structs.
           dest.shrink dest.len - 1 # remove ParRi
-          dest.addParPair NotnilU, info
+          if LenientNilsFeature notin c.features:
+            dest.addParPair NotnilU, info
+          else:
+            dest.addParPair UncheckedU, info
           dest.addParRi()
     elif res.status == LacksNothing:
       let typ = asTypeDecl(res.decl)
