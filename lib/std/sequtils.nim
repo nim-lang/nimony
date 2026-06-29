@@ -118,3 +118,115 @@ proc any*[T](s: openArray[T]; pred: proc (x: T): bool): bool =
   for i in 0 ..< s.len:
     if pred(s[i]): return true
   return false
+
+proc apply*[T](s: var seq[T]; op: proc (x: T): T) =
+  ## Applies `op` to every element of `s` in place.
+  runnableExamples:
+    proc inc1(x: int): int = x + 1
+    var data = @[1, 2, 3]
+    apply(data, inc1)
+    assert data == @[2, 3, 4]
+  for i in 0 ..< s.len:
+    let v = op(s[i])
+    s[i] = v
+
+func cycle*[T](s: openArray[T]; n: Natural): seq[T] =
+  ## Returns a sequence with the elements of `s` repeated `n` times.
+  runnableExamples:
+    assert cycle(@[1, 2], 3) == @[1, 2, 1, 2, 1, 2]
+  result = @[]
+  for _ in 0 ..< n:
+    for i in 0 ..< s.len:
+      result.add s[i]
+
+func zip*[S, T](a: openArray[S]; b: openArray[T]): seq[(S, T)] =
+  ## Pairs up the elements of `a` and `b`, truncating to the shorter length.
+  runnableExamples:
+    assert zip(@[1, 2, 3], @["a", "b"]) == @[(1, "a"), (2, "b")]
+  result = @[]
+  var n = a.len
+  if b.len < n: n = b.len
+  for i in 0 ..< n:
+    result.add (a[i], b[i])
+
+func unzip*[S, T](s: openArray[(S, T)]): (seq[S], seq[T]) =
+  ## Splits a sequence of pairs into a pair of sequences.
+  runnableExamples:
+    let (a, b) = unzip(@[(1, "a"), (2, "b")])
+    assert a == @[1, 2]
+    assert b == @["a", "b"]
+  var first: seq[S] = @[]
+  var second: seq[T] = @[]
+  for i in 0 ..< s.len:
+    first.add s[i][0]
+    second.add s[i][1]
+  result = (first, second)
+
+# ── `it` / fold templates ────────────────────────────────────────────────────
+#
+# These mirror the classic `*It` family. They are `{.untyped.}` templates and
+# inject their loop bindings with `{.inject.}` (`it` for the element; `a`/`b`
+# for the fold accumulator and current element).
+#
+# NOTE: `mapIt`/`filterIt`/`toSeq` are deliberately *not* provided yet. They must
+# build a result `seq` whose element type is inferred via `typeof` inside the
+# template, and Nimony currently leaves that as a bare `seq` ("got seq but
+# wanted seq"). Worth a follow-up once template `typeof` element inference lands.
+
+template foldl*(s, operation: untyped): untyped {.untyped.} =
+  ## Left-associative fold. `a` is the accumulator (seeded with the first
+  ## element), `b` the current element.
+  runnableExamples:
+    assert foldl(@[1, 2, 3, 4], a + b) == 10
+  var acc = s[0]
+  for i in 1 ..< s.len:
+    let a {.inject.} = acc
+    let b {.inject.} = s[i]
+    acc = operation
+  acc
+
+template foldr*(s, operation: untyped): untyped {.untyped.} =
+  ## Right-associative fold. `a` is the current element, `b` the accumulator
+  ## (seeded with the last element).
+  runnableExamples:
+    assert foldr(@[1, 2, 3, 4], a + b) == 10
+  var acc = s[s.len - 1]
+  for k in 0 ..< s.len - 1:
+    let a {.inject.} = s[s.len - 2 - k]
+    let b {.inject.} = acc
+    acc = operation
+  acc
+
+template anyIt*(s, pred: untyped): bool {.untyped.} =
+  ## Whether `pred` (referencing the injected `it`) holds for any element.
+  runnableExamples:
+    assert anyIt(@[1, 3, 4], it mod 2 == 0)
+  var res = false
+  for i in 0 ..< s.len:
+    let it {.inject.} = s[i]
+    if pred:
+      res = true
+      break
+  res
+
+template allIt*(s, pred: untyped): bool {.untyped.} =
+  ## Whether `pred` (referencing the injected `it`) holds for every element.
+  runnableExamples:
+    assert allIt(@[2, 4, 6], it mod 2 == 0)
+  var res = true
+  for i in 0 ..< s.len:
+    let it {.inject.} = s[i]
+    if not (pred):
+      res = false
+      break
+  res
+
+template countIt*(s, pred: untyped): int {.untyped.} =
+  ## Number of elements for which `pred` (referencing the injected `it`) holds.
+  runnableExamples:
+    assert countIt(@[1, 2, 3, 4], it mod 2 == 0) == 2
+  var res = 0
+  for i in 0 ..< s.len:
+    let it {.inject.} = s[i]
+    if pred: inc res
+  res
