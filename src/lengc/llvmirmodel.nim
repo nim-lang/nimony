@@ -229,7 +229,7 @@ type
     metadata*: LLFuncMetadata
 
   LLGlobal* = object
-    name*: string # WITHOUT leading @
+    name*: string   # WITHOUT leading @
     typ*: LLType
     initVal*: LLValue
     isThreadLocal*: bool
@@ -237,6 +237,7 @@ type
     isExternal*: bool
     isPrivate*: bool
     align*: int
+    dbgLoc*: string # ", !dbg !N" suffix, empty if none
 
   LLExternDecl* = object
     declaration*: string # full declare line (kept as text)

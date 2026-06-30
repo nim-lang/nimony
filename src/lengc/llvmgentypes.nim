@@ -205,6 +205,9 @@ proc typeSizeBits(c: var LLVMCode; n: Cursor): int =
         if nn.substructureKind == FldU:
           var fdecl = takeFieldDecl(nn)
           result += typeSizeBits(c, fdecl.typ)
+        elif nn.typeKind == UnionT:
+          result += typeSizeBits(c, nn)
+          skip nn
         else:
           skip nn
   of UnionT:
@@ -216,6 +219,10 @@ proc typeSizeBits(c: var LLVMCode; n: Cursor): int =
           var fdecl = takeFieldDecl(nn)
           let sz = typeSizeBits(c, fdecl.typ)
           if sz > result: result = sz
+        elif nn.typeKind in {ObjectT, UnionT}:
+          let sz = typeSizeBits(c, nn)
+          if sz > result: result = sz
+          skip nn
         else:
           skip nn
   of VoidT, VarargsT, ParamsT:
@@ -263,6 +270,10 @@ proc typeAlignBits(c: var LLVMCode; n: Cursor): int =
           var fdecl = takeFieldDecl(nn)
           let a = typeAlignBits(c, fdecl.typ)
           if a > result: result = a
+        elif nn.typeKind in {ObjectT, UnionT}:
+          let a = typeAlignBits(c, nn)
+          if a > result: result = a
+          skip nn
         else:
           skip nn
   else:

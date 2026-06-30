@@ -594,7 +594,8 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM;
                        emitGlobalDbgVar(c, name, varInfo, lit, diType) else: ""
     if toExtern or isImport:
       var g = LLGlobal(name: name, typ: typ, isExternal: true,
-          isThreadLocal: (vk == IsThreadlocal), align: int alignVal)
+          isThreadLocal: (vk == IsThreadlocal), align: int alignVal,
+          dbgLoc: dbgvSuffix)
       g.initVal = llZeroInit(typ)
       c.module.globals.add g
     else:
@@ -603,14 +604,16 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM;
         let initVal = genGlobalConstr(c, v, d.typ)
         c.module.globals.add LLGlobal(name: name, typ: initVal.typ,
             initVal: initVal, isThreadLocal: (vk == IsThreadlocal),
-            isConstant: (vk == IsConst), align: int alignVal)
+            isConstant: (vk == IsConst), align: int alignVal,
+            dbgLoc: dbgvSuffix)
       else:
         skip d.value
         let zeroVal = if d.typ.typeKind in {PtrT, AptrT,
             ProctypeT}: llNull(typ) else: llZeroInit(typ)
         c.module.globals.add LLGlobal(name: name, typ: typ, initVal: zeroVal,
             isThreadLocal: (vk == IsThreadlocal),
-            isConstant: (vk == IsConst), align: int alignVal)
+            isConstant: (vk == IsConst), align: int alignVal,
+            dbgLoc: dbgvSuffix)
     if vk == IsConst:
       c.emittedConsts.incl lit
   else:

@@ -129,7 +129,7 @@ proc genDITypeImpl(c: var LLVMCode; n: var Cursor): int =
       while n.hasMore:
         if n.substructureKind == EfldU:
           n.into:
-            let enumName = c.m.pool.syms[n.symId]
+            let enumName = nifSymBaseName(c, n.symId)
             inc n
             var val = 0
             if n.kind == IntLit:
@@ -238,6 +238,116 @@ proc genDITypeForSymbol(c: var LLVMCode; symId: SymId): int =
 
 # ---- Composite type (struct / union) ----------------------------------
 
+proc genDIUnionType(c: var LLVMCode; n: var Cursor): int
+proc genDIAnonObject(c: var LLVMCode; n: var Cursor): int
+
+proc diElemsList(members: seq[int]): string =
+  for i, m in members:
+    if i > 0: result.add ", "
+    result.add "!" & $m
+
+proc addFieldMember(c: var LLVMCode; fd: FieldDecl; members: var seq[int];
+                    fieldOffset: var int) =
+  let fieldName = nifSymBaseName(c, fd.name.symId)
+  let fieldType = genDITypeReadOnly(c, fd.typ)
+  if fieldType == 0: return
+  let fieldSize = typeSizeBits(c, fd.typ)
+  let fieldAlign = if fd.typ.typeKind in {PtrT, AptrT, ProctypeT}:
+                    c.bits else: min(fieldSize, c.bits)
+  if fieldAlign > 0:
+    fieldOffset = ((fieldOffset + fieldAlign - 1) div fieldAlign) * fieldAlign
+  let fInfo = fd.name.info
+  var fFileId = 0
+  var fLine = 0
+  if fInfo.isValid and fInfo.file.isValid:
+    fFileId = getOrCreateDIFile(c, fInfo.file)
+    fLine = int(fInfo.line)
+  var mStr = "!DIDerivedType(tag: DW_TAG_member" &
+    ", name: \"" & fieldName & "\""
+  if fFileId != 0:
+    mStr.add ", file: !" & $fFileId & ", line: " & $fLine
+  mStr.add ", baseType: !" & $fieldType &
+    ", size: " & $fieldSize &
+    ", align: " & $fieldAlign
+  if fieldOffset > 0:
+    mStr.add ", offset: " & $fieldOffset
+  mStr.add ")"
+  members.add c.addMetadata(mStr)
+  fieldOffset += fieldSize
+
+proc addUnionMember(c: var LLVMCode; n: var Cursor; members: var seq[int];
+                    fieldOffset: var int) =
+  ## Add the embedded union ``n`` (UnionT) as a single member whose baseType
+  ## is an anonymous DICompositeType union. Consumes ``n``.
+  let uSize = typeSizeBits(c, n)
+  let uAlign = typeAlignBits(c, n)
+  let udi = genDIUnionType(c, n)
+  if uAlign > 0:
+    fieldOffset = ((fieldOffset + uAlign - 1) div uAlign) * uAlign
+  if udi != 0:
+    var mStr = "!DIDerivedType(tag: DW_TAG_member" &
+      ", baseType: !" & $udi &
+      ", size: " & $uSize &
+      ", align: " & $uAlign
+    if fieldOffset > 0:
+      mStr.add ", offset: " & $fieldOffset
+    mStr.add ")"
+    members.add c.addMetadata(mStr)
+  fieldOffset += uSize
+
+proc genDIAnonObject(c: var LLVMCode; n: var Cursor): int =
+  ## Generate an anonymous DICompositeType struct for an inline object body.
+  var members: seq[int] = @[]
+  var fieldOffset = 0
+  let oSize = typeSizeBits(c, n)
+  let oAlign = typeAlignBits(c, n)
+  let kind = n.typeKind
+  n.into:
+    if kind == ObjectT:
+      if n.kind == DotToken: inc n
+      elif n.kind == Symbol: inc n
+    while n.hasMore:
+      if n.substructureKind == FldU:
+        var fd = takeFieldDecl(n)
+        addFieldMember(c, fd, members, fieldOffset)
+      elif n.typeKind == UnionT:
+        addUnionMember(c, n, members, fieldOffset)
+      else:
+        skip n
+  result = c.addMetadata("!DICompositeType(tag: DW_TAG_structure_type" &
+    ", elements: !{" & diElemsList(members) & "}" &
+    ", size: " & $oSize &
+    ", align: " & $oAlign & ")")
+
+proc genDIUnionType(c: var LLVMCode; n: var Cursor): int =
+  ## Generate an anonymous DICompositeType union for an inline union body.
+  ## Each branch (nested object / field) becomes an overlapping member.
+  var members: seq[int] = @[]
+  let uSize = typeSizeBits(c, n)
+  let uAlign = typeAlignBits(c, n)
+  n.into:
+    while n.hasMore:
+      if n.substructureKind == FldU:
+        var fd = takeFieldDecl(n)
+        var off = 0
+        addFieldMember(c, fd, members, off)
+      elif n.typeKind == ObjectT:
+        let bdi = genDIAnonObject(c, n)
+        if bdi != 0:
+          members.add c.addMetadata("!DIDerivedType(tag: DW_TAG_member" &
+            ", baseType: !" & $bdi & ")")
+      elif n.typeKind == UnionT:
+        let ndi = genDIUnionType(c, n)
+        if ndi != 0:
+          members.add c.addMetadata("!DIDerivedType(tag: DW_TAG_member" &
+            ", baseType: !" & $ndi & ")")
+      else:
+        skip n
+  result = c.addMetadata("!DICompositeType(tag: DW_TAG_union_type" &
+    ", elements: !{" & diElemsList(members) & "}" &
+    ", size: " & $uSize &
+    ", align: " & $uAlign & ")")
+
 proc genDICompositeType(c: var LLVMCode; n: var Cursor): int =
   ## Generate DICompositeType for ObjectT or UnionT.
   ## Walks ``decl.body`` (not the inline cursor) — matches
@@ -298,35 +408,9 @@ proc genDICompositeType(c: var LLVMCode; n: var Cursor): int =
     while body.hasMore:
       if body.substructureKind == FldU:
         var fd = takeFieldDecl(body)
-        let fieldName = nifSymBaseName(c, fd.name.symId)
-        let fieldType = genDITypeReadOnly(c, fd.typ)
-        if fieldType != 0:
-          let fieldSize = typeSizeBits(c, fd.typ)
-          let fieldAlign = if fd.typ.typeKind in {PtrT, AptrT, ProctypeT}:
-                            c.bits else: min(fieldSize, c.bits)
-          if fieldAlign > 0:
-            fieldOffset = ((fieldOffset + fieldAlign - 1) div fieldAlign) * fieldAlign
-          # Source location for the field
-          let fInfo = fd.name.info
-          var fFileId = 0
-          var fLine = 0
-          if fInfo.isValid and fInfo.file.isValid:
-            fFileId = getOrCreateDIFile(c, fInfo.file)
-            fLine = int(fInfo.line)
-          var mStr = "!DIDerivedType(tag: DW_TAG_member" &
-            ", name: \"" & fieldName & "\""
-          if fFileId != 0:
-            mStr.add ", file: !" & $fFileId & ", line: " & $fLine
-          mStr.add ", baseType: !" & $fieldType &
-            ", size: " & $fieldSize &
-            ", align: " & $fieldAlign
-          if fieldOffset > 0:
-            mStr.add ", offset: " & $fieldOffset
-          mStr.add ")"
-          members.add c.addMetadata(mStr)
-          fieldOffset += fieldSize
+        addFieldMember(c, fd, members, fieldOffset)
       elif body.typeKind == UnionT:
-        discard genUnionBodyLLVM(c, body)
+        addUnionMember(c, body, members, fieldOffset)
       elif body.typeKind == ObjectT:
         skip body
       else:
