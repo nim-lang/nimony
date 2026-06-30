@@ -96,4 +96,26 @@ if command -v node >/dev/null 2>&1; then
   } | node
 fi
 
+# ── importc/exportc: an `importc` proc/global names an external entity, so it is
+# referenced by its C name and not emitted (a runtime provides it); an `exportc`
+# symbol is emitted under its C name. Resolution is cross-module in real builds.
+"$lengc" js --nimcache:"$work" "$here/timportc.c.nif"
+gotFfi="$work/timportc.js"
+
+if ! diff -u "$here/timportc.expected.js" "$gotFfi"; then
+  echo "FAILURE: generated JS differs from golden timportc.expected.js"
+  exit 1
+fi
+
+if command -v node >/dev/null 2>&1; then
+  {
+    # the runtime supplies the importc `extTriple`; `triple` itself is not emitted.
+    echo 'function extTriple(x){return x*3;}'
+    cat "$gotFfi"
+    echo 'if (run_0_timportc()===21 && counter===21)'
+    echo '  { console.log("functional(ffi): PASS"); }'
+    echo '  else { console.log("functional(ffi): FAIL"); process.exit(1); }'
+  } | node
+fi
+
 echo "jsbackend: OK"

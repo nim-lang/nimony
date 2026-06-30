@@ -78,7 +78,27 @@ proc nl(g: var JSGen) =
   g.code.add "\n"
   for _ in 0 ..< g.indent: g.code.add "  "
 
-proc name(g: JSGen; symId: SymId): string {.inline.} =
+proc name(g: var JSGen; symId: SymId): string =
+  ## The JS identifier for a symbol. `importc`/`exportc` symbols use their
+  ## external (C) name — resolved cross-module via the lazily-loaded foreign
+  ## declarations, exactly as the C backend's `mangleSym` does — so a call into
+  ## another module's `importc` proc/global lands on the runtime name (e.g.
+  ## `stdout`, `fwrite`) rather than a mangled stub. Everything else mangles.
+  let d = g.m.getDeclOrNil(symId)
+  if d != nil and d.extern != StrId(0):
+    result = g.m.pool.strings[d.extern]
+  else:
+    result = mangleToC(g.m.pool.syms[symId])
+
+proc isImportc(g: var JSGen; symId: SymId): bool =
+  ## True for `importc`/`importcpp` symbols: they name external entities, so the
+  ## JS backend references them but emits no definition (a runtime provides them).
+  let d = g.m.getDeclOrNil(symId)
+  result = d != nil and d.isImport
+
+proc fieldName(g: JSGen; symId: SymId): string {.inline.} =
+  ## Object-field key: always the mangled field name (matching the C backend),
+  ## never an extern name — `name`'s foreign-decl lookup is for top-level symbols.
   mangleToC(g.m.pool.syms[symId])
 
 proc jsString(s: string): string =
@@ -185,7 +205,7 @@ proc genAddrOf(g: var JSGen; n: var Cursor) =
   of DotC:
     n.into:
       let base = g.captureExpr n
-      let key = g.name(n.symId); inc n   # field symbol
+      let key = g.fieldName(n.symId); inc n   # field symbol
       g.wr "[" & base & ", " & jsString(key) & "]"
       while n.hasMore: skip n
   of AtC:
@@ -314,7 +334,7 @@ proc gx(g: var JSGen; n: var Cursor) =
         if n.substructureKind == KvU:
           if i > 0: g.wr ", "
           n.into:
-            g.wr g.name(n.symId); inc n   # field name (Symbol) as key
+            g.wr g.fieldName(n.symId); inc n   # field name (Symbol) as key
             g.wr ": "
             g.gx n                         # value
             while n.hasMore: skip n        # optional inheritance depth
@@ -349,7 +369,7 @@ proc gx(g: var JSGen; n: var Cursor) =
     n.into:
       g.gx n            # object
       g.wr "."
-      g.wr g.name(n.symId); inc n   # field name (Symbol)
+      g.wr g.fieldName(n.symId); inc n   # field name (Symbol)
       while n.hasMore: skip n        # inheritance depth / access token
   of AtC, PatC:
     # array / pointer indexing -> `arr[idx]`.
@@ -381,6 +401,7 @@ proc genBlock(g: var JSGen; n: var Cursor) =
 
 proc genVar(g: var JSGen; n: var Cursor) =
   var d = takeVarDecl(n)
+  if g.isImportc(d.name.symId): return   # external global: provided by the runtime
   g.nl()
   let nm = g.name(d.name.symId)
   if d.name.symId in g.boxed:
@@ -532,6 +553,7 @@ proc gs(g: var JSGen; n: var Cursor) =
 
 proc genProc(g: var JSGen; n: var Cursor) =
   var prc = takeProcDecl(n)
+  if g.isImportc(prc.name.symId): return   # external proc: provided by the runtime
   g.nl()
   g.wr "function " & g.name(prc.name.symId) & "("
   if prc.params.kind != DotToken:
