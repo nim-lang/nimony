@@ -98,6 +98,29 @@ proc isLocalName*(s: string): bool =
     if c == '.': inc dots
   result = dots <= 1
 
+proc splitLocalSymName*(s: string; basename: var string;
+                        disamb: var int): bool =
+  ## Splits a local symbol such as `tmp.14` into `tmp` and `14`.
+  basename = ""
+  disamb = 0
+  var dot = s.len - 1
+  while dot >= 0 and s[dot] in {'0'..'9'}:
+    dec dot
+  if dot <= 0 or dot == s.len - 1 or s[dot] != '.':
+    return false
+  for i in 0 ..< dot:
+    if s[i] == '.':
+      return false
+  var value = 0
+  for i in dot + 1 ..< s.len:
+    let digit = ord(s[i]) - ord('0')
+    if value > (high(int) - digit) div 10:
+      return false
+    value = value * 10 + digit
+  basename = substr(s, 0, dot - 1)
+  disamb = value
+  result = true
+
 proc removeModule*(s: string): string =
   # From "abc.12.Mod132a3bc" extract "abc.12".
   # From "abc.12" extract "abc.12".
@@ -166,3 +189,11 @@ when isMainModule:
   assert mp3.dir == "", mp3.dir
   assert mp3.name == "def", mp3.name
   assert mp3.ext == ""
+
+  var basename = ""
+  var disamb = 0
+  assert splitLocalSymName("tmp.14", basename, disamb)
+  assert basename == "tmp"
+  assert disamb == 14
+  assert not splitLocalSymName("tmp.14.mod", basename, disamb)
+  assert not splitLocalSymName("tmp.part.14", basename, disamb)

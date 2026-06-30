@@ -57,6 +57,17 @@ proc main =
   while child.hasMore:
     assert child.rawLineInfo.isValid
     child.skip()
+
+  var unusedName = ""
+  var hinted = parseFromBuffer(
+    "(.unusedname tmp.14)\n(stmts)", "hinted", unusedName)
+  assert unusedName == "tmp.14"
+  assert toString(hinted, includeLineInfo = false) == "(stmts)"
+
+  var symbols = createTokenBuf()
+  let fresh = symbols.pool.syms.getOrIncl("tmp.14")
+  symbols.addSymDef(fresh)
+  assert toString(symbols, includeLineInfo = false) == ":tmp.14"
   echo "ok"
 
 main()
