@@ -13,7 +13,7 @@
 import std / [assertions, hashes, syncio, cmdline]
 import ".." / ".." / "lib" / nifcore except symId, `$`, addSymUse, addSymDef
 import ".." / ".." / "lib" / nifcoreparse except symId, `$`, addSymUse, addSymDef
-import ".." / ".." / "lib" / [bitabs, symparser]
+import ".." / ".." / "lib" / [bitabs, nifbuilder, symparser]
 import ".." / ".." / "models" / [tags, nimony_tags]
 import ".." / nif_annotations
 export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther
@@ -713,27 +713,33 @@ template peek*(t: var Replacer; body: untyped) =
 # ── Entry points ──────────────────────────────────────────────────────────
 
 proc loadPluginTree(filename: string): NifBuilder =
-  unusedNameBase = ""
-  nextUnusedName = 0
   var hint = ""
   result = parseFromFile(
     filename, hint, sharedPool = pluginPool, sharedTags = pluginTags,
     denseLineInfo = true)
   if hint.len > 0:
-    assert splitLocalSymName(hint, unusedNameBase, nextUnusedName),
+    var hintBase = ""
+    var hintNumber = 0
+    assert splitLocalSymName(hint, hintBase, hintNumber),
       "plugin .unusedname must be a local symbol"
+    if unusedNameBase.len == 0:
+      unusedNameBase = hintBase
+      nextUnusedName = hintNumber
+    else:
+      assert unusedNameBase == hintBase,
+        "plugin inputs must use the same .unusedname base"
+      if nextUnusedName < hintNumber:
+        nextUnusedName = hintNumber
 
 proc writePluginTree(tree: var NifBuilder; filename: string) =
-  var content = ""
+  var output = nifbuilder.open(filename)
   if unusedNameBase.len > 0:
-    content.add "(.unusedname "
-    content.add unusedNameBase
-    content.add "."
-    content.add $nextUnusedName
-    content.add ")\n"
-  content.add nifcoreparse.toString(tree)
+    output.addRaw "(.unusedname "
+    output.addSymbol unusedNameBase & "." & $nextUnusedName
+    output.addRaw ")\n"
+  tree.appendTo(output)
   try:
-    writeFile filename, content
+    output.close()
   except:
     quit "FAILURE: cannot write " & filename
 

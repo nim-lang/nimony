@@ -7,6 +7,7 @@
 # destructors (incl. the shared-pool GC_ref / GC_unref) at scope exit.
 
 import nifcoreparse
+import nifbuilder
 import std / [assertions, syncio]
 
 proc sameTokens(a, b: var TokenBuf): bool =
@@ -68,6 +69,10 @@ proc main =
   let fresh = symbols.pool.syms.getOrIncl("tmp.14")
   symbols.addSymDef(fresh)
   assert toString(symbols, includeLineInfo = false) == ":tmp.14"
+  var rendered = nifbuilder.open(32)
+  rendered.addRaw "prefix "
+  symbols.appendTo(rendered, includeLineInfo = false)
+  assert rendered.extract() == "prefix :tmp.14"
   echo "ok"
 
 main()
