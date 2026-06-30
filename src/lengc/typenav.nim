@@ -161,13 +161,20 @@ proc getTypeImpl(c: var MainModule; n: Cursor): Cursor =
       else:
         result = createIntegralType(c, "(err)")
     of AtC, PatC:
-      let arrayType = getTypeImpl(c, firstChild(n))
-      result = arrayType
-      if result.kind == Symbol:
-        let d = c.getDeclOrNil(result.symId)
+      var arrayType = getTypeImpl(c, firstChild(n))
+      if arrayType.kind == Symbol:
+        let d = c.getDeclOrNil(arrayType.symId)
         if d != nil and d.pos.stmtKind == TypeS:
-          result = asTypeDecl(d.pos).body
-      inc result  # into (arr …)
+          arrayType = asTypeDecl(d.pos).body
+      # Descend to the element type only when the base really is an indexable
+      # type. Otherwise the base did not resolve (an unresolved `Symbol` or the
+      # `(err)` sentinel), and a blind `inc` would run the cursor off the end of
+      # its buffer — a later `kind`/`typeKind` on that exhausted cursor crashes.
+      if arrayType.typeKind in {ArrayT, FlexarrayT, PtrT, AptrT}:
+        result = arrayType
+        inc result  # into the element type (first child of (arr …)/(ptr …))
+      else:
+        result = createIntegralType(c, "(err)")
     of DotC:
       var a = firstChild(n)
       var objType = getTypeImpl(c, a)

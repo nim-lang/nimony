@@ -198,8 +198,45 @@ func parseBiggestUInt*(s: openArray[char], number: var BiggestUInt): int {.
 
 # Following parseBiggestFloat code is copied from `lib/system/strmantle.nim` in Nim 2.
 
-func c_strtod(buf: cstring, endptr: ptr cstring): float64 {.
-  importc: "strtod", header: "<stdlib.h>", noSideEffect.}
+when defined(nimNativeIo):
+  func c_strtod(buf: cstring, endptr: ptr cstring): float64 {.noSideEffect.} =
+    ## Freestanding (`nimony n`, libc-free) decimal→float64. Only reached on
+    ## `parseBiggestFloat`'s slow path, which always hands us a normalized
+    ## `<digits>E<sign><exp>` buffer. The mantissa is accumulated in a 64-bit
+    ## integer (exact for the ≤19 significant digits that fit; further digits bump
+    ## the exponent) and then scaled by 10^exp. Exact when the mantissa is ≤2^53
+    ## and |exp|≤22; for the extreme cases beyond that it is within a few ulp rather
+    ## than correctly rounded (a full Eisel-Lemire parser would close that gap).
+    ## `endptr` is ignored — the only caller passes nil.
+    var i = 0
+    var mant = 0'u64
+    var se = 0                                   # signed decimal exponent
+    const MantCap = 0xFFFFFFFFFFFFFFFF'u64 div 10'u64
+    while buf[i] in {'0'..'9'}:
+      if mant <= MantCap:
+        mant = mant * 10'u64 + uint64(ord(buf[i]) - ord('0'))
+      else:
+        inc se                                   # digit kept only as a power of ten
+      inc i
+    if buf[i] == 'E' or buf[i] == 'e':
+      inc i
+      var eneg = false
+      if buf[i] == '-': (eneg = true; inc i)
+      elif buf[i] == '+': inc i
+      var e = 0
+      while buf[i] in {'0'..'9'}:
+        e = e * 10 + (ord(buf[i]) - ord('0'))
+        inc i
+      se += (if eneg: -e else: e)
+    var r = float64(mant)
+    while se >= 22: (r = r * 1e22; se -= 22)
+    while se > 0: (r = r * 10.0; dec se)
+    while se <= -22: (r = r / 1e22; se += 22)
+    while se < 0: (r = r / 10.0; inc se)
+    result = r
+else:
+  func c_strtod(buf: cstring, endptr: ptr cstring): float64 {.
+    importc: "strtod", header: "<stdlib.h>", noSideEffect.}
 
 func parseBiggestFloat*(s: openArray[char]; number: var BiggestFloat): int {.
   noSideEffect.} =

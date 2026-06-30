@@ -461,7 +461,7 @@ proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
             TypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU,
             CaseU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
             UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU,
-            GfldU, NoSub:
+            GfldU, CallargsU, ForcallU, NoSub:
           error "expected `of` or `else` inside `case`"
       dest.addParRi # end of union
       skipParRi c, n
@@ -470,7 +470,8 @@ proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
     of NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU,
         EfldU, WhenU, ElifU, ElseU, TypevarsU, OfU, StmtsU,
         ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
-        UnpacktupU, ExceptU, FinU, UncheckedU, NoSub:
+        UnpacktupU, ExceptU, FinU, UncheckedU, CallargsU,
+        ForcallU, NoSub:
       error "illformed AST inside object: ", n
 
 proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag] = {}) =
@@ -821,7 +822,7 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
            FeatureP, UncheckedAssignP, UncheckedAccessP,
            ProfilerP, StacktraceP, GcsafeP, UsedP:
           skip n
-        of BuildP, CompileP, EmitP, PushP, PopP, PassLP, PassCP, CallConvP:
+        of BuildP, BundleP, CompileP, EmitP, PushP, PopP, PassLP, PassCP, CallConvP:
           bug "unreachable"
       else:
         error c, "unknown pragma: ", n
@@ -1880,7 +1881,7 @@ proc trCase(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         TypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
         StmtsU, ParamsU, PragmasU, EitherU, JoinU,
         UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU,
-        GfldU, NoSub:
+        GfldU, CallargsU, ForcallU, NoSub:
       error c, "expected (of) or (else) but got: ", n
   takeParRi dest, n
 

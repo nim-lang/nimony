@@ -34,7 +34,7 @@ proc trAsgn(n: var NifCursor, o: var NifBuilder) =
     emitOnChanged = false
   traverse n:
     n.into:                              # descend past `(asgn`
-      if n.kind == ParLe and n.exprKind == DotX:
+      if n.kind == TagLit and n.exprKind == DotX:
         access = n                       # snapshot at the dot expression
         # Inspect the receiver/field inside the (dot ...) without consuming
         # `n` — the outer loop's `skip` below handles that.
@@ -79,7 +79,7 @@ proc trTemplate(n: var NifCursor, o: var NifBuilder) =
         n.into:                          # descend into `(params`
           n.into:                        # descend into the first `(param`
             skip n, 3                    # skip first three param children
-            if n.kind == ParLe and n.typeKind == MutT:
+            if n.kind == TagLit and n.typeKind == MutT:
               n.into:                    # descend into `(mut`
                 if n.kind == Symbol:
                   knownOnChanged[n.symId] = nameSym
@@ -94,7 +94,7 @@ proc trTemplate(n: var NifCursor, o: var NifBuilder) =
 
 proc trAux(n: var NifCursor, o: var NifBuilder) =
   case n.kind
-  of ParLe:
+  of TagLit:
     if n.stmtKind == AsgnS:
       trAsgn n, o
     elif n.stmtKind == GvarS:

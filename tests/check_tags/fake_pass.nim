@@ -27,3 +27,8 @@ proc wrongKind(dest: var TokenBuf; info: PackedLineInfo; s: SymId) =
     dest.addSymDef s, info  # BUG: SymDef where expr expected
     dest.addDotToken()      # BUG: DotToken where expr expected (no dot prefix)
 
+proc boundedCursorLoop(n: var Cursor) =
+  # Canonical bounded-cursor traversal: the validator must recognize `hasMore`
+  # and prove progress from the unconditional `skip`.
+  while n.hasMore:
+    skip n

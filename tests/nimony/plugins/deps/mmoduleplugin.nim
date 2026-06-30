@@ -12,6 +12,7 @@ proc trAux(t: var Replacer) =
         trAux t
 
 var t = loadReplacer()
-loopKeepTag t:
-  trAux t
+replaceHead t, StmtsS, t.info:
+  while t.getCursor.hasMore:
+    trAux t
 saveReplacer(t)

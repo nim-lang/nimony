@@ -22,6 +22,9 @@ proc roundTrips(b1: var TokenBuf): bool =
   if not result: echo "round-trip MISMATCH:\n", txt
 
 proc main =
+  var empty = createTokenBuf()
+  assert toString(empty) == ""
+
   for s in [
       "(stmts (call foo 42 \"hi\") (asgn x 3.14) (ret -7))",
       "(proc :myproc.0 . . (params (param x.1 (i +32))) (i +32) (stmts (ret 0)))",
@@ -29,6 +32,42 @@ proc main =
       "(nested (a (b (c (d .)))))"]:
     var b1 = parseFromBuffer(s, "t")
     assert roundTrips(b1)
+
+  var positioned = createTokenBuf()
+  positioned.addIdent("hello")
+  let file = positioned.pool.filenames.getOrIncl("source.nim")
+  positioned.appendLineInfo(file, 12, 3)
+  assert toString(positioned, includeLineInfo = false) == "hello"
+  assert toString(positioned).len > "hello".len
+  let positionedCursor = positioned.beginRead()
+  assert toString(positionedCursor, includeLineInfo = false) == "hello"
+
+  var sparse = createTokenBuf()
+  let tag = sparse.tags.registerTag("pair")
+  sparse.openTag(tag)
+  let sparseFile = sparse.pool.filenames.getOrIncl("dense.nim")
+  sparse.appendLineInfo(sparseFile, 7, 2)
+  sparse.addIdent("left")
+  sparse.addIdent("right")
+  sparse.closeTag()
+  var dense = parseFromBuffer(toString(sparse), "dense",
+                              denseLineInfo = true)
+  var child = dense.beginRead()
+  child = child.childCursor
+  while child.hasMore:
+    assert child.rawLineInfo.isValid
+    child.skip()
+
+  var unusedName = ""
+  var hinted = parseFromBuffer(
+    "(.unusedname tmp.14)\n(stmts)", "hinted", unusedName)
+  assert unusedName == "tmp.14"
+  assert toString(hinted, includeLineInfo = false) == "(stmts)"
+
+  var symbols = createTokenBuf()
+  let fresh = symbols.pool.syms.getOrIncl("tmp.14")
+  symbols.addSymDef(fresh)
+  assert toString(symbols, includeLineInfo = false) == ":tmp.14"
   echo "ok"
 
 main()

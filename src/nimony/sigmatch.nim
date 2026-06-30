@@ -1303,9 +1303,17 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
   let forig = f
   inc f
   let cmp = cmpTypeBits(m.context, f, a)
+  # With `.feature: "lenientFloats".` a wider float *value* (not just a literal)
+  # may be narrowed to a smaller float formal, e.g. a `float64` constant passed
+  # to a `float32` parameter (nim-lang/nimony#1899). Float-only and opt-in,
+  # since the narrowing can silently lose precision.
+  let lenientFloat = sameKind and forig.typeKind == FloatT and cmp < 0 and
+    m.context != nil and LenientFloatsFeature in m.context.features
   if cmp == 0 and sameKind:
     discard "same types"
-  elif cmp > 0 or (isIntLit and checkIntLitRange(m.context, forig, ex)) or (isFloatLit and checkFloatLitRange(m.context, forig, ex)):
+  elif cmp > 0 or lenientFloat or
+      (isIntLit and checkIntLitRange(m.context, forig, ex)) or
+      (isFloatLit and checkFloatLitRange(m.context, forig, ex)):
     # f has more bits than a, great!
     if m.skippedMod in {MutT, OutT}:
       m.error ImplicitConversionNotMutable, forig, forig

@@ -11,7 +11,8 @@
 ## `openTag`/`closeTag`, and atoms drive the builder. The reader's relative
 ## line positions are resolved to absolute file/line/col (against a parent
 ## stack, exactly like `nifstreams.rawNext`) and emitted as a sparse
-## `LineInfoLit` suffix only where the position changes.
+## `LineInfoLit` suffix only where the position changes. Callers that need
+## random-access effective locations can request dense line info while parsing.
 ##
 ## Note: NIF `#comment#` decorations are not carried into the token buffer —
 ## the codegen path has no use for them.
@@ -49,18 +50,21 @@ proc resolveInfo(b: var TokenBuf; tok: rd.ExpandedToken;
                          comment: comment)
 
 proc parse*(r: var rd.Reader; b: var TokenBuf;
-            parentSeed: NifLineInfo = NoNifLineInfo) =
+            parentSeed: NifLineInfo = NoNifLineInfo;
+            denseLineInfo = false) =
   ## Read one complete NIF tree (or until EOF) from `r` into `b`. `parentSeed`
   ## seeds the parent line-info stack so the first token's relative position
   ## resolves against the right origin (index-jumped reads pass the indexed
   ## compound's parent info; whole-file reads pass `NoNifLineInfo`).
+  ## With `denseLineInfo`, every positioned value receives its effective
+  ## location instead of only changes in the location stream.
   var parents = @[(file: parentSeed.file, line: parentSeed.line,
                    col: parentSeed.col)]
   var last = NoNifLineInfo
   var nested = 0
   var tok = default(rd.ExpandedToken)
   template emit(info: NifLineInfo) =
-    if info.isValid and info != last:
+    if info.isValid and (denseLineInfo or info != last):
       b.appendLineInfo info
       last = info
   while true:
@@ -107,18 +111,40 @@ proc parse*(r: var rd.Reader; b: var TokenBuf;
 
 proc parseFromBuffer*(input: string; thisModule: sink string;
                       sizeHint = 100; sharedPool: Pool = nil;
-                      sharedTags: TagPool = nil): TokenBuf =
+                      sharedTags: TagPool = nil;
+                      denseLineInfo = false): TokenBuf =
   var r = rd.openFromBuffer(input, thisModule)
   result = createTokenBuf(sizeHint, sharedPool, sharedTags)
-  parse(r, result)
+  parse(r, result, denseLineInfo = denseLineInfo)
+
+proc parseFromBuffer*(input: string; thisModule: sink string;
+                      unusedName: var string; sizeHint = 100;
+                      sharedPool: Pool = nil; sharedTags: TagPool = nil;
+                      denseLineInfo = false): TokenBuf =
+  ## Parses NIF text and returns its `.unusedname` directive via `unusedName`.
+  var r = rd.openFromBuffer(input, thisModule)
+  unusedName = r.firstUnusedName
+  result = createTokenBuf(sizeHint, sharedPool, sharedTags)
+  parse(r, result, denseLineInfo = denseLineInfo)
 
 proc parseFromFile*(filename: string; sizeHint = 100;
                     sharedPool: Pool = nil;
-                    sharedTags: TagPool = nil): TokenBuf =
+                    sharedTags: TagPool = nil;
+                    denseLineInfo = false): TokenBuf =
   var r = rd.open(filename)
   discard rd.processDirectives(r)
   result = createTokenBuf(sizeHint, sharedPool, sharedTags)
-  parse(r, result)
+  parse(r, result, denseLineInfo = denseLineInfo)
+
+proc parseFromFile*(filename: string; unusedName: var string;
+                    sizeHint = 100; sharedPool: Pool = nil;
+                    sharedTags: TagPool = nil;
+                    denseLineInfo = false): TokenBuf =
+  ## Parses a NIF file and returns its `.unusedname` directive via `unusedName`.
+  var r = rd.open(filename)
+  unusedName = r.firstUnusedName
+  result = createTokenBuf(sizeHint, sharedPool, sharedTags)
+  parse(r, result, denseLineInfo = denseLineInfo)
 
 # ── toString ─────────────────────────────────────────────────────────────
 
@@ -144,8 +170,10 @@ proc emitRelLineInfo(bld: var Builder; abs, parent: NifLineInfo; pool: Pool;
   if emitComment and uint32(abs.comment) != 0'u32:
     bld.attachComment(pool.strings[abs.comment])
 
-proc emitValue(bld: var Builder; c: var Cursor; cur: var NifLineInfo;
-               parents: var seq[NifLineInfo]; tags: TagPool; pool: Pool) =
+proc emitValueWithLineInfo(bld: var Builder; c: var Cursor;
+                           cur: var NifLineInfo;
+                           parents: var seq[NifLineInfo];
+                           tags: TagPool; pool: Pool) =
   ## Emit one value (atom or whole TagLit subtree), advancing `c` past it.
   ## `cur` is the running absolute line info (a head with no `LineInfoLit`
   ## inherits it); `parents` holds enclosing-tag infos for relative encoding.
@@ -161,38 +189,107 @@ proc emitValue(bld: var Builder; c: var Cursor; cur: var NifLineInfo;
     parents.add abs
     c.into:
       while c.hasMore:
-        emitValue(bld, c, cur, parents, tags, pool)
+        emitValueWithLineInfo(bld, c, cur, parents, tags, pool)
     discard parents.pop()
     bld.endTree()
   of DotToken:
     bld.addEmpty(); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
   of Ident:
-    bld.addIdent(strVal(c, pool)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+    bld.addIdent(strVal(c, pool))
+    emitRelLineInfo(bld, abs, parents[^1], pool)
+    c.inc
   of StrLit:
-    bld.addStrLit(strVal(c, pool)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+    bld.addStrLit(strVal(c, pool))
+    emitRelLineInfo(bld, abs, parents[^1], pool)
+    c.inc
   of Symbol:
-    bld.addSymbol(symName(c, pool)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+    bld.addSymbol(symName(c, pool))
+    emitRelLineInfo(bld, abs, parents[^1], pool)
+    c.inc
   of SymbolDef:
-    bld.addSymbolDef(symName(c, pool)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+    bld.addSymbolDef(symName(c, pool))
+    emitRelLineInfo(bld, abs, parents[^1], pool)
+    c.inc
   of CharLit:
-    bld.addCharLit(charLit(c)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+    bld.addCharLit(charLit(c))
+    emitRelLineInfo(bld, abs, parents[^1], pool)
+    c.inc
   of IntLit:
-    bld.addIntLit(intVal(c)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+    bld.addIntLit(intVal(c))
+    emitRelLineInfo(bld, abs, parents[^1], pool)
+    c.inc
   of UIntLit:
-    bld.addUIntLit(uintVal(c)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+    bld.addUIntLit(uintVal(c))
+    emitRelLineInfo(bld, abs, parents[^1], pool)
+    c.inc
   of FloatLit:
-    bld.addFloatLit(floatVal(c)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+    bld.addFloatLit(floatVal(c))
+    emitRelLineInfo(bld, abs, parents[^1], pool)
+    c.inc
   of ExtendedSuffix, LineInfoLit:
     assert false, "suffix token is not a value head"
 
-proc toString*(b: var TokenBuf; sizeHint = 0): string =
+proc emitValueWithoutLineInfo(bld: var Builder; c: var Cursor;
+                              tags: TagPool; pool: Pool) =
+  ## Fast diagnostic serializer: no location decoding or parent stack.
+  case c.kind
+  of TagLit:
+    bld.addTree(tags.tags[c.cursorTagId])
+    c.into:
+      while c.hasMore:
+        emitValueWithoutLineInfo(bld, c, tags, pool)
+    bld.endTree()
+  of DotToken:
+    bld.addEmpty(); c.inc
+  of Ident:
+    bld.addIdent(strVal(c, pool)); c.inc
+  of StrLit:
+    bld.addStrLit(strVal(c, pool)); c.inc
+  of Symbol:
+    bld.addSymbol(symName(c, pool)); c.inc
+  of SymbolDef:
+    bld.addSymbolDef(symName(c, pool)); c.inc
+  of CharLit:
+    bld.addCharLit(charLit(c)); c.inc
+  of IntLit:
+    bld.addIntLit(intVal(c)); c.inc
+  of UIntLit:
+    bld.addUIntLit(uintVal(c)); c.inc
+  of FloatLit:
+    bld.addFloatLit(floatVal(c)); c.inc
+  of ExtendedSuffix, LineInfoLit:
+    assert false, "suffix token is not a value head"
+
+proc toString*(b: var TokenBuf; sizeHint = 0;
+               includeLineInfo = true): string =
   ## Canonical NIF text for the whole buffer (one or more top-level values).
+  ## Set `includeLineInfo` to false for location-free diagnostic rendering.
   var bld = nifbuilder.open(if sizeHint > 0: sizeHint else: b.len * 8)
   var c = b.beginRead()
-  var cur = NoNifLineInfo
-  var parents = @[NoNifLineInfo]
-  while c.hasMore:
-    emitValue(bld, c, cur, parents, b.tags, b.pool)
+  if includeLineInfo:
+    var cur = NoNifLineInfo
+    var parents = @[NoNifLineInfo]
+    while c.hasMore:
+      emitValueWithLineInfo(bld, c, cur, parents, b.tags, b.pool)
+  else:
+    while c.hasMore:
+      emitValueWithoutLineInfo(bld, c, b.tags, b.pool)
+  result = bld.extract()
+
+proc toString*(node: Cursor; sizeHint = 0;
+               includeLineInfo = true): string =
+  ## Canonical NIF text for the value or subtree at `node`.
+  if not node.hasMore:
+    return ""
+  var bld = nifbuilder.open(
+    if sizeHint > 0: sizeHint else: subtreeWidth(node) * 8)
+  var c = node
+  if includeLineInfo:
+    var cur = NoNifLineInfo
+    var parents = @[NoNifLineInfo]
+    emitValueWithLineInfo(bld, c, cur, parents, node.tags, node.pool)
+  else:
+    emitValueWithoutLineInfo(bld, c, node.tags, node.pool)
   result = bld.extract()
 
 # ── toModuleString (full file with embedded index) ─────────────────────────

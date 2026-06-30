@@ -1656,7 +1656,7 @@ proc patchParamList*(c: var Context; dest, init: var TokenBuf; sym: SymId;
           def: -1,
           use: 0)
         c.typeCache.registerLocal(paramSym, ParamY, n)
-        dest.takeTree n # type
+        c.hooks.trProctype(c, dest, n) # type
         dest.takeTree n # default value
         dest.takeParRi n # ParRi
 
@@ -1934,7 +1934,18 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             coroTrSons c, dest, n
         else:
           coroTrSons c, dest, n
-      of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX,
+      of DotX, DdotX:
+        # The selector is a field identity, not a value use. It can share a
+        # SymId with a lifted local or parameter of the same spelling; running
+        # it through `coroTr` would replace the field name with an environment
+        # access and produce malformed `(dot obj (dot ...))` NIF.
+        dest.takeToken n
+        coroTr c, dest, n
+        takeTree dest, n # field
+        if n.hasMore: takeTree dest, n # optional inheritance depth
+        if n.hasMore: takeTree dest, n # optional private-access token
+        dest.takeParRi n
+      of ErrX, SufX, AtX, DerefX, PatX, ParX,
           AddrX, NilX, InfX, NeginfX, NanX, FalseX,
           TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX,
           AlignofX, OffsetofX, OconstrX, AconstrX,
@@ -1942,7 +1953,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX,
           BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX,
           CchoiceX, OchoiceX, PragmaxX, QuotedX,
-          HderefX, DdotX, HaddrX, NewrefX, NewobjX,
+          HderefX, HaddrX, NewrefX, NewobjX,
           TupX, TupconstrX, SetconstrX, TabconstrX,
           AshrX, BaseobjX, DconvX, CompilesX,
           DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX,

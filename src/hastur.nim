@@ -134,6 +134,15 @@ proc diffFiles(c: var TestCounters; file, a, b: string; overwrite: bool) =
 const
   ErrorKeyword = "Error:"
 
+  targetIs64bit = sizeof(int) == 8
+    ## The checked-in golden `.nim.c` and `.nif` outputs are generated for a
+    ## 64-bit target (e.g. `(i +64)`, `IL64(...)`, `NIM_INTBITS 64`). nimony
+    ## defaults its target word size to the host CPU, so on a 32-bit host the
+    ## generated code legitimately differs and those diffs would spuriously
+    ## fail. Per nim-lang/nimony#1569, only run the golden-file comparisons on
+    ## 64-bit hosts. (`sizeof(int)` reflects the host hastur was built for,
+    ## which is the same machine that runs nimony for the tests.)
+
 type
   LineInfo = object
     line, col: int
@@ -415,7 +424,7 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category;
 
   if compilerExitCode == 0:
     let cfile = file.changeFileExt(".nim.c")
-    if cfile.fileExists():
+    if targetIs64bit and cfile.fileExists():
       let nimcacheC = generatedFile(file, ".c")
       diffFiles c, file, cfile, nimcacheC, overwrite
 
@@ -442,7 +451,7 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category;
     # depend on `lib/std/system.nim` and so remain stable across system
     # changes. With the phase validator in place, diffing NIF for normal
     # tests causes noisy churn without meaningfully improving coverage.
-    if cat == Basics:
+    if cat == Basics and targetIs64bit:
       let ast = file.changeFileExt(".nif")
       if ast.fileExists():
         let nif = generatedFile(file, ".s.nif")
@@ -1242,6 +1251,13 @@ proc buildShoggoth(showProgress = false) =
   let exe = "shoggoth".addFileExt(ExeExt)
   robustMoveFile "src/lengc/shoggoth/" & exe, binDir() / exe
 
+proc buildNiflink(showProgress = false) =
+  ## `niflink` (the C-backend link driver) reads a link manifest NIF and links
+  ## the project; built on the nifcore API.
+  exec nimcPrefix() & "src/niflink/niflink.nim", showProgress
+  let exe = "niflink".addFileExt(ExeExt)
+  robustMoveFile "src/niflink/" & exe, binDir() / exe
+
 proc buildArkham(showProgress = false) =
   ## `arkham` (Leng -> typed asm-NIF native codegen) lives in the sibling
   ## `../nativenif` repo and reuses nimony's NIF libraries via its committed
@@ -1418,7 +1434,7 @@ const BootSelfTools = ["nimsem", "hexer", "nimony"]
   ## hexer are needed by every later `nimony c` call, so they go first;
   ## nimony itself goes last because it's the one each *next* stage will
   ## drive with.
-const BootCarryTools = ["nifler", "lengc", "nifmake", "validator", "shoggoth"]
+const BootCarryTools = ["nifler", "lengc", "niflink", "nifmake", "validator", "shoggoth"]
   ## Tools copied from `bin/` into each stage dir. They're tier-0 for
   ## bootstrap purposes (host-Nim-built throughout) but `nimony c` shells
   ## to them, so each stage dir needs its own copy.
@@ -2021,10 +2037,12 @@ proc handleCmdLine =
       buildNimony(showProgress)
       buildLengc(showProgress)
       buildShoggoth(showProgress)
+      buildNiflink(showProgress)
       buildHexer(showProgress)
       buildNifmake(showProgress)
       buildNj(showProgress)
       buildVl(showProgress)
+      buildValidator(showProgress)
       buildDagon(showProgress)
       buildPnak(showProgress)
     of "nifler":
@@ -2037,6 +2055,8 @@ proc handleCmdLine =
       buildLengc(showProgress)
     of "shoggoth":
       buildShoggoth(showProgress)
+    of "niflink":
+      buildNiflink(showProgress)
     of "arkham":
       buildArkham(showProgress)
     of "nifasm":

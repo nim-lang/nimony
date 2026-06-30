@@ -6,7 +6,7 @@
 # via `--passC` (see hastur's `testFile`, `prebuildSharedObjects`, and
 # `boot --valgrind`); that flag flows into the same `cc` command that compiles
 # `static.c`, so tracking is preserved exactly where it's wanted.
-{.build("C", "${path}/../../../vendor/mimalloc/src/static.c", "-DMI_STATS=1 -I${path}/../../../vendor/mimalloc/include").}
+{.compile("${path}/../../../vendor/mimalloc/src/static.c", "-DMI_STATS=1 -I${path}/../../../vendor/mimalloc/include").}
 when defined(arm):
   {.passL:"-latomic".}
 

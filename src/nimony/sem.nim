@@ -86,7 +86,7 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
             while it.hasMore: skip it
         of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, EfldU, FldU,
            WhenU, TypevarsU, CaseU, OfU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
-           UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU:
+           UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, ForcallU:
           error "illformed AST: `elif` or `else` inside `if` expected, got ", it
           skip it  # avoid infinite loop on illformed
     # all branches are discardable
@@ -115,7 +115,7 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
             while it.hasMore: skip it
         of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, EfldU, FldU,
            WhenU, TypevarsU, CaseU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
-           UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU:
+           UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, ForcallU:
           error "illformed AST: `of`, `elif` or `else` inside `case` expected, got ", it
           skip it
     # all branches are discardable
@@ -1312,7 +1312,14 @@ proc exprToType(c: var SemContext; dest: var TokenBuf; exprType: Cursor; start: 
     dest.shrink start
     var base = exprType
     inc base
-    dest.addSubtree base
+    if base.kind == ParRi:
+      # A bare `typedesc` carrying no concrete base type, e.g. a `T: typedesc`
+      # parameter used as a type (`proc f(T: typedesc): Box[T]`). nimony has no
+      # implicit-generic `typedesc` params, so there is nothing to inline here.
+      # Report it instead of tripping the `addSubtree` "cursor at end?" assert.
+      c.buildErr dest, info, "'typedesc' without a concrete type cannot be used as a type; use an explicit generic parameter such as `proc f[T](x: typedesc[T])`"
+    else:
+      dest.addSubtree base
   of ErrT, AutoT:
     # propagate error
     discard
@@ -1361,10 +1368,18 @@ proc semTypeSym(c: var SemContext; dest: var TokenBuf; s: Sym; info: PackedLineI
           typeclassBuf.addParRi()
           typeclassBuf.addParRi()
           replace(dest, cursorAt(typeclassBuf, 0), start)
-        elif magic in {CstringT, PointerT} and LenientNilsFeature notin c.features:
-          # add default notnil for pointer-like magic types:
+        elif magic in {CstringT, PointerT}:
+          # Pointer-like magic types must carry an explicit nilability
+          # annotation so they unify with the syntactic path in
+          # `semLocalTypeImpl` (which adds the same default). Otherwise a bare
+          # `(cstring)` and a `(cstring (unchecked))` are structurally distinct
+          # and fragment generic instances (e.g. `seq[cstring]`) into
+          # incompatible C structs.
           dest.shrink dest.len - 1 # remove ParRi
-          dest.addParPair NotnilU, info
+          if LenientNilsFeature notin c.features:
+            dest.addParPair NotnilU, info
+          else:
+            dest.addParPair UncheckedU, info
           dest.addParRi()
     elif res.status == LacksNothing:
       let typ = asTypeDecl(res.decl)
@@ -1522,6 +1537,12 @@ proc semTypeof(c: var SemContext; dest: var TokenBuf; it: var Item) =
   semExpr c, dest, it, semFlags
   var t = it.typ
   if t.typeKind == TypedescT: inc t
+  # `typeof` produces the *value* type: drop reference qualifiers so that e.g.
+  # `typeof(s[i])` over a `var seq`/`openArray` is the element type `T`, not
+  # `var T`. Without this `seq[typeof(s[0])]` becomes `seq[var T]`, which then
+  # mismatches plain `T` elements (notably inside `mapIt`/`filterIt` templates).
+  while t.typeKind in {MutT, OutT, LentT, SinkT}:
+    inc t
   dest.shrink beforeExpr
   dest.addParLe(TypedescT, t.info)
   dest.addSubtree t
@@ -2686,7 +2707,9 @@ proc semForLoopVar(c: var SemContext; dest: var TokenBuf; it: var Item; loopvarT
     let delayed = handleSymDef(c, dest, it.n, LetY)
     c.addSym dest, delayed
     wantDot c, dest, it.n # export marker must be empty
-    wantDot c, dest, it.n # pragmas
+    # The loop variable may carry pragmas (e.g. `{.inject.}` from a template, as
+    # `mapIt`/`toSeq` use); copy the slot through rather than requiring it empty.
+    takeTree dest, it.n # pragmas
     if loopvarTypeMod != NoType and loopvarType.typeKind notin TypeModifiers:
       dest.buildTree loopvarTypeMod, it.n.info:
         copyTree dest, loopvarType
@@ -2848,17 +2871,22 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
     dec c.routine.inLoop
   inc it.n # skip the for's closing ')'
 
-  # Build plugin input: (stmts <iter-name> <call-args...> <loop-vars> <body>)
+  # Build plugin input:
+  # (forcall <iter-name> (callargs <arg1> ...) (unpackflat ...) <body>)
   var b = createTokenBuf(30)
-  b.addParLe StmtsS, info
+  b.addParLe ForcallU, info
   b.add identToken(symToIdent(routine.name.symId), info)
+  # (callargs ...)
+  b.addParLe CallargsU, info
   var callC = beginRead(callBuf)
   callC.into:
     skip callC # fn symbol or sym-choice
     while callC.hasMore:
       b.takeTree callC
+  b.addParRi()
+  # loop vars and body
   var vbC = beginRead(vb)
-  b.takeTree vbC # loop vars (typed)
+  b.takeTree vbC # loop vars (typed, unpackflat/unpacktup)
   b.takeTree vbC # loop body (typed)
   b.addParRi()
 
@@ -3696,7 +3724,8 @@ proc caseBranchMatchesExpr(c: var SemContext; dest: var TokenBuf; branch, matche
       skipParRi(branch)
     of NoSub, NilU, NotnilU, KvU, VvU, RangesU, ParamU, TypevarU, EfldU, FldU,
        WhenU, ElifU, ElseU, TypevarsU, CaseU, OfU, StmtsU, ParamsU, PragmasU,
-       EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU:
+       EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU,
+       CallargsU, ForcallU:
       if sameTrees(branch, matched):
         return true
       skip branch
@@ -3774,7 +3803,8 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         skipParRi n
       of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, EfldU, FldU,
          WhenU, ElifU, TypevarsU, CaseU, StmtsU, ParamsU, PragmasU,
-         EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU:
+         EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU,
+         CallargsU, ForcallU:
         error "illformed AST inside case object: ", n
 
   if selectorSymId notin setFields:

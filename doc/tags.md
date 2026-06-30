@@ -178,6 +178,8 @@
 | `(kill Y)` | ControlFlowKind, NjvlKind | some.var is about to disappear (scope exit) |
 | `(unpackflat ...)` | NimonyOther, NiflerKind | unpack into flat variable list |
 | `(unpacktup ...)` | NimonyOther, NiflerKind | unpack tuple |
+| `(callargs X*)` | NimonyOther | grouped call arguments in a for-loop plugin input |
+| `(forcall <name> (callargs X*) (unpackflat ...) S)` | NimonyOther | for-loop plugin input: the iterator name, grouped call arguments, loop variables, and the loop body |
 | `(unpackdecl S+)` | NimonyStmt, NiflerKind | unpack var/let/const declaration |
 | `(except .Y X)` | NimonyOther, NiflerKind | except subsection |
 | `(fin S)` | NimonyOther, NiflerKind | finally subsection |
@@ -336,6 +338,7 @@
 | `(gcsafe)` | NimonyPragma | `gcsafe` pragma; accepted for Nim source compatibility, semantically ignored |
 | `(used)` | NimonyPragma | `used` pragma; accepted for Nim source compatibility, semantically ignored |
 | `(compile STR)`; `(compile STR STR)` | NimonyPragma | `compile` pragma (Nim-compatible alias of `build`; the source language is inferred from the file extension, e.g. `.m` → Objective-C) |
+| `(bundle STR STR)`; `(bundle STR STR STR)` | NimonyPragma, NifIndexKind | `bundle` pragma: a custom linker command override `(builder, tool[, args])`; the `tool` is built on demand by `builder` and replaces the final link step, consuming the project's link manifest |
 
 ### unpackflat, unpacktup, unpackdecl
 
