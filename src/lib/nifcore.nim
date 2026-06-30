@@ -903,16 +903,23 @@ proc addSymDef*(b: var TokenBuf; s: string) =
   ## Appends a symbol definition, interning `s` when it does not fit inline.
   addStringLike(b, SymbolDef, s, b.pool.syms)
 
+proc addInternedSymbol(b: var TokenBuf; kind: NifKind; id: SymId) =
+  let s = b.pool.syms[id]
+  if s.len <= StrInlineMaxLen:
+    b.add NifToken(toX(kind, encodeInlineStr(s)))
+  else:
+    let payload = uint64(uint32(id)) shl 1
+    b.add NifToken(toX(kind, lowBits(payload)))
+    addSuffixIfNeeded(b, payload)
+
+proc addSymDef*(b: var TokenBuf; id: SymId) =
+  ## Emits a symbol definition already interned in `b.pool`.
+  addInternedSymbol(b, SymbolDef, id)
+
 proc addSymUse*(b: var TokenBuf; id: SymId) =
   ## Emit a symbol already interned in `b.pool`. Short symbols remain inline;
   ## longer symbols reuse `id` without a second hash-table lookup.
-  let s = b.pool.syms[id]
-  if s.len <= StrInlineMaxLen:
-    b.add NifToken(toX(Symbol, encodeInlineStr(s)))
-  else:
-    let payload = uint64(uint32(id)) shl 1
-    b.add NifToken(toX(Symbol, lowBits(payload)))
-    addSuffixIfNeeded(b, payload)
+  addInternedSymbol(b, Symbol, id)
 
 template emitChained(b: var TokenBuf; kind: NifKind; bits: uint64) =
   ## Emit a value carrier (kinded token plus 0/1/2 ExtendedSuffix
