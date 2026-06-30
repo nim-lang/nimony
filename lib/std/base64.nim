@@ -17,8 +17,8 @@ const
   cb64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
   cb64safe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 
-func encode*(s: openArray[char]; safe = false): string =
-  ## Encodes `s` (interpreted as bytes) to a base64 string.
+func encode*[T: byte|char](s: openArray[T]; safe = false): string =
+  ## Encodes `s` (a sequence of `char`s or `byte`s) to a base64 string.
   runnableExamples:
     assert encode("foo") == "Zm9v"
     assert encode("foob") == "Zm9vYg=="
@@ -49,6 +49,22 @@ func encode*(s: openArray[char]; safe = false): string =
     result.add alphabet[((a shl 4) or (b shr 4)) and 63]
     result.add alphabet[(b shl 2) and 63]
     result.add '='
+
+func encodeMime*(s: string; lineLen = 75; newLine = "\r\n"; safe = false): string =
+  ## Encodes `s` to base64 (RFC 2045 MIME): the output is wrapped into lines of
+  ## at most `lineLen` characters, separated by `newLine`.
+  runnableExamples:
+    assert encodeMime("foobar", lineLen = 4) == "Zm9v\r\nYmFy"
+  let e = encode(s, safe)
+  result = ""
+  var i = 0
+  while i < e.len:
+    if i > 0: result.add newLine
+    var j = 0
+    while j < lineLen and i < e.len:
+      result.add e[i]
+      inc i
+      inc j
 
 func decodeByte(c: char): int =
   ## Maps a base64 character to its 6-bit value, or -1 for padding/whitespace/

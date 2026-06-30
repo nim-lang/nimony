@@ -34,4 +34,13 @@ proc main =
   assert decode("Zm 9v") == "foo"
   assert decode("Zm9v\n") == "foo"
 
+  # encode over bytes (0x66 0x6f 0x6f == "foo")
+  assert encode(@[byte 102, 111, 111]) == "Zm9v"
+  assert encode(@[byte 0xfb, 0xff, 0xbf], safe = true) == "-_-_"
+
+  # encodeMime wraps into lines
+  assert encodeMime("foobar", lineLen = 4) == "Zm9v\r\nYmFy"
+  assert encodeMime("foobar") == "Zm9vYmFy"  # fits one line
+  assert encodeMime("foobar", lineLen = 4, newLine = "\n") == "Zm9v\nYmFy"
+
 main()
