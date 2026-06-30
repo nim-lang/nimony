@@ -181,7 +181,7 @@ proc serialize*(i: LLInstr): string =
     if i.cxSyncscope.len > 0:
       result.add " syncscope(\"" & i.cxSyncscope & "\")"
     result.add " ptr " & serializeUnqualified(i.cxPtr) & ", " &
-             operand(i.cxExpected) & ", " & serializeUnqualified(i.cxDesired) &
+             operand(i.cxExpected) & ", " & operand(i.cxDesired) &
              " " & OrderingStr[i.cxSuccessOrdering] & " " &
              OrderingStr[i.cxFailureOrdering]
     if i.cxWeak: result.add " weak"

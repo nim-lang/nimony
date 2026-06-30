@@ -72,7 +72,7 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): LLType =
           inc n
           return
       let name = mangleToC(c.m.pool.syms[n.symId])
-      result = LLType(kind: llStruct, name: name)  # named reference → "%name"
+      result = LLType(kind: llStruct, name: name) # named reference → "%name"
       inc n
     elif n.kind == DotToken:
       result = c.primVoid
@@ -91,7 +91,7 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): LLType =
     result = c.primPtr
     skip n
   of VarargsT:
-    result = c.primPtr  # placeholder; handled specially in signatures
+    result = c.primPtr # placeholder; handled specially in signatures
     skip n
   of EnumT:
     n.into:
@@ -116,7 +116,8 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): LLType =
       let decl = asTypeDecl(typeDecl)
       if decl.name.kind == SymbolDef:
         discard c.m.getDeclOrNil(decl.name.symId)
-        result = LLType(kind: llStruct, name: mangleToC(c.m.pool.syms[decl.name.symId]))
+        result = LLType(kind: llStruct, name: mangleToC(c.m.pool.syms[
+            decl.name.symId]))
       else:
         result = c.primPtr
     else:
@@ -674,7 +675,8 @@ proc genTypeDefLLVM(c: var LLVMCode; body: var Cursor; name: string;
       else:
         sizeStr = "0"
       skip body
-      result = "%" & name & " = type [" & sizeStr & " x " & serialize(elemType) & "]\n"
+      result = "%" & name & " = type [" & sizeStr & " x " & serialize(
+          elemType) & "]\n"
       while body.hasMore: skip body
   of EnumT:
     body.into:

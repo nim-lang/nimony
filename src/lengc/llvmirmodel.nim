@@ -319,7 +319,7 @@ proc newLLFuncType*(retType: LLType; params: seq[LLType];
 # ---- Instruction constructors ----
 
 proc newLLBinInstr*(kind: LLInstrKind; res: LLValue; binOp: string;
-                     binLhs, binRhs: LLValue; dbgLoc = "") : LLInstr =
+                     binLhs, binRhs: LLValue; dbgLoc = ""): LLInstr =
   ## Construct a binary-op instruction whose `kind` is determined at runtime.
   ## The `case` inside the proc lets the Nim compiler verify that `binOp`,
   ## `binLhs`, `binRhs` — which only exist in the `llAdd..llXor` branch — are

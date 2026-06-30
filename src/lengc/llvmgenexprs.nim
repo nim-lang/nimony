@@ -777,7 +777,8 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       let arrTyp = newLLArrayType(s.len + 1, c.llI8())
       c.module.globals.add LLGlobal(name: globalName,
         typ: arrTyp, initVal: LLValue(kind: llvCString,
-          strVal: escaped & "\\00", typ: arrTyp), isConstant: true, isPrivate: true)
+          strVal: escaped & "\\00", typ: arrTyp), isConstant: true,
+          isPrivate: true)
       result = llGlobalRef(globalName, c.primPtr)
     of Symbol:
       let s = n.symId
@@ -1137,6 +1138,8 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       var idx = 0
       while n.hasMore:
         var elemVal = LLValue(); genExprLLVM(c, n, elemVal)
+        if elemVal.kind == llvInt:
+          elemVal.typ = elemTyp
         let t = c.nextTemp()
         let res = llReg(t, typ)
         c.emit LLInstr(kind: llInsertValue, result: res, ivAggregate: current,

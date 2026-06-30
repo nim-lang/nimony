@@ -427,7 +427,8 @@ proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
                  icmpLhs: currentOvf, icmpRhs: llIntTextC("0", c.llI8()))
   let combinedOvf = c.nextTemp()
   let coRes = llReg(combinedOvf, c.llI1())
-  c.emit LLInstr(kind: llOr, result: coRes, binOp: "or", binLhs: cobRes, binRhs: ovfRes)
+  c.emit LLInstr(kind: llOr, result: coRes, binOp: "or", binLhs: cobRes,
+      binRhs: ovfRes)
   let newOvfByte = c.nextTemp()
   let nobRes = llReg(newOvfByte, c.llI8())
   c.emit LLInstr(kind: llZext, result: nobRes, castOp: "zext", castSrc: coRes,

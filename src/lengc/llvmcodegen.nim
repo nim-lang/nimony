@@ -601,10 +601,9 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM;
       if d.value.kind != DotToken:
         var v = d.value
         let initVal = genGlobalConstr(c, v, d.typ)
-        c.module.globals.add LLGlobal(name: name, typ: initVal.typ, initVal: initVal,
-            isThreadLocal: (vk == IsThreadlocal),
-            isConstant: (vk == IsConst), isPrivate: (vk == IsConst),
-            align: int alignVal)
+        c.module.globals.add LLGlobal(name: name, typ: initVal.typ,
+            initVal: initVal, isThreadLocal: (vk == IsThreadlocal),
+            isConstant: (vk == IsConst), align: int alignVal)
       else:
         skip d.value
         let zeroVal = if d.typ.typeKind in {PtrT, AptrT,
