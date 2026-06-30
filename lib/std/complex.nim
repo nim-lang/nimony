@@ -14,124 +14,136 @@
 ## part and `b` is the imaginary part (and `i` is the imaginary unit with the
 ## property `i*i == -1`).
 ##
-## The operations are provided for 64-bit floats (`Complex64`). A generic
-## `Complex[T: SomeFloat]` form (as in Nim 2) is not used here because the
-## stdlib's float `math`, comparison and `$` operations are concrete per float
-## type rather than generic over `SomeFloat`.
+## `Complex[T]` is generic over the floating-point component type `T`. Following
+## the modelling of `std/math`, each operation depends precisely on the concepts
+## it needs: the arithmetic operators come from `Arithmetic`, and the
+## transcendental functions add `HasSqrt`, `HasExp`, `HasLn`, `HasSin`,
+## `HasCos` and `HasArctan2`. So `Complex[float32]` and `Complex[float64]` both
+## work, and a user float type satisfying the relevant concepts works too.
 
 import std/math
 
 type
-  Complex64* = object
+  Complex*[T: SomeFloat] = object
+    ## A complex number with real part `re` and imaginary part `im`, both of
+    ## the floating-point type `T`.
+    re*, im*: T
+
+  Complex64* = Complex[float64]
     ## A complex number with 64-bit float components.
-    re*, im*: float
 
-  Complex* = Complex64
-    ## The default complex number type.
+  Complex32* = Complex[float32]
+    ## A complex number with 32-bit float components.
 
-func complex*(re, im: float): Complex64 =
+  Stringable = concept
+    proc `$`(x: Self): string
+
+func complex*[T: SomeFloat](re, im: T): Complex[T] =
   ## Returns a complex number with real part `re` and imaginary part `im`.
-  result = Complex64(re: re, im: im)
+  result = Complex[T](re: re, im: im)
 
-func complex*(re: float): Complex64 =
+func complex*[T: SomeFloat](re: T): Complex[T] =
   ## Returns a complex number with real part `re` and zero imaginary part.
-  result = Complex64(re: re, im: 0.0)
+  result = Complex[T](re: re, im: T(0))
 
-func abs2*(z: Complex64): float =
+func abs2*[T: SomeFloat and Arithmetic](z: Complex[T]): T =
   ## Returns the squared absolute value of `z`, i.e. `z.re^2 + z.im^2`.
   ## Cheaper than `abs` because it avoids the square root.
   result = z.re * z.re + z.im * z.im
 
-func abs*(z: Complex64): float =
+func abs*[T: SomeFloat and HasHypot](z: Complex[T]): T =
   ## Returns the absolute value (modulus) of `z`.
   result = hypot(z.re, z.im)
 
-func arg*(z: Complex64): float =
+func arg*[T: SomeFloat and HasArctan2](z: Complex[T]): T =
   ## Returns the argument (phase angle, in radians) of `z`.
   result = arctan2(z.im, z.re)
 
-func conjugate*(z: Complex64): Complex64 =
+func conjugate*[T: SomeFloat and Arithmetic](z: Complex[T]): Complex[T] =
   ## Returns the complex conjugate of `z` (`z.im` negated).
-  result = Complex64(re: z.re, im: -z.im)
+  result = Complex[T](re: z.re, im: -z.im)
 
-func `==`*(a, b: Complex64): bool =
+func `==`*[T: SomeFloat and Arithmetic](a, b: Complex[T]): bool =
   ## Compares two complex numbers for equality.
   result = a.re == b.re and a.im == b.im
 
-func `+`*(a, b: Complex64): Complex64 =
-  result = Complex64(re: a.re + b.re, im: a.im + b.im)
+func `+`*[T: SomeFloat and Arithmetic](a, b: Complex[T]): Complex[T] =
+  result = Complex[T](re: a.re + b.re, im: a.im + b.im)
 
-func `+`*(a: Complex64; b: float): Complex64 =
-  result = Complex64(re: a.re + b, im: a.im)
+func `+`*[T: SomeFloat and Arithmetic](a: Complex[T]; b: T): Complex[T] =
+  result = Complex[T](re: a.re + b, im: a.im)
 
-func `+`*(a: float; b: Complex64): Complex64 =
-  result = Complex64(re: a + b.re, im: b.im)
+func `+`*[T: SomeFloat and Arithmetic](a: T; b: Complex[T]): Complex[T] =
+  result = Complex[T](re: a + b.re, im: b.im)
 
-func `-`*(z: Complex64): Complex64 =
+func `-`*[T: SomeFloat and Arithmetic](z: Complex[T]): Complex[T] =
   ## Unary minus.
-  result = Complex64(re: -z.re, im: -z.im)
+  result = Complex[T](re: -z.re, im: -z.im)
 
-func `-`*(a, b: Complex64): Complex64 =
-  result = Complex64(re: a.re - b.re, im: a.im - b.im)
+func `-`*[T: SomeFloat and Arithmetic](a, b: Complex[T]): Complex[T] =
+  result = Complex[T](re: a.re - b.re, im: a.im - b.im)
 
-func `-`*(a: Complex64; b: float): Complex64 =
-  result = Complex64(re: a.re - b, im: a.im)
+func `-`*[T: SomeFloat and Arithmetic](a: Complex[T]; b: T): Complex[T] =
+  result = Complex[T](re: a.re - b, im: a.im)
 
-func `-`*(a: float; b: Complex64): Complex64 =
-  result = Complex64(re: a - b.re, im: -b.im)
+func `-`*[T: SomeFloat and Arithmetic](a: T; b: Complex[T]): Complex[T] =
+  result = Complex[T](re: a - b.re, im: -b.im)
 
-func `*`*(a, b: Complex64): Complex64 =
-  result = Complex64(re: a.re * b.re - a.im * b.im,
-                     im: a.re * b.im + a.im * b.re)
+func `*`*[T: SomeFloat and Arithmetic](a, b: Complex[T]): Complex[T] =
+  result = Complex[T](re: a.re * b.re - a.im * b.im,
+                      im: a.re * b.im + a.im * b.re)
 
-func `*`*(a: Complex64; b: float): Complex64 =
-  result = Complex64(re: a.re * b, im: a.im * b)
+func `*`*[T: SomeFloat and Arithmetic](a: Complex[T]; b: T): Complex[T] =
+  result = Complex[T](re: a.re * b, im: a.im * b)
 
-func `*`*(a: float; b: Complex64): Complex64 =
-  result = Complex64(re: a * b.re, im: a * b.im)
+func `*`*[T: SomeFloat and Arithmetic](a: T; b: Complex[T]): Complex[T] =
+  result = Complex[T](re: a * b.re, im: a * b.im)
 
-func `/`*(a, b: Complex64): Complex64 =
+func `/`*[T: SomeFloat and Arithmetic](a, b: Complex[T]): Complex[T] =
   let d = b.re * b.re + b.im * b.im
-  result = Complex64(re: (a.re * b.re + a.im * b.im) / d,
-                     im: (a.im * b.re - a.re * b.im) / d)
+  result = Complex[T](re: (a.re * b.re + a.im * b.im) / d,
+                      im: (a.im * b.re - a.re * b.im) / d)
 
-func `/`*(a: Complex64; b: float): Complex64 =
-  result = Complex64(re: a.re / b, im: a.im / b)
+func `/`*[T: SomeFloat and Arithmetic](a: Complex[T]; b: T): Complex[T] =
+  result = Complex[T](re: a.re / b, im: a.im / b)
 
-func inv*(z: Complex64): Complex64 =
+func inv*[T: SomeFloat and Arithmetic](z: Complex[T]): Complex[T] =
   ## Returns the multiplicative inverse `1 / z`.
   let d = z.re * z.re + z.im * z.im
-  result = Complex64(re: z.re / d, im: -z.im / d)
+  result = Complex[T](re: z.re / d, im: -z.im / d)
 
-func sqrt*(z: Complex64): Complex64 =
+func sqrt*[T: SomeFloat and Arithmetic and HasHypot and HasSqrt](z: Complex[T]): Complex[T] =
   ## Returns the principal square root of `z`.
-  if z.re == 0.0 and z.im == 0.0:
-    result = Complex64(re: 0.0, im: 0.0)
+  if z.re == T(0) and z.im == T(0):
+    result = Complex[T](re: T(0), im: T(0))
   else:
     let m = abs(z)
-    var s = sqrt((m - z.re) * 0.5)
-    if z.im < 0.0: s = -s
-    result = Complex64(re: sqrt((m + z.re) * 0.5), im: s)
+    var s = sqrt((m - z.re) * T(0.5))
+    if z.im < T(0): s = -s
+    result = Complex[T](re: sqrt((m + z.re) * T(0.5)), im: s)
 
-func exp*(z: Complex64): Complex64 =
+func exp*[T: SomeFloat and Arithmetic and HasExp and HasSin and HasCos](
+    z: Complex[T]): Complex[T] =
   ## Returns the exponential `e^z`.
   let r = exp(z.re)
-  result = Complex64(re: r * cos(z.im), im: r * sin(z.im))
+  result = Complex[T](re: r * cos(z.im), im: r * sin(z.im))
 
-func ln*(z: Complex64): Complex64 =
+func ln*[T: SomeFloat and HasHypot and HasLn and HasArctan2](
+    z: Complex[T]): Complex[T] =
   ## Returns the principal natural logarithm of `z`.
-  result = Complex64(re: ln(abs(z)), im: arg(z))
+  result = Complex[T](re: ln(abs(z)), im: arg(z))
 
-func pow*(z, w: Complex64): Complex64 =
+func pow*[T: SomeFloat and Arithmetic and HasHypot and HasExp and HasLn and
+          HasSin and HasCos and HasArctan2](z, w: Complex[T]): Complex[T] =
   ## Returns `z` raised to the power `w` (principal value).
-  if z.re == 0.0 and z.im == 0.0:
-    if w.re == 0.0 and w.im == 0.0:
-      result = Complex64(re: 1.0, im: 0.0)
+  if z.re == T(0) and z.im == T(0):
+    if w.re == T(0) and w.im == T(0):
+      result = Complex[T](re: T(1), im: T(0))
     else:
-      result = Complex64(re: 0.0, im: 0.0)
+      result = Complex[T](re: T(0), im: T(0))
   else:
     result = exp(w * ln(z))
 
-proc `$`*(z: Complex64): string =
+proc `$`*[T: SomeFloat and Stringable](z: Complex[T]): string =
   ## Returns a textual representation of `z` as `"(re, im)"`.
   result = "(" & $z.re & ", " & $z.im & ")"

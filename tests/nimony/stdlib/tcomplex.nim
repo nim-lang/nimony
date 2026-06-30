@@ -3,7 +3,13 @@ import std/[assertions, complex, math]
 proc close(a, b: float): bool =
   abs(a - b) < 1e-9
 
+proc close(a, b: float32): bool =
+  abs(a - b) < 1e-5'f32
+
 proc close(a, b: Complex64): bool =
+  close(a.re, b.re) and close(a.im, b.im)
+
+proc close(a, b: Complex32): bool =
   close(a.re, b.re) and close(a.im, b.im)
 
 block: # construction and accessors
@@ -56,3 +62,15 @@ block: # pow
 
 block: # stringification
   assert $complex(1.0, 2.0) == "(1.0, 2.0)"
+
+block: # generic over float32 (Complex32)
+  let a = complex(1.0'f32, 2.0'f32)
+  let b = complex(3.0'f32, -1.0'f32)
+  assert a + b == complex(4.0'f32, 1.0'f32)
+  assert a * b == complex(5.0'f32, 5.0'f32)
+  assert 2.0'f32 * a == complex(2.0'f32, 4.0'f32)
+  assert close(abs(complex(3.0'f32, 4.0'f32)), 5.0'f32)
+  assert close(abs2(complex(3.0'f32, 4.0'f32)), 25.0'f32)
+  assert conjugate(a) == complex(1.0'f32, -2.0'f32)
+  let s = sqrt(complex(3.0'f32, 4.0'f32))
+  assert close(s * s, complex(3.0'f32, 4.0'f32))
