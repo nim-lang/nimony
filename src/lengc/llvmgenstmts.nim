@@ -33,13 +33,13 @@ proc getVirtualGuardLLVM(c: var LLVMCode; n: Cursor): (SymId, bool) =
 
 proc genOnErrorLLVM(c: var LLVMCode; n: var Cursor) =
   let onErrInfo = n.info
-  let errPtr = llGlobalRef("LENGC_ERR_", c.primPtr)
-  let errVal = c.emitLoad(errPtr, c.llI8())
+  let errPtr = llGlobalRef("LENGC_ERR_", c.prim.ptrT)
+  let errVal = c.emitLoad(errPtr, c.prim.i8)
   let cond = c.nextTemp()
-  let condRes = llReg(cond, c.llI1())
+  let condRes = llReg(cond, c.prim.i1)
   c.setLoc(onErrInfo)
   c.emit LLInstr(kind: llIcmp, result: condRes, icmpPred: "ne",
-                 icmpLhs: errVal, icmpRhs: llIntTextC("0", c.llI8()))
+                 icmpLhs: errVal, icmpRhs: llIntTextC("0", c.prim.i8))
   let thenLabel = c.nextLabel()
   let endLabel = c.nextLabel()
   c.emit LLInstr(kind: llCondBr, condBrCond: condRes,
@@ -314,8 +314,8 @@ proc genMflagDeclLLVM(c: var LLVMCode; n: var Cursor) =
       let s = n.symId
       c.m.registerLocal(s, createIntegralType(c.m, "(bool)"))
       let name = mangleToC(c.m.pool.syms[s])
-      c.emitAlloca(name, c.llI8())
-      c.emitStore(llIntTextC("0", c.llI8()), llReg(name, c.primPtr))
+      c.emitAlloca(name, c.prim.i8)
+      c.emitStore(llIntTextC("0", c.prim.i8), llReg(name, c.prim.ptrT))
       inc n
     else:
       error c.m, "expected SymbolDef but got: ", n
@@ -404,7 +404,7 @@ proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
     while n.hasMore: skip n
 
   let aggTyp = LLType(kind: llStruct,
-      structFields: @[LLStructField(typ: typ), LLStructField(typ: c.llI1())])
+      structFields: @[LLStructField(typ: typ), LLStructField(typ: c.prim.i1)])
   let aggText = "{ " & serialize(typ) & ", i1 }"
   let rs = c.nextTemp()
   let rsRes = llReg(rs, aggTyp)
@@ -416,24 +416,24 @@ proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
                  evAggType: aggText, evIndex: 0)
   c.emitStore(rvRes, target)
   let ovfFlag = c.nextTemp()
-  let ovfRes = llReg(ovfFlag, c.llI1())
+  let ovfRes = llReg(ovfFlag, c.prim.i1)
   c.emit LLInstr(kind: llExtractValue, result: ovfRes, evAggregate: rsRes,
                  evAggType: aggText, evIndex: 1)
-  let currentOvf = c.emitLoad(llGlobalRef("LENGC_OVF_", c.primPtr), c.llI8())
+  let currentOvf = c.emitLoad(llGlobalRef("LENGC_OVF_", c.prim.ptrT), c.prim.i8)
   let currentOvfBool = c.nextTemp()
-  let cobRes = llReg(currentOvfBool, c.llI1())
+  let cobRes = llReg(currentOvfBool, c.prim.i1)
   c.setLoc(ovfInfo)
   c.emit LLInstr(kind: llIcmp, result: cobRes, icmpPred: "ne",
-                 icmpLhs: currentOvf, icmpRhs: llIntTextC("0", c.llI8()))
+                 icmpLhs: currentOvf, icmpRhs: llIntTextC("0", c.prim.i8))
   let combinedOvf = c.nextTemp()
-  let coRes = llReg(combinedOvf, c.llI1())
+  let coRes = llReg(combinedOvf, c.prim.i1)
   c.emit LLInstr(kind: llOr, result: coRes, binOp: "or", binLhs: cobRes,
       binRhs: ovfRes)
   let newOvfByte = c.nextTemp()
-  let nobRes = llReg(newOvfByte, c.llI8())
+  let nobRes = llReg(newOvfByte, c.prim.i8)
   c.emit LLInstr(kind: llZext, result: nobRes, castOp: "zext", castSrc: coRes,
-                 castDstType: c.llI8())
-  c.emitStore(nobRes, llGlobalRef("LENGC_OVF_", c.primPtr))
+                 castDstType: c.prim.i8)
+  c.emitStore(nobRes, llGlobalRef("LENGC_OVF_", c.prim.ptrT))
 
   let declStr = "declare { " & serialize(typ) & ", i1 } @" & intrinsic & "(" &
       serialize(typ) & ", " & serialize(typ) & ")"
@@ -468,7 +468,7 @@ proc genStmtLLVM(c: var LLVMCode; n: var Cursor) =
     var saved = n
     inc saved
     let calleeType = getType(c.m, saved)
-    var retType = c.primVoid
+    var retType = c.prim.voidT
     if calleeType.typeKind == ProctypeT or calleeType.symKind == ProcY:
       var ct = calleeType
       if ct.typeKind == ProctypeT or ct.symKind == ProcY:
@@ -564,7 +564,7 @@ proc genStmtLLVM(c: var LLVMCode; n: var Cursor) =
       else:
         inc n
       c.emit LLInstr(kind: llCall, callCallee: "@llvm.trap",
-                     callRetType: c.primVoid, callArgs: @[])
+                     callRetType: c.prim.voidT, callArgs: @[])
       c.emit LLInstr(kind: llUnreachable)
       c.currentProc.needsTerminator = true
       declareExtern(c, "declare void @llvm.trap() noreturn nounwind", "llvm.trap")
@@ -575,7 +575,7 @@ proc genStmtLLVM(c: var LLVMCode; n: var Cursor) =
     var saved = n
     inc saved
     let calleeType = getType(c.m, saved)
-    var retType = c.primVoid
+    var retType = c.prim.voidT
     if calleeType.typeKind == ProctypeT or calleeType.symKind == ProcY:
       var ct = calleeType
       if ct.typeKind == ProctypeT or ct.symKind == ProcY:

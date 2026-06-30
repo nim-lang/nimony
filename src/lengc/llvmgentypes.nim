@@ -18,7 +18,7 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): LLType =
   ## Returns the LLType for a NIF type node.
   case n.typeKind
   of VoidT:
-    result = c.primVoid
+    result = c.prim.voidT
     skip n
   of IT:
     n.into:
@@ -46,20 +46,20 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): LLType =
         inc n
       while n.hasMore:
         skip n
-      result = if bits == 32: c.primFloat elif bits == 128: newLLFloatType(128)
-               else: c.primDouble
+      result = if bits == 32: c.prim.f32 elif bits == 128: newLLFloatType(128)
+               else: c.prim.f64
   of BoolT:
     n.into:
       while n.hasMore:
         skip n
-    result = c.primI8 # Use i8 for bool to match C ABI (i1 has different ABI)
+    result = c.prim.i8 # Use i8 for bool to match C ABI (i1 has different ABI)
   of CT:
     n.into:
       if n.kind == IntLit:
         result = c.llIntBits(integralBitsLLVM(n, c))
         inc n
       else:
-        result = c.primI8
+        result = c.prim.i8
       while n.hasMore:
         skip n
   of NoType:
@@ -68,19 +68,19 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): LLType =
       if d != nil and d.kind == TypeY:
         let decl = asTypeDecl(d.pos)
         if decl.body.typeKind == ProctypeT:
-          result = c.primPtr
+          result = c.prim.ptrT
           inc n
           return
       let name = mangleToC(c.m.pool.syms[n.symId])
       result = LLType(kind: llStruct, name: name) # named reference → "%name"
       inc n
     elif n.kind == DotToken:
-      result = c.primVoid
+      result = c.prim.voidT
       inc n
     else:
       error c.m, "node is not a type: ", n
   of PtrT, AptrT:
-    result = c.primPtr
+    result = c.prim.ptrT
     skip n
   of FlexarrayT:
     n.into:
@@ -88,10 +88,10 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): LLType =
       result = newLLArrayType(0, elemType)
       while n.hasMore: skip n
   of ProctypeT:
-    result = c.primPtr
+    result = c.prim.ptrT
     skip n
   of VarargsT:
-    result = c.primPtr # placeholder; handled specially in signatures
+    result = c.prim.ptrT # placeholder; handled specially in signatures
     skip n
   of EnumT:
     n.into:
@@ -119,9 +119,9 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): LLType =
         result = LLType(kind: llStruct, name: mangleToC(c.m.pool.syms[
             decl.name.symId]))
       else:
-        result = c.primPtr
+        result = c.prim.ptrT
     else:
-      result = c.primPtr
+      result = c.prim.ptrT
     skip n
   of ParamsT:
     error c.m, "params type not allowed in expression context: ", n
@@ -480,12 +480,12 @@ proc genUnionBodyLLVM(c: var LLVMCode; n: var Cursor): LLType =
   let repSizeBytes = (candidates[repIdx].sizeBits + 7) div 8
   var fields: seq[LLStructField] = @[]
   if alignBytes <= 1:
-    fields.add LLStructField(typ: newLLArrayType(sizeBytes, c.primI8))
+    fields.add LLStructField(typ: newLLArrayType(sizeBytes, c.prim.i8))
   else:
     fields.add LLStructField(typ: candidates[repIdx].typ)
     let paddingBytes = sizeBytes - repSizeBytes
     if paddingBytes > 0:
-      fields.add LLStructField(typ: newLLArrayType(paddingBytes, c.primI8))
+      fields.add LLStructField(typ: newLLArrayType(paddingBytes, c.prim.i8))
   result = newLLStructType(fields)
 
 proc flushBitfieldAccum(fields: var seq[LLType]; bitfieldAccum: var int64) =
@@ -812,7 +812,7 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
     let s = c.m.pool.strings[n.litId]
     inc n
     if s.len == 0:
-      result = rawConst(newLLArrayType(0, c.primI8), "zeroinitializer")
+      result = rawConst(newLLArrayType(0, c.prim.i8), "zeroinitializer")
     else:
       var escaped = "c\""
       for ch in s:
@@ -824,7 +824,7 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
         else:
           escaped.add ch
       escaped.add '"'
-      result = rawConst(newLLArrayType(s.len, c.primI8), escaped)
+      result = rawConst(newLLArrayType(s.len, c.prim.i8), escaped)
   of Symbol:
     let name = mangleSym(c, n.symId)
     c.requestedSyms.incl n.symId
@@ -838,13 +838,13 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
   else:
     case n.exprKind
     of FalseC:
-      result = rawConst(c.primI8, "0")
+      result = rawConst(c.prim.i8, "0")
       skip n
     of TrueC:
-      result = rawConst(c.primI8, "1")
+      result = rawConst(c.prim.i8, "1")
       skip n
     of NilC:
-      result = rawConst(c.primPtr, "null")
+      result = rawConst(c.prim.ptrT, "null")
       skip n
     of OconstrC:
       var resultTyp: LLType = nil
@@ -929,7 +929,7 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
     of AconstrC:
       n.into:
         var elemTypeCursor = declaredType
-        var elemType: LLType = c.primI8
+        var elemType: LLType = c.prim.i8
         if declaredType.typeKind == FlexarrayT:
           var et = declaredType
           inc et
@@ -982,7 +982,7 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
         if n.kind == Symbol:
           let name = mangleSym(c, n.symId)
           c.requestedSyms.incl n.symId
-          result = rawConst(c.primPtr, "@" & name)
+          result = rawConst(c.prim.ptrT, "@" & name)
           inc n
         else:
           error c.m, "unsupported address constant; only plain symbols are currently handled: ", n

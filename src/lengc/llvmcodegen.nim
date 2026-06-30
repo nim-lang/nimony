@@ -68,6 +68,9 @@ type
     globalExprs*: seq[int] # DIGlobalVariableExpression IDs for DICompileUnit globals
 
 type
+  PrimTypes* = object
+    voidT*, i1*, i8*, i16*, i32*, i64*, ptrT*, f32*, f64*: LLType
+
   LLVMCode* = object
     m: MainModule
     module*: LLModule
@@ -75,15 +78,7 @@ type
     nextTempCounter*: int
     nextLabelCounter*: int
     typeCache*: Table[SymId, LLType]
-    primVoid*: LLType
-    primI1*: LLType
-    primI8*: LLType
-    primI16*: LLType
-    primI32*: LLType
-    primI64*: LLType
-    primPtr*: LLType
-    primFloat*: LLType
-    primDouble*: LLType
+    prim*: PrimTypes
     bits: int
     flags: set[LLVMGenFlag]
     generatedTypes*: HashSet[SymId]
@@ -96,36 +91,29 @@ type
     strLitCounter*: int                      # global counter for string literal names
     debug*: DebugInfo
 
+proc initPrimTypes*(): PrimTypes =
+  result.voidT = newLLVoidType()
+  result.i1 = newLLIntType(1)
+  result.i8 = newLLIntType(8)
+  result.i16 = newLLIntType(16)
+  result.i32 = newLLIntType(32)
+  result.i64 = newLLIntType(64)
+  result.ptrT = newLLPtrType()
+  result.f32 = newLLFloatType(32)
+  result.f64 = newLLFloatType(64)
+
 proc initLLVMCode*(m: sink MainModule; flags: set[LLVMGenFlag];
     bits: int): LLVMCode =
-  result = LLVMCode(m: m, flags: flags, bits: bits, inToplevel: true)
-  result.primVoid = newLLVoidType()
-  result.primI1 = newLLIntType(1)
-  result.primI8 = newLLIntType(8)
-  result.primI16 = newLLIntType(16)
-  result.primI32 = newLLIntType(32)
-  result.primI64 = newLLIntType(64)
-  result.primPtr = newLLPtrType()
-  result.primFloat = newLLFloatType(32)
-  result.primDouble = newLLFloatType(64)
-
-template llVoid*(c: LLVMCode): LLType = c.primVoid
-template llI1*(c: LLVMCode): LLType = c.primI1
-template llI8*(c: LLVMCode): LLType = c.primI8
-template llI16*(c: LLVMCode): LLType = c.primI16
-template llI32*(c: LLVMCode): LLType = c.primI32
-template llI64*(c: LLVMCode): LLType = c.primI64
-template llPtr*(c: LLVMCode): LLType = c.primPtr
-template llFloat*(c: LLVMCode): LLType = c.primFloat
-template llDouble*(c: LLVMCode): LLType = c.primDouble
+  result = LLVMCode(m: m, flags: flags, bits: bits, inToplevel: true,
+                    prim: initPrimTypes())
 
 proc llIntBits*(c: LLVMCode; n: int): LLType =
   case n
-  of 1: c.primI1
-  of 8: c.primI8
-  of 16: c.primI16
-  of 32: c.primI32
-  of 64: c.primI64
+  of 1: c.prim.i1
+  of 8: c.prim.i8
+  of 16: c.prim.i16
+  of 32: c.prim.i32
+  of 64: c.prim.i64
   else: newLLIntType(n)
 
 proc error(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
@@ -144,7 +132,6 @@ proc error(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
 
 proc dbgLocation(c: var LLVMCode; info: NifLineInfo): string
 
-proc currentFuncIdx(c: LLVMCode): int {.inline.} = c.currentProc.funcIdx
 
 proc funcByIndex(c: var LLVMCode; idx: int): var LLFunc {.inline.} =
   if idx == InitFuncIdx:
@@ -198,14 +185,14 @@ proc emitRaw*(c: var LLVMCode; text: string) =
   currentBlock(c).instrs.add instr
 
 proc emitAlloca*(c: var LLVMCode; name: string; typ: LLType; align: int64 = 0) =
-  var instr = LLInstr(kind: llAlloca, result: llReg(name, c.primPtr),
+  var instr = LLInstr(kind: llAlloca, result: llReg(name, c.prim.ptrT),
                       allocaType: typ, allocaAlign: int align)
   currentFunc(c).entryAllocas.add instr
 
 proc emitGEP*(c: var LLVMCode; baseType: LLType; base: LLValue;
               indices: openArray[LLValue]; inbounds = true): LLValue =
   let t = c.nextTemp()
-  result = llReg(t, c.primPtr)
+  result = llReg(t, c.prim.ptrT)
   var idxs: seq[LLValue] = @[]
   for x in indices: idxs.add x
   c.emit LLInstr(kind: llGep, result: result, gepBaseType: baseType,
@@ -218,10 +205,6 @@ proc emitLoad*(c: var LLVMCode; ptrVal: LLValue; typ: LLType): LLValue =
 
 proc emitStore*(c: var LLVMCode; value, ptrVal: LLValue) =
   c.emit LLInstr(kind: llStore, storeValue: value, storePtr: ptrVal)
-
-proc llIntConst*(c: var LLVMCode; val: BiggestInt;
-    typ: LLType): LLValue {.inline.} =
-  LLValue(kind: llvInt, intText: $val, typ: typ)
 
 proc llIntTextC*(text: string; typ: LLType): LLValue {.inline.} =
   LLValue(kind: llvInt, intText: text, typ: typ)
@@ -486,21 +469,21 @@ proc genLocalVarDeclLLVM(c: var LLVMCode; n: var Cursor) =
         var val = LLValue(); genCallExprLLVM(c, d.value, val)
         c.setLoc(varInfo)
         c.emit LLInstr(kind: llStore, storeValue: val,
-                       storePtr: llReg(name, c.primPtr))
+                       storePtr: llReg(name, c.prim.ptrT))
         if onErrAction.kind != DotToken:
           genOnErrorLLVM(c, onErrAction)
       else:
         var val = LLValue(); genExprLLVM(c, d.value, val)
         c.setLoc(varInfo)
         c.emit LLInstr(kind: llStore, storeValue: val,
-                       storePtr: llReg(name, c.primPtr))
+                       storePtr: llReg(name, c.prim.ptrT))
     else:
       inc d.value
       let zeroVal = if d.typ.typeKind in {PtrT, AptrT,
           ProctypeT}: llNull(typ) else: llZeroInit(typ)
       c.setLoc(varInfo)
       c.emit LLInstr(kind: llStore, storeValue: zeroVal,
-                     storePtr: llReg(name, c.primPtr))
+                     storePtr: llReg(name, c.prim.ptrT))
   else:
     error c.m, "expected SymbolDef but got: ", d.name
 
@@ -596,16 +579,6 @@ proc genParamPragmasLLVM(c: var LLVMCode; n: var Cursor) =
   else:
     error c.m, "expected pragmas but got: ", n
 
-proc callingConvToLLVM(cc: CallConv): string =
-  case cc
-  of NoCallConv, Nimcall, Noconv, Member: ""
-  of Cdecl: "ccc"
-  of Stdcall: "x86_stdcallcc"
-  of Safecall: "x86_stdcallcc"
-  of Syscall: "ccc"
-  of Fastcall: "x86_fastcallcc"
-  of Thiscall: "x86_thiscallcc"
-
 proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
   c.m.openScope()
   c.inToplevel = false
@@ -623,7 +596,7 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
 
   var retType: LLType
   if prc.returnType.kind == DotToken:
-    retType = c.primVoid
+    retType = c.prim.voidT
   else:
     var rt = prc.returnType
     retType = genTypeLLVM(c, rt)
@@ -704,7 +677,7 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
       c.emitAlloca(pn, paramTypes[i])
       let paramVal = llReg(pn & ".param", paramTypes[i])
       c.emit LLInstr(kind: llStore, storeValue: paramVal,
-                     storePtr: llReg(pn, c.primPtr))
+                     storePtr: llReg(pn, c.prim.ptrT))
       let pdi = if i < paramDITypes.len: paramDITypes[i] else: 0
       let psym = if i < paramSyms.len: paramSyms[i] else: SymId(0)
       emitDbgDeclare(c, "%" & pn, psym, paramWasNames[i], procInfo, pdi,
@@ -871,7 +844,7 @@ proc generateLLVMCode*(s: var State; inp, outp: string; flags: set[LLVMGenFlag])
   if c.module.hasInitBody:
     var initFn = c.module.initFunc
     initFn.name = "lengc_init"
-    initFn.retType = c.primVoid
+    initFn.retType = c.prim.voidT
     f.add serialize(initFn) & "\n"
     f.add "@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @lengc_init, ptr null }]\n"
 
