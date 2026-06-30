@@ -311,6 +311,9 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         takeTree dest, n
       of NilX:
         trNil c, dest, n
+      of ToClosureX:
+        c.hasClosures = true
+        trSons(c, dest, n)
       of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX,
         InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
         NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
@@ -875,11 +878,29 @@ proc isStaticCall(c: var Context;s: SymId): bool =
     let local = c.typeCache.getLocalInfo(s)
     result = isRoutine(local.kind)
 
+proc toNonClosureProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
+  # just remove closure pragma from proctype
+  var n = n
+  assert n.typeKind == ProctypeT
+  takeToken dest, n
+  while n.hasMore:
+    if n.substructureKind == PragmasU:
+      takeToken dest, n
+      while n.hasMore:
+        if n.pragmaKind == ClosureP:
+          skip n
+        else:
+          takeTree dest, n
+      takeParRi dest, n
+    else:
+      takeTree dest, n
+  takeParRi dest, n
+
 proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  dest.add n # the call node itself
+  let callNode = n  # the call node itself
   inc n
-  #var fn = n
+  let fn = n
   let typ = c.typeCache.getType(n, {SkipAliases})
   # A closure iter-value call target type can appear here in two guises:
   #   - raw `(itertype … (pragmas (closure)))` — `isClosure` matches.
@@ -898,19 +919,36 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
                  (n.kind == Symbol and c.closureProcs.contains(n.symId))
   var isStatic = false
   var tmp = SymId(0)
+  var needNilCheck = false
   if wantsEnv:
     isStatic = n.kind == Symbol and isStaticCall(c, n.symId)
     if isStatic:
+      dest.add callNode
       # do not produce a tuple:
       dest.add n
       inc n
     elif n.kind == Symbol:
       tmp = n.symId
+      needNilCheck = true
+      dest.addParLe IfS, info
+      dest.addParLe ElifU, info
+      # env == nil means calls the non closure procedure that was converted to a closure procedure
+      copyIntoKind dest, NeqX, info:
+        if c.env.needsHeap:
+          dest.addRootRef info
+        else:
+          dest.copyIntoKind PointerT, info: discard
+        copyIntoKind dest, TupatX, info:
+          dest.addSymUse tmp, info
+          dest.addIntLit 1, info
+        dest.addParPair NilX, info
+      dest.add callNode
       copyIntoKind dest, TupatX, info:
         #tre c, dest, n
         takeToken dest, n
         dest.addIntLit 0, info
     else:
+      dest.add callNode
       dest.addParLe(ExprX, info)
       copyIntoKind dest, StmtsS, info:
         tmp = pool.syms.getOrIncl("`llTemp." & $c.counter)
@@ -924,6 +962,8 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
           tre c, dest, n # value
       dest.addSymUse tmp, info
       dest.addParRi() # ExprX
+  else:
+    dest.add callNode
   while n.hasMore:
     tre(c, dest, n)
   if wantsEnv:
@@ -944,6 +984,21 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addIntLit 1, info
   dest.addParRi()
   skipParRi n
+
+  if needNilCheck:
+    dest.addParRi() # end of ElifU
+    copyIntoKind dest, ElseU, info:
+      dest.add callNode
+      var n2 = fn
+      copyIntoKind dest, CastX, info:
+        c.toNonClosureProcType dest, typ
+        copyIntoKind dest, TupatX, info:
+          takeToken dest, n2
+          dest.addIntLit 0, info
+      while n2.hasMore:
+        tre(c, dest, n2)
+      dest.addParRi() # end of call
+    dest.addParRi() # end of IfS
 
 proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
   var n = n
@@ -970,6 +1025,20 @@ proc treKv(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.takeTree n # key
     while n.hasMore:
       tre(c, dest, n)
+
+proc treToClosure(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  let origTyp = c.typeCache.getType(n, {SkipAliases})
+  inc n
+  dest.copyIntoKind TupconstrX, info:
+    dest.copyIntoKind TupleT, info:
+      c.toProcType(dest, origTyp)
+      dest.addRootRef info
+    dest.copyIntoKind CastX, info:
+      c.toProcType(dest, origTyp)
+      tr c, dest, n
+    dest.addParPair NilX, info
+  skipParRi n
 
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
@@ -1121,6 +1190,8 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         skipParRi n
       of TypeofX:
         takeTree dest, n
+      of ToClosureX:
+        treToClosure c, dest, n
       of ErrX, SufX, AtX, DerefX, PatX, ParX, AddrX, NilX,
         InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
         NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,

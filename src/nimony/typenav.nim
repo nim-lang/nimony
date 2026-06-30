@@ -576,6 +576,25 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       else: result = c.builtins.autoType
   of EnvpX:
     result = c.builtins.autoType
+  of ToClosureX:
+    let srcProc = getTypeImpl(c, n.firstSon, flags).asRoutine
+    var buf = createTokenBuf()
+    copyIntoKind(buf, srcProc.kind, n.info):
+      buf.addDotToken() # name
+      buf.addDotToken() # exported
+      buf.addSubtree srcProc.pattern
+      buf.addDotToken() # typevars
+      buf.addSubtree srcProc.params
+      buf.addSubtree srcProc.retType
+      copyIntoKind(buf, PragmasU, srcProc.pragmas.info):
+        if srcProc.pragmas.kind != DotToken:
+          var n = srcProc.pragmas
+          loopInto n:
+            buf.addSubtree n
+        buf.addParPair(ClosureP)
+      buf.addDotToken # effects
+    c.mem.add buf
+    result = cursorAt(c.mem[c.mem.len-1], 0)
 
   assert result.hasMore, "ParRi for expression: " & toString(n, false)
 

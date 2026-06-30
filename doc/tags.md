@@ -339,6 +339,7 @@
 | `(used)` | NimonyPragma | `used` pragma; accepted for Nim source compatibility, semantically ignored |
 | `(compile STR)`; `(compile STR STR)` | NimonyPragma | `compile` pragma (Nim-compatible alias of `build`; the source language is inferred from the file extension, e.g. `.m` → Objective-C) |
 | `(bundle STR STR)`; `(bundle STR STR STR)` | NimonyPragma, NifIndexKind | `bundle` pragma: a custom linker command override `(builder, tool[, args])`; the `tool` is built on demand by `builder` and replaces the final link step, consuming the project's link manifest |
+| `(toClosure X)` | NimonyExpr | converts non closure proc to closure proc |
 
 ### unpackflat, unpacktup, unpackdecl
 

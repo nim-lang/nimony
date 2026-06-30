@@ -1608,7 +1608,7 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
      DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
      PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
      DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
-     FailedX, IsX, EnvpX:
+     FailedX, IsX, EnvpX, ToClosureX:
     let a = evalConstIntExpr(c, dest, orig, expected)
     if seen.containsOrIncl(a):
       buildErr c, dest, info, "value already handled"
@@ -1837,7 +1837,7 @@ proc semAsgn(c: var SemContext; dest: var TokenBuf; it: var Item) =
      DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
      PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
      DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
-     FailedX, IsX, EnvpX:
+     FailedX, IsX, EnvpX, ToClosureX:
     dest.addParLe(AsgnS, info)
     var a = Item(n: it.n, typ: c.types.autoType)
     let beforeLhs = dest.len
@@ -5125,6 +5125,8 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
         takeTree dest, it.n
       takeParRi dest, it.n
       it.typ = valIt.typ
+    of ToClosureX:
+      bug "frontend should not encounter `toClosure`"
 
   of ParRi, EofToken, SymbolDef, UnknownToken, DotToken:
     buildErr c, dest, it.n.info, "expression expected"

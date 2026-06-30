@@ -1027,10 +1027,14 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
     m.error CallConvMismatch, f, a
   elif fcc.usesRaises != acc.usesRaises:
     m.error RaisesMismatch, f, a
-  elif fcc.usesClosure != acc.usesClosure:
+  elif (fcc.usesClosure != acc.usesClosure) and (not fcc.usesClosure or acc.cc != Nimcall):
     m.error ClosureMismatch, f, a
   elif fcc.usesPassive != acc.usesPassive:
     m.error PassiveMismatch, f, a
+  if not m.err and fcc.usesClosure and not acc.usesClosure:
+    m.args.addParLe ToClosureX, m.argInfo
+    inc m.opened
+    inc m.convCosts
   # XXX consider when f or a is (params):
   if not fIsProctype:
     skip f, SkipEffects # effects
