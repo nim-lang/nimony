@@ -459,5 +459,5 @@ proc skipNilAnnotation*(n: var Cursor) {.inline.} =
   ## Skip a trailing nil annotation `(notnil)`, `(nil)`, or `(unchecked)`
   ## plus any further attributes (importc/header/...) that `fitTypeToPragmas`
   ## may have appended when an importc'd pointer alias was inlined.
-  while n.kind != ParRi:
+  while n.hasMore:
     skip n

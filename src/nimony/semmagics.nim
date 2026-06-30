@@ -237,7 +237,7 @@ proc semBindSymName*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   if it.n.kind != StringLit:
     c.buildErr dest, info,
       "bindSym expects a string literal as the name, got: " & asNimCode(orig), orig
-    while it.n.kind != ParRi: skip it.n
+    while it.n.hasMore: skip it.n
     skipParRi it.n
     return
   let nameStr = pool.strings[it.n.litId]
@@ -315,7 +315,7 @@ proc semBindSym*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     c.buildErr dest, info,
       "bindSym expects a string literal, got: " & asNimCode(orig), orig
     skip it.n
-    while it.n.kind != ParRi: skip it.n
+    while it.n.hasMore: skip it.n
     skipParRi it.n
     return
   let nameStr = pool.strings[it.n.litId]
