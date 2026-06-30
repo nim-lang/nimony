@@ -33,4 +33,22 @@ else
   echo "node not found; skipped functional check (golden check passed)"
 fi
 
+# ── M1.5: data structures (object construction, field access, arrays, indexing)
+"$lengc" js --nimcache:"$work" "$here/tdata.c.nif"
+gotData="$work/tdata.js"
+
+if ! diff -u "$here/tdata.expected.js" "$gotData"; then
+  echo "FAILURE: generated JS differs from golden tdata.expected.js"
+  exit 1
+fi
+
+if command -v node >/dev/null 2>&1; then
+  {
+    cat "$gotData"
+    echo 'if (mkpoint_0_tdata(3,4)===7 && arrsum_0_tdata()===60)'
+    echo '  { console.log("functional(data): PASS"); }'
+    echo 'else { console.log("functional(data): FAIL"); process.exit(1); }'
+  } | node
+fi
+
 echo "jsbackend: OK"

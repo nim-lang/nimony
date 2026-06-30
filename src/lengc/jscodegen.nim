@@ -204,6 +204,61 @@ proc gx(g: var JSGen; n: var Cursor) =
     n.into:
       gx g, n
       while n.hasMore: skip n
+  of OconstrC:
+    # `(oconstr Type (kv field value [inheritance]) …)` -> a JS object literal
+    # `{field: value, …}`. The field key is the mangled field-symbol name so it
+    # matches dot access. Lowered strings/seqs are objects at this level, so
+    # this is the faithful, type-system-neutral mapping.
+    n.into:
+      skip n            # object type
+      g.wr "{"
+      var i = 0
+      while n.hasMore:
+        if n.substructureKind == KvU:
+          if i > 0: g.wr ", "
+          n.into:
+            g.wr g.name(n.symId); inc n   # field name (Symbol) as key
+            g.wr ": "
+            g.gx n                         # value
+            while n.hasMore: skip n        # optional inheritance depth
+          inc i
+        else:
+          skip n
+      g.wr "}"
+  of AconstrC:
+    # `(aconstr Type elem0 elem1 …)` -> a JS array literal `[elem0, elem1, …]`.
+    n.into:
+      skip n            # element/array type
+      g.wr "["
+      var i = 0
+      while n.hasMore:
+        if i > 0: g.wr ", "
+        g.gx n
+        inc i
+      g.wr "]"
+  of AddrC, DerefC:
+    # JS values are references and there are no raw pointers: taking the address
+    # of, or dereferencing, an object is the identity. `(addr x)`/`(deref x)`
+    # therefore emit just `x`.
+    n.into:
+      g.gx n
+      while n.hasMore: skip n
+  of DotC:
+    # `(dot obj field [inheritance-depth] [access-token])` -> `obj.field`. The
+    # field key is the mangled field-symbol name, matching `oconstr` above.
+    n.into:
+      g.gx n            # object
+      g.wr "."
+      g.wr g.name(n.symId); inc n   # field name (Symbol)
+      while n.hasMore: skip n        # inheritance depth / access token
+  of AtC, PatC:
+    # array / pointer indexing -> `arr[idx]`.
+    n.into:
+      g.gx n            # array / pointer
+      g.wr "["
+      g.gx n            # index
+      g.wr "]"
+      while n.hasMore: skip n
   else:
     g.todo("expr:" & $n.exprKind, n)
 

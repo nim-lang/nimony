@@ -1,0 +1,24 @@
+(.nif27)
+(stmts
+ (proc :mkpoint.0.tdata
+  (params
+   (param :a.0 . (i 64))
+   (param :b.0 . (i 64)))
+  (i 64)
+  .
+  (stmts
+   (var :p.0 . Point.0.tdata
+    (oconstr Point.0.tdata
+     (kv x.0.tdata a.0)
+     (kv y.0.tdata b.0)))
+   (ret (add (i 64) (dot p.0 x.0.tdata) (dot p.0 y.0.tdata)))))
+ (proc :arrsum.0.tdata
+  (params)
+  (i 64)
+  .
+  (stmts
+   (var :arr.0 . (array (i 64) 3)
+    (aconstr (array (i 64) 3) 10 20 30))
+   (ret (add (i 64)
+    (at arr.0 0)
+    (add (i 64) (at arr.0 1) (at arr.0 2)))))))
