@@ -677,11 +677,15 @@ func newStringOfCap*(len: int): string =
 
 # ---- concat / & ----
 
-template concat*(): string {.varargs.} =
-  var res = ""
-  for s in unpack():
-    res.add s
-  res
+func concat*(parts: varargs[string]): string =
+  ## Concatenates the given strings.
+  # Declared with a typed `varargs[string]` rather than a bare 0-parameter
+  # `{.varargs.}` template: the latter matched *every* call and then failed in
+  # its body for non-string arguments, shadowing user overloads such as
+  # `sequtils.concat(a, b: openArray[T])`.
+  result = ""
+  for s in parts:
+    result.add s
 
 func `&`*(a, b: string): string {.semantics: "string.&".} =
   result = string(bytes: 0'u, more: nil)
