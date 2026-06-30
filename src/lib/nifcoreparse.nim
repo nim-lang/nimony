@@ -117,12 +117,32 @@ proc parseFromBuffer*(input: string; thisModule: sink string;
   result = createTokenBuf(sizeHint, sharedPool, sharedTags)
   parse(r, result, denseLineInfo = denseLineInfo)
 
+proc parseFromBuffer*(input: string; thisModule: sink string;
+                      unusedName: var string; sizeHint = 100;
+                      sharedPool: Pool = nil; sharedTags: TagPool = nil;
+                      denseLineInfo = false): TokenBuf =
+  ## Parses NIF text and returns its `.unusedname` directive via `unusedName`.
+  var r = rd.openFromBuffer(input, thisModule)
+  unusedName = r.firstUnusedName
+  result = createTokenBuf(sizeHint, sharedPool, sharedTags)
+  parse(r, result, denseLineInfo = denseLineInfo)
+
 proc parseFromFile*(filename: string; sizeHint = 100;
                     sharedPool: Pool = nil;
                     sharedTags: TagPool = nil;
                     denseLineInfo = false): TokenBuf =
   var r = rd.open(filename)
   discard rd.processDirectives(r)
+  result = createTokenBuf(sizeHint, sharedPool, sharedTags)
+  parse(r, result, denseLineInfo = denseLineInfo)
+
+proc parseFromFile*(filename: string; unusedName: var string;
+                    sizeHint = 100; sharedPool: Pool = nil;
+                    sharedTags: TagPool = nil;
+                    denseLineInfo = false): TokenBuf =
+  ## Parses a NIF file and returns its `.unusedname` directive via `unusedName`.
+  var r = rd.open(filename)
+  unusedName = r.firstUnusedName
   result = createTokenBuf(sizeHint, sharedPool, sharedTags)
   parse(r, result, denseLineInfo = denseLineInfo)
 

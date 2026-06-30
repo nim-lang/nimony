@@ -11,9 +11,9 @@
 {.feature: "untyped".}
 
 import std / [assertions, hashes, syncio, cmdline]
-import ".." / ".." / "lib" / nifcore except symId, `$`, addSymUse
-import ".." / ".." / "lib" / nifcoreparse except symId, `$`, addSymUse
-import ".." / ".." / "lib" / bitabs
+import ".." / ".." / "lib" / nifcore except symId, `$`, addSymUse, addSymDef
+import ".." / ".." / "lib" / nifcoreparse except symId, `$`, addSymUse, addSymDef
+import ".." / ".." / "lib" / [bitabs, symparser]
 import ".." / ".." / "models" / [tags, nimony_tags]
 import ".." / nif_annotations
 export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther
@@ -23,7 +23,7 @@ export Symbol, SymbolDef, Ident, TagLit
 export isValid, hash
 export skip, hasMore, into, loopInto
 export addSubtree, addDotToken, addStrLit, addIntLit, addUIntLit
-export addIdent, addCharLit, addFloatLit, addSymDef
+export addIdent, addCharLit, addFloatLit
 export charLit
 export nif_annotations
 
@@ -49,6 +49,10 @@ proc createPluginTags(): TagPool =
 let
   pluginPool = newPool()
   pluginTags = createPluginTags()
+
+var
+  unusedNameBase = ""
+  nextUnusedName = 0
 
 proc appendInfo(buf: var NifBuilder; info: LineInfo) {.inline.} =
   buf.appendLineInfo(info)
@@ -226,6 +230,28 @@ proc addSymUse*(t: var NifBuilder; s: string;
   ## Appends a symbol use from its textual name with source information.
   nifcore.addSymUse(t, s)
   appendInfo(t, info)
+
+proc addSymDef*(t: var NifBuilder; s: SymId;
+                info: LineInfo = NoLineInfo) =
+  ## Appends a symbol definition from a plugin-pool symbol handle.
+  nifcore.addSymDef(t, s)
+  appendInfo(t, info)
+
+proc addSymDef*(t: var NifBuilder; s: string;
+                info: LineInfo = NoLineInfo) =
+  ## Appends a symbol definition from its textual name.
+  nifcore.addSymDef(t, s)
+  appendInfo(t, info)
+
+proc genSym*(): SymId =
+  ## Returns a fresh local symbol supplied by the input's `.unusedname` hint.
+  ##
+  ## Pass the result to the regular `addSymDef` and `addSymUse` operations.
+  assert unusedNameBase.len > 0,
+    "genSym requires plugin input with an .unusedname directive"
+  result = pluginPool.syms.getOrIncl(
+    unusedNameBase & "." & $nextUnusedName)
+  inc nextUnusedName
 
 proc addErrorMessage(t: var NifBuilder; msg: string; info: LineInfo) =
   t.addStrLit(msg)
@@ -687,8 +713,29 @@ template peek*(t: var Replacer; body: untyped) =
 # ── Entry points ──────────────────────────────────────────────────────────
 
 proc loadPluginTree(filename: string): NifBuilder =
-  parseFromFile(filename, sharedPool = pluginPool, sharedTags = pluginTags,
-                denseLineInfo = true)
+  unusedNameBase = ""
+  nextUnusedName = 0
+  var hint = ""
+  result = parseFromFile(
+    filename, hint, sharedPool = pluginPool, sharedTags = pluginTags,
+    denseLineInfo = true)
+  if hint.len > 0:
+    assert splitLocalSymName(hint, unusedNameBase, nextUnusedName),
+      "plugin .unusedname must be a local symbol"
+
+proc writePluginTree(tree: var NifBuilder; filename: string) =
+  var content = ""
+  if unusedNameBase.len > 0:
+    content.add "(.unusedname "
+    content.add unusedNameBase
+    content.add "."
+    content.add $nextUnusedName
+    content.add ")\n"
+  content.add nifcoreparse.toString(tree)
+  try:
+    writeFile filename, content
+  except:
+    quit "FAILURE: cannot write " & filename
 
 proc loadReplacer*(inputFile = paramStr(1)): Replacer =
   ## Loads the input NIF file and returns a `Replacer` ready for
@@ -698,10 +745,7 @@ proc loadReplacer*(inputFile = paramStr(1)): Replacer =
 
 proc saveReplacer*(t: var Replacer; filename = paramStr(2)) =
   ## Writes the Replacer's output to `filename` (default: `paramStr(2)`).
-  try:
-    writeFile filename, nifcoreparse.toString(t.dest)
-  except:
-    quit "FAILURE: cannot write " & filename
+  writePluginTree(t.dest, filename)
 
 # ── Plugin input helpers ───────────────────────────────────────────────────
 
@@ -798,17 +842,11 @@ proc renderTree*(tree: var NifBuilder): string =
   ## top-level fragments when the tree is still under construction.
   result = nifcoreparse.toString(tree, includeLineInfo = false)
 
-proc writeTree(tree: var NifBuilder; filename: string) =
-  try:
-    writeFile filename, nifcoreparse.toString(tree)
-  except:
-    quit "FAILURE: cannot write " & filename
-
 proc saveTree*(tree: sink NifBuilder; filename: string) =
   ## Writes the complete contents of a mutable `NifBuilder` to `filename`.
   ## This preserves line info because it is intended for `.nif` output.
   var output = ensureMove(tree)
-  writeTree(output, filename)
+  writePluginTree(output, filename)
 
 proc saveTree*(tree: sink NifBuilder) =
   ## Writes the complete contents of a mutable `NifBuilder` to `paramStr(2)`.
@@ -822,7 +860,7 @@ proc saveTree*(tree: sink NifBuilder) =
   ## semanticked NIF (resolved symbols, typed expressions) because it
   ## directly replaces the module body.
   var output = ensureMove(tree)
-  writeTree(output, paramStr(2))
+  writePluginTree(output, paramStr(2))
 
 proc renderNode*(n: NifCursor): string =
   ## Renders the current token or subtree as raw NIF text for debugging.
