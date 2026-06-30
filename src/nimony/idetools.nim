@@ -82,18 +82,16 @@ proc tr(c: var IdeContext, n: var Cursor) =
 
   of ProcS, FuncS, MethodS, IteratorS, TemplateS, MacroS, ConverterS:
     let decl = n
-    inc n # ParLe
-    let symId = n.symId
     c.typeCache.openScope(ProcScope)
-    for i in 0..<BodyPos:
-      if i == ParamsPos:
-        c.typeCache.registerParams(symId, decl, n)
-        tr(c, n)
-      else:
-        tr(c, n)
-    tr(c, n) # body
-    assert n.kind == ParRi
-    inc n # ParRi
+    n.into():
+      let symId = n.symId
+      for i in 0..<BodyPos:
+        if i == ParamsPos:
+          c.typeCache.registerParams(symId, decl, n)
+          tr(c, n)
+        else:
+          tr(c, n)
+      tr(c, n) # body
     c.typeCache.closeScope()
 
   of TypeS:
@@ -108,20 +106,17 @@ proc tr(c: var IdeContext, n: var Cursor) =
 
   of VarS, LetS, ConstS:
     let symKind = n.symKind
-    inc n # ParLe
-    let sym = n.symId
-    if sym == c.sym and c.searchKind notin {skField, skDot}:
-      c.usages.add(Usage(n: n, containingType: c.currentType))
-    inc n # sym
-    inc n # exported
-    inc n # pragmas
-    let typ = n
-    tr(c, n) # type
-    tr(c, n) # value
-    assert n.kind == ParRi
-    inc n
-
-    c.typeCache.registerLocal(sym, symKind, typ)
+    n.into():
+      let sym = n.symId
+      if sym == c.sym and c.searchKind notin {skField, skDot}:
+        c.usages.add(Usage(n: n, containingType: c.currentType))
+      inc n # sym
+      inc n # exported
+      inc n # pragmas
+      let typ = n
+      tr(c, n) # type
+      tr(c, n) # value
+      c.typeCache.registerLocal(sym, symKind, typ)
 
   else:
     case n.exprKind
@@ -143,19 +138,15 @@ proc tr(c: var IdeContext, n: var Cursor) =
     else:
       case n.substructureKind
       of ParamU:
-        let symKind = n.symKind
-        inc n # ParLe
-        let sym = n.symId
-        if sym == c.sym and c.searchKind notin {skField, skDot}:
-          c.usages.add(Usage(n: n, containingType: c.currentType))
-        inc n # sym
-        inc n # exported
-        inc n # pragmas
-        let typ = n
-        tr(c, n) # type
-        tr(c, n) # value
-        assert n.kind == ParRi
-        inc n # ParRi
+        n.into():
+          let sym = n.symId
+          if sym == c.sym and c.searchKind notin {skField, skDot}:
+            c.usages.add(Usage(n: n, containingType: c.currentType))
+          inc n # sym
+          inc n # exported
+          inc n # pragmas
+          tr(c, n) # type
+          tr(c, n) # value
 
       of FldU:
         n.into():
