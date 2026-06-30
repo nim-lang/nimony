@@ -67,15 +67,6 @@ type
     compositeTypeDone*: HashSet[SymId]    # symIds with fully built DICompositeType
     globalExprs*: seq[int] # DIGlobalVariableExpression IDs for DICompileUnit globals
 
-const
-  DW_ATE_address = 1
-  DW_ATE_boolean = 2
-  DW_ATE_float = 4
-  DW_ATE_signed = 5
-  DW_ATE_signed_char = 6
-  DW_ATE_unsigned = 7
-  DW_ATE_unsigned_char = 8
-
 type
   LLVMCode* = object
     m: MainModule
@@ -267,109 +258,7 @@ proc nifSymBaseName*(c: var LLVMCode; symId: SymId): string =
   if result.len == 0:
     result = full
 
-# ---- Debug info helpers ----
-
-proc addMetadata(c: var LLVMCode; node: string): int =
-  ## Add a metadata node, return its ID.
-  result = c.debug.nextMetadataId
-  c.debug.metadata.add node
-  inc c.debug.nextMetadataId
-
-proc initDebugInfo(c: var LLVMCode; filename: string) =
-  ## Debug metadata is initialized lazily: the first call to
-  ## ``getOrCreateDIFile`` creates the DICompileUnit using the first
-  ## real source file as its file reference.
-  discard
-
-proc bitsFromLLVMType(typ: LLType; defaultBits: int): int =
-  if typ != nil and typ.kind == llInt: typ.intBits
-  else: defaultBits
-
-proc genDIBasicType(c: var LLVMCode; name: string; sizeBits,
-    encoding: int): int =
-  ## Get or create a DIBasicType metadata node. Cached by name+size+encoding.
-  let key = name & ":" & $sizeBits & ":" & $encoding
-  result = c.debug.diBasicTypeCache.getOrDefault(key)
-  if result != 0: return
-  result = c.addMetadata("!DIBasicType(name: \"" & name &
-    "\", size: " & $sizeBits &
-    ", encoding: " & $encoding & ")")
-  c.debug.diBasicTypeCache[key] = result
-
-proc getOrCreateDIFile(c: var LLVMCode; fid: FileId): int =
-  ## Get or create a DIFile metadata node for the given FileId.
-  let key = int(fid)
-  if key in c.debug.fileIds:
-    return c.debug.fileIds[key]
-  let path = c.m.pool.filenames[fid]
-  let (dir, name, ext) = splitFile(path)
-  let fullName = name & ext
-  let directory = if dir == "": getCurrentDir() else: absolutePath(dir)
-  result = c.addMetadata("!DIFile(filename: \"" & fullName &
-      "\", directory: \"" & directory & "\")")
-  c.debug.fileIds[key] = result
-  # First real source file → create the compile unit using this file
-  if c.debug.cuId == 0:
-    c.debug.cuId = c.addMetadata("distinct !DICompileUnit(language: DW_LANG_C99, file: !" &
-      $result & ", producer: \"lengc\", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)")
-
-proc dbgLocation(c: var LLVMCode; info: NifLineInfo): string =
-  ## Return a `, !dbg !N` suffix for the given source location, or "" if invalid.
-  if not info.isValid: return ""
-  let rawInfo = info
-  if not rawInfo.file.isValid: return ""
-  let fileId = getOrCreateDIFile(c, rawInfo.file)
-  let scopeId =
-    if fileId == c.currentProc.subprogramFileId:
-      c.currentProc.subprogramId
-    else:
-      c.addMetadata("!DILexicalBlockFile(scope: !" &
-          $c.currentProc.subprogramId &
-        ", file: !" & $fileId & ", discriminator: 0)")
-  let locId = c.addMetadata("!DILocation(line: " & $rawInfo.line &
-    ", column: " & $(rawInfo.col + 1) &
-    ", scope: !" & $scopeId & ")")
-  result = ", !dbg !" & $locId
-
-proc createSubprogram(c: var LLVMCode; name: string; info: NifLineInfo): int =
-  ## Create a DISubprogram metadata node for a function.
-  var fileId = 0
-  var line = 0
-  if info.isValid:
-    let rawInfo = info
-    if rawInfo.file.isValid:
-      fileId = getOrCreateDIFile(c, rawInfo.file)
-      line = rawInfo.line
-  c.currentProc.spName = name
-  c.currentProc.spLine = line
-  c.currentProc.spScopeLine = line
-  c.currentProc.subprogramFileId = fileId
-  # placeholder (content replaced later by finalizeSubprogram)
-  result = c.addMetadata("")
-
-proc finalizeSubprogram(c: var LLVMCode; spId: int;
-                         paramDITypes, retainedNodes: seq[int]) =
-  if spId == 0: return
-  let fid = c.currentProc.subprogramFileId
-  var typesStr = ""
-  for i, pt in paramDITypes:
-    if i > 0: typesStr.add ", "
-    typesStr.add "!" & $pt
-  let stId = c.addMetadata("!DISubroutineType(types: !{" & typesStr & "})")
-  var rnList = ""
-  for i, rn in retainedNodes:
-    if i > 0: rnList.add ", "
-    rnList.add "!" & $rn
-  let rnId = c.addMetadata("!{" & rnList & "}")
-  let finalSp = "distinct !DISubprogram(name: \"" & c.currentProc.spName &
-    "\", scope: !" & $fid &
-    ", file: !" & $fid &
-    ", line: " & $c.currentProc.spLine &
-    ", type: !" & $stId &
-    ", scopeLine: " & $c.currentProc.spScopeLine &
-    ", spFlags: DISPFlagDefinition, unit: !" & $c.debug.cuId &
-    ", retainedNodes: !" & $rnId & ")"
-  c.debug.metadata[spId] = finalSp
+# ---- Pragma / type helpers ----
 
 proc extractWasPragma(n: Cursor): string =
   result = ""
@@ -383,34 +272,6 @@ proc extractWasPragma(n: Cursor): string =
           while p.hasMore: skip p
         return
       skip p
-
-proc emitDbgDeclare(c: var LLVMCode; localName: string; symId: SymId;
-                    wasName: string; info: NifLineInfo; diType: int = 0;
-                    argNo: int = 0; llvmTyp: LLType = nil) =
-  ## Emit a #dbg_declare for a local variable (as a raw intrinsic line).
-  if not info.isValid: return
-  let rawInfo = info
-  if not rawInfo.file.isValid: return
-  var useType = diType
-  if useType == 0:
-    let bits = bitsFromLLVMType(llvmTyp, c.bits)
-    useType = genDIBasicType(c, "int " & $bits, bits, DW_ATE_signed)
-  let debugName = if wasName.len > 0: wasName else: nifSymBaseName(c, symId)
-  let fileId = getOrCreateDIFile(c, rawInfo.file)
-  var varMetadata = "!DILocalVariable(name: \"" & debugName & "\""
-  if argNo > 0:
-    varMetadata.add ", arg: " & $argNo
-  varMetadata.add ", scope: !" & $c.currentProc.subprogramId &
-    ", file: !" & $fileId &
-    ", line: " & $rawInfo.line &
-    ", type: !" & $useType & ")"
-  let varId = c.addMetadata(varMetadata)
-  c.currentProc.retainedNodes.add varId
-  let locId = c.addMetadata("!DILocation(line: " & $rawInfo.line &
-    ", column: " & $(rawInfo.col + 1) &
-    ", scope: !" & $c.currentProc.subprogramId & ")")
-  c.emitRaw "#dbg_declare(ptr " & localName & ", !" & $varId &
-      ", !DIExpression(), !" & $locId & ")"
 
 proc extractAlignValue(pragmas: Cursor): int64 =
   result = 0
@@ -467,9 +328,9 @@ proc genCallExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue)
 
 include llvmgentypes
 
-# ---- DWARF debug type generation ----
+# ---- DWARF debug info (metadata infra + type generation) ----
 
-include llvmditypes
+include llvmdebug
 
 # ---- Expression generation ----
 
@@ -505,30 +366,6 @@ proc genVarPragmasLLVM(c: var LLVMCode; n: var Cursor): set[LengPragma] =
 type
   VarKindLLVM = enum
     IsLocal, IsGlobal, IsThreadlocal, IsConst
-
-proc emitGlobalDbgVar(c: var LLVMCode; name: string; varInfo: NifLineInfo;
-                      symId: SymId; diType: int): string =
-  if c.debug.cuId == 0: return ""
-  var fileId = 0
-  var line = 0
-  if varInfo.isValid and varInfo.file.isValid:
-    fileId = getOrCreateDIFile(c, varInfo.file)
-    line = int(varInfo.line)
-  if fileId == 0:
-    fileId = c.currentProc.subprogramFileId
-  if fileId == 0: return ""
-  if diType == 0: return ""
-  let displayName = nifSymBaseName(c, symId)
-  let gvId = c.addMetadata("distinct !DIGlobalVariable(name: \"" & displayName &
-    "\", scope: !" & $c.debug.cuId &
-    ", file: !" & $fileId &
-    ", line: " & $line &
-    ", type: !" & $diType &
-    ", isLocal: false, isDefinition: true)")
-  let gveId = c.addMetadata("!DIGlobalVariableExpression(var: !" &
-    $gvId & ", expr: !DIExpression())")
-  c.debug.globalExprs.add gveId
-  result = ", !dbg !" & $gveId
 
 proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM;
     toExtern = false) =
