@@ -27,7 +27,7 @@ func len*[T](heap: HeapQueue[T]): int {.inline.} =
   ## Number of elements in `heap`.
   heap.data.len
 
-func `[]`*[T](heap: HeapQueue[T]; i: Natural): T {.inline.} =
+func `[]`*[T](heap: HeapQueue[T]; i: Natural): var T {.inline.} =
   ## Accesses the `i`-th element of `heap`'s internal array. `heap[0]` is the
   ## smallest element.
   heap.data[i]
@@ -63,7 +63,7 @@ proc siftDown[T: Comparable](heap: var HeapQueue[T]; p: int) =
     swap(heap.data[pos], heap.data[smallest])
     pos = smallest
 
-proc push*[T: Comparable](heap: var HeapQueue[T]; item: T) =
+proc push*[T: Comparable](heap: var HeapQueue[T]; item: sink T) =
   ## Pushes `item` onto `heap`, keeping the heap invariant.
   runnableExamples:
     var h = initHeapQueue[int]()
@@ -102,7 +102,7 @@ proc toHeapQueue*[T: Comparable](xs: openArray[T]): HeapQueue[T] =
   for i in 0 ..< xs.len:
     result.push(xs[i])
 
-iterator items*[T](heap: HeapQueue[T]): T =
+iterator items*[T](heap: HeapQueue[T]): var T =
   ## Yields each element of `heap` in its internal (heap-array) order.
   for i in 0 ..< heap.data.len:
     yield heap.data[i]
@@ -130,7 +130,7 @@ proc del*[T: Comparable](heap: var HeapQueue[T]; index: Natural) =
     siftUp(heap, index)
     siftDown(heap, index)
 
-proc replace*[T: Comparable](heap: var HeapQueue[T]; item: T): T =
+proc replace*[T: Comparable](heap: var HeapQueue[T]; item: sink T): T =
   ## Pops and returns the smallest element, then pushes `item` — more efficient
   ## than `pop` + `push`. Requires a non-empty heap. The returned value may be
   ## larger than `item`.
@@ -138,7 +138,7 @@ proc replace*[T: Comparable](heap: var HeapQueue[T]; item: T): T =
   heap.data[0] = item
   siftDown(heap, 0)
 
-proc pushpop*[T: Comparable](heap: var HeapQueue[T]; item: T): T =
+proc pushpop*[T: Comparable](heap: var HeapQueue[T]; item: sink T): T =
   ## A `push(item)` immediately followed by a `pop()`, but faster.
   result = item
   if heap.data.len > 0 and heap.data[0] < result:
