@@ -43,5 +43,24 @@ proc main =
   var kdata = @[1, 2, 3, 4, 5]
   keepItIf(kdata, it mod 2 == 1)
   assert kdata == @[1, 3, 5]
+  # minmax / addUnique / delete / insert / applyIt / newSeqWith
+  assert minmax(@[3, 1, 2, 5, 4]) == (1, 5)
+  var au = @[1, 2, 3]
+  au.addUnique(4)
+  au.addUnique(4)
+  assert au == @[1, 2, 3, 4]
+  var ddata = @[10, 11, 12, 13, 14]
+  ddata.delete(1, 2)
+  assert ddata == @[10, 13, 14]
+  var idata = @[1, 1, 1]
+  idata.insert(@[2, 2], 1)
+  assert idata == @[1, 2, 2, 1, 1]
+  var nums = @[1, 2, 3, 4]
+  nums.applyIt(it * 3)
+  assert nums == @[3, 6, 9, 12]
+  let nsw1: seq[int] = newSeqWith(3, 7)
+  assert nsw1 == @[7, 7, 7]
+  let nsw2: seq[seq[int]] = newSeqWith(2, newSeq[int](0))
+  assert nsw2.len == 2
 
 main()

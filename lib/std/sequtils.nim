@@ -162,6 +162,47 @@ func unzip*[S, T](s: openArray[(S, T)]): (seq[S], seq[T]) =
     second.add s[i][1]
   result = (first, second)
 
+func minmax*[T: Comparable](x: openArray[T]): (T, T) =
+  ## Returns the `(minimum, maximum)` of `x` in a single pass. Requires a
+  ## non-empty `x`.
+  runnableExamples:
+    assert minmax(@[3, 1, 2, 5, 4]) == (1, 5)
+  var lo = x[0]
+  var hi = x[0]
+  for i in 1 ..< x.len:
+    if x[i] < lo: lo = x[i]
+    if hi < x[i]: hi = x[i]
+  result = (lo, hi)
+
+# `addUnique` is intentionally not defined here — `system` (seqimpl) already
+# provides `addUnique[T](s: var seq[T]; x: sink T)`.
+
+func delete*[T](s: var seq[T]; first, last: Natural) =
+  ## Deletes the elements `s[first..last]` (inclusive) in place.
+  runnableExamples:
+    var a = @[10, 11, 12, 13, 14]
+    a.delete(1, 2)
+    assert a == @[10, 13, 14]
+  var res: seq[T] = @[]
+  for i in 0 ..< s.len:
+    if i < first or i > last: res.add s[i]
+  s = res
+
+func insert*[T](dest: var seq[T]; src: openArray[T]; pos: Natural = 0) =
+  ## Inserts the elements of `src` into `dest` at position `pos`, in place.
+  runnableExamples:
+    var dest = @[1, 1, 1]
+    dest.insert(@[2, 2], 1)
+    assert dest == @[1, 2, 2, 1, 1]
+  var res: seq[T] = @[]
+  for i in 0 ..< pos:
+    res.add dest[i]
+  for i in 0 ..< src.len:
+    res.add src[i]
+  for i in pos ..< dest.len:
+    res.add dest[i]
+  dest = res
+
 # ── `it` / fold templates ────────────────────────────────────────────────────
 #
 # These mirror the classic `*It` family. They are `{.untyped.}` templates and
@@ -261,3 +302,19 @@ template keepItIf*(s, pred: untyped) {.untyped.} =
     let it {.inject.} = s[i]
     if pred: res.add(it)
   s = res
+
+template applyIt*(varSeq, op: untyped) {.untyped.} =
+  ## In-place `mapIt`: replaces each element of the seq `varSeq` with `op`
+  ## (referencing the injected `it`). `op` must yield the element type.
+  ## Example: `applyIt(nums, it * 3)`.
+  for i in 0 ..< varSeq.len:
+    let it {.inject.} = varSeq[i]
+    varSeq[i] = op
+
+template newSeqWith*(len: int; init: untyped): untyped {.untyped.} =
+  ## Creates a `seq` of length `len`, evaluating `init` for each element — handy
+  ## for 2D seqs (`newSeqWith(5, newSeq[int](3))`) or per-element initialization.
+  var res: seq[typeof((block: init))] = @[]
+  for i in 0 ..< len:
+    res.add(init)
+  res
