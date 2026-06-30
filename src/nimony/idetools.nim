@@ -63,8 +63,7 @@ type
     usages: seq[Usage]
 
 proc findAndAddFieldDefinition(c: var IdeContext, n: var Cursor, name: string, nameSym: SymId, containingType: Cursor) =
-  inc n
-  while n.kind != ParRi:
+  n.loopInto():
     if n.substructureKind == FldU:
       var sym = n
       inc sym
@@ -98,14 +97,13 @@ proc tr(c: var IdeContext, n: var Cursor) =
     c.typeCache.closeScope()
 
   of TypeS:
-    inc n # ParLe
-    if n.symId == c.sym:
-      c.usages.add(Usage(n: n, containingType: c.currentType))
     let t = c.currentType
-    c.currentType = n
-    while n.kind != ParRi:
-      tr(c, n)
-    inc n # ParRi
+    n.into():
+      if n.symId == c.sym:
+        c.usages.add(Usage(n: n, containingType: c.currentType))
+      c.currentType = n
+      while n.hasMore:
+        tr(c, n)
     c.currentType = t
 
   of VarS, LetS, ConstS:
@@ -128,19 +126,16 @@ proc tr(c: var IdeContext, n: var Cursor) =
   else:
     case n.exprKind
     of DotX, DdotX:
-      let dot = n
-      inc n # skip ParLe
-      let lhs = n
-      tr(c, n) # lhs
-      let typeContext = c.currentDotLhs
-      c.currentDotLhs = lhs
-      tr(c, n) # rhs
-      c.currentDotLhs = typeContext
-      # skip remaining children
-      while n.kind != ParRi:
-        tr(c, n)
-      assert n.kind == ParRi
-      inc n # ParRi
+      n.into():
+        let lhs = n
+        tr(c, n) # lhs
+        let typeContext = c.currentDotLhs
+        c.currentDotLhs = lhs
+        tr(c, n) # rhs
+        c.currentDotLhs = typeContext
+        # process any remaining children
+        while n.hasMore:
+          tr(c, n)
 
     of OconstrX:
       skip n
@@ -163,14 +158,12 @@ proc tr(c: var IdeContext, n: var Cursor) =
         inc n # ParRi
 
       of FldU:
-        inc n # ParLe
-        if n.symId == c.sym and c.trackMode == TrackUsages and c.searchKind in {skField, skDot}:
-          c.usages.add(Usage(n: n, containingType: c.currentType))
-        # skip remaining children
-        while n.kind != ParRi:
-          tr(c, n)
-        assert n.kind == ParRi
-        inc n # ParRi
+        n.into():
+          if n.symId == c.sym and c.trackMode == TrackUsages and c.searchKind in {skField, skDot}:
+            c.usages.add(Usage(n: n, containingType: c.currentType))
+          # process any remaining children
+          while n.hasMore:
+            tr(c, n)
 
       else:
         case n.kind
