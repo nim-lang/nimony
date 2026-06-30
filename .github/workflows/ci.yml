@@ -75,7 +75,7 @@ jobs:
           submodules: false
 
       - name: Checkout nativenif (sibling of nimony)
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: nim-lang/nativenif
           path: nativenif
@@ -248,6 +248,13 @@ jobs:
           key: hastur-release-${{ runner.os }}-${{ matrix.target.cpu }}-${{ matrix.target.nim_branch }}-${{ hashFiles('nimony/src/**/*.nim', 'nimony/src/**/*.cfg', 'nimony/src/**/*.nims') }}
           restore-keys: |
             hastur-release-${{ runner.os }}-${{ matrix.target.cpu }}-${{ matrix.target.nim_branch }}-
+
+      - name: Create dist/nimony symlink for Nim compiler
+        shell: bash
+        run: |
+          rm -rf nim/dist/nimony
+          mkdir -p nim/dist
+          ln -sf "${{ github.workspace }}/nimony" nim/dist/nimony
 
       - name: Test Building nimony
         run: |
