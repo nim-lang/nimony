@@ -3,25 +3,25 @@
 
 function through_0_taddr() {
   let n_0 = [41];
-  let p_0 = n_0;
-  p_0[0] = (p_0[0] + 1);
+  let p_0 = [n_0, 0];
+  p_0[0][p_0[1]] = (p_0[0][p_0[1]] + 1);
   return n_0[0];
 }
 
 function bump_0_taddr(p_0) {
-  p_0[0] = (p_0[0] + 10);
+  p_0[0][p_0[1]] = (p_0[0][p_0[1]] + 10);
 }
 
 function usebump_0_taddr() {
   let m_0 = [5];
-  bump_0_taddr(m_0);
+  bump_0_taddr([m_0, 0]);
   return m_0[0];
 }
 
 function addrparam_0_taddr(a_0) {
   a_0 = [a_0];
-  let q_0 = a_0;
-  q_0[0] = 99;
+  let q_0 = [a_0, 0];
+  q_0[0][q_0[1]] = 99;
   return a_0[0];
 }
 

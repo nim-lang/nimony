@@ -23,8 +23,9 @@ type generation and maps Leng constructs directly to JS:
 | `(aconstr T e0 e1 …)` | `[e0, e1, …]` — array literal |
 | `(dot obj f)` | `obj.f` — field selection |
 | `(at arr i)` / `(pat p i)` | `arr[i]` — array / pointer indexing |
-| `(addr x)` | `x` — `x` is a boxed local (1-element array); the box *is* the pointer |
-| `(deref p)` | `p[0]` — read/write through the box |
+| `(addr x)` | `[x, 0]` — `x` is a boxed local (1-element array) |
+| `(addr o.f)` / `(addr a[i])` | `[o, "f"]` / `[a, i]` — fat `[base, key]` pointer |
+| `(deref p)` | `p[0][p[1]]` — read/write through the fat pointer |
 
 ## Scope
 
@@ -38,16 +39,25 @@ literal — generate cleanly (`echo "hello world"` now produces zero `/*TODO*/`s
 referencing only the still-missing runtime functions).
 
 **Addresses.** JS cannot reference a variable's storage, so a pointer cannot be
-the value itself. A pre-pass finds every local whose address is taken and boxes
-it into a 1-element array; the box is then the pointer. So `let x = init;`
-becomes `let x = [init];`, each use of `x` becomes `x[0]`, `(addr x)` becomes
-`x`, and `(deref p)` becomes `p[0]` — writes through a pointer therefore mutate
-the underlying local. Taking the address of a *field* or *element* (`addr x.f`,
-`addr a[i]`) would need an accessor-pair pointer and is out of scope for this
-slice; it emits a `/*TODO:addr-of-location*/` marker. Anything outside the
-subset (seqs growth, the GC runtime) likewise emits a `/*TODO:<tag>*/` marker
-and is skipped, so generation always completes and the coverage gap is visible
-in the output and reported on stderr.
+the value itself. Following the classic Nim JS backend (`mapType`'s
+`etyBaseIndex` "fat pointers"), a pointer is a `[base, key]` pair such that
+`base[key]` is the pointee's storage. A pre-pass boxes every local whose address
+is taken into a 1-element array, so `let x = init;` becomes `let x = [init];`,
+each use of `x` becomes `x[0]`, and `(addr x)` becomes `[x, 0]`. The address of
+a field is `[obj, "field"]` and of an element is `[arr, idx]`; `(deref p)` is
+`p[0][p[1]]`. Writes through a pointer therefore mutate the underlying storage.
+The pairs `(addr (deref p))` and `(deref (addr loc))` cancel, keeping the common
+cases compact. Two fat pointers compare component-wise via a small `nimPtrEq`
+helper (emitted only when used), since a fresh `[base,key]` array is never `===`
+another; `p == nil` stays a plain comparison (a nil pointer is `null`).
+
+Taking the address of a *pointer-indexed* element (`addr (pat p i)`, i.e.
+pointer arithmetic) or other raw-memory forms need more than a single base/key
+pair and are out of scope for this slice; they emit a
+`/*TODO:addr-of-location*/` marker. Anything else outside the subset (`sizeof`,
+seqs growth, the GC runtime) likewise emits a `/*TODO:<tag>*/` marker and is
+skipped, so generation always completes and the coverage gap is visible in the
+output and reported on stderr.
 
 The remaining **M2+** work is the runtime: the system-module FFI procs
 (`write`/`stdout`/`nimFlushStdStreams`) need JS shims, and string values use the
@@ -65,6 +75,11 @@ Leng modules (no system deps) and runs each under Node:
   `fib(20)==6765`.
 - `tdata.c.nif` (data structures) → checks `mkpoint(3,4)==7` (object construction
   + field access) and `arrsum()==60` (array construction + indexing).
-- `taddr.c.nif` (addresses) → checks `through()==42` (write through a pointer to a
-  boxed local), `usebump()==15` (mutation via a pointer parameter), and
-  `addrparam(7)==99` (a value parameter whose address is taken is boxed at entry).
+- `taddr.c.nif` (addresses, locals) → checks `through()==42` (write through a
+  pointer to a boxed local), `usebump()==15` (mutation via a pointer parameter),
+  and `addrparam(7)==99` (a value parameter whose address is taken is boxed at
+  entry).
+- `taddr2.c.nif` (addresses, aggregates) → checks `fieldaddr()==100` (write
+  through the address of an object field), `elemaddr()==99` (through the address
+  of an array element), and `samefield()`/`difffield()` (fat-pointer equality:
+  same key vs different key).
