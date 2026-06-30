@@ -51,8 +51,9 @@ if command -v node >/dev/null 2>&1; then
   } | node
 fi
 
-# ── addresses: locals whose address is taken are boxed into 1-element arrays,
-# so writes through a pointer mutate the underlying local.
+# ── addresses (locals): a pointer is a fat `[base, key]` pair; an addr-taken
+# local is boxed (`[value]`), so its address is `[x, 0]` and writes through the
+# pointer (`p[0][p[1]] = …`) mutate the underlying local.
 "$lengc" js --nimcache:"$work" "$here/taddr.c.nif"
 gotAddr="$work/taddr.js"
 
@@ -69,6 +70,29 @@ if command -v node >/dev/null 2>&1; then
     echo 'if (through_0_taddr()===42 && usebump_0_taddr()===15 && addrparam_0_taddr(7)===99)'
     echo '  { console.log("functional(addr): PASS"); }'
     echo 'else { console.log("functional(addr): FAIL"); process.exit(1); }'
+  } | node
+fi
+
+# ── addresses (aggregates): addr of an object field is `[obj, "field"]` and of
+# an array element is `[arr, idx]`; two fat pointers compare component-wise
+# (`nimPtrEq`), since fresh `[base,key]` arrays are never `===`.
+"$lengc" js --nimcache:"$work" "$here/taddr2.c.nif"
+gotAddr2="$work/taddr2.js"
+
+if ! diff -u "$here/taddr2.expected.js" "$gotAddr2"; then
+  echo "FAILURE: generated JS differs from golden taddr2.expected.js"
+  exit 1
+fi
+
+if command -v node >/dev/null 2>&1; then
+  {
+    cat "$gotAddr2"
+    # fieldaddr: write through addr of a field; elemaddr: through addr of an
+    # element; samefield/difffield: fat-pointer equality (same key vs different).
+    echo 'if (fieldaddr_0_taddr2()===100 && elemaddr_0_taddr2()===99 &&'
+    echo '    samefield_0_taddr2()===true && difffield_0_taddr2()===false)'
+    echo '  { console.log("functional(addr2): PASS"); }'
+    echo '  else { console.log("functional(addr2): FAIL"); process.exit(1); }'
   } | node
 fi
 

@@ -19,14 +19,21 @@
 ##   - `(try ...)` / `(raise e)` -> native `try`/`throw`
 ##
 ## **Addresses.** JS has no way to reference a variable's storage, so a pointer
-## cannot be the value itself. Following the classic Nim JS backend, a local
-## whose address is taken is boxed into a 1-element array: the box *is* the
-## pointer. A pre-pass (`scanForAddr`) finds every such local; then
-##   - the declaration becomes `let x = [init];`,
-##   - every use of `x` becomes `x[0]`,
-##   - `(addr x)` becomes `x` (the box), and `(deref p)` becomes `p[0]`.
-## This makes writes through a pointer mutate the underlying local, which the
-## earlier "addr/deref are identity" mapping got wrong.
+## cannot be the value itself. Following the classic Nim JS backend (`mapType`'s
+## `etyBaseIndex` "fat pointers"), a pointer is a `[base, key]` pair such that
+## `base[key]` is the pointee's storage:
+##   - a local whose address is taken is boxed into a 1-element array
+##     (`let x = [init];`, every use of `x` becomes `x[0]`); its address is
+##     `[x, 0]`,
+##   - `(addr o.f)` becomes `[o, "f"]`, `(addr a[i])` becomes `[a, i]`,
+##   - `(deref p)` becomes `p[0][p[1]]`,
+##   - the pairs `(addr (deref p))` and `(deref (addr loc))` cancel, so the
+##     common cases stay compact.
+## A pre-pass (`scanForAddr`) finds the locals that need boxing. Writes through a
+## pointer therefore mutate the underlying storage, which the earlier
+## "addr/deref are identity" mapping got wrong. Two fat pointers are equal iff
+## their components are (`nimPtrEq`), since a fresh `[base,key]` is never `===`
+## another array.
 ##
 ## This is the M0/M1 pure-compute slice: procs, locals/globals, assignment,
 ## calls, returns, arithmetic/bitwise/comparison/logic operators, `if`,
@@ -55,9 +62,13 @@ type
     flags: set[JSGenFlag]
     todos: int
     boxed: HashSet[SymId]   ## locals whose address is taken (see `scanForAddr`)
+    usesPtrEq: bool         ## whether the module compares fat pointers (needs the helper)
 
 proc initJSGen(m: sink MainModule; flags: set[JSGenFlag]): JSGen =
   JSGen(m: m, code: "", indent: 0, flags: flags, boxed: initHashSet[SymId]())
+
+const ptrEqHelper =
+  "function nimPtrEq(a, b) { return a[0] === b[0] && a[1] === b[1]; }\n"
 
 # ── low-level emit helpers ───────────────────────────────────────────────────
 
@@ -152,6 +163,78 @@ proc genCall(g: var JSGen; n: var Cursor) =
       inc i
     g.wr ")"
 
+proc captureExpr(g: var JSGen; n: var Cursor): string =
+  ## Generate the expression at `n` into a string instead of the main buffer,
+  ## advancing the cursor. Used where an emitted operand must be referenced more
+  ## than once (a fat-pointer deref `p[0][p[1]]`, pointer-equality components).
+  let start = g.code.len
+  gx g, n
+  result = g.code[start ..< g.code.len]
+  g.code.setLen start
+
+proc genAddrOf(g: var JSGen; n: var Cursor) =
+  ## Emit `(addr LOC)` as a fat pointer `[base, key]` so that `base[key]` is
+  ## LOC's storage. Locals are boxed (`[value]`), so a local's address is
+  ## `[x, 0]`; a field's is `[obj, "field"]`; an element's is `[arr, idx]`.
+  ## `(addr (deref p))` cancels to the pointer `p`. `n` is the location operand.
+  case n.exprKind
+  of DerefC:
+    n.into:
+      gx g, n
+      while n.hasMore: skip n
+  of DotC:
+    n.into:
+      let base = g.captureExpr n
+      let key = g.name(n.symId); inc n   # field symbol
+      g.wr "[" & base & ", " & jsString(key) & "]"
+      while n.hasMore: skip n
+  of AtC:
+    n.into:
+      let base = g.captureExpr n
+      let idx = g.captureExpr n
+      g.wr "[" & base & ", " & idx & "]"
+      while n.hasMore: skip n
+  of NoExpr:
+    if n.kind == Symbol:
+      # a boxed local: the box is the storage, indexed at slot 0.
+      g.wr "[" & g.name(n.symId) & ", 0]"; inc n
+    else:
+      g.todo("addr-of-location", n)
+  else:
+    # `addr (pat p i)` (pointer arithmetic) and other forms need more than a
+    # single base/key pair; out of scope for this slice.
+    g.todo("addr-of-location", n)
+
+proc genDeref(g: var JSGen; n: var Cursor) =
+  ## `(deref p)` reads through a fat pointer: `p[0][p[1]]`. When `p` is itself
+  ## `(addr LOC)` the two cancel and LOC's storage is accessed directly. `n` is
+  ## the pointer operand.
+  if n.exprKind == AddrC:
+    n.into:
+      gx g, n   # read LOC directly: boxed sym -> x[0], field -> o.f, elem -> a[i]
+      while n.hasMore: skip n
+  else:
+    let p = g.captureExpr n
+    g.wr p & "[0][" & p & "[1]]"
+
+proc genEq(g: var JSGen; n: var Cursor; negate: bool) =
+  ## `(eq a b)` / `(neq a b)`. When either operand is an address, the operands
+  ## are fat pointers and must be compared component-wise (a fresh `[base,key]`
+  ## is never `===` another array); otherwise a plain strict comparison, which
+  ## is also correct for `p == nil` (a nil pointer is `null`).
+  n.into:
+    let aAddr = n.exprKind == AddrC
+    let a = g.captureExpr n
+    let bAddr = n.exprKind == AddrC
+    let b = g.captureExpr n
+    if aAddr or bAddr:
+      g.usesPtrEq = true
+      if negate: g.wr "(!nimPtrEq(" & a & ", " & b & "))"
+      else: g.wr "nimPtrEq(" & a & ", " & b & ")"
+    else:
+      g.wr "(" & a & (if negate: " !== " else: " === ") & b & ")"
+    while n.hasMore: skip n
+
 proc gx(g: var JSGen; n: var Cursor) =
   case n.exprKind
   of NoExpr:
@@ -197,8 +280,8 @@ proc gx(g: var JSGen; n: var Cursor) =
   of AndC: binPlain g, n, " && "
   of OrC: binPlain g, n, " || "
   of NotC: unPlain g, n, "!"
-  of EqC: binPlain g, n, " === "
-  of NeqC: binPlain g, n, " !== "
+  of EqC: genEq g, n, false
+  of NeqC: genEq g, n, true
   of LeC: binPlain g, n, " <= "
   of LtC: binPlain g, n, " < "
   of CastC, ConvC:
@@ -251,26 +334,14 @@ proc gx(g: var JSGen; n: var Cursor) =
         inc i
       g.wr "]"
   of AddrC:
-    # `(addr x)` is a pointer to the local `x`. Such locals are boxed into a
-    # 1-element array (see `scanForAddr`/`genVar`), so the box itself is the
-    # pointer: emit the bare name (NOT `x[0]`). `(addr (deref p))` cancels to `p`.
+    # `(addr LOC)` -> a fat pointer `[base, key]` (see `genAddrOf`).
     n.into:
-      if n.kind == Symbol:
-        g.wr g.name(n.symId); inc n
-      elif n.exprKind == DerefC:
-        n.into:
-          g.gx n
-          while n.hasMore: skip n
-      else:
-        # address of a field/element (`addr x.f`, `addr a[i]`) needs an
-        # accessor-pair pointer; out of scope for this slice.
-        g.todo("addr-of-location", n)
+      g.genAddrOf n
       while n.hasMore: skip n
   of DerefC:
-    # a pointer is a 1-element array box; dereferencing reads slot 0.
+    # `(deref p)` -> `p[0][p[1]]` (see `genDeref`).
     n.into:
-      g.gx n
-      g.wr "[0]"
+      g.genDeref n
       while n.hasMore: skip n
   of DotC:
     # `(dot obj field [inheritance-depth] [access-token])` -> `obj.field`. The
@@ -533,19 +604,24 @@ proc generateJSCode*(s: var State; inp, outp: string; flags: set[JSGenFlag]) =
   var m = load(inp)
   m.config = s.config
   var g = initJSGen(m, flags)
-  g.wr "// generated by lengc (js backend) from " & extractFilename(inp) & "\n"
-  g.wr "\"use strict\";\n"
   var probe = beginRead(g.m.src)
   g.scanForAddr probe
+  # The body is generated into `g.code`; the header and any runtime helpers are
+  # prepended afterwards, since whether the module needs `nimPtrEq` is only known
+  # once generation has run.
   var n = beginRead(g.m.src)
   if n.stmtKind == StmtsS:
     n.loopInto: g.genToplevel n
   else:
     g.todo("root", n)
   g.code.add "\n"
+  var output = "// generated by lengc (js backend) from " & extractFilename(inp) & "\n"
+  output.add "\"use strict\";\n"
+  if g.usesPtrEq: output.add ptrEqHelper
+  output.add g.code
   if g.todos > 0:
     stdout.writeLine "[lengc js] " & inp & ": " & $g.todos & " unsupported node(s) emitted as /*TODO*/"
-  if vfsExists(outp) and vfsRead(outp) == g.code:
+  if vfsExists(outp) and vfsRead(outp) == output:
     discard "unchanged"
   else:
-    vfsWrite outp, g.code
+    vfsWrite outp, output
