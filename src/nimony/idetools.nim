@@ -63,7 +63,7 @@ type
     usages: seq[Usage]
 
 proc findAndAddFieldDefinition(c: var IdeContext, n: var Cursor, name: string, nameSym: SymId, containingType: Cursor) =
-  n.loopInto():
+  n.loopInto:
     if n.substructureKind == FldU:
       var sym = n
       inc sym
@@ -76,14 +76,14 @@ proc tr(c: var IdeContext, n: var Cursor) =
   case n.stmtKind
   of ScopeS:
     c.typeCache.openScope()
-    n.loopInto():
+    n.loopInto:
       tr(c, n)
     c.typeCache.closeScope()
 
   of ProcS, FuncS, MethodS, IteratorS, TemplateS, MacroS, ConverterS:
     let decl = n
     c.typeCache.openScope(ProcScope)
-    n.into():
+    n.into:
       let symId = n.symId
       for i in 0..<BodyPos:
         if i == ParamsPos:
@@ -96,7 +96,7 @@ proc tr(c: var IdeContext, n: var Cursor) =
 
   of TypeS:
     let t = c.currentType
-    n.into():
+    n.into:
       if n.symId == c.sym:
         c.usages.add(Usage(n: n, containingType: c.currentType))
       c.currentType = n
@@ -106,7 +106,7 @@ proc tr(c: var IdeContext, n: var Cursor) =
 
   of VarS, LetS, ConstS:
     let symKind = n.symKind
-    n.into():
+    n.into:
       let sym = n.symId
       if sym == c.sym and c.searchKind notin {skField, skDot}:
         c.usages.add(Usage(n: n, containingType: c.currentType))
@@ -121,7 +121,7 @@ proc tr(c: var IdeContext, n: var Cursor) =
   else:
     case n.exprKind
     of DotX, DdotX:
-      n.into():
+      n.into:
         let lhs = n
         tr(c, n) # lhs
         let typeContext = c.currentDotLhs
@@ -138,7 +138,7 @@ proc tr(c: var IdeContext, n: var Cursor) =
     else:
       case n.substructureKind
       of ParamU:
-        n.into():
+        n.into:
           let sym = n.symId
           if sym == c.sym and c.searchKind notin {skField, skDot}:
             c.usages.add(Usage(n: n, containingType: c.currentType))
@@ -149,7 +149,7 @@ proc tr(c: var IdeContext, n: var Cursor) =
           tr(c, n) # value
 
       of FldU:
-        n.into():
+        n.into:
           if n.symId == c.sym and c.trackMode == TrackUsages and c.searchKind in {skField, skDot}:
             c.usages.add(Usage(n: n, containingType: c.currentType))
           # process any remaining children
@@ -178,7 +178,7 @@ proc tr(c: var IdeContext, n: var Cursor) =
           inc n
 
         of ParLe:
-          n.loopInto():
+          n.loopInto:
             tr(c, n)
 
         else:

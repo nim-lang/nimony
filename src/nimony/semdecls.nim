@@ -651,7 +651,7 @@ proc hasUntypedOrTypedParam(dest: var TokenBuf; beforeParams: int): bool =
   if n.substructureKind != ParamsU:
     endRead(dest)
     return
-  n.loopInto():
+  n.loopInto:
     if n.substructureKind == ParamU:
       var p = n
       inc p

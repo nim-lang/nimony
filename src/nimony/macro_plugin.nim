@@ -232,7 +232,7 @@ proc countParams(macroDecl: Cursor): int =
   if r.params.kind == DotToken or r.params.substructureKind != ParamsU:
     return 0
   var p = r.params
-  p.loopInto():
+  p.loopInto:
     if p.substructureKind == ParamU:
       inc result
     skip p
