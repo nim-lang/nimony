@@ -214,9 +214,28 @@ func insert*[T](dest: var seq[T]; src: openArray[T]; pos: Natural = 0) =
 # for the fold accumulator and current element).
 #
 # `mapIt`/`filterIt`/`keepItIf` infer their result element type via `typeof`
-# inside the template (see below). `toSeq` is still deferred: it must infer the
-# element type of an arbitrary iterable, which needs `for it {.inject.} in iter`
-# (not yet accepted on a for-loop variable).
+# inside the template (see below); `toSeq` (at the end) does the same for the
+# yielded element type of an arbitrary iterable.
+
+template toSeq*(iter: untyped): untyped {.untyped.} =
+  ## Materializes any iterable (a collection, a range, an iterator call, …) into
+  ## a `seq`.
+  ## Example: `toSeq(1 .. 3) == @[1, 2, 3]`; `toSeq("ab") == @['a', 'b']`.
+  # A collection iterates via an implicit `items`, so its element type is
+  # `typeof(items(iter))`. A range / direct iterator call has no `items` and is
+  # already an iterator in `typeof`'s (default `typeOfIter`) interpretation, so
+  # its element type is `typeof(iter)`. `compiles(for _ in items(iter): …)`
+  # distinguishes the two reliably.
+  when compiles((for _ in items(iter): discard)):
+    block:
+      var res: seq[typeof(items(iter))] = @[]
+      for x in iter: res.add(x)
+      res
+  else:
+    block:
+      var res: seq[typeof(iter)] = @[]
+      for x in iter: res.add(x)
+      res
 
 template foldl*(s, operation: untyped): untyped {.untyped.} =
   ## Left-associative fold. `a` is the accumulator (seeded with the first

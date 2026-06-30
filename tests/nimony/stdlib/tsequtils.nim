@@ -63,5 +63,12 @@ proc main =
   assert nsw1 == @[7, 7, 7]
   let nsw2: seq[seq[int]] = newSeqWith(2, newSeq[int](0))
   assert nsw2.len == 2
+  # toSeq: collections, ranges, strings
+  assert toSeq(@[1, 2, 3]) == @[1, 2, 3]
+  assert toSeq([10, 20, 30]) == @[10, 20, 30]
+  assert toSeq(1 .. 4) == @[1, 2, 3, 4]
+  assert toSeq('a' .. 'c') == @['a', 'b', 'c']
+  let chars = toSeq("ab")
+  assert chars == @['a', 'b']
 
 main()
