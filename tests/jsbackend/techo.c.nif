@@ -1,0 +1,38 @@
+(.nif27)
+(stmts
+ (gvar :stdout.0.techo
+  (pragmas
+   (importc "stdout"))
+  (i 32)
+  .)
+ (proc :putInt.0.techo
+  (params
+   (param :f.0 . (i 32))
+   (param :n.0 . (i 64)))
+  .
+  (pragmas
+   (importc "rtPutInt"))
+  .)
+ (proc :putChar.0.techo
+  (params
+   (param :f.0 . (i 32))
+   (param :c.0 . (i 64)))
+  .
+  (pragmas
+   (importc "rtPutChar"))
+  .)
+ (proc :echoInt.0.techo
+  (params
+   (param :n.0 . (i 64)))
+  .
+  .
+  (stmts
+   (call putInt.0.techo stdout.0.techo n.0)
+   (call putChar.0.techo stdout.0.techo 10)))
+ (proc :run.0.techo
+  (params)
+  .
+  .
+  (stmts
+   (call echoInt.0.techo 55)
+   (call echoInt.0.techo 5))))

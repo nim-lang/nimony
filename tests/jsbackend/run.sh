@@ -118,4 +118,29 @@ if command -v node >/dev/null 2>&1; then
   } | node
 fi
 
+# ── echo (end-to-end I/O): mirrors how a real `echo <int>` lowers — Nim procs
+# (`echoInt`/`run`) call `importc` stdio (`stdout`, `putInt`, `putChar`) that a
+# runtime provides. Proves the generated code executes and produces output.
+"$lengc" js --nimcache:"$work" "$here/techo.c.nif"
+gotEcho="$work/techo.js"
+
+if ! diff -u "$here/techo.expected.js" "$gotEcho"; then
+  echo "FAILURE: generated JS differs from golden techo.expected.js"
+  exit 1
+fi
+
+if command -v node >/dev/null 2>&1; then
+  {
+    # tiny runtime: capture stdout instead of writing it, then assert the text.
+    echo 'let _out="";'
+    echo 'const stdout = {};'
+    echo 'function rtPutInt(f, n) { _out += String(n); }'
+    echo 'function rtPutChar(f, c) { _out += String.fromCharCode(c); }'
+    cat "$gotEcho"
+    echo 'run_0_techo();'
+    echo 'if (_out === "55\n5\n") { console.log("functional(echo): PASS"); }'
+    echo 'else { console.log("functional(echo): FAIL got " + JSON.stringify(_out)); process.exit(1); }'
+  } | node
+fi
+
 echo "jsbackend: OK"

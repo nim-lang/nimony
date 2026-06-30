@@ -115,7 +115,12 @@ proc jsString(s: string): string =
   result.add "\""
 
 proc todo(g: var JSGen; what: string; n: var Cursor) =
-  g.wr "/*TODO:" & what & "*/"
+  ## Placeholder for an unsupported node. It is a valid JS expression
+  ## (`undefined` with a tagging comment), so the output always *parses* even
+  ## where an expression is required — e.g. as a call argument — and a single
+  ## unsupported node never breaks the surrounding (possibly never-called)
+  ## function. The gap stays visible and is counted in `g.todos`.
+  g.wr "undefined/*TODO:" & what & "*/"
   inc g.todos
   skip n
 
