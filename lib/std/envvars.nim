@@ -130,6 +130,10 @@ else:
         importc: "_NSGetEnviron", header: "<crt_externs.h>".}
     elif defined(haiku):
       var gEnv {.importc: "environ", header: "<stdlib.h>".}: cstringArray
+    elif defined(nimNativeIo):
+      # Libc-free backend: no `environ`. The generated `main` captures the
+      # kernel-provided env block into `nimEnviron` (hexer genMainProc).
+      var gEnv {.importc: "nimEnviron".}: cstringArray
     else:
       var gEnv {.importc: "environ".}: cstringArray
 
@@ -176,14 +180,19 @@ else:
     if i >= 0:
       result = substr(environment[i], find(environment[i], '=')+1)
     else:
-      var key = key
-      let kc = key.toCString()
-      if kc.isNil:
+      when defined(nimNativeIo):
+        # Libc-free: no `getenv`. The `environment` scan above (built from
+        # `nimEnviron`) is the complete view, so a miss means "not set".
         result = default
       else:
-        var env = c_getenv(kc)
-        if env == nil: result = default
-        else: result = $env
+        var key = key
+        let kc = key.toCString()
+        if kc.isNil:
+          result = default
+        else:
+          var env = c_getenv(kc)
+          if env == nil: result = default
+          else: result = $env
 
   proc existsEnv*(key: string): bool {.tags: [ReadEnvEffect].} =
     ## Checks whether the environment variable named `key` exists.
