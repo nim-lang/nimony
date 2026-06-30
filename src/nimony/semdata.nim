@@ -174,6 +174,13 @@ type
     checkedForWriteNifModule*: bool
     inWhen*: int
     inUncheckedAccess*: int
+    warnedSources*: HashSet[PackedLineInfo]
+      ## source positions already reported via `warn` (dedup so a construct that
+      ## is semchecked more than once is only warned about once)
+    inSpeculativeArg*: int
+      ## >0 while semchecking the args of an unoverloadable magic
+      ## (`compiles`/`declared`/`defined`/`typeof`); such args are probed, not
+      ## compiled, so eval-order warnings must stay silent there
     templateInstCounter*: int
     commandLineArgs*: string # for IC we make nimony `exec` itself. Thus it is important
                              # to forward command line args properly.

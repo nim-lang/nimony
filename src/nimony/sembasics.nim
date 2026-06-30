@@ -11,7 +11,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import nimony_model, symtabs, builtintypes, decls, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig,
-  intervals, xints, features,
+  intervals, xints, features, langmodes,
   semdata, semos, expreval
 import ".." / lib / [symparser, nifindexes]
 
@@ -256,6 +256,25 @@ proc buildErr*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; msg:
   var orig = createTokenBuf(1)
   orig.addDotToken()
   c.buildErr dest, info, msg, cursorAt(orig, 0)
+
+proc warn*(c: var SemContext; info: PackedLineInfo; msg: string) =
+  ## Emit a user-facing compile-time warning. Unlike `buildErr`, a warning is not
+  ## written into the tree (it must not abort compilation or reach later passes);
+  ## it is printed immediately through a `Reporter`, exactly as `reportErrors`
+  ## does for errors. Skipped while semchecking speculatively (`compiles`, overload
+  ## trials set `debugAllowErrors`, magic-arg probes set `inSpeculativeArg`) so
+  ## code that is tried and discarded never warns, and deduplicated by source
+  ## position so a construct that is semchecked more than once is only reported once.
+  ##
+  ## Only the project's main module is flagged: warnings about imported library /
+  ## system modules (which the user cannot edit and did not write) would be noise,
+  ## and — because dependency modules are compiled by their own passes whose output
+  ## is aggregated — would non-deterministically pollute unrelated `.msgs` goldens.
+  if c.debugAllowErrors or c.inSpeculativeArg > 0: return
+  if IsMain notin c.moduleFlags: return
+  if not c.warnedSources.containsOrIncl(info):
+    var r = Reporter(verbosity: 2, noColors: not useColors())
+    r.warn infoToStr(info), msg
 
 proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: PackedLineInfo; msg: string; orig: Cursor) =
   ## Builds ErrT node and combine it with the node at `pos` so that no nodes are added outside of

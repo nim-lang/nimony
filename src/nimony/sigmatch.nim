@@ -79,6 +79,11 @@ type
     firstVarargPosition*: int
     varargsEndPosition*: int
     genericConverter*, refineArgType*, insertedParam*: bool
+    namedArgsReordered*: bool
+      ## set by `orderArgs` when named arguments fill parameters out of source
+      ## order, so the chosen overload can warn that the values are evaluated in
+      ## a different order than written (see semcall)
+    namedArgsReorderInfo*: PackedLineInfo
 
 proc createMatch*(context: ptr SemContext): Match =
   Match(context: context, firstVarargPosition: -1, varargsEndPosition: -1)
@@ -2274,6 +2279,23 @@ proc orderArgs*(m: var Match; paramsCursor: Cursor; args: openArray[CallArg]): s
     else:
       inVarargs = true
     inc ai
+
+  # Detect whether named arguments changed the evaluation order: walking the
+  # parameters in declaration order, the source-argument index that fills each
+  # given (non-default, non-vararg-continuation) parameter must be increasing.
+  # If it isn't, a later parameter is filled by an earlier-written argument, so
+  # the values run out of source order — flagged by the caller (consistent with
+  # object constructors, nim-lang/nimony#1056).
+  block:
+    var prevAi = -1
+    for pfi in 0 ..< params.len:
+      let p = positions[pfi]
+      if p >= 0:
+        if p < prevAi:
+          m.namedArgsReordered = true
+          m.namedArgsReorderInfo = args[p].n.info
+          break
+        prevAi = p
 
   result = newSeqOfCap[CallArg](args.len)
   fi = 0
