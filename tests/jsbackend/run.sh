@@ -51,4 +51,25 @@ if command -v node >/dev/null 2>&1; then
   } | node
 fi
 
+# ── addresses: locals whose address is taken are boxed into 1-element arrays,
+# so writes through a pointer mutate the underlying local.
+"$lengc" js --nimcache:"$work" "$here/taddr.c.nif"
+gotAddr="$work/taddr.js"
+
+if ! diff -u "$here/taddr.expected.js" "$gotAddr"; then
+  echo "FAILURE: generated JS differs from golden taddr.expected.js"
+  exit 1
+fi
+
+if command -v node >/dev/null 2>&1; then
+  {
+    cat "$gotAddr"
+    # through: *p+1 on a boxed local; usebump: mutate via pointer param;
+    # addrparam: a value param whose address is taken is boxed at entry.
+    echo 'if (through_0_taddr()===42 && usebump_0_taddr()===15 && addrparam_0_taddr(7)===99)'
+    echo '  { console.log("functional(addr): PASS"); }'
+    echo 'else { console.log("functional(addr): FAIL"); process.exit(1); }'
+  } | node
+fi
+
 echo "jsbackend: OK"

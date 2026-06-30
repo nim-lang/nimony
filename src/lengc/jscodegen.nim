@@ -18,13 +18,23 @@
 ##   - `(if (elif c (stmts ...)))` -> `if (c) { ... }`
 ##   - `(try ...)` / `(raise e)` -> native `try`/`throw`
 ##
+## **Addresses.** JS has no way to reference a variable's storage, so a pointer
+## cannot be the value itself. Following the classic Nim JS backend, a local
+## whose address is taken is boxed into a 1-element array: the box *is* the
+## pointer. A pre-pass (`scanForAddr`) finds every such local; then
+##   - the declaration becomes `let x = [init];`,
+##   - every use of `x` becomes `x[0]`,
+##   - `(addr x)` becomes `x` (the box), and `(deref p)` becomes `p[0]`.
+## This makes writes through a pointer mutate the underlying local, which the
+## earlier "addr/deref are identity" mapping got wrong.
+##
 ## This is the M0/M1 pure-compute slice: procs, locals/globals, assignment,
 ## calls, returns, arithmetic/bitwise/comparison/logic operators, `if`,
 ## `while`, `case`, `break`. Constructs outside this subset emit a
 ## `/*TODO:<tag>*/` marker and are skipped, so generation always completes and
 ## the coverage gap is visible in the output.
 
-import std / [assertions, syncio, strutils, formatfloat]
+import std / [assertions, syncio, strutils, formatfloat, sets]
 
 import ".." / lib / nifcoreparse   # re-exports nifcore (Cursor, beginRead, intVal, ...)
 import ".." / lib / nifcdecl        # stmtKind/exprKind/substructureKind + Leng enums + decl extractors
@@ -44,9 +54,10 @@ type
     indent: int
     flags: set[JSGenFlag]
     todos: int
+    boxed: HashSet[SymId]   ## locals whose address is taken (see `scanForAddr`)
 
 proc initJSGen(m: sink MainModule; flags: set[JSGenFlag]): JSGen =
-  JSGen(m: m, code: "", indent: 0, flags: flags)
+  JSGen(m: m, code: "", indent: 0, flags: flags, boxed: initHashSet[SymId]())
 
 # ── low-level emit helpers ───────────────────────────────────────────────────
 
@@ -156,7 +167,10 @@ proc gx(g: var JSGen; n: var Cursor) =
     of StrLit:
       g.wr jsString(g.m.pool.strings[strId(n)]); inc n
     of Symbol:
-      g.wr g.name(n.symId); inc n
+      # a boxed local lives in a 1-element array; read it through slot 0.
+      if n.symId in g.boxed: g.wr g.name(n.symId) & "[0]"
+      else: g.wr g.name(n.symId)
+      inc n
     of DotToken:
       g.wr "undefined"; inc n
     else:
@@ -236,12 +250,27 @@ proc gx(g: var JSGen; n: var Cursor) =
         g.gx n
         inc i
       g.wr "]"
-  of AddrC, DerefC:
-    # JS values are references and there are no raw pointers: taking the address
-    # of, or dereferencing, an object is the identity. `(addr x)`/`(deref x)`
-    # therefore emit just `x`.
+  of AddrC:
+    # `(addr x)` is a pointer to the local `x`. Such locals are boxed into a
+    # 1-element array (see `scanForAddr`/`genVar`), so the box itself is the
+    # pointer: emit the bare name (NOT `x[0]`). `(addr (deref p))` cancels to `p`.
+    n.into:
+      if n.kind == Symbol:
+        g.wr g.name(n.symId); inc n
+      elif n.exprKind == DerefC:
+        n.into:
+          g.gx n
+          while n.hasMore: skip n
+      else:
+        # address of a field/element (`addr x.f`, `addr a[i]`) needs an
+        # accessor-pair pointer; out of scope for this slice.
+        g.todo("addr-of-location", n)
+      while n.hasMore: skip n
+  of DerefC:
+    # a pointer is a 1-element array box; dereferencing reads slot 0.
     n.into:
       g.gx n
+      g.wr "[0]"
       while n.hasMore: skip n
   of DotC:
     # `(dot obj field [inheritance-depth] [access-token])` -> `obj.field`. The
@@ -282,12 +311,22 @@ proc genBlock(g: var JSGen; n: var Cursor) =
 proc genVar(g: var JSGen; n: var Cursor) =
   var d = takeVarDecl(n)
   g.nl()
-  g.wr "let " & g.name(d.name.symId)
-  if d.value.kind != DotToken:
-    g.wr " = "
-    var v = d.value
-    g.gx v
-  g.wr ";"
+  let nm = g.name(d.name.symId)
+  if d.name.symId in g.boxed:
+    # boxed local: store the value in a 1-element array so its address (the
+    # array) is a stable pointer; all reads/writes go through slot 0.
+    g.wr "let " & nm & " = ["
+    if d.value.kind != DotToken:
+      var v = d.value
+      g.gx v
+    g.wr "];"
+  else:
+    g.wr "let " & nm
+    if d.value.kind != DotToken:
+      g.wr " = "
+      var v = d.value
+      g.gx v
+    g.wr ";"
 
 proc genIf(g: var JSGen; n: var Cursor) =
   var first = true
@@ -432,8 +471,27 @@ proc genProc(g: var JSGen; n: var Cursor) =
       if i > 0: g.wr ", "
       g.wr g.name(d.name.symId)
       inc i
-  g.wr ") "
-  g.genBlock prc.body
+  g.wr ") {"
+  inc g.indent
+  # Prologue: a value parameter whose address is taken must be boxed too, so a
+  # pointer to it is a live 1-element array. Re-bind it to its box at entry; all
+  # uses inside the body then read through slot 0 (see `gx`). A `var`/pointer
+  # parameter already arrives as a box from the caller, so it is never boxed.
+  if prc.params.kind != DotToken:
+    var p = prc.params
+    p.loopInto:
+      var d = takeParamDecl(p)
+      if d.name.symId in g.boxed:
+        let nm = g.name(d.name.symId)
+        g.nl(); g.wr nm & " = [" & nm & "];"
+  var body = prc.body
+  if body.stmtKind in {StmtsS, ScopeS}:
+    body.loopInto: g.gs body
+  else:
+    g.gs body
+  dec g.indent
+  g.nl()
+  g.wr "}"
   g.nl()
 
 proc genToplevel(g: var JSGen; n: var Cursor) =
@@ -456,12 +514,29 @@ proc genToplevel(g: var JSGen; n: var Cursor) =
   else:
     g.nl(); g.todo("toplevel:" & $n.stmtKind, n)
 
+proc scanForAddr(g: var JSGen; n: var Cursor) =
+  ## Pre-pass over the whole module: record every local that is the direct
+  ## operand of `(addr <symbol>)`. Symbols are module-unique, so a single set
+  ## drives boxing for both the declaration and every use.
+  if n.kind == TagLit:
+    if n.exprKind == AddrC:
+      n.into:
+        if n.hasMore and n.kind == Symbol:
+          g.boxed.incl n.symId
+        while n.hasMore: g.scanForAddr n
+    else:
+      n.loopInto: g.scanForAddr n
+  else:
+    inc n
+
 proc generateJSCode*(s: var State; inp, outp: string; flags: set[JSGenFlag]) =
   var m = load(inp)
   m.config = s.config
   var g = initJSGen(m, flags)
   g.wr "// generated by lengc (js backend) from " & extractFilename(inp) & "\n"
   g.wr "\"use strict\";\n"
+  var probe = beginRead(g.m.src)
+  g.scanForAddr probe
   var n = beginRead(g.m.src)
   if n.stmtKind == StmtsS:
     n.loopInto: g.genToplevel n
