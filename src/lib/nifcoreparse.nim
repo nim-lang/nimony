@@ -260,20 +260,25 @@ proc emitValueWithoutLineInfo(bld: var Builder; c: var Cursor;
   of ExtendedSuffix, LineInfoLit:
     assert false, "suffix token is not a value head"
 
-proc toString*(b: var TokenBuf; sizeHint = 0;
-               includeLineInfo = true): string =
-  ## Canonical NIF text for the whole buffer (one or more top-level values).
-  ## Set `includeLineInfo` to false for location-free diagnostic rendering.
-  var bld = nifbuilder.open(if sizeHint > 0: sizeHint else: b.len * 8)
+proc appendTo*(b: var TokenBuf; dest: var Builder;
+               includeLineInfo = true) =
+  ## Appends canonical NIF text for the whole buffer to `dest`.
   var c = b.beginRead()
   if includeLineInfo:
     var cur = NoNifLineInfo
     var parents = @[NoNifLineInfo]
     while c.hasMore:
-      emitValueWithLineInfo(bld, c, cur, parents, b.tags, b.pool)
+      emitValueWithLineInfo(dest, c, cur, parents, b.tags, b.pool)
   else:
     while c.hasMore:
-      emitValueWithoutLineInfo(bld, c, b.tags, b.pool)
+      emitValueWithoutLineInfo(dest, c, b.tags, b.pool)
+
+proc toString*(b: var TokenBuf; sizeHint = 0;
+               includeLineInfo = true): string =
+  ## Canonical NIF text for the whole buffer (one or more top-level values).
+  ## Set `includeLineInfo` to false for location-free diagnostic rendering.
+  var bld = nifbuilder.open(if sizeHint > 0: sizeHint else: b.len * 8)
+  b.appendTo(bld, includeLineInfo)
   result = bld.extract()
 
 proc toString*(node: Cursor; sizeHint = 0;
