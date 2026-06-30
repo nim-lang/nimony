@@ -118,11 +118,6 @@ proc scopeBump(m: Match): int =
     dec i
   return 0
 
-when not defined(nimony):
-  proc concat(a: varargs[string]): string =
-    result = a[0]
-    for i in 1..high(a): result.add a[i]
-
 proc error(m: var Match; k: MatchErrorKind; expected, got: Cursor) =
   m.err = true
   if m.hasError: return # first error is the important one
@@ -175,13 +170,13 @@ proc constraintToString(c: Cursor): string =
 proc getErrorMsg*(m: Match): string =
   case m.error.kind
   of InvalidMatch:
-    concat("expected: ", typeToString(m.error.expected), " but got: ", typeToString(m.error.got))
+    "expected: " & typeToString(m.error.expected) & " but got: " & typeToString(m.error.got)
   of InvalidRematch:
-    concat("Could not match again: ", pool.syms[m.error.typeVar], " expected ",
-      typeToString(m.error.expected), " but got ", typeToString(m.error.got))
+    "Could not match again: " & pool.syms[m.error.typeVar] & " expected " &
+      typeToString(m.error.expected) & " but got " & typeToString(m.error.got)
   of ConstraintMismatch:
-    concat(typeToString(m.error.got), " does not match constraint ",
-      constraintToString(m.error.expected))
+    typeToString(m.error.got) & " does not match constraint " &
+      constraintToString(m.error.expected)
   of FormalTypeNotAtEndBug:
     "BUG: formal type not at end!"
   of FormalParamsMismatch:
@@ -197,22 +192,22 @@ proc getErrorMsg*(m: Match): string =
   of UnavailableSubtypeRelation:
     "subtype relation not available for `out` parameters"
   of ImplicitConversionNotMutable:
-    concat("implicit conversion to ", typeToString(m.error.expected), " is not mutable")
+    "implicit conversion to " & typeToString(m.error.expected) & " is not mutable"
   of VarNeeded:
-    concat("expression is not a mutable lvalue, cannot be passed to ",
-      typeToString(m.error.expected), " parameter")
+    "expression is not a mutable lvalue, cannot be passed to " &
+      typeToString(m.error.expected) & " parameter"
   of UnhandledTypeBug:
-    concat("BUG: unhandled type: ", pool.tags[m.error.expected.tagId])
+    "BUG: unhandled type: " & pool.tags[m.error.expected.tagId]
   of MismatchBug:
-    concat("BUG: expected: ", typeToString(m.error.expected), " but got: ", typeToString(m.error.got))
+    "BUG: expected: " & typeToString(m.error.expected) & " but got: " & typeToString(m.error.got)
   of MissingExplicitGenericParameter:
-    concat("missing explicit generic parameter for ", pool.syms[m.error.typeVar])
+    "missing explicit generic parameter for " & pool.syms[m.error.typeVar]
   of ExtraGenericParameter:
     "extra generic parameter"
   of RoutineIsNotGeneric:
     "routine is not generic"
   of CouldNotInferTypeVar:
-    concat("could not infer type for ", pool.syms[m.error.typeVar])
+    "could not infer type for " & pool.syms[m.error.typeVar]
   of TooManyArguments:
     "too many arguments"
   of TooFewArguments:

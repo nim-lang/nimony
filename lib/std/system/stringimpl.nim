@@ -675,13 +675,7 @@ func newStringOfCap*(len: int): string =
   else:
     strOom result, LongStringDataOffset + len
 
-# ---- concat / & ----
-
-template concat*(): string {.varargs.} =
-  var res = ""
-  for s in unpack():
-    res.add s
-  res
+# ---- & ----
 
 func `&`*(a, b: string): string {.semantics: "string.&".} =
   result = string(bytes: 0'u, more: nil)

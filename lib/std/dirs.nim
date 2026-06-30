@@ -155,7 +155,7 @@ proc fillDirEntry(w: var DirWalker; e: var DirEntry) =
 when defined(posix):
   proc pathComponentFromEntry(w: var DirWalker; name: string; dType: uint8): PathComponent =
     if dType == DT_UNKNOWN or dType == DT_LNK:
-      var fullPath = concat($w.dir, "/", name)
+      var fullPath = $w.dir & "/" & name
       var s = default Stat
       if lstat(fullPath.toCString, s) == 0:
         if S_ISLNK(s.st_mode):
