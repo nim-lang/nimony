@@ -28,9 +28,6 @@ type
     data: seq[T]
     head, tail, count, mask: int
 
-  Stringable = concept
-    ## A type that can be rendered with `$`.
-    func `$`(x: Self): string
 
 func raiseEmpty() {.noinline, noreturn.} =
   {.cast(noSideEffect).}: quit "Deque is empty"
@@ -100,13 +97,13 @@ func addFirst*[T: HasDefault](d: var Deque[T]; item: sink T) =
   d.data[d.head] = item
   inc d.count
 
-func peekFirst*[T](d: Deque[T]): T =
+func peekFirst*[T](d: Deque[T]): var T =
   ## Returns the first element of `d`. Terminates the program if `d` is empty.
   if d.count == 0:
     raiseEmpty()
   result = d.data[d.head]
 
-func peekLast*[T](d: Deque[T]): T =
+func peekLast*[T](d: Deque[T]): var T =
   ## Returns the last element of `d`. Terminates the program if `d` is empty.
   if d.count == 0:
     raiseEmpty()
@@ -130,7 +127,7 @@ func popLast*[T](d: var Deque[T]): T =
   result = move(d.data[d.tail])
   dec d.count
 
-func `[]`*[T](d: Deque[T]; i: int): T =
+func `[]`*[T](d: Deque[T]; i: int): var T =
   ## Accesses the `i`-th element of `d` (0-based, counting from the front).
   ## Terminates the program if `i` is out of range.
   runnableExamples:
@@ -169,7 +166,7 @@ func contains*[T: Equatable](d: Deque[T]; item: T): bool =
       return true
   result = false
 
-iterator items*[T](d: Deque[T]): T =
+iterator items*[T](d: Deque[T]): var T =
   ## Yields every element of `d`, from first to last.
   for i in 0 ..< d.count:
     yield d.data[(d.head + i) and d.mask]
@@ -179,7 +176,7 @@ iterator mitems*[T](d: var Deque[T]): var T =
   for i in 0 ..< d.count:
     yield d.data[(d.head + i) and d.mask]
 
-iterator pairs*[T](d: Deque[T]): (int, T) =
+iterator pairs*[T](d: Deque[T]): (int, var T) =
   ## Yields every `(index, element)` pair of `d`, from first to last.
   for i in 0 ..< d.count:
     yield (i, d.data[(d.head + i) and d.mask])
