@@ -2694,7 +2694,9 @@ proc semForLoopVar(c: var SemContext; dest: var TokenBuf; it: var Item; loopvarT
     let delayed = handleSymDef(c, dest, it.n, LetY)
     c.addSym dest, delayed
     wantDot c, dest, it.n # export marker must be empty
-    wantDot c, dest, it.n # pragmas
+    # The loop variable may carry pragmas (e.g. `{.inject.}` from a template, as
+    # `mapIt`/`toSeq` use); copy the slot through rather than requiring it empty.
+    takeTree dest, it.n # pragmas
     if loopvarTypeMod != NoType and loopvarType.typeKind notin TypeModifiers:
       dest.buildTree loopvarTypeMod, it.n.info:
         copyTree dest, loopvarType
