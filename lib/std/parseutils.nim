@@ -16,11 +16,6 @@ const
 func toLower(c: char): char {.inline.} =
   result = if c in {'A'..'Z'}: chr(ord(c)-ord('A')+ord('a')) else: c
 
-func integerOutOfRangeError() {.noinline, noreturn.} =
-  # TODO: Uncomment when exception is implemented.
-  #raise newException(ValueError, "Parsed integer outside of valid range")
-  {.cast(noSideEffect).}: quit "Parsed integer outside of valid range"
-
 func parseHex*[T: SomeInteger](s: openArray[char], number: var T, maxLen = 0): int {.untyped.} =
   ## Parses a hexadecimal number and stores its value in ``number``.
   ##
@@ -110,28 +105,37 @@ func parseHex*[T: SomeInteger](s: string, number: var T, start = 0,
   parseHex(s.toOpenArray(start, s.high), number, maxLen)
 
 func rawParseInt(s: openArray[char], b: var BiggestInt): int =
+  ## On success returns the number of processed characters and stores the value
+  ## in `b`. Returns 0 if `s` does not start with an integer. Returns a negative
+  ## number `-n` if the first `n` characters form an integer literal whose value
+  ## does not fit in `BiggestInt`; in that case `b` is left unchanged. The whole
+  ## digit run is still consumed on overflow so the caller can skip past it.
   var
     sign: BiggestInt = -1
     i = 0
+    res = BiggestInt(0)
+    overflow = false
   if i < s.len:
     if s[i] == '+': inc(i)
     elif s[i] == '-':
       inc(i)
       sign = 1
   if i < s.len and s[i] in {'0'..'9'}:
-    b = 0
     while i < s.len and s[i] in {'0'..'9'}:
       let c = ord(s[i]) - ord('0')
-      if b >= (low(BiggestInt) + c) div 10:
-        b = b * 10 - c
-      else:
-        integerOutOfRangeError()
+      if not overflow:
+        if res >= (low(BiggestInt) + c) div 10:
+          res = res * 10 - c
+        else:
+          overflow = true
       inc(i)
       while i < s.len and s[i] == '_': inc(i) # underscores are allowed and ignored
-    if sign == -1 and b == low(BiggestInt):
-      integerOutOfRangeError()
+    if sign == -1 and res == low(BiggestInt):
+      overflow = true
+    if overflow:
+      result = -i
     else:
-      b = b * sign
+      b = res * sign
       result = i
   else:
     result = 0
@@ -139,61 +143,79 @@ func rawParseInt(s: openArray[char], b: var BiggestInt): int =
 func parseBiggestInt*(s: openArray[char], number: var BiggestInt): int {.
   noSideEffect.} =
   ## Parses an integer and stores the value into `number`.
-  ## Result is the number of processed chars or 0 if there is no integer.
-  ## `ValueError` is raised if the parsed integer is out of the valid range.
+  ## Result is the number of processed chars, or 0 if there is no integer.
+  ## If the parsed integer is out of the valid `BiggestInt` range the result is
+  ## a **negative** number `-n` (where `n` chars form the out-of-range literal)
+  ## and `number` is left unchanged, so the caller can detect the overflow and
+  ## handle it instead of aborting.
   runnableExamples:
     var ret: BiggestInt
     assert parseBiggestInt("9223372036854775807", ret) == 19
     assert ret == 9223372036854775807
     assert parseBiggestInt("-2024_05_09", ret) == 11
     assert ret == -20240509
+    # out of range: negative result, `ret` untouched
+    assert parseBiggestInt("9223372036854775808", ret) == -19
+    assert ret == -20240509
   var res = BiggestInt(0)
-  # use 'res' for exception safety (don't write to 'number' in case of an
-  # overflow exception):
+  # use 'res' so 'number' is only written on a successful, in-range parse:
   result = rawParseInt(s, res)
-  if result != 0:
+  if result > 0:
     number = res
 
 func rawParseUInt(s: openArray[char], b: var BiggestUInt): int =
+  ## On success returns the number of processed characters and stores the value
+  ## in `b`. Returns 0 if `s` does not start with an unsigned integer. Returns a
+  ## negative number `-n` if the first `n` characters are out of the valid
+  ## `BiggestUInt` range (including a leading `-` before digits); in that case
+  ## `b` is left unchanged.
   var
     res = 0.BiggestUInt
     i = 0
+    overflow = false
   if i < s.len - 1 and s[i] == '-' and s[i + 1] in {'0'..'9'}:
-    integerOutOfRangeError()
+    # a negative value is out of range for an unsigned integer
+    overflow = true
+    inc(i)
   if i < s.len and s[i] == '+': inc(i) # Allow
   if i < s.len and s[i] in {'0'..'9'}:
-    b = 0
     while i < s.len and s[i] in {'0'..'9'}:
-      if res > BiggestUInt.high div 10: # Highest value that you can multiply 10 without overflow
-        integerOutOfRangeError()
-      res = res * 10
-      let prev = res
-      inc res, (ord(s[i]) - ord('0')).BiggestUInt
-      if prev > res:
-        integerOutOfRangeError()
+      if not overflow:
+        if res > BiggestUInt.high div 10: # Highest value that you can multiply 10 without overflow
+          overflow = true
+        else:
+          res = res * 10
+          let prev = res
+          inc res, (ord(s[i]) - ord('0')).BiggestUInt
+          if prev > res:
+            overflow = true
       inc(i)
       while i < s.len and s[i] == '_': inc(i) # underscores are allowed and ignored
-    b = res
-    result = i
+    if overflow:
+      result = -i
+    else:
+      b = res
+      result = i
   else:
     result = 0
 
 func parseBiggestUInt*(s: openArray[char], number: var BiggestUInt): int {.
   noSideEffect.} =
-  ## Parses an unsigned integer and stores the value
-  ## into `number`.
-  ## `ValueError` is raised if the parsed integer is out of the valid range.
+  ## Parses an unsigned integer and stores the value into `number`.
+  ## Result is the number of processed chars, or 0 if there is no integer.
+  ## If the parsed integer is out of the valid `BiggestUInt` range (including a
+  ## leading `-`) the result is a **negative** number `-n` and `number` is left
+  ## unchanged, so the caller can detect the overflow instead of aborting.
   runnableExamples:
     var ret: BiggestUInt
-    assert parseBiggestUInt("12", ret, 0) == 2
+    assert parseBiggestUInt("12", ret) == 2
     assert ret == 12
-    assert parseBiggestUInt("1111111111111111111", ret, 0) == 19
+    assert parseBiggestUInt("1111111111111111111", ret) == 19
     assert ret == 1111111111111111111'u64
   var res = BiggestUInt(0)
-  # use 'res' for exception safety (don't write to 'number' in case of an
-  # overflow exception):
+  # use 'res' so 'number' is only written on a successful, in-range parse:
   result = rawParseUInt(s, res)
-  if result != 0:
+  if result > 0:
     number = res
 
 # Following parseBiggestFloat code is copied from `lib/system/strmantle.nim` in Nim 2.
