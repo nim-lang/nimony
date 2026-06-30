@@ -25,9 +25,13 @@ func repeat*[T](x: T; n: Natural): seq[T] =
   for i in 0 ..< n:
     result.add x
 
-# NOTE: `concat` is intentionally not provided yet — `system` exposes a greedy
-# `concat*()` varargs string template that wins/!breaks overload resolution for
-# a `seq` overload. Resolving that cleanly is left to a follow-up.
+func concat*[T](a, b: openArray[T]): seq[T] =
+  ## Concatenates `a` and `b` into a fresh sequence.
+  runnableExamples:
+    assert concat(@[1, 2], @[3, 4]) == @[1, 2, 3, 4]
+  result = @[]
+  for i in 0 ..< a.len: result.add a[i]
+  for i in 0 ..< b.len: result.add b[i]
 
 func count*[T: Equatable](s: openArray[T]; x: T): int =
   ## Returns the number of occurrences of `x` in `s`.

@@ -5,6 +5,7 @@ proc dbl(x: int): int = x * 2
 
 proc main =
   assert repeat(7, 3) == @[7, 7, 7]
+  assert concat(@[1, 2], @[3, 4]) == @[1, 2, 3, 4]
   assert count(@[1, 2, 2, 3, 2], 2) == 3
   assert find(@[10, 20, 30], 20) == 1
   assert find(@[10, 20, 30], 99) == -1
