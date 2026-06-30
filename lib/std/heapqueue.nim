@@ -101,3 +101,46 @@ proc toHeapQueue*[T: Comparable](xs: openArray[T]): HeapQueue[T] =
   result = initHeapQueue[T]()
   for i in 0 ..< xs.len:
     result.push(xs[i])
+
+iterator items*[T](heap: HeapQueue[T]): T =
+  ## Yields each element of `heap` in its internal (heap-array) order.
+  for i in 0 ..< heap.data.len:
+    yield heap.data[i]
+
+func find*[T: Equatable](heap: HeapQueue[T]; x: T): int =
+  ## Linear scan for `x`; returns its internal index, or -1 if absent.
+  result = -1
+  for i in 0 ..< heap.data.len:
+    if heap.data[i] == x: return i
+
+func contains*[T: Equatable](heap: HeapQueue[T]; x: T): bool =
+  ## Whether `x` is in `heap` (shortcut for `find(heap, x) >= 0`).
+  find(heap, x) >= 0
+
+proc del*[T: Comparable](heap: var HeapQueue[T]; index: Natural) =
+  ## Removes the element at internal `index`, keeping the heap invariant.
+  let last = heap.data.len - 1
+  if index >= last:
+    discard heap.data.pop()
+  else:
+    swap(heap.data[index], heap.data[last])
+    discard heap.data.pop()
+    # the moved-in element belongs either up or down; restoring both ways is
+    # safe because exactly one direction applies (the rest of the heap is valid).
+    siftUp(heap, index)
+    siftDown(heap, index)
+
+proc replace*[T: Comparable](heap: var HeapQueue[T]; item: T): T =
+  ## Pops and returns the smallest element, then pushes `item` — more efficient
+  ## than `pop` + `push`. Requires a non-empty heap. The returned value may be
+  ## larger than `item`.
+  result = heap.data[0]
+  heap.data[0] = item
+  siftDown(heap, 0)
+
+proc pushpop*[T: Comparable](heap: var HeapQueue[T]; item: T): T =
+  ## A `push(item)` immediately followed by a `pop()`, but faster.
+  result = item
+  if heap.data.len > 0 and heap.data[0] < result:
+    swap(result, heap.data[0])
+    siftDown(heap, 0)
