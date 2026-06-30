@@ -218,21 +218,15 @@ proc lengthOrd*(c: var SemContext; typ: TypeCursor): xint =
   result = last - first + createXint(1.uint64)
 
 proc containsGenericParams*(n: TypeCursor): bool =
-  var n = n
-  var nested = 0
-  while true:
-    case n.kind
-    of Symbol:
-      let res = tryLoadSym(n.symId)
-      if res.status == LacksNothing and res.decl.tagEnum == TypevarTagId:
-        return true
-    of ParLe:
-      inc nested
-    of ParRi:
-      dec nested
-    else: discard
-    if nested == 0: break
-    inc n
+  if n.kind == Symbol:
+    let res = tryLoadSym(n.symId)
+    if res.status == LacksNothing and res.decl.tagEnum == TypevarTagId:
+      return true
+  elif n.kind == ParLe:
+    var n = n
+    n.loopInto:
+      if containsGenericParams(n): return true
+      skip n
   return false
 
 proc nominalRoot*(t: TypeCursor; allowTypevar = false; skipPtrs = false): SymId =
