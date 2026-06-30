@@ -740,6 +740,12 @@ proc semConvArg(c: var SemContext; dest: var TokenBuf; destType: Cursor; arg: It
           # Successfully resolved the overload choice
           dest.add symToken(matchedSym, info)
           return
+    elif destType.typeKind in {ProctypeT, ItertypeT}:
+      # Resolve an overloaded routine against the expected proc type.
+      let matchedSym = tryMatchProcChoice(addr c, arg.n, destType)
+      if matchedSym != SymId(0):
+        dest.add symToken(matchedSym, info)
+        return
     # If we couldn't resolve it, fall through to normal error handling
 
   # distinct type conversion?
