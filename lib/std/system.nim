@@ -119,6 +119,12 @@ func `$`*(b: bool): string =
 func `$`*[T: enum](x: T): string {.magic: "EnumToStr", noSideEffect.}
   ## Converts an enum value to a string.
 
+type Stringable* = concept
+  ## A type that can be rendered as a `string` via the `$` operator. Generic
+  ## code that stringifies an abstract type parameter `T` should constrain it
+  ## with `[T: Stringable]`, since nimony binds generic bodies eagerly.
+  func `$`(x: Self): string
+
 func addr*[T](x: T): ptr T {.magic: "Addr", noSideEffect.}
   ## Returns the address of `x`.
 func unsafeAddr*[T](x: T): ptr T {.magic: "Addr", noSideEffect.}
