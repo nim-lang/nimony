@@ -72,19 +72,38 @@ always use the mangled field name.
 
 With `importc`/`exportc` resolved, the FFI boundary for a real `echo` is now
 small and explicit: the generated code calls bare `fwrite`/`fprintf`/`fputc` on
-`stdout`, and module init touches no allocator. The remaining **M2+** work is a
-JS runtime for those few externals. The one hard piece is the string *data*
-path: `write` lowers to `readRawData(s)` (a Nim proc that returns a pointer into
-either the inline SSO bytes or the heap buffer) handed to `fwrite` as a raw byte
-pointer — and byte-addressing into the packed SSO integer is the C-memory-model
-operation that the open design question is about (consume fully-lowered Leng vs.
-a higher-level Leng with strings as JS strings). The integer path
-(`fprintf "%lld"`) has no such dependency.
+`stdout`, and module init touches no allocator. Given a tiny JS runtime for those
+externals, **integer `echo` already runs end-to-end** through the real std/system
++ std/syncio modules:
+
+```
+$ nimony c --nimcache:nc echoint.nim        # echo fib(10); echo 2+3
+$ for f in nc/*/*.c.nif; do lengc js --nimcache:out "$f"; done
+$ cat runtime.js out/sysvq0asl.js out/for2ybv4p1.js \
+      out/syn1lfpjv.js out/<main>.js <(echo 'main(0,[]);') | node
+55
+5
+```
+
+(`runtime.js` defines `stdout`/`fprintf`/`fputc`; module order is irrelevant
+since JS hoists function declarations and nothing runs until `main`.) Because an
+unsupported node now emits a *valid* placeholder expression (`undefined/*TODO*/`),
+a never-called function that contains one — e.g. the string `copyMem` path — no
+longer breaks parsing of the whole bundle.
+
+The one piece still missing for *string* `echo` is the data path: `write` lowers
+to `readRawData(s)` (a Nim proc returning a pointer into either the inline SSO
+bytes or the heap buffer) handed to `fwrite` as a raw byte pointer — and
+byte-addressing into the packed SSO integer is the C-memory-model operation the
+open design question is about (consume fully-lowered Leng vs. a higher-level Leng
+with strings as JS strings). The integer path (`fprintf "%lld"`) has no such
+dependency, which is why it runs today.
 
 ## Test
 
-`bash tests/jsbackend/run.sh` — golden-diffs two hand-authored, self-contained
-Leng modules (no system deps) and runs each under Node:
+`bash tests/jsbackend/run.sh` — golden-diffs hand-authored, self-contained Leng
+modules (no system deps, so the test needs only `bin/lengc` and `node`) and runs
+each under Node:
 - `tcompute.c.nif` (pure compute) → checks `add(2,3)==5`, `fib(10)==55`,
   `fib(20)==6765`.
 - `tdata.c.nif` (data structures) → checks `mkpoint(3,4)==7` (object construction
@@ -100,3 +119,6 @@ Leng modules (no system deps) and runs each under Node:
 - `timportc.c.nif` (foreign symbols) → an `importc` proc is not emitted and is
   called by its C name (`extTriple`, supplied as the runtime); an `exportc`
   global is emitted as `counter`. Checks `run()==21` and `counter==21`.
+- `techo.c.nif` (end-to-end I/O) → mirrors how `echo <int>` lowers: Nim procs
+  (`echoInt`/`run`) call `importc` stdio (`stdout`, `putInt`, `putChar`) supplied
+  by a tiny runtime that captures output; asserts `run()` prints `"55\n5\n"`.
