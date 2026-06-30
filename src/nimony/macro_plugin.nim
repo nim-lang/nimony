@@ -45,7 +45,7 @@ proc spliceBodyWithoutResult(dest: var TokenBuf; body: Cursor) =
   if n.kind == ParLe and n.stmtKind == ResultS:
     # Skip the leading result declaration.
     skip n
-  while n.kind != ParRi:
+  while n.hasMore:
     dest.takeTree n
   dest.addParRi()  # the closing ParRi of stmts
 
@@ -72,7 +72,7 @@ proc rewriteSymsToIdents(buf: var TokenBuf) =
           var name = pool.syms[n.symId]
           extractBasename name
           newBuf.add identToken(pool.strings.getOrIncl(name), n.info)
-          while n.kind != ParRi: skip n
+          while n.hasMore: skip n
           skipParRi n  # consume ParRi
         else:
           newBuf.takeToken n
@@ -127,7 +127,7 @@ proc copyParamsRewritingMetatypes(dest: var TokenBuf; params: Cursor;
   dest.add params.load
   var n = params
   inc n
-  while n.kind != ParRi:
+  while n.hasMore:
     if n.substructureKind == ParamU:
       dest.takeToken n
       # Slot 0: name (SymbolDef or Ident)
@@ -232,8 +232,7 @@ proc countParams(macroDecl: Cursor): int =
   if r.params.kind == DotToken or r.params.substructureKind != ParamsU:
     return 0
   var p = r.params
-  inc p
-  while p.kind != ParRi:
+  p.loopInto():
     if p.substructureKind == ParamU:
       inc result
     skip p
