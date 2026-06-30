@@ -906,6 +906,7 @@ proc findObjFieldAux(c: var SemContext; t: Cursor; name: StrId; bindings: Table[
   var baseType = n
   skip n, SkipType # skip basetype
   var iter = initObjFieldIter()
+  var fieldPos = 0 # declaration index of the current field within this level
   while nextField(iter, n):
     let isGuarded = n.substructureKind == GfldU
     inc n # skip FldU/GfldU
@@ -921,13 +922,14 @@ proc findObjFieldAux(c: var SemContext; t: Cursor; name: StrId; bindings: Table[
         # for invoked object types, bindings are built from the given arguments
         # and the field type is instantiated based on them here
         typ = instantiateType(c, typ, bindings)
-      return ObjField(sym: symId, level: level, typ: typ, exported: exported, guarded: isGuarded, rootOwner: SymId(0))
+      return ObjField(sym: symId, level: level, pos: fieldPos, typ: typ, exported: exported, guarded: isGuarded, rootOwner: SymId(0))
     skip n, SkipName # skip name
     skip n, SkipExport # skip export marker
     skip n, SkipPragmas # skip pragmas
     skip n, SkipType # type
     skip n, SkipValue # value
     skipParRi n
+    inc fieldPos
   if baseType.kind == DotToken:
     result = ObjField(level: -1)
   else:
@@ -1534,7 +1536,11 @@ proc semTypeof(c: var SemContext; dest: var TokenBuf; it: var Item) =
   else:
     assert false
 
+  # `typeof` extracts a type; the operand's value (and its side effects) never
+  # run, so an eval-order warning about it would be spurious — stay silent.
+  inc c.inSpeculativeArg
   semExpr c, dest, it, semFlags
+  dec c.inSpeculativeArg
   var t = it.typ
   if t.typeKind == TypedescT: inc t
   # `typeof` produces the *value* type: drop reference qualifiers so that e.g.
@@ -4147,6 +4153,17 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
   let bindings = bindInvokeArgs(decl, invokeArgs)
   var fieldBuf = createTokenBuf(16)
   var setFieldPositions = initTable[SymId, int]()
+  # Warn when a constructor writes fields out of declaration order
+  # (nim-lang/nimony#1056): `buildDefaultObjConstr` always emits fields in
+  # declaration order, so the values' side effects run in that order regardless
+  # of the source order. Tracked inline as fields are resolved below, rather than
+  # by re-walking the type. Objects with a base type are skipped: there the
+  # emission order interleaves base and derived fields, so a single per-level
+  # `pos` is not a comparable rank across levels.
+  var checkFieldOrder = not isGenericObj and
+      asObjectDecl(objType).parentType.kind == DotToken
+  var prevFieldPos = -1
+  var fieldsOutOfOrder = false
   while it.n.hasMore:
     if it.n.substructureKind != KvU:
       c.buildErr dest, it.n.info, "expected key/value pair in object constructor"
@@ -4177,6 +4194,11 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
             skip it.n
           else:
             setFieldPositions[field.sym] = fieldStart
+            if checkFieldOrder:
+              # a rank that does not strictly increase means this field is
+              # written before one declared earlier -> evaluation is reordered
+              if field.pos <= prevFieldPos: fieldsOutOfOrder = true
+              else: prevFieldPos = field.pos
             if isGenericObj:
               # do not save generic field sym
               fieldBuf.add identToken(fieldName, fieldInfo)
@@ -4204,6 +4226,10 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
   var setFields = initTable[SymId, Cursor]()
   for field, pos in setFieldPositions:
     setFields[field] = cursorAt(fieldBuf, pos)
+
+  if fieldsOutOfOrder:
+    c.warn info, "object constructor fields are out of order; reorder them to match the field declaration (evaluation) order"
+
   buildDefaultObjConstr(c, dest, it.typ, setFields, info, bindings)
   commonType c, dest, it, exprStart, expected
 
