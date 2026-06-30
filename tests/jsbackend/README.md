@@ -26,6 +26,8 @@ type generation and maps Leng constructs directly to JS:
 | `(addr x)` | `[x, 0]` — `x` is a boxed local (1-element array) |
 | `(addr o.f)` / `(addr a[i])` | `[o, "f"]` / `[a, i]` — fat `[base, key]` pointer |
 | `(deref p)` | `p[0][p[1]]` — read/write through the fat pointer |
+| `importc "fwrite"` proc/global | referenced as `fwrite`; **not** emitted (runtime provides it) |
+| `exportc "main"` proc/global | emitted as `main` (its C name) |
 
 ## Scope
 
@@ -59,13 +61,25 @@ seqs growth, the GC runtime) likewise emits a `/*TODO:<tag>*/` marker and is
 skipped, so generation always completes and the coverage gap is visible in the
 output and reported on stderr.
 
-The remaining **M2+** work is the runtime: the system-module FFI procs
-(`write`/`stdout`/`nimFlushStdStreams`) need JS shims, and string values use the
-lowered SSO representation (`{bytes, more}`) which a `write` shim must decode.
-This still depends on the open design question of whether JS consumes
-fully-lowered Leng or a higher-level Leng with the destructor passes gated off
-for the GC target — but the codegen for the data shapes themselves is now in
-place and design-neutral.
+**Foreign symbols (`importc`/`exportc`).** A symbol's external (C) name is
+resolved exactly as the C backend's `mangleSym` does — through the lazily-loaded
+foreign-module declarations — so a reference works across modules. An `importc`
+proc or global names an external entity: it is referenced by its C name (e.g.
+`fwrite`, `stdout`) and **no** definition is emitted, leaving a small, explicit
+boundary for a runtime to fill. An `exportc` symbol is emitted under its C name
+(so `main` is `main`). Object-field keys are never treated as foreign — they
+always use the mangled field name.
+
+With `importc`/`exportc` resolved, the FFI boundary for a real `echo` is now
+small and explicit: the generated code calls bare `fwrite`/`fprintf`/`fputc` on
+`stdout`, and module init touches no allocator. The remaining **M2+** work is a
+JS runtime for those few externals. The one hard piece is the string *data*
+path: `write` lowers to `readRawData(s)` (a Nim proc that returns a pointer into
+either the inline SSO bytes or the heap buffer) handed to `fwrite` as a raw byte
+pointer — and byte-addressing into the packed SSO integer is the C-memory-model
+operation that the open design question is about (consume fully-lowered Leng vs.
+a higher-level Leng with strings as JS strings). The integer path
+(`fprintf "%lld"`) has no such dependency.
 
 ## Test
 
@@ -83,3 +97,6 @@ Leng modules (no system deps) and runs each under Node:
   through the address of an object field), `elemaddr()==99` (through the address
   of an array element), and `samefield()`/`difffield()` (fat-pointer equality:
   same key vs different key).
+- `timportc.c.nif` (foreign symbols) → an `importc` proc is not emitted and is
+  called by its C name (`extTriple`, supplied as the runtime); an `exportc`
+  global is emitted as `counter`. Checks `run()==21` and `counter==21`.
