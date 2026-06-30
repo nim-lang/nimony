@@ -66,16 +66,9 @@ proc collectSyms(n: Cursor; stack: var seq[SymId]) =
     if n.kind == Symbol: stack.add n.symId
   else:
     var n = n
-    var nested = 0
-    while true:
-      case n.kind
-      of ParRi:
-        dec nested
-        if nested == 0: break
-      of ParLe: inc nested
-      of Symbol: stack.add n.symId
-      else: discard
-      inc n
+    n.loopInto:
+      collectSyms(n, stack)
+      skip n
 
 proc instantiationTypevars(sym: SymId): Cursor =
   ## Returns the instantiated proc/type decl's `typevars` slot if `sym`
