@@ -52,7 +52,7 @@ type
     thisModule*: string
     line*: int32 # file position within the NIF file, not affected by line annotations
     indexAt: int  # position of the index
-    unusedNameHint: StringView
+    unusedNameHint: ExpandedToken
 
 proc `$`*(t: ExpandedToken): string =
   case t.tk
@@ -533,7 +533,7 @@ proc readDirectives(r: var Reader) =
       elif tok.data == ".unusedname":
         next(r, tok)
         if tok.tk == Symbol:
-          r.unusedNameHint = tok.data
+          r.unusedNameHint = tok
       # skip the rest of the directive:
       var nested = 0
       while true:
@@ -601,6 +601,12 @@ proc jumpTo*(r: var Reader; offset: int) {.inline.} =
 
 proc indexStartsAt*(r: Reader): int =
   r.indexAt
+
+proc firstUnusedName*(r: Reader): string =
+  ## Returns the symbol supplied by the `.unusedname` directive, or `""`.
+  result = ""
+  if r.unusedNameHint.tk == Symbol:
+    result = decodeStr(r, r.unusedNameHint)
 
 when isMainModule and not defined(nimony):
   #const test = r"(.nif27)(stmts :\5B\5D=)"
