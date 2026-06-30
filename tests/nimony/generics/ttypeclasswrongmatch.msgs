@@ -1,24 +1,24 @@
-tests/nimony/generics/ttypeclasswrongmatch.nim(3, 5) Error: Type mismatch at [position]
+tests/nimony/generics/ttypeclasswrongmatch.nim(3, 5) Error: type mismatch
 foo2(123)
 [1] int64 does not match constraint T (declared in tests/nimony/generics/deps/mtypeclassmatch.nim(19, 1))
-tests/nimony/generics/ttypeclasswrongmatch.nim(4, 5) Error: Type mismatch at [position]
+tests/nimony/generics/ttypeclasswrongmatch.nim(4, 5) Error: type mismatch
 foo3(e0)
 [1] EnumA does not match constraint T (declared in tests/nimony/generics/deps/mtypeclassmatch.nim(26, 1))
-tests/nimony/generics/ttypeclasswrongmatch.nim(9, 9) Error: Type mismatch at [position]
+tests/nimony/generics/ttypeclasswrongmatch.nim(9, 9) Error: type mismatch
 foo2(x)
 [1] T does not match constraint T (declared in tests/nimony/generics/deps/mtypeclassmatch.nim(19, 1))
-tests/nimony/generics/ttypeclasswrongmatch.nim(17, 9) Error: Type mismatch at [position]
+tests/nimony/generics/ttypeclasswrongmatch.nim(17, 9) Error: type mismatch
 foo3(x)
 [1] T does not match constraint T (declared in tests/nimony/generics/deps/mtypeclassmatch.nim(26, 1))
-tests/nimony/generics/ttypeclasswrongmatch.nim(23, 9) Error: Type mismatch at [position]
+tests/nimony/generics/ttypeclasswrongmatch.nim(23, 9) Error: type mismatch
 foo2(x)
 [1] T does not match constraint T (declared in tests/nimony/generics/deps/mtypeclassmatch.nim(19, 1))
-tests/nimony/generics/ttypeclasswrongmatch.nim(29, 9) Error: Type mismatch at [position]
+tests/nimony/generics/ttypeclasswrongmatch.nim(29, 9) Error: type mismatch
 foo1(x)
 [1] T does not match constraint T (declared in tests/nimony/generics/deps/mtypeclassmatch.nim(12, 1))
-tests/nimony/generics/ttypeclasswrongmatch.nim(30, 9) Error: Type mismatch at [position]
+tests/nimony/generics/ttypeclasswrongmatch.nim(30, 9) Error: type mismatch
 foo2(x)
 [1] T does not match constraint T (declared in tests/nimony/generics/deps/mtypeclassmatch.nim(19, 1))
-tests/nimony/generics/ttypeclasswrongmatch.nim(31, 9) Error: Type mismatch at [position]
+tests/nimony/generics/ttypeclasswrongmatch.nim(31, 9) Error: type mismatch
 foo3(x)
 [1] T does not match constraint T (declared in tests/nimony/generics/deps/mtypeclassmatch.nim(26, 1))

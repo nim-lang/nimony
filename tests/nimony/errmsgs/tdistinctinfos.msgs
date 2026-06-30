@@ -1,5 +1,5 @@
 tests/nimony/errmsgs/tdistinctinfos.nim(4, 20) Trace: instantiation from here
-lib/std/system/comparisons.nim(110, 10) Error: Type mismatch at [position]
+lib/std/system/comparisons.nim(110, 10) Error: type mismatch
 WINBOOL(0) == 0
 [2] expected: WINBOOL but got: int64 (declared in lib/std/system/comparisons.nim(4, 1))
 [1] WINBOOL does not match constraint Enum (declared in lib/std/system/comparisons.nim(7, 1))

@@ -1032,7 +1032,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         errorMsg.add " for type "
         errorMsg.add typeToString(cs.args[0].typ)
     elif m.len > 0:
-      errorMsg = "Type mismatch at [position]\n"
+      errorMsg = "type mismatch\n"
       errorMsg.add asNimCode erroredN
       for i in 0..<m.len:
         errorMsg.add "\n"

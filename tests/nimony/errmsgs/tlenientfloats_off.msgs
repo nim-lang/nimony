@@ -1,3 +1,3 @@
-tests/nimony/errmsgs/tlenientfloats_off.nim(6, 1) Error: Type mismatch at [position]
+tests/nimony/errmsgs/tlenientfloats_off.nim(6, 1) Error: type mismatch
 takeF32 M_PI
 [1] expected: 32 but got: 64 (declared in tests/nimony/errmsgs/tlenientfloats_off.nim(5, 1))

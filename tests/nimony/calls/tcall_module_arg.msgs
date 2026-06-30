@@ -1,5 +1,5 @@
 tests/nimony/calls/tcall_module_arg.nim(5, 1) Trace: instantiation from here
-lib/std/syncio.nim(453, 5) Error: Type mismatch at [position]
+lib/std/syncio.nim(453, 5) Error: type mismatch
 write stdout, syncio
 [2] expected: string but got: (module) (declared in lib/std/syncio.nim(244, 1))
 [2] expected: bool but got: (module) (declared in lib/std/syncio.nim(250, 1))
