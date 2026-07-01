@@ -17,23 +17,37 @@ const { NimMem } = require("./mem.js");
 const mem = new NimMem();
 
 // ╔═══════════════════════════════════════════════════════════════════════════╗
-// ║ ALLOCATOR — THE ONE OPEN ABI DECISION (Araq's Q1 on PR #2043)             ║
+// ║ ALLOCATOR — RESOLVED (Araq, PR #2043)                                     ║
 // ╠═══════════════════════════════════════════════════════════════════════════╣
-// ║ The generated code calls a small, fixed set of primitives:                ║
-// ║     allocFixed(size) -> ptr        (zeroed; used by new/seq/closures)      ║
-// ║     dealloc(ptr)                    (paired with =destroy / GC)            ║
-// ║ The INTERFACE is settled — it is what codegen emits. Only the             ║
-// ║ IMPLEMENTATION POLICY is open, and it is a two-way choice:                 ║
-// ║   (a) run the existing Nim allocator (mimalloc) compiled to operate over   ║
-// ║       THIS ArrayBuffer, WASM-`Memory` style (one heap, byte-addressed);    ║
-// ║   (b) a minimal JS shim providing just these primitives over the buffer.   ║
-// ║ Ownership (who calls dealloc — manual, =destroy, or a FinalizationRegistry ║
-// ║ sweep) rides along with this same decision. This spike uses (b)'s simplest ║
-// ║ form, a bump allocator, so the surface runs; swapping the body below for   ║
-// ║ the real policy is the whole of the remaining allocator work.              ║
+// ║ The native Nim allocator is COMPILED TO JS like any other Nim code — its   ║
+// ║ free lists, size classes, and `allocFixed`/`dealloc` all come from the     ║
+// ║ normal pipeline running over linear memory. So there is essentially no     ║
+// ║ allocator "ABI" to design; the JS runtime provides ONLY the OS pages the   ║
+// ║ allocator sits on:                                                         ║
+// ║     mmap(size)  -> ptr      hand raw, page-aligned pages to the allocator  ║
+// ║     munmap(ptr, size)       release a region                               ║
+// ║ And the allocator does NOT assume one contiguous growable block, so each   ║
+// ║ mmap may return an independent, NON-growable TypedArray region — no        ║
+// ║ resizable ArrayBuffer required (wider engine portability). This spike      ║
+// ║ keeps one backing buffer and sub-reserves from it; that region-agnostic    ║
+// ║ property is exactly why single- vs. multi-buffer is a free choice.         ║
 // ╚═══════════════════════════════════════════════════════════════════════════╝
-function allocFixed(size) { return mem.alloc(size, 8); }   // zeroed by mem.alloc
-function dealloc(_p) { /* bump: no reclaim; the real ABI frees here */ }
+// The ONLY genuinely JS-provided primitives (the mmap/munmap emulation):
+function mmap(size) { return mem.alloc(size, 4096); }   // page-aligned, zeroed
+function munmap(_p, _size) { /* real emulation releases the region */ }
+
+// STAND-IN for the compiled-Nim allocator: in a real build `allocFixed`/`dealloc`
+// come from the pipeline (Nim code over `mmap` above), NOT from here. This tiny
+// bump-over-mmap only exists so the spikes below have storage, and it models the
+// true layering — the allocator sub-allocates the regions it gets from `mmap`.
+let _brk = 0, _end = 0;
+const REGION = 1 << 16;
+function allocFixed(size) {
+  size = (size + 7) & ~7;
+  if (_brk + size > _end) { const need = Math.max(REGION, size); _brk = mmap(need); _end = _brk + need; }
+  const p = _brk; _brk += size; return p;
+}
+function dealloc(_p) { /* the compiled allocator reclaims; munmap returns pages */ }
 
 // ── strings (SSO over linear memory) — proven in model.spike.js ──────────────
 // 16-byte value; low bit of byte 0 is the SSO discriminant (set = inline ≤15,
@@ -84,7 +98,7 @@ class Registry {
 function nimPtrEq(a, b) { return a[0] === b[0] && a[1] === b[1]; }
 
 module.exports = {
-  mem, allocFixed, dealloc,
+  mem, mmap, munmap, allocFixed, dealloc,
   mkstr, readRawData, strLen,
   stdout, fwrite, fputc, nimFlushStdStreams, writeString,
   Registry, nimPtrEq,

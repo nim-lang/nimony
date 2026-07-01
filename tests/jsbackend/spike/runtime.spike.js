@@ -5,7 +5,7 @@
 
 "use strict";
 const {
-  mem, allocFixed, mkstr, strLen, writeString, Registry, nimPtrEq,
+  mem, mmap, allocFixed, mkstr, strLen, writeString, Registry, nimPtrEq,
 } = require("./runtime.js");
 
 let ok = true;
@@ -13,7 +13,11 @@ const eq = (label, got, want) => {
   if (got !== want) { ok = false; console.log(`FAIL ${label}: got ${JSON.stringify(got)} want ${JSON.stringify(want)}`); }
 };
 
-// allocator: distinct, zeroed, usable offsets (the ABI the codegen targets)
+// the real JS-provided boundary (Araq): mmap hands the allocator page-aligned pages
+const pg = mmap(4096);
+eq("mmap page-aligned", pg % 4096, 0);
+
+// allocFixed (compiled-Nim allocator stand-in) sub-allocates those pages
 const a = allocFixed(8), b = allocFixed(8);
 eq("allocs distinct", a !== b, true);
 eq("alloc zeroed", mem.i32(a), 0);
