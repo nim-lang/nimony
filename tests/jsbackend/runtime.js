@@ -35,6 +35,14 @@ function memcpy(d,s,n){ _u8.copyWithin(Number(d),Number(s),Number(s)+Number(n));
 function memset(p,v,n){ _u8.fill(v&0xff,Number(p),Number(p)+Number(n)); return p; }
 function strlen(p){ let n=0; while(_u8[Number(p)+n]!==0) n++; return n; }
 
+// Function table: a proc pointer in linear memory is an integer index into
+// `_fns` (WASM's model — JS can't call an integer). `_fnid(fn)` interns a proc to
+// its stable index when it's taken as a value; the codegen emits `_fns[idx](args)`
+// for an indirect call (a proc variable / closure field). Index 0 is nil.
+const _fns = [null];
+const _fnmap = new Map();
+function _fnid(fn){ let i=_fnmap.get(fn); if(i===undefined){ i=_fns.length; _fns.push(fn); _fnmap.set(fn,i); } return i; }
+
 // C11 memory-order constants (imported by the atomic ops; ignored by the shims).
 const __ATOMIC_RELAXED = 0, __ATOMIC_CONSUME = 1, __ATOMIC_ACQUIRE = 2,
       __ATOMIC_RELEASE = 3, __ATOMIC_ACQ_REL = 4, __ATOMIC_SEQ_CST = 5;

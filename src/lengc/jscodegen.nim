@@ -86,6 +86,14 @@ proc isImportc(g: var JSGen; symId: SymId): bool =
   let d = g.m.getDeclOrNil(symId)
   result = d != nil and d.isImport
 
+proc isProc(g: var JSGen; symId: SymId): bool =
+  ## True when `symId` names a proc (as opposed to a var/param/field). Drives the
+  ## function-table model: a proc *called directly* is a plain JS call; a proc used
+  ## as a *value* becomes a table index, and a call through such an index (a proc
+  ## variable / closure field) is dispatched via `_fns[idx]`.
+  let d = g.m.getDeclOrNil(symId)
+  result = d != nil and d.kind == ProcY
+
 proc fieldName(g: JSGen; symId: SymId): string {.inline.} =
   ## Object-field key: always the mangled field name (matching the C backend),
   ## never an extern name — `name`'s foreign-decl lookup is for top-level symbols.
@@ -172,11 +180,21 @@ proc unPlain(g: var JSGen; n: var Cursor; opr: string) =
       while n.hasMore: skip n
 
 proc genCall(g: var JSGen; n: var Cursor) =
-  g.js.tree jCall:
-    n.into:
-      g.gx n            # callee
-      while n.hasMore:
-        g.gx n          # each argument
+  n.into:
+    if n.kind == Symbol and g.isProc(n.symId):
+      # direct call: the callee names a proc -> a plain JS call `name(args)`.
+      g.js.tree jCall:
+        g.js.name g.name(n.symId); inc n
+        while n.hasMore: g.gx n
+    else:
+      # indirect call: the callee is a function-table index (a proc variable or a
+      # closure's fn field) -> `_fns[idx](args)`. JS can't call an integer, so the
+      # index is resolved through the runtime table.
+      g.js.tree jCall:
+        g.js.tree jIndex:
+          g.js.name "_fns"
+          g.gx n          # the fn-pointer index (advances past the callee)
+        while n.hasMore: g.gx n
 
 # ── buffer model (Typed-Array linear memory, Araq's M2 direction) ────────────
 # A Nim-native object is bytes in linear memory: construction is `allocFixed` +
@@ -227,10 +245,12 @@ proc resolveType(g: var JSGen; typ: Cursor): Cursor =
       result = asTypeDecl(p).body
 
 proc arrayElemInfo(g: var JSGen; arrTyp: Cursor): (bool, int64, AccessKind) =
-  ## `(isArray, elementStride, elementAccessKind)` for an array type. The stride
-  ## is the element size rounded up to its alignment (C array layout).
+  ## `(isArray, elementStride, elementAccessKind)` for an array/flexarray type. The
+  ## stride is the element size rounded up to its alignment (C array layout). A
+  ## flexarray `(flexarray elem)` has the same element-then-optional-tail shape as
+  ## `(array elem size)`, so the same walk covers both.
   let t = g.resolveType(arrTyp)
-  if t.typeKind != ArrayT: return (false, 0'i64, akAggregate)
+  if t.typeKind notin {ArrayT, FlexarrayT}: return (false, 0'i64, akAggregate)
   var n = t
   var stride = 0'i64
   var ak = akAggregate
@@ -369,6 +389,19 @@ proc constrExtraBytes(g: var JSGen; n: Cursor): int64 =
             result += int64(g.m.pool.strings[strId(kv)].len)
           while kv.hasMore: skip kv
       skip c
+
+proc aconstrBytes(g: var JSGen; n: Cursor; arrTyp: Cursor): int64 =
+  ## Total bytes an `(aconstr T e0 e1 …)` occupies — element count times stride.
+  ## Used to size a flexarray/unsized-array allocation, whose fixed layout is 0.
+  let (_, stride, _) = g.arrayElemInfo(arrTyp)
+  var count = 0'i64
+  var c = n
+  c.into:
+    skip c            # element/array type operand
+    while c.hasMore:
+      inc count
+      skip c
+  count * stride
 
 proc constructObjectInto(g: var JSGen; dest: string; n: var Cursor) =
   ## Build the stores for an `(oconstr Type (kv f v) …)` into the storage at
@@ -531,19 +564,28 @@ proc gx(g: var JSGen; n: var Cursor) =
     of CharLit:  g.js.num int64(ord(n.charLit)); inc n
     of StrLit:   g.js.str g.m.pool.strings[strId(n)]; inc n
     of Symbol:
-      # an address-taken SCALAR local lives in a buffer slot (so it has a real
-      # byte address); read it with a typed load. An aggregate local already holds
-      # its offset, and ordinary locals stay JS registers — both read by name.
       let nm = g.name(n.symId)
-      let ak = (if n.symId in g.boxed and g.localTypes.hasKey(n.symId): accessOf(g.m, g.localTypes[n.symId])
-                elif n.symId in g.boxed: akI64
-                else: akAggregate)   # sentinel meaning "emit name"
-      if n.symId in g.boxed and ak != akAggregate:
-        let (ld, _) = accessors(ak)
-        g.memMeth(ld): g.js.name nm
+      if g.isProc(n.symId):
+        # a proc used as a VALUE (stored in a closure / proc variable): its stable
+        # function-table index, `_fnid(fn)`. A *called* proc never reaches here —
+        # `genCall` emits the direct call itself.
+        g.js.tree jCall:
+          g.js.name "_fnid"
+          g.js.name nm
+        inc n
       else:
-        g.js.name nm
-      inc n
+        # an address-taken SCALAR local lives in a buffer slot (so it has a real
+        # byte address); read it with a typed load. An aggregate local already holds
+        # its offset, and ordinary locals stay JS registers — both read by name.
+        let ak = (if n.symId in g.boxed and g.localTypes.hasKey(n.symId): accessOf(g.m, g.localTypes[n.symId])
+                  elif n.symId in g.boxed: akI64
+                  else: akAggregate)   # sentinel meaning "emit name"
+        if n.symId in g.boxed and ak != akAggregate:
+          let (ld, _) = accessors(ak)
+          g.memMeth(ld): g.js.name nm
+        else:
+          g.js.name nm
+        inc n
     of DotToken:
       g.js.raw "undefined"; inc n
     else:
@@ -766,6 +808,8 @@ proc genVar(g: var JSGen; n: var Cursor) =
     var allocSz = lay.size
     if d.value.kind != DotToken and d.value.exprKind == OconstrC:
       allocSz += g.constrExtraBytes(d.value)   # room for a static string's data
+    elif d.value.kind != DotToken and d.value.exprKind == AconstrC and allocSz == 0:
+      allocSz = g.aconstrBytes(d.value, d.typ)  # flexarray/unsized: size from elems
     g.jallocVar(nm, allocSz)
     if d.value.kind != DotToken:
       var v = d.value

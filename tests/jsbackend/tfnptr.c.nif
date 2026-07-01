@@ -1,0 +1,14 @@
+(.nif27)
+(stmts
+ (proc :dbl.0.tfnptr
+  (params (param :n.0 . (i 64)))
+  (i 64)
+  .
+  (stmts (ret (mul (i 64) n.0 2))))
+ (proc :callit.0.tfnptr
+  (params)
+  (i 64)
+  .
+  (stmts
+   (var :f.0 . (ptr (i 64)) dbl.0.tfnptr)
+   (ret (call f.0 21)))))
