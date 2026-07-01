@@ -128,6 +128,12 @@ proc tracebackTypeC*(c: var MainModule; n: Cursor): Cursor =
   ## `default(Cursor)` for an unregistered body (e.g. an anonymous inline type).
   c.typeBodyToDecl.getOrDefault(n.toUniqueId(), default(Cursor))
 
+proc hasLocalDecl*(c: MainModule; s: SymId): bool =
+  ## True when `s` is declared in this module (registered by `detectToplevelDecls`).
+  ## Lets a caller decide to resolve a type without risking the foreign-load path
+  ## in `getDeclOrNil`, which asserts on an unresolvable suffixed symbol.
+  c.defs.hasKey(s)
+
 proc getDeclOrNil*(c: var MainModule; s: SymId): ptr Definition =
   if not c.defs.hasKey(s):
     let splitted = splitSymName(c.pool.syms[s])
