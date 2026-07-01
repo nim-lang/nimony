@@ -83,6 +83,24 @@ $ node structcopy.spike.js
 structcopy spike: PASS (oconstr+dot+aggregate copyMem over layout-pass offsets)
 ```
 
+## Consolidated runtime (`runtime.js` + `runtime.spike.js`)
+
+The pieces above each proved one slice with its own throwaway shims. `runtime.js`
+gathers them into the single runtime a real bundle links against (the names
+`jslink` prepends ahead of the module artifacts): the allocator primitives, SSO
+strings, stdio, the interop registry, and fat-pointer equality. It is a spike in
+exactly one respect — the allocator is the bump placeholder — and that one open
+decision is **isolated and labelled** in a boxed `ALLOCATOR — THE ONE OPEN ABI
+DECISION` section: the `allocFixed`/`dealloc` *interface* is what codegen emits
+and is settled; only the *implementation policy* (mimalloc-over-`ArrayBuffer`
+vs. a minimal shim, and who calls `dealloc`) is Araq's call. `runtime.spike.js`
+exercises every section as one module.
+
+```
+$ node runtime.spike.js
+runtime spike: PASS (allocator ABI surface + strings + stdio + registry + ptrs)
+```
+
 ## Files
 
 - `mem.js` — the linear-memory runtime: resizable `ArrayBuffer`, bump `alloc`,
@@ -92,6 +110,8 @@ structcopy spike: PASS (oconstr+dot+aggregate copyMem over layout-pass offsets)
 - `interop.spike.js` — the JS-interop boundary: registry + factory + ES class.
 - `structcopy.spike.js` — buffer emission over the layout-pass offsets:
   `oconstr`/`dot`/aggregate `copyMem`, proving value-copy semantics.
+- `runtime.js` — the consolidated runtime surface (allocator ABI boundary +
+  strings + stdio + registry + pointers); `runtime.spike.js` exercises it.
 
 ## What this makes concrete for the codegen
 
