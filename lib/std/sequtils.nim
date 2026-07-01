@@ -181,30 +181,51 @@ func minmax*[T: Comparable](x: openArray[T]): (T, T) =
 # provides `addUnique[T](s: var seq[T]; x: sink T)`.
 
 func delete*[T](s: var seq[T]; first, last: Natural) =
-  ## Deletes the elements `s[first..last]` (inclusive) in place.
+  ## Deletes the elements `s[first..last]` (inclusive) in place, without building
+  ## a fresh sequence: the survivors after `last` are swapped down over the gap,
+  ## which leaves the dropped elements in the tail, and `shrink` then destroys
+  ## exactly those dropped elements.
   runnableExamples:
     var a = @[10, 11, 12, 13, 14]
     a.delete(1, 2)
     assert a == @[10, 13, 14]
-  var res: seq[T] = @[]
-  for i in 0 ..< s.len:
-    if i < first or i > last: res.add s[i]
-  s = res
+  let L = s.len
+  let lo = first.int
+  if lo >= L or first > last: return
+  let hi = min(last.int, L - 1)
+  var w = lo             # next survivor slot to fill
+  var i = hi + 1
+  while i < L:
+    swap(s[w], s[i])
+    inc w
+    inc i
+  shrink(s, w)           # destroys the dropped elements now sitting in `[w ..< L]`
 
-func insert*[T](dest: var seq[T]; src: openArray[T]; pos: Natural = 0) =
-  ## Inserts the elements of `src` into `dest` at position `pos`, in place.
+func insert*[T](dest: var seq[T]; src: openArray[T]; pos: Natural = 0) {.nodestroy.} =
+  ## Inserts the elements of `src` into `dest` at position `pos`, in place: the
+  ## storage is grown once and the tail shifted up, rather than materialising a
+  ## whole new sequence.
   runnableExamples:
     var dest = @[1, 1, 1]
     dest.insert(@[2, 2], 1)
     assert dest == @[1, 2, 2, 1, 1]
-  var res: seq[T] = @[]
-  for i in 0 ..< pos:
-    res.add dest[i]
-  for i in 0 ..< src.len:
-    res.add src[i]
-  for i in pos ..< dest.len:
-    res.add dest[i]
-  dest = res
+  let n = src.len
+  if n == 0: return
+  let oldLen = dest.len
+  let at = min(pos.int, oldLen)
+  growUnsafe(dest, oldLen + n)
+  let p = rawData(dest)
+  if p == nil: return
+  # Shift the tail `[at ..< oldLen]` up by `n`, back to front to avoid clobber.
+  var i = oldLen
+  while i > at:
+    dec i
+    (p[i + n]) = p[i]
+  # Fill the gap `[at ..< at+n]` with owned copies of `src`.
+  var j = 0
+  while j < n:
+    (p[at + j]) = `=dup`(src[j])
+    inc j
 
 # ── `it` / fold templates ────────────────────────────────────────────────────
 #
