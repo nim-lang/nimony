@@ -33,7 +33,8 @@ proc main() =
         stdout.writeLine nameOf(m, decl.name.symId) &
           " size=" & $lay.size & " align=" & $lay.align
         for f in objectFields(m, decl.body):
-          stdout.writeLine "  " & nameOf(m, f.sym) & " @" & $f.offset
+          stdout.writeLine "  " & nameOf(m, f.sym) & " @" & $f.offset &
+            " " & $accessOf(m, f.typ)
       else:
         skip n
   else:

@@ -1,17 +1,17 @@
 Point_0_tlayout size=8 align=4
-  x_0_tlayout @0
-  y_0_tlayout @4
+  x_0_tlayout @0 akI32
+  y_0_tlayout @4 akI32
 Mixed_0_tlayout size=24 align=8
-  a_0_tlayout @0
-  b_0_tlayout @8
-  c_0_tlayout @16
+  a_0_tlayout @0 akI8
+  b_0_tlayout @8 akI64
+  c_0_tlayout @16 akI16
 WithArr_0_tlayout size=20 align=4
-  h_0_tlayout @0
-  arr_0_tlayout @4
+  h_0_tlayout @0 akI8
+  arr_0_tlayout @4 akAggregate
 Base_0_tlayout size=4 align=4
-  k_0_tlayout @0
+  k_0_tlayout @0 akI32
 Rect_0_tlayout size=16 align=4
-  ra_0_tlayout @0
-  rb_0_tlayout @8
+  ra_0_tlayout @0 akAggregate
+  rb_0_tlayout @8 akAggregate
 Derived_0_tlayout size=8 align=4
-  m_0_tlayout @4
+  m_0_tlayout @4 akI32

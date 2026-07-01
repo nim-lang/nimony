@@ -36,6 +36,16 @@ type
     offset*: int64    ## byte offset from the start of the object
     typ*: Cursor      ## the field's type (so codegen can pick the load/store width)
 
+  AccessKind* = enum
+    ## How a value of a type is loaded/stored at a byte offset in linear memory.
+    ## Scalars pick a typed `DataView` accessor; `akAggregate` has none — an
+    ## object/array/union is accessed by its sub-offsets or copied wholesale.
+    akI8, akI16, akI32, akI64
+    akU8, akU16, akU32, akU64
+    akF32, akF64
+    akPtr        ## a pointer, stored as a pointer-size integer offset
+    akAggregate  ## object/array/union: no scalar load
+
 proc roundUp(x, a: int64): int64 {.inline.} =
   if a <= 1: x else: (x + a - 1) and not (a - 1)
 
@@ -162,6 +172,44 @@ proc typeLayout*(m: var MainModule; t: Cursor): Layout =
       result = Layout(size: 0, align: 1)
   else:
     result = Layout(size: PtrSize, align: PtrSize)
+
+proc accessOf*(m: var MainModule; t: Cursor): AccessKind =
+  ## The scalar access class of a type (or `akAggregate`), resolving named types
+  ## and enums (an enum accesses as its base type). This is what a `dot`/`at`
+  ## load or `oconstr`/`store` write picks its `DataView` method from.
+  result = akAggregate
+  case t.typeKind
+  of IT:
+    let b = bitsOf(t, PtrSize * 8)
+    result = (if b == 8: akI8 elif b == 16: akI16 elif b == 32: akI32 else: akI64)
+  of UT:
+    let b = bitsOf(t, PtrSize * 8)
+    result = (if b == 8: akU8 elif b == 16: akU16 elif b == 32: akU32 else: akU64)
+  of FT:
+    result = (if bitsOf(t, 64) == 32: akF32 else: akF64)
+  of BoolT, CT:
+    result = akU8
+  of PtrT, AptrT, ProctypeT:
+    result = akPtr
+  of EnumT:
+    var n = t
+    n.into:
+      result = accessOf(m, n)
+      while n.hasMore: skip n
+  of ObjectT, UnionT, ArrayT, FlexarrayT:
+    result = akAggregate
+  of NoType:
+    if t.kind == Symbol:
+      let def = m.getDeclOrNil(t.symId)
+      if def != nil:
+        var p = def.pos
+        result = accessOf(m, asTypeDecl(p).body)
+      else:
+        result = akPtr
+    else:
+      result = akAggregate
+  else:
+    result = akAggregate
 
 proc objectFields*(m: var MainModule; t: Cursor): seq[FieldInfo] =
   ## Per-field byte offsets for an object (empty for non-objects). Resolves a
