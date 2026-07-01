@@ -42,12 +42,33 @@ a longer, heap-allocated string!
 spike: PASS (struct layout + SSO inline/heap string echo over linear memory)
 ```
 
+## Interop boundary (`interop.spike.js`)
+
+Backs the interop answers on the PR with running code — the split between
+linear memory (Nim-native data) and a JS handle registry (real JS values):
+
+- **JS primitives.** A `number` has a machine rep, so it is stored *unboxed* in
+  the buffer; a `string` has no fixed byte shape, so the field stores a registry
+  handle. (`Person { age: int32; name: jsstring }` — `age` in the buffer, `name`
+  a handle.)
+- **Allocator-backed factory.** JS can't carve Nim bytes itself, so a generated
+  `_nim_Person_new` calls the (spike) allocator and returns an offset.
+- **ES-class export.** `class Person` wraps the offset with get/set accessors and
+  a `dispose()` that releases the registry root — so JS writes `new Person(30,
+  "Ada")` over a Nim object living in linear memory.
+
+```
+$ node interop.spike.js
+interop spike: PASS (registry + allocator factory + ES-class export)
+```
+
 ## Files
 
 - `mem.js` — the linear-memory runtime: resizable `ArrayBuffer`, bump `alloc`,
   little-endian typed load/store, `copy` (memcpy), `bytes` (a raw view for
   `fwrite`).
-- `model.spike.js` — the hand-written demonstration above.
+- `model.spike.js` — struct layout + SSO string echo over linear memory.
+- `interop.spike.js` — the JS-interop boundary: registry + factory + ES class.
 
 ## What this makes concrete for the codegen
 
