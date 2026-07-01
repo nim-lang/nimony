@@ -11,4 +11,5 @@ fi
 node "$here/model.spike.js"
 node "$here/interop.spike.js"
 node "$here/structcopy.spike.js"
+node "$here/runtime.spike.js"
 echo "spike: OK"
