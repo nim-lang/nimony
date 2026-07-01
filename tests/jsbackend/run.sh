@@ -119,6 +119,24 @@ if have_node; then
   } | node
 fi
 
+# ── pointer-indexed stores `(pat p i) = v` — the seq/openarray element-write path
+# (`s[i] = v` after the seq's data pointer is loaded). A typed store at
+# `p + i*stride`, not the `mem.i64n(...) = v` load-as-lvalue that slipped through
+# before this case existed. Writes three i64 through a pointer into a stack array
+# and reads them back: 100 + 200 + 300 = 600.
+gen tpatstore
+if have_node; then
+  {
+    echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
+    echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)) };'
+    cat "$work/tpatstore.js"
+    echo 'if (patrw_0_tpatstore()===600)'
+    echo '  { console.log("functional(patstore): PASS"); }'
+    echo '  else { console.log("functional(patstore): FAIL got "+patrw_0_tpatstore()); process.exit(1); }'
+  } | node
+fi
+
 # ── long strings (>14 chars): a static long-string literal's `data` flexarray is
 # written into linear memory. `LStr {len; data: flexarray char}` is allocated
 # with room for the payload (fixed 8 + "hello"=5 -> 13 bytes), the codegen emits

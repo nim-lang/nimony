@@ -948,6 +948,25 @@ proc genLvalueStore(g: var JSGen; lval: Cursor; val: Cursor) =
       g.js.tree jAsgn:
         (var nn = n; g.gx nn)
         (var v = val; g.gx v)
+  of PatC:
+    # `(pat p i) = v` — a pointer-indexed store (a seq/openarray element write):
+    # `mem.setX(p + i*stride, v)`, with stride the pointee size.
+    var nn = n
+    nn.into:
+      let (ak, stride) = g.pointeeInfo(nn)
+      if ak == akAggregate:
+        g.js.tree jExprStmt:
+          g.memMeth("copy"):
+            g.jbin("+", g.gx nn, g.jbin("*", g.gx nn, g.js.num stride))
+            (var v = val; g.gx v)
+            g.js.num stride
+      else:
+        let (_, st) = accessors(ak)
+        g.js.tree jExprStmt:
+          g.memMeth(st):
+            g.jbin("+", g.gx nn, g.jbin("*", g.gx nn, g.js.num stride))
+            (var v = val; g.gx v)
+      while nn.hasMore: skip nn
   of NoExpr:
     if n.kind == Symbol and n.symId in g.boxed:
       let ak = (if g.localTypes.hasKey(n.symId): accessOf(g.m, g.localTypes[n.symId]) else: akI64)
