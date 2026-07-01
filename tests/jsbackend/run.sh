@@ -119,6 +119,36 @@ if have_node; then
   } | node
 fi
 
+# ── function pointers (proc value + indirect call) — the closure dispatch path.
+# A proc taken as a value becomes a function-table index (`_fnid(fn)`); a call
+# through a proc variable is `_fns[idx](args)` (JS can't call an integer). `dbl` is
+# called indirectly through `f`: dbl(21) = 42.
+gen tfnptr
+if have_node; then
+  {
+    echo 'const _fns=[null]; const _fnmap=new Map();'
+    echo 'function _fnid(fn){ let i=_fnmap.get(fn); if(i===undefined){ i=_fns.length; _fns.push(fn); _fnmap.set(fn,i); } return i; }'
+    cat "$work/tfnptr.js"
+    echo 'if (callit_0_tfnptr()===42) { console.log("functional(fnptr): PASS"); }'
+    echo 'else { console.log("functional(fnptr): FAIL got "+callit_0_tfnptr()); process.exit(1); }'
+  } | node
+fi
+
+# ── flexarrays over the buffer — a `(flexarray T)` `(aconstr …)` is allocated by
+# element count (its fixed layout is 0) and filled by typed stores. This backs the
+# RTTI/vtable tables closures need. `[100,200,300]` -> reads sum to 600.
+gen tflex
+if have_node; then
+  {
+    echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
+    echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)) };'
+    cat "$work/tflex.js"
+    echo 'if (flx_0_tflex()===600) { console.log("functional(flex): PASS"); }'
+    echo 'else { console.log("functional(flex): FAIL got "+flx_0_tflex()); process.exit(1); }'
+  } | node
+fi
+
 # ── whole-aggregate store through a pointer `(deref p) = obj` — the `new`'d
 # heap-cell initialisation path (`p[] = SomeObject(…)`). A `mem.copy` of the
 # object's bytes, not the empty-accessor `mem.()` that a scalar store would emit
