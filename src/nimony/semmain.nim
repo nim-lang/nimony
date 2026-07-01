@@ -40,8 +40,6 @@ type
     buf1: TokenBuf
     moduleLineInfo: PackedLineInfo
 
-proc loadSymWithPhase*(c: var SemContext; symId: SymId; targetPhase: SemPhase): LoadResult
-
 proc buildIndexExports(c: var SemContext): TokenBuf =
   if c.exports.len == 0:
     return default(TokenBuf)
@@ -186,31 +184,9 @@ proc getModuleLineInfo(buf: var TokenBuf): PackedLineInfo =
   result = n.info
   endRead(buf)
 
-proc ensurePhase*(c: var SemContext; symId: SymId; targetPhase: SemPhase): EnsurePhaseResult =
-  ## Check if a symbol has been processed to at least targetPhase.
-  ## Used for cycle detection during phase 2/3.
-  if not prog.mem.hasKey(symId):
-    return PhaseNotFound  # Symbol not in mem (external or not yet registered)
-
-  let currentPhase = prog.mem[symId].phase
-  if currentPhase >= targetPhase:
-    return PhaseOk  # Already at or past target phase
-
-  # Cycle detection: check for InProgress markers
-  if currentPhase in {SemcheckSignaturesInProgress, SemcheckBodiesInProgress}:
-    return PhaseCycle
-
-  # Symbol not yet at target phase - this is a forward reference
-  # The caller should handle this appropriately
-  result = PhaseOk
-
-proc loadSymWithPhase*(c: var SemContext; symId: SymId; targetPhase: SemPhase): LoadResult =
-  ## Load a symbol, checking for cycles.
-  ## For current module symbols in progress, returns cycle error.
-  let phaseRes = ensurePhase(c, symId, targetPhase)
-  if phaseRes == PhaseCycle:
-    return LoadResult(status: LacksOffset)  # Cycle detected
-  result = tryLoadSym(symId)
+# `ensurePhase` / `loadSymWithPhase` now live in programs.nim / templates.nim
+# respectively, so the on-demand consumers (semcall's template promotion, and
+# later the phased passes) can reach them without importing upward into semmain.
 
 proc semToplevelStmts(c: var SemContext; dest: var TokenBuf; buf: var TokenBuf) =
   ## Iterate over toplevel statements in buf and semcheck each one.

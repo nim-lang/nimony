@@ -5158,9 +5158,3 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
     if it.n.kind in {DotToken, UnknownToken}:
       inc it.n
 
-
-type
-  EnsurePhaseResult* = enum
-    PhaseOk,        ## Symbol is now at the required phase
-    PhaseCycle,     ## Cyclic dependency detected
-    PhaseNotFound   ## Symbol not in prog.mem

@@ -121,8 +121,10 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
   # `expandTemplateImpl`'s SymId-keyed substitution can find the params.
   # See `tryPromoteTemplateBody` for why this must be lazy rather than
   # eager. Must run before `declToCursor` reads the decl into the local
-  # `res` since promotion swaps the registry buffer out.
-  discard tryPromoteTemplateBody(c, fnId)
+  # `res` since promotion swaps the registry buffer out. Routed through the
+  # unified on-demand driver `loadSymWithPhase` (the promotion is its only
+  # registered driver today).
+  discard loadSymWithPhase(c, fnId, SemcheckBodies)
 
   let s = fetchSym(c, fnId)
   let res = declToCursor(c, dest, s)
