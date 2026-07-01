@@ -873,12 +873,21 @@ proc genLvalueStore(g: var JSGen; lval: Cursor; val: Cursor) =
           g.genLvalueStore(n, val)         # (deref (addr loc)) = v  ->  store loc
           while n.hasMore: skip n
       else:
-        let ak = g.pointeeAk(n)
-        let (_, st) = accessors(ak)
-        g.js.tree jExprStmt:
-          g.memMeth(st):
-            g.gx n                          # p (the pointer)
-            (var v = val; g.gx v)
+        let (ak, sz) = g.pointeeInfo(n)
+        if ak == akAggregate:
+          # storing a whole aggregate through a pointer (`(deref p) = obj`, e.g. a
+          # `new`'d heap cell): copy the object's bytes, not a scalar store.
+          g.js.tree jExprStmt:
+            g.memMeth("copy"):
+              g.gx n                        # dest pointer
+              (var v = val; g.gx v)         # source offset
+              g.js.num sz
+        else:
+          let (_, st) = accessors(ak)
+          g.js.tree jExprStmt:
+            g.memMeth(st):
+              g.gx n                        # p (the pointer)
+              (var v = val; g.gx v)
       while n.hasMore: skip n
   of DotC:
     var isBuf = false
