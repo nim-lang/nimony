@@ -269,17 +269,41 @@ proc constructObjectInto(g: var JSGen; dest: string; n: var Cursor) =
       else:
         skip n
 
+proc dotObjType(g: var JSGen; base: Cursor): (bool, Cursor) =
+  ## Resolve the object type of a `(dot BASE field)` base for buffer routing.
+  ## Two IR shapes carry a resolvable object type:
+  ##   * a Symbol local of object type          — its value IS the object's offset;
+  ##   * `(deref sym)` where `sym : ptr Object`  — `sym`'s value is the offset
+  ##     (deref of a pointer-to-aggregate is the offset itself).
+  ## In both cases the caller still renders the base offset with `captureExpr`
+  ## (which yields the operand for the deref shape), so only the type differs.
+  ## Returns `(false, base)` for anything else (legacy JS-object / fat-pointer).
+  result = (false, base)
+  var b = base
+  if b.kind == Symbol and g.localTypes.hasKey(b.symId):
+    let t = g.localTypes[b.symId]
+    if g.isBufferObjectType(t): result = (true, t)
+  elif b.exprKind == DerefC:
+    b.into:
+      if b.kind == Symbol and g.localTypes.hasKey(b.symId):
+        let t = g.localTypes[b.symId]
+        if t.typeKind in {PtrT, AptrT}:
+          var inner = t
+          inner.into:
+            if g.isBufferObjectType(inner): result = (true, inner)
+            while inner.hasMore: skip inner
+      while b.hasMore: skip b
+
 proc bufferFieldOf(g: var JSGen; dotNode: Cursor): (bool, Cursor) =
-  ## Non-consuming peek: is `dotNode` `(dot sym field …)` whose `sym` is a local
-  ## of declared object type? Returns `(true, objectType)`. Used to route a
-  ## `(dot …)` assignment target to a typed store instead of `lhs = rhs`.
+  ## Non-consuming peek: is `dotNode` a `(dot base field …)` whose base resolves to
+  ## a declared object type (by value or through a pointer)? Returns
+  ## `(true, objectType)`. Used to route a `(dot …)` assignment target to a typed
+  ## store instead of `lhs = rhs`.
   result = (false, dotNode)
   if dotNode.exprKind != DotC: return
   var probe = dotNode
   probe.into:
-    if probe.kind == Symbol and g.localTypes.hasKey(probe.symId):
-      let t = g.localTypes[probe.symId]
-      if g.isBufferObjectType(t): result = (true, t)
+    result = g.dotObjType(probe)
     while probe.hasMore: skip probe
 
 proc takeBufferField(g: var JSGen; n: var Cursor; oty: Cursor):
@@ -331,34 +355,49 @@ proc isBufferAggregate(g: var JSGen; typ: Cursor): bool =
   ## array. (Unions/flexarrays fall here too once needed.)
   g.isBufferObjectType(typ) or g.isBufferArray(typ)
 
+template withPointee(g: var JSGen; operand: Cursor; pointee, body: untyped) =
+  ## Run `body` with `pointee` bound to the statically-known pointee type of a
+  ## pointer-valued operand, when it can be determined:
+  ##   * a Symbol local typed `(ptr T)`/`(aptr T)`   -> T;
+  ##   * a Symbol loosely typed as its pointee `T`    -> T;
+  ##   * a `(cast (ptr T) x)` / `(conv (ptr T) x)`    -> T (the explicit cast type,
+  ##     the shape system.nim uses for `deref(cast (ptr u8) (addr …))`).
+  ## `body` is skipped when the pointee is not statically knowable (caller keeps
+  ## its default).
+  block:
+    var op = operand
+    if op.kind == Symbol and g.localTypes.hasKey(op.symId):
+      let t = g.localTypes[op.symId]
+      if t.typeKind in {PtrT, AptrT}:
+        var pointee = t
+        pointee.into:
+          body
+          while pointee.hasMore: skip pointee
+      else:
+        var pointee = t
+        body
+    elif op.exprKind in {CastC, ConvC}:
+      op.into:
+        let ty = op
+        if ty.typeKind in {PtrT, AptrT}:
+          var pointee = ty
+          pointee.into:
+            body
+            while pointee.hasMore: skip pointee
+        while op.hasMore: skip op
+
 proc pointeeAk(g: var JSGen; operand: Cursor): AccessKind =
-  ## Access kind of the pointee for a `(deref p)` / pointer store. Reads it from
-  ## the operand symbol's type: a real `(ptr T)` yields `accessOf(T)`; a pointer
-  ## loosely typed as its pointee (e.g. `(i 64)`) yields `accessOf` of that type.
+  ## Access kind of the pointee for a `(deref p)` / pointer store — see `withPointee`.
   result = akI64
-  if operand.kind == Symbol and g.localTypes.hasKey(operand.symId):
-    let t = g.localTypes[operand.symId]
-    if t.typeKind in {PtrT, AptrT}:
-      var inner = t
-      inner.into:
-        result = accessOf(g.m, inner)
-        while inner.hasMore: skip inner
-    else:
-      result = accessOf(g.m, t)
+  g.withPointee(operand, pointee):
+    result = accessOf(g.m, pointee)
 
 proc pointeeInfo(g: var JSGen; operand: Cursor): (AccessKind, int64) =
   ## `(accessKind, byteSize)` of the pointee for a pointer operand — used for
   ## `(pat p i)` element arithmetic (`p + i*size`) and its load/store width.
   result = (akU8, 1'i64)     # default: byte pointer (cstring-like)
-  if operand.kind == Symbol and g.localTypes.hasKey(operand.symId):
-    let t = g.localTypes[operand.symId]
-    if t.typeKind in {PtrT, AptrT}:
-      var inner = t
-      inner.into:
-        result = (accessOf(g.m, inner), typeLayout(g.m, inner).size)
-        while inner.hasMore: skip inner
-    else:
-      result = (accessOf(g.m, t), typeLayout(g.m, t).size)
+  g.withPointee(operand, pointee):
+    result = (accessOf(g.m, pointee), typeLayout(g.m, pointee).size)
 
 proc genAddrOf(g: var JSGen; n: var Cursor) =
   ## `(addr LOC)` -> an integer BYTE OFFSET into the buffer (a Nim-native
@@ -373,10 +412,7 @@ proc genAddrOf(g: var JSGen; n: var Cursor) =
       while n.hasMore: skip n
   of DotC:
     n.into:
-      var oty = n
-      var isBuf = false
-      if n.kind == Symbol and g.localTypes.hasKey(n.symId):
-        oty = g.localTypes[n.symId]; isBuf = g.isBufferObjectType(oty)
+      let (isBuf, oty) = g.dotObjType(n)
       let base = g.captureExpr n
       let fsym = n.symId; inc n
       if isBuf:
@@ -619,11 +655,7 @@ proc gx(g: var JSGen; n: var Cursor) =
     # type) this is a typed load at the field's byte offset in linear memory;
     # otherwise the legacy `obj.field` mapping (JS-interop / undeclared types).
     n.into:
-      var useBuffer = false
-      var oty = n
-      if n.kind == Symbol and g.localTypes.hasKey(n.symId):
-        oty = g.localTypes[n.symId]
-        useBuffer = g.isBufferObjectType(oty)
+      let (useBuffer, oty) = g.dotObjType(n)
       if useBuffer:
         let base = g.captureExpr n         # object base offset (advances past it)
         let fsym = n.symId; inc n

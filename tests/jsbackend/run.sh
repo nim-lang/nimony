@@ -95,6 +95,30 @@ if have_node; then
   } | node
 fi
 
+# ── strings-through-pointers (the system.nim string idiom): a proc takes a
+# `ptr Str` and reads a field via `(dot (deref s) bytes)` — the base is a
+# `(deref sym)`, not a bare symbol — and reads the SSO length byte through
+# `deref(cast (ptr u8) (addr …))`, whose width must come from the cast's `(ptr
+# u8)`, not default to i64. `Str` mirrors the real 16-byte string (bytes:u64 @0,
+# more:ptr @8); `bytes` is packed like "hi" (len 2, 'h','i'). This is exactly what
+# made `echo "hi"` finally print: len reads 2 (not the whole word), so the small-
+# string branch is taken and the data pointer is `base+1`.
+gen tstrptr
+if have_node; then
+  {
+    echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
+    echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)),'
+    echo '  setU64:(p,v)=>_dv.setBigUint64(p,BigInt(v),true), u8At:(p)=>_dv.getUint8(p) };'
+    cat "$work/tstrptr.js"
+    # drive = slen(2) + firstchar('h'==104) = 106. A width bug (i64 read) would send
+    # slen down the heap branch; a fat-pointer base bug would crash on `(deref s)`.
+    echo 'if (drive_0_tstrptr()===106)'
+    echo '  { console.log("functional(strptr): PASS"); }'
+    echo '  else { console.log("functional(strptr): FAIL got "+drive_0_tstrptr()); process.exit(1); }'
+  } | node
+fi
+
 # ── addresses (unified byte-pointer model): a pointer is an INTEGER byte offset.
 # An address-taken scalar local is spilled to a buffer slot, so `addr x` is its
 # offset and `deref` is a typed load/store — no boxing, no fat pointers.
