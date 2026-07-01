@@ -48,6 +48,17 @@ type
     path: seq[SymId]  ## root :: field1 :: field2 :: ...
     info: PackedLineInfo
 
+  CondFact = object
+    ## A linear (`le`/not-nil) fact that holds only under a cfvar hypothesis.
+    ## The `and`/`or` lowering of a guard like `if a == nil or b == nil` spills
+    ## the disjuncts into a join cfvar `cf` and intersects the per-branch nil
+    ## facts away at the merge. We record those facts here, keyed on `cf`'s
+    ## truth value, and re-materialise them once `cf`'s value becomes known
+    ## (e.g. inside the `else` of the `if cf` that the lowering produces).
+    cond: SymId             ## the cfvar (or synthetic cond sym) gating the fact
+    whenTrue: bool          ## `fact` holds when `cond` has this truth value
+    fact: LeXplusC
+
   NjvlContext = object
     facts: Facts           # From inferle.nim - tracks le/notnil facts
     typeCache: TypeCache
@@ -78,6 +89,17 @@ type
     currentProcStart: Cursor           # cursor at the start of the proc whose
                                        # body we are currently analysing (used
                                        # for the --verbose dump)
+    condFacts: seq[CondFact]           # linear facts conditioned on a cfvar's
+                                       # truth value; bridges the gap between
+                                       # the cfvar (init) implications and the
+                                       # le/not-nil fact base so nil refinement
+                                       # survives the `and`/`or` join-flag
+                                       # lowering. See `CondFact`.
+    cfJtrueCount: Table[SymId, int]    # per-proc count of `jtrue` sites for
+                                       # each cfvar. 1 site => conjunction flag
+                                       # (`cf=true` is a single path, sound to
+                                       # condition facts on); >=2 => disjunction
+                                       # flag (`cf=false` is the single path).
 
 proc dumpCurrentProc(c: var NjvlContext; info: PackedLineInfo; msg: string) =
   ## Dump the NJ IR of the proc currently under analysis to stderr. Used
@@ -965,6 +987,82 @@ proc cannotBeNil(c: var NjvlContext; n: Cursor): bool {.inline.} =
   let t = getType(c.typeCache, n)
   result = markedAs(t, NotnilU) or isNonNilExpr(c, n)
 
+# --- cfvar-conditioned linear facts ---
+
+proc sameLe(a, b: LeXplusC): bool {.inline.} =
+  a.a == b.a and a.b == b.b and a.c == b.c
+
+proc captureCondFacts(c: var NjvlContext; cf: SymId; whenTrue: bool;
+                      branchFacts: Facts; preFacts: seq[LeXplusC]) =
+  ## A branch left via `jtrue cf`, so sequential code reached past the ite
+  ## (where `cf` is false) came through the OTHER branch. Record each linear
+  ## fact that branch freshly established (i.e. not already known before the
+  ## ite) as holding whenever `cf` equals `whenTrue`. This is what lets
+  ## `a != nil`/`b != nil` survive the join-flag lowering of an `and`/`or`
+  ## guard, where the per-disjunct facts are otherwise intersected away.
+  for i in 0 ..< branchFacts.len:
+    let f = branchFacts[i]
+    if not f.isValid: continue
+    if f.a == VarId(0) and f.b == VarId(0): continue  # the trivial `0 <= 0` base
+    var known = false
+    for p in preFacts:
+      if sameLe(f, p): known = true; break
+    if known: continue
+    var dup = false
+    for e in c.condFacts:
+      if e.cond == cf and e.whenTrue == whenTrue and sameLe(e.fact, f):
+        dup = true; break
+    if not dup:
+      c.condFacts.add CondFact(cond: cf, whenTrue: whenTrue, fact: f)
+
+proc materializeCondFacts(c: var NjvlContext; cf: SymId; isTrue: bool) =
+  ## `cf` just became known to hold value `isTrue`; inject every linear fact
+  ## captured under that hypothesis into the live fact base.
+  for e in c.condFacts:
+    if e.cond == cf and e.whenTrue == isTrue and e.fact.isValid:
+      c.facts.add e.fact
+
+proc invalidateCondFactsAbout(c: var NjvlContext; x: VarId) =
+  ## Drop conditioned facts mentioning `x` when `x` is reassigned, mirroring
+  ## `invalidateFactsAbout` on the live fact base.
+  var i = 0
+  while i < c.condFacts.len:
+    if c.condFacts[i].fact.a == x or c.condFacts[i].fact.b == x:
+      del c.condFacts, i
+    else:
+      inc i
+
+proc countJtrueSites(start: Cursor; tbl: var Table[SymId, int]) =
+  ## Count the textual `jtrue cf` sites for each cfvar within the (single)
+  ## subtree at `start`, without descending into nested routine bodies (those
+  ## have their own cfvars). Lets `traverseIte`/the `jtrue` handler tell a
+  ## conjunction flag (1 site) from a disjunction flag (>= 2) and only capture
+  ## the soundly-conditionable polarity.
+  var n = start
+  if n.kind != ParLe: return
+  var depth = 0
+  while true:
+    case n.kind
+    of ParLe:
+      if n.njvlKind == JtrueV:
+        var j = n
+        inc j
+        while j.kind == Symbol:
+          tbl[j.symId] = tbl.getOrDefault(j.symId, 0) + 1
+          inc j
+        skip n
+      elif n.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS}:
+        skip n  # don't count a nested routine's cfvars
+      else:
+        inc depth
+        inc n
+    of ParRi:
+      dec depth
+      inc n
+      if depth <= 0: break
+    else:
+      inc n
+
 # --- NJVL-specific traversal ---
 
 proc traverseStore(c: var NjvlContext; n: var Cursor) =
@@ -1003,9 +1101,11 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
         variableChangedByDiff(c.facts, fact.a, fact.c)
       else:
         invalidateFactsAbout(c.facts, fact.a)
+        invalidateCondFactsAbout(c, fact.a)
         addAsgnFact c, fact
     else:
       invalidateFactsAbout(c.facts, fact.a)
+      invalidateCondFactsAbout(c, fact.a)
 
     # Check if the rhs is known to be not nil
     if (valueStart.exprKind == NewobjX and c.procCanRaise) or cannotBeNil(c, valueStart):
@@ -1052,6 +1152,10 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
 
   # Analyze condition and extract facts.
   let savedFacts = save(c.facts)
+  # Snapshot the facts known before the ite, so each branch's freshly-derived
+  # facts can be isolated for cfvar-conditioned capture after the merge.
+  var preFacts: seq[LeXplusC] = @[]
+  for i in 0 ..< c.facts.len: preFacts.add c.facts[i]
   let savedBorrowsLen = c.activeBorrows.len
   let implsCp = c.impls.checkpoint()
   let condFacts = analyseCondition(c, n)
@@ -1062,10 +1166,15 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     condFactsList.add c.facts[c.facts.len - 1]
 
   # Then branch: `(not cf)` makes cf known false inside; a direct `(v cf …)`
-  # makes cf known true inside.
+  # makes cf known true inside. Materialising the matching conditioned facts
+  # lets earlier `and`/`or` refinements re-enter the live fact base here.
   if cond.sym != NoSymId:
-    if cond.negated: c.falseCfvars.add cond.sym
-    else:            c.trueCfvars.add cond.sym
+    if cond.negated:
+      c.falseCfvars.add cond.sym
+      materializeCondFacts(c, cond.sym, false)
+    else:
+      c.trueCfvars.add cond.sym
+      materializeCondFacts(c, cond.sym, true)
   traverseStmt c, n
   if cond.sym != NoSymId:
     if cond.negated: discard c.falseCfvars.pop()
@@ -1082,8 +1191,12 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     c.facts.add negated
 
   if cond.sym != NoSymId:
-    if cond.negated: c.trueCfvars.add cond.sym
-    else:            c.falseCfvars.add cond.sym
+    if cond.negated:
+      c.trueCfvars.add cond.sym
+      materializeCondFacts(c, cond.sym, true)
+    else:
+      c.falseCfvars.add cond.sym
+      materializeCondFacts(c, cond.sym, false)
   if n.kind == DotToken:
     inc n
   else:
@@ -1099,6 +1212,7 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   # facts to `Always s` when `cf` is already known false in the outer scope.
   # `combine` returns any cond syms the leaving-path asymmetry proves are
   # known-false / -true in sequential code past this ite.
+  let elseFacts = c.facts
   c.facts = merge(thenFacts, 0, c.facts, false)
   var knownFalse = initHashSet[SymId]()
   for cf in c.falseCfvars: knownFalse.incl cf
@@ -1108,6 +1222,32 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     if cf notin c.falseCfvars: c.falseCfvars.add cf
   for cf in nowKnownTrue:
     if cf notin c.trueCfvars: c.trueCfvars.add cf
+
+  # Capture cfvar-conditioned linear facts. A cfvar `cf` that is `jtrue`'d
+  # (Always-init) in exactly one branch is a leaving marker: sequential code
+  # reached past this ite (where `cf` is false) came through the OTHER branch,
+  # so that branch's freshly-derived le/not-nil facts hold whenever `cf` is
+  # false. They are re-materialised when the `if cf` produced by the `and`/`or`
+  # lowering is later analysed. (Without this, `if a == nil or b == nil` fails
+  # to prove `a`/`b` non-nil afterwards — both nil facts are intersected away
+  # at the join while only the join flag survives.)
+  var thenLeave = initHashSet[SymId]()
+  var elseLeave = initHashSet[SymId]()
+  for imp in thenImpls:
+    if imp.kind == Always and imp.sym in c.knownCfVars: thenLeave.incl imp.sym
+  for imp in elseImpls:
+    if imp.kind == Always and imp.sym in c.knownCfVars: elseLeave.incl imp.sym
+  # Only a disjunction flag (>= 2 jtrue sites, e.g. the `or` lowering) has a
+  # single `cf=false` path whose facts are the union of the per-branch
+  # negations; for a conjunction flag (1 site, the `and` lowering) `cf=false`
+  # is a disjunction and conditioning on it would be unsound, so skip it (its
+  # sound `cf=true` facts are captured at the `jtrue` site instead).
+  for cf in thenLeave:
+    if cf notin elseLeave and c.cfJtrueCount.getOrDefault(cf, 0) >= 2:
+      captureCondFacts(c, cf, false, elseFacts, preFacts)
+  for cf in elseLeave:
+    if cf notin thenLeave and c.cfJtrueCount.getOrDefault(cf, 0) >= 2:
+      captureCondFacts(c, cf, false, thenFacts, preFacts)
 
   # Skip optional join information emitted by vl.nim.
   if n.kind == ParLe and n.stmtKind == StmtsS:
@@ -1143,7 +1283,12 @@ proc traverseLoop(c: var NjvlContext; n: var Cursor) =
   # wrote `s`. `IfFalse cf s` doesn't survive: `cf=false` after the loop is
   # consistent with 0 iterations, where nothing was written.
   let loopCp = c.impls.checkpoint()
+  # Conditioned facts captured inside the loop body refer to that iteration's
+  # cfvar values; they don't soundly survive across iterations, so drop them
+  # (conservative: at worst we miss a refinement, never accept unsoundly).
+  let condFactsCp = c.condFacts.len
   traverseStmt c, n
+  c.condFacts.setLen(condFactsCp)
   let bodyImpls = c.impls.take(loopCp)
   for imp in bodyImpls:
     if imp.kind == IfTrue: c.impls.add imp
@@ -1268,6 +1413,8 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   let oldResultSym = c.resultSym
   let oldInlineVars = move c.inlineVars
   let oldBorrows = move c.activeBorrows
+  let oldCondFacts = move c.condFacts   # cfvars are proc-local; start fresh
+  let oldCfJtrueCount = move c.cfJtrueCount
   let oldProcStart = c.currentProcStart
   c.currentProcStart = decl
   c.resultSym = NoSymId
@@ -1296,6 +1443,8 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
 
   # Analyze body
   if not isGeneric:
+    c.cfJtrueCount = initTable[SymId, int]()
+    countJtrueSites(n, c.cfJtrueCount)
     traverseStmt c, n
     let info = decl.info
     # Check result / out-param init at proc end. In-body writes guarded by
@@ -1319,6 +1468,8 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   c.resultSym = oldResultSym
   c.inlineVars = ensureMove oldInlineVars
   c.activeBorrows = ensureMove oldBorrows
+  c.condFacts = ensureMove oldCondFacts
+  c.cfJtrueCount = ensureMove oldCfJtrueCount
   c.currentProcStart = oldProcStart
   discard c.directlyInitialized.pop()
 
@@ -1348,7 +1499,15 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     n.into:
       while n.hasMore:
         assert n.kind == Symbol
-        c.impls.add always(n.symId)
+        let cf = n.symId
+        c.impls.add always(cf)
+        # Conjunction flag (single jtrue site): this path is the only one that
+        # sets `cf` true, so every linear fact known here holds whenever `cf`
+        # is true. Capture it so the `if cf:` the `and` lowering produces can
+        # refine inside its then-branch (the `or` dual is handled at the ite
+        # merge, conditioned on `cf=false`).
+        if c.cfJtrueCount.getOrDefault(cf, 0) == 1:
+          captureCondFacts(c, cf, true, c.facts, @[])
         skip n
   of KillV:
     # Variable going out of scope - end any active borrows
