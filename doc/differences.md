@@ -53,7 +53,11 @@ The first pre-release of Nimony misses lots of things but might be useful for yo
 Nimony currently lacks these features:
 
 - An exception handling system that is compatible with Nim's. Instead Nimony uses its own based on an `ErrorCode` enum.
-- Nimony does not check `range` subtypes and treats a `range` type like its underlying base type. For example `range[0..10]` is treated as `int`.
+- Nimony checks `range` subtypes at compile time: a statically-known value that
+  does not fit a `range` formal is rejected (e.g. `var x: range[0..10] = 20`), and
+  a narrower range is accepted where a wider one is expected (`range[2..5]` is a
+  subtype of `range[0..10]`). Runtime bounds enforcement for values only known at
+  run time (e.g. `var x: range[0..10] = someInt`) is not yet emitted.
 - Nim's effect system:
   - `tags` annotations are ignored. Tag mismatches should produce warnings in Nim 3 with the option to turn these warnings into errors.
   - `raises: []` is the new default and ignored. `raises: <list here>` is mapped to `.raises` (but this needs to be changed to an exception system compatible with Nim's).

@@ -184,6 +184,16 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
 
 proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall)
 
+proc reportRangeError(c: var SemContext; dest: var TokenBuf; m: Match; info: PackedLineInfo): bool =
+  ## When a failed `typematch` was caused by a statically-known value that does
+  ## not fit the formal `range`, emit that precise diagnostic and return true.
+  ## Callers use this to surface the range error instead of the generic type
+  ## mismatch (and, in `semConvArg`, instead of masking it with the
+  ## reverse-direction object-downcast probe).
+  result = m.isValueOutOfRange
+  if result:
+    buildErr c, dest, info, getErrorMsg(m)
+
 proc commonType*(c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: int; expected: TypeCursor) =
   if typeKind(expected) == AutoT:
     return
@@ -242,8 +252,8 @@ proc commonType*(c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: 
       endRead convArg.n
       expectUnique dest
       shrink dest, argBegin
-      #buildErr c, dest, info, getErrorMsg(m)
-      c.typeMismatch dest, info, it.typ, expected
+      if not reportRangeError(c, dest, m, info):
+        c.typeMismatch dest, info, it.typ, expected
   else:
     endRead arg.n
     expectUnique dest
@@ -702,7 +712,7 @@ proc semBaseobj(c: var SemContext; dest: var TokenBuf; it: var Item) =
   if not m.err and m.args[0].tagEnum == BaseobjTagId:
     dest.shrink beforeExpr
     dest.add m.args
-  else:
+  elif not reportRangeError(c, dest, m, it.n.info):
     c.typeMismatch dest, it.n.info, it.typ, destType
   skipParRi it.n
   commonType c, dest, it, beforeExpr, destType
@@ -771,7 +781,8 @@ proc semConvArg(c: var SemContext; dest: var TokenBuf; destType: Cursor; arg: It
     var m = createMatch(addr c)
     typematch m, destBase, matchArg
     if m.err:
-      c.typeMismatch dest, info, arg.typ, destType
+      if not reportRangeError(c, dest, m, info):
+        c.typeMismatch dest, info, arg.typ, destType
     else:
       # distinct type conversions can also involve conversions
       # between different integer sizes or object types and then
@@ -789,7 +800,10 @@ proc semConvArg(c: var SemContext; dest: var TokenBuf; destType: Cursor; arg: It
     typematch m, destType, matchArg
     if not m.err:
       addMaybeBaseobjConv(c, dest, m, beforeExpr)
-    else:
+    elif not reportRangeError(c, dest, m, info):
+      # A statically-known out-of-range value is reported above and must
+      # short-circuit here: the reverse-direction (object downcast) probe below
+      # would otherwise spuriously accept it. Only genuine mismatches reach it.
       # also try the other direction:
       var m = createMatch(addr c)
       m.flipped = true
