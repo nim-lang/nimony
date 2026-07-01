@@ -35,6 +35,20 @@ proc loopVarSym(n: NifCursor): SymId =
       return vars.symId
   result = default(SymId)
 
+proc emitValueSource(n: NifCursor): NifBuilder =
+  result = createTree()
+  result.withTree CallX, n.info:
+    result.withTree AtX, n.info:
+      result.addIdent "pluginValues"
+      result.addIdent "int"
+    result.addIntLit 1
+
+proc loopVarType(n: NifCursor): NifCursor =
+  result = firstChild(firstChild(forLoopVars(n)))
+  skip result # symbol
+  skip result # export marker
+  skip result # pragmas
+
 proc transform(n: NifCursor): NifBuilder =
   let info = n.info
   let mode = pluginName(n)
@@ -46,6 +60,15 @@ proc transform(n: NifCursor): NifBuilder =
       for i in 1..3:
         var body = forLoopBody(n)
         emitSubst(result, body, loopSym, i)
+  elif mode == "valueSource":
+    result = emitValueSource(n)
+  elif mode == "pluginValues":
+    let typ = loopVarType(n)
+    if typ.typeKind != IT:
+      result = errorTree("template-emitted plugin iterator must yield int", typ)
+    else:
+      result.withTree StmtsS, info:
+        discard
   else:
     result = errorTree("unknown for-loop plugin mode: " & mode)
 

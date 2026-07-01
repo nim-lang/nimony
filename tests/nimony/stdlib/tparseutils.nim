@@ -64,6 +64,17 @@ block:
   assert ret == high(int64)
   assert parseBiggestInt($low(int64), ret) == 20
   assert ret == low(int64)
+  # out of range -> negative processed-char count, `ret` left unchanged
+  ret = 7'i64
+  assert parseBiggestInt("9223372036854775808", ret) == -19   # int64.high + 1
+  assert ret == 7'i64
+  assert parseBiggestInt("-9223372036854775809", ret) == -20  # int64.low - 1
+  assert ret == 7'i64
+  assert parseBiggestInt("99999999999999999999999", ret) == -23
+  assert ret == 7'i64
+  # no integer at all is still 0 (distinct from the overflow signal)
+  assert parseBiggestInt("abc", ret) == 0
+  assert ret == 7'i64
 
 block:
   var ret: uint64 = 3'u64
@@ -79,6 +90,14 @@ block:
   assert ret == 123'u64
   assert parseBiggestUInt($high(uint64), ret) == 20
   assert ret == high(uint64)
+  # out of range -> negative processed-char count, `ret` left unchanged
+  ret = 7'u64
+  assert parseBiggestUInt("18446744073709551616", ret) == -20  # uint64.high + 1
+  assert ret == 7'u64
+  assert parseBiggestUInt("-5", ret) == -2                     # negative is out of range
+  assert ret == 7'u64
+  assert parseBiggestUInt("abc", ret) == 0
+  assert ret == 7'u64
 
 block:
   var ret: float64 = 3.0

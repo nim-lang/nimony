@@ -138,6 +138,11 @@ when defined(nimNativeIo):
     proc newFile(fd: OsFileHandle; flags: set[FileFlag]): File =
       File(fd: fd, flags: flags)
 
+    proc getFileHandle*(f: File): cint {.inline.} =
+      ## The underlying OS file descriptor (libc-free posix build). Used e.g. by
+      ## `std/terminal`'s `isatty`, which has no `fileno`/FILE* to go through.
+      cint(f.fd)
+
     let
       stdin* = newFile(0, {ffReadable})
         ## Standard input file handle (fd 0).

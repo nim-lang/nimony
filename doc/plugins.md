@@ -408,7 +408,9 @@ snapshot transparently detaches its token storage.
 | `openTree(t, tagString, info)` | Same, from a textual tag name |
 | `closeTree(t)` | Close the most recently opened tree |
 | `addIdent(t, name)` | Identifier |
+| `addSymDef(t, sym, info)` | Symbol definition (from `SymId` or string) |
 | `addSymUse(t, sym, info)` | Symbol reference (from `SymId` or string) |
+| `genSym()` | Fresh local `SymId` for `addSymDef` and `addSymUse` |
 | `addStrLit(t, s)` | String literal |
 | `addIntLit(t, i)` | Signed integer literal |
 | `addUIntLit(t, u)` | Unsigned integer literal |
@@ -424,6 +426,20 @@ snapshot transparently detaches its token storage.
 | `takeTree(t, n)` | Copy the current subtree from `n` into `t`, advancing `n` |
 | `addSubtree(t, n)` | Copy subtree from `n` into `t` without advancing |
 | `addTree(t, child)` | Append an entire child builder without consuming it |
+
+`genSym()` uses the input file's standard NIF `.unusedname` hint. The returned
+`SymId` can be emitted through the ordinary symbol operations:
+
+```nim
+let temp = genSym()
+result.withTree LetS, info:
+  result.addSymDef temp, info
+  result.addEmptyNode3(info)
+  result.takeTree value
+result.withTree CallS, info:
+  result.addIdent "echo"
+  result.addSymUse temp, info
+```
 
 **Structured building:**
 

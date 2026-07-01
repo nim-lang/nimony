@@ -25,6 +25,12 @@ type
       ## in whether a parameter is `var T` or `T`, prefer the `var T`
       ## overload (mirrors `sumGeneric` +1 for `tyVar` in old Nim's
       ## `complexDisambiguation`).
+    LenientFloatsFeature
+      ## Nim-2-style implicit narrowing of float *values* (named constants and
+      ## arbitrary expressions, not just literals) to a smaller float type,
+      ## e.g. passing a `float64` constant where a `float32` is expected. Off by
+      ## default because the narrowing can silently lose precision; opt in with
+      ## `.feature: "lenientFloats".` (v2 implies it).
 
 proc normalizeFeatureName(s: string): string =
   result = newStringOfCap(s.len)
@@ -44,7 +50,8 @@ proc parseFeatures*(s: string): set[Feature] =
   of "lenientnils": {LenientNilsFeature}
   of "ignorestyle": {IgnoreStyleFeature}
   of "vartoverloads": {VarToverloadsFeature}
+  of "lenientfloats": {LenientFloatsFeature}
   of "v2": {UntypedFeature, LenientConvertersFeature, EarlyMagicsFeature,
             AutoClosuresFeature, LenientNilsFeature, IgnoreStyleFeature,
-            VarToverloadsFeature}
+            VarToverloadsFeature, LenientFloatsFeature}
   else: {}

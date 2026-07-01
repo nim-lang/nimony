@@ -112,7 +112,7 @@ proc typeofCallIs(c: var SemContext; dest: var TokenBuf; it: var Item; beforeCal
   commonType c, dest, it, beforeCall, expected
 
 proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: SymId; beforeCall: int;
-                     m: Match) =
+                     m: Match; flags: set[SemFlag]) =
   var expandedInto = createTokenBuf(30)
 
   # If we are about to expand a template whose published body is still
@@ -142,7 +142,7 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
     var a = Item(n: cursorAt(expandedInto, 0), typ: c.types.autoType)
     let aInfo = a.n.info
     inc c.routine.inInst
-    semExpr c, dest, a
+    semExpr c, dest, a, flags
     # make sure template body expression matches return type, mirrored with `semProcBody`:
     let returnType =
       if m.inferred.len == 0 or m.returnType.kind == DotToken:
@@ -979,7 +979,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         c.expanded.addSymUse finalFn.sym, cs.callNode.info
         inc c.templateInstCounter
         withErrorContext c, cs.callNode.info:
-          semTemplateCall c, dest, it, finalFn.sym, cs.beforeCall, m[idx]
+          semTemplateCall c, dest, it, finalFn.sym, cs.beforeCall, m[idx], cs.flags
         dec c.templateInstCounter
       else:
         buildErr c, dest, cs.callNode.info, "recursion limit exceeded for template expansions"
