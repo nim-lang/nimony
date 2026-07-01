@@ -1174,6 +1174,45 @@ proc tryMatchEnumChoice*(choice: Cursor; enumTypeSym: SymId): SymId =
   if matchCount != 1:
     result = SymId(0)
 
+proc procTypeOfRoutineSym(sym: SymId; buf: var TokenBuf): bool =
+  ## Build the structural proc type of a routine symbol into `buf` so it can be
+  ## compared against a formal proc type with `procTypeMatch`.
+  let res = tryLoadSym(sym)
+  result = false
+  if res.status == LacksNothing and res.decl.symKind in RoutineKinds:
+    let r = asRoutine(res.decl)
+    buf.addParLe ProctypeT
+    buf.addDotToken() # nilability tag
+    buf.addSubtree r.params
+    buf.addSubtree r.retType
+    buf.addSubtree r.pragmas
+    buf.addParRi()
+    result = true
+
+proc tryMatchProcChoice*(context: ptr SemContext; choice, f: Cursor): SymId =
+  ## Find the unique overload in the OchoiceX/CchoiceX `choice` whose proc type
+  ## matches the formal proc type `f`, returning SymId(0) if zero or more than
+  ## one candidate matches. Resolves an overloaded routine passed where a `proc`
+  ## type is expected (nim-lang/nimony#1973).
+  result = SymId(0)
+  var matchCount = 0
+  var a = choice.firstSon
+  while a.hasMore:
+    if a.kind == Symbol:
+      var buf = createTokenBuf(16)
+      if procTypeOfRoutineSym(a.symId, buf):
+        var ac = beginRead(buf)
+        if ac.typeKind in RoutineTypes:
+          var trial = createMatch(context)
+          var fc = f
+          procTypeMatch(trial, fc, ac)
+          if not trial.err:
+            result = a.symId
+            inc matchCount
+    skip a
+  if matchCount != 1:
+    result = SymId(0)
+
 proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
   let a = skipModifier(arg.typ)
   let fs = f.symId
@@ -1640,7 +1679,18 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
       of RoutineTypes:
         procTypeMatch m, f, a
       else:
-        m.error InvalidMatch, f, a
+        if arg.n.exprKind in {OchoiceX, CchoiceX} and
+            tryMatchProcChoice(m.context, arg.n, f) != SymId(0):
+          # An overloaded routine was passed to a proc-typed parameter. Defer
+          # the actual overload selection to `semConvArg` via an `hconv`, the
+          # same mechanism enum choices use.
+          m.refineArgType = true
+          m.args.addParLe HconvX, m.argInfo
+          m.args.addSubtree f
+          inc m.opened
+          skip f
+        else:
+          m.error InvalidMatch, f, a
     of OrT:
       # `f` is an `or`-typed parameter (e.g. `x: A | B | C`).
       #
