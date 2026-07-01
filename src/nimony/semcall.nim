@@ -173,46 +173,85 @@ proc addUnique(c: var FnCandidates; x: FnCandidate) =
   if not containsOrIncl(c.marker, x.sym):
     c.a.add x
 
-iterator findConceptsInConstraint(typ: Cursor): Cursor {.sideEffect.} =
-  var typ = typ
-  var nested = 0
-  while true:
-    if typ.kind == ParRi:
-      inc typ
-      dec nested
-    elif typ.kind == Symbol:
-      let section = getTypeSection typ.symId
-      if section.body.typeKind == ConceptT:
-        yield section.body
-      inc typ
-    elif typ.typeKind == AndT:
-      inc typ
-      inc nested
-    else:
-      skip typ
-    if nested == 0: break
-
 proc conceptMethodAlreadyListed(cands: FnCandidates; routine: Cursor): bool =
   for existing in cands.a:
     if existing.fromConcept and sameConceptRoutineTrees(routine, existing.typ, equivKinds = true):
       return true
   false
 
-proc collectConceptMethods(c: var SemContext; fn: StrId; concpt: Cursor; cands: var FnCandidates) =
+proc sameConceptMethod(a, b: FnCandidate): bool {.inline.} =
+  sameConceptRoutineTrees(a.typ, b.typ, equivKinds = true)
+
+proc collectConceptMethodsFor(fn: StrId; concpt: Cursor): seq[FnCandidate] =
+  ## All routines named `fn` required by `concpt` (including its parents),
+  ## deduplicated by signature shape.
+  result = @[]
   for _, routine in conceptHierarchyRoutines(concpt):
     var prc = routine
     inc prc
     if prc.kind == SymbolDef and sameIdent(prc.symId, fn):
-      if not conceptMethodAlreadyListed(cands, routine):
-        cands.addUnique FnCandidate(kind: routine.symKind, sym: prc.symId, typ: routine, fromConcept: true)
+      var dup = false
+      for ex in result:
+        if sameConceptRoutineTrees(routine, ex.typ, equivKinds = true):
+          dup = true
+          break
+      if not dup:
+        result.add FnCandidate(kind: routine.symKind, sym: prc.symId,
+                               typ: routine, fromConcept: true)
+
+proc conceptMethodsForConstraint(fn: StrId; typ: Cursor): seq[FnCandidate] =
+  ## Candidate routines named `fn` that are *guaranteed* to be available on a
+  ## type variable constrained by `typ`. `and` exposes the union of its
+  ## operands' operations; `or` exposes only their intersection: an operation is
+  ## available solely when every alternative provides a matching one. Treating
+  ## `or` as a union (as a naive fix does) is unsound, since the type may satisfy
+  ## just one alternative. See nim-lang/nimony#2029.
+  result = @[]
+  if typ.kind == Symbol:
+    let section = getTypeSection typ.symId
+    if section.body.typeKind == ConceptT:
+      result = collectConceptMethodsFor(fn, section.body)
+  elif typ.typeKind == AndT:
+    var t = typ
+    inc t
+    while t.kind != ParRi:
+      for cand in conceptMethodsForConstraint(fn, t):
+        var dup = false
+        for ex in result:
+          if sameConceptMethod(cand, ex):
+            dup = true
+            break
+        if not dup:
+          result.add cand
+      skip t
+  elif typ.typeKind == OrT:
+    var t = typ
+    inc t
+    var first = true
+    while t.kind != ParRi:
+      let branch = conceptMethodsForConstraint(fn, t)
+      if first:
+        result = branch
+        first = false
+      else:
+        var keep: seq[FnCandidate] = @[]
+        for cand in result:
+          for other in branch:
+            if sameConceptMethod(cand, other):
+              keep.add cand
+              break
+        result = keep
+      skip t
+    if first: result = @[]
 
 proc maybeAddConceptMethods(c: var SemContext; fn: StrId; typevar: SymId; cands: var FnCandidates) =
   let res = tryLoadSym(typevar)
   assert res.status == LacksNothing
   let local = asLocal(res.decl)
   if local.kind == TypevarY and local.typ.kind != DotToken:
-    for concpt in findConceptsInConstraint(local.typ):
-      collectConceptMethods c, fn, concpt, cands
+    for cand in conceptMethodsForConstraint(fn, local.typ):
+      if not conceptMethodAlreadyListed(cands, cand.typ):
+        cands.addUnique cand
 
 proc hasAttachedParam(params: Cursor; typ: SymId): bool =
   result = false
