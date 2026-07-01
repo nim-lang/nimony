@@ -35,6 +35,10 @@ function memcpy(d,s,n){ _u8.copyWithin(Number(d),Number(s),Number(s)+Number(n));
 function memset(p,v,n){ _u8.fill(v&0xff,Number(p),Number(p)+Number(n)); return p; }
 function strlen(p){ let n=0; while(_u8[Number(p)+n]!==0) n++; return n; }
 
+// C11 memory-order constants (imported by the atomic ops; ignored by the shims).
+const __ATOMIC_RELAXED = 0, __ATOMIC_CONSUME = 1, __ATOMIC_ACQUIRE = 2,
+      __ATOMIC_RELEASE = 3, __ATOMIC_ACQ_REL = 4, __ATOMIC_SEQ_CST = 5;
+
 // atomics for ARC refcounts: operate on an i64 slot at byte offset `p`
 function __atomic_add_fetch(p,v,o){ const n=mem.i64n(p)+Number(v); mem.setI64(p,n); return n; }
 function __atomic_sub_fetch(p,v,o){ const n=mem.i64n(p)-Number(v); mem.setI64(p,n); return n; }

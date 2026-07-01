@@ -119,6 +119,25 @@ if have_node; then
   } | node
 fi
 
+# ── whole-aggregate store through a pointer `(deref p) = obj` — the `new`'d
+# heap-cell initialisation path (`p[] = SomeObject(…)`). A `mem.copy` of the
+# object's bytes, not the empty-accessor `mem.()` that a scalar store would emit
+# for an aggregate pointee. Writes a Pt through a pointer, reads both fields back:
+# 11 + 31 = 42.
+gen tderefstore
+if have_node; then
+  {
+    echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
+    echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)),'
+    echo '  copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n) };'
+    cat "$work/tderefstore.js"
+    echo 'if (thru_0_tderefstore()===42)'
+    echo '  { console.log("functional(derefstore): PASS"); }'
+    echo '  else { console.log("functional(derefstore): FAIL got "+thru_0_tderefstore()); process.exit(1); }'
+  } | node
+fi
+
 # ── pointer-indexed stores `(pat p i) = v` — the seq/openarray element-write path
 # (`s[i] = v` after the seq's data pointer is loaded). A typed store at
 # `p + i*stride`, not the `mem.i64n(...) = v` load-as-lvalue that slipped through
