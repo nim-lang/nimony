@@ -133,7 +133,7 @@ proc constructsValue*(n: Cursor; derefConstructs = true): bool =
         XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX,
-        KvX, NoExpr: break
+        KvX, ToClosureX, NoExpr: break
   result = n.exprKind in ConstructingExprs or n.kind in {IntLit, FloatLit, StringLit, CharLit}
 
 proc lvalueRoot(n: Cursor; hdrefs: var bool): SymId =
@@ -160,7 +160,7 @@ proc lvalueRoot(n: Cursor; hdrefs: var bool): SymId =
         MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX,
         EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX,
-        KvX, NoExpr: break
+        KvX, ToClosureX, NoExpr: break
   if n.kind == Symbol:
     result = n.symId
   else:
@@ -279,7 +279,7 @@ proc isSimpleExpression(n: var Cursor): bool =
         MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX,
         CardX, EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX,
         TraceX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
-        EnvpX, KvX, NoExpr:
+        EnvpX, ToClosureX, KvX, NoExpr:
       result = false
       skip n
   of ParRi, SymbolDef, UnknownToken, EofToken:
@@ -707,7 +707,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
         Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX, PlussetX,
         MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
         InsetX, CardX, EmoveX, InternalTypeNameX,
-        InternalFieldPairsX, FailedX, IsX, EnvpX, KvX:
+        InternalFieldPairsX, FailedX, IsX, EnvpX, KvX, ToClosureX:
       # all other expression kinds: copy the head and recurse into the children
       copyInto c.dest, n:
         while n.hasMore: trOnlyEssentials c, n
@@ -1194,7 +1194,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
        EqX, NeqX, LeX, LtX, InfX, NeginfX, NanX, CompilesX, DeclaredX,
        DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, QuotedX,
        AddrX, HaddrX, AlignofX, OffsetofX, ErrX, OvfX, InstanceofX, InternalTypeNameX,
-       InternalFieldPairsX, IsX:
+       InternalFieldPairsX, IsX, ToClosureX:
       trSons c, n, WantNonOwner
     of DerefX, HderefX:
       trDeref c, n, e
