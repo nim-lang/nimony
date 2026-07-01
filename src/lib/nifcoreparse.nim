@@ -117,12 +117,32 @@ proc parseFromBuffer*(input: string; thisModule: sink string;
   result = createTokenBuf(sizeHint, sharedPool, sharedTags)
   parse(r, result, denseLineInfo = denseLineInfo)
 
+proc parseFromBuffer*(input: string; thisModule: sink string;
+                      unusedName: var string; sizeHint = 100;
+                      sharedPool: Pool = nil; sharedTags: TagPool = nil;
+                      denseLineInfo = false): TokenBuf =
+  ## Parses NIF text and returns its `.unusedname` directive via `unusedName`.
+  var r = rd.openFromBuffer(input, thisModule)
+  unusedName = r.firstUnusedName
+  result = createTokenBuf(sizeHint, sharedPool, sharedTags)
+  parse(r, result, denseLineInfo = denseLineInfo)
+
 proc parseFromFile*(filename: string; sizeHint = 100;
                     sharedPool: Pool = nil;
                     sharedTags: TagPool = nil;
                     denseLineInfo = false): TokenBuf =
   var r = rd.open(filename)
   discard rd.processDirectives(r)
+  result = createTokenBuf(sizeHint, sharedPool, sharedTags)
+  parse(r, result, denseLineInfo = denseLineInfo)
+
+proc parseFromFile*(filename: string; unusedName: var string;
+                    sizeHint = 100; sharedPool: Pool = nil;
+                    sharedTags: TagPool = nil;
+                    denseLineInfo = false): TokenBuf =
+  ## Parses a NIF file and returns its `.unusedname` directive via `unusedName`.
+  var r = rd.open(filename)
+  unusedName = r.firstUnusedName
   result = createTokenBuf(sizeHint, sharedPool, sharedTags)
   parse(r, result, denseLineInfo = denseLineInfo)
 
@@ -240,20 +260,25 @@ proc emitValueWithoutLineInfo(bld: var Builder; c: var Cursor;
   of ExtendedSuffix, LineInfoLit:
     assert false, "suffix token is not a value head"
 
-proc toString*(b: var TokenBuf; sizeHint = 0;
-               includeLineInfo = true): string =
-  ## Canonical NIF text for the whole buffer (one or more top-level values).
-  ## Set `includeLineInfo` to false for location-free diagnostic rendering.
-  var bld = nifbuilder.open(if sizeHint > 0: sizeHint else: b.len * 8)
+proc appendTo*(b: var TokenBuf; dest: var Builder;
+               includeLineInfo = true) =
+  ## Appends canonical NIF text for the whole buffer to `dest`.
   var c = b.beginRead()
   if includeLineInfo:
     var cur = NoNifLineInfo
     var parents = @[NoNifLineInfo]
     while c.hasMore:
-      emitValueWithLineInfo(bld, c, cur, parents, b.tags, b.pool)
+      emitValueWithLineInfo(dest, c, cur, parents, b.tags, b.pool)
   else:
     while c.hasMore:
-      emitValueWithoutLineInfo(bld, c, b.tags, b.pool)
+      emitValueWithoutLineInfo(dest, c, b.tags, b.pool)
+
+proc toString*(b: var TokenBuf; sizeHint = 0;
+               includeLineInfo = true): string =
+  ## Canonical NIF text for the whole buffer (one or more top-level values).
+  ## Set `includeLineInfo` to false for location-free diagnostic rendering.
+  var bld = nifbuilder.open(if sizeHint > 0: sizeHint else: b.len * 8)
+  b.appendTo(bld, includeLineInfo)
   result = bld.extract()
 
 proc toString*(node: Cursor; sizeHint = 0;

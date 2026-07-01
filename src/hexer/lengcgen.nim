@@ -2348,10 +2348,37 @@ proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo) 
   dest.addDotToken() # no init value
   dest.addParRi() # gvar
 
-  # Generate: (proc :main (params (param :argc . (i 32)) (param :argv . (ptr (ptr cchar)))) (i 32) (pragmas (exportc "main")) (stmts ...))
+  # (gvar :nimEnviron (pragmas (exportc "nimEnviron")) (ptr (ptr cchar)) .)
+  # The environment block (`char **`), written by `main` from its 3rd parameter.
+  # Distinct from libc's `environ` ON PURPOSE: this same gvar is emitted for the C
+  # backend too (codegen is shared), and an exportc `environ` would clash with
+  # libc's. The libc-free backend has no `environ`, so std/envvars + std/posix read
+  # `nimEnviron` instead under `-d:nimNativeIo` (on the C backend it's dead — those
+  # modules keep using libc's `environ`). The native nifasm entry passes the
+  # kernel-provided env pointer as main's 3rd arg, mirroring argc/argv.
+  let nimEnvironSym = pool.syms.getOrIncl("`nimEnviron.0." & c.main)
+  dest.add tagToken("gvar", rootInfo)
+  dest.add symdefToken(nimEnvironSym, rootInfo)
+  dest.add tagToken("pragmas", rootInfo)
+  dest.add tagToken("exportc", rootInfo)
+  dest.addStrLit("nimEnviron", rootInfo)
+  dest.addParRi() # exportc
+  dest.addParRi() # pragmas
+  dest.add tagToken("ptr", rootInfo)
+  dest.add tagToken("ptr", rootInfo)
+  dest.add tagToken("c", rootInfo)
+  dest.addIntLit(8, rootInfo)
+  dest.addParRi() # c 8
+  dest.addParRi() # inner ptr
+  dest.addParRi() # outer ptr
+  dest.addDotToken() # no init value
+  dest.addParRi() # gvar
+
+  # Generate: (proc :main (params (param :argc . (i 32)) (param :argv . (ptr (ptr cchar))) (param :envp . (ptr (ptr cchar)))) (i 32) (pragmas (exportc "main")) (stmts ...))
   let mainSym = pool.syms.getOrIncl("`main.0." & c.main)
   let argcSym = pool.syms.getOrIncl("`argc.0." & c.main)
   let argvSym = pool.syms.getOrIncl("`argv.0." & c.main)
+  let envpSym = pool.syms.getOrIncl("`envp.0." & c.main)
   dest.add tagToken("proc", rootInfo)
   dest.add symdefToken(mainSym, rootInfo)
   # params
@@ -2367,6 +2394,16 @@ proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo) 
   # (param :argv . (ptr (ptr cchar)))
   dest.add tagToken("param", rootInfo)
   dest.add symdefToken(argvSym, rootInfo)
+  dest.addDotToken()
+  dest.add tagToken("ptr", rootInfo)
+  dest.add tagToken("ptr", rootInfo)
+  dest.add symToken(ccharSym, rootInfo)
+  dest.addParRi() # inner ptr
+  dest.addParRi() # outer ptr
+  dest.addParRi() # param
+  # (param :envp . (ptr (ptr cchar)))  — the environment block (3rd C-main arg)
+  dest.add tagToken("param", rootInfo)
+  dest.add symdefToken(envpSym, rootInfo)
   dest.addDotToken()
   dest.add tagToken("ptr", rootInfo)
   dest.add tagToken("ptr", rootInfo)
@@ -2408,6 +2445,20 @@ proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo) 
   dest.add symToken(argvSym, rootInfo)
   dest.addParRi() # asgn
 
+  dest.addParRi() # asgn
+  # (asgn nimEnviron (cast (ptr (ptr cchar)) envp))
+  dest.add tagToken("asgn", rootInfo)
+  dest.add symToken(nimEnvironSym, rootInfo)
+  dest.add tagToken("cast", rootInfo)
+  dest.add tagToken("ptr", rootInfo)
+  dest.add tagToken("ptr", rootInfo)
+  dest.add tagToken("c", rootInfo)
+  dest.addIntLit(8, rootInfo)
+  dest.addParRi() # c 8
+  dest.addParRi() # inner ptr
+  dest.addParRi() # outer ptr
+  dest.add symToken(envpSym, rootInfo)
+  dest.addParRi() # cast
   dest.addParRi() # asgn
   # (call ini.0.modname)
   dest.add tagToken("call", rootInfo)

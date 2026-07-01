@@ -1,7 +1,7 @@
 import std/[assertions, fenv]
 
 type
-  Arithmetic = concept
+  Arithmetic* = concept ## Types that supply the usual arithmetic and comparison operators.
     func `-`(x: Self): Self
     func `+`(x, y: Self): Self
     func `-`(x, y: Self): Self
@@ -14,6 +14,24 @@ type
     func `==`(x, y: Self): bool
     func `<`(x, y: Self): bool
     func `>`(x, y: Self): bool
+
+  # Concepts for the individual transcendental functions below. They let generic
+  # code (e.g. `std/complex`) depend precisely on the operations it actually uses,
+  # rather than on a concrete float type.
+  HasSqrt* = concept ## Types that provide `sqrt`.
+    func sqrt(x: Self): Self
+  HasExp* = concept ## Types that provide `exp`.
+    func exp(x: Self): Self
+  HasLn* = concept ## Types that provide `ln`.
+    func ln(x: Self): Self
+  HasSin* = concept ## Types that provide `sin`.
+    func sin(x: Self): Self
+  HasCos* = concept ## Types that provide `cos`.
+    func cos(x: Self): Self
+  HasHypot* = concept ## Types that provide `hypot`.
+    func hypot(x, y: Self): Self
+  HasArctan2* = concept ## Types that provide `arctan2`.
+    func arctan2(y, x: Self): Self
 
 const
   PI* = 3.1415926535897932384626433          ## The circle constant PI (Ludolph's number).

@@ -99,7 +99,17 @@ proc setBackgroundColor*(f: File; bg: BackgroundColor; bright = false) =
   ## Sets the terminal's background color.
   write f, ansiBackgroundColorCode(bg, bright)
 
-when defined(posix):
+when defined(nimNativeIo) and defined(posix):
+  # Libc-free: a `File` carries a raw fd (no `FILE*`, so no `fileno`), and `isatty`
+  # is itself a libc helper — implement it as `ioctl(fd, TCGETS)` (== 0 ⇒ a tty),
+  # the same probe glibc's `isatty` uses. TCGETS is 0x5401 on x86-64 and AArch64.
+  proc nativeIoctl(fd: cint; request: uint; arg: pointer): cint {.
+    importc: "ioctl", sideEffect.}
+  proc c_fileno(f: File): cint = getFileHandle(f)
+  proc c_isatty(fildes: cint): cint =
+    var termbuf {.noinit.}: array[64, byte]   # holds a `struct termios` (~60B)
+    if nativeIoctl(fildes, 0x5401'u, addr termbuf) == 0'i32: 1'i32 else: 0'i32
+elif defined(posix):
   proc c_isatty(fildes: cint): cint {.importc: "isatty", header: "<unistd.h>".}
   proc c_fileno(f: File): cint {.importc: "fileno", header: "<stdio.h>".}
 elif defined(windows):
