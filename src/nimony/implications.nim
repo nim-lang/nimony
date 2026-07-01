@@ -203,6 +203,17 @@ proc liftAsymmetric(impls: var Implications;
   for imp in otherImpls:
     if imp.kind == IfFalse and imp.cond == cf: impls.add imp
 
+proc branchGuarantees(impls: openArray[Implication]; imp: Implication): bool =
+  ## Does a branch whose implications are `impls` guarantee the conditional
+  ## `imp` (an ``IfTrue``/``IfFalse cond s``)? Either it contains that exact
+  ## fact, or it writes `s` unconditionally (``Always s`` subsumes any
+  ## conditional claim about the same `s`: if `s` is written on every path of
+  ## the branch, then in particular it is written whenever `cond` holds).
+  for other in impls:
+    if other == imp: return true
+    if other.kind == Always and other.sym == imp.sym: return true
+  return false
+
 proc combine*(impls: var Implications;
               nowKnownFalse, nowKnownTrue: var seq[SymId];
               thenImpls, elseImpls: openArray[Implication];
@@ -251,16 +262,21 @@ proc combine*(impls: var Implications;
       if s notin thenAlways:
         liftAsymmetric(impls, s, elseAlways, thenAlways, elseImpls, thenImpls)
 
-  # (4) Propagate conditional facts that appear in **both** branches. A
-  #     conditional that only one branch produces is not valid in the outer
-  #     scope (we can't encode "… AND that branch ran" without conjunctions),
-  #     so we drop it. Intersection is sound.
+  # (4) Propagate conditional facts guaranteed by **both** branches. A branch
+  #     guarantees ``IfX cond s`` when it produces that exact conditional or
+  #     when it writes `s` unconditionally (``Always s`` subsumes it). A
+  #     conditional that survives this intersection holds in the outer scope:
+  #     whichever branch ran, `cond`'s hypothesis implies `s` was written.
+  #     Considering conditionals from either branch (symmetric) and honouring
+  #     Always-subsumption recovers facts like "result init when cf=false" when
+  #     one branch sets the sym unconditionally and the other only under `cf`
+  #     — the plain exact-match intersection used to drop those.
   for imp in thenImpls:
     if imp.kind == Always: continue
-    for other in elseImpls:
-      if imp == other:
-        impls.add imp
-        break
+    if branchGuarantees(elseImpls, imp): impls.add imp
+  for imp in elseImpls:
+    if imp.kind == Always: continue
+    if branchGuarantees(thenImpls, imp): impls.add imp
 
   # (5) Leaving-path promotion: if a branch unconditionally `jtrue`s a
   #     cfvar, sequential code past the ite is only reachable via the other
