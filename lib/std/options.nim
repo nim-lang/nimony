@@ -26,9 +26,6 @@ type
     val: T
     has: bool
 
-  Stringable = concept
-    ## A type that can be rendered with `$`.
-    func `$`(x: Self): string
 
 func raiseEmptyOption() {.noinline, noreturn.} =
   {.cast(noSideEffect).}: quit "Tried to access the value of an empty Option"
