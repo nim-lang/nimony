@@ -105,6 +105,27 @@ proc nimUcheckB(i, b: uint): uint {.inline, exportc: "nimUcheckB".} =
   if result > b:
     raiseIndexError3(i, 0, b)
 
+proc raiseRangeError3[T: HasWriteErr](i, a, b: T) {.noinline.} =
+  writeErr "value out of range: "
+  writeErr i
+  writeErr " notin "
+  writeErr a
+  writeErr ".."
+  writeErr b
+  writeErr "\n"
+  die 1'i32
+
+proc nimIRcheck(i, a, b: int): int {.inline, exportc: "nimIRcheck".} =
+  ## Range check for a conversion to an ordinal `range[a..b]`: returns `i`
+  ## unchanged when `a <= i <= b`, otherwise terminates. Unlike the array
+  ## bound check (`nimIcheckAB`), the value keeps its magnitude (no `- a`
+  ## rebasing), since a range value *is* its ordinal.
+  if i >= a and i <= b:
+    result = i
+  else:
+    result = 0
+    raiseRangeError3(i, a, b)
+
 proc nimInvalidObjConv(name: string) {.inline, exportc: "nimInvalidObjConv".} =
   writeErr "invalid object conversion: "
   writeErr name
