@@ -494,7 +494,9 @@ proc handleSymDef*(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: S
       # #1974: this toplevel let/var was already resolved on demand in the
       # signature phase (for a `when` condition). Reuse that symbol so the
       # body phase neither redeclares it nor shifts its global-counter name.
-      let def = c.onDemandResolved[lit]
+      # `getOrDefault` (not `[]`) because nimony rejects the raising `Table.[]`
+      # in effect-checked code; presence is already guaranteed by `hasKey` above.
+      let def = c.onDemandResolved.getOrDefault(lit, SymId(0))
       let s = Sym(kind: kind, name: def, pos: dest.len)
       result = DelayedSym(status: OkExistingFresh, lit: lit, s: s, info: info)
       dest.add symdefToken(def, info)

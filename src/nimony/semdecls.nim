@@ -263,7 +263,9 @@ proc resolveDeferredLocal(c: var SemContext; ident: StrId): bool =
   ## output equivalent to deferring normally. See `semIdentImpl`,
   ## nim-lang/nimony#1974.
   if not c.deferredLocals.hasKey(ident): return false
-  var decl = c.deferredLocals[ident]
+  # `getOrDefault` (not `[]`) to avoid the raising `Table.[]` in effect-checked
+  # code; `hasKey` above already guarantees the key is present.
+  var decl = c.deferredLocals.getOrDefault(ident, default(Cursor))
   c.deferredLocals.del ident  # resolve at most once
   # A plain `if` (not `case`) because this is a partial map over the handful of
   # local-decl kinds; `case n.stmtKind` would demand an `else`, which the source
