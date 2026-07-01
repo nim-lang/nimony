@@ -1,3 +1,7 @@
+# issue #1948
+# tests convertion from non closure procs to closure proc type params
+# related to `ToClosureX` tag
+
 import std/assertions
 
 var testNonClosureVar = 0
