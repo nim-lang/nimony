@@ -200,68 +200,8 @@ proc captureExpr(g: var JSGen; n: var Cursor): string =
   result = g.code[start ..< g.code.len]
   g.code.setLen start
 
-proc genAddrOf(g: var JSGen; n: var Cursor) =
-  ## Emit `(addr LOC)` as a fat pointer `[base, key]` so that `base[key]` is
-  ## LOC's storage. Locals are boxed (`[value]`), so a local's address is
-  ## `[x, 0]`; a field's is `[obj, "field"]`; an element's is `[arr, idx]`.
-  ## `(addr (deref p))` cancels to the pointer `p`. `n` is the location operand.
-  case n.exprKind
-  of DerefC:
-    n.into:
-      gx g, n
-      while n.hasMore: skip n
-  of DotC:
-    n.into:
-      let base = g.captureExpr n
-      let key = g.fieldName(n.symId); inc n   # field symbol
-      g.wr "[" & base & ", " & jsString(key) & "]"
-      while n.hasMore: skip n
-  of AtC:
-    n.into:
-      let base = g.captureExpr n
-      let idx = g.captureExpr n
-      g.wr "[" & base & ", " & idx & "]"
-      while n.hasMore: skip n
-  of NoExpr:
-    if n.kind == Symbol:
-      # a boxed local: the box is the storage, indexed at slot 0.
-      g.wr "[" & g.name(n.symId) & ", 0]"; inc n
-    else:
-      g.todo("addr-of-location", n)
-  else:
-    # `addr (pat p i)` (pointer arithmetic) and other forms need more than a
-    # single base/key pair; out of scope for this slice.
-    g.todo("addr-of-location", n)
-
-proc genDeref(g: var JSGen; n: var Cursor) =
-  ## `(deref p)` reads through a fat pointer: `p[0][p[1]]`. When `p` is itself
-  ## `(addr LOC)` the two cancel and LOC's storage is accessed directly. `n` is
-  ## the pointer operand.
-  if n.exprKind == AddrC:
-    n.into:
-      gx g, n   # read LOC directly: boxed sym -> x[0], field -> o.f, elem -> a[i]
-      while n.hasMore: skip n
-  else:
-    let p = g.captureExpr n
-    g.wr p & "[0][" & p & "[1]]"
-
-proc genEq(g: var JSGen; n: var Cursor; negate: bool) =
-  ## `(eq a b)` / `(neq a b)`. When either operand is an address, the operands
-  ## are fat pointers and must be compared component-wise (a fresh `[base,key]`
-  ## is never `===` another array); otherwise a plain strict comparison, which
-  ## is also correct for `p == nil` (a nil pointer is `null`).
-  n.into:
-    let aAddr = n.exprKind == AddrC
-    let a = g.captureExpr n
-    let bAddr = n.exprKind == AddrC
-    let b = g.captureExpr n
-    if aAddr or bAddr:
-      g.usesPtrEq = true
-      if negate: g.wr "(!nimPtrEq(" & a & ", " & b & "))"
-      else: g.wr "nimPtrEq(" & a & ", " & b & ")"
-    else:
-      g.wr "(" & a & (if negate: " !== " else: " === ") & b & ")"
-    while n.hasMore: skip n
+# genAddrOf / genDeref / genEq are defined below, after the buffer-layout helpers
+# they depend on (arrayElemInfo, isBufferObjectType, pointeeAk), just before `gx`.
 
 # ── buffer model (Typed-Array linear memory, Araq's M2 direction) ────────────
 # A Nim-native object is bytes in linear memory: construction is `allocFixed` +
@@ -318,11 +258,18 @@ proc constructObjectInto(g: var JSGen; dest: string; n: var Cursor) =
           for f in fields:
             if f.sym == fsym:
               off = f.offset; ftyp = f.typ
-          let (_, st) = accessors(accessOf(g.m, ftyp))
+          let ak = accessOf(g.m, ftyp)
           g.nl()
-          g.wr "mem." & st & "(" & dest & " + " & $off & ", "
-          g.gx n              # field value
-          g.wr ");"
+          if ak == akAggregate:
+            # a nested aggregate field: copy the value's bytes in.
+            g.wr "mem.copy(" & dest & " + " & $off & ", "
+            g.gx n
+            g.wr ", " & $typeLayout(g.m, ftyp).size & ");"
+          else:
+            let (_, st) = accessors(ak)
+            g.wr "mem." & st & "(" & dest & " + " & $off & ", "
+            g.gx n              # field value
+            g.wr ");"
           while n.hasMore: skip n
       else:
         skip n
@@ -355,6 +302,151 @@ proc takeBufferField(g: var JSGen; n: var Cursor; oty: Cursor):
         result.fsize = typeLayout(g.m, f.typ).size
     while n.hasMore: skip n
 
+proc resolveType(g: var JSGen; typ: Cursor): Cursor =
+  ## Resolve a named type to its declared body (locally-declared only, to avoid
+  ## `getDeclOrNil`'s foreign-load assert); otherwise return the type unchanged.
+  result = typ
+  if typ.typeKind == NoType and typ.kind == Symbol and g.m.hasLocalDecl(typ.symId):
+    let def = g.m.getDeclOrNil(typ.symId)
+    if def != nil:
+      var p = def.pos
+      result = asTypeDecl(p).body
+
+proc arrayElemInfo(g: var JSGen; arrTyp: Cursor): (bool, int64, AccessKind) =
+  ## `(isArray, elementStride, elementAccessKind)` for an array type. The stride
+  ## is the element size rounded up to its alignment (C array layout).
+  let t = g.resolveType(arrTyp)
+  if t.typeKind != ArrayT: return (false, 0'i64, akAggregate)
+  var n = t
+  var stride = 0'i64
+  var ak = akAggregate
+  n.into:
+    let elem = n
+    let lay = typeLayout(g.m, elem)
+    stride = (if lay.align <= 1: lay.size else: (lay.size + lay.align - 1) and not (lay.align - 1))
+    ak = accessOf(g.m, elem)
+    while n.hasMore: skip n
+  (true, stride, ak)
+
+proc isBufferArray(g: var JSGen; typ: Cursor): bool =
+  g.arrayElemInfo(typ)[0]
+
+proc isBufferAggregate(g: var JSGen; typ: Cursor): bool =
+  ## A Nim-native aggregate laid out in linear memory: a declared object or an
+  ## array. (Unions/flexarrays fall here too once needed.)
+  g.isBufferObjectType(typ) or g.isBufferArray(typ)
+
+proc pointeeAk(g: var JSGen; operand: Cursor): AccessKind =
+  ## Access kind of the pointee for a `(deref p)` / pointer store. Reads it from
+  ## the operand symbol's type: a real `(ptr T)` yields `accessOf(T)`; a pointer
+  ## loosely typed as its pointee (e.g. `(i 64)`) yields `accessOf` of that type.
+  result = akI64
+  if operand.kind == Symbol and g.localTypes.hasKey(operand.symId):
+    let t = g.localTypes[operand.symId]
+    if t.typeKind in {PtrT, AptrT}:
+      var inner = t
+      inner.into:
+        result = accessOf(g.m, inner)
+        while inner.hasMore: skip inner
+    else:
+      result = accessOf(g.m, t)
+
+proc genAddrOf(g: var JSGen; n: var Cursor) =
+  ## `(addr LOC)` -> an integer BYTE OFFSET into the buffer (a Nim-native
+  ## pointer). A field's address is `base + off`, an element's is `base + i*stride`,
+  ## an address-taken scalar local's is its own slot offset. `(addr (deref p))`
+  ## cancels to `p`. Fat pointers `[base,key]` are reserved for the future importjs
+  ## interop layer (the legacy fallback branch, hit only for undeclared types).
+  case n.exprKind
+  of DerefC:
+    n.into:
+      gx g, n                       # addr(deref p) = p
+      while n.hasMore: skip n
+  of DotC:
+    n.into:
+      var oty = n
+      var isBuf = false
+      if n.kind == Symbol and g.localTypes.hasKey(n.symId):
+        oty = g.localTypes[n.symId]; isBuf = g.isBufferObjectType(oty)
+      let base = g.captureExpr n
+      let fsym = n.symId; inc n
+      if isBuf:
+        var off = 0'i64
+        for f in objectFields(g.m, oty):
+          if f.sym == fsym: off = f.offset
+        g.wr "(" & base & " + " & $off & ")"
+      else:
+        g.wr "[" & base & ", " & jsString(g.fieldName(fsym)) & "]"
+      while n.hasMore: skip n
+  of AtC:
+    n.into:
+      var aty = n
+      var isArr = false
+      if n.kind == Symbol and g.localTypes.hasKey(n.symId):
+        aty = g.localTypes[n.symId]; isArr = g.isBufferArray(aty)
+      let base = g.captureExpr n
+      let idx = g.captureExpr n
+      if isArr:
+        let (_, stride, _) = g.arrayElemInfo(aty)
+        g.wr "(" & base & " + (" & idx & ") * " & $stride & ")"
+      else:
+        g.wr "[" & base & ", " & idx & "]"
+      while n.hasMore: skip n
+  of NoExpr:
+    if n.kind == Symbol:
+      # an address-taken scalar local: its slot's byte offset IS the variable.
+      g.wr g.name(n.symId); inc n
+    else:
+      g.todo("addr-of-location", n)
+  else:
+    g.todo("addr-of-location", n)
+
+proc genDeref(g: var JSGen; n: var Cursor) =
+  ## `(deref p)` -> a typed load at byte offset `p`, the pointee width taken from
+  ## `p`'s type. `(deref (addr LOC))` cancels to reading LOC directly.
+  if n.exprKind == AddrC:
+    n.into:
+      gx g, n
+      while n.hasMore: skip n
+  else:
+    let ak = g.pointeeAk(n)
+    let p = g.captureExpr n
+    if ak == akAggregate:
+      g.wr p                       # deref of a pointer-to-aggregate: the offset itself
+    else:
+      let (ld, _) = accessors(ak)
+      g.wr "mem." & ld & "(" & p & ")"
+
+proc genEq(g: var JSGen; n: var Cursor; negate: bool) =
+  ## `(eq a b)` / `(neq a b)`. Pointers are now integer byte offsets, so a plain
+  ## strict comparison is correct for addresses too (no fat-pointer component
+  ## compare needed).
+  n.into:
+    let a = g.captureExpr n
+    let b = g.captureExpr n
+    g.wr "(" & a & (if negate: " !== " else: " === ") & b & ")"
+    while n.hasMore: skip n
+
+proc constructArrayInto(g: var JSGen; dest: string; n: var Cursor; arrTyp: Cursor) =
+  ## Emit the stores that build an `(aconstr T e0 e1 …)` into the storage at
+  ## `dest`: one `mem.setX(dest + i*stride, ei)` per element.
+  let (_, stride, ak) = g.arrayElemInfo(arrTyp)
+  n.into:
+    skip n                # array type operand
+    var i = 0'i64
+    while n.hasMore:
+      g.nl()
+      if ak == akAggregate:
+        g.wr "mem.copy(" & dest & " + " & $(i * stride) & ", "
+        g.gx n
+        g.wr ", " & $stride & ");"
+      else:
+        let (_, st) = accessors(ak)
+        g.wr "mem." & st & "(" & dest & " + " & $(i * stride) & ", "
+        g.gx n
+        g.wr ");"
+      inc i
+
 proc gx(g: var JSGen; n: var Cursor) =
   case n.exprKind
   of NoExpr:
@@ -370,9 +462,18 @@ proc gx(g: var JSGen; n: var Cursor) =
     of StrLit:
       g.wr jsString(g.m.pool.strings[strId(n)]); inc n
     of Symbol:
-      # a boxed local lives in a 1-element array; read it through slot 0.
-      if n.symId in g.boxed: g.wr g.name(n.symId) & "[0]"
-      else: g.wr g.name(n.symId)
+      # an address-taken SCALAR local lives in a buffer slot (so it has a real
+      # byte address); read it with a typed load. An aggregate local already holds
+      # its offset, and ordinary locals stay JS registers — both read by name.
+      let nm = g.name(n.symId)
+      let ak = (if n.symId in g.boxed and g.localTypes.hasKey(n.symId): accessOf(g.m, g.localTypes[n.symId])
+                elif n.symId in g.boxed: akI64
+                else: akAggregate)   # sentinel meaning "emit name"
+      if n.symId in g.boxed and ak != akAggregate:
+        let (ld, _) = accessors(ak)
+        g.wr "mem." & ld & "(" & nm & ")"
+      else:
+        g.wr nm
       inc n
     of DotToken:
       g.wr "undefined"; inc n
@@ -380,7 +481,7 @@ proc gx(g: var JSGen; n: var Cursor) =
       g.todo("expr:" & $n.kind, n)
   of TrueC: g.wr "true"; skip n
   of FalseC: g.wr "false"; skip n
-  of NilC: g.wr "null"; skip n
+  of NilC: g.wr "0"; skip n   # a nil pointer is byte offset 0 (reserved as null)
   of InfC: g.wr "Infinity"; skip n
   of NegInfC: g.wr "(-Infinity)"; skip n
   of NanC: g.wr "NaN"; skip n
@@ -496,12 +597,33 @@ proc gx(g: var JSGen; n: var Cursor) =
         g.wr "."
         g.wr g.fieldName(n.symId); inc n   # field name (Symbol)
       while n.hasMore: skip n        # inheritance depth / access token
-  of AtC, PatC:
-    # array / pointer indexing -> `arr[idx]`.
+  of AtC:
+    # `(at arr i)` on a Nim-native array -> typed load at `base + i*stride` in
+    # linear memory; otherwise (undeclared element type) the legacy `arr[i]`.
     n.into:
-      g.gx n            # array / pointer
+      var isArr = false
+      var aty = n
+      if n.kind == Symbol and g.localTypes.hasKey(n.symId):
+        aty = g.localTypes[n.symId]
+        isArr = g.isBufferArray(aty)
+      if isArr:
+        let (_, stride, ak) = g.arrayElemInfo(aty)
+        let base = g.captureExpr n
+        let idx = g.captureExpr n
+        if ak == akAggregate:
+          g.wr "(" & base & " + (" & idx & ") * " & $stride & ")"
+        else:
+          let (ld, _) = accessors(ak)
+          g.wr "mem." & ld & "(" & base & " + (" & idx & ") * " & $stride & ")"
+      else:
+        g.gx n; g.wr "["; g.gx n; g.wr "]"
+      while n.hasMore: skip n
+  of PatC:
+    # `(pat p i)` pointer indexing stays the legacy `p[i]` (JS-interop / raw).
+    n.into:
+      g.gx n
       g.wr "["
-      g.gx n            # index
+      g.gx n
       g.wr "]"
       while n.hasMore: skip n
   else:
@@ -530,28 +652,34 @@ proc genVar(g: var JSGen; n: var Cursor) =
   g.localTypes[d.name.symId] = d.typ     # remember the type for buffer-model access
   g.nl()
   let nm = g.name(d.name.symId)
-  if d.name.symId notin g.boxed and g.isBufferObjectType(d.typ):
-    # Nim-native object: storage in linear memory. `allocFixed` its bytes, then
-    # either construct an `oconstr` into it in place, or copy another aggregate.
+  if g.isBufferAggregate(d.typ):
+    # Nim-native aggregate (object or array): storage in linear memory. Allocate
+    # its bytes, then construct the (a)constr into it in place, or copy another
+    # aggregate value. Its address is simply its offset (no boxing needed).
     let lay = typeLayout(g.m, d.typ)
     g.wr "let " & nm & " = allocFixed(" & $lay.size & ");"
     if d.value.kind != DotToken:
       var v = d.value
       if v.exprKind == OconstrC:
         g.constructObjectInto(nm, v)
+      elif v.exprKind == AconstrC:
+        g.constructArrayInto(nm, v, d.typ)
       else:
         g.nl(); g.wr "mem.copy(" & nm & ", "
         g.gx v
         g.wr ", " & $lay.size & ");"
     return
   if d.name.symId in g.boxed:
-    # boxed local: store the value in a 1-element array so its address (the
-    # array) is a stable pointer; all reads/writes go through slot 0.
-    g.wr "let " & nm & " = ["
+    # address-taken scalar local: spill to a buffer slot so it has a real byte
+    # address (its variable holds the offset). Reads/writes go through mem.
+    let lay = typeLayout(g.m, d.typ)
+    g.wr "let " & nm & " = allocFixed(" & $lay.size & ");"
     if d.value.kind != DotToken:
+      let (_, st) = accessors(accessOf(g.m, d.typ))
+      g.nl(); g.wr "mem." & st & "(" & nm & ", "
       var v = d.value
       g.gx v
-    g.wr "];"
+      g.wr ");"
   else:
     g.wr "let " & nm
     if d.value.kind != DotToken:
@@ -626,6 +754,74 @@ proc genCase(g: var JSGen; n: var Cursor) =
     dec g.indent
     g.nl(); g.wr "}"
 
+proc genLvalueStore(g: var JSGen; lval: Cursor; value: string) =
+  ## Store the pre-rendered `value` into the lvalue, dispatching on the unified
+  ## byte-pointer model: `(deref p)` -> typed store at offset `p`; a buffer object
+  ## field or array element -> typed store at its offset; an address-taken scalar
+  ## local -> store at its slot; anything else -> a plain `lhs = value`.
+  var n = lval
+  case n.exprKind
+  of DerefC:
+    n.into:
+      if n.exprKind == AddrC:
+        n.into:
+          g.genLvalueStore(n, value)      # (deref (addr loc)) = v  ->  store loc
+          while n.hasMore: skip n
+      else:
+        let ak = g.pointeeAk(n)
+        let p = g.captureExpr n
+        let (_, st) = accessors(ak)
+        g.wr "mem." & st & "(" & p & ", " & value & ");"
+      while n.hasMore: skip n
+  of DotC:
+    let (isBuf, oty) = g.bufferFieldOf(n)
+    if isBuf:
+      var nn = n
+      let fld = g.takeBufferField(nn, oty)
+      if fld.ak == akAggregate:
+        g.wr "mem.copy(" & fld.base & " + " & $fld.off & ", " & value & ", " & $fld.fsize & ");"
+      else:
+        let (_, st) = accessors(fld.ak)
+        g.wr "mem." & st & "(" & fld.base & " + " & $fld.off & ", " & value & ");"
+    else:
+      var nn = n
+      g.gx nn; g.wr " = " & value & ";"
+  of AtC:
+    var isArr = false
+    var aty = n
+    var probe = n
+    probe.into:
+      if probe.kind == Symbol and g.localTypes.hasKey(probe.symId):
+        aty = g.localTypes[probe.symId]; isArr = g.isBufferArray(aty)
+      while probe.hasMore: skip probe
+    if isArr:
+      let (_, stride, ak) = g.arrayElemInfo(aty)
+      var nn = n
+      nn.into:
+        let base = g.captureExpr nn
+        let idx = g.captureExpr nn
+        if ak == akAggregate:
+          g.wr "mem.copy(" & base & " + (" & idx & ") * " & $stride & ", " & value & ", " & $stride & ");"
+        else:
+          let (_, st) = accessors(ak)
+          g.wr "mem." & st & "(" & base & " + (" & idx & ") * " & $stride & ", " & value & ");"
+        while nn.hasMore: skip nn
+    else:
+      var nn = n
+      g.gx nn; g.wr " = " & value & ";"
+  of NoExpr:
+    let ak = (if n.kind == Symbol and n.symId in g.boxed and g.localTypes.hasKey(n.symId):
+                accessOf(g.m, g.localTypes[n.symId]) else: akAggregate)
+    if n.kind == Symbol and n.symId in g.boxed and ak != akAggregate:
+      let (_, st) = accessors(ak)
+      g.wr "mem." & st & "(" & g.name(n.symId) & ", " & value & ");"
+    else:
+      var nn = n
+      g.gx nn; g.wr " = " & value & ";"
+  else:
+    var nn = n
+    g.gx nn; g.wr " = " & value & ";"
+
 proc gs(g: var JSGen; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
@@ -638,50 +834,31 @@ proc gs(g: var JSGen; n: var Cursor) =
   of VarS, GvarS, TvarS, ConstS:
     g.genVar n
   of AsgnS:
+    # `(asgn lvalue value)` — dispatched by `genLvalueStore` (typed store for a
+    # deref / buffer field / array element / spilled scalar; plain `=` otherwise).
     n.into:
-      g.nl()
-      let (isBuf, oty) = g.bufferFieldOf(n)
-      if isBuf:
-        # `(asgn (dot p f) v)` on a buffer object -> `mem.setX(p + off, v)`.
-        let fld = g.takeBufferField(n, oty)
-        if fld.ak == akAggregate:
-          g.wr "mem.copy(" & fld.base & " + " & $fld.off & ", "; g.gx n
-          g.wr ", " & $fld.fsize & ");"
-        else:
-          let (_, st) = accessors(fld.ak)
-          g.wr "mem." & st & "(" & fld.base & " + " & $fld.off & ", "; g.gx n; g.wr ");"
-      else:
-        g.gx n            # lvalue
-        g.wr " = "
-        g.gx n            # value
-        g.wr ";"
-      while n.hasMore: skip n
-  of StoreS:
-    # `(store value lvalue)` — operands are reversed relative to `asgn`.
-    n.into:
+      let lval = n
+      skip n
       let value = g.captureExpr n
       g.nl()
-      let (isBuf, oty) = g.bufferFieldOf(n)
-      if isBuf:
-        let fld = g.takeBufferField(n, oty)
-        if fld.ak == akAggregate:
-          g.wr "mem.copy(" & fld.base & " + " & $fld.off & ", " & value & ", " & $fld.fsize & ");"
-        else:
-          let (_, st) = accessors(fld.ak)
-          g.wr "mem." & st & "(" & fld.base & " + " & $fld.off & ", " & value & ");"
-      else:
-        g.gx n            # lvalue
-        g.wr " = " & value & ";"
+      g.genLvalueStore(lval, value)
+      while n.hasMore: skip n
+  of StoreS:
+    # `(store value lvalue)` — operands reversed relative to `asgn`.
+    n.into:
+      let value = g.captureExpr n
+      let lval = n
+      g.nl()
+      g.genLvalueStore(lval, value)
       while n.hasMore: skip n
   of KeepovfS:
-    # `(keepovf (op TYPE lhs rhs) dest)` computes the arithmetic, stores it into
-    # `dest`, and would set the overflow flag on overflow. JS has no 64-bit
-    # overflow trap, so this reduces to the plain store; `(ovf)` stays `false`.
+    # `(keepovf (op TYPE lhs rhs) dest)` computes the arithmetic and stores it
+    # into `dest`. JS has no 64-bit overflow trap, so this is just the store.
     n.into:
       let arith = g.captureExpr n
+      let lval = n
       g.nl()
-      g.gx n            # dest lvalue
-      g.wr " = " & arith & ";"
+      g.genLvalueStore(lval, arith)
       while n.hasMore: skip n
   of CallS:
     g.nl()
@@ -745,17 +922,23 @@ proc genProc(g: var JSGen; n: var Cursor) =
       inc i
   g.wr ") {"
   inc g.indent
-  # Prologue: a value parameter whose address is taken must be boxed too, so a
-  # pointer to it is a live 1-element array. Re-bind it to its box at entry; all
-  # uses inside the body then read through slot 0 (see `gx`). A `var`/pointer
-  # parameter already arrives as a box from the caller, so it is never boxed.
+  # Prologue: a value parameter whose address is taken must be spilled to a
+  # buffer slot so a pointer to it is a real byte offset. Re-bind the name to its
+  # slot at entry and store the incoming value; all uses inside the body then go
+  # through `mem` (see `gx`). A pointer parameter already arrives as an offset.
   if prc.params.kind != DotToken:
     var p = prc.params
     p.loopInto:
       var d = takeParamDecl(p)
-      if d.name.symId in g.boxed:
+      # Only SCALAR value params need spilling; an aggregate param already
+      # arrives as a byte offset (addressable), so it is left as-is.
+      if d.name.symId in g.boxed and accessOf(g.m, d.typ) != akAggregate:
         let nm = g.name(d.name.symId)
-        g.nl(); g.wr nm & " = [" & nm & "];"
+        let sz = typeLayout(g.m, d.typ).size
+        let (_, st) = accessors(accessOf(g.m, d.typ))
+        g.nl(); g.wr "const " & nm & "_v = " & nm & ";"
+        g.nl(); g.wr nm & " = allocFixed(" & $sz & ");"
+        g.nl(); g.wr "mem." & st & "(" & nm & ", " & nm & "_v);"
   var body = prc.body
   if body.stmtKind in {StmtsS, ScopeS}:
     body.loopInto: g.gs body

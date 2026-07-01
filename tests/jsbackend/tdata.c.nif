@@ -1,5 +1,9 @@
 (.nif27)
 (stmts
+ (type :Point.0.tdata .
+  (object .
+   (fld :x.0.tdata . (i 64))
+   (fld :y.0.tdata . (i 64))))
  (proc :mkpoint.0.tdata
   (params
    (param :a.0 . (i 64))
