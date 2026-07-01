@@ -62,6 +62,27 @@ $ node interop.spike.js
 interop spike: PASS (registry + allocator factory + ES-class export)
 ```
 
+## Emission over the layout pass (`structcopy.spike.js`)
+
+Bridges the two halves the other spikes prove separately — `jslayout` (byte
+offsets) and `mem.js` (linear memory) — by showing a real lowered Leng pattern
+translate *mechanically* onto the computed offsets, and it pins down the one
+semantic the JS backend must own that C gets for free: **aggregate value copy.**
+
+The source (`type Point = object; x, y: int` with `mk`/`bump`) is compiled
+through `nimony`, and the offsets are taken verbatim from `bin/jslayout_dump`
+(`Point size=16 align=8, x@0, y@8`) — not hand-guessed. Each emission rule is
+1:1 with a lowered node: `oconstr`→`alloc`+`setI64` at offsets, `dot`→`i64`
+load, aggregate `var q = p`→`alloc`+`copyMem`. The load-bearing assertion is
+that `bump` copies rather than aliases, so mutating the copy leaves the original
+untouched — which the lowered IR does *not* pre-lower to a copy, so codegen must
+emit it.
+
+```
+$ node structcopy.spike.js
+structcopy spike: PASS (oconstr+dot+aggregate copyMem over layout-pass offsets)
+```
+
 ## Files
 
 - `mem.js` — the linear-memory runtime: resizable `ArrayBuffer`, bump `alloc`,
@@ -69,6 +90,8 @@ interop spike: PASS (registry + allocator factory + ES-class export)
   `fwrite`).
 - `model.spike.js` — struct layout + SSO string echo over linear memory.
 - `interop.spike.js` — the JS-interop boundary: registry + factory + ES class.
+- `structcopy.spike.js` — buffer emission over the layout-pass offsets:
+  `oconstr`/`dot`/aggregate `copyMem`, proving value-copy semantics.
 
 ## What this makes concrete for the codegen
 

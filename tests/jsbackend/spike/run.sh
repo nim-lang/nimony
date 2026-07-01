@@ -10,4 +10,5 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 node "$here/model.spike.js"
 node "$here/interop.spike.js"
+node "$here/structcopy.spike.js"
 echo "spike: OK"
