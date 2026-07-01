@@ -63,6 +63,11 @@ class NimMem {
 
   // A raw byte view [p, p+len) — what `fwrite(readRawData(s), 1, len, f)` needs.
   bytes(p, len) { return this.u8.subarray(p, p + len); }
+
+  // Write a static string's bytes into linear memory — the `data` flexarray of a
+  // long-string literal (the codegen emits `mem.writeStr(dest, "…")`). ASCII/
+  // Latin-1 for now (one byte per code unit); UTF-8 encoding is a later refinement.
+  writeStr(p, s) { for (let i = 0; i < s.length; i++) this.u8[p + i] = s.charCodeAt(i); }
 }
 
 module.exports = { NimMem };

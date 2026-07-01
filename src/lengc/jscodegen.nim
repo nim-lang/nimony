@@ -216,31 +216,6 @@ proc isBufferObjectType(g: var JSGen; typ: Cursor): bool =
       return asTypeDecl(p).body.typeKind == ObjectT
   false
 
-proc dotObjType(g: var JSGen; base: Cursor): (bool, Cursor) =
-  ## Resolve the object type of a `(dot BASE field)` base for buffer routing.
-  ## Two IR shapes carry a resolvable object type:
-  ##   * a Symbol local of object type          — its value IS the object's offset;
-  ##   * `(deref sym)` where `sym : ptr Object`  — `sym`'s value is the offset
-  ##     (deref of a pointer-to-aggregate is the offset itself).
-  ## In both cases the caller still renders the base offset by building the base
-  ## expression (which yields the operand for the deref shape), so only the type
-  ## differs. Returns `(false, base)` for anything else (legacy fat-pointer).
-  result = (false, base)
-  var b = base
-  if b.kind == Symbol and g.localTypes.hasKey(b.symId):
-    let t = g.localTypes[b.symId]
-    if g.isBufferObjectType(t): result = (true, t)
-  elif b.exprKind == DerefC:
-    b.into:
-      if b.kind == Symbol and g.localTypes.hasKey(b.symId):
-        let t = g.localTypes[b.symId]
-        if t.typeKind in {PtrT, AptrT}:
-          var inner = t
-          inner.into:
-            if g.isBufferObjectType(inner): result = (true, inner)
-            while inner.hasMore: skip inner
-      while b.hasMore: skip b
-
 proc resolveType(g: var JSGen; typ: Cursor): Cursor =
   ## Resolve a named type to its declared body (locally-declared only, to avoid
   ## `getDeclOrNil`'s foreign-load assert); otherwise return the type unchanged.
@@ -275,54 +250,125 @@ proc isBufferAggregate(g: var JSGen; typ: Cursor): bool =
   ## array. (Unions/flexarrays fall here too once needed.)
   g.isBufferObjectType(typ) or g.isBufferArray(typ)
 
-template withPointee(g: var JSGen; operand: Cursor; pointee, body: untyped) =
-  ## Run `body` with `pointee` bound to the statically-known pointee type of a
-  ## pointer-valued operand, when it can be determined:
-  ##   * a Symbol local typed `(ptr T)`/`(aptr T)`   -> T;
-  ##   * a Symbol loosely typed as its pointee `T`    -> T;
-  ##   * a `(cast (ptr T) x)` / `(conv (ptr T) x)`    -> T (the explicit cast type,
-  ##     the shape system.nim uses for `deref(cast (ptr u8) (addr …))`).
-  ## `body` is skipped when the pointee is not statically knowable (caller keeps
-  ## its default).
-  block:
-    var op = operand
-    if op.kind == Symbol and g.localTypes.hasKey(op.symId):
-      let t = g.localTypes[op.symId]
-      if t.typeKind in {PtrT, AptrT}:
-        var pointee = t
-        pointee.into:
-          body
-          while pointee.hasMore: skip pointee
-      else:
-        var pointee = t
-        body
-    elif op.exprKind in {CastC, ConvC}:
-      op.into:
-        let ty = op
-        if ty.typeKind in {PtrT, AptrT}:
-          var pointee = ty
-          pointee.into:
-            body
-            while pointee.hasMore: skip pointee
-        while op.hasMore: skip op
+proc exprType(g: var JSGen; n: Cursor): (bool, Cursor) =
+  ## Static type of an lvalue expression, resolved structurally. Returns a type
+  ## Cursor `jslayout` can consume (a named type or a type node), or `(false, n)`
+  ## when it can't be determined. This is what lets buffer access follow through
+  ## *nested* pointer/field chains — e.g. `(dot (deref (dot s more)) fullLen)`,
+  ## the heap-string path where the dot base is itself a `(deref (dot …))`:
+  ##   * a Symbol local           -> its declared type;
+  ##   * `(deref p)` / `(pat p i)`-> the pointee of `p`'s (ptr) type;
+  ##   * `(dot base field)`       -> the field's type in `base`'s object;
+  ##   * `(at arr i)`             -> the array element type;
+  ##   * `(cast/conv T x)`        -> the target type `T`.
+  ## Guards every object/array lookup behind `isBufferObjectType`/`resolveType`
+  ## (which check `hasResolvableDecl`), so an unresolvable foreign symbol never
+  ## trips `getDeclOrNil`'s assert.
+  result = (false, n)
+  var e = n
+  case e.exprKind
+  of NoExpr:
+    if e.kind == Symbol and g.localTypes.hasKey(e.symId):
+      result = (true, g.localTypes[e.symId])
+  of DerefC, PatC:
+    e.into:
+      let (ok, t) = g.exprType(e)
+      if ok and t.typeKind in {PtrT, AptrT}:
+        var inner = t
+        inner.into:
+          result = (true, inner)
+          while inner.hasMore: skip inner
+      while e.hasMore: skip e
+  of DotC:
+    e.into:
+      let (ok, bt) = g.exprType(e)
+      if ok and g.isBufferObjectType(bt):
+        skip e                       # advance to the field symbol
+        let fsym = e.symId
+        for f in objectFields(g.m, bt):
+          if f.sym == fsym: result = (true, f.typ)
+      while e.hasMore: skip e
+  of AtC:
+    e.into:
+      let (ok, at) = g.exprType(e)
+      if ok:
+        let t = g.resolveType(at)
+        if t.typeKind == ArrayT:
+          var el = t
+          el.into:
+            result = (true, el)
+            while el.hasMore: skip el
+      while e.hasMore: skip e
+  of CastC, ConvC:
+    e.into:
+      result = (true, e)             # the explicit target type
+      while e.hasMore: skip e
+  else: discard
+
+proc dotObjType(g: var JSGen; base: Cursor): (bool, Cursor) =
+  ## Resolve the object type of a `(dot BASE field)` base for buffer routing. Any
+  ## base whose static type (`exprType`) is a declared object routes to the buffer
+  ## — a Symbol object value, `(deref sym)` through a pointer, or a deeper chain
+  ## like `(deref (dot s more))`. The caller still renders the base offset by
+  ## building the base expression (a pointer-to-aggregate deref yields the
+  ## offset). Returns `(false, base)` for anything else (legacy fat-pointer).
+  let (ok, t) = g.exprType(base)
+  if ok and g.isBufferObjectType(t):
+    (true, t)
+  else:
+    (false, base)
 
 proc pointeeAk(g: var JSGen; operand: Cursor): AccessKind =
-  ## Access kind of the pointee for a `(deref p)` / pointer store — see `withPointee`.
+  ## Access kind of the pointee for a `(deref p)` / pointer store. The pointer's
+  ## static type (`exprType`) gives it: a real `(ptr T)` yields `accessOf(T)`; a
+  ## value loosely typed as its pointee yields `accessOf` of that type.
   result = akI64
-  g.withPointee(operand, pointee):
-    result = accessOf(g.m, pointee)
+  let (ok, t) = g.exprType(operand)
+  if ok:
+    if t.typeKind in {PtrT, AptrT}:
+      var inner = t
+      inner.into:
+        result = accessOf(g.m, inner)
+        while inner.hasMore: skip inner
+    else:
+      result = accessOf(g.m, t)
 
 proc pointeeInfo(g: var JSGen; operand: Cursor): (AccessKind, int64) =
   ## `(accessKind, byteSize)` of the pointee for a pointer operand — used for
   ## `(pat p i)` element arithmetic (`p + i*size`) and its load/store width.
   result = (akU8, 1'i64)     # default: byte pointer (cstring-like)
-  g.withPointee(operand, pointee):
-    result = (accessOf(g.m, pointee), typeLayout(g.m, pointee).size)
+  let (ok, t) = g.exprType(operand)
+  if ok:
+    if t.typeKind in {PtrT, AptrT}:
+      var inner = t
+      inner.into:
+        result = (accessOf(g.m, inner), typeLayout(g.m, inner).size)
+        while inner.hasMore: skip inner
+    else:
+      result = (accessOf(g.m, t), typeLayout(g.m, t).size)
 
 # `dest + off` where `dest` is a plain identifier name (a constructed aggregate's
 # base). Always emits the `+ off` — the emitter parenthesises it.
 proc destPlus(g: var JSGen; dest: string; off: int64) =
   g.jbin("+", g.js.name dest, g.js.num off)
+
+proc constrExtraBytes(g: var JSGen; n: Cursor): int64 =
+  ## Extra buffer bytes an `(oconstr …)` needs beyond its fixed layout: the
+  ## payload of a flexarray field initialised by a string literal — a static
+  ## long-string's `data`. Zero for ordinary objects.
+  result = 0
+  var c = n
+  c.into:
+    skip c   # type operand
+    while c.hasMore:
+      if c.substructureKind == KvU:
+        var kv = c
+        kv.into:
+          inc kv         # field symbol
+          if kv.kind == StrLit:
+            result += int64(g.m.pool.strings[strId(kv)].len)
+          while kv.hasMore: skip kv
+      skip c
 
 proc constructObjectInto(g: var JSGen; dest: string; n: var Cursor) =
   ## Build the stores for an `(oconstr Type (kv f v) …)` into the storage at
@@ -342,7 +388,17 @@ proc constructObjectInto(g: var JSGen; dest: string; n: var Cursor) =
             if f.sym == fsym:
               off = f.offset; ftyp = f.typ
           let ak = accessOf(g.m, ftyp)
-          if ak == akAggregate:
+          if n.kind == StrLit:
+            # a static string payload — the `data` flexarray of a long-string
+            # literal. Write its bytes into the tail the caller over-allocated
+            # (see `constrExtraBytes`); the runtime `mem.writeStr` copies them in.
+            let s = g.m.pool.strings[strId(n)]
+            g.js.tree jExprStmt:
+              g.memMeth("writeStr"):
+                g.destPlus(dest, off)
+                g.js.str s
+            inc n
+          elif ak == akAggregate:
             let fsize = typeLayout(g.m, ftyp).size
             g.js.tree jExprStmt:
               g.memMeth("copy"):
@@ -551,7 +607,7 @@ proc gx(g: var JSGen; n: var Cursor) =
         isBuf = g.isBufferObjectType(oty)
         while probe.hasMore: skip probe
     if isBuf:
-      let sz = typeLayout(g.m, oty).size
+      let sz = typeLayout(g.m, oty).size + g.constrExtraBytes(n)  # + static string data
       g.js.tree jCall:                       # (() => { … })()
         g.js.tree jArrow:
           g.js.tree jParams: discard
@@ -707,7 +763,10 @@ proc genVar(g: var JSGen; n: var Cursor) =
     # its bytes, then construct the (a)constr into it in place, or copy another
     # aggregate value. Its address is simply its offset (no boxing needed).
     let lay = typeLayout(g.m, d.typ)
-    g.jallocVar(nm, lay.size)
+    var allocSz = lay.size
+    if d.value.kind != DotToken and d.value.exprKind == OconstrC:
+      allocSz += g.constrExtraBytes(d.value)   # room for a static string's data
+    g.jallocVar(nm, allocSz)
     if d.value.kind != DotToken:
       var v = d.value
       if v.exprKind == OconstrC:
