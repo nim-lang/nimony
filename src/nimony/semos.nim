@@ -361,6 +361,14 @@ proc compilePlugin(c: var SemContext; info: PackedLineInfo; nf, exefile: string)
   # make plugin child compiles read caller-local nimony.paths files.
   let nimonyExe = findTool("nimony")
   let srcLibPath = nimonyDir() / "src" / "lib"
+  # Compiled via the libc-free NATIVE backend (`--native c`): the plugin builds from
+  # `.nim` source into its own per-plugin cache, so there's no config-mix (unlike macro
+  # plugins). Two native-backend bugs previously blocked this, both now fixed in
+  # ../nativenif: (1) a nifasm frame-layout bug where outgoing stack-arg slots aliased
+  # the caller's locals (fixed-frame arg-area reservation was gated to AArch64 only);
+  # (2) an arkham codegen bug where a narrowing `cast[uintN](v)` used as an arithmetic
+  # operand narrowed the live source variable `v` in place — this corrupted the Ryu
+  # float formatter, so `tnifoverloads` (emits `addFloatLit`) printed garbage floats.
   var cmd = quoteShell(nimonyExe) &
     " --nimcache:" & quoteShell(pluginCache) &
     " --path:" & quoteShell(srcLibPath) &
@@ -371,7 +379,7 @@ proc compilePlugin(c: var SemContext; info: PackedLineInfo; nf, exefile: string)
       cmd.add quoteShell(path)
   cmd.add " -o:"
   cmd.add quoteShell(exefile)
-  cmd.add " c "
+  cmd.add " --native c "
   cmd.add quoteShell(nf)
   exec cmd
 
