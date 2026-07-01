@@ -1540,7 +1540,11 @@ proc semTypeof(c: var SemContext; dest: var TokenBuf; it: var Item) =
   else:
     assert false
 
+  # `typeof` extracts a type; the operand's value (and its side effects) never
+  # run, so an eval-order warning about it would be spurious — stay silent.
+  inc c.inSpeculativeArg
   semExpr c, dest, it, semFlags
+  dec c.inSpeculativeArg
   var t = it.typ
   if t.typeKind == TypedescT: inc t
   # `typeof` produces the *value* type: drop reference qualifiers so that e.g.
@@ -4080,6 +4084,36 @@ proc semSumTypeObjConstr(c: var SemContext; dest: var TokenBuf; it: var Item;
   semObjConstr c, dest, objConstr
   it.typ = objConstr.typ
 
+proc flatFieldDeclOrder(typ: Cursor; order: var seq[SymId]): bool =
+  ## Fills `order` with the object's field symbols in declaration order and
+  ## returns true *iff* `typ` is a flat object: a concrete object with no base
+  ## type and no variant (`case`) part. For those shapes the constructor's
+  ## reorder-into-declaration-order rewrite changes nothing but the *evaluation*
+  ## order of the field values, so writing fields out of order is a pure
+  ## eval-order footgun worth flagging (nim-lang/nimony#1056). Inherited and
+  ## variant objects are conservatively skipped (false), where field order also
+  ## carries base-class / discriminator semantics.
+  var objImpl = typ
+  if objImpl.typeKind in {RefT, PtrT}: inc objImpl
+  discard skipInvoke(objImpl)
+  if objImpl.kind != Symbol: return false
+  let objDecl = getTypeSection(objImpl.symId)
+  if objDecl.kind != TypeY: return false
+  var objBody = objDecl.objBody
+  if objBody.typeKind != ObjectT: return false
+  let obj = asObjectDecl(objBody)
+  if obj.parentType.kind != DotToken: return false   # has a base type
+  var f = obj.body
+  inc f                # past (object
+  skip f               # inheritance slot (DotToken for a flat object)
+  if f.kind == DotToken: return false                # no fields
+  var iter = initObjFieldIter()
+  while nextField(iter, f, keepCase = true):
+    if f.substructureKind == CaseU: return false     # variant part
+    let field = takeLocal(f, SkipFinalParRi)
+    order.add field.name.symId
+  return true
+
 proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
   let exprStart = dest.len
   let expected = it.typ
@@ -4153,6 +4187,7 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
   let bindings = bindInvokeArgs(decl, invokeArgs)
   var fieldBuf = createTokenBuf(16)
   var setFieldPositions = initTable[SymId, int]()
+  var givenOrder: seq[SymId] = @[]   # field syms in the order the user wrote them
   while it.n.hasMore:
     if it.n.substructureKind != KvU:
       c.buildErr dest, it.n.info, "expected key/value pair in object constructor"
@@ -4183,6 +4218,7 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
             skip it.n
           else:
             setFieldPositions[field.sym] = fieldStart
+            givenOrder.add field.sym
             if isGenericObj:
               # do not save generic field sym
               fieldBuf.add identToken(fieldName, fieldInfo)
@@ -4210,6 +4246,26 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
   var setFields = initTable[SymId, Cursor]()
   for field, pos in setFieldPositions:
     setFields[field] = cursorAt(fieldBuf, pos)
+
+  # `buildDefaultObjConstr` emits the fields in *declaration* order, so a value's
+  # side effects run in that order regardless of how the user wrote them. Rather
+  # than silently preserve source order (which would be inconsistent with how
+  # named call arguments are already reordered), flag the mismatch: warn when a
+  # flat object's fields are written in an order that won't match their
+  # evaluation order (nim-lang/nimony#1056).
+  if not isGenericObj and givenOrder.len >= 2:
+    var declOrder: seq[SymId] = @[]
+    if flatFieldDeclOrder(it.typ, declOrder):
+      var rank = initTable[SymId, int]()
+      for i in 0 ..< declOrder.len: rank[declOrder[i]] = i
+      var prev = -1
+      for s in givenOrder:
+        let r = rank.getOrDefault(s, -1)
+        if r <= prev:
+          c.warn info, "object constructor fields are out of order; reorder them to match the field declaration (evaluation) order"
+          break
+        prev = r
+
   buildDefaultObjConstr(c, dest, it.typ, setFields, info, bindings)
   commonType c, dest, it, exprStart, expected
 

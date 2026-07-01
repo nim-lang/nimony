@@ -947,6 +947,15 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
   if idx >= 0:
     dest.add cs.callNode
     let finalFn = m[idx].fn
+    if m[idx].namedArgsReordered and finalFn.kind notin {TemplateY, MacroY}:
+      # The chosen overload's named arguments are written in an order that does
+      # not match parameter (evaluation) order; the values' side effects run in
+      # parameter order, not source order. Flag it, consistently with object
+      # constructor fields. Templates/macros are skipped: their arguments are not
+      # plain call values (the plugin reads `cs.args`), so reordering carries no
+      # evaluation-order meaning there.
+      c.warn m[idx].namedArgsReorderInfo,
+        "named call arguments are out of order; reorder them to match the parameter (evaluation) order"
     # only merge symbols defined in args to scope if we did not match a macro/template:
     closeArgsScope c, cs, merge = finalFn.kind notin {MacroY, TemplateY}
     let isMagic = c.addFn(dest, finalFn, cs.fn.n, m[idx])
@@ -1256,6 +1265,13 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     let oldDebugAllowErrors = c.debugAllowErrors
     if cs.fnName in c.unoverloadableMagics:
       c.debugAllowErrors = true
+  # Args of unoverloadable magics (`compiles`/`declared`/`defined`/`typeof`) are
+  # semchecked here only to probe validity/type; the magic then re-semchecks or
+  # discards them, so this pass is speculative. Suppress the eval-order warning
+  # while in it so the warning never leaks for code that is merely being tested
+  # rather than compiled (nim-lang/nimony#1056).
+  let speculativeMagicArgs = cs.fnName in c.unoverloadableMagics
+  if speculativeMagicArgs: inc c.inSpeculativeArg
   cs.fnKind = cs.fn.kind
   var skipSemCheck = false
   while it.n.hasMore:
@@ -1274,6 +1290,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       skipSemCheck = true
     it.n = arg.n
     cs.args.add CallArg(typ: arg.typ, orig: argOrig) # n will be set by argIndexes
+  if speculativeMagicArgs: dec c.inSpeculativeArg
   when defined(debug):
     c.debugAllowErrors = oldDebugAllowErrors
   assert cs.args.len == argIndexes.len
