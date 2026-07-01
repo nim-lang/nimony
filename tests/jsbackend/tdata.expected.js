@@ -13,5 +13,5 @@ function arrsum_0_tdata() {
   mem.setI64(arr_0, 10);
   mem.setI64((arr_0 + 8), 20);
   mem.setI64((arr_0 + 16), 30);
-  return (mem.i64n((arr_0 + 0)) + (mem.i64n((arr_0 + 8)) + mem.i64n((arr_0 + 16))));
+  return (mem.i64n(arr_0) + (mem.i64n((arr_0 + 8)) + mem.i64n((arr_0 + 16))));
 }

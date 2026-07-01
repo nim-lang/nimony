@@ -119,6 +119,26 @@ if have_node; then
   } | node
 fi
 
+# ── long strings (>14 chars): a static long-string literal's `data` flexarray is
+# written into linear memory. `LStr {len; data: flexarray char}` is allocated
+# with room for the payload (fixed 8 + "hello"=5 -> 13 bytes), the codegen emits
+# `mem.writeStr(dest, "hello")`, and the element read `data[1]` ('e'==101) plus
+# len (5) = 106. This is the construction side of the heap-string path (the read
+# side — deref-through-pointer field chains — is exercised by the real programs).
+gen tstrlong
+if have_node; then
+  {
+    echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); const _u8 = new Uint8Array(_dv.buffer); let _brk = 8;'
+    echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; _u8.fill(0,p,p+n); return p; }'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)),'
+    echo '  u8At:(p)=>_dv.getUint8(p), writeStr:(p,s)=>{ for(let i=0;i<s.length;i++) _u8[p+i]=s.charCodeAt(i); } };'
+    cat "$work/tstrlong.js"
+    echo 'if (mk_0_tstrlong()===106)'
+    echo '  { console.log("functional(strlong): PASS"); }'
+    echo '  else { console.log("functional(strlong): FAIL got "+mk_0_tstrlong()); process.exit(1); }'
+  } | node
+fi
+
 # ── addresses (unified byte-pointer model): a pointer is an INTEGER byte offset.
 # An address-taken scalar local is spilled to a buffer slot, so `addr x` is its
 # offset and `deref` is a typed load/store — no boxing, no fat pointers.

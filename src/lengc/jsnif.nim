@@ -179,14 +179,26 @@ proc emitBlock(e: var Emitter; c: var Cursor) =
   dec e.indent
   e.nl(); e.wr "}"
 
+const jsMaxSafe = 9007199254740991'i64   ## Number.MAX_SAFE_INTEGER (2^53 - 1)
+
+proc jsInt(v: int64): string =
+  ## A JS integer literal. Values past the ±2^53 safe range are emitted as BigInt
+  ## literals (`123n`) so precision survives the parse — the runtime's `setI64`/
+  ## `setU64` coerce with `BigInt(v)`, which accepts a BigInt, but a plain number
+  ## literal would already have rounded (e.g. a long-string's 64-bit SSO marker).
+  if v > jsMaxSafe or v < -jsMaxSafe: $v & "n" else: $v
+
+proc jsUInt(v: uint64): string =
+  if v > uint64(jsMaxSafe): $v & "n" else: $v
+
 proc emitExpr(e: var Emitter; c: var Cursor) =
   case e.tagOf(c)
   of jName:
     c.into: (e.wr strVal(c); inc c); (while c.hasMore: skip c)
   of jNum:
-    c.into: (e.wr $intVal(c); inc c); (while c.hasMore: skip c)
+    c.into: (e.wr jsInt(intVal(c)); inc c); (while c.hasMore: skip c)
   of jUNum:
-    c.into: (e.wr $uintVal(c); inc c); (while c.hasMore: skip c)
+    c.into: (e.wr jsUInt(uintVal(c)); inc c); (while c.hasMore: skip c)
   of jStr:
     c.into: (e.wr jsEscape(strVal(c)); inc c); (while c.hasMore: skip c)
   of jRaw:
@@ -401,21 +413,45 @@ proc jsTagAt*(b: JsBuilder; c: Cursor): JsTag =
       if b.ids[t] == id: return t
   jNone
 
-proc numAt(b: JsBuilder; c: Cursor): (bool, int64) =
-  ## `(true, v)` if `c` is a `(num v)` literal node.
+proc constVal(b: JsBuilder; c: Cursor): (bool, int64) =
+  ## The compile-time integer an expression folds to, resolved *recursively* so a
+  ## cascade collapses in one pass — e.g. `0 * 1` is const 0, which makes its
+  ## parent `(X + (0*1))` a `X + 0`. `(true, v)` for a `(num v)` or a `(bin op A B)`
+  ## with `+`/`-`/`*` whose operands are both constant; `(false, _)` otherwise.
   result = (false, 0'i64)
-  if b.jsTagAt(c) == jNum:
+  case b.jsTagAt(c)
+  of jNum:
     var cc = c
     cc.into:
       if cc.kind == IntLit: result = (true, intVal(cc))
       while cc.hasMore: skip cc
+  of jBin:
+    var op = ""
+    var a, bb: Cursor
+    block:
+      var p = c
+      p.into:
+        op = strVal(p); inc p
+        a = p; skip p
+        bb = p; skip p
+        while p.hasMore: skip p
+    let (ao, av) = b.constVal(a)
+    let (bo, bv) = b.constVal(bb)
+    if ao and bo:
+      case op
+      of "+": result = (true, av + bv)
+      of "-": result = (true, av - bv)
+      of "*": result = (true, av * bv)
+      else: discard
+  else: discard
 
 proc optNode(dst: var JsBuilder; src: JsBuilder; c: var Cursor)
 
 proc optBinFold(dst: var JsBuilder; src: JsBuilder; c: var Cursor): bool =
   ## Try to rewrite a `(bin op A B)` at `c`. On success emits the folded node,
   ## consumes `c`, returns true. Handled: `x+0`/`0+x` -> x, `x*1`/`1*x` -> x,
-  ## `x-0` -> x, and `(num a) op (num b)` -> `(num a∘b)` for +,-,*.
+  ## `x-0` -> x, and constant operands -> `(num a∘b)` for +,-,*. Operand
+  ## constness is resolved recursively (`constVal`) so cascades fold in one pass.
   var op = ""
   var aCur, bCur: Cursor
   block:
@@ -425,8 +461,8 @@ proc optBinFold(dst: var JsBuilder; src: JsBuilder; c: var Cursor): bool =
       aCur = p; skip p               # operand A
       bCur = p; skip p               # operand B
       while p.hasMore: skip p
-  let (aNum, aVal) = src.numAt(aCur)
-  let (bNum, bVal) = src.numAt(bCur)
+  let (aNum, aVal) = src.constVal(aCur)
+  let (bNum, bVal) = src.constVal(bCur)
   if aNum and bNum:                  # constant fold
     case op
     of "+": dst.num aVal + bVal; skip c; return true
