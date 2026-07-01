@@ -881,7 +881,7 @@ proc isStaticCall(c: var Context;s: SymId): bool =
 proc toNonClosureProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
   # just remove closure pragma from proctype
   var n = n
-  assert n.typeKind == ProctypeT
+  assert n.typeKind in {ProctypeT, ProcT}
   takeToken dest, n
   while n.hasMore:
     if n.substructureKind == PragmasU:
