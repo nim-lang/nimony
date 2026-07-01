@@ -871,11 +871,31 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
                   if body.substructureKind == FldU:
                     var fdecl = takeFieldDecl(body)
                     fieldNifTypes.add fdecl.typ
+                  elif body.typeKind == UnionT:
+                    # Traverse into union to collect branch field types
+                    # so that branch-specific KvU pairs find the correct NIF type.
+                    body.into:
+                      while body.hasMore:
+                        if body.substructureKind == FldU:
+                          var fdecl = takeFieldDecl(body)
+                          fieldNifTypes.add fdecl.typ
+                        elif body.typeKind in {ObjectT, UnionT}:
+                          # Nested object/union inside a union branch.
+                          body.into:
+                            while body.hasMore:
+                              if body.substructureKind == FldU:
+                                var fdecl = takeFieldDecl(body)
+                                fieldNifTypes.add fdecl.typ
+                              else:
+                                skip body
+                        else:
+                          skip body
                   else:
                     skip body
         skip n # type
         var typeParts: seq[LLType] = @[]
         var valParts: seq[string] = @[]
+        var usedNifTypes: seq[Cursor] = @[]
         var fieldIdx = 0
         while n.hasMore:
           if n.substructureKind == KvU:
@@ -883,6 +903,7 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
               skip n
               let nifType = if fieldIdx < fieldNifTypes.len: fieldNifTypes[fieldIdx]
                             else: declaredType
+              usedNifTypes.add nifType
               let tc = genGlobalConstr(c, n, nifType)
               typeParts.add tc.typ
               valParts.add serialize(tc.typ) & " " & tc.rawText
@@ -891,6 +912,7 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
           elif n.exprKind == OconstrC:
             let nifType = if fieldIdx < fieldNifTypes.len: fieldNifTypes[fieldIdx]
                           else: declaredType
+            usedNifTypes.add nifType
             let tc = genGlobalConstr(c, n, nifType)
             typeParts.add tc.typ
             valParts.add serialize(tc.typ) & " " & tc.rawText
@@ -898,6 +920,7 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
           else:
             let nifType = if fieldIdx < fieldNifTypes.len: fieldNifTypes[fieldIdx]
                           else: declaredType
+            usedNifTypes.add nifType
             let tc = genGlobalConstr(c, n, nifType)
             typeParts.add tc.typ
             valParts.add serialize(tc.typ) & " " & tc.rawText
@@ -907,6 +930,21 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
         if not typeEq(typeParts[i], fieldTypes[i]):
           needsAnon = true
           break
+      if typeParts.len != fieldTypes.len:
+        needsAnon = true
+      # For union object types, the branch-specific fields may not fill the
+      # full declared type. Add padding to match the declared size.
+      if needsAnon:
+        let declaredSizeBits = typeSizeBits(c, declaredType)
+        var actualSizeBits = 0
+        for nt in usedNifTypes:
+          actualSizeBits += typeSizeBits(c, nt)
+        let paddingBits = declaredSizeBits - actualSizeBits
+        if paddingBits > 0:
+          let paddingBytes = paddingBits div 8
+          let padType = newLLArrayType(paddingBytes, c.prim.i8)
+          typeParts.add padType
+          valParts.add "[" & $paddingBytes & " x i8] zeroinitializer"
       let valStr = valParts.join(", ")
       if needsAnon:
         var sfields: seq[LLStructField] = @[]
