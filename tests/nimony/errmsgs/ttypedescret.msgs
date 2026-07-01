@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/ttypedescret.nim(8, 20) Error: 'typedesc' without a concrete type cannot be used as a type; use an explicit generic parameter such as `proc f[T](x: typedesc[T])`

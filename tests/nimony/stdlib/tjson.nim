@@ -94,6 +94,25 @@ proc main() =
       if isError(el): inc seen
     check seen, 1
 
+  block out_of_range_int:
+    # An integer literal beyond int64 (e.g. C's UINT64_MAX in header dumps) used
+    # to abort the whole parse; now it falls back to a float atom, JSON-style,
+    # and the surrounding integers still parse.
+    var t = parseJson("[1, 18446744073709551615, 3]")
+    check kind(t.root), JArray
+    check len(t.root), 3
+    var c = t.root
+    var ints: seq[int64] = @[]
+    var floats = 0
+    for el in items(c):
+      var m = el
+      if kind(m) == JInt: ints.add getInt(m)
+      elif kind(m) == JFloat: inc floats
+    check ints.len, 2
+    check ints[0], 1'i64
+    check ints[1], 3'i64
+    check floats, 1
+
   block error_inside_object:
     var t = parseJson("""{"a": 1, "b": nope}""")
     check kind(t.root), JObject

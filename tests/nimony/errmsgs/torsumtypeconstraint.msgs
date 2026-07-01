@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/torsumtypeconstraint.nim(22, 6) Error: undeclared identifier: 'foo'

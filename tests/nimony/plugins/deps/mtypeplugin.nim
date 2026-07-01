@@ -1,5 +1,5 @@
 
-import std / [strutils, tables]
+import std / [assertions, strutils, tables]
 
 import plugins
 
@@ -123,7 +123,10 @@ proc tr(n: NifCursor): NifBuilder =
 
 
 var inp = loadPluginInput()
+let generatedBeforeTypes = genSym()
 var inpTypes = loadTypeDefinitions()
+let generatedAfterTypes = genSym()
+assert generatedBeforeTypes != generatedAfterTypes
 
 typesTr(inpTypes)
 saveTree tr(inp)

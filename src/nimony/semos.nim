@@ -13,6 +13,7 @@ from std / osproc import execCmdEx
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / [nifchecksums, nifindexes, tooldirs, argsfinder, symparser]
+import ".." / lib / nifreader as rd
 
 import nimony_model, symtabs, builtintypes, decls, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig,
@@ -381,12 +382,49 @@ proc writeFileIfChanged(file, content: string) {.canRaise.} =
   else:
     writeFile file, content
 
+const pluginTempBase = "tmp"
+
+proc addUnusedName(input, name: string): string =
+  result = "(.unusedname " & name & ")\n"
+  result.add input
+
+proc registerGeneratedSymbols(c: var SemContext; firstDisamb: int;
+                              nextName: string) =
+  if nextName.len == 0:
+    return
+
+  var nextBase = ""
+  var nextDisamb = 0
+  assert splitLocalSymName(nextName, nextBase, nextDisamb) and
+    nextBase == pluginTempBase and nextDisamb >= firstDisamb,
+    "invalid .unusedname returned by plugin"
+
+  for disamb in firstDisamb ..< nextDisamb:
+    let name = pluginTempBase & "." & $disamb
+    c.freshSyms.incl pool.syms.getOrIncl(name)
+
+  if nextDisamb > firstDisamb:
+    c.locals[pluginTempBase] = nextDisamb - 1
+
 proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
-                pluginName: string;
-                input: string; additionalInput = "") =
+                pluginName: string; input: string; additionalInput = "") =
+  ## Runs a plugin with a NIF `.unusedname` hint and registers every generated
+  ## local symbol as fresh for subsequent semantic checking.
+  let firstDisamb = c.locals.getOrDefault(pluginTempBase, -1) + 1
+  let firstName = pluginTempBase & "." & $firstDisamb
+  let pluginInput = addUnusedName(input, firstName)
+  let pluginAdditionalInput =
+    if additionalInput.len > 0: addUnusedName(additionalInput, firstName)
+    else: ""
+
   let p = splitFile(pluginName)
-  let checksumA = if additionalInput.len > 0: "_" & computeChecksum(additionalInput) else: ""
-  let basename = c.g.config.nifcachePath / p.name & "_" & computeChecksum(input) & checksumA
+  let checksumA =
+    if pluginAdditionalInput.len > 0:
+      "_" & computeChecksum(pluginAdditionalInput)
+    else:
+      ""
+  let basename = c.g.config.nifcachePath / p.name & "_" &
+    computeChecksum(pluginInput) & checksumA
   let inputFile = basename & ".in.nif"
   let outputFile = basename & ".out.nif"
   let inputFileB = basename & ".types.nif"
@@ -397,23 +435,26 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
     compilePlugin(c, info, nf, pluginExe)
 
   try:
-    writeFileIfChanged(inputFile, input)
-    if additionalInput.len > 0:
-      writeFileIfChanged(inputFileB, additionalInput)
+    writeFileIfChanged(inputFile, pluginInput)
+    if pluginAdditionalInput.len > 0:
+      writeFileIfChanged(inputFileB, pluginAdditionalInput)
   except:
     quit "FAILURE: cannot write plugin input file " & inputFile
 
   if needsRecompile(pluginExe, outputFile):
     var cmd = quoteShell(pluginExe) & " " & quoteShell(inputFile) & " " & quoteShell(outputFile)
-    if additionalInput.len > 0:
+    if pluginAdditionalInput.len > 0:
       cmd &= " "
       cmd &= quoteShell(inputFileB)
     exec cmd
   var s = nifstreams.open(outputFile)
+  var nextName = ""
   try:
+    nextName = rd.firstUnusedName(s.r)
     parse s, dest, NoLineInfo
   finally:
     close s
+  registerGeneratedSymbols(c, firstDisamb, nextName)
 
 proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string];
                 commandLineArgs: string;
