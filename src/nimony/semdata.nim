@@ -195,6 +195,8 @@ type
     pendingModulePlugins*: seq[PluginObj]
     pluginBlacklist*: HashSet[StrId] # make 1984 fiction again
     cachedTypeboundOps*: Table[(SymId, StrId), seq[SymId]]
+    conceptCache*: RootRef
+      ## Opaque concept-match cache; implementation in conceptcache.nim.
     userPragmas*: Table[StrId, TokenBuf]
     customPragmaTemplates*: HashSet[StrId]
       ## Names of templates declared with `{.pragma.}`. Such templates can
