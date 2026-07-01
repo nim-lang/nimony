@@ -65,7 +65,7 @@ in `nim.cfg` is preserved across runs.
 
 import std / [os, osproc, parseopt, strutils, syncio, assertions, tables, deques, algorithm, json, sets, times, terminal, streams]
 
-include ".." / lib / nifprelude
+import ".." / lib / [nifcore, nifcoreparse]
 import ".." / lib / tooldirs
 
 const
@@ -216,6 +216,38 @@ proc parseRequirement(spec: string): Requirement =
     result.name = stem
 
 # ---------------------------------------------------------------------------
+# NIF tags pnak cares about
+#
+# Only a handful of tags matter: the `(stmts …)` wrapper, the `(asgn …)`
+# and `(cmd …)`/`(call …)` forms nifler emits for a `.nimble`, and the
+# `(requires …)` entries in a `pnak.nif` lockfile. Modelling them as an
+# enum (with `createTags` seeding the buffer's tag pool in ordinal order)
+# turns tag tests into register-only TagId compares instead of string
+# lookups — the same shim pattern nifcore's jsonnif/htmlnif adapters use.
+# ---------------------------------------------------------------------------
+
+type
+  PnakTag = enum
+    StmtsT    = (0, "stmts")
+    AsgnT     = (1, "asgn")
+    CmdT      = (2, "cmd")
+    CallT     = (3, "call")
+    RequiresT = (4, "requires")
+
+# Boundary shims: BiTable ids start at 1 (0 is the "unused" sentinel), so
+# `tagId`/`pnakKind` bridge the gap with a +/-1 that folds to one add/sub.
+template tagId(k: PnakTag): TagId = TagId(uint32(k) + 1'u32)
+template pnakKind(t: TagId): PnakTag = cast[PnakTag](uint32(t) - 1'u32)
+
+proc pnakTags(): TagPool =
+  ## Tag pool seeded with `PnakTag` in ordinal order, so a `TagLit`'s
+  ## `cursorTagId` maps to its `PnakTag` by a plain cast. Passed as the
+  ## shared tag pool when parsing, so these tags keep fixed ids regardless
+  ## of the order nifler happened to emit them; any other tag nifler emits
+  ## interns past the enum and simply never matches a `PnakTag`.
+  createTags[PnakTag]()
+
+# ---------------------------------------------------------------------------
 # Run nifler to parse a .nimble file into a NIF TokenBuf
 # ---------------------------------------------------------------------------
 
@@ -230,23 +262,25 @@ proc parseNimbleViaNifler(nimbleFile: string): TokenBuf =
   let (output, exitCode) = execCmdEx(cmd)
   if exitCode != 0:
     quit "nifler failed on " & nimbleFile & ": " & output
-
-  var stream = nifstreams.open(outFile)
-  try:
-    discard processDirectives(stream.r)
-    result = fromStream(stream)
-  finally:
-    nifstreams.close(stream)
+  # `parseFromFile` consumes the `(.nif…)` header directives and reads the
+  # whole tree into a fresh nifcore TokenBuf (with the PnakTag-seeded pool).
+  result = parseFromFile(outFile, sharedTags = pnakTags())
 
 # ---------------------------------------------------------------------------
 # Cursor-based traversal of the parsed nimble file
 # ---------------------------------------------------------------------------
 
+proc pnakTag(n: Cursor): PnakTag {.inline.} =
+  ## `PnakTag` of the `(tag …)` the cursor sits at. Valid only for buffers
+  ## parsed with `pnakTags()`; an unseeded tag yields an out-of-enum value
+  ## that matches no `PnakTag` case (so callers rely on an `else`/default).
+  pnakKind(n.cursorTagId)
+
 proc readStrLit(n: var Cursor; dest: var string): bool =
   ## If `n` is at a string literal, read it into `dest` and advance.
-  result = n.kind == StringLit
+  result = n.kind == StrLit
   if result:
-    dest = pool.strings[n.litId]
+    dest = strVal(n)
     inc n
 
 proc parseRequiresCmd(n: var Cursor; spec: var NimbleSpec) =
@@ -268,7 +302,7 @@ proc parseAsgn(n: var Cursor; spec: var NimbleSpec) =
   ## `(asgn <ident> <value>)` — pick out scalars we care about.
   n.into:
     if n.kind == Ident:
-      let lhs = pool.strings[n.litId]
+      let lhs = strVal(n)
       inc n
       if lhs == "srcDir":
         var s = ""
@@ -284,18 +318,17 @@ proc parseNimble(nimbleFile: string): NimbleSpec =
   result = NimbleSpec()
   var buf = parseNimbleViaNifler(nimbleFile)
   var n = beginRead(buf)
-  if n.kind != ParLe or pool.tags[n.tag] != "stmts":
+  if n.kind != TagLit or n.pnakTag != StmtsT:
     quit nimbleFile & ": expected (stmts ...) at top level"
   n.loopInto:
-    if n.kind == ParLe:
-      let tag = pool.tags[n.tag]
-      case tag
-      of "asgn":
+    if n.kind == TagLit:
+      case n.pnakTag
+      of AsgnT:
         parseAsgn(n, result)
-      of "cmd", "call":
+      of CmdT, CallT:
         var probe = n
         inc probe
-        if probe.kind == Ident and pool.strings[probe.litId] == "requires":
+        if probe.kind == Ident and strVal(probe) == "requires":
           parseRequiresCmd(n, result)
         else:
           skip n
@@ -324,18 +357,12 @@ proc parsePnakNif(nifFile: string): NimbleSpec =
   ## produces. Each `(requires "url" "commit")` becomes one pinned
   ## requirement.
   result = NimbleSpec()
-  var stream = nifstreams.open(nifFile)
-  var buf: TokenBuf
-  try:
-    discard processDirectives(stream.r)
-    buf = fromStream(stream)
-  finally:
-    nifstreams.close(stream)
+  var buf = parseFromFile(nifFile, sharedTags = pnakTags())
   var n = beginRead(buf)
-  if n.kind != ParLe or pool.tags[n.tag] != "stmts":
+  if n.kind != TagLit or n.pnakTag != StmtsT:
     quit nifFile & ": expected (stmts ...) at top level"
   n.loopInto:
-    if n.kind == ParLe and pool.tags[n.tag] == "requires":
+    if n.kind == TagLit and n.pnakTag == RequiresT:
       n.into:
         var url = ""
         var commit = ""
@@ -959,19 +986,23 @@ proc writePnakNif(c: Context; path: string) =
   for k in c.resolved.keys: names.add k
   names.sort(cmp[string])
 
-  var b = nifbuilder.open(path)
-  b.addHeader()
-  b.withTree "stmts":
+  var buf = createTokenBuf(names.len * 8 + 4, sharedTags = pnakTags())
+  buf.buildTree StmtsT.tagId:
     for name in names:
       let r = c.resolved[name]
       # Prefer the actual HEAD sha over the requested ref: a lockfile must
       # pin a concrete commit, not a branch/tag name that can move.
       let sha = gitCurrentCommit(r.dir)
       let commit = if sha.len > 0: sha else: r.commit
-      b.withTree "requires":
-        b.addStrLit r.url
-        b.addStrLit commit
-  b.close()
+      buf.buildTree RequiresT.tagId:
+        buf.addStrLit r.url
+        buf.addStrLit commit
+  # `toString` renders just the tree, so prepend the NIF header ourselves
+  # (the reader's `processDirectives` consumes it on the way back in). We
+  # deliberately avoid `toModuleString`: that emits an indexed *module* file
+  # (`.indexat` + trailing `.index`) keyed on global SymbolDefs — a lockfile
+  # has none, so it would only add an empty, pointless index block.
+  writeFile(path, "(.nif27)\n" & buf.toString(includeLineInfo = false) & "\n")
   say mInfo, "wrote lockfile ", path
 
 # ---------------------------------------------------------------------------
