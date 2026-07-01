@@ -10,4 +10,3 @@ function run_0_techo() {
   echoInt_0_techo(55);
   echoInt_0_techo(5);
 }
-
