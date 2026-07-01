@@ -1,5 +1,9 @@
 (.nif27)
 (stmts
+ (type :Point.0.taddr2 .
+  (object .
+   (fld :x.0.taddr2 . (i 64))
+   (fld :y.0.taddr2 . (i 64))))
  (proc :fieldaddr.0.taddr2
   (params)
   (i 64)

@@ -43,10 +43,14 @@ else
   echo "node not found; skipped functional check (golden check passed)"
 fi
 
-# ── M1.5: data structures (object construction, field access, arrays, indexing)
+# ── data structures over linear memory: object construction + field access and
+# array construction + indexing, all laid out in the buffer (declared types).
 gen tdata
 if have_node; then
   {
+    echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
+    echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)) };'
     cat "$work/tdata.js"
     echo 'if (mkpoint_0_tdata(3,4)===7 && arrsum_0_tdata()===60)'
     echo '  { console.log("functional(data): PASS"); }'
@@ -54,12 +58,9 @@ if have_node; then
   } | node
 fi
 
-# ── data over LINEAR MEMORY (M2, Araq's Typed-Array model): a declared object
+# ── objects over LINEAR MEMORY (M2, Araq's Typed-Array model): a declared object
 # is laid out in an ArrayBuffer — construction is `allocFixed` + typed stores at
-# the field byte-offsets `jslayout` computes, field access is a typed load. This
-# is the buffer path in the shipping codegen (only for declared object types;
-# arrays and JS-interop stay on the legacy mapping for now). `tdata` above keeps
-# the legacy JS-object mapping (its `Point` is undeclared), so both paths run.
+# the field byte-offsets `jslayout` computes, field access is a typed load.
 gen tbuffer
 if have_node; then
   {
@@ -94,30 +95,35 @@ if have_node; then
   } | node
 fi
 
-# ── addresses (locals): a pointer is a fat `[base, key]` pair; an addr-taken
-# local is boxed (`[value]`), so its address is `[x, 0]` and writes through the
-# pointer (`p[0][p[1]] = …`) mutate the underlying local.
+# ── addresses (unified byte-pointer model): a pointer is an INTEGER byte offset.
+# An address-taken scalar local is spilled to a buffer slot, so `addr x` is its
+# offset and `deref` is a typed load/store — no boxing, no fat pointers.
 gen taddr
 if have_node; then
   {
+    echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
+    echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)) };'
     cat "$work/taddr.js"
-    # through: *p+1 on a boxed local; usebump: mutate via pointer param;
-    # addrparam: a value param whose address is taken is boxed at entry.
+    # through: *p+1 on a spilled local; usebump: mutate via pointer param;
+    # addrparam: a value param whose address is taken is spilled at entry.
     echo 'if (through_0_taddr()===42 && usebump_0_taddr()===15 && addrparam_0_taddr(7)===99)'
     echo '  { console.log("functional(addr): PASS"); }'
     echo 'else { console.log("functional(addr): FAIL"); process.exit(1); }'
   } | node
 fi
 
-# ── addresses (aggregates): addr of an object field is `[obj, "field"]` and of
-# an array element is `[arr, idx]`; two fat pointers compare component-wise
-# (`nimPtrEq`), since fresh `[base,key]` arrays are never `===`.
+# ── addresses (aggregates, byte pointers): addr of an object field is `base+off`,
+# of an array element is `base + i*stride`; pointer equality is integer `===`.
 gen taddr2
 if have_node; then
   {
+    echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
+    echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)) };'
     cat "$work/taddr2.js"
     # fieldaddr: write through addr of a field; elemaddr: through addr of an
-    # element; samefield/difffield: fat-pointer equality (same key vs different).
+    # element; samefield/difffield: integer pointer equality (same vs different).
     echo 'if (fieldaddr_0_taddr2()===100 && elemaddr_0_taddr2()===99 &&'
     echo '    samefield_0_taddr2()===true && difffield_0_taddr2()===false)'
     echo '  { console.log("functional(addr2): PASS"); }'
