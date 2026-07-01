@@ -222,6 +222,7 @@ type
     genericInnerProcs*: HashSet[SymId] # these are special in that they must be instantiated in specific places
     expanded*: TokenBuf
     forwardDecls*: Table[StrId, seq[SymId]] # forward declaration candidates by name
+    routineSigCache*: Table[SymId, string] # canonical routine signatures for redef checks
     compiledMacros*: Table[SymId, string] # mapping macro SymId to compiled plugin path
     matchedForwardDecls*: HashSet[SymId] ## Forward decls whose matching
       ## implementation has been seen. The proc-decl tokens are still in
