@@ -12,6 +12,6 @@ function checkedAdd_0_tarith(a_0, b_0) {
 
 function storeTest_0_tarith() {
   let x_0;
-  x_0 = (40 + 2);
+  x_0 = 42;
   return x_0;
 }
