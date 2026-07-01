@@ -220,7 +220,7 @@ func parseBiggestUInt*(s: openArray[char], number: var BiggestUInt): int {.
 
 # Following parseBiggestFloat code is copied from `lib/system/strmantle.nim` in Nim 2.
 
-when defined(nimNativeIo):
+when defined(nimNoLibc):
   func c_strtod(buf: cstring, endptr: ptr cstring): float64 {.noSideEffect.} =
     ## Freestanding (`nimony n`, libc-free) decimal→float64. Only reached on
     ## `parseBiggestFloat`'s slow path, which always hands us a normalized

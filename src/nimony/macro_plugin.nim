@@ -8,7 +8,7 @@
 ## `nimony s` (which picks up `.p.nif` input — same machinery `executeExpr`
 ## uses for CTFE), and exec the resulting binary at every call site.
 
-import std/[syncio, os, osproc, tables, hashes, assertions]
+import std/[syncio, os, osproc, tables, hashes, assertions, dirs, paths]
 
 import ".." / lib / [nifstreams, nifcursors, lineinfos, bitabs, nifindexes, symparser]
 import ".." / models / [tags]
@@ -284,13 +284,37 @@ proc getMacroPluginPath*(nifcachePath: string; macroSym: SymId): string =
 
 proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymId;
                          info: lineinfos.PackedLineInfo;
-                         commandLineArgs: string): string =
+                         commandLineArgs: string;
+                         importSnippets: var TokenBuf): string =
   ## Build the plugin module straight from NIF (no Nim text round-trip), write
   ## it as a `.p.nif`, and have Nimony compile it through `s` (the NIF-input
   ## entry point — same one CTFE uses in `semos.runEval`).
+  ##
+  ## Compiled via the libc-free NATIVE backend (`--native`: arkham + nifasm go
+  ## straight to a static machine-code executable, skipping the C-compiler
+  ## round-trip — the dominant cost on this compile-time-critical path). The
+  ## native backend needs its deps compiled under the native config
+  ## (`nimNativeAlloc`+`nimNativeIo`); the OUTER compile's nimcache holds
+  ## C-config `.s.nif` (different `dealloc`/`fputc`/… lowering), so we CANNOT
+  ## reuse it. Instead use a DEDICATED native sub-cache (built once, reused by
+  ## every plugin in the project) and convey the importing module's deps via the
+  ## `.p.deps.nif` so `nimony s` rebuilds them from source under the native config
+  ## (same mechanism as `semos.runEval`).
   let exePath = getMacroPluginPath(nifcachePath, macroSym)
   let pluginBaseName = "macro_" & $macroSym.int
-  let progfile = nifcachePath / pluginBaseName.addFileExt(".p.nif")
+  # Dedicated native-config BUILD cache, separate from the outer (C-config) nimcache
+  # so native-config `.s.nif`/objects don't mix with the C ones. `nimony s` reads the
+  # `.p.nif` AND its `.p.deps.nif` from this `--nimcache`, so both inputs go here too.
+  let nativeCache = nifcachePath / "nmacroplugins"
+  try:
+    when defined(nimony):
+      createDir(path(nativeCache))
+    else:
+      createDir(Path(nativeCache))
+  except:
+    echo "Macro plugin: failed to create ", nativeCache
+    return ""
+  let progfile = nativeCache / pluginBaseName.addFileExt(".p.nif")
 
   var buf = buildPluginNif(macroDecl, macroSym, info)
   try:
@@ -299,12 +323,14 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
     echo "Macro plugin: failed to write ", progfile
     return ""
 
-  # `nimony s` opens `<progfile>.p.deps.nif` unconditionally — write an empty
-  # `(stmts)` (the plugin module has no external NIF dependencies of its own,
-  # only stdlib imports which Nimony discovers via its normal search path).
-  let depsFile = nifcachePath / pluginBaseName & ".p.deps.nif"
-  var deps = createTokenBuf(4)
+  # `.p.deps.nif` lists the importing module's imports so `nimony s` rebuilds them
+  # from source under the native config (rather than relying on pre-built `.s.nif`,
+  # which in the shared cache are C-config). Mirrors `semos.runEval`.
+  let depsFile = nativeCache / pluginBaseName & ".p.deps.nif"
+  var deps = createTokenBuf(importSnippets.len + 4)
   deps.addParLe StmtsS, info
+  if importSnippets.len > 0:
+    deps.add importSnippets
   deps.addParRi()
   try:
     writeFile(deps, depsFile)
@@ -314,21 +340,14 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
 
   let nimonyExe = getAppDir() / "nimony"
   let srcLibPath = getAppDir().parentDir() / "src" / "lib"
-  # Forward `--nimcache:` so the sub-compile reads the `.p.deps.nif` from the
-  # same per-worker directory we wrote it to. Without this, `nimony s` falls
-  # back to its default `nimcache/` and can't find the deps file under
-  # parallel test execution (CI uses `nimcache/.par/<n>/` per worker).
-  #
-  # Forward the outer compile's command-line args (notably `--cc`) so the
-  # nested build's nifmake-cmd signatures match the outer's. Otherwise
-  # nifmake's per-cmd staleness check sees a different argv for `nimsem ...
-  # m sysvq0asl.p.nif`, decides the existing `sysvq0asl.s.nif` is stale,
-  # and tries to overwrite it — which on Windows fails because the outer
-  # nimsem (currently paused waiting on this exec) still has it mmap'd.
-  # Same rationale as `semos.runProgram` / `semos.prepareEval`.
+  # `--native` selects the libc-free backend (sets `nimNativeAlloc`/`nimNativeIo`);
+  # `--nimcache:<nativeCache>` keeps all native-config artefacts out of the outer
+  # C-config cache. The outer args are still forwarded (user `-d:` defines etc.),
+  # but `--cc` is moot for the native backend.
   let cmd = quoteShell(nimonyExe) & commandLineArgs &
+            " --native" &
             " --path:" & quoteShell(srcLibPath) &
-            " --nimcache:" & quoteShell(nifcachePath) &
+            " --nimcache:" & quoteShell(nativeCache) &
             " -o:" & quoteShell(exePath) &
             " s " & quoteShell(progfile)
 

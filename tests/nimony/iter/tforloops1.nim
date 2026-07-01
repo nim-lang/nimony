@@ -8,13 +8,10 @@ iterator powers(n: int): int =
     yield i*i*i
     i = i + 1
 
-proc printf(format: cstring) {.importc: "printf", varargs, header: "<stdio.h>", nodecl.}
-
-
 for i in powers(5):
   let m = i
 
-  printf("Hello, world: %ld\n", m)
+  echo "Hello, world: ", m
 
 iterator countup(a, b: int): int =
   var i = a
@@ -24,12 +21,12 @@ iterator countup(a, b: int): int =
 
 for x in countup(1, 5):
   let m = x
-  printf("countup start: %ld\n", m)
+  echo "countup start: ", m
   if x > 5:
     break
   elif x < 3:
     continue
-  printf("countup end: %ld\n", m)
+  echo "countup end: ", m
 
 iterator countup2(n: int): int =
   var i = 0
@@ -44,7 +41,7 @@ iterator powers2(n: int): int =
     yield i*i*i
 
 for i in powers2(6):
-  printf("Hello, world: %ld\n", i)
+  echo "Hello, world: ", i
 
 iterator countup3(a: int): int =
   yield 3
@@ -55,7 +52,7 @@ iterator powers3(b: int): int =
 
 for m in powers3(5):
   for n in countup3(4):
-    printf("Hello, world: %ld\n", m+n)
+    echo "Hello, world: ", m+n
 
 while true:
   for i in 0 ..< 1:
@@ -72,7 +69,7 @@ iterator powers4(a: int): int =
 
 for i in powers4(5):
   for j in countup4(4):
-    printf("Hello, world: %ld\n", i+j)
+    echo "Hello, world: ", i+j
 
 
 for i in 0..<3:
