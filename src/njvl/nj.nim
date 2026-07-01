@@ -445,7 +445,15 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       dest.takeToken n
       while n.hasMore:
-        trExpr c, dest, n
+        if n.kind == ParLe and n.exprKind in CallKinds:
+          # A call surviving to nj in an operand position is an lvalue
+          # location (xelim lifts every value-producing call), e.g. the
+          # `s[i]` argument of a location-taking builtin like `wasMoved`.
+          # Emit it via `trCall`, which accepts a call here, rather than the
+          # plain-expression path that rejects one.
+          discard trCall(c, dest, n)
+        else:
+          trExpr c, dest, n
       dest.takeToken n
   of ParRi: bug "Unmatched ParRi"
 
