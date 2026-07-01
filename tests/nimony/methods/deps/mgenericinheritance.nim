@@ -9,7 +9,7 @@ method foo*(x: RootObj2): string = "RootObj"
 template name(_: typedesc[int]): string = "int"
 template name(_: typedesc[float]): string = "float"
 method foo*[T](x: GenericObj[T]): string {.untyped.} =
-  concat("GenericObj ", name(T))
+  "GenericObj " & name(T)
 
 proc testFoo*(x: RootObj2) =
   echo foo(x)

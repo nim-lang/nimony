@@ -635,9 +635,25 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
         else:
           c.b.addTree(LetL)
 
-          toNif(n[i], n, c) # name
+          # A loop variable may carry a pragma (e.g. `for x {.inject.} in s`,
+          # as used by `mapIt` & friends). Split it out like a regular ident-def
+          # so the pragma lands in the `let`'s pragmas slot rather than staying
+          # wrapped as a `pragmax` in the name slot.
+          let split = splitIdentDefName(n[i])
 
-          c.b.addEmpty 4 # export marker, pragmas, type, value
+          toNif(split.name, n, c) # name
+
+          if split.visibility != nil:
+            c.b.addRaw " x"
+          else:
+            c.b.addEmpty # export marker
+
+          if split.pragma != nil:
+            toNif(split.pragma, n, c)
+          else:
+            c.b.addEmpty # pragmas
+
+          c.b.addEmpty 2 # type, value
           c.b.endTree() # LetDecl
       c.b.endTree() # UnpackIntoFlat
 

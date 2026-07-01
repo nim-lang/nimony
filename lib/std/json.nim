@@ -224,8 +224,16 @@ proc parseValue(p: var JsonParser; t: var JsonTree; mode: LineInfoMode; file: Fi
     t.buf.addStrLit p.a; emitInfo(p, t, mode, file); discard getTok(p)
   of tkInt:
     var v: BiggestInt = 0
-    discard parseBiggestInt(p.a, v)
-    t.buf.addIntLit int64(v); emitInfo(p, t, mode, file); discard getTok(p)
+    if parseBiggestInt(p.a, v) > 0:
+      t.buf.addIntLit int64(v)
+    else:
+      # Integer literal outside the int64 range (e.g. C's UINT64_MAX in header
+      # dumps): the standard JSON fallback is to keep it as a (lossy) float atom
+      # rather than aborting the whole parse.
+      var f: BiggestFloat = 0.0
+      discard parseBiggestFloat(p.a, f)
+      t.buf.addFloatLit float64(f)
+    emitInfo(p, t, mode, file); discard getTok(p)
   of tkFloat:
     var v: BiggestFloat = 0.0
     discard parseBiggestFloat(p.a, v)

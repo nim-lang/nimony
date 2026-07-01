@@ -263,7 +263,9 @@ when defined(windows):
 
   func nameToCodePage*(name: string): CodePage =
     var nameAsInt: int = 0
-    if parseBiggestInt(name, nameAsInt) == 0: nameAsInt = -1
+    # `<= 0`: 0 = not a number, negative = out-of-range integer; neither is a
+    # valid code-page number, so fall back to the name lookup.
+    if parseBiggestInt(name, nameAsInt) <= 0: nameAsInt = -1
     for value in arrayIter(winEncodings):
       let (no, na) = value
       if no == nameAsInt or eqEncodingNames(na, name): return CodePage(no)
