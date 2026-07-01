@@ -1178,16 +1178,16 @@ proc procTypeOfRoutineSym(sym: SymId; buf: var TokenBuf): bool =
   ## Build the structural proc type of a routine symbol into `buf` so it can be
   ## compared against a formal proc type with `procTypeMatch`.
   let res = tryLoadSym(sym)
-  if res.status != LacksNothing: return false
-  if res.decl.symKind notin RoutineKinds: return false
-  let r = asRoutine(res.decl)
-  buf.addParLe ProctypeT
-  buf.addDotToken() # nilability tag
-  buf.addSubtree r.params
-  buf.addSubtree r.retType
-  buf.addSubtree r.pragmas
-  buf.addParRi()
-  result = true
+  result = false
+  if res.status == LacksNothing and res.decl.symKind in RoutineKinds:
+    let r = asRoutine(res.decl)
+    buf.addParLe ProctypeT
+    buf.addDotToken() # nilability tag
+    buf.addSubtree r.params
+    buf.addSubtree r.retType
+    buf.addSubtree r.pragmas
+    buf.addParRi()
+    result = true
 
 proc tryMatchProcChoice*(context: ptr SemContext; choice, f: Cursor): SymId =
   ## Find the unique overload in the OchoiceX/CchoiceX `choice` whose proc type
@@ -1209,7 +1209,7 @@ proc tryMatchProcChoice*(context: ptr SemContext; choice, f: Cursor): SymId =
           if not trial.err:
             result = a.symId
             inc matchCount
-    inc a
+    skip a
   if matchCount != 1:
     result = SymId(0)
 
