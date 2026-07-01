@@ -291,6 +291,107 @@ proc endBorrow(c: var NjvlContext; sym: SymId) =
 
 template getVarId(c: var NjvlContext; symId: SymId): VarId = VarId(symId)
 
+# --- Range (`range[lo..hi]`) checking ---
+#
+# Following Araq's design: a value flowing into a `range[lo..hi]` slot carries
+# the proof obligation `lo <= value <= hi`. We ask the inferle engine to
+# discharge it from the facts known on this path; whatever cannot be proven is
+# rejected at compile time. No runtime check is ever emitted (zero runtime cost,
+# no new dynamic failure modes). A `range`-typed location, once bound, is itself
+# a fact (`lo <= x <= hi`), which is what makes proper subtyping such as
+# `range[2..5]` -> `range[0..10]` provable.
+
+proc staticRangeBounds(typ: Cursor; lo, hi: var xint): bool =
+  ## Extract the statically-known integer bounds of a `range[lo..hi]` type,
+  ## resolving a named range type (a `Symbol`) to its definition. Returns false
+  ## for non-range or non-static ranges (which the caller leaves untouched).
+  var t = typ
+  var guard = 0
+  while t.kind == Symbol and guard < 8:
+    let s = tryLoadSym(t.symId)
+    if s.status != LacksNothing or s.decl.symKind != TypeY: return false
+    t = asTypeDecl(s.decl).body
+    inc guard
+  if t.typeKind != RangetypeT: return false
+  var r = t
+  inc r        # skip rangetype tag
+  skip r       # skip base type
+  case r.kind
+  of IntLit: lo = createXint(pool.integers[r.intId])
+  of UIntLit: lo = createXint(pool.uintegers[r.uintId])
+  else: return false
+  inc r
+  case r.kind
+  of IntLit: hi = createXint(pool.integers[r.intId])
+  of UIntLit: hi = createXint(pool.uintegers[r.uintId])
+  else: return false
+  result = lo <= hi
+
+proc checkRangeAssign(c: var NjvlContext; targetType, value: Cursor) =
+  ## Emit and discharge the `lo <= value <= hi` obligation for a value bound to a
+  ## `range[lo..hi]`-typed target. Value conversions are handled at the
+  ## conversion site (see the `ConvX`/`HconvX` case in `traverseExpr`), so we
+  ## skip them here to avoid double-reporting.
+  if value.exprKind in {ConvX, HconvX, CastX, BaseobjX}: return
+  var lo = zero()
+  var hi = zero()
+  if not staticRangeBounds(targetType, lo, hi): return
+
+  # 1. The value's own *declared type* may already be a `range` that fits: a
+  #    subset `range[aLo..aHi]` with `lo <= aLo` and `aHi <= hi` is provably in
+  #    range. This is the type acting as its own proof (proper subtyping such as
+  #    `range[2..5]` -> `range[0..10]`), and it is robust across control-flow
+  #    joins where flow-derived facts would be intersected away.
+  var aLo = zero()
+  var aHi = zero()
+  if staticRangeBounds(getType(c.typeCache, value), aLo, aHi):
+    if lo <= aLo and aHi <= hi: return
+
+  # 2. Otherwise, discharge `lo <= value <= hi` from the facts known on this
+  #    path (e.g. a preceding `if a >= 0 ... a <= 10` guard, or a `range`-typed
+  #    parameter whose bounds were seeded on entry).
+  var v = VarId(0)
+  var off = zero()
+  var isLit = false
+  var r = value
+  let sym = skipSymbol(r)
+  if sym != NoSymId:
+    v = getVarId(c, sym)
+  else:
+    case value.kind
+    of IntLit: off = createXint(pool.integers[value.intId]); isLit = true
+    of UIntLit: off = createXint(pool.uintegers[value.uintId]); isLit = true
+    else:
+      # A value we cannot model cannot be proven in range, so we reject it.
+      buildErr c, value.info, "cannot prove value is in range " & $lo & ".." & $hi
+      return
+
+  # lo <= v + off   <=>   0 <= v + (off - lo)
+  let lower = query(VarId(0), v, off - lo)
+  # v + off <= hi   <=>   v <= 0 + (hi - off)
+  let upper = query(v, VarId(0), hi - off)
+  if not (implies(c.facts, lower) and implies(c.facts, upper)):
+    if isLit:
+      buildErr c, value.info, "value out of range: " & $off & " notin " & $lo & ".." & $hi
+    elif sym != NoSymId:
+      buildErr c, value.info, "cannot prove '" & pool.syms[sym] &
+        "' is in range " & $lo & ".." & $hi
+    else:
+      buildErr c, value.info, "cannot prove value is in range " & $lo & ".." & $hi
+
+proc seedRangeFacts(c: var NjvlContext; sym: SymId; typ: Cursor) =
+  ## Record that a `range[lo..hi]`-typed parameter holds a value within its
+  ## bounds on entry, so obligations that pass it on to an equal-or-wider range
+  ## are provable from facts even when the value's static type is erased (e.g.
+  ## after arithmetic). Range-to-range narrowing itself is proven structurally
+  ## in `checkRangeAssign` and does not depend on this.
+  var lo = zero()
+  var hi = zero()
+  if staticRangeBounds(typ, lo, hi):
+    let v = getVarId(c, sym)
+    c.facts.add query(VarId(0), v, -lo)  # lo <= v
+    c.facts.add query(v, VarId(0), hi)   # v <= hi
+
 # --- Fact extraction from conditions ---
 
 proc rightHandSide(c: var NjvlContext; pc: var Cursor; fact: var LeXplusC): bool =
@@ -806,8 +907,14 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
       of TupconstrX:
         analyseTupConstr c, pc
       of CastX, ConvX, HconvX:
+        let isCast = pc.exprKind == CastX
         inc pc
+        let convType = pc
         skip pc # skips type
+        # A checked conversion to a `range[lo..hi]` carries the same obligation
+        # as an assignment. `cast` is an unchecked escape hatch and is exempt.
+        if not isCast:
+          checkRangeAssign c, convType, pc
         traverseExpr c, pc
         skipParRi pc
       of NilX:
@@ -979,6 +1086,7 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
     # Check for not-nil type match
     let expected = getType(c.typeCache, n)
     checkNilMatch c, valueStart, expected
+    checkRangeAssign c, expected, valueStart
 
     # Try to extract facts from the value
     var valueForFact = valueStart
@@ -1000,8 +1108,13 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
         # The nil-match check already passed, so the value IS non-nil
         c.facts.add isNotNil(fact.a)
 
+    # The (re)assigned location again holds an in-range value; the fact
+    # bookkeeping above may have invalidated its range facts, so restore them.
+    seedRangeFacts c, symId, expected
+
     skip n
   else:
+    checkRangeAssign c, getType(c.typeCache, n), valueStart
     traverseExpr c, n
 
   skipParRi n
@@ -1382,8 +1495,13 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
         "': path is not borrowable; use 'addr' to override or a temporary move"
   if n.kind != DotToken and localType.typeKind in {PtrT, RefT, CstringT, PointerT, ProctypeT}:
     checkNilMatch c, n, localType
+  if n.kind != DotToken:
+    checkRangeAssign c, localType, n
   traverseExpr c, n
   skipParRi n
+  # The local now holds a value proven to be within its range (if any), so
+  # record that for downstream obligations that reference this symbol.
+  seedRangeFacts c, name, localType
 
 proc traverseAssume(c: var NjvlContext; n: var Cursor) =
   inc n
@@ -1479,6 +1597,8 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
           c.typeCache.registerLocal(r.name.symId, ParamY, r.typ)
           if r.typ.typeKind == OutT and not hasPragma(r.pragmas, NoinitP):
             outParams.add r.name.symId
+          # A `range[lo..hi]`-typed parameter is known to be within bounds.
+          seedRangeFacts c, r.name.symId, r.typ
       c.typeCache.registerLocal(symId, ProcY, decl)
     skip n
 
