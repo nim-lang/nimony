@@ -148,6 +148,7 @@ type
     mode: ExceptionMode
     resultSym: SymId
     errorTracker: SymId # tracks error codes in try blocks (can differ from resultSym)
+    pcSym: SymId # under `usePc`: the single integer that replaces the cfvar stack
     guards: seq[Guard]
     tmpCounter: int
     returnType: Cursor
@@ -158,6 +159,11 @@ type
     counter: int
     thisModuleSuffix: string
     raisesResolved: bool  ## True when eraiser has already run; prevents double-injecting raise checks
+    usePc: bool  ## Collapse the boolean cfvar stack into a single integer `pc` local.
+                 ## Sound because the active-guard set is always a contiguous
+                 ## stack suffix (see the `pc` helpers): a guard at stack index
+                 ## `i` fires iff `pc <= i`. Only the leaf emission changes; all
+                 ## compile-time guard bookkeeping is identical to the cfvar path.
     current: CurrentProc
     callFirstArgs: Table[SymId, TokenBuf] ## Maps local syms to the first argument of their init call (for borrow tracking)
 
@@ -203,6 +209,60 @@ proc openElseBranch(b: var BasicBlock; dest: var TokenBuf; info: PackedLineInfo)
   dest.addParLe StmtsS, info # begin of else branch
   inc b.openElseBranches
 
+# --- single-`pc` lowering (under `usePc`) -----------------------------------
+# `pc` holds the stack index of the *outermost* scope currently being left, or
+# `PcNotLeaving` when nothing is leaving. The active-guard set is always a
+# contiguous suffix `{k..top}` of the stack (every `jtrue` site sets such a
+# run), so a guard at stack index `i` fires (its tail is skipped) iff `pc <= i`,
+# i.e. the tail runs iff `i < pc`.
+const PcNotLeaving = 1 shl 30
+
+proc declarePc(c: var Context; dest: var TokenBuf) =
+  ## Declare the per-proc `pc` int local (init to `PcNotLeaving`).
+  let s = pool.syms.getOrIncl("´pc." & $c.counter)
+  inc c.counter
+  c.current.pcSym = s
+  copyIntoKind dest, VarS, NoLineInfo:
+    dest.addSymDef s, NoLineInfo
+    dest.addDotToken() # export marker
+    dest.addDotToken() # pragmas
+    dest.copyTree c.typeCache.builtins.intType
+    dest.addIntLit(PcNotLeaving, NoLineInfo)
+  # Bind the type cursor to a local first: passing `c.typeCache.builtins.intType`
+  # directly would alias the mutable `c.typeCache` receiver (var) with an
+  # immutable arg borrowed from inside it, which the borrow checker rejects.
+  let intType = c.typeCache.builtins.intType
+  c.typeCache.registerLocal(s, VarY, intType)
+
+proc setPc(c: Context; dest: var TokenBuf; targetIdx: int; info: PackedLineInfo) =
+  ## `pc = targetIdx` — replaces a `(jtrue …)` leaving scopes down to `targetIdx`.
+  copyIntoKind dest, StoreV, info:
+    dest.addIntLit(targetIdx, info)
+    dest.addSymUse c.current.pcSym, info
+
+proc pcRunCond(c: Context; dest: var TokenBuf; idx: int; info: PackedLineInfo) =
+  ## The condition "scope `idx` not yet left" = `idx < pc` (guarded tail runs).
+  ## Typed comparisons carry the operand type as their first child.
+  copyIntoKind dest, LtX, info:
+    dest.copyTree c.typeCache.builtins.intType
+    dest.addIntLit(idx, info)
+    dest.addSymUse c.current.pcSym, info
+
+proc resetPc(c: Context; dest: var TokenBuf; idx: int; info: PackedLineInfo) =
+  ## Emitted after scope `idx` is exited: `if pc == idx: pc = PcNotLeaving`.
+  ## Clears the leave once we fall through past its target; if `pc < idx` an
+  ## *outer* leave is still propagating through this scope, so `pc` is kept.
+  copyIntoKind dest, IteV, info:
+    copyIntoKind dest, EqX, info:
+      dest.copyTree c.typeCache.builtins.intType
+      dest.addIntLit(idx, info)
+      dest.addSymUse c.current.pcSym, info
+    copyIntoKind dest, StmtsS, info:
+      copyIntoKind dest, StoreV, info:
+        dest.addIntLit(PcNotLeaving, info)
+        dest.addSymUse c.current.pcSym, info
+    dest.addDotToken() # no else
+
 proc maybeEmitGuard(c: var Context; dest: var TokenBuf; info: PackedLineInfo): (int, SymId) =
   ## If any guard is active, emit `(ite (not guard) (stmts` and temporarily
   ## disable the guard. Returns `(index, sym)` of the disabled guard, or
@@ -216,8 +276,11 @@ proc maybeEmitGuard(c: var Context; dest: var TokenBuf; info: PackedLineInfo): (
     let g = addr c.current.guards[i]
     if g.active:
       dest.add tagToken("ite", info)
-      dest.copyIntoKind NotX, info:
-        dest.addSymUse g.cond, info
+      if c.usePc:
+        pcRunCond(c, dest, i, info)  # (lt i pc): run tail iff scope `i` not left
+      else:
+        dest.copyIntoKind NotX, info:
+          dest.addSymUse g.cond, info
       result = (i, g.cond)
       g.active = false # borrow: disable until maybeCloseGuard returns it
       dest.addParLe StmtsS, info # then section
@@ -246,6 +309,7 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc declareCfVar(c: var Context; dest: var TokenBuf; s: SymId) =
+  if c.usePc: return  # the single `pc` (declared per-proc) replaces all cfvars
   dest.add tagToken("mflag", NoLineInfo)
   dest.addSymDef s, NoLineInfo
   dest.addParRi()
@@ -369,6 +433,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
           c.current.errorTracker = c.current.resultSym
 
         declareCfVar c, dest, retFlag
+        if c.usePc: declarePc(c, dest)
         trGuardedStmts c, b, dest, n, false
         closeBasicBlock c, b, dest
         closeScope c, dest, info
@@ -450,14 +515,17 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of ParRi: bug "Unmatched ParRi"
 
 proc emitReturnGuards(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
-  dest.add tagToken("jtrue", info)
+  if not c.usePc: dest.add tagToken("jtrue", info)
   # we also need to break out of everything:
   for i in countdown(c.current.guards.len - 1, 0):
     let cond = c.current.guards[i].cond
     assert cond != NoSymId
     c.current.guards[i].active = true
-    dest.addSymUse cond, info
-  dest.addParRi()
+    if not c.usePc: dest.addSymUse cond, info
+  if c.usePc:
+    setPc(c, dest, 0, info)  # leave down to the proc-level guard (index 0)
+  else:
+    dest.addParRi()
 
 proc callIsOver(c: var Context; dest: var TokenBuf; callInfo: CallInfo) =
   # we make `unknown` part of the `call` for now. This will be cleaned up
@@ -481,8 +549,9 @@ proc trBoundExpr(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
 proc raiseGuards(c: var Context; dest: var TokenBuf; info: PackedLineInfo;
                  skipInnermostHandler = false) =
   let before = dest.len
-  dest.add tagToken("jtrue", info)
+  if not c.usePc: dest.add tagToken("jtrue", info)
   var produced = 0
+  var target = 0
   var skippedHandler = not skipInnermostHandler
   # Break out of everything up to and INCLUDING the innermost try guard.
   # The try guard itself must be set so the except handler fires.
@@ -496,12 +565,16 @@ proc raiseGuards(c: var Context; dest: var TokenBuf; info: PackedLineInfo;
       continue
     assert g.cond != NoSymId
     g.active = true
-    dest.addSymUse g.cond, info
+    if not c.usePc: dest.addSymUse g.cond, info
+    target = i
     inc produced
     if g.isTryGuard:
       break  # include the try guard, then stop (don't propagate further up)
-  dest.addParRi()
-  if produced == 0: dest.shrink before
+  if c.usePc:
+    if produced > 0: setPc(c, dest, target, info)
+  else:
+    dest.addParRi()
+    if produced == 0: dest.shrink before
 
 proc trStmtCall(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor) =
   let before = dest.len
@@ -757,14 +830,18 @@ proc trBreak(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
 
   assert entries > 0, "break resolved to zero guard entries"
   b.leavesWith = c.current.guards.len-1
-  dest.add tagToken("jtrue", n.info)
+  if not c.usePc: dest.add tagToken("jtrue", n.info)
   for i in 1..entries:
     let guardIdx = c.current.guards.len - i
     assert guardIdx >= 0, "guard index underflow in break"
     let g = addr c.current.guards[guardIdx]
-    dest.addSymUse g.cond, n.info
+    if not c.usePc: dest.addSymUse g.cond, n.info
     g.active = true
-  dest.takeParRi n
+  if c.usePc:
+    setPc(c, dest, c.current.guards.len - entries, n.info)
+    skipParRi n      # consume the break's `)` (no jtrue was opened to absorb it)
+  else:
+    dest.takeParRi n # the break's `)` closes the emitted `(jtrue …)`
 
 type
   GuardUndoState = object
@@ -791,6 +868,7 @@ proc trBlock(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Curs
   var b = BasicBlock(openElseBranches: 0, hasParLe: outerB.hasParLe, leavesWith: -1)
   trGuardedStmts c, b, dest, n, true
   closeBasicBlock c, b, dest
+  if c.usePc: resetPc(c, dest, s.at, NoLineInfo)
   removeGuard c, s
   skipParRi n
 
@@ -850,8 +928,11 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor;
 
     closeBasicBlock c, b, dest
 
-  dest.copyIntoKind NotX, info:
-    dest.addSymUse guard, info # condition is always our artifical guard
+  if c.usePc:
+    pcRunCond(c, dest, s.at, info)  # loop runs while its break-guard scope isn't left
+  else:
+    dest.copyIntoKind NotX, info:
+      dest.addSymUse guard, info # condition is always our artifical guard
 
   # post loop condition body:
   dest.copyIntoKind StmtsS, info:
@@ -878,6 +959,7 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor;
   removeGuard c, s
 
 proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info0 = n.info
   dest.add tagToken("loop", n.info)
   inc n
 
@@ -887,6 +969,7 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skipParRi n
     trWhileTrue c, dest, n
     dest.takeParRi n # close "loop"
+    if c.usePc: resetPc(c, dest, c.current.guards.len, info0)
   else:
     # translate `while cond: body` to `while true: if cond: body else: break`
     # as it's too complex to handle otherwise.
@@ -905,6 +988,7 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trWhileTrue c, dest, ww
     endRead w
     dest.addParRi() # close "loop"
+    if c.usePc: resetPc(c, dest, c.current.guards.len, info0)
 
 proc addForBorrowDecls(dest: var TokenBuf; vars: Cursor; firstArgBuf: TokenBuf) =
   var vars = vars
@@ -1163,7 +1247,11 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
   while n.substructureKind == ExceptU:
     inc n # into ExceptU
     dest.copyIntoKind IteV, info:
-      dest.addSymUse guard, info
+      if c.usePc:
+        dest.copyIntoKind NotX, info:  # handler fires iff this try was left: pc <= s.at
+          pcRunCond(c, dest, s.at, info)
+      else:
+        dest.addSymUse guard, info
       dest.copyIntoKind StmtsS, info:
         # Handle exception type pattern (if present)
         if n.stmtKind != LetS:
@@ -1225,6 +1313,7 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
 
     c.current.mode = oldMode
     c.current.errorTracker = oldErrorTracker
+  if c.usePc: resetPc(c, dest, s.at, info)
   removeGuard c, s
   skipParRi n
 
@@ -1378,10 +1467,10 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
   if takeThisParRi:
     dest.addParRi()
 
-proc eliminateJumps*(pass: var Pass; raisesResolved = false) =
+proc eliminateJumps*(pass: var Pass; raisesResolved = false; usePc = false) =
   var c = Context(counter: 0, typeCache: createTypeCache(),
                   thisModuleSuffix: pass.moduleSuffix,
-                  raisesResolved: raisesResolved)
+                  raisesResolved: raisesResolved, usePc: usePc)
   c.openScope()
   lowerExprs(pass, TowardsNjvl)
   pass.prepareForNext("elimjumps")
@@ -1395,6 +1484,7 @@ proc eliminateJumps*(pass: var Pass; raisesResolved = false) =
   let topFlag = pool.syms.getOrIncl("´r.0." & c.thisModuleSuffix)
   c.current.guards.add Guard(cond: topFlag, active: false)
   declareCfVar c, pass.dest, topFlag
+  if c.usePc: declarePc(c, pass.dest)
   var b = BasicBlock(openElseBranches: 0, hasParLe: true, leavesWith: -1)
   while n.hasMore:
     trGuardedStmts c, b, pass.dest, n, false
@@ -1407,17 +1497,22 @@ when isMainModule:
   from std/os import paramStr, paramCount
   import std/syncio
   import ".." / lib / symparser
-  let infile = paramStr(1)
+  var usePc = false
+  var positional: seq[string] = @[]
+  for i in 1..paramCount():
+    if paramStr(i) == "--pc": usePc = true
+    else: positional.add paramStr(i)
+  let infile = positional[0]
   var owningBuf = createTokenBuf(300)
   let n = setupProgram(infile, infile.changeModuleExt".njvl.nif", owningBuf)
   var initialBuf = createTokenBuf(300)
   initialBuf.addSubtree(n)
   var pass = initPass(move initialBuf, "main", "xelim_njvl", 0)
-  eliminateJumps(pass)
+  eliminateJumps(pass, usePc = usePc)
   let output = pass.dest.toString(false)
-  if paramCount() >= 2:
+  if positional.len >= 2:
     # Write to specified output file
-    let outfile = paramStr(2)
+    let outfile = positional[1]
     var f = syncio.open(outfile, fmWrite)
     try:
       syncio.write(f, output)

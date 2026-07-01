@@ -87,6 +87,21 @@ type
     resultSym*: SymId
     counter*: int
     labelCounter*: int = 1
+    symToState*: Table[SymId, int]
+      ## Final-IR path: maps a finalir `(lab)`/`(jmp)` SymId that is a *state
+      ## boundary* (crosses a suspension) to the integer state `coroTr` keys off.
+      ## SymIds NOT in here stay verbatim `(lab sym)`/`(jmp sym)` — pure
+      ## control-flow gotos (break/block in suspension-free code) handled by the
+      ## backend, never split into states.
+    flattenDepth*: int
+      ## >0 while lowering the body of a suspension-containing construct: every
+      ## `lab`/`jmp` inside genuinely crosses a state, so it is relabelled to int.
+    loopExits*: seq[SymId]
+      ## exit labels of the enclosing suspension-free loops being rebuilt as
+      ## `(while)`: a `(jmp exit)` to the innermost is a structured `(break)`.
+    loopExitLabs*: HashSet[SymId]
+      ## every such exit label, so its trailing `(lab exit)` is dropped (the
+      ## `(while)` exits naturally) rather than emitted as an unknown statement.
     kind*: RoutineKind
     isClosureIter*: bool
       ## True for `.closure` iters specifically. Drives the resume-slot
@@ -465,8 +480,8 @@ proc isClosureIter*(s: SymId): bool =
 proc getNextState*(buf: TokenBuf; n: Cursor): int =
   var pos = cursorToPosition(buf, n)
   while pos < buf.len:
-    if pool.tags[buf[pos].tag] == "lab":
-      return int(pool.integers[buf[pos+1].intId])
+    if pool.tags[buf[pos].tag] == "lab" and buf[pos+1].kind == IntLit:
+      return int(pool.integers[buf[pos+1].intId])  # skip SymId gotos, find next state
     inc pos
   return -1
 
@@ -1036,7 +1051,7 @@ proc escapingLocals*(c: var Context; n: Cursor) =
   var n = n
   var nested = 0
   while true:
-    if pool.tags[n.tag] == "lab":
+    if pool.tags[n.tag] == "lab" and n.firstSon.kind == IntLit:
       currentState = int(pool.integers[n.firstSon.intId])
 
     let sk = n.stmtKind
@@ -1160,11 +1175,39 @@ proc emitLabel*(dest: var TokenBuf; label: int; info: PackedLineInfo) =
   dest.addIntLit label, info
   dest.addParRi()
 
+proc stateFor(c: var Context; sym: SymId): int =
+  ## Final-IR path: the integer state for a finalir `(lab)`/`(jmp)` SymId,
+  ## assigning a fresh one (sharing the suspension-state counter) on first use.
+  result = c.currentProc.symToState.getOrDefault(sym, 0)
+  if result == 0:
+    result = c.currentProc.labelCounter
+    inc c.currentProc.labelCounter
+    c.currentProc.symToState[sym] = result
+
 proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var info = n.info
   case n.njvlKind
+  of LabV:
+    var peek = n
+    inc peek
+    let sym = peek.symId
+    if c.currentProc.flattenDepth > 0 or c.currentProc.symToState.hasKey(sym):
+      # state boundary → the int `(lab state)` coroTr keys off
+      skip n
+      emitLabel dest, stateFor(c, sym), info
+    else:
+      dest.takeTree n  # pure control-flow goto: keep `(lab sym)` for the backend
+  of JmpV:
+    var peek = n
+    inc peek
+    let sym = peek.symId
+    if c.currentProc.flattenDepth > 0 or c.currentProc.symToState.hasKey(sym):
+      skip n
+      emitJump dest, stateFor(c, sym), info
+    else:
+      dest.takeTree n  # pure control-flow goto: keep `(jmp sym)` for the backend
   of ContinueV:
-    skip n
+    skip n             # NJ handles the back-edge via the loop structure
   of StoreV:
     dest.takeToken n
     var addLabel = c.hooks.isPassiveCall(c, n)
@@ -1207,6 +1250,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.takeTree n
   of IteV, ItecV:
     if containsSuspensionPoint(c, n):
+      inc c.currentProc.flattenDepth  # gotos in the arms cross states → relabel
       inc n
       var lthen = c.currentProc.labelCounter
       inc c.currentProc.labelCounter
@@ -1242,6 +1286,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       emitJump dest, lend, info
       emitLabel dest, lend, info
       skipParRi n
+      dec c.currentProc.flattenDepth
     else:
       dest.takeTree n
   else:
@@ -1309,7 +1354,7 @@ proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: 
   wrapper.copyTree iter
   wrapper.addParRi()
   var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "eliminateJumps", 0)
-  eliminateJumps(pass, raisesResolved = true)
+  eliminateJumps(pass, raisesResolved = true, usePc = true)
   block extractBody:
     var wholeResult = ensureMove(pass.dest)
     var nExt = beginRead(wholeResult)
@@ -2039,17 +2084,29 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           else:
             case pool.tags[n.tagId]
             of "jmp":
-              inc n
-              gotoNextState(c, dest, int(pool.integers[n.intId]), n.info)
-              inc n
-              skipParRi n
+              if n.firstSon.kind == IntLit:
+                inc n
+                gotoNextState(c, dest, int(pool.integers[n.intId]), n.info)
+                inc n
+                skipParRi n
+              elif c.currentProc.loopExits.len > 0 and
+                   n.firstSon.symId == c.currentProc.loopExits[^1]:
+                dest.copyIntoKind BreakS, n.info: dest.addDotToken()  # break innermost
+                skip n
+              else:
+                dest.takeTree n  # SymId goto (suspension-free control flow) → backend
             of "lab":
-              dest.addParRi() # close stmts
-              dest.addParRi() # close proc decl
-              inc n
-              newLocalProc c, dest, int(pool.integers[n.intId]), c.procStack[^1]
-              inc n
-              skipParRi n
+              if n.firstSon.kind == IntLit:
+                dest.addParRi() # close stmts
+                dest.addParRi() # close proc decl
+                inc n
+                newLocalProc c, dest, int(pool.integers[n.intId]), c.procStack[^1]
+                inc n
+                skipParRi n
+              elif c.currentProc.loopExitLabs.contains(n.firstSon.symId):
+                skip n           # the `(while)` exits naturally; drop the exit label
+              else:
+                dest.takeTree n  # SymId label (suspension-free control flow) → backend
             else:
               coroTrSons(c, dest, n)
   of ParRi:

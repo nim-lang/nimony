@@ -75,6 +75,7 @@ proc semInclude*(c: var SemContext; dest: var TokenBuf; it: var Item) =
 proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilename; origin: string;
                       mode: ImportFilter; exports: var seq[(string, ImportFilter)];
                       info: PackedLineInfo): SymId =
+  result = SymId(0)
   let f2 = resolveFile(c.g.config.paths, origin, f1.path)
   if not fileExists(f2):
     c.buildErr dest, info, "file not found: " & f2

@@ -20,9 +20,14 @@ include ".." / nimony / nif_annotations
 
 type
   Goal* = enum
-    ElimExprs   # normal mode: eliminate expressions
-    TowardsNjvl # goal mode: prepare for transformation into njvl
-    LowerCasts  # lower cast expressions: bind both source and result to variables
+    ElimExprs    # normal mode: eliminate expressions
+    TowardsNjvl  # goal mode: prepare for transformation into njvl
+    LowerCasts   # lower cast expressions: bind both source and result to variables
+    TowardsFinalIr # goal mode: prepare for the Final IR (doc/final_ir.md).
+                   # Like `TowardsNjvl` (calls bind to locations), but `and`/`or`
+                   # are lowered to the label/jump-friendly if-with-bool-temp form
+                   # (`trAnd`/`trOr`) instead of the cfvar (`mflag`/`jtrue`) form —
+                   # Final IR never introduces a single cfvar.
 
 proc isComplex(n: Cursor; goal: Goal): bool =
   var nested = 0
@@ -46,7 +51,7 @@ proc isComplex(n: Cursor; goal: Goal): bool =
           # More than one son is always complex:
           return true
         inc nested
-      elif goal in {TowardsNjvl, LowerCasts} and n.exprKind in (CallKinds+{AndX, OrX}):
+      elif goal in {TowardsNjvl, LowerCasts, TowardsFinalIr} and n.exprKind in (CallKinds+{AndX, OrX}):
         return true
       else:
         inc n
@@ -68,6 +73,9 @@ type
     typeCache: TypeCache
     thisModuleSuffix: string
     goal: Goal
+    coroMode: bool  ## TowardsFinalIr for the coroutine transform: lower `and`/`or`
+                    ## to the structured bool-temp form (no Cx `lab`/`jmp`, which
+                    ## the backend can't take in suspension-free code).
 
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor)
@@ -123,7 +131,8 @@ proc trExprInto(c: var Context; dest: var TokenBuf; n: var Cursor; v: SymId) =
       dest.addSymUse v, info
       dest.addTarget tar
 
-proc hoistDeclsFromExprX(outerDest, transformed: var TokenBuf; n: var Cursor) =
+proc hoistDeclsFromExprX(outerDest, transformed: var TokenBuf; n: var Cursor;
+                         markNoinit = false) =
   ## Copy the subtree at `n` into `transformed`. If the subtree is an
   ## `(expr (stmts decls…) val…)`, top-level `let`/`var`/`cursor` decls
   ## inside the leading `(stmts …)` are *hoisted*: an uninitialised
@@ -131,6 +140,14 @@ proc hoistDeclsFromExprX(outerDest, transformed: var TokenBuf; n: var Cursor) =
   ## decl is rewritten as `(asgn sym init)` so the initialiser still runs
   ## at the original control-flow point. `n` is advanced past the consumed
   ## subtree.
+  ##
+  ## With `markNoinit`, the hoisted `var` carries `.noinit`. The decl came from
+  ## a `let` in a short-circuited `and`/`or` operand: the value is always
+  ## assigned before any use that the surrounding `if`/`elif` body can reach
+  ## (the body runs only when that operand was evaluated). The init analysis
+  ## cannot see that correlation through the hoist, so the tag tells it to treat
+  ## the slot as initialised — used only on the Final-IR (analysis) path, so
+  ## codegen still gets the plain zero-initialised slot.
   if n.kind != ParLe or n.exprKind != ExprX:
     transformed.takeTree n
     return
@@ -151,7 +168,19 @@ proc hoistDeclsFromExprX(outerDest, transformed: var TokenBuf; n: var Cursor) =
       outerDest.addParLe(VarS, info)
       outerDest.add symdefToken(sym, symInfo)
       outerDest.addSubtree local.exported
-      outerDest.addSubtree local.pragmas
+      if markNoinit:
+        outerDest.addParLe(PragmasS, info)
+        outerDest.addParLe(NoinitP, info)
+        outerDest.addParRi()
+        if local.pragmas.kind == ParLe:  # keep any original pragmas too
+          var p = local.pragmas
+          inc p
+          while p.kind != ParRi:
+            outerDest.addSubtree p
+            skip p
+        outerDest.addParRi()
+      else:
+        outerDest.addSubtree local.pragmas
       outerDest.addSubtree local.typ
       outerDest.addDotToken()          # uninitialised
       outerDest.addParRi()
@@ -176,7 +205,7 @@ proc trOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     # scope so they remain visible after the `or` lowering — same idea as
     # `trAnd` below; see the comment there.
     var rhs = createTokenBuf(16)
-    hoistDeclsFromExprX(dest, rhs, n)
+    hoistDeclsFromExprX(dest, rhs, n, markNoinit = c.goal == TowardsFinalIr)
     var rhsCursor = beginRead(rhs)
     copyIntoKind dest, IfS, info:
       copyIntoKind dest, ElifU, info:
@@ -210,7 +239,7 @@ proc trAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     # and the original initialiser is rewritten into an `asgn` that runs
     # only when `x` is true (preserving short-circuit evaluation).
     var rhs = createTokenBuf(16)
-    hoistDeclsFromExprX(dest, rhs, n)
+    hoistDeclsFromExprX(dest, rhs, n, markNoinit = c.goal == TowardsFinalIr)
     var rhsCursor = beginRead(rhs)
     copyIntoKind dest, IfS, info:
       copyIntoKind dest, ElifU, info:
@@ -343,7 +372,7 @@ proc trAggregate(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Tar
   inc n
 
 proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
-  if tar.m in {IsAppend, IsEmpty} and c.goal in {TowardsNjvl, LowerCasts}:
+  if tar.m in {IsAppend, IsEmpty} and c.goal in {TowardsNjvl, LowerCasts, TowardsFinalIr}:
     # bind to a temporary variable:
     let info = n.info
     let typ = getType(c, n)
@@ -484,20 +513,53 @@ proc trCondOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target
 
   skipParRi n
 
+proc condPassthroughSafe(n: Cursor): bool =
+  ## True if an `and`/`or` condition subtree contains only short-circuit nodes
+  ## and *pure* leaves that finalir can emit inline — no calls and no
+  ## statement-expressions. Such a tree is handed to finalir verbatim so its
+  ## two-target condition compiler (Cx) can lower it to shared `(lab)`/`(jmp)`
+  ## merges (linear). A subtree with a call in a leaf must instead keep the
+  ## bool-temp lowering here, because short-circuit evaluation requires the
+  ## call to be hoisted *into* the branch, which Cx-in-finalir does not do.
+  var n = n
+  if n.kind != ParLe: return false
+  var nested = 0
+  while true:
+    case n.kind
+    of ParLe:
+      if n.exprKind in CallKinds: return false
+      if n.exprKind == ExprX: return false
+      if n.stmtKind in {IfS, CaseS, TryS, BlockS, WhileS, ForS, StmtsS}:
+        return false
+      inc nested
+    of ParRi:
+      dec nested
+    else: discard
+    inc n
+    if nested == 0: break
+  result = true
+
 proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; mustUseLabel: bool) =
   assert tar.m == IsEmpty
-  if c.goal in {TowardsNjvl, LowerCasts}:
+  if c.goal in {TowardsNjvl, LowerCasts, TowardsFinalIr}:
     case n.exprKind
     of AndX:
-      # `mustUseLabel` (cfvar lowering) is NJ-only. In `LowerCasts` mode we
-      # still want the binding/hoisting path inside `trAnd`'s `isComplex`
-      # branch, but never the cfvar form.
-      if mustUseLabel:
+      # `mustUseLabel` (cfvar lowering) is NJ-only. In `LowerCasts` and
+      # `TowardsFinalIr` mode we still want the binding/hoisting path inside
+      # `trAnd`'s `isComplex` branch, but never the cfvar form. `coroMode` forces
+      # the structured bool-temp form (no Cx `lab`/`jmp` for the backend).
+      if c.goal == TowardsFinalIr and not c.coroMode and condPassthroughSafe(n):
+        tar.t.copyTree n
+        skip n
+      elif mustUseLabel:
         trCondAnd c, dest, n, tar
       else:
         trAnd c, dest, n, tar
     of OrX:
-      if mustUseLabel:
+      if c.goal == TowardsFinalIr and not c.coroMode and condPassthroughSafe(n):
+        tar.t.copyTree n
+        skip n
+      elif mustUseLabel:
         trCondOr c, dest, n, tar
       else:
         trOr c, dest, n, tar
@@ -791,7 +853,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skipParRi n
 
   of DiscardS:
-    if c.goal in {TowardsNjvl, LowerCasts}:
+    if c.goal in {TowardsNjvl, LowerCasts, TowardsFinalIr}:
       inc n
       if n.kind == DotToken:
         dest.takeToken n
@@ -835,18 +897,19 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # directly via trBoundExpr and emits the "was successful?" branching
     # after the store, which is both simpler and avoids borrow-checking
     # trouble caused by the extra temporary.
-    # `lhsIsResult` is the NJ-specific shortcut that keeps the call in
-    # place when the lhs is already a sym; nj.nim handles it via
-    # `trBoundExpr`. `LowerCasts` always binds — the dce2 inliner wants
-    # every call to appear as the value of a let/var binding.
+    # `lhsIsResult` is the shortcut that keeps the call in place when the lhs
+    # is already a sym; both nj.nim and finalir.nim handle it via
+    # `trBoundExpr` (a call binds directly to its destination — doc/final_ir.md).
+    # `LowerCasts` always binds — the dce2 inliner wants every call to appear
+    # as the value of a let/var binding.
     var lhsIsResult = false
-    if c.goal == TowardsNjvl:
+    if c.goal in {TowardsNjvl, TowardsFinalIr}:
       let peek = n.firstSon
       lhsIsResult = peek.kind == Symbol
     tar.t.copyInto n:
       trExpr c, dest, n, tar
-      if c.goal in {TowardsNjvl, LowerCasts}:
-        if c.goal == TowardsNjvl and lhsIsResult:
+      if c.goal in {TowardsNjvl, LowerCasts, TowardsFinalIr}:
+        if c.goal in {TowardsNjvl, TowardsFinalIr} and lhsIsResult:
           tar.m = IsBound
         # else: tar.m stays IsAppend so trExprCall can bind
         trExpr c, dest, n, tar
@@ -1046,7 +1109,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   of ParRi:
     bug "unexpected ')' inside"
 
-proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
+proc lowerExprs*(pass: var Pass; goal = ElimExprs; coroMode = false) =
   var n = pass.n  # Extract cursor locally
   # Inherit the temp counter across passes via `pass.nextTemp` — `lowerExprs`
   # runs three times in `pipeline.transform` (xelim1, xelim2, xelim_final);
@@ -1054,7 +1117,7 @@ proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
   # Lengc-emitted C names clash within a single function. `pool.syms.getOrIncl`
   # is identity-by-name, so two semantically distinct temps would otherwise
   # share an identifier.
-  var c = Context(counter: pass.nextTemp, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix, goal: goal)
+  var c = Context(counter: pass.nextTemp, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix, goal: goal, coroMode: coroMode)
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS, $n.kind
   pass.dest.add n

@@ -106,7 +106,7 @@ proc ifExpr(): int =
     if 1 == 2:
       "abc"
     elif 1 == 3:
-      return
+      return 0
     else:
       "def"
   result =
