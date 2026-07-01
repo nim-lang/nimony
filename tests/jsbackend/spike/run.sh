@@ -9,4 +9,5 @@ if ! command -v node >/dev/null 2>&1; then
   echo "node not found; skipping spike"; exit 0
 fi
 node "$here/model.spike.js"
+node "$here/interop.spike.js"
 echo "spike: OK"
