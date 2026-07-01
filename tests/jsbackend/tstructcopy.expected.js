@@ -2,23 +2,22 @@
 "use strict";
 
 function psum_0_tsc(p_0) {
-  return (mem.i64n(p_0 + 0) + mem.i64n(p_0 + 8));
+  return (mem.i64n((p_0 + 0)) + mem.i64n((p_0 + 8)));
 }
 
 function drive_0_tsc(a_0, b_0) {
   let p_1 = allocFixed(16);
-  mem.setI64(p_1 + 0, a_0);
-  mem.setI64(p_1 + 8, b_0);
+  mem.setI64((p_1 + 0), a_0);
+  mem.setI64((p_1 + 8), b_0);
   return psum_0_tsc(p_1);
 }
 
 function mkbump_0_tsc(a_0, b_0) {
   let p_2 = allocFixed(16);
-  mem.setI64(p_2 + 0, a_0);
-  mem.setI64(p_2 + 8, b_0);
+  mem.setI64((p_2 + 0), a_0);
+  mem.setI64((p_2 + 8), b_0);
   let q_0 = allocFixed(16);
   mem.copy(q_0, p_2, 16);
-  mem.setI64(q_0 + 0, (mem.i64n(q_0 + 0) + 1));
-  return (mem.i64n(q_0 + 0) + mem.i64n(p_2 + 0));
+  mem.setI64((q_0 + 0), (mem.i64n((q_0 + 0)) + 1));
+  return (mem.i64n((q_0 + 0)) + mem.i64n((p_2 + 0)));
 }
-

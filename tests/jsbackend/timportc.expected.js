@@ -2,8 +2,8 @@
 "use strict";
 
 let counter = 0;
+
 function run_0_timportc() {
   counter = extTriple(7);
   return counter;
 }
-

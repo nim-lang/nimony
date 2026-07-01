@@ -15,4 +15,3 @@ function storeTest_0_tarith() {
   x_0 = (40 + 2);
   return x_0;
 }
-

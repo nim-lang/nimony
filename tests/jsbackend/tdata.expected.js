@@ -3,16 +3,15 @@
 
 function mkpoint_0_tdata(a_0, b_0) {
   let p_0 = allocFixed(16);
-  mem.setI64(p_0 + 0, a_0);
-  mem.setI64(p_0 + 8, b_0);
-  return (mem.i64n(p_0 + 0) + mem.i64n(p_0 + 8));
+  mem.setI64((p_0 + 0), a_0);
+  mem.setI64((p_0 + 8), b_0);
+  return (mem.i64n((p_0 + 0)) + mem.i64n((p_0 + 8)));
 }
 
 function arrsum_0_tdata() {
   let arr_0 = allocFixed(24);
-  mem.setI64(arr_0 + 0, 10);
-  mem.setI64(arr_0 + 8, 20);
-  mem.setI64(arr_0 + 16, 30);
-  return (mem.i64n(arr_0 + (0) * 8) + (mem.i64n(arr_0 + (1) * 8) + mem.i64n(arr_0 + (2) * 8)));
+  mem.setI64((arr_0 + 0), 10);
+  mem.setI64((arr_0 + 8), 20);
+  mem.setI64((arr_0 + 16), 30);
+  return (mem.i64n((arr_0 + (0 * 8))) + (mem.i64n((arr_0 + (1 * 8))) + mem.i64n((arr_0 + (2 * 8)))));
 }
-

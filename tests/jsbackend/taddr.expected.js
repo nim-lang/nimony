@@ -21,11 +21,10 @@ function usebump_0_taddr() {
 }
 
 function addrparam_0_taddr(a_0) {
-  const a_0_v = a_0;
+  let a_0_v = a_0;
   a_0 = allocFixed(8);
   mem.setI64(a_0, a_0_v);
   let q_0 = a_0;
   mem.setI64(q_0, 99);
   return mem.i64n(a_0);
 }
-
