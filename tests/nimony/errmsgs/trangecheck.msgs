@@ -1,0 +1,5 @@
+tests/nimony/errmsgs/trangecheck.nim(2, 25) Error: value out of range: 20 notin 0..10
+tests/nimony/errmsgs/trangecheck.nim(5, 25) Error: value out of range: 99 notin 0..10
+tests/nimony/errmsgs/trangecheck.nim(8, 25) Error: value out of range: -3 notin 0..10
+tests/nimony/errmsgs/trangecheck.nim(11, 27) Error: value out of range: 50 notin 0..10
+tests/nimony/errmsgs/trangecheck.nim(15, 25) Error: value out of range: 0..20 notin 0..10

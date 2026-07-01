@@ -48,10 +48,10 @@ type
     TooFewArguments
     NameNotFound
     ParamAlreadyGiven
+    ValueOutOfRange
 
   MatchError* = object
     info: PackedLineInfo
-    #msg: string
     kind: MatchErrorKind
     typeVar: SymId
     expected, got: TypeCursor
@@ -148,6 +148,18 @@ proc error0Typevar(m: var Match; k: MatchErrorKind; typevar: SymId) =
   m.error = MatchError(info: m.argInfo, kind: k,
                        typeVar: typevar, pos: m.pos+1)
 
+proc errorValueOutOfRange(m: var Match; rangeType, value: Cursor) =
+  ## Record a `ValueOutOfRange` match error. Only the raw operands are stored
+  ## (the formal `range` type in `expected`, the offending value in `got`); the
+  ## human-readable message is rendered lazily in `getErrorMsg`, on demand. That
+  ## matters in overload resolution, where a failed match usually just means a
+  ## different overload wins and the message is never shown.
+  m.err = true
+  if m.hasError: return # first error is the important one
+  m.hasError = true
+  m.error = MatchError(info: m.argInfo, kind: ValueOutOfRange,
+                       expected: rangeType, got: value, pos: m.pos+1)
+
 proc constraintToString(c: Cursor): string =
   ## For a typevar formal, render its *constraint* (e.g. `Comparable`) rather
   ## than its name, so a mismatch reads "T does not match constraint Comparable"
@@ -216,6 +228,22 @@ proc getErrorMsg*(m: Match): string =
     "named argument not found"
   of ParamAlreadyGiven:
     "parameter already given"
+  of ValueOutOfRange:
+    # Rendered on demand (see `errorValueOutOfRange`). `context` is a `ptr`, so
+    # `context[]` is a mutable lvalue even though `m` is not `var` here, which is
+    # what `firstOrd`/`lastOrd` require (cf. `checkIntLitRange`).
+    let ctx = m.context
+    let value = m.error.got
+    let valStr = if value.kind == IntLit: $pool.integers[value.intId]
+                 else: typeToString(value)
+    "value out of range: " & valStr & " notin " &
+      $firstOrd(ctx[], m.error.expected) & ".." & $lastOrd(ctx[], m.error.expected)
+
+proc isValueOutOfRange*(m: Match): bool =
+  ## True when the match failed specifically because a statically-known value
+  ## does not fit the formal `range` type (as opposed to a plain type
+  ## mismatch). Callers use this to surface the precise range diagnostic.
+  m.err and m.error.kind == ValueOutOfRange
 
 proc addErrorMsg*(dest: var string; m: Match) =
   assert m.err
@@ -1548,16 +1576,40 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         # handled in linearMatch
         linearMatch m, f, a
     of RangetypeT:
-      # for now acts the same as base type
+      let fRange = f # whole `(rangetype base lo hi)` for bound queries
       var a = skipModifier(arg.typ)
       if a.typeKind == RangetypeT:
-        linearMatch m, f, a
+        # Range-to-range: the argument's value set must be a *subset* of the
+        # formal's. `linearMatch` alone would demand identical bounds and thus
+        # reject legal narrowings like `range[0..5]` -> `range[0..10]`.
+        var fb = f
+        var ab = a
+        inc fb # -> formal base type
+        inc ab # -> arg base type
+        linearMatch m, fb, ab # base types must be compatible
+        if not m.err:
+          let aLo = firstOrd(m.context[], a)
+          let aHi = lastOrd(m.context[], a)
+          let fLo = firstOrd(m.context[], fRange)
+          let fHi = lastOrd(m.context[], fRange)
+          if not (isNaN(aLo) or isNaN(aHi) or isNaN(fLo) or isNaN(fHi)):
+            if fLo <= fHi and (aLo < fLo or fHi < aHi):
+              errorValueOutOfRange(m, fRange, a)
+        skip f # consume the whole formal range type
       else:
         inc f # skip to base type
         linearMatch m, f, a
-        skip f
-        skip f
+        skip f # lo bound
+        skip f # hi bound
         expectParRi m, f
+        # Reject a statically-known out-of-range literal at compile time.
+        if not m.err:
+          let ex = skipExpr(arg.n)
+          let fLo = firstOrd(m.context[], fRange)
+          let fHi = lastOrd(m.context[], fRange)
+          if ex.kind == IntLit and not (isNaN(fLo) or isNaN(fHi)) and
+              fLo <= fHi and not checkIntLitRange(m.context, fRange, ex):
+            errorValueOutOfRange(m, fRange, ex)
     of ArrayT:
       var a = skipModifier(arg.typ)
       matchArrayType m, f, a
