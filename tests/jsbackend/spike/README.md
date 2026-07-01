@@ -89,12 +89,16 @@ The pieces above each proved one slice with its own throwaway shims. `runtime.js
 gathers them into the single runtime a real bundle links against (the names
 `jslink` prepends ahead of the module artifacts): the allocator primitives, SSO
 strings, stdio, the interop registry, and fat-pointer equality. It is a spike in
-exactly one respect — the allocator is the bump placeholder — and that one open
-decision is **isolated and labelled** in a boxed `ALLOCATOR — THE ONE OPEN ABI
-DECISION` section: the `allocFixed`/`dealloc` *interface* is what codegen emits
-and is settled; only the *implementation policy* (mimalloc-over-`ArrayBuffer`
-vs. a minimal shim, and who calls `dealloc`) is Araq's call. `runtime.spike.js`
-exercises every section as one module.
+exactly one respect — the allocator is a placeholder — and that boundary is
+**isolated and labelled** in a boxed `ALLOCATOR — RESOLVED` section. Araq settled
+it (PR #2043): the native Nim allocator is *compiled to JS* like any other Nim
+code, so `allocFixed`/`dealloc` come from the pipeline over linear memory — there
+is essentially no allocator ABI. The JS runtime provides only the OS pages it
+sits on, `mmap`/`munmap`, and because the allocator does not assume one
+contiguous growable block, those pages can be independent non-growable
+TypedArray regions (no resizable `ArrayBuffer` required). The spike keeps a
+bump-over-`mmap` stand-in for the compiled allocator so the surface runs.
+`runtime.spike.js` exercises every section as one module.
 
 ```
 $ node runtime.spike.js
