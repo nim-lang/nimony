@@ -686,6 +686,24 @@ template loopInto*(c: var Cursor; body: untyped) =
   into c:
     while c.hasMore: body
 
+proc leaveScopePartial*(c: var Cursor; scope: CursorScope) =
+  ## Leaves a scope opened by `enterScope` **without** requiring the body to
+  ## have been fully consumed: rewinds to the scope head and skips the whole
+  ## subtree. The early-out counterpart to `leaveScope`.
+  c.p = scope.savedP
+  c.rem = scope.savedRem
+  skip c
+
+template peekInto*(c: var Cursor; body: untyped) =
+  ## Like `into`, but `body` need not consume every child — any unconsumed
+  ## remainder is skipped. Use for early-out searches over a node's children
+  ## (e.g. `break` out on the first match). The finish is a single `skip`
+  ## from the rewound scope head, so it does not depend on where `body`
+  ## stopped; `body` still sees a bounded scope so `hasMore` terminates.
+  let cursorScope = enterScope(c)
+  body
+  leaveScopePartial(c, cursorScope)
+
 proc rootOf*(c: Cursor): SymId =
   ## The access root of an lvalue: the first `Symbol` in the subtree at `c`
   ## — `x` in `x.f[i]` — or `SymId(0)` if there is none.

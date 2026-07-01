@@ -343,6 +343,31 @@ template into*(n: var Cursor; body: untyped) =
     assert n.kind == ParRi, "into: body must consume all children"
     inc n          # skip closing ParRi
 
+template peekInto*(n: var Cursor; body: untyped) =
+  ## Like `into`, but does **not** require `body` to consume every child.
+  ## Enters the current `ParLe`, runs `body` (which may read only some of the
+  ## children and stop early — e.g. `break` out of a search), then advances
+  ## `n` past the *whole* subtree regardless of where `body` left off.
+  ##
+  ## The finish is a single `skip` from the (rewound) opening tag, so it is
+  ## O(1) under the bounded-`rem` nifcore/virtualParRi representation and a
+  ## balanced walk otherwise — never dependent on `body` having landed on the
+  ## closing `)`. `body` still sees a bounded scope, so `hasMore` terminates
+  ## correctly inside it.
+  assert n.kind == ParLe, "peekInto requires cursor at ParLe"
+  let savedParLe = n
+  when defined(virtualParRi):
+    let j = jump(n.load)
+    let isOverflow = j == MaxJump
+    n.p = cast[ptr PackedToken](cast[uint](n.p) + sizeof(PackedToken).uint)
+    n.rem = if isOverflow: high(int) else: int(j)
+    body
+  else:
+    inc n          # skip opening tag
+    body
+  n = savedParLe   # rewind to the opening tag …
+  skip n           # … and skip the entire subtree past the closing `)`
+
 template loopInto*(n: var Cursor; body: untyped) =
   ## Enters a node, iterates all children, then advances past `)`.
   ## The body must advance `n` on every iteration.
