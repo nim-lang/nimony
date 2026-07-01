@@ -18,28 +18,23 @@
 ##   - `(if (elif c (stmts ...)))` -> `if (c) { ... }`
 ##   - `(try ...)` / `(raise e)` -> native `try`/`throw`
 ##
-## **Addresses.** JS has no way to reference a variable's storage, so a pointer
-## cannot be the value itself. Following the classic Nim JS backend (`mapType`'s
-## `etyBaseIndex` "fat pointers"), a pointer is a `[base, key]` pair such that
-## `base[key]` is the pointee's storage:
-##   - a local whose address is taken is boxed into a 1-element array
-##     (`let x = [init];`, every use of `x` becomes `x[0]`); its address is
-##     `[x, 0]`,
-##   - `(addr o.f)` becomes `[o, "f"]`, `(addr a[i])` becomes `[a, i]`,
-##   - `(deref p)` becomes `p[0][p[1]]`,
-##   - the pairs `(addr (deref p))` and `(deref (addr loc))` cancel, so the
-##     common cases stay compact.
-## A pre-pass (`scanForAddr`) finds the locals that need boxing. Writes through a
-## pointer therefore mutate the underlying storage, which the earlier
-## "addr/deref are identity" mapping got wrong. Two fat pointers are equal iff
-## their components are (`nimPtrEq`), since a fresh `[base,key]` is never `===`
-## another array.
+## **Memory model (Araq's Typed-Array direction, PR #2043).** Nim-native data —
+## `object`/`array`/`string` and pointers to them — lives as bytes in one linear
+## `ArrayBuffer` (`mem`), so `cast` and low-level libs work uniformly:
+##   - an aggregate is `allocFixed`'d and accessed by typed load/store at the byte
+##     offsets `jslayout` computes (`mem.setX(p+off, v)` / `mem.getX(p+off)`);
+##   - a pointer is a single INTEGER byte offset. `addr o.f` is `p+off`, `addr
+##     a[i]` is `p+i*stride`, `deref p` is a typed load at `p`, `==` is integer
+##     `===`, nil is offset 0. `(addr (deref p))`/`(deref (addr loc))` cancel;
+##   - an address-taken scalar local is spilled to a buffer slot (C's stack
+##     model), so it too has a real address — found by the `scanForAddr` pre-pass.
 ##
-## This is the M0/M1 pure-compute slice: procs, locals/globals, assignment,
-## calls, returns, arithmetic/bitwise/comparison/logic operators, `if`,
-## `while`, `case`, `break`. Constructs outside this subset emit a
-## `/*TODO:<tag>*/` marker and are skipped, so generation always completes and
-## the coverage gap is visible in the output.
+## The fat-pointer `[base, key]` form (the classic Nim JS backend's `etyBaseIndex`)
+## is retained only as a fallback for undeclared/opaque types and is reserved for
+## the future `importjs`/`jsstring` interop layer; native data never uses it.
+##
+## Constructs outside the supported subset emit a `/*TODO:<tag>*/` marker (a valid
+## `undefined` expression), so generation always completes and gaps stay visible.
 
 import std / [assertions, syncio, strutils, formatfloat, sets, tables]
 
@@ -234,7 +229,7 @@ proc isBufferObjectType(g: var JSGen; typ: Cursor): bool =
   # Only resolve locally-declared symbols: `getDeclOrNil` asserts on an
   # unresolvable suffixed symbol (foreign-load path), and cross-module object
   # types stay on the legacy mapping for this increment.
-  if t.typeKind == NoType and t.kind == Symbol and g.m.hasLocalDecl(t.symId):
+  if t.typeKind == NoType and t.kind == Symbol and g.m.hasResolvableDecl(t.symId):
     let def = g.m.getDeclOrNil(t.symId)
     if def != nil:
       var p = def.pos
@@ -306,7 +301,7 @@ proc resolveType(g: var JSGen; typ: Cursor): Cursor =
   ## Resolve a named type to its declared body (locally-declared only, to avoid
   ## `getDeclOrNil`'s foreign-load assert); otherwise return the type unchanged.
   result = typ
-  if typ.typeKind == NoType and typ.kind == Symbol and g.m.hasLocalDecl(typ.symId):
+  if typ.typeKind == NoType and typ.kind == Symbol and g.m.hasResolvableDecl(typ.symId):
     let def = g.m.getDeclOrNil(typ.symId)
     if def != nil:
       var p = def.pos
@@ -351,6 +346,20 @@ proc pointeeAk(g: var JSGen; operand: Cursor): AccessKind =
     else:
       result = accessOf(g.m, t)
 
+proc pointeeInfo(g: var JSGen; operand: Cursor): (AccessKind, int64) =
+  ## `(accessKind, byteSize)` of the pointee for a pointer operand — used for
+  ## `(pat p i)` element arithmetic (`p + i*size`) and its load/store width.
+  result = (akU8, 1'i64)     # default: byte pointer (cstring-like)
+  if operand.kind == Symbol and g.localTypes.hasKey(operand.symId):
+    let t = g.localTypes[operand.symId]
+    if t.typeKind in {PtrT, AptrT}:
+      var inner = t
+      inner.into:
+        result = (accessOf(g.m, inner), typeLayout(g.m, inner).size)
+        while inner.hasMore: skip inner
+    else:
+      result = (accessOf(g.m, t), typeLayout(g.m, t).size)
+
 proc genAddrOf(g: var JSGen; n: var Cursor) =
   ## `(addr LOC)` -> an integer BYTE OFFSET into the buffer (a Nim-native
   ## pointer). A field's address is `base + off`, an element's is `base + i*stride`,
@@ -391,6 +400,14 @@ proc genAddrOf(g: var JSGen; n: var Cursor) =
         g.wr "(" & base & " + (" & idx & ") * " & $stride & ")"
       else:
         g.wr "[" & base & ", " & idx & "]"
+      while n.hasMore: skip n
+  of PatC:
+    # `addr (pat p i)` -> pointer arithmetic `p + i*stride` (stride = pointee size).
+    n.into:
+      let (_, stride) = g.pointeeInfo(n)
+      let base = g.captureExpr n
+      let idx = g.captureExpr n
+      g.wr "(" & base & " + (" & idx & ") * " & $stride & ")"
       while n.hasMore: skip n
   of NoExpr:
     if n.kind == Symbol:
@@ -527,37 +544,66 @@ proc gx(g: var JSGen; n: var Cursor) =
       gx g, n
       while n.hasMore: skip n
   of OconstrC:
-    # `(oconstr Type (kv field value [inheritance]) …)` -> a JS object literal
-    # `{field: value, …}`. The field key is the mangled field-symbol name so it
-    # matches dot access. Lowered strings/seqs are objects at this level, so
-    # this is the faithful, type-system-neutral mapping.
-    n.into:
-      skip n            # object type
-      g.wr "{"
-      var i = 0
-      while n.hasMore:
-        if n.substructureKind == KvU:
-          if i > 0: g.wr ", "
-          n.into:
-            g.wr g.fieldName(n.symId); inc n   # field name (Symbol) as key
-            g.wr ": "
-            g.gx n                         # value
-            while n.hasMore: skip n        # optional inheritance depth
-          inc i
-        else:
-          skip n
-      g.wr "}"
+    # `(oconstr Type (kv f v) …)`. For a Nim-native object this materialises into
+    # a fresh buffer allocation (an IIFE returning the offset), so an inline
+    # object value is a pointer just like a stored one. Undeclared types fall back
+    # to the legacy JS object literal `{field: value, …}`.
+    var oty = n
+    var isBuf = false
+    block:
+      var probe = n
+      probe.into:
+        oty = probe
+        isBuf = g.isBufferObjectType(oty)
+        while probe.hasMore: skip probe
+    if isBuf:
+      let sz = typeLayout(g.m, oty).size
+      g.wr "(() => { const _o = allocFixed(" & $sz & ");"
+      g.constructObjectInto("_o", n)
+      g.wr " return _o; })()"
+    else:
+      n.into:
+        skip n            # object type
+        g.wr "{"
+        var i = 0
+        while n.hasMore:
+          if n.substructureKind == KvU:
+            if i > 0: g.wr ", "
+            n.into:
+              g.wr g.fieldName(n.symId); inc n   # field name (Symbol) as key
+              g.wr ": "
+              g.gx n                         # value
+              while n.hasMore: skip n        # optional inheritance depth
+            inc i
+          else:
+            skip n
+        g.wr "}"
   of AconstrC:
-    # `(aconstr Type elem0 elem1 …)` -> a JS array literal `[elem0, elem1, …]`.
-    n.into:
-      skip n            # element/array type
-      g.wr "["
-      var i = 0
-      while n.hasMore:
-        if i > 0: g.wr ", "
-        g.gx n
-        inc i
-      g.wr "]"
+    # `(aconstr Type e0 e1 …)`. A Nim-native array materialises into a fresh
+    # buffer allocation (IIFE -> offset); otherwise a legacy JS array literal.
+    var aty = n
+    var isArr = false
+    block:
+      var probe = n
+      probe.into:
+        aty = probe
+        isArr = g.isBufferArray(aty)
+        while probe.hasMore: skip probe
+    if isArr:
+      let sz = typeLayout(g.m, aty).size
+      g.wr "(() => { const _a = allocFixed(" & $sz & ");"
+      g.constructArrayInto("_a", n, aty)
+      g.wr " return _a; })()"
+    else:
+      n.into:
+        skip n            # element/array type
+        g.wr "["
+        var i = 0
+        while n.hasMore:
+          if i > 0: g.wr ", "
+          g.gx n
+          inc i
+        g.wr "]"
   of AddrC:
     # `(addr LOC)` -> a fat pointer `[base, key]` (see `genAddrOf`).
     n.into:
@@ -619,12 +665,21 @@ proc gx(g: var JSGen; n: var Cursor) =
         g.gx n; g.wr "["; g.gx n; g.wr "]"
       while n.hasMore: skip n
   of PatC:
-    # `(pat p i)` pointer indexing stays the legacy `p[i]` (JS-interop / raw).
+    # `(pat p i)` pointer indexing -> typed load at `p + i*stride` (byte pointer).
     n.into:
-      g.gx n
-      g.wr "["
-      g.gx n
-      g.wr "]"
+      let (ak, stride) = g.pointeeInfo(n)
+      let base = g.captureExpr n
+      let idx = g.captureExpr n
+      if ak == akAggregate:
+        g.wr "(" & base & " + (" & idx & ") * " & $stride & ")"
+      else:
+        let (ld, _) = accessors(ak)
+        g.wr "mem." & ld & "(" & base & " + (" & idx & ") * " & $stride & ")"
+      while n.hasMore: skip n
+  of SizeofC:
+    # `(sizeof T)` -> the byte size the layout pass computes.
+    n.into:
+      g.wr $typeLayout(g.m, n).size
       while n.hasMore: skip n
   else:
     g.todo("expr:" & $n.exprKind, n)
