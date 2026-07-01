@@ -265,13 +265,17 @@ proc resolveDeferredLocal(c: var SemContext; ident: StrId): bool =
   if not c.deferredLocals.hasKey(ident): return false
   var decl = c.deferredLocals[ident]
   c.deferredLocals.del ident  # resolve at most once
-  let kind = case decl.stmtKind
-    of LetS: LetY
-    of VarS: VarY
-    of GletS: GletY
-    of GvarS: GvarY
-    of TletS: TletY
-    of TvarS: TvarY
+  # A plain `if` (not `case`) because this is a partial map over the handful of
+  # local-decl kinds; `case n.stmtKind` would demand an `else`, which the source
+  # validator forbids (it enforces exhaustive enumeration for tag discriminators).
+  let sk = decl.stmtKind
+  let kind =
+    if sk == LetS: LetY
+    elif sk == VarS: VarY
+    elif sk == GletS: GletY
+    elif sk == GvarS: GvarY
+    elif sk == TletS: TletY
+    elif sk == TvarS: TvarY
     else: return false
   var scratch = createTokenBuf()
   # Force the signature phase so `semLocal` takes its value-verbatim path
