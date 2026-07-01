@@ -967,6 +967,39 @@ proc trArrAt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.add idxBuf
   takeParRi dest, n
 
+proc trRangeConv(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## Lower the runtime range check for a conversion to an ordinal range type.
+  ## `n` is at `(conv|hconv (rangetype base lo hi) value)`; rewrite the value
+  ## into `(call nimIRcheck value lo hi)` so an out-of-range conversion raises
+  ## at runtime. Done here — like `trArrAt` for bound checks — so `xelim` can
+  ## hoist the check call into a `(var :tmp … (call …))` for the inliner.
+  let info = n.info
+  let convKind = n.exprKind
+  # Grab the (compile-time) bounds off the `(rangetype base lo hi)` target
+  # before the type subtree is copied across and `n` moves on.
+  var rt = n
+  inc rt          # into conv → target type `(rangetype`
+  inc rt          # into rangetype → base type
+  skip rt         # base type → lo
+  var loBuf = createTokenBuf(4)
+  loBuf.addSubtree rt
+  skip rt         # lo → hi
+  var hiBuf = createTokenBuf(4)
+  hiBuf.addSubtree rt
+  # Rebuild `(conv <sametype> (call nimIRcheck <value> lo hi))`.
+  dest.add parLeToken(convKind, info)
+  inc n           # into conv → target type
+  takeTree dest, n  # copy the range type unchanged, advance to the value
+  var valBuf = createTokenBuf(8)
+  tr(c, valBuf, n)  # desugar the operand, advance past it
+  let p = pool.syms.getOrIncl("nimIRcheck.0." & SystemModuleSuffix)
+  copyIntoKind dest, CallX, info:
+    dest.addSymUse p, info
+    dest.add valBuf
+    dest.add loBuf
+    dest.add hiBuf
+  takeParRi dest, n  # close the conv
+
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   case n.kind
   of DotToken, UnknownToken, EofToken, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StringLit:
@@ -1072,15 +1105,22 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         genStringConcatChain(c, dest, n)
       else:
         trSons(c, dest, n)
+    of ConvX, HconvX:
+      var t = n
+      inc t  # target type
+      if RangeCheck in c.activeChecks and t.typeKind == RangetypeT:
+        trRangeConv(c, dest, n)
+      else:
+        trSons(c, dest, n)
     of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
         InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
         NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
         AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
         MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
-        BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX,
+        BitnotX, EqX, NeqX, LeX, LtX, CastX,
         CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX,
         HaddrX, NewrefX, NewobjX, TupX, TupconstrX, TabconstrX,
-        AshrX, BaseobjX, HconvX, DconvX,
+        AshrX, BaseobjX, DconvX,
         CompilesX, DeclaredX, DefinedX, ProccallX, DelayX,
         AstToStrX, BindSymX, BindSymNameX, InstanceofX, HighX, LowX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,

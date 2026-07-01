@@ -80,6 +80,7 @@ Options:
   --outdir:DIR              put the executable in DIR (default = cwd).
                             Same semantics as Nim's --outdir.
   --boundchecks:on|off      turn bound checks on or off
+  --rangechecks:on|off      turn range checks on or off
   --usages:file,line,col    list usages of the symbol at the given position
   --def:file,line,col       list definition of the symbol at the given position
   --cc:C_COMPILER           set the C compiler; can be a path to the compiler's
@@ -247,6 +248,12 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
             of "on": c.checkModes.incl BoundCheck
             of "off": c.checkModes.excl BoundCheck
             else: quit "invalid value for --boundchecks"
+          of "rangechecks":
+            forwardArg = false
+            case val
+            of "on": c.checkModes.incl RangeCheck
+            of "off": c.checkModes.excl RangeCheck
+            else: quit "invalid value for --rangechecks"
           of "silentmake":
             c.buildFlags.incl SilentMake
             forwardArg = false
