@@ -22,7 +22,9 @@ A package's dependencies are extracted from its `.nimble` file.
 
 If YourApp decides to list all its direct and indirect
 dependencies explicitly and with specific commits then it becomes
-a lockfile.
+a lockfile. The `pin` command produces exactly such a listing in a
+`pnak.nif` file; when present in the project root it is preferred over
+`project.nimble` for the demanded commits, so it behaves as a lockfile.
 
 The same algorithm can be used for updates and initial
 checkouts -- the classic breadth-first traversal.
@@ -76,8 +78,16 @@ Usage:
 
 Commands:
   fetch [.nimble]       (default) clone or update the dependency closure
-                        of the given .nimble file (or the .nimble file in
-                        the current directory) and rewrite nimony.paths.
+                        and rewrite nimony.paths. A `pnak.nif` lockfile
+                        next to the project (or in the current directory)
+                        is preferred over the .nimble for the demanded
+                        commits; otherwise the given .nimble (or the one in
+                        the current directory) is used.
+  pin [.nimble]         resolve the full dependency closure and write a
+                        `pnak.nif` lockfile listing every direct and
+                        indirect dependency at its exact commit. Because
+                        pnak lets the shallowest requirement win, this file
+                        then acts as a lockfile for subsequent `fetch`es.
   search <terms>        search packages.json + GitHub for matching Nim
                         packages and print candidates.
   refresh               re-download packages.json into the cache.
@@ -291,6 +301,52 @@ proc parseNimble(nimbleFile: string): NimbleSpec =
           skip n
       else:
         skip n
+    else:
+      skip n
+  endRead n
+
+# ---------------------------------------------------------------------------
+# pnak.nif lockfile
+#
+# A `pnak.nif` in the project root lists every direct and indirect
+# dependency with a pinned commit. Because pnak's BFS lets the shallowest
+# requirement win, listing all deps at the root (depth 1) makes each pin
+# authoritative — i.e. the file behaves as a lockfile. Its shape is:
+#
+#   (stmts
+#     (requires "<git-url>" "<commit>")
+#     ...)
+# ---------------------------------------------------------------------------
+
+proc parsePnakNif(nifFile: string): NimbleSpec =
+  ## Read a `pnak.nif` lockfile directly (it is already NIF, so no nifler
+  ## round-trip is needed) into the same `NimbleSpec` shape a `.nimble`
+  ## produces. Each `(requires "url" "commit")` becomes one pinned
+  ## requirement.
+  result = NimbleSpec()
+  var stream = nifstreams.open(nifFile)
+  var buf: TokenBuf
+  try:
+    discard processDirectives(stream.r)
+    buf = fromStream(stream)
+  finally:
+    nifstreams.close(stream)
+  var n = beginRead(buf)
+  if n.kind != ParLe or pool.tags[n.tag] != "stmts":
+    quit nifFile & ": expected (stmts ...) at top level"
+  n.loopInto:
+    if n.kind == ParLe and pool.tags[n.tag] == "requires":
+      n.into:
+        var url = ""
+        var commit = ""
+        discard readStrLit(n, url)
+        discard readStrLit(n, commit)
+        while n.hasMore: skip n
+        if url.len > 0:
+          var r = parseRequirement(url)
+          if commit.len > 0: r.commit = commit
+          if r.name.len > 0 and r.name != "nim":
+            result.requires.add r
     else:
       skip n
   endRead n
@@ -896,6 +952,28 @@ proc patchNimCfg(cfgPath, blockText: string) =
   writeFile(cfgPath, existing)
   say mInfo, "patched ", cfgPath
 
+proc writePnakNif(c: Context; path: string) =
+  ## Emit a `pnak.nif` lockfile listing every resolved package with its
+  ## *exact* checked-out commit. Sorted by name for deterministic output.
+  var names: seq[string] = @[]
+  for k in c.resolved.keys: names.add k
+  names.sort(cmp[string])
+
+  var b = nifbuilder.open(path)
+  b.addHeader()
+  b.withTree "stmts":
+    for name in names:
+      let r = c.resolved[name]
+      # Prefer the actual HEAD sha over the requested ref: a lockfile must
+      # pin a concrete commit, not a branch/tag name that can move.
+      let sha = gitCurrentCommit(r.dir)
+      let commit = if sha.len > 0: sha else: r.commit
+      b.withTree "requires":
+        b.addStrLit r.url
+        b.addStrLit commit
+  b.close()
+  say mInfo, "wrote lockfile ", path
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -1022,7 +1100,7 @@ proc handleCmdLine() =
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
-      if action.len == 0 and key in ["fetch", "search", "refresh", "translate"]:
+      if action.len == 0 and key in ["fetch", "pin", "search", "refresh", "translate"]:
         action = key
       else:
         args.add key
@@ -1057,6 +1135,46 @@ proc handleCmdLine() =
 
   case action
   of "fetch":
+    # A `pnak.nif` next to the project (or in the current directory) is a
+    # lockfile and takes precedence over the `.nimble` file for the root's
+    # demanded commits. Fall back to the `.nimble` when it is absent.
+    let explicitNimble =
+      if args.len > 0 and args[0].endsWith(".nimble"): args[0]
+      else: ""
+    let baseDir =
+      if explicitNimble.len > 0: explicitNimble.parentDir
+      else: getCurrentDir()
+    let pnakNif = baseDir / "pnak.nif"
+
+    var rootSpec: NimbleSpec
+    var cfgAnchor: string
+    if fileExists(pnakNif):
+      say mInfo, "using lockfile ", pnakNif
+      rootSpec = parsePnakNif(pnakNif)
+      cfgAnchor = baseDir
+    else:
+      let nimbleFile =
+        if explicitNimble.len > 0: explicitNimble
+        else: findRootNimble()
+      if nimbleFile.len == 0 or not fileExists(nimbleFile):
+        quit "no pnak.nif or .nimble file found"
+      rootSpec = parseNimble(nimbleFile)
+      cfgAnchor = nimbleFile.parentDir
+
+    createDir(ctx.depsDir)
+    fetchAll(ctx, rootSpec)
+    echo "[pnak] resolved ", ctx.resolved.len, " package(s) into ", ctx.depsDir
+
+    if not noCfg:
+      let cfgPath =
+        if cfgFile.len > 0: cfgFile
+        else: cfgAnchor / "nimony.paths"
+      let kind = if cfgPath.endsWith(".cfg"): NimCfg else: NimonyPaths
+      patchNimCfg(cfgPath, generateBlock(ctx, cfgPath, kind))
+  of "pin":
+    # Resolve the full closure from the `.nimble` truth, then freeze it into
+    # a `pnak.nif` lockfile listing every direct and indirect dependency at
+    # its exact commit.
     let nimbleFile =
       if args.len > 0 and args[0].endsWith(".nimble"): args[0]
       else: findRootNimble()
@@ -1066,14 +1184,8 @@ proc handleCmdLine() =
     createDir(ctx.depsDir)
     let rootSpec = parseNimble(nimbleFile)
     fetchAll(ctx, rootSpec)
-    echo "[pnak] resolved ", ctx.resolved.len, " package(s) into ", ctx.depsDir
-
-    if not noCfg:
-      let cfgPath =
-        if cfgFile.len > 0: cfgFile
-        else: nimbleFile.parentDir / "nimony.paths"
-      let kind = if cfgPath.endsWith(".cfg"): NimCfg else: NimonyPaths
-      patchNimCfg(cfgPath, generateBlock(ctx, cfgPath, kind))
+    writePnakNif(ctx, nimbleFile.parentDir / "pnak.nif")
+    echo "[pnak] pinned ", ctx.resolved.len, " package(s)"
   of "search":
     if args.len == 0: quit "search: at least one term required"
     searchCmd(ctx, args)
