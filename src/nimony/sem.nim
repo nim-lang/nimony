@@ -151,11 +151,10 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
             if noreturnOnly: {NoreturnP}
             else: {DiscardableP, NoreturnP}
           if decl.kind == ParLe:
-            decl.into:  # (pragmas …)
+            decl.peekInto:  # (pragmas …)
               while decl.hasMore:
                 if pragmaKind(decl) in accepted:
-                  while decl.hasMore: skip decl  # mop-up before early-exit
-                  return true
+                  return true  # peekInto skips the remaining pragmas + `)`
                 skip decl
     result = false
   of RetS, BreakS, ContinueS, RaiseS:

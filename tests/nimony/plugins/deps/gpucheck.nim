@@ -26,7 +26,7 @@ proc displayName(s: SymId): string =
 proc isGpuProc(procNode: NifCursor): bool =
   ## Checks for a preserved `(pragma <sym>)` whose symbol is named `gpu`.
   var scan = procNode
-  scan.balancedTokens:
+  scan.linearScan:
     if scan.pragmaKind == PragmaP:
       let sym = firstChild(scan)
       if sym.kind == Symbol and displayName(sym.symId) == "gpu":
