@@ -118,6 +118,26 @@ if command -v node >/dev/null 2>&1; then
   } | node
 fi
 
+# ── checked arithmetic: `keepovf`/`ovf` (overflow-checked ops) reduce to a
+# plain assignment (JS has no 64-bit overflow trap; `ovf` is always false), and
+# `store` assigns with its operands reversed relative to `asgn`.
+"$lengc" js --nimcache:"$work" "$here/tarith.c.nif"
+gotArith="$work/tarith.js"
+
+if ! diff -u "$here/tarith.expected.js" "$gotArith"; then
+  echo "FAILURE: generated JS differs from golden tarith.expected.js"
+  exit 1
+fi
+
+if command -v node >/dev/null 2>&1; then
+  {
+    cat "$gotArith"
+    echo 'if (checkedAdd_0_tarith(20,22)===42 && storeTest_0_tarith()===42)'
+    echo '  { console.log("functional(arith): PASS"); }'
+    echo '  else { console.log("functional(arith): FAIL"); process.exit(1); }'
+  } | node
+fi
+
 # ── echo (end-to-end I/O): mirrors how a real `echo <int>` lowers — Nim procs
 # (`echoInt`/`run`) call `importc` stdio (`stdout`, `putInt`, `putChar`) that a
 # runtime provides. Proves the generated code executes and produces output.

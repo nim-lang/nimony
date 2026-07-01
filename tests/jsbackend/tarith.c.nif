@@ -1,0 +1,24 @@
+(.nif27)
+(stmts
+ (proc :checkedAdd.0.tarith
+  (params
+   (param :a.0 . (i 64))
+   (param :b.0 . (i 64)))
+  (i 64)
+  .
+  (stmts
+   (var :r.0 . (i 64) .)
+   (keepovf (add (i 64) a.0 b.0) r.0)
+   (if
+    (elif (ovf)
+     (stmts
+      (asgn r.0 (suf 999 "i64")))))
+   (ret r.0)))
+ (proc :storeTest.0.tarith
+  (params)
+  (i 64)
+  .
+  (stmts
+   (var :x.0 . (i 64) .)
+   (store (add (i 64) 40 2) x.0)
+   (ret x.0))))
