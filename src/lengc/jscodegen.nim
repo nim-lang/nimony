@@ -41,13 +41,14 @@
 ## `/*TODO:<tag>*/` marker and are skipped, so generation always completes and
 ## the coverage gap is visible in the output.
 
-import std / [assertions, syncio, strutils, formatfloat, sets]
+import std / [assertions, syncio, strutils, formatfloat, sets, tables]
 
 import ".." / lib / nifcoreparse   # re-exports nifcore (Cursor, beginRead, intVal, ...)
 import ".." / lib / nifcdecl        # stmtKind/exprKind/substructureKind + Leng enums + decl extractors
 import mangler
 import noptions
 import nifmodules                   # MainModule + load
+import jslayout                     # C-ABI layout: typeLayout/objectFields/accessOf (buffer model)
 from ".." / lib / vfs import vfsExists, vfsRead, vfsWrite
 from std / os import extractFilename
 
@@ -63,9 +64,11 @@ type
     todos: int
     boxed: HashSet[SymId]   ## locals whose address is taken (see `scanForAddr`)
     usesPtrEq: bool         ## whether the module compares fat pointers (needs the helper)
+    localTypes: Table[SymId, Cursor]  ## var/param -> declared type (for buffer-model dot access)
 
 proc initJSGen(m: sink MainModule; flags: set[JSGenFlag]): JSGen =
-  JSGen(m: m, code: "", indent: 0, flags: flags, boxed: initHashSet[SymId]())
+  JSGen(m: m, code: "", indent: 0, flags: flags, boxed: initHashSet[SymId](),
+        localTypes: initTable[SymId, Cursor]())
 
 const ptrEqHelper =
   "function nimPtrEq(a, b) { return a[0] === b[0] && a[1] === b[1]; }\n"
@@ -260,6 +263,70 @@ proc genEq(g: var JSGen; n: var Cursor; negate: bool) =
       g.wr "(" & a & (if negate: " !== " else: " === ") & b & ")"
     while n.hasMore: skip n
 
+# ── buffer model (Typed-Array linear memory, Araq's M2 direction) ────────────
+# A Nim-native object is bytes in linear memory: construction is `allocFixed` +
+# typed stores at the field byte-offsets `jslayout` computes, field access is a
+# typed load. This path is taken only when the object type has a resolvable
+# layout (a declared `object`); JS-interop objects and as-yet-undeclared types
+# stay on the legacy JS-object / fat-pointer mapping below.
+
+proc accessors(ak: AccessKind): (string, string) =
+  ## `(load, store)` method names on the `mem` runtime for a scalar access kind.
+  case ak
+  of akI8:  ("i8", "setI8")
+  of akI16: ("i16", "setI16")
+  of akI32: ("i32", "setI32")
+  of akI64: ("i64n", "setI64")
+  of akU8:  ("u8At", "setU8")
+  of akU16: ("u16", "setU16")
+  of akU32: ("u32", "setU32")
+  of akU64: ("u64n", "setU64")
+  of akF32: ("f32", "setF32")
+  of akF64: ("f64", "setF64")
+  of akPtr: ("i64n", "setI64")     ## a pointer is a pointer-size (64-bit) integer
+  of akAggregate: ("", "")         ## no scalar accessor (sub-object / array)
+
+proc isBufferObjectType(g: var JSGen; typ: Cursor): bool =
+  ## True when `typ` resolves to a declared `object` — the trigger for laying it
+  ## out in linear memory rather than as a native JS object.
+  var t = typ
+  if t.typeKind == ObjectT: return true
+  # Only resolve locally-declared symbols: `getDeclOrNil` asserts on an
+  # unresolvable suffixed symbol (foreign-load path), and cross-module object
+  # types stay on the legacy mapping for this increment.
+  if t.typeKind == NoType and t.kind == Symbol and g.m.hasLocalDecl(t.symId):
+    let def = g.m.getDeclOrNil(t.symId)
+    if def != nil:
+      var p = def.pos
+      return asTypeDecl(p).body.typeKind == ObjectT
+  false
+
+proc constructObjectInto(g: var JSGen; dest: string; n: var Cursor) =
+  ## Emit the stores that build an `(oconstr Type (kv f v) …)` into the storage at
+  ## `dest` (already allocated by the caller): one `mem.setX(dest + off, v)` per
+  ## field at its computed offset.
+  n.into:
+    let ty = n            # object type (independent cursor copy)
+    skip n                # advance past the type operand
+    let fields = objectFields(g.m, ty)
+    while n.hasMore:
+      if n.substructureKind == KvU:
+        n.into:
+          let fsym = n.symId; inc n
+          var off = 0'i64
+          var ftyp = n            # placeholder; overwritten when the field is found
+          for f in fields:
+            if f.sym == fsym:
+              off = f.offset; ftyp = f.typ
+          let (_, st) = accessors(accessOf(g.m, ftyp))
+          g.nl()
+          g.wr "mem." & st & "(" & dest & " + " & $off & ", "
+          g.gx n              # field value
+          g.wr ");"
+          while n.hasMore: skip n
+      else:
+        skip n
+
 proc gx(g: var JSGen; n: var Cursor) =
   case n.exprKind
   of NoExpr:
@@ -373,12 +440,33 @@ proc gx(g: var JSGen; n: var Cursor) =
       g.genDeref n
       while n.hasMore: skip n
   of DotC:
-    # `(dot obj field [inheritance-depth] [access-token])` -> `obj.field`. The
-    # field key is the mangled field-symbol name, matching `oconstr` above.
+    # `(dot obj field …)`. For a Nim-native object (a local of declared object
+    # type) this is a typed load at the field's byte offset in linear memory;
+    # otherwise the legacy `obj.field` mapping (JS-interop / undeclared types).
     n.into:
-      g.gx n            # object
-      g.wr "."
-      g.wr g.fieldName(n.symId); inc n   # field name (Symbol)
+      var useBuffer = false
+      var oty = n
+      if n.kind == Symbol and g.localTypes.hasKey(n.symId):
+        oty = g.localTypes[n.symId]
+        useBuffer = g.isBufferObjectType(oty)
+      if useBuffer:
+        let base = g.captureExpr n         # object base offset (advances past it)
+        let fsym = n.symId; inc n
+        var off = 0'i64
+        var ftyp = n
+        var found = false
+        for f in objectFields(g.m, oty):
+          if f.sym == fsym: off = f.offset; ftyp = f.typ; found = true
+        let ak = (if found: accessOf(g.m, ftyp) else: akAggregate)
+        if ak == akAggregate:
+          g.wr "(" & base & " + " & $off & ")"   # sub-object: a pointer, not a load
+        else:
+          let (ld, _) = accessors(ak)
+          g.wr "mem." & ld & "(" & base & " + " & $off & ")"
+      else:
+        g.gx n            # object
+        g.wr "."
+        g.wr g.fieldName(n.symId); inc n   # field name (Symbol)
       while n.hasMore: skip n        # inheritance depth / access token
   of AtC, PatC:
     # array / pointer indexing -> `arr[idx]`.
@@ -411,8 +499,23 @@ proc genBlock(g: var JSGen; n: var Cursor) =
 proc genVar(g: var JSGen; n: var Cursor) =
   var d = takeVarDecl(n)
   if g.isImportc(d.name.symId): return   # external global: provided by the runtime
+  g.localTypes[d.name.symId] = d.typ     # remember the type for buffer-model access
   g.nl()
   let nm = g.name(d.name.symId)
+  if d.name.symId notin g.boxed and g.isBufferObjectType(d.typ):
+    # Nim-native object: storage in linear memory. `allocFixed` its bytes, then
+    # either construct an `oconstr` into it in place, or copy another aggregate.
+    let lay = typeLayout(g.m, d.typ)
+    g.wr "let " & nm & " = allocFixed(" & $lay.size & ");"
+    if d.value.kind != DotToken:
+      var v = d.value
+      if v.exprKind == OconstrC:
+        g.constructObjectInto(nm, v)
+      else:
+        g.nl(); g.wr "mem.copy(" & nm & ", "
+        g.gx v
+        g.wr ", " & $lay.size & ");"
+    return
   if d.name.symId in g.boxed:
     # boxed local: store the value in a 1-element array so its address (the
     # array) is a stable pointer; all reads/writes go through slot 0.

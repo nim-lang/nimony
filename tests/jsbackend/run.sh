@@ -54,6 +54,28 @@ if have_node; then
   } | node
 fi
 
+# ── data over LINEAR MEMORY (M2, Araq's Typed-Array model): a declared object
+# is laid out in an ArrayBuffer — construction is `allocFixed` + typed stores at
+# the field byte-offsets `jslayout` computes, field access is a typed load. This
+# is the buffer path in the shipping codegen (only for declared object types;
+# arrays and JS-interop stay on the legacy mapping for now). `tdata` above keeps
+# the legacy JS-object mapping (its `Point` is undeclared), so both paths run.
+gen tbuffer
+if have_node; then
+  {
+    # tiny linear-memory runtime (the shape runtime.js provides): allocFixed over
+    # an ArrayBuffer + typed load/store. mkpoint(3,4) builds a Point in the buffer
+    # and reads its fields back -> 7.
+    echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
+    echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)) };'
+    cat "$work/tbuffer.js"
+    echo 'if (mkpoint_0_tbuffer(3,4)===7 && mkpoint_0_tbuffer(20,22)===42)'
+    echo '  { console.log("functional(buffer): PASS"); }'
+    echo '  else { console.log("functional(buffer): FAIL got "+mkpoint_0_tbuffer(3,4)); process.exit(1); }'
+  } | node
+fi
+
 # ── addresses (locals): a pointer is a fat `[base, key]` pair; an addr-taken
 # local is boxed (`[value]`), so its address is `[x, 0]` and writes through the
 # pointer (`p[0][p[1]] = …`) mutate the underlying local.
