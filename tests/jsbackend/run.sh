@@ -163,4 +163,19 @@ if command -v node >/dev/null 2>&1; then
   } | node
 fi
 
+# ── type layout (M2, Typed-Array model): the C-ABI sizeof/alignment/field-offset
+# computation `jslayout` performs so object/array values can be laid out in an
+# ArrayBuffer. Runs only when the debug tool `bin/jslayout_dump` has been built
+# (it is not needed by the codegen path, so the rest of the suite stays lengc-only).
+if [ -x "$root/bin/jslayout_dump" ]; then
+  gotLayout="$("$root/bin/jslayout_dump" "$here/tlayout.c.nif")"
+  if ! diff -u "$here/tlayout.expected.txt" <(printf '%s\n' "$gotLayout"); then
+    echo "FAILURE: computed type layout differs from golden tlayout.expected.txt"
+    exit 1
+  fi
+  echo "layout: PASS"
+else
+  echo "bin/jslayout_dump not built; skipped layout check"
+fi
+
 echo "jsbackend: OK"

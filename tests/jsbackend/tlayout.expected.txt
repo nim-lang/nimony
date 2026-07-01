@@ -1,0 +1,17 @@
+Point_0_tlayout size=8 align=4
+  x_0_tlayout @0
+  y_0_tlayout @4
+Mixed_0_tlayout size=24 align=8
+  a_0_tlayout @0
+  b_0_tlayout @8
+  c_0_tlayout @16
+WithArr_0_tlayout size=20 align=4
+  h_0_tlayout @0
+  arr_0_tlayout @4
+Base_0_tlayout size=4 align=4
+  k_0_tlayout @0
+Rect_0_tlayout size=16 align=4
+  ra_0_tlayout @0
+  rb_0_tlayout @8
+Derived_0_tlayout size=8 align=4
+  m_0_tlayout @4
