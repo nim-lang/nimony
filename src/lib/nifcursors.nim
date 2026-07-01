@@ -389,20 +389,25 @@ proc rootOf*(c: Cursor): SymId =
         if inner != SymId(0): result = inner
       skip n
 
-template balancedTokens*(n: var Cursor; body: untyped) =
-  ## Deep-scans all `ParLe` nodes in the subtree rooted at `n`.
-  ## Inside `body`, `n` is positioned at each `ParLe` node in turn.
-  ## `body` must **not** advance `n` — the template handles traversal.
-  var nestedDepth = 0
+template linearScan*(n: var Cursor; body: untyped) =
+  ## Linearly scans the subtree rooted at `n`, visiting every nested `ParLe`
+  ## node in document order and at all depths — the all-depth counterpart to
+  ## `loopInto` (which visits direct children only). `body` runs with `n`
+  ## positioned at each `ParLe`; it may inspect the node — reading children
+  ## through a *copy* so as not to disturb the walk — and `break` to stop
+  ## early, leaving `n` at the matching node. `body` must **not** advance
+  ## `n`; the template walks it. Use for tag searches over a whole subtree,
+  ## e.g. the type-hook pragma lookups.
+  var nested = 0
   if n.kind == ParLe:
-    inc nestedDepth; inc n
-    while nestedDepth > 0:
+    inc nested; inc n
+    while nested > 0:
       case n.kind
       of ParLe:
         body
-        inc nestedDepth; inc n
+        inc nested; inc n
       of ParRi:
-        dec nestedDepth; inc n
+        dec nested; inc n
       else:
         inc n
 

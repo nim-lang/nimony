@@ -351,53 +351,35 @@ proc tryLoadHook*(op: AttachedOp; typ: SymId): SymId =
     let hooktag = hookToTag(op)
     let typedef = asTypeDecl(d.decl)
     var n = typedef.pragmas
-    if n.kind == ParLe:
-      var nested = 0
-      while true:
-        case n.kind
-        of ParLe:
-          if n.tagId == hooktag:
-            inc n
-            if n.kind == Symbol:
-              result = n.symId
-              break
-          inc nested
-        of ParRi:
-          dec nested
-          if nested == 0: break
-        else: discard
-        inc n
+    n.linearScan:
+      if n.tagId == hooktag:
+        var c = n
+        inc c
+        if c.kind == Symbol:
+          result = c.symId
+          break
 
 proc tryLoadAllHooks*(typ: SymId): HooksPerType =
-  template setRes(n: var Cursor; op: AttachedOp) =
-    inc n
-    if n.kind == Symbol:
-      result.a[op] = n.symId
+  template setRes(hookCursor: Cursor; op: AttachedOp) =
+    var c = hookCursor
+    inc c
+    if c.kind == Symbol:
+      result.a[op] = c.symId
 
   result = HooksPerType(a: default(array[AttachedOp, SymId]))
   let d = tryLoadSym(typ)
   if d.status == LacksNothing:
     let typedef = asTypeDecl(d.decl)
     var n = typedef.pragmas
-    if n.kind == ParLe:
-      var nested = 0
-      while true:
-        case n.kind
-        of ParLe:
-          case hookKind(n.tagId)
-          of NoHook: discard
-          of WasmovedH: setRes(n, attachedWasMoved)
-          of DestroyH: setRes(n, attachedDestroy)
-          of DupH: setRes(n, attachedDup)
-          of CopyH: setRes(n, attachedCopy)
-          of SinkhH: setRes(n, attachedSink)
-          of TraceH: setRes(n, attachedTrace)
-          inc nested
-        of ParRi:
-          dec nested
-          if nested == 0: break
-        else: discard
-        inc n
+    n.linearScan:
+      case hookKind(n.tagId)
+      of NoHook: discard
+      of WasmovedH: setRes(n, attachedWasMoved)
+      of DestroyH: setRes(n, attachedDestroy)
+      of DupH: setRes(n, attachedDup)
+      of CopyH: setRes(n, attachedCopy)
+      of SinkhH: setRes(n, attachedSink)
+      of TraceH: setRes(n, attachedTrace)
 
 proc loadSyms*(suffix: string; identifier: StrId): seq[SymId] =
   # gives top level exported syms of a module

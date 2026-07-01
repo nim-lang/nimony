@@ -1114,7 +1114,7 @@ proc whileBodyHasProgressCall(whileNode: Cursor; lv: Cursor;
   inc c, SkipTag   # (while
   skip c, SkipCond # condition
   if c.kind != ParLe: return false
-  c.balancedTokens:
+  c.linearScan:
     let tag = pool.tags[c.tag]
     if tag in CallTags:
       let callName = extractCalleeName(c)
@@ -1178,7 +1178,7 @@ proc whileBodyLooksLikeNestedScanner(whileNode: Cursor): bool =
   var incVars = initHashSet[string]()
   var decVars = initHashSet[string]()
 
-  c.balancedTokens:
+  c.linearScan:
     let tag = pool.tags[c.tag]
     if tag in ["break", "breakstmt"]:
       hasBreak = true
