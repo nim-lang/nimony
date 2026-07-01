@@ -139,6 +139,22 @@ proc asLocal*(c: Cursor; mode = SkipInclBody): Local =
 proc asTypevar*(c: Cursor): Local {.inline.} =
   result = asLocal(c)
 
+proc localHasAtomExplicitType*(n: Cursor): bool =
+  ## Peek whether a `(let|var ...)` decl carries an explicit type annotation
+  ## that is a single atom (a bare Ident/Symbol — e.g. `int`, `string`, a
+  ## non-generic nominal or alias), as opposed to a `DotToken` (inferred) or
+  ## a compound type expression (a `ParLe`, e.g. a generic instance `Foo[T]`
+  ## or `seq[int]`). Atom types resolve without triggering generic
+  ## instantiation, so they are safe to resolve in the signature phase;
+  ## compound types are left for the body phase to avoid duplicating the
+  ## instantiation (and any constraint error it reports). Does not advance `n`.
+  var c = n
+  inc c          # past the (let/var tag
+  skip c         # name
+  skip c         # export marker
+  skip c         # pragmas
+  result = c.kind != DotToken and c.kind != ParLe
+
 type
   Routine* = object
     kind*: SymKind

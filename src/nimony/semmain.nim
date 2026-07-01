@@ -230,6 +230,11 @@ proc phase1(c: var SemContext; dest: var TokenBuf; n: Cursor): (TokenBuf, Packed
 proc phase2(c: var SemContext; buf: var TokenBuf; moduleLineInfo: PackedLineInfo): TokenBuf =
   ## Phase 2: Check signatures.
   c.phase = SemcheckSignatures
+  # #1974: deferredLocals lives within this phase; onDemandResolved carries
+  # the resolved-early names into phase 3 (so cleared per module here, not in
+  # phase 3).
+  c.deferredLocals.clear()
+  c.onDemandResolved.clear()
   result = createTokenBuf()
   result.addParLe(StmtsS, moduleLineInfo)
   semToplevelStmts(c, result, buf)
@@ -239,6 +244,7 @@ proc phase2(c: var SemContext; buf: var TokenBuf; moduleLineInfo: PackedLineInfo
 proc phase3(c: var SemContext; buf: var TokenBuf; moduleLineInfo: PackedLineInfo): TokenBuf =
   ## Phase 3: Check bodies.
   c.phase = SemcheckBodies
+  c.deferredLocals.clear()  # phase-2 cursors are stale here (#1974)
   result = createTokenBuf()
   result.addParLe(StmtsS, moduleLineInfo)
   semToplevelStmts(c, result, buf)

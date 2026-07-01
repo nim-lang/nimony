@@ -231,6 +231,19 @@ type
       ## tests/nimony/lookups/tforward_decl_export.nim.
     deferredCyclicImports*: seq[(string, SymId)] # (module suffix, module sym) for cyclic imports to resolve after phase1
     inTypeInst*: int # > 0 means we're inside a generic type instantiation
+    deferredLocals*: Table[StrId, Cursor]
+      ## Signature-phase on-demand resolution (nim-lang/nimony#1974): toplevel
+      ## let/var are deferred to the body phase, but their decl cursor is
+      ## recorded here keyed by name so a `when` condition in the signature
+      ## phase referencing such a local can drive just its signature on demand.
+      ## Populated and consumed within phase 2.
+    onDemandResolved*: Table[StrId, SymId]
+      ## Names of toplevel let/var that were resolved on demand in phase 2
+      ## (see `deferredLocals`), mapped to the symbol allocated for them. In
+      ## phase 3 `handleSymDef` reuses this symbol for the same decl (treating
+      ## it as OkExistingFresh) so the body phase does not redeclare it and the
+      ## symbol keeps the same name as if it had never been resolved early.
+      ## Persists phase 2 → phase 3; cleared per module at phase-2 start.
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""
