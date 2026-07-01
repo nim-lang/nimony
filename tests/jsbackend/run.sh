@@ -146,4 +146,42 @@ else
   echo "bin/jslayout_dump not built; skipped layout check"
 fi
 
+# ── bundling (the `{.bundle.}` linker half): `jslink` reads the project link
+# manifest NIF (the format nimony's deps.nim emits) and assembles the final JS
+# bundle from the per-module `kind "artifact"` entries — prepending a runtime,
+# dropping each file's own `"use strict";`, and appending the program entry.
+# Runs only when `bin/jslink` has been built.
+if [ -x "$root/bin/jslink" ]; then
+  # two self-contained JS "artifacts" (as if emitted per-module by lengjs) …
+  printf '"use strict";\nfunction helper(){ return 21; }\n' > "$work/a.js"
+  printf '"use strict";\nfunction main(){ globalThis.RESULT = helper()*2; }\n' > "$work/b.js"
+  printf '// runtime\n' > "$work/rt.js"
+  # … listed in a manifest in the real (link (file … (kind …))) grammar.
+  cat > "$work/t.linkmanifest.nif" <<NIF
+(.nif27)
+(link
+ (apptype "console")
+ (output "prog.js")
+ (file "$work/a.js" (kind "artifact"))
+ (file "$work/b.js" (kind "artifact")))
+NIF
+  "$root/bin/jslink" "$work/t.linkmanifest.nif" "$work/prog.js" "$work/rt.js" >/dev/null
+  # exactly one "use strict"; both artifacts present; entry appended and runs.
+  stricts=$(grep -c '^"use strict";$' "$work/prog.js" || true)
+  if [ "$stricts" != "1" ]; then
+    echo "FAILURE: jslink bundle has $stricts \"use strict\"; directives (want 1)"; exit 1
+  fi
+  if command -v node >/dev/null 2>&1; then
+    {
+      cat "$work/prog.js"
+      echo 'if (globalThis.RESULT===42) { console.log("bundle: PASS"); }'
+      echo 'else { console.log("bundle: FAIL got "+globalThis.RESULT); process.exit(1); }'
+    } | node
+  else
+    echo "bundle: PASS (structure; node not found for run check)"
+  fi
+else
+  echo "bin/jslink not built; skipped bundle check"
+fi
+
 echo "jsbackend: OK"
