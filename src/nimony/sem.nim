@@ -1318,7 +1318,14 @@ proc exprToType(c: var SemContext; dest: var TokenBuf; exprType: Cursor; start: 
     dest.shrink start
     var base = exprType
     inc base
-    dest.addSubtree base
+    if base.kind == ParRi:
+      # A bare `typedesc` carrying no concrete base type, e.g. a `T: typedesc`
+      # parameter used as a type (`proc f(T: typedesc): Box[T]`). nimony has no
+      # implicit-generic `typedesc` params, so there is nothing to inline here.
+      # Report it instead of tripping the `addSubtree` "cursor at end?" assert.
+      c.buildErr dest, info, "'typedesc' without a concrete type cannot be used as a type; use an explicit generic parameter such as `proc f[T](x: typedesc[T])`"
+    else:
+      dest.addSubtree base
   of ErrT, AutoT:
     # propagate error
     discard
@@ -1536,6 +1543,12 @@ proc semTypeof(c: var SemContext; dest: var TokenBuf; it: var Item) =
   semExpr c, dest, it, semFlags
   var t = it.typ
   if t.typeKind == TypedescT: inc t
+  # `typeof` produces the *value* type: drop reference qualifiers so that e.g.
+  # `typeof(s[i])` over a `var seq`/`openArray` is the element type `T`, not
+  # `var T`. Without this `seq[typeof(s[0])]` becomes `seq[var T]`, which then
+  # mismatches plain `T` elements (notably inside `mapIt`/`filterIt` templates).
+  while t.typeKind in {MutT, OutT, LentT, SinkT}:
+    inc t
   dest.shrink beforeExpr
   dest.addParLe(TypedescT, t.info)
   dest.addSubtree t
@@ -2700,7 +2713,9 @@ proc semForLoopVar(c: var SemContext; dest: var TokenBuf; it: var Item; loopvarT
     let delayed = handleSymDef(c, dest, it.n, LetY)
     c.addSym dest, delayed
     wantDot c, dest, it.n # export marker must be empty
-    wantDot c, dest, it.n # pragmas
+    # The loop variable may carry pragmas (e.g. `{.inject.}` from a template, as
+    # `mapIt`/`toSeq` use); copy the slot through rather than requiring it empty.
+    takeTree dest, it.n # pragmas
     if loopvarTypeMod != NoType and loopvarType.typeKind notin TypeModifiers:
       dest.buildTree loopvarTypeMod, it.n.info:
         copyTree dest, loopvarType

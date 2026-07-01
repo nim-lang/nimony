@@ -459,15 +459,72 @@ when defined(posix):
     proc pipe*(a: ptr cint): cint {.importc: "pipe", sideEffect.}
     proc dup2*(oldfd, newfd: cint): cint {.importc: "dup2", sideEffect.}
     proc fork*(): Pid {.importc: "fork", sideEffect.}
-    proc execvp*(file: cstring; argv: CCharArray): cint {.importc: "execvp", sideEffect.}
     proc execve*(path: cstring; argv, env: CCharArray): cint {.importc: "execve", sideEffect.}
-    proc waitpid*(pid: Pid; status: var cint; options: cint): Pid {.importc: "waitpid", sideEffect.}
+    # `execvp` is defined below as a native wrapper (it is NOT a syscall — it is
+    # libc's PATH-resolving layer over `execve`); see after `posix_environ`.
+    # There is no `waitpid` Linux syscall — it is libc sugar for `wait4` with a NULL
+    # `rusage`. arkham lowers bare syscall names, so on the native backend we bind to
+    # `wait4` directly and pass `rusage = nil` ourselves, keeping the 3-arg `waitpid`
+    # signature the rest of the code (and the libc path) expects.
+    proc wait4(pid: Pid; status: var cint; options: cint;
+               rusage: nil pointer): Pid {.importc: "wait4", sideEffect.}
+    proc waitpid*(pid: Pid; status: var cint; options: cint): Pid {.inline.} =
+      wait4(pid, status, options, nil)
     proc kill*(pid: Pid; sig: cint): cint {.importc: "kill", sideEffect.}
     proc setpgid*(pid, pgid: Pid): cint {.importc: "setpgid", sideEffect.}
     proc exitnow*(status: cint) {.importc: "_exit", noreturn.}
     proc read*(fildes: cint; buf: pointer; nbyte: int): int {.importc: "read", sideEffect.}
     proc write*(fildes: cint; buf: pointer; nbyte: int): int {.importc: "write", sideEffect.}
-    var posix_environ* {.importc: "environ".}: ptr UncheckedArray[cstring]
+    # The libc-free runtime has no `environ`; the generated `main` captures the
+    # kernel-provided env block into `nimEnviron` (see hexer genMainProc). Reading
+    # it makes `execShellCmd`/`execProcess` pass the real parent environment.
+    var posix_environ* {.importc: "nimEnviron".}: ptr UncheckedArray[cstring]
+
+    proc execvp*(file: cstring; argv: CCharArray): cint {.sideEffect.} =
+      ## Libc-free `execvp`. There is no `execvp` syscall — it is libc's PATH-
+      ## resolving wrapper around `execve`. If `file` contains a '/', exec it
+      ## directly; otherwise try `file` in each ':'-separated directory of `$PATH`
+      ## (default `/bin:/usr/bin`), reading the environment from `nimEnviron`.
+      ## Runs in the forked child of `osproc.startProcess`; on success it never
+      ## returns, so the allocations here are reached only on the error path.
+      let envp = cast[CCharArray](posix_environ)
+      var hasSlash = false
+      var n = 0
+      while file[n] != '\0':
+        if file[n] == '/': hasSlash = true
+        inc n
+      if hasSlash:
+        return execve(file, argv, envp)
+      # Locate PATH in the environment block (raw cstring scan, no allocation).
+      var path = "/bin:/usr/bin"
+      if posix_environ != nil:
+        var i = 0
+        while posix_environ[i] != nil:
+          let e = posix_environ[i]
+          if e[0] == 'P' and e[1] == 'A' and e[2] == 'T' and e[3] == 'H' and
+             e[4] == '=':
+            path = ""
+            var k = 5
+            while e[k] != '\0':
+              path.add e[k]
+              inc k
+            break
+          inc i
+      var fileStr = ""
+      var m = 0
+      while file[m] != '\0':
+        fileStr.add file[m]
+        inc m
+      var start = 0
+      var i = 0
+      while i <= path.len:
+        if i == path.len or path[i] == ':':
+          let dir = if i > start: path[start ..< i] else: "."
+          var candidate = dir & "/" & fileStr
+          discard execve(candidate.toCString, argv, envp)   # returns only on failure
+          start = i + 1
+        inc i
+      result = -1'i32
   else:
     proc pipe*(a: ptr cint): cint {.
       importc, header: "<unistd.h>", sideEffect.}
