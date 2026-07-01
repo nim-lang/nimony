@@ -13,7 +13,9 @@ type generation and maps Leng constructs directly to JS:
 | `(add T a b)` (typed binop) | `(a + b)` — leading type operand skipped |
 | `(div T a b)` | `Math.trunc(a / b)` (Nim int `div` truncates toward zero) |
 | `(lt a b)`, `(and a b)`, `(not a)` | `(a < b)`, `(a && b)`, `(!a)` |
-| `(asgn x e)` / `(store e x)` | `x = e;` |
+| `(asgn x e)` | `x = e;` |
+| `(store e x)` | `x = e;` (operands reversed vs `asgn`) |
+| `(keepovf (op T a b) dst)` / `(ovf)` | `dst = (a op b);` / `false` (no 64-bit overflow trap) |
 | `(if (elif c (stmts …)) (else (stmts …)))` | `if (c) { … } else { … }` |
 | `(while c (stmts …))` | `while (c) { … }` |
 | `(case sel (of (ranges v) …) (else …))` | `switch (sel) { case v: … }` |
@@ -33,12 +35,21 @@ type generation and maps Leng constructs directly to JS:
 
 This is the **M0/M1 pure-compute slice plus data structures**: procs,
 locals/globals, assignment, calls, returns, integer/float/bool/string literals,
-the arithmetic / bitwise / comparison / logic operators, `if`, `while`, `case`,
-`break`, **object construction + field access, array construction + indexing,
-and address-of/deref**. With these the
+the arithmetic / bitwise / comparison / logic operators (incl. overflow-checked
+`keepovf`/`ovf`), `if`, `while`, `case`, `break`, **object construction + field
+access, array construction + indexing, and address-of/deref**. With these the
 lowered object/array shapes — including the object representation of a string
 literal — generate cleanly (`echo "hello world"` now produces zero `/*TODO*/`s,
 referencing only the still-missing runtime functions).
+
+Because these are all *lowered* Leng shapes, a range of surface Nim compiles to
+the covered subset with no new backend work — a survey of programs using enums
+(→ ints), tuples (→ objects), `for` loops (→ `while` + iterator inlining), `case`
+with multi-value branches, `set` membership, and `object … case` variants all
+generate zero user-module `/*TODO*/`s and run correctly under Node. What is *not*
+yet covered bottoms out in allocation/GC: `seq`s, `ref`/heap objects, and closure
+environments (their `allocFixed(sizeof …)` still emits a `sizeof` TODO) — i.e. the
+open design question, not missing codegen.
 
 **Addresses.** JS cannot reference a variable's storage, so a pointer cannot be
 the value itself. Following the classic Nim JS backend (`mapType`'s
@@ -116,6 +127,9 @@ each under Node:
   through the address of an object field), `elemaddr()==99` (through the address
   of an array element), and `samefield()`/`difffield()` (fat-pointer equality:
   same key vs different key).
+- `tarith.c.nif` (checked arithmetic) → `keepovf`/`ovf` reduce to a plain
+  assignment with `ovf` always false, and `store` assigns with reversed operands.
+  Checks `checkedAdd(20,22)==42` and `storeTest()==42`.
 - `timportc.c.nif` (foreign symbols) → an `importc` proc is not emitted and is
   called by its C name (`extTriple`, supplied as the runtime); an `exportc`
   global is emitted as `counter`. Checks `run()==21` and `counter==21`.

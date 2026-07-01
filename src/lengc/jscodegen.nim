@@ -289,6 +289,10 @@ proc gx(g: var JSGen; n: var Cursor) =
   of InfC: g.wr "Infinity"; skip n
   of NegInfC: g.wr "(-Infinity)"; skip n
   of NanC: g.wr "NaN"; skip n
+  of OvfC:
+    # The overflow flag (see `KeepovfS`). JS numbers are doubles with no 64-bit
+    # overflow trap, so nothing sets it — a checked op never reports overflow.
+    g.wr "false"; skip n
   of CallC: genCall g, n
   of AddC: binTyped g, n, " + "
   of SubC: binTyped g, n, " - "
@@ -502,13 +506,31 @@ proc gs(g: var JSGen; n: var Cursor) =
     g.nl(); g.genBlock n
   of VarS, GvarS, TvarS, ConstS:
     g.genVar n
-  of AsgnS, StoreS:
+  of AsgnS:
     n.into:
       g.nl()
       g.gx n            # lvalue
       g.wr " = "
       g.gx n            # value
       g.wr ";"
+      while n.hasMore: skip n
+  of StoreS:
+    # `(store value lvalue)` — operands are reversed relative to `asgn`.
+    n.into:
+      let value = g.captureExpr n
+      g.nl()
+      g.gx n            # lvalue
+      g.wr " = " & value & ";"
+      while n.hasMore: skip n
+  of KeepovfS:
+    # `(keepovf (op TYPE lhs rhs) dest)` computes the arithmetic, stores it into
+    # `dest`, and would set the overflow flag on overflow. JS has no 64-bit
+    # overflow trap, so this reduces to the plain store; `(ovf)` stays `false`.
+    n.into:
+      let arith = g.captureExpr n
+      g.nl()
+      g.gx n            # dest lvalue
+      g.wr " = " & arith & ";"
       while n.hasMore: skip n
   of CallS:
     g.nl()
