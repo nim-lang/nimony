@@ -327,6 +327,34 @@ proc constructObjectInto(g: var JSGen; dest: string; n: var Cursor) =
       else:
         skip n
 
+proc bufferFieldOf(g: var JSGen; dotNode: Cursor): (bool, Cursor) =
+  ## Non-consuming peek: is `dotNode` `(dot sym field …)` whose `sym` is a local
+  ## of declared object type? Returns `(true, objectType)`. Used to route a
+  ## `(dot …)` assignment target to a typed store instead of `lhs = rhs`.
+  result = (false, dotNode)
+  if dotNode.exprKind != DotC: return
+  var probe = dotNode
+  probe.into:
+    if probe.kind == Symbol and g.localTypes.hasKey(probe.symId):
+      let t = g.localTypes[probe.symId]
+      if g.isBufferObjectType(t): result = (true, t)
+    while probe.hasMore: skip probe
+
+proc takeBufferField(g: var JSGen; n: var Cursor; oty: Cursor):
+    tuple[base: string, off: int64, ak: AccessKind, fsize: int64] =
+  ## Consume a `(dot base field …)` lvalue at `n`, returning the base offset
+  ## expression and the field's offset / access kind / size.
+  result = (base: "", off: 0'i64, ak: akAggregate, fsize: 0'i64)
+  n.into:
+    result.base = g.captureExpr n
+    let fsym = n.symId; inc n
+    for f in objectFields(g.m, oty):
+      if f.sym == fsym:
+        result.off = f.offset
+        result.ak = accessOf(g.m, f.typ)
+        result.fsize = typeLayout(g.m, f.typ).size
+    while n.hasMore: skip n
+
 proc gx(g: var JSGen; n: var Cursor) =
   case n.exprKind
   of NoExpr:
@@ -612,18 +640,38 @@ proc gs(g: var JSGen; n: var Cursor) =
   of AsgnS:
     n.into:
       g.nl()
-      g.gx n            # lvalue
-      g.wr " = "
-      g.gx n            # value
-      g.wr ";"
+      let (isBuf, oty) = g.bufferFieldOf(n)
+      if isBuf:
+        # `(asgn (dot p f) v)` on a buffer object -> `mem.setX(p + off, v)`.
+        let fld = g.takeBufferField(n, oty)
+        if fld.ak == akAggregate:
+          g.wr "mem.copy(" & fld.base & " + " & $fld.off & ", "; g.gx n
+          g.wr ", " & $fld.fsize & ");"
+        else:
+          let (_, st) = accessors(fld.ak)
+          g.wr "mem." & st & "(" & fld.base & " + " & $fld.off & ", "; g.gx n; g.wr ");"
+      else:
+        g.gx n            # lvalue
+        g.wr " = "
+        g.gx n            # value
+        g.wr ";"
       while n.hasMore: skip n
   of StoreS:
     # `(store value lvalue)` — operands are reversed relative to `asgn`.
     n.into:
       let value = g.captureExpr n
       g.nl()
-      g.gx n            # lvalue
-      g.wr " = " & value & ";"
+      let (isBuf, oty) = g.bufferFieldOf(n)
+      if isBuf:
+        let fld = g.takeBufferField(n, oty)
+        if fld.ak == akAggregate:
+          g.wr "mem.copy(" & fld.base & " + " & $fld.off & ", " & value & ", " & $fld.fsize & ");"
+        else:
+          let (_, st) = accessors(fld.ak)
+          g.wr "mem." & st & "(" & fld.base & " + " & $fld.off & ", " & value & ");"
+      else:
+        g.gx n            # lvalue
+        g.wr " = " & value & ";"
       while n.hasMore: skip n
   of KeepovfS:
     # `(keepovf (op TYPE lhs rhs) dest)` computes the arithmetic, stores it into
@@ -691,6 +739,7 @@ proc genProc(g: var JSGen; n: var Cursor) =
     var i = 0
     p.loopInto:
       var d = takeParamDecl(p)
+      g.localTypes[d.name.symId] = d.typ   # remember param types for buffer access
       if i > 0: g.wr ", "
       g.wr g.name(d.name.symId)
       inc i

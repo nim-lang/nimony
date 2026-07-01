@@ -76,6 +76,24 @@ if have_node; then
   } | node
 fi
 
+# ── objects, full story (M2): object params + field reads (psum), a Nim value
+# copy `var q = p` (mem.copy) and field write `q.x = q.x + 1`, all over the
+# buffer. The value-semantics assertion: mkbump returns q.x + p.x = (a+1) + a, so
+# an aliasing bug (q sharing p's storage) would give (a+1) + (a+1) instead.
+gen tstructcopy
+if have_node; then
+  {
+    echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
+    echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)),'
+    echo '  copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n) };'
+    cat "$work/tstructcopy.js"
+    echo 'if (drive_0_tsc(3,4)===7 && mkbump_0_tsc(5,9)===11 && mkbump_0_tsc(20,0)===41)'
+    echo '  { console.log("functional(objects): PASS"); }'
+    echo '  else { console.log("functional(objects): FAIL got "+mkbump_0_tsc(5,9)); process.exit(1); }'
+  } | node
+fi
+
 # ── addresses (locals): a pointer is a fat `[base, key]` pair; an addr-taken
 # local is boxed (`[value]`), so its address is `[x, 0]` and writes through the
 # pointer (`p[0][p[1]] = …`) mutate the underlying local.
