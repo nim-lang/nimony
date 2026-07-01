@@ -383,3 +383,88 @@ proc emit*(b: var JsBuilder): string =
         e.outp.add "\n"
   endRead c
   result = e.outp
+
+# ── peephole optimizer (jsnif -> jsnif) ───────────────────────────────────────
+# A tree pass — the payoff of emitting JS as NIF rather than strings (Araq: "you
+# can easily run a peephole optimizer later on the nifjs"). The byte-pointer
+# lowering emits lots of `x + 0` (offset-0 fields) and `x * 1` (byte-stride
+# arrays / element-size-1 pointers); folding those and constant arithmetic makes
+# the output far closer to hand-written JS. Runs bottom-up so nested forms
+# collapse (`(s + 0) + (i * 1)` -> `(s + i)`), and shares the input's pools so
+# unchanged subtrees are bulk-copied.
+
+proc jsTagAt*(b: JsBuilder; c: Cursor): JsTag =
+  ## Decode the JS tag at `c` using `b`'s tag ids.
+  if c.kind == TagLit:
+    let id = c.cursorTagId
+    for t in JsTag:
+      if b.ids[t] == id: return t
+  jNone
+
+proc numAt(b: JsBuilder; c: Cursor): (bool, int64) =
+  ## `(true, v)` if `c` is a `(num v)` literal node.
+  result = (false, 0'i64)
+  if b.jsTagAt(c) == jNum:
+    var cc = c
+    cc.into:
+      if cc.kind == IntLit: result = (true, intVal(cc))
+      while cc.hasMore: skip cc
+
+proc optNode(dst: var JsBuilder; src: JsBuilder; c: var Cursor)
+
+proc optBinFold(dst: var JsBuilder; src: JsBuilder; c: var Cursor): bool =
+  ## Try to rewrite a `(bin op A B)` at `c`. On success emits the folded node,
+  ## consumes `c`, returns true. Handled: `x+0`/`0+x` -> x, `x*1`/`1*x` -> x,
+  ## `x-0` -> x, and `(num a) op (num b)` -> `(num a∘b)` for +,-,*.
+  var op = ""
+  var aCur, bCur: Cursor
+  block:
+    var p = c
+    p.into:
+      op = strVal(p); inc p          # op ident
+      aCur = p; skip p               # operand A
+      bCur = p; skip p               # operand B
+      while p.hasMore: skip p
+  let (aNum, aVal) = src.numAt(aCur)
+  let (bNum, bVal) = src.numAt(bCur)
+  if aNum and bNum:                  # constant fold
+    case op
+    of "+": dst.num aVal + bVal; skip c; return true
+    of "-": dst.num aVal - bVal; skip c; return true
+    of "*": dst.num aVal * bVal; skip c; return true
+    else: discard
+  if (op == "+" or op == "-") and bNum and bVal == 0:
+    var a = aCur; dst.optNode(src, a); skip c; return true   # x ± 0 -> x
+  if op == "+" and aNum and aVal == 0:
+    var b = bCur; dst.optNode(src, b); skip c; return true   # 0 + x -> x
+  if op == "*" and bNum and bVal == 1:
+    var a = aCur; dst.optNode(src, a); skip c; return true   # x * 1 -> x
+  if op == "*" and aNum and aVal == 1:
+    var b = bCur; dst.optNode(src, b); skip c; return true   # 1 * x -> x
+  false
+
+proc optNode(dst: var JsBuilder; src: JsBuilder; c: var Cursor) =
+  ## Copy the node at `c` into `dst`, applying peephole rewrites and recursing so
+  ## inner nodes are optimized too. `dst` shares `src`'s pools, so a leaf (and any
+  ## subtree with no rewrite in it) is a bulk copy.
+  if c.kind != TagLit:
+    dst.buf.addSubtree c            # a bare payload token (ident / literal / dot)
+    skip c
+    return
+  if src.jsTagAt(c) == jBin and dst.optBinFold(src, c):
+    return
+  dst.buf.openTag c.cursorTagId     # same tag id (shared tag pool)
+  c.into:
+    while c.hasMore:
+      dst.optNode(src, c)
+  dst.buf.closeTag()
+
+proc peephole*(src: var JsBuilder): JsBuilder =
+  ## Return an optimized copy of the whole `src` tree. Sharing `src`'s literal and
+  ## tag pools keeps unchanged subtrees a memcpy and lets the result be `emit`ed
+  ## with `src`'s ids.
+  result = JsBuilder(buf: createTokenBuf(64, sharedPool = src.buf.pool,
+                                         sharedTags = src.buf.tags), ids: src.ids)
+  var c = beginRead(src.buf)
+  result.optNode(src, c)
+  endRead c
