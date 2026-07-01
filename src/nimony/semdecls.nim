@@ -149,11 +149,20 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
       elif kind == ParamY and it.n.kind == DotToken:
         if c.usingStmtMap.hasKey(delayed.lit):
           it.typ = c.usingStmtMap.getOrQuit(delayed.lit)
+          dest.takeToken it.n # empty value slot
         elif c.routine.kind in {TemplateY, MacroY}:
           it.typ = c.types.untypedType
+          dest.takeToken it.n # empty value slot
         else:
-          buildErr c, dest, it.n.info, "type or init value expected"
-        dest.takeToken it.n
+          # A parameter without a type and without a default value. Produce an
+          # error *type* (mirroring how an unresolved named type is handled) and
+          # leave the value slot empty. The error node must end up in the type
+          # slot, not be appended after the empty value: an extra node there
+          # makes the param over-full and crashes a later phase (issue #2012).
+          var errBuf = createTokenBuf(4)
+          c.buildErr errBuf, it.n.info, "type or init value expected"
+          it.typ = typeToCursor(c, errBuf, 0)
+          dest.takeToken it.n # empty value slot
       else:
         semLocalValue c, dest, it, crucial # 4
       n = it.n
