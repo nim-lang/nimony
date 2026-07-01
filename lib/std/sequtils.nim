@@ -11,8 +11,7 @@
 ## programming: `map`, `filter`, `zip`, folds and friends.
 ##
 ## This is the Nimony port. It currently covers the callback- and
-## value-oriented core; the `mapIt`/`filterIt` template family is not ported
-## yet.
+## value-oriented core.
 
 import std/[assertions]
 
