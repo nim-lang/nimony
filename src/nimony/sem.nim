@@ -182,6 +182,8 @@ type
 
 proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag] = {})
 
+proc resolveDeferredLocal(c: var SemContext; ident: StrId): bool
+
 proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall)
 
 proc commonType*(c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: int; expected: TypeCursor) =
@@ -1273,7 +1275,17 @@ proc semIdentImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor; ident: S
     else: InnerMost
   let insertPos = dest.len
   let info = n.info
-  let count = buildSymChoice(c, dest, ident, info, mode)
+  var count = buildSymChoice(c, dest, ident, info, mode)
+  if count == 0 and c.deferredLocals.hasKey(ident):
+    # On-demand resolution (nim-lang/nimony#1974): a signature-phase `when`
+    # condition referenced a toplevel let/var that is otherwise deferred to
+    # the body phase. (The condition is folded with `c.phase` temporarily
+    # forced to SemcheckBodies, so we key off `deferredLocals` — which is
+    # only populated during phase 2 — rather than the current phase.) Drive
+    # just its signature now, then retry the lookup.
+    dest.shrink insertPos
+    discard resolveDeferredLocal(c, ident)
+    count = buildSymChoice(c, dest, ident, info, mode)
   if count == 1:
     let sym = dest[insertPos+1].symId
     dest.shrink insertPos
@@ -4615,6 +4627,21 @@ template toplevelGuard(c: var SemContext; body: untyped) =
   else:
     dest.takeTree it.n
 
+template localSigGuard(c: var SemContext; body: untyped) =
+  ## Toplevel let/var are processed in the body phase as before. In the
+  ## signature phase they are still deferred (copied verbatim), but an
+  ## atom-typed one is also recorded by name so that a later signature-phase
+  ## `when` condition referencing it can drive just its signature on demand
+  ## (see `semIdentImpl` / `resolveDeferredLocal`, nim-lang/nimony#1974).
+  ## Recording is side-effect-free for modules without such a `when`, so
+  ## their body-phase output is unchanged.
+  if c.phase == SemcheckBodies:
+    body
+  else:
+    if c.phase == SemcheckSignatures and localHasAtomExplicitType(it.n):
+      recordDeferredLocal(c, it.n)
+    dest.takeTree it.n
+
 template procGuard(c: var SemContext; body: untyped) =
   if c.phase in {SemcheckSignatures, SemcheckBodies}:
     body
@@ -4819,22 +4846,22 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
         buildErr c, dest, it.n.info, "`corofor` is a hexer-internal shape and must not appear in source"
         skip it.n
       of VarS:
-        toplevelGuard c:
+        localSigGuard c:
           semLocal c, dest, it, VarY
       of GvarS:
-        toplevelGuard c:
+        localSigGuard c:
           semLocal c, dest, it, GvarY
       of TvarS:
-        toplevelGuard c:
+        localSigGuard c:
           semLocal c, dest, it, TvarY
       of LetS:
-        toplevelGuard c:
+        localSigGuard c:
           semLocal c, dest, it, LetY
       of GletS:
-        toplevelGuard c:
+        localSigGuard c:
           semLocal c, dest, it, GletY
       of TletS:
-        toplevelGuard c:
+        localSigGuard c:
           semLocal c, dest, it, TletY
       of CursorS:
         toplevelGuard c:
@@ -5137,9 +5164,3 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
     if it.n.kind in {DotToken, UnknownToken}:
       inc it.n
 
-
-type
-  EnsurePhaseResult* = enum
-    PhaseOk,        ## Symbol is now at the required phase
-    PhaseCycle,     ## Cyclic dependency detected
-    PhaseNotFound   ## Symbol not in prog.mem

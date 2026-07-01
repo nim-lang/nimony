@@ -114,6 +114,27 @@ proc `[]=`*(t: var ToplevelEntries; s: SymId; entry: sink ToplevelEntry) =
     t.entries.add entry
     t.bySymId[s] = idx
 
+type
+  EnsurePhaseResult* = enum
+    PhaseOk,        ## Symbol is now at (or past) the required phase
+    PhaseCycle,     ## Cyclic dependency detected (an in-progress marker)
+    PhaseNotFound   ## Symbol not in prog.mem (external or not yet registered)
+
+proc ensurePhase*(symId: SymId; targetPhase: SemPhase): EnsurePhaseResult =
+  ## Report whether `symId` has been processed to at least `targetPhase`,
+  ## distinguishing a genuine cycle (an in-progress marker) from a plain
+  ## forward reference. Pure inspection; the on-demand driver
+  ## `loadSymWithPhase` (templates.nim) is what acts on the result.
+  if not prog.mem.hasKey(symId):
+    return PhaseNotFound
+  let currentPhase = prog.mem[symId].phase
+  if currentPhase >= targetPhase:
+    return PhaseOk
+  if currentPhase in {SemcheckSignaturesInProgress, SemcheckBodiesInProgress}:
+    return PhaseCycle
+  # Below target but not in progress: a forward reference the driver may resolve.
+  result = PhaseOk
+
 proc add*(t: var ToplevelEntries; entry: sink ToplevelEntry) =
   ## Add an entry without a SymId (e.g., when statement, import).
   t.entries.add entry
