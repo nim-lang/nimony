@@ -262,6 +262,8 @@ proc typeOfField(c: var TypeCache; n: var Cursor; fld: SymId): Cursor =
       if not cursorIsNil(baseObj):
         var b = skipToObjectBody baseObj
         result = typeOfField(c, b, fld)
+    else:
+      skip n # empty sum type body
 
 proc lookupField*(c: var TypeCache; typ: Cursor; fld: SymId): Cursor =
   var body = skipToObjectBody(typ)
