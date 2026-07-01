@@ -16,7 +16,7 @@
 ## empty `Deque` (or an out-of-range index) terminates the program (mirroring
 ## `assert`) rather than raising `IndexDefect`.
 
-import std/syncio
+import std/[syncio, assertions]
 
 const
   defaultInitialSize = 4
@@ -28,12 +28,6 @@ type
     data: seq[T]
     head, tail, count, mask: int
 
-
-func raiseEmpty() {.noinline, noreturn.} =
-  {.cast(noSideEffect).}: quit "Deque is empty"
-
-func raiseIndex() {.noinline, noreturn.} =
-  {.cast(noSideEffect).}: quit "Deque index out of bounds"
 
 func nextPowerOfTwo(x: int): int =
   ## Smallest power of two `>= x` (at least 1).
@@ -99,21 +93,18 @@ func addFirst*[T: HasDefault](d: var Deque[T]; item: sink T) =
 
 func peekFirst*[T](d: Deque[T]): var T =
   ## Returns the first element of `d`. Terminates the program if `d` is empty.
-  if d.count == 0:
-    raiseEmpty()
+  {.cast(noSideEffect).}: assert d.count > 0, "Deque is empty"
   result = d.data[d.head]
 
 func peekLast*[T](d: Deque[T]): var T =
   ## Returns the last element of `d`. Terminates the program if `d` is empty.
-  if d.count == 0:
-    raiseEmpty()
+  {.cast(noSideEffect).}: assert d.count > 0, "Deque is empty"
   result = d.data[(d.tail - 1) and d.mask]
 
 func popFirst*[T](d: var Deque[T]): T =
   ## Removes and returns the first element of `d`. Terminates the program if
   ## `d` is empty.
-  if d.count == 0:
-    raiseEmpty()
+  {.cast(noSideEffect).}: assert d.count > 0, "Deque is empty"
   result = move(d.data[d.head])
   d.head = (d.head + 1) and d.mask
   dec d.count
@@ -121,8 +112,7 @@ func popFirst*[T](d: var Deque[T]): T =
 func popLast*[T](d: var Deque[T]): T =
   ## Removes and returns the last element of `d`. Terminates the program if
   ## `d` is empty.
-  if d.count == 0:
-    raiseEmpty()
+  {.cast(noSideEffect).}: assert d.count > 0, "Deque is empty"
   d.tail = (d.tail - 1) and d.mask
   result = move(d.data[d.tail])
   dec d.count
@@ -135,15 +125,13 @@ func `[]`*[T](d: Deque[T]; i: int): var T =
     for i in 1 .. 3: a.addLast(i)
     assert a[0] == 1
     assert a[2] == 3
-  if i < 0 or i >= d.count:
-    raiseIndex()
+  {.cast(noSideEffect).}: assert i >= 0 and i < d.count, "Deque index out of bounds"
   result = d.data[(d.head + i) and d.mask]
 
 func `[]=`*[T](d: var Deque[T]; i: int; val: sink T) =
   ## Sets the `i`-th element of `d` (0-based, counting from the front).
   ## Terminates the program if `i` is out of range.
-  if i < 0 or i >= d.count:
-    raiseIndex()
+  {.cast(noSideEffect).}: assert i >= 0 and i < d.count, "Deque index out of bounds"
   d.data[(d.head + i) and d.mask] = val
 
 func clear*[T](d: var Deque[T]) =
