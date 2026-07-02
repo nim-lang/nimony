@@ -92,9 +92,41 @@ proc layoutObject(m: var MainModule; t: Cursor): (Layout, seq[FieldInfo]) =
         fields.add FieldInfo(sym: f.name.symId, offset: off, typ: f.typ)
         off += fl.size
         maxAlign = max(maxAlign, fl.align)
-      elif n.typeKind in {ObjectT, UnionT}:
-        # anonymous nested aggregate (e.g. a variant's union): reserve its span;
-        # its inner fields are not flattened into this map (looked up via `typ`).
+      elif n.typeKind == UnionT:
+        # A variant's `union`: its branches OVERLAY, so every branch's fields
+        # start at the same offset. Each branch is an anonymous `object` wrapping
+        # that branch's fields (Nim `case` objects); lay each out and flatten its
+        # fields into this map at the shared union offset, reserving only the
+        # largest branch. Without this an `oconstr`/`dot` on a branch field finds
+        # no entry and mis-lays it (offset 0 / size 0).
+        var uAlign = 1'i64
+        var uSize = 0'i64
+        var brFields: seq[FieldInfo] = @[]   # branch fields, still 0-based
+        var u = n
+        u.into:
+          while u.hasMore:
+            if u.typeKind in {ObjectT, UnionT}:
+              let (bl, bf) = layoutObject(m, u)   # a branch object: 0-based fields
+              uAlign = max(uAlign, bl.align)
+              uSize = max(uSize, bl.size)
+              for f in bf: brFields.add f
+              skip u
+            elif u.substructureKind == FldU:      # a bare `fld` branch (robustness)
+              let f = takeFieldDecl(u)
+              let fl = typeLayout(m, f.typ)
+              uAlign = max(uAlign, fl.align)
+              uSize = max(uSize, fl.size)
+              brFields.add FieldInfo(sym: f.name.symId, offset: 0, typ: f.typ)
+            else:
+              skip u
+        off = roundUp(off, uAlign)
+        for f in brFields:
+          fields.add FieldInfo(sym: f.sym, offset: off + f.offset, typ: f.typ)
+        off += uSize
+        maxAlign = max(maxAlign, uAlign)
+        skip n
+      elif n.typeKind == ObjectT:
+        # a bare anonymous nested object (not a variant union): reserve its span.
         let (al, _) = layoutObject(m, n)
         off = roundUp(off, al.align)
         off += al.size
@@ -105,7 +137,9 @@ proc layoutObject(m: var MainModule; t: Cursor): (Layout, seq[FieldInfo]) =
   result = (Layout(size: roundUp(off, maxAlign), align: maxAlign), fields)
 
 proc unionLayout(m: var MainModule; t: Cursor): Layout =
-  ## A `union` overlays its fields: size = max field size, align = max field align.
+  ## A `union` overlays its members: size = max member size, align = max member
+  ## align. A member is either a bare `fld` or an anonymous `object` wrapping a
+  ## variant branch's fields (Nim `case` objects) — handle both.
   var maxSize = 0'i64
   var maxAlign = 1'i64
   var n = t
@@ -116,6 +150,11 @@ proc unionLayout(m: var MainModule; t: Cursor): Layout =
         let fl = typeLayout(m, f.typ)
         maxSize = max(maxSize, fl.size)
         maxAlign = max(maxAlign, fl.align)
+      elif n.typeKind in {ObjectT, UnionT}:
+        let (bl, _) = layoutObject(m, n)
+        maxSize = max(maxSize, bl.size)
+        maxAlign = max(maxAlign, bl.align)
+        skip n
       else:
         skip n
   result = Layout(size: roundUp(maxSize, maxAlign), align: maxAlign)

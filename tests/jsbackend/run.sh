@@ -264,6 +264,26 @@ if have_node; then
   } | node
 fi
 
+# ── variant / `case` objects: the branch fields live in a `union` whose members
+# are anonymous objects. `jslayout` overlays the branches (every branch's fields
+# share the union's offset) and flattens them into the field map, so an
+# `oconstr`/`dot` on a branch field lands at the right byte offset. `x` (a normal
+# field) at 0, the discriminant `k` at 8, and the union at 16; `mk(0,9)` builds
+# `N(x:100, k:0, a:9)` and returns `x + a` = 109 (a would clobber x at offset 0
+# if the branch field were mis-laid).
+gen tvariant
+if have_node; then
+  {
+    echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
+    echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)), setU8:(p,v)=>_dv.setUint8(p,v&0xff) };'
+    cat "$work/tvariant.js"
+    echo 'if (mk_0_tvariant(0,9)===109)'
+    echo '  { console.log("functional(variant): PASS"); }'
+    echo '  else { console.log("functional(variant): FAIL got "+mk_0_tvariant(0,9)); process.exit(1); }'
+  } | node
+fi
+
 # ── addresses (unified byte-pointer model): a pointer is an INTEGER byte offset.
 # An address-taken scalar local is spilled to a buffer slot, so `addr x` is its
 # offset and `deref` is a typed load/store — no boxing, no fat pointers.
