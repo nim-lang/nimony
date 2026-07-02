@@ -78,6 +78,9 @@ type
     currentProcStart: Cursor           # cursor at the start of the proc whose
                                        # body we are currently analysing (used
                                        # for the --verbose dump)
+    pathToVarId: Table[seq[SymId], VarId]  # maps a path (root :: field1 :: field2 :: ...) to a VarId
+    nextPathIndex: int32 # Counters used for paths
+
 
 proc dumpCurrentProc(c: var NjvlContext; info: PackedLineInfo; msg: string) =
   ## Dump the NJ IR of the proc currently under analysis to stderr. Used
@@ -149,17 +152,17 @@ proc skipSymbol(r: var Cursor): SymId {.inline.} =
 
 # --- Borrow checking ---
 
-proc extractBorrowPath(c: var NjvlContext; n: Cursor; result: var BorrowInfo; followInlineVars=true) =
+proc extractBorrowPath(c: var NjvlContext; n: Cursor; result: var BorrowInfo; followInlineVars=true; allowDeref=false) =
   ## Extract a path (root :: field1 :: field2 :: ...) from an expression,
   ## expanding inline variables.
   if n.kind == ParLe:
     let ek = n.exprKind
     if ek in {DotX, DdotX}:
-      if ek == DdotX and result.mode != HasAddr:
+      if ek == DdotX and result.mode != HasAddr and not allowDeref:
         result.mode = NotBorrowable
       var r = n
       inc r
-      extractBorrowPath(c, r, result, followInlineVars)
+      extractBorrowPath(c, r, result, followInlineVars, allowDeref)
       skip r # skip object subtree
       if r.kind == Symbol:
         result.path.add r.symId
@@ -167,53 +170,53 @@ proc extractBorrowPath(c: var NjvlContext; n: Cursor; result: var BorrowInfo; fo
       result.mode = HasAddr
       var r = n
       inc r
-      extractBorrowPath(c, r, result, followInlineVars)
+      extractBorrowPath(c, r, result, followInlineVars, allowDeref)
     elif ek == DerefX:
       if result.mode != HasAddr:
         result.mode = NotBorrowable
       var r = n
       inc r
-      extractBorrowPath(c, r, result, followInlineVars)
+      extractBorrowPath(c, r, result, followInlineVars, allowDeref)
     elif ek in {HaddrX, HderefX}:
       var r = n
       inc r
-      extractBorrowPath(c, r, result, followInlineVars)
+      extractBorrowPath(c, r, result, followInlineVars, allowDeref)
     elif ek in {TupatX, ArratX, AtX, PatX}:
       # Array/tuple access: recurse into container, don't distinguish indices
       var r = n
       inc r
-      extractBorrowPath(c, r, result, followInlineVars)
+      extractBorrowPath(c, r, result, followInlineVars, allowDeref)
     elif ek in ConvKinds:
       var r = n
       inc r
       skip r # type
-      extractBorrowPath(c, r, result, followInlineVars)
+      extractBorrowPath(c, r, result, followInlineVars, allowDeref)
     elif ek == BaseobjX:
       var r = n
       inc r
       skip r # type
       skip r # intlit
-      extractBorrowPath(c, r, result, followInlineVars)
+      extractBorrowPath(c, r, result, followInlineVars, allowDeref)
     elif ek in CallKinds:
       # we borrow from the first argument of the call:
       var r = n
       inc r
       skip r # fn
-      extractBorrowPath(c, r, result, followInlineVars)
+      extractBorrowPath(c, r, result, followInlineVars, allowDeref)
     elif ek in {AconstrX, SetconstrX, TupconstrX, OconstrX, NilX, TrueX, FalseX}:
       result.mode = IsBorrowableFromConst
     elif n.njvlKind == EtupatV:
       var r = n
       inc r
-      extractBorrowPath(c, r, result, followInlineVars)
+      extractBorrowPath(c, r, result, followInlineVars, allowDeref)
     elif n.njvlKind == VV:
-      extractBorrowPath(c, n.firstSon, result, followInlineVars)
+      extractBorrowPath(c, n.firstSon, result, followInlineVars, allowDeref)
   elif n.kind in {IntLit, UIntLit, CharLit, FloatLit, StringLit}:
     result.mode = IsBorrowableFromConst
   elif n.kind == Symbol:
     let s = n.symId
     if (followInlineVars or getType(c.typeCache, n).typeKind in {MutT, OutT, LentT}) and s in c.inlineVars:
-      extractBorrowPath(c, c.inlineVars.getOrQuit(s), result, followInlineVars)
+      extractBorrowPath(c, c.inlineVars.getOrQuit(s), result, followInlineVars, allowDeref)
     else:
       if result.mode != HasAddr:
         result.mode = IsBorrowable
@@ -224,9 +227,9 @@ proc extractBorrowPath(c: var NjvlContext; n: Cursor; result: var BorrowInfo; fo
             result.mode = IsBorrowableFromGlobal
       result.path.add s
 
-proc extractPath(c: var NjvlContext; n: Cursor; followInlineVars=true): BorrowInfo =
+proc extractPath(c: var NjvlContext; n: Cursor; followInlineVars=true, allowDeref=false): BorrowInfo =
   result = BorrowInfo(path: @[], mode: NotBorrowable, info: n.info)
-  extractBorrowPath(c, n, result, followInlineVars)
+  extractBorrowPath(c, n, result, followInlineVars, allowDeref)
 
 proc `$`(b: BorrowInfo): string =
   result = "BorrowInfo(mode: " & $b.mode & ", path: "
@@ -239,6 +242,15 @@ proc pathsOverlap(a, b: BorrowInfo): bool =
   ## Disjoint siblings (e.g. a.b vs a.c) do not overlap.
   if a.path.len == 0 or b.path.len == 0: return false
   let minLen = min(a.path.len, b.path.len)
+  for i in 0 ..< minLen:
+    if a.path[i] != b.path[i]:
+      return false
+  result = true
+
+proc isPrefix(a, b: BorrowInfo): bool =
+  ## Check if `a` is a prefix of `b`
+  if a.path.len == 0 or b.path.len == 0 or a.path.len > b.path.len: return false
+  let minLen = a.path.len
   for i in 0 ..< minLen:
     if a.path[i] != b.path[i]:
       return false
@@ -301,7 +313,23 @@ proc cfCondKnownValue(c: NjvlContext; n: Cursor): int =
   else:
     result = 0
 
+const PathVarIdBit = 1'i32 shl 30
+
+proc mintPathVarId(c: var NjvlContext): VarId =
+  inc c.nextPathIndex
+  result = VarId(PathVarIdBit or c.nextPathIndex)
+
 template getVarId(c: var NjvlContext; symId: SymId): VarId = VarId(symId)
+proc getPathVarId(c: var NjvlContext; path: seq[SymId]): VarId =
+  if path.len == 1:
+    return VarId(path[0])
+
+  c.pathToVarId.withValue(path, v):
+    return v[]
+  do:
+    result = mintPathVarId(c)
+    c.pathToVarId[path] = result
+
 
 # --- Fact extraction from conditions ---
 
@@ -370,9 +398,9 @@ proc translateCond(c: var NjvlContext; pc: var Cursor; wasEquality: var bool): L
     # We don't model the type-narrowing here, just the not-nil consequence.
     var probe = r
     inc probe
-    let sa = extractSymId(probe)
-    if sa != NoSymId:
-      result = isNotNil(getVarId(c, sa))
+    let sp = extractPath(c, probe, allowDeref=true)
+    if sp.mode == IsBorrowable and sp.path.len > 0 and sp.path[0] != NoSymId:
+      result = isNotNil(getPathVarId(c, sp.path))
     else:
       traverseExpr c, pc
       return result
@@ -385,9 +413,9 @@ proc translateCond(c: var NjvlContext; pc: var Cursor; wasEquality: var bool): L
     return result
   else:
     # Check for a bare symbol/hderef/haddr (truthy ref check: `if x:` means `x != nil`)
-    let sa = extractSymId(r)
-    if sa != NoSymId:
-      result = isNotNil(getVarId(c, sa))
+    let sp = extractPath(c, r, allowDeref=true).path
+    if sp.len > 0 and sp[0] != NoSymId:
+      result = isNotNil(getPathVarId(c, sp))
       skip r
       while negations > 0:
         negateFact(result)
@@ -412,8 +440,13 @@ proc translateCond(c: var NjvlContext; pc: var Cursor; wasEquality: var bool): L
     result.a = VarId(0)
     skip r
   else:
-    traverseExpr c, pc
-    return result
+    let lhsPath = extractPath(c, r, allowDeref = true)
+    if lhsPath.mode == IsBorrowable and lhsPath.path.len > 0:
+      result.a = getPathVarId(c, lhsPath.path)
+      skip r
+    else:
+      traverseExpr c, pc
+      return result
   if r.exprKind == NilX:
     wasEquality = false
   if not rightHandSide(c, r, result):
@@ -500,6 +533,19 @@ proc analysableRoot(c: var NjvlContext; n: Cursor): SymId =
   else:
     result = NoSymId
 
+proc analysablePath(c: var NjvlContext; n: Cursor): VarId =
+  let path = extractPath(c, n, allowDeref=true)
+  if path.mode == IsBorrowable and path.path.len > 0 and path.path[0] != NoSymId:
+    result = getPathVarId(c, path.path)
+  else:
+    result = InvalidVarId
+
+proc invalidatePathsWithPrefix(c: var NjvlContext; prefix: BorrowInfo) =
+  for path, vid in c.pathToVarId:
+    let bi = BorrowInfo(path: path, mode: IsBorrowable)
+    if isPrefix(prefix, bi):
+      c.facts.invalidateFactsAbout(vid)
+
 proc isNonNilExpr(c: var NjvlContext; n: Cursor): bool =
   ## Check if an expression is trivially non-nil without needing dataflow analysis.
   case n.exprKind
@@ -554,7 +600,16 @@ proc wantNotNil(c: var NjvlContext; n: Cursor) =
         if n.exprKind == NewobjX and c.procCanRaise:
           discard "fine, nil value is mapped to OOM by the compiler"
         else:
-          buildErr c, n.info, "cannot analyze expression is not nil: " & asNimCode(n)
+          # This path triggers for fields expressions
+          let p = analysablePath(c, n)
+          if p != InvalidVarId:
+            let fact = inferle.isNotNil(p)
+            if implies(c.facts, fact):
+              discard "fine, did prove access correct"
+            else:
+              buildErr c, n.info, "cannot prove expression is not nil: " & asNimCode(n)
+          else:
+            buildErr c, n.info, "cannot analyze expression is not nil: " & asNimCode(n)
       else:
         let fact = inferle.isNotNil(VarId r)
         if implies(c.facts, fact):
@@ -928,6 +983,7 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
       var inner = n
       inc inner # skip haddr tag
       needsBorrowCheck = true
+
     if pk == OutT:
       let s = extractSymId(n)
       if s != NoSymId:
@@ -977,6 +1033,7 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
 
   # Check borrow conflicts for the destination
   let destMutPath = extractPath(c, n)
+  let destPrefix = destMutPath
   if destMutPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
     checkBorrowConflict(c, destMutPath, n.info)
 
@@ -1002,9 +1059,11 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
       if fact.a == fact.b:
         variableChangedByDiff(c.facts, fact.a, fact.c)
       else:
+        invalidatePathsWithPrefix(c, destPrefix)
         invalidateFactsAbout(c.facts, fact.a)
         addAsgnFact c, fact
     else:
+      invalidatePathsWithPrefix(c, destPrefix)
       invalidateFactsAbout(c.facts, fact.a)
 
     # Check if the rhs is known to be not nil
@@ -1363,8 +1422,14 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     # Check borrow conflicts: passing a borrowed path to a var param is a mutation.
     inc n
     let unknownPath = extractPath(c, n)
+    let unknownPathFact = extractPath(c, n, allowDeref=true)
     if unknownPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
       checkBorrowConflict(c, unknownPath, n.info)
+
+    if unknownPathFact.mode in {IsBorrowable, IsBorrowableFromGlobal}:
+      invalidatePathsWithPrefix(c, unknownPathFact)
+      if unknownPathFact.path.len == 1: invalidateFactsAbout(c.facts, getVarId(c, unknownPathFact.path[0]))
+
     skip n # the unknown location
     skipParRi n
   of ContinueV:
