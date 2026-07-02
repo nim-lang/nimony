@@ -45,6 +45,7 @@ import ".." / lib / nifcdecl        # stmtKind/exprKind/substructureKind + Leng 
 import mangler
 import noptions
 import nifmodules                   # MainModule + load
+from ".." / lib / symparser import splitModulePath, splitSymName
 import jslayout                     # C-ABI layout: typeLayout/objectFields/accessOf (buffer model)
 import jsnif                        # the JS-as-NIF model + emitter (the only place JS text is produced)
 from ".." / lib / vfs import vfsExists, vfsRead, vfsWrite
@@ -65,10 +66,16 @@ type
                             ## (function-scoped) so they survive the labeled-block nesting
                             ## that goto-style exception handling lowers to
     skipCtr: int            ## counter minting fresh `$exs<n>` skip labels for dead-if pads
+    selfModule: string      ## this module's suffix (e.g. `sysvq0asl`) — tells a
+                            ## local (`x.0.<self>` not registered) from a foreign global
+    globalScalarCache: Table[SymId, bool]  ## memoized `isGlobalScalarVar`
 
 proc initJSGen(m: sink MainModule; flags: set[JSGenFlag]): JSGen =
-  JSGen(m: m, js: initJsBuilder(), flags: flags, boxed: initHashSet[SymId](),
-        localTypes: initTable[SymId, Cursor]())
+  result = JSGen(js: initJsBuilder(), flags: flags, boxed: initHashSet[SymId](),
+                 localTypes: initTable[SymId, Cursor](),
+                 globalScalarCache: initTable[SymId, bool]())
+  result.selfModule = splitModulePath(m.filename).name
+  result.m = m
 
 # ── symbol naming ─────────────────────────────────────────────────────────────
 
@@ -102,6 +109,46 @@ proc fieldName(g: JSGen; symId: SymId): string {.inline.} =
   ## Object-field key: always the mangled field name (matching the C backend),
   ## never an extern name — `name`'s foreign-decl lookup is for top-level symbols.
   mangleToC(g.m.pool.syms[symId])
+
+proc isGlobalScalarVar(g: var JSGen; symId: SymId): bool =
+  ## True when `symId` names a *module-level* `var`/`gvar`/`threadvar` of scalar
+  ## type (in this module or a foreign one). Such a global has static storage, so
+  ## in the linear-memory model it lives in a buffer slot: every module that
+  ## touches it must go through `mem`, not a bare JS name.
+  ##
+  ## This is what makes boxing CONSISTENT across modules. The per-module
+  ## `scanForAddr` only boxes a symbol where `(addr x)` textually appears — but a
+  ## global's address may be taken in its *defining* module (which then spills it
+  ## to a slot) while a *using* module references it bare, reading the slot offset
+  ## instead of the value. Deciding purely from the decl kind — visible identically
+  ## from every module via the lazily-loaded foreign declarations — removes that
+  ## whole-program dependency. Aggregate globals already route through
+  ## `isBufferAggregate`; `importc` globals are runtime-provided. As a side effect
+  ## the declared type is recorded in `localTypes`, so the slot load/store picks
+  ## the right `DataView` width. Memoized: a foreign lookup loads its owner once.
+  if g.globalScalarCache.hasKey(symId): return g.globalScalarCache[symId]
+  result = false
+  block compute:
+    if not g.m.hasLocalDecl(symId):
+      # Not a top-level decl of THIS module. A same-suffix symbol is therefore a
+      # local (inside a proc) — never a global; skip the foreign-load probe.
+      let sp = splitSymName(g.m.pool.syms[symId])
+      if sp.module.len == 0 or sp.module == g.selfModule: break compute
+      if not g.m.hasResolvableDecl(symId): break compute
+    let d = g.m.getDeclOrNil(symId)
+    if d == nil or d.isImport: break compute
+    if d.kind notin {VarY, GvarY, TvarY}: break compute
+    var p = d.pos
+    let vd = takeVarDecl(p)
+    if accessOf(g.m, vd.typ) == akAggregate: break compute  # aggregate: buffer path
+    g.localTypes[symId] = vd.typ
+    result = true
+  g.globalScalarCache[symId] = result
+
+proc isSlotVar(g: var JSGen; symId: SymId): bool {.inline.} =
+  ## A symbol read/written through a buffer slot: an address-taken local
+  ## (`scanForAddr`) or a scalar module-level global (consistent cross-module).
+  symId in g.boxed or g.isGlobalScalarVar(symId)
 
 # ── expression builder ────────────────────────────────────────────────────────
 
@@ -593,6 +640,16 @@ proc genAddrOf(g: var JSGen; n: var Cursor) =
       let (_, stride) = g.pointeeInfo(n)
       g.jbin("+", g.gx n, g.jbin("*", g.gx n, g.js.num stride))
       while n.hasMore: skip n
+  of BaseobjC:
+    # `(addr (baseobj T depth loc))` — the address of an inherited base subobject.
+    # The base is embedded at byte offset 0, so its address equals the address of
+    # the derived object: `addr(baseobj(loc)) == addr(loc)`. (Seen in a derived
+    # type's `=destroy`, which passes the base's address to the base destructor.)
+    n.into:
+      skip n            # target base type
+      skip n            # inheritance depth
+      g.genAddrOf n
+      while n.hasMore: skip n
   of NoExpr:
     if n.kind == Symbol:
       g.js.name g.name(n.symId); inc n     # address-taken scalar: its slot offset
@@ -648,15 +705,17 @@ proc gx(g: var JSGen; n: var Cursor) =
           g.js.name nm
         inc n
       else:
-        # an address-taken SCALAR local lives in a buffer slot (so it has a real
-        # byte address); read it with a typed load. An aggregate local already holds
+        # a slot-resident scalar (an address-taken local, or a module-level
+        # global — see `isSlotVar`) lives in a buffer slot with a real byte
+        # address; read it with a typed load. An aggregate local already holds
         # its offset, and ordinary locals stay JS registers — both read by name.
-        let ak = (if n.symId in g.boxed and g.localTypes.hasKey(n.symId): accessOf(g.m, g.localTypes[n.symId])
-                  elif n.symId in g.boxed: akI64
-                  else: akAggregate)   # sentinel meaning "emit name"
-        if n.symId in g.boxed and ak != akAggregate:
-          let (ld, _) = accessors(ak)
-          g.memMeth(ld): g.js.name nm
+        if g.isSlotVar(n.symId):
+          let ak = (if g.localTypes.hasKey(n.symId): accessOf(g.m, g.localTypes[n.symId]) else: akI64)
+          if ak != akAggregate:
+            let (ld, _) = accessors(ak)
+            g.memMeth(ld): g.js.name nm
+          else:
+            g.js.name nm
         else:
           g.js.name nm
         inc n
@@ -1049,9 +1108,11 @@ proc genVar(g: var JSGen; n: var Cursor) =
             g.gx v
             g.js.num lay.size
     return
-  if d.name.symId in g.boxed:
-    # address-taken scalar local: spill to a buffer slot so it has a real byte
-    # address (its variable holds the offset). Reads/writes go through mem.
+  if g.isSlotVar(d.name.symId):
+    # A slot-resident scalar: an address-taken local (spilled so it has a real
+    # byte address), or a module-level global (static storage, boxed the same in
+    # every module — see `isSlotVar`/`isGlobalScalarVar`). Its variable holds the
+    # slot offset; reads/writes go through `mem`.
     let lay = typeLayout(g.m, d.typ)
     g.jallocVar(nm, lay.size)
     if d.value.kind != DotToken:
@@ -1245,7 +1306,7 @@ proc genLvalueStore(g: var JSGen; lval: Cursor; val: Cursor) =
             (var v = val; g.gx v)
       while nn.hasMore: skip nn
   of NoExpr:
-    if n.kind == Symbol and n.symId in g.boxed:
+    if n.kind == Symbol and g.isSlotVar(n.symId):
       let ak = (if g.localTypes.hasKey(n.symId): accessOf(g.m, g.localTypes[n.symId]) else: akI64)
       if ak != akAggregate:
         let (_, st) = accessors(ak)

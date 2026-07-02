@@ -307,11 +307,42 @@ gen timportc
 if have_node; then
   {
     # the runtime supplies the importc `extTriple`; `triple` itself is not emitted.
+    # `counter` is a module-level global -> it lives in a buffer slot (boxed the
+    # same in every module), so it needs the linear-memory runtime and is read
+    # via `mem.i64n`, not by bare name.
+    echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
+    echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)) };'
     echo 'function extTriple(x){return x*3;}'
     cat "$work/timportc.js"
-    echo 'if (run_0_timportc()===21 && counter===21)'
+    echo 'if (run_0_timportc()===21 && mem.i64n(counter)===21)'
     echo '  { console.log("functional(ffi): PASS"); }'
     echo '  else { console.log("functional(ffi): FAIL"); process.exit(1); }'
+  } | node
+fi
+
+# ── cross-module boxing consistency: a module-level global scalar has static
+# storage, so in the linear-memory model it lives in a buffer slot in EVERY
+# module that touches it — the boxing decision follows the decl kind, not where
+# `(addr)` textually appears. Here one proc mutates `slot` through its ADDRESS
+# and another READS it plainly; both must go through `mem` on the same slot, so
+# the write is visible to the plain read. (Before the fix, a use in a module
+# that didn't take the address read the raw slot offset instead of the value —
+# the blocker for cross-module heap exceptions, whose `exc` threadvar is boxed
+# in `system` yet used bare in the raising module. True cross-module wiring is
+# verified end-to-end by the heap-exception programs, which need the full
+# toolchain and so live outside this self-contained suite.)
+gen tgmoddef
+if have_node; then
+  {
+    echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
+    echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)) };'
+    cat "$work/tgmoddef.js"
+    echo 'bumpViaAddr_0_tgmoddef(5);'            # slot: 7 -> 12 via its address
+    echo 'if (defget_0_tgmoddef()===12 && mem.i64n(slot)===12)'  # plain read agrees
+    echo '  { console.log("functional(gmodbox): PASS"); }'
+    echo '  else { console.log("functional(gmodbox): FAIL"); process.exit(1); }'
   } | node
 fi
 

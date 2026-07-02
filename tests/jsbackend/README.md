@@ -132,7 +132,8 @@ each under Node:
   Checks `checkedAdd(20,22)==42` and `storeTest()==42`.
 - `timportc.c.nif` (foreign symbols) → an `importc` proc is not emitted and is
   called by its C name (`extTriple`, supplied as the runtime); an `exportc`
-  global is emitted as `counter`. Checks `run()==21` and `counter==21`.
+  global is emitted as `counter`. As a module-level global it lives in a buffer
+  slot (see `tgmoddef`), so it is read via `mem.i64n(counter)`. Checks `run()==21`.
 - `techo.c.nif` (end-to-end I/O) → mirrors how `echo <int>` lowers: Nim procs
   (`echoInt`/`run`) call `importc` stdio (`stdout`, `putInt`, `putChar`) supplied
   by a tiny runtime that captures output; asserts `run()` prints `"55\n5\n"`.
@@ -140,3 +141,14 @@ each under Node:
   returns an `ErrorCode`, `if canRaise.err` forward-`jmp`s to a handler in a dead
   `if (false)` landing pad. The `jmp`/`lab`s become `break` in nested labeled
   blocks. Checks `run(false)==42` (normal path) and `run(true)==-1` (handler).
+- `tinherit.c.nif` (object inheritance) → a `Derived` object embeds its `Base`
+  at offset 0; `baseobj` conversion is a no-op on the byte offset and inherited
+  fields are laid out at the front. Checks `mk(30,12)==42`.
+- `tgmoddef.c.nif` (cross-module boxing consistency) → a module-level global
+  scalar has static storage, so it lives in a buffer slot in *every* module that
+  touches it — the boxing decision follows the decl kind, not where `(addr)`
+  textually appears. One proc mutates `slot` through its address, another reads
+  it plainly; both go through `mem` on the same slot. Checks `defget()==12` after
+  `bumpViaAddr(5)`. (This is what unblocks cross-module heap exceptions, whose
+  `exc` threadvar is boxed in `system` yet used bare in the raising module; the
+  full path is verified e2e by the heap-exception programs outside this suite.)

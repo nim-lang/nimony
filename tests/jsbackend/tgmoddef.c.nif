@@ -1,0 +1,21 @@
+(.nif27)
+(stmts
+ (gvar :slot.0.tgmoddef
+  (pragmas
+   (exportc "slot"))
+  (i 64)
+  7)
+ (proc :bumpViaAddr.0.tgmoddef
+  (params
+   (param :d.0 . (i 64)))
+  .
+  .
+  (stmts
+   (var :p.0 . (i 64) (addr slot.0.tgmoddef))
+   (asgn (deref p.0) (add (i 64) (deref p.0) d.0))))
+ (proc :defget.0.tgmoddef
+  (params)
+  (i 64)
+  .
+  (stmts
+   (ret slot.0.tgmoddef))))
