@@ -1,0 +1,15 @@
+(.nif27)
+(stmts
+ (proc :sump.0.tptrarray
+  (params (param :a.0 . (ptr (array (i 64) 3))))
+  (i 64)
+  .
+  (stmts (ret (add (i 64) (at a.0 0) (add (i 64) (at a.0 1) (at a.0 2))))))
+ (proc :driver.0.tptrarray
+  (params)
+  (i 64)
+  .
+  (stmts
+   (var :arr.0 . (array (i 64) 3) (aconstr (array (i 64) 3) 7 11 13))
+   (var :p.0 . (ptr (array (i 64) 3)) (addr arr.0))
+   (ret (call sump.0.tptrarray p.0)))))

@@ -119,6 +119,23 @@ if have_node; then
   } | node
 fi
 
+# ── array indexing through a pointer `(at a i)` where `a: ptr [N]T` — how an array
+# is passed by reference (seqimpl's `@` array->seq conversion indexes the source
+# this way). Element access steps through the pointer: `a + i*stride`, not the
+# legacy `a[i]`. A pointer to `[7,11,13]` sums to 31. (Regression guard for the
+# seq-of-objects bug: aggregate elements read as zero when this fell to `a[i]`.)
+gen tptrarray
+if have_node; then
+  {
+    echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
+    echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)) };'
+    cat "$work/tptrarray.js"
+    echo 'if (driver_0_tptrarray()===31) { console.log("functional(ptrarray): PASS"); }'
+    echo 'else { console.log("functional(ptrarray): FAIL got "+driver_0_tptrarray()); process.exit(1); }'
+  } | node
+fi
+
 # ── function pointers (proc value + indirect call) — the closure dispatch path.
 # A proc taken as a value becomes a function-table index (`_fnid(fn)`); a call
 # through a proc variable is `_fns[idx](args)` (JS can't call an integer). `dbl` is
