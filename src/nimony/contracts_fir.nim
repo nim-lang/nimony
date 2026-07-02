@@ -70,6 +70,10 @@ type
     procCanRaise: bool
     moduleSuffix: string
     nestedProcs: int
+    loopExitLabels: HashSet[SymId]     # `(lab)`s emitted right after a `(loop)`.
+                                       # Their post-join facts are the pre-loop
+                                       # set `traverseLoop` rolled back to (via
+                                       # the inferle journal), not "know nothing".
     inlineVars: Table[SymId, Cursor] # var -> to its init expression
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
     activeBorrows: seq[BorrowInfo]
@@ -1038,7 +1042,11 @@ proc bindKeyBoth(c: var NjvlContext; key: ExitKey[SymId]) =
   case key.kind
   of ekLabel:
     bindLabel(c.tr, key.label)
-    if hadExit: c.facts.clearJournaled()
+    # A loop-exit label keeps the journal-restored pre-loop facts (see
+    # `traverseLoop`); only a *general* forward-jump join collapses to "know
+    # nothing", since finalir doesn't snapshot facts per `jmp`.
+    if hadExit and not c.loopExitLabels.contains(key.label):
+      c.facts.clearJournaled()
   of ekReturn: bindReturn(c.tr)
   of ekRaise: bindRaise(c.tr)
   of ekContinue: dropContinue(c.tr)
@@ -1138,6 +1146,15 @@ proc traverseLoop(c: var NjvlContext; n: var Cursor) =
   # the borrowed container after the loop is wrongly seen as still-borrowed.
   c.activeBorrows.setLen(savedBorrows)
   skipParRi n
+  # The trailing `(lab loopExit)` (emitted iff a `break`/guard targeted it) is
+  # *this* loop's exit. Its facts are the pre-loop set we just rolled back to —
+  # a `dirp != nil` established before the loop and never reassigned inside it
+  # still holds. Record it so `bindKeyBoth` keeps those facts instead of
+  # collapsing the join to "know nothing".
+  if n.kind == ParLe and n.njvlKind == LabV:
+    var peek = n
+    inc peek
+    c.loopExitLabels.incl peek.symId
 
 proc traverseLabel(c: var NjvlContext; n: var Cursor) =
   ## `(lab L)` — the multi-join. Every forward `jmp L` has already been seen.
@@ -1671,6 +1688,7 @@ proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; verbose
     typeCache: createTypeCache(),
     moduleSuffix: moduleSuffix,
     tr: newInitTracker(),
+    loopExitLabels: initHashSet[SymId](),
     facts: createFacts(),
     verbose: verbose
   )
