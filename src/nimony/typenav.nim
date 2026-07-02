@@ -580,6 +580,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     result = c.builtins.autoType
   of ToClosureX:
     let srcProc = getTypeImpl(c, n.firstSon, flags).asRoutine
+    assert srcProc.kind != NoSym
     var buf = createTokenBuf()
     copyIntoKind(buf, srcProc.kind, n.info):
       buf.addDotToken() # name
@@ -590,9 +591,9 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       buf.addSubtree srcProc.retType
       copyIntoKind(buf, PragmasU, srcProc.pragmas.info):
         if srcProc.pragmas.kind != DotToken:
-          var n = srcProc.pragmas
-          loopInto n:
-            buf.addSubtree n
+          var n2 = srcProc.pragmas
+          loopInto n2:
+            buf.takeTree n2
         buf.addParPair(ClosureP)
       buf.addDotToken # effects
     c.mem.add buf

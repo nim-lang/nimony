@@ -18,3 +18,10 @@ proc testNonClosureInt(clsr: proc (x: int): int {.closure.}) =
   assert clsr(123) == 369
 
 testNonClosureInt(nonClosureInt)
+
+proc nonClosurePassive(x: int): int {.passive.} = x * -3
+
+proc testNonClosurePassive(clsr: proc (x: int): int {.closure, passive.}) =
+  assert clsr(123) == -369
+
+testNonClosurePassive(nonClosurePassive)

@@ -114,7 +114,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
     let info = n.info
     # fallback to init wrapper call for methods, closures, proctype
     # calls because we cant restore its coroTypeForProc
-    if typ.typeKind == MethodT or procHasPragma(typ, ClosureP) or typ.firstSon.kind == DotToken:
+    if typ.typeKind == MethodT or procHasPragma(typ, ClosureP) or typ.firstSon.kind == DotToken or n.firstSon.symKind notin RoutineKinds:
       let contVar = pool.syms.getOrIncl("`contVar." & $c.currentProc.counter)
       inc c.currentProc.counter
       copyIntoKind dest, VarS, info:
