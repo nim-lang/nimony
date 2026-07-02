@@ -1,1 +1,0 @@
-tests/nimony/notnil/tnil_mutate.nim(12, 5) Error: cannot prove expression is not nil: a [pass --verbose for the NJ IR]
