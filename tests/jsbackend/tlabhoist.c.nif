@@ -1,0 +1,12 @@
+(.nif27)
+(stmts
+ (proc :compute.0.tlabhoist
+  (params)
+  (i 64)
+  .
+  (stmts
+   (var :result.0 . (i 64) 0)
+   (asgn result.0 41)
+   (lab :done.0.tlabhoist)
+   (asgn result.0 (add (i 64) result.0 1))
+   (ret result.0))))

@@ -264,6 +264,22 @@ if have_node; then
   } | node
 fi
 
+# ── labeled-block var hoisting: a `(lab …)` (a loop break/continue target, or a
+# goto pad) makes the codegen wrap statements in a labeled block. A function-
+# scoped local declared before the label but read after it must be a `var` (whole
+# function), not a block-scoped `let` — otherwise it is out of scope at the read
+# (this is what broke `result` in stdlib loops, e.g. `std/tables` resize and the
+# float `default`). `compute` sets `result`=41 before `done:`, then reads it after.
+gen tlabhoist
+if have_node; then
+  {
+    cat "$work/tlabhoist.js"
+    echo 'if (compute_0_tlabhoist()===42)'
+    echo '  { console.log("functional(labhoist): PASS"); }'
+    echo '  else { console.log("functional(labhoist): FAIL got "+compute_0_tlabhoist()); process.exit(1); }'
+  } | node
+fi
+
 # ── inheritance (object layout + construction): a `Derived` embeds its `Base` at
 # offset 0, so an INHERITED field is read at the base's offset, and the oconstr's
 # positional base initializer `(oconstr Base …)` is constructed in place at offset

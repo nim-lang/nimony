@@ -62,9 +62,9 @@ type
     todos: int
     boxed: HashSet[SymId]   ## locals whose address is taken (see `scanForAddr`)
     localTypes: Table[SymId, Cursor]  ## var/param -> declared type (for buffer-model access)
-    hoistLocals: bool       ## in a proc that contains `jmp`: declare locals with `var`
-                            ## (function-scoped) so they survive the labeled-block nesting
-                            ## that goto-style exception handling lowers to
+    hoistLocals: bool       ## in a proc that contains `(lab …)` (goto pad or loop
+                            ## break target): declare locals with `var` (function-scoped)
+                            ## so they survive the labeled-block nesting they lower to
     skipCtr: int            ## counter minting fresh `$exs<n>` skip labels for dead-if pads
     selfModule: string      ## this module's suffix (e.g. `sysvq0asl`) — tells a
                             ## local (`x.0.<self>` not registered) from a foreign global
@@ -955,10 +955,16 @@ proc cfScan(n: var Cursor; want: LengStmt; found: var bool) =
   else:
     inc n
 
-proc bodyHasJmp(g: var JSGen; body: Cursor): bool =
+proc bodyHasLabels(g: var JSGen; body: Cursor): bool =
+  ## True when the proc body contains a `(lab …)` — either a goto landing pad
+  ## (exception handling) or a loop break/continue target. Both make
+  ## `genStmtList` wrap statements in labeled blocks, so any function-scoped local
+  ## declared before a label but read after it must be a function-scoped `var`
+  ## (see `localVar`/`hoistLocals`), not a block-scoped `let`. Scanning for `lab`
+  ## rather than `jmp` covers the loop case too (a `jmp` always targets a `lab`).
   var c = body
   result = false
-  cfScan(c, JmpS, result)
+  cfScan(c, LabS, result)
 
 proc labelName(g: var JSGen; n: Cursor): string =
   ## The JS identifier for the label a `(jmp SYM)` / `(lab SYMDEF)` carries.
@@ -1425,10 +1431,11 @@ proc genProc(g: var JSGen; n: var Cursor) =
   var prc = takeProcDecl(n)
   if g.isImportc(prc.name.symId): return   # external proc: provided by the runtime
   let savedHoist = g.hoistLocals
-  # A proc whose body contains `jmp`s (goto-style exception handling) is emitted
-  # with its statement list wrapped in nested labeled blocks; declare its locals
-  # function-scoped (`var`) so values set before a label survive being read after.
-  g.hoistLocals = g.bodyHasJmp(prc.body)
+  # A proc whose body contains `(lab …)`s — a goto pad (exception handling) or a
+  # loop break/continue target — is emitted with its statement list wrapped in
+  # nested labeled blocks; declare its locals function-scoped (`var`) so a value
+  # (e.g. `result`) declared before a label survives being read after the block.
+  g.hoistLocals = g.bodyHasLabels(prc.body)
   g.js.tree jFunc:
     g.js.name g.name(prc.name.symId)
     g.js.tree jParams:
