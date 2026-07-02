@@ -104,6 +104,18 @@ proc emitJmp(dest: var TokenBuf; name: SymId; info: PackedLineInfo) =
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor)
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
+type
+  CallInfo = object
+    # Each entry holds the inner location expression of a `(haddr …)` argument.
+    # Recording the full path (not just the root sym) lets later alias analysis
+    # tell `c.field` apart from other fields of `c`. We copy the path into its
+    # own buffer rather than holding a Cursor into `dest`, which any later
+    # append to `dest` would invalidate via COW.
+    mutates: seq[TokenBuf]
+    info: PackedLineInfo
+
+proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo
+
 proc trStmtsInline(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Translate the children of a `(stmts ...)`/`(scope ...)` *without* emitting
   ## a wrapping node. The caller already opened the enclosing list.
@@ -148,19 +160,17 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       dest.takeToken n
       while n.hasMore:
-        trExpr c, dest, n
+        if n.kind == ParLe and n.exprKind in CallKinds:
+          # A call surviving to the Final IR in an operand position is an
+          # lvalue location (xelim lifts every value-producing call), e.g. the
+          # `s[i]` argument of a location-taking builtin like `=wasMoved`.
+          # Emit it via `trCall`, which accepts a call here, rather than the
+          # plain-expression path that rejects one. (Matches nj.nim / #2081.)
+          discard trCall(c, dest, n)
+        else:
+          trExpr c, dest, n
       dest.takeToken n
   of ParRi: bug "Unmatched ParRi"
-
-type
-  CallInfo = object
-    # Each entry holds the inner location expression of a `(haddr …)` argument.
-    # Recording the full path (not just the root sym) lets later alias analysis
-    # tell `c.field` apart from other fields of `c`. We copy the path into its
-    # own buffer rather than holding a Cursor into `dest`, which any later
-    # append to `dest` would invalidate via COW.
-    mutates: seq[TokenBuf]
-    info: PackedLineInfo
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
   let info = n.info
