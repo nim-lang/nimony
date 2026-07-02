@@ -4623,16 +4623,18 @@ template toplevelGuard(c: var SemContext; body: untyped) =
 
 template localSigGuard(c: var SemContext; body: untyped) =
   ## Toplevel let/var are processed in the body phase as before. In the
-  ## signature phase they are still deferred (copied verbatim), but an
-  ## atom-typed one is also recorded by name so that a later signature-phase
-  ## `when` condition referencing it can drive just its signature on demand
-  ## (see `semIdentImpl` / `resolveDeferredLocal`, nim-lang/nimony#1974).
-  ## Recording is side-effect-free for modules without such a `when`, so
-  ## their body-phase output is unchanged.
+  ## signature phase they are still deferred (copied verbatim), but each is
+  ## also recorded by name so that a later signature-phase `when` condition
+  ## referencing it can drive just its signature on demand (see `semIdentImpl`
+  ## / `resolveDeferredLocal`, nim-lang/nimony#1974). Whether a recorded decl
+  ## is *actually* resolvable early is decided at resolve time by a linear
+  ## scan of its type (`typeSymsAvailable`), not by any syntactic gate here.
+  ## Recording is side-effect-free for modules without such a `when`, so their
+  ## body-phase output is unchanged.
   if c.phase == SemcheckBodies:
     body
   else:
-    if c.phase == SemcheckSignatures and localHasAtomExplicitType(it.n):
+    if c.phase == SemcheckSignatures:
       recordDeferredLocal(c, it.n)
     dest.takeTree it.n
 

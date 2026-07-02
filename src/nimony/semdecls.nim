@@ -254,6 +254,36 @@ proc recordDeferredLocal*(c: var SemContext; n: Cursor) =
   if name.kind == Ident:
     c.deferredLocals[name.litId] = n
 
+proc typeSymsAvailable(c: var SemContext; n: var Cursor): bool =
+  ## Linear scan over an unsemmed type expression: true iff every name it
+  ## references is already available in the signature phase — each `Ident`
+  ## is declared in the current scopes/imports and each `Symbol` (e.g.
+  ## template-injected) loads to a non-typevar decl. A generic `T` is *not*
+  ## available (it still needs instantiation), so `var x: T` stays deferred
+  ## while a fully-concrete `seq[int]` resolves. Consumes the subtree on
+  ## `true`; on `false` the search stops immediately and `n` is left
+  ## mid-subtree (callers pass a copy and abandon it).
+  ##
+  ## This is the atom-visiting analog of the `linearScan` traversal primitive
+  ## (nim-lang/nimony#2064): a whole-subtree walk that, unlike `linearScan`
+  ## (which stops at each `ParLe`), must also inspect the leaf `Ident`/`Symbol`
+  ## tokens. When that primitive lands on master, fold this onto it.
+  case n.kind
+  of Ident:
+    if not isDeclared(c, n.litId): return false
+    inc n
+  of Symbol:
+    let res = tryLoadSym(n.symId)
+    if res.status != LacksNothing or res.decl.tagEnum == TypevarTagId:
+      return false
+    inc n
+  of ParLe:
+    n.loopInto:
+      if not typeSymsAvailable(c, n): return false
+  else:
+    inc n
+  result = true
+
 proc resolveDeferredLocal(c: var SemContext; ident: StrId): bool =
   ## On-demand signature resolution for a deferred toplevel let/var: sem just
   ## its signature into a throwaway buffer so the symbol becomes visible
@@ -279,6 +309,19 @@ proc resolveDeferredLocal(c: var SemContext; ident: StrId): bool =
     elif sk == TletS: TletY
     elif sk == TvarS: TvarY
     else: return false
+  # Availability gate (review, nim-lang/nimony#1974): resolve early only when
+  # every symbol the explicit type references is already available in the
+  # signature phase; otherwise leave the decl fully deferred, so the `when`
+  # reference degrades to a clean "undeclared". The rollback in `semLocal`
+  # below remains as the safety net for types that pass the scan but still
+  # fail to sem.
+  var typ = decl
+  inc typ   # past the (let/var tag
+  skip typ  # name
+  skip typ  # export marker
+  skip typ  # pragmas
+  if typ.kind == DotToken: return false  # inferred: needs the init value
+  if not typeSymsAvailable(c, typ): return false
   var scratch = createTokenBuf()
   # Force the signature phase so `semLocal` takes its value-verbatim path
   # (the `when` condition is folded at a temporarily-forced body phase).

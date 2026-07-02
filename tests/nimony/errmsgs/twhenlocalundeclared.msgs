@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/twhenlocalundeclared.nim(6, 8) Error: undeclared identifier: T
+tests/nimony/errmsgs/twhenlocalundeclared.nim(7, 6) Error: undeclared identifier: x
