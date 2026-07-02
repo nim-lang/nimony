@@ -7,7 +7,7 @@ type
     NoExpr
     ErrX = (ord(ErrTagId), "err")  ## indicates an error
     SufX = (ord(SufTagId), "suf")  ## literal with suffix annotation
-    AtX = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)`
+    AtX = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)` where an argument may also be a constant *value* bound to a `staticTypevar`
     DerefX = (ord(DerefTagId), "deref")  ## pointer deref operation
     DotX = (ord(DotTagId), "dot")  ## object field selection; optional integer is the inheritance depth of the field; optional trailing `STRLIT` is an *access token* (carrying `"x"` like an export marker) — when present, the expression was already type-checked in a scope with access to the field, so re-check at expansion/serialization sites must accept the access even if the field is private. Emitted by sem when a template body or `.semantics` serializer is type-checked in the field's defining module and later expanded/consumed elsewhere.
     PatX = (ord(PatTagId), "pat")  ## pointer indexing operation
@@ -199,7 +199,7 @@ type
   NimonyType* = enum
     NoType
     ErrT = (ord(ErrTagId), "err")  ## indicates an error
-    AtT = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)`
+    AtT = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)` where an argument may also be a constant *value* bound to a `staticTypevar`
     AndT = (ord(AndTagId), "and")  ## boolean `and` operation; `Y+` form is also used for concept parent lists with more than two parents
     OrT = (ord(OrTagId), "or")  ## boolean `or` operation
     NotT = (ord(NotTagId), "not")  ## boolean `not` operation
