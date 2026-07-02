@@ -458,7 +458,7 @@ proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
           skipParRi c, n
           skipParRi c, n
         of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
-            TypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU,
+            TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU,
             CaseU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
             UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU,
             GfldU, CallargsU, ForcallU, NoSub:
@@ -468,7 +468,7 @@ proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
     of NilU:
       skip n
     of NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU,
-        EfldU, WhenU, ElifU, ElseU, TypevarsU, OfU, StmtsU,
+        StaticTypevarU, EfldU, WhenU, ElifU, ElseU, TypevarsU, OfU, StmtsU,
         ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
         UnpacktupU, ExceptU, FinU, UncheckedU, CallargsU,
         ForcallU, NoSub:
@@ -919,7 +919,7 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
     # count each typevar as used:
     n.into:                                     # (typevars ...)
       while n.hasMore:
-        assert n.symKind == TypevarY
+        assert n.symKind in {TypevarY, StaticTypevarY}
         n.into:                                 # (typevar ...)
           let (typevar, _) = getSymDef(c, n)
           while n.hasMore: skip n
@@ -1007,7 +1007,7 @@ proc trTypeDecl(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: Traver
     # count each typevar as used:
     n.into:                                     # (typevars ...)
       while n.hasMore:
-        assert n.symKind == TypevarY
+        assert n.symKind in {TypevarY, StaticTypevarY}
         n.into:                                 # (typevar ...)
           let (typevar, _) = getSymDef(c, n)
           while n.hasMore: skip n               # consume rest of body (skipToEnd would eat the parri too)
@@ -1878,7 +1878,7 @@ proc trCase(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       trStmt c, dest, n
       takeParRi dest, n
     of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
-        TypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
+        TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
         StmtsU, ParamsU, PragmasU, EitherU, JoinU,
         UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU,
         GfldU, CallargsU, ForcallU, NoSub:

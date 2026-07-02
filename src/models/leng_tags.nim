@@ -120,6 +120,7 @@ type
     RangesU = (ord(RangesTagId), "ranges")
     ParamU = (ord(ParamTagId), "param")  ## parameter declaration
     TypevarU = (ord(TypevarTagId), "typevar")  ## type variable declaration; constraint `.T` is optional
+    StaticTypevarU = (ord(StaticTypevarTagId), "staticTypevar")  ## value generic parameter: a generic parameter that is a compile-time *value*; the type slot holds the value's plain element type (e.g. `int` for `N: static[int]`), never a `static` wrapper
     EfldU = (ord(EfldTagId), "efld")  ## enum field declaration; slot 2 carries the export marker *or* the compile-time value (may be `.`)
     FldU = (ord(FldTagId), "fld")  ## field declaration
     ElifU = (ord(ElifTagId), "elif")  ## pair of (condition, action)
@@ -128,7 +129,7 @@ type
     PragmasU = (ord(PragmasTagId), "pragmas")  ## begin of pragma section
 
 proc rawTagIsLengOther*(raw: TagEnum): bool {.inline.} =
-  raw in {KvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, EfldTagId, FldTagId, ElifTagId, ElseTagId, OfTagId, PragmasTagId}
+  raw in {KvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, StaticTypevarTagId, EfldTagId, FldTagId, ElifTagId, ElseTagId, OfTagId, PragmasTagId}
 
 type
   LengPragma* = enum
