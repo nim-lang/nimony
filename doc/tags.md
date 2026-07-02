@@ -98,8 +98,8 @@
 | `(corofor X S)` | NimonyStmt | closure-iterator for loop, lowered shape used between iterinliner and cps; first child is the iterator call, second child is a `(stmts ...)` whose first inner statement is a `(var :forLoopVar T .)` declaration that receives each yielded value |
 | `(case X (of (ranges...) S)+ (else X)?)` | LengStmt, NimonyStmt, NimonyOther, NiflerKind | `case` statement |
 | `(of (ranges ...) S)` | LengOther, NimonyOther, NiflerKind | `of` branch within a `case` statement |
-| `(lab D)` | LengStmt, LengSym | label, target of a `jmp` instruction |
-| `(jmp Y)` | LengStmt | jump/goto instruction |
+| `(lab D)` | LengStmt, LengSym, NjvlKind | label, target of a `jmp` instruction |
+| `(jmp Y)` | LengStmt, NjvlKind | jump/goto instruction |
 | `(ret .X)` | LengStmt, NimonyStmt, NiflerKind | `return` instruction |
 | `(yld .X)` | NimonyStmt, NiflerKind | yield statement |
 | `(stmts S*)` | LengStmt, NimonyStmt, NimonyOther, NiflerKind | list of statements |

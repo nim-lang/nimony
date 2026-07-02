@@ -1,5 +1,4 @@
-import std/encodings
-import std/assertions
+import std/[encodings, syncio, assertions]
 
 template noRaise(x: untyped): untyped {.untyped.} =
   try:
@@ -11,7 +10,7 @@ proc openNoRaise(destEncoding = "UTF-8", srcEncoding = "CP1252"): EncodingConver
   try:
     result = open(destEncoding, srcEncoding)
   except:
-    assert false
+    quit "failed to open encoding converter"
 
 var fromGBK = openNoRaise("utf-8", "gbk")
 var toGBK = openNoRaise("gbk", "utf-8")
