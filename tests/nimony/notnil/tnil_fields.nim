@@ -12,8 +12,10 @@ proc main =
   if a != nil:
     a.next = b
     a.x += 1
+    echo a.x
     if a.next != nil:
       a.next.x += 1
+      echo a.next.x
 
 try:
   main()
