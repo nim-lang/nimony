@@ -34,6 +34,20 @@ import nimony_model, programs, decls, typenav, sembasics, reporters,
   renderer, typeprops, inferle, xints, builtintypes
 import implications
 
+type SymPath = object
+  data: seq[SymId]
+proc `$`(s: SymId): string = $(s.uint32)
+func hash(s: SymPath): Hash =
+  var h: Hash = 0
+  for item in s.data: h = h !& hash(item)
+  result = !$h
+func `==`(s1, s2: SymPath): bool =
+  if s1.data.len != s2.data.len: return false
+  for i in 0..s1.data.high:
+    if s1.data[i] != s2.data[i]: return false
+
+  return true
+
 type
   BorrowableCheck = enum
     IsBorrowable       ## simple path: symbols, dots, array access
@@ -78,9 +92,8 @@ type
     currentProcStart: Cursor           # cursor at the start of the proc whose
                                        # body we are currently analysing (used
                                        # for the --verbose dump)
-    pathToVarId: Table[seq[SymId], VarId]  # maps a path (root :: field1 :: field2 :: ...) to a VarId
+    pathToVarId: Table[SymPath, VarId]  # maps a path (root :: field1 :: field2 :: ...) to a VarId
     nextPathIndex: int32 # Counters used for paths
-
 
 proc dumpCurrentProc(c: var NjvlContext; info: PackedLineInfo; msg: string) =
   ## Dump the NJ IR of the proc currently under analysis to stderr. Used
@@ -324,11 +337,12 @@ proc getPathVarId(c: var NjvlContext; path: seq[SymId]): VarId =
   if path.len == 1:
     return VarId(path[0])
 
-  if path in c.pathToVarId:
-    result = c.pathToVarId[path]
-  else:
+  let sp = SymPath(data: path)
+  result = c.pathToVarId.getOrDefault(sp, InvalidVarId)
+
+  if result == InvalidVarId:
     result = mintPathVarId(c)
-    c.pathToVarId[path] = result
+    c.pathToVarId[sp] = result
 
 
 # --- Fact extraction from conditions ---
@@ -542,7 +556,7 @@ proc analysablePath(c: var NjvlContext; n: Cursor): VarId =
 
 proc invalidatePathsWithPrefix(c: var NjvlContext; prefix: BorrowInfo) =
   for path, vid in c.pathToVarId:
-    let bi = BorrowInfo(path: path, mode: IsBorrowable)
+    let bi = BorrowInfo(path: path.data, mode: IsBorrowable)
     if isPrefix(prefix, bi):
       c.facts.invalidateFactsAbout(vid)
 
