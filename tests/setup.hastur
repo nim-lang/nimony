@@ -1,0 +1,3 @@
+# Prep for the whole test tree: build the full toolchain so every
+# suite (nimony runner + nj/vl/dagon/pnak/boot/... setup.nim) has its tools.
+build
