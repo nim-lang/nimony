@@ -245,6 +245,25 @@ if have_node; then
   } | node
 fi
 
+# ── inheritance (object layout + construction): a `Derived` embeds its `Base` at
+# offset 0, so an INHERITED field is read at the base's offset, and the oconstr's
+# positional base initializer `(oconstr Base …)` is constructed in place at offset
+# 0. `objectFields` walks the base chain (so `d.k` — `k` declared on `Base` — is
+# found) and `baseobj` is a no-op on the offset. `mk(30,12)` builds a `Derived`
+# {k:30 (inherited), m:12} and `sum` reads k + m = 42.
+gen tinherit
+if have_node; then
+  {
+    echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
+    echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)) };'
+    cat "$work/tinherit.js"
+    echo 'if (mk_0_tinherit(30,12)===42)'
+    echo '  { console.log("functional(inheritance): PASS"); }'
+    echo '  else { console.log("functional(inheritance): FAIL got "+mk_0_tinherit(30,12)); process.exit(1); }'
+  } | node
+fi
+
 # ── addresses (unified byte-pointer model): a pointer is an INTEGER byte offset.
 # An address-taken scalar local is spilled to a buffer slot, so `addr x` is its
 # offset and `deref` is a typed load/store — no boxing, no fat pointers.

@@ -1,0 +1,27 @@
+(.nif27)
+(stmts
+ (type :Base.0.tinherit .
+  (object .
+   (fld :k.0.tinherit . (i 64))))
+ (type :Derived.0.tinherit .
+  (object Base.0.tinherit
+   (fld :m.0.tinherit . (i 64))))
+ (proc :sum.0.tinherit
+  (params (param :d.0 . Derived.0.tinherit))
+  (i 64)
+  .
+  (stmts
+   (ret (add (i 64) (dot d.0 k.0.tinherit) (dot d.0 m.0.tinherit)))))
+ (proc :mk.0.tinherit
+  (params
+   (param :a.0 . (i 64))
+   (param :b.0 . (i 64)))
+  (i 64)
+  .
+  (stmts
+   (var :d.1 . Derived.0.tinherit
+    (oconstr Derived.0.tinherit
+     (oconstr Base.0.tinherit
+      (kv k.0.tinherit a.0))
+     (kv m.0.tinherit b.0)))
+   (ret (call sum.0.tinherit d.1)))))

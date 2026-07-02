@@ -336,6 +336,10 @@ proc exprType(g: var JSGen; n: Cursor): (bool, Cursor) =
     e.into:
       result = (true, e)             # the explicit target type
       while e.hasMore: skip e
+  of BaseobjC:
+    e.into:
+      result = (true, e)             # the target base type (offset 0 in the derived)
+      while e.hasMore: skip e
   else: discard
 
 proc dotObjType(g: var JSGen; base: Cursor): (bool, Cursor) =
@@ -353,8 +357,10 @@ proc dotObjType(g: var JSGen; base: Cursor): (bool, Cursor) =
 
 proc pointeeAk(g: var JSGen; operand: Cursor): AccessKind =
   ## Access kind of the pointee for a `(deref p)` / pointer store. The pointer's
-  ## static type (`exprType`) gives it: a real `(ptr T)` yields `accessOf(T)`; a
-  ## value loosely typed as its pointee yields `accessOf` of that type.
+  ## static type (`exprType`) gives it: a real `(ptr T)` yields `accessOf(T)`; an
+  ## array/flexarray operand (indexed like a pointer, e.g. a vtable's method table)
+  ## yields its element's kind; a value loosely typed as its pointee yields
+  ## `accessOf` of that type.
   result = akI64
   let (ok, t) = g.exprType(operand)
   if ok:
@@ -363,12 +369,17 @@ proc pointeeAk(g: var JSGen; operand: Cursor): AccessKind =
       inner.into:
         result = accessOf(g.m, inner)
         while inner.hasMore: skip inner
+    elif t.typeKind in {ArrayT, FlexarrayT}:
+      let (isArr, _, ak) = g.arrayElemInfo(t)
+      if isArr: result = ak
     else:
       result = accessOf(g.m, t)
 
 proc pointeeInfo(g: var JSGen; operand: Cursor): (AccessKind, int64) =
   ## `(accessKind, byteSize)` of the pointee for a pointer operand — used for
-  ## `(pat p i)` element arithmetic (`p + i*size`) and its load/store width.
+  ## `(pat p i)` element arithmetic (`p + i*size`) and its load/store width. An
+  ## array/flexarray operand is indexed as a pointer to its first element (how a
+  ## vtable's method table `(pat mt i)` reaches a slot), so it yields the element.
   result = (akU8, 1'i64)     # default: byte pointer (cstring-like)
   let (ok, t) = g.exprType(operand)
   if ok:
@@ -377,6 +388,9 @@ proc pointeeInfo(g: var JSGen; operand: Cursor): (AccessKind, int64) =
       inner.into:
         result = (accessOf(g.m, inner), typeLayout(g.m, inner).size)
         while inner.hasMore: skip inner
+    elif t.typeKind in {ArrayT, FlexarrayT}:
+      let (isArr, stride, ak) = g.arrayElemInfo(t)
+      if isArr: result = (ak, stride)
     else:
       result = (accessOf(g.m, t), typeLayout(g.m, t).size)
 
@@ -402,10 +416,14 @@ proc arrayBaseInfo(g: var JSGen; base: Cursor): (bool, int64, AccessKind) =
 proc destPlus(g: var JSGen; dest: string; off: int64) =
   g.jbin("+", g.js.name dest, g.js.num off)
 
+proc aconstrBytes(g: var JSGen; n: Cursor; arrTyp: Cursor): int64
+
 proc constrExtraBytes(g: var JSGen; n: Cursor): int64 =
-  ## Extra buffer bytes an `(oconstr …)` needs beyond its fixed layout: the
-  ## payload of a flexarray field initialised by a string literal — a static
-  ## long-string's `data`. Zero for ordinary objects.
+  ## Extra buffer bytes an `(oconstr …)` needs beyond its fixed layout: the payload
+  ## of a trailing flexarray field, whose fixed size is 0. Two forms: a string
+  ## literal (a static long-string's `data`) contributes its byte length; an
+  ## `(aconstr T e…)` (e.g. an RTTI vtable's method table) contributes count*stride.
+  ## Zero for ordinary objects.
   result = 0
   var c = n
   c.into:
@@ -417,6 +435,12 @@ proc constrExtraBytes(g: var JSGen; n: Cursor): int64 =
           inc kv         # field symbol
           if kv.kind == StrLit:
             result += int64(g.m.pool.strings[strId(kv)].len)
+          elif kv.exprKind == AconstrC:
+            var av = kv
+            av.into:
+              let atyp = av        # the aconstr's own (flexarray) type operand
+              result += g.aconstrBytes(kv, atyp)
+              while av.hasMore: skip av
           while kv.hasMore: skip kv
       skip c
 
@@ -432,6 +456,9 @@ proc aconstrBytes(g: var JSGen; n: Cursor; arrTyp: Cursor): int64 =
       inc count
       skip c
   count * stride
+
+proc constructArrayInto(g: var JSGen; dest: string; n: var Cursor; arrTyp: Cursor;
+                        baseOff = 0'i64)
 
 proc constructObjectInto(g: var JSGen; dest: string; n: var Cursor) =
   ## Build the stores for an `(oconstr Type (kv f v) …)` into the storage at
@@ -461,6 +488,13 @@ proc constructObjectInto(g: var JSGen; dest: string; n: var Cursor) =
                 g.destPlus(dest, off)
                 g.js.str s
             inc n
+          elif n.exprKind == AconstrC:
+            # an array/flexarray field literal — construct its elements in place at
+            # the field offset. A trailing flexarray (e.g. an RTTI vtable's method
+            # table) has fixed size 0, so it MUST be built here, not `mem.copy`d
+            # from a separate zero-byte allocation. Its payload was reserved by
+            # `constrExtraBytes`.
+            g.constructArrayInto(dest, n, ftyp, off)
           elif ak == akAggregate:
             let fsize = typeLayout(g.m, ftyp).size
             g.js.tree jExprStmt:
@@ -476,11 +510,25 @@ proc constructObjectInto(g: var JSGen; dest: string; n: var Cursor) =
                 g.gx n              # field value
           while n.hasMore: skip n
       else:
-        skip n
+        # An inheritance base initializer (a positional child before the `kv`s):
+        # the embedded base subobject sits at offset 0. A nested `oconstr`
+        # constructs the base in place (its fields resolve to the same offsets); a
+        # scalar is the RTTI `vt` pointer of a RootObj base — store it at offset 0.
+        if n.exprKind == OconstrC:
+          g.constructObjectInto(dest, n)
+        else:
+          let (_, st) = accessors(akPtr)
+          g.js.tree jExprStmt:
+            g.memMeth(st):
+              g.destPlus(dest, 0)
+              g.gx n
 
-proc constructArrayInto(g: var JSGen; dest: string; n: var Cursor; arrTyp: Cursor) =
+proc constructArrayInto(g: var JSGen; dest: string; n: var Cursor; arrTyp: Cursor;
+                        baseOff = 0'i64) =
   ## Build the stores for an `(aconstr T e0 e1 …)` into `dest`: one
-  ## `mem.setX(dest + i*stride, ei)` per element (or `mem.copy` for aggregates).
+  ## `mem.setX(dest + baseOff + i*stride, ei)` per element (or `mem.copy` for
+  ## aggregates). `baseOff` places the array at a field offset — how a trailing
+  ## flexarray field (e.g. an RTTI vtable's method table) is built in place.
   let (_, stride, ak) = g.arrayElemInfo(arrTyp)
   n.into:
     skip n                # array type operand
@@ -489,14 +537,14 @@ proc constructArrayInto(g: var JSGen; dest: string; n: var Cursor; arrTyp: Curso
       if ak == akAggregate:
         g.js.tree jExprStmt:
           g.memMeth("copy"):
-            g.destPlus(dest, i * stride)
+            g.destPlus(dest, baseOff + i * stride)
             g.gx n
             g.js.num stride
       else:
         let (_, st) = accessors(ak)
         g.js.tree jExprStmt:
           g.memMeth(st):
-            g.destPlus(dest, i * stride)
+            g.destPlus(dest, baseOff + i * stride)
             g.gx n
       inc i
 
@@ -650,6 +698,16 @@ proc gx(g: var JSGen; n: var Cursor) =
     # JS is untyped: a conversion/cast is the inner value (skip the type).
     n.into:
       skip n
+      g.gx n
+      while n.hasMore: skip n
+  of BaseobjC:
+    # `(baseobj Type Depth Expr)` — convert an object to a base type. The base
+    # subobject is embedded first (byte offset 0), so in the linear-memory model
+    # the pointer is unchanged; emit the operand (the C backend walks `.Q` Depth
+    # times, which here is a no-op on the offset).
+    n.into:
+      skip n            # target base type
+      skip n            # inheritance depth
       g.gx n
       while n.hasMore: skip n
   of ParC:

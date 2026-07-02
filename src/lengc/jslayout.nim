@@ -60,12 +60,16 @@ proc bitsOf(t: Cursor; dflt: int64): int64 =
     while n.hasMore: skip n
 
 proc typeLayout*(m: var MainModule; t: Cursor): Layout
+proc objectFields*(m: var MainModule; t: Cursor): seq[FieldInfo]
 
 proc layoutObject(m: var MainModule; t: Cursor): (Layout, seq[FieldInfo]) =
   ## Lay out an `(object <base|.> (fld …)+)` in declaration order: each field at
   ## the next offset rounded up to its alignment; object align = max field align;
   ## object size = end offset rounded up to that align. An inheritance base (a
-  ## leading `Symbol`) is embedded first, exactly as the C backend's `Q` member.
+  ## leading `Symbol`) is embedded first, exactly as the C backend's `Q` member;
+  ## its fields sit at the front (offsets unchanged) and are included here so an
+  ## `oconstr`/`dot` can target *inherited* fields, not just the ones declared on
+  ## this type.
   var off = 0'i64
   var maxAlign = 1'i64
   var fields: seq[FieldInfo] = @[]
@@ -73,6 +77,8 @@ proc layoutObject(m: var MainModule; t: Cursor): (Layout, seq[FieldInfo]) =
   n.into:
     if n.kind == Symbol:
       let base = typeLayout(m, n)   # embedded base occupies the front
+      for bf in objectFields(m, n): # inherited fields keep their (front) offsets
+        fields.add bf
       off = base.size
       maxAlign = max(maxAlign, base.align)
       inc n

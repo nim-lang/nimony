@@ -14,4 +14,5 @@ Rect_0_tlayout size=16 align=4
   ra_0_tlayout @0 akAggregate
   rb_0_tlayout @8 akAggregate
 Derived_0_tlayout size=8 align=4
+  k_0_tlayout @0 akI32
   m_0_tlayout @4 akI32
