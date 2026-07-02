@@ -217,23 +217,26 @@ proc lengthOrd*(c: var SemContext; typ: TypeCursor): xint =
   if last.isNaN: return last
   result = last - first + createXint(1.uint64)
 
-proc containsGenericParams*(n: TypeCursor): bool =
-  var n = n
-  var nested = 0
-  while true:
-    case n.kind
-    of Symbol:
-      let res = tryLoadSym(n.symId)
-      if res.status == LacksNothing and res.decl.tagEnum in {TypevarTagId, StaticTypevarTagId}:
-        return true
-    of ParLe:
-      inc nested
-    of ParRi:
-      dec nested
-    else: discard
-    if nested == 0: break
+proc containsGenericParamsAux(n: var TypeCursor): bool =
+  ## Advances `n` past the subtree when the answer is `false`; on `true`
+  ## the search stops immediately and `n` is left mid-subtree (every
+  ## caller early-outs and abandons the cursor).
+  case n.kind
+  of Symbol:
+    let res = tryLoadSym(n.symId)
+    if res.status == LacksNothing and res.decl.tagEnum in {TypevarTagId, StaticTypevarTagId}:
+      return true
+    inc n
+  of ParLe:
+    n.loopInto:
+      if containsGenericParamsAux(n): return true
+  else:
     inc n
   return false
+
+proc containsGenericParams*(n: TypeCursor): bool =
+  var n = n
+  result = containsGenericParamsAux(n)
 
 proc nominalRoot*(t: TypeCursor; allowTypevar = false; skipPtrs = false): SymId =
   result = SymId(0)

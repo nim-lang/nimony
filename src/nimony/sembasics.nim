@@ -225,18 +225,10 @@ proc buildErr*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; msg:
     if n.tagId == nifstreams.ErrT:
       hasErr = true
     else:
-      var nested = 0
-      while true:
-        inc n
-        if n.kind == ParRi:
-          if nested == 0: break
-          dec nested
-        elif n.kind == ParLe:
-          if n.tagId == nifstreams.ErrT:
-            hasErr = true
-            break
-          else:
-            inc nested
+      n.linearScan:
+        if n.tagId == nifstreams.ErrT:
+          hasErr = true
+          break
   let info = if hasErr: n.info else: info
   dest.buildTree ErrT, info:
     if hasErr:

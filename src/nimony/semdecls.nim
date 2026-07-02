@@ -724,8 +724,7 @@ proc hasUntypedOrTypedParam(dest: var TokenBuf; beforeParams: int): bool =
   if n.substructureKind != ParamsU:
     endRead(dest)
     return
-  inc n
-  while n.kind != ParRi:
+  n.loopInto:
     if n.substructureKind == ParamU:
       var p = n
       inc p
@@ -1101,7 +1100,7 @@ proc fitTypeToPragmas(c: var SemContext; dest: var TokenBuf; pragmas: CrucialPra
            t.substructureKind in {NotnilU, NilU, UncheckedU}:
           takeTree rebuilt, t
       else: discard
-      while t.kind != ParRi:
+      while t.hasMore:
         skip t
       for tok in attrs:
         rebuilt.add tok
