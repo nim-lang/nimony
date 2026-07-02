@@ -26,7 +26,7 @@ import ".." / models / nifindex_tags
 import nimony_model, symtabs, builtintypes, decls, programs, sigmatch,
   reporters, nifconfig, xints, semdata, sembasics,
   semos, langmodes, derefs, vtables_frontend,
-  contracts_njvl, contracts_finalir, exprexec, semimport, module_plugins, sem
+  contracts_fir, exprexec, semimport, module_plugins, sem
 when not defined(nimony):
   import ".." / validator / phase_validator
 
