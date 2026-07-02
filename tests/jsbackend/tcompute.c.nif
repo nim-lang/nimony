@@ -1,0 +1,22 @@
+(.nif27)
+(stmts
+ (proc :add.0.tcompute
+  (params
+   (param :a.0 . (i 64))
+   (param :b.0 . (i 64)))
+  (i 64)
+  .
+  (stmts
+   (ret (add (i 64) a.0 b.0))))
+ (proc :fib.0.tcompute
+  (params
+   (param :n.0 . (i 64)))
+  (i 64)
+  .
+  (stmts
+   (if
+    (elif (lt n.0 2)
+     (stmts (ret n.0))))
+   (ret (add (i 64)
+    (call fib.0.tcompute (sub (i 64) n.0 1))
+    (call fib.0.tcompute (sub (i 64) n.0 2)))))))

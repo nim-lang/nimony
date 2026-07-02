@@ -1,0 +1,21 @@
+(.nif27)
+(stmts
+ (proc :triple.0.timportc
+  (params
+   (param :x.0 . (i 64)))
+  (i 64)
+  (pragmas
+   (importc "extTriple"))
+  .)
+ (gvar :counter.0.timportc
+  (pragmas
+   (exportc "counter"))
+  (i 64)
+  0)
+ (proc :run.0.timportc
+  (params)
+  (i 64)
+  .
+  (stmts
+   (asgn counter.0.timportc (call triple.0.timportc 7))
+   (ret counter.0.timportc))))

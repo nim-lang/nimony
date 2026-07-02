@@ -19,6 +19,7 @@
 ## embedded index is read at the raw-token level with no pool involvement.
 
 import std / [assertions, tables]
+from std / os import fileExists
 import ".." / "lib" / nifcoreparse        # re-exports nifcore + parse
 import ".." / "lib" / nifcdecl              # stmtKind/symKind/pragmaKind, decls
 import ".." / "lib" / nifreader as rd       # Reader, jumpTo, indexStartsAt
@@ -127,6 +128,32 @@ proc tracebackTypeC*(c: var MainModule; n: Cursor): Cursor =
   ## *body* cursor, return its enclosing `(type …)` declaration. Returns
   ## `default(Cursor)` for an unregistered body (e.g. an anonymous inline type).
   c.typeBodyToDecl.getOrDefault(n.toUniqueId(), default(Cursor))
+
+proc hasLocalDecl*(c: MainModule; s: SymId): bool =
+  ## True when `s` is declared in this module (registered by `detectToplevelDecls`).
+  ## Lets a caller decide to resolve a type without risking the foreign-load path
+  ## in `getDeclOrNil`, which asserts on an unresolvable suffixed symbol.
+  c.defs.hasKey(s)
+
+proc hasResolvableDecl*(c: var MainModule; s: SymId): bool =
+  ## True when `s` can be resolved to a declaration WITHOUT aborting: it is either
+  ## declared locally, or its owning module is already loaded (and has it), or its
+  ## module file exists on disk and contains it. This lets a caller then call
+  ## `getDeclOrNil` safely — `getDeclOrNil`/`loadForeign` otherwise `raiseAssert`
+  ## on a missing foreign symbol and `nifreader.open` process-quits on a missing
+  ## module file. Used to gate cross-module type layout (e.g. `string`) without
+  ## crashing on a standalone module whose siblings aren't present.
+  if c.defs.hasKey(s): return true
+  let sp = splitSymName(c.pool.syms[s])
+  if sp.module == "": return false
+  if c.prog.mods.hasKey(sp.module):
+    return hasDecl(c.prog.mods[sp.module], $sp)
+  c.prog.scheme.name = sp.module
+  let path = $c.prog.scheme
+  if not fileExists(path): return false
+  let m = openForeignModule(path)
+  c.prog.mods[sp.module] = m
+  return hasDecl(m, $sp)
 
 proc getDeclOrNil*(c: var MainModule; s: SymId): ptr Definition =
   if not c.defs.hasKey(s):

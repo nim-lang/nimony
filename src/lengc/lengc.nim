@@ -11,6 +11,7 @@
 
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
 import codegen, llvmcodegen          # nifcore backends (local to shoggoth/)
+import jscodegen                     # JavaScript backend
 import noptions
 import ".." / lib / symparser
 import ".." / lib / vfs
@@ -25,7 +26,7 @@ const
 Usage:
   lengc [options] [command] [arguments]
 Command:
-  c|cpp|llvm file.nif [file2.nif]    convert NIF files to C|C++|LLVM IR
+  c|cpp|llvm|js file.nif [file2.nif] convert NIF files to C|C++|LLVM IR|JavaScript
 
 Options:
   -r, --run                 run the makefile and the compiled program
@@ -70,6 +71,17 @@ proc generateLLVMBackend(s: var State; files: seq[string]; flags: set[LLVMGenFla
   let outp = s.config.nifcacheDir / splitModulePath(inp).name & ".ll"
   generateLLVMCode s, inp, outp, flags
 
+proc generateJSBackend(s: var State; files: seq[string]; flags: set[JSGenFlag]) =
+  if files.len == 0:
+    quit "command takes a filename"
+  for i in 0..<files.len-1:
+    let inp = files[i]
+    let outp = s.config.nifcacheDir / splitModulePath(inp).name & ".js"
+    generateJSCode s, inp, outp, {}
+  let inp = files[^1]
+  let outp = s.config.nifcacheDir / splitModulePath(inp).name & ".js"
+  generateJSCode s, inp, outp, flags
+
 proc handleCmdLine() =
   var toRun = false
   var compileOnly = false
@@ -106,6 +118,10 @@ proc handleCmdLine() =
         currentAction = atLLVM
         if not hasKey(actionTable, atLLVM):
           actionTable[atLLVM] = @[]
+      of "js":
+        currentAction = atJS
+        if not hasKey(actionTable, atJS):
+          actionTable[atJS] = @[]
       else:
         case currentAction
         of atC:
@@ -116,6 +132,8 @@ proc handleCmdLine() =
           actionTable[atNative].add key
         of atLLVM:
           actionTable[atLLVM].add key
+        of atJS:
+          actionTable[atJS].add key
         of atNone:
           quit "invalid command: " & key
     of cmdLongOption, cmdShortOption:
@@ -199,6 +217,10 @@ proc handleCmdLine() =
         let isLast = (if compileOnly: isMain else: currentAction == action)
         let llvmFlags = if isLast: {llvmcodegen.gfMainModule} else: {}
         generateLLVMBackend(s, actionTable[action], llvmFlags)
+      of atJS:
+        let isLast = (if compileOnly: isMain else: currentAction == action)
+        let jsFlags = if isLast: {jscodegen.gfMainModule} else: {}
+        generateJSBackend(s, actionTable[action], jsFlags)
       of atNone:
         quit "targets are not specified"
 

@@ -1,0 +1,17 @@
+(.nif27)
+(stmts
+ (type :Pt.0.tderefstore .
+  (object .
+   (fld :x.0.tderefstore . (i 64))
+   (fld :y.0.tderefstore . (i 64))))
+ (proc :thru.0.tderefstore
+  (params)
+  (i 64)
+  .
+  (stmts
+   (var :buf.0 . Pt.0.tderefstore
+    (oconstr Pt.0.tderefstore (kv x.0.tderefstore 0) (kv y.0.tderefstore 0)))
+   (var :p.0 . (ptr Pt.0.tderefstore) (addr buf.0))
+   (asgn (deref p.0)
+    (oconstr Pt.0.tderefstore (kv x.0.tderefstore 11) (kv y.0.tderefstore 31)))
+   (ret (add (i 64) (dot buf.0 x.0.tderefstore) (dot buf.0 y.0.tderefstore))))))
