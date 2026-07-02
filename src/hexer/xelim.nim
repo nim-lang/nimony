@@ -545,16 +545,14 @@ proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; 
       # `TowardsFinalIr` mode we still want the binding/hoisting path inside
       # `trAnd`'s `isComplex` branch, but never the cfvar form.
       if c.goal == TowardsFinalIr and condPassthroughSafe(n):
-        tar.t.copyTree n
-        skip n
+        tar.t.takeTree n
       elif mustUseLabel:
         trCondAnd c, dest, n, tar
       else:
         trAnd c, dest, n, tar
     of OrX:
       if c.goal == TowardsFinalIr and condPassthroughSafe(n):
-        tar.t.copyTree n
-        skip n
+        tar.t.takeTree n
       elif mustUseLabel:
         trCondOr c, dest, n, tar
       else:
