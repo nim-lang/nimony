@@ -272,7 +272,7 @@ jobs:
           NIMONY_CC: ${{ runner.os == 'Windows' && 'clang' || '' }}
         run: |
           cd nimony
-          nim c -r tests/tester.nim
+          nim c -r tools/tester.nim
 
       - name: Run native backend tests (Linux amd64)
         # The native path emits a static, libc-free x86-64 ELF — only meaningful on

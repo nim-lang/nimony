@@ -1,0 +1,2 @@
+# Standalone `hastur tests/nimony` rebuilds just the compiler.
+build nimony
