@@ -55,6 +55,8 @@ if node != nil:
   echo node.data  # OK after nil check
 ```
 
+> Note:
+> The proof of a var not being nil can't be done at global scope. The compiler will error if you use nilable object in that scope
 
 ## Unchecked pointer types
 
@@ -135,4 +137,3 @@ proc `=destroy`(x: MyResource) =
 proc `=wasMoved`(x: var MyResource) =
   x.handle = nil
 ```
-

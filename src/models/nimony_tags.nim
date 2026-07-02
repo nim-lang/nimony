@@ -423,4 +423,3 @@ type
 
 proc rawTagIsControlFlowKind*(raw: TagEnum): bool {.inline.} =
   raw in {IteTagId, GraphTagId, ForbindTagId, KillTagId}
-
