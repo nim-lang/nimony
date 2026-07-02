@@ -398,9 +398,32 @@ proc preScan(c: var Context; n: Cursor) =
 
 # ---- public entry ---------------------------------------------------------
 
-proc runCopyProp*(buf: var TokenBuf) =
+proc registerParams(c: var Context; params: Cursor) =
+  ## Mark the proc's parameters as eligible copy *sources*. copyprop only sees the
+  ## proc *body* (the params live in the enclosing decl the driver strips off), so
+  ## without this a `var y = param` copy is never propagated. A param is as safe a
+  ## source as an address-not-taken local: a by-value param only changes by a direct
+  ## assignment to it (caught by `trAsgn` → `invalidate`), and a `var`/`out` param
+  ## is a pointer whose bare-symbol use is the pointer value (a through-`deref` store
+  ## invalidates via `rootOf`). This is what lets SROA's `T(x: a, …)` → `sroa = a`
+  ## parameter copies collapse away. The `addrTaken` pre-scan of the body still
+  ## excludes any param whose address is taken.
+  if not params.hasMore or params.kind != TagLit: return
+  var p = params
+  p.loopInto:
+    if p.kind == TagLit and p.substructureKind == ParamU:
+      let nameCur = child0(p)
+      if nameCur.kind == SymbolDef:
+        c.localDefs.incl symId(nameCur)
+        c.names[symId(nameCur)] = symName(nameCur)
+    skip p
+
+proc runCopyProp*(buf: var TokenBuf; params: Cursor = default(Cursor)) =
   ## In-place copy propagation + dead-binding elimination for a single proc body.
+  ## `params` is the enclosing proc's `(params …)` node (empty for a bare body);
+  ## its parameters become eligible copy sources (see `registerParams`).
   var ctx = createContext(addr buf)
+  registerParams(ctx, params)
   block:
     let pn = beginRead(buf)
     preScan(ctx, pn)
