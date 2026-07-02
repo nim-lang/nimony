@@ -224,7 +224,7 @@ proc containsGenericParamsAux(n: var TypeCursor): bool =
   case n.kind
   of Symbol:
     let res = tryLoadSym(n.symId)
-    if res.status == LacksNothing and res.decl.tagEnum == TypevarTagId:
+    if res.status == LacksNothing and res.decl.tagEnum in {TypevarTagId, StaticTypevarTagId}:
       return true
     inc n
   of ParLe:

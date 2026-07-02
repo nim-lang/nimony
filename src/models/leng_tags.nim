@@ -6,7 +6,7 @@ type
   LengExpr* = enum
     NoExpr
     SufC = (ord(SufTagId), "suf")  ## literal with suffix annotation
-    AtC = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)`
+    AtC = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)` where an argument may also be a constant *value* bound to a `staticTypevar`
     DerefC = (ord(DerefTagId), "deref")  ## pointer deref operation
     DotC = (ord(DotTagId), "dot")  ## object field selection; optional integer is the inheritance depth of the field; optional trailing `STRLIT` is an *access token* (carrying `"x"` like an export marker) — when present, the expression was already type-checked in a scope with access to the field, so re-check at expansion/serialization sites must accept the access even if the field is private. Emitted by sem when a template body or `.semantics` serializer is type-checked in the field's defining module and later expanded/consumed elsewhere.
     PatC = (ord(PatTagId), "pat")  ## pointer indexing operation
@@ -120,6 +120,7 @@ type
     RangesU = (ord(RangesTagId), "ranges")
     ParamU = (ord(ParamTagId), "param")  ## parameter declaration
     TypevarU = (ord(TypevarTagId), "typevar")  ## type variable declaration; constraint `.T` is optional
+    StaticTypevarU = (ord(StaticTypevarTagId), "staticTypevar")  ## value generic parameter: a generic parameter that is a compile-time *value*; the type slot holds the value's plain element type (e.g. `int` for `N: static[int]`), never a `static` wrapper
     EfldU = (ord(EfldTagId), "efld")  ## enum field declaration; slot 2 carries the export marker *or* the compile-time value (may be `.`)
     FldU = (ord(FldTagId), "fld")  ## field declaration
     ElifU = (ord(ElifTagId), "elif")  ## pair of (condition, action)
@@ -128,7 +129,7 @@ type
     PragmasU = (ord(PragmasTagId), "pragmas")  ## begin of pragma section
 
 proc rawTagIsLengOther*(raw: TagEnum): bool {.inline.} =
-  raw in {KvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, EfldTagId, FldTagId, ElifTagId, ElseTagId, OfTagId, PragmasTagId}
+  raw in {KvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, StaticTypevarTagId, EfldTagId, FldTagId, ElifTagId, ElseTagId, OfTagId, PragmasTagId}
 
 type
   LengPragma* = enum
