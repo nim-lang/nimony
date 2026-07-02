@@ -572,7 +572,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
           trStmt c, dest, n
         skipParRi n
       of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
-         TypevarU, EfldU, FldU, WhenU, TypevarsU, CaseU, OfU,
+         TypevarU, StaticTypevarU, EfldU, FldU, WhenU, TypevarsU, CaseU, OfU,
          StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
          UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU,
          ForcallU, NoSub:
@@ -616,7 +616,7 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
         else:
           trStmt c, dest, n
     of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
-       TypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
+       TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
        StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
        UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU,
        ForcallU, NoSub:
@@ -655,7 +655,7 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
         copyInto(dest, n):
           trStmt c, dest, n
       of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
-         TypevarU, EfldU, FldU, WhenU, ElifU, ElseU, TypevarsU,
+         TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, ElseU, TypevarsU,
          CaseU, OfU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
          UnpackflatU, UnpacktupU, UncheckedU, GfldU, CallargsU,
          ForcallU, NoSub:

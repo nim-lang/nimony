@@ -44,7 +44,7 @@ type
     WhenL = (ord(WhenTagId), "when")  ## when statement header
     ElifL = (ord(ElifTagId), "elif")  ## pair of (condition, action)
     ElseL = (ord(ElseTagId), "else")  ## `else` action
-    TypevarsL = (ord(TypevarsTagId), "typevars")  ## type variable/generic parameters
+    TypevarsL = (ord(TypevarsTagId), "typevars")  ## type variable/generic parameters; after sem an entry may also be a `(staticTypevar ...)`
     BreakL = (ord(BreakTagId), "break")  ## `break` statement
     ContinueL = (ord(ContinueTagId), "continue")  ## `continue` statement
     ForL = (ord(ForTagId), "for")  ## for statement

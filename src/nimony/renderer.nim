@@ -501,13 +501,20 @@ proc takeTypeVars(g: var SrcGen, n: var Cursor) =
       else:
         afterFirst = true
 
+      let isStatic = n.symKind == StaticTypevarY
       let typevar = takeLocal(n, SkipFinalParRi)
       var name = typevar.name
       gsub(g, name)
       var typ = typevar.typ
       if typ.kind != DotToken:
         putWithSpace(g, tkColon, ":")
-        gtype(g, typ, emptyContext)
+        if isStatic:
+          put(g, tkSymbol, "static")
+          put(g, tkBracketLe, "[")
+          gtype(g, typ, emptyContext)
+          put(g, tkBracketRi, "]")
+        else:
+          gtype(g, typ, emptyContext)
 
     skipParRi(n)
     put(g, tkBracketRi, "]")
