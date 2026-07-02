@@ -223,6 +223,28 @@ if have_node; then
   } | node
 fi
 
+# ── exceptions (goto-style EH -> labeled blocks, Araq's PR #2043 direction):
+# Hexer lowers try/except to an error-code ABI — a raising call returns an
+# ErrorCode (`var canRaise = mayFail(r)`), `if canRaise.err` does a forward `jmp`
+# to a handler that lives inside a dead `if (false)` landing pad. The backend maps
+# those `jmp`/`lab`s to `break` in nested labeled blocks (no relooper): `jmp L` ->
+# `break L`, the normal path `break`s a synthetic skip label past the handler.
+# `run(false)` returns the value (42); `run(true)` takes the handler (-1). The
+# body's locals are `var` (function-scoped) so they survive the block nesting.
+gen texc
+if have_node; then
+  {
+    echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
+    echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)),'
+    echo '  copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n) };'
+    cat "$work/texc.js"
+    echo 'if (run_0_texc(false)===42 && run_0_texc(true)===-1)'
+    echo '  { console.log("functional(exceptions): PASS"); }'
+    echo '  else { console.log("functional(exceptions): FAIL got "+run_0_texc(false)+","+run_0_texc(true)); process.exit(1); }'
+  } | node
+fi
+
 # ── addresses (unified byte-pointer model): a pointer is an INTEGER byte offset.
 # An address-taken scalar local is spilled to a buffer slot, so `addr x` is its
 # offset and `deref` is a typed load/store — no boxing, no fat pointers.

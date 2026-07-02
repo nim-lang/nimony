@@ -19,7 +19,7 @@ type generation and maps Leng constructs directly to JS:
 | `(if (elif c (stmts …)) (else (stmts …)))` | `if (c) { … } else { … }` |
 | `(while c (stmts …))` | `while (c) { … }` |
 | `(case sel (of (ranges v) …) (else …))` | `switch (sel) { case v: … }` |
-| `(raise e)` / `(try …)` | `throw e;` / `try { … }` (native) |
+| `(jmp L)` / `(lab L)` | `break L;` in a labeled block — try/except lowers (in Hexer) to an error-code ABI + a dead `if (false)` landing pad reached by a forward `jmp`; those map directly to `break` in nested labeled blocks, no relooper (Araq's PR #2043 direction) |
 | `(ret e)` | `return e;` |
 | `(oconstr T (kv f v) …)` | `{f: v, …}` — object literal (field key = mangled field sym) |
 | `(aconstr T e0 e1 …)` | `[e0, e1, …]` — array literal |
@@ -136,3 +136,7 @@ each under Node:
 - `techo.c.nif` (end-to-end I/O) → mirrors how `echo <int>` lowers: Nim procs
   (`echoInt`/`run`) call `importc` stdio (`stdout`, `putInt`, `putChar`) supplied
   by a tiny runtime that captures output; asserts `run()` prints `"55\n5\n"`.
+- `texc.c.nif` (exceptions) → mirrors how `try/except` lowers: a raising call
+  returns an `ErrorCode`, `if canRaise.err` forward-`jmp`s to a handler in a dead
+  `if (false)` landing pad. The `jmp`/`lab`s become `break` in nested labeled
+  blocks. Checks `run(false)==42` (normal path) and `run(true)==-1` (handler).

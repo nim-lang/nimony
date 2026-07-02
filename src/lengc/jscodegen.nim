@@ -61,6 +61,10 @@ type
     todos: int
     boxed: HashSet[SymId]   ## locals whose address is taken (see `scanForAddr`)
     localTypes: Table[SymId, Cursor]  ## var/param -> declared type (for buffer-model access)
+    hoistLocals: bool       ## in a proc that contains `jmp`: declare locals with `var`
+                            ## (function-scoped) so they survive the labeled-block nesting
+                            ## that goto-style exception handling lowers to
+    skipCtr: int            ## counter minting fresh `$exs<n>` skip labels for dead-if pads
 
 proc initJSGen(m: sink MainModule; flags: set[JSGenFlag]): JSGen =
   JSGen(m: m, js: initJsBuilder(), flags: flags, boxed: initHashSet[SymId](),
@@ -117,9 +121,18 @@ template jbin(g: var JSGen; op: string; a, b: untyped) =
     a
     b
 
+template localVar(g: var JSGen; body: untyped) =
+  ## A local variable declaration. In a proc that contains `jmp`s the body is
+  ## wrapped in nested labeled blocks (goto-style exception handling), so a `let`
+  ## declared before a label but read after it would fall out of scope — emit such
+  ## locals as a function-scoped `var` instead. Plain procs keep `let` (no churn).
+  g.js.open(if g.hoistLocals: jVarFn else: jVar)
+  body
+  g.js.close()
+
 proc jallocVar(g: var JSGen; nm: string; sz: int64) =
   ## `let <nm> = allocFixed(<sz>);`
-  g.js.tree jVar:
+  g.localVar:
     g.js.name nm
     g.js.tree jCall:
       g.js.name "allocFixed"
@@ -794,14 +807,160 @@ proc gx(g: var JSGen; n: var Cursor) =
 
 proc gs(g: var JSGen; n: var Cursor)
 
+# ── goto-style exception handling: `jmp`/`lab` -> labeled blocks ───────────────
+# Hexer lowers `try/except/(finally)` to an error-code ABI: a raising call returns
+# an `ErrorCode` (a `(var canRaise (call …))` + `(if canRaise.err (jmp L))`), and
+# the handler lives inside a *dead if* — `(if (elif (false) (lab L …)) (else …))` —
+# reachable only via that `jmp`. Araq's guidance on PR #2043: these `jmp`/`lab`s
+# map directly to `break` in labeled blocks, no relooper, because the `jmp`s Hexer
+# emits are (1) forward-only and (2) scoped — a `jmp` only ever leaves enclosing
+# constructs going forward, never enters a sibling or descends into one.
+#
+# So per statement list we: flatten transparent `stmts` and rewrite each dead-if
+# into a flat `[else-code; jmp SKIP; lab L; handler; lab SKIP]` stream, then wrap
+# it in nested labeled blocks (outermost = last label). A `(jmp L)` becomes
+# `break L` (lands right after block `L:`, i.e. at label `L`); the normal path
+# falls through / `break`s the synthetic SKIP block past the handler.
+
+type
+  CfKind = enum cfStmt, cfJmp, cfLab
+  CfItem = object
+    case kind: CfKind
+    of cfStmt: cur: Cursor
+    of cfJmp, cfLab: label: string
+
+proc cfScan(n: var Cursor; want: LengStmt; found: var bool) =
+  ## Set `found` if the subtree at `n` contains a statement of kind `want`
+  ## (`JmpS`/`LabS`). Consumes `n`.
+  if n.kind == TagLit:
+    if n.stmtKind == want: (found = true; skip n)
+    else: n.loopInto: cfScan(n, want, found)
+  else:
+    inc n
+
+proc bodyHasJmp(g: var JSGen; body: Cursor): bool =
+  var c = body
+  result = false
+  cfScan(c, JmpS, result)
+
+proc labelName(g: var JSGen; n: Cursor): string =
+  ## The JS identifier for the label a `(jmp SYM)` / `(lab SYMDEF)` carries.
+  var c = n
+  c.into:
+    result = mangleToC(g.m.pool.syms[c.symId])
+    inc c
+    while c.hasMore: skip c
+
+proc isDeadIf(g: var JSGen; n: Cursor): bool =
+  ## True for `(if (elif (false) BODY) …)` where BODY contains a `lab` — Hexer's
+  ## goto landing pad (never a user `if false:`, which has no label inside).
+  var c = n
+  result = false
+  c.into:
+    if c.substructureKind == ElifU:
+      var e = c
+      e.into:
+        if e.exprKind == FalseC:
+          skip e                        # condition -> BODY
+          var found = false
+          cfScan(e, LabS, found)        # scans (and consumes) BODY
+          result = found
+          while e.hasMore: skip e
+        else:
+          while e.hasMore: skip e
+    skip c                              # consume the branch we peeked at
+    while c.hasMore: skip c             # drain remaining if-children
+
+proc linItem(g: var JSGen; n: var Cursor; items: var seq[CfItem])
+
+proc rewriteDeadIf(g: var JSGen; n: var Cursor; items: var seq[CfItem]) =
+  ## Flatten `(if (elif (false) BODY) (else ELSE)?)` into the item stream:
+  ##   ELSE… ; jmp SKIP ; <BODY: lab L, handler…> ; lab SKIP
+  ## The normal path runs ELSE then `break SKIP`s past the handler; the `jmp L`
+  ## from the raising-call check lands at `lab L` (start of the handler).
+  let skipLbl = "$exs" & $g.skipCtr
+  inc g.skipCtr
+  var body, ebody: Cursor = default(Cursor)
+  var hasElse = false
+  block:
+    var c = n
+    c.into:
+      var e = c                          # first branch: (elif (false) BODY)
+      e.into:
+        skip e                           # condition
+        body = e                         # BODY
+        skip e
+        while e.hasMore: skip e
+      skip c                             # past the (elif …)
+      if c.hasMore:                      # optional (else ELSE)
+        var el = c
+        el.into:
+          ebody = el
+          skip el
+          while el.hasMore: skip el
+        hasElse = true
+        skip c
+      while c.hasMore: skip c
+  skip n
+  if hasElse:
+    g.linItem(ebody, items)              # normal-path code (e.g. a finally)
+  items.add CfItem(kind: cfJmp, label: skipLbl)
+  g.linItem(body, items)                 # the landing pad: lab L + handler
+  items.add CfItem(kind: cfLab, label: skipLbl)
+
+proc linItem(g: var JSGen; n: var Cursor; items: var seq[CfItem]) =
+  ## Append the statement at `n` to `items`, flattening transparent `stmts` and
+  ## rewriting dead-ifs; real `if`/`while`/`case`/`scope`/leaf stay opaque (their
+  ## own bodies get the same treatment when generated via `genBlock`). Consumes `n`.
+  case n.stmtKind
+  of JmpS:
+    items.add CfItem(kind: cfJmp, label: g.labelName(n)); skip n
+  of LabS:
+    items.add CfItem(kind: cfLab, label: g.labelName(n)); skip n
+  of StmtsS:
+    n.into:
+      while n.hasMore: g.linItem(n, items)
+  of IfS:
+    if g.isDeadIf(n): g.rewriteDeadIf(n, items)
+    else: (items.add CfItem(kind: cfStmt, cur: n); skip n)
+  else:
+    items.add CfItem(kind: cfStmt, cur: n); skip n
+
+proc emitItems(g: var JSGen; items: seq[CfItem]; lo, hi: int) =
+  ## Emit `items[lo ..< hi]` as nested labeled blocks. The last label in the range
+  ## becomes the outermost block `L: { <prefix> }`; the suffix after it follows.
+  var lastLab = -1
+  var i = hi - 1
+  while i >= lo:
+    if items[i].kind == cfLab: (lastLab = i; break)
+    dec i
+  if lastLab < 0:
+    for j in lo ..< hi:
+      case items[j].kind
+      of cfStmt: (var c = items[j].cur; g.gs c)
+      of cfJmp: g.js.breakTo(items[j].label)
+      of cfLab: discard
+    return
+  let lbl = items[lastLab].label
+  g.js.labelTree(lbl):
+    g.emitItems(items, lo, lastLab)
+  g.emitItems(items, lastLab + 1, hi)
+
+proc genStmtList(g: var JSGen; body: var Cursor) =
+  ## Generate a statement list, lowering any goto-style exception control flow to
+  ## labeled blocks. Consumes `body` (a `stmts`/`scope` list or a single stmt).
+  var items: seq[CfItem] = @[]
+  if body.stmtKind in {StmtsS, ScopeS}:
+    body.into:
+      while body.hasMore: g.linItem(body, items)
+  else:
+    g.linItem(body, items)
+  g.emitItems(items, 0, items.len)
+
 proc genBlock(g: var JSGen; n: var Cursor) =
   ## emit a `(stmts ...)` body as a `jBlock` (the emitter braces + indents it).
   g.js.tree jBlock:
-    if n.stmtKind in {StmtsS, ScopeS}:
-      n.loopInto:
-        g.gs n
-    else:
-      g.gs n
+    g.genStmtList(n)
 
 proc genVar(g: var JSGen; n: var Cursor) =
   var d = takeVarDecl(n)
@@ -845,7 +1004,7 @@ proc genVar(g: var JSGen; n: var Cursor) =
           g.js.name nm
           g.gx v
   else:
-    g.js.tree jVar:
+    g.localVar:
       g.js.name nm
       if d.value.kind != DotToken:
         var v = d.value
@@ -1107,10 +1266,15 @@ proc gs(g: var JSGen; n: var Cursor) =
   of BreakS:
     g.js.leaf jBreak
     skip n
+  of JmpS:
+    # A forward `jmp` -> `break <label>` out to the enclosing labeled block that
+    # `genStmtList` opened at the label's site. (Normally the jmp is consumed by
+    # `genStmtList`'s linearization; this covers a jmp reaching `gs` directly.)
+    g.js.breakTo(g.labelName(n))
+    skip n
   of LabS:
-    # A goto-target label. Vestigial under structured control flow (no matching
-    # `jmp`); JS has no `goto`, so emit nothing. A real `jmp` still surfaces as
-    # an unsupported node, making any genuine goto use visible.
+    # A goto-target label. Handled structurally by `genStmtList` (it becomes a
+    # labeled block boundary), so a `lab` reaching `gs` directly is a no-op.
     skip n
   of RaiseS:
     g.js.tree jThrow:
@@ -1128,6 +1292,11 @@ proc gs(g: var JSGen; n: var Cursor) =
 proc genProc(g: var JSGen; n: var Cursor) =
   var prc = takeProcDecl(n)
   if g.isImportc(prc.name.symId): return   # external proc: provided by the runtime
+  let savedHoist = g.hoistLocals
+  # A proc whose body contains `jmp`s (goto-style exception handling) is emitted
+  # with its statement list wrapped in nested labeled blocks; declare its locals
+  # function-scoped (`var`) so values set before a label survive being read after.
+  g.hoistLocals = g.bodyHasJmp(prc.body)
   g.js.tree jFunc:
     g.js.name g.name(prc.name.symId)
     g.js.tree jParams:
@@ -1161,10 +1330,8 @@ proc genProc(g: var JSGen; n: var Cursor) =
             g.js.tree jExprStmt:                   # mem.setX(nm, nm_v);
               g.memMeth(st): g.js.name nm; g.js.name (nm & "_v")
       var body = prc.body
-      if body.stmtKind in {StmtsS, ScopeS}:
-        body.loopInto: g.gs body
-      else:
-        g.gs body
+      g.genStmtList(body)
+  g.hoistLocals = savedHoist
 
 proc genToplevel(g: var JSGen; n: var Cursor) =
   case n.stmtKind

@@ -43,6 +43,7 @@ type
     jFunc            ## (func NAME PARAMS BODY)   -> function NAME(…) { … }
     jParams          ## (params NAME…)            -> parameter list
     jVar             ## (var NAME E?)             -> let NAME = E;   (or `let NAME;`)
+    jVarFn           ## (varfn NAME E?)           -> var NAME = E;   (function-scoped)
     jAsgn            ## (asgn E_lhs E_rhs)         -> lhs = rhs;
     jIf              ## (if E BODY ELSE?)          -> if (E) { … } else { … }
     jWhile           ## (while E BODY)             -> while (E) { … }
@@ -53,7 +54,8 @@ type
     jRet             ## (ret E?)                   -> return E;   (or `return;`)
     jExprStmt        ## (estmt E)                  -> E;
     jBlock           ## (block S…)                 -> { … }  (an indented stmt list)
-    jBreak           ## (break)                    -> break;
+    jLabel           ## (label NAME BLOCK)         -> NAME: { … }  (a labeled block)
+    jBreak           ## (break NAME?)              -> break;  (or `break NAME;`)
     jContinue        ## (continue)                 -> continue;
     jThrow           ## (throw E?)                 -> throw E;  (or throw new Error();)
     jRaw             ## (raw "text")               -> text verbatim (stmt or expr)
@@ -129,6 +131,17 @@ template member*(b: var JsBuilder; field: string; obj: untyped) =
 proc kvKey*(b: var JsBuilder; key: string) {.inline.} =
   ## The bare-ident key token that leads a `jKv` (an object-literal entry).
   b.buf.addIdent key
+
+proc breakTo*(b: var JsBuilder; label: string) =
+  ## `break <label>;` — a labeled break (the target of a forward `jmp`).
+  b.tree jBreak: b.buf.addIdent label
+
+template labelTree*(b: var JsBuilder; label: string; body: untyped) =
+  ## `<label>: { <body> }` — a labeled block; `body` builds the block's statements.
+  b.tree jLabel:
+    b.buf.addIdent label
+    b.tree jBlock:
+      body
 
 # ── emitting (jsnif -> JS text) ───────────────────────────────────────────────
 
@@ -286,9 +299,10 @@ proc emitExpr(e: var Emitter; c: var Cursor) =
 
 proc emitStmt(e: var Emitter; c: var Cursor) =
   case e.tagOf(c)
-  of jVar:
+  of jVar, jVarFn:
+    let kw = if e.tagOf(c) == jVarFn: "var " else: "let "
     c.into:
-      e.wr "let "; e.emitExpr c            # name
+      e.wr kw; e.emitExpr c                # name
       if e.tagOf(c) != jNone: (e.wr " = "; e.emitExpr c) else: skip c
       e.wr ";"
       while c.hasMore: skip c
@@ -351,8 +365,16 @@ proc emitStmt(e: var Emitter; c: var Cursor) =
       while c.hasMore: skip c
   of jBlock:
     e.emitBlock c
+  of jLabel:
+    c.into:
+      e.wr strVal(c); e.wr ": "; inc c    # label name (bare ident)
+      e.emitBlock c                        # the labeled block body
+      while c.hasMore: skip c
   of jBreak:
-    e.wr "break;"; skip c
+    c.into:
+      if c.hasMore: (e.wr "break "; e.wr strVal(c); e.wr ";"; inc c)
+      else: e.wr "break;"
+      while c.hasMore: skip c
   of jContinue:
     e.wr "continue;"; skip c
   of jThrow:
