@@ -22,7 +22,9 @@ A package's dependencies are extracted from its `.nimble` file.
 
 If YourApp decides to list all its direct and indirect
 dependencies explicitly and with specific commits then it becomes
-a lockfile.
+a lockfile. The `pin` command produces exactly such a listing in a
+`pnak.nif` file; when present in the project root it is preferred over
+`project.nimble` for the demanded commits, so it behaves as a lockfile.
 
 The same algorithm can be used for updates and initial
 checkouts -- the classic breadth-first traversal.
@@ -63,7 +65,7 @@ in `nim.cfg` is preserved across runs.
 
 import std / [os, osproc, parseopt, strutils, syncio, assertions, tables, deques, algorithm, json, sets, times, terminal, streams]
 
-include ".." / lib / nifprelude
+import ".." / lib / [nifcore, nifcoreparse]
 import ".." / lib / tooldirs
 
 const
@@ -76,8 +78,16 @@ Usage:
 
 Commands:
   fetch [.nimble]       (default) clone or update the dependency closure
-                        of the given .nimble file (or the .nimble file in
-                        the current directory) and rewrite nimony.paths.
+                        and rewrite nimony.paths. A `pnak.nif` lockfile
+                        next to the project (or in the current directory)
+                        is preferred over the .nimble for the demanded
+                        commits; otherwise the given .nimble (or the one in
+                        the current directory) is used.
+  pin [.nimble]         resolve the full dependency closure and write a
+                        `pnak.nif` lockfile listing every direct and
+                        indirect dependency at its exact commit. Because
+                        pnak lets the shallowest requirement win, this file
+                        then acts as a lockfile for subsequent `fetch`es.
   search <terms>        search packages.json + GitHub for matching Nim
                         packages and print candidates.
   refresh               re-download packages.json into the cache.
@@ -206,6 +216,38 @@ proc parseRequirement(spec: string): Requirement =
     result.name = stem
 
 # ---------------------------------------------------------------------------
+# NIF tags pnak cares about
+#
+# Only a handful of tags matter: the `(stmts …)` wrapper, the `(asgn …)`
+# and `(cmd …)`/`(call …)` forms nifler emits for a `.nimble`, and the
+# `(requires …)` entries in a `pnak.nif` lockfile. Modelling them as an
+# enum (with `createTags` seeding the buffer's tag pool in ordinal order)
+# turns tag tests into register-only TagId compares instead of string
+# lookups — the same shim pattern nifcore's jsonnif/htmlnif adapters use.
+# ---------------------------------------------------------------------------
+
+type
+  PnakTag = enum
+    StmtsT    = (0, "stmts")
+    AsgnT     = (1, "asgn")
+    CmdT      = (2, "cmd")
+    CallT     = (3, "call")
+    RequiresT = (4, "requires")
+
+# Boundary shims: BiTable ids start at 1 (0 is the "unused" sentinel), so
+# `tagId`/`pnakKind` bridge the gap with a +/-1 that folds to one add/sub.
+template tagId(k: PnakTag): TagId = TagId(uint32(k) + 1'u32)
+template pnakKind(t: TagId): PnakTag = cast[PnakTag](uint32(t) - 1'u32)
+
+proc pnakTags(): TagPool =
+  ## Tag pool seeded with `PnakTag` in ordinal order, so a `TagLit`'s
+  ## `cursorTagId` maps to its `PnakTag` by a plain cast. Passed as the
+  ## shared tag pool when parsing, so these tags keep fixed ids regardless
+  ## of the order nifler happened to emit them; any other tag nifler emits
+  ## interns past the enum and simply never matches a `PnakTag`.
+  createTags[PnakTag]()
+
+# ---------------------------------------------------------------------------
 # Run nifler to parse a .nimble file into a NIF TokenBuf
 # ---------------------------------------------------------------------------
 
@@ -220,23 +262,25 @@ proc parseNimbleViaNifler(nimbleFile: string): TokenBuf =
   let (output, exitCode) = execCmdEx(cmd)
   if exitCode != 0:
     quit "nifler failed on " & nimbleFile & ": " & output
-
-  var stream = nifstreams.open(outFile)
-  try:
-    discard processDirectives(stream.r)
-    result = fromStream(stream)
-  finally:
-    nifstreams.close(stream)
+  # `parseFromFile` consumes the `(.nif…)` header directives and reads the
+  # whole tree into a fresh nifcore TokenBuf (with the PnakTag-seeded pool).
+  result = parseFromFile(outFile, sharedTags = pnakTags())
 
 # ---------------------------------------------------------------------------
 # Cursor-based traversal of the parsed nimble file
 # ---------------------------------------------------------------------------
 
+proc pnakTag(n: Cursor): PnakTag {.inline.} =
+  ## `PnakTag` of the `(tag …)` the cursor sits at. Valid only for buffers
+  ## parsed with `pnakTags()`; an unseeded tag yields an out-of-enum value
+  ## that matches no `PnakTag` case (so callers rely on an `else`/default).
+  pnakKind(n.cursorTagId)
+
 proc readStrLit(n: var Cursor; dest: var string): bool =
   ## If `n` is at a string literal, read it into `dest` and advance.
-  result = n.kind == StringLit
+  result = n.kind == StrLit
   if result:
-    dest = pool.strings[n.litId]
+    dest = strVal(n)
     inc n
 
 proc parseRequiresCmd(n: var Cursor; spec: var NimbleSpec) =
@@ -258,7 +302,7 @@ proc parseAsgn(n: var Cursor; spec: var NimbleSpec) =
   ## `(asgn <ident> <value>)` — pick out scalars we care about.
   n.into:
     if n.kind == Ident:
-      let lhs = pool.strings[n.litId]
+      let lhs = strVal(n)
       inc n
       if lhs == "srcDir":
         var s = ""
@@ -274,23 +318,62 @@ proc parseNimble(nimbleFile: string): NimbleSpec =
   result = NimbleSpec()
   var buf = parseNimbleViaNifler(nimbleFile)
   var n = beginRead(buf)
-  if n.kind != ParLe or pool.tags[n.tag] != "stmts":
+  if n.kind != TagLit or n.pnakTag != StmtsT:
     quit nimbleFile & ": expected (stmts ...) at top level"
   n.loopInto:
-    if n.kind == ParLe:
-      let tag = pool.tags[n.tag]
-      case tag
-      of "asgn":
+    if n.kind == TagLit:
+      case n.pnakTag
+      of AsgnT:
         parseAsgn(n, result)
-      of "cmd", "call":
+      of CmdT, CallT:
         var probe = n
         inc probe
-        if probe.kind == Ident and pool.strings[probe.litId] == "requires":
+        if probe.kind == Ident and strVal(probe) == "requires":
           parseRequiresCmd(n, result)
         else:
           skip n
       else:
         skip n
+    else:
+      skip n
+  endRead n
+
+# ---------------------------------------------------------------------------
+# pnak.nif lockfile
+#
+# A `pnak.nif` in the project root lists every direct and indirect
+# dependency with a pinned commit. Because pnak's BFS lets the shallowest
+# requirement win, listing all deps at the root (depth 1) makes each pin
+# authoritative — i.e. the file behaves as a lockfile. Its shape is:
+#
+#   (stmts
+#     (requires "<git-url>" "<commit>")
+#     ...)
+# ---------------------------------------------------------------------------
+
+proc parsePnakNif(nifFile: string): NimbleSpec =
+  ## Read a `pnak.nif` lockfile directly (it is already NIF, so no nifler
+  ## round-trip is needed) into the same `NimbleSpec` shape a `.nimble`
+  ## produces. Each `(requires "url" "commit")` becomes one pinned
+  ## requirement.
+  result = NimbleSpec()
+  var buf = parseFromFile(nifFile, sharedTags = pnakTags())
+  var n = beginRead(buf)
+  if n.kind != TagLit or n.pnakTag != StmtsT:
+    quit nifFile & ": expected (stmts ...) at top level"
+  n.loopInto:
+    if n.kind == TagLit and n.pnakTag == RequiresT:
+      n.into:
+        var url = ""
+        var commit = ""
+        discard readStrLit(n, url)
+        discard readStrLit(n, commit)
+        while n.hasMore: skip n
+        if url.len > 0:
+          var r = parseRequirement(url)
+          if commit.len > 0: r.commit = commit
+          if r.name.len > 0 and r.name != "nim":
+            result.requires.add r
     else:
       skip n
   endRead n
@@ -896,6 +979,32 @@ proc patchNimCfg(cfgPath, blockText: string) =
   writeFile(cfgPath, existing)
   say mInfo, "patched ", cfgPath
 
+proc writePnakNif(c: Context; path: string) =
+  ## Emit a `pnak.nif` lockfile listing every resolved package with its
+  ## *exact* checked-out commit. Sorted by name for deterministic output.
+  var names: seq[string] = @[]
+  for k in c.resolved.keys: names.add k
+  names.sort(cmp[string])
+
+  var buf = createTokenBuf(names.len * 8 + 4, sharedTags = pnakTags())
+  buf.buildTree StmtsT.tagId:
+    for name in names:
+      let r = c.resolved[name]
+      # Prefer the actual HEAD sha over the requested ref: a lockfile must
+      # pin a concrete commit, not a branch/tag name that can move.
+      let sha = gitCurrentCommit(r.dir)
+      let commit = if sha.len > 0: sha else: r.commit
+      buf.buildTree RequiresT.tagId:
+        buf.addStrLit r.url
+        buf.addStrLit commit
+  # `toString` renders just the tree, so prepend the NIF header ourselves
+  # (the reader's `processDirectives` consumes it on the way back in). We
+  # deliberately avoid `toModuleString`: that emits an indexed *module* file
+  # (`.indexat` + trailing `.index`) keyed on global SymbolDefs — a lockfile
+  # has none, so it would only add an empty, pointless index block.
+  writeFile(path, "(.nif27)\n" & buf.toString(includeLineInfo = false) & "\n")
+  say mInfo, "wrote lockfile ", path
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -1022,7 +1131,7 @@ proc handleCmdLine() =
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
-      if action.len == 0 and key in ["fetch", "search", "refresh", "translate"]:
+      if action.len == 0 and key in ["fetch", "pin", "search", "refresh", "translate"]:
         action = key
       else:
         args.add key
@@ -1057,6 +1166,46 @@ proc handleCmdLine() =
 
   case action
   of "fetch":
+    # A `pnak.nif` next to the project (or in the current directory) is a
+    # lockfile and takes precedence over the `.nimble` file for the root's
+    # demanded commits. Fall back to the `.nimble` when it is absent.
+    let explicitNimble =
+      if args.len > 0 and args[0].endsWith(".nimble"): args[0]
+      else: ""
+    let baseDir =
+      if explicitNimble.len > 0: explicitNimble.parentDir
+      else: getCurrentDir()
+    let pnakNif = baseDir / "pnak.nif"
+
+    var rootSpec: NimbleSpec
+    var cfgAnchor: string
+    if fileExists(pnakNif):
+      say mInfo, "using lockfile ", pnakNif
+      rootSpec = parsePnakNif(pnakNif)
+      cfgAnchor = baseDir
+    else:
+      let nimbleFile =
+        if explicitNimble.len > 0: explicitNimble
+        else: findRootNimble()
+      if nimbleFile.len == 0 or not fileExists(nimbleFile):
+        quit "no pnak.nif or .nimble file found"
+      rootSpec = parseNimble(nimbleFile)
+      cfgAnchor = nimbleFile.parentDir
+
+    createDir(ctx.depsDir)
+    fetchAll(ctx, rootSpec)
+    echo "[pnak] resolved ", ctx.resolved.len, " package(s) into ", ctx.depsDir
+
+    if not noCfg:
+      let cfgPath =
+        if cfgFile.len > 0: cfgFile
+        else: cfgAnchor / "nimony.paths"
+      let kind = if cfgPath.endsWith(".cfg"): NimCfg else: NimonyPaths
+      patchNimCfg(cfgPath, generateBlock(ctx, cfgPath, kind))
+  of "pin":
+    # Resolve the full closure from the `.nimble` truth, then freeze it into
+    # a `pnak.nif` lockfile listing every direct and indirect dependency at
+    # its exact commit.
     let nimbleFile =
       if args.len > 0 and args[0].endsWith(".nimble"): args[0]
       else: findRootNimble()
@@ -1066,14 +1215,8 @@ proc handleCmdLine() =
     createDir(ctx.depsDir)
     let rootSpec = parseNimble(nimbleFile)
     fetchAll(ctx, rootSpec)
-    echo "[pnak] resolved ", ctx.resolved.len, " package(s) into ", ctx.depsDir
-
-    if not noCfg:
-      let cfgPath =
-        if cfgFile.len > 0: cfgFile
-        else: nimbleFile.parentDir / "nimony.paths"
-      let kind = if cfgPath.endsWith(".cfg"): NimCfg else: NimonyPaths
-      patchNimCfg(cfgPath, generateBlock(ctx, cfgPath, kind))
+    writePnakNif(ctx, nimbleFile.parentDir / "pnak.nif")
+    echo "[pnak] pinned ", ctx.resolved.len, " package(s)"
   of "search":
     if args.len == 0: quit "search: at least one term required"
     searchCmd(ctx, args)

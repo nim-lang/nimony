@@ -8,8 +8,6 @@ import ../pathnorm
 
 
 
-proc c_strlen(a: cstring): csize_t {.
-  importc: "strlen", header: "<string.h>", noSideEffect.}
 
 ## .. importdoc:: osappdirs.nim, osdirs.nim, osseps.nim, os.nim
 
@@ -874,7 +872,7 @@ when not defined(nimscript) and supportedSystem:
       result = newString(bufsize)
       while true:
         if getcwd(result.toCString(), bufsize) != nil:
-          setLen(result, c_strlen(result.toCString()).int)
+          setLen(result, len(result.toCString()))   # libc-free `len(cstring)` (system/stringimpl)
           break
         else:
           let err = osLastError()
