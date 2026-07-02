@@ -7,7 +7,7 @@ type
     None
     ErrL = (ord(ErrTagId), "err")  ## indicates an error
     SufL = (ord(SufTagId), "suf")  ## literal with suffix annotation
-    AtL = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)`
+    AtL = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)` where an argument may also be a constant *value* bound to a `staticTypevar`
     DerefL = (ord(DerefTagId), "deref")  ## pointer deref operation
     DotL = (ord(DotTagId), "dot")  ## object field selection; optional integer is the inheritance depth of the field; optional trailing `STRLIT` is an *access token* (carrying `"x"` like an export marker) — when present, the expression was already type-checked in a scope with access to the field, so re-check at expansion/serialization sites must accept the access even if the field is private. Emitted by sem when a template body or `.semantics` serializer is type-checked in the field's defining module and later expanded/consumed elsewhere.
     ParL = (ord(ParTagId), "par")  ## syntactic parenthesis
