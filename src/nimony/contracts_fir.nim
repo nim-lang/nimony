@@ -86,14 +86,13 @@ proc isectInits(a, b: InitSet): InitSet =
   ## its result from `data.len` (the internal slot-array capacity, which a
   ## HashSet never shrinks) rather than from the element count, so once a proc
   ## has touched many locals every control-flow merge allocates an oversized
-  ## table and large procs OOM. Iterate the smaller operand by element count
-  ## and size the result to it.
+  ## table and large procs OOM. Iterate the smaller operand and let the result
+  ## grow to the (small) number of shared elements.
+  result = initHashSet[SymId]()
   if a.len <= b.len:
-    result = initHashSet[SymId](max(a.len, 2))
     for x in a:
       if x in b: result.incl x
   else:
-    result = initHashSet[SymId](max(b.len, 2))
     for x in b:
       if x in a: result.incl x
 
