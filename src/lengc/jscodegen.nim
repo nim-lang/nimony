@@ -367,6 +367,23 @@ proc pointeeInfo(g: var JSGen; operand: Cursor): (AccessKind, int64) =
     else:
       result = (accessOf(g.m, t), typeLayout(g.m, t).size)
 
+proc arrayBaseInfo(g: var JSGen; base: Cursor): (bool, int64, AccessKind) =
+  ## `(isArray, elementStride, elementAccessKind)` for the base of `(at base i)`,
+  ## whether the base is an array value OR a POINTER to an array. The latter is
+  ## how an array is passed by reference (`a: ptr [N]T`, seqimpl's `@` conversion):
+  ## the pointer's value is the array's offset, so element access is still
+  ## `base + i*stride` — only the type resolution steps through the pointer.
+  let (ok, t) = g.exprType(base)
+  if not ok: return (false, 0'i64, akAggregate)
+  if t.typeKind in {PtrT, AptrT}:
+    var inner = t
+    result = (false, 0'i64, akAggregate)
+    inner.into:
+      result = g.arrayElemInfo(inner)
+      while inner.hasMore: skip inner
+  else:
+    result = g.arrayElemInfo(t)
+
 # `dest + off` where `dest` is a plain identifier name (a constructed aggregate's
 # base). Always emits the `+ off` — the emitter parenthesises it.
 proc destPlus(g: var JSGen; dest: string; off: int64) =
@@ -502,12 +519,8 @@ proc genAddrOf(g: var JSGen; n: var Cursor) =
       while n.hasMore: skip n
   of AtC:
     n.into:
-      var aty = n
-      var isArr = false
-      if n.kind == Symbol and g.localTypes.hasKey(n.symId):
-        aty = g.localTypes[n.symId]; isArr = g.isBufferArray(aty)
+      let (isArr, stride, _) = g.arrayBaseInfo(n)
       if isArr:
-        let (_, stride, _) = g.arrayElemInfo(aty)
         g.jbin("+", g.gx n, g.jbin("*", g.gx n, g.js.num stride))
       else:
         g.js.tree jArray:           # fat pointer [base, idx]
@@ -745,13 +758,8 @@ proc gx(g: var JSGen; n: var Cursor) =
     # `(at arr i)` on a Nim-native array -> typed load at `base + i*stride`;
     # otherwise (undeclared element type) the legacy `arr[i]`.
     n.into:
-      var isArr = false
-      var aty = n
-      if n.kind == Symbol and g.localTypes.hasKey(n.symId):
-        aty = g.localTypes[n.symId]
-        isArr = g.isBufferArray(aty)
+      let (isArr, stride, ak) = g.arrayBaseInfo(n)
       if isArr:
-        let (_, stride, ak) = g.arrayElemInfo(aty)
         if ak == akAggregate:
           g.jbin("+", g.gx n, g.jbin("*", g.gx n, g.js.num stride))
         else:
@@ -973,15 +981,14 @@ proc genLvalueStore(g: var JSGen; lval: Cursor; val: Cursor) =
         (var v = val; g.gx v)
   of AtC:
     var isArr = false
-    var aty = n
+    var stride = 0'i64
+    var ak = akAggregate
     block:
       var probe = n
       probe.into:
-        if probe.kind == Symbol and g.localTypes.hasKey(probe.symId):
-          aty = g.localTypes[probe.symId]; isArr = g.isBufferArray(aty)
+        (isArr, stride, ak) = g.arrayBaseInfo(probe)
         while probe.hasMore: skip probe
     if isArr:
-      let (_, stride, ak) = g.arrayElemInfo(aty)
       var nn = n
       nn.into:
         if ak == akAggregate:
