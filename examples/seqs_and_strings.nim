@@ -76,12 +76,11 @@ var s2 = s1
 s2[0] = 'X'
 assert s1 == "abc"   # s1 is unchanged
 
-# --- concat for efficient string building ---
+# --- string building with `&` ---
 
-# `&` allocates a new string each time.
-# `concat` is much more efficient for multiple pieces:
+# Chained `&` builds a new string from multiple pieces:
 let name = "world"
-let msg = concat("hello, ", name, "!")
+let msg = "hello, " & name & "!"
 assert msg == "hello, world!"
 
 # --- Bulk writes with beginStore / endStore ---

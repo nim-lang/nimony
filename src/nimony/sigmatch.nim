@@ -118,11 +118,6 @@ proc scopeBump(m: Match): int =
     dec i
   return 0
 
-when not defined(nimony):
-  proc concat(a: varargs[string]): string =
-    result = a[0]
-    for i in 1..high(a): result.add a[i]
-
 proc error(m: var Match; k: MatchErrorKind; expected, got: Cursor) =
   m.err = true
   if m.hasError: return # first error is the important one
@@ -175,13 +170,13 @@ proc constraintToString(c: Cursor): string =
 proc getErrorMsg*(m: Match): string =
   case m.error.kind
   of InvalidMatch:
-    concat("expected: ", typeToString(m.error.expected), " but got: ", typeToString(m.error.got))
+    "expected: " & typeToString(m.error.expected) & " but got: " & typeToString(m.error.got)
   of InvalidRematch:
-    concat("Could not match again: ", pool.syms[m.error.typeVar], " expected ",
-      typeToString(m.error.expected), " but got ", typeToString(m.error.got))
+    "Could not match again: " & pool.syms[m.error.typeVar] & " expected " &
+      typeToString(m.error.expected) & " but got " & typeToString(m.error.got)
   of ConstraintMismatch:
-    concat(typeToString(m.error.got), " does not match constraint ",
-      constraintToString(m.error.expected))
+    typeToString(m.error.got) & " does not match constraint " &
+      constraintToString(m.error.expected)
   of FormalTypeNotAtEndBug:
     "BUG: formal type not at end!"
   of FormalParamsMismatch:
@@ -197,22 +192,22 @@ proc getErrorMsg*(m: Match): string =
   of UnavailableSubtypeRelation:
     "subtype relation not available for `out` parameters"
   of ImplicitConversionNotMutable:
-    concat("implicit conversion to ", typeToString(m.error.expected), " is not mutable")
+    "implicit conversion to " & typeToString(m.error.expected) & " is not mutable"
   of VarNeeded:
-    concat("expression is not a mutable lvalue, cannot be passed to ",
-      typeToString(m.error.expected), " parameter")
+    "expression is not a mutable lvalue, cannot be passed to " &
+      typeToString(m.error.expected) & " parameter"
   of UnhandledTypeBug:
-    concat("BUG: unhandled type: ", pool.tags[m.error.expected.tagId])
+    "BUG: unhandled type: " & pool.tags[m.error.expected.tagId]
   of MismatchBug:
-    concat("BUG: expected: ", typeToString(m.error.expected), " but got: ", typeToString(m.error.got))
+    "BUG: expected: " & typeToString(m.error.expected) & " but got: " & typeToString(m.error.got)
   of MissingExplicitGenericParameter:
-    concat("missing explicit generic parameter for ", pool.syms[m.error.typeVar])
+    "missing explicit generic parameter for " & pool.syms[m.error.typeVar]
   of ExtraGenericParameter:
     "extra generic parameter"
   of RoutineIsNotGeneric:
     "routine is not generic"
   of CouldNotInferTypeVar:
-    concat("could not infer type for ", pool.syms[m.error.typeVar])
+    "could not infer type for " & pool.syms[m.error.typeVar]
   of TooManyArguments:
     "too many arguments"
   of TooFewArguments:
@@ -1179,6 +1174,45 @@ proc tryMatchEnumChoice*(choice: Cursor; enumTypeSym: SymId): SymId =
   if matchCount != 1:
     result = SymId(0)
 
+proc procTypeOfRoutineSym(sym: SymId; buf: var TokenBuf): bool =
+  ## Build the structural proc type of a routine symbol into `buf` so it can be
+  ## compared against a formal proc type with `procTypeMatch`.
+  let res = tryLoadSym(sym)
+  result = false
+  if res.status == LacksNothing and res.decl.symKind in RoutineKinds:
+    let r = asRoutine(res.decl)
+    buf.addParLe ProctypeT
+    buf.addDotToken() # nilability tag
+    buf.addSubtree r.params
+    buf.addSubtree r.retType
+    buf.addSubtree r.pragmas
+    buf.addParRi()
+    result = true
+
+proc tryMatchProcChoice*(context: ptr SemContext; choice, f: Cursor): SymId =
+  ## Find the unique overload in the OchoiceX/CchoiceX `choice` whose proc type
+  ## matches the formal proc type `f`, returning SymId(0) if zero or more than
+  ## one candidate matches. Resolves an overloaded routine passed where a `proc`
+  ## type is expected (nim-lang/nimony#1973).
+  result = SymId(0)
+  var matchCount = 0
+  var a = choice.firstSon
+  while a.hasMore:
+    if a.kind == Symbol:
+      var buf = createTokenBuf(16)
+      if procTypeOfRoutineSym(a.symId, buf):
+        var ac = beginRead(buf)
+        if ac.typeKind in RoutineTypes:
+          var trial = createMatch(context)
+          var fc = f
+          procTypeMatch(trial, fc, ac)
+          if not trial.err:
+            result = a.symId
+            inc matchCount
+    skip a
+  if matchCount != 1:
+    result = SymId(0)
+
 proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
   let a = skipModifier(arg.typ)
   let fs = f.symId
@@ -1645,7 +1679,18 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
       of RoutineTypes:
         procTypeMatch m, f, a
       else:
-        m.error InvalidMatch, f, a
+        if arg.n.exprKind in {OchoiceX, CchoiceX} and
+            tryMatchProcChoice(m.context, arg.n, f) != SymId(0):
+          # An overloaded routine was passed to a proc-typed parameter. Defer
+          # the actual overload selection to `semConvArg` via an `hconv`, the
+          # same mechanism enum choices use.
+          m.refineArgType = true
+          m.args.addParLe HconvX, m.argInfo
+          m.args.addSubtree f
+          inc m.opened
+          skip f
+        else:
+          m.error InvalidMatch, f, a
     of OrT:
       # `f` is an `or`-typed parameter (e.g. `x: A | B | C`).
       #

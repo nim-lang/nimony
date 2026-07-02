@@ -366,6 +366,10 @@ proc finish(p: Progressor) =
     stdout.write "\n"
     stdout.flushFile()
 
+var gMaxJobs = 0
+  ## Concurrency cap for `--parallel:N` / `-j:N` (0 = use all cores, the
+  ## `execProcesses` default). Set during option parsing, read in `runDag`.
+
 proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
             progressLo = 0; progressHi = 100): bool =
   ## Execute the DAG in topological order
@@ -430,7 +434,13 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
             let sec = toSeconds(getMonoTime() - startTimes[idx])
             profile[].recordCmdTime(cmdNames[idx], sec)
 
-        let maxExitCode = execProcesses(commands, beforeRunEvent = beforeRunEvent, afterRunEvent = afterRunEvent)
+        let maxExitCode =
+          if gMaxJobs > 0:
+            execProcesses(commands, n = gMaxJobs,
+                          beforeRunEvent = beforeRunEvent, afterRunEvent = afterRunEvent)
+          else:
+            execProcesses(commands,
+                          beforeRunEvent = beforeRunEvent, afterRunEvent = afterRunEvent)
         if profile != nil:
           profile[].execWallTime += toSeconds(getMonoTime() - depthStart)
         if maxExitCode != 0:
@@ -656,7 +666,7 @@ Commands:
   version               Show version
 
 Options:
-  -j, --parallel        Enable parallel builds (for 'run' command)
+  -j, --parallel[:N]    Parallel builds (for 'run'); :N caps at N processes
   --makefile <name>     Output Makefile name (default: Makefile)
   --force               Force rebuild of all targets
   --verbose             Show verbose output
@@ -758,7 +768,18 @@ proc main() =
       case key.normalize
       of "help", "h": writeHelp()
       of "version", "v": writeVersion()
-      of "parallel", "j": opt.incl Parallel
+      of "parallel", "j":
+        opt.incl Parallel
+        # `--parallel:N` / `-j:N` caps the per-depth fan-out at N processes;
+        # bare `--parallel` (no value) keeps the all-cores default. Without this
+        # the value was discarded and every DAG depth ran on all cores, which
+        # OOMs large projects (e.g. nimbus under `nim ic -d:icJobs:N`).
+        if val.len > 0:
+          try:
+            gMaxJobs = parseInt(val)
+          except ValueError:
+            quit "invalid value for --parallel: " & val
+          if gMaxJobs < 1: quit "--parallel value must be >= 1"
       of "makefile": outputMakefile = val
       of "force": opt.incl Force
       of "verbose": opt.incl Verbose
