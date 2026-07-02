@@ -1,0 +1,19 @@
+(.nif27)
+(stmts
+ (type :P.0.tasgncopy .
+  (object .
+   (fld :a.0.tasgncopy . (i 64))
+   (fld :b.0.tasgncopy . (i 64))))
+ (proc :copytest.0.tasgncopy
+  (params)
+  (i 64)
+  .
+  (stmts
+   (var :src.0 . P.0.tasgncopy
+    (oconstr P.0.tasgncopy
+     (kv a.0.tasgncopy 10)
+     (kv b.0.tasgncopy 20)))
+   (var :dst.0 . P.0.tasgncopy .)
+   (asgn dst.0 src.0)
+   (asgn (dot src.0 a.0.tasgncopy) 999)
+   (ret (dot dst.0 a.0.tasgncopy)))))

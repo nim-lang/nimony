@@ -1306,7 +1306,20 @@ proc genLvalueStore(g: var JSGen; lval: Cursor; val: Cursor) =
             (var v = val; g.gx v)
       while nn.hasMore: skip nn
   of NoExpr:
-    if n.kind == Symbol and g.isSlotVar(n.symId):
+    if n.kind == Symbol and g.localTypes.hasKey(n.symId) and
+       accessOf(g.m, g.localTypes[n.symId]) == akAggregate:
+      # Aggregate assignment: both sides are buffer offsets, so copy the bytes
+      # (value semantics). An aliasing `dst = src` is wrong here — an ARC move
+      # `wasMoved`s the source right after, which would then zero `dst` too (this
+      # is exactly why `$bool` returned an empty string). `copy` keeps the lval's
+      # slot stable; a fresh `oconstr`/`aconstr` rhs is built then copied in.
+      let sz = typeLayout(g.m, g.localTypes[n.symId]).size
+      g.js.tree jExprStmt:
+        g.memMeth("copy"):
+          (var nn = n; g.gx nn)
+          (var v = val; g.gx v)
+          g.js.num sz
+    elif n.kind == Symbol and g.isSlotVar(n.symId):
       let ak = (if g.localTypes.hasKey(n.symId): accessOf(g.m, g.localTypes[n.symId]) else: akI64)
       if ak != akAggregate:
         let (_, st) = accessors(ak)

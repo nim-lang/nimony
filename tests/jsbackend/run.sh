@@ -95,6 +95,25 @@ if have_node; then
   } | node
 fi
 
+# ── aggregate ASSIGNMENT is a byte copy, not an offset alias. `dst = src` where
+# both are buffer-resident aggregates must `mem.copy` — otherwise `dst` would
+# alias `src`'s bytes, and an ARC move (which `wasMoved`s the source right after
+# the assignment) would zero `dst` too. `copytest` copies `src`{a:10} into `dst`,
+# then sets `src.a = 999`; `dst.a` must still read 10.
+gen tasgncopy
+if have_node; then
+  {
+    echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
+    echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)),'
+    echo '  copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n) };'
+    cat "$work/tasgncopy.js"
+    echo 'if (copytest_0_tasgncopy()===10)'
+    echo '  { console.log("functional(asgncopy): PASS"); }'
+    echo '  else { console.log("functional(asgncopy): FAIL got "+copytest_0_tasgncopy()); process.exit(1); }'
+  } | node
+fi
+
 # ── strings-through-pointers (the system.nim string idiom): a proc takes a
 # `ptr Str` and reads a field via `(dot (deref s) bytes)` — the base is a
 # `(deref sym)`, not a bare symbol — and reads the SSO length byte through
