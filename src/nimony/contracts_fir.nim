@@ -79,7 +79,23 @@ type
                                        # body we are currently analysing (used
                                        # for the --verbose dump)
 
-proc isectInits(a, b: InitSet): InitSet = intersection(a, b)
+proc isectInits(a, b: InitSet): InitSet =
+  ## Intersection join for the definite-assignment lattice.
+  ##
+  ## Deliberately hand-rolled instead of `std/sets.intersection`: that sizes
+  ## its result from `data.len` (the internal slot-array capacity, which a
+  ## HashSet never shrinks) rather than from the element count, so once a proc
+  ## has touched many locals every control-flow merge allocates an oversized
+  ## table and large procs OOM. Iterate the smaller operand by element count
+  ## and size the result to it.
+  if a.len <= b.len:
+    result = initHashSet[SymId](max(a.len, 2))
+    for x in a:
+      if x in b: result.incl x
+  else:
+    result = initHashSet[SymId](max(b.len, 2))
+    for x in b:
+      if x in a: result.incl x
 
 proc newInitTracker(): Tracker[InitSet, SymId] =
   initTracker[InitSet, SymId](initHashSet[SymId](), isectInits)
