@@ -324,9 +324,9 @@ proc getPathVarId(c: var NjvlContext; path: seq[SymId]): VarId =
   if path.len == 1:
     return VarId(path[0])
 
-  c.pathToVarId.withValue(path, v):
-    return v[]
-  do:
+  if path in c.pathToVarId:
+    result = c.pathToVarId[path]
+  else:
     result = mintPathVarId(c)
     c.pathToVarId[path] = result
 
