@@ -770,6 +770,40 @@ proc createTokenBuf*(cap = 16; sharedPool: Pool = nil;
     tags: (if sharedTags != nil: sharedTags else: newTagPool())
   )
 
+proc adoptForeignTokens*(data: pointer; count: int;
+                         sharedPool: Pool = nil; sharedTags: TagPool = nil): TokenBuf =
+  ## Build a buffer whose `count` tokens are BORROWED from `data` (e.g. an mmap'd
+  ## `.bif` region) rather than copied into a heap allocation — a zero-copy load.
+  ## The buffer reads like any other. It NEVER frees `data`: the block is handed to
+  ## an eagerly-created cursor owner seeded with an EXTRA, permanent reference
+  ## (`rc = 2` = the buffer's own ref plus one keep-alive), so `decRcAndFree` never
+  ## reaches 0 and never `dealloc`s the borrowed storage. A *mutation* still works
+  ## unchanged: because the owner is shared (`rc > 1`), `prepareMutation` forks a
+  ## private heap copy and abandons the borrowed block — no special-casing anywhere
+  ## else. The buffer does NOT own the mapping's lifetime: `data` must stay valid
+  ## (and aligned for `NifToken`, 4 bytes) for as long as the buffer or any cursor
+  ## over it lives. The caller keeps the backing store resident — typically for the
+  ## whole process; an mmap left mapped costs only address space, reclaimed at exit.
+  assert (cast[uint](data) and (sizeof(NifToken).uint - 1)) == 0,
+    "adoptForeignTokens: misaligned token block"
+  result = TokenBuf(
+    data: cast[Storage](data),
+    len: count, cap: count,
+    pool: (if sharedPool != nil: sharedPool else: newPool()),
+    tags: (if sharedTags != nil: sharedTags else: newTagPool())
+  )
+  # Pin the borrowed block for the buffer's whole life via an owner seeded with a
+  # permanent extra ref — same shape `ensureOwner` builds, but `rc = 2` so it is
+  # never collected. (Mirrors `ensureOwner`, inlined because that proc is declared
+  # further down and this one needs the non-default seed.)
+  result.owner = cast[CursorOwner](alloc0(sizeof(CursorOwnerObj)))
+  result.owner.data = cast[Storage](data)
+  result.owner.pool = result.pool
+  result.owner.tags = result.tags
+  GC_ref(result.owner.pool)
+  GC_ref(result.owner.tags)
+  result.owner.rc = 2
+
 proc len*(b: TokenBuf): int {.inline.} = b.len
 
 proc `[]`*(b: TokenBuf; i: int): NifToken {.inline.} =
