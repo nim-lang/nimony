@@ -2444,6 +2444,15 @@ proc semObjectCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item;
     while it.n.hasMore:
       semObjectComponent c, dest, it.n, state
     takeParRi dest, it.n
+  elif it.n.substructureKind == NilU:
+    # An empty branch (`of X: discard`) parses to a bare `(nil)` body. Emit a
+    # well-formed empty `(stmts)` instead so downstream variant walkers (type
+    # navigation, sizeof, hooks) see the same body shape as a normal branch,
+    # rather than a `(nil)` that several `while hasMore` loops fail to advance
+    # past (an effectively-infinite compile).
+    dest.addParLe(StmtsS, it.n.info)
+    dest.addParRi()
+    skip it.n
   else:
     dest.addParLe(StmtsS, it.n.info)
     semObjectComponent c, dest, it.n, state
