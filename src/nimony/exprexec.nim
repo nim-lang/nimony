@@ -59,23 +59,15 @@ type
                              # struct stays trivially-copyable; the SemContext
                              # outlives `executeExpr`'s whole call).
 
-proc collectSyms(n: Cursor; stack: var seq[SymId]) =
-  assert n.hasMore, "cursor at end?"
+proc collectSyms(n: var Cursor; stack: var seq[SymId]) =
+  ## Collects every `Symbol` in the subtree at `n`, advancing `n` past it.
   if n.kind != ParLe:
     # atom:
     if n.kind == Symbol: stack.add n.symId
+    inc n
   else:
-    var n = n
-    var nested = 0
-    while true:
-      case n.kind
-      of ParRi:
-        dec nested
-        if nested == 0: break
-      of ParLe: inc nested
-      of Symbol: stack.add n.symId
-      else: discard
-      inc n
+    n.loopInto:
+      collectSyms(n, stack)
 
 proc instantiationTypevars(sym: SymId): Cursor =
   ## Returns the instantiated proc/type decl's `typevars` slot if `sym`
@@ -707,7 +699,8 @@ proc collectUsedSymsFromExpr(c: var SynthesizeSerializerCtx; s: var SemContext; 
   var handledSyms = initHashSet[SymId]()
   var inlineDefs = initHashSet[SymId]()
   collectSymDefs(expr, inlineDefs)
-  collectSyms(expr, stack)
+  var e = expr
+  collectSyms(e, stack)
   c.usedModules.incl(s.g.config.nifcachePath / SystemModuleSuffix)
   while stack.len > 0:
     let sym = stack.pop()
@@ -729,7 +722,8 @@ proc collectUsedSymsFromExpr(c: var SynthesizeSerializerCtx; s: var SemContext; 
         if res.status == LacksNothing:
           let before = c.dest.len
           c.dest.addSubtree res.decl
-          collectSyms(cursorAt(c.dest, before), stack)
+          var d = cursorAt(c.dest, before)
+          collectSyms(d, stack)
           endRead(c.dest)
       elif owner.len > 0:
         c.usedModules.incl(s.g.config.nifcachePath / owner)

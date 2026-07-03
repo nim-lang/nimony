@@ -63,8 +63,7 @@ type
     usages: seq[Usage]
 
 proc findAndAddFieldDefinition(c: var IdeContext, n: var Cursor, name: string, nameSym: SymId, containingType: Cursor) =
-  inc n
-  while n.kind != ParRi:
+  n.loopInto:
     if n.substructureKind == FldU:
       var sym = n
       inc sym
@@ -77,70 +76,61 @@ proc tr(c: var IdeContext, n: var Cursor) =
   case n.stmtKind
   of ScopeS:
     c.typeCache.openScope()
-    n.loopInto():
+    n.loopInto:
       tr(c, n)
     c.typeCache.closeScope()
 
   of ProcS, FuncS, MethodS, IteratorS, TemplateS, MacroS, ConverterS:
     let decl = n
-    inc n # ParLe
-    let symId = n.symId
     c.typeCache.openScope(ProcScope)
-    for i in 0..<BodyPos:
-      if i == ParamsPos:
-        c.typeCache.registerParams(symId, decl, n)
-        tr(c, n)
-      else:
-        tr(c, n)
-    tr(c, n) # body
-    assert n.kind == ParRi
-    inc n # ParRi
+    n.into:
+      let symId = n.symId
+      for i in 0..<BodyPos:
+        if i == ParamsPos:
+          c.typeCache.registerParams(symId, decl, n)
+          tr(c, n)
+        else:
+          tr(c, n)
+      tr(c, n) # body
     c.typeCache.closeScope()
 
   of TypeS:
-    inc n # ParLe
-    if n.symId == c.sym:
-      c.usages.add(Usage(n: n, containingType: c.currentType))
     let t = c.currentType
-    c.currentType = n
-    while n.kind != ParRi:
-      tr(c, n)
-    inc n # ParRi
+    n.into:
+      if n.symId == c.sym:
+        c.usages.add(Usage(n: n, containingType: c.currentType))
+      c.currentType = n
+      while n.hasMore:
+        tr(c, n)
     c.currentType = t
 
   of VarS, LetS, ConstS:
     let symKind = n.symKind
-    inc n # ParLe
-    let sym = n.symId
-    if sym == c.sym and c.searchKind notin {skField, skDot}:
-      c.usages.add(Usage(n: n, containingType: c.currentType))
-    inc n # sym
-    inc n # exported
-    inc n # pragmas
-    let typ = n
-    tr(c, n) # type
-    tr(c, n) # value
-    assert n.kind == ParRi
-    inc n
-
-    c.typeCache.registerLocal(sym, symKind, typ)
+    n.into:
+      let sym = n.symId
+      if sym == c.sym and c.searchKind notin {skField, skDot}:
+        c.usages.add(Usage(n: n, containingType: c.currentType))
+      inc n # sym
+      inc n # exported
+      inc n # pragmas
+      let typ = n
+      tr(c, n) # type
+      tr(c, n) # value
+      c.typeCache.registerLocal(sym, symKind, typ)
 
   else:
     case n.exprKind
     of DotX, DdotX:
-      let dot = n
-      inc n # skip ParLe
-      let lhs = n
-      tr(c, n) # lhs
-      let typeContext = c.currentDotLhs
-      c.currentDotLhs = lhs
-      tr(c, n) # rhs
-      c.currentDotLhs = typeContext
-      # skip remaining children
-      while n.kind != ParRi:
-        tr(c, n)
-      assert n.kind == ParRi
-      inc n # ParRi
+      n.into:
+        let lhs = n
+        tr(c, n) # lhs
+        let typeContext = c.currentDotLhs
+        c.currentDotLhs = lhs
+        tr(c, n) # rhs
+        c.currentDotLhs = typeContext
+        # process any remaining children
+        while n.hasMore:
+          tr(c, n)
 
     of OconstrX:
       skip n
@@ -148,29 +138,23 @@ proc tr(c: var IdeContext, n: var Cursor) =
     else:
       case n.substructureKind
       of ParamU:
-        let symKind = n.symKind
-        inc n # ParLe
-        let sym = n.symId
-        if sym == c.sym and c.searchKind notin {skField, skDot}:
-          c.usages.add(Usage(n: n, containingType: c.currentType))
-        inc n # sym
-        inc n # exported
-        inc n # pragmas
-        let typ = n
-        tr(c, n) # type
-        tr(c, n) # value
-        assert n.kind == ParRi
-        inc n # ParRi
+        n.into:
+          let sym = n.symId
+          if sym == c.sym and c.searchKind notin {skField, skDot}:
+            c.usages.add(Usage(n: n, containingType: c.currentType))
+          inc n # sym
+          inc n # exported
+          inc n # pragmas
+          tr(c, n) # type
+          tr(c, n) # value
 
       of FldU:
-        inc n # ParLe
-        if n.symId == c.sym and c.trackMode == TrackUsages and c.searchKind in {skField, skDot}:
-          c.usages.add(Usage(n: n, containingType: c.currentType))
-        # skip remaining children
-        while n.kind != ParRi:
-          tr(c, n)
-        assert n.kind == ParRi
-        inc n # ParRi
+        n.into:
+          if n.symId == c.sym and c.trackMode == TrackUsages and c.searchKind in {skField, skDot}:
+            c.usages.add(Usage(n: n, containingType: c.currentType))
+          # process any remaining children
+          while n.hasMore:
+            tr(c, n)
 
       else:
         case n.kind
@@ -194,7 +178,7 @@ proc tr(c: var IdeContext, n: var Cursor) =
           inc n
 
         of ParLe:
-          n.loopInto():
+          n.loopInto:
             tr(c, n)
 
         else:

@@ -116,7 +116,61 @@ proc semLocalValue(c: var SemContext; dest: var TokenBuf; it: var Item; crucial:
   else:
     semExpr c, dest, it
 
+proc isStaticConstraint(n: Cursor): bool =
+  ## Detects the `static[T]` / `static T` / bare `static` constraint forms of a
+  ## generic parameter before semchecking: nifler keeps `static` as a plain
+  ## identifier in `static[T]` (giving `(at static T)`) but produces a
+  ## `(static T)` type for the prefix form `static T`.
+  if n.typeKind == StaticT: return true
+  var n = n
+  if n.exprKind == AtX: inc n
+  n.kind == Ident and pool.strings[n.litId] == "static"
+
+proc semStaticTypevarType(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
+  ## Sem the element type of a value generic parameter (`N: static[int]`). The
+  ## type slot of the resulting `staticTypevar` holds the plain element type;
+  ## a `static` wrapper never enters the checked type system (issue #2089).
+  let info = n.info
+  if n.typeKind == StaticT:
+    inc n
+    if n.kind == ParRi:
+      c.buildErr dest, info, "`static` requires an explicit element type, e.g. `static[int]`"
+    else:
+      discard semLocalType(c, dest, n)
+    skipParRi n
+  elif n.exprKind == AtX:
+    inc n
+    skip n # the `static` identifier
+    if n.kind == ParRi:
+      c.buildErr dest, info, "`static` requires an explicit element type, e.g. `static[int]`"
+    else:
+      discard semLocalType(c, dest, n)
+      if n.kind != ParRi:
+        c.buildErr dest, info, "`static` takes a single element type"
+        while n.kind != ParRi: skip n
+    skipParRi n
+  elif n.kind == Ident and pool.strings[n.litId] == "static":
+    # bare `static` identifier
+    skip n
+    c.buildErr dest, info, "`static` requires an explicit element type, e.g. `static[int]`"
+  else:
+    # already desugared (re-semming a `staticTypevar` declaration): the slot
+    # holds the plain element type
+    discard semLocalType(c, dest, n)
+
 proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKind) =
+  var kind = kind
+  if kind == TypevarY:
+    # `N: static[int]` declares a *value* generic parameter. Detect the
+    # `static` constraint before the symbol is declared so that both the
+    # symbol kind and the declaration tag become `staticTypevar`.
+    var constraint = n
+    inc constraint # tag
+    skip constraint # name
+    skip constraint # export marker
+    skip constraint # pragmas
+    if isStaticConstraint(constraint):
+      kind = StaticTypevarY
   let declStart = dest.len
   takeToken dest, n
   var delayed = handleSymDef(c, dest, n, kind) # 0
@@ -136,6 +190,9 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
   of TypevarY:
     discard semLocalType(c, dest, n, InGenericConstraint)
     wantDot c, dest, n
+  of StaticTypevarY:
+    semStaticTypevarType c, dest, n
+    wantDot c, dest, n
   of ParamY, LetY, VarY, ConstY, CursorY, PatternvarY, ResultY, FldY, GfldY, GletY, TletY, GvarY, TvarY:
     beforeType = dest.len
     if n.kind == DotToken:
@@ -149,11 +206,20 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
       elif kind == ParamY and it.n.kind == DotToken:
         if c.usingStmtMap.hasKey(delayed.lit):
           it.typ = c.usingStmtMap.getOrQuit(delayed.lit)
+          dest.takeToken it.n # empty value slot
         elif c.routine.kind in {TemplateY, MacroY}:
           it.typ = c.types.untypedType
+          dest.takeToken it.n # empty value slot
         else:
-          buildErr c, dest, it.n.info, "type or init value expected"
-        dest.takeToken it.n
+          # A parameter without a type and without a default value. Produce an
+          # error *type* (mirroring how an unresolved named type is handled) and
+          # leave the value slot empty. The error node must end up in the type
+          # slot, not be appended after the empty value: an extra node there
+          # makes the param over-full and crashes a later phase (issue #2012).
+          var errBuf = createTokenBuf(4)
+          c.buildErr errBuf, it.n.info, "type or init value expected"
+          it.typ = typeToCursor(c, errBuf, 0)
+          dest.takeToken it.n # empty value slot
       else:
         semLocalValue c, dest, it, crucial # 4
       n = it.n
@@ -212,6 +278,10 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
       copyKeepLineInfo dest[declStart], parLeToken(GvarS, NoLineInfo)
   elif kind == GfldY:
     copyKeepLineInfo dest[declStart], parLeToken(GfldY, NoLineInfo)
+  elif kind == StaticTypevarY:
+    # the input tree used the `typevar` tag; the declaration's static-ness
+    # lives in the tag, so retag it
+    copyKeepLineInfo dest[declStart], parLeToken(StaticTypevarY, NoLineInfo)
   if kind notin {FldY, GfldY}:
     publish c, dest, delayed.s.name, declStart
 
@@ -327,6 +397,9 @@ proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: v
 proc semGenericParam(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   if n.substructureKind == TypevarU:
     semLocal c, dest, n, TypevarY
+  elif n.substructureKind == StaticTypevarU:
+    # re-semming an already desugared value generic parameter
+    semLocal c, dest, n, StaticTypevarY
   else:
     buildErr c, dest, n.info, "expected 'typevar'"
 
@@ -651,8 +724,7 @@ proc hasUntypedOrTypedParam(dest: var TokenBuf; beforeParams: int): bool =
   if n.substructureKind != ParamsU:
     endRead(dest)
     return
-  inc n
-  while n.kind != ParRi:
+  n.loopInto:
     if n.substructureKind == ParamU:
       var p = n
       inc p
@@ -1028,7 +1100,7 @@ proc fitTypeToPragmas(c: var SemContext; dest: var TokenBuf; pragmas: CrucialPra
            t.substructureKind in {NotnilU, NilU, UncheckedU}:
           takeTree rebuilt, t
       else: discard
-      while t.kind != ParRi:
+      while t.hasMore:
         skip t
       for tok in attrs:
         rebuilt.add tok

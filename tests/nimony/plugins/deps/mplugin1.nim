@@ -23,7 +23,7 @@ proc tr(n: NifCursor): NifBuilder =
       sample.addIdent "echo"
   var scan = snapshot(sample)
   var nestedTags = 0
-  scan.balancedTokens:
+  scan.linearScan:
     inc nestedTags
     assert scan.stmtKind == CallS
   assert nestedTags == 1

@@ -2,7 +2,7 @@
 |------------------------|-----------------------------|---------------|
 | `(err ...)`            | NimonyExpr, NimonyType, NiflerKind                    | indicates an error |
 | `(suf LIT STR)`        | LengExpr, NimonyExpr, NiflerKind                     | literal with suffix annotation |
-| `(at T X X); (at X X); (at Y T+)` | LengExpr, NimonyExpr, NimonyType, NiflerKind | array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)` |
+| `(at T X X); (at X X); (at Y X+)` | LengExpr, NimonyExpr, NimonyType, NiflerKind | array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)` where an argument may also be a constant *value* bound to a `staticTypevar` |
 | `(deref X)`; `(deref X (cppref)?)`            | LengExpr, NimonyExpr, NiflerKind | pointer deref operation |
 | `(dot X Y INTLIT? STRLIT?)` | LengExpr, NimonyExpr, NiflerKind | object field selection; optional integer is the inheritance depth of the field; optional trailing `STRLIT` is an *access token* (carrying `"x"` like an export marker) — when present, the expression was already type-checked in a scope with access to the field, so re-check at expansion/serialization sites must accept the access even if the field is private. Emitted by sem when a template body or `.semantics` serializer is type-checked in the field's defining module and later expanded/consumed elsewhere. |
 | `(pat X X)`            | LengExpr, NimonyExpr | pointer indexing operation |
@@ -65,6 +65,7 @@
 | `(cursor D E P T .X)` | NimonySym, NimonyStmt, NimonyPragma, NifIndexKind | cursor variable declaration |
 | `(patternvar D E P T .X)` | NimonySym, NimonyStmt | pattern variable declaration |
 | `(typevar D E P .T .X)` | NimonySym, LengOther, NimonyOther, NiflerKind | type variable declaration; constraint `.T` is optional |
+| `(staticTypevar D E P T .X)` | NimonySym, LengOther, NimonyOther | value generic parameter: a generic parameter that is a compile-time *value*; the type slot holds the value's plain element type (e.g. `int` for `N: static[int]`), never a `static` wrapper |
 | `(efld D .X P T .X)`; `(efld D X)` | NimonySym, LengSym, LengOther, NimonyOther, NiflerKind | enum field declaration; slot 2 carries the export marker *or* the compile-time value (may be `.`) |
 | `(fld D E P T .X)`; `(fld D P T)` | LengOther, NimonyOther, NimonySym, LengSym, NiflerKind | field declaration |
 | `(gfld D E P T .X)` | NimonySym, NimonyOther | guarded field declaration, cannot be accessed outside an `of` branch |
@@ -89,7 +90,7 @@
 | `(when (elif X X)+ (else X)?)` | NimonyStmt, NimonyOther, NiflerKind | when statement header |
 | `(elif X X)` | LengOther, NimonyOther, NiflerKind | pair of (condition, action) |
 | `(else X)` | LengOther, NimonyOther, NiflerKind | `else` action |
-| `(typevars (typevar ...)*)` | NimonyOther, NiflerKind | type variable/generic parameters |
+| `(typevars (typevar ...)*)` | NimonyOther, NiflerKind | type variable/generic parameters; after sem an entry may also be a `(staticTypevar ...)` |
 | `(break .Y)`; `(break)` | LengStmt, NimonyStmt, NiflerKind | `break` statement |
 | `(continue .Y)`; `(continue)` | NimonyStmt, NiflerKind, NjvlKind | `continue` statement |
 | `(for X ... S)` | NimonyStmt, NiflerKind | for statement |
@@ -97,8 +98,8 @@
 | `(corofor X S)` | NimonyStmt | closure-iterator for loop, lowered shape used between iterinliner and cps; first child is the iterator call, second child is a `(stmts ...)` whose first inner statement is a `(var :forLoopVar T .)` declaration that receives each yielded value |
 | `(case X (of (ranges...) S)+ (else X)?)` | LengStmt, NimonyStmt, NimonyOther, NiflerKind | `case` statement |
 | `(of (ranges ...) S)` | LengOther, NimonyOther, NiflerKind | `of` branch within a `case` statement |
-| `(lab D)` | LengStmt, LengSym | label, target of a `jmp` instruction |
-| `(jmp Y)` | LengStmt | jump/goto instruction |
+| `(lab D)` | LengStmt, LengSym, NjvlKind | label, target of a `jmp` instruction |
+| `(jmp Y)` | LengStmt, NjvlKind | jump/goto instruction |
 | `(ret .X)` | LengStmt, NimonyStmt, NiflerKind | `return` instruction |
 | `(yld .X)` | NimonyStmt, NiflerKind | yield statement |
 | `(stmts S*)` | LengStmt, NimonyStmt, NimonyOther, NiflerKind | list of statements |

@@ -5,18 +5,28 @@
 # distribution, for details about the copyright.
 
 ##[
-Contract analysis using NJVL (No-Jump Versioned Locations) IR.
+Contract analysis over the **Final IR** (`doc/final_ir.md`).
 
-Tries to prove or disprove `.requires` and `.ensures` annotations.
-Uses the structured ite/loop constructs from NJVL instead of goto-based
-control flow graphs.
+Tries to prove or disprove `.requires` and `.ensures` annotations and to
+verify initialization and not-nil properties.
 
-The analysis is performed on NJVL IR which has:
+Where the older `contracts_njvl.nim` eliminated jumps and tracked "did we
+already leave" with materialized control-flow flags (`mflag`/`jtrue`) and an
+`Implications` lattice, this analysis runs directly on the structured Final IR:
+
 - `(ite cond then else)` for branching
-- `(loop pre cond body)` for loops
+- `(loop body)` — infinite loop; the body ends in `(continue .)` and every
+  forward exit is a `(jmp loopExit)`
+- `(lab L)` / `(jmp L)` — the structured multi-exit
+- `(try body (except ...)* (fin ...)?)`, `(ret ...)`, `(raise ...)`
 - `(store value dest)` for assignments
-- `(v symId version)` for versioned variables
-- `(join symId newV old1 old2)` for merge points
+
+"Did we already leave" is now positional: the `Tracker` (`njvl/tracker.nim`)
+carries fall-through reachability and the per-target exit summaries, and a
+`(lab)` multi-join resolves them in one forward pass. Per the chosen design the
+state is *hybrid*: `inferle` facts stay imperative (`save`/`restore` at branch
+points, snapshotted per-exit for the multi-join), while the **Tracker** owns
+init-tracking and fall-through.
 
 In order to not be too annoying in the case of a contract violation, the
 compiler emits a warning (that can be suppressed or turned into an error).
@@ -29,10 +39,10 @@ include ".." / lib / compat2
 
 import ".." / models / tags
 import ".." / lib / symparser
-import ".." / njvl / [njvl_model, vl]
+import ".." / njvl / [njvl_model, finalir, tracker]
+import ".." / hexer / passes
 import nimony_model, programs, decls, typenav, sembasics, reporters,
   renderer, typeprops, inferle, xints, builtintypes
-import implications
 
 type
   BorrowableCheck = enum
@@ -48,36 +58,56 @@ type
     path: seq[SymId]  ## root :: field1 :: field2 :: ...
     info: PackedLineInfo
 
+  InitSet = HashSet[SymId]    ## locals proven initialized at a program point
+
   NjvlContext = object
     facts: Facts           # From inferle.nim - tracks le/notnil facts
     typeCache: TypeCache
-    directlyInitialized: seq[HashSet[SymId]]
+    tr: Tracker[InitSet, SymId]        # fall-through + per-exit init summaries;
+                                        # `tr.state` is the init-set at the
+                                        # current (reachable) point.
     errors: TokenBuf
     procCanRaise: bool
     moduleSuffix: string
     nestedProcs: int
-    knownCfVars: HashSet[SymId]
+    loopExitLabels: HashSet[SymId]     # `(lab)`s emitted right after a `(loop)`.
+                                       # Their post-join facts are the pre-loop
+                                       # set `traverseLoop` rolled back to (via
+                                       # the inferle journal), not "know nothing".
     inlineVars: Table[SymId, Cursor] # var -> to its init expression
-    impls: Implications                # flow-sensitive init implications;
-                                        # subsumes both "writesTo" and
-                                        # "knownTrueCfVars" — a jtrue'd cfvar
-                                        # is just `Always cfvar` in `impls`.
-    nextCondId: int                    # counter for minting synthetic cond
-                                        # syms for complex ite conditions
-    falseCfvars: seq[SymId]            # cond syms (cfvars or synthetics)
-                                        # currently known false (from
-                                        # `(ite (not cf) ...)` nesting and
-                                        # from leaving-path asymmetries)
-    trueCfvars: seq[SymId]             # cond syms currently known true
-                                        # (from `(ite cf ...)` nesting and
-                                        # leaving-path asymmetries)
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
     activeBorrows: seq[BorrowInfo]
-    verbose: bool                      # --verbose: dump NJ IR on init/contract
+    verbose: bool                      # --verbose: dump final IR on init/contract
                                        # failures for easier debugging
     currentProcStart: Cursor           # cursor at the start of the proc whose
                                        # body we are currently analysing (used
                                        # for the --verbose dump)
+
+proc isectInits(a, b: InitSet): InitSet =
+  ## Intersection join for the definite-assignment lattice.
+  ##
+  ## Deliberately hand-rolled instead of `std/sets.intersection`: that sizes
+  ## its result from `data.len` (the internal slot-array capacity, which a
+  ## HashSet never shrinks) rather than from the element count, so once a proc
+  ## has touched many locals every control-flow merge allocates an oversized
+  ## table and large procs OOM. Iterate the smaller operand and let the result
+  ## grow to the (small) number of shared elements.
+  result = initHashSet[SymId]()
+  if a.len <= b.len:
+    for x in a:
+      if x in b: result.incl x
+  else:
+    for x in b:
+      if x in a: result.incl x
+
+proc newInitTracker(): Tracker[InitSet, SymId] =
+  initTracker[InitSet, SymId](initHashSet[SymId](), isectInits)
+
+proc markInit(c: var NjvlContext; symId: SymId) {.inline.} =
+  c.tr.state.incl symId
+
+proc isInitialized(c: NjvlContext; symId: SymId): bool {.inline.} =
+  symId in c.tr.state
 
 proc dumpCurrentProc(c: var NjvlContext; info: PackedLineInfo; msg: string) =
   ## Dump the NJ IR of the proc currently under analysis to stderr. Used
@@ -258,48 +288,6 @@ proc endBorrow(c: var NjvlContext; sym: SymId) =
       c.activeBorrows.del(i)
     else:
       inc i
-
-proc conditionCond(c: var NjvlContext; n: Cursor): PolarizedSym =
-  ## Classify an ite condition into a cond-sym with polarity.
-  ## When the condition is a cfvar (``(v cf …)`` or ``(not cf)``) the
-  ## cfvar itself is used as the cond sym, preserving transitive reasoning
-  ## across chained cfvar implications. For anything else (complex
-  ## expressions, tuple-pattern checks, …) a fresh synthetic sym is
-  ## minted so `combine` can still lift branch-local `Always` facts via
-  ## cond-polarity. Synthetic conds are never ``jtrue``'d, so they don't
-  ## appear in `c.knownCfVars`; they interact with the analysis purely
-  ## through the cond-polarity lift and the `c.falseCfvars` set.
-  if n.exprKind == NotX:
-    var r = n
-    inc r
-    let s = extractSymId(r)
-    if s != NoSymId and s in c.knownCfVars:
-      return PolarizedSym(sym: s, negated: true)
-  let d = extractSymId(n)
-  if d != NoSymId and d in c.knownCfVars:
-    return PolarizedSym(sym: d, negated: false)
-  inc c.nextCondId
-  let synth = pool.syms.getOrIncl("´cond." & $c.nextCondId & "." & c.moduleSuffix)
-  result = PolarizedSym(sym: synth, negated: false)
-
-proc cfCondKnownValue(c: NjvlContext; n: Cursor): int =
-  ## Returns +1 if the condition is a mflag known to be true,
-  ## -1 if it is `(not cf)` where cf is known true, 0 otherwise.
-  ## After vl.nim, cfvars appear as `(v sym N)` so we use extractSymId.
-  ## A cfvar is known true ⟺ it is `Always` written in `c.impls`.
-  let s = extractSymId(n)
-  if s != NoSymId and c.impls.isAlwaysInit(s):
-    result = 1
-  elif n.exprKind == NotX:
-    var inner = n
-    inc inner
-    let s2 = extractSymId(inner)
-    if s2 != NoSymId and c.impls.isAlwaysInit(s2):
-      result = -1
-    else:
-      result = 0
-  else:
-    result = 0
 
 template getVarId(c: var NjvlContext; symId: SymId): VarId = VarId(symId)
 
@@ -763,24 +751,6 @@ proc analyseTupConstr(c: var NjvlContext; n: var Cursor) =
     skip expected # type of the next field
   skipParRi n
 
-proc isDirectlyInitialized(c: var NjvlContext; symId: SymId): bool =
-  for s in mitems c.directlyInitialized:
-    if symId in s:
-      return true
-  return false
-
-proc isEffectivelyInitialized(c: var NjvlContext; symId: SymId): bool =
-  ## True if symId is known initialized (directly, always on every path via
-  ## `c.impls`, or via cond-based implication when a cond is known true or
-  ## known false at the current program point).
-  if isDirectlyInitialized(c, symId): return true
-  if c.impls.isAlwaysInit(symId): return true
-  for cf in c.falseCfvars:
-    if c.impls.isInitIfCondFalse(symId, cf): return true
-  for cf in c.trueCfvars:
-    if c.impls.isInitIfCondTrue(symId, cf): return true
-  return false
-
 proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
   var nested = 0
   while true:
@@ -789,10 +759,10 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
       let symId = pc.symId
       let x = getLocalInfo(c.typeCache, symId)
       if x.kind in {VarY, LetY, CursorY, PatternvarY, ResultY}:
-        if not isEffectivelyInitialized(c, symId):
+        if c.tr.live and not isInitialized(c, symId):
           buildErr(c, pc.info, "cannot prove that " & pool.syms[symId] & " has been initialized")
           # don't report the same symbol twice from later references
-          c.impls.add always(symId)
+          markInit(c, symId)
       inc pc
     of SymbolDef:
       # SymbolDef can appear inside type expressions embedded in expressions
@@ -931,7 +901,7 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
     if pk == OutT:
       let s = extractSymId(n)
       if s != NoSymId:
-        c.impls.add always(s)
+        markInit(c, s)
     elif pk == VarargsT:
       fnType = previousFormalParam
     checkNilMatch c, n, param.typ
@@ -951,8 +921,22 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
 
 proc analyseCall(c: var NjvlContext; n: var Cursor) =
   inc n # skip call instruction
+  # A `{.noreturn.}` callee (e.g. `quit`, an out-of-range raiser) does not fall
+  # through. Mark the path dead after it, so a sibling branch that assigns
+  # `result` is correctly seen as the only way out (matches nj.nim, which emits
+  # a leave after noreturn calls). The init-set on this dead path contributes to
+  # no exit, exactly as a `raise`/`return` would.
+  var isNoReturn = false
+  block:
+    var pragmas = skipProcTypeToParams(getType(c.typeCache, n))
+    if pragmas.isParamsTag:
+      skip pragmas # params
+      skip pragmas # return type
+      isNoReturn = hasPragma(pragmas, NoreturnP)
   analyseCallArgs(c, n)
   skipParRi n
+  if isNoReturn:
+    c.tr.live = false
 
 # --- Assignment fact tracking ---
 
@@ -986,11 +970,11 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
     let symId = destSymId
     let x = getLocalInfo(c.typeCache, symId)
     if x.kind in {LetY, GletY, TletY}:
-      if isDirectlyInitialized(c, symId) or c.impls.isAlwaysInit(symId):
+      if isInitialized(c, symId):
         c.buildErr n.info, "invalid reassignment to `let` variable"
 
     var fact = query(getVarId(c, symId), InvalidVarId, createXint(0'i32))
-    c.impls.add always(symId)
+    markInit(c, symId)
 
     # Check for not-nil type match
     let expected = getType(c.typeCache, n)
@@ -1022,141 +1006,348 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
 
   skipParRi n
 
+# --- Exit-summary plumbing (facts ride alongside the Tracker's init-set) ---
+
+proc retKey(): ExitKey[SymId] {.inline.} = ExitKey[SymId](kind: ekReturn)
+proc raiseKey(): ExitKey[SymId] {.inline.} = ExitKey[SymId](kind: ekRaise)
+proc contKey(): ExitKey[SymId] {.inline.} = ExitKey[SymId](kind: ekContinue)
+
+proc leaveToLabel(c: var NjvlContext; label: SymId) =
+  gotoLabel(c.tr, label)
+
+proc leaveToReturn(c: var NjvlContext) =
+  # `return` facts are never consumed (the proc root only checks *init*, via the
+  # Tracker), so we don't snapshot them — capturing them per-return is both
+  # useless and quadratic (each return re-`merge`s into one accumulator).
+  gotoReturn(c.tr)
+
+proc leaveToRaise(c: var NjvlContext) =
+  # `raise` facts are never consumed either: an `except` handler conservatively
+  # assumes the pre-`try` state (see `traverseTry`). So we don't snapshot them.
+  gotoRaise(c.tr)
+
+proc leaveToContinue(c: var NjvlContext) =
+  # The back-edge state is discarded by a one-pass forward analysis, so we do
+  # not snapshot facts; we only stop falling through.
+  gotoContinue(c.tr)
+
+proc bindKeyBoth(c: var NjvlContext; key: ExitKey[SymId]) =
+  ## The multi-join. **Init** is joined precisely by the Tracker (a key keeps
+  ## its value iff every predecessor agrees). **Facts** are numeric `inferle`
+  ## relations that aren't snapshotted per exit; a `(lab)` reached by a `jmp`
+  ## therefore collapses facts to "know nothing" — sound (facts are positive
+  ## knowledge, so dropping is conservative) and exactly what a loop exit wants
+  ## (e.g. `while x < 10: …` proves nothing about `x` *after* the loop).
+  let hadExit = c.tr.pending(key)
+  case key.kind
+  of ekLabel:
+    bindLabel(c.tr, key.label)
+    # A loop-exit label keeps the journal-restored pre-loop facts (see
+    # `traverseLoop`); only a *general* forward-jump join collapses to "know
+    # nothing", since finalir doesn't snapshot facts per `jmp`.
+    if hadExit and not c.loopExitLabels.contains(key.label):
+      c.facts.clearJournaled()
+  of ekReturn: bindReturn(c.tr)
+  of ekRaise: bindRaise(c.tr)
+  of ekContinue: dropContinue(c.tr)
+
+proc setFactsTo(c: var NjvlContext; cp: int; target: Facts) =
+  ## Make `c.facts` equal `target` *journaled* — roll back to the checkpoint
+  ## (the pre-branch base), then add/remove only the cells that differ. No
+  ## whole-`Facts` replacement, so an enclosing checkpoint stays valid.
+  c.facts.rollbackTo cp
+  var want = initTable[(VarId, VarId), xint]()
+  for k in 0 ..< target.len:
+    let m = target[k]
+    want[(m.a, m.b)] = m.c
+  var i = 0
+  while i < c.facts.len:
+    let f = c.facts[i]
+    let key = (f.a, f.b)
+    if key in want and want.getOrDefault(key) == f.c:
+      want.del key
+      inc i
+    else:
+      removeFactAt(c.facts, i)          # journaled removal; rechecks slot i
+  for key, cc in want:
+    c.facts.add LeXplusC(a: key[0], b: key[1], c: cc)
+
 proc traverseIte(c: var NjvlContext; n: var Cursor) =
-  ## Handle (ite cond then else [join])
+  ## `(ite cond then else)`. Each arm is analyzed under the condition's
+  ## polarity; the branch summaries are merged via the Tracker (init/fall-through)
+  ## and the facts by liveness — a branch that always leaves drops out of the
+  ## merge, unifying guard-clause and if-else style. Facts use the journaled
+  ## checkpoint/rollback, so per-frame cost is O(writes), not a whole-set copy.
   inc n # skip ite/itec tag
 
-  # Fast path: if the condition's truth value is known from mflag state,
-  # only traverse the live branch and skip the dead one.
-  let knownVal = cfCondKnownValue(c, n)
-  if knownVal == 1:
-    # condition is a mflag known to be true: only then-branch runs
-    skip n  # skip condition
-    traverseStmt c, n  # then branch
-    skip n  # skip else
-    if n.kind == ParLe and n.stmtKind == StmtsS: skip n  # skip join
-    skipParRi n
-    return
-  elif knownVal == -1:
-    # condition is (not cf) with cf known true: only else-branch runs
-    skip n  # skip condition
-    skip n  # skip then branch
-    if n.kind != DotToken: traverseStmt c, n else: inc n  # else
-    if n.kind == ParLe and n.stmtKind == StmtsS: skip n  # skip join
-    skipParRi n
-    return
-
-  # Classify the condition into a cond sym + polarity. Cfvars reuse their
-  # own sym; complex conditions get a freshly minted synthetic.
-  let cond = conditionCond(c, n)
-
-  # Analyze condition and extract facts.
-  let savedFacts = save(c.facts)
+  let cp = c.facts.checkpoint()
   let savedBorrowsLen = c.activeBorrows.len
-  let implsCp = c.impls.checkpoint()
   let condFacts = analyseCondition(c, n)
 
-  # Copy condition facts for else-branch negation (only single fact can be negated)
+  # Single-fact conditions can be negated for the else-branch's `assume(¬c)`.
   var condFactsList: seq[LeXplusC] = @[]
   if condFacts == 1:
     condFactsList.add c.facts[c.facts.len - 1]
 
-  # Then branch: `(not cf)` makes cf known false inside; a direct `(v cf …)`
-  # makes cf known true inside.
-  if cond.sym != NoSymId:
-    if cond.negated: c.falseCfvars.add cond.sym
-    else:            c.trueCfvars.add cond.sym
+  # then-branch (under assume(c)):
+  var b = splitBranch(c.tr)
   traverseStmt c, n
-  if cond.sym != NoSymId:
-    if cond.negated: discard c.falseCfvars.pop()
-    else:            discard c.trueCfvars.pop()
-  let thenFacts = c.facts
-  let thenImpls = c.impls.take(implsCp)
+  let thenLive = c.tr.live
+  # snapshot the then-path facts *only* when it falls through (needed for the
+  # merge); a leaving branch (the common `ret`/`raise` case) copies nothing.
+  let thenFacts = if thenLive: snapshotFacts(c.facts) else: default(Facts)
+  commitThen(c.tr, b)
   c.activeBorrows.setLen(savedBorrowsLen)
 
-  # Restore facts for else branch. Inside else, the cond's polarity flips.
-  restore(c.facts, savedFacts)
+  # else-branch (under assume(¬c)):
+  c.facts.rollbackTo cp
   for f in condFactsList:
     var negated = f
     negateFact(negated)
     c.facts.add negated
-
-  if cond.sym != NoSymId:
-    if cond.negated: c.trueCfvars.add cond.sym
-    else:            c.falseCfvars.add cond.sym
   if n.kind == DotToken:
     inc n
   else:
     traverseStmt c, n
-  if cond.sym != NoSymId:
-    if cond.negated: discard c.trueCfvars.pop()
-    else:            discard c.falseCfvars.pop()
+  let elseLive = c.tr.live
+  mergeBranches(c.tr, b)
   c.activeBorrows.setLen(savedBorrowsLen)
-  let elseImpls = c.impls.take(implsCp)
 
-  # Merge branch implications into the outer scope. Pass the ambient
-  # `falseCfvars` set so `combine` can promote branch-local `IfFalse cf s`
-  # facts to `Always s` when `cf` is already known false in the outer scope.
-  # `combine` returns any cond syms the leaving-path asymmetry proves are
-  # known-false / -true in sequential code past this ite.
-  c.facts = merge(thenFacts, 0, c.facts, false)
-  var knownFalse = initHashSet[SymId]()
-  for cf in c.falseCfvars: knownFalse.incl cf
-  var nowKnownFalse, nowKnownTrue: seq[SymId] = @[]
-  combine(c.impls, nowKnownFalse, nowKnownTrue, thenImpls, elseImpls, cond, c.knownCfVars, knownFalse)
-  for cf in nowKnownFalse:
-    if cf notin c.falseCfvars: c.falseCfvars.add cf
-  for cf in nowKnownTrue:
-    if cf notin c.trueCfvars: c.trueCfvars.add cf
-
-  # Skip optional join information emitted by vl.nim.
-  if n.kind == ParLe and n.stmtKind == StmtsS:
-    skip n
+  # Post-ite facts survive only along arms that fall through.
+  if thenLive and elseLive:
+    setFactsTo(c, cp, merge(thenFacts, 0, c.facts, false))
+  elif thenLive:
+    setFactsTo(c, cp, thenFacts)
+  elif not elseLive:
+    c.facts.rollbackTo cp           # both arms left — unreachable; reset to base
+  # elif elseLive: keep c.facts (the else-path under assume(¬c))
 
   skipParRi n
 
 proc traverseLoop(c: var NjvlContext; n: var Cursor) =
-  ## Handle (loop pre cond body)
+  ## `(loop body)` — infinite; the body ends in `(continue .)` and exits
+  ## forward via `(jmp loopExit)`. The while-condition is the leading guard
+  ## `(ite (not cond) (jmp loopExit) .)` *inside* the body, so it needs no
+  ## special handling here. Iteration-gained facts/inits flow only to the
+  ## break sites (captured) and to the back-edge (discarded); the loop never
+  ## falls through. The `(lab loopExit)` that follows installs the merged
+  ## break state via `bindKeyBoth`.
   inc n # skip loop tag
-
-  # Pre-condition statements
-  traverseStmt c, n
-
-  # Analyze loop condition
-  let savedBorrowsLen = c.activeBorrows.len
-  let savedFacts = save(c.facts)
-  var condCursor = n
-  var wasEquality = false
-  let condFact = translateCond(c, condCursor, wasEquality)
-  skip n # skip condition expression
-
-  # Add condition fact so body is analyzed knowing condition is true
-  if condFact.isValid:
-    c.facts.add condFact
-    if wasEquality:
-      c.facts.add condFact.geXplusC
-
-  # Loop body: the loop may execute 0 times, so `Always` facts don't survive.
-  # However, cfvars are monotonic (only `jtrue` writes them), so an
-  # `IfTrue cf s` fact produced by any iteration stays valid outside the
-  # loop — if `cf=true` after the loop, the iteration that set it also
-  # wrote `s`. `IfFalse cf s` doesn't survive: `cf=false` after the loop is
-  # consistent with 0 iterations, where nothing was written.
-  let loopCp = c.impls.checkpoint()
-  traverseStmt c, n
-  let bodyImpls = c.impls.take(loopCp)
-  for imp in bodyImpls:
-    if imp.kind == IfTrue: c.impls.add imp
-
-  # After loop, we know the condition is false (if we exited normally)
-  c.activeBorrows.setLen(savedBorrowsLen)
-  restore(c.facts, savedFacts)
-  if condFact.isValid:
-    var negated = condFact
-    negateFact(negated)
-    c.facts.add negated
-
+  let cp = c.facts.checkpoint()
+  let savedBorrows = c.activeBorrows.len
+  traverseStmt c, n        # the body `(stmts ...)`; ends by leaving
+  bindKeyBoth(c, contKey()) # the loop header consumes the back-edge
+  # The loop never falls through; reset working facts to the pre-loop base. A
+  # following `(lab loopExit)` collapses them to "know nothing" (sound: a loop
+  # proves nothing about its mutated vars afterwards).
+  c.facts.rollbackTo cp
+  # Borrows taken *inside* the body are loop-local (a `var p = addr coll[i]`
+  # cannot outlive the iteration), so drop them — otherwise a later mutation of
+  # the borrowed container after the loop is wrongly seen as still-borrowed.
+  c.activeBorrows.setLen(savedBorrows)
   skipParRi n
+  # The trailing `(lab loopExit)` (emitted iff a `break`/guard targeted it) is
+  # *this* loop's exit. Its facts are the pre-loop set we just rolled back to —
+  # a `dirp != nil` established before the loop and never reassigned inside it
+  # still holds. Record it so `bindKeyBoth` keeps those facts instead of
+  # collapsing the join to "know nothing".
+  if n.kind == ParLe and n.njvlKind == LabV:
+    var peek = n
+    inc peek
+    c.loopExitLabels.incl peek.symId
+
+proc traverseLabel(c: var NjvlContext; n: var Cursor) =
+  ## `(lab L)` — the multi-join. Every forward `jmp L` has already been seen.
+  inc n
+  let label = n.symId
+  inc n # symdef
+  skipParRi n
+  bindKeyBoth(c, labelKey(label))
+
+proc traverseJmp(c: var NjvlContext; n: var Cursor) =
+  ## `(jmp L)` — a forward structural transfer (loop-`break` included).
+  inc n
+  let label = n.symId
+  inc n # symuse
+  skipParRi n
+  leaveToLabel(c, label)
+
+proc traverseRet(c: var NjvlContext; n: var Cursor) =
+  ## `(ret .X)` — primitive return, bound by the proc root. A `return value`
+  ## with a non-`result` operand *provides* the result directly (the NJVL path
+  ## rewrote this to `result = value`), so it initializes `result` on this exit.
+  inc n
+  if n.kind == DotToken:
+    inc n
+  else:
+    let providesResult = c.resultSym != NoSymId and
+      not (n.kind == Symbol and n.symId == c.resultSym)
+    traverseExpr c, n
+    if providesResult:
+      markInit(c, c.resultSym)
+  skipParRi n
+  leaveToReturn(c)
+
+proc traverseRaise(c: var NjvlContext; n: var Cursor) =
+  ## `(raise .X)` — primitive raise, bound by the nearest enclosing `except`.
+  inc n
+  if n.kind == DotToken:
+    inc n # bare re-raise
+  else:
+    traverseExpr c, n
+  skipParRi n
+  leaveToRaise(c)
+
+proc addCaseFacts(c: var NjvlContext; selSym: SymId; ranges: Cursor) =
+  ## Inside an `of` branch the selector is known to lie in `ranges`. When the
+  ## branch lists exactly one value/range and the selector is a plain variable,
+  ## add the corresponding bound facts (`sel == v`, or `lo <= sel <= hi`).
+  if selSym == NoSymId or ranges.substructureKind != RangesU: return
+  var r = ranges
+  inc r # into 'ranges'
+  var cnt = 0
+  var first = r
+  while r.hasMore:
+    inc cnt
+    skip r
+  if cnt != 1: return # a disjunction of values yields no single bound fact
+  let a = getVarId(c, selSym)
+  r = first
+  if r.substructureKind == RangeU:
+    inc r
+    if r.kind == IntLit:
+      var lo = query(a, VarId(0), createXint(pool.integers[r.intId]))
+      c.facts.add lo.geXplusC # sel >= lo
+    skip r
+    if r.kind == IntLit:
+      c.facts.add query(a, VarId(0), createXint(pool.integers[r.intId])) # sel <= hi
+  elif r.kind == IntLit:
+    var f = query(a, VarId(0), createXint(pool.integers[r.intId]))
+    c.facts.add f            # sel <= v
+    c.facts.add f.geXplusC   # sel >= v
+
+proc traverseCase(c: var NjvlContext; n: var Cursor) =
+  ## `(case selector (of (ranges...) body)+ (else body)?)`. An N-way merge:
+  ## every branch starts from the pre-case state, plus the bound facts implied
+  ## by its `ranges`; the post-case fall-through is the intersection of the
+  ## init-sets (and a fact-join) over the arms that fall through.
+  inc n # skip 'case'
+  let selCursor = n
+  let selSym = extractSymId(selCursor)
+  traverseExpr c, n # selector (init-checked)
+
+  # Collect (ranges, body) per branch, walking past the whole case.
+  var branches: seq[tuple[ranges, body: Cursor]] = @[]
+  while n.substructureKind == OfU:
+    inc n          # into 'of'
+    let ranges = n
+    skip n         # ranges
+    branches.add (ranges, n)
+    skip n         # body
+    skipParRi n    # close 'of'
+  if n.substructureKind == ElseU:
+    inc n
+    branches.add (default(Cursor), n)
+    skip n
+    skipParRi n
+  skipParRi n       # close 'case'
+
+  let cp = c.facts.checkpoint()
+  let savedBorrows = c.activeBorrows.len
+  let baseState = c.tr.state
+  let baseLive = c.tr.live
+
+  var mergedLive = false
+  var mergedState = baseState
+  var mergedFacts = default(Facts)
+  var haveFacts = false
+
+  for br in branches:
+    # Each branch resumes from the pre-case state (the selector chose this arm).
+    c.tr.state = baseState
+    c.tr.live = baseLive
+    c.facts.rollbackTo cp
+    c.activeBorrows.setLen(savedBorrows)
+    if not cursorIsNil(br.ranges):
+      addCaseFacts(c, selSym, br.ranges)
+    var bc = br.body
+    traverseStmt c, bc
+    if c.tr.live:
+      if not haveFacts:
+        mergedState = c.tr.state; mergedFacts = snapshotFacts(c.facts); haveFacts = true
+      else:
+        mergedState = isectInits(mergedState, c.tr.state)
+        mergedFacts = merge(mergedFacts, 0, c.facts, false)
+      mergedLive = true
+
+  # A case with no `else` is exhaustive (sem guarantees this), so the selector
+  # always matches some branch — there is no implicit fall-through to add.
+  c.tr.state = mergedState
+  c.tr.live = mergedLive
+  if haveFacts: setFactsTo(c, cp, mergedFacts) else: c.facts.rollbackTo cp
+  c.activeBorrows.setLen(savedBorrows)
+
+proc traverseTry(c: var NjvlContext; n: var Cursor) =
+  ## `(try body (except ...)* (fin ...)?)`. Conservative: an `except` handler
+  ## may run after *any* point of the body, so it can only assume the pre-try
+  ## state; a `fin` is analyzed on the merged fall-through (its inits are not
+  ## propagated onto exit paths — sound, since that only withholds knowledge).
+  inc n # skip 'try'
+  let cp = c.facts.checkpoint()
+  let savedBorrows = c.activeBorrows.len
+  let baseState = c.tr.state
+  let baseLive = c.tr.live
+
+  traverseStmt c, n # try body
+
+  var mergedLive = c.tr.live
+  var mergedState = c.tr.state
+  var mergedFacts = if c.tr.live: snapshotFacts(c.facts) else: default(Facts)
+  var haveFacts = c.tr.live
+
+  if n.substructureKind == ExceptU:
+    # The excepts catch the body's raises.
+    discard takeRaise(c.tr)
+
+  while n.substructureKind == ExceptU:
+    inc n # into 'except'
+    var boundExc = NoSymId
+    while n.hasMore and n.stmtKind notin {StmtsS, ScopeS}:
+      if isLocal(n.symKind):
+        let local = asLocal(n)
+        c.typeCache.registerLocal(local.name.symId, n.symKind, local.typ)
+        boundExc = local.name.symId
+      skip n
+    # handler entry = pre-try state (a raise may interrupt the body anywhere):
+    c.tr.state = baseState
+    c.tr.live = baseLive
+    c.facts.rollbackTo cp
+    c.activeBorrows.setLen(savedBorrows)
+    # The bound exception value is initialized *in the handler* — mark it after
+    # resetting to the pre-try state, which would otherwise discard the init.
+    if boundExc != NoSymId:
+      markInit(c, boundExc)
+    if n.stmtKind in {StmtsS, ScopeS}:
+      traverseStmt c, n
+    if c.tr.live:
+      if not haveFacts:
+        mergedState = c.tr.state; mergedFacts = snapshotFacts(c.facts); haveFacts = true
+      else:
+        mergedState = isectInits(mergedState, c.tr.state)
+        mergedFacts = merge(mergedFacts, 0, c.facts, false)
+      mergedLive = true
+    skipParRi n # close 'except'
+
+  c.tr.state = mergedState
+  c.tr.live = mergedLive
+  if haveFacts: setFactsTo(c, cp, mergedFacts) else: c.facts.rollbackTo cp
+  c.activeBorrows.setLen(savedBorrows)
+
+  if n.substructureKind == FinU:
+    inc n
+    traverseStmt c, n # finally body, on the merged fall-through
+    skipParRi n
+  skipParRi n # close 'try'
 
 proc traverseLocal(c: var NjvlContext; n: var Cursor) =
   let kind = n.symKind
@@ -1171,7 +1362,7 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
   let localType = n
   skip n # type
   if n.kind != DotToken or skipInitCheck:
-    c.directlyInitialized[^1].incl name
+    markInit(c, name)
   if kind == ResultY:
     c.resultSym = name
   if isInline:
@@ -1244,27 +1435,24 @@ proc traverseAssert(c: var NjvlContext; n: var Cursor) =
       contractViolation(c, orig, fact, report)
   skipParRi n
 
-proc isInitializedAtProcEnd(c: var NjvlContext; symId: SymId): bool =
-  ## At the natural proc exit every cfvar Nimony emitted is a leaving-path
-  ## marker, so reaching here implies each such cfvar is still false
-  ## (otherwise we would already be on a raise/return path). We extend the
-  ## ambient `falseCfvars` with every `knownCfVars` entry for the duration
-  ## of this query and run the normal sound init check.
-  let savedLen = c.falseCfvars.len
-  for cf in c.knownCfVars:
-    if cf notin c.falseCfvars: c.falseCfvars.add cf
-  result = isEffectivelyInitialized(c, symId)
-  c.falseCfvars.setLen(savedLen)
-
 proc traverseProc(c: var NjvlContext; n: var Cursor) =
   let decl = n
+  # Fresh, journaling fact set for this proc; the enclosing proc's facts (with
+  # its live checkpoints) are restored on the way out.
+  let oldFacts = move c.facts
   c.facts = createFacts()
-  c.directlyInitialized.add initHashSet[SymId]()
+  c.facts.enableJournaling()
   c.procCanRaise = false
-  let savedImplsScope = c.impls.pushScope()
-  let oldFalseCfvars = move c.falseCfvars
-  let oldTrueCfvars = move c.trueCfvars
-  let oldKnownCfVars = move c.knownCfVars
+  let oldTr = move c.tr
+  c.tr = newInitTracker()
+  # Seed with the enclosing init-set ONLY for genuinely nested procs (closures),
+  # so a captured outer local stays initialized inside the closure body. A
+  # top-level proc must NOT inherit the whole module-level init-set: those syms
+  # are globals/consts that are never init-checked, and carrying them makes the
+  # tracker's per-branch copies O(module) — which blows up on deeply-nested
+  # `if/elif` chains. `nestedProcs >= 2` means "inside another proc's body".
+  if c.nestedProcs >= 2:
+    c.tr.state = oldTr.state
   let oldResultSym = c.resultSym
   let oldInlineVars = move c.inlineVars
   let oldBorrows = move c.activeBorrows
@@ -1294,33 +1482,39 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
       c.typeCache.registerLocal(symId, ProcY, decl)
     skip n
 
-  # Analyze body
-  if not isGeneric:
+  # Analyze body. Generic procs are only checked once instantiated. Extern
+  # (importc/importcpp) procs satisfy their contract at the C level and have no
+  # meaningful Nim body — and the lowered body of an extern func with a doc /
+  # `runnableExamples` body still ends in an implicit `(ret result)` that reads
+  # the never-initialized `result`, so we must skip the *traversal*, not merely
+  # the final init check.
+  if not isGeneric and not isExternProc:
     traverseStmt c, n
+    # Join every `return` into the natural fall-through: the result init-set at
+    # proc exit is the intersection over all exit paths. The init-check below
+    # then reads `c.tr.state` directly — `result`/out-params must be init on
+    # every path that leaves the proc.
+    bindKeyBoth(c, retKey())
     let info = decl.info
-    # Check result / out-param init at proc end. In-body writes guarded by
-    # leaving-path cfvars still land in `c.impls` as conditional facts; if
-    # combine folded complementary conditionals into `Always`, we're fine.
-    # Skip importc/importcpp procs: they have no Nim body and satisfy the
-    # contract at the C level.
-    if not isExternProc:
-      if c.resultSym != NoSymId and not isInitializedAtProcEnd(c, c.resultSym):
+    # Only when control can actually leave the proc *normally* (fall-through or a
+    # `return`) must `result`/out-params be initialized. A proc whose every path
+    # raises or otherwise never returns (`c.tr.live == false` here) has no normal
+    # exit, so the init obligation is vacuous — e.g. `proc f: string = raise X`.
+    if c.tr.live:
+      if c.resultSym != NoSymId and not isInitialized(c, c.resultSym):
         buildErr c, info, "cannot prove that " & pool.syms[c.resultSym] & " has been initialized"
       for sym in outParams:
-        if not isInitializedAtProcEnd(c, sym):
+        if not isInitialized(c, sym):
           buildErr c, info, "cannot prove that " & pool.syms[sym] & " has been initialized"
   else:
     skip n
   skipParRi n
-  c.impls.popScope(savedImplsScope)
-  c.falseCfvars = oldFalseCfvars
-  c.trueCfvars = oldTrueCfvars
-  c.knownCfVars = oldKnownCfVars
+  c.tr = ensureMove oldTr
+  c.facts = ensureMove oldFacts
   c.resultSym = oldResultSym
   c.inlineVars = ensureMove oldInlineVars
   c.activeBorrows = ensureMove oldBorrows
   c.currentProcStart = oldProcStart
-  discard c.directlyInitialized.pop()
 
 proc traverseStmt(c: var NjvlContext; n: var Cursor) =
   case n.njvlKind
@@ -1334,22 +1528,21 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     traverseAssume c, n
   of AssertV:
     traverseAssert c, n
+  of LabV:
+    traverseLabel c, n
+  of JmpV:
+    traverseJmp c, n
   of MflagV, VflagV:
-    # Control flow variable declaration
+    # A control-flow flag declaration may still arrive from xelim; the bool
+    # storage is harmless. Register it so its later use is not flagged.
     inc n
-    c.knownCfVars.incl n.symId
+    let s = n.symId
     skip n # symdef
     skipParRi n
+    markInit(c, s)
   of JtrueV:
-    # (jtrue cf1 cf2 ...) - cfvars listed here are now known true on this path.
-    # NJ emits jtrue after noreturn calls and leaving paths (return/break/raise).
-    # The mflag information is used at join points to determine which branches are
-    # leaving paths, enabling the writeSets implication mechanism.
-    n.into:
-      while n.hasMore:
-        assert n.kind == Symbol
-        c.impls.add always(n.symId)
-        skip n
+    # Final IR has no `jtrue`; if one survives from xelim, it is inert here.
+    skip n
   of KillV:
     # Variable going out of scope - end any active borrows
     n.into:
@@ -1368,8 +1561,9 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     skip n # the unknown location
     skipParRi n
   of ContinueV:
-    # Continue in loop - skip
+    # The loop back-edge.
     skip n
+    leaveToContinue(c)
   of VV:
     # Versioned variable reference - should not appear as statement
     skip n
@@ -1381,6 +1575,14 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
       n.into:
         while n.hasMore:
           traverseStmt c, n
+    of CaseS:
+      traverseCase c, n
+    of TryS:
+      traverseTry c, n
+    of RetS:
+      traverseRet c, n
+    of RaiseS:
+      traverseRaise c, n
     of LocalDecls:
       traverseLocal c, n
     of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS:
@@ -1390,7 +1592,7 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
       traverseProc c, n
       dec c.nestedProcs
       c.typeCache.closeScope()
-    of TemplateS, TypeS, CommentS, PragmasS, RetS:
+    of TemplateS, TypeS, CommentS, PragmasS:
       skip n
     of CallKindsS:
       analyseCall c, n
@@ -1445,8 +1647,13 @@ proc traverseToplevel(c: var NjvlContext; n: var Cursor) =
         traverseToplevel c, n
   of PragmaxS:
     inc n
-    skip n
-    traverseToplevel c, n
+    skip n # pragmas
+    # A pragma block (e.g. `{.cast(uncheckedAccess).}:`) carries a whole body,
+    # not a single statement — traverse every child before closing, as the
+    # non-toplevel `traverseStmt` already does. Consuming only one left the
+    # cursor on the next statement and tripped `skipParRi`.
+    while n.hasMore:
+      traverseToplevel c, n
     skipParRi n
   of ProcS, FuncS, IteratorS, ConverterS, MethodS:
     inc c.nestedProcs
@@ -1461,29 +1668,36 @@ proc traverseToplevel(c: var NjvlContext; n: var Cursor) =
     # Toplevel statements - analyze them
     traverseStmt c, n
 
-proc analyzeContractsNjvl*(input: var TokenBuf; moduleSuffix: string; verbose = false): TokenBuf =
-  ## Main entry point: converts input to NJVL and analyzes contracts.
-  ## When `verbose` is true, every contract/init failure dumps the enclosing
-  ## proc's NJ IR to stderr to aid debugging.
+proc lowerToFinalIr(input: var TokenBuf; moduleSuffix: string): TokenBuf =
+  ## Run the Final-IR lowering (`finalir.nim`, which itself runs xelim first).
   var n = beginRead(input)
-
-  # Convert to NJVL first
-  var njvlBuf = toNjvl(n, moduleSuffix)
+  var buf = createTokenBuf(input.len)
+  buf.addSubtree n
   endRead input
+  var pass = initPass(move buf, moduleSuffix, "xelim_finalir", 0)
+  toFinalIr(pass)
+  result = ensureMove pass.dest
 
-  # Now analyze the NJVL IR
+proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; verbose = false): TokenBuf =
+  ## Main entry point: lowers `input` to the Final IR and analyzes contracts.
+  ## When `verbose` is true, every contract/init failure dumps the enclosing
+  ## proc's IR to stderr to aid debugging.
+  var finalBuf = lowerToFinalIr(input, moduleSuffix)
+
   var c = NjvlContext(
     typeCache: createTypeCache(),
     moduleSuffix: moduleSuffix,
-    directlyInitialized: @[initHashSet[SymId]()],
-    impls: createImplications(),
+    tr: newInitTracker(),
+    loopExitLabels: initHashSet[SymId](),
+    facts: createFacts(),
     verbose: verbose
   )
+  c.facts.enableJournaling()
   c.typeCache.openScope()
 
-  var njvl = beginRead(njvlBuf)
-  traverseToplevel c, njvl
-  endRead njvlBuf
+  var fin = beginRead(finalBuf)
+  traverseToplevel c, fin
+  endRead finalBuf
 
   c.typeCache.closeScope()
   result = ensureMove c.errors
@@ -1492,6 +1706,6 @@ when isMainModule:
   import std / [syncio, os]
   proc main(infile: string) =
     var input = parseFromFile(infile)
-    discard analyzeContractsNjvl(input, "main")
+    discard analyzeContractsFinalIr(input, "main")
 
   main(paramStr(1))

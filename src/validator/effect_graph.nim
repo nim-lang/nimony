@@ -818,7 +818,7 @@ proc buildSymContext*(buf: var TokenBuf): SymContext =
   result = initTable[string, ChildKind]()
   var n = beginRead(buf)
   if n.kind != ParLe: return
-  n.balancedTokens:
+  n.linearScan:
     let tag = pool.tags[n.tag]
 
     # Field type refinements via distinct types
@@ -967,7 +967,7 @@ proc detectDestLvalue*(body: Cursor; hintName: string): Cursor =
   ## Returns nil Cursor if not found.
   var c = body
   if c.kind != ParLe: return default(Cursor)
-  c.balancedTokens:
+  c.linearScan:
     let tag = pool.tags[c.tag]
     if tag in CallTags:
       var peek = c
@@ -1025,7 +1025,7 @@ proc detectCursorLvs*(body: Cursor): seq[Cursor] =
         break
     if not found:
       result.add lv
-  c.balancedTokens:
+  c.linearScan:
     let tag = pool.tags[c.tag]
     if tag in CallTags:
       let callName = extractCalleeName(c)

@@ -10,24 +10,35 @@ export ospaths2
 export osappdirs
 export oscommons
 
-proc c_system(cmd: cstring): cint {.
-    importc: "system", header: "<stdlib.h>".}
+when not defined(nimNativeIo):
+  proc c_system(cmd: cstring): cint {.
+      importc: "system", header: "<stdlib.h>".}
 
 when defined(posix):
   proc expandFilename*(filename: string): string {.raises.} =
     ## Returns the full (`absolute`) path of an existing file `filename`,
     ## resolving symlinks. Raises `OSError` if `filename` does not exist.
-    const PATH_MAX = 4096
-    result = newString(PATH_MAX)
-    var filename = filename
-    let r = realpath(filename.toCString, result.toCString)
-    if r.isNil:
-      raiseOSError(osLastError(), filename)
+    when defined(nimNativeIo):
+      # Libc-free: there is no `realpath` (it is a libc routine, not a syscall).
+      # Do a LEXICAL canonicalization instead — absolutize against the cwd and
+      # collapse `.`/`..`/`//`. Unlike `realpath` this does NOT follow symlinks,
+      # which is sufficient for the compiler's source-path use. The existence
+      # check is preserved so the documented `OSError`-on-missing contract holds.
+      if not (fileExists(filename) or dirExists(filename)):
+        raiseOSError(osLastError(), filename)
+      result = normalizedPath(absolutePath(filename))
     else:
-      var L = 0
-      while L < PATH_MAX and result[L] != '\0':
-        inc L
-      setLen(result, L)
+      const PATH_MAX = 4096
+      result = newString(PATH_MAX)
+      var filename = filename
+      let r = realpath(filename.toCString, result.toCString)
+      if r.isNil:
+        raiseOSError(osLastError(), filename)
+      else:
+        var L = 0
+        while L < PATH_MAX and result[L] != '\0':
+          inc L
+        setLen(result, L)
 else:
   proc expandFilename*(filename: string): string {.raises.} =
     result = absolutePath(filename)
@@ -215,12 +226,42 @@ proc execShellCmd*(command: string): int {.tags: [ExecIOEffect].} =
   ##   ```Nim
   ##   discard execShellCmd("ls -la")
   ##   ```
-  var command = command
-  let cc = command.toCString()
-  if cc.isNil:
-    result = -202 # OOM
+  when defined(nimNativeIo) and defined(posix):
+    # Freestanding: there is no libc `system()` (it is not a syscall). Replicate
+    # it as fork + execve of `/bin/sh -c command` + waitpid, inheriting the
+    # parent's standard streams — exactly what glibc's `system()` does, and the
+    # same fork+exec path osproc.execCmd already uses. `os` can't import osproc
+    # (circular), so the sequence is inlined here.
+    var sh = "/bin/sh"
+    var dashc = "-c"
+    var cmd = command
+    let argv = cast[ptr UncheckedArray[cstring]](alloc0(4 * sizeof(cstring)))
+    argv[0] = sh.toCString
+    argv[1] = dashc.toCString
+    argv[2] = cmd.toCString
+    argv[3] = nil.cstring
+    let pid = fork()
+    if pid == Pid(0):
+      # child: exec the shell; only reached past here if exec failed.
+      discard execve(sh.toCString, cast[CCharArray](argv),
+                     cast[CCharArray](posix_environ))
+      exitnow(127'i32)
+    dealloc(cast[pointer](argv))
+    if pid.int < 0:
+      result = -1   # fork failed, like `system()`
+    else:
+      var status: cint = 0'i32
+      if waitpid(pid, status, 0'i32).int < 0:
+        result = -1
+      else:
+        result = exitStatusLikeShell(status)
   else:
-    result = exitStatusLikeShell(c_system(cc))
+    var command = command
+    let cc = command.toCString()
+    if cc.isNil:
+      result = -202 # OOM
+    else:
+      result = exitStatusLikeShell(c_system(cc))
 
 proc getFileSize*(file: string): int64 {.tags: [ReadIOEffect], raises.} =
   ## Returns the file size of `file` (in bytes).

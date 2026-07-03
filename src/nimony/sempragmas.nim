@@ -421,7 +421,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       # `pragmas` closer) and swallow the routine body.
       dest.add parLeToken(PragmaP, n.info)
       inc n
-      while n.kind != ParRi:
+      while n.hasMore:
         takeTree dest, n
       dest.addParRi()
     else:

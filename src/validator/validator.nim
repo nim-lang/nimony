@@ -1114,7 +1114,7 @@ proc whileBodyHasProgressCall(whileNode: Cursor; lv: Cursor;
   inc c, SkipTag   # (while
   skip c, SkipCond # condition
   if c.kind != ParLe: return false
-  c.balancedTokens:
+  c.linearScan:
     let tag = pool.tags[c.tag]
     if tag in CallTags:
       let callName = extractCalleeName(c)
@@ -1178,7 +1178,7 @@ proc whileBodyLooksLikeNestedScanner(whileNode: Cursor): bool =
   var incVars = initHashSet[string]()
   var decVars = initHashSet[string]()
 
-  c.balancedTokens:
+  c.linearScan:
     let tag = pool.tags[c.tag]
     if tag in ["break", "breakstmt"]:
       hasBreak = true
@@ -1211,7 +1211,15 @@ proc whileBodyLooksLikeNestedScanner(whileNode: Cursor): bool =
 
 proc parseFileViaNifler(nimFile: string): TokenBuf =
   let nifler = findTool("nifler")
-  let outFile = getTempDir() / "check_tags_" & extractFilename(nimFile).changeFileExt("nif")
+  # The scratch `.nif` name must be unique per process: `hastur` runs tests in
+  # parallel and several of them validate the *same* plugin source at once
+  # (e.g. `tparfor.nim`, `tparfib.nim` and `tparfor_race.nim` all pull in
+  # `parfor.nim`). A fixed `check_tags_<basename>.nif` made those concurrent
+  # validator processes share one file, so on Windows one process opening it
+  # for reading while another's nifler was truncating it surfaced as
+  # `cannot open: …check_tags_parfor.nif`. Tag the name with the pid.
+  let outFile = getTempDir() / "check_tags_" & $getCurrentProcessId() & "_" &
+    extractFilename(nimFile).changeFileExt("nif")
   let cmd = quoteShell(nifler) & " parse " & quoteShell(nimFile) & " " & quoteShell(outFile)
   let (output, exitCode) = execCmdEx(cmd)
   if exitCode != 0:
@@ -1223,6 +1231,7 @@ proc parseFileViaNifler(nimFile: string): TokenBuf =
     result = fromStream(stream)
   finally:
     nifstreams.close(stream)
+    removeFile(outFile)
 
 proc main() =
   if paramCount() < 1:
