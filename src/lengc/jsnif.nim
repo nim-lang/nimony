@@ -509,6 +509,35 @@ proc optBinFold(dst: var JsBuilder; src: JsBuilder; c: var Cursor): bool =
     var b = bCur; dst.optNode(src, b); skip c; return true   # 1 * x -> x
   false
 
+proc optCallFold(dst: var JsBuilder; src: JsBuilder; c: var Cursor): bool =
+  ## `BigInt(<int literal>)` -> a BigInt literal (`52n`), folding the coercion the
+  ## 64-bit lowering wraps around small typed literals. On success emits the folded
+  ## literal, consumes `c`, returns true.
+  var callee, arg: Cursor
+  var nargs = 0
+  block:
+    var p = c
+    p.into:
+      callee = p; skip p             # callee
+      arg = p                        # first argument
+      while p.hasMore: (inc nargs; skip p)
+  if nargs != 1 or src.jsTagAt(callee) != jName: return false
+  var nm = ""
+  block:
+    var cc = callee
+    cc.into: (nm = strVal(cc); inc cc); (while cc.hasMore: skip cc)
+  if nm != "BigInt": return false
+  # A constant argument (a `(num v)` or a fold-to-constant `(bin …)` such as the
+  # `53 - 1` shift amounts the lowering produces) becomes a BigInt literal.
+  let (isConst, v) = src.constVal(arg)
+  if isConst:
+    dst.bignum v; skip c; return true
+  if src.jsTagAt(arg) == jUNum:
+    var a = arg
+    a.into: (dst.bigunum uintVal(a); inc a); (while a.hasMore: skip a)
+    skip c; return true
+  false
+
 proc optNode(dst: var JsBuilder; src: JsBuilder; c: var Cursor) =
   ## Copy the node at `c` into `dst`, applying peephole rewrites and recursing so
   ## inner nodes are optimized too. `dst` shares `src`'s pools, so a leaf (and any
@@ -518,6 +547,8 @@ proc optNode(dst: var JsBuilder; src: JsBuilder; c: var Cursor) =
     skip c
     return
   if src.jsTagAt(c) == jBin and dst.optBinFold(src, c):
+    return
+  if src.jsTagAt(c) == jCall and dst.optCallFold(src, c):
     return
   dst.buf.openTag c.cursorTagId     # same tag id (shared tag pool)
   c.into:
