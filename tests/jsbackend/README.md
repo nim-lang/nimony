@@ -1,8 +1,20 @@
-# JavaScript backend (lengc `js`)
+# JavaScript backend (`lengjs`)
 
-A third codegen over the **Leng** IR, alongside the C (`codegen.nim`) and LLVM
-(`llvmcodegen.nim`) backends. Selected with `lengc js file.c.nif`; output is a
-`.js` file in the nimcache dir.
+A codegen over the **Leng** IR, alongside the C (`codegen.nim`) and LLVM
+(`llvmcodegen.nim`) backends. It is structured as a standalone `{.build.}`-
+schedulable plugin rather than a `lengc` subcommand — Araq's "backends are
+plugins, not codegens baked into the compiler" direction for PR #2043:
+
+- **`lengjs <module.c.nif> <out.js>`** — the per-module backend: reads one
+  module's lowered Leng IR and emits its `.js` artifact (the JS counterpart of
+  `arkham` on the native path).
+- **`jslink <linkmanifest.nif> <out.js> [runtime.js]`** — the `{.bundle.}`
+  linker: assembles the runtime + per-module artifacts + entry call into one
+  runnable bundle (the JS counterpart of `niflink`).
+
+The JS target is treated as a **32-bit platform** (`--bits:32`): `int`/`uint`
+map to a JS `Number`, and only `int64`/`uint64` map to `BigInt`. This is what
+lets ordinary integer code stay fast Numbers while wide arithmetic stays exact.
 
 JavaScript is dynamically typed and garbage collected, so the pass drops all
 type generation and maps Leng constructs directly to JS:
@@ -11,7 +23,7 @@ type generation and maps Leng constructs directly to JS:
 |------|------------|
 | `(proc :f (params (param :a . T)) RET . (stmts …))` | `function f(a) { … }` |
 | `(add T a b)` (typed binop) | `(a + b)` — leading type operand skipped |
-| `(div T a b)` | `Math.trunc(a / b)` (Nim int `div` truncates toward zero) |
+| `(div T a b)` | `Math.trunc(a / b)` for `int`; real `a / b` for floats; BigInt `a / b` for `int64`/`uint64` (Nim int `div` truncates toward zero) |
 | `(lt a b)`, `(and a b)`, `(not a)` | `(a < b)`, `(a && b)`, `(!a)` |
 | `(asgn x e)` | `x = e;` |
 | `(store e x)` | `x = e;` (operands reversed vs `asgn`) |
@@ -43,13 +55,15 @@ literal — generate cleanly (`echo "hello world"` now produces zero `/*TODO*/`s
 referencing only the still-missing runtime functions).
 
 Because these are all *lowered* Leng shapes, a range of surface Nim compiles to
-the covered subset with no new backend work — a survey of programs using enums
-(→ ints), tuples (→ objects), `for` loops (→ `while` + iterator inlining), `case`
-with multi-value branches, `set` membership, and `object … case` variants all
-generate zero user-module `/*TODO*/`s and run correctly under Node. What is *not*
-yet covered bottoms out in allocation/GC: `seq`s, `ref`/heap objects, and closure
-environments (their `allocFixed(sizeof …)` still emits a `sizeof` TODO) — i.e. the
-open design question, not missing codegen.
+the covered subset with no new backend work — enums (→ ints), tuples (→ objects),
+`for` loops (→ `while` + iterator inlining), `case` with multi-value branches,
+and `object … case` variants all run correctly under Node. Since bring-up the
+slice has grown to cover **strings** (SSO + heap, `echo` and `$`), **`seq`s**,
+**`ref`/heap objects**, **closures**, and **exceptions** (nimony's heap-exception
+lowering), all exercised end-to-end by the tests below. Allocation is a bump
+arena over the shared buffer with **no free/GC yet** — that (and whole-program
+`{.bundle.}` wiring + JS interop) is the remaining open design question, not
+missing codegen.
 
 **Addresses.** JS cannot reference a variable's storage, so a pointer cannot be
 the value itself. Following the classic Nim JS backend (`mapType`'s
@@ -81,74 +95,41 @@ boundary for a runtime to fill. An `exportc` symbol is emitted under its C name
 (so `main` is `main`). Object-field keys are never treated as foreign — they
 always use the mangled field name.
 
-With `importc`/`exportc` resolved, the FFI boundary for a real `echo` is now
-small and explicit: the generated code calls bare `fwrite`/`fprintf`/`fputc` on
-`stdout`, and module init touches no allocator. Given a tiny JS runtime for those
-externals, **integer `echo` already runs end-to-end** through the real std/system
-+ std/syncio modules:
-
-```
-$ nimony c --nimcache:nc echoint.nim        # echo fib(10); echo 2+3
-$ for f in nc/*/*.c.nif; do lengc js --nimcache:out "$f"; done
-$ cat runtime.js out/sysvq0asl.js out/for2ybv4p1.js \
-      out/syn1lfpjv.js out/<main>.js <(echo 'main(0,[]);') | node
-55
-5
-```
-
-(`runtime.js` defines `stdout`/`fprintf`/`fputc`; module order is irrelevant
-since JS hoists function declarations and nothing runs until `main`.) Because an
-unsupported node now emits a *valid* placeholder expression (`undefined/*TODO*/`),
-a never-called function that contains one — e.g. the string `copyMem` path — no
-longer breaks parsing of the whole bundle.
-
-The one piece still missing for *string* `echo` is the data path: `write` lowers
-to `readRawData(s)` (a Nim proc returning a pointer into either the inline SSO
-bytes or the heap buffer) handed to `fwrite` as a raw byte pointer — and
-byte-addressing into the packed SSO integer is the C-memory-model operation the
-open design question is about (consume fully-lowered Leng vs. a higher-level Leng
-with strings as JS strings). The integer path (`fprintf "%lld"`) has no such
-dependency, which is why it runs today.
+With `importc`/`exportc` resolved, the FFI boundary is small and explicit: the
+generated code calls bare `fwrite`/`fprintf`/`fputc` on `stdout`, and `echo`
+runs end-to-end for **every scalar type and for strings** through the real
+std/system + std/syncio modules. `runtime.js` supplies the externals over a
+single `ArrayBuffer`: `stdout`/`fprintf`/`fputc`, the typed load/store accessors
+the linear-memory model reads and writes through, and a `memcmp`/`memcpy` pair.
+Strings resolve their data path (`readRawData` into the SSO/heap bytes) against
+that buffer, so both `echo "…"` and `$`-of-int print correctly.
 
 ## Test
 
-`bash tests/jsbackend/run.sh` — golden-diffs hand-authored, self-contained Leng
-modules (no system deps, so the test needs only `bin/lengc` and `node`) and runs
-each under Node:
-- `tcompute.c.nif` (pure compute) → checks `add(2,3)==5`, `fib(10)==55`,
-  `fib(20)==6765`.
-- `tdata.c.nif` (data structures) → checks `mkpoint(3,4)==7` (object construction
-  + field access) and `arrsum()==60` (array construction + indexing).
-- `taddr.c.nif` (addresses, locals) → checks `through()==42` (write through a
-  pointer to a boxed local), `usebump()==15` (mutation via a pointer parameter),
-  and `addrparam(7)==99` (a value parameter whose address is taken is boxed at
-  entry).
-- `taddr2.c.nif` (addresses, aggregates) → checks `fieldaddr()==100` (write
-  through the address of an object field), `elemaddr()==99` (through the address
-  of an array element), and `samefield()`/`difffield()` (fat-pointer equality:
-  same key vs different key).
-- `tarith.c.nif` (checked arithmetic) → `keepovf`/`ovf` reduce to a plain
-  assignment with `ovf` always false, and `store` assigns with reversed operands.
-  Checks `checkedAdd(20,22)==42` and `storeTest()==42`.
-- `timportc.c.nif` (foreign symbols) → an `importc` proc is not emitted and is
-  called by its C name (`extTriple`, supplied as the runtime); an `exportc`
-  global is emitted as `counter`. As a module-level global it lives in a buffer
-  slot (see `tgmoddef`), so it is read via `mem.i64n(counter)`. Checks `run()==21`.
-- `techo.c.nif` (end-to-end I/O) → mirrors how `echo <int>` lowers: Nim procs
-  (`echoInt`/`run`) call `importc` stdio (`stdout`, `putInt`, `putChar`) supplied
-  by a tiny runtime that captures output; asserts `run()` prints `"55\n5\n"`.
-- `texc.c.nif` (exceptions) → mirrors how `try/except` lowers: a raising call
-  returns an `ErrorCode`, `if canRaise.err` forward-`jmp`s to a handler in a dead
-  `if (false)` landing pad. The `jmp`/`lab`s become `break` in nested labeled
-  blocks. Checks `run(false)==42` (normal path) and `run(true)==-1` (handler).
-- `tinherit.c.nif` (object inheritance) → a `Derived` object embeds its `Base`
-  at offset 0; `baseobj` conversion is a no-op on the byte offset and inherited
-  fields are laid out at the front. Checks `mk(30,12)==42`.
-- `tgmoddef.c.nif` (cross-module boxing consistency) → a module-level global
-  scalar has static storage, so it lives in a buffer slot in *every* module that
-  touches it — the boxing decision follows the decl kind, not where `(addr)`
-  textually appears. One proc mutates `slot` through its address, another reads
-  it plainly; both go through `mem` on the same slot. Checks `defget()==12` after
-  `bumpViaAddr(5)`. (This is what unblocks cross-module heap exceptions, whose
-  `exc` threadvar is boxed in `system` yet used bare in the raising module; the
-  full path is verified e2e by the heap-exception programs outside this suite.)
+The suite is a hastur **custom runner** (`setup.nim`, the mechanism from the
+hastur rewrite in #2095): each `t*.nim` here is a *real program* compiled and run
+end-to-end, its stdout diffed against the sibling `.output` golden.
+
+```
+hastur tests/jsbackend              # run the suite
+hastur --overwrite tests/jsbackend  # regenerate the .output goldens
+```
+
+Per test the runner does: `nimony c --bits:32` (harvesting every module's
+lowered `.c.nif`) → `lengjs` each module → concatenate `runtime.js` + the
+artifacts + `main(0, [])` → `node` → diff. The trailing 32-bit C link fails on a
+64-bit host and is ignored on purpose: the `.c.nif` is emitted by hexer *before*
+the C backend, so a genuine front-end error is the one that leaves no `.c.nif`
+behind (how the runner tells a real failure from the expected link stub). `node`
+is required; the directory carries `hastur.mode = skip` so the WIP suite stays
+out of the default `all` sweep but still runs when pointed at directly (the
+`dagon` pattern).
+
+The programs cover the backend end-to-end: `techo`/`tstrings` (scalars + string
+building), `tarith` (integer ops that stay Numbers), `tfloat` (float arithmetic
++ real division), `tbig64` (`int64`/`uint64` → BigInt, exact 10¹⁸ and
+two's-complement wraparound), `tconv` (8/16-bit narrowing, int↔BigInt,
+int64↔uint64 signedness), `tcontrol` (if/while/for/case), `tproc` (recursion),
+`tobject`/`tvariant` (object + tagged-union layout in linear memory), `tseq`
+(sequence growth + iteration), `tptr` (`addr`/store-through-deref), and `texc`
+(nimony's heap-exception lowering: raise / try-except / resume).

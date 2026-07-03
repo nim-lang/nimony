@@ -26,7 +26,7 @@ Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|hexer|lengc|shoggoth|nifmake|nj|vl|validator|dagon|pnak|arkham|nifasm|native]   build selected tools (default: all).
+  build [all|nimony|nifler|hexer|lengc|lengjs|shoggoth|nifmake|nj|vl|validator|dagon|pnak|arkham|nifasm|native]   build selected tools (default: all).
   tiers                compile every module on the bootstrap list with nimony.
   boot [options]       Self-host the *full* nimony toolchain (nimony,
                        nimsem, hexer). `bin0/` is a fresh copy of the
@@ -1283,6 +1283,22 @@ proc buildLengc*(showProgress = false) =
   let exe = "lengc".addFileExt(ExeExt)
   robustMoveFile "src/lengc/" & exe, binDir() / exe
 
+proc buildLengjs*(showProgress = false) =
+  ## `lengjs` (Leng -> JavaScript per-module backend) is a `{.build.}`-schedulable
+  ## plugin, the JS counterpart of arkham (native): it reads one module's Leng IR
+  ## (`.c.nif`) and emits its `.js` artifact. See tests/jsbackend/setup.nim.
+  exec nimcPrefix() & "src/lengc/lengjs.nim", showProgress
+  let exe = "lengjs".addFileExt(ExeExt)
+  robustMoveFile "src/lengc/" & exe, binDir() / exe
+
+proc buildJslink*(showProgress = false) =
+  ## `jslink` (the JS `{.bundle.}` linker) reads a project link manifest NIF and
+  ## assembles the per-module `.js` artifacts plus the runtime into one bundle,
+  ## the JS counterpart of `niflink`.
+  exec nimcPrefix() & "src/lengc/jslink.nim", showProgress
+  let exe = "jslink".addFileExt(ExeExt)
+  robustMoveFile "src/lengc/" & exe, binDir() / exe
+
 proc buildShoggoth(showProgress = false) =
   exec nimcPrefix() & "src/lengc/shoggoth/shoggoth.nim", showProgress
   let exe = "shoggoth".addFileExt(ExeExt)
@@ -2137,6 +2153,8 @@ proc handleCmdLine =
       buildNimsem(showProgress)
       buildNimony(showProgress)
       buildLengc(showProgress)
+      buildLengjs(showProgress)
+      buildJslink(showProgress)
       buildShoggoth(showProgress)
       buildNiflink(showProgress)
       buildHexer(showProgress)
@@ -2154,6 +2172,9 @@ proc handleCmdLine =
       buildHexer(showProgress)
     of "lengc":
       buildLengc(showProgress)
+    of "lengjs":
+      buildLengjs(showProgress)
+      buildJslink(showProgress)
     of "shoggoth":
       buildShoggoth(showProgress)
     of "niflink":
