@@ -440,6 +440,18 @@ if have_node; then
   } | node
 fi
 
+# ── narrowing integer conversions mask to the target width (`uint8(300)`==44,
+# `int8(200)`==-56, sign-extended). Source is a 32-bit Number here.
+gen tconv
+if have_node; then
+  {
+    cat "$work/tconv.js"
+    echo 'if (toU8_0_tconv(300)===44 && toI8_0_tconv(200)===-56 && toU16_0_tconv(70000)===4464)'
+    echo '  { console.log("functional(conv): PASS"); }'
+    echo '  else { console.log("functional(conv): FAIL got "+toU8_0_tconv(300)+" "+toI8_0_tconv(200)); process.exit(1); }'
+  } | node
+fi
+
 # ── echo (end-to-end I/O): mirrors how a real `echo <int>` lowers — Nim procs
 # (`echoInt`/`run`) call `importc` stdio (`stdout`, `putInt`, `putChar`) that a
 # runtime provides. Proves the generated code executes and produces output.

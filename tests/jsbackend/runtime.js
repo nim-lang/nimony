@@ -58,7 +58,7 @@ function __atomic_store_n(p,v,o){ mem.setI64(p,v); }
 // stdio
 const stdout = {};
 function fwrite(ptr,size,nmemb,f){ process.stdout.write(Buffer.from(_u8.subarray(ptr,ptr+size*nmemb))); return nmemb; }
-function fprintf(f,fmt,...a){ let i=0; process.stdout.write(String(fmt).replace(/%lld|%d|%s/g,()=>String(a[i++]))); }
+function fprintf(f,fmt,...a){ let i=0; process.stdout.write(String(fmt).replace(/%ll[du]|%l[du]|%[dus]/g,()=>String(a[i++]))); }
 function fputc(c,f){ process.stdout.write(Buffer.from([c&0xff])); return c; }
 function nimFlushStdStreams(){}
 function copyMem_0_sysvq0asl(d,s,n){ if(typeof d==='number'&&typeof s==='number') _u8.copyWithin(d,s,s+n); }

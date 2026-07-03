@@ -893,6 +893,23 @@ proc gx(g: var JSGen; n: var Cursor) =
               g.js.name "BigInt"
             g.js.num akBits(targetAk)
             g.gx n
+      elif targetAk in {akU8, akU16}:
+        # narrow to unsigned 8/16-bit (Number source): mask off the high bits
+        g.js.tree jBin:
+          g.js.addOp "&"
+          g.gx n
+          g.js.num (if targetAk == akU8: 0xFF else: 0xFFFF)
+      elif targetAk in {akI8, akI16}:
+        # narrow to signed 8/16-bit (Number source): shift up then arithmetic-shift
+        # down so the sign bit extends (`(x << 24) >> 24` for int8).
+        let sh = (if targetAk == akI8: 24 else: 16)
+        g.js.tree jBin:
+          g.js.addOp ">>"
+          g.js.tree jBin:
+            g.js.addOp "<<"
+            g.gx n
+            g.js.num sh
+          g.js.num sh
       else:
         g.gx n
       while n.hasMore: skip n
