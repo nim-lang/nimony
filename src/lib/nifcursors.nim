@@ -446,8 +446,21 @@ else:
     else:
       if dest.data != nil: dealloc(dest.data)
 
+template allocStorage(cap: int): Storage =
+  ## Allocate backing storage for `cap` tokens, never requesting a zero- or
+  ## sub-`FreeCell` block. `alloc(0)` (cap 0) — and any request below the
+  ## allocator's `sizeof(FreeCell)` minimum, e.g. one 8-byte `PackedToken` —
+  ## is undefined for Nim's default (non-`useMalloc`) allocator: it rounds the
+  ## size through the small-block freelist and corrupts the heap. That fires
+  ## `[SYSASSERT] rawAlloc: requested size too small` under `-d:useSysAssert`
+  ## and segfaults in `rawAlloc`/`addToSharedFreeList` on some platforms (WSL2),
+  ## while `-d:useMalloc` hides it because `malloc(0)` returns a valid pointer.
+  ## Floor the request at 8 slots — the same minimum the grow path uses, so an
+  ## empty buffer's first append needs no immediate realloc.
+  cast[Storage](alloc(sizeof(PackedToken) * max(cap, 8)))
+
 proc createTokenBuf*(cap = 100): TokenBuf =
-  result = TokenBuf(data: cast[Storage](alloc(sizeof(PackedToken)*cap)), len: 0, cap: cap)
+  result = TokenBuf(data: allocStorage(cap), len: 0, cap: cap)
 
 proc prepareMutation*(b: var TokenBuf) {.inline.} =
   ## Detach the buffer from its CursorOwner so the next mutation does
@@ -477,7 +490,7 @@ proc prepareMutation*(b: var TokenBuf) {.inline.} =
       b.owner = nil
       when defined(prepMutStats): inc cowFastCount
     else:
-      let newData = cast[Storage](alloc(sizeof(PackedToken) * b.cap))
+      let newData = allocStorage(b.cap)
       copyMem(newData, b.data, sizeof(PackedToken) * b.len)
       decRcAndFree(b.owner)
       b.owner = nil
