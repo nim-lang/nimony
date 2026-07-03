@@ -29,7 +29,7 @@ proc serialize*(typ: LLType; result: var string) =
     result.add "ptr" # treat nil pointee as opaque ptr
   case typ.kind
   of llVoid: result.add "void"
-  of llInt: result.add "i"; result.add $typ.intBits
+  of llInt: result.add "i" & $typ.intBits
   of llFloat:
     case typ.floatBits
     of 32: result.add "float"
@@ -38,15 +38,12 @@ proc serialize*(typ: LLType; result: var string) =
     else: result.add "double"
   of llPtr: result.add "ptr"
   of llArray:
-    result.add "["
-    result.add $typ.arrLen
-    result.add " x "
+    result.add "[" & $typ.arrLen & " x "
     serialize(typ.arrElem, result)
     result.add "]"
   of llStruct:
     if typ.name.len > 0:
-      result.add "%"
-      result.add typ.name
+      result.add "%" & typ.name
     else:
       result.add "{ "
       for i, f in typ.structFields:
@@ -65,16 +62,16 @@ proc serialize*(typ: LLType): string =
 proc serializeUnqualified*(v: LLValue; result: var string) =
   ## Append the bare value text WITHOUT its type prefix.
   case v.kind
-  of llvReg: result.add "%"; result.add v.regName
+  of llvReg: result.add "%" & v.regName
   of llvInt: result.add v.intText
   of llvFloat: result.add v.floatText
   of llvBool: result.add (if v.boolVal: "1" else: "0")
-  of llvGlobal: result.add "@"; result.add v.globalName
+  of llvGlobal: result.add "@" & v.globalName
   of llvNull: result.add "null"
   of llvUndef: result.add "undef"
   of llvZero: result.add "zeroinitializer"
   of llvPoison: result.add "poison"
-  of llvCString: result.add "c\""; result.add v.strVal; result.add "\""
+  of llvCString: result.add "c\"" & v.strVal & "\""
   of llvRawText: result.add v.rawText
   of llvNone: discard
 
@@ -87,9 +84,7 @@ proc operand*(v: LLValue; result: var string) =
 
 proc resultPrefix(i: LLInstr; result: var string) =
   if i.result.kind != llvNone:
-    result.add "%"
-    result.add i.result.regName
-    result.add " = "
+    result.add "%" & i.result.regName & " = "
 
 proc serialize*(i: LLInstr; result: var string) =
   ## Append a single instruction WITHOUT leading indentation or trailing
@@ -107,25 +102,20 @@ proc serialize*(i: LLInstr; result: var string) =
     serializeUnqualified(i.binRhs, result)
   of llIcmp:
     resultPrefix(i, result)
-    result.add "icmp "
-    result.add i.icmpPred
-    result.add " "
+    result.add "icmp " & i.icmpPred & " "
     operand(i.icmpLhs, result)
     result.add ", "
     serializeUnqualified(i.icmpRhs, result)
   of llFcmp:
     resultPrefix(i, result)
-    result.add "fcmp "
-    result.add i.fcmpPred
-    result.add " "
+    result.add "fcmp " & i.fcmpPred & " "
     operand(i.fcmpLhs, result)
     result.add ", "
     serializeUnqualified(i.fcmpRhs, result)
   of llZext, llSext, llTrunc, llFpext, llFptrunc, llSitofp, llFptosi,
      llBitcast, llInttoptr, llPtrtoint:
     resultPrefix(i, result)
-    result.add i.castOp
-    result.add " "
+    result.add i.castOp & " "
     operand(i.castSrc, result)
     result.add " to "
     serialize(i.castDstType, result)
@@ -173,9 +163,7 @@ proc serialize*(i: LLInstr; result: var string) =
       operand(idx, result)
   of llCall:
     if i.result.kind != llvNone:
-      result.add "%"
-      result.add i.result.regName
-      result.add " = "
+      result.add "%" & i.result.regName & " = "
     result.add "call "
     serialize(i.callRetType, result)
     if i.callFuncType.len > 0:
@@ -187,22 +175,16 @@ proc serialize*(i: LLInstr; result: var string) =
     result.add ")"
   of llExtractValue:
     resultPrefix(i, result)
-    result.add "extractvalue "
-    result.add i.evAggType
-    result.add " "
+    result.add "extractvalue " & i.evAggType & " "
     serializeUnqualified(i.evAggregate, result)
-    result.add ", "
-    result.add $i.evIndex
+    result.add ", " & $i.evIndex
   of llInsertValue:
     resultPrefix(i, result)
-    result.add "insertvalue "
-    result.add i.ivAggType
-    result.add " "
+    result.add "insertvalue " & i.ivAggType & " "
     serializeUnqualified(i.ivAggregate, result)
     result.add ", "
     operand(i.ivElement, result)
-    result.add ", "
-    result.add $i.ivIndex
+    result.add ", " & $i.ivIndex
   of llPhi:
     resultPrefix(i, result)
     result.add "phi "
@@ -211,9 +193,7 @@ proc serialize*(i: LLInstr; result: var string) =
       if j > 0: result.add ", "
       result.add " [ "
       serializeUnqualified(val, result)
-      result.add ", %"
-      result.add label
-      result.add " ]"
+      result.add ", %" & label & " ]"
   of llSelect:
     resultPrefix(i, result)
     result.add "select i1 "
@@ -230,45 +210,34 @@ proc serialize*(i: LLInstr; result: var string) =
       result.add " "
       operand(i.retVal, result)
   of llBr:
-    result.add "br label %"
-    result.add i.brTarget
+    result.add "br label %" & i.brTarget
   of llCondBr:
     result.add "br i1 "
     serializeUnqualified(i.condBrCond, result)
-    result.add ", label %"
-    result.add i.condBrTrue
-    result.add ", label %"
-    result.add i.condBrFalse
+    result.add ", label %" & i.condBrTrue & ", label %" & i.condBrFalse
   of llSwitch:
-    result.add "switch "
-    result.add i.switchValType
-    result.add " "
+    result.add "switch " & i.switchValType & " "
     serializeUnqualified(i.switchVal, result)
-    result.add ", label %"
-    result.add i.switchDefault
+    result.add ", label %" & i.switchDefault
     if i.switchCases.len > 0:
       result.add " [\n"
       for (cv, label) in i.switchCases:
         result.add "    " & i.switchValType & " "
         serializeUnqualified(cv, result)
-        result.add ", label %"
-        result.add label
-        result.add "\n"
+        result.add ", label %" & label & "\n"
       result.add "  ]"
   of llUnreachable:
     result.add "unreachable"
   of llAtomicrmw:
     resultPrefix(i, result)
-    result.add "atomicrmw "
-    result.add RmwOpStr[i.armwOp]
+    result.add "atomicrmw " & RmwOpStr[i.armwOp]
     if i.armwSyncscope.len > 0:
       result.add " syncscope(\"" & i.armwSyncscope & "\")"
     result.add " ptr "
     serializeUnqualified(i.armwPtr, result)
     result.add ", "
     operand(i.armwVal, result)
-    result.add " "
-    result.add OrderingStr[i.armwOrdering]
+    result.add " " & OrderingStr[i.armwOrdering]
     if i.armwAlign > 0: result.add ", align " & $i.armwAlign
   of llCmpxchg:
     resultPrefix(i, result)
@@ -281,24 +250,20 @@ proc serialize*(i: LLInstr; result: var string) =
     operand(i.cxExpected, result)
     result.add ", "
     operand(i.cxDesired, result)
-    result.add " "
-    result.add OrderingStr[i.cxSuccessOrdering]
-    result.add " "
-    result.add OrderingStr[i.cxFailureOrdering]
+    result.add " " & OrderingStr[i.cxSuccessOrdering]
+    result.add " " & OrderingStr[i.cxFailureOrdering]
     if i.cxWeak: result.add " weak"
     if i.cxAlign > 0: result.add ", align " & $i.cxAlign
   of llFence:
     result.add "fence"
     if i.fenceSyncscope.len > 0:
       result.add " syncscope(\"" & i.fenceSyncscope & "\")"
-    result.add " "
-    result.add OrderingStr[i.fenceOrdering]
+    result.add " " & OrderingStr[i.fenceOrdering]
   of llRaw:
     result.add i.rawText
 
 proc serialize*(blk: LLBlock; result: var string) =
-  result.add blk.label
-  result.add ":\n"
+  result.add blk.label & ":\n"
   for instr in blk.instrs:
     result.add "  "
     serialize(instr, result)
@@ -310,9 +275,7 @@ proc paramText(f: LLFunc; result: var string) =
   for i, (name, typ) in f.params:
     if i > 0: result.add ", "
     serialize(typ, result)
-    result.add " %"
-    result.add name
-    result.add ".param"
+    result.add " %" & name & ".param"
   if f.isVarargs:
     if f.params.len > 0: result.add ", "
     result.add "..."
@@ -320,21 +283,17 @@ proc paramText(f: LLFunc; result: var string) =
 proc serialize*(f: LLFunc; result: var string) =
   result.add "define "
   serialize(f.retType, result)
-  result.add " @"
-  result.add f.name
-  result.add "("
+  result.add " @" & f.name & "("
   paramText(f, result)
   result.add ")"
   if f.alwaysInline: result.add " alwaysinline"
   if f.noInline: result.add " noinline"
   if f.metadata.subprogramId != 0:
-    result.add " !dbg !"
-    result.add $f.metadata.subprogramId
+    result.add " !dbg !" & $f.metadata.subprogramId
   result.add " {\n"
   for i, blk in f.blocks:
     if i == 0:
-      result.add blk.label
-      result.add ":\n"
+      result.add blk.label & ":\n"
       for a in f.entryAllocas:
         result.add "  "
         serialize(a, result)
@@ -351,9 +310,7 @@ proc serialize*(f: LLFunc; result: var string) =
   result.add "}\n"
 
 proc serialize*(g: LLGlobal; result: var string) =
-  result.add "@"
-  result.add g.name
-  result.add " = "
+  result.add "@" & g.name & " = "
   if g.isPrivate: result.add "private "
   if g.isExternal:
     result.add "external "
