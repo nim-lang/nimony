@@ -13,7 +13,6 @@
 ## `LLValue` is a tagged union, value rendering switches on `kind` and never
 ## inspects string prefixes.
 
-import std / [strutils, sequtils]
 import llvmirmodel
 
 const OrderingStr*: array[LLAtomicOrdering, string] = [
@@ -24,230 +23,354 @@ const RmwOpStr*: array[LLAtomicrmwOp, string] = [
   "nand", "min", "max", "umin", "umax"]
 
 proc serialize*(typ: LLType; result: var string) =
-  if typ == nil: return "ptr" # treat nil pointee as opaque ptr
+  ## Append the LLVM type string to `result`. Uses `var string` to avoid
+  ## exponential allocation when serializing nested pointer/array/struct types.
+  if typ == nil:
+    result.add "ptr" # treat nil pointee as opaque ptr
   case typ.kind
-  of llVoid: "void"
-  of llInt: "i" & $typ.intBits
+  of llVoid: result.add "void"
+  of llInt: result.add "i"; result.add $typ.intBits
   of llFloat:
     case typ.floatBits
-    of 32: "float"
-    of 64: "double"
-    of 128: "fp128"
-    else: "double"
-  of llPtr: "ptr"
-  of llArray: "[" & $typ.arrLen & " x " & serialize(typ.arrElem) & "]"
+    of 32: result.add "float"
+    of 64: result.add "double"
+    of 128: result.add "fp128"
+    else: result.add "double"
+  of llPtr: result.add "ptr"
+  of llArray:
+    result.add "["
+    result.add $typ.arrLen
+    result.add " x "
+    serialize(typ.arrElem, result)
+    result.add "]"
   of llStruct:
     if typ.name.len > 0:
-      "%" & typ.name
+      result.add "%"
+      result.add typ.name
     else:
-      "{ " & typ.structFields.mapIt(serialize(it.typ)).join(", ") & " }"
-  of llUnion: serialize(typ.repType)
-  of llFunc: "ptr"
+      result.add "{ "
+      for i, f in typ.structFields:
+        if i > 0: result.add ", "
+        serialize(f.typ, result)
+      result.add " }"
+  of llUnion: serialize(typ.repType, result)
+  of llFunc: result.add "ptr"
 
-proc serializeUnqualified*(v: LLValue): string =
-  ## The bare value text WITHOUT its type prefix.
-  case v.kind
-  of llvReg: "%" & v.regName
-  of llvInt: v.intText
-  of llvFloat: v.floatText
-  of llvBool: (if v.boolVal: "1" else: "0")
-  of llvGlobal: "@" & v.globalName
-  of llvNull: "null"
-  of llvUndef: "undef"
-  of llvZero: "zeroinitializer"
-  of llvPoison: "poison"
-  of llvCString: "c\"" & v.strVal & "\""
-  of llvRawText: v.rawText
-  of llvNone: ""
-
-proc operand*(v: LLValue): string =
-  ## Typed operand: "<type> <value>".
-  if v.kind == llvNone: ""
-  else: serialize(v.typ) & " " & serializeUnqualified(v)
-
-proc resultPrefix(i: LLInstr): string =
-  if i.result.kind != llvNone:
-    "%" & i.result.regName & " = "
-  else:
-    ""
-
-proc serialize*(i: LLInstr): string =
-  ## Renders a single instruction WITHOUT leading indentation or trailing
-  ## newline. The caller adds those.
+proc serialize*(typ: LLType): string =
+  ## Convenience overload. Prefer `serialize(typ, result)` when building into an
+  ## existing string to avoid an extra allocation.
   result = ""
+  serialize(typ, result)
+
+proc serializeUnqualified*(v: LLValue; result: var string) =
+  ## Append the bare value text WITHOUT its type prefix.
+  case v.kind
+  of llvReg: result.add "%"; result.add v.regName
+  of llvInt: result.add v.intText
+  of llvFloat: result.add v.floatText
+  of llvBool: result.add (if v.boolVal: "1" else: "0")
+  of llvGlobal: result.add "@"; result.add v.globalName
+  of llvNull: result.add "null"
+  of llvUndef: result.add "undef"
+  of llvZero: result.add "zeroinitializer"
+  of llvPoison: result.add "poison"
+  of llvCString: result.add "c\""; result.add v.strVal; result.add "\""
+  of llvRawText: result.add v.rawText
+  of llvNone: discard
+
+proc operand*(v: LLValue; result: var string) =
+  ## Append typed operand: "<type> <value>".
+  if v.kind == llvNone: return
+  serialize(v.typ, result)
+  result.add " "
+  serializeUnqualified(v, result)
+
+proc resultPrefix(i: LLInstr; result: var string) =
+  if i.result.kind != llvNone:
+    result.add "%"
+    result.add i.result.regName
+    result.add " = "
+
+proc serialize*(i: LLInstr; result: var string) =
+  ## Append a single instruction WITHOUT leading indentation or trailing
+  ## newline. The caller adds those.
   case i.kind
   of llAdd, llSub, llMul, llSDiv, llUDiv, llSRem, llURem,
      llShl, llAShr, llLShr, llAnd, llOr, llXor:
-    result = i.resultPrefix() & i.binOp
+    resultPrefix(i, result)
+    result.add i.binOp
     if i.binNuw: result.add " nuw"
     if i.binNsw: result.add " nsw"
-    result.add " " & operand(i.binLhs) & ", " & serializeUnqualified(i.binRhs)
+    result.add " "
+    operand(i.binLhs, result)
+    result.add ", "
+    serializeUnqualified(i.binRhs, result)
   of llIcmp:
-    result = i.resultPrefix() & "icmp " & i.icmpPred & " " &
-             operand(i.icmpLhs) & ", " & serializeUnqualified(i.icmpRhs)
+    resultPrefix(i, result)
+    result.add "icmp "
+    result.add i.icmpPred
+    result.add " "
+    operand(i.icmpLhs, result)
+    result.add ", "
+    serializeUnqualified(i.icmpRhs, result)
   of llFcmp:
-    result = i.resultPrefix() & "fcmp " & i.fcmpPred & " " &
-             operand(i.fcmpLhs) & ", " & serializeUnqualified(i.fcmpRhs)
+    resultPrefix(i, result)
+    result.add "fcmp "
+    result.add i.fcmpPred
+    result.add " "
+    operand(i.fcmpLhs, result)
+    result.add ", "
+    serializeUnqualified(i.fcmpRhs, result)
   of llZext, llSext, llTrunc, llFpext, llFptrunc, llSitofp, llFptosi,
      llBitcast, llInttoptr, llPtrtoint:
-    result = i.resultPrefix() & i.castOp & " " & operand(i.castSrc) &
-             " to " & serialize(i.castDstType)
+    resultPrefix(i, result)
+    result.add i.castOp
+    result.add " "
+    operand(i.castSrc, result)
+    result.add " to "
+    serialize(i.castDstType, result)
   of llAlloca:
-    result = i.resultPrefix() & "alloca " & serialize(i.allocaType)
+    resultPrefix(i, result)
+    result.add "alloca "
+    serialize(i.allocaType, result)
     if i.allocaNumElts.kind != llvNone:
-      result.add ", " & serialize(i.allocaType) & " " &
-                 serializeUnqualified(i.allocaNumElts)
+      result.add ", "
+      serialize(i.allocaType, result)
+      result.add " "
+      serializeUnqualified(i.allocaNumElts, result)
     if i.allocaAlign > 0:
       result.add ", align " & $i.allocaAlign
   of llLoad:
-    result = i.resultPrefix() & "load"
+    resultPrefix(i, result)
+    result.add "load"
     if i.loadAtomic: result.add " atomic"
-    result.add " " & serialize(i.result.typ) & ", ptr " &
-             serializeUnqualified(i.loadPtr)
+    result.add " "
+    serialize(i.result.typ, result)
+    result.add ", ptr "
+    serializeUnqualified(i.loadPtr, result)
     if i.loadAtomic:
       result.add " " & OrderingStr[i.loadOrdering]
       if i.loadAlign > 0: result.add ", align " & $i.loadAlign
   of llStore:
-    result = "store"
+    result.add "store"
     if i.storeAtomic: result.add " atomic"
-    result.add " " & operand(i.storeValue) & ", ptr " &
-             serializeUnqualified(i.storePtr)
+    result.add " "
+    operand(i.storeValue, result)
+    result.add ", ptr "
+    serializeUnqualified(i.storePtr, result)
     if i.storeAtomic:
       result.add " " & OrderingStr[i.storeOrdering]
       if i.storeAlign > 0: result.add ", align " & $i.storeAlign
   of llGep:
-    result = i.resultPrefix() & "getelementptr "
+    resultPrefix(i, result)
+    result.add "getelementptr "
     if i.gepInbounds: result.add "inbounds "
-    result.add serialize(i.gepBaseType) & ", ptr " &
-             serializeUnqualified(i.gepBase)
+    serialize(i.gepBaseType, result)
+    result.add ", ptr "
+    serializeUnqualified(i.gepBase, result)
     for idx in i.gepIndices:
-      result.add ", " & operand(idx)
+      result.add ", "
+      operand(idx, result)
   of llCall:
     if i.result.kind != llvNone:
-      result = "%" & i.result.regName & " = "
-    result.add "call " & serialize(i.callRetType)
+      result.add "%"
+      result.add i.result.regName
+      result.add " = "
+    result.add "call "
+    serialize(i.callRetType, result)
     if i.callFuncType.len > 0:
       result.add " " & i.callFuncType
     result.add " " & i.callCallee & "("
     for j, a in i.callArgs:
       if j > 0: result.add ", "
-      result.add operand(a)
+      operand(a, result)
     result.add ")"
   of llExtractValue:
-    result = i.resultPrefix() & "extractvalue " & i.evAggType & " " &
-             serializeUnqualified(i.evAggregate) & ", " & $i.evIndex
+    resultPrefix(i, result)
+    result.add "extractvalue "
+    result.add i.evAggType
+    result.add " "
+    serializeUnqualified(i.evAggregate, result)
+    result.add ", "
+    result.add $i.evIndex
   of llInsertValue:
-    result = i.resultPrefix() & "insertvalue " & i.ivAggType & " " &
-             serializeUnqualified(i.ivAggregate) & ", " & operand(i.ivElement) &
-             ", " & $i.ivIndex
+    resultPrefix(i, result)
+    result.add "insertvalue "
+    result.add i.ivAggType
+    result.add " "
+    serializeUnqualified(i.ivAggregate, result)
+    result.add ", "
+    operand(i.ivElement, result)
+    result.add ", "
+    result.add $i.ivIndex
   of llPhi:
-    result = i.resultPrefix() & "phi " & serialize(i.result.typ)
+    resultPrefix(i, result)
+    result.add "phi "
+    serialize(i.result.typ, result)
     for j, (val, label) in i.phiIncoming:
       if j > 0: result.add ", "
-      result.add " [ " & serializeUnqualified(val) & ", %" & label & " ]"
+      result.add " [ "
+      serializeUnqualified(val, result)
+      result.add ", %"
+      result.add label
+      result.add " ]"
   of llSelect:
-    result = i.resultPrefix() & "select i1 " & serializeUnqualified(i.selCond) &
-             ", " & operand(i.selTrue) & ", " & operand(i.selFalse)
+    resultPrefix(i, result)
+    result.add "select i1 "
+    serializeUnqualified(i.selCond, result)
+    result.add ", "
+    operand(i.selTrue, result)
+    result.add ", "
+    operand(i.selFalse, result)
   of llRet:
+    result.add "ret"
     if i.retVal.kind == llvNone:
-      result = "ret void"
+      result.add " void"
     else:
-      result = "ret " & operand(i.retVal)
+      result.add " "
+      operand(i.retVal, result)
   of llBr:
-    result = "br label %" & i.brTarget
+    result.add "br label %"
+    result.add i.brTarget
   of llCondBr:
-    result = "br i1 " & serializeUnqualified(i.condBrCond) &
-             ", label %" & i.condBrTrue & ", label %" & i.condBrFalse
+    result.add "br i1 "
+    serializeUnqualified(i.condBrCond, result)
+    result.add ", label %"
+    result.add i.condBrTrue
+    result.add ", label %"
+    result.add i.condBrFalse
   of llSwitch:
-    result = "switch " & i.switchValType & " " &
-             serializeUnqualified(i.switchVal) & ", label %" & i.switchDefault
+    result.add "switch "
+    result.add i.switchValType
+    result.add " "
+    serializeUnqualified(i.switchVal, result)
+    result.add ", label %"
+    result.add i.switchDefault
     if i.switchCases.len > 0:
       result.add " [\n"
       for (cv, label) in i.switchCases:
-        result.add "    " & i.switchValType & " " &
-            serializeUnqualified(cv) & ", label %" & label & "\n"
+        result.add "    " & i.switchValType & " "
+        serializeUnqualified(cv, result)
+        result.add ", label %"
+        result.add label
+        result.add "\n"
       result.add "  ]"
   of llUnreachable:
-    result = "unreachable"
+    result.add "unreachable"
   of llAtomicrmw:
-    result = i.resultPrefix() & "atomicrmw " & RmwOpStr[i.armwOp]
+    resultPrefix(i, result)
+    result.add "atomicrmw "
+    result.add RmwOpStr[i.armwOp]
     if i.armwSyncscope.len > 0:
       result.add " syncscope(\"" & i.armwSyncscope & "\")"
-    result.add " ptr " & serializeUnqualified(i.armwPtr) & ", " &
-             operand(i.armwVal) & " " & OrderingStr[i.armwOrdering]
+    result.add " ptr "
+    serializeUnqualified(i.armwPtr, result)
+    result.add ", "
+    operand(i.armwVal, result)
+    result.add " "
+    result.add OrderingStr[i.armwOrdering]
     if i.armwAlign > 0: result.add ", align " & $i.armwAlign
   of llCmpxchg:
-    result = i.resultPrefix() & "cmpxchg"
+    resultPrefix(i, result)
+    result.add "cmpxchg"
     if i.cxSyncscope.len > 0:
       result.add " syncscope(\"" & i.cxSyncscope & "\")"
-    result.add " ptr " & serializeUnqualified(i.cxPtr) & ", " &
-             operand(i.cxExpected) & ", " & operand(i.cxDesired) &
-             " " & OrderingStr[i.cxSuccessOrdering] & " " &
-             OrderingStr[i.cxFailureOrdering]
+    result.add " ptr "
+    serializeUnqualified(i.cxPtr, result)
+    result.add ", "
+    operand(i.cxExpected, result)
+    result.add ", "
+    operand(i.cxDesired, result)
+    result.add " "
+    result.add OrderingStr[i.cxSuccessOrdering]
+    result.add " "
+    result.add OrderingStr[i.cxFailureOrdering]
     if i.cxWeak: result.add " weak"
     if i.cxAlign > 0: result.add ", align " & $i.cxAlign
   of llFence:
-    result = "fence"
+    result.add "fence"
     if i.fenceSyncscope.len > 0:
       result.add " syncscope(\"" & i.fenceSyncscope & "\")"
-    result.add " " & OrderingStr[i.fenceOrdering]
+    result.add " "
+    result.add OrderingStr[i.fenceOrdering]
   of llRaw:
-    result = i.rawText
+    result.add i.rawText
 
-proc serialize*(blk: LLBlock): string =
-  result = blk.label & ":\n"
+proc serialize*(blk: LLBlock; result: var string) =
+  result.add blk.label
+  result.add ":\n"
   for instr in blk.instrs:
-    result.add "  " & serialize(instr)
+    result.add "  "
+    serialize(instr, result)
     if instr.kind != llRaw:
       result.add instr.dbgLoc
     result.add "\n"
 
-proc paramText(f: LLFunc): string =
-  var parts: seq[string] = @[]
-  for (name, typ) in f.params:
-    parts.add serialize(typ) & " %" & name & ".param"
+proc paramText(f: LLFunc; result: var string) =
+  for i, (name, typ) in f.params:
+    if i > 0: result.add ", "
+    serialize(typ, result)
+    result.add " %"
+    result.add name
+    result.add ".param"
   if f.isVarargs:
-    parts.add "..."
-  result = parts.join(", ")
+    if f.params.len > 0: result.add ", "
+    result.add "..."
 
-proc serialize*(f: LLFunc): string =
-  result = "define "
-  result.add serialize(f.retType) & " @" & f.name & "(" & paramText(f) & ")"
+proc serialize*(f: LLFunc; result: var string) =
+  result.add "define "
+  serialize(f.retType, result)
+  result.add " @"
+  result.add f.name
+  result.add "("
+  paramText(f, result)
+  result.add ")"
   if f.alwaysInline: result.add " alwaysinline"
   if f.noInline: result.add " noinline"
   if f.metadata.subprogramId != 0:
-    result.add " !dbg !" & $f.metadata.subprogramId
+    result.add " !dbg !"
+    result.add $f.metadata.subprogramId
   result.add " {\n"
   for i, blk in f.blocks:
     if i == 0:
-      result.add blk.label & ":\n"
+      result.add blk.label
+      result.add ":\n"
       for a in f.entryAllocas:
-        result.add "  " & serialize(a) & a.dbgLoc & "\n"
+        result.add "  "
+        serialize(a, result)
+        result.add a.dbgLoc
+        result.add "\n"
       for instr in blk.instrs:
-        result.add "  " & serialize(instr)
+        result.add "  "
+        serialize(instr, result)
         if instr.kind != llRaw:
           result.add instr.dbgLoc
         result.add "\n"
     else:
-      result.add serialize(blk)
+      serialize(blk, result)
   result.add "}\n"
 
-proc serialize*(g: LLGlobal): string =
-  result = "@" & g.name & " = "
+proc serialize*(g: LLGlobal; result: var string) =
+  result.add "@"
+  result.add g.name
+  result.add " = "
   if g.isPrivate: result.add "private "
   if g.isExternal:
     result.add "external "
     if g.isThreadLocal: result.add "thread_local "
-    result.add "global " & serialize(g.typ)
+    result.add "global "
+    serialize(g.typ, result)
   else:
     if g.isThreadLocal: result.add "thread_local "
     result.add (if g.isConstant: "constant " else: "global ")
-    result.add serialize(g.typ) & " " & serializeUnqualified(g.initVal)
+    serialize(g.typ, result)
+    result.add " "
+    serializeUnqualified(g.initVal, result)
   if g.align > 0: result.add ", align " & $g.align
   if g.dbgLoc.len > 0: result.add g.dbgLoc
 
-proc serialize*(m: LLModule; triple: string): string =
-  result = "; LLVM IR generated by Lengc\n"
+proc serialize*(m: LLModule; triple: string; result: var string) =
+  result.add "; LLVM IR generated by Lengc\n"
   result.add "target datalayout = \"e-m:o-i64:64-i128:128-n32:64-S128\"\n"
   if triple.len > 0:
     result.add "target triple = \"" & triple & "\"\n"
@@ -264,7 +387,8 @@ proc serialize*(m: LLModule; triple: string): string =
   if m.externs.len > 0: result.add "\n"
 
   for g in m.globals:
-    result.add serialize(g) & "\n"
+    serialize(g, result)
+    result.add "\n"
   if m.globals.len > 0: result.add "\n"
 
   # error and overflow flags are added by the caller before serializing,
@@ -272,7 +396,9 @@ proc serialize*(m: LLModule; triple: string): string =
   # overwrites. The integrator splices them in directly.
 
   for f in m.funcs:
-    result.add serialize(f) & "\n\n"
+    serialize(f, result)
+    result.add "\n\n"
 
   if m.hasInitBody:
-    result.add serialize(m.initFunc) & "\n"
+    serialize(m.initFunc, result)
+    result.add "\n"

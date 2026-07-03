@@ -671,10 +671,11 @@ proc genTypeDefLLVM(c: var LLVMCode; body: var Cursor; name: string;
   of ObjectT, UnionT:
     let structBody = genObjectBodyLLVM(c, body)
     if structBody.structFields.len == 0: return ""
+    let ts = serialize(structBody)
     if packed:
-      result = "%" & name & " = type <" & serialize(structBody) & ">\n"
+      result = "%" & name & " = type <" & ts & ">\n"
     else:
-      result = "%" & name & " = type " & serialize(structBody) & "\n"
+      result = "%" & name & " = type " & ts & "\n"
   of ArrayT:
     body.into:
       let elemType = genTypeLLVM(c, body)
@@ -686,8 +687,8 @@ proc genTypeDefLLVM(c: var LLVMCode; body: var Cursor; name: string;
       else:
         sizeStr = "0"
       skip body
-      result = "%" & name & " = type [" & sizeStr & " x " & serialize(
-          elemType) & "]\n"
+      result = "%" & name & " = type [" & sizeStr & " x " &
+          serialize(elemType) & "]\n"
       while body.hasMore: skip body
   of EnumT:
     body.into:
@@ -702,14 +703,17 @@ proc genTypeDefLLVM(c: var LLVMCode; body: var Cursor; name: string;
       retType = "void"
     else:
       var rt = procType.returnType
-      retType = serialize(genTypeLLVM(c, rt))
+      retType = ""
+      serialize(genTypeLLVM(c, rt), retType)
     var paramTypes: seq[string] = @[]
     if procType.params.kind == TagLit:
       var p = procType.params
       p.loopInto:
         let paramDecl = takeParamDecl(p)
         var t = paramDecl.typ
-        paramTypes.add serialize(genTypeLLVM(c, t))
+        var ps = ""
+        serialize(genTypeLLVM(c, t), ps)
+        paramTypes.add ps
     result = "%" & name & " = type " & retType & " (" & paramTypes.join(", ") & ")*\n"
   else:
     result = ""

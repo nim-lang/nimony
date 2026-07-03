@@ -299,7 +299,10 @@ proc genAtomicCall(c: var LLVMCode; externName: string; args: seq[LLValue];
                    fenceSyncscope: "singlethread")
     result = llNoneVal()
   else:
-    let argStr = args.mapIt(operand(it)).join(", ")
+    var argStr = ""
+    for i, a in args:
+      if i > 0: argStr.add ", "
+      operand(a, argStr)
     if retType.kind == llVoid:
       c.emit LLInstr(kind: llCall, callCallee: "@" & externName,
                      callRetType: retType, callArgs: args)
@@ -344,7 +347,10 @@ proc genMemIntrinsicCall(c: var LLVMCode; externName: string; args: seq[
     declareExtern(c, "declare i32 @memcmp(ptr nocapture, ptr nocapture, i64)", "memcmp")
     result = res
   else:
-    let argStr = args.mapIt(operand(it)).join(", ")
+    var argStr = ""
+    for i, a in args:
+      if i > 0: argStr.add ", "
+      operand(a, argStr)
     if retType.kind == llVoid:
       c.emit LLInstr(kind: llCall, callCallee: "@" & externName,
                      callRetType: retType, callArgs: args)
@@ -1137,6 +1143,7 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       let elemTyp = genTypeLLVMReadOnly(c, elemBody)
       var current = llUndef(typ)
       var idx = 0
+      var s = serialize(typ)
       while n.hasMore:
         var elemVal = LLValue(); genExprLLVM(c, n, elemVal)
         if elemVal.kind == llvInt:
@@ -1144,7 +1151,7 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
         let t = c.nextTemp()
         let res = llReg(t, typ)
         c.emit LLInstr(kind: llInsertValue, result: res, ivAggregate: current,
-                       ivElement: elemVal, ivAggType: serialize(typ), ivIndex: idx)
+                       ivElement: elemVal, ivAggType: s, ivIndex: idx)
         current = res
         inc idx
       if expectedLen >= 0 and idx != expectedLen:

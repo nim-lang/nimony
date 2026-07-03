@@ -223,7 +223,7 @@ proc withType*(v: LLValue; typ: LLType): LLValue {.inline.} =
 
 proc disp*(v: LLValue): string {.inline.} =
   ## Display text of a value (for building callee names / signatures).
-  serializeUnqualified(v)
+  serializeUnqualified(v, result)
 
 proc mangleSym(c: var LLVMCode; s: SymId): string =
   let x = c.m.getDeclOrNil(s)
@@ -634,7 +634,10 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
       else:
         error c.m, "expected SymbolDef but got: ", d.name
 
-  var sig = "(" & paramTypes.mapIt(serialize(it)).join(", ")
+  var sig = "("
+  for i, t in paramTypes:
+    if i > 0: sig.add ", "
+    serialize(t, sig)
   if isVarargs:
     if paramTypes.len > 0: sig.add ", "
     sig.add "..."
@@ -828,7 +831,9 @@ proc generateLLVMCode*(s: var State; inp, outp: string; flags: set[LLVMGenFlag])
   if c.module.externs.len > 0: f.add "\n"
 
   for g in c.module.globals:
-    f.add serialize(g) & "\n"
+    var s = ""
+    serialize(g, s)
+    f.add s & "\n"
   if c.module.globals.len > 0: f.add "\n"
 
   if gfMainModule in c.flags:
@@ -839,13 +844,17 @@ proc generateLLVMCode*(s: var State; inp, outp: string; flags: set[LLVMGenFlag])
     f.add "@LENGC_OVF_ = external thread_local global i8\n\n"
 
   for fn in c.module.funcs:
-    f.add serialize(fn) & "\n\n"
+    var s = ""
+    serialize(fn, s)
+    f.add s & "\n\n"
 
   if c.module.hasInitBody:
     var initFn = c.module.initFunc
     initFn.name = "lengc_init"
     initFn.retType = c.prim.voidT
-    f.add serialize(initFn) & "\n"
+    var s = ""
+    serialize(initFn, s)
+    f.add s & "\n"
     f.add "@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @lengc_init, ptr null }]\n"
 
   if c.debug.metadata.len > 0:

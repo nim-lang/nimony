@@ -394,7 +394,8 @@ proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
         while n.hasMore: skip n
 
       typ = c.llIntBits(parseInt(bitsStr))
-      intrinsic.add ".with.overflow." & serialize(typ)
+      intrinsic.add ".with.overflow."
+      serialize(typ, intrinsic)
 
       genExprLLVM(c, n, lhs)
       genExprLLVM(c, n, rhs)
@@ -435,8 +436,9 @@ proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
                  castDstType: c.prim.i8)
   c.emitStore(nobRes, llGlobalRef("LENGC_OVF_", c.prim.ptrT))
 
-  let declStr = "declare { " & serialize(typ) & ", i1 } @" & intrinsic & "(" &
-      serialize(typ) & ", " & serialize(typ) & ")"
+  let s = serialize(typ)
+  let declStr = "declare { " & s & ", i1 } @" & intrinsic & "(" &
+      s & ", " & s & ")"
   declareExtern(c, declStr, intrinsic)
 
 proc genEmitStmtLLVM(c: var LLVMCode; n: var Cursor) =
