@@ -866,11 +866,19 @@ proc gx(g: var JSGen; n: var Cursor) =
       let targetBig = targetAk in {akI64, akU64}
       let targetFloat = targetAk in {akF32, akF64}
       skip n                                   # target type
-      let srcBig = g.isBigExpr(n)
+      let (sok, st) = g.exprType(n)
+      let srcAk = (if sok: accessOf(g.m, st) else: akAggregate)
+      let srcBig = srcAk in {akI64, akU64}
       if targetFloat and srcBig:
         g.js.tree jCall: (g.js.name "Number"; g.gx n)   # BigInt -> float value
       elif targetBig and not srcBig:
-        g.js.tree jCall: (g.js.name "BigInt"; g.gx n)    # widen ≤32-bit -> BigInt
+        g.gxBig n                                        # widen ≤32-bit -> BigInt (literal -> `Nn`)
+      elif targetBig and srcBig and targetAk != srcAk:
+        # same-width signedness reinterpret (int64 <-> uint64), like a C cast
+        g.js.tree jCall:
+          g.js.member (if targetAk == akI64: "asIntN" else: "asUintN"): g.js.name "BigInt"
+          g.js.num 64
+          g.gx n
       elif not targetBig and not targetFloat and srcBig:
         # narrow 64-bit int -> ≤32-bit int: mask to the target width, back to Number
         g.js.tree jCall:
