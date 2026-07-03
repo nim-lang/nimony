@@ -1,0 +1,20 @@
+(.nif27)
+(stmts
+ (proc :mul64.0.tbig64
+  (params
+   (param :a.0 . (u 64))
+   (param :b.0 . (u 64)))
+  (u 64)
+  .
+  (stmts
+   (ret (mul (u 64) a.0 b.0))))
+ (proc :extractExp.0.tbig64
+  (params
+   (param :bits.0 . (u 64)))
+  (u 64)
+  .
+  (stmts
+   (ret
+    (shr (u 64)
+     (bitand (u 64) bits.0 (suf 9218868437227405312 "u64"))
+     (suf 52 "u64"))))))

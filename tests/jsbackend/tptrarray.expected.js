@@ -2,14 +2,14 @@
 "use strict";
 
 function sump_0_tptrarray(a_0) {
-  return (mem.i64n(a_0) + (mem.i64n((a_0 + 8)) + mem.i64n((a_0 + 16))));
+  return (mem.i32(a_0) + (mem.i32((a_0 + 4)) + mem.i32((a_0 + 8))));
 }
 
 function driver_0_tptrarray() {
-  let arr_0 = allocFixed(24);
-  mem.setI64(arr_0, 7);
-  mem.setI64((arr_0 + 8), 11);
-  mem.setI64((arr_0 + 16), 13);
+  let arr_0 = allocFixed(12);
+  mem.setI32(arr_0, 7);
+  mem.setI32((arr_0 + 4), 11);
+  mem.setI32((arr_0 + 8), 13);
   let p_0 = arr_0;
   return sump_0_tptrarray(p_0);
 }

@@ -2,28 +2,28 @@
 (stmts
  (type :Point.0.taddr2 .
   (object .
-   (fld :x.0.taddr2 . (i 64))
-   (fld :y.0.taddr2 . (i 64))))
+   (fld :x.0.taddr2 . (i 32))
+   (fld :y.0.taddr2 . (i 32))))
  (proc :fieldaddr.0.taddr2
   (params)
-  (i 64)
+  (i 32)
   .
   (stmts
    (var :pt.0 . Point.0.taddr2
     (oconstr Point.0.taddr2
      (kv x.0.taddr2 1)
      (kv y.0.taddr2 2)))
-   (var :px.0 . (ptr (i 64)) (addr (dot pt.0 x.0.taddr2)))
+   (var :px.0 . (ptr (i 32)) (addr (dot pt.0 x.0.taddr2)))
    (asgn (deref px.0) 100)
    (ret (dot pt.0 x.0.taddr2))))
  (proc :elemaddr.0.taddr2
   (params)
-  (i 64)
+  (i 32)
   .
   (stmts
-   (var :a.0 . (array (i 64) 3)
-    (aconstr (array (i 64) 3) 10 20 30))
-   (var :p.0 . (ptr (i 64)) (addr (at a.0 1)))
+   (var :a.0 . (array (i 32) 3)
+    (aconstr (array (i 32) 3) 10 20 30))
+   (var :p.0 . (ptr (i 32)) (addr (at a.0 1)))
    (asgn (deref p.0) 99)
    (ret (at a.0 1))))
  (proc :samefield.0.taddr2

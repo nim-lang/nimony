@@ -2,11 +2,11 @@
 "use strict";
 
 function copytest_0_tasgncopy() {
-  let src_0 = allocFixed(16);
-  mem.setI64(src_0, 10);
-  mem.setI64((src_0 + 8), 20);
-  let dst_0 = allocFixed(16);
-  mem.copy(dst_0, src_0, 16);
-  mem.setI64(src_0, 999);
-  return mem.i64n(dst_0);
+  let src_0 = allocFixed(8);
+  mem.setI32(src_0, 10);
+  mem.setI32((src_0 + 4), 20);
+  let dst_0 = allocFixed(8);
+  mem.copy(dst_0, src_0, 8);
+  mem.setI32(src_0, 999);
+  return mem.i32(dst_0);
 }

@@ -2,9 +2,9 @@
 "use strict";
 
 function mk_0_tvariant(sel_0, v_0) {
-  let n_0 = allocFixed(24);
-  mem.setI64(n_0, 100);
-  mem.setU8((n_0 + 8), sel_0);
-  mem.setI64((n_0 + 16), v_0);
-  return (mem.i64n(n_0) + mem.i64n((n_0 + 16)));
+  let n_0 = allocFixed(12);
+  mem.setI32(n_0, 100);
+  mem.setU8((n_0 + 4), sel_0);
+  mem.setI32((n_0 + 8), v_0);
+  return (mem.i32(n_0) + mem.i32((n_0 + 8)));
 }

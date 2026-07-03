@@ -2,15 +2,15 @@
 "use strict";
 
 function thru_0_tderefstore() {
-  let buf_0 = allocFixed(16);
-  mem.setI64(buf_0, 0);
-  mem.setI64((buf_0 + 8), 0);
+  let buf_0 = allocFixed(8);
+  mem.setI32(buf_0, 0);
+  mem.setI32((buf_0 + 4), 0);
   let p_0 = buf_0;
   mem.copy(p_0, (() => {
-    let _o = allocFixed(16);
-    mem.setI64(_o, 11);
-    mem.setI64((_o + 8), 31);
+    let _o = allocFixed(8);
+    mem.setI32(_o, 11);
+    mem.setI32((_o + 4), 31);
     return _o;
-  })(), 16);
-  return (mem.i64n(buf_0) + mem.i64n((buf_0 + 8)));
+  })(), 8);
+  return (mem.i32(buf_0) + mem.i32((buf_0 + 4)));
 }

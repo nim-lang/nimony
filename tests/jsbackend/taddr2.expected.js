@@ -2,34 +2,34 @@
 "use strict";
 
 function fieldaddr_0_taddr2() {
-  let pt_0 = allocFixed(16);
-  mem.setI64(pt_0, 1);
-  mem.setI64((pt_0 + 8), 2);
+  let pt_0 = allocFixed(8);
+  mem.setI32(pt_0, 1);
+  mem.setI32((pt_0 + 4), 2);
   let px_0 = pt_0;
-  mem.setI64(px_0, 100);
-  return mem.i64n(pt_0);
+  mem.setI32(px_0, 100);
+  return mem.i32(pt_0);
 }
 
 function elemaddr_0_taddr2() {
-  let a_0 = allocFixed(24);
-  mem.setI64(a_0, 10);
-  mem.setI64((a_0 + 8), 20);
-  mem.setI64((a_0 + 16), 30);
-  let p_0 = (a_0 + 8);
-  mem.setI64(p_0, 99);
-  return mem.i64n((a_0 + 8));
+  let a_0 = allocFixed(12);
+  mem.setI32(a_0, 10);
+  mem.setI32((a_0 + 4), 20);
+  mem.setI32((a_0 + 8), 30);
+  let p_0 = (a_0 + 4);
+  mem.setI32(p_0, 99);
+  return mem.i32((a_0 + 4));
 }
 
 function samefield_0_taddr2() {
-  let pt_0 = allocFixed(16);
-  mem.setI64(pt_0, 1);
-  mem.setI64((pt_0 + 8), 2);
+  let pt_0 = allocFixed(8);
+  mem.setI32(pt_0, 1);
+  mem.setI32((pt_0 + 4), 2);
   return (pt_0 === pt_0);
 }
 
 function difffield_0_taddr2() {
-  let pt_0 = allocFixed(16);
-  mem.setI64(pt_0, 1);
-  mem.setI64((pt_0 + 8), 2);
-  return (pt_0 === (pt_0 + 8));
+  let pt_0 = allocFixed(8);
+  mem.setI32(pt_0, 1);
+  mem.setI32((pt_0 + 4), 2);
+  return (pt_0 === (pt_0 + 4));
 }

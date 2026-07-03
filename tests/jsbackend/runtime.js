@@ -18,6 +18,7 @@ const mem = {
   setU32:(p,v)=>_dv.setUint32(p,v,true), u32:(p)=>_dv.getUint32(p,true),
   setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)),
   setU64:(p,v)=>_dv.setBigUint64(p,BigInt(v),true), u64n:(p)=>Number(_dv.getBigUint64(p,true)),
+  i64b:(p)=>_dv.getBigInt64(p,true), u64b:(p)=>_dv.getBigUint64(p,true),   // exact 64-bit reads (int64/uint64 -> BigInt)
   setF64:(p,v)=>_dv.setFloat64(p,v,true), f64:(p)=>_dv.getFloat64(p,true),
   copy:(d,s,n)=>_u8.copyWithin(d,s,s+n),
   bytes:(p,n)=>_u8.subarray(p,p+n),
@@ -34,6 +35,7 @@ function mi_usable_size(p){ return _sizes.get(Number(p)) || 0; }
 function memcpy(d,s,n){ _u8.copyWithin(Number(d),Number(s),Number(s)+Number(n)); return d; }
 function memset(p,v,n){ _u8.fill(v&0xff,Number(p),Number(p)+Number(n)); return p; }
 function strlen(p){ let n=0; while(_u8[Number(p)+n]!==0) n++; return n; }
+function memcmp(a,b,n){ a=Number(a);b=Number(b);n=Number(n); for(let i=0;i<n;i++){ const d=_u8[a+i]-_u8[b+i]; if(d!==0) return d<0?-1:1; } return 0; }
 
 // Function table: a proc pointer in linear memory is an integer index into
 // `_fns` (WASM's model — JS can't call an integer). `_fnid(fn)` interns a proc to

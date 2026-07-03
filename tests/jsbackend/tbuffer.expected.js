@@ -2,8 +2,8 @@
 "use strict";
 
 function mkpoint_0_tbuffer(a_0, b_0) {
-  let p_0 = allocFixed(16);
-  mem.setI64(p_0, a_0);
-  mem.setI64((p_0 + 8), b_0);
-  return (mem.i64n(p_0) + mem.i64n((p_0 + 8)));
+  let p_0 = allocFixed(8);
+  mem.setI32(p_0, a_0);
+  mem.setI32((p_0 + 4), b_0);
+  return (mem.i32(p_0) + mem.i32((p_0 + 4)));
 }

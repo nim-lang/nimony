@@ -2,20 +2,20 @@
 (stmts
  (type :LStr.0.tstrlong .
   (object .
-   (fld :len.0.tstrlong . (i 64))
+   (fld :len.0.tstrlong . (i 32))
    (fld :data.0.tstrlong . (flexarray (c 8)))))
  (proc :mk.0.tstrlong
   (params)
-  (i 64)
+  (i 32)
   .
   (stmts
    (var :s.0 . LStr.0.tstrlong
     (oconstr LStr.0.tstrlong
      (kv len.0.tstrlong 5)
      (kv data.0.tstrlong "hello")))
-   (ret (add (i 64)
+   (ret (add (i 32)
     (dot s.0 len.0.tstrlong)
-    (conv (i 64)
+    (conv (i 32)
      (pat
       (cast (ptr (u 8)) (addr (dot s.0 data.0.tstrlong 0)))
       1)))))))

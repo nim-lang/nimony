@@ -25,7 +25,11 @@ import ".." / lib / nifcoreparse   # re-exports nifcore (Cursor, into, skip, int
 import ".." / lib / nifcdecl        # typeKind/substructureKind + decl readers
 import nifmodules                   # MainModule + getDeclOrNil
 
-const PtrSize* = 8'i64   ## target pointer size (64-bit default; `(i -1)` uses it)
+const PtrSize* = 4'i64   ## target pointer size. The JS target is a `--bits:32`
+                         ## platform (Araq's steer: `int`/`uint` are platform-
+                         ## specific → 32-bit JS `Number`; only explicit `int64`/
+                         ## `uint64` become `BigInt`). Pointers are 4-byte byte
+                         ## offsets into the linear-memory buffer; `(i -1)` uses it.
 
 type
   Layout* = object
@@ -225,10 +229,12 @@ proc accessOf*(m: var MainModule; t: Cursor): AccessKind =
   result = akAggregate
   case t.typeKind
   of IT:
-    let b = bitsOf(t, PtrSize * 8)
+    let b0 = bitsOf(t, PtrSize * 8)
+    let b = if b0 <= 0: PtrSize * 8 else: b0   # (i -1) => pointer-size (platform int)
     result = (if b == 8: akI8 elif b == 16: akI16 elif b == 32: akI32 else: akI64)
   of UT:
-    let b = bitsOf(t, PtrSize * 8)
+    let b0 = bitsOf(t, PtrSize * 8)
+    let b = if b0 <= 0: PtrSize * 8 else: b0
     result = (if b == 8: akU8 elif b == 16: akU16 elif b == 32: akU32 else: akU64)
   of FT:
     result = (if bitsOf(t, 64) == 32: akF32 else: akF64)

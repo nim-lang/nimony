@@ -153,6 +153,8 @@ proc isSlotVar(g: var JSGen; symId: SymId): bool {.inline.} =
 # ── expression builder ────────────────────────────────────────────────────────
 
 proc gx(g: var JSGen; n: var Cursor)
+proc gxBig(g: var JSGen; n: var Cursor)
+proc isBigExpr(g: var JSGen; n: Cursor): bool
 
 template memMeth(g: var JSGen; meth: string; args: untyped) =
   ## `mem.<meth>(<args>)` — the runtime accessor calls (`mem.i64n(p)`,
@@ -194,43 +196,91 @@ proc todo(g: var JSGen; what: string; n: var Cursor) =
   skip n
 
 proc binTyped(g: var JSGen; n: var Cursor; opr: string) =
-  ## `(op TYPE lhs rhs)` -> `(lhs opr rhs)`; the type operand is irrelevant in JS.
-  g.js.tree jBin:
-    g.js.addOp opr
-    n.into:
-      skip n            # result type
-      g.gx n
-      g.gx n
-      while n.hasMore: skip n
+  ## `(op TYPE lhs rhs)`. A ≤32-bit int type maps to the JS operator directly
+  ## (`Number` arithmetic/bitops are exact & correct at ≤32 bits). An explicit
+  ## `(i 64)`/`(u 64)` uses `BigInt` operands (see `gxBig`); a *wrapping* op
+  ## (`+ - * <<`) is masked back to 64 bits so it wraps like Nim's fixed width.
+  n.into:
+    let ak = accessOf(g.m, n)
+    let big = ak in {akI64, akU64}
+    skip n            # result type
+    if big and opr in ["+", "-", "*", "<<"]:
+      g.js.tree jCall:
+        g.js.member (if ak == akI64: "asIntN" else: "asUintN"): g.js.name "BigInt"
+        g.js.num 64
+        g.js.tree jBin:
+          g.js.addOp opr
+          g.gxBig n
+          g.gxBig n
+    elif big:
+      g.js.tree jBin:
+        g.js.addOp opr
+        g.gxBig n
+        g.gxBig n
+    else:
+      g.js.tree jBin:
+        g.js.addOp opr
+        g.gx n
+        g.gx n
+    while n.hasMore: skip n
 
 proc intDiv(g: var JSGen; n: var Cursor) =
-  ## Nim integer `div` truncates toward zero; JS `/` is float division.
-  g.js.tree jCall:
-    g.js.member "trunc": g.js.name "Math"
-    g.js.tree jBin:
-      g.js.addOp "/"
-      n.into:
-        skip n
-        g.gx n
-        g.gx n
-        while n.hasMore: skip n
+  ## Nim integer `div` truncates toward zero. `BigInt` `/` already truncates toward
+  ## zero, so a 64-bit `div` is a plain `/`; a ≤32-bit `div` needs `Math.trunc`
+  ## around JS float division.
+  n.into:
+    let big = accessOf(g.m, n) in {akI64, akU64}
+    skip n            # result type
+    if big:
+      g.js.tree jBin:
+        g.js.addOp "/"
+        g.gxBig n
+        g.gxBig n
+    else:
+      g.js.tree jCall:
+        g.js.member "trunc": g.js.name "Math"
+        g.js.tree jBin:
+          g.js.addOp "/"
+          g.gx n
+          g.gx n
+    while n.hasMore: skip n
 
 proc binPlain(g: var JSGen; n: var Cursor; opr: string) =
-  ## `(op lhs rhs)` (comparisons / logic): no type operand.
+  ## `(op lhs rhs)` (comparisons / logic): no type operand. If either operand is a
+  ## 64-bit `BigInt` value, both sides are coerced to `BigInt` so the comparison
+  ## does not mix `BigInt` and `Number` (a runtime error).
+  var probe = n
+  var big = false
+  probe.into:
+    big = g.isBigExpr(probe)
+    skip probe
+    if not big and probe.hasMore: big = g.isBigExpr(probe)
+    while probe.hasMore: skip probe
   g.js.tree jBin:
     g.js.addOp opr
     n.into:
-      g.gx n
-      g.gx n
+      (if big: g.gxBig n else: g.gx n)
+      (if big: g.gxBig n else: g.gx n)
       while n.hasMore: skip n
 
 proc unTyped(g: var JSGen; n: var Cursor; opr: string) =
-  g.js.tree jUn:
-    g.js.addOp opr
-    n.into:
-      skip n            # type
-      g.gx n
-      while n.hasMore: skip n
+  ## `(op TYPE x)` unary (`~` / `-`). 64-bit -> `BigInt` op masked back to 64 bits.
+  n.into:
+    let ak = accessOf(g.m, n)
+    let big = ak in {akI64, akU64}
+    skip n            # type
+    if big:
+      g.js.tree jCall:
+        g.js.member (if ak == akI64: "asIntN" else: "asUintN"): g.js.name "BigInt"
+        g.js.num 64
+        g.js.tree jUn:
+          g.js.addOp opr
+          g.gxBig n
+    else:
+      g.js.tree jUn:
+        g.js.addOp opr
+        g.gx n
+    while n.hasMore: skip n
 
 proc unPlain(g: var JSGen; n: var Cursor; opr: string) =
   g.js.tree jUn:
@@ -269,14 +319,14 @@ proc accessors(ak: AccessKind): (string, string) =
   of akI8:  ("i8", "setI8")
   of akI16: ("i16", "setI16")
   of akI32: ("i32", "setI32")
-  of akI64: ("i64n", "setI64")
+  of akI64: ("i64b", "setI64")     ## explicit int64 -> BigInt read (setI64 coerces)
   of akU8:  ("u8At", "setU8")
   of akU16: ("u16", "setU16")
   of akU32: ("u32", "setU32")
-  of akU64: ("u64n", "setU64")
+  of akU64: ("u64b", "setU64")     ## explicit uint64 -> BigInt read
   of akF32: ("f32", "setF32")
   of akF64: ("f64", "setF64")
-  of akPtr: ("i64n", "setI64")     ## a pointer is a pointer-size (64-bit) integer
+  of akPtr: ("u32", "setU32")      ## a 4-byte pointer (byte offset) on the 32-bit target
   of akAggregate: ("", "")         ## no scalar accessor (sub-object / array)
 
 proc isBufferObjectType(g: var JSGen; typ: Cursor): bool =
@@ -387,7 +437,54 @@ proc exprType(g: var JSGen; n: Cursor): (bool, Cursor) =
     e.into:
       result = (true, e)             # the target base type (offset 0 in the derived)
       while e.hasMore: skip e
+  of AddC, SubC, MulC, DivC, ModC, ShlC, ShrC, BitandC, BitorC, BitxorC, BitnotC, NegC:
+    e.into:
+      result = (true, e)             # a typed op: its result type is the first operand
+      while e.hasMore: skip e
   else: discard
+
+proc isBigType(g: var JSGen; t: Cursor): bool =
+  ## True when a type is represented as a JS `BigInt`: an explicit `(i 64)`/`(u 64)`.
+  ## The JS target is a `--bits:32` platform, so `int`/`uint` are `(i 32)`/`(u 32)`
+  ## (`Number`); only genuinely-64-bit values pay the `BigInt` cost.
+  accessOf(g.m, t) in {akI64, akU64}
+
+proc isBigExpr(g: var JSGen; n: Cursor): bool =
+  let (ok, t) = g.exprType(n)
+  ok and g.isBigType(t)
+
+proc akBits(ak: AccessKind): int64 =
+  case ak
+  of akI8, akU8: 8
+  of akI16, akU16: 16
+  of akI32, akU32, akPtr: 32
+  of akI64, akU64: 64
+  else: 32
+
+proc gxBigAtom(g: var JSGen; n: var Cursor) =
+  ## Emit the value at `n` (a literal or an expression, not a `suf` wrapper) coerced
+  ## to `BigInt`: an integer literal becomes a `BigInt` literal (`52n`); a value
+  ## already statically 64-bit passes through; anything else is wrapped `BigInt(x)`.
+  case n.kind
+  of IntLit:  g.js.bignum intVal(n); inc n
+  of UIntLit: g.js.bigunum uintVal(n); inc n
+  of CharLit: g.js.bignum int64(ord(n.charLit)); inc n
+  else:
+    if g.isBigExpr(n): g.gx n
+    else:
+      g.js.tree jCall:
+        g.js.name "BigInt"
+        g.gx n
+
+proc gxBig(g: var JSGen; n: var Cursor) =
+  ## Operand of a 64-bit op / mixed comparison, emitted as a `BigInt`. A `suf`
+  ## literal is unwrapped first so its inner value emits as a `BigInt` literal.
+  if n.exprKind == SufC:
+    n.into:
+      g.gxBigAtom n
+      while n.hasMore: skip n
+  else:
+    g.gxBigAtom n
 
 proc dotObjType(g: var JSGen; base: Cursor): (bool, Cursor) =
   ## Resolve the object type of a `(dot BASE field)` base for buffer routing. Any
@@ -675,12 +772,20 @@ proc genDeref(g: var JSGen; n: var Cursor) =
 
 proc genEq(g: var JSGen; n: var Cursor; negate: bool) =
   ## `(eq a b)` / `(neq a b)`. Pointers are integer byte offsets, so a plain
-  ## strict comparison is correct for addresses too.
+  ## strict comparison is correct for addresses too. If either side is a 64-bit
+  ## `BigInt` value both are coerced to `BigInt` (`5n === 5` is `false` in JS).
+  var probe = n
+  var big = false
+  probe.into:
+    big = g.isBigExpr(probe)
+    skip probe
+    if not big and probe.hasMore: big = g.isBigExpr(probe)
+    while probe.hasMore: skip probe
   g.js.tree jBin:
     g.js.addOp (if negate: "!==" else: "===")
     n.into:
-      g.gx n
-      g.gx n
+      (if big: g.gxBig n else: g.gx n)
+      (if big: g.gxBig n else: g.gx n)
       while n.hasMore: skip n
 
 # ── the main expression translator ────────────────────────────────────────────
@@ -754,10 +859,29 @@ proc gx(g: var JSGen; n: var Cursor) =
   of LeC: binPlain g, n, "<="
   of LtC: binPlain g, n, "<"
   of CastC, ConvC:
-    # JS is untyped: a conversion/cast is the inner value (skip the type).
+    # A conversion crosses the Number/BigInt boundary between the ≤32-bit world and
+    # the explicit-64-bit world, so it materialises the coercion the target implies.
     n.into:
-      skip n
-      g.gx n
+      let targetAk = accessOf(g.m, n)
+      let targetBig = targetAk in {akI64, akU64}
+      let targetFloat = targetAk in {akF32, akF64}
+      skip n                                   # target type
+      let srcBig = g.isBigExpr(n)
+      if targetFloat and srcBig:
+        g.js.tree jCall: (g.js.name "Number"; g.gx n)   # BigInt -> float value
+      elif targetBig and not srcBig:
+        g.js.tree jCall: (g.js.name "BigInt"; g.gx n)    # widen ≤32-bit -> BigInt
+      elif not targetBig and not targetFloat and srcBig:
+        # narrow 64-bit int -> ≤32-bit int: mask to the target width, back to Number
+        g.js.tree jCall:
+          g.js.name "Number"
+          g.js.tree jCall:
+            g.js.member (if targetAk in {akI8, akI16, akI32}: "asIntN" else: "asUintN"):
+              g.js.name "BigInt"
+            g.js.num akBits(targetAk)
+            g.gx n
+      else:
+        g.gx n
       while n.hasMore: skip n
   of BaseobjC:
     # `(baseobj Type Depth Expr)` — convert an object to a base type. The base

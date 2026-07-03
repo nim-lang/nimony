@@ -2,11 +2,11 @@
 (stmts
  (type :Pt.0.tderefstore .
   (object .
-   (fld :x.0.tderefstore . (i 64))
-   (fld :y.0.tderefstore . (i 64))))
+   (fld :x.0.tderefstore . (i 32))
+   (fld :y.0.tderefstore . (i 32))))
  (proc :thru.0.tderefstore
   (params)
-  (i 64)
+  (i 32)
   .
   (stmts
    (var :buf.0 . Pt.0.tderefstore
@@ -14,4 +14,4 @@
    (var :p.0 . (ptr Pt.0.tderefstore) (addr buf.0))
    (asgn (deref p.0)
     (oconstr Pt.0.tderefstore (kv x.0.tderefstore 11) (kv y.0.tderefstore 31)))
-   (ret (add (i 64) (dot buf.0 x.0.tderefstore) (dot buf.0 y.0.tderefstore))))))
+   (ret (add (i 32) (dot buf.0 x.0.tderefstore) (dot buf.0 y.0.tderefstore))))))

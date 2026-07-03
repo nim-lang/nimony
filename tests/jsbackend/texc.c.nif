@@ -2,8 +2,8 @@
 (stmts
  (type :ErrTup.0.texc .
   (object .
-   (fld :err.0.texc . (i 64))
-   (fld :value.0.texc . (i 64))))
+   (fld :err.0.texc . (i 32))
+   (fld :value.0.texc . (i 32))))
  (proc :mayFail.0.texc
   (params (param :r.0 . (bool)))
   ErrTup.0.texc
@@ -15,10 +15,10 @@
    (ret (oconstr ErrTup.0.texc (kv err.0.texc 0) (kv value.0.texc 42)))))
  (proc :run.0.texc
   (params (param :r.1 . (bool)))
-  (i 64)
+  (i 32)
   .
   (stmts
-   (var :result.1 . (i 64) .)
+   (var :result.1 . (i 32) .)
    (stmts
     (stmts
      (var :canRaise.0 . ErrTup.0.texc (call mayFail.0.texc r.1))

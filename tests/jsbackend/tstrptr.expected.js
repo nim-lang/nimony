@@ -12,6 +12,6 @@ function firstchar_0_tstrptr(s_0) {
 function drive_0_tstrptr() {
   let hi_0 = allocFixed(16);
   mem.setU64(hi_0, 6907906);
-  mem.setI64((hi_0 + 8), 0);
+  mem.setU32((hi_0 + 8), 0);
   return (slen_0_tstrptr(hi_0) + firstchar_0_tstrptr(hi_0));
 }

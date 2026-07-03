@@ -4,16 +4,16 @@
 function mayFail_0_texc(r_0) {
   if (r_0) {
     return (() => {
-      let _o = allocFixed(16);
-      mem.setI64(_o, 7);
-      mem.setI64((_o + 8), 0);
+      let _o = allocFixed(8);
+      mem.setI32(_o, 7);
+      mem.setI32((_o + 4), 0);
       return _o;
     })();
   }
   return (() => {
-    let _o = allocFixed(16);
-    mem.setI64(_o, 0);
-    mem.setI64((_o + 8), 42);
+    let _o = allocFixed(8);
+    mem.setI32(_o, 0);
+    mem.setI32((_o + 4), 42);
     return _o;
   })();
 }
@@ -22,12 +22,12 @@ function run_0_texc(r_1) {
   $exs0: {
     exlab_0: {
       var result_1;
-      var canRaise_0 = allocFixed(16);
-      mem.copy(canRaise_0, mayFail_0_texc(r_1), 16);
-      if (mem.i64n(canRaise_0)) {
+      var canRaise_0 = allocFixed(8);
+      mem.copy(canRaise_0, mayFail_0_texc(r_1), 8);
+      if (mem.i32(canRaise_0)) {
         break exlab_0;
       }
-      result_1 = mem.i64n((canRaise_0 + 8));
+      result_1 = mem.i32((canRaise_0 + 4));
       break $exs0;
     }
     result_1 = -1;

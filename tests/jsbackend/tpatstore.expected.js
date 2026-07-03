@@ -2,13 +2,13 @@
 "use strict";
 
 function patrw_0_tpatstore() {
-  let a_0 = allocFixed(24);
-  mem.setI64(a_0, 0);
-  mem.setI64((a_0 + 8), 0);
-  mem.setI64((a_0 + 16), 0);
+  let a_0 = allocFixed(12);
+  mem.setI32(a_0, 0);
+  mem.setI32((a_0 + 4), 0);
+  mem.setI32((a_0 + 8), 0);
   let p_0 = a_0;
-  mem.setI64(p_0, 100);
-  mem.setI64((p_0 + 8), 200);
-  mem.setI64((p_0 + 16), 300);
-  return (mem.i64n(p_0) + (mem.i64n((p_0 + 8)) + mem.i64n((p_0 + 16))));
+  mem.setI32(p_0, 100);
+  mem.setI32((p_0 + 4), 200);
+  mem.setI32((p_0 + 8), 300);
+  return (mem.i32(p_0) + (mem.i32((p_0 + 4)) + mem.i32((p_0 + 8))));
 }

@@ -2,9 +2,9 @@
 "use strict";
 
 function flx_0_tflex() {
-  let a_0 = allocFixed(24);
-  mem.setI64(a_0, 100);
-  mem.setI64((a_0 + 8), 200);
-  mem.setI64((a_0 + 16), 300);
-  return (mem.i64n(a_0) + (mem.i64n((a_0 + 8)) + mem.i64n((a_0 + 16))));
+  let a_0 = allocFixed(12);
+  mem.setI32(a_0, 100);
+  mem.setI32((a_0 + 4), 200);
+  mem.setI32((a_0 + 8), 300);
+  return (mem.i32(a_0) + (mem.i32((a_0 + 4)) + mem.i32((a_0 + 8))));
 }

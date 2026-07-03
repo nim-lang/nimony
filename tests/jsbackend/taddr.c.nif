@@ -2,34 +2,34 @@
 (stmts
  (proc :through.0.taddr
   (params)
-  (i 64)
+  (i 32)
   .
   (stmts
-   (var :n.0 . (i 64) 41)
-   (var :p.0 . (i 64) (addr n.0))
-   (asgn (deref p.0) (add (i 64) (deref p.0) 1))
+   (var :n.0 . (i 32) 41)
+   (var :p.0 . (i 32) (addr n.0))
+   (asgn (deref p.0) (add (i 32) (deref p.0) 1))
    (ret n.0)))
  (proc :bump.0.taddr
   (params
-   (param :p.0 . (i 64)))
+   (param :p.0 . (i 32)))
   .
   .
   (stmts
-   (asgn (deref p.0) (add (i 64) (deref p.0) 10))))
+   (asgn (deref p.0) (add (i 32) (deref p.0) 10))))
  (proc :usebump.0.taddr
   (params)
-  (i 64)
+  (i 32)
   .
   (stmts
-   (var :m.0 . (i 64) 5)
+   (var :m.0 . (i 32) 5)
    (call bump.0.taddr (addr m.0))
    (ret m.0)))
  (proc :addrparam.0.taddr
   (params
-   (param :a.0 . (i 64)))
-  (i 64)
+   (param :a.0 . (i 32)))
+  (i 32)
   .
   (stmts
-   (var :q.0 . (i 64) (addr a.0))
+   (var :q.0 . (i 32) (addr a.0))
    (asgn (deref q.0) 99)
    (ret a.0))))

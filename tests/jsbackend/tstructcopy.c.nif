@@ -2,19 +2,19 @@
 (stmts
  (type :Point.0.tsc .
   (object .
-   (fld :x.0.tsc . (i 64))
-   (fld :y.0.tsc . (i 64))))
+   (fld :x.0.tsc . (i 32))
+   (fld :y.0.tsc . (i 32))))
  (proc :psum.0.tsc
   (params (param :p.0 . Point.0.tsc))
-  (i 64)
+  (i 32)
   .
   (stmts
-   (ret (add (i 64) (dot p.0 x.0.tsc) (dot p.0 y.0.tsc)))))
+   (ret (add (i 32) (dot p.0 x.0.tsc) (dot p.0 y.0.tsc)))))
  (proc :drive.0.tsc
   (params
-   (param :a.0 . (i 64))
-   (param :b.0 . (i 64)))
-  (i 64)
+   (param :a.0 . (i 32))
+   (param :b.0 . (i 32)))
+  (i 32)
   .
   (stmts
    (var :p.1 . Point.0.tsc
@@ -24,9 +24,9 @@
    (ret (call psum.0.tsc p.1))))
  (proc :mkbump.0.tsc
   (params
-   (param :a.0 . (i 64))
-   (param :b.0 . (i 64)))
-  (i 64)
+   (param :a.0 . (i 32))
+   (param :b.0 . (i 32)))
+  (i 32)
   .
   (stmts
    (var :p.2 . Point.0.tsc
@@ -34,5 +34,5 @@
      (kv x.0.tsc a.0)
      (kv y.0.tsc b.0)))
    (var :q.0 . Point.0.tsc p.2)
-   (asgn (dot q.0 x.0.tsc) (add (i 64) (dot q.0 x.0.tsc) 1))
-   (ret (add (i 64) (dot q.0 x.0.tsc) (dot p.2 x.0.tsc))))))
+   (asgn (dot q.0 x.0.tsc) (add (i 32) (dot q.0 x.0.tsc) 1))
+   (ret (add (i 32) (dot q.0 x.0.tsc) (dot p.2 x.0.tsc))))))

@@ -2,29 +2,29 @@
 "use strict";
 
 function through_0_taddr() {
-  let n_0 = allocFixed(8);
-  mem.setI64(n_0, 41);
+  let n_0 = allocFixed(4);
+  mem.setI32(n_0, 41);
   let p_0 = n_0;
-  mem.setI64(p_0, (mem.i64n(p_0) + 1));
-  return mem.i64n(n_0);
+  mem.setI32(p_0, (mem.i32(p_0) + 1));
+  return mem.i32(n_0);
 }
 
 function bump_0_taddr(p_0) {
-  mem.setI64(p_0, (mem.i64n(p_0) + 10));
+  mem.setI32(p_0, (mem.i32(p_0) + 10));
 }
 
 function usebump_0_taddr() {
-  let m_0 = allocFixed(8);
-  mem.setI64(m_0, 5);
+  let m_0 = allocFixed(4);
+  mem.setI32(m_0, 5);
   bump_0_taddr(m_0);
-  return mem.i64n(m_0);
+  return mem.i32(m_0);
 }
 
 function addrparam_0_taddr(a_0) {
   let a_0_v = a_0;
-  a_0 = allocFixed(8);
-  mem.setI64(a_0, a_0_v);
+  a_0 = allocFixed(4);
+  mem.setI32(a_0, a_0_v);
   let q_0 = a_0;
-  mem.setI64(q_0, 99);
-  return mem.i64n(a_0);
+  mem.setI32(q_0, 99);
+  return mem.i32(a_0);
 }

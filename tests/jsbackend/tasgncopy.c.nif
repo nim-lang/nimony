@@ -2,11 +2,11 @@
 (stmts
  (type :P.0.tasgncopy .
   (object .
-   (fld :a.0.tasgncopy . (i 64))
-   (fld :b.0.tasgncopy . (i 64))))
+   (fld :a.0.tasgncopy . (i 32))
+   (fld :b.0.tasgncopy . (i 32))))
  (proc :copytest.0.tasgncopy
   (params)
-  (i 64)
+  (i 32)
   .
   (stmts
    (var :src.0 . P.0.tasgncopy

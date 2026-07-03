@@ -8,7 +8,7 @@
  (proc :putInt.0.techo
   (params
    (param :f.0 . (i 32))
-   (param :n.0 . (i 64)))
+   (param :n.0 . (i 32)))
   .
   (pragmas
    (importc "rtPutInt"))
@@ -16,14 +16,14 @@
  (proc :putChar.0.techo
   (params
    (param :f.0 . (i 32))
-   (param :c.0 . (i 64)))
+   (param :c.0 . (i 32)))
   .
   (pragmas
    (importc "rtPutChar"))
   .)
  (proc :echoInt.0.techo
   (params
-   (param :n.0 . (i 64)))
+   (param :n.0 . (i 32)))
   .
   .
   (stmts

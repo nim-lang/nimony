@@ -2,12 +2,12 @@
 "use strict";
 
 function sum_0_tinherit(d_0) {
-  return (mem.i64n(d_0) + mem.i64n((d_0 + 8)));
+  return (mem.i32(d_0) + mem.i32((d_0 + 4)));
 }
 
 function mk_0_tinherit(a_0, b_0) {
-  let d_1 = allocFixed(16);
-  mem.setI64(d_1, a_0);
-  mem.setI64((d_1 + 8), b_0);
+  let d_1 = allocFixed(8);
+  mem.setI32(d_1, a_0);
+  mem.setI32((d_1 + 4), b_0);
   return sum_0_tinherit(d_1);
 }

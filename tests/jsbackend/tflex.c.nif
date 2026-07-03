@@ -2,9 +2,9 @@
 (stmts
  (proc :flx.0.tflex
   (params)
-  (i 64)
+  (i 32)
   .
   (stmts
-   (var :a.0 . (flexarray (i 64))
-    (aconstr (flexarray (i 64)) 100 200 300))
-   (ret (add (i 64) (at a.0 0) (add (i 64) (at a.0 1) (at a.0 2)))))))
+   (var :a.0 . (flexarray (i 32))
+    (aconstr (flexarray (i 32)) 100 200 300))
+   (ret (add (i 32) (at a.0 0) (add (i 32) (at a.0 1) (at a.0 2)))))))

@@ -3,19 +3,19 @@
  (gvar :slot.0.tgmoddef
   (pragmas
    (exportc "slot"))
-  (i 64)
+  (i 32)
   7)
  (proc :bumpViaAddr.0.tgmoddef
   (params
-   (param :d.0 . (i 64)))
+   (param :d.0 . (i 32)))
   .
   .
   (stmts
-   (var :p.0 . (i 64) (addr slot.0.tgmoddef))
-   (asgn (deref p.0) (add (i 64) (deref p.0) d.0))))
+   (var :p.0 . (i 32) (addr slot.0.tgmoddef))
+   (asgn (deref p.0) (add (i 32) (deref p.0) d.0))))
  (proc :defget.0.tgmoddef
   (params)
-  (i 64)
+  (i 32)
   .
   (stmts
    (ret slot.0.tgmoddef))))

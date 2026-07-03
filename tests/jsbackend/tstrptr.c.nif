@@ -7,35 +7,35 @@
  (proc :slen.0.tstrptr
   (params
    (param :s.0 . (ptr Str.0.tstrptr)))
-  (i 64)
+  (i 32)
   .
   (stmts
    (ret
-    (conv (i 64)
+    (conv (i 32)
      (deref
       (cast (ptr (u 8))
        (addr (dot (deref s.0) bytes.0.tstrptr 0))))))))
  (proc :firstchar.0.tstrptr
   (params
    (param :s.0 . (ptr Str.0.tstrptr)))
-  (i 64)
+  (i 32)
   .
   (stmts
    (ret
-    (conv (i 64)
+    (conv (i 32)
      (pat
       (cast (ptr (u 8))
        (addr (dot (deref s.0) bytes.0.tstrptr 0)))
       1)))))
  (proc :drive.0.tstrptr
   (params)
-  (i 64)
+  (i 32)
   .
   (stmts
    (var :hi.0 . Str.0.tstrptr
     (oconstr Str.0.tstrptr
      (kv bytes.0.tstrptr 6907906)
      (kv more.0.tstrptr 0)))
-   (ret (add (i 64)
+   (ret (add (i 32)
     (call slen.0.tstrptr (addr hi.0))
     (call firstchar.0.tstrptr (addr hi.0)))))))

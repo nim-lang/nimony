@@ -2,8 +2,8 @@
 "use strict";
 
 function mk_0_tstrlong() {
-  let s_0 = allocFixed(13);
-  mem.setI64(s_0, 5);
-  mem.writeStr((s_0 + 8), "hello");
-  return (mem.i64n(s_0) + mem.u8At(((s_0 + 8) + 1)));
+  let s_0 = allocFixed(9);
+  mem.setI32(s_0, 5);
+  mem.writeStr((s_0 + 4), "hello");
+  return (mem.i32(s_0) + mem.u8At(((s_0 + 4) + 1)));
 }

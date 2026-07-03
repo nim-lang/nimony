@@ -50,7 +50,7 @@ if have_node; then
   {
     echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
     echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
-    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)) };'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)), setI8:(p,v)=>_dv.setInt8(p,v), i8:(p)=>_dv.getInt8(p), setI16:(p,v)=>_dv.setInt16(p,v,true), i16:(p)=>_dv.getInt16(p,true), setI32:(p,v)=>_dv.setInt32(p,v,true), i32:(p)=>_dv.getInt32(p,true), setU8:(p,v)=>_dv.setUint8(p,v&0xff), u8At:(p)=>_dv.getUint8(p), setU16:(p,v)=>_dv.setUint16(p,v,true), u16:(p)=>_dv.getUint16(p,true), setU32:(p,v)=>_dv.setUint32(p,v,true), u32:(p)=>_dv.getUint32(p,true), setU64:(p,v)=>_dv.setBigUint64(p,BigInt(v),true), u64n:(p)=>Number(_dv.getBigUint64(p,true)), i64b:(p)=>_dv.getBigInt64(p,true), u64b:(p)=>_dv.getBigUint64(p,true), setF64:(p,v)=>_dv.setFloat64(p,v,true), f64:(p)=>_dv.getFloat64(p,true), copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n), writeStr:(p,s)=>{for(let i=0;i<s.length;i++)new Uint8Array(_dv.buffer)[p+i]=s.charCodeAt(i);} };'
     cat "$work/tdata.js"
     echo 'if (mkpoint_0_tdata(3,4)===7 && arrsum_0_tdata()===60)'
     echo '  { console.log("functional(data): PASS"); }'
@@ -69,7 +69,7 @@ if have_node; then
     # and reads its fields back -> 7.
     echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
     echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
-    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)) };'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)), setI8:(p,v)=>_dv.setInt8(p,v), i8:(p)=>_dv.getInt8(p), setI16:(p,v)=>_dv.setInt16(p,v,true), i16:(p)=>_dv.getInt16(p,true), setI32:(p,v)=>_dv.setInt32(p,v,true), i32:(p)=>_dv.getInt32(p,true), setU8:(p,v)=>_dv.setUint8(p,v&0xff), u8At:(p)=>_dv.getUint8(p), setU16:(p,v)=>_dv.setUint16(p,v,true), u16:(p)=>_dv.getUint16(p,true), setU32:(p,v)=>_dv.setUint32(p,v,true), u32:(p)=>_dv.getUint32(p,true), setU64:(p,v)=>_dv.setBigUint64(p,BigInt(v),true), u64n:(p)=>Number(_dv.getBigUint64(p,true)), i64b:(p)=>_dv.getBigInt64(p,true), u64b:(p)=>_dv.getBigUint64(p,true), setF64:(p,v)=>_dv.setFloat64(p,v,true), f64:(p)=>_dv.getFloat64(p,true), copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n), writeStr:(p,s)=>{for(let i=0;i<s.length;i++)new Uint8Array(_dv.buffer)[p+i]=s.charCodeAt(i);} };'
     cat "$work/tbuffer.js"
     echo 'if (mkpoint_0_tbuffer(3,4)===7 && mkpoint_0_tbuffer(20,22)===42)'
     echo '  { console.log("functional(buffer): PASS"); }'
@@ -86,7 +86,7 @@ if have_node; then
   {
     echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
     echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
-    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)),'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)), setI8:(p,v)=>_dv.setInt8(p,v), i8:(p)=>_dv.getInt8(p), setI16:(p,v)=>_dv.setInt16(p,v,true), i16:(p)=>_dv.getInt16(p,true), setI32:(p,v)=>_dv.setInt32(p,v,true), i32:(p)=>_dv.getInt32(p,true), setU8:(p,v)=>_dv.setUint8(p,v&0xff), u8At:(p)=>_dv.getUint8(p), setU16:(p,v)=>_dv.setUint16(p,v,true), u16:(p)=>_dv.getUint16(p,true), setU32:(p,v)=>_dv.setUint32(p,v,true), u32:(p)=>_dv.getUint32(p,true), setU64:(p,v)=>_dv.setBigUint64(p,BigInt(v),true), u64n:(p)=>Number(_dv.getBigUint64(p,true)), i64b:(p)=>_dv.getBigInt64(p,true), u64b:(p)=>_dv.getBigUint64(p,true), setF64:(p,v)=>_dv.setFloat64(p,v,true), f64:(p)=>_dv.getFloat64(p,true), copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n), writeStr:(p,s)=>{for(let i=0;i<s.length;i++)new Uint8Array(_dv.buffer)[p+i]=s.charCodeAt(i);},'
     echo '  copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n) };'
     cat "$work/tstructcopy.js"
     echo 'if (drive_0_tsc(3,4)===7 && mkbump_0_tsc(5,9)===11 && mkbump_0_tsc(20,0)===41)'
@@ -105,7 +105,7 @@ if have_node; then
   {
     echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
     echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
-    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)),'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)), setI8:(p,v)=>_dv.setInt8(p,v), i8:(p)=>_dv.getInt8(p), setI16:(p,v)=>_dv.setInt16(p,v,true), i16:(p)=>_dv.getInt16(p,true), setI32:(p,v)=>_dv.setInt32(p,v,true), i32:(p)=>_dv.getInt32(p,true), setU8:(p,v)=>_dv.setUint8(p,v&0xff), u8At:(p)=>_dv.getUint8(p), setU16:(p,v)=>_dv.setUint16(p,v,true), u16:(p)=>_dv.getUint16(p,true), setU32:(p,v)=>_dv.setUint32(p,v,true), u32:(p)=>_dv.getUint32(p,true), setU64:(p,v)=>_dv.setBigUint64(p,BigInt(v),true), u64n:(p)=>Number(_dv.getBigUint64(p,true)), i64b:(p)=>_dv.getBigInt64(p,true), u64b:(p)=>_dv.getBigUint64(p,true), setF64:(p,v)=>_dv.setFloat64(p,v,true), f64:(p)=>_dv.getFloat64(p,true), copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n), writeStr:(p,s)=>{for(let i=0;i<s.length;i++)new Uint8Array(_dv.buffer)[p+i]=s.charCodeAt(i);},'
     echo '  copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n) };'
     cat "$work/tasgncopy.js"
     echo 'if (copytest_0_tasgncopy()===10)'
@@ -127,7 +127,7 @@ if have_node; then
   {
     echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
     echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
-    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)),'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)), setI8:(p,v)=>_dv.setInt8(p,v), i8:(p)=>_dv.getInt8(p), setI16:(p,v)=>_dv.setInt16(p,v,true), i16:(p)=>_dv.getInt16(p,true), setI32:(p,v)=>_dv.setInt32(p,v,true), i32:(p)=>_dv.getInt32(p,true), setU8:(p,v)=>_dv.setUint8(p,v&0xff), u8At:(p)=>_dv.getUint8(p), setU16:(p,v)=>_dv.setUint16(p,v,true), u16:(p)=>_dv.getUint16(p,true), setU32:(p,v)=>_dv.setUint32(p,v,true), u32:(p)=>_dv.getUint32(p,true), setU64:(p,v)=>_dv.setBigUint64(p,BigInt(v),true), u64n:(p)=>Number(_dv.getBigUint64(p,true)), i64b:(p)=>_dv.getBigInt64(p,true), u64b:(p)=>_dv.getBigUint64(p,true), setF64:(p,v)=>_dv.setFloat64(p,v,true), f64:(p)=>_dv.getFloat64(p,true), copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n), writeStr:(p,s)=>{for(let i=0;i<s.length;i++)new Uint8Array(_dv.buffer)[p+i]=s.charCodeAt(i);},'
     echo '  setU64:(p,v)=>_dv.setBigUint64(p,BigInt(v),true), u8At:(p)=>_dv.getUint8(p) };'
     cat "$work/tstrptr.js"
     # drive = slen(2) + firstchar('h'==104) = 106. A width bug (i64 read) would send
@@ -148,7 +148,7 @@ if have_node; then
   {
     echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
     echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
-    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)) };'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)), setI8:(p,v)=>_dv.setInt8(p,v), i8:(p)=>_dv.getInt8(p), setI16:(p,v)=>_dv.setInt16(p,v,true), i16:(p)=>_dv.getInt16(p,true), setI32:(p,v)=>_dv.setInt32(p,v,true), i32:(p)=>_dv.getInt32(p,true), setU8:(p,v)=>_dv.setUint8(p,v&0xff), u8At:(p)=>_dv.getUint8(p), setU16:(p,v)=>_dv.setUint16(p,v,true), u16:(p)=>_dv.getUint16(p,true), setU32:(p,v)=>_dv.setUint32(p,v,true), u32:(p)=>_dv.getUint32(p,true), setU64:(p,v)=>_dv.setBigUint64(p,BigInt(v),true), u64n:(p)=>Number(_dv.getBigUint64(p,true)), i64b:(p)=>_dv.getBigInt64(p,true), u64b:(p)=>_dv.getBigUint64(p,true), setF64:(p,v)=>_dv.setFloat64(p,v,true), f64:(p)=>_dv.getFloat64(p,true), copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n), writeStr:(p,s)=>{for(let i=0;i<s.length;i++)new Uint8Array(_dv.buffer)[p+i]=s.charCodeAt(i);} };'
     cat "$work/tptrarray.js"
     echo 'if (driver_0_tptrarray()===31) { console.log("functional(ptrarray): PASS"); }'
     echo 'else { console.log("functional(ptrarray): FAIL got "+driver_0_tptrarray()); process.exit(1); }'
@@ -178,7 +178,7 @@ if have_node; then
   {
     echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
     echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
-    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)) };'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)), setI8:(p,v)=>_dv.setInt8(p,v), i8:(p)=>_dv.getInt8(p), setI16:(p,v)=>_dv.setInt16(p,v,true), i16:(p)=>_dv.getInt16(p,true), setI32:(p,v)=>_dv.setInt32(p,v,true), i32:(p)=>_dv.getInt32(p,true), setU8:(p,v)=>_dv.setUint8(p,v&0xff), u8At:(p)=>_dv.getUint8(p), setU16:(p,v)=>_dv.setUint16(p,v,true), u16:(p)=>_dv.getUint16(p,true), setU32:(p,v)=>_dv.setUint32(p,v,true), u32:(p)=>_dv.getUint32(p,true), setU64:(p,v)=>_dv.setBigUint64(p,BigInt(v),true), u64n:(p)=>Number(_dv.getBigUint64(p,true)), i64b:(p)=>_dv.getBigInt64(p,true), u64b:(p)=>_dv.getBigUint64(p,true), setF64:(p,v)=>_dv.setFloat64(p,v,true), f64:(p)=>_dv.getFloat64(p,true), copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n), writeStr:(p,s)=>{for(let i=0;i<s.length;i++)new Uint8Array(_dv.buffer)[p+i]=s.charCodeAt(i);} };'
     cat "$work/tflex.js"
     echo 'if (flx_0_tflex()===600) { console.log("functional(flex): PASS"); }'
     echo 'else { console.log("functional(flex): FAIL got "+flx_0_tflex()); process.exit(1); }'
@@ -195,7 +195,7 @@ if have_node; then
   {
     echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
     echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
-    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)),'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)), setI8:(p,v)=>_dv.setInt8(p,v), i8:(p)=>_dv.getInt8(p), setI16:(p,v)=>_dv.setInt16(p,v,true), i16:(p)=>_dv.getInt16(p,true), setI32:(p,v)=>_dv.setInt32(p,v,true), i32:(p)=>_dv.getInt32(p,true), setU8:(p,v)=>_dv.setUint8(p,v&0xff), u8At:(p)=>_dv.getUint8(p), setU16:(p,v)=>_dv.setUint16(p,v,true), u16:(p)=>_dv.getUint16(p,true), setU32:(p,v)=>_dv.setUint32(p,v,true), u32:(p)=>_dv.getUint32(p,true), setU64:(p,v)=>_dv.setBigUint64(p,BigInt(v),true), u64n:(p)=>Number(_dv.getBigUint64(p,true)), i64b:(p)=>_dv.getBigInt64(p,true), u64b:(p)=>_dv.getBigUint64(p,true), setF64:(p,v)=>_dv.setFloat64(p,v,true), f64:(p)=>_dv.getFloat64(p,true), copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n), writeStr:(p,s)=>{for(let i=0;i<s.length;i++)new Uint8Array(_dv.buffer)[p+i]=s.charCodeAt(i);},'
     echo '  copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n) };'
     cat "$work/tderefstore.js"
     echo 'if (thru_0_tderefstore()===42)'
@@ -214,7 +214,7 @@ if have_node; then
   {
     echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
     echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
-    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)) };'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)), setI8:(p,v)=>_dv.setInt8(p,v), i8:(p)=>_dv.getInt8(p), setI16:(p,v)=>_dv.setInt16(p,v,true), i16:(p)=>_dv.getInt16(p,true), setI32:(p,v)=>_dv.setInt32(p,v,true), i32:(p)=>_dv.getInt32(p,true), setU8:(p,v)=>_dv.setUint8(p,v&0xff), u8At:(p)=>_dv.getUint8(p), setU16:(p,v)=>_dv.setUint16(p,v,true), u16:(p)=>_dv.getUint16(p,true), setU32:(p,v)=>_dv.setUint32(p,v,true), u32:(p)=>_dv.getUint32(p,true), setU64:(p,v)=>_dv.setBigUint64(p,BigInt(v),true), u64n:(p)=>Number(_dv.getBigUint64(p,true)), i64b:(p)=>_dv.getBigInt64(p,true), u64b:(p)=>_dv.getBigUint64(p,true), setF64:(p,v)=>_dv.setFloat64(p,v,true), f64:(p)=>_dv.getFloat64(p,true), copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n), writeStr:(p,s)=>{for(let i=0;i<s.length;i++)new Uint8Array(_dv.buffer)[p+i]=s.charCodeAt(i);} };'
     cat "$work/tpatstore.js"
     echo 'if (patrw_0_tpatstore()===600)'
     echo '  { console.log("functional(patstore): PASS"); }'
@@ -233,7 +233,7 @@ if have_node; then
   {
     echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); const _u8 = new Uint8Array(_dv.buffer); let _brk = 8;'
     echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; _u8.fill(0,p,p+n); return p; }'
-    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)),'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)), setI8:(p,v)=>_dv.setInt8(p,v), i8:(p)=>_dv.getInt8(p), setI16:(p,v)=>_dv.setInt16(p,v,true), i16:(p)=>_dv.getInt16(p,true), setI32:(p,v)=>_dv.setInt32(p,v,true), i32:(p)=>_dv.getInt32(p,true), setU8:(p,v)=>_dv.setUint8(p,v&0xff), u8At:(p)=>_dv.getUint8(p), setU16:(p,v)=>_dv.setUint16(p,v,true), u16:(p)=>_dv.getUint16(p,true), setU32:(p,v)=>_dv.setUint32(p,v,true), u32:(p)=>_dv.getUint32(p,true), setU64:(p,v)=>_dv.setBigUint64(p,BigInt(v),true), u64n:(p)=>Number(_dv.getBigUint64(p,true)), i64b:(p)=>_dv.getBigInt64(p,true), u64b:(p)=>_dv.getBigUint64(p,true), setF64:(p,v)=>_dv.setFloat64(p,v,true), f64:(p)=>_dv.getFloat64(p,true), copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n), writeStr:(p,s)=>{for(let i=0;i<s.length;i++)new Uint8Array(_dv.buffer)[p+i]=s.charCodeAt(i);},'
     echo '  u8At:(p)=>_dv.getUint8(p), writeStr:(p,s)=>{ for(let i=0;i<s.length;i++) _u8[p+i]=s.charCodeAt(i); } };'
     cat "$work/tstrlong.js"
     echo 'if (mk_0_tstrlong()===106)'
@@ -255,7 +255,7 @@ if have_node; then
   {
     echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
     echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
-    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)),'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)), setI8:(p,v)=>_dv.setInt8(p,v), i8:(p)=>_dv.getInt8(p), setI16:(p,v)=>_dv.setInt16(p,v,true), i16:(p)=>_dv.getInt16(p,true), setI32:(p,v)=>_dv.setInt32(p,v,true), i32:(p)=>_dv.getInt32(p,true), setU8:(p,v)=>_dv.setUint8(p,v&0xff), u8At:(p)=>_dv.getUint8(p), setU16:(p,v)=>_dv.setUint16(p,v,true), u16:(p)=>_dv.getUint16(p,true), setU32:(p,v)=>_dv.setUint32(p,v,true), u32:(p)=>_dv.getUint32(p,true), setU64:(p,v)=>_dv.setBigUint64(p,BigInt(v),true), u64n:(p)=>Number(_dv.getBigUint64(p,true)), i64b:(p)=>_dv.getBigInt64(p,true), u64b:(p)=>_dv.getBigUint64(p,true), setF64:(p,v)=>_dv.setFloat64(p,v,true), f64:(p)=>_dv.getFloat64(p,true), copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n), writeStr:(p,s)=>{for(let i=0;i<s.length;i++)new Uint8Array(_dv.buffer)[p+i]=s.charCodeAt(i);},'
     echo '  copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n) };'
     cat "$work/texc.js"
     echo 'if (run_0_texc(false)===42 && run_0_texc(true)===-1)'
@@ -291,7 +291,7 @@ if have_node; then
   {
     echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
     echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
-    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)) };'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)), setI8:(p,v)=>_dv.setInt8(p,v), i8:(p)=>_dv.getInt8(p), setI16:(p,v)=>_dv.setInt16(p,v,true), i16:(p)=>_dv.getInt16(p,true), setI32:(p,v)=>_dv.setInt32(p,v,true), i32:(p)=>_dv.getInt32(p,true), setU8:(p,v)=>_dv.setUint8(p,v&0xff), u8At:(p)=>_dv.getUint8(p), setU16:(p,v)=>_dv.setUint16(p,v,true), u16:(p)=>_dv.getUint16(p,true), setU32:(p,v)=>_dv.setUint32(p,v,true), u32:(p)=>_dv.getUint32(p,true), setU64:(p,v)=>_dv.setBigUint64(p,BigInt(v),true), u64n:(p)=>Number(_dv.getBigUint64(p,true)), i64b:(p)=>_dv.getBigInt64(p,true), u64b:(p)=>_dv.getBigUint64(p,true), setF64:(p,v)=>_dv.setFloat64(p,v,true), f64:(p)=>_dv.getFloat64(p,true), copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n), writeStr:(p,s)=>{for(let i=0;i<s.length;i++)new Uint8Array(_dv.buffer)[p+i]=s.charCodeAt(i);} };'
     cat "$work/tinherit.js"
     echo 'if (mk_0_tinherit(30,12)===42)'
     echo '  { console.log("functional(inheritance): PASS"); }'
@@ -311,7 +311,7 @@ if have_node; then
   {
     echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
     echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
-    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)), setU8:(p,v)=>_dv.setUint8(p,v&0xff) };'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)), setI8:(p,v)=>_dv.setInt8(p,v), i8:(p)=>_dv.getInt8(p), setI16:(p,v)=>_dv.setInt16(p,v,true), i16:(p)=>_dv.getInt16(p,true), setI32:(p,v)=>_dv.setInt32(p,v,true), i32:(p)=>_dv.getInt32(p,true), setU8:(p,v)=>_dv.setUint8(p,v&0xff), u8At:(p)=>_dv.getUint8(p), setU16:(p,v)=>_dv.setUint16(p,v,true), u16:(p)=>_dv.getUint16(p,true), setU32:(p,v)=>_dv.setUint32(p,v,true), u32:(p)=>_dv.getUint32(p,true), setU64:(p,v)=>_dv.setBigUint64(p,BigInt(v),true), u64n:(p)=>Number(_dv.getBigUint64(p,true)), i64b:(p)=>_dv.getBigInt64(p,true), u64b:(p)=>_dv.getBigUint64(p,true), setF64:(p,v)=>_dv.setFloat64(p,v,true), f64:(p)=>_dv.getFloat64(p,true), copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n), writeStr:(p,s)=>{for(let i=0;i<s.length;i++)new Uint8Array(_dv.buffer)[p+i]=s.charCodeAt(i);}, setU8:(p,v)=>_dv.setUint8(p,v&0xff) };'
     cat "$work/tvariant.js"
     echo 'if (mk_0_tvariant(0,9)===109)'
     echo '  { console.log("functional(variant): PASS"); }'
@@ -327,7 +327,7 @@ if have_node; then
   {
     echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
     echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
-    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)) };'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)), setI8:(p,v)=>_dv.setInt8(p,v), i8:(p)=>_dv.getInt8(p), setI16:(p,v)=>_dv.setInt16(p,v,true), i16:(p)=>_dv.getInt16(p,true), setI32:(p,v)=>_dv.setInt32(p,v,true), i32:(p)=>_dv.getInt32(p,true), setU8:(p,v)=>_dv.setUint8(p,v&0xff), u8At:(p)=>_dv.getUint8(p), setU16:(p,v)=>_dv.setUint16(p,v,true), u16:(p)=>_dv.getUint16(p,true), setU32:(p,v)=>_dv.setUint32(p,v,true), u32:(p)=>_dv.getUint32(p,true), setU64:(p,v)=>_dv.setBigUint64(p,BigInt(v),true), u64n:(p)=>Number(_dv.getBigUint64(p,true)), i64b:(p)=>_dv.getBigInt64(p,true), u64b:(p)=>_dv.getBigUint64(p,true), setF64:(p,v)=>_dv.setFloat64(p,v,true), f64:(p)=>_dv.getFloat64(p,true), copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n), writeStr:(p,s)=>{for(let i=0;i<s.length;i++)new Uint8Array(_dv.buffer)[p+i]=s.charCodeAt(i);} };'
     cat "$work/taddr.js"
     # through: *p+1 on a spilled local; usebump: mutate via pointer param;
     # addrparam: a value param whose address is taken is spilled at entry.
@@ -344,7 +344,7 @@ if have_node; then
   {
     echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
     echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
-    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)) };'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)), setI8:(p,v)=>_dv.setInt8(p,v), i8:(p)=>_dv.getInt8(p), setI16:(p,v)=>_dv.setInt16(p,v,true), i16:(p)=>_dv.getInt16(p,true), setI32:(p,v)=>_dv.setInt32(p,v,true), i32:(p)=>_dv.getInt32(p,true), setU8:(p,v)=>_dv.setUint8(p,v&0xff), u8At:(p)=>_dv.getUint8(p), setU16:(p,v)=>_dv.setUint16(p,v,true), u16:(p)=>_dv.getUint16(p,true), setU32:(p,v)=>_dv.setUint32(p,v,true), u32:(p)=>_dv.getUint32(p,true), setU64:(p,v)=>_dv.setBigUint64(p,BigInt(v),true), u64n:(p)=>Number(_dv.getBigUint64(p,true)), i64b:(p)=>_dv.getBigInt64(p,true), u64b:(p)=>_dv.getBigUint64(p,true), setF64:(p,v)=>_dv.setFloat64(p,v,true), f64:(p)=>_dv.getFloat64(p,true), copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n), writeStr:(p,s)=>{for(let i=0;i<s.length;i++)new Uint8Array(_dv.buffer)[p+i]=s.charCodeAt(i);} };'
     cat "$work/taddr2.js"
     # fieldaddr: write through addr of a field; elemaddr: through addr of an
     # element; samefield/difffield: integer pointer equality (same vs different).
@@ -367,7 +367,7 @@ if have_node; then
     # via `mem.i64n`, not by bare name.
     echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
     echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
-    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)) };'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)), setI8:(p,v)=>_dv.setInt8(p,v), i8:(p)=>_dv.getInt8(p), setI16:(p,v)=>_dv.setInt16(p,v,true), i16:(p)=>_dv.getInt16(p,true), setI32:(p,v)=>_dv.setInt32(p,v,true), i32:(p)=>_dv.getInt32(p,true), setU8:(p,v)=>_dv.setUint8(p,v&0xff), u8At:(p)=>_dv.getUint8(p), setU16:(p,v)=>_dv.setUint16(p,v,true), u16:(p)=>_dv.getUint16(p,true), setU32:(p,v)=>_dv.setUint32(p,v,true), u32:(p)=>_dv.getUint32(p,true), setU64:(p,v)=>_dv.setBigUint64(p,BigInt(v),true), u64n:(p)=>Number(_dv.getBigUint64(p,true)), i64b:(p)=>_dv.getBigInt64(p,true), u64b:(p)=>_dv.getBigUint64(p,true), setF64:(p,v)=>_dv.setFloat64(p,v,true), f64:(p)=>_dv.getFloat64(p,true), copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n), writeStr:(p,s)=>{for(let i=0;i<s.length;i++)new Uint8Array(_dv.buffer)[p+i]=s.charCodeAt(i);} };'
     echo 'function extTriple(x){return x*3;}'
     cat "$work/timportc.js"
     echo 'if (run_0_timportc()===21 && mem.i64n(counter)===21)'
@@ -392,7 +392,7 @@ if have_node; then
   {
     echo 'const _dv = new DataView(new ArrayBuffer(1<<16)); let _brk = 8;'
     echo 'function allocFixed(n){ const p=(_brk+7)&~7; _brk=p+n; new Uint8Array(_dv.buffer).fill(0,p,p+n); return p; }'
-    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)) };'
+    echo 'const mem = { setI64:(p,v)=>_dv.setBigInt64(p,BigInt(v),true), i64n:(p)=>Number(_dv.getBigInt64(p,true)), setI8:(p,v)=>_dv.setInt8(p,v), i8:(p)=>_dv.getInt8(p), setI16:(p,v)=>_dv.setInt16(p,v,true), i16:(p)=>_dv.getInt16(p,true), setI32:(p,v)=>_dv.setInt32(p,v,true), i32:(p)=>_dv.getInt32(p,true), setU8:(p,v)=>_dv.setUint8(p,v&0xff), u8At:(p)=>_dv.getUint8(p), setU16:(p,v)=>_dv.setUint16(p,v,true), u16:(p)=>_dv.getUint16(p,true), setU32:(p,v)=>_dv.setUint32(p,v,true), u32:(p)=>_dv.getUint32(p,true), setU64:(p,v)=>_dv.setBigUint64(p,BigInt(v),true), u64n:(p)=>Number(_dv.getBigUint64(p,true)), i64b:(p)=>_dv.getBigInt64(p,true), u64b:(p)=>_dv.getBigUint64(p,true), setF64:(p,v)=>_dv.setFloat64(p,v,true), f64:(p)=>_dv.getFloat64(p,true), copy:(d,s,n)=>new Uint8Array(_dv.buffer).copyWithin(d,s,s+n), writeStr:(p,s)=>{for(let i=0;i<s.length;i++)new Uint8Array(_dv.buffer)[p+i]=s.charCodeAt(i);} };'
     cat "$work/tgmoddef.js"
     echo 'bumpViaAddr_0_tgmoddef(5);'            # slot: 7 -> 12 via its address
     echo 'if (defget_0_tgmoddef()===12 && mem.i64n(slot)===12)'  # plain read agrees
@@ -411,6 +411,20 @@ if have_node; then
     echo 'if (checkedAdd_0_tarith(20,22)===42 && storeTest_0_tarith()===42)'
     echo '  { console.log("functional(arith): PASS"); }'
     echo '  else { console.log("functional(arith): FAIL"); process.exit(1); }'
+  } | node
+fi
+
+# ── 64-bit ints as BigInt (Araq's steer: `int`/`uint` are 32-bit `Number`, only
+# explicit `int64`/`uint64` become `BigInt`). Guards the exact op that used to
+# crash `echo <float>`: a `uint64` mask + shift past 2^53 (3.5's real bit pattern
+# -> exponent 1024), plus a multiply that overflows 2^53 (exact, wrapped mod 2^64).
+gen tbig64
+if have_node; then
+  {
+    cat "$work/tbig64.js"
+    echo 'if (mul64_0_tbig64(3000000000n,4000000000n)===12000000000000000000n && extractExp_0_tbig64(4615063718147915776n)===1024n)'
+    echo '  { console.log("functional(big64): PASS"); }'
+    echo '  else { console.log("functional(big64): FAIL got "+mul64_0_tbig64(3000000000n,4000000000n)+" "+extractExp_0_tbig64(4615063718147915776n)); process.exit(1); }'
   } | node
 fi
 

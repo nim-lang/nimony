@@ -74,6 +74,8 @@ type
     jCond            ## (cond E E E)               -> (c ? a : b)
     jArrow           ## (arrow PARAMS BODY)        -> (…) => { … }
     jUndef           ## (undef "note")             -> undefined/*note*/
+    jBigNum          ## (bignum 123)               -> BigInt literal `123n`   (int64)
+    jBigUNum         ## (bigunum 123)              -> BigInt literal `123n`   (uint64)
 
   JsBuilder* = object
     ## Accumulates a jsnif tree. Thin wrapper so callers say `b.tree(jBin): …`
@@ -115,6 +117,8 @@ proc str*(b: var JsBuilder; s: string) = b.tree jStr: b.buf.addStrLit s
 proc raw*(b: var JsBuilder; s: string) = b.tree jRaw: b.buf.addStrLit s
 proc num*(b: var JsBuilder; v: int64) = b.tree jNum: b.buf.addIntLit v
 proc unum*(b: var JsBuilder; v: uint64) = b.tree jUNum: b.buf.addUIntLit v
+proc bignum*(b: var JsBuilder; v: int64) = b.tree jBigNum: b.buf.addIntLit v
+proc bigunum*(b: var JsBuilder; v: uint64) = b.tree jBigUNum: b.buf.addUIntLit v
 proc none*(b: var JsBuilder) = b.leaf jNone
 proc undef*(b: var JsBuilder; note: string) = b.tree jUndef: b.buf.addStrLit note
 proc addOp*(b: var JsBuilder; s: string) {.inline.} =
@@ -212,6 +216,10 @@ proc emitExpr(e: var Emitter; c: var Cursor) =
     c.into: (e.wr jsInt(intVal(c)); inc c); (while c.hasMore: skip c)
   of jUNum:
     c.into: (e.wr jsUInt(uintVal(c)); inc c); (while c.hasMore: skip c)
+  of jBigNum:
+    c.into: (e.wr($intVal(c) & "n"); inc c); (while c.hasMore: skip c)
+  of jBigUNum:
+    c.into: (e.wr($uintVal(c) & "n"); inc c); (while c.hasMore: skip c)
   of jStr:
     c.into: (e.wr jsEscape(strVal(c)); inc c); (while c.hasMore: skip c)
   of jRaw:

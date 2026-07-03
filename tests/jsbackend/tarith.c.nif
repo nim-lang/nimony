@@ -2,13 +2,13 @@
 (stmts
  (proc :checkedAdd.0.tarith
   (params
-   (param :a.0 . (i 64))
-   (param :b.0 . (i 64)))
-  (i 64)
+   (param :a.0 . (i 32))
+   (param :b.0 . (i 32)))
+  (i 32)
   .
   (stmts
-   (var :r.0 . (i 64) .)
-   (keepovf (add (i 64) a.0 b.0) r.0)
+   (var :r.0 . (i 32) .)
+   (keepovf (add (i 32) a.0 b.0) r.0)
    (if
     (elif (ovf)
      (stmts
@@ -16,9 +16,9 @@
    (ret r.0)))
  (proc :storeTest.0.tarith
   (params)
-  (i 64)
+  (i 32)
   .
   (stmts
-   (var :x.0 . (i 64) .)
-   (store (add (i 64) 40 2) x.0)
+   (var :x.0 . (i 32) .)
+   (store (add (i 32) 40 2) x.0)
    (ret x.0))))

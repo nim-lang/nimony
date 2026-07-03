@@ -35,7 +35,7 @@ proc main() =
   # A backend tool always renders the single module it is handed; which module is
   # the program's `main` is the scheduler's concern, not the plugin's, so the
   # module handed over is emitted as-is.
-  var s = State(config: ConfigRef(), bits: 64)
+  var s = State(config: ConfigRef(), bits: 32)   # the JS target is a 32-bit platform
   generateJSCode(s, inp, outp, {gfMainModule})
 
 main()

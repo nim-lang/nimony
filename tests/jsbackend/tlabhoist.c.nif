@@ -2,11 +2,11 @@
 (stmts
  (proc :compute.0.tlabhoist
   (params)
-  (i 64)
+  (i 32)
   .
   (stmts
-   (var :result.0 . (i 64) 0)
+   (var :result.0 . (i 32) 0)
    (asgn result.0 41)
    (lab :done.0.tlabhoist)
-   (asgn result.0 (add (i 64) result.0 1))
+   (asgn result.0 (add (i 32) result.0 1))
    (ret result.0))))
