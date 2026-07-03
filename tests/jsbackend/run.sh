@@ -428,6 +428,18 @@ if have_node; then
   } | node
 fi
 
+# ── float arithmetic: `/` must be real division, not integer truncation
+# (`fdiv(10,4)` = 2.5, not 2). `float` values are JS Numbers, no coercion.
+gen tfloat
+if have_node; then
+  {
+    cat "$work/tfloat.js"
+    echo 'if (fdiv_0_tfloat(10.0,4.0)===2.5 && Math.abs(fcompute_0_tfloat(10.0,4.0)-14/6)<1e-9)'
+    echo '  { console.log("functional(float): PASS"); }'
+    echo '  else { console.log("functional(float): FAIL got "+fdiv_0_tfloat(10.0,4.0)); process.exit(1); }'
+  } | node
+fi
+
 # ── echo (end-to-end I/O): mirrors how a real `echo <int>` lowers — Nim procs
 # (`echoInt`/`run`) call `importc` stdio (`stdout`, `putInt`, `putChar`) that a
 # runtime provides. Proves the generated code executes and produces output.
