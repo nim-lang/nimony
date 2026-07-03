@@ -642,6 +642,9 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
               if isGeneric(routine):
                 let conv = FnCandidate(kind: routine.kind, sym: sym, typ: routine.params)
                 var convMatch = createMatch(addr c)
+                if i >= origArgs.len:
+                  bug "addArgsInstConverters: i=" & $i & " origArgs.len=" & $origArgs.len &
+                    " at " & arg.info.infoToStr
                 sigmatch convMatch, conv, [CallArg(n: arg, typ: origArgs[i].typ)], emptyNode(c)
                 # ^ could also use origArgs[i] directly but commonType would have to keep the expression alive
                 assert not convMatch.err
