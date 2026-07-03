@@ -13,6 +13,8 @@ when defined(posix):
   type
     InAddrScalar* = uint32
     Sighandler = proc (a: cint) {.noconv.}
+    FileHandle* = cint
+    SocketHandle* = cint
 
   when defined(nimNativeIo) and defined(amd64):
     # Hardcoded Linux/amd64 ABI so the freestanding/native build needs no

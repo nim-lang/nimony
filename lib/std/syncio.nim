@@ -26,6 +26,17 @@ type
     fspSet               ## Seek to absolute value
     fspCur               ## Seek relative to current position
     fspEnd               ## Seek relative to end
+  
+  FilePermission* = enum   ## File access permission, modelled after UNIX.
+    fpUserExec,            ## execute access for the file owner
+    fpUserWrite,           ## write access for the file owner
+    fpUserRead,            ## read access for the file owner
+    fpGroupExec,           ## execute access for the group
+    fpGroupWrite,          ## write access for the group
+    fpGroupRead,           ## read access for the group
+    fpOthersExec,          ## execute access for others
+    fpOthersWrite,         ## write access for others
+    fpOthersRead           ## read access for others
 
 when defined(nimNativeIo):
   # Freestanding IO: a `File` is a small heap object holding the raw OS file
@@ -243,6 +254,9 @@ else:
     importc: "fwrite", header: "<stdio.h>".}
   proc c_fread(buf: pointer; size, n: uint; f: File): uint {.
     importc: "fread", header: "<stdio.h>".}
+  proc c_fileno(f: File): cint {.importc: "fileno", header: "<stdio.h>".}
+
+  proc getFileHandle*(f: File): cint = c_fileno(f)
 
   proc fprintf(f: File; fmt: cstring) {.varargs, importc: "fprintf", header: "<stdio.h>".}
 
