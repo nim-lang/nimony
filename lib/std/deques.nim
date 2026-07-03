@@ -13,10 +13,10 @@
 ## This is the Nimony port. The container is a growable, power-of-two ring
 ## buffer: elements are appended/prepended in amortized O(1) and indexed in
 ## O(1). Since exceptions are not yet wired up, accessing an element of an
-## empty `Deque` (or an out-of-range index) terminates the program (mirroring
-## `assert`) rather than raising `IndexDefect`.
+## empty `Deque` (or an out-of-range index) is a broken precondition, expressed
+## as a `.requires` contract, rather than raising `IndexDefect`.
 
-import std/[syncio, assertions]
+import std/assertions
 
 const
   defaultInitialSize = 4
@@ -35,7 +35,18 @@ func nextPowerOfTwo(x: int): int =
   while result < x:
     result = result shl 1
 
-func initDeque*[T: HasDefault](initialSize: int = defaultInitialSize): Deque[T] =
+func newRingBuf[T](cap: int): seq[T] =
+  ## Allocates a ring buffer of `cap` uninitialized slots and marks every slot
+  ## moved-out. This is the buffer's invariant: a *dead* slot always stays in
+  ## the moved-from state, so it is safe to destroy and safe to overwrite via
+  ## `=sink` (which no-ops the destroy of the moved-from value before storing).
+  ## A slot only holds a real value while it is live, i.e. in `[head, head+count)`.
+  ## Because the elements are never default-initialized, `T` needs no default.
+  result = newSeqUninit[T](cap)
+  for i in 0 ..< cap:
+    `=wasMoved`(result[i])
+
+func initDeque*[T](initialSize: int = defaultInitialSize): Deque[T] =
   ## Creates a new empty `Deque`.
   ##
   ## `initialSize` is rounded up to the next power of two and used as the
@@ -44,20 +55,20 @@ func initDeque*[T: HasDefault](initialSize: int = defaultInitialSize): Deque[T] 
     var a = initDeque[int]()
     assert a.len == 0
   let cap = nextPowerOfTwo(initialSize)
-  result = Deque[T](data: newSeq[T](cap), head: 0, tail: 0, count: 0, mask: cap - 1)
+  result = Deque[T](data: newRingBuf[T](cap), head: 0, tail: 0, count: 0, mask: cap - 1)
 
 func len*[T](d: Deque[T]): int {.inline.} =
   ## Returns the number of elements of `d`.
   d.count
 
-func growIfNeeded[T: HasDefault](d: var Deque[T]) =
+func growIfNeeded[T](d: var Deque[T]) =
   ## Doubles the capacity if the ring buffer is full, re-laying the elements
   ## out contiguously starting at index 0.
   if d.count < d.data.len:
     return
   let oldCap = d.data.len
   let newCap = if oldCap == 0: defaultInitialSize else: oldCap * 2
-  var newData = newSeq[T](newCap)
+  var newData = newRingBuf[T](newCap)
   var i = 0
   var j = d.head
   while i < d.count:
@@ -69,7 +80,7 @@ func growIfNeeded[T: HasDefault](d: var Deque[T]) =
   d.tail = d.count
   d.mask = newCap - 1
 
-func addLast*[T: HasDefault](d: var Deque[T]; item: sink T) =
+func addLast*[T](d: var Deque[T]; item: sink T) =
   ## Adds an `item` to the end of `d`.
   runnableExamples:
     var a = initDeque[int]()
@@ -80,7 +91,7 @@ func addLast*[T: HasDefault](d: var Deque[T]; item: sink T) =
   d.tail = (d.tail + 1) and d.mask
   inc d.count
 
-func addFirst*[T: HasDefault](d: var Deque[T]; item: sink T) =
+func addFirst*[T](d: var Deque[T]; item: sink T) =
   ## Adds an `item` to the beginning of `d`.
   runnableExamples:
     var a = initDeque[int]()
@@ -91,47 +102,39 @@ func addFirst*[T: HasDefault](d: var Deque[T]; item: sink T) =
   d.data[d.head] = item
   inc d.count
 
-func peekFirst*[T](d: Deque[T]): var T =
-  ## Returns the first element of `d`. Terminates the program if `d` is empty.
-  {.cast(noSideEffect).}: assert d.count > 0, "Deque is empty"
+func peekFirst*[T](d: Deque[T]): var T {.requires: d.count > 0.} =
+  ## Returns the first element of `d`. Requires `d` to be non-empty.
   result = d.data[d.head]
 
-func peekLast*[T](d: Deque[T]): var T =
-  ## Returns the last element of `d`. Terminates the program if `d` is empty.
-  {.cast(noSideEffect).}: assert d.count > 0, "Deque is empty"
+func peekLast*[T](d: Deque[T]): var T {.requires: d.count > 0.} =
+  ## Returns the last element of `d`. Requires `d` to be non-empty.
   result = d.data[(d.tail - 1) and d.mask]
 
-func popFirst*[T](d: var Deque[T]): T =
-  ## Removes and returns the first element of `d`. Terminates the program if
-  ## `d` is empty.
-  {.cast(noSideEffect).}: assert d.count > 0, "Deque is empty"
+func popFirst*[T](d: var Deque[T]): T {.requires: d.count > 0.} =
+  ## Removes and returns the first element of `d`. Requires `d` to be non-empty.
   result = move(d.data[d.head])
   d.head = (d.head + 1) and d.mask
   dec d.count
 
-func popLast*[T](d: var Deque[T]): T =
-  ## Removes and returns the last element of `d`. Terminates the program if
-  ## `d` is empty.
-  {.cast(noSideEffect).}: assert d.count > 0, "Deque is empty"
+func popLast*[T](d: var Deque[T]): T {.requires: d.count > 0.} =
+  ## Removes and returns the last element of `d`. Requires `d` to be non-empty.
   d.tail = (d.tail - 1) and d.mask
   result = move(d.data[d.tail])
   dec d.count
 
-func `[]`*[T](d: Deque[T]; i: int): var T =
+func `[]`*[T](d: Deque[T]; i: int): var T {.requires: i >= 0 and i < d.count.} =
   ## Accesses the `i`-th element of `d` (0-based, counting from the front).
-  ## Terminates the program if `i` is out of range.
+  ## Requires `i` to be in range.
   runnableExamples:
     var a = initDeque[int]()
     for i in 1 .. 3: a.addLast(i)
     assert a[0] == 1
     assert a[2] == 3
-  {.cast(noSideEffect).}: assert i >= 0 and i < d.count, "Deque index out of bounds"
   result = d.data[(d.head + i) and d.mask]
 
-func `[]=`*[T](d: var Deque[T]; i: int; val: sink T) =
+func `[]=`*[T](d: var Deque[T]; i: int; val: sink T) {.requires: i >= 0 and i < d.count.} =
   ## Sets the `i`-th element of `d` (0-based, counting from the front).
-  ## Terminates the program if `i` is out of range.
-  {.cast(noSideEffect).}: assert i >= 0 and i < d.count, "Deque index out of bounds"
+  ## Requires `i` to be in range.
   d.data[(d.head + i) and d.mask] = val
 
 func clear*[T](d: var Deque[T]) =
@@ -180,7 +183,7 @@ func `$`*[T: Stringable](d: Deque[T]): string =
     result.add $d.data[(d.head + i) and d.mask]
   result.add "]"
 
-func toDeque*[T: HasDefault](xs: openArray[T]): Deque[T] =
+func toDeque*[T](xs: openArray[T]): Deque[T] =
   ## Creates a new `Deque` containing the elements of `xs`, in order.
   runnableExamples:
     let a = toDeque([1, 2, 3])
