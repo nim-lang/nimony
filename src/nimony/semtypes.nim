@@ -452,10 +452,20 @@ proc semMagicInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: 
   var m = cursorAt(typeBuf, 0)
   semLocalTypeImpl c, dest, m, InLocalDecl
 
+proc isEnumFieldSym(n: Cursor): bool =
+  ## An enum field symbol is the canonical typed value of its enum type
+  ## (`annotateOrdinal` maps an ordinal back to exactly this symbol), so it is
+  ## accepted verbatim as a value argument rather than folded to a bare ordinal
+  ## (which would lose the enum type and fail re-checking).
+  if n.kind != Symbol: return false
+  let res = tryLoadSym(n.symId)
+  result = res.status == LacksNothing and res.decl.symKind == EfldY
+
 proc isStaticValue(n: Cursor): bool =
   ## a canonical compile-time value as bound to a `staticTypevar`
   n.kind in {IntLit, UIntLit, FloatLit, CharLit, StringLit} or
-    n.exprKind in {FalseX, TrueX, SufX}
+    n.exprKind in {FalseX, TrueX, SufX} or
+    isEnumFieldSym(n)
 
 proc semStaticInvokeArg(c: var SemContext; dest: var TokenBuf; n: var Cursor;
                         elemType: Cursor; info: PackedLineInfo): bool =

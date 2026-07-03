@@ -526,6 +526,23 @@ proc foldValueExpr(m: var Match; a: Cursor; depth = 0): xint =
   else:
     discard
 
+proc constSymbolValue(a: Cursor): Cursor =
+  ## A `const` symbol used in value position folds to its defining value, so a
+  ## value (`static`) parameter can bind it just like the literal it aliases.
+  ## Returns `default(Cursor)` for anything that is not a `const`. (Enum fields
+  ## are handled separately: they are canonical typed values and bind verbatim.)
+  result = default(Cursor)
+  if a.kind != Symbol: return
+  let res = tryLoadSym(a.symId)
+  if res.status != LacksNothing: return
+  if res.decl.symKind == ConstY:
+    result = asLocal(res.decl).val
+
+proc isEnumFieldSym(a: Cursor): bool =
+  if a.kind != Symbol: return false
+  let res = tryLoadSym(a.symId)
+  result = res.status == LacksNothing and res.decl.symKind == EfldY
+
 proc staticValueToBind(m: var Match; elemType: Cursor; a: Cursor): Cursor =
   ## For a value (`static`) generic parameter: the value to bind from `a`, or
   ## `default(Cursor)` when `a` is not an acceptable argument. An array-index
@@ -547,9 +564,20 @@ proc staticValueToBind(m: var Match; elemType: Cursor; a: Cursor): Cursor =
     if m.context != nil and sameTrees(elemType, m.context.types.stringType):
       result = a
   of Symbol:
-    # a symbolic value: a value parameter of an enclosing generic; it is
-    # compared or substituted later, no value is computed here
-    if isStaticTypevar(a.symId): result = a
+    if isStaticTypevar(a.symId):
+      # a symbolic value: a value parameter of an enclosing generic; it is
+      # compared or substituted later, no value is computed here
+      result = a
+    elif isEnumFieldSym(a) and isOrdinalType(elemType, allowEnumWithHoles = true):
+      # an enum field is already the canonical typed value of its enum type;
+      # bind it verbatim (folding to the bare ordinal would lose the type)
+      result = a
+    else:
+      # a `const`: bind the literal it aliases, accepted exactly as if that
+      # literal had been written in the argument position
+      let folded = constSymbolValue(a)
+      if folded != default(Cursor):
+        result = staticValueToBind(m, elemType, folded)
   of ParLe:
     case a.exprKind
     of FalseX, TrueX:
