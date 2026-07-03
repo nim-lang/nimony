@@ -1043,6 +1043,7 @@ proc semProc(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind;
 
     var anons = createTokenBuf()
     semProcImpl c, anons, it, kind, pass, name
+    let exprStart = dest.len
     dest.add parLeToken(ExprX, info)
     dest.add parLeToken(StmtsS, info)
     let anonTypePos = dest.len
@@ -1050,7 +1051,9 @@ proc semProc(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind;
     dest.addParRi()
     dest.add symToken(name, info)
     dest.addParRi()
+    let expected = it.typ
     it.typ = typeToCursor(c, dest, anonTypePos)
+    commonType c, dest, it, exprStart, expected
 
   else:
     semProcImpl c, dest, it, kind, pass

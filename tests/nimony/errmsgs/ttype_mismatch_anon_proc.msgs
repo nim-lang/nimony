@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/ttype_mismatch_anon_proc.nim(2, 21) Error: type mismatch: got: proc (x: int64): int64 but wanted: int64
