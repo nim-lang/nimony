@@ -23,7 +23,7 @@ const RmwOpStr*: array[LLAtomicrmwOp, string] = [
   "xchg", "add", "sub", "and", "or", "xor",
   "nand", "min", "max", "umin", "umax"]
 
-proc serialize*(typ: LLType): string =
+proc serialize*(typ: LLType; result: var string) =
   if typ == nil: return "ptr" # treat nil pointee as opaque ptr
   case typ.kind
   of llVoid: "void"
