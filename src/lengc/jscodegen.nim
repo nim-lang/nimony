@@ -225,13 +225,18 @@ proc binTyped(g: var JSGen; n: var Cursor; opr: string) =
     while n.hasMore: skip n
 
 proc intDiv(g: var JSGen; n: var Cursor) =
-  ## Nim integer `div` truncates toward zero. `BigInt` `/` already truncates toward
-  ## zero, so a 64-bit `div` is a plain `/`; a ≤32-bit `div` needs `Math.trunc`
-  ## around JS float division.
+  ## `(div TYPE a b)`. Float `/` is JS division as-is. Integer `div` truncates
+  ## toward zero: `BigInt` `/` already does (so a 64-bit `div` is a plain `/`), a
+  ## ≤32-bit `div` needs `Math.trunc` around JS float division.
   n.into:
-    let big = accessOf(g.m, n) in {akI64, akU64}
+    let ak = accessOf(g.m, n)
     skip n            # result type
-    if big:
+    if ak in {akF32, akF64}:
+      g.js.tree jBin:                # float division: no truncation
+        g.js.addOp "/"
+        g.gx n
+        g.gx n
+    elif ak in {akI64, akU64}:
       g.js.tree jBin:
         g.js.addOp "/"
         g.gxBig n
