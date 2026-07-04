@@ -1,5 +1,9 @@
 # included in sem.nim
 
+const LocalSigKinds = {LetY, VarY, GletY, GvarY, TletY, TvarY}
+  ## let/var-family locals that get a signature-phase pass at toplevel
+  ## (explicit-type only). See `localSigGuard` / nim-lang/nimony#1974.
+
 proc signaturesMatch(forwardDecl: Cursor; implDecl: Cursor): bool =
   ## Check if two routine declarations have compatible signatures.
   ## Compares NIF tokens directly, mapping symbols back to identifiers.
@@ -116,8 +120,63 @@ proc semLocalValue(c: var SemContext; dest: var TokenBuf; it: var Item; crucial:
   else:
     semExpr c, dest, it
 
+proc isStaticConstraint(n: Cursor): bool =
+  ## Detects the `static[T]` / `static T` / bare `static` constraint forms of a
+  ## generic parameter before semchecking: nifler keeps `static` as a plain
+  ## identifier in `static[T]` (giving `(at static T)`) but produces a
+  ## `(static T)` type for the prefix form `static T`.
+  if n.typeKind == StaticT: return true
+  var n = n
+  if n.exprKind == AtX: inc n
+  n.kind == Ident and pool.strings[n.litId] == "static"
+
+proc semStaticTypevarType(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
+  ## Sem the element type of a value generic parameter (`N: static[int]`). The
+  ## type slot of the resulting `staticTypevar` holds the plain element type;
+  ## a `static` wrapper never enters the checked type system (issue #2089).
+  let info = n.info
+  if n.typeKind == StaticT:
+    inc n
+    if n.kind == ParRi:
+      c.buildErr dest, info, "`static` requires an explicit element type, e.g. `static[int]`"
+    else:
+      discard semLocalType(c, dest, n)
+    skipParRi n
+  elif n.exprKind == AtX:
+    inc n
+    skip n # the `static` identifier
+    if n.kind == ParRi:
+      c.buildErr dest, info, "`static` requires an explicit element type, e.g. `static[int]`"
+    else:
+      discard semLocalType(c, dest, n)
+      if n.kind != ParRi:
+        c.buildErr dest, info, "`static` takes a single element type"
+        while n.kind != ParRi: skip n
+    skipParRi n
+  elif n.kind == Ident and pool.strings[n.litId] == "static":
+    # bare `static` identifier
+    skip n
+    c.buildErr dest, info, "`static` requires an explicit element type, e.g. `static[int]`"
+  else:
+    # already desugared (re-semming a `staticTypevar` declaration): the slot
+    # holds the plain element type
+    discard semLocalType(c, dest, n)
+
 proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKind) =
+  var kind = kind
+  if kind == TypevarY:
+    # `N: static[int]` declares a *value* generic parameter. Detect the
+    # `static` constraint before the symbol is declared so that both the
+    # symbol kind and the declaration tag become `staticTypevar`.
+    var constraint = n
+    inc constraint # tag
+    skip constraint # name
+    skip constraint # export marker
+    skip constraint # pragmas
+    if isStaticConstraint(constraint):
+      kind = StaticTypevarY
   let declStart = dest.len
+  let entryCursor = n  # saved for the signature-phase rollback below
   takeToken dest, n
   var delayed = handleSymDef(c, dest, n, kind) # 0
   let beforeExportMarker = dest.len
@@ -135,6 +194,9 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
   case kind
   of TypevarY:
     discard semLocalType(c, dest, n, InGenericConstraint)
+    wantDot c, dest, n
+  of StaticTypevarY:
+    semStaticTypevarType c, dest, n
     wantDot c, dest, n
   of ParamY, LetY, VarY, ConstY, CursorY, PatternvarY, ResultY, FldY, GfldY, GletY, TletY, GvarY, TvarY:
     beforeType = dest.len
@@ -175,6 +237,27 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
       if n.kind == DotToken:
         # empty value
         takeToken dest, n
+      elif c.phase == SemcheckSignatures and kind in LocalSigKinds:
+        if hasErrorSince(dest, beforeType):
+          # The explicit type did not resolve in the signature phase — e.g.
+          # it is injected by a template that only expands in the body phase
+          # (tests/nimony/templates/tinject.nim). Abandon the early signature:
+          # roll back everything emitted for this decl and leave it verbatim
+          # for phase 3. The bail happens before `addSym`/`publish`, and the
+          # `handleSymDef` Ident path adds nothing to `freshSyms`, so the only
+          # residue is a never-referenced SymId — the rollback is otherwise
+          # complete.
+          dest.shrink declStart
+          n = entryCursor
+          takeTree dest, n
+          return
+        # Signature pass for a toplevel let/var with an explicit type:
+        # the symbol and its type are established above; carry the init
+        # value verbatim instead of semchecking it. Skipping `semExpr`
+        # here avoids phase-2 macro expansion and forward references to
+        # not-yet-signatured procs (the reasons toplevel let/var were
+        # body-only). Phase 3 re-sems this decl fully. See `localSigGuard`.
+        takeTree dest, n
       else:
         var it = Item(n: n, typ: typ)
         if kind == ConstY:
@@ -221,6 +304,10 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
       copyKeepLineInfo dest[declStart], parLeToken(GvarS, NoLineInfo)
   elif kind == GfldY:
     copyKeepLineInfo dest[declStart], parLeToken(GfldY, NoLineInfo)
+  elif kind == StaticTypevarY:
+    # the input tree used the `typevar` tag; the declaration's static-ness
+    # lives in the tag, so retag it
+    copyKeepLineInfo dest[declStart], parLeToken(StaticTypevarY, NoLineInfo)
   if kind notin {FldY, GfldY}:
     publish c, dest, delayed.s.name, declStart
 
@@ -228,6 +315,97 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind
   let info = it.n.info
   semLocal c, dest, it.n, kind
   producesVoid c, dest, info, it.typ
+
+proc recordDeferredLocal*(c: var SemContext; n: Cursor) =
+  ## Record a deferred toplevel let/var, keyed by its identifier, so a later
+  ## signature-phase `when` can resolve it on demand. See `localSigGuard`.
+  var name = n
+  inc name  # past the (let/var tag
+  if name.kind == Ident:
+    c.deferredLocals[name.litId] = n
+
+proc typeSymsAvailable(c: var SemContext; n: var Cursor): bool =
+  ## Linear scan over an unsemmed type expression: true iff every name it
+  ## references is already available in the signature phase — each `Ident`
+  ## is declared in the current scopes/imports and each `Symbol` (e.g.
+  ## template-injected) loads to a non-typevar decl. A generic `T` is *not*
+  ## available (it still needs instantiation), so `var x: T` stays deferred
+  ## while a fully-concrete `seq[int]` resolves. Consumes the subtree on
+  ## `true`; on `false` the search stops immediately and `n` is left
+  ## mid-subtree (callers pass a copy and abandon it).
+  ##
+  ## This is the atom-visiting analog of the `linearScan` traversal primitive
+  ## (nim-lang/nimony#2064): a whole-subtree walk that, unlike `linearScan`
+  ## (which stops at each `ParLe`), must also inspect the leaf `Ident`/`Symbol`
+  ## tokens. When that primitive lands on master, fold this onto it.
+  case n.kind
+  of Ident:
+    if not isDeclared(c, n.litId): return false
+    inc n
+  of Symbol:
+    let res = tryLoadSym(n.symId)
+    if res.status != LacksNothing or res.decl.tagEnum == TypevarTagId:
+      return false
+    inc n
+  of ParLe:
+    n.loopInto:
+      if not typeSymsAvailable(c, n): return false
+  else:
+    inc n
+  result = true
+
+proc resolveDeferredLocal(c: var SemContext; ident: StrId): bool =
+  ## On-demand signature resolution for a deferred toplevel let/var: sem just
+  ## its signature into a throwaway buffer so the symbol becomes visible
+  ## (scope + prog.mem) to a signature-phase `when` condition. The allocated
+  ## symbol is remembered in `onDemandResolved` so that phase 3 reuses it (via
+  ## `handleSymDef`) instead of redeclaring the decl — keeping the body-phase
+  ## output equivalent to deferring normally. See `semIdentImpl`,
+  ## nim-lang/nimony#1974.
+  if not c.deferredLocals.hasKey(ident): return false
+  # `getOrDefault` (not `[]`) to avoid the raising `Table.[]` in effect-checked
+  # code; `hasKey` above already guarantees the key is present.
+  var decl = c.deferredLocals.getOrDefault(ident, default(Cursor))
+  c.deferredLocals.del ident  # resolve at most once
+  # A plain `if` (not `case`) because this is a partial map over the handful of
+  # local-decl kinds; `case n.stmtKind` would demand an `else`, which the source
+  # validator forbids (it enforces exhaustive enumeration for tag discriminators).
+  let sk = decl.stmtKind
+  let kind =
+    if sk == LetS: LetY
+    elif sk == VarS: VarY
+    elif sk == GletS: GletY
+    elif sk == GvarS: GvarY
+    elif sk == TletS: TletY
+    elif sk == TvarS: TvarY
+    else: return false
+  # Availability gate (review, nim-lang/nimony#1974): resolve early only when
+  # every symbol the explicit type references is already available in the
+  # signature phase; otherwise leave the decl fully deferred, so the `when`
+  # reference degrades to a clean "undeclared". The rollback in `semLocal`
+  # below remains as the safety net for types that pass the scan but still
+  # fail to sem.
+  var typ = decl
+  inc typ   # past the (let/var tag
+  skip typ  # name
+  skip typ  # export marker
+  skip typ  # pragmas
+  if typ.kind == DotToken: return false  # inferred: needs the init value
+  if not typeSymsAvailable(c, typ): return false
+  var scratch = createTokenBuf()
+  # Force the signature phase so `semLocal` takes its value-verbatim path
+  # (the `when` condition is folded at a temporarily-forced body phase).
+  let savedPhase = c.phase
+  c.phase = SemcheckSignatures
+  semLocal(c, scratch, decl, kind)
+  c.phase = savedPhase
+  if scratch.len > 1 and scratch[1].kind == SymbolDef:
+    c.onDemandResolved[ident] = scratch[1].symId
+    result = true
+  else:
+    # The type did not resolve in the signature phase (e.g. template-injected);
+    # `semLocal` rolled its output back. Leave the decl fully deferred.
+    result = false
 
 proc semEnumOrdinalValue(c: var SemContext; dest: var TokenBuf; n: var Cursor): xint =
   let info = n.info
@@ -336,6 +514,9 @@ proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: v
 proc semGenericParam(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   if n.substructureKind == TypevarU:
     semLocal c, dest, n, TypevarY
+  elif n.substructureKind == StaticTypevarU:
+    # re-semming an already desugared value generic parameter
+    semLocal c, dest, n, StaticTypevarY
   else:
     buildErr c, dest, n.info, "expected 'typevar'"
 
@@ -660,8 +841,7 @@ proc hasUntypedOrTypedParam(dest: var TokenBuf; beforeParams: int): bool =
   if n.substructureKind != ParamsU:
     endRead(dest)
     return
-  inc n
-  while n.kind != ParRi:
+  n.loopInto:
     if n.substructureKind == ParamU:
       var p = n
       inc p
@@ -980,6 +1160,7 @@ proc semProc(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind;
 
     var anons = createTokenBuf()
     semProcImpl c, anons, it, kind, pass, name
+    let exprStart = dest.len
     dest.add parLeToken(ExprX, info)
     dest.add parLeToken(StmtsS, info)
     let anonTypePos = dest.len
@@ -987,7 +1168,9 @@ proc semProc(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind;
     dest.addParRi()
     dest.add symToken(name, info)
     dest.addParRi()
+    let expected = it.typ
     it.typ = typeToCursor(c, dest, anonTypePos)
+    commonType c, dest, it, exprStart, expected
 
   else:
     semProcImpl c, dest, it, kind, pass
@@ -1037,7 +1220,7 @@ proc fitTypeToPragmas(c: var SemContext; dest: var TokenBuf; pragmas: CrucialPra
            t.substructureKind in {NotnilU, NilU, UncheckedU}:
           takeTree rebuilt, t
       else: discard
-      while t.kind != ParRi:
+      while t.hasMore:
         skip t
       for tok in attrs:
         rebuilt.add tok

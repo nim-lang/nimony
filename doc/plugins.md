@@ -568,6 +568,6 @@ The `into`/`loopInto` templates are for pure analysis; the
 | `hasMore(n)` | `NifCursor` | true while the bounded cursor has more values |
 | `into n:` | `NifCursor` | enter a `TagLit`, run the body for its children, leave |
 | `loopInto n:` | `NifCursor` | enter node, iterate all children, leave |
-| `balancedTokens n:` | `NifCursor` | scan descendant compound nodes, then advance past the subtree |
+| `linearScan n:` | `NifCursor` | scan descendant compound nodes, then advance past the subtree |
 | `keepTag r:` | `Replacer` | copy tag to output, run body, close tree and advance |
 | `loopKeepTag r:` | `Replacer` | copy tag, iterate all children, close tree and advance |

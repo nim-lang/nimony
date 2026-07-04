@@ -50,7 +50,11 @@ proc isRoutine*(t: SymKind): bool {.inline.} =
   t in {ProcY, FuncY, IteratorY, MacroY, TemplateY, ConverterY, MethodY}
 
 proc isLocal*(t: SymKind): bool {.inline.} =
-  t in {LetY, VarY, ResultY, ConstY, ParamY, TypevarY, CursorY, PatternvarY, FldY, GfldY, EfldY, GletY, TletY, GvarY, TvarY}
+  t in {LetY, VarY, ResultY, ConstY, ParamY, TypevarY, StaticTypevarY, CursorY, PatternvarY, FldY, GfldY, EfldY, GletY, TletY, GvarY, TvarY}
+
+proc isTypevarLike*(t: SymKind): bool {.inline.} =
+  ## generic parameters: ordinary type variables and value ("static") parameters
+  t in {TypevarY, StaticTypevarY}
 
 proc isNominal*(t: TypeKind): bool {.inline.} =
   ## type kinds that should stay as symbols, see sigmatch.matchSymbol

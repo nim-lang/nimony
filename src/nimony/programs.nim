@@ -114,6 +114,27 @@ proc `[]=`*(t: var ToplevelEntries; s: SymId; entry: sink ToplevelEntry) =
     t.entries.add entry
     t.bySymId[s] = idx
 
+type
+  EnsurePhaseResult* = enum
+    PhaseOk,        ## Symbol is now at (or past) the required phase
+    PhaseCycle,     ## Cyclic dependency detected (an in-progress marker)
+    PhaseNotFound   ## Symbol not in prog.mem (external or not yet registered)
+
+proc ensurePhase*(symId: SymId; targetPhase: SemPhase): EnsurePhaseResult =
+  ## Report whether `symId` has been processed to at least `targetPhase`,
+  ## distinguishing a genuine cycle (an in-progress marker) from a plain
+  ## forward reference. Pure inspection; the on-demand driver
+  ## `loadSymWithPhase` (templates.nim) is what acts on the result.
+  if not prog.mem.hasKey(symId):
+    return PhaseNotFound
+  let currentPhase = prog.mem[symId].phase
+  if currentPhase >= targetPhase:
+    return PhaseOk
+  if currentPhase in {SemcheckSignaturesInProgress, SemcheckBodiesInProgress}:
+    return PhaseCycle
+  # Below target but not in progress: a forward reference the driver may resolve.
+  result = PhaseOk
+
 proc add*(t: var ToplevelEntries; entry: sink ToplevelEntry) =
   ## Add an entry without a SymId (e.g., when statement, import).
   t.entries.add entry
@@ -351,53 +372,35 @@ proc tryLoadHook*(op: AttachedOp; typ: SymId): SymId =
     let hooktag = hookToTag(op)
     let typedef = asTypeDecl(d.decl)
     var n = typedef.pragmas
-    if n.kind == ParLe:
-      var nested = 0
-      while true:
-        case n.kind
-        of ParLe:
-          if n.tagId == hooktag:
-            inc n
-            if n.kind == Symbol:
-              result = n.symId
-              break
-          inc nested
-        of ParRi:
-          dec nested
-          if nested == 0: break
-        else: discard
-        inc n
+    n.linearScan:
+      if n.tagId == hooktag:
+        var c = n
+        inc c
+        if c.kind == Symbol:
+          result = c.symId
+          break
 
 proc tryLoadAllHooks*(typ: SymId): HooksPerType =
-  template setRes(n: var Cursor; op: AttachedOp) =
-    inc n
-    if n.kind == Symbol:
-      result.a[op] = n.symId
+  template setRes(hookCursor: Cursor; op: AttachedOp) =
+    var c = hookCursor
+    inc c
+    if c.kind == Symbol:
+      result.a[op] = c.symId
 
   result = HooksPerType(a: default(array[AttachedOp, SymId]))
   let d = tryLoadSym(typ)
   if d.status == LacksNothing:
     let typedef = asTypeDecl(d.decl)
     var n = typedef.pragmas
-    if n.kind == ParLe:
-      var nested = 0
-      while true:
-        case n.kind
-        of ParLe:
-          case hookKind(n.tagId)
-          of NoHook: discard
-          of WasmovedH: setRes(n, attachedWasMoved)
-          of DestroyH: setRes(n, attachedDestroy)
-          of DupH: setRes(n, attachedDup)
-          of CopyH: setRes(n, attachedCopy)
-          of SinkhH: setRes(n, attachedSink)
-          of TraceH: setRes(n, attachedTrace)
-          inc nested
-        of ParRi:
-          dec nested
-          if nested == 0: break
-        else: discard
-        inc n
+    n.linearScan:
+      case hookKind(n.tagId)
+      of NoHook: discard
+      of WasmovedH: setRes(n, attachedWasMoved)
+      of DestroyH: setRes(n, attachedDestroy)
+      of DupH: setRes(n, attachedDup)
+      of CopyH: setRes(n, attachedCopy)
+      of SinkhH: setRes(n, attachedSink)
+      of TraceH: setRes(n, attachedTrace)
 
 proc loadSyms*(suffix: string; identifier: StrId): seq[SymId] =
   # gives top level exported syms of a module

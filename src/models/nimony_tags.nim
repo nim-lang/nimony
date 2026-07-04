@@ -7,7 +7,7 @@ type
     NoExpr
     ErrX = (ord(ErrTagId), "err")  ## indicates an error
     SufX = (ord(SufTagId), "suf")  ## literal with suffix annotation
-    AtX = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)`
+    AtX = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)` where an argument may also be a constant *value* bound to a `staticTypevar`
     DerefX = (ord(DerefTagId), "deref")  ## pointer deref operation
     DotX = (ord(DotTagId), "dot")  ## object field selection; optional integer is the inheritance depth of the field; optional trailing `STRLIT` is an *access token* (carrying `"x"` like an export marker) — when present, the expression was already type-checked in a scope with access to the field, so re-check at expansion/serialization sites must accept the access even if the field is private. Emitted by sem when a template body or `.semantics` serializer is type-checked in the field's defining module and later expanded/consumed elsewhere.
     PatX = (ord(PatTagId), "pat")  ## pointer indexing operation
@@ -199,7 +199,7 @@ type
   NimonyType* = enum
     NoType
     ErrT = (ord(ErrTagId), "err")  ## indicates an error
-    AtT = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)`
+    AtT = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)` where an argument may also be a constant *value* bound to a `staticTypevar`
     AndT = (ord(AndTagId), "and")  ## boolean `and` operation; `Y+` form is also used for concept parent lists with more than two parents
     OrT = (ord(OrTagId), "or")  ## boolean `or` operation
     NotT = (ord(NotTagId), "not")  ## boolean `not` operation
@@ -263,13 +263,14 @@ type
     RangesU = (ord(RangesTagId), "ranges")
     ParamU = (ord(ParamTagId), "param")  ## parameter declaration
     TypevarU = (ord(TypevarTagId), "typevar")  ## type variable declaration; constraint `.T` is optional
+    StaticTypevarU = (ord(StaticTypevarTagId), "staticTypevar")  ## value generic parameter: a generic parameter that is a compile-time *value*; the type slot holds the value's plain element type (e.g. `int` for `N: static[int]`), never a `static` wrapper
     EfldU = (ord(EfldTagId), "efld")  ## enum field declaration; slot 2 carries the export marker *or* the compile-time value (may be `.`)
     FldU = (ord(FldTagId), "fld")  ## field declaration
     GfldU = (ord(GfldTagId), "gfld")  ## guarded field declaration, cannot be accessed outside an `of` branch
     WhenU = (ord(WhenTagId), "when")  ## when statement header
     ElifU = (ord(ElifTagId), "elif")  ## pair of (condition, action)
     ElseU = (ord(ElseTagId), "else")  ## `else` action
-    TypevarsU = (ord(TypevarsTagId), "typevars")  ## type variable/generic parameters
+    TypevarsU = (ord(TypevarsTagId), "typevars")  ## type variable/generic parameters; after sem an entry may also be a `(staticTypevar ...)`
     CaseU = (ord(CaseTagId), "case")  ## `case` statement
     OfU = (ord(OfTagId), "of")  ## `of` branch within a `case` statement
     StmtsU = (ord(StmtsTagId), "stmts")  ## list of statements
@@ -285,7 +286,7 @@ type
     FinU = (ord(FinTagId), "fin")  ## finally subsection
 
 proc rawTagIsNimonyOther*(raw: TagEnum): bool {.inline.} =
-  raw in {NilTagId, NotnilTagId, UncheckedTagId, KvTagId, VvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, EfldTagId, FldTagId, GfldTagId, WhenTagId, ElifTagId, ElseTagId, TypevarsTagId, CaseTagId, OfTagId, StmtsTagId, ParamsTagId, PragmasTagId, EitherTagId, JoinTagId, UnpackflatTagId, UnpacktupTagId, CallargsTagId, ForcallTagId, ExceptTagId, FinTagId}
+  raw in {NilTagId, NotnilTagId, UncheckedTagId, KvTagId, VvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, StaticTypevarTagId, EfldTagId, FldTagId, GfldTagId, WhenTagId, ElifTagId, ElseTagId, TypevarsTagId, CaseTagId, OfTagId, StmtsTagId, ParamsTagId, PragmasTagId, EitherTagId, JoinTagId, UnpackflatTagId, UnpacktupTagId, CallargsTagId, ForcallTagId, ExceptTagId, FinTagId}
 
 type
   NimonyPragma* = enum
@@ -382,6 +383,7 @@ type
     CursorY = (ord(CursorTagId), "cursor")  ## cursor variable declaration
     PatternvarY = (ord(PatternvarTagId), "patternvar")  ## pattern variable declaration
     TypevarY = (ord(TypevarTagId), "typevar")  ## type variable declaration; constraint `.T` is optional
+    StaticTypevarY = (ord(StaticTypevarTagId), "staticTypevar")  ## value generic parameter: a generic parameter that is a compile-time *value*; the type slot holds the value's plain element type (e.g. `int` for `N: static[int]`), never a `static` wrapper
     EfldY = (ord(EfldTagId), "efld")  ## enum field declaration; slot 2 carries the export marker *or* the compile-time value (may be `.`)
     FldY = (ord(FldTagId), "fld")  ## field declaration
     GfldY = (ord(GfldTagId), "gfld")  ## guarded field declaration, cannot be accessed outside an `of` branch

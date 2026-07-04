@@ -40,20 +40,16 @@ Commands:
                        toolchain (nimony+nimsem+hexer share `programs.nim`),
                        runs `tiers`, then `boot --valgrind`. Use this
                        after touching any module the compiler itself imports.
-  all                  run all tests.
-  nimony               run Nimony tests.
-  examples             run examples (examples/ directory).
+  <dir>                run the test tree rooted at <dir> (see Files below):
+                       each directory is either a setup.nim custom runner or
+                       the built-in nimony runner, recursively. This is the
+                       general entry point — point it at any suite.
+  all                  run the whole suite: `<tests>` + `<examples>`.
   native               run the curated native-backend regression set through
                        `nimony n` (arkham + nifasm, from the sibling
                        `../nativenif` checkout). See `NativeTestDirs`/`Files`.
   lengc                 run Leng tests.
-  nj                   run NJ (Nimony Jump Elimination) tests.
-  vl                   run VL (Versioned Locations) tests.
-  dagon                run Dagon doc-generator tests (tests/dagon/).
-  pnak                 run pnak package-fetcher tests (tests/pnak/).
-  incremental          verify nifmake's mtime-based incremental rebuilds via
-                       the `--report` machine-readable summary.
-  test <file>/<dir>    run test <file> or <dir>.
+  test <file>/<dir>    run a single test <file>, or a flat <dir> of tests.
   bug [file]           build nimony+hexer and compile <file> to fill nimcache/.
                        If no file is provided `bug.nim` is used.
   rep                  repeat the last failing tool command from the session.
@@ -78,12 +74,32 @@ Options:
   --release             build in release mode
   --jobs:N|auto         run up to N tests in parallel (auto = #cores)
   --cachedir:PATH       use PATH instead of `nimcache/` for intermediates
-  --no-build            skip rebuilding nimony/lengc before `test`
+  --bindir:PATH         resolve the toolchain (nimony, lengc, …) from
+                        directory PATH instead of hastur's own directory
+                        (implies --no-build). Binaries not found there are
+                        looked up on `$PATH`.
+  --no-build            skip the setup.hastur prep step during the tree walk
   --native-debug        build arkham + nifasm unoptimized (they default to
                         -d:release); for `-d:arkhamDbgSym` / gdb toolchain work
   --valgrind            for `boot`: build with -DMI_TRACK_VALGRIND=1 so
                         mimalloc plays nicely with valgrind, then run a
                         valgrind smoke test on the bootstrapped binary.
+
+Files (per test directory, all optional):
+  setup.nim             a custom runner program that owns this directory and
+                        its subtree: hastur compiles+runs it (it imports
+                        hastur as the test kit) and takes its exit code as the
+                        verdict. For suites that aren't a folder of inputs
+                        (boot, incremental, validator) or need a bespoke tool
+                        (nj, vl, dagon, pnak, hexer, controlflow, contracts).
+  setup.hastur          prep for a built-in-runner directory: each line is a
+                        hastur subcommand (e.g. `build nimony`) run before the
+                        tests beneath it. `tests/setup.hastur` builds the
+                        toolchain for the whole sweep.
+  hastur.mode           this directory's category for the built-in nimony
+                        runner: nosystem, track, compat, valgrind, opt, or
+                        skip (excluded from the sweep, but still run when
+                        pointed at directly). Absent means normal.
 """
 
 proc quitWithText*(s: string) =
@@ -203,9 +219,36 @@ proc markersToCmdLine(s: seq[LineInfo]; file: string): string =
     else:
       result.add " --track:" & $x.line & ":" & $x.col & ":" & x.filename
 
+proc defaultToolchainDir(): string =
+  ## Where hastur looks for its sibling toolchain binaries by default: the
+  ## directory hastur itself lives in. `tester.nim` builds hastur into `bin/`
+  ## alongside `nimony`, `lengc`, `hexer`, … so a `bin/hastur` invocation
+  ## finds them regardless of the current working directory — no `--bindir`
+  ## and no "run from the repo root" requirement. When hastur's own directory
+  ## has no toolchain (e.g. a `nim c -r` run whose binary sits in a nimcache
+  ## temp dir) fall back to the cwd-relative `bin/`.
+  result = getAppFilename().parentDir
+  if not fileExists(result / "nimony".addFileExt(ExeExt)):
+    result = "bin"
+
+var toolchainDir* = defaultToolchainDir()
+  ## Directory the toolchain binaries (`nimony`, `lengc`, `hexer`, …) are
+  ## resolved from. Defaults to hastur's own directory (its siblings);
+  ## `--bindir:PATH` overrides it to point at any prebuilt/installed
+  ## toolchain, and binaries missing there are looked up on `$PATH`.
+
+proc toolExe*(name: string): string =
+  ## Resolve a toolchain binary: `toolchainDir/<name>` if present, otherwise
+  ## `<name>` on `$PATH`. The `$PATH` fallback lets an installed toolchain
+  ## drive the tests. When neither exists we still return the `toolchainDir`
+  ## path so the ensuing "not found" failure names the expected location.
+  result = toolchainDir / name.addFileExt(ExeExt)
+  if fileExists(result): return
+  let onPath = findExe(name)
+  if onPath.len > 0: result = onPath
+
 proc execLocal(exe, cmd: string): (string, int) =
-  let bin = "bin" / exe.addFileExt(ExeExt)
-  result = osproc.execCmdEx(bin & " " & cmd)
+  result = osproc.execCmdEx(toolExe(exe).quoteShell & " " & cmd)
 
 type
   Category = enum
@@ -216,6 +259,8 @@ type
     Compat # compatibility mode tests
     Valgrind # valgrind tests
     Optimized # tests compiled with --opt:speed (exercise the shoggoth passes)
+    Skip # `hastur.mode = skip`: the tree walk ignores this directory and its
+         # subtree (non-suite dirs: fixtures, inputs owned by another runner)
 
 var nimcacheDir* = "nimcache"
   ## Directory used for compiler intermediates. Per-test parallel runs
@@ -238,7 +283,7 @@ proc toCommand(cat: Category): string =
   of Basics: "m"
   of Tracked: "check --silentMake"
   of Optimized: "c --silentMake --opt:speed"
-  of Normal, Compat, Valgrind: "c --silentMake"
+  of Normal, Compat, Valgrind, Skip: "c --silentMake"
 
 proc execNimony(cmd: string; cat: Category): (string, int) =
   let cacheArg =
@@ -386,7 +431,7 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category;
   inc c.total
   var nimonycmd = "--isMain"
   case cat
-  of Normal, Valgrind, Optimized: discard
+  of Normal, Valgrind, Optimized, Skip: discard
   of Basics:
     nimonycmd.add " --noSystem"
   of Tracked:
@@ -487,7 +532,7 @@ proc warmupSharedCache(): string =
   if not fileExists(warmupSrc):
     return ""
   result = nimcacheDir / "warmup"
-  let nimony = "bin" / "nimony".addFileExt(ExeExt)
+  let nimony = toolExe("nimony")
   if not fileExists(nimony):
     return ""
   let cmd = nimony.quoteShell & " c --nimcache:" & result.quoteShell &
@@ -531,7 +576,7 @@ proc prebuildSharedObjects(forward: string) =
   ## clang+lld worker link then fails with `undefined symbol: pthread_*`.
   if sharedObjectsPrebuilt: return
   sharedObjectsPrebuilt = true
-  let nimony = "bin" / "nimony".addFileExt(ExeExt)
+  let nimony = toolExe("nimony")
   if not fileExists(nimony):
     return
   let cache = nimcacheDir / "prebuild_static"
@@ -700,6 +745,10 @@ proc parallelTestDir(c: var TestCounters; files: openArray[string];
     let cacheDir = nimcacheDir / ".par" / $idx
     prefillFromWarmup(warmupCache, cacheDir)
     var args = @["test", "--no-build", "--cachedir:" & cacheDir]
+    # Forward the parent's resolved toolchain dir so each worker uses the
+    # exact same binaries (the default is now hastur's own sibling dir, an
+    # absolute path, not the literal "bin").
+    args.add "--bindir:" & toolchainDir
     if overwrite: args.add "--overwrite"
     if forward.len > 0: args.add "--forward:" & forward
     args.add file
@@ -756,48 +805,46 @@ proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category; f
   if cat in {Compat, Basics}:
     removeDir "nimcache"
 
-proc parseCategory(path: string): Category =
-  case path
-  of "track": Tracked
-  of "nosystem": Basics
+const ModeFile = "hastur.mode"
+  ## A test directory may drop a `hastur.mode` file naming the category that
+  ## applies to it and everything beneath it. This replaces the old scheme of
+  ## inferring the category from magic directory names (`nosystem`, `track`,
+  ## `compat`, `valgrind`, `opt`): a suite is now free to use whatever
+  ## directory layout it likes and opts into a special mode explicitly.
+
+proc parseMode(s, src: string): Category =
+  ## Map a `hastur.mode` keyword to a `Category`. The legacy directory names
+  ## are the canonical keywords; the enum names are accepted as synonyms.
+  case s.strip.normalize
+  of "normal", "": Normal
+  of "nosystem", "basics": Basics
+  of "track", "tracked": Tracked
   of "compat": Compat
   of "valgrind": Valgrind
-  of "opt": Optimized
-  else: Normal
+  of "opt", "optimized": Optimized
+  of "skip": Skip
+  else: quit "invalid mode '" & s.strip & "' in " & src
 
-proc findCategory(path: string): Category =
-  for x in split(path, {DirSep, AltSep}):
-    let cat = parseCategory x
-    if cat != Normal:
-      return cat
+proc categoryOfDir(dir: string): Category =
+  ## Resolve the category for `dir` from the nearest `hastur.mode` file in
+  ## `dir` or an ancestor. No mode file up the whole chain means `Normal`.
+  var d = dir
+  while d.len > 0:
+    let mf = d / ModeFile
+    if fileExists(mf):
+      return parseMode(readFile(mf), mf)
+    let parent = d.parentDir
+    if parent == d: break
+    d = parent
   return Normal
 
-proc exampletests(overwrite: bool; forward: string) =
-  ## Run all the examples in the examples/ directory.
-  const TestDir = "examples"
-  let t0 = epochTime()
-  var c = TestCounters(total: 0, failures: 0)
-  testDir c, TestDir, overwrite, Normal, forward
-  echo c.total - c.failures, " / ", c.total, " examples successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
-  if c.failures > 0:
-    quit "FAILURE: Some examples failed."
-  else:
-    echo "SUCCESS."
+proc categoryOf(path: string): Category =
+  ## Category for a test file or directory: the mode of its own directory
+  ## (or, for a not-yet-existing `record` destination, its parent directory).
+  categoryOfDir(if dirExists(path): path else: path.parentDir)
 
-proc nimonytests(overwrite: bool; forward: string) =
-  ## Run all the nimonytests in the test-suite.
-  const TestDir = "tests/nimony"
-  let t0 = epochTime()
-  var c = TestCounters(total: 0, failures: 0)
-  for x in walkDir(TestDir, relative = true):
-    let cat = parseCategory x.path
-    if x.kind == pcDir:
-      testDir c, TestDir / x.path, overwrite, cat, forward
-  echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
-  if c.failures > 0:
-    quit "FAILURE: Some tests failed."
-  else:
-    echo "SUCCESS."
+# The general test-tree runner is `walkTests`/`walkRoots` further below; the
+# old per-suite `nimonytests`/`exampletests` drivers folded into it.
 
 # ── native-backend regression set ────────────────────────────────────────────
 # The C-FREE native path (`nimony n` → arkham + nifasm, sibling `../nativenif`) is
@@ -882,7 +929,7 @@ proc nativetests(overwrite: bool) =
   else:
     echo "SUCCESS."
 
-proc runNifToolTests(tool, testDir, inputExt, expectedExt: string; overwrite: bool) =
+proc runNifToolTests*(tool, testDir, inputExt, expectedExt: string; overwrite: bool) =
   ## Run tests for a NIF tool.
   ## - inputExt: extension that input files must have (e.g., ".nif" or ".nj.nif")
   ## - expectedExt: extension for expected output files (e.g., ".nj.nif" or ".vl.nif")
@@ -928,21 +975,11 @@ proc runNifToolTests(tool, testDir, inputExt, expectedExt: string; overwrite: bo
   else:
     echo "SUCCESS."
 
-proc controlflowTests(tool: string; overwrite: bool) =
-  ## Run all the controlflow tests in the test-suite.
-  runNifToolTests(tool, "tests/" & tool, ".nif", ".expected.nif", overwrite)
+# NJ/VL/controlflow/contracts are now `setup.nim` runner directories under
+# `tests/` that call `runNifToolTests` directly; their old wrapper procs and
+# subcommands are gone.
 
-proc njTests(overwrite: bool) =
-  ## Run all the NJ (Nimony Jump Elimination) tests.
-  ## Tests are .nif files in src/njvl/tests/ with expected output in .nj.nif files.
-  runNifToolTests("nj", "src/njvl/tests", ".nif", ".nj.nif", overwrite)
-
-proc vlTests(overwrite: bool) =
-  ## Run all the VL (Versioned Locations) tests.
-  ## Tests are .nif files in src/njvl/tests/ with expected output in .vl.nif files.
-  runNifToolTests("vl", "src/njvl/tests", ".nif", ".vl.nif", overwrite)
-
-proc validatorTests() =
+proc validatorTests*() =
   ## Run the validator over compiler pass source files to verify NIF construction
   ## conforms to the grammar in doc/tags.md, plus obligation tracking and
   ## while-ParRi completion checks (the latter as warnings, not errors).
@@ -1028,7 +1065,7 @@ proc reportField(entries: seq[ReportEntry]; cmd: string): int =
     if e.cmd == cmd: return e.count
   result = 0
 
-proc incrementalTests() =
+proc incrementalTests*() =
   ## Drive `bin/nimony c --report` through a fixed sequence of scenarios on
   ## `tests/incremental/sample.nim` and assert the per-nifmake-invocation
   ## command counts. Fails the run on the first divergence; restores the
@@ -1119,7 +1156,7 @@ proc test(t: string; overwrite: bool; cat: Category; forward: string) =
 proc testDirCmd(dir: string; overwrite: bool; forward: string) =
   var c = TestCounters(total: 0, failures: 0)
   let t0 = epochTime()
-  testDir c, dir, overwrite, findCategory(dir), forward
+  testDir c, dir, overwrite, categoryOfDir(dir), forward
   echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
     quit "FAILURE: Some tests failed."
@@ -1189,7 +1226,7 @@ proc record(file, test: string; flags: set[RecordFlag]; cat: Category) =
       addTestCode test.changeFileExt(".nif"), nif
 
 proc binDir*(): string =
-  result = "bin"
+  result = toolchainDir
 
 proc robustMoveFile(src, dest: string) =
   if fileExists(src):
@@ -1251,27 +1288,27 @@ proc buildNimony(showProgress = false) =
   let exe = "nimony".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
-proc buildControlflow(showProgress = false) =
+proc buildControlflow*(showProgress = false) =
   exec nimcPrefix() & "src/nimony/controlflow.nim", showProgress
   let exe = "controlflow".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
-proc buildContracts(showProgress = false) =
+proc buildContracts*(showProgress = false) =
   exec nimcPrefix() & "src/nimony/contracts.nim", showProgress
   let exe = "contracts".addFileExt(ExeExt)
   robustMoveFile "src/nimony/" & exe, binDir() / exe
 
-proc buildNj(showProgress = false) =
+proc buildNj*(showProgress = false) =
   exec nimcPrefix() & "src/njvl/nj.nim", showProgress
   let exe = "nj".addFileExt(ExeExt)
   robustMoveFile "src/njvl/" & exe, binDir() / exe
 
-proc buildVl(showProgress = false) =
+proc buildVl*(showProgress = false) =
   exec nimcPrefix() & "src/njvl/vl.nim", showProgress
   let exe = "vl".addFileExt(ExeExt)
   robustMoveFile "src/njvl/" & exe, binDir() / exe
 
-proc buildLengc(showProgress = false) =
+proc buildLengc*(showProgress = false) =
   exec nimcPrefix() & "src/lengc/lengc.nim", showProgress
   let exe = "lengc".addFileExt(ExeExt)
   robustMoveFile "src/lengc/" & exe, binDir() / exe
@@ -1302,7 +1339,7 @@ proc buildNifasm(showProgress = false) =
   ## linker) — sibling repo, same assume-exists arrangement as `buildArkham`.
   exec nativeToolPrefix() & "--outdir:" & binDir() & " ../nativenif/src/nifasm/nifasm.nim", showProgress
 
-proc buildHexer(showProgress = false) =
+proc buildHexer*(showProgress = false) =
   exec nimcPrefix() & "src/hexer/hexer.nim", showProgress
   let exe = "hexer".addFileExt(ExeExt)
   robustMoveFile "src/hexer/" & exe, binDir() / exe
@@ -1312,17 +1349,17 @@ proc buildNifmake(showProgress = false) =
   let exe = "nifmake".addFileExt(ExeExt)
   robustMoveFile "src/nifmake/" & exe, binDir() / exe
 
-proc buildValidator(showProgress = false) =
+proc buildValidator*(showProgress = false) =
   exec nimcPrefix() & "src/validator/validator.nim", showProgress
   let exe = "validator".addFileExt(ExeExt)
   robustMoveFile "src/validator/" & exe, binDir() / exe
 
-proc buildDagon(showProgress = false) =
+proc buildDagon*(showProgress = false) =
   exec nimcPrefix() & "src/dagon/dagon.nim", showProgress
   let exe = "dagon".addFileExt(ExeExt)
   robustMoveFile "src/dagon/" & exe, binDir() / exe
 
-proc buildPnak(showProgress = false) =
+proc buildPnak*(showProgress = false) =
   exec nimcPrefix() & "src/pnak/pnak.nim", showProgress
   let exe = "pnak".addFileExt(ExeExt)
   robustMoveFile "src/pnak/" & exe, binDir() / exe
@@ -1686,7 +1723,7 @@ const BootSelfCompilePasses = 3
   ## same set of stage directories regardless of whether earlier stages
   ## happen to converge to a byte-identical binary.
 
-proc bootCmd(args: string; withValgrind: bool) =
+proc bootCmd*(args: string; withValgrind: bool) =
   for tool in BootSelfTools:
     let exe = binDir() / tool.addFileExt(ExeExt)
     if not fileExists(exe):
@@ -1757,7 +1794,7 @@ proc execLengc(cmd: string) =
 proc execHexer(cmd: string) =
   exec "hexer", cmd
 
-proc hexertests(overwrite: bool) =
+proc hexertests*(overwrite: bool) =
   let mod1 = "tests/hexer/mod1"
   let helloworld = "tests/hexer/hexer_helloworld"
   createIndex helloworld & ".nif", false, NoLineInfo
@@ -1805,10 +1842,11 @@ proc runDagonTest(c: var TestCounters; testFile: string) =
     failure c, testFile, $problems.len & " assertion(s) failed",
       problems.join("\n")
 
-proc dagontests(overwrite: bool) =
-  ## Run every `t*.nim` under `tests/dagon/` through `nimony doc` and verify
-  ## the produced HTML/idx files against an `.assertions` sidecar.
-  const TestDir = "tests/dagon"
+proc dagontests*(dir: string; overwrite: bool) =
+  ## Run every `t*.nim` under `dir` (default `tests/dagon/`) through
+  ## `nimony doc` and verify the produced HTML/idx files against an
+  ## `.assertions` sidecar.
+  let TestDir = dir
   let t0 = epochTime()
   var c = TestCounters(total: 0, failures: 0)
   if dirExists(TestDir):
@@ -1841,11 +1879,12 @@ proc runPnakTest(c: var TestCounters; testFile: string) =
   if exit != 0:
     failure c, testFile, "exit " & $exit, output
 
-proc pnaktests() =
-  ## Run every `t*.nim` under `tests/pnak/`. The tests are self-contained
-  ## integration tests of the `pnak` binary (BFS clone + `nimony.paths`
-  ## generation); they stage a local file:// upstream and stay offline.
-  const TestDir = "tests/pnak"
+proc pnaktests*(dir: string) =
+  ## Run every `t*.nim` under `dir` (default `tests/pnak/`). The tests are
+  ## self-contained integration tests of the `pnak` binary (BFS clone +
+  ## `nimony.paths` generation); they stage a local file:// upstream and
+  ## stay offline.
+  let TestDir = dir
   let t0 = epochTime()
   var c = TestCounters(total: 0, failures: 0)
   if dirExists(TestDir):
@@ -1916,8 +1955,104 @@ proc repCmd() =
     quit "no session to repeat"
   exec cmd
 
+# ── recursive tree runner (the general `hastur <dir>` command) ───────────────
+# A directory describes how it is tested with two optional files:
+#   setup.nim     — a custom runner program that OWNS the directory (and its
+#                   subtree): hastur compiles+runs it, passes context on argv,
+#                   and takes its exit code as the verdict. This is the escape
+#                   hatch for suites that aren't "a folder of inputs" (boot,
+#                   incremental, validator) or need bespoke logic (nj, vl,
+#                   dagon, pnak). It imports hastur itself as the test kit.
+#   setup.hastur  — lightweight prep for a directory still run by the built-in
+#                   nimony runner: each line is a hastur subcommand (e.g.
+#                   `build nimony`), run before the tests below it.
+# Neither present → the built-in nimony runner processes the directory's own
+# `.nim` files (category from its `hastur.mode`) and recursion continues.
+
+proc runSetupHastur(dir: string) =
+  ## Prep step for a built-in-runner directory: run each line of
+  ## `<dir>/setup.hastur` as a hastur subcommand before its tests. `--release`
+  ## is forwarded so a release CI run also builds the toolchain in release
+  ## mode (the child hastur wouldn't otherwise inherit it).
+  if skipBuild: return
+  let f = dir / "setup.hastur"
+  if not fileExists(f): return
+  let self = getAppFilename().quoteShell
+  let relFlag = if release: " --release" else: ""
+  for raw in lines(f):
+    let line = raw.strip
+    if line.len == 0 or line.startsWith("#"): continue
+    exec self & relFlag & " " & line, showProgress = true
+
+proc runSetupNimDir(c: var TestCounters; dir, forward: string; overwrite: bool) =
+  ## A `setup.nim` owns its directory. Compile and run it, passing context on
+  ## argv (the test dir, toolchain dir, cache dir, overwrite, forwarded
+  ## flags); its exit code is the directory's verdict. The program reports its
+  ## own per-test detail, so here the whole directory counts as one result.
+  inc c.total
+  let setupNim = dir / "setup.nim"
+  let cache = nimcacheDir / "setupnim" / dir.splitPath.tail
+  # `-o:` keeps the compiled runner in the cache; without it nim drops the
+  # binary next to `setup.nim` and litters the test tree.
+  let outBin = cache / "setup".addFileExt(ExeExt)
+  var cmd = "nim c -r --warningAsError:ProveInit:off --warningAsError:Uninit:off" &
+            " --nimcache:" & cache.quoteShell & " -o:" & outBin.quoteShell & " " &
+            setupNim.quoteShell & " --" &
+            " --dir:" & dir & " --bindir:" & toolchainDir & " --cachedir:" & nimcacheDir
+  if overwrite: cmd.add " --overwrite"
+  if forward.len > 0: cmd.add " --forward:" & forward
+  if execShellCmd(cmd) != 0:
+    inc c.failures
+
+proc walkTests(c: var TestCounters; dir, forward: string; overwrite, isRoot: bool) =
+  # `hastur.mode = skip` excludes a directory from the sweep, but only when the
+  # walk *descends* into it — pointing hastur straight at it (isRoot) still
+  # runs it. That's how a WIP/known-broken suite (e.g. dagon) stays out of the
+  # default `all` run yet remains explicitly runnable via `hastur tests/dagon`.
+  let cat = categoryOfDir(dir)
+  if cat == Skip and not isRoot: return
+  if fileExists(dir / "setup.nim"):
+    runSetupNimDir(c, dir, forward, overwrite)
+    return
+  runSetupHastur(dir)
+  var hasNim = false
+  var subs: seq[string] = @[]
+  for x in walkDir(dir):
+    if x.kind == pcFile and x.path.endsWith(".nim"): hasNim = true
+    elif x.kind == pcDir: subs.add x.path
+  if hasNim:
+    # Leaf test directory: run its own `.nim` files via the flat built-in
+    # runner and do NOT descend. Nested dirs here (`deps/`, `imp/`, `system/`,
+    # …) hold import fixtures pulled in by those tests, not standalone tests —
+    # the old per-category runner never entered them either.
+    testDir(c, dir, overwrite, cat, forward)
+  else:
+    # Pure grouping directory (e.g. `tests/`, `tests/nimony/`): recurse.
+    sort subs
+    for s in subs: walkTests(c, s, forward, overwrite, isRoot = false)
+
+proc walkRoots(roots: openArray[string]; forward: string; overwrite: bool) =
+  ## Run one or more test trees, accumulating into shared counters and
+  ## reporting once. `hastur <dir>` passes a single root; `all` passes
+  ## `tests/` and `examples/`.
+  let t0 = epochTime()
+  var c = TestCounters(total: 0, failures: 0)
+  for r in roots:
+    if not dirExists(r): quit "FAILURE: not a directory: " & r
+    walkTests(c, r, forward, overwrite, isRoot = true)
+  echo c.total - c.failures, " / ", c.total, " tests successful in ",
+    formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if c.failures > 0: quit "FAILURE: Some tests failed."
+  else: echo "SUCCESS."
+
+proc walkCmd(dir, forward: string; overwrite: bool) =
+  ## The general entry point: `hastur <dir>` runs the whole test tree at
+  ## `<dir>`. `hastur tests/` is what `all` becomes.
+  walkRoots([dir], forward, overwrite)
+
 proc handleCmdLine =
   var primaryCmd = ""
+  var rawPrimary = ""   # unnormalized first arg; a directory path stays intact
   var args: seq[string] = @[]
 
   var flags: set[RecordFlag] = {}
@@ -1929,6 +2064,7 @@ proc handleCmdLine =
     of cmdArgument:
       if primaryCmd.len == 0:
         primaryCmd = key.normalize
+        rawPrimary = key
       else:
         args.add key
     of cmdLongOption, cmdShortOption:
@@ -1945,6 +2081,13 @@ proc handleCmdLine =
       of "cachedir":
         if val.len == 0: writeHelp()
         nimcacheDir = val
+      of "bindir":
+        # Point hastur at a prebuilt/installed toolchain instead of the
+        # project-local `bin/`. Implies `--no-build`: there is no source
+        # tree to rebuild from when testing out-of-tree code.
+        if val.len == 0: writeHelp()
+        toolchainDir = val
+        skipBuild = true
       of "jobs", "j":
         if val == "auto" or val.len == 0:
           parallelJobs = countProcessors()
@@ -1989,37 +2132,11 @@ proc handleCmdLine =
 
   case primaryCmd
   of "all":
-    buildNimsem()
-    buildNimony()
-    buildLengc()
-    buildShoggoth()
-    buildHexer()
-    buildNifmake()
-    nimonytests(overwrite, forward)
-    exampletests(overwrite, forward)
-    #lengctests(overwrite)
-    #hexertests(overwrite)
-    buildControlflow()
-    controlflowTests("controlflow", overwrite)
-    buildContracts()
-    controlflowTests("contracts", overwrite)
-    buildNj()
-    njTests(overwrite)
-    buildVl()
-    vlTests(overwrite)
-    buildValidator()
-    validatorTests()
-    incrementalTests()
-    buildPnak()
-    pnaktests()
-    bootCmd("", withValgrind = false)
-
-  of "validate", "validator":
-    buildValidator()
-    validatorTests()
-
-  of "incremental":
-    incrementalTests()
+    # `all` is now the tree walk: `tests/` (each suite via its setup.nim or the
+    # built-in nimony runner; `tests/setup.hastur` builds the toolchain first)
+    # plus `examples/`. Directories marked `hastur.mode = skip` (dagon, hexer)
+    # stay out of the sweep but remain runnable via `hastur tests/<dir>`.
+    walkRoots(["tests", "examples"], forward, overwrite)
 
   of "tiers":
     buildNimony()
@@ -2044,22 +2161,6 @@ proc handleCmdLine =
 
   of "selfcheck":
     selfcheckCmd()
-
-  of "controlflow", "cf":
-    buildControlflow()
-    controlflowTests("controlflow", overwrite)
-
-  of "contracts":
-    buildContracts()
-    controlflowTests("contracts", overwrite)
-
-  of "nj":
-    buildNj()
-    njTests(overwrite)
-
-  of "vl":
-    buildVl()
-    vlTests(overwrite)
 
   of "build":
     const showProgress = true
@@ -2121,9 +2222,6 @@ proc handleCmdLine =
       writeHelp()
     removeDir "nimcache"
 
-  of "nimony":
-    buildNimony()
-    nimonytests(overwrite, forward)
   of "native":
     # Run the curated native-backend regression set through `nimony n`. Build the
     # front end AND the C-free native toolchain (arkham + nifasm + shoggoth live in
@@ -2132,32 +2230,16 @@ proc handleCmdLine =
     buildArkham()
     buildNifasm()
     nativetests(overwrite)
-  of "examples":
-    buildNimony()
-    exampletests(overwrite, forward)
   of "lengc":
     buildLengc()
 
-  of "hexer":
-    buildHexer()
-    hexertests(overwrite)
-  of "dagon":
-    buildNimony()
-    buildDagon()
-    dagontests(overwrite)
-  of "pnak":
-    buildPnak()
-    pnaktests()
   of "test":
-    if not skipBuild:
-      buildNimony()
-      buildLengc()
     if args.len > 0:
       for arg in args:
         if arg.dirExists():
           testDirCmd arg, overwrite, forward
         else:
-          test arg, overwrite, findCategory(arg), forward
+          test arg, overwrite, categoryOf(arg), forward
     else:
       quit "`test` takes an argument"
   of "bug", "debug":
@@ -2171,11 +2253,9 @@ proc handleCmdLine =
     if args.len == 2:
       let inp = args[0].addFileExt(".nim")
       let outp = args[1].addFileExt(".nim")
-      let cat = findCategory(args[1])
-      if splitFile(args[1]).dir == "":
-        record inp, "tests/nimony/basics" / outp, flags, cat
-      else:
-        record inp, outp, flags, cat
+      let dest = if splitFile(args[1]).dir == "": "tests/nimony/basics" / outp
+                 else: outp
+      record inp, dest, flags, categoryOf(dest)
     else:
       quit "`record` takes two arguments"
   of "clean":
@@ -2192,6 +2272,14 @@ proc handleCmdLine =
   of "push":
     pullpush("push")
   else:
-    quit "invalid command: " & primaryCmd
+    if dirExists(rawPrimary):
+      walkCmd(rawPrimary, forward, overwrite)
+    else:
+      quit "invalid command: " & primaryCmd
 
-handleCmdLine()
+# `handleCmdLine()` runs only when hastur is the program. Imported as a module
+# (e.g. from a directory's `setup.nim` custom runner) it is just the test kit:
+# `runNifToolTests`, `buildNj`, the toolchain resolution, counters, … with no
+# CLI side effects.
+when isMainModule:
+  handleCmdLine()

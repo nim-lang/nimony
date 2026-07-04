@@ -62,7 +62,7 @@ proc buildSymChoiceForDot(c: var SemContext; dest: var TokenBuf; identifier: Str
     dest.add identToken(identifier, info)
 
 proc isNonOverloadable*(t: SymKind): bool {.inline.} =
-  t in {LetY, VarY, ParamY, TypevarY, ConstY, TypeY, ResultY, FldY, GfldY, CursorY, PatternvarY, BlockY, GletY, TletY, GvarY, TvarY}
+  t in {LetY, VarY, ParamY, TypevarY, StaticTypevarY, ConstY, TypeY, ResultY, FldY, GfldY, CursorY, PatternvarY, BlockY, GletY, TletY, GvarY, TvarY}
 
 proc buildSymChoiceForSelfModule*(c: var SemContext; dest: var TokenBuf;
                                   identifier: StrId; info: PackedLineInfo): int =
@@ -225,18 +225,10 @@ proc buildErr*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; msg:
     if n.tagId == nifstreams.ErrT:
       hasErr = true
     else:
-      var nested = 0
-      while true:
-        inc n
-        if n.kind == ParRi:
-          if nested == 0: break
-          dec nested
-        elif n.kind == ParLe:
-          if n.tagId == nifstreams.ErrT:
-            hasErr = true
-            break
-          else:
-            inc nested
+      n.linearScan:
+        if n.tagId == nifstreams.ErrT:
+          hasErr = true
+          break
   let info = if hasErr: n.info else: info
   dest.buildTree ErrT, info:
     if hasErr:
@@ -417,7 +409,7 @@ proc identToSym*(c: var SemContext; str: sink string; kind: SymKind): SymId =
   if kind in {FldY, GfldY}:
     c.makeFieldSym(name)
   elif c.currentScope.kind == ToplevelScope or
-      kind in {TypevarY, ProcY, FuncY, ConverterY, MethodY, TemplateY, MacroY, IteratorY, TypeY, EfldY}:
+      kind in {TypevarY, StaticTypevarY, ProcY, FuncY, ConverterY, MethodY, TemplateY, MacroY, IteratorY, TypeY, EfldY}:
     c.makeGlobalSym(name)
   else:
     c.makeLocalSym(name)
@@ -488,16 +480,30 @@ proc handleSymDef*(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: S
   let info = n.info
   if n.kind == Ident:
     let lit = n.litId
-    let def = identToSym(c, lit, kind)
-    let s = Sym(kind: kind, name: def,
-                pos: dest.len)
-    result = DelayedSym(status: OkNew, lit: lit, s: s, info: info)
-    dest.add symdefToken(def, info)
-    inc n
+    if kind in {LetY, VarY, GletY, GvarY, TletY, TvarY} and
+        c.currentScope.kind == ToplevelScope and
+        c.onDemandResolved.hasKey(lit):
+      # #1974: this toplevel let/var was already resolved on demand in the
+      # signature phase (for a `when` condition). Reuse that symbol so the
+      # body phase neither redeclares it nor shifts its global-counter name.
+      # `getOrDefault` (not `[]`) because nimony rejects the raising `Table.[]`
+      # in effect-checked code; presence is already guaranteed by `hasKey` above.
+      let def = c.onDemandResolved.getOrDefault(lit, SymId(0))
+      let s = Sym(kind: kind, name: def, pos: dest.len)
+      result = DelayedSym(status: OkExistingFresh, lit: lit, s: s, info: info)
+      dest.add symdefToken(def, info)
+      inc n
+    else:
+      let def = identToSym(c, lit, kind)
+      let s = Sym(kind: kind, name: def,
+                  pos: dest.len)
+      result = DelayedSym(status: OkNew, lit: lit, s: s, info: info)
+      dest.add symdefToken(def, info)
+      inc n
   elif n.kind == SymbolDef:
     discard "ok, and no need to re-add it to the symbol table ... or is there?"
     let status =
-      if c.phase == SemcheckBodies and kind in {ParamY, TypevarY}: OkNew
+      if c.phase == SemcheckBodies and kind in {ParamY, TypevarY, StaticTypevarY}: OkNew
       elif not c.freshSyms.missingOrExcl(n.symId): OkExistingFresh
       else: OkExisting
 

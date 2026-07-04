@@ -501,13 +501,20 @@ proc takeTypeVars(g: var SrcGen, n: var Cursor) =
       else:
         afterFirst = true
 
+      let isStatic = n.symKind == StaticTypevarY
       let typevar = takeLocal(n, SkipFinalParRi)
       var name = typevar.name
       gsub(g, name)
       var typ = typevar.typ
       if typ.kind != DotToken:
         putWithSpace(g, tkColon, ":")
-        gtype(g, typ, emptyContext)
+        if isStatic:
+          put(g, tkSymbol, "static")
+          put(g, tkBracketLe, "[")
+          gtype(g, typ, emptyContext)
+          put(g, tkBracketRi, "]")
+        else:
+          gtype(g, typ, emptyContext)
 
     skipParRi(n)
     put(g, tkBracketRi, "]")
@@ -786,23 +793,21 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
       skip n
     of CstringT, PointerT:
       put(g, tkSymbol, $n.typeKind)
-      inc n
-      if n.hasMore and n.substructureKind == NotnilU:
-        put(g, tkSpaces, Space)
-        put(g, tkSymbol, "not")
-        put(g, tkSpaces, Space)
-        put(g, tkNil, "nil")
-        skip n
-      elif n.hasMore and n.substructureKind == NilU:
-        # rendered as prefix: nil cstring
-        skip n
-      elif n.hasMore:
-        skip n # unchecked or other annotation
-      # Skip any importc/header attrs trailing the nilness annotation —
-      # these get inlined when a `{.importc.}` pointer alias is expanded.
-      while n.kind != ParRi:
-        skip n
-      skipParRi(n)
+      # Render the leading nilness annotation; `peekInto` then skips any
+      # trailing importc/header attrs (inlined when a `{.importc.}` pointer
+      # alias is expanded) and the closing `)` — no manual mop-up needed.
+      n.peekInto:
+        if n.hasMore and n.substructureKind == NotnilU:
+          put(g, tkSpaces, Space)
+          put(g, tkSymbol, "not")
+          put(g, tkSpaces, Space)
+          put(g, tkNil, "nil")
+          skip n
+        elif n.hasMore and n.substructureKind == NilU:
+          # rendered as prefix: nil cstring
+          skip n
+        elif n.hasMore:
+          skip n # unchecked or other annotation
     of OrdinalT:
       put(g, tkSymbol, "Ordinal")
       inc n
