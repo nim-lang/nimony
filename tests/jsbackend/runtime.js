@@ -139,6 +139,19 @@ function _jsNewObject(){ return _jsNew({}); }
 function _jsCtor0(ctorH){ return _jsNew(new (_jsv[ctorH])()); }
 function _jsCtor1(ctorH, aH){ return _jsNew(new (_jsv[ctorH])(_jsv[aH])); }
 
+// JS arrays. An array is just another JS value in the table; `_jsArrGet` interns
+// a *new* handle to the element (owned by the returned JsValue), and `push`/set
+// hand the array a direct reference to the element value — so releasing the Nim
+// handle slot afterwards never disturbs the array's own reference (JS GC keeps
+// the value alive as long as the array does). Floats need no bridge of their
+// own: on --bits:32 a Nim float is already a JS Number, so `toJs(float)` reuses
+// `_numToJs` and `toFloat` reuses `_jsToNum`.
+function _jsNewArray(){ return _jsNew([]); }
+function _jsArrLen(h){ return _jsv[h].length; }
+function _jsArrPush(h, vH){ _jsv[h].push(_jsv[vH]); }
+function _jsArrGet(h, i){ return _jsNew(_jsv[h][Number(i)]); }
+function _jsArrSet(h, i, vH){ _jsv[h][Number(i)] = _jsv[vH]; }
+
 // Nim proc -> JS function (the reverse of the _fns call table): a Nim proc used
 // as a value lowers to an integer _fns index, so wrap that in a JS closure. The
 // closure marshals each incoming JS argument to a `JsValue` — which the backend

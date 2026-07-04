@@ -1,0 +1,7 @@
+float round-trip: 3.5
+len: 3
+a[0]: x
+a[1] as int: 42
+a[1] after set: 99
+json: ["x",99,true]
+joined: x-99-true

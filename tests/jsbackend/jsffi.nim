@@ -39,8 +39,16 @@ proc rawStrInto(h: int32; dst: cstring) {.importc: "_jsStrInto".}
 
 proc rawNumToJs(x: int): int32 {.importc: "_numToJs".}
 proc rawToNum(h: int32): int {.importc: "_jsToNum".}
+proc rawFloatToJs(x: float): int32 {.importc: "_numToJs".}   # a Nim float is already a JS Number
+proc rawToFloat(h: int32): float {.importc: "_jsToNum".}
 proc rawBoolToJs(b: bool): int32 {.importc: "_boolToJs".}
 proc rawToBool(h: int32): bool {.importc: "_jsToBool".}
+
+proc rawNewArray(): int32 {.importc: "_jsNewArray".}
+proc rawArrLen(h: int32): int {.importc: "_jsArrLen".}
+proc rawArrPush(h, v: int32) {.importc: "_jsArrPush".}
+proc rawArrGet(h: int32; i: int): int32 {.importc: "_jsArrGet".}
+proc rawArrSet(h: int32; i: int; v: int32) {.importc: "_jsArrSet".}
 
 proc rawGlobalH(nameH: int32): int32 {.importc: "_jsGlobalH".}
 proc rawGetProp(obj, name: int32): int32 {.importc: "_jsGetProp".}
@@ -80,6 +88,10 @@ proc toJs*(x: int): JsValue {.inline.} = JsValue(h: rawNumToJs(x))
   ## A Nim `int` as a JS Number.
 proc toInt*(v: JsValue): int {.inline.} = rawToNum(v.h)
   ## A JS Number as a Nim `int` (unchecked).
+proc toJs*(x: float): JsValue {.inline.} = JsValue(h: rawFloatToJs(x))
+  ## A Nim `float` as a JS Number.
+proc toFloat*(v: JsValue): float {.inline.} = rawToFloat(v.h)
+  ## A JS Number as a Nim `float`.
 proc toJs*(b: bool): JsValue {.inline.} = JsValue(h: rawBoolToJs(b))
 proc toBool*(v: JsValue): bool {.inline.} = rawToBool(v.h)
 
@@ -99,6 +111,19 @@ proc `$`*(v: JsValue): string {.inline.} = toStr(v)
 
 proc newJsObject*(): JsValue {.inline.} = JsValue(h: rawNewObject())
   ## An empty JS `{}` object.
+
+# ── JS arrays ────────────────────────────────────────────────────────────────
+proc newJsArray*(): JsValue {.inline.} = JsValue(h: rawNewArray())
+  ## An empty JS `[]` array.
+proc len*(arr: JsValue): int {.inline.} = rawArrLen(arr.h)
+  ## `arr.length`.
+proc add*(arr: JsValue; val: JsValue) {.inline.} = rawArrPush(arr.h, val.h)
+  ## `arr.push(val)`. The array takes its own reference to the value, so `val`'s
+  ## handle may be released afterwards without affecting the array.
+proc `[]`*(arr: JsValue; i: int): JsValue {.inline.} = JsValue(h: rawArrGet(arr.h, i))
+  ## `arr[i]` — returns a fresh owning handle to the element.
+proc `[]=`*(arr: JsValue; i: int; val: JsValue) {.inline.} = rawArrSet(arr.h, i, val.h)
+  ## `arr[i] = val`.
 
 # ── Nim procs as JS callbacks (event handlers) ───────────────────────────────
 type
