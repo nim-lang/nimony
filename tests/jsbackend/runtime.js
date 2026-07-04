@@ -88,3 +88,47 @@ function fputc(c,f){ _stream(f).write(Buffer.from([c&0xff])); return c; }
 function nimFlushStdStreams(){}
 function copyMem_0_sysvq0asl(d,s,n){ if(typeof d==='number'&&typeof s==='number') _u8.copyWithin(d,s,s+n); }
 function exit(c){ process.exit(Number(c)||0); }
+
+// ── JS-value interop bridge (std/jsffi) ──────────────────────────────────────
+// Native Nim data lives in linear memory as byte offsets; a *JS* value (string,
+// object, function, DOM node) can't. So Nim holds an integer HANDLE into this
+// side table — the generalisation of the `_fns` proc-pointer table above. Slot 0
+// is `undefined`/`null` (matches nil = offset 0), freed slots are recycled.
+const _jsv = [undefined];
+const _jsvFree = [];
+function _jsNew(v){                                   // intern a JS value -> handle
+  if (v === undefined || v === null) return 0;
+  const i = _jsvFree.length ? _jsvFree.pop() : _jsv.length;
+  _jsv[i] = v; return i;
+}
+function _jsRelease(h){ if (h > 0){ _jsv[h] = undefined; _jsvFree.push(h); } }
+
+// Strings cross the linear-memory boundary as UTF-8 bytes. `_strToJs` decodes a
+// (ptr,len) slice of Nim string storage into a real JS string; the read-back is
+// two calls (length, then copy) so no scratch region leaks — and since JS
+// strings are immutable, both just encode the same handle (no cached state).
+const _td = new TextDecoder(), _te = new TextEncoder();
+function _strToJs(p, n){ return _jsNew(_td.decode(_u8.subarray(Number(p), Number(p) + Number(n)))); }
+function _jsStrLen(h){ return _te.encode(String(_jsv[h])).length; }
+function _jsStrInto(h, dst){ _u8.set(_te.encode(String(_jsv[h])), Number(dst)); }
+
+// JS `===` (value/identity), so two distinct handles to the same value compare
+// equal — handle-integer equality would not.
+function _jsStrictEq(aH, bH){ return _jsv[aH] === _jsv[bH] ? 1 : 0; }
+
+// Number/bool bridges: on --bits:32 a Nim int is already a JS Number.
+function _numToJs(x){ return _jsNew(Number(x)); }
+function _jsToNum(h){ return _jsv[h]; }
+function _boolToJs(x){ return _jsNew(!!x); }
+function _jsToBool(h){ return _jsv[h] ? 1 : 0; }
+
+// Global lookup + property/method access, all keyed by JS-string handles so the
+// member name itself rides the same marshalling path (no C string constants).
+function _jsGlobalH(nameH){ return _jsNew(globalThis[_jsv[nameH]]); }
+function _jsGetProp(oH, nameH){ return _jsNew(_jsv[oH][_jsv[nameH]]); }
+function _jsSetProp(oH, nameH, vH){ _jsv[oH][_jsv[nameH]] = _jsv[vH]; }
+function _jsCall0(oH, nameH){ const o = _jsv[oH]; return _jsNew(o[_jsv[nameH]]()); }
+function _jsCall1(oH, nameH, aH){ const o = _jsv[oH]; return _jsNew(o[_jsv[nameH]](_jsv[aH])); }
+function _jsCall2(oH, nameH, aH, bH){ const o = _jsv[oH]; return _jsNew(o[_jsv[nameH]](_jsv[aH], _jsv[bH])); }
+function _jsCall3(oH, nameH, aH, bH, cH){ const o = _jsv[oH]; return _jsNew(o[_jsv[nameH]](_jsv[aH], _jsv[bH], _jsv[cH])); }
+function _jsNewObject(){ return _jsNew({}); }

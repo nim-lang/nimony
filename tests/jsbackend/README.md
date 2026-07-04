@@ -76,7 +76,8 @@ the page primitives it sits on, carved from the same `ArrayBuffer`; real `alloc`
 `dealloc`/`realloc` with free-list reuse run as Nim code, so there is no
 JS-side bump shim. (`munmap` is a no-op — whole-page reclamation is deferred —
 but the allocator reuses cells within its arenas.) Whole-program `{.bundle.}`
-wiring + JS interop remain the open items.
+wiring is the remaining native-path open item; **JS value interop now has its
+foundation** (see below).
 
 **Addresses.** A pointer is a single integer **byte offset** into the shared
 `ArrayBuffer` — the C memory model, one cast-transparent representation with no
@@ -111,6 +112,21 @@ the linear-memory model reads and writes through, and a `memcmp`/`memcpy` pair.
 Strings resolve their data path (`readRawData` into the SSO/heap bytes) against
 that buffer, so both `echo "…"` and `$`-of-int print correctly.
 
+**JS value interop (`jsffi`).** Native Nim data lives in linear memory as byte
+offsets; a genuine JS value (string, object, function, DOM node) cannot. So the
+interop layer holds each such value in a runtime-side table and hands Nim an
+integer **handle** — the same idea as the proc-pointer `_fns` table, generalised
+to arbitrary values (slot `0` = `undefined`/`null`, mirroring nil). This rides
+the existing `importc` seam: `jsffi.nim` declares body-less `importc` procs that
+lower to calls of the runtime's bridge functions (`_strToJs`, `_jsGetProp`,
+`_jsCall*`, …). On top of that seam it exposes an ergonomic surface —
+`toJs`/`toStr`/`toInt`/`toBool` marshalling (strings cross as UTF-8 bytes),
+`global`/`get`/`set`/`call` for globals, properties and methods, and `==` as JS
+`===`. This is the foundation a DOM binding sits on. Handles are **not** yet
+GC-integrated: a value you keep should be `release`d (the wrappers release the
+transient member-name handles they create); Nim→JS callbacks and destructor
+integration are the next increments.
+
 ## Test
 
 The suite is a hastur **custom runner** (`setup.nim`, the mechanism from the
@@ -138,5 +154,7 @@ building), `tarith` (integer ops that stay Numbers), `tfloat` (float arithmetic
 two's-complement wraparound), `tconv` (8/16-bit narrowing, int↔BigInt,
 int64↔uint64 signedness), `tcontrol` (if/while/for/case), `tproc` (recursion),
 `tobject`/`tvariant` (object + tagged-union layout in linear memory), `tseq`
-(sequence growth + iteration), `tptr` (`addr`/store-through-deref), and `texc`
-(nimony's heap-exception lowering: raise / try-except / resume).
+(sequence growth + iteration), `tptr` (`addr`/store-through-deref), `texc`
+(nimony's heap-exception lowering: raise / try-except / resume), and `tffi`
+(JS value interop: marshal Nim strings/ints/bools to and from real JS values,
+call host `console`/`Math`/`JSON`, read results back).

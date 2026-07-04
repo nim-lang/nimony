@@ -1,0 +1,9 @@
+hello from Nim through a real JS string
+Math.max(3, 7)    = 7
+Math.max(3, 7, 5) = 7
+back in Nim: round-trip
+o.year via get = 2026
+{"name":"nimony","year":2026}
+bool round-trip: true false
+missing prop isNil: true
+self === self: true
