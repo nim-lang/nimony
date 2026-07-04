@@ -1743,15 +1743,25 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         # handled in linearMatch
         linearMatch m, f, a
     of RangetypeT:
-      # for now acts the same as base type
+      # A `range[lo..hi]` matches structurally on its *base type* only; whether
+      # a value actually fits the bounds (and whether one range is a subset of
+      # another) is a proof obligation discharged later by the contracts engine
+      # (see `checkRangeAssign` in contracts_njvl.nim), not a type-match failure
+      # here. This deliberately accepts legal narrowings such as
+      # `range[2..5]` -> `range[0..10]` that an exact-tree match would reject.
       var a = skipModifier(arg.typ)
       if a.typeKind == RangetypeT:
-        linearMatch m, f, a
+        var fb = f
+        var ab = a
+        inc fb # -> formal base type
+        inc ab # -> arg base type
+        linearMatch m, fb, ab # base types must be compatible
+        skip f # consume the whole formal range type
       else:
         inc f # skip to base type
         linearMatch m, f, a
-        skip f
-        skip f
+        skip f # lo bound
+        skip f # hi bound
         expectParRi m, f
     of ArrayT:
       var a = skipModifier(arg.typ)
