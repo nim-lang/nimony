@@ -462,10 +462,43 @@ proc isEnumFieldSym(n: Cursor): bool =
   result = res.status == LacksNothing and res.decl.symKind == EfldY
 
 proc isStaticValue(n: Cursor): bool =
-  ## a canonical compile-time value as bound to a `staticTypevar`
-  n.kind in {IntLit, UIntLit, FloatLit, CharLit, StringLit} or
-    n.exprKind in {FalseX, TrueX, SufX} or
-    isEnumFieldSym(n)
+  ## a canonical compile-time value as bound to a `staticTypevar`: a primitive
+  ## literal, an enum field, or a typed aggregate constructor (array/set/tuple/
+  ## object) whose elements are themselves static.
+  case n.kind
+  of IntLit, UIntLit, FloatLit, CharLit, StringLit:
+    result = true
+  of Symbol:
+    result = isEnumFieldSym(n)
+  of ParLe:
+    case n.exprKind
+    of FalseX, TrueX, SufX:
+      result = true
+    of AconstrX, SetconstrX, TupconstrX, OconstrX:
+      var elem = n
+      inc elem
+      skip elem # type
+      result = true
+      while elem.hasMore:
+        if elem.substructureKind in {KvU, RangeU}:
+          inc elem
+          skip elem # key or range start
+          if not isStaticValue(elem):
+            result = false
+            break
+          skip elem
+          if elem.kind == ParRi:
+            break
+          inc elem
+        else:
+          if not isStaticValue(elem):
+            result = false
+            break
+          skip elem
+    else:
+      result = false
+  else:
+    result = false
 
 proc semStaticInvokeArg(c: var SemContext; dest: var TokenBuf; n: var Cursor;
                         elemType: Cursor; info: PackedLineInfo): bool =

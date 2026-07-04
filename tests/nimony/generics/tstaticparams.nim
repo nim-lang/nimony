@@ -99,3 +99,20 @@ let wide = concatCols(col, pair)   # Matrix[2, 3, int] = [[1, 3, 4], [2, 5, 6]]
 echo wide.data[0]
 echo wide.data[3]
 echo sizeof(wide)                  # 2 * 3 * 8 = 48
+
+# a non-primitive (aggregate) value is accepted as a compile-time generic value:
+# an array literal bound to a `static[openArray[T]]` parameter.
+proc countValues[XS: static[openArray[int]]](): int = XS.len
+
+echo countValues[[1, 2, 3, 4]]()   # 4
+
+# overload resolution folds already-bound `static[int]` params when matching an
+# array length, so `array[R * C, T]` resolves for `array[6, T]`.
+proc takesFlat[R, C: static[int]; T](x: array[R * C, T]): int = x.len
+
+var flat: array[6, int]
+echo takesFlat[3, 2, int](flat)    # 6
+
+# the folded length also works when a bound value comes from a `const`.
+const rows = 3
+echo takesFlat[rows, 2, int](flat) # rows * 2 == 6
