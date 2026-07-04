@@ -35,7 +35,7 @@ import std / [sets, tables, hashes, assertions, syncio]
 
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, typeprops]
+import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, typeprops, reporters]
 import ".." / models / tags
 import duplifier, passes
 include ".." / nimony / nif_annotations
@@ -114,7 +114,9 @@ proc localsThatBecomeTuples*(n: Cursor): HashSet[SymId] =
 
 proc callCanRaise*(typeCache: var TypeCache; n: Cursor): bool =
   var fnType = skipProcTypeToParams(getType(typeCache, n.firstSon))
-  assert fnType.tagEnum == ParamsTagId
+  if fnType.tagEnum != ParamsTagId:
+    raiseAssert "BUG eraiser callCanRaise: callee type not params at " & infoToStr(n.info) &
+         ": " & toString(getType(typeCache, n.firstSon), false)
   skip fnType # params
   skip fnType # return type
   # now pragmas follow:
@@ -126,7 +128,9 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
   let callStart = n # skip `(call)`
   n = sub(n)
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
-  assert fnType.tagEnum == ParamsTagId
+  if fnType.tagEnum != ParamsTagId:
+    raiseAssert "BUG eraiser trCall: callee type not params at " & infoToStr(info) &
+         ": " & toString(getType(c.typeCache, n), false)
   skip fnType # params
   let retType = fnType
   skip fnType # return type
