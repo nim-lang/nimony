@@ -433,18 +433,18 @@ var
 proc setup*(entries: cint, params: ptr Params): FileHandle {.raises, tags: [].} =
   result = syscall(SYS_io_uring_setup, entries, params, 0, 0, 0, 0)
   if result < 0:
-    raiseOSError osLastError()
+    raiseOSError(osLastError(), "io_uring setup syscall failed")
 
 proc enter*(fd: cint, toSubmit: cint, minComplete: cint,
             flags: cint, sig: nil ptr Sigset, sz: cint): cint {.raises, tags: [].} =
   result = syscall(SYS_io_uring_enter, fd, toSubmit, minComplete, flags, sig, sz)
   if result < 0:
-    raiseOSError osLastError()
+    raiseOSError(osLastError(), "io_uring enter syscall failed")
 
 proc register*(fd: cint, op: cint, arg: nil pointer, nr_args: cint): cint {.raises, tags: [].} =
   result = syscall(SYS_io_uring_register, fd, op, arg, nr_args, 0, 0)
   if result < 0:
-    raiseOSError osLastError()
+    raiseOSError(osLastError(), "io_uring register syscall failed")
 
 # ============= QUEUE ==================
 
@@ -457,50 +457,46 @@ proc uringMap(offset: Off; fd: FileHandle; begin: uint32;
   result = mmap(nil, size, PROT_READ or PROT_WRITE, MAP_SHARED or MAP_POPULATE,
                 fd.cint, offset)
   if result == MAP_FAILED:
-    raiseOSError osLastError()
+    raiseOSError(osLastError(), "io_uring uringMap failed")
 
 proc uringUnmap(p: pointer; size: int) {.raises, tags: [].} =
   ## interface to tear down some memory (probably mmap'd)
   let code = munmap(p, size)
   if code < 0:
-    raiseOSError osLastError()
+    raiseOSError(osLastError(), "io_uring uringUnmap failed")
 
 type
   Ring = object of RootObj
-    head: ptr uint32
-    tail: ptr uint32
-    mask: ptr uint32
+    head*: ptr uint32
+    tail*: ptr uint32
+    mask*: ptr uint32
     entries*: ptr uint32
     size*: uint32
-    ring: pointer
+    ring*: pointer
 
-  SqRing = object of Ring
+  SqRing* = object of Ring
     flags*: ptr SqringFlags
-    dropped: pointer
-    array: pointer
-    sqes: ptr Sqe
-    sqeTail: uint32
-    sqeHead: uint32
+    dropped*: pointer
+    array*: pointer
+    sqes*: ptr Sqe
+    sqeTail*: uint32
+    sqeHead*: uint32
 
-  CqRing = object of Ring
+  CqRing* = object of Ring
     flags*: ptr CqringFlags
     overflow*: ptr int
-    cqes: pointer
+    cqes*: pointer
   
   Queue* = object
     params*: ptr Params
     fd*: FileHandle
     cq*: CqRing
     sq*: SqRing
-  
-  IoUringError* = distinct int
 
 const
   defaultFlags: SetupFlags = {}
-  ERROR_io_uring_not_initializes = IoUringError(1)
-  ERROR_entries_must_be_power_of_two = IoUringError(2)
 
-proc newRing(fd: FileHandle; offset: ptr CqringOffsets; size: uint32): CqRing {.raises: IoUringError, tags: [].} =
+proc newRing(fd: FileHandle; offset: ptr CqringOffsets; size: uint32): CqRing {.raises, tags: [].} =
   ## mmap a Cq ring from the given file-descriptor, using the size spec'd
   let ring = OFF_CQ_RING.uringMap(fd, offset.cqes, size, sizeof(Cqe))
   result = CqRing(
@@ -512,10 +508,10 @@ proc newRing(fd: FileHandle; offset: ptr CqringOffsets; size: uint32): CqRing {.
     tail: cast[ptr uint32](ring + offset.tail),
     mask: cast[ptr uint32](ring + offset.ringMask),
     entries: cast[ptr uint32](ring + offset.ringEntries))
-  if offset.ringEntries <= 0:
-    raise ERROR_io_uring_not_initializes
+  # if offset.ringEntries <= 0:
+  #   raise ERROR_io_uring_not_initializes
 
-proc newRing(fd: FileHandle; offset: ptr SqringOffsets; size: uint32): SqRing {.raises: IoUringError, tags: [].} =
+proc newRing(fd: FileHandle; offset: ptr SqringOffsets; size: uint32): SqRing {.raises, tags: [].} =
   ## mmap a Sq ring from the given file-descriptor, using the size spec'd
   let ring = OFF_SQ_RING.uringMap(fd, offset.array, size, sizeof(pointer))
   result = SqRing(
@@ -529,10 +525,11 @@ proc newRing(fd: FileHandle; offset: ptr SqringOffsets; size: uint32): SqRing {.
     mask: cast[ptr uint32](ring + offset.ringMask),
     entries: cast[ptr uint32](ring + offset.ringEntries))
   # Directly map SQ slots to SQEs
+  var arr = cast[ptr UncheckedArray[uint32]](result.array)
   for i in 0..size.int:
-    cast[ptr UncheckedArray[uint32]](result.array)[i] = i.uint32
-  if offset.ringEntries <= 0:
-    raise ERROR_io_uring_not_initializes
+    arr[i] = i.uint32
+  # if offset.ringEntries <= 0:
+  #   raise ERROR_io_uring_not_initializes
 
 # XXX: is it ok that =destroy can raise error?
 proc `=destroy`(queue: Queue) {.raises, tags: [].} =
@@ -559,9 +556,9 @@ proc isPowerOfTwo(x: int): bool = (x != 0) and ((x and (x - 1)) == 0)
 
 proc newQueue*(sqEntries: int;  flags = defaultFlags; sqThreadCpu = 0;
                sqThreadIdle = 0; wqFd = 0; cqEntries = 0
-): Queue {.raises: IoUringError, tags: [].}  =
-  if not sqEntries.isPowerOfTwo:
-    raise ERROR_entries_must_be_power_of_two
+): Queue {.raises, tags: [].}  =
+  # if not sqEntries.isPowerOfTwo:
+  #   raise ERROR_entries_must_be_power_of_two
   # var params = createShared(Params)
   var params = cast[ptr Params](alloc(sizeof(Params)))
   params.flags = flags
