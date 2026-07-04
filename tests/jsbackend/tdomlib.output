@@ -1,0 +1,6 @@
+childElementCount: 2
+first tag/text: H1 Hello
+getElementById tag: DIV
+querySelector p: world
+owner->app tag: DIV
+documentElement tag: HTML

@@ -1,12 +1,15 @@
 ## GENERATED from @webref/idl (dom.idl) by gen/idl2nim.js — do not edit by hand.
 ## Regenerate: node gen/idl2nim.js dom DOMTokenList domtokenlist.nim
 ##
-## A jsffi binding for the WHATWG/W3C `DOMTokenList` interface. Each member
-## marshals through jsffi exactly as the hand-written dom.nim does.
+## jsffi bindings for the WHATWG/W3C DOMTokenList interface.
+## Each interface is a JsValue alias; interface-typed members are typed by name
+## so DOM-tree navigation reads (and, once distinct, checks) like a real DOM API.
 import jsffi
 
 type
   DOMTokenList* = JsValue
+
+# ── DOMTokenList ─────────────────────────────────────────────────────────────
 
 proc length*(self: DOMTokenList): int = self.get("length").toInt
 
@@ -35,4 +38,4 @@ proc value*(self: DOMTokenList): string = $self.get("value")
 proc `value=`*(self: DOMTokenList; value: string) = self.set("value", toJs(value))
 
 ## SKIPPED (not yet generated — extend gen/idl2nim.js to cover):
-##   - iterable member
+##   - DOMTokenList iterable member

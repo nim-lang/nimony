@@ -1,12 +1,16 @@
 ## GENERATED from @webref/idl (url.idl) by gen/idl2nim.js — do not edit by hand.
 ## Regenerate: node gen/idl2nim.js url URL weburl.nim
 ##
-## A jsffi binding for the WHATWG/W3C `URL` interface. Each member
-## marshals through jsffi exactly as the hand-written dom.nim does.
+## jsffi bindings for the WHATWG/W3C URL interface.
+## Each interface is a JsValue alias; interface-typed members are typed by name
+## so DOM-tree navigation reads (and, once distinct, checks) like a real DOM API.
 import jsffi
 
 type
   URL* = JsValue
+  URLSearchParams* = JsValue
+
+# ── URL ─────────────────────────────────────────────────────────────
 
 proc newURL*(url: string): URL =
   newOf("URL", [toJs(url)])
@@ -43,7 +47,7 @@ proc `pathname=`*(self: URL; value: string) = self.set("pathname", toJs(value))
 proc search*(self: URL): string = $self.get("search")
 proc `search=`*(self: URL; value: string) = self.set("search", toJs(value))
 
-proc searchParams*(self: URL): JsValue = self.get("searchParams")
+proc searchParams*(self: URL): URLSearchParams = self.get("searchParams")
 
 proc hash*(self: URL): string = $self.get("hash")
 proc `hash=`*(self: URL; value: string) = self.set("hash", toJs(value))
@@ -51,5 +55,5 @@ proc `hash=`*(self: URL; value: string) = self.set("hash", toJs(value))
 proc toJSON*(self: URL): string = $self.call("toJSON")
 
 ## SKIPPED (not yet generated — extend gen/idl2nim.js to cover):
-##   - static op parse
-##   - static op canParse
+##   - URL.parse static op
+##   - URL.canParse static op

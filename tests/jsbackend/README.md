@@ -233,14 +233,30 @@ the mixins each level `includes` — with most-derived-winning on name clashes
 re-declarations don't). So a single generated `Element` carries `appendChild`
 (from `Node`), `addEventListener`/`dispatchEvent` (from `EventTarget`),
 `append`/`querySelector`/`children` (from the `ParentNode` mixin) and `remove`
-(from `ChildNode`) directly — 103 members from six sources. Ancestors that live
+(from `ChildNode`) directly — 95 members from six sources. Ancestors that live
 in a different spec file are noted as unresolved rather than silently dropped.
 
-`weburl.nim` and `element.nim` are checked-in generator output (`node
-gen/idl2nim.js url URL weburl.nim`, `node gen/idl2nim.js dom Element
-element.nim`; regenerate after `npm install`). `turl` exercises the flat `URL`;
-`telement` drives the flattened `Element` against jsdom, hitting members from
-its own interface, both ancestors, and three mixins in one test.
+**Several interfaces generate into one typed module.** Pass more than one
+interface — `node gen/idl2nim.js dom Node domlib.nim Element Document
+DocumentFragment` — and the generator emits a single module where interface-typed
+members are typed *by name*: `document.createElement`/`getElementById`/
+`querySelector` return `Element`, `element.ownerDocument` returns `Document`,
+`appendChild` takes and returns `Node`. So DOM-tree navigation is typed end to
+end from one `import`. Because every interface is a (non-`distinct`) `JsValue`
+alias, the same flattened member collapses to one Nim signature across
+interfaces, so the generator dedups globally — `appendChild` is emitted once,
+callable on any node type — and the typing is currently documentation that reads
+like a real DOM API and is ready to switch to `distinct` types later. A member
+that would return-type-collide with one of jsffi's own `(JsValue, string)`
+accessor verbs (`get`/`set`/`call`/`apply`) is skipped rather than redefine them;
+verbs with a distinct shape (`DOMTokenList.add(openArray)`) are fine and kept.
+
+`weburl.nim`, `element.nim`, `domtokenlist.nim` (single-interface) and
+`domlib.nim` (the `Node`/`Element`/`Document`/`DocumentFragment` module) are all
+checked-in generator output (regenerate after `npm install`). `turl` exercises
+the flat `URL`; `telement` drives the flattened `Element` against jsdom;
+`tdomlib` navigates a built tree with fully typed results (`Element`/`Document`/
+`Node`) through the one module.
 `webidl2`/`@webref/idl` are dev-only, like jsdom — the generated `.nim` is
 committed, so `turl` needs neither them nor a DOM env. This is the path to
 spec-backed coverage; adding `@mdn/browser-compat-data` later gates which
