@@ -78,19 +78,27 @@ if (iface.inheritance) {
 out.push(``);
 
 const self = "self";
+const paramOf = (a) => `${nid(a.name)}: ${mapType(a.idlType).nim}`;
+
 for (const m of iface.members) {
   if (m.type === "constructor") {
-    if (m.arguments.some((a) => a.variadic)) { skipped.push(`constructor (variadic)`); continue; }
-    const req = m.arguments.filter((a) => !a.optional); // required args only (v1)
-    const params = req.map((a) => `${nid(a.name)}: ${mapType(a.idlType).nim}`).join("; ");
-    const jsArgs = req.map((a) => mapType(a.idlType).toJs(nid(a.name)));
-    const body = jsArgs.length === 0
-      ? `newOf("${ifaceName}")`
-      : `newOf("${ifaceName}", [${jsArgs.join(", ")}])`;
-    out.push(`proc new${ifaceName}*(${params}): ${ifaceName} =`);
-    out.push(`  ${body}`);
-    if (m.arguments.some((a) => a.optional)) skipped.push(`constructor optional arg(s): ${m.arguments.filter(a=>a.optional).map(a=>a.name).join(", ")}`);
-    out.push(``);
+    const args = m.arguments;
+    if (args.length && args[args.length - 1].variadic) { skipped.push(`constructor (variadic)`); continue; }
+    // One overload per arity, from the required count up to all args (WebIDL
+    // guarantees optionals trail), so `new URL(url)` and `new URL(url, base)`
+    // both exist.
+    const required = args.filter((a) => !a.optional).length;
+    for (let k = required; k <= args.length; k++) {
+      const sub = args.slice(0, k);
+      const params = sub.map(paramOf).join("; ");
+      const jsArgs = sub.map((a) => mapType(a.idlType).toJs(nid(a.name)));
+      const body = jsArgs.length === 0
+        ? `newOf("${ifaceName}")`
+        : `newOf("${ifaceName}", [${jsArgs.join(", ")}])`;
+      out.push(`proc new${ifaceName}*(${params}): ${ifaceName} =`);
+      out.push(`  ${body}`);
+      out.push(``);
+    }
   } else if (m.type === "attribute") {
     const t = mapType(m.idlType);
     out.push(`proc ${nid(m.name)}*(${self}: ${ifaceName}): ${t.nim} = ${t.fromJs(`${self}.get("${m.name}")`)}`);
@@ -101,22 +109,45 @@ for (const m of iface.members) {
   } else if (m.type === "operation") {
     if (m.special === "static") { skipped.push(`static op ${m.name}`); continue; }
     if (!m.name) { skipped.push(`anonymous/special op (${m.special})`); continue; }
-    if (m.arguments.some((a) => a.variadic || a.optional)) { skipped.push(`op ${m.name} (optional/variadic args)`); continue; }
-    if (m.arguments.length > 3) { skipped.push(`op ${m.name} (>3 args — needs apply)`); continue; }
-    const params = m.arguments.map((a) => `${nid(a.name)}: ${mapType(a.idlType).nim}`).join("; ");
-    const sig = params ? `${self}: ${ifaceName}; ${params}` : `${self}: ${ifaceName}`;
-    const callArgs = m.arguments.map((a) => mapType(a.idlType).toJs(nid(a.name)));
-    const callExpr = callArgs.length
-      ? `${self}.call("${m.name}", ${callArgs.join(", ")})`
-      : `${self}.call("${m.name}")`;
+    const args = m.arguments;
     const ret = m.idlType ? m.idlType.idlType : "undefined";
-    if (ret === "undefined") {
-      out.push(`proc ${nid(m.name)}*(${sig}) = discard ${callExpr}`);
+    const rt = m.idlType ? mapType(m.idlType) : null;
+    const retDecl = ret === "undefined" ? "" : `: ${rt.nim}`;
+
+    if (args.length && args[args.length - 1].variadic) {
+      // Variadic tail -> an openArray param, marshalled into a JS array and
+      // spread via applyArgs (e.g. `classList.add("a", "b")`).
+      const fixed = args.slice(0, -1);
+      const va = args[args.length - 1];
+      const params = [`${self}: ${ifaceName}`]
+        .concat(fixed.map(paramOf))
+        .concat([`${nid(va.name)}: openArray[${mapType(va.idlType).nim}]`])
+        .join("; ");
+      out.push(`proc ${nid(m.name)}*(${params})${retDecl} =`);
+      out.push(`  let a = newJsArray()`);
+      for (const a of fixed) out.push(`  a.add(${mapType(a.idlType).toJs(nid(a.name))})`);
+      out.push(`  for x in ${nid(va.name)}: a.add(${mapType(va.idlType).toJs("x")})`);
+      const call = `${self}.applyArgs("${m.name}", a)`;
+      out.push(ret === "undefined" ? `  discard ${call}` : `  result = ${rt.fromJs(call)}`);
+      out.push(``);
     } else {
-      const t = mapType(m.idlType);
-      out.push(`proc ${nid(m.name)}*(${sig}): ${t.nim} = ${t.fromJs(callExpr)}`);
+      // Fixed/optional args -> one overload per arity (required..all).
+      const required = args.filter((a) => !a.optional).length;
+      for (let k = required; k <= args.length; k++) {
+        if (k > 3) { skipped.push(`op ${m.name} arity ${k} (>3 fixed args)`); continue; }
+        const sub = args.slice(0, k);
+        const params = sub.map(paramOf).join("; ");
+        const sig = params ? `${self}: ${ifaceName}; ${params}` : `${self}: ${ifaceName}`;
+        const callArgs = sub.map((a) => mapType(a.idlType).toJs(nid(a.name)));
+        const callExpr = callArgs.length
+          ? `${self}.call("${m.name}", ${callArgs.join(", ")})`
+          : `${self}.call("${m.name}")`;
+        out.push(ret === "undefined"
+          ? `proc ${nid(m.name)}*(${sig}) = discard ${callExpr}`
+          : `proc ${nid(m.name)}*(${sig})${retDecl} = ${rt.fromJs(callExpr)}`);
+      }
+      out.push(``);
     }
-    out.push(``);
   } else {
     skipped.push(`${m.type} member`);
   }

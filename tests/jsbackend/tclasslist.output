@@ -1,0 +1,10 @@
+length: 2
+contains alpha: true
+contains gamma: false
+item0: alpha
+item1: beta
+value after toggle beta: alpha
+toggle force gamma: true
+value: alpha gamma
+final value: ALPHA gamma
+after remove gamma: ALPHA

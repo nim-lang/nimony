@@ -188,7 +188,10 @@ built from Nim through the `dom.nim` binding slice — `createElement`/`textCont
 click handler and fired via `dispatchEvent`, all against a genuine WHATWG DOM),
 and `turl` (a binding **generated** from official WebIDL — `URL` from
 `@webref/idl` via `gen/idl2nim.js` — constructed, attributes read/written,
-`toJSON` called; `URL` is a native Node global so no DOM env is needed).
+`toJSON` called; `URL` is a native Node global so no DOM env is needed), and
+`tclasslist` (a generated `DOMTokenList` binding — `element.classList` — driving
+the variadic `add`/`remove` and the optional-argument `toggle` overloads against
+jsdom).
 
 **DOM environment (`tdom`).** `document`/`window`/`HTMLElement` don't exist in
 bare Node (only `EventTarget`/`Event` do — which is why `tevent` needs no shim).
@@ -211,9 +214,14 @@ parses it with the standard `webidl2` parser, and emits a `jsffi` binding in
 exactly the `dom.nim` style: an interface becomes a `JsValue` alias, attributes
 become get/set procs, operations become `call` procs, and WebIDL types map to
 Nim through jsffi's marshalling (`DOMString`→`string`, `boolean`→`bool`,
-integer types→`int`, `double`→`float`, other interfaces→`JsValue`). Constructs
-it doesn't yet handle (optional/variadic args, static ops, overloads) are
-emitted as `## SKIPPED` comments so the coverage gap is visible, not silent.
+integer types→`int`, `double`→`float`, other interfaces→`JsValue`). **Optional
+arguments** become one Nim overload per arity (so `new URL(url)` and
+`new URL(url, base)` both exist; `toggle(token)` and `toggle(token, force)`
+both exist), and a **variadic** tail becomes an `openArray` parameter spread
+through `applyArgs` (so `classList.add("a", "b")` works). Constructs it still
+doesn't handle (static ops, `>3`-arg fixed ops, iterables, member-name clashes
+with jsffi's own verbs like `get`/`set`) are emitted as `## SKIPPED` comments
+so the coverage gap is visible, not silent.
 
 `weburl.nim` is the checked-in output of `node gen/idl2nim.js url URL
 weburl.nim` (regenerate with that command after `npm install`); `turl`

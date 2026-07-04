@@ -11,6 +11,9 @@ type
 proc newURL*(url: string): URL =
   newOf("URL", [toJs(url)])
 
+proc newURL*(url: string; base: string): URL =
+  newOf("URL", [toJs(url), toJs(base)])
+
 proc href*(self: URL): string = $self.get("href")
 proc `href=`*(self: URL; value: string) = self.set("href", toJs(value))
 
@@ -48,6 +51,5 @@ proc `hash=`*(self: URL; value: string) = self.set("hash", toJs(value))
 proc toJSON*(self: URL): string = $self.call("toJSON")
 
 ## SKIPPED (not yet generated — extend gen/idl2nim.js to cover):
-##   - constructor optional arg(s): base
 ##   - static op parse
 ##   - static op canParse

@@ -217,11 +217,17 @@ proc instanceOf*(v: JsValue; ctorName: string): bool =
   let c = global(ctorName)
   rawInstanceOf(v.h, c.h)
 
+proc applyArgs*(obj: JsValue; name: string; argsArray: JsValue): JsValue =
+  ## `obj.name(...argsArray)` where `argsArray` is an already-built JS array (a
+  ## `newJsArray()` the caller filled). This is the primitive generated variadic
+  ## bindings use — they build the array element-by-element then call here.
+  let n = toJs(name)
+  JsValue(h: rawApply(obj.h, n.h, argsArray.h))
+
 proc apply*(obj: JsValue; name: string; args: openArray[JsValue]): JsValue =
   ## `obj.name(...args)` — a method call with any number of arguments (the
   ## variadic counterpart of `call`; the args are marshalled through a JS array).
   let arr = newJsArray()
   for x in args:
     arr.add(x)
-  let n = toJs(name)
-  JsValue(h: rawApply(obj.h, n.h, arr.h))
+  obj.applyArgs(name, arr)
