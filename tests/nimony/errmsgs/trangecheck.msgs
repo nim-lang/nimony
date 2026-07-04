@@ -1,0 +1,4 @@
+tests/nimony/errmsgs/trangecheck.nim(7, 25) Error: value out of range: 20 notin 0..10 [pass --verbose for the NJ IR]
+tests/nimony/errmsgs/trangecheck.nim(10, 25) Error: value out of range: 99 notin 0..10 [pass --verbose for the NJ IR]
+tests/nimony/errmsgs/trangecheck.nim(13, 26) Error: value out of range: 50 notin 0..10 [pass --verbose for the NJ IR]
+tests/nimony/errmsgs/trangecheck.nim(19, 27) Error: cannot prove 'e.0' is in range 0..10 [pass --verbose for the NJ IR]
