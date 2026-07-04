@@ -126,7 +126,9 @@ reuses the number bridge), `global`/`get`/`set`/`call` for globals, properties
 and methods, `newOf` for `new Ctor(...)`, `newJsArray`/`add`/`[]`/`[]=`/`len`
 for JS arrays (an `arr[i]` read interns a fresh owning handle; `push` hands the
 array its own reference to the value, so releasing the Nim handle afterwards
-never disturbs it), and `==` as JS `===`. **Nim→JS callbacks** close the loop: a Nim
+never disturbs it), `jsTypeof`/`hasProp`/`instanceOf` for introspection, `apply`
+for a variadic method call (any argument count, marshalled through a JS array),
+and `==` as JS `===`. **Nim→JS callbacks** close the loop: a Nim
 proc used as a value already lowers to an `_fns` table index, so `toJs(someProc)`
 wraps that index in a JS function that marshals the incoming JS arguments to
 handles — an `EventTarget`/`addEventListener` handler written in Nim fires back
@@ -176,6 +178,8 @@ call host `console`/`Math`/`JSON`, read results back), `tevent` (Nim→JS
 callbacks: a Nim proc registered as an `EventTarget` handler, fired by
 `dispatchEvent`, reading the event back — the DOM event mechanism), `tgc`
 (handle GC-integration: transient `JsValue`s reclaimed at scope exit, copies are
-independent slots — 1000 iterations with zero table growth), and `tarray`
+independent slots — 1000 iterations with zero table growth), `tarray`
 (floats and JS arrays: `toFloat` round-trip, build/index/mutate a JS array from
-Nim, hand it to `JSON.stringify` and `Array.prototype.join`).
+Nim, hand it to `JSON.stringify` and `Array.prototype.join`), and `tintro`
+(introspection + variadic call: `jsTypeof`/`instanceOf`/`hasProp` and `apply`
+of `Math.max` over a five-element argument array).

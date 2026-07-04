@@ -152,6 +152,16 @@ function _jsArrPush(h, vH){ _jsv[h].push(_jsv[vH]); }
 function _jsArrGet(h, i){ return _jsNew(_jsv[h][Number(i)]); }
 function _jsArrSet(h, i, vH){ _jsv[h][Number(i)] = _jsv[vH]; }
 
+// Introspection: `typeof`, `in`, `instanceof`. A DOM binding branches on these
+// constantly (a node's type, whether a property exists, an Array vs a NodeList).
+function _jsTypeof(h){ return _jsNew(typeof _jsv[h]); }
+function _jsHasProp(oH, nameH){ return (_jsv[nameH] in _jsv[oH]) ? 1 : 0; }
+function _jsInstanceOf(vH, ctorH){ return (_jsv[vH] instanceof _jsv[ctorH]) ? 1 : 0; }
+
+// `obj.name(...args)` for any argument count (beyond the fixed _jsCall0..3): the
+// Nim side marshals the args into a JS array, we spread it via Function.apply.
+function _jsApply(oH, nameH, argsH){ const o = _jsv[oH]; return _jsNew(o[_jsv[nameH]].apply(o, _jsv[argsH])); }
+
 // Nim proc -> JS function (the reverse of the _fns call table): a Nim proc used
 // as a value lowers to an integer _fns index, so wrap that in a JS closure. The
 // closure marshals each incoming JS argument to a `JsValue` — which the backend

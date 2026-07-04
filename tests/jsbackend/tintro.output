@@ -1,0 +1,9 @@
+typeof num: number
+typeof str: string
+typeof obj: object
+typeof arr: object
+arr instanceof Array: true
+obj instanceof Array: false
+has x: true
+has y: false
+max apply: 9

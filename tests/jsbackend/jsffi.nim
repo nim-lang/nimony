@@ -50,6 +50,11 @@ proc rawArrPush(h, v: int32) {.importc: "_jsArrPush".}
 proc rawArrGet(h: int32; i: int): int32 {.importc: "_jsArrGet".}
 proc rawArrSet(h: int32; i: int; v: int32) {.importc: "_jsArrSet".}
 
+proc rawTypeof(h: int32): int32 {.importc: "_jsTypeof".}
+proc rawHasProp(obj, name: int32): bool {.importc: "_jsHasProp".}
+proc rawInstanceOf(v, ctor: int32): bool {.importc: "_jsInstanceOf".}
+proc rawApply(obj, name, args: int32): int32 {.importc: "_jsApply".}
+
 proc rawGlobalH(nameH: int32): int32 {.importc: "_jsGlobalH".}
 proc rawGetProp(obj, name: int32): int32 {.importc: "_jsGetProp".}
 proc rawSetProp(obj, name, val: int32) {.importc: "_jsSetProp".}
@@ -185,3 +190,28 @@ proc newOf*(ctorName: string; a: JsValue): JsValue =
   ## `new globalThis[ctorName](a)` — e.g. `newOf("Event", toJs("click"))`.
   let c = global(ctorName)
   JsValue(h: rawCtor1(c.h, a.h))
+
+# ── introspection ────────────────────────────────────────────────────────────
+proc jsTypeof*(v: JsValue): string =
+  ## The JS `typeof v` string ("number", "string", "object", "function", …).
+  ## (Named `jsTypeof`, not `typeof`, to avoid Nim's `typeof` builtin.)
+  toStr(JsValue(h: rawTypeof(v.h)))
+
+proc hasProp*(obj: JsValue; name: string): bool =
+  ## `name in obj`.
+  let n = toJs(name)
+  rawHasProp(obj.h, n.h)
+
+proc instanceOf*(v: JsValue; ctorName: string): bool =
+  ## `v instanceof globalThis[ctorName]` — e.g. `n.instanceOf("Array")`.
+  let c = global(ctorName)
+  rawInstanceOf(v.h, c.h)
+
+proc apply*(obj: JsValue; name: string; args: openArray[JsValue]): JsValue =
+  ## `obj.name(...args)` — a method call with any number of arguments (the
+  ## variadic counterpart of `call`; the args are marshalled through a JS array).
+  let arr = newJsArray()
+  for x in args:
+    arr.add(x)
+  let n = toJs(name)
+  JsValue(h: rawApply(obj.h, n.h, arr.h))
