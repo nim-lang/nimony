@@ -434,12 +434,15 @@ proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations
     of VarS, LetS, CursorS, PatternvarS:
       dest.add c
       inc c
-      let oldName = c.symId
-      let newName = pool.syms.getOrIncl("`lf." & $e.instId)
-      inc e.instId
-      relations[oldName] = newName
-      dest.add symdefToken(newName, c.info)
-      inc c
+      # `CursorS` is also the tag of the `{.cursor.}` *pragma* `(cursor)`, which
+      # carries no symbol; only rename when a real declaration name follows.
+      if c.kind == SymbolDef:
+        let oldName = c.symId
+        let newName = pool.syms.getOrIncl("`lf." & $e.instId)
+        inc e.instId
+        relations[oldName] = newName
+        dest.add symdefToken(newName, c.info)
+        inc c
       e.loop(dest, c):
         replaceSymbol(e, dest, c, relations)
     of CallS, CmdS, GvarS, TvarS, ConstS, ResultS, GletS, TletS,

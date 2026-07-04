@@ -691,13 +691,52 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
         # generic statement: copy the head and recurse into the children
         copyInto c.dest, n:
           while n.hasMore: trOnlyEssentials c, n
-    of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
+    of DotX:
+      # Reading a *user* field through a boxed `ref` must reach the object
+      # payload, i.e. `(dot (deref p) field)` has to become
+      # `(dot (dot (deref p) d) field)`, exactly as `trDeref` does on the full
+      # path. Copying it verbatim — as this branch used to — left the payload
+      # hop off, so field reads in `.nodestroy` bodies dereferenced the ref
+      # cell itself and produced C accessing a non-existent member.
+      # Lifter-emitted hooks already spell out the cell's own `d`/`r` fields,
+      # so those (and non-ref derefs) are left untouched.
+      var probe = n
+      inc probe # -> object operand
+      var doHop = false
+      if probe.exprKind in {DerefX, HderefX}:
+        var operand = probe
+        inc operand # -> deref'd pointer
+        var typ = getType(c.typeCache, operand, {SkipAliases})
+        if typ.kind == ParLe and typ.typeKind == SinkT:
+          inc typ
+        if not cursorIsNil(typ) and typ.typeKind == RefT:
+          var field = probe
+          skip field # object operand -> field name
+          if field.kind == Symbol and
+             field.symId != pool.syms.getOrIncl(DataField) and
+             field.symId != pool.syms.getOrIncl(RcField):
+            doHop = true
+      if doHop:
+        let info = n.info
+        c.dest.addParLe DotX, info # outer dot: (… .field)
+        c.dest.addParLe DotX, info # inner dot: ((deref p) .d)
+        inc n # into the DotX, at the (deref …) operand
+        trOnlyEssentials c, n
+        c.dest.add symToken(pool.syms.getOrIncl(DataField), info)
+        c.dest.addIntLit(0, info) # inheritance
+        c.dest.addParRi() # close inner dot
+        while n.hasMore: trOnlyEssentials c, n # field, inheritance, access marker
+        takeParRi c.dest, n
+      else:
+        copyInto c.dest, n:
+          while n.hasMore: trOnlyEssentials c, n
+    of ErrX, SufX, AtX, DerefX, HderefX, PatX, ParX, AddrX, NilX,
         InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
         NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
         AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
         MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
         BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
-        CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, DdotX,
+        CchoiceX, OchoiceX, PragmaxX, QuotedX, DdotX,
         HaddrX, NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
         TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX,
         InfixX, PrefixX, HcallX, CompilesX, DeclaredX, DefinedX,
