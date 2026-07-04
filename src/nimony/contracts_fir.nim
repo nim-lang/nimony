@@ -161,9 +161,11 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor)
 proc traverseExpr(c: var NjvlContext; pc: var Cursor)
 proc analyseCall(c: var NjvlContext; n: var Cursor)
 
-proc extractSymId(n: Cursor): SymId {.inline.} =
+proc extractSymId(n: Cursor, skipDots=false): SymId {.inline.} =
   var n = n
   if n.exprKind in {HaddrX, HderefX}: inc n
+  if skipDots:
+    while n.exprKind in {DdotX, DotX}: inc n
 
   if n.kind == Symbol:
     result = n.symId
@@ -172,13 +174,13 @@ proc extractSymId(n: Cursor): SymId {.inline.} =
   else:
     result = NoSymId
 
-proc extractSymIdForStore(n: Cursor): SymId =
+proc extractSymIdForStore(n: Cursor, skipDots=false): SymId =
   # idea both (etupat result.0 +0) and (etupat result.0 +1) create
   # a full store to `result.0`.
   var n = n
   if n.njvlKind == EtupatV:
     inc n
-  result = extractSymId(n)
+  result = extractSymId(n, skipDots=skipDots)
 
 proc skipSymbol(r: var Cursor): SymId {.inline.} =
   ## Consume a bare Symbol or (v sym version) node and return its SymId.
@@ -1143,13 +1145,14 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
     checkBorrowConflict(c, destMutPath, n.info)
 
   # Now handle the destination (Symbol or NJVL versioned variable (v symId version))
-  let destSymId = extractSymIdForStore(n)
+  let destSymId = extractSymIdForStore(n, skipDots=true)
+  var r = n
   if destSymId != NoSymId:
     let symId = destSymId
     let x = getLocalInfo(c.typeCache, symId)
     if x.kind in {LetY, GletY, TletY}:
       if isInitialized(c, symId):
-        c.buildErr n.info, "invalid reassignment to `let` variable"
+        c.buildErr n.info, "invalid modification to `let` variable"
 
     var fact = query(getVarId(c, symId), InvalidVarId, createXint(0'i32))
     markInit(c, symId)
