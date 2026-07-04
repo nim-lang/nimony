@@ -56,6 +56,23 @@ proc jsCall3(obj, name, a, b, c: JsValue): JsValue {.importc: "_jsCall3".}
 proc newJsObject*(): JsValue {.importc: "_jsNewObject".}
   ## An empty JS `{}` object.
 
+# ── Nim procs as JS callbacks (event handlers) ───────────────────────────────
+type
+  JsProc0* = proc() {.nimcall.}
+  JsProc1* = proc(ev: JsValue) {.nimcall.}
+    ## A one-argument callback — the shape of a DOM event handler. Its `JsValue`
+    ## argument is only valid for the duration of the call (the runtime releases
+    ## the handle when the callback returns), matching the DOM event contract.
+
+proc toJs*(p: JsProc0): JsValue {.importc: "_fnToJs0".}
+  ## A Nim proc as a JS function taking no arguments.
+proc toJs*(p: JsProc1): JsValue {.importc: "_fnToJs1".}
+  ## A Nim proc as a JS function taking one argument (marshalled to a handle).
+
+# ── construction (`new Ctor(...)`) ───────────────────────────────────────────
+proc jsCtor0(ctor: JsValue): JsValue {.importc: "_jsCtor0".}
+proc jsCtor1(ctor, a: JsValue): JsValue {.importc: "_jsCtor1".}
+
 # ── string marshalling ───────────────────────────────────────────────────────
 proc toJs*(s: string): JsValue =
   ## A Nim `string` as a real JS string (UTF-8 decoded).
@@ -99,3 +116,11 @@ proc call*(obj: JsValue; name: string; a, b: JsValue): JsValue =
 proc call*(obj: JsValue; name: string; a, b, c: JsValue): JsValue =
   ## `obj.name(a, b, c)`.
   let n = toJs(name); result = jsCall3(obj, n, a, b, c); n.release
+
+proc newOf*(ctorName: string): JsValue =
+  ## `new globalThis[ctorName]()` — e.g. `newOf("EventTarget")`.
+  let c = global(ctorName); result = jsCtor0(c); c.release
+
+proc newOf*(ctorName: string; a: JsValue): JsValue =
+  ## `new globalThis[ctorName](a)` — e.g. `newOf("Event", toJs("click"))`.
+  let c = global(ctorName); result = jsCtor1(c, a); c.release

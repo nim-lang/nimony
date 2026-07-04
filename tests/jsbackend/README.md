@@ -121,11 +121,16 @@ the existing `importc` seam: `jsffi.nim` declares body-less `importc` procs that
 lower to calls of the runtime's bridge functions (`_strToJs`, `_jsGetProp`,
 `_jsCall*`, …). On top of that seam it exposes an ergonomic surface —
 `toJs`/`toStr`/`toInt`/`toBool` marshalling (strings cross as UTF-8 bytes),
-`global`/`get`/`set`/`call` for globals, properties and methods, and `==` as JS
-`===`. This is the foundation a DOM binding sits on. Handles are **not** yet
-GC-integrated: a value you keep should be `release`d (the wrappers release the
-transient member-name handles they create); Nim→JS callbacks and destructor
-integration are the next increments.
+`global`/`get`/`set`/`call` for globals, properties and methods, `newOf` for
+`new Ctor(...)`, and `==` as JS `===`. **Nim→JS callbacks** close the loop: a Nim
+proc used as a value already lowers to an `_fns` table index, so `toJs(someProc)`
+wraps that index in a JS function that marshals the incoming JS arguments to
+handles — an `EventTarget`/`addEventListener` handler written in Nim fires back
+into Nim and reads the event's properties (see `tevent`). This is the foundation
+a DOM binding sits on. Handles are **not** yet GC-integrated: a value you keep
+should be `release`d (the wrappers release the transient member-name and
+callback-argument handles they create); destructor integration is the next
+increment.
 
 ## Test
 
@@ -155,6 +160,8 @@ two's-complement wraparound), `tconv` (8/16-bit narrowing, int↔BigInt,
 int64↔uint64 signedness), `tcontrol` (if/while/for/case), `tproc` (recursion),
 `tobject`/`tvariant` (object + tagged-union layout in linear memory), `tseq`
 (sequence growth + iteration), `tptr` (`addr`/store-through-deref), `texc`
-(nimony's heap-exception lowering: raise / try-except / resume), and `tffi`
+(nimony's heap-exception lowering: raise / try-except / resume), `tffi`
 (JS value interop: marshal Nim strings/ints/bools to and from real JS values,
-call host `console`/`Math`/`JSON`, read results back).
+call host `console`/`Math`/`JSON`, read results back), and `tevent` (Nim→JS
+callbacks: a Nim proc registered as an `EventTarget` handler, fired by
+`dispatchEvent`, reading the event back — the DOM event mechanism).

@@ -132,3 +132,15 @@ function _jsCall1(oH, nameH, aH){ const o = _jsv[oH]; return _jsNew(o[_jsv[nameH
 function _jsCall2(oH, nameH, aH, bH){ const o = _jsv[oH]; return _jsNew(o[_jsv[nameH]](_jsv[aH], _jsv[bH])); }
 function _jsCall3(oH, nameH, aH, bH, cH){ const o = _jsv[oH]; return _jsNew(o[_jsv[nameH]](_jsv[aH], _jsv[bH], _jsv[cH])); }
 function _jsNewObject(){ return _jsNew({}); }
+
+// `new Ctor(...)` construction.
+function _jsCtor0(ctorH){ return _jsNew(new (_jsv[ctorH])()); }
+function _jsCtor1(ctorH, aH){ return _jsNew(new (_jsv[ctorH])(_jsv[aH])); }
+
+// Nim proc -> JS function (the reverse of the _fns call table): a Nim proc used
+// as a value lowers to an integer _fns index, so wrap that in a JS closure. The
+// closure marshals each incoming JS argument to a handle, calls the Nim proc,
+// then releases the transient argument handle — an event object is only valid
+// for the duration of dispatch, matching the DOM contract.
+function _fnToJs0(idx){ return _jsNew(() => { _fns[idx](); }); }
+function _fnToJs1(idx){ return _jsNew((a) => { const h = _jsNew(a); _fns[idx](h); _jsRelease(h); }); }
