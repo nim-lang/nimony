@@ -86,6 +86,41 @@ proc main =
   appendedCursor.skip()
   appendedCursor.skip()
   assert appendedCursor.strVal == "foreign"
+
+  # Navigation primitives: span / firstSon / isLastSon / takeTree / linearScan.
+  let tCall = tp.registerTag("call")
+  let tAdd = tp.registerTag("add")
+  var nb = createTokenBuf(32, sharedTags = tp)   # (stmts (call "foo" 1) (add 2 3))
+  nb.buildTree tStmts:
+    nb.buildTree tCall:
+      nb.addStrLit("foo")
+      nb.addIntLit(1)
+    nb.buildTree tAdd:
+      nb.addIntLit(2)
+      nb.addIntLit(3)
+  var nroot = nb.beginRead()
+
+  let call0 = firstSon(nroot)                    # first child is (call ...)
+  assert call0.kind == TagLit and call0.cursorTagId == tCall
+  assert not isLastSon(call0)                    # (call ...) is not the last child
+  var add0 = call0
+  skip add0                                      # advance to (add ...)
+  assert add0.cursorTagId == tAdd and isLastSon(add0)
+
+  var taken = createTokenBuf(16, sharedPool = nb.pool, sharedTags = nb.tags)
+  var w = firstSon(nroot)
+  takeTree(taken, w)                             # copy (call ...), advance past it
+  assert w.cursorTagId == tAdd
+  var tc = taken.beginRead()
+  assert tc.cursorTagId == tCall and span(tc) == span(call0)
+
+  var scan = nroot
+  var seen: seq[uint32] = @[]
+  linearScan scan:                               # all nested tags, doc order
+    seen.add uint32(scan.cursorTagId)
+  assert seen == @[uint32(tCall), uint32(tAdd)]
+  nroot.endRead()
+
   echo "ok"
 
 main()

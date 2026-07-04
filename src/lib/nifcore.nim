@@ -1123,6 +1123,43 @@ proc subtreeWidth*(c: Cursor): int =
   else:
     tokenWidth(c)
 
+proc span*(c: Cursor): int {.inline.} =
+  ## Total tokens occupied by the value at `c` (head + body). Alias of
+  ## `subtreeWidth`, kept for parity with the nifcursors-era frontend which
+  ## spells the token-count of a subtree `span` (e.g. `inc i, span(x)`).
+  subtreeWidth(c)
+
+proc firstSon*(n: Cursor): Cursor {.inline.} =
+  ## Cursor at the first body token of the `TagLit` at `n`. Like `inc`, the
+  ## result carries the *outer* scope bound, not the body's — read a known
+  ## child then `skip`, or use `into`/`loopInto` to iterate the body safely.
+  result = n
+  inc result
+
+proc isLastSon*(n: Cursor): bool =
+  ## True when the value at `n` is the last child in its bounded scope, i.e.
+  ## skipping it exhausts the scope. The bounded-cursor replacement for the
+  ## nifcursors `skip; kind == ParRi` idiom.
+  var m = n
+  skip m
+  not m.hasMore
+
+template linearScan*(n: var Cursor; body: untyped) =
+  ## Linearly scans the subtree rooted at `n`, visiting every nested `TagLit`
+  ## in document order at all depths — the all-depth counterpart to `loopInto`
+  ## (direct children only). `body` runs with `n` positioned at each `TagLit`;
+  ## it may inspect the node through a copy and `break` early, leaving `n` at
+  ## the matching node. `body` must not advance `n`; the template walks it.
+  if n.kind == TagLit:
+    var remaining = subtreeWidth(n) - tokenWidth(n)   # body tokens (the jump)
+    inc n                                             # descend to first body token
+    while remaining > 0:
+      let w = tokenWidth(n)
+      if n.kind == TagLit:
+        body
+      remaining -= w
+      inc n
+
 proc reinternLineInfo(dest: var TokenBuf; c: Cursor): NifLineInfo =
   ## Map the source head's trailing line info into `dest`'s pools — the filename
   ## and, if present, the `#comment#` string. Returns `NoNifLineInfo` when none.
@@ -1185,6 +1222,12 @@ proc addSubtree*(dest: var TokenBuf; c: Cursor) =
     assert c.pool != nil and c.tags != nil
     var c = c
     addAcrossPools(dest, c)
+
+proc takeTree*(dest: var TokenBuf; n: var Cursor) =
+  ## Copy the whole value at `n` (a subtree, or a single atom) into `dest`
+  ## and advance `n` past it. The bounded-cursor form of nifcursors `takeTree`.
+  dest.addSubtree n
+  skip n
 
 proc addBufferSamePool*(dest: var TokenBuf; src: TokenBuf) =
   ## Append a closed buffer that shares `dest`'s literal and tag pools.
