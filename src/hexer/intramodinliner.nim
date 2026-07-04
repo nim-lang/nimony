@@ -403,18 +403,43 @@ proc isSubstitutableArg(c: Cursor): bool =
   of ParLe: c.exprKind in {TrueC, FalseC, NilC, InfC, NeginfC, NanC}
   else: false
 
+proc slotRootOf(c: Cursor): SymId =
+  ## Like `rootOf`, but a spine that crosses a pointer dereference targets the
+  ## *pointee*, not the named slot: `(*p).f = x` writes through `p`, leaving
+  ## `p`'s own value and address untouched. Such through-pointer lvalues yield
+  ## `SymId(0)`; a plain slot (`x`, `x.f`, `x[i]`, `conv(T, x)`) yields its base
+  ## symbol. This is the deref-aware analogue used by copyprop's `addrRootOf`:
+  ## it lets a param that is only ever *written through* still count as
+  ## value-stable (its pointer value never changes), so its argument can be
+  ## substituted instead of copied.
+  var n = c
+  while true:
+    case n.kind
+    of Symbol: return n.symId
+    of ParLe:
+      case n.exprKind
+      of DerefC, PatC: return SymId(0)       # through-pointer: pointee, not the slot
+      of DotC, AtC: inc n                     # field / index: base is the first child
+      of ConvC, CastC:
+        inc n; skip n                         # `(conv/cast Type operand)` — skip the type
+      else: return rootOf(n)                  # unmodelled spine: stay conservative
+    else: return SymId(0)
+
 proc scanParamUsage(c: Cursor; params: HashSet[SymId];
                     assigned, addrTaken: var HashSet[SymId]) =
-  ## Record which parameters are an assignment target's root, or have their
-  ## address taken, anywhere in the body — those cannot be replaced by a value.
+  ## Record which parameters have their *slot* reassigned (a bare `p = …`) or
+  ## their *slot* address taken (`addr p`) anywhere in the body — those cannot
+  ## be replaced by their argument value. Writes and address-of that go
+  ## *through* the pointer (`(*p).f = …`, `addr (*p)`) leave the slot's value
+  ## and address intact, so `slotRootOf` deliberately ignores them.
   if c.kind != ParLe: return
   if c.stmtKind in {AsgnS, StoreS}:
     var dst = c.firstSon
     if c.stmtKind == StoreS: skip dst        # `(store value dest)` — dest is 2nd
-    let s = rootOf(dst)
+    let s = slotRootOf(dst)
     if s in params: assigned.incl s
   elif c.exprKind == AddrC:
-    let s = rootOf(c.firstSon)
+    let s = slotRootOf(c.firstSon)
     if s in params: addrTaken.incl s
   var n = c
   n.into:
@@ -572,6 +597,35 @@ proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
     dest.add body
     inc body
 
+proc emitTailStmt(dest: var TokenBuf; body: var Cursor; bnd: Bindings;
+                  targetSym: SymId; returnLabel: SymId) =
+  ## Emit a statement that is in TAIL position — the last statement reached
+  ## before the inline body's `(lab :returnLabel)`. A tail `(ret X)` becomes its
+  ## `(asgn targetSym X)` with NO `(jmp returnLabel)` (control falls straight into
+  ## the label). A tail `stmts`/`scope` recurses so ITS last statement inherits
+  ## the tail position; anything else is handled by the general `(ret)`-rewriter
+  ## (interior returns still jump). Mirrors the arkham value-core's tail handling.
+  if body.kind == ParLe and body.stmtKind == RetS:
+    let rinfo = body.info
+    into body:
+      if body.hasMore and body.kind != DotToken and targetSym != SymId(0):
+        dest.addParLe TagId(AsgnS), rinfo
+        dest.addSymUse targetSym, rinfo
+        emitRenamed(dest, body, bnd)         # the returned expression
+        dest.addParRi()
+      else:
+        while body.hasMore: skip body        # void return: discard the value
+  elif body.kind == ParLe and body.stmtKind in {StmtsS, ScopeS}:
+    dest.add body                            # copy the (stmts/(scope opener
+    into body:
+      while body.hasMore:
+        var nx = body; skip nx
+        if not nx.hasMore: emitTailStmt(dest, body, bnd, targetSym, returnLabel)
+        else: emitRenamedWithRet(dest, body, bnd, targetSym, returnLabel)
+    dest.addParRi()
+  else:
+    emitRenamedWithRet(dest, body, bnd, targetSym, returnLabel)
+
 proc emitBody(c: var InlinerCtx; dest: var TokenBuf; body: var Cursor;
               bnd: Bindings; targetSym: SymId) =
   ## Emit the proc body's outer `(stmts …)` with renames, rewriting
@@ -579,10 +633,14 @@ proc emitBody(c: var InlinerCtx; dest: var TokenBuf; body: var Cursor;
   ## `(asgn targetSym X)` for a bound non-void splice), and append the
   ## matching `(lab :returnLabel)` after the body's last statement.
   ##
-  ## A `.inline` proc with a single tail return produces a redundant
-  ## `(jmp) (lab)` pair which a C compiler trivially optimises away —
-  ## that cost buys us uniform handling of arbitrarily-many `(ret X)`
-  ## points so no body shape disqualifies the splice.
+  ## A tail `(ret X)` — the last statement of the body — is emitted as its
+  ## `(asgn targetSym X)` alone: control then falls straight through to the
+  ## trailing `(lab :returnLabel)`, so the `(jmp returnLabel)` would be dead.
+  ## gcc drops that dead jump for free, but arkham renders `(jmp)`/`(lab)`
+  ## verbatim, so eliding it at the source keeps the native output tight while
+  ## preserving uniform handling of any interior `(ret X)` points. The label is
+  ## still emitted unconditionally (it costs zero machine bytes) so interior
+  ## returns' jumps always resolve.
   if body.kind != ParLe or body.stmtKind != StmtsS:
     emitRenamed(dest, body, bnd)
     return
@@ -590,14 +648,26 @@ proc emitBody(c: var InlinerCtx; dest: var TokenBuf; body: var Cursor;
   inc c.counter
   let returnLabel = pool.syms.getOrIncl(
     "returnLabel.0" & c.counterPrefix & $c.counter)
-  dest.addParLe TagId(StmtsS), info
+  # Emit the inlined body as a real variable SCOPE, not a bare `(stmts)`: the
+  # callee's fresh locals then belong to *this* scope frame, so the backend frees
+  # their registers at the inlined body's end instead of leaking their live range
+  # to the end of the *caller* (arkham measures a local's `freeAfter` at its
+  # enclosing scope; a `stmts` is not a scope). Without this, N sequential inline
+  # sites keep N sets of locals simultaneously live → false register pressure.
+  # The `returnLabel` stays INSIDE the scope so every early-return path reaches the
+  # scope's exit (its variable kills), never jumping out of a still-open scope.
+  dest.addParLe TagId(ScopeS), info
   into body:                                # bounded: source `)` may be virtual
     while body.hasMore:
-      emitRenamedWithRet(dest, body, bnd, targetSym, returnLabel)
+      var nx = body; skip nx
+      if not nx.hasMore:                     # last statement → tail position
+        emitTailStmt(dest, body, bnd, targetSym, returnLabel)
+      else:
+        emitRenamedWithRet(dest, body, bnd, targetSym, returnLabel)
   dest.addParLe TagId(LabS), info
   dest.addSymDef returnLabel, info
   dest.addParRi()
-  dest.addParRi()                           # close (stmts …)
+  dest.addParRi()                           # close (scope …)
 
 proc bindingsFor(pSyms: seq[SymId]; argCursors: seq[Cursor];
                  body: Cursor; rename: Table[SymId, SymId]): Bindings =
@@ -611,9 +681,19 @@ proc bindingsFor(pSyms: seq[SymId]; argCursors: seq[Cursor];
   var addrTaken = initHashSet[SymId]()
   scanParamUsage(body, paramSet, assigned, addrTaken)
   for i in 0 ..< pSyms.len:
-    if isSubstitutableArg(argCursors[i]) and
-       pSyms[i] notin assigned and pSyms[i] notin addrTaken:
-      result.subst[pSyms[i]] = argCursors[i]
+    if pSyms[i] in assigned or pSyms[i] in addrTaken:
+      continue                               # slot mutated / addr observed → copy
+    let arg = argCursors[i]
+    # A read-only param (value-stable per `scanParamUsage`) may be replaced by
+    # its argument at every use instead of bound to a fresh `(var)` copy.
+    # Literals are always stable. A bare *local* symbol is stable too: the
+    # inlined body only ever assigns fresh-renamed locals, never a caller local,
+    # so the substituted symbol's value cannot change across the body. Globals
+    # are excluded — a nested call in the body could mutate one between uses,
+    # whereas the copy captured its entry value.
+    if isSubstitutableArg(arg) or
+       (arg.kind == Symbol and isLocalName(pool.syms[arg.symId])):
+      result.subst[pSyms[i]] = arg
 
 proc seedRenameWalk(c: var InlinerCtx; n: var Cursor;
                     rename: var Table[SymId, SymId]) =

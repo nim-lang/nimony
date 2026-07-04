@@ -59,6 +59,31 @@ proc child0(c: Cursor): Cursor {.inline.} =
   result = c
   inc result
 
+proc addrRootOf(c: Cursor): SymId =
+  ## The *storage* root of an `addr` operand — the local whose address is actually
+  ## taken. Unlike the deref-blind `rootOf`, it STOPS at a through-pointer step
+  ## (`deref`/`pat`): `addr((*p).f)` addresses the POINTEE — a heap location computed
+  ## from `p`'s value — so it does NOT take the address of `p`'s own storage; `p` is
+  ## only READ. Returns the base symbol of the leftmost projection spine, or
+  ## `SymId(0)` when that spine crosses a `deref`/`pat` (⇒ no local is address-taken).
+  ## Mirrors the analyser's DerefC context reset / mover's `CannotFollowDerefs`. Any
+  ## spine shape it does not model falls back to the conservative `rootOf` (which still
+  ## marks something address-taken), so the relaxation is one-directional: it can only
+  ## un-mark a pointer whose pointee — never its storage — is addressed. That copy is
+  ## still sound to propagate because the pointer VALUE is what a substitution carries.
+  var n = c
+  while true:
+    case n.kind
+    of Symbol: return symId(n)
+    of TagLit:
+      case n.exprKind
+      of DerefC, PatC: return SymId(0)     # through-pointer: the pointee, not the var
+      of DotC, AtC: inc n                   # object field / array index: base is 1st child
+      of ConvC, CastC:
+        inc n; skip n                       # `(conv/cast Type operand)` — skip the type
+      else: return rootOf(n)                # unmodelled spine: stay conservative
+    else: return SymId(0)
+
 const LeafKinds = {Symbol, IntLit, UIntLit, FloatLit, CharLit, StrLit}
   ## Side-effect-free initializers a dead local binding may be deleted with.
 
@@ -144,6 +169,8 @@ proc substituteSym(c: var Context; n: Cursor; root: SymId) =
 # ---- main traversal -------------------------------------------------------
 
 proc tr(c: var Context; n: var Cursor)   # forward
+proc trExpr(c: var Context; n: var Cursor)   # forward
+proc trAddrOperand(c: var Context; n: var Cursor)   # forward
 
 proc trExpr(c: var Context; n: var Cursor) =
   case n.kind
@@ -156,9 +183,15 @@ proc trExpr(c: var Context; n: var Cursor) =
   of TagLit:
     case n.exprKind
     of AddrC:
-      # `addr x`: the *address* of `x`, not its value. `&y` and `&x` differ even
-      # when `y == x`, so never substitute inside an `addr`.
-      skip n
+      # `addr x`: the *address* of `x`, not its value. On the leftmost STORAGE spine
+      # `&y` and `&x` differ even when `y == x` (distinct storage), so the base local
+      # is not substituted. But a `deref` breaks the spine: `&((*p).f)` addresses the
+      # POINTEE — a location computed from p's VALUE — so `p` (and anything below the
+      # deref) is an ordinary value use and IS substitutable. `trAddrOperand` walks the
+      # spine with that distinction; this is what collapses an inlined pointer param
+      # copy `p2 = p` whose only uses are `&((*p2)…)`.
+      n.into:
+        while n.hasMore: trAddrOperand(c, n)
     of CallC:
       n.into:
         if n.hasMore: skip n             # callee
@@ -184,6 +217,39 @@ proc trExpr(c: var Context; n: var Cursor) =
       else:
         n.loopInto:
           trExpr(c, n)
+  else:
+    inc n
+
+proc trAddrOperand(c: var Context; n: var Cursor) =
+  ## Traverse the operand of `(addr …)` on the storage spine: the leftmost projection
+  ## chain whose base local's address is being formed. A bare local here is the storage
+  ## root and is NOT substituted (`&x.f` ≠ `&y.f` for a value-copy). A `deref`/`pat`
+  ## breaks the spine — below it we address the POINTEE, so the pointer is a value use
+  ## and normal substitution (`trExpr`) resumes. Array indices are values too.
+  case n.kind
+  of Symbol:
+    skip n                                 # storage root — never substitute
+  of TagLit:
+    case n.exprKind
+    of DerefC, PatC:
+      # through-pointer: the pointer (and its index) are value reads → substitutable
+      trExpr(c, n)
+    of DotC:
+      n.into:
+        if n.hasMore: trAddrOperand(c, n)  # object base stays on the storage spine
+        if n.hasMore: skip n               # field selector — leave untouched
+        while n.hasMore: skip n            # inheritance depth
+    of AtC:
+      n.into:
+        if n.hasMore: trAddrOperand(c, n)  # array base stays on the storage spine
+        while n.hasMore: trExpr(c, n)      # index is a value
+    of ConvC, CastC:
+      n.into:
+        if n.hasMore: skip n               # target type
+        if n.hasMore: trAddrOperand(c, n)  # operand stays on the storage spine
+        while n.hasMore: skip n
+    else:
+      skip n                               # unmodelled spine: conservative, no subst
   else:
     inc n
 
@@ -387,7 +453,10 @@ proc preScan(c: var Context; n: Cursor) =
       if nameCur.kind == SymbolDef:
         c.localDefs.incl symId(nameCur)
     if n.exprKind == AddrC:
-      let s = rootOf(child0(n))
+      # Only a local whose OWN storage is addressed is excluded from copy prop. An
+      # `addr((*p).f)` addresses the pointee (computed from p's value), so `p` stays
+      # propagatable — `addrRootOf` stops at the `deref`/`pat` and returns SymId(0).
+      let s = addrRootOf(child0(n))
       if s != SymId(0): c.addrTaken.incl s
     var m = n
     m.loopInto:
