@@ -9,7 +9,7 @@
 
 ## This module implements a series of low-level bit manipulation procedures
 ## over the fixed-width unsigned integers `uint8`, `uint16`, `uint32` and
-## `uint64`.
+## `uint64` -- or any type that satifies the `BitInteger` concept. 
 ##
 ## The procedures are generic and constrained by the `BitInteger` concept
 ## below, which lists exactly the bitwise and shift operators the algorithms
