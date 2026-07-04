@@ -10,7 +10,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 
 import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes, renderer, asthelpers,
-  features, symtabs, sigconcepts
+  features, symtabs, sigconcepts, expreval
 import ".." / lib / symparser
 import ".." / models / tags
 
@@ -526,17 +526,29 @@ proc foldValueExpr(m: var Match; a: Cursor; depth = 0): xint =
   else:
     discard
 
-proc constSymbolValue(a: Cursor): Cursor =
-  ## A `const` symbol used in value position folds to its defining value, so a
-  ## value (`static`) parameter can bind it just like the literal it aliases.
-  ## Returns `default(Cursor)` for anything that is not a `const`. (Enum fields
-  ## are handled separately: they are canonical typed values and bind verbatim.)
+proc foldStaticArg(m: var Match; elemType, a: Cursor): Cursor =
+  ## Fold `a` to the canonical typed value a value (`static`) parameter should
+  ## bind, using the shared `expreval` engine in a mode that never shells out
+  ## to a sub-compile (overload resolution must stay in-process and cheap).
+  ## `annotateConstantType` re-types the folded value against `elemType`, so an
+  ## enum-valued `const` recovers its field symbol instead of collapsing to a
+  ## bare ordinal (which would drop the enum type). Returns `default(Cursor)`
+  ## when `a` cannot be folded locally or does not match `elemType`.
   result = default(Cursor)
-  if a.kind != Symbol: return
-  let res = tryLoadSym(a.symId)
-  if res.status != LacksNothing: return
-  if res.decl.symKind == ConstY:
-    result = asLocal(res.decl).val
+  if m.context == nil: return
+  var ec = initEvalContext(m.context, noExecute = true)
+  var cur = a
+  let folded = eval(ec, cur)
+  if folded.kind == ParLe and folded.tagId == nifstreams.ErrT:
+    return
+  # `folded` lives in a temporary buffer; consume it immediately by re-typing
+  # it into a fresh buffer before any other evaluation runs.
+  var buf = createTokenBuf(16)
+  annotateConstantType(buf, elemType, folded)
+  let typed = cursorAt(buf, 0)
+  if typed.kind == ParLe and typed.tagId == nifstreams.ErrT:
+    return
+  result = typeToCursor(m.context[], buf, 0)
 
 proc isEnumFieldSym(a: Cursor): bool =
   if a.kind != Symbol: return false
@@ -573,11 +585,10 @@ proc staticValueToBind(m: var Match; elemType: Cursor; a: Cursor): Cursor =
       # bind it verbatim (folding to the bare ordinal would lose the type)
       result = a
     else:
-      # a `const`: bind the literal it aliases, accepted exactly as if that
-      # literal had been written in the argument position
-      let folded = constSymbolValue(a)
-      if folded != default(Cursor):
-        result = staticValueToBind(m, elemType, folded)
+      # a `const` (or other foldable symbol): resolve it through the shared
+      # expreval engine and bind the value it aliases, exactly as if that value
+      # had been written in the argument position.
+      result = foldStaticArg(m, elemType, a)
   of ParLe:
     case a.exprKind
     of FalseX, TrueX:
