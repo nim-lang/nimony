@@ -232,6 +232,19 @@ proc tryPromoteTemplateBody*(c: var SemContext; sym: SymId): bool =
   prog.mem[sym].phase = SemcheckBodies
   result = true
 
+proc loadSymWithPhase*(c: var SemContext; symId: SymId; targetPhase: SemPhase): LoadResult =
+  ## Drive `symId` toward `targetPhase` on demand, then load it. This is the
+  ## single entry point for cross-phase symbol resolution: today the only
+  ## registered driver is template-body promotion (Signatures -> Bodies, see
+  ## `tryPromoteTemplateBody`); as more of the phased passes become on-demand,
+  ## additional drivers hang off here rather than being invoked ad hoc at each
+  ## consumption site (toward nim-lang/nimony#2064's phase de-rigidification).
+  if targetPhase >= SemcheckBodies:
+    discard tryPromoteTemplateBody(c, symId)
+  if ensurePhase(symId, targetPhase) == PhaseCycle:
+    return LoadResult(status: LacksOffset)  # cycle detected
+  result = tryLoadSym(symId)
+
 proc expandTemplate*(c: var SemContext; dest: var TokenBuf;
                      templateDecl, args, firstVarargMatch: Cursor;
                      inferred: ptr Table[SymId, Cursor];

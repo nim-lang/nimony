@@ -480,12 +480,26 @@ proc handleSymDef*(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: S
   let info = n.info
   if n.kind == Ident:
     let lit = n.litId
-    let def = identToSym(c, lit, kind)
-    let s = Sym(kind: kind, name: def,
-                pos: dest.len)
-    result = DelayedSym(status: OkNew, lit: lit, s: s, info: info)
-    dest.add symdefToken(def, info)
-    inc n
+    if kind in {LetY, VarY, GletY, GvarY, TletY, TvarY} and
+        c.currentScope.kind == ToplevelScope and
+        c.onDemandResolved.hasKey(lit):
+      # #1974: this toplevel let/var was already resolved on demand in the
+      # signature phase (for a `when` condition). Reuse that symbol so the
+      # body phase neither redeclares it nor shifts its global-counter name.
+      # `getOrDefault` (not `[]`) because nimony rejects the raising `Table.[]`
+      # in effect-checked code; presence is already guaranteed by `hasKey` above.
+      let def = c.onDemandResolved.getOrDefault(lit, SymId(0))
+      let s = Sym(kind: kind, name: def, pos: dest.len)
+      result = DelayedSym(status: OkExistingFresh, lit: lit, s: s, info: info)
+      dest.add symdefToken(def, info)
+      inc n
+    else:
+      let def = identToSym(c, lit, kind)
+      let s = Sym(kind: kind, name: def,
+                  pos: dest.len)
+      result = DelayedSym(status: OkNew, lit: lit, s: s, info: info)
+      dest.add symdefToken(def, info)
+      inc n
   elif n.kind == SymbolDef:
     discard "ok, and no need to re-add it to the symbol table ... or is there?"
     let status =
