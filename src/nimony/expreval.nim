@@ -1429,7 +1429,23 @@ proc bitsetSizeInBytes*(baseType: Cursor): xint =
     var err = false
     let m = asSigned(b.hi, err) + 1'i64
     if err: result = createNaN()
-    else: result = createXint div8Roundup(m)
+    else:
+      result = createXint div8Roundup(m)
+      # If the enum has an explicit .size pragma, its base type may be
+      # wider than the field values need. Use the base type's byte width
+      # as a minimum for set storage.
+      var bt = baseType
+      inc bt  # skip EnumT/HoleyEnumT/AnumT tag
+      if bt.typeKind in {IntT, UIntT}:
+        let baseBits = int pool.integers[bt.firstSon.intId]
+        let baseBytes = baseBits div 8
+        if baseBytes > 0 and result < createXint(baseBytes):
+          # IntT with negative field values is the compiler's default
+          # for signed enums (not from .size). Only apply when UIntT
+          # or when no negative values exist.
+          let hasNegativeValues = not isNaN(b.lo) and (b.lo < createXint(0'i64))
+          if bt.typeKind == UIntT or not hasNegativeValues:
+            result = createXint(baseBytes)
   of RangetypeT:
     var index = baseType
     inc index # tag
