@@ -55,6 +55,10 @@ if node != nil:
   echo node.data  # OK after nil check
 ```
 
+> Note:
+> The proof of a var not being nil can't be done at global scope. The compiler
+> will error if you use a nilable object in that scope.
+
 
 ## Unchecked pointer types
 
