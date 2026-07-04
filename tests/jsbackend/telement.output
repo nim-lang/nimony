@@ -1,0 +1,12 @@
+tagName: DIV
+childElementCount: 2
+firstElementChild: alpha
+querySelector span: alpha
+b.previousElementSibling: alpha
+getAttribute data-x: 42
+hasAttribute data-y: false
+  handler fired: ping #1
+  handler fired: ping #2
+pings: 2
+after remove childElementCount: 1
+firstElementChild now: beta

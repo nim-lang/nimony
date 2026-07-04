@@ -7,11 +7,13 @@
 // Reads the curated spec IDL shipped in @webref/idl (the W3C/WHATWG official
 // data), parses it with the standard `webidl2` parser, and emits a jsffi-based
 // binding in the exact style of the hand-written dom.nim — proving the path to
-// spec-backed bindings. This is a deliberately small first cut: it handles
-// attributes (get/set), the constructor, and fixed-arity instance operations.
-// Constructs it does not yet emit (optional/variadic args, static ops,
-// iterables, overloads) are reported as `## SKIPPED` comments so the coverage
-// gap is visible in the output rather than silent.
+// spec-backed bindings. It handles attributes (get/set), constructors, and
+// operations, expanding optional args into per-arity overloads and a variadic
+// tail into an openArray. It also flattens the WebIDL `inheritance` chain and
+// merges `includes` mixins, so a generated `Element` is self-contained (carries
+// Node/EventTarget/ParentNode/ChildNode members directly). Constructs it does
+// not yet emit (static ops, >3-arg fixed ops, iterables, consts) are reported
+// as `## SKIPPED` comments so the coverage gap is visible rather than silent.
 const fs = require("fs");
 const path = require("path");
 const webidl2 = require("webidl2");
@@ -28,6 +30,65 @@ const iface = ast.find((x) => x.type === "interface" && x.name === ifaceName);
 if (!iface) {
   console.error(`interface ${ifaceName} not found in ${spec}.idl`);
   process.exit(1);
+}
+
+// --- mixin + inheritance resolution -----------------------------------------
+// WebIDL splits an interface's surface across `interface mixin` blocks glued on
+// by `includes` statements, and up an `inheritance` chain. jsffi's model is a
+// flat JsValue, so we flatten all of it onto the target: every ancestor's own
+// members plus the mixins each `includes`, most-derived-wins on name clashes.
+// This lets a generated `Element` carry appendChild (Node), addEventListener
+// (EventTarget) and querySelector (ParentNode mixin) directly.
+const mixinByName = new Map();
+for (const x of ast) if (x.type === "interface mixin") mixinByName.set(x.name, x);
+const includedBy = new Map(); // interface name -> [mixin name, …] in file order
+for (const x of ast) if (x.type === "includes") {
+  if (!includedBy.has(x.target)) includedBy.set(x.target, []);
+  includedBy.get(x.target).push(x.includes);
+}
+const ifaceByName = new Map();
+for (const x of ast) if (x.type === "interface") ifaceByName.set(x.name, x);
+
+// Members contributed to `name` directly: its own members plus each mixin it
+// `includes` (mixins can't carry constructors, so those only come from `iface`).
+function directMembers(name) {
+  const host = ifaceByName.get(name);
+  const ms = host ? host.members.slice() : [];
+  for (const mx of includedBy.get(name) || []) {
+    const mixin = mixinByName.get(mx);
+    // NB: push members as-is — webidl2 exposes `type`/`name` via prototype
+    // getters, so an object spread ({...m}) would silently drop them.
+    if (mixin) for (const m of mixin.members) ms.push(m);
+  }
+  return ms;
+}
+
+// Walk self -> ancestors, collecting direct members at each level. Dedup so a
+// more-derived definition shadows an inherited one: attributes by name,
+// operations by name+arity (keeps genuine overloads, drops re-declarations).
+const mergedMembers = [];
+const seen = new Set();
+const mergedMixins = new Set();
+const flattenedFrom = [];
+const unresolved = [];
+let cur = ifaceName;
+let level = 0;
+while (cur) {
+  const host = ifaceByName.get(cur);
+  if (!host) { unresolved.push(cur); break; }
+  if (level > 0) flattenedFrom.push(cur);
+  for (const mx of includedBy.get(cur) || []) if (mixinByName.has(mx)) mergedMixins.add(mx);
+  for (const m of directMembers(cur)) {
+    if (m.type === "constructor") { if (level === 0) mergedMembers.push(m); continue; }
+    const key = m.type === "operation"
+      ? `op:${m.name}:${m.arguments.length}`
+      : `${m.type}:${m.name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    mergedMembers.push(m);
+  }
+  cur = host.inheritance;
+  level++;
 }
 
 // WebIDL type -> how it marshals through jsffi. `nim` is the Nim type; `toJs`
@@ -72,15 +133,21 @@ out.push(`import jsffi`);
 out.push(``);
 out.push(`type`);
 out.push(`  ${ifaceName}* = JsValue`);
-if (iface.inheritance) {
-  out.push(`    ## NOTE: inherits ${iface.inheritance} (flat JsValue; inherited members not re-emitted).`);
+if (flattenedFrom.length) {
+  out.push(`    ## Flattened inheritance (members merged in): ${flattenedFrom.join(", ")}.`);
+}
+if (mergedMixins.size) {
+  out.push(`    ## Merged mixins (includes): ${[...mergedMixins].join(", ")}.`);
+}
+if (unresolved.length) {
+  out.push(`    ## NOTE: ancestor ${unresolved.join(", ")} not in ${spec}.idl — its members are absent.`);
 }
 out.push(``);
 
 const self = "self";
 const paramOf = (a) => `${nid(a.name)}: ${mapType(a.idlType).nim}`;
 
-for (const m of iface.members) {
+for (const m of mergedMembers) {
   if (m.type === "constructor") {
     const args = m.arguments;
     if (args.length && args[args.length - 1].variadic) { skipped.push(`constructor (variadic)`); continue; }
@@ -160,4 +227,4 @@ if (skipped.length) {
 }
 
 fs.writeFileSync(path.join(__dirname, "..", outFile), out.join("\n"));
-console.error(`wrote ${outFile}: ${iface.members.length} members, ${skipped.length} skipped`);
+console.error(`wrote ${outFile}: ${mergedMembers.length} members (${flattenedFrom.length} ancestors, ${mergedMixins.size} mixins merged), ${skipped.length} skipped`);

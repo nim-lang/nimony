@@ -223,9 +223,25 @@ doesn't handle (static ops, `>3`-arg fixed ops, iterables, member-name clashes
 with jsffi's own verbs like `get`/`set`) are emitted as `## SKIPPED` comments
 so the coverage gap is visible, not silent.
 
-`weburl.nim` is the checked-in output of `node gen/idl2nim.js url URL
-weburl.nim` (regenerate with that command after `npm install`); `turl`
-exercises it end-to-end. `webidl2`/`@webref/idl` are dev-only, like jsdom — the
-generated `.nim` is committed, so `turl` needs neither them nor a DOM env. This
-is the path to spec-backed coverage; adding `@mdn/browser-compat-data` later
-gates which members a target actually supports.
+**Inheritance and mixins are flattened.** WebIDL spreads an interface's real
+surface across an `inheritance` chain (`Element` → `Node` → `EventTarget`) and
+across `interface mixin` blocks glued on by `includes` statements (`ParentNode`,
+`ChildNode`, `Slottable`, …). Since jsffi's model is a flat `JsValue`, the
+generator merges all of it onto the target — every ancestor's own members plus
+the mixins each level `includes` — with most-derived-winning on name clashes
+(attributes by name, operations by name+arity, so genuine overloads survive but
+re-declarations don't). So a single generated `Element` carries `appendChild`
+(from `Node`), `addEventListener`/`dispatchEvent` (from `EventTarget`),
+`append`/`querySelector`/`children` (from the `ParentNode` mixin) and `remove`
+(from `ChildNode`) directly — 103 members from six sources. Ancestors that live
+in a different spec file are noted as unresolved rather than silently dropped.
+
+`weburl.nim` and `element.nim` are checked-in generator output (`node
+gen/idl2nim.js url URL weburl.nim`, `node gen/idl2nim.js dom Element
+element.nim`; regenerate after `npm install`). `turl` exercises the flat `URL`;
+`telement` drives the flattened `Element` against jsdom, hitting members from
+its own interface, both ancestors, and three mixins in one test.
+`webidl2`/`@webref/idl` are dev-only, like jsdom — the generated `.nim` is
+committed, so `turl` needs neither them nor a DOM env. This is the path to
+spec-backed coverage; adding `@mdn/browser-compat-data` later gates which
+members a target actually supports.
