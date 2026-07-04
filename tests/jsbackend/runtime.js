@@ -102,6 +102,8 @@ function _jsNew(v){                                   // intern a JS value -> ha
   _jsv[i] = v; return i;
 }
 function _jsRelease(h){ if (h > 0){ _jsv[h] = undefined; _jsvFree.push(h); } }
+function _jsvDup(h){ return _jsNew(_jsv[h]); }        // a new slot to the same JS value
+function _jsvLive(){ return _jsv.length - 1 - _jsvFree.length; }   // live slot count (leak tests)
 
 // Strings cross the linear-memory boundary as UTF-8 bytes. `_strToJs` decodes a
 // (ptr,len) slice of Nim string storage into a real JS string; the read-back is
@@ -139,8 +141,18 @@ function _jsCtor1(ctorH, aH){ return _jsNew(new (_jsv[ctorH])(_jsv[aH])); }
 
 // Nim proc -> JS function (the reverse of the _fns call table): a Nim proc used
 // as a value lowers to an integer _fns index, so wrap that in a JS closure. The
-// closure marshals each incoming JS argument to a handle, calls the Nim proc,
-// then releases the transient argument handle — an event object is only valid
-// for the duration of dispatch, matching the DOM contract.
+// closure marshals each incoming JS argument to a `JsValue` — which the backend
+// represents as a one-field `{h: int32}` object, i.e. 4 bytes in linear memory
+// with the handle at offset 0 — and passes that object's byte offset (the ABI a
+// Nim `proc(ev: JsValue)` expects). The Nim callback borrows the argument, so we
+// release the handle after it returns; an event object is only valid for the
+// duration of dispatch, matching the DOM contract.
 function _fnToJs0(idx){ return _jsNew(() => { _fns[idx](); }); }
-function _fnToJs1(idx){ return _jsNew((a) => { const h = _jsNew(a); _fns[idx](h); _jsRelease(h); }); }
+function _fnToJs1(idx){
+  return _jsNew((a) => {
+    const h = _jsNew(a);
+    const p = allocFixed(4); mem.setI32(p, h);   // a JsValue {h} object for the ABI
+    _fns[idx](p);
+    _jsRelease(h);
+  });
+}

@@ -127,10 +127,16 @@ proc used as a value already lowers to an `_fns` table index, so `toJs(someProc)
 wraps that index in a JS function that marshals the incoming JS arguments to
 handles — an `EventTarget`/`addEventListener` handler written in Nim fires back
 into Nim and reads the event's properties (see `tevent`). This is the foundation
-a DOM binding sits on. Handles are **not** yet GC-integrated: a value you keep
-should be `release`d (the wrappers release the transient member-name and
-callback-argument handles they create); destructor integration is the next
-increment.
+a DOM binding sits on. **`JsValue` is GC-integrated:** it is a one-field object
+carrying ARC hooks, so `=destroy` releases its table slot and a copy (`=copy`/
+`=dup`) allocates a *new* slot to the same JS value — every copy is independently
+owned, there is no double free, and transient values (a method result you drop,
+a member-name handle) are reclaimed at scope exit with no manual release (see
+`tgc`, which loops 1000× with zero table growth). The FFI seam itself stays on
+plain `int32` handles so no owning `JsValue` crosses an `importc`. (The 4-byte
+object storage rides the same never-freed `allocFixed` bump the backend uses for
+all value objects — the pre-existing GC/`#1518` gap — but the unbounded leak, the
+value-table slots, is now closed.)
 
 ## Test
 
@@ -162,6 +168,8 @@ int64↔uint64 signedness), `tcontrol` (if/while/for/case), `tproc` (recursion),
 (sequence growth + iteration), `tptr` (`addr`/store-through-deref), `texc`
 (nimony's heap-exception lowering: raise / try-except / resume), `tffi`
 (JS value interop: marshal Nim strings/ints/bools to and from real JS values,
-call host `console`/`Math`/`JSON`, read results back), and `tevent` (Nim→JS
+call host `console`/`Math`/`JSON`, read results back), `tevent` (Nim→JS
 callbacks: a Nim proc registered as an `EventTarget` handler, fired by
-`dispatchEvent`, reading the event back — the DOM event mechanism).
+`dispatchEvent`, reading the event back — the DOM event mechanism), and `tgc`
+(handle GC-integration: transient `JsValue`s reclaimed at scope exit, copies are
+independent slots — 1000 iterations with zero table growth).

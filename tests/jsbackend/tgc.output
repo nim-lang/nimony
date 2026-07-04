@@ -1,0 +1,4 @@
+leak after 1000 iters: 0
+a == b (===): true
+live handles from a + its copy: 2
+ok
