@@ -38,14 +38,14 @@
 ## Constructs outside the supported subset emit a `jUndef` marker (a valid
 ## `undefined` expression), so generation always completes and gaps stay visible.
 
-import std / [assertions, syncio, strutils, formatfloat, sets, tables]
+import std / [assertions, syncio, formatfloat, sets, tables]
 
 import ".." / lib / nifcoreparse   # re-exports nifcore (Cursor, beginRead, intVal, ...)
 import ".." / lib / nifcdecl        # stmtKind/exprKind/substructureKind + Leng enums + decl extractors
 import mangler
 import noptions
-import nifmodules                   # MainModule + load
-from ".." / lib / symparser import splitModulePath, splitSymName
+import nifmodules                   # MainModule + load + scope stack (openScope/registerLocal)
+import typenav                      # the shared Leng type navigator (getType/getNominalType)
 import jslayout                     # C-ABI layout: typeLayout/objectFields/accessOf (buffer model)
 import jsnif                        # the JS-as-NIF model + emitter (the only place JS text is produced)
 from ".." / lib / vfs import vfsExists, vfsRead, vfsWrite
@@ -61,20 +61,17 @@ type
     flags: set[JSGenFlag]
     todos: int
     boxed: HashSet[SymId]   ## locals whose address is taken (see `scanForAddr`)
-    localTypes: Table[SymId, Cursor]  ## var/param -> declared type (for buffer-model access)
+    inProc: bool            ## inside a proc body: `(var …)` decls are proc-locals to
+                            ## register in the `typenav` scope (toplevel ones are globals)
     hoistLocals: bool       ## in a proc that contains `(lab …)` (goto pad or loop
                             ## break target): declare locals with `var` (function-scoped)
                             ## so they survive the labeled-block nesting they lower to
     skipCtr: int            ## counter minting fresh `$exs<n>` skip labels for dead-if pads
-    selfModule: string      ## this module's suffix (e.g. `sysvq0asl`) — tells a
-                            ## local (`x.0.<self>` not registered) from a foreign global
     globalScalarCache: Table[SymId, bool]  ## memoized `isGlobalScalarVar`
 
 proc initJSGen(m: sink MainModule; flags: set[JSGenFlag]): JSGen =
   result = JSGen(js: initJsBuilder(), flags: flags, boxed: initHashSet[SymId](),
-                 localTypes: initTable[SymId, Cursor](),
                  globalScalarCache: initTable[SymId, bool]())
-  result.selfModule = splitModulePath(m.filename).name
   result.m = m
 
 # ── symbol naming ─────────────────────────────────────────────────────────────
@@ -110,6 +107,17 @@ proc fieldName(g: JSGen; symId: SymId): string {.inline.} =
   ## never an extern name — `name`'s foreign-decl lookup is for top-level symbols.
   mangleToC(g.m.pool.syms[symId])
 
+proc inScope(g: JSGen; symId: SymId): bool =
+  ## True when `symId` is a param/local registered in the current proc's scope
+  ## (`typenav`'s scope stack). A registered local is never a module-level global,
+  ## so this both answers "is it a local?" and keeps `getDeclOrNil` off a
+  ## proc-local symbol (which has no top-level decl to load).
+  var sc {.cursor.} = g.m.current
+  while sc != nil:
+    if sc.locals.hasKey(symId): return true
+    sc = sc.parent
+  false
+
 proc isGlobalScalarVar(g: var JSGen; symId: SymId): bool =
   ## True when `symId` names a *module-level* `var`/`gvar`/`threadvar` of scalar
   ## type (in this module or a foreign one). Such a global has static storage, so
@@ -123,25 +131,18 @@ proc isGlobalScalarVar(g: var JSGen; symId: SymId): bool =
   ## instead of the value. Deciding purely from the decl kind — visible identically
   ## from every module via the lazily-loaded foreign declarations — removes that
   ## whole-program dependency. Aggregate globals already route through
-  ## `isBufferAggregate`; `importc` globals are runtime-provided. As a side effect
-  ## the declared type is recorded in `localTypes`, so the slot load/store picks
-  ## the right `DataView` width. Memoized: a foreign lookup loads its owner once.
+  ## `isBufferAggregate`; `importc` globals are runtime-provided. Memoized: a
+  ## foreign lookup loads its owner once.
   if g.globalScalarCache.hasKey(symId): return g.globalScalarCache[symId]
   result = false
   block compute:
-    if not g.m.hasLocalDecl(symId):
-      # Not a top-level decl of THIS module. A same-suffix symbol is therefore a
-      # local (inside a proc) — never a global; skip the foreign-load probe.
-      let sp = splitSymName(g.m.pool.syms[symId])
-      if sp.module.len == 0 or sp.module == g.selfModule: break compute
-      if not g.m.hasResolvableDecl(symId): break compute
+    if g.inScope(symId): break compute          # a proc-local, never a global
     let d = g.m.getDeclOrNil(symId)
     if d == nil or d.isImport: break compute
     if d.kind notin {VarY, GvarY, TvarY}: break compute
     var p = d.pos
     let vd = takeVarDecl(p)
     if accessOf(g.m, vd.typ) == akAggregate: break compute  # aggregate: buffer path
-    g.localTypes[symId] = vd.typ
     result = true
   g.globalScalarCache[symId] = result
 
@@ -217,6 +218,25 @@ proc binTyped(g: var JSGen; n: var Cursor; opr: string) =
         g.js.addOp opr
         g.gxBig n
         g.gxBig n
+    elif ak in {akU8, akU16, akU32} and opr in ["&", "|", "^", "<<", ">>"]:
+      # JS bitwise/shift ops yield a SIGNED int32; for an unsigned type the result
+      # must be reinterpreted as unsigned (`>>> 0`) and `shr` must be the *logical*
+      # `>>>`. Otherwise a uint32 with the high bit set goes negative and breaks the
+      # unsigned comparisons / table lookups downstream — e.g. the native
+      # allocator's uint32 TLSF bitmap search (`not 0u32 shl k`, `msbit`'s `x shr a`).
+      if opr == ">>":
+        g.js.tree jBin:            # logical shift right: result is already >= 0
+          g.js.addOp ">>>"
+          g.gx n
+          g.gx n
+      else:
+        g.js.tree jBin:            # (a op b) >>> 0
+          g.js.addOp ">>>"
+          g.js.tree jBin:
+            g.js.addOp opr
+            g.gx n
+            g.gx n
+          g.js.num 0
     else:
       g.js.tree jBin:
         g.js.addOp opr
@@ -281,6 +301,13 @@ proc unTyped(g: var JSGen; n: var Cursor; opr: string) =
         g.js.tree jUn:
           g.js.addOp opr
           g.gxBig n
+    elif ak in {akU8, akU16, akU32} and opr == "~":
+      g.js.tree jBin:              # (~x) >>> 0  — unsigned bitwise-not (`not 0u32` == 2^32-1)
+        g.js.addOp ">>>"
+        g.js.tree jUn:
+          g.js.addOp "~"
+          g.gx n
+        g.js.num 0
     else:
       g.js.tree jUn:
         g.js.addOp opr
@@ -336,26 +363,24 @@ proc accessors(ak: AccessKind): (string, string) =
 
 proc isBufferObjectType(g: var JSGen; typ: Cursor): bool =
   ## True when `typ` resolves to a declared `object` — the trigger for laying it
-  ## out in linear memory rather than as a native JS object.
+  ## out in linear memory rather than as a native JS object. A named type is
+  ## resolved through `getDeclOrNil` (the codegen requires a consistent input set,
+  ## exactly like `jslayout`/the C backend — no on-disk existence probe).
   var t = typ
   if t.typeKind == ObjectT: return true
-  # Only resolve locally-declared symbols: `getDeclOrNil` asserts on an
-  # unresolvable suffixed symbol (foreign-load path), and cross-module object
-  # types stay on the legacy mapping for this increment.
-  if t.typeKind == NoType and t.kind == Symbol and g.m.hasResolvableDecl(t.symId):
+  if t.typeKind == NoType and t.kind == Symbol:
     let def = g.m.getDeclOrNil(t.symId)
-    if def != nil:
+    if def != nil and def.pos.stmtKind == TypeS:
       var p = def.pos
       return asTypeDecl(p).body.typeKind == ObjectT
   false
 
 proc resolveType(g: var JSGen; typ: Cursor): Cursor =
-  ## Resolve a named type to its declared body (locally-declared only, to avoid
-  ## `getDeclOrNil`'s foreign-load assert); otherwise return the type unchanged.
+  ## Resolve a named type to its declared body; otherwise return it unchanged.
   result = typ
-  if typ.typeKind == NoType and typ.kind == Symbol and g.m.hasResolvableDecl(typ.symId):
+  if typ.typeKind == NoType and typ.kind == Symbol:
     let def = g.m.getDeclOrNil(typ.symId)
-    if def != nil:
+    if def != nil and def.pos.stmtKind == TypeS:
       var p = def.pos
       result = asTypeDecl(p).body
 
@@ -386,67 +411,21 @@ proc isBufferAggregate(g: var JSGen; typ: Cursor): bool =
   g.isBufferObjectType(typ) or g.isBufferArray(typ)
 
 proc exprType(g: var JSGen; n: Cursor): (bool, Cursor) =
-  ## Static type of an lvalue expression, resolved structurally. Returns a type
-  ## Cursor `jslayout` can consume (a named type or a type node), or `(false, n)`
-  ## when it can't be determined. This is what lets buffer access follow through
-  ## *nested* pointer/field chains — e.g. `(dot (deref (dot s more)) fullLen)`,
-  ## the heap-string path where the dot base is itself a `(deref (dot …))`:
-  ##   * a Symbol local           -> its declared type;
-  ##   * `(deref p)` / `(pat p i)`-> the pointee of `p`'s (ptr) type;
-  ##   * `(dot base field)`       -> the field's type in `base`'s object;
-  ##   * `(at arr i)`             -> the array element type;
-  ##   * `(cast/conv T x)`        -> the target type `T`.
-  ## Guards every object/array lookup behind `isBufferObjectType`/`resolveType`
-  ## (which check `hasResolvableDecl`), so an unresolvable foreign symbol never
-  ## trips `getDeclOrNil`'s assert.
-  result = (false, n)
-  var e = n
-  case e.exprKind
-  of NoExpr:
-    if e.kind == Symbol and g.localTypes.hasKey(e.symId):
-      result = (true, g.localTypes[e.symId])
-  of DerefC, PatC:
-    e.into:
-      let (ok, t) = g.exprType(e)
-      if ok and t.typeKind in {PtrT, AptrT}:
-        var inner = t
-        inner.into:
-          result = (true, inner)
-          while inner.hasMore: skip inner
-      while e.hasMore: skip e
-  of DotC:
-    e.into:
-      let (ok, bt) = g.exprType(e)
-      if ok and g.isBufferObjectType(bt):
-        skip e                       # advance to the field symbol
-        let fsym = e.symId
-        for f in objectFields(g.m, bt):
-          if f.sym == fsym: result = (true, f.typ)
-      while e.hasMore: skip e
-  of AtC:
-    e.into:
-      let (ok, at) = g.exprType(e)
-      if ok:
-        let t = g.resolveType(at)
-        if t.typeKind == ArrayT:
-          var el = t
-          el.into:
-            result = (true, el)
-            while el.hasMore: skip el
-      while e.hasMore: skip e
-  of CastC, ConvC:
-    e.into:
-      result = (true, e)             # the explicit target type
-      while e.hasMore: skip e
-  of BaseobjC:
-    e.into:
-      result = (true, e)             # the target base type (offset 0 in the derived)
-      while e.hasMore: skip e
-  of AddC, SubC, MulC, DivC, ModC, ShlC, ShrC, BitandC, BitorC, BitxorC, BitnotC, NegC:
-    e.into:
-      result = (true, e)             # a typed op: its result type is the first operand
-      while e.hasMore: skip e
-  else: discard
+  ## Static type of an expression, via the shared **`typenav`** navigator
+  ## (`getNominalType` — the Leng type model the C and LLVM backends use, so the
+  ## JS backend no longer keeps a parallel one). It resolves symbols (through the
+  ## `typenav` scope stack), fields, derefs and index chains cross-module via
+  ## `getDeclOrNil`, which is what lets buffer access follow a *nested*
+  ## pointer/field chain like `(dot (deref (dot s more)) fullLen)`. It is kept
+  ## *nominal* (aliases unresolved) so a named type or a `ptr`/`array` node comes
+  ## back structurally, exactly as the buffer-routing predicates below expect.
+  ## An expression typenav can't type yields its `(err)` sentinel — a `NoType`
+  ## tag — reported here as `(false, n)` so callers keep their legacy fallback.
+  let t = getNominalType(g.m, n)
+  if t.kind == TagLit and t.typeKind == NoType:   # typenav's `(err)` sentinel
+    result = (false, n)
+  else:
+    result = (true, t)
 
 proc isBigType(g: var JSGen; t: Cursor): bool =
   ## True when a type is represented as a JS `BigInt`: an explicit `(i 64)`/`(u 64)`.
@@ -820,7 +799,8 @@ proc gx(g: var JSGen; n: var Cursor) =
         # address; read it with a typed load. An aggregate local already holds
         # its offset, and ordinary locals stay JS registers — both read by name.
         if g.isSlotVar(n.symId):
-          let ak = (if g.localTypes.hasKey(n.symId): accessOf(g.m, g.localTypes[n.symId]) else: akI64)
+          let (tok, tt) = g.exprType(n)
+          let ak = (if tok: accessOf(g.m, tt) else: akI64)
           if ak != akAggregate:
             let (ld, _) = accessors(ak)
             g.memMeth(ld): g.js.name nm
@@ -1242,7 +1222,8 @@ proc genBlock(g: var JSGen; n: var Cursor) =
 proc genVar(g: var JSGen; n: var Cursor) =
   var d = takeVarDecl(n)
   if g.isImportc(d.name.symId): return   # external global: provided by the runtime
-  g.localTypes[d.name.symId] = d.typ     # remember the type for buffer-model access
+  if g.inProc:
+    g.m.registerLocal(d.name.symId, d.typ)  # scope it for `typenav` (buffer-model access)
   let nm = g.name(d.name.symId)
   if g.isBufferAggregate(d.typ):
     # Nim-native aggregate (object or array): storage in linear memory. Allocate
@@ -1466,21 +1447,21 @@ proc genLvalueStore(g: var JSGen; lval: Cursor; val: Cursor) =
             (var v = val; g.gx v)
       while nn.hasMore: skip nn
   of NoExpr:
-    if n.kind == Symbol and g.localTypes.hasKey(n.symId) and
-       accessOf(g.m, g.localTypes[n.symId]) == akAggregate:
+    let (tok, tt) = (if n.kind == Symbol: g.exprType(n) else: (false, n))
+    if tok and accessOf(g.m, tt) == akAggregate:
       # Aggregate assignment: both sides are buffer offsets, so copy the bytes
       # (value semantics). An aliasing `dst = src` is wrong here — an ARC move
       # `wasMoved`s the source right after, which would then zero `dst` too (this
       # is exactly why `$bool` returned an empty string). `copy` keeps the lval's
       # slot stable; a fresh `oconstr`/`aconstr` rhs is built then copied in.
-      let sz = typeLayout(g.m, g.localTypes[n.symId]).size
+      let sz = typeLayout(g.m, tt).size
       g.js.tree jExprStmt:
         g.memMeth("copy"):
           (var nn = n; g.gx nn)
           (var v = val; g.gx v)
           g.js.num sz
     elif n.kind == Symbol and g.isSlotVar(n.symId):
-      let ak = (if g.localTypes.hasKey(n.symId): accessOf(g.m, g.localTypes[n.symId]) else: akI64)
+      let ak = (if tok: accessOf(g.m, tt) else: akI64)
       if ak != akAggregate:
         let (_, st) = accessors(ak)
         g.js.tree jExprStmt:
@@ -1590,6 +1571,14 @@ proc genProc(g: var JSGen; n: var Cursor) =
   # nested labeled blocks; declare its locals function-scoped (`var`) so a value
   # (e.g. `result`) declared before a label survives being read after the block.
   g.hoistLocals = g.bodyHasLabels(prc.body)
+  # Open a fresh `typenav` scope for this proc and register its params, so the
+  # buffer-model type queries resolve locals without leaking across procs (locals
+  # are cleared by `closeScope` — the per-proc lifetime the old `localTypes` table
+  # lacked). `inProc` tells `genVar` to scope body-locals rather than globals.
+  let savedInProc = g.inProc
+  g.inProc = true
+  g.m.openScope()
+  g.m.registerParams(prc.params)
   g.js.tree jFunc:
     g.js.name g.name(prc.name.symId)
     g.js.tree jParams:
@@ -1597,7 +1586,6 @@ proc genProc(g: var JSGen; n: var Cursor) =
         var p = prc.params
         p.loopInto:
           var d = takeParamDecl(p)
-          g.localTypes[d.name.symId] = d.typ   # remember param types for buffer access
           g.js.name g.name(d.name.symId)
     g.js.tree jBlock:
       # Prologue: a value parameter whose address is taken must be spilled to a
@@ -1624,6 +1612,8 @@ proc genProc(g: var JSGen; n: var Cursor) =
               g.memMeth(st): g.js.name nm; g.js.name (nm & "_v")
       var body = prc.body
       g.genStmtList(body)
+  g.m.closeScope()
+  g.inProc = savedInProc
   g.hoistLocals = savedHoist
 
 proc genToplevel(g: var JSGen; n: var Cursor) =

@@ -81,25 +81,29 @@ type
     ## Accumulates a jsnif tree. Thin wrapper so callers say `b.tree(jBin): …`
     ## rather than juggling raw tag ids.
     buf*: TokenBuf
-    ids: array[JsTag, TagId]
 
-proc createJsTagPool(): (TagPool, array[JsTag, TagId]) =
-  ## A private pool with one tag per `JsTag`. Registration is in enum order, so
-  ## (pool ids starting at 1) `id(e) == ord(e) + 1`; we still record the ids
-  ## rather than assume, so `tagOf` is a lookup, not a cast that could drift.
-  var pool = newTagPool()
-  var ids: array[JsTag, TagId] = default(array[JsTag, TagId])
-  for e in JsTag:
-    ids[e] = pool.registerTag($e)
-  (pool, ids)
+template tagId(t: JsTag): TagId =
+  ## The pool id of `t`, *by construction*: `createTags` registers the tags in
+  ## enum order and BiTable ids are 1-based, so `TagId == ord(JsTag) + 1` (that
+  ## alignment is asserted in `createTags`). No per-builder `ids` array needed.
+  TagId(uint32(ord(t)) + 1'u32)
+
+proc tagOf(c: Cursor): JsTag =
+  ## The inverse of `tagId`: decode the `JsTag` at `c`. A bounds-checked ordinal
+  ## move — `o == 0` wraps unsigned and fails the check — not an array lookup.
+  if c.kind == TagLit:
+    let o = uint32(c.cursorTagId)
+    if o - 1'u32 <= uint32(ord(high(JsTag))): return JsTag(o - 1'u32)
+  jNone
 
 proc initJsBuilder*(): JsBuilder =
-  let (pool, ids) = createJsTagPool()
-  result = JsBuilder(buf: createTokenBuf(64, sharedTags = pool), ids: ids)
+  ## `createTags[JsTag]()` registers the JS tags in ordinal order and asserts the
+  ## `TagId == ord + 1` alignment that `tagId`/`tagOf` rely on.
+  result = JsBuilder(buf: createTokenBuf(64, sharedTags = createTags[JsTag]()))
 
 # ── building ────────────────────────────────────────────────────────────────
 
-proc open*(b: var JsBuilder; t: JsTag) {.inline.} = b.buf.openTag b.ids[t]
+proc open*(b: var JsBuilder; t: JsTag) {.inline.} = b.buf.openTag tagId(t)
 proc close*(b: var JsBuilder) {.inline.} = b.buf.closeTag()
 
 template tree*(b: var JsBuilder; t: JsTag; body: untyped) =
@@ -150,18 +154,8 @@ template labelTree*(b: var JsBuilder; label: string; body: untyped) =
 # ── emitting (jsnif -> JS text) ───────────────────────────────────────────────
 
 type Emitter = object
-  ids: array[JsTag, TagId]
   outp: string
   indent: int
-
-proc tagOf(e: Emitter; c: Cursor): JsTag =
-  ## Decode the JS tag at `c`. Linear over ~25 tags — trivial, and robust against
-  ## any pool-id drift a raw ordinal cast would hide.
-  if c.kind == TagLit:
-    let id = c.cursorTagId
-    for t in JsTag:
-      if e.ids[t] == id: return t
-  jNone
 
 proc wr(e: var Emitter; s: string) {.inline.} = e.outp.add s
 proc nl(e: var Emitter) =
@@ -187,7 +181,7 @@ proc emitBlock(e: var Emitter; c: var Cursor) =
   ## Emit a `(block S…)` (or a `jNone`) as `{ … }` with an indented body.
   e.wr "{"
   inc e.indent
-  if e.tagOf(c) == jBlock:
+  if tagOf(c) == jBlock:
     c.into:
       while c.hasMore:
         e.nl(); e.emitStmt c
@@ -209,7 +203,7 @@ proc jsUInt(v: uint64): string =
   if v > uint64(jsMaxSafe): $v & "n" else: $v
 
 proc emitExpr(e: var Emitter; c: var Cursor) =
-  case e.tagOf(c)
+  case tagOf(c)
   of jName:
     c.into: (e.wr strVal(c); inc c); (while c.hasMore: skip c)
   of jNum:
@@ -271,7 +265,7 @@ proc emitExpr(e: var Emitter; c: var Cursor) =
       var i = 0
       while c.hasMore:            # each child is a jKv
         if i > 0: e.wr ", "
-        if e.tagOf(c) == jKv:
+        if tagOf(c) == jKv:
           c.into:
             e.wr strVal(c); inc c   # bare key ident
             e.wr ": "; e.emitExpr c
@@ -288,7 +282,7 @@ proc emitExpr(e: var Emitter; c: var Cursor) =
     # (an IIFE), never the illegal `() => {…}()`.
     c.into:
       e.wr "(("
-      if e.tagOf(c) == jParams:
+      if tagOf(c) == jParams:
         c.into:
           var i = 0
           while c.hasMore:
@@ -306,12 +300,12 @@ proc emitExpr(e: var Emitter; c: var Cursor) =
     e.wr "undefined/*jsnif:expr?*/"; skip c
 
 proc emitStmt(e: var Emitter; c: var Cursor) =
-  case e.tagOf(c)
+  case tagOf(c)
   of jVar, jVarFn:
-    let kw = if e.tagOf(c) == jVarFn: "var " else: "let "
+    let kw = if tagOf(c) == jVarFn: "var " else: "let "
     c.into:
       e.wr kw; e.emitExpr c                # name
-      if e.tagOf(c) != jNone: (e.wr " = "; e.emitExpr c) else: skip c
+      if tagOf(c) != jNone: (e.wr " = "; e.emitExpr c) else: skip c
       e.wr ";"
       while c.hasMore: skip c
   of jAsgn:
@@ -322,15 +316,15 @@ proc emitStmt(e: var Emitter; c: var Cursor) =
     c.into: (e.emitExpr c; e.wr ";"); (while c.hasMore: skip c)
   of jRet:
     c.into:
-      if e.tagOf(c) != jNone: (e.wr "return "; e.emitExpr c; e.wr ";") else: (skip c; e.wr "return;")
+      if tagOf(c) != jNone: (e.wr "return "; e.emitExpr c; e.wr ";") else: (skip c; e.wr "return;")
       while c.hasMore: skip c
   of jIf:
     c.into:
       e.wr "if ("; e.emitExpr c; e.wr ") "
       e.emitBlock c
-      if e.tagOf(c) == jBlock:
+      if tagOf(c) == jBlock:
         e.wr " else "; e.emitBlock c
-      elif e.tagOf(c) == jIf:            # else-if chain
+      elif tagOf(c) == jIf:            # else-if chain
         e.wr " else "; e.emitStmt c
       else: skip c
       while c.hasMore: skip c
@@ -350,7 +344,7 @@ proc emitStmt(e: var Emitter; c: var Cursor) =
       while c.hasMore: skip c
   of jCase:
     c.into:
-      if e.tagOf(c) == jLabels:     # one or more `case L:` labels
+      if tagOf(c) == jLabels:     # one or more `case L:` labels
         c.into:
           var first = true
           while c.hasMore:
@@ -387,14 +381,14 @@ proc emitStmt(e: var Emitter; c: var Cursor) =
     e.wr "continue;"; skip c
   of jThrow:
     c.into:
-      if e.tagOf(c) != jNone: (e.wr "throw "; e.emitExpr c; e.wr ";")
+      if tagOf(c) != jNone: (e.wr "throw "; e.emitExpr c; e.wr ";")
       else: (skip c; e.wr "throw new Error();")
       while c.hasMore: skip c
   of jFunc:
     c.into:
       e.wr "function "; e.emitExpr c      # name
       e.wr "("
-      if e.tagOf(c) == jParams:
+      if tagOf(c) == jParams:
         c.into:
           var i = 0
           while c.hasMore:
@@ -416,9 +410,9 @@ proc emit*(b: var JsBuilder): string =
   ## Print the accumulated `(module …)` tree to JS text. Top-level statements are
   ## separated by a blank line, matching the per-declaration spacing the codegen
   ## used before.
-  var e = Emitter(ids: b.ids, outp: "", indent: 0)
+  var e = Emitter(outp: "", indent: 0)
   var c = beginRead(b.buf)
-  if e.tagOf(c) == jModule:
+  if tagOf(c) == jModule:
     c.into:
       while c.hasMore:
         e.nl(); e.emitStmt c      # each top-level decl preceded by a blank line
@@ -435,21 +429,13 @@ proc emit*(b: var JsBuilder): string =
 # collapse (`(s + 0) + (i * 1)` -> `(s + i)`), and shares the input's pools so
 # unchanged subtrees are bulk-copied.
 
-proc jsTagAt*(b: JsBuilder; c: Cursor): JsTag =
-  ## Decode the JS tag at `c` using `b`'s tag ids.
-  if c.kind == TagLit:
-    let id = c.cursorTagId
-    for t in JsTag:
-      if b.ids[t] == id: return t
-  jNone
-
 proc constVal(b: JsBuilder; c: Cursor): (bool, int64) =
   ## The compile-time integer an expression folds to, resolved *recursively* so a
   ## cascade collapses in one pass — e.g. `0 * 1` is const 0, which makes its
   ## parent `(X + (0*1))` a `X + 0`. `(true, v)` for a `(num v)` or a `(bin op A B)`
   ## with `+`/`-`/`*` whose operands are both constant; `(false, _)` otherwise.
   result = (false, 0'i64)
-  case b.jsTagAt(c)
+  case tagOf(c)
   of jNum:
     var cc = c
     cc.into:
@@ -521,7 +507,7 @@ proc optCallFold(dst: var JsBuilder; src: JsBuilder; c: var Cursor): bool =
       callee = p; skip p             # callee
       arg = p                        # first argument
       while p.hasMore: (inc nargs; skip p)
-  if nargs != 1 or src.jsTagAt(callee) != jName: return false
+  if nargs != 1 or tagOf(callee) != jName: return false
   var nm = ""
   block:
     var cc = callee
@@ -532,7 +518,7 @@ proc optCallFold(dst: var JsBuilder; src: JsBuilder; c: var Cursor): bool =
   let (isConst, v) = src.constVal(arg)
   if isConst:
     dst.bignum v; skip c; return true
-  if src.jsTagAt(arg) == jUNum:
+  if tagOf(arg) == jUNum:
     var a = arg
     a.into: (dst.bigunum uintVal(a); inc a); (while a.hasMore: skip a)
     skip c; return true
@@ -546,9 +532,9 @@ proc optNode(dst: var JsBuilder; src: JsBuilder; c: var Cursor) =
     dst.buf.addSubtree c            # a bare payload token (ident / literal / dot)
     skip c
     return
-  if src.jsTagAt(c) == jBin and dst.optBinFold(src, c):
+  if tagOf(c) == jBin and dst.optBinFold(src, c):
     return
-  if src.jsTagAt(c) == jCall and dst.optCallFold(src, c):
+  if tagOf(c) == jCall and dst.optCallFold(src, c):
     return
   dst.buf.openTag c.cursorTagId     # same tag id (shared tag pool)
   c.into:
@@ -559,9 +545,9 @@ proc optNode(dst: var JsBuilder; src: JsBuilder; c: var Cursor) =
 proc peephole*(src: var JsBuilder): JsBuilder =
   ## Return an optimized copy of the whole `src` tree. Sharing `src`'s literal and
   ## tag pools keeps unchanged subtrees a memcpy and lets the result be `emit`ed
-  ## with `src`'s ids.
+  ## directly.
   result = JsBuilder(buf: createTokenBuf(64, sharedPool = src.buf.pool,
-                                         sharedTags = src.buf.tags), ids: src.ids)
+                                         sharedTags = src.buf.tags))
   var c = beginRead(src.buf)
   result.optNode(src, c)
   endRead c

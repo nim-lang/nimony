@@ -16,8 +16,14 @@ The JS target is treated as a **32-bit platform** (`--bits:32`): `int`/`uint`
 map to a JS `Number`, and only `int64`/`uint64` map to `BigInt`. This is what
 lets ordinary integer code stay fast Numbers while wide arithmetic stays exact.
 
-JavaScript is dynamically typed and garbage collected, so the pass drops all
-type generation and maps Leng constructs directly to JS:
+Nim-native data (`object`/`array`/`string`/`seq`/`ref`) is laid out **as bytes
+in one `ArrayBuffer`** — JS Typed Arrays used as byte-addressable linear memory
+(Araq's direction on PR #2043) — so `cast`, unions and low-level libraries behave
+exactly as on the C target. A pointer is a single integer **byte offset** into
+that buffer; a new `jslayout` pass computes the C-ABI `sizeof`/alignment/field
+offsets, and construction/field access lower to typed load/store calls
+(`mem.setX(p+off, v)` / `mem.getX(p+off)`) on the runtime's `DataView`. Control
+flow and scalar ops map directly; only the memory model is new:
 
 | Leng | JavaScript |
 |------|------------|
@@ -33,13 +39,13 @@ type generation and maps Leng constructs directly to JS:
 | `(case sel (of (ranges v) …) (else …))` | `switch (sel) { case v: … }` |
 | `(jmp L)` / `(lab L)` | `break L;` in a labeled block — try/except lowers (in Hexer) to an error-code ABI + a dead `if (false)` landing pad reached by a forward `jmp`; those map directly to `break` in nested labeled blocks, no relooper (Araq's PR #2043 direction) |
 | `(ret e)` | `return e;` |
-| `(oconstr T (kv f v) …)` | `{f: v, …}` — object literal (field key = mangled field sym) |
-| `(aconstr T e0 e1 …)` | `[e0, e1, …]` — array literal |
-| `(dot obj f)` | `obj.f` — field selection |
-| `(at arr i)` / `(pat p i)` | `arr[i]` — array / pointer indexing |
-| `(addr x)` | `[x, 0]` — `x` is a boxed local (1-element array) |
-| `(addr o.f)` / `(addr a[i])` | `[o, "f"]` / `[a, i]` — fat `[base, key]` pointer |
-| `(deref p)` | `p[0][p[1]]` — read/write through the fat pointer |
+| `(oconstr T (kv f v) …)` | `allocFixed(sizeof T)` then a `mem.setX(p+off, v)` per field — a fresh buffer object, evaluated by an IIFE returning its offset |
+| `(aconstr T e0 e1 …)` | `allocFixed(sizeof T)` then `mem.setX(p+i*stride, ei)` per element |
+| `(dot obj f)` | `mem.getX(base + off)` — typed load at the field's byte offset (`off` from `jslayout`) |
+| `(at arr i)` / `(pat p i)` | `mem.getX(base + i*stride)` — typed load at the element offset |
+| `(addr x)` | an integer **byte offset**: a field is `base + off`, an element `base + i*stride`, an address-taken scalar local its own slot offset |
+| `(deref p)` | `mem.getX(p)` — typed load at byte offset `p`; `(addr (deref p))` and `(deref (addr loc))` cancel |
+| `(eq a b)` / `(nil)` | `(a === b)` — offsets compare as integers; `nil` is offset `0` |
 | `importc "fwrite"` proc/global | referenced as `fwrite`; **not** emitted (runtime provides it) |
 | `exportc "main"` proc/global | emitted as `main` (its C name) |
 
@@ -60,31 +66,32 @@ the covered subset with no new backend work — enums (→ ints), tuples (→ ob
 and `object … case` variants all run correctly under Node. Since bring-up the
 slice has grown to cover **strings** (SSO + heap, `echo` and `$`), **`seq`s**,
 **`ref`/heap objects**, **closures**, and **exceptions** (nimony's heap-exception
-lowering), all exercised end-to-end by the tests below. Allocation is a bump
-arena over the shared buffer with **no free/GC yet** — that (and whole-program
-`{.bundle.}` wiring + JS interop) is the remaining open design question, not
-missing codegen.
+lowering), all exercised end-to-end by the tests below.
 
-**Addresses.** JS cannot reference a variable's storage, so a pointer cannot be
-the value itself. Following the classic Nim JS backend (`mapType`'s
-`etyBaseIndex` "fat pointers"), a pointer is a `[base, key]` pair such that
-`base[key]` is the pointee's storage. A pre-pass boxes every local whose address
-is taken into a 1-element array, so `let x = init;` becomes `let x = [init];`,
-each use of `x` becomes `x[0]`, and `(addr x)` becomes `[x, 0]`. The address of
-a field is `[obj, "field"]` and of an element is `[arr, idx]`; `(deref p)` is
-`p[0][p[1]]`. Writes through a pointer therefore mutate the underlying storage.
-The pairs `(addr (deref p))` and `(deref (addr loc))` cancel, keeping the common
-cases compact. Two fat pointers compare component-wise via a small `nimPtrEq`
-helper (emitted only when used), since a fresh `[base,key]` array is never `===`
-another; `p == nil` stays a plain comparison (a nil pointer is `null`).
+The heap is **Nim's own native allocator** — the ported `system/alloc.nim`
+(TLSF page-chunk allocator), compiled to JS through `lengjs` like any other
+module by building the stdlib with `--define:nimNativeAlloc` (the libc-free
+config the native backend uses). The runtime supplies only `mmap`/`munmap` as
+the page primitives it sits on, carved from the same `ArrayBuffer`; real `alloc`/
+`dealloc`/`realloc` with free-list reuse run as Nim code, so there is no
+JS-side bump shim. (`munmap` is a no-op — whole-page reclamation is deferred —
+but the allocator reuses cells within its arenas.) Whole-program `{.bundle.}`
+wiring + JS interop remain the open items.
 
-Taking the address of a *pointer-indexed* element (`addr (pat p i)`, i.e.
-pointer arithmetic) or other raw-memory forms need more than a single base/key
-pair and are out of scope for this slice; they emit a
-`/*TODO:addr-of-location*/` marker. Anything else outside the subset (`sizeof`,
-seqs growth, the GC runtime) likewise emits a `/*TODO:<tag>*/` marker and is
-skipped, so generation always completes and the coverage gap is visible in the
-output and reported on stderr.
+**Addresses.** A pointer is a single integer **byte offset** into the shared
+`ArrayBuffer` — the C memory model, one cast-transparent representation with no
+fat-pointer/box form for `cast` to fail to see through. `addr o.f` is `p + off`,
+`addr a[i]` is `p + i*stride`, `deref p` is a typed load at `p`, `p == q` is
+integer `===`, and `nil` is offset `0`. The pairs `(addr (deref p))` and
+`(deref (addr loc))` cancel, keeping the common cases compact. A local whose
+address is taken has no JS storage to point at, so a pre-pass (`scanForAddr`)
+spills it to a buffer slot — the C stack model — and every use goes through
+`mem`, giving it a real byte address like any other datum. `addr (pat p i)`
+(pointer arithmetic) is just `p + i*stride`, so it needs no special case.
+
+Constructs still outside the supported subset emit a `/*TODO:<tag>*/` marker (a
+valid `undefined` expression) and are skipped, so generation always completes and
+the coverage gap is visible in the output and reported on stderr.
 
 **Foreign symbols (`importc`/`exportc`).** A symbol's external (C) name is
 resolved exactly as the C backend's `mangleSym` does — through the lazily-loaded

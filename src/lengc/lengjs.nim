@@ -20,8 +20,8 @@
 ## The argv contract matches the `.build` tool-routing convention
 ## (`<tool> <args…> <module.c.nif> <out>`) and Ghast's `ghast <in> <out>`, so the
 ## compiler can schedule this without knowing anything JS-specific. All codegen
-## lives in `jscodegen` (shared with the `lengc js` convenience wrapper); this
-## module is only the plugin entry point + the paramStr contract.
+## lives in `jscodegen`; this module is only the plugin entry point + the
+## paramStr contract.
 
 import std / [os, syncio]
 import noptions

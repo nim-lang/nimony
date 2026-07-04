@@ -16,7 +16,7 @@ type
     ccNone, ccGcc, ccCLang
 
   Action* = enum
-    atNone, atC, atCpp, atNative, atLLVM, atJS
+    atNone, atC, atCpp, atNative, atLLVM
 
   AppType* = enum
     appConsole = "console"   # executable with console
@@ -60,5 +60,5 @@ template getCompilerConfig*(config: ConfigRef): (string, string) =
   else:
     quit "unreachable"
 
-const ExtAction*: array[Action, string] = ["", ".c", ".cpp", ".S", ".ll", ".js"]
+const ExtAction*: array[Action, string] = ["", ".c", ".cpp", ".S", ".ll"]
 

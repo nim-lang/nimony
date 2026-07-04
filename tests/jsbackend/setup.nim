@@ -53,11 +53,15 @@ proc runOne(nimFile: string): Res =
   removeDir cache
   createDir cache
 
-  # 1. Front end + hexer → `.c.nif` per module. The 32-bit C link fails on a
-  #    64-bit host; we deliberately ignore the exit code and judge success by
-  #    whether any `.c.nif` was produced (a real sema/hexer error produces none).
+  # 1. Front end + hexer → `.c.nif` per module. `--define:nimNativeAlloc` compiles
+  #    the stdlib against Nim's OWN ported allocator (`system/alloc.nim`) instead
+  #    of the mimalloc C binding, so the heap is real Nim code over the runtime's
+  #    `mmap`/`munmap` — the libc-free config the JS target wants (same as the
+  #    native backend). The 32-bit C link fails on a 64-bit host; we deliberately
+  #    ignore the exit code and judge success by whether any `.c.nif` was produced
+  #    (a real sema/hexer error produces none).
   let (compileOut, _) = execCmdEx(nimony.quoteShell &
-    " c --bits:32 --silentMake --nimcache:" & cache.quoteShell & " " &
+    " c --bits:32 --define:nimNativeAlloc --silentMake --nimcache:" & cache.quoteShell & " " &
     nimFile.quoteShell)
 
   var cnifs: seq[string] = @[]
