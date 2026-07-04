@@ -227,6 +227,10 @@ proc poolHelp*(): bool {.inline.} =
 proc ioFd*(): cint {.inline.} = gIoFd
   ## The shared I/O poller file descriptor (epoll fd or kqueue fd).
 
+proc perror(s: cstring) {.importc, header: "<stdio.h>".}
+  ## libc perror — report a residual epoll_ctl failure on stderr (see the
+  ## ADD/MOD fallbacks in registerFd/rearmFd).
+
 proc registerFd*(fd: cint; handler: ptr IoHandler; events: uint32) =
   ## Register fd with the shared I/O instance.
   ## Oneshot semantics: exactly one worker handles each fired event.
@@ -236,7 +240,13 @@ proc registerFd*(fd: cint; handler: ptr IoHandler; events: uint32) =
     if (events and EvWrite) != 0: mask = mask or EPOLLOUT
     var ev = EpollEvent(events: mask)
     ev.data.p = handler
-    discard epoll_ctl(gIoFd, EPOLL_CTL_ADD, fd, addr ev)
+    if epoll_ctl(gIoFd, EPOLL_CTL_ADD, fd, addr ev) == -1:
+      # Concurrent armers can race ADD vs MOD (the slot's `registered` flag is
+      # advisory across workers). ADD on an already-present fd → EEXIST; fall
+      # back to MOD so the fd ends up armed with the current mask instead of
+      # staying a fired (disarmed) oneshot — that stall loses the connection.
+      if epoll_ctl(gIoFd, EPOLL_CTL_MOD, fd, addr ev) == -1:
+        perror("ioring: epoll ADD+MOD both failed")
   elif hasKqueue:
     var kevs = default array[2, KEvent]
     var n = 0
@@ -263,7 +273,11 @@ proc rearmFd*(fd: cint; handler: ptr IoHandler; events: uint32) =
     if (events and EvWrite) != 0: mask = mask or EPOLLOUT
     var ev = EpollEvent(events: mask)
     ev.data.p = handler
-    discard epoll_ctl(gIoFd, EPOLL_CTL_MOD, fd, addr ev)
+    if epoll_ctl(gIoFd, EPOLL_CTL_MOD, fd, addr ev) == -1:
+      # Mirror of registerFd's fallback: MOD on an fd that isn't in the set
+      # (ENOENT — e.g. armed-flag set before the racing ADD landed) → ADD.
+      if epoll_ctl(gIoFd, EPOLL_CTL_ADD, fd, addr ev) == -1:
+        perror("ioring: epoll MOD+ADD both failed")
   elif hasKqueue:
     var kevs = default array[2, KEvent]
     var n = 0
