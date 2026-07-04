@@ -1,0 +1,10 @@
+{
+  "name": "nimony-jsbackend-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dev-only DOM environment (jsdom) for the JS backend's DOM tests. Run `npm install` here to enable tdom; node_modules is git-ignored, not vendored.",
+  "license": "MIT",
+  "devDependencies": {
+    "jsdom": "^29.1.1"
+  }
+}

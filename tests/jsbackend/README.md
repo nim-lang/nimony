@@ -180,6 +180,22 @@ callbacks: a Nim proc registered as an `EventTarget` handler, fired by
 (handle GC-integration: transient `JsValue`s reclaimed at scope exit, copies are
 independent slots — 1000 iterations with zero table growth), `tarray`
 (floats and JS arrays: `toFloat` round-trip, build/index/mutate a JS array from
-Nim, hand it to `JSON.stringify` and `Array.prototype.join`), and `tintro`
+Nim, hand it to `JSON.stringify` and `Array.prototype.join`), `tintro`
 (introspection + variadic call: `jsTypeof`/`instanceOf`/`hasProp` and `apply`
-of `Math.max` over a five-element argument array).
+of `Math.max` over a five-element argument array), and `tdom` (a real DOM tree
+built from Nim through the `dom.nim` binding slice — `createElement`/`textContent`/
+`appendChild`/`getElementById`/`querySelector` — plus a Nim proc wired as a
+click handler and fired via `dispatchEvent`, all against a genuine WHATWG DOM).
+
+**DOM environment (`tdom`).** `document`/`window`/`HTMLElement` don't exist in
+bare Node (only `EventTarget`/`Event` do — which is why `tevent` needs no shim).
+So the DOM test runs against **jsdom**, a spec-compliant DOM implementation, set
+up as globals by a per-test `tdom.env.js` preamble. jsdom is a **dev-only**
+dependency (declared in `package.json`, `node_modules` git-ignored, not
+vendored): run `npm install` in this directory once to enable the DOM test. The
+runner prepends any `<test>.env.js` to that test's bundle and puts
+`node_modules` on `NODE_PATH`; a test that has an `.env.js` but whose deps
+aren't installed is **skipped** (not failed), exactly like the whole suite is
+skipped when `node` is absent — so a bare checkout stays green. Testing the
+bindings against jsdom's real DOM semantics (rather than a hand shim) is also
+what makes this the reference target for a future WebIDL/MDN-driven generator.

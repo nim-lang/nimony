@@ -1,0 +1,4 @@
+# jsdom (DOM test environment) is installed on demand via `npm install`; it is
+# a dev-only dependency declared in package.json, not vendored into the repo.
+node_modules/
+package-lock.json

@@ -1,0 +1,6 @@
+children: 3
+first li: alpha
+body html: <ul id="list"><li>alpha</li><li>beta</li><li>gamma</li></ul><button>Press</button>
+clicked; target text: Press
+clicked; target text: Press
+clicks: 2

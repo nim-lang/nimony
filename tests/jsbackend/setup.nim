@@ -83,10 +83,25 @@ proc runOne(nimFile: string): Res =
       return rFail
     artifacts.add js
 
-  # 3. Bundle: runtime first, then the module artifacts (each drops its own
-  #    `"use strict";`), then the console entry point. This is the by-hand form
-  #    of what `jslink` does from the compiler's link manifest.
-  var bundle = readFile(runtime)
+  # Optional per-test JS environment: if `<test>.env.js` exists it is prepended
+  # to the bundle (e.g. a jsdom DOM installed under node_modules) and node runs
+  # with node_modules on NODE_PATH. A test that needs an env whose deps aren't
+  # installed is SKIPPED — the same way the whole suite is when `node` is absent
+  # — not failed, so a bare checkout stays green.
+  let envFile = nimFile.changeFileExt(".env.js")
+  let needsEnv = fileExists(envFile)
+  if needsEnv and not dirExists(dir / "node_modules"):
+    echo "SKIP ", nimFile, ": needs a JS env — run `npm install` in ", dir
+    return rPass
+
+  # 3. Bundle: (optional env,) runtime, then the module artifacts (each drops its
+  #    own `"use strict";`), then the console entry point. This is the by-hand
+  #    form of what `jslink` does from the compiler's link manifest.
+  var bundle = ""
+  if needsEnv:
+    bundle.add readFile(envFile)
+    if not bundle.endsWith("\n"): bundle.add "\n"
+  bundle.add readFile(runtime)
   if not bundle.endsWith("\n"): bundle.add "\n"
   for a in artifacts:
     for line in readFile(a).splitLines:
@@ -98,7 +113,9 @@ proc runOne(nimFile: string): Res =
   writeFile(bundlePath, bundle)
 
   # 4. Run under node, compare stdout to the golden.
-  let (nodeOut, nodeCode) = execCmdEx("node " & bundlePath.quoteShell)
+  let nodeCmd = (if needsEnv: "NODE_PATH=" & (dir / "node_modules").quoteShell & " " else: "") &
+                "node " & bundlePath.quoteShell
+  let (nodeOut, nodeCode) = execCmdEx(nodeCmd)
   if nodeCode != 0:
     echo "FAILURE ", nimFile, ": node exited ", nodeCode, "\n", nodeOut
     return rFail
