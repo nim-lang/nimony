@@ -366,13 +366,13 @@ proc firstChild*(n: NifCursor): NifCursor {.inline.} =
 # ── Traversal templates ──────────────────────────────────────────────────
 # Pure traversal helpers for reading/analyzing a tree without producing output.
 
-template balancedTokens*(n: var NifCursor; body: untyped) =
+template linearScan*(n: var NifCursor; body: untyped) =
   ## Deep-scans all `TagLit` nodes in the subtree rooted at `n`.
   ## Inside `body`, `n` is positioned at each `TagLit` node in turn.
   ## `body` must **not** advance `n` — the template handles traversal.
   ##
   ## .. code-block:: nim
-  ##   n.balancedTokens:
+  ##   n.linearScan:
   ##     if n.stmtKind == IfS:
   ##       foundIf = true
   let outerCursor = n

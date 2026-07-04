@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tstaticparambad.nim(4, 10) Error: `static` requires an explicit element type, e.g. `static[int]`

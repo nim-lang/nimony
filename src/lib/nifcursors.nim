@@ -343,6 +343,32 @@ template into*(n: var Cursor; body: untyped) =
     assert n.kind == ParRi, "into: body must consume all children"
     inc n          # skip closing ParRi
 
+template peekInto*(n: var Cursor; body: untyped) =
+  ## Like `into`, but does **not** require `body` to consume every child.
+  ## Enters the current `ParLe`, runs `body` (which may consume only some of
+  ## the children and stop early), then skips whatever `body` did not read
+  ## and advances `n` past the closing `)`. Only the *unconsumed* remainder
+  ## is walked — nothing is traversed twice. Like `into`, `body` must stop
+  ## at a child boundary (advance only across whole subtrees, e.g. via
+  ## `skip`); it still sees a bounded scope, so `hasMore` terminates
+  ## correctly inside it.
+  assert n.kind == ParLe, "peekInto requires cursor at ParLe"
+  when defined(virtualParRi):
+    # O(1) finish: rewind to the opening tag and skip via its jump field.
+    let savedParLe = n
+    let j = jump(n.load)
+    let isOverflow = j == MaxJump
+    n.p = cast[ptr PackedToken](cast[uint](n.p) + sizeof(PackedToken).uint)
+    n.rem = if isOverflow: high(int) else: int(j)
+    body
+    n = savedParLe
+    skip n
+  else:
+    inc n          # skip opening tag
+    body
+    while n.kind != ParRi: skip n   # mop up the unconsumed children
+    inc n          # skip closing ParRi
+
 template loopInto*(n: var Cursor; body: untyped) =
   ## Enters a node, iterates all children, then advances past `)`.
   ## The body must advance `n` on every iteration.
@@ -364,20 +390,25 @@ proc rootOf*(c: Cursor): SymId =
         if inner != SymId(0): result = inner
       skip n
 
-template balancedTokens*(n: var Cursor; body: untyped) =
-  ## Deep-scans all `ParLe` nodes in the subtree rooted at `n`.
-  ## Inside `body`, `n` is positioned at each `ParLe` node in turn.
-  ## `body` must **not** advance `n` — the template handles traversal.
-  var nestedDepth = 0
+template linearScan*(n: var Cursor; body: untyped) =
+  ## Linearly scans the subtree rooted at `n`, visiting every nested `ParLe`
+  ## node in document order and at all depths — the all-depth counterpart to
+  ## `loopInto` (which visits direct children only). `body` runs with `n`
+  ## positioned at each `ParLe`; it may inspect the node — reading children
+  ## through a *copy* so as not to disturb the walk — and `break` to stop
+  ## early, leaving `n` at the matching node. `body` must **not** advance
+  ## `n`; the template walks it. Use for tag searches over a whole subtree,
+  ## e.g. the type-hook pragma lookups.
+  var nested = 0
   if n.kind == ParLe:
-    inc nestedDepth; inc n
-    while nestedDepth > 0:
+    inc nested; inc n
+    while nested > 0:
       case n.kind
       of ParLe:
         body
-        inc nestedDepth; inc n
+        inc nested; inc n
       of ParRi:
-        dec nestedDepth; inc n
+        dec nested; inc n
       else:
         inc n
 
@@ -415,8 +446,21 @@ else:
     else:
       if dest.data != nil: dealloc(dest.data)
 
+template allocStorage(cap: int): Storage =
+  ## Allocate backing storage for `cap` tokens, never requesting a zero- or
+  ## sub-`FreeCell` block. `alloc(0)` (cap 0) — and any request below the
+  ## allocator's `sizeof(FreeCell)` minimum, e.g. one 8-byte `PackedToken` —
+  ## is undefined for Nim's default (non-`useMalloc`) allocator: it rounds the
+  ## size through the small-block freelist and corrupts the heap. That fires
+  ## `[SYSASSERT] rawAlloc: requested size too small` under `-d:useSysAssert`
+  ## and segfaults in `rawAlloc`/`addToSharedFreeList` on some platforms (WSL2),
+  ## while `-d:useMalloc` hides it because `malloc(0)` returns a valid pointer.
+  ## Floor the request at 8 slots — the same minimum the grow path uses, so an
+  ## empty buffer's first append needs no immediate realloc.
+  cast[Storage](alloc(sizeof(PackedToken) * max(cap, 8)))
+
 proc createTokenBuf*(cap = 100): TokenBuf =
-  result = TokenBuf(data: cast[Storage](alloc(sizeof(PackedToken)*cap)), len: 0, cap: cap)
+  result = TokenBuf(data: allocStorage(cap), len: 0, cap: cap)
 
 proc prepareMutation*(b: var TokenBuf) {.inline.} =
   ## Detach the buffer from its CursorOwner so the next mutation does
@@ -446,7 +490,7 @@ proc prepareMutation*(b: var TokenBuf) {.inline.} =
       b.owner = nil
       when defined(prepMutStats): inc cowFastCount
     else:
-      let newData = cast[Storage](alloc(sizeof(PackedToken) * b.cap))
+      let newData = allocStorage(b.cap)
       copyMem(newData, b.data, sizeof(PackedToken) * b.len)
       decRcAndFree(b.owner)
       b.owner = nil

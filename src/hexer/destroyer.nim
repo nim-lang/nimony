@@ -356,7 +356,7 @@ proc trIf(c: var Context; n: var Cursor) =
         copyInto(c.dest, n):
           trNestedScope c, n
       of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
-          TypevarU, EfldU, FldU, WhenU, TypevarsU, CaseU, OfU,
+          TypevarU, StaticTypevarU, EfldU, FldU, WhenU, TypevarsU, CaseU, OfU,
           StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
           UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, ForcallU, NoSub:
         takeTree c.dest, n
@@ -374,7 +374,7 @@ proc trCase(c: var Context; n: var Cursor) =
         copyInto(c.dest, n):
           trNestedScope c, n
       of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
-          TypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
+          TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
           StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
           UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, ForcallU, NoSub:
         takeTree c.dest, n

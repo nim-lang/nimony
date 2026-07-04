@@ -23,8 +23,6 @@ import nimony_model, symtabs, builtintypes, decls, asthelpers,
   semuntyped, vtables_frontend, module_plugins, deferstmts, pragmacanon, exprexec, langmodes,
   features, identstyle, macro_plugin
 
-import contracts_njvl
-
 import ".." / gear2 / modnames
 import ".." / models / [tags, nifindex_tags]
 when not defined(nimony):
@@ -84,7 +82,7 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
             checkBranch(it)
             skip it
             while it.hasMore: skip it
-        of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, EfldU, FldU,
+        of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, StaticTypevarU, EfldU, FldU,
            WhenU, TypevarsU, CaseU, OfU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
            UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, ForcallU:
           error "illformed AST: `elif` or `else` inside `if` expected, got ", it
@@ -113,7 +111,7 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
             checkBranch(it)
             skip it
             while it.hasMore: skip it
-        of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, EfldU, FldU,
+        of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, StaticTypevarU, EfldU, FldU,
            WhenU, TypevarsU, CaseU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
            UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, ForcallU:
           error "illformed AST: `of`, `elif` or `else` inside `case` expected, got ", it
@@ -151,11 +149,10 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
             if noreturnOnly: {NoreturnP}
             else: {DiscardableP, NoreturnP}
           if decl.kind == ParLe:
-            decl.into:  # (pragmas …)
+            decl.peekInto:  # (pragmas …)
               while decl.hasMore:
                 if pragmaKind(decl) in accepted:
-                  while decl.hasMore: skip decl  # mop-up before early-exit
-                  return true
+                  return true  # peekInto skips the remaining pragmas + `)`
                 skip decl
     result = false
   of RetS, BreakS, ContinueS, RaiseS:
@@ -388,7 +385,7 @@ proc produceInvoke(c: var SemContext; dest: var TokenBuf; req: InstRequest;
     if typeVars.substructureKind == TypevarsU:
       typeVars.into TypevarsU:
         while typeVars.hasMore:
-          if typeVars.symKind == TypevarY:
+          if isTypevarLike(typeVars.symKind):
             var tv = typeVars
             inc tv
             dest.copyTree req.inferred.getOrQuit(tv.symId)
@@ -880,7 +877,7 @@ proc bindInvokeArgs(decl: TypeDecl; invokeArgs: Cursor): Table[SymId, Cursor] =
     typevar.into TypevarsU:
       while arg.hasMore:
         let tv = asLocal(typevar)
-        assert tv.kind == TypevarY
+        assert isTypevarLike(tv.kind)
         result[tv.name.symId] = arg
         skip typevar
         skip arg
@@ -1666,6 +1663,11 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
     dest.shrink typeStart
     commonType c, dest, it, start, expected
   else:
+    if s.kind == StaticTypevarY:
+      # a *value* generic parameter: it is an ordinary value whose type is the
+      # declared element type (the local-symbol path below), but its use marks
+      # the enclosing construct as generic, exactly like an ordinary typevar
+      inc c.usedTypevars
     let res = declToCursor(c, dest, s)
     if KeepMagics notin flags:
       let beforeMagic = dest.len
@@ -2442,6 +2444,15 @@ proc semObjectCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item;
     while it.n.hasMore:
       semObjectComponent c, dest, it.n, state
     takeParRi dest, it.n
+  elif it.n.substructureKind == NilU:
+    # An empty branch (`of X: discard`) parses to a bare `(nil)` body. Emit a
+    # well-formed empty `(stmts)` instead so downstream variant walkers (type
+    # navigation, sizeof, hooks) see the same body shape as a normal branch,
+    # rather than a `(nil)` that several `while hasMore` loops fail to advance
+    # past (an effectively-infinite compile).
+    dest.addParLe(StmtsS, it.n.info)
+    dest.addParRi()
+    skip it.n
   else:
     dest.addParLe(StmtsS, it.n.info)
     semObjectComponent c, dest, it.n, state
@@ -3728,7 +3739,7 @@ proc caseBranchMatchesExpr(c: var SemContext; dest: var TokenBuf; branch, matche
       if value >= a and value <= b:
         return true
       skipParRi(branch)
-    of NoSub, NilU, NotnilU, KvU, VvU, RangesU, ParamU, TypevarU, EfldU, FldU,
+    of NoSub, NilU, NotnilU, KvU, VvU, RangesU, ParamU, TypevarU, StaticTypevarU, EfldU, FldU,
        WhenU, ElifU, ElseU, TypevarsU, CaseU, OfU, StmtsU, ParamsU, PragmasU,
        EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU,
        CallargsU, ForcallU:
@@ -3807,7 +3818,7 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         else:
           skip n
         skipParRi n
-      of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, EfldU, FldU,
+      of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, StaticTypevarU, EfldU, FldU,
          WhenU, ElifU, TypevarsU, CaseU, StmtsU, ParamsU, PragmasU,
          EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU,
          CallargsU, ForcallU:

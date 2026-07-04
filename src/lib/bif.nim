@@ -69,6 +69,7 @@
 
 import std / [syncio, assertions, strutils]
 import nifcore
+import vfs
 
 const
   Version = 3'u8
@@ -282,11 +283,75 @@ proc loadFromFile*(f: File): BifModule =
   # symbol index (we are now positioned exactly at indexOffset).
   result.index = readIndex(f)
 
+# ── mmap-backed load (zero-copy token block) ────────────────────────────────
+# `load` maps the whole `.bif` with `vfs.vfsOpenMmap` and BORROWS its token block
+# straight into the returned `TokenBuf` via `adoptForeignTokens` — no multi-hundred
+# -MB `readBuffer` into the heap. The pages are file-backed and read-only, so every
+# process that maps the same cache file shares one physical copy (the whole point
+# for the parallel IC backend, where dozens of workers reload `system.s.bif` & co).
+# Only the small pools + index are copied out, so they don't pin the mapping. The
+# mapping is intentionally never unmapped (see `adoptForeignTokens`): a `.bif` load
+# feeds a short-lived backend process and is reclaimed wholesale at exit.
+
+type
+  BifReader = object
+    base: uint     # start of the mapped bytes
+    pos: int       # cursor within [0, size)
+    size: int
+
+proc rU32(r: var BifReader): uint32 =
+  assert r.pos + 4 <= r.size, "bif: truncated header/pool"
+  result = cast[ptr uint32](r.base + uint(r.pos))[]
+  r.pos += 4
+
+proc rStr(r: var BifReader): string =
+  let n = int rU32(r)
+  assert r.pos + n <= r.size, "bif: truncated string"
+  result = newString(n)
+  if n > 0:
+    copyMem(addr result[0], cast[pointer](r.base + uint(r.pos)), n)
+    r.pos += n
+
 proc load*(filename: string): BifModule =
-  ## Read a `BifModule` from a binary `.bif` file. Mints fresh pools (INVARIANT).
-  var f = open(filename, fmRead)
-  result = loadFromFile(f)
-  close(f)
+  ## Read a `BifModule` from a binary `.bif` file, memory-mapping it and BORROWING
+  ## the token block (zero-copy — see `adoptForeignTokens`). Mints fresh pools (the
+  ## bif INVARIANT). The mapping stays resident for the process lifetime.
+  let blob = vfsOpenMmap(filename)          # left mapped for the buffer's lifetime
+  var r = BifReader(base: cast[uint](blob.data), pos: 0, size: blob.size)
+  block:                                    # magic
+    let want = magic()
+    assert r.size >= MagicLen, "bif: file too small"
+    for i in 0 ..< MagicLen:
+      if cast[ptr char](r.base + uint(i))[] != want[i]:
+        quit "bif: bad magic / incompatible format or word size"
+  r.pos = MagicLen
+  discard rU32(r)                  # indexOffset — a full load reaches it linearly
+  let tokenCount = int rU32(r)
+  let nTags      = int rU32(r)
+  let nStrings   = int rU32(r)
+  let nSyms      = int rU32(r)
+  let nFiles     = int rU32(r)
+  # token block starts here (byte 32) and is borrowed straight from the mapping.
+  result = BifModule()
+  let tokenBytes = tokenCount * sizeof(NifToken)
+  assert r.pos + tokenBytes <= r.size, "bif: truncated token block"
+  result.buf = adoptForeignTokens(cast[pointer](r.base + uint(r.pos)), tokenCount)
+  r.pos += tokenBytes
+  # pools: re-intern in stored (id) order so ids 1,2,… match the token refs.
+  for _ in 1 .. nTags:    discard result.buf.tags.tags.getOrIncl(rStr(r))
+  for _ in 1 .. nStrings: discard result.buf.pool.strings.getOrIncl(rStr(r))
+  for _ in 1 .. nSyms:    discard result.buf.pool.syms.getOrIncl(rStr(r))
+  for _ in 1 .. nFiles:   discard result.buf.pool.filenames.getOrIncl(rStr(r))
+  # symbol index (we are now positioned exactly at indexOffset).
+  let nIndex = int rU32(r)
+  result.index = newSeq[IndexEntry](nIndex)
+  for i in 0 ..< nIndex:
+    let sym = SymId rU32(r)
+    let pos = cast[int32](rU32(r))
+    assert r.pos + 1 <= r.size, "bif: truncated index"
+    let v = cast[ptr uint8](r.base + uint(r.pos))[]
+    r.pos += 1
+    result.index[i] = IndexEntry(sym: sym, pos: pos, vis: IndexVis(v))
 
 # ── self-test ───────────────────────────────────────────────────────────────
 

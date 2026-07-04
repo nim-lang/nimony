@@ -81,6 +81,18 @@ proc hasturTests(overwrite: bool) =
   # compile tests much faster with no coverage loss for regression runs.
   if os.getEnv("CI").len > 0:
     args = "--release " & args
-  exec "nim c -r src/hastur " & args & " all"
+  # Build hastur once into `bin/` as a dedicated step, then drive the suite
+  # with the compiled binary. Previously `nim c -r src/hastur … all` fused
+  # the compile and the run, so a hastur *compile* error surfaced as a bogus
+  # test failure, and hastur's parallel runner re-exec'd itself via a
+  # nimcache temp binary (`getAppFilename`) instead of a stable `bin/hastur`.
+  # `--warningAsError:{ProveInit,Uninit}:off` mirrors hastur's own
+  # `nimcPrefix`: `src/config.nims` promotes those to errors, which Nim
+  # 2.2.10's `typedthreads` (`createThread`, used by the parallel runner)
+  # trips.
+  let hastur = ("bin" / "hastur").addFileExt(ExeExt)
+  exec "nim c --warningAsError:ProveInit:off --warningAsError:Uninit:off " &
+       "-o:" & hastur & " src/hastur"
+  exec hastur & " " & args & " all"
 
 hasturTests(overwrite)
