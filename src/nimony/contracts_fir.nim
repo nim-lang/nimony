@@ -1075,6 +1075,15 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
     # Validate borrowable path for haddr arguments (call-scoped borrows)
     if isMut:
       var inner = n
+
+      # Make sure the variable is `var`, else it error
+      let path = extractPath(c, inner, allowDeref=true)
+      if path.path.len > 0:
+        let rootSym = path.path[0]
+        let x = getLocalInfo(c.typeCache, rootSym)
+        if x.kind in {LetY, GletY, TletY} and isInitialized(c, rootSym):
+          buildErr c, n.info, "Can't pass `let` variable as var argument"
+
       inc inner # skip haddr tag
       needsBorrowCheck = true
     if pk == OutT:

@@ -173,7 +173,7 @@ func ensureUniqueLong(s: var string; oldLen, newLen: int) =
       p.fullLen = newLen
       p.capImpl = newCap
       if isHeap:
-        let old = s.more
+        var old = s.more
         copyMem(addr p.data[0], addr old.data[0], min(oldLen, newCap))
         if arcDec(old.rc):
           dealloc(old)
