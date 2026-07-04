@@ -65,6 +65,7 @@ proc rawCall3(obj, name, a, b, c: int32): int32 {.importc: "_jsCall3".}
 proc rawNewObject(): int32 {.importc: "_jsNewObject".}
 proc rawCtor0(ctor: int32): int32 {.importc: "_jsCtor0".}
 proc rawCtor1(ctor, a: int32): int32 {.importc: "_jsCtor1".}
+proc rawCtorN(ctor, args: int32): int32 {.importc: "_jsCtorN".}
 
 # ── ARC hooks: JsValue owns its slot ─────────────────────────────────────────
 proc `=destroy`(x: JsValue) =
@@ -190,6 +191,15 @@ proc newOf*(ctorName: string; a: JsValue): JsValue =
   ## `new globalThis[ctorName](a)` — e.g. `newOf("Event", toJs("click"))`.
   let c = global(ctorName)
   JsValue(h: rawCtor1(c.h, a.h))
+
+proc newOf*(ctorName: string; args: openArray[JsValue]): JsValue =
+  ## `new globalThis[ctorName](...args)` — construction with any argument count
+  ## (the args are marshalled through a JS array and spread via `Reflect.construct`).
+  let arr = newJsArray()
+  for x in args:
+    arr.add(x)
+  let c = global(ctorName)
+  JsValue(h: rawCtorN(c.h, arr.h))
 
 # ── introspection ────────────────────────────────────────────────────────────
 proc jsTypeof*(v: JsValue): string =

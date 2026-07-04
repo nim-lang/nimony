@@ -1,0 +1,10 @@
+protocol: https:
+hostname: example.com
+port: 8080
+pathname: /a/b
+search: ?x=1&y=2
+hash: #frag
+username: user
+href: https://user:pw@example.com:8080/a/b?x=1&y=2#updated
+searchParams x: 1
+json: https://user:pw@example.com:8080/a/b?x=1&y=2#updated

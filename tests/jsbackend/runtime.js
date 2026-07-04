@@ -138,6 +138,8 @@ function _jsNewObject(){ return _jsNew({}); }
 // `new Ctor(...)` construction.
 function _jsCtor0(ctorH){ return _jsNew(new (_jsv[ctorH])()); }
 function _jsCtor1(ctorH, aH){ return _jsNew(new (_jsv[ctorH])(_jsv[aH])); }
+// `new Ctor(...args)` for any arity: args is a JS array handle, spread via Reflect.
+function _jsCtorN(ctorH, argsH){ return _jsNew(Reflect.construct(_jsv[ctorH], _jsv[argsH])); }
 
 // JS arrays. An array is just another JS value in the table; `_jsArrGet` interns
 // a *new* handle to the element (owned by the returned JsValue), and `push`/set

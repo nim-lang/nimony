@@ -2,9 +2,11 @@
   "name": "nimony-jsbackend-tests",
   "version": "1.0.0",
   "private": true,
-  "description": "Dev-only DOM environment (jsdom) for the JS backend's DOM tests. Run `npm install` here to enable tdom; node_modules is git-ignored, not vendored.",
+  "description": "Dev-only tooling for the JS backend tests: a DOM environment (jsdom, for tdom) and the WebIDL binding generator (webidl2 + @webref/idl, for gen/idl2nim.js). Run `npm install` here to enable them; node_modules is git-ignored, not vendored.",
   "license": "MIT",
   "devDependencies": {
-    "jsdom": "^29.1.1"
+    "@webref/idl": "^3.81.2",
+    "jsdom": "^29.1.1",
+    "webidl2": "^24.5.0"
   }
 }

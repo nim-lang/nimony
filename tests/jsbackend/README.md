@@ -185,7 +185,10 @@ Nim, hand it to `JSON.stringify` and `Array.prototype.join`), `tintro`
 of `Math.max` over a five-element argument array), and `tdom` (a real DOM tree
 built from Nim through the `dom.nim` binding slice — `createElement`/`textContent`/
 `appendChild`/`getElementById`/`querySelector` — plus a Nim proc wired as a
-click handler and fired via `dispatchEvent`, all against a genuine WHATWG DOM).
+click handler and fired via `dispatchEvent`, all against a genuine WHATWG DOM),
+and `turl` (a binding **generated** from official WebIDL — `URL` from
+`@webref/idl` via `gen/idl2nim.js` — constructed, attributes read/written,
+`toJSON` called; `URL` is a native Node global so no DOM env is needed).
 
 **DOM environment (`tdom`).** `document`/`window`/`HTMLElement` don't exist in
 bare Node (only `EventTarget`/`Event` do — which is why `tevent` needs no shim).
@@ -198,4 +201,23 @@ runner prepends any `<test>.env.js` to that test's bundle and puts
 aren't installed is **skipped** (not failed), exactly like the whole suite is
 skipped when `node` is absent — so a bare checkout stays green. Testing the
 bindings against jsdom's real DOM semantics (rather than a hand shim) is also
-what makes this the reference target for a future WebIDL/MDN-driven generator.
+what makes this the reference target for the WebIDL-driven generator below.
+
+**Spec-backed bindings (`gen/idl2nim.js`, `weburl.nim`, `turl`).** DOM/web
+bindings are too large to hand-write, so `dom.nim` is really the *reference
+shape* for a generator. `gen/idl2nim.js` reads the curated WebIDL that
+`@webref/idl` ships (the W3C/WHATWG official interface data — 325 specs),
+parses it with the standard `webidl2` parser, and emits a `jsffi` binding in
+exactly the `dom.nim` style: an interface becomes a `JsValue` alias, attributes
+become get/set procs, operations become `call` procs, and WebIDL types map to
+Nim through jsffi's marshalling (`DOMString`→`string`, `boolean`→`bool`,
+integer types→`int`, `double`→`float`, other interfaces→`JsValue`). Constructs
+it doesn't yet handle (optional/variadic args, static ops, overloads) are
+emitted as `## SKIPPED` comments so the coverage gap is visible, not silent.
+
+`weburl.nim` is the checked-in output of `node gen/idl2nim.js url URL
+weburl.nim` (regenerate with that command after `npm install`); `turl`
+exercises it end-to-end. `webidl2`/`@webref/idl` are dev-only, like jsdom — the
+generated `.nim` is committed, so `turl` needs neither them nor a DOM env. This
+is the path to spec-backed coverage; adding `@mdn/browser-compat-data` later
+gates which members a target actually supports.
