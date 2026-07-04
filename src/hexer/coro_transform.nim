@@ -2538,7 +2538,13 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         inner = sub(inner)
         var dstType = inner
         skip inner           # past target type
-        if inner.kind == Symbol or inner.exprKind in {TupatX, DotX}:
+        # Any value shape can carry the closure tuple — a symbol, a
+        # field, but also `(hderef (call get… seq i))` from an inlined
+        # seq-element loop. Gate on the DESTINATION being a pointer cast
+        # and let typenav decide; unknown shapes type as auto and fall
+        # through.
+        if dstType.typeKind in {PtrT, PointerT} and
+            (inner.kind == Symbol or inner.isTagLit):
           let srcTyp = c.typeCache.getType(inner, {SkipAliases})
           # A `.closure` proctype value is the same (fn, env) pair: a closure
           # global declared in another module keeps its semchecked type here,
