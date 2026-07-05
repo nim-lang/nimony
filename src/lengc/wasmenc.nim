@@ -58,11 +58,17 @@ type
     locals*: seq[ValType]
     body*: seq[byte]
 
+  Global = object
+    typ: ValType
+    mutable: bool
+    initI32: int32                     ## init is `i32.const initI32` (all we need: $hp)
+
   WasmModule* = object
     types: seq[FuncType]
     typeCache: Table[string, uint32]   ## dedup identical signatures
     imports: seq[Import]
     funcs*: seq[WasmFunc]
+    globals: seq[Global]
     exports: seq[Export]
     numImportedFuncs*: uint32          ## imported funcs occupy the low func indices
 
@@ -213,6 +219,11 @@ proc addFunc*(m: var WasmModule; f: WasmFunc): uint32 =
   result = m.numImportedFuncs + uint32(m.funcs.len)
   m.funcs.add f
 
+proc addGlobal*(m: var WasmModule; typ: ValType; mutable: bool; initI32: int32): uint32 =
+  ## A module global with a constant `i32.const` initializer. Returns its index.
+  result = uint32(m.globals.len)
+  m.globals.add Global(typ: typ, mutable: mutable, initI32: initI32)
+
 proc exportFunc*(m: var WasmModule; name: string; funcIdx: uint32) =
   m.exports.add Export(name: name, kind: ekFunc, index: funcIdx)
 
@@ -283,6 +294,17 @@ proc encode*(m: WasmModule): seq[byte] =
     s.putU uint64(m.funcs.len)
     for f in m.funcs: s.putU uint64(f.typeIdx)
     section(result, 3, s)
+
+  # 6: global section
+  block:
+    var s: seq[byte] = @[]
+    s.putU uint64(m.globals.len)
+    for g in m.globals:
+      s.add byte(ord(g.typ))
+      s.add (if g.mutable: 0x01'u8 else: 0x00'u8)
+      s.i32Const g.initI32           # init expr: i32.const N
+      s.add opEnd                    # ... end
+    section(result, 6, s)
 
   # 7: export section
   block:

@@ -1,0 +1,4 @@
+makeDist() = 169
+fieldStores() = 18
+valueCopy() = 101
+arraySum() = 100

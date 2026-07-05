@@ -39,6 +39,7 @@ import std / [tables, sets, syncio]
 
 import ".." / lib / nifcoreparse   # re-exports nifcore (Cursor, into, skip, intVal, ...)
 import ".." / lib / nifcdecl        # stmtKind/exprKind/substructureKind + decl readers
+import mangler                      # mangleToC — external name for a cross-module import
 import noptions
 import nifmodules                   # MainModule + load + scope stack
 import typenav                      # getNominalType — the shared Leng type navigator
@@ -59,6 +60,12 @@ type
     hasResult: bool
     resultVT: ValType
 
+  ImportSig = object
+    funcIdx: uint32
+    params: seq[ValType]
+    hasResult: bool
+    resultVT: ValType
+
   WasmGen = object
     m: MainModule
     md: WasmModule
@@ -66,6 +73,7 @@ type
     todos: int
     procs: seq[ProcInfo]
     procBySym: Table[SymId, int]     ## symId -> index into `procs`
+    importSigs: Table[SymId, ImportSig]  ## cross-module/importc callee -> host import
     # per-function state:
     body: seq[byte]
     locals: seq[ValType]             ## additional locals (indices numParams..)
@@ -77,6 +85,7 @@ type
     nframes: int                     ## current control-frame nesting (for `br` depth)
     breakBlocks: seq[int]            ## `nframes` value at each enclosing loop's break-block
     labelBlocks: Table[SymId, int]   ## goto label -> the `nframes` level of its wrapping block
+    hpGlobal: uint32                 ## the bump-allocation pointer ($hp), a mutable i32 global
 
 # ── type mapping ──────────────────────────────────────────────────────────────
 
@@ -112,6 +121,8 @@ proc genExpr(g: var WasmGen; n: var Cursor; want: ValType)
 proc genStmt(g: var WasmGen; n: var Cursor)
 proc genStmtList(g: var WasmGen; n: var Cursor)
 proc labelSym(n: Cursor): SymId
+proc constructObjInto(g: var WasmGen; destLocal: uint32; n: var Cursor)
+proc constructArrInto(g: var WasmGen; destLocal: uint32; n: var Cursor; arrTyp: Cursor; baseOff: int64)
 
 proc todo(g: var WasmGen; what: string) =
   inc g.todos
@@ -307,7 +318,13 @@ proc genElemAddr(g: var WasmGen; n: var Cursor; ptrStride: bool): AccessKind =
   n.into:
     var stride = 0'i64
     var ak = akAggregate
-    let baseTy = getNominalType(g.m, n)
+    var baseTy = getNominalType(g.m, n)
+    # resolve a named type (a local's declared array/ptr type is a symbol) to its body
+    if baseTy.typeKind == NoType and baseTy.kind == Symbol:
+      let def = g.m.getDeclOrNil(baseTy.symId)
+      if def != nil and def.pos.stmtKind == TypeS:
+        var p = def.pos
+        baseTy = asTypeDecl(p).body
     var elemTy = baseTy
     if baseTy.typeKind in {ArrayT, FlexarrayT}:
       var a = baseTy
@@ -387,11 +404,164 @@ proc genCall(g: var WasmGen; n: var Cursor; wantResult: bool) =
         g.body.op opDrop
       elif not pi.hasResult and wantResult:
         g.body.i32Const 0      # void call in value position (shouldn't happen)
+    elif n.kind == Symbol and g.importSigs.hasKey(n.symId):
+      # a cross-module / importc / runtime call: dispatched to a host import whose
+      # signature was collected in the pre-pass. Args are coerced to its params.
+      let sig = g.importSigs[n.symId]
+      inc n
+      var pi = 0
+      while n.hasMore:
+        let w = (if pi < sig.params.len: sig.params[pi] else: vI32)
+        g.genExpr(n, w)
+        inc pi
+      g.body.call sig.funcIdx
+      if sig.hasResult and not wantResult: g.body.op opDrop
+      elif not sig.hasResult and wantResult: g.body.i32Const 0
     else:
-      # cross-module / importc / indirect: unsupported in this slice
+      # indirect / unresolved: unsupported in this slice
       while n.hasMore: skip n
       g.todo("call")
       if wantResult: g.body.i32Const 0
+
+# ── linear-memory allocation & aggregate construction ─────────────────────────
+# Aggregates (objects/arrays) live in linear memory, exactly as in the JS backend.
+# Storage comes from a bump pointer `$hp` — a mutable i32 global — that only ever
+# grows (never freed), mirroring the JS backend's `allocFixed` (the pre-existing
+# GC/#1518 gap; whole-program reclamation is a later concern). A pointer is the
+# integer byte offset the bump returns.
+
+proc roundUp8(x: int64): int64 {.inline.} = (x + 7) and not 7'i64
+
+proc freshLocal(g: var WasmGen; w: ValType): uint32 =
+  ## A nameless temporary local (for a construction destination address).
+  result = g.numParams + uint32(g.locals.len)
+  g.locals.add w
+
+proc emitAlloc(g: var WasmGen; size: int64) =
+  ## Bump-allocate `size` bytes, leaving the allocation's byte address on the
+  ## stack: `addr = $hp; $hp += roundUp8(size)`.
+  let sz = roundUp8(max(size, 0))
+  g.body.globalGet g.hpGlobal            # the address (result)
+  g.body.globalGet g.hpGlobal
+  g.body.i32Const int32(sz)
+  g.body.op 0x6A'u8                      # i32.add
+  g.body.globalSet g.hpGlobal            # $hp += sz
+
+proc memCopy(g: var WasmGen) =
+  ## `memory.copy` — expects (dest, src, len) already on the stack.
+  g.body.op 0xFC'u8
+  g.body.putU 10                         # memory.copy
+  g.body.putByte 0x00                    # dst mem index
+  g.body.putByte 0x00                    # src mem index
+
+proc arrayElemInfo(g: var WasmGen; arrTyp: Cursor): (int64, AccessKind) =
+  ## (elementStride, elementAccessKind) for an array/flexarray type.
+  var t = arrTyp
+  if t.typeKind == NoType and t.kind == Symbol:
+    let def = g.m.getDeclOrNil(t.symId)
+    if def != nil and def.pos.stmtKind == TypeS:
+      var p = def.pos
+      t = asTypeDecl(p).body
+  if t.typeKind notin {ArrayT, FlexarrayT}: return (0'i64, akAggregate)
+  var n = t
+  var stride = 0'i64
+  var ak = akAggregate
+  n.into:
+    let lay = typeLayout(g.m, n)
+    stride = (if lay.align <= 1: lay.size else: (lay.size + lay.align - 1) and not (lay.align - 1))
+    ak = accessOf(g.m, n)
+    while n.hasMore: skip n
+  (stride, ak)
+
+proc storeFieldAt(g: var WasmGen; destLocal: uint32; off: int64; ak: AccessKind; val: var Cursor) =
+  ## Emit a store of the value at `val` into `destLocal + off` (scalar) or a
+  ## `memory.copy` of `size` bytes (aggregate field: dest, src, len).
+  g.body.localGet destLocal
+  if off != 0: (g.body.i32Const int32(off); g.body.op 0x6A'u8)
+  if ak == akAggregate:
+    g.genExpr(val, vI32)                 # src address
+    g.body.i32Const int32(typeLayout(g.m, getNominalType(g.m, val)).size)
+    g.memCopy()
+  else:
+    g.genExpr(val, vt(ak))
+    g.body.memArg(storeOp(ak), alignOf(ak), 0)
+
+proc constructObjInto(g: var WasmGen; destLocal: uint32; n: var Cursor) =
+  ## Build an `(oconstr Type (kv f v) …)` into the storage whose address is in
+  ## `destLocal`: one store per field at its `jslayout` byte offset.
+  n.into:
+    let ty = n
+    skip n
+    let fields = objectFields(g.m, ty)
+    while n.hasMore:
+      if n.substructureKind == KvU:
+        n.into:
+          let fsym = n.symId; inc n
+          var off = 0'i64
+          var ftyp = n
+          for f in fields:
+            if f.sym == fsym: off = f.offset; ftyp = f.typ
+          let ak = accessOf(g.m, ftyp)
+          if n.exprKind == AconstrC:
+            g.constructArrInto(destLocal, n, ftyp, off)
+          else:
+            g.storeFieldAt(destLocal, off, ak, n)
+          while n.hasMore: skip n
+      else:
+        # inheritance-base initializer at offset 0
+        if n.exprKind == OconstrC:
+          g.constructObjInto(destLocal, n)
+        else:
+          g.storeFieldAt(destLocal, 0, akPtr, n)
+
+proc constructArrInto(g: var WasmGen; destLocal: uint32; n: var Cursor; arrTyp: Cursor; baseOff: int64) =
+  ## Build an `(aconstr T e0 e1 …)` into `destLocal`: one store per element at
+  ## `baseOff + i*stride`.
+  let (stride, ak) = g.arrayElemInfo(arrTyp)
+  n.into:
+    skip n                # array type operand
+    var i = 0'i64
+    while n.hasMore:
+      g.storeFieldAt(destLocal, baseOff + i * stride, ak, n)
+      inc i
+
+proc isBufferAggregate(g: var WasmGen; typ: Cursor): bool =
+  ## A declared object or an array — laid out in linear memory.
+  var t = typ
+  if t.typeKind in {ObjectT, ArrayT, FlexarrayT}: return true
+  if t.typeKind == NoType and t.kind == Symbol:
+    let def = g.m.getDeclOrNil(t.symId)
+    if def != nil and def.pos.stmtKind == TypeS:
+      var p = def.pos
+      return asTypeDecl(p).body.typeKind in {ObjectT, ArrayT, FlexarrayT}
+  false
+
+proc genConstr(g: var WasmGen; n: var Cursor; isArray: bool) =
+  ## An `(oconstr …)` / `(aconstr …)` in value position: allocate storage, build
+  ## into it, and leave its byte address on the stack (a pointer, like any value).
+  # peek the aggregate type + size without consuming
+  var aty = n
+  block:
+    var probe = n
+    probe.into:
+      aty = probe
+      while probe.hasMore: skip probe
+  var size = typeLayout(g.m, aty).size
+  if isArray and size == 0:
+    # a flexarray/unsized array: size from the element count
+    let (stride, _) = g.arrayElemInfo(aty)
+    var cnt = 0'i64
+    var c = n
+    c.into:
+      skip c
+      while c.hasMore: (inc cnt; skip c)
+    size = cnt * stride
+  let dst = g.freshLocal(vI32)
+  g.emitAlloc(size)
+  g.body.localSet dst
+  if isArray: g.constructArrInto(dst, n, aty, 0)
+  else: g.constructObjInto(dst, n)
+  g.body.localGet dst                    # the address is the value
 
 proc genExpr(g: var WasmGen; n: var Cursor; want: ValType) =
   case n.exprKind
@@ -457,6 +627,16 @@ proc genExpr(g: var WasmGen; n: var Cursor; want: ValType) =
   of LeC:  cmp g, n, 0x4C, 0x4D, 0x57, 0x58, 0x65
   of CastC, ConvC: genConv g, n
   of CallC: g.genCall(n, wantResult = true)
+  of OconstrC: genConstr g, n, false
+  of AconstrC: genConstr g, n, true
+  of BaseobjC:
+    # `(baseobj Type Depth Expr)`: the base subobject is embedded at offset 0, so
+    # in the linear-memory model the pointer is unchanged — just emit the operand.
+    n.into:
+      skip n            # target base type
+      skip n            # inheritance depth
+      g.genExpr(n, want)
+      while n.hasMore: skip n
   of DotC:
     let ak = g.genFieldAddr(n)
     if ak != akAggregate: g.body.memArg(loadOp(ak), alignOf(ak), 0)
@@ -496,15 +676,29 @@ proc genExpr(g: var WasmGen; n: var Cursor; want: ValType) =
 
 # ── statements ────────────────────────────────────────────────────────────────
 
+proc aggCopyFrom(g: var WasmGen; val: Cursor) =
+  ## `dest` is already on the stack; push the source aggregate's address and its
+  ## byte size and emit `memory.copy` (value-semantic aggregate assignment).
+  var v = val
+  g.genExpr(v, vI32)                    # src address
+  g.body.i32Const int32(typeLayout(g.m, getNominalType(g.m, val)).size)
+  g.memCopy()
+
 proc genStore(g: var WasmGen; lval: Cursor; val: Cursor) =
   var n = lval
   case n.exprKind
   of NoExpr:
     if n.kind == Symbol and g.localIdx.hasKey(n.symId):
-      let w = g.localVT[n.symId]
-      var v = val
-      g.genExpr(v, w)
-      g.body.localSet g.localIdx[n.symId]
+      let (tok, tt) = (if n.kind == Symbol: (true, getNominalType(g.m, n)) else: (false, n))
+      if tok and accessOf(g.m, tt) == akAggregate:
+        # aggregate local = aggregate value: copy bytes (both sides are addresses)
+        g.body.localGet g.localIdx[n.symId]
+        g.aggCopyFrom(val)
+      else:
+        let w = g.localVT[n.symId]
+        var v = val
+        g.genExpr(v, w)
+        g.body.localSet g.localIdx[n.symId]
     else:
       var v = val
       g.genExpr(v, vI32)
@@ -512,27 +706,31 @@ proc genStore(g: var WasmGen; lval: Cursor; val: Cursor) =
       g.todo("store-global")
   of DotC:
     let ak = g.genFieldAddr(n)          # pushes address
-    let w = vt(ak)
-    var v = val
-    g.genExpr(v, w)                     # value
-    if ak != akAggregate: g.body.memArg(storeOp(ak), alignOf(ak), 0)
-    else: (g.body.op opDrop; g.body.op opDrop; g.todo("agg-store"))
+    if ak != akAggregate:
+      var v = val
+      g.genExpr(v, vt(ak))              # value
+      g.body.memArg(storeOp(ak), alignOf(ak), 0)
+    else:
+      g.aggCopyFrom(val)               # dest already on stack
   of AtC, PatC:
     let ak = g.genElemAddr(n, n.exprKind == PatC)
-    let w = vt(ak)
-    var v = val
-    g.genExpr(v, w)
-    if ak != akAggregate: g.body.memArg(storeOp(ak), alignOf(ak), 0)
-    else: (g.body.op opDrop; g.body.op opDrop; g.todo("agg-store"))
+    if ak != akAggregate:
+      var v = val
+      g.genExpr(v, vt(ak))
+      g.body.memArg(storeOp(ak), alignOf(ak), 0)
+    else:
+      g.aggCopyFrom(val)
   of DerefC:
     var nn = n
     nn.into:
       let ak = g.pointeeAk(nn)
-      let w = vt(ak)
-      g.genExpr(nn, vI32)              # pointer
-      var v = val
-      g.genExpr(v, w)
-      if ak != akAggregate: g.body.memArg(storeOp(ak), alignOf(ak), 0)
+      g.genExpr(nn, vI32)              # pointer (dest)
+      if ak != akAggregate:
+        var v = val
+        g.genExpr(v, vt(ak))
+        g.body.memArg(storeOp(ak), alignOf(ak), 0)
+      else:
+        g.aggCopyFrom(val)
       while nn.hasMore: skip nn
   else:
     var v = val
@@ -550,6 +748,24 @@ proc genVar(g: var WasmGen; n: var Cursor) =
   g.localIdx[d.name.symId] = idx
   g.localVT[d.name.symId] = w
   g.m.registerLocal(d.name.symId, d.typ)
+  if ak == akAggregate and g.isBufferAggregate(d.typ):
+    # an aggregate local lives in linear memory; the local holds its byte address.
+    if d.value.kind != DotToken and d.value.exprKind in {OconstrC, AconstrC}:
+      var v = d.value            # the constructor self-allocates and returns its addr
+      g.genExpr(v, vI32)
+      g.body.localSet idx
+    elif d.value.kind != DotToken:
+      # aggregate copy: fresh storage, then copy the source bytes in (value semantics)
+      let size = typeLayout(g.m, d.typ).size
+      g.emitAlloc(size); g.body.localSet idx
+      g.body.localGet idx
+      var v = d.value; g.genExpr(v, vI32)
+      g.body.i32Const int32(size)
+      g.memCopy()
+    else:
+      g.emitAlloc(typeLayout(g.m, d.typ).size)   # uninitialised: empty storage
+      g.body.localSet idx
+    return
   if d.value.kind != DotToken:
     var v = d.value
     g.genExpr(v, w)
@@ -755,20 +971,46 @@ proc emitProc(g: var WasmGen; pi: ProcInfo): WasmFunc =
 
 # ── reachability ──────────────────────────────────────────────────────────────
 
-proc scanCalls(g: var WasmGen; n: var Cursor; reach: var HashSet[SymId]; work: var seq[SymId]) =
+proc scanCalls(g: var WasmGen; n: var Cursor; reach: var HashSet[SymId];
+               work: var seq[SymId]; imports: var HashSet[SymId]) =
   if n.kind == TagLit:
     if n.exprKind == CallC or n.stmtKind == CallS:
       var c = n
       c.into:
-        if c.kind == Symbol and g.procBySym.hasKey(c.symId) and not reach.containsOrIncl(c.symId):
-          work.add c.symId
-        while c.hasMore: g.scanCalls(c, reach, work)
+        if c.kind == Symbol:
+          if g.procBySym.hasKey(c.symId):
+            if not reach.containsOrIncl(c.symId): work.add c.symId
+          else:
+            imports.incl c.symId          # a cross-module / importc callee
+        while c.hasMore: g.scanCalls(c, reach, work, imports)
       skip n
     else:
       n.into:
-        while n.hasMore: g.scanCalls(n, reach, work)
+        while n.hasMore: g.scanCalls(n, reach, work, imports)
   else:
     inc n
+
+proc buildImportSig(g: var WasmGen; symId: SymId): (string, ImportSig) =
+  ## Derive a host-import signature from the callee's (possibly foreign) decl: its
+  ## external name (extern if importc, else the mangled C name) and param/result
+  ## WASM types. The host/runtime provides a function of this shape.
+  let d = g.m.getDeclOrNil(symId)
+  var nm = mangleToC(g.m.pool.syms[symId])
+  if d != nil and d.extern != StrId(0): nm = g.m.pool.strings[d.extern]
+  var sig = ImportSig(resultVT: vI32)
+  if d != nil and d.pos.stmtKind == ProcS:
+    var p = d.pos
+    var pd = takeProcDecl(p)
+    if pd.params.kind != DotToken:
+      var pp = pd.params
+      pp.into:
+        while pp.hasMore:
+          var prm = takeParamDecl(pp)
+          sig.params.add vt(accessOf(g.m, prm.typ))
+    if not isVoidType(pd.returnType):
+      sig.hasResult = true
+      sig.resultVT = vt(accessOf(g.m, pd.returnType))
+  result = (nm, sig)
 
 # ── module driver ─────────────────────────────────────────────────────────────
 
@@ -797,14 +1039,17 @@ proc generateWasmCode*(s: var State; inp, outp: string; flags: set[WasmGenFlag])
   var m = load(inp)
   m.config = s.config
   var g = WasmGen(m: m, md: initModule(), flags: flags,
-                  procBySym: initTable[SymId, int]())
+                  procBySym: initTable[SymId, int](),
+                  importSigs: initTable[SymId, ImportSig]())
 
   # 1. collect every proc decl (so calls can be resolved as forward references).
   var probe = beginRead(g.m.src)
   g.collectProcs probe
 
-  # 2. roots = exportc procs that aren't the C `main` shim; mark reachable.
+  # 2. roots = exportc procs that aren't the C `main` shim; mark reachable and
+  #    collect the cross-module / importc callees they need as host imports.
   var reach = initHashSet[SymId]()
+  var imports = initHashSet[SymId]()
   var work: seq[SymId] = @[]
   for pi in g.procs:
     if pi.extern.len > 0 and pi.extern != "main" and not pi.isImport:
@@ -813,11 +1058,21 @@ proc generateWasmCode*(s: var State; inp, outp: string; flags: set[WasmGenFlag])
     let s0 = work.pop()
     let idx = g.procBySym[s0]
     var b = g.procs[idx].body
-    g.scanCalls(b, reach, work)
+    g.scanCalls(b, reach, work, imports)
 
-  # 3. assign function indices to reachable procs (imports first — none here) and
-  #    build their signatures.
+  # 3. imports FIRST (they occupy the low function indices): the memory, then each
+  #    collected host function. Only after this can defined procs be numbered.
   g.md.importMemory("env", "memory", 1)
+  for sym in imports:
+    let (nm, sigBase) = g.buildImportSig(sym)
+    var sig = sigBase
+    sig.funcIdx = g.md.addImportFunc("env", nm, g.md.addType(
+      FuncType(params: sig.params, results: (if sig.hasResult: @[sig.resultVT] else: @[]))))
+    g.importSigs[sym] = sig
+  # the bump-allocation pointer: a mutable i32 global starting above a reserved low
+  # region (offset 0 stays null). Aggregate storage grows up from here (never freed,
+  # like the JS backend's allocFixed).
+  g.hpGlobal = g.md.addGlobal(vI32, mutable = true, initI32 = 1024)
   var order: seq[int] = @[]
   for i in 0 ..< g.procs.len:
     if g.procs[i].sym in reach and not g.procs[i].isImport:

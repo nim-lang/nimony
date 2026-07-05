@@ -47,8 +47,23 @@ The **pure-compute + linear-memory scalar slice**:
 | `(jmp L)` / `(lab L)` | `br` out of a `block` whose `end` sits where the label is — hexer's `jmp`s are forward-only and scoped, so a `break` (lowered to `jmp`) needs no relooper; the `.c.nif` is already structured (no raw `goto`) |
 | `(ret e)` | `e; return` |
 | `(dot p f)` / `(at a i)` / `(deref p)` | address (`base + off` / `base + i*stride` / `p`) then `iN.load` at the **`jslayout`** offset |
-| `(asgn lval e)` on the above | address, value, then `iN.store` |
+| `(asgn lval e)` on the above | address, value, then `iN.store`; whole-aggregate assignment is a `memory.copy` (value semantics) |
+| `(oconstr T (kv f v)…)` / `(aconstr T e…)` | bump-allocate `sizeof T`, then a store per field/element at its `jslayout` offset; the allocation's address is the value |
 | `(sizeof T)` | `i32.const` of the layout size |
+
+**Aggregates** (objects/arrays) live in linear memory. Storage comes from a bump
+pointer `$hp` — a mutable `i32` global that only grows (never freed), mirroring
+the JS backend's `allocFixed` (the pre-existing GC/#1518 gap). A pointer is the
+integer byte offset the bump returns; construction, field/element access and
+value-semantic copy all use the **`jslayout`** offsets unchanged.
+
+**Cross-module / runtime calls → host imports.** A call to a symbol not defined
+in this module (a `system` helper, an `importc`, e.g. the array bounds check
+`nimIcheckB(i, bound)`) is emitted as a call to a **host function import** whose
+signature is read from the callee's decl. A pre-pass collects these so imports
+occupy the low function indices (as WASM requires). This is the same seam the JS
+backend's runtime fills, and the foundation for linking the ported allocator and
+`std` modules later; the tests provide the handful of stubs their code needs.
 
 ### Entry model
 
@@ -91,3 +106,7 @@ directly (the `dagon`/`jsbackend` pattern).
   `WebAssembly.Memory` (the same `ArrayBuffer` model as the JS backend's `mem`);
   `dot`/`manhattan` read fields and `setY` writes one, each an `iN.load`/`store`
   at the **`jslayout`** byte offset — proving the layout core is shared.
+- **`tconstruct`** — objects and arrays *constructed by the module itself* in
+  bump-allocated linear memory: `oconstr`/`aconstr`, field stores, value-semantic
+  copy (`memory.copy`), and array indexing (its bounds check dispatched to a host
+  import the driver stubs).
