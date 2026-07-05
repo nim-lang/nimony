@@ -81,10 +81,14 @@ proc runOne(nimFile: string): Res =
     echo "FAILURE ", nimFile, ": no main .c.nif produced (compile error)"
     return rFail
 
-  # 2. Main module → a `.wasm` artifact.
+  # 2. Main module → a `.wasm` artifact. A `<test>.program` marker asks for
+  #    whole-program mode (emit the C `main` entry + its whole cross-module
+  #    closure) — for real programs like `echo` whose work runs from `main`, not
+  #    an `exportc` proc.
   let wasm = cache / (name & ".wasm")
+  let programFlag = if fileExists(nimFile.changeFileExt(".program")): " --program" else: ""
   let (lwOut, lwCode) = execCmdEx(lengwasm.quoteShell & " " & cnif.quoteShell &
-                                  " " & wasm.quoteShell)
+                                  " " & wasm.quoteShell & programFlag)
   if lwCode != 0:
     echo "FAILURE ", nimFile, ": lengwasm failed\n", lwOut
     return rFail

@@ -63,6 +63,10 @@ type
     mutable: bool
     initI32: int32                     ## init is `i32.const initI32` (all we need: $hp)
 
+  DataSeg = object
+    offset: int32
+    bytes: seq[byte]
+
   WasmModule* = object
     types: seq[FuncType]
     typeCache: Table[string, uint32]   ## dedup identical signatures
@@ -70,6 +74,7 @@ type
     funcs*: seq[WasmFunc]
     globals: seq[Global]
     exports: seq[Export]
+    datas: seq[DataSeg]
     numImportedFuncs*: uint32          ## imported funcs occupy the low func indices
 
 # ── LEB128 ────────────────────────────────────────────────────────────────────
@@ -230,6 +235,11 @@ proc exportFunc*(m: var WasmModule; name: string; funcIdx: uint32) =
 proc exportMemory*(m: var WasmModule; name: string; memIdx: uint32 = 0) =
   m.exports.add Export(name: name, kind: ekMemory, index: memIdx)
 
+proc addData*(m: var WasmModule; offset: int32; bytes: seq[byte]) =
+  ## An active data segment: `bytes` are copied into linear memory at `offset` on
+  ## instantiation. Used to materialise constant globals (string literals, etc.).
+  if bytes.len > 0: m.datas.add DataSeg(offset: offset, bytes: bytes)
+
 # ── final serialization ───────────────────────────────────────────────────────
 
 proc section(dst: var seq[byte]; id: byte; payload: seq[byte]) =
@@ -328,3 +338,15 @@ proc encode*(m: WasmModule): seq[byte] =
       s.putU uint64(body.len)
       s.putBytes body
     section(result, 10, s)
+
+  # 11: data section
+  block:
+    var s: seq[byte] = @[]
+    s.putU uint64(m.datas.len)
+    for d in m.datas:
+      s.add 0x00'u8                    # active segment, memory 0
+      s.i32Const d.offset              # offset expr: i32.const off
+      s.add opEnd                      # ... end
+      s.putU uint64(d.bytes.len)
+      s.putBytes d.bytes
+    section(result, 11, s)

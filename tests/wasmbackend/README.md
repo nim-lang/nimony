@@ -67,16 +67,45 @@ backend's runtime fills, and the foundation for linking the ported allocator and
 
 ### Entry model
 
-A WASM module is instantiated by a host that calls its exports, so the backend
-emits a function per `exportc` proc (and its same-module callees) and **exports
-it** — it does *not* emit the C `main(argc, argv, envp)` shim, whose job (argv
-wiring, cross-module `ini`) is a C-runtime convention that does not apply to a
-host-instantiated module. Module-level globals, `string`/`seq` heap data and
-`echo` (which need a start function and the ported allocator over an imported
-`WebAssembly.Memory`) are the next increment — on this same `jslayout` core.
+Two modes:
+
+- **Library (default):** a WASM module is instantiated by a host that calls its
+  exports, so the backend emits a function per `exportc` proc (and its callees)
+  and exports it. It does *not* emit the C `main(argc,argv,envp)` shim.
+- **Whole-program (`--program`, marked by a `<test>.program` file):** the C
+  `main` entry *is* emitted along with its whole cross-module closure, and the
+  host calls `main(0,0,0)`. This is how a real program like `echo` runs — its
+  work happens in the module-init (`ini`) chain `main` calls, not in an `exportc`
+  proc.
 
 Constructs outside the slice emit `unreachable` (stack-polymorphic, so the module
 still validates) and are reported on stderr, so the coverage gap is visible.
+
+### Multi-module linking, globals, constants → `echo` runs end-to-end
+
+`echo "hello world"` compiles and runs under Node's WASM engine (`techo`). Three
+pieces make a real program work, all on the same `jslayout` core:
+
+- **Multi-module linking.** A call to a symbol not defined in this module is
+  resolved through `getDeclOrNil`: a foreign *defined* proc (the `std/syncio`
+  `write`, a `system` helper) is pulled in — its body loads via the lazy
+  `ForeignModule` loader, sharing the main pool's SymIds — and emitted as a real
+  function, transitively. Only genuine `importc` primitives (`fwrite`, `fputc`,
+  …) stay host imports (the same seam the JS backend's `runtime.js` fills). A
+  call-boundary coercion wraps/extends a scalar whose produced WASM type differs
+  from the callee's param (cross-module boundaries occasionally need it).
+- **Globals as memory slots.** Every module-level var/const — this module's and
+  every foreign one a reachable body touches (`stdout`, allocator/syncio state) —
+  gets a fixed byte slot in a globals region below the bump heap. Zero-initialised
+  (linear memory starts 0).
+- **Constant data segments.** A `const` with a constant initializer (a string
+  literal's `LongString` — `fullLen`/`rc`/`capImpl` + the `data` flexarray bytes)
+  is laid out into a byte image at its slot's `jslayout` offsets and emitted as a
+  WASM **data segment**, so the runtime `write` reads real bytes back.
+
+So `echo` runs: `main` → `ini` (init chain) → `write(stdout, str)` → `fwrite`
+(host), with the string materialised from a data segment. `echo` of an *integer*
+(int→string) is the next small step (one unhandled node in that path).
 
 ## Test
 
@@ -108,5 +137,10 @@ directly (the `dagon`/`jsbackend` pattern).
   at the **`jslayout`** byte offset — proving the layout core is shared.
 - **`tconstruct`** — objects and arrays *constructed by the module itself* in
   bump-allocated linear memory: `oconstr`/`aconstr`, field stores, value-semantic
-  copy (`memory.copy`), and array indexing (its bounds check dispatched to a host
-  import the driver stubs).
+  copy (`memory.copy`), and array indexing whose bounds check (`nimIcheckB`) is
+  **linked in as real WASM** from the system module.
+- **`tglobals`** — module-level globals as memory slots: state persists across
+  exported calls in the shared buffer.
+- **`techo`** — a whole *program* (`echo "hello world"`): `main` + its whole
+  cross-module closure run under Node, the C stdio primitives (`fwrite`/`fputc`)
+  provided as host imports, the string materialised from a data segment.

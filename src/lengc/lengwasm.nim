@@ -26,7 +26,10 @@ proc main() =
     quit "usage: lengwasm <module.c.nif> <out.wasm>"
   let inp = paramStr(1)
   let outp = paramStr(2)
+  var flags = {gfMainModule}
+  for i in 3 .. paramCount():
+    if paramStr(i) == "--program": flags.incl gfWholeProgram
   var s = State(config: ConfigRef(), bits: 32)   # the WASM target is 32-bit
-  generateWasmCode(s, inp, outp, {gfMainModule})
+  generateWasmCode(s, inp, outp, flags)
 
 main()

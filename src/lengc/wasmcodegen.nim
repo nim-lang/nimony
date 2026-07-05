@@ -49,6 +49,7 @@ import wasmenc                      # the WASM binary model + encoder
 type
   WasmGenFlag* = enum
     gfMainModule
+    gfWholeProgram    ## emit the C `main` entry + its whole cross-module closure
 
   ProcInfo = object
     sym: SymId
@@ -89,6 +90,7 @@ type
     globalOff: Table[SymId, int64]   ## module-level var/const -> its byte offset (a memory slot)
     globalAk: Table[SymId, AccessKind]
     dataEnd: int64                   ## next free byte in the globals region
+    dataSegs: seq[(int32, seq[byte])]  ## constant global images -> data segments
 
 # ── type mapping ──────────────────────────────────────────────────────────────
 
@@ -593,6 +595,60 @@ proc genConstr(g: var WasmGen; n: var Cursor; isArray: bool) =
   if isArray: g.constructArrInto(dst, n, aty, 0)
   else: g.constructObjInto(dst, n)
   g.body.localGet dst                    # the address is the value
+
+proc putScalarLE(image: var seq[byte]; off: int64; value: int64; width: int64) =
+  for i in 0 ..< width:
+    let idx = int(off) + int(i)
+    while image.len <= idx: image.add 0'u8
+    image[idx] = byte((value shr (i * 8)) and 0xFF)
+
+proc buildConstImage(g: var WasmGen; image: var seq[byte]; baseOff: int64; typ, val: Cursor) =
+  ## Materialise a constant initializer's byte image at `baseOff` (little-endian,
+  ## the same `jslayout` layout the runtime reads back). Handles nested
+  ## `oconstr`/`aconstr`, scalar literals and a string-literal flexarray payload.
+  var v = val
+  case v.exprKind
+  of OconstrC:
+    v.into:
+      let oty = v
+      skip v
+      let fields = objectFields(g.m, oty)
+      while v.hasMore:
+        if v.substructureKind == KvU:
+          v.into:
+            let fsym = v.symId; inc v
+            var off = 0'i64
+            var ftyp = v
+            for f in fields:
+              if f.sym == fsym: off = f.offset; ftyp = f.typ
+            g.buildConstImage(image, baseOff + off, ftyp, v)
+            while v.hasMore: skip v
+        else: skip v
+  of AconstrC:
+    v.into:
+      let aty = v
+      let (stride, _) = g.arrayElemInfo(aty)
+      skip v
+      var i = 0'i64
+      while v.hasMore:
+        g.buildConstImage(image, baseOff + i * stride, aty, v)
+        inc i
+  of SufC, ParC:
+    v.into:
+      g.buildConstImage(image, baseOff, typ, v)
+      while v.hasMore: skip v
+  else:
+    case v.kind
+    of StrLit:
+      let s = g.m.pool.strings[strId(v)]
+      for i in 0 ..< s.len:
+        let idx = int(baseOff) + i
+        while image.len <= idx: image.add 0'u8
+        image[idx] = byte(s[i])
+    of IntLit:  putScalarLE(image, baseOff, intVal(v), max(typeLayout(g.m, typ).size, 1))
+    of UIntLit: putScalarLE(image, baseOff, cast[int64](uintVal(v)), max(typeLayout(g.m, typ).size, 1))
+    of CharLit: putScalarLE(image, baseOff, int64(ord(v.charLit)), 1)
+    else: discard      # addr / non-constant: left zero (best-effort)
 
 proc genExpr(g: var WasmGen; n: var Cursor; want: ValType) =
   case n.exprKind
@@ -1103,29 +1159,64 @@ proc collectProcs(g: var WasmGen; n: var Cursor) =
   else:
     skip n
 
+proc slotGlobal(g: var WasmGen; sym: SymId; typ: Cursor) =
+  ## Give a module-level var/const a fixed byte slot in the globals region (once).
+  if g.globalOff.hasKey(sym): return
+  let lay = typeLayout(g.m, typ)
+  let align = max(lay.align, 1'i64)
+  g.dataEnd = (g.dataEnd + align - 1) and not (align - 1)
+  g.globalOff[sym] = g.dataEnd
+  g.globalAk[sym] = accessOf(g.m, typ)
+  g.dataEnd += max(lay.size, 1'i64)
+
 proc collectGlobals(g: var WasmGen; n: var Cursor) =
-  ## Assign every module-level var/const a fixed byte slot in the globals region.
-  ## A scalar global is read/written by a typed load/store at its offset; an
-  ## aggregate global's slot IS its address. importc globals (e.g. `stdout`) are
-  ## external and get no slot. Slots are zero-initialised (linear memory starts 0).
+  ## Slot this module's toplevel vars/consts. A scalar global is a typed load/store
+  ## at its offset; an aggregate global's slot IS its address. Slots are
+  ## zero-initialised (linear memory starts 0); an importc global (e.g. `stdout`)
+  ## also gets a zero slot — its value is a handle the host `fwrite` ignores.
   if n.stmtKind in {GvarS, VarS, ConstS, TvarS}:
     var pos = n
     var d = takeVarDecl(pos)
-    let sym = d.name.symId
-    let def = g.m.getDeclOrNil(sym)
-    if def == nil or not def.isImport:
-      let lay = typeLayout(g.m, d.typ)
-      let align = max(lay.align, 1'i64)
-      g.dataEnd = (g.dataEnd + align - 1) and not (align - 1)
-      g.globalOff[sym] = g.dataEnd
-      g.globalAk[sym] = accessOf(g.m, d.typ)
-      g.dataEnd += max(lay.size, 1'i64)
+    if d.value.kind != DotToken and
+       (d.value.exprKind in {OconstrC, AconstrC} or d.value.kind in {StrLit, IntLit, UIntLit, CharLit}):
+      # a constant initializer: materialise its bytes as a data segment. The image
+      # can exceed the fixed layout (a string literal's flexarray tail), so it also
+      # sizes the slot.
+      var image: seq[byte] = @[]
+      g.buildConstImage(image, 0, d.typ, d.value)
+      let size = max(int64(image.len), typeLayout(g.m, d.typ).size)
+      g.dataEnd = (g.dataEnd + 7) and not 7'i64
+      g.globalOff[d.name.symId] = g.dataEnd
+      g.globalAk[d.name.symId] = accessOf(g.m, d.typ)
+      g.dataSegs.add (int32(g.dataEnd), image)
+      g.dataEnd += max(size, 1'i64)
+    else:
+      g.slotGlobal(d.name.symId, d.typ)
     n = pos
   elif n.stmtKind == StmtsS:
     n.into:
       while n.hasMore: g.collectGlobals n
   else:
     skip n
+
+proc scanGlobalsIn(g: var WasmGen; n: var Cursor) =
+  ## Slot every *foreign* global a reachable body references (cross-module vars /
+  ## consts / the importc `stdout`), so it has a memory slot before the bump base
+  ## is fixed. A `Symbol` atom that resolves to a var/const/gvar decl is a global;
+  ## a local has no foreign decl, so it is naturally skipped.
+  if n.kind == TagLit:
+    n.into:
+      while n.hasMore: g.scanGlobalsIn n
+  else:
+    if n.kind == Symbol and not g.globalOff.hasKey(n.symId):
+      var d: ptr Definition = nil
+      try: d = g.m.getDeclOrNil(n.symId)
+      except CatchableError, Defect: d = nil
+      if d != nil and d.kind in {VarY, ConstY, GvarY, TvarY}:
+        var pos = d.pos
+        var vd = takeVarDecl(pos)
+        g.slotGlobal(n.symId, vd.typ)
+    inc n
 
 proc generateWasmCode*(s: var State; inp, outp: string; flags: set[WasmGenFlag]) =
   var m = load(inp)
@@ -1150,13 +1241,21 @@ proc generateWasmCode*(s: var State; inp, outp: string; flags: set[WasmGenFlag])
   var imports = initHashSet[SymId]()
   var work: seq[SymId] = @[]
   for pi in g.procs:
-    if pi.extern.len > 0 and pi.extern != "main" and not pi.isImport:
+    if pi.extern.len > 0 and not pi.isImport and
+       (pi.extern != "main" or gfWholeProgram in g.flags):
       if not reach.containsOrIncl(pi.sym): work.add pi.sym
   while work.len > 0:
     let s0 = work.pop()
     let idx = g.procBySym[s0]
     var b = g.procs[idx].body
     g.scanCalls(b, reach, work, imports)
+
+  # 2b. slot every foreign global the reachable bodies reference (cross-module
+  #     vars/consts), so the globals region is final before the bump base is set.
+  for i in 0 ..< g.procs.len:
+    if g.procs[i].sym in reach:
+      var b = g.procs[i].body
+      g.scanGlobalsIn b
 
   # 3. imports FIRST (they occupy the low function indices): the memory, then each
   #    collected host function. Only after this can defined procs be numbered.
@@ -1186,6 +1285,8 @@ proc generateWasmCode*(s: var State; inp, outp: string; flags: set[WasmGenFlag])
     if g.procs[i].extern.len > 0:
       g.md.exportFunc(g.procs[i].extern, g.procs[i].funcIdx)
   g.md.exportMemory("memory")
+  for (off, image) in g.dataSegs:      # constant globals -> data segments
+    g.md.addData(off, image)
 
   let bytes = g.md.encode()
   writeFile(outp, cast[string](bytes))
