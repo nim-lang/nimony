@@ -33,11 +33,11 @@ const
     '8', '7', '8', '8', '8', '9', '9', '0', '9', '1', '9', '2', '9', '3', '9', '4', '9', '5',
     '9', '6', '9', '7', '9', '8', '9', '9']
 
-proc utoa2Digits(buf: var openArray[char]; pos: int; digits: uint32) {.inline.} =
+func utoa2Digits(buf: var openArray[char]; pos: int; digits: uint32) {.inline.} =
   buf[pos] = digits100[int(2 * digits)]
   buf[pos+1] = digits100[int(2 * digits + 1)]
 
-proc trailingZeros2Digits(digits: uint32): int {.inline.} =
+func trailingZeros2Digits(digits: uint32): int {.inline.} =
   result = int(trailingZeros100[int(digits)])
 
 
@@ -61,27 +61,27 @@ const
   sfExponentMask: sfBitsType = sfMaxIeeeExponent shl (sfSignificandSize - 1)
   sfSignMask: sfBitsType = not (not sfBitsType(0) shr 1)
 
-proc constructSingle(value: sfValueType): Single =
+func constructSingle(value: sfValueType): Single =
   result = Single(bits: cast[sfBitsType](value))
 
-proc physicalSignificand(this: Single): sfBitsType =
+func physicalSignificand(this: Single): sfBitsType =
   result = this.bits and sfSignificandMask
 
-proc physicalExponent(this: Single): sfBitsType =
+func physicalExponent(this: Single): sfBitsType =
   result = (this.bits and sfExponentMask) shr (sfSignificandSize - 1)
 
-proc signBit(this: Single): int =
+func signBit(this: Single): int =
   result = int((this.bits and sfSignMask) != 0)
 
 # ==================================================================================================
 ##  Returns floor(x / 2^n).
 
-proc sfFloorDivPow2(x: int; n: int): int {.inline.} =
+func sfFloorDivPow2(x: int; n: int): int {.inline.} =
   result = x shr n
 
 ##  Returns floor(log_2(10^e))
 
-proc sfFloorLog2Pow10(e: int): int {.inline.} =
+func sfFloorLog2Pow10(e: int): int {.inline.} =
   fmtAssert(e >= -1233)
   fmtAssert(e <= 1233)
   result = sfFloorDivPow2(e * 1741647, 19)
@@ -116,7 +116,7 @@ const
     0xEB194F8E1AE525FE'u64, 0x92EFD1B8D0CF37BF'u64, 0xB7ABC627050305AE'u64,
     0xE596B7B0C643C71A'u64, 0x8F7E32CE7BEA5C70'u64, 0xB35DBF821AE4F38C'u64]
 
-proc computePow10Single(k: int): uint64 {.inline.} =
+func computePow10Single(k: int): uint64 {.inline.} =
   ##  There are unique beta and r such that 10^k = beta 2^r and
   ##  2^63 <= beta < 2^64, namely r = floor(log_2 10^k) - 63 and
   ##  beta = 2^-r 10^k.
@@ -124,13 +124,13 @@ proc computePow10Single(k: int): uint64 {.inline.} =
   fmtAssert(k <= sfKMax)
   result = sfG[k - sfKMin]
 
-proc sfLo32(x: uint64): uint32 {.inline.} =
+func sfLo32(x: uint64): uint32 {.inline.} =
   result = cast[uint32](x)
 
-proc sfHi32(x: uint64): uint32 {.inline.} =
+func sfHi32(x: uint64): uint32 {.inline.} =
   result = cast[uint32](x shr 32)
 
-proc roundToOdd(sfG: uint64; cp: uint32): uint32 {.inline.} =
+func roundToOdd(sfG: uint64; cp: uint32): uint32 {.inline.} =
   let b01: uint64 = uint64(sfLo32(sfG)) * cp
   let b11: uint64 = uint64(sfHi32(sfG)) * cp
   let hi: uint64 = b11 + sfHi32(b01)
@@ -140,7 +140,7 @@ proc roundToOdd(sfG: uint64; cp: uint32): uint32 {.inline.} =
 
 ##  Returns whether value is divisible by 2^e2
 
-proc multipleOfPow2(value: uint32; e2: int): bool {.inline.} =
+func multipleOfPow2(value: uint32; e2: int): bool {.inline.} =
   fmtAssert(e2 >= 0)
   fmtAssert(e2 <= 31)
   result = (value and ((uint32(1) shl e2) - 1)) == 0
@@ -150,7 +150,7 @@ type
     digits: uint32            ##  num_digits <= 9
     exponent: int
 
-proc toDecimal32(ieeeSignificand: uint32; ieeeExponent: uint32): FloatingDecimal32 =
+func toDecimal32(ieeeSignificand: uint32; ieeeExponent: uint32): FloatingDecimal32 =
   var c: uint32
   var q: int
   if ieeeExponent != 0:
@@ -205,7 +205,7 @@ proc toDecimal32(ieeeSignificand: uint32; ieeeExponent: uint32): FloatingDecimal
 ##  ToChars
 ## ==================================================================================================
 
-proc printDecimalDigitsBackwards(buf: var openArray[char]; pos: int; output: uint32): int =
+func printDecimalDigitsBackwards(buf: var openArray[char]; pos: int; output: uint32): int =
   var output = output
   var pos = pos
   var tz = 0
@@ -261,7 +261,7 @@ proc printDecimalDigitsBackwards(buf: var openArray[char]; pos: int; output: uin
     buf[pos] = chr(ord('0') + int(q))
   result = tz
 
-proc decimalLength(v: uint32): int =
+func decimalLength(v: uint32): int =
   fmtAssert(v >= 1)
   fmtAssert(v <= 999999999'u32)
   if v >= 100000000'u32: return 9
@@ -274,7 +274,7 @@ proc decimalLength(v: uint32): int =
   if v >= 10'u32: return 2
   result = 1
 
-proc formatDigits(buffer: var openArray[char]; pos: int; digits: uint32; decimalExponent: int;
+func formatDigits(buffer: var openArray[char]; pos: int; digits: uint32; decimalExponent: int;
                   forceTrailingDotZero = false): int =
   const
     minFixedDecimalPoint: int32 = -4
@@ -348,7 +348,7 @@ proc formatDigits(buffer: var openArray[char]; pos: int; digits: uint32; decimal
       inc(pos, 2)
   result = pos
 
-proc float32ToChars(buffer: var openArray[char]; v: float32; forceTrailingDotZero = false): int =
+func float32ToChars(buffer: var openArray[char]; v: float32; forceTrailingDotZero = false): int =
   let single = constructSingle(v)
   let significand: uint32 = physicalSignificand(single)
   let exponent: uint32 = physicalExponent(single)
@@ -405,16 +405,16 @@ const
   dbExponentMask: dbBitsType = dbMaxIeeeExponent shl (dbSignificandSize - 1)
   dbSignMask: dbBitsType = not (not dbBitsType(0) shr 1)
 
-proc constructDouble(value: dbValueType): Double =
+func constructDouble(value: dbValueType): Double =
   result = Double(bits: cast[dbBitsType](value))
 
-proc physicalSignificand(this: Double): dbBitsType =
+func physicalSignificand(this: Double): dbBitsType =
   result = this.bits and dbSignificandMask
 
-proc physicalExponent(this: Double): dbBitsType =
+func physicalExponent(this: Double): dbBitsType =
   result = (this.bits and dbExponentMask) shr (dbSignificandSize - 1)
 
-proc signBit(this: Double): int =
+func signBit(this: Double): int =
   result = ord((this.bits and dbSignMask) != 0)
 
 # ==================================================================================================
@@ -422,20 +422,20 @@ proc signBit(this: Double): int =
 # ==================================================================================================
 ##  Returns floor(x / 2^n).
 
-proc dbFloorDivPow2(x: int; n: int): int {.inline.} =
+func dbFloorDivPow2(x: int; n: int): int {.inline.} =
   result = x shr n
 
-proc dbFloorLog2Pow10(e: int): int {.inline.} =
+func dbFloorLog2Pow10(e: int): int {.inline.} =
   fmtAssert(e >= -1233)
   fmtAssert(e <= 1233)
   result = dbFloorDivPow2(e * 1741647, 19)
 
-proc dbFloorLog10Pow2(e: int): int {.inline.} =
+func dbFloorLog10Pow2(e: int): int {.inline.} =
   fmtAssert(e >= -1500)
   fmtAssert(e <= 1500)
   result = dbFloorDivPow2(e * 1262611, 22)
 
-proc dbFloorLog10ThreeQuartersPow2(e: int): int {.inline.} =
+func dbFloorLog10ThreeQuartersPow2(e: int): int {.inline.} =
   fmtAssert(e >= -1500)
   fmtAssert(e <= 1500)
   result = dbFloorDivPow2(e * 1262611 - 524031, 22)
@@ -449,7 +449,7 @@ type
     hi: uint64
     lo: uint64
 
-proc computePow10(k: int): uint64x2 {.inline.} =
+func computePow10(k: int): uint64x2 {.inline.} =
   const
     kMin: int = -292
     kMax: int = 326
@@ -1079,7 +1079,7 @@ proc computePow10(k: int): uint64x2 {.inline.} =
 
 ##  Returns whether value is divisible by 2^e2
 
-proc multipleOfPow2(value: uint64; e2: int): bool {.inline.} =
+func multipleOfPow2(value: uint64; e2: int): bool {.inline.} =
   fmtAssert(e2 >= 0)
   result = e2 < 64 and (value and ((uint64(1) shl e2) - 1)) == 0
 
@@ -1090,7 +1090,7 @@ type
     mul: uint64
     cmp: uint64
 
-proc multipleOfPow5(value: uint64; e5: int): bool {.inline.} =
+func multipleOfPow5(value: uint64; e5: int): bool {.inline.} =
   const
     mod5: array[25, MulCmp] = [MulCmp(mul: 0x0000000000000001'u64, cmp: 0xFFFFFFFFFFFFFFFF'u64),
       MulCmp(mul: 0xCCCCCCCCCCCCCCCD'u64, cmp: 0x3333333333333333'u64),
@@ -1127,7 +1127,7 @@ type
     significand: uint64
     exponent: int
 
-proc toDecimal64AsymmetricInterval(e2: int): FloatingDecimal64 {.inline.} =
+func toDecimal64AsymmetricInterval(e2: int): FloatingDecimal64 {.inline.} =
   ##  NB:
   ##  accept_lower_endpoint = true
   ##  accept_upper_endpoint = true
@@ -1160,18 +1160,18 @@ proc toDecimal64AsymmetricInterval(e2: int): FloatingDecimal64 {.inline.} =
     inc(q, uint64(ord(q < xi)))
   result = FloatingDecimal64(significand: q, exponent: minusK)
 
-proc computeDelta(pow10: uint64x2; betaMinus1: int): uint32 {.inline.} =
+func computeDelta(pow10: uint64x2; betaMinus1: int): uint32 {.inline.} =
   fmtAssert(betaMinus1 >= 0)
   fmtAssert(betaMinus1 <= 63)
   result = cast[uint32](pow10.hi shr (64 - 1 - betaMinus1))
 
-proc dbLo32(x: uint64): uint32 {.inline.} =
+func dbLo32(x: uint64): uint32 {.inline.} =
   result = cast[uint32](x)
 
-proc dbHi32(x: uint64): uint32 {.inline.} =
+func dbHi32(x: uint64): uint32 {.inline.} =
   result = cast[uint32](x shr 32)
 
-proc mul128(a: uint64; b: uint64): uint64x2 {.inline.} =
+func mul128(a: uint64; b: uint64): uint64x2 {.inline.} =
   let b00: uint64 = uint64(dbLo32(a)) * dbLo32(b)
   let b01: uint64 = uint64(dbLo32(a)) * dbHi32(b)
   let b10: uint64 = uint64(dbHi32(a)) * dbLo32(b)
@@ -1184,14 +1184,14 @@ proc mul128(a: uint64; b: uint64): uint64x2 {.inline.} =
 
 ##  Returns (x * y) / 2^128
 
-proc mulShift(x: uint64; y: uint64x2): uint64 {.inline.} =
+func mulShift(x: uint64; y: uint64x2): uint64 {.inline.} =
   var p1: uint64x2 = mul128(x, y.hi)
   let p0: uint64x2 = mul128(x, y.lo)
   p1.lo += p0.hi
   inc(p1.hi, uint64(ord(p1.lo < p0.hi)))
   result = p1.hi
 
-proc mulParity(twoF: uint64; pow10: uint64x2; betaMinus1: int): bool {.inline.} =
+func mulParity(twoF: uint64; pow10: uint64x2; betaMinus1: int): bool {.inline.} =
   fmtAssert(betaMinus1 >= 1)
   fmtAssert(betaMinus1 <= 63)
   let p01: uint64 = twoF * pow10.hi
@@ -1199,7 +1199,7 @@ proc mulParity(twoF: uint64; pow10: uint64x2; betaMinus1: int): bool {.inline.} 
   let mid: uint64 = p01 + p10
   result = (mid and (uint64(1) shl (64 - betaMinus1))) != 0
 
-proc isIntegralEndpoint(twoF: uint64; e2: int; minusK: int): bool {.inline.} =
+func isIntegralEndpoint(twoF: uint64; e2: int; minusK: int): bool {.inline.} =
   if e2 < -2:
     return false
   if e2 <= 9:
@@ -1208,7 +1208,7 @@ proc isIntegralEndpoint(twoF: uint64; e2: int; minusK: int): bool {.inline.} =
     return multipleOfPow5(twoF, minusK)
   result = false
 
-proc isIntegralMidpoint(twoF: uint64; e2: int; minusK: int): bool {.inline.} =
+func isIntegralMidpoint(twoF: uint64; e2: int; minusK: int): bool {.inline.} =
   if e2 < -4:
     return multipleOfPow2(twoF, minusK - e2 + 1)
   if e2 <= 9:
@@ -1217,7 +1217,7 @@ proc isIntegralMidpoint(twoF: uint64; e2: int; minusK: int): bool {.inline.} =
     return multipleOfPow5(twoF, minusK)
   result = false
 
-proc toDecimal64(ieeeSignificand: uint64; ieeeExponent: uint64): FloatingDecimal64 =
+func toDecimal64(ieeeSignificand: uint64; ieeeExponent: uint64): FloatingDecimal64 =
   const
     kappa: int = 2
     bigDivisor: uint32 = 1000      ##  10^(kappa + 1)
@@ -1307,7 +1307,7 @@ proc toDecimal64(ieeeSignificand: uint64; ieeeExponent: uint64): FloatingDecimal
 #  ToChars
 # ==================================================================================================
 
-proc utoa8DigitsSkipTrailingZeros(buf: var openArray[char]; pos: int; digits: uint32): int {.inline.} =
+func utoa8DigitsSkipTrailingZeros(buf: var openArray[char]; pos: int; digits: uint32): int {.inline.} =
   fmtAssert(digits >= 1)
   fmtAssert(digits <= 99999999'u32)
   let q: uint32 = digits div 10000
@@ -1325,7 +1325,7 @@ proc utoa8DigitsSkipTrailingZeros(buf: var openArray[char]; pos: int; digits: ui
     utoa2Digits(buf, pos + 6, rL)
     result = trailingZeros2Digits(if rL == 0: rH else: rL) + (if rL == 0: 2 else: 0)
 
-proc printDecimalDigitsBackwards(buf: var openArray[char]; pos: int; output64: uint64): int {.inline.} =
+func printDecimalDigitsBackwards(buf: var openArray[char]; pos: int; output64: uint64): int {.inline.} =
   var pos = pos
   var output64 = output64
   var tz = 0       ##  number of trailing zeros removed.
@@ -1398,7 +1398,7 @@ proc printDecimalDigitsBackwards(buf: var openArray[char]; pos: int; output64: u
     buf[pos] = chr(ord('0') + int(q))
   result = tz
 
-proc decimalLength(v: uint64): int {.inline.} =
+func decimalLength(v: uint64): int {.inline.} =
   fmtAssert(v >= 1)
   fmtAssert(v <= 99999999999999999'u64)
   if cast[uint32](v shr 32) != 0:
@@ -1422,7 +1422,7 @@ proc decimalLength(v: uint64): int {.inline.} =
   if v32 >= 10'u32: return 2
   result = 1
 
-proc formatDigits(buffer: var openArray[char]; pos: int; digits: uint64; decimalExponent: int;
+func formatDigits(buffer: var openArray[char]; pos: int; digits: uint64; decimalExponent: int;
                   forceTrailingDotZero = false): int {.inline.} =
   const
     minFixedDecimalPoint: int = -6
@@ -1505,7 +1505,7 @@ proc formatDigits(buffer: var openArray[char]; pos: int; digits: uint64; decimal
       inc(pos, 2)
   result = pos
 
-proc toChars(buffer: var openArray[char]; v: float; forceTrailingDotZero = false): int =
+func toChars(buffer: var openArray[char]; v: float; forceTrailingDotZero = false): int =
   var pos = 0
   let double = constructDouble(v)
   let significand: uint64 = physicalSignificand(double)
@@ -1545,25 +1545,25 @@ proc toChars(buffer: var openArray[char]; v: float; forceTrailingDotZero = false
 #  Public API
 # ==================================================================================================
 
-proc addFloat*(result: var string; x: float) =
+func addFloat*(result: var string; x: float) =
   ## Converts `x` to its shortest round-tripping decimal representation and
   ## appends it to `result`. Whole-valued floats keep a trailing `.0`.
   var buffer = default(array[65, char])
   let n = toChars(buffer, x, true)
   for i in 0 ..< n: result.add buffer[i]
 
-proc addFloat*(result: var string; x: float32) =
+func addFloat*(result: var string; x: float32) =
   ## `float32` overload of `addFloat`.
   var buffer = default(array[65, char])
   let n = float32ToChars(buffer, x, true)
   for i in 0 ..< n: result.add buffer[i]
 
-proc `$`*(x: float): string =
+func `$`*(x: float): string =
   ## Outplace `addFloat` for `float`.
   result = ""
   result.addFloat(x)
 
-proc `$`*(x: float32): string =
+func `$`*(x: float32): string =
   ## Outplace `addFloat` for `float32`.
   result = ""
   result.addFloat(x)
