@@ -2338,6 +2338,15 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
     inc f
     m.returnType = f # return type follows the parameters in the token stream
 
+proc hasUnboundTypevars*(m: Match): bool =
+  ## True if `m.fn`'s generic typevars (as collected by `matchTypevars`) still
+  ## lack a binding after argument matching. Cheap: just consults the
+  ## `tvars`/`inferred` bookkeeping already built up, no extra lookups.
+  for v in m.tvars:
+    if not m.inferred.hasKey(v):
+      return true
+  return false
+
 proc buildTypeArgs*(m: var Match) =
   # check all type vars have a value:
   if not m.err and m.fn.kind in RoutineKinds:

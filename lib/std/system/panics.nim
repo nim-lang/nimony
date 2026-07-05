@@ -63,7 +63,7 @@ else:
   proc writeErr(s: string) = discard c_fwrite(readRawData(s), 1'u, s.len.uint, cstderr)
   proc writeErr(s: cstring) = discard c_fwrite(s, 1'u, s.len.uint, cstderr)
 
-proc panic*(s: string) {.noinline.} =
+proc panic*(s: string) {.noinline, noreturn.} =
   writeErr s
   die 1'i32
 
