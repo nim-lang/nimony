@@ -691,11 +691,15 @@ proc genExpr(g: var WasmGen; n: var Cursor; want: ValType) =
   of ModC: binDivMod g, n, 0x6F, 0x70, 0x81, 0x82, 0xA3  # f64 has no rem (todo)
   of ShlC: binArith g, n, 0x74, 0x86, 0xA0
   of ShrC:
-    # logical vs arithmetic shift by signedness
-    var probe = n
-    probe.into:
-      let uns = accessOf(g.m, probe) in {akU8, akU16, akU32, akU64, akPtr}
-      binArith g, n, (if uns: 0x76 else: 0x75), (if uns: 0x88 else: 0x87), 0xA0
+    # logical vs arithmetic shift by signedness (read the type operand, drain the
+    # probe, THEN emit — calling binArith inside `probe.into` left it undrained)
+    var uns = false
+    block:
+      var probe = n
+      probe.into:
+        uns = accessOf(g.m, probe) in {akU8, akU16, akU32, akU64, akPtr}
+        while probe.hasMore: skip probe
+    binArith g, n, (if uns: 0x76 else: 0x75), (if uns: 0x88 else: 0x87), 0xA0
   of BitandC: binArith g, n, 0x71, 0x83, 0xA0
   of BitorC:  binArith g, n, 0x72, 0x84, 0xA0
   of BitxorC: binArith g, n, 0x73, 0x85, 0xA0
