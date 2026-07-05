@@ -1,3 +1,4 @@
+{.feature: "lenientnils".}
 type
   Node* = ref object
     case

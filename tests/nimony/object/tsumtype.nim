@@ -1,5 +1,7 @@
 import std/[syncio, assertions]
 
+{.feature: "lenientnils".}
+
 type
   Node = ref object
     case

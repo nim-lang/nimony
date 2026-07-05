@@ -2,7 +2,7 @@ import std/syncio
 
 type
   Node = ref object
-    le, ri: Node
+    le, ri: nil Node
     s: string
 
 proc traverse(root: nil Node) =

@@ -17,6 +17,8 @@ import std / [tables, syncio, assertions]
 include "../../../src/lib/nifprelude"
 include "../../../src/lib/compat2"
 
+{.feature: "lenientnils".}
+
 type
   SymKind = enum
     NoSym, VarY, LetY, ResultY, ConstY, ParamY, TypevarY, CursorY, PatternvarY,

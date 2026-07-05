@@ -1,3 +1,4 @@
+{.feature: "lenientnils".}
 type Foo = ref object
   x: int
   parent: Foo

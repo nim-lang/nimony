@@ -26,7 +26,7 @@ proc main =
   initPool()
 
   for i in 0 ..< NumTasks:
-    let frame = cast[ptr IncFrame](alloc(sizeof(IncFrame)))
+    var frame = cast[ptr IncFrame](alloc(sizeof(IncFrame)))
     frame.amount = 1
     let cont = Continuation(fn: incStep, env: cast[ptr CoroutineBase](frame))
     submit(cont, hint = i)

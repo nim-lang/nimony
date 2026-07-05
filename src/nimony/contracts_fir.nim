@@ -1154,7 +1154,7 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
 
   # Check borrow conflicts for the destination
   let destMutPath = extractPath(c, n)
-  let destPrefix = destMutPath
+  let destPrefix = extractPath(c, n, allowDeref=true)
   if destMutPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
     checkBorrowConflict(c, destMutPath, n.info)
 
@@ -1168,7 +1168,7 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
       if isInitialized(c, symId):
         c.buildErr n.info, "invalid mutation to `let` variable"
 
-    var fact = query(getVarId(c, symId), InvalidVarId, createXint(0'i32))
+    var fact = query(getPathVarId(c, destPrefix.path), InvalidVarId, createXint(0'i32))
     markInit(c, symId)
 
     # Check for not-nil type match

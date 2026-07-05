@@ -1,6 +1,8 @@
 import std/[syncio, assertions]
 import deps/msumtype_generic
 
+{.feature: "lenientnils".}
+
 # Explicit type annotation with imported generic sum type:
 let a: Option[int] = Some(val: 42)
 {.cast(uncheckedAccess).}:

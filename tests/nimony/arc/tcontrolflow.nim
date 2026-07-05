@@ -52,7 +52,7 @@ type
     x: int
 
   MouseEvent = ref object
-    control: Control
+    control: nil Control
     button: int
 
 proc run(data: Control) =

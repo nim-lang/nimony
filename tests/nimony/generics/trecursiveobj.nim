@@ -1,3 +1,4 @@
+{.feature: "lenientnils".}
 type
   Foo[T] = object
     x: ref Foo[T]
