@@ -87,6 +87,30 @@ function __atomic_compare_exchange_n(p,exp,des,weak,so,fo){
   mem.setU32(exp,cur); return false;
 }
 
+// libm functions `importc`'d by std/math. Most map straight onto JS `Math`; the
+// few with libm-specific semantics are spelled out (`round` = half away from
+// zero, unlike `Math.round`'s half-up; `fmod` = `%`; `copysign`/`signbit` honour
+// the sign of -0). The float32 `…f` variants share the double routine (JS has
+// only doubles; the extra precision is harmless). Uncommon libm entries not
+// covered here (erf/gamma/frexp/fpclassify) are simply never referenced unless a
+// program calls them.
+const sqrt=Math.sqrt, cbrt=Math.cbrt, exp=Math.exp, sin=Math.sin, cos=Math.cos,
+  tan=Math.tan, asin=Math.asin, acos=Math.acos, atan=Math.atan, atan2=Math.atan2,
+  sinh=Math.sinh, cosh=Math.cosh, tanh=Math.tanh, asinh=Math.asinh,
+  acosh=Math.acosh, atanh=Math.atanh, floor=Math.floor, ceil=Math.ceil,
+  trunc=Math.trunc, hypot=Math.hypot, log=Math.log, log2=Math.log2,
+  log10=Math.log10, pow=Math.pow;
+function fmod(a,b){ return a % b; }
+function round(x){ return x >= 0 ? Math.floor(x + 0.5) : Math.ceil(x - 0.5); }
+function copysign(x,y){ return (y < 0 || Object.is(y,-0)) ? -Math.abs(x) : Math.abs(x); }
+function isnan(x){ return Number.isNaN(x); }
+function signbit(x){ return x < 0 || Object.is(x,-0); }
+const sqrtf=sqrt, cbrtf=cbrt, expf=exp, sinf=sin, cosf=cos, tanf=tan, asinf=asin,
+  acosf=acos, atanf=atan, atan2f=atan2, sinhf=sinh, coshf=cosh, tanhf=tanh,
+  asinhf=asinh, acoshf=acosh, atanhf=atanh, floorf=floor, ceilf=ceil,
+  truncf=trunc, hypotf=hypot, logf=log, log2f=log2, log10f=log10, powf=pow,
+  roundf=round, fmodf=fmod, copysignf=copysign;
+
 // stdio — distinct stdout/stderr handles; the lowered code passes one as the
 // `FILE*`, so route on identity (error/panic reporting goes to stderr).
 const stdout = {}, stderr = {};
