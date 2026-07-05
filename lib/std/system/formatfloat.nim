@@ -1545,19 +1545,14 @@ func toChars(buffer: var openArray[char]; v: float; forceTrailingDotZero = false
 #  Public API
 # ==================================================================================================
 
-func floatCharsToString(n: int; buffer: openArray[char]): string =
-  result = newString(n)
-  for i in 0 ..< n:
-    result[i] = buffer[i]
-
-proc addFloat*(result: var string; x: float) =
+func addFloat*(result: var string; x: float) =
   ## Converts `x` to its shortest round-tripping decimal representation and
   ## appends it to `result`. Whole-valued floats keep a trailing `.0`.
   var buffer = default(array[65, char])
   let n = toChars(buffer, x, true)
   for i in 0 ..< n: result.add buffer[i]
 
-proc addFloat*(result: var string; x: float32) =
+func addFloat*(result: var string; x: float32) =
   ## `float32` overload of `addFloat`.
   var buffer = default(array[65, char])
   let n = float32ToChars(buffer, x, true)
@@ -1565,12 +1560,10 @@ proc addFloat*(result: var string; x: float32) =
 
 func `$`*(x: float): string =
   ## Outplace `addFloat` for `float`.
-  var buffer = default(array[65, char])
-  let n = toChars(buffer, x, true)
-  floatCharsToString(n, buffer)
+  result = ""
+  result.addFloat(x)
 
 func `$`*(x: float32): string =
   ## Outplace `addFloat` for `float32`.
-  var buffer = default(array[65, char])
-  let n = float32ToChars(buffer, x, true)
-  floatCharsToString(n, buffer)
+  result = ""
+  result.addFloat(x)
