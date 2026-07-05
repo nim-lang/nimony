@@ -218,6 +218,66 @@ proc binTyped(g: var JSGen; n: var Cursor; opr: string) =
         g.js.addOp opr
         g.gxBig n
         g.gxBig n
+    elif ak in {akI8, akI16, akI32, akU8, akU16, akU32} and opr in ["+", "-", "*"]:
+      # Fixed-width wrapping arithmetic. A ≤32-bit `+`/`-`/`*` must wrap to the
+      # type width like Nim's fixed-size ints: a plain JS `a op b` keeps the full
+      # (up to ~2^64) result, which then mismatches the SAME value after it round-
+      # trips through a narrow memory slot — e.g. a hash `h*prime+c` kept in a JS
+      # register vs. its truncated stored `hcode`, silently breaking string-keyed
+      # `Table`/`HashSet` lookups once a hash exceeds 32 bits. `*` uses `Math.imul`
+      # (the correct low-32-bit product; a plain `a*b` loses bits above 2^53), then
+      # the result is coerced to the exact type width.
+      template rawOp() =
+        if opr == "*":
+          g.js.tree jCall:
+            g.js.member "imul": g.js.name "Math"
+            g.gx n
+            g.gx n
+        else:
+          g.js.tree jBin:
+            g.js.addOp opr
+            g.gx n
+            g.gx n
+      case ak
+      of akU8:
+        g.js.tree jBin:
+          g.js.addOp "&"
+          rawOp()
+          g.js.num 0xFF
+      of akU16:
+        g.js.tree jBin:
+          g.js.addOp "&"
+          rawOp()
+          g.js.num 0xFFFF
+      of akU32:
+        g.js.tree jBin:            # reinterpret as unsigned 32-bit
+          g.js.addOp ">>>"
+          rawOp()
+          g.js.num 0
+      of akI8:
+        g.js.tree jBin:            # sign-extend from bit 7: (x << 24) >> 24
+          g.js.addOp ">>"
+          g.js.tree jBin:
+            g.js.addOp "<<"
+            rawOp()
+            g.js.num 24
+          g.js.num 24
+      of akI16:
+        g.js.tree jBin:            # sign-extend from bit 15
+          g.js.addOp ">>"
+          g.js.tree jBin:
+            g.js.addOp "<<"
+            rawOp()
+            g.js.num 16
+          g.js.num 16
+      else:                        # akI32
+        if opr == "*":
+          rawOp()                  # `Math.imul` already yields a signed int32
+        else:
+          g.js.tree jBin:          # `| 0` truncates the sum/difference to int32
+            g.js.addOp "|"
+            rawOp()
+            g.js.num 0
     elif ak in {akU8, akU16, akU32} and opr in ["&", "|", "^", "<<", ">>"]:
       # JS bitwise/shift ops yield a SIGNED int32; for an unsigned type the result
       # must be reinterpreted as unsigned (`>>> 0`) and `shr` must be the *logical*

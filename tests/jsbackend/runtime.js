@@ -49,6 +49,15 @@ function memset(p,v,n){ _u8.fill(v&0xff,Number(p),Number(p)+Number(n)); return p
 function strlen(p){ let n=0; while(_u8[Number(p)+n]!==0) n++; return n; }
 function memcmp(a,b,n){ a=Number(a);b=Number(b);n=Number(n); for(let i=0;i<n;i++){ const d=_u8[a+i]-_u8[b+i]; if(d!==0) return d<0?-1:1; } return 0; }
 
+// GCC/Clang 64-bit bit intrinsics `importc`'d by the stdlib's SWAR string
+// comparison (system/stringimpl.nim: ctz/clz/bswap over a uint64 word). The
+// codegen calls them by their C names on BigInt args; ctz/clz return an int.
+// (C leaves ctz/clz of 0 undefined; the callers never pass 0, but returning 64
+// is the well-defined choice.)
+function __builtin_ctzll(x){ x=BigInt.asUintN(64,BigInt(x)); if(x===0n) return 64; let n=0; while((x&1n)===0n){ x>>=1n; n++; } return n; }
+function __builtin_clzll(x){ x=BigInt.asUintN(64,BigInt(x)); if(x===0n) return 64; let n=0; for(let i=63n;i>=0n;i--){ if((x>>i)&1n) break; n++; } return n; }
+function __builtin_bswap64(x){ x=BigInt.asUintN(64,BigInt(x)); let r=0n; for(let i=0;i<8;i++){ r=(r<<8n)|(x&0xffn); x>>=8n; } return BigInt.asUintN(64,r); }
+
 // Function table: a proc pointer in linear memory is an integer index into
 // `_fns` (WASM's model — JS can't call an integer). `_fnid(fn)` interns a proc to
 // its stable index when it's taken as a value; the codegen emits `_fns[idx](args)`
