@@ -26,7 +26,7 @@ Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|hexer|lengc|lengjs|shoggoth|nifmake|nj|vl|validator|dagon|pnak|arkham|nifasm|native]   build selected tools (default: all).
+  build [all|nimony|nifler|hexer|lengc|lengjs|lengwasm|shoggoth|nifmake|nj|vl|validator|dagon|pnak|arkham|nifasm|native]   build selected tools (default: all).
   tiers                compile every module on the bootstrap list with nimony.
   boot [options]       Self-host the *full* nimony toolchain (nimony,
                        nimsem, hexer). `bin0/` is a fresh copy of the
@@ -1299,6 +1299,16 @@ proc buildJslink*(showProgress = false) =
   let exe = "jslink".addFileExt(ExeExt)
   robustMoveFile "src/lengc/" & exe, binDir() / exe
 
+proc buildLengwasm*(showProgress = false) =
+  ## `lengwasm` (Leng -> WebAssembly per-module backend) is a `{.build.}`-schedulable
+  ## plugin, the WASM counterpart of `lengjs`: it reads one module's Leng IR
+  ## (`.c.nif`) and emits its `.wasm` artifact. WASM linear memory *is* the JS
+  ## backend's linear-memory model, so it reuses `jslayout` verbatim. See
+  ## tests/wasmbackend/setup.nim.
+  exec nimcPrefix() & "src/lengc/lengwasm.nim", showProgress
+  let exe = "lengwasm".addFileExt(ExeExt)
+  robustMoveFile "src/lengc/" & exe, binDir() / exe
+
 proc buildShoggoth(showProgress = false) =
   exec nimcPrefix() & "src/lengc/shoggoth/shoggoth.nim", showProgress
   let exe = "shoggoth".addFileExt(ExeExt)
@@ -2155,6 +2165,7 @@ proc handleCmdLine =
       buildLengc(showProgress)
       buildLengjs(showProgress)
       buildJslink(showProgress)
+      buildLengwasm(showProgress)
       buildShoggoth(showProgress)
       buildNiflink(showProgress)
       buildHexer(showProgress)
@@ -2175,6 +2186,8 @@ proc handleCmdLine =
     of "lengjs":
       buildLengjs(showProgress)
       buildJslink(showProgress)
+    of "lengwasm":
+      buildLengwasm(showProgress)
     of "shoggoth":
       buildShoggoth(showProgress)
     of "niflink":

@@ -1,0 +1,4 @@
+dot(p) = 169
+manhattan(p) = 19
+after setY(p,7): y = 7
+dot(p) = 202
