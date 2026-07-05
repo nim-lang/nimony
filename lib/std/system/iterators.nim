@@ -1,30 +1,31 @@
 iterator `..<`*[T: Ordinal](a, b: T): T {.inline.} =
-  ## Counts from ordinal value `a` to `b` (exclusive)
+  ## Count up in the range `[a, b)`
   var i = a
   while i < b:
     yield i
     inc i
 
 iterator `..`*[T: Ordinal](a, b: T): T {.inline.} =
-  ## Counts from ordinal value `a` to `b` (inclusive)
+  ## Count up in the range `[a, b]`
   var i = a
   while i <= b:
     yield i
     inc i
 
 iterator `>..`*[T: Ordinal](a, b: T): T {.inline.} =
-  ## Counts from ordinal value `a` down to `b` (inclusive).
-  ##
-  ## Requires ``a >= b`` for a non-empty range. Yields nothing if ``a < b``.
-  ## Equivalent to ``countdown(a, b)``.
-  for i in countdown(a, b):
+  ## Count down in the range `[b, a]`.
+  var i = a
+  while i >= b:
     yield i
+    if i == b: break
+    dec i
 
 iterator `>..<`*[T: Ordinal](a, b: T): T {.inline.} =
-  ## Counts from ordinal value `a` down to `b` (exclusive)
-  var i = a
-  while i > b:
+  ## Count down in the range `[b, a)`.
+  var i = pred(a)
+  while i >= b:
     yield i
+    if i == b: break
     dec i
 
 iterator countdown*[T, V: Ordinal](a, b: T; step: V = T(1)): T {.inline.} =

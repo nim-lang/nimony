@@ -11,16 +11,16 @@ proc main =
   assert toSeq(7 .. 3) == @[]
   assert toSeq(5 .. 5) == @[5]
 
-  # descending inclusive: [b, a] traversed downward
+  # descending inclusive at both ends: [b, a] traversed downward
   assert toSeq(7 >.. 3) == @[7, 6, 5, 4, 3]
   assert toSeq(3 >.. 7) == @[]
   assert toSeq(5 >.. 5) == @[5]
 
-  # descending exclusive: (b, a] traversed downward
-  assert toSeq(7 >..< 3) == @[7, 6, 5, 4]
+  # descending exclusive at `a`, inclusive at `b`: [b, a) traversed downward
+  assert toSeq(7 >..< 3) == @[6, 5, 4, 3]
   assert toSeq(3 >..< 7) == @[]
   assert toSeq(5 >..< 5) == @[]
-  assert toSeq(4 >..< 3) == @[4]
+  assert toSeq(4 >..< 3) == @[3]
 
   # stepped variants
   assert toSeq(countdown(9, 2, 3)) == @[9, 6, 3]
