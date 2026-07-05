@@ -380,6 +380,34 @@ proc genConv(g: var WasmGen; n: var Cursor) =
       else: discard
     while n.hasMore: skip n
 
+proc coerceScalar(g: var WasmGen; fromVT, toVT: ValType) =
+  ## Best-effort width coercion when a produced scalar's WASM type differs from
+  ## the one required (a call arg vs. the callee's param, a `ret` vs. the result).
+  ## The Leng IR is usually explicit, but cross-module boundaries occasionally
+  ## need this (e.g. a platform-`int` value into an `int32` slot).
+  if fromVT == toVT: return
+  if   fromVT == vI64 and toVT == vI32: g.body.op 0xA7'u8   # i32.wrap_i64
+  elif fromVT == vI32 and toVT == vI64: g.body.op 0xAC'u8   # i64.extend_i32_s
+  elif fromVT == vI32 and toVT == vF64: g.body.op 0xB7'u8   # f64.convert_i32_s
+  elif fromVT == vF64 and toVT == vI32: g.body.op 0xAA'u8   # i32.trunc_f64_s
+  elif fromVT == vI64 and toVT == vF64: g.body.op 0xB9'u8   # f64.convert_i64_s
+  elif fromVT == vF64 and toVT == vI64: g.body.op 0xB0'u8   # i64.trunc_f64_s
+  elif fromVT == vF32 and toVT == vF64: g.body.op 0xBB'u8
+  elif fromVT == vF64 and toVT == vF32: g.body.op 0xB6'u8
+
+proc isLiteralAtom(n: Cursor): bool {.inline.} =
+  n.exprKind == NoExpr and n.kind in {IntLit, UIntLit, FloatLit, CharLit}
+
+proc genArg(g: var WasmGen; n: var Cursor; want: ValType) =
+  ## Emit a call argument, coercing a mismatched scalar to the param's WASM type.
+  ## A literal is already emitted in `want` by `genExpr`, so it needs no coercion.
+  if isLiteralAtom(n):
+    g.genExpr(n, want)
+  else:
+    let aVT = vt(g.exprAk(n))
+    g.genExpr(n, want)
+    g.coerceScalar(aVT, want)
+
 proc genCall(g: var WasmGen; n: var Cursor; wantResult: bool) =
   ## `(call callee args...)`. Direct call to a same-module defined proc. Args are
   ## coerced to the callee's declared param types.
@@ -395,9 +423,9 @@ proc genCall(g: var WasmGen; n: var Cursor; wantResult: bool) =
           while params.hasMore:
             var pd = takeParamDecl(params)
             if n.hasMore:
-              g.genExpr(n, vt(accessOf(g.m, pd.typ)))
+              g.genArg(n, vt(accessOf(g.m, pd.typ)))
       else:
-        while n.hasMore: g.genExpr(n, vI32)
+        while n.hasMore: g.genArg(n, vI32)
       while n.hasMore: skip n     # (defensive: arg count matches param count)
       g.body.call callee
       if pi.hasResult and not wantResult:
@@ -412,7 +440,7 @@ proc genCall(g: var WasmGen; n: var Cursor; wantResult: bool) =
       var pi = 0
       while n.hasMore:
         let w = (if pi < sig.params.len: sig.params[pi] else: vI32)
-        g.genExpr(n, w)
+        g.genArg(n, w)
         inc pi
       g.body.call sig.funcIdx
       if sig.hasResult and not wantResult: g.body.op opDrop
@@ -978,10 +1006,24 @@ proc scanCalls(g: var WasmGen; n: var Cursor; reach: var HashSet[SymId];
       var c = n
       c.into:
         if c.kind == Symbol:
+          if not g.procBySym.hasKey(c.symId):
+            # not a proc collected from THIS module — try to pull it in from a
+            # foreign module (multi-module link). A foreign DEFINED proc is emitted
+            # as a real WASM function; an importc stays a host import.
+            var d: ptr Definition = nil
+            try: d = g.m.getDeclOrNil(c.symId)
+            except CatchableError, Defect: d = nil
+            if d != nil and d.kind == ProcY and not d.isImport:
+              var pos = d.pos
+              var pd = takeProcDecl(pos)
+              var pi = ProcInfo(sym: c.symId, name: pd.name, params: pd.params,
+                                returnType: pd.returnType, body: pd.body)
+              g.procBySym[c.symId] = g.procs.len
+              g.procs.add pi
           if g.procBySym.hasKey(c.symId):
             if not reach.containsOrIncl(c.symId): work.add c.symId
           else:
-            imports.incl c.symId          # a cross-module / importc callee
+            imports.incl c.symId          # a cross-module importc / unresolved callee
         while c.hasMore: g.scanCalls(c, reach, work, imports)
       skip n
     else:
