@@ -371,21 +371,26 @@ proc isRangeExpr(n: Cursor): bool =
   let name = takeIdent(n)
   result = name != StrId(0) and pool.strings[name] == ".."
 
+proc addRangeBound(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
+  ## Emit one bound of a range type. A bound that still mentions a generic
+  ## value parameter (e.g. `N-1` in `range[0..N-1]` for `N: static[int]`) is
+  ## kept symbolic and folded when the type is instantiated, mirroring how
+  ## `semArrayType` defers a symbolic array length.
+  if containsGenericParams(n):
+    dest.addSubtree n
+    skip n
+  else:
+    var err = false
+    let value = asSigned(evalOrdinal(c, n), err)
+    if err:
+      c.buildErr dest, n.info, "could not evaluate as ordinal", n
+    else:
+      dest.addIntLit(value, n.info)
+    skip n
+
 proc addRangeValues(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
-  var err: bool = false
-  let first = asSigned(evalOrdinal(c, n), err)
-  if err:
-    c.buildErr dest, n.info, "could not evaluate as ordinal", n
-    err = false
-  else:
-    dest.addIntLit(first, n.info)
-  skip n
-  let last = asSigned(evalOrdinal(c, n), err)
-  if err:
-    c.buildErr dest, n.info, "could not evaluate as ordinal", n
-    err = false
-  else:
-    dest.addIntLit(last, n.info)
+  addRangeBound c, dest, n
+  addRangeBound c, dest, n
 
 proc semRangeTypeFromExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; info: PackedLineInfo) =
   inc n # call tag

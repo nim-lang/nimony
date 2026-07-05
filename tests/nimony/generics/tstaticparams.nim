@@ -139,3 +139,18 @@ type
     data: array[N, T]
 var depbx: DepBox[2, Shape[2](bounds: [7, 8]), int]
 echo sizeof(depbx)                                    # array[2, int] == 16
+
+# a `range[lo..hi]` bound may mention a value parameter; the bound is folded
+# when the enclosing routine/type is instantiated, and the range-checking
+# engine then discharges the obligations against the folded range (#2075).
+type
+  RBox[N: static[int]; T] = object
+    data: array[N, T]
+
+func ritem[N: static[int]; T](box: RBox[N, T]; index: range[0..N-1]): T =
+  box.data[index]
+
+var rb: RBox[3, int]
+rb.data[0] = 10; rb.data[1] = 20; rb.data[2] = 30
+echo ritem(rb, 1)                                     # 20
+echo ritem(rb, 2)                                     # 30
