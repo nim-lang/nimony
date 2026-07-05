@@ -96,6 +96,7 @@ type
                                        # for the --verbose dump)
     pathToVarId: Table[SymPath, VarId] # maps a path (root :: field1 :: field2 :: ...) to a VarId
     nextPathIndex: int32               # counter used for minting path VarIds
+    lenientLets: bool
 
 proc isectInits(a, b: InitSet): InitSet =
   ## Intersection join for the definite-assignment lattice.
@@ -161,11 +162,15 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor)
 proc traverseExpr(c: var NjvlContext; pc: var Cursor)
 proc analyseCall(c: var NjvlContext; n: var Cursor)
 
-proc extractSymId(n: Cursor, skipDots=false): SymId {.inline.} =
+proc extractSymId(n: Cursor, skipDots=false, skipDdots=true): SymId {.inline.} =
   var n = n
   if n.exprKind in {HaddrX, HderefX}: inc n
   if skipDots:
-    while n.exprKind in {DdotX, DotX}: inc n
+    var skipSet = {DotX}
+    if skipDdots:
+      skipSet = {DotX, DdotX}
+
+    while n.exprKind in skipSet: inc n
 
   if n.kind == Symbol:
     result = n.symId
@@ -174,13 +179,13 @@ proc extractSymId(n: Cursor, skipDots=false): SymId {.inline.} =
   else:
     result = NoSymId
 
-proc extractSymIdForStore(n: Cursor, skipDots=false): SymId =
+proc extractSymIdForStore(n: Cursor, skipDots=false, skipDdots=true): SymId =
   # idea both (etupat result.0 +0) and (etupat result.0 +1) create
   # a full store to `result.0`.
   var n = n
   if n.njvlKind == EtupatV:
     inc n
-  result = extractSymId(n, skipDots=skipDots)
+  result = extractSymId(n, skipDots=skipDots, skipDdots=skipDdots)
 
 proc skipSymbol(r: var Cursor): SymId {.inline.} =
   ## Consume a bare Symbol or (v sym version) node and return its SymId.
@@ -1081,7 +1086,7 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
       if path.path.len > 0:
         let rootSym = path.path[0]
         let x = getLocalInfo(c.typeCache, rootSym)
-        if x.kind in {LetY, GletY, TletY} and isInitialized(c, rootSym):
+        if (x.kind in {LetY, GletY, TletY} and not c.lenientLets) and isInitialized(c, rootSym):
           buildErr c, n.info, "Can't pass `let` variable as var argument"
 
       inc inner # skip haddr tag
@@ -1154,14 +1159,14 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
     checkBorrowConflict(c, destMutPath, n.info)
 
   # Now handle the destination (Symbol or NJVL versioned variable (v symId version))
-  let destSymId = extractSymIdForStore(n, skipDots=true)
+  let destSymId = extractSymIdForStore(n, skipDots=true, skipDdots=not c.lenientLets)
   var r = n
   if destSymId != NoSymId:
     let symId = destSymId
     let x = getLocalInfo(c.typeCache, symId)
     if x.kind in {LetY, GletY, TletY}:
       if isInitialized(c, symId):
-        c.buildErr n.info, "invalid modification to `let` variable"
+        c.buildErr n.info, "invalid mutation to `let` variable"
 
     var fact = query(getVarId(c, symId), InvalidVarId, createXint(0'i32))
     markInit(c, symId)
@@ -1892,7 +1897,7 @@ proc lowerToFinalIr(input: var TokenBuf; moduleSuffix: string): TokenBuf =
   toFinalIr(pass)
   result = ensureMove pass.dest
 
-proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; verbose = false): TokenBuf =
+proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; verbose = false; lenientLets=false): TokenBuf =
   ## Main entry point: lowers `input` to the Final IR and analyzes contracts.
   ## When `verbose` is true, every contract/init failure dumps the enclosing
   ## proc's IR to stderr to aid debugging.
@@ -1904,7 +1909,8 @@ proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; verbose
     tr: newInitTracker(),
     loopExitLabels: initHashSet[SymId](),
     facts: createFacts(),
-    verbose: verbose
+    verbose: verbose,
+    lenientLets: lenientLets
   )
   c.facts.enableJournaling()
   c.typeCache.openScope()

@@ -16,6 +16,7 @@ type
     EarlyMagicsFeature
     AutoClosuresFeature
     LenientNilsFeature
+    LenientLetsFeature
     IgnoreStyleFeature
       ## Nim-2-style "style insensitivity": identifier lookup ignores
       ## underscores and ASCII case after the first character. Strictly a
@@ -48,10 +49,11 @@ proc parseFeatures*(s: string): set[Feature] =
   of "earlymagics": {EarlyMagicsFeature}
   of "autoclosures": {AutoClosuresFeature}
   of "lenientnils": {LenientNilsFeature}
+  of "lenientlets": {LenientLetsFeature}
   of "ignorestyle": {IgnoreStyleFeature}
   of "vartoverloads": {VarToverloadsFeature}
   of "lenientfloats": {LenientFloatsFeature}
   of "v2": {UntypedFeature, LenientConvertersFeature, EarlyMagicsFeature,
             AutoClosuresFeature, LenientNilsFeature, IgnoreStyleFeature,
-            VarToverloadsFeature, LenientFloatsFeature}
+            VarToverloadsFeature, LenientFloatsFeature, LenientLetsFeature}
   else: {}

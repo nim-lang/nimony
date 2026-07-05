@@ -25,7 +25,7 @@ import ".." / gear2 / modnames
 import ".." / models / nifindex_tags
 import nimony_model, symtabs, builtintypes, decls, programs, sigmatch,
   reporters, nifconfig, xints, semdata, sembasics,
-  semos, langmodes, derefs, vtables_frontend,
+  semos, langmodes, derefs, vtables_frontend, features,
   contracts_fir, exprexec, semimport, module_plugins, sem
 when not defined(nimony):
   import ".." / validator / phase_validator
@@ -461,8 +461,10 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
       reorderInnerGenericInstances(c, afterSem)
     var finalBuf = beginRead afterSem
     dest = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
+    let lenientLets = LenientLetsFeature in c.features
+
     when true: #defined(enableContracts):
-      var moreErrors = analyzeContractsFinalIr(dest, c.thisModuleSuffix, c.g.config.verbose)
+      var moreErrors = analyzeContractsFinalIr(dest, c.thisModuleSuffix, c.g.config.verbose, lenientLets=lenientLets)
       if reporters.reportErrors(moreErrors) > 0:
         quit 1
   else:
@@ -533,11 +535,12 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
   dest.add c.pendingSumtypes
   instantiateGenericHooks c, dest
   dest.addParRi()
+  let lenientLets = LenientLetsFeature in c.features
 
   if reportErrors(dest) == 0:
     var afterSem = move dest
     when true:
-      var moreErrors = analyzeContractsFinalIr(afterSem, c.thisModuleSuffix, c.g.config.verbose)
+      var moreErrors = analyzeContractsFinalIr(afterSem, c.thisModuleSuffix, c.g.config.verbose, lenientLets=lenientLets)
       if reporters.reportErrors(moreErrors) > 0:
         quit 1
     if c.genericInnerProcs.len > 0:
