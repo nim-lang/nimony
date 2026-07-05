@@ -640,6 +640,21 @@ proc trExplicitTrace(c: var Context; n: var Cursor) =
 when not defined(nimony):
   proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false)
 
+proc derefsBoxedRef(c: var Context; ptrOperand: Cursor): bool =
+  ## The pointer inside a `(deref ptrOperand)` has boxed `ref` type, so a field
+  ## read through the deref has to hop through the object payload (`d`) rather
+  ## than name the field on the ref cell itself.
+  var typ = getType(c.typeCache, ptrOperand, {SkipAliases})
+  if typ.kind == ParLe and typ.typeKind == SinkT:
+    inc typ
+  result = not cursorIsNil(typ) and typ.typeKind == RefT
+
+proc addDataFieldHop(c: var Context; info: PackedLineInfo) =
+  ## Emit the `d 0` that follows an already-emitted `(deref refptr)` to reach the
+  ## object payload of a boxed `ref` cell.
+  c.dest.add symToken(pool.syms.getOrIncl(DataField), info)
+  c.dest.addIntLit(0, info) # inheritance
+
 proc trOnlyEssentials(c: var Context; n: var Cursor)
     {.ensuresNif: addedAny(c.dest).} =
   case n.kind
@@ -695,21 +710,19 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
       # Reading a *user* field through a boxed `ref` must reach the object
       # payload, i.e. `(dot (deref p) field)` has to become
       # `(dot (dot (deref p) d) field)`, exactly as `trDeref` does on the full
-      # path. Copying it verbatim — as this branch used to — left the payload
-      # hop off, so field reads in `.nodestroy` bodies dereferenced the ref
-      # cell itself and produced C accessing a non-existent member.
-      # Lifter-emitted hooks already spell out the cell's own `d`/`r` fields,
-      # so those (and non-ref derefs) are left untouched.
+      # path (both share `derefsBoxedRef`/`addDataFieldHop`). Copying it verbatim
+      # — as this branch used to — left the payload hop off, so field reads in
+      # `.nodestroy` bodies dereferenced the ref cell itself and produced C
+      # accessing a non-existent member. Lifter-emitted hooks already spell out
+      # the cell's own `d`/`r` fields, so those (and non-ref derefs) are left
+      # untouched.
       var probe = n
       inc probe # -> object operand
       var doHop = false
       if probe.exprKind in {DerefX, HderefX}:
         var operand = probe
         inc operand # -> deref'd pointer
-        var typ = getType(c.typeCache, operand, {SkipAliases})
-        if typ.kind == ParLe and typ.typeKind == SinkT:
-          inc typ
-        if not cursorIsNil(typ) and typ.typeKind == RefT:
+        if derefsBoxedRef(c, operand):
           var field = probe
           skip field # object operand -> field name
           if field.kind == Symbol and
@@ -721,9 +734,8 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
         c.dest.addParLe DotX, info # outer dot: (… .field)
         c.dest.addParLe DotX, info # inner dot: ((deref p) .d)
         inc n # into the DotX, at the (deref …) operand
-        trOnlyEssentials c, n
-        c.dest.add symToken(pool.syms.getOrIncl(DataField), info)
-        c.dest.addIntLit(0, info) # inheritance
+        trOnlyEssentials c, n # copies the whole `(deref p)`, closing ParRi incl.
+        addDataFieldHop c, info
         c.dest.addParRi() # close inner dot
         while n.hasMore: trOnlyEssentials c, n # field, inheritance, access marker
         takeParRi c.dest, n
@@ -1168,19 +1180,14 @@ proc trDeref(c: var Context; n: var Cursor; e: Expects)
     c.dest.addParLe CallS, info
     c.dest.add symToken(dupHook, info)
   inc n, SkipTag
-  var typ = getType(c.typeCache, n, {SkipAliases})
-  if typ.kind == ParLe and typ.typeKind == SinkT:
-    inc typ
-  let isRef = not cursorIsNil(typ) and typ.typeKind == RefT
+  let isRef = derefsBoxedRef(c, n)
   if isRef:
     c.dest.addParLe DotX, info
   c.dest.addParLe DerefX, info
   tr c, n, WantNonOwner
   if isRef:
-    c.dest.addParRi()
-    let dataField = pool.syms.getOrIncl(DataField)
-    c.dest.add symToken(dataField, info)
-    c.dest.addIntLit(0, info) # inheritance
+    c.dest.addParRi() # close deref
+    addDataFieldHop c, info
   takeParRi c.dest, n
   if wrapDup:
     c.dest.addParRi()
