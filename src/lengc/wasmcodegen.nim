@@ -86,6 +86,9 @@ type
     breakBlocks: seq[int]            ## `nframes` value at each enclosing loop's break-block
     labelBlocks: Table[SymId, int]   ## goto label -> the `nframes` level of its wrapping block
     hpGlobal: uint32                 ## the bump-allocation pointer ($hp), a mutable i32 global
+    globalOff: Table[SymId, int64]   ## module-level var/const -> its byte offset (a memory slot)
+    globalAk: Table[SymId, AccessKind]
+    dataEnd: int64                   ## next free byte in the globals region
 
 # ── type mapping ──────────────────────────────────────────────────────────────
 
@@ -600,6 +603,11 @@ proc genExpr(g: var WasmGen; n: var Cursor; want: ValType) =
     of Symbol:
       if g.localIdx.hasKey(n.symId):
         g.body.localGet g.localIdx[n.symId]
+      elif g.globalOff.hasKey(n.symId):
+        let off = g.globalOff[n.symId]
+        let ak = g.globalAk[n.symId]
+        g.body.i32Const int32(off)              # the slot's byte address
+        if ak != akAggregate: g.body.memArg(loadOp(ak), alignOf(ak), 0)
       else:
         g.todo("global-sym")
       inc n
@@ -693,6 +701,14 @@ proc genExpr(g: var WasmGen; n: var Cursor; want: ValType) =
         n.into:
           g.genExpr(n, vI32)       # addr(deref p) == p
           while n.hasMore: skip n
+      of NoExpr:
+        if n.kind == Symbol and g.globalOff.hasKey(n.symId):
+          g.body.i32Const int32(g.globalOff[n.symId])       # a global's slot address
+        elif n.kind == Symbol and g.localIdx.hasKey(n.symId) and
+             g.localVT[n.symId] == vI32:
+          g.body.localGet g.localIdx[n.symId]               # aggregate local: already an address
+        else:
+          g.todo("addr")
       else: g.todo("addr")
       while n.hasMore: skip n
   of SizeofC:
@@ -727,6 +743,16 @@ proc genStore(g: var WasmGen; lval: Cursor; val: Cursor) =
         var v = val
         g.genExpr(v, w)
         g.body.localSet g.localIdx[n.symId]
+    elif n.kind == Symbol and g.globalOff.hasKey(n.symId):
+      let off = g.globalOff[n.symId]
+      let ak = g.globalAk[n.symId]
+      g.body.i32Const int32(off)               # the slot's byte address
+      if ak == akAggregate:
+        g.aggCopyFrom(val)
+      else:
+        var v = val
+        g.genExpr(v, vt(ak))
+        g.body.memArg(storeOp(ak), alignOf(ak), 0)
     else:
       var v = val
       g.genExpr(v, vI32)
@@ -1077,16 +1103,46 @@ proc collectProcs(g: var WasmGen; n: var Cursor) =
   else:
     skip n
 
+proc collectGlobals(g: var WasmGen; n: var Cursor) =
+  ## Assign every module-level var/const a fixed byte slot in the globals region.
+  ## A scalar global is read/written by a typed load/store at its offset; an
+  ## aggregate global's slot IS its address. importc globals (e.g. `stdout`) are
+  ## external and get no slot. Slots are zero-initialised (linear memory starts 0).
+  if n.stmtKind in {GvarS, VarS, ConstS, TvarS}:
+    var pos = n
+    var d = takeVarDecl(pos)
+    let sym = d.name.symId
+    let def = g.m.getDeclOrNil(sym)
+    if def == nil or not def.isImport:
+      let lay = typeLayout(g.m, d.typ)
+      let align = max(lay.align, 1'i64)
+      g.dataEnd = (g.dataEnd + align - 1) and not (align - 1)
+      g.globalOff[sym] = g.dataEnd
+      g.globalAk[sym] = accessOf(g.m, d.typ)
+      g.dataEnd += max(lay.size, 1'i64)
+    n = pos
+  elif n.stmtKind == StmtsS:
+    n.into:
+      while n.hasMore: g.collectGlobals n
+  else:
+    skip n
+
 proc generateWasmCode*(s: var State; inp, outp: string; flags: set[WasmGenFlag]) =
   var m = load(inp)
   m.config = s.config
   var g = WasmGen(m: m, md: initModule(), flags: flags,
                   procBySym: initTable[SymId, int](),
-                  importSigs: initTable[SymId, ImportSig]())
+                  importSigs: initTable[SymId, ImportSig](),
+                  globalOff: initTable[SymId, int64](),
+                  globalAk: initTable[SymId, AccessKind](),
+                  dataEnd: 1024)          # globals live above the null/scratch region
 
-  # 1. collect every proc decl (so calls can be resolved as forward references).
+  # 1. collect every proc decl (so calls resolve as forward refs) and every
+  #    module-level global (each gets a fixed memory slot).
   var probe = beginRead(g.m.src)
   g.collectProcs probe
+  var probe2 = beginRead(g.m.src)
+  g.collectGlobals probe2
 
   # 2. roots = exportc procs that aren't the C `main` shim; mark reachable and
   #    collect the cross-module / importc callees they need as host imports.
@@ -1111,10 +1167,11 @@ proc generateWasmCode*(s: var State; inp, outp: string; flags: set[WasmGenFlag])
     sig.funcIdx = g.md.addImportFunc("env", nm, g.md.addType(
       FuncType(params: sig.params, results: (if sig.hasResult: @[sig.resultVT] else: @[]))))
     g.importSigs[sym] = sig
-  # the bump-allocation pointer: a mutable i32 global starting above a reserved low
+  # the bump-allocation pointer: a mutable i32 global starting ABOVE the globals
   # region (offset 0 stays null). Aggregate storage grows up from here (never freed,
   # like the JS backend's allocFixed).
-  g.hpGlobal = g.md.addGlobal(vI32, mutable = true, initI32 = 1024)
+  let hpBase = (g.dataEnd + 7) and not 7'i64
+  g.hpGlobal = g.md.addGlobal(vI32, mutable = true, initI32 = int32(hpBase))
   var order: seq[int] = @[]
   for i in 0 ..< g.procs.len:
     if g.procs[i].sym in reach and not g.procs[i].isImport:

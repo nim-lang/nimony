@@ -1,0 +1,4 @@
+bump() = 1
+bump() = 2
+bump() = 3
+getTotal() = 6
