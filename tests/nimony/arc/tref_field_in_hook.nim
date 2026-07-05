@@ -4,7 +4,7 @@
 ## non-recursive destructor that frees a long chain and its elements.
 
 import std / [assertions]
-
+{.feature: "lenientnils".}
 var freed = 0
 type
   Elem = object
@@ -29,7 +29,7 @@ proc `=wasMoved`(x: var List) {.nodestroy.} =
   x.head = nil
 
 proc push(l: var List; id: int) =
-  let n = Node(value: Elem(id: id))
+  var n = Node(value: Elem(id: id))
   n.next = l.head
   l.head = n
 
@@ -44,4 +44,3 @@ proc scoped =
 
 scoped()
 assert freed == 1000
-

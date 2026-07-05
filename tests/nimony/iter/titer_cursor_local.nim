@@ -4,6 +4,7 @@
 ## off the bare `(cursor)` pragma and asserted.
 
 import std / [assertions]
+{.feature: "lenientnils".}
 
 type
   Node = ref object

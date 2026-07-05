@@ -1,5 +1,6 @@
 
 import std / [syncio]
+{.feature: "lenientnils".}
 
 type
   BinaryTree = ref object
