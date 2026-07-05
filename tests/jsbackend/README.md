@@ -68,6 +68,14 @@ slice has grown to cover **strings** (SSO + heap, `echo` and `$`), **`seq`s**,
 **`ref`/heap objects**, **closures**, and **exceptions** (nimony's heap-exception
 lowering), all exercised end-to-end by the tests below.
 
+On top of that primitive slice, real **standard-library modules** now compile and
+run unchanged through the same pipeline: `std/tables` (hash tables), `std/sets`
+(`HashSet`, `intersection`/in-place union+difference), and `std/strutils`
+(`split`/`strip`/`replace`/`repeat`/case-mapping) each have an end-to-end test
+below. They need no backend-specific code — they lower to the covered object/seq/
+string shapes and run under Node like any other module — which is the point: the
+JS target inherits the stdlib for free as its coverage grows.
+
 The heap is **Nim's own native allocator** — the ported `system/alloc.nim`
 (TLSF page-chunk allocator), compiled to JS through `lengjs` like any other
 module by building the stdlib with `--define:nimNativeAlloc` (the libc-free
