@@ -116,3 +116,26 @@ echo takesFlat[3, 2, int](flat)    # 6
 # the folded length also works when a bound value comes from a `const`.
 const rows = 3
 echo takesFlat[rows, 2, int](flat) # rows * 2 == 6
+
+# a *dependent* static type parameter: one value parameter (`N`) parameterizes
+# the type of another (`S: static[Shape[N]]`). The aggregate argument is matched
+# against `Shape[N]`, binding `N` from the earlier argument, and the value's
+# fields are then available at compile time (issue #2104).
+type
+  Shape[N: static[int]] = object
+    bounds: array[N, int]
+
+proc firstBound[N: static[int]; S: static[Shape[N]]](): int = S.bounds[0]
+echo firstBound[2, Shape[2](bounds: [7, 8])]()        # 7
+
+proc sumBounds[N: static[int]; S: static[Shape[N]]](): int =
+  result = 0
+  for e in S.bounds: result = result + e              # compile-time iteration
+echo sumBounds[3, Shape[3](bounds: [10, 20, 30])]()   # 60
+
+# and in a type section, with `N` reused as an array length in the object body:
+type
+  DepBox[N: static[int]; B: static[Shape[N]]; T] = object
+    data: array[N, T]
+var depbx: DepBox[2, Shape[2](bounds: [7, 8]), int]
+echo sizeof(depbx)                                    # array[2, int] == 16

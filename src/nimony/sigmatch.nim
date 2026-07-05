@@ -740,6 +740,18 @@ proc staticValueToBind(m: var Match; elemType: Cursor; a: Cursor): Cursor =
         # a typed aggregate constructor (array/set/tuple/object), or an
         # `openArray`/`varargs` value satisfied by an array literal
         result = a
+      elif isStaticValue(a) and elemType.typeKind == InvokeT:
+        # a *dependent* generic element type such as `Shape[N]`, where an
+        # enclosing value parameter `N` parameterizes this parameter's type.
+        # Unify the element type against the value's concrete type (`Shape[2]`),
+        # which binds or equality-checks the enclosing parameters through the
+        # ordinary matcher. See #2108 / issue #2104.
+        let vt = staticValueType(a)
+        if not cursorIsNil(vt):
+          var f = elemType
+          var av = vt
+          if tryLinearMatch(m, f, av):
+            result = a
       elif containsGenericParams(a):
         # a symbolic expression over value parameters, e.g. `N1 + N2`:
         # compared syntactically, never solved
