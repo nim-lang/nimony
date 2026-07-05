@@ -2343,7 +2343,7 @@ proc hasUnboundTypevars*(m: Match): bool =
   ## lack a binding after argument matching. Cheap: just consults the
   ## `tvars`/`inferred` bookkeeping already built up, no extra lookups.
   for v in m.tvars:
-    if m.inferred.getOrDefault(v) == default(Cursor):
+    if not m.inferred.hasKey(v):
       return true
   return false
 
