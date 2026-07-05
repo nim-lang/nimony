@@ -91,6 +91,7 @@ type
     globalAk: Table[SymId, AccessKind]
     dataEnd: int64                   ## next free byte in the globals region
     dataSegs: seq[(int32, seq[byte])]  ## constant global images -> data segments
+    strLitOff: Table[StrId, int64]   ## interned raw string-literal bytes -> offset
 
 # ── type mapping ──────────────────────────────────────────────────────────────
 
@@ -667,6 +668,11 @@ proc genExpr(g: var WasmGen; n: var Cursor; want: ValType) =
       else:
         g.todo("global-sym")
       inc n
+    of StrLit:
+      # a raw string-literal value (char*/cstring): a pointer to its interned bytes
+      if g.strLitOff.hasKey(strId(n)): g.body.i32Const int32(g.strLitOff[strId(n)])
+      else: g.body.i32Const 0
+      inc n
     of DotToken:
       g.body.i32Const 0; inc n
     else:
@@ -1199,16 +1205,31 @@ proc collectGlobals(g: var WasmGen; n: var Cursor) =
   else:
     skip n
 
+proc internStrLit(g: var WasmGen; sid: StrId): int64 =
+  ## Intern a raw string literal's bytes (NUL-terminated) into a data segment and
+  ## return its byte offset — a `cstring`/char* value points here.
+  if g.strLitOff.hasKey(sid): return g.strLitOff[sid]
+  let s = g.m.pool.strings[sid]
+  let off = g.dataEnd
+  var img = newSeq[byte](s.len + 1)
+  for i in 0 ..< s.len: img[i] = byte(s[i])
+  g.dataSegs.add (int32(off), img)
+  g.strLitOff[sid] = off
+  g.dataEnd += int64(s.len) + 1
+  result = off
+
 proc scanGlobalsIn(g: var WasmGen; n: var Cursor) =
   ## Slot every *foreign* global a reachable body references (cross-module vars /
-  ## consts / the importc `stdout`), so it has a memory slot before the bump base
-  ## is fixed. A `Symbol` atom that resolves to a var/const/gvar decl is a global;
-  ## a local has no foreign decl, so it is naturally skipped.
+  ## consts / the importc `stdout`) and intern every raw string literal, so the
+  ## data region is final before the bump base is fixed. A `Symbol` atom that
+  ## resolves to a var/const/gvar decl is a global; a local has no foreign decl.
   if n.kind == TagLit:
     n.into:
       while n.hasMore: g.scanGlobalsIn n
   else:
-    if n.kind == Symbol and not g.globalOff.hasKey(n.symId):
+    if n.kind == StrLit:
+      discard g.internStrLit(strId(n))
+    elif n.kind == Symbol and not g.globalOff.hasKey(n.symId):
       var d: ptr Definition = nil
       try: d = g.m.getDeclOrNil(n.symId)
       except CatchableError, Defect: d = nil
@@ -1226,6 +1247,7 @@ proc generateWasmCode*(s: var State; inp, outp: string; flags: set[WasmGenFlag])
                   importSigs: initTable[SymId, ImportSig](),
                   globalOff: initTable[SymId, int64](),
                   globalAk: initTable[SymId, AccessKind](),
+                  strLitOff: initTable[StrId, int64](),
                   dataEnd: 1024)          # globals live above the null/scratch region
 
   # 1. collect every proc decl (so calls resolve as forward refs) and every
