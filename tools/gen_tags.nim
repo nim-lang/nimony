@@ -159,6 +159,7 @@ proc genTags(inp: File) =
         desc: desc
       )
 
+  # check `checkGenTags` proc in tools/tester.nim when the output directory is changed.
   writeTagsFile "src/models/tags.nim", tags
 
   writeModel "src/models/nifler", enumDecls, NiflerKind, NiflerKind
