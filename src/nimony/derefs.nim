@@ -684,7 +684,10 @@ proc trAsgn(c: var Context; n: var Cursor) =
           skip n
           takeParRi c, n
           return
-  elif borrowsFromReadonly(c, n, allowLet=true):
+  elif borrowsFromReadonly(c, n, allowLet = le.kind == Symbol):
+    # A bare-symbol destination is a whole-variable (re)assignment, handled by
+    # the definite-assignment pass in contracts_fir; a projection (`a.field`,
+    # `a[i]`) of a `let` mutates its contents and must be rejected here.
     err = LocationIsConst
   else:
     tr c, n, e
