@@ -461,8 +461,6 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
       reorderInnerGenericInstances(c, afterSem)
     var finalBuf = beginRead afterSem
     dest = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
-
-
     when true: #defined(enableContracts):
       var moreErrors = analyzeContractsFinalIr(dest, c.thisModuleSuffix, c.g.config.verbose)
       if reporters.reportErrors(moreErrors) > 0:
