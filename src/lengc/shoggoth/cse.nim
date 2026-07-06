@@ -154,6 +154,11 @@ type
     localDefPos: Table[SymId, int]  ## local symbol → position of its `(var …)` decl,
                                     ## so a cached load is never hoisted above the
                                     ## declaration of a local it reads
+    symReads: Table[SymId, int]     ## per-symbol count of every `Symbol` occurrence in
+                                    ## the body — the profitability gate for cheap-arith
+                                    ## CSE: fold `a op b` only when its operands appear
+                                    ## NOWHERE else (so folding kills their live ranges
+                                    ## instead of adding the temp on top). See flushPending.
 
 proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
                    summaries: ptr FunctionSummaryTable): Context =
@@ -643,6 +648,59 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
                                                 (usePos, derefThis)])
   result = true
 
+proc isPureRegArith(n: Cursor): bool =
+  ## True if `n` is a CHEAP arithmetic binop/unop whose operands are only
+  ## symbols, literals, or nested pure arithmetic — a pure *register* computation
+  ## with NO memory load or call inside. Such a value depends solely on its
+  ## operand symbols, so the existing operand-write invalidation
+  ## (`invalidateMentioning` / `clobberClasses`, which scan the whole expression)
+  ## already covers it with no memory/alias reasoning — no load/aggregate/aliasing
+  ## logic is needed. Used both to gate the CSE candidate and, at flush, to apply
+  ## the cheap-arith profitability gate.
+  if n.kind != TagLit: return false
+  case n.exprKind
+  of AddC, SubC, MulC, DivC, ModC, ShlC, ShrC,
+     BitandC, BitorC, BitxorC, NegC, BitnotC:
+    result = true
+    var m = n
+    var idx = 0
+    m.loopInto:
+      # idx 0 is the result-TYPE child (typed ops carry it first); only operands
+      # need the purity check.
+      if idx > 0:
+        case m.kind
+        of Symbol, IntLit, UIntLit, CharLit, FloatLit, Ident: discard
+        of TagLit:
+          if not isPureRegArith(m): result = false
+        else: result = false
+      inc idx
+      skip m
+  else: result = false
+
+proc countLeafSyms(cur: Cursor; counts: var Table[SymId, int]) =
+  ## Tally each `Symbol` leaf of the expression `cur` (multiplicity: `a*a` → a:2).
+  case cur.kind
+  of Symbol:
+    counts[symId(cur)] = counts.getOrDefault(symId(cur), 0) + 1
+  of TagLit:
+    var n = cur
+    n.loopInto:
+      countLeafSyms(n, counts)
+      skip n
+  else: discard
+
+proc computeSymReads(c: var Context) =
+  ## One linear pass over the body counting every `Symbol` occurrence per symbol.
+  ## Used only as the cheap-arith CSE profitability gate — an over-count (it also
+  ## tallies write targets and non-folded occurrences) only makes the gate more
+  ## conservative (reject a marginal CSE), never unsound. Run LAZILY (only when a
+  ## cheap-arith temp actually needs gating), so bodies with no arith CSE — the
+  ## overwhelming majority — pay nothing.
+  for i in 0 ..< c.orig[].len:
+    let tok = cursorAt(c.orig[], i)
+    if tok.kind == Symbol:
+      c.symReads[tok.symId] = c.symReads.getOrDefault(tok.symId, 0) + 1
+
 proc flushPending(c: var Context) =
   ## Emit each materialized temp's decl at its final (shallowest) hoist position,
   ## then rewrite its occurrences. A temp is DROPPED (decl + all rewrites) when its
@@ -650,11 +708,33 @@ proc flushPending(c: var Context) =
   ## the cached expression's free locals must all be in scope at the decl site.
   ## Because the rewrites are applied here (not eagerly), dropping leaves the
   ## original expressions untouched and correct.
+  var symReadsReady = false
   for fp, pd in c.pending:
     if pd.hoistPos < 0: continue
     let firstCur = cursorAt(c.orig[], pd.exprPos)
     if pd.hoistPos <= latestLocalDef(c, firstCur):
       continue                              # unsound hoist — keep the originals
+    if isPureRegArith(firstCur):
+      if not symReadsReady:                 # lazy: only scan when arith gating is needed
+        computeSymReads(c); symReadsReady = true
+      # Cheap-arith profitability gate (the tweak's "`a` only used in `binop(a,b)`/
+      # `unop(a)` or unused after these"). A cheap op is only worth a temp when
+      # folding its duplicates KILLS the operands' live ranges rather than adding
+      # the temp on top of them. Sufficient & checkable: every non-literal operand
+      # appears NOWHERE outside this expression's folded occurrences — i.e. its
+      # total `Symbol` count equals (occurrences × its multiplicity in one copy).
+      # If any operand is used elsewhere it stays live regardless, so the temp is
+      # pure register pressure (this is exactly what regressed rawAlloc's
+      # `alignment - 1`). Reject → keep the originals; the recompute is cheaper.
+      let k = pd.usePositions.len
+      var operandCounts = initTable[SymId, int]()
+      countLeafSyms(firstCur, operandCounts)
+      var paysOff = true
+      for s, mult in operandCounts:
+        if c.symReads.getOrDefault(s, 0) != k * mult:
+          paysOff = false
+          break
+      if not paysOff: continue              # cheap recompute wins — leave inline
     let varIdx = if pd.addrMode: addAddrVarDecl(c, pd.tempName, firstCur, rawLineInfo(firstCur))
                  else: addValueVarDecl(c, pd.tempName, firstCur, rawLineInfo(firstCur))
     c.patchset.addInsert(pd.hoistPos, synthCursor(c, varIdx))
@@ -699,6 +779,20 @@ proc trExpr(c: var Context; n: var Cursor) =
         n.into:
           if n.hasMore: skip n             # base
           while n.hasMore: trExpr(c, n)    # indices / value children
+    of AddC, SubC, MulC, DivC, ModC, ShlC, ShrC,
+       BitandC, BitorC, BitxorC, NegC, BitnotC:
+      # Cheap pure arithmetic. A repeated `a op b` is CSE'd on its 2nd occurrence
+      # (the same lazy/flow-sensitive path as loads); `handleCandidate` hoists the
+      # temp no higher than the first occurrence, so a trapping `div`/checked op
+      # keeps its original fault ordering. Only PURE register arithmetic qualifies
+      # (`isPureRegArith`): a load/call inside would need memory reasoning we leave
+      # to load-CSE. On the first occurrence (or a non-pure tree) fall through and
+      # recurse so nested loads / sub-expressions still get their own chance.
+      if isPureRegArith(n) and handleCandidate(c, n):
+        skip n
+      else:
+        n.loopInto:
+          trExpr(c, n)
     else:
       n.loopInto:
         trExpr(c, n)
@@ -1259,5 +1353,21 @@ when isMainModule:
       "(asgn y.0.M (at (dot (deref a.0.M) arr.0.M) i.0.M)) " &
       "(asgn i.0.M 5) " &
       "(asgn p.0.M (addr (at (dot (deref a.0.M) arr.0.M) i.0.M))))")
+
+  block arith_dead_after_is_csed:
+    # `a + b` computed twice; `a` and `b` appear NOWHERE else, so folding the
+    # duplicate into one temp kills their live ranges — the gate lets it through.
+    chk(
+      "(stmts (asgn y.0.M (add (i 64) a.0.M b.0.M)) (asgn z.0.M (add (i 64) a.0.M b.0.M)))",
+      "(stmts (var :`cse.1 . . (add (i 64) a.0.M b.0.M)) " &
+      "(asgn y.0.M `cse.1) (asgn z.0.M `cse.1))")
+
+  block arith_operand_used_elsewhere_not_csed:
+    # Same duplicate `a + b`, but `a` is ALSO read in `(asgn w a)` → it stays live
+    # regardless, so a temp would be pure register pressure. The gate rejects it
+    # (this is the `alignment - 1` rawAlloc regression, prevented) → unchanged.
+    assertUnchanged(
+      "(stmts (asgn y.0.M (add (i 64) a.0.M b.0.M)) (asgn w.0.M a.0.M) " &
+      "(asgn z.0.M (add (i 64) a.0.M b.0.M)))")
 
   echo "cse.nim: all self-tests passed"
