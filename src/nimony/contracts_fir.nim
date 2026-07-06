@@ -602,6 +602,16 @@ proc isNonNilExpr(c: var NjvlContext; n: Cursor): bool =
     inc inner
     skip inner # skip type part
     result = isNonNilExpr(c, inner)
+  of BaseobjX:
+    # A base-object upcast (e.g. a derived `ref Dog` widened to `ref Animal`)
+    # of a non-nil value is itself non-nil. The operand's static type still
+    # carries the `notnil` marker even though the widened result type drops it,
+    # so consult the operand's type as well as recursing structurally.
+    var inner = n
+    inc inner
+    skip inner # skip type part
+    skip inner # skip inheritance-depth intlit
+    result = markedAs(getType(c.typeCache, inner), NotnilU) or isNonNilExpr(c, inner)
   of SufX:
     # suffixed literal, e.g. (suf "abc" "R") — still a literal value
     result = true
