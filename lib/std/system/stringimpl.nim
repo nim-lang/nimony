@@ -167,13 +167,13 @@ func ensureUniqueLong(s: var string; oldLen, newLen: int) =
     copyMem(inlinePtrV(s), addr s.more.data[0], min(oldLen, AlwaysAvail))
   else:
     let newCap = if newLen > cap: max(newLen, ssResize(cap)) else: cap
-    var p = cast[ptr LongString](alloc(LongStringDataOffset + newCap))
+    let p = cast[ptr LongString](alloc(LongStringDataOffset + newCap))
     if p != nil:
       p.rc = 0
       p.fullLen = newLen
       p.capImpl = newCap
       if isHeap:
-        var old = s.more
+        let old = s.more
         copyMem(addr p.data[0], addr old.data[0], min(oldLen, newCap))
         if arcDec(old.rc):
           dealloc(old)
@@ -192,7 +192,7 @@ func ensureUniqueLong(s: var string; oldLen, newLen: int) =
 
 func transitionToLong(s: var string; sl: int; newLen: int) =
   let newCap = max(newLen, ssResize(newLen))
-  var p = cast[ptr LongString](alloc(LongStringDataOffset + newCap))
+  let p = cast[ptr LongString](alloc(LongStringDataOffset + newCap))
   if p != nil:
     p.rc = 0
     p.fullLen = newLen
@@ -229,7 +229,7 @@ func prepareMutation*(s: var string) =
       discard arcDec(s.more.rc)
     let old = s.more
     let oldLen = old.fullLen
-    var p = cast[ptr LongString](alloc(LongStringDataOffset + oldLen))
+    let p = cast[ptr LongString](alloc(LongStringDataOffset + oldLen))
     if p != nil:
       p.rc = 0
       p.fullLen = oldLen
@@ -431,7 +431,7 @@ func substr*(s: string; first, last: int): string =
     setSSLen(result, newLen)
     copyMem(inlinePtrV(result), cast[pointer](cast[uint](src) + uint(f)), newLen)
   else:
-    var p = cast[ptr LongString](alloc(LongStringDataOffset + newLen))
+    let p = cast[ptr LongString](alloc(LongStringDataOffset + newLen))
     if p != nil:
       p.rc = 0
       p.fullLen = newLen
@@ -649,7 +649,7 @@ func newString*(len: int): string =
     setSSLen(result, len)
     zeroMem(inlinePtrV(result), len)
   else:
-    var p = cast[ptr LongString](alloc(LongStringDataOffset + len))
+    let p = cast[ptr LongString](alloc(LongStringDataOffset + len))
     if p != nil:
       zeroMem(p, LongStringDataOffset + len)
       p.rc = 0
@@ -664,7 +664,7 @@ func newStringOfCap*(len: int): string =
   ## Returns a new empty string with capacity reserved for `len` chars.
   result = string(bytes: 0'u, more: nil)
   if len <= PayloadSize: return  # inline capacity always available
-  var p = cast[ptr LongString](alloc(LongStringDataOffset + len))
+  let p = cast[ptr LongString](alloc(LongStringDataOffset + len))
   if p != nil:
     zeroMem(p, LongStringDataOffset + len)
     p.rc = 0
@@ -687,7 +687,7 @@ func `&`*(a, b: string): string {.semantics: "string.&".} =
     if al > 0: copyMem(inlinePtrV(result), rawData(a), al)
     if b.len > 0: copyMem(inlinePtrAt(result, al), rawData(b), b.len)
   else:
-    var p = cast[ptr LongString](alloc(LongStringDataOffset + rlen))
+    let p = cast[ptr LongString](alloc(LongStringDataOffset + rlen))
     if p != nil:
       p.rc = 0
       p.fullLen = rlen
@@ -727,7 +727,7 @@ func borrowCStringUnsafe*(s: cstring; l: int): string =
     setSSLen(result, l)
     copyMem(inlinePtrV(result), s, l)
   else:
-    var p = cast[ptr LongString](alloc(LongStringDataOffset + l))
+    let p = cast[ptr LongString](alloc(LongStringDataOffset + l))
     if p != nil:
       p.rc = 0
       p.fullLen = l
@@ -764,7 +764,7 @@ func fromCString*(s: cstring): string =
     setSSLen(result, l)
     copyMem(inlinePtrV(result), s, l)
   else:
-    var p = cast[ptr LongString](alloc(LongStringDataOffset + l))
+    let p = cast[ptr LongString](alloc(LongStringDataOffset + l))
     if p != nil:
       p.rc = 0
       p.fullLen = l

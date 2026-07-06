@@ -1082,12 +1082,13 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
       var inner = n
 
       # Make sure the variable is `var`, else it error
-      let path = extractPath(c, inner, allowDeref=true)
-      if path.path.len > 0:
-        let rootSym = path.path[0]
-        let x = getLocalInfo(c.typeCache, rootSym)
-        if (x.kind in {LetY, GletY, TletY} and not c.lenientLets) and isInitialized(c, rootSym):
-          buildErr c, n.info, "Can't pass `let` variable as var argument"
+      if not c.lenientLets:
+        let path = extractPath(c, inner, allowDeref=true)
+        if path.path.len > 0:
+          let rootSym = path.path[0]
+          let x = getLocalInfo(c.typeCache, rootSym)
+          if (x.kind in {LetY, GletY, TletY}) and isInitialized(c, rootSym):
+            buildErr c, n.info, "Can't pass `let` variable as var argument"
 
       inc inner # skip haddr tag
       needsBorrowCheck = true
@@ -1897,7 +1898,7 @@ proc lowerToFinalIr(input: var TokenBuf; moduleSuffix: string): TokenBuf =
   toFinalIr(pass)
   result = ensureMove pass.dest
 
-proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; verbose = false; lenientLets=false): TokenBuf =
+proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; verbose = false; lenientLets=true): TokenBuf =
   ## Main entry point: lowers `input` to the Final IR and analyzes contracts.
   ## When `verbose` is true, every contract/init failure dumps the enclosing
   ## proc's IR to stderr to aid debugging.
