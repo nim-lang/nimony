@@ -10,7 +10,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 
 import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes, renderer, asthelpers,
-  features, symtabs, sigconcepts, expreval
+  features, symtabs, sigconcepts, expreval, staticmatches
 import ".." / lib / symparser
 import ".." / models / tags
 
@@ -481,11 +481,6 @@ proc matchesConstraint*(m: var Match; f: var Cursor; a: Cursor): bool =
       return matchesConstraint(m, f, typevar.typ)
   result = matchesConstraintAux(m, f, a)
 
-proc isStaticTypevar(s: SymId): bool =
-  let res = tryLoadSym(s)
-  assert res.status == LacksNothing
-  result = res.decl.symKind == StaticTypevarY
-
 proc foldValueExpr(m: var Match; a: Cursor; depth = 0): xint =
   ## The tiny fixed-opcode evaluator for compile-time *values* in type
   ## positions: folds `+ - *` over integer literals and rewrites an
@@ -499,6 +494,12 @@ proc foldValueExpr(m: var Match; a: Cursor; depth = 0): xint =
     result = createXint(pool.integers[a.intId])
   of UIntLit:
     result = createXint(pool.uintegers[a.uintId])
+  of Symbol:
+    # an already-inferred value typevar (e.g. `R` in `array[R * C, T]`): fold to
+    # the value it was bound to, so array-length matching resolves once bound.
+    if isStaticTypevar(a.symId) and m.inferred.contains(a.symId):
+      let inferred = m.inferred.getOrQuit(a.symId)
+      result = foldValueExpr(m, inferred, depth+1)
   of ParLe:
     case a.exprKind
     of AddX, SubX, MulX:
@@ -603,7 +604,23 @@ proc staticValueToBind(m: var Match; elemType: Cursor; a: Cursor): Cursor =
         if k == FloatT: result = a
       else: discard
     else:
-      if containsGenericParams(a):
+      if isStaticValue(a) and staticValueTypeMatches(elemType, staticValueType(a)):
+        # a typed aggregate constructor (array/set/tuple/object), or an
+        # `openArray`/`varargs` value satisfied by an array literal
+        result = a
+      elif isStaticValue(a) and elemType.typeKind == InvokeT:
+        # a *dependent* generic element type such as `Shape[N]`, where an
+        # enclosing value parameter `N` parameterizes this parameter's type.
+        # Unify the element type against the value's concrete type (`Shape[2]`),
+        # which binds or equality-checks the enclosing parameters through the
+        # ordinary matcher. See #2108 / issue #2104.
+        let vt = staticValueType(a)
+        if not cursorIsNil(vt):
+          var f = elemType
+          var av = vt
+          if tryLinearMatch(m, f, av):
+            result = a
+      elif containsGenericParams(a):
         # a symbolic expression over value parameters, e.g. `N1 + N2`:
         # compared syntactically, never solved
         result = a
@@ -1565,8 +1582,14 @@ proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
     inc f1
     skip a1
     skip f1
-    let fLen = lengthOrd(m.context[], f1)
-    let aLen = lengthOrd(m.context[], a1)
+    # fold already-bound value typevars first (`array[R * C, T]`), falling back
+    # to the plain array-length ordinal for concrete/rangetype lengths.
+    var fLen = foldValueExpr(m, f1)
+    if fLen.isNaN:
+      fLen = lengthOrd(m.context[], f1)
+    var aLen = foldValueExpr(m, a1)
+    if aLen.isNaN:
+      aLen = lengthOrd(m.context[], a1)
     if fLen.isNaN or aLen.isNaN:
       # match typevars
       linearMatch m, f, a

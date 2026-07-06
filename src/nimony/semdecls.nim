@@ -130,6 +130,15 @@ proc isStaticConstraint(n: Cursor): bool =
   if n.exprKind == AtX: inc n
   n.kind == Ident and pool.strings[n.litId] == "static"
 
+proc isStaticSugarHead(n: Cursor): bool =
+  ## True when the `AtX` cursor `n` is the `static[T]` sugar `(at static T)`,
+  ## i.e. its head is the literal `static` identifier — as opposed to an
+  ## already-desugared element type that is itself an invocation such as
+  ## `Shape[N]` (`(at Shape N)`).
+  var head = n
+  inc head # past `at`
+  result = head.kind == Ident and pool.strings[head.litId] == "static"
+
 proc semStaticTypevarType(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   ## Sem the element type of a value generic parameter (`N: static[int]`). The
   ## type slot of the resulting `staticTypevar` holds the plain element type;
@@ -142,7 +151,11 @@ proc semStaticTypevarType(c: var SemContext; dest: var TokenBuf; n: var Cursor) 
     else:
       discard semLocalType(c, dest, n)
     skipParRi n
-  elif n.exprKind == AtX:
+  elif n.exprKind == AtX and isStaticSugarHead(n):
+    # the `static[T]` sugar: nifler renders it as `(at static T)`. An `AtX` whose
+    # head is *not* the `static` identifier is an already-desugared element type
+    # that is itself a generic instantiation (e.g. `Shape[N]` -> `(at Shape N)`),
+    # handled by the `else` branch below.
     inc n
     skip n # the `static` identifier
     if n.kind == ParRi:
