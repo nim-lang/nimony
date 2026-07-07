@@ -853,6 +853,7 @@ const
     "tests/nimony/cps/tclosure_iter_envcheck",
     "tests/nimony/cps/tclosure_iter_string",
     "tests/nimony/cps/tclosure_iter_var",
+    "tests/nimony/cps/tasync_queue",
     "tests/nimony/cps/tfirstpassive",
     "tests/nimony/cps/tif",
     "tests/nimony/cps/tmethods",
