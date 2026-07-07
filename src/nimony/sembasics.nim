@@ -463,6 +463,9 @@ proc declareOverloadableSym*(c: var SemContext; dest: var TokenBuf; it: var Item
     result = (it.n.symId, status)
     dest.add it.n
     inc it.n
+  elif it.n.kind == ParLe and it.n.tagId == nifstreams.ErrT:
+    dest.takeTree it.n
+    result = (SymId(0), ErrNoIdent)
   else:
     let lit = takeIdent(it.n)
     if lit == StrId(0):
