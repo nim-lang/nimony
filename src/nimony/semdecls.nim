@@ -709,9 +709,12 @@ proc registerHook(c: var SemContext; obj: SymId, symId: SymId, op: HookKind; isG
   c.typeHooks.getOrQuit(obj).a[attachedOp] = symId
 
 proc getHookName(symId: SymId): string =
-  result = pool.syms[symId]
-  extractBasename(result)
-  #result = result.normalize
+  if symId == SymId(0):
+    result = ""
+  else:
+    result = pool.syms[symId]
+    extractBasename(result)
+    #result = result.normalize
 
 proc semHook(c: var SemContext; dest: var TokenBuf; name: string; beforeParams: int; symId: SymId, info: NifLineInfo): TypeCursor =
   let params = getParamsType(c, dest, beforeParams)
@@ -1072,6 +1075,19 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
         extractBasename(name)
         # go up a scope for the parameter scope:
         c.currentScope.up.addOverloadable(pool.strings.getOrIncl(name), s)
+      if symId != SymId(0) and kind in {ProcY, FuncY} and {ImportcP, ImportcppP} * crucial.flags == {}:
+        var name = pool.syms[symId]
+        extractBasename(name)
+        if name == ">" or name == ">=" or name == "!=":
+          var errBuf = createTokenBuf()
+          let errOrigAt = cursorAt(dest, beforeName)
+          let op1 = if name == "!=": "==" elif name == ">": "<" else: "<="
+          buildErr c, errBuf, dest[beforeName].info,
+                   "define `" & op1 & "` instead of `" & name & "` to implement user defined comparison operator. " &
+                   "it allows you to use `" & name & "` automatically.",
+                   errOrigAt
+          let errAt = cursorAt(errBuf, 0)
+          replace dest, errAt, beforeName
       # An intrinsic's signature is unified against its row here, where the
       # params and the return type are already in `dest`. The message lands in
       # the `effects` slot — the one routine slot that already accepts an
@@ -1136,7 +1152,8 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
       c.routine = c.routine.parent
   if newName == NoSymId:
     producesVoid c, dest, info, it.typ
-  publish c, dest, symId, declStart
+  if symId != SymId(0):
+    publish c, dest, symId, declStart
 
   if kind == MacroY and pass == checkBody:
     let macroDecl = cursorAt(dest, declStart)
