@@ -822,7 +822,7 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
            FeatureP, UncheckedAssignP, UncheckedAccessP,
            ProfilerP, StacktraceP, GcsafeP, UsedP:
           skip n
-        of BuildP, BundleP, CompileP, EmitP, PushP, PopP, PassLP, PassCP, CallConvP, TestTagP:
+        of BuildP, BundleP, CompileP, EmitP, PushP, PopP, PassLP, PassCP, CallConvP:
           bug "unreachable"
       else:
         error c, "unknown pragma: ", n
