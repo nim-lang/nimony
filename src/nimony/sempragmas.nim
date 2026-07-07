@@ -450,6 +450,8 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     while n.hasMore:
       dest.takeTree n
     dest.addParRi()
+  of TestTagP:
+    discard
   if hasParRi:
     if n.hasMore:
       if n.exprKind != ErrX:
