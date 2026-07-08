@@ -283,6 +283,21 @@ proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: PackedLi
   orig.addDotToken()
   c.combineErr dest, pos, info, msg, cursorAt(orig, 0)
 
+proc buildErrAt*(c: var SemContext; dest: var TokenBuf; pos: int; msg: string) =
+  ## Builds ErrT node on the existing node at `pos` and it becomes the origin of the error.
+  ## Node at `pos` may not be a node without closing ParRi.
+  ## e.g:
+  ## input:
+  ## content of `dest`: (tagX (tagY a) (tagZ b))
+  ## `pos`:                   ^
+  ## output:
+  ## content of `dest`: (tagX (err (tagY a) ...) (tagZ b))
+  assert dest.len > pos
+  var tmpBuf = createTokenBuf()
+  buildErr c, tmpBuf, dest[pos].info, msg, cursorAt(dest, pos)
+  let errAt = cursorAt(tmpBuf, 0)
+  replace dest, errAt, pos
+
 proc buildLocalErr*(dest: var TokenBuf; info: PackedLineInfo; msg: string; orig: Cursor) =
   when defined(debug):
     if true: # not c.debugAllowErrors: - c not given
