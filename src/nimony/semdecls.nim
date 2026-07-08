@@ -1082,10 +1082,12 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
           var errBuf = createTokenBuf()
           let errOrigAt = cursorAt(dest, beforeName)
           let op1 = if name == "!=": "==" elif name == ">": "<" else: "<="
-          buildErr c, errBuf, dest[beforeName].info,
-                   "define `" & op1 & "` instead of `" & name & "` to implement user defined comparison operator. " &
-                   "it allows you to use `" & name & "` automatically.",
-                   errOrigAt
+          let msg = if pass == checkConceptProc:
+                      "If a type has `" & op1 & "`, it automatically has `" & name & "`."
+                    else:
+                      "define `" & op1 & "` instead of `" & name & "` to implement user defined comparison operator. " &
+                      "it allows you to use `" & name & "` automatically."
+          buildErr c, errBuf, dest[beforeName].info, msg, errOrigAt
           let errAt = cursorAt(errBuf, 0)
           replace dest, errAt, beforeName
       # An intrinsic's signature is unified against its row here, where the
