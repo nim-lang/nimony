@@ -787,6 +787,8 @@ proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; rout
       savedSelf.add (selfSym, m.inferred.getOrDefault(selfSym, default(Cursor)))
     m.inferred[selfSym] = a
   let basename = conceptRoutineBasename(routine)
+  if basename == StrId(0):
+    return true
   let inferenceBase = m.inferred
   for cand in collectConceptRoutineCandidates(m.context, conceptSym, basename):
     let res = tryLoadSym(cand)

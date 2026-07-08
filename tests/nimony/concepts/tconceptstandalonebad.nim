@@ -5,7 +5,7 @@ type
   Comparable = concept
     func `==`(a, b: Self): bool
     func `<`(a, b: Self): bool
-    func `>`(a, b: Self): bool
+    func `>>`(a, b: Self): bool
 
   Foo = distinct int
 
