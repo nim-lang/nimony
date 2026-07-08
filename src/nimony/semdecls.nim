@@ -1079,17 +1079,13 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
         var name = pool.syms[symId]
         extractBasename(name)
         if name == ">" or name == ">=" or name == "!=":
-          var errBuf = createTokenBuf()
-          let errOrigAt = cursorAt(dest, beforeName)
           let op1 = if name == "!=": "==" elif name == ">": "<" else: "<="
           let msg = if pass == checkConceptProc:
                       "If a type has `" & op1 & "`, it automatically has `" & name & "`."
                     else:
                       "define `" & op1 & "` instead of `" & name & "` to implement user defined comparison operator. " &
                       "it allows you to use `" & name & "` automatically."
-          buildErr c, errBuf, dest[beforeName].info, msg, errOrigAt
-          let errAt = cursorAt(errBuf, 0)
-          replace dest, errAt, beforeName
+          buildErrAt c, dest, beforeName, msg
       # An intrinsic's signature is unified against its row here, where the
       # params and the return type are already in `dest`. The message lands in
       # the `effects` slot — the one routine slot that already accepts an
