@@ -67,6 +67,7 @@ proc tagToNimNodeKind(tag: string): NimNodeKind =
   of "asm": nnkAsm
   of "comment": nnkCommentStmt
   # Declarations
+  of "proc": nnkProcDef
   of "func": nnkFuncDef
   of "method": nnkMethodDef
   of "iterator": nnkIteratorDef
@@ -167,7 +168,7 @@ proc nimNodeKindToTag(k: NimNodeKind): string =
   of nnkYieldStmt: "yld"
   of nnkRaiseStmt: "raise"
   of nnkDiscardStmt: "discard"
-  of nnkProcDef: "func"
+  of nnkProcDef: "proc"
   of nnkFuncDef: "func"
   of nnkMethodDef: "method"
   of nnkIteratorDef: "iterator"
