@@ -1,0 +1,1 @@
+tests/nimony/notnil/tmove_resets_notnil.nim(16, 10) Error: cannot prove expression is not nil: a [pass --verbose for the NJ IR]

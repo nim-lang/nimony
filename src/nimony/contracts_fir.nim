@@ -1688,6 +1688,14 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     let unknownPath = extractPath(c, n)
     if unknownPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
       checkBorrowConflict(c, unknownPath, n.info)
+    # The location's contents are now unknown: every fact we knew about it is
+    # stale. Dropping them is what makes e.g. `move(a)` correctly forget the
+    # `a != nil` proof — `a` was passed by `haddr` and reset to a moved-from
+    # (nil) state, so a later `a.x` must be re-proven, not silently accepted.
+    # Facts are keyed per root variable (see `analysableRoot`), so we invalidate
+    # by the path's root symbol.
+    if unknownPath.path.len > 0:
+      invalidateFactsAbout(c.facts, getVarId(c, unknownPath.path[0]))
     skip n # the unknown location
     skipParRi n
   of ContinueV:
