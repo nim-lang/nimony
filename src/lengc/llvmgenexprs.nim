@@ -99,7 +99,15 @@ proc cmpOp(c: var LLVMCode; n: var Cursor; signedPred, unsignedPred: string;
     let lhsType = getType(c.m, lhsExpr)
     let lhsTK = scalarTypeKind(c, lhsType)
     var lhs = LLValue(); genExprLLVM(c, n, lhs)
+    let rhsExpr = n
+    let rhsType = getType(c.m, rhsExpr)
     var rhs = LLValue(); genExprLLVM(c, n, rhs)
+    # LLVM cmp needs both operands at one type: widen the narrower one.
+    if not typeEq(lhs.typ, rhs.typ):
+      if typeSizeBits(c, lhsType) < typeSizeBits(c, rhsType):
+        coerceValueLLVM(c, lhs, lhsType, rhsType, false, lhs)
+      else:
+        coerceValueLLVM(c, rhs, rhsType, lhsType, false, rhs)
     let t = c.nextTemp()
     if isFloatType(lhs.typ):
       let fpPred = case signedPred
@@ -156,10 +164,10 @@ proc atomicAlign(c: var LLVMCode; typ: LLType): int {.inline.} =
     else: c.bits div 8
   else: c.bits div 8
 
-proc declareExtern(c: var LLVMCode; declLine: string; name: string) =
-  if name notin c.declaredExterns:
-    c.declaredExterns.incl name
-    c.module.externs.add LLExternDecl(declaration: declLine, name: name)
+proc declareExtern(c: var LLVMCode; e: LLExternDecl) =
+  if e.name notin c.declaredExterns:
+    c.declaredExterns.incl e.name
+    c.module.externs.add e
 
 proc genAtomicCall(c: var LLVMCode; externName: string; args: seq[LLValue];
     retType: LLType; result: var LLValue) =
@@ -191,22 +199,22 @@ proc genAtomicCall(c: var LLVMCode; externName: string; args: seq[LLValue];
     let leRes = llReg(le, valTyp)
     c.emit LLInstr(kind: llLoad, result: leRes, loadPtr: args[1])
     let t = c.nextTemp()
-    let cmpxRes = llReg(t, LLType(kind: llStruct,
+    let aggTyp = LLType(kind: llStruct,
         structFields: @[LLStructField(typ: valTyp), LLStructField(
-            typ: c.prim.i1)]))
-    let aggText = "{ " & serialize(valTyp) & ", i1 }"
+            typ: c.prim.i1)])
+    let cmpxRes = llReg(t, aggTyp)
     c.emit LLInstr(kind: llCmpxchg, result: cmpxRes, cxPtr: args[0],
-                   cxExpected: leRes, cxDesired: args[2], cxAggType: aggText,
+                   cxExpected: leRes, cxDesired: args[2], cxAggType: aggTyp,
                    cxSuccessOrdering: ordering, cxFailureOrdering: ordering,
                    cxAlign: valAlign)
     let success = c.nextTemp()
     let succRes = llReg(success, c.prim.i1)
     c.emit LLInstr(kind: llExtractValue, result: succRes, evAggregate: cmpxRes,
-                   evAggType: aggText, evIndex: 1)
+                   evAggType: aggTyp, evIndex: 1)
     let oldVal = c.nextTemp()
     let oldRes = llReg(oldVal, valTyp)
     c.emit LLInstr(kind: llExtractValue, result: oldRes, evAggregate: cmpxRes,
-                   evAggType: aggText, evIndex: 0)
+                   evAggType: aggTyp, evIndex: 0)
     c.emitStore(oldRes, args[1])
     let r = c.nextTemp()
     let rRes = llReg(r, c.prim.i8)
@@ -304,13 +312,13 @@ proc genAtomicCall(c: var LLVMCode; externName: string; args: seq[LLValue];
       if i > 0: argStr.add ", "
       operand(a, argStr)
     if retType.kind == llVoid:
-      c.emit LLInstr(kind: llCall, callCallee: "@" & externName,
+      c.emit LLInstr(kind: llCall, callCallee: llGlobalRef(externName, c.prim.ptrT),
                      callRetType: retType, callArgs: args)
       result = llNoneVal()
     else:
       let t = c.nextTemp()
       let res = llReg(t, retType)
-      c.emit LLInstr(kind: llCall, result: res, callCallee: "@" & externName,
+      c.emit LLInstr(kind: llCall, result: res, callCallee: llGlobalRef(externName, c.prim.ptrT),
                      callRetType: retType, callArgs: args)
       result = res
 
@@ -318,33 +326,41 @@ proc genMemIntrinsicCall(c: var LLVMCode; externName: string; args: seq[
     LLValue]; retType: LLType; result: var LLValue) =
   case externName
   of "memcpy":
-    c.emit LLInstr(kind: llCall, callCallee: "@llvm.memcpy.p0.p0.i64",
+    c.emit LLInstr(kind: llCall,
+      callCallee: llGlobalRef("llvm.memcpy.p0.p0.i64", c.prim.ptrT),
       callRetType: c.prim.voidT,
       callArgs: @[args[0], args[1], args[2], llIntTextC("0", c.prim.i1)])
-    declareExtern(c, "declare void @llvm.memcpy.p0.p0.i64(ptr noalias nocapture writeonly, ptr noalias nocapture readonly, i64, i1 immarg)", "llvm.memcpy.p0.p0.i64")
+    declareExtern(c, LLExternDecl(name: "llvm.memcpy.p0.p0.i64",
+      raw: "declare void @llvm.memcpy.p0.p0.i64(ptr noalias nocapture writeonly, ptr noalias nocapture readonly, i64, i1 immarg)"))
     result = args[0].withType(c.prim.ptrT)
   of "memmove":
-    c.emit LLInstr(kind: llCall, callCallee: "@llvm.memmove.p0.p0.i64",
+    c.emit LLInstr(kind: llCall,
+      callCallee: llGlobalRef("llvm.memmove.p0.p0.i64", c.prim.ptrT),
       callRetType: c.prim.voidT,
       callArgs: @[args[0], args[1], args[2], llIntTextC("0", c.prim.i1)])
-    declareExtern(c, "declare void @llvm.memmove.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)", "llvm.memmove.p0.p0.i64")
+    declareExtern(c, LLExternDecl(name: "llvm.memmove.p0.p0.i64",
+      raw: "declare void @llvm.memmove.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)"))
     result = args[0].withType(c.prim.ptrT)
   of "memset":
     let val8 = c.nextTemp()
     let val8Res = llReg(val8, c.prim.i8)
     c.emit LLInstr(kind: llTrunc, result: val8Res, castOp: "trunc",
                    castSrc: args[1], castDstType: c.prim.i8)
-    c.emit LLInstr(kind: llCall, callCallee: "@llvm.memset.p0.i64",
+    c.emit LLInstr(kind: llCall,
+      callCallee: llGlobalRef("llvm.memset.p0.i64", c.prim.ptrT),
       callRetType: c.prim.voidT,
       callArgs: @[args[0], val8Res, args[2], llIntTextC("0", c.prim.i1)])
-    declareExtern(c, "declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)", "llvm.memset.p0.i64")
+    declareExtern(c, LLExternDecl(name: "llvm.memset.p0.i64",
+      raw: "declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)"))
     result = args[0].withType(c.prim.ptrT)
   of "memcmp":
     let t = c.nextTemp()
     let res = llReg(t, c.prim.i32)
-    c.emit LLInstr(kind: llCall, result: res, callCallee: "@memcmp",
+    c.emit LLInstr(kind: llCall, result: res,
+      callCallee: llGlobalRef("memcmp", c.prim.ptrT),
       callRetType: c.prim.i32, callArgs: @[args[0], args[1], args[2]])
-    declareExtern(c, "declare i32 @memcmp(ptr nocapture, ptr nocapture, i64)", "memcmp")
+    declareExtern(c, LLExternDecl(name: "memcmp",
+      raw: "declare i32 @memcmp(ptr nocapture, ptr nocapture, i64)"))
     result = res
   else:
     var argStr = ""
@@ -352,13 +368,13 @@ proc genMemIntrinsicCall(c: var LLVMCode; externName: string; args: seq[
       if i > 0: argStr.add ", "
       operand(a, argStr)
     if retType.kind == llVoid:
-      c.emit LLInstr(kind: llCall, callCallee: "@" & externName,
+      c.emit LLInstr(kind: llCall, callCallee: llGlobalRef(externName, c.prim.ptrT),
                      callRetType: retType, callArgs: args)
       result = llNoneVal()
     else:
       let t = c.nextTemp()
       let res = llReg(t, retType)
-      c.emit LLInstr(kind: llCall, result: res, callCallee: "@" & externName,
+      c.emit LLInstr(kind: llCall, result: res, callCallee: llGlobalRef(externName, c.prim.ptrT),
                      callRetType: retType, callArgs: args)
       result = res
 
@@ -387,7 +403,8 @@ proc genGccBuiltinCall(c: var LLVMCode; externName: string; args: seq[LLValue];
   template callIntrinsic(iname: string; rtype: LLType): LLValue =
     let t = c.nextTemp()
     let res = llReg(t, rtype)
-    c.emit LLInstr(kind: llCall, result: res, callCallee: "@" & iname,
+    c.emit LLInstr(kind: llCall, result: res,
+      callCallee: llGlobalRef(iname, c.prim.ptrT),
       callRetType: rtype, callArgs: @[args[0], llIntTextC("0", c.prim.i1)])
     res
   case externName
@@ -437,23 +454,22 @@ proc genCallWithType(c: var LLVMCode; n: var Cursor; retType: LLType;
   let callInfo = n.info
   n.into:
 
-    var calleeName: string
-    var calleeExtern: string = ""
-    var calleeSym = SymId(0)
+    var callee = LLValue()
+    var calleeExtern = ""
     if n.kind == Symbol:
-      calleeSym = n.symId
+      let calleeSym = n.symId
       c.requestedSyms.incl calleeSym
       calleeExtern = getExternName(c, calleeSym)
       let decl = c.m.getDeclOrNil(calleeSym)
       if decl != nil and decl.kind == ProcY:
-        calleeName = "@" & mangleSym(c, calleeSym)
+        let bare = mangleSym(c, calleeSym)
+        let ftype = genFuncTypeLLVM(c, decl.pos)
+        callee = llGlobalRef(bare, ftype)
         inc n
       else:
-        var callee = LLValue(); genExprLLVM(c, n, callee)
-        calleeName = disp(callee)
+        genExprLLVM(c, n, callee)
     else:
-      var callee = LLValue(); genExprLLVM(c, n, callee)
-      calleeName = disp(callee)
+      genExprLLVM(c, n, callee)
 
     var args: seq[LLValue] = @[]
     while n.hasMore:
@@ -472,19 +488,17 @@ proc genCallWithType(c: var LLVMCode; n: var Cursor; retType: LLType;
       genGccBuiltinCall(c, calleeExtern, args, retType, result)
       return
 
-  let funcType = if calleeName in c.varargsFuncTypes: c.varargsFuncTypes[
-      calleeName] else: ""
   if retType.kind == llVoid:
     c.setLoc(callInfo)
-    c.emit LLInstr(kind: llCall, callCallee: calleeName, callRetType: retType,
-                   callArgs: args, callFuncType: funcType)
+    c.emit LLInstr(kind: llCall, callCallee: callee, callRetType: retType,
+                   callArgs: args)
     result = llNoneVal()
   else:
     let t = c.nextTemp()
     let res = llReg(t, retType)
     c.setLoc(callInfo)
-    c.emit LLInstr(kind: llCall, result: res, callCallee: calleeName,
-                   callRetType: retType, callArgs: args, callFuncType: funcType)
+    c.emit LLInstr(kind: llCall, result: res, callCallee: callee,
+                   callRetType: retType, callArgs: args)
     result = res
 
 proc genCallLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
@@ -548,6 +562,10 @@ proc coerceValueLLVM(c: var LLVMCode; val: LLValue; srcTypeCursor, destTypeCurso
         castDstType: destTyp)
     result = res
   elif isLengInt(srcTK) and isLengInt(destTK):
+    # Constant integer casts fold to the target type with no instruction.
+    if val.kind == llvInt:
+      result = val.withType(destTyp)
+      return
     let srcBits = typeSizeBits(c, srcTypeCursor)
     let destBits = typeSizeBits(c, destTypeCursor)
     if srcBits < destBits:
@@ -653,13 +671,31 @@ proc genDotLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       gepType = genTypeLLVMReadOnly(c, curType)
   result = genFieldPtrLLVM(c, curBody, fldSym, gepType, gepTarget).withType(c.prim.ptrT)
 
+proc isAddressableExpr(n: Cursor): bool {.inline.} =
+  ## True iff `genLvalueLLVM` can take `n`'s address directly; false ⇒ it's a
+  ## pure rvalue (aconstr/oconstr/par/call) that must be materialised into a temp.
+  case n.exprKind
+  of NoExpr: result = n.kind == Symbol
+  of DerefC, AtC, PatC, DotC, ErrvC, OvfC, BaseobjC: result = true
+  else: result = false
+
 proc genAtLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   var arrType: Cursor
   var arr = LLValue()
   var idx = LLValue()
   n.into:
     arrType = getType(c.m, n)
-    genLvalueLLVM(c, n, arr)
+    if isAddressableExpr(n):
+      genLvalueLLVM(c, n, arr)
+    else:
+      # Rvalue base has no address (only an SSA value) — alloca + store to give
+      # it a home, then address that.
+      var val = LLValue(); genExprLLVM(c, n, val)
+      let typ = genTypeLLVMReadOnly(c, arrType)
+      let tmp = c.nextTemp()
+      c.emitAlloca(tmp, typ)
+      c.emitStore(val, llReg(tmp, c.prim.ptrT))
+      arr = llReg(tmp, c.prim.ptrT)
     genExprLLVM(c, n, idx)
     while n.hasMore: skip n
   let arrTypeName = genTypeLLVMReadOnly(c, arrType)
@@ -762,7 +798,8 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     of FloatLit:
       let f = floatVal(n)
       inc n
-      result = LLValue(kind: llvFloat, floatText: $f, typ: c.prim.f64)
+      result = LLValue(kind: llvFloat, floatText: llFloatHexText(f),
+          typ: c.prim.f64)
     of CharLit:
       let ch = n.charLit
       inc n
@@ -818,8 +855,10 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
         result = llIntTextC("0", baseTyp)
         return
       if decl != nil and decl.kind == ProcY:
-        let typ = genTypeLLVMReadOnly(c, symType)
-        result = llGlobalRef(name, typ)
+        # A proc value is a function pointer — plain `ptr` under opaque pointers.
+        # `getType` of a proc symbol returns its `params` cursor, not a type, so
+        # don't feed it to genTypeLLVM (it rejects ParamsT).
+        result = llGlobalRef(name, c.prim.ptrT)
         return
       let typ = genTypeLLVMReadOnly(c, symType)
       let prefix = if isGlobalSym(c, s): "@" else: "%"
@@ -884,7 +923,7 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     let t = c.nextTemp()
     let res = llReg(t, typ)
     if isFloatType(typ):
-      c.emitRaw "%" & t & " = fneg " & serialize(typ) & " " & disp(val)
+      c.emit LLInstr(kind: llFneg, result: res, fnegVal: val)
       result = res
     else:
       c.emit LLInstr(kind: llSub, result: res, binOp: "sub",
@@ -1073,8 +1112,18 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
         let t = c.nextTemp()
         let res = llReg(t, targetTyp)
         if isFloatType(targetTyp):
-          c.emit LLInstr(kind: llSitofp, result: res, castOp: "sitofp",
-                         castSrc: val, castDstType: targetTyp)
+          # Pick the opcode by the source value's kind: float→float
+          # narrows/widens (fptrunc/fpext), int→float is sitofp.
+          let srcIsFloat = isFloatType(val.typ)
+          if srcIsFloat and val.typ.floatBits > targetTyp.floatBits:
+            c.emit LLInstr(kind: llFptrunc, result: res, castOp: "fptrunc",
+                           castSrc: val, castDstType: targetTyp)
+          elif srcIsFloat:
+            c.emit LLInstr(kind: llFpext, result: res, castOp: "fpext",
+                           castSrc: val, castDstType: targetTyp)
+          else:
+            c.emit LLInstr(kind: llSitofp, result: res, castOp: "sitofp",
+                           castSrc: val, castDstType: targetTyp)
         else:
           let destBits = case suffixStr
             of "i8", "u8": 8
@@ -1143,7 +1192,6 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       let elemTyp = genTypeLLVMReadOnly(c, elemBody)
       var current = llUndef(typ)
       var idx = 0
-      var s = serialize(typ)
       while n.hasMore:
         var elemVal = LLValue(); genExprLLVM(c, n, elemVal)
         if elemVal.kind == llvInt:
@@ -1151,7 +1199,7 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
         let t = c.nextTemp()
         let res = llReg(t, typ)
         c.emit LLInstr(kind: llInsertValue, result: res, ivAggregate: current,
-                       ivElement: elemVal, ivAggType: s, ivIndex: idx)
+                       ivElement: elemVal, ivAggType: typ, ivIndex: idx)
         current = res
         inc idx
       if expectedLen >= 0 and idx != expectedLen:

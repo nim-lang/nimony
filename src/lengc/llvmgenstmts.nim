@@ -15,7 +15,7 @@ type
     ## Used by genSwitchLLVM. Declared at module scope rather than inside
     ## the proc's `n.into:` block so the type isn't re-instantiated each
     ## time the template expands.
-    values: seq[string]
+    values: seq[LLValue]
     label: string
 
 proc getVirtualGuardLLVM(c: var LLVMCode; n: Cursor): (SymId, bool) =
@@ -218,11 +218,19 @@ proc genSwitchLLVM(c: var LLVMCode; n: var Cursor) =
                   n.into:
                     var lo = LLValue(); genExprLLVM(c, n, lo)
                     var hi = LLValue(); genExprLLVM(c, n, hi)
-                    branch.values.add disp(lo)
+                    # LLVM switch has no ranges: expand to one case per value.
+                    if lo.kind == llvInt and hi.kind == llvInt:
+                      var v = parseInt(lo.intText)
+                      let hiBound = parseInt(hi.intText)
+                      while v <= hiBound:
+                        branch.values.add llIntTextC($v, switchVal.typ)
+                        inc v
+                    else:
+                      branch.values.add lo
                     while n.hasMore: skip n
                 else:
                   var val = LLValue(); genExprLLVM(c, n, val)
-                  branch.values.add disp(val)
+                  branch.values.add val
               while n.hasMore: skip n
           branches.add branch
           skip n
@@ -239,8 +247,8 @@ proc genSwitchLLVM(c: var LLVMCode; n: var Cursor) =
     var cases: seq[(LLValue, string)] = @[]
     for branch in branches:
       for v in branch.values:
-        cases.add (llIntTextC(v, switchVal.typ), branch.label)
-    c.emit LLInstr(kind: llSwitch, switchValType: serialize(switchVal.typ),
+        cases.add (v, branch.label)
+    c.emit LLInstr(kind: llSwitch, switchValType: switchVal.typ,
                    switchVal: switchVal, switchDefault: defaultLabel,
                    switchCases: cases)
 
@@ -406,20 +414,20 @@ proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
 
   let aggTyp = LLType(kind: llStruct,
       structFields: @[LLStructField(typ: typ), LLStructField(typ: c.prim.i1)])
-  let aggText = "{ " & serialize(typ) & ", i1 }"
   let rs = c.nextTemp()
   let rsRes = llReg(rs, aggTyp)
-  c.emit LLInstr(kind: llCall, result: rsRes, callCallee: "@" & intrinsic,
+  c.emit LLInstr(kind: llCall, result: rsRes,
+                 callCallee: llGlobalRef(intrinsic, c.prim.ptrT),
                  callRetType: aggTyp, callArgs: @[lhs, rhs])
   let resultVal = c.nextTemp()
   let rvRes = llReg(resultVal, typ)
   c.emit LLInstr(kind: llExtractValue, result: rvRes, evAggregate: rsRes,
-                 evAggType: aggText, evIndex: 0)
+                 evAggType: aggTyp, evIndex: 0)
   c.emitStore(rvRes, target)
   let ovfFlag = c.nextTemp()
   let ovfRes = llReg(ovfFlag, c.prim.i1)
   c.emit LLInstr(kind: llExtractValue, result: ovfRes, evAggregate: rsRes,
-                 evAggType: aggText, evIndex: 1)
+                 evAggType: aggTyp, evIndex: 1)
   let currentOvf = c.emitLoad(llGlobalRef("LENGC_OVF_", c.prim.ptrT), c.prim.i8)
   let currentOvfBool = c.nextTemp()
   let cobRes = llReg(currentOvfBool, c.prim.i1)
@@ -436,10 +444,8 @@ proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
                  castDstType: c.prim.i8)
   c.emitStore(nobRes, llGlobalRef("LENGC_OVF_", c.prim.ptrT))
 
-  let s = serialize(typ)
-  let declStr = "declare { " & s & ", i1 } @" & intrinsic & "(" &
-      s & ", " & s & ")"
-  declareExtern(c, declStr, intrinsic)
+  declareExtern(c, LLExternDecl(name: intrinsic, retType: aggTyp,
+      params: @[typ, typ]))
 
 proc genEmitStmtLLVM(c: var LLVMCode; n: var Cursor) =
   n.into:
@@ -565,11 +571,12 @@ proc genStmtLLVM(c: var LLVMCode; n: var Cursor) =
         var raiseVal = LLValue(); genExprLLVM(c, n, raiseVal)
       else:
         inc n
-      c.emit LLInstr(kind: llCall, callCallee: "@llvm.trap",
+      c.emit LLInstr(kind: llCall, callCallee: llGlobalRef("llvm.trap", c.prim.ptrT),
                      callRetType: c.prim.voidT, callArgs: @[])
       c.emit LLInstr(kind: llUnreachable)
       c.currentProc.needsTerminator = true
-      declareExtern(c, "declare void @llvm.trap() noreturn nounwind", "llvm.trap")
+      declareExtern(c, LLExternDecl(name: "llvm.trap",
+          raw: "declare void @llvm.trap() noreturn nounwind"))
       while n.hasMore: skip n
   of OnerrS:
     var onErrAction = n

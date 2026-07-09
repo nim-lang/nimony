@@ -14,6 +14,9 @@ proc integralBitsLLVM(t: Cursor; c: LLVMCode): int {.inline.} =
   let res = intVal(t)
   if res == -1: c.bits else: int(res)
 
+# Forward decl: the genTypeLLVM <-> ensureTypeDef <-> genTypeDefBodyLLVM cycle.
+proc ensureTypeDef(c: var LLVMCode; symId: SymId): LLType
+
 proc genTypeLLVM(c: var LLVMCode; n: var Cursor): LLType =
   ## Returns the LLType for a NIF type node.
   case n.typeKind
@@ -71,11 +74,7 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): LLType =
           result = c.prim.ptrT
           inc n
           return
-      let name = mangleToC(c.m.pool.syms[n.symId])
-      result = LLType(kind: llStruct, name: name) # named reference → "%name"
-      inc n
-    elif n.kind == DotToken:
-      result = c.prim.voidT
+      result = ensureTypeDef(c, n.symId) # aggregate -> named ref; non-aggregate -> inline
       inc n
     else:
       error c.m, "node is not a type: ", n
@@ -115,9 +114,7 @@ proc genTypeLLVM(c: var LLVMCode; n: var Cursor): LLType =
     if not cursorIsNil(typeDecl) and typeDecl.stmtKind == TypeS:
       let decl = asTypeDecl(typeDecl)
       if decl.name.kind == SymbolDef:
-        discard c.m.getDeclOrNil(decl.name.symId)
-        result = LLType(kind: llStruct, name: mangleToC(c.m.pool.syms[
-            decl.name.symId]))
+        result = ensureTypeDef(c, decl.name.symId)
       else:
         result = c.prim.ptrT
     else:
@@ -279,147 +276,7 @@ proc typeAlignBits(c: var LLVMCode; n: Cursor): int =
   else:
     result = 8
 
-# ---- Type ordering and definition generation ----
-
-type
-  TypeOrderEntryLLVM = (Cursor, bool)
-
-  TypeOrderLLVM = object
-    forwardedDecls: seq[Cursor]
-    ordered: seq[TypeOrderEntryLLVM]
-    lookedAt: IntSet
-    lookedAtBodies: HashSet[SymId]
-
-proc traverseObjectBodyLLVM(m: var MainModule; o: var TypeOrderLLVM; t: Cursor)
-proc traverseProctypeBodyLLVM(m: var MainModule; o: var TypeOrderLLVM; t: Cursor)
-
-proc recordDependencyImplLLVM(m: var MainModule; o: var TypeOrderLLVM;
-                               parent, child: Cursor; viaPointer: var bool) =
-  var ch = child
-  while true:
-    case ch.typeKind
-    of AptrT, PtrT:
-      viaPointer = true
-      ch = elementType(ch)
-    of FlexarrayT:
-      viaPointer = false
-      ch = elementType(ch)
-    else:
-      break
-
-  case ch.typeKind
-  of ObjectT, UnionT:
-    let obj = ch
-    if viaPointer:
-      o.forwardedDecls.add parent
-    else:
-      if not containsOrIncl(o.lookedAt, obj.toUniqueId()):
-        traverseObjectBodyLLVM(m, o, obj)
-      o.ordered.add (tracebackTypeC(m, ch), false)
-  of ArrayT:
-    if viaPointer:
-      o.forwardedDecls.add parent
-    else:
-      if not containsOrIncl(o.lookedAt, ch.toUniqueId()):
-        var viaPointer = false
-        var elemCur = ch
-        inc elemCur
-        recordDependencyImplLLVM m, o, ch, elemCur, viaPointer
-      o.ordered.add (tracebackTypeC(m, ch), false)
-  of EnumT:
-    o.ordered.add (tracebackTypeC(m, ch), false)
-  of ProctypeT:
-    if viaPointer:
-      o.forwardedDecls.add parent
-    else:
-      if not containsOrIncl(o.lookedAt, ch.toUniqueId()):
-        traverseProctypeBodyLLVM(m, o, ch)
-      o.ordered.add (tracebackTypeC(m, ch), false)
-  else:
-    if ch.kind == Symbol:
-      let id = ch.symId
-      let def = m.getDeclOrNil(id)
-      if def == nil:
-        error m, "undeclared symbol: ", ch
-      else:
-        var n = def.pos
-        let decl = asTypeDecl(n)
-        let alreadyFullyProcessed = decl.name.symId in o.lookedAtBodies
-        if viaPointer:
-          recordDependencyImplLLVM m, o, n, decl.body, viaPointer
-        elif not alreadyFullyProcessed:
-          o.lookedAtBodies.incl decl.name.symId
-          recordDependencyImplLLVM m, o, n, decl.body, viaPointer
-
-proc recordDependencyLLVM(m: var MainModule; o: var TypeOrderLLVM; parent,
-    child: Cursor) =
-  var viaPointer = false
-  recordDependencyImplLLVM m, o, parent, child, viaPointer
-
-proc traverseObjectBodyLLVM(m: var MainModule; o: var TypeOrderLLVM; t: Cursor) =
-  let kind = t.typeKind
-  var n = t
-  n.into:
-    if kind == ObjectT:
-      if n.kind == Symbol:
-        recordDependencyLLVM m, o, t, n
-        inc n
-      elif n.kind == DotToken:
-        inc n
-      else:
-        error m, "expected `Symbol` or `.` for inheritance but got: ", n
-    while n.hasMore:
-      if n.substructureKind == FldU:
-        let decl = takeFieldDecl(n)
-        recordDependencyLLVM m, o, t, decl.typ
-      elif n.typeKind in {ObjectT, UnionT}:
-        traverseObjectBodyLLVM(m, o, n)
-        skip n
-      else:
-        error m, "unexpected node inside object: ", n
-
-proc traverseProctypeBodyLLVM(m: var MainModule; o: var TypeOrderLLVM; t: Cursor) =
-  var n = t
-  let procType = takeProcType(n)
-  var viaPointer = true
-  if procType.params.kind == TagLit:
-    var param = procType.params
-    param.loopInto:
-      let paramDecl = takeParamDecl(param)
-      recordDependencyImplLLVM m, o, t, paramDecl.typ, viaPointer
-  recordDependencyImplLLVM m, o, t, procType.returnType, viaPointer
-
-proc traverseTypesLLVM(m: var MainModule; o: var TypeOrderLLVM) =
-  var i = 0
-  while i < m.types.len:
-    let n = m.types[i]
-    let decl = asTypeDecl(n)
-    let t = decl.body
-    case t.typeKind
-    of ObjectT:
-      traverseObjectBodyLLVM m, o, t
-      o.ordered.add (n, false)
-    of UnionT:
-      traverseObjectBodyLLVM m, o, t
-      o.ordered.add (n, false)
-    of ArrayT:
-      recordDependencyLLVM m, o, t, t.firstSon
-      o.ordered.add (n, false)
-    of ProctypeT:
-      traverseProctypeBodyLLVM m, o, t
-      o.ordered.add (n, false)
-    of EnumT:
-      o.ordered.add (n, false)
-    else: discard
-    inc i
-  for fd in o.forwardedDecls:
-    var found = false
-    for j in 0 ..< o.ordered.len:
-      if o.ordered[j][0].toUniqueId() == fd.toUniqueId():
-        found = true
-        break
-    if not found:
-      o.ordered.insert((fd, true), 0)
+# ---- Named-type definitions: lazily emitted by ensureTypeDef on first use. ----
 
 type
   UnionCandidate = object
@@ -664,59 +521,89 @@ proc fieldAccessLLVM(c: var LLVMCode; objBody: Cursor;
   result = FieldAccess()
   discard searchFieldIdx(c, body, fldSym, result, bitfieldAccum, bitfieldUnit)
 
-proc genTypeDefLLVM(c: var LLVMCode; body: var Cursor; name: string;
-                    packed: bool): string =
-  ## Generate a named type definition line. Returns "" if nothing to emit.
+proc genTypeDefBodyLLVM(c: var LLVMCode; body: var Cursor): LLType =
+  ## Build the body `LLType` for a named type. Returns nil for kinds we can't
+  ## render (ensureTypeDef then emits `= type opaque`); empty objects become `{}`.
   case body.typeKind
   of ObjectT, UnionT:
-    let structBody = genObjectBodyLLVM(c, body)
-    if structBody.structFields.len == 0: return ""
-    let ts = serialize(structBody)
-    if packed:
-      result = "%" & name & " = type <" & ts & ">\n"
-    else:
-      result = "%" & name & " = type " & ts & "\n"
+    # Empty object -> `{}` (sized 0), never nil: nil would serialize as opaque
+    # (unsized) and break `alloca %Empty`.
+    result = genObjectBodyLLVM(c, body)
   of ArrayT:
     body.into:
       let elemType = genTypeLLVM(c, body)
-      var sizeStr: string
+      var sz = 0
       if body.kind == IntLit:
-        sizeStr = $intVal(body)
+        sz = int(intVal(body))
+        skip body
       elif body.kind == UIntLit:
-        sizeStr = $uintVal(body)
-      else:
-        sizeStr = "0"
-      skip body
-      result = "%" & name & " = type [" & sizeStr & " x " &
-          serialize(elemType) & "]\n"
+        sz = int(uintVal(body))
+        skip body
+      result = newLLArrayType(sz, elemType)
       while body.hasMore: skip body
   of EnumT:
     body.into:
-      let baseType = genTypeLLVM(c, body)
+      result = genTypeLLVM(c, body)
       while body.hasMore:
         skip body
-      result = "%" & name & " = type " & serialize(baseType) & "\n"
   of ProctypeT:
     let procType = takeProcType(body)
-    var retType: string
+    var retType: LLType
     if procType.returnType.kind == DotToken:
-      retType = "void"
+      retType = c.prim.voidT
     else:
       var rt = procType.returnType
-      retType = ""
-      serialize(genTypeLLVM(c, rt), retType)
-    var paramTypes: seq[string] = @[]
+      retType = genTypeLLVM(c, rt)
+    var paramTypes: seq[LLType] = @[]
     if procType.params.kind == TagLit:
       var p = procType.params
       p.loopInto:
         let paramDecl = takeParamDecl(p)
         var t = paramDecl.typ
-        var ps = ""
-        serialize(genTypeLLVM(c, t), ps)
-        paramTypes.add ps
-    result = "%" & name & " = type " & retType & " (" & paramTypes.join(", ") & ")*\n"
+        paramTypes.add genTypeLLVM(c, t)
+    result = newLLFuncType(retType, paramTypes, false)
   else:
-    result = ""
+    result = nil
+
+proc typeDefByName(c: var LLVMCode; name: string): int =
+  ## Index of `name` in c.module.typeDefs, or -1. Linear scan: type count is small.
+  for i, nt in c.module.typeDefs:
+    if nt.name == name: return i
+  return -1
+
+proc ensureTypeDef(c: var LLVMCode; symId: SymId): LLType =
+  ## Aggregates (object/union) get a `%Name = type <body>` def; non-aggregates
+  ## (enum→scalar, array) resolve inline — LLVM forbids forward refs to non-struct
+  ## named types. The placeholder is inserted before the body so recursion returns
+  ## a ref instead of looping.
+  let name = mangleToC(c.m.pool.syms[symId])
+  if typeDefByName(c, name) >= 0:
+    return LLType(kind: llStruct, name: name) # already registered aggregate (incl. placeholder)
+  let d = c.m.getDeclOrNil(symId)
+  if d == nil or d.kind != TypeY:
+    return c.prim.ptrT # unresolved symbol -> opaque pointer
+  let decl = asTypeDecl(d.pos)
+  var body = decl.body
+  if body.typeKind notin {ObjectT, UnionT}:
+    # Non-aggregate: inline the underlying LLType, no %Name def.
+    result = genTypeDefBodyLLVM(c, body)
+    if result == nil: result = c.prim.ptrT
+    return
+  # Aggregate: placeholder before the body for recursion safety (above).
+  var packed = false
+  if decl.pragmas.substructureKind == PragmasU:
+    var p = decl.pragmas
+    p.loopInto:
+      if p.pragmaKind == PackedP: packed = true
+      skip p
+  let idx = c.module.typeDefs.len
+  c.module.typeDefs.add LLNamedType(name: name, body: nil, packed: false) # placeholder
+  let bodyType = genTypeDefBodyLLVM(c, body)
+  if bodyType != nil:
+    c.module.typeDefs[idx] = LLNamedType(name: name, body: bodyType,
+        packed: packed)
+    # else: placeholder stays nil => serializes as `= type opaque`
+  result = LLType(kind: llStruct, name: name)
 
 proc collectStructFieldTypes(c: var LLVMCode; body: var Cursor; types: var seq[LLType];
                              bitfieldAccum: var int64; bitfieldUnit: var int) =
@@ -789,34 +676,41 @@ proc isPackedType(c: var LLVMCode; typeSym: Cursor): bool =
             result = true
           skip p
 
+proc operandStr(v: LLValue): string {.inline.} =
+  ## Typed operand text "<type> <value>" for one constant-initializer element,
+  ## whether the leaf is a scalar value (llvInt/llvGlobal/…) or a pre-rendered
+  ## aggregate (llvRawText).
+  operand(v, result)
+
 proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
     declaredType: Cursor): LLValue =
-  ## Generate a constant value as an LLValue (kind llvRawText carries the
-  ## formatted constant text; typ carries the actual LLVM type).
+  ## Generate a constant value as an LLValue. Scalar leaves use the proper
+  ## value kinds (llvInt/llvGlobal/llvZero/…); only composed aggregates and
+  ## escaped string literals fall back to llvRawText (pre-formatted text).
   template rawConst(t: LLType; v: string): LLValue =
     LLValue(kind: llvRawText, rawText: v, typ: t)
   case n.kind
   of IntLit:
     let typ = genTypeLLVMReadOnly(c, declaredType)
-    result = rawConst(typ, $intVal(n))
+    result = llIntText($intVal(n), typ)
     inc n
   of UIntLit:
     let typ = genTypeLLVMReadOnly(c, declaredType)
-    result = rawConst(typ, $uintVal(n))
+    result = llIntText($uintVal(n), typ)
     inc n
   of FloatLit:
     let typ = genTypeLLVMReadOnly(c, declaredType)
-    result = rawConst(typ, $floatVal(n))
+    result = llFloatText(llFloatHexText(floatVal(n)), typ)
     inc n
   of CharLit:
     let typ = genTypeLLVMReadOnly(c, declaredType)
-    result = rawConst(typ, $ord(n.charLit))
+    result = llIntText($ord(n.charLit), typ)
     inc n
   of StrLit:
     let s = c.m.pool.strings[n.litId]
     inc n
     if s.len == 0:
-      result = rawConst(newLLArrayType(0, c.prim.i8), "zeroinitializer")
+      result = llZeroInit(newLLArrayType(0, c.prim.i8))
     else:
       var escaped = "c\""
       for ch in s:
@@ -833,22 +727,22 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
     let name = mangleSym(c, n.symId)
     c.requestedSyms.incl n.symId
     let typ = genTypeLLVMReadOnly(c, declaredType)
-    result = rawConst(typ, "@" & name)
+    result = llGlobalRef(name, typ)
     inc n
   of DotToken:
     let typ = genTypeLLVMReadOnly(c, declaredType)
-    result = rawConst(typ, "zeroinitializer")
+    result = llZeroInit(typ)
     inc n
   else:
     case n.exprKind
     of FalseC:
-      result = rawConst(c.prim.i8, "0")
+      result = llIntText("0", c.prim.i8)
       skip n
     of TrueC:
-      result = rawConst(c.prim.i8, "1")
+      result = llIntText("1", c.prim.i8)
       skip n
     of NilC:
-      result = rawConst(c.prim.ptrT, "null")
+      result = llNull(c.prim.ptrT)
       skip n
     of OconstrC:
       var resultTyp: LLType = nil
@@ -910,7 +804,7 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
               usedNifTypes.add nifType
               let tc = genGlobalConstr(c, n, nifType)
               typeParts.add tc.typ
-              valParts.add serialize(tc.typ) & " " & tc.rawText
+              valParts.add operandStr(tc)
               while n.hasMore: skip n
             inc fieldIdx
           elif n.exprKind == OconstrC:
@@ -919,7 +813,7 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
             usedNifTypes.add nifType
             let tc = genGlobalConstr(c, n, nifType)
             typeParts.add tc.typ
-            valParts.add serialize(tc.typ) & " " & tc.rawText
+            valParts.add operandStr(tc)
             inc fieldIdx
           else:
             let nifType = if fieldIdx < fieldNifTypes.len: fieldNifTypes[fieldIdx]
@@ -927,7 +821,7 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
             usedNifTypes.add nifType
             let tc = genGlobalConstr(c, n, nifType)
             typeParts.add tc.typ
-            valParts.add serialize(tc.typ) & " " & tc.rawText
+            valParts.add operandStr(tc)
             inc fieldIdx
       var needsAnon = false
       for i in 0 ..< min(typeParts.len, fieldTypes.len):
@@ -1006,7 +900,7 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
         var elems: seq[string] = @[]
         while n.hasMore:
           let tc = genGlobalConstr(c, n, elemTypeCursor)
-          elems.add serialize(tc.typ) & " " & tc.rawText
+          elems.add operandStr(tc)
         let arrTyp = newLLArrayType(elems.len, elemType)
         result = rawConst(arrTyp, "[ " & elems.join(", ") & " ]")
     of CastC, ConvC:
@@ -1024,7 +918,7 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
         if n.kind == Symbol:
           let name = mangleSym(c, n.symId)
           c.requestedSyms.incl n.symId
-          result = rawConst(c.prim.ptrT, "@" & name)
+          result = llGlobalRef(name, c.prim.ptrT)
           inc n
         else:
           error c.m, "unsupported address constant; only plain symbols are currently handled: ", n

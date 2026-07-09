@@ -11,7 +11,7 @@
 # serializer (llvmserializer.nim) renders to .ll text. All LLVM syntax
 # knowledge lives in the serializer.
 
-import std / [assertions, syncio, sets, intsets, formatfloat, packedsets,
+import std / [assertions, syncio, sets, formatfloat, packedsets,
     strutils, sequtils, tables]
 from std / os import changeFileExt, splitFile, extractFilename, fileExists,
     getCurrentDir, absolutePath
@@ -77,18 +77,15 @@ type
     currentBlockIdx*: int
     nextTempCounter*: int
     nextLabelCounter*: int
-    typeCache*: Table[SymId, LLType]
     prim*: PrimTypes
     bits: int
     flags: set[LLVMGenFlag]
-    generatedTypes*: HashSet[SymId]
     requestedSyms*: HashSet[SymId]
-    declaredExterns*: HashSet[string]        # to avoid duplicate extern declarations
-    varargsFuncTypes*: Table[string, string] # "@name" -> function-type-signature
-    emittedConsts*: HashSet[SymId]           # local consts emitted as global constants
+    declaredExterns*: HashSet[string] # to avoid duplicate extern declarations
+    emittedConsts*: HashSet[SymId]    # local consts emitted as global constants
     inToplevel: bool
     currentProc: LLVMCurrentProc
-    strLitCounter*: int                      # global counter for string literal names
+    strLitCounter*: int               # global counter for string literal names
     debug*: DebugInfo
 
 proc initPrimTypes*(): PrimTypes =
@@ -226,6 +223,8 @@ proc disp*(v: LLValue): string {.inline.} =
   serializeUnqualified(v, result)
 
 proc mangleSym(c: var LLVMCode; s: SymId): string =
+  ## extern name if declared, else mangleToC. Shared-SymId locals (inlined copies
+  ## of one source var) are dedup'd at the alloca site, not here.
   let x = c.m.getDeclOrNil(s)
   if x != nil and x.extern != StrId(0):
     result = c.m.pool.strings[x.extern]
@@ -307,9 +306,38 @@ proc genCallWithType(c: var LLVMCode; n: var Cursor; retType: LLType;
     result: var LLValue)
 proc genCallExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue)
 
+proc llFloatHexText(f: float): string {.inline.} =
+  # LLVM float literal as hex: `0x` + IEEE-754 bits — exact, avoids the decimal-point rule.
+  "0x" & toHex(cast[uint64](f), 16)
+
 # ---- Type generation ----
 
 include llvmgentypes
+
+# ---- Func type helper (used by genexprs call-site) ----
+
+proc genFuncTypeLLVM*(c: var LLVMCode; procDecl: Cursor): LLType =
+  ## Build an llFunc type signature from a ProcS decl (type only).
+  var n = procDecl
+  let prc = takeProcDecl(n)
+  var retType: LLType
+  if prc.returnType.kind == DotToken:
+    retType = c.prim.voidT
+  else:
+    var rt = prc.returnType
+    retType = genTypeLLVM(c, rt)
+  var paramTypes: seq[LLType] = @[]
+  var isVarargs = false
+  if prc.params.kind != DotToken:
+    var p = prc.params
+    p.loopInto:
+      var d = takeParamDecl(p)
+      if d.typ.typeKind == VarargsT:
+        isVarargs = true
+      else:
+        var t = d.typ
+        paramTypes.add genTypeLLVM(c, t)
+  result = newLLFuncType(retType, paramTypes, isVarargs)
 
 # ---- DWARF debug info (metadata infra + type generation) ----
 
@@ -386,21 +414,17 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM;
       let extName = c.m.pool.strings[externName]
       var t = d.typ
       let typ = genTypeLLVM(c, t)
-      let zeroI: array[6, int] = [0, 1, 2, 3, 4, 5]
-      case extName
-      of "__ATOMIC_RELAXED", "__ATOMIC_CONSUME", "__ATOMIC_ACQUIRE",
-         "__ATOMIC_RELEASE", "__ATOMIC_ACQ_REL", "__ATOMIC_SEQ_CST":
-        let val = case extName
-          of "__ATOMIC_RELAXED": 0
-          of "__ATOMIC_CONSUME": 1
-          of "__ATOMIC_ACQUIRE": 2
-          of "__ATOMIC_RELEASE": 3
-          of "__ATOMIC_ACQ_REL": 4
-          else: 5
+      const AtomicOrderNames = ["__ATOMIC_RELAXED", "__ATOMIC_CONSUME",
+        "__ATOMIC_ACQUIRE", "__ATOMIC_RELEASE", "__ATOMIC_ACQ_REL",
+        "__ATOMIC_SEQ_CST"]
+      var idx = -1
+      for i, nm in AtomicOrderNames:
+        if nm == extName:
+          idx = i
+          break
+      if idx >= 0:
         c.module.globals.add LLGlobal(name: extName, typ: typ,
-            initVal: llIntText($val, typ), isConstant: true)
-      else:
-        discard
+            initVal: llIntText($idx, typ), isConstant: true)
       skip d.value
       return
 
@@ -428,8 +452,7 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM;
             dbgLoc: dbgvSuffix)
       else:
         skip d.value
-        let zeroVal = if d.typ.typeKind in {PtrT, AptrT,
-            ProctypeT}: llNull(typ) else: llZeroInit(typ)
+        let zeroVal = llDefaultZero(typ)
         c.module.globals.add LLGlobal(name: name, typ: typ, initVal: zeroVal,
             isThreadLocal: (vk == IsThreadlocal),
             isConstant: (vk == IsConst), align: int alignVal,
@@ -453,7 +476,7 @@ proc genLocalVarDeclLLVM(c: var LLVMCode; n: var Cursor) =
       skip d.value
       return
 
-    let name = mangleToC(c.m.pool.syms[lit])
+    let name = mangleSym(c, lit)
     var t = d.typ
     let diType = genDITypeReadOnly(c, t)
     let typ = genTypeLLVM(c, t)
@@ -479,8 +502,7 @@ proc genLocalVarDeclLLVM(c: var LLVMCode; n: var Cursor) =
                        storePtr: llReg(name, c.prim.ptrT))
     else:
       inc d.value
-      let zeroVal = if d.typ.typeKind in {PtrT, AptrT,
-          ProctypeT}: llNull(typ) else: llZeroInit(typ)
+      let zeroVal = llDefaultZero(typ)
       c.setLoc(varInfo)
       c.emit LLInstr(kind: llStore, storeValue: zeroVal,
                      storePtr: llReg(name, c.prim.ptrT))
@@ -634,31 +656,19 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
       else:
         error c.m, "expected SymbolDef but got: ", d.name
 
-  var sig = "("
-  for i, t in paramTypes:
-    if i > 0: sig.add ", "
-    serialize(t, sig)
-  if isVarargs:
-    if paramTypes.len > 0: sig.add ", "
-    sig.add "..."
-  sig.add ")"
-
   if {NodeclP, HeaderP} * prag.flags != {}:
     discard
   elif isExtern or {ImportcP, ImportcppP} * prag.flags != {}:
     let externName = name
     if externName notin c.declaredExterns:
       c.declaredExterns.incl externName
-      if isVarargs: c.varargsFuncTypes["@" & externName] = sig
-      let decl = "declare " & serialize(retType) & " @" & externName & sig & "\n"
-      c.module.externs.add LLExternDecl(declaration: decl.strip(chars = {'\n'}),
-          name: externName)
+      c.module.externs.add LLExternDecl(name: externName, retType: retType,
+          params: paramTypes, isVarargs: isVarargs)
   else:
     # Function definition: build an LLFunc
     let displayName = if prag.wasName.len > 0: prag.wasName else: name
     let spId = createSubprogram(c, displayName, procInfo)
     c.currentProc.subprogramId = spId
-    if isVarargs: c.varargsFuncTypes["@" & name] = sig
 
     var f = LLFunc(name: name, retType: retType, isVarargs: isVarargs,
         alwaysInline: (InlineP in prag.flags),
@@ -696,8 +706,7 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
         c.setLoc(procInfo)
         c.emit LLInstr(kind: llRet, retVal: llNoneVal())
       else:
-        let zeroVal = if prc.returnType.typeKind in {PtrT, AptrT,
-            ProctypeT}: llNull(retType) else: llZeroInit(retType)
+        let zeroVal = llDefaultZero(retType)
         c.setLoc(procInfo)
         c.emit LLInstr(kind: llRet, retVal: zeroVal)
 
@@ -770,35 +779,8 @@ proc traverseCodeLLVM(c: var LLVMCode; n: var Cursor) =
   else:
     error c.m, "expected `stmts` but got: ", n
 
-proc generateLLVMTypes(c: var LLVMCode) =
-  var co = TypeOrderLLVM()
-  traverseTypesLLVM(c.m, co)
-  for (d, isForward) in co.ordered:
-    var n = d
-    let decl = takeTypeDecl(n)
-    if not c.generatedTypes.containsOrIncl(decl.name.symId):
-      var skipDecl = false
-      var packed = false
-      if decl.pragmas.substructureKind == PragmasU:
-        var p = decl.pragmas
-        p.loopInto:
-          case p.pragmaKind
-          of NodeclP, HeaderP:
-            skipDecl = true
-          of PackedP:
-            packed = true
-          else: discard
-          skip p
-      if skipDecl: continue
-
-      let name = mangleToC(c.m.pool.syms[decl.name.symId])
-      if isForward:
-        c.module.typeDefs.add "%" & name & " = type opaque\n"
-      else:
-        var body = decl.body
-        let typeDef = genTypeDefLLVM(c, body, name, packed)
-        if typeDef.len > 0:
-          c.module.typeDefs.add typeDef
+# Named types are registered lazily by genTypeLLVM via ensureTypeDef
+# (see llvmgentypes.nim) — no separate type-emission pass.
 
 proc generateLLVMCode*(s: var State; inp, outp: string; flags: set[LLVMGenFlag]) =
   var m = load(inp)
@@ -811,52 +793,14 @@ proc generateLLVMCode*(s: var State; inp, outp: string; flags: set[LLVMGenFlag])
   var n = beginRead(c.m.src)
   traverseCodeLLVM c, n
 
-  generateLLVMTypes c
+  # Add runtime globals as structured LLGlobal
+  let isMain = gfMainModule in c.flags
+  c.module.globals.add LLGlobal(name: "LENGC_ERR_", typ: c.prim.i8,
+      isThreadLocal: true, isExternal: not isMain, initVal: llIntText("0", c.prim.i8))
+  c.module.globals.add LLGlobal(name: "LENGC_OVF_", typ: c.prim.i8,
+      isThreadLocal: true, isExternal: not isMain, initVal: llIntText("0", c.prim.i8))
 
-  let triple = when defined(macos): "arm64-apple-macosx" else: ""
-  var f = "; LLVM IR generated by Lengc\n"
-  f.add "target datalayout = \"e-m:o-i64:64-i128:128-n32:64-S128\"\n"
-  if triple.len > 0:
-    f.add "target triple = \"" & triple & "\"\n"
-  else:
-    f.add "; target triple should be set for your platform\n"
-  f.add "\n"
-
-  for td in c.module.typeDefs:
-    f.add td
-  if c.module.typeDefs.len > 0: f.add "\n"
-
-  for e in c.module.externs:
-    f.add e.declaration & "\n"
-  if c.module.externs.len > 0: f.add "\n"
-
-  for g in c.module.globals:
-    var s = ""
-    serialize(g, s)
-    f.add s & "\n"
-  if c.module.globals.len > 0: f.add "\n"
-
-  if gfMainModule in c.flags:
-    f.add "@LENGC_ERR_ = thread_local global i8 0\n"
-    f.add "@LENGC_OVF_ = thread_local global i8 0\n\n"
-  else:
-    f.add "@LENGC_ERR_ = external thread_local global i8\n"
-    f.add "@LENGC_OVF_ = external thread_local global i8\n\n"
-
-  for fn in c.module.funcs:
-    var s = ""
-    serialize(fn, s)
-    f.add s & "\n\n"
-
-  if c.module.hasInitBody:
-    var initFn = c.module.initFunc
-    initFn.name = "lengc_init"
-    initFn.retType = c.prim.voidT
-    var s = ""
-    serialize(initFn, s)
-    f.add s & "\n"
-    f.add "@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @lengc_init, ptr null }]\n"
-
+  # Patch debug metadata onto the module before serialization
   if c.debug.metadata.len > 0:
     if c.debug.globalExprs.len > 0:
       var gList = ""
@@ -870,15 +814,21 @@ proc generateLLVMCode*(s: var State; inp, outp: string; flags: set[LLVMGenFlag])
 
     let dwarfId = c.addMetadata("!{i32 7, !\"Dwarf Version\", i32 4}")
     let diVersionId = c.addMetadata("!{i32 2, !\"Debug Info Version\", i32 3}")
-    f.add "\n"
-    f.add "!llvm.dbg.cu = !{!" & $c.debug.cuId & "}\n"
-    f.add "!llvm.module.flags = !{!" & $dwarfId & ", !" & $diVersionId & "}\n"
-    for i, md in c.debug.metadata:
-      f.add "!" & $i & " = " & md & "\n"
+    c.module.cuId = c.debug.cuId
+    c.module.dwarfVerId = dwarfId
+    c.module.diVerId = diVersionId
+    c.module.metadata = move c.debug.metadata
+    c.module.globalExprIds = move c.debug.globalExprs
 
-  if vfsExists(outp) and vfsRead(outp) == f:
+  if c.module.hasInitBody:
+    c.module.initFunc.name = "lengc_init"
+    c.module.initFunc.retType = c.prim.voidT
+
+  let llText = serializeModule(c.module)
+
+  if vfsExists(outp) and vfsRead(outp) == llText:
     discard "unchanged, keep mtime for incremental builds"
   else:
-    vfsWrite outp, f
+    vfsWrite outp, llText
 
   c.m.closeScope()

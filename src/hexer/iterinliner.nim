@@ -85,7 +85,10 @@ proc connectSingleExprToLoopVar(e: var EContext; dest: var TokenBuf; c: var Curs
     inc c
   else:
     var typ = local.typ
-    createDecl(e, dest, destSym, typ, c, info, VarS, needsAddr=false)
+    # Fresh SymId per yield expansion
+    let freshSym = pool.syms.getOrIncl("`ii." & $e.getTmpId)
+    res[destSym] = freshSym
+    createDecl(e, dest, freshSym, typ, c, info, VarS, needsAddr=false)
 
 proc unpackTupleAccess(e: var EContext; dest: var TokenBuf; forVar: Cursor; left: TokenBuf; i: int; info: PackedLineInfo; typ: Cursor; needsAddr: bool) =
   assert typ.hasMore
