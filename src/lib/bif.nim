@@ -139,25 +139,33 @@ proc buildIndex*(b: var TokenBuf; dottedSuffix = ""): seq[IndexEntry] =
 proc magic(): array[MagicLen, char] =
   result = ['N', 'I', 'F', 'B', 'I', 'N', char(sizeof(int)), char(Version)]
 
+proc writeExact(f: File; p: pointer; n: int) =
+  let written = f.writeBuffer(p, n)
+  assert written == n
+
+proc readExact(f: File; p: pointer; n: int) =
+  let got = f.readBuffer(p, n)
+  assert got == n
+
 proc writeU32(f: File; x: uint32) =
   var v = x
-  assert f.writeBuffer(addr v, 4) == 4
+  writeExact(f, addr v, 4)
 
 proc readU32(f: File): uint32 =
   var v = 0'u32
-  assert f.readBuffer(addr v, 4) == 4
+  readExact(f, addr v, 4)
   v
 
 proc writeStr(f: File; s: string) =
   writeU32(f, uint32 s.len)
   if s.len > 0:
-    assert f.writeBuffer(unsafeAddr s[0], s.len) == s.len
+    writeExact(f, unsafeAddr s[0], s.len)
 
 proc readStr(f: File): string =
   let n = int readU32(f)
   result = newString(n)
   if n > 0:
-    assert f.readBuffer(addr result[0], n) == n
+    readExact(f, addr result[0], n)
 
 # ── store ─────────────────────────────────────────────────────────────────
 
@@ -173,7 +181,7 @@ proc storeToFile*(b: var TokenBuf; f: File; dottedSuffix = "") =
   # always emitted — see the module doc.
   let index = buildIndex(b, dottedSuffix)
   var m = magic()
-  assert f.writeBuffer(addr m[0], MagicLen) == MagicLen
+  writeExact(f, addr m[0], MagicLen)
   # Reserve the `indexOffset` slot. We can only fill it once tokens and pools are
   # written, so write a placeholder now and patch it at the end — the binary
   # equivalent of `addHeader27`'s `(.indexat …)` reservation + `patchIndexAt`.
@@ -187,7 +195,7 @@ proc storeToFile*(b: var TokenBuf; f: File; dottedSuffix = "") =
   # token stream: one contiguous block.
   let bytes = b.len * sizeof(NifToken)
   if bytes > 0:
-    assert f.writeBuffer(b.rawTokenPtr, bytes) == bytes
+    writeExact(f, b.rawTokenPtr, bytes)
   # pools, each in id order (ids are 1-based, dense up to len).
   for i in 1 .. b.tags.tags.len:      writeStr(f, b.tags.tags[TagId(i)])
   for i in 1 .. b.pool.strings.len:   writeStr(f, b.pool.strings[StrId(i)])
@@ -201,7 +209,7 @@ proc storeToFile*(b: var TokenBuf; f: File; dottedSuffix = "") =
     writeU32(f, uint32 e.sym)
     writeU32(f, cast[uint32](e.pos))
     var v = uint8(ord(e.vis))
-    assert f.writeBuffer(addr v, 1) == 1
+    writeExact(f, addr v, 1)
   # Patch the header slot to point at the index, then leave the cursor at EOF.
   setFilePos(f, indexAtPos)
   writeU32(f, uint32 indexOffset)
@@ -218,7 +226,7 @@ proc store*(b: var TokenBuf; filename: string; dottedSuffix = "") =
 proc checkMagic(f: File) =
   var m = default(array[MagicLen, char])
   let want = magic()
-  assert f.readBuffer(addr m[0], MagicLen) == MagicLen
+  readExact(f, addr m[0], MagicLen)
   for i in 0 ..< MagicLen:
     if m[i] != want[i]:
       quit "bif: bad magic / incompatible format or word size"
@@ -232,7 +240,7 @@ proc readIndex(f: File): seq[IndexEntry] =
     let sym = SymId readU32(f)
     let pos = cast[int32](readU32(f))
     var v = 0'u8
-    assert f.readBuffer(addr v, 1) == 1
+    readExact(f, addr v, 1)
     result[i] = IndexEntry(sym: sym, pos: pos, vis: IndexVis(v))
 
 proc loadIndexFromFile*(f: File): seq[IndexEntry] =
@@ -314,7 +322,7 @@ proc loadFromFile*(f: File): BifModule =
   if tokenCount > 0:
     let dest = result.buf.growRawUninit(tokenCount)
     let bytes = tokenCount * sizeof(NifToken)
-    assert f.readBuffer(dest, bytes) == bytes
+    readExact(f, dest, bytes)
   # pools: re-intern in stored (id) order so ids 1,2,… match the token refs.
   for _ in 1 .. nTags:    discard result.buf.tags.tags.getOrIncl(readStr(f))
   for _ in 1 .. nStrings: discard result.buf.pool.strings.getOrIncl(readStr(f))
