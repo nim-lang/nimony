@@ -505,13 +505,20 @@ proc isStaticValue(n: Cursor): bool =
   else:
     result = false
 
+proc isConstSym(n: Cursor): bool =
+  if n.kind != Symbol: return false
+  let res = tryLoadSym(n.symId)
+  result = res.status == LacksNothing and res.decl.symKind == ConstY
+
 proc semStaticInvokeArg(c: var SemContext; dest: var TokenBuf; n: var Cursor;
                         elemType: Cursor; info: PackedLineInfo): bool =
   ## Sem a generic argument bound to a value (`static`) parameter: an ordinary
   ## expression of the parameter's element type that must either be a
   ## compile-time constant or still symbolic (when used inside another
   ## generic). Constant expressions are folded here, so `Matrix[2 + 3, T]`
-  ## and `Matrix[5, T]` produce the same instance.
+  ## and `Matrix[5, T]` produce the same instance. A `const` alias is
+  ## re-typed via `annotateConstantType` (as in `foldStaticArg`) so it
+  ## canonicalizes to the same instance as the value it names.
   result = true
   var phase = SemcheckBodies
   swap c.phase, phase
@@ -527,8 +534,14 @@ proc semStaticInvokeArg(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     endRead(dest)
   else:
     var value2 = value
-    var folded = evalExpr(c, value2)
-    let f = beginRead(folded)
+    let constAlias = isConstSym(value)
+    var folded = evalExpr(c, value2, if constAlias: elemType else: default(Cursor))
+    var outBuf = createTokenBuf(16)
+    if constAlias:
+      annotateConstantType(outBuf, elemType, beginRead(folded))
+    else:
+      outBuf.addSubtree beginRead(folded)
+    let f = beginRead(outBuf)
     endRead(dest)
     if isStaticValue(f):
       dest.shrink start

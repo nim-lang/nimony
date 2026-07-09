@@ -117,6 +117,12 @@ echo takesFlat[3, 2, int](flat)    # 6
 const rows = 3
 echo takesFlat[rows, 2, int](flat) # rows * 2 == 6
 
+# and the same `const` in a type position:
+type FlatBox = object
+  data: array[rows * 2, int]
+var fb: FlatBox
+echo sizeof(fb)                   # array[6, int] == 48
+
 # a *dependent* static type parameter: one value parameter (`N`) parameterizes
 # the type of another (`S: static[Shape[N]]`). The aggregate argument is matched
 # against `Shape[N]`, binding `N` from the earlier argument, and the value's
@@ -154,3 +160,4 @@ var rb: RBox[3, int]
 rb.data[0] = 10; rb.data[1] = 20; rb.data[2] = 30
 echo ritem(rb, 1)                                     # 20
 echo ritem(rb, 2)                                     # 30
+
