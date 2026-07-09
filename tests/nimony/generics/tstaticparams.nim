@@ -99,3 +99,58 @@ let wide = concatCols(col, pair)   # Matrix[2, 3, int] = [[1, 3, 4], [2, 5, 6]]
 echo wide.data[0]
 echo wide.data[3]
 echo sizeof(wide)                  # 2 * 3 * 8 = 48
+
+# a non-primitive (aggregate) value is accepted as a compile-time generic value:
+# an array literal bound to a `static[openArray[T]]` parameter.
+proc countValues[XS: static[openArray[int]]](): int = XS.len
+
+echo countValues[[1, 2, 3, 4]]()   # 4
+
+# overload resolution folds already-bound `static[int]` params when matching an
+# array length, so `array[R * C, T]` resolves for `array[6, T]`.
+proc takesFlat[R, C: static[int]; T](x: array[R * C, T]): int = x.len
+
+var flat: array[6, int]
+echo takesFlat[3, 2, int](flat)    # 6
+
+# the folded length also works when a bound value comes from a `const`.
+const rows = 3
+echo takesFlat[rows, 2, int](flat) # rows * 2 == 6
+
+# a *dependent* static type parameter: one value parameter (`N`) parameterizes
+# the type of another (`S: static[Shape[N]]`). The aggregate argument is matched
+# against `Shape[N]`, binding `N` from the earlier argument, and the value's
+# fields are then available at compile time (issue #2104).
+type
+  Shape[N: static[int]] = object
+    bounds: array[N, int]
+
+proc firstBound[N: static[int]; S: static[Shape[N]]](): int = S.bounds[0]
+echo firstBound[2, Shape[2](bounds: [7, 8])]()        # 7
+
+proc sumBounds[N: static[int]; S: static[Shape[N]]](): int =
+  result = 0
+  for e in S.bounds: result = result + e              # compile-time iteration
+echo sumBounds[3, Shape[3](bounds: [10, 20, 30])]()   # 60
+
+# and in a type section, with `N` reused as an array length in the object body:
+type
+  DepBox[N: static[int]; B: static[Shape[N]]; T] = object
+    data: array[N, T]
+var depbx: DepBox[2, Shape[2](bounds: [7, 8]), int]
+echo sizeof(depbx)                                    # array[2, int] == 16
+
+# a `range[lo..hi]` bound may mention a value parameter; the bound is folded
+# when the enclosing routine/type is instantiated, and the range-checking
+# engine then discharges the obligations against the folded range (#2075).
+type
+  RBox[N: static[int]; T] = object
+    data: array[N, T]
+
+func ritem[N: static[int]; T](box: RBox[N, T]; index: range[0..N-1]): T =
+  box.data[index]
+
+var rb: RBox[3, int]
+rb.data[0] = 10; rb.data[1] = 20; rb.data[2] = 30
+echo ritem(rb, 1)                                     # 20
+echo ritem(rb, 2)                                     # 30

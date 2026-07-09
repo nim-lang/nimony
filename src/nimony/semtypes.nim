@@ -371,21 +371,26 @@ proc isRangeExpr(n: Cursor): bool =
   let name = takeIdent(n)
   result = name != StrId(0) and pool.strings[name] == ".."
 
+proc addRangeBound(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
+  ## Emit one bound of a range type. A bound that still mentions a generic
+  ## value parameter (e.g. `N-1` in `range[0..N-1]` for `N: static[int]`) is
+  ## kept symbolic and folded when the type is instantiated, mirroring how
+  ## `semArrayType` defers a symbolic array length.
+  if containsGenericParams(n):
+    dest.addSubtree n
+    skip n
+  else:
+    var err = false
+    let value = asSigned(evalOrdinal(c, n), err)
+    if err:
+      c.buildErr dest, n.info, "could not evaluate as ordinal", n
+    else:
+      dest.addIntLit(value, n.info)
+    skip n
+
 proc addRangeValues(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
-  var err: bool = false
-  let first = asSigned(evalOrdinal(c, n), err)
-  if err:
-    c.buildErr dest, n.info, "could not evaluate as ordinal", n
-    err = false
-  else:
-    dest.addIntLit(first, n.info)
-  skip n
-  let last = asSigned(evalOrdinal(c, n), err)
-  if err:
-    c.buildErr dest, n.info, "could not evaluate as ordinal", n
-    err = false
-  else:
-    dest.addIntLit(last, n.info)
+  addRangeBound c, dest, n
+  addRangeBound c, dest, n
 
 proc semRangeTypeFromExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; info: PackedLineInfo) =
   inc n # call tag
@@ -452,10 +457,53 @@ proc semMagicInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: 
   var m = cursorAt(typeBuf, 0)
   semLocalTypeImpl c, dest, m, InLocalDecl
 
+proc isEnumFieldSym(n: Cursor): bool =
+  ## An enum field symbol is the canonical typed value of its enum type
+  ## (`annotateOrdinal` maps an ordinal back to exactly this symbol), so it is
+  ## accepted verbatim as a value argument rather than folded to a bare ordinal
+  ## (which would lose the enum type and fail re-checking).
+  if n.kind != Symbol: return false
+  let res = tryLoadSym(n.symId)
+  result = res.status == LacksNothing and res.decl.symKind == EfldY
+
 proc isStaticValue(n: Cursor): bool =
-  ## a canonical compile-time value as bound to a `staticTypevar`
-  n.kind in {IntLit, UIntLit, FloatLit, CharLit, StringLit} or
-    n.exprKind in {FalseX, TrueX, SufX}
+  ## a canonical compile-time value as bound to a `staticTypevar`: a primitive
+  ## literal, an enum field, or a typed aggregate constructor (array/set/tuple/
+  ## object) whose elements are themselves static.
+  case n.kind
+  of IntLit, UIntLit, FloatLit, CharLit, StringLit:
+    result = true
+  of Symbol:
+    result = isEnumFieldSym(n)
+  of ParLe:
+    case n.exprKind
+    of FalseX, TrueX, SufX:
+      result = true
+    of AconstrX, SetconstrX, TupconstrX, OconstrX:
+      var elem = n
+      inc elem
+      skip elem # type
+      result = true
+      while elem.hasMore:
+        if elem.substructureKind in {KvU, RangeU}:
+          inc elem
+          skip elem # key or range start
+          if not isStaticValue(elem):
+            result = false
+            break
+          skip elem
+          if elem.kind == ParRi:
+            break
+          inc elem
+        else:
+          if not isStaticValue(elem):
+            result = false
+            break
+          skip elem
+    else:
+      result = false
+  else:
+    result = false
 
 proc semStaticInvokeArg(c: var SemContext; dest: var TokenBuf; n: var Cursor;
                         elemType: Cursor; info: PackedLineInfo): bool =

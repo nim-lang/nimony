@@ -238,7 +238,7 @@ proc typeChildIndices(parentTag: string): seq[int] =
   case parentTag
   # Declarations `(<kind> D E P T .X)` or `(<kind> D P T .X)`:
   of "var", "let", "const", "gvar", "tvar", "glet", "tlet",
-     "cursor", "patternvar", "result", "typevar", "param", "fld":
+     "cursor", "patternvar", "result", "typevar", "staticTypevar", "param", "fld":
     @[3]
   of "efld":
     @[3]

@@ -10,7 +10,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 
 import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes, renderer, asthelpers,
-  features, symtabs, sigconcepts
+  features, symtabs, sigconcepts, expreval, staticmatches
 import ".." / lib / symparser
 import ".." / models / tags
 
@@ -481,11 +481,6 @@ proc matchesConstraint*(m: var Match; f: var Cursor; a: Cursor): bool =
       return matchesConstraint(m, f, typevar.typ)
   result = matchesConstraintAux(m, f, a)
 
-proc isStaticTypevar(s: SymId): bool =
-  let res = tryLoadSym(s)
-  assert res.status == LacksNothing
-  result = res.decl.symKind == StaticTypevarY
-
 proc foldValueExpr(m: var Match; a: Cursor; depth = 0): xint =
   ## The tiny fixed-opcode evaluator for compile-time *values* in type
   ## positions: folds `+ - *` over integer literals and rewrites an
@@ -499,6 +494,12 @@ proc foldValueExpr(m: var Match; a: Cursor; depth = 0): xint =
     result = createXint(pool.integers[a.intId])
   of UIntLit:
     result = createXint(pool.uintegers[a.uintId])
+  of Symbol:
+    # an already-inferred value typevar (e.g. `R` in `array[R * C, T]`): fold to
+    # the value it was bound to, so array-length matching resolves once bound.
+    if isStaticTypevar(a.symId) and m.inferred.contains(a.symId):
+      let inferred = m.inferred.getOrQuit(a.symId)
+      result = foldValueExpr(m, inferred, depth+1)
   of ParLe:
     case a.exprKind
     of AddX, SubX, MulX:
@@ -526,6 +527,35 @@ proc foldValueExpr(m: var Match; a: Cursor; depth = 0): xint =
   else:
     discard
 
+proc foldStaticArg(m: var Match; elemType, a: Cursor): Cursor =
+  ## Fold `a` to the canonical typed value a value (`static`) parameter should
+  ## bind, using the shared `expreval` engine in a mode that never shells out
+  ## to a sub-compile (overload resolution must stay in-process and cheap).
+  ## `annotateConstantType` re-types the folded value against `elemType`, so an
+  ## enum-valued `const` recovers its field symbol instead of collapsing to a
+  ## bare ordinal (which would drop the enum type). Returns `default(Cursor)`
+  ## when `a` cannot be folded locally or does not match `elemType`.
+  result = default(Cursor)
+  if m.context == nil: return
+  var ec = initEvalContext(m.context, noExecute = true)
+  var cur = a
+  let folded = eval(ec, cur)
+  if folded.kind == ParLe and folded.tagId == nifstreams.ErrT:
+    return
+  # `folded` lives in a temporary buffer; consume it immediately by re-typing
+  # it into a fresh buffer before any other evaluation runs.
+  var buf = createTokenBuf(16)
+  annotateConstantType(buf, elemType, folded)
+  let typed = cursorAt(buf, 0)
+  if typed.kind == ParLe and typed.tagId == nifstreams.ErrT:
+    return
+  result = typeToCursor(m.context[], buf, 0)
+
+proc isEnumFieldSym(a: Cursor): bool =
+  if a.kind != Symbol: return false
+  let res = tryLoadSym(a.symId)
+  result = res.status == LacksNothing and res.decl.symKind == EfldY
+
 proc staticValueToBind(m: var Match; elemType: Cursor; a: Cursor): Cursor =
   ## For a value (`static`) generic parameter: the value to bind from `a`, or
   ## `default(Cursor)` when `a` is not an acceptable argument. An array-index
@@ -547,9 +577,19 @@ proc staticValueToBind(m: var Match; elemType: Cursor; a: Cursor): Cursor =
     if m.context != nil and sameTrees(elemType, m.context.types.stringType):
       result = a
   of Symbol:
-    # a symbolic value: a value parameter of an enclosing generic; it is
-    # compared or substituted later, no value is computed here
-    if isStaticTypevar(a.symId): result = a
+    if isStaticTypevar(a.symId):
+      # a symbolic value: a value parameter of an enclosing generic; it is
+      # compared or substituted later, no value is computed here
+      result = a
+    elif isEnumFieldSym(a) and isOrdinalType(elemType, allowEnumWithHoles = true):
+      # an enum field is already the canonical typed value of its enum type;
+      # bind it verbatim (folding to the bare ordinal would lose the type)
+      result = a
+    else:
+      # a `const` (or other foldable symbol): resolve it through the shared
+      # expreval engine and bind the value it aliases, exactly as if that value
+      # had been written in the argument position.
+      result = foldStaticArg(m, elemType, a)
   of ParLe:
     case a.exprKind
     of FalseX, TrueX:
@@ -564,7 +604,23 @@ proc staticValueToBind(m: var Match; elemType: Cursor; a: Cursor): Cursor =
         if k == FloatT: result = a
       else: discard
     else:
-      if containsGenericParams(a):
+      if isStaticValue(a) and staticValueTypeMatches(elemType, staticValueType(a)):
+        # a typed aggregate constructor (array/set/tuple/object), or an
+        # `openArray`/`varargs` value satisfied by an array literal
+        result = a
+      elif isStaticValue(a) and elemType.typeKind == InvokeT:
+        # a *dependent* generic element type such as `Shape[N]`, where an
+        # enclosing value parameter `N` parameterizes this parameter's type.
+        # Unify the element type against the value's concrete type (`Shape[2]`),
+        # which binds or equality-checks the enclosing parameters through the
+        # ordinary matcher. See #2108 / issue #2104.
+        let vt = staticValueType(a)
+        if not cursorIsNil(vt):
+          var f = elemType
+          var av = vt
+          if tryLinearMatch(m, f, av):
+            result = a
+      elif containsGenericParams(a):
         # a symbolic expression over value parameters, e.g. `N1 + N2`:
         # compared syntactically, never solved
         result = a
@@ -1180,10 +1236,14 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
     m.error CallConvMismatch, f, a
   elif fcc.usesRaises != acc.usesRaises:
     m.error RaisesMismatch, f, a
-  elif fcc.usesClosure != acc.usesClosure:
+  elif (fcc.usesClosure != acc.usesClosure) and (not fcc.usesClosure or acc.cc != Nimcall):
     m.error ClosureMismatch, f, a
   elif fcc.usesPassive != acc.usesPassive:
     m.error PassiveMismatch, f, a
+  if not m.err and fcc.usesClosure and not acc.usesClosure:
+    m.args.addParLe ToClosureX, m.argInfo
+    inc m.opened
+    inc m.convCosts
   # XXX consider when f or a is (params):
   if not fIsProctype:
     skip f, SkipEffects # effects
@@ -1526,8 +1586,14 @@ proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
     inc f1
     skip a1
     skip f1
-    let fLen = lengthOrd(m.context[], f1)
-    let aLen = lengthOrd(m.context[], a1)
+    # fold already-bound value typevars first (`array[R * C, T]`), falling back
+    # to the plain array-length ordinal for concrete/rangetype lengths.
+    var fLen = foldValueExpr(m, f1)
+    if fLen.isNaN:
+      fLen = lengthOrd(m.context[], f1)
+    var aLen = foldValueExpr(m, a1)
+    if aLen.isNaN:
+      aLen = lengthOrd(m.context[], a1)
     if fLen.isNaN or aLen.isNaN:
       # match typevars
       linearMatch m, f, a
@@ -1704,15 +1770,25 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         # handled in linearMatch
         linearMatch m, f, a
     of RangetypeT:
-      # for now acts the same as base type
+      # A `range[lo..hi]` matches structurally on its *base type* only; whether
+      # a value actually fits the bounds (and whether one range is a subset of
+      # another) is a proof obligation discharged later by the contracts engine
+      # (see `checkRangeAssign` in contracts_njvl.nim), not a type-match failure
+      # here. This deliberately accepts legal narrowings such as
+      # `range[2..5]` -> `range[0..10]` that an exact-tree match would reject.
       var a = skipModifier(arg.typ)
       if a.typeKind == RangetypeT:
-        linearMatch m, f, a
+        var fb = f
+        var ab = a
+        inc fb # -> formal base type
+        inc ab # -> arg base type
+        linearMatch m, fb, ab # base types must be compatible
+        skip f # consume the whole formal range type
       else:
         inc f # skip to base type
         linearMatch m, f, a
-        skip f
-        skip f
+        skip f # lo bound
+        skip f # hi bound
         expectParRi m, f
     of ArrayT:
       var a = skipModifier(arg.typ)
@@ -2288,6 +2364,15 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
   if f.kind == ParRi:
     inc f
     m.returnType = f # return type follows the parameters in the token stream
+
+proc hasUnboundTypevars*(m: Match): bool =
+  ## True if `m.fn`'s generic typevars (as collected by `matchTypevars`) still
+  ## lack a binding after argument matching. Cheap: just consults the
+  ## `tvars`/`inferred` bookkeeping already built up, no extra lookups.
+  for v in m.tvars:
+    if not m.inferred.hasKey(v):
+      return true
+  return false
 
 proc buildTypeArgs*(m: var Match) =
   # check all type vars have a value:

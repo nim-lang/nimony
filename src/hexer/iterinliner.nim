@@ -442,11 +442,17 @@ proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations
       inc c
       e.loop(dest, c):
         replaceSymbol(e, dest, c, relations)
+    of PragmasS:
+      # Pragma lists declare no locals to rename, so copy them verbatim instead
+      # of descending. This also keeps us from treating a `(cursor)` *pragma* as
+      # a `cursor` declaration — the two share a tag — which would misread the
+      # following `)` as the decl's name.
+      dest.takeTree c
     of CallS, CmdS, GvarS, TvarS, ConstS, ResultS, GletS, TletS,
         ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS,
         TemplateS, TypeS, BlockS, EmitS, AsgnS, ScopeS, IfS,
         WhenS, BreakS, ContinueS, ForS, WhileS, CoroforS, CaseS,
-        RetS, YldS, StmtsS, PragmasS, PragmaxS, InclS, ExclS,
+        RetS, YldS, StmtsS, PragmaxS, InclS, ExclS,
         IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS,
         ExportS, ExportexceptS, CommentS, DiscardS, TryS, RaiseS,
         UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS,

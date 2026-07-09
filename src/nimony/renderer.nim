@@ -2045,6 +2045,14 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         skip n
       skipParRi(n)
 
+    of ToClosureX:
+      inc n
+      put(g, tkSymbol, "toClosure")
+      put(g, tkParLe, "(")
+      gsub(g, n)
+      put(g, tkParRi, ")")
+      skipParRi(n)
+
     of IsmainmoduleX,
         DoX, InternalTypeNameX, InternalFieldPairsX, FailedX:
       raiseAssert "todo"

@@ -24,6 +24,12 @@ type
                              # complex const initialisers (e.g. `block:`)
                              # to `executeExpr`. Default-constructed when
                              # no type context is available.
+    noExecute*: bool         # when true the evaluator never shells out to
+                             # `executeExpr` (which re-runs the full nimony
+                             # pipeline in a sub-compile); anything that would
+                             # need it yields a "cannot evaluate" result. Used
+                             # by callers such as overload resolution that must
+                             # stay in-process and cheap.
 
 proc isConstBoolValue*(n: Cursor): bool =
   n.exprKind in {TrueX, FalseX}
@@ -40,8 +46,8 @@ proc isConstStringValue*(n: Cursor): bool =
 proc isConstCharValue*(n: Cursor): bool =
   n.kind == CharLit
 
-proc initEvalContext*(c: ptr SemContext): EvalContext =
-  result = EvalContext(c: c)
+proc initEvalContext*(c: ptr SemContext; noExecute = false): EvalContext =
+  result = EvalContext(c: c, noExecute: noExecute)
 
 proc error(c: var EvalContext, msg: string, info: PackedLineInfo): Cursor =
   var buf = createTokenBuf(4)
@@ -132,7 +138,7 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
     if callee.exprKind != AtX:
       cannotEval(n)
       return
-    if c.c == nil or c.c.executeExpr == nil:
+    if c.c == nil or c.c.executeExpr == nil or c.noExecute:
       cannotEval(n)
       return
     var resultBuf = createTokenBuf(12)
@@ -190,6 +196,9 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
     let val = pool.strings[a.litId].len
     result = intValue(c, val, n.info)
   else:
+    if c.c == nil or c.c.executeExpr == nil or c.noExecute:
+      cannotEval(n)
+      return
     # Forward args to `executeExpr` verbatim. Running `eval` here would strip
     # distinct/conversion wrappers (e.g. `TagId(1)` → `1`), and the sub-compile
     # would then fail to match the callee's formal parameter types.
@@ -963,7 +972,8 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         result = n
         skip n
       elif (n.stmtKind == BlockS or n.stmtKind == StmtsS) and
-           not cursorIsNil(c.expectedType) and c.c != nil and c.c.executeExpr != nil:
+           not cursorIsNil(c.expectedType) and c.c != nil and
+           c.c.executeExpr != nil and not c.noExecute:
         # Const initialisers such as
         #   `const x: T = block: ...; var ...; for ...; expr`
         # cannot be folded by the in-process evaluator. Forward the whole
@@ -1419,7 +1429,23 @@ proc bitsetSizeInBytes*(baseType: Cursor): xint =
     var err = false
     let m = asSigned(b.hi, err) + 1'i64
     if err: result = createNaN()
-    else: result = createXint div8Roundup(m)
+    else:
+      result = createXint div8Roundup(m)
+      # If the enum has an explicit .size pragma, its base type may be
+      # wider than the field values need. Use the base type's byte width
+      # as a minimum for set storage.
+      var bt = baseType
+      inc bt  # skip EnumT/HoleyEnumT/AnumT tag
+      if bt.typeKind in {IntT, UIntT}:
+        let baseBits = int pool.integers[bt.firstSon.intId]
+        let baseBytes = baseBits div 8
+        if baseBytes > 0 and result < createXint(baseBytes):
+          # IntT with negative field values is the compiler's default
+          # for signed enums (not from .size). Only apply when UIntT
+          # or when no negative values exist.
+          let hasNegativeValues = not isNaN(b.lo) and (b.lo < createXint(0'i64))
+          if bt.typeKind == UIntT or not hasNegativeValues:
+            result = createXint(baseBytes)
   of RangetypeT:
     var index = baseType
     inc index # tag

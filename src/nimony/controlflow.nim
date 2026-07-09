@@ -318,7 +318,7 @@ proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
      DoX, ArratX, TupatX, PlussetX, MinussetX, MulsetX, XorsetX, EqsetX,
      LesetX, LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX,
      WasmovedX, SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
-     FailedX, IsX, EnvpX, NoExpr:
+     FailedX, IsX, EnvpX, ToClosureX, NoExpr:
     # cannot exploit a special case here:
     let info = NoLineInfo # NoLineInfo is crucial here!
     var bb = Target(m: IsEmpty)
@@ -606,7 +606,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
        MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
        DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
        BracketX, CurlyX, TupX, OvfX, InstanceofX, InternalFieldPairsX,
-       FailedX, IsX, EnvpX, Delay0X, SuspendX:
+       FailedX, IsX, EnvpX, Delay0X, SuspendX, ToClosureX:
       trExprLoop c, n, tar
     of PragmaxX:
       bug "pragmax should be handled in trStmt"

@@ -262,6 +262,8 @@ proc typeOfField(c: var TypeCache; n: var Cursor; fld: SymId): Cursor =
       if not cursorIsNil(baseObj):
         var b = skipToObjectBody baseObj
         result = typeOfField(c, b, fld)
+    else:
+      skip n # empty sum type body
 
 proc lookupField*(c: var TypeCache; typ: Cursor; fld: SymId): Cursor =
   var body = skipToObjectBody(typ)
@@ -576,6 +578,26 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       else: result = c.builtins.autoType
   of EnvpX:
     result = c.builtins.autoType
+  of ToClosureX:
+    let srcProc = getTypeImpl(c, n.firstSon, flags).asRoutine
+    assert srcProc.kind != NoSym
+    var buf = createTokenBuf()
+    copyIntoKind(buf, srcProc.kind, n.info):
+      buf.addDotToken() # name
+      buf.addDotToken() # exported
+      buf.addSubtree srcProc.pattern
+      buf.addDotToken() # typevars
+      buf.addSubtree srcProc.params
+      buf.addSubtree srcProc.retType
+      copyIntoKind(buf, PragmasU, srcProc.pragmas.info):
+        if srcProc.pragmas.kind != DotToken:
+          var n2 = srcProc.pragmas
+          loopInto n2:
+            buf.takeTree n2
+        buf.addParPair(ClosureP)
+      buf.addDotToken # effects
+    c.mem.add buf
+    result = cursorAt(c.mem[c.mem.len-1], 0)
 
   assert result.hasMore, "ParRi for expression: " & toString(n, false)
 

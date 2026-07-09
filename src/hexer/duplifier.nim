@@ -133,7 +133,7 @@ proc constructsValue*(n: Cursor; derefConstructs = true): bool =
         XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX,
-        KvX, NoExpr: break
+        KvX, ToClosureX, NoExpr: break
   result = n.exprKind in ConstructingExprs or n.kind in {IntLit, FloatLit, StringLit, CharLit}
 
 proc lvalueRoot(n: Cursor; hdrefs: var bool): SymId =
@@ -160,7 +160,7 @@ proc lvalueRoot(n: Cursor; hdrefs: var bool): SymId =
         MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX,
         EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX,
-        KvX, NoExpr: break
+        KvX, ToClosureX, NoExpr: break
   if n.kind == Symbol:
     result = n.symId
   else:
@@ -279,7 +279,7 @@ proc isSimpleExpression(n: var Cursor): bool =
         MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX,
         CardX, EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX,
         TraceX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
-        EnvpX, KvX, NoExpr:
+        EnvpX, ToClosureX, KvX, NoExpr:
       result = false
       skip n
   of ParRi, SymbolDef, UnknownToken, EofToken:
@@ -640,6 +640,21 @@ proc trExplicitTrace(c: var Context; n: var Cursor) =
 when not defined(nimony):
   proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false)
 
+proc derefsBoxedRef(c: var Context; ptrOperand: Cursor): bool =
+  ## The pointer inside a `(deref ptrOperand)` has boxed `ref` type, so a field
+  ## read through the deref has to hop through the object payload (`d`) rather
+  ## than name the field on the ref cell itself.
+  var typ = getType(c.typeCache, ptrOperand, {SkipAliases})
+  if typ.kind == ParLe and typ.typeKind == SinkT:
+    inc typ
+  result = not cursorIsNil(typ) and typ.typeKind == RefT
+
+proc addDataFieldHop(c: var Context; info: PackedLineInfo) =
+  ## Emit the `d 0` that follows an already-emitted `(deref refptr)` to reach the
+  ## object payload of a boxed `ref` cell.
+  c.dest.add symToken(pool.syms.getOrIncl(DataField), info)
+  c.dest.addIntLit(0, info) # inheritance
+
 proc trOnlyEssentials(c: var Context; n: var Cursor)
     {.ensuresNif: addedAny(c.dest).} =
   case n.kind
@@ -691,13 +706,49 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
         # generic statement: copy the head and recurse into the children
         copyInto c.dest, n:
           while n.hasMore: trOnlyEssentials c, n
-    of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
+    of DotX:
+      # Reading a *user* field through a boxed `ref` must reach the object
+      # payload, i.e. `(dot (deref p) field)` has to become
+      # `(dot (dot (deref p) d) field)`, exactly as `trDeref` does on the full
+      # path (both share `derefsBoxedRef`/`addDataFieldHop`). Copying it verbatim
+      # — as this branch used to — left the payload hop off, so field reads in
+      # `.nodestroy` bodies dereferenced the ref cell itself and produced C
+      # accessing a non-existent member. Lifter-emitted hooks already spell out
+      # the cell's own `d`/`r` fields, so those (and non-ref derefs) are left
+      # untouched.
+      var probe = n
+      inc probe # -> object operand
+      var doHop = false
+      if probe.exprKind in {DerefX, HderefX}:
+        var operand = probe
+        inc operand # -> deref'd pointer
+        if derefsBoxedRef(c, operand):
+          var field = probe
+          skip field # object operand -> field name
+          if field.kind == Symbol and
+             field.symId != pool.syms.getOrIncl(DataField) and
+             field.symId != pool.syms.getOrIncl(RcField):
+            doHop = true
+      if doHop:
+        let info = n.info
+        c.dest.addParLe DotX, info # outer dot: (… .field)
+        c.dest.addParLe DotX, info # inner dot: ((deref p) .d)
+        inc n # into the DotX, at the (deref …) operand
+        trOnlyEssentials c, n # copies the whole `(deref p)`, closing ParRi incl.
+        addDataFieldHop c, info
+        c.dest.addParRi() # close inner dot
+        while n.hasMore: trOnlyEssentials c, n # field, inheritance, access marker
+        takeParRi c.dest, n
+      else:
+        copyInto c.dest, n:
+          while n.hasMore: trOnlyEssentials c, n
+    of ErrX, SufX, AtX, DerefX, HderefX, PatX, ParX, AddrX, NilX,
         InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
         NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
         AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
         MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
         BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX,
-        CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, DdotX,
+        CchoiceX, OchoiceX, PragmaxX, QuotedX, DdotX,
         HaddrX, NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
         TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX,
         InfixX, PrefixX, HcallX, CompilesX, DeclaredX, DefinedX,
@@ -707,7 +758,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
         Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX, PlussetX,
         MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
         InsetX, CardX, EmoveX, InternalTypeNameX,
-        InternalFieldPairsX, FailedX, IsX, EnvpX, KvX:
+        InternalFieldPairsX, FailedX, IsX, EnvpX, KvX, ToClosureX:
       # all other expression kinds: copy the head and recurse into the children
       copyInto c.dest, n:
         while n.hasMore: trOnlyEssentials c, n
@@ -1129,19 +1180,14 @@ proc trDeref(c: var Context; n: var Cursor; e: Expects)
     c.dest.addParLe CallS, info
     c.dest.add symToken(dupHook, info)
   inc n, SkipTag
-  var typ = getType(c.typeCache, n, {SkipAliases})
-  if typ.kind == ParLe and typ.typeKind == SinkT:
-    inc typ
-  let isRef = not cursorIsNil(typ) and typ.typeKind == RefT
+  let isRef = derefsBoxedRef(c, n)
   if isRef:
     c.dest.addParLe DotX, info
   c.dest.addParLe DerefX, info
   tr c, n, WantNonOwner
   if isRef:
-    c.dest.addParRi()
-    let dataField = pool.syms.getOrIncl(DataField)
-    c.dest.add symToken(dataField, info)
-    c.dest.addIntLit(0, info) # inheritance
+    c.dest.addParRi() # close deref
+    addDataFieldHop c, info
   takeParRi c.dest, n
   if wrapDup:
     c.dest.addParRi()
@@ -1194,7 +1240,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
        EqX, NeqX, LeX, LtX, InfX, NeginfX, NanX, CompilesX, DeclaredX,
        DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, QuotedX,
        AddrX, HaddrX, AlignofX, OffsetofX, ErrX, OvfX, InstanceofX, InternalTypeNameX,
-       InternalFieldPairsX, IsX:
+       InternalFieldPairsX, IsX, ToClosureX:
       trSons c, n, WantNonOwner
     of DerefX, HderefX:
       trDeref c, n, e
