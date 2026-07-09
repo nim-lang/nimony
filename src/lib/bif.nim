@@ -253,6 +253,46 @@ proc loadIndex*(filename: string): seq[IndexEntry] =
   result = loadIndexFromFile(f)
   close(f)
 
+proc containsSym*(filename, name: string): bool =
+  ## Cheap membership probe: does the `.bif` at `filename` reference the symbol
+  ## `name`? Reads ONLY the trailing symbol table — seeking past the (large) token
+  ## block and the tags/strings tables to reach `syms`, which it scans comparing
+  ## just the equal-length entries. No token block is mapped and no pool `BiTable`
+  ## is built, so a module that never mentions `name` is rejected far more cheaply
+  ## than a full `load`; `nim track` uses it to skip loading the whole nimcache for
+  ## a query whose symbol lives in only a handful of modules.
+  ##
+  ## A symbol is in `syms` iff it is stored by pool id — i.e. any name longer than
+  ## `StrInlineMaxLen`, which a mangled `ident.disamb.suffix` always is; shorter
+  ## inline-encoded names never reach the table, so only use this for such pooled
+  ## names. A foreign or truncated file yields `false` ("skip it").
+  var f = default(File)
+  if not open(f, filename, fmRead): return false
+  defer: close(f)
+  var m = default(array[MagicLen, char])
+  if f.readBuffer(addr m[0], MagicLen) != MagicLen or m != magic(): return false
+  discard readU32(f)                    # indexOffset
+  let tokenCount = int readU32(f)
+  let nTags      = int readU32(f)
+  let nStrings   = int readU32(f)
+  let nSyms      = int readU32(f)
+  discard readU32(f)                    # nFiles
+  # Skip the token block and the tags/strings tables to reach `syms`.
+  setFilePos(f, getFilePos(f) + int64(tokenCount) * sizeof(NifToken))
+  for _ in 1 .. nTags + nStrings:
+    let n = int readU32(f)              # read length first (advances 4), THEN skip
+    setFilePos(f, getFilePos(f) + n)
+  # Scan the syms table; only entries of matching length can be `name`.
+  for _ in 1 .. nSyms:
+    let n = int readU32(f)
+    if n == name.len:
+      var s = newString(n)
+      if n > 0 and f.readBuffer(addr s[0], n) != n: return false
+      if s == name: return true
+    else:
+      setFilePos(f, getFilePos(f) + n)
+  result = false
+
 proc loadFromFile*(f: File): BifModule =
   ## Read a `BifModule` (token buffer + symbol index) from an already-open binary
   ## file. Always mints FRESH pools — see the INVARIANT in the module doc: the
