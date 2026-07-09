@@ -1965,7 +1965,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           CardX, EmoveX, DestroyX, DupX, CopyX,
           WasmovedX, SinkhX, TraceX,
           InternalTypeNameX, InternalFieldPairsX,
-          FailedX, IsX, EnvpX, KvX, NoExpr:
+          FailedX, IsX, EnvpX, KvX, ToClosureX, NoExpr:
         case n.njvlKind
         of LoopV:
           var beforeBuf = createTokenBuf(32)
