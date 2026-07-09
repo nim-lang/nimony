@@ -905,6 +905,247 @@ proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): in
   skip n
   result = 2                               # `(var …)` + `(scope …)`
 
+# ---- Condition-splice: inline body straight into an `if`/`elif` guard ----
+
+proc countSymUses(n: Cursor; sym: SymId): int =
+  ## Count `Symbol` (use, not `SymbolDef`) occurrences of `sym` within the
+  ## single subtree rooted at `n` (which may be a leaf token).
+  result = 0
+  if n.kind == Symbol:
+    if n.symId == sym: result = 1
+    return
+  if n.kind != ParLe:
+    return
+  var it = n
+  it.into:
+    while it.hasMore:
+      case it.kind
+      of Symbol:
+        if it.symId == sym: inc result
+        inc it
+      of ParLe:
+        result += countSymUses(it, sym)
+        skip it
+      else:
+        inc it
+
+proc effectiveReturnExpr(body: Cursor; outVal: var Cursor): bool =
+  ## True when `body` computes a single value with no side effect other than
+  ## producing it, in one of the shapes nimony emits for `result = X` /
+  ## `return X` inline bodies:
+  ##
+  ##   (ret X)
+  ##   (var :R T X) (ret R)
+  ##   (var :R T .) (asgn R X) (ret R)
+  ##
+  ## (each optionally wrapped in length-1 `(stmts …)`/`(scope …)`). On success
+  ## `outVal` is the cursor at `X`. The result var `R` must not appear inside
+  ## `X`, so splicing `X` where `R` would have been read is sound.
+  var b = body
+  # Peel single-child stmts/scope wrappers to reach the real statement list.
+  while b.kind == ParLe and b.stmtKind in {StmtsS, ScopeS}:
+    var cnt = 0
+    var only = default(Cursor)
+    var inner = b
+    inner.into:
+      while inner.hasMore:
+        inc cnt
+        if cnt == 1: only = inner
+        skip inner
+    if cnt == 1:
+      b = only
+    else:
+      break
+  # Gather the (up to 3) statements of the reached list.
+  var stmts: seq[Cursor] = @[]
+  if b.kind == ParLe and b.stmtKind in {StmtsS, ScopeS}:
+    var it = b
+    it.into:
+      while it.hasMore:
+        stmts.add it
+        skip it
+        if stmts.len > 3: return false     # too many statements → not the idiom
+  else:
+    stmts.add b                            # a bare `(ret …)` etc.
+
+  proc retSym(s: Cursor; outR: var SymId): bool =
+    # `(ret R)` returning a plain symbol → R.
+    if s.kind != ParLe or s.stmtKind != RetS: return false
+    let v = s.firstSon
+    if v.kind == Symbol:
+      outR = v.symId
+      return true
+    return false
+
+  case stmts.len
+  of 1:
+    # (ret X) with X a value expression (not a bare `(ret sym)` handled below).
+    let s = stmts[0]
+    if s.kind == ParLe and s.stmtKind == RetS:
+      let v = s.firstSon
+      if v.kind != DotToken and v.kind != Symbol:
+        outVal = v
+        return true
+    return false
+  of 2:
+    # (var :R T X) (ret R)
+    var R = SymId(0)
+    if not retSym(stmts[1], R): return false
+    let vdecl = stmts[0]
+    if vdecl.kind != ParLe or vdecl.stmtKind != VarS: return false
+    var p = vdecl
+    inc p                                  # past `var`
+    if p.kind != SymbolDef or p.symId != R: return false
+    inc p                                  # past name
+    skip p                                 # past pragmas
+    skip p                                 # past type
+    if p.kind == DotToken: return false    # no initializer here
+    if countSymUses(p, R) != 0: return false
+    outVal = p
+    return true
+  of 3:
+    # (var :R T .) (asgn R X) (ret R)
+    var R = SymId(0)
+    if not retSym(stmts[2], R): return false
+    let vdecl = stmts[0]
+    if vdecl.kind != ParLe or vdecl.stmtKind != VarS: return false
+    var p = vdecl
+    inc p
+    if p.kind != SymbolDef or p.symId != R: return false
+    inc p                                  # past name
+    skip p                                 # past pragmas
+    skip p                                 # past type
+    # The result var must have NO initializer — otherwise `X` is not the sole
+    # value of `R` and a side-effecting initializer would be dropped.
+    if p.kind != DotToken: return false
+    let asgn = stmts[1]
+    if asgn.kind != ParLe or asgn.stmtKind != AsgnS: return false
+    var a = asgn
+    inc a                                  # past `asgn`
+    if a.kind != Symbol or a.symId != R: return false
+    skip a                                 # past LHS (R)
+    if countSymUses(a, R) != 0: return false
+    outVal = a
+    return true
+  else:
+    return false
+
+proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
+                    calleeSym: var SymId): int =
+  ## Fuse xelim's condition-temp lowering back into the guard when the call
+  ## inlines to a single expression. Matches the *adjacent* pair
+  ##
+  ##   (var :tmp <pragmas> <type> (call f arg…))
+  ##   (if (elif tmp BODY) …rest…)
+  ##
+  ## where `f`'s body is exactly `result = X`, every parameter is
+  ## substitutable, and `tmp` is used *only* as that first `elif`'s
+  ## condition (guaranteed by construction — xelim mints `tmp` solely to
+  ## hold the guard). It then emits
+  ##
+  ##   (if (elif X' BODY) …rest…)
+  ##
+  ## dropping the temp entirely, so arkham's `emitCond2` fuses the compare
+  ## into the branch (`cmp; jcc`) instead of materialising a boolean and
+  ## re-testing it. This is a purely local, single-use rewrite: correctness
+  ## follows from `var t = X; if t:` ≡ `if X:` (the first `elif` condition is
+  ## evaluated unconditionally, exactly where the temp was), so no purity or
+  ## dataflow analysis is needed. Returns the number of top-level subtrees
+  ## emitted (1: the rewritten `if`) or 0 (leaving `n`/`dest` untouched).
+  if n.kind != ParLe or n.stmtKind != VarS: return 0
+  let entry = n
+
+  # --- parse `(var :tmp <pragmas> <type> (call f arg…))` ---
+  var probe = n
+  inc probe                                # past `var` tag
+  if probe.kind != SymbolDef: return 0
+  let tmpSym = probe.symId
+  if not isLocalName(pool.syms[tmpSym]): return 0
+  inc probe                                # past name
+  skip probe                               # past pragmas
+  skip probe                               # past type
+  if probe.kind != ParLe or probe.stmtKind != CallS: return 0
+  let valueCursor = probe
+  var callProbe = valueCursor
+  inc callProbe                            # past `call` tag
+  if callProbe.kind != Symbol: return 0
+  let cSym = callProbe.symId
+
+  # --- peek the next sibling: must be `(if (elif tmp …) …)` guarding on tmp ---
+  var nextCur = entry
+  skip nextCur                             # past the whole var decl
+  if nextCur.kind != ParLe or nextCur.stmtKind != IfS: return 0
+  let firstElif = nextCur.firstSon
+  if firstElif.kind != ParLe or firstElif.substructureKind != ElifU: return 0
+  let condCur = firstElif.firstSon
+  if condCur.kind != Symbol or condCur.symId != tmpSym: return 0
+  # `tmp` must be used *only* here — otherwise dropping its def is unsound.
+  if countSymUses(nextCur, tmpSym) != 1: return 0
+
+  # --- heavier inline eligibility checks (only after the shape matched) ---
+  if cSym in c.inProgress: return 0
+  if c.maxDepth > 0 and c.inProgress.len >= c.maxDepth: return 0
+  if not shouldInlineCall(c, cSym, valueCursor): return 0
+  var pcur = default(Cursor)
+  if not lookupBody(c, cSym, pcur): return 0
+  let pd = takeProcDecl(pcur)
+
+  var pSyms: seq[SymId] = @[]
+  var pTypes: seq[Cursor] = @[]
+  collectParams(pd.params, pSyms, pTypes)
+
+  var argScan = valueCursor
+  var argCount = 0
+  argScan.into:
+    skip argScan                           # past callee sym
+    while argScan.hasMore:
+      skip argScan
+      inc argCount
+  if argCount != pSyms.len: return 0
+
+  # Body must reduce to a single returned expression `result = X`.
+  var retVal = default(Cursor)
+  if not effectiveReturnExpr(pd.body, retVal): return 0
+
+  # Bind params; require *every* param substitutable so the whole inline
+  # collapses to `X` with no `(var :p = arg)` prologue to emit before the if.
+  var rename = initTable[SymId, SymId]()
+  for s in pSyms:
+    rename[s] = c.freshSym(s)
+  var argCursors: seq[Cursor] = @[]
+  var ac = callProbe
+  inc ac                                   # past callee sym
+  for i in 0 ..< pSyms.len:
+    argCursors.add ac
+    skip ac
+  let bnd = bindingsFor(pSyms, argCursors, pd.body, rename)
+  for i in 0 ..< pSyms.len:
+    if not bnd.subst.hasKey(pSyms[i]): return 0
+
+  # --- emit the rewritten `if`, splicing X into the first elif's condition ---
+  var ifOpener = nextCur
+  dest.add ifOpener                        # copy `(if` opener
+  ifOpener.into:
+    var elifn = ifOpener
+    dest.add elifn                         # copy `(elif` opener
+    elifn.into:
+      emitRenamed(dest, retVal, bnd)       # X' replaces the tmp condition
+      skip elifn                           # drop the original tmp condition
+      while elifn.hasMore:
+        dest.takeTree elifn                # elif body verbatim
+    dest.addParRi()                        # close (elif …)
+    skip ifOpener                          # past the elif we just consumed
+    while ifOpener.hasMore:
+      dest.takeTree ifOpener               # else / further elifs verbatim
+  dest.addParRi()                          # close (if …)
+
+  # Advance past BOTH the var decl and the if we folded into it.
+  n = entry
+  skip n                                   # past var
+  skip n                                   # past if
+  calleeSym = cSym
+  result = 1
+
 # ---- Same-module inliner pass (called from hexer.nim) ----
 
 proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
@@ -946,6 +1187,21 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
               endRead(inner)
               if calleeSym != SymId(0):
                 c.inProgress.excl calleeSym
+              continue
+          if n.kind == ParLe and n.stmtKind == VarS:
+            # `(var :tmp T (call …))` immediately guarding an `if` — fold the
+            # inlined condition straight into the guard so no boolean temp is
+            # materialised (see `trySpliceCond`). Peeks the following sibling.
+            var condCallee = SymId(0)
+            var spliced = createTokenBuf(32)
+            let nEmitted = trySpliceCond(c, spliced, n, condCallee)
+            if nEmitted > 0:
+              c.inProgress.incl condCallee
+              var inner = beginRead(spliced)
+              for _ in 0 ..< nEmitted:
+                trIntra(c, dest, inner)
+              endRead(inner)
+              c.inProgress.excl condCallee
               continue
           trIntra(c, dest, n)
       dest.addParRi()
