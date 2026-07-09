@@ -124,8 +124,8 @@ template error(msg: string; info: PackedLineInfo) {.dirty.} =
 template cannotEval(n: Cursor) {.dirty.} =
   result = c.error("cannot evaluate expression at compile time: " & asNimCode(n), n.info)
 
+proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor)
 proc eval*(c: var EvalContext; n: var Cursor): Cursor
-
 proc findObjectField(objType: Cursor; fieldSym: SymId; typ: var Cursor; exported: var bool): bool
 
 proc evalCall(c: var EvalContext; n: Cursor): Cursor =
@@ -994,13 +994,26 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
   else:
     cannotEval n
 
+proc isConstSym(n: Cursor): bool =
+  if n.kind != Symbol: return false
+  let res = tryLoadSym(n.symId)
+  result = res.status == LacksNothing and res.decl.symKind == ConstY
+
 proc evalExpr*(c: var SemContext, n: var Cursor;
                expectedType: TypeCursor = default(Cursor)): TokenBuf =
+  ## Evaluate a constant expression. When `expectedType` is set and `n` is a
+  ## `const` symbol, the folded value is re-typed via `annotateConstantType`
+  ## so it canonicalizes to the typed static value the name aliases.
+  let retypeConst = not cursorIsNil(expectedType) and isConstSym(n)
   var ec = initEvalContext(addr c)
   ec.expectedType = expectedType
   let val = eval(ec, n)
-  result = createTokenBuf(val.span)
-  result.addSubtree val
+  if retypeConst:
+    result = createTokenBuf(16)
+    annotateConstantType(result, expectedType, val)
+  else:
+    result = createTokenBuf(val.span)
+    result.addSubtree val
 
 proc evalOrdinal(c: ptr SemContext, n: Cursor): xint =
   var ec = initEvalContext(c)
