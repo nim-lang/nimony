@@ -39,7 +39,8 @@ include ".." / lib / compat2
 
 import ".." / models / tags
 import ".." / lib / symparser
-import ".." / njvl / [njvl_model, finalir, tracker]
+import ".." / njvl / [njvl_model, finalir]
+import flowtracker
 import ".." / hexer / passes
 import nimony_model, programs, decls, typenav, sembasics, reporters,
   renderer, typeprops, inferle, xints, builtintypes
@@ -58,22 +59,22 @@ type
     path: seq[SymId]  ## root :: field1 :: field2 :: ...
     info: PackedLineInfo
 
-  InitSet = HashSet[SymId]    ## locals proven initialized at a program point
-
   NjvlContext = object
-    facts: Facts           # From inferle.nim - tracks le/notnil facts
+    flow: FlowState                    # the journaled analysis state: the
+                                       # definite-assignment init-set and the
+                                       # `inferle` facts, mutated in place.
     typeCache: TypeCache
-    tr: Tracker[InitSet, SymId]        # fall-through + per-exit init summaries;
-                                        # `tr.state` is the init-set at the
-                                        # current (reachable) point.
+    tr: FlowTracker                    # control flow: fall-through liveness +
+                                       # per-exit state accumulation (journaled).
     errors: TokenBuf
     procCanRaise: bool
     moduleSuffix: string
     nestedProcs: int
     loopExitLabels: HashSet[SymId]     # `(lab)`s emitted right after a `(loop)`.
-                                       # Their post-join facts are the pre-loop
-                                       # set `traverseLoop` rolled back to (via
-                                       # the inferle journal), not "know nothing".
+                                       # Their post-join state keeps the pre-loop
+                                       # facts (break-site facts are dropped; only
+                                       # break-site inits are joined). See
+                                       # `bindLoopExit`.
     inlineVars: Table[SymId, Cursor] # var -> to its init expression
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
     activeBorrows: seq[BorrowInfo]
@@ -83,31 +84,15 @@ type
                                        # body we are currently analysing (used
                                        # for the --verbose dump)
 
-proc isectInits(a, b: InitSet): InitSet =
-  ## Intersection join for the definite-assignment lattice.
-  ##
-  ## Deliberately hand-rolled instead of `std/sets.intersection`: that sizes
-  ## its result from `data.len` (the internal slot-array capacity, which a
-  ## HashSet never shrinks) rather than from the element count, so once a proc
-  ## has touched many locals every control-flow merge allocates an oversized
-  ## table and large procs OOM. Iterate the smaller operand and let the result
-  ## grow to the (small) number of shared elements.
-  result = initHashSet[SymId]()
-  if a.len <= b.len:
-    for x in a:
-      if x in b: result.incl x
-  else:
-    for x in b:
-      if x in a: result.incl x
-
-proc newInitTracker(): Tracker[InitSet, SymId] =
-  initTracker[InitSet, SymId](initHashSet[SymId](), isectInits)
+# `c.facts` reads/writes the fact set inside the journaled `FlowState`; the bulk
+# of the pass mutates facts through this alias, so it stays spelled `c.facts`.
+template facts(c: NjvlContext): untyped = c.flow.facts
 
 proc markInit(c: var NjvlContext; symId: SymId) {.inline.} =
-  c.tr.state.incl symId
+  c.flow.inits.incl symId
 
 proc isInitialized(c: NjvlContext; symId: SymId): bool {.inline.} =
-  symId in c.tr.state
+  symId in c.flow.inits
 
 proc dumpCurrentProc(c: var NjvlContext; info: PackedLineInfo; msg: string) =
   ## Dump the NJ IR of the proc currently under analysis to stderr. Used
@@ -1129,82 +1114,30 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
 
   skipParRi n
 
-# --- Exit-summary plumbing (facts ride alongside the Tracker's init-set) ---
+# --- Exit-summary plumbing (drives the journaled FlowTracker over c.flow) ---
+#
+# Every leave/bind/branch operation now goes through the `FlowTracker`, which
+# journals the whole `FlowState` (init-set + facts) in place: a leave snapshots
+# the state at its exit key, a bind joins the accumulated exit state back into
+# fall-through, and an `ite`/`case`/`try` checkpoints once and rolls back rather
+# than copying the state per branch.
 
-proc retKey(): ExitKey[SymId] {.inline.} = ExitKey[SymId](kind: ekReturn)
-proc raiseKey(): ExitKey[SymId] {.inline.} = ExitKey[SymId](kind: ekRaise)
-proc contKey(): ExitKey[SymId] {.inline.} = ExitKey[SymId](kind: ekContinue)
-
-proc leaveToLabel(c: var NjvlContext; label: SymId) =
-  gotoLabel(c.tr, label)
-
-proc leaveToReturn(c: var NjvlContext) =
-  # `return` facts are never consumed (the proc root only checks *init*, via the
-  # Tracker), so we don't snapshot them — capturing them per-return is both
-  # useless and quadratic (each return re-`merge`s into one accumulator).
-  gotoReturn(c.tr)
-
-proc leaveToRaise(c: var NjvlContext) =
-  # `raise` facts are never consumed either: an `except` handler conservatively
-  # assumes the pre-`try` state (see `traverseTry`). So we don't snapshot them.
-  gotoRaise(c.tr)
-
-proc leaveToContinue(c: var NjvlContext) =
-  # The back-edge state is discarded by a one-pass forward analysis, so we do
-  # not snapshot facts; we only stop falling through.
-  gotoContinue(c.tr)
-
-proc bindKeyBoth(c: var NjvlContext; key: ExitKey[SymId]) =
-  ## The multi-join. **Init** is joined precisely by the Tracker (a key keeps
-  ## its value iff every predecessor agrees). **Facts** are numeric `inferle`
-  ## relations that aren't snapshotted per exit; a `(lab)` reached by a `jmp`
-  ## therefore collapses facts to "know nothing" — sound (facts are positive
-  ## knowledge, so dropping is conservative) and exactly what a loop exit wants
-  ## (e.g. `while x < 10: …` proves nothing about `x` *after* the loop).
-  let hadExit = c.tr.pending(key)
-  case key.kind
-  of ekLabel:
-    bindLabel(c.tr, key.label)
-    # A loop-exit label keeps the journal-restored pre-loop facts (see
-    # `traverseLoop`); only a *general* forward-jump join collapses to "know
-    # nothing", since finalir doesn't snapshot facts per `jmp`.
-    if hadExit and not c.loopExitLabels.contains(key.label):
-      c.facts.clearJournaled()
-  of ekReturn: bindReturn(c.tr)
-  of ekRaise: bindRaise(c.tr)
-  of ekContinue: dropContinue(c.tr)
-
-proc setFactsTo(c: var NjvlContext; cp: int; target: Facts) =
-  ## Make `c.facts` equal `target` *journaled* — roll back to the checkpoint
-  ## (the pre-branch base), then add/remove only the cells that differ. No
-  ## whole-`Facts` replacement, so an enclosing checkpoint stays valid.
-  c.facts.rollbackTo cp
-  var want = initTable[(VarId, VarId), xint]()
-  for k in 0 ..< target.len:
-    let m = target[k]
-    want[(m.a, m.b)] = m.c
-  var i = 0
-  while i < c.facts.len:
-    let f = c.facts[i]
-    let key = (f.a, f.b)
-    if key in want and want.getOrDefault(key) == f.c:
-      want.del key
-      inc i
-    else:
-      removeFactAt(c.facts, i)          # journaled removal; rechecks slot i
-  for key, cc in want:
-    c.facts.add LeXplusC(a: key[0], b: key[1], c: cc)
+proc leaveToLabel(c: var NjvlContext; label: SymId) = gotoLabel(c.tr, c.flow, label)
+proc leaveToReturn(c: var NjvlContext) = gotoReturn(c.tr, c.flow)
+proc leaveToRaise(c: var NjvlContext) = gotoRaise(c.tr, c.flow)
+proc leaveToContinue(c: var NjvlContext) = gotoContinue(c.tr, c.flow)
 
 proc traverseIte(c: var NjvlContext; n: var Cursor) =
-  ## `(ite cond then else)`. Each arm is analyzed under the condition's
-  ## polarity; the branch summaries are merged via the Tracker (init/fall-through)
-  ## and the facts by liveness — a branch that always leaves drops out of the
-  ## merge, unifying guard-clause and if-else style. Facts use the journaled
-  ## checkpoint/rollback, so per-frame cost is O(writes), not a whole-set copy.
+  ## `(ite cond then else)`. Each arm is analyzed under the condition's polarity;
+  ## the tracker merges the fall-through state (inits + facts) by liveness — a
+  ## branch that always leaves drops out, unifying guard-clause and if-else
+  ## style. The state is journaled, so a branch costs O(writes), not a copy.
   inc n # skip ite/itec tag
 
-  let cp = c.facts.checkpoint()
   let savedBorrowsLen = c.activeBorrows.len
+  # Split BEFORE the condition facts so they belong to the then-branch's delta
+  # (the then-branch runs under `assume(cond)`); `commitThen` rolls them back.
+  var b = splitBranch(c.tr, c.flow)
   let condFacts = analyseCondition(c, n)
 
   # Single-fact conditions can be negated for the else-branch's `assume(¬c)`.
@@ -1213,17 +1146,14 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     condFactsList.add c.facts[c.facts.len - 1]
 
   # then-branch (under assume(c)):
-  var b = splitBranch(c.tr)
   traverseStmt c, n
-  let thenLive = c.tr.live
-  # snapshot the then-path facts *only* when it falls through (needed for the
-  # merge); a leaving branch (the common `ret`/`raise` case) copies nothing.
-  let thenFacts = if thenLive: snapshotFacts(c.facts) else: default(Facts)
-  commitThen(c.tr, b)
+  # `commitThen` captures the then-branch (its init delta, facts, and exits) and
+  # rolls `c.flow` back to the split baseline — which drops the condition facts,
+  # since the split was taken before them.
+  commitThen(c.tr, c.flow, b)
   c.activeBorrows.setLen(savedBorrowsLen)
 
   # else-branch (under assume(¬c)):
-  c.facts.rollbackTo cp
   for f in condFactsList:
     var negated = f
     negateFact(negated)
@@ -1232,18 +1162,10 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     inc n
   else:
     traverseStmt c, n
-  let elseLive = c.tr.live
-  mergeBranches(c.tr, b)
+  # `mergeBranches` joins the then-branch (in `b`) with the current else-branch,
+  # merging both the init-set and the facts; a leaving arm drops out.
+  mergeBranches(c.tr, c.flow, b)
   c.activeBorrows.setLen(savedBorrowsLen)
-
-  # Post-ite facts survive only along arms that fall through.
-  if thenLive and elseLive:
-    setFactsTo(c, cp, merge(thenFacts, 0, c.facts, false))
-  elif thenLive:
-    setFactsTo(c, cp, thenFacts)
-  elif not elseLive:
-    c.facts.rollbackTo cp           # both arms left — unreachable; reset to base
-  # elif elseLive: keep c.facts (the else-path under assume(¬c))
 
   skipParRi n
 
@@ -1254,26 +1176,25 @@ proc traverseLoop(c: var NjvlContext; n: var Cursor) =
   ## special handling here. Iteration-gained facts/inits flow only to the
   ## break sites (captured) and to the back-edge (discarded); the loop never
   ## falls through. The `(lab loopExit)` that follows installs the merged
-  ## break state via `bindKeyBoth`.
+  ## break state via `bindLoopExit`.
   inc n # skip loop tag
-  let cp = c.facts.checkpoint()
+  let cp = c.flow.checkpoint()
   let savedBorrows = c.activeBorrows.len
   traverseStmt c, n        # the body `(stmts ...)`; ends by leaving
-  bindKeyBoth(c, contKey()) # the loop header consumes the back-edge
-  # The loop never falls through; reset working facts to the pre-loop base. A
-  # following `(lab loopExit)` collapses them to "know nothing" (sound: a loop
-  # proves nothing about its mutated vars afterwards).
-  c.facts.rollbackTo cp
+  dropContinue(c.tr)       # the loop header consumes the back-edge
+  # The loop never falls through; reset the working state to the pre-loop base.
+  # A following `(lab loopExit)` keeps these pre-loop facts (break-site facts are
+  # iteration-specific and dropped; break-site inits are joined — see
+  # `bindLoopExit`), which is sound: a loop proves nothing new about the facts of
+  # its mutated vars afterwards.
+  c.flow.rollbackTo cp
   # Borrows taken *inside* the body are loop-local (a `var p = addr coll[i]`
   # cannot outlive the iteration), so drop them — otherwise a later mutation of
   # the borrowed container after the loop is wrongly seen as still-borrowed.
   c.activeBorrows.setLen(savedBorrows)
   skipParRi n
   # The trailing `(lab loopExit)` (emitted iff a `break`/guard targeted it) is
-  # *this* loop's exit. Its facts are the pre-loop set we just rolled back to —
-  # a `dirp != nil` established before the loop and never reassigned inside it
-  # still holds. Record it so `bindKeyBoth` keeps those facts instead of
-  # collapsing the join to "know nothing".
+  # *this* loop's exit. Record it so `traverseLabel` uses `bindLoopExit`.
   if n.kind == ParLe and n.njvlKind == LabV:
     var peek = n
     inc peek
@@ -1285,7 +1206,10 @@ proc traverseLabel(c: var NjvlContext; n: var Cursor) =
   let label = n.symId
   inc n # symdef
   skipParRi n
-  bindKeyBoth(c, labelKey(label))
+  if c.loopExitLabels.contains(label):
+    bindLoopExit(c.tr, c.flow, label)
+  else:
+    bindLabel(c.tr, c.flow, label)
 
 proc traverseJmp(c: var NjvlContext; n: var Cursor) =
   ## `(jmp L)` — a forward structural transfer (loop-`break` included).
@@ -1375,39 +1299,34 @@ proc traverseCase(c: var NjvlContext; n: var Cursor) =
     skipParRi n
   skipParRi n       # close 'case'
 
-  let cp = c.facts.checkpoint()
+  let cp = c.flow.checkpoint()
   let savedBorrows = c.activeBorrows.len
-  let baseState = c.tr.state
   let baseLive = c.tr.live
 
-  var mergedLive = false
-  var mergedState = baseState
-  var mergedFacts = default(Facts)
-  var haveFacts = false
+  var merged = default(FlowSnap)   # join of the fall-through arms (see joinSnap)
+  var haveMerged = false
 
   for br in branches:
     # Each branch resumes from the pre-case state (the selector chose this arm).
-    c.tr.state = baseState
+    c.flow.rollbackTo cp
     c.tr.live = baseLive
-    c.facts.rollbackTo cp
     c.activeBorrows.setLen(savedBorrows)
     if not cursorIsNil(br.ranges):
       addCaseFacts(c, selSym, br.ranges)
     var bc = br.body
     traverseStmt c, bc
     if c.tr.live:
-      if not haveFacts:
-        mergedState = c.tr.state; mergedFacts = snapshotFacts(c.facts); haveFacts = true
-      else:
-        mergedState = isectInits(mergedState, c.tr.state)
-        mergedFacts = merge(mergedFacts, 0, c.facts, false)
-      mergedLive = true
+      merged = if haveMerged: joinSnap(merged, snapshot(c.flow)) else: snapshot(c.flow)
+      haveMerged = true
 
   # A case with no `else` is exhaustive (sem guarantees this), so the selector
   # always matches some branch — there is no implicit fall-through to add.
-  c.tr.state = mergedState
-  c.tr.live = mergedLive
-  if haveFacts: setFactsTo(c, cp, mergedFacts) else: c.facts.rollbackTo cp
+  if haveMerged:
+    c.tr.live = true
+    setTo(c.flow, cp, merged)
+  else:
+    c.tr.live = false
+    c.flow.rollbackTo cp
   c.activeBorrows.setLen(savedBorrows)
 
 proc traverseTry(c: var NjvlContext; n: var Cursor) =
@@ -1416,17 +1335,16 @@ proc traverseTry(c: var NjvlContext; n: var Cursor) =
   ## state; a `fin` is analyzed on the merged fall-through (its inits are not
   ## propagated onto exit paths — sound, since that only withholds knowledge).
   inc n # skip 'try'
-  let cp = c.facts.checkpoint()
+  let cp = c.flow.checkpoint()
   let savedBorrows = c.activeBorrows.len
-  let baseState = c.tr.state
   let baseLive = c.tr.live
 
   traverseStmt c, n # try body
 
-  var mergedLive = c.tr.live
-  var mergedState = c.tr.state
-  var mergedFacts = if c.tr.live: snapshotFacts(c.facts) else: default(Facts)
-  var haveFacts = c.tr.live
+  var merged = default(FlowSnap)   # join of the fall-through of body + handlers
+  var haveMerged = false
+  if c.tr.live:
+    merged = snapshot(c.flow); haveMerged = true
 
   if n.substructureKind == ExceptU:
     # The excepts catch the body's raises.
@@ -1442,9 +1360,8 @@ proc traverseTry(c: var NjvlContext; n: var Cursor) =
         boundExc = local.name.symId
       skip n
     # handler entry = pre-try state (a raise may interrupt the body anywhere):
-    c.tr.state = baseState
+    c.flow.rollbackTo cp
     c.tr.live = baseLive
-    c.facts.rollbackTo cp
     c.activeBorrows.setLen(savedBorrows)
     # The bound exception value is initialized *in the handler* — mark it after
     # resetting to the pre-try state, which would otherwise discard the init.
@@ -1453,17 +1370,16 @@ proc traverseTry(c: var NjvlContext; n: var Cursor) =
     if n.stmtKind in {StmtsS, ScopeS}:
       traverseStmt c, n
     if c.tr.live:
-      if not haveFacts:
-        mergedState = c.tr.state; mergedFacts = snapshotFacts(c.facts); haveFacts = true
-      else:
-        mergedState = isectInits(mergedState, c.tr.state)
-        mergedFacts = merge(mergedFacts, 0, c.facts, false)
-      mergedLive = true
+      merged = if haveMerged: joinSnap(merged, snapshot(c.flow)) else: snapshot(c.flow)
+      haveMerged = true
     skipParRi n # close 'except'
 
-  c.tr.state = mergedState
-  c.tr.live = mergedLive
-  if haveFacts: setFactsTo(c, cp, mergedFacts) else: c.facts.rollbackTo cp
+  if haveMerged:
+    c.tr.live = true
+    setTo(c.flow, cp, merged)
+  else:
+    c.tr.live = false
+    c.flow.rollbackTo cp
   c.activeBorrows.setLen(savedBorrows)
 
   if n.substructureKind == FinU:
@@ -1565,22 +1481,20 @@ proc traverseAssert(c: var NjvlContext; n: var Cursor) =
 
 proc traverseProc(c: var NjvlContext; n: var Cursor) =
   let decl = n
-  # Fresh, journaling fact set for this proc; the enclosing proc's facts (with
-  # its live checkpoints) are restored on the way out.
-  let oldFacts = move c.facts
-  c.facts = createFacts()
-  c.facts.enableJournaling()
+  # Fresh, journaling flow state (init-set + facts) for this proc; the enclosing
+  # proc's state (with its live checkpoints) is restored on the way out.
+  let oldFlow = move c.flow
+  c.flow = initFlowState()
   c.procCanRaise = false
   let oldTr = move c.tr
-  c.tr = newInitTracker()
+  c.tr = initFlowTracker()
   # Seed with the enclosing init-set ONLY for genuinely nested procs (closures),
   # so a captured outer local stays initialized inside the closure body. A
   # top-level proc must NOT inherit the whole module-level init-set: those syms
-  # are globals/consts that are never init-checked, and carrying them makes the
-  # tracker's per-branch copies O(module) — which blows up on deeply-nested
-  # `if/elif` chains. `nestedProcs >= 2` means "inside another proc's body".
+  # are globals/consts that are never init-checked. `nestedProcs >= 2` means
+  # "inside another proc's body".
   if c.nestedProcs >= 2:
-    c.tr.state = oldTr.state
+    inheritInits(c.flow, oldFlow)
   let oldResultSym = c.resultSym
   let oldInlineVars = move c.inlineVars
   let oldBorrows = move c.activeBorrows
@@ -1622,9 +1536,9 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
     traverseStmt c, n
     # Join every `return` into the natural fall-through: the result init-set at
     # proc exit is the intersection over all exit paths. The init-check below
-    # then reads `c.tr.state` directly — `result`/out-params must be init on
-    # every path that leaves the proc.
-    bindKeyBoth(c, retKey())
+    # then reads `c.flow.inits` — `result`/out-params must be init on every path
+    # that leaves the proc.
+    bindReturn(c.tr, c.flow)
     let info = decl.info
     # Only when control can actually leave the proc *normally* (fall-through or a
     # `return`) must `result`/out-params be initialized. A proc whose every path
@@ -1640,7 +1554,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
     skip n
   skipParRi n
   c.tr = ensureMove oldTr
-  c.facts = ensureMove oldFacts
+  c.flow = ensureMove oldFlow
   c.resultSym = oldResultSym
   c.inlineVars = ensureMove oldInlineVars
   c.activeBorrows = ensureMove oldBorrows
@@ -1825,12 +1739,11 @@ proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; verbose
   var c = NjvlContext(
     typeCache: createTypeCache(),
     moduleSuffix: moduleSuffix,
-    tr: newInitTracker(),
+    tr: initFlowTracker(),
+    flow: initFlowState(),
     loopExitLabels: initHashSet[SymId](),
-    facts: createFacts(),
     verbose: verbose
   )
-  c.facts.enableJournaling()
   c.typeCache.openScope()
 
   var fin = beginRead(finalBuf)
