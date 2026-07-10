@@ -443,20 +443,23 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM;
       g.initVal = llZeroInit(typ)
       c.module.globals.add g
     else:
+      # Module-private constants (plain `const`, string literals) hide their
+      # global; exportc/importc keep external linkage.
+      let isPriv = vk == IsConst and externName == StrId(0)
       if d.value.kind != DotToken:
         var v = d.value
         let initVal = genGlobalConstr(c, v, d.typ)
         c.module.globals.add LLGlobal(name: name, typ: initVal.typ,
             initVal: initVal, isThreadLocal: (vk == IsThreadlocal),
-            isConstant: (vk == IsConst), align: int alignVal,
-            dbgLoc: dbgvSuffix)
+            isConstant: (vk == IsConst), isPrivate: isPriv,
+            align: int alignVal, dbgLoc: dbgvSuffix)
       else:
         skip d.value
         let zeroVal = llDefaultZero(typ)
         c.module.globals.add LLGlobal(name: name, typ: typ, initVal: zeroVal,
             isThreadLocal: (vk == IsThreadlocal),
-            isConstant: (vk == IsConst), align: int alignVal,
-            dbgLoc: dbgvSuffix)
+            isConstant: (vk == IsConst), isPrivate: isPriv,
+            align: int alignVal, dbgLoc: dbgvSuffix)
     if vk == IsConst:
       c.emittedConsts.incl lit
   else:
