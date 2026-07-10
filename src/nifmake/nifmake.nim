@@ -171,6 +171,19 @@ proc freshByHash(m: var HashManifest; ruleKey, input: string;
     return true
   return false
 
+proc commandTool(cmd: Command): string =
+  ## The tool binary a command invokes — its argv[0], resolved through the same
+  ## `findTool` lookup `expandCommand` uses. Returns "" when the command has no
+  ## leading tool token or the token doesn't resolve to a statable file (e.g. a
+  ## bare `cc`/`gcc` found only via $PATH): such a tool can't be treated as an
+  ## implicit input, so its rules keep their prior behaviour.
+  if cmd.tokens.len == 0: return ""
+  var n = readonlyCursorAt(cmd.tokens, 0)
+  if n.kind == StringLit:
+    let t = findTool(strVal(n))
+    if vfsExists(t): return t
+  return ""
+
 proc addSpace(result: var string) {.inline.} =
   if result.len > 0 and result[^1] != ' ': result.add ' '
 
@@ -303,7 +316,7 @@ proc removeOutdatedArtifacts(node: Node; opt: set[CliOption]) =
       except:
         stderr.writeLine "Warning: Could not remove outdated artifact: ", output
 
-proc needsRebuild(node: Node; manifest: var HashManifest): bool =
+proc needsRebuild(node: Node; manifest: var HashManifest; toolPath: string): bool =
   ## Check if a node needs to be rebuilt
   result = false
 
@@ -330,6 +343,16 @@ proc needsRebuild(node: Node; manifest: var HashManifest): bool =
       freshestOutput = outputTime
 
   let ruleKey = node.outputs[0]
+  # The tool binary that produces this rule is an implicit input: a rebuilt
+  # nimsem/hexer/lengc/nifc/... must invalidate every output it produced, so a
+  # compiler fix propagates automatically instead of needing hand-eviction of
+  # stale malformed artifacts. Treated exactly like a declared input (mtime +
+  # content-hash fallback), so re-linking a tool with byte-identical output
+  # doesn't spuriously rebuild the world.
+  if toolPath.len > 0:
+    let toolTime = vfsMtime(toolPath)
+    if toolTime > freshestOutput and not freshByHash(manifest, ruleKey, toolPath, toolTime):
+      return true
   for input in node.inputs:
     if vfsExists(input):
       let inputTime = vfsMtime(input)
@@ -341,19 +364,23 @@ proc needsRebuild(node: Node; manifest: var HashManifest): bool =
       if inputTime > freshestOutput and not freshByHash(manifest, ruleKey, input, inputTime):
         return true
 
-proc recordNode(node: Node; manifest: var HashManifest) =
-  ## After a rule builds successfully, fingerprint every input it consumed so a
-  ## later newer-mtime-but-same-bytes check can prove freshness. Skips side-
-  ## effectful (output-less) nodes — they have no rule identity to key on.
+proc recordNode(node: Node; manifest: var HashManifest; toolPath: string) =
+  ## After a rule builds successfully, fingerprint every input it consumed —
+  ## and the tool that produced it — so a later newer-mtime-but-same-bytes check
+  ## can prove freshness. Skips side-effectful (output-less) nodes — they have
+  ## no rule identity to key on.
   if node.outputs.len == 0: return
   let ruleKey = node.outputs[0]
+  if toolPath.len > 0:
+    manifest.entries[hkey(ruleKey, toolPath)] =
+      HashRecord(mtime: vfsMtime(toolPath), hash: contentHash(toolPath))
   for input in node.inputs:
     if vfsExists(input):
       manifest.entries[hkey(ruleKey, input)] =
         HashRecord(mtime: vfsMtime(input), hash: contentHash(input))
   manifest.dirty = true
 
-proc backfillNode(node: Node; manifest: var HashManifest) =
+proc backfillNode(node: Node; manifest: var HashManifest; toolPath: string) =
   ## A node judged fresh this build won't hit `recordNode`, so an input it has
   ## no record for would force a rebuild the first time that input's mtime moves
   ## (e.g. a git checkout). This happens for outputs produced out of band — the
@@ -363,7 +390,9 @@ proc backfillNode(node: Node; manifest: var HashManifest) =
   ## inputs stay on the no-hash mtime fast-path.
   if node.outputs.len == 0: return
   let ruleKey = node.outputs[0]
-  for input in node.inputs:
+  var pseudoInputs = node.inputs
+  if toolPath.len > 0: pseudoInputs.add toolPath
+  for input in pseudoInputs:
     let key = hkey(ruleKey, input)
     if key notin manifest.entries and vfsExists(input):
       manifest.entries[key] =
@@ -451,7 +480,7 @@ proc nodeLabel(dag: Dag; node: Node): string =
   else: dag.commands[node.cmdIdx].name
 
 proc countToBuild(dag: var Dag; sortedNodes: seq[int]; opt: set[CliOption];
-                  manifest: var HashManifest): int =
+                  manifest: var HashManifest; toolPaths: seq[string]): int =
   ## Estimate how many nodes will run, propagating staleness along the DAG:
   ## a node rebuilds if it is stale itself or any dependency will rebuild.
   ## `sortedNodes` is depth-ordered (deps first), so a single forward pass
@@ -461,7 +490,7 @@ proc countToBuild(dag: var Dag; sortedNodes: seq[int]; opt: set[CliOption];
   result = 0
   var willBuild = newSeq[bool](dag.nodes.len)
   for nodeId in sortedNodes:
-    var w = Force in opt or needsRebuild(dag.nodes[nodeId], manifest)
+    var w = Force in opt or needsRebuild(dag.nodes[nodeId], manifest, toolPaths[dag.nodes[nodeId].cmdIdx])
     if not w:
       for depId in dag.nodes[nodeId].deps:
         if willBuild[depId]: w = true; break
@@ -502,6 +531,11 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
     profile[].dagSetupTime = toSeconds(getMonoTime() - sortStart)
 
   var manifest = loadManifest(hashFile)
+  # Resolve each command's tool binary (argv[0]) once; needsRebuild treats it as
+  # an implicit input so a rebuilt tool invalidates the outputs it produced.
+  var toolPaths = newSeq[string](dag.commands.len)
+  for i in 0 ..< dag.commands.len:
+    toolPaths[i] = commandTool(dag.commands[i])
 
   # The live bar is routed only where it makes sense: it needs an interactive
   # terminal, and it must not corrupt `--verbose`'s line output or `--report`'s
@@ -510,7 +544,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
     active: Progress in opt and Verbose notin opt and Report notin opt and isatty(stdout),
     done: 0, total: 0, lo: progressLo, hi: progressHi)
   if prog.active:
-    prog.total = countToBuild(dag, sortedNodes, opt, manifest)
+    prog.total = countToBuild(dag, sortedNodes, opt, manifest, toolPaths)
     prog.draw("")  # paint the starting reading (lo%) right away
 
   if Parallel in opt:
@@ -525,7 +559,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
       # Collect all commands at the current depth
       while i < sortedNodes.len and dag.nodes[sortedNodes[i]].depth == currentDepth:
         let node = addr dag.nodes[sortedNodes[i]]
-        if Force in opt or needsRebuild(node[], manifest):
+        if Force in opt or needsRebuild(node[], manifest, toolPaths[node.cmdIdx]):
           if Force in opt:
             removeOutdatedArtifacts(node[], opt)
           if Verbose in opt:
@@ -538,7 +572,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
           cmdNames.add(dag.commands[node.cmdIdx].name)
           labels.add(nodeLabel(dag, node[]))
         else:
-          backfillNode(node[], manifest)
+          backfillNode(node[], manifest, toolPaths[node.cmdIdx])
         inc i
 
       # Execute all commands at this depth in parallel
@@ -582,12 +616,12 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
         # future fresh-mtime-same-bytes touch can prove staleness without a
         # rebuild.
         for nodeId in nodeIds:
-          recordNode(dag.nodes[nodeId], manifest)
+          recordNode(dag.nodes[nodeId], manifest, toolPaths[dag.nodes[nodeId].cmdIdx])
   else:
     # Sequential execution
     for nodeId in sortedNodes:
       let node = addr dag.nodes[nodeId]
-      if Force in opt or needsRebuild(node[], manifest):
+      if Force in opt or needsRebuild(node[], manifest, toolPaths[node.cmdIdx]):
         if Force in opt:
           removeOutdatedArtifacts(node[], opt)
         if Verbose in opt:
@@ -606,7 +640,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
           failed expandedCmd
           saveManifest manifest
           return false
-        recordNode(node[], manifest)
+        recordNode(node[], manifest, toolPaths[node.cmdIdx])
         inc prog.done
         prog.draw(nodeLabel(dag, node[]))
         if profile != nil:
@@ -614,7 +648,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
           profile[].recordCmdTime(cmdName, sec)
           profile[].execWallTime += sec
       else:
-        backfillNode(node[], manifest)
+        backfillNode(node[], manifest, toolPaths[node.cmdIdx])
         if Verbose in opt:
           echo "Up to date: ", node.outputs.join(", ")
 
