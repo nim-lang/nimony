@@ -468,9 +468,12 @@ when defined(posix):
     # `rusage`. arkham lowers bare syscall names, so on the native backend we bind to
     # `wait4` directly and pass `rusage = nil` ourselves, keeping the 3-arg `waitpid`
     # signature the rest of the code (and the libc path) expects.
+    # No `<sys/wait.h>` header (strip it like mkdir/rmdir/unlink above): on Linux it
+    # transitively pulls `<unistd.h>`, whose `execve(const char*, char* const*, ...)`
+    # prototype conflicts with our bare `execve` binding. The status decoders and
+    # `WNOHANG`/`WCONTINUED` are all self-defined, so the header buys us nothing.
     proc wait4(pid: Pid; status: var cint; options: cint;
-               rusage: nil pointer): Pid {.importc: "wait4",
-               header: "<sys/wait.h>", sideEffect.}
+               rusage: nil pointer): Pid {.importc: "wait4", sideEffect.}
     proc waitpid*(pid: Pid; status: var cint; options: cint): Pid {.inline.} =
       wait4(pid, status, options, nil)
     proc kill*(pid: Pid; sig: cint): cint {.importc: "kill", sideEffect.}
