@@ -74,6 +74,12 @@ type
                                        # Their post-join facts are the pre-loop
                                        # set `traverseLoop` rolled back to (via
                                        # the inferle journal), not "know nothing".
+    labelFacts: Table[SymId, Facts]    # per-label merge of the facts snapshotted
+                                       # at every forward `(jmp L)`. Presence of a
+                                       # key means at least one jmp targeting `L`
+                                       # was seen; the value is the intersection of
+                                       # all those jump-site fact sets. Consumed
+                                       # (and cleared) by `bindKeyBoth` at `(lab L)`.
     inlineVars: Table[SymId, Cursor] # var -> to its init expression
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
     activeBorrows: seq[BorrowInfo]
@@ -1137,6 +1143,16 @@ proc contKey(): ExitKey[SymId] {.inline.} = ExitKey[SymId](kind: ekContinue)
 
 proc leaveToLabel(c: var NjvlContext; label: SymId) =
   gotoLabel(c.tr, label)
+  # Snapshot the facts on this jump's path and fold them into the label's
+  # accumulator by intersection — the label will hold exactly the facts common
+  # to every predecessor (mirroring how the Tracker joins the init-set). This is
+  # what lets `if a == nil or b == nil: return` re-establish `a != nil` *and*
+  # `b != nil` on the fall-through, even though the `or` lowered to jmp/lab.
+  let snap = snapshotFacts(c.facts)
+  if c.labelFacts.hasKey(label):
+    c.labelFacts[label] = merge(c.labelFacts[label], 0, snap, false)
+  else:
+    c.labelFacts[label] = snap
 
 proc leaveToReturn(c: var NjvlContext) =
   # `return` facts are never consumed (the proc root only checks *init*, via the
@@ -1153,26 +1169,6 @@ proc leaveToContinue(c: var NjvlContext) =
   # The back-edge state is discarded by a one-pass forward analysis, so we do
   # not snapshot facts; we only stop falling through.
   gotoContinue(c.tr)
-
-proc bindKeyBoth(c: var NjvlContext; key: ExitKey[SymId]) =
-  ## The multi-join. **Init** is joined precisely by the Tracker (a key keeps
-  ## its value iff every predecessor agrees). **Facts** are numeric `inferle`
-  ## relations that aren't snapshotted per exit; a `(lab)` reached by a `jmp`
-  ## therefore collapses facts to "know nothing" — sound (facts are positive
-  ## knowledge, so dropping is conservative) and exactly what a loop exit wants
-  ## (e.g. `while x < 10: …` proves nothing about `x` *after* the loop).
-  let hadExit = c.tr.pending(key)
-  case key.kind
-  of ekLabel:
-    bindLabel(c.tr, key.label)
-    # A loop-exit label keeps the journal-restored pre-loop facts (see
-    # `traverseLoop`); only a *general* forward-jump join collapses to "know
-    # nothing", since finalir doesn't snapshot facts per `jmp`.
-    if hadExit and not c.loopExitLabels.contains(key.label):
-      c.facts.clearJournaled()
-  of ekReturn: bindReturn(c.tr)
-  of ekRaise: bindRaise(c.tr)
-  of ekContinue: dropContinue(c.tr)
 
 proc setFactsTo(c: var NjvlContext; cp: int; target: Facts) =
   ## Make `c.facts` equal `target` *journaled* — roll back to the checkpoint
@@ -1194,6 +1190,42 @@ proc setFactsTo(c: var NjvlContext; cp: int; target: Facts) =
       removeFactAt(c.facts, i)          # journaled removal; rechecks slot i
   for key, cc in want:
     c.facts.add LeXplusC(a: key[0], b: key[1], c: cc)
+
+proc bindKeyBoth(c: var NjvlContext; key: ExitKey[SymId]) =
+  ## The multi-join. **Init** is joined precisely by the Tracker (a key keeps
+  ## its value iff every predecessor agrees). **Facts** are joined the same way:
+  ## each forward `(jmp L)` snapshots its facts into `labelFacts[L]` (see
+  ## `leaveToLabel`), and here we intersect that accumulator with the
+  ## fall-through's facts to get exactly the facts common to all predecessors.
+  let hadExit = c.tr.pending(key)
+  case key.kind
+  of ekLabel:
+    # Whether control also *falls through* into the label (as opposed to only
+    # being reached by jumps) is decided before `bindLabel` mutates the tracker.
+    let fallThroughLive = c.tr.live
+    let fallThroughFacts = if fallThroughLive: snapshotFacts(c.facts) else: default(Facts)
+    bindLabel(c.tr, key.label)
+    let jumped = c.labelFacts.hasKey(key.label)
+    # A loop-exit label keeps the journal-restored pre-loop facts (see
+    # `traverseLoop`): its break-site facts are intentionally not merged in.
+    if hadExit and not c.loopExitLabels.contains(key.label):
+      var merged = default(Facts)
+      var have = false
+      if jumped:
+        merged = c.labelFacts[key.label]
+        have = true
+      if fallThroughLive:
+        merged = if have: merge(merged, 0, fallThroughFacts, false) else: fallThroughFacts
+        have = true
+      # `have` is always true here (hadExit implies a jump predecessor); if the
+      # merge came out empty we install the empty set, i.e. "know nothing".
+      let cp = c.facts.checkpoint()
+      setFactsTo(c, cp, merged)
+    if jumped:
+      c.labelFacts.del key.label
+  of ekReturn: bindReturn(c.tr)
+  of ekRaise: bindRaise(c.tr)
+  of ekContinue: dropContinue(c.tr)
 
 proc traverseIte(c: var NjvlContext; n: var Cursor) =
   ## `(ite cond then else)`. Each arm is analyzed under the condition's
@@ -1827,6 +1859,7 @@ proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; verbose
     moduleSuffix: moduleSuffix,
     tr: newInitTracker(),
     loopExitLabels: initHashSet[SymId](),
+    labelFacts: initTable[SymId, Facts](),
     facts: createFacts(),
     verbose: verbose
   )
