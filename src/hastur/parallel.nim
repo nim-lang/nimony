@@ -128,21 +128,20 @@ proc prebuildSharedObjects(forward: string) =
   # mimalloc's build pragma no longer bakes in `-DMI_TRACK_VALGRIND=1` (that
   # made the valgrind dev headers a hard build dependency for every nimony
   # program); valgrind tracking is now requested purely via this `--passC`.
-  # But the shared `static.o` is keyed only by mtime, so a prior *non*-valgrind
-  # build (e.g. a plain `bin/nimony c foo.nim`) can leave a stale, untracked
-  # `static.o` that nifmake would happily reuse — silently running the valgrind
-  # tests against non-tracked mimalloc. Delete it so this valgrind-tracked
-  # variant is always freshly produced.
+  # The shared object is now keyed by a hash of its compile flags
+  # (`static-<hash8>.o`), so the valgrind and non-valgrind variants live under
+  # distinct names and no longer clobber each other — no manual eviction needed.
   when defined(linux):
     if hasValgrind:
-      try: removeFile("nimcache_static" / "static.o")
-      except OSError: discard
-      # The valgrind tests compile with `-d:useLibc` (valgrind can only track the
-      # libc/mimalloc heap; the native mmap heap has no hooks), so the shared
-      # `static.o` they reuse must be the *mimalloc* object — build the prebuild
-      # probe with `-d:useLibc` too. Without it the libc-free default is used and
-      # `static.o` is never produced (mimalloc isn't compiled), so valgrind runs
-      # against an untracked heap and reports 0 allocations.
+      # Post-merge, libc-free is the default (upstream #2078). Valgrind can only
+      # track the libc/mimalloc heap (the native mmap heap has no hooks), so the
+      # prebuild probe must build with `-d:useLibc` — otherwise mimalloc's
+      # `static.c` is never compiled, no shared object is produced, and valgrind
+      # runs against an untracked heap and reports 0 allocations. No manual
+      # eviction is needed here: our objects are hash-keyed by compile flags
+      # (`static-<hash8>.o`, see deps.sharedObjFile), so the valgrind and
+      # non-valgrind variants live under distinct names and never clobber — unlike
+      # upstream's single mtime-keyed `static.o`, which it must `removeFile` first.
       cmd.add " -d:useLibc --passC:\"-DMI_TRACK_VALGRIND=1\""
   cmd.add ' ' & src.quoteShell
   if execShellCmd(cmd) != 0:
