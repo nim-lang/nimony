@@ -151,7 +151,7 @@ proc getTypeImpl(c: var MainModule; n: Cursor): Cursor =
     of TrueC, FalseC, AndC, OrC, NotC, EqC, NeqC, LeC, LtC, ErrvC, OvfC:
       result = createIntegralType(c, "(bool)")
     of CallC:
-      var procType = getTypeImpl(c, firstChild(n))
+      var procType = navigateToObjectBody(c, getTypeImpl(c, firstChild(n)))
       if procType.typeKind == ProctypeT or procType.symKind == ProcY:
         inc procType
         skip procType  # name
@@ -161,11 +161,7 @@ proc getTypeImpl(c: var MainModule; n: Cursor): Cursor =
       else:
         result = createIntegralType(c, "(err)")
     of AtC, PatC:
-      var arrayType = getTypeImpl(c, firstChild(n))
-      if arrayType.kind == Symbol:
-        let d = c.getDeclOrNil(arrayType.symId)
-        if d != nil and d.pos.stmtKind == TypeS:
-          arrayType = asTypeDecl(d.pos).body
+      var arrayType = navigateToObjectBody(c, getTypeImpl(c, firstChild(n)))
       # Descend to the element type only when the base really is an indexable
       # type. Otherwise the base did not resolve (an unresolved `Symbol` or the
       # `(err)` sentinel), and a blind `inc` would run the cursor off the end of
@@ -177,17 +173,9 @@ proc getTypeImpl(c: var MainModule; n: Cursor): Cursor =
         result = createIntegralType(c, "(err)")
     of DotC:
       var a = firstChild(n)
-      var objType = getTypeImpl(c, a)
+      var objType = navigateToObjectBody(c, getTypeImpl(c, a))
       skip a  # skip the object
       let fld = a.symId
-      var counter = 20
-      while counter > 0 and objType.kind == Symbol:
-        dec counter
-        let d = c.getDeclOrNil(objType.symId)
-        if d != nil and d.pos.stmtKind == TypeS:
-          objType = asTypeDecl(d.pos).body
-        else:
-          break
       if objType.typeKind in {ObjectT, UnionT}:
         result = typeOfField(c, objType, fld)
         if cursorIsNil(result):

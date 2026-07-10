@@ -10,12 +10,14 @@
 # included from llvmcodegen.nim
 # Generates LLVM IR for statements.
 
+const RangeExpandThreshold = 32 # values <= this with literal lo/hi expand per-value; otherwise range-check
+
 type
   CaseBranch = object
     ## Used by genSwitchLLVM. Declared at module scope rather than inside
     ## the proc's `n.into:` block so the type isn't re-instantiated each
     ## time the template expands.
-    values: seq[string]
+    values: seq[LLValue]
     label: string
 
 proc getVirtualGuardLLVM(c: var LLVMCode; n: Cursor): (SymId, bool) =
@@ -196,8 +198,32 @@ proc genLoopLLVM(c: var LLVMCode; n: var Cursor) =
     discard c.startBlock(endLabel)
     while n.hasMore: skip n
 
+proc emitRangeCheck(c: var LLVMCode; info: NifLineInfo; switchVal, lo, hi: LLValue;
+                    switchTK: LengType; branchLabel: string) =
+  ## Lowers a range to a `switchVal in [lo,hi]` condbr (LLVM switch has no range case);
+  ## opens a fresh block for the next range-check or the switch.
+  let predLo = if switchTK in {UT, CT, BoolT}: "uge" else: "sge"
+  let predHi = if switchTK in {UT, CT, BoolT}: "ule" else: "sle"
+  c.setLoc(info)
+  let loOk = llReg(c.nextTemp(), c.prim.i1)
+  c.emit LLInstr(kind: llIcmp, result: loOk, icmpPred: predLo,
+                 icmpLhs: switchVal, icmpRhs: lo)
+  let hiOk = llReg(c.nextTemp(), c.prim.i1)
+  c.emit LLInstr(kind: llIcmp, result: hiOk, icmpPred: predHi,
+                 icmpLhs: switchVal, icmpRhs: hi)
+  let inRange = llReg(c.nextTemp(), c.prim.i1)
+  c.emit LLInstr(kind: llAnd, result: inRange, binOp: "and",
+                 binLhs: loOk, binRhs: hiOk)
+  let nextChk = c.nextLabel()
+  c.emit LLInstr(kind: llCondBr, condBrCond: inRange,
+                 condBrTrue: branchLabel, condBrFalse: nextChk)
+  discard c.startBlock(nextChk)
+
 proc genSwitchLLVM(c: var LLVMCode; n: var Cursor) =
   n.into:
+    let switchExpr = n
+    let switchSrcType = getType(c.m, switchExpr)
+    let switchTK = scalarTypeKind(c, switchSrcType)
     var switchVal = LLValue(); genExprLLVM(c, n, switchVal)
     let endLabel = c.nextLabel()
     var defaultLabel = endLabel
@@ -216,13 +242,33 @@ proc genSwitchLLVM(c: var LLVMCode; n: var Cursor) =
               while n.hasMore:
                 if n.substructureKind == RangeU:
                   n.into:
+                    let rangeInfo = n.info
                     var lo = LLValue(); genExprLLVM(c, n, lo)
                     var hi = LLValue(); genExprLLVM(c, n, hi)
-                    branch.values.add disp(lo)
+                    if lo.kind == llvInt and hi.kind == llvInt:
+                      let loN = parseInt(lo.intText)
+                      let hiN = parseInt(hi.intText)
+                      let span = hiN - loN + 1
+                      if span >= 0 and span <= RangeExpandThreshold:
+                        # small dense literal range: expand per value to keep switch jump-table
+                        var v = loN
+                        while v <= hiN:
+                          branch.values.add llIntTextC($v, switchVal.typ)
+                          inc v
+                      else:
+                        # large range: short-circuit via range-check
+                        emitRangeCheck(c, rangeInfo, switchVal,
+                          llIntTextC(lo.intText, switchVal.typ),
+                          llIntTextC(hi.intText, switchVal.typ),
+                          switchTK, branch.label)
+                    else:
+                      # non-literal range: must range-check (old code dropped hi)
+                      emitRangeCheck(c, rangeInfo, switchVal, lo, hi,
+                        switchTK, branch.label)
                     while n.hasMore: skip n
                 else:
                   var val = LLValue(); genExprLLVM(c, n, val)
-                  branch.values.add disp(val)
+                  branch.values.add val
               while n.hasMore: skip n
           branches.add branch
           skip n
@@ -236,11 +282,13 @@ proc genSwitchLLVM(c: var LLVMCode; n: var Cursor) =
       else:
         error c.m, "`case` expects `of` or `else` but got: ", n
 
+    # branch.values holds only per-value entries (single values + expanded
+    # small ranges); range-checked ranges short-circuit above, not here.
     var cases: seq[(LLValue, string)] = @[]
     for branch in branches:
       for v in branch.values:
-        cases.add (llIntTextC(v, switchVal.typ), branch.label)
-    c.emit LLInstr(kind: llSwitch, switchValType: serialize(switchVal.typ),
+        cases.add (v, branch.label)
+    c.emit LLInstr(kind: llSwitch, switchValType: switchVal.typ,
                    switchVal: switchVal, switchDefault: defaultLabel,
                    switchCases: cases)
 
@@ -406,20 +454,20 @@ proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
 
   let aggTyp = LLType(kind: llStruct,
       structFields: @[LLStructField(typ: typ), LLStructField(typ: c.prim.i1)])
-  let aggText = "{ " & serialize(typ) & ", i1 }"
   let rs = c.nextTemp()
   let rsRes = llReg(rs, aggTyp)
-  c.emit LLInstr(kind: llCall, result: rsRes, callCallee: "@" & intrinsic,
+  c.emit LLInstr(kind: llCall, result: rsRes,
+                 callCallee: llGlobalRef(intrinsic, c.prim.ptrT),
                  callRetType: aggTyp, callArgs: @[lhs, rhs])
   let resultVal = c.nextTemp()
   let rvRes = llReg(resultVal, typ)
   c.emit LLInstr(kind: llExtractValue, result: rvRes, evAggregate: rsRes,
-                 evAggType: aggText, evIndex: 0)
+                 evAggType: aggTyp, evIndex: 0)
   c.emitStore(rvRes, target)
   let ovfFlag = c.nextTemp()
   let ovfRes = llReg(ovfFlag, c.prim.i1)
   c.emit LLInstr(kind: llExtractValue, result: ovfRes, evAggregate: rsRes,
-                 evAggType: aggText, evIndex: 1)
+                 evAggType: aggTyp, evIndex: 1)
   let currentOvf = c.emitLoad(llGlobalRef("LENGC_OVF_", c.prim.ptrT), c.prim.i8)
   let currentOvfBool = c.nextTemp()
   let cobRes = llReg(currentOvfBool, c.prim.i1)
@@ -436,10 +484,8 @@ proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
                  castDstType: c.prim.i8)
   c.emitStore(nobRes, llGlobalRef("LENGC_OVF_", c.prim.ptrT))
 
-  let s = serialize(typ)
-  let declStr = "declare { " & s & ", i1 } @" & intrinsic & "(" &
-      s & ", " & s & ")"
-  declareExtern(c, declStr, intrinsic)
+  declareExtern(c, LLExternDecl(name: intrinsic, retType: aggTyp,
+      params: @[typ, typ]))
 
 proc genEmitStmtLLVM(c: var LLVMCode; n: var Cursor) =
   n.into:
@@ -565,11 +611,12 @@ proc genStmtLLVM(c: var LLVMCode; n: var Cursor) =
         var raiseVal = LLValue(); genExprLLVM(c, n, raiseVal)
       else:
         inc n
-      c.emit LLInstr(kind: llCall, callCallee: "@llvm.trap",
+      c.emit LLInstr(kind: llCall, callCallee: llGlobalRef("llvm.trap", c.prim.ptrT),
                      callRetType: c.prim.voidT, callArgs: @[])
       c.emit LLInstr(kind: llUnreachable)
       c.currentProc.needsTerminator = true
-      declareExtern(c, "declare void @llvm.trap() noreturn nounwind", "llvm.trap")
+      declareExtern(c, LLExternDecl(name: "llvm.trap",
+          raw: "declare void @llvm.trap() noreturn nounwind"))
       while n.hasMore: skip n
   of OnerrS:
     var onErrAction = n
