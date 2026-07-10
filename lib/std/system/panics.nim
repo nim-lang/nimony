@@ -9,19 +9,22 @@ when defined(nimNativeIo):
     const STD_ERROR_HANDLE = 0xFFFFFFF4'u32   # (DWORD)-12
     proc cGetStdHandle(nStdHandle: uint32): WinHandle {.stdcall,
       importc: "GetStdHandle", header: "<windows.h>".}
+    # `lpNumberOfBytesWritten` is a `LPDWORD` (i.e. `unsigned long*`). Use
+    # `culong` for the out-param so the generated pointer type matches exactly;
+    # `NU32*` (`unsigned int*`) is a hard error under the newer mingw headers.
     proc cWriteErrFile(h: WinHandle; buf: pointer; n: uint32;
-                       written: ptr uint32; overlapped: pointer): int32 {.
+                       written: ptr culong; overlapped: pointer): int32 {.
       stdcall, importc: "WriteFile", header: "<windows.h>".}
 
     proc writeErr(s: string) =
-      var written: uint32 = 0
+      var written: culong = 0
       discard cWriteErrFile(cGetStdHandle(STD_ERROR_HANDLE), readRawData(s),
                             s.len.uint32, addr written, nil)
     proc writeErr(s: cstring) =
       var n = 0
       let p = cast[ptr UncheckedArray[char]](s)
       while p[n] != '\0': inc n
-      var written: uint32 = 0
+      var written: culong = 0
       discard cWriteErrFile(cGetStdHandle(STD_ERROR_HANDLE), p, n.uint32,
                             addr written, nil)
     proc writeErr(x: int64) = writeErr($x)
