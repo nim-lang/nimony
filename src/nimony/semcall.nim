@@ -1169,6 +1169,31 @@ proc atHasTypeArgs(c: var SemContext; n: Cursor): bool =
     return typeKind(n) != NoType
   false
 
+proc symchoiceHasRoutine(n: Cursor): bool =
+  ## True when an overload set contains at least one routine symbol.
+  var n = n
+  if n.exprKind in {OchoiceX, CchoiceX}:
+    inc n
+  var nested = 0
+  while true:
+    case n.kind
+    of ParLe:
+      if n.exprKind in {CchoiceX, OchoiceX}:
+        inc nested
+      inc n
+    of ParRi:
+      dec nested
+      inc n
+    of Symbol:
+      let res = tryLoadSym(n.symId)
+      if res.status == LacksNothing and isRoutine(res.decl.symKind):
+        return true
+      inc n
+    else:
+      inc n
+    if nested == 0 and (n.kind == ParRi or not n.hasMore): break
+  false
+
 proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall) =
   var cs = CallState(
     beforeCall: dest.len,
@@ -1200,6 +1225,12 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       if isRoutine(res.decl.symKind) and isGeneric(asRoutine(res.decl)):
         treatAsGenericInst = true
     if not treatAsGenericInst and lhs.kind != TypeY and atHasTypeArgs(c, cs.fn.n):
+      treatAsGenericInst = true
+    if not treatAsGenericInst and lhs.n.exprKind in {OchoiceX, CchoiceX} and
+        cs.fn.n.hasMore and symchoiceHasRoutine(lhs.n):
+      # `name[R, C, T](...)` with a module/proc name clash: multiple generic
+      # overloads can share the same type parameters. Route through ordinary call
+      # overload resolution instead of rewriting to a module subscript.
       treatAsGenericInst = true
     if treatAsGenericInst:
       cs.hasGenericArgs = true
