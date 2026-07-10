@@ -1479,6 +1479,86 @@ proc buildNimonyToolchain(showProgress = false) =
   buildNimony(showProgress)
   buildHexer(showProgress)
 
+proc runNativeCodegenTests*(dir: string; overwrite: bool) =
+  ## Custom runner for `tests/nativecg`: a golden suite over the C-free native
+  ## backend's *emitted machine code*. For each `.nim` it
+  ##   1. compiles with `nimony n --opt:speed` (so the shoggoth inliner/optimizer
+  ##      that feeds the native path actually runs),
+  ##   2. goldens arkham's `<main>.asm.nif` (the typed assembler NIF) against a
+  ##      checked-in `<test>.asm.nif`, and
+  ##   3. runs the linked libc-free ELF, checking `.output` / `.exitcode`.
+  ##
+  ## The asm-NIF is byte-stable for a fixed *relative* test path — module
+  ## suffixes are derived from the relative path, and a module's own symbols
+  ## carry no suffix — so the golden is portable across checkouts/machines as
+  ## long as hastur is invoked from the repo root (which it always is). No
+  ## normalization is needed.
+  ##
+  ## Requires the sibling `../nativenif` checkout (arkham/nifasm), exactly like
+  ## the `native` subcommand; the directory is `hastur.mode = skip` so the
+  ## default `all` sweep leaves this opt-in.
+  if not skipBuild:
+    buildNimony()
+    buildHexer()
+    buildShoggoth()
+    buildArkham()
+    buildNifasm()
+  let t0 = epochTime()
+  var c = TestCounters(total: 0, failures: 0)
+  var files: seq[string] = @[]
+  for x in walkDir(dir):
+    if x.kind == pcFile and x.path.endsWith(".nim") and
+       x.path.extractFilename != "setup.nim":   # the runner itself, not a test
+      files.add x.path
+  sort files
+  for file in files:
+    let msgs = file.changeFileExt(".msgs")
+    if msgs.fileExists() and readFile(msgs).contains(ErrorKeyword):
+      continue                              # negative test: not a codegen case
+    inc c.total
+    let cacheArg =
+      if nimcacheDir != "nimcache": "--nimcache:" & quoteShell(nimcacheDir) & " "
+      else: ""
+    let (compilerOutput, compilerExitCode) =
+      execLocal("nimony",
+        "n --opt:speed --silentMake --isMain " & cacheArg & quoteShell(file))
+    if compilerExitCode != 0:
+      failure c, file, "native compiler exitcode 0",
+        removeMakeErrors(compilerOutput) & "\nexitcode " & $compilerExitCode
+      continue
+    # 1) Golden arkham's assembler NIF for the main module.
+    let asmFile = generatedFile(file, ".asm.nif")
+    if not asmFile.fileExists():
+      failure c, file, "arkham asm.nif", "missing: " & asmFile
+      continue
+    diffFiles(c, file, file.changeFileExt(".asm.nif"), asmFile, overwrite)
+    # 2) Behavioural check: the linked ELF must run and match .output/.exitcode.
+    let exe = generatedExeFile(file)
+    if not exe.fileExists():
+      failure c, file, "native executable", "missing: " & exe
+      continue
+    let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
+    var output = file.changeFileExt(".output")
+    if testProgramExitCode != 0:
+      output = file.changeFileExt(".exitcode")
+      if not output.fileExists():
+        failure c, file, "test program exitcode 0",
+          "exitcode " & $testProgramExitCode & "\n" & testProgramOutput
+        continue
+    if output.fileExists():
+      let outputSpec = readFile(output).strip
+      if outputSpec != testProgramOutput.strip:
+        if overwrite:
+          writeFile(output, testProgramOutput)
+        failure c, file, outputSpec, testProgramOutput
+  echo c.total - c.failures, " / ", c.total,
+    " native-codegen tests successful in ",
+    formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if c.failures > 0:
+    quit "FAILURE: Some native-codegen tests failed."
+  else:
+    echo "SUCCESS."
+
 # ---- deterministic self-host bootstrap ------------------------------------
 # `bin0/` is a fresh copy of the host-Nim-built toolchain in `bin/`; `binN/`
 # (N >= 1) is `binN-1/`'s nimony recompiling all three self-tools from
