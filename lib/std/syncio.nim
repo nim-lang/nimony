@@ -26,7 +26,7 @@ type
     fspSet               ## Seek to absolute value
     fspCur               ## Seek relative to current position
     fspEnd               ## Seek relative to end
-  
+
   FilePermission* = enum   ## File access permission, modelled after UNIX.
     fpUserExec,            ## execute access for the file owner
     fpUserWrite,           ## write access for the file owner
@@ -133,7 +133,7 @@ when defined(nimNativeIo):
     # --- raw syscall wrappers (arkham lowers these to `syscall` instructions) -
     proc sysWrite(fd: OsFileHandle; buf: pointer; n: uint): int {.importc: "write".}
     proc sysRead(fd: OsFileHandle; buf: pointer; n: uint): int {.importc: "read".}
-    proc sysOpen(path: cstring; flags, mode: cint): cint {.importc: "open".}
+    proc sysOpen(path: cstring; flags: cint): cint {.varargs, importc: "open".}
     proc sysClose(fd: OsFileHandle): cint {.importc: "close".}
     proc sysLseek(fd: OsFileHandle; offset: int64; whence: cint): int64 {.importc: "lseek".}
 
