@@ -212,7 +212,7 @@ proc emitRangeCheck(c: var LLVMCode; info: NifLineInfo; switchVal, lo, hi: LLVal
   c.emit LLInstr(kind: llIcmp, result: hiOk, icmpPred: predHi,
                  icmpLhs: switchVal, icmpRhs: hi)
   let inRange = llReg(c.nextTemp(), c.prim.i1)
-  c.emit LLInstr(kind: llAnd, result: inRange, binOp: "and",
+  c.emit LLInstr(kind: llBinOp, result: inRange, binOp: "and",
                  binLhs: loOk, binRhs: hiOk)
   let nextChk = c.nextLabel()
   c.emit LLInstr(kind: llCondBr, condBrCond: inRange,
@@ -476,7 +476,7 @@ proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
                  icmpLhs: currentOvf, icmpRhs: llIntTextC("0", c.prim.i8))
   let combinedOvf = c.nextTemp()
   let coRes = llReg(combinedOvf, c.prim.i1)
-  c.emit LLInstr(kind: llOr, result: coRes, binOp: "or", binLhs: cobRes,
+  c.emit LLInstr(kind: llBinOp, result: coRes, binOp: "or", binLhs: cobRes,
       binRhs: ovfRes)
   let newOvfByte = c.nextTemp()
   let nobRes = llReg(newOvfByte, c.prim.i8)

@@ -133,8 +133,7 @@ proc serialize*(i: LLInstr; result: var string) =
   ## Append a single instruction WITHOUT leading indentation or trailing
   ## newline. The caller adds those.
   case i.kind
-  of llAdd, llSub, llMul, llSDiv, llUDiv, llSRem, llURem,
-     llShl, llAShr, llLShr, llAnd, llOr, llXor:
+  of llBinOp:
     resultPrefix(i, result)
     let isFloat = i.binLhs.typ != nil and i.binLhs.typ.kind == llFloat
     result.add (if isFloat: floatBinOpName(i.binOp) else: i.binOp)
