@@ -10,6 +10,8 @@
 # included from llvmcodegen.nim
 # Generates LLVM IR for statements.
 
+const RangeExpandThreshold = 32 # values <= this with literal lo/hi expand per-value; otherwise range-check
+
 type
   CaseBranch = object
     ## Used by genSwitchLLVM. Declared at module scope rather than inside
@@ -196,8 +198,32 @@ proc genLoopLLVM(c: var LLVMCode; n: var Cursor) =
     discard c.startBlock(endLabel)
     while n.hasMore: skip n
 
+proc emitRangeCheck(c: var LLVMCode; info: NifLineInfo; switchVal, lo, hi: LLValue;
+                    switchTK: LengType; branchLabel: string) =
+  ## Lowers a range to a `switchVal in [lo,hi]` condbr (LLVM switch has no range case);
+  ## opens a fresh block for the next range-check or the switch.
+  let predLo = if switchTK in {UT, CT, BoolT}: "uge" else: "sge"
+  let predHi = if switchTK in {UT, CT, BoolT}: "ule" else: "sle"
+  c.setLoc(info)
+  let loOk = llReg(c.nextTemp(), c.prim.i1)
+  c.emit LLInstr(kind: llIcmp, result: loOk, icmpPred: predLo,
+                 icmpLhs: switchVal, icmpRhs: lo)
+  let hiOk = llReg(c.nextTemp(), c.prim.i1)
+  c.emit LLInstr(kind: llIcmp, result: hiOk, icmpPred: predHi,
+                 icmpLhs: switchVal, icmpRhs: hi)
+  let inRange = llReg(c.nextTemp(), c.prim.i1)
+  c.emit LLInstr(kind: llAnd, result: inRange, binOp: "and",
+                 binLhs: loOk, binRhs: hiOk)
+  let nextChk = c.nextLabel()
+  c.emit LLInstr(kind: llCondBr, condBrCond: inRange,
+                 condBrTrue: branchLabel, condBrFalse: nextChk)
+  discard c.startBlock(nextChk)
+
 proc genSwitchLLVM(c: var LLVMCode; n: var Cursor) =
   n.into:
+    let switchExpr = n
+    let switchSrcType = getType(c.m, switchExpr)
+    let switchTK = scalarTypeKind(c, switchSrcType)
     var switchVal = LLValue(); genExprLLVM(c, n, switchVal)
     let endLabel = c.nextLabel()
     var defaultLabel = endLabel
@@ -216,17 +242,29 @@ proc genSwitchLLVM(c: var LLVMCode; n: var Cursor) =
               while n.hasMore:
                 if n.substructureKind == RangeU:
                   n.into:
+                    let rangeInfo = n.info
                     var lo = LLValue(); genExprLLVM(c, n, lo)
                     var hi = LLValue(); genExprLLVM(c, n, hi)
-                    # LLVM switch has no ranges: expand to one case per value.
                     if lo.kind == llvInt and hi.kind == llvInt:
-                      var v = parseInt(lo.intText)
-                      let hiBound = parseInt(hi.intText)
-                      while v <= hiBound:
-                        branch.values.add llIntTextC($v, switchVal.typ)
-                        inc v
+                      let loN = parseInt(lo.intText)
+                      let hiN = parseInt(hi.intText)
+                      let span = hiN - loN + 1
+                      if span >= 0 and span <= RangeExpandThreshold:
+                        # small dense literal range: expand per value to keep switch jump-table
+                        var v = loN
+                        while v <= hiN:
+                          branch.values.add llIntTextC($v, switchVal.typ)
+                          inc v
+                      else:
+                        # large range: short-circuit via range-check
+                        emitRangeCheck(c, rangeInfo, switchVal,
+                          llIntTextC(lo.intText, switchVal.typ),
+                          llIntTextC(hi.intText, switchVal.typ),
+                          switchTK, branch.label)
                     else:
-                      branch.values.add lo
+                      # non-literal range: must range-check (old code dropped hi)
+                      emitRangeCheck(c, rangeInfo, switchVal, lo, hi,
+                        switchTK, branch.label)
                     while n.hasMore: skip n
                 else:
                   var val = LLValue(); genExprLLVM(c, n, val)
@@ -244,6 +282,8 @@ proc genSwitchLLVM(c: var LLVMCode; n: var Cursor) =
       else:
         error c.m, "`case` expects `of` or `else` but got: ", n
 
+    # branch.values holds only per-value entries (single values + expanded
+    # small ranges); range-checked ranges short-circuit above, not here.
     var cases: seq[(LLValue, string)] = @[]
     for branch in branches:
       for v in branch.values:

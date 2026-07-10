@@ -279,15 +279,14 @@ proc serialize*(i: LLInstr; result: var string) =
     result.add " "
     serializeUnqualified(i.switchVal, result)
     result.add ", label %" & i.switchDefault
-    if i.switchCases.len > 0:
-      result.add " [\n"
-      for (cv, label) in i.switchCases:
-        result.add "    "
-        serialize(i.switchValType, result)
-        result.add " "
-        serializeUnqualified(cv, result)
-        result.add ", label %" & label & "\n"
-      result.add "  ]"
+    result.add " [\n"
+    for (cv, label) in i.switchCases:
+      result.add "    "
+      serialize(i.switchValType, result)
+      result.add " "
+      serializeUnqualified(cv, result)
+      result.add ", label %" & label & "\n"
+    result.add "  ]"
   of llUnreachable:
     result.add "unreachable"
   of llAtomicrmw:
