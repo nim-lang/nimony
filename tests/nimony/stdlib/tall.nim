@@ -32,6 +32,7 @@ import std/rawthreads
 import std/rlocks
 import std/sets
 import std/setutils
+import std/smartcli
 import std/strutils
 import std/syncio
 import std/system
