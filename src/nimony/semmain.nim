@@ -420,6 +420,8 @@ proc reorderInnerGenericInstances(c: SemContext; dest: var TokenBuf) =
     else:
       inc i
 
+func hasPendingPlugins(c: SemContext): bool {.inline.} = c.pendingTypePlugins.len != 0 or c.pendingModulePlugins.len != 0
+
 proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), kind: ToplevelScope)
 
@@ -459,8 +461,11 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     var afterSem = move dest
     if c.genericInnerProcs.len > 0:
       reorderInnerGenericInstances(c, afterSem)
-    var finalBuf = beginRead afterSem
-    dest = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
+    if c.hasPendingPlugins:
+      dest = move afterSem
+    else:
+      var finalBuf = beginRead afterSem
+      dest = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
     when true: #defined(enableContracts):
       var moreErrors = analyzeContractsFinalIr(dest, c.thisModuleSuffix, c.g.config.verbose)
       if reporters.reportErrors(moreErrors) > 0:
@@ -542,8 +547,11 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
         quit 1
     if c.genericInnerProcs.len > 0:
       reorderInnerGenericInstances(c, afterSem)
-    var finalBuf = beginRead afterSem
-    dest = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
+    if c.hasPendingPlugins:
+      dest = move afterSem
+    else:
+      var finalBuf = beginRead afterSem
+      dest = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
   else:
     quit 1
 
@@ -665,7 +673,7 @@ proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFla
 
   while true:
     semcheckCore c, dest, n0
-    if c.pendingTypePlugins.len == 0 and c.pendingModulePlugins.len == 0: break
+    if not c.hasPendingPlugins: break
     handleTypePlugins c, dest
 
   if reportErrors(dest) == 0:
