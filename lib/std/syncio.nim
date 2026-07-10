@@ -121,6 +121,11 @@ when defined(nimNativeIo):
     proc newFile(fd: OsFileHandle; flags: set[FileFlag]): File =
       File(fd: fd, flags: flags)
 
+    proc getFileHandle*(f: File): Handle {.inline.} =
+      ## The underlying Win32 handle (libc-free build). Used e.g. by
+      ## `std/terminal`'s `isatty`, which has no `_fileno`/`FILE*` to go through.
+      f.fd
+
     let
       stdin* = newFile(getStdHandle(STD_INPUT_HANDLE), {ffReadable})
         ## Standard input file handle.
