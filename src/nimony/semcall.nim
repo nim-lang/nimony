@@ -1187,7 +1187,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     inc cs.fn.n # skip tag
     var lhsBuf = createTokenBuf(4)
     var lhs = Item(n: cs.fn.n, typ: c.types.autoType)
-    semExpr c, lhsBuf, lhs, {KeepMagics, AllowUndeclared} # don't consider all overloads
+    semExpr c, lhsBuf, lhs, {KeepMagics, AllowUndeclared, AllowOverloads}
     cs.fn.n = lhs.n
     lhs.n = cursorAt(lhsBuf, 0)
     var maybeRoutine = lhs.n

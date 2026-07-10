@@ -4395,6 +4395,10 @@ proc tryExplicitRoutineInst(c: var SemContext; dest: var TokenBuf; syms: Cursor;
       inc syms
     of Symbol:
       let sym = syms.symId
+      let res = tryLoadSym(sym)
+      if res.status != LacksNothing or not isRoutine(res.decl.symKind):
+        inc syms
+        continue
       let routine = getProcDecl(sym)
       let candidate = FnCandidate(kind: routine.kind, sym: sym, typ: routine.params)
       var m = createMatch(addr c)
@@ -4457,13 +4461,15 @@ proc tryBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lh
     semLocalTypeExpr c, dest, typeItem
     it.typ = typeItem.typ
     return true
-  var maybeRoutine = lhs.n
-  if maybeRoutine.exprKind in {OchoiceX, CchoiceX}:
-    inc maybeRoutine
-  if maybeRoutine.kind == Symbol:
-    let res = tryLoadSym(maybeRoutine.symId)
+  if lhs.n.exprKind in {OchoiceX, CchoiceX}:
+    # A name can denote both a module and generic routines (e.g. `import foo`
+    # with `proc foo`). Prefer explicit routine instantiation over subscripting
+    # the module symbol.
+    result = tryExplicitRoutineInst(c, dest, lhs.n, it)
+    if result: return
+  elif lhs.n.kind == Symbol:
+    let res = tryLoadSym(lhs.n.symId)
     if res.status == LacksNothing and isRoutine(res.decl.symKind):
-      # check for explicit generic routine instantiation
       result = tryExplicitRoutineInst(c, dest, lhs.n, it)
       if result: return
 
