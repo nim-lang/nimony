@@ -66,8 +66,8 @@ proc compatVarargsElem(paramType: Cursor): Cursor =
     result = default(Cursor)
   else:
     var elem = paramType
-    inc elem
-    if elem.kind == ParRi:
+    discard enterScope(elem)
+    if not elem.hasMore:
       result = default(Cursor)
     else:
       result = elem
@@ -110,13 +110,13 @@ proc compatToOpenArrayTypevars(): (SymId, SymId) =
     let routine = asRoutine(res.decl)
     var tv = routine.typevars
     if tv.substructureKind == TypevarsU:
-      inc tv
-      if tv.kind == ParLe and tv.symKind == TypevarY:
+      discard enterScope(tv)
+      if tv.hasMore and tv.kind == ParLe and tv.symKind == TypevarY:
         var inner = tv
         inc inner
         result[0] = inner.symId
         skip tv
-      if tv.kind == ParLe and tv.symKind == TypevarY:
+      if tv.hasMore and tv.kind == ParLe and tv.symKind == TypevarY:
         var inner = tv
         inc inner
         result[1] = inner.symId
@@ -135,7 +135,7 @@ proc compatAnnotateVarargsParam*(c: var SemContext; dest: var TokenBuf;
   else:
     let info = typeCursor.info
     var elem = typeCursor
-    inc elem
+    discard enterScope(elem)
     if elem.hasMore:
       # Capture children of the original `(varargs …)` into a fresh buffer so
       # the in-place `replace` can read its source without aliasing `dest`.

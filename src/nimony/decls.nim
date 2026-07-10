@@ -118,23 +118,31 @@ proc takeLocal*(c: var Cursor; mode: SkipMode): Local =
   let kind = symKind c
   result = Local(kind: kind)
   if isLocal(kind):
-    inc c
-    result.name = c
-    skip c
-    result.exported = c
-    skip c
-    result.pragmas = c
-    skip c
-    result.typ = c
-    if mode >= SkipInclBody:
+    if mode == SkipFinalParRi:
+      c.into:
+        result.name = c
+        skip c
+        result.exported = c
+        skip c
+        result.pragmas = c
+        skip c
+        result.typ = c
+        skip c
+        result.val = c
+        skip c
+    else:
+      inc c
+      result.name = c
       skip c
-      result.val = c
+      result.exported = c
       skip c
-      if mode == SkipFinalParRi:
-        if c.kind == ParRi:
-          inc c
-        else:
-          bug "expected ')' inside (" & $result.kind
+      result.pragmas = c
+      skip c
+      result.typ = c
+      if mode >= SkipInclBody:
+        skip c
+        result.val = c
+        skip c
 
 proc asLocal*(c: Cursor; mode = SkipInclBody): Local =
   var c = c
@@ -163,31 +171,47 @@ proc takeRoutine*(c: var Cursor; mode: SkipMode): Routine =
   let kind = symKind c
   result = Routine(kind: kind)
   if isRoutine(kind):
-    inc c
-    result.name = c
-    skip c
-    result.exported = c
-    skip c
-    result.pattern = c
-    skip c
-    result.typevars = c
-    skip c
-    result.params = c
-    skip c
-    result.retType = c
-    skip c
-    result.pragmas = c
-    skip c
-    result.effects = c
-    if mode >= SkipInclBody:
+    if mode == SkipFinalParRi:
+      c.into:
+        result.name = c
+        skip c
+        result.exported = c
+        skip c
+        result.pattern = c
+        skip c
+        result.typevars = c
+        skip c
+        result.params = c
+        skip c
+        result.retType = c
+        skip c
+        result.pragmas = c
+        skip c
+        result.effects = c
+        skip c
+        result.body = c
+        skip c
+    else:
+      inc c
+      result.name = c
       skip c
-      result.body = c
+      result.exported = c
       skip c
-      if mode == SkipFinalParRi:
-        if c.kind == ParRi:
-          inc c
-        else:
-          bug "expected ')' inside (" & $result.kind
+      result.pattern = c
+      skip c
+      result.typevars = c
+      skip c
+      result.params = c
+      skip c
+      result.retType = c
+      skip c
+      result.pragmas = c
+      skip c
+      result.effects = c
+      if mode >= SkipInclBody:
+        skip c
+        result.body = c
+        skip c
 
 const
   TypevarsPos* = 3
@@ -216,23 +240,30 @@ proc takeTypeDecl*(c: var Cursor; mode: SkipMode): TypeDecl =
   let kind = symKind c
   result = TypeDecl(kind: kind)
   if kind == TypeY:
-    inc c
-    result.name = c
-    skip c
-    result.exported = c
-    skip c
-    result.typevars = c
-    skip c
-    result.pragmas = c
-    if mode >= SkipInclBody:
-      skip c
-      result.body = c
-      if mode == SkipFinalParRi:
+    if mode == SkipFinalParRi:
+      c.into:
+        result.name = c
         skip c
-        if c.kind == ParRi:
-          inc c
-        else:
-          bug "expected ')' inside (" & $result.kind
+        result.exported = c
+        skip c
+        result.typevars = c
+        skip c
+        result.pragmas = c
+        skip c
+        result.body = c
+        skip c
+    else:
+      inc c
+      result.name = c
+      skip c
+      result.exported = c
+      skip c
+      result.typevars = c
+      skip c
+      result.pragmas = c
+      if mode >= SkipInclBody:
+        skip c
+        result.body = c
 
 proc asTypeDecl*(c: Cursor): TypeDecl =
   var c = c
@@ -257,16 +288,22 @@ proc asObjectDecl*(c: Cursor): ObjectDecl =
 
 type ObjFieldIter* = object
   nested: int
+  scopes: seq[CursorScope]
 
 proc initObjFieldIter*(): ObjFieldIter =
   result = ObjFieldIter(nested: 1)
 
 proc nextField*(iter: var ObjFieldIter, n: var Cursor, keepCase = false): bool =
+  ## Resumable walk over an object body's fields. The caller must have
+  ## entered the object scope (e.g. via `into`/`peekInto`) so that the
+  ## outermost scope is bounded; nested case/when/of scopes are managed
+  ## here via `enterScope`/`leaveScope`.
   result = false
   while iter.nested != 0:
-    if n.kind == ParRi:
+    if not n.hasMore:
       dec iter.nested
-      if iter.nested != 0: inc n
+      if iter.nested != 0:
+        leaveScope(n, iter.scopes.pop())
     else:
       case n.substructureKind
       of CaseU:
@@ -275,13 +312,13 @@ proc nextField*(iter: var ObjFieldIter, n: var Cursor, keepCase = false): bool =
           break
         else:
           inc iter.nested
-          inc n
+          iter.scopes.add enterScope(n)
       of WhenU, StmtsU, NilU, ElseU:
         inc iter.nested
-        inc n
+        iter.scopes.add enterScope(n)
       of ElifU, OfU:
         inc iter.nested
-        inc n
+        iter.scopes.add enterScope(n)
         skip n
       of FldU, GfldU:
         result = true

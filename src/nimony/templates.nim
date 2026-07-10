@@ -30,77 +30,73 @@ type
 
 proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
                         e: var ExpansionContext; body: Cursor) =
-  var nested = 0
+  ## Expands a single tree/token of the template body into `dest`.
   var body = body
-  let isAtom = body.kind != ParLe
-  while true:
-    case body.kind
-    of UnknownToken, EofToken, DotToken, Ident:
-      dest.add body
-    of Symbol:
-      let s = body.symId
-      let arg = e.formalParams.getOrDefault(s)
-      if arg != default(Cursor):
-        dest.addSubtree arg
+  case body.kind
+  of UnknownToken, EofToken, DotToken, Ident:
+    dest.add body
+  of Symbol:
+    let s = body.symId
+    let arg = e.formalParams.getOrDefault(s)
+    if arg != default(Cursor):
+      dest.addSubtree arg
+    else:
+      let nv = e.newVars.getOrDefault(s)
+      if nv != SymId(0):
+        dest.add symToken(nv, body.info)
       else:
-        let nv = e.newVars.getOrDefault(s)
-        if nv != SymId(0):
-          dest.add symToken(nv, body.info)
+        let tv = e.inferred[].getOrDefault(s)
+        if tv != default(Cursor):
+          dest.addSubtree tv
         else:
-          let tv = e.inferred[].getOrDefault(s)
-          if tv != default(Cursor):
-            dest.addSubtree tv
-          else:
-            dest.add body # keep Symbol as it was
-    of SymbolDef:
-      let s = body.symId
-      let newDef = newSymId(c, s)
-      e.newVars[s] = newDef
-      dest.add symdefToken(newDef, body.info)
-    of StringLit, CharLit, IntLit, UIntLit, FloatLit:
+          dest.add body # keep Symbol as it was
+  of SymbolDef:
+    let s = body.symId
+    let newDef = newSymId(c, s)
+    e.newVars[s] = newDef
+    dest.add symdefToken(newDef, body.info)
+  of StringLit, CharLit, IntLit, UIntLit, FloatLit:
+    dest.add body
+  of ParLe:
+    let forStmt = asForStmt(body)
+    if forStmt.kind == ForS and forStmt.iter.exprKind == UnpackX:
+      # the loop body is expanded once per matched vararg; the `(for …)`
+      # tree itself produces no output
+      assert forStmt.vars.substructureKind == UnpackflatU
+      var arg = e.firstVarargMatch
+      var fv = forStmt.vars
+      inc fv
+      inc fv
+      let vid = fv.symId
+      if arg.kind notin {DotToken, ParRi}:
+        while arg.hasMore:
+          e.formalParams[vid] = arg
+          expandTemplateImpl c, dest, e, forStmt.body
+          skip arg
+    elif body.exprKind == UnpackX:
+      var un = body
+      discard enterScope(un) # bounded: `kind` is ParRi for a bare `unpack()`
+      var arg = e.firstVarargMatch
+      if un.kind == ParRi:
+        # `unpack()` variant:
+        while arg.hasMore:
+          dest.takeTree arg
+      else:
+        # `unpack(fn)` variant:
+        while arg.hasMore:
+          dest.addParLe CallX, arg.info
+          dest.copyTree un # fn
+          dest.takeTree arg
+          dest.addParRi()
+    else:
       dest.add body
-    of ParLe:
-      let forStmt = asForStmt(body)
-      if forStmt.kind == ForS and forStmt.iter.exprKind == UnpackX:
-        assert forStmt.vars.substructureKind == UnpackflatU
-        var arg = e.firstVarargMatch
-        var fv = forStmt.vars
-        inc fv
-        inc fv
-        let vid = fv.symId
-        if arg.kind notin {DotToken, ParRi}:
-          while arg.hasMore:
-            e.formalParams[vid] = arg
-            expandTemplateImpl c, dest, e, forStmt.body
-            skip arg
-
-        skip body
-        unsafeDec body
-      elif body.exprKind == UnpackX:
-        inc body
-        var arg = e.firstVarargMatch
-        if body.kind == ParRi:
-          # `unpack()` variant:
-          while arg.hasMore:
-            dest.takeTree arg
-        else:
-          # `unpack(fn)` variant:
-          while arg.hasMore:
-            dest.addParLe CallX, arg.info
-            dest.copyTree body # fn
-            dest.takeTree arg
-            dest.addParRi()
+      body.into:
+        while body.hasMore:
+          expandTemplateImpl c, dest, e, body
           skip body
-          unsafeDec body
-      else:
-        dest.add body
-        inc nested
-    of ParRi:
-      dest.add body
-      dec nested
-      if nested == 0: break
-    if isAtom: break
-    inc body
+        dest.addParRi(body.endInfo)
+  of ParRi:
+    discard "cannot happen: subtree ends are consumed by the bounded scope"
 
 proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cursor): bool =
   result = false

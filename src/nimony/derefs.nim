@@ -477,15 +477,12 @@ proc trProcDecl(c: var Context; n: var Cursor) =
     takeParRi c, n
   else:
     var body = n
+    let bodyStart = c.dest.len
     tr c, n, c.r.returnExpects
     if c.r.dangerousLocations.len > 0:
-      # NOTE(nifcore port): reopens the body `(stmts)` just emitted by `tr` to
-      # append the deferred dangerous-location checks. Relies on the closing `)`
-      # being the last physical token in `c.dest`. Under virtual ParRi that token
-      # is elided (folded into the matching ParLe's jump field), so `len - 1`
-      # no longer points at it. Rework before flipping `-d:virtualParRi`: have
-      # `tr` leave the body open, or rebuild the stmts subtree explicitly.
-      c.dest.shrink c.dest.len - 1
+      # reopen the body `(stmts)` just emitted by `tr` to append the
+      # deferred dangerous-location checks:
+      c.dest.reopenLastTree bodyStart
       checkForDangerousLocations c, body
       c.dest.addParRi()
     takeParRi c, n

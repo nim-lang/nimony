@@ -89,6 +89,26 @@ proc instantiationTypevars(sym: SymId): Cursor =
         result = tv
 
 proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: PackedLineInfo;
+                    thisMod: string)
+
+proc emitTreeAsIdents(buf: var TokenBuf; n: var Cursor; thisMod: string) =
+  ## Copies the subtree at `n`, rewriting every `Symbol` to an ident (or
+  ## `(at ...)` form for instantiations) via `emitSymAsIdent`.
+  case n.kind
+  of Symbol:
+    emitSymAsIdent(buf, n.symId, n.info, thisMod)
+    inc n
+  of ParLe:
+    buf.add n
+    n.into:
+      while n.hasMore:
+        emitTreeAsIdents(buf, n, thisMod)
+    buf.addParRi()
+  else:
+    buf.add n
+    inc n
+
+proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: PackedLineInfo;
                     thisMod: string) =
   ## Strip an instantiated/non-instantiated Symbol to its basename Ident.
   ## For an instantiated Symbol, also emit the surrounding `(at <basename>
@@ -107,32 +127,15 @@ proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: PackedLineInfo;
   if not cursorIsNil(typevars):
     buf.add parLeToken(AtX, info)
     var tv = typevars
-    inc tv # past `invok` tag
-    # Origin sym → recurse (it may also be instantiated, e.g. nested generics).
-    emitSymAsIdent(buf, tv.symId, info, thisMod)
-    inc tv
-    # Type args: each arg is a subtree (may contain Symbols).
-    while tv.hasMore:
-      var argCur = tv
-      var argNested = 0
-      while true:
-        case argCur.kind
-        of Symbol:
-          emitSymAsIdent(buf, argCur.symId, argCur.info, thisMod)
-        of ParLe:
-          buf.add argCur
-          inc argNested
-        of ParRi:
-          buf.add argCur
-          dec argNested
-          if argNested == 0:
-            inc argCur
-            break
-        else:
-          buf.add argCur
-        inc argCur
-        if argNested == 0: break
-      skip tv
+    tv.into: # past `invok` tag
+      # Origin sym → recurse (it may also be instantiated, e.g. nested generics).
+      emitSymAsIdent(buf, tv.symId, info, thisMod)
+      inc tv
+      # Type args: each arg is a subtree (may contain Symbols).
+      while tv.hasMore:
+        var argCur = tv
+        emitTreeAsIdents(buf, argCur, thisMod)
+        skip tv
     buf.addParRi()
     return
   let symStr = pool.syms[sym]
@@ -147,6 +150,38 @@ proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: PackedLineInfo;
   extractBasename basename
   buf.add identToken(pool.strings.getOrIncl(basename), info)
 
+proc rewriteTreeToIdents(newDest: var TokenBuf; n: var Cursor; thisMod: string) =
+  case n.kind
+  of Symbol:
+    emitSymAsIdent(newDest, n.symId, n.info, thisMod)
+    inc n
+  of SymbolDef:
+    # SymbolDefs only appear at decl sites; always strip to basename
+    # so the sub-compile creates fresh decls via re-semchecking.
+    var basename = pool.syms[n.symId]
+    extractBasename basename
+    newDest.add identToken(pool.strings.getOrIncl(basename), n.info)
+    inc n
+  of ParLe:
+    if n.exprKind in {OchoiceX, CchoiceX}:
+      # eliminate the choice: keep only its first alternative, rewritten
+      n.peekInto:
+        if n.kind == Symbol:
+          emitSymAsIdent(newDest, n.symId, n.info, thisMod)
+        else:
+          rewriteTreeToIdents(newDest, n, thisMod)
+    else:
+      newDest.add n
+      n.into:
+        while n.hasMore:
+          rewriteTreeToIdents(newDest, n, thisMod)
+      newDest.addParRi()
+  of ParRi:
+    bug "unpaired ')'"
+  else:
+    newDest.add n
+    inc n
+
 proc rewriteSymsToIdents*(c: var SynthesizeSerializerCtx) =
   ## Convert all Symbols and SymbolDefs to Idents so that the semchecker can resolve them fresh.
   ## Also eliminates choice nodes (ochoice, cchoice) by turning them back to idents.
@@ -156,43 +191,7 @@ proc rewriteSymsToIdents*(c: var SynthesizeSerializerCtx) =
   ## This allows the compiled code to go through the full nimony pipeline.
   var newDest = createTokenBuf(c.dest.len)
   var n = beginRead(c.dest)
-  var nested = 0
-  let thisMod = c.thisModuleSuffix
-  while true:
-    case n.kind
-    of Symbol:
-      emitSymAsIdent(newDest, n.symId, n.info, thisMod)
-      inc n
-    of SymbolDef:
-      # SymbolDefs only appear at decl sites; always strip to basename
-      # so the sub-compile creates fresh decls via re-semchecking.
-      var basename = pool.syms[n.symId]
-      extractBasename basename
-      newDest.add identToken(pool.strings.getOrIncl(basename), n.info)
-      inc n
-    of ParLe:
-      if n.exprKind in {OchoiceX, CchoiceX}:
-        inc n
-        if n.kind == Symbol:
-          emitSymAsIdent(newDest, n.symId, n.info, thisMod)
-          while n.hasMore: skip n
-          consumeParRi n
-        else:
-          newDest.add n
-          inc nested
-          inc n
-      else:
-        newDest.add n
-        inc nested
-        inc n
-    of ParRi:
-      newDest.add n
-      dec nested
-      if nested == 0: break
-      inc n
-    else:
-      newDest.add n
-      inc n
+  rewriteTreeToIdents(newDest, n, c.thisModuleSuffix)
   endRead(c.dest)
   c.dest = ensureMove newDest
 
@@ -307,37 +306,33 @@ proc unravelObjFields(c: var SynthesizeSerializerCtx; n: var Cursor; param: Toke
     case n.substructureKind
     of CaseU:
       let info = n.info
-      inc n
-      var selector = n
-      unravelObjField c, selector, param, needsDeref, depth
+      n.into:
+        var selector = n
+        unravelObjField c, selector, param, needsDeref, depth
 
-      var selectorField = takeLocal(n, SkipFinalParRi)
-      let sel = accessObjField(c, param, selectorField.name, needsDeref)
+        var selectorField = takeLocal(n, SkipFinalParRi)
+        let sel = accessObjField(c, param, selectorField.name, needsDeref)
 
-      c.dest.addParLe CaseU, info
-      c.dest.add sel
+        c.dest.addParLe CaseU, info
+        c.dest.add sel
 
-      while n.hasMore:
-        case n.substructureKind
-        of OfU:
-          c.dest.takeToken(n)
-          c.dest.takeTree(n)
-          assert n.stmtKind == StmtsS
-          c.dest.takeToken(n)
-          unravelObjFields c, n, param, needsDeref, depth
-          takeParRi(c.dest, n)
-          takeParRi(c.dest, n)
-        of ElseU:
-          c.dest.takeToken(n)
-          assert n.stmtKind == StmtsS
-          c.dest.takeToken(n)
-          unravelObjFields c, n, param, needsDeref, depth
-          takeParRi(c.dest, n)
-          takeParRi(c.dest, n)
-        else:
-          error "expected `of` or `else` inside `case`"
+        while n.hasMore:
+          case n.substructureKind
+          of OfU:
+            copyInto c.dest, n:
+              c.dest.takeTree(n)
+              assert n.stmtKind == StmtsS
+              copyInto c.dest, n:
+                unravelObjFields c, n, param, needsDeref, depth
+          of ElseU:
+            copyInto c.dest, n:
+              assert n.stmtKind == StmtsS
+              copyInto c.dest, n:
+                unravelObjFields c, n, param, needsDeref, depth
+          else:
+            error "expected `of` or `else` inside `case`"
 
-      takeParRi(c.dest, n) # end of case
+      c.dest.addParRi() # end of case
 
     of FldU, GfldU:
       unravelObjField c, n, param, needsDeref, depth
@@ -357,7 +352,7 @@ proc unravelObj(c: var SynthesizeSerializerCtx; orig: Cursor; param: TokenBuf; d
   if n.typeKind in {RefT, PtrT}:
     inc n
   assert n.typeKind == ObjectT
-  inc n
+  discard enterScope(n) # bound the field walk; `n` is a copy
   # recurse for the inherited object type, if any:
   if n.kind != DotToken:
     var parent = n
@@ -658,7 +653,8 @@ proc genProcDecl(c: var SynthesizeSerializerCtx; sym: SymId; typ: TypeCursor) =
   c.dest.addParRi() # close ProcS declaration
   # tell vtables.nim we need dynamic binding here:
   if c.routineKind == MethodY:
-    c.dest[procStart] = parLeToken(MethodS, c.info)
+    setTag(c.dest[procStart], TagId(MethodS)) # keeps the sealed jump
+    c.dest[procStart] = withLineInfo(c.dest[procStart], c.info)
 
 proc genMissingProcs*(c: var SynthesizeSerializerCtx) =
   # remember that genProcDecl does mutate c.requests so be robust against that:
@@ -668,25 +664,21 @@ proc genMissingProcs*(c: var SynthesizeSerializerCtx) =
       c.routineKind = ProcY
       genProcDecl(c, reqs[i].sym, reqs[i].typ)
 
+proc collectSymDefsAux(n: var Cursor; defs: var HashSet[SymId]) =
+  if n.kind == ParLe:
+    n.loopInto:
+      collectSymDefsAux(n, defs)
+  else:
+    if n.kind == SymbolDef: defs.incl n.symId
+    inc n
+
 proc collectSymDefs(n: Cursor; defs: var HashSet[SymId]) =
   ## Walks `n` and records every `SymbolDef` token. Used by
   ## `collectUsedSymsFromExpr` to avoid pulling in top-level decls for
   ## symbols that are actually defined inline in the expression itself
   ## (local `var`s, nested procs, etc.).
-  if n.kind != ParLe:
-    if n.kind == SymbolDef: defs.incl n.symId
-  else:
-    var n = n
-    var nested = 0
-    while true:
-      case n.kind
-      of ParRi:
-        dec nested
-        if nested == 0: break
-      of ParLe: inc nested
-      of SymbolDef: defs.incl n.symId
-      else: discard
-      inc n
+  var n = n
+  collectSymDefsAux(n, defs)
 
 proc collectUsedSymsFromExpr(c: var SynthesizeSerializerCtx; s: var SemContext; expr: Cursor) =
   ## Like `collectUsedSyms` but seeded from the symbols referenced *in the

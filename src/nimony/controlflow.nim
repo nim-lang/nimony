@@ -156,34 +156,33 @@ proc trAndValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
   let info = n.info
   var w = makeVar(c, info, tar, c.typeCache.builtins.boolType)
 
-  inc n
-  var aa = Target(m: IsEmpty)
-  trExpr c, n, aa
-  c.dest.addParLe(IteF, info)
-  c.dest.add aa
-  var tjmp: seq[Label] = @[]
-  var fjmp: seq[Label] = @[]
-  tjmp.add c.jmpForw(info)
-  fjmp.add c.jmpForw(info)
-  c.dest.addParRi()
-  for t in tjmp: c.patch t
-  assert tar.m == IsVar
-  # tar = y
-  var bb = Target(m: IsEmpty)
-  trExpr c, n, bb
-  c.dest.copyIntoKind AsgnS, info:
-    c.dest.add tar
-    c.dest.add bb
+  n.into:
+    var aa = Target(m: IsEmpty)
+    trExpr c, n, aa
+    c.dest.addParLe(IteF, info)
+    c.dest.add aa
+    var tjmp: seq[Label] = @[]
+    var fjmp: seq[Label] = @[]
+    tjmp.add c.jmpForw(info)
+    fjmp.add c.jmpForw(info)
+    c.dest.addParRi()
+    for t in tjmp: c.patch t
+    assert tar.m == IsVar
+    # tar = y
+    var bb = Target(m: IsEmpty)
+    trExpr c, n, bb
+    c.dest.copyIntoKind AsgnS, info:
+      c.dest.add tar
+      c.dest.add bb
 
-  let lend = c.jmpForw(info)
-  for f in fjmp: c.patch f
-  assert tar.m == IsVar
-  # tar = false:
-  c.dest.copyIntoKind AsgnS, info:
-    c.dest.add tar
-    c.dest.addParPair(FalseX, info)
-  c.patch lend
-  skipParRi n
+    let lend = c.jmpForw(info)
+    for f in fjmp: c.patch f
+    assert tar.m == IsVar
+    # tar = false:
+    c.dest.copyIntoKind AsgnS, info:
+      c.dest.add tar
+      c.dest.addParPair(FalseX, info)
+    c.patch lend
   maybeAppend tar, w
 
 proc trOrValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
@@ -191,35 +190,34 @@ proc trOrValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
   let info = n.info
   var w = makeVar(c, info, tar, c.typeCache.builtins.boolType)
 
-  inc n
-  var aa = Target(m: IsEmpty)
-  trExpr c, n, aa
-  c.dest.addParLe(IteF, info)
-  c.dest.add aa
-  var tjmp: seq[Label] = @[]
-  var fjmp: seq[Label] = @[]
-  tjmp.add c.jmpForw(info)
-  fjmp.add c.jmpForw(info)
-  c.dest.addParRi()
-  for t in tjmp: c.patch t
-  assert tar.m == IsVar
-  # tar = true
-  c.dest.copyIntoKind AsgnS, info:
-    c.dest.add tar
-    c.dest.addParPair(TrueX, info)
-  let lend = c.jmpForw(info)
-  for f in fjmp: c.patch f
+  n.into:
+    var aa = Target(m: IsEmpty)
+    trExpr c, n, aa
+    c.dest.addParLe(IteF, info)
+    c.dest.add aa
+    var tjmp: seq[Label] = @[]
+    var fjmp: seq[Label] = @[]
+    tjmp.add c.jmpForw(info)
+    fjmp.add c.jmpForw(info)
+    c.dest.addParRi()
+    for t in tjmp: c.patch t
+    assert tar.m == IsVar
+    # tar = true
+    c.dest.copyIntoKind AsgnS, info:
+      c.dest.add tar
+      c.dest.addParPair(TrueX, info)
+    let lend = c.jmpForw(info)
+    for f in fjmp: c.patch f
 
-  # tar = y
-  assert tar.m == IsVar
-  var bb = Target(m: IsEmpty)
-  trExpr c, n, bb
-  c.dest.copyIntoKind AsgnS, info:
-    c.dest.add tar
-    c.dest.add bb
+    # tar = y
+    assert tar.m == IsVar
+    var bb = Target(m: IsEmpty)
+    trExpr c, n, bb
+    c.dest.copyIntoKind AsgnS, info:
+      c.dest.add tar
+      c.dest.add bb
 
-  c.patch lend
-  skipParRi n
+    c.patch lend
   maybeAppend tar, w
 
 proc trStmtListExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
@@ -279,31 +277,27 @@ proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
     # `(x and y) goto (T, F)` <=>
     #     x goto (T1, F);
     # T1: y goto (T, F)
-    inc n
-    var tjmpOverride: seq[Label] = @[]
-    trIte c, n, tjmpOverride, fjmp
-    for t in tjmpOverride: c.patch t
-    trIte c, n, tjmp, fjmp
-    skipParRi n
+    n.into:
+      var tjmpOverride: seq[Label] = @[]
+      trIte c, n, tjmpOverride, fjmp
+      for t in tjmpOverride: c.patch t
+      trIte c, n, tjmp, fjmp
   of OrX:
     # `(x or y) goto (T, F)` <=>
     #     x goto (T, F1);
     # F1: y goto (T, F)
-    inc n
-    var fjmpOverride: seq[Label] = @[]
-    trIte c, n, tjmp, fjmpOverride
-    for f in fjmpOverride: c.patch f
-    trIte c, n, tjmp, fjmp
-    skipParRi n
+    n.into:
+      var fjmpOverride: seq[Label] = @[]
+      trIte c, n, tjmp, fjmpOverride
+      for f in fjmpOverride: c.patch f
+      trIte c, n, tjmp, fjmp
   of NotX:
     # reverse the jump targets:
-    inc n
-    trIte c, n, fjmp, tjmp
-    skipParRi n
+    n.into:
+      trIte c, n, fjmp, tjmp
   of ParX:
-    inc n
-    trIte c, n, tjmp, fjmp
-    skipParRi n
+    n.into:
+      trIte c, n, tjmp, fjmp
   of ErrX, SufX, AtX, DerefX, DotX, PatX, AddrX, NilX, InfX, NeginfX,
      NanX, FalseX, TrueX, XorX, NegX, SizeofX, AlignofX, OffsetofX,
      KvX, OconstrX, AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
@@ -349,193 +343,178 @@ proc trStmtOrExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
 
 proc trIf(c: var ControlFlow; n: var Cursor; tar: var Target) =
   var endings: seq[Label] = @[]
-  inc n # if
-  while true:
-    let info = n.info
-    let k = n.substructureKind
-    if k == ElifU:
-      inc n
-      var tjmp: seq[Label] = @[]
-      var fjmp: seq[Label] = @[]
-      trIte c, n, tjmp, fjmp # condition
-      for t in tjmp: c.patch t
-      trStmtOrExpr c, n, tar # action
-      endings.add c.jmpForw(info)
-      for f in fjmp: c.patch f
-      skipParRi n
-    elif k == ElseU:
-      inc n
-      trStmtOrExpr c, n, tar
-      endings.add c.jmpForw(info) # this is crucial if we use the graph to compute basic blocks
-      skipParRi n
-    else:
-      break
-  skipParRi n
+  n.into: # if
+    while n.hasMore:
+      let info = n.info
+      let k = n.substructureKind
+      if k == ElifU:
+        n.into:
+          var tjmp: seq[Label] = @[]
+          var fjmp: seq[Label] = @[]
+          trIte c, n, tjmp, fjmp # condition
+          for t in tjmp: c.patch t
+          trStmtOrExpr c, n, tar # action
+          endings.add c.jmpForw(info)
+          for f in fjmp: c.patch f
+      elif k == ElseU:
+        n.into:
+          trStmtOrExpr c, n, tar
+          endings.add c.jmpForw(info) # this is crucial if we use the graph to compute basic blocks
+      else:
+        break
   for i in countdown(endings.high, 0):
     c.patch(endings[i])
 
 proc trCaseRanges(c: var ControlFlow; n: var Cursor; selector: SymId; selectorType: Cursor;
                tjmp, fjmp: var FixupList) =
   assert n.substructureKind == RangesU
-  inc n
   var nextAttempt = Label(-1)
   var nextAttemptB = Label(-1)
-  while n.hasMore:
-    if nextAttempt.int >= 0:
-      c.patch nextAttempt
-      nextAttempt = Label(-1)
-    if nextAttemptB.int >= 0:
-      c.patch nextAttemptB
-      nextAttemptB = Label(-1)
+  n.into:
+    while n.hasMore:
+      if nextAttempt.int >= 0:
+        c.patch nextAttempt
+        nextAttempt = Label(-1)
+      if nextAttemptB.int >= 0:
+        c.patch nextAttemptB
+        nextAttemptB = Label(-1)
 
-    if n.substructureKind == RangeU:
-      inc n
+      if n.substructureKind == RangeU:
+        n.into:
+          c.dest.addParLe(IteF, n.info)
+          c.dest.addParLe(LeX, n.info)
+          c.dest.copyTree selectorType
+          trUseExpr c, n
+          c.dest.addSymUse selector, n.info
+          c.dest.addParRi() # LeX
+          let trange = c.jmpForw(n.info)
+          nextAttemptB = c.jmpForw(n.info)
+          c.dest.addParRi() # IteF
+          c.patch trange
 
-      c.dest.addParLe(IteF, n.info)
-      c.dest.addParLe(LeX, n.info)
-      c.dest.copyTree selectorType
-      trUseExpr c, n
-      c.dest.addSymUse selector, n.info
-      c.dest.addParRi() # LeX
-      let trange = c.jmpForw(n.info)
-      nextAttemptB = c.jmpForw(n.info)
-      c.dest.addParRi() # IteF
-      c.patch trange
-
-      c.dest.addParLe(IteF, n.info)
-      c.dest.addParLe(LeX, n.info)
-      c.dest.copyTree selectorType
-      c.dest.addSymUse selector, n.info
-      trUseExpr c, n
-      c.dest.addParRi() # LeX
-      tjmp.add c.jmpForw(n.info)
-      nextAttempt = c.jmpForw(n.info)
-      c.dest.addParRi() # IteF
-
-      skipParRi n
-    else:
-      c.dest.addParLe(IteF, n.info)
-      c.dest.addParLe(EqX, n.info)
-      c.dest.copyTree selectorType
-      c.dest.addSymUse selector, n.info
-      trUseExpr c, n
-      c.dest.addParRi() # EqX
-      tjmp.add c.jmpForw(n.info)
-      nextAttempt = c.jmpForw(n.info)
-      c.dest.addParRi() # IteF
+          c.dest.addParLe(IteF, n.info)
+          c.dest.addParLe(LeX, n.info)
+          c.dest.copyTree selectorType
+          c.dest.addSymUse selector, n.info
+          trUseExpr c, n
+          c.dest.addParRi() # LeX
+          tjmp.add c.jmpForw(n.endInfo)
+          nextAttempt = c.jmpForw(n.endInfo)
+          c.dest.addParRi() # IteF
+      else:
+        c.dest.addParLe(IteF, n.info)
+        c.dest.addParLe(EqX, n.info)
+        c.dest.copyTree selectorType
+        c.dest.addSymUse selector, n.info
+        trUseExpr c, n
+        c.dest.addParRi() # EqX
+        tjmp.add c.jmpForw(n.endInfo)
+        nextAttempt = c.jmpForw(n.endInfo)
+        c.dest.addParRi() # IteF
   if nextAttempt.int >= 0:
     fjmp.add nextAttempt
   if nextAttemptB.int >= 0:
     fjmp.add nextAttemptB
-  inc n
 
 proc trCase(c: var ControlFlow; n: var Cursor; tar: var Target) =
   let info = n.info
-  inc n
-  let selectorType = c.typeCache.getType(n)
-  let isExhaustive = isOrdinalType(selectorType, allowEnumWithHoles=true)
-  let simpleSelector = n.kind == Symbol
-  var selector: SymId
-  if simpleSelector:
-    selector = n.symId
-    inc n
-  else:
-    var aa = Target(m: IsEmpty)
-    trExpr c, n, aa
-
-    selector = pool.syms.getOrIncl("`cf." & $c.nextVar)
-    inc c.nextVar
-    c.dest.addParLe VarS, info
-    c.dest.addSymDef selector, info
-    c.dest.addEmpty2 info # no export marker, no pragmas
-    c.dest.copyTree selectorType
-    c.dest.add aa
-    c.dest.addParRi()
-
   var endings: FixupList = @[]
-  var finalBranch = default(Cursor)
-  if isExhaustive:
-    var nn = n
-    while nn.substructureKind == OfU:
-      finalBranch = nn
-      skip nn
-    if nn.substructureKind == ElseU:
-      finalBranch = default(Cursor)
-  while n.substructureKind == OfU:
-    if n == finalBranch:
-      # compile the final branch like an `else` to model the exhaustiveness precisely
-      # in the control flow graph:
+  n.into:
+    let selectorType = c.typeCache.getType(n)
+    let isExhaustive = isOrdinalType(selectorType, allowEnumWithHoles=true)
+    let simpleSelector = n.kind == Symbol
+    var selector: SymId
+    if simpleSelector:
+      selector = n.symId
       inc n
-      skip n, SkipValue # ranges
-      trStmtOrExpr c, n, tar
-      endings.add c.jmpForw(n.info) # this is crucial if we use the graph to compute basic blocks
     else:
-      inc n
-      var tjmp: FixupList = @[]
-      var fjmp: FixupList = @[]
-      trCaseRanges c, n, selector, selectorType, tjmp, fjmp
-      for t in tjmp: c.patch t
-      trStmtOrExpr c, n, tar
-      endings.add c.jmpForw(n.info)
-      for f in fjmp: c.patch f
-    skipParRi n
-  if n.substructureKind == ElseU:
-    inc n
-    trStmtOrExpr c, n, tar
-    endings.add c.jmpForw(n.info) # this is crucial if we use the graph to compute basic blocks
-    skipParRi n
-  skipParRi n
+      var aa = Target(m: IsEmpty)
+      trExpr c, n, aa
+
+      selector = pool.syms.getOrIncl("`cf." & $c.nextVar)
+      inc c.nextVar
+      c.dest.addParLe VarS, info
+      c.dest.addSymDef selector, info
+      c.dest.addEmpty2 info # no export marker, no pragmas
+      c.dest.copyTree selectorType
+      c.dest.add aa
+      c.dest.addParRi()
+
+    var finalBranch = default(Cursor)
+    if isExhaustive:
+      var nn = n
+      while nn.hasMore and nn.substructureKind == OfU:
+        finalBranch = nn
+        skip nn
+      if nn.hasMore and nn.substructureKind == ElseU:
+        finalBranch = default(Cursor)
+    while n.hasMore and n.substructureKind == OfU:
+      let isFinal = n == finalBranch
+      n.into:
+        if isFinal:
+          # compile the final branch like an `else` to model the exhaustiveness precisely
+          # in the control flow graph:
+          skip n, SkipValue # ranges
+          trStmtOrExpr c, n, tar
+          endings.add c.jmpForw(n.endInfo) # this is crucial if we use the graph to compute basic blocks
+        else:
+          var tjmp: FixupList = @[]
+          var fjmp: FixupList = @[]
+          trCaseRanges c, n, selector, selectorType, tjmp, fjmp
+          for t in tjmp: c.patch t
+          trStmtOrExpr c, n, tar
+          endings.add c.jmpForw(n.endInfo)
+          for f in fjmp: c.patch f
+    if n.hasMore and n.substructureKind == ElseU:
+      n.into:
+        trStmtOrExpr c, n, tar
+        endings.add c.jmpForw(n.endInfo) # this is crucial if we use the graph to compute basic blocks
   for e in endings: c.patch e
 
 proc trTry(c: var ControlFlow; n: var Cursor; tar: var Target) =
   var thisBlock = BlockOrLoop(kind: IsTryStmt, sym: SymId(0), parent: c.currentBlock)
   c.currentBlock = thisBlock
-  inc n
-  trStmtOrExpr c, n, tar
-  let tryEnd = c.jmpForw(n.info)
-  for ret in thisBlock.breakInstrs: c.patch ret
-  thisBlock.breakInstrs.shrink 0
-
-  var exceptEnds: seq[Label] = @[]
-  while n.substructureKind == ExceptU:
-    inc n
-    takeTree c.dest, n # copy (except e as Type)
+  n.into:
     trStmtOrExpr c, n, tar
-    exceptEnds.add c.jmpForw(n.info)
-    skipParRi n
+    let tryEnd = c.jmpForw(n.endInfo)
+    for ret in thisBlock.breakInstrs: c.patch ret
+    thisBlock.breakInstrs.shrink 0
 
-  # `return` inside an `except` also collects into `thisBlock.breakInstrs`
-  # (trReturn targets the innermost `IsTryStmt`); patch those here so they
-  # land past all of the except bodies instead of as self-loop gotos.
-  for ret in thisBlock.breakInstrs: c.patch ret
-  thisBlock.breakInstrs.shrink 0
+    var exceptEnds: seq[Label] = @[]
+    while n.hasMore and n.substructureKind == ExceptU:
+      n.into:
+        takeTree c.dest, n # copy (except e as Type)
+        trStmtOrExpr c, n, tar
+        exceptEnds.add c.jmpForw(n.endInfo)
 
-  for exceptEnd in exceptEnds: c.patch exceptEnd
-  c.patch tryEnd
-  # Inside a `finally` `return` really means `return` again:
-  c.currentBlock = c.currentBlock.parent
+    # `return` inside an `except` also collects into `thisBlock.breakInstrs`
+    # (trReturn targets the innermost `IsTryStmt`); patch those here so they
+    # land past all of the except bodies instead of as self-loop gotos.
+    for ret in thisBlock.breakInstrs: c.patch ret
+    thisBlock.breakInstrs.shrink 0
 
-  if n.substructureKind == FinU:
-    inc n
-    trStmt c, n
-    skipParRi n
+    for exceptEnd in exceptEnds: c.patch exceptEnd
+    c.patch tryEnd
+    # Inside a `finally` `return` really means `return` again:
+    c.currentBlock = c.currentBlock.parent
 
-  skipParRi n
+    if n.hasMore and n.substructureKind == FinU:
+      n.into:
+        trStmt c, n
 
 proc trBlock(c: var ControlFlow; n: var Cursor; tar: var Target) =
-  inc n
   let thisBlock = BlockOrLoop(kind: IsBlock, sym: SymId(0), parent: c.currentBlock)
   c.currentBlock = thisBlock
-  if n.kind == SymbolDef:
-    thisBlock.sym = n.symId
-    inc n
-  elif n.kind == DotToken:
-    inc n
-  else:
-    bug "invalid block statement"
-  trStmtOrExpr c, n, tar
-  for brk in thisBlock.breakInstrs: c.patch brk
-  skipParRi n
+  n.into:
+    if n.kind == SymbolDef:
+      thisBlock.sym = n.symId
+      inc n
+    elif n.kind == DotToken:
+      inc n
+    else:
+      bug "invalid block statement"
+    trStmtOrExpr c, n, tar
+    for brk in thisBlock.breakInstrs: c.patch brk
   c.currentBlock = c.currentBlock.parent
 
 type
@@ -639,47 +618,45 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
 
 proc trWhile(c: var ControlFlow; n: var Cursor) =
   let info = n.info
-  inc n
   let thisBlock = BlockOrLoop(kind: IsLoop, sym: SymId(0), parent: c.currentBlock)
   c.currentBlock = thisBlock
   let loopStart = c.genLabel()
 
-  # Generate if with goto
-  var tjmp: seq[Label] = @[]
-  trIte c, n, tjmp, thisBlock.breakInstrs # transform condition
+  n.into:
+    # Generate if with goto
+    var tjmp: seq[Label] = @[]
+    trIte c, n, tjmp, thisBlock.breakInstrs # transform condition
 
-  # loop body is about to begin:
-  for t in tjmp: c.patch t
+    # loop body is about to begin:
+    for t in tjmp: c.patch t
 
-  trStmt(c, n) # transform body
-  for cont in thisBlock.contInstrs: c.patch cont
-  c.jmpBack(loopStart, info)
+    trStmt(c, n) # transform body
+    for cont in thisBlock.contInstrs: c.patch cont
+    c.jmpBack(loopStart, info)
 
-  for f in thisBlock.breakInstrs: c.patch f
-  skipParRi n
+    for f in thisBlock.breakInstrs: c.patch f
   c.currentBlock = c.currentBlock.parent
 
 proc trCoroFor(c: var ControlFlow; n: var Cursor) =
   let info = n.info
-  inc n
   let thisBlock = BlockOrLoop(kind: IsLoop, sym: SymId(0), parent: c.currentBlock)
   c.currentBlock = thisBlock
   let loopStart = c.genLabel()
 
-  # First child is the iter call. cps.nim will rewrite this into the init+advance
-  # trampoline; for CFG purposes treat it as a side-effecting expression whose
-  # result is discarded.
-  var aa = Target(m: IsAppend)
-  trExpr c, n, aa
-  if aa.t.len > 0:
-    c.dest.add aa
+  n.into:
+    # First child is the iter call. cps.nim will rewrite this into the init+advance
+    # trampoline; for CFG purposes treat it as a side-effecting expression whose
+    # result is discarded.
+    var aa = Target(m: IsAppend)
+    trExpr c, n, aa
+    if aa.t.len > 0:
+      c.dest.add aa
 
-  trStmt(c, n) # body
-  for cont in thisBlock.contInstrs: c.patch cont
-  c.jmpBack(loopStart, info)
+    trStmt(c, n) # body
+    for cont in thisBlock.contInstrs: c.patch cont
+    c.jmpBack(loopStart, info)
 
-  for f in thisBlock.breakInstrs: c.patch f
-  skipParRi n
+    for f in thisBlock.breakInstrs: c.patch f
   c.currentBlock = c.currentBlock.parent
 
 proc trReturn(c: var ControlFlow; n: var Cursor) =
@@ -696,74 +673,70 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
   if control == nil:
     control = it
   let info = n.info
-  inc n # skip `(ret`
-  if c.keepReturns:
-    var aa = Target(m: IsEmpty)
-    trExpr c, n, aa
-    c.dest.addParLe(RetS, info)
-    c.dest.add aa
-    c.dest.addParRi()
-  elif (n.kind == Symbol and n.symId == c.resultSym) or (n.kind == DotToken):
-    discard "do not generate `result = result`"
-    inc n
-  else:
-    if c.resultSym == NoSymId:
-      bug "result symbol not found " & toString(orig, false)
-    var aa = Target(m: IsEmpty)
-    trExpr c, n, aa
-    c.dest.addParLe(AsgnS, n.info)
-    c.dest.addSymUse c.resultSym, n.info
-    c.dest.add aa
-    c.dest.addParRi()
-  skipParRi n
-  control.breakInstrs.add c.jmpForw(n.info)
+  n.into: # skip `(ret`
+    if c.keepReturns:
+      var aa = Target(m: IsEmpty)
+      trExpr c, n, aa
+      c.dest.addParLe(RetS, info)
+      c.dest.add aa
+      c.dest.addParRi()
+    elif (n.kind == Symbol and n.symId == c.resultSym) or (n.kind == DotToken):
+      discard "do not generate `result = result`"
+      inc n
+    else:
+      if c.resultSym == NoSymId:
+        bug "result symbol not found " & toString(orig, false)
+      var aa = Target(m: IsEmpty)
+      trExpr c, n, aa
+      c.dest.addParLe(AsgnS, n.endInfo)
+      c.dest.addSymUse c.resultSym, n.endInfo
+      c.dest.add aa
+      c.dest.addParRi()
+  control.breakInstrs.add c.jmpForw(n.endInfo)
 
 proc trBreak(c: var ControlFlow; n: var Cursor) =
   var it {.cursor.} = c.currentBlock
-  inc n
-  if n.kind == DotToken:
-    while it != nil and it.kind notin {IsLoop, IsBlock}:
-      if it.kind == IsRoutine:
-        # we cannot cross routine boundaries!
+  n.into:
+    if n.kind == DotToken:
+      while it != nil and it.kind notin {IsLoop, IsBlock}:
+        if it.kind == IsRoutine:
+          # we cannot cross routine boundaries!
+          bug "break outside of loop"
+        it = it.parent
+      if it != nil:
+        it.breakInstrs.add c.jmpForw(n.info)
+      else:
         bug "break outside of loop"
-      it = it.parent
-    if it != nil:
-      it.breakInstrs.add c.jmpForw(n.info)
-    else:
-      bug "break outside of loop"
-    inc n
-  elif n.kind == Symbol:
-    let lab = n.symId
-    while it != nil and it.sym != lab:
-      if it.kind == IsRoutine:
-        # we cannot cross routine boundaries!
+      inc n
+    elif n.kind == Symbol:
+      let lab = n.symId
+      while it != nil and it.sym != lab:
+        if it.kind == IsRoutine:
+          # we cannot cross routine boundaries!
+          bug "could not find label"
+        it = it.parent
+      if it != nil:
+        it.breakInstrs.add c.jmpForw(n.info)
+      else:
         bug "could not find label"
-      it = it.parent
-    if it != nil:
-      it.breakInstrs.add c.jmpForw(n.info)
+      inc n
     else:
-      bug "could not find label"
-    inc n
-  else:
-    bug "invalid break statement"
-  skipParRi n
+      bug "invalid break statement"
 
 proc trContinue(c: var ControlFlow; n: var Cursor) =
   var it {.cursor.} = c.currentBlock
-  inc n
-  if n.kind == DotToken:
-    if it != nil:
-      it.contInstrs.add c.jmpForw(n.info)
+  n.into:
+    if n.kind == DotToken:
+      if it != nil:
+        it.contInstrs.add c.jmpForw(n.info)
+      else:
+        bug "continue outside of loop"
+      inc n
     else:
-      bug "continue outside of loop"
-    inc n
-  else:
-    bug "invalid continue statement"
-  skipParRi n
+      bug "invalid continue statement"
 
 proc trFor(c: var ControlFlow; n: var Cursor) =
   let info = n.info
-  inc n
   let thisBlock = BlockOrLoop(kind: IsLoop, sym: SymId(0), parent: c.currentBlock)
   c.currentBlock = thisBlock
   let loopStart = c.genLabel()
@@ -776,15 +749,15 @@ proc trFor(c: var ControlFlow; n: var Cursor) =
 
   # loop body is about to begin:
   c.patch tjmp
-  c.dest.addParLe(ForbindF, info)
-  # iterator call:
-  trUseExpr c, n
-  # bindings:
-  takeTree c.dest, n
-  c.dest.addParRi()
-  # loop body:
-  trStmt c, n
-  skipParRi n
+  n.into:
+    c.dest.addParLe(ForbindF, info)
+    # iterator call:
+    trUseExpr c, n
+    # bindings:
+    takeTree c.dest, n
+    c.dest.addParRi()
+    # loop body:
+    trStmt c, n
   for cont in thisBlock.contInstrs: c.patch cont
   c.jmpBack(loopStart, info)
   for brk in thisBlock.breakInstrs: c.patch brk
@@ -817,14 +790,13 @@ proc trLocal(c: var ControlFlow; n: var Cursor) =
 proc trRaise(c: var ControlFlow; n: var Cursor) =
   # we map `raise x` to `localErr = x; return`.
   let info = n.info
-  inc n
-  var aa = Target(m: IsEmpty)
-  trExpr c, n, aa
-  c.dest.addParLe(AsgnS, info)
-  c.dest.addSymUse pool.syms.getOrIncl("localErr.0." & SystemModuleSuffix), info
-  c.dest.add aa
-  c.dest.addParRi()
-  skipParRi n
+  n.into:
+    var aa = Target(m: IsEmpty)
+    trExpr c, n, aa
+    c.dest.addParLe(AsgnS, info)
+    c.dest.addSymUse pool.syms.getOrIncl("localErr.0." & SystemModuleSuffix), info
+    c.dest.add aa
+    c.dest.addParRi()
   var it {.cursor.} = c.currentBlock
   while it != nil and it.kind notin {IsRoutine, IsTryStmt, IsFinally}:
     it = it.parent
@@ -835,18 +807,11 @@ proc trRaise(c: var ControlFlow; n: var Cursor) =
 
 proc isComplexLhs(n: Cursor): bool =
   var n = n
-  var nested = 0
-  while true:
-    case n.kind
-    of ParLe:
-      if n.exprKind in CallKinds+{PatX, ArratX}:
-        return true
-      inc nested
-    of ParRi:
-      dec nested
-    else: discard
-    if nested == 0: break
-    inc n
+  if n.kind == ParLe and n.exprKind in CallKinds+{PatX, ArratX}:
+    return true
+  n.linearScan:
+    if n.exprKind in CallKinds+{PatX, ArratX}:
+      return true
   return false
 
 proc trAsgn(c: var ControlFlow; n: var Cursor) =
@@ -861,14 +826,14 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
   var aa = Target(m: IsEmpty)
   var bb = Target(m: IsEmpty)
   let head = n.load()
-  inc n
+  var typ = default(Cursor)
 
-  let typ = c.typeCache.getType(n)
-  trExpr c, n, aa
-  assert aa.t.len > 0
-  trExpr c, n, bb
-  assert bb.t.len > 0
-  skipParRi n
+  n.into:
+    typ = c.typeCache.getType(n)
+    trExpr c, n, aa
+    assert aa.t.len > 0
+    trExpr c, n, bb
+    assert bb.t.len > 0
   c.dest.add head
   c.dest.add aa
   c.dest.add bb
@@ -998,10 +963,9 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     c.dest.add tar
     c.dest.addParRi()
   of PragmaxS:
-    inc n
-    skip n # ignore pragmas
-    trStmt c, n
-    skipParRi n
+    n.into:
+      skip n # ignore pragmas
+      trStmt c, n
   of WhenS:
     bug "`when` statement should have been eliminated"
   of CoroforS:

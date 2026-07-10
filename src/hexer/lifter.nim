@@ -180,13 +180,13 @@ proc isTrivialObjectBody(c: var LiftingCtx; body: Cursor): bool =
   var n = body
   if n.typeKind in {RefT, PtrT}:
     inc n
-  inc n # skip `(object` token
+  discard enterScope(n) # skip `(object` token; bound the walk, `n` is a copy
 
   var baseType = n
   if baseType.typeKind in {RefT, PtrT}:
     inc baseType
   skip n # skip basetype
-  if n.kind != DotToken:
+  if n.hasMore and n.kind != DotToken:
     result = isTrivialForFields(c, n)
   else:
     result = true

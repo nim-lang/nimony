@@ -41,13 +41,12 @@ proc spliceBodyWithoutResult(dest: var TokenBuf; body: Cursor) =
   ## return type.
   var n = body
   assert n.stmtKind == StmtsS, "macro body should be a stmts block"
-  dest.takeToken n
-  if n.kind == ParLe and n.stmtKind == ResultS:
-    # Skip the leading result declaration.
-    skip n
-  while n.hasMore:
-    dest.takeTree n
-  dest.addParRi()  # the closing ParRi of stmts
+  copyInto dest, n:
+    if n.hasMore and n.kind == ParLe and n.stmtKind == ResultS:
+      # Skip the leading result declaration.
+      skip n
+    while n.hasMore:
+      dest.takeTree n
 
 proc rewriteSymsToIdents(buf: var TokenBuf) =
   ## Convert every Symbol / SymbolDef in `buf` to an Ident bearing the symbol's
@@ -124,34 +123,30 @@ proc copyParamsRewritingMetatypes(dest: var TokenBuf; params: Cursor;
   ## Param shape per `(param :name pragmas TYPE default)`. We pass through
   ## name/pragmas/default verbatim and only swap the TYPE slot.
   assert params.substructureKind == ParamsU
-  dest.add params.load
   var n = params
-  inc n
-  while n.hasMore:
-    if n.substructureKind == ParamU:
-      dest.takeToken n
-      # Slot 0: name (SymbolDef or Ident)
-      dest.takeTree n
-      # Slot 1: exported marker (DotToken)
-      dest.takeTree n
-      # Slot 2: pragmas
-      dest.takeTree n
-      # Slot 3: type — rewrite (untyped) / (typed) → NimNode
-      let isMetatype = n.kind == ParLe and
-        (n.typeKind == UntypedT or n.typeKind == TypedT)
-      if isMetatype:
-        dest.addIdent "NimNode", info
-        skip n
+  copyInto dest, n:
+    while n.hasMore:
+      if n.substructureKind == ParamU:
+        copyInto dest, n:
+          # Slot 0: name (SymbolDef or Ident)
+          dest.takeTree n
+          # Slot 1: exported marker (DotToken)
+          dest.takeTree n
+          # Slot 2: pragmas
+          dest.takeTree n
+          # Slot 3: type — rewrite (untyped) / (typed) → NimNode
+          let isMetatype = n.kind == ParLe and
+            (n.typeKind == UntypedT or n.typeKind == TypedT)
+          if isMetatype:
+            dest.addIdent "NimNode", info
+            skip n
+          else:
+            dest.takeTree n
+          # Slot 4: default value
+          dest.takeTree n
       else:
+        # Non-param entry (e.g. return-type-of-routine slot at end). Copy verbatim.
         dest.takeTree n
-      # Slot 4: default value
-      dest.takeTree n
-      # Closing ParRi of (param ...)
-      dest.takeParRi n
-    else:
-      # Non-param entry (e.g. return-type-of-routine slot at end). Copy verbatim.
-      dest.takeTree n
-  dest.takeParRi n  # closing ParRi of params
 
 proc emitImplProc(dest: var TokenBuf; implName: string; macroDecl: Cursor;
                   info: PackedLineInfo) =

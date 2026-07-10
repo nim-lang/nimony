@@ -258,8 +258,7 @@ proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: PackedLi
   if dest.len > pos:
     needsParRi = true
     if dest[pos].stmtKind == StmtsS:
-      assert dest[dest.len - 1].kind == ParRi
-      dest.shrink(dest.len - 1)
+      dest.reopenLastTree pos
     else:
       dest.insert [parLeToken(StmtsS, dest[pos].info)], pos
   buildErr c, dest, info, msg, orig
