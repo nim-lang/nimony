@@ -1,0 +1,3 @@
+tests/nimony/errmsgs/ttype_mismatch_closure_proc.nim(5, 18) Error: Type mismatch at [position]
+dontTakeClosure(closureProc)
+[1] `.closure` mismatch (declared in tests/nimony/errmsgs/ttype_mismatch_closure_proc.nim(1, 1))

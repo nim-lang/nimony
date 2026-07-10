@@ -354,7 +354,10 @@ proc draw(p: Progressor; label: string) =
   let frac = if p.total <= 0: 100 else: clamp(p.done * 100 div p.total, 0, 100)
   let pct = p.lo + frac * (p.hi - p.lo) div 100
   # `\r` rewinds to column 0, `\e[K` clears any leftover from a longer label.
-  stdout.write "\r[" & align($pct, 3) & "%] " & label & "\e[K"
+  # The trailing `\r` parks the cursor back at column 0 so a child process that
+  # streams its own output (a compile error, a warning) overwrites the bar in
+  # place instead of getting glued onto the end of the parked bar line.
+  stdout.write "\r[" & align($pct, 3) & "%] " & label & "\e[K\r"
   stdout.flushFile()
 
 proc finish(p: Progressor) =
