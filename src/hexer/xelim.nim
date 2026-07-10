@@ -513,11 +513,11 @@ proc trCondOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target
 proc condPassthroughSafe(n: Cursor): bool =
   ## True if an `and`/`or` condition subtree contains only short-circuit nodes
   ## and *pure* leaves that finalir can emit inline — no calls and no
-  ## statement-expressions. Such a tree is handed to finalir verbatim so its
-  ## two-target condition compiler (Cx) can lower it to shared `(lab)`/`(jmp)`
-  ## merges (linear). A subtree with a call in a leaf must instead keep the
-  ## bool-temp lowering here, because short-circuit evaluation requires the
-  ## call to be hoisted *into* the branch, which Cx-in-finalir does not do.
+  ## statement-expressions with actual statements. Such a tree is handed to
+  ## finalir verbatim so its two-target condition compiler (Cx) can lower it to
+  ## shared `(lab)`/`(jmp)` merges (linear). A subtree with a call in a leaf must
+  ## instead keep the bool-temp lowering here, because short-circuit evaluation
+  ## requires the call to be hoisted *into* the branch, which Cx does not do.
   var n = n
   if n.kind != ParLe: return false
   var nested = 0
@@ -525,8 +525,16 @@ proc condPassthroughSafe(n: Cursor): bool =
     case n.kind
     of ParLe:
       if n.exprKind in CallKinds: return false
-      if n.exprKind == ExprX: return false
-      if n.stmtKind in {IfS, CaseS, TryS, BlockS, WhileS, ForS, StmtsS}:
+      if n.exprKind == ExprX:
+        # A single-son `(expr val)` is a transparent wrapper — e.g. the `!=`
+        # template expands to `(expr (not (== x y)))`, which is pure. Walk into
+        # it; a multi-son `(expr (stmts …) val)` carries real statements (a hoist
+        # would be needed) and stays complex. Mirrors `isComplex`.
+        var probe = n
+        inc probe        # into `(expr`
+        skip probe       # the (would-be sole) value son
+        if probe.kind != ParRi: return false
+      elif n.stmtKind in {IfS, CaseS, TryS, BlockS, WhileS, ForS, StmtsS}:
         return false
       inc nested
     of ParRi:
@@ -535,6 +543,29 @@ proc condPassthroughSafe(n: Cursor): bool =
     inc n
     if nested == 0: break
   result = true
+
+proc takeStrippingTrivialExpr(dest: var TokenBuf; n: var Cursor) =
+  ## Copy the condition subtree at `n` into `dest`, dropping the brackets of any
+  ## single-son `(expr val)` wrapper. The `!=`, `>=`, `>`, `notin`, … templates
+  ## expand to exactly `(expr (not (== x y)))` etc.; keeping that wrapper leaves
+  ## the finalir condition compiler and the contract/nil analysis staring at a
+  ## statement-expression instead of the pure `not (== …)` leaf they understand.
+  if n.kind == ParLe and n.exprKind == ExprX:
+    var probe = n
+    inc probe
+    skip probe
+    if probe.kind == ParRi:           # single son ⇒ transparent wrapper
+      inc n                           # drop `(expr`
+      takeStrippingTrivialExpr(dest, n)
+      inc n                           # drop the matching `)`
+      return
+  if n.kind == ParLe:
+    dest.takeToken n                  # `(tag`
+    while n.kind != ParRi:
+      takeStrippingTrivialExpr(dest, n)
+    dest.takeToken n                  # `)`
+  else:
+    dest.takeToken n
 
 proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; mustUseLabel: bool) =
   assert tar.m == IsEmpty
@@ -545,14 +576,14 @@ proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; 
       # `TowardsFinalIr` mode we still want the binding/hoisting path inside
       # `trAnd`'s `isComplex` branch, but never the cfvar form.
       if c.goal == TowardsFinalIr and condPassthroughSafe(n):
-        tar.t.takeTree n
+        takeStrippingTrivialExpr(tar.t, n)
       elif mustUseLabel:
         trCondAnd c, dest, n, tar
       else:
         trAnd c, dest, n, tar
     of OrX:
       if c.goal == TowardsFinalIr and condPassthroughSafe(n):
-        tar.t.takeTree n
+        takeStrippingTrivialExpr(tar.t, n)
       elif mustUseLabel:
         trCondOr c, dest, n, tar
       else:
