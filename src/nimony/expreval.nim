@@ -1005,7 +1005,7 @@ proc evalExpr*(c: var SemContext, n: var Cursor;
   ## Evaluate a constant expression. When `retypeConstAlias` is set and `n` is
   ## a `const` symbol, the folded value is re-typed via `annotateConstantType`
   ## so it canonicalizes to the typed static value the name aliases.
-  let retypeConst = retypeConstAlias and not cursorIsNil(expectedType) and isConstSym(n)
+  let retypeConst = retypeConstAlias and not cursorIsNil(expectedType)
   var ec = initEvalContext(addr c)
   ec.expectedType = expectedType
   let val = eval(ec, n)
