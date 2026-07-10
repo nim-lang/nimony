@@ -649,6 +649,17 @@ when defined(linux):
   const CLOCK_REALTIME* = cint(0)
   const CLOCK_MONOTONIC* = cint(1)
   const TIMER_ABSTIME* = cint(1)
+elif defined(nimNativeIo):
+  # macOS/BSD clockid_t values (from <sys/_types/_clockid_t.h>: CLOCK_REALTIME=0,
+  # CLOCK_MONOTONIC=6), hardcoded so the freestanding path pulls in NO <time.h>.
+  # That header both redeclares `clock_gettime` — clashing with our own headerless
+  # prototype under the C backend — and defines a `struct timespec` distinct from
+  # our hardcoded `Timespec`; and on the native backend `CLOCK_REALTIME` is a macro
+  # with no symbol to bind. TIMER_ABSTIME mirrors the POSIX value (unused on macOS,
+  # which lacks clock_nanosleep).
+  const CLOCK_REALTIME* = cint(0)
+  const CLOCK_MONOTONIC* = cint(6)
+  const TIMER_ABSTIME* = cint(1)
 else:
   var CLOCK_REALTIME* {.importc: "CLOCK_REALTIME", header: "<time.h>".}: cint
   var TIMER_ABSTIME* {.importc: "TIMER_ABSTIME", header: "<time.h>".}: cint

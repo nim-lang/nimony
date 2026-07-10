@@ -469,7 +469,8 @@ when defined(posix):
     # `wait4` directly and pass `rusage = nil` ourselves, keeping the 3-arg `waitpid`
     # signature the rest of the code (and the libc path) expects.
     proc wait4(pid: Pid; status: var cint; options: cint;
-               rusage: nil pointer): Pid {.importc: "wait4", sideEffect.}
+               rusage: nil pointer): Pid {.importc: "wait4",
+               header: "<sys/wait.h>", sideEffect.}
     proc waitpid*(pid: Pid; status: var cint; options: cint): Pid {.inline.} =
       wait4(pid, status, options, nil)
     proc kill*(pid: Pid; sig: cint): cint {.importc: "kill", sideEffect.}
