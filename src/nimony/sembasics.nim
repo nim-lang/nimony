@@ -41,10 +41,10 @@ proc considerImportedSymbols(c: var SemContext; dest: var TokenBuf; name: StrId;
         for defId in candidates[]:
           if option == FindOverloads:
             let res = tryLoadSym(defId)
-            if res.status == LacksNothing and res.decl.symKind == ModuleY:
+            if res.status == LacksNothing and not isRoutine(res.decl.symKind):
               continue
           inc result
-          dest.add symToken(defId, info)
+dest.add symToken(defId, info)
 
 proc addSymUse*(dest: var TokenBuf; s: Sym; info: PackedLineInfo) =
   dest.add symToken(s.name, info)
@@ -135,7 +135,7 @@ proc rawBuildSymChoice(c: var SemContext; dest: var TokenBuf; identifier: StrId;
     var nonOverloadable = 0
     for k in stylesOfScope(it, identifier, ignoreStyle):
       for sym in it.tab.getOrDefault(k):
-        if option == FindOverloads and sym.kind == ModuleY:
+        if option == FindOverloads and not isRoutine(sym.kind):
           continue
         dest.addSymUse sym, info
         inc result
