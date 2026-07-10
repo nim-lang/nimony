@@ -16,26 +16,35 @@
 ## straight back, so a cache load is one `readBuffer` of the token block plus a
 ## quick re-intern of the small pools — no parsing.
 ##
-## Layout (all integers host-endian — a `.bif` file is a machine-local cache and
-## is never shared between hosts; the `Magic` carries the word size + a version
-## so a mismatched file is rejected rather than misread):
+## Layout. A `.bif` file is stored **little-endian**: the token block and the
+## `indexOffset` are raw host-endian dumps and BIF is *defined* to be
+## little-endian (every supported target is), so the `Magic` carries a fixed
+## endianness byte (`0` = little) plus a version, and a mismatched/foreign file is
+## rejected rather than misread. The host word size does NOT appear — a token is
+## always `uint32`. Every integer is a SQLite-style `varint`
+## (`std/varints`) — most counts and lengths are small, so the header and the
+## per-string/-entry length prefixes shrink to a byte or two. The SOLE exception
+## is `indexOffset`, which is a **fixed 8-byte** little integer: it is written as
+## a placeholder and patched in place once the tail offset is known, so it must
+## keep a constant width (a varint would change size when patched):
 ##
 ## ```
-##   Magic            8 bytes  ("NIFBIN" + sizeof(int) + Version)
-##   indexOffset      u32      -- BYTE offset of the index section (see below)
-##   tokenCount       u32
-##   nTags            u32
-##   nStrings         u32
-##   nSyms            u32
-##   nFiles           u32
+##   Magic            8 bytes  ("NIFBIN" + endianness byte (0=little) + Version)
+##   indexOffset      u64      -- FIXED 8 bytes; BYTE offset of the index (patched)
+##   tokenCount       varint
+##   nTags            varint
+##   nStrings         varint
+##   nSyms            varint
+##   nFiles           varint
+##   pad              0..3 zero bytes  -- align the token block to NifToken (4 B)
 ##   tokens           tokenCount * sizeof(NifToken)   -- one raw block
-##   tags             nTags    * (u32 len + bytes)
-##   strings          nStrings * (u32 len + bytes)
-##   syms             nSyms    * (u32 len + bytes)
-##   filenames        nFiles   * (u32 len + bytes)
+##   tags             nTags    * (varint len + bytes)
+##   strings          nStrings * (varint len + bytes)
+##   syms             nSyms    * (varint len + bytes)
+##   filenames        nFiles   * (varint len + bytes)
 ##   index (@indexOffset)
-##     nIndex         u32
-##     entries        nIndex   * (u32 symId, i32 tokenPos, u8 vis)
+##     nIndex         varint
+##     entries        nIndex   * (varint symId, varint tokenPos, varint vis)
 ## ```
 ##
 ## The `index` is the binary analogue of a text NIF's embedded `(.index …)`:
@@ -43,11 +52,12 @@
 ## buffer can locate one symbol without scanning. It is ALWAYS present (a cache
 ## with no index would force a full rescan to find any declaration) and lives at
 ## the **end** of the file, exactly like the text format's trailing index. The
-## single `indexOffset` header field is the binary `(.indexat …)`: the one `u32`
-## a reader follows to jump straight to the index. Because the offset is only
-## known once the token block and pools have been written, `storeToFile` writes
-## a placeholder, streams everything, then patches the slot — mirroring the text
-## writer's `addHeader27` reservation + `patchIndexAt`. The index entries
+## single `indexOffset` header field is the binary `(.indexat …)`: the fixed
+## 8-byte slot a reader follows to jump straight to the index. Because the offset
+## is only known once the token block and pools have been written, `storeToFile`
+## writes a placeholder, streams everything, then patches the slot — mirroring the
+## text writer's `addHeader27` reservation + `patchIndexAt`. It stays a constant
+## width precisely so that in-place patch keeps working. The index entries
 ## themselves are gathered in the single forward token traversal `buildIndex`,
 ## the way the text writer accumulates `(.index …)` entries while emitting tokens.
 ##
@@ -67,13 +77,41 @@
 ## need a buffer to share a pool with others, load it with `bif` first and then
 ## copy across pools via `nifcore.addSubtree` (which re-interns properly).
 
-import std / [syncio, assertions, strutils]
+when defined(nimony):
+  {.feature: "lenientnils".}
+
+import std / [syncio, assertions, strutils, varints]
 import nifcore
 import vfs
 
+include compat2   # `onRaiseQuit`: run a raising call and `quit` on failure; identity under Nim
+
+# Bulk string data access. Under Nimony these come from `system`; a `string`'s
+# payload cannot be reached with a bare `addr s[0]` (it may be inline-stored), so
+# reads go through `readRawData` and bulk writes through `beginStore`/`endStore`.
+# Host Nim has no such API, so shim it (guarded, matching `stringviews.nim`).
+when not defined(nimony):
+  when not declared(readRawData):
+    proc readRawData*(s: string): ptr UncheckedArray[char] {.inline.} =
+      if s.len == 0: nil
+      else: cast[ptr UncheckedArray[char]](addr(s[0]))
+  when not declared(beginStore):
+    proc beginStore*(s: var string; newLen: int; start = 0): ptr UncheckedArray[char] {.inline.} =
+      s.setLen(newLen)
+      if s.len == 0: nil
+      else: cast[ptr UncheckedArray[char]](addr(s[start]))
+  when not declared(endStore):
+    proc endStore*(s: var string) {.inline.} = discard
+
 const
-  Version = 3'u8
+  Version = 5'u8
   MagicLen = 8
+  LittleEndianTag = 0'u8
+    ## Endianness marker in the `Magic`. BIF stores the token block and the
+    ## `indexOffset` as raw host-endian bytes and is *defined* to be
+    ## little-endian (every supported target is), so this byte is fixed at 0 =
+    ## little. It replaces a former `sizeof(int)` byte that guarded nothing: a
+    ## token is always `uint32`, so the host word size never affects the layout.
 
 # ── embedded index ──────────────────────────────────────────────────────────
 # A text NIF carries a trailing `(.index …)` mapping every *global* `SymbolDef`
@@ -137,35 +175,79 @@ proc buildIndex*(b: var TokenBuf; dottedSuffix = ""): seq[IndexEntry] =
   c.endRead()
 
 proc magic(): array[MagicLen, char] =
-  result = ['N', 'I', 'F', 'B', 'I', 'N', char(sizeof(int)), char(Version)]
+  result = ['N', 'I', 'F', 'B', 'I', 'N', char(LittleEndianTag), char(Version)]
+
+# A `.bif` file is a machine-local cache; a read/write/seek error is unrecoverable
+# here. Under Nimony the syncio primitives are `{.raises.}`, so rather than thread
+# `raises` through the whole module we funnel every raising call through these thin
+# wrappers and `quit` on failure (via compat2's `onRaiseQuit`, an identity on host
+# Nim). Everything above this line is pure; everything below only does I/O via
+# these four wrappers, so no `.raises` call ever escapes.
+proc readBytes(f: File; p: pointer; n: int): int = onRaiseQuit f.readBuffer(p, n)
+proc getPos(f: File): int64 = onRaiseQuit getFilePos(f)
+proc setPos(f: File; pos: int64) = onRaiseQuit setFilePos(f, pos)
+proc setPosEnd(f: File) = onRaiseQuit setFilePos(f, 0, fspEnd)
 
 proc writeExact(f: File; p: pointer; n: int) =
-  let written = f.writeBuffer(p, n)
+  let written = onRaiseQuit f.writeBuffer(p, n)
   assert written == n
 
 proc readExact(f: File; p: pointer; n: int) =
-  let got = f.readBuffer(p, n)
+  let got = readBytes(f, p, n)
   assert got == n
 
-proc writeU32(f: File; x: uint32) =
+# `indexOffset` is the one fixed-width field: a placeholder that gets patched in
+# place, so it must always occupy exactly 8 bytes (a varint would resize on patch).
+proc writeU64(f: File; x: uint64) =
   var v = x
-  writeExact(f, addr v, 4)
+  writeExact(f, addr v, 8)
 
-proc readU32(f: File): uint32 =
-  var v = 0'u32
-  readExact(f, addr v, 4)
-  v
+proc readU64(f: File): uint64 =
+  result = 0'u64
+  readExact(f, addr result, 8)
+
+# Everything else is a varint. `varintLen` recovers a varint's total byte length
+# from its first byte (mirrors `readVu64`'s `int(z[0]-246)` length check), so a
+# file reader can pull the first byte, then the remaining `n-1`, then decode.
+proc varintLen(b0: byte): int =
+  if b0 <= 240: 1
+  elif b0 <= 248: 2
+  else: int(b0) - 246
+
+proc writeVarint(f: File; x: uint64) =
+  var buf = default(array[maxVarIntLen, byte])
+  let n = writeVu64(buf, x)
+  writeExact(f, addr buf[0], n)
+
+proc readVarint(f: File): uint64 =
+  var buf = default(array[maxVarIntLen, byte])
+  readExact(f, addr buf[0], 1)
+  let n = varintLen(buf[0])
+  if n > 1:
+    readExact(f, addr buf[1], n - 1)
+  result = 0'u64
+  discard readVu64(buf, result)
 
 proc writeStr(f: File; s: string) =
-  writeU32(f, uint32 s.len)
+  writeVarint(f, uint64 s.len)
   if s.len > 0:
-    writeExact(f, unsafeAddr s[0], s.len)
+    writeExact(f, cast[pointer](readRawData(s)), s.len)
 
 proc readStr(f: File): string =
-  let n = int readU32(f)
+  let n = int readVarint(f)
   result = newString(n)
   if n > 0:
-    readExact(f, addr result[0], n)
+    readExact(f, cast[pointer](beginStore(result, n)), n)
+    endStore(result)
+
+proc tokenPad(pos: int): int =
+  ## Number of zero bytes to insert after the (variable-width varint) header so
+  ## the token block begins `NifToken`-aligned. The mmap loader borrows that block
+  ## in place and `adoptForeignTokens` asserts it is aligned; the fixed-header
+  ## format got this for free, but a varint header can end on any byte. Writer and
+  ## every reader compute this from the SAME post-header position, so they agree.
+  let a = sizeof(NifToken)
+  (a - (pos and (a - 1))) and (a - 1)
 
 # ── store ─────────────────────────────────────────────────────────────────
 
@@ -185,13 +267,19 @@ proc storeToFile*(b: var TokenBuf; f: File; dottedSuffix = "") =
   # Reserve the `indexOffset` slot. We can only fill it once tokens and pools are
   # written, so write a placeholder now and patch it at the end — the binary
   # equivalent of `addHeader27`'s `(.indexat …)` reservation + `patchIndexAt`.
-  let indexAtPos = getFilePos(f)
-  writeU32(f, 0'u32)                   # placeholder for indexOffset
-  writeU32(f, uint32 b.len)
-  writeU32(f, uint32 b.tags.tags.len)
-  writeU32(f, uint32 b.pool.strings.len)
-  writeU32(f, uint32 b.pool.syms.len)
-  writeU32(f, uint32 b.pool.filenames.len)
+  let indexAtPos = getPos(f)
+  writeU64(f, 0'u64)                   # fixed 8-byte placeholder for indexOffset
+  writeVarint(f, uint64 b.len)
+  writeVarint(f, uint64 b.tags.tags.len)
+  writeVarint(f, uint64 b.pool.strings.len)
+  writeVarint(f, uint64 b.pool.syms.len)
+  writeVarint(f, uint64 b.pool.filenames.len)
+  # Pad to NifToken alignment so the mmap loader can borrow the token block in
+  # place (see `tokenPad`).
+  let pad = tokenPad(int getPos(f))
+  if pad > 0:
+    var zeros = default(array[8, byte])
+    writeExact(f, addr zeros[0], pad)
   # token stream: one contiguous block.
   let bytes = b.len * sizeof(NifToken)
   if bytes > 0:
@@ -201,19 +289,19 @@ proc storeToFile*(b: var TokenBuf; f: File; dottedSuffix = "") =
   for i in 1 .. b.pool.strings.len:   writeStr(f, b.pool.strings[StrId(i)])
   for i in 1 .. b.pool.syms.len:      writeStr(f, b.pool.syms[SymId(i)])
   for i in 1 .. b.pool.filenames.len: writeStr(f, b.pool.filenames[FileId(i)])
-  # symbol index — self-contained at the offset we now know.
-  let indexOffset = getFilePos(f)
-  assert indexOffset <= int64(high(uint32)), "bif cache exceeds 4 GiB"
-  writeU32(f, uint32 index.len)
+  # symbol index — self-contained at the offset we now know. `pos` is a token
+  # index (always >= 0) and `vis` a 0/1 enum, so plain varints suffice.
+  let indexOffset = getPos(f)
+  writeVarint(f, uint64 index.len)
   for e in index:
-    writeU32(f, uint32 e.sym)
-    writeU32(f, cast[uint32](e.pos))
-    var v = uint8(ord(e.vis))
-    writeExact(f, addr v, 1)
-  # Patch the header slot to point at the index, then leave the cursor at EOF.
-  setFilePos(f, indexAtPos)
-  writeU32(f, uint32 indexOffset)
-  setFilePos(f, 0, fspEnd)
+    writeVarint(f, uint64 e.sym)
+    writeVarint(f, uint64 e.pos)
+    writeVarint(f, uint64 ord(e.vis))
+  # Patch the fixed-width header slot to point at the index, then leave the
+  # cursor at EOF. The slot is 8 bytes wide, so this overwrites exactly it.
+  setPos(f, indexAtPos)
+  writeU64(f, uint64 indexOffset)
+  setPosEnd(f)
 
 proc store*(b: var TokenBuf; filename: string; dottedSuffix = "") =
   ## Write `b` to `filename` in binary `.bif` form (with its symbol index).
@@ -234,13 +322,12 @@ proc checkMagic(f: File) =
 proc readIndex(f: File): seq[IndexEntry] =
   ## Read the self-contained index section (`nIndex` followed by the entries),
   ## assuming `f` is already positioned at its start.
-  let nIndex = int readU32(f)
+  let nIndex = int readVarint(f)
   result = newSeq[IndexEntry](nIndex)
   for i in 0 ..< nIndex:
-    let sym = SymId readU32(f)
-    let pos = cast[int32](readU32(f))
-    var v = 0'u8
-    readExact(f, addr v, 1)
+    let sym = SymId readVarint(f)
+    let pos = int32(readVarint(f))
+    let v = int readVarint(f)
     result[i] = IndexEntry(sym: sym, pos: pos, vis: IndexVis(v))
 
 proc loadIndexFromFile*(f: File): seq[IndexEntry] =
@@ -251,8 +338,8 @@ proc loadIndexFromFile*(f: File): seq[IndexEntry] =
   ## that is only meaningful together with the buffer's `syms` pool, so a fully
   ## standalone consumer must also load that pool (or use the names another way).
   checkMagic(f)
-  let indexOffset = readU32(f)
-  setFilePos(f, int64 indexOffset)
+  let indexOffset = readU64(f)
+  setPos(f, int64 indexOffset)
   result = readIndex(f)
 
 proc loadIndex*(filename: string): seq[IndexEntry] =
@@ -274,32 +361,38 @@ proc containsSym*(filename, name: string): bool =
   ## `StrInlineMaxLen`, which a mangled `ident.disamb.suffix` always is; shorter
   ## inline-encoded names never reach the table, so only use this for such pooled
   ## names. A foreign or truncated file yields `false` ("skip it").
+  result = false                        # every non-match path falls through to this
   var f = default(File)
   if not open(f, filename, fmRead): return false
-  defer: close(f)
-  var m = default(array[MagicLen, char])
-  if f.readBuffer(addr m[0], MagicLen) != MagicLen or m != magic(): return false
-  discard readU32(f)                    # indexOffset
-  let tokenCount = int readU32(f)
-  let nTags      = int readU32(f)
-  let nStrings   = int readU32(f)
-  let nSyms      = int readU32(f)
-  discard readU32(f)                    # nFiles
-  # Skip the token block and the tags/strings tables to reach `syms`.
-  setFilePos(f, getFilePos(f) + int64(tokenCount) * sizeof(NifToken))
-  for _ in 1 .. nTags + nStrings:
-    let n = int readU32(f)              # read length first (advances 4), THEN skip
-    setFilePos(f, getFilePos(f) + n)
-  # Scan the syms table; only entries of matching length can be `name`.
-  for _ in 1 .. nSyms:
-    let n = int readU32(f)
-    if n == name.len:
-      var s = newString(n)
-      if n > 0 and f.readBuffer(addr s[0], n) != n: return false
-      if s == name: return true
-    else:
-      setFilePos(f, getFilePos(f) + n)
-  result = false
+  try:
+    var m = default(array[MagicLen, char])
+    if readBytes(f, addr m[0], MagicLen) != MagicLen or m != magic(): return false
+    discard readU64(f)                  # indexOffset (fixed 8 bytes)
+    let tokenCount = int readVarint(f)
+    let nTags      = int readVarint(f)
+    let nStrings   = int readVarint(f)
+    let nSyms      = int readVarint(f)
+    discard readVarint(f)               # nFiles
+    # Skip the alignment pad, the token block and the tags/strings tables to reach `syms`.
+    let pad = tokenPad(int getPos(f))
+    setPos(f, getPos(f) + int64(pad) + int64(tokenCount) * sizeof(NifToken))
+    for _ in 1 .. nTags + nStrings:
+      let n = int readVarint(f)         # read length first, THEN skip the bytes
+      setPos(f, getPos(f) + n)
+    # Scan the syms table; only entries of matching length can be `name`.
+    for _ in 1 .. nSyms:
+      let n = int readVarint(f)
+      if n == name.len:
+        var s = newString(n)
+        if n > 0:
+          if readBytes(f, cast[pointer](beginStore(s, n)), n) != n: return false
+          endStore(s)
+        if s == name: return true
+      else:
+        setPos(f, getPos(f) + n)
+    result = false
+  finally:
+    close(f)
 
 proc loadFromFile*(f: File): BifModule =
   ## Read a `BifModule` (token buffer + symbol index) from an already-open binary
@@ -309,13 +402,16 @@ proc loadFromFile*(f: File): BifModule =
   ## deliberately not supported. Quits on a magic/version mismatch.
   result = BifModule()
   checkMagic(f)
-  discard readU32(f)               # indexOffset — only `loadIndex*` follows it;
+  discard readU64(f)               # indexOffset — only `loadIndex*` follows it;
                                    # a full load reaches the index sequentially.
-  let tokenCount = int readU32(f)
-  let nTags      = int readU32(f)
-  let nStrings   = int readU32(f)
-  let nSyms      = int readU32(f)
-  let nFiles     = int readU32(f)
+  let tokenCount = int readVarint(f)
+  let nTags      = int readVarint(f)
+  let nStrings   = int readVarint(f)
+  let nSyms      = int readVarint(f)
+  let nFiles     = int readVarint(f)
+  # Skip the alignment pad the writer inserted before the token block.
+  let pad = tokenPad(int getPos(f))
+  if pad > 0: setPos(f, getPos(f) + int64(pad))
 
   result.buf = createTokenBuf(max(tokenCount, 16))   # fresh pools — see INVARIANT
   # token stream: read straight into the storage in one block.
@@ -347,17 +443,32 @@ type
     pos: int       # cursor within [0, size)
     size: int
 
-proc rU32(r: var BifReader): uint32 =
-  assert r.pos + 4 <= r.size, "bif: truncated header/pool"
-  result = cast[ptr uint32](r.base + uint(r.pos))[]
-  r.pos += 4
+proc rU64(r: var BifReader): uint64 =
+  assert r.pos + 8 <= r.size, "bif: truncated header"
+  result = cast[ptr uint64](r.base + uint(r.pos))[]
+  r.pos += 8
+
+proc rVarint(r: var BifReader): uint64 =
+  assert r.pos + 1 <= r.size, "bif: truncated varint"
+  let b0 = cast[ptr byte](r.base + uint(r.pos))[]
+  let n = varintLen(b0)
+  assert r.pos + n <= r.size, "bif: truncated varint"
+  var buf = default(array[maxVarIntLen, byte])
+  var i = 0
+  while i < n:
+    buf[i] = cast[ptr byte](r.base + uint(r.pos + i))[]
+    inc i
+  r.pos += n
+  result = 0'u64
+  discard readVu64(buf, result)
 
 proc rStr(r: var BifReader): string =
-  let n = int rU32(r)
+  let n = int rVarint(r)
   assert r.pos + n <= r.size, "bif: truncated string"
   result = newString(n)
   if n > 0:
-    copyMem(addr result[0], cast[pointer](r.base + uint(r.pos)), n)
+    copyMem(cast[pointer](beginStore(result, n)), cast[pointer](r.base + uint(r.pos)), n)
+    endStore(result)
     r.pos += n
 
 proc load*(filename: string): BifModule =
@@ -373,13 +484,16 @@ proc load*(filename: string): BifModule =
       if cast[ptr char](r.base + uint(i))[] != want[i]:
         quit "bif: bad magic / incompatible format or word size"
   r.pos = MagicLen
-  discard rU32(r)                  # indexOffset — a full load reaches it linearly
-  let tokenCount = int rU32(r)
-  let nTags      = int rU32(r)
-  let nStrings   = int rU32(r)
-  let nSyms      = int rU32(r)
-  let nFiles     = int rU32(r)
-  # token block starts here (byte 32) and is borrowed straight from the mapping.
+  discard rU64(r)                  # indexOffset — a full load reaches it linearly
+  let tokenCount = int rVarint(r)
+  let nTags      = int rVarint(r)
+  let nStrings   = int rVarint(r)
+  let nSyms      = int rVarint(r)
+  let nFiles     = int rVarint(r)
+  # Skip the alignment pad so the borrowed token block is NifToken-aligned. The
+  # mapping's base is page-aligned, so aligning `r.pos` aligns the absolute address.
+  r.pos += tokenPad(r.pos)
+  # token block follows the varint header and is borrowed straight from the mapping.
   result = BifModule()
   let tokenBytes = tokenCount * sizeof(NifToken)
   assert r.pos + tokenBytes <= r.size, "bif: truncated token block"
@@ -391,19 +505,25 @@ proc load*(filename: string): BifModule =
   for _ in 1 .. nSyms:    discard result.buf.pool.syms.getOrIncl(rStr(r))
   for _ in 1 .. nFiles:   discard result.buf.pool.filenames.getOrIncl(rStr(r))
   # symbol index (we are now positioned exactly at indexOffset).
-  let nIndex = int rU32(r)
+  let nIndex = int rVarint(r)
   result.index = newSeq[IndexEntry](nIndex)
   for i in 0 ..< nIndex:
-    let sym = SymId rU32(r)
-    let pos = cast[int32](rU32(r))
-    assert r.pos + 1 <= r.size, "bif: truncated index"
-    let v = cast[ptr uint8](r.base + uint(r.pos))[]
-    r.pos += 1
+    let sym = SymId rVarint(r)
+    let pos = int32(rVarint(r))
+    let v = int rVarint(r)
     result.index[i] = IndexEntry(sym: sym, pos: pos, vis: IndexVis(v))
 
 # ── self-test ───────────────────────────────────────────────────────────────
 
 when isMainModule:
+  when defined(nimony):
+    # Nimony's `system` has `assert` but not `doAssert`; the self-test wants an
+    # always-on check, so provide the two arities it uses.
+    template doAssert(cond: bool) =
+      if not cond: quit "bif self-test: assertion failed"
+    template doAssert(cond: bool; msg: string) =
+      if not cond: quit "bif self-test: " & msg
+
   proc sameTokens(a, b: TokenBuf): bool =
     if a.len != b.len: return false
     for i in 0 ..< a.len:
@@ -443,6 +563,20 @@ when isMainModule:
     var c = m.buf.beginRead()
     doAssert c.kind == TagLit
     doAssert m.buf.tags.tagName(c.cursorTagId) == "foo"
+
+    # the non-mmap File reader must decode byte-for-byte the same buffer as the
+    # mmap path (it walks the same varint header + alignment pad).
+    var ff = open(tmp, fmRead)
+    let fm = loadFromFile(ff)
+    close(ff)
+    doAssert sameTokens(src, fm.buf), "loadFromFile disagrees with mmap load"
+    doAssert fm.buf.pool.syms.len == src.pool.syms.len
+
+    # containsSym probes only the syms table (skipping header, pad, tokens, tags,
+    # strings); it must find a pooled name and reject an absent one.
+    doAssert containsSym(tmp, "some.long.symbol.name.0")
+    doAssert containsSym(tmp, "another.symbol.def.1")
+    doAssert not containsSym(tmp, "no.such.symbol.here.9")
 
   block embedded_index:
     # A module-shaped buffer: a global exported def, a global hidden def, and a
