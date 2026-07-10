@@ -85,6 +85,92 @@ type
     cmdTime: Table[string, tuple[sec: float, count: int]]
     execWallTime: float
 
+  HashRecord = object
+    ## What a rule saw for one input the last time it built successfully.
+    ## `mtime` lets an unchanged input fast-path a second time without
+    ## re-hashing; `hash` is the content fingerprint that decides freshness
+    ## when the mtime moved but the bytes did not.
+    mtime: int64
+    hash: uint64
+
+  HashManifest = object
+    ## Sidecar (`<buildfile>.hashes`) persisting the content fingerprint of
+    ## every input each rule consumed at its last successful build. Keyed by
+    ## `ruleKey \t inputPath` where `ruleKey` is the rule's first output — so
+    ## the hash is scoped to *this* rule's view of the input (two rules sharing
+    ## an input may have last run at different times / different content).
+    path: string
+    entries: Table[string, HashRecord]
+    dirty: bool
+
+proc hkey(ruleKey, input: string): string {.inline.} =
+  ruleKey & "\t" & input
+
+proc contentHash(path: string): uint64 =
+  ## 64-bit FNV-1a over the file's bytes. Not cryptographic — only needs to be
+  ## stable across runs and collision-safe enough that two genuinely different
+  ## inputs are never mistaken for the same content (birthday bound over a whole
+  ## project's files is ~1e-9). Cheap so it doesn't slow cold builds where every
+  ## rule records its inputs.
+  result = 0xcbf29ce484222325'u64
+  let content = vfsRead(path)
+  for i in 0 ..< content.len:
+    result = (result xor uint64(byte(content[i]))) * 0x100000001b3'u64
+
+proc loadManifest(path: string): HashManifest =
+  result = HashManifest(path: path, entries: initTable[string, HashRecord](),
+                        dirty: false)
+  if path.len == 0 or not vfsExists(path): return
+  for line in vfsRead(path).splitLines:
+    if line.len == 0: continue
+    # `<mtime> <hashHex> <ruleKey>\t<inputPath>` — the two scalar fields are
+    # space-separated and tab-free, so split off exactly two leading tokens and
+    # keep the remainder (which is itself `ruleKey\tinputPath`) verbatim.
+    let sp1 = line.find(' ')
+    if sp1 < 0: continue
+    let sp2 = line.find(' ', sp1 + 1)
+    if sp2 < 0: continue
+    var mtime = 0'i64
+    var hash = 0'u64
+    try:
+      mtime = parseBiggestInt(line[0 ..< sp1])
+      hash = uint64(parseBiggestUInt(line[sp1 + 1 ..< sp2]))
+    except ValueError:
+      continue
+    result.entries[line[sp2 + 1 .. ^1]] = HashRecord(mtime: mtime, hash: hash)
+
+proc saveManifest(m: HashManifest) =
+  if m.path.len == 0 or not m.dirty: return
+  var content = ""
+  for key, rec in m.entries.pairs:
+    content.add $rec.mtime
+    content.add ' '
+    content.add $rec.hash
+    content.add ' '
+    content.add key      # already `ruleKey\tinputPath`
+    content.add '\n'
+  vfsWrite(m.path, content)
+
+proc freshByHash(m: var HashManifest; ruleKey, input: string;
+                 inputTime: int64): bool =
+  ## The mtime check flagged `input` as newer than the rule's output. Decide
+  ## whether that is a real change (rebuild) or just a fresh timestamp over
+  ## identical bytes (a git checkout round-trip, a `touch`). Conservative: an
+  ## input this rule never recorded forces a rebuild.
+  let key = hkey(ruleKey, input)
+  let rec = m.entries.getOrDefault(key)
+  if rec.hash == 0 and rec.mtime == 0:
+    return false                       # no record for this rule+input -> rebuild
+  if rec.mtime == inputTime:
+    return true                        # this exact timestamp already verified
+  if contentHash(input) == rec.hash:
+    # Same bytes, newer mtime. Promote the verified mtime so the next build
+    # hits the mtime fast-path instead of re-hashing every time.
+    m.entries[key] = HashRecord(mtime: inputTime, hash: rec.hash)
+    m.dirty = true
+    return true
+  return false
+
 proc addSpace(result: var string) {.inline.} =
   if result.len > 0 and result[^1] != ' ': result.add ' '
 
@@ -217,7 +303,7 @@ proc removeOutdatedArtifacts(node: Node; opt: set[CliOption]) =
       except:
         stderr.writeLine "Warning: Could not remove outdated artifact: ", output
 
-proc needsRebuild(node: Node): bool =
+proc needsRebuild(node: Node; manifest: var HashManifest): bool =
   ## Check if a node needs to be rebuilt
   result = false
 
@@ -243,11 +329,46 @@ proc needsRebuild(node: Node): bool =
     if outputTime > freshestOutput:
       freshestOutput = outputTime
 
+  let ruleKey = node.outputs[0]
   for input in node.inputs:
     if vfsExists(input):
       let inputTime = vfsMtime(input)
-      if inputTime > freshestOutput:
+      # A newer mtime is the ONLY mtime-based rebuild trigger. Before trusting
+      # it, fall back to a content hash: a git branch round-trip (checkout
+      # A->B->A) rewrites files with fresh mtimes but identical bytes, and that
+      # must not cascade a rebuild. `freshByHash` is only reached on the newer-
+      # mtime slow path, so unchanged files are never hashed.
+      if inputTime > freshestOutput and not freshByHash(manifest, ruleKey, input, inputTime):
         return true
+
+proc recordNode(node: Node; manifest: var HashManifest) =
+  ## After a rule builds successfully, fingerprint every input it consumed so a
+  ## later newer-mtime-but-same-bytes check can prove freshness. Skips side-
+  ## effectful (output-less) nodes — they have no rule identity to key on.
+  if node.outputs.len == 0: return
+  let ruleKey = node.outputs[0]
+  for input in node.inputs:
+    if vfsExists(input):
+      manifest.entries[hkey(ruleKey, input)] =
+        HashRecord(mtime: vfsMtime(input), hash: contentHash(input))
+  manifest.dirty = true
+
+proc backfillNode(node: Node; manifest: var HashManifest) =
+  ## A node judged fresh this build won't hit `recordNode`, so an input it has
+  ## no record for would force a rebuild the first time that input's mtime moves
+  ## (e.g. a git checkout). This happens for outputs produced out of band — the
+  ## main module's `.p.nif`, which nimony's in-process dependency parse writes
+  ## before nifmake ever runs the nifler rule. Backfill fingerprints ONLY inputs
+  ## missing a record, so it hashes each such input at most once ever; recorded
+  ## inputs stay on the no-hash mtime fast-path.
+  if node.outputs.len == 0: return
+  let ruleKey = node.outputs[0]
+  for input in node.inputs:
+    let key = hkey(ruleKey, input)
+    if key notin manifest.entries and vfsExists(input):
+      manifest.entries[key] =
+        HashRecord(mtime: vfsMtime(input), hash: contentHash(input))
+      manifest.dirty = true
 
 proc visit(nodes: var seq[Node]; nodeId: int; sortedNodes: var seq[int]; maxDepth: var int): bool =
   case nodes[nodeId].state
@@ -329,7 +450,8 @@ proc nodeLabel(dag: Dag; node: Node): string =
   if node.outputs.len > 0: extractFilename(node.outputs[0])
   else: dag.commands[node.cmdIdx].name
 
-proc countToBuild(dag: var Dag; sortedNodes: seq[int]; opt: set[CliOption]): int =
+proc countToBuild(dag: var Dag; sortedNodes: seq[int]; opt: set[CliOption];
+                  manifest: var HashManifest): int =
   ## Estimate how many nodes will run, propagating staleness along the DAG:
   ## a node rebuilds if it is stale itself or any dependency will rebuild.
   ## `sortedNodes` is depth-ordered (deps first), so a single forward pass
@@ -339,7 +461,7 @@ proc countToBuild(dag: var Dag; sortedNodes: seq[int]; opt: set[CliOption]): int
   result = 0
   var willBuild = newSeq[bool](dag.nodes.len)
   for nodeId in sortedNodes:
-    var w = Force in opt or needsRebuild(dag.nodes[nodeId])
+    var w = Force in opt or needsRebuild(dag.nodes[nodeId], manifest)
     if not w:
       for depId in dag.nodes[nodeId].deps:
         if willBuild[depId]: w = true; break
@@ -371,13 +493,15 @@ var gMaxJobs = 0
   ## `execProcesses` default). Set during option parsing, read in `runDag`.
 
 proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
-            progressLo = 0; progressHi = 100): bool =
+            progressLo = 0; progressHi = 100; hashFile = ""): bool =
   ## Execute the DAG in topological order
   result = true
   let sortStart = if profile != nil: getMonoTime() else: MonoTime()
   let sortedNodes = topologicalSort(dag)
   if profile != nil:
     profile[].dagSetupTime = toSeconds(getMonoTime() - sortStart)
+
+  var manifest = loadManifest(hashFile)
 
   # The live bar is routed only where it makes sense: it needs an interactive
   # terminal, and it must not corrupt `--verbose`'s line output or `--report`'s
@@ -386,7 +510,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
     active: Progress in opt and Verbose notin opt and Report notin opt and isatty(stdout),
     done: 0, total: 0, lo: progressLo, hi: progressHi)
   if prog.active:
-    prog.total = countToBuild(dag, sortedNodes, opt)
+    prog.total = countToBuild(dag, sortedNodes, opt, manifest)
     prog.draw("")  # paint the starting reading (lo%) right away
 
   if Parallel in opt:
@@ -401,7 +525,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
       # Collect all commands at the current depth
       while i < sortedNodes.len and dag.nodes[sortedNodes[i]].depth == currentDepth:
         let node = addr dag.nodes[sortedNodes[i]]
-        if Force in opt or needsRebuild(node[]):
+        if Force in opt or needsRebuild(node[], manifest):
           if Force in opt:
             removeOutdatedArtifacts(node[], opt)
           if Verbose in opt:
@@ -413,6 +537,8 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
           nodeIds.add(sortedNodes[i])
           cmdNames.add(dag.commands[node.cmdIdx].name)
           labels.add(nodeLabel(dag, node[]))
+        else:
+          backfillNode(node[], manifest)
         inc i
 
       # Execute all commands at this depth in parallel
@@ -450,12 +576,18 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
           for i, p in pairs(progress):
             if p == Running:
               failed commands[i]
+          saveManifest manifest
           return false
+        # Every command in this batch exited 0: fingerprint their inputs so a
+        # future fresh-mtime-same-bytes touch can prove staleness without a
+        # rebuild.
+        for nodeId in nodeIds:
+          recordNode(dag.nodes[nodeId], manifest)
   else:
     # Sequential execution
     for nodeId in sortedNodes:
       let node = addr dag.nodes[nodeId]
-      if Force in opt or needsRebuild(node[]):
+      if Force in opt or needsRebuild(node[], manifest):
         if Force in opt:
           removeOutdatedArtifacts(node[], opt)
         if Verbose in opt:
@@ -472,7 +604,9 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
             stdout.write "\n"
             stdout.flushFile()
           failed expandedCmd
+          saveManifest manifest
           return false
+        recordNode(node[], manifest)
         inc prog.done
         prog.draw(nodeLabel(dag, node[]))
         if profile != nil:
@@ -480,9 +614,11 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
           profile[].recordCmdTime(cmdName, sec)
           profile[].execWallTime += sec
       else:
+        backfillNode(node[], manifest)
         if Verbose in opt:
           echo "Up to date: ", node.outputs.join(", ")
 
+  saveManifest manifest
   prog.finish()
 
 proc mescape(p: string): string =
@@ -806,13 +942,13 @@ proc main() =
       let parseStart = getMonoTime()
       var dag = parseNifFile(inputFile, baseDir)
       profile.parseTime = toSeconds(getMonoTime() - parseStart)
-      let ok = runDag(dag, opt, addr profile, progressLo, progressHi)
+      let ok = runDag(dag, opt, addr profile, progressLo, progressHi, inputFile & ".hashes")
       if Profile in opt: printProfile(profile)
       if Report in opt: printReport(profile)
       if not ok: quit 1
     else:
       var dag = parseNifFile(inputFile, baseDir)
-      if not runDag(dag, opt, nil, progressLo, progressHi):
+      if not runDag(dag, opt, nil, progressLo, progressHi, inputFile & ".hashes"):
         quit 1
 
   of cmdMakefile:

@@ -1146,17 +1146,17 @@ proc incrementalTests*() =
       expect reportField(r[1], "total") == 0,
              "noop: backend re-ran " & $reportField(r[1], "total") & " commands"
 
-  # Phase 3: touch (no content change). nifler reruns to find content
-  # unchanged — its OnlyIfChanged write preserves `.p.nif`'s mtime, so
-  # nimsem and the backend must stay idle.
+  # Phase 3: touch (no content change). nifmake's content-hash freshness
+  # fallback (see `freshByHash` in nifmake.nim) recognises the fresh mtime
+  # covers identical bytes, so NOTHING re-runs — not even nifler. This is the
+  # git-branch-round-trip case (checkout rewrites files with new mtimes but the
+  # same content) that used to trigger the full-tree rebuild storm.
   block:
     setLastModificationTime(src, getTime())
     let r = run("touch")
     if r.len == 2:
-      expect reportField(r[0], "nifler") >= 1,
-             "touch: nifler did not re-run"
-      expect reportField(r[0], "nimsem") == 0,
-             "touch: nimsem ran " & $reportField(r[0], "nimsem") & " times (expected 0)"
+      expect reportField(r[0], "total") == 0,
+             "touch: frontend ran " & $reportField(r[0], "total") & " commands (expected 0)"
       expect reportField(r[1], "total") == 0,
              "touch: backend ran " & $reportField(r[1], "total") & " commands (expected 0)"
 
