@@ -20,7 +20,7 @@ when defined(nimony):
 import std/[os, tables, sets, syncio, hashes, assertions, strutils, times, formatfloat, dirs, paths]
 import semos, nifconfig, nimony_model, semdata, langmodes
 import ".." / gear2 / modnames
-import ".." / lib / [tooldirs, platform, nifindexes, symparser, docpaths, argsfinder]
+import ".." / lib / [tooldirs, platform, nifindexes, symparser, docpaths, argsfinder, tinyhashes]
 import ".." / models / nifindex_tags
 
 include ".." / lib / nifprelude
@@ -175,7 +175,7 @@ type
     Stats          ## after build, print total LOC + module count across the dep graph
 
   CFile = object
-    name, obj, customArgs: string
+    name, customArgs: string
 
   BackendTool = object
     ## A `{.build(builder, tool[, args[, linkflags]]).}` custom-backend routing
@@ -503,8 +503,9 @@ proc processBuild(c: var DepContext; it: var Cursor; current: Node) =
         if typ in ["C", "ObjC", "Cpp", "ObjCpp"]:
           # `.compile` foreign source -> object file, linked into the program.
           # The first field is a C-family language (set by `addBuildTarget`).
-          let obj = splitFile(path).name & ".o"
-          c.toBuild.add CFile(name: path, obj: obj, customArgs: args)
+          # The object filename is derived later by `sharedObjFile`, which folds
+          # the compile flags into a hash so flag-variants don't clobber.
+          c.toBuild.add CFile(name: path, customArgs: args)
         else:
           # `{.build(builder, tool, args[, linkflags]).}` — a custom backend routes
           # THIS module's Leng IR through `tool`. The first field is the generic
@@ -682,8 +683,34 @@ proc sharedObjDir(): string =
   ## across nimcaches saves ~4-5 s per cold build on Windows.
   result = getCacheDir("nimony") / "nimcache_static"
 
-proc sharedObjFile(cfile: CFile): string =
-  sharedObjDir() / cfile.obj
+proc compileVariantKey(c: DepContext; cfile: CFile; passC: string): string =
+  ## Every compile input that changes a shared `.o`'s bytes without changing its
+  ## source path: the compiler, opt level, backend, PIC, the forwarded and
+  ## `.passC`-pragma flags (this is where `-DMI_TRACK_VALGRIND=1` lives), and the
+  ## per-file `.compile` args. NUL-separated so no field boundary can be forged
+  ## by a flag that happens to contain the separator.
+  result = c.config.cc
+  result.add '\0'
+  result.add $c.config.optLevel
+  result.add '\0'
+  result.add $c.config.backend
+  result.add '\0'
+  if c.config.appType == appLib: result.add "fPIC"
+  result.add '\0'
+  result.add passC
+  result.add '\0'
+  result.add c.passC.join(" ")
+  result.add '\0'
+  result.add cfile.customArgs
+
+proc sharedObjFile(c: DepContext; cfile: CFile; passC: string): string =
+  ## Shared cache path for a `.compile`d TU's object. The compile-flag hash is
+  ## baked into the filename (`static-<hash8>.o`) so a valgrind-tracked build and
+  ## a plain build — or a clang and a gcc build — cache DIFFERENT objects instead
+  ## of silently clobbering one shared `static.o`.
+  let base = splitFile(cfile.name).name
+  let h = toHex(uhash(compileVariantKey(c, cfile, passC)))
+  sharedObjDir() / (base & "-" & h & ".o")
 
 proc emitFrontendArgs(b: var Builder; baseDir, commandLineArgs: string) =
   ## Emit the shared `--base:` plus the forwarded `commandLineArgs` for a
@@ -1241,7 +1268,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
           # the dedup must happen here (not only on the DO-node ordering inputs).
           var seenObjs = initHashSet[string]()
           for cfile in c.toBuild:
-            let o = sharedObjFile(cfile)
+            let o = sharedObjFile(c, cfile, passC)
             if not seenObjs.containsOrIncl(o): objs.add o
           for v in c.nodes:
             let o = c.config.objFile(v.files[0], backend)
@@ -1315,7 +1342,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
             b.addStrLit nativeObj
           objFiles.incl nativeObj
           for cfile in c.toBuild:
-            let obj = sharedObjFile(cfile)
+            let obj = sharedObjFile(c, cfile, passC)
             if not objFiles.containsOrIncl(obj):
               b.withTree "input":
                 b.addStrLit obj
@@ -1350,7 +1377,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
       # that uses the `.compile` pragma (`nativeSysLink`) compiles them.
       if (not native) or nativeSysLink:
         for cfile in c.toBuild:
-          let obj = sharedObjFile(cfile)
+          let obj = sharedObjFile(c, cfile, passC)
           if not objFiles.containsOrIncl(obj):
             b.withTree "do":
               b.addIdent "cc"
