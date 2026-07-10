@@ -463,6 +463,26 @@ proc callWasMoved(c: var Context; sym: SymId; info: NifLineInfo; typ: Cursor) =
       copyIntoKind c.dest, HaddrX, info:
         copyIntoSymUse c.dest, sym, info
 
+proc writesThroughCursorField(le: Cursor): bool =
+  ## True when the assignment target `le` is a write through a `{.cursor.}`
+  ## object field, e.g. `obj.cursorField = x`. Such a field is a non-owning
+  ## alias: the store must be a raw bitcopy (no `=destroy` of the old value,
+  ## no `=dup`/`=copy` of the new), matching the constructor-side handling in
+  ## `isCursorField` / trObjConstr and the lifter's `unravelObjField`. Without
+  ## this, a captured `{.cursor.}` local hoisted into a closure environment
+  ## (see lambdalifting) would get `=dup`'d into its env field, re-forming the
+  ## exact ref cycle the cursor was written to break.
+  if le.exprKind != DotX: return false
+  var f = le
+  inc f            # into the dot: object operand
+  skip f           # skip the object operand -> field symbol
+  if f.kind != Symbol: return false
+  let res = tryLoadSym(f.symId)
+  if res.status != LacksNothing: return false
+  let local = asLocal(res.decl)
+  if local.kind notin {FldY, GfldY}: return false
+  result = hasPragma(local.pragmas, CursorP)
+
 proc trAsgn(c: var Context; n: var Cursor) =
   #[
   `x = f()` is turned into `let tmp = f(); =destroy(x); x =bitcopy tmp` #`f()` can read `x`
@@ -498,8 +518,9 @@ proc trAsgn(c: var Context; n: var Cursor) =
   # over-decrement the rc on a value the cursor never claimed ownership of
   # (and matching =destroy at end of scope was suppressed for the same
   # reason). Treat cursor lhs's like the no-destructor case — raw bitcopy.
-  let lhsIsCursor = le.kind == Symbol and
-                    c.typeCache.getLocalInfo(le.symId).kind == CursorY
+  let lhsIsCursor = (le.kind == Symbol and
+                     c.typeCache.getLocalInfo(le.symId).kind == CursorY) or
+                    writesThroughCursorField(le)
   if destructor == NoSymId or lhsIsCursor:
     # the type has no destructor, there is nothing interesting to do:
     trSons c, n, DontCare
