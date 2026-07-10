@@ -528,7 +528,7 @@ proc semStaticInvokeArg(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     endRead(dest)
   else:
     var value2 = value
-    var folded = evalExpr(c, value2, elemType)
+    var folded = evalExpr(c, value2, elemType, retypeConstAlias = true)
     let f = beginRead(folded)
     endRead(dest)
     if isStaticValue(f):

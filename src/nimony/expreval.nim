@@ -1000,11 +1000,12 @@ proc isConstSym(n: Cursor): bool =
   result = res.status == LacksNothing and res.decl.symKind == ConstY
 
 proc evalExpr*(c: var SemContext, n: var Cursor;
-               expectedType: TypeCursor = default(Cursor)): TokenBuf =
-  ## Evaluate a constant expression. When `expectedType` is set and `n` is a
-  ## `const` symbol, the folded value is re-typed via `annotateConstantType`
+               expectedType: TypeCursor = default(Cursor);
+               retypeConstAlias = false): TokenBuf =
+  ## Evaluate a constant expression. When `retypeConstAlias` is set and `n` is
+  ## a `const` symbol, the folded value is re-typed via `annotateConstantType`
   ## so it canonicalizes to the typed static value the name aliases.
-  let retypeConst = not cursorIsNil(expectedType) and isConstSym(n)
+  let retypeConst = retypeConstAlias and not cursorIsNil(expectedType) and isConstSym(n)
   var ec = initEvalContext(addr c)
   ec.expectedType = expectedType
   let val = eval(ec, n)
