@@ -19,13 +19,18 @@ import ".." / gear2 / modnames
 
 # -------------- symbol lookups -------------------------------------
 
+type
+  ChoiceOption* = enum
+    FindAll, FindOverloads, InnerMost
+
 template buildTree*(dest: var TokenBuf; kind: StmtKind|ExprKind|TypeKind|SymKind|NimonyOther;
                     info: PackedLineInfo; body: untyped) =
   addParLe(dest, kind, info)
   body
   dest.addParRi()
 
-proc considerImportedSymbols(c: var SemContext; dest: var TokenBuf; name: StrId; info: PackedLineInfo): int =
+proc considerImportedSymbols(c: var SemContext; dest: var TokenBuf; name: StrId; info: PackedLineInfo;
+                             option = FindAll): int =
   result = 0
   let ignoreStyle = IgnoreStyleFeature in c.features
   for realName in stylesOfImport(c.importTab, name, ignoreStyle):
@@ -33,8 +38,12 @@ proc considerImportedSymbols(c: var SemContext; dest: var TokenBuf; name: StrId;
       let iface = addr c.importedModules.getOrQuit(moduleId).iface
       for foreignName in stylesOfIface(iface[], realName, ignoreStyle):
         let candidates = addr iface[].getOrQuit(foreignName)
-        inc result, candidates[].len
         for defId in candidates[]:
+          if option == FindOverloads:
+            let res = tryLoadSym(defId)
+            if res.status == LacksNothing and res.decl.symKind == ModuleY:
+              continue
+          inc result
           dest.add symToken(defId, info)
 
 proc addSymUse*(dest: var TokenBuf; s: Sym; info: PackedLineInfo) =
@@ -117,10 +126,6 @@ proc buildSymChoiceForForeignModule*(c: var SemContext; dest: var TokenBuf; modu
     dest.shrink oldLen
     dest.add identToken(identifier, info)
 
-type
-  ChoiceOption* = enum
-    FindAll, FindOverloads, InnerMost
-
 proc rawBuildSymChoice(c: var SemContext; dest: var TokenBuf; identifier: StrId; info: PackedLineInfo;
                        option = FindAll): int =
   result = 0
@@ -130,6 +135,8 @@ proc rawBuildSymChoice(c: var SemContext; dest: var TokenBuf; identifier: StrId;
     var nonOverloadable = 0
     for k in stylesOfScope(it, identifier, ignoreStyle):
       for sym in it.tab.getOrDefault(k):
+        if option == FindOverloads and sym.kind == ModuleY:
+          continue
         dest.addSymUse sym, info
         inc result
         if sym.kind.isNonOverloadable:
@@ -140,7 +147,7 @@ proc rawBuildSymChoice(c: var SemContext; dest: var TokenBuf; identifier: StrId;
       # in case of FindOverloads, if symbol is overloadable, consider other overloads
       return
     it = it.up
-  inc result, considerImportedSymbols(c, dest, identifier, info)
+  inc result, considerImportedSymbols(c, dest, identifier, info, option)
 
 proc buildSymChoice*(c: var SemContext; dest: var TokenBuf; identifier: StrId; info: PackedLineInfo;
                     option: ChoiceOption): int =
