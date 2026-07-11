@@ -80,18 +80,18 @@ proc rollbackTo*(x: var Inits; cp: int) =
     dec i
   x.journal.setLen cp
 
-proc addedSince(x: Inits; cp: int): seq[SymId] =
+proc addedSince(x: Inits; cp: int): HashSet[SymId] =
   ## The net keys gained since `cp`: those added in the interval AND still
   ## present now. Baseline keys are never removed (definite-assignment is
   ## monotone; nested confluences only ever drop keys they themselves added),
   ## so a currently-present key added since `cp` is exactly a delta key — even
-  ## if a nested branch added, dropped, then re-added it.
-  result = @[]
-  var seen = initHashSet[SymId]()
+  ## if a nested branch added, dropped, then re-added it. Returned as a set (its
+  ## members are unique and every caller wants membership tests).
+  result = initHashSet[SymId]()
   for i in cp ..< x.journal.len:
     let e = x.journal[i]
-    if e.op == ijAdd and e.sym in x.s and not containsOrIncl(seen, e.sym):
-      result.add e.sym
+    if e.op == ijAdd and e.sym in x.s:
+      result.incl e.sym
 
 proc snapshot(x: Inits): HashSet[SymId] = x.s   # a plain value copy
 
@@ -201,7 +201,7 @@ type
     cp: FlowCp
     ejcp: int
     thenLive: bool
-    thenInits: seq[SymId]             ## the then-branch's init *delta*
+    thenInits: HashSet[SymId]         ## the then-branch's init *delta*
     thenFacts: Facts                  ## the then-branch's facts (if it lives)
     thenDelta: seq[ExitJEntry]        ## the then-branch's net exit contributions
 
@@ -356,12 +356,10 @@ proc mergeBranches*(tr: var FlowTracker; fs: var FlowState; b: Branch) =
   if b.thenLive and elseLive:
     # merged init-set = baseline + (thenDelta ∩ elseDelta); merged facts = ⊔.
     let elseDelta = fs.inits.addedSince(b.cp.initsCp)
-    var thenSet = initHashSet[SymId]()
-    for k in b.thenInits: thenSet.incl k
     let mergedFacts = merge(b.thenFacts, 0, fs.facts, false)
     fs.inits.rollbackTo b.cp.initsCp
     for k in elseDelta:
-      if k in thenSet: fs.inits.incl k
+      if k in b.thenInits: fs.inits.incl k
     setFactsTo(fs.facts, b.cp.factsCp, mergedFacts)
     tr.live = true
   elif b.thenLive:

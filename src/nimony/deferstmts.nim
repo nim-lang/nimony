@@ -61,6 +61,9 @@ proc trReturn(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addSymUse c.retSym, info
       inc n, SkipTag # skip `ret`
       trStmt c, dest, n
+    skipParRi n # consume the original `(ret …)` close; without this the cursor is
+                # left on the return's ')' and every statement after the return is
+                # silently dropped (the caller's `while n.hasMore` stops at a ParRi)
     dest.copyIntoKind RetS, info:
       dest.addSymUse c.retSym, info
   else:
@@ -171,8 +174,15 @@ proc transformDefer*(dest: var TokenBuf; procBody: int) =
   var n = cursorAt(dest, procBody)
   assert n.stmtKind == StmtsS
   var c = Context()
-  c.scopeStack.add procBody
   var buf = createTokenBuf(50)
+  # The scope id is an index into `buf` (where `trStmt`/`trDefer` build), NOT into
+  # `dest`. It must be the position of the first body statement — i.e. right after
+  # the `(stmts` opener `buf.takeToken` copies below — mirroring `trBlock`'s
+  # `beforeBody = dest.len+1`. Seeding it with the `dest`-absolute `procBody`
+  # corrupted the tree whenever enough tokens preceded a top-level `defer` (the
+  # bad insert position only landed correctly while it happened to exceed `buf`'s
+  # length and clamp to an append).
+  c.scopeStack.add buf.len + 1
   buf.takeToken n
   while n.hasMore:
     trStmt c, buf, n
