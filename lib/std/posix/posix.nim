@@ -93,24 +93,24 @@ when defined(posix):
 
       Stat* {.importc: "struct stat",
                header: "<sys/stat.h>", final, pure.} = object ## struct stat
-        st_dev* {.importc: "st_dev".} : Dev          ## Device ID of device containing file.
-        st_ino* {.importc: "st_ino".} : Ino          ## File serial number.
-        st_size* {.importc: "st_size".} : Off  ## For regular files, the file size in bytes.
+        st_dev* {.importc: "st_dev".}: Dev          ## Device ID of device containing file.
+        st_ino* {.importc: "st_ino".}: Ino          ## File serial number.
+        st_size* {.importc: "st_size".}: Off  ## For regular files, the file size in bytes.
                                               ## For symbolic links, the length in bytes of the
                                               ## pathname contained in the symbolic link.
                                               ## For a shared memory object, the length in bytes.
                                               ## For a typed memory object, the length in bytes.
                                               ## For other file types, the use of this field is
                                               ## unspecified.
-        st_mode* {.importc: "st_mode".} : Mode        ## Mode of file (see below).
+        st_mode* {.importc: "st_mode".}: Mode        ## Mode of file (see below).
         when defined(osx):
           # On macOS `st_mtime` is a macro that expands to `st_mtimespec.tv_sec`,
           # so declaring it as a separate field would alias `st_mtim` and trigger
           # a `-Winitializer-overrides` warning whenever a `Stat` value is zeroed.
-          st_mtim* {.importc: "st_mtimespec".} : Timespec ## Time of last data modification with nanosecond precision.
+          st_mtim* {.importc: "st_mtimespec".}: Timespec ## Time of last data modification with nanosecond precision.
         else:
-          st_mtime* {.importc: "st_mtime".} : int64     ## Time of last data modification (seconds since epoch).
-          st_mtim* {.importc: "st_mtim".} : Timespec      ## Time of last data modification with nanosecond precision.
+          st_mtime* {.importc: "st_mtime".}: int64     ## Time of last data modification (seconds since epoch).
+          st_mtim* {.importc: "st_mtim".}: Timespec      ## Time of last data modification with nanosecond precision.
 
 
   const StatHasNanoseconds* = defined(linux) or defined(freebsd) or
@@ -432,12 +432,12 @@ when defined(posix):
 
   # <sys/wait.h>
   proc WEXITSTATUS*(s: cint): cint =  (s and 0xff00) shr 8
-  proc WTERMSIG*(s:cint): cint = s and 0x7f
-  proc WSTOPSIG*(s:cint): cint = WEXITSTATUS(s)
-  proc WIFEXITED*(s:cint) : bool = WTERMSIG(s) == 0
-  proc WIFSIGNALED*(s:cint) : bool = (cast[int8]((s and 0x7f) + 1) shr 1) > 0
-  proc WIFSTOPPED*(s:cint) : bool = (s and 0xff) == 0x7f
-  proc WIFCONTINUED*(s:cint) : bool = s == WCONTINUED
+  proc WTERMSIG*(s: cint): cint = s and 0x7f
+  proc WSTOPSIG*(s: cint): cint = WEXITSTATUS(s)
+  proc WIFEXITED*(s: cint): bool = WTERMSIG(s) == 0
+  proc WIFSIGNALED*(s: cint): bool = (cast[int8]((s and 0x7f) + 1) shr 1) > 0
+  proc WIFSTOPPED*(s: cint): bool = (s and 0xff) == 0x7f
+  proc WIFCONTINUED*(s: cint): bool = s == WCONTINUED
 
   # -------- Process / pipe / exec bindings needed by std/osproc --------
   # The syscall-based subset (pipe/dup2/fork/exec/waitpid/kill/...) is provided
