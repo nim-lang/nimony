@@ -234,12 +234,18 @@ proc implies*(facts: Facts; v: LeXplusC): bool =
 
 proc consider(best: var Table[(VarId, VarId), xint]; a, b: VarId; c: xint) =
   let key = (a, b)
-  if key notin best or c < best.getOrDefault(key):
+  # Keep the *weakest* bound seen for a given (a,b): a larger `c` in `a <= b + c`
+  # is the weaker constraint, and a join can only assert what holds on every
+  # predecessor.
+  if key notin best or c > best.getOrDefault(key):
     best[key] = c
 
 proc merge*(x: Facts; xstart: int; y: Facts; negate: bool): Facts =
-  # At a join we know facts that hold in BOTH branches.
-  # For a<=b+c: intersection uses min(c1,c2) (strongest constraint).
+  # At a join we know facts that hold in BOTH branches. For `a <= b + c` a
+  # branch that guarantees `a <= b + c1` and one that guarantees `a <= b + c2`
+  # jointly guarantee only the *weaker* `a <= b + max(c1,c2)` (each branch's own,
+  # tighter bound implies the weaker one, so it holds on both). Using min would
+  # claim a bound tighter than one branch actually proves — unsound.
   # Deduplicate: at most one fact per (a,b).
   var best = initTable[(VarId, VarId), xint]()
 
@@ -247,7 +253,7 @@ proc merge*(x: Facts; xstart: int; y: Facts; negate: bool): Facts =
     for j in 0..<y.len:
       let ya = y[j]
       if x[i].a == ya.a and x[i].b == ya.b:
-        consider(best, x[i].a, x[i].b, min(x[i].c, ya.c))
+        consider(best, x[i].a, x[i].b, max(x[i].c, ya.c))
 
   if negate and x.len - xstart > 1:
     discard "negation of (a and b) would be (not a or not b) so we cannot model that"
@@ -258,7 +264,7 @@ proc merge*(x: Facts; xstart: int; y: Facts; negate: bool): Facts =
         if negate:
           ya.negateFact()
         if x[i].a == ya.a and x[i].b == ya.b:
-          consider(best, x[i].a, x[i].b, min(x[i].c, ya.c))
+          consider(best, x[i].a, x[i].b, max(x[i].c, ya.c))
 
   result = Facts()
   for key, c in best:
