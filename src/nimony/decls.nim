@@ -74,10 +74,11 @@ proc skipToParams*(c: var Cursor) =
   ## Proctype/itertype layout: `(<tag> <NilTag> (params...) RetType <Pragmas>)`.
   ## Proc-decl layout: `(proc Name ExportMarker Pattern Typevars (params...) ...)`.
   let kind = c.typeKind
+  let sk = c.symKind
   inc c # skip ParLe
   if kind in {ProctypeT, ItertypeT}:
     skip c # nilability tag
-  elif kind in RoutineTypes:
+  elif kind in RoutineTypes or sk in RoutineKinds:
     skip c # name
     skip c # export marker
     skip c # pattern
@@ -100,7 +101,7 @@ proc skipRoutineDeclPrefix*(n: var Cursor; parentKind: TypeKind) =
 proc skipProcTypeToParams*(t: Cursor): Cursor =
   ## Pure version: returns a cursor advanced past the prefix slots.
   result = t
-  if result.typeKind in RoutineTypes:
+  if result.typeKind in RoutineTypes or result.symKind in RoutineKinds:
     skipToParams result
 
 const

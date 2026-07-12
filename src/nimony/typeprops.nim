@@ -410,6 +410,9 @@ proc hasRtti*(s: SymId): bool =
     # This `startsWith` is a minor hack but we know that types of this
     # internal name only have a refcount and a payload, hence no RTTI
     return false
+  let res0 = tryLoadSym(s)
+  if res0.status == LacksNothing and res0.decl.symKind == TypevarY:
+    return false
   var root = s
   for r in inheritanceChain(s):
     root = r

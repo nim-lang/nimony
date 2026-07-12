@@ -488,7 +488,14 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       discard "byref param access: type is already the Nim-level type"
   of QuotedX, OchoiceX, CchoiceX, UnpackX, FieldsX, FieldpairsX, TypeofX, LowX, HighX,
      InternalFieldPairsX:
-    discard "keep the error type"
+    # When an overload set is still present (common in generic bodies), use
+    # the first candidate's type so later passes can inspect the routine.
+    var it = n
+    inc it
+    if it.kind == Symbol:
+      result = lookupSymbol(c, it.symId)
+      if cursorIsNil(result) or (result.typeKind notin RoutineTypes and result.symKind notin RoutineKinds):
+        result = c.builtins.autoType
   of ErrX:
     # determining the type of `(err)` is not an error by itself:
     result = n
