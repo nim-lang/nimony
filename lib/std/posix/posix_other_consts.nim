@@ -613,7 +613,12 @@ var ST_RDONLY* {.importc: "ST_RDONLY", header: "<sys/statvfs.h>".}: cint
 var ST_NOSUID* {.importc: "ST_NOSUID", header: "<sys/statvfs.h>".}: cint
 
 # <sys/wait.h>
-when defined(linux):
+# Under -d:nimNativeIo the syscall-based build must pull no libc headers, so the
+# wait flags used by osproc are hardcoded rather than `importc`'d (referencing a
+# `header: "<sys/wait.h>"` var would include the header and re-declare `wait4`,
+# whose native binding is header-less — conflicting types). WNOHANG is 1 on every
+# Unix; WCONTINUED differs (Linux 0x8, macOS 0x10).
+when defined(linux) or defined(nimNativeIo):
   const WNOHANG* = cint(1)
 else:
   var WNOHANG* {.importc: "WNOHANG", header: "<sys/wait.h>".}: cint
@@ -622,6 +627,8 @@ var WEXITED* {.importc: "WEXITED", header: "<sys/wait.h>".}: cint
 var WSTOPPED* {.importc: "WSTOPPED", header: "<sys/wait.h>".}: cint
 when defined(linux):
   const WCONTINUED* = cint(8)
+elif defined(nimNativeIo):  # macOS/native: no <sys/wait.h>
+  const WCONTINUED* = cint(0x10)
 else:
   var WCONTINUED* {.importc: "WCONTINUED", header: "<sys/wait.h>".}: cint
 var WNOWAIT* {.importc: "WNOWAIT", header: "<sys/wait.h>".}: cint
