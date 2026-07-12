@@ -134,6 +134,20 @@ type
     buf*: TokenBuf
     index*: seq[IndexEntry]
 
+proc findDeclaration*(module: var BifModule; name: string): Cursor =
+  ## Returns the indexed declaration for ``name``, or a nil cursor when absent.
+  result = default(Cursor)
+  for entry in module.index:
+    if poolSym(module.buf.pool, entry.sym) == name:
+      return module.buf.cursorAt(entry.pos)
+
+iterator declarations*(module: var BifModule):
+    tuple[name: string, visibility: IndexVis, declaration: Cursor] =
+  ## Iterates all indexed global declarations in storage order.
+  for entry in module.index:
+    yield (poolSym(module.buf.pool, entry.sym), entry.vis,
+      module.buf.cursorAt(entry.pos))
+
 proc isGlobalSymbol(s, dottedSuffix: string): bool =
   ## Mirror of `nifbuilder.addSymbolDefRetIsGlobal`: a symbol is "global" (gets
   ## an index entry) when its name — with a self-module `dottedSuffix` compressed
@@ -608,6 +622,18 @@ when isMainModule:
     # entry 1: bar, hidden.
     doAssert m.buf.pool.syms[m.index[1].sym] == "bar.4.mymod"
     doAssert m.index[1].vis == ivHidden
+
+    let foo = m.findDeclaration("foo.3.mymod")
+    doAssert not foo.cursorIsNil
+    doAssert foo.kind == TagLit and m.buf.tags.tagName(foo.cursorTagId) == "sdef"
+    doAssert m.findDeclaration("missing.0.mymod").cursorIsNil
+    var declarationCount = 0
+    for name, visibility, declaration in m.declarations:
+      doAssert name in ["foo.3.mymod", "bar.4.mymod"]
+      doAssert visibility in {ivExported, ivHidden}
+      doAssert declaration.kind == TagLit
+      inc declarationCount
+    doAssert declarationCount == 2
 
     # jump-only load: following indexOffset must yield exactly the same entries
     # the full load produced, without touching the token block or pools.
