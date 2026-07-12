@@ -125,7 +125,6 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
         isConcrete = n.substructureKind != TypevarsU
       elif i == ProcPragmasPos:
         if hasPragma(n, ClosureP):
-          c.closureProcs.incl symId
           c.escapes.incl symId
           c.hasClosures = true
       takeTree dest, n
@@ -902,6 +901,7 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   inc n
   let fn = n
   let typ = c.typeCache.getType(n, {SkipAliases})
+  let isStatic = n.kind == Symbol and isStaticCall(c, n.symId)
   # A closure iter-value call target type can appear here in two guises:
   #   - raw `(itertype … (pragmas (closure)))` — `isClosure` matches.
   #   - lifted `(tuple <proctype> (ref RootObj))` — `isLiftedClosureTuple`
@@ -915,13 +915,13 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # this to a wrapper-proc call with explicit `StopContinuation`. We
   # must not append an env-arg here, otherwise the trampoline expects
   # the env-arg to be the addr-of-result and bails.
-  let wantsEnv = isClosure(typ) or isLiftedClosureTuple(typ) or
-                 (n.kind == Symbol and c.closureProcs.contains(n.symId))
-  var isStatic = false
+  let wantsEnv = if isStatic:
+                   c.closureProcs.contains(n.symId)
+                 else:
+                   isClosure(typ) or isLiftedClosureTuple(typ)
   var tmp = SymId(0)
   var needNilCheck = false
   if wantsEnv:
-    isStatic = n.kind == Symbol and isStaticCall(c, n.symId)
     if isStatic:
       dest.add callNode
       # do not produce a tuple:
@@ -964,6 +964,8 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addParRi() # ExprX
   else:
     dest.add callNode
+    if isStatic:
+      takeToken dest, n
   while n.hasMore:
     tre(c, dest, n)
   if wantsEnv:
@@ -1026,18 +1028,24 @@ proc treKv(c: var Context; dest: var TokenBuf; n: var Cursor) =
     while n.hasMore:
       tre(c, dest, n)
 
-proc treToClosure(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let info = n.info
-  let origTyp = c.typeCache.getType(n, {SkipAliases})
-  inc n
+proc nonClosureToClosure(c: var Context; dest: var TokenBuf; n: var Cursor; origTyp: Cursor; info: PackedLineInfo) =
   dest.copyIntoKind TupconstrX, info:
     dest.copyIntoKind TupleT, info:
       c.toProcType(dest, origTyp)
       dest.addRootRef info
     dest.copyIntoKind CastX, info:
       c.toProcType(dest, origTyp)
-      tr c, dest, n
+      if n.kind == ParLe:
+        treSons c, dest, n
+      else:
+        dest.takeToken n
     dest.addParPair NilX, info
+
+proc treToClosure(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  let origTyp = c.typeCache.getType(n, {SkipAliases})
+  inc n
+  nonClosureToClosure c, dest, n, origTyp, info
   skipParRi n
 
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -1092,13 +1100,18 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
               dest.addSymUse coro_transform.coroTypeForExternIter(iterSym), info
       inc n
     elif origTyp.typeKind in RoutineTypes and isClosure(origTyp) and c.typeCache.fetchSymKind(n.symId) in RoutineKinds:
-      dest.copyIntoKind TupconstrX, info:
-        dest.copyIntoKind TupleT, info:
-          c.toProcType(dest, origTyp)
-          dest.addRootRef info
-        dest.addSymUse n.symId, info
-        dest.untypedEnv info, c.env
-      inc n
+      if c.closureProcs.contains(n.symId):
+        dest.copyIntoKind TupconstrX, info:
+          dest.copyIntoKind TupleT, info:
+            c.toProcType(dest, origTyp)
+            dest.addRootRef info
+          dest.addSymUse n.symId, info
+          dest.untypedEnv info, c.env
+        inc n
+      else:
+        # proc with closure pragma but doesn't capture any variables.
+        # so it is actually not closure.
+        nonClosureToClosure c, dest, n, origTyp, info
     else:
       let repWith = c.localToEnv.getOrDefault(n.symId)
       if repWith.field != SymId(0):
