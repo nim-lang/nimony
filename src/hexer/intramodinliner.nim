@@ -302,28 +302,12 @@ proc walkInlineWeights(n: var Cursor; params: Table[SymId, int];
     inc n
 
 proc subtreeTokenCount(n: Cursor; limit: int): int =
-  result = 0
-  var n = n
+  ## Number of tokens the subtree occupies (the physical span; elided
+  ## closes do not count). `limit` is only relevant for the comparison the
+  ## callers do, the count is exact.
   if n.kind != ParLe:
     return 1
-  var nested = 0
-  while true:
-    inc result
-    if result > limit:
-      return result
-    case n.kind
-    of ParLe:
-      inc nested
-      inc n
-    of ParRi:
-      dec nested
-      inc n
-      if nested == 0:
-        return result
-    of EofToken:
-      return result
-    else:
-      inc n
+  result = span(n)
 
 proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
   result = DefaultInlineInfo

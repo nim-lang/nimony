@@ -342,11 +342,9 @@ proc opt(c: Con; n: var Cursor; dest: var TokenBuf) =
       dest.add dotToken(n.info)
       skip n
     else:
-      dest.add n
-      inc n
-      while n.hasMore:
-        opt(c, n, dest)
-      dest.takeParRi n
+      takeInto dest, n:
+        while n.hasMore:
+          opt(c, n, dest)
   of ParRi:
     raiseAssert "unexpected ')' in tree rewrite"
   of Symbol, SymbolDef, DotToken, UnknownToken, EofToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:

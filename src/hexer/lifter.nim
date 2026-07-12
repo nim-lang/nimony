@@ -448,7 +448,7 @@ proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: T
         unravelObjFieldsForward(c, nCopy, paramA, paramB, depth)
         c.op = prevOp
       let info = n.info
-      inc n
+      let caseScope = enterScope(n)
       var selector = n
       if c.op != attachedDestroy:
         # copy the selector before case stmt, but destroy after case stmt
@@ -463,24 +463,21 @@ proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: T
       while n.hasMore:
         case n.substructureKind
         of OfU:
-          c.dest.takeToken(n)
-          c.dest.takeTree(n)
-          assert n.stmtKind == StmtsS
-          c.dest.takeToken(n)
-          unravelObjFieldsForward c, n, paramA, paramB, depth
-          takeParRi(c.dest, n)
-          takeParRi(c.dest, n)
+          takeInto c.dest, n:
+            c.dest.takeTree(n)
+            assert n.stmtKind == StmtsS
+            takeInto c.dest, n:
+              unravelObjFieldsForward c, n, paramA, paramB, depth
         of ElseU:
-          c.dest.takeToken(n)
-          assert n.stmtKind == StmtsS
-          c.dest.takeToken(n)
-          unravelObjFieldsForward c, n, paramA, paramB, depth
-          takeParRi(c.dest, n)
-          takeParRi(c.dest, n)
+          takeInto c.dest, n:
+            assert n.stmtKind == StmtsS
+            takeInto c.dest, n:
+              unravelObjFieldsForward c, n, paramA, paramB, depth
         else:
           error "expected `of` or `else` inside `case`"
 
-      takeParRi(c.dest, n) # end of case
+      c.dest.addParRi(n.endInfo) # end of case
+      leaveScope(n, caseScope)
 
       if c.op == attachedDestroy:
         # destroy the selector after case stmt
@@ -858,7 +855,8 @@ proc maybeAddReturn(c: var LiftingCtx; res: SymId) =
 
 proc publishProc(sym: SymId; dest: TokenBuf; procStart: int) =
   var buf = createTokenBuf(100)
-  for i in procStart ..< dest.len: buf.add dest[i]
+  # verbatim copy of a (possibly still-open) span: keep seals, no open-tag churn
+  for i in procStart ..< dest.len: buf.addRaw dest[i]
   programs.publish(sym, buf)
 
 proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
@@ -950,7 +948,10 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
       copyIntoKind(c.dest, StmtsS, c.info): discard
   # tell vtables.nim we need dynamic binding here:
   if c.routineKind == MethodY:
-    c.dest[procStart] = parLeToken(MethodS, c.info)
+    # `setTag`, not a `parLeToken` overwrite: the decl is sealed by now and
+    # its jump must be preserved
+    setTag(c.dest[procStart], TagId(MethodS))
+    c.dest[procStart] = withLineInfo(c.dest[procStart], c.info)
 
   if c.calledErrorHook != NoLineInfo:
     c.dest.insert [parLeToken(ErrorP, c.calledErrorHook), parRiToken(c.calledErrorHook)], pragmasPos

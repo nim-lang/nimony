@@ -36,10 +36,13 @@ proc killVar*(v: var VersionTab, symId: SymId) =
   v.currentVersion.del symId
 
 proc openSection*(v: var VersionTab) =
-  v.history.addParLe StmtsS, NoLineInfo
+  # `history` is a marker journal that `combineJoin` scans BACKWARDS by
+  # index; the parens are raw section delimiters, not a tree — bypass
+  # sealing/ParRi elision so the closing markers stay physical.
+  v.history.addRaw parLeToken(StmtsS, NoLineInfo)
 
 proc closeSection*(v: var VersionTab) =
-  v.history.addParRi()
+  v.history.addRaw parRiToken(NoLineInfo)
 
 type
   JoinVar* = object

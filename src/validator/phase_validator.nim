@@ -179,7 +179,7 @@ proc collectChildKinds(parent: Cursor; preferStmtContext: bool;
   ## their classifications to `outKinds`. Does not recurse into children.
   assert parent.kind == ParLe
   var c = parent
-  inc c  # past the ParLe
+  discard enterScope(c) # past the ParLe; bound the walk to the children
   var idx = 0
   while c.hasMore:
     let inTypeSlot = allKidsType or (idx in typeSlots)
@@ -383,7 +383,7 @@ proc checkParLe(ctx: var ValidatorCtx; c: var Cursor;
   # Recurse into children:
   ctx.parents.add tag
   var child = c
-  inc child
+  discard enterScope(child) # bound the walk to this subtree's children
   var idx = 0
   while child.hasMore:
     let childInType = kidsTypeByThisTag or (idx in typeSlots)

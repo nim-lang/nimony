@@ -123,7 +123,7 @@ proc callCanRaise*(typeCache: var TypeCache; n: Cursor): bool =
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
   let head = n.load()
   let info = n.info
-  inc n # skip `(call)`
+  let callScope = enterScope(n) # skip `(call)`
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
   assert fnType.tagEnum == ParamsTagId
   skip fnType # params
@@ -147,7 +147,8 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
         dest.add head
         while n.hasMore:
           tr c, dest, n
-        takeParRi dest, n
+        dest.addParRi(n.endInfo)
+        leaveScope(n, callScope)
       addRaiseStmt(dest, symId, info)
     if not isVoid:
       dest.addSymUse symId, info
@@ -156,7 +157,8 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
     dest.add head
     while n.hasMore:
       tr c, dest, n
-    takeParRi dest, n
+    dest.addParRi(n.endInfo)
+    leaveScope(n, callScope)
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind

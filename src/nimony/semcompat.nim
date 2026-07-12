@@ -196,7 +196,7 @@ proc compatBundleVarargsInMatch*(c: var SemContext; m: var Match;
     # following the varargs slot and must end up after the bundle.
     var trailing = createTokenBuf(max(8, m.args.len - endPos))
     for i in endPos ..< m.args.len:
-      trailing.add m.args[i]
+      trailing.addRaw m.args[i]
     # Move the flat varargs args out of `m.args` into a `(stmts …)` scratch
     # wrapper so an iterator over them terminates at the closing `)` rather
     # than walking off the end. (Without the wrapper, `hasMore` — which only
@@ -205,7 +205,9 @@ proc compatBundleVarargsInMatch*(c: var SemContext; m: var Match;
     var flat = createTokenBuf(max(8, endPos - start + 2))
     flat.addParLe(StmtsS, info)
     for i in start ..< endPos:
-      flat.add m.args[i]
+      # balanced span: raw copy keeps its seals and leaves the pending
+      # StmtsS as the only open tag for the close below
+      flat.addRaw m.args[i]
     flat.addParRi()
     m.args.shrink start
 

@@ -3,6 +3,43 @@ type FieldsIter = object
     # can be SymId if loopvars/body are processed before substituting
   obj1, obj2: Cursor
 
+proc expandNamedFieldBody(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId; fieldSym: SymId; body: Cursor) =
+  ## Copies the single tree/token at `body` into `buf`, substituting the
+  ## loop variables.
+  var n = body
+  case n.kind
+  of Ident:
+    # substitute direct idents for now, symbols would work the same way
+    let s = n.litId
+    if s == iter.nameVar:
+      if fieldSym == SymId(0):
+        buf.add strToken(fieldName, n.info)
+      else:
+        buf.addStrLit pool.syms[fieldSym]
+    elif s == iter.fieldVar1:
+      buf.addParLe(DotX, n.info)
+      buf.addSubtree iter.obj1
+      buf.add identToken(fieldName, n.info)
+      buf.addParRi()
+    elif s == iter.fieldVar2:
+      buf.addParLe(DotX, n.info)
+      buf.addSubtree iter.obj2
+      buf.add identToken(fieldName, n.info)
+      buf.addParRi()
+    else:
+      buf.add n
+  of ParLe:
+    buf.add n
+    n.into:
+      while n.hasMore:
+        expandNamedFieldBody(buf, iter, fieldName, fieldSym, n)
+        skip n
+      buf.addParRi(n.endInfo)
+  of ParRi:
+    discard "cannot happen: subtree ends are consumed by the bounded scope"
+  else:
+    buf.add n
+
 proc buildNamedFieldIter(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId; fieldSym: SymId; body: Cursor) =
   # use `if true` to open a new scope without interfering with `break`:
   buf.addParLe(IfS, body.info)
@@ -10,43 +47,44 @@ proc buildNamedFieldIter(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId; 
   buf.addParLe(TrueX, body.info)
   buf.addParRi()
   buf.addParLe(StmtsS, body.info)
-  var nested = 0
-  var n = body
-  while true:
-    case n.kind
-    of UnknownToken, EofToken, DotToken, StringLit, CharLit, IntLit, UIntLit, FloatLit, Symbol, SymbolDef:
-      buf.add n
-    of Ident:
-      # substitute direct idents for now, symbols would work the same way 
-      let s = n.litId
-      if s == iter.nameVar:
-        if fieldSym == SymId(0):
-          buf.add strToken(fieldName, n.info)
-        else:
-          buf.addStrLit pool.syms[fieldSym]
-      elif s == iter.fieldVar1:
-        buf.addParLe(DotX, n.info)
-        buf.addSubtree iter.obj1
-        buf.add identToken(fieldName, n.info)
-        buf.addParRi()
-      elif s == iter.fieldVar2:
-        buf.addParLe(DotX, n.info)
-        buf.addSubtree iter.obj2
-        buf.add identToken(fieldName, n.info)
-        buf.addParRi()
-      else:
-        buf.add n
-    of ParLe:
-      buf.add n
-      inc nested
-    of ParRi:
-      buf.add n
-      dec nested
-    if nested == 0: break
-    inc n
+  expandNamedFieldBody(buf, iter, fieldName, fieldSym, body)
   buf.addParRi() # (stmts)
   buf.addParRi() # (elif)
   buf.addParRi() # (if)
+
+proc expandTupleFieldBody(buf: var TokenBuf; iter: FieldsIter; intId: IntId; name: StrId; body: Cursor) =
+  ## Copies the single tree/token at `body` into `buf`, substituting the
+  ## loop variables.
+  var n = body
+  case n.kind
+  of Ident:
+    # substitute direct idents for now, symbols would work the same way
+    let s = n.litId
+    if s == iter.nameVar:
+      buf.add strToken(name, n.info)
+    elif s == iter.fieldVar1:
+      buf.addParLe(TupatX, n.info)
+      buf.addSubtree iter.obj1
+      buf.add intToken(intId, n.info)
+      buf.addParRi()
+    elif s == iter.fieldVar2:
+      buf.addParLe(TupatX, n.info)
+      buf.addSubtree iter.obj2
+      buf.add intToken(intId, n.info)
+      buf.addParRi()
+    else:
+      buf.add n
+  of ParLe:
+    buf.add n
+    n.into:
+      while n.hasMore:
+        expandTupleFieldBody(buf, iter, intId, name, n)
+        skip n
+      buf.addParRi(n.endInfo)
+  of ParRi:
+    discard "cannot happen: subtree ends are consumed by the bounded scope"
+  else:
+    buf.add n
 
 proc buildTupleFieldIter(buf: var TokenBuf; iter: FieldsIter; i: int; name: StrId; body: Cursor) =
   # use `if true` to open a new scope without interfering with `break`:
@@ -55,43 +93,21 @@ proc buildTupleFieldIter(buf: var TokenBuf; iter: FieldsIter; i: int; name: StrI
   buf.addParLe(TrueX, body.info)
   buf.addParRi()
   buf.addParLe(StmtsS, body.info)
-  let intId = pool.integers.getOrIncl(i)
-  var nested = 0
-  var n = body
-  while true:
-    case n.kind
-    of UnknownToken, EofToken, DotToken, StringLit, CharLit, IntLit, UIntLit, FloatLit, Symbol, SymbolDef:
-      buf.add n
-    of Ident:
-      # substitute direct idents for now, symbols would work the same way 
-      let s = n.litId
-      if s == iter.nameVar:
-        buf.add strToken(name, n.info)
-      elif s == iter.fieldVar1:
-        buf.addParLe(TupatX, n.info)
-        buf.addSubtree iter.obj1
-        buf.add intToken(intId, n.info)
-        buf.addParRi()
-      elif s == iter.fieldVar2:
-        buf.addParLe(TupatX, n.info)
-        buf.addSubtree iter.obj2
-        buf.add intToken(intId, n.info)
-        buf.addParRi()
-      else:
-        buf.add n
-    of ParLe:
-      buf.add n
-      inc nested
-    of ParRi:
-      buf.add n
-      dec nested
-    if nested == 0: break
-    inc n
+  expandTupleFieldBody(buf, iter, pool.integers.getOrIncl(i), name, body)
   buf.addParRi() # (stmts)
   buf.addParRi() # (elif)
   buf.addParRi() # (if)
 
-proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, orig: Cursor) =
+proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, orig: Cursor;
+                  forScope: CursorScope) =
+  ## `it.n` sits inside the `(for …)` scope entered by `semFor`; this proc
+  ## consumes the rest of that scope, including its close (via `forScope`).
+  template bailOut(msg: string) =
+    buildErr c, dest, unpackInfo, msg
+    while it.n.hasMore: skip it.n
+    leaveScope(it.n, forScope)
+    return
+
   let fieldPairs = call.exprKind in {FieldpairsX, InternalFieldPairsX}
   let isInternalSym = call.exprKind == InternalFieldPairsX
   var iter = FieldsIter()
@@ -112,48 +128,33 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
         if names.len == 3:
           iter.fieldVar2 = names[2]
       else:
-        buildErr c, dest, unpackInfo, "wrong number of variables"
-        while it.n.hasMore: skip it.n
-        consumeParRi it.n
-        return
+        bailOut "wrong number of variables"
     else:
       if names.len == 1 or names.len == 2:
         iter.fieldVar1 = names[0]
         if names.len == 2:
           iter.fieldVar2 = names[1]
       else:
-        buildErr c, dest, unpackInfo, "wrong number of variables"
-        while it.n.hasMore: skip it.n
-        consumeParRi it.n
-        return
+        bailOut "wrong number of variables"
   else:
-    buildErr c, dest, unpackInfo, "illformed AST: `unpackflat` or `unpacktup` inside `for` expected"
-    while it.n.hasMore: skip it.n
-    consumeParRi it.n
-    return
+    bailOut "illformed AST: `unpackflat` or `unpacktup` inside `for` expected"
 
-  var objType = call # call is typed magic so we don't have to call getType
-  inc objType
-  var obj1 = objType
-  skip obj1
-  iter.obj1 = obj1
-  var obj2 = obj1
-  skip obj2
-  if obj2.hasMore:
-    iter.obj2 = obj2
+  var callArgs = call # call is typed magic so we don't have to call getType
+  discard enterScope(callArgs) # bound to the call's children; never left,
+                               # the cursors below only mark subtree starts
+  var objType = callArgs
+  skip callArgs
+  iter.obj1 = callArgs
+  skip callArgs
+  if callArgs.hasMore:
+    iter.obj2 = callArgs
     if iter.fieldVar2 == StrId(0):
-      buildErr c, dest, unpackInfo, "wrong number of variables"
-      while it.n.hasMore: skip it.n
-      consumeParRi it.n
-      return
+      bailOut "wrong number of variables"
   elif iter.fieldVar2 != StrId(0):
-    buildErr c, dest, unpackInfo, "wrong number of variables"
-    while it.n.hasMore: skip it.n
-    consumeParRi it.n
-    return
+    bailOut "wrong number of variables"
   let body = it.n
   skip it.n
-  skipParRi it.n
+  leaveScope(it.n, forScope)
   # it.n fully skipped
 
   let isTuple = objType.typeKind == TupleT

@@ -371,7 +371,11 @@ proc semConvFromCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: Ca
       typeBuf.addParRi()
       var item = Item(n: beginRead(typeBuf), typ: it.typ)
       semLocalTypeExpr(c, dest, item)
-      leaveCall dest, it, cs
+      # No call tree was opened in `dest` here, so unlike the ConvX path
+      # below there is no close to emit — an unmatched `addParRi` would
+      # seal the enclosing scope early under ParRi elision (the caller's
+      # rollback `shrink` cannot undo a seal). Only advance past the call:
+      leaveScope(it.n, cs.scope)
       it.typ = item.typ
       return
   dest.add parLeToken(ConvX, info)
@@ -584,8 +588,9 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
           leaveScope(arg, callScope)
           # instantiate `@`/`toOpenArray` call, done by semchecking:
           var callBuf = createTokenBuf(dest.len - start)
+          # balanced span: raw copy keeps its seals
           for tok in start ..< dest.len:
-            callBuf.add dest[tok]
+            callBuf.addRaw dest[tok]
           dest.shrink start
           var call = Item(n: beginRead(callBuf), typ: c.types.autoType)
           semCall c, dest, call, {}
@@ -1080,7 +1085,10 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
           while genericArgsRead.hasMore:
             takeTree invokeBuf, genericArgsRead
           invokeBuf.addParRi()
+          let growth = invokeBuf.len - 1 # the replaced callee was one token
           replace dest, beginRead(invokeBuf), cs.beforeCall+1
+          # the call tree is already sealed; `replace` cannot widen it itself:
+          widenSealed dest, cs.beforeCall, growth
         if matched.returnType.kind == DotToken:
           returnType = matched.returnType
         else:
@@ -1146,29 +1154,26 @@ proc getFnIdent(c: var SemContext; dest: var TokenBuf): StrId =
   endRead(dest)
 
 proc findMagicInSyms(syms: Cursor): ExprKind =
+  ## Looks for a magic in a bare symbol or anywhere in a symchoice tree.
   var syms = syms
   result = NoExpr
-  var nested = 0
-  while true:
-    case syms.kind
-    of Symbol:
-      let res = tryLoadSym(syms.symId)
-      if res.status == LacksNothing:
-        var n = res.decl
-        inc n # skip the symbol kind
-        if n.kind == SymbolDef:
-          inc n # skip the SymbolDef
-          if n.kind == ParLe:
-            result = n.exprKind
-            if result != NoExpr: break
-    of ParLe:
-      if syms.exprKind notin {OchoiceX, CchoiceX}: break
-      inc nested
-    of ParRi:
-      dec nested
-    else: break
-    if nested == 0: break
-    inc syms
+  case syms.kind
+  of Symbol:
+    let res = tryLoadSym(syms.symId)
+    if res.status == LacksNothing:
+      var n = res.decl
+      inc n # skip the symbol kind
+      if n.kind == SymbolDef:
+        inc n # skip the SymbolDef
+        if n.kind == ParLe:
+          result = n.exprKind
+  of ParLe:
+    if syms.exprKind in {OchoiceX, CchoiceX}:
+      syms.loopInto:
+        result = findMagicInSyms(syms)
+        if result != NoExpr: return
+        skip syms
+  else: discard
 
 proc unoverloadableMagicCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState; magic: ExprKind) =
   let nifTag = parLeToken(magic, cs.callNode.info)
@@ -1246,7 +1251,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       cs.fn.kind = lhs.kind
       cs.fnName = getFnIdent(c, dest)
     if not cs.hasGenericArgs:
-      semBuiltinSubscript(c, dest, cs.fn, lhs)
+      semBuiltinSubscript(c, dest, cs.fn, lhs, atScope)
       cs.fnName = getFnIdent(c, dest)
       it.n = cs.fn.n
   elif cs.fn.n.exprKind == DotX:

@@ -155,15 +155,13 @@ proc localToField(c: var Context; n: Cursor; local, typ: SymId): SymId =
     c.localToEnv[local] = EnvField(objType: typ, field: result, typ: c.typeCache.getType(n))
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  dest.add n
-  inc n
-  if n.kind == Symbol:
-    # if a closure proc is called, we don't want to see it as "escaping".
-    dest.add n
-    inc n
-  while n.hasMore:
-    tr(c, dest, n)
-  dest.takeParRi(n)
+  takeInto dest, n:
+    if n.kind == Symbol:
+      # if a closure proc is called, we don't want to see it as "escaping".
+      dest.add n
+      inc n
+    while n.hasMore:
+      tr(c, dest, n)
 
 proc itertypeNeedsTuple(n: Cursor): bool {.inline.} =
   ## True when an itertype's pragmas tag it as a `.closure` iter (Nim-style
@@ -174,7 +172,7 @@ proc itertypeNeedsTuple(n: Cursor): bool {.inline.} =
 
 proc trNil(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  inc n
+  let nilScope = enterScope(n)
   # `(nil <Type>)` for a closure proctype OR itertype (.closure / .passive)
   # lowers to a `{fnptr, env}` tuple constructor — that's the runtime shape
   # of Nim closures and of our wrapper-signature iter values.
@@ -188,7 +186,6 @@ proc trNil(c: var Context; dest: var TokenBuf; n: var Cursor) =
       if n.hasMore: skip n # might have another nil value
       dest.addParPair NilX, info
       dest.addParPair NilX, info
-    skipParRi n
   elif isCloseable:
     # nil closure must be a tuple:
     c.hasClosures = true
@@ -197,11 +194,11 @@ proc trNil(c: var Context; dest: var TokenBuf; n: var Cursor) =
       if n.hasMore: skip n # might have another nil value
       dest.addParPair NilX, info
       dest.addParPair NilX, info
-    skipParRi n
   else:
-    dest.addParLe NilX, n.info
+    dest.addParLe NilX, (if n.hasMore: n.info else: n.endInfo)
     while n.hasMore: takeTree dest, n
-    dest.takeParRi n
+    dest.addParRi(n.endInfo)
+  leaveScope(n, nilScope)
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
@@ -264,23 +261,22 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       # lifter.isTrivial), and never generates destroy/copy hooks for the
       # iter-value env slot.
       let typeStart = dest.len
-      dest.takeToken n        # TypeS tag
       var typeSym = SymId(0)
-      if n.kind == SymbolDef:
-        typeSym = n.symId
-      takeTree dest, n        # name
-      takeTree dest, n        # exported
-      takeTree dest, n        # typevars
-      takeTree dest, n        # pragmas
-      if typeSym != SymId(0) and itertypeNeedsTuple(n):
-        c.hasClosures = true
-        emitIterTupleTypeFromParams(dest, n, n.info)
+      var publishIt = false
+      takeInto dest, n:       # TypeS tag
+        if n.kind == SymbolDef:
+          typeSym = n.symId
+        takeTree dest, n        # name
+        takeTree dest, n        # exported
+        takeTree dest, n        # typevars
+        takeTree dest, n        # pragmas
+        if typeSym != SymId(0) and itertypeNeedsTuple(n):
+          c.hasClosures = true
+          emitIterTupleTypeFromParams(dest, n, n.info)
+          publishIt = true
         while n.hasMore: takeTree dest, n
-        dest.takeParRi n
+      if publishIt:
         programs.publish(typeSym, dest, typeStart)
-      else:
-        while n.hasMore: takeTree dest, n
-        dest.takeParRi n
     of IteratorS:
       # `.closure` iter decls are owned by lambdalifting now (pass 2
       # generates the state machine via coro_transform). Set
@@ -487,11 +483,11 @@ proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## the body via lambdalifting's `tre` (so closure captures inside
   ## the for-loop body get rewritten to env accesses).
   let info = n.info
-  inc n # skip (corofor
+  let coroforScope = enterScope(n) # skip (corofor
 
   # ---- first child: (call iter-or-tupat args... (haddr forLoopVar)) ----
   assert n.exprKind in CallKinds, "corofor: expected iter call as first child"
-  inc n # past CallS tag
+  let callScope = enterScope(n) # past CallS tag
   # Extract the call target. Three shapes:
   #   1. Symbol of an iter DECL — direct call routed through its
   #      init wrapper.
@@ -537,7 +533,7 @@ proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
     lastArgPos = n
     skip n
     inc argCount
-  skipParRi n # close iter call
+  leaveScope(n, callScope) # close iter call
 
   # Structural invariant maintained by the corofor producer (sem/hexer
   # genCall): `(haddr forLoopVar)` is the trailing arg, optionally
@@ -612,7 +608,7 @@ proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
     tre(c, dest, n)
   coro_transform.emitWhileEnd(dest, info, itSym)
 
-  skipParRi n # close (corofor
+  leaveScope(n, coroforScope) # close (corofor
 
 proc treSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
@@ -657,9 +653,12 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addDotToken() # nilability tag
         let inputKind = n.typeKind
         let isProctypeInput = inputKind == ProctypeT
-        let usesWrapper = inputKind in RoutineTypes
-        if usesWrapper:
-          skipToParams n
+        # the callers guarantee `inputKind in RoutineTypes` here
+        let rtScope = enterScope(n)
+        if inputKind in {ProctypeT, ItertypeT}:
+          skip n # nilability tag
+        else:
+          skipRoutineDeclPrefix(n, inputKind)
         if n.substructureKind == ParamsU:
           treParamsWithEnv(c, dest, n)
         else:
@@ -671,29 +670,28 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
         tre c, dest, n # return type
         # pragmas:
         tre c, dest, n
-        if usesWrapper and not isProctypeInput:
+        if not isProctypeInput:
           # effects and body, deliberately made flexible here for future changes
           # as it's messy to work with.
           if n.hasMore:
             skip n
             if n.hasMore: skip n
-        skipParRi n
+        leaveScope(n, rtScope)
       copyIntoKind dest, RefT, info:
         dest.addSymUse pool.syms.getOrIncl(BareRootObjName), info
   else:
     let isProctypeInput = n.typeKind == ProctypeT
-    dest.takeToken n
-    if isProctypeInput:
-      # new layout: nilability, params, retType, pragmas
-      for i in 0..3:
-        if n.kind == ParRi: break
-        tre c, dest, n
-    else:
-      for i in 0..<BodyPos:
-        tre c, dest, n
-      if n.hasMore:
-        dest.takeTree n # don't transform the potential proc body here
-    dest.takeParRi n
+    takeInto dest, n:
+      if isProctypeInput:
+        # new layout: nilability, params, retType, pragmas
+        for i in 0..3:
+          if not n.hasMore: break
+          tre c, dest, n
+      else:
+        for i in 0..<BodyPos:
+          tre c, dest, n
+        if n.hasMore:
+          dest.takeTree n # don't transform the potential proc body here
 
 proc treType(c: var Context; dest: var TokenBuf; n: var Cursor)
   {.ensuresNif: addedType(dest).} =
@@ -710,7 +708,7 @@ proc treLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if fld.field != SymId(0):
     # the local is already a field of an environment object
     let info = n.info
-    inc n # into the decl
+    let declScope = enterScope(n) # into the decl
     let name = n.symId
     for i in 1..3: skip n
     # register the local anyway to keep the type navigator happy:
@@ -727,7 +725,9 @@ proc treLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
             dest.typedEnv info, c.env
           dest.addSymUse fld.field, info
         tre c, dest, n # value
-    skipParRi n
+    else:
+      inc n # the dot value
+    leaveScope(n, declScope)
   else:
     copyInto dest, n:
       let name = n.symId
@@ -882,24 +882,22 @@ proc toNonClosureProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
   # just remove closure pragma from proctype
   var n = n
   assert n.typeKind in {ProctypeT, ProcT}
-  takeToken dest, n
-  while n.hasMore:
-    if n.substructureKind == PragmasU:
-      takeToken dest, n
-      while n.hasMore:
-        if n.pragmaKind == ClosureP:
-          skip n
-        else:
-          takeTree dest, n
-      takeParRi dest, n
-    else:
-      takeTree dest, n
-  takeParRi dest, n
+  takeInto dest, n:
+    while n.hasMore:
+      if n.substructureKind == PragmasU:
+        takeInto dest, n:
+          while n.hasMore:
+            if n.pragmaKind == ClosureP:
+              skip n
+            else:
+              takeTree dest, n
+      else:
+        takeTree dest, n
 
 proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let callNode = n  # the call node itself
-  inc n
+  let callScope = enterScope(n)
   let fn = n
   let typ = c.typeCache.getType(n, {SkipAliases})
   # A closure iter-value call target type can appear here in two guises:
@@ -983,7 +981,7 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addSymUse tmp, info
         dest.addIntLit 1, info
   dest.addParRi()
-  skipParRi n
+  leaveScope(n, callScope)
 
   if needNilCheck:
     dest.addParRi() # end of ElifU
@@ -1005,7 +1003,12 @@ proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
   let info = n.info
   copyIntoKind dest, ProctypeT, info:
     dest.addDotToken() # nilability tag
-    skipToParams n
+    let inputKind = n.typeKind
+    let rtScope = enterScope(n)
+    if inputKind in {ProctypeT, ItertypeT}:
+      skip n # nilability tag
+    elif inputKind in RoutineTypes:
+      skipRoutineDeclPrefix(n, inputKind)
     copyIntoKind dest, ParamsU, n.info:
       if n.kind == DotToken:
         inc n
@@ -1018,7 +1021,7 @@ proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
     # pragmas:
     tre c, dest, n
     while n.hasMore: skip n
-    skipParRi n
+    leaveScope(n, rtScope)
 
 proc treKv(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
@@ -1029,7 +1032,7 @@ proc treKv(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc treToClosure(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let origTyp = c.typeCache.getType(n, {SkipAliases})
-  inc n
+  let closureScope = enterScope(n)
   dest.copyIntoKind TupconstrX, info:
     dest.copyIntoKind TupleT, info:
       c.toProcType(dest, origTyp)
@@ -1038,7 +1041,7 @@ proc treToClosure(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.toProcType(dest, origTyp)
       tr c, dest, n
     dest.addParPair NilX, info
-  skipParRi n
+  leaveScope(n, closureScope)
 
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
@@ -1164,21 +1167,19 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of CallKinds:
         genCall(c, dest, n)
       of DotX:
-        takeToken dest, n
-        tre c, dest, n
-        takeTree dest, n # don't look up field names here
-        if n.hasMore: takeTree dest, n # optional inheritance depth
-        if n.hasMore: takeTree dest, n # optional access-token string lit
-        takeParRi dest, n
-      of CastX, ConvX:
-        takeToken dest, n
-        treType c, dest, n
-        while n.hasMore:
+        takeInto dest, n:
           tre c, dest, n
-        takeParRi dest, n
+          takeTree dest, n # don't look up field names here
+          if n.hasMore: takeTree dest, n # optional inheritance depth
+          if n.hasMore: takeTree dest, n # optional access-token string lit
+      of CastX, ConvX:
+        takeInto dest, n:
+          treType c, dest, n
+          while n.hasMore:
+            tre c, dest, n
       of EnvpX:
         let info = n.info
-        inc n
+        let envpScope = enterScope(n)
         dest.copyIntoKind DotX, info:
           dest.copyIntoKind DerefX, info:
             dest.copyIntoKind CastX, info:
@@ -1187,7 +1188,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
               dest.addSymUse c.env.s, info
           assert n.kind == Symbol
           dest.takeTree n # the symbol
-        skipParRi n
+        leaveScope(n, envpScope)
       of TypeofX:
         takeTree dest, n
       of ToClosureX:
@@ -1279,7 +1280,7 @@ proc elimLambdas*(pass: var Pass) =
     var n2 = beginRead(oldDest)
     assert n2.stmtKind == StmtsS
     pass.dest.add n2 # stmts opener
-    inc n2
+    let stmtsScope = enterScope(n2)
     genObjectTypes(c, pass.dest)
     # Walk statements into a side buffer so we can prepend any
     # `.closure` iter coro frame types that `transformClosureIter`
@@ -1303,7 +1304,8 @@ proc elimLambdas*(pass: var Pass) =
       publishSignature buf, entry.sym, 0
     pass.dest.add c.coroCtx.coroTypes
     pass.dest.add stmtsBuf
-    pass.dest.takeParRi n2
+    pass.dest.addParRi(n2.endInfo)
+    leaveScope(n2, stmtsScope)
     endRead(oldDest)
     c.typeCache.closeScope()
 

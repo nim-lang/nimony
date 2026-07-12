@@ -696,6 +696,13 @@ proc add*(b: var TokenBuf; item: PackedToken) {.inline.} =
 
 proc len*(b: TokenBuf): int {.inline.} = b.len
 
+proc debugOpenTags*(b: TokenBuf): seq[int] =
+  ## debugging helper: the current open-tag stack (classic mode has none)
+  when defined(virtualParRi):
+    b.openTags
+  else:
+    @[]
+
 when defined(nimony):
   proc `[]`*(b: TokenBuf; i: int): var PackedToken {.inline.} =
     assert i >= 0 and i < b.len
@@ -1041,6 +1048,44 @@ proc insert*(dest: var TokenBuf; src: TokenBuf; pos: int) =
   else:
     insert dest, toOpenArray(src.data, 0, src.len-1), pos
 
+proc checkSeals*(b: TokenBuf; maxReports = 5): seq[string] =
+  ## Debugging helper: verifies that every sealed scope ends at or before
+  ## its parent's end. Returns human-readable reports (empty = consistent).
+  ## Only meaningful under `-d:virtualParRi`.
+  result = @[]
+  when defined(virtualParRi):
+    var stack: seq[(string, int)] = @[] # (tag, endPos) per open scope
+    var openIdx = 0 # b.openTags is ascending: skip still-open tags,
+                    # their jump fields are not sealed yet
+    for i in 0 ..< b.len:
+      while stack.len > 0 and i >= stack[stack.len-1][1]: discard stack.pop()
+      let t = b.data[i]
+      if openIdx < b.openTags.len and b.openTags[openIdx] == i:
+        inc openIdx
+        continue
+      if t.kind == ParLe and jump(t) != MaxJump:
+        let endPos = i + 1 + int(jump(t))
+        if endPos > b.len or (stack.len > 0 and endPos > stack[stack.len-1][1]):
+          if result.len < maxReports:
+            let u = unpack(pool.man, t.info)
+            result.add "(" & pool.tags[nifstreams.tag(t)] & " jump=" & $jump(t) &
+              " at token " & $i & " ends at " & $endPos & " but parent (" &
+              (if stack.len > 0: stack[stack.len-1][0] else: "") & ") ends at " &
+              (if stack.len > 0: $stack[stack.len-1][1] else: "buf:" & $b.len) &
+              " src=" & (if u.file != FileId(0): pool.files[u.file] else: "?") & ":" & $u.line & ":" & $u.col
+        stack.add (pool.tags[nifstreams.tag(t)], endPos)
+
+proc widenSealed*(dest: var TokenBuf; enclosing: int; growth: int) =
+  ## After an `insert`/`replace` grew the contents of an already-sealed
+  ## scope (its ParLe at `enclosing`), widen the seal to match — the splice
+  ## operations keep open-tag bookkeeping in sync but cannot know which
+  ## sealed ancestor spans the splice point. No-op in classic mode and for
+  ## overflow scopes (their real ParRi moved along with the content).
+  when defined(virtualParRi):
+    if growth > 0 and jump(dest[enclosing]) != MaxJump:
+      assert jump(dest[enclosing]) + uint32(growth) < MaxJump, "widenSealed: subtree overflows the jump field"
+      setJump(dest[enclosing], jump(dest[enclosing]) + uint32(growth))
+
 proc replace*(dest: var TokenBuf; by: Cursor; pos: int) =
   if dest.owner != nil: prepareMutation(dest)
   when defined(virtualParRi):
@@ -1323,6 +1368,9 @@ proc takeTree*(dest: var TokenBuf; n: var Cursor) =
         inc n
 
 when isMainModule:
+  # Token counts differ per mode: under `-d:virtualParRi` a sealed empty
+  # pair occupies one token (its close is elided).
+  const PairLen = when defined(virtualParRi): 1 else: 2
   # test replace
   block:
     var dest = createTokenBuf(1)
@@ -1334,8 +1382,10 @@ when isMainModule:
     block:
       let by2 = [parLeToken(TagId 1, NoLineInfo), parRiToken(NoLineInfo)]
       replace dest, fromBuffer(by2), 0
-      assert dest.len == 2
-      assert dest[0] == by2[0] and dest[1] == by2[1]
+      assert dest.len == PairLen
+      assert dest[0].kind == ParLe and dest[0].tagId == TagId 1
+      when not defined(virtualParRi):
+        assert dest[1] == by2[1]
 
       let by1 = [strToken(StrId 2, NoLineInfo)]
       replace dest, fromBuffer(by1), 0
@@ -1350,21 +1400,25 @@ when isMainModule:
     block:
       let by = [charToken('a', NoLineInfo)]
       replace dest, fromBuffer(by), 1
-      assert dest.len == 3
-      assert dest[0] == dest0
+      assert dest.len == 2 + PairLen - 1
+      assert dest[0].kind == ParLe and dest[0].tagId == TagId 123
       assert dest[1] == by[0]
-      assert dest[2].kind == ParRi
+      when not defined(virtualParRi):
+        assert dest[2].kind == ParRi
 
       let by2 = [parLeToken(TagId 456, NoLineInfo), parRiToken(NoLineInfo)]
       replace dest, fromBuffer(by2), 1
-      assert dest.len == 4
-      assert dest[0] == dest0
-      assert dest[1] == by2[0] and dest[2] == by2[1]
-      assert dest[3].kind == ParRi
+      assert dest.len == 2*PairLen
+      assert dest[0].kind == ParLe and dest[0].tagId == TagId 123
+      assert dest[1].kind == ParLe and dest[1].tagId == TagId 456
+      when not defined(virtualParRi):
+        assert dest[2] == by2[1]
+        assert dest[3].kind == ParRi
 
       let by1 = [strToken(StrId 789, NoLineInfo)]
       replace dest, fromBuffer(by1), 1
-      assert dest.len == 3
-      assert dest[0] == dest0
+      assert dest.len == 1 + PairLen
+      assert dest[0].kind == ParLe and dest[0].tagId == TagId 123
       assert dest[1] == by1[0]
-      assert dest[2].kind == ParRi
+      when not defined(virtualParRi):
+        assert dest[2].kind == ParRi

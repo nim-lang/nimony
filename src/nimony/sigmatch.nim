@@ -1181,7 +1181,7 @@ proc extractProcProps*(c: var Cursor): ProcProperties =
   else:
     bug "No pragmas found"
 
-proc skipRoutinePrefix(n: var Cursor; kind: TypeKind) =
+proc skipRoutinePrefix*(n: var Cursor; kind: TypeKind) =
   ## Skips from a routine type's first child (just inside the opening tag)
   ## to its params slot; mirrors `skipToParams` sans the scope entry.
   if kind in {ProctypeT, ItertypeT}:

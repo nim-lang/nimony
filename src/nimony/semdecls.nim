@@ -515,7 +515,7 @@ proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: v
           if explicitValue != state.thisValue:
             state.hasHole = true
             state.thisValue = explicitValue
-          dest.add strToken(delayed.lit, n.info)
+          dest.add strToken(delayed.lit, n.endInfo)
           dest.addParRi()
     dest.addParRi(n.endInfo)
   if delayed.status == OkNew:
@@ -746,13 +746,12 @@ proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
     buildErr c, dest, info, "'method' is only allowed at top level"
 
   var params = cursorAt(dest, beforeParams)
+  let paramsNode = params
   var root = SymId(0)
   var signature = StrId(0)
   if params.kind == ParLe:
     inc params
     if params.substructureKind == ParamU:
-      var rest = params
-      skip rest # past the whole first param
       inc params
       skip params, SkipName # name
       skip params, SkipExport # export marker
@@ -760,7 +759,7 @@ proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
       root = getClass(params) # can be a generic instance symbol
       var methodName = pool.syms[symId]
       extractBasename methodName
-      signature = pool.strings.getOrIncl(methodKey(methodName, rest))
+      signature = pool.strings.getOrIncl(methodKey(methodName, paramsNode))
   if root == SymId(0) or not isObjectType(root):
     let typ = typeToString(params)
     dest.endRead()
@@ -829,12 +828,22 @@ proc handleForwardDeclarations(c: var SemContext; dest: var TokenBuf; declStart:
 
 proc attachSpecialProc(c: var SemContext; dest: var TokenBuf; kind: SymKind;
                        symId: SymId; declStart, beforeExportMarker, beforeGenericParams, beforeParams: int;
-                       hk: HookKind; info: PackedLineInfo) =
+                       hk: HookKind; info: PackedLineInfo; isMagic: bool) =
   ## Attach converters, methods, or hooks that should become methods.
   if kind == ConverterY:
     attachConverter c, dest, symId, declStart, beforeExportMarker, beforeGenericParams, info
   elif kind == MethodY:
     attachMethod c, dest, symId, declStart, beforeParams, beforeGenericParams, info
+  elif isMagic:
+    # Magic hooks (`=destroy` etc. with a `.magic`) never become methods.
+    # Their `(magicname)` tag also replaced the export marker, so the
+    # `before*` positions can be stale — do not read them here.
+    discard
+  elif dest[beforeGenericParams].kind == ParLe and
+      dest[beforeGenericParams].substructureKind == TypevarsU:
+    # A generic hook is attached per instantiation (its typevars slot is
+    # then an `(invoke ...)`), never as-is.
+    discard
   elif hookThatShouldBeMethod(c, dest, hk, beforeParams):
     setTag(dest[declStart], TagId(MethodS)) # keeps the sealed jump
     dest[declStart] = withLineInfo(dest[declStart], info)
@@ -1043,7 +1052,8 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
       let hk = hookToKind(hookName)
       if status in {OkNew, OkExistingFresh}:
         attachSpecialProc(c, dest, kind, symId, declStart, beforeExportMarker,
-                          beforeGenericParams, beforeParams, hk, info)
+                          beforeGenericParams, beforeParams, hk, info,
+                          isMagic = crucial.magic.len > 0)
       let beforeBody = dest.len
       if it.n.kind != DotToken:
         case pass
@@ -1087,7 +1097,7 @@ proc findMacroInvocs(c: SemContext; n: Cursor; kind: SymKind): seq[Cursor] =
   if kind in RoutineKinds:
     var n = asRoutine(n).pragmas
     if n.substructureKind == PragmasU:
-      inc n
+      discard enterScope(n) # bound the walk; peek only, never left
       while n.hasMore:
         if n.exprKind == ErrX or n.substructureKind == KvU:
           skip n

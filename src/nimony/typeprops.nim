@@ -567,7 +567,7 @@ proc reorderSumOfProducts*(buf: var TokenBuf; n: var TypeCursor; negative = fals
       reorderSumOfProducts(buf, n, negative)
       while n.hasMore:
         # move both operands to `buf2` then fold into `buf`:
-        for tok in sumStart ..< buf.len: buf2.add buf[tok]
+        for tok in sumStart ..< buf.len: buf2.addRaw buf[tok]
         buf.shrink sumStart
         let bStart = buf2.len
         reorderSumOfProducts(buf2, n, negative)

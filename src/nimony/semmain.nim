@@ -157,6 +157,20 @@ proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
           importBuf.addStrLit toUnixPath(abs.toRelativePath(curWorkDir))
     importBuf.addParRi()
     dest.insert importBuf, 1 # after the (stmts tag
+    # a small module's `(stmts` is sealed; the insert cannot widen it itself:
+    widenSealed dest, 0, importBuf.len
+  when defined(sealCheck):
+    for i in 0 ..< dest.len:
+      if dest[i].kind == ParLe and pool.tags[nifstreams.tag(dest[i])] == "aconstr":
+        for k in max(0,i-3) .. min(dest.len-1, i+12):
+          let tk = dest[k]
+          if tk.kind == ParLe:
+            echo "  [", k, "] ParLe ", pool.tags[nifstreams.tag(tk)], " jump=", jump(tk)
+          elif tk.kind in {Symbol, SymbolDef}:
+            echo "  [", k, "] ", tk.kind, " ", pool.syms[nifstreams.symId(tk)]
+          else:
+            echo "  [", k, "] ", tk.kind
+        break
   onRaiseQuit writeFile(dest, outfile, OnlyIfChanged)
   let root = dest[0].info
   onRaiseQuit createIndex(outfile, root, true,
@@ -164,6 +178,12 @@ proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
       converters: move c.converterIndexMap,
       exportBuf: buildIndexExports(c)))
   writeNewDepsFile c, outfile
+
+proc dbgCheckSeals*(dest: TokenBuf; label: string) =
+  ## `-d:sealCheck` debugging aid: report inconsistent seals per phase.
+  when defined(sealCheck):
+    for r in checkSeals(dest):
+      echo "SEAL[", label, "] ", r
 
 proc phaseX(c: var SemContext; dest: var TokenBuf; n: Cursor; x: SemPhase) =
   assert n.stmtKind == StmtsS
@@ -229,7 +249,7 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
   let decl = asTypeDecl(decl)
   var typevars = decl.typevars
   assert classifyType(c, typevars) == InvokeT
-  inc typevars
+  discard enterScope(typevars) # peek only, never left
   assert typevars.kind == Symbol
 
   let symId = typevars.symId
@@ -269,7 +289,7 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
         let info = res.decl.info
         let procDecl = asRoutine(res.decl)
         var typevarsStart = procDecl.typevars
-        inc typevarsStart # skips typevars tag
+        discard enterScope(typevarsStart) # skips typevars tag; peek only
 
         var counter = 0
         while typevarsStart.hasMore:
@@ -301,7 +321,7 @@ proc instantiateMethodForType(c: var SemContext; dest: var TokenBuf; methodSym, 
     # type matched, check that the method can be fully instantiated
     var inferred = ensureMove paramMatch.inferred
     var typevars = procDecl.typevars
-    inc typevars
+    discard enterScope(typevars) # peek only, never left
     var typeArgsBuf = createTokenBuf(32)
     while typevars.hasMore:
       let name = takeLocal(typevars, SkipFinalParRi).name.symId
@@ -413,7 +433,7 @@ proc reorderInnerGenericInstances(c: SemContext; dest: var TokenBuf) =
           # Extract the procedure declaration
           var procBuf = createTokenBuf(procLen)
           for j in (i-1)..<(i-1+procLen):
-            procBuf.add dest[j]
+            procBuf.addRaw dest[j]
             dest[j] = dotToken(NoLineInfo) # invalidate
 
           dest.insert procBuf, originPos
@@ -435,10 +455,28 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
 
   #echo "PHASE 1"
   var (buf1, moduleLineInfo) = phase1(c, dest, n0)
+  dbgCheckSeals(buf1, "phase1")
+  when defined(dumpPhases) and defined(virtualParRi):
+    block:
+      var r = beginRead(buf1)
+      syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".phase1.nif", toString(r, false))
+      endRead(buf1)
   #echo "PHASE 2"
   var buf2 = phase2(c, buf1, moduleLineInfo)
+  dbgCheckSeals(buf2, "phase2")
+  when defined(dumpPhases):
+    block:
+      var r = beginRead(buf2)
+      syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".phase2.nif", toString(r, false))
+      endRead(buf2)
   #echo "PHASE 3"
   dest = phase3(c, buf2, moduleLineInfo)
+  dbgCheckSeals(dest, "phase3")
+  when defined(dumpPhases) and defined(virtualParRi):
+    block:
+      var r = beginRead(dest)
+      syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".phase3.nif", toString(r, false))
+      endRead(dest)
 
   if c.expanded.len > 0:
     dest.addParLe CommentS, c.expanded[0].info

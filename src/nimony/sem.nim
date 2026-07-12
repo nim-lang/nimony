@@ -550,6 +550,15 @@ proc semStmt*(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: 
   var it = Item(n: n, typ: c.types.autoType)
   let exPos = dest.len
   semExpr c, dest, it
+  when defined(sealCheck):
+    block:
+      let reports = checkSeals(dest)
+      if reports.len > 0:
+        let u = unpack(pool.man, info)
+        echo "SEAL[semStmt after ", (if u.file != FileId(0): pool.files[u.file] else: "?"), ":", u.line, "]"
+        for r in reports: echo "  ", r
+        writeStackTrace()
+        quit 1
   if it.typ.kind != Symbol and
       classifyType(c, it.typ) in {NoType, VoidT, AutoT, UntypedT}:
     discard "ok"
@@ -692,8 +701,10 @@ type
 
 proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item; fieldName: StrId; info: PackedLineInfo; flags: set[SemFlag]): DotExprState
 
-proc tryBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item): bool
-proc semBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item)
+proc tryBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item;
+                         atScope: CursorScope): bool
+proc semBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item;
+                         atScope: CursorScope)
 
 proc semBaseobj(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeExpr = dest.len
@@ -870,9 +881,10 @@ proc objBody(td: TypeDecl): Cursor {.inline.} =
 
 proc skipInvoke(t: var Cursor): Cursor {.inline.} =
   ## if `t` is an invocation, skips to root sym and returns start of args,
-  ## otherwise returns `default(Cursor)`
+  ## otherwise returns `default(Cursor)`. Both cursors are bounded to the
+  ## invocation's children so `hasMore` stops at its (possibly elided) close.
   if t.typeKind == InvokeT:
-    inc t
+    discard enterScope(t)
     result = t
     inc result
   else:
@@ -1548,7 +1560,10 @@ proc addVarargsParameter(c: var SemContext; dest: var TokenBuf; paramsAt: int; i
       let insertPos = cursorToPosition(dest, n)
       endRead(dest)
       let before = dest.len
-      dest.insert fromBuffer(varargsParam), insertPos
+      # NOT `insert fromBuffer(...)`: the raw array is unsealed, and the
+      # Cursor overload splices `span(src)` tokens of a *sealed* subtree.
+      # The openArray overload normalizes (seals + elides) first.
+      dest.insert varargsParam, insertPos
       # the params tree is already sealed; widen its jump by the growth
       # (no-op in classic mode where `jump` is always MaxJump):
       if jump(dest[paramsAt]) != MaxJump:
@@ -1766,10 +1781,9 @@ proc semSubscriptAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info:
                       asgnScope: CursorScope) =
   # check if LHS is builtin subscript:
   var subscript = Item(n: it.n, typ: c.types.autoType)
-  # XXX virtualParRi: close of this (at ...) scope is consumed either by
-  # tryBuiltinSubscript or by the skipParRi below; rework the pairing when
-  # flipping the define
-  inc subscript.n # tag
+  # the close of this (at ...) scope is consumed either by
+  # tryBuiltinSubscript or by the leaveScope below:
+  let atScope = enterScope(subscript.n) # skip tag
   var subscriptLhsBuf = createTokenBuf(4)
   var subscriptLhs = Item(n: subscript.n, typ: c.types.autoType)
   semExpr c, subscriptLhsBuf, subscriptLhs, {KeepMagics}
@@ -1777,7 +1791,7 @@ proc semSubscriptAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info:
   subscript.n = afterSubscriptLhs
   subscriptLhs.n = cursorAt(subscriptLhsBuf, 0)
   var subscriptBuf = createTokenBuf(8)
-  let builtin = tryBuiltinSubscript(c, subscriptBuf, subscript, subscriptLhs)
+  let builtin = tryBuiltinSubscript(c, subscriptBuf, subscript, subscriptLhs, atScope)
   if builtin:
     # build regular assignment:
     dest.addParLe(AsgnS, info)
@@ -1798,7 +1812,7 @@ proc semSubscriptAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info:
     while it.n.hasMore:
       # arguments of the subscript
       callBuf.takeTree it.n
-    skipParRi it.n # end subscript expression
+    leaveScope(it.n, atScope) # end subscript expression
     callBuf.takeTree it.n # assignment value
     callBuf.addParRi()
     leaveScope(it.n, asgnScope) # end assignment
@@ -2629,7 +2643,7 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
     if stInfo.valid:
       isSumType = true
       for i in selectorStart ..< dest.len:
-        savedSelector.add dest[i]
+        savedSelector.addRaw dest[i]
       dest.shrink selectorStart
       var needsExprClose = false
       if savedSelector.len != 1 or savedSelector[0].kind != Symbol:
@@ -2645,7 +2659,7 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
         dest.addDotToken()
         dest.addSubtree selectorType
         for i in 0 ..< savedSelector.len:
-          dest.add savedSelector[i]
+          dest.addRaw savedSelector[i]
         dest.addParRi()
         publish c, dest, tmpSym, tmpDeclStart
         let s = Sym(kind: VarY, name: tmpSym, pos: tmpDeclStart)
@@ -2657,7 +2671,7 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
       else:
         dest.addParLe(DotX, info)
       for i in 0 ..< savedSelector.len:
-        dest.add savedSelector[i]
+        dest.addRaw savedSelector[i]
       dest.add symToken(stInfo.discrimSym, info)
       dest.addIntLit(0, info)
       dest.addParRi()
@@ -2727,7 +2741,7 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
               else:
                 dest.addParLe(DotX, b.info)
               for i in 0 ..< savedSelector.len:
-                dest.add savedSelector[i]
+                dest.addRaw savedSelector[i]
               dest.add symToken(b.fieldSym, b.info)
               dest.addIntLit(0, b.info)
               dest.addParRi()
@@ -2831,11 +2845,9 @@ proc semForLoopTupleVar(c: var SemContext; dest: var TokenBuf; it: var Item; tup
       buildErr c, dest, it.n.endInfo, "too few for loop variables"
   else:
     buildErr c, dest, it.n.info, "too many for loop variables"
+    # drain the rest; the caller entered the unpack scope and its
+    # `takeInto` epilogue consumes the close
     while it.n.hasMore: skip it.n
-    # XXX virtualParRi: this consumes the enclosing unpack scope's close in
-    # the error path even though the caller entered that scope; rework the
-    # pairing when flipping the define
-    consumeParRi it.n
 
 include semfields
 
@@ -2904,7 +2916,8 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
 
   # Extract the sem'd call from dest so we can pass the call args to the plugin
   var callBuf = createTokenBuf(dest.len - beforeCall)
-  for tok in beforeCall ..< dest.len: callBuf.add dest[tok]
+  # balanced span: raw copy keeps its seals
+  for tok in beforeCall ..< dest.len: callBuf.addRaw dest[tok]
   dest.shrink beforeCall - 1
 
   # Type the loop variable(s) against the iterator's element type and
@@ -2989,13 +3002,11 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
        dest[beforeCall].tagId == TagId(FieldpairsTagId) or
        dest[beforeCall].tagId == TagId(InternalFieldPairsTagId)):
     var callBuf = createTokenBuf(dest.len - beforeCall)
-    for tok in beforeCall ..< dest.len: callBuf.add dest[tok]
+    # balanced span: raw copy keeps its seals
+    for tok in beforeCall ..< dest.len: callBuf.addRaw dest[tok]
     dest.shrink beforeCall-1
     var call = beginRead(callBuf)
-    # XXX virtualParRi: semForFields (semfields.nim, unconverted) consumes
-    # the rest of the ForS scope entered above, including its close; rework
-    # the pairing when flipping the define
-    semForFields c, dest, it, call, orig
+    semForFields c, dest, it, call, orig, forScope
     return
   elif iterCall.typ.typeKind == UntypedT or
       # for iterators from concepts in generic context:
@@ -3025,7 +3036,9 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
       var callBuf = createTokenBuf(32)
       callBuf.addParLe(CallX, callInfo)
       discard buildSymChoice(c, callBuf, pool.strings.getOrIncl(name), info, FindAll)
-      for tok in beforeCall ..< dest.len: callBuf.add dest[tok]
+      # balanced span: raw copy keeps its seals and leaves the pending
+      # CallX as the only open tag for the close below
+      for tok in beforeCall ..< dest.len: callBuf.addRaw dest[tok]
       callBuf.addParRi()
       let argType = iterCall.typ
       iterCall = Item(n: beginRead(callBuf), typ: c.types.autoType)
@@ -3425,6 +3438,8 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
 
   dest.shrink typeStart
   dest.insert it.typ, typeInsertPos
+  # the aconstr was sealed above; the inserted type grew its contents:
+  widenSealed dest, exprStart, span(it.typ)
   commonType c, dest, it, exprStart, expected
 
 proc semCurly(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[SemFlag]) =
@@ -3529,6 +3544,8 @@ proc semCurly(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[Se
   it.typ = typeToCursor(c, dest, typeStart)
   dest.shrink typeStart
   dest.insert it.typ, typeInsertPos
+  # the setconstr was sealed above; the inserted type grew its contents:
+  widenSealed dest, exprStart, span(it.typ)
   commonType c, dest, it, exprStart, expected
 
 proc semArrayConstr(c: var SemContext; dest: var TokenBuf; it: var Item) =
@@ -3654,7 +3671,7 @@ proc semTup(c: var SemContext; dest: var TokenBuf, it: var Item) =
         else:
           dest.add identToken(name, nameCursor.info)
         for tok in nameStart ..< dest.len:
-          typ.add dest[tok]
+          typ.addRaw dest[tok]
     var elem = Item(n: it.n, typ: c.types.autoType)
     var freshElemType = true
     if doExpected:
@@ -3684,6 +3701,8 @@ proc semTup(c: var SemContext; dest: var TokenBuf, it: var Item) =
   it.typ = typeToCursor(c, dest, typeStart)
   dest.shrink typeStart
   dest.insert it.typ, typePos
+  # the tupconstr was sealed above; the inserted type grew its contents:
+  widenSealed dest, exprStart, span(it.typ)
   commonType c, dest, it, exprStart, origExpected
 
 proc semTupleConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
@@ -4401,7 +4420,46 @@ proc semTupAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
     leaveScope(it.n, tupatScope)
     commonType c, dest, it, exprStart, expected
 
-proc tryExplicitRoutineInst(c: var SemContext; dest: var TokenBuf; syms: Cursor; it: var Item): bool =
+proc collectExplicitInstMatches(c: var SemContext; dest: var TokenBuf; syms: Cursor;
+                                args: Cursor; matches: var int; lastMatch: var Match;
+                                instLastMatch: var bool; errMsg: var string;
+                                errInfo: var PackedLineInfo) =
+  ## Walks a symchoice tree (or a bare symbol), adding every sym whose
+  ## typevars match `args` to `dest`. Malformed content is reported via
+  ## `errMsg`/`errInfo` (empty `errMsg` means success).
+  var syms = syms
+  case syms.kind
+  of Symbol:
+    let sym = syms.symId
+    let routine = getProcDecl(sym)
+    let candidate = FnCandidate(kind: routine.kind, sym: sym, typ: routine.params)
+    var m = createMatch(addr c)
+    m.fn = candidate
+    matchTypevars m, candidate, args
+    buildTypeArgs(m)
+    if not m.err:
+      # match
+      dest.add symToken(sym, syms.info)
+      inc matches
+      lastMatch = m
+      # mark if routine is suitable for instantiation:
+      instLastMatch = routine.kind notin {TemplateY, MacroY} and routine.exported.kind != ParLe
+  of ParLe:
+    if syms.exprKind in {CchoiceX, OchoiceX}:
+      syms.loopInto:
+        collectExplicitInstMatches(c, dest, syms, args, matches, lastMatch,
+                                   instLastMatch, errMsg, errInfo)
+        if errMsg.len > 0: return
+        skip syms
+    else:
+      errMsg = "invalid tag in symchoice: " & pool.tags[syms.tagId]
+      errInfo = syms.info
+  else:
+    errMsg = "invalid token in symchoice: " & $syms.kind
+    errInfo = syms.info
+
+proc tryExplicitRoutineInst(c: var SemContext; dest: var TokenBuf; syms: Cursor; it: var Item;
+                            atScope: CursorScope): bool =
   result = false
   let info = syms.info
   let exprStart = dest.len
@@ -4413,52 +4471,24 @@ proc tryExplicitRoutineInst(c: var SemContext; dest: var TokenBuf; syms: Cursor;
   var argRead = it.n
   while argRead.hasMore:
     semLocalTypeImpl c, dest, argRead, AllowValues
-  # XXX virtualParRi: close of the (at ...) scope entered in semcall.nim's
-  # AtX branch (or semSubscript); rework the pairing when flipping the define
-  takeParRi dest, argRead
+  # keep a physical ParRi sentinel after the args: `matchTypevars` uses it
+  # to detect the end of the fragment
+  dest.addParRi(argRead.endInfo)
+  leaveScope(argRead, atScope) # close of the (at ...) scope entered by the caller
   swap dest, argBuf
   # XXX investigate this further, seems odd and prevents us from eliminating the swaps:
   let args = cursorAt(argBuf, 0)
   var matches = 0
   var lastMatch = default(Match)
   var instLastMatch = false
-  var syms = syms
-  var nested = 0
-  while true:
-    # find matching syms
-    case syms.kind
-    of ParLe:
-      if syms.exprKind in {CchoiceX, OchoiceX}:
-        inc nested
-        inc syms
-      else:
-        dest.shrink exprStart
-        c.buildErr dest, syms.info, "invalid tag in symchoice: " & pool.tags[syms.tagId]
-        return
-    of ParRi:
-      dec nested
-      inc syms
-    of Symbol:
-      let sym = syms.symId
-      let routine = getProcDecl(sym)
-      let candidate = FnCandidate(kind: routine.kind, sym: sym, typ: routine.params)
-      var m = createMatch(addr c)
-      m.fn = candidate
-      matchTypevars m, candidate, args
-      buildTypeArgs(m)
-      if not m.err:
-        # match
-        dest.add symToken(sym, syms.info)
-        inc matches
-        lastMatch = m
-        # mark if routine is suitable for instantiation:
-        instLastMatch = routine.kind notin {TemplateY, MacroY} and routine.exported.kind != ParLe
-      inc syms
-    else:
-      dest.shrink exprStart
-      c.buildErr dest, syms.info, "invalid token in symchoice: " & $syms.kind
-      return
-    if nested == 0: break
+  var errMsg = ""
+  var errInfo = info
+  collectExplicitInstMatches(c, dest, syms, args, matches, lastMatch,
+                             instLastMatch, errMsg, errInfo)
+  if errMsg.len > 0:
+    dest.shrink exprStart
+    c.buildErr dest, errInfo, errMsg
+    return
   dest.addParRi() # close symchoice
   if matches == 0:
     dest.shrink exprStart
@@ -4483,8 +4513,10 @@ proc isSinglePar(n: Cursor): bool =
   discard enterScope(n)
   result = not n.hasMore
 
-proc tryBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item): bool =
-  # it.n is after lhs, at args
+proc tryBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item;
+                         atScope: CursorScope): bool =
+  # it.n is after lhs, at args; `atScope` is the (at ...) scope entered by
+  # the caller — its close is consumed here iff the result is true
   result = false
   if (lhs.n.kind == Symbol and lhs.kind == TypeY and
         isGeneric(getTypeSection(lhs.n.symId))) or
@@ -4496,9 +4528,7 @@ proc tryBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lh
     typeExpr.addSubtree lhs.n
     while it.n.hasMore:
       takeTree typeExpr, it.n
-    # XXX virtualParRi: close of the (at ...) scope entered in semcall.nim's
-    # AtX branch (or semSubscript); rework the pairing when flipping the define
-    skipParRi it.n
+    leaveScope(it.n, atScope)
     typeExpr.addParRi()
     var typeItem = Item(n: beginRead(typeExpr), typ: it.typ)
     semLocalTypeExpr c, dest, typeItem
@@ -4511,12 +4541,13 @@ proc tryBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lh
     let res = tryLoadSym(maybeRoutine.symId)
     if res.status == LacksNothing and isRoutine(res.decl.symKind):
       # check for explicit generic routine instantiation
-      result = tryExplicitRoutineInst(c, dest, lhs.n, it)
+      result = tryExplicitRoutineInst(c, dest, lhs.n, it, atScope)
       if result: return
 
-proc semBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item) =
+proc semBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item;
+                         atScope: CursorScope) =
   # it.n is after lhs, at args
-  if tryBuiltinSubscript(c, dest, it, lhs):
+  if tryBuiltinSubscript(c, dest, it, lhs, atScope):
     return
 
   # build call:
@@ -4527,24 +4558,21 @@ proc semBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lh
   while it.n.hasMore:
     callBuf.takeTree it.n
   callBuf.addParRi()
-  # XXX virtualParRi: close of the (at ...) scope entered in semcall.nim's
-  # AtX branch (or semSubscript); rework the pairing when flipping the define
-  skipParRi it.n
+  leaveScope(it.n, atScope) # close of the (at ...) scope entered by the caller
   var call = Item(n: cursorAt(callBuf, 0), typ: it.typ)
   semCall c, dest, call, {}, SubscriptCall
   it.typ = call.typ
 
 proc semSubscript(c: var SemContext; dest: var TokenBuf; it: var Item) =
   var n = it.n
-  # XXX virtualParRi: this enters the (at ...) scope whose close is consumed
-  # inside semBuiltinSubscript; rework the pairing when flipping the define
-  inc n # tag
+  let atScope = enterScope(n) # skip tag; the close is consumed inside
+                              # semBuiltinSubscript
   var lhsBuf = createTokenBuf(4)
   var lhs = Item(n: n, typ: c.types.autoType)
   semExpr c, lhsBuf, lhs, {KeepMagics}
   it.n = lhs.n
   lhs.n = cursorAt(lhsBuf, 0)
-  semBuiltinSubscript(c, dest, it, lhs)
+  semBuiltinSubscript(c, dest, it, lhs, atScope)
 
 proc semCurlyat(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info

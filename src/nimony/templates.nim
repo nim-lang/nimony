@@ -167,7 +167,8 @@ proc tryPromoteTemplateBody*(c: var SemContext; sym: SymId): bool =
   if oldHead.symKind != TemplateY: return false
 
   var newBuf = createTokenBuf(prog.mem[sym].buffer.len + 16)
-  newBuf.takeToken oldHead    # `(template`
+  newBuf.add oldHead          # `(template`
+  let tmplScope = enterScope(oldHead)
   newBuf.takeTree oldHead     # name (SymbolDef)
   newBuf.takeTree oldHead     # exported marker
   newBuf.takeTree oldHead     # pattern
@@ -215,14 +216,15 @@ proc tryPromoteTemplateBody*(c: var SemContext; sym: SymId): bool =
           skip p
 
   semTemplBody ctx, newBuf, oldHead
-  # `oldHead` is now past the body, sitting on the closing `)`.
+  # `oldHead` is now past the body, at the template's (possibly elided) close.
 
   c.closeScope()  # body scope
   c.closeScope()  # parameter scope
   c.routine = oldRoutine
 
   # Closing `)` for the template
-  newBuf.takeToken oldHead
+  newBuf.addParRi(oldHead.endInfo)
+  leaveScope(oldHead, tmplScope)
 
   prog.mem[sym].buffer = newBuf
   prog.mem[sym].phase = SemcheckBodies

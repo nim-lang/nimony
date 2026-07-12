@@ -68,27 +68,6 @@ proc error*(e: var EContext; msg: string) {.noreturn.} =
   quit 1
 
 
-proc takeParRi*(e: var EContext; dest: var TokenBuf; c: var Cursor) =
-  if c.kind == ParRi:
-    dest.add c
-    consumeParRi c
-  else:
-    error e, "expected ')', but got: ", c
-
-proc skipParRi*(e: var EContext; c: var Cursor) =
-  if c.kind == ParRi:
-    consumeParRi c
-  else:
-    error e, "expected ')', but got: ", c
-
-template loop*(e: var EContext; dest: var TokenBuf; c: var Cursor; body: untyped) =
-  while true:
-    case c.kind
-    of ParRi:
-      dest.add c
-      inc c
-      break
-    of EofToken:
-      error e, "expected ')', but EOF reached"
-    else: discard
-    body
+# The classic `takeParRi`/`skipParRi`/`loop` helpers are gone: they required
+# a physical close token, which ParRi elision removes. Use the bounded-scope
+# API (`into`/`takeInto`/`enterScope`+`leaveScope`) instead.

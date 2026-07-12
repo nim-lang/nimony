@@ -239,20 +239,19 @@ proc trDelay0(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## `(delay0)` — no-arg form: jump to the NEXT suspension point.
   c.awaitingSuspendPark = true
   let info = n.info
-  inc n      # skip delay0 tag
-  var state = getNextState(c.currentProc.cf, n)
-  assert state != -1, "delay() no-arg must precede suspension point"
-  contNextState(c, dest, state, info)
-  skipParRi n  # skip ParRi of delay0
+  n.into: # delay0
+    let state = getNextState(c.currentProc.cf, n)
+    assert state != -1, "delay() no-arg must precede suspension point"
+    contNextState(c, dest, state, info)
 
 proc trSuspend(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## `(suspend)` — parks only after a preceding `(delay0)` in the same
   ## state (`Continuation(fn: nil, env: this)`). A bare `suspend()` is a
   ## synchronous transition to the next state so `complete()` can drive on.
   let info = n.info
-  inc n      # skip suspend tag
-  let state = getNextState(c.currentProc.cf, n)
-  skipParRi n  # skip ParRi of suspend
+  var state = -1
+  n.into: # suspend
+    state = getNextState(c.currentProc.cf, n)
   let park = c.awaitingSuspendPark
   c.awaitingSuspendPark = false
   dest.copyIntoKind RetS, info:
@@ -276,7 +275,7 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## `(delay fn args)` — fn-args form; typenav returns
   ## `Continuation` for `DelayX`.
   let info = n.info
-  inc n      # skip delay tag
+  let delayScope = enterScope(n) # skip delay tag
   if n.kind == Symbol:
     let sym = n.symId
     inc n    # skip fn symbol
@@ -297,12 +296,12 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.copyIntoKind KvU, info:
           dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
           dest.addParPair NilX, info
-    skipParRi n  # skip ParRi of delay
+    leaveScope(n, delayScope) # skip close of delay
   else:
     dest.copyIntoKind ErrT, info:
       dest.addStrLit "`delay` expects a call expression"
-    skip n   # skip rest
-    skipParRi n
+    while n.hasMore: skip n # skip rest
+    leaveScope(n, delayScope)
 
 # ---------------------------------------------------------------------
 # Proctype / itertype shape rewrite — coroutine-shaped types get the
@@ -329,17 +328,20 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
       if isClosureIterType:
         # open the (tuple … (ref RootObj)) wrapper
         dest.addParLe TupleT, info
+      var ptScope = default(CursorScope)
       if isPassiveProc:
-        dest.takeToken n                # proctype tag (passive proc)
+        dest.add n                      # proctype tag (passive proc)
+        ptScope = enterScope(n)
       else:
         # itertype → wrapper proctype (both `.closure` and `.passive`)
         dest.addParLe ProctypeT, info
-        inc n                            # consume original itertype tag
+        ptScope = enterScope(n)          # consume original itertype tag
       dest.takeTree n         # nilability tag
-      dest.takeToken n        # params tag
+      dest.add n              # params tag
+      let paramsScope = enterScope(n)
       while n.hasMore:
         trProctype(c, dest, n)
-      inc n
+      leaveScope(n, paramsScope)
       # return type becomes a ptr parameter:
       if not isVoidType(n):
         dest.copyIntoKind ParamU, info:
@@ -362,7 +364,8 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
       while n.hasMore:
         trProctype(c, dest, n)
-      dest.takeParRi n
+      dest.addParRi(n.endInfo)
+      leaveScope(n, ptScope)
       if isClosureIterType:
         # proctype is already closed; add the env slot and close the tuple
         dest.copyIntoKind RefT, info:

@@ -48,6 +48,36 @@ proc spliceBodyWithoutResult(dest: var TokenBuf; body: Cursor) =
     while n.hasMore:
       dest.takeTree n
 
+proc rewriteSymsToIdentsImpl(newBuf: var TokenBuf; n: var Cursor) =
+  ## Rewrites the single tree/token at `n` into `newBuf` and advances past it.
+  case n.kind
+  of Symbol, SymbolDef:
+    var name = pool.syms[n.symId]
+    extractBasename name
+    newBuf.add identToken(pool.strings.getOrIncl(name), n.info)
+    inc n
+  of ParLe:
+    let ek = n.exprKind
+    var firstChild = n
+    inc firstChild
+    if (ek == OchoiceX or ek == CchoiceX) and firstChild.kind == Symbol:
+      # unwrap the choice to a single ident:
+      n.into:
+        var name = pool.syms[n.symId]
+        extractBasename name
+        newBuf.add identToken(pool.strings.getOrIncl(name), n.info)
+        while n.hasMore: skip n
+    else:
+      newBuf.add n
+      n.into:
+        while n.hasMore:
+          rewriteSymsToIdentsImpl(newBuf, n)
+        newBuf.addParRi(n.endInfo)
+  of ParRi:
+    discard "cannot happen: subtree ends are consumed by the bounded scope"
+  else:
+    newBuf.takeToken n
+
 proc rewriteSymsToIdents(buf: var TokenBuf) =
   ## Convert every Symbol / SymbolDef in `buf` to an Ident bearing the symbol's
   ## base name, and unwrap `(ochoice …)` / `(cchoice …)` nodes the same way.
@@ -55,39 +85,7 @@ proc rewriteSymsToIdents(buf: var TokenBuf) =
   ## every name against the plugin module's own scope.
   var newBuf = createTokenBuf(buf.len)
   var n = beginRead(buf)
-  var nested = 0
-  while true:
-    case n.kind
-    of Symbol, SymbolDef:
-      var name = pool.syms[n.symId]
-      extractBasename name
-      newBuf.add identToken(pool.strings.getOrIncl(name), n.info)
-      inc n
-    of ParLe:
-      let ek = n.exprKind
-      if ek == OchoiceX or ek == CchoiceX:
-        inc n
-        if n.kind == Symbol:
-          var name = pool.syms[n.symId]
-          extractBasename name
-          newBuf.add identToken(pool.strings.getOrIncl(name), n.info)
-          while n.hasMore: skip n
-          skipParRi n  # consume ParRi
-        else:
-          newBuf.takeToken n
-          inc nested
-      else:
-        newBuf.takeToken n
-        inc nested
-    of ParRi:
-      newBuf.add n.load
-      dec nested
-      if nested == 0: break
-      inc n
-    of EofToken:
-      break
-    else:
-      newBuf.takeToken n
+  rewriteSymsToIdentsImpl(newBuf, n)
   endRead(buf)
   buf = ensureMove newBuf
 

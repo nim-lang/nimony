@@ -59,35 +59,31 @@ proc update(dest: var Sha1State; n: PackedToken) =
     update(dest, "!EOF!")
 
 proc updateLoop*(dest: var Sha1State; n: var Cursor; inlineT: TagId; foundInline: var bool) =
-  var nested = 0
-  while true:
+  ## Hashes the single tree/token at `n`, advancing past it. The digest is
+  ## the same with and without ParRi elision: the close is hashed as ")"
+  ## whether or not its token physically exists.
+  case n.kind
+  of ParLe:
     update dest, n.load
-    case n.kind
-    of ParLe:
-      if n.tagId == inlineT: foundInline = true
-      inc nested
-    of ParRi:
-      dec nested
-    else: discard
+    if n.tagId == inlineT: foundInline = true
+    n.into:
+      while n.hasMore:
+        updateLoop(dest, n, inlineT, foundInline)
+    update dest, ")"
+  of ParRi:
+    discard "cannot happen: subtree ends are consumed by the bounded scope"
+  else:
+    update dest, n.load
     inc n
-    if nested <= 0:
-      break
+
+const
+  NoInlineTag = TagId(high(uint32)) ## never matches a real tag
 
 proc computeChecksum*(n: Cursor): string =
   var checksum = newSha1State()
   var n = n
-  var nested = 0
-  while true:
-    update checksum, n.load
-    case n.kind
-    of ParLe:
-      inc nested
-    of ParRi:
-      dec nested
-    else: discard
-    inc n
-    if nested <= 0:
-      break
+  var dummy = false
+  updateLoop(checksum, n, NoInlineTag, dummy)
   let final = SecureHash checksum.finalize()
   result = $final
 

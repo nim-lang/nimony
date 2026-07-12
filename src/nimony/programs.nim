@@ -433,15 +433,26 @@ proc publish*(s: SymId; buf: sink TokenBuf; phase = SemcheckBodies) =
 proc publish*(s: SymId; dest: TokenBuf; start: int; phase = SemcheckBodies) =
   var buf = createTokenBuf(dest.len - start + 1)
   for i in start..<dest.len:
-    buf.add dest[i]
+    # the span is an already-balanced subtree; raw copy keeps its seals
+    buf.addRaw dest[i]
   publish s, buf, phase
 
 proc publishSignature*(dest: TokenBuf; s: SymId; start: int) =
+  when defined(debugPublish):
+    if pool.syms[s].startsWith("\x2E."):
+      echo "PUBSIG ", pool.syms[s], " src=", toString(readonlyCursorAt(dest, start), false)
   var buf = createTokenBuf(dest.len - start + 3)
-  for i in start..<dest.len:
-    buf.add dest[i]
+  # the span is the routine's open tag followed by complete signature
+  # subtrees; open the tag properly so the final close seals it, and copy
+  # the sealed children raw
+  buf.add dest[start]
+  for i in start+1 ..< dest.len:
+    buf.addRaw dest[i]
   buf.addDotToken() # body is empty for a signature
   buf.addParRi()
+  when defined(debugPublish):
+    if pool.syms[s].startsWith("\x2E."):
+      echo "PUBSIG OUT ", toString(readonlyCursorAt(buf, 0), false)
   publish s, buf, SemcheckSignatures
 
 proc publishStringType*() =

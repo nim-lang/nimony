@@ -37,38 +37,27 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor)
 proc setupProc(c: var Context; procBody: Cursor) =
   # detect `addr x` and mark `x` as addrTaken:
   var n = procBody
-  var nested = 0
-  while true:
-    case n.kind
-    of ParLe:
-      if n.exprKind == AddrX:
-        let r = rootOf(n, CanFollowCalls)
-        if r != NoSymId:
-          c.current.addrTaken.incl r
-      inc nested
-    of ParRi:
-      dec nested
-    else:
-      discard
-    if nested == 0: break
-    inc n
+  linearScan n:
+    if n.exprKind == AddrX:
+      let r = rootOf(n, CanFollowCalls)
+      if r != NoSymId:
+        c.current.addrTaken.incl r
 
 proc trParams(c: var Context; params: Cursor) =
   var n = params
-  inc n # skips (params
+  discard enterScope(n) # skips (params; peek only, never left
   while n.hasMore:
     let r = takeLocal(n, SkipFinalParRi)
     if r.name.kind == SymbolDef:
       c.vt.newValueFor r.name.symId # register parameter as known location
 
 proc trCfvar(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  dest.takeToken n
-  assert n.kind == SymbolDef
-  let s = n.symId
-  dest.takeToken n
-  # Do versioning for cfvars!
-  newValueFor c.vt, s
-  dest.takeParRi n
+  takeInto dest, n:
+    assert n.kind == SymbolDef
+    let s = n.symId
+    dest.takeToken n
+    # Do versioning for cfvars!
+    newValueFor c.vt, s
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n
@@ -98,21 +87,19 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.current = ensureMove oldProc
 
 proc trUnknown(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  dest.takeToken n
-  let r = rootOf(n, CanFollowCalls)
-  if r != NoSymId:
-    if not c.current.addrTaken.contains(r):
-      newValueFor c.vt, r
-  trExpr c, dest, n
-  dest.takeParRi n
+  takeInto dest, n:
+    let r = rootOf(n, CanFollowCalls)
+    if r != NoSymId:
+      if not c.current.addrTaken.contains(r):
+        newValueFor c.vt, r
+    trExpr c, dest, n
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # for now we leave the unknown instructions where they are as they do not hurt us.
   # We can later push them around.
-  dest.takeToken n
-  while n.hasMore:
-    trExpr c, dest, n
-  dest.takeToken n
+  takeInto dest, n:
+    while n.hasMore:
+      trExpr c, dest, n
 
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -135,37 +122,34 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of CallKinds:
       trCall c, dest, n
     of DotX, DdotX:
-      dest.takeToken n
-      trExpr c, dest, n
-      # field name:
-      dest.takeTree n
-      if n.hasMore:
-        # inheritance depth:
-        takeTree dest, n
-      if n.hasMore:
-        # optional access-token string lit
-        takeTree dest, n
-      dest.takeParRi n
-    else:
-      if n.substructureKind == KvU:
-        dest.takeToken n
-        dest.takeTree n # key, don't versionize!
+      takeInto dest, n:
         trExpr c, dest, n
+        # field name:
+        dest.takeTree n
         if n.hasMore:
           # inheritance depth:
           takeTree dest, n
-        takeParRi dest, n
-      else:
-        dest.takeToken n
-        while n.hasMore:
+        if n.hasMore:
+          # optional access-token string lit
+          takeTree dest, n
+    else:
+      if n.substructureKind == KvU:
+        takeInto dest, n:
+          dest.takeTree n # key, don't versionize!
           trExpr c, dest, n
-        dest.takeToken n
+          if n.hasMore:
+            # inheritance depth:
+            takeTree dest, n
+      else:
+        takeInto dest, n:
+          while n.hasMore:
+            trExpr c, dest, n
   of ParRi: bug "Unmatched ParRi"
 
 proc trStore(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   dest.add tagToken("store", info)
-  inc n
+  let storeScope = enterScope(n)
   trExpr c, dest, n # source
 
   let r = rootOf(n, CanFollowCalls)
@@ -174,11 +158,13 @@ proc trStore(c: var Context; dest: var TokenBuf; n: var Cursor) =
       newValueFor c.vt, r
 
   trExpr c, dest, n # dest
-  dest.takeParRi n
+  dest.addParRi(n.endInfo)
+  leaveScope(n, storeScope)
 
 proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  dest.takeToken n # "ite" or "itec"
+  dest.add n # "ite" or "itec"
+  let iteScope = enterScope(n)
   trExpr c, dest, n
   openSection c.vt
   openScope c.typeCache
@@ -209,7 +195,8 @@ proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addParRi()
 
   dest.addParRi() # join information
-  dest.takeParRi n # "ite"
+  dest.addParRi(n.endInfo) # "ite"
+  leaveScope(n, iteScope)
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
@@ -224,13 +211,15 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trLoop(c: var Context; dest: var TokenBuf; n: var Cursor) =
   openSection c.vt
 
-  dest.takeToken n # "loop"
+  dest.add n # "loop"
+  let loopScope = enterScope(n)
 
   openScope c.typeCache
   trStmt c, dest, n # pre condition
   trExpr c, dest, n # condition
   assert n.stmtKind == StmtsS
-  dest.takeToken n
+  dest.add n
+  let bodyScope = enterScope(n)
   while n.hasMore:
     trStmt c, dest, n # body
   # last statement of our loop body is the `continue`:
@@ -248,28 +237,28 @@ proc trLoop(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addIntLit j.old2, n.info
       dest.addParRi()
   dest.addParRi() # Continue statement
-  dest.takeParRi n # close loop body
-  dest.takeParRi n # close loop
+  dest.addParRi(n.endInfo) # close loop body
+  leaveScope(n, bodyScope)
+  dest.addParRi(n.endInfo) # close loop
+  leaveScope(n, loopScope)
 
 proc trKill(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Do not version the variables here!
-  dest.takeToken n
-  while n.hasMore:
-    assert n.kind == Symbol
-    let s = n.symId
-    killVar c.vt, s
-    dest.takeToken n
-  dest.takeParRi n
+  takeInto dest, n:
+    while n.hasMore:
+      assert n.kind == Symbol
+      let s = n.symId
+      killVar c.vt, s
+      dest.takeToken n
 
 proc trJtrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  dest.takeToken n
-  while n.hasMore:
-    assert n.kind == Symbol
-    let s = n.symId
-    dest.takeToken n
-    # Do versioning for cfvars!
-    newValueFor c.vt, s
-  dest.takeParRi n
+  takeInto dest, n:
+    while n.hasMore:
+      assert n.kind == Symbol
+      let s = n.symId
+      dest.takeToken n
+      # Do versioning for cfvars!
+      newValueFor c.vt, s
 
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.njvlKind
@@ -309,10 +298,9 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of ContinueS:
       skip n
     else:
-      dest.takeToken n
-      while n.hasMore:
-        trStmt c, dest, n
-      dest.takeToken n
+      takeInto dest, n:
+        while n.hasMore:
+          trStmt c, dest, n
 
 proc toNjvl*(n: Cursor; moduleSuffix: string): TokenBuf =
   var c = Context(typeCache: createTypeCache(), vt: createVersionTab())
