@@ -8,10 +8,10 @@ when defined(nimNativeIo):
     type WinHandle = pointer
     const STD_ERROR_HANDLE = 0xFFFFFFF4'u32   # (DWORD)-12
     proc cGetStdHandle(nStdHandle: uint32): WinHandle {.stdcall,
-      importc: "GetStdHandle", header: "<windows.h>".}
+      importc: "GetStdHandle".}
     proc cWriteErrFile(h: WinHandle; buf: pointer; n: uint32;
                        written: ptr uint32; overlapped: pointer): int32 {.
-      stdcall, importc: "WriteFile", header: "<windows.h>".}
+      stdcall, importc: "WriteFile".}
 
     proc writeErr(s: string) =
       var written: uint32 = 0

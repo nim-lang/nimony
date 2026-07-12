@@ -168,10 +168,10 @@ elif defined(windows) and not defined(StandaloneHeapSize):
 
   proc virtualAlloc(lpAddress: pointer, dwSize: int, flAllocationType,
                     flProtect: int32): pointer {.
-                    header: "<windows.h>", stdcall, importc: "VirtualAlloc".}
+                    stdcall, importc: "VirtualAlloc".}
 
   proc virtualFree(lpAddress: pointer, dwSize: int,
-                   dwFreeType: int32): cint {.header: "<windows.h>", stdcall,
+                   dwFreeType: int32): cint {.stdcall,
                    importc: "VirtualFree".}
 
   proc osAllocPages(size: int): pointer {.inline.} =

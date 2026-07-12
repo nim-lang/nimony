@@ -613,7 +613,12 @@ var ST_RDONLY* {.importc: "ST_RDONLY", header: "<sys/statvfs.h>".}: cint
 var ST_NOSUID* {.importc: "ST_NOSUID", header: "<sys/statvfs.h>".}: cint
 
 # <sys/wait.h>
-when defined(linux):
+# Under -d:nimNativeIo the syscall-based build must pull no libc headers, so the
+# wait flags used by osproc are hardcoded rather than `importc`'d (referencing a
+# `header: "<sys/wait.h>"` var would include the header and re-declare `wait4`,
+# whose native binding is header-less — conflicting types). WNOHANG is 1 on every
+# Unix; WCONTINUED differs (Linux 0x8, macOS 0x10).
+when defined(linux) or defined(nimNativeIo):
   const WNOHANG* = cint(1)
 else:
   var WNOHANG* {.importc: "WNOHANG", header: "<sys/wait.h>".}: cint
@@ -622,6 +627,8 @@ var WEXITED* {.importc: "WEXITED", header: "<sys/wait.h>".}: cint
 var WSTOPPED* {.importc: "WSTOPPED", header: "<sys/wait.h>".}: cint
 when defined(linux):
   const WCONTINUED* = cint(8)
+elif defined(nimNativeIo):  # macOS/native: no <sys/wait.h>
+  const WCONTINUED* = cint(0x10)
 else:
   var WCONTINUED* {.importc: "WCONTINUED", header: "<sys/wait.h>".}: cint
 var WNOWAIT* {.importc: "WNOWAIT", header: "<sys/wait.h>".}: cint
@@ -648,6 +655,17 @@ var CLOCK_THREAD_CPUTIME_ID* {.importc: "CLOCK_THREAD_CPUTIME_ID", header: "<tim
 when defined(linux):
   const CLOCK_REALTIME* = cint(0)
   const CLOCK_MONOTONIC* = cint(1)
+  const TIMER_ABSTIME* = cint(1)
+elif defined(nimNativeIo):
+  # macOS/BSD clockid_t values (from <sys/_types/_clockid_t.h>: CLOCK_REALTIME=0,
+  # CLOCK_MONOTONIC=6), hardcoded so the freestanding path pulls in NO <time.h>.
+  # That header both redeclares `clock_gettime` — clashing with our own headerless
+  # prototype under the C backend — and defines a `struct timespec` distinct from
+  # our hardcoded `Timespec`; and on the native backend `CLOCK_REALTIME` is a macro
+  # with no symbol to bind. TIMER_ABSTIME mirrors the POSIX value (unused on macOS,
+  # which lacks clock_nanosleep).
+  const CLOCK_REALTIME* = cint(0)
+  const CLOCK_MONOTONIC* = cint(6)
   const TIMER_ABSTIME* = cint(1)
 else:
   var CLOCK_REALTIME* {.importc: "CLOCK_REALTIME", header: "<time.h>".}: cint

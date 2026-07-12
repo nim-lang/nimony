@@ -48,7 +48,8 @@ proc extractModuleSuffix(filename: string): string =
       result.add c
 
 proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
-                  summaries: ptr FunctionSummaryTable; m: ptr MainModule) =
+                  summaries: ptr FunctionSummaryTable; m: ptr MainModule;
+                  params: Cursor = default(Cursor)) =
   ## Per-body optimization pipeline. The nifcore passes plug in here as they
   ## are ported. The suffix is made unique per body (`st.bodies` is the body's
   ## index in the module): the passes name synthesized temps `<kind>.<n>.<suffix>`
@@ -62,7 +63,7 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # later passes see simpler, scalar code.
   runConstructorProjection(buf)
   runScalarize(buf, bodySuffix)
-  runCopyProp(buf)
+  runCopyProp(buf, params)
   runInductionVariables(buf, bodySuffix)
   runCSE(buf, bodySuffix, summaries, m)
 
@@ -93,7 +94,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
           m[].registerParams(d.params)
         var body = createTokenBuf(64, dest.pool, dest.tags)
         body.addSubtree d.body
-        optimizeBody(body, suffix, st, summaries, m)
+        optimizeBody(body, suffix, st, summaries, m, d.params)
         if m != nil: m[].closeScope()
         var rb = body.beginRead()
         dest.addSubtree rb

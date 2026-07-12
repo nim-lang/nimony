@@ -42,6 +42,16 @@ import aliasing                               # intra-proc Steensgaard alias cla
 import ".." / nifmodules                      # MainModule (type context, threaded through)
 import ".." / typenav                         # getType — to skip value-CSE of aggregates
 
+const AddressCSE = false
+  ## Address-CSE caches `&location` (as a held pointer temp) so repeated read/write
+  ## of one lvalue reuses the address. DISABLED: on the arkham targets a memory
+  ## address is folded into the load/store addressing mode (`or [base+idx*8], m`)
+  ## for free, so caching it saves no work and instead ties up a pointer register
+  ## across the whole live range — measured as the dominant register-pressure source
+  ## in the allocator hot path (9 held pointers in rawAlloc). Value-CSE of genuine
+  ## loads stays on (a load is a real memory access worth factoring); the write-target
+  ## aggregate-skip at `handleCandidate` still holds with an empty `writeTargets`.
+
 # ---- function summaries (alias-aware; pure data, mirrors hexer/funcsummary) -
 # These are read from `(smry …)` pragmas in the buffer by the nifcore loader
 # below (Stage 2). The wire format is pinned in `doc/tags.md`.
@@ -84,7 +94,15 @@ proc child0(c: Cursor): Cursor {.inline.} =
 type
   CachedEntry = object
     hasFirst: bool       # a first occurrence has been recorded
-    firstExprPos: int    # position in `orig` of the first occurrence
+    firstExprPos: int    # position in `orig` of the first occurrence's LVALUE `L`
+                         # (for an `(addr L)` occurrence this is `L`, the child) —
+                         # it is what the decl caches (`L` or `addr L`)
+    firstUsePos: int     # position of the NODE to rewrite for the first occurrence:
+                         # `L` for a load/write, the whole `(addr L)` node for an
+                         # address-of. Usually == firstExprPos (differs only for
+                         # an address-of first occurrence).
+    firstIsAddrOf: bool  # the first occurrence was `(addr L)` (rewrite → bare temp),
+                         # not a load/write of `L` (rewrite → `(deref temp)`)
     firstStmtPos: int    # position of the statement directly enclosing the first
                          # occurrence — the (sound) decl-insertion point
     anchorStack: seq[int] # the first occurrence's enclosing hoist anchors
@@ -95,15 +113,20 @@ type
 
   PendingDecl = object   # a materialized temp; its decl is emitted at flush time
     tempName: string
-    exprPos: int         # the first occurrence's expression position
-    addrMode: bool
+    exprPos: int         # the first occurrence's LVALUE position (what the decl caches)
+    addrMode: bool       # the temp holds `addr L` (a pointer); loads/writes of `L`
+                         # rewrite to `(deref t)`, address-of occurrences to bare `t`
     hoistPos: int        # = first occurrence's `firstStmtPos` (dominates every
                          # cache-flow-matched occurrence, and follows all stores
                          # that precede the first use in its block)
-    usePositions: seq[int] # occurrence positions to rewrite to the temp; applied
-                           # at flush (NOT eagerly) so a temp whose hoist position
-                           # turns out unsound can be dropped without leaving
-                           # dangling uses
+    usePositions: seq[tuple[pos: int; deref: bool]]
+                           # occurrence positions to rewrite to the temp, each with
+                           # its rewrite form: `deref` ⇒ `(deref t)` (an lvalue load/
+                           # write under address-CSE), else the bare temp `t` (a value-
+                           # CSE use, or an address-of occurrence whose value IS the
+                           # cached address). Applied at flush (NOT eagerly) so a temp
+                           # whose hoist position turns out unsound can be dropped
+                           # without leaving dangling uses
 
   Context = object
     orig: ptr TokenBuf
@@ -131,6 +154,11 @@ type
     localDefPos: Table[SymId, int]  ## local symbol → position of its `(var …)` decl,
                                     ## so a cached load is never hoisted above the
                                     ## declaration of a local it reads
+    symReads: Table[SymId, int]     ## per-symbol count of every `Symbol` occurrence in
+                                    ## the body — the profitability gate for cheap-arith
+                                    ## CSE: fold `a op b` only when its operands appear
+                                    ## NOWHERE else (so folding kills their live ranges
+                                    ## instead of adding the temp on top). See flushPending.
 
 proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
                    summaries: ptr FunctionSummaryTable): Context =
@@ -249,13 +277,18 @@ proc preScanWrites(start: Cursor; writes, addrs: var HashSet[SymId]) =
 
 # ---- cache invalidation ---------------------------------------------------
 
-proc markAddrTaken(c: var Context; s: SymId)
+proc markAddrTaken(c: var Context; s: SymId; exempt = "")
 proc clearCache(c: var Context)
 
-proc invalidateMentioning(c: var Context; target: SymId) =
+proc invalidateMentioning(c: var Context; target: SymId; exempt = "") =
+  ## Drop every cached entry whose expression mentions `target` (its value/address
+  ## may have changed). `exempt` keeps one key alive: taking `&L` marks `L`'s root
+  ## addr-taken but does NOT change `&L` itself, so `L`'s own address entry survives
+  ## (mirrors `invalidateForStore`'s exempt of the written location's address temp).
   var toClear: seq[string] = @[]
   for key, entry in c.cache.pairs:
     if not entry.hasFirst: continue
+    if key == exempt: continue
     let exprCur = cursorAt(c.orig[], entry.firstExprPos)
     if expressionMentions(exprCur, target):
       toClear.add key
@@ -477,18 +510,21 @@ proc gotoLabel(c: var Context; L: LabelId) = c.cache.gotoLabel L
 proc landLabel(c: var Context; L: LabelId) = c.cache.landLabel L
 proc clearCache(c: var Context) = c.cache.clearAll()
 
-proc markAddrTaken(c: var Context; s: SymId) =
+proc markAddrTaken(c: var Context; s: SymId; exempt = "") =
   if s in c.addrTaken: return
   c.addrTaken.incl s
-  invalidateMentioning(c, s)
+  invalidateMentioning(c, s, exempt)
 
 # ---- main traversal -------------------------------------------------------
 
 proc tr(c: var Context; n: var Cursor)   # forward
 
-proc substUse(c: var Context; exprPos: int; tempName: string; addrMode: bool) =
+proc substUse(c: var Context; exprPos: int; tempName: string; deref: bool) =
+  ## Rewrite the occurrence at `exprPos` to the temp: `(deref t)` when `deref`
+  ## (an lvalue load/write sharing an address temp), else the bare temp `t` (a
+  ## value-CSE use, or an address-of occurrence whose value is the cached address).
   addSubstPatch(c, exprPos,
-    (if addrMode: addDerefSynth(c, tempName) else: addSymUseSynth(c, tempName)))
+    (if deref: addDerefSynth(c, tempName) else: addSymUseSynth(c, tempName)))
 
 type
   LoadTypeClass = enum
@@ -534,26 +570,40 @@ proc latestLocalDef(c: Context; start: Cursor): int =
       if p > result: result = p
     inc i
 
-proc handleCandidate(c: var Context; n: Cursor): bool =
+proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
   ## Lazy CSE. The *first* occurrence is only recorded — no temp yet — so
   ## single-use expressions are left untouched. On the *second* occurrence the
   ## temp is materialized; the cache (control flow) decides *whether* reuse is
   ## valid, while the decl is hoisted at the deepest hoist-anchor common to all
   ## occurrences (the emitted scope that encloses them) — placed at the end so it
   ## can move up as further occurrences appear. An lvalue that is also an
-  ## assignment target (in `writeTargets`) is cached by ADDRESS (`var t = addr L`;
-  ## every read/write becomes `(deref t)`); everything else by value.
-  let key = hashExpr(n)
+  ## assignment target OR whose address is taken (in `writeTargets`) is cached by
+  ## ADDRESS (`var t = addr L`; every load/write becomes `(deref t)` and every
+  ## `(addr L)` becomes bare `t`); everything else by value.
+  ##
+  ## `isAddrOf`: `n` is an `(addr L)` node; the caller has verified `L` (its child)
+  ## is an address-CSE'd memory lvalue. We key on `L` (so it unifies with plain
+  ## loads/writes of `L`) but rewrite the whole `(addr L)` node to the bare temp.
+  let lvalueCur = if isAddrOf: child0(n) else: n
+  let key = hashExpr(lvalueCur)
   # Don't *value*-CSE an aggregate load: it copies the whole object/array. An
-  # lvalue that is also a write target is address-CSE'd (caches a cheap pointer),
-  # so it stays eligible — only plain value loads are skipped here. A load whose
-  # type cannot be navigated is never CSE'd (in either mode): the materialized
+  # lvalue that is also a write target / addr-of'd is address-CSE'd (caches a cheap
+  # pointer), so it stays eligible — only plain value loads are skipped here. A load
+  # whose type cannot be navigated is never CSE'd (in either mode): the materialized
   # temp's inferred type would be `(err)` and break the C backend.
-  let cls = classifyLoad(c, n)
+  let cls = classifyLoad(c, lvalueCur)
   if cls == ltcUnknown: return false
   if key notin c.writeTargets and cls == ltcAggregate:
     return false
-  let exprPos = cursorToPosition(c.orig[], n)
+  let addrMode = key in c.writeTargets
+  when not AddressCSE:
+    # `addrMode`/`isAddrOf` means we'd cache an ADDRESS (`&L`) as a held pointer temp.
+    # Don't: on the arkham targets the address folds into the load/store addressing mode
+    # for free, so caching it saves nothing and ties up a register across the live range.
+    # Leave the lvalue inline (no temp) — NOT value-CSE'd (unsound across its own writes).
+    if addrMode or isAddrOf: return false
+  let usePos = cursorToPosition(c.orig[], n)          # node to rewrite
+  let lvaluePos = cursorToPosition(c.orig[], lvalueCur)  # `L`, what the decl caches
   let entry = c.cache[key]
   if not entry.hasFirst:
     if c.curStmt < 0: return false         # no enclosing statement → nowhere to hoist
@@ -562,7 +612,8 @@ proc handleCandidate(c: var Context; n: Cursor): bool =
       # Loop-condition candidate: hoisting before the loop would compute a stale
       # pre-loop value every iteration. Don't CSE here.
       return false
-    c.cache[key] = CachedEntry(hasFirst: true, firstExprPos: exprPos,
+    c.cache[key] = CachedEntry(hasFirst: true, firstExprPos: lvaluePos,
+                               firstUsePos: usePos, firstIsAddrOf: isAddrOf,
                                firstStmtPos: c.curStmt, anchorStack: c.stmtStack)
     return false                           # recorded only — not yet a temp
   # Second-or-later occurrence. The cache is flow-sensitive and intersects at
@@ -576,21 +627,79 @@ proc handleCandidate(c: var Context; n: Cursor): bool =
     if a.len > c.stmtStack.len: return false
     for i in 0 ..< a.len:
       if a[i] != c.stmtStack[i]: return false
-  let addrMode = key in c.writeTargets
+  # A use's rewrite form: an address-of occurrence yields the bare address temp;
+  # any other occurrence under address-CSE is an lvalue → `(deref t)`; value-CSE
+  # is always bare.
+  let derefThis = addrMode and not isAddrOf
+  let derefFirst = addrMode and not entry.firstIsAddrOf
   let fp = entry.firstExprPos
   var tempName: string
   if c.materialized.hasKey(fp):
     tempName = c.materialized.getOrDefault(fp)
     var pd = c.pending.getOrDefault(fp)
-    pd.usePositions.add exprPos
+    pd.usePositions.add (usePos, derefThis)
     c.pending[fp] = pd
   else:
     tempName = freshTempName(c)
     c.materialized[fp] = tempName
     c.pending[fp] = PendingDecl(tempName: tempName, exprPos: fp, addrMode: addrMode,
                                 hoistPos: entry.firstStmtPos,
-                                usePositions: @[fp, exprPos]) # first + this occurrence
+                                usePositions: @[(entry.firstUsePos, derefFirst),
+                                                (usePos, derefThis)])
   result = true
+
+proc isPureRegArith(n: Cursor): bool =
+  ## True if `n` is a CHEAP arithmetic binop/unop whose operands are only
+  ## symbols, literals, or nested pure arithmetic — a pure *register* computation
+  ## with NO memory load or call inside. Such a value depends solely on its
+  ## operand symbols, so the existing operand-write invalidation
+  ## (`invalidateMentioning` / `clobberClasses`, which scan the whole expression)
+  ## already covers it with no memory/alias reasoning — no load/aggregate/aliasing
+  ## logic is needed. Used both to gate the CSE candidate and, at flush, to apply
+  ## the cheap-arith profitability gate.
+  if n.kind != TagLit: return false
+  case n.exprKind
+  of AddC, SubC, MulC, DivC, ModC, ShlC, ShrC,
+     BitandC, BitorC, BitxorC, NegC, BitnotC:
+    result = true
+    var m = n
+    var idx = 0
+    m.loopInto:
+      # idx 0 is the result-TYPE child (typed ops carry it first); only operands
+      # need the purity check.
+      if idx > 0:
+        case m.kind
+        of Symbol, IntLit, UIntLit, CharLit, FloatLit, Ident: discard
+        of TagLit:
+          if not isPureRegArith(m): result = false
+        else: result = false
+      inc idx
+      skip m
+  else: result = false
+
+proc countLeafSyms(cur: Cursor; counts: var Table[SymId, int]) =
+  ## Tally each `Symbol` leaf of the expression `cur` (multiplicity: `a*a` → a:2).
+  case cur.kind
+  of Symbol:
+    counts[symId(cur)] = counts.getOrDefault(symId(cur), 0) + 1
+  of TagLit:
+    var n = cur
+    n.loopInto:
+      countLeafSyms(n, counts)
+      skip n
+  else: discard
+
+proc computeSymReads(c: var Context) =
+  ## One linear pass over the body counting every `Symbol` occurrence per symbol.
+  ## Used only as the cheap-arith CSE profitability gate — an over-count (it also
+  ## tallies write targets and non-folded occurrences) only makes the gate more
+  ## conservative (reject a marginal CSE), never unsound. Run LAZILY (only when a
+  ## cheap-arith temp actually needs gating), so bodies with no arith CSE — the
+  ## overwhelming majority — pay nothing.
+  for i in 0 ..< c.orig[].len:
+    let tok = cursorAt(c.orig[], i)
+    if tok.kind == Symbol:
+      c.symReads[tok.symId] = c.symReads.getOrDefault(tok.symId, 0) + 1
 
 proc flushPending(c: var Context) =
   ## Emit each materialized temp's decl at its final (shallowest) hoist position,
@@ -599,25 +708,60 @@ proc flushPending(c: var Context) =
   ## the cached expression's free locals must all be in scope at the decl site.
   ## Because the rewrites are applied here (not eagerly), dropping leaves the
   ## original expressions untouched and correct.
+  var symReadsReady = false
   for fp, pd in c.pending:
     if pd.hoistPos < 0: continue
     let firstCur = cursorAt(c.orig[], pd.exprPos)
     if pd.hoistPos <= latestLocalDef(c, firstCur):
       continue                              # unsound hoist — keep the originals
+    if isPureRegArith(firstCur):
+      if not symReadsReady:                 # lazy: only scan when arith gating is needed
+        computeSymReads(c); symReadsReady = true
+      # Cheap-arith profitability gate (the tweak's "`a` only used in `binop(a,b)`/
+      # `unop(a)` or unused after these"). A cheap op is only worth a temp when
+      # folding its duplicates KILLS the operands' live ranges rather than adding
+      # the temp on top of them. Sufficient & checkable: every non-literal operand
+      # appears NOWHERE outside this expression's folded occurrences — i.e. its
+      # total `Symbol` count equals (occurrences × its multiplicity in one copy).
+      # If any operand is used elsewhere it stays live regardless, so the temp is
+      # pure register pressure (this is exactly what regressed rawAlloc's
+      # `alignment - 1`). Reject → keep the originals; the recompute is cheaper.
+      let k = pd.usePositions.len
+      var operandCounts = initTable[SymId, int]()
+      countLeafSyms(firstCur, operandCounts)
+      var paysOff = true
+      for s, mult in operandCounts:
+        if c.symReads.getOrDefault(s, 0) != k * mult:
+          paysOff = false
+          break
+      if not paysOff: continue              # cheap recompute wins — leave inline
     let varIdx = if pd.addrMode: addAddrVarDecl(c, pd.tempName, firstCur, rawLineInfo(firstCur))
                  else: addValueVarDecl(c, pd.tempName, firstCur, rawLineInfo(firstCur))
     c.patchset.addInsert(pd.hoistPos, synthCursor(c, varIdx))
-    for pos in pd.usePositions:
-      substUse(c, pos, pd.tempName, pd.addrMode)
+    for u in pd.usePositions:
+      substUse(c, u.pos, pd.tempName, u.deref)
 
 proc trExpr(c: var Context; n: var Cursor) =
   case n.kind
   of TagLit:
     case n.exprKind
     of AddrC:
-      let s = rootOf(child0(n))
-      if s != SymId(0): markAddrTaken(c, s)
-      skip n
+      let inner = child0(n)
+      # `(addr L)` where `L` is an address-CSE'd memory lvalue: unify with loads/
+      # writes of `L`. Cache `addr L` once; this whole node rewrites to the bare
+      # temp (its value IS the address). `markAddrTaken` still fires for the value-
+      # entry soundness of OTHER cached loads through the root, but EXEMPTS `L`'s
+      # own address entry — taking `&L` does not change `&L`.
+      if inner.kind == TagLit and inner.exprKind in {DotC, AtC, DerefC, PatC} and
+         hashExpr(inner) in c.writeTargets:
+        discard handleCandidate(c, n, isAddrOf = true)
+        let s = rootOf(inner)
+        if s != SymId(0): markAddrTaken(c, s, exempt = hashExpr(inner))
+        skip n
+      else:
+        let s = rootOf(inner)
+        if s != SymId(0): markAddrTaken(c, s)
+        skip n
     of CallC:
       let call = n
       n.into:
@@ -635,6 +779,20 @@ proc trExpr(c: var Context; n: var Cursor) =
         n.into:
           if n.hasMore: skip n             # base
           while n.hasMore: trExpr(c, n)    # indices / value children
+    of AddC, SubC, MulC, DivC, ModC, ShlC, ShrC,
+       BitandC, BitorC, BitxorC, NegC, BitnotC:
+      # Cheap pure arithmetic. A repeated `a op b` is CSE'd on its 2nd occurrence
+      # (the same lazy/flow-sensitive path as loads); `handleCandidate` hoists the
+      # temp no higher than the first occurrence, so a trapping `div`/checked op
+      # keeps its original fault ordering. Only PURE register arithmetic qualifies
+      # (`isPureRegArith`): a load/call inside would need memory reasoning we leave
+      # to load-CSE. On the first occurrence (or a non-pure tree) fall through and
+      # recurse so nested loads / sub-expressions still get their own chance.
+      if isPureRegArith(n) and handleCandidate(c, n):
+        skip n
+      else:
+        n.loopInto:
+          trExpr(c, n)
     else:
       n.loopInto:
         trExpr(c, n)
@@ -794,10 +952,18 @@ proc trBreakOrRet(c: var Context; n: var Cursor) =
   clearCache c
 
 proc isHoistAnchor(sk: LengStmt): bool {.inline.} =
-  # `(scope …)` IS an anchor: it becomes a C `{…}` block, so it must appear on
-  # the anchor stack or a temp could be hoisted inside it while a sibling use is
-  # outside. `(stmts …)` is transparent (no block of its own).
-  sk notin {NoStmt, StmtsS}
+  # An anchor is a statement that forms a nested lexical scope — a C `{…}` block:
+  # a temp hoisted at the first occurrence's statement must not be reused by an
+  # occurrence OUTSIDE that block, so the block must appear on the anchor stack.
+  # `(scope)`/`(if)`/`(case)`/`(while)`/`(loop)`/`(try)`/`(onerr)` qualify.
+  # `(stmts)` is transparent, and LEAF statements (asgn/store/call/var/ret/…) form
+  # no block of their own — anchoring them would give two sibling statements
+  # DIFFERENT anchor stacks and defeat all cross-statement CSE (which is the whole
+  # point of hoisting a shared load/address to a dominating decl). Unknown/other
+  # statements stay anchored (the safe, CSE-suppressing default).
+  sk notin {NoStmt, StmtsS,
+            AsgnS, StoreS, CallS, VarS, GvarS, TvarS, ConstS, DiscardS,
+            RetS, BreakS, RaiseS, JmpS, LabS, EmitS, KeepovfS, MflagS, VflagS}
 
 proc tr(c: var Context; n: var Cursor) =
   if not n.hasMore: return
@@ -918,24 +1084,35 @@ proc collectFunctionSummaries*(buf: var TokenBuf): FunctionSummaryTable =
 # ---- write-target pre-pass -----------------------------------------------
 
 proc collectWriteTargets(c: var Context; n: var Cursor) =
-  ## Record the hash of every memory lvalue that is an assignment target, so the
-  ## main walk knows to address-CSE (not value-CSE) such expressions.
+  ## Record the hash of every memory lvalue that should be ADDRESS-CSE'd rather
+  ## than value-CSE'd: an assignment target (its value can't be value-cached, but
+  ## its address is stable across the write) OR an lvalue whose address is taken
+  ## (`(addr L)`) — so a cached `addr L` unifies the `(addr L)` node with plain
+  ## loads/writes of `L` (which become `(deref t)`). Recurses into ALL children,
+  ## including assignment RHS, since `(addr L)` most often sits there.
   if not n.hasMore: return
   if n.kind != TagLit:
     inc n
     return
+  # `(addr L)` of a memory lvalue → `L` is address-CSE'd.
+  if n.exprKind == AddrC:
+    let inner = child0(n)
+    if inner.kind == TagLit and inner.exprKind in {DotC, AtC, DerefC, PatC}:
+      c.writeTargets.incl hashExpr(inner)
   case n.stmtKind
   of AsgnS:                        # (asgn dest src)
     let lhs = child0(n)
     if lhs.kind == TagLit and lhs.exprKind in {DotC, AtC, DerefC, PatC}:
       c.writeTargets.incl hashExpr(lhs)
-    skip n
+    n.loopInto:
+      collectWriteTargets(c, n)    # recurse (find `(addr L)` in the RHS / indices)
   of StoreS:                       # (store src dest) — dest is the 2nd child
     var lhs = child0(n)
     skip lhs
     if lhs.kind == TagLit and lhs.exprKind in {DotC, AtC, DerefC, PatC}:
       c.writeTargets.incl hashExpr(lhs)
-    skip n
+    n.loopInto:
+      collectWriteTargets(c, n)
   else:
     n.loopInto:
       collectWriteTargets(c, n)
@@ -955,7 +1132,7 @@ proc runCSE*(buf: var TokenBuf; moduleSuffix = "M";
   ctx.aa = computeAliasing(buf, m)   # alias pre-pass: drives precise invalidation
   block:
     var wn = beginRead(buf)
-    collectWriteTargets(ctx, wn)  # decide address- vs value-CSE per expression
+    collectWriteTargets(ctx, wn)  # identify write-target / addr-of'd lvalues
   var n = beginRead(buf)
   tr(ctx, n)
   flushPending(ctx)               # emit deferred temp decls at their final positions
@@ -1038,20 +1215,30 @@ when isMainModule:
       "(asgn (dot (deref pp.0.M) g.0.M) v.0.M) " &
       "(asgn z.0.M (dot (deref (deref pp.0.M)) fld.0.M)))")
 
-  block lvalue_write_target_address_cse:
-    # `a.arr[i]` is read, written, read. Value CSE can't fold a write target, but
-    # its address is stable across the write, so it is address-CSE'd: one `addr`
-    # temp, `(deref t)` for both reads and the write. (Like `mat()` in alloc.nim.)
-    chk(
-      "(stmts " &
-      "(asgn y.0.M (at (dot (deref a.0.M) arr.0.M) i.0.M)) " &
-      "(asgn (at (dot (deref a.0.M) arr.0.M) i.0.M) b.0.M) " &
-      "(asgn z.0.M (at (dot (deref a.0.M) arr.0.M) i.0.M)))",
-      "(stmts " &
-      "(var :`cse.1 . . (addr (at (dot (deref a.0.M) arr.0.M) i.0.M))) " &
-      "(asgn y.0.M (deref `cse.1)) " &
-      "(asgn (deref `cse.1) b.0.M) " &
-      "(asgn z.0.M (deref `cse.1)))")
+  when AddressCSE:
+    block lvalue_write_target_address_cse:
+      # `a.arr[i]` is read, written, read. Value CSE can't fold a write target, but
+      # its address is stable across the write, so it is address-CSE'd: one `addr`
+      # temp, `(deref t)` for both reads and the write. (Like `mat()` in alloc.nim.)
+      chk(
+        "(stmts " &
+        "(asgn y.0.M (at (dot (deref a.0.M) arr.0.M) i.0.M)) " &
+        "(asgn (at (dot (deref a.0.M) arr.0.M) i.0.M) b.0.M) " &
+        "(asgn z.0.M (at (dot (deref a.0.M) arr.0.M) i.0.M)))",
+        "(stmts " &
+        "(var :`cse.1 . . (addr (at (dot (deref a.0.M) arr.0.M) i.0.M))) " &
+        "(asgn y.0.M (deref `cse.1)) " &
+        "(asgn (deref `cse.1) b.0.M) " &
+        "(asgn z.0.M (deref `cse.1)))")
+  else:
+    block lvalue_write_target_left_inline:
+      # Address-CSE disabled: the read/write/read of one lvalue stays inline (arkham
+      # folds the address into each load/store's addressing mode) — no temp.
+      assertUnchanged(
+        "(stmts " &
+        "(asgn y.0.M (at (dot (deref a.0.M) arr.0.M) i.0.M)) " &
+        "(asgn (at (dot (deref a.0.M) arr.0.M) i.0.M) b.0.M) " &
+        "(asgn z.0.M (at (dot (deref a.0.M) arr.0.M) i.0.M)))")
 
   block dominance_into_both_branches:
     chk(
@@ -1111,5 +1298,76 @@ when isMainModule:
       "(stmts (asgn y.0.M (dot (deref (deref pp.0.M)) fld.0.M)) " &
       "(call f.0.M pp.0.M) " &
       "(asgn z.0.M (dot (deref (deref pp.0.M)) fld.0.M)))")
+
+  when AddressCSE:   # these validate address-CSE, which is disabled on the arkham path
+    block addr_and_load_shared:
+      # `a.arr[i]` is loaded, then its ADDRESS is taken (into a pointer local). The
+      # address arithmetic is shared: cache `addr(a.arr[i])` once; the load becomes
+      # `(deref t)`, the `(addr …)` becomes bare `t`. (The rawDealloc
+      # `freeSmallChunks[s div 16]` case — inlined `listAdd` takes the address.)
+      chk(
+        "(stmts " &
+        "(asgn y.0.M (at (dot (deref a.0.M) arr.0.M) i.0.M)) " &
+        "(asgn p.0.M (addr (at (dot (deref a.0.M) arr.0.M) i.0.M))))",
+        "(stmts " &
+        "(var :`cse.1 . . (addr (at (dot (deref a.0.M) arr.0.M) i.0.M))) " &
+        "(asgn y.0.M (deref `cse.1)) " &
+        "(asgn p.0.M `cse.1))")
+
+    block addr_first_then_load:
+      # Address taken first, then loaded — same unification, order-independent.
+      chk(
+        "(stmts " &
+        "(asgn p.0.M (addr (at (dot (deref a.0.M) arr.0.M) i.0.M))) " &
+        "(asgn y.0.M (at (dot (deref a.0.M) arr.0.M) i.0.M)))",
+        "(stmts " &
+        "(var :`cse.1 . . (addr (at (dot (deref a.0.M) arr.0.M) i.0.M))) " &
+        "(asgn p.0.M `cse.1) " &
+        "(asgn y.0.M (deref `cse.1)))")
+
+    block two_addrs_shared:
+      # Two `(addr L)` occurrences share the address temp.
+      chk(
+        "(stmts " &
+        "(asgn u.0.M (addr (at (dot (deref p.0.M) arr.0.M) i.0.M))) " &
+        "(asgn v.0.M (addr (at (dot (deref p.0.M) arr.0.M) i.0.M))))",
+        "(stmts " &
+        "(var :`cse.1 . . (addr (at (dot (deref p.0.M) arr.0.M) i.0.M))) " &
+        "(asgn u.0.M `cse.1) " &
+        "(asgn v.0.M `cse.1))")
+
+  when not AddressCSE:
+    block addr_load_not_shared_when_disabled:
+      # With address-CSE off, a load + a subsequent `(addr L)` of the same lvalue are
+      # left inline (arkham folds the address into the load/store) — no shared temp.
+      assertUnchanged(
+        "(stmts " &
+        "(asgn y.0.M (at (dot (deref a.0.M) arr.0.M) i.0.M)) " &
+        "(asgn p.0.M (addr (at (dot (deref a.0.M) arr.0.M) i.0.M))))")
+
+  block index_write_blocks_addr_load:
+    # The index `i` is reassigned between the load and the addr → the address
+    # changed → no reuse → unchanged.
+    assertUnchanged(
+      "(stmts " &
+      "(asgn y.0.M (at (dot (deref a.0.M) arr.0.M) i.0.M)) " &
+      "(asgn i.0.M 5) " &
+      "(asgn p.0.M (addr (at (dot (deref a.0.M) arr.0.M) i.0.M))))")
+
+  block arith_dead_after_is_csed:
+    # `a + b` computed twice; `a` and `b` appear NOWHERE else, so folding the
+    # duplicate into one temp kills their live ranges — the gate lets it through.
+    chk(
+      "(stmts (asgn y.0.M (add (i 64) a.0.M b.0.M)) (asgn z.0.M (add (i 64) a.0.M b.0.M)))",
+      "(stmts (var :`cse.1 . . (add (i 64) a.0.M b.0.M)) " &
+      "(asgn y.0.M `cse.1) (asgn z.0.M `cse.1))")
+
+  block arith_operand_used_elsewhere_not_csed:
+    # Same duplicate `a + b`, but `a` is ALSO read in `(asgn w a)` → it stays live
+    # regardless, so a temp would be pure register pressure. The gate rejects it
+    # (this is the `alignment - 1` rawAlloc regression, prevented) → unchanged.
+    assertUnchanged(
+      "(stmts (asgn y.0.M (add (i 64) a.0.M b.0.M)) (asgn w.0.M a.0.M) " &
+      "(asgn z.0.M (add (i 64) a.0.M b.0.M)))")
 
   echo "cse.nim: all self-tests passed"
