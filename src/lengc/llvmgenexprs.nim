@@ -31,23 +31,6 @@ proc pointeeType(c: var LLVMCode; typ: Cursor): Cursor =
   else:
     result = default(Cursor)
 
-proc llBinopKind(op: string): LLInstrKind =
-  case op
-  of "add": llAdd
-  of "sub": llSub
-  of "mul": llMul
-  of "sdiv": llSDiv
-  of "udiv": llUDiv
-  of "srem": llSRem
-  of "urem": llURem
-  of "shl": llShl
-  of "ashr": llAShr
-  of "lshr": llLShr
-  of "and": llAnd
-  of "or": llOr
-  of "xor": llXor
-  of "fneg": llFcmp # unused placeholder
-  else: llAdd
 
 proc signedBinOp(c: var LLVMCode; n: var Cursor; op: string;
     result: var LLValue) =
@@ -64,7 +47,7 @@ proc signedBinOp(c: var LLVMCode; n: var Cursor; op: string;
       coerceValueLLVM(c, rhs, srcRhs, typCursor, true, rhs)
     let t = c.nextTemp()
     let res = llReg(t, typLL)
-    c.emit newLLBinInstr(llBinopKind(op), res = res, binOp = op,
+    c.emit newLLBinInstr(res = res, binOp = op,
                          binLhs = lhs, binRhs = rhs)
     result = res
     while n.hasMore: skip n
@@ -86,7 +69,7 @@ proc unsignedBinOp(c: var LLVMCode; n: var Cursor; signedOp, unsignedOp: string;
     let op = if isUnsigned: unsignedOp else: signedOp
     let t = c.nextTemp()
     let res = llReg(t, typLL)
-    c.emit newLLBinInstr(llBinopKind(op), res = res, binOp = op,
+    c.emit newLLBinInstr(res = res, binOp = op,
                          binLhs = lhs, binRhs = rhs)
     result = res
     while n.hasMore: skip n
@@ -229,7 +212,7 @@ proc genAtomicCall(c: var LLVMCode; externName: string; args: seq[LLValue];
                    armwAlign: align)
     let r = c.nextTemp()
     let rRes = llReg(r, retType)
-    c.emit LLInstr(kind: llAdd, result: rRes, binOp: "add", binLhs: res,
+    c.emit LLInstr(kind: llBinOp, result: rRes, binOp: "add", binLhs: res,
         binRhs: args[1])
     result = rRes
   of "__atomic_sub_fetch":
@@ -240,7 +223,7 @@ proc genAtomicCall(c: var LLVMCode; externName: string; args: seq[LLValue];
                    armwAlign: align)
     let r = c.nextTemp()
     let rRes = llReg(r, retType)
-    c.emit LLInstr(kind: llSub, result: rRes, binOp: "sub", binLhs: res,
+    c.emit LLInstr(kind: llBinOp, result: rRes, binOp: "sub", binLhs: res,
         binRhs: args[1])
     result = rRes
   of "__atomic_fetch_add":
@@ -910,7 +893,7 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       while n.hasMore: skip n
     let t = c.nextTemp()
     let res = llReg(t, typ)
-    c.emit LLInstr(kind: llXor, result: res, binOp: "xor", binLhs: val,
+    c.emit LLInstr(kind: llBinOp, result: res, binOp: "xor", binLhs: val,
                    binRhs: llIntTextC("-1", typ))
     result = res
   of NegC:
@@ -926,7 +909,7 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       c.emit LLInstr(kind: llFneg, result: res, fnegVal: val)
       result = res
     else:
-      c.emit LLInstr(kind: llSub, result: res, binOp: "sub",
+      c.emit LLInstr(kind: llBinOp, result: res, binOp: "sub",
                      binLhs: llIntTextC("0", typ), binRhs: val)
       result = res
   of EqC: genBoolCmpOp(c, n, "eq", "eq", result)

@@ -522,6 +522,7 @@ proc genDICompositeType(c: var LLVMCode; n: var Cursor): int =
   ## Generate DICompositeType for ObjectT or UnionT.
   ## Walks ``decl.body`` (not the inline cursor) — matches
   ## ``addObjectFieldsLLVM`` / ``genObjectBodyLLVM`` pattern exactly.
+  result = 0
   let td = tracebackTypeC(c.m, n)
   let decl = asTypeDecl(td)
   let symId = decl.name.symId
