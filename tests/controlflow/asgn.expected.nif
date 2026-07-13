@@ -8,8 +8,8 @@
    (result :res.0 . .
     (i -1).)
    (asgn res.0 1)
-   (goto L37)
-   (lab :L37)
+   (goto L30)
+   (lab :L30)
    (ret res.0)))
  (let :my.var . .
   (array

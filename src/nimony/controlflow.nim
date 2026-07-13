@@ -61,6 +61,13 @@ proc codeListing*(c: TokenBuf, start = 0; last = -1): string =
   # second iteration: generate string representation:
   var i = start
   var b = nifbuilder.open(1000)
+  # Under `-d:virtualParRi` the matching ParRi of a sealed ParLe is elided
+  # from the buffer, so the raw index walk below never sees it. Track the
+  # last-content index of every open sealed scope and inject `endTree()`
+  # once we've walked past it. Overflow scopes (jump == MaxJump) keep a
+  # physical ParRi and are still closed by the `of ParRi` branch.
+  when defined(virtualParRi):
+    var closeStack: seq[int] = @[]
   while i <= last:
     if i in jumpTargets:
       b.addTree "lab"
@@ -88,8 +95,16 @@ proc codeListing*(c: TokenBuf, start = 0; last = -1): string =
     of IntLit: b.addIntLit pool.integers[c[i].intId]
     of UIntLit: b.addUIntLit pool.uintegers[c[i].uintId]
     of FloatLit: b.addFloatLit pool.floats[c[i].floatId]
-    of ParLe: b.addTree pool.tags[c[i].tagId]
+    of ParLe:
+      b.addTree pool.tags[c[i].tagId]
+      when defined(virtualParRi):
+        if jump(c[i]) != MaxJump:
+          closeStack.add(i + span(readonlyCursorAt(c, i)) - 1)
     of ParRi: b.endTree()
+    when defined(virtualParRi):
+      while closeStack.len > 0 and closeStack[^1] == i:
+        b.endTree()
+        discard closeStack.pop()
     inc i
   if i in jumpTargets: b.addRaw("L" & $i & ": End\n")
   result = b.extract()
@@ -331,9 +346,12 @@ proc trUseExpr(c: var ControlFlow; n: var Cursor) =
 proc trStmtOrExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
   if tar.m != IsIgnored:
     var aa = Target(m: IsEmpty)
+    # Capture the info up front: `trExpr` consumes `n`, so afterwards it may
+    # sit on a (virtual) ParRi where `n.info` would assert under vpr.
+    let info = n.info
     # it may be a `ExprX` so we generate statements before `AsgnS`
     trExpr c, n, aa
-    c.dest.addParLe(AsgnS, n.info)
+    c.dest.addParLe(AsgnS, info)
     assert tar.t.len > 0
     c.dest.add tar
     c.dest.add aa

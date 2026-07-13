@@ -6,16 +6,16 @@
   (auto).)
  (ite
   (eq other.var 12)
-  (goto L30)
-  (goto L38))
- (lab :L30)
+  (goto L23)
+  (goto L29))
+ (lab :L23)
  (asgn `cf.0
   (call echo 1))
- (goto L43)
- (lab :L38)
+ (goto L33)
+ (lab :L29)
  (asgn `cf.0 0)
- (goto L43)
- (lab :L43)
+ (goto L33)
+ (lab :L33)
  (let :my.var . .
   (i -1)`cf.0)
  (ret .))
