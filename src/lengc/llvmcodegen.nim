@@ -89,6 +89,7 @@ type
     debug*: DebugInfo
 
 proc initPrimTypes*(): PrimTypes =
+  result = default(PrimTypes)
   result.voidT = newLLVoidType()
   result.i1 = newLLIntType(1)
   result.i8 = newLLIntType(8)
@@ -220,6 +221,7 @@ proc withType*(v: LLValue; typ: LLType): LLValue {.inline.} =
 
 proc disp*(v: LLValue): string {.inline.} =
   ## Display text of a value (for building callee names / signatures).
+  result = ""
   serializeUnqualified(v, result)
 
 proc mangleSym(c: var LLVMCode; s: SymId): string =
@@ -444,8 +446,8 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM;
       c.module.globals.add g
     else:
       # Module-private constants (plain `const`, string literals) hide their
-      # global; exportc/importc keep external linkage.
-      let isPriv = vk == IsConst and externName == StrId(0)
+      # global; exportc/importc/template keep external linkage.
+      let isPriv = vk == IsConst and externName == StrId(0) and not c.inToplevel
       if d.value.kind != DotToken:
         var v = d.value
         let initVal = genGlobalConstr(c, v, d.typ)

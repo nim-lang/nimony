@@ -79,6 +79,8 @@ Options:
                         (implies --no-build). Binaries not found there are
                         looked up on `$PATH`.
   --no-build            skip the setup.hastur prep step during the tree walk
+  --native-debug        build arkham + nifasm unoptimized (they default to
+                        -d:release); for `-d:arkhamDbgSym` / gdb toolchain work
   --valgrind            for `boot`: build with -DMI_TRACK_VALGRIND=1 so
                         mimalloc plays nicely with valgrind, then run a
                         valgrind smoke test on the bootstrapped binary.
@@ -439,6 +441,15 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category;
   if forward.len != 0:
     nimonycmd.add ' '
     nimonycmd.add forward
+  # The libc-free stdlib (native allocator + raw-syscall IO) is the compiler's
+  # default now, but some tests assume the libc build, so they opt back in with
+  # `-d:useLibc`: valgrind can only track the libc (mimalloc) heap — the native
+  # mmap heap has no malloc hooks and is invisible to it — and the checked-in
+  # golden `.nim.c` files were generated for the libc configuration.
+  if cat == Valgrind or
+     file.changeFileExt(".valgrind").fileExists() or
+     file.changeFileExt(".nim.c").fileExists():
+    nimonycmd.add " -d:useLibc"
   when defined(linux):
     # Only request valgrind-tracked mimalloc when valgrind is actually present;
     # the flag pulls in `<valgrind/valgrind.h>`, which a valgrind-less box lacks.
@@ -598,7 +609,13 @@ proc prebuildSharedObjects(forward: string) =
     if hasValgrind:
       try: removeFile("nimcache_static" / "static.o")
       except OSError: discard
-      cmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\""
+      # The valgrind tests compile with `-d:useLibc` (valgrind can only track the
+      # libc/mimalloc heap; the native mmap heap has no hooks), so the shared
+      # `static.o` they reuse must be the *mimalloc* object — build the prebuild
+      # probe with `-d:useLibc` too. Without it the libc-free default is used and
+      # `static.o` is never produced (mimalloc isn't compiled), so valgrind runs
+      # against an untracked heap and reports 0 allocations.
+      cmd.add " -d:useLibc --passC:\"-DMI_TRACK_VALGRIND=1\""
   cmd.add ' ' & src.quoteShell
   if execShellCmd(cmd) != 0:
     # Non-fatal: if this fails the tests still run, just without the
@@ -1216,6 +1233,7 @@ proc robustMoveFile(src, dest: string) =
     moveFile src, dest
 
 var release = false
+var nativeToolsDebug = false
 
 proc nimcPrefix(): string =
   # `--warningAsError:ProveInit:off` and `--warningAsError:Uninit:off`:
@@ -1225,6 +1243,18 @@ proc nimcPrefix(): string =
   # any tool using `createThread` (hastur itself) or `initDeque` (pnak)
   # fails to build on Nim 2.2.10.
   (if release: "nim c -d:release " else: "nim c ") &
+    "--warningAsError:ProveInit:off --warningAsError:Uninit:off "
+
+proc nativeToolPrefix(): string =
+  ## arkham + nifasm are the native backend's HOT codegen tools: they run
+  ## once per module on every `nimony n` build, so unlike the other tools they
+  ## ship OPTIMIZED by default. A debug build roughly doubles `nimony n` cold
+  ## time (measured: nimsem 50.7s debug → 39.5s release) because — unlike the C
+  ## backend, whose heavy lifting is gcc (always optimized) — the native
+  ## backend's heavy lifting IS these two tools. Pass `--native-debug` to hastur
+  ## to build them unoptimized instead (for `-d:arkhamDbgSym` / gdb work on the
+  ## toolchain itself).
+  (if nativeToolsDebug: "nim c " else: "nim c -d:release ") &
     "--warningAsError:ProveInit:off --warningAsError:Uninit:off "
 
 proc validatePassesFlag(): string =
@@ -1302,12 +1332,12 @@ proc buildArkham(showProgress = false) =
   ## auto-clone is a later step). arkham's own `nim.cfg` already sets
   ## `--outdir:bin`; we pass it explicitly so the result is deterministic
   ## regardless of the current directory.
-  exec nimcPrefix() & "--outdir:" & binDir() & " ../nativenif/src/arkham/arkham.nim", showProgress
+  exec nativeToolPrefix() & "--outdir:" & binDir() & " ../nativenif/src/arkham/arkham.nim", showProgress
 
 proc buildNifasm(showProgress = false) =
   ## `nifasm` (asm-NIF -> static, libc-free ELF/Mach-O/PE executable; also the
   ## linker) — sibling repo, same assume-exists arrangement as `buildArkham`.
-  exec nimcPrefix() & "--outdir:" & binDir() & " ../nativenif/src/nifasm/nifasm.nim", showProgress
+  exec nativeToolPrefix() & "--outdir:" & binDir() & " ../nativenif/src/nifasm/nifasm.nim", showProgress
 
 proc buildHexer*(showProgress = false) =
   exec nimcPrefix() & "src/hexer/hexer.nim", showProgress
@@ -1448,6 +1478,86 @@ proc buildNimonyToolchain(showProgress = false) =
   buildNimsem(showProgress)
   buildNimony(showProgress)
   buildHexer(showProgress)
+
+proc runNativeCodegenTests*(dir: string; overwrite: bool) =
+  ## Custom runner for `tests/nativecg`: a golden suite over the C-free native
+  ## backend's *emitted machine code*. For each `.nim` it
+  ##   1. compiles with `nimony n --opt:speed` (so the shoggoth inliner/optimizer
+  ##      that feeds the native path actually runs),
+  ##   2. goldens arkham's `<main>.asm.nif` (the typed assembler NIF) against a
+  ##      checked-in `<test>.asm.nif`, and
+  ##   3. runs the linked libc-free ELF, checking `.output` / `.exitcode`.
+  ##
+  ## The asm-NIF is byte-stable for a fixed *relative* test path — module
+  ## suffixes are derived from the relative path, and a module's own symbols
+  ## carry no suffix — so the golden is portable across checkouts/machines as
+  ## long as hastur is invoked from the repo root (which it always is). No
+  ## normalization is needed.
+  ##
+  ## Requires the sibling `../nativenif` checkout (arkham/nifasm), exactly like
+  ## the `native` subcommand; the directory is `hastur.mode = skip` so the
+  ## default `all` sweep leaves this opt-in.
+  if not skipBuild:
+    buildNimony()
+    buildHexer()
+    buildShoggoth()
+    buildArkham()
+    buildNifasm()
+  let t0 = epochTime()
+  var c = TestCounters(total: 0, failures: 0)
+  var files: seq[string] = @[]
+  for x in walkDir(dir):
+    if x.kind == pcFile and x.path.endsWith(".nim") and
+       x.path.extractFilename != "setup.nim":   # the runner itself, not a test
+      files.add x.path
+  sort files
+  for file in files:
+    let msgs = file.changeFileExt(".msgs")
+    if msgs.fileExists() and readFile(msgs).contains(ErrorKeyword):
+      continue                              # negative test: not a codegen case
+    inc c.total
+    let cacheArg =
+      if nimcacheDir != "nimcache": "--nimcache:" & quoteShell(nimcacheDir) & " "
+      else: ""
+    let (compilerOutput, compilerExitCode) =
+      execLocal("nimony",
+        "n --opt:speed --silentMake --isMain " & cacheArg & quoteShell(file))
+    if compilerExitCode != 0:
+      failure c, file, "native compiler exitcode 0",
+        removeMakeErrors(compilerOutput) & "\nexitcode " & $compilerExitCode
+      continue
+    # 1) Golden arkham's assembler NIF for the main module.
+    let asmFile = generatedFile(file, ".asm.nif")
+    if not asmFile.fileExists():
+      failure c, file, "arkham asm.nif", "missing: " & asmFile
+      continue
+    diffFiles(c, file, file.changeFileExt(".asm.nif"), asmFile, overwrite)
+    # 2) Behavioural check: the linked ELF must run and match .output/.exitcode.
+    let exe = generatedExeFile(file)
+    if not exe.fileExists():
+      failure c, file, "native executable", "missing: " & exe
+      continue
+    let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
+    var output = file.changeFileExt(".output")
+    if testProgramExitCode != 0:
+      output = file.changeFileExt(".exitcode")
+      if not output.fileExists():
+        failure c, file, "test program exitcode 0",
+          "exitcode " & $testProgramExitCode & "\n" & testProgramOutput
+        continue
+    if output.fileExists():
+      let outputSpec = readFile(output).strip
+      if outputSpec != testProgramOutput.strip:
+        if overwrite:
+          writeFile(output, testProgramOutput)
+        failure c, file, outputSpec, testProgramOutput
+  echo c.total - c.failures, " / ", c.total,
+    " native-codegen tests successful in ",
+    formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if c.failures > 0:
+    quit "FAILURE: Some native-codegen tests failed."
+  else:
+    echo "SUCCESS."
 
 # ---- deterministic self-host bootstrap ------------------------------------
 # `bin0/` is a fresh copy of the host-Nim-built toolchain in `bin/`; `binN/`
@@ -2066,6 +2176,10 @@ proc handleCmdLine =
           except: writeHelp()
       of "no-build", "nobuild":
         skipBuild = true
+      of "native-debug", "nativedebug":
+        # Build arkham + nifasm UNOPTIMIZED (they default to -d:release; see
+        # nativeToolPrefix). For `-d:arkhamDbgSym` / gdb work on the toolchain.
+        nativeToolsDebug = true
       of "valgrind":
         withValgrind = true
       of "forward":

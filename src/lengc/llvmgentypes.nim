@@ -677,9 +677,8 @@ proc isPackedType(c: var LLVMCode; typeSym: Cursor): bool =
           skip p
 
 proc operandStr(v: LLValue): string {.inline.} =
-  ## Typed operand text "<type> <value>" for one constant-initializer element,
-  ## whether the leaf is a scalar value (llvInt/llvGlobal/…) or a pre-rendered
-  ## aggregate (llvRawText).
+  ## Typed operand text "<type> <value>" for one constant-initializer element
+  result = ""
   operand(v, result)
 
 proc genGlobalConstr(c: var LLVMCode; n: var Cursor;

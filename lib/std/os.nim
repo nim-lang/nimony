@@ -10,7 +10,10 @@ export ospaths2
 export osappdirs
 export oscommons
 
-when not defined(nimNativeIo):
+when not (defined(nimNativeIo) and defined(posix)):
+  # The native fork+exec path in `execShellCmd` replaces libc's `system()` only
+  # on POSIX. Every other configuration (Windows, or the libc-backed builds)
+  # still falls back to `c_system`, so keep the declaration available there.
   proc c_system(cmd: cstring): cint {.
       importc: "system", header: "<stdlib.h>".}
 

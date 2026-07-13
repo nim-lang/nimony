@@ -85,7 +85,8 @@ else:
     PageShift = 12
     PageSize = 1 shl PageShift
     PageMask = PageSize - 1
-    MemAlign = 16
+    MemAlignShift = 4
+    MemAlign = 1 shl MemAlignShift # 16
     BitsPerPage = PageSize div MemAlign
     UnitsPerPage = BitsPerPage div (sizeof(int) * 8)
     TrunkShift = 9

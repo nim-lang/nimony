@@ -33,10 +33,12 @@ proc nimFlushStdStreams*() {.exportc: "nimFlushStdStreams".} =
 when defined(nimNativeIo):
   when defined(windows):
     # Freestanding Windows: terminate through kernel32 `ExitProcess` — no libc
-    # and no POSIX signals. `<windows.h>`/kernel32 is the OS API, not the C
-    # runtime, so this stays the direct counterpart of the Linux syscall path.
+    # and no POSIX signals, the direct counterpart of the Linux syscall path.
+    # Declared bare (no `header: "<windows.h>"`): nimony emits the prototype and
+    # the linker binds `ExitProcess` from kernel32, keeping the whole `system`
+    # translation unit free of the Windows header (see `panics`).
     proc cExitProcess(uExitCode: uint32) {.stdcall, importc: "ExitProcess",
-                                           header: "<windows.h>", noreturn.}
+                                           noreturn.}
 
     proc cExit*(code: int) {.noreturn.} =
       ## Normal process termination: flush the standard streams, then exit.

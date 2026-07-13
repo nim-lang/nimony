@@ -263,6 +263,17 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
             # undocumented command line option, by design
             c.isChild = true
             forwardArg = false
+          of "native":
+            # Select the libc-free native backend (arkham + nifasm) for this build,
+            # without using the `n` *command*. Used by macro-plugin compilation (the
+            # `s` command), where skipping the C-compiler round-trip is the biggest
+            # compile-time win. Mirrors `n`'s config in dispatchBasicCommand; the
+            # defines are forwarded to nimsem by compileProgram (the backendNative
+            # branch), so this flag itself need not propagate.
+            c.config.backend = backendNative
+            c.config.addDefine "nimNativeAlloc"
+            c.config.addDefine "nimNativeIo"
+            forwardArg = false
           of "passc":
             if c.passC.len > 0:
               c.passC.add " "
@@ -315,13 +326,32 @@ proc compileProgram(c: var CmdOptions) =
   # injects bound/range-check calls); without this it always used DefaultSettings.
   c.config.checkFlags = genFlags(c.checkModes)
 
-  # The native backend needs the libc-free, native-allocator stdlib. The `n`
-  # command already recorded these in `config.defines` (cache key), but the
-  # `when defined(...)` gates live in nimsem, which only sees defines that are
-  # *forwarded on its command line* (config.defines is not enough) — so inject
-  # them the same way a user's `-d:` does.
-  if c.config.backend == backendNative:
-    c.commandLineArgs.add " --define:nimNativeAlloc --define:nimNativeIo"
+  # The libc-free stdlib is the DEFAULT for every backend now: the native
+  # allocator (`nimNativeAlloc`, a ported region allocator over mmap) and
+  # raw-syscall IO (`nimNativeIo`). Opt back into the libc-backed versions with
+  # `-d:useLibc` (both), `-d:useMimalloc` (allocator only) or `-d:useLibcIo` (IO
+  # only). The native backend links no libc at all, so it is ALWAYS libc-free
+  # regardless of those opt-outs. The `when defined(...)` gates live in nimsem,
+  # which only sees defines forwarded on its command line (config.defines is the
+  # cache key but not enough on its own) — so inject them the same way a user's
+  # `-d:` does, and record them in config.defines so the cache key tracks them.
+  let nativeBackend = c.config.backend == backendNative
+  let optOutAll = c.config.isDefined("useLibc")
+  if nativeBackend or not (optOutAll or c.config.isDefined("useMimalloc")):
+    c.config.addDefine "nimNativeAlloc"
+    c.commandLineArgs.add " --define:nimNativeAlloc"
+  if nativeBackend or not (optOutAll or c.config.isDefined("useLibcIo")):
+    c.config.addDefine "nimNativeIo"
+    c.commandLineArgs.add " --define:nimNativeIo"
+  # `nimNoLibc` marks the TRULY freestanding target — the native (arkham+nifasm)
+  # backend, which links no libc at all. It is a stricter condition than
+  # `nimNativeIo`: the C backend uses the raw-syscall stdlib too, but libc is still
+  # linked, so stdlib code can fall back to a libc symbol where the freestanding
+  # implementation is impossible (`futex` — no libc symbol of that name) or merely
+  # approximate (`strtod`). Only the native backend sets it.
+  if nativeBackend:
+    c.config.addDefine "nimNoLibc"
+    c.commandLineArgs.add " --define:nimNoLibc"
 
   semos.setupPaths(c.config)
 
