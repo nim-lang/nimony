@@ -35,15 +35,18 @@ proc semBindStmt(c: var SemContext; dest: var TokenBuf; n: var Cursor; toBind: v
       # the same symbol!
       # This is however not true anymore for hygienic templates as semantic
       # processing for them changes the symbol table...
+      # Capture the identifier's info up front: `takeIdent` consumes it, so
+      # afterwards `n` may sit on the (virtual) ParRi where `n.info` asserts.
+      let info = n.info
       let name = takeIdent(n)
       if name == StrId(0):
-        c.buildErr dest, n.info, "invalid identifier"
+        c.buildErr dest, info, "invalid identifier"
       var symsBuf = createTokenBuf(4)
-      discard buildSymChoice(c, symsBuf, name, n.info, FindAll)
+      discard buildSymChoice(c, symsBuf, name, info, FindAll)
       var syms = cursorAt(symsBuf, 0)
       case syms.kind
       of Ident:
-        c.buildErr dest, n.info, "undeclared identifier: " & pool.strings[syms.litId]
+        c.buildErr dest, info, "undeclared identifier: " & pool.strings[syms.litId]
       of Symbol:
         dest.add syms
       else:
@@ -60,11 +63,14 @@ proc semMixinStmt(c: var SemContext; dest: var TokenBuf; n: var Cursor; toMixin:
   dest.add n
   n.into:  # (mixin …)
     while n.hasMore:
+      # Capture the identifier's info up front: `takeIdent` consumes it, so
+      # afterwards `n` may sit on the (virtual) ParRi where `n.info` asserts.
+      let info = n.info
       let name = takeIdent(n)
       if name == StrId(0):
-        c.buildErr dest, n.info, "invalid identifier"
+        c.buildErr dest, info, "invalid identifier"
       toMixin.incl(name)
-      discard buildSymChoice(c, dest, name, n.info, FindAll)
+      discard buildSymChoice(c, dest, name, info, FindAll)
   dest.addParRi()
 
 type

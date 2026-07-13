@@ -576,10 +576,6 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   swap c.dest, callBuf
   let head = n.load()
   let callScope = enterScope(n)
-  template finishCallArgs() =
-    trCallArgs(c, n, fnType)
-    c.dest.addParRi(n.endInfo)
-    leaveScope(n, callScope)
   template bailCannotPassToVar() =
     while n.hasMore: skip n
     leaveScope(n, callScope) # leave the call without emitting into callBuf
@@ -591,6 +587,13 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   let calleeKind = tt.stmtKind
   let fnType = skipProcTypeToParams(tt.skipModifier)
   assert fnType.isParamsTag
+  # Declared here (not up top) so its body can see `fnType`: Nimony resolves
+  # template-body identifiers eagerly, so a template referencing a
+  # later-declared local fails to self-host.
+  template finishCallArgs() =
+    trCallArgs(c, n, fnType)
+    c.dest.addParRi(n.endInfo)
+    leaveScope(n, callScope)
   var retType = fnType
   skip retType
   var pragmas = retType

@@ -185,9 +185,21 @@ proc buildFindStartIndex(cf: TokenBuf; srcLen: int): seq[FindStartEntry] =
   for i in 0 ..< result.len:
     result[i] = FindStartEntry(pos: -1'i32, nested: 0)
   var nested = 0
+  # Under `-d:virtualParRi` the sealed ParRis are elided from `cf`, so counting
+  # `dec nested` only on physical ParRis would make `nested` grow monotonically
+  # (overflowing `int16` on large modules, then wrapping negative → `findStart`
+  # spuriously reports "not indexed"). Track each open sealed scope's last-content
+  # index and decrement when we walk past it. Overflow scopes (jump == MaxJump)
+  # keep a physical ParRi and are handled by the `of ParRi` branch.
+  when defined(virtualParRi):
+    var closeStack: seq[int] = @[]
   for i in 0 ..< cf.len:
     case cf[i].kind
-    of ParLe: inc nested
+    of ParLe:
+      inc nested
+      when defined(virtualParRi):
+        if jump(cf[i]) != MaxJump:
+          closeStack.add(i + span(readonlyCursorAt(cf, i)) - 1)
     of ParRi: dec nested
     else: discard
     let info = cf[i].info
@@ -195,6 +207,10 @@ proc buildFindStartIndex(cf: TokenBuf; srcLen: int): seq[FindStartEntry] =
       let p = int(getPayload(info))
       if p < result.len and result[p].pos < 0:
         result[p] = FindStartEntry(pos: int32(i), nested: int16(nested))
+    when defined(virtualParRi):
+      while closeStack.len > 0 and closeStack[^1] == i:
+        dec nested
+        discard closeStack.pop()
 
 proc findStart(c: TokenBuf; idx: PackedLineInfo; n: var Cursor;
                index: openArray[FindStartEntry]): int =
