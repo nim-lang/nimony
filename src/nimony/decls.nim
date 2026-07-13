@@ -174,7 +174,8 @@ type
     body*: Cursor
 
 proc isGeneric*(r: Routine): bool {.inline.} =
-  r.typevars.substructureKind == TypevarsU
+  if not isRoutine(r.kind): return false
+  result = r.typevars.substructureKind == TypevarsU
 
 proc takeRoutine*(c: var Cursor; mode: SkipMode): Routine =
   let kind = symKind c

@@ -1076,7 +1076,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       var matched = ensureMove(m[idx])
       let returnType: Cursor
       if isMagic == NonMagicCall and c.routine.inGeneric == 0 and
-          isGeneric(getProcDecl(finalFn.sym)):
+          isRoutine(finalFn.kind) and isGeneric(getProcDecl(finalFn.sym)):
         let inst = c.requestRoutineInstance(finalFn.sym, matched.typeArgs, matched.inferred, cs.callNode.info)
         # `addFn` emits the callee in different shapes — usually a
         # single `Symbol` at `cs.beforeCall+1`, but a phantom-concept
