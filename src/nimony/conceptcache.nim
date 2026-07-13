@@ -46,7 +46,7 @@ type
   ConceptMetadata* = object
     parents*: seq[SymId]
 
-  ConceptCacheImpl* = ref object of RootObj
+  ConceptCacheImpl* = ref object of ConceptCache
     capacity*: int
     bodyCache*: Table[BodyCacheKey, ConceptBodyResult]
     bodyCacheOrder*: seq[BodyCacheKey]
@@ -55,8 +55,6 @@ type
     candidatesCache*: Table[CandidatesCacheKey, seq[SymId]]
     candidatesCacheOrder*: seq[CandidatesCacheKey]
     metadata*: Table[SymId, ConceptMetadata]
-
-var fallbackConceptCache = ConceptCacheImpl(capacity: DefaultConceptCacheCapacity)
 
 when defined(nimonyProfileConcepts):
   var
@@ -118,19 +116,15 @@ proc initConceptCache*(c: ptr SemContext) =
   if c != nil and c.conceptCache == nil:
     c.conceptCache = ConceptCacheImpl(capacity: DefaultConceptCacheCapacity)
 
-proc asConceptCacheImpl(cache: RootRef): ConceptCacheImpl {.inline.} =
-  cast[ConceptCacheImpl](cache)
-
 proc ensureConceptCache(c: ptr SemContext): ConceptCacheImpl =
-  if c != nil and c.conceptCache != nil:
-    asConceptCacheImpl(c.conceptCache)
-  else:
-    fallbackConceptCache
+  if c != nil and c.conceptCache == nil:
+    initConceptCache(c)
+  ConceptCacheImpl(c.conceptCache)
 
 proc onConceptImportsChanged*(c: var SemContext) =
   if c.conceptCache == nil:
     return
-  let cache = asConceptCacheImpl(c.conceptCache)
+  let cache = ConceptCacheImpl(c.conceptCache)
   cache.bodyCache.clear()
   cache.bodyCacheOrder.setLen(0)
   cache.routineImplCache.clear()
@@ -182,7 +176,7 @@ proc invalidateConceptSymCache(cache: ConceptCacheImpl; conceptSym: SymId) =
 proc onConceptDeclSem*(c: var SemContext; ownerSym: SymId; dest: var TokenBuf; conceptStart: int) =
   if ownerSym == SymId(0) or c.conceptCache == nil:
     return
-  let cache = asConceptCacheImpl(c.conceptCache)
+  let cache = ConceptCacheImpl(c.conceptCache)
   invalidateConceptSymCache(cache, ownerSym)
   let body = cursorAt(dest, conceptStart)
   let parents = conceptParentsSlot(body)
@@ -285,7 +279,7 @@ proc collectConceptMetadata(body: Cursor): ConceptMetadata =
 
 proc getConceptMetadata*(c: ptr SemContext; conceptSym: SymId; body: Cursor): ConceptMetadata =
   if c != nil and conceptSym != SymId(0) and c.conceptCache != nil:
-    let cache = asConceptCacheImpl(c.conceptCache)
+    let cache = ConceptCacheImpl(c.conceptCache)
     if cache.metadata.hasKey(conceptSym):
       return cache.metadata.getOrDefault(conceptSym)
   collectConceptMetadata(body)
