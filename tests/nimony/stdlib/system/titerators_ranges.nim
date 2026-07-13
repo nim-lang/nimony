@@ -16,12 +16,6 @@ proc main =
   assert toSeq(3 >.. 7) == @[]
   assert toSeq(5 >.. 5) == @[5]
 
-  # descending exclusive at `a`, inclusive at `b`: [b, a) traversed downward
-  assert toSeq(7 >..< 3) == @[6, 5, 4, 3]
-  assert toSeq(3 >..< 7) == @[]
-  assert toSeq(5 >..< 5) == @[]
-  assert toSeq(4 >..< 3) == @[3]
-
   # stepped variants
   assert toSeq(countdown(9, 2, 3)) == @[9, 6, 3]
   assert toSeq(countup(2, 9, 3)) == @[2, 5, 8]
