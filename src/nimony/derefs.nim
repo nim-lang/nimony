@@ -162,6 +162,17 @@ proc isAddressable*(n: Cursor): bool =
 
 proc tr(c: var Context; n: var Cursor; e: Expects)
 
+proc calleeRoutineType(c: var Context; callee: Cursor): Cursor =
+  ## Routine metadata for call checking. `getType` returns `(auto)` for
+  ## unresolved symchoices; callers that need params or pragmas must inspect
+  ## the choice node directly.
+  result = getType(c.typeCache, callee)
+  if result.typeKind == AutoT and callee.exprKind in {OchoiceX, CchoiceX}:
+    var it = callee
+    inc it
+    if it.kind == Symbol:
+      result = lookupSymbol(c.typeCache, it.symId)
+
 proc trSons(c: var Context; n: var Cursor; e: Expects) =
   if n.kind != ParLe:
     takeToken c, n
@@ -201,7 +212,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
       let fn = n
       skip n # skip the `fn`
       if n.hasMore:
-        var fnType = skipProcTypeToParams(getType(c.typeCache, fn))
+        var fnType = skipProcTypeToParams(calleeRoutineType(c, fn))
         assert fnType.isParamsTag
         inc fnType
         let firstParam = asLocal(fnType)
@@ -385,7 +396,7 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
     elif n.exprKind in CallKinds:
       n.into:
         let orig = n
-        var fnType = skipProcTypeToParams(getType(c.typeCache, n))
+        var fnType = skipProcTypeToParams(calleeRoutineType(c, n))
         skip n # skip `fn`
         assert fnType.isParamsTag
         inc fnType
@@ -583,7 +594,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
     cannotPassToVar c.dest, info, callExpr
     return
 
-  let tt = getType(c.typeCache, n)
+  let tt = calleeRoutineType(c, n)
   let calleeKind = tt.stmtKind
   let fnType = skipProcTypeToParams(tt.skipModifier)
   if not fnType.isParamsTag:
