@@ -903,20 +903,20 @@ proc emitPragmasWithInlineInfo(dest: var TokenBuf; pragmas: Cursor; info: Inline
     return
 
   dest.add p
-  inc p
-  while p.kind != ParRi:
-    if p.kind == ParLe and p.pragmaKind == InlineP:
-      dest.add p
-      inc p
-      dest.addIntLit info.threshold, p.info
-      for w in info.weights:
-        dest.addIntLit w, p.info
-      while p.kind != ParRi:
-        skip p
-      dest.takeToken p
-    else:
-      dest.takeTree p
-  dest.takeToken p
+  p.into:
+    while p.hasMore:
+      if p.kind == ParLe and p.pragmaKind == InlineP:
+        dest.add p
+        p.into:
+          dest.addIntLit info.threshold, p.endInfo
+          for w in info.weights:
+            dest.addIntLit w, p.endInfo
+          while p.hasMore:
+            skip p
+        dest.addParRi()
+      else:
+        dest.takeTree p
+  dest.addParRi()
 
 proc annotateInlinePragmas(dest: var TokenBuf; n: var Cursor;
                            infos: Table[SymId, InlineInfo]) =
@@ -938,10 +938,11 @@ proc annotateInlinePragmas(dest: var TokenBuf; n: var Cursor;
       dest.addSubtree d.body
       dest.addParRi()
     else:
-      dest.takeToken n
-      while n.hasMore:
-        annotateInlinePragmas(dest, n, infos)
-      dest.takeToken n
+      dest.add n.load()
+      n.into:
+        while n.hasMore:
+          annotateInlinePragmas(dest, n, infos)
+      dest.addParRi()
   of ParRi:
     raiseAssert "ParRi should not be encountered here"
   else:

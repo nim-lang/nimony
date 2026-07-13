@@ -745,6 +745,7 @@ proc treParams(c: var Context; dest, init: var TokenBuf; n: var Cursor; doAddEnv
       assert n.substructureKind == ParamU
       copyInto dest, n:
         let name = n.symId
+        let paramInfo = n.info # `n` sits at the scope's end below
         takeTree dest, n # name
         takeTree dest, n # export marker
         takeTree dest, n # pragmas
@@ -769,18 +770,18 @@ proc treParams(c: var Context; dest, init: var TokenBuf; n: var Cursor; doAddEnv
           # deref is needed. (The previous code had this inverted —
           # never tripped because the path was also broken by the
           # `typedEnv c.env` call with `c.env.s == 0`.)
-          init.copyIntoKind AsgnS, n.info:
-            init.copyIntoKind DotX, n.info:
+          init.copyIntoKind AsgnS, paramInfo:
+            init.copyIntoKind DotX, paramInfo:
               if envTyp == SymId(0):
-                init.copyIntoKind DerefX, n.info:
-                  init.addSymUse pool.syms.getOrIncl(EnvLocalName), n.info
+                init.copyIntoKind DerefX, paramInfo:
+                  init.addSymUse pool.syms.getOrIncl(EnvLocalName), paramInfo
               else:
-                init.addSymUse pool.syms.getOrIncl(EnvLocalName), n.info
-              init.addSymUse fld.field, n.info
-            init.addSymUse name, n.info
+                init.addSymUse pool.syms.getOrIncl(EnvLocalName), paramInfo
+              init.addSymUse fld.field, paramInfo
+            init.addSymUse name, paramInfo
 
     if doAddEnvParam:
-      addEnvParam dest, n.info, envTyp
+      addEnvParam dest, n.endInfo, envTyp
 
 proc treProcBody(c: var Context; dest, init: var TokenBuf; n: var Cursor; sym: SymId; needsHeap: bool) =
   if n.stmtKind == StmtsS:

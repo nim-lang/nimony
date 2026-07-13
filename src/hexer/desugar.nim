@@ -49,10 +49,10 @@ proc needsTemp(n: Cursor): bool =
     of NilX, FalseX, TrueX, InfX, NeginfX, NanX, SizeofX:
       result = false
     of ExprX:
-      inc n
+      discard enterScope(n)  # throwaway copy; bounds the probe under vpr
       let first = n
       skip n
-      if n.kind == ParRi:
+      if not n.hasMore:
         # single element expr
         result = needsTemp(first)
       else:
@@ -66,7 +66,7 @@ proc needsTemp(n: Cursor): bool =
       result = needsTemp(n)
     of AtX, PatX, ArratX, TupatX, DotX, DdotX, ParX, AddrX, HaddrX:
       result = false
-      inc n
+      discard enterScope(n)  # throwaway copy; bounds the walk under vpr
       while n.hasMore:
         if needsTemp(n):
           return true
@@ -1093,10 +1093,16 @@ proc desugar*(pass: var Pass; activeChecks: set[CheckMode]) =
   var n = pass.n  # Extract cursor locally
   var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix, activeChecks: activeChecks, pending: createTokenBuf())
   c.typeCache.openScope()
-  tr c, pass.dest, n, isTopScope = true
-
-  assert pass.dest[pass.dest.len-1].kind == ParRi
-  shrink(pass.dest, pass.dest.len-1)
+  # Process the root `(stmts` manually (mirroring trSons' copyInto) but
+  # keep it OPEN until `pending` has been appended: an emitted close
+  # cannot be rolled back under `-d:virtualParRi` (it seals the tag and
+  # is elided), so the old "close, shrink away, re-close" dance is
+  # impossible.
+  assert n.stmtKind == StmtsS
+  pass.dest.add n
+  n.into:
+    while n.hasMore:
+      tr c, pass.dest, n, isTopScope = true
 
   pass.dest.add c.pending
   pass.dest.addParRi()

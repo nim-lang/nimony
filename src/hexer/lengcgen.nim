@@ -451,7 +451,7 @@ proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
               if n.exprKind == NilX:
                 skip n
               else:
-                dest.add tagToken("object", n.info)
+                dest.add tagToken("object", n.endInfo)
                 dest.addDotToken  # base type
                 trObjFields(c, dest, n, flags)
                 dest.addParRi # end of object
@@ -462,7 +462,7 @@ proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
               if n.exprKind == NilX:
                 skip n
               else:
-                dest.add tagToken("object", n.info)
+                dest.add tagToken("object", n.endInfo)
                 dest.addDotToken  # base type
                 trObjFields(c, dest, n, flags)
                 dest.addParRi # end of object
@@ -533,7 +533,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
       # procs — passes through unchanged so NIFC's `...` ellipsis fires.
       let info = n.info
       var probe = n
-      inc probe
+      discard enterScope(probe)  # throwaway copy; bounds the walk under vpr
       var hint = default(Cursor)
       while probe.hasMore:
         if probe.kind == StringLit:

@@ -124,7 +124,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
         dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
         # constructor call as initializer:
         copyIntoKind dest, CallS, info:
-          inc n
+          let callScope = enterScope(n)
           if n.kind == Symbol and typ.firstSon.kind == SymbolDef:
             dest.addSymUse coroWrapperProc(c, n.symId), info
             inc n
@@ -132,7 +132,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
             coroTr(c, dest, n)
           while n.hasMore:
             coroTr(c, dest, n)
-          inc n
+          leaveScope(n, callScope)
           if hasResult:
             dest.copyIntoKind AddrX, info:
               dest.copyTree target
@@ -169,11 +169,11 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
         # constructor call as initializer:
         copyIntoKind dest, CallS, info:
           dest.addSymUse sym, info
-          inc n
+          let callScope = enterScope(n)
           skip n # fn already handled
           while n.hasMore:
             coroTr(c, dest, n)
-          inc n
+          leaveScope(n, callScope)
           dest.copyIntoKind AddrX, info:
             dest.addSymUse coroVar, info
           if hasResult:
@@ -215,7 +215,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
 
     # value: emit constructor call with heap-allocated frame:
     copyIntoKind dest, CallS, info:
-      inc n
+      let callScope = enterScope(n)
       if n.kind == Symbol and typ.firstSon.kind == SymbolDef:
         dest.addSymUse coroWrapperProc(c, n.symId), info
         inc n
@@ -223,7 +223,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
         coroTr(c, dest, n)
       while n.hasMore:
         coroTr(c, dest, n)
-      inc n
+      leaveScope(n, callScope)
 
       if hasResult:
         dest.copyIntoKind AddrX, info:
@@ -406,7 +406,8 @@ proc transformToCps*(pass: var Pass) =
     hooks: passiveHooks())
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS
-  c.coroTypes.takeToken n
+  c.coroTypes.add n.load() # the `(stmts` open tag
+  let rootScope = enterScope(n)
   while n.hasMore:
     coroTr(c, pass.dest, n)
   for (sym, start) in c.shouldPublish:
@@ -415,7 +416,8 @@ proc transformToCps*(pass: var Pass) =
     endRead(pass.dest)
     publishSignature buf, sym, 0
   c.coroTypes.add pass.dest # concat coroTypes and other statements
-  c.coroTypes.takeToken n # ParRi
+  c.coroTypes.addParRi() # close the root; its source ParRi may be elided
+  leaveScope(n, rootScope)
   swap c.coroTypes, pass.dest
   c.typeCache.closeScope()
 

@@ -484,7 +484,7 @@ proc trBoundExpr(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
     result = trCall(c, dest, n)
   else:
     trExpr c, dest, n
-    result = CallInfo(isNoReturn: false, mode: NoRaise, mutates: @[], info: n.info)
+    result = CallInfo(isNoReturn: false, mode: NoRaise, mutates: @[], info: n.endInfo)
 
 proc raiseGuards(c: var Context; dest: var TokenBuf; info: PackedLineInfo;
                  skipInnermostHandler = false) =
@@ -767,12 +767,12 @@ proc trBreak(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
 
   assert entries > 0, "break resolved to zero guard entries"
   b.leavesWith = c.current.guards.len-1
-  dest.add tagToken("jtrue", n.info)
+  dest.add tagToken("jtrue", n.endInfo)
   for i in 1..entries:
     let guardIdx = c.current.guards.len - i
     assert guardIdx >= 0, "guard index underflow in break"
     let g = addr c.current.guards[guardIdx]
-    dest.addSymUse g.cond, n.info
+    dest.addSymUse g.cond, n.endInfo
     g.active = true
   dest.addParRi(n.endInfo)
   leaveScope(n, breakScope)
@@ -1303,11 +1303,10 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
   of StmtsS, ScopeS:
     # Flatten nested stmts when the output already has a (stmts open.
     if not b.hasParLe and g[0] < 0:
-      dest.takeToken n
+      dest.add n.load()
       b.hasParLe = true
       takeThisParRi = true
-    else:
-      inc n
+    let stmtsScope = enterScope(n)
     # g2 borrows the innermost active guard for the ENTIRE statement list.
     # All children are emitted inside this single guard, achieving the merge.
     var g2 = (-1, NoSymId)
@@ -1320,7 +1319,7 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
         # suppress the re-activation to prevent sibling ites.
         c.current.guards[g2[0]].active = false
       trGuardedStmts(c, b, dest, n, false)
-    inc n # ParRi
+    leaveScope(n, stmtsScope)
     maybeCloseGuard(c, dest, g2, false)
 
   of AsgnS:
@@ -1396,7 +1395,7 @@ proc eliminateJumps*(pass: var Pass; raisesResolved = false) =
   var b = BasicBlock(openElseBranches: 0, hasParLe: true, leavesWith: -1)
   while n.hasMore:
     trGuardedStmts c, b, pass.dest, n, false
-  closeScope c, pass.dest, n.info
+  closeScope c, pass.dest, n.endInfo
   closeBasicBlock c, b, pass.dest
   pass.dest.addParRi()
   #echo "PRODUCED: ", pass.dest.toString(false)

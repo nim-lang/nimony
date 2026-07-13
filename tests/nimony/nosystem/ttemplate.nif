@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 3576             )
+(.indexat 3571             )
 (stmts@,2,tests/nimony/nosystem/ttemplate.nim
  (type@2,1 :int.0.
   (i 64).
@@ -112,7 +112,7 @@
        (add@2
         (i 64)2~A,4 89~7,4)))))
    (asgn@2,2 x.5~2 "34"@2)
-   (ret~2,~1 result.1)))
+   (ret result.1)))
  (proc@,d :overloaded.0.@5 . . .
   (params@F). . .
   (stmts@2,1
@@ -179,7 +179,7 @@
  (x \2B.0. 149)
  (h plus.0. 170)
  (h foo.0. 176)
- (h overloaded.0. 418)
+ (h overloaded.0. 413)
  (x uint.0. 221)
  (h conv.0. 66)
  (h@D,j T.3. 43)

@@ -241,7 +241,8 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
         n = it.n
         let typ = skipModifier(it.typ)
         if classifyType(c, typ) == VoidT:
-          c.buildErr dest, n.info, "expression '" & asNimCode(orig) & "' has no type (or is ambiguous)"
+          # point at the declared name (the decl's close info is elided under vpr):
+          c.buildErr dest, delayed.info, "expression '" & asNimCode(orig) & "' has no type (or is ambiguous)"
         insertType c, dest, typ, beforeType
       else:
         let typ = semLocalType(c, dest, n) # 3
@@ -1297,8 +1298,9 @@ proc buildInnerObjDecl(c: var SemContext; decl: Cursor; sym: var SymId): TokenBu
 proc invokeInnerObj(c: var SemContext; dest: var TokenBuf; genericsPos: int; objSym: SymId; info: PackedLineInfo) =
   var params = cursorAt(dest, genericsPos)
   if params.substructureKind == TypevarsU:
-    # build an invocation of the inner object type
-    inc params
+    # build an invocation of the inner object type; enterScope bounds the
+    # walk (the typevars' close token is elided under -d:virtualParRi)
+    discard enterScope(params)
     var invokeBuf = createTokenBuf(16)
     invokeBuf.buildTree InvokeT, info:
       invokeBuf.add symToken(objSym, info)

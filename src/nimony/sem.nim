@@ -1285,7 +1285,8 @@ proc semIdentImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor; ident: S
     if AllowOverloads in flags: FindOverloads
     else: InnerMost
   let insertPos = dest.len
-  let info = n.info
+  let info = n.endInfo # `semQuoted` calls this with `n` already past the
+                       # quoted subtree, possibly at a scope's end
   var count = buildSymChoice(c, dest, ident, info, mode)
   if count == 0 and c.deferredLocals.hasKey(ident):
     # On-demand resolution (nim-lang/nimony#1974): a signature-phase `when`
@@ -2335,21 +2336,21 @@ proc findBranchFields(objTypeSym: SymId; efldSym: SymId): seq[SumTypeBranchField
   if body.typeKind != ObjectT: return
   let obj = asObjectDecl(body)
   var n = obj.body
-  inc n  # past (object
+  discard enterScope(n)  # past (object; bounds the walk under vpr
   skip n  # parent type / inheritance slot
   while n.substructureKind in {FldU, GfldU}:
     skip n
   if n.substructureKind != CaseU: return
-  inc n
+  discard enterScope(n)  # past (case
   skip n # skip discriminator fld
   let efldName = symToIdent(efldSym)
   while n.hasMore:
     if n.substructureKind == OfU:
-      inc n
+      let ofScope = enterScope(n)
       var found = false
       if n.substructureKind == RangesU:
         var scan = n
-        inc scan
+        discard enterScope(scan)  # throwaway copy
         while scan.hasMore:
           if scan.kind == Symbol and sameIdent(scan.symId, efldName):
             found = true
@@ -2357,7 +2358,7 @@ proc findBranchFields(objTypeSym: SymId; efldSym: SymId): seq[SumTypeBranchField
           skip scan
       skip n # skip ranges
       if found and n.substructureKind == StmtsU:
-        inc n
+        discard enterScope(n)
         while n.hasMore:
           if n.substructureKind in {FldU, GfldU}:
             let f = asLocal(n)
@@ -2366,7 +2367,7 @@ proc findBranchFields(objTypeSym: SymId; efldSym: SymId): seq[SumTypeBranchField
         return
       else:
         skip n # skip stmts
-      inc n # skip of parri
+      leaveScope(n, ofScope) # past the of's (elided) close
     else:
       skip n
 
@@ -2772,7 +2773,9 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
       of ObjectCase:
         semObjectCaseBranch(c, dest, it, state)
   elif not isString:
-    checkExhaustiveness c, dest, it.n.endInfo, selectorType, seen
+    # `info` (the case head) — the close's info is elided under vpr and
+    # the diagnostic should point at the `case` statement anyway:
+    checkExhaustiveness c, dest, info, selectorType, seen
 
   dest.addParRi(it.n.endInfo)
   leaveScope(it.n, caseScope)

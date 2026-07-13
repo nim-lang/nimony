@@ -109,18 +109,18 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
         p.into PluginP:
           # `.plugin: "path"` — single-string form only.
           var path = StrId(0)
-          var pathInfo = p.info
+          var pathInfo = p.endInfo # the pragma may be degenerate/empty
           if p.kind == StringLit:
             path = p.litId
             pathInfo = p.info
           if path != StrId(0):
             var b = createTokenBuf(30)
-            b.addParLe StmtsS, args.info
+            b.addParLe StmtsS, args.endInfo # zero-arg calls: args sits at a scope's end
             # Pass the invoked template's name as the first child of the input
             # so a single shared plugin can dispatch on which template was
             # called. The plugin reads it with `pluginName` and skips to
             # the real call-site arguments with `callArgs`.
-            b.add identToken(symToIdent(temp.name.symId), args.info)
+            b.add identToken(symToIdent(temp.name.symId), args.endInfo)
             var a = args
             while a.hasMore:
               b.takeTree a

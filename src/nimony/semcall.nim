@@ -129,8 +129,11 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
   let s = fetchSym(c, fnId)
   let res = declToCursor(c, dest, s)
   if res.status == LacksNothing:
-    var args = cursorAt(dest, beforeCall + 2)
-    var firstVarargMatch = cursorAt(dest, beforeCall + 2 + m.firstVarargPosition)
+    # `cursorTailAt`: for a zero-arg call (or a vararg position past the
+    # last arg) these positions sit right after the sealed call's last
+    # token — its physical close is elided under `-d:virtualParRi`.
+    var args = cursorTailAt(dest, beforeCall + 2)
+    var firstVarargMatch = cursorTailAt(dest, beforeCall + 2 + m.firstVarargPosition)
     expandTemplate(c, expandedInto, res.decl, args, firstVarargMatch, addr m.inferred, dest[beforeCall].info)
     # Release the rc refs the two `cursorAt` calls bumped on `dest`, so the
     # subsequent `shrink dest` + body re-sem can mutate `dest` without
@@ -948,7 +951,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       if cs.hasNamedArgs:
         cs.args = orderArgs(newMatch, param, csArgsOrig)
       assert param.isParamsTag
-      inc param
+      discard enterScope(param) # throwaway copy; bounds the walk under vpr
       var ai = 0
       var anyConverters = false
       while param.hasMore:

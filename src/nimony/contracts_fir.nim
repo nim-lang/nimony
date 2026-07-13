@@ -792,7 +792,7 @@ proc checkReq(c: var NjvlContext; paramMap: Table[SymId, int]; req, call: Cursor
   of ExprX:
     var r = req
     while r.exprKind == ExprX:
-      inc r
+      discard enterScope(r) # throwaway copy; bounds the walk under vpr
       while r.hasMore and not isLastSon(r): skip r
     result = checkReq(c, paramMap, r, call)
   else:

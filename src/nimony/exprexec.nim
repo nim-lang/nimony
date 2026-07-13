@@ -745,11 +745,9 @@ proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
       c.dest.addIdent "writenif", info
 
   if s.importSnippets.len > 0:
-    var cur = beginRead(s.importSnippets)
-    for i in 0 ..< s.importSnippets.len:
-      c.dest.add cur.load
-      inc cur
-    endRead(s.importSnippets)
+    # buffer-level `add` keeps the seals intact; a token-by-token `add`
+    # loop would push open tags whose closes are elided under vpr:
+    c.dest.add s.importSnippets
 
   c.dest.copyIntoKind CallS, info:
     c.dest.addSymUse pool.syms.getOrIncl("setup.0." & writeNifModuleSuffix), info

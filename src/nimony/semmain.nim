@@ -119,15 +119,14 @@ proc pruneMatchedForwardDecls(c: var SemContext; dest: var TokenBuf) =
         dest[i + 1].kind == SymbolDef and
         dest[i + 1].symId in c.matchedForwardDecls:
       let info = dest[i].info
-      var nesting = 0
-      while i < dest.len:
-        case dest[i].kind
-        of ParLe: inc nesting
-        of ParRi: dec nesting
-        else: discard
-        dest[i] = dotToken(info)
-        inc i
-        if nesting == 0: break
+      # Overwrite exactly the decl's subtree. `span` is jump-based under
+      # `-d:virtualParRi` (the subtree's ParRis are elided, so a raw
+      # nesting counter would run to the end of the buffer) and
+      # ParRi-walk based in classic mode.
+      let declSpan = span(readonlyCursorAt(dest, i))
+      for k in i ..< i + declSpan:
+        dest[k] = dotToken(info)
+      i += declSpan
     else:
       inc i
 
@@ -436,7 +435,11 @@ proc reorderInnerGenericInstances(c: SemContext; dest: var TokenBuf) =
             procBuf.addRaw dest[j]
             dest[j] = dotToken(NoLineInfo) # invalidate
 
+          let before = dest.len
           dest.insert procBuf, originPos
+          # the insertion point sits inside sealed scopes (the enclosing
+          # proc's body); re-widen their jumps (no-op in classic mode):
+          widenEnclosingSealed(dest, originPos, dest.len - before)
     else:
       inc i
 
@@ -502,8 +505,18 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     if c.hasPendingPlugins:
       dest = move afterSem
     else:
+      when defined(dumpPhases):
+        block:
+          var r = beginRead(afterSem)
+          syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".beforederefs.nif", toString(r, false))
+          endRead(afterSem)
       var finalBuf = beginRead afterSem
       dest = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
+      when defined(dumpPhases):
+        block:
+          var r = beginRead(dest)
+          syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".afterderefs.nif", toString(r, false))
+          endRead(dest)
     when true: #defined(enableContracts):
       var moreErrors = analyzeContractsFinalIr(dest, c.thisModuleSuffix, c.g.config.verbose)
       if reporters.reportErrors(moreErrors) > 0:

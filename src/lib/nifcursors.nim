@@ -699,9 +699,9 @@ proc len*(b: TokenBuf): int {.inline.} = b.len
 proc debugOpenTags*(b: TokenBuf): seq[int] =
   ## debugging helper: the current open-tag stack (classic mode has none)
   when defined(virtualParRi):
-    b.openTags
+    result = b.openTags
   else:
-    @[]
+    result = newSeq[int]()
 
 when defined(nimony):
   proc `[]`*(b: TokenBuf; i: int): var PackedToken {.inline.} =
@@ -728,6 +728,24 @@ proc cursorAt*(b: var TokenBuf; i: int): Cursor {.inline.} =
     b.owner.rc = 1  # 1 for TokenBuf
   inc b.owner.rc  # + 1 for the returned Cursor
   result = Cursor(owner: b.owner, p: addr b.data[i], rem: b.len-i)
+
+proc cursorTailAt*(b: var TokenBuf; i: int): Cursor {.inline.} =
+  ## Like `cursorAt`, but additionally accepts `i == b.len`: under
+  ## `-d:virtualParRi` a subtree's physical close is elided, so the
+  ## position right after a sealed tree's last child can be the end of
+  ## the buffer. The returned cursor then has `rem == 0` and reports a
+  ## virtual `ParRi` — do not `load`/`inc` it, only `kind`-style probes.
+  ## (Classic mode always has a physical token there, making this
+  ## equivalent to `cursorAt`.)
+  assert i >= 0 and i <= b.len
+  if b.owner == nil:
+    b.owner = cast[CursorOwner](alloc0(sizeof(CursorOwnerObj)))
+    b.owner.data = b.data
+    b.owner.rc = 1  # 1 for TokenBuf
+  inc b.owner.rc  # + 1 for the returned Cursor
+  result = Cursor(owner: b.owner,
+    p: cast[ptr PackedToken](cast[uint](b.data) + uint(i) * uint(sizeof(PackedToken))),
+    rem: b.len-i)
 
 proc readonlyCursorAt*(b: TokenBuf; i: int): Cursor {.inline.} =
   assert i >= 0 and i < b.len
@@ -1085,6 +1103,30 @@ proc widenSealed*(dest: var TokenBuf; enclosing: int; growth: int) =
     if growth > 0 and jump(dest[enclosing]) != MaxJump:
       assert jump(dest[enclosing]) + uint32(growth) < MaxJump, "widenSealed: subtree overflows the jump field"
       setJump(dest[enclosing], jump(dest[enclosing]) + uint32(growth))
+
+proc widenEnclosingSealed*(dest: var TokenBuf; pos, growth: int) =
+  ## After `insert`ing `growth` tokens at position `pos` of a COMPLETED
+  ## buffer (no open tags), widen the jump of EVERY sealed scope enclosing
+  ## `pos`. Use this when the insertion point's ancestor chain isn't known
+  ## to the caller (otherwise prefer targeted `widenSealed` calls).
+  ## No-op in classic mode; overflow scopes keep their physical ParRi.
+  when defined(virtualParRi):
+    if growth <= 0: return
+    var i = 0
+    while i < pos:
+      if dest[i].kind == ParLe:
+        let j = jump(dest[i])
+        if j == MaxJump:
+          inc i # overflow scope: physical ParRi, nothing to widen; descend
+        elif i + int(j) >= pos:
+          # the (stale, pre-insert) span reaches the insertion point:
+          # this scope encloses it — widen and descend
+          widenSealed(dest, i, growth)
+          inc i
+        else:
+          i += int(j) + 1 # sealed subtree entirely before `pos`: skip it
+      else:
+        inc i
 
 proc replace*(dest: var TokenBuf; by: Cursor; pos: int) =
   if dest.owner != nil: prepareMutation(dest)

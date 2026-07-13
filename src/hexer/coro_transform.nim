@@ -428,12 +428,12 @@ proc isLiftedClosureTuple*(n: Cursor): bool =
   ## re-trigger the proctype rewrite and produce nested tuples.
   if n.typeKind != TupleT: return false
   var t = n
-  inc t
+  discard enterScope(t)  # throwaway copy; bounds the probe under vpr
   if t.kind != ParLe or t.typeKind != ProctypeT: return false
   skip t
   if t.kind != ParLe or t.typeKind != RefT: return false
   skip t
-  result = t.kind == ParRi
+  result = not t.hasMore
 
 # ---------------------------------------------------------------------
 # Predicates
@@ -1097,11 +1097,11 @@ proc trMflag*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## initialized to false. If the flag is lifted to the environment,
   ## emit an assignment to the env field instead.
   let info = n.info
-  inc n  # skip mflag/vflag tag
+  let flagScope = enterScope(n)  # past mflag/vflag tag
   let symDef = n
   let symId = n.symId
   inc n  # skip symdef
-  inc n  # skip ParRi
+  leaveScope(n, flagScope)  # past the (elided) ParRi
   let field = c.currentProc.localToEnv.getOrDefault(symId)
   if field.def != field.use:
     dest.copyIntoKind AsgnS, info:
@@ -1270,10 +1270,11 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
             StaticstmtS, BindS, MixinS, UsingS, AsmS,
             DeferS, NoStmt:
-          dest.takeToken n
-          while n.hasMore:
-            trGoto c, dest, n
-          dest.takeToken n
+          dest.add n.load()
+          n.into:
+            while n.hasMore:
+              trGoto c, dest, n
+          dest.addParRi()
       else:
         dest.takeToken n
 
@@ -1493,11 +1494,11 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
                   dest.addSymUse envFld, info
                   dest.addIntLit 0, info
             var p = params
-            if p.kind != DotToken:
-              inc p
+            if p.kind == ParLe:
+              discard enterScope(p)  # throwaway copy; bounds the walk under vpr
               while p.hasMore:
                 assert p.substructureKind == ParamU
-                inc p
+                let paramScope = enterScope(p)
                 let paramSym = p.symId
                 let field = c.currentProc.localToEnv.getOrDefault(paramSym)
                 if field.field != SymId(0):
@@ -1513,7 +1514,7 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
                 skip p, SkipPragmas
                 skip p, SkipType
                 skip p, SkipValue
-                inc p # ParRi
+                leaveScope(p, paramScope)
             if hasResult:
               dest.copyIntoKind AsgnS, info:
                 dest.copyIntoKind DotX, info:
@@ -1596,11 +1597,11 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
 
 proc registerParamsInTypecache*(c: var Context; sym: SymId; origParams: Cursor) =
   var n = origParams
-  if n.kind != DotToken:
-    inc n
+  if n.kind == ParLe:
+    discard enterScope(n)  # throwaway copy; bounds the walk under vpr
     while n.hasMore:
       assert n.substructureKind == ParamU
-      inc n
+      let paramScope = enterScope(n)
       let paramSym = n.symId
       skip n, SkipName # name
       skip n, SkipExport # exported
@@ -1608,7 +1609,7 @@ proc registerParamsInTypecache*(c: var Context; sym: SymId; origParams: Cursor) 
       c.typeCache.registerLocal(paramSym, ParamY, n)
       skip n, SkipType # type
       skip n, SkipValue # default value
-      inc n # ParRi
+      leaveScope(n, paramScope)
 
 proc patchParamList*(c: var Context; dest, init: var TokenBuf; sym: SymId;
                      paramsBegin, paramsEnd: int; origParams: Cursor) =

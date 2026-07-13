@@ -375,7 +375,9 @@ proc isLastUse*(n: Cursor; buf: var TokenBuf;
   assert idx >= 0
   var other = default Cursor
   result = isLastReadImpl(mover.cf, idx.uint32, other, mover.index)
-  if other.cursorIsNil:
+  if other.cursorIsNil or not other.hasCurrentToken:
+    # `other` can sit at a scope's end (see the "pc advanced to ')'"
+    # notes in singlePath); there is no token to read info from then.
     otherUsage = NoLineInfo
   else:
     otherUsage = other.info

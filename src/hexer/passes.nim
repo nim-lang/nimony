@@ -94,6 +94,10 @@ proc prepareForNext*(pass: var Pass; nextPassName: string) =
 proc finishPass*(pass: var Pass) =
   ## Log the final pass's elapsed time. Call once after the last pass body
   ## has finished; no-op when timing is disabled.
+  when defined(logPasses):
+    echo pass.passName, " produced:"
+    echo "  ", toString(pass.dest, false)
+
   when not defined(nimony):
     if passTimingEnabled:
       logPassTiming(pass.moduleSuffix, pass.passName, pass.passStart)

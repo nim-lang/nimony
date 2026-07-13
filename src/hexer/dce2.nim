@@ -100,58 +100,57 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
 
     of ProcS, VarS, ConstS, GvarS, TvarS:
       let head = n.load()
-      inc n
-      if n.kind == SymbolDef:
-        let def = n.symId
-        if isLocalName(pool.syms[def]):
-          dest.add head
-          dest.addSymDef def.toLengName, n.info
-          inc n # skip symbol def
-          while n.hasMore:
-            tr dest, n, alive, resolved
-          dest.takeToken n
-        elif alive.contains(def):
-          let t = translate(resolved, def)
-          if t != def:
-            # we are a loser and need to add an `extern` declaration:
-            dest.add parLeToken(pool.tags.getOrIncl("imp"), head.info)
-
-            dest.add head
-            dest.addSymDef t.toLengName, n.info
-            inc n # skip symbol def
-            var untilBody = if stmtKind == ProcS: 3 else: 2 # pragmas type (for procs: return type)
-            while n.hasMore and untilBody > 0:
-              dec untilBody
-              tr dest, n, alive, resolved
-            skip n # skip the body
-            # replace it with an empty body:
-            dest.addDotToken()
-            assert n.kind == ParRi
-            dest.takeToken n
-            dest.addParRi() # also close the "imp" declaration
-          else:
+      n.into:
+        if n.kind == SymbolDef:
+          let def = n.symId
+          if isLocalName(pool.syms[def]):
             dest.add head
             dest.addSymDef def.toLengName, n.info
             inc n # skip symbol def
             while n.hasMore:
               tr dest, n, alive, resolved
-            dest.takeToken n
+            dest.addParRi()
+          elif alive.contains(def):
+            let t = translate(resolved, def)
+            if t != def:
+              # we are a loser and need to add an `extern` declaration:
+              dest.add parLeToken(pool.tags.getOrIncl("imp"), head.info)
+
+              dest.add head
+              dest.addSymDef t.toLengName, n.info
+              inc n # skip symbol def
+              var untilBody = if stmtKind == ProcS: 3 else: 2 # pragmas type (for procs: return type)
+              while n.hasMore and untilBody > 0:
+                dec untilBody
+                tr dest, n, alive, resolved
+              skip n # skip the body
+              # replace it with an empty body:
+              dest.addDotToken()
+              dest.addParRi()
+              dest.addParRi() # also close the "imp" declaration
+            else:
+              dest.add head
+              dest.addSymDef def.toLengName, n.info
+              inc n # skip symbol def
+              while n.hasMore:
+                tr dest, n, alive, resolved
+              dest.addParRi()
+          else:
+            # skip it, it's dead
+            inc n # skip symbol def
+            while n.hasMore: skip n
         else:
-          # skip it, it's dead
-          inc n # skip symbol def
-          while n.hasMore: skip n
-          inc n
-      else:
-        # let errors propagate:
-        dest.add head
+          # let errors propagate:
+          dest.add head
+          while n.hasMore:
+            tr dest, n, alive, resolved
+          dest.addParRi()
+    else:
+      dest.add n.load()
+      n.into:
         while n.hasMore:
           tr dest, n, alive, resolved
-        dest.takeToken n
-    else:
-      dest.takeToken n
-      while n.hasMore:
-        tr dest, n, alive, resolved
-      dest.takeToken n
+      dest.addParRi()
   of Symbol:
     let t = translate(resolved, n.symId)
     dest.addSymUse t.toLengName, n.info

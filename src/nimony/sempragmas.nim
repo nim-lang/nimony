@@ -780,7 +780,7 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
     let pragInfo = it.n.info
     toPragmaArgs()
     var path = StrId(0)
-    var pathInfo = it.n.info
+    var pathInfo = it.n.endInfo
     var errMsg = ""
     if it.n.hasMore and it.n.kind == StringLit:
       path = it.n.litId
@@ -807,14 +807,14 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
     toPragmaArgs()
     let name = takeIdent(it.n)
     if name == StrId(0):
-      buildErr c, dest, it.n.info, "expected identifier for pragma"
+      buildErr c, dest, it.n.endInfo, "expected identifier for pragma"
       dest.addParRi()
       closePragmaLine()
       while it.n.hasMore:
         takeTree dest, it.n
     else:
       var buf = createTokenBuf(16)
-      dest.add identToken(name, it.n.info)
+      dest.add identToken(name, it.n.endInfo)
       dest.addParRi()
       closePragmaLine()
       # take remaining pragmas:

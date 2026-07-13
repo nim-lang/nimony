@@ -171,7 +171,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       tr c, dest, n
   if cr:
-    addRaiseStmt(dest, target, n.info)
+    addRaiseStmt(dest, target, n.endInfo)
 
 proc trAssign(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:

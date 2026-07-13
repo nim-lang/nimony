@@ -68,7 +68,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
   discard getType(c.typeCache, n)
   var n = n
   while n.exprKind == ExprX:
-    inc n
+    discard enterScope(n)  # throwaway copy; bounds the walk under vpr
     while n.hasMore and not isLastSon(n): skip n
 
   if n.exprKind == EmoveX: inc n
@@ -391,7 +391,7 @@ proc callDup(c: var Context; arg: var Cursor)
 proc callWasMoved(c: var Context; arg: Cursor; typ: Cursor) =
   var n = arg
   if n.exprKind == ExprX:
-    inc n
+    discard enterScope(n)  # throwaway copy; bounds the walk under vpr
     while n.hasMore:
       if isLastSon(n):
         break
@@ -480,7 +480,8 @@ proc trAsgn(c: var Context; n: var Cursor) =
           callDestroy(c, destructor, lhs, leType)
         copyInto c.dest, n:
           copyTree c.dest, lhs
-          n = ri
+          skip n # over `le`; advance `n` itself so the scope's rem
+                 # bookkeeping stays intact under -d:virtualParRi
           tr c, n, WillBeOwned
       else:
         # `x = f()` is turned into `let tmp = f(); =destroy(x); x =bitcopy tmp`.
@@ -490,8 +491,8 @@ proc trAsgn(c: var Context; n: var Cursor) =
         copyInto c.dest, n:
           copyTree c.dest, lhs
           copyIntoSymUse c.dest, tmp, ri.info
-          n = ri
-          skip n, SkipFull
+          skip n # le
+          skip n # ri
     elif isLastRead(c, ri):
       if isNotFirstAsgn and (potentialSelfAsgn(le, ri) or potentialAliasing(le, ri)):
         # `let tmp = y; =wasMoved(y); =destroy(x); x =bitcopy tmp`
@@ -502,14 +503,14 @@ proc trAsgn(c: var Context; n: var Cursor) =
           var lhsAsCursor = cursorAt(lhs, 0)
           tr c, lhsAsCursor, DontCare
           copyIntoSymUse c.dest, tmp, ri.info
-          n = n2
-          skip n, SkipFull
+          skip n # le
+          skip n # ri
       else:
         if isNotFirstAsgn:
           callDestroy(c, destructor, lhs, leType)
         copyInto c.dest, n:
           copyTree c.dest, lhs
-          n = ri
+          skip n # over `le`
           tr c, n, WillBeOwned
         callWasMoved c, ri, leType
     else:
@@ -520,7 +521,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
         copyInto c.dest, n:
           var lhsAsCursor = cursorAt(lhs, 0)
           tr c, lhsAsCursor, DontCare
-          n = ri
+          skip n # over `le`
           callDup c, n
         callDestroy(c, destructor, tmp, le.info, leType)
       else:
@@ -529,7 +530,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
         copyInto c.dest, n:
           var lhsAsCursor = cursorAt(lhs, 0)
           tr c, lhsAsCursor, DontCare
-          n = ri
+          skip n # over `le`
           callDup c, n
 
 proc getHookType(c: var Context; n: Cursor): Cursor =
@@ -1073,7 +1074,7 @@ proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
     c.dest.addParRi()
     callWasMoved c, r.name.symId, r.name.info, r.typ
   else:
-    let destructor = getDestructor(c.lifter[], r.typ, n.info)
+    let destructor = getDestructor(c.lifter[], r.typ, n.endInfo)
     if destructor != NoSymId:
       if k == CursorS:
         trValue c, r.val, DontCare
@@ -1305,7 +1306,7 @@ proc checkForErrorRoutine(r: var Reporter; fn: SymId; info: PackedLineInfo): int
       var m = "'" & fnName & "' is not available"
       var arg = routine.params
       if arg.substructureKind == ParamsU:
-        inc arg
+        discard enterScope(arg)  # throwaway copy; bounds the peek under vpr
         if arg.hasMore:
           let param = asLocal(arg)
           m.add " for type <" & typeToString(param.typ) & ">"

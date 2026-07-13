@@ -51,8 +51,9 @@ proc passByConstRef(c: var Context; typ, pragmas: Cursor): bool =
            typeprops.isInheritable(typ, false)
 
 proc rememberConstRefParams(c: var Context; params: Cursor) =
+  if params.kind != ParLe: return
   var n = params
-  inc n # skips (params
+  discard enterScope(n) # skips (params; bounds the walk under vpr
   while n.hasMore:
     let r = takeLocal(n, SkipFinalParRi)
     if r.name.kind == SymbolDef and passByConstRef(c, r.typ, r.pragmas):
@@ -194,7 +195,7 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addIntLit 0, info
     else:
       tr c, dest, n
-    finishRaiseTuple c, dest, n.info
+    finishRaiseTuple c, dest, n.endInfo
 
 proc trFailed(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info

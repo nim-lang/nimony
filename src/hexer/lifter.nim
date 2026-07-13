@@ -250,7 +250,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
     result = isTrivialObjectBody(c, typ)
   of TupleT:
     var tup = typ
-    inc tup
+    discard enterScope(tup)  # throwaway copy; bounds the walk under vpr
     while tup.hasMore:
       let field = getTupleFieldType(tup)
       if not isTrivial(c, field):
@@ -581,7 +581,7 @@ proc unravelTuple(c: var LiftingCtx;
                   n: Cursor; paramA, paramB: TokenBuf) =
   assert n.typeKind == TupleT
   var n = n
-  inc n
+  discard enterScope(n)  # throwaway copy; bounds the walk under vpr
   var idx = 0
   while n.hasMore:
     let fieldType = getTupleFieldType(n)
@@ -814,12 +814,16 @@ proc addParamType(c: var LiftingCtx; typ: TypeCursor) =
   if n.isAtom:
     copyTree c.dest, typ
   else:
-    c.dest.takeToken n
-    while n.hasMore:
-      if isNilAnnotation(n):
-        skip n
-      else:
-        takeTree c.dest, n
+    # `n.into` bounds the child walk: `typ` is a cursor into an enclosing
+    # decl, so an unbounded `hasMore` loop would run past the type's
+    # (elided) close and copy the decl's remaining children too.
+    c.dest.add n.load()
+    n.into:
+      while n.hasMore:
+        if isNilAnnotation(n):
+          skip n
+        else:
+          takeTree c.dest, n
     c.dest.addParRi()
 
 proc addParamWithModifier(c: var LiftingCtx; param: SymId; typ: TypeCursor; modifier: TypeKind) =
@@ -915,6 +919,7 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
       c.dest.addParRi()
       c.dest.addEmpty() # void return type
 
+    let pragmasStart = c.dest.len
     copyIntoKind c.dest, PragmasS, c.info:
       copyIntoKind c.dest, NodestroyP, c.info: discard
       let pragmasPos = c.dest.len
@@ -954,7 +959,13 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
     c.dest[procStart] = withLineInfo(c.dest[procStart], c.info)
 
   if c.calledErrorHook != NoLineInfo:
+    let before = c.dest.len
     c.dest.insert [parLeToken(ErrorP, c.calledErrorHook), parRiToken(c.calledErrorHook)], pragmasPos
+    # The insert lands inside two already-sealed scopes; widen their jumps
+    # (no-op in classic mode):
+    let growth = c.dest.len - before
+    widenSealed c.dest, pragmasStart, growth
+    widenSealed c.dest, procStart, growth
 
   publishProc(sym, c.dest, procStart)
 
