@@ -44,7 +44,7 @@ proc considerImportedSymbols(c: var SemContext; dest: var TokenBuf; name: StrId;
             if res.status == LacksNothing and not isRoutine(res.decl.symKind):
               continue
           inc result
-dest.add symToken(defId, info)
+          dest.add symToken(defId, info)
 
 proc addSymUse*(dest: var TokenBuf; s: Sym; info: PackedLineInfo) =
   dest.add symToken(s.name, info)
