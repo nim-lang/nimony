@@ -501,6 +501,12 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor; destLv: Cursor): Effect
         if writesToDest: effects.add fixedEffect(ckT) # adds a type reference
       of "addIdent":
         if writesToDest: effects.add fixedEffect(ckAny)
+      of "flush":
+        # controlflow.nim context emitter: appends one Target subtree to the
+        # pass buffer (`c.dest`) via the context `c`, so the call names `c`
+        # (not `c.dest`) as receiver — `writesToDest` is false, hence unguarded.
+        # Equivalent to `c.dest.add someTarget`: contributes exactly one child.
+        effects.add fixedEffect(ckAny)
       of "skip", "skipToEnd", "skipUntilEnd", "skipParRi", "consumeParRi", "inc", "swap",
          "endRead", "assert", "registerLocal", "registerLocalPtrOf",
          "openScope", "closeScope", "openProcScope", "registerParams",
