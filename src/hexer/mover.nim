@@ -19,17 +19,27 @@ type
     CanFollowDerefs, CannotFollowDerefs, CanFollowCalls
 
   FindStartEntry = object
-    pos: int32       ## position in `cf`, or -1 if no CF token has this payload
+    pos: int32       ## position in `cf`, or -1 if no CF token maps to this source pos
     nested: int16    ## paren-nesting depth at that position
+
+  FindStartIndex = object
+    ## Source-position → (cf position, nesting) lookup. Indexed by source-buffer
+    ## position; `data[srcPos - base]` holds the entry, so only the touched span
+    ## `[base, base + data.len)` is allocated rather than the whole buffer (the
+    ## LocSpan trick from arkham's register_allocator). Built from the side-channel
+    ## `srcMap` that `toControlflowWithMap` returns — the source→CF mapping no
+    ## longer rides in the token `info` field (nifcore tokens may carry none).
+    base: int32
+    data: seq[FindStartEntry]
 
   MoverContext* = object
     ## Per-pass context for the mover. Holds the controlflow buffer and a
-    ## position-payload → (cf position, nested depth) lookup built once when
+    ## source-position → (cf position, nested depth) lookup built once when
     ## the CF is materialized. Replaces the bare `cf: TokenBuf` the duplifier
     ## used to carry around, and turns `findStart` from an O(N) buffer scan
     ## into an O(1) array index.
     cf*: TokenBuf
-    index*: seq[FindStartEntry]   ## indexed by payload value (= srcPos + PayloadOffset)
+    index*: FindStartIndex
 
 proc rootOf*(n: Cursor; mode = CanFollowDerefs): SymId =
   var n = n
@@ -176,14 +186,28 @@ proc containsRoot(tree: var Cursor; x: Cursor): bool =
   else:
     inc tree
 
-proc buildFindStartIndex(cf: TokenBuf; srcLen: int): seq[FindStartEntry] =
-  ## One-pass scan of the just-built CF buffer that records, for each
-  ## payload value, the *first* CF token whose `info` carries it and the
-  ## paren-nesting depth at that position. Subsequent `findStart` lookups
-  ## are then O(1).
-  result = newSeq[FindStartEntry](srcLen + int(PayloadOffset))
-  for i in 0 ..< result.len:
-    result[i] = FindStartEntry(pos: -1'i32, nested: 0)
+proc contains(index: FindStartIndex; srcPos: int): bool {.inline.} =
+  srcPos >= int(index.base) and srcPos < int(index.base) + index.data.len
+
+proc buildFindStartIndex(cf: TokenBuf; srcMap: openArray[int32]): FindStartIndex =
+  ## One-pass scan of the just-built CF buffer that records, for each source
+  ## position, the *first* CF token that maps back to it (via the parallel
+  ## `srcMap` side-channel) and the paren-nesting depth at that position.
+  ## Subsequent `findStart` lookups are then O(1).
+  assert srcMap.len == cf.len
+  # Size to the touched source span `[lo, hi]` with a `base` (LocSpan trick),
+  # rather than allocating an entry per source token.
+  var lo = high(int32)
+  var hi = -1'i32
+  for s in srcMap:
+    if s >= 0:
+      if s < lo: lo = s
+      if s > hi: hi = s
+  if hi < 0:
+    return FindStartIndex(base: 0, data: @[])
+  result = FindStartIndex(base: lo, data: newSeq[FindStartEntry](int(hi - lo) + 1))
+  for i in 0 ..< result.data.len:
+    result.data[i] = FindStartEntry(pos: -1'i32, nested: 0)
   var nested = 0
   # Under `-d:virtualParRi` the sealed ParRis are elided from `cf`, so counting
   # `dec nested` only on physical ParRis would make `nested` grow monotonically
@@ -202,23 +226,20 @@ proc buildFindStartIndex(cf: TokenBuf; srcLen: int): seq[FindStartEntry] =
           closeStack.add(i + span(readonlyCursorAt(cf, i)) - 1)
     of ParRi: dec nested
     else: discard
-    let info = cf[i].info
-    if isPayload(info):
-      let p = int(getPayload(info))
-      if p < result.len and result[p].pos < 0:
-        result[p] = FindStartEntry(pos: int32(i), nested: int16(nested))
+    let s = srcMap[i]
+    if s >= 0:
+      let k = int(s - result.base)
+      if result.data[k].pos < 0:
+        result.data[k] = FindStartEntry(pos: int32(i), nested: int16(nested))
     when defined(virtualParRi):
       while closeStack.len > 0 and closeStack[^1] == i:
         dec nested
         discard closeStack.pop()
 
-proc findStart(c: TokenBuf; idx: PackedLineInfo; n: var Cursor;
-               index: openArray[FindStartEntry]): int =
-  if not isPayload(idx):
-    return -1
-  let p = int(getPayload(idx))
-  if p < 0 or p >= index.len: return -1
-  let e = index[p]
+proc findStart(c: TokenBuf; srcPos: int; n: var Cursor;
+               index: FindStartIndex): int =
+  if not index.contains(srcPos): return -1
+  let e = index.data[srcPos - int(index.base)]
   if e.pos < 0: return -1
   n = c.readonlyCursorAt(int(e.pos))
   result = int(e.nested)
@@ -347,9 +368,9 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
   return true
 
 proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var Cursor;
-                    index: openArray[FindStartEntry]): bool =
+                    index: FindStartIndex): bool =
   var n = default Cursor
-  let nested = findStart(c, toPayload(idx + PayloadOffset), n, index)
+  let nested = findStart(c, int(idx), n, index)
   if nested < 0:
     return true
   let x = n
@@ -374,19 +395,17 @@ proc isLastUse*(n: Cursor; buf: var TokenBuf;
                 mover: var MoverContext): bool =
   # XXX Todo: only transform&traverse the innermost scope the variable was declared in.
   if mover.cf.len == 0:
-    # First call for this `buf`: bake the payload-encoded back-pointers into
-    # `buf.info`, build the CF from it, then restore `buf` to its original
-    # infos. The CF inherits the payloads and keeps them for the lifetime of
-    # this analysis pass — they never change once built, because per-walk
-    # visited marks now live in a side IntSet (see isLastReadImpl), not in
-    # the `info` field. The same scan also builds the payload→position index
-    # so `findStart` runs in O(1) instead of O(cf.len) per query.
-    let oldInfos = prepare(buf)
-    mover.cf = toControlflow(beginRead buf)
+    # First call for this `buf`: build the CF and, alongside it, the `srcMap`
+    # side-channel mapping every CF token back to its source position. `buf`
+    # itself is left untouched (the old scheme stamped payloads into `buf.info`
+    # and restored them; nifcore tokens may carry no info, so the mapping lives
+    # in a dedicated seq instead). The same scan then inverts `srcMap` into the
+    # source-position → position index so `findStart` runs in O(1) per query.
+    var srcMap: seq[int32] = @[]
+    mover.cf = toControlflowWithMap(beginRead buf, srcMap)
     freeze mover.cf
     endRead buf
-    restore(buf, oldInfos)
-    mover.index = buildFindStartIndex(mover.cf, buf.len)
+    mover.index = buildFindStartIndex(mover.cf, srcMap)
   let idx = cursorToPosition(buf, n)
   assert idx >= 0
   var other = default Cursor

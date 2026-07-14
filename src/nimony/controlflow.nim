@@ -42,8 +42,18 @@ type
   Target = object
     m: Mode
     t: TokenBuf
+    src: seq[int32]
+      ## Side-channel parallel to `t`: `src[i]` is the source-buffer position of
+      ## the source token that produced `t[i]`, or -1 for a synthesized token.
+      ## Maintained lazily — trailing synthesized tokens are `-1`-padded on demand
+      ## (see `padSrc`). Replaces the old scheme of smuggling the source position
+      ## through the token's `info` field as a payload; nifcore tokens do not
+      ## necessarily carry line info, so the mapping lives in a dedicated seq.
   ControlFlow = object
     dest: TokenBuf
+    destSrc: seq[int32]         ## side-channel parallel to `dest`; see `Target.src`.
+    srcBase: Cursor            ## start of the source buffer; source positions are
+                               ## measured relative to it (`cursorToPosition`).
     nextVar: int
     currentBlock: BlockOrLoop
     typeCache: TypeCache
@@ -109,6 +119,24 @@ proc codeListing*(c: TokenBuf, start = 0; last = -1): string =
   if i in jumpTargets: b.addRaw("L" & $i & ": End\n")
   result = b.extract()
 
+# ── source-position side-channel ──────────────────────────────────────────
+# The mover needs to map every CF token back to the source token it came from.
+# Rather than stamp a payload into the token `info` field (nifcore tokens may
+# carry no line info), we thread a parallel `seq[int32]` of source positions
+# through the `Target`/`dest` buffers. Only actual source-token copies get a
+# real position (see `addSource`); everything synthesized is `-1`. The arrays
+# are kept in sync lazily: `padSrc` fills the gap with `-1` up to the buffer's
+# current length just before a precise append and once at the very end.
+
+proc padSrcSeq(src: var seq[int32]; upTo: int) =
+  while src.len < upTo: src.add(-1'i32)
+
+proc padSrc(tar: var Target) = padSrcSeq(tar.src, tar.t.len)
+proc pad(c: var ControlFlow) = padSrcSeq(c.destSrc, c.dest.len)
+
+proc srcPosOf(c: ControlFlow; n: Cursor): int32 =
+  int32(cursorToPosition(c.srcBase, n))
+
 proc genLabel(c: ControlFlow): Label = Label(c.dest.len)
 
 proc jmpBack(c: var ControlFlow, p: Label; info: PackedLineInfo) =
@@ -133,6 +161,21 @@ proc trStmt(c: var ControlFlow; n: var Cursor)
 proc add(dest: var TokenBuf; tar: Target) =
   dest.copyTree tar.t
 
+proc flush(c: var ControlFlow; tar: var Target) =
+  ## Append a completed `Target` to `dest`, carrying its source-position
+  ## side-channel along. Replaces the bare `c.dest.add tar`.
+  padSrc(tar)
+  pad(c)
+  c.dest.add tar
+  for s in tar.src: c.destSrc.add s
+
+proc addSource(c: var ControlFlow; tar: var Target; n: Cursor) =
+  ## Copy a single *source* token into `tar`, recording its source position.
+  ## The only three call sites that funnel source tokens into the CF pipeline.
+  padSrc(tar)
+  tar.t.add n
+  tar.src.add srcPosOf(c, n)
+
 proc openTempVar(c: var ControlFlow; kind: StmtKind; typ: Cursor; info: PackedLineInfo): SymId =
   assert typ.kind != DotToken
   result = pool.syms.getOrIncl("`cf." & $c.nextVar)
@@ -146,24 +189,30 @@ type
   TargetWrapper = object
     m: Mode
     t: TokenBuf
+    src: seq[int32]
 
 proc makeVar(c: var ControlFlow; info: PackedLineInfo; tar: var Target; typ: Cursor): TargetWrapper =
   case tar.m
   of IsVar:
     result = TargetWrapper(m: IsVar)
   of IsEmpty, IsIgnored, IsAppend:
-    result = TargetWrapper(m: tar.m, t: move(tar.t))
+    result = TargetWrapper(m: tar.m, t: move(tar.t), src: move(tar.src))
     let tmp = openTempVar(c, VarS, typ, info)
     c.dest.addDotToken()
     c.dest.addParRi()
     tar.m = IsVar
     tar.t = createTokenBuf(1)
+    tar.src = @[]
     tar.t.addSymUse tmp, info
 
 proc maybeAppend(tar: var Target; w: var TargetWrapper) =
   if w.m == IsAppend:
+    padSrcSeq(w.src, w.t.len)
+    padSrc(tar)
     w.t.add tar.t
+    for s in tar.src: w.src.add s
     tar.t = move(w.t)
+    tar.src = move(w.src)
   tar.m = w.m
 
 proc trAndValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
@@ -175,7 +224,7 @@ proc trAndValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
     var aa = Target(m: IsEmpty)
     trExpr c, n, aa
     c.dest.addParLe(IteF, info)
-    c.dest.add aa
+    c.flush aa
     var tjmp: seq[Label] = @[]
     var fjmp: seq[Label] = @[]
     tjmp.add c.jmpForw(info)
@@ -187,15 +236,15 @@ proc trAndValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
     var bb = Target(m: IsEmpty)
     trExpr c, n, bb
     c.dest.copyIntoKind AsgnS, info:
-      c.dest.add tar
-      c.dest.add bb
+      c.flush tar
+      c.flush bb
 
     let lend = c.jmpForw(info)
     for f in fjmp: c.patch f
     assert tar.m == IsVar
     # tar = false:
     c.dest.copyIntoKind AsgnS, info:
-      c.dest.add tar
+      c.flush tar
       c.dest.addParPair(FalseX, info)
     c.patch lend
   maybeAppend tar, w
@@ -209,7 +258,7 @@ proc trOrValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
     var aa = Target(m: IsEmpty)
     trExpr c, n, aa
     c.dest.addParLe(IteF, info)
-    c.dest.add aa
+    c.flush aa
     var tjmp: seq[Label] = @[]
     var fjmp: seq[Label] = @[]
     tjmp.add c.jmpForw(info)
@@ -219,7 +268,7 @@ proc trOrValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
     assert tar.m == IsVar
     # tar = true
     c.dest.copyIntoKind AsgnS, info:
-      c.dest.add tar
+      c.flush tar
       c.dest.addParPair(TrueX, info)
     let lend = c.jmpForw(info)
     for f in fjmp: c.patch f
@@ -229,8 +278,8 @@ proc trOrValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
     var bb = Target(m: IsEmpty)
     trExpr c, n, bb
     c.dest.copyIntoKind AsgnS, info:
-      c.dest.add tar
-      c.dest.add bb
+      c.flush tar
+      c.flush bb
 
     c.patch lend
   maybeAppend tar, w
@@ -248,7 +297,7 @@ proc trExprLoop(c: var ControlFlow; n: var Cursor; tar: var Target) =
     tar.m = IsAppend
   else:
     assert tar.m == IsAppend, toString(n, false) & " " & $tar.m
-  tar.t.add n
+  c.addSource(tar, n)
   n.into:
     while n.hasMore:
       trExpr c, n, tar
@@ -268,7 +317,7 @@ proc trCall(c: var ControlFlow; n: var Cursor; tar: var Target) =
 
     var callTarget = Target(m: IsAppend)
     trExprLoop c, n, callTarget
-    c.dest.add callTarget
+    c.flush callTarget
     c.dest.addParRi()
 
     if tar.m == IsEmpty:
@@ -279,12 +328,12 @@ proc trCall(c: var ControlFlow; n: var Cursor; tar: var Target) =
 
 proc trVoidCall(c: var ControlFlow; n: var Cursor) =
   var tar = Target(m: IsAppend)
-  tar.t.add n
+  c.addSource(tar, n)
   n.into:
     while n.hasMore:
       trExpr c, n, tar
   tar.t.addParRi()
-  c.dest.add tar
+  c.flush tar
 
 proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
   case n.exprKind
@@ -333,7 +382,7 @@ proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
     var bb = Target(m: IsEmpty)
     trExpr c, n, bb
     c.dest.addParLe(IteF, info)
-    c.dest.add bb
+    c.flush bb
     tjmp.add c.jmpForw(info)
     fjmp.add c.jmpForw(info)
     c.dest.addParRi()
@@ -341,7 +390,7 @@ proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
 proc trUseExpr(c: var ControlFlow; n: var Cursor) =
   var aa = Target(m: IsEmpty)
   trExpr c, n, aa
-  c.dest.add aa
+  c.flush aa
 
 proc trStmtOrExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
   if tar.m != IsIgnored:
@@ -353,8 +402,8 @@ proc trStmtOrExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
     trExpr c, n, aa
     c.dest.addParLe(AsgnS, info)
     assert tar.t.len > 0
-    c.dest.add tar
-    c.dest.add aa
+    c.flush tar
+    c.flush aa
     c.dest.addParRi()
   else:
     trStmt c, n
@@ -455,7 +504,7 @@ proc trCase(c: var ControlFlow; n: var Cursor; tar: var Target) =
       c.dest.addSymDef selector, info
       c.dest.addEmpty2 info # no export marker, no pragmas
       c.dest.copyTree selectorType
-      c.dest.add aa
+      c.flush aa
       c.dest.addParRi()
 
     var finalBranch = default(Cursor)
@@ -574,7 +623,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
   case n.kind
   of Symbol, SymbolDef, IntLit, UIntLit, FloatLit, StringLit, CharLit,
      Ident, DotToken, EofToken, UnknownToken:
-    tar.t.add n
+    c.addSource(tar, n)
     inc n
   of ParRi:
     bug "unreachable"
@@ -668,7 +717,7 @@ proc trCoroFor(c: var ControlFlow; n: var Cursor) =
     var aa = Target(m: IsAppend)
     trExpr c, n, aa
     if aa.t.len > 0:
-      c.dest.add aa
+      c.flush aa
 
     trStmt(c, n) # body
     for cont in thisBlock.contInstrs: c.patch cont
@@ -696,7 +745,7 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
       var aa = Target(m: IsEmpty)
       trExpr c, n, aa
       c.dest.addParLe(RetS, info)
-      c.dest.add aa
+      c.flush aa
       c.dest.addParRi()
     elif (n.kind == Symbol and n.symId == c.resultSym) or (n.kind == DotToken):
       discard "do not generate `result = result`"
@@ -708,7 +757,7 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
       trExpr c, n, aa
       c.dest.addParLe(AsgnS, n.endInfo)
       c.dest.addSymUse c.resultSym, n.endInfo
-      c.dest.add aa
+      c.flush aa
       c.dest.addParRi()
   control.breakInstrs.add c.jmpForw(n.endInfo)
 
@@ -803,7 +852,7 @@ proc trLocal(c: var ControlFlow; n: var Cursor) =
   copyInto c.dest, n:
     takeLocalHeader c.typeCache, c.dest, n, kind
     skip n, SkipValue # value
-    c.dest.add aa
+    c.flush aa
 
 proc trRaise(c: var ControlFlow; n: var Cursor) =
   # we map `raise x` to `localErr = x; return`.
@@ -813,7 +862,7 @@ proc trRaise(c: var ControlFlow; n: var Cursor) =
     trExpr c, n, aa
     c.dest.addParLe(AsgnS, info)
     c.dest.addSymUse pool.syms.getOrIncl("localErr.0." & SystemModuleSuffix), info
-    c.dest.add aa
+    c.flush aa
     c.dest.addParRi()
   var it {.cursor.} = c.currentBlock
   while it != nil and it.kind notin {IsRoutine, IsTryStmt, IsFinally}:
@@ -853,13 +902,24 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
     trExpr c, n, bb
     assert bb.t.len > 0
   c.dest.add head
-  c.dest.add aa
-  c.dest.add bb
+  c.flush aa
+  c.flush bb
   c.dest.addParRi()
 
   let lhs = cursorAt(c.dest, asgnBegin+1)
   if isComplexLhs(lhs):
+    # The lhs/rhs of the just-emitted `asgn` are copied around below (and `dest`
+    # is truncated), so the source-position side-channel must be reshuffled with
+    # them. Align `destSrc` to `dest` first, then splice the matching slices into
+    # the rewritten `stmts` (via a parallel `stmtsSrc`).
+    c.pad()
+    let lhsPos = asgnBegin+1
+    var rhs = lhs
+    skip rhs
+    let rhsPos = cursorToPosition(c.dest, rhs)
+
     var stmts = createTokenBuf(40)
+    var stmtsSrc: seq[int32] = @[]
 
     let tmp = pool.syms.getOrIncl("`cf." & $c.nextVar)
     inc c.nextVar
@@ -869,20 +929,32 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
     stmts.copyIntoKind PtrT, info:
       stmts.copyTree typ
     stmts.copyIntoKind AddrX, info:
+      padSrcSeq(stmtsSrc, stmts.len)
+      let beforeL = stmts.len
       stmts.copyTree lhs
+      var kL = 0
+      while beforeL + kL < stmts.len:
+        stmtsSrc.add c.destSrc[lhsPos + kL]
+        inc kL
     stmts.addParRi()
-
-    var rhs = lhs
-    skip rhs
 
     stmts.copyIntoKind AsgnS, info:
       stmts.copyIntoKind DerefX, info:
         stmts.addSymUse tmp, info
+      padSrcSeq(stmtsSrc, stmts.len)
+      let beforeR = stmts.len
       stmts.copyTree rhs
+      var kR = 0
+      while beforeR + kR < stmts.len:
+        stmtsSrc.add c.destSrc[rhsPos + kR]
+        inc kR
+    padSrcSeq(stmtsSrc, stmts.len)
 
     endRead c.dest
     c.dest.shrink asgnBegin
+    c.destSrc.setLen asgnBegin
     c.dest.add stmts
+    for s in stmtsSrc: c.destSrc.add s
   else:
     endRead c.dest
 
@@ -920,7 +992,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     var aa = Target(m: IsAppend)
     trExpr c, n, aa
     if aa.t.len > 0:
-      c.dest.add aa
+      c.flush aa
   of IfS:
     var aa = Target(m: IsIgnored)
     trIf c, n, aa
@@ -978,7 +1050,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
       while n.hasMore:
         trExpr c, n, tar
     c.dest.add head
-    c.dest.add tar
+    c.flush tar
     c.dest.addParRi()
   of PragmaxS:
     n.into:
@@ -989,8 +1061,9 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
   of CoroforS:
     trCoroFor c, n
 
-proc toControlflow*(n: Cursor; keepReturns = false): TokenBuf =
+proc toControlflowImpl(n: Cursor; keepReturns: bool; srcMap: var seq[int32]): TokenBuf =
   var c = ControlFlow(typeCache: createTypeCache(), keepReturns: keepReturns)
+  c.srcBase = n
   c.typeCache.openScope()
   let sk = n.stmtKind
   var n = n
@@ -1005,8 +1078,25 @@ proc toControlflow*(n: Cursor; keepReturns = false): TokenBuf =
     addRet c
     c.dest.addParRi()
   c.typeCache.closeScope()
+  c.pad()                       # fill trailing synthesized tokens with -1
+  srcMap = ensureMove c.destSrc
   result = ensureMove c.dest
   #echo "result: ", codeListing(result)
+
+proc toControlflow*(n: Cursor; keepReturns = false): TokenBuf =
+  ## Build the goto-based control-flow representation. The source-position
+  ## side-channel is discarded — for callers (e.g. contracts) that only need
+  ## the CF graph, not the back-mapping to the original trees.
+  var srcMap: seq[int32] = @[]
+  result = toControlflowImpl(n, keepReturns, srcMap)
+
+proc toControlflowWithMap*(n: Cursor; srcMap: var seq[int32];
+                           keepReturns = false): TokenBuf =
+  ## As `toControlflow`, but also returns `srcMap`, a seq parallel to the result
+  ## buffer: `srcMap[i]` is the position (relative to `n`) of the source token
+  ## that produced CF token `i`, or -1 for a synthesized token. The mover inverts
+  ## this to locate an `emove` operand's landing site in the CF.
+  result = toControlflowImpl(n, keepReturns, srcMap)
 
 proc eliminateDeadInstructions*(c: TokenBuf; start = 0; last = -1): seq[bool] =
   # Create a sequence to track which instructions are reachable
@@ -1063,24 +1153,6 @@ proc eliminateDeadInstructions*(c: TokenBuf; start = 0; last = -1): seq[bool] =
     # For regular instructions or after processing special instructions,
     # continue to the next instruction
     worklist.add(pos + 1)
-
-const
-  PayloadOffset* = 1'u32
-    ## Position payloads stored in CF token `info` fields use
-    ## `toPayload(srcPos + PayloadOffset)`. The offset of 1 dates back to when
-    ## `toPayload(0)` was reserved as a visited-mark sentinel — that scheme has
-    ## been replaced by a side `IntSet` in the mover (see mover.nim), but the
-    ## offset is kept so the encoding of existing CFs is stable.
-
-proc prepare*(buf: var TokenBuf): seq[PackedLineInfo] =
-  result = newSeq[PackedLineInfo](buf.len)
-  for i in 0..<buf.len:
-    result[i] = buf[i].info
-    buf[i].info = toPayload(i.uint32 + PayloadOffset)
-
-proc restore*(buf: var TokenBuf; infos: seq[PackedLineInfo]) =
-  for i in 0..<buf.len:
-    buf[i].info = infos[i]
 
 when isMainModule:
   import std / [syncio, os]
