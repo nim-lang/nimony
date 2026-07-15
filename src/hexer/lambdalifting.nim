@@ -104,11 +104,22 @@ proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
     while n.hasMore:
       tr(c, dest, n)
 
+proc isClosure(typ: Cursor): bool {.inline.} = procHasPragma(typ, ClosureP)
+
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
   copyInto dest, n:
-    c.typeCache.takeLocalHeader(dest, n, kind)
+    let name = n.symId
+    takeTree dest, n # name
+    takeTree dest, n # export marker
+    takeTree dest, n # pragmas
+    let typ = n
+    if isClosure(typ):
+      # closure proc or iterator type transformed in `treProcType` proc
+      c.hasClosures = true
     tr(c, dest, n)
+    c.typeCache.registerLocal(name, kind, typ, n)
+    tr(c, dest, n)  # value
 
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   #c.typeCache.openScope(ProcScope)
@@ -127,7 +138,12 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
         if hasPragma(n, ClosureP):
           c.escapes.incl symId
           c.hasClosures = true
-      takeTree dest, n
+      if i == ParamsPos:
+        takeInto dest, n:
+          while n.hasMore:
+            trLocal c, dest, n
+      else:
+        takeTree dest, n
     if isConcrete:
       tr(c, dest, n)
     else:
@@ -155,6 +171,10 @@ proc localToField(c: var Context; n: Cursor; local, typ: SymId): SymId =
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   takeInto dest, n:
+    let calleeTyp = c.typeCache.getType(n)
+    if isClosure(calleeTyp):
+      # a call transformed by `genCall` proc
+      c.hasClosures = true
     if n.kind == Symbol:
       # if a closure proc is called, we don't want to see it as "escaping".
       dest.add n
@@ -329,8 +349,6 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trSons(c, dest, n)
   of ParRi:
     bug "unexpected ')' inside"
-
-proc isClosure(typ: Cursor): bool {.inline.} = procHasPragma(typ, ClosureP)
 
 when false:
   proc paramsWithClosurePragma(typ: Cursor): bool =
