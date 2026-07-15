@@ -61,7 +61,8 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n
   c.typeCache.openScope()
   dest.add n
-  var r = takeRoutine(n, SkipExclBody)
+  let declScope = enterScope(n)
+  var r = asRoutine(decl, SkipExclBody)
   let oldThisRoutine = c.thisRoutine
   c.thisRoutine = r.name.symId
   copyTree dest, r.name
@@ -72,12 +73,13 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.registerParams(r.name.symId, decl, r.params)
   copyTree dest, r.pragmas
   copyTree dest, r.effects
-  skip n, SkipEffects # effects
+  for i in 0 ..< BodyPos: skip n # header fields, already copied from `r`
   if n.stmtKind == StmtsS and not isGeneric(r):
     tr c, dest, n
   else:
     takeTree dest, n
-  dest.takeParRi(n)
+  dest.addParRi(n.endInfo)
+  leaveScope(n, declScope)
   c.thisRoutine = oldThisRoutine
   c.typeCache.closeScope()
 

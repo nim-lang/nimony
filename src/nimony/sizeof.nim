@@ -181,7 +181,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
       # mark as invalid as we pretend to not to know the alignment the backend ends up using etc.
       c.overflow = true
     var n = n
-    inc n
+    discard enterScope(n) # bound the field walk, `n` is a copy
     var c2 = createSizeofValue(c.strict, PackedP in pragmas.pragmas)
     if n.kind != DotToken:  # base type
       getSize(c2, cache, n, ptrSize)

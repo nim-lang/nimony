@@ -132,20 +132,19 @@ proc compileCmp(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor):
     cnst = createXint(pool.uintegers[r.uintId])
     inc r
   elif (let op = r.exprKind; op in {AddX, SubX}):
-    inc r
-    skip r # type
-    if r.kind == Symbol:
-      b = mapSymbol(c, paramMap, call, r.symId)
-      inc r
-      if r.kind == IntLit:
-        cnst = createXint(pool.integers[r.intId])
-      elif r.kind == UIntLit:
-        cnst = createXint(pool.uintegers[r.uintId])
+    r.peekInto:
+      skip r # type
+      if r.kind == Symbol:
+        b = mapSymbol(c, paramMap, call, r.symId)
+        inc r
+        if r.kind == IntLit:
+          cnst = createXint(pool.integers[r.intId])
+        elif r.kind == UIntLit:
+          cnst = createXint(pool.uintegers[r.uintId])
+        else:
+          error "expected integer literal but got: ", r
       else:
-        error "expected integer literal but got: ", r
-    else:
-      error "expected symbol but got: ", r
-    skipParRi r
+        error "expected symbol but got: ", r
   result = query(a, b, cnst)
 
 proc checkReq(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): ProofRes =
@@ -310,106 +309,94 @@ proc wantNotNilDeref(c: var Context; n: Cursor) =
     wantNotNil c, n
 
 proc analyseOconstr(c: var Context; n: var Cursor) =
-  inc n
-  let objType = n
-  skip n # type
-  while n.hasMore:
-    assert n.substructureKind == KvU
-    inc n
-    assert n.kind == Symbol
-    let expected = lookupField(c.typeCache, objType, n.symId)
-    assert not cursorIsNil(expected), "could not lookup type for " & pool.syms[n.symId]
-    skip n # field name
-    checkNilMatch c, n, expected
-    skip n # value
-    if n.hasMore:
-      # optional inheritance
-      skip n
-    skipParRi n
-  skipParRi n
+  n.into:
+    let objType = n
+    skip n # type
+    while n.hasMore:
+      assert n.substructureKind == KvU
+      n.into:
+        assert n.kind == Symbol
+        let expected = lookupField(c.typeCache, objType, n.symId)
+        assert not cursorIsNil(expected), "could not lookup type for " & pool.syms[n.symId]
+        skip n # field name
+        checkNilMatch c, n, expected
+        skip n # value
+        if n.hasMore:
+          # optional inheritance
+          skip n
 
 proc analyseArrayConstr(c: var Context; n: var Cursor) =
-  inc n
-  let expected = n.firstSon # element type of the array
-  skip n # type
-  while n.hasMore:
-    checkNilMatch c, n, expected
-    skip n
-  skipParRi n
+  n.into:
+    let expected = n.firstSon # element type of the array
+    skip n # type
+    while n.hasMore:
+      checkNilMatch c, n, expected
+      skip n
 
 proc analyseTupConstr(c: var Context; n: var Cursor) =
-  inc n
-  var expected = n.firstSon # type of the first field
-  skip n # type
-  while n.hasMore:
-    assert expected.hasMore
-    checkNilMatch c, n, getTupleFieldType(expected)
-    skip n
-    skip expected # type of the next field
-  skipParRi n
+  n.into:
+    var expected = n.firstSon # type of the first field
+    skip n # type
+    while n.hasMore:
+      assert expected.hasMore
+      checkNilMatch c, n, getTupleFieldType(expected)
+      skip n
+      skip expected # type of the next field
 
 proc analyseExpr(c: var Context; pc: var Cursor) =
   #echo "analyseExpr ", toString(pc, false)
-  var nested = 0
-  while true:
-    case pc.kind
-    of Symbol:
-      let symId = pc.symId
-      let x = getLocalInfo(c.typeCache, symId)
-      if x.kind in {VarY, LetY, CursorY, PatternvarY}:
-        if symId notin c.directlyInitialized and symId notin c.writesTo:
-          buildErr(c, pc.info, "cannot prove that " & pool.syms[symId] & " has been initialized")
-          # do not name the same variable twice:
-          c.writesTo.add symId
-      inc pc
-    of SymbolDef:
-      bug "symbol definition in single path"
-    of EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit, UnknownToken:
-      inc pc
-    of ParRi:
-      assert nested > 0
-      dec nested
-      inc pc
-    of ParLe:
-      case pc.exprKind
-      of CallKinds:
-        analyseCall c, pc
-      of DdotX:
-        inc pc
+  case pc.kind
+  of Symbol:
+    let symId = pc.symId
+    let x = getLocalInfo(c.typeCache, symId)
+    if x.kind in {VarY, LetY, CursorY, PatternvarY}:
+      if symId notin c.directlyInitialized and symId notin c.writesTo:
+        buildErr(c, pc.info, "cannot prove that " & pool.syms[symId] & " has been initialized")
+        # do not name the same variable twice:
+        c.writesTo.add symId
+    inc pc
+  of SymbolDef:
+    bug "symbol definition in single path"
+  of EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit, UnknownToken:
+    inc pc
+  of ParRi:
+    bug "unpaired ')'"
+  of ParLe:
+    case pc.exprKind
+    of CallKinds:
+      analyseCall c, pc
+    of DdotX:
+      pc.into:
         wantNotNilDeref c, pc
         analyseExpr c, pc # object
         skip pc # field name
         if pc.hasMore: skip pc # inheritence depth
         if pc.hasMore: skip pc # optional access-token string lit
-        skipParRi pc
-      of DerefX:
-        inc pc
+    of DerefX:
+      pc.into:
         wantNotNilDeref c, pc
         analyseExpr c, pc
-        skipParRi pc
-      of OconstrX, NewobjX:
-        analyseOconstr c, pc
-      of AconstrX:
-        analyseArrayConstr c, pc
-      of TupconstrX:
-        analyseTupConstr c, pc
-      of CastX, ConvX, HconvX:
-        inc pc
+    of OconstrX, NewobjX:
+      analyseOconstr c, pc
+    of AconstrX:
+      analyseArrayConstr c, pc
+    of TupconstrX:
+      analyseTupConstr c, pc
+    of CastX, ConvX, HconvX:
+      pc.into:
         skip pc # skips type
         analyseExpr c, pc
-        skipParRi pc
-      else:
-        inc nested
-        inc pc
-    if nested == 0: break
+    else:
+      pc.loopInto:
+        analyseExpr c, pc
 
 proc analyseCallArgs(c: var Context; n: var Cursor) =
   let callCursor = n
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
   analyseExpr c, n # the `fn` itself could be a proc pointer we must ensure was initialized
   assert fnType.isParamsTag
-  inc fnType
   var paramMap = initTable[SymId, int]() # param to position
+  let paramsScope = enterScope(fnType)
   while n.hasMore:
     let previousFormalParam = fnType
     assert fnType.hasMore
@@ -428,7 +415,7 @@ proc analyseCallArgs(c: var Context; n: var Cursor) =
     checkNilMatch c, n, param.typ
     analyseExpr c, n
   while fnType.hasMore: skip fnType
-  inc fnType # skip ParRi
+  leaveScope(fnType, paramsScope)
   # skip return type:
   skip fnType
   # now we have the pragmas:
@@ -442,9 +429,8 @@ proc analyseCallArgs(c: var Context; n: var Cursor) =
         error "contract violation: ", req
 
 proc analyseCall(c: var Context; n: var Cursor) =
-  inc n # skip call instruction
-  analyseCallArgs(c, n)
-  skipParRi n
+  n.into: # skip call instruction
+    analyseCallArgs(c, n)
 
 #[
 We use the control flow graph for a structured traversal over the basic blocks (bb):
@@ -490,26 +476,25 @@ proc computeBasicBlocks*(c: TokenBuf; start = 0; last = -1): Table[BasicBlockIdx
 proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
   result = false
   if pc.exprKind in {AddX, SubX}:
-    inc pc
-    skip pc # type
-    if pc.kind == Symbol:
-      let symId2 = pc.symId
-      fact.b = getVarId(c, symId2)
-      inc pc
-      if pc.kind == IntLit:
-        fact.c = fact.c + createXint(pool.integers[pc.intId])
-        result = true
+    pc.into:
+      skip pc # type
+      if pc.kind == Symbol:
+        let symId2 = pc.symId
+        fact.b = getVarId(c, symId2)
         inc pc
-      elif pc.kind == UIntLit:
-        fact.c = fact.c + createXint(pool.uintegers[pc.uintId])
-        result = true
-        inc pc
+        if pc.kind == IntLit:
+          fact.c = fact.c + createXint(pool.integers[pc.intId])
+          result = true
+          inc pc
+        elif pc.kind == UIntLit:
+          fact.c = fact.c + createXint(pool.uintegers[pc.uintId])
+          result = true
+          inc pc
+        else:
+          analyseExpr c, pc
       else:
         analyseExpr c, pc
-    else:
-      analyseExpr c, pc
-      analyseExpr c, pc
-    skipParRi pc
+        analyseExpr c, pc
   elif pc.kind == Symbol:
     let symId2 = pc.symId
     fact.b = getVarId(c, symId2)
@@ -538,17 +523,19 @@ proc translateCond(c: var Context; pc: var Cursor; wasEquality: var bool): LeXpl
   result = LeXplusC(a: InvalidVarId, b: VarId(0), c: createXint(0'i32))
 
   var negations = 0
+  var notScopes: seq[CursorScope] = @[]
   while r.exprKind == NotX:
     inc negations
-    inc r
+    notScopes.add enterScope(r)
 
   let xk = r.exprKind
+  var cmpScope = default(CursorScope)
   if xk in {LeX, LtX}:
-    inc r
+    cmpScope = enterScope(r)
     skip r # skip type
   elif xk == EqX:
     wasEquality = true
-    inc r
+    cmpScope = enterScope(r)
     skip r # skip type
   else:
     analyseExpr c, pc
@@ -578,12 +565,12 @@ proc translateCond(c: var Context; pc: var Cursor; wasEquality: var bool): LeXpl
   # a < b  --> a <= b - 1:
   if xk == LtX:
     result.c = result.c - createXint(1'i32)
-  skipParRi r
+  leaveScope(r, cmpScope)
 
   while negations > 0:
     negateFact(result)
     dec negations
-    skipParRi r
+    leaveScope(r, notScopes.pop())
 
   pc = r
 
@@ -627,89 +614,84 @@ proc cannotBeNil(c: var Context; n: Cursor): bool {.inline.} =
   result = markedAs(t, NotnilU) or isNonNilExpr(n)
 
 proc analyseAsgn(c: var Context; pc: var Cursor) =
-  inc pc # skip asgn instruction
-  let expected = getType(c.typeCache, pc)
-  if pc.kind == Symbol:
-    let symId = pc.symId
-    let x = getLocalInfo(c.typeCache, symId)
-    if x.kind in {LetY, GletY, TletY}:
-      if symId in c.directlyInitialized or symId in c.writesTo:
-        c.buildErr pc.info, "invalid reassignment to `let` variable"
+  pc.into: # skip asgn instruction
+    let expected = getType(c.typeCache, pc)
+    if pc.kind == Symbol:
+      let symId = pc.symId
+      let x = getLocalInfo(c.typeCache, symId)
+      if x.kind in {LetY, GletY, TletY}:
+        if symId in c.directlyInitialized or symId in c.writesTo:
+          c.buildErr pc.info, "invalid reassignment to `let` variable"
 
-    var fact = query(getVarId(c, symId), InvalidVarId, createXint(0'i32))
-    c.writesTo.add symId
-    # after `x = 4` we know two facts: `x >= 4` and `x <= 4`
-    inc pc
-    checkNilMatch c, pc, expected
-    let rhs = pc
-    if rightHandSide(c, pc, fact):
-      if fact.a == fact.b:
-        variableChangedByDiff(c.facts, fact.a, fact.c)
+      var fact = query(getVarId(c, symId), InvalidVarId, createXint(0'i32))
+      c.writesTo.add symId
+      # after `x = 4` we know two facts: `x >= 4` and `x <= 4`
+      inc pc
+      checkNilMatch c, pc, expected
+      let rhs = pc
+      if rightHandSide(c, pc, fact):
+        if fact.a == fact.b:
+          variableChangedByDiff(c.facts, fact.a, fact.c)
+        else:
+          invalidateFactsAbout(c.facts, fact.a)
+          addAsgnFact c, fact
       else:
         invalidateFactsAbout(c.facts, fact.a)
-        addAsgnFact c, fact
-    else:
-      invalidateFactsAbout(c.facts, fact.a)
 
-    if (rhs.exprKind == NewobjX and c.procCanRaise) or cannotBeNil(c, rhs):
-      # we know: x != nil after the assignment:
-      c.facts.add isNotNil(fact.a)
-  else:
-    analyseExpr c, pc
-    checkNilMatch c, pc, expected
-    analyseExpr c, pc
-  skipParRi pc
+      if (rhs.exprKind == NewobjX and c.procCanRaise) or cannotBeNil(c, rhs):
+        # we know: x != nil after the assignment:
+        c.facts.add isNotNil(fact.a)
+    else:
+      analyseExpr c, pc
+      checkNilMatch c, pc, expected
+      analyseExpr c, pc
 
 proc analyseAssume(c: var Context; pc: var Cursor) =
-  inc pc
-  var wasEquality = false
-  let fact = translateCond(c, pc, wasEquality)
-  if not fact.isValid:
-    error "invalid assume: ", pc
-  else:
-    c.facts.add fact
-    if wasEquality:
-      c.facts.add fact.geXplusC
-  skipParRi pc
+  pc.into:
+    var wasEquality = false
+    let fact = translateCond(c, pc, wasEquality)
+    if not fact.isValid:
+      error "invalid assume: ", pc
+    else:
+      c.facts.add fact
+      if wasEquality:
+        c.facts.add fact.geXplusC
 
 proc analyseAssert(c: var Context; pc: var Cursor) =
   # We also support `(assert (report) (error) <condition>)` for testing purposes.
   let orig = pc
-  inc pc
-  var report = false
-  var shouldError = false
-  if pc.pragmaKind == ReportP:
-    report = true
-    inc pc
-    skipParRi pc
-  if pc.pragmaKind == ErrorP:
-    shouldError = true
-    inc pc
-    skipParRi pc
+  pc.into:
+    var report = false
+    var shouldError = false
+    if pc.pragmaKind == ReportP:
+      report = true
+      skip pc
+    if pc.pragmaKind == ErrorP:
+      shouldError = true
+      skip pc
 
-  var wasEquality = false
-  let fact = translateCond(c, pc, wasEquality)
-  if not fact.isValid:
-    error "invalid assert: ", orig
-  elif implies(c.facts, fact):
-    if shouldError:
-      contractViolation(c, orig, fact, report)
-    elif wasEquality:
-      if implies(c.facts, fact.geXplusC):
-        if report: echo "OK ", fact
-      else:
-        if shouldError:
-          if report: echo "OK (could indeed not prove) ", fact
+    var wasEquality = false
+    let fact = translateCond(c, pc, wasEquality)
+    if not fact.isValid:
+      error "invalid assert: ", orig
+    elif implies(c.facts, fact):
+      if shouldError:
+        contractViolation(c, orig, fact, report)
+      elif wasEquality:
+        if implies(c.facts, fact.geXplusC):
+          if report: echo "OK ", fact
         else:
-          contractViolation(c, orig, fact, report)
+          if shouldError:
+            if report: echo "OK (could indeed not prove) ", fact
+          else:
+            contractViolation(c, orig, fact, report)
+      else:
+        if report: echo "OK ", fact
     else:
-      if report: echo "OK ", fact
-  else:
-    if shouldError:
-      if report: echo "OK (could indeed not prove) ", fact
-    else:
-      contractViolation(c, orig, fact, report)
-  skipParRi pc
+      if shouldError:
+        if report: echo "OK (could indeed not prove) ", fact
+      else:
+        contractViolation(c, orig, fact, report)
 
 proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
   #echo "TRAVERSING BASIC BLOCK: L", toBasicBlock(c, pc).int
@@ -767,24 +749,22 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
           skip pc # pragmas
           inc nested
         of LocalDecls:
-          inc pc
-          let name = pc.symId
-          skip pc # name
-          skip pc # export marker
-          let skipInitCheck = hasPragma(pc, NoinitP)
-          skip pc # pragmas
-          c.typeCache.registerLocal(name, cast[SymKind](kind), pc)
-          skip pc # type
-          if pc.kind != DotToken or skipInitCheck:
-            c.directlyInitialized.incl name
-          analyseExpr c, pc
-          skipParRi pc
+          pc.into:
+            let name = pc.symId
+            skip pc # name
+            skip pc # export marker
+            let skipInitCheck = hasPragma(pc, NoinitP)
+            skip pc # pragmas
+            c.typeCache.registerLocal(name, cast[SymKind](kind), pc)
+            skip pc # type
+            if pc.kind != DotToken or skipInitCheck:
+              c.directlyInitialized.incl name
+            analyseExpr c, pc
         of NoStmt:
           if pc.cfKind == ForbindF:
-            inc pc
-            analyseCall c, pc
-            skip pc
-            skipParRi pc
+            pc.into:
+              analyseCall c, pc
+              skip pc
           else:
             case pc.exprKind
             of PragmaxX:
@@ -792,18 +772,16 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
               skip pc # pragmas
               inc nested
             of DestroyX, CopyX, WasmovedX, SinkhX, TraceX:
-              inc pc
-              analyseExpr c, pc
-              # don't assume arity here
-              while pc.hasMore:
+              pc.into:
                 analyseExpr c, pc
-              skipParRi pc
+                # don't assume arity here
+                while pc.hasMore:
+                  analyseExpr c, pc
             else:
               bug "unknown statement: " & toString(pc, false)
         of DiscardS, YldS:
-          inc pc
-          analyseExpr c, pc
-          skipParRi pc
+          pc.into:
+            analyseExpr c, pc
         of CallKindsS:
           analyseCall(c, pc)
         of EmitS, InclS, ExclS:
@@ -906,33 +884,32 @@ proc checkContracts(c: var Context; n: Cursor) =
           candidates.add cont.elsePart
   c.typeCache.closeScope()
 
+proc traverseProc(c: var Context; n: var Cursor)
+
+proc traverseBody(c: var Context; n: var Cursor) =
+  # don't forget about inner procs:
+  let sk = n.stmtKind
+  if sk in {ProcS, FuncS, IteratorS, ConverterS, MethodS}:
+    traverseProc(c, n)
+  elif sk in {MacroS, TemplateS, TypeS, CommentS, PragmasS}:
+    skip n
+  elif n.kind == ParLe:
+    n.loopInto:
+      traverseBody(c, n)
+  else:
+    inc n
+
 proc traverseProc(c: var Context; n: var Cursor) =
   let orig = n
-  let r = takeRoutine(n, SkipExclBody)
-  skip n, SkipEffects # effects
-  if not isGeneric(r):
-    c.routines.add orig
-    var nested = 0
-    while true:
-      # don't forget about inner procs:
-      let sk = n.stmtKind
-      if sk in {ProcS, FuncS, IteratorS, ConverterS, MethodS}:
-        traverseProc(c, n)
-      elif sk in {MacroS, TemplateS, TypeS, CommentS, PragmasS}:
-        skip n
-      elif n.kind == ParLe:
-        inc nested
-        inc n
-      elif n.kind == ParRi:
-        dec nested
-        inc n
-        if nested == 0: break
-      else:
-        inc n
-        if nested == 0: break
-  else:
-    skip n, SkipBody # body
-  skipParRi n # proc decl end
+  let r = asRoutine(orig, SkipExclBody)
+  n.into:
+    for i in 0 ..< BodyPos:
+      skip n
+    if not isGeneric(r):
+      c.routines.add orig
+      traverseBody(c, n)
+    else:
+      skip n # body
 
 proc traverseToplevel(c: var Context; n: var Cursor) =
   case n.stmtKind
@@ -943,10 +920,9 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
         traverseToplevel(c, n)
     c.toplevelStmts.addParRi()
   of PragmaxS:
-    inc n
-    skip n
-    traverseToplevel(c, n)
-    skipParRi n
+    n.into:
+      skip n
+      traverseToplevel(c, n)
   of ProcS, FuncS, IteratorS, ConverterS, MethodS:
     traverseProc(c, n)
   of MacroS, TemplateS, TypeS, CommentS, PragmasS,

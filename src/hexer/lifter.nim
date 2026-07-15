@@ -180,13 +180,13 @@ proc isTrivialObjectBody(c: var LiftingCtx; body: Cursor): bool =
   var n = body
   if n.typeKind in {RefT, PtrT}:
     inc n
-  inc n # skip `(object` token
+  discard enterScope(n) # skip `(object` token; bound the walk, `n` is a copy
 
   var baseType = n
   if baseType.typeKind in {RefT, PtrT}:
     inc baseType
   skip n # skip basetype
-  if n.kind != DotToken:
+  if n.hasMore and n.kind != DotToken:
     result = isTrivialForFields(c, n)
   else:
     result = true
@@ -250,7 +250,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
     result = isTrivialObjectBody(c, typ)
   of TupleT:
     var tup = typ
-    inc tup
+    discard enterScope(tup)  # throwaway copy; bounds the walk under vpr
     while tup.hasMore:
       let field = getTupleFieldType(tup)
       if not isTrivial(c, field):
@@ -448,7 +448,7 @@ proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: T
         unravelObjFieldsForward(c, nCopy, paramA, paramB, depth)
         c.op = prevOp
       let info = n.info
-      inc n
+      let caseScope = enterScope(n)
       var selector = n
       if c.op != attachedDestroy:
         # copy the selector before case stmt, but destroy after case stmt
@@ -463,24 +463,21 @@ proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: T
       while n.hasMore:
         case n.substructureKind
         of OfU:
-          c.dest.takeToken(n)
-          c.dest.takeTree(n)
-          assert n.stmtKind == StmtsS
-          c.dest.takeToken(n)
-          unravelObjFieldsForward c, n, paramA, paramB, depth
-          takeParRi(c.dest, n)
-          takeParRi(c.dest, n)
+          takeInto c.dest, n:
+            c.dest.takeTree(n)
+            assert n.stmtKind == StmtsS
+            takeInto c.dest, n:
+              unravelObjFieldsForward c, n, paramA, paramB, depth
         of ElseU:
-          c.dest.takeToken(n)
-          assert n.stmtKind == StmtsS
-          c.dest.takeToken(n)
-          unravelObjFieldsForward c, n, paramA, paramB, depth
-          takeParRi(c.dest, n)
-          takeParRi(c.dest, n)
+          takeInto c.dest, n:
+            assert n.stmtKind == StmtsS
+            takeInto c.dest, n:
+              unravelObjFieldsForward c, n, paramA, paramB, depth
         else:
           error "expected `of` or `else` inside `case`"
 
-      takeParRi(c.dest, n) # end of case
+      c.dest.addParRi(n.endInfo) # end of case
+      leaveScope(n, caseScope)
 
       if c.op == attachedDestroy:
         # destroy the selector after case stmt
@@ -584,7 +581,7 @@ proc unravelTuple(c: var LiftingCtx;
                   n: Cursor; paramA, paramB: TokenBuf) =
   assert n.typeKind == TupleT
   var n = n
-  inc n
+  discard enterScope(n)  # throwaway copy; bounds the walk under vpr
   var idx = 0
   while n.hasMore:
     let fieldType = getTupleFieldType(n)
@@ -817,12 +814,16 @@ proc addParamType(c: var LiftingCtx; typ: TypeCursor) =
   if n.isAtom:
     copyTree c.dest, typ
   else:
-    c.dest.takeToken n
-    while n.hasMore:
-      if isNilAnnotation(n):
-        skip n
-      else:
-        takeTree c.dest, n
+    # `n.into` bounds the child walk: `typ` is a cursor into an enclosing
+    # decl, so an unbounded `hasMore` loop would run past the type's
+    # (elided) close and copy the decl's remaining children too.
+    c.dest.add n.load()
+    n.into:
+      while n.hasMore:
+        if isNilAnnotation(n):
+          skip n
+        else:
+          takeTree c.dest, n
     c.dest.addParRi()
 
 proc addParamWithModifier(c: var LiftingCtx; param: SymId; typ: TypeCursor; modifier: TypeKind) =
@@ -858,7 +859,8 @@ proc maybeAddReturn(c: var LiftingCtx; res: SymId) =
 
 proc publishProc(sym: SymId; dest: TokenBuf; procStart: int) =
   var buf = createTokenBuf(100)
-  for i in procStart ..< dest.len: buf.add dest[i]
+  # verbatim copy of a (possibly still-open) span: keep seals, no open-tag churn
+  for i in procStart ..< dest.len: buf.addRaw dest[i]
   programs.publish(sym, buf)
 
 proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
@@ -917,6 +919,7 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
       c.dest.addParRi()
       c.dest.addEmpty() # void return type
 
+    let pragmasStart = c.dest.len
     copyIntoKind c.dest, PragmasS, c.info:
       copyIntoKind c.dest, NodestroyP, c.info: discard
       let pragmasPos = c.dest.len
@@ -950,10 +953,19 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
       copyIntoKind(c.dest, StmtsS, c.info): discard
   # tell vtables.nim we need dynamic binding here:
   if c.routineKind == MethodY:
-    c.dest[procStart] = parLeToken(MethodS, c.info)
+    # `setTag`, not a `parLeToken` overwrite: the decl is sealed by now and
+    # its jump must be preserved
+    setTag(c.dest[procStart], TagId(MethodS))
+    c.dest[procStart] = withLineInfo(c.dest[procStart], c.info)
 
   if c.calledErrorHook != NoLineInfo:
+    let before = c.dest.len
     c.dest.insert [parLeToken(ErrorP, c.calledErrorHook), parRiToken(c.calledErrorHook)], pragmasPos
+    # The insert lands inside two already-sealed scopes; widen their jumps
+    # (no-op in classic mode):
+    let growth = c.dest.len - before
+    widenSealed c.dest, pragmasStart, growth
+    widenSealed c.dest, procStart, growth
 
   publishProc(sym, c.dest, procStart)
 

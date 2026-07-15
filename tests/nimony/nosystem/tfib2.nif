@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 3292             )
+(.indexat 3282             )
 (stmts@,2,tests/nimony/nosystem/tfib2.nim
  (type@2,1 :int.0.
   (i 64).
@@ -114,7 +114,7 @@
         (call@5 fib.0.~3
          (infix@2
           (ochoice \2D.0. \2D.1.)a.1~1 2@1)))))))
-   (ret~2,~1 result.0)))
+   (ret result.0)))
  (discard@,S
   (call@B fib.0.Intnbdb.~3 8@1))
  (discard@,T
@@ -147,7 +147,7 @@
         (call@5 fib.0.Intnbdb.~3
          (sub@2
           (i 64)a.3~1 2@1)))))))
-   (ret~2,~1 result.1))))(.index@,2,tests/nimony/nosystem/tfib2.nim
+   (ret result.1))))(.index@,2,tests/nimony/nosystem/tfib2.nim
  (x int.0. 79)
  (x bool.0. 64)
  (x float.0. 66)
@@ -164,4 +164,4 @@
  (h@4,I \2D.2. 135)
  (h fib.0. 138)
  (h@8,M T.0. 38)
- (h fib.0.Intnbdb. 903))
+ (h fib.0.Intnbdb. 898))

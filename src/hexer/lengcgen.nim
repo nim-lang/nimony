@@ -61,6 +61,13 @@ proc expectIntLit(c: var EContext; n: var Cursor) =
 proc add(dest: var TokenBuf; tag: string; info: PackedLineInfo) =
   dest.add tagToken(tag, info)
 
+proc takeParRi(dest: var TokenBuf; n: var Cursor; scope: CursorScope) {.inline.} =
+  ## Bounded counterpart of the classic `takeParRi dest, n`: emits the close
+  ## with the input close's info (`NoLineInfo` if it was elided) and leaves
+  ## the scope opened via `enterScope`.
+  dest.addParRi(n.endInfo)
+  leaveScope(n, scope)
+
 type
   GenPragmas = object
     opened: bool
@@ -146,7 +153,7 @@ proc externPragmas(c: var EContext; dest: var TokenBuf; genPragmas: var GenPragm
 proc trField(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag] = {}) =
   # Translate gfld to fld for NIFC (NIFC only knows fld):
   dest.add parLeToken(pool.tags.getOrIncl("fld"), n.info)
-  inc n
+  let fieldScope = enterScope(n)
 
   expectSymdef(c, n)
   let (s, sinfo) = getSymDef(c, n)
@@ -169,7 +176,7 @@ proc trField(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[Type
   trType c, dest, n, flags
 
   skip n # skips value
-  takeParRi dest, n
+  takeParRi dest, n, fieldScope
 
 proc ithTupleField(c: var EContext; counter: int, typ: Cursor): SymId {.inline.} =
   #var typ = typ
@@ -186,7 +193,7 @@ proc genTupleField(c: var EContext; dest: var TokenBuf; typ: var Cursor; counter
 
 proc trEnumField(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag] = {}) =
   dest.add n # efld
-  inc n
+  let fieldScope = enterScope(n)
 
   expectSymdef(c, n)
   let (s, sinfo) = getSymDef(c, n)
@@ -198,12 +205,11 @@ proc trEnumField(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
 
   skip n # type: must be the enum itself
 
-  inc n # skips TupleConstr
-  trExpr c, dest, n
-  skip n
-  skipParRi c, n
+  n.into: # TupleConstr
+    trExpr c, dest, n
+    skip n
 
-  takeParRi dest, n
+  takeParRi dest, n, fieldScope
 
 proc genStringType(c: var EContext; dest: var TokenBuf; info: PackedLineInfo) =
   # now unused
@@ -263,40 +269,39 @@ proc useStringType(c: var EContext; dest: var TokenBuf; info: PackedLineInfo) =
 
 proc trTupleBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  inc n
+  let tupleScope = enterScope(n)
   dest.add tagToken("object", info)
   dest.addDotToken()
   var counter = 0
   while n.hasMore:
     if n.substructureKind == KvU:
-      inc n # skip tag
-      skip n # skip name
-      genTupleField(c, dest, n, counter)
-      skipParRi c, n
+      n.into: # kv
+        skip n # skip name
+        genTupleField(c, dest, n, counter)
     else:
       genTupleField(c, dest, n, counter)
     inc counter
-  takeParRi dest, n
+  takeParRi dest, n, tupleScope
 
 proc trArrayBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   dest.add n
-  inc n
+  let arrayScope = enterScope(n)
   trType c, dest, n
   if n.typeKind == RangetypeT:
-    inc n
-    skip n
-    expectIntLit c,  n
-    let first = pool.integers[n.intId]
-    inc n
-    expectIntLit c, n
-    let last = pool.integers[n.intId]
-    inc n
-    skipParRi c, n
-    dest.addIntLit(last - first + 1, n.info)
+    var first, last: int64
+    n.into:
+      skip n
+      expectIntLit c,  n
+      first = pool.integers[n.intId]
+      inc n
+      expectIntLit c, n
+      last = pool.integers[n.intId]
+      inc n
+    dest.addIntLit(last - first + 1, n.endInfo)
   else:
     # should not be possible, but assume length anyway
     trExpr c, dest, n
-  takeParRi dest, n
+  takeParRi dest, n, arrayScope
 
 proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor)
 
@@ -310,7 +315,15 @@ proc trProcTypeBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   # 4-leading-dot proc-decl-shaped layouts (`(proc Name Export Pattern ...)`)
   # have trailing effects/body slots we still need to consume.
   let isCompactTypeForm = n.typeKind in {ProctypeT, ItertypeT}
-  skipToParams n
+  # inlined `skipToParams` so the scope handle survives for the close below:
+  let procScope = enterScope(n)
+  if isCompactTypeForm:
+    skip n # nilability tag
+  else:
+    skip n # name
+    skip n # export marker
+    skip n # pattern
+    skip n # generics
   trParams c, dest, n
 
   let pinfo = n.info
@@ -327,7 +340,7 @@ proc trProcTypeBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       skip n
       if n.hasMore:
         skip n
-  takeParRi dest, n
+  takeParRi dest, n, procScope
 
 proc trRefBody(c: var EContext; dest: var TokenBuf; n: var Cursor; key: string) =
   # We translate `ref T` to:
@@ -425,38 +438,34 @@ proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
       trField(c, dest, n, flags)
     of CaseU:
       # XXX for now counts each case object field as separate
-      inc n
+      let caseScope = enterScope(n)
       trField(c, dest, n, flags)
       dest.add tagToken("union", n.info)
       while n.hasMore:
         case n.substructureKind
         of OfU:
-          inc n
-          skip n
-          assert n.stmtKind == StmtsS
-          inc n
-          if n.exprKind == NilX:
+          n.into:
             skip n
-          else:
-            dest.add tagToken("object", n.info)
-            dest.addDotToken  # base type
-            trObjFields(c, dest, n, flags)
-            dest.addParRi # end of object
-          skipParRi c, n
-          skipParRi c, n
+            assert n.stmtKind == StmtsS
+            n.into:
+              if n.exprKind == NilX:
+                skip n
+              else:
+                dest.add tagToken("object", n.endInfo)
+                dest.addDotToken  # base type
+                trObjFields(c, dest, n, flags)
+                dest.addParRi # end of object
         of ElseU:
-          inc n
-          assert n.stmtKind == StmtsS
-          inc n
-          if n.exprKind == NilX:
-            skip n
-          else:
-            dest.add tagToken("object", n.info)
-            dest.addDotToken  # base type
-            trObjFields(c, dest, n, flags)
-            dest.addParRi # end of object
-          skipParRi c, n
-          skipParRi c, n
+          n.into:
+            assert n.stmtKind == StmtsS
+            n.into:
+              if n.exprKind == NilX:
+                skip n
+              else:
+                dest.add tagToken("object", n.endInfo)
+                dest.addDotToken  # base type
+                trObjFields(c, dest, n, flags)
+                dest.addParRi # end of object
         of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
             TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU,
             CaseU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
@@ -464,7 +473,7 @@ proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
             GfldU, CallargsU, ForcallU, NoSub:
           error "expected `of` or `else` inside `case`"
       dest.addParRi # end of union
-      skipParRi c, n
+      leaveScope(n, caseScope)
     of NilU:
       skip n
     of NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU,
@@ -524,7 +533,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
       # procs — passes through unchanged so NIFC's `...` ellipsis fires.
       let info = n.info
       var probe = n
-      inc probe
+      discard enterScope(probe)  # throwaway copy; bounds the walk under vpr
       var hint = default(Cursor)
       while probe.hasMore:
         if probe.kind == StringLit:
@@ -539,20 +548,21 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
         skip n
     of MutT, LentT:
       dest.add tagToken("ptr", n.info)
-      inc n
+      let ptrScope = enterScope(n)
       if isViewType(n):
         dest.shrink dest.len-1 # remove the "ptr" again
         trType c, dest, n, {}
-        skipParRi n
+        leaveScope(n, ptrScope)
       else:
-        c.loop dest, n:
+        while n.hasMore:
           trType c, dest, n, {IsPointerOf}
+        takeParRi dest, n, ptrScope
     of PtrT, OutT:
       dest.add tagToken("ptr", n.info)
-      inc n
+      let ptrScope = enterScope(n)
       trType c, dest, n, {IsPointerOf}
       skipNilAnnotation n
-      takeParRi dest, n
+      takeParRi dest, n, ptrScope
     of RefT:
       trAsNamedType c, dest, n
     of ArrayT, RoutineTypes:
@@ -562,67 +572,69 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
         trAsNamedType c, dest, n
     of RangetypeT:
       # skip to base type
-      inc n
-      trType c, dest, n
-      skip n
-      skip n
-      skipParRi c, n
+      n.into:
+        trType c, dest, n
+        skip n
+        skip n
     of UarrayT:
       if IsPointerOf in flags:
-        inc n
-        trType c, dest, n
-        skipParRi c, n
+        n.into:
+          trType c, dest, n
       else:
         dest.add tagToken("flexarray", n.info)
-        inc n
+        let flexScope = enterScope(n)
         trType c, dest, n
-        takeParRi dest, n
+        takeParRi dest, n, flexScope
     of PointerT:
       dest.add tagToken("ptr", n.info)
       dest.add tagToken("void", n.info)
       dest.addParRi()
-      inc n
+      let ptrScope = enterScope(n)
       skipNilAnnotation n
-      takeParRi dest, n
+      takeParRi dest, n, ptrScope
     of CstringT:
       dest.add tagToken("ptr", n.info)
       dest.add tagToken($CharT, n.info)
       dest.addIntLit(8, n.info)
       dest.addParRi()
-      inc n
+      let ptrScope = enterScope(n)
       skipNilAnnotation n
-      takeParRi dest, n
+      takeParRi dest, n, ptrScope
     of StaticT, SinkT, DistinctT:
-      inc n
-      trType c, dest, n, flags
-      skipParRi c, n
+      n.into:
+        trType c, dest, n, flags
     of TupleT:
       trAsNamedType c, dest, n
     of ObjectT:
-      if IsUnion in flags:
+      let isUnion = IsUnion in flags
+      if isUnion:
         dest.add tagToken("union", n.info)
-        inc n
+      else:
+        dest.add n
+      let objScope = enterScope(n)
+      if isUnion:
         # Union types don't inherit any types.
         assert n.kind == DotToken
         inc n
       else:
-        dest.add n
-        inc n
         if n.kind == DotToken:
           dest.add n
           inc n
         else:
           # inherited symbol
           let isPtr = n.typeKind in {RefT, PtrT}
-          if isPtr: inc n
-          let (s, sinfo) = getSym(c, n)
+          var s = SymId(0)
+          var sinfo = NoLineInfo
           if isPtr:
-            skipNilAnnotation n
-            skipParRi c, n
+            n.into:
+              (s, sinfo) = getSym(c, n)
+              skipNilAnnotation n
+          else:
+            (s, sinfo) = getSym(c, n)
           dest.add symToken(s, sinfo)
 
         if IsInheritable in flags:
-          addRttiField c, dest, n.info
+          addRttiField c, dest, n.endInfo
 
       if n.kind == DotToken:
         dest.add n
@@ -630,11 +642,11 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
       else:
         trObjFields(c, dest, n, flags)
 
-      takeParRi dest, n
+      takeParRi dest, n, objScope
     of EnumT, HoleyEnumT, AnumT:
       let enumKind = n.typeKind
       dest.add tagToken("enum", n.info)
-      inc n
+      let enumScope = enterScope(n)
       trType c, dest, n, flags # base type
       if enumKind == AnumT:
         skip n # owner object type sym
@@ -642,10 +654,10 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
       while n.substructureKind == EfldU:
         trEnumField(c, dest, n, flags)
 
-      takeParRi dest, n
+      takeParRi dest, n, enumScope
     of SetT:
       let info = n.info
-      inc n
+      let setScope = enterScope(n)
       let sizeOrig = bitsetSizeInBytes(n)
       var err = false
       let size = asSigned(sizeOrig, err)
@@ -668,7 +680,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
           var arrCursor = cursorAt(arrBuf, 0)
           trAsNamedType(c, dest, arrCursor)
       skip n
-      skipParRi c, n
+      leaveScope(n, setScope)
     of VoidT, NiltT, ConceptT, InvokeT:
       error c, "unimplemented type: ", n
   else:
@@ -702,11 +714,12 @@ proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     inc n
   elif n.kind == ParLe and n.substructureKind == ParamsU:
     dest.add n
-    inc n
-    loop c, dest, n:
+    let paramsScope = enterScope(n)
+    while n.hasMore:
       if n.symKind != ParamY:
         error c, "expected (param) but got: ", n
       maybeByConstRef(c, dest, n)
+    takeParRi dest, n, paramsScope
   else:
     error c, "expected (params) but got: ", n
   # the result type
@@ -733,106 +746,83 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
   if n.kind == DotToken:
     inc n
   elif n.kind == ParLe and pool.tags[n.tag] == $PragmasS:
-    inc n
-    while true:
-      case n.kind
-      of ParRi:
-        inc n
-        break
-      of EofToken:
-        error c, "expected ')', but EOF reached"
-      else: discard
-      if n.kind == ParLe:
-        let pk = n.pragmaKind
-        case pk
-        of NoPragma:
-          let cc = n.callConvKind
-          if cc == NoCallConv:
-            if hookKind(n.tagId) != NoHook:
-              skip n
-            elif isNilAnnotation(n):
-              skip n
+    n.into:
+      while n.hasMore:
+        if n.kind == ParLe:
+          let pk = n.pragmaKind
+          case pk
+          of NoPragma:
+            let cc = n.callConvKind
+            if cc == NoCallConv:
+              if hookKind(n.tagId) != NoHook:
+                skip n
+              elif isNilAnnotation(n):
+                skip n
+              else:
+                error c, "unknown pragma: ", n
             else:
-              error c, "unknown pragma: ", n
-          else:
-            result.callConv = cc
-            inc n
-            skipParRi c, n
-        of MagicP:
-          inc n
-          if n.kind notin {StringLit, Ident}:
-            error c, "expected string literal or ident, but got: ", n
-          result.flags.incl MagicP
-          inc n
-          skipParRi c, n
-        of ImportcP, ImportcppP:
-          inc n
-          expectStrLit c, n
-          result.extern = n.litId
-          result.flags.incl pk
-          inc n
-          skipParRi c, n
-        of ExportcP:
-          inc n
-          expectStrLit c, n
-          result.extern = n.litId
-          result.flags.incl pk
-          inc n
-          skipParRi c, n
-        of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP,
-           VarargsP, NoSideEffectP, NodestroyP, BycopyP, ByrefP,
-           InlineP, NoinlineP, NoinitP, InjectP, GensymP, DirtyP, UntypedP, ViewP,
-           InheritableP, PureP, AcyclicP, ClosureP, PackedP, UnionP, IncompleteStructP:
-          result.flags.incl pk
-          inc n
-          skipParRi c, n
-        of BorrowP:
-          result.flags.incl InlineP
-          result.flags.incl pk
-          inc n
-          skipParRi c, n
-        of HeaderP:
-          inc n
-          expectStrLit c, n
-          result.header = n.litId
-          inc n
-          skipParRi c, n
-        of DynlibP:
-          inc n
-          expectStrLit c, n
-          result.dynlib = n.litId
-          result.flags.incl DynlibP
-          inc n
-          skipParRi c, n
-        of AlignP:
-          inc n
-          expectIntLit c, n
-          result.align = n.intId
-          inc n
-          skipParRi c, n
-        of BitsP:
-          inc n
-          expectIntLit c, n
-          result.bits = n.intId
-          inc n
-          skipParRi c, n
-        of RequiresP, EnsuresP, StringP, RaisesP, ErrorP, AssumeP, AssertP, ReportP,
-           TagsP, DeprecatedP, SideEffectP, KeepOverflowFlagP, SemanticsP,
-           BaseP, FinalP, PragmaP, CursorP, PassiveP, PluginP, MethodsP, CastP, SizeP,
-           FeatureP, UncheckedAssignP, UncheckedAccessP,
-           ProfilerP, StacktraceP, GcsafeP, UsedP:
-          skip n
-        of BuildP, BundleP, CompileP, EmitP, PushP, PopP, PassLP, PassCP, CallConvP:
-          bug "unreachable"
-      else:
-        error c, "unknown pragma: ", n
+              result.callConv = cc
+              skip n
+          of MagicP:
+            n.into:
+              if n.kind notin {StringLit, Ident}:
+                error c, "expected string literal or ident, but got: ", n
+              result.flags.incl MagicP
+              inc n
+          of ImportcP, ImportcppP, ExportcP:
+            n.into:
+              expectStrLit c, n
+              result.extern = n.litId
+              result.flags.incl pk
+              inc n
+          of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP,
+             VarargsP, NoSideEffectP, NodestroyP, BycopyP, ByrefP,
+             InlineP, NoinlineP, NoinitP, InjectP, GensymP, DirtyP, UntypedP, ViewP,
+             InheritableP, PureP, AcyclicP, ClosureP, PackedP, UnionP, IncompleteStructP:
+            result.flags.incl pk
+            skip n
+          of BorrowP:
+            result.flags.incl InlineP
+            result.flags.incl pk
+            skip n
+          of HeaderP:
+            n.into:
+              expectStrLit c, n
+              result.header = n.litId
+              inc n
+          of DynlibP:
+            n.into:
+              expectStrLit c, n
+              result.dynlib = n.litId
+              result.flags.incl DynlibP
+              inc n
+          of AlignP:
+            n.into:
+              expectIntLit c, n
+              result.align = n.intId
+              inc n
+          of BitsP:
+            n.into:
+              expectIntLit c, n
+              result.bits = n.intId
+              inc n
+          of RequiresP, EnsuresP, StringP, RaisesP, ErrorP, AssumeP, AssertP, ReportP,
+             TagsP, DeprecatedP, SideEffectP, KeepOverflowFlagP, SemanticsP,
+             BaseP, FinalP, PragmaP, CursorP, PassiveP, PluginP, MethodsP, CastP, SizeP,
+             FeatureP, UncheckedAssignP, UncheckedAccessP,
+             ProfilerP, StacktraceP, GcsafeP, UsedP:
+            skip n
+          of BuildP, BundleP, CompileP, EmitP, PushP, PopP, PassLP, PassCP, CallConvP:
+            bug "unreachable"
+        else:
+          error c, "unknown pragma: ", n
   else:
     error c, "(pragmas) or '.' expected, but got: ", n
 
 proc trProcBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   if n.stmtKind == StmtsS:
     dest.add n
-    inc n
+    let bodyScope = enterScope(n)
     var prevStmt = NoStmt
     while n.hasMore:
       prevStmt = n.stmtKind
@@ -840,10 +830,10 @@ proc trProcBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     if prevStmt == RetS or c.resultSym == SymId(0):
       discard "ok, do not add another return"
     else:
-      dest.add parLeToken(RetS, n.info)
-      dest.add symToken(c.resultSym, n.info)
+      dest.add parLeToken(RetS, n.endInfo)
+      dest.add symToken(c.resultSym, n.endInfo)
       dest.addParRi()
-    takeParRi dest, n
+    takeParRi dest, n, bodyScope
   else:
     trStmt c, dest, n, TraverseInner
 
@@ -901,7 +891,7 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
 
   let vinfo = n.info
   dest.add tagToken("proc", vinfo)
-  inc n
+  let procScope = enterScope(n)
   let (s, sinfo) = getSymDef(c, n)
 
   let newSym = s
@@ -965,7 +955,7 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
   else:
     dest.addDotToken()
     skip n
-  takeParRi dest, n
+  takeParRi dest, n, procScope
   swap dst, dest
   if prag.flags * {MagicP, DynlibP} != {} or isGeneric:
     discard "do not add to dest"
@@ -994,7 +984,7 @@ proc trTypeDecl(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: Traver
   let isDistinct = decl.body.typeKind == DistinctT
   let vinfo = n.info
   dest.add tagToken("type", vinfo)
-  inc n
+  let typeScope = enterScope(n)
   let (s, sinfo) = getSymDef(c, n)
 
   let newSym = s
@@ -1037,7 +1027,7 @@ proc trTypeDecl(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: Traver
     if {ImportcP, ImportcppP} * prag.flags != {}:
       flags.incl IsImportExternal
     trType c, dest, n, flags
-  takeParRi dest, n
+  takeParRi dest, n, typeScope
   swap dst, dest
   if isGeneric:
     discard "do not add to dest"
@@ -1190,10 +1180,10 @@ proc genStringLit(c: var EContext; dest: var TokenBuf; n: Cursor) =
 
 proc trStmtsExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   let head = n.load()
-  inc n
+  let exprScope = enterScope(n)
   if isLastSon(n):
     trExpr c, dest, n
-    skipParRi c, n
+    leaveScope(n, exprScope)
   else:
     dest.add head
     while n.hasMore:
@@ -1201,60 +1191,54 @@ proc trStmtsExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         trStmt c, dest, n
       else:
         trExpr c, dest, n
-    takeParRi dest, n
+    takeParRi dest, n, exprScope
 
 proc trTupleConstr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   dest.add tagToken("oconstr", n.info)
-  inc n
+  let constrScope = enterScope(n)
   var tupleType = n
   c.trType(dest, n, {})
 
-  inc tupleType
+  discard enterScope(tupleType) # parallel walk over the tuple type's fields
   var counter = 0
   while n.hasMore:
     dest.add tagToken("kv", n.info)
-    let isKvU = tupleType.substructureKind == KvU
-    if isKvU:
-      inc tupleType # skip "kv"
-      skip tupleType # skip key
-    dest.add symToken(ithTupleField(c, counter, tupleType), n.info)
-    skip tupleType
-    if isKvU:
-      skipParRi tupleType
+    if tupleType.substructureKind == KvU:
+      tupleType.into:
+        skip tupleType # skip key
+        dest.add symToken(ithTupleField(c, counter, tupleType), n.info)
+        skip tupleType
+    else:
+      dest.add symToken(ithTupleField(c, counter, tupleType), n.info)
+      skip tupleType
 
     inc counter
     if n.substructureKind == KvU:
-      inc n # skip "kv"
-      skip n # skip key
-      trExpr c, dest, n
-      skipParRi c, n
+      n.into:
+        skip n # skip key
+        trExpr c, dest, n
     else:
       trExpr c, dest, n
     dest.addParRi() # "kv"
-  takeParRi dest, n
+  takeParRi dest, n, constrScope
 
 proc trConv(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let beforeConv = dest.len
   dest.add tagToken("conv", info)
-  inc n
+  let convScope = enterScope(n)
   let destType = n
   trType(c, dest, n)
   let srcType = getType(c.typeCache, n)
   if destType.typeKind == CstringT and isStringType(srcType):
-    var isSuffix = false
-    if n.exprKind == SufX:
-      isSuffix = true
-      inc n
-    if n.kind == StringLit:
+    var lit = n
+    if lit.exprKind == SufX: inc lit
+    if lit.kind == StringLit:
       # evaluate the conversion at compile time:
       dest.shrink beforeConv
-      dest.addStrLit pool.strings[n.litId]
-      inc n
-      if isSuffix:
-        inc n
-        skipParRi c, n
-      skipParRi c, n
+      dest.addStrLit pool.strings[lit.litId]
+      skip n # the literal, or its whole suffix wrapper
+      leaveScope(n, convScope)
     else:
       when sso:
         bug "cannot convert a string to cstring at runtime"
@@ -1265,10 +1249,10 @@ proc trConv(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         dest.add symToken(strField, info)
         dest.addIntLit(0, info)
         dest.addParRi()
-        takeParRi dest, n
+        takeParRi dest, n, convScope
   else:
     trExpr(c, dest, n)
-    takeParRi dest, n
+    takeParRi dest, n, convScope
 
 proc isSimpleLiteral(nb: var Cursor): bool =
   case nb.kind
@@ -1281,17 +1265,16 @@ proc isSimpleLiteral(nb: var Cursor): bool =
       result = true
       skip nb
     of SufX:
-      inc nb
-      result = isSimpleLiteral(nb)
-      skip nb # type suffix
-      skipParRi nb
+      result = false
+      nb.into:
+        result = isSimpleLiteral(nb)
+        skip nb # type suffix
     of CastX, ConvX:
       result = true
-      inc nb
-      skip nb # type
-      while nb.hasMore:
-        if not isSimpleLiteral(nb): return false
-      skipParRi nb
+      nb.into:
+        skip nb # type
+        while nb.hasMore:
+          if not isSimpleLiteral(nb): return false
     of ErrX, AtX, DerefX, DotX, PatX, ParX, AddrX, AndX, OrX,
         XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX,
         OconstrX, AconstrX, BracketX, CurlyX, CurlyatX, OvfX,
@@ -1328,7 +1311,7 @@ proc trArrAt(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   # arrive here. Those get checked inline as before — correct, just not
   # inline-spliceable (rare enough not to matter).
   dest.add parLeToken(AtX, n.info) # NIFC uses the `at` token for array indexing
-  inc n
+  let atScope = enterScope(n)
   trExpr(c, dest, n)
   let beforeIndex = dest.len
   let info = n.info
@@ -1336,8 +1319,9 @@ proc trArrAt(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   trExpr(c, dest, n)
   if n.hasMore:
     var indexDest = createTokenBuf(dest.len - beforeIndex)
+    # balanced span: raw copy keeps its seals
     for i in beforeIndex..<dest.len:
-      indexDest.add dest[i]
+      indexDest.addRaw dest[i]
     dest.shrink beforeIndex
     let indexB = n
     skip n
@@ -1370,7 +1354,7 @@ proc trArrAt(c: var EContext; dest: var TokenBuf; n: var Cursor) =
           dest.addSubtree indexB
       else:
         dest.add indexDest
-  takeParRi dest, n
+  takeParRi dest, n, atScope
 
 proc trFieldname(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   if n.kind == Symbol:
@@ -1397,8 +1381,9 @@ proc trAddrAconstrUarray(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   ##      type (tuple, named object) gets lifted too.
   let info = n.info
   var aconstr = n
-  inc aconstr # past `addr` tag
-  inc aconstr # past `aconstr` tag — now at the `(uarray T)` type slot
+  discard enterScope(aconstr) # past `addr` tag
+  discard enterScope(aconstr) # past `aconstr` tag — now at the `(uarray T)`
+                              # type slot, bounded to the aconstr's children
   var elemType = aconstr
   inc elemType # past `uarray` tag → element type
   var elemTypeBuf = createTokenBuf(8)
@@ -1445,14 +1430,9 @@ proc trAddrAconstrUarray(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   constBuf.addParRi() # close const
   c.strLitBuf.add constBuf
 
-  # Advance caller's cursor past the whole `(addr (aconstr ...))`.
-  inc n # past `addr` tag
-  inc n # past `aconstr` tag
-  skip n # past uarray type slot
-  while n.hasMore:
-    skip n # elements
-  skipParRi(c, n) # close aconstr
-  skipParRi(c, n) # close addr
+  # Advance caller's cursor past the whole `(addr (aconstr ...))`;
+  # `isAddrOfAconstrUarray` already validated the shape.
+  skip n
 
   # Emit `(cast (ptr T) (addr <anon>))` at the original site.
   var ptrTypeBuf = createTokenBuf(8)
@@ -1488,78 +1468,65 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     of EqX, NeqX, LeX, LtX:
       # `(eq T X X)` in Nimony carries `T`, but NIFC comparisons are `(eq X X)` — see
       # `cmpOp` in llvmgenexprs.nim. Walk `T` with `trType` for side effects, omit from dest.
-      dest.add n
-      inc n
-      let beforeType = dest.len
-      trType(c, dest, n)
-      dest.shrink beforeType
-      trExpr(c, dest, n)
-      trExpr(c, dest, n)
-      takeParRi dest, n
+      takeInto dest, n:
+        let beforeType = dest.len
+        trType(c, dest, n)
+        dest.shrink beforeType
+        trExpr(c, dest, n)
+        trExpr(c, dest, n)
     of AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX:
       # `(op T X X)` — NIFC typed binops need the type (`signedBinOp` / `unsignedBinOp`).
-      dest.add n
-      inc n
-      trType(c, dest, n)
-      trExpr(c, dest, n)
-      trExpr(c, dest, n)
-      takeParRi dest, n
+      takeInto dest, n:
+        trType(c, dest, n)
+        trExpr(c, dest, n)
+        trExpr(c, dest, n)
     of BitnotX:
       # `(bitnot T X)` — NIFC expects type + expr (see BitnotC in llvmgenexprs.nim).
-      dest.add n
-      inc n
-      trType(c, dest, n)
-      trExpr(c, dest, n)
-      takeParRi dest, n
+      takeInto dest, n:
+        trType(c, dest, n)
+        trExpr(c, dest, n)
     of BaseobjX:
       # `(baseobj T INTLIT X)` — keep `T` and depth for NIFC (BaseobjC).
-      dest.add n
-      inc n
-      trType(c, dest, n)
-      expectIntLit c, n
-      dest.add n
-      inc n
-      trExpr(c, dest, n)
-      takeParRi dest, n
+      takeInto dest, n:
+        trType(c, dest, n)
+        expectIntLit c, n
+        dest.add n
+        inc n
+        trExpr(c, dest, n)
     of CastX:
-      dest.add n
-      inc n
-      trType(c, dest, n)
-      trExpr(c, dest, n)
-      takeParRi dest, n
+      takeInto dest, n:
+        trType(c, dest, n)
+        trExpr(c, dest, n)
     of HconvX, ConvX:
       trConv c, dest, n
     of DconvX:
-      inc n
-      let beforeType = dest.len
-      trType(c, dest, n)
-      dest.shrink beforeType
-      trExpr(c, dest, n)
-      skipParRi(c, n)
+      n.into:
+        let beforeType = dest.len
+        trType(c, dest, n)
+        dest.shrink beforeType
+        trExpr(c, dest, n)
     of AconstrX:
       dest.add tagToken("aconstr", n.info)
-      inc n
+      let constrScope = enterScope(n)
       trType(c, dest, n)
       while n.hasMore:
         trExpr(c, dest, n)
-      takeParRi dest, n
+      takeParRi dest, n, constrScope
     of OconstrX:
       dest.add tagToken("oconstr", n.info)
-      inc n
+      let constrScope = enterScope(n)
       trType(c, dest, n)
       while n.hasMore:
         if n.substructureKind == KvU:
-          dest.add n # KvU
-          inc n
-          takeTree dest, n # key
-          trExpr c, dest, n # value
-          if n.hasMore:
-            # optional inheritance
-            takeTree dest, n
-          takeParRi dest, n
+          takeInto dest, n: # KvU
+            takeTree dest, n # key
+            trExpr c, dest, n # value
+            if n.hasMore:
+              # optional inheritance
+              takeTree dest, n
         else:
           trExpr c, dest, n
-      takeParRi dest, n
+      takeParRi dest, n, constrScope
     of TupconstrX:
       trTupleConstr c, dest, n
     of CmdX, CallstrlitX, InfixX, PrefixX, HcallX, CallX:
@@ -1575,16 +1542,16 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     of TupatX:
       let fieldType = getType(c.typeCache, n)
       dest.add tagToken("dot", n.info)
-      inc n # skip tag
+      let dotScope = enterScope(n) # skip tag
       trExpr c, dest, n # tuple
       expectIntLit c, n
       dest.add symToken(ithTupleField(c, int pool.integers[n.intId], fieldType), n.info)
       inc n # skip index
-      dest.addIntLit(0, n.info) # inheritance
-      takeParRi dest, n
+      dest.addIntLit(0, n.endInfo) # inheritance
+      takeParRi dest, n, dotScope
     of DotX:
       dest.add tagToken("dot", n.info)
-      inc n # skip tag
+      let dotScope = enterScope(n) # skip tag
       trExpr c, dest, n # obj
       trFieldname c, dest, n # field
       if n.hasMore:
@@ -1592,31 +1559,31 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       if n.kind == StringLit:
         # drop the access-token marker; NIFC has no visibility concept.
         skip n
-      takeParRi dest, n
+      takeParRi dest, n, dotScope
     of DdotX:
       dest.add tagToken("dot", n.info)
       dest.add tagToken("deref", n.info)
-      inc n # skip tag
+      let dotScope = enterScope(n) # skip tag
       trExpr c, dest, n
       dest.addParRi()
       trFieldname c, dest, n
       trExpr c, dest, n
       if n.kind == StringLit:
         skip n
-      takeParRi dest, n
+      takeParRi dest, n, dotScope
     of HaddrX, AddrX:
       if isAddrOfAconstrUarray(n):
         trAddrAconstrUarray(c, dest, n)
       else:
         dest.add tagToken("addr", n.info)
-        inc n
+        let addrScope = enterScope(n)
         trExpr(c, dest, n)
-        takeParRi dest, n
+        takeParRi dest, n, addrScope
     of HderefX, DerefX:
       dest.add tagToken("deref", n.info)
-      inc n
+      let derefScope = enterScope(n)
       trExpr(c, dest, n)
-      takeParRi dest, n
+      takeParRi dest, n, derefScope
     of SufX:
       var suf = n
       inc suf
@@ -1625,25 +1592,22 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       assert suf.kind == StringLit
       if arg.kind == StringLit:
         # no suffix for string literal in nifc
-        inc n
-        if pool.strings[suf.litId] == "C":
-          # cstring literal, add string lit directly:
+        n.into:
+          if pool.strings[suf.litId] == "C":
+            # cstring literal, add string lit directly:
+            dest.add n
+            inc n
+          else:
+            trExpr c, dest, n
+          inc n # suf
+      else:
+        takeInto dest, n:
+          trExpr c, dest, n
           dest.add n
           inc n
-        else:
-          trExpr c, dest, n
-        inc n # suf
-        skipParRi c, n
-      else:
-        dest.add n
-        inc n
-        trExpr c, dest, n
-        dest.add n
-        inc n
-        takeParRi dest, n
     of AshrX:
       dest.add tagToken("shr", n.info)
-      inc n
+      let shrScope = enterScope(n)
       var bits = -1'i64
       if n.typeKind in {IntT, UIntT}:
         var bitsToken = n
@@ -1663,7 +1627,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         dest.addIntLit(bits, n.info)
         dest.addParRi()
         trExpr c, dest, n
-      takeParRi dest, n
+      takeParRi dest, n, shrScope
     of ErrX, NewobjX, NewrefX, SetconstrX, PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
        InsetX, CardX, BracketX, CurlyX, TupX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, UnpackX,
        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX, DefaulttupX, DefaultdistinctX, DoX, CchoiceX, OchoiceX,
@@ -1691,13 +1655,11 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
           trExpr c, dest, n
       dest.addParRi()
     of KvX:
-      dest.add n
-      inc n
-      takeTree dest, n
-      trExpr c, dest, n
-      if n.hasMore:
+      takeInto dest, n:
         takeTree dest, n
-      takeParRi dest, n
+        trExpr c, dest, n
+        if n.hasMore:
+          takeTree dest, n
     of NoExpr:
       trType c, dest, n
   of SymbolDef:
@@ -1724,7 +1686,7 @@ proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; m
   let toPatch = dest.len
   let vinfo = n.info
   dest.addParLe symKind, vinfo
-  inc n
+  let localScope = enterScope(n)
   let (s, sinfo) = getSymDef(c, n)
   if tag == ResultY:
     c.resultSym = s
@@ -1765,16 +1727,14 @@ proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; m
     skip n
   else:
     trExpr c, dest, n
-  takeParRi dest, n
+  takeParRi dest, n, localScope
 
 proc trWhile(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   c.nestedIn.add (WhileS, SymId(0))
-  dest.add n
-  inc n
-  trExpr c, dest, n
-  trStmt c, dest, n
-  takeParRi dest, n
+  takeInto dest, n:
+    trExpr c, dest, n
+    trStmt c, dest, n
   let lab = c.nestedIn[^1][1]
   if lab != SymId(0):
     dest.add tagToken("lab", info)
@@ -1784,7 +1744,7 @@ proc trWhile(c: var EContext; dest: var TokenBuf; n: var Cursor) =
 
 proc trBlock(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  inc n
+  let blockScope = enterScope(n)
   if n.kind == DotToken:
     c.nestedIn.add (BlockS, SymId(0))
     inc n
@@ -1793,7 +1753,7 @@ proc trBlock(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     c.nestedIn.add (BlockS, s)
   dest.add tagToken("scope", info)
   trStmt c, dest, n
-  takeParRi dest, n
+  takeParRi dest, n, blockScope
   let lab = c.nestedIn[^1][1]
   if lab != SymId(0):
     dest.add tagToken("lab", info)
@@ -1803,7 +1763,7 @@ proc trBlock(c: var EContext; dest: var TokenBuf; n: var Cursor) =
 
 proc trBreak(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  inc n
+  let breakScope = enterScope(n)
   if n.kind == DotToken:
     inc n
     dest.add tagToken("break", info)
@@ -1813,24 +1773,18 @@ proc trBreak(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     inc n
     dest.add tagToken("jmp", info)
     dest.add symToken(lab, info)
-  takeParRi dest, n
+  takeParRi dest, n, breakScope
 
 proc trIf(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   # (if cond (.. then ..) (.. else ..))
-  dest.add n
-  inc n
-  while n.kind == ParLe and n.substructureKind == ElifU:
-    dest.add n
-    inc n # skips '(elif'
-    trExpr c, dest, n
-    trStmt c, dest, n
-    takeParRi dest, n
-  if n.kind == ParLe and n.substructureKind == ElseU:
-    dest.add n
-    inc n
-    trStmt c, dest, n
-    takeParRi dest, n
-  takeParRi dest, n
+  takeInto dest, n:
+    while n.kind == ParLe and n.substructureKind == ElifU:
+      takeInto dest, n: # elif
+        trExpr c, dest, n
+        trStmt c, dest, n
+    if n.kind == ParLe and n.substructureKind == ElseU:
+      takeInto dest, n:
+        trStmt c, dest, n
 
 include stringcases
 
@@ -1847,54 +1801,46 @@ proc trStringCase(c: var EContext; dest: var TokenBuf; n: var Cursor): bool =
 proc trCase(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   if trStringCase(c, dest, n):
     return
-  dest.add n
-  inc n
-  trExpr c, dest, n
-  while n.hasMore:
-    case n.substructureKind
-    of OfU:
-      dest.add n
-      inc n
-      if n.kind == ParLe and n.substructureKind == RangesU:
-        inc n
-        dest.add "ranges", n.info
-        while n.hasMore:
-          if n.kind == ParLe and n.substructureKind == RangeU:
-            inc n
-            dest.add "range", n.info
+  takeInto dest, n:
+    trExpr c, dest, n
+    while n.hasMore:
+      case n.substructureKind
+      of OfU:
+        takeInto dest, n:
+          if n.kind == ParLe and n.substructureKind == RangesU:
+            let rangesScope = enterScope(n)
+            dest.add "ranges", n.endInfo
             while n.hasMore:
-              trExpr c, dest, n
-            takeParRi dest, n
+              if n.kind == ParLe and n.substructureKind == RangeU:
+                let rangeScope = enterScope(n)
+                dest.add "range", n.endInfo
+                while n.hasMore:
+                  trExpr c, dest, n
+                takeParRi dest, n, rangeScope
+              else:
+                trExpr c, dest, n
+            takeParRi dest, n, rangesScope
           else:
             trExpr c, dest, n
-        takeParRi dest, n
-      else:
-        trExpr c, dest, n
-      trStmt c, dest, n
-      takeParRi dest, n
-    of ElseU:
-      dest.add n
-      inc n
-      trStmt c, dest, n
-      takeParRi dest, n
-    of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
-        TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
-        StmtsU, ParamsU, PragmasU, EitherU, JoinU,
-        UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU,
-        GfldU, CallargsU, ForcallU, NoSub:
-      error c, "expected (of) or (else) but got: ", n
-  takeParRi dest, n
+          trStmt c, dest, n
+      of ElseU:
+        takeInto dest, n:
+          trStmt c, dest, n
+      of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+          TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
+          StmtsU, ParamsU, PragmasU, EitherU, JoinU,
+          UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU,
+          GfldU, CallargsU, ForcallU, NoSub:
+        error c, "expected (of) or (else) but got: ", n
 
 proc trKeepovf(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  dest.add n
-  inc n
-  trExpr c, dest, n # (add ...)
-  trExpr c, dest, n # destination
-  takeParRi dest, n
+  takeInto dest, n:
+    trExpr c, dest, n # (add ...)
+    trExpr c, dest, n # destination
 
 proc trRaise(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  inc n
+  let raiseScope = enterScope(n)
   if c.exceptLabels.len == 0:
     # translate `raise` to `return`:
     dest.addParLe RetS, info
@@ -1905,12 +1851,12 @@ proc trRaise(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     let lab = c.exceptLabels[^1]
     dest.add tagToken("jmp", info)
     dest.add symToken(lab, info)
-  takeParRi dest, n
+  takeParRi dest, n, raiseScope
 
 proc trTry(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   # We only deal with the control flow here.
   let info = n.info
-  inc n
+  let tryScope = enterScope(n)
   var nn = n
   skip nn # stmts
   let oldLen = c.exceptLabels.len
@@ -1936,19 +1882,18 @@ proc trTry(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         dest.add tagToken("lab", n.info)
         dest.add symdefToken(lab, n.info)
         dest.addParRi()
-        inc n
-        if n.stmtKind == LetS:
+        n.into:
+          if n.stmtKind == LetS:
+            trStmt c, dest, n
+          else:
+            skip n # skip `T`
+          # A `raise` (typed or bare) inside an except handler must propagate
+          # PAST this try, not loop back to its own handler label. Temporarily
+          # pop the label for the duration of the handler body so any nested
+          # `raise` uses the next outer label (or `return`).
+          c.exceptLabels.shrink oldLen
           trStmt c, dest, n
-        else:
-          skip n # skip `T`
-        # A `raise` (typed or bare) inside an except handler must propagate
-        # PAST this try, not loop back to its own handler label. Temporarily
-        # pop the label for the duration of the handler body so any nested
-        # `raise` uses the next outer label (or `return`).
-        c.exceptLabels.shrink oldLen
-        trStmt c, dest, n
-        c.exceptLabels.add tryLab
-        skipParRi n
+          c.exceptLabels.add tryLab
   c.exceptLabels.shrink oldLen
 
   # Since we duplicated the finally statements before every `raise` statement we
@@ -1957,12 +1902,11 @@ proc trTry(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   if n.substructureKind == FinU:
     if hasExcept:
       dest.addParLe ElseU, n.info
-    inc n
-    trStmt c, dest, n
-    skipParRi n
+    n.into:
+      trStmt c, dest, n
     if hasExcept:
       dest.addParRi()
-  skipParRi n
+  leaveScope(n, tryScope)
   if hasExcept:
     dest.addParRi()
 
@@ -1979,33 +1923,29 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
       else:
         error c, "unknown statement: ", n
     of PragmaxS:
-      inc n
-      skip n
-      trStmt c, dest, n, mode
-      skipParRi n
+      n.into:
+        skip n
+        while n.hasMore:
+          trStmt c, dest, n, mode
     of StmtsS:
       if mode == TraverseTopLevel:
-        inc n
-        while n.kind notin {EofToken, ParRi}:
-          trStmt c, dest, n, mode
-        skipParRi c, n
+        n.into:
+          while n.hasMore and n.kind != EofToken:
+            trStmt c, dest, n, mode
       else:
-        dest.add n
-        inc n
-        c.loop dest, n:
-          trStmt c, dest, n, mode
+        takeInto dest, n:
+          while n.hasMore:
+            trStmt c, dest, n, mode
     of ScopeS:
       c.typeCache.openScope()
       if mode == TraverseTopLevel:
-        inc n
-        while n.kind notin {EofToken, ParRi}:
-          trStmt c, dest, n, mode
-        skipParRi c, n
+        n.into:
+          while n.hasMore and n.kind != EofToken:
+            trStmt c, dest, n, mode
       else:
-        dest.add n
-        inc n
-        c.loop dest, n:
-          trStmt c, dest, n, mode
+        takeInto dest, n:
+          while n.hasMore:
+            trStmt c, dest, n, mode
       c.typeCache.closeScope()
     of VarS, LetS, CursorS, PatternvarS:
       trLocal c, dest, n, VarY, mode
@@ -2019,40 +1959,38 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
       trLocal c, dest, n, ConstY, mode
     of CallKindsS:
       dest.add tagToken("call", n.info)
-      inc n
-      c.loop dest, n:
+      let callScope = enterScope(n)
+      while n.hasMore:
         trExpr c, dest, n
+      takeParRi dest, n, callScope
     of EmitS, AsmS:
-      dest.add n
-      inc n
-      c.loop dest, n:
-        if n.kind == StringLit:
-          dest.add n
-          inc n
-        elif n.exprKind == SufX:
-          inc n
-          assert n.kind == StringLit
-          dest.add n
-          while n.hasMore: skip n
-          consumeParRi n
-        else:
-          trExpr c, dest, n
+      takeInto dest, n:
+        while n.hasMore:
+          if n.kind == StringLit:
+            dest.add n
+            inc n
+          elif n.exprKind == SufX:
+            n.into:
+              assert n.kind == StringLit
+              dest.add n
+              while n.hasMore: skip n
+          else:
+            trExpr c, dest, n
     of AsgnS, RetS:
-      dest.add n
-      inc n
-      c.loop dest, n:
-        trExpr c, dest, n
+      takeInto dest, n:
+        while n.hasMore:
+          trExpr c, dest, n
     of DiscardS:
       let discardToken = n
-      inc n
+      let discardScope = enterScope(n)
       if n.kind in {StringLit, DotToken}:
         # eliminates discard without side effects
         inc n
-        skipParRi c, n
+        leaveScope(n, discardScope)
       else:
         dest.add discardToken
         trExpr c, dest, n
-        takeParRi dest, n
+        takeParRi dest, n, discardScope
     of BreakS: trBreak c, dest, n
     of WhileS: trWhile c, dest, n
     of BlockS: trBlock c, dest, n
@@ -2489,41 +2427,42 @@ proc isTopLevelDecl(n: Cursor): bool {.inline.} =
 
 const RuntimeVarKinds = {VarY, LetY, ResultY, CursorY, PatternvarY, GvarY, GletY, TvarY, TletY}
 
+proc scanInitValue(c: var EContext; n: var Cursor): bool =
+  ## Scans the single tree/token at `n` for calls or runtime variable
+  ## references, advancing past it.
+  result = false
+  case n.kind
+  of ParLe:
+    if n.stmtKind in CallKindsS:
+      return true
+    n.into:
+      while n.hasMore:
+        if scanInitValue(c, n):
+          return true
+  of Symbol:
+    if c.typeCache.fetchSymKind(n.symId) in RuntimeVarKinds:
+      result = true # runtime variable → value not available at C file scope
+    inc n
+  else:
+    inc n
+
 proc initHasCall(c: var EContext; n: Cursor): bool =
   ## Returns true if the init expression of a global var/let decl contains any
   ## function call or runtime variable reference. Such inits cannot be emitted
   ## inline by NIFC at C file scope (only literals and compile-time constants
   ## are valid C file-scope initializers).
   var n = n
-  inc n    # skip the gvar/glet/tvar/tlet tag
+  discard enterScope(n) # skip the gvar/glet/tvar/tlet tag; peek only
   skip n   # skip SymbolDef
   skip n   # skip export marker
   skip n   # skip pragmas
   skip n   # skip type
   # Now at the init value; scan its subtree
-  var nested = 0
-  while true:
-    case n.kind
-    of ParRi:
-      if nested == 0: break
-      dec nested
-      inc n
-    of EofToken: break
-    of ParLe:
-      if n.stmtKind in CallKindsS:
-        return true
-      inc nested
-      inc n
-    of Symbol:
-      if c.typeCache.fetchSymKind(n.symId) in RuntimeVarKinds:
-        return true  # runtime variable → value not available at C file scope
-      inc n
-    else:
-      inc n
-  result = false
+  result = scanInitValue(c, n)
 
 proc trToplevel(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  inc n
+  ## Consumes the whole `(stmts …)` node at `n`, including its close.
+  let toplevelScope = enterScope(n)
   while n.hasMore:
     let sk = n.stmtKind
     if sk in {GvarS, GletS, TvarS, TletS}:
@@ -2553,7 +2492,6 @@ proc trToplevel(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     elif sk == StmtsS:
       # Nested stmts block: recurse to handle mixed decls and executable code
       trToplevel c, dest, n
-      skipParRi c, n
     elif isTopLevelDecl(n):
       # Pure declarations and compile-time constructs stay at top level:
       trStmt c, dest, n, TraverseTopLevel
@@ -2562,6 +2500,7 @@ proc trToplevel(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       swap dest, c.initBody
       trStmt c, dest, n, TraverseAll
       swap dest, c.initBody
+  leaveScope(n, toplevelScope)
 
 proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string; appType = appConsole) =
   let mp = splitModulePath(infile)
@@ -2621,7 +2560,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
   if isMain and appType in {appConsole, appGui}:
     genMainProc(c, cdest, rootInfo)
 
-  skipParRi c, n
+  # the module's close was consumed by `trToplevel`
   let destfileName = c.dir / c.main & ".x.nif"
 
   var outputBuf = makeOutput(c, cdest, rootInfo)

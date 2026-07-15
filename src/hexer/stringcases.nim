@@ -75,17 +75,15 @@ proc getSimpleStringLit(c: var EContext; n: var Cursor): StrId =
   else:
     case n.exprKind:
     of SufX:
-      inc n
-      assert n.kind == StringLit
-      result = n.litId
-      while n.hasMore: skip n
-      consumeParRi n
+      n.into:
+        assert n.kind == StringLit
+        result = n.litId
+        while n.hasMore: skip n
     of HconvX, ConvX:
-      inc n
-      assert n.typeKind == CstringT
-      skip n
-      result = getSimpleStringLit(c, n)
-      skipParRi n
+      n.into:
+        assert n.typeKind == CstringT
+        skip n
+        result = getSimpleStringLit(c, n)
     of KvX:
       bug "not a string literal"
     else:
@@ -95,7 +93,7 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   # Prepare the list of (key, value) pairs:
   var pairs: seq[Key] = @[]
   var nb = n
-  inc nb
+  discard enterScope(nb) # peek pass over the case; never left
   var selectorNode = nb
   let sinfo = selectorNode.info
   let selector: SymId
@@ -139,7 +137,7 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   decodeSolution(c, dest, solution, 0, selector, selectorNode.info)
   var i = 0
   nb = n
-  inc nb
+  let caseScope = enterScope(nb)
 
   skip nb # selector
   let afterwards = pool.syms.getOrIncl("`sc." & $getTmpId(c))
@@ -164,9 +162,8 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     elif nb.substructureKind == ElseU:
       dest.copyIntoUnchecked "lab", info:
         dest.add symdefToken(elseLabel, info)
-      inc nb
-      trStmt c, dest, nb
-      skipParRi nb
+      nb.into:
+        trStmt c, dest, nb
       hasElse = true
     else:
       error "invalid `case` statement", nb
@@ -174,7 +171,7 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     dest.copyIntoUnchecked "lab", sinfo:
       dest.add symdefToken(elseLabel, sinfo)
 
-  skipParRi nb
+  leaveScope(nb, caseScope)
   dest.copyIntoUnchecked "lab", n.info:
     dest.add symdefToken(afterwards, n.info)
   n = nb

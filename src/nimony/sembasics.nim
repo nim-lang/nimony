@@ -258,8 +258,7 @@ proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: PackedLi
   if dest.len > pos:
     needsParRi = true
     if dest[pos].stmtKind == StmtsS:
-      assert dest[dest.len - 1].kind == ParRi
-      dest.shrink(dest.len - 1)
+      dest.reopenLastTree pos
     else:
       dest.insert [parLeToken(StmtsS, dest[pos].info)], pos
   buildErr c, dest, info, msg, orig
@@ -307,19 +306,11 @@ proc declToCursor*(c: var SemContext; dest: var TokenBuf; s: Sym): LoadResult =
     result = tryLoadSym(s.name)
   elif s.pos > 0:
     var buf = createTokenBuf(10)
-    var pos = s.pos - 1
-    var nested = 0
     # XXX optimize this for non-generic procs. No need to
     # copy their bodies here.
-    while true:
-      buf.add dest[pos]
-      case dest[pos].kind
-      of ParLe: inc nested
-      of ParRi:
-        dec nested
-        if nested == 0: break
-      else: discard
-      inc pos
+    let decl = cursorAt(dest, s.pos - 1)
+    buf.addSubtree decl
+    endRead(dest)
     result = LoadResult(status: LacksNothing, decl: cursorAt(buf, 0))
     programs.publish s.name, buf, c.phase
   else:
@@ -557,7 +548,7 @@ proc publish*(c: var SemContext; dest: var TokenBuf; s: SymId; start: int) =
   assert s != SymId(0)
   var buf = createTokenBuf(dest.len - start + 1)
   for i in start..<dest.len:
-    buf.add dest[i]
+    buf.addRaw dest[i]
   programs.publish s, buf, c.phase
 
 # -------------------------------------------------------------------------------------------------

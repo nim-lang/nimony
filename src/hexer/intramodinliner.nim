@@ -302,28 +302,12 @@ proc walkInlineWeights(n: var Cursor; params: Table[SymId, int];
     inc n
 
 proc subtreeTokenCount(n: Cursor; limit: int): int =
-  result = 0
-  var n = n
+  ## Number of tokens the subtree occupies (the physical span; elided
+  ## closes do not count). `limit` is only relevant for the comparison the
+  ## callers do, the count is exact.
   if n.kind != ParLe:
     return 1
-  var nested = 0
-  while true:
-    inc result
-    if result > limit:
-      return result
-    case n.kind
-    of ParLe:
-      inc nested
-      inc n
-    of ParRi:
-      dec nested
-      inc n
-      if nested == 0:
-        return result
-    of EofToken:
-      return result
-    else:
-      inc n
+  result = span(n)
 
 proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
   result = DefaultInlineInfo
@@ -1255,20 +1239,20 @@ proc emitPragmasWithInlineInfo(dest: var TokenBuf; pragmas: Cursor; info: Inline
     return
 
   dest.add p
-  inc p
-  while p.kind != ParRi:
-    if p.kind == ParLe and p.pragmaKind == InlineP:
-      dest.add p
-      inc p
-      dest.addIntLit info.threshold, p.info
-      for w in info.weights:
-        dest.addIntLit w, p.info
-      while p.kind != ParRi:
-        skip p
-      dest.takeToken p
-    else:
-      dest.takeTree p
-  dest.takeToken p
+  p.into:
+    while p.hasMore:
+      if p.kind == ParLe and p.pragmaKind == InlineP:
+        dest.add p
+        p.into:
+          dest.addIntLit info.threshold, p.endInfo
+          for w in info.weights:
+            dest.addIntLit w, p.endInfo
+          while p.hasMore:
+            skip p
+        dest.addParRi()
+      else:
+        dest.takeTree p
+  dest.addParRi()
 
 proc annotateInlinePragmas(dest: var TokenBuf; n: var Cursor;
                            infos: Table[SymId, InlineInfo]) =
@@ -1290,10 +1274,11 @@ proc annotateInlinePragmas(dest: var TokenBuf; n: var Cursor;
       dest.addSubtree d.body
       dest.addParRi()
     else:
-      dest.takeToken n
-      while n.hasMore:
-        annotateInlinePragmas(dest, n, infos)
-      dest.takeToken n
+      dest.add n.load()
+      n.into:
+        while n.hasMore:
+          annotateInlinePragmas(dest, n, infos)
+      dest.addParRi()
   of ParRi:
     raiseAssert "ParRi should not be encountered here"
   else:

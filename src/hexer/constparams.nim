@@ -51,8 +51,9 @@ proc passByConstRef(c: var Context; typ, pragmas: Cursor): bool =
            typeprops.isInheritable(typ, false)
 
 proc rememberConstRefParams(c: var Context; params: Cursor) =
+  if params.kind != ParLe: return
   var n = params
-  inc n # skips (params
+  discard enterScope(n) # skips (params; bounds the walk under vpr
   while n.hasMore:
     let r = takeLocal(n, SkipFinalParRi)
     if r.name.kind == SymbolDef and passByConstRef(c, r.typ, r.pragmas):
@@ -155,9 +156,7 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # there is no error channel, so we degrade to a bare `(ret .)`.
   if n.firstSon.kind == DotToken:
     let info = n.info
-    inc n  # past `(raise`
-    inc n  # past `.`
-    skipParRi n
+    skip n # the whole bare `(raise .)`
     if c.canRaise:
       copyIntoKind dest, RaiseS, info:
         produceRaiseTuple(c, dest, c.retType, info)
@@ -196,21 +195,20 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addIntLit 0, info
     else:
       tr c, dest, n
-    finishRaiseTuple c, dest, n.info
+    finishRaiseTuple c, dest, n.endInfo
 
 proc trFailed(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  inc n
-  let localIsVoid = isVoidType(getType(c.typeCache, n))
-  if localIsVoid:
-    dest.takeTree n
-  else:
-    assert n.kind == Symbol
-    copyIntoKind dest, TupatX, info:
-      dest.addSymUse n.symId, info
-      inc n
-      dest.addIntLit 0, info
-  skipParRi n
+  n.into:
+    let localIsVoid = isVoidType(getType(c.typeCache, n))
+    if localIsVoid:
+      dest.takeTree n
+    else:
+      assert n.kind == Symbol
+      copyIntoKind dest, TupatX, info:
+        dest.addSymUse n.symId, info
+        inc n
+        dest.addIntLit 0, info
   c.nextRaiseIsSpecial = true
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetExpectsTuple: bool) =
@@ -227,10 +225,10 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetExpectsTupl
     needsTuple = produceSuccessTuple(c, dest, retType, n.info)
 
   dest.add n
-  inc n # skip `(call)`
+  let callScope = enterScope(n) # skip `(call)`
   tr c, dest, n # handle `fn`
 
-  inc fnType
+  discard enterScope(fnType) # peek only, never left
   while n.hasMore:
     let previousFormalParam = fnType
     if fnType.kind == ParRi:
@@ -252,7 +250,8 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetExpectsTupl
         skip n
       else:
         tr c, dest, n
-  takeParRi dest, n
+  dest.addParRi(n.endInfo)
+  leaveScope(n, callScope)
   if needsTuple:
     dest.addParRi() # TupconstrX
 
@@ -333,22 +332,22 @@ proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.closeScope()
 
 proc trPragmaBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  inc n # pragmax
-  inc n # pragmas
+  let pragmaxScope = enterScope(n) # pragmax
+  let pragmasScope = enterScope(n) # pragmas
   if n.pragmaKind == KeepOverflowFlagP:
     skip n # keepOverflowFlag
-    skipParRi n # pragmas
+    leaveScope(n, pragmasScope) # pragmas
     let oldKeepOverflowFlag = c.keepOverflowFlag
     c.keepOverflowFlag = true
     tr(c, dest, n)
     c.keepOverflowFlag = oldKeepOverflowFlag
   elif n.pragmaKind == CastP:
     skip n # cast pragma
-    skipParRi n # pragmas
+    leaveScope(n, pragmasScope) # pragmas
     tr(c, dest, n)
   else:
     bug "unknown pragma block: " & toString(n, false)
-  skipParRi n # pragmax
+  leaveScope(n, pragmaxScope) # pragmax
 
 proc checkedArithOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -392,7 +391,7 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
         inc nn
 
   dest.add n
-  inc n
+  let tryScope = enterScope(n)
   tr c, dest, n
   c.exceptVars.shrink oldLen
   while n.substructureKind == ExceptU:
@@ -406,7 +405,8 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if n.substructureKind == FinU:
     copyInto dest, n:
       tr c, dest, n
-  takeParRi dest, n
+  dest.addParRi(n.endInfo)
+  leaveScope(n, tryScope)
 
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -438,21 +438,19 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tr c, dest, n
 
 proc trObjConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  dest.takeToken n
-  takeTree dest, n # type
-  while n.hasMore:
-    if n.substructureKind == KvU:
-      takeToken dest, n
-      takeTree dest, n # key
-      tr c, dest, n
-      if n.hasMore:
-        # optional inheritance
+  takeInto dest, n:
+    takeTree dest, n # type
+    while n.hasMore:
+      if n.substructureKind == KvU:
+        takeInto dest, n:
+          takeTree dest, n # key
+          tr c, dest, n
+          if n.hasMore:
+            # optional inheritance
+            takeTree dest, n
+      else:
+        # V-Table:
         takeTree dest, n
-      takeParRi dest, n
-    else:
-      # V-Table:
-      takeTree dest, n
-  takeParRi dest, n
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
@@ -484,11 +482,10 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         copyInto dest, n:
           while n.hasMore: tr c, dest, n
     of DotX:
-      dest.takeToken n
-      tr c, dest, n
-      while n.hasMore:
-        dest.takeTree n
-      dest.takeParRi n
+      takeInto dest, n:
+        tr c, dest, n
+        while n.hasMore:
+          dest.takeTree n
     of OconstrX:
       trObjConstr c, dest, n
     of FailedX:

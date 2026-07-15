@@ -49,29 +49,18 @@ proc conceptRoutineBasename*(routine: Cursor): StrId =
 proc collectSelfSymsInType*(typ: Cursor; result: var seq[SymId]) =
   ## Collect every `Self` typevar referenced inside a type tree.
   var typ = typ
-  var nested = 0
-  while nested >= 0:
-    case typ.kind
-    of Symbol:
-      let res = tryLoadSym(typ.symId)
-      if res.status == LacksNothing and res.decl.symKind == TypevarY:
-        if typ.symId notin result:
-          result.add typ.symId
-      inc typ
-      if nested == 0:
-        return
-    of ParLe:
-      inc nested
-      inc typ
-    of ParRi:
-      dec nested
-      inc typ
-      if nested == 0:
-        return
-    else:
-      inc typ
-      if nested == 0:
-        return
+  case typ.kind
+  of Symbol:
+    let res = tryLoadSym(typ.symId)
+    if res.status == LacksNothing and res.decl.symKind == TypevarY:
+      if typ.symId notin result:
+        result.add typ.symId
+  of ParLe:
+    typ.loopInto:
+      collectSelfSymsInType(typ, result)
+      skip typ
+  else:
+    discard
 
 proc conceptSelfSymFromSlot*(body: Cursor): SymId =
   let selfSlot = conceptSelfSlot(body)

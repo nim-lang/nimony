@@ -464,17 +464,9 @@ proc isMinterm(n: TypeCursor): bool =
   if n.typeKind == AndT:
     result = true
     var n = n
-    inc n
-    var nested = 1
-    while nested != 0:
-      if n.typeKind == AndT:
-        inc n
-        inc nested
-      elif n.kind == ParRi:
-        inc n
-        dec nested
-      else:
-        result = isAtomTypeclass(n)
+    n.peekInto:
+      while n.hasMore:
+        result = isMinterm(n)
         if not result: break
         skip n
   else:
@@ -484,17 +476,9 @@ proc isSumOfProducts*(n: TypeCursor): bool =
   if n.typeKind == OrT:
     result = true
     var n = n
-    inc n
-    var nested = 1
-    while nested != 0:
-      if n.typeKind == OrT:
-        inc n
-        inc nested
-      elif n.kind == ParRi:
-        inc n
-        dec nested
-      else:
-        result = isMinterm(n)
+    n.peekInto:
+      while n.hasMore:
+        result = isSumOfProducts(n)
         if not result: break
         skip n
   else:
@@ -531,30 +515,25 @@ proc multiplyMinterms(buf: var TokenBuf; a, b: var TypeCursor) =
 proc multiplySums(buf: var TokenBuf; a, b: var TypeCursor) =
   # apply distributive property
   if a.typeKind == OrT:
-    buf.add a
-    inc a
-    let bOrig = b
-    while a.hasMore:
-      b = bOrig
-      if b.typeKind == OrT:
-        inc b
+    copyInto buf, a:
+      let bOrig = b
+      while a.hasMore:
+        b = bOrig
+        if b.typeKind == OrT:
+          let aOrig = a
+          b.into:
+            while b.hasMore:
+              a = aOrig
+              multiplyMinterms(buf, a, b)
+        else:
+          multiplyMinterms(buf, a, b)
+  else:
+    if b.typeKind == OrT:
+      copyInto buf, b:
         let aOrig = a
         while b.hasMore:
           a = aOrig
           multiplyMinterms(buf, a, b)
-        skipParRi b
-      else:
-        multiplyMinterms(buf, a, b)
-    takeParRi buf, a
-  else:
-    if b.typeKind == OrT:
-      buf.add b
-      inc b
-      let aOrig = a
-      while b.hasMore:
-        a = aOrig
-        multiplyMinterms(buf, a, b)
-      takeParRi buf, b
     else:
       multiplyMinterms(buf, a, b)
 
@@ -583,34 +562,33 @@ proc reorderSumOfProducts*(buf: var TokenBuf; n: var TypeCursor; negative = fals
       reorderSumOfProducts(buf, n, not negative)
   of AndT:
     var buf2 = createTokenBuf(32)
-    inc n
     let sumStart = buf.len
-    reorderSumOfProducts(buf, n, negative)
-    while n.hasMore:
-      # move both operands to `buf2` then fold into `buf`:
-      for tok in sumStart ..< buf.len: buf2.add buf[tok]
-      buf.shrink sumStart
-      let bStart = buf2.len
-      reorderSumOfProducts(buf2, n, negative)
-      var a = beginRead(buf2)
-      var b = cursorAt(buf2, bStart)
-      if countProducts(a) * countProducts(b) >= 256:
-        # bail out
-        buf.addParLe(AndT, a.info)
-        buf.add buf2
-        while n.hasMore:
-          if negative:
-            buf.addParLe(NotT, n.info)
-          takeTree buf, n
-          if negative:
-            buf.addParRi()
-        break
-      else:
-        multiplySums(buf, a, b)
-      endRead(buf2)
-      endRead(buf2)
-      buf2.shrink 0
-    skipParRi n
+    n.into:
+      reorderSumOfProducts(buf, n, negative)
+      while n.hasMore:
+        # move both operands to `buf2` then fold into `buf`:
+        for tok in sumStart ..< buf.len: buf2.addRaw buf[tok]
+        buf.shrink sumStart
+        let bStart = buf2.len
+        reorderSumOfProducts(buf2, n, negative)
+        var a = beginRead(buf2)
+        var b = cursorAt(buf2, bStart)
+        if countProducts(a) * countProducts(b) >= 256:
+          # bail out
+          buf.addParLe(AndT, a.info)
+          buf.add buf2
+          while n.hasMore:
+            if negative:
+              buf.addParLe(NotT, n.info)
+            takeTree buf, n
+            if negative:
+              buf.addParRi()
+          break
+        else:
+          multiplySums(buf, a, b)
+        endRead(buf2)
+        endRead(buf2)
+        buf2.shrink 0
   of OrT:
     # flatten:
     buf.addParLe(OrT, n.info)

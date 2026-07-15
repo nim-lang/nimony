@@ -149,7 +149,18 @@ proc load*(c: Cursor): PackedToken {.inline.} =
   assert c.p != nil and c.rem > 0
   c.p[]
 
-proc kind*(c: Cursor): NifKind {.inline.} = c.load.kind
+proc kind*(c: Cursor): NifKind {.inline.} =
+  when defined(virtualParRi):
+    ## A bounded cursor (from `into`/`enterScope`) reports a virtual `ParRi`
+    ## once its scope is consumed (`rem == 0`), even though the physical
+    ## close token is elided. This keeps classic sentinel idioms
+    ## (`n.kind == ParRi`, `typeKind` yielding `NoType` at a subtree's end)
+    ## working unchanged. Only `leaveScope`/`into` may move past a virtual
+    ## close — `inc` still asserts.
+    if c.rem <= 0: ParRi
+    else: c.load.kind
+  else:
+    c.load.kind
 
 proc info*(c: Cursor): PackedLineInfo {.inline.} = c.load.info
 proc setInfo*(c: Cursor; info: PackedLineInfo) {.inline.} = c.p[].info = info
@@ -183,17 +194,43 @@ proc inc*(c: var Cursor) {.inline.} =
 
 proc consumeParRi*(c: var Cursor) {.inline.} =
   ## Advance past a ParRi token. Under `-d:virtualParRi` the real ParRi
-  ## may sit at the bounded scope's tail without being counted in `rem`,
-  ## so plain `inc` would trip its `rem != 0` guard — we accept rem == 0
-  ## and just advance the pointer.
-  assert c.kind == ParRi, "consumeParRi: cursor not at ParRi"
+  ## may sit at the bounded scope's tail without being counted in `rem`
+  ## (under `-d:preserveRealParRi`), so plain `inc` would trip its
+  ## `rem != 0` guard — this advances the pointer directly instead.
   when defined(virtualParRi):
+    # Must be a *physical* ParRi: a virtual close (rem == 0 at a sealed
+    # scope's end) has no token to advance past — use `leaveScope`/`into`
+    # for those. `c.p[]` is read directly since `load` requires rem > 0
+    # but under `-d:preserveRealParRi` the trailing ParRi is not counted.
+    when defined(preserveRealParRi):
+      assert c.p != nil and c.p[].kind == ParRi, "consumeParRi: cursor not at ParRi"
+    else:
+      assert c.rem > 0 and c.p[].kind == ParRi, "consumeParRi: cursor not at real ParRi"
     c.p = cast[ptr PackedToken](cast[uint](c.p) + sizeof(PackedToken).uint)
     if c.rem > 0: dec c.rem
   else:
+    assert c.kind == ParRi, "consumeParRi: cursor not at ParRi"
     inc c
 
 # `setTag(PackedToken, TagId)` lives in nifstreams now (gated by `-d:virtualParRi`)
+
+proc peekPastEnd*(n: Cursor): Cursor =
+  ## A cursor positioned at the token that physically follows the current
+  ## bounded scope's (real or elided) close; `n` must sit at the scope's
+  ## end. For read-only peeks at a following sibling that the caller KNOWS
+  ## exists (e.g. the body slot after a type decl's pragmas): the result
+  ## carries a loose bound, so treat it strictly as a peek.
+  result = n
+  when defined(virtualParRi):
+    if result.rem > 0:
+      # overflow scope: a real ParRi terminates it
+      assert result.load.kind == ParRi, "peekPastEnd: not at scope end"
+      result.p = cast[ptr PackedToken](cast[uint](result.p) + sizeof(PackedToken).uint)
+    # else: the close is elided; `p` already points at the following token
+    result.rem = high(int)
+  else:
+    assert result.kind == ParRi, "peekPastEnd: not at scope end"
+    inc result
 
 proc unsafeDec*(c: var Cursor) {.inline.} =
   c.p = cast[ptr PackedToken](cast[uint](c.p) - sizeof(PackedToken).uint)
@@ -277,15 +314,22 @@ proc skip*(c: var Cursor) =
 
 proc skipUntilEnd*(c: var Cursor) =
   ## skips `c` until an unmatched ParRi is found, then returns without skipping the ParRi
-  var nested = 0
-  while true:
-    if c.kind == ParRi:
-      if nested == 0:
-        break
-      dec nested
-    elif c.kind == ParLe:
-      inc nested
-    inc c
+  when defined(virtualParRi):
+    # Requires a *bounded* cursor (from `into`/`enterScope`): whole-subtree
+    # skips land exactly on the scope's end — the virtual close (rem == 0)
+    # or the real ParRi of an overflow scope. (`hasMore` is not yet
+    # declared at this point in the file, hence the spelled-out condition.)
+    while c.rem > 0 and c.load.kind != ParRi: skip c
+  else:
+    var nested = 0
+    while true:
+      if c.kind == ParRi:
+        if nested == 0:
+          break
+        dec nested
+      elif c.kind == ParLe:
+        inc nested
+      inc c
 
 # ── Traversal templates ──────────────────────────────────────────────────
 # Pure traversal helpers for reading/analyzing a tree without producing output.
@@ -297,6 +341,52 @@ template hasMore*(n: Cursor): bool =
     n.rem > 0 and n.kind != ParRi
   else:
     n.kind != ParRi
+
+proc endInfo*(n: Cursor): PackedLineInfo {.inline.} =
+  ## Line info at the current position, safe to call when `n` may sit at
+  ## the end of a bounded scope. Classic mode reads the token there (the
+  ## closing ParRi); under `-d:virtualParRi` that closer is elided, so
+  ## this yields the next physical token's info if any, else NoLineInfo.
+  when defined(virtualParRi):
+    if n.rem > 0: n.info else: NoLineInfo
+  else:
+    n.info
+
+type
+  CursorScope* = object
+    ## Manual counterpart to `into` for resumable traversals (iterators
+    ## that pause mid-walk and cannot use a template's scoped body).
+    head: Cursor
+
+proc enterScope*(n: var Cursor): CursorScope =
+  ## Advances past the ParLe at `n` and bounds the cursor to the scope's
+  ## body. While inside, `n.hasMore` is false exactly when the body is
+  ## consumed; then call `leaveScope` to advance past the (real or
+  ## virtual) closing `)` and restore the outer scope's bound.
+  assert n.kind == ParLe, "enterScope requires cursor at ParLe"
+  result = CursorScope(head: n)
+  when defined(virtualParRi):
+    let j = jump(n.load)
+    let isOverflow = j == MaxJump
+    n.p = cast[ptr PackedToken](cast[uint](n.p) + sizeof(PackedToken).uint)
+    n.rem = if isOverflow: high(int) else: int(j)
+  else:
+    inc n
+
+proc leaveScope*(n: var Cursor; scope: CursorScope) =
+  ## Leaves a scope opened by `enterScope`; the body must have been fully
+  ## consumed (`not n.hasMore`).
+  when defined(virtualParRi):
+    if n.rem > 0:
+      # overflow scope: terminated by its real ParRi
+      assert n.kind == ParRi, "leaveScope: scope did not end at ParRi"
+      n.p = cast[ptr PackedToken](cast[uint](n.p) + sizeof(PackedToken).uint)
+    let consumed = int((cast[uint](n.p) - cast[uint](scope.head.p)) div sizeof(PackedToken).uint)
+    let savedRem = scope.head.rem
+    n.rem = if savedRem >= consumed: savedRem - consumed else: 0
+  else:
+    assert n.kind == ParRi, "leaveScope: scope did not end at ParRi"
+    inc n
 
 template into*(n: var Cursor; body: untyped) =
   ## Enters the current ParLe node, runs `body` to process the children,
@@ -399,18 +489,30 @@ template linearScan*(n: var Cursor; body: untyped) =
   ## early, leaving `n` at the matching node. `body` must **not** advance
   ## `n`; the template walks it. Use for tag searches over a whole subtree,
   ## e.g. the type-hook pragma lookups.
-  var nested = 0
-  if n.kind == ParLe:
-    inc nested; inc n
-    while nested > 0:
-      case n.kind
-      of ParLe:
-        body
-        inc nested; inc n
-      of ParRi:
-        dec nested; inc n
-      else:
+  when defined(virtualParRi):
+    # token-linear walk over the subtree's physical span; closes are elided
+    # so the classic ParRi counting cannot terminate the loop
+    if n.kind == ParLe:
+      var togo = span(n) - 1
+      inc n
+      while togo > 0:
+        if n.kind == ParLe:
+          body
         inc n
+        dec togo
+  else:
+    var nested = 0
+    if n.kind == ParLe:
+      inc nested; inc n
+      while nested > 0:
+        case n.kind
+        of ParLe:
+          body
+          inc nested; inc n
+        of ParRi:
+          dec nested; inc n
+        else:
+          inc n
 
 type
   TokenBuf* = object
@@ -594,6 +696,13 @@ proc add*(b: var TokenBuf; item: PackedToken) {.inline.} =
 
 proc len*(b: TokenBuf): int {.inline.} = b.len
 
+proc debugOpenTags*(b: TokenBuf): seq[int] =
+  ## debugging helper: the current open-tag stack (classic mode has none)
+  when defined(virtualParRi):
+    result = b.openTags
+  else:
+    result = newSeq[int]()
+
 when defined(nimony):
   proc `[]`*(b: TokenBuf; i: int): var PackedToken {.inline.} =
     assert i >= 0 and i < b.len
@@ -619,6 +728,24 @@ proc cursorAt*(b: var TokenBuf; i: int): Cursor {.inline.} =
     b.owner.rc = 1  # 1 for TokenBuf
   inc b.owner.rc  # + 1 for the returned Cursor
   result = Cursor(owner: b.owner, p: addr b.data[i], rem: b.len-i)
+
+proc cursorTailAt*(b: var TokenBuf; i: int): Cursor {.inline.} =
+  ## Like `cursorAt`, but additionally accepts `i == b.len`: under
+  ## `-d:virtualParRi` a subtree's physical close is elided, so the
+  ## position right after a sealed tree's last child can be the end of
+  ## the buffer. The returned cursor then has `rem == 0` and reports a
+  ## virtual `ParRi` — do not `load`/`inc` it, only `kind`-style probes.
+  ## (Classic mode always has a physical token there, making this
+  ## equivalent to `cursorAt`.)
+  assert i >= 0 and i <= b.len
+  if b.owner == nil:
+    b.owner = cast[CursorOwner](alloc0(sizeof(CursorOwnerObj)))
+    b.owner.data = b.data
+    b.owner.rc = 1  # 1 for TokenBuf
+  inc b.owner.rc  # + 1 for the returned Cursor
+  result = Cursor(owner: b.owner,
+    p: cast[ptr PackedToken](cast[uint](b.data) + uint(i) * uint(sizeof(PackedToken))),
+    rem: b.len-i)
 
 proc readonlyCursorAt*(b: TokenBuf; i: int): Cursor {.inline.} =
   assert i >= 0 and i < b.len
@@ -722,8 +849,58 @@ iterator items*(b: TokenBuf): PackedToken =
   for i in 0 ..< b.len:
     yield b.data[i]
 
+proc span*(c: Cursor): int =
+  ## Number of physical tokens the subtree at `c` occupies. Under
+  ## `-d:virtualParRi` elided ParRis do not count (they don't exist).
+  when defined(virtualParRi):
+    var c2 = c
+    skip c2
+    result = int((cast[uint](c2.p) - cast[uint](c.p)) div sizeof(PackedToken).uint)
+  else:
+    result = 0
+    var c = c
+    if c.kind == ParLe:
+      var nested = 0
+      while true:
+        inc c
+        inc result
+        if c.kind == ParRi:
+          if nested == 0: break
+          dec nested
+        elif c.kind == ParLe: inc nested
+    if c.rem > 0:
+      inc c
+      inc result
+
 proc add*(dest: var TokenBuf; src: TokenBuf) =
-  for t in items(src): dest.add t
+  when defined(virtualParRi):
+    # `src` may be a *fragment*: sealed subtrees (their ParRi elided), plus
+    # still-open ParLes (recorded in src.openTags) and unmatched ParRis that
+    # close opens living in `dest`. Replay it with the semantics a
+    # token-by-token build would have had: sealed subtrees are bulk-copied
+    # (jumps are position-independent), open ParLes become open tags of
+    # `dest`, unmatched ParRis seal dest's opens.
+    var i = 0
+    var openIdx = 0 # src.openTags is ascending
+    while i < src.len:
+      let t = src.data[i]
+      if t.kind == ParLe and
+          not (openIdx < src.openTags.len and src.openTags[openIdx] == i):
+        # sealed subtree: bulk-copy its physical span
+        let n = span(Cursor(p: addr src.data[i], rem: src.len - i))
+        if dest.owner != nil: prepareMutation(dest)
+        if dest.len + n > dest.cap:
+          dest.cap = max(dest.cap div 2 + dest.cap, dest.len + n)
+          dest.data = cast[Storage](realloc(dest.data, sizeof(PackedToken)*dest.cap))
+        copyMem(addr dest.data[dest.len], addr src.data[i], n * sizeof(PackedToken))
+        dest.len += n
+        i += n
+      else:
+        if t.kind == ParLe: inc openIdx
+        dest.add t
+        inc i
+  else:
+    for t in items(src): dest.add t
 
 proc fromCursor*(c: Cursor): TokenBuf =
   result = createTokenBuf(4)
@@ -736,7 +913,38 @@ proc fromStream*(s: var Stream): TokenBuf =
 proc shrink*(b: var TokenBuf; newLen: int) =
   if b.owner != nil: prepareMutation(b)
   assert newLen >= 0 and newLen <= b.len
+  when defined(virtualParRi):
+    # Truncating away an unsealed ParLe must also drop its open-tag entry,
+    # otherwise a later add(ParRi) seals a position that no longer exists.
+    # Callers use shrink to roll back speculatively emitted subtrees.
+    while b.openTags.len > 0 and b.openTags[b.openTags.len - 1] >= newLen:
+      b.openTags.setLen b.openTags.len - 1
   b.len = newLen
+
+proc reopenLastTree*(b: var TokenBuf; pos: int) =
+  ## Reopens the finished tree headed by the ParLe at `pos` so that more
+  ## children can be appended; close it again with `addParRi`. The tree's
+  ## subtree must be the last content of `b`. Classic mode removes the
+  ## trailing `)`; under `-d:virtualParRi` the ParLe is re-registered as
+  ## an open tag (its `)` was elided; overflow scopes drop their real one).
+  if b.owner != nil: prepareMutation(b)
+  assert b.data[pos].kind == ParLe, "reopenLastTree: no ParLe at pos"
+  when defined(virtualParRi):
+    if jump(b.data[pos]) == MaxJump:
+      assert b.data[b.len-1].kind == ParRi, "reopenLastTree: tree does not end the buffer"
+      dec b.len
+    else:
+      assert pos + 1 + int(jump(b.data[pos])) == b.len,
+        "reopenLastTree: tree does not end the buffer"
+    var insertAt = b.openTags.len
+    for k in 0 ..< b.openTags.len:
+      if b.openTags[k] > pos:
+        insertAt = k
+        break
+    b.openTags.insert(pos, insertAt)
+  else:
+    assert b.data[b.len-1].kind == ParRi, "reopenLastTree: tree does not end the buffer"
+    dec b.len
 
 proc grow(b: var TokenBuf; newLen: int) =
   if b.owner != nil: prepareMutation(b)
@@ -789,67 +997,198 @@ proc addCharLit*(dest: var TokenBuf; c: char; info = NoLineInfo) =
 proc addFloatLit*(dest: var TokenBuf; f: BiggestFloat; info = NoLineInfo) =
   dest.add floatToken(pool.floats.getOrIncl(f), info)
 
-proc span*(c: Cursor): int =
-  result = 0
-  var c = c
-  if c.kind == ParLe:
-    var nested = 0
-    while true:
-      inc c
-      inc result
-      if c.kind == ParRi:
-        if nested == 0: break
-        dec nested
-      elif c.kind == ParLe: inc nested
-  if c.rem > 0:
-    inc c
-    inc result
+when defined(virtualParRi):
+  proc spliceRaw(dest: var TokenBuf; p: ptr PackedToken; n: int; pos: int;
+                 srcOpenTags: openArray[int]) =
+    ## Splices `n` already-normalized tokens at `pos` and fixes the
+    ## open-tag bookkeeping: existing entries at/after `pos` shift by `n`,
+    ## the fragment's own still-open tags (`srcOpenTags`, fragment-relative,
+    ## ascending) slot in between so the stack stays ascending.
+    if n <= 0: return
+    if dest.owner != nil: prepareMutation(dest)
+    let oldLen = dest.len
+    dest.grow(oldLen + n)
+    if oldLen > pos:
+      moveMem(addr dest.data[pos + n], addr dest.data[pos],
+              (oldLen - pos) * sizeof(PackedToken))
+    copyMem(addr dest.data[pos], p, n * sizeof(PackedToken))
+    var insertAt = dest.openTags.len
+    for k in 0 ..< dest.openTags.len:
+      if dest.openTags[k] >= pos:
+        dest.openTags[k] += n
+        if insertAt == dest.openTags.len: insertAt = k
+    for k in 0 ..< srcOpenTags.len:
+      dest.openTags.insert(srcOpenTags[k] + pos, insertAt + k)
 
 proc insert*(dest: var TokenBuf; src: openArray[PackedToken]; pos: int) =
-  var j = len(dest) - 1
-  var i = j + len(src)
-  dest.grow(i + 1)
+  when defined(virtualParRi):
+    # Normalize the raw fragment exactly as a plain build would (sealing
+    # matched pairs, eliding their ParRis), then splice. A ParRi that
+    # closes an open living in `dest` before `pos` is not supported here.
+    var tmp = createTokenBuf(max(src.len, 4))
+    for t in src:
+      assert t.kind != ParRi or tmp.openTags.len > 0,
+        "insert: unmatched ')' in inserted fragment"
+      tmp.add t
+    spliceRaw dest, addr tmp.data[0], tmp.len, pos,
+              toOpenArray(tmp.openTags, 0, tmp.openTags.len-1)
+  else:
+    var j = len(dest) - 1
+    var i = j + len(src)
+    dest.grow(i + 1)
 
-  # Move items after `pos` to the end of the sequence.
-  while j >= pos:
-    dest[i] = dest[j]
-    dec i
-    dec j
-  # Insert items from `dest` into `dest` at `pos`
-  inc j
-  for item in src:
-    dest[j] = item
+    # Move items after `pos` to the end of the sequence.
+    while j >= pos:
+      dest[i] = dest[j]
+      dec i
+      dec j
+    # Insert items from `dest` into `dest` at `pos`
     inc j
+    for item in src:
+      dest[j] = item
+      inc j
 
 proc insert*(dest: var TokenBuf; src: Cursor; pos: int) =
-  insert dest, toOpenArray(cast[ptr  UncheckedArray[PackedToken]](src.p), 0, span(src)-1), pos
+  when defined(virtualParRi):
+    # a complete (sealed) subtree: splice its physical span; it contributes
+    # no open tags of its own
+    spliceRaw dest, src.p, span(src), pos, []
+  else:
+    insert dest, toOpenArray(cast[ptr  UncheckedArray[PackedToken]](src.p), 0, span(src)-1), pos
 
 proc insert*(dest: var TokenBuf; src: TokenBuf; pos: int) =
-  insert dest, toOpenArray(src.data, 0, src.len-1), pos
+  when defined(virtualParRi):
+    # `src` was built through `add`, so it is already normalized; its
+    # still-open ParLes carry over as open tags of `dest`.
+    if src.len > 0:
+      spliceRaw dest, addr src.data[0], src.len, pos,
+                toOpenArray(src.openTags, 0, src.openTags.len-1)
+  else:
+    insert dest, toOpenArray(src.data, 0, src.len-1), pos
+
+proc checkSeals*(b: TokenBuf; maxReports = 5): seq[string] =
+  ## Debugging helper: verifies that every sealed scope ends at or before
+  ## its parent's end. Returns human-readable reports (empty = consistent).
+  ## Only meaningful under `-d:virtualParRi`.
+  result = @[]
+  when defined(virtualParRi):
+    var stack: seq[(string, int)] = @[] # (tag, endPos) per open scope
+    var openIdx = 0 # b.openTags is ascending: skip still-open tags,
+                    # their jump fields are not sealed yet
+    for i in 0 ..< b.len:
+      while stack.len > 0 and i >= stack[stack.len-1][1]: discard stack.pop()
+      let t = b.data[i]
+      if openIdx < b.openTags.len and b.openTags[openIdx] == i:
+        inc openIdx
+        continue
+      if t.kind == ParLe and jump(t) != MaxJump:
+        let endPos = i + 1 + int(jump(t))
+        if endPos > b.len or (stack.len > 0 and endPos > stack[stack.len-1][1]):
+          if result.len < maxReports:
+            let u = unpack(pool.man, t.info)
+            result.add "(" & pool.tags[nifstreams.tag(t)] & " jump=" & $jump(t) &
+              " at token " & $i & " ends at " & $endPos & " but parent (" &
+              (if stack.len > 0: stack[stack.len-1][0] else: "") & ") ends at " &
+              (if stack.len > 0: $stack[stack.len-1][1] else: "buf:" & $b.len) &
+              " src=" & (if u.file != FileId(0): pool.files[u.file] else: "?") & ":" & $u.line & ":" & $u.col
+        stack.add (pool.tags[nifstreams.tag(t)], endPos)
+
+proc widenSealed*(dest: var TokenBuf; enclosing: int; growth: int) =
+  ## After an `insert`/`replace` grew the contents of an already-sealed
+  ## scope (its ParLe at `enclosing`), widen the seal to match — the splice
+  ## operations keep open-tag bookkeeping in sync but cannot know which
+  ## sealed ancestor spans the splice point. No-op in classic mode and for
+  ## overflow scopes (their real ParRi moved along with the content).
+  when defined(virtualParRi):
+    if growth > 0 and jump(dest[enclosing]) != MaxJump:
+      assert jump(dest[enclosing]) + uint32(growth) < MaxJump, "widenSealed: subtree overflows the jump field"
+      setJump(dest[enclosing], jump(dest[enclosing]) + uint32(growth))
+
+proc widenEnclosingSealed*(dest: var TokenBuf; pos, growth: int) =
+  ## After `insert`ing `growth` tokens at position `pos` of a COMPLETED
+  ## buffer (no open tags), widen the jump of EVERY sealed scope enclosing
+  ## `pos`. Use this when the insertion point's ancestor chain isn't known
+  ## to the caller (otherwise prefer targeted `widenSealed` calls).
+  ## No-op in classic mode; overflow scopes keep their physical ParRi.
+  when defined(virtualParRi):
+    if growth <= 0: return
+    var i = 0
+    while i < pos:
+      if dest[i].kind == ParLe:
+        let j = jump(dest[i])
+        if j == MaxJump:
+          inc i # overflow scope: physical ParRi, nothing to widen; descend
+        elif i + int(j) >= pos:
+          # the (stale, pre-insert) span reaches the insertion point:
+          # this scope encloses it — widen and descend
+          widenSealed(dest, i, growth)
+          inc i
+        else:
+          i += int(j) + 1 # sealed subtree entirely before `pos`: skip it
+      else:
+        inc i
 
 proc replace*(dest: var TokenBuf; by: Cursor; pos: int) =
   if dest.owner != nil: prepareMutation(dest)
-  let len = span(Cursor(p: addr dest.data[pos], rem: dest.len-pos))
-  let actualLen = min(len, dest.len - pos)
-  let byLen = span(by)
-  let oldLen = dest.len
-  let newLen = oldLen + byLen - actualLen
-  if byLen > actualLen:
-    # Need to make room for additional elements
-    dest.grow(newLen)
-    # Move existing elements to the right
-    for i in countdown(oldLen - 1, pos + actualLen):
-      dest[i + byLen - actualLen] = dest[i]
-  elif byLen < actualLen:
-    # Need to remove elements
-    for i in pos + byLen ..< dest.len - (actualLen - byLen):
-      dest[i] = dest[i + actualLen - byLen]
-    dest.shrink(newLen)
-  # Copy new elements
-  var by = by
-  for i in 0 ..< byLen:
-    dest[pos + i] = by.load
-    inc by
+  when defined(virtualParRi):
+    # Replaces the sealed subtree at `pos` with the sealed subtree `by`.
+    let actualLen = min(span(Cursor(p: addr dest.data[pos], rem: dest.len-pos)),
+                        dest.len - pos)
+    let byLen = span(by)
+    let oldLen = dest.len
+    let newLen = oldLen + byLen - actualLen
+    let delta = byLen - actualLen
+    if delta != 0:
+      # keep open-tag positions beyond the replaced region in sync; opens
+      # strictly inside it cannot exist (the subtree at `pos` is sealed)
+      for k in 0 ..< dest.openTags.len:
+        if dest.openTags[k] >= pos + actualLen: dest.openTags[k] += delta
+    if delta > 0:
+      dest.grow(newLen)
+      moveMem(addr dest.data[pos + byLen], addr dest.data[pos + actualLen],
+              (oldLen - pos - actualLen) * sizeof(PackedToken))
+    elif delta < 0:
+      moveMem(addr dest.data[pos + byLen], addr dest.data[pos + actualLen],
+              (oldLen - pos - actualLen) * sizeof(PackedToken))
+      dest.len = newLen
+    copyMem(addr dest.data[pos], by.p, byLen * sizeof(PackedToken))
+  else:
+    let len = span(Cursor(p: addr dest.data[pos], rem: dest.len-pos))
+    let actualLen = min(len, dest.len - pos)
+    let byLen = span(by)
+    let oldLen = dest.len
+    let newLen = oldLen + byLen - actualLen
+    if byLen > actualLen:
+      # Need to make room for additional elements
+      dest.grow(newLen)
+      # Move existing elements to the right
+      for i in countdown(oldLen - 1, pos + actualLen):
+        dest[i + byLen - actualLen] = dest[i]
+    elif byLen < actualLen:
+      # Need to remove elements
+      for i in pos + byLen ..< dest.len - (actualLen - byLen):
+        dest[i] = dest[i + actualLen - byLen]
+      dest.shrink(newLen)
+    # Copy new elements
+    var by = by
+    for i in 0 ..< byLen:
+      dest[pos + i] = by.load
+      inc by
+
+proc replaceWithOpenTag*(dest: var TokenBuf; tag: PackedToken; pos: int) =
+  ## Replaces the subtree at `pos` with the single open tag `tag` (a ParLe)
+  ## and registers it as unsealed, so a later `addParRi` closes it. The
+  ## structured way to spell the classic "replace a tree with `(tag` and
+  ## close it further down the line" idiom.
+  assert tag.kind == ParLe
+  replace(dest, fromBuffer([tag]), pos)
+  when defined(virtualParRi):
+    var insertAt = dest.openTags.len
+    for k in 0 ..< dest.openTags.len:
+      if dest.openTags[k] > pos:
+        insertAt = k
+        break
+    dest.openTags.insert(pos, insertAt)
 
 proc toString*(b: TokenBuf; produceLineInfo = true): string =
   result = nifstreams.toString(toOpenArray(b.data, 0, b.len-1), produceLineInfo)
@@ -939,8 +1278,14 @@ proc isLastSon*(n: Cursor): bool =
   result = n.kind == ParRi
 
 proc firstSon*(n: Cursor): Cursor {.inline.} =
+  ## Cursor at the first child of the ParLe at `n`. Under `-d:virtualParRi`
+  ## the result is *bounded* to the node's children, so `hasMore` on it
+  ## terminates at the node's (elided) close.
   result = n
-  inc result
+  when defined(virtualParRi):
+    discard enterScope(result)
+  else:
+    inc result
 
 proc takeToken*(buf: var TokenBuf; n: var Cursor) {.inline.} =
   buf.add n
@@ -1065,6 +1410,9 @@ proc takeTree*(dest: var TokenBuf; n: var Cursor) =
         inc n
 
 when isMainModule:
+  # Token counts differ per mode: under `-d:virtualParRi` a sealed empty
+  # pair occupies one token (its close is elided).
+  const PairLen = when defined(virtualParRi): 1 else: 2
   # test replace
   block:
     var dest = createTokenBuf(1)
@@ -1076,8 +1424,10 @@ when isMainModule:
     block:
       let by2 = [parLeToken(TagId 1, NoLineInfo), parRiToken(NoLineInfo)]
       replace dest, fromBuffer(by2), 0
-      assert dest.len == 2
-      assert dest[0] == by2[0] and dest[1] == by2[1]
+      assert dest.len == PairLen
+      assert dest[0].kind == ParLe and dest[0].tagId == TagId 1
+      when not defined(virtualParRi):
+        assert dest[1] == by2[1]
 
       let by1 = [strToken(StrId 2, NoLineInfo)]
       replace dest, fromBuffer(by1), 0
@@ -1092,21 +1442,25 @@ when isMainModule:
     block:
       let by = [charToken('a', NoLineInfo)]
       replace dest, fromBuffer(by), 1
-      assert dest.len == 3
-      assert dest[0] == dest0
+      assert dest.len == 2 + PairLen - 1
+      assert dest[0].kind == ParLe and dest[0].tagId == TagId 123
       assert dest[1] == by[0]
-      assert dest[2].kind == ParRi
+      when not defined(virtualParRi):
+        assert dest[2].kind == ParRi
 
       let by2 = [parLeToken(TagId 456, NoLineInfo), parRiToken(NoLineInfo)]
       replace dest, fromBuffer(by2), 1
-      assert dest.len == 4
-      assert dest[0] == dest0
-      assert dest[1] == by2[0] and dest[2] == by2[1]
-      assert dest[3].kind == ParRi
+      assert dest.len == 2*PairLen
+      assert dest[0].kind == ParLe and dest[0].tagId == TagId 123
+      assert dest[1].kind == ParLe and dest[1].tagId == TagId 456
+      when not defined(virtualParRi):
+        assert dest[2] == by2[1]
+        assert dest[3].kind == ParRi
 
       let by1 = [strToken(StrId 789, NoLineInfo)]
       replace dest, fromBuffer(by1), 1
-      assert dest.len == 3
-      assert dest[0] == dest0
+      assert dest.len == 1 + PairLen
+      assert dest[0].kind == ParLe and dest[0].tagId == TagId 123
       assert dest[1] == by1[0]
-      assert dest[2].kind == ParRi
+      when not defined(virtualParRi):
+        assert dest[2].kind == ParRi

@@ -42,18 +42,17 @@ proc isExported(n: Cursor): bool =
       return true
   return false
 
-proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
-  var n = beginRead(content)
-  var nested = 0
+proc processDeclForChecksum(dest: var Sha1State; n: var Cursor) =
+  ## Hashes the single tree/token at `n` — the exported declarations in it,
+  ## to be exact — advancing past it.
   let inlineT = TagId(InlineIdx)
-  while true:
-    case n.kind
-    of ParLe:
-      var foundInline = false
-      let k = entryKind(n.tagId)
-      case k
-      of LetIdx, VarIdx, CursorIdx, ConstIdx, TypeIdx, GletIdx, TletIdx, GvarIdx, TvarIdx:
-        inc n # tag
+  case n.kind
+  of ParLe:
+    var foundInline = false
+    let k = entryKind(n.tagId)
+    case k
+    of LetIdx, VarIdx, CursorIdx, ConstIdx, TypeIdx, GletIdx, TletIdx, GvarIdx, TvarIdx:
+      n.into: # tag
         if isExported(n):
           updateLoop(dest, n, inlineT, foundInline) # SymbolDef
           updateLoop(dest, n, inlineT, foundInline) # Export marker
@@ -61,10 +60,9 @@ proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
           updateLoop(dest, n, inlineT, foundInline) # type
           updateLoop(dest, n, inlineT, foundInline) # value
         while n.hasMore: skip n
-        consumeParRi n
-      of TemplateIdx, MacroIdx, IteratorIdx:
-        # these always have inline semantics
-        inc n # tag
+    of TemplateIdx, MacroIdx, IteratorIdx:
+      # these always have inline semantics
+      n.into: # tag
         if isExported(n):
           updateLoop(dest, n, inlineT, foundInline) # SymbolDef
           updateLoop(dest, n, inlineT, foundInline) # Export marker
@@ -76,9 +74,8 @@ proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
           updateLoop(dest, n, inlineT, foundInline) # effects
           updateLoop(dest, n, inlineT, foundInline) # body
         while n.hasMore: skip n
-        consumeParRi n
-      of ProcIdx, FuncIdx, MethodIdx, ConverterIdx:
-        inc n # tag
+    of ProcIdx, FuncIdx, MethodIdx, ConverterIdx:
+      n.into: # tag
         if isExported(n):
           var dummy = false
           updateLoop(dest, n, inlineT, dummy) # SymbolDef
@@ -94,18 +91,18 @@ proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
           else:
             skip n
         while n.hasMore: skip n
-        consumeParRi n
-      of NoIndexTag, InlineIdx, KvIdx, VvIdx, BuildIdx, BundleIdx, IndexIdx,
-         ExportIdx, FromexportIdx, ExportexceptIdx:
-        inc n
-        inc nested
-    of ParRi:
-      dec nested
-      if nested == 0:
-        break
-      inc n
-    else:
-      inc n
+    of NoIndexTag, InlineIdx, KvIdx, VvIdx, BuildIdx, BundleIdx, IndexIdx,
+       ExportIdx, FromexportIdx, ExportexceptIdx:
+      n.loopInto:
+        processDeclForChecksum(dest, n)
+  of ParRi:
+    discard "cannot happen: subtree ends are consumed by the bounded scope"
+  else:
+    inc n
+
+proc processForChecksum(dest: var Sha1State; content: var TokenBuf) =
+  var n = beginRead(content)
+  processDeclForChecksum(dest, n)
 
 type
   HookIndexEntry* = object

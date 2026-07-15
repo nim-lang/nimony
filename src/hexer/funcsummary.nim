@@ -161,9 +161,9 @@ proc exprRoots(a: var ProcAnalysis; n: Cursor): seq[int] =
     of CallC:
       # Steensgaard "select": the result may alias any pointer argument.
       var r = n
-      inc r
+      discard enterScope(r)  # throwaway copy; no leaveScope needed
       skip r                 # callee
-      while r.kind != ParRi:
+      while r.hasMore:
         for e in exprRoots(a, r): result.add e
         skip r
     else:
@@ -177,8 +177,8 @@ proc lastChildStart(n: Cursor): Cursor =
   ## Returns a cursor to the last child of the `(tag ...)` node `n`.
   result = n
   var c = n
-  inc c
-  while c.kind != ParRi:
+  discard enterScope(c)  # throwaway copy; no leaveScope needed
+  while c.hasMore:
     result = c
     skip c
 
@@ -231,8 +231,8 @@ proc handleAssign(a: var ProcAnalysis; n: var Cursor; reversed: bool) =
 
 proc handleRet(a: var ProcAnalysis; n: var Cursor) =
   var c = n
-  inc c
-  if c.kind != ParRi and c.kind != DotToken:
+  discard enterScope(c)  # throwaway copy; no leaveScope needed
+  if c.hasMore and c.kind != DotToken:
     let roots = exprRoots(a, c)
     for r in roots:
       ufUnion(a.uf, a.nParams, r)              # result aliases the returned graph
@@ -243,13 +243,13 @@ proc handleRet(a: var ProcAnalysis; n: var Cursor) =
 
 proc handleCall(a: var ProcAnalysis; n: var Cursor) =
   var c = n
-  inc c
+  discard enterScope(c)  # throwaway copy; no leaveScope needed
   let calleeStart = c
   var fact = CallFact(callee: SymId(0), argRoots: @[])
   if calleeStart.kind == Symbol:
     fact.callee = calleeStart.symId
   skip c                                       # past callee
-  while c.kind != ParRi:
+  while c.hasMore:
     let roots = exprRoots(a, c)
     fact.argRoots.add roots
     for r in roots: markReadElem(a, r)
@@ -416,33 +416,34 @@ proc collectProcAnalyses(buf: var TokenBuf): Table[SymId, ProcAnalysis] =
 # ---- serialization --------------------------------------------------------
 
 proc readParamSummary(n: var Cursor; outSummary: var FunctionSummary) =
+  # no early `return` here: it would skip `into`'s epilogue and leave the
+  # caller's cursor mid-scope
   n.into:
-    if n.kind != IntLit:
-      while n.hasMore: skip n
-      return
-    let idx = int(pool.integers[n.intId])
-    inc n
+    var idx = -1
+    if n.kind == IntLit:
+      idx = int(pool.integers[n.intId])
+      inc n
     if idx < 0:
       while n.hasMore: skip n
-      return
-    while outSummary.params.len <= idx:
-      outSummary.params.add ParamEffect()
-    var cls = uint32(idx)
-    if n.kind == IntLit:
-      cls = uint32(pool.integers[n.intId])
-      inc n
-    outSummary.params[idx].cls = cls
-    while n.hasMore:
-      if n.kind == Ident:
-        case pool.strings[n.litId]
-        of "reads": outSummary.params[idx].reads = true
-        of "writes": outSummary.params[idx].writes = true
-        of "slot": outSummary.params[idx].slotWritten = true
-        of "escapes": outSummary.params[idx].escapes = true
-        else: discard
+    else:
+      while outSummary.params.len <= idx:
+        outSummary.params.add ParamEffect()
+      var cls = uint32(idx)
+      if n.kind == IntLit:
+        cls = uint32(pool.integers[n.intId])
         inc n
-      else:
-        skip n
+      outSummary.params[idx].cls = cls
+      while n.hasMore:
+        if n.kind == Ident:
+          case pool.strings[n.litId]
+          of "reads": outSummary.params[idx].reads = true
+          of "writes": outSummary.params[idx].writes = true
+          of "slot": outSummary.params[idx].slotWritten = true
+          of "escapes": outSummary.params[idx].escapes = true
+          else: discard
+          inc n
+        else:
+          skip n
 
 proc readSummary(n: var Cursor; outSummary: var FunctionSummary): bool =
   result = true
@@ -526,18 +527,18 @@ proc writePragmasWithSummary(dest: var TokenBuf; pragmas: Cursor;
     dest.addParRi()
   elif p.kind == ParLe:
     dest.add p
-    inc p
     var hadSummary = false
-    while p.kind != ParRi:
-      if p.kind == ParLe and p.pragmaKind == SmryP:
-        addSummaryPragma(dest, summary, p.info)
-        skip p
-        hadSummary = true
-      else:
-        dest.takeTree p
+    p.into:
+      while p.hasMore:
+        if p.kind == ParLe and p.pragmaKind == SmryP:
+          addSummaryPragma(dest, summary, p.info)
+          skip p
+          hadSummary = true
+        else:
+          dest.takeTree p
     if not hadSummary:
       addSummaryPragma(dest, summary, info)
-    dest.takeToken p
+    dest.addParRi()
   else:
     dest.addSubtree p
 
@@ -561,10 +562,11 @@ proc annotateSummaries(dest: var TokenBuf; n: var Cursor;
       dest.addSubtree d.body
       dest.addParRi()
     else:
-      dest.takeToken n
-      while n.hasMore:
-        annotateSummaries(dest, n, summaries)
-      dest.takeToken n
+      dest.add n.load()
+      n.into:
+        while n.hasMore:
+          annotateSummaries(dest, n, summaries)
+      dest.addParRi()
   of ParRi:
     assert false, "ParRi should not be encountered here"
   else:

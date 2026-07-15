@@ -201,16 +201,50 @@ proc getParent(n: Cursor): Cursor =
       discard
     unsafeDec result
 
-proc findLocal(file: string; sym: SymId; toTrack: PackedLineInfo; mode: TrackMode, offset: int, parentOffset: int) =
+proc locateSymImpl(n: var Cursor; buf: TokenBuf; sym: SymId; toTrack: PackedLineInfo;
+                   tokenLen: int; parentPos: int; symOffset, parentOffset: var int): bool =
+  ## Positions of the tracked symbol token and its innermost parent ParLe
+  ## in the PARSED buffer. (The caller's stream scan counts the file's
+  ## physical ParRi tokens, which are elided in the in-memory buffer under
+  ## `-d:virtualParRi`, so its offsets cannot be used here.)
+  result = false
+  case n.kind
+  of ParLe:
+    let myPos = cursorToPosition(buf, n)
+    let scope = enterScope(n)
+    while n.hasMore:
+      if locateSymImpl(n, buf, sym, toTrack, tokenLen, myPos, symOffset, parentOffset):
+        return true
+    leaveScope(n, scope)
+  of Symbol, SymbolDef:
+    if n.symId == sym and lineInfoMatch(n.info, toTrack, tokenLen):
+      symOffset = cursorToPosition(buf, n)
+      parentOffset = parentPos
+      result = true
+    else:
+      inc n
+  else:
+    inc n
+
+proc findLocal(file: string; sym: SymId; toTrack: PackedLineInfo; mode: TrackMode) =
   var buf = parseFromFile(file)
+
+  var name = pool.syms[sym]
+  extractBasename name
+
+  var offset = -1
+  var parentOffset = 0
+  block locateBlock:
+    var loc = beginRead(buf)
+    discard locateSymImpl(loc, buf, sym, toTrack, name.len, 0, offset, parentOffset)
+    endRead(buf)
+  if offset < 0:
+    quit "symbol not found"
 
   var n = beginRead(buf)
 
   var symCursor = buf.cursorAt(offset)
   var symParent = buf.cursorAt(parentOffset)
-
-  var name = pool.syms[sym]
-  extractBasename name
 
   var c = IdeContext()
   c.toTrack = toTrack
@@ -304,7 +338,7 @@ proc usages*(files: openArray[string]; config: NifConfig) =
   elif isLocalSym:
     # Set path so files are found when resolving symbols
     prog.main.dir = nifFile.splitPath.head
-    findLocal(symFile, symId, requestedInfo, config.toTrack.mode, symOffset, symParentOffset)
+    findLocal(symFile, symId, requestedInfo, config.toTrack.mode)
   else:
     for file in files:
       var s = nifstreams.open(file)

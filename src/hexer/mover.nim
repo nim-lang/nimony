@@ -19,17 +19,27 @@ type
     CanFollowDerefs, CannotFollowDerefs, CanFollowCalls
 
   FindStartEntry = object
-    pos: int32       ## position in `cf`, or -1 if no CF token has this payload
+    pos: int32       ## position in `cf`, or -1 if no CF token maps to this source pos
     nested: int16    ## paren-nesting depth at that position
+
+  FindStartIndex = object
+    ## Source-position → (cf position, nesting) lookup. Indexed by source-buffer
+    ## position; `data[srcPos - base]` holds the entry, so only the touched span
+    ## `[base, base + data.len)` is allocated rather than the whole buffer (the
+    ## LocSpan trick from arkham's register_allocator). Built from the side-channel
+    ## `srcMap` that `toControlflowWithMap` returns — the source→CF mapping no
+    ## longer rides in the token `info` field (nifcore tokens may carry none).
+    base: int32
+    data: seq[FindStartEntry]
 
   MoverContext* = object
     ## Per-pass context for the mover. Holds the controlflow buffer and a
-    ## position-payload → (cf position, nested depth) lookup built once when
+    ## source-position → (cf position, nested depth) lookup built once when
     ## the CF is materialized. Replaces the bare `cf: TokenBuf` the duplifier
     ## used to carry around, and turns `findStart` from an O(N) buffer scan
     ## into an O(1) array index.
     cf*: TokenBuf
-    index*: seq[FindStartEntry]   ## indexed by payload value (= srcPos + PayloadOffset)
+    index*: FindStartIndex
 
 proc rootOf*(n: Cursor; mode = CanFollowDerefs): SymId =
   var n = n
@@ -66,47 +76,41 @@ proc rootOf*(n: Cursor; mode = CanFollowDerefs): SymId =
 proc sameTreesIgnoreArrayIndexes*(a, b: Cursor): bool =
   var a = a
   var b = b
-  var nested = 0
-  let isAtom = a.kind != ParLe
-  while true:
-    if a.kind != b.kind: return false
-    case a.kind
-    of ParLe:
-      if a.tagId != b.tagId: return false
-      if a.exprKind in {PatX, ArratX}:
-        inc a
-        inc b
-        if not sameTreesIgnoreArrayIndexes(a, b):
-          return false
-        # do not compare the array indexes:
-        while a.hasMore: skip a
-        consumeParRi a
-        while b.hasMore: skip b
-        consumeParRi b
-      else:
-        inc a
-        inc b
-        inc nested
-    of ParRi:
-      dec nested
-      if nested == 0: return true
-    of Symbol, SymbolDef:
-      if a.symId != b.symId: return false
-    of IntLit:
-      if a.intId != b.intId: return false
-    of UIntLit:
-      if a.uintId != b.uintId: return false
-    of FloatLit:
-      if a.floatId != b.floatId: return false
-    of StringLit, Ident:
-      if a.litId != b.litId: return false
-    of CharLit, UnknownToken:
-      if a.uoperand != b.uoperand: return false
-    of DotToken, EofToken: discard "nothing else to compare"
-    if isAtom: return true
-    inc a
-    inc b
-  return false
+  if a.kind != b.kind: return false
+  case a.kind
+  of ParLe:
+    if a.tagId != b.tagId: return false
+    if a.exprKind in {PatX, ArratX}:
+      # compare the accessed object only, not the array indexes:
+      inc a
+      inc b
+      result = sameTreesIgnoreArrayIndexes(a, b)
+    else:
+      discard enterScope(a)
+      discard enterScope(b)
+      while true:
+        if a.hasMore != b.hasMore: return false
+        if not a.hasMore: break
+        if not sameTreesIgnoreArrayIndexes(a, b): return false
+        skip a
+        skip b
+      result = true
+  of ParRi:
+    result = true
+  of Symbol, SymbolDef:
+    result = a.symId == b.symId
+  of IntLit:
+    result = a.intId == b.intId
+  of UIntLit:
+    result = a.uintId == b.uintId
+  of FloatLit:
+    result = a.floatId == b.floatId
+  of StringLit, Ident:
+    result = a.litId == b.litId
+  of CharLit, UnknownToken:
+    result = a.uoperand == b.uoperand
+  of DotToken, EofToken:
+    result = true
 
 proc disjointDirectField(tree: Cursor; r: SymId; x: Cursor): bool =
   ## True if `tree` is a *direct* field/index access of the moved root `r` that
@@ -152,72 +156,90 @@ proc containsRoot(tree: var Cursor; x: Cursor): bool =
   ## read through a deref of `r`. Statically-disjoint sibling fields/indices of
   ## `r` are skipped — they cannot alias `x` (see `disjointDirectField`).
   let r = rootOf(x)
-  # scan loop also correct for `r == NoSymId`:
-  var nested = 0
+  # scan also correct for `r == NoSymId`:
   result = false
-  while true:
-    case tree.kind
-    of Symbol:
-      if tree.symId == r:
-        # MUST continue here as we must `skip tree` properly
-        result = true
-      inc tree
-    of ParLe:
-      if disjointDirectField(tree, r, x):
-        # A sibling field/index that cannot alias `x`: skip the whole subtree.
-        # `skip` consumed its matching `)` too, so `nested` is unchanged;
-        # replicate the loop's terminator before continuing, or a disjoint path
-        # that *is* the top-level scanned expression would run the scan off the
-        # end into the following CF instructions.
-        skip tree
-        if nested == 0: break
-        continue
-      elif tree.exprKind == DotX:
-        inc tree
+  case tree.kind
+  of Symbol:
+    if tree.symId == r:
+      result = true
+    inc tree
+  of ParLe:
+    if disjointDirectField(tree, r, x):
+      # A sibling field/index that cannot alias `x`: skip the whole subtree.
+      skip tree
+    elif tree.exprKind == DotX:
+      tree.into:
         if containsRoot(tree, x):
           result = true
         while tree.hasMore:
           skip tree
-      elif tree.substructureKind == KvU:
-        inc tree
+    elif tree.substructureKind == KvU:
+      tree.into:
         skip tree # key ignored for object construction!
-      else:
-        inc tree
-      inc nested
-    of ParRi:
-      dec nested
-      inc tree
+        while tree.hasMore:
+          if containsRoot(tree, x):
+            result = true
     else:
-      inc tree
-    if nested == 0: break
+      tree.loopInto:
+        if containsRoot(tree, x):
+          result = true
+  else:
+    inc tree
 
-proc buildFindStartIndex(cf: TokenBuf; srcLen: int): seq[FindStartEntry] =
-  ## One-pass scan of the just-built CF buffer that records, for each
-  ## payload value, the *first* CF token whose `info` carries it and the
-  ## paren-nesting depth at that position. Subsequent `findStart` lookups
-  ## are then O(1).
-  result = newSeq[FindStartEntry](srcLen + int(PayloadOffset))
-  for i in 0 ..< result.len:
-    result[i] = FindStartEntry(pos: -1'i32, nested: 0)
+proc contains(index: FindStartIndex; srcPos: int): bool {.inline.} =
+  srcPos >= int(index.base) and srcPos < int(index.base) + index.data.len
+
+proc buildFindStartIndex(cf: TokenBuf; srcMap: openArray[int32]): FindStartIndex =
+  ## One-pass scan of the just-built CF buffer that records, for each source
+  ## position, the *first* CF token that maps back to it (via the parallel
+  ## `srcMap` side-channel) and the paren-nesting depth at that position.
+  ## Subsequent `findStart` lookups are then O(1).
+  assert srcMap.len == cf.len
+  # Size to the touched source span `[lo, hi]` with a `base` (LocSpan trick),
+  # rather than allocating an entry per source token.
+  var lo = high(int32)
+  var hi = -1'i32
+  for s in srcMap:
+    if s >= 0:
+      if s < lo: lo = s
+      if s > hi: hi = s
+  if hi < 0:
+    return FindStartIndex(base: 0, data: @[])
+  result = FindStartIndex(base: lo, data: newSeq[FindStartEntry](int(hi - lo) + 1))
+  for i in 0 ..< result.data.len:
+    result.data[i] = FindStartEntry(pos: -1'i32, nested: 0)
   var nested = 0
+  # Under `-d:virtualParRi` the sealed ParRis are elided from `cf`, so counting
+  # `dec nested` only on physical ParRis would make `nested` grow monotonically
+  # (overflowing `int16` on large modules, then wrapping negative → `findStart`
+  # spuriously reports "not indexed"). Track each open sealed scope's last-content
+  # index and decrement when we walk past it. Overflow scopes (jump == MaxJump)
+  # keep a physical ParRi and are handled by the `of ParRi` branch.
+  when defined(virtualParRi):
+    var closeStack: seq[int] = @[]
   for i in 0 ..< cf.len:
     case cf[i].kind
-    of ParLe: inc nested
+    of ParLe:
+      inc nested
+      when defined(virtualParRi):
+        if jump(cf[i]) != MaxJump:
+          closeStack.add(i + span(readonlyCursorAt(cf, i)) - 1)
     of ParRi: dec nested
     else: discard
-    let info = cf[i].info
-    if isPayload(info):
-      let p = int(getPayload(info))
-      if p < result.len and result[p].pos < 0:
-        result[p] = FindStartEntry(pos: int32(i), nested: int16(nested))
+    let s = srcMap[i]
+    if s >= 0:
+      let k = int(s - result.base)
+      if result.data[k].pos < 0:
+        result.data[k] = FindStartEntry(pos: int32(i), nested: int16(nested))
+    when defined(virtualParRi):
+      while closeStack.len > 0 and closeStack[^1] == i:
+        dec nested
+        discard closeStack.pop()
 
-proc findStart(c: TokenBuf; idx: PackedLineInfo; n: var Cursor;
-               index: openArray[FindStartEntry]): int =
-  if not isPayload(idx):
-    return -1
-  let p = int(getPayload(idx))
-  if p < 0 or p >= index.len: return -1
-  let e = index[p]
+proc findStart(c: TokenBuf; srcPos: int; n: var Cursor;
+               index: FindStartIndex): int =
+  if not index.contains(srcPos): return -1
+  let e = index.data[srcPos - int(index.base)]
   if e.pos < 0: return -1
   n = c.readonlyCursorAt(int(e.pos))
   result = int(e.nested)
@@ -284,7 +306,7 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
       else:
         case pc.stmtKind
         of AsgnS:
-          inc pc
+          let asgnScope = enterScope(pc)
           if (pc.kind == Symbol and pc.symId == root) or sameTrees(pc, x):
             # the path leads to a redefinition of 's' --> sink 's'.
             break
@@ -302,7 +324,7 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
             # or maybe writes to 's' --> can't sink 's'
             otherUsage = pc # XXX Fixme: pc advanced to ')'
             return false
-          skipParRi pc
+          leaveScope(pc, asgnScope)
         of RetS:
           break
         of StmtsS, ScopeS, BlockS, ContinueS, BreakS:
@@ -346,14 +368,16 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
   return true
 
 proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var Cursor;
-                    index: openArray[FindStartEntry]): bool =
+                    index: FindStartIndex): bool =
   var n = default Cursor
-  let nested = findStart(c, toPayload(idx + PayloadOffset), n, index)
+  let nested = findStart(c, int(idx), n, index)
   if nested < 0:
     return true
   let x = n
   skip n
-  while n.kind == ParRi: inc n
+  # step over the (real) closes that separate `x` from the next CF
+  # instruction; under ParRi elision there are none to step over
+  while hasCurrentToken(n) and n.kind == ParRi: inc n
   let cfBase = c.readonlyCursorAt(0)
   var pcs = @[n]
   var marks = initIntSet()
@@ -371,45 +395,36 @@ proc isLastUse*(n: Cursor; buf: var TokenBuf;
                 mover: var MoverContext): bool =
   # XXX Todo: only transform&traverse the innermost scope the variable was declared in.
   if mover.cf.len == 0:
-    # First call for this `buf`: bake the payload-encoded back-pointers into
-    # `buf.info`, build the CF from it, then restore `buf` to its original
-    # infos. The CF inherits the payloads and keeps them for the lifetime of
-    # this analysis pass — they never change once built, because per-walk
-    # visited marks now live in a side IntSet (see isLastReadImpl), not in
-    # the `info` field. The same scan also builds the payload→position index
-    # so `findStart` runs in O(1) instead of O(cf.len) per query.
-    let oldInfos = prepare(buf)
-    mover.cf = toControlflow(beginRead buf)
+    # First call for this `buf`: build the CF and, alongside it, the `srcMap`
+    # side-channel mapping every CF token back to its source position. `buf`
+    # itself is left untouched (the old scheme stamped payloads into `buf.info`
+    # and restored them; nifcore tokens may carry no info, so the mapping lives
+    # in a dedicated seq instead). The same scan then inverts `srcMap` into the
+    # source-position → position index so `findStart` runs in O(1) per query.
+    var srcMap: seq[int32] = @[]
+    mover.cf = toControlflowWithMap(beginRead buf, srcMap)
     freeze mover.cf
     endRead buf
-    restore(buf, oldInfos)
-    mover.index = buildFindStartIndex(mover.cf, buf.len)
+    mover.index = buildFindStartIndex(mover.cf, srcMap)
   let idx = cursorToPosition(buf, n)
   assert idx >= 0
   var other = default Cursor
   result = isLastReadImpl(mover.cf, idx.uint32, other, mover.index)
-  if other.cursorIsNil:
+  if other.cursorIsNil or not other.hasCurrentToken:
+    # `other` can sit at a scope's end (see the "pc advanced to ')'"
+    # notes in singlePath); there is no token to read info from then.
     otherUsage = NoLineInfo
   else:
     otherUsage = other.info
 
 when isMainModule:
   proc findX(n: Cursor): Cursor =
-    result = n
-    var nested = 0
-    while true:
-      case result.kind
-      of ParLe:
-        if result.exprKind == EmoveX:
-          inc result
-          return result
-        inc nested
-      of ParRi:
-        dec nested
-      else:
-        discard
-      if nested == 0: break
-      inc result
+    var n = n
+    linearScan n:
+      if n.exprKind == EmoveX:
+        result = n
+        inc result
+        return result
     bug "no 'ensureMove' found"
 
   proc test(s: string; expected: bool) =

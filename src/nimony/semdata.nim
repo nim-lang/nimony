@@ -308,7 +308,7 @@ proc typeToCursor*(c: var SemContext; buf: TokenBuf; start: int): TypeCursor =
   else:
     var newBuf = createTokenBuf(buf.len - start)
     for i in start..<buf.len:
-      newBuf.add buf[i]
+      newBuf.addRaw buf[i]
     # make resilient against crashes:
     #if newBuf.len == 0: newBuf.add dotToken(NoLineInfo)
     result = cursorAt(newBuf, 0)

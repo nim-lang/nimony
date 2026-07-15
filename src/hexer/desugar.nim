@@ -49,10 +49,10 @@ proc needsTemp(n: Cursor): bool =
     of NilX, FalseX, TrueX, InfX, NeginfX, NanX, SizeofX:
       result = false
     of ExprX:
-      inc n
+      discard enterScope(n)  # throwaway copy; bounds the probe under vpr
       let first = n
       skip n
-      if n.kind == ParRi:
+      if not n.hasMore:
         # single element expr
         result = needsTemp(first)
       else:
@@ -66,7 +66,7 @@ proc needsTemp(n: Cursor): bool =
       result = needsTemp(n)
     of AtX, PatX, ArratX, TupatX, DotX, DdotX, ParX, AddrX, HaddrX:
       result = false
-      inc n
+      discard enterScope(n)  # throwaway copy; bounds the walk under vpr
       while n.hasMore:
         if needsTemp(n):
           return true
@@ -96,17 +96,15 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false)
 
 proc trSons(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   if n.substructureKind == KvU:
-    dest.takeToken n
-    dest.takeTree n # key
-    while n.hasMore:
-      tr(c, dest, n, isTopScope)
-    dest.takeParRi n
+    takeInto dest, n:
+      dest.takeTree n # key
+      while n.hasMore:
+        tr(c, dest, n, isTopScope)
   elif n.exprKind in {DotX, DdotX}:
-    dest.takeToken n
-    tr(c, dest, n, isTopScope)
-    while n.hasMore:
-      dest.takeTree n
-    dest.takeParRi n
+    takeInto dest, n:
+      tr(c, dest, n, isTopScope)
+      while n.hasMore:
+        dest.takeTree n
   else:
     copyInto dest, n:
       while n.hasMore:
@@ -189,16 +187,15 @@ proc addSetType(buf: var TokenBuf; size: int; info: PackedLineInfo) =
 
 proc trSetType(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  inc n
-  let sizeOrig = bitsetSizeInBytes(n)
-  var err = false
-  let size = asSigned(sizeOrig, err)
-  if err:
-    error "invalid set element type: ", n
-  else:
-    addSetType dest, int size, info
-  skip n
-  skipParRi n
+  n.into:
+    let sizeOrig = bitsetSizeInBytes(n)
+    var err = false
+    let size = asSigned(sizeOrig, err)
+    if err:
+      error "invalid set element type: ", n
+    else:
+      addSetType dest, int size, info
+    skip n
 
 proc liftTemp(c: var Context; dest: var TokenBuf; n: Cursor; typ: Cursor; info: PackedLineInfo): Cursor =
   let tmp = declareTemp(c, dest, typ, n.info)
@@ -264,7 +261,7 @@ proc genSetElem(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let kind = n.exprKind
-  inc n
+  let opScope = enterScope(n)
   let typ = n
   if typ.typeKind != SetT:
     error "expected set type for set op", n
@@ -282,7 +279,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     tr(c, dest, n)
   swap dest, argsBuf
-  skipParRi n
+  leaveScope(n, opScope)
   let cType = cursorAt(argsBuf, typeStart)
   let aOrig = cursorAt(argsBuf, aStart)
   let bOrig = cursorAt(argsBuf, bStart)
@@ -463,7 +460,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc genCard(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  inc n
+  let cardScope = enterScope(n)
   let typ = n
   if typ.typeKind != SetT:
     error "expected set type for set op", n
@@ -475,7 +472,7 @@ proc genCard(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let aStart = dest.len
   tr(c, dest, n)
   swap dest, argsBuf
-  skipParRi n
+  leaveScope(n, cardScope)
   let a = cursorAt(argsBuf, aStart) # no temp needed
   var err = false
   let size = asSigned(bitsetSizeInBytes(baseType), err)
@@ -535,7 +532,7 @@ proc genSingleInclBig(dest: var TokenBuf; s, elem: Cursor; info: PackedLineInfo)
 proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   dest.add parLeToken(ExprX, info)
-  inc n # tag
+  let constrScope = enterScope(n) # tag
   let typ = n
   skip n
   var elemTyp = typ
@@ -559,7 +556,7 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
   while n.hasMore:
     let elemInfo = n.info
     if n.substructureKind == RangeU:
-      inc n
+      let rangeScope = enterScope(n)
       var argsBuf = createTokenBuf(16)
       swap dest, argsBuf
       let aStart = dest.len
@@ -567,7 +564,7 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
       let bStart = dest.len
       genSetElem(c, dest, n)
       swap dest, argsBuf
-      skipParRi n
+      leaveScope(n, rangeScope)
       # a is used once, no need for temp:
       let a = cursorAt(argsBuf, aStart)
       let bOrig = cursorAt(argsBuf, bStart)
@@ -609,7 +606,7 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
         genSingleInclBig(dest, res, a, elemInfo)
       else:
         genSingleInclSmall(dest, res, a, size, elemInfo)
-  skipParRi n
+  leaveScope(n, constrScope)
   dest.addSubtree res
   dest.addParRi()
 
@@ -637,7 +634,7 @@ proc genSetConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let kind = n.stmtKind
-  inc n
+  let inclScope = enterScope(n)
   let typ = n
   if typ.typeKind != SetT:
     error "expected set type for incl/excl", n
@@ -652,7 +649,7 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let bStart = dest.len
   tr(c, dest, n)
   swap dest, argsBuf
-  skipParRi n
+  leaveScope(n, inclScope)
   let cType = cursorAt(argsBuf, typeStart)
   let aOrig = cursorAt(argsBuf, aStart)
   let bOrig = cursorAt(argsBuf, bStart)
@@ -852,18 +849,15 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Simplify (expr (expr ...)) to (expr (...)) so that our
   # controlflow graph can handle them easily:
   dest.add n
-  inc n
-  var nestedExpr = 0
+  var scopes: seq[CursorScope] = @[]
+  scopes.add enterScope(n)
   while n.exprKind == ExprX:
-    inc n
-    inc nestedExpr
+    scopes.add enterScope(n)
   while n.hasMore:
     tr(c, dest, n)
-  inc n
   dest.addParRi()
-  while nestedExpr > 0:
-    skipParRi n
-    dec nestedExpr
+  while scopes.len > 0:
+    leaveScope(n, scopes.pop())
 
 proc trTupleAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Lower `(a, b, ...) = rhs` (LHS is `tup`/`tupconstr`) into:
@@ -875,9 +869,9 @@ proc trTupleAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## is not a valid L-value, so the destructuring assignment must be
   ## broken apart before codegen sees it.
   let info = n.info
-  inc n # past `asgn` tag
+  let asgnScope = enterScope(n) # past `asgn` tag
   let lhsTagInfo = n.info
-  inc n # past LHS `tup`/`tupconstr` tag
+  let lhsScope = enterScope(n) # past LHS `tup`/`tupconstr` tag
   # The tuple constructor's first child is the type (a `(tuple ...)`
   # subtree); the remaining children are the actual element expressions.
   let tupleType = n
@@ -886,7 +880,7 @@ proc trTupleAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   while n.hasMore:
     lhsItems.add n
     skip n
-  inc n # past LHS closing ParRi
+  leaveScope(n, lhsScope) # past LHS close
 
   dest.addParLe StmtsS, info
 
@@ -894,7 +888,7 @@ proc trTupleAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   trExpr c, dest, n   # serialise the RHS as the var's initial value
   dest.addParRi()     # close `(var ...)`
 
-  skipParRi n         # close original `(asgn ...)`
+  leaveScope(n, asgnScope) # close original `(asgn ...)`
 
   for i in 0 ..< lhsItems.len:
     var lhsLocal = lhsItems[i]
@@ -920,7 +914,7 @@ proc trArrAt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## the `(at …)` index expression and never gets inlined.
   let info = n.info
   dest.add parLeToken(ArratX, info)
-  inc n
+  let atScope = enterScope(n)
   tr(c, dest, n)  # array operand
   # `isUnsigned` is decided from the index's type, exactly as nifcgen did.
   let isUnsigned = getType(c.typeCache, n).typeKind in {UIntT, CharT}
@@ -965,7 +959,8 @@ proc trArrAt(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.add idxBuf
   else:
     dest.add idxBuf
-  takeParRi dest, n
+  dest.addParRi(n.endInfo)
+  leaveScope(n, atScope)
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   case n.kind
@@ -1054,7 +1049,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
     of DdotX:
       dest.add tagToken("dot", n.info)
       dest.add tagToken("deref", n.info)
-      inc n # skip tag
+      let ddotScope = enterScope(n) # skip tag
       tr c, dest, n
       dest.addParRi() # deref
       tr c, dest, n
@@ -1062,7 +1057,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
       if n.kind == StringLit:
         # drop optional access-token marker; no visibility in NIFC.
         skip n
-      takeParRi dest, n
+      dest.addParRi(n.endInfo)
+      leaveScope(n, ddotScope)
     of ExprX:
       trExpr c, dest, n
     of CallX, CallstrlitX, CmdX, PrefixX, InfixX, HcallX:
@@ -1097,10 +1093,16 @@ proc desugar*(pass: var Pass; activeChecks: set[CheckMode]) =
   var n = pass.n  # Extract cursor locally
   var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix, activeChecks: activeChecks, pending: createTokenBuf())
   c.typeCache.openScope()
-  tr c, pass.dest, n, isTopScope = true
-
-  assert pass.dest[pass.dest.len-1].kind == ParRi
-  shrink(pass.dest, pass.dest.len-1)
+  # Process the root `(stmts` manually (mirroring trSons' copyInto) but
+  # keep it OPEN until `pending` has been appended: an emitted close
+  # cannot be rolled back under `-d:virtualParRi` (it seals the tag and
+  # is elided), so the old "close, shrink away, re-close" dance is
+  # impossible.
+  assert n.stmtKind == StmtsS
+  pass.dest.add n
+  n.into:
+    while n.hasMore:
+      tr c, pass.dest, n, isTopScope = true
 
   pass.dest.add c.pending
   pass.dest.addParRi()

@@ -64,7 +64,7 @@ iterator currentScopeLocals*(c: var TypeCache): SymId =
 proc registerParams*(c: var TypeCache; routine: SymId; decl, params: Cursor) =
   if params.kind == ParLe:
     var p = params
-    inc p
+    discard enterScope(p) # bound the param walk
     while p.hasMore:
       let r = takeLocal(p, SkipFinalParRi)
       registerLocal(c, r.name.symId, ParamY, r.typ, r.val)
@@ -174,17 +174,16 @@ proc registerLocals(c: var TypeCache; n: var Cursor) =
         while n.hasMore:
           registerLocals(c, n)
     of LetS, CursorS, PatternvarS, VarS, TvarS, TletS, GvarS, GletS:
-      inc n
-      let name = n.symId
-      inc n # name
-      skip n, SkipExport # export marker
-      skip n, SkipPragmas # pragmas
-      let typ = n
-      skip n, SkipType # type
-      let val = n
-      c.registerLocal name, cast[SymKind](k), typ, val
-      skip n, SkipValue # init value
-      skipParRi n
+      n.into:
+        let name = n.symId
+        inc n # name
+        skip n, SkipExport # export marker
+        skip n, SkipPragmas # pragmas
+        let typ = n
+        skip n, SkipType # type
+        let val = n
+        c.registerLocal name, cast[SymKind](k), typ, val
+        skip n, SkipValue # init value
     else:
       skip n
   else:
@@ -224,41 +223,39 @@ proc typeOfField(c: var TypeCache; n: var Cursor; fld: SymId): Cursor =
         if not cursorIsNil(result): return result
     result = default(Cursor)
   elif n.substructureKind == CaseU:
-    inc n
-    result = typeOfField(c, n, fld) # selector field
-    if not cursorIsNil(result): return result
-    while n.hasMore:
-      case n.substructureKind
-      of OfU:
-        n.into:
-          skip n, SkipValue # ranges
-          n.into:                                # (stmts ...)
-            while n.hasMore:
-              result = typeOfField(c, n, fld)
-              if not cursorIsNil(result): return result
-      of ElseU:
-        n.into:
-          n.into:                                # (stmts ...)
-            while n.hasMore:
-              result = typeOfField(c, n, fld)
-              if not cursorIsNil(result): return result
-      else:
-        skip n
-    skipParRi n
+    n.into:
+      result = typeOfField(c, n, fld) # selector field
+      if not cursorIsNil(result): return result
+      while n.hasMore:
+        case n.substructureKind
+        of OfU:
+          n.into:
+            skip n, SkipValue # ranges
+            n.into:                                # (stmts ...)
+              while n.hasMore:
+                result = typeOfField(c, n, fld)
+                if not cursorIsNil(result): return result
+        of ElseU:
+          n.into:
+            n.into:                                # (stmts ...)
+              while n.hasMore:
+                result = typeOfField(c, n, fld)
+                if not cursorIsNil(result): return result
+        else:
+          skip n
     result = default(Cursor)
   else:
     result = default(Cursor)
     let tk = n.typeKind
     if tk in {ObjectT, TupleT}:
-      inc n
       var baseObj = default(Cursor)
-      if tk == ObjectT:
-        baseObj = n
-        skip n # inheritance
-      while n.hasMore:
-        result = typeOfField(c, n, fld)
-        if not cursorIsNil(result): return result
-      inc n
+      n.into:
+        if tk == ObjectT:
+          baseObj = n
+          skip n # inheritance
+        while n.hasMore:
+          result = typeOfField(c, n, fld)
+          if not cursorIsNil(result): return result
       if not cursorIsNil(baseObj):
         var b = skipToObjectBody baseObj
         result = typeOfField(c, b, fld)
@@ -400,12 +397,12 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     result = getTypeImpl(c, n.firstSon, flags)
   of ExprX:
     var n = n
-    inc n # skip "expr"
-    while n.hasMore:
-      let prev = n
-      registerLocals(c, n)
-      if n.kind == ParRi:
-        result = getTypeImpl(c, prev, flags)
+    n.into: # skip "expr"
+      while n.hasMore:
+        let prev = n
+        registerLocals(c, n)
+        if not n.hasMore:
+          result = getTypeImpl(c, prev, flags)
   of CallX, CallstrlitX, InfixX, PrefixX, CmdX, HcallX, ProccallX:
     result = getTypeImpl(c, n.firstSon, flags)
     if result.typeKind in RoutineTypes:

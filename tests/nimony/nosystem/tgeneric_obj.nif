@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 6246             )
+(.indexat 6229             )
 (stmts@,2,tests/nimony/nosystem/tgeneric_obj.nim
  (type@2,1 :int.0.
   (i 64).
@@ -136,7 +136,7 @@
    (var@4 :x.5 . . string.0.sysvq0asl "abc"@4)
    (asgn@7,1 result.1~7 4@2)
    (asgn@2,2 x.5~2 "34"@2)
-   (ret~2,~1 result.1)))
+   (ret result.1)))
  (proc@,m :overloaded.0.@5 . . .
   (params@F). . .
   (stmts@2,1
@@ -171,7 +171,7 @@
    (result :result.2 . .
     (at~P HSlice.0.~6 T.6.@1 U.1.@4).)
    (discard .)
-   (ret~j result.2)))
+   (ret result.2)))
  (gvar@4,z :myarr2.0. . .
   (array@C,~d
    (i@4 64)
@@ -226,7 +226,7 @@
    (result@7 :result.3 . .
     (array@J,~1 T.8.@4 I.1.@1).)
    (asgn@7 result.3~7 x.4@2)
-   (ret~2,~1 result.3)))
+   (ret result.3)))
  (asgn@7,1B myarr2.0.~7
   (call@A identity.0.Ippgo8y.~8 myarr2.0.@1))
  (comment@F,G untyped.0. typedesc.0.@I int.0.@1,M int.0.@1,M int.0.~2,M int.0.~3,R int.0.@6,R array.0.@3,q array.0.@8,t array.0.@3,t set.0.~4,5 uint8.0.@,5 array.0.~4,6 int.0.@5,6 int.0.@5,G float.0.@4,H array.0.~3,j int.0.@9,j array.0.~7,m int.0.@2,m array.0.~7,n int.0.@5,n)
@@ -265,7 +265,7 @@
      (rangetype~C,~n
       (i 64)0 2)).)
    (asgn@7 result.4~7 x.9@2)
-   (ret~2,~1 result.4)))
+   (ret result.4)))
  (type@J,W :MyGeneric.0.I7tqnb11. .
   (at MyGeneric.0.
    (i@1 64))
@@ -308,7 +308,7 @@
  (x \2B.0. 148)
  (h foobar.0. 170)
  (h foo.0. 79)
- (h overloaded.0. 318)
+ (h overloaded.0. 313)
  (x HSlice.0. 221)
  (h@9,r T.4. 40)
  (h@9,r U.0. 29)
@@ -317,7 +317,7 @@
  (x \2E..0. 67)
  (h@A,w T.6. 39)
  (h@A,w U.1. 29)
- (h myarr2.0. 255)
+ (h myarr2.0. 253)
  (h m3.0. 203)
  (h x3.0. 164)
  (h foo.1. 198)
@@ -326,7 +326,7 @@
  (h identity.0. 170)
  (h@D,19 I.1. 44)
  (h@D,19 T.8. 29)
- (h foo.1.I1asdq91. 597)
+ (h foo.1.I1asdq91. 592)
  (h identity.0.Ippgo8y. 255)
- (h MyGeneric.0.I7tqnb11. 459)
+ (h MyGeneric.0.I7tqnb11. 454)
  (h MyGeneric.0.Ieuzwfh. 137))
