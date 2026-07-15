@@ -388,6 +388,16 @@ proc leaveScope*(n: var Cursor; scope: CursorScope) =
     assert n.kind == ParRi, "leaveScope: scope did not end at ParRi"
     inc n
 
+proc sub*(n: Cursor): Cursor =
+  ## Read-only descent: returns a bounded cursor over the children of the
+  ## ParLe at `n`, leaving `n` itself untouched. Use it for a throwaway walk
+  ## of a node's body (`while result.hasMore: …`) where there is no dest to
+  ## preserve into and hence no scope to `leaveScope`. Replaces the old
+  ## `var t = n; discard enterScope(t)` idiom.
+  assert n.kind == ParLe, "sub requires cursor at ParLe"
+  result = n
+  discard enterScope(result)
+
 template into*(n: var Cursor; body: untyped) =
   ## Enters the current ParLe node, runs `body` to process the children,
   ## then advances past the (real or virtual) closing `)`.

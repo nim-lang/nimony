@@ -87,7 +87,7 @@ proc isPreservedCustomPragma(n: Cursor): bool =
   ## bare `(pragma)` marker on a custom-pragma template declaration.
   if n.kind == ParLe and n.pragmaKind == PragmaP:
     var probe = n
-    discard enterScope(probe) # bound the peek; `probe` is a copy
+    probe = sub(probe) # bound the peek; `probe` is a copy
     result = probe.hasMore and probe.kind == Symbol
   else:
     result = false
@@ -380,7 +380,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       dest.addParRi()
       var emptyRaises = false
       if nn.exprKind == BracketX:
-        discard enterScope(nn) # bound the peek; `nn` is a copy
+        nn = sub(nn) # bound the peek; `nn` is a copy
         emptyRaises = not nn.hasMore
       if emptyRaises:
         # `raises: []` means "does not raise":
@@ -827,7 +827,7 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
   of PushP:
     var n = it.n
     if n.kind == ParLe:
-      discard enterScope(n) # bound the peek; `n` is a copy
+      n = sub(n) # bound the peek; `n` is a copy
     else:
       inc n
     if not n.hasMore:
@@ -911,7 +911,7 @@ proc hasCastUncheckedAccess(n: Cursor): bool =
   ## contains `{.cast(uncheckedAccess).}`.
   result = false
   var scan = n
-  discard enterScope(scan) # into (pragmas; bound the walk, `scan` is a copy
+  scan = sub(scan) # into (pragmas; bound the walk, `scan` is a copy
   if scan.hasMore and scan.kind == ParLe:
     if scan.pragmaKind == UncheckedAccessP:
       result = true

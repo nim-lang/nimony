@@ -42,7 +42,7 @@ proc getForVars(e: var EContext, forVars: Cursor): seq[Cursor] =
   var forVars = forVars
   if forVars.substructureKind notin {UnpackflatU, UnpacktupU}:
     error e, "`unpackflat` or `unpacktup` expected, but got: ", forVars
-  discard enterScope(forVars) # unpackflat/unpacktup; peek only, never left
+  forVars = sub(forVars) # unpackflat/unpacktup; peek only, never left
   while forVars.hasMore:
     result.add forVars
     skip forVars
@@ -113,7 +113,7 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
         var typCur = yieldType
         createDecl(e, dest, tmpId, typCur, c, info, LetS, needsAddr=false)
 
-      discard enterScope(typ) # skips tuple; peek only, never left
+      typ = sub(typ) # skips tuple; peek only, never left
       for i in 0..<forVars.len:
         let isKvU = typ.substructureKind == KvU
         var kvScope = default(CursorScope)
@@ -124,7 +124,7 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
         if forVars[i].substructureKind in {UnpacktupU, UnpackflatU}:
           var counter = 0
           var unpackCursor = forVars[i]
-          discard enterScope(unpackCursor) # peek only, never left
+          unpackCursor = sub(unpackCursor) # peek only, never left
           var left = startTupleAccess(tmpId, info, needsDeref)
           # The yielded element may itself be wrapped in `var`/`lent`/etc.
           # (e.g. `pairs(seq[T])` yields `(int, var T)`). Peel any modifier
@@ -596,7 +596,7 @@ proc emitCoroFor(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
   if callCur.exprKind == HderefX:
     inc callCur # peel hderef for var/lent-returning iters
   dest.add callCur # (call tag
-  discard enterScope(callCur) # drained below; the close is synthesized
+  callCur = sub(callCur) # drained below; the close is synthesized
   dest.takeTree callCur # iter sym
   while callCur.hasMore:
     dest.takeTree callCur
@@ -629,7 +629,7 @@ proc emitCoroFor(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
 
   var bodyCur = forStmt.body
   if bodyCur.stmtKind == StmtsS:
-    discard enterScope(bodyCur) # peek only, never left
+    bodyCur = sub(bodyCur) # peek only, never left
     while bodyCur.hasMore:
       transformStmt(e, dest, bodyCur)
   else:
@@ -662,7 +662,7 @@ proc inlineIterator(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
       emitCoroFor(e, dest, forStmt)
       return
     var params = routine.params
-    discard enterScope(params) # (params; peek only, never left
+    params = sub(params) # (params; peek only, never left
     inc iter # name
     var relationsMap = initTable[SymId, SymId]()
     while params.hasMore:

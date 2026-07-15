@@ -249,7 +249,7 @@ proc publishWrapperSignature*(iterSym: SymId; moduleSuffix: string) =
   buf.copyIntoKind ParamsU, info:
     var p = fn.params
     if p.kind != DotToken:
-      discard enterScope(p) # peek walk, never left
+      p = sub(p) # peek walk, never left
       while p.hasMore:
         assert p.substructureKind == ParamU
         takeInto buf, p:
@@ -377,7 +377,7 @@ proc emitIterTupleTypeFromSym*(dest: var TokenBuf; iterSym: SymId; info: PackedL
       dest.copyIntoKind ParamsU, info:
         var p = fn.params
         if p.kind != DotToken:
-          discard enterScope(p) # peek walk, never left
+          p = sub(p) # peek walk, never left
           while p.hasMore:
             assert p.substructureKind == ParamU
             takeInto dest, p:
@@ -428,7 +428,7 @@ proc isLiftedClosureTuple*(n: Cursor): bool =
   ## re-trigger the proctype rewrite and produce nested tuples.
   if n.typeKind != TupleT: return false
   var t = n
-  discard enterScope(t)  # throwaway copy; bounds the probe under vpr
+  t = sub(t)  # throwaway copy; bounds the probe under vpr
   if t.kind != ParLe or t.typeKind != ProctypeT: return false
   skip t
   if t.kind != ParLe or t.typeKind != RefT: return false
@@ -1378,7 +1378,7 @@ proc emitFreshFrameCall(c: var Context; d: var TokenBuf; sym: SymId; params: Cur
       d.addSymUse sym, info
       var p = params
       if p.kind != DotToken:
-        discard enterScope(p) # peek walk, never left
+        p = sub(p) # peek walk, never left
         while p.hasMore:
           assert p.substructureKind == ParamU
           p.into:
@@ -1495,7 +1495,7 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
                   dest.addIntLit 0, info
             var p = params
             if p.kind == ParLe:
-              discard enterScope(p)  # throwaway copy; bounds the walk under vpr
+              p = sub(p)  # throwaway copy; bounds the walk under vpr
               while p.hasMore:
                 assert p.substructureKind == ParamU
                 let paramScope = enterScope(p)
@@ -1598,7 +1598,7 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
 proc registerParamsInTypecache*(c: var Context; sym: SymId; origParams: Cursor) =
   var n = origParams
   if n.kind == ParLe:
-    discard enterScope(n)  # throwaway copy; bounds the walk under vpr
+    n = sub(n)  # throwaway copy; bounds the walk under vpr
     while n.hasMore:
       assert n.substructureKind == ParamU
       let paramScope = enterScope(n)
@@ -1628,7 +1628,7 @@ proc patchParamList*(c: var Context; dest, init: var TokenBuf; sym: SymId;
     init.addSymUse coroTypeForProc(c, sym), info
     var n = origParams
     if n.kind != DotToken:
-      discard enterScope(n) # peek walk, never left
+      n = sub(n) # peek walk, never left
       while n.hasMore:
         assert n.substructureKind == ParamU
         var field = SymId(0)

@@ -53,7 +53,7 @@ proc passByConstRef(c: var Context; typ, pragmas: Cursor): bool =
 proc rememberConstRefParams(c: var Context; params: Cursor) =
   if params.kind != ParLe: return
   var n = params
-  discard enterScope(n) # skips (params; bounds the walk under vpr
+  n = sub(n) # skips (params; bounds the walk under vpr
   while n.hasMore:
     let r = takeLocal(n, SkipFinalParRi)
     if r.name.kind == SymbolDef and passByConstRef(c, r.typ, r.pragmas):
@@ -228,7 +228,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetExpectsTupl
   let callScope = enterScope(n) # skip `(call)`
   tr c, dest, n # handle `fn`
 
-  discard enterScope(fnType) # peek only, never left
+  fnType = sub(fnType) # peek only, never left
   while n.hasMore:
     let previousFormalParam = fnType
     if fnType.kind == ParRi:

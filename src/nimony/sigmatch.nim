@@ -1168,7 +1168,7 @@ proc extractProcProps*(c: var Cursor): ProcProperties =
           result.usesRaises = true
           # Extract the raises type from the pragma
           var raisesNode = c
-          discard enterScope(raisesNode) # bounds it, so `hasMore` is exact
+          raisesNode = sub(raisesNode) # bounds it, so `hasMore` is exact
           if raisesNode.hasMore:
             result.raisesType = raisesNode
         elif c.pragmaKind == ClosureP:
@@ -1203,7 +1203,7 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
   skipRoutinePrefix f, fKind
   assert a.typeKind in RoutineTypes
   let aKind = a.typeKind
-  discard enterScope(a)
+  a = sub(a)
   skipRoutinePrefix a, aKind
   var hasParams = 0
   let fHasParamsList = f.substructureKind == ParamsU
@@ -1554,7 +1554,7 @@ proc checkFloatLitRange(context: ptr SemContext; f: Cursor; floatLit: Cursor): b
 proc skipExpr*(n: Cursor): Cursor =
   result = n
   while result.exprKind in {ExprX, ParX}:
-    discard enterScope(result) # bound the last-son scan below
+    result = sub(result) # bound the last-son scan below
     var next = result
     while next.hasMore:
       result = next
@@ -1780,7 +1780,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         # (same iterator, same `[]`, same `len`). Bind the openArray's
         # type variable to the varargs element type.
         var aElem = a
-        discard enterScope(aElem) # bounded: `kind` is ParRi at a bare `(varargs)`
+        aElem = sub(aElem) # bounded: `kind` is ParRi at a bare `(varargs)`
         if aElem.kind == ParRi:
           # bare `(varargs)` has no element type — can't satisfy openArray[T]
           m.error InvalidMatch, f, a
@@ -1909,7 +1909,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
       else:
         # skip tags:
         let fScope = enterScope(f)
-        discard enterScope(a)
+        a = sub(a)
         while f.hasMore:
           if a.kind == ParRi:
             # len(f) > len(a)
@@ -1968,7 +1968,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         # snapshot `Match` (no `=copy`), so undo-on-failure using the args
         # buffer length and the `err` flag.
         var branches = f
-        discard enterScope(branches) # bound the alternatives walk
+        branches = sub(branches) # bound the alternatives walk
         let argsSave = m.args.len
         let errSave = m.err
         let openedSave = m.opened
@@ -1996,7 +1996,7 @@ proc isEmptyLiteral*(n: Cursor): bool =
   result = n.exprKind in {AconstrX, SetconstrX}
   if result:
     var n = n
-    discard enterScope(n) # past the tag; bounded so the end check is exact
+    n = sub(n) # past the tag; bounded so the end check is exact
     skip n # type
     result = n.kind == ParRi
 
@@ -2005,7 +2005,7 @@ proc isEmptyCall*(n: Cursor): bool =
   if n.exprKind notin CallKinds:
     return false
   var n = n
-  discard enterScope(n) # bound the argument walk
+  n = sub(n) # bound the argument walk
   # overload of `@` with empty array param:
   result = n.kind == Symbol and pool.syms[n.symId] == "@.1." & SystemModuleSuffix
   inc n
@@ -2022,7 +2022,7 @@ proc isEmptyOpenArrayCall*(n: Cursor): bool =
   if n.exprKind notin CallKinds:
     return false
   var n = n
-  discard enterScope(n) # bound the argument walk
+  n = sub(n) # bound the argument walk
   result = n.kind == Symbol and
     # normal overload of `toOpenArray` for arrays:
     (pool.syms[n.symId] == "toOpenArray.0." & SystemModuleSuffix or
@@ -2133,7 +2133,7 @@ proc varargsMatch(m: var Match; f: var Cursor; arg: CallArg) =
   # converter-retry path in `resolveOverloads` — it kicks in only when
   # the direct element match below has set `m.err`.
   var elem = f
-  discard enterScope(elem) # bounded: `kind` is ParRi at a bare `(varargs)`
+  elem = sub(elem) # bounded: `kind` is ParRi at a bare `(varargs)`
   if elem.kind == ParRi or elem.typeKind in {UntypedT, TypedT}:
     if m.firstVarargPosition < 0:
       m.firstVarargPosition = m.args.len
@@ -2310,7 +2310,7 @@ iterator typeVars(fn: SymId): SymId {.sideEffect.} =
     for i in 1..3:
       skip c # name, export marker, pattern
     if c.substructureKind == TypevarsU:
-      discard enterScope(c) # bound the typevar walk
+      c = sub(c) # bound the typevar walk
       while c.hasMore:
         if isTypevarLike(c.symKind):
           var tv = c
@@ -2442,8 +2442,8 @@ proc mutualGenericMatch(a, b: Match): DisambiguationResult =
   assert aParams.substructureKind == ParamsU
   skipToParams bParams
   assert bParams.substructureKind == ParamsU
-  discard enterScope(aParams)
-  discard enterScope(bParams)
+  aParams = sub(aParams)
+  bParams = sub(bParams)
   while aParams.hasMore and bParams.hasMore:
     let aParam = takeLocal(aParams, SkipFinalParRi)
     let bParam = takeLocal(bParams, SkipFinalParRi)
@@ -2530,7 +2530,7 @@ proc buildParamsInfo(params: Cursor): ParamsInfo =
   result = ParamsInfo(names: initTable[StrId, int](), len: 0)
   var f = params
   assert f.isParamsTag
-  discard enterScope(f) # bound the param walk
+  f = sub(f) # bound the param walk
   while f.hasMore:
     assert f.symKind == ParamY
     var param = takeLocal(f, SkipFinalParRi)

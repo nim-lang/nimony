@@ -719,7 +719,7 @@ proc compileCmp(c: var NjvlContext; paramMap: Table[SymId, int]; req, call: Curs
     cnst = createXint(pool.uintegers[r.uintId])
     inc r
   elif (let op = r.exprKind; op in {AddX, SubX}):
-    discard enterScope(r) # peek only, never left
+    r = sub(r) # peek only, never left
     skip r # type
     let cid = extractSymId(r)
     if cid != NoSymId:
@@ -792,7 +792,7 @@ proc checkReq(c: var NjvlContext; paramMap: Table[SymId, int]; req, call: Cursor
   of ExprX:
     var r = req
     while r.exprKind == ExprX:
-      discard enterScope(r) # throwaway copy; bounds the walk under vpr
+      r = sub(r) # throwaway copy; bounds the walk under vpr
       while r.hasMore and not isLastSon(r): skip r
     result = checkReq(c, paramMap, r, call)
   else:
@@ -1231,7 +1231,7 @@ proc addCaseFacts(c: var NjvlContext; selSym: SymId; ranges: Cursor) =
   ## add the corresponding bound facts (`sel == v`, or `lo <= sel <= hi`).
   if selSym == NoSymId or ranges.substructureKind != RangesU: return
   var r = ranges
-  discard enterScope(r) # into 'ranges'; peek only, never left
+  r = sub(r) # into 'ranges'; peek only, never left
   var cnt = 0
   var first = r
   while r.hasMore:
@@ -1487,7 +1487,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
     elif i == ParamsPos:
       if n.kind == ParLe:
         var p = n
-        discard enterScope(p) # peek only, never left
+        p = sub(p) # peek only, never left
         while p.hasMore:
           let r = takeLocal(p, SkipFinalParRi)
           c.typeCache.registerLocal(r.name.symId, ParamY, r.typ)

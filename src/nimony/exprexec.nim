@@ -352,7 +352,7 @@ proc unravelObj(c: var SynthesizeSerializerCtx; orig: Cursor; param: TokenBuf; d
   if n.typeKind in {RefT, PtrT}:
     inc n
   assert n.typeKind == ObjectT
-  discard enterScope(n) # bound the field walk; `n` is a copy
+  n = sub(n) # bound the field walk; `n` is a copy
   # recurse for the inherited object type, if any:
   if n.kind != DotToken:
     var parent = n

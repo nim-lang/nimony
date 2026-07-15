@@ -192,12 +192,12 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
       skip n # skip type
       skip n # skip intlit
     of ExprX:
-      discard enterScope(n)
+      n = sub(n)
       while true:
         if isLastSon(n): break
         skip n
     of CallKinds:
-      discard enterScope(n)
+      n = sub(n)
       let fn = n
       skip n # skip the `fn`
       if n.hasMore:
@@ -242,7 +242,7 @@ proc skipToRoot(n: Cursor): Cursor =
       skip n # skip intlit
       skip n # skip type
     of CallKinds:
-      discard enterScope(n)
+      n = sub(n)
       skip n # skip the `fn`
       if n.hasMore:
         # borrowing only work from first parameters:
@@ -303,7 +303,7 @@ type
 proc checkTupleConstrBorrowing(c: var Context; n: Cursor): LvalueStatus =
   result = Valid
   var n = n
-  discard enterScope(n)
+  n = sub(n)
 
   var typ = n
   assert typ.typeKind == TupleT
@@ -516,7 +516,7 @@ proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
 proc firstArgIsMutable(c: var Context; n: Cursor): bool =
   assert n.exprKind in CallKinds
   var n = n
-  discard enterScope(n)
+  n = sub(n)
   assert n.hasMore
   skip n
   if n.hasMore:
@@ -548,9 +548,9 @@ proc trPragmaBlock(c: var Context; n: var Cursor) =
         # without touching props.
         isCast = true
         var inner = n
-        discard enterScope(inner) # past `cast`
+        inner = sub(inner) # past `cast`
         if inner.substructureKind == PragmasU:
-          discard enterScope(inner)
+          inner = sub(inner)
           while inner.hasMore:
             if inner.pragmaKind == NoSideEffectP:
               disableNoSideEffect = true
@@ -891,7 +891,7 @@ proc shouldCollapseTry(c: var Context; tryAfterTag: Cursor): bool =
   var anyRef = false
   while n.substructureKind == ExceptU:
     var arm = n
-    discard enterScope(arm)  # past 'except' tag
+    arm = sub(arm)  # past 'except' tag
     let info = parseExceptArm(arm)
     if info.isCatchAll:
       discard
@@ -963,7 +963,7 @@ proc trTryCollapsed(c: var Context; n: var Cursor) =
 
   while n.substructureKind == ExceptU:
     var armCur = n
-    discard enterScope(armCur)  # past `(except`
+    armCur = sub(armCur)  # past `(except`
     let arm = parseExceptArm(armCur)
     if arm.isCatchAll:
       catchallBody = arm.bodyStart
@@ -1049,7 +1049,7 @@ proc trTryCollapsed(c: var Context; n: var Cursor) =
 
 proc trTry(c: var Context; n: var Cursor) =
   var prescan = n
-  discard enterScope(prescan)  # past `(try` tag
+  prescan = sub(prescan)  # past `(try` tag
   if shouldCollapseTry(c, prescan):
     trTryCollapsed(c, n)
     return
@@ -1428,7 +1428,7 @@ proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
   var n2 = n
   var n3 = n
   c.dest.add n2
-  discard enterScope(n2)
+  n2 = sub(n2)
   while n2.hasMore:
     # clean up dots that sem might have introduced for moving inner generic instances:
     if n2.kind == DotToken: inc n2

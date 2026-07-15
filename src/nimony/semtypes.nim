@@ -60,7 +60,7 @@ proc countInheritedFieldNames(objType: Cursor; counts: var Table[string, int]; d
   if body.typeKind in {RefT, PtrT}: inc body
   if body.typeKind != ObjectT: return
   var n = body
-  discard enterScope(n) # into (object; bound the walk, `n` is a copy
+  n = sub(n) # into (object; bound the walk, `n` is a copy
   let baseType = n
   skip n # skip inheritance slot
   var iter = initObjFieldIter()
@@ -333,7 +333,7 @@ proc subsGenericTypeFromArgs(c: var SemContext; dest: var TokenBuf;
       dest.add symToken(origin, info)
       var a = args
       var typevars = decl.typevars
-      discard enterScope(typevars) # bound the typevar walk
+      typevars = sub(typevars) # bound the typevar walk
       while a.hasMore and typevars.hasMore:
         var tv = typevars
         assert tv.substructureKind in {TypevarU, StaticTypevarU}
@@ -479,12 +479,12 @@ proc isStaticValue(n: Cursor): bool =
       result = true
     of AconstrX, SetconstrX, TupconstrX, OconstrX:
       var elem = n
-      discard enterScope(elem) # bound the element walk
+      elem = sub(elem) # bound the element walk
       skip elem # type
       result = true
       while elem.hasMore:
         if elem.substructureKind in {KvU, RangeU}:
-          discard enterScope(elem)
+          elem = sub(elem)
           skip elem # key or range start
           if not isStaticValue(elem):
             result = false
@@ -571,7 +571,7 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   var params = default(Cursor)
   if decl.kind == TypeY:
     params = decl.typevars
-    discard enterScope(params) # bound the parameter walk
+    params = sub(params) # bound the parameter walk
   var paramCount = 0
   var argCount = 0
   var m = createMatch(addr c)
@@ -737,7 +737,7 @@ proc semRangeType(c: var SemContext; dest: var TokenBuf; n: var Cursor; context:
 proc tryTypeClass(c: var SemContext; dest: var TokenBuf; n: var Cursor): bool =
   # if the type tree has no children, interpret it as a type kind typeclass
   var op = n
-  discard enterScope(op) # bounded: `kind` is ParRi for an empty tree
+  op = sub(op) # bounded: `kind` is ParRi for an empty tree
   if op.kind == ParRi:
     dest.addParLe(TypekindT, n.info)
     takeTree dest, n

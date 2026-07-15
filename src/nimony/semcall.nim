@@ -77,7 +77,7 @@ proc addFn(c: var SemContext; dest: var TokenBuf; fn: FnCandidate; fnOrig: Curso
           # ^ export marker position has a `(`? If so, it is a magic!
           let info = dest[dest.len-1].info
           copyKeepLineInfo dest[dest.len-1], n.load # overwrite the `(call` node with the magic itself
-          discard enterScope(n) # bound the magic-body walk
+          n = sub(n) # bound the magic-body walk
           if n.kind == IntLit:
             if pool.integers[n.intId] == TypedMagic:
               # use type of first param
@@ -543,7 +543,7 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
     if f.typeKind in RoutineTypes:
       skipToParams f
     assert f.substructureKind == ParamsU
-    discard enterScope(f) # bound the param walk
+    f = sub(f) # bound the param walk
     var arg = beginRead(m.args)
     var i = 0
     while arg.hasMore:
@@ -875,7 +875,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
   var m: seq[Match] = @[]
   if cs.fn.n.exprKind in {OchoiceX, CchoiceX}:
     var f = cs.fn.n
-    discard enterScope(f) # bound the candidate walk
+    f = sub(f) # bound the candidate walk
     while f.hasMore:
       if f.kind == Symbol:
         let sym = f.symId
@@ -951,7 +951,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       if cs.hasNamedArgs:
         cs.args = orderArgs(newMatch, param, csArgsOrig)
       assert param.isParamsTag
-      discard enterScope(param) # throwaway copy; bounds the walk under vpr
+      param = sub(param) # throwaway copy; bounds the walk under vpr
       var ai = 0
       var anyConverters = false
       while param.hasMore:

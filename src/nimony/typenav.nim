@@ -64,7 +64,7 @@ iterator currentScopeLocals*(c: var TypeCache): SymId =
 proc registerParams*(c: var TypeCache; routine: SymId; decl, params: Cursor) =
   if params.kind == ParLe:
     var p = params
-    discard enterScope(p) # bound the param walk
+    p = sub(p) # bound the param walk
     while p.hasMore:
       let r = takeLocal(p, SkipFinalParRi)
       registerLocal(c, r.name.symId, ParamY, r.typ, r.val)

@@ -86,8 +86,8 @@ proc sameTreesIgnoreArrayIndexes*(a, b: Cursor): bool =
       inc b
       result = sameTreesIgnoreArrayIndexes(a, b)
     else:
-      discard enterScope(a)
-      discard enterScope(b)
+      a = sub(a)
+      b = sub(b)
       while true:
         if a.hasMore != b.hasMore: return false
         if not a.hasMore: break

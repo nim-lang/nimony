@@ -1098,7 +1098,7 @@ proc findMacroInvocs(c: SemContext; n: Cursor; kind: SymKind): seq[Cursor] =
   if kind in RoutineKinds:
     var n = asRoutine(n).pragmas
     if n.substructureKind == PragmasU:
-      discard enterScope(n) # bound the walk; peek only, never left
+      n = sub(n) # bound the walk; peek only, never left
       while n.hasMore:
         if n.exprKind == ErrX or n.substructureKind == KvU:
           skip n
@@ -1249,7 +1249,7 @@ proc fitTypeToPragmas(c: var SemContext; dest: var TokenBuf; pragmas: CrucialPra
       var t = typ
       let tk = typ.typeKind
       rebuilt.add t
-      discard enterScope(t) # (i/u/f/c/pointer/cstring; `t` is a copy
+      t = sub(t) # (i/u/f/c/pointer/cstring; `t` is a copy
       case tk
       of IntT, UIntT, FloatT, CharT:
         takeToken rebuilt, t # bit-size literal
@@ -1300,7 +1300,7 @@ proc invokeInnerObj(c: var SemContext; dest: var TokenBuf; genericsPos: int; obj
   if params.substructureKind == TypevarsU:
     # build an invocation of the inner object type; enterScope bounds the
     # walk (the typevars' close token is elided under -d:virtualParRi)
-    discard enterScope(params)
+    params = sub(params)
     var invokeBuf = createTokenBuf(16)
     invokeBuf.buildTree InvokeT, info:
       invokeBuf.add symToken(objSym, info)

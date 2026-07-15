@@ -533,7 +533,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
       # procs — passes through unchanged so NIFC's `...` ellipsis fires.
       let info = n.info
       var probe = n
-      discard enterScope(probe)  # throwaway copy; bounds the walk under vpr
+      probe = sub(probe)  # throwaway copy; bounds the walk under vpr
       var hint = default(Cursor)
       while probe.hasMore:
         if probe.kind == StringLit:
@@ -1199,7 +1199,7 @@ proc trTupleConstr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   var tupleType = n
   c.trType(dest, n, {})
 
-  discard enterScope(tupleType) # parallel walk over the tuple type's fields
+  tupleType = sub(tupleType) # parallel walk over the tuple type's fields
   var counter = 0
   while n.hasMore:
     dest.add tagToken("kv", n.info)
@@ -1381,8 +1381,8 @@ proc trAddrAconstrUarray(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   ##      type (tuple, named object) gets lifted too.
   let info = n.info
   var aconstr = n
-  discard enterScope(aconstr) # past `addr` tag
-  discard enterScope(aconstr) # past `aconstr` tag — now at the `(uarray T)`
+  aconstr = sub(aconstr) # past `addr` tag
+  aconstr = sub(aconstr) # past `aconstr` tag — now at the `(uarray T)`
                               # type slot, bounded to the aconstr's children
   var elemType = aconstr
   inc elemType # past `uarray` tag → element type
@@ -2452,7 +2452,7 @@ proc initHasCall(c: var EContext; n: Cursor): bool =
   ## inline by NIFC at C file scope (only literals and compile-time constants
   ## are valid C file-scope initializers).
   var n = n
-  discard enterScope(n) # skip the gvar/glet/tvar/tlet tag; peek only
+  n = sub(n) # skip the gvar/glet/tvar/tlet tag; peek only
   skip n   # skip SymbolDef
   skip n   # skip export marker
   skip n   # skip pragmas

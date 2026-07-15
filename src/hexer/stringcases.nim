@@ -93,7 +93,7 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   # Prepare the list of (key, value) pairs:
   var pairs: seq[Key] = @[]
   var nb = n
-  discard enterScope(nb) # peek pass over the case; never left
+  nb = sub(nb) # peek pass over the case; never left
   var selectorNode = nb
   let sinfo = selectorNode.info
   let selector: SymId

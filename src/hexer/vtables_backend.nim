@@ -733,7 +733,7 @@ proc collectMethods(c: var Context; n: var Cursor) =
     if not r.isGeneric:
       var p = r.params
       if p.kind == ParLe:
-        discard enterScope(p) # peek at the first param only, never left
+        p = sub(p) # peek at the first param only, never left
         let param = takeLocal(p, SkipFinalParRi)
         let cls = getClass(param.typ)
         if cls == SymId(0):

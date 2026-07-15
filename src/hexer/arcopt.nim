@@ -67,7 +67,7 @@ proc peelComparableArg(n: Cursor): Cursor =
     case result.exprKind
     of ExprX:
       var it = result
-      discard enterScope(it)  # throwaway copy; bounds the walk under vpr
+      it = sub(it)  # throwaway copy; bounds the walk under vpr
       while it.hasMore:
         if isLastSon(it):
           result = it
@@ -159,7 +159,7 @@ proc isExhaustive(n: Cursor; exhaustiveKind: SubstructureKind): bool =
   var it = n
   if it.kind != ParLe:
     return false
-  discard enterScope(it)  # throwaway copy; bounds the walk under vpr
+  it = sub(it)  # throwaway copy; bounds the walk under vpr
   var lastKind = NoSub
   while it.hasMore:
     lastKind = it.substructureKind
@@ -172,7 +172,7 @@ proc getCallInfo(n: Cursor; attachedOp: var AttachedOp; arg: var Cursor): bool =
   if n.exprKind notin CallKinds and n.stmtKind notin {CallS, CmdS, HcallS, CallstrlitS, InfixS, PrefixS}:
     return false
   var it = n
-  discard enterScope(it)  # throwaway copy; bounds the peek under vpr
+  it = sub(it)  # throwaway copy; bounds the peek under vpr
   if it.kind != Symbol:
     return false
   if not getAttachedOp(it.symId, attachedOp):

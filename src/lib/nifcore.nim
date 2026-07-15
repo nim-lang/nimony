@@ -675,6 +675,16 @@ proc leaveScope*(c: var Cursor; scope: CursorScope) =
           else:
             0
 
+proc sub*(c: Cursor): Cursor =
+  ## Read-only descent: returns a bounded cursor over the children of the
+  ## `TagLit` at `c`, leaving `c` itself untouched. Use it for a throwaway
+  ## walk of a node's body (`while result.hasMore: …`) where there is no dest
+  ## to preserve into and hence no scope to `leaveScope`. Replaces the old
+  ## `var t = c; discard enterScope(t)` idiom.
+  assert c.load.kind == TagLit, "sub requires cursor at TagLit"
+  result = c
+  discard enterScope(result)
+
 template into*(c: var Cursor; body: untyped) =
   ## Enters the current `TagLit`, runs `body`, then restores the outer bounds.
   ## `body` must consume every child.

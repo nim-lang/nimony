@@ -49,7 +49,7 @@ proc needsTemp(n: Cursor): bool =
     of NilX, FalseX, TrueX, InfX, NeginfX, NanX, SizeofX:
       result = false
     of ExprX:
-      discard enterScope(n)  # throwaway copy; bounds the probe under vpr
+      n = sub(n)  # throwaway copy; bounds the probe under vpr
       let first = n
       skip n
       if not n.hasMore:
@@ -66,7 +66,7 @@ proc needsTemp(n: Cursor): bool =
       result = needsTemp(n)
     of AtX, PatX, ArratX, TupatX, DotX, DdotX, ParX, AddrX, HaddrX:
       result = false
-      discard enterScope(n)  # throwaway copy; bounds the walk under vpr
+      n = sub(n)  # throwaway copy; bounds the walk under vpr
       while n.hasMore:
         if needsTemp(n):
           return true

@@ -1107,7 +1107,7 @@ proc findObjectField(objType: Cursor; fieldSym: SymId; typ: var Cursor; exported
   ## entries in `prog.mem`, so `tryLoadSym(fieldSym)` cannot resolve them.
   var n = objType
   if n.typeKind != ObjectT: return false
-  discard enterScope(n) # bound the walk to the object body; `n` is a copy
+  n = sub(n) # bound the walk to the object body; `n` is a copy
   skip n # parent type
   var iter = initObjFieldIter()
   while nextField(iter, n):

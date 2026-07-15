@@ -68,7 +68,7 @@ proc isLastRead(c: var Context; n: Cursor): bool =
   discard getType(c.typeCache, n)
   var n = n
   while n.exprKind == ExprX:
-    discard enterScope(n)  # throwaway copy; bounds the walk under vpr
+    n = sub(n)  # throwaway copy; bounds the walk under vpr
     while n.hasMore and not isLastSon(n): skip n
 
   if n.exprKind == EmoveX: inc n
@@ -391,7 +391,7 @@ proc callDup(c: var Context; arg: var Cursor)
 proc callWasMoved(c: var Context; arg: Cursor; typ: Cursor) =
   var n = arg
   if n.exprKind == ExprX:
-    discard enterScope(n)  # throwaway copy; bounds the walk under vpr
+    n = sub(n)  # throwaway copy; bounds the walk under vpr
     while n.hasMore:
       if isLastSon(n):
         break
@@ -842,7 +842,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects)
 
     tr c, n, DontCare # transforms `fn` because it may be an expression that requires further handling
     assert fnType.substructureKind == ParamsU
-    discard enterScope(fnType) # peek walk, never left
+    fnType = sub(fnType) # peek walk, never left
     while n.hasMore:
       let previousFormalParam = fnType
       var e2 = WantNonOwner
@@ -1306,7 +1306,7 @@ proc checkForErrorRoutine(r: var Reporter; fn: SymId; info: PackedLineInfo): int
       var m = "'" & fnName & "' is not available"
       var arg = routine.params
       if arg.substructureKind == ParamsU:
-        discard enterScope(arg)  # throwaway copy; bounds the peek under vpr
+        arg = sub(arg)  # throwaway copy; bounds the peek under vpr
         if arg.hasMore:
           let param = asLocal(arg)
           m.add " for type <" & typeToString(param.typ) & ">"

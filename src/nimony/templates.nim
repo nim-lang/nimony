@@ -75,7 +75,7 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
           skip arg
     elif body.exprKind == UnpackX:
       var un = body
-      discard enterScope(un) # bounded: `kind` is ParRi for a bare `unpack()`
+      un = sub(un) # bounded: `kind` is ParRi for a bare `unpack()`
       var arg = e.firstVarargMatch
       if un.kind == ParRi:
         # `unpack()` variant:

@@ -660,7 +660,7 @@ proc requestRoutineInstance*(c: var SemContext; origin: SymId;
     var newInferred = initTable[SymId, Cursor]()
     var typevar = decl.typevars
     var typeArg = cursorAt(signature, invokeStart)
-    discard enterScope(typeArg) # into the (invok …); bounds the arg walk
+    typeArg = sub(typeArg) # into the (invok …); bounds the arg walk
     skip typeArg # the origin symbol
     typevar.into:  # (typevars …)
       while typevar.hasMore:
@@ -884,7 +884,7 @@ proc skipInvoke(t: var Cursor): Cursor {.inline.} =
   ## otherwise returns `default(Cursor)`. Both cursors are bounded to the
   ## invocation's children so `hasMore` stops at its (possibly elided) close.
   if t.typeKind == InvokeT:
-    discard enterScope(t)
+    t = sub(t)
     result = t
     inc result
   else:
@@ -936,7 +936,7 @@ proc bindSubsInvokeArgs(c: var SemContext; decl: TypeDecl; buf: var TokenBuf;
 proc findObjFieldAux(c: var SemContext; t: Cursor; name: StrId; bindings: Table[SymId, Cursor]; level = 0): ObjField =
   assert t.typeKind == ObjectT
   var n = t
-  discard enterScope(n) # skip `(object` token; bound the walk, `n` is a copy
+  n = sub(n) # skip `(object` token; bound the walk, `n` is a copy
   var baseType = n
   skip n, SkipType # skip basetype
   var iter = initObjFieldIter()
@@ -1363,7 +1363,7 @@ proc exprToType(c: var SemContext; dest: var TokenBuf; exprType: Cursor; start: 
   of TypedescT:
     dest.shrink start
     var base = exprType
-    discard enterScope(base)
+    base = sub(base)
     if not base.hasMore:
       # A bare `typedesc` carrying no concrete base type, e.g. a `T: typedesc`
       # parameter used as a type (`proc f(T: typedesc): Box[T]`). nimony has no
@@ -1545,7 +1545,7 @@ proc addVarargsParameter(c: var SemContext; dest: var TokenBuf; paramsAt: int; i
   else:
     var n = cursorAt(dest, paramsAt)
     if n.substructureKind == ParamsU:
-      discard enterScope(n)
+      n = sub(n)
       while n.hasMore:
         if n.symKind == ParamY:
           let paramScope = enterScope(n)
@@ -2336,12 +2336,12 @@ proc findBranchFields(objTypeSym: SymId; efldSym: SymId): seq[SumTypeBranchField
   if body.typeKind != ObjectT: return
   let obj = asObjectDecl(body)
   var n = obj.body
-  discard enterScope(n)  # past (object; bounds the walk under vpr
+  n = sub(n)  # past (object; bounds the walk under vpr
   skip n  # parent type / inheritance slot
   while n.substructureKind in {FldU, GfldU}:
     skip n
   if n.substructureKind != CaseU: return
-  discard enterScope(n)  # past (case
+  n = sub(n)  # past (case
   skip n # skip discriminator fld
   let efldName = symToIdent(efldSym)
   while n.hasMore:
@@ -2350,7 +2350,7 @@ proc findBranchFields(objTypeSym: SymId; efldSym: SymId): seq[SumTypeBranchField
       var found = false
       if n.substructureKind == RangesU:
         var scan = n
-        discard enterScope(scan)  # throwaway copy
+        scan = sub(scan)  # throwaway copy
         while scan.hasMore:
           if scan.kind == Symbol and sameIdent(scan.symId, efldName):
             found = true
@@ -2358,7 +2358,7 @@ proc findBranchFields(objTypeSym: SymId; efldSym: SymId): seq[SumTypeBranchField
           skip scan
       skip n # skip ranges
       if found and n.substructureKind == StmtsU:
-        discard enterScope(n)
+        n = sub(n)
         while n.hasMore:
           if n.substructureKind in {FldU, GfldU}:
             let f = asLocal(n)
@@ -2829,7 +2829,7 @@ proc semForLoopTupleVar(c: var SemContext; dest: var TokenBuf; it: var Item; tup
   if tup.typeKind in TypeModifiers:
     loopvarTypeMod = tup.typeKind
     inc tup
-  discard enterScope(tup)
+  tup = sub(tup)
   while it.n.hasMore and tup.hasMore:
     let field = getTupleFieldType(tup)
     if it.n.substructureKind == UnpacktupU:
@@ -3653,7 +3653,7 @@ proc semTup(c: var SemContext; dest: var TokenBuf, it: var Item) =
   var expected = origExpected
   var doExpected = expected.typeKind == TupleT
   if doExpected:
-    discard enterScope(expected) # skip tag, now at fields
+    expected = sub(expected) # skip tag, now at fields
   let named = it.n.substructureKind == KvU
   var typ = createTokenBuf(32)
   typ.add parLeToken(TupleT, it.n.info)
@@ -3719,7 +3719,7 @@ proc semTupleConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
       dest.shrink start
       c.buildErr dest, info, "expected tuple type for tuple constructor, got: " & typeToString(t)
       return
-    discard enterScope(t)
+    t = sub(t)
     while it.n.hasMore:
       let named = it.n.substructureKind == KvU
       var kvScope = default(CursorScope)
@@ -3809,7 +3809,7 @@ template wrongBranchError(c: var SemContext; dest: var TokenBuf, info: PackedLin
 proc caseBranchMatchesExpr(c: var SemContext; dest: var TokenBuf; branch, matched: Cursor; selectorType: Cursor): bool =
   result = false
   var branch = branch
-  discard enterScope(branch)
+  branch = sub(branch)
   while branch.hasMore:
     case branch.substructureKind
     of RangeU:
@@ -3920,7 +3920,7 @@ proc buildObjConstrFields(c: var SemContext; dest: var TokenBuf; n: var Cursor;
   while nextField(iter, n, keepCase = true):
     if n.substructureKind == CaseU:
       var body = n
-      discard enterScope(body) # bound the branch walk; `body` is a copy
+      body = sub(body) # bound the branch walk; `body` is a copy
       # selector
       let field = takeLocal(body, SkipFinalParRi)
       buildObjConstrField(c, dest, field, setFields, info, bindings, depth)
@@ -3993,7 +3993,7 @@ proc buildDefaultObjConstr(c: var SemContext; dest: var TokenBuf; typ: Cursor;
 
       let parent = asObjectDecl(parentImpl)
       var currentField = parent.body
-      discard enterScope(currentField)   # past (object; bound the walk
+      currentField = sub(currentField)   # past (object; bound the walk
       if parent.kind == ObjectT:
         skip currentField  # parent type / inheritance slot
       if currentField.hasMore and currentField.kind != DotToken:
@@ -4003,7 +4003,7 @@ proc buildDefaultObjConstr(c: var SemContext; dest: var TokenBuf; typ: Cursor;
     # bring back original bindings:
     bindings = origBindings
   var currentField = obj.body
-  discard enterScope(currentField)   # past (object; bound the walk
+  currentField = sub(currentField)   # past (object; bound the walk
   if obj.kind == ObjectT:
     skip currentField  # parent type / inheritance slot
   if currentField.hasMore and currentField.kind != DotToken:
@@ -4084,7 +4084,7 @@ proc buildInferredInvoke(c: var SemContext; objTypeSym: SymId;
   typeBuf.addParLe(InvokeT, info)
   typeBuf.add symToken(objTypeSym, info)
   var tv = decl.typevars
-  discard enterScope(tv) # skip TypevarsU tag
+  tv = sub(tv) # skip TypevarsU tag
   while tv.hasMore:
     let tvar = asLocal(tv)
     let tvSym = tvar.name.symId
@@ -4105,7 +4105,7 @@ proc fieldTypesByNameFromObj(decl: TypeDecl): Table[StrId, TypeCursor] =
   if body.typeKind != ObjectT: return
   let obj = asObjectDecl(body)
   var n = obj.body
-  discard enterScope(n)  # past (object; bound the walk, `n` is a copy
+  n = sub(n)  # past (object; bound the walk, `n` is a copy
   skip n  # parent type / inheritance slot
   var iter = initObjFieldIter()
   while nextField(iter, n):
@@ -4334,7 +4334,7 @@ proc buildDefaultTuple(c: var SemContext; dest: var TokenBuf; typ: Cursor; info:
   dest.addParLe(TupconstrX, info)
   dest.addSubtree typ
   var currentField = typ
-  discard enterScope(currentField) # skip tuple tag
+  currentField = sub(currentField) # skip tuple tag
   while currentField.hasMore:
     let field = getTupleFieldType(currentField)
     callDefault c, dest, field, info
@@ -4404,7 +4404,7 @@ proc semTupAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
     leaveScope(it.n, tupatScope)
   else:
     it.typ = tupleType
-    discard enterScope(it.typ)
+    it.typ = sub(it.typ)
     # navigate to the proper type within the tuple type:
     let one = createXint(1'i64)
     while true:
@@ -4513,7 +4513,7 @@ proc tryExplicitRoutineInst(c: var SemContext; dest: var TokenBuf; syms: Cursor;
 
 proc isSinglePar(n: Cursor): bool =
   var n = n
-  discard enterScope(n)
+  n = sub(n)
   result = not n.hasMore
 
 proc tryBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item;
@@ -5032,7 +5032,7 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
           # Extract feature pragmas even in phase1 so that e.g. lenientnils
           # is known before type declarations are processed:
           var probe = it.n
-          discard enterScope(probe) # skip (pragmas; bound the walk
+          probe = sub(probe) # skip (pragmas; bound the walk
           while probe.hasMore:
             if probe.substructureKind == KvU:
               inc probe # skip (kv

@@ -180,7 +180,7 @@ proc isTrivialObjectBody(c: var LiftingCtx; body: Cursor): bool =
   var n = body
   if n.typeKind in {RefT, PtrT}:
     inc n
-  discard enterScope(n) # skip `(object` token; bound the walk, `n` is a copy
+  n = sub(n) # skip `(object` token; bound the walk, `n` is a copy
 
   var baseType = n
   if baseType.typeKind in {RefT, PtrT}:
@@ -250,7 +250,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
     result = isTrivialObjectBody(c, typ)
   of TupleT:
     var tup = typ
-    discard enterScope(tup)  # throwaway copy; bounds the walk under vpr
+    tup = sub(tup)  # throwaway copy; bounds the walk under vpr
     while tup.hasMore:
       let field = getTupleFieldType(tup)
       if not isTrivial(c, field):
@@ -581,7 +581,7 @@ proc unravelTuple(c: var LiftingCtx;
                   n: Cursor; paramA, paramB: TokenBuf) =
   assert n.typeKind == TupleT
   var n = n
-  discard enterScope(n)  # throwaway copy; bounds the walk under vpr
+  n = sub(n)  # throwaway copy; bounds the walk under vpr
   var idx = 0
   while n.hasMore:
     let fieldType = getTupleFieldType(n)

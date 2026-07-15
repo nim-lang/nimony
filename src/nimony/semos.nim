@@ -174,7 +174,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
     of CallX, InfixX:
       var x = n
       skip n # ensure we skipped it completely
-      discard enterScope(x)
+      x = sub(x)
       let opId = takeIdent(x)
       if opId == StrId(0):
         hasError = true
@@ -216,7 +216,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
     of PrefixX:
       var x = n
       skip n # ensure we skipped it completely
-      discard enterScope(x)
+      x = sub(x)
       let opId = takeIdent(x)
       if opId == StrId(0):
         hasError = true

@@ -37,7 +37,7 @@ proc isComplex(n: Cursor; goal: Goal): bool =
       result = true
     elif n.exprKind == ExprX:
       var probe = n
-      discard enterScope(probe) # peek only, never left
+      probe = sub(probe) # peek only, never left
       let inner = probe
       skip probe
       if probe.hasMore:
@@ -168,7 +168,7 @@ proc hoistDeclsFromExprX(outerDest, transformed: var TokenBuf; n: var Cursor;
             outerDest.addParRi()
             if local.pragmas.kind == ParLe:  # keep any original pragmas too
               var p = local.pragmas
-              discard enterScope(p) # peek only, never left
+              p = sub(p) # peek only, never left
               while p.hasMore:
                 outerDest.addSubtree p
                 skip p
@@ -519,7 +519,7 @@ proc condNodeSafe(n: Cursor): bool =
       # it; a multi-son `(expr (stmts …) val)` carries real statements (a hoist
       # would be needed) and stays complex. Mirrors `isComplex`.
       var probe = n
-      discard enterScope(probe) # into `(expr`; peek only, never left
+      probe = sub(probe) # into `(expr`; peek only, never left
       skip probe                # the (would-be sole) value son
       if probe.hasMore: return false
     elif n.stmtKind in {IfS, CaseS, TryS, BlockS, WhileS, ForS, StmtsS}:
@@ -550,7 +550,7 @@ proc takeStrippingTrivialExpr(dest: var TokenBuf; n: var Cursor) =
   ## statement-expression instead of the pure `not (== …)` leaf they understand.
   if n.kind == ParLe and n.exprKind == ExprX:
     var probe = n
-    discard enterScope(probe) # peek only, never left
+    probe = sub(probe) # peek only, never left
     skip probe
     if not probe.hasMore:             # single son ⇒ transparent wrapper
       n.into:                         # drop `(expr` and the matching `)`

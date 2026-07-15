@@ -280,7 +280,7 @@ proc trScope(c: var Context; body: var Cursor; kind = Other) =
 proc registerSinkParameters(c: var Context; params: Cursor) =
   if params.kind != ParLe: return
   var p = params
-  discard enterScope(p)  # throwaway copy; bounds the walk under vpr
+  p = sub(p)  # throwaway copy; bounds the walk under vpr
   while p.hasMore:
     let r = takeLocal(p, SkipFinalParRi)
     if r.typ.typeKind == SinkT:
