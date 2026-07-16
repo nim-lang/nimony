@@ -213,7 +213,8 @@ proc trStmtCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
   dest.add n
-  let localScope = enterScope(n)
+  let localStart = n
+  n = sub(n)
 
   let symId = n.symId
   if kind == ResultY:
@@ -236,7 +237,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.callFirstArgs[symId] = argBuf
 
   let callInfo = trBoundExpr(c, dest, n)
-  leaveScope(n, localScope)
+  n = localStart; skip n
   dest.addParRi()
   callIsOver(c, dest, callInfo)
 
@@ -245,7 +246,8 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # actual evaluation order and is easier to analyze.
   let info = n.info
   dest.addParLe StoreV, info
-  let asgnScope = enterScope(n)
+  let asgnStart = n
+  n = sub(n)
   if n.kind == Symbol:
     let symId = n.symId
     inc n # skip the destination symbol
@@ -253,7 +255,7 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
       # `dest = f(args)`: the call binds directly to its destination, no temp.
       let callInfo = trBoundExpr(c, dest, n)
       dest.addSymUse symId, info
-      leaveScope(n, asgnScope)
+      n = asgnStart; skip n
       dest.addParRi()
       callIsOver(c, dest, callInfo)
       return
@@ -267,7 +269,7 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trExpr c, dest, rhs # value first
     trExpr c, dest, n   # then the destination location
     n = rhs
-  leaveScope(n, asgnScope)
+  n = asgnStart; skip n
   dest.addParRi()
 
 proc condIsComplex(n: Cursor): bool =
@@ -329,31 +331,34 @@ proc genCond(c: var Context; dest: var TokenBuf; n: var Cursor;
   ## textually following this emission, for fall-through elision.
   case n.exprKind
   of AndX:
-    let sc = enterScope(n)
+    let scStart = n
+    n = sub(n)
     let z = freshLabel(c, "´cz.")
     genCond c, dest, n, z, falseL, z        # Cx(a)(z, f), a-true falls to z
     emitLab dest, z, n.info
     genCond c, dest, n, trueL, falseL, fallL # Cx(b)(t, f)
-    leaveScope(n, sc)
+    n = scStart; skip n
   of OrX:
-    let sc = enterScope(n)
+    let scStart = n
+    n = sub(n)
     let z = freshLabel(c, "´cz.")
     genCond c, dest, n, trueL, z, z         # Cx(a)(t, z), a-false falls to z
     emitLab dest, z, n.info
     genCond c, dest, n, trueL, falseL, fallL # Cx(b)(t, f)
-    leaveScope(n, sc)
+    n = scStart; skip n
   of NotX:
-    let sc = enterScope(n)
+    let scStart = n
+    n = sub(n)
     genCond c, dest, n, falseL, trueL, fallL # swap targets
-    leaveScope(n, sc)
+    n = scStart; skip n
   else:
     genLeaf c, dest, n, trueL, falseL, fallL
 
 proc genIfViaCx(c: var Context; dest: var TokenBuf; n: var Cursor;
-                info: PackedLineInfo; ifScope: CursorScope) =
+                info: PackedLineInfo; ifStart: Cursor) =
   ## `if <complex cond>: then [else: else]` via `Cx`, so short-circuit
   ## `and`/`or` lower to shared `(lab)`/`(jmp)` merges. `n` is at the `(elif`;
-  ## `ifScope` is the enclosing `(if ...)` scope entered by `trIf`, whose close
+  ## `ifStart` is the enclosing `(if ...)` head captured by `trIf`, whose close
   ## is consumed here.
   var afterElif = n
   skip afterElif
@@ -361,47 +366,52 @@ proc genIfViaCx(c: var Context; dest: var TokenBuf; n: var Cursor;
   let thenL = freshLabel(c, "´ct.")
   let endL = freshLabel(c, "´ce.")
   let elseL = if hasElse: freshLabel(c, "´cl.") else: endL
-  let elifScope = enterScope(n) # skip `elif`
+  let elifStart = n # skip `elif`
+  n = sub(n)
   genCond c, dest, n, thenL, elseL, thenL
   emitLab dest, thenL, info
   trScopedBody c, dest, n      # then-branch
-  leaveScope(n, elifScope)     # end of `elif`
+  n = elifStart; skip n        # end of `elif`
   if hasElse:
     emitJmp dest, endL, info
     emitLab dest, elseL, info
-    let elseScope = enterScope(n) # skip `else`
+    let elseStart = n # skip `else`
+    n = sub(n)
     trScopedBody c, dest, n    # else-branch
-    leaveScope(n, elseScope)   # end of `else`
+    n = elseStart; skip n      # end of `else`
   emitLab dest, endL, info
-  leaveScope(n, ifScope)       # end of `if`
+  n = ifStart; skip n          # end of `if`
 
 proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Precondition: xelim already produced a single elif-else construct here.
   let info = n.info
-  let ifScope = enterScope(n)
+  let ifStart = n
+  n = sub(n)
   assert n.substructureKind == ElifU
   var condPeek = n
   inc condPeek               # at the condition
   if condIsComplex(condPeek):
     # Short-circuit `and`/`or`: use the two-target condition compiler.
-    genIfViaCx c, dest, n, info, ifScope
+    genIfViaCx c, dest, n, info, ifStart
     return
 
   dest.addParLe IteV, info
-  let elifScope = enterScope(n) # skip `elif`
+  let elifStart = n # skip `elif`
+  n = sub(n)
   trExpr c, dest, n          # condition
   trScopedBody c, dest, n    # then-branch
-  leaveScope(n, elifScope)   # end of `elif`
+  n = elifStart; skip n      # end of `elif`
 
   if n.hasMore:
     assert n.substructureKind == ElseU
-    let elseScope = enterScope(n)
+    let elseStart = n
+    n = sub(n)
     trScopedBody c, dest, n  # else-branch
-    leaveScope(n, elseScope) # end of `else`
+    n = elseStart; skip n    # end of `else`
   else:
     dest.addDotToken()       # no else section
 
-  leaveScope(n, ifScope)     # end of `if`
+  n = ifStart; skip n        # end of `if`
   dest.addParRi()            # close `ite`
 
 proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -412,7 +422,8 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Touch the selector type so typenav stays consistent across the switch.
   discard c.typeCache.getType(n.firstSon)
   dest.add tagToken("case", info)
-  let caseScope = enterScope(n)
+  let caseStart = n
+  n = sub(n)
   trExpr c, dest, n          # selector
   while n.substructureKind == OfU:
     takeInto dest, n:        # `of`
@@ -422,12 +433,13 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
     takeInto dest, n:        # `else`
       trScopedBody c, dest, n
   dest.addParRi(n.endInfo)   # close `case`
-  leaveScope(n, caseScope)
+  n = caseStart; skip n
 
 proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## `break` is a forward `(jmp loopExit)` to the matching construct's exit.
   let info = n.info
-  let breakScope = enterScope(n)
+  let breakStart = n
+  n = sub(n)
   var target = -1
   if n.kind == ParRi or n.kind == DotToken:
     if n.kind == DotToken: inc n
@@ -444,7 +456,7 @@ proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
   assert target >= 0, "break has no matching loop/block"
   c.current.exits[target].used = true
   emitJmp dest, c.current.exits[target].name, info
-  leaveScope(n, breakScope)
+  n = breakStart; skip n
 
 proc trContinue(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # The single backward transfer: the loop's back-edge to its header.
@@ -456,7 +468,8 @@ proc trContinue(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # `return` stays primitive: it carries the result and runs the epilogue.
   let info = n.info
-  let retScope = enterScope(n)
+  let retStart = n
+  n = sub(n)
   dest.add tagToken("ret", info)
   if n.kind == ParRi:
     dest.addDotToken()
@@ -469,13 +482,14 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     trExpr c, dest, n
   dest.addParRi()
-  leaveScope(n, retScope)
+  n = retStart; skip n
 
 proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # `raise` stays primitive: it is type-dispatched by `except` and crosses
   # `finally`. A bare `(raise .)` re-raises the in-flight exception.
   let info = n.info
-  let raiseScope = enterScope(n)
+  let raiseStart = n
+  n = sub(n)
   dest.add tagToken("raise", info)
   if n.kind == ParRi:
     dest.addDotToken()
@@ -485,13 +499,14 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     trExpr c, dest, n
   dest.addParRi()
-  leaveScope(n, raiseScope)
+  n = raiseStart; skip n
 
 proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # A `block` has no Final IR construct of its own: it is `body (lab blockExit)`
   # where `break label` jumps forward to `blockExit`.
   let info = n.info
-  let blockScope = enterScope(n) # `block`
+  let blockStart = n # `block`
+  n = sub(n)
   let blockName = if n.kind == SymbolDef: n.symId else: NoSymId
   inc n # name or empty
   let exitL = freshLabel(c, "´blk.")
@@ -499,7 +514,7 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   trScopedBody c, dest, n
   let used = c.current.exits[^1].used
   c.current.exits.shrink(c.current.exits.len - 1)
-  leaveScope(n, blockScope) # close `block`
+  n = blockStart; skip n # close `block`
   if used:
     emitLab dest, exitL, info
 
@@ -531,13 +546,14 @@ proc trLoopFromBody(c: var Context; dest: var TokenBuf; n: var Cursor;
     emitLab dest, exitL, info
 
 proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let whileScope = enterScope(n) # `while`
+  let whileStart = n # `while`
+  n = sub(n)
   let empty = createTokenBuf(0)
   if n.exprKind == TrueX:
     # `while true` is already the canonical infinite loop.
     skip n # the `(true)` condition
     trLoopFromBody c, dest, n, empty
-    leaveScope(n, whileScope) # close `while`
+    n = whileStart; skip n # close `while`
   else:
     # Rewrite `while cond: body` to `while true: (if cond: body else: break)`;
     # the leading-guard `break` becomes the forward `jmp loopExit`.
@@ -551,7 +567,7 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
         w.copyIntoKind ElseU, info:
           w.copyIntoKind StmtsS, info:
             w.addParPair BreakS, info
-    leaveScope(n, whileScope) # close `while`
+    n = whileStart; skip n # close `while`
     var ww = beginRead(w)
     trLoopFromBody c, dest, ww, empty
     endRead w
@@ -559,7 +575,7 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc addForBorrowDecls(dest: var TokenBuf; vars: Cursor; firstArgBuf: TokenBuf) =
   var vars = vars
   if vars.substructureKind in {UnpackflatU, UnpacktupU}:
-    discard enterScope(vars) # peek only, never left
+    vars = sub(vars) # peek only, never left
     while vars.hasMore:
       addForBorrowDecls dest, vars, firstArgBuf
       skip vars
@@ -587,7 +603,7 @@ proc extractForBorrow(c: var Context; forStmt: ForStmt; info: PackedLineInfo): T
   var firstArgBuf = createTokenBuf(0)
   var iterCall = forStmt.iter
   if iterCall.kind == ParLe and iterCall.exprKind in CallKinds:
-    discard enterScope(iterCall) # peek only, never left
+    iterCall = sub(iterCall) # peek only, never left
     skip iterCall
     if iterCall.hasMore:
       firstArgBuf = createTokenBuf(8)
@@ -616,19 +632,21 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # binds the loop variable(s).
   let info = n.info
   let forStmt = asForStmt(n) # peek at structure before advancing
-  let forScope = enterScope(n)
+  let forStart = n
+  n = sub(n)
   let borrowBuf = extractForBorrow(c, forStmt, info)
   skip n # for loop iterator call
   skip n # for loop variables
   trLoopFromBody c, dest, n, borrowBuf
-  leaveScope(n, forScope) # close `for`
+  n = forStart; skip n # close `for`
 
 proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # `try`/`except`/`fin` are kept as regions: a `fin` must run on *every* exit
   # crossing it, so it cannot be lowered to a `jmp` (doc/final_ir.md).
   let info = n.info
   dest.add tagToken("try", info)
-  let tryScope = enterScope(n)
+  let tryStart = n
+  n = sub(n)
   trScopedBody c, dest, n # try body
   while n.substructureKind == ExceptU:
     takeInto dest, n: # `except`
@@ -646,7 +664,7 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
     takeInto dest, n: # `fin`
       trScopedBody c, dest, n
   dest.addParRi(n.endInfo) # close `try`
-  leaveScope(n, tryScope)
+  n = tryStart; skip n
 
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n

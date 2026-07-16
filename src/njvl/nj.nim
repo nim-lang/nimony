@@ -410,7 +410,8 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
     info: info
   )
   dest.add n
-  let callScope = enterScope(n) # skip `(call)`
+  let callStart = n
+  n = sub(n) # skip `(call)`
   trExpr c, dest, n # handle `fn`
   while n.hasMore:
     if n.exprKind == HaddrX:
@@ -422,7 +423,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
         result.mutates.add ensureMove pathBuf
     trExpr c, dest, n
   dest.addParRi(n.endInfo)
-  leaveScope(n, callScope)
+  n = callStart; skip n
 
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
@@ -560,7 +561,8 @@ proc trLocal(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
   let kind = n.symKind
   let beforeHead = dest.len
   dest.add n
-  let localScope = enterScope(n)
+  let localStart = n
+  n = sub(n)
 
   let symId = n.symId
   if kind == ResultY:
@@ -587,7 +589,7 @@ proc trLocal(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
 
   let info = n.info
   let callInfo = trBoundExpr(c, dest, n)
-  leaveScope(n, localScope)
+  n = localStart; skip n
   # After eraiser, every raiseable local init already has an explicit
   # `if (failed x): raise x` injected after it, so NJ must not add another check.
   let effectiveMode = if c.raisesResolved: NoRaise else: callInfo.mode
@@ -630,7 +632,8 @@ proc trAsgn(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor
   # it reflects the actual evaluation order.
   let info = n.info
   dest.add tagToken("store", info)
-  let asgnScope = enterScope(n)
+  let asgnStart = n
+  n = sub(n)
   if n.kind == Symbol:
     let symId = n.symId
     inc n # skip `result`:
@@ -640,7 +643,7 @@ proc trAsgn(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor
       # then emit the "was successful?" branching afterwards.
       let callInfo = trBoundExpr(c, dest, n)
       dest.addSymUse symId, info
-      leaveScope(n, asgnScope)
+      n = asgnStart; skip n
       dest.addParRi()
       callIsOver(c, dest, callInfo)
       case callInfo.mode
@@ -671,7 +674,7 @@ proc trAsgn(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor
     trExpr c, dest, rhs
     trExpr c, dest, n # lhs
     n = rhs
-  leaveScope(n, asgnScope)
+  n = asgnStart; skip n
   dest.addParRi()
 
 proc countSons(dest: var TokenBuf; d: int): int =
@@ -688,9 +691,11 @@ proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cur
   # Precondition: xelim already produced a single elif-else construct here
   let info = n.info
   dest.add tagToken("ite", info)
-  let ifScope = enterScope(n)
+  let ifStart = n
+  n = sub(n)
   assert n.substructureKind == ElifU
-  let elifScope = enterScope(n)
+  let elifStart = n
+  n = sub(n)
   trExpr c, dest, n
 
   var b = BasicBlock(openElseBranches: 0, hasParLe: true, leavesWith: -1)
@@ -698,12 +703,13 @@ proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cur
     openScope c
     trGuardedStmts c, b, dest, n, true
     closeBasicBlock c, b, dest
-  leaveScope(n, elifScope) # end of `elif`
+  n = elifStart; skip n # end of `elif`
 
   if n.hasMore:
     # --- Case 1: Explicit else branch ---
     assert n.substructureKind == ElseU
-    let elseScope = enterScope(n)
+    let elseStart = n
+    n = sub(n)
     var oldActive = false
     if b.leavesWith >= 0:
       # The then-branch ended with a leaving statement (break/return/raise)
@@ -719,9 +725,9 @@ proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cur
       var thenB = BasicBlock(openElseBranches: 0, hasParLe: true, leavesWith: -1)
       trGuardedStmts c, thenB, dest, n, true
       closeBasicBlock c, thenB, dest
-    leaveScope(n, elseScope)
+    n = elseStart; skip n
     dest.addParRi(n.endInfo) # "ite"
-    leaveScope(n, ifScope)
+    n = ifStart; skip n
 
     if b.leavesWith >= 0:
       # Restore the guard to its pre-else state.
@@ -733,7 +739,7 @@ proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cur
     # This is correct because if the then-branch was taken, jtrue fired and
     # subsequent guarded code is skipped. If the then-branch was NOT taken,
     # we fall through to the else which runs the subsequent code.
-    leaveScope(n, ifScope)
+    n = ifStart; skip n
     assert b.leavesWith < c.current.guards.len, "leavesWith out of range"
     c.current.guards[b.leavesWith].active = false
     outerB.reenableOnLeave.add ((b.leavesWith, c.current.guards[b.leavesWith].cond))
@@ -742,7 +748,7 @@ proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cur
     # --- Case 3: No else branch, normal completion ---
     dest.addDotToken() # no else section
     dest.addParRi(n.endInfo) # "ite"
-    leaveScope(n, ifScope)
+    n = ifStart; skip n
 
 proc trBreak(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor) =
   ## Emit `(jtrue guard1 guard2 ...)` and activate the guards.
@@ -751,7 +757,8 @@ proc trBreak(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
   assert c.current.guards.len > 0, "break outside any guarded scope"
 
   var entries = 0 # only care about the inner most
-  let breakScope = enterScope(n)
+  let breakStart = n
+  n = sub(n)
   if n.kind == ParRi:
     entries = 1
   elif n.kind == DotToken:
@@ -775,7 +782,7 @@ proc trBreak(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
     dest.addSymUse g.cond, n.endInfo
     g.active = true
   dest.addParRi(n.endInfo)
-  leaveScope(n, breakScope)
+  n = breakStart; skip n
 
 type
   GuardUndoState = object
@@ -793,7 +800,8 @@ proc trBlock(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Curs
   inc c.current.tmpCounter
 
   declareCfVar c, dest, guard
-  let blockScope = enterScope(n) # "block"
+  let blockStart = n # "block"
+  n = sub(n)
   let blockName = if n.kind == SymbolDef: n.symId else: NoSymId
   inc n # name or empty
   openScope c
@@ -803,7 +811,7 @@ proc trBlock(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Curs
   trGuardedStmts c, b, dest, n, true
   closeBasicBlock c, b, dest
   removeGuard c, s
-  leaveScope(n, blockScope)
+  n = blockStart; skip n
 
 proc containsBreak(n: Cursor): bool =
   var n = n
@@ -816,17 +824,17 @@ proc findBreakSplitPoint(n: Cursor): int =
   # can be considered to be part of the pre-condition of the loop.
   var n = n
   assert n.stmtKind == StmtsS
-  discard enterScope(n) # stmtList; peek only, never left
+  n = sub(n) # stmtList; peek only, never left
   result = 0
   while n.hasMore:
     if n.stmtKind == IfS:
       var p = n
-      discard enterScope(p)         # into the `if`
+      p = sub(p)         # into the `if`
       if p.substructureKind == ElifU:
-        discard enterScope(p)       # into the `elif`
+        p = sub(p)       # into the `elif`
         skip p                      # condition
         if p.stmtKind == StmtsS:
-          discard enterScope(p)     # into the `stmts`
+          p = sub(p)     # into the `stmts`
           if p.stmtKind == BreakS:
             skip p
             if p.kind == ParRi:     # the break is the sole statement
@@ -852,7 +860,8 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor;
     var b = BasicBlock(openElseBranches: 0, hasParLe: true, leavesWith: -1)
 
     var breakSplitPoint = findBreakSplitPoint(n)
-    let bodyScope = enterScope(n) # into the loop body statement list
+    let bodyStart = n # into the loop body statement list
+    n = sub(n)
     while n.hasMore and breakSplitPoint >= 1:
       trGuardedStmts c, b, dest, n, false
       dec breakSplitPoint
@@ -878,7 +887,7 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor;
     maybeCloseGuard(c, dest, g, false)
     closeBasicBlock c, b2, dest
     closeScope c, dest, NoLineInfo
-    leaveScope(n, bodyScope) # end of body statement list
+    n = bodyStart; skip n # end of body statement list
 
     # last statement of our loop body is the `continue`:
     dest.copyIntoKind ContinueS, info:
@@ -888,14 +897,15 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor;
 
 proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.add tagToken("loop", n.info)
-  let whileScope = enterScope(n)
+  let whileStart = n
+  n = sub(n)
 
   # special case `while true` as it plays into our hands:
   if n.exprKind == TrueX:
     skip n
     trWhileTrue c, dest, n
     dest.addParRi(n.endInfo) # close "loop"
-    leaveScope(n, whileScope)
+    n = whileStart; skip n
   else:
     # translate `while cond: body` to `while true: if cond: body else: break`
     # as it's too complex to handle otherwise.
@@ -906,7 +916,7 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
         w.copyIntoKind ElifU, info:
           w.takeTree n # condition
           w.takeTree n # body
-          leaveScope(n, whileScope)
+          n = whileStart; skip n
         w.copyIntoKind ElseU, info:
           w.copyIntoKind StmtsS, info:
             w.addParPair BreakS, info
@@ -918,7 +928,7 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc addForBorrowDecls(dest: var TokenBuf; vars: Cursor; firstArgBuf: TokenBuf) =
   var vars = vars
   if vars.substructureKind in {UnpackflatU, UnpacktupU}:
-    discard enterScope(vars) # peek only, never left
+    vars = sub(vars) # peek only, never left
     while vars.hasMore:
       addForBorrowDecls dest, vars, firstArgBuf
       skip vars
@@ -951,7 +961,7 @@ proc extractForBorrow(c: var Context; forStmt: ForStmt; info: PackedLineInfo): T
   var firstArgBuf = createTokenBuf(0)
   var iterCall = forStmt.iter
   if iterCall.kind == ParLe and iterCall.exprKind in CallKinds:
-    discard enterScope(iterCall) # peek only, never left
+    iterCall = sub(iterCall) # peek only, never left
     skip iterCall
     if iterCall.hasMore:
       firstArgBuf = createTokenBuf(8)
@@ -980,7 +990,8 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let forStmt = asForStmt(n) # peek at structure before advancing
   dest.add tagToken("loop", info)
-  let forScope = enterScope(n)
+  let forStart = n
+  n = sub(n)
 
   let borrowBuf = extractForBorrow(c, forStmt, info)
 
@@ -988,13 +999,14 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   skip n # for loop variables
   trWhileTrue c, dest, n, borrowBuf
   dest.addParRi(n.endInfo) # close "loop"
-  leaveScope(n, forScope)
+  n = forStart; skip n
 
 proc buildCaseCondition(c: var Context; dest: var TokenBuf; n: var Cursor;
                         selector: SymId; selectorType: Cursor; info: PackedLineInfo) =
   ## Build condition for one of-branch using OrX for multiple ranges/values
   assert n.substructureKind == RangesU
-  let rangesScope = enterScope(n)  # into RangesU
+  let rangesStart = n  # into RangesU
+  n = sub(n)
   # Collect all conditions
   var conditions: seq[TokenBuf] = @[]
 
@@ -1021,7 +1033,7 @@ proc buildCaseCondition(c: var Context; dest: var TokenBuf; n: var Cursor;
 
     conditions.add cond
 
-  leaveScope(n, rangesScope)  # skip closing ParRi of RangesU
+  n = rangesStart; skip n  # skip closing ParRi of RangesU
 
   # Combine conditions with OrX
   if conditions.len == 1:
@@ -1039,7 +1051,8 @@ proc trGuardedStmtsBlock(c: var Context; dest: var TokenBuf; n: var Cursor; hasP
 
 proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  let caseScope = enterScope(n)  # skip 'case'
+  let caseStart = n  # skip 'case'
+  n = sub(n)
 
   # Evaluate selector
   let selectorType = c.typeCache.getType(n)
@@ -1083,7 +1096,8 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
         closeScope c, dest, info
       break
 
-    let ofScope = enterScope(n)  # into OfU
+    let ofStart = n  # into OfU
+    n = sub(n)
     # Emit ite (or itec for first branch to mark case origin)
     if iteCount == 0:
       dest.add tagToken("itec", info)
@@ -1100,7 +1114,7 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trGuardedStmtsBlock c, dest, n, true
     closeScope c, dest, info
     dest.addParRi()
-    leaveScope(n, ofScope)  # close OfU
+    n = ofStart; skip n  # close OfU
 
     # Start else-branch (will contain next ite or final else)
     dest.addParLe StmtsS, info
@@ -1115,7 +1129,7 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # No explicit else
     dest.addDotToken()
 
-  leaveScope(n, caseScope)  # close case
+  n = caseStart; skip n  # close case
 
   # Close all the nested ite structures
   for i in 0..<iteCount:
@@ -1158,7 +1172,8 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
     c.current.mode = VoidRaise
 
   openScope c
-  let tryScope = enterScope(n) # into the try
+  let tryStart = n # into the try
+  n = sub(n)
   trGuardedStmtsBlock c, dest, n, outerB.hasParLe
 
   # Restore original mode and errorTracker
@@ -1168,7 +1183,8 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
   closeScope c, dest, info
 
   while n.substructureKind == ExceptU:
-    let exceptScope = enterScope(n) # into ExceptU
+    let exceptStart = n # into ExceptU
+    n = sub(n)
     dest.copyIntoKind IteV, info:
       dest.addSymUse guard, info
       dest.copyIntoKind StmtsS, info:
@@ -1205,21 +1221,22 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
         storeConstToErrorTracker(c, dest, tracker, pool.syms.getOrIncl(SuccessName), info)
 
         closeScope c, dest, info
-        leaveScope(n, exceptScope)
+        n = exceptStart; skip n
       dest.addDotToken() # no else
   if n.substructureKind == FinU:
     c.current.errorTracker = tracker
     if c.current.mode == NoRaise:
       c.current.mode = VoidRaise
 
-    let finScope = enterScope(n) # into FinU
+    let finStart = n # into FinU
+    n = sub(n)
     openScope c
     # The finally body must always execute. Deactivate the try guard so `maybeEmitGuard`
     # does not wrap the finally body in `(ite (not guard) ...)`.
     c.current.guards[s.at].active = false
     trGuardedStmtsBlock c, dest, n, true
     closeScope c, dest, info
-    leaveScope(n, finScope)
+    n = finStart; skip n
 
     # Re-raise any unhandled error after finally block executes
     # Check the error tracker, not the guard (guards are monotonic and can't be reset)
@@ -1232,7 +1249,7 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
     c.current.mode = oldMode
     c.current.errorTracker = oldErrorTracker
   removeGuard c, s
-  leaveScope(n, tryScope)
+  n = tryStart; skip n
 
 
 proc trRet(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor) =
@@ -1306,7 +1323,8 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
       dest.add n.load()
       b.hasParLe = true
       takeThisParRi = true
-    let stmtsScope = enterScope(n)
+    let stmtsStart = n
+    n = sub(n)
     # g2 borrows the innermost active guard for the ENTIRE statement list.
     # All children are emitted inside this single guard, achieving the merge.
     var g2 = (-1, NoSymId)
@@ -1319,7 +1337,7 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
         # suppress the re-activation to prevent sibling ites.
         c.current.guards[g2[0]].active = false
       trGuardedStmts(c, b, dest, n, false)
-    leaveScope(n, stmtsScope)
+    n = stmtsStart; skip n
     maybeCloseGuard(c, dest, g2, false)
 
   of AsgnS:
