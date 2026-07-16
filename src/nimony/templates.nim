@@ -75,7 +75,7 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
           skip arg
     elif body.exprKind == UnpackX:
       var un = body
-      discard enterScope(un) # bounded: `kind` is ParRi for a bare `unpack()`
+      un = sub(un) # bounded: `kind` is ParRi for a bare `unpack()`
       var arg = e.firstVarargMatch
       if un.kind == ParRi:
         # `unpack()` variant:
@@ -168,63 +168,62 @@ proc tryPromoteTemplateBody*(c: var SemContext; sym: SymId): bool =
 
   var newBuf = createTokenBuf(prog.mem[sym].buffer.len + 16)
   newBuf.add oldHead          # `(template`
-  let tmplScope = enterScope(oldHead)
-  newBuf.takeTree oldHead     # name (SymbolDef)
-  newBuf.takeTree oldHead     # exported marker
-  newBuf.takeTree oldHead     # pattern
-  let typevarsAt = newBuf.len
-  newBuf.takeTree oldHead     # typevars
-  let paramsAt = newBuf.len
-  newBuf.takeTree oldHead     # params
-  newBuf.takeTree oldHead     # return type
-  newBuf.takeTree oldHead     # pragmas
-  newBuf.takeTree oldHead     # effects
-  # oldHead is now positioned at the body.
+  oldHead.into:
+    newBuf.takeTree oldHead     # name (SymbolDef)
+    newBuf.takeTree oldHead     # exported marker
+    newBuf.takeTree oldHead     # pattern
+    let typevarsAt = newBuf.len
+    newBuf.takeTree oldHead     # typevars
+    let paramsAt = newBuf.len
+    newBuf.takeTree oldHead     # params
+    newBuf.takeTree oldHead     # return type
+    newBuf.takeTree oldHead     # pragmas
+    newBuf.takeTree oldHead     # effects
+    # oldHead is now positioned at the body.
 
-  let oldRoutine = c.routine
-  c.routine = createSemRoutine(TemplateY, c.routine)
-  # Mirror `semProcImpl`'s template setup so the lazy body sem matches
-  # what phase 3 would do.
-  inc c.routine.inLoop
-  inc c.routine.inGeneric
-  c.openScope()  # parameter scope
-  c.openScope()  # body scope
+    let oldRoutine = c.routine
+    c.routine = createSemRoutine(TemplateY, c.routine)
+    # Mirror `semProcImpl`'s template setup so the lazy body sem matches
+    # what phase 3 would do.
+    inc c.routine.inLoop
+    inc c.routine.inGeneric
+    c.openScope()  # parameter scope
+    c.openScope()  # body scope
 
-  var ctx = createUntypedContext(addr c, UntypedTemplate, dirty = false)
-  addParams(ctx, newBuf, typevarsAt)
-  addParams(ctx, newBuf, paramsAt)
+    var ctx = createUntypedContext(addr c, UntypedTemplate, dirty = false)
+    addParams(ctx, newBuf, typevarsAt)
+    addParams(ctx, newBuf, paramsAt)
 
-  # `addParams` populates `ctx.params` (used by `getIdentReplaceParams`'s
-  # `isTemplParam` check) — but `getIdentReplaceParams` first calls
-  # `buildSymChoice`, which scans the actual SemContext scope. The
-  # original phase-3 path got params into scope via `semParams`, which
-  # ran `addSym` for each param. Lazily promoting from the published
-  # decl skips that, so re-attach the params to the scope here.
-  block addParamsToScope:
-    var p = readonlyCursorAt(newBuf, paramsAt)
-    if p.substructureKind == ParamsU:
-      p.into ParamsU:
-        while p.hasMore:
-          let param = asLocal(p)
-          if param.name.kind == SymbolDef:
-            var nameStr = pool.syms[param.name.symId]
-            extractBasename(nameStr)
-            if nameStr.len > 0:
-              let s = Sym(kind: ParamY, name: param.name.symId, pos: 0)
-              addOverloadable(c.currentScope,
-                              pool.strings.getOrIncl(nameStr), s)
-          skip p
+    # `addParams` populates `ctx.params` (used by `getIdentReplaceParams`'s
+    # `isTemplParam` check) — but `getIdentReplaceParams` first calls
+    # `buildSymChoice`, which scans the actual SemContext scope. The
+    # original phase-3 path got params into scope via `semParams`, which
+    # ran `addSym` for each param. Lazily promoting from the published
+    # decl skips that, so re-attach the params to the scope here.
+    block addParamsToScope:
+      var p = readonlyCursorAt(newBuf, paramsAt)
+      if p.substructureKind == ParamsU:
+        p.into ParamsU:
+          while p.hasMore:
+            let param = asLocal(p)
+            if param.name.kind == SymbolDef:
+              var nameStr = pool.syms[param.name.symId]
+              extractBasename(nameStr)
+              if nameStr.len > 0:
+                let s = Sym(kind: ParamY, name: param.name.symId, pos: 0)
+                addOverloadable(c.currentScope,
+                                pool.strings.getOrIncl(nameStr), s)
+            skip p
 
-  semTemplBody ctx, newBuf, oldHead
-  # `oldHead` is now past the body, at the template's (possibly elided) close.
+    semTemplBody ctx, newBuf, oldHead
+    # `oldHead` is now past the body, at the template's (possibly elided) close.
 
-  c.closeScope()  # body scope
-  c.closeScope()  # parameter scope
-  c.routine = oldRoutine
+    c.closeScope()  # body scope
+    c.closeScope()  # parameter scope
+    c.routine = oldRoutine
 
-  # Closing `)` for the template
-  newBuf.addParRi(oldHead.endInfo)
-  leaveScope(oldHead, tmplScope)
+    # Closing `)` for the template
+    newBuf.addParRi(oldHead.endInfo)
 
   prog.mem[sym].buffer = newBuf
   prog.mem[sym].phase = SemcheckBodies

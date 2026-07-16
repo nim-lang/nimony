@@ -60,7 +60,7 @@ proc countInheritedFieldNames(objType: Cursor; counts: var Table[string, int]; d
   if body.typeKind in {RefT, PtrT}: inc body
   if body.typeKind != ObjectT: return
   var n = body
-  discard enterScope(n) # into (object; bound the walk, `n` is a copy
+  n = sub(n) # into (object; bound the walk, `n` is a copy
   let baseType = n
   skip n # skip inheritance slot
   var iter = initObjFieldIter()
@@ -333,7 +333,7 @@ proc subsGenericTypeFromArgs(c: var SemContext; dest: var TokenBuf;
       dest.add symToken(origin, info)
       var a = args
       var typevars = decl.typevars
-      discard enterScope(typevars) # bound the typevar walk
+      typevars = sub(typevars) # bound the typevar walk
       while a.hasMore and typevars.hasMore:
         var tv = typevars
         assert tv.substructureKind in {TypevarU, StaticTypevarU}
@@ -387,7 +387,8 @@ proc addRangeValues(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   addRangeBound c, dest, n
 
 proc semRangeTypeFromExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; info: PackedLineInfo) =
-  let callScope = enterScope(n) # call tag
+  let callStart = n # call tag
+  n = sub(n)
   skip n # `..`
   dest.addParLe(RangetypeT, info)
   var it = Item(n: n, typ: c.types.autoType)
@@ -407,13 +408,13 @@ proc semRangeTypeFromExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; 
   var values = cursorAt(valuesBuf, 0)
   addRangeValues c, dest, values
   dest.addParRi(n.endInfo)
-  leaveScope(n, callScope)
+  n = callStart; skip n
 
 const InvocableTypeMagics = {ArrayT, RangetypeT, VarargsT,
   PtrT, RefT, UarrayT, SetT, StaticT, TypedescT,
   SinkT, LentT}
 
-proc semMagicInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: TypeKind; info: PackedLineInfo; invokeScope: CursorScope) =
+proc semMagicInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: TypeKind; info: PackedLineInfo; invokeStart: Cursor) =
   # `n` is at first arg, inside the invoke scope owned by `semInvoke`;
   # this proc consumes the remaining args and leaves the invoke scope.
   var typeBuf = createTokenBuf(16)
@@ -427,7 +428,7 @@ proc semMagicInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: 
     takeTree typeBuf, n # element type
     typeBuf.addSubtree indexPart
     typeBuf.addParRi(n.endInfo)
-    leaveScope(n, invokeScope)
+    n = invokeStart; skip n
   of RangetypeT:
     # range types are invoked as `range[a..b]`
     if isRangeExpr(n):
@@ -436,20 +437,20 @@ proc semMagicInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: 
     else:
       c.buildErr dest, info, "expected `a..b` expression for range type"
       while n.hasMore: skip n
-    leaveScope(n, invokeScope)
+    n = invokeStart; skip n
     return
   of PtrT, RefT, UarrayT, SetT, StaticT, TypedescT, SinkT, LentT:
     # unary invocations
     takeTree typeBuf, n
     typeBuf.addParRi(n.endInfo)
-    leaveScope(n, invokeScope)
+    n = invokeStart; skip n
   of VarargsT:
     takeTree typeBuf, n
     if n.hasMore:
       # optional varargs call
       takeTree typeBuf, n
     typeBuf.addParRi(n.endInfo)
-    leaveScope(n, invokeScope)
+    n = invokeStart; skip n
   else:
     bug "unreachable" # see type kind check for magicKind
   var m = cursorAt(typeBuf, 0)
@@ -479,12 +480,12 @@ proc isStaticValue(n: Cursor): bool =
       result = true
     of AconstrX, SetconstrX, TupconstrX, OconstrX:
       var elem = n
-      discard enterScope(elem) # bound the element walk
+      elem = sub(elem) # bound the element walk
       skip elem # type
       result = true
       while elem.hasMore:
         if elem.substructureKind in {KvU, RangeU}:
-          discard enterScope(elem)
+          elem = sub(elem)
           skip elem # key or range start
           if not isStaticValue(elem):
             result = false
@@ -540,7 +541,8 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   let typeStart = dest.len
   let info = n.info
   dest.add n # copy `at`
-  let invokeScope = enterScope(n)
+  let invokeStart = n
+  n = sub(n)
   semLocalTypeImpl c, dest, n, InInvokeHead
 
   var headId: SymId = SymId(0)
@@ -563,7 +565,7 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
     if kind in InvocableTypeMagics:
       # magics that can be invoked
       dest.shrink typeStart
-      semMagicInvoke(c, dest, n, kind, info, invokeScope)
+      semMagicInvoke(c, dest, n, kind, info, invokeStart)
       return
     else:
       c.buildErr dest, info, "cannot attempt to instantiate a non-type"
@@ -571,7 +573,7 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   var params = default(Cursor)
   if decl.kind == TypeY:
     params = decl.typevars
-    discard enterScope(params) # bound the parameter walk
+    params = sub(params) # bound the parameter walk
   var paramCount = 0
   var argCount = 0
   var m = createMatch(addr c)
@@ -612,7 +614,7 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   let usedTypevarsFinal = c.usedTypevars
   let isConcrete = usedTypevarsInitial == usedTypevarsFinal # no generic params were used
   dest.addParRi(n.endInfo)
-  leaveScope(n, invokeScope)
+  n = invokeStart; skip n
   if ok and paramCount != argCount:
     dest.shrink typeStart
     c.buildErr dest, info, "wrong amount of generic parameters for type " & pool.syms[headId] &
@@ -668,7 +670,8 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
 proc semArrayType(c: var SemContext; dest: var TokenBuf; n: var Cursor; context: TypeDeclContext) =
   let info = n.info
   dest.add n
-  let arrayScope = enterScope(n)
+  let arrayStart = n
+  n = sub(n)
   semLocalTypeImpl c, dest, n, InLocalDecl
   # index type, possibilities are:
   # 1. length as integer
@@ -723,7 +726,7 @@ proc semArrayType(c: var SemContext; dest: var TokenBuf; n: var Cursor; context:
         dest.addIntLit length - 1, info
         dest.addParRi()
   dest.addParRi(n.endInfo)
-  leaveScope(n, arrayScope)
+  n = arrayStart; skip n
 
 proc semRangeType(c: var SemContext; dest: var TokenBuf; n: var Cursor; context: TypeDeclContext) =
   dest.takeInto n:
@@ -737,7 +740,7 @@ proc semRangeType(c: var SemContext; dest: var TokenBuf; n: var Cursor; context:
 proc tryTypeClass(c: var SemContext; dest: var TokenBuf; n: var Cursor): bool =
   # if the type tree has no children, interpret it as a type kind typeclass
   var op = n
-  discard enterScope(op) # bounded: `kind` is ParRi for an empty tree
+  op = sub(op) # bounded: `kind` is ParRi for an empty tree
   if op.kind == ParRi:
     dest.addParLe(TypekindT, n.info)
     takeTree dest, n
@@ -792,7 +795,8 @@ proc handleNotnilType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; con
   result = false
   let info = nn.info
   var n = nn
-  let infixScope = enterScope(n) # skip infix
+  let infixStart = n # skip infix
+  n = sub(n)
   skip n # skip `not` identifier
   let before = dest.len
   semLocalTypeImpl c, dest, n, context
@@ -814,7 +818,7 @@ proc handleNotnilType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; con
       dest.endRead()
       dest.shrink before
       c.buildErr dest, info, "`not nil` only valid for a ptr/ref type"
-    leaveScope(n, infixScope)
+    n = infixStart; skip n
     nn = n
     result = true
   else:
@@ -829,7 +833,8 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
   if nn.exprKind == InfixX:
     # (nil ref <as ident> T)
     var n = nn
-    let infixScope = enterScope(n)
+    let infixStart = n
+    n = sub(n)
     let info = n.info
     let ptrkind = takeIdent(n)
     var ptrk = NoType
@@ -844,7 +849,7 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
       semLocalTypeImpl c, dest, n, context
       dest.addParPair NilX, info
       dest.addParRi(n.endInfo)
-      leaveScope(n, infixScope)
+      n = infixStart; skip n
       nn = n
       result = true
     else:
@@ -855,7 +860,7 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
         semLocalTypeImpl c, dest, n, context
         dest.addParPair UncheckedU, info
         dest.addParRi(n.endInfo)
-        leaveScope(n, infixScope)
+        n = infixStart; skip n
         nn = n
         result = true
 
@@ -863,7 +868,8 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
     # `nil RootRef`
     var n = nn
     let info = n.info
-    let prefixScope = enterScope(n)
+    let prefixStart = n
+    n = sub(n)
     var annotation = NoSub
     if n.exprKind == NilX:
       annotation = NilU
@@ -915,7 +921,7 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
         dest.endRead()
         dest.shrink before
         c.buildErr dest, info, "`nil` only valid for a ptr/ref type"
-      leaveScope(n, prefixScope)
+      n = prefixStart; skip n
       nn = n
       result = true
 
@@ -942,9 +948,10 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         let s = semQuoted(c, dest, n, {})
         semTypeSym c, dest, s, info, start, context
       elif xkind == ParX:
-        let parScope = enterScope(n)
+        let parStart = n
+        n = sub(n)
         semLocalTypeImpl c, dest, n, context
-        leaveScope(n, parScope)
+        n = parStart; skip n
       elif xkind == TupX:
         semTupleType c, dest, n
       elif handleNilableType(c, dest, n, context):
@@ -954,13 +961,15 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         # XXX `or` case temporarily handled here instead of magic overload in system
         # (scope stack instead of ParRi counting; flattens nested infixes)
         dest.addParLe(OrT, info)
-        var scopes = @[enterScope(n)]
+        var scopes = @[n]
+        n = sub(n)
         skip n # `|`
         while scopes.len > 0:
           if not n.hasMore:
-            leaveScope(n, scopes.pop)
+            let h = scopes.pop(); n = h; skip n
           elif isOrExpr(n):
-            scopes.add enterScope(n)
+            scopes.add n
+            n = sub(n)
             skip n # `|`
           else:
             semLocalTypeImpl c, dest, n, context
@@ -968,13 +977,15 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       elif isAndExpr(n):
         # XXX temporarily handled here instead of magic overload in system
         dest.addParLe(AndT, info)
-        var scopes = @[enterScope(n)]
+        var scopes = @[n]
+        n = sub(n)
         skip n # `and`
         while scopes.len > 0:
           if not n.hasMore:
-            leaveScope(n, scopes.pop)
+            let h = scopes.pop(); n = h; skip n
           elif isAndExpr(n):
-            scopes.add enterScope(n)
+            scopes.add n
+            n = sub(n)
             skip n # `and`
           else:
             semLocalTypeImpl c, dest, n, context
@@ -982,11 +993,12 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       elif isNotExpr(n):
         # XXX temporarily handled here instead of magic overload in system
         dest.addParLe(NotT, info)
-        let notScope = enterScope(n)
+        let notStart = n
+        n = sub(n)
         skip n # `not`
         semLocalTypeImpl c, dest, n, context
         dest.addParRi(n.endInfo)
-        leaveScope(n, notScope)
+        n = notStart; skip n
       elif false and isRangeExpr(n):
         # a..b, interpret as range type but only without AllowValues
         # to prevent conflict with HSlice
@@ -1021,9 +1033,10 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       dest.takeInto n:
         if exprKind(n) == BracketX:
           # ptr[T] or ref[T], extract T
-          let bracketScope = enterScope(n)
+          let bracketStart = n
+          n = sub(n)
           semLocalTypeImpl c, dest, n, InLocalDecl
-          leaveScope(n, bracketScope)
+          n = bracketStart; skip n
         else:
           semLocalTypeImpl c, dest, n, InLocalDecl
         if n.hasMore:
@@ -1124,7 +1137,8 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         return
       let tk = typeKind(n)
       dest.add n
-      let routineScope = enterScope(n)
+      let routineStart = n
+      n = sub(n)
       # Type-form routine literals: `(proctype <NilTag> (params...) T ...)` and
       # `(itertype <NilTag> (params...) T ...)`. Both have the same canonical
       # head — a nilability tag in slot 0 — so the canonicalisation logic
@@ -1206,7 +1220,7 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
         # while the routine tree is still open — see `addVarargsParameter`
         addVarargsParameter c, dest, beforeParams, crucial.hasVarargs
       dest.addParRi(n.endInfo)
-      leaveScope(n, routineScope)
+      n = routineStart; skip n
     of InvokeT:
       semInvoke c, dest, n
     of ErrT:

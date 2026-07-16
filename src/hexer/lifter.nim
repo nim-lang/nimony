@@ -180,7 +180,7 @@ proc isTrivialObjectBody(c: var LiftingCtx; body: Cursor): bool =
   var n = body
   if n.typeKind in {RefT, PtrT}:
     inc n
-  discard enterScope(n) # skip `(object` token; bound the walk, `n` is a copy
+  n = sub(n) # skip `(object` token; bound the walk, `n` is a copy
 
   var baseType = n
   if baseType.typeKind in {RefT, PtrT}:
@@ -250,7 +250,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
     result = isTrivialObjectBody(c, typ)
   of TupleT:
     var tup = typ
-    discard enterScope(tup)  # throwaway copy; bounds the walk under vpr
+    tup = sub(tup)  # throwaway copy; bounds the walk under vpr
     while tup.hasMore:
       let field = getTupleFieldType(tup)
       if not isTrivial(c, field):
@@ -448,7 +448,8 @@ proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: T
         unravelObjFieldsForward(c, nCopy, paramA, paramB, depth)
         c.op = prevOp
       let info = n.info
-      let caseScope = enterScope(n)
+      let caseStart = n
+      n = sub(n)
       var selector = n
       if c.op != attachedDestroy:
         # copy the selector before case stmt, but destroy after case stmt
@@ -477,7 +478,7 @@ proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: T
           error "expected `of` or `else` inside `case`"
 
       c.dest.addParRi(n.endInfo) # end of case
-      leaveScope(n, caseScope)
+      n = caseStart; skip n
 
       if c.op == attachedDestroy:
         # destroy the selector after case stmt
@@ -581,7 +582,7 @@ proc unravelTuple(c: var LiftingCtx;
                   n: Cursor; paramA, paramB: TokenBuf) =
   assert n.typeKind == TupleT
   var n = n
-  discard enterScope(n)  # throwaway copy; bounds the walk under vpr
+  n = sub(n)  # throwaway copy; bounds the walk under vpr
   var idx = 0
   while n.hasMore:
     let fieldType = getTupleFieldType(n)

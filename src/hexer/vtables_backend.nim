@@ -321,11 +321,10 @@ proc trProcCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # (proccall fn args...) - static call, convert to regular call bypassing vtable
   let info = n.info
   dest.addParLe(CallS, info)
-  let callScope = enterScope(n)  # skip (proccall
-  while n.hasMore:
-    tr c, dest, n
-  dest.addParRi(n.endInfo)
-  leaveScope(n, callScope)
+  n.into:  # skip (proccall
+    while n.hasMore:
+      tr c, dest, n
+    dest.addParRi(n.endInfo)
 
 proc classData(typ: Cursor): (int, UHash) =
   var n = typ
@@ -509,7 +508,8 @@ proc needsTemp(c: var Context; n: Cursor): MaybeTemp =
 proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
   let info = nn.info
   var n = nn
-  let objScope = enterScope(n) # skip `baseobj`
+  let objStart = n # skip `baseobj`
+  n = sub(n)
   let typ = n
   skip n # skip type
   if n.kind == IntLit and pool.integers[n.intId] < 0:
@@ -564,7 +564,7 @@ proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
           copyIntoKind dest, AddrX, info:
             var bufn = beginRead(buf)
             tr c, dest, bufn
-    leaveScope(n, objScope)
+    n = objStart; skip n
   else:
     let isPtr = typ.typeKind in {RefT, PtrT}
     if isPtr:
@@ -575,7 +575,7 @@ proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
       skip n
       tr c, dest, n
       dest.addParRi(n.endInfo)
-      leaveScope(n, objScope)
+      n = objStart; skip n
     else:
       n = nn
       copyInto dest, n:
@@ -733,7 +733,7 @@ proc collectMethods(c: var Context; n: var Cursor) =
     if not r.isGeneric:
       var p = r.params
       if p.kind == ParLe:
-        discard enterScope(p) # peek at the first param only, never left
+        p = sub(p) # peek at the first param only, never left
         let param = takeLocal(p, SkipFinalParRi)
         let cls = getClass(param.typ)
         if cls == SymId(0):

@@ -161,7 +161,7 @@ proc exprRoots(a: var ProcAnalysis; n: Cursor): seq[int] =
     of CallC:
       # Steensgaard "select": the result may alias any pointer argument.
       var r = n
-      discard enterScope(r)  # throwaway copy; no leaveScope needed
+      r = sub(r)  # throwaway copy; no leaveScope needed
       skip r                 # callee
       while r.hasMore:
         for e in exprRoots(a, r): result.add e
@@ -177,7 +177,7 @@ proc lastChildStart(n: Cursor): Cursor =
   ## Returns a cursor to the last child of the `(tag ...)` node `n`.
   result = n
   var c = n
-  discard enterScope(c)  # throwaway copy; no leaveScope needed
+  c = sub(c)  # throwaway copy; no leaveScope needed
   while c.hasMore:
     result = c
     skip c
@@ -231,7 +231,7 @@ proc handleAssign(a: var ProcAnalysis; n: var Cursor; reversed: bool) =
 
 proc handleRet(a: var ProcAnalysis; n: var Cursor) =
   var c = n
-  discard enterScope(c)  # throwaway copy; no leaveScope needed
+  c = sub(c)  # throwaway copy; no leaveScope needed
   if c.hasMore and c.kind != DotToken:
     let roots = exprRoots(a, c)
     for r in roots:
@@ -243,7 +243,7 @@ proc handleRet(a: var ProcAnalysis; n: var Cursor) =
 
 proc handleCall(a: var ProcAnalysis; n: var Cursor) =
   var c = n
-  discard enterScope(c)  # throwaway copy; no leaveScope needed
+  c = sub(c)  # throwaway copy; no leaveScope needed
   let calleeStart = c
   var fact = CallFact(callee: SymId(0), argRoots: @[])
   if calleeStart.kind == Symbol:

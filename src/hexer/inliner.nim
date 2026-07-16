@@ -61,7 +61,8 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n
   c.typeCache.openScope()
   dest.add n
-  let declScope = enterScope(n)
+  let declStart = n
+  n = sub(n)
   var r = asRoutine(decl, SkipExclBody)
   let oldThisRoutine = c.thisRoutine
   c.thisRoutine = r.name.symId
@@ -79,7 +80,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     takeTree dest, n
   dest.addParRi(n.endInfo)
-  leaveScope(n, declScope)
+  n = declStart; skip n
   c.thisRoutine = oldThisRoutine
   c.typeCache.closeScope()
 

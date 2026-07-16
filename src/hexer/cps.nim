@@ -124,7 +124,8 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
         dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
         # constructor call as initializer:
         copyIntoKind dest, CallS, info:
-          let callScope = enterScope(n)
+          let callStart = n
+          n = sub(n)
           if n.kind == Symbol and typ.firstSon.kind == SymbolDef:
             dest.addSymUse coroWrapperProc(c, n.symId), info
             inc n
@@ -132,7 +133,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
             coroTr(c, dest, n)
           while n.hasMore:
             coroTr(c, dest, n)
-          leaveScope(n, callScope)
+          n = callStart; skip n
           if hasResult:
             dest.copyIntoKind AddrX, info:
               dest.copyTree target
@@ -169,11 +170,12 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
         # constructor call as initializer:
         copyIntoKind dest, CallS, info:
           dest.addSymUse sym, info
-          let callScope = enterScope(n)
+          let callStart = n
+          n = sub(n)
           skip n # fn already handled
           while n.hasMore:
             coroTr(c, dest, n)
-          leaveScope(n, callScope)
+          n = callStart; skip n
           dest.copyIntoKind AddrX, info:
             dest.addSymUse coroVar, info
           if hasResult:
@@ -215,7 +217,8 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
 
     # value: emit constructor call with heap-allocated frame:
     copyIntoKind dest, CallS, info:
-      let callScope = enterScope(n)
+      let callStart = n
+      n = sub(n)
       if n.kind == Symbol and typ.firstSon.kind == SymbolDef:
         dest.addSymUse coroWrapperProc(c, n.symId), info
         inc n
@@ -223,7 +226,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
         coroTr(c, dest, n)
       while n.hasMore:
         coroTr(c, dest, n)
-      leaveScope(n, callScope)
+      n = callStart; skip n
 
       if hasResult:
         dest.copyIntoKind AddrX, info:
@@ -275,7 +278,8 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## `(delay fn args)` — fn-args form; typenav returns
   ## `Continuation` for `DelayX`.
   let info = n.info
-  let delayScope = enterScope(n) # skip delay tag
+  let delayStart = n # skip delay tag
+  n = sub(n)
   if n.kind == Symbol:
     let sym = n.symId
     inc n    # skip fn symbol
@@ -296,12 +300,12 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.copyIntoKind KvU, info:
           dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
           dest.addParPair NilX, info
-    leaveScope(n, delayScope) # skip close of delay
+    n = delayStart; skip n # skip close of delay
   else:
     dest.copyIntoKind ErrT, info:
       dest.addStrLit "`delay` expects a call expression"
     while n.hasMore: skip n # skip rest
-    leaveScope(n, delayScope)
+    n = delayStart; skip n
 
 # ---------------------------------------------------------------------
 # Proctype / itertype shape rewrite — coroutine-shaped types get the
@@ -328,20 +332,19 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
       if isClosureIterType:
         # open the (tuple … (ref RootObj)) wrapper
         dest.addParLe TupleT, info
-      var ptScope = default(CursorScope)
+      var ptStart = default(Cursor)
       if isPassiveProc:
         dest.add n                      # proctype tag (passive proc)
-        ptScope = enterScope(n)
+        ptStart = n; n = sub(n)
       else:
         # itertype → wrapper proctype (both `.closure` and `.passive`)
         dest.addParLe ProctypeT, info
-        ptScope = enterScope(n)          # consume original itertype tag
+        ptStart = n; n = sub(n)          # consume original itertype tag
       dest.takeTree n         # nilability tag
       dest.add n              # params tag
-      let paramsScope = enterScope(n)
-      while n.hasMore:
-        trProctype(c, dest, n)
-      leaveScope(n, paramsScope)
+      n.into:
+        while n.hasMore:
+          trProctype(c, dest, n)
       # return type becomes a ptr parameter:
       if not isVoidType(n):
         dest.copyIntoKind ParamU, info:
@@ -365,7 +368,7 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
       while n.hasMore:
         trProctype(c, dest, n)
       dest.addParRi(n.endInfo)
-      leaveScope(n, ptScope)
+      n = ptStart; skip n
       if isClosureIterType:
         # proctype is already closed; add the env slot and close the tuple
         dest.copyIntoKind RefT, info:
@@ -407,17 +410,16 @@ proc transformToCps*(pass: var Pass) =
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS
   c.coroTypes.add n.load() # the `(stmts` open tag
-  let rootScope = enterScope(n)
-  while n.hasMore:
-    coroTr(c, pass.dest, n)
-  for (sym, start) in c.shouldPublish:
-    var buf = createTokenBuf(16)
-    buf.copyTree pass.dest.cursorAt(start)
-    endRead(pass.dest)
-    publishSignature buf, sym, 0
-  c.coroTypes.add pass.dest # concat coroTypes and other statements
-  c.coroTypes.addParRi() # close the root; its source ParRi may be elided
-  leaveScope(n, rootScope)
+  n.into:
+    while n.hasMore:
+      coroTr(c, pass.dest, n)
+    for (sym, start) in c.shouldPublish:
+      var buf = createTokenBuf(16)
+      buf.copyTree pass.dest.cursorAt(start)
+      endRead(pass.dest)
+      publishSignature buf, sym, 0
+    c.coroTypes.add pass.dest # concat coroTypes and other statements
+    c.coroTypes.addParRi() # close the root; its source ParRi may be elided
   swap c.coroTypes, pass.dest
   c.typeCache.closeScope()
 

@@ -45,7 +45,7 @@ proc setupProc(c: var Context; procBody: Cursor) =
 
 proc trParams(c: var Context; params: Cursor) =
   var n = params
-  discard enterScope(n) # skips (params; peek only, never left
+  n = sub(n) # skips (params; peek only, never left
   while n.hasMore:
     let r = takeLocal(n, SkipFinalParRi)
     if r.name.kind == SymbolDef:
@@ -149,7 +149,8 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trStore(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   dest.add tagToken("store", info)
-  let storeScope = enterScope(n)
+  let storeStart = n
+  n = sub(n)
   trExpr c, dest, n # source
 
   let r = rootOf(n, CanFollowCalls)
@@ -159,12 +160,13 @@ proc trStore(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   trExpr c, dest, n # dest
   dest.addParRi(n.endInfo)
-  leaveScope(n, storeScope)
+  n = storeStart; skip n
 
 proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   dest.add n # "ite" or "itec"
-  let iteScope = enterScope(n)
+  let iteStart = n
+  n = sub(n)
   trExpr c, dest, n
   openSection c.vt
   openScope c.typeCache
@@ -196,7 +198,7 @@ proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   dest.addParRi() # join information
   dest.addParRi(n.endInfo) # "ite"
-  leaveScope(n, iteScope)
+  n = iteStart; skip n
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
@@ -212,14 +214,16 @@ proc trLoop(c: var Context; dest: var TokenBuf; n: var Cursor) =
   openSection c.vt
 
   dest.add n # "loop"
-  let loopScope = enterScope(n)
+  let loopStart = n
+  n = sub(n)
 
   openScope c.typeCache
   trStmt c, dest, n # pre condition
   trExpr c, dest, n # condition
   assert n.stmtKind == StmtsS
   dest.add n
-  let bodyScope = enterScope(n)
+  let bodyStart = n
+  n = sub(n)
   while n.hasMore:
     trStmt c, dest, n # body
   # last statement of our loop body is the `continue`:
@@ -238,9 +242,9 @@ proc trLoop(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addParRi()
   dest.addParRi() # Continue statement
   dest.addParRi(n.endInfo) # close loop body
-  leaveScope(n, bodyScope)
+  n = bodyStart; skip n
   dest.addParRi(n.endInfo) # close loop
-  leaveScope(n, loopScope)
+  n = loopStart; skip n
 
 proc trKill(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Do not version the variables here!

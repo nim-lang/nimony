@@ -352,19 +352,13 @@ proc endInfo*(n: Cursor): PackedLineInfo {.inline.} =
   else:
     n.info
 
-type
-  CursorScope* = object
-    ## Manual counterpart to `into` for resumable traversals (iterators
-    ## that pause mid-walk and cannot use a template's scoped body).
-    head: Cursor
-
-proc enterScope*(n: var Cursor): CursorScope =
-  ## Advances past the ParLe at `n` and bounds the cursor to the scope's
-  ## body. While inside, `n.hasMore` is false exactly when the body is
-  ## consumed; then call `leaveScope` to advance past the (real or
-  ## virtual) closing `)` and restore the outer scope's bound.
+proc enterScope(n: var Cursor) =
+  ## Advances past the ParLe at `n` and bounds the cursor to that node's
+  ## children — `n.hasMore` then terminates at the node's (real or elided)
+  ## closing `)`. Internal primitive behind `sub`/`firstSon`; there is no
+  ## corresponding "leave" — walk a *copy* with `sub`, or transform in place
+  ## with the `into`/`peekInto` templates which handle the exit themselves.
   assert n.kind == ParLe, "enterScope requires cursor at ParLe"
-  result = CursorScope(head: n)
   when defined(virtualParRi):
     let j = jump(n.load)
     let isOverflow = j == MaxJump
@@ -373,20 +367,14 @@ proc enterScope*(n: var Cursor): CursorScope =
   else:
     inc n
 
-proc leaveScope*(n: var Cursor; scope: CursorScope) =
-  ## Leaves a scope opened by `enterScope`; the body must have been fully
-  ## consumed (`not n.hasMore`).
-  when defined(virtualParRi):
-    if n.rem > 0:
-      # overflow scope: terminated by its real ParRi
-      assert n.kind == ParRi, "leaveScope: scope did not end at ParRi"
-      n.p = cast[ptr PackedToken](cast[uint](n.p) + sizeof(PackedToken).uint)
-    let consumed = int((cast[uint](n.p) - cast[uint](scope.head.p)) div sizeof(PackedToken).uint)
-    let savedRem = scope.head.rem
-    n.rem = if savedRem >= consumed: savedRem - consumed else: 0
-  else:
-    assert n.kind == ParRi, "leaveScope: scope did not end at ParRi"
-    inc n
+proc sub*(n: Cursor): Cursor =
+  ## Read-only descent: returns a bounded cursor over the children of the
+  ## ParLe at `n`, leaving `n` itself untouched. Use it for a throwaway walk
+  ## of a node's body (`while result.hasMore: …`) where there is no dest to
+  ## preserve into. Replaces the old `var t = n; discard enterScope(t)` idiom.
+  assert n.kind == ParLe, "sub requires cursor at ParLe"
+  result = n
+  enterScope(result)
 
 template into*(n: var Cursor; body: untyped) =
   ## Enters the current ParLe node, runs `body` to process the children,
@@ -1283,7 +1271,7 @@ proc firstSon*(n: Cursor): Cursor {.inline.} =
   ## terminates at the node's (elided) close.
   result = n
   when defined(virtualParRi):
-    discard enterScope(result)
+    enterScope(result)
   else:
     inc result
 

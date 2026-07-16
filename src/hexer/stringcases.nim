@@ -93,7 +93,7 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   # Prepare the list of (key, value) pairs:
   var pairs: seq[Key] = @[]
   var nb = n
-  discard enterScope(nb) # peek pass over the case; never left
+  nb = sub(nb) # peek pass over the case; never left
   var selectorNode = nb
   let sinfo = selectorNode.info
   let selector: SymId
@@ -137,7 +137,8 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   decodeSolution(c, dest, solution, 0, selector, selectorNode.info)
   var i = 0
   nb = n
-  let caseScope = enterScope(nb)
+  let caseStart = nb
+  nb = sub(nb)
 
   skip nb # selector
   let afterwards = pool.syms.getOrIncl("`sc." & $getTmpId(c))
@@ -171,7 +172,7 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     dest.copyIntoUnchecked "lab", sinfo:
       dest.add symdefToken(elseLabel, sinfo)
 
-  leaveScope(nb, caseScope)
+  nb = caseStart; skip nb
   dest.copyIntoUnchecked "lab", n.info:
     dest.add symdefToken(afterwards, n.info)
   n = nb

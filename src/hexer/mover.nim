@@ -86,8 +86,8 @@ proc sameTreesIgnoreArrayIndexes*(a, b: Cursor): bool =
       inc b
       result = sameTreesIgnoreArrayIndexes(a, b)
     else:
-      discard enterScope(a)
-      discard enterScope(b)
+      a = sub(a)
+      b = sub(b)
       while true:
         if a.hasMore != b.hasMore: return false
         if not a.hasMore: break
@@ -306,7 +306,12 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
       else:
         case pc.stmtKind
         of AsgnS:
-          let asgnScope = enterScope(pc)
+          # NOTE: this body does NOT fully consume the asgn (it reads the RHS
+          # without advancing), so `into` is wrong here — use the parent-cursor
+          # form, which jumps past the whole subtree regardless of consumption
+          # (like the old forgiving `leaveScope`).
+          let asgnStart = pc
+          pc = sub(pc)
           let lhsRedefinesRoot = (pc.kind == Symbol and pc.symId == root) or
                                  sameTrees(pc, x)
           skip pc # skip left-hand-side; pc now at the right-hand-side
@@ -329,7 +334,7 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
           if lhsRedefinesRoot:
             # pure redefinition of 's' (old value overwritten unread) --> sink 's'.
             break
-          leaveScope(pc, asgnScope)
+          pc = asgnStart; skip pc
         of RetS:
           break
         of StmtsS, ScopeS, BlockS, ContinueS, BreakS:
