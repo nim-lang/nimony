@@ -1041,14 +1041,17 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
         extractBasename(name)
         # go up a scope for the parameter scope:
         c.currentScope.up.addOverloadable(pool.strings.getOrIncl(name), s)
-      if name == ">" or name == ">=" or name == "!=":
-        let op1 = if name == "!=": "==" elif name == ">": "<" else: "<="
-        let msg = if pass == checkConceptProc:
-                    "If a type has `" & op1 & "`, it automatically has `" & name & "`."
-                  else:
-                    "define `" & op1 & "` instead of `" & name & "` to implement user defined comparison operator. " &
-                    "it allows you to use `" & name & "` automatically."
-        buildErrAt c, dest, beforeName, msg
+      if symId != SymId(0) and kind in {ProcY, FuncY} and {ImportcP, ImportcppP} * crucial.flags == {}:
+        var name = pool.syms[symId]
+        extractBasename(name)
+        if name == ">" or name == ">=" or name == "!=":
+          let op1 = if name == "!=": "==" elif name == ">": "<" else: "<="
+          let msg = if pass == checkConceptProc:
+                      "If a type has `" & op1 & "`, it automatically has `" & name & "`."
+                    else:
+                      "define `" & op1 & "` instead of `" & name & "` to implement user defined comparison operator. " &
+                      "it allows you to use `" & name & "` automatically."
+          buildErrAt c, dest, beforeName, msg
       if it.n.kind == DotToken:
         takeToken dest, it.n
       else:
