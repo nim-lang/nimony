@@ -1,14 +1,24 @@
 iterator `..<`*[T: Ordinal](a, b: T): T {.inline.} =
+  ## Count up in the range `[a, b)`
   var i = a
   while i < b:
     yield i
     inc i
 
 iterator `..`*[T: Ordinal](a, b: T): T {.inline.} =
+  ## Count up in the range `[a, b]`
   var i = a
   while i <= b:
     yield i
     inc i
+
+iterator `>..`*[T: Ordinal](a, b: T): T {.inline.} =
+  ## Count down in the range `[b, a]`.
+  var i = a
+  while i >= b:
+    yield i
+    if i == b: break
+    dec i
 
 iterator countdown*[T, V: Ordinal](a, b: T; step: V = T(1)): T {.inline.} =
   ## Counts from ordinal value `a` down to `b` (inclusive) with the given
@@ -25,6 +35,16 @@ iterator countdown*[T, V: Ordinal](a, b: T; step: V = T(1)): T {.inline.} =
       if res < succ(b, step):
         break
       dec(res, step)
+
+iterator countup*[T: Ordinal](a, b: T; step: Positive = 1): T {.inline.} =
+  ## Counts from ordinal value `a` to `b` (inclusive) with the given
+  ## step count.
+  ##
+  ## `step` may only be positive.
+  var res = a
+  while res <= b:
+    yield res
+    inc(res, step)
 
 # RootObj is replaced with untyped for now:
 
