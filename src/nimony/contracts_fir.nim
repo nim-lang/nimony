@@ -426,25 +426,26 @@ proc translateCond(c: var NjvlContext; pc: var Cursor; wasEquality: var bool): L
   result = LeXplusC(a: InvalidVarId, b: VarId(0), c: createXint(0'i32))
 
   var negations = 0
-  var notScopes: seq[CursorScope] = @[]
+  var notScopes: seq[Cursor] = @[]
   while r.exprKind == NotX:
     inc negations
-    notScopes.add enterScope(r)
+    notScopes.add r
+    r = sub(r)
 
   template unwindNegations() =
     while negations > 0:
       negateFact(result)
       dec negations
-      leaveScope(r, notScopes.pop())
+      let h = notScopes.pop(); r = h; skip r
 
   let xk = r.exprKind
-  var cmpScope = default(CursorScope)
+  var cmpStart = default(Cursor)
   if xk in {LeX, LtX}:
-    cmpScope = enterScope(r)
+    cmpStart = r; r = sub(r)
     skip r # skip type
   elif xk == EqX:
     wasEquality = negations == 0  # negated equality is inequality, not equality
-    cmpScope = enterScope(r)
+    cmpStart = r; r = sub(r)
     skip r # skip type
   elif xk == InstanceofX:
     # `(instanceof x T)` truthy: x is not nil (and is at least T at runtime).
@@ -496,7 +497,7 @@ proc translateCond(c: var NjvlContext; pc: var Cursor; wasEquality: var bool): L
   # a < b  --> a <= b - 1:
   if xk == LtX:
     result.c = result.c - createXint(1'i32)
-  leaveScope(r, cmpScope)
+  if xk in {LeX, LtX, EqX}: r = cmpStart; skip r
 
   unwindNegations()
 
@@ -960,7 +961,8 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
   let effect = whichEffect(calleeKind, fnPragmas)
   traverseExpr c, n # the `fn` itself
   assert fnType.isParamsTag
-  let paramsScope = enterScope(fnType)
+  let paramsStart = fnType
+  fnType = sub(fnType)
   var paramMap = initTable[SymId, int]()
   # Collect argument paths for aliasing check
   let args = n
@@ -995,7 +997,7 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
   if needsBorrowCheck:
     borrowCheckForCall c, args
   while fnType.hasMore: skip fnType
-  leaveScope(fnType, paramsScope)
+  fnType = paramsStart; skip fnType
   skip fnType # skip return type
   # now we have the pragmas:
   let req = extractPragma(fnType, RequiresP)
@@ -1038,7 +1040,8 @@ proc cannotBeNil(c: var NjvlContext; n: Cursor): bool {.inline.} =
 
 proc traverseStore(c: var NjvlContext; n: var Cursor) =
   ## Handle (store value dest) - note reversed order from asgn
-  let storeScope = enterScope(n) # skip store tag
+  let storeStart = n # skip store tag
+  n = sub(n)
 
   # First analyze the value (source)
   let valueStart = n
@@ -1095,7 +1098,7 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
     checkRangeAssign c, getType(c.typeCache, n), valueStart
     traverseExpr c, n
 
-  leaveScope(n, storeScope)
+  n = storeStart; skip n
 
 # --- Exit-summary plumbing (drives the journaled FlowTracker over c.flow) ---
 #
@@ -1115,7 +1118,8 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   ## the tracker merges the fall-through state (inits + facts) by liveness — a
   ## branch that always leaves drops out, unifying guard-clause and if-else
   ## style. The state is journaled, so a branch costs O(writes), not a copy.
-  let iteScope = enterScope(n) # skip ite/itec tag
+  let iteStart = n # skip ite/itec tag
+  n = sub(n)
 
   let savedBorrowsLen = c.activeBorrows.len
   # Split BEFORE the condition facts so they belong to the then-branch's delta
@@ -1150,7 +1154,7 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
   mergeBranches(c.tr, c.flow, b)
   c.activeBorrows.setLen(savedBorrowsLen)
 
-  leaveScope(n, iteScope)
+  n = iteStart; skip n
 
 proc traverseLoop(c: var NjvlContext; n: var Cursor) =
   ## `(loop body)` — infinite; the body ends in `(continue .)` and exits
@@ -1258,7 +1262,8 @@ proc traverseCase(c: var NjvlContext; n: var Cursor) =
   ## every branch starts from the pre-case state, plus the bound facts implied
   ## by its `ranges`; the post-case fall-through is the intersection of the
   ## init-sets (and a fact-join) over the arms that fall through.
-  let caseScope = enterScope(n) # skip 'case'
+  let caseStart = n # skip 'case'
+  n = sub(n)
   let selCursor = n
   let selSym = extractSymId(selCursor)
   traverseExpr c, n # selector (init-checked)
@@ -1275,7 +1280,7 @@ proc traverseCase(c: var NjvlContext; n: var Cursor) =
     n.into:
       branches.add (default(Cursor), n)
       skip n
-  leaveScope(n, caseScope) # close 'case'
+  n = caseStart; skip n # close 'case'
 
   let cp = c.flow.checkpoint()
   let savedBorrows = c.activeBorrows.len
@@ -1312,7 +1317,8 @@ proc traverseTry(c: var NjvlContext; n: var Cursor) =
   ## may run after *any* point of the body, so it can only assume the pre-try
   ## state; a `fin` is analyzed on the merged fall-through (its inits are not
   ## propagated onto exit paths — sound, since that only withholds knowledge).
-  let tryScope = enterScope(n) # skip 'try'
+  let tryStart = n # skip 'try'
+  n = sub(n)
   let cp = c.flow.checkpoint()
   let savedBorrows = c.activeBorrows.len
   let baseLive = c.tr.live
@@ -1362,11 +1368,12 @@ proc traverseTry(c: var NjvlContext; n: var Cursor) =
   if n.substructureKind == FinU:
     n.into:
       traverseStmt c, n # finally body, on the merged fall-through
-  leaveScope(n, tryScope) # close 'try'
+  n = tryStart; skip n # close 'try'
 
 proc traverseLocal(c: var NjvlContext; n: var Cursor) =
   let kind = n.symKind
-  let localScope = enterScope(n)
+  let localStart = n
+  n = sub(n)
   let name = n.symId
   skip n # name
   skip n # export marker
@@ -1400,7 +1407,7 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
   if n.kind != DotToken:
     checkRangeAssign c, localType, n
   traverseExpr c, n
-  leaveScope(n, localScope)
+  n = localStart; skip n
   # The local now holds a value proven to be within its range (if any), so
   # record that for downstream obligations that reference this symbol.
   seedRangeFacts c, name, localType
@@ -1473,7 +1480,8 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   let oldProcStart = c.currentProcStart
   c.currentProcStart = decl
   c.resultSym = NoSymId
-  let procScope = enterScope(n)
+  let procStart = n
+  n = sub(n)
   let symId = n.symId
   var isGeneric = false
   var isExternProc = false
@@ -1524,7 +1532,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
           buildErr c, info, "cannot prove that " & pool.syms[sym] & " has been initialized"
   else:
     skip n
-  leaveScope(n, procScope)
+  n = procStart; skip n
   c.tr = ensureMove oldTr
   c.flow = ensureMove oldFlow
   c.resultSym = oldResultSym

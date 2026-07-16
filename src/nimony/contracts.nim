@@ -396,7 +396,8 @@ proc analyseCallArgs(c: var Context; n: var Cursor) =
   analyseExpr c, n # the `fn` itself could be a proc pointer we must ensure was initialized
   assert fnType.isParamsTag
   var paramMap = initTable[SymId, int]() # param to position
-  let paramsScope = enterScope(fnType)
+  let paramsStart = fnType
+  fnType = sub(fnType)
   while n.hasMore:
     let previousFormalParam = fnType
     assert fnType.hasMore
@@ -415,7 +416,7 @@ proc analyseCallArgs(c: var Context; n: var Cursor) =
     checkNilMatch c, n, param.typ
     analyseExpr c, n
   while fnType.hasMore: skip fnType
-  leaveScope(fnType, paramsScope)
+  fnType = paramsStart; skip fnType
   # skip return type:
   skip fnType
   # now we have the pragmas:
@@ -523,19 +524,20 @@ proc translateCond(c: var Context; pc: var Cursor; wasEquality: var bool): LeXpl
   result = LeXplusC(a: InvalidVarId, b: VarId(0), c: createXint(0'i32))
 
   var negations = 0
-  var notScopes: seq[CursorScope] = @[]
+  var notScopes: seq[Cursor] = @[]
   while r.exprKind == NotX:
     inc negations
-    notScopes.add enterScope(r)
+    notScopes.add r
+    r = sub(r)
 
   let xk = r.exprKind
-  var cmpScope = default(CursorScope)
+  var cmpStart = default(Cursor)
   if xk in {LeX, LtX}:
-    cmpScope = enterScope(r)
+    cmpStart = r; r = sub(r)
     skip r # skip type
   elif xk == EqX:
     wasEquality = true
-    cmpScope = enterScope(r)
+    cmpStart = r; r = sub(r)
     skip r # skip type
   else:
     analyseExpr c, pc
@@ -565,12 +567,12 @@ proc translateCond(c: var Context; pc: var Cursor; wasEquality: var bool): LeXpl
   # a < b  --> a <= b - 1:
   if xk == LtX:
     result.c = result.c - createXint(1'i32)
-  leaveScope(r, cmpScope)
+  if xk in {LeX, LtX, EqX}: r = cmpStart; skip r
 
   while negations > 0:
     negateFact(result)
     dec negations
-    leaveScope(r, notScopes.pop())
+    let h = notScopes.pop(); r = h; skip r
 
   pc = r
 
