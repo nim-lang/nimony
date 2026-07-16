@@ -99,13 +99,13 @@ proc buildTupleFieldIter(buf: var TokenBuf; iter: FieldsIter; i: int; name: StrI
   buf.addParRi() # (if)
 
 proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, orig: Cursor;
-                  forScope: CursorScope) =
+                  forStart: Cursor) =
   ## `it.n` sits inside the `(for …)` scope entered by `semFor`; this proc
-  ## consumes the rest of that scope, including its close (via `forScope`).
+  ## consumes the rest of that scope, including its close (via `forStart`).
   template bailOut(msg: string) =
     buildErr c, dest, unpackInfo, msg
     while it.n.hasMore: skip it.n
-    leaveScope(it.n, forScope)
+    it.n = forStart; skip it.n
     return
 
   let fieldPairs = call.exprKind in {FieldpairsX, InternalFieldPairsX}
@@ -140,8 +140,8 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
     bailOut "illformed AST: `unpackflat` or `unpacktup` inside `for` expected"
 
   var callArgs = call # call is typed magic so we don't have to call getType
-  discard enterScope(callArgs) # bound to the call's children; never left,
-                               # the cursors below only mark subtree starts
+  callArgs = sub(callArgs) # bound to the call's children; never left,
+                           # the cursors below only mark subtree starts
   var objType = callArgs
   skip callArgs
   iter.obj1 = callArgs
@@ -154,7 +154,7 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
     bailOut "wrong number of variables"
   let body = it.n
   skip it.n
-  leaveScope(it.n, forScope)
+  it.n = forStart; skip it.n
   # it.n fully skipped
 
   let isTuple = objType.typeKind == TupleT

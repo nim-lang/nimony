@@ -77,7 +77,7 @@ proc addFn(c: var SemContext; dest: var TokenBuf; fn: FnCandidate; fnOrig: Curso
           # ^ export marker position has a `(`? If so, it is a magic!
           let info = dest[dest.len-1].info
           copyKeepLineInfo dest[dest.len-1], n.load # overwrite the `(call` node with the magic itself
-          discard enterScope(n) # bound the magic-body walk
+          n = sub(n) # bound the magic-body walk
           if n.kind == IntLit:
             if pool.integers[n.intId] == TypedMagic:
               # use type of first param
@@ -318,10 +318,10 @@ type
     fnKind: SymKind
     fnName: StrId
     callNode: PackedToken
-    scope: CursorScope
-      ## the call node's scope, entered by `semCall`; every exit path
-      ## leaves it via `leaveCall`/`leaveScope` instead of consuming a
-      ## physical ParRi
+    scope: Cursor
+      ## the call node's head, captured by `semCall`; every exit path
+      ## leaves it via `leaveCall`/`it.n = cs.scope; skip it.n` instead of
+      ## consuming a physical ParRi
     dest, genericDest: TokenBuf
     args: seq[CallArg]
     hasGenericArgs, hasNamedArgs: bool
@@ -334,7 +334,7 @@ proc leaveCall(dest: var TokenBuf; it: var Item; cs: CallState) =
   ## Closes the call tree in `dest` and advances `it.n` past the call
   ## node's (real or virtual) closing `)`, keeping the close's line info.
   dest.addParRi(it.n.endInfo)
-  leaveScope(it.n, cs.scope)
+  it.n = cs.scope; skip it.n
 
 proc closeArgsScope(c: var SemContext; cs: var CallState; merge = true) =
   assert not cs.argsScopeClosed, "args scope already closed"
@@ -378,7 +378,7 @@ proc semConvFromCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: Ca
       # below there is no close to emit — an unmatched `addParRi` would
       # seal the enclosing scope early under ParRi elision (the caller's
       # rollback `shrink` cannot undo a seal). Only advance past the call:
-      leaveScope(it.n, cs.scope)
+      it.n = cs.scope; skip it.n
       it.typ = item.typ
       return
   dest.add parLeToken(ConvX, info)
@@ -392,7 +392,7 @@ proc semConvFromCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: Ca
 proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item)
 
 proc semObjConstrFromCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: CallState) =
-  leaveScope(it.n, cs.scope)
+  it.n = cs.scope; skip it.n
   var objBuf = createTokenBuf()
   objBuf.add parLeToken(OconstrX, cs.callNode.info)
   objBuf.addSubtree cs.fn.n
@@ -415,7 +415,7 @@ proc isAnumEfld(sym: SymId): bool =
 
 proc semSumTypeConstrFromCall(c: var SemContext; dest: var TokenBuf;
                                it: var Item; cs: var CallState) =
-  leaveScope(it.n, cs.scope)
+  it.n = cs.scope; skip it.n
   let info = cs.callNode.info
   let expected = it.typ
   assert cs.fn.n.kind == Symbol
@@ -543,7 +543,7 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
     if f.typeKind in RoutineTypes:
       skipToParams f
     assert f.substructureKind == ParamsU
-    discard enterScope(f) # bound the param walk
+    f = sub(f) # bound the param walk
     var arg = beginRead(m.args)
     var i = 0
     while arg.hasMore:
@@ -563,32 +563,35 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
       elif m.refineArgType and (isEmptyContainer(arg) or isEmptyOpenArrayCall(arg)):
         let isCall = arg.exprKind in CallKinds
         let start = dest.len
-        var callScope = default(CursorScope)
+        var callStart = default(Cursor)
         if isCall:
           dest.add arg
-          callScope = enterScope(arg)
+          callStart = arg
+          arg = sub(arg)
           takeTree dest, arg
         let isDoubleCall = arg.exprKind in CallKinds # `@` call inside `toOpenArray` call case
-        var innerCallScope = default(CursorScope)
+        var innerCallStart = default(Cursor)
         if isDoubleCall:
           dest.add arg
-          innerCallScope = enterScope(arg)
+          innerCallStart = arg
+          arg = sub(arg)
           takeTree dest, arg
         dest.add arg
-        let aconstrScope = enterScope(arg)
+        let aconstrStart = arg
+        arg = sub(arg)
         if containsGenericParams(arg):
           dest.addSubtree instantiateType(c, arg, m.inferred)
           skip arg
         else:
           takeTree dest, arg
         dest.addParRi(arg.endInfo)
-        leaveScope(arg, aconstrScope)
+        arg = aconstrStart; skip arg
         if isDoubleCall:
           dest.addParRi(arg.endInfo)
-          leaveScope(arg, innerCallScope)
+          arg = innerCallStart; skip arg
         if isCall:
           dest.addParRi(arg.endInfo)
-          leaveScope(arg, callScope)
+          arg = callStart; skip arg
           # instantiate `@`/`toOpenArray` call, done by semchecking:
           var callBuf = createTokenBuf(dest.len - start)
           # balanced span: raw copy keeps its seals
@@ -600,16 +603,18 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
       elif m.genericConverter:
         # wrappers are entered with explicit scopes so their (possibly
         # elided) closes can be re-emitted by the mop-up loop below
-        var wrapperScopes: seq[CursorScope] = @[]
+        var wrapperScopes: seq[Cursor] = @[]
         while true:
           case arg.exprKind
           of HconvX:
             dest.add arg
-            wrapperScopes.add enterScope(arg)
+            wrapperScopes.add arg
+            arg = sub(arg)
             dest.takeTree arg # skip type
           of BaseobjX:
             dest.add arg
-            wrapperScopes.add enterScope(arg)
+            wrapperScopes.add arg
+            arg = sub(arg)
             # genericConverter is reused for object conversions to generic types
             if containsGenericParams(arg):
               dest.addSubtree instantiateType(c, arg, m.inferred)
@@ -619,13 +624,15 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
             dest.takeTree arg # skip intlit
           of HderefX, HaddrX:
             dest.add arg
-            wrapperScopes.add enterScope(arg)
+            wrapperScopes.add arg
+            arg = sub(arg)
           else:
             break
         if arg.exprKind == HcallX:
           let convInfo = arg.info
           dest.add arg
-          wrapperScopes.add enterScope(arg)
+          wrapperScopes.add arg
+          arg = sub(arg)
           if arg.kind == Symbol:
             let sym = arg.symId
             takeToken dest, arg
@@ -660,7 +667,7 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
           while wrapperScopes.len > 0:
             if arg.kind == ParRi:
               dest.addParRi(arg.endInfo)
-              leaveScope(arg, wrapperScopes.pop)
+              let h = wrapperScopes.pop(); arg = h; skip arg
             else:
               takeTree dest, arg
       elif m.refineArgType and arg.exprKind == HconvX:
@@ -730,20 +737,22 @@ proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, a
       var argToInst = beginRead(inputMatch.args)
       assert isEmptyContainer(argToInst)
       let isCall = argToInst.exprKind in CallKinds
-      var callScope = default(CursorScope)
+      var callStart = default(Cursor)
       if isCall:
         instArgBuf.add argToInst
-        callScope = enterScope(argToInst)
+        callStart = argToInst
+        argToInst = sub(argToInst)
         takeTree instArgBuf, argToInst # call symbol
       instArgBuf.add argToInst # array constructor tag
-      let aconstrScope = enterScope(argToInst)
+      let aconstrStart = argToInst
+      argToInst = sub(argToInst)
       instArgBuf.addSubtree instantiateType(c, argToInst, inputMatch.inferred)
       skip argToInst
       instArgBuf.addParRi(argToInst.endInfo) # array constructor
-      leaveScope(argToInst, aconstrScope)
+      argToInst = aconstrStart; skip argToInst
       if isCall:
         instArgBuf.addParRi(argToInst.endInfo) # call
-        leaveScope(argToInst, callScope)
+        argToInst = callStart; skip argToInst
       inputMatch.args = instArgBuf
 
     let dest = inputMatch.returnType
@@ -875,7 +884,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
   var m: seq[Match] = @[]
   if cs.fn.n.exprKind in {OchoiceX, CchoiceX}:
     var f = cs.fn.n
-    discard enterScope(f) # bound the candidate walk
+    f = sub(f) # bound the candidate walk
     while f.hasMore:
       if f.kind == Symbol:
         let sym = f.symId
@@ -951,7 +960,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       if cs.hasNamedArgs:
         cs.args = orderArgs(newMatch, param, csArgsOrig)
       assert param.isParamsTag
-      discard enterScope(param) # throwaway copy; bounds the walk under vpr
+      param = sub(param) # throwaway copy; bounds the walk under vpr
       var ai = 0
       var anyConverters = false
       while param.hasMore:
@@ -1106,7 +1115,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       typeofCallIs c, dest, it, cs.beforeCall, returnType
 
   else:
-    leaveScope(it.n, cs.scope)
+    it.n = cs.scope; skip it.n
     # do not add symbols defined in args on failed match:
     closeArgsScope c, cs, merge = false
     var errored = createTokenBuf(4)
@@ -1190,7 +1199,7 @@ proc unoverloadableMagicCall(c: var SemContext; dest: var TokenBuf; it: var Item
     # add all args in call:
     takeTree cs.dest, it.n
   cs.dest.addParRi(it.n.endInfo)
-  leaveScope(it.n, cs.scope)
+  it.n = cs.scope; skip it.n
   var magicCall = Item(n: beginRead(cs.dest), typ: it.typ)
   semExpr c, dest, magicCall, cs.flags
   it.typ = magicCall.typ
@@ -1215,14 +1224,16 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     source: source,
     flags: {InTypeContext, AllowEmpty, PreferIterators}*flags
   )
-  cs.scope = enterScope(it.n)
+  cs.scope = it.n
+  it.n = sub(it.n)
   # open temp scope for args, has to be closed after matching:
   openShadowScope(c.currentScope)
   swap dest, cs.dest
   cs.fn = Item(n: it.n, typ: c.types.autoType)
   var argIndexes: seq[int] = @[]
   if cs.fn.n.exprKind == AtX:
-    let atScope = enterScope(cs.fn.n) # skip tag
+    let atStart = cs.fn.n # skip tag
+    cs.fn.n = sub(cs.fn.n)
     var lhsBuf = createTokenBuf(4)
     var lhs = Item(n: cs.fn.n, typ: c.types.autoType)
     semExpr c, lhsBuf, lhs, {KeepMagics, AllowUndeclared} # don't consider all overloads
@@ -1246,7 +1257,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       while cs.fn.n.hasMore:
         semLocalTypeImpl c, dest, cs.fn.n, AllowValues
       dest.addParRi(cs.fn.n.endInfo)
-      leaveScope(cs.fn.n, atScope)
+      cs.fn.n = atStart; skip cs.fn.n
       swap dest, cs.genericDest
       it.n = cs.fn.n
       dest.addSubtree lhs.n
@@ -1254,14 +1265,15 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       cs.fn.kind = lhs.kind
       cs.fnName = getFnIdent(c, dest)
     if not cs.hasGenericArgs:
-      semBuiltinSubscript(c, dest, cs.fn, lhs, atScope)
+      semBuiltinSubscript(c, dest, cs.fn, lhs, atStart)
       cs.fnName = getFnIdent(c, dest)
       it.n = cs.fn.n
   elif cs.fn.n.exprKind == DotX:
     let dotStart = dest.len
     let dotInfo = cs.fn.n.info
     # read through the dot expression first:
-    let dotScope = enterScope(cs.fn.n) # skip tag
+    let dotHead = cs.fn.n # skip tag
+    cs.fn.n = sub(cs.fn.n)
     var lhsBuf = createTokenBuf(4)
     let lhsOrig = cs.fn.n
     var lhs = Item(n: cs.fn.n, typ: c.types.autoType)
@@ -1277,7 +1289,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     if cs.fn.n.kind == StringLit:
       dotFlags.incl BypassFieldVis
       inc cs.fn.n
-    leaveScope(cs.fn.n, dotScope)
+    cs.fn.n = dotHead; skip cs.fn.n
     it.n = cs.fn.n
     # now interpret the dot expression:
     let dotState = tryBuiltinDot(c, dest, cs.fn, lhs, fieldName, dotInfo,
@@ -1326,16 +1338,19 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     var arg = Item(n: it.n, typ: c.types.autoType)
     argIndexes.add dest.len
     let named = arg.n.substructureKind == VvU
-    var namedScope = default(CursorScope)
+    var namedStart = default(Cursor)
     if named:
       cs.hasNamedArgs = true
       dest.add arg.n
-      namedScope = enterScope(arg.n)
+      namedStart = arg.n
+      arg.n = sub(arg.n)
       takeTree dest, arg.n
     semExpr c, dest, arg, {AllowEmpty}
     if named:
       dest.addParRi(arg.n.endInfo)
-      leaveScope(arg.n, namedScope)
+      # reset only reachable inside `if named:`, where namedStart was set:
+      if not cursorIsNil(namedStart):
+        arg.n = namedStart; skip arg.n
     if arg.typ.typeKind == UntypedT:
       skipSemCheck = true
     it.n = arg.n
