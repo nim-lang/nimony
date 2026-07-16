@@ -307,23 +307,28 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
         case pc.stmtKind
         of AsgnS:
           let asgnScope = enterScope(pc)
-          if (pc.kind == Symbol and pc.symId == root) or sameTrees(pc, x):
-            # the path leads to a redefinition of 's' --> sink 's'.
-            break
-          skip pc # skip left-hand-side
-          # right-hand-side is a simple use expression. Use `containsRoot`, not
-          # `containsUsage`: when `x` is a partial path like `a.field`, a later
-          # *whole-object* read of `a` (e.g. `c = (emove a)`) still reads the
-          # moved field, but `containsUsage` only matched the exact path and
-          # missed it — wrongly sinking `a.field` so the later whole-object move
-          # restored an emptied field. `containsRoot` is sound (it also catches
-          # deref-of-root) and lets a disjoint sibling read `a.other` through
-          # (see `disjointDirectField`).
+          let lhsRedefinesRoot = (pc.kind == Symbol and pc.symId == root) or
+                                 sameTrees(pc, x)
+          skip pc # skip left-hand-side; pc now at the right-hand-side
+          # The RHS is evaluated *before* the store, so a read of the old value
+          # here (as in `x = f(x)`) means the earlier occurrence is NOT the last
+          # use — even when the LHS fully redefines `root`. This MUST be checked
+          # before the redefinition `break`; otherwise `x = f(x)` wrongly sinks a
+          # still-live `x` (moving it into `f`'s arg before `f` reads it).
+          # Use `containsRoot`, not `containsUsage`: when `x` is a partial path
+          # like `a.field`, a later *whole-object* read of `a` (e.g. `c = (emove
+          # a)`) still reads the moved field, but `containsUsage` only matched
+          # the exact path and missed it — wrongly sinking `a.field` so the later
+          # whole-object move restored an emptied field. `containsRoot` is sound
+          # (it also catches deref-of-root) and lets a disjoint sibling read
+          # `a.other` through (see `disjointDirectField`).
           if containsRoot(pc, x):
-            # only partially writes to 's' --> can't sink 's', so this def reads 's'
-            # or maybe writes to 's' --> can't sink 's'
+            # the RHS reads 's' (or only partially writes it) --> can't sink 's'.
             otherUsage = pc # XXX Fixme: pc advanced to ')'
             return false
+          if lhsRedefinesRoot:
+            # pure redefinition of 's' (old value overwritten unread) --> sink 's'.
+            break
           leaveScope(pc, asgnScope)
         of RetS:
           break
