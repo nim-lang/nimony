@@ -98,14 +98,14 @@ proc buildTupleFieldIter(buf: var TokenBuf; iter: FieldsIter; i: int; name: StrI
   buf.addParRi() # (elif)
   buf.addParRi() # (if)
 
-proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, orig: Cursor;
-                  forScope: CursorScope) =
+proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, orig: Cursor) =
   ## `it.n` sits inside the `(for …)` scope entered by `semFor`; this proc
-  ## consumes the rest of that scope, including its close (via `forScope`).
+  ## consumes the rest of that scope. `orig` is the `(for …)` head, so
+  ## `it.n = orig; skip it.n` re-emerges past the whole loop.
   template bailOut(msg: string) =
     buildErr c, dest, unpackInfo, msg
     while it.n.hasMore: skip it.n
-    leaveScope(it.n, forScope)
+    it.n = orig; skip it.n
     return
 
   let fieldPairs = call.exprKind in {FieldpairsX, InternalFieldPairsX}
@@ -154,7 +154,7 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
     bailOut "wrong number of variables"
   let body = it.n
   skip it.n
-  leaveScope(it.n, forScope)
+  it.n = orig; skip it.n
   # it.n fully skipped
 
   let isTuple = objType.typeKind == TupleT

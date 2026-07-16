@@ -127,14 +127,14 @@ proc resolveHeaderPath*(raw: string; currentFile: string; config: NifConfig): st
 
 proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
   var hasParRi = n.kind == ParLe # if false, has no arguments
-  var scope = default(CursorScope)
+  var start = default(Cursor)
   if n.substructureKind == KvU:
-    scope = enterScope(n)
+    start = n; n = sub(n)
   template toPragmaArgs() =
     # step past the pragma name: enter a tag-form pragma's scope, or skip
     # the name ident inside an already entered `(kv ...)` wrapper
     if n.kind == ParLe:
-      scope = enterScope(n)
+      start = n; n = sub(n)
     else:
       inc n
   var pk = pragmaKind(n)
@@ -468,7 +468,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       if n.exprKind != ErrX:
         buildErr c, dest, n.info, "too many arguments for pragma"
       while n.hasMore: skip n
-    leaveScope(n, scope)
+    n = start; skip n
 
 proc semPragmas*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: var CrucialPragma; kind: SymKind) =
   var pragmaOpen = false
@@ -653,20 +653,21 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
   # ident / tag-form node. For wrapped forms the wrapper's scope is entered
   # here; the branches step past the name via `toPragmaArgs` and close the
   # scope via `closePragmaLine`.
-  var scope = default(CursorScope)
+  var start = default(Cursor)
   var hasScope = false
   if not isPragmaBlock and it.n.kind == ParLe and
       (it.n.stmtKind in CallKindsS or it.n.substructureKind == KvU):
-    scope = enterScope(it.n)
+    start = it.n; it.n = sub(it.n)
     hasScope = true
   template toPragmaArgs() =
     if it.n.kind == ParLe:
-      scope = enterScope(it.n)
+      start = it.n; it.n = sub(it.n)
       hasScope = true
     else:
       inc it.n
   template closePragmaLine() =
-    if hasScope: leaveScope(it.n, scope)
+    if hasScope:
+      it.n = start; skip it.n
     else: skipParRi it.n # degenerate bare-ident form; historical behavior
   case it.n.pragmaKind
   of BuildP:

@@ -313,9 +313,9 @@ proc checkTupleConstrBorrowing(c: var Context; n: Cursor): LvalueStatus =
     let fieldType = getTupleFieldType(typ)
     skip typ
     let isKv = n.substructureKind == KvU
-    var kvScope = default(CursorScope)
+    var kvStart = default(Cursor)
     if isKv:
-      kvScope = enterScope(n)
+      kvStart = n; n = sub(n)
       skip n # skip key
     if fieldType.typeKind in {MutT, LentT, OutT}:
       if not validBorrowsFrom(c, n):
@@ -325,7 +325,7 @@ proc checkTupleConstrBorrowing(c: var Context; n: Cursor): LvalueStatus =
     skip n
 
     if isKv:
-      leaveScope(n, kvScope)
+      n = kvStart; skip n
 
 proc isResultUsage(c: Context; n: Cursor): bool {.inline.} =
   result = false
@@ -486,27 +486,26 @@ proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
                        # call's (possibly elided) close when there are none
   var fnType = skipProcTypeToParams(fnType)
   assert fnType.isParamsTag
-  let paramsScope = enterScope(fnType)
-  while n.hasMore:
-    var e = WantT
-    let previousFormalParam = fnType
-    let param = takeLocal(fnType, SkipFinalParRi)
-    var pk = param.typ.typeKind
-    if pk in {MutT, LentT}:
-      var elemType = param.typ
-      inc elemType
-      if isViewType(elemType):
-        e = WantMutableT
-      else:
+  fnType.into:
+    while n.hasMore:
+      var e = WantT
+      let previousFormalParam = fnType
+      let param = takeLocal(fnType, SkipFinalParRi)
+      var pk = param.typ.typeKind
+      if pk in {MutT, LentT}:
+        var elemType = param.typ
+        inc elemType
+        if isViewType(elemType):
+          e = WantMutableT
+        else:
+          e = WantVarT
+      elif pk == OutT:
         e = WantVarT
-    elif pk == OutT:
-      e = WantVarT
-    elif pk == VarargsT:
-      # do not advance formal parameter:
-      fnType = previousFormalParam
-    tr c, n, e
-  while fnType.hasMore: skip fnType
-  leaveScope(fnType, paramsScope)
+      elif pk == VarargsT:
+        # do not advance formal parameter:
+        fnType = previousFormalParam
+      tr c, n, e
+    while fnType.hasMore: skip fnType
   # skip return type:
   skip fnType
   # now at the pragmas position:
@@ -575,10 +574,11 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
 
   swap c.dest, callBuf
   let head = n.load()
-  let callScope = enterScope(n)
+  let callStart = n
+  n = sub(n)
   template bailCannotPassToVar() =
     while n.hasMore: skip n
-    leaveScope(n, callScope) # leave the call without emitting into callBuf
+    n = callStart; skip n # leave the call without emitting into callBuf
     swap c.dest, callBuf # restore original dest; discard partial callBuf
     cannotPassToVar c.dest, info, callExpr
     return
@@ -593,7 +593,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   template finishCallArgs() =
     trCallArgs(c, n, fnType)
     c.dest.addParRi(n.endInfo)
-    leaveScope(n, callScope)
+    n = callStart; skip n
   var retType = fnType
   skip retType
   var pragmas = retType
@@ -915,137 +915,136 @@ proc trTryCollapsed(c: var Context; n: var Cursor) =
   ## we re-raise so the original `errorTracker` value is preserved.
   let info = n.info
   c.dest.add n
-  let tryScope = enterScope(n)  # take '(try' tag
+  n.into:  # take '(try' tag
 
-  # Allow raises inside the try body — there is at least one except arm:
-  let oldProps = c.r.props
-  c.r.props.incl CanRaise
+    # Allow raises inside the try body — there is at least one except arm:
+    let oldProps = c.r.props
+    c.r.props.incl CanRaise
 
-  # Body
-  tr c, n, WantT
-
-  c.r.props = oldProps
-
-  # Mint a fresh symbol for `err` (moved-out exc).
-  inc c.tmpCounter
-  let errSym = pool.syms.getOrIncl("`err." & $c.tmpCounter)
-  let excSym = pool.syms.getOrIncl(ExcThreadVarName)
-
-  # Open the synthesized `(except . (stmts ...))`
-  c.dest.addParLe ExceptU, info
-  c.dest.addDotToken()  # catchall: no type / no binding
-
-  c.dest.addParLe StmtsS, info  # arm body stmts
-
-  # `let err = exc` followed by `exc = nil` — equivalent to a move but
-  # expressed without `(emove ...)` so the duplifier does not have to reason
-  # about moving from a thread-local global.
-  c.dest.copyIntoKind LetS, info:
-    c.dest.addSymDef errSym, info
-    c.dest.addDotToken()
-    c.dest.addDotToken()
-    emitRefExceptionType(c.dest, info)
-    c.dest.addSymUse excSym, info
-  c.dest.copyIntoKind AsgnS, info:
-    c.dest.addSymUse excSym, info
-    c.dest.copyIntoKind NilX, info:
-      discard
-
-  # Push handler stack so that bare `raise` inside arm bodies restores `exc = err`.
-  c.handlerStack.add (errSym: errSym, eSym: NoSymId)
-
-  # Open if-chain
-  c.dest.addParLe IfS, info
-
-  # Iterate arms, collecting any catchall body.
-  var catchallBody: Cursor = default(Cursor)
-  var hasCatchall = false
-
-  while n.substructureKind == ExceptU:
-    var armCur = n
-    armCur = sub(armCur)  # past `(except`
-    let arm = parseExceptArm(armCur)
-    if arm.isCatchAll:
-      catchallBody = arm.bodyStart
-      hasCatchall = true
-      # We will consume this arm later; for now skip the cursor past it.
-      skip n
-      continue
-
-    # Ref arm — emit `(elif (instanceof err T) <body>)`.
-    c.dest.addParLe ElifU, info
-    c.dest.copyIntoKind InstanceofX, info:
-      c.dest.addSymUse errSym, info
-      c.dest.addSubtree arm.declType  # type cursor
-    # Branch body
-    c.dest.addParLe StmtsS, info
-    if arm.bindSym != NoSymId:
-      # `cursor e = (hconv T err)` — non-owning view of `err` typed as the
-      # user's declared T. The dynamic type was just proven by the
-      # surrounding `(instanceof err T)` check, so the narrowing is sound.
-      # `cursor` keeps `err` as the sole owner of the in-flight exception
-      # so that a bare `raise` inside the body can faithfully restore
-      # `exc = err` without the duplifier turning the read into a move.
-      c.typeCache.registerLocal(arm.bindSym, CursorY, arm.declType)
-      c.dest.copyIntoKind CursorS, info:
-        c.dest.addSymDef arm.bindSym, info
-        c.dest.addDotToken()
-        c.dest.addDotToken()
-        c.dest.addSubtree arm.declType
-        c.dest.copyIntoKind HconvX, info:
-          c.dest.addSubtree arm.declType
-          c.dest.addSymUse errSym, info
-    # Recursively transform the original arm body
-    var bodyCur = arm.bodyStart
-    if bodyCur.kind == ParLe and bodyCur.stmtKind == StmtsS:
-      bodyCur.into:
-        while bodyCur.hasMore:
-          tr c, bodyCur, WantT
-    else:
-      while bodyCur.hasMore:
-        tr c, bodyCur, WantT
-    c.dest.addParRi()  # close inner stmts
-    c.dest.addParRi()  # close elif
-
-    # Advance n past this whole `(except ...)`.
-    skip n
-
-  # Else branch: catchall body, or re-raise.
-  c.dest.addParLe ElseU, info
-  c.dest.addParLe StmtsS, info
-  if hasCatchall:
-    var bodyCur = catchallBody
-    if bodyCur.kind == ParLe and bodyCur.stmtKind == StmtsS:
-      bodyCur.into:
-        while bodyCur.hasMore:
-          tr c, bodyCur, WantT
-    else:
-      while bodyCur.hasMore:
-        tr c, bodyCur, WantT
-  else:
-    # `(asgn exc err)`
-    c.dest.copyIntoKind AsgnS, info:
-      c.dest.addSymUse excSym, info
-      c.dest.addSymUse errSym, info
-    # Bare re-raise: `(raise .)`. njvl is expected to lower this into
-    # propagation that preserves the current `errorTracker` value.
-    c.dest.copyIntoKind RaiseS, info:
-      c.dest.addDotToken()
-  c.dest.addParRi()  # close else stmts
-  c.dest.addParRi()  # close else
-
-  c.dest.addParRi()  # close if
-  c.dest.addParRi()  # close arm body stmts
-  c.dest.addParRi()  # close synthesized except
-
-  discard c.handlerStack.pop()
-
-  # Pass through `(fin ...)` if present.
-  if n.substructureKind == FinU:
+    # Body
     tr c, n, WantT
 
-  c.dest.addParRi(n.endInfo)  # close try
-  leaveScope(n, tryScope)
+    c.r.props = oldProps
+
+    # Mint a fresh symbol for `err` (moved-out exc).
+    inc c.tmpCounter
+    let errSym = pool.syms.getOrIncl("`err." & $c.tmpCounter)
+    let excSym = pool.syms.getOrIncl(ExcThreadVarName)
+
+    # Open the synthesized `(except . (stmts ...))`
+    c.dest.addParLe ExceptU, info
+    c.dest.addDotToken()  # catchall: no type / no binding
+
+    c.dest.addParLe StmtsS, info  # arm body stmts
+
+    # `let err = exc` followed by `exc = nil` — equivalent to a move but
+    # expressed without `(emove ...)` so the duplifier does not have to reason
+    # about moving from a thread-local global.
+    c.dest.copyIntoKind LetS, info:
+      c.dest.addSymDef errSym, info
+      c.dest.addDotToken()
+      c.dest.addDotToken()
+      emitRefExceptionType(c.dest, info)
+      c.dest.addSymUse excSym, info
+    c.dest.copyIntoKind AsgnS, info:
+      c.dest.addSymUse excSym, info
+      c.dest.copyIntoKind NilX, info:
+        discard
+
+    # Push handler stack so that bare `raise` inside arm bodies restores `exc = err`.
+    c.handlerStack.add (errSym: errSym, eSym: NoSymId)
+
+    # Open if-chain
+    c.dest.addParLe IfS, info
+
+    # Iterate arms, collecting any catchall body.
+    var catchallBody: Cursor = default(Cursor)
+    var hasCatchall = false
+
+    while n.substructureKind == ExceptU:
+      var armCur = n
+      armCur = sub(armCur)  # past `(except`
+      let arm = parseExceptArm(armCur)
+      if arm.isCatchAll:
+        catchallBody = arm.bodyStart
+        hasCatchall = true
+        # We will consume this arm later; for now skip the cursor past it.
+        skip n
+        continue
+
+      # Ref arm — emit `(elif (instanceof err T) <body>)`.
+      c.dest.addParLe ElifU, info
+      c.dest.copyIntoKind InstanceofX, info:
+        c.dest.addSymUse errSym, info
+        c.dest.addSubtree arm.declType  # type cursor
+      # Branch body
+      c.dest.addParLe StmtsS, info
+      if arm.bindSym != NoSymId:
+        # `cursor e = (hconv T err)` — non-owning view of `err` typed as the
+        # user's declared T. The dynamic type was just proven by the
+        # surrounding `(instanceof err T)` check, so the narrowing is sound.
+        # `cursor` keeps `err` as the sole owner of the in-flight exception
+        # so that a bare `raise` inside the body can faithfully restore
+        # `exc = err` without the duplifier turning the read into a move.
+        c.typeCache.registerLocal(arm.bindSym, CursorY, arm.declType)
+        c.dest.copyIntoKind CursorS, info:
+          c.dest.addSymDef arm.bindSym, info
+          c.dest.addDotToken()
+          c.dest.addDotToken()
+          c.dest.addSubtree arm.declType
+          c.dest.copyIntoKind HconvX, info:
+            c.dest.addSubtree arm.declType
+            c.dest.addSymUse errSym, info
+      # Recursively transform the original arm body
+      var bodyCur = arm.bodyStart
+      if bodyCur.kind == ParLe and bodyCur.stmtKind == StmtsS:
+        bodyCur.into:
+          while bodyCur.hasMore:
+            tr c, bodyCur, WantT
+      else:
+        while bodyCur.hasMore:
+          tr c, bodyCur, WantT
+      c.dest.addParRi()  # close inner stmts
+      c.dest.addParRi()  # close elif
+
+      # Advance n past this whole `(except ...)`.
+      skip n
+
+    # Else branch: catchall body, or re-raise.
+    c.dest.addParLe ElseU, info
+    c.dest.addParLe StmtsS, info
+    if hasCatchall:
+      var bodyCur = catchallBody
+      if bodyCur.kind == ParLe and bodyCur.stmtKind == StmtsS:
+        bodyCur.into:
+          while bodyCur.hasMore:
+            tr c, bodyCur, WantT
+      else:
+        while bodyCur.hasMore:
+          tr c, bodyCur, WantT
+    else:
+      # `(asgn exc err)`
+      c.dest.copyIntoKind AsgnS, info:
+        c.dest.addSymUse excSym, info
+        c.dest.addSymUse errSym, info
+      # Bare re-raise: `(raise .)`. njvl is expected to lower this into
+      # propagation that preserves the current `errorTracker` value.
+      c.dest.copyIntoKind RaiseS, info:
+        c.dest.addDotToken()
+    c.dest.addParRi()  # close else stmts
+    c.dest.addParRi()  # close else
+
+    c.dest.addParRi()  # close if
+    c.dest.addParRi()  # close arm body stmts
+    c.dest.addParRi()  # close synthesized except
+
+    discard c.handlerStack.pop()
+
+    # Pass through `(fin ...)` if present.
+    if n.substructureKind == FinU:
+      tr c, n, WantT
+
+    c.dest.addParRi(n.endInfo)  # close try
 
 proc trTry(c: var Context; n: var Cursor) =
   var prescan = n
@@ -1195,91 +1194,90 @@ proc trType(c: var Context; n: var Cursor) =
   ## For non-generic nominal types (objects/distincts), generate hooks via lifter.
   let info = n.info
   c.dest.add n
-  let typeScope = enterScope(n) # (type
-  var s = SymId(0)
-  if n.kind == SymbolDef:
-    s = n.symId
-  c.dest.takeTree n # the symbol definition
-  c.dest.takeTree n # exported
-  let isGeneric = n.substructureKind == TypevarsU
-  c.dest.takeTree n # typevars
+  n.into: # (type
+    var s = SymId(0)
+    if n.kind == SymbolDef:
+      s = n.symId
+    c.dest.takeTree n # the symbol definition
+    c.dest.takeTree n # exported
+    let isGeneric = n.substructureKind == TypevarsU
+    c.dest.takeTree n # typevars
 
-  # Check if this is a non-generic nominal type that needs hooks generated
-  var needsForgedHooks = false
-  if not isGeneric and s != SymId(0):
-    # Check if it's a nominal type (object, distinct)
-    var checkBody = n
-    skip checkBody # skip pragmas
-    let bk = checkBody.typeKind
-    needsForgedHooks = bk in {ObjectT, DistinctT, RefT}
+    # Check if this is a non-generic nominal type that needs hooks generated
+    var needsForgedHooks = false
+    if not isGeneric and s != SymId(0):
+      # Check if it's a nominal type (object, distinct)
+      var checkBody = n
+      skip checkBody # skip pragmas
+      let bk = checkBody.typeKind
+      needsForgedHooks = bk in {ObjectT, DistinctT, RefT}
 
-  # Check if type has methods (for vtables)
-  # Use the new c.classes table for method information
-  var hasMethods = false
-  var methodsToAdd: seq[(string, SymId)] = @[]
-  if s != SymId(0) and s in c.classes:
-    hasMethods = true
-    # Convert MethodIndexEntry to (string, SymId) format for addMethodsDecl
-    for entry in c.classes.getOrQuit(s).methods:
-      let sig = pool.strings[entry.signature]
-      methodsToAdd.add (sig, entry.fn)
+    # Check if type has methods (for vtables)
+    # Use the new c.classes table for method information
+    var hasMethods = false
+    var methodsToAdd: seq[(string, SymId)] = @[]
+    if s != SymId(0) and s in c.classes:
+      hasMethods = true
+      # Convert MethodIndexEntry to (string, SymId) format for addMethodsDecl
+      for entry in c.classes.getOrQuit(s).methods:
+        let sig = pool.strings[entry.signature]
+        methodsToAdd.add (sig, entry.fn)
 
-  # pragmas:
-  if s != SymId(0) and (c.hooks.hasKey(s) or hasMethods):
-    # Type has custom hooks or methods from semantic analysis
-    if n.kind == DotToken:
-      c.dest.addParLe PragmasU, info
-      inc n
+    # pragmas:
+    if s != SymId(0) and (c.hooks.hasKey(s) or hasMethods):
+      # Type has custom hooks or methods from semantic analysis
+      if n.kind == DotToken:
+        c.dest.addParLe PragmasU, info
+        inc n
+      else:
+        c.dest.add n # existing pragma tag
+        n.into:
+          while n.hasMore:
+            c.dest.takeTree n # existing individual pragmas
+      if c.hooks.hasKey(s):
+        addHookDecls c.dest, c.hooks.getOrQuit(s)
+      if hasMethods:
+        addMethodsDecl c.dest, methodsToAdd
+      c.dest.addParRi()
+    elif needsForgedHooks:
+      # Non-generic nominal type - generate hooks via lifter
+      if n.kind == DotToken:
+        c.dest.addParLe PragmasU, info
+        inc n
+      else:
+        c.dest.add n # existing pragma tag
+        n.into:
+          while n.hasMore:
+            c.dest.takeTree n # existing individual pragmas
+      # Generate hooks via lifter - create Symbol buffer that stays alive:
+      var buf = createTokenBuf(1)
+      buf.addSymUse s, info
+      let typeCursor = cursorAt(buf, 0)
+      c.typeSymBufs.add buf
+      # Collect methods for RTTI types (destroy/trace need to be methods)
+      let isRtti = hasRtti(s)
+      var rttiMethods = default seq[(string, SymId)]
+      for op in low(AttachedOp)..high(AttachedOp):
+        let hookProc = getHook(c.lifter[], op, typeCursor, info)
+        if hookProc != SymId(0):
+          c.dest.addParLe hookToTag(op), NoLineInfo
+          c.dest.addSymUse hookProc, NoLineInfo
+          c.dest.addParRi()
+          # For RTTI types, destroy/trace are methods - add them with known signature
+          if isRtti and op in {attachedDestroy, attachedTrace}:
+            let key = case op
+              of attachedDestroy: destroyMethodKey()
+              of attachedTrace: traceMethodKey()
+              else: ""
+            rttiMethods.add((key, hookProc))
+      # Emit methods pragma for RTTI types
+      if rttiMethods.len > 0:
+        addMethodsDecl c.dest, rttiMethods
+      c.dest.addParRi() # close pragmas
     else:
-      c.dest.add n # existing pragma tag
-      n.into:
-        while n.hasMore:
-          c.dest.takeTree n # existing individual pragmas
-    if c.hooks.hasKey(s):
-      addHookDecls c.dest, c.hooks.getOrQuit(s)
-    if hasMethods:
-      addMethodsDecl c.dest, methodsToAdd
-    c.dest.addParRi()
-  elif needsForgedHooks:
-    # Non-generic nominal type - generate hooks via lifter
-    if n.kind == DotToken:
-      c.dest.addParLe PragmasU, info
-      inc n
-    else:
-      c.dest.add n # existing pragma tag
-      n.into:
-        while n.hasMore:
-          c.dest.takeTree n # existing individual pragmas
-    # Generate hooks via lifter - create Symbol buffer that stays alive:
-    var buf = createTokenBuf(1)
-    buf.addSymUse s, info
-    let typeCursor = cursorAt(buf, 0)
-    c.typeSymBufs.add buf
-    # Collect methods for RTTI types (destroy/trace need to be methods)
-    let isRtti = hasRtti(s)
-    var rttiMethods = default seq[(string, SymId)]
-    for op in low(AttachedOp)..high(AttachedOp):
-      let hookProc = getHook(c.lifter[], op, typeCursor, info)
-      if hookProc != SymId(0):
-        c.dest.addParLe hookToTag(op), NoLineInfo
-        c.dest.addSymUse hookProc, NoLineInfo
-        c.dest.addParRi()
-        # For RTTI types, destroy/trace are methods - add them with known signature
-        if isRtti and op in {attachedDestroy, attachedTrace}:
-          let key = case op
-            of attachedDestroy: destroyMethodKey()
-            of attachedTrace: traceMethodKey()
-            else: ""
-          rttiMethods.add((key, hookProc))
-    # Emit methods pragma for RTTI types
-    if rttiMethods.len > 0:
-      addMethodsDecl c.dest, rttiMethods
-    c.dest.addParRi() # close pragmas
-  else:
-    c.dest.takeTree n # pragmas
-  c.dest.takeTree n # body
-  c.dest.addParRi(n.endInfo)
-  leaveScope(n, typeScope)
+      c.dest.takeTree n # pragmas
+    c.dest.takeTree n # body
+    c.dest.addParRi(n.endInfo)
 
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   case n.kind

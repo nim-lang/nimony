@@ -249,12 +249,13 @@ proc isSimpleExpression(n: var Cursor): bool =
         while n.hasMore:
           if not isSimpleExpression(n): return false
     of ExprX:
-      let exprScope = enterScope(n)
+      let exprStart = n
+      n = sub(n)
       var inner = n
       skip n
       if not n.hasMore:
         result = isSimpleExpression(inner)
-        leaveScope(n, exprScope)
+        n = exprStart; skip n
       else:
         result = false
     of ErrX, AtX, DerefX, DotX, PatX, ParX, AddrX, AndX, OrX, XorX,
@@ -546,85 +547,80 @@ proc trExplicitDestroy(c: var Context; n: var Cursor) =
   let typ = getHookType(c, n)
   let info = n.info
   let destructor = getDestructor(c.lifter[], typ, info)
-  let hookScope = enterScope(n)
-  if destructor == NoSymId:
-    c.dest.addEmpty info
-    skip n, SkipFull
-  else:
-    let needsAddr = isMutFirstParam(destructor)
-    copyIntoKind c.dest, CallS, info:
-      copyIntoSymUse c.dest, destructor, info
-      if needsAddr:
-        copyIntoKind c.dest, HaddrX, info:
+  n.into:
+    if destructor == NoSymId:
+      c.dest.addEmpty info
+      skip n, SkipFull
+    else:
+      let needsAddr = isMutFirstParam(destructor)
+      copyIntoKind c.dest, CallS, info:
+        copyIntoSymUse c.dest, destructor, info
+        if needsAddr:
+          copyIntoKind c.dest, HaddrX, info:
+            tr c, n, DontCare
+        else:
           tr c, n, DontCare
-      else:
-        tr c, n, DontCare
-  leaveScope(n, hookScope)
 
 proc trExplicitDup(c: var Context; n: var Cursor; e: Expects) =
   let typ = getHookType(c, n)
   let info = n.info
   let hookProc = getHook(c.lifter[], attachedDup, typ, info)
-  let hookScope = enterScope(n)
-  if hookProc != NoSymId:
-    copyIntoKind c.dest, CallS, info:
-      copyIntoSymUse c.dest, hookProc, info
-      tr c, n, DontCare
-  else:
-    let e2 = if e == WillBeOwned: WantOwner else: e
-    tr c, n, e2
-  leaveScope(n, hookScope)
+  n.into:
+    if hookProc != NoSymId:
+      copyIntoKind c.dest, CallS, info:
+        copyIntoSymUse c.dest, hookProc, info
+        tr c, n, DontCare
+    else:
+      let e2 = if e == WillBeOwned: WantOwner else: e
+      tr c, n, e2
 
 proc trExplicitCopy(c: var Context; n: var Cursor; op: AttachedOp) =
   let typ = getHookType(c, n)
   let info = n.info
   let hookProc = getHook(c.lifter[], op, typ, info)
-  let hookScope = enterScope(n)
-  if hookProc != NoSymId:
-    # (the classic code emitted the input's close *and* `copyIntoKind`'s own
-    # here — a double close; the balanced form is what was always intended)
-    copyIntoKind c.dest, CallS, info:
-      copyIntoSymUse c.dest, hookProc, info
-      while n.hasMore:
-        tr c, n, DontCare
-  else:
-    c.dest.addParLe AsgnS, info
-    if n.exprKind == HaddrX:
-      n.into:
-        tr c, n, DontCare
+  n.into:
+    if hookProc != NoSymId:
+      # (the classic code emitted the input's close *and* `copyIntoKind`'s own
+      # here — a double close; the balanced form is what was always intended)
+      copyIntoKind c.dest, CallS, info:
+        copyIntoSymUse c.dest, hookProc, info
+        while n.hasMore:
+          tr c, n, DontCare
     else:
+      c.dest.addParLe AsgnS, info
+      if n.exprKind == HaddrX:
+        n.into:
+          tr c, n, DontCare
+      else:
+        tr c, n, DontCare
       tr c, n, DontCare
-    tr c, n, DontCare
-    c.dest.addParRi(n.endInfo)
-  leaveScope(n, hookScope)
+      c.dest.addParRi(n.endInfo)
 
 proc trExplicitWasMoved(c: var Context; n: var Cursor) =
   let typ = getHookType(c, n)
   let info = n.info
   let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
-  let hookScope = enterScope(n)
-  if hookProc != NoSymId:
-    copyIntoKind c.dest, CallS, info:
-      copyIntoSymUse c.dest, hookProc, info
-      tr c, n, DontCare
-  else:
-    skip n, SkipFull
-  leaveScope(n, hookScope)
+  n.into:
+    if hookProc != NoSymId:
+      copyIntoKind c.dest, CallS, info:
+        copyIntoSymUse c.dest, hookProc, info
+        tr c, n, DontCare
+    else:
+      skip n, SkipFull
 
 proc trExplicitTrace(c: var Context; n: var Cursor) =
   let typ = getHookType(c, n)
   let info = n.info
   let hookProc = getHook(c.lifter[], attachedTrace, typ, info)
-  let hookScope = enterScope(n)
-  if hookProc != NoSymId:
-    copyIntoKind c.dest, CallS, info:
-      copyIntoSymUse c.dest, hookProc, info
-      tr c, n, DontCare
-      tr c, n, DontCare
-  else:
-    skip n, SkipFull
-    skip n, SkipFull
-  leaveScope(n, hookScope)
+  n.into:
+    if hookProc != NoSymId:
+      copyIntoKind c.dest, CallS, info:
+        copyIntoSymUse c.dest, hookProc, info
+        tr c, n, DontCare
+        tr c, n, DontCare
+    else:
+      skip n, SkipFull
+      skip n, SkipFull
 
 when not defined(nimony):
   proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false)
@@ -944,7 +940,8 @@ proc genOutOfMemCheck(c: var Context; ow: OwningTemp; info: PackedLineInfo) =
 proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
     {.ensuresNif: addedAny(c.dest).} =
   let info = n.info
-  let objScope = enterScope(n)
+  let objStart = n
+  n = sub(n)
   let refType = n
   assert refType.typeKind == RefT
 
@@ -987,7 +984,7 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
         else:
           skip n, SkipType
           tr c, n, WantOwner # process default(T) call
-  leaveScope(n, objScope)
+  n = objStart; skip n
 
   c.dest.addParRi()  # finish the StmtsS
   c.dest.copyIntoSymUse ow.s, ow.info
@@ -1161,17 +1158,16 @@ proc trDeref(c: var Context; n: var Cursor; e: Expects)
   if wrapDup:
     c.dest.addParLe CallS, info
     c.dest.add symToken(dupHook, info)
-  let derefScope = enterScope(n)
-  let isRef = derefsBoxedRef(c, n)
-  if isRef:
-    c.dest.addParLe DotX, info
-  c.dest.addParLe DerefX, info
-  tr c, n, WantNonOwner
-  if isRef:
-    c.dest.addParRi() # close deref
-    addDataFieldHop c, info
-  c.dest.addParRi(n.endInfo)
-  leaveScope(n, derefScope)
+  n.into:
+    let isRef = derefsBoxedRef(c, n)
+    if isRef:
+      c.dest.addParLe DotX, info
+    c.dest.addParLe DerefX, info
+    tr c, n, WantNonOwner
+    if isRef:
+      c.dest.addParRi() # close deref
+      addDataFieldHop c, info
+    c.dest.addParRi(n.endInfo)
   if wrapDup:
     c.dest.addParRi()
 

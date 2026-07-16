@@ -375,12 +375,13 @@ proc matchConstraintSplitAnd(m: var Match; f: var Cursor; a: Cursor): bool =
     # depth-first over the leaves of the nested `and` tree; the scope stack
     # replaces the classic ParRi-counting walk (closes are elided under
     # `-d:virtualParRi`)
-    var scopes = @[enterScope(a)]
+    var scopes = @[a]
+    a = sub(a)
     while scopes.len > 0:
       if not a.hasMore:
-        leaveScope(a, scopes.pop)
+        a = scopes.pop; skip a
       elif a.typeKind == AndT:
-        scopes.add enterScope(a)
+        scopes.add a; a = sub(a)
       else:
         var f2 = f
         # XXX `a` can be an `or` type again here which will not match properly
@@ -432,12 +433,13 @@ proc matchConstraintSplitOr(m: var Match; f: var Cursor; a: Cursor): bool =
     result = false
     var a = a
     # same scope-stack walk as in `matchConstraintSplitAnd`
-    var scopes = @[enterScope(a)]
+    var scopes = @[a]
+    a = sub(a)
     while scopes.len > 0:
       if not a.hasMore:
-        leaveScope(a, scopes.pop)
+        a = scopes.pop; skip a
       elif a.typeKind == OrT:
-        scopes.add enterScope(a)
+        scopes.add a; a = sub(a)
       else:
         var f2 = f
         result = matchBooleanConstraint(m, f2, a)
@@ -889,24 +891,25 @@ proc sameSymbol(a, b: SymId): bool =
   result = isInstantiation(sa) and isInstantiation(sb) and
     removeModule(sa) == removeModule(sb)
 
-proc expectParRi(m: var Match; f: var Cursor; scope: CursorScope) =
-  ## Closes a type-tree scope opened with `enterScope`: the tree must be
+proc expectParRi(m: var Match; f: var Cursor; start: Cursor) =
+  ## Closes a type-tree scope opened with `sub`: the tree must be
   ## fully consumed, else the match errors (`m.err` doubles as the
   ## mismatch signal). On the error path `f` stays mid-tree — callers
-  ## either bail on `m.err` or use a saved original.
+  ## either bail on `m.err` or use a saved original. `start` is the node
+  ## head, so `f = start; skip f` re-emerges past the whole subtree.
   if f.kind == ParRi:
-    leaveScope(f, scope)
+    f = start; skip f
   else:
     m.error FormalTypeNotAtEndBug, f, f
 
-proc expectPtrParRi(m: var Match; f: var Cursor; scope: CursorScope) =
+proc expectPtrParRi(m: var Match; f: var Cursor; start: Cursor) =
   if f.hasMore: skip f # skip nil/not nil annotation
   # Inlined importc'd pointer aliases drag importc/header attrs into the
   # type body — they are bookkeeping, not part of type identity.
   while f.pragmaKind in {ImportcP, ImportcppP, HeaderP}:
     skip f
   if f.kind == ParRi:
-    leaveScope(f, scope)
+    f = start; skip f
   else:
     m.error FormalTypeNotAtEndBug, f, f
 
@@ -1055,8 +1058,8 @@ proc linearMatchTree(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor;
         if a.typeKind != f.typeKind:
           m.error(InvalidMatch, fOrig, aOrig)
         else:
-          let fScope = enterScope(f)
-          let aScope = enterScope(a)
+          let fStart = f; f = sub(f)
+          let aStart = a; a = sub(a)
           let bitsDiffer =
             if ExactBits in flags: cmpExactTypeBits(f, a) != 0
             else: cmpTypeBits(m.context, f, a) != 0
@@ -1070,14 +1073,14 @@ proc linearMatchTree(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor;
               skip f
             while a.pragmaKind in {ImportcP, ImportcppP, HeaderP}:
               skip a
-            expectParRi m, f, fScope
-            expectParRi m, a, aScope
+            expectParRi m, f, fStart
+            expectParRi m, a, aStart
       of CstringT, PointerT:
         if a.typeKind != f.typeKind:
           m.error(InvalidMatch, fOrig, aOrig)
         else:
-          let fScope = enterScope(f)
-          let aScope = enterScope(a)
+          let fStart = f; f = sub(f)
+          let aStart = a; a = sub(a)
           matchNilAnnotations m, f, a, fOrig, aOrig
           # importc/header attrs are an inlined-alias bookkeeping detail,
           # not part of type identity — ignore them on both sides.
@@ -1085,18 +1088,18 @@ proc linearMatchTree(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor;
             skip f
           while a.pragmaKind in {ImportcP, ImportcppP, HeaderP}:
             skip a
-          expectParRi m, f, fScope
-          expectParRi m, a, aScope
+          expectParRi m, f, fStart
+          expectParRi m, a, aStart
       of PtrT, RefT:
         if a.typeKind != f.typeKind:
           m.error(InvalidMatch, fOrig, aOrig)
         else:
-          let fScope = enterScope(f)
-          let aScope = enterScope(a)
+          let fStart = f; f = sub(f)
+          let aStart = a; a = sub(a)
           linearMatch m, f, a # match base type
           matchNilAnnotations m, f, a, fOrig, aOrig
-          expectParRi m, f, fScope
-          expectParRi m, a, aScope
+          expectParRi m, f, fStart
+          expectParRi m, a, aStart
       else:
         # generic tree: same tag, then match the children pairwise.
         # Compare tag ids, not raw operands — under `-d:virtualParRi` the
@@ -1105,14 +1108,14 @@ proc linearMatchTree(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor;
         if f.tagId != a.tagId:
           m.error(InvalidMatch, fOrig, aOrig)
         else:
-          let fScope = enterScope(f)
-          let aScope = enterScope(a)
+          let fStart = f; f = sub(f)
+          let aStart = a; a = sub(a)
           while f.hasMore and a.hasMore and not m.err:
             linearMatchTree m, f, a, fOrig, aOrig, flags
           if not m.err:
             if f.kind == ParRi and a.kind == ParRi:
-              leaveScope f, fScope
-              leaveScope a, aScope
+              f = fStart; skip f
+              a = aStart; skip a
             else:
               # different child counts
               m.error(InvalidMatch, fOrig, aOrig)
@@ -1199,7 +1202,7 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
   assert f.typeKind in RoutineTypes
   let fKind = f.typeKind
   let fIsProctype = fKind in {ProctypeT, ItertypeT}
-  let fScope = enterScope(f)
+  let fStart = f; f = sub(f)
   skipRoutinePrefix f, fKind
   assert a.typeKind in RoutineTypes
   let aKind = a.typeKind
@@ -1208,13 +1211,13 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
   var hasParams = 0
   let fHasParamsList = f.substructureKind == ParamsU
   let aHasParamsList = a.substructureKind == ParamsU
-  var fps = default(CursorScope)
-  var aps = default(CursorScope)
+  var fps = default(Cursor)
+  var aps = default(Cursor)
   if fHasParamsList:
-    fps = enterScope(f)
+    fps = f; f = sub(f)
     if f.hasMore: inc hasParams
   if aHasParamsList:
-    aps = enterScope(a)
+    aps = a; a = sub(a)
     if a.hasMore: inc hasParams, 2
   if hasParams == 3:
     while f.hasMore and a.hasMore:
@@ -1241,9 +1244,9 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
     skipUntilEnd f
 
   # close the params scopes; a DotToken params slot is just skipped:
-  if fHasParamsList: leaveScope(f, fps)
+  if fHasParamsList: (f = fps; skip f)
   else: inc f
-  if aHasParamsList: leaveScope(a, aps)
+  if aHasParamsList: (a = aps; skip a)
   else: inc a
 
   # match return types:
@@ -1275,7 +1278,7 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
     skip f, SkipBody # body
     #skip a # effects
     #skip a # body
-  expectParRi m, f, fScope
+  expectParRi m, f, fStart
   # `a` is deliberately left inside its tree (see the contract above)
 
 proc commonType(f, a: Cursor): Cursor =
@@ -1576,7 +1579,7 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
     m.error InvalidMatch, f, a
     return
   let forig = f
-  let fScope = enterScope(f)
+  let fStart = f; f = sub(f)
   let cmp = cmpTypeBits(m.context, f, a)
   # With `.feature: "lenientFloats".` a wider float *value* (not just a literal)
   # may be narrowed to a smaller float formal, e.g. a `float64` constant passed
@@ -1602,7 +1605,7 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
   if f.hasMore: inc f # past the bits
   while f.pragmaKind in {ImportcP, ImportcppP, HeaderP}:
     skip f
-  expectParRi m, f, fScope
+  expectParRi m, f, fStart
 
 proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
   if a.typeKind == ArrayT:
@@ -1624,11 +1627,11 @@ proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
       # match typevars
       linearMatch m, f, a
     elif fLen == aLen:
-      let fScope = enterScope(f)
+      let fStart = f; f = sub(f)
       inc a
       linearMatch m, f, a # element types
       skip f # index type
-      expectParRi m, f, fScope
+      expectParRi m, f, fStart
     else:
       m.error InvalidMatch, f, a
   else:
@@ -1758,17 +1761,17 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
           # overload, leaving the immutable case for a later pass to
           # diagnose.
           m.error VarNeeded, f, arg.typ
-      let fScope = enterScope(f)
+      let fStart = f; f = sub(f)
       singleArgImpl m, f, CallArg(n: arg.n, typ: a, orig: arg.orig)
-      expectParRi m, f, fScope
+      expectParRi m, f, fStart
     of IntT, UIntT, FloatT, CharT:
       matchIntegralType m, f, arg # consumes the whole tree, incl. the close
     of BoolT:
       var a = skipModifier(arg.typ)
       if a.typeKind != fk:
         m.error InvalidMatch, f, a
-      let fScope = enterScope(f)
-      expectParRi m, f, fScope
+      let fStart = f; f = sub(f)
+      expectParRi m, f, fStart
     of InvokeT:
       var a = skipModifier(arg.typ)
       if isObjectType(f) and isObjectType(a):
@@ -1810,11 +1813,11 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         linearMatch m, fb, ab # base types must be compatible
         skip f # consume the whole formal range type
       else:
-        let fScope = enterScope(f) # -> base type
+        let fStart = f; f = sub(f) # -> base type
         linearMatch m, f, a
         skip f # lo bound
         skip f # hi bound
-        expectParRi m, f, fScope
+        expectParRi m, f, fStart
     of ArrayT:
       var a = skipModifier(arg.typ)
       matchArrayType m, f, a
@@ -1825,20 +1828,20 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
       var a = skipModifier(arg.typ)
       if a.typeKind == NiltT:
         discard "ok"
-        let fScope = enterScope(f)
-        expectPtrParRi m, f, fScope
+        let fStart = f; f = sub(f)
+        expectPtrParRi m, f, fStart
       elif isStringType(a) and skipExpr(arg.n).kind == StringLit:
         m.args.addParLe HconvX, m.argInfo
         m.args.addSubtree f
         inc m.opened
         inc m.convCosts
-        let fScope = enterScope(f)
-        expectPtrParRi m, f, fScope
+        let fStart = f; f = sub(f)
+        expectPtrParRi m, f, fStart
       elif a.typeKind == CstringT:
-        let fScope = enterScope(f)
-        let aScope = enterScope(a)
-        expectPtrParRi m, f, fScope
-        expectPtrParRi m, a, aScope
+        let fStart = f; f = sub(f)
+        let aStart = a; a = sub(a)
+        expectPtrParRi m, f, fStart
+        expectPtrParRi m, a, aStart
       else:
         m.error InvalidMatch, f, a
     of PointerT:
@@ -1846,20 +1849,20 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
       case a.typeKind
       of NiltT:
         discard "ok"
-        let fScope = enterScope(f)
-        expectPtrParRi m, f, fScope
+        let fStart = f; f = sub(f)
+        expectPtrParRi m, f, fStart
       of PtrT, CstringT, RoutineTypes:
         m.args.addParLe HconvX, m.argInfo
         m.args.addSubtree f
         inc m.opened
         inc m.convCosts
-        let fScope = enterScope(f)
-        expectPtrParRi m, f, fScope
+        let fStart = f; f = sub(f)
+        expectPtrParRi m, f, fStart
       of PointerT:
-        let fScope = enterScope(f)
-        let aScope = enterScope(a)
-        expectPtrParRi m, f, fScope
-        expectPtrParRi m, a, aScope
+        let fStart = f; f = sub(f)
+        let aStart = a; a = sub(a)
+        expectPtrParRi m, f, fStart
+        expectPtrParRi m, a, aStart
       else:
         m.error InvalidMatch, f, a
     of PtrT, RefT:
@@ -1867,18 +1870,18 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
       let ak = a.typeKind
       if ak == NiltT:
         discard "ok"
-        let fScope = enterScope(f)
+        let fStart = f; f = sub(f)
         skip f # base type
-        expectPtrParRi m, f, fScope
+        expectPtrParRi m, f, fStart
       elif ak == fk:
-        let fScope = enterScope(f)
+        let fStart = f; f = sub(f)
         inc a
         if isObjectType(f) and isObjectType(a):
           # handle inheritance
           matchObjectTypes m, f, a, fk
         else:
           linearMatch m, f, a
-        expectPtrParRi m, f, fScope
+        expectPtrParRi m, f, fStart
       else:
         m.error InvalidMatch, f, a
     of TypedescT:
@@ -1891,11 +1894,11 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         m.firstVarargPosition = m.args.len
     of UntypedT, TypedT:
       # `typed` and `untyped` simply match everything:
-      let fScope = enterScope(f)
-      expectParRi m, f, fScope
+      let fStart = f; f = sub(f)
+      expectParRi m, f, fStart
     of VoidT:
-      let fScope = enterScope(f)
-      expectPtrParRi m, f, fScope
+      let fStart = f; f = sub(f)
+      expectPtrParRi m, f, fStart
       var a = arg.typ
       if not isVoidType(a):
         m.error InvalidMatch, f, a
@@ -1908,7 +1911,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
         skip f
       else:
         # skip tags:
-        let fScope = enterScope(f)
+        let fStart = f; f = sub(f)
         a = sub(a)
         while f.hasMore:
           if a.kind == ParRi:
@@ -1926,7 +1929,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
           # len(a) > len(f)
           m.error InvalidMatch, fOrig, aOrig
         if f.kind == ParRi:
-          leaveScope(f, fScope) # normalize: end past the tree like every branch
+          f = fStart; skip f # normalize: end past the tree like every branch
     of RoutineTypes:
       var a = skipModifier(arg.typ)
       case a.typeKind
@@ -2371,7 +2374,8 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
   if f.typeKind in RoutineTypes:
     skipToParams f
   assert f.substructureKind == ParamsU
-  let paramsScope = enterScope(f)
+  let paramsStart = f
+  f = sub(f)
   sigmatchLoop m, f, args
 
   if m.pos < args.len:
@@ -2385,7 +2389,7 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
       m.error0 TooFewArguments
 
   if f.kind == ParRi:
-    leaveScope(f, paramsScope)
+    f = paramsStart; skip f
     m.returnType = f # return type follows the parameters in the token stream
 
 proc hasUnboundTypevars*(m: Match): bool =

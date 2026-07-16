@@ -46,12 +46,11 @@ proc methodKeyImpl(name: string; params: Cursor): string =
   # `params` sits at the routine's `(params …)` node.
   var a = params
   var b = createMangler(60)
-  let paramsScope = enterScope(a)
-  skip a # first parameter is of the class type and must be ignored
-  while a.hasMore:
-    let pa = takeLocal(a, SkipFinalParRi)
-    mangle b, pa.typ, Frontend
-  leaveScope(a, paramsScope)
+  a.into:
+    skip a # first parameter is of the class type and must be ignored
+    while a.hasMore:
+      let pa = takeLocal(a, SkipFinalParRi)
+      mangle b, pa.typ, Frontend
   # also add return type:
   mangle b, a, Frontend
   skip a

@@ -91,12 +91,11 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
     connectSingleExprToLoopVar(e, dest, c, forVars[0], result)
   else:
     if c.kind == ParLe and c.exprKind == TupX:
-      let tupScope = enterScope(c)
-      var i = 0
-      while c.hasMore:
-        connectSingleExprToLoopVar(e, dest, c, forVars[i], result)
-        inc i
-      leaveScope(c, tupScope)
+      c.into:
+        var i = 0
+        while c.hasMore:
+          connectSingleExprToLoopVar(e, dest, c, forVars[i], result)
+          inc i
     else:
       let tmpId: SymId
       let info: PackedLineInfo
@@ -116,9 +115,9 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
       typ = sub(typ) # skips tuple; peek only, never left
       for i in 0..<forVars.len:
         let isKvU = typ.substructureKind == KvU
-        var kvScope = default(CursorScope)
+        var kvStart = default(Cursor)
         if isKvU:
-          kvScope = enterScope(typ) # skip tag
+          kvStart = typ; typ = sub(typ) # skip tag
           skip typ # skip name
 
         if forVars[i].substructureKind in {UnpacktupU, UnpackflatU}:
@@ -135,36 +134,35 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
           # inner tuple.
           let hasModifier = typ.kind == ParLe and typ.typeKind in TypeModifiers
           var leftTupleAccess = createTupleAccess(left, i, info)
-          var modScope = default(CursorScope)
+          var modStart = default(Cursor)
           if hasModifier:
             var deref = createTokenBuf()
             deref.copyIntoKind HderefX, info:
               deref.add leftTupleAccess
             leftTupleAccess = deref
-            modScope = enterScope(typ)
+            modStart = typ; typ = sub(typ)
           assert typ.typeKind == TupleT
-          let innerTupScope = enterScope(typ)
-          # When we deref'd a `var`/`lent`/... element above, the resulting
-          # tuple-field accesses are by-value but the for-vars are still typed
-          # as `var T`/`lent T`/... — sem propagates the outer modifier to
-          # every unpacked sub-var. Pass `needsAddr` through so each `let sym
-          # = (tupat ...)` is wrapped in `(haddr ...)`.
-          let innerNeedsAddr = needsDeref or hasModifier
-          while unpackCursor.hasMore:
-            unpackTupleAccess(e, dest, unpackCursor, leftTupleAccess, counter, info, typ, innerNeedsAddr)
-            inc counter
-            skip unpackCursor
-            skip typ
-          leaveScope(typ, innerTupScope)
+          typ.into:
+            # When we deref'd a `var`/`lent`/... element above, the resulting
+            # tuple-field accesses are by-value but the for-vars are still typed
+            # as `var T`/`lent T`/... — sem propagates the outer modifier to
+            # every unpacked sub-var. Pass `needsAddr` through so each `let sym
+            # = (tupat ...)` is wrapped in `(haddr ...)`.
+            let innerNeedsAddr = needsDeref or hasModifier
+            while unpackCursor.hasMore:
+              unpackTupleAccess(e, dest, unpackCursor, leftTupleAccess, counter, info, typ, innerNeedsAddr)
+              inc counter
+              skip unpackCursor
+              skip typ
           if hasModifier:
-            leaveScope(typ, modScope)
+            typ = modStart; skip typ
         else:
           var left = startTupleAccess(tmpId, info, needsDeref)
           unpackTupleAccess(e, dest, forVars[i], left, i, info, typ, needsDeref)
           skip typ
 
         if isKvU:
-          leaveScope(typ, kvScope)
+          typ = kvStart; skip typ
 
 proc transformBreakStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
   takeInto dest, c:
@@ -179,12 +177,11 @@ proc transformBreakStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
 proc transformContinueStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
   if e.continues.len > 0 and e.continues[^1] != SymId(0):
     dest.add tagToken("break", c.info)
-    let sc = enterScope(c)
-    let lab = e.continues[^1]
-    dest.add symToken(lab, c.info)
-    inc c # dotToken
-    dest.addParRi(c.endInfo)
-    leaveScope(c, sc)
+    c.into:
+      let lab = e.continues[^1]
+      dest.add symToken(lab, c.info)
+      inc c # dotToken
+      dest.addParRi(c.endInfo)
   else:
     takeInto dest, c:
       dest.addDotToken()
@@ -343,19 +340,18 @@ proc inlineIteratorBody(e: var EContext; dest: var TokenBuf;
         dest.add tagToken("stmts", c.info)
         e.continues.add lab
 
-      let yldScope = enterScope(c) # skips yield
-      var mapping = createYieldMapping(e, dest, c, forStmt.vars, yieldType)
-      var body = forStmt.body
-      inlineLoopBody(e, dest, body, mapping, true)
+      c.into: # skips yield
+        var mapping = createYieldMapping(e, dest, c, forStmt.vars, yieldType)
+        var body = forStmt.body
+        inlineLoopBody(e, dest, body, mapping, true)
 
-      if loopBodyHasContinueStmt:
-        discard e.continues.pop()
-        dest.addParRi() # stmts
+        if loopBodyHasContinueStmt:
+          discard e.continues.pop()
+          dest.addParRi() # stmts
+          dest.addParRi()
+
         dest.addParRi()
-
-      dest.addParRi()
-      dest.addParRi()
-      leaveScope(c, yldScope)
+        dest.addParRi()
     of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS, GletS,
         TletS, LetS, CursorS, PatternvarS, ProcS, FuncS, IteratorS,
         ConverterS, MethodS, MacroS, TemplateS, TypeS, BlockS,
@@ -442,20 +438,19 @@ proc rewriteYieldsAndCopy(e: var EContext; dest: var TokenBuf;
     if sk == YldS:
       let info = c.info
       let head = c.load()
-      let yldScope = enterScope(c) # past yld tag
-      if c.kind == DotToken:
-        # bare yield (void return) — leave as-is
-        dest.add head
-        dest.takeToken c # the dot token
-      else:
-        # (yld v) ⇒ (asgn resultSym v) ; (yld .)
-        dest.copyIntoKind AsgnS, info:
-          dest.addSymUse resultSym, info
-          dest.takeTree c # v
-        dest.add head
-        dest.addDotToken()
-      dest.addParRi(c.endInfo) # close original yld
-      leaveScope(c, yldScope)
+      c.into: # past yld tag
+        if c.kind == DotToken:
+          # bare yield (void return) — leave as-is
+          dest.add head
+          dest.takeToken c # the dot token
+        else:
+          # (yld v) ⇒ (asgn resultSym v) ; (yld .)
+          dest.copyIntoKind AsgnS, info:
+            dest.addSymUse resultSym, info
+            dest.takeTree c # v
+          dest.add head
+          dest.addDotToken()
+        dest.addParRi(c.endInfo) # close original yld
     elif sk in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS,
                 TemplateS, TypeS}:
       dest.takeTree c
@@ -477,7 +472,8 @@ proc rewriteClosureIter(e: var EContext; dest: var TokenBuf;
     "`coroResult." & $getTmpId(e) & "." & e.main)
 
   dest.add c # IteratorS tag
-  let iterScope = enterScope(c)
+  let iterStart = c
+  c = sub(c)
   for _ in 0..<BodyPos:
     dest.takeTree c
 
@@ -485,32 +481,31 @@ proc rewriteClosureIter(e: var EContext; dest: var TokenBuf;
   if c.kind == DotToken:
     dest.takeToken c
     dest.addParRi(c.endInfo)
-    leaveScope(c, iterScope)
+    c = iterStart; skip c
     return
   if c.stmtKind != StmtsS:
     dest.takeTree c
     dest.addParRi(c.endInfo)
-    leaveScope(c, iterScope)
+    c = iterStart; skip c
     return
 
   dest.add c # body's StmtsS opening
-  let bodyScope = enterScope(c)
+  c.into:
 
-  let info = c.info
-  dest.copyIntoKind ResultS, info:
-    dest.addSymDef synthResultSym, info
-    dest.addDotToken() # exported
-    dest.addDotToken() # pragmas
-    dest.copyTree retType
-    dest.addDotToken() # value
+    let info = c.info
+    dest.copyIntoKind ResultS, info:
+      dest.addSymDef synthResultSym, info
+      dest.addDotToken() # exported
+      dest.addDotToken() # pragmas
+      dest.copyTree retType
+      dest.addDotToken() # value
 
-  while c.hasMore:
-    rewriteYieldsAndCopy(e, dest, c, synthResultSym)
+    while c.hasMore:
+      rewriteYieldsAndCopy(e, dest, c, synthResultSym)
 
-  dest.addParRi(c.endInfo) # close body stmts
-  leaveScope(c, bodyScope)
+    dest.addParRi(c.endInfo) # close body stmts
   dest.addParRi(c.endInfo) # close iter decl
-  leaveScope(c, iterScope)
+  c = iterStart; skip c
 
 proc emitCoroFor(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
   ## Lower `for x in closureIter(args): body` into a `(corofor ...)` tag.

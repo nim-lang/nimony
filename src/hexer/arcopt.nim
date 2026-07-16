@@ -198,13 +198,12 @@ proc analyse(c: var Con; b: var BasicBlock; n: var Cursor)
 
 proc analyseChildren(c: var Con; b: var BasicBlock; n: var Cursor) =
   assert n.kind == ParLe
-  let scope = enterScope(n)
-  while n.hasMore and n.kind != EofToken:
-    let before = cursorToPosition(c.source[], n)
-    analyse(c, b, n)
-    if n.hasMore and n.kind != EofToken and cursorToPosition(c.source[], n) == before:
-      skip n
-  leaveScope(n, scope)
+  n.into:
+    while n.hasMore and n.kind != EofToken:
+      let before = cursorToPosition(c.source[], n)
+      analyse(c, b, n)
+      if n.hasMore and n.kind != EofToken and cursorToPosition(c.source[], n) == before:
+        skip n
 
 proc analyse(c: var Con; b: var BasicBlock; n: var Cursor) =
   case n.kind

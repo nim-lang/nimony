@@ -575,14 +575,13 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
           innerCallScope = enterScope(arg)
           takeTree dest, arg
         dest.add arg
-        let aconstrScope = enterScope(arg)
-        if containsGenericParams(arg):
-          dest.addSubtree instantiateType(c, arg, m.inferred)
-          skip arg
-        else:
-          takeTree dest, arg
-        dest.addParRi(arg.endInfo)
-        leaveScope(arg, aconstrScope)
+        arg.into:
+          if containsGenericParams(arg):
+            dest.addSubtree instantiateType(c, arg, m.inferred)
+            skip arg
+          else:
+            takeTree dest, arg
+          dest.addParRi(arg.endInfo)
         if isDoubleCall:
           dest.addParRi(arg.endInfo)
           leaveScope(arg, innerCallScope)
@@ -736,11 +735,10 @@ proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, a
         callScope = enterScope(argToInst)
         takeTree instArgBuf, argToInst # call symbol
       instArgBuf.add argToInst # array constructor tag
-      let aconstrScope = enterScope(argToInst)
-      instArgBuf.addSubtree instantiateType(c, argToInst, inputMatch.inferred)
-      skip argToInst
-      instArgBuf.addParRi(argToInst.endInfo) # array constructor
-      leaveScope(argToInst, aconstrScope)
+      argToInst.into:
+        instArgBuf.addSubtree instantiateType(c, argToInst, inputMatch.inferred)
+        skip argToInst
+        instArgBuf.addParRi(argToInst.endInfo) # array constructor
       if isCall:
         instArgBuf.addParRi(argToInst.endInfo) # call
         leaveScope(argToInst, callScope)
@@ -1222,7 +1220,8 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
   cs.fn = Item(n: it.n, typ: c.types.autoType)
   var argIndexes: seq[int] = @[]
   if cs.fn.n.exprKind == AtX:
-    let atScope = enterScope(cs.fn.n) # skip tag
+    let atStart = cs.fn.n
+    cs.fn.n = sub(cs.fn.n) # skip tag
     var lhsBuf = createTokenBuf(4)
     var lhs = Item(n: cs.fn.n, typ: c.types.autoType)
     semExpr c, lhsBuf, lhs, {KeepMagics, AllowUndeclared} # don't consider all overloads
@@ -1246,7 +1245,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       while cs.fn.n.hasMore:
         semLocalTypeImpl c, dest, cs.fn.n, AllowValues
       dest.addParRi(cs.fn.n.endInfo)
-      leaveScope(cs.fn.n, atScope)
+      cs.fn.n = atStart; skip cs.fn.n
       swap dest, cs.genericDest
       it.n = cs.fn.n
       dest.addSubtree lhs.n
@@ -1254,7 +1253,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       cs.fn.kind = lhs.kind
       cs.fnName = getFnIdent(c, dest)
     if not cs.hasGenericArgs:
-      semBuiltinSubscript(c, dest, cs.fn, lhs, atScope)
+      semBuiltinSubscript(c, dest, cs.fn, lhs, atStart)
       cs.fnName = getFnIdent(c, dest)
       it.n = cs.fn.n
   elif cs.fn.n.exprKind == DotX:

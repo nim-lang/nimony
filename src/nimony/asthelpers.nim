@@ -5,15 +5,15 @@ import ".." / lib / symparser
 
 proc takeUnquoted*(c: var Cursor): StrId =
   var r = ""
-  var scopes: seq[CursorScope] = @[]
+  var scopes: seq[Cursor] = @[]
   while true:
     case c.kind
     of ParLe:
-      scopes.add enterScope(c)
+      scopes.add c; c = sub(c)
     of ParRi:
       # the first close ends the walk (quoted content is flat in practice)
       if scopes.len > 0:
-        leaveScope(c, scopes.pop)
+        c = scopes.pop; skip c
       else:
         inc c
       break

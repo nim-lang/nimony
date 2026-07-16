@@ -448,7 +448,8 @@ proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: T
         unravelObjFieldsForward(c, nCopy, paramA, paramB, depth)
         c.op = prevOp
       let info = n.info
-      let caseScope = enterScope(n)
+      let caseStart = n
+      n = sub(n)
       var selector = n
       if c.op != attachedDestroy:
         # copy the selector before case stmt, but destroy after case stmt
@@ -477,7 +478,7 @@ proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: T
           error "expected `of` or `else` inside `case`"
 
       c.dest.addParRi(n.endInfo) # end of case
-      leaveScope(n, caseScope)
+      n = caseStart; skip n
 
       if c.op == attachedDestroy:
         # destroy the selector after case stmt

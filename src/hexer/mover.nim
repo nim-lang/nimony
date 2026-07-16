@@ -306,7 +306,12 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
       else:
         case pc.stmtKind
         of AsgnS:
-          let asgnScope = enterScope(pc)
+          # NOTE: this body does NOT fully consume the asgn (it reads the RHS
+          # without advancing), so `into` is wrong here — use the parent-cursor
+          # form, which jumps past the whole subtree regardless of consumption
+          # (like the old forgiving `leaveScope`).
+          let asgnStart = pc
+          pc = sub(pc)
           if (pc.kind == Symbol and pc.symId == root) or sameTrees(pc, x):
             # the path leads to a redefinition of 's' --> sink 's'.
             break
@@ -324,7 +329,7 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
             # or maybe writes to 's' --> can't sink 's'
             otherUsage = pc # XXX Fixme: pc advanced to ')'
             return false
-          leaveScope(pc, asgnScope)
+          pc = asgnStart; skip pc
         of RetS:
           break
         of StmtsS, ScopeS, BlockS, ContinueS, BreakS:

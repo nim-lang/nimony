@@ -288,7 +288,7 @@ proc asObjectDecl*(c: Cursor): ObjectDecl =
 
 type ObjFieldIter* = object
   nested: int
-  scopes: seq[CursorScope]
+  scopes: seq[Cursor]
 
 proc initObjFieldIter*(): ObjFieldIter =
   result = ObjFieldIter(nested: 1)
@@ -297,13 +297,13 @@ proc nextField*(iter: var ObjFieldIter, n: var Cursor, keepCase = false): bool =
   ## Resumable walk over an object body's fields. The caller must have
   ## entered the object scope (e.g. via `into`/`peekInto`) so that the
   ## outermost scope is bounded; nested case/when/of scopes are managed
-  ## here via `enterScope`/`leaveScope`.
+  ## here via `sub`/`skip`.
   result = false
   while iter.nested != 0:
     if not n.hasMore:
       dec iter.nested
       if iter.nested != 0:
-        leaveScope(n, iter.scopes.pop())
+        n = iter.scopes.pop(); skip n
     else:
       case n.substructureKind
       of CaseU:
@@ -312,13 +312,13 @@ proc nextField*(iter: var ObjFieldIter, n: var Cursor, keepCase = false): bool =
           break
         else:
           inc iter.nested
-          iter.scopes.add enterScope(n)
+          iter.scopes.add n; n = sub(n)
       of WhenU, StmtsU, NilU, ElseU:
         inc iter.nested
-        iter.scopes.add enterScope(n)
+        iter.scopes.add n; n = sub(n)
       of ElifU, OfU:
         inc iter.nested
-        iter.scopes.add enterScope(n)
+        iter.scopes.add n; n = sub(n)
         skip n
       of FldU, GfldU:
         result = true

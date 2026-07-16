@@ -225,33 +225,32 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetExpectsTupl
     needsTuple = produceSuccessTuple(c, dest, retType, n.info)
 
   dest.add n
-  let callScope = enterScope(n) # skip `(call)`
-  tr c, dest, n # handle `fn`
+  n.into: # skip `(call)`
+    tr c, dest, n # handle `fn`
 
-  fnType = sub(fnType) # peek only, never left
-  while n.hasMore:
-    let previousFormalParam = fnType
-    if fnType.kind == ParRi:
-      tr c, dest, n # can happen for closure parameter
-    else:
-      assert fnType.kind == ParLe
-      let param = takeLocal(fnType, SkipFinalParRi)
-      let pk = param.typ.typeKind
-      if pk in {MutT, OutT, LentT}:
-        tr c, dest, n
-      elif pk == VarargsT:
-        # do not advance formal parameter:
-        fnType = previousFormalParam
-        tr c, dest, n
-      elif passByConstRef(c, param.typ, param.pragmas):
-        trConstRef c, dest, n
-      elif pk in {TypedescT, StaticT}:
-        # do not produce any code for this as it's a compile-time value:
-        skip n
+    fnType = sub(fnType) # peek only, never left
+    while n.hasMore:
+      let previousFormalParam = fnType
+      if fnType.kind == ParRi:
+        tr c, dest, n # can happen for closure parameter
       else:
-        tr c, dest, n
-  dest.addParRi(n.endInfo)
-  leaveScope(n, callScope)
+        assert fnType.kind == ParLe
+        let param = takeLocal(fnType, SkipFinalParRi)
+        let pk = param.typ.typeKind
+        if pk in {MutT, OutT, LentT}:
+          tr c, dest, n
+        elif pk == VarargsT:
+          # do not advance formal parameter:
+          fnType = previousFormalParam
+          tr c, dest, n
+        elif passByConstRef(c, param.typ, param.pragmas):
+          trConstRef c, dest, n
+        elif pk in {TypedescT, StaticT}:
+          # do not produce any code for this as it's a compile-time value:
+          skip n
+        else:
+          tr c, dest, n
+    dest.addParRi(n.endInfo)
   if needsTuple:
     dest.addParRi() # TupconstrX
 
@@ -332,22 +331,22 @@ proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.closeScope()
 
 proc trPragmaBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let pragmaxScope = enterScope(n) # pragmax
-  let pragmasScope = enterScope(n) # pragmas
-  if n.pragmaKind == KeepOverflowFlagP:
-    skip n # keepOverflowFlag
-    leaveScope(n, pragmasScope) # pragmas
-    let oldKeepOverflowFlag = c.keepOverflowFlag
-    c.keepOverflowFlag = true
-    tr(c, dest, n)
-    c.keepOverflowFlag = oldKeepOverflowFlag
-  elif n.pragmaKind == CastP:
-    skip n # cast pragma
-    leaveScope(n, pragmasScope) # pragmas
-    tr(c, dest, n)
-  else:
-    bug "unknown pragma block: " & toString(n, false)
-  leaveScope(n, pragmaxScope) # pragmax
+  n.into: # pragmax
+    let pragmasStart = n # pragmas
+    n = sub(n)
+    if n.pragmaKind == KeepOverflowFlagP:
+      skip n # keepOverflowFlag
+      n = pragmasStart; skip n # pragmas
+      let oldKeepOverflowFlag = c.keepOverflowFlag
+      c.keepOverflowFlag = true
+      tr(c, dest, n)
+      c.keepOverflowFlag = oldKeepOverflowFlag
+    elif n.pragmaKind == CastP:
+      skip n # cast pragma
+      n = pragmasStart; skip n # pragmas
+      tr(c, dest, n)
+    else:
+      bug "unknown pragma block: " & toString(n, false)
 
 proc checkedArithOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -391,22 +390,21 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
         inc nn
 
   dest.add n
-  let tryScope = enterScope(n)
-  tr c, dest, n
-  c.exceptVars.shrink oldLen
-  while n.substructureKind == ExceptU:
-    copyInto dest, n:
-      if n.stmtKind == LetS:
-        dest.addDotToken() # we moved the declaration before the try statement
-        skip n
-      else:
-        dest.takeTree n
-      tr c, dest, n
-  if n.substructureKind == FinU:
-    copyInto dest, n:
-      tr c, dest, n
-  dest.addParRi(n.endInfo)
-  leaveScope(n, tryScope)
+  n.into:
+    tr c, dest, n
+    c.exceptVars.shrink oldLen
+    while n.substructureKind == ExceptU:
+      copyInto dest, n:
+        if n.stmtKind == LetS:
+          dest.addDotToken() # we moved the declaration before the try statement
+          skip n
+        else:
+          dest.takeTree n
+        tr c, dest, n
+    if n.substructureKind == FinU:
+      copyInto dest, n:
+        tr c, dest, n
+    dest.addParRi(n.endInfo)
 
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info

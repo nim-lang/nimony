@@ -261,7 +261,8 @@ proc genSetElem(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let kind = n.exprKind
-  let opScope = enterScope(n)
+  let opStart = n
+  n = sub(n)
   let typ = n
   if typ.typeKind != SetT:
     error "expected set type for set op", n
@@ -279,7 +280,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     tr(c, dest, n)
   swap dest, argsBuf
-  leaveScope(n, opScope)
+  n = opStart; skip n
   let cType = cursorAt(argsBuf, typeStart)
   let aOrig = cursorAt(argsBuf, aStart)
   let bOrig = cursorAt(argsBuf, bStart)
@@ -460,7 +461,8 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc genCard(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  let cardScope = enterScope(n)
+  let cardStart = n
+  n = sub(n)
   let typ = n
   if typ.typeKind != SetT:
     error "expected set type for set op", n
@@ -472,7 +474,7 @@ proc genCard(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let aStart = dest.len
   tr(c, dest, n)
   swap dest, argsBuf
-  leaveScope(n, cardScope)
+  n = cardStart; skip n
   let a = cursorAt(argsBuf, aStart) # no temp needed
   var err = false
   let size = asSigned(bitsetSizeInBytes(baseType), err)
@@ -532,7 +534,8 @@ proc genSingleInclBig(dest: var TokenBuf; s, elem: Cursor; info: PackedLineInfo)
 proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   dest.add parLeToken(ExprX, info)
-  let constrScope = enterScope(n) # tag
+  let constrStart = n # tag
+  n = sub(n)
   let typ = n
   skip n
   var elemTyp = typ
@@ -556,7 +559,8 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
   while n.hasMore:
     let elemInfo = n.info
     if n.substructureKind == RangeU:
-      let rangeScope = enterScope(n)
+      let rangeStart = n
+      n = sub(n)
       var argsBuf = createTokenBuf(16)
       swap dest, argsBuf
       let aStart = dest.len
@@ -564,7 +568,7 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
       let bStart = dest.len
       genSetElem(c, dest, n)
       swap dest, argsBuf
-      leaveScope(n, rangeScope)
+      n = rangeStart; skip n
       # a is used once, no need for temp:
       let a = cursorAt(argsBuf, aStart)
       let bOrig = cursorAt(argsBuf, bStart)
@@ -606,7 +610,7 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
         genSingleInclBig(dest, res, a, elemInfo)
       else:
         genSingleInclSmall(dest, res, a, size, elemInfo)
-  leaveScope(n, constrScope)
+  n = constrStart; skip n
   dest.addSubtree res
   dest.addParRi()
 
@@ -634,7 +638,8 @@ proc genSetConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let kind = n.stmtKind
-  let inclScope = enterScope(n)
+  let inclStart = n
+  n = sub(n)
   let typ = n
   if typ.typeKind != SetT:
     error "expected set type for incl/excl", n
@@ -649,7 +654,7 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let bStart = dest.len
   tr(c, dest, n)
   swap dest, argsBuf
-  leaveScope(n, inclScope)
+  n = inclStart; skip n
   let cType = cursorAt(argsBuf, typeStart)
   let aOrig = cursorAt(argsBuf, aStart)
   let bOrig = cursorAt(argsBuf, bStart)
@@ -849,15 +854,15 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Simplify (expr (expr ...)) to (expr (...)) so that our
   # controlflow graph can handle them easily:
   dest.add n
-  var scopes: seq[CursorScope] = @[]
-  scopes.add enterScope(n)
+  var scopes: seq[Cursor] = @[]
+  scopes.add n; n = sub(n)
   while n.exprKind == ExprX:
-    scopes.add enterScope(n)
+    scopes.add n; n = sub(n)
   while n.hasMore:
     tr(c, dest, n)
   dest.addParRi()
   while scopes.len > 0:
-    leaveScope(n, scopes.pop())
+    n = scopes.pop(); skip n
 
 proc trTupleAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Lower `(a, b, ...) = rhs` (LHS is `tup`/`tupconstr`) into:
@@ -869,9 +874,11 @@ proc trTupleAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## is not a valid L-value, so the destructuring assignment must be
   ## broken apart before codegen sees it.
   let info = n.info
-  let asgnScope = enterScope(n) # past `asgn` tag
+  let asgnStart = n # past `asgn` tag
+  n = sub(n)
   let lhsTagInfo = n.info
-  let lhsScope = enterScope(n) # past LHS `tup`/`tupconstr` tag
+  let lhsStart = n # past LHS `tup`/`tupconstr` tag
+  n = sub(n)
   # The tuple constructor's first child is the type (a `(tuple ...)`
   # subtree); the remaining children are the actual element expressions.
   let tupleType = n
@@ -880,7 +887,7 @@ proc trTupleAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   while n.hasMore:
     lhsItems.add n
     skip n
-  leaveScope(n, lhsScope) # past LHS close
+  n = lhsStart; skip n # past LHS close
 
   dest.addParLe StmtsS, info
 
@@ -888,7 +895,7 @@ proc trTupleAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   trExpr c, dest, n   # serialise the RHS as the var's initial value
   dest.addParRi()     # close `(var ...)`
 
-  leaveScope(n, asgnScope) # close original `(asgn ...)`
+  n = asgnStart; skip n # close original `(asgn ...)`
 
   for i in 0 ..< lhsItems.len:
     var lhsLocal = lhsItems[i]
@@ -914,53 +921,52 @@ proc trArrAt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## the `(at …)` index expression and never gets inlined.
   let info = n.info
   dest.add parLeToken(ArratX, info)
-  let atScope = enterScope(n)
-  tr(c, dest, n)  # array operand
-  # `isUnsigned` is decided from the index's type, exactly as nifcgen did.
-  let isUnsigned = getType(c.typeCache, n).typeKind in {UIntT, CharT}
-  var idxBuf = createTokenBuf(8)
-  tr(c, idxBuf, n)
-  if n.hasMore:
-    # `(arrat arr idx hi [lo])` — `hi` is the inclusive upper bound, `lo`
-    # the optional lower bound. nimIcheckAB(i, a, b) wants (i, lo, hi).
-    var hiBuf = createTokenBuf(8)
-    tr(c, hiBuf, n)
+  n.into:
+    tr(c, dest, n)  # array operand
+    # `isUnsigned` is decided from the index's type, exactly as nifcgen did.
+    let isUnsigned = getType(c.typeCache, n).typeKind in {UIntT, CharT}
+    var idxBuf = createTokenBuf(8)
+    tr(c, idxBuf, n)
     if n.hasMore:
-      var loBuf = createTokenBuf(8)
-      tr(c, loBuf, n)
-      if BoundCheck in c.activeChecks:
-        let p = pool.syms.getOrIncl(
-          (if isUnsigned: "nimUcheckAB" else: "nimIcheckAB") & ".0." & SystemModuleSuffix)
-        copyIntoKind dest, CallX, info:
-          dest.addSymUse p, info
-          dest.add idxBuf
-          dest.add loBuf
-          dest.add hiBuf
-      else:
-        # The subtraction is needed regardless of checks: NIFC arrays are
-        # zero-based, so a `lo..hi` Nim array indexes at `i - lo`.
-        if isUnsigned:
-          addUIntTypedOp dest, SubX, -1, info:
+      # `(arrat arr idx hi [lo])` — `hi` is the inclusive upper bound, `lo`
+      # the optional lower bound. nimIcheckAB(i, a, b) wants (i, lo, hi).
+      var hiBuf = createTokenBuf(8)
+      tr(c, hiBuf, n)
+      if n.hasMore:
+        var loBuf = createTokenBuf(8)
+        tr(c, loBuf, n)
+        if BoundCheck in c.activeChecks:
+          let p = pool.syms.getOrIncl(
+            (if isUnsigned: "nimUcheckAB" else: "nimIcheckAB") & ".0." & SystemModuleSuffix)
+          copyIntoKind dest, CallX, info:
+            dest.addSymUse p, info
             dest.add idxBuf
             dest.add loBuf
+            dest.add hiBuf
         else:
-          addIntTypedOp dest, SubX, -1, info:
-            dest.add idxBuf
-            dest.add loBuf
-    else:
-      if BoundCheck in c.activeChecks:
-        let p = pool.syms.getOrIncl(
-          (if isUnsigned: "nimUcheckB" else: "nimIcheckB") & ".0." & SystemModuleSuffix)
-        copyIntoKind dest, CallX, info:
-          dest.addSymUse p, info
-          dest.add idxBuf
-          dest.add hiBuf
+          # The subtraction is needed regardless of checks: NIFC arrays are
+          # zero-based, so a `lo..hi` Nim array indexes at `i - lo`.
+          if isUnsigned:
+            addUIntTypedOp dest, SubX, -1, info:
+              dest.add idxBuf
+              dest.add loBuf
+          else:
+            addIntTypedOp dest, SubX, -1, info:
+              dest.add idxBuf
+              dest.add loBuf
       else:
-        dest.add idxBuf
-  else:
-    dest.add idxBuf
-  dest.addParRi(n.endInfo)
-  leaveScope(n, atScope)
+        if BoundCheck in c.activeChecks:
+          let p = pool.syms.getOrIncl(
+            (if isUnsigned: "nimUcheckB" else: "nimIcheckB") & ".0." & SystemModuleSuffix)
+          copyIntoKind dest, CallX, info:
+            dest.addSymUse p, info
+            dest.add idxBuf
+            dest.add hiBuf
+        else:
+          dest.add idxBuf
+    else:
+      dest.add idxBuf
+    dest.addParRi(n.endInfo)
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   case n.kind
@@ -1049,16 +1055,15 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
     of DdotX:
       dest.add tagToken("dot", n.info)
       dest.add tagToken("deref", n.info)
-      let ddotScope = enterScope(n) # skip tag
-      tr c, dest, n
-      dest.addParRi() # deref
-      tr c, dest, n
-      tr c, dest, n # inheritance depth
-      if n.kind == StringLit:
-        # drop optional access-token marker; no visibility in NIFC.
-        skip n
-      dest.addParRi(n.endInfo)
-      leaveScope(n, ddotScope)
+      n.into: # skip tag
+        tr c, dest, n
+        dest.addParRi() # deref
+        tr c, dest, n
+        tr c, dest, n # inheritance depth
+        if n.kind == StringLit:
+          # drop optional access-token marker; no visibility in NIFC.
+          skip n
+        dest.addParRi(n.endInfo)
     of ExprX:
       trExpr c, dest, n
     of CallX, CallstrlitX, CmdX, PrefixX, InfixX, HcallX:

@@ -211,11 +211,10 @@ proc locateSymImpl(n: var Cursor; buf: TokenBuf; sym: SymId; toTrack: PackedLine
   case n.kind
   of ParLe:
     let myPos = cursorToPosition(buf, n)
-    let scope = enterScope(n)
-    while n.hasMore:
-      if locateSymImpl(n, buf, sym, toTrack, tokenLen, myPos, symOffset, parentOffset):
-        return true
-    leaveScope(n, scope)
+    n.into:
+      while n.hasMore:
+        if locateSymImpl(n, buf, sym, toTrack, tokenLen, myPos, symOffset, parentOffset):
+          return true
   of Symbol, SymbolDef:
     if n.symId == sym and lineInfoMatch(n.info, toTrack, tokenLen):
       symOffset = cursorToPosition(buf, n)

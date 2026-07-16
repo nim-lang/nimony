@@ -702,9 +702,9 @@ type
 proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item; fieldName: StrId; info: PackedLineInfo; flags: set[SemFlag]): DotExprState
 
 proc tryBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item;
-                         atScope: CursorScope): bool
+                         atStart: Cursor): bool
 proc semBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item;
-                         atScope: CursorScope)
+                         atStart: Cursor)
 
 proc semBaseobj(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeExpr = dest.len
@@ -1158,7 +1158,8 @@ proc semDot(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[SemF
   let info = it.n.info
   let expected = it.typ
   # read through the dot expression first:
-  let dotScope = enterScope(it.n) # skip tag
+  let dotStart = it.n # skip tag
+  it.n = sub(it.n)
   var lhsBuf = createTokenBuf(4)
   var lhs = Item(n: it.n, typ: c.types.autoType)
   semExpr c, lhsBuf, lhs, {AllowModuleSym}
@@ -1177,7 +1178,7 @@ proc semDot(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[SemF
   if it.n.kind == StringLit:
     innerFlags.incl BypassFieldVis
     inc it.n
-  leaveScope(it.n, dotScope)
+  it.n = dotStart; skip it.n
   # now interpret the dot expression:
   let state = tryBuiltinDot(c, dest, it, lhs, fieldName, info, innerFlags)
   if state == FailedDot and dotLhsModuleSym(lhs) != SymId(0):
@@ -1548,14 +1549,13 @@ proc addVarargsParameter(c: var SemContext; dest: var TokenBuf; paramsAt: int; i
       n = sub(n)
       while n.hasMore:
         if n.symKind == ParamY:
-          let paramScope = enterScope(n)
-          let lit = takeIdent(n)
-          if lit != StrId(0) and pool.strings[lit] == vanon:
-            # already added:
-            endRead(dest)
-            return
-          while n.hasMore: skip n
-          leaveScope(n, paramScope)
+          n.into:
+            let lit = takeIdent(n)
+            if lit != StrId(0) and pool.strings[lit] == vanon:
+              # already added:
+              endRead(dest)
+              return
+            while n.hasMore: skip n
         else:
           break
       let insertPos = cursorToPosition(dest, n)
@@ -1574,7 +1574,8 @@ include semtypes
 
 proc semTypeof(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeExpr = dest.len
-  let typeofScope = enterScope(it.n) # typeof
+  let typeofStart = it.n # typeof
+  it.n = sub(it.n)
 
   let beforeMode = dest.len
   var modeArg = Item(n: it.n, typ: c.types.autoType)
@@ -1587,7 +1588,7 @@ proc semTypeof(c: var SemContext; dest: var TokenBuf; it: var Item) =
     skip it.n
     skip it.n
     dest.addParRi(it.n.endInfo)
-    leaveScope(it.n, typeofScope)
+    it.n = typeofStart; skip it.n
     return
   assert modeTok.kind == Symbol
   var semFlags: set[SemFlag] = {}
@@ -1618,7 +1619,7 @@ proc semTypeof(c: var SemContext; dest: var TokenBuf; it: var Item) =
   #echo "CAME HERE! ", typeToString(t), " ", c.phase
   #writeStackTrace()
   skip it.n # skip mode
-  leaveScope(it.n, typeofScope)
+  it.n = typeofStart; skip it.n
 
 proc semCaseOfValueImpl(c: var SemContext; dest: var TokenBuf; it: var Item; selectorType: TypeCursor;
                     seen: var seq[(xint, xint)])
@@ -1779,12 +1780,13 @@ proc semLocalTypeExpr(c: var SemContext; dest: var TokenBuf, it: var Item) =
   dest.shrink start
 
 proc semSubscriptAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: PackedLineInfo;
-                      asgnScope: CursorScope) =
+                      asgnStart: Cursor) =
   # check if LHS is builtin subscript:
   var subscript = Item(n: it.n, typ: c.types.autoType)
-  # the close of this (at ...) scope is consumed either by
-  # tryBuiltinSubscript or by the leaveScope below:
-  let atScope = enterScope(subscript.n) # skip tag
+  # the (at ...) subtree is skipped past either by tryBuiltinSubscript or by
+  # the `skip` on the else path below:
+  let subAtStart = subscript.n
+  subscript.n = sub(subscript.n) # skip tag
   var subscriptLhsBuf = createTokenBuf(4)
   var subscriptLhs = Item(n: subscript.n, typ: c.types.autoType)
   semExpr c, subscriptLhsBuf, subscriptLhs, {KeepMagics}
@@ -1792,7 +1794,7 @@ proc semSubscriptAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info:
   subscript.n = afterSubscriptLhs
   subscriptLhs.n = cursorAt(subscriptLhsBuf, 0)
   var subscriptBuf = createTokenBuf(8)
-  let builtin = tryBuiltinSubscript(c, subscriptBuf, subscript, subscriptLhs, atScope)
+  let builtin = tryBuiltinSubscript(c, subscriptBuf, subscript, subscriptLhs, subAtStart)
   if builtin:
     # build regular assignment:
     dest.addParLe(AsgnS, info)
@@ -1801,7 +1803,7 @@ proc semSubscriptAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info:
     semExpr c, dest, subscript # use the type and position from the subscript
     it.n = subscript.n
     dest.addParRi(it.n.endInfo)
-    leaveScope(it.n, asgnScope)
+    it.n = asgnStart; skip it.n
     producesVoid c, dest, info, it.typ
   else:
     # generate call to `[]=`:
@@ -1813,16 +1815,16 @@ proc semSubscriptAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info:
     while it.n.hasMore:
       # arguments of the subscript
       callBuf.takeTree it.n
-    leaveScope(it.n, atScope) # end subscript expression
+    it.n = subAtStart; skip it.n # end subscript expression
     callBuf.takeTree it.n # assignment value
     callBuf.addParRi()
-    leaveScope(it.n, asgnScope) # end assignment
+    it.n = asgnStart; skip it.n # end assignment
     var call = Item(n: cursorAt(callBuf, 0), typ: it.typ)
     semCall c, dest, call, {}, SubscriptAsgnCall
     it.typ = call.typ
 
 proc semCurlyatAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: PackedLineInfo;
-                    asgnScope: CursorScope) =
+                    asgnStart: Cursor) =
   # `{}=` has no builtin meaning; always rewrite to a call to `{}=`:
   var lhsBuf = createTokenBuf(4)
   var callBuf = createTokenBuf(16)
@@ -1839,17 +1841,18 @@ proc semCurlyatAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: P
       callBuf.takeTree it.n
   callBuf.takeTree it.n # assignment value
   callBuf.addParRi()
-  leaveScope(it.n, asgnScope) # end assignment
+  it.n = asgnStart; skip it.n # end assignment
   var call = Item(n: cursorAt(callBuf, 0), typ: it.typ)
   semCall c, dest, call, {}, CurlyatAsgnCall
   it.typ = call.typ
 
 proc semDotAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: PackedLineInfo;
-                asgnScope: CursorScope) =
+                asgnStart: Cursor) =
   # check if LHS is builtin subscript:
   let dotInfo = it.n.info
   var dot = Item(n: it.n, typ: c.types.autoType)
-  let dotScope = enterScope(dot.n) # tag
+  let dotStart = dot.n # tag
+  dot.n = sub(dot.n)
   var dotLhsBuf = createTokenBuf(4)
   var dotLhs = Item(n: dot.n, typ: c.types.autoType)
   semExpr c, dotLhsBuf, dotLhs, {KeepMagics}
@@ -1863,7 +1866,7 @@ proc semDotAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: Packe
   if dot.n.kind == StringLit:
     dotFlags.incl BypassFieldVis
     inc dot.n
-  leaveScope(dot.n, dotScope)
+  dot.n = dotStart; skip dot.n
   var dotBuf = createTokenBuf(8)
   let builtin = tryBuiltinDot(c, dotBuf, dot, dotLhs, fieldName, dotInfo,
                                dotFlags) != FailedDot
@@ -1875,7 +1878,7 @@ proc semDotAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: Packe
     semExpr c, dest, dot # use the type and position from the dot expression
     it.n = dot.n
     dest.addParRi(it.n.endInfo)
-    leaveScope(it.n, asgnScope)
+    it.n = asgnStart; skip it.n
     producesVoid c, dest, info, it.typ
   else:
     # generate call to `field=`:
@@ -1886,7 +1889,7 @@ proc semDotAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: Packe
     it.n = dot.n
     callBuf.takeTree it.n # assignment value
     callBuf.addParRi()
-    leaveScope(it.n, asgnScope)
+    it.n = asgnStart; skip it.n
     var call = Item(n: cursorAt(callBuf, 0), typ: it.typ)
     semCall c, dest, call, {}, DotAsgnCall
     # XXX original compiler also checks if the call fails and tries a dotcall for the LHS
@@ -1894,14 +1897,15 @@ proc semDotAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: Packe
 
 proc semAsgn(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
-  let asgnScope = enterScope(it.n)
+  let asgnStart = it.n
+  it.n = sub(it.n)
   case it.n.exprKind
   of AtX:
-    semSubscriptAsgn c, dest, it, info, asgnScope
+    semSubscriptAsgn c, dest, it, info, asgnStart
   of CurlyatX:
-    semCurlyatAsgn c, dest, it, info, asgnScope
+    semCurlyatAsgn c, dest, it, info, asgnStart
   of DotX, DdotX:
-    semDotAsgn c, dest, it, info, asgnScope
+    semDotAsgn c, dest, it, info, asgnStart
   of NoExpr, ErrX, SufX, DerefX, PatX, ParX, AddrX, NilX, InfX, NeginfX, NanX,
      FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX, KvX, OconstrX,
      AconstrX, BracketX, CurlyX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
@@ -1925,7 +1929,7 @@ proc semAsgn(c: var SemContext; dest: var TokenBuf; it: var Item) =
     semExpr c, dest, a # ensures type compatibility with `left-hand-side`
     it.n = a.n
     dest.addParRi(it.n.endInfo)
-    leaveScope(it.n, asgnScope)
+    it.n = asgnStart; skip it.n
     producesVoid c, dest, info, it.typ
 
 proc semEmit*(c: var SemContext; dest: var TokenBuf; it: var Item) =
@@ -2021,7 +2025,8 @@ proc semTry(c: var SemContext; dest: var TokenBuf; it: var Item) =
           takeToken dest, it.n
         elif it.n.exprKind in CallKinds and it.n.firstSon.kind == Ident and pool.strings[it.n.firstSon.litId] == "as":
           # `Type as e`:
-          let asScope = enterScope(it.n)
+          let asStart = it.n
+          it.n = sub(it.n)
           inc it.n
           let start = dest.len
           let etyp = semExceptionType(c, dest, it)
@@ -2029,7 +2034,7 @@ proc semTry(c: var SemContext; dest: var TokenBuf; it: var Item) =
           var decl = createTokenBuf(8)
           decl.addParLe(LetS, info)
           decl.takeTree it.n # name
-          leaveScope(it.n, asScope)
+          it.n = asStart; skip it.n
           decl.addEmpty() # export marker
           decl.addEmpty() # pragmas
           decl.addSubtree etyp
@@ -2058,12 +2063,14 @@ proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: When
   let start = dest.len
   let info = it.n.info
   dest.add it.n
-  let whenScope = enterScope(it.n)
+  let whenStart = it.n
+  it.n = sub(it.n)
   var leaveUnresolved = false
   if it.n.hasMore and it.n.substructureKind == ElifU:
     while it.n.hasMore and it.n.substructureKind == ElifU:
       dest.add it.n
-      let elifScope = enterScope(it.n)
+      let elifStart = it.n
+      it.n = sub(it.n)
       let condStart = dest.len
       var phase = SemcheckBodies
       swap c.phase, phase
@@ -2079,9 +2086,9 @@ proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: When
             semExprMissingPhases c, dest, it, SemcheckSignatures
           of ObjectWhen:
             semObjectComponent c, dest, it.n, state
-          leaveScope(it.n, elifScope) # finish elif
+          it.n = elifStart; skip it.n # finish elif
           while it.n.hasMore: skip it.n
-          leaveScope(it.n, whenScope)
+          it.n = whenStart; skip it.n
           return
         elif condValue != FalseX:
           # erroring/unresolved condition, leave entire statement as unresolved
@@ -2093,12 +2100,13 @@ proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: When
       else:
         takeTree dest, it.n
       dest.addParRi(it.n.endInfo)
-      leaveScope(it.n, elifScope)
+      it.n = elifStart; skip it.n
   else:
     buildErr c, dest, it.n.endInfo, "illformed AST: `elif` inside `if` expected"
   if it.n.hasMore and it.n.substructureKind == ElseU:
     dest.add it.n
-    let elseScope = enterScope(it.n)
+    let elseStart = it.n
+    it.n = sub(it.n)
     if not leaveUnresolved:
       dest.shrink start
       case mode
@@ -2106,17 +2114,17 @@ proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: When
         semExprMissingPhases c, dest, it, SemcheckSignatures
       of ObjectWhen:
         semObjectComponent c, dest, it.n, state
-      leaveScope(it.n, elseScope) # finish else
+      it.n = elseStart; skip it.n # finish else
       while it.n.hasMore: skip it.n
-      leaveScope(it.n, whenScope)
+      it.n = whenStart; skip it.n
       return
     else:
       var ctx = createUntypedContext(addr c, UntypedGeneric)
       semTemplBody ctx, dest, it.n
     dest.addParRi(it.n.endInfo)
-    leaveScope(it.n, elseScope)
+    it.n = elseStart; skip it.n
   dest.addParRi(it.n.endInfo)
-  leaveScope(it.n, whenScope)
+  it.n = whenStart; skip it.n
   if not leaveUnresolved:
     # none of the branches evaluated, output nothing
     dest.shrink start
@@ -2346,28 +2354,27 @@ proc findBranchFields(objTypeSym: SymId; efldSym: SymId): seq[SumTypeBranchField
   let efldName = symToIdent(efldSym)
   while n.hasMore:
     if n.substructureKind == OfU:
-      let ofScope = enterScope(n)
-      var found = false
-      if n.substructureKind == RangesU:
-        var scan = n
-        scan = sub(scan)  # throwaway copy
-        while scan.hasMore:
-          if scan.kind == Symbol and sameIdent(scan.symId, efldName):
-            found = true
-            break
-          skip scan
-      skip n # skip ranges
-      if found and n.substructureKind == StmtsU:
-        n = sub(n)
-        while n.hasMore:
-          if n.substructureKind in {FldU, GfldU}:
-            let f = asLocal(n)
-            result.add SumTypeBranchField(sym: f.name.symId, typ: f.typ)
-          skip n
-        return
-      else:
-        skip n # skip stmts
-      leaveScope(n, ofScope) # past the of's (elided) close
+      n.into:
+        var found = false
+        if n.substructureKind == RangesU:
+          var scan = n
+          scan = sub(scan)  # throwaway copy
+          while scan.hasMore:
+            if scan.kind == Symbol and sameIdent(scan.symId, efldName):
+              found = true
+              break
+            skip scan
+        skip n # skip ranges
+        if found and n.substructureKind == StmtsU:
+          n = sub(n)
+          while n.hasMore:
+            if n.substructureKind in {FldU, GfldU}:
+              let f = asLocal(n)
+              result.add SumTypeBranchField(sym: f.name.symId, typ: f.typ)
+            skip n
+          return
+        else:
+          skip n # skip stmts
     else:
       skip n
 
@@ -2422,14 +2429,15 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
     while it.n.hasMore:
       let info = it.n.info
       if it.n.exprKind in CallKinds:
-        let callScope = enterScope(it.n)
+        let callStart = it.n
+        it.n = sub(it.n)
         if it.n.kind == Ident:
           let branchName = it.n.litId
           let efldSym = findOneofEfld(c, branchName)
           if efldSym == SymId(0):
             buildErr c, dest, info, "undeclared sum type branch: " & pool.strings[branchName]
             while it.n.hasMore: skip it.n
-            leaveScope(it.n, callScope)
+            it.n = callStart; skip it.n
             continue
           dest.add symToken(efldSym, info)
           inc it.n
@@ -2450,7 +2458,7 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
               buildErr c, dest, it.n.info, "too many bindings for sum type branch"
             inc it.n
             inc fieldIdx
-          leaveScope(it.n, callScope) # skip call ')'
+          it.n = callStart; skip it.n # skip call ')'
         elif it.n.exprKind == CurlyX:
           var firstEfld = SymId(0)
           var firstBranchFields: seq[SumTypeBranchField] = @[]
@@ -2493,11 +2501,11 @@ proc semSumTypeCaseOfValue(c: var SemContext; dest: var TokenBuf; it: var Item;
           else:
             while it.n.hasMore:
               inc it.n
-          leaveScope(it.n, callScope) # skip call ')'
+          it.n = callStart; skip it.n # skip call ')'
         else:
           buildErr c, dest, info, "identifier expected for sum type branch name"
           while it.n.hasMore: skip it.n
-          leaveScope(it.n, callScope)
+          it.n = callStart; skip it.n
       else:
         evalConstCaseBranch(c, dest, it, selectorType, seen, info)
 
@@ -2628,157 +2636,154 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
                  state: var SemObjectState) =
   let info = it.n.info
   dest.add it.n
-  let caseScope = enterScope(it.n)
-  var selectorType = default(Cursor)
-  var isSumType = false
-  var stInfo = SumTypeInfo(valid: false)
-  var savedSelector = createTokenBuf(4)
-  case mode
-  of NormalCase:
-    let selectorStart = dest.len
-    var selector = Item(n: it.n, typ: c.types.autoType)
-    semExpr c, dest, selector
-    it.n = selector.n
-    selectorType = skipModifier(selector.typ)
-    stInfo = findSumTypeInfo(selectorType)
-    if stInfo.valid:
-      isSumType = true
-      for i in selectorStart ..< dest.len:
-        savedSelector.addRaw dest[i]
-      dest.shrink selectorStart
-      var needsExprClose = false
-      if savedSelector.len != 1 or savedSelector[0].kind != Symbol:
-        dest.addParLe(ExprX, info)
-        needsExprClose = true
-        var tmpName = "`case"
-        c.makeLocalSym(tmpName)
-        let tmpSym = pool.syms.getOrIncl(tmpName)
-        let tmpDeclStart = dest.len
-        dest.addParLe(VarS, info)
-        dest.add symdefToken(tmpSym, info)
-        dest.addDotToken()
-        dest.addDotToken()
-        dest.addSubtree selectorType
+  it.n.into:
+    var selectorType = default(Cursor)
+    var isSumType = false
+    var stInfo = SumTypeInfo(valid: false)
+    var savedSelector = createTokenBuf(4)
+    case mode
+    of NormalCase:
+      let selectorStart = dest.len
+      var selector = Item(n: it.n, typ: c.types.autoType)
+      semExpr c, dest, selector
+      it.n = selector.n
+      selectorType = skipModifier(selector.typ)
+      stInfo = findSumTypeInfo(selectorType)
+      if stInfo.valid:
+        isSumType = true
+        for i in selectorStart ..< dest.len:
+          savedSelector.addRaw dest[i]
+        dest.shrink selectorStart
+        var needsExprClose = false
+        if savedSelector.len != 1 or savedSelector[0].kind != Symbol:
+          dest.addParLe(ExprX, info)
+          needsExprClose = true
+          var tmpName = "`case"
+          c.makeLocalSym(tmpName)
+          let tmpSym = pool.syms.getOrIncl(tmpName)
+          let tmpDeclStart = dest.len
+          dest.addParLe(VarS, info)
+          dest.add symdefToken(tmpSym, info)
+          dest.addDotToken()
+          dest.addDotToken()
+          dest.addSubtree selectorType
+          for i in 0 ..< savedSelector.len:
+            dest.addRaw savedSelector[i]
+          dest.addParRi()
+          publish c, dest, tmpSym, tmpDeclStart
+          let s = Sym(kind: VarY, name: tmpSym, pos: tmpDeclStart)
+          discard addNonOverloadable(c.currentScope, pool.strings.getOrIncl(tmpName), s)
+          savedSelector = createTokenBuf(1)
+          savedSelector.add symToken(tmpSym, info)
+        if stInfo.isRef:
+          dest.addParLe(DdotX, info)
+        else:
+          dest.addParLe(DotX, info)
         for i in 0 ..< savedSelector.len:
           dest.addRaw savedSelector[i]
+        dest.add symToken(stInfo.discrimSym, info)
+        dest.addIntLit(0, info)
         dest.addParRi()
-        publish c, dest, tmpSym, tmpDeclStart
-        let s = Sym(kind: VarY, name: tmpSym, pos: tmpDeclStart)
-        discard addNonOverloadable(c.currentScope, pool.strings.getOrIncl(tmpName), s)
-        savedSelector = createTokenBuf(1)
-        savedSelector.add symToken(tmpSym, info)
-      if stInfo.isRef:
-        dest.addParLe(DdotX, info)
+        if needsExprClose:
+          dest.addParRi()
+        selectorType = stInfo.discrimType
+    of ObjectCase:
+      var probe = it.n
+      inc probe
+      if probe.kind == DotToken:
+        selectorType = synthSumTypeDiscriminator(c, dest, it, info,
+          state)
       else:
-        dest.addParLe(DotX, info)
-      for i in 0 ..< savedSelector.len:
-        dest.addRaw savedSelector[i]
-      dest.add symToken(stInfo.discrimSym, info)
-      dest.addIntLit(0, info)
-      dest.addParRi()
-      if needsExprClose:
-        dest.addParRi()
-      selectorType = stInfo.discrimType
-  of ObjectCase:
-    var probe = it.n
-    inc probe
-    if probe.kind == DotToken:
-      selectorType = synthSumTypeDiscriminator(c, dest, it, info,
-        state)
-    else:
-      let selectorStart = dest.len
-      semLocal(c, dest, it.n, FldY)
-      let field = cursorAt(dest, selectorStart)
-      let fieldType = asLocal(field).typ
-      let fieldTypePos = cursorToPosition(dest, fieldType)
-      endRead(dest)
-      selectorType = typeToCursor(c, dest, fieldTypePos)
-      if not isOrdinalType(selectorType):
-        buildErr c, dest, info, "selector must be of an ordinal type"
+        let selectorStart = dest.len
+        semLocal(c, dest, it.n, FldY)
+        let field = cursorAt(dest, selectorStart)
+        let fieldType = asLocal(field).typ
+        let fieldTypePos = cursorToPosition(dest, fieldType)
+        endRead(dest)
+        selectorType = typeToCursor(c, dest, fieldTypePos)
+        if not isOrdinalType(selectorType):
+          buildErr c, dest, info, "selector must be of an ordinal type"
 
-  let isString = if isSumType: false else: isSomeStringType(selectorType)
-  var seen: seq[(xint, xint)] = @[]
-  var seenStr = initHashSet[StrId]()
-  var bindings: seq[SumTypeBinding] = @[]
-  if it.n.hasMore and it.n.substructureKind == OfU:
-    while it.n.hasMore and it.n.substructureKind == OfU:
-      dest.add it.n
-      let ofScope = enterScope(it.n)
-      if isSumType:
-        semSumTypeCaseOfValue c, dest, it, selectorType, stInfo.objTypeSym, seen, bindings
-      elif isString:
-        semCaseOfValueString c, dest, it, selectorType, seenStr
-      else:
-        semCaseOfValue c, dest, it, selectorType, seen
-      case mode
-      of NormalCase:
-        if isSumType and bindings.len > 0:
-          # For generic instantiations, build bindings to instantiate field types:
-          var typeBindings = initTable[SymId, Cursor]()
-          if stInfo.invokeArgs != default(Cursor):
-            let objDecl = getTypeSection(stInfo.objTypeSym)
-            typeBindings = bindInvokeArgs(objDecl, stInfo.invokeArgs)
-          withNewScope c:
-            dest.add it.n
-            let bodyScope = enterScope(it.n)
-            for b in bindings:
-              var bindName = pool.strings[b.ident]
-              c.makeLocalSym(bindName)
-              let bindSym = pool.syms.getOrIncl(bindName)
-              let declStart = dest.len
-              dest.addParLe(PatternvarS, b.info)
-              dest.add symdefToken(bindSym, b.info)
-              dest.addDotToken()
-              dest.addDotToken()
-              dest.addParLe(MutT, b.info)
-              if typeBindings.len > 0:
-                let concreteType = instantiateType(c, b.fieldType, typeBindings)
-                dest.addSubtree concreteType
-              else:
-                dest.addSubtree b.fieldType
-              dest.addParRi()
-              if stInfo.isRef:
-                dest.addParLe(DdotX, b.info)
-              else:
-                dest.addParLe(DotX, b.info)
-              for i in 0 ..< savedSelector.len:
-                dest.addRaw savedSelector[i]
-              dest.add symToken(b.fieldSym, b.info)
-              dest.addIntLit(0, b.info)
-              dest.addParRi()
-              dest.addParRi()
-              publish c, dest, bindSym, declStart
-              let s = Sym(kind: PatternvarY, name: bindSym, pos: declStart)
-              if addNonOverloadable(c.currentScope, b.ident, s) == Conflict:
-                buildErr c, dest, b.info, "attempt to redeclare: " & pool.strings[b.ident]
-            while it.n.hasMore:
-              semStmt c, dest, it.n, false
-            dest.addParRi(it.n.endInfo)
-            leaveScope(it.n, bodyScope)
-        else:
+    let isString = if isSumType: false else: isSomeStringType(selectorType)
+    var seen: seq[(xint, xint)] = @[]
+    var seenStr = initHashSet[StrId]()
+    var bindings: seq[SumTypeBinding] = @[]
+    if it.n.hasMore and it.n.substructureKind == OfU:
+      while it.n.hasMore and it.n.substructureKind == OfU:
+        dest.add it.n
+        it.n.into:
+          if isSumType:
+            semSumTypeCaseOfValue c, dest, it, selectorType, stInfo.objTypeSym, seen, bindings
+          elif isString:
+            semCaseOfValueString c, dest, it, selectorType, seenStr
+          else:
+            semCaseOfValue c, dest, it, selectorType, seen
+          case mode
+          of NormalCase:
+            if isSumType and bindings.len > 0:
+              # For generic instantiations, build bindings to instantiate field types:
+              var typeBindings = initTable[SymId, Cursor]()
+              if stInfo.invokeArgs != default(Cursor):
+                let objDecl = getTypeSection(stInfo.objTypeSym)
+                typeBindings = bindInvokeArgs(objDecl, stInfo.invokeArgs)
+              withNewScope c:
+                dest.add it.n
+                it.n.into:
+                  for b in bindings:
+                    var bindName = pool.strings[b.ident]
+                    c.makeLocalSym(bindName)
+                    let bindSym = pool.syms.getOrIncl(bindName)
+                    let declStart = dest.len
+                    dest.addParLe(PatternvarS, b.info)
+                    dest.add symdefToken(bindSym, b.info)
+                    dest.addDotToken()
+                    dest.addDotToken()
+                    dest.addParLe(MutT, b.info)
+                    if typeBindings.len > 0:
+                      let concreteType = instantiateType(c, b.fieldType, typeBindings)
+                      dest.addSubtree concreteType
+                    else:
+                      dest.addSubtree b.fieldType
+                    dest.addParRi()
+                    if stInfo.isRef:
+                      dest.addParLe(DdotX, b.info)
+                    else:
+                      dest.addParLe(DotX, b.info)
+                    for i in 0 ..< savedSelector.len:
+                      dest.addRaw savedSelector[i]
+                    dest.add symToken(b.fieldSym, b.info)
+                    dest.addIntLit(0, b.info)
+                    dest.addParRi()
+                    dest.addParRi()
+                    publish c, dest, bindSym, declStart
+                    let s = Sym(kind: PatternvarY, name: bindSym, pos: declStart)
+                    if addNonOverloadable(c.currentScope, b.ident, s) == Conflict:
+                      buildErr c, dest, b.info, "attempt to redeclare: " & pool.strings[b.ident]
+                  while it.n.hasMore:
+                    semStmt c, dest, it.n, false
+                  dest.addParRi(it.n.endInfo)
+            else:
+              withNewScope c:
+                semStmtBranch c, dest, it, true
+          of ObjectCase:
+            semObjectCaseBranch(c, dest, it, state)
+          dest.addParRi(it.n.endInfo)
+    else:
+      buildErr c, dest, it.n.endInfo, "illformed AST: `of` inside `case` expected"
+    if it.n.hasMore and it.n.substructureKind == ElseU:
+      takeInto dest, it.n:
+        case mode
+        of NormalCase:
           withNewScope c:
             semStmtBranch c, dest, it, true
-      of ObjectCase:
-        semObjectCaseBranch(c, dest, it, state)
-      dest.addParRi(it.n.endInfo)
-      leaveScope(it.n, ofScope)
-  else:
-    buildErr c, dest, it.n.endInfo, "illformed AST: `of` inside `case` expected"
-  if it.n.hasMore and it.n.substructureKind == ElseU:
-    takeInto dest, it.n:
-      case mode
-      of NormalCase:
-        withNewScope c:
-          semStmtBranch c, dest, it, true
-      of ObjectCase:
-        semObjectCaseBranch(c, dest, it, state)
-  elif not isString:
-    # `info` (the case head) — the close's info is elided under vpr and
-    # the diagnostic should point at the `case` statement anyway:
-    checkExhaustiveness c, dest, info, selectorType, seen
+        of ObjectCase:
+          semObjectCaseBranch(c, dest, it, state)
+    elif not isString:
+      # `info` (the case head) — the close's info is elided under vpr and
+      # the diagnostic should point at the `case` statement anyway:
+      checkExhaustiveness c, dest, info, selectorType, seen
 
-  dest.addParRi(it.n.endInfo)
-  leaveScope(it.n, caseScope)
+    dest.addParRi(it.n.endInfo)
   if typeKind(it.typ) == AutoT:
     producesVoid c, dest, info, it.typ
 
@@ -2894,7 +2899,7 @@ proc isIdentCall(c: var SemContext; dest: var TokenBuf; beforeCall: int): bool {
 
 proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
                       beforeCall: int; info: PackedLineInfo;
-                      loopVarType: TypeCursor; forScope: CursorScope): bool =
+                      loopVarType: TypeCursor; forStart: Cursor): bool =
   ## When a `for` loop's iterator resolves to a routine with a `.plugin`
   ## pragma, invoke the plugin with the for-loop context instead of doing
   ## normal iterator resolution. The plugin receives:
@@ -2955,7 +2960,7 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
     inc c.routine.inLoop
     semStmt c, vb, it.n, true
     dec c.routine.inLoop
-  leaveScope(it.n, forScope) # skip the for's closing ')'
+  it.n = forStart; skip it.n # skip the for's closing ')'
 
   # Build plugin input:
   # (forcall <iter-name> (callargs <arg1> ...) (unpackflat ...) <body>)
@@ -2987,13 +2992,13 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   let orig = it.n
   dest.add it.n
-  let forScope = enterScope(it.n)
+  it.n = sub(it.n)
   var iterCall = Item(n: it.n, typ: c.types.autoType)
   let callInfo = iterCall.n.info
   let beforeCall = dest.len
   semExpr c, dest, iterCall, {PreferIterators, KeepMagics}
   it.n = iterCall.n
-  if tryForLoopPlugin(c, dest, it, beforeCall, info, iterCall.typ, forScope):
+  if tryForLoopPlugin(c, dest, it, beforeCall, info, iterCall.typ, orig):
     return
   var isMacroLike = false
   if dest[beforeCall].exprKind == ErrX:
@@ -3009,7 +3014,7 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
     for tok in beforeCall ..< dest.len: callBuf.addRaw dest[tok]
     dest.shrink beforeCall-1
     var call = beginRead(callBuf)
-    semForFields c, dest, it, call, orig, forScope
+    semForFields c, dest, it, call, orig
     return
   elif iterCall.typ.typeKind == UntypedT or
       # for iterators from concepts in generic context:
@@ -3094,7 +3099,7 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
       dec c.routine.inLoop
 
   dest.addParRi(it.n.endInfo)
-  leaveScope(it.n, forScope)
+  it.n = orig; skip it.n
   producesNoReturn c, dest, info, it.typ
 
 proc semReturn(c: var SemContext; dest: var TokenBuf; it: var Item) =
@@ -3260,12 +3265,13 @@ proc semDelay(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeExpr = dest.len
   let expected = it.typ
   let info = it.n.info
-  let delayScope = enterScope(it.n)  # skip (delay tag (always DelayX from addFn)
+  let delayStart = it.n  # skip (delay tag (always DelayX from addFn)
+  it.n = sub(it.n)
   if not it.n.hasMore:
     # delay() no-arg form: produces (delay0)
     dest.addParLe(Delay0X, info)
     dest.addParRi()
-    leaveScope(it.n, delayScope)
+    it.n = delayStart; skip it.n
   elif it.n.exprKind in CallKinds:
     # delay(call) form: produce (delay fn args)
     dest.addParLe(DelayX, info)
@@ -3273,11 +3279,11 @@ proc semDelay(c: var SemContext; dest: var TokenBuf; it: var Item) =
       while it.n.hasMore:
         takeTree dest, it.n            # copy fn and args verbatim (already semchecked)
     dest.addParRi()
-    leaveScope(it.n, delayScope)       # skip outer delay's )
+    it.n = delayStart; skip it.n       # skip outer delay's )
   else:
     buildErr c, dest, it.n.info, "`delay` takes a call expression or no argument"
     skip it.n
-    leaveScope(it.n, delayScope)
+    it.n = delayStart; skip it.n
   it.typ = c.types.continuationType
   commonType c, dest, it, beforeExpr, expected
 
@@ -3287,15 +3293,16 @@ proc semSuspend(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeExpr = dest.len
   let expected = it.typ
   let info = it.n.info
-  let suspendScope = enterScope(it.n)  # skip (suspend tag (always SuspendX from addFn)
+  let suspendStart = it.n  # skip (suspend tag (always SuspendX from addFn)
+  it.n = sub(it.n)
   if not it.n.hasMore:
     dest.addParLe(SuspendX, info)
     dest.addParRi()
-    leaveScope(it.n, suspendScope)
+    it.n = suspendStart; skip it.n
   else:
     buildErr c, dest, it.n.info, "`suspend` takes no argument"
     skip it.n
-    leaveScope(it.n, suspendScope)
+    it.n = suspendStart; skip it.n
   it.typ = c.types.continuationType
   commonType c, dest, it, beforeExpr, expected
 
@@ -3343,7 +3350,8 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
   let info = it.n.info
 
   var orig = it.n
-  let bracketScope = enterScope(it.n)
+  let bracketStart = it.n
+  it.n = sub(it.n)
   dest.addParLe(AconstrX, info)
   if not it.n.hasMore:
     # empty array
@@ -3355,11 +3363,11 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
       else:
         buildErr c, dest, info, "empty array needs a specified type"
       dest.addParRi(it.n.endInfo)
-      leaveScope(it.n, bracketScope)
+      it.n = bracketStart; skip it.n
     of ArrayT:
       dest.addSubtree it.typ
       dest.addParRi(it.n.endInfo)
-      leaveScope(it.n, bracketScope)
+      it.n = bracketStart; skip it.n
     of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
        TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, VarargsT,
        StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
@@ -3368,7 +3376,7 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
       # unknown expected type, give empty literal auto type, then match it
       dest.addSubtree c.types.autoType
       dest.addParRi(it.n.endInfo)
-      leaveScope(it.n, bracketScope)
+      it.n = bracketStart; skip it.n
       let expected = it.typ
       it.typ = c.types.autoType
       commonType c, dest, it, exprStart, expected
@@ -3409,7 +3417,7 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
     inc count
   it.n = elem.n
   dest.addParRi(it.n.endInfo)
-  leaveScope(it.n, bracketScope)
+  it.n = bracketStart; skip it.n
   let typeStart = dest.len
   dest.buildTree ArrayT, info:
     dest.addSubtree elem.typ
@@ -3448,7 +3456,8 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
 proc semCurly(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[SemFlag]) =
   let exprStart = dest.len
   let info = it.n.info
-  let curlyScope = enterScope(it.n)
+  let curlyStart = it.n
+  it.n = sub(it.n)
   dest.addParLe(SetconstrX, info)
   if not it.n.hasMore:
     # empty set
@@ -3460,11 +3469,11 @@ proc semCurly(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[Se
       else:
         buildErr c, dest, info, "empty set needs a specified type"
       dest.addParRi(it.n.endInfo)
-      leaveScope(it.n, curlyScope)
+      it.n = curlyStart; skip it.n
     of SetT:
       dest.addSubtree it.typ
       dest.addParRi(it.n.endInfo)
-      leaveScope(it.n, curlyScope)
+      it.n = curlyStart; skip it.n
     of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
        TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
        StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
@@ -3473,7 +3482,7 @@ proc semCurly(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[Se
       # unknown expected type, give empty literal auto type, then match it
       dest.addSubtree c.types.autoType
       dest.addParRi(it.n.endInfo)
-      leaveScope(it.n, curlyScope)
+      it.n = curlyStart; skip it.n
       let expected = it.typ
       it.typ = c.types.autoType
       commonType c, dest, it, exprStart, expected
@@ -3539,7 +3548,7 @@ proc semCurly(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[Se
       c.buildErr dest, elemInfo, "type " & typeToString(elem.typ) & " is too large to be a set element type"
   it.n = elem.n
   dest.addParRi(it.n.endInfo)
-  leaveScope(it.n, curlyScope)
+  it.n = curlyStart; skip it.n
   let typeStart = dest.len
   dest.buildTree SetT, info:
     dest.addSubtree elem.typ
@@ -3605,7 +3614,8 @@ proc semSetConstr(c: var SemContext; dest: var TokenBuf; it: var Item) =
 proc semSuf(c: var SemContext; dest: var TokenBuf, it: var Item) =
   let exprStart = dest.len
   dest.add it.n
-  let sufScope = enterScope(it.n)
+  let sufStart = it.n
+  it.n = sub(it.n)
   var num = Item(n: it.n, typ: c.types.autoType)
   semExpr c, dest, num
   it.n = num.n
@@ -3634,19 +3644,20 @@ proc semSuf(c: var SemContext; dest: var TokenBuf, it: var Item) =
     c.buildErr dest, it.n.info, "unknown suffix: " & pool.strings[it.n.litId]
   takeToken dest, it.n # suffix
   dest.addParRi(it.n.endInfo) # right paren
-  leaveScope(it.n, sufScope)
+  it.n = sufStart; skip it.n
   commonType c, dest, it, exprStart, expected
 
 proc semTup(c: var SemContext; dest: var TokenBuf, it: var Item) =
   let exprStart = dest.len
   let origExpected = it.typ
   dest.add parLeToken(TupconstrX, it.n.info)
-  let tupScope = enterScope(it.n)
+  let tupStart = it.n
+  it.n = sub(it.n)
   if not it.n.hasMore:
     it.typ = c.types.emptyTupleType
     dest.addSubtree it.typ
     dest.addParRi(it.n.endInfo)
-    leaveScope(it.n, tupScope)
+    it.n = tupStart; skip it.n
     commonType c, dest, it, exprStart, origExpected
     return
   let typePos = dest.len
@@ -3696,7 +3707,7 @@ proc semTup(c: var SemContext; dest: var TokenBuf, it: var Item) =
       leaveScope(it.n, kvScope)
       typ.addParRi()
   dest.addParRi(it.n.endInfo)
-  leaveScope(it.n, tupScope)
+  it.n = tupStart; skip it.n
   typ.addParRi()
   let typeStart = dest.len
   var t = typ.cursorAt(0)
@@ -4058,7 +4069,8 @@ proc inferFieldTypes(c: var SemContext; args: Cursor;
   var scan = args
   while scan.hasMore:
     if scan.substructureKind == KvU:
-      let kvScope = enterScope(scan)
+      let kvStart = scan
+      scan = sub(scan)
       let fieldName = takeIdent(scan)
       if fieldName != StrId(0) and fieldTypesByName.hasKey(fieldName):
         var valBuf = createTokenBuf(16)
@@ -4069,7 +4081,7 @@ proc inferFieldTypes(c: var SemContext; args: Cursor;
       else:
         skip scan
       if not scan.hasMore:
-        leaveScope(scan, kvScope)
+        scan = kvStart; skip scan
       else:
         skip scan
     else:
@@ -4148,7 +4160,7 @@ proc inferObjTypeFromFields(c: var SemContext; objTypeSym: SymId;
 
 proc semSumTypeObjConstr(c: var SemContext; dest: var TokenBuf; it: var Item;
                           efldSym: SymId; expected: TypeCursor; info: PackedLineInfo;
-                          oconstrScope: CursorScope) =
+                          oconstrStart: Cursor) =
   let branchInfo = it.n.info
   inc it.n
   var objBuf = createTokenBuf(32)
@@ -4163,7 +4175,7 @@ proc semSumTypeObjConstr(c: var SemContext; dest: var TokenBuf; it: var Item;
     objBuf.addSubtree it.n
     skip it.n
   objBuf.addParRi()
-  leaveScope(it.n, oconstrScope)
+  it.n = oconstrStart; skip it.n
   var objConstr = Item(n: cursorAt(objBuf, 0), typ: expected)
   semObjConstr c, dest, objConstr
   it.typ = objConstr.typ
@@ -4172,7 +4184,8 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
   let exprStart = dest.len
   let expected = it.typ
   let info = it.n.info
-  let oconstrScope = enterScope(it.n)
+  let oconstrStart = it.n
+  it.n = sub(it.n)
   if it.n.kind == Ident:
     block sumTypeCheck:
       let efldSym = findOneofEfld(c, it.n.litId)
@@ -4187,9 +4200,9 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
           if inferredExpected == default(TypeCursor):
             c.buildErr dest, info, "cannot infer generic type for sum type constructor"
             while it.n.hasMore: skip it.n
-            leaveScope(it.n, oconstrScope)
+            it.n = oconstrStart; skip it.n
             return
-        semSumTypeObjConstr(c, dest, it, efldSym, inferredExpected, info, oconstrScope)
+        semSumTypeObjConstr(c, dest, it, efldSym, inferredExpected, info, oconstrStart)
         return
   it.typ = semLocalType(c, dest, it.n)
   dest.shrink exprStart
@@ -4207,18 +4220,18 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
       # includes typevar case
       c.buildErr dest, info, "expected type for object constructor"
       while it.n.hasMore: skip it.n
-      leaveScope(it.n, oconstrScope)
+      it.n = oconstrStart; skip it.n
       return
     objType = decl.objBody
     if objType.typeKind != ObjectT:
       c.buildErr dest, info, "expected object type for object constructor"
       while it.n.hasMore: skip it.n
-      leaveScope(it.n, oconstrScope)
+      it.n = oconstrStart; skip it.n
       return
   else:
     c.buildErr dest, info, "expected type symbol for object constructor"
     while it.n.hasMore: skip it.n
-    leaveScope(it.n, oconstrScope)
+    it.n = oconstrStart; skip it.n
     return
   if decl.isGeneric and invokeArgs == default(Cursor):
     # Generic object without explicit type params — infer from field values:
@@ -4226,7 +4239,7 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
     if inferred == default(TypeCursor):
       c.buildErr dest, info, "cannot infer generic type for object constructor"
       while it.n.hasMore: skip it.n
-      leaveScope(it.n, oconstrScope)
+      it.n = oconstrStart; skip it.n
       return
     it.typ = inferred
     objType = it.typ
@@ -4248,53 +4261,52 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
     else:
       let fieldStart = fieldBuf.len
       fieldBuf.add it.n
-      let kvScope = enterScope(it.n)
-      let fieldInfo = it.n.info
-      let fieldNameCursor = it.n
-      let fieldName = takeIdent(it.n)
-      if fieldName == StrId(0):
-        c.buildErr dest, fieldInfo, "identifier expected for object field"
-        while it.n.hasMore: skip it.n
-      else:
-        # A field is never a free-standing global symbol: it lives in its owning
-        # object type's scope. Always resolve it by name against `decl` (the type
-        # being constructed) rather than trusting a carried field sym via
-        # `tryLoadSym` — a carried sym can be stale (e.g. an earlier instantiation
-        # numbered the field differently than the canonical decl). The Symbol form
-        # means a prior semcheck pass already validated visibility, so bypass the
-        # visibility check in that case.
-        let hasFieldSym = fieldNameCursor.kind == Symbol
-        var field = findObjFieldConsiderVis(c, decl, fieldName, bindings, bypassVis = hasFieldSym)
-        if field.level >= 0:
-          if field.sym in setFieldPositions:
-            c.buildErr dest, fieldInfo, "field already set: " & pool.strings[fieldName]
-            skip it.n
-          else:
-            setFieldPositions[field.sym] = fieldStart
-            if isGenericObj:
-              # do not save generic field sym
-              fieldBuf.add identToken(fieldName, fieldInfo)
-            else:
-              fieldBuf.add symToken(field.sym, fieldInfo)
-            # maybe add inheritance depth too somehow?
-            var val = Item(n: it.n, typ: field.typ)
-            semExpr c, fieldBuf, val
-            it.n = val.n
+      it.n.into:
+        let fieldInfo = it.n.info
+        let fieldNameCursor = it.n
+        let fieldName = takeIdent(it.n)
+        if fieldName == StrId(0):
+          c.buildErr dest, fieldInfo, "identifier expected for object field"
+          while it.n.hasMore: skip it.n
         else:
-          c.buildErr dest, fieldInfo, "undeclared field: '" & pool.strings[fieldName] & "' for type " & typeToString(it.typ)
-          skip it.n
-        if it.n.hasMore:
-          # inheritance level, reuse if field already has a sym, otherwise set a new one
-          if hasFieldSym:
-            takeTree fieldBuf, it.n
+          # A field is never a free-standing global symbol: it lives in its owning
+          # object type's scope. Always resolve it by name against `decl` (the type
+          # being constructed) rather than trusting a carried field sym via
+          # `tryLoadSym` — a carried sym can be stale (e.g. an earlier instantiation
+          # numbered the field differently than the canonical decl). The Symbol form
+          # means a prior semcheck pass already validated visibility, so bypass the
+          # visibility check in that case.
+          let hasFieldSym = fieldNameCursor.kind == Symbol
+          var field = findObjFieldConsiderVis(c, decl, fieldName, bindings, bypassVis = hasFieldSym)
+          if field.level >= 0:
+            if field.sym in setFieldPositions:
+              c.buildErr dest, fieldInfo, "field already set: " & pool.strings[fieldName]
+              skip it.n
+            else:
+              setFieldPositions[field.sym] = fieldStart
+              if isGenericObj:
+                # do not save generic field sym
+                fieldBuf.add identToken(fieldName, fieldInfo)
+              else:
+                fieldBuf.add symToken(field.sym, fieldInfo)
+              # maybe add inheritance depth too somehow?
+              var val = Item(n: it.n, typ: field.typ)
+              semExpr c, fieldBuf, val
+              it.n = val.n
           else:
+            c.buildErr dest, fieldInfo, "undeclared field: '" & pool.strings[fieldName] & "' for type " & typeToString(it.typ)
             skip it.n
-        if not hasFieldSym and field.level > 0:
-          # add inheritance level
-          fieldBuf.addIntLit(field.level, fieldInfo)
-      fieldBuf.addParRi()
-      leaveScope(it.n, kvScope)
-  leaveScope(it.n, oconstrScope)
+          if it.n.hasMore:
+            # inheritance level, reuse if field already has a sym, otherwise set a new one
+            if hasFieldSym:
+              takeTree fieldBuf, it.n
+            else:
+              skip it.n
+          if not hasFieldSym and field.level > 0:
+            # add inheritance level
+            fieldBuf.addIntLit(field.level, fieldInfo)
+        fieldBuf.addParRi()
+  it.n = oconstrStart; skip it.n
   var setFields = initTable[SymId, Cursor]()
   for field, pos in setFieldPositions:
     setFields[field] = cursorAt(fieldBuf, pos)
@@ -4372,7 +4384,8 @@ proc semTupAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let exprStart = dest.len
   let expected = it.typ
   dest.add it.n
-  let tupatScope = enterScope(it.n)
+  let tupatStart = it.n
+  it.n = sub(it.n)
   var tup = Item(n: it.n, typ: c.types.autoType)
   let tupInfo = tup.n.info
   semExpr c, dest, tup
@@ -4384,7 +4397,7 @@ proc semTupAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
       semExpr c, dest, index
       it.n = index.n
       dest.addParRi(it.n.endInfo)
-      leaveScope(it.n, tupatScope)
+      it.n = tupatStart; skip it.n
       it.typ = c.types.untypedType
     else:
       c.buildErr dest, tupInfo, "expected tuple but got: " & typeToString(tupleType)
@@ -4401,7 +4414,7 @@ proc semTupAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
     shrink dest, idxStart
     c.buildErr dest, idxInfo, "must be a constant expression >= 0"
     dest.addParRi(it.n.endInfo)
-    leaveScope(it.n, tupatScope)
+    it.n = tupatStart; skip it.n
   else:
     it.typ = tupleType
     it.typ = sub(it.typ)
@@ -4420,7 +4433,7 @@ proc semTupAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
     if it.typ.hasMore:
       it.typ = getTupleFieldType(it.typ)
     dest.addParRi(it.n.endInfo)
-    leaveScope(it.n, tupatScope)
+    it.n = tupatStart; skip it.n
     commonType c, dest, it, exprStart, expected
 
 proc collectExplicitInstMatches(c: var SemContext; dest: var TokenBuf; syms: Cursor;
@@ -4462,7 +4475,7 @@ proc collectExplicitInstMatches(c: var SemContext; dest: var TokenBuf; syms: Cur
     errInfo = syms.info
 
 proc tryExplicitRoutineInst(c: var SemContext; dest: var TokenBuf; syms: Cursor; it: var Item;
-                            atScope: CursorScope): bool =
+                            atStart: Cursor): bool =
   result = false
   let info = syms.info
   let exprStart = dest.len
@@ -4477,7 +4490,7 @@ proc tryExplicitRoutineInst(c: var SemContext; dest: var TokenBuf; syms: Cursor;
   # keep a physical ParRi sentinel after the args: `matchTypevars` uses it
   # to detect the end of the fragment
   dest.addParRi(argRead.endInfo)
-  leaveScope(argRead, atScope) # close of the (at ...) scope entered by the caller
+  argRead = atStart; skip argRead # close of the (at ...) scope entered by the caller
   swap dest, argBuf
   # XXX investigate this further, seems odd and prevents us from eliminating the swaps:
   let args = cursorAt(argBuf, 0)
@@ -4517,9 +4530,9 @@ proc isSinglePar(n: Cursor): bool =
   result = not n.hasMore
 
 proc tryBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item;
-                         atScope: CursorScope): bool =
-  # it.n is after lhs, at args; `atScope` is the (at ...) scope entered by
-  # the caller — its close is consumed here iff the result is true
+                         atStart: Cursor): bool =
+  # it.n is after lhs, at args; `atStart` is the (at ...) head entered by
+  # the caller — the subtree is skipped past here iff the result is true
   result = false
   if (lhs.n.kind == Symbol and lhs.kind == TypeY and
         isGeneric(getTypeSection(lhs.n.symId))) or
@@ -4531,7 +4544,7 @@ proc tryBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lh
     typeExpr.addSubtree lhs.n
     while it.n.hasMore:
       takeTree typeExpr, it.n
-    leaveScope(it.n, atScope)
+    it.n = atStart; skip it.n
     typeExpr.addParRi()
     var typeItem = Item(n: beginRead(typeExpr), typ: it.typ)
     semLocalTypeExpr c, dest, typeItem
@@ -4544,13 +4557,13 @@ proc tryBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lh
     let res = tryLoadSym(maybeRoutine.symId)
     if res.status == LacksNothing and isRoutine(res.decl.symKind):
       # check for explicit generic routine instantiation
-      result = tryExplicitRoutineInst(c, dest, lhs.n, it, atScope)
+      result = tryExplicitRoutineInst(c, dest, lhs.n, it, atStart)
       if result: return
 
 proc semBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item;
-                         atScope: CursorScope) =
+                         atStart: Cursor) =
   # it.n is after lhs, at args
-  if tryBuiltinSubscript(c, dest, it, lhs, atScope):
+  if tryBuiltinSubscript(c, dest, it, lhs, atStart):
     return
 
   # build call:
@@ -4561,21 +4574,21 @@ proc semBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lh
   while it.n.hasMore:
     callBuf.takeTree it.n
   callBuf.addParRi()
-  leaveScope(it.n, atScope) # close of the (at ...) scope entered by the caller
+  it.n = atStart; skip it.n # close of the (at ...) scope entered by the caller
   var call = Item(n: cursorAt(callBuf, 0), typ: it.typ)
   semCall c, dest, call, {}, SubscriptCall
   it.typ = call.typ
 
 proc semSubscript(c: var SemContext; dest: var TokenBuf; it: var Item) =
-  var n = it.n
-  let atScope = enterScope(n) # skip tag; the close is consumed inside
+  let atStart = it.n          # the (at head; the subtree is skipped past inside
                               # semBuiltinSubscript
+  var n = sub(it.n)           # bounded child over the subscript body
   var lhsBuf = createTokenBuf(4)
   var lhs = Item(n: n, typ: c.types.autoType)
   semExpr c, lhsBuf, lhs, {KeepMagics}
   it.n = lhs.n
   lhs.n = cursorAt(lhsBuf, 0)
-  semBuiltinSubscript(c, dest, it, lhs, atScope)
+  semBuiltinSubscript(c, dest, it, lhs, atStart)
 
 proc semCurlyat(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
@@ -5024,9 +5037,8 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
         producesVoid c, dest, info, it.typ
       of EmitS:
         pragmaGuard c:
-          let emitScope = enterScope(it.n)
-          semEmit c, dest, it
-          leaveScope(it.n, emitScope)
+          it.n.into:
+            semEmit c, dest, it
       of PragmasS:
         if c.phase == SemcheckTopLevelSyms:
           # Extract feature pragmas even in phase1 so that e.g. lenientnils
