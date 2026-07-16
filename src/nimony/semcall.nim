@@ -77,7 +77,7 @@ proc addFn(c: var SemContext; dest: var TokenBuf; fn: FnCandidate; fnOrig: Curso
           # ^ export marker position has a `(`? If so, it is a magic!
           let info = dest[dest.len-1].info
           copyKeepLineInfo dest[dest.len-1], n.load # overwrite the `(call` node with the magic itself
-          n = sub(n) # bound the magic-body walk
+          discard enterScope(n) # bound the magic-body walk
           if n.kind == IntLit:
             if pool.integers[n.intId] == TypedMagic:
               # use type of first param
@@ -543,7 +543,7 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
     if f.typeKind in RoutineTypes:
       skipToParams f
     assert f.substructureKind == ParamsU
-    f = sub(f) # bound the param walk
+    discard enterScope(f) # bound the param walk
     var arg = beginRead(m.args)
     var i = 0
     while arg.hasMore:
@@ -575,13 +575,14 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
           innerCallScope = enterScope(arg)
           takeTree dest, arg
         dest.add arg
-        arg.into:
-          if containsGenericParams(arg):
-            dest.addSubtree instantiateType(c, arg, m.inferred)
-            skip arg
-          else:
-            takeTree dest, arg
-          dest.addParRi(arg.endInfo)
+        let aconstrScope = enterScope(arg)
+        if containsGenericParams(arg):
+          dest.addSubtree instantiateType(c, arg, m.inferred)
+          skip arg
+        else:
+          takeTree dest, arg
+        dest.addParRi(arg.endInfo)
+        leaveScope(arg, aconstrScope)
         if isDoubleCall:
           dest.addParRi(arg.endInfo)
           leaveScope(arg, innerCallScope)
@@ -735,10 +736,11 @@ proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, a
         callScope = enterScope(argToInst)
         takeTree instArgBuf, argToInst # call symbol
       instArgBuf.add argToInst # array constructor tag
-      argToInst.into:
-        instArgBuf.addSubtree instantiateType(c, argToInst, inputMatch.inferred)
-        skip argToInst
-        instArgBuf.addParRi(argToInst.endInfo) # array constructor
+      let aconstrScope = enterScope(argToInst)
+      instArgBuf.addSubtree instantiateType(c, argToInst, inputMatch.inferred)
+      skip argToInst
+      instArgBuf.addParRi(argToInst.endInfo) # array constructor
+      leaveScope(argToInst, aconstrScope)
       if isCall:
         instArgBuf.addParRi(argToInst.endInfo) # call
         leaveScope(argToInst, callScope)
@@ -873,7 +875,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
   var m: seq[Match] = @[]
   if cs.fn.n.exprKind in {OchoiceX, CchoiceX}:
     var f = cs.fn.n
-    f = sub(f) # bound the candidate walk
+    discard enterScope(f) # bound the candidate walk
     while f.hasMore:
       if f.kind == Symbol:
         let sym = f.symId
@@ -949,7 +951,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       if cs.hasNamedArgs:
         cs.args = orderArgs(newMatch, param, csArgsOrig)
       assert param.isParamsTag
-      param = sub(param) # throwaway copy; bounds the walk under vpr
+      discard enterScope(param) # throwaway copy; bounds the walk under vpr
       var ai = 0
       var anyConverters = false
       while param.hasMore:
@@ -1220,8 +1222,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
   cs.fn = Item(n: it.n, typ: c.types.autoType)
   var argIndexes: seq[int] = @[]
   if cs.fn.n.exprKind == AtX:
-    let atStart = cs.fn.n
-    cs.fn.n = sub(cs.fn.n) # skip tag
+    let atScope = enterScope(cs.fn.n) # skip tag
     var lhsBuf = createTokenBuf(4)
     var lhs = Item(n: cs.fn.n, typ: c.types.autoType)
     semExpr c, lhsBuf, lhs, {KeepMagics, AllowUndeclared} # don't consider all overloads
@@ -1245,7 +1246,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       while cs.fn.n.hasMore:
         semLocalTypeImpl c, dest, cs.fn.n, AllowValues
       dest.addParRi(cs.fn.n.endInfo)
-      cs.fn.n = atStart; skip cs.fn.n
+      leaveScope(cs.fn.n, atScope)
       swap dest, cs.genericDest
       it.n = cs.fn.n
       dest.addSubtree lhs.n
@@ -1253,7 +1254,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       cs.fn.kind = lhs.kind
       cs.fnName = getFnIdent(c, dest)
     if not cs.hasGenericArgs:
-      semBuiltinSubscript(c, dest, cs.fn, lhs, atStart)
+      semBuiltinSubscript(c, dest, cs.fn, lhs, atScope)
       cs.fnName = getFnIdent(c, dest)
       it.n = cs.fn.n
   elif cs.fn.n.exprKind == DotX:
