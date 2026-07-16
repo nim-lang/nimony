@@ -674,8 +674,7 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
             if n.hasMore:
               skip n
               if n.hasMore: skip n
-      copyIntoKind dest, RefT, info:
-        dest.addSymUse pool.syms.getOrIncl(BareRootObjName), info
+      addRootRef dest, info
   else:
     let isProctypeInput = n.typeKind == ProctypeT
     takeInto dest, n:
@@ -896,7 +895,6 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let callNode = n  # the call node itself
   let callStart = n
   n = sub(n)
-  let fn = n
   let typ = c.typeCache.getType(n, {SkipAliases})
   let isStatic = n.kind == Symbol and isStaticCall(c, n.symId)
   # A closure iter-value call target type can appear here in two guises:
@@ -918,14 +916,30 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
                    isClosure(typ) or isLiftedClosureTuple(typ)
   var tmp = SymId(0)
   var needNilCheck = false
+  var addTmpVar = false
   if wantsEnv:
     if isStatic:
       dest.add callNode
       # do not produce a tuple:
       dest.add n
       inc n
-    elif n.kind == Symbol:
-      tmp = n.symId
+    else:
+      if n.kind == Symbol:
+        tmp = n.symId
+        inc n
+      else:
+        addTmpVar = true
+        dest.addParLe(ExprX, info)
+        copyIntoKind dest, StmtsS, info:
+          tmp = pool.syms.getOrIncl("`llTemp." & $c.counter)
+          inc c.counter
+          copyIntoKind dest, VarS, info:
+            dest.addSymDef tmp, info
+            dest.addDotToken() # no export marker
+            dest.addDotToken() # no pragmas
+            var t = typ
+            tre c, dest, t
+            tre c, dest, n # value
       needNilCheck = true
       dest.addParLe IfS, info
       dest.addParLe ElifU, info
@@ -941,28 +955,13 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addParPair NilX, info
       dest.add callNode
       copyIntoKind dest, TupatX, info:
-        #tre c, dest, n
-        takeToken dest, n
+        dest.addSymUse tmp, info
         dest.addIntLit 0, info
-    else:
-      dest.add callNode
-      dest.addParLe(ExprX, info)
-      copyIntoKind dest, StmtsS, info:
-        tmp = pool.syms.getOrIncl("`llTemp." & $c.counter)
-        inc c.counter
-        copyIntoKind dest, VarS, info:
-          dest.addSymDef tmp, info
-          dest.addDotToken() # no export marker
-          dest.addDotToken() # no pragmas
-          var t = typ
-          tre c, dest, t
-          tre c, dest, n # value
-      dest.addSymUse tmp, info
-      dest.addParRi() # ExprX
   else:
     dest.add callNode
     if isStatic:
       takeToken dest, n
+  let firstArg = n
   while n.hasMore:
     tre(c, dest, n)
   if wantsEnv:
@@ -988,16 +987,18 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addParRi() # end of ElifU
     copyIntoKind dest, ElseU, info:
       dest.add callNode
-      var n2 = fn
       copyIntoKind dest, CastX, info:
         c.toNonClosureProcType dest, typ
         copyIntoKind dest, TupatX, info:
-          takeToken dest, n2
+          dest.addSymUse tmp, info
           dest.addIntLit 0, info
+      var n2 = firstArg
       while n2.hasMore:
         tre(c, dest, n2)
       dest.addParRi() # end of call
     dest.addParRi() # end of IfS
+    if addTmpVar:
+      dest.addParRi() # end of ExprX
 
 proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
   var n = n
