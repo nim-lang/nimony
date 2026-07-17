@@ -2,7 +2,10 @@
   (rule (IF (add T X 0))               (DO X))
   (rule (IF (add T 0 X))               (DO X))
   (rule (IF (sub T X 0))               (DO X))
-  (rule (IF (sub T X (same X)))        (DO 0))
+  (rule
+    (IF (sub T (pure X) (same X)))
+    (WHEN (isIntT T))
+    (DO 0))
   (rule (IF (mul T X 1))               (DO X))
   (rule (IF (mul T 1 X))               (DO X))
   (rule (IF (mul T (pure X) 0))        (DO 0))
@@ -11,8 +14,4 @@
   (rule (IF (or (false) X))            (DO X))
   (rule (IF (not (not X)))             (DO X))
   (rule (IF (deref (addr X)))          (DO X))
-  (rule
-    (IF (mul T X (int K)))
-    (WHEN (isPow2 K))
-    (DO (shl T X (int K))))
 )
