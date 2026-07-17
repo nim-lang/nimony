@@ -655,7 +655,7 @@ proc sharedObjDir(): string =
   ## pragmas (currently just `vendor/mimalloc/src/static.c`). These TUs don't
   ## depend on per-project state, so compiling them once and reusing the .o
   ## across nimcaches saves ~4-5 s per cold build on Windows.
-  result = parentDir(stdlibDir()) / "nimcache_static"
+  result = getCacheDir("nimony") / "nimcache_static"
 
 proc sharedObjFile(cfile: CFile): string =
   sharedObjDir() / cfile.obj
