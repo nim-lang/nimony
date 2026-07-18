@@ -360,7 +360,8 @@ type
 
 proc untypedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv; mode=WantValue)
   {.ensuresNif: addedExpr(dest).} =
-  assert env.s != SymId(0)
+  if env.s == SymId(0):
+    bug "lambdalifting untypedEnv: no environment in scope at " & infoToStr(info)
   case env.mode
   of EnvIsLocal:
     dest.copyIntoKind CastX, info:
@@ -383,7 +384,8 @@ proc untypedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv; mode=
 
 proc typedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv)
   {.ensuresNif: addedExpr(dest).} =
-  assert env.s != SymId(0)
+  if env.s == SymId(0):
+    bug "lambdalifting typedEnv: no environment in scope at " & infoToStr(info)
   case env.mode
   of EnvIsLocal:
     # the local already has the full type:

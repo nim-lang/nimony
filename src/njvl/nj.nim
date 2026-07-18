@@ -14,7 +14,7 @@ when defined(nimony):
   {.feature: "lenientnils".}
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes]
+import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes, reporters]
 import ".." / hexer / [xelim, mover, passes]
 import njvl_model
 
@@ -395,7 +395,8 @@ type
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
   let info = n.info
   var fnType = skipProcTypeToParams(getType(c.typeCache, n.firstSon))
-  assert isParamsTag(fnType)
+  if not isParamsTag(fnType):
+    bug "njvl trCall: callee type not params at " & infoToStr(info)
   var pragmas = fnType
   skip pragmas
   let retType = pragmas

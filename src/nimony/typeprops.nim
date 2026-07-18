@@ -429,7 +429,7 @@ proc hasRtti*(pragmas: Cursor): bool =
 
 proc getTypeSection*(s: SymId): TypeDecl =
   let res = tryLoadSym(s)
-  assert res.status == LacksNothing
+  assert res.status == LacksNothing, "could not load type declaration: " & pool.syms[s]
   result = asTypeDecl(res.decl)
 
 proc skipDistinct*(n: TypeCursor; isDistinct: var bool): TypeCursor =

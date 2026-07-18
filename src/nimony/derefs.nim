@@ -586,7 +586,8 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   let tt = getType(c.typeCache, n)
   let calleeKind = tt.stmtKind
   let fnType = skipProcTypeToParams(tt.skipModifier)
-  assert fnType.isParamsTag
+  if not fnType.isParamsTag:
+    bug "derefs trCall: callee type not params at " & infoToStr(n.info)
   # Declared here (not up top) so its body can see `fnType`: Nimony resolves
   # template-body identifiers eagerly, so a template referencing a
   # later-declared local fails to self-host.

@@ -12,7 +12,7 @@ when defined(posix):
 
   type
     InAddrScalar* = uint32
-    Sighandler = proc (a: cint) {.noconv.}
+    Sighandler* = proc (a: cint) {.noconv.}
     FileHandle* = cint
     SocketHandle* = cint
 
