@@ -699,7 +699,9 @@ proc compileVariantKey(c: DepContext; cfile: CFile; passC: string): string =
   result.add '\0'
   result.add passC
   result.add '\0'
-  result.add c.passC.join(" ")
+  for i in 0 ..< c.passC.len:
+    if i > 0: result.add ' '
+    result.add c.passC[i]
   result.add '\0'
   result.add cfile.customArgs
 
@@ -709,7 +711,12 @@ proc sharedObjFile(c: DepContext; cfile: CFile; passC: string): string =
   ## a plain build — or a clang and a gcc build — cache DIFFERENT objects instead
   ## of silently clobbering one shared `static.o`.
   let base = splitFile(cfile.name).name
-  let h = toHex(uhash(compileVariantKey(c, cfile, passC)))
+  # local hex formatter: nimony's libc-free strutils has no `toHex`
+  var h = ""
+  var x = uint32(uhash(compileVariantKey(c, cfile, passC)))
+  for _ in 0 ..< 8:
+    h.add "0123456789ABCDEF"[int(x shr 28)]
+    x = x shl 4
   sharedObjDir() / (base & "-" & h & ".o")
 
 proc emitFrontendArgs(b: var Builder; baseDir, commandLineArgs: string) =
