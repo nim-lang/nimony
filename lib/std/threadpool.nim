@@ -231,6 +231,21 @@ proc perror(s: cstring) {.importc, header: "<stdio.h>".}
   ## libc perror — report a residual epoll_ctl failure on stderr (see the
   ## ADD/MOD fallbacks in registerFd/rearmFd).
 
+var cErrno {.importc: "errno", header: "<errno.h>".}: cint
+  ## the C errno, read immediately after a failing epoll_ctl (no intervening libc
+  ## call) to classify the failure.
+var epollErrPerm {.importc: "EPERM", header: "<errno.h>".}: cint
+var epollErrBadFd {.importc: "EBADF", header: "<errno.h>".}: cint
+
+proc fdNotPollable(): bool {.inline.} =
+  ## True when a failed epoll_ctl means the fd is no longer a live pollable
+  ## descriptor we own: EPERM (a non-pollable type — a regular file, e.g. a socket
+  ## fd closed by its transfer and its number reused by one of the process's file
+  ## opens before this arm ran) or EBADF (already closed). Skipping such an fd is
+  ## correct — it carries no real transfer, so not watching it can't stall one —
+  ## and avoids the perror spam under multi-threaded handler resumption.
+  result = cErrno == epollErrPerm or cErrno == epollErrBadFd
+
 proc registerFd*(fd: cint; handler: ptr IoHandler; events: uint32) =
   ## Register fd with the shared I/O instance.
   ## Oneshot semantics: exactly one worker handles each fired event.
@@ -241,12 +256,14 @@ proc registerFd*(fd: cint; handler: ptr IoHandler; events: uint32) =
     var ev = EpollEvent(events: mask)
     ev.data.p = handler
     if epoll_ctl(gIoFd, EPOLL_CTL_ADD, fd, addr ev) == -1:
-      # Concurrent armers can race ADD vs MOD (the slot's `registered` flag is
-      # advisory across workers). ADD on an already-present fd → EEXIST; fall
-      # back to MOD so the fd ends up armed with the current mask instead of
-      # staying a fired (disarmed) oneshot — that stall loses the connection.
-      if epoll_ctl(gIoFd, EPOLL_CTL_MOD, fd, addr ev) == -1:
-        perror("ioring: epoll ADD+MOD both failed")
+      if not fdNotPollable():
+        # Not a stale/non-pollable fd → a genuine ADD-vs-MOD race (the slot's
+        # `registered` flag is advisory across workers). ADD on an already-present
+        # fd → EEXIST; fall back to MOD so the fd ends up armed with the current
+        # mask instead of staying a fired (disarmed) oneshot — that stall loses the
+        # connection. (A regular-file/closed fd is skipped above; MOD can't help it.)
+        if epoll_ctl(gIoFd, EPOLL_CTL_MOD, fd, addr ev) == -1:
+          perror("ioring: epoll ADD+MOD both failed")
   elif hasKqueue:
     var kevs = default array[2, KEvent]
     var n = 0
@@ -277,7 +294,12 @@ proc rearmFd*(fd: cint; handler: ptr IoHandler; events: uint32) =
       # Mirror of registerFd's fallback: MOD on an fd that isn't in the set
       # (ENOENT — e.g. armed-flag set before the racing ADD landed) → ADD.
       if epoll_ctl(gIoFd, EPOLL_CTL_ADD, fd, addr ev) == -1:
-        perror("ioring: epoll MOD+ADD both failed")
+        # Both failed: skip a stale/non-pollable fd silently (a socket fd closed by
+        # its transfer and its number reused by a file open before this re-arm) —
+        # it's no longer a live socket we own, so not watching it can't stall a real
+        # transfer. Only a genuinely unexpected failure is worth reporting.
+        if not fdNotPollable():
+          perror("ioring: epoll MOD+ADD both failed")
   elif hasKqueue:
     var kevs = default array[2, KEvent]
     var n = 0
