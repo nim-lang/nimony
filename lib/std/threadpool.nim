@@ -337,7 +337,7 @@ proc poolPollIo*(timeoutMs: cint): bool =
 
 # --- Worker loop ---
 
-when not defined(windows):
+when defined(useMimalloc):
   proc miCollect(force: bool) {.importc: "mi_collect".}
     ## mimalloc heap collection for the CALLING thread. Continuation-based
     ## scheduling constantly allocates on one worker and frees on another;
@@ -363,7 +363,9 @@ proc workerLoop(arg: pointer) {.nimcall.} =
     #    after a brief idle (~8ms of 1ms polls), plus a hard periodic fallback
     #    so a worker that never goes idle still collects. force=true is what
     #    actually drains the remote list; at this cadence its cost is noise.
-    when not defined(windows):
+    #    (mimalloc-only: the default nimNativeAlloc has its own cross-thread
+    #    free path — measure before assuming it needs an equivalent.)
+    when defined(useMimalloc):
       inc sinceCollect
       if busy:
         idleTicks = 0
