@@ -953,9 +953,11 @@ proc generateBlock(c: Context; cfgPath, rootDir, rootSrcDir: string;
   let cfgDir = cfgPath.parentDir
   result = CfgBegin & "\n"
   # The consuming package's own source dir first, so its modules resolve
-  # without a separate hand-maintained entry.
-  let rootTarget = if rootSrcDir.len > 0: rootDir / rootSrcDir else: rootDir
-  emitPath(result, cfgPathSpecOf(rootTarget, cfgDir), kind)
+  # without a separate hand-maintained entry. A srcDir-less root already
+  # resolves from the compile cwd — emitting "." for it is pure noise
+  # (and tpaths_basic pins the srcDir-only behavior).
+  if rootSrcDir.len > 0:
+    emitPath(result, cfgPathSpecOf(rootDir / rootSrcDir, cfgDir), kind)
   # Then the resolved dependencies, sorted by name for deterministic output.
   var names: seq[string] = @[]
   for k in c.resolved.keys: names.add k
