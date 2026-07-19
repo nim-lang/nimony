@@ -126,6 +126,10 @@ type
 
   Context* = object
     counter*: int
+    nextTemp*: int
+      ## Continues the outer pipeline's xelim temp counter through the
+      ## nested per-coroutine njvl runs (treIteratorBody) — restarting at
+      ## 0 re-mints `x.N SymIds that collide with still-live outer temps.
     typeCache*: TypeCache
     thisModuleSuffix*: string
     procStack*: seq[SymId]
@@ -1296,8 +1300,10 @@ proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: 
   wrapper.addParLe StmtsS, NoLineInfo
   wrapper.copyTree iter
   wrapper.addParRi()
-  var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "eliminateJumps", 0)
+  var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "eliminateJumps", 0,
+                      nextTemp = c.nextTemp)
   eliminateJumps(pass, raisesResolved = true)
+  c.nextTemp = pass.nextTemp
   block extractBody:
     var wholeResult = ensureMove(pass.dest)
     var nExt = beginRead(wholeResult)

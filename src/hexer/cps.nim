@@ -406,7 +406,7 @@ proc transformToCps*(pass: var Pass) =
   var c = Context(thisModuleSuffix: pass.moduleSuffix,
     typeCache: createTypeCache(), coroTypes: createTokenBuf(10),
     continuationProcImpl: generateContinuationProcImpl(),
-    hooks: passiveHooks())
+    hooks: passiveHooks(), nextTemp: pass.nextTemp)
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS
   c.coroTypes.add n.load() # the `(stmts` open tag
@@ -421,6 +421,7 @@ proc transformToCps*(pass: var Pass) =
     c.coroTypes.add pass.dest # concat coroTypes and other statements
     c.coroTypes.addParRi() # close the root; its source ParRi may be elided
   swap c.coroTypes, pass.dest
+  pass.nextTemp = c.nextTemp
   c.typeCache.closeScope()
 
 when isMainModule:

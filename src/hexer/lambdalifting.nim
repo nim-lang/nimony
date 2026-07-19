@@ -1290,7 +1290,8 @@ proc elimLambdas*(pass: var Pass) =
     typeCache: createTypeCache(),   # placeholder; swapped with c.typeCache per call
     coroTypes: createTokenBuf(10),
     continuationProcImpl: coro_transform.generateContinuationProcImpl(),
-    hooks: lambdaHooks()
+    hooks: lambdaHooks(),
+    nextTemp: pass.nextTemp         # nested njvl runs continue the xelim counter
   )
   c.typeCache.openScope()
   tr c, pass.dest, n
@@ -1336,6 +1337,7 @@ proc elimLambdas*(pass: var Pass) =
       pass.dest.add stmtsBuf
       pass.dest.addParRi(n2.endInfo)
     endRead(oldDest)
+    pass.nextTemp = c.coroCtx.nextTemp
     c.typeCache.closeScope()
 
   #echo "PRODUCED ", toString(pass.dest, false)
