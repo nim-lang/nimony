@@ -163,34 +163,23 @@ proc onConceptDeclSem*(c: var SemContext; ownerSym: SymId; dest: var TokenBuf; c
 
 proc hashTypeCursor(n: Cursor): Hash =
   var h: Hash = 0
-  var nested = 0
-  var c = n
-  while nested >= 0:
-    case c.kind
-    of Symbol:
-      h = h !& Hash(c.symId.int)
-      inc c
-    of ParLe:
-      h = h !& Hash(c.tagId.int)
-      inc nested
-      inc c
-    of ParRi:
-      inc c
-      dec nested
-    of Ident, StringLit:
-      h = h !& Hash(c.litId.int)
-      inc c
-    of IntLit, InlineInt:
-      h = h !& Hash(c.intId.int)
-      inc c
-    of FloatLit:
-      h = h !& Hash(c.floatId.int)
-      inc c
-    else:
-      h = h !& Hash(ord(c.kind))
-      inc c
-    if nested == 0:
-      break
+  case n.kind
+  of Symbol:
+    h = h !& Hash(n.symId.int)
+  of ParLe:
+    h = h !& Hash(n.tagId.int)
+    var child = sub(n)
+    while hasMore(child):
+      h = h !& hashTypeCursor(child)
+      skip child
+  of Ident, StringLit:
+    h = h !& Hash(n.litId.int)
+  of IntLit, InlineInt:
+    h = h !& Hash(n.intId.int)
+  of FloatLit:
+    h = h !& Hash(n.floatId.int)
+  else:
+    h = h !& Hash(ord(n.kind))
   result = h
 
 proc conceptTypeKey*(a: Cursor): ConceptTypeKey =
@@ -214,25 +203,18 @@ proc isOpenTypevar*(a: Cursor): bool =
   false
 
 proc hasOpenTypevarDeep(a: Cursor): bool =
-  var nested = 0
-  var c = a
-  while nested >= 0:
-    if c.kind == Symbol:
-      let res = tryLoadSym(c.symId)
-      if res.status == LacksNothing and res.decl.symKind == TypevarY:
+  case a.kind
+  of Symbol:
+    isOpenTypevar(a)
+  of ParLe:
+    var child = sub(a)
+    while hasMore(child):
+      if hasOpenTypevarDeep(child):
         return true
-      inc c
-    elif c.kind == ParLe:
-      inc nested
-      inc c
-    elif c.kind == ParRi:
-      dec nested
-      inc c
-    else:
-      inc c
-    if nested == 0:
-      break
-  false
+      skip child
+    false
+  else:
+    false
 
 proc isCacheableConcreteType*(a: Cursor): bool =
   not hasOpenTypevarDeep(a)
