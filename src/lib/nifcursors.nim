@@ -909,6 +909,25 @@ proc shrink*(b: var TokenBuf; newLen: int) =
       b.openTags.setLen b.openTags.len - 1
   b.len = newLen
 
+when defined(virtualParRi):
+  proc insertOpenTag(tags: var seq[int]; value, at: int) =
+    ## Inserts `value` at index `at`, shifting later entries right. Spelled
+    ## out rather than `system.insert` so the call never collides with this
+    ## module's own `insert*` overloads during overload resolution.
+    tags.setLen tags.len + 1
+    for k in countdown(tags.high, at + 1):
+      tags[k] = tags[k-1]
+    tags[at] = value
+
+  proc registerOpenTag(tags: var seq[int]; pos: int) =
+    ## Registers `pos` as a still-open ParLe, keeping `tags` ascending.
+    var at = tags.len
+    for k in 0 ..< tags.len:
+      if tags[k] > pos:
+        at = k
+        break
+    insertOpenTag(tags, pos, at)
+
 proc reopenLastTree*(b: var TokenBuf; pos: int) =
   ## Reopens the finished tree headed by the ParLe at `pos` so that more
   ## children can be appended; close it again with `addParRi`. The tree's
@@ -924,12 +943,7 @@ proc reopenLastTree*(b: var TokenBuf; pos: int) =
     else:
       assert pos + 1 + int(jump(b.data[pos])) == b.len,
         "reopenLastTree: tree does not end the buffer"
-    var insertAt = b.openTags.len
-    for k in 0 ..< b.openTags.len:
-      if b.openTags[k] > pos:
-        insertAt = k
-        break
-    b.openTags.insert(pos, insertAt)
+    registerOpenTag(b.openTags, pos)
   else:
     assert b.data[b.len-1].kind == ParRi, "reopenLastTree: tree does not end the buffer"
     dec b.len
@@ -1006,7 +1020,7 @@ when defined(virtualParRi):
         dest.openTags[k] += n
         if insertAt == dest.openTags.len: insertAt = k
     for k in 0 ..< srcOpenTags.len:
-      dest.openTags.insert(srcOpenTags[k] + pos, insertAt + k)
+      insertOpenTag(dest.openTags, srcOpenTags[k] + pos, insertAt + k)
 
 proc insert*(dest: var TokenBuf; src: openArray[PackedToken]; pos: int) =
   when defined(virtualParRi):
@@ -1171,12 +1185,7 @@ proc replaceWithOpenTag*(dest: var TokenBuf; tag: PackedToken; pos: int) =
   assert tag.kind == ParLe
   replace(dest, fromBuffer([tag]), pos)
   when defined(virtualParRi):
-    var insertAt = dest.openTags.len
-    for k in 0 ..< dest.openTags.len:
-      if dest.openTags[k] > pos:
-        insertAt = k
-        break
-    dest.openTags.insert(pos, insertAt)
+    registerOpenTag(dest.openTags, pos)
 
 proc toString*(b: TokenBuf; produceLineInfo = true): string =
   result = nifstreams.toString(toOpenArray(b.data, 0, b.len-1), produceLineInfo)

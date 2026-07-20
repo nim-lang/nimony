@@ -2224,7 +2224,7 @@ proc handleCmdLine =
 
   of "boot":
     buildNimony()
-    var bootArgs = ""
+    var bootArgs = "-d:virtualParRi"
     if release: bootArgs.add "--opt:speed"
     for a in items(args):
       if bootArgs.len > 0: bootArgs.add ' '
