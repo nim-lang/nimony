@@ -451,17 +451,20 @@ when defined(posix):
   else:
     type Pid* {.importc: "pid_t", header: "<sys/types.h>".} = cint
 
-  # Use plain C `char` so that `char**` lines up with libc's expectation
-  # (Nimony's `cstring` is `NC8*` / unsigned char*, which triggers
-  # `-Wincompatible-pointer-types` on posix_spawn / execvp / execve).
+  # Use plain C `char` so argv/env blocks are `char**`-compatible at call
+  # sites (Nimony's `cstring` is `NC8*` / unsigned char*). For `execve`
+  # itself, emit no local prototype: include `nim_execve.h` instead so the
+  # declaration matches glibc's builtin (`const char*`, `char *const*`).
   type CChar* {.importc: "char", nodecl.} = int8
   type CCharArray* = nil ptr UncheckedArray[nil ptr CChar]
 
   when defined(nimNativeIo):
+    {.passC: "-Ilib/std/posix".}
     proc pipe*(a: ptr cint): cint {.importc: "pipe", sideEffect.}
     proc dup2*(oldfd, newfd: cint): cint {.importc: "dup2", sideEffect.}
     proc fork*(): Pid {.importc: "fork", sideEffect.}
-    proc execve*(path: cstring; argv, env: CCharArray): cint {.importc: "execve", sideEffect.}
+    proc execve*(path: cstring; argv, env: CCharArray): cint {.
+      importc: "execve", header: "nim_execve.h", sideEffect.}
     # `execvp` is defined below as a native wrapper (it is NOT a syscall — it is
     # libc's PATH-resolving layer over `execve`); see after `posix_environ`.
     # There is no `waitpid` Linux syscall — it is libc sugar for `wait4` with a NULL
@@ -469,9 +472,8 @@ when defined(posix):
     # `wait4` directly and pass `rusage = nil` ourselves, keeping the 3-arg `waitpid`
     # signature the rest of the code (and the libc path) expects.
     # No `<sys/wait.h>` header (strip it like mkdir/rmdir/unlink above): on Linux it
-    # transitively pulls `<unistd.h>`, whose `execve(const char*, char* const*, ...)`
-    # prototype conflicts with our bare `execve` binding. The status decoders and
-    # `WNOHANG`/`WCONTINUED` are all self-defined, so the header buys us nothing.
+    # transitively pulls `<unistd.h>`. The status decoders and `WNOHANG`/`WCONTINUED`
+    # are all self-defined, so the header buys us nothing for wait4.
     proc wait4(pid: Pid; status: var cint; options: cint;
                rusage: nil pointer): Pid {.importc: "wait4", sideEffect.}
     proc waitpid*(pid: Pid; status: var cint; options: cint): Pid {.inline.} =
