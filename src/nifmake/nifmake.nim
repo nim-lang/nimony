@@ -9,7 +9,7 @@
 ## by a .nif file or it can translate this file to a Makefile.
 
 import std/[assertions, os, strutils, sequtils, tables, hashes, times, monotimes, sets, parseopt, syncio, osproc, algorithm, terminal]
-import ".." / lib / [bitabs, lineinfos, nifreader, tooldirs, argsfinder, vfs, nifcursors, nifstreams]
+import ".." / lib / [bitabs, lineinfos, nifreader, tooldirs, argsfinder, vfs, nifcursors, nifstreams, nimversion]
 
 # Inspired by https://gittup.org/tup/build_system_rules_and_algorithms.pdf
 #[
@@ -692,9 +692,6 @@ Examples:
   nifmake --makefile build.mk makefile build.nif
 """
   quit(0)
-
-const
-  Version = slurp("../../doc/version.md")
 
 proc writeVersion() =
   echo "nifmake " & Version

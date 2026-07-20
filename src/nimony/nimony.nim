@@ -17,7 +17,7 @@ when defined(nimony):
   {.feature: "lenientnils".}
   {.feature: "untyped".}
 import std / [parseopt, sets, strutils, os, assertions, syncio, dirs, paths]
-import ".." / lib / [tooldirs, argsfinder]
+import ".." / lib / [tooldirs, argsfinder, nimversion]
 
 import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
@@ -32,7 +32,6 @@ template makeDir(p: string) =
     onRaiseQuit createDir(Path(p))
 
 const
-  Version = slurp("../../doc/version.md")
   Usage = "Nimony Compiler. Version " & Version & """
 
   (c) 2024-2025 Andreas Rumpf

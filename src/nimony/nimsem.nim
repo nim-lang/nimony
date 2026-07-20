@@ -10,12 +10,11 @@ import std / [parseopt, sets, strutils, os, assertions, syncio]
 
 import ".." / gear2 / modnames
 import ".." / lib / [argsfinder, symparser, nifcursors, nifstreams, nifreader,
-                     nifbuilder, nifindexes, tooldirs, vfs]
+                     nifbuilder, nifindexes, tooldirs, vfs, nimversion]
 import semmain, sem, nifconfig, semos, semdata, indexgen, programs,
        derefs, deps, idetools, cli, langmodes
 
 const
-  Version = slurp("../../doc/version.md")
   Usage = "Nimsem Semantic Checker. Version " & Version & """
 
   (c) 2024-2025 Andreas Rumpf

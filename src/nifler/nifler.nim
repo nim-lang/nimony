@@ -9,12 +9,11 @@
 
 import std / [parseopt, strutils, os, assertions, times]
 import bridge, configcmd
-import ".." / lib / vfs
+import ".." / lib / [vfs, nimversion]
 
 include ".." / lib / compat2
 
 const
-  Version = slurp("../../doc/version.md")
   Usage = "Nifler - Tools related to NIF. Version " & Version & """
 
   (c) 2024 Andreas Rumpf
