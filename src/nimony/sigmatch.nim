@@ -10,7 +10,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 
 import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes, renderer, asthelpers,
-  features, symtabs, sigconcepts, expreval, staticmatches
+  features, symtabs, sigconcepts, conceptcache, expreval, staticmatches
 import ".." / lib / symparser
 import ".." / models / tags
 

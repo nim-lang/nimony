@@ -15,11 +15,6 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 
 import nimony_model, decls, programs, semdata, typeprops, features, symtabs, conceptcache
-
-export conceptcache.tryBodyCheckFromCache, tryRoutineImplFromCache, tryCandidatesFromCache,
-  tryMissingFromBodyCache, getConceptMetadata, conceptRequirementSym, isOpenTypevar,
-  ConceptBodyResult, ConceptRoutineImplResult, storeBodyCheck, storeRoutineImpl,
-  storeCandidates, bodyResultFromMissing
 import ".." / lib / symparser
 
 proc isConceptType*(a: Cursor): bool {.inline.} =
