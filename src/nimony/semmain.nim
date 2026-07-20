@@ -697,7 +697,6 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
       writeOutput modules[i].c, modules[i].dest, modules[i].outfile
     else:
       quit 1
-  printConceptProfile()
 
 proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFlags: set[ModuleFlag];
                commandLineArgs: sink string; canSelfExec: bool) =
@@ -734,4 +733,3 @@ proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFla
     writeOutput c, dest, outfile
   else:
     quit 1
-  printConceptProfile()

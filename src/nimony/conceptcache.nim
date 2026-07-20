@@ -56,34 +56,6 @@ type
     candidatesCacheOrder*: seq[CandidatesCacheKey]
     metadata*: Table[SymId, ConceptMetadata]
 
-when defined(nimonyProfileConcepts):
-  var
-    conceptBodyChecks* = 0
-    conceptBodyCacheHits* = 0
-    conceptRoutineAvailableCalls* = 0
-    conceptRoutineImplCacheHits* = 0
-    conceptCandidateScans* = 0
-    conceptCandidateCacheHits* = 0
-    matchConceptRoutineSigCalls* = 0
-
-  proc printConceptProfile*() =
-    echo "concept profile:"
-    echo "  body_checks=", conceptBodyChecks, " body_cache_hits=", conceptBodyCacheHits
-    echo "  routine_available=", conceptRoutineAvailableCalls,
-         " routine_impl_hits=", conceptRoutineImplCacheHits
-    echo "  candidate_scans=", conceptCandidateScans,
-         " candidate_cache_hits=", conceptCandidateCacheHits
-    echo "  sig_match_calls=", matchConceptRoutineSigCalls
-else:
-  template conceptBodyChecks*() = discard
-  template conceptBodyCacheHits*() = discard
-  template conceptRoutineAvailableCalls*() = discard
-  template conceptRoutineImplCacheHits*() = discard
-  template conceptCandidateScans*() = discard
-  template conceptCandidateCacheHits*() = discard
-  template matchConceptRoutineSigCalls*() = discard
-  template printConceptProfile*() = discard
-
 proc `==`*(a, b: ConceptTypeKey): bool {.inline, noSideEffect.} =
   a.root == b.root and a.aux == b.aux
 
@@ -376,7 +348,6 @@ proc tryBodyCheckFromCache*(c: ptr SemContext; conceptSym: SymId; a: Cursor): (b
   let key = bodyCacheKey(conceptSym, a)
   if not cache.bodyCache.hasKey(key):
     return (false, default(ConceptBodyResult))
-  conceptBodyCacheHits()
   lruTouchBody(cache.bodyCacheOrder, key)
   (true, cache.bodyCache.getOrDefault(key))
 
@@ -395,7 +366,6 @@ proc tryRoutineImplFromCache*(c: ptr SemContext; conceptSym, reqSym: SymId; a: C
   let key = routineImplCacheKey(conceptSym, reqSym, a)
   if not cache.routineImplCache.hasKey(key):
     return (false, default(ConceptRoutineImplResult))
-  conceptRoutineImplCacheHits()
   lruTouchRoutine(cache.routineImplCacheOrder, key)
   (true, cache.routineImplCache.getOrDefault(key))
 
@@ -421,7 +391,6 @@ proc tryMissingFromBodyCache*(c: ptr SemContext; conceptSym: SymId; a: Cursor;
   let key = bodyCacheKey(conceptSym, a)
   if not cache.bodyCache.hasKey(key):
     return false
-  conceptBodyCacheHits()
   lruTouchBody(cache.bodyCacheOrder, key)
   let cached = cache.bodyCache.getOrDefault(key)
   if not cached.satisfied and cached.missing.len == 0:
@@ -449,6 +418,5 @@ proc tryCandidatesFromCache*(c: ptr SemContext; conceptSym: SymId; basename: Str
   let key = CandidatesCacheKey(conceptSym: conceptSym, basename: basename)
   if not cache.candidatesCache.hasKey(key):
     return (false, default(seq[SymId]))
-  conceptCandidateCacheHits()
   lruTouchCandidates(cache.candidatesCacheOrder, key)
   (true, cache.candidatesCache.getOrDefault(key))

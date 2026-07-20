@@ -712,7 +712,6 @@ proc matchConceptParamTypes(m: var Match; conceptTyp, implTyp: Cursor): bool =
   false
 
 proc matchConceptRoutineSig(m: var Match; conceptR, implR: Cursor): bool =
-  matchConceptRoutineSigCalls()
   if not conceptRoutineKindsCompatible(conceptR.symKind, implR.symKind, implR):
     return false
   var cf = conceptR
@@ -787,7 +786,6 @@ proc conceptRoutineAvailableCore(m: var Match; conceptSym: SymId; body: Cursor; 
   ConceptRoutineImplResult(found: false)
 
 proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; routine: Cursor; a: Cursor; actualBody: Cursor): bool =
-  conceptRoutineAvailableCalls()
   if m.context == nil:
     return true
   if isConceptType(a):
@@ -890,7 +888,6 @@ proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor):
   let (hit, cached) = tryBodyCheckFromCache(m.context, conceptSym, a)
   if hit:
     return cached.satisfied
-  conceptBodyChecks()
   let res = matchConceptBodyCore(m, conceptSym, body, a)
   storeBodyCheck(m.context, conceptSym, a, res)
   res.satisfied

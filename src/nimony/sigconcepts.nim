@@ -18,9 +18,8 @@ import nimony_model, decls, programs, semdata, typeprops, features, symtabs, con
 
 export conceptcache.tryBodyCheckFromCache, tryRoutineImplFromCache, tryCandidatesFromCache,
   tryMissingFromBodyCache, getConceptMetadata, conceptRequirementSym, isOpenTypevar,
-  ConceptBodyResult, ConceptRoutineImplResult, matchConceptRoutineSigCalls,
-  conceptRoutineAvailableCalls, storeBodyCheck, storeRoutineImpl, storeCandidates,
-  bodyResultFromMissing, conceptBodyChecks
+  ConceptBodyResult, ConceptRoutineImplResult, storeBodyCheck, storeRoutineImpl,
+  storeCandidates, bodyResultFromMissing
 import ".." / lib / symparser
 
 proc isConceptType*(a: Cursor): bool {.inline.} =
@@ -139,7 +138,6 @@ proc collectConceptRoutineCandidates*(c: ptr SemContext; conceptSym: SymId; base
   let (hit, cached) = tryCandidatesFromCache(c, conceptSym, basename)
   if hit:
     return cached
-  conceptCandidateScans()
   result = default(seq[SymId])
   for cand in conceptRoutineCandidates(c, conceptSym, basename):
     result.add cand
