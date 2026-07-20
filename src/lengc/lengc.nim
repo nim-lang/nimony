@@ -14,11 +14,11 @@ import codegen, llvmcodegen          # nifcore backends (local to shoggoth/)
 import noptions
 import ".." / lib / symparser
 import ".." / lib / vfs
+import ".." / lib / nimversion
 
 include ".." / lib / compat2
 
 const
-  Version = slurp("../../doc/version.md")
   Usage = "Leng Compiler. Version " & Version & """
 
   (c) 2024 Andreas Rumpf
