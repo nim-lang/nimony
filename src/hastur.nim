@@ -843,7 +843,7 @@ proc categoryOf(path: string): Category =
   ## (or, for a not-yet-existing `record` destination, its parent directory).
   categoryOfDir(if dirExists(path): path else: path.parentDir)
 
-# The general test-tree runner is `walkTests`/`walkRoots` further below; the
+# The general test-tree runner is `collectTests`/`walkRoots` further below; the
 # old per-suite `nimonytests`/`exampletests` drivers folded into it.
 
 # ── native-backend regression set ────────────────────────────────────────────
@@ -2084,7 +2084,20 @@ proc runSetupNimDir(c: var TestCounters; dir, forward: string; overwrite: bool) 
   if execShellCmd(cmd) != 0:
     inc c.failures
 
-proc walkTests(c: var TestCounters; dir, forward: string; overwrite, isRoot: bool) =
+type WalkPlan = object
+  ## Accumulated during the tree walk so the run phase can drive ONE
+  ## saturated parallel pool instead of one pool per directory. The old
+  ## walk ran each leaf directory to completion before starting the next,
+  ## so every directory boundary was a hard pool barrier (N-1 cores idle on
+  ## its tail test) plus a fresh `warmupSharedCache` spawn. Flattening every
+  ## parallel-safe file into a single queue pays warmup/prebuild once and
+  ## keeps the pool full across the whole run — the win is largest where
+  ## process spawns are expensive (Windows CI).
+  parFiles: seq[string]              # parallel-safe test files, flattened
+  serialDirs: seq[(string, Category)] # dirs that must run serially (see below)
+
+proc collectTests(c: var TestCounters; plan: var WalkPlan; dir, forward: string;
+                  overwrite, isRoot: bool) =
   # `hastur.mode = skip` excludes a directory from the sweep, but only when the
   # walk *descends* into it — pointing hastur straight at it (isRoot) still
   # runs it. That's how a WIP/known-broken suite (e.g. dagon) stays out of the
@@ -2092,8 +2105,12 @@ proc walkTests(c: var TestCounters; dir, forward: string; overwrite, isRoot: boo
   let cat = categoryOfDir(dir)
   if cat == Skip and not isRoot: return
   if fileExists(dir / "setup.nim"):
+    # A `setup.nim` owns its subtree and runs its own tests right here — it is
+    # a self-contained runner, not part of the shared file pool.
     runSetupNimDir(c, dir, forward, overwrite)
     return
+  # `setup.hastur` prep (e.g. building the toolchain) must precede every test
+  # in its subtree, so it runs during the walk, before the run phase kicks off.
   runSetupHastur(dir)
   var hasNim = false
   var subs: seq[string] = @[]
@@ -2101,15 +2118,23 @@ proc walkTests(c: var TestCounters; dir, forward: string; overwrite, isRoot: boo
     if x.kind == pcFile and x.path.endsWith(".nim"): hasNim = true
     elif x.kind == pcDir: subs.add x.path
   if hasNim:
-    # Leaf test directory: run its own `.nim` files via the flat built-in
-    # runner and do NOT descend. Nested dirs here (`deps/`, `imp/`, `system/`,
-    # …) hold import fixtures pulled in by those tests, not standalone tests —
-    # the old per-category runner never entered them either.
-    testDir(c, dir, overwrite, cat, forward)
+    # Leaf test directory: gather its own `.nim` files and do NOT descend.
+    # Nested dirs here (`deps/`, `imp/`, `system/`, …) hold import fixtures
+    # pulled in by those tests, not standalone tests — the old per-category
+    # runner never entered them either.
+    if parallelJobs > 1 and canRunParallel(cat):
+      for x in walkDir(dir):
+        if x.kind == pcFile and x.path.endsWith(".nim"):
+          plan.parFiles.add x.path
+    else:
+      # `Basics`/`Compat` reset the shared `nimcache/` around their loop and so
+      # cannot share the pool's cache layout; serial (`--jobs:1`) runs keep the
+      # in-process `testFile` path. Either way, defer to a per-dir `testDir`.
+      plan.serialDirs.add (dir, cat)
   else:
     # Pure grouping directory (e.g. `tests/`, `tests/nimony/`): recurse.
     sort subs
-    for s in subs: walkTests(c, s, forward, overwrite, isRoot = false)
+    for s in subs: collectTests(c, plan, s, forward, overwrite, isRoot = false)
 
 proc walkRoots(roots: openArray[string]; forward: string; overwrite: bool) =
   ## Run one or more test trees, accumulating into shared counters and
@@ -2117,9 +2142,21 @@ proc walkRoots(roots: openArray[string]; forward: string; overwrite: bool) =
   ## `tests/` and `examples/`.
   let t0 = epochTime()
   var c = TestCounters(total: 0, failures: 0)
+  var plan = WalkPlan()
   for r in roots:
     if not dirExists(r): quit "FAILURE: not a directory: " & r
-    walkTests(c, r, forward, overwrite, isRoot = true)
+    collectTests(c, plan, r, forward, overwrite, isRoot = true)
+  # Serial suites first: `Basics`/`Compat` wipe the whole `nimcache/`, which
+  # would delete the pool's per-test cache dirs if it ran afterwards. They
+  # finish and reset the cache, then the single flat pool populates it.
+  for (d, cat) in plan.serialDirs:
+    testDir(c, d, overwrite, cat, forward)
+  if plan.parFiles.len > 0:
+    sort plan.parFiles
+    # One saturated pool over every parallel-safe file from every directory.
+    # `parallelTestDir` ignores the `cat` argument (each worker re-derives its
+    # own category from the file's directory), so a mixed-category queue is safe.
+    parallelTestDir(c, plan.parFiles, overwrite, Normal, forward, parallelJobs)
   echo c.total - c.failures, " / ", c.total, " tests successful in ",
     formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0: quit "FAILURE: Some tests failed."
