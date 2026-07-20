@@ -754,7 +754,7 @@ proc restoreConceptSelfInference(m: var Match; selfSyms: seq[SymId];
     if selfSym notin restored:
       m.inferred.del(selfSym)
 
-proc conceptRoutineAvailableCore(m: var Match; conceptSym: SymId; body: Cursor; routine: Cursor; a: Cursor; actualBody: Cursor): ConceptRoutineImplResult =
+proc findConceptRoutineImpl(m: var Match; conceptSym: SymId; body: Cursor; routine: Cursor; a: Cursor; actualBody: Cursor): ConceptRoutineImplResult =
   let selfSyms = conceptSelfSyms(body, routine)
   var savedSelf: seq[(SymId, Cursor)] = @[]
   for selfSym in selfSyms:
@@ -794,7 +794,7 @@ proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; rout
   let (hit, cachedImpl) = tryRoutineImplFromCache(m.context, conceptSym, reqSym, a)
   if hit:
     return cachedImpl.found
-  let implRes = conceptRoutineAvailableCore(m, conceptSym, body, routine, a, actualBody)
+  let implRes = findConceptRoutineImpl(m, conceptSym, body, routine, a, actualBody)
   storeRoutineImpl(m.context, conceptSym, reqSym, a, implRes)
   implRes.found
 
@@ -858,7 +858,7 @@ proc constraintMismatchMsg*(m: var Match; constraint, arg: Cursor): string =
         result.add ", "
       result.add asNimCode(routine, {renderNoBody})
 
-proc matchConceptBodyCore(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): ConceptBodyResult =
+proc checkConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): ConceptBodyResult =
   if isOpenTypevar(a):
     return ConceptBodyResult(satisfied: true)
   let actualIsConcept = isConceptType(a)
@@ -888,7 +888,7 @@ proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor):
   let (hit, cached) = tryBodyCheckFromCache(m.context, conceptSym, a)
   if hit:
     return cached.satisfied
-  let res = matchConceptBodyCore(m, conceptSym, body, a)
+  let res = checkConceptBody(m, conceptSym, body, a)
   storeBodyCheck(m.context, conceptSym, a, res)
   res.satisfied
 
