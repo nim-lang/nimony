@@ -648,19 +648,18 @@ proc conceptHasParents*(parents: Cursor): bool =
 
 iterator conceptParentSyms*(parents: Cursor): SymId {.sideEffect.} =
   var p = parents
-  if conceptParentsWellFormed(p):
-    if p.kind == DotToken:
-      discard
-    elif p.kind == Symbol:
-      yield p.symId
-    elif p.typeKind == AndT or p.exprKind == ParX:
-      p.into:
-        while p.hasMore:
-          if p.kind == Symbol:
-            yield p.symId
-          skip p
-    else:
-      bug "illformed concept parents: ", p
+  if not conceptParentsWellFormed(p):
+    bug "illformed concept parents: ", p
+  if p.kind == DotToken:
+    discard
+  elif p.kind == Symbol:
+    yield p.symId
+  elif p.typeKind == AndT or p.exprKind == ParX:
+    p.into:
+      while p.hasMore:
+        if p.kind == Symbol:
+          yield p.symId
+        skip p
 
 proc conceptSelfSlot*(body: Cursor): Cursor =
   result = conceptParentsSlot(body)
