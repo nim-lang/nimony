@@ -1,5 +1,7 @@
 # included in sem.nim
 
+import conceptcache
+
 proc semObjectComponent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
                         state: var SemObjectState) =
   case n.substructureKind
