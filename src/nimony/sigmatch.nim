@@ -881,15 +881,15 @@ proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor):
       let satisfied = a.kind != DotToken
       storeBodyCheck(m.context, conceptSym, a, ConceptBodyResult(satisfied: satisfied))
       return satisfied
-  var result = ConceptBodyResult(satisfied: true)
+  var bodyResult = ConceptBodyResult(satisfied: true)
   for cbody, routine in conceptHierarchyRoutines(body):
     if not conceptRoutineAvailable(m, conceptSym, cbody, routine, a, actualBody):
-      result.satisfied = false
+      bodyResult.satisfied = false
       let rs = conceptRequirementSym(routine)
       if rs != SymId(0):
-        result.missing.add rs
-  storeBodyCheck(m.context, conceptSym, a, result)
-  result.satisfied
+        bodyResult.missing.add rs
+  storeBodyCheck(m.context, conceptSym, a, bodyResult)
+  bodyResult.satisfied
 
 proc isTypevar(s: SymId): bool =
   let res = tryLoadSym(s)
