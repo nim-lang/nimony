@@ -526,7 +526,10 @@ proc semStaticInvokeArg(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     endRead(dest)
   else:
     var value2 = value
-    var folded = evalExpr(c, value2)
+    # `keepEnumFields`: an enum `const` alias folds to its field symbol (the
+    # canonical typed value) instead of collapsing to a bare ordinal, so
+    # `Box[someEnumConst]` canonicalizes like `Box[theLiteralField]`.
+    var folded = evalExpr(c, value2, keepEnumFields = true)
     let f = beginRead(folded)
     endRead(dest)
     if isStaticValue(f):

@@ -35,6 +35,17 @@ const c = blue
 proc viaConst[C: static[Color]](): int = ord(C)
 echo viaConst[c]()            # 2
 
+# --- a `const` in a type position (object field and constructor) ---
+type Box[C: static[Color]] = object
+  holder: Holder[C]
+
+proc makeBox[C: static[Color]](): Box[C] =
+  Box[C](holder: Holder[C](x: 0))
+
+proc boxViaConst(): Box[c] =
+  makeBox[c]()
+discard boxViaConst()
+
 # --- an enum ordinal drives type-level arithmetic ---
 type Buf[C: static[Color]] = object
   data: array[ord(C) + 1, int]
