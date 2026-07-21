@@ -571,6 +571,7 @@ func ln*(x: float64): float64 {.importc: "log".} =
   ## * `log func <#log,T,T>`_
   ## * `log10 func <#log10,float64>`_
   ## * `log2 func <#log2,float64>`_
+  ## * `log1p func <#log1p,float64>`_
   ## * `exp func <#exp,float64>`_
   runnableExamples:
     assert almostEqual(ln(exp(4.0)), 4.0)
@@ -582,9 +583,10 @@ func log2*(x: float64): float64 {.importc: "log2".} =
   ## Computes the binary logarithm (base 2) of `x`.
   ##
   ## **See also:**
+  ## * `ln func <#ln,float64>`_
   ## * `log func <#log,T,T>`_
   ## * `log10 func <#log10,float64>`_
-  ## * `ln func <#ln,float64>`_
+  ## * `log1p func <#log1p,float64>`_
   runnableExamples:
     assert almostEqual(log2(8.0), 3.0)
     assert almostEqual(log2(1.0), 0.0)
@@ -598,10 +600,24 @@ func log10*(x: float64): float64 {.importc: "log10".} =
   ## * `ln func <#ln,float64>`_
   ## * `log func <#log,T,T>`_
   ## * `log2 func <#log2,float64>`_
+  ## * `log1p func <#log1p,float64>`_
   runnableExamples:
     assert almostEqual(log10(100.0) , 2.0)
     assert almostEqual(log10(0.0), -Inf)
     assert log10(-100.0).isNaN
+func log1p*(x: float32): float32 {.importc: "log1pf".}
+func log1p*(x: float64): float64 {.importc: "log1p".} =
+  ## Computes the natural logarithm of `1 + x`.
+  ##
+  ## **See also:**
+  ## * `ln func <#ln,float64>`_
+  ## * `log func <#log,T,T>`_
+  ## * `log10 func <#log10,float64>`_
+  ## * `log2 func <#log2,float64>`_
+  runnableExamples:
+    assert almostEqual(log1p(0.0), 0.0)
+    assert almostEqual(log1p(exp(1.0) - 1.0), 1.0)
+    assert almostEqual(log1p(exp(2.0) - 1.0), 2.0)
 {.pop.}
 
 func log*[T: SomeFloat](x, base: T): T {.untyped.} =
