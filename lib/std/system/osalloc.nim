@@ -197,8 +197,10 @@ elif defined(windows) and not defined(StandaloneHeapSize):
         rawQuit 1
     #VirtualFree(p, size, MEM_DECOMMIT)
 
-elif hostOS == "standalone" or defined(StandaloneHeapSize):
-  const StandaloneHeapSize {.intdefine.}: int = 1024 * PageSize
+elif defined(standalone) or defined(StandaloneHeapSize):
+  # nimony has no {.intdefine.}; plain const for now (config override can
+  # return as a proper -d: hook when someone needs a different heap size).
+  const StandaloneHeapSize: int = 1024 * PageSize
   var
     theHeap: array[StandaloneHeapSize div sizeof(float64), float64] # 'float64' for alignment
     bumpPointer = cast[int](addr theHeap)
@@ -211,6 +213,7 @@ elif hostOS == "standalone" or defined(StandaloneHeapSize):
       raiseOutOfMem()
 
   proc osTryAllocPages(size: int): pointer {.inline.} =
+    result = nil   # explicit: nimony's init prover rejects the implicit zero
     if size+bumpPointer < cast[int](addr theHeap) + sizeof(theHeap):
       result = cast[pointer](bumpPointer)
       inc bumpPointer, size
