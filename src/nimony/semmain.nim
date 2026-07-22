@@ -115,9 +115,9 @@ proc pruneMatchedForwardDecls(c: var SemContext; dest: var TokenBuf) =
   if c.matchedForwardDecls.len == 0: return
   var i = 0
   while i < dest.len:
-    if readonlyCursorAt(dest, i).kind == OpenTagKind and i + 1 < dest.len and
-        dest[i + 1].kind == SymbolDef and
-        dest[i + 1].symId in c.matchedForwardDecls:
+    if readonlyCursorAt(dest, i).kind == OpenTagKind and
+        childCursor(readonlyCursorAt(dest, i)).isSymbolDef and
+        childCursor(readonlyCursorAt(dest, i)).symId in c.matchedForwardDecls:
       let info = readonlyCursorAt(dest, i).info
       # Overwrite exactly the decl's subtree. `span` is jump-based under
       # `-d:virtualParRi` (the subtree's ParRis are elided, so a raw
@@ -396,7 +396,7 @@ proc fromGeneric(dest: var TokenBuf; i: int): SymId =
 proc findOrigin(dest: var TokenBuf; origin: SymId): int =
   var i = 0
   while i < dest.len:
-    if dest[i].kind == SymbolDef and dest[i].symId == origin:
+    if dest[i].kind == SymbolDef and readonlyCursorAt(dest, i).symId == origin:
       return i-1 # before name
     inc i
   return -1

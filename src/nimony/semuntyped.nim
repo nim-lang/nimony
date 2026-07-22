@@ -445,12 +445,9 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
           dest.addSymUse(firstSym, n.info)
         else:
           assert dest[start].kind == OpenTagKind
-          when defined(useNifcore):
-            var ctok = dest[start]
-            setTag(ctok, TagId(CchoiceX))
-            dest[start] = ctok
-          else:
-            setTag(dest[start], TagId(CchoiceX)) # keeps the sealed jump
+          var ctok = dest[start]
+          setTag(ctok, TagId(CchoiceX))
+          dest[start] = ctok
       elif contains(c.toMixin, n.litId):
         if count == 1:
           dest.shrink start

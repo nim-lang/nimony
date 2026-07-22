@@ -23,35 +23,34 @@ type
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor)
   {.ensuresNif: addedAny(dest).}
 
-when defined(useNifcore):
-  proc wrapDeferScope(dest: var TokenBuf; beforeBody: int;
-                      defers: var seq[TokenBuf]; info: PackedLineInfo) =
-    ## Collect-then-wrap: nifcore's sealed model can't insert unbalanced opens,
-    ## so instead of splicing `(try (stmts` at scope start we take the finished
-    ## body `dest[beforeBody..]`, drop it, and re-emit it wrapped in one nested
-    ## try/finally per defer. `defers` is popped LIFO (defers[0] = last-declared
-    ## = innermost try; defers[^1] = first-declared = outermost) — the exact
-    ## nesting the classic insert path produced.
-    var bodyBuf = createTokenBuf(dest.len - beforeBody + 4)
-    for i in beforeBody ..< dest.len: bodyBuf.addRaw dest[i]
-    dest.shrink beforeBody
-    let m = defers.len
-    for k in countdown(m-1, 0):        # open trys outer -> inner
-      dest.addParLe(TryS, info)
-      dest.addParLe(StmtsS, info)
-    var bc = beginRead(bodyBuf)         # the body inside the innermost stmts
-    while bc.hasMore:
-      dest.addSubtree bc
-      skip bc
-    for k in 0 ..< m:                   # close inner -> outer, each with its finally
-      dest.addParRi()                   # close this try's stmts
-      dest.addParLe(FinU, info)
-      var dc = beginRead(defers[k])
-      while dc.hasMore:
-        dest.addSubtree dc
-        skip dc
-      dest.addParRi()                   # close (fin …)
-      dest.addParRi()                   # close (try …)
+proc wrapDeferScope(dest: var TokenBuf; beforeBody: int;
+                    defers: var seq[TokenBuf]; info: PackedLineInfo) =
+  ## Collect-then-wrap: nifcore's sealed model can't insert unbalanced opens,
+  ## so instead of splicing `(try (stmts` at scope start we take the finished
+  ## body `dest[beforeBody..]`, drop it, and re-emit it wrapped in one nested
+  ## try/finally per defer. `defers` is popped LIFO (defers[0] = last-declared
+  ## = innermost try; defers[^1] = first-declared = outermost) — the exact
+  ## nesting the classic insert path produced.
+  var bodyBuf = createTokenBuf(dest.len - beforeBody + 4)
+  for i in beforeBody ..< dest.len: bodyBuf.addRaw dest[i]
+  dest.shrink beforeBody
+  let m = defers.len
+  for k in countdown(m-1, 0):        # open trys outer -> inner
+    dest.addParLe(TryS, info)
+    dest.addParLe(StmtsS, info)
+  var bc = beginRead(bodyBuf)         # the body inside the innermost stmts
+  while bc.hasMore:
+    dest.addSubtree bc
+    skip bc
+  for k in 0 ..< m:                   # close inner -> outer, each with its finally
+    dest.addParRi()                   # close this try's stmts
+    dest.addParLe(FinU, info)
+    var dc = beginRead(defers[k])
+    while dc.hasMore:
+      dest.addSubtree dc
+      skip dc
+    dest.addParRi()                   # close (fin …)
+    dest.addParRi()                   # close (try …)
 
 proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let beforeBody = dest.len+1
@@ -65,39 +64,22 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     dest.addParLe(StmtsS, n.info)
     trStmt c, dest, n
-  when defined(useNifcore):
-    var defers: seq[TokenBuf] = @[]
-    while c.actionStack.len > 0 and c.actionStack[^1].id == beforeBody:
-      var popped = c.actionStack.pop
-      defers.add ensureMove(popped.action)
-    if defers.len > 0:
-      wrapDeferScope(dest, beforeBody, defers, blockInfo)
-  else:
-    while c.actionStack.len > 0 and c.actionStack[^1].id == beforeBody:
-      let a = c.actionStack.pop
-      dest.add a.action
+  var defers: seq[TokenBuf] = @[]
+  while c.actionStack.len > 0 and c.actionStack[^1].id == beforeBody:
+    var popped = c.actionStack.pop
+    defers.add ensureMove(popped.action)
+  if defers.len > 0:
+    wrapDeferScope(dest, beforeBody, defers, blockInfo)
   dest.addParRi()
   discard c.scopeStack.pop
 
 proc trDefer(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let mine = c.scopeStack[^1]
-  when defined(useNifcore):
-    # capture the (transformed) defer body; the wrap happens at scope end
-    var deferBody = createTokenBuf(50)
-    n.into: # enter (defer
-      trStmt c, deferBody, n
-    c.actionStack.add ActionItem(id: mine, action: ensureMove deferBody)
-  else:
-    dest.insert [parLeToken(TryS, n.info), parLeToken(StmtsS, n.info)], mine
-    var fin = createTokenBuf(50)
-    fin.addParRi() # stmts body from try statement
-    fin.addParLe(FinU, n.info)
-    n.into: # enter (defer
-      trStmt c, fin, n
-    fin.addParRi() # close the finally clause
-    fin.addParRi() # close try statement
-    c.actionStack.add ActionItem(id: mine, action: ensureMove fin)
-
+  # capture the (transformed) defer body; the wrap happens at scope end
+  var deferBody = createTokenBuf(50)
+  n.into: # enter (defer
+    trStmt c, deferBody, n
+  c.actionStack.add ActionItem(id: mine, action: ensureMove deferBody)
 proc trReturn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if c.retSym != NoSymId and not (n.firstSon.isSymbol and n.firstSon.symId == c.retSym):
     # transform to `result = <expr>; return result`, see bug #1440
@@ -219,25 +201,17 @@ proc transformDefer*(dest: var TokenBuf; procBody: int) =
   n.into:
     while n.hasMore:
       trStmt c, buf, n
-  when defined(useNifcore):
-    var defers: seq[TokenBuf] = @[]
-    while c.actionStack.len > 0:
-      var popped = c.actionStack.pop
-      defers.add ensureMove(popped.action)
-    if defers.len > 0:
-      wrapDeferScope(buf, beforeBody, defers, topInfo)
-  else:
-    while c.actionStack.len > 0:
-      let a = c.actionStack.pop
-      buf.add a.action
+  var defers: seq[TokenBuf] = @[]
+  while c.actionStack.len > 0:
+    var popped = c.actionStack.pop
+    defers.add ensureMove(popped.action)
+  if defers.len > 0:
+    wrapDeferScope(buf, beforeBody, defers, topInfo)
   buf.addParRi()
 
   dest.endRead
   dest.shrink procBody
-  when defined(useNifcore):
-    var bc = beginRead(buf)
-    while bc.hasMore:
-      dest.addSubtree bc
-      skip bc
-  else:
-    dest.add buf
+  var bc = beginRead(buf)
+  while bc.hasMore:
+    dest.addSubtree bc
+    skip bc

@@ -75,8 +75,9 @@ proc addFn(c: var SemContext; dest: var TokenBuf; fn: FnCandidate; fnOrig: Curso
           else:
             result = MagicCall
           # ^ export marker position has a `(`? If so, it is a magic!
-          let info = readonlyCursorAt(dest, dest.len-1).info
-          copyKeepLineInfoAt(dest, dest.len-1, n.load) # overwrite the `(call` node with the magic itself
+          let callHeadAt = lastValueStart(dest)
+          let info = readonlyCursorAt(dest, callHeadAt).info
+          copyKeepLineInfoAt(dest, callHeadAt, n.load) # overwrite the `(call` node with the magic itself
           n = sub(n) # bound the magic-body walk
           if n.isIntLit:
             if pool.integers[n.intId] == TypedMagic:
@@ -91,11 +92,7 @@ proc addFn(c: var SemContext; dest: var TokenBuf; fn: FnCandidate; fnOrig: Curso
               if m.inferred.len != 0:
                 paramType = instantiateType(c, paramType, m.inferred)
               removeModifier(paramType)
-              let typeStart = dest.len
               dest.addSubtree paramType
-              # op type line info does not matter, strip it for better output:
-              for tok in typeStart ..< dest.len:
-                when not defined(useNifcore): dest[tok].info = info
             else:
               dest.addSubtree n
             inc n
@@ -132,8 +129,12 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
     # `cursorTailAt`: for a zero-arg call (or a vararg position past the
     # last arg) these positions sit right after the sealed call's last
     # token — its physical close is elided under `-d:virtualParRi`.
-    var args = cursorTailAt(dest, beforeCall + 2)
-    var firstVarargMatch = cursorTailAt(dest, beforeCall + 2 + m.firstVarargPosition)
+    let callHead = readonlyCursorAt(dest, beforeCall)
+    var pastFn = childCursor(callHead)
+    skip pastFn # past the callee; the rebuilt args (if any) follow
+    let argsPos = beforeCall + cursorToPosition(callHead, pastFn)
+    var args = cursorTailAt(dest, argsPos)
+    var firstVarargMatch = cursorTailAt(dest, argsPos + m.firstVarargPosition)
     expandTemplate(c, expandedInto, res.decl, args, firstVarargMatch, addr m.inferred, readonlyCursorAt(dest, beforeCall).info)
     # Release the rc refs the two `cursorAt` calls bumped on `dest`, so the
     # subsequent `shrink dest` + body re-sem can mutate `dest` without
@@ -143,7 +144,7 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
     endRead firstVarargMatch
     expectUnique dest
     shrink dest, beforeCall
-    expandedInto.addParRi() # extra token so final `inc` doesn't break
+    expandedInto.addDotToken() # sentinel so the final `inc` stays in bounds
     var a = Item(n: cursorAt(expandedInto, 0), typ: c.types.autoType)
     let aInfo = a.n.info
     inc c.routine.inInst
@@ -347,7 +348,7 @@ proc closeArgsScope(c: var SemContext; cs: var CallState; merge = true) =
 
 proc untypedCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState) =
   closeArgsScope c, cs, merge = false
-  dest.add cs.callNode
+  dest.addParLe(cs.callNode.tag, cs.callNodeInfo)
   dest.addSubtree cs.fn.n
   for a in cs.args:
     # XXX call semTemplBody for orig instead?
@@ -455,13 +456,13 @@ proc semSumTypeConstrFromCall(c: var SemContext; dest: var TokenBuf;
 proc buildCallSource(buf: var TokenBuf; cs: CallState) =
   case cs.source
   of RegularCall:
-    buf.add cs.callNode
+    buf.addParLe(cs.callNode.tag, cs.callNodeInfo)
     buf.addSubtree cs.fn.n
     for a in cs.args:
       buf.addSubtree a.n
   of MethodCall:
     assert cs.args.len >= 1
-    buf.add cs.callNode
+    buf.addParLe(cs.callNode.tag, cs.callNodeInfo)
     buf.addParLe(DotX, cs.callNodeInfo)
     buf.addSubtree cs.args[0].n
     buf.addParRi()
@@ -655,10 +656,10 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
                   buildErr c, dest, convInfo, getErrorMsg(convMatch)
                 elif c.routine.inGeneric == 0:
                   let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
-                  setSymIdAt(dest, dest.len-1, inst.targetSym)
+                  setSymIdAt(dest, lastValueStart(dest), inst.targetSym)
                 else:
                   # in generics, cannot instantiate yet
-                  dest.shrink dest.len-1
+                  dest.shrink lastValueStart(dest)
                   dest.addParLe(AtX, convInfo)
                   dest.addSymUse(conv.sym, convInfo)
                   dest.add convMatch.typeArgs
@@ -848,7 +849,7 @@ proc runCompiledMacroPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
     if success:
       # Shrink dest to before the call and semcheck the expanded output
       dest.shrink cs.beforeCall
-      expandedInto.addParRi() # extra token so final `inc` doesn't break
+      expandedInto.addDotToken() # sentinel so the final `inc` stays in bounds
       var a = Item(n: cursorAt(expandedInto, 0), typ: c.types.autoType)
       inc c.routine.inInst
       semExpr c, dest, a
@@ -1017,7 +1018,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       cs.args = csArgsOrig
 
   if idx >= 0:
-    dest.add cs.callNode
+    dest.addParLe(cs.callNode.tag, cs.callNodeInfo)
     let finalFn = m[idx].fn
     # only merge symbols defined in args to scope if we did not match a macro/template:
     closeArgsScope c, cs, merge = finalFn.kind notin {MacroY, TemplateY}
@@ -1192,25 +1193,16 @@ proc findMagicInSyms(syms: Cursor): ExprKind =
   else: discard
 
 proc unoverloadableMagicCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState; magic: ExprKind) =
-  when defined(useNifcore):
-    if cs.args.len != 0:
-      # keep args after if they were produced by dotcall: retag the head tree
-      # in place and reopen it so the appended args + `addParRi` re-seal it.
-      var t = cs.dest[0]
-      setTag(t, cast[TagId](uint32(ord(magic))))
-      cs.dest[0] = t
-      cs.dest.reopenLastTree(0)
-    else:
-      cs.dest.shrink 0
-      cs.dest.addParLe(magic, cs.callNodeInfo)
+  if cs.args.len != 0:
+    # keep args after if they were produced by dotcall: retag the head tree
+    # in place and reopen it so the appended args + `addParRi` re-seal it.
+    var t = cs.dest[0]
+    setTag(t, cast[TagId](uint32(ord(magic))))
+    cs.dest[0] = t
+    cs.dest.reopenLastTree(0)
   else:
-    let nifTag = parLeToken(magic, cs.callNodeInfo)
-    if cs.args.len != 0:
-      # keep args after if they were produced by dotcall:
-      cs.dest.replaceWithOpenTag nifTag, 0
-    else:
-      cs.dest.shrink 0
-      cs.dest.add nifTag
+    cs.dest.shrink 0
+    cs.dest.addParLe(magic, cs.callNodeInfo)
   while it.n.hasMore:
     # add all args in call:
     takeTree cs.dest, it.n

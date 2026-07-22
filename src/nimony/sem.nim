@@ -225,7 +225,7 @@ proc commonType*(c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: 
           buildErr c, dest, info, getErrorMsg(convMatch)
         else:
           let inst = c.requestRoutineInstance(convMatch.fn.sym, convMatch.typeArgs, convMatch.inferred, info)
-          setSymIdAt(dest, dest.len-1, inst.targetSym)
+          setSymIdAt(dest, lastValueStart(dest), inst.targetSym)
       # ignore refineArgType case, probably environment is generic
       dest.add convMatch.args
       dest.addParRi()
@@ -281,109 +281,62 @@ proc declareResult*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo)
 # -------------------- generics ---------------------------------
 
 
-when defined(useNifcore):
-  proc instToStringRec(b: var Builder; n: var Cursor) =
-    ## Cursor-based canonical rendering: line-info suffixes are skipped by the
-    ## cursor advance, so the text — and hence the instance-hash suffixes —
-    ## matches the classic token walk.
-    case n.kind
-    of DotToken:
-      b.addEmpty()
-      inc n
-    of Ident:
-      b.addIdent(pool.strings[n.litId])
-      inc n
-    of Symbol:
-      # for nested instantiations i.e. `Foo[Bar[int]]`
-      let s = pool.syms[n.symId]
-      if isInstantiation(s):
-        b.addSymbol(removeModule(s))
-      else:
-        b.addSymbol(s)
-      inc n
-    of IntLit:
-      b.addIntLit(pool.integers[n.intId])
-      inc n
-    of UIntLit:
-      b.addUIntLit(pool.uintegers[n.uintId])
-      inc n
-    of FloatLit:
-      b.addFloatLit(pool.floats[n.floatId])
-      inc n
-    of SymbolDef:
-      b.addSymbolDef(pool.syms[n.symId])
-      inc n
-    of CharLit:
-      b.addCharLit char(n.uoperand)
-      inc n
-    of StrLitKind:
-      b.addStrLit(pool.strings[n.litId])
-      inc n
-    of OpenTagKind:
-      b.addTree(pool.tags[n.tagId])
-      n.into:
-        while n.hasMore:
-          instToStringRec(b, n)
-      b.endTree()
+proc instToStringRec(b: var Builder; n: var Cursor) =
+  ## Cursor-based canonical rendering: line-info suffixes are skipped by the
+  ## cursor advance, so the text — and hence the instance-hash suffixes —
+  ## matches the classic token walk.
+  case n.kind
+  of DotToken:
+    b.addEmpty()
+    inc n
+  of Ident:
+    b.addIdent(pool.strings[n.litId])
+    inc n
+  of Symbol:
+    # for nested instantiations i.e. `Foo[Bar[int]]`
+    let s = pool.syms[n.symId]
+    if isInstantiation(s):
+      b.addSymbol(removeModule(s))
     else:
-      # suffix kinds never appear as a cursor head
-      b.addIdent "<unknown token>"
-      inc n
+      b.addSymbol(s)
+    inc n
+  of IntLit:
+    b.addIntLit(pool.integers[n.intId])
+    inc n
+  of UIntLit:
+    b.addUIntLit(pool.uintegers[n.uintId])
+    inc n
+  of FloatLit:
+    b.addFloatLit(pool.floats[n.floatId])
+    inc n
+  of SymbolDef:
+    b.addSymbolDef(pool.syms[n.symId])
+    inc n
+  of CharLit:
+    b.addCharLit char(n.uoperand)
+    inc n
+  of StrLitKind:
+    b.addStrLit(pool.strings[n.litId])
+    inc n
+  of OpenTagKind:
+    b.addTree(pool.tags[n.tagId])
+    n.into:
+      while n.hasMore:
+        instToStringRec(b, n)
+    b.endTree()
+  else:
+    # suffix kinds never appear as a cursor head
+    b.addIdent "<unknown token>"
+    inc n
 
-  proc instToString(buf: TokenBuf; start: int): string =
-    # canonicalized string of invocation
-    # could directly build hash too but this is easier to debug
-    var b = nifbuilder.open((buf.len - start) * 20, compact = true)
-    var n = readonlyCursorAt(buf, start)
-    while n.hasMore:
-      instToStringRec(b, n)
-    result = b.extract()
-else:
-  proc instToString(buf: TokenBuf; start: int): string =
-    # canonicalized string of invocation
-    # could directly build hash too but this is easier to debug
-    var b = nifbuilder.open((buf.len - start) * 20, compact = true)
-    when defined(virtualParRi):
-      # elided closes are reconstructed from the sealed jumps so the output —
-      # and hence the instance-hash suffixes — stays identical to classic mode
-      var closeAt: seq[int] = @[]
-    for n in start ..< buf.len:
-      when defined(virtualParRi):
-        while closeAt.len > 0 and closeAt[^1] == n:
-          b.endTree()
-          discard closeAt.pop()
-      let k = buf[n].kind
-      case k
-      of DotToken: b.addEmpty()
-      of Ident: b.addIdent(pool.strings[buf[n].litId])
-      of Symbol:
-        # for nested instantiations i.e. `Foo[Bar[int]]`
-        let s = pool.syms[buf[n].symId]
-        if isInstantiation(s):
-          b.addSymbol(removeModule(s))
-        else:
-          b.addSymbol(s)
-      of IntLit: b.addIntLit(pool.integers[buf[n].intId])
-      of UIntLit: b.addUIntLit(pool.uintegers[buf[n].uintId])
-      of FloatLit: b.addFloatLit(pool.floats[buf[n].floatId])
-      of SymbolDef: b.addSymbolDef(pool.syms[buf[n].symId])
-      of CharLit: b.addCharLit char(buf[n].uoperand)
-      of StrLitKind: b.addStrLit(pool.strings[buf[n].litId])
-      of UnknownTokenKind: b.addIdent "<unknown token>"
-      of EofTokenKind: b.addIntLit buf[n].soperand
-      of OpenTagKind:
-        b.addTree(pool.tags[buf[n].tagId])
-        when defined(virtualParRi):
-          let j = jump(buf[n])
-          if j != MaxJump:
-            closeAt.add n + int(j) + 1
-      else: b.endTree() # a real close (ParRi; overflow scope) in virtualParRi mode
-    when defined(virtualParRi):
-      while closeAt.len > 0:
-        b.endTree()
-        discard closeAt.pop()
-    result = b.extract()
-
+proc instToString(buf: TokenBuf; start: int): string =
+  # canonicalized string of invocation
+  # could directly build hash too but this is easier to debug
+  var b = nifbuilder.open((buf.len - start) * 20, compact = true)
+  var n = readonlyCursorAt(buf, start)
+  while n.hasMore:
+    instToStringRec(b, n)
+  result = b.extract()
 proc instToSuffix(buf: TokenBuf, start: int): string =
   result = uhashBase36(instToString(buf, start))
 
@@ -1073,7 +1026,7 @@ proc semQualifiedIdent(c: var SemContext; dest: var TokenBuf; module: SymId; ide
     else:
       buildSymChoiceForForeignModule(c, dest, module, ident, info)
   if count == 1:
-    let sym = dest[insertPos+1].symId
+    let sym = childCursor(readonlyCursorAt(dest, insertPos)).symId
     dest.shrink insertPos
     dest.addSymUse(sym, info)
     result = fetchSym(c, sym)
@@ -1360,7 +1313,7 @@ proc semIdentImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor; ident: S
     discard resolveDeferredLocal(c, ident)
     count = buildSymChoice(c, dest, ident, info, mode)
   if count == 1:
-    let sym = dest[insertPos+1].symId
+    let sym = childCursor(readonlyCursorAt(dest, insertPos)).symId
     dest.shrink insertPos
     dest.addSymUse(sym, info)
     result = fetchSym(c, sym)
@@ -1402,7 +1355,12 @@ proc maybeInlineMagic(c: var SemContext; dest: var TokenBuf; res: LoadResult): b
       if n.isTagLit:
         result = true
         # ^ export marker position has a `(`? If so, it is a magic!
-        let info = readonlyCursorAt(dest, dest.len-1).info
+        # The trailing symbol occupies its token PLUS any line-info suffix:
+        # find the atom's head so the whole atom is replaced.
+        var atomStart = dest.len-1
+        while readonlyCursorAt(dest, atomStart).kind in {ExtendedSuffix, LineInfoLit}:
+          dec atomStart
+        let info = readonlyCursorAt(dest, atomStart).info
         var tag = n.tagId
         if cast[TagEnum](tag) == IsmainmoduleTagId:
           if IsMain in c.moduleFlags:
@@ -1412,7 +1370,7 @@ proc maybeInlineMagic(c: var SemContext; dest: var TokenBuf; res: LoadResult): b
         # Replace the trailing symbol with a properly registered open tag —
         # an in-place `dest.retagAt(i, ...)` would bypass the open-tags
         # bookkeeping and misseal every enclosing scope.
-        dest.shrink dest.len-1
+        dest.shrink atomStart
         dest.addParLe(tag, info)
         n.into:
           while n.hasMore:
@@ -1508,7 +1466,7 @@ proc semTypeSym(c: var SemContext; dest: var TokenBuf; s: Sym; info: PackedLineI
             c.pendingTypePlugins[s.name] = PluginObj(path: path, info: pathInfo)
       else:
         # remove symbol, inline type:
-        dest.shrink dest.len-1
+        dest.shrink lastValueStart(dest)
         var t = typ.body
         semLocalTypeImpl c, dest, t, context
   else:
@@ -1584,38 +1542,23 @@ proc addVarargsParameter(c: var SemContext; dest: var TokenBuf; paramsAt: int; i
   ## `insert`/`replace` maintain the open-tag bookkeeping but cannot widen
   ## the sealed jump of an enclosing scope.
   const vanon = "vanon"
-  when defined(useNifcore):
-    # nifcore has no standalone open tokens: build the `(param …)` subtree as a
-    # sealed buffer via the open-tag bookkeeping.
-    var varargsParam = createTokenBuf(8)
-    varargsParam.addParLe(ParamY, info)
-    varargsParam.addIdent(pool.strings.getOrIncl(vanon), info)
-    varargsParam.addDotToken(info) # export marker
-    varargsParam.addDotToken(info) # pragmas
-    varargsParam.addParPair(VarargsT, info)
-    varargsParam.addDotToken(info) # value
-    varargsParam.addParRi()
-  else:
-    var varargsParam = @[
-      parLeToken(ParamY, info),
-      identToken(pool.strings.getOrIncl(vanon), info),
-      dotToken(info), # export marker
-      dotToken(info), # pragmas
-      parLeToken(VarargsT, info),
-      parRiToken(info),
-      dotToken(info), # value
-      parRiToken(info)
-    ]
+  # nifcore has no standalone open tokens: build the `(param …)` subtree as a
+  # sealed buffer via the open-tag bookkeeping.
+  var varargsParam = createTokenBuf(8)
+  varargsParam.addParLe(ParamY, info)
+  varargsParam.addIdent(pool.strings.getOrIncl(vanon), info)
+  varargsParam.addDotToken(info) # export marker
+  varargsParam.addDotToken(info) # pragmas
+  varargsParam.addParPair(VarargsT, info)
+  varargsParam.addDotToken(info) # value
+  varargsParam.addParRi()
   if dest[paramsAt].kind == DotToken:
     # build the `(params (param ...))` tree separately and replace the dot
     # with it — an in-place OpenTagKind assignment plus a trailing-`)` splice
     # would bypass the open-tags bookkeeping:
     var tmp = createTokenBuf(varargsParam.len + 2)
     tmp.addParLe(ParamsU, info)
-    when defined(useNifcore):
-      tmp.addSubtree cursorAt(varargsParam, 0)
-    else:
-      for t in varargsParam: tmp.add t
+    tmp.addSubtree cursorAt(varargsParam, 0)
     tmp.addParRi(info)
     dest.replace cursorAt(tmp, 0), paramsAt
   else:
@@ -1644,12 +1587,7 @@ proc addVarargsParameter(c: var SemContext; dest: var TokenBuf; paramsAt: int; i
       dest.insert varargsParam, insertPos
       # the params tree is already sealed; widen its jump by the growth
       # (no-op in classic mode where `jump` is always MaxJump):
-      when defined(useNifcore):
-        widenSealed(dest, paramsAt, dest.len - before)
-      else:
-        if jump(dest[paramsAt]) != MaxJump:
-          setJump(dest[paramsAt], jump(dest[paramsAt]) + uint32(dest.len - before))
-
+      widenSealed(dest, paramsAt, dest.len - before)
 include semtypes
 
 proc semTypeof(c: var SemContext; dest: var TokenBuf; it: var Item) =
@@ -1768,9 +1706,10 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
   let expected = it.typ
   if s.kind == NoSym:
     if AllowUndeclared notin flags:
-      var orig = createTokenBuf(1)
-      orig.add dest[dest.len-1]
-      dest.shrink dest.len-1
+      let identStart = lastValueStart(dest)
+      var orig = createTokenBuf(2)
+      orig.addSubtree readonlyCursorAt(dest, identStart)
+      dest.shrink identStart
       let ident = cursorAt(orig, 0)
       if s.name != SymId(0):
         c.buildErr dest, ident.info, "undeclared identifier: " & pool.syms[s.name], ident
@@ -2957,7 +2896,7 @@ proc isIteratorCall(c: var SemContext; dest: var TokenBuf; beforeCall: int): boo
         NoExpr
     result = callKind in CallKinds and
       dest[beforeCall+1].kind == Symbol and
-      c.isIterator(dest, dest[beforeCall+1].symId)
+      c.isIterator(dest, childCursor(readonlyCursorAt(dest, beforeCall)).symId)
 
 proc isIdentCall(c: var SemContext; dest: var TokenBuf; beforeCall: int): bool {.inline.} =
   # A call whose fn is unresolved at sem time and needs re-resolution at
@@ -3003,7 +2942,7 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
   if dest.len <= beforeCall + 1 or
      dest[beforeCall].exprKind notin CallKinds or
      dest[beforeCall + 1].kind != Symbol: return
-  let res = declToCursor(c, dest, fetchSym(c, dest[beforeCall + 1].symId))
+  let res = declToCursor(c, dest, fetchSym(c, childCursor(readonlyCursorAt(dest, beforeCall)).symId))
   if res.status != LacksNothing or not isRoutine(res.decl.symKind): return
   let routine = asRoutine(res.decl, SkipExclBody)
   let pp = extractPragma(routine.pragmas, PluginP)

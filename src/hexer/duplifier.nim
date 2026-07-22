@@ -326,7 +326,7 @@ proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
     c.typeCache.registerLocalPtrOf(tmp, VarY, typ)
 
 proc callDestroy(c: var Context; destroyProc: SymId; arg: TokenBuf; typ: Cursor) =
-  let info = arg[0].info
+  let info = readonlyCursorAt(arg, 0).info
   let staticCall = typ.typeKind notin {RefT, PtrT}
   template emitArgs(dest: var TokenBuf) =
     copyIntoSymUse dest, destroyProc, info
@@ -1057,9 +1057,9 @@ proc trValue(c: var Context; n: Cursor; e: Expects) =
 
 proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
   let kind = n.symKind
-  c.dest.add n
+  c.dest.addParLe(n.tag, n.info)
   let r = takeLocal(n, SkipFinalParRi)
-  if k == ResultS and r.name.kind == SymbolDef:
+  if k == ResultS and r.name.isSymbolDef:
     c.resultSym = r.name.symId
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
@@ -1356,9 +1356,6 @@ proc checkForMoveTypesImpl(n: var Cursor; r: var Reporter): int =
       n.loopInto:
         result += checkForMoveTypesImpl(n, r)
   else:
-    when not defined(useNifcore):
-      if n.kind == ParRi:
-        return # cannot happen: subtree ends are consumed by the bounded scope
     inc n
 
 proc checkForMoveTypes(c: var Context; n: Cursor): int =

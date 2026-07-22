@@ -344,9 +344,6 @@ proc opt(c: Con; n: var Cursor; dest: var TokenBuf) =
         while n.hasMore:
           opt(c, n, dest)
   else:
-    when not defined(useNifcore):
-      if n.kind == ParRi:
-        raiseAssert "unexpected ')' in tree rewrite"
     dest.takeToken n
 
 proc optimizeArc*(pass: var Pass) =
@@ -409,9 +406,6 @@ proc runArcoptTree(dest: var TokenBuf; n: var Cursor; moduleSuffix: string; bits
           runArcoptTree(dest, n, moduleSuffix, bits)
       dest.addParRi()
   else:
-    when not defined(useNifcore):
-      if n.kind == ParRi:
-        raiseAssert "ParRi should not be encountered here"
     dest.takeToken n
 
 proc runArcopt*(buf: var TokenBuf; moduleSuffix = ""; bits = 0) =

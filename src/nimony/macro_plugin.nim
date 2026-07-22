@@ -11,9 +11,8 @@
 import std/[syncio, os, osproc, tables, hashes, assertions]
 
 import ".." / lib / [nifstreams, nifcursors, lineinfos, bitabs, nifindexes, symparser]
-when defined(useNifcore):
-  import ".." / lib / nifreader
-  from ".." / lib / nifcoreparse import parse
+import ".." / lib / nifreader
+from ".." / lib / nifcoreparse import parse
 import ".." / models / [tags]
 import nimony_model, decls, programs
 
@@ -301,10 +300,7 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
   deps.addParLe StmtsS, info
   deps.addParRi()
   try:
-    when defined(useNifcore):
-      writeFile(depsFile, toString(deps, true))
-    else:
-      writeFile(deps, depsFile)
+    writeFile(depsFile, toString(deps, true))
   except:
     echo "Macro plugin: failed to write ", depsFile
     return ""
@@ -376,14 +372,7 @@ proc runMacroPlugin*(nifcachePath: string; dest: var TokenBuf;
     echo output
     return false
 
-  when defined(useNifcore):
-    var r = nifreader.open(outputPath)
-    parse(r, dest)
-    r.close()
-  else:
-    var s = nifstreams.open(outputPath)
-    try:
-      parse s, dest, lineinfos.NoLineInfo
-    finally:
-      close s
+  var r = nifreader.open(outputPath)
+  parse(r, dest)
+  r.close()
   return true

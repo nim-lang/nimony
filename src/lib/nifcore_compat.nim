@@ -46,7 +46,17 @@ import ".." / models / tags   # TagEnum + TagData (the master tag namespace)
 
 # ── Global pool / tags / line-info manager ───────────────────────────────
 
-var globalTags*: TagPool = createTags[TagEnum]()
+proc createMasterTagPool(): TagPool =
+  ## Seeded so each tag's `TagId` equals its master `TagEnum` ordinal
+  ## (same pattern as nifcdecl.createLengTagPool).
+  result = newTagPool()
+  for e in TagEnum:
+    if e == InvalidTagId: continue
+    let id = result.registerTag(TagData[e][0])
+    assert uint32(id) == uint32(TagData[e][1]),
+      "tag pool misalignment for " & TagData[e][0]
+
+var globalTags*: TagPool = createMasterTagPool()
 var lineMan*: LineInfoManager
 
 # The old global `pool` (a nifstreams `Literals`) IS a nifcore `Pool` here, so
@@ -56,6 +66,8 @@ var lineMan*: LineInfoManager
 # `.integers` / `.man` are accessors (below, after the proxy types).
 type Literals* = Pool
 var pool*: Pool = newPool()
+nifcore.fallbackPool = pool
+nifcore.fallbackTags = globalTags
 
 # ── Type aliases ─────────────────────────────────────────────────────────
 
@@ -421,11 +433,6 @@ template copyIntoUnchecked*(dest: var TokenBuf; tag: string; info: PackedLineInf
   addParLe(dest, pool.tags.getOrIncl(tag), info)
   body
   closeTag(dest)
-
-proc shrink*(b: var TokenBuf; newLen: int) =
-  ## Truncate to `newLen`. For a shrink (newLen <= len <= cap) `growRawUninit`
-  ## never reallocates, so the existing prefix words are preserved.
-  discard growRawUninit(b, newLen)
 
 proc freeze*(b: var TokenBuf) {.inline.} = discard  ## CursorOwner refcounts; no-op
 proc thaw*(b: var TokenBuf) {.inline.} = discard

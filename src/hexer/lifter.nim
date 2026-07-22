@@ -956,34 +956,15 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
   if c.routineKind == MethodY:
     # `setTag`, not a `parLeToken` overwrite: the decl is sealed by now and
     # its jump must be preserved
-    when defined(useNifcore):
-      var mtok = c.dest[procStart]
-      setTag(mtok, TagId(MethodS))
-      c.dest[procStart] = mtok
-    else:
-      setTag(c.dest[procStart], TagId(MethodS))
-      c.dest[procStart] = withLineInfo(c.dest[procStart], c.info)
-
+    var mtok = c.dest[procStart]
+    setTag(mtok, TagId(MethodS))
+    c.dest[procStart] = mtok
   if c.calledErrorHook != NoLineInfo:
     let before = c.dest.len
-    when defined(useNifcore):
-      var errBuf = createTokenBuf(2)
-      errBuf.addParLe(cast[TagId](uint32(ord(ErrorP))), c.calledErrorHook)
-      errBuf.addParRi()
-      c.dest.insert(errBuf, pragmasPos)
-    else:
-      when defined(useNifcore):
-        # nifcore cannot splice raw open/close tokens; build a sealed
-        # `(error)` fragment, insert it, and widen the enclosing jumps
-        # (nifcore's `insert` is raw and does not adjust them).
-        var errFrag = createTokenBuf(2)
-        errFrag.addParLe(ErrorP, c.calledErrorHook)
-        errFrag.addParRi()
-        let errGrowth = errFrag.len
-        c.dest.insert cursorAt(errFrag, 0), pragmasPos
-        widenEnclosingSealed(c.dest, pragmasPos, errGrowth)
-      else:
-        c.dest.insert [parLeToken(ErrorP, c.calledErrorHook), parRiToken(c.calledErrorHook)], pragmasPos
+    var errBuf = createTokenBuf(2)
+    errBuf.addParLe(cast[TagId](uint32(ord(ErrorP))), c.calledErrorHook)
+    errBuf.addParRi()
+    c.dest.insert(errBuf, pragmasPos)
     # The insert lands inside two already-sealed scopes; widen their jumps
     # (no-op in classic mode):
     let growth = c.dest.len - before

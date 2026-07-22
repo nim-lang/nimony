@@ -651,14 +651,9 @@ proc genProcDecl(c: var SynthesizeSerializerCtx; sym: SymId; typ: TypeCursor) =
   c.dest.addParRi() # close ProcS declaration
   # tell vtables.nim we need dynamic binding here:
   if c.routineKind == MethodY:
-    when defined(useNifcore):
-      var mtok = c.dest[procStart]
-      setTag(mtok, TagId(MethodS))
-      c.dest[procStart] = mtok
-    else:
-      setTag(c.dest[procStart], TagId(MethodS)) # keeps the sealed jump
-      c.dest[procStart] = withLineInfo(c.dest[procStart], c.info)
-
+    var mtok = c.dest[procStart]
+    setTag(mtok, TagId(MethodS))
+    c.dest[procStart] = mtok
 proc genMissingProcs*(c: var SynthesizeSerializerCtx) =
   # remember that genProcDecl does mutate c.requests so be robust against that:
   while c.requests.len > 0:

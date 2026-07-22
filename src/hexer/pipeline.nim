@@ -41,9 +41,6 @@ proc publishHooks*(n: var Cursor) =
       n.into:
         while n.hasMore: publishHooks(n)
   else:
-    when not defined(useNifcore):
-      if n.kind == ParRi:
-        raiseAssert "BUG: unexpected ParRi in publishHooks"
     inc n
 
 proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): TokenBuf =

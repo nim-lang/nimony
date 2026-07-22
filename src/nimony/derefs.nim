@@ -606,7 +606,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
       skip n
       return
 
-  c.dest.add head # (call)
+  c.dest.addParLe(head.tag, n.info) # (call)
   tr c, n, WantT # `fn` part of the call
 
   var needHderef = false

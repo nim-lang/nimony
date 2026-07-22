@@ -1992,7 +1992,7 @@ proc asNimCode*(n: Cursor; renderFlags: RenderFlags = {}): string =
   var n2 = n
   var file0 = FileId 0
 
-  var togo = span(n2)
+  var togo = span(n2)  # tokens incl. suffixes; consume `tokenWidth` per step
   while togo > 0:
     if n2.info.isValid:
       let currentFile = getFileId(pool.man, n2.info)
@@ -2001,7 +2001,7 @@ proc asNimCode*(n: Cursor; renderFlags: RenderFlags = {}): string =
         file0 = currentFile
       elif not m1.isValid and currentFile == file0:
         m1 = n2.info
-    dec togo
+    dec togo, tokenWidth(n2)
     if togo > 0: inc n2
 
   when false: #if m0.isValid:

@@ -222,17 +222,10 @@ proc buildFindStartIndex(cf: TokenBuf; srcMap: openArray[int32]): FindStartIndex
     case cf[i].kind
     of OpenTagKind:
       inc nested
-      when defined(useNifcore):
-        # nifcore: every TagLit's close is implicit; no MaxJump sentinel.
-        closeStack.add(i + span(readonlyCursorAt(cf, i)) - 1)
-      elif defined(virtualParRi):
-        if jump(cf[i]) != MaxJump:
-          closeStack.add(i + span(readonlyCursorAt(cf, i)) - 1)
+      # nifcore: every TagLit's close is implicit; no MaxJump sentinel.
+      closeStack.add(i + span(readonlyCursorAt(cf, i)) - 1)
     else:
-      when not defined(useNifcore):
-        if cf[i].kind == ParRi: dec nested
-      # nifcore: no physical ParRi token (closes are implicit); nesting for the
-      # CF stream still needs a nifcore-native design (see the CF goto note).
+      discard # nifcore: no physical ParRi token; closes are tracked below
     let s = srcMap[i]
     if s >= 0:
       let k = int(s - result.base)
@@ -378,13 +371,7 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
           # declarative junk we don't care about:
           skip pc
     else:
-      when defined(useNifcore):
-        inc pc   # LineInfoLit / stray suffix — just advance
-      else:
-        if pc.kind == ParRi:
-          if nested == 0: bug "unpaired ')'"
-          dec nested
-        inc pc  # ParRi (classic) or EofToken
+      inc pc   # LineInfoLit / stray suffix — just advance
   return true
 
 proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var Cursor;
@@ -397,8 +384,6 @@ proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var Cursor;
   skip n
   # step over the (real) closes that separate `x` from the next CF
   # instruction; under ParRi elision there are none to step over
-  when not defined(useNifcore):
-    while hasCurrentToken(n) and n.kind == ParRi: inc n
   let cfBase = c.readonlyCursorAt(0)
   var pcs = @[n]
   var marks = initIntSet()

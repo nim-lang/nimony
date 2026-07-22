@@ -568,9 +568,6 @@ proc annotateSummaries(dest: var TokenBuf; n: var Cursor;
           annotateSummaries(dest, n, summaries)
       dest.addParRi()
   else:
-    when not defined(useNifcore):
-      if n.kind == ParRi:
-        assert false, "ParRi should not be encountered here"
     dest.takeToken n
 
 proc annotateFunctionSummaries*(buf: var TokenBuf) =

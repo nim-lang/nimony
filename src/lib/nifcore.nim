@@ -340,16 +340,27 @@ template decRcAndFree(owner: CursorOwner) =
       owner.tags = nil
     dealloc(owner)
 
+var
+  fallbackPool*: Pool = nil
+    ## Application-default literals pool: cursor accessors use it when the
+    ## underlying buffer carries no pool (e.g. a `default(TokenBuf)` that was
+    ## filled via raw/interned adds). Applications that share ONE pool across
+    ## all buffers (like the nimony toolchain) set this once at startup;
+    ## adapters with per-buffer pools leave it nil.
+  fallbackTags*: TagPool = nil
+    ## Application-default tag pool, same contract as `fallbackPool`.
+
 proc pool*(c: Cursor): Pool {.inline.} =
-  ## Literals pool the cursor's underlying buffer was built against.
-  if c.owner != nil: c.owner.pool else: nil
+  ## Literals pool the cursor's underlying buffer was built against,
+  ## or `fallbackPool` when the buffer carries none.
+  if c.owner != nil and c.owner.pool != nil: c.owner.pool else: fallbackPool
 
 proc tags*(c: Cursor): TagPool {.inline.} =
-  ## Tag pool the cursor's underlying buffer was built against. Adapter
-  ## code is expected to know which TagPool layout to expect, so callers
-  ## typically reach for `cast[MyTag](c.cursorTagId.uint32)` instead of
-  ## consulting `c.tags` directly.
-  if c.owner != nil: c.owner.tags else: nil
+  ## Tag pool the cursor's underlying buffer was built against (or
+  ## `fallbackTags`). Adapter code is expected to know which TagPool layout
+  ## to expect, so callers typically reach for
+  ## `cast[MyTag](c.cursorTagId.uint32)` instead of consulting `c.tags`.
+  if c.owner != nil and c.owner.tags != nil: c.owner.tags else: fallbackTags
 
 proc toUniqueId*(c: Cursor): int {.inline.} =
   ## A stable identity for the cursor's *position*: two cursors over the same
@@ -767,6 +778,15 @@ else:
     if dest.owner != nil: decRcAndFree(dest.owner)
     elif dest.data != nil: dealloc(dest.data)
 
+template ensurePools*(b: var TokenBuf) =
+  ## Bind the application-default pools to a buffer that was created without
+  ## any (e.g. `default(TokenBuf)`), so interning builders and cross-pool
+  ## copies work on it. No-op when the buffer already has pools.
+  if b.pool == nil:
+    b.pool = (if fallbackPool != nil: fallbackPool else: newPool())
+  if b.tags == nil:
+    b.tags = (if fallbackTags != nil: fallbackTags else: newTagPool())
+
 proc createTokenBuf*(cap = 16; sharedPool: Pool = nil;
                      sharedTags: TagPool = nil): TokenBuf =
   ## Mint a new buffer. Pass `sharedPool` to thread a single literals
@@ -867,6 +887,16 @@ proc add*(b: var TokenBuf; t: NifToken) {.inline.} =
 # (assigned 1,2,… in intern order), a loader that re-interns the pool values in
 # the same order reproduces identical ids, so the raw token words stay valid.
 
+proc shrink*(b: var TokenBuf; newLen: int) =
+  ## Truncate to `newLen` tokens. Any still-open tags at or past the cut are
+  ## discarded from the build-time stack so later `closeTag` calls keep
+  ## sealing the right opens (rollback-past-an-open-tag pattern).
+  assert newLen >= 0 and newLen <= b.len
+  if b.owner != nil: prepareMutation(b)
+  while b.openTags.len > 0 and b.openTags[^1] >= newLen:
+    b.openTags.setLen b.openTags.len - 1
+  b.len = newLen
+
 proc rawTokenPtr*(b: TokenBuf): pointer {.inline.} =
   ## Pointer to the first token word; `len(b) * sizeof(NifToken)` bytes follow.
   b.data
@@ -940,6 +970,7 @@ proc appendLineInfo*(b: var TokenBuf; file: FileId; line, col: int32;
   ## none) — a NIF `#…#` decoration on this head. A non-zero comment forces the
   ## overflow position layout and rides as one further `ExtendedSuffix` (a second
   ## only for ids past 2^28), so `rawLineInfo` recovers it unambiguously.
+  ensurePools(b)
   if not file.isValid: return
   var line = line
   var col = col
@@ -988,6 +1019,7 @@ proc encodeInlineStr(s: string): uint32 {.inline.} =
 template addStringLike(b: var TokenBuf; kind: NifKind; s: string; pool: untyped) =
   ## Shared body for StrLit/Ident/Symbol/SymbolDef. Inlines bytes for
   ## `s.len <= 3`; otherwise interns in the given `pool` BiTable.
+  ensurePools(b)
   if s.len <= StrInlineMaxLen:
     b.add NifToken(toX(kind, encodeInlineStr(s)))
   else:
@@ -1013,6 +1045,7 @@ proc addSymDef*(b: var TokenBuf; s: string) =
   addStringLike(b, SymbolDef, s, b.pool.syms)
 
 proc addInternedSymbol(b: var TokenBuf; kind: NifKind; id: SymId) =
+  ensurePools(b)
   let s = b.pool.syms[id]
   if s.len <= StrInlineMaxLen:
     b.add NifToken(toX(kind, encodeInlineStr(s)))
@@ -1234,6 +1267,7 @@ proc peekPastEnd*(n: Cursor): Cursor =
 proc reinternLineInfo(dest: var TokenBuf; c: Cursor): NifLineInfo =
   ## Map the source head's trailing line info into `dest`'s pools — the filename
   ## and, if present, the `#comment#` string. Returns `NoNifLineInfo` when none.
+  ensurePools(dest)
   let li = rawLineInfo(c)
   if not li.isValid: return NoNifLineInfo
   let fname = if c.pool != nil: c.pool.filenames[li.file] else: ""

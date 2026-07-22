@@ -385,8 +385,8 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
         let exc = nn.symId
         c.exceptVars.add exc
         c.typeCache.takeLocalHeader(dest, nn, LetY)
-        assert nn.kind == DotToken
-        dest.add nn
+        assert nn.isDotToken
+        dest.addSubtree nn
         inc nn
 
   dest.addParLe(n.tag, n.info)

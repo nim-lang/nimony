@@ -297,9 +297,6 @@ proc walkInlineWeights(n: var Cursor; params: Table[SymId, int];
       while n.hasMore:
         walkInlineWeights(n, params, weights, w)
   else:
-    when not defined(useNifcore):
-      if n.kind == ParRi:
-        return # mirrors the classic `of ParRi: discard` arm
     inc n
 
 proc subtreeTokenCount(n: Cursor; limit: int): int =
@@ -496,9 +493,6 @@ proc emitRenamed(dest: var TokenBuf; body: var Cursor;
         emitRenamed(dest, body, bnd)
     dest.addParRi()
   else:
-    when not defined(useNifcore):
-      if body.kind == ParRi:
-        return # mirrors the classic `of ParRi: discard` arm
     dest.addSubtree body
     inc body
 
@@ -578,9 +572,6 @@ proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
         emitRenamedWithRet(dest, body, bnd, targetSym, returnLabel)
     dest.addParRi()
   else:
-    when not defined(useNifcore):
-      if body.kind == ParRi:
-        return # mirrors the classic `of ParRi: discard` arm
     dest.addSubtree body
     inc body
 
@@ -1231,9 +1222,6 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
           trIntra(c, dest, n)
       dest.addParRi()
   else:
-    when not defined(useNifcore):
-      if n.kind == ParRi:
-        raiseAssert "ParRi should not be encountered here"
     dest.takeToken n
 
 proc emitPragmasWithInlineInfo(dest: var TokenBuf; pragmas: Cursor; info: InlineInfo) =
@@ -1284,9 +1272,6 @@ proc annotateInlinePragmas(dest: var TokenBuf; n: var Cursor;
           annotateInlinePragmas(dest, n, infos)
       dest.addParRi()
   else:
-    when not defined(useNifcore):
-      if n.kind == ParRi:
-        raiseAssert "ParRi should not be encountered here"
     dest.takeToken n
 
 proc annotateInlinePragmas(buf: var TokenBuf; infos: Table[SymId, InlineInfo]) =

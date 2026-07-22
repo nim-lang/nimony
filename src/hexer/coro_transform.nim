@@ -465,7 +465,7 @@ proc getNextState*(buf: TokenBuf; n: Cursor): int =
   var pos = cursorToPosition(buf, n)
   while pos < buf.len:
     if pool.tags[buf[pos].tag] == "lab":
-      return int(pool.integers[buf[pos+1].intId])
+      return int(pool.integers[readonlyCursorAt(buf, pos+1).intId])
     inc pos
   return -1
 
@@ -997,8 +997,8 @@ proc trReturn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # return/raise x -->
   # this.res[] = x
   # var tmpCaller = this.caller; deallocFrame(this); return/raise tmpCaller
-  let head = n.load()
-  let info = head.info
+  let headTag = n.tag
+  let info = n.info
   returnValue(c, dest, n, info)
   if c.currentProc.isClosureIter:
     # `.closure` iters: caller.fn holds the resume slot, not a return
@@ -1018,7 +1018,7 @@ proc trReturn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
       dest.addIntLit 1, info # field is in superclass
   emitDeallocFrame(c, dest, info)
-  dest.add head
+  dest.addParLe(headTag, info)
   dest.addSymUse tmpVar, info
   dest.addParRi()
 
@@ -1116,7 +1116,7 @@ proc trMflag*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addParPair FalseX, info
   else:
     dest.addParLe VarS, info
-    dest.add symDef
+    dest.addSubtree symDef
     dest.addDotToken()  # exported
     dest.addDotToken()  # pragmas
     dest.copyTree c.typeCache.builtins.boolType
@@ -1137,7 +1137,7 @@ proc trJtrue*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
           dest.addSymUse field.field, info
       else:
-        dest.add n
+        dest.addSubtree n
       dest.addParPair TrueX, info
       dest.addParRi()
       skip n
@@ -1328,7 +1328,7 @@ proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: 
   escapingLocals(c, n)
 
   assert n.stmtKind == StmtsS
-  dest.add n
+  dest.addParLe(n.tag, n.info)
   n.into:
     dest.add init
     declareContinuationResult c, dest, NoLineInfo
@@ -1615,7 +1615,7 @@ proc registerParamsInTypecache*(c: var Context; sym: SymId; origParams: Cursor) 
 
 proc patchParamList*(c: var Context; dest, init: var TokenBuf; sym: SymId;
                      paramsBegin, paramsEnd: int; origParams: Cursor) =
-  let info = dest[paramsBegin].info
+  let info = readonlyCursorAt(dest, paramsBegin).info
   var retType = createTokenBuf(4)
   # balanced span: raw copy keeps its seals
   for i in paramsEnd..<dest.len: retType.addRaw dest[i]
@@ -1731,7 +1731,7 @@ proc transformCoroutineDecl*(c: var Context; dest: var TokenBuf; n: var Cursor) 
   var paramsEnd = -1
   var paramsBegin = -1
   var origParams = default(Cursor)
-  dest.add n # ProcS etc.
+  dest.addParLe(n.tag, n.info) # ProcS etc.
   let procScopeStart = n
   n = sub(n)
   let procStart = dest.len - 1
@@ -1758,7 +1758,7 @@ proc transformCoroutineDecl*(c: var Context; dest: var TokenBuf; n: var Cursor) 
         if isConcrete:
           if kind == IteratorY:
             # retag in place: `parLeToken` would reset an already-set jump
-            dest[procStart].setTag cast[TagId](ProcS)
+            setTagAt(dest, procStart, cast[TagId](ProcS))
           patchParamList c, dest, init, sym, paramsBegin, paramsEnd, origParams
     elif i == TypevarsPos:
       isConcrete = n.substructureKind != TypevarsU
@@ -1776,7 +1776,7 @@ proc transformCoroutineDecl*(c: var Context; dest: var TokenBuf; n: var Cursor) 
   elif isConcrete:
     registerParamsInTypecache(c, sym, origParams)
     if not n.isTagLit:
-      dest.add n
+      dest.addSubtree n
       inc n
     else:
       coroTrSons(c, dest, n)

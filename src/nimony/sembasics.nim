@@ -273,12 +273,9 @@ proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: PackedLi
     if dest[pos].stmtKind == StmtsS:
       dest.reopenLastTree pos
     else:
-      when defined(useNifcore):
-        # nifcore cannot splice an unbalanced open; skip the stmts wrapper for
-        # this error-recovery path (the err node is still emitted below).
-        needsParRi = false
-      else:
-        dest.insert [parLeToken(StmtsS, dest[pos].info)], pos
+      # nifcore cannot splice an unbalanced open; skip the stmts wrapper for
+      # this error-recovery path (the err node is still emitted below).
+      needsParRi = false
   buildErr c, dest, info, msg, orig
   if needsParRi:
     dest.addParRi

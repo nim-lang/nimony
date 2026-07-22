@@ -75,22 +75,15 @@ proc handleProcReturnType(c: var SemContext; dest: var TokenBuf; it: var Item;
     discard "ok"
   elif c.routine.resId != SymId(0):
     commonType c, dest, it, beforeLastSon, c.routine.returnType
-    when defined(useNifcore):
-      # nifcore cannot splice an unbalanced `(asgn resId` open; collect the
-      # last-son subtree, drop it, and re-emit it wrapped in `(asgn resId …)`.
-      var lastSon = createTokenBuf(dest.len - beforeLastSon + 2)
-      lastSon.addUnstructured cursorAt(dest, beforeLastSon)
-      dest.shrink beforeLastSon
-      dest.addParLe(AsgnS, lastSonInfo)
-      dest.addSymUse(c.routine.resId, lastSonInfo)
-      dest.addUnstructured cursorAt(lastSon, 0)
-      dest.addParRi()
-    else:
-      var prefix = [
-        parLeToken(AsgnS, lastSonInfo),
-        symToken(c.routine.resId, lastSonInfo)]
-      dest.insert prefix, beforeLastSon
-      dest.addParRi()
+    # nifcore cannot splice an unbalanced `(asgn resId` open; collect the
+    # last-son subtree, drop it, and re-emit it wrapped in `(asgn resId …)`.
+    var lastSon = createTokenBuf(dest.len - beforeLastSon + 2)
+    lastSon.addUnstructured cursorAt(dest, beforeLastSon)
+    dest.shrink beforeLastSon
+    dest.addParLe(AsgnS, lastSonInfo)
+    dest.addSymUse(c.routine.resId, lastSonInfo)
+    dest.addUnstructured cursorAt(lastSon, 0)
+    dest.addParRi()
   else:
     commonType c, dest, it, beforeLastSon, c.routine.returnType
 
@@ -424,8 +417,11 @@ proc resolveDeferredLocal(c: var SemContext; ident: StrId): bool =
   c.phase = SemcheckSignatures
   semLocal(c, scratch, decl, kind)
   c.phase = savedPhase
-  if scratch.len > 1 and scratch[1].kind == SymbolDef:
-    c.onDemandResolved[ident] = scratch[1].symId
+  var scratchName = default(Cursor)
+  if scratch.len > 1 and readonlyCursorAt(scratch, 0).kind == OpenTagKind:
+    scratchName = childCursor(readonlyCursorAt(scratch, 0))
+  if not cursorIsNil(scratchName) and scratchName.hasMore and scratchName.kind == SymbolDef:
+    c.onDemandResolved[ident] = scratchName.symId
     result = true
   else:
     # The type did not resolve in the signature phase (e.g. template-injected);
@@ -783,7 +779,7 @@ proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
     let methodIsInstance = dest[beforeGenericParams].kind == OpenTagKind and dest[beforeGenericParams].tagId == TagId(InvokeT)
     var symToRegister = symId
     if methodIsInstance:
-      symToRegister = dest[beforeGenericParams+1].symId
+      symToRegister = childCursor(readonlyCursorAt(dest, beforeGenericParams)).symId
 
     # Also add to c.classes for vtable generation
     let methodEntry = MethodIndexEntry(fn: symToRegister, signature: signature)
@@ -1239,27 +1235,15 @@ proc fitTypeToPragmas(c: var SemContext; dest: var TokenBuf; pragmas: CrucialPra
       let info = typ.info
       endRead(dest)
       let kind = if ImportcP in pragmas.flags: ImportcP else: ImportcppP
-      when defined(useNifcore):
-        var attrs = createTokenBuf(8)
-        attrs.addParLe(kind, info)
-        attrs.addStrLit(pool.strings.getOrIncl(pragmas.externName), info)
+      var attrs = createTokenBuf(8)
+      attrs.addParLe(kind, info)
+      attrs.addStrLit(pool.strings.getOrIncl(pragmas.externName), info)
+      attrs.addParRi()
+      if HeaderP in pragmas.flags:
+        assert pragmas.headerFileTok.isStringLit
+        attrs.addParLe(HeaderP, info)
+        attrs.add pragmas.headerFileTok
         attrs.addParRi()
-        if HeaderP in pragmas.flags:
-          assert pragmas.headerFileTok.isStringLit
-          attrs.addParLe(HeaderP, info)
-          attrs.add pragmas.headerFileTok
-          attrs.addParRi()
-      else:
-        var attrs = @[
-          parLeToken(kind, info),
-          strToken(pool.strings.getOrIncl(pragmas.externName), info),
-          parRiToken(info)
-        ]
-        if HeaderP in pragmas.flags:
-          assert pragmas.headerFileTok.isStringLit
-          attrs.add parLeToken(HeaderP, info)
-          attrs.add pragmas.headerFileTok
-          attrs.add parRiToken(info)
       # Imported aliases of scalar builtins must override the C spelling
       # (`importc`/`importcpp` + optional `header`) rather than stack with
       # existing builtin attributes like `(importc "int")`. The payload
@@ -1281,11 +1265,7 @@ proc fitTypeToPragmas(c: var SemContext; dest: var TokenBuf; pragmas: CrucialPra
       else: discard
       while t.hasMore:
         skip t
-      when defined(useNifcore):
-        rebuilt.addUnstructured cursorAt(attrs, 0)
-      else:
-        for tok in attrs:
-          rebuilt.add tok
+      rebuilt.addUnstructured cursorAt(attrs, 0)
       rebuilt.addParRi()
       dest.replace cursorAt(rebuilt, 0), typeStart
     else:

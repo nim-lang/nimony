@@ -18,18 +18,14 @@ import ".." / models / [nifindex_tags]
 
 include ".." / lib / compat2
 
-when defined(useNifcore):
-  import ".." / lib / nifreader
-  from ".." / lib / nifcoreparse import parse
+import ".." / lib / nifreader
+from ".." / lib / nifcoreparse import parse
 
 type
   Iface* = OrderedTable[StrId, seq[SymId]] # eg. "foo" -> @["foo.1.mod", "foo.3.mod"]
 
   NifModule* = ref object
-    when defined(useNifcore):
-      reader: Reader
-    else:
-      stream: Stream
+    reader: Reader
     index*: NifIndex
     public*: Table[string, NifIndexEntry]
     private*: Table[string, NifIndexEntry]
@@ -172,17 +168,10 @@ iterator symIds*(t: ToplevelEntries): SymId =
 # -------------- end ToplevelEntries methods --------------
 
 proc newNifModule(infile: string): NifModule =
-  when defined(useNifcore):
-    result = NifModule(reader: nifreader.open(infile),
-                       public: initTable[string, NifIndexEntry](),
-                       private: initTable[string, NifIndexEntry]())
-    discard nifreader.processDirectives(result.reader)
-  else:
-    result = NifModule(stream: nifstreams.open(infile),
-                       public: initTable[string, NifIndexEntry](),
-                       private: initTable[string, NifIndexEntry]())
-    discard processDirectives(result.stream.r)
-
+  result = NifModule(reader: nifreader.open(infile),
+                     public: initTable[string, NifIndexEntry](),
+                     private: initTable[string, NifIndexEntry]())
+  discard nifreader.processDirectives(result.reader)
 proc addEmbeddedIndex(public, private: var Table[string, NifIndexEntry];
                       embedded: Table[string, NifIndexEntry]) =
   for k, v in embedded:
@@ -195,11 +184,8 @@ proc loadModuleContent*(infile: string; owningBuf: var TokenBuf; paths: openArra
   ## Load a module's content into owningBuf and return a cursor to it.
   ## Also registers the module in prog.mods.
   let m = newNifModule(infile)
-  when defined(useNifcore):
-    owningBuf = createTokenBuf()
-    parse(m.reader, owningBuf)
-  else:
-    owningBuf = fromStream(m.stream)
+  owningBuf = createTokenBuf()
+  parse(m.reader, owningBuf)
   result = beginRead(owningBuf)
   let suffix = moduleSuffix(infile, paths)
   prog.mods[suffix] = m
@@ -207,11 +193,8 @@ proc loadModuleContent*(infile: string; owningBuf: var TokenBuf; paths: openArra
 proc loadModule*(infile: string; owningBuf: var TokenBuf; suffix: string): Cursor =
   ## Load a module's content and register it under the given suffix.
   let m = newNifModule(infile)
-  when defined(useNifcore):
-    owningBuf = createTokenBuf()
-    parse(m.reader, owningBuf)
-  else:
-    owningBuf = fromStream(m.stream)
+  owningBuf = createTokenBuf()
+  parse(m.reader, owningBuf)
   result = beginRead(owningBuf)
   prog.mods[suffix] = m
 
@@ -246,8 +229,7 @@ proc load*(suffix: string): NifModule =
     result = newNifModule(infile)
     result.index = default(NifIndex)
     let embedded =
-      when defined(useNifcore): readEmbeddedIndex(result.reader)
-      else: readEmbeddedIndex(result.stream)
+      readEmbeddedIndex(result.reader)
     if embedded.len > 0:
       addEmbeddedIndex(result.public, result.private, embedded)
     let indexName = infile.changeModuleExt(semIndexExt())
@@ -352,12 +334,8 @@ proc tryLoadSym*(s: SymId): LoadResult =
         result = LoadResult(status: LacksOffset)
       else:
         var buf = createTokenBuf(30)
-        when defined(useNifcore):
-          m.reader.jumpTo indexEntry.offset
-          parse(m.reader, buf)
-        else:
-          m.stream.r.jumpTo indexEntry.offset
-          nifcursors.parse(m.stream, buf, indexEntry.info)
+        m.reader.jumpTo indexEntry.offset
+        parse(m.reader, buf)
         let decl = cursorAt(buf, 0)
         prog.mem[s] = ToplevelEntry(buffer: ensureMove(buf), phase: SemcheckBodies)
         result = LoadResult(status: LacksNothing, decl: decl)
@@ -471,8 +449,8 @@ proc publishSignature*(dest: TokenBuf; s: SymId; start: int) =
   var buf = createTokenBuf(dest.len - start + 3)
   # the span is the routine's open tag followed by complete signature
   # subtrees; open the tag properly so the final close seals it, and copy
-  # the sealed children raw
-  buf.add dest[start]
+  # the sealed children (incl. the head's own line-info suffix) raw
+  buf.openTag readonlyCursorAt(dest, start).tag
   for i in start+1 ..< dest.len:
     buf.addRaw dest[i]
   buf.addDotToken() # body is empty for a signature
@@ -561,20 +539,15 @@ proc setupProgram*(infile, outfile: string; owningBuf: var TokenBuf; hasIndex=fa
   if hasIndex:
     m.index = default(NifIndex)
     let embedded =
-      when defined(useNifcore): readEmbeddedIndex(m.reader)
-      else: readEmbeddedIndex(m.stream)
+      readEmbeddedIndex(m.reader)
     if embedded.len > 0:
       addEmbeddedIndex(m.public, m.private, embedded)
     let indexName = infile.changeModuleExt".s.idx.nif"
     m.index = readIndex(indexName)
 
   #echo "INPUT IS ", toString(m.buf)
-  when defined(useNifcore):
-    owningBuf = createTokenBuf()
-    parse(m.reader, owningBuf)
-  else:
-    owningBuf = fromStream(m.stream)
-
+  owningBuf = createTokenBuf()
+  parse(m.reader, owningBuf)
   result = beginRead(owningBuf)
   prog.mods[prog.main.name] = m
   #publishStringType()

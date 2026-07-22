@@ -436,7 +436,7 @@ proc makeCfVar(c: var Context; dest: var TokenBuf; tar: var Target; info: Packed
     tar.t.addSymUse result.v, info
   else:
     assert tar.m == IsCfvar
-    result = CfVar(v: tar.t[0].symId)
+    result = CfVar(v: readonlyCursorAt(tar.t, 0).symId)
 
 proc useCfVar(dest: var TokenBuf; cf: CfVar; info: PackedLineInfo) =
   dest.addParLe("jtrue", info)

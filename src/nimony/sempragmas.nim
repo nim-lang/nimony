@@ -220,7 +220,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       dest.addParRi()
       return
     if pk in {ImportcP, ImportcppP, ExportcP} and dest[strPos].kind == StrLitKind:
-      crucial.externName = pool.strings[dest[strPos].litId]
+      crucial.externName = pool.strings[readonlyCursorAt(dest, strPos).litId]
     # Header pragma extra
     if pk == HeaderP:
       let idx = dest.len - 1
@@ -277,7 +277,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     else:
       buildErr c, dest, n.info, "expected int literal"
     if pk == SizeP and dest[valueStart].kind == IntLit:
-      crucial.size = int(pool.integers[dest[valueStart].intId])
+      crucial.size = int(pool.integers[readonlyCursorAt(dest, valueStart).intId])
     dest.addParRi()
   of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP, BorrowP,
      NoSideEffectP, NodestroyP, BycopyP, ByrefP, InlineP, NoinlineP, NoinitP,

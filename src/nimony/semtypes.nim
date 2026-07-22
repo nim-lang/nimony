@@ -553,8 +553,9 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   var headId: SymId = SymId(0)
   var decl = default TypeDecl
   var ok = false
-  if dest[typeStart+1].kind == Symbol:
-    headId = dest[typeStart+1].symId
+  let invokeHead = childCursor(readonlyCursorAt(dest, typeStart))
+  if invokeHead.isSymbol:
+    headId = invokeHead.symId
     decl = getTypeSection(headId)
     if decl.kind != TypeY:
       c.buildErr dest, info, "cannot attempt to instantiate a non-type"
@@ -564,9 +565,7 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
       ok = true
   else:
     # symbol may have inlined into a magic
-    let head = cursorAt(dest, typeStart+1)
-    let kind = head.typeKind
-    endRead(dest)
+    let kind = invokeHead.typeKind
     if kind in InvocableTypeMagics:
       # magics that can be invoked
       dest.shrink typeStart
@@ -784,25 +783,12 @@ proc stripNilAnnotation(dest: var TokenBuf; minPos: int) =
   ## remove it. This is needed because semLocalTypeImpl may add a default `(notnil)` annotation
   ## that must be stripped before adding an explicit annotation.
   let L = dest.len
-  when defined(useNifcore):
-    # an empty pair is a single sealed OpenTagKind (jump 0); its `)` is elided
-    let last = readonlyCursorAt(dest, L-1)
-    if L >= minPos + 1 and last.kind == OpenTagKind and jump(last) == 0:
-      let t = last.substructureKind
-      if t in {NotnilU, NilU, UncheckedU}:
-        dest.shrink L-1
-  elif defined(virtualParRi):
-    # an empty pair is a single sealed OpenTagKind (jump 0); its `)` is elided
-    if L >= minPos + 1 and dest[L-1].kind == OpenTagKind and jump(dest[L-1]) == 0:
-      let t = dest[L-1].substructureKind
-      if t in {NotnilU, NilU, UncheckedU}:
-        dest.shrink L-1
-  else:
-    if L >= minPos + 2 and dest[L-1].kind == ParRi and dest[L-2].kind == OpenTagKind:
-      let t = dest[L-2].substructureKind
-      if t in {NotnilU, NilU, UncheckedU}:
-        dest.shrink L-2
-
+  # an empty pair is a single sealed OpenTagKind (jump 0); its `)` is elided
+  let last = readonlyCursorAt(dest, L-1)
+  if L >= minPos + 1 and last.kind == OpenTagKind and jump(last) == 0:
+    let t = last.substructureKind
+    if t in {NotnilU, NilU, UncheckedU}:
+      dest.shrink L-1
 proc handleNotnilType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; context: TypeDeclContext): bool =
   result = false
   let info = nn.info

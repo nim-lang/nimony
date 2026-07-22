@@ -22,28 +22,7 @@ proc lineInfoMatch*(info, toTrack: PackedLineInfo; tokenLen: int): bool =
   return true
 
 proc foundSymbol(tok: PackedToken; mode: TrackMode) =
- when defined(useNifcore):
   discard "idetools --track over a raw NifToken needs the cursor-based rewrite"
- else:
-  # format that is compatible with nimsuggest's in the hope it helps:
-  let info = unpack(pool.man, tok.info)
-  if info.file.isValid:
-    if (tok.isSymbol and mode == TrackUsages) or (tok.isSymbolDef and mode == TrackDef):
-      var r = (if tok.isSymbol: "use\t" else: "def\t")
-      r.add "\t" # unknown symbol kind
-      r.add pool.syms[tok.symId]
-      r.add "\t"
-      # unknown signature:
-      r.add "\t"
-      # filename:
-      r.add "\t"
-      r.add pool.files[info.file]
-      r.add "\t"
-      r.addInt info.line
-      r.add "\t"
-      r.addInt info.col
-      stdout.writeLine(r)
-
 type
   SearchKind = enum skOther, skField, skDot
 
@@ -189,24 +168,7 @@ proc tr(c: var IdeContext, n: var Cursor) =
 
 proc getParent(n: Cursor): Cursor =
   ## Walk cursor backwards until reaching the start of the parent of n
-  when defined(useNifcore):
-    result = n  # backward paren-counting has no nifcore analogue (no ParRi token)
-  else:
-    result = n
-    unsafeDec result
-    var depth = 1
-    while depth > 0:
-      case result.kind
-      of OpenTagKind:
-        dec depth
-        if depth == 0:
-          break
-      of ParRi:
-        inc depth
-      else:
-        discard
-      unsafeDec result
-
+  result = n  # backward paren-counting has no nifcore analogue (no ParRi token)
 proc locateSymImpl(n: var Cursor; buf: TokenBuf; sym: SymId; toTrack: PackedLineInfo;
                    tokenLen: int; parentPos: int; symOffset, parentOffset: var int): bool =
   ## Positions of the tracked symbol token and its innermost parent OpenTagKind
@@ -288,81 +250,4 @@ proc findLocal(file: string; sym: SymId; toTrack: PackedLineInfo; mode: TrackMod
     foundSymbol(usage.n.load, c.trackMode)
 
 proc usages*(files: openArray[string]; config: NifConfig) =
-  when defined(useNifcore):
-    quit "idetools --track is not yet supported under -d:useNifcore (needs a cursor-based rewrite of the streaming/offset walk)"
-  else:
-    # This is comparable to a linking step: We iterate over all `.idetools.nif` files to see
-    # what symbol is meant by the `file,line,col` tracking information.
-    let requestedInfo = lineinfos.pack(pool.man, pool.files.getOrIncl(config.toTrack.filename),
-                                       config.toTrack.line, config.toTrack.col)
-    # first pass: search for the symbol at `file,line,col`:
-    var isLocalSym = false
-    var symId = SymId 0
-    var symFile = ""
-    var symOffset = 0
-    var symParentOffset = 0
-
-    let moduleName = moduleSuffix(config.toTrack.filename, config.paths)
-    let nifFile = config.nifcachePath / moduleName & ".s.nif"
-
-    var s = nifstreams.open(nifFile)
-    var parentStarts = newSeqOfCap[int](100)
-    try:
-      discard processDirectives(s.r)
-      var i = 0
-      while true:
-        let tok = next(s)
-        case tok.kind
-        of Symbol, SymbolDef:
-          # performance critical! May run over every symbol in the project!
-          var name = addr pool.syms[tok.symId]
-          var tokenLen = 0
-          var dots = 0
-          for i in 0 ..< name[].len:
-            if name[][i] == '.':
-              inc dots
-            if dots == 0: inc tokenLen
-          if lineInfoMatch(tok.info, requestedInfo, tokenLen):
-            symOffset = i
-            symParentOffset = parentStarts[^1]
-            isLocalSym = dots < 2
-            symId = tok.symId
-            symFile = nifFile
-            break
-        of EofTokenKind: break
-        of OpenTagKind:
-          parentStarts.add(i)
-        of ParRi:
-          discard parentStarts.pop()
-        of UnknownTokenKind, DotToken, Ident, StrLitKind, CharLit, IntLit, UIntLit, FloatLit:
-          discard "proceed"
-
-        inc i
-    finally:
-      close(s)
-
-    if symId == SymId 0:
-      quit "symbol not found"
-    elif isLocalSym:
-      # Set path so files are found when resolving symbols
-      prog.main.dir = nifFile.splitPath.head
-      findLocal(symFile, symId, requestedInfo, config.toTrack.mode)
-    else:
-      for file in files:
-        var s = nifstreams.open(file)
-        try:
-          discard processDirectives(s.r)
-          let indexStart = s.r.indexStartsAt()
-          while true:
-            if indexStart > 0 and s.r.offset() >= indexStart: break
-            let tok = next(s)
-            case tok.kind
-            of Symbol:
-              if tok.symId == symId: foundSymbol(tok, config.toTrack.mode)
-            of SymbolDef:
-              if tok.symId == symId: foundSymbol(tok, config.toTrack.mode)
-            of EofTokenKind: break
-            of UnknownTokenKind, DotToken, Ident, StrLitKind, CharLit, IntLit, UIntLit, FloatLit, OpenTagKind, ParRi:
-              discard "proceed"
-        finally:
-          close(s)
+  quit "idetools --track is not yet supported on nifcore (needs a cursor-based rewrite of the streaming/offset walk)"

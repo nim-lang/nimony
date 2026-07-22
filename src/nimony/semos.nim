@@ -14,8 +14,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / [nifchecksums, nifindexes, tooldirs, argsfinder, symparser]
 import ".." / lib / nifreader as rd
-when defined(useNifcore):
-  from ".." / lib / nifcoreparse import parse
+from ".." / lib / nifcoreparse import parse
 
 import nimony_model, symtabs, builtintypes, decls, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig,
@@ -303,19 +302,10 @@ proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string)
   exec quoteShell(nifler) & " --portablePaths --deps parse " & quoteShell(nimFile) & " " &
     quoteShell(src)
 
-  when defined(useNifcore):
-    var r = rd.open(src)
-    result = createTokenBuf()
-    parse(r, result)
-    rd.close(r)
-  else:
-    var stream = nifstreams.open(src)
-    try:
-      discard processDirectives(stream.r)
-      result = fromStream(stream)
-    finally:
-      nifstreams.close(stream)
-
+  var r = rd.open(src)
+  result = createTokenBuf()
+  parse(r, result)
+  rd.close(r)
 proc getFile*(info: PackedLineInfo): string =
   let fid = unpack(pool.man, info).file
   if fid.isValid:
@@ -454,18 +444,10 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
       cmd &= quoteShell(inputFileB)
     exec cmd
   var nextName = ""
-  when defined(useNifcore):
-    var r = rd.open(outputFile)
-    nextName = rd.firstUnusedName(r)
-    parse(r, dest)
-    rd.close(r)
-  else:
-    var s = nifstreams.open(outputFile)
-    try:
-      nextName = rd.firstUnusedName(s.r)
-      parse s, dest, NoLineInfo
-    finally:
-      close s
+  var r = rd.open(outputFile)
+  nextName = rd.firstUnusedName(r)
+  parse(r, dest)
+  rd.close(r)
   registerGeneratedSymbols(c, firstDisamb, nextName)
 
 proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string];
@@ -545,27 +527,16 @@ proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: Token
       deps.add c.importSnippets
     deps.addParRi()
     let depsFile = c.g.config.nifcachePath / srcName & ".p.deps.nif"
-    when defined(useNifcore):
-      writeFile(depsFile, toString(deps, true))
-    else:
-      writeFile deps, depsFile
-
+    writeFile(depsFile, toString(deps, true))
     let (output, exitCode) = runProgram(progfile, c.g.config.nifcachePath, usedModules,
                                         c.commandLineArgs, sourceDir)
     if exitCode != 0:
       result = ensureMove(output)
     else:
       let outfile = c.g.config.nifcachePath / srcName.addFileExt(".out.nif")
-      when defined(useNifcore):
-        var r = rd.open(outfile)
-        parse(r, dest)
-        rd.close(r)
-      else:
-        var s = nifstreams.open(outfile)
-        try:
-          parse s, dest, NoLineInfo
-        finally:
-          close s
+      var r = rd.open(outfile)
+      parse(r, dest)
+      rd.close(r)
       result = ""  # success: caller interprets "" as no error
   except:
     result = "I/O error while evaluating " & srcName

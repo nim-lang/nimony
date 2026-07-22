@@ -9,17 +9,8 @@ const
   MaxSetElements* = createXint(1'u64 shl 16)
 
 proc typebits*(config: NifConfig; n: PackedToken): int =
-  when defined(useNifcore):
-    if n.isIntLit: result = n.soperand.int  # nifcore stores small ints inline
-    else: result = 0
-  else:
-    if n.isIntLit:
-      result = int pool.integers[n.intId]
-    elif n.kind == InlineInt:
-      result = n.soperand
-    else:
-      result = 0
-
+  if n.isIntLit: result = n.soperand.int  # nifcore stores small ints inline
+  else: result = 0
 proc isOrdinalTypeKind*(kind: TypeKind): bool {.inline.} =
   result = kind in {EnumT, IntT, UIntT, CharT, BoolT, RangetypeT}
 

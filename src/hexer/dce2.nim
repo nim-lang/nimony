@@ -161,8 +161,6 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
     dest.addSymDef t.toLengName, n.info
     inc n
   else: # atoms and suffix kinds; classic: a physical ParRi cannot appear here
-    when not defined(useNifcore):
-      if n.kind == ParRi: raiseAssert "ParRi should not be encountered here"
     dest.takeToken n
 
 proc rewriteModule(file: string; live: HashSet[SymId]; resolved: ResolveTable; outdir: string) =

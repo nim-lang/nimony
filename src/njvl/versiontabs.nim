@@ -17,21 +17,14 @@ include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls]
 
 
-when defined(useNifcore):
-  # nifcore has no ParLe/ParRi token kinds. The journal's section delimiters
-  # are raw marker tokens that are never cursor-walked: a jump-0 TagLit opens
-  # a section, a DotToken closes it (only Symbol entries appear in between).
-  const SectionOpen = TagLit
-  const SectionClose = DotToken
-  proc sectionOpenToken(): NifToken {.inline.} =
-    tagLitToken(cast[TagId](uint32(ord(StmtsS))))
-  proc sectionCloseToken(): NifToken {.inline.} = dotToken()
-else:
-  const SectionOpen = ParLe
-  const SectionClose = ParRi
-  proc sectionOpenToken(): PackedToken {.inline.} = parLeToken(StmtsS, NoLineInfo)
-  proc sectionCloseToken(): PackedToken {.inline.} = parRiToken(NoLineInfo)
-
+# nifcore has no ParLe/ParRi token kinds. The journal's section delimiters
+# are raw marker tokens that are never cursor-walked: a jump-0 TagLit opens
+# a section, a DotToken closes it (only Symbol entries appear in between).
+const SectionOpen = TagLit
+const SectionClose = DotToken
+proc sectionOpenToken(): NifToken {.inline.} =
+  tagLitToken(cast[TagId](uint32(ord(StmtsS))))
+proc sectionCloseToken(): NifToken {.inline.} = dotToken()
 type
   VersionTab* = object
     history: TokenBuf
@@ -41,7 +34,9 @@ proc createVersionTab*(): VersionTab =
   result = VersionTab(history: createTokenBuf(100), currentVersion: initTable[SymId, int]())
 
 proc newValueFor*(v: var VersionTab, symId: SymId) =
-  v.history.addSymUse symId, NoLineInfo
+  # raw pool-ref token (never inline): `combineJoin` reads `symId` back by
+  # raw index, which an inline-encoded short symbol would corrupt
+  v.history.addRaw symToken(symId)
   v.currentVersion.mgetOrPut(symId, -1) += 1
 
 proc getVersion*(v: VersionTab, symId: SymId): int =

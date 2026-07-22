@@ -15,48 +15,12 @@ proc takeUnquotedAtom(r: var string; c: var Cursor) =
 
 proc takeUnquoted*(c: var Cursor): StrId =
   var r = ""
-  when defined(useNifcore):
-    # quoted content is flat in practice: read the atoms of the current subtree
-    if c.isTagLit:
-      c.into:
-        while c.hasMore: takeUnquotedAtom(r, c)
-    else:
-      takeUnquotedAtom(r, c)
+  # quoted content is flat in practice: read the atoms of the current subtree
+  if c.isTagLit:
+    c.into:
+      while c.hasMore: takeUnquotedAtom(r, c)
   else:
-    var scopes: seq[Cursor] = @[]
-    while true:
-      case c.kind
-      of ParLe:
-        scopes.add c; c = sub(c)
-      of ParRi:
-        # the first close ends the walk (quoted content is flat in practice)
-        if scopes.len > 0:
-          c = scopes.pop; skip c
-        else:
-          inc c
-        break
-      of EofToken:
-        r.add "<unexpected eof>"
-        break
-      of Ident, StringLit:
-        r.add pool.strings[c.litId]
-        inc c
-      of IntLit:
-        r.addInt pool.integers[c.intId]
-        inc c
-      of CharLit:
-        let ch = char(c.uoperand)
-        r.add ch
-        inc c
-      of UIntLit:
-        r.add $pool.uintegers[c.uintId]
-        inc c
-      of FloatLit:
-        r.addFloat pool.floats[c.floatId]
-        inc c
-      of UnknownToken, DotToken, Symbol, SymbolDef:
-        r.add "<unexpected token>: " & $c.kind
-        inc c
+    takeUnquotedAtom(r, c)
   assert r.len > 0
   result = getOrIncl(pool.strings, r)
 

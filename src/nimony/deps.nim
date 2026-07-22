@@ -25,9 +25,8 @@ import ".." / models / nifindex_tags
 
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-when defined(useNifcore):
-  import ".." / lib / nifreader as rd
-  from ".." / lib / nifcoreparse import parse
+import ".." / lib / nifreader as rd
+from ".." / lib / nifcoreparse import parse
 
 type
   FilePair = object
@@ -638,25 +637,13 @@ proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
   else:
     depsFile = c.config.deps2File(p)
 
-  when defined(useNifcore):
-    var r = rd.open(depsFile)
-    var buf = createTokenBuf()
-    parse(r, buf)
-    rd.close(r)
-    processDeps c, beginRead(buf), current
-    if {SkipSystem, IsSystem} * c.moduleFlags == {} and not current.isSystem:
-      importSystem c, current
-  else:
-    var stream = nifstreams.open(depsFile)
-    try:
-      discard processDirectives(stream.r)
-      var buf = fromStream(stream)
-      processDeps c, beginRead(buf), current
-      if {SkipSystem, IsSystem} * c.moduleFlags == {} and not current.isSystem:
-        importSystem c, current
-    finally:
-      nifstreams.close(stream)
-
+  var r = rd.open(depsFile)
+  var buf = createTokenBuf()
+  parse(r, buf)
+  rd.close(r)
+  processDeps c, beginRead(buf), current
+  if {SkipSystem, IsSystem} * c.moduleFlags == {} and not current.isSystem:
+    importSystem c, current
 proc rootPath(c: DepContext): string =
   # XXX: Relative paths in build files are relative to current working directory, not the location of the build file.
   result = absoluteParentDir(c.rootNode.files[0].nimFile)

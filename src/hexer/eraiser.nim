@@ -101,9 +101,6 @@ proc collectTupleLocals(n: var Cursor; hasRaisesPragma: var bool; res: var HashS
       n.into:
         while n.hasMore: collectTupleLocals(n, hasRaisesPragma, res)
   else:
-    when not defined(useNifcore):
-      if n.kind == ParRi:
-        raiseAssert "BUG: unexpected ParRi in eraiser.collectTupleLocals"
     inc n
 
 proc localsThatBecomeTuples*(n: Cursor): HashSet[SymId] =

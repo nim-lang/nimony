@@ -61,67 +61,7 @@ type
     keepReturns: bool
 
 proc codeListing*(c: TokenBuf, start = 0; last = -1): string =
-  when defined(useNifcore):
-    result = "<codeListing: not available under nifcore>"
-  else:
-    # for debugging purposes
-    # first iteration: compute all necessary labels:
-    var jumpTargets = initIntSet()
-    let last = if last < 0: c.len-1 else: min(last, c.len-1)
-    for i in start..last:
-      if c[i].kind == GotoInstr:
-        jumpTargets.incl(i+c[i].getInt28)
-    # second iteration: generate string representation:
-    var i = start
-    var b = nifbuilder.open(1000)
-    # Under `-d:virtualParRi` the matching ParRi of a sealed OpenTagKind is elided
-    # from the buffer, so the raw index walk below never sees it. Track the
-    # last-content index of every open sealed scope and inject `endTree()`
-    # once we've walked past it. Overflow scopes (jump == MaxJump) keep a
-    # physical ParRi and are still closed by the `of ParRi` branch.
-    when defined(virtualParRi):
-      var closeStack: seq[int] = @[]
-    while i <= last:
-      if i in jumpTargets:
-        b.addTree "lab"
-        b.addSymbolDef("L" & $i)
-        b.endTree()
-      case c[i].kind
-      of GotoInstr:
-        b.addTree "goto"
-        let diff = c[i].getInt28()
-        if diff != 0:
-          b.addIdent "L" & $(i+diff)
-        else:
-          b.addIdent "L<BUG HERE>" & $i
-        b.endTree()
-      of Symbol:
-        b.addSymbol pool.syms[c[i].symId]
-      of SymbolDef:
-        b.addSymbolDef pool.syms[c[i].symId]
-      of EofTokenKind:
-        b.addRaw "\n<unexptected EOF>\n"
-      of DotToken: b.addEmpty
-      of Ident: b.addIdent pool.strings[c[i].litId]
-      of StrLitKind: b.addStrLit pool.strings[c[i].litId]
-      of CharLit: b.addCharLit c[i].charLit
-      of IntLit: b.addIntLit pool.integers[c[i].intId]
-      of UIntLit: b.addUIntLit pool.uintegers[c[i].uintId]
-      of FloatLit: b.addFloatLit pool.floats[c[i].floatId]
-      of OpenTagKind:
-        b.addTree pool.tags[c[i].tagId]
-        when defined(virtualParRi):
-          if jump(c[i]) != MaxJump:
-            closeStack.add(i + span(readonlyCursorAt(c, i)) - 1)
-      of ParRi: b.endTree()
-      when defined(virtualParRi):
-        while closeStack.len > 0 and closeStack[^1] == i:
-          b.endTree()
-          discard closeStack.pop()
-      inc i
-    if i in jumpTargets: b.addRaw("L" & $i & ": End\n")
-    result = b.extract()
-
+  result = "<codeListing: not available under nifcore>"
   # ── source-position side-channel ──────────────────────────────────────────
   # The mover needs to map every CF token back to the source token it came from.
   # Rather than stamp a payload into the token `info` field (nifcore tokens may
@@ -156,13 +96,9 @@ proc patch(c: var ControlFlow; p: Label) =
   let diff = c.dest.len - p.int
   assert diff != 0
   assert c.dest[p.int].kind == GotoInstr
-  when defined(useNifcore):
-    var tok = c.dest[p.int]
-    tok.patchInt28Token int32(diff)
-    c.dest[p.int] = tok
-  else:
-    c.dest[p.int].patchInt28Token int32(diff)
-
+  var tok = c.dest[p.int]
+  tok.patchInt28Token int32(diff)
+  c.dest[p.int] = tok
 proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target)
 proc trStmt(c: var ControlFlow; n: var Cursor)
 

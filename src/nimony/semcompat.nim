@@ -172,8 +172,9 @@ proc compatVarargsSlotIsBundled(m: Match; start: int): bool =
   result = false
   if start < m.args.len:
     if m.args[start].exprKind == HcallX:
-      if start + 1 < m.args.len and m.args[start + 1].kind == Symbol:
-        result = pool.syms[m.args[start + 1].symId].startsWith("toOpenArray.")
+      let callee = childCursor(readonlyCursorAt(m.args, start))
+      if callee.hasMore and callee.kind == Symbol:
+        result = pool.syms[callee.symId].startsWith("toOpenArray.")
 
 proc compatBundleVarargsInMatch*(c: var SemContext; m: var Match;
                                  elemType: Cursor; info: PackedLineInfo) =

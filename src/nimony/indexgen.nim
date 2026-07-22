@@ -9,9 +9,8 @@
 import std / [os, assertions, sets, hashes, tables, syncio]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-when defined(useNifcore):
-  import ".." / lib / nifreader as rd
-  from ".." / lib / nifcoreparse import parse
+import ".." / lib / nifreader as rd
+from ".." / lib / nifcoreparse import parse
 import ".." / lib / [nifindexes, symparser]
 import decls, nimony_model, programs, semos
 import ".." / models / nifindex_tags
@@ -40,21 +39,13 @@ proc buildIndexExports(exports: Table[string, HashSet[SymId]]; infile: string): 
       # open NIF file to get the path of source file of the module from the line info.
       let modPath = mp.dir / (suffix & mp.ext)
       var fileId: lineinfos.FileId
-      when defined(useNifcore):
-        var r = rd.open(modPath)
-        var mbuf = createTokenBuf()
-        parse(r, mbuf)
-        rd.close(r)
-        var mn = beginRead(mbuf)
-        if mn.isTagLit: inc mn      # into the stmts; first child carries the info
-        fileId = pool.man.getFileId(mn.info)
-      else:
-        var stream = nifstreams.open(modPath)
-        discard processDirectives(stream.r)
-        discard stream.next   # first stmts node doesn't have line info.
-        let t = stream.next
-        fileId = pool.man.getFileId(t.info)
-        stream.close
+      var r = rd.open(modPath)
+      var mbuf = createTokenBuf()
+      parse(r, mbuf)
+      rd.close(r)
+      var mn = beginRead(mbuf)
+      if mn.isTagLit: inc mn      # into the stmts; first child carries the info
+      fileId = pool.man.getFileId(mn.info)
       assert fileId.isValid
       let path = pool.files[fileId].toAbsolutePath
       result.addParLe(TagId(FromexportIdx))
@@ -69,17 +60,10 @@ proc indexFromNif*(infile: string) =
   ## Extract index from `infile` Nif file and write it to `*.idx.nif` file.
   ##
   ## See https://github.com/nim-lang/nimony/issues/1162
-  when defined(useNifcore):
-    var r = rd.open(infile)
-    var buf = createTokenBuf()
-    parse(r, buf)
-    rd.close(r)
-  else:
-    var stream = nifstreams.open(infile)
-    discard processDirectives(stream.r)
-    var buf = fromStream(stream)
-    stream.close
-
+  var r = rd.open(infile)
+  var buf = createTokenBuf()
+  parse(r, buf)
+  rd.close(r)
   var n = beginRead buf
   let root = n.info
   var converterIndexMap = default seq[(SymId, SymId)]

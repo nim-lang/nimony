@@ -554,11 +554,12 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
         dest.addSymUse(hintSym, info)
         skip n
     of MutT, LentT:
+      let ptrPos = dest.len
       dest.addParLe("ptr", n.info)
       let ptrStart = n
       n = sub(n)
       if isViewType(n):
-        dest.shrink dest.len-1 # remove the "ptr" again
+        dest.shrink ptrPos # remove the "ptr" again
         trType c, dest, n, {}
         n = ptrStart; skip n
       else:
@@ -887,7 +888,10 @@ proc buildProcType(c: var EContext; dest: var TokenBuf; thisProc: Cursor): SymId
   var procTypeCursor = beginRead(procTypeBuf)
   var beforeProcPos = dest.len
   trAsNamedType c, dest, procTypeCursor
-  result = dest[dest.len - 1].symId
+  var lastTok = dest.len - 1
+  while readonlyCursorAt(dest, lastTok).kind in {ExtendedSuffix, LineInfoLit}:
+    dec lastTok
+  result = readonlyCursorAt(dest, lastTok).symId
   dest.shrink beforeProcPos
 
 proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMode) =
@@ -1721,10 +1725,10 @@ proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; m
       externPragmas c, dest, genPragmas, prag, pinfo
 
     if ThreadvarP in prag.flags:
-      setTag(dest[toPatch], pool.tags.getOrIncl("tvar"))
+      setTagAt(dest, toPatch, pool.tags.getOrIncl("tvar"))
       symKind = TvarY
     elif GlobalP in prag.flags:
-      setTag(dest[toPatch], pool.tags.getOrIncl("gvar"))
+      setTagAt(dest, toPatch, pool.tags.getOrIncl("gvar"))
       symKind = GvarY
 
     if prag.align != IntId(0):

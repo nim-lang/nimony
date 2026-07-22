@@ -15,10 +15,9 @@ else:
 import ".." / lib / platform
 
 include ".." / lib / nifprelude
-when defined(useNifcore):
-  # only `parse` — a full import would re-export nifcore and shadow the global
-  # `pool` / `createTokenBuf` the shim provides.
-  from ".." / lib / nifcoreparse import parse
+# only `parse` — a full import would re-export nifcore and shadow the global
+# `pool` / `createTokenBuf` the shim provides.
+from ".." / lib / nifcoreparse import parse
 
 when defined(nimony):
   func addUnique(s: var seq[string]; x: sink string) =
@@ -189,22 +188,11 @@ proc parseConfig(c: Cursor; result: var NifConfig) =
           skip c
 
 proc parseNifConfig*(configFile: string; result: var NifConfig) =
-  when defined(useNifcore):
-    var r = nifreader.open(configFile)
-    var buf = createTokenBuf()
-    nifcoreparse.parse(r, buf)   # reads directives + the tree into `buf`
-    var c = beginRead(buf)
-    parseConfig(c, result)
-  else:
-    var f = nifstreams.open(configFile)
-    discard processDirectives(f.r)
-    var buf = fromStream(f)
-    var c = beginRead(buf)
-    try:
-      parseConfig(c, result)
-    finally:
-      f.close()
-
+  var r = nifreader.open(configFile)
+  var buf = createTokenBuf()
+  nifcoreparse.parse(r, buf)   # reads directives + the tree into `buf`
+  var c = beginRead(buf)
+  parseConfig(c, result)
 proc getOptionsAsOneString*(config: NifConfig): string =
   ## Returns the concatenation of options that affects generated files.
   result = "--base:" & config.baseDir

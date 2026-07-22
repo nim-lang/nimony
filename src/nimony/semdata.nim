@@ -247,17 +247,17 @@ type
       ## symbol keeps the same name as if it had never been resolved early.
       ## Persists phase 2 → phase 3; cleared per module at phase-2 start.
 
-when defined(useNifcore):
-  proc typeToCanonAux(result: var string; c: var Cursor) =
-    ## Cursor walk (ignores nifcore's sparse line-info suffixes, which must not
-    ## enter the type-identity key). Byte-format matches the classic raw walk.
-    if c.isTagLit:
-      result.add '('
-      result.addInt c.tagId.int
-      c.into:
-        while c.hasMore: typeToCanonAux(result, c)
-      result.add ')'
-    elif c.isIdent or c.isStringLit:
+proc typeToCanonAux(result: var string; c: var Cursor) =
+  ## Cursor walk (ignores nifcore's sparse line-info suffixes, which must not
+  ## enter the type-identity key). Byte-format matches the classic raw walk.
+  if c.isTagLit:
+    result.add '('
+    result.addInt c.tagId.int
+    c.into:
+      while c.hasMore: typeToCanonAux(result, c)
+    result.add ')'
+  else:
+    if c.isIdent or c.isStringLit:
       result.add ' '
       result.addInt c.litId.int
     elif c.isDotToken:
@@ -279,71 +279,13 @@ when defined(useNifcore):
       result.add " i"; result.addInt c.intId.int
     elif c.isUIntLit:
       result.add " u"; result.addInt c.uintId.int
-    elif c.isFloatLit:
-      result.add " f"; result.addInt c.floatId.int
-    if not c.isTagLit: skip c
+    skip c
 
-  proc typeToCanon*(buf: TokenBuf; start: int): string =
-    result = ""
-    var c = cursorAt(cast[ptr TokenBuf](unsafeAddr buf)[], start)
-    while c.hasMore:
-      typeToCanonAux(result, c)
-
-else:
- proc typeToCanon*(buf: TokenBuf; start: int): string =
+proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""
-  for i in start..<buf.len:
-    case buf[i].kind
-    of ParLe:
-      result.add '('
-      result.addInt buf[i].tagId.int
-    of ParRi: result.add ')'
-    of Ident, StringLit:
-      result.add ' '
-      result.addInt buf[i].litId.int
-    of UnknownToken: result.add " unknown"
-    of EofToken: result.add " eof"
-    of DotToken: result.add '.'
-    of SymbolDef:
-      # Param names inside proctypes get fresh symIds per declaration,
-      # but param names do not affect type identity. Use a fixed marker
-      # so that e.g. two `seq[proc(x: int)]` type trees produce the same
-      # canonical key regardless of the internal symId allocation for `x`.
-      result.add " !symdef"
-    of Symbol:
-      # An instantiated sym like `seq.0.Iabc.modA` has its module suffix
-      # appended at *creation* time, so the same logical instantiation
-      # `seq[Foo]` can appear as `seq.0.Iabc.modA` or `seq.0.Iabc.modB`
-      # depending on where in the program it was first instantiated.
-      # When such a sym appears as a *typeArg* to another generic
-      # instantiation, the two forms have different `symId`s but are
-      # semantically the same — DCE merges them at link time via
-      # `removeModule(name)` as the key, and `instToSuffix` (the hash
-      # that builds the *new* instantiation's name) likewise strips the
-      # module. Without matching canonicalization here, the proc-instance
-      # cache (`c.instantiatedProcs`) misses for typeArgs that differ
-      # only in module suffix, while `newInstSymId` still produces the
-      # same name — so we get two definitions of the same proc.
-      let s = pool.syms[buf[i].symId]
-      if isInstantiation(s):
-        result.add " s\""
-        result.add removeModule(s)
-        result.add '"'
-      else:
-        result.add " s"
-        result.addInt buf[i].symId.int
-    of CharLit:
-      result.add " c"
-      result.addInt buf[i].uoperand.int
-    of IntLit:
-      result.add " i"
-      result.addInt buf[i].intId.int
-    of UIntLit:
-      result.add " u"
-      result.addInt buf[i].uintId.int
-    of FloatLit:
-      result.add " f"
-      result.addInt buf[i].floatId.int
+  var c = cursorAt(cast[ptr TokenBuf](unsafeAddr buf)[], start)
+  while c.hasMore:
+    typeToCanonAux(result, c)
 
 proc typeToCursor*(c: var SemContext; buf: TokenBuf; start: int): TypeCursor =
   let key = typeToCanon(buf, start)

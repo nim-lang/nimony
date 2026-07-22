@@ -395,9 +395,6 @@ proc checkTree(ctx: var ValidatorCtx; c: var Cursor;
   if c.isTagLit:
     checkParLe(ctx, c, parentTag, childIdx, inType)
   else:
-    when not defined(useNifcore):
-      if c.kind == ParRi:
-        return # a physical close: do not advance (mirrors the classic case arm)
     if c.hasMore:
       inc c
 
