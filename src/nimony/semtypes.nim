@@ -553,7 +553,13 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   var headId: SymId = SymId(0)
   var decl = default TypeDecl
   var ok = false
-  let invokeHead = childCursor(readonlyCursorAt(dest, typeStart))
+  # The `(at …)` head emitted above is still open (sealed only at the end of
+  # this proc), so `childCursor`'s jump is not valid yet; address the first
+  # child by raw position instead.
+  let headPos = typeStart + tokenWidth(readonlyCursorAt(dest, typeStart))
+  let invokeHead =
+    if headPos < dest.len: readonlyCursorAt(dest, headPos)
+    else: default(Cursor)
   if invokeHead.isSymbol:
     headId = invokeHead.symId
     decl = getTypeSection(headId)
@@ -782,13 +788,15 @@ proc stripNilAnnotation(dest: var TokenBuf; minPos: int) =
   ## If the last tree in `dest` is a `(notnil)`, `(nil)`, or `(unchecked)` annotation pair,
   ## remove it. This is needed because semLocalTypeImpl may add a default `(notnil)` annotation
   ## that must be stripped before adding an explicit annotation.
-  let L = dest.len
-  # an empty pair is a single sealed OpenTagKind (jump 0); its `)` is elided
-  let last = readonlyCursorAt(dest, L-1)
-  if L >= minPos + 1 and last.kind == OpenTagKind and jump(last) == 0:
-    let t = last.substructureKind
-    if t in {NotnilU, NilU, UncheckedU}:
-      dest.shrink L-1
+  # an empty pair is a single sealed TagLit (jump 0) possibly followed by
+  # line-info suffix tokens; `lastValueStart` finds the head.
+  let start = lastValueStart(dest)
+  if start >= minPos:
+    let last = readonlyCursorAt(dest, start)
+    if last.kind == OpenTagKind and jump(last) == 0:
+      let t = last.substructureKind
+      if t in {NotnilU, NilU, UncheckedU}:
+        dest.shrink start
 proc handleNotnilType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; context: TypeDeclContext): bool =
   result = false
   let info = nn.info

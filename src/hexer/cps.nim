@@ -409,7 +409,7 @@ proc transformToCps*(pass: var Pass) =
     hooks: passiveHooks(), nextTemp: pass.nextTemp)
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS
-  c.coroTypes.add n.load() # the `(stmts` open tag
+  c.coroTypes.addParLe(n.tag, n.info) # the `(stmts` open tag
   n.into:
     while n.hasMore:
       coroTr(c, pass.dest, n)

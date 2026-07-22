@@ -47,11 +47,11 @@ proc wellFormed(buf: var TokenBuf): bool =
 proc rec(n: var Cursor; acc: var seq[TokenBuf]) =
   ## Recursive descent collecting every ProcS body (incl. nested procs).
   while n.hasMore:
-    if n.kind == ParLe:
+    if n.isTagLit:
       if n.stmtKind == ProcS:
         var probe = n
         let d = takeProcDecl(probe)
-        if d.body.kind == ParLe:
+        if d.body.isTagLit:
           var b = createTokenBuf(64)
           var bc = d.body
           b.addSubtree bc

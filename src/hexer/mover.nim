@@ -216,8 +216,7 @@ proc buildFindStartIndex(cf: TokenBuf; srcMap: openArray[int32]): FindStartIndex
   # spuriously reports "not indexed"). Track each open sealed scope's last-content
   # index and decrement when we walk past it. Overflow scopes (jump == MaxJump)
   # keep a physical ParRi and are handled by the `of ParRi` branch.
-  when defined(virtualParRi):
-    var closeStack: seq[int] = @[]
+  var closeStack: seq[int] = @[]
   for i in 0 ..< cf.len:
     case cf[i].kind
     of OpenTagKind:
@@ -231,10 +230,9 @@ proc buildFindStartIndex(cf: TokenBuf; srcMap: openArray[int32]): FindStartIndex
       let k = int(s - result.base)
       if result.data[k].pos < 0:
         result.data[k] = FindStartEntry(pos: int32(i), nested: int16(nested))
-    when defined(virtualParRi):
-      while closeStack.len > 0 and closeStack[^1] == i:
-        dec nested
-        discard closeStack.pop()
+    while closeStack.len > 0 and closeStack[^1] == i:
+      dec nested
+      discard closeStack.pop()
 
 proc findStart(c: TokenBuf; srcPos: int; n: var Cursor;
                index: FindStartIndex): int =

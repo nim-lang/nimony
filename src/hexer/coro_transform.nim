@@ -1273,7 +1273,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
             StaticstmtS, BindS, MixinS, UsingS, AsmS,
             DeferS, NoStmt:
-          dest.add n.load()
+          dest.addParLe(n.tag, n.info)
           n.into:
             while n.hasMore:
               trGoto c, dest, n

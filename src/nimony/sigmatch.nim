@@ -1613,7 +1613,7 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
     ex.isIntLit and sameTrees(a, m.context.types.intType)
   let isFloatLit = f.typeKind != CharT and
     ex.kind == FloatLit and sameTrees(a, m.context.types.floatType)
-  let sameKind = f.tag == a.tag
+  let sameKind = a.isTagLit and f.tag == a.tag
   if sameKind or isIntLit or isFloatLit:
     inc a
   else:
@@ -2143,7 +2143,7 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: CallArg) =
       if containsGenericParams(f): # maybe restrict to params of this routine
         # element type needs to be instantiated:
         m.refineArgType = true
-      m.args.add arg.n.load # copy tag
+      m.args.addParLe(arg.n.tag, arg.n.info) # copy tag
       m.args.takeTree f
       m.args.addParRi()
   else:

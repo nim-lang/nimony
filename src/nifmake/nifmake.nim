@@ -103,26 +103,23 @@ proc expandCommand(cmd: Command; inputs, outputs, args: seq[string]; baseDir: st
 
   var n = readonlyCursorAt(cmd.tokens, 0)
   var toolArgs: seq[string] = @[]
-  if n.kind == StringLit:
-    let tool = findTool(pool.strings[n.litId])
+  if n.kind == StrLit:
+    let tool = findTool(n.strVal)
     result.add quoteShell(tool)
     inc n
     if baseDir.len > 0 and cmd.ext.len > 0:
       let argsFile = findArgs(baseDir, extractArgsKey(tool) & cmd.ext)
       processArgsFile argsFile, toolArgs
 
-  while true:
-    case n.kind
-    of ParRi:
-      break  # sentinel emitted by `parseCommandDefinition`'s trailing addParRi
-    of StringLit:
+  while n.hasMore:
+    if n.kind == StrLit:
       addSpace(result)
-      # each StringLit is one argument; without quoting an argument
+      # each StrLit is one argument; without quoting an argument
       # containing a space (e.g. a forwarded `--define:key=a b` or a path)
       # splits into several (tool names and filenames are quoted already)
-      result.add quoteShell(pool.strings[n.litId])
+      result.add quoteShell(n.strVal)
       inc n
-    of ParLe:
+    elif n.isTagLit:
       let tag = pool.tags[n.tag]
       if tag == "args":
         # Add explicit arguments from the .nif file
@@ -141,20 +138,20 @@ proc expandCommand(cmd: Command; inputs, outputs, args: seq[string]; baseDir: st
         var prefix = ""
         var suffix = ""
         n.into:
-          if n.hasMore and n.kind == StringLit:
-            prefix = pool.strings[n.litId]
+          if n.hasMore and n.kind == StrLit:
+            prefix = n.strVal
             inc n
           if n.hasMore and n.kind == IntLit:
-            a = int pool.integers[n.intId]
+            a = int n.intVal
             if a < 0: a = L + a
             b = a
             inc n
           if n.hasMore and n.kind == IntLit:
-            b = int pool.integers[n.intId]
+            b = int n.intVal
             if b < 0: b = L + b
             inc n
-          if n.hasMore and n.kind == StringLit:
-            suffix = pool.strings[n.litId]
+          if n.hasMore and n.kind == StrLit:
+            suffix = n.strVal
             inc n
           while n.hasMore: skip n
         case tag
@@ -547,16 +544,15 @@ proc parseCommandDefinition(n: var Cursor; dag: var Dag) =
     var tokens = createTokenBuf(4)
     var argsext = ".args"
     while n.hasMore:
-      case n.kind
-      of StringLit:
-        tokens.add n.load()
+      if n.kind == StrLit:
+        tokens.addStrLit n.strVal
         inc n
-      of ParLe:
+      elif n.isTagLit:
         let tag = pool.tags[n.tag]
         if tag == "argsext":
           n.into:
-            if n.hasMore and n.kind == StringLit:
-              argsext = pool.strings[n.litId]
+            if n.hasMore and n.kind == StrLit:
+              argsext = n.strVal
               inc n
         elif tag in ["input", "output", "args"]:
           # Bulk-copy the (input/output/args …) subtree into `tokens`. The
@@ -568,9 +564,8 @@ proc parseCommandDefinition(n: var Cursor; dag: var Dag) =
           quit "unsupported tag in `cmd` definition: " & tag
       else:
         quit "unsupported token in `cmd` definition: " & $n.kind
-    # Sentinel ParRi: tokens has no opener registered, so `add` falls through
-    # to emitting a real ParRi. `expandCommand` uses it as the loop terminator.
-    tokens.add parRiToken(NoLineInfo)
+    # No terminator token needed: `expandCommand`'s cursor is bounded by
+    # the buffer, so `hasMore` ends the loop.
     let cmdIdx = registerCommand(dag, cmdName, argsext)
     freeze tokens
     dag.commands[cmdIdx].tokens = tokens
@@ -583,7 +578,7 @@ proc parseDoRule(n: var Cursor; dag: var Dag) =
     cmdName = pool.syms[n.symId]
     inc n
   elif n.kind == Ident:
-    cmdName = pool.strings[n.litId]
+    cmdName = n.strVal
     inc n
   else:
     quit "expected symbol or identifier in `do` rule"
@@ -594,21 +589,21 @@ proc parseDoRule(n: var Cursor; dag: var Dag) =
 
   # Parse imports and results
   while n.hasMore:
-    if n.kind == ParLe:
+    if n.isTagLit:
       let tag = pool.tags[n.tag]
       n.into:
         if tag == "input":
-          if n.hasMore and n.kind == StringLit:
-            inputs.add(pool.strings[n.litId])
+          if n.hasMore and n.kind == StrLit:
+            inputs.add(n.strVal)
             inc n
         elif tag == "output":
-          if n.hasMore and n.kind == StringLit:
-            outputs.add(pool.strings[n.litId])
+          if n.hasMore and n.kind == StrLit:
+            outputs.add(n.strVal)
             inc n
         elif tag == "args":
           while n.hasMore:
-            if n.kind == StringLit:
-              args.add(pool.strings[n.litId])
+            if n.kind == StrLit:
+              args.add(n.strVal)
             inc n
         else:
           quit "unsupported tag in `do` definition: " & tag
@@ -626,20 +621,15 @@ proc parseNifFile(filename: string; baseDir: sink string): Dag =
   if not vfsExists(filename):
     quit "File not found: " & filename
 
-  var stream = nifstreams.open(filename)
-  defer: nifstreams.close(stream)
-
-  discard processDirectives(stream.r)
-
-  var buf = fromStream(stream)
+  var buf = parseFromFile(filename)
   var n = beginRead(buf)
   defer: endRead(buf)
 
   # Parse (.nif27)(stmts ...)
-  if n.kind == ParLe:
+  if n.isTagLit:
     n.into:  # enter the (stmts ...) wrapper
       while n.hasMore:
-        if n.kind == ParLe:
+        if n.isTagLit:
           case pool.tags[n.tag]
           of "cmd":
             n.into:

@@ -565,8 +565,6 @@ proc open*(filename: string): Reader =
       vfsOpenMmap(filename)
     except:
       when defined(debug) and not defined(nimony): writeStackTrace()
-      when not defined(release):
-        writeStackTrace()
       quit "[Error] cannot open: " & filename
   result = Reader(f: f, p: nil, thisModule: extractModuleSuffix(filename))
   result.p = cast[pchar](result.f.data)

@@ -216,38 +216,24 @@ proc produceConfig*(infile, outfile: string) =
 
 proc sourcesChangedImpl(configFile: string; c: Cursor): bool =
   var c = c
-  var nested = 0
   let modtime = getLastModificationTime(configFile)
-  while true:
-    case c.kind
-    of ParLe:
-      inc nested
-      if pool.tags[c.tag] == "sources":
-        inc c
-        while c.hasMore:
-          if c.kind == StringLit:
-            let dep = pool.strings[c.litId]
-            if not fileExists(dep):
-              return true
-            if getLastModificationTime(dep) >= modtime:
-              return true
-          inc c
-      else:
-        inc c
-    of ParRi:
-      dec nested
-      if nested == 0: break
-      inc c
+  result = false
+  while c.hasMore:
+    if c.isTagLit and pool.tags[c.tag] == "sources":
+      var dep = childCursor(c)
+      while dep.hasMore:
+        if dep.isStringLit:
+          let path = pool.strings[dep.litId]
+          if not fileExists(path):
+            return true
+          if getLastModificationTime(path) >= modtime:
+            return true
+        skip dep
+      skip c
     else:
       inc c
-  return false
 
 proc sourcesChanged*(configFile: string): bool =
-  var f = nifstreams.open(configFile)
-  discard processDirectives(f.r)
-  var buf = fromStream(f)
-  var c = beginRead(buf)
-  try:
-    result = sourcesChangedImpl(configFile, c)
-  finally:
-    f.close()
+  var buf = parseFromFile(configFile)
+  let c = beginRead(buf)
+  result = sourcesChangedImpl(configFile, c)

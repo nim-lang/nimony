@@ -117,7 +117,12 @@ proc addSource(c: var ControlFlow; tar: var Target; n: Cursor) =
   ## Copy a single *source* token into `tar`, recording its source position.
   ## The only three call sites that funnel source tokens into the CF pipeline.
   padSrc(tar)
-  tar.t.add load(n)
+  if n.isTagLit:
+    # register the head so the matching `addParRi` can seal it (a raw
+    # token copy would leave a stale jump and nothing to close)
+    tar.t.addParLe(n.tag, n.info)
+  else:
+    tar.t.add load(n)
   tar.src.add srcPosOf(c, n)
 
 proc openTempVar(c: var ControlFlow; kind: StmtKind; typ: Cursor; info: PackedLineInfo): SymId =
@@ -836,7 +841,7 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
   let info = n.info
   var aa = Target(m: IsEmpty)
   var bb = Target(m: IsEmpty)
-  let head = n.load()
+  let headTag = n.tag
   var typ = default(Cursor)
 
   n.into:
@@ -845,19 +850,20 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
     assert aa.t.len > 0
     trExpr c, n, bb
     assert bb.t.len > 0
-  c.dest.add head
+  c.dest.addParLe(headTag, info)
   c.flush aa
   c.flush bb
   c.dest.addParRi()
 
-  let lhs = cursorAt(c.dest, asgnBegin+1)
+  # the `(asgn` head may carry line-info suffix tokens
+  let lhsPos = asgnBegin + tokenWidth(readonlyCursorAt(c.dest, asgnBegin))
+  let lhs = cursorAt(c.dest, lhsPos)
   if isComplexLhs(lhs):
     # The lhs/rhs of the just-emitted `asgn` are copied around below (and `dest`
     # is truncated), so the source-position side-channel must be reshuffled with
     # them. Align `destSrc` to `dest` first, then splice the matching slices into
     # the rewritten `stmts` (via a parallel `stmtsSrc`).
     c.pad()
-    let lhsPos = asgnBegin+1
     var rhs = lhs
     skip rhs
     let rhsPos = cursorToPosition(c.dest, rhs)
@@ -989,11 +995,12 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     trVoidCall c, n
   of YldS, DiscardS, AsmS, DeferS:
     var tar = Target(m: IsAppend)
-    let head = n.load()
+    let headTag = n.tag
+    let headInfo = n.info
     n.into:
       while n.hasMore:
         trExpr c, n, tar
-    c.dest.add head
+    c.dest.addParLe(headTag, headInfo)
     c.flush tar
     c.dest.addParRi()
   of PragmaxS:

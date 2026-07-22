@@ -818,7 +818,7 @@ proc addParamType(c: var LiftingCtx; typ: TypeCursor) =
     # `n.into` bounds the child walk: `typ` is a cursor into an enclosing
     # decl, so an unbounded `hasMore` loop would run past the type's
     # (elided) close and copy the decl's remaining children too.
-    c.dest.add n.load()
+    c.dest.addParLe(n.tag, n.info)
     n.into:
       while n.hasMore:
         if isNilAnnotation(n):

@@ -1351,7 +1351,7 @@ proc checkForMoveTypesImpl(n: var Cursor; r: var Reporter): int =
     else:
       if ek in CallKinds:
         let fn = n.firstSon
-        if fn.kind == Symbol:
+        if fn.isSymbol:
           result += checkForErrorRoutine(r, fn.symId, n.info)
       n.loopInto:
         result += checkForMoveTypesImpl(n, r)

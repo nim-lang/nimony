@@ -998,8 +998,6 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         let info = n.info
         var resultBuf = createTokenBuf(12)
         let exprStart = n
-        when not defined(release):
-          echo "EXEC-FALLBACK: ", toString(exprStart, false)
         let errMsg = c.c.executeExpr(c.c[], exprStart, skipModifier(c.expectedType), resultBuf, info)
         skip n
         if errMsg.len == 0:

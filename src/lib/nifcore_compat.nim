@@ -188,7 +188,9 @@ const
 const InlineInt* = ExtendedSuffix
 
 proc int28Token*(operand: int32; info: PackedLineInfo): NifToken {.inline.} =
-  extendedSuffixToken(cast[uint32](operand))
+  # mask to 28 bits: negative jump diffs set the high bits; `soperand`
+  # sign-extends the payload's top bit on read
+  extendedSuffixToken(cast[uint32](operand) and PayloadMask)
 proc getInt28*(n: NifToken): int32 {.inline.} = n.soperand
 proc getInt28*(c: Cursor): int32 {.inline.} = load(c).soperand
 
@@ -211,7 +213,7 @@ proc isLastSon*(n: Cursor): bool =
   result = not hasMore(c)
 
 proc patchInt28Token*(n: var NifToken; operand: int32) {.inline.} =
-  n = extendedSuffixToken(cast[uint32](operand))
+  n = extendedSuffixToken(cast[uint32](operand) and PayloadMask)
 
 proc charToken*(ch: char; info: PackedLineInfo): NifToken {.inline.} = charToken(ch)
   ## Info is dropped (a single nifcore token carries none); prefer `addCharLit`.
@@ -388,6 +390,7 @@ proc parseFromFile*(filename: string; sizeHint = 100): TokenBuf =
   ## Whole-file read (classic nifcursors.parseFromFile) via the nifcore reader.
   result = createTokenBuf(sizeHint)
   var r = nifreader.open(filename)
+  discard nifreader.processDirectives(r)
   nifcoreparse.parse(r, result)
   nifreader.close(r)
 

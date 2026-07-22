@@ -103,7 +103,7 @@ proc breakStmt(b: var BasicBlock; n: Cursor) =
     it.wasMovedLocs.setLen 0
     it.hasBreak = true
 
-    if n.kind == Symbol:
+    if n.isSymbol:
       if it.label == n.symId:
         break
     else:

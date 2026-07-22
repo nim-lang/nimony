@@ -51,13 +51,11 @@ proc tryDetectGuardPrologue(body: Cursor; shape: var GuardShape): bool =
   ## length-1 `(stmts …)`); there must be exactly one `elif` (no further
   ## branches, no `else`). Returns true on match and fills `shape`.
   ##
-  ## Implementation note: walks via `firstSon` + `into` + `hasMore` so it
-  ## works equally under `-d:virtualParRi` (where closing parens are
-  ## elided and only the bounded child loop terminates correctly) and
-  ## without it.
-  if body.kind != ParLe or body.stmtKind != StmtsS: return false
-  let firstStmt = body.firstSon
-  if firstStmt.kind != ParLe or firstStmt.stmtKind != IfS: return false
+  ## Implementation note: walks via `childCursor` + `into` + `hasMore`
+  ## so the bounded child loop terminates correctly.
+  if not body.isTagLit or body.stmtKind != StmtsS: return false
+  let firstStmt = childCursor(body)
+  if not firstStmt.isTagLit or firstStmt.stmtKind != IfS: return false
 
   # The if must contain exactly one branch, and it must be an elif.
   var theElif = default(Cursor)
@@ -67,7 +65,7 @@ proc tryDetectGuardPrologue(body: Cursor; shape: var GuardShape): bool =
   ifn.into:
     while ifn.hasMore:
       inc branchCount
-      if branchCount == 1 and ifn.kind == ParLe and
+      if branchCount == 1 and ifn.isTagLit and
          ifn.substructureKind == ElifU:
         theElif = ifn
       else:
@@ -76,14 +74,14 @@ proc tryDetectGuardPrologue(body: Cursor; shape: var GuardShape): bool =
   if rejected or branchCount != 1: return false
 
   # Inside (elif COND BODY): grab COND and BODY.
-  let condCur = theElif.firstSon
+  let condCur = childCursor(theElif)
   shape.cond = condCur
   var elifBody = condCur
   skip elifBody                                # past condition, on body
 
   # Optionally unwrap a single-statement `(stmts (ret …))`.
   var retCur = elifBody
-  if retCur.kind == ParLe and retCur.stmtKind == StmtsS:
+  if retCur.isTagLit and retCur.stmtKind == StmtsS:
     var saved = default(Cursor)
     var stmtCount = 0
     var inner = retCur
@@ -95,8 +93,8 @@ proc tryDetectGuardPrologue(body: Cursor; shape: var GuardShape): bool =
     if stmtCount != 1: return false
     retCur = saved
 
-  if retCur.kind != ParLe or retCur.stmtKind != RetS: return false
-  let retVal = retCur.firstSon                 # `.` for void, else the value
+  if not retCur.isTagLit or retCur.stmtKind != RetS: return false
+  let retVal = childCursor(retCur)             # `.` for void, else the value
   shape.retVal = retVal
   shape.voidReturn = retVal.kind == DotToken
   result = true
@@ -135,8 +133,7 @@ proc runInterModuleInliner*(buf: var TokenBuf; suffix: string;
 
 when isMainModule:
   proc parse(src: string): TokenBuf =
-    var stream = nifstreams.openFromBuffer(src, "M")
-    result = fromStream(stream)
+    result = parseFromBuffer(src, "M")
 
   for s in ["x.0.M", "cond.0.M"]:
     discard pool.syms.getOrIncl(s)

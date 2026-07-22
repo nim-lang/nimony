@@ -201,19 +201,25 @@ proc tryPromoteTemplateBody*(c: var SemContext; sym: SymId): bool =
     # ran `addSym` for each param. Lazily promoting from the published
     # decl skips that, so re-attach the params to the scope here.
     block addParamsToScope:
-      var p = readonlyCursorAt(newBuf, paramsAt)
-      if p.substructureKind == ParamsU:
-        p.into ParamsU:
-          while p.hasMore:
-            let param = asLocal(p)
-            if param.name.isSymbolDef:
-              var nameStr = pool.syms[param.name.symId]
-              extractBasename(nameStr)
-              if nameStr.len > 0:
-                let s = Sym(kind: ParamY, name: param.name.symId, pos: 0)
-                addOverloadable(c.currentScope,
-                                pool.strings.getOrIncl(nameStr), s)
-            skip p
+      template attach(atPos: int; expected: SubstructureKind; kindOfSym: SymKind) =
+        var p = readonlyCursorAt(newBuf, atPos)
+        if p.substructureKind == expected:
+          p.into expected:
+            while p.hasMore:
+              let param = asLocal(p)
+              if param.name.isSymbolDef:
+                var nameStr = pool.syms[param.name.symId]
+                extractBasename(nameStr)
+                if nameStr.len > 0:
+                  let s = Sym(kind: kindOfSym, name: param.name.symId, pos: 0)
+                  addOverloadable(c.currentScope,
+                                  pool.strings.getOrIncl(nameStr), s)
+              skip p
+      # Typevars must be re-attached as well: a body ident like `T` in
+      # `template sizeof*[T](_: T): int = sizeof(T)` has to resolve to the
+      # typevar Symbol here or expansion can never substitute it.
+      attach typevarsAt, TypevarsU, TypevarY
+      attach paramsAt, ParamsU, ParamY
 
     semTemplBody ctx, newBuf, oldHead
     # `oldHead` is now past the body, at the template's (possibly elided) close.

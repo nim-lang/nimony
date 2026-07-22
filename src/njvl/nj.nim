@@ -1321,7 +1321,7 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
   of StmtsS, ScopeS:
     # Flatten nested stmts when the output already has a (stmts open.
     if not b.hasParLe and g[0] < 0:
-      dest.add n.load()
+      dest.addParLe(n.tag, n.info)
       b.hasParLe = true
       takeThisParRi = true
     let stmtsStart = n

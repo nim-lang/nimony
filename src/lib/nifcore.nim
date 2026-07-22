@@ -1177,6 +1177,10 @@ proc ensureOwner(b: var TokenBuf) {.inline.} =
     GC_ref(b.owner.tags)
     b.owner.rc = 1
 
+proc unclosedTagPositions*(b: TokenBuf): seq[int] =
+  ## Debug helper: build-time stack of still-open TagLit positions.
+  b.openTags
+
 proc beginRead*(b: var TokenBuf): Cursor =
   assert b.openTags.len == 0, "beginRead with unclosed tags"
   ensureOwner(b)
@@ -1334,11 +1338,19 @@ proc addBufferSamePool*(dest: var TokenBuf; src: TokenBuf) =
   ## The source is borrowed and remains usable. Matching pools make the
   ## append one bulk copy without constructing a read cursor.
   assert src.openTags.len == 0, "addBufferSamePool with unclosed source tags"
-  assert dest.data != src.data, "cannot append a TokenBuf to itself"
-  assert dest.pool == src.pool and dest.tags == src.tags,
-         "addBufferSamePool requires matching pools"
   if src.len == 0:
+    # an empty buffer may never have been written to, leaving its pool
+    # refs nil — nothing to copy, nothing to check
     return
+  assert dest.data != src.data, "cannot append a TokenBuf to itself"
+  # A buffer filled only via raw/`openTag` adds may still carry nil pool
+  # refs; its interned ids belong to the application fallback pools, so
+  # compare the EFFECTIVE pools.
+  ensurePools(dest)
+  let spool = (if src.pool != nil: src.pool else: fallbackPool)
+  let stags = (if src.tags != nil: src.tags else: fallbackTags)
+  assert dest.pool == spool and dest.tags == stags,
+         "addBufferSamePool requires matching pools"
   if dest.owner != nil:
     prepareMutation(dest)
   if dest.len + src.len > dest.cap:

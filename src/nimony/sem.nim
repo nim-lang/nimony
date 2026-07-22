@@ -1332,7 +1332,7 @@ proc addWithInfoRewrite(dest: var TokenBuf; n: var Cursor; info: PackedLineInfo)
   ## Copies the tree/token at `n`, rewriting every token's line info to
   ## `info`. Structure-aware, so the (possibly elided) closes stay balanced.
   if n.isTagLit:
-    dest.add withLineInfo(n.load, info)
+    dest.addParLe(n.tag, info)
     n.into:
       while n.hasMore:
         addWithInfoRewrite(dest, n, info)
@@ -2894,9 +2894,12 @@ proc isIteratorCall(c: var SemContext; dest: var TokenBuf; beforeCall: int): boo
         cast[NimonyExpr](tagEnum(dest[beforeCall]))
       else:
         NoExpr
-    result = callKind in CallKinds and
-      dest[beforeCall+1].kind == Symbol and
-      c.isIterator(dest, childCursor(readonlyCursorAt(dest, beforeCall)).symId)
+    if callKind in CallKinds:
+      # head+1 may be a line-info suffix; go through the child cursor
+      let callee = childCursor(readonlyCursorAt(dest, beforeCall))
+      result = callee.isSymbol and c.isIterator(dest, callee.symId)
+    else:
+      result = false
 
 proc isIdentCall(c: var SemContext; dest: var TokenBuf; beforeCall: int): bool {.inline.} =
   # A call whose fn is unresolved at sem time and needs re-resolution at
@@ -2915,17 +2918,19 @@ proc isIdentCall(c: var SemContext; dest: var TokenBuf; beforeCall: int): bool {
         NoExpr
     if callKind notin CallKinds:
       return false
-    let fnTok = dest[beforeCall+1]
-    if fnTok.isIdent:
+    # head+1 may be a line-info suffix; go through the child cursor
+    let fnCur = childCursor(readonlyCursorAt(dest, beforeCall))
+    if not fnCur.hasMore:
+      result = false
+    elif fnCur.kind == Ident:
       result = true
-    elif fnTok.isTagLit:
-      let fnExpr = exprKind(fnTok)
-      result = fnExpr in {OchoiceX, CchoiceX}
+    elif fnCur.isTagLit:
+      result = fnCur.exprKind in {OchoiceX, CchoiceX}
     else:
       result = false
 
 proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
-                      beforeCall: int; info: PackedLineInfo;
+                      forHeadPos, beforeCall: int; info: PackedLineInfo;
                       loopVarType: TypeCursor; forStart: Cursor): bool =
   ## When a `for` loop's iterator resolves to a routine with a `.plugin`
   ## pragma, invoke the plugin with the for-loop context instead of doing
@@ -2953,7 +2958,9 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
   var callBuf = createTokenBuf(dest.len - beforeCall)
   # balanced span: raw copy keeps its seals
   for tok in beforeCall ..< dest.len: callBuf.addRaw dest[tok]
-  dest.shrink beforeCall - 1
+  # drop the sem'd call plus the `(for` head (whose width can exceed one
+  # token: line-info suffixes)
+  dest.shrink forHeadPos
 
   # Type the loop variable(s) against the iterator's element type and
   # sem-check the loop body into a temporary buffer, so the plugin gets a
@@ -3018,6 +3025,7 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
 proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
   let orig = it.n
+  let forHeadPos = dest.len
   dest.addParLe(it.n.tag, it.n.info)
   let forStart = it.n
   it.n = sub(it.n)
@@ -3026,7 +3034,7 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeCall = dest.len
   semExpr c, dest, iterCall, {PreferIterators, KeepMagics}
   it.n = iterCall.n
-  if tryForLoopPlugin(c, dest, it, beforeCall, info, iterCall.typ, forStart):
+  if tryForLoopPlugin(c, dest, it, forHeadPos, beforeCall, info, iterCall.typ, forStart):
     return
   var isMacroLike = false
   if dest[beforeCall].exprKind == ErrX:
@@ -3040,7 +3048,8 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
     var callBuf = createTokenBuf(dest.len - beforeCall)
     # balanced span: raw copy keeps its seals
     for tok in beforeCall ..< dest.len: callBuf.addRaw dest[tok]
-    dest.shrink beforeCall-1
+    # drop the sem'd call plus the `(for` head (width can exceed one token)
+    dest.shrink forHeadPos
     var call = beginRead(callBuf)
     semForFields c, dest, it, call, orig, forStart
     return

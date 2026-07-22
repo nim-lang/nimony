@@ -822,7 +822,7 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
       while it.n.hasMore:
         buf.addSubtree it.n
         takeTree dest, it.n
-      buf.addParRi() # extra ParRi to make reading easier
+      # no closing sentinel: consumers iterate with `hasMore`
       c.userPragmas[name] = buf
     dest.addParRi()
   of PushP:
@@ -838,7 +838,7 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
       while n.hasMore:
         buf.addSubtree n
         skip n
-      buf.addParRi() # sentinel to stop iteration
+      # no closing sentinel: consumers iterate with `hasMore`
       c.pragmaStack.add buf
     # semcheck push/pop pragmas in both SemcheckSignatures and SemcheckBodies phases
     # so that pushed pragmas works for both procs and variables

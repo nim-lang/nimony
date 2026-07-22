@@ -7,8 +7,7 @@
 #    distribution, for details about the copyright.
 #
 
-## Renders a `TokenBuf` (possibly encoded with `-d:virtualParRi`, whose
-## closing parens are elided) to canonical NIF text by walking it via
+## Renders a `TokenBuf` to canonical NIF text by walking it via
 ## cursors and driving `nifbuilder` in compact mode.
 ##
 ## Used by the optimizer pass tests to assert against the full output
@@ -19,29 +18,28 @@ include "../../lib" / nifprelude
 import nifstreams, nifcursors, nifbuilder
 
 proc emit(c: var Cursor; b: var Builder) =
-  case c.kind
-  of ParLe:
-    b.addTree(pool.tags[c.tagId])
+  if c.isTagLit:
+    b.addTree(pool.tags[c.tag])
     c.loopInto:
       emit(c, b)
     b.endTree()
-    return
-  of DotToken:    b.addEmpty()
-  of Ident:       b.addIdent(pool.strings[c.litId])
-  of Symbol:      b.addSymbol(pool.syms[c.symId])
-  of SymbolDef:   b.addSymbolDef(pool.syms[c.symId])
-  of IntLit:      b.addIntLit(pool.integers[c.intId])
-  of UIntLit:     b.addUIntLit(pool.uintegers[c.uintId])
-  of FloatLit:    b.addFloatLit(pool.floats[c.floatId])
-  of CharLit:     b.addCharLit(char(c.uoperand))
-  of StringLit:   b.addStrLit(pool.strings[c.litId])
-  of UnknownToken, EofToken, ParRi: discard
-  inc c
+  else:
+    case c.kind
+    of DotToken:  b.addEmpty()
+    of Ident:     b.addIdent(c.strVal)
+    of Symbol:    b.addSymbol(c.symName)
+    of SymbolDef: b.addSymbolDef(c.symName)
+    of IntLit:    b.addIntLit(c.intVal)
+    of UIntLit:   b.addUIntLit(c.uintVal)
+    of FloatLit:  b.addFloatLit(c.floatVal)
+    of CharLit:   b.addCharLit(charLit(c))
+    of StrLit:    b.addStrLit(c.strVal)
+    else: discard
+    inc c
 
 proc render*(buf: var TokenBuf): string =
-  ## Canonical compact NIF text for `buf`. Handles virtualParRi-encoded
-  ## buffers (the cursor walk understands the encoding; `nifbuilder`
-  ## adds the explicit closing parens).
+  ## Canonical compact NIF text for `buf` (`nifbuilder` adds the
+  ## explicit closing parens).
   var b = nifbuilder.open(buf.len * 20, compact = true)
   var c = beginRead(buf)
   # Emit the single outermost block; `emit` descends into its children.

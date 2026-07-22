@@ -155,7 +155,8 @@ proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
           # downstream consumers (dagon) compare prefixes uniformly.
           importBuf.addStrLit toUnixPath(abs.toRelativePath(curWorkDir))
     importBuf.addParRi()
-    dest.insert importBuf, 1 # after the (stmts tag
+    # after the (stmts tag — including its line-info suffix tokens
+    dest.insert importBuf, tokenWidth(readonlyCursorAt(dest, 0))
     # a small module's `(stmts` is sealed; the insert cannot widen it itself:
     widenSealed dest, 0, importBuf.len
   when defined(sealCheck):
@@ -459,7 +460,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   #echo "PHASE 1"
   var (buf1, moduleLineInfo) = phase1(c, dest, n0)
   dbgCheckSeals(buf1, "phase1")
-  when defined(dumpPhases) and defined(virtualParRi):
+  when defined(dumpPhases):
     block:
       var r = beginRead(buf1)
       syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".phase1.nif", toString(r, false))
@@ -475,7 +476,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   #echo "PHASE 3"
   dest = phase3(c, buf2, moduleLineInfo)
   dbgCheckSeals(dest, "phase3")
-  when defined(dumpPhases) and defined(virtualParRi):
+  when defined(dumpPhases):
     block:
       var r = beginRead(dest)
       syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".phase3.nif", toString(r, false))

@@ -540,7 +540,7 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
   if not (m.genericConverter or m.refineArgType or m.insertedParam):
     dest.add m.args
   else:
-    m.args.addParRi()
+    # no terminator token: `beginRead`'s cursor is bounded by the buffer
     var f = m.fn.typ
     if f.typeKind in RoutineTypes:
       skipToParams f
@@ -1087,8 +1087,11 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         # time picks the actual overload. Patch the sym in place only
         # when the slot is a real symbol token; otherwise leave the
         # callee shape alone and rely on the later re-sem.
-        if dest[cs.beforeCall+1].kind == Symbol:
-          setSymIdAt(dest, cs.beforeCall+1, inst.targetSym)
+        # the call head may carry line-info suffix tokens; head+1 is not
+        # necessarily the callee slot
+        let calleePos = cs.beforeCall + tokenWidth(readonlyCursorAt(dest, cs.beforeCall))
+        if calleePos < dest.len and readonlyCursorAt(dest, calleePos).isSymbol:
+          setSymIdAt(dest, calleePos, inst.targetSym)
         var instReturnType = createTokenBuf(16)
         var subsReturnType = inst.returnType
         returnType = semReturnType(c, instReturnType, subsReturnType)
@@ -1102,8 +1105,11 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
           while genericArgsRead.hasMore:
             takeTree invokeBuf, genericArgsRead
           invokeBuf.addParRi()
-          let growth = invokeBuf.len - 1 # the replaced callee was one token
-          replace dest, beginRead(invokeBuf), cs.beforeCall+1
+          # head+1 may be a line-info suffix; locate the callee positionally
+          # and account for its real width (a Symbol may carry suffixes too)
+          let calleePos = cs.beforeCall + tokenWidth(readonlyCursorAt(dest, cs.beforeCall))
+          let growth = invokeBuf.len - span(readonlyCursorAt(dest, calleePos))
+          replace dest, beginRead(invokeBuf), calleePos
           # the call tree is already sealed; `replace` cannot widen it itself:
           widenSealed dest, cs.beforeCall, growth
         if matched.returnType.isDotToken:
@@ -1268,7 +1274,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       swap dest, cs.genericDest
       while cs.fn.n.hasMore:
         semLocalTypeImpl c, dest, cs.fn.n, AllowValues
-      dest.addParRi(cs.fn.n.endInfo)
+      # no terminator: `genericDest` consumers walk with `hasMore`
       cs.fn.n = atStart; skip cs.fn.n
       swap dest, cs.genericDest
       it.n = cs.fn.n
