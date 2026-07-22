@@ -300,10 +300,10 @@ proc instToStringRec(b: var Builder; n: var Cursor) =
       b.addSymbol(s)
     inc n
   of IntLit:
-    b.addIntLit(pool.integers[n.intId])
+    b.addIntLit(n.intVal)
     inc n
   of UIntLit:
-    b.addUIntLit(pool.uintegers[n.uintId])
+    b.addUIntLit(n.uintVal)
     inc n
   of FloatLit:
     b.addFloatLit(n.floatVal)
@@ -318,7 +318,7 @@ proc instToStringRec(b: var Builder; n: var Cursor) =
     b.addStrLit(pool.strings[n.strId])
     inc n
   of TagLit:
-    b.addTree(pool.tags[n.cursorTagId])
+    b.addTree(globalTags.tags[n.cursorTagId])
     n.into:
       while n.hasMore:
         instToStringRec(b, n)
@@ -566,8 +566,8 @@ proc semStmt*(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: 
     block:
       let reports = checkSeals(dest)
       if reports.len > 0:
-        let u = unpack(pool.man, info)
-        echo "SEAL[semStmt after ", (if u.file != FileId(0): pool.files[u.file] else: "?"), ":", u.line, "]"
+        let u = unpack(lineMan, info)
+        echo "SEAL[semStmt after ", (if u.file != FileId(0): pool.filenames[u.file] else: "?"), ":", u.line, "]"
         for r in reports: echo "  ", r
         writeStackTrace()
         quit 1
@@ -2258,9 +2258,9 @@ proc checkExhaustiveness(c: var SemContext; dest: var TokenBuf; info: PackedLine
         var vnode = f.val.childCursor # skip tuple tag
         case vnode.kind
         of IntLit:
-          v = createXint pool.integers[vnode.intId]
+          v = createXint vnode.intVal
         of UIntLit:
-          v = createXint pool.uintegers[vnode.uintId]
+          v = createXint vnode.uintVal
         else:
           var dummyDest = createTokenBuf(4)
           v = semEnumOrdinalValue(c, dummyDest, vnode)
@@ -2400,7 +2400,7 @@ proc getEfldOrdinal(sym: SymId): xint =
     if n.isTagLit: # TupX
       inc n
       if n.isIntLit:
-        return createXint pool.integers[n.intId]
+        return createXint n.intVal
   return createNaN()
 
 type
@@ -4505,7 +4505,7 @@ proc collectExplicitInstMatches(c: var SemContext; dest: var TokenBuf; syms: Cur
         if errMsg.len > 0: return
         skip syms
     else:
-      errMsg = "invalid tag in symchoice: " & pool.tags[syms.cursorTagId]
+      errMsg = "invalid tag in symchoice: " & globalTags.tags[syms.cursorTagId]
       errInfo = syms.info
   else:
     errMsg = "invalid token in symchoice: " & $syms.kind
@@ -4680,9 +4680,9 @@ proc semTypedAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
         var isZero: bool
         case first.kind
         of IntLit:
-          isZero = pool.integers[first.intId] == 0
+          isZero = first.intVal == 0
         of UIntLit:
-          isZero = pool.uintegers[first.uintId] == 0
+          isZero = first.uintVal == 0
         else:
           isZero = true
         if not isZero:
@@ -4926,7 +4926,7 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
       of NoStmt:
         case typeKind(it.n)
         of NoType:
-          buildErr c, dest, it.n.info, "expression expected; tag: " & pool.tags[it.n.cursorTagId]
+          buildErr c, dest, it.n.info, "expression expected; tag: " & globalTags.tags[it.n.cursorTagId]
           skip it.n
         of ErrT:
           dest.takeTree it.n

@@ -152,7 +152,7 @@ proc parseConfig(c: Cursor; result: var NifConfig) =
   ## recursively for known sections.
   var c = c
   if c.isTagLit:
-    case pool.tags[c.cursorTagId]
+    case globalTags.tags[c.cursorTagId]
     of "defines":
       c.into:
         while c.hasMore:
@@ -174,12 +174,12 @@ proc parseConfig(c: Cursor; result: var NifConfig) =
     of "intbits":
       c.into:
         if c.isIntLit:
-          result.bits = int pool.integers[c.intId]
+          result.bits = int c.intVal
         while c.hasMore: skip c
     of "compat":
       c.into:
         if c.isIntLit:
-          result.compat = bool(pool.integers[c.intId])
+          result.compat = bool(c.intVal)
         while c.hasMore: skip c
     else:
       c.into:

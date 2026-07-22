@@ -25,9 +25,10 @@
 ##     the boundary via the shared `lineMan`. `.info` is ~99% pass-through, so
 ##     the round-trip is invisible to callers.
 ##
-##  3. Inline literals.  nifstreams interns int/uint/float into pools referenced
-##     by `IntId`/`UIntId`/`FloatId`; nifcore stores them inline. The id becomes
-##     a value carrier and `pool.integers[id]` is an identity proxy.
+##  3. Inline literals.  Classic nifstreams interned int/uint/float into pools;
+##     nifcore stores them inline and code reads `intVal`/`uintVal`/`floatVal`
+##     directly (the classic id/proxy surface lives on in nifstreams.nim for
+##     the Nim compiler side only).
 ##
 ## Tier-3 GAPs a shim can't honestly cover are `{.error.}` stubs (raw ParLe/ParRi
 ## token values, the streaming text reader) — real per-site migrations.
@@ -72,34 +73,6 @@ nifcore.fallbackPool = pool
 nifcore.fallbackTags = globalTags
 
 # ── Type aliases ─────────────────────────────────────────────────────────
-
-type
-  IntId*   = distinct int64         ## value carriers (nifcore stores inline)
-  UIntId*  = distinct uint64
-
-  ## Identity proxies: the id already carries the value, `[]` returns it.
-  ## (Floats live in nifstreams.nim: the Nim compiler side needs a REAL
-  ## interning float pool; nimony-internal code reads `floatVal` directly.)
-  IntegersProxy*  = object
-  UIntegersProxy* = object
-
-func `==`*(a, b: IntId): bool {.borrow.}
-func `==`*(a, b: UIntId): bool {.borrow.}
-
-# ── Global-pool views (nifstreams `pool.X` compatibility) ────────────────
-
-template files*(p: Pool): untyped = p.filenames
-template tags*(p: Pool): untyped = globalTags.tags
-template man*(p: Pool): untyped = lineMan
-template integers*(p: Pool): IntegersProxy = IntegersProxy()
-template uintegers*(p: Pool): UIntegersProxy = UIntegersProxy()
-
-template `[]`*(x: IntegersProxy; id: IntId): int64 = int64(id)
-template `[]`*(x: UIntegersProxy; id: UIntId): uint64 = uint64(id)
-
-# nifcore stores integers inline: the "id" is the value itself (identity proxy).
-template getOrIncl*(x: IntegersProxy; v: int64): IntId = IntId(v)
-template getOrIncl*(x: UIntegersProxy; v: uint64): UIntId = UIntId(v)
 
 # ── Buffer construction: thread the global pool + tags ───────────────────
 
@@ -190,8 +163,6 @@ proc getInt28*(c: Cursor): int32 {.inline.} = load(c).soperand
 
 proc symId*(n: NifToken): SymId {.inline.} = SymId(nifcore.uoperand(n) shr 1)
 proc strId*(n: NifToken): StrId {.inline.} = StrId(nifcore.uoperand(n) shr 1)
-proc intId*(n: NifToken): IntId {.inline.} = IntId(n.soperand)
-proc uintId*(n: NifToken): UIntId {.inline.} = UIntId(nifcore.uoperand(n))
 proc charLit*(n: NifToken): char {.inline.} = char(nifcore.uoperand(n) and 0xFF)
 proc tagId*(n: NifToken): TagId {.inline.} = TagId((uint32(n) shr TagShift) and TagMask)
 
@@ -208,20 +179,10 @@ proc isLastSon*(n: Cursor): bool =
 proc patchInt28Token*(n: var NifToken; operand: int32) {.inline.} =
   n = int28Token(operand, NoLineInfo)
 
-proc charToken*(ch: char; info: PackedLineInfo): NifToken {.inline.} = charToken(ch)
-  ## Info is dropped (a single nifcore token carries none); prefer `addCharLit`.
-proc strToken*(s: StrId; info: PackedLineInfo): NifToken {.inline.} = strLitToken(s)
-  ## Info dropped; prefer `addStrLit`.
 
 proc setSymId*(dest: var NifToken; sym: SymId) {.inline.} =
   ## Rewrite a Symbol/SymbolDef token's id in place (kind preserved).
   dest = (if dest.kind == SymbolDef: symdefToken(sym) else: symToken(sym))
-
-# Standalone atom builders with a line-info argument (dropped: nifcore keeps
-# line info in a separate suffix that a bare token cannot carry).
-proc identToken*(id: StrId; info: PackedLineInfo): NifToken {.inline.} = identToken(id)
-proc dotToken*(info: PackedLineInfo): NifToken {.inline.} = dotToken()
-proc symToken*(id: SymId; info: PackedLineInfo): NifToken {.inline.} = symToken(id)
 
 # `buildTree` with an explicit info argument (classic signature). nifcore's own
 # `buildTree` takes no info; these thread it through `addParLe`.
@@ -282,11 +243,6 @@ proc isUIntLit*(n: NifToken): bool {.inline.} = n.kind == UIntLit
 proc isFloatLit*(n: NifToken): bool {.inline.} = n.kind == FloatLit
 proc isCharLit*(n: NifToken): bool {.inline.} = n.kind == CharLit
 
-# ── Cursor atom accessors (renames) ──────────────────────────────────────
-
-proc intId*(c: Cursor): IntId {.inline.} = IntId(intVal(c))
-proc uintId*(c: Cursor): UIntId {.inline.} = UIntId(uintVal(c))
-
 # ── Structural navigation ────────────────────────────────────────────────
 
 # ── TokenBuf building: openTag/closeTag bridge with line info ─────────────
@@ -332,8 +288,6 @@ proc addIdent*(dest: var TokenBuf; s: string; info = NoLineInfo) =
   nifcore.addIdent(dest, s); emitInfo(dest, info)
 proc addIntLit*(dest: var TokenBuf; v: int64; info: PackedLineInfo) =
   nifcore.addIntLit(dest, v); emitInfo(dest, info)
-proc addIntLit*(dest: var TokenBuf; id: IntId; info: PackedLineInfo) =
-  addIntLit(dest, pool.integers[id], info)
 proc addUIntLit*(dest: var TokenBuf; v: uint64; info: PackedLineInfo) =
   nifcore.addUIntLit(dest, v); emitInfo(dest, info)
 proc addFloatLit*(dest: var TokenBuf; v: float64; info: PackedLineInfo) =
@@ -405,7 +359,7 @@ template copyInto*(dest: var TokenBuf; tag: TagId; info: PackedLineInfo; body: u
   closeTag(dest)
 
 template copyIntoUnchecked*(dest: var TokenBuf; tag: string; info: PackedLineInfo; body: untyped) =
-  addParLe(dest, pool.tags.getOrIncl(tag), info)
+  addParLe(dest, globalTags.registerTag(tag), info)
   body
   closeTag(dest)
 

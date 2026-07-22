@@ -40,7 +40,7 @@ proc pragmaKind*(c: Cursor): NimonyPragma {.inline.} =
     else:
       result = NoPragma
   elif c.isIdent:
-    let tagId = pool.tags.getOrIncl(pool.strings[c.strId])
+    let tagId = globalTags.registerTag(pool.strings[c.strId])
     if tagId.int >= 0 and tagId.int <= high(TagEnum).int and rawTagIsNimonyPragma(cast[TagEnum](tagId)):
       result = cast[NimonyPragma](tagId)
     else:
@@ -78,7 +78,7 @@ proc callConvKind*(c: Cursor): CallConv {.inline.} =
     else:
       result = NoCallConv
   elif c.isIdent:
-    let tagId = pool.tags.getOrIncl(pool.strings[c.strId])
+    let tagId = globalTags.registerTag(pool.strings[c.strId])
     if rawTagIsCallConv(cast[TagEnum](tagId)):
       result = cast[CallConv](tagId)
     else:
@@ -246,7 +246,7 @@ proc retagAt*[T: enum](dest: var TokenBuf; pos: int; kind: T; info = NoLineInfo)
   dest[pos] = t
 proc addParLe*(dest: var TokenBuf; tag: string; info = NoLineInfo) {.inline.} =
   ## Open a tag by name (replaces the classic `dest.add tagToken(tag)`).
-  dest.addParLe(pool.tags.getOrIncl(tag), info)
+  dest.addParLe(globalTags.registerTag(tag), info)
 
 template copyIntoKind*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|PragmaKind;
                        info: PackedLineInfo; body: untyped) =

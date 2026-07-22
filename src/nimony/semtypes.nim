@@ -159,7 +159,7 @@ proc semEnumType(c: var SemContext; dest: var TokenBuf; n: var Cursor; enumType:
       takeTree dest, n
     let magicToken = dest[beforeExportMarker]
     var state = EnumTypeState(enumType: enumType, thisValue: createXint(0'i64), hasHole: false,
-      isBoolType: magicToken.isTagLit and pool.tags[magicToken.tagId] == $BoolT,
+      isBoolType: magicToken.isTagLit and globalTags.tags[magicToken.tagId] == $BoolT,
       isExported: not magicToken.isDotToken)
     var signed = false
     var lastValue = state.thisValue

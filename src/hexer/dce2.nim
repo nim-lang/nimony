@@ -115,7 +115,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
             let t = translate(resolved, def)
             if t != def:
               # we are a loser and need to add an `extern` declaration:
-              dest.addParLe(pool.tags.getOrIncl("imp"), headInfo)
+              dest.addParLe(globalTags.registerTag("imp"), headInfo)
 
               dest.addParLe(headTag, headInfo)
               dest.addSymDef t.toLengName, n.info
@@ -241,9 +241,9 @@ proc readLiveFile*(infile: string): LiveSet =
     live: initTable[string, HashSet[SymId]]())
   if n.stmtKind != StmtsS:
     raiseAssert infile & ": expected (stmts ...)"
-  let liveTagId = pool.tags.getOrIncl(liveTag)
-  let resolveTagId = pool.tags.getOrIncl(resolveTag)
-  let modTagId = pool.tags.getOrIncl(modTag)
+  let liveTagId = globalTags.registerTag(liveTag)
+  let resolveTagId = globalTags.registerTag(resolveTag)
+  let modTagId = globalTags.registerTag(modTag)
   n.into:                                       # (stmts ...)
     while n.hasMore:
       if not n.isTagLit:

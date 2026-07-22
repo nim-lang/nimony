@@ -119,7 +119,7 @@ proc compileOr(c: var Context; it: string; n: var Cursor): string =
       else: declTemp(c, "st", "getStack(" & c.args0 & ")")
   
   while true:
-    if n.kind == ParLe and pool.tags[n.cursorTagId] == "ERR":
+    if n.kind == ParLe and globalTags.tags[n.cursorTagId] == "ERR":
       ind c
       c.outp.add compileErr(c, it, n)
       break
@@ -236,7 +236,7 @@ proc compileKeywArgs(c: var Context; it, tag, resultVar: string; n: var Cursor) 
       var errmsg = ""
       if e.kind == DotToken:
         errmsg = "in rule " & c.currentRule & ": <empty node> expected"
-      elif e.kind == ParLe and pool.tags[e.cursorTagId] in [
+      elif e.kind == ParLe and globalTags.tags[e.cursorTagId] in [
         "ZERO_OR_MANY", "ONE_OR_MANY", "OR", "ZERO_OR_ONE",
         "SCOPE", "ENTER", "QUERY", "COND", "DO", "LET",
         "MATCH"]: errmsg = "invalid " & c.currentRule
@@ -259,7 +259,7 @@ proc compileKeywArgs(c: var Context; it, tag, resultVar: string; n: var Cursor) 
   c.outp.add " = matchParRi(" & c.args & ")"
 
 proc compileKeyw(c: var Context; it: string, n: var Cursor): string =
-  let tag = pool.tags[n.cursorTagId]
+  let tag = globalTags.tags[n.cursorTagId]
 
   c.foundTags[tag] = 1
   if c.specTags.len > 0 and not c.specTags.hasKey(tag):
@@ -596,7 +596,7 @@ proc compilePop(c: var Context; it: string, n: var Cursor): string =
 proc compileExpr(c: var Context; it: string, n: var Cursor): string =
   if n.kind == ParLe:
     c.localPopCounts.add 0
-    let op = pool.tags[n.cursorTagId]
+    let op = globalTags.tags[n.cursorTagId]
     case op
     of "OR":
       result = compileOr(c, it, n)
@@ -733,7 +733,7 @@ proc compileRule(c: var Context; it: string, n: var Cursor) =
 
 proc compile(c: var Context, n: Cursor) =
   var n = n
-  if n.kind == ParLe and pool.tags[n.cursorTagId] == "GENERATOR":
+  if n.kind == ParLe and globalTags.tags[n.cursorTagId] == "GENERATOR":
     c.kind = Generator
     c.procPrefix = "gen"
 
@@ -742,9 +742,9 @@ proc compile(c: var Context, n: Cursor) =
   inc n # skip ident
 
   while true:
-    if n.kind == ParLe and pool.tags[n.cursorTagId] == "RULE":
+    if n.kind == ParLe and globalTags.tags[n.cursorTagId] == "RULE":
       compileRule(c, (if c.kind == Generator: "" else: "it"), n)
-    elif n.kind == ParLe and pool.tags[n.cursorTagId] == "COM":
+    elif n.kind == ParLe and globalTags.tags[n.cursorTagId] == "COM":
       skip n
     else:
       break
@@ -875,7 +875,7 @@ proc scanRule(c: var ScanContext, n: var Cursor) =
   while nesting > 0:
     if n.kind == ParLe:
       popCounts.add 0
-      if pool.tags[n.cursorTagId] == "POP":
+      if globalTags.tags[n.cursorTagId] == "POP":
         c.scanPop(popVars, popCounts, n)
         inc n
         continue # skip ')' by next iteration so not increase nesting
@@ -892,7 +892,7 @@ proc scan(c: var ScanContext; n: Cursor) =
   # This pass is necessary to determine the arguments of the rules
   # (they differ from the standard ones if POP Var was used and then the rule was called). 
   var n = n
-  if n.kind == ParLe and (pool.tags[n.cursorTagId] == "GRAMMAR" or pool.tags[n.cursorTagId] == "GENERATOR"):
+  if n.kind == ParLe and (globalTags.tags[n.cursorTagId] == "GRAMMAR" or globalTags.tags[n.cursorTagId] == "GENERATOR"):
     inc n
     if n.kind == Ident:
       inc n
@@ -900,15 +900,15 @@ proc scan(c: var ScanContext; n: Cursor) =
       error c, "GRAMMAR takes an IDENT that is the name of the starting rule"
 
     while true:
-      if n.kind == ParLe and pool.tags[n.cursorTagId] == "RULE":
+      if n.kind == ParLe and globalTags.tags[n.cursorTagId] == "RULE":
         c.scanRule(n)
-      elif n.kind == ParLe and pool.tags[n.cursorTagId] == "COM":
+      elif n.kind == ParLe and globalTags.tags[n.cursorTagId] == "COM":
         skip n
       if n.kind == ParRi:
         break
   else:
     if n.kind == ParLe:
-      error c, "GRAMMAR expected but got " & pool.tags[n.cursorTagId]
+      error c, "GRAMMAR expected but got " & globalTags.tags[n.cursorTagId]
     else:
       error c, "GRAMMAR expected but got " & $n
   

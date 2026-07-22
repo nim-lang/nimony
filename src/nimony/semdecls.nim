@@ -108,7 +108,7 @@ proc exportMarkerBecomesNifTag(c: var SemContext; dest: var TokenBuf; insertPos:
   # built through `add` so the tree is properly sealed — a raw token array
   # carries no jump and `replace` would splice a broken subtree
   var nifTag = createTokenBuf(4)
-  nifTag.addParLe(pool.tags.getOrIncl(crucial.magic), info)
+  nifTag.addParLe(globalTags.registerTag(crucial.magic), info)
   if crucial.bits != 0:
     nifTag.addIntLit(crucial.bits, info)
   nifTag.addParRi(info)
@@ -741,7 +741,7 @@ proc attachConverter(c: var SemContext; dest: var TokenBuf; symId: SymId;
     if dest[beforeExportMarker].kind != DotToken:
       # exported
       if not (dest[beforeGenericParams].kind == TagLit and
-          pool.tags[dest[beforeGenericParams].tagId] == $InvokeT):
+          globalTags.tags[dest[beforeGenericParams].tagId] == $InvokeT):
         # don't register instances
         c.converterIndexMap.add((root, symId))
 

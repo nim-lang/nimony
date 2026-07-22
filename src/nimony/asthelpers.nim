@@ -6,9 +6,9 @@ import ".." / lib / symparser
 proc takeUnquotedAtom(r: var string; c: var Cursor) =
   ## Append one leaf token's text (build-agnostic).
   if c.isIdent or c.isStringLit: r.add pool.strings[c.strId]
-  elif c.isIntLit: r.addInt pool.integers[c.intId]
+  elif c.isIntLit: r.addInt c.intVal
   elif c.isCharLit: r.add char(c.uoperand)
-  elif c.isUIntLit: r.add $pool.uintegers[c.uintId]
+  elif c.isUIntLit: r.add $c.uintVal
   elif c.isFloatLit: r.addFloat c.floatVal
   else: r.add "<unexpected token>"
   inc c

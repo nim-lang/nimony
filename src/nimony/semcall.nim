@@ -80,7 +80,7 @@ proc addFn(c: var SemContext; dest: var TokenBuf; fn: FnCandidate; fnOrig: Curso
           dest[callHeadAt] = n.load # overwrite the `(call` node with the magic itself
           n = sub(n) # bound the magic-body walk
           if n.isIntLit:
-            if pool.integers[n.intId] == TypedMagic:
+            if n.intVal == TypedMagic:
               # use type of first param
               var paramType = fn.typ
               assert paramType.typeKind in RoutineTypes

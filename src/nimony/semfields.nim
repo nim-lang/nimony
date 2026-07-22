@@ -52,7 +52,7 @@ proc buildNamedFieldIter(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId; 
   buf.addParRi() # (elif)
   buf.addParRi() # (if)
 
-proc expandTupleFieldBody(buf: var TokenBuf; iter: FieldsIter; intId: IntId; name: StrId; body: Cursor) =
+proc expandTupleFieldBody(buf: var TokenBuf; iter: FieldsIter; intVal: int64; name: StrId; body: Cursor) =
   ## Copies the single tree/token at `body` into `buf`, substituting the
   ## loop variables.
   var n = body
@@ -65,12 +65,12 @@ proc expandTupleFieldBody(buf: var TokenBuf; iter: FieldsIter; intId: IntId; nam
     elif s == iter.fieldVar1:
       buf.addParLe(TupatX, n.info)
       buf.addSubtree iter.obj1
-      buf.addIntLit(intId, n.info)
+      buf.addIntLit(intVal, n.info)
       buf.addParRi()
     elif s == iter.fieldVar2:
       buf.addParLe(TupatX, n.info)
       buf.addSubtree iter.obj2
-      buf.addIntLit(intId, n.info)
+      buf.addIntLit(intVal, n.info)
       buf.addParRi()
     else:
       buf.addParLe(n.cursorTagId, n.info)
@@ -78,7 +78,7 @@ proc expandTupleFieldBody(buf: var TokenBuf; iter: FieldsIter; intId: IntId; nam
     buf.addParLe(n.cursorTagId, n.info)
     n.into:
       while n.hasMore:
-        expandTupleFieldBody(buf, iter, intId, name, n)
+        expandTupleFieldBody(buf, iter, intVal, name, n)
         skip n
       buf.addParRi(n.endInfo)
   else:
@@ -93,7 +93,7 @@ proc buildTupleFieldIter(buf: var TokenBuf; iter: FieldsIter; i: int; name: StrI
   buf.addParLe(TrueX, body.info)
   buf.addParRi()
   buf.addParLe(StmtsS, body.info)
-  expandTupleFieldBody(buf, iter, pool.integers.getOrIncl(i), name, body)
+  expandTupleFieldBody(buf, iter, int64(i), name, body)
   buf.addParRi() # (stmts)
   buf.addParRi() # (elif)
   buf.addParRi() # (if)

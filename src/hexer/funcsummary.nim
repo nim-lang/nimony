@@ -420,7 +420,7 @@ proc readParamSummary(n: var Cursor; outSummary: var FunctionSummary) =
   n.into:
     var idx = -1
     if n.kind == IntLit:
-      idx = int(pool.integers[n.intId])
+      idx = int(n.intVal)
       inc n
     if idx < 0:
       while n.hasMore: skip n
@@ -429,7 +429,7 @@ proc readParamSummary(n: var Cursor; outSummary: var FunctionSummary) =
         outSummary.params.add ParamEffect()
       var cls = uint32(idx)
       if n.kind == IntLit:
-        cls = uint32(pool.integers[n.intId])
+        cls = uint32(n.intVal)
         inc n
       outSummary.params[idx].cls = cls
       while n.hasMore:
@@ -460,7 +460,7 @@ proc readSummary(n: var Cursor; outSummary: var FunctionSummary): bool =
         of "result":
           inc n
           if n.kind == IntLit:
-            outSummary.resultCls = uint32(pool.integers[n.intId])
+            outSummary.resultCls = uint32(n.intVal)
             sawResult = true
             inc n
         else: inc n

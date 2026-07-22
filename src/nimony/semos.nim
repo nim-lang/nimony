@@ -307,9 +307,9 @@ proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string)
   parse(r, result, denseLineInfo = true)
   rd.close(r)
 proc getFile*(info: PackedLineInfo): string =
-  let fid = unpack(pool.man, info).file
+  let fid = unpack(lineMan, info).file
   if fid.isValid:
-    result = pool.files[fid]
+    result = pool.filenames[fid]
   else:
     result = ""
 

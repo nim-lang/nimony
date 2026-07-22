@@ -302,13 +302,13 @@ proc staticRangeBounds(typ: Cursor; lo, hi: var xint): bool =
   inc r        # skip rangetype tag
   skip r       # skip base type
   case r.kind
-  of IntLit: lo = createXint(pool.integers[r.intId])
-  of UIntLit: lo = createXint(pool.uintegers[r.uintId])
+  of IntLit: lo = createXint(r.intVal)
+  of UIntLit: lo = createXint(r.uintVal)
   else: return false
   inc r
   case r.kind
-  of IntLit: hi = createXint(pool.integers[r.intId])
-  of UIntLit: hi = createXint(pool.uintegers[r.uintId])
+  of IntLit: hi = createXint(r.intVal)
+  of UIntLit: hi = createXint(r.uintVal)
   else: return false
   result = lo <= hi
 
@@ -344,8 +344,8 @@ proc checkRangeAssign(c: var NjvlContext; targetType, value: Cursor) =
     v = getVarId(c, sym)
   else:
     case value.kind
-    of IntLit: off = createXint(pool.integers[value.intId]); isLit = true
-    of UIntLit: off = createXint(pool.uintegers[value.uintId]); isLit = true
+    of IntLit: off = createXint(value.intVal); isLit = true
+    of UIntLit: off = createXint(value.uintVal); isLit = true
     else:
       # A value we cannot model cannot be proven in range, so we reject it.
       buildErr c, value.info, "cannot prove value is in range " & $lo & ".." & $hi
@@ -388,11 +388,11 @@ proc rightHandSide(c: var NjvlContext; pc: var Cursor; fact: var LeXplusC): bool
       if symId2 != NoSymId:
         fact.b = getVarId(c, symId2)
         if pc.isIntLit:
-          fact.c = fact.c + createXint(pool.integers[pc.intId])
+          fact.c = fact.c + createXint(pc.intVal)
           result = true
           inc pc
         elif pc.kind == UIntLit:
-          fact.c = fact.c + createXint(pool.uintegers[pc.uintId])
+          fact.c = fact.c + createXint(pc.uintVal)
           result = true
           inc pc
         else:
@@ -405,12 +405,12 @@ proc rightHandSide(c: var NjvlContext; pc: var Cursor; fact: var LeXplusC): bool
     result = true
   elif pc.isIntLit:
     fact.b = VarId(0)
-    fact.c = fact.c + createXint(pool.integers[pc.intId])
+    fact.c = fact.c + createXint(pc.intVal)
     result = true
     inc pc
   elif pc.kind == UIntLit:
     fact.b = VarId(0)
-    fact.c = fact.c + createXint(pool.uintegers[pc.uintId])
+    fact.c = fact.c + createXint(pc.uintVal)
     result = true
     inc pc
   elif pc.exprKind == NilX:
@@ -476,11 +476,11 @@ proc translateCond(c: var NjvlContext; pc: var Cursor; wasEquality: var bool): L
 
   if r.isIntLit:
     result.a = VarId(0)
-    result.c = -createXint(pool.integers[r.intId])
+    result.c = -createXint(r.intVal)
     inc r
   elif r.kind == UIntLit:
     result.a = VarId(0)
-    result.c = -createXint(pool.uintegers[r.uintId])
+    result.c = -createXint(r.uintVal)
     inc r
   elif (let sa = skipSymbol(r); sa != NoSymId):
     result.a = getVarId(c, sa)
@@ -713,11 +713,11 @@ proc compileCmp(c: var NjvlContext; paramMap: Table[SymId, int]; req, call: Curs
     inc r
   elif r.isIntLit:
     b = VarId(0)
-    cnst = createXint(pool.integers[r.intId])
+    cnst = createXint(r.intVal)
     inc r
   elif r.kind == UIntLit:
     b = VarId(0)
-    cnst = createXint(pool.uintegers[r.uintId])
+    cnst = createXint(r.uintVal)
     inc r
   elif (let op = r.exprKind; op in {AddX, SubX}):
     r = sub(r) # peek only, never left
@@ -727,9 +727,9 @@ proc compileCmp(c: var NjvlContext; paramMap: Table[SymId, int]; req, call: Curs
       b = mapSymbol(c, paramMap, call, cid)
       inc r
       if r.isIntLit:
-        cnst = createXint(pool.integers[r.intId])
+        cnst = createXint(r.intVal)
       elif r.kind == UIntLit:
-        cnst = createXint(pool.uintegers[r.uintId])
+        cnst = createXint(r.uintVal)
       else:
         error "expected integer literal but got: ", r
     else:
@@ -1247,13 +1247,13 @@ proc addCaseFacts(c: var NjvlContext; selSym: SymId; ranges: Cursor) =
   if r.substructureKind == RangeU:
     inc r
     if r.isIntLit:
-      var lo = query(a, VarId(0), createXint(pool.integers[r.intId]))
+      var lo = query(a, VarId(0), createXint(r.intVal))
       c.facts.add lo.geXplusC # sel >= lo
     skip r
     if r.isIntLit:
-      c.facts.add query(a, VarId(0), createXint(pool.integers[r.intId])) # sel <= hi
+      c.facts.add query(a, VarId(0), createXint(r.intVal)) # sel <= hi
   elif r.isIntLit:
-    var f = query(a, VarId(0), createXint(pool.integers[r.intId]))
+    var f = query(a, VarId(0), createXint(r.intVal))
     c.facts.add f            # sel <= v
     c.facts.add f.geXplusC   # sel >= v
 

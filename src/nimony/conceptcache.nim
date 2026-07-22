@@ -175,7 +175,7 @@ proc hashTypeCursor(n: Cursor): Hash =
   of Ident, StrLit:
     h = h !& Hash(n.strId.int)
   of IntLit, InlineInt:
-    h = h !& Hash(n.intId.int)
+    h = h !& Hash(n.intVal.int)
   of FloatLit:
     h = h !& Hash(cast[int64](n.floatVal))
   else:

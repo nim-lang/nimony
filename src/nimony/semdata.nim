@@ -276,9 +276,9 @@ proc typeToCanonAux(result: var string; c: var Cursor) =
     elif c.isCharLit:
       result.add " c"; result.addInt c.uoperand.int
     elif c.isIntLit:
-      result.add " i"; result.addInt c.intId.int
+      result.add " i"; result.addInt c.intVal.int
     elif c.isUIntLit:
-      result.add " u"; result.addInt c.uintId.int
+      result.add " u"; result.addInt c.uintVal.int
     skip c
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =

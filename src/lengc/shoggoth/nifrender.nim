@@ -19,7 +19,7 @@ import nifpools, nifbuilder
 
 proc emit(c: var Cursor; b: var Builder) =
   if c.isTagLit:
-    b.addTree(pool.tags[c.tag])
+    b.addTree(globalTags.tags[c.tag])
     c.loopInto:
       emit(c, b)
     b.endTree()

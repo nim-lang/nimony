@@ -106,11 +106,11 @@ proc shortenDir*(x: string): string =
     result = x
 
 proc infoToStr*(info: PackedLineInfo): string =
-  let rawInfo = unpack(pool.man, info)
+  let rawInfo = unpack(lineMan, info)
   if not info.isValid or not rawInfo.file.isValid:
     result = "???"
   else:
-    result = pool.files[rawInfo.file].shortenDir()
+    result = pool.filenames[rawInfo.file].shortenDir()
     result.add "(" & $rawInfo.line & ", " & $(rawInfo.col+1) & ")"
 
 proc reportErrorsRec(r: var Reporter; n: var Cursor; errTag: TagId; count: var int) =
@@ -144,7 +144,7 @@ proc reportErrorsRec(r: var Reporter; n: var Cursor; errTag: TagId; count: var i
     skip n
 
 proc reportErrors*(dest: var TokenBuf): int =
-  let errTag = pool.tags.getOrIncl("err")
+  let errTag = globalTags.registerTag("err")
   var r = Reporter(verbosity: 2, noColors: not useColors())
   result = 0
   var n = beginRead(dest)

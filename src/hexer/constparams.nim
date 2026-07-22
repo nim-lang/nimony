@@ -361,7 +361,7 @@ proc checkedArithOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addEmpty2 info # export marker, pragma
     copyTree dest, typ
     dest.addDotToken() # value
-  dest.addParLe(pool.tags.getOrIncl("keepovf"), info)
+  dest.addParLe(globalTags.registerTag("keepovf"), info)
   dest.copyInto n:
     tr(c, dest, n) # type
     tr(c, dest, n) # operand A

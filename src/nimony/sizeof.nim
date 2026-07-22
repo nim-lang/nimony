@@ -309,7 +309,7 @@ when isMainModule:
       publish result, srcBuf, SemcheckBodies
       result
     var symBuf = createTokenBuf(1)
-    symBuf.add symToken(symId, NoLineInfo)
+    symBuf.add symToken(symId)
     let n = beginRead symBuf
     var sz = getSize(n, 8)
     endRead symBuf

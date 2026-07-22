@@ -579,7 +579,7 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
 
 proc processDeps(c: var DepContext; n: Cursor; current: Node) =
   var n = n
-  if n.isTagLit and pool.tags[n.cursorTagId] == "stmts":
+  if n.isTagLit and globalTags.tags[n.cursorTagId] == "stmts":
     n.into:
       while n.hasMore:
         processDep c, n, current

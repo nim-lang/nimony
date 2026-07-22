@@ -339,7 +339,7 @@ proc gpragmas(g: var SrcGen, n: var Cursor) =
       else:
         afterFirst = true
 
-      put(g, tkSymbol, pool.tags[n.cursorTagId])
+      put(g, tkSymbol, globalTags.tags[n.cursorTagId])
       n.into:
         if n.hasMore:
           putWithSpace(g, tkColon, ":")
@@ -668,16 +668,16 @@ proc gsufx(g: var SrcGen, n: var Cursor) =
     skip n
 
     case pool.strings[n.strId]
-    of "i": put(g, tkIntLit, $pool.integers[value.intId])
-    of "i8": put(g, tkIntLit, $pool.integers[value.intId] & "'i8")
-    of "i16": put(g, tkIntLit, $pool.integers[value.intId] & "'i16")
-    of "i32": put(g, tkIntLit, $pool.integers[value.intId] & "'i32")
-    of "i64": put(g, tkIntLit, $pool.integers[value.intId] & "'i64")
-    of "u": put(g, tkUIntLit, $pool.uintegers[value.uintId] & "'u")
-    of "u8": put(g, tkUIntLit, $pool.uintegers[value.uintId] & "'u8")
-    of "u16": put(g, tkUIntLit, $pool.uintegers[value.uintId] & "'u16")
-    of "u32": put(g, tkUIntLit, $pool.uintegers[value.uintId] & "'u32")
-    of "u64": put(g, tkUIntLit, $pool.uintegers[value.uintId] & "'u64")
+    of "i": put(g, tkIntLit, $value.intVal)
+    of "i8": put(g, tkIntLit, $value.intVal & "'i8")
+    of "i16": put(g, tkIntLit, $value.intVal & "'i16")
+    of "i32": put(g, tkIntLit, $value.intVal & "'i32")
+    of "i64": put(g, tkIntLit, $value.intVal & "'i64")
+    of "u": put(g, tkUIntLit, $value.uintVal & "'u")
+    of "u8": put(g, tkUIntLit, $value.uintVal & "'u8")
+    of "u16": put(g, tkUIntLit, $value.uintVal & "'u16")
+    of "u32": put(g, tkUIntLit, $value.uintVal & "'u32")
+    of "u64": put(g, tkUIntLit, $value.uintVal & "'u64")
     of "f": put(g, tkFloatLit, $value.floatVal)
     of "f32": put(g, tkFloatLit, $value.floatVal & "f32")
     of "f64": put(g, tkFloatLit, $value.floatVal & "f64")
@@ -690,7 +690,7 @@ proc gsufx(g: var SrcGen, n: var Cursor) =
 proc takeNumberType(g: var SrcGen, n: var Cursor, typ: string) =
   var name = typ
   n.into:
-    let size = pool.integers[n.intId]
+    let size = n.intVal
     if size != -1:
       name.add $size
 
@@ -1423,7 +1423,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         skip n
 
       else:
-        # raiseAssert $pool.tags[n.tagId]
+        # raiseAssert $globalTags.tags[n.tagId]
         skip n
     of TrueX:
       put(g, tkSymbol, "true")
@@ -1935,10 +1935,10 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       raiseAssert "todo"
 
   of IntLit:
-    put(g, tkIntLit, $pool.integers[n.intId])
+    put(g, tkIntLit, $n.intVal)
     inc n
   of UIntLit:
-    put(g, tkUIntLit, $pool.uintegers[n.uintId])
+    put(g, tkUIntLit, $n.uintVal)
     inc n
   of FloatLit:
     put(g, tkFloatLit, $n.floatVal)
@@ -1998,7 +1998,7 @@ proc asNimCode*(n: Cursor; renderFlags: RenderFlags = {}): string =
   var togo = subtreeWidth(n2)  # tokens incl. suffixes; consume `tokenWidth` per step
   while togo > 0:
     if n2.info.isValid:
-      let currentFile = getFileId(pool.man, n2.info)
+      let currentFile = getFileId(lineMan, n2.info)
       if not m0.isValid:
         m0 = n2.info
         file0 = currentFile
@@ -2009,14 +2009,14 @@ proc asNimCode*(n: Cursor; renderFlags: RenderFlags = {}): string =
 
   when false: #if m0.isValid:
     if file0.isValid:
-      let (_, line0, col0) = unpack(pool.man, m0)
+      let (_, line0, col0) = unpack(lineMan, m0)
       if m1.isValid:
-        let (_, line1, col1) = unpack(pool.man, m1)
-        result = extract(pool.files[file0],
+        let (_, line1, col1) = unpack(lineMan, m1)
+        result = extract(pool.filenames[file0],
                         FilePosition(line: line0, col: col0),
                         FilePosition(line: line1, col: col1))
       else:
-        result = extract(pool.files[file0], FilePosition(line: line0, col: col0))
+        result = extract(pool.filenames[file0], FilePosition(line: line0, col: col0))
     else:
       result = ""
     var visible = false

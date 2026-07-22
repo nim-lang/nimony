@@ -88,13 +88,13 @@ proc addKey(dest: var TokenBuf; g: var GenPragmas; key: string; info: PackedLine
 
 proc addKeyVal(dest: var TokenBuf; g: var GenPragmas; key: string; val: StrId; info: PackedLineInfo) =
   maybeOpen dest, g, info
-  dest.addParLe(pool.tags.getOrIncl(key), info)
+  dest.addParLe(globalTags.registerTag(key), info)
   dest.addStrLit(val, info)
   dest.addParRi()
 
-proc addKeyVal(dest: var TokenBuf; g: var GenPragmas; key: string; val: IntId; info: PackedLineInfo) =
+proc addKeyVal(dest: var TokenBuf; g: var GenPragmas; key: string; val: int64; info: PackedLineInfo) =
   maybeOpen dest, g, info
-  dest.addParLe(pool.tags.getOrIncl(key), info)
+  dest.addParLe(globalTags.registerTag(key), info)
   dest.addIntLit(val, info)
   dest.addParRi()
 
@@ -128,7 +128,7 @@ type
   CollectedPragmas = object
     extern: StrId
     flags: set[PragmaKind]
-    align, bits: IntId
+    align, bits: int64
     header: StrId
     dynlib: StrId
     callConv: CallConv
@@ -160,7 +160,7 @@ proc externPragmas(c: var EContext; dest: var TokenBuf; genPragmas: var GenPragm
 
 proc trField(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag] = {}) =
   # Translate gfld to fld for NIFC (NIFC only knows fld):
-  dest.addParLe(pool.tags.getOrIncl("fld"), n.info)
+  dest.addParLe(globalTags.registerTag("fld"), n.info)
   n.into:
 
     expectSymdef(c, n)
@@ -175,9 +175,9 @@ proc trField(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[Type
     var genPragmas = openGenPragmas()
     externPragmas c, dest, genPragmas, prag, pinfo
 
-    if prag.align != IntId(0):
+    if prag.align != 0:
       dest.addKeyVal genPragmas, "align", prag.align, pinfo
-    if prag.bits != IntId(0):
+    if prag.bits != 0:
       dest.addKeyVal genPragmas, "bits", prag.bits, pinfo
     closeGenPragmas dest, genPragmas
 
@@ -300,10 +300,10 @@ proc trArrayBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       n.into:
         skip n
         expectIntLit c,  n
-        first = pool.integers[n.intId]
+        first = n.intVal
         inc n
         expectIntLit c, n
-        last = pool.integers[n.intId]
+        last = n.intVal
         inc n
       dest.addIntLit(last - first + 1, n.endInfo)
     else:
@@ -755,7 +755,7 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
   result = default(CollectedPragmas)
   if n.isDotToken:
     inc n
-  elif n.isTagLit and pool.tags[n.cursorTagId] == $PragmasS:
+  elif n.isTagLit and globalTags.tags[n.cursorTagId] == $PragmasS:
     n.into:
       while n.hasMore:
         if n.isTagLit:
@@ -809,12 +809,12 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
           of AlignP:
             n.into:
               expectIntLit c, n
-              result.align = n.intId
+              result.align = n.intVal
               inc n
           of BitsP:
             n.into:
               expectIntLit c, n
-              result.bits = n.intId
+              result.bits = n.intVal
               inc n
           of RequiresP, EnsuresP, StringP, RaisesP, ErrorP, AssumeP, AssertP, ReportP,
              TagsP, DeprecatedP, SideEffectP, KeepOverflowFlagP, SemanticsP,
@@ -1562,7 +1562,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       n = sub(n) # skip tag
       trExpr c, dest, n # tuple
       expectIntLit c, n
-      dest.addSymUse(ithTupleField(c, int pool.integers[n.intId], fieldType), n.info)
+      dest.addSymUse(ithTupleField(c, int n.intVal, fieldType), n.info)
       inc n # skip index
       dest.addIntLit(0, n.endInfo) # inheritance
       takeParRi dest, n, dotStart
@@ -1631,7 +1631,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         if n.typeKind in {IntT, UIntT}:
           var bitsToken = n
           inc bitsToken
-          bits = pool.integers[bitsToken.intId]
+          bits = bitsToken.intVal
         else:
           #error c, "expected int/uint type for ashr, got: ", n
           discard
@@ -1724,15 +1724,15 @@ proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; m
       externPragmas c, dest, genPragmas, prag, pinfo
 
     if ThreadvarP in prag.flags:
-      setTagAt(dest, toPatch, pool.tags.getOrIncl("tvar"))
+      setTagAt(dest, toPatch, globalTags.registerTag("tvar"))
       symKind = TvarY
     elif GlobalP in prag.flags:
-      setTagAt(dest, toPatch, pool.tags.getOrIncl("gvar"))
+      setTagAt(dest, toPatch, globalTags.registerTag("gvar"))
       symKind = GvarY
 
-    if prag.align != IntId(0):
+    if prag.align != 0:
       dest.addKeyVal genPragmas, "align", prag.align, pinfo
-    if prag.bits != IntId(0):
+    if prag.bits != 0:
       dest.addKeyVal genPragmas, "bits", prag.bits, pinfo
     closeGenPragmas dest, genPragmas
 

@@ -84,9 +84,9 @@ proc getConstOrdinalValue*(val: Cursor): xint =
   of CharLit:
     result = createXint val.uoperand
   of IntLit:
-    result = createXint pool.integers[val.intId]
+    result = createXint val.intVal
   of UIntLit:
-    result = createXint pool.uintegers[val.uintId]
+    result = createXint val.uintVal
   of TagLit:
     case val.exprKind
     of FalseX:
@@ -602,9 +602,9 @@ proc evalCast(c: var EvalContext; typ, val, nOrig: Cursor): Cursor =
     if val.kind == FloatLit:
       result = val
     elif val.isIntLit:
-      result = floatValue(c, cast[float64](pool.integers[val.intId]), nOrig.info)
+      result = floatValue(c, cast[float64](val.intVal), nOrig.info)
     elif val.kind == UIntLit:
-      result = floatValue(c, cast[float64](pool.uintegers[val.uintId]), nOrig.info)
+      result = floatValue(c, cast[float64](val.uintVal), nOrig.info)
     else:
       cannotEval nOrig
   elif dtk in {IntT, UIntT}:
@@ -1437,7 +1437,7 @@ proc bitsetSizeInBytes*(baseType: Cursor): xint =
   var baseType = toTypeImpl baseType
   case baseType.typeKind
   of IntT, UIntT:
-    let bits = int pool.integers[baseType.childCursor.intId]
+    let bits = int baseType.childCursor.intVal
     # - 3 because we do `div 8` as a byte has 8 bits:
     result = createXint(1'i64) shl (bits - 3)
   of CharT:
@@ -1459,7 +1459,7 @@ proc bitsetSizeInBytes*(baseType: Cursor): xint =
       var bt = baseType
       inc bt  # skip EnumT/HoleyEnumT/AnumT tag
       if bt.typeKind in {IntT, UIntT}:
-        let baseBits = int pool.integers[bt.childCursor.intId]
+        let baseBits = int bt.childCursor.intVal
         let baseBytes = baseBits div 8
         if baseBytes > 0 and result < createXint(baseBytes):
           # IntT with negative field values is the compiler's default
@@ -1500,7 +1500,7 @@ proc getArrayIndexLen*(index: Cursor): xint =
   of EnumT:
     result = countEnumValues(index)
   of IntT, UIntT:
-    let bits = int pool.integers[index.childCursor.intId]
+    let bits = int index.childCursor.intVal
     result = createXint(1'i64) shl bits
   of CharT:
     result = createXint 256'i64

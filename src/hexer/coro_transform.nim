@@ -464,8 +464,8 @@ proc isClosureIter*(s: SymId): bool =
 proc getNextState*(buf: TokenBuf; n: Cursor): int =
   var pos = cursorToPosition(buf, n)
   while pos < buf.len:
-    if pool.tags[buf[pos].tagId] == "lab":
-      return int(pool.integers[readonlyCursorAt(buf, pos+1).intId])
+    if globalTags.tags[buf[pos].tagId] == "lab":
+      return int(readonlyCursorAt(buf, pos+1).intVal)
     inc pos
   return -1
 
@@ -1028,8 +1028,8 @@ proc trReturn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc escapingLocalsImpl(c: var Context; n: var Cursor; currentState: var int) =
   ## Processes the single tree/token at `n`, advancing past it.
-  if n.isTagLit and pool.tags[n.cursorTagId] == "lab":
-    currentState = int(pool.integers[n.childCursor.intId])
+  if n.isTagLit and globalTags.tags[n.cursorTagId] == "lab":
+    currentState = int(n.childCursor.intVal)
 
   let sk = n.stmtKind
   let nk = n.njvlKind
@@ -2031,16 +2031,16 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           if n.typeKind == ProctypeT:
             c.hooks.trProctype(c, dest, n)
           else:
-            case pool.tags[n.cursorTagId]
+            case globalTags.tags[n.cursorTagId]
             of "jmp":
               n.into:
-                gotoNextState(c, dest, int(pool.integers[n.intId]), n.info)
+                gotoNextState(c, dest, int(n.intVal), n.info)
                 inc n
             of "lab":
               dest.addParRi() # close stmts
               dest.addParRi() # close proc decl
               n.into:
-                newLocalProc c, dest, int(pool.integers[n.intId]), c.procStack[^1]
+                newLocalProc c, dest, int(n.intVal), c.procStack[^1]
                 inc n
             else:
               coroTrSons(c, dest, n)

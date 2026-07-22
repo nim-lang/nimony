@@ -96,11 +96,11 @@ proc rewriteSymsToIdents(buf: var TokenBuf) =
 proc emitImportStdMacros(dest: var TokenBuf; info: PackedLineInfo) =
   ## Emit `(import (infix / std (bracket syncio macros)))` — the same shape
   ## nifler emits for `import std/[syncio, macros]`.
-  dest.copyInto(pool.tags.getOrIncl("import"), info):
-    dest.copyInto(pool.tags.getOrIncl("infix"), info):
+  dest.copyInto(globalTags.registerTag("import"), info):
+    dest.copyInto(globalTags.registerTag("infix"), info):
       dest.addIdent "/", info
       dest.addIdent "std", info
-      dest.copyInto(pool.tags.getOrIncl("bracket"), info):
+      dest.copyInto(globalTags.registerTag("bracket"), info):
         dest.addIdent "syncio", info
         dest.addIdent "macros", info
 
@@ -150,7 +150,7 @@ proc emitImplProc(dest: var TokenBuf; implName: string; macroDecl: Cursor;
                   info: PackedLineInfo) =
   ## Emit `(proc <implName> . . . (params <copied-and-rewritten>) NimNode . . <body>)`.
   let r = asRoutine(macroDecl, SkipInclBody)
-  dest.copyInto(pool.tags.getOrIncl("proc"), info):
+  dest.copyInto(globalTags.registerTag("proc"), info):
     dest.addIdent implName, info
     dest.addEmpty3 info                       # exported, pattern, typevars
     # params: copy verbatim, but swap (untyped)/(typed) types for NimNode so
@@ -158,7 +158,7 @@ proc emitImplProc(dest: var TokenBuf; implName: string; macroDecl: Cursor;
     # "don't sem-check the arg" semantics (which the user's macro signature
     # already provides via the untyped/typed metatype).
     if r.params.isDotToken:
-      dest.copyInto(pool.tags.getOrIncl("params"), info):
+      dest.copyInto(globalTags.registerTag("params"), info):
         discard
     else:
       copyParamsRewritingMetatypes(dest, r.params, info)
@@ -174,12 +174,12 @@ proc emitMainProc(dest: var TokenBuf; implName: string; paramCount: int;
   ##     let arg0 = input[0]; let arg1 = input[1]; ...
   ##     let output = <implName>(arg0, arg1, ...)
   ##     saveOutput(output)
-  let procTag = pool.tags.getOrIncl("proc")
-  let letTag = pool.tags.getOrIncl("let")
-  let callTag = pool.tags.getOrIncl("call")
-  let stmtsTag = pool.tags.getOrIncl("stmts")
-  let paramsTag = pool.tags.getOrIncl("params")
-  let bracketExprTag = pool.tags.getOrIncl("at")
+  let procTag = globalTags.registerTag("proc")
+  let letTag = globalTags.registerTag("let")
+  let callTag = globalTags.registerTag("call")
+  let stmtsTag = globalTags.registerTag("stmts")
+  let paramsTag = globalTags.registerTag("params")
+  let bracketExprTag = globalTags.registerTag("at")
 
   dest.copyInto(procTag, info):
     dest.addIdent "main", info
@@ -248,12 +248,12 @@ proc buildPluginNif*(macroDecl: Cursor; macroSym: SymId;
   let implName = macroName & "Impl"
   let paramCount = countParams(macroDecl)
 
-  result.copyInto(pool.tags.getOrIncl("stmts"), info):
+  result.copyInto(globalTags.registerTag("stmts"), info):
     emitImportStdMacros(result, info)
     emitImplProc(result, implName, macroDecl, info)
     emitMainProc(result, implName, paramCount, info)
     # call main()
-    result.copyInto(pool.tags.getOrIncl("call"), info):
+    result.copyInto(globalTags.registerTag("call"), info):
       result.addIdent "main", info
 
   rewriteSymsToIdents(result)

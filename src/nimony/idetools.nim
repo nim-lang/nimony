@@ -11,8 +11,8 @@ import semos, programs, typenav, typeprops, decls, nifconfig, nimony_model
 import ".."/gear2/modnames
 
 proc lineInfoMatch*(info, toTrack: PackedLineInfo; tokenLen: int): bool =
-  let i = unpack(pool.man, info)
-  let t = unpack(pool.man, toTrack)
+  let i = unpack(lineMan, info)
+  let t = unpack(lineMan, toTrack)
   if i.file.isValid and t.file.isValid:
     if i.file != t.file: return false
     if i.line != t.line: return false

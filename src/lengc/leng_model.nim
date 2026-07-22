@@ -41,7 +41,7 @@ proc pragmaKind*(c: Cursor): LengPragma {.inline.} =
     else:
       result = NoPragma
   elif c.kind == Ident:
-    let tagId = pool.tags.getOrIncl(pool.strings[c.strId])
+    let tagId = globalTags.registerTag(pool.strings[c.strId])
     if rawTagIsLengPragma(cast[TagEnum](tagId)):
       result = cast[LengPragma](tagId)
     else:
@@ -79,7 +79,7 @@ proc callConvKind*(c: Cursor): CallConv {.inline.} =
     else:
       result = NoCallConv
   elif c.kind == Ident:
-    let tagId = pool.tags.getOrIncl(pool.strings[c.strId])
+    let tagId = globalTags.registerTag(pool.strings[c.strId])
     if rawTagIsCallConv(cast[TagEnum](tagId)):
       result = cast[CallConv](tagId)
     else:

@@ -197,7 +197,7 @@ proc getErrorMsg*(m: Match): string =
     "expression is not a mutable lvalue, cannot be passed to " &
       typeToString(m.error.expected) & " parameter"
   of UnhandledTypeBug:
-    "BUG: unhandled type: " & pool.tags[m.error.expected.cursorTagId]
+    "BUG: unhandled type: " & globalTags.tags[m.error.expected.cursorTagId]
   of MismatchBug:
     "BUG: expected: " & typeToString(m.error.expected) & " but got: " & typeToString(m.error.got)
   of MissingExplicitGenericParameter:
@@ -489,9 +489,9 @@ proc foldValueExpr(m: var Match; a: Cursor; depth = 0): xint =
   if depth > 10: return
   case a.kind
   of IntLit:
-    result = createXint(pool.integers[a.intId])
+    result = createXint(a.intVal)
   of UIntLit:
-    result = createXint(pool.uintegers[a.uintId])
+    result = createXint(a.uintVal)
   of Symbol:
     # an already-inferred value typevar (e.g. `R` in `array[R * C, T]`): fold to
     # the value it was bound to, so array-length matching resolves once bound.
@@ -1579,7 +1579,7 @@ proc checkIntLitRange(context: ptr SemContext; f: Cursor; intLit: Cursor): bool 
   if f.typeKind == FloatT:
     result = true
   else:
-    let i = createXint(pool.integers[intLit.intId])
+    let i = createXint(intLit.intVal)
     result = i >= firstOrd(context[], f) and i <= lastOrd(context[], f)
 
 proc checkFloatLitRange(context: ptr SemContext; f: Cursor; floatLit: Cursor): bool =

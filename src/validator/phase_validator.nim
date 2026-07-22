@@ -140,7 +140,7 @@ proc classifyCursor(c: Cursor; preferStmt: bool; inType: bool): ChildKind =
     if inType:
       if isType:
         return ckT
-      let tagStr = pool.tags[c.cursorTagId]
+      let tagStr = globalTags.tags[c.cursorTagId]
       for t in typeCtxTagsLiteral:
         if t == tagStr: return ckT
     if isExpr and isStmt:
@@ -164,7 +164,7 @@ proc classifyCursor(c: Cursor; preferStmt: bool; inType: bool): ChildKind =
 
 proc tagName(c: Cursor): string =
   if c.isTagLit:
-    result = pool.tags[c.cursorTagId]
+    result = globalTags.tags[c.cursorTagId]
   else:
     result = ""
 

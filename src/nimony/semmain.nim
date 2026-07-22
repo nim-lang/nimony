@@ -49,21 +49,21 @@ proc buildIndexExports(c: var SemContext): TokenBuf =
     case ex.kind
     of ImportAll:
       result.addParLe(TagId(ExportIdx), NoLineInfo)
-      result.add strToken(pool.strings.getOrIncl(path), NoLineInfo)
+      result.addStrLit(path, NoLineInfo)
       result.addParRi()
     of FromImport:
       if ex.list.len != 0:
         result.addParLe(TagId(FromexportIdx), NoLineInfo)
-        result.add strToken(pool.strings.getOrIncl(path), NoLineInfo)
+        result.addStrLit(path, NoLineInfo)
         for s in ex.list:
-          result.add identToken(s, NoLineInfo)
+          result.addIdent(s, NoLineInfo)
         result.addParRi()
     of ImportExcept:
       let kind = if ex.list.len == 0: ExportIdx else: ExportexceptIdx
       result.addParLe(TagId(kind), NoLineInfo)
-      result.add strToken(pool.strings.getOrIncl(path), NoLineInfo)
+      result.addStrLit(path, NoLineInfo)
       for s in ex.list:
-        result.add identToken(s, NoLineInfo)
+        result.addIdent(s, NoLineInfo)
       result.addParRi()
 
 proc writeNewDepsFile(c: var SemContext; outfile: string) =
@@ -125,7 +125,7 @@ proc pruneMatchedForwardDecls(c: var SemContext; dest: var TokenBuf) =
       # ParRi-walk based in classic mode.
       let declSpan = subtreeWidth(readonlyCursorAt(dest, i))
       for k in i ..< i + declSpan:
-        dest[k] = dotToken(info)
+        dest[k] = dotToken()
       i += declSpan
     else:
       inc i
@@ -161,13 +161,13 @@ proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
     widenSealed dest, 0, importBuf.len
   when defined(sealCheck):
     for i in 0 ..< dest.len:
-      if dest[i].kind == ParLe and pool.tags[nifpools.tag(dest[i])] == "aconstr":
+      if dest[i].isTagLit and globalTags.tags[dest[i].tagId] == "aconstr":
         for k in max(0,i-3) .. min(dest.len-1, i+12):
           let tk = dest[k]
           if tk.isTagLit:
-            echo "  [", k, "] ParLe ", pool.tags[nifpools.tag(tk)], " jump=", jump(tk)
+            echo "  [", k, "] TagLit ", globalTags.tags[tk.tagId], " jump=", uint32(tk) shr JumpShift
           elif tk.kind in {Symbol, SymbolDef}:
-            echo "  [", k, "] ", tk.kind, " ", pool.syms[nifpools.symId(tk)]
+            echo "  [", k, "] ", tk.kind, " ", pool.syms[tk.symId]
           else:
             echo "  [", k, "] ", tk.kind
         break
@@ -312,7 +312,7 @@ proc instantiateMethodForType(c: var SemContext; dest: var TokenBuf; methodSym, 
     # instance is the object type, not a ref/ptr type
     inc firstParam
   var typBuf = createTokenBuf(2)
-  typBuf.add symToken(typeInstSym, NoLineInfo)
+  typBuf.add symToken(typeInstSym)
   var paramMatch = createMatch(addr c)
   typematch paramMatch, firstParam, Item(n: emptyNode(c), typ: beginRead(typBuf))
   if classifyMatch(paramMatch) in {EqualMatch, GenericMatch}:
@@ -430,7 +430,7 @@ proc reorderInnerGenericInstances(c: SemContext; dest: var TokenBuf) =
           var procBuf = createTokenBuf(procLen)
           for j in (i-1)..<(i-1+procLen):
             procBuf.add dest[j]
-            dest[j] = dotToken(NoLineInfo) # invalidate
+            dest[j] = dotToken() # invalidate
 
           let before = dest.len
           dest.insert procBuf, originPos

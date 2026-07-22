@@ -49,7 +49,7 @@ proc buildErr(c: var Context; info: PackedLineInfo; msg: string) =
     quit msg
   c.errors.buildTree ErrT, info:
     c.errors.addDotToken()
-    c.errors.add strToken(pool.strings.getOrIncl(msg), info)
+    c.errors.add strLitToken(pool.strings.getOrIncl(msg))
 
 proc contractViolation(c: var Context; orig: Cursor; fact: LeXplusC; report: bool) =
   if report:
@@ -125,11 +125,11 @@ proc compileCmp(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor):
     inc r
   elif r.isIntLit:
     b = VarId(0)
-    cnst = createXint(pool.integers[r.intId])
+    cnst = createXint(r.intVal)
     inc r
   elif r.kind == UIntLit:
     b = VarId(0)
-    cnst = createXint(pool.uintegers[r.uintId])
+    cnst = createXint(r.uintVal)
     inc r
   elif (let op = r.exprKind; op in {AddX, SubX}):
     r.peekInto:
@@ -138,9 +138,9 @@ proc compileCmp(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor):
         b = mapSymbol(c, paramMap, call, r.symId)
         inc r
         if r.isIntLit:
-          cnst = createXint(pool.integers[r.intId])
+          cnst = createXint(r.intVal)
         elif r.kind == UIntLit:
-          cnst = createXint(pool.uintegers[r.uintId])
+          cnst = createXint(r.uintVal)
         else:
           error "expected integer literal but got: ", r
       else:
@@ -484,11 +484,11 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
         fact.b = getVarId(c, symId2)
         inc pc
         if pc.isIntLit:
-          fact.c = fact.c + createXint(pool.integers[pc.intId])
+          fact.c = fact.c + createXint(pc.intVal)
           result = true
           inc pc
         elif pc.kind == UIntLit:
-          fact.c = fact.c + createXint(pool.uintegers[pc.uintId])
+          fact.c = fact.c + createXint(pc.uintVal)
           result = true
           inc pc
         else:
@@ -503,12 +503,12 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
     inc pc
   elif pc.isIntLit:
     fact.b = VarId(0)
-    fact.c = fact.c + createXint(pool.integers[pc.intId])
+    fact.c = fact.c + createXint(pc.intVal)
     result = true
     inc pc
   elif pc.kind == UIntLit:
     fact.b = VarId(0)
-    fact.c = fact.c + createXint(pool.uintegers[pc.uintId])
+    fact.c = fact.c + createXint(pc.uintVal)
     result = true
     inc pc
   elif pc.exprKind == NilX:
@@ -545,11 +545,11 @@ proc translateCond(c: var Context; pc: var Cursor; wasEquality: var bool): LeXpl
 
   if r.isIntLit:
     result.a = VarId(0)
-    result.c = -createXint(pool.integers[r.intId])
+    result.c = -createXint(r.intVal)
     inc r
   elif r.kind == UIntLit:
     result.a = VarId(0)
-    result.c = -createXint(pool.uintegers[r.uintId])
+    result.c = -createXint(r.uintVal)
     inc r
   elif r.isSymbol:
     result.a = getVarId(c, r.symId)
@@ -722,7 +722,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
     of EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
       inc pc
     of ParLe:
-      #echo "PC IS: ", pool.tags[pc.tag]
+      #echo "PC IS: ", globalTags.tags[pc.tag]
       if pc.cfKind == IteF:
         inc pc
         let conditionalFacts = analyseCondition(c, pc)

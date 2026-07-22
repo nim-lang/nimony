@@ -98,9 +98,9 @@ proc sameTreesIgnoreArrayIndexes*(a, b: Cursor): bool =
   of Symbol, SymbolDef:
     result = a.symId == b.symId
   of IntLit:
-    result = a.intId == b.intId
+    result = a.intVal == b.intVal
   of UIntLit:
-    result = a.uintId == b.uintId
+    result = a.uintVal == b.uintVal
   of FloatLit:
     result = a.floatVal == b.floatVal
   of StrLit, Ident:
@@ -147,7 +147,7 @@ proc disjointDirectField(tree: Cursor; r: SymId; x: Cursor): bool =
                  treeSel.symId != xSel.symId
       of TupatX:                # disjoint iff the two tuple indices differ
         result = treeSel.kind == IntLit and xSel.kind == IntLit and
-                 pool.integers[treeSel.intId] != pool.integers[xSel.intId]
+                 treeSel.intVal != xSel.intVal
       else:
         discard
 
@@ -284,7 +284,7 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
     of Ident, StrLit, CharLit, IntLit, UIntLit, FloatLit:
       inc pc
     of TagLit:
-      #echo "PC IS: ", pool.tags[pc.tag]
+      #echo "PC IS: ", globalTags.tags[pc.tag]
       if pc.cfKind == IteF:
         inc pc
         # `containsRoot` (not `containsUsage`): an `if` condition that reads the

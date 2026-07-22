@@ -96,7 +96,7 @@ proc ensurePragmaStyleIndex*() {.sideEffect.} =
     let raw = cast[TagEnum](tagIdInt)
     if not rawTagIsNimonyPragma(raw): continue
     let p = cast[NimonyPragma](raw)
-    let canonicalName = pool.tags[TagId(tagIdInt)]
+    let canonicalName = globalTags.tags[TagId(tagIdInt)]
     let norm = pool.strings.getOrIncl(normalizeStyleFull(canonicalName))
     pragmaStyleIndex[norm] = p
 

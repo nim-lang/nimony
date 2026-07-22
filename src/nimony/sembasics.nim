@@ -375,7 +375,7 @@ proc hasErrorSince*(dest: TokenBuf; start: int): bool =
   ## True when `dest[start..]` already contains an `(err ...)` node. Used to
   ## avoid stacking a redundant follow-up error on top of one semExpr already
   ## produced (e.g. `auto`-typed expression from an undeclared identifier).
-  let errTag = pool.tags.getOrIncl("err")
+  let errTag = globalTags.registerTag("err")
   var i = start
   result = false
   while i < dest.len:

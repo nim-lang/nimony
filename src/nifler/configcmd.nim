@@ -219,7 +219,7 @@ proc sourcesChangedImpl(configFile: string; c: Cursor): bool =
   let modtime = getLastModificationTime(configFile)
   result = false
   while c.hasMore:
-    if c.isTagLit and pool.tags[c.cursorTagId] == "sources":
+    if c.isTagLit and globalTags.tags[c.cursorTagId] == "sources":
       var dep = childCursor(c)
       while dep.hasMore:
         if dep.isStringLit:

@@ -512,7 +512,7 @@ proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
   n = sub(n)
   let typ = n
   skip n # skip type
-  if n.kind == IntLit and pool.integers[n.intId] < 0:
+  if n.kind == IntLit and n.intVal < 0:
     inc n # integer literal
     let x = n
     skip n # skip expression

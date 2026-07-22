@@ -118,7 +118,7 @@ proc semDeclared*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     commonType c, dest, it, beforeExpr, expected
 
 proc hasError(dest: TokenBuf): bool =
-  let errTag = pool.tags.getOrIncl("err")
+  let errTag = globalTags.registerTag("err")
   var i = 0
   result = false
   while i < dest.len:
@@ -202,7 +202,7 @@ proc readBindSymRule(arg: Cursor): string =
     extractBasename s
     result = s
   of IntLit:
-    case pool.integers[arg.intId]
+    case arg.intVal
     of 0: result = "brClosed"
     of 1: result = "brOpen"
     of 2: result = "brForceOpen"

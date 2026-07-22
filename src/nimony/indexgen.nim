@@ -45,9 +45,9 @@ proc buildIndexExports(exports: Table[string, HashSet[SymId]]; infile: string): 
       rd.close(r)
       var mn = beginRead(mbuf)
       if mn.isTagLit: inc mn      # into the stmts; first child carries the info
-      fileId = pool.man.getFileId(mn.info)
+      fileId = lineMan.getFileId(mn.info)
       assert fileId.isValid
-      let path = pool.files[fileId].toAbsolutePath
+      let path = pool.filenames[fileId].toAbsolutePath
       result.addParLe(TagId(FromexportIdx))
       result.addStrLit(path, NoLineInfo)
       for s in syms:

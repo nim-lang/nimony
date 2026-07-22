@@ -73,7 +73,7 @@ proc getCfvar(n: var Cursor): Cfvar =
   inc n
   let s = n.symId
   inc n
-  let v = pool.integers[n.intId]
+  let v = n.intVal
   inc n
   skipParRi n
   result = (s, int(v))
@@ -109,11 +109,11 @@ proc aJoin(c: var Context; n: var Cursor) =
   inc n
   let sym = n.symId
   inc n
-  let fresh = pool.integers[n.intId]
+  let fresh = n.intVal
   inc n
-  let old1 = pool.integers[n.intId]
+  let old1 = n.intVal
   inc n
-  let old2 = pool.integers[n.intId]
+  let old2 = n.intVal
   inc n
   skipParRi n
   let freshX = (sym, int(fresh))

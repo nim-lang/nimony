@@ -31,6 +31,46 @@ proc litId*(n: NifToken): StrId {.inline.} = strId(n)
 proc litId*(c: Cursor): StrId {.inline.} = strId(c)
 proc firstSon*(n: Cursor): Cursor {.inline.} = childCursor(n)
 
+template files*(p: Pool): untyped = p.filenames
+template tags*(p: Pool): untyped = globalTags.tags
+template man*(p: Pool): untyped = lineMan
+
+type
+  IntId*   = distinct int64         ## value carriers (nifcore stores inline)
+  UIntId*  = distinct uint64
+
+  ## Identity proxies: the id already carries the value, `[]` returns it.
+  IntegersProxy*  = object
+  UIntegersProxy* = object
+
+func `==`*(a, b: IntId): bool {.borrow.}
+func `==`*(a, b: UIntId): bool {.borrow.}
+
+template integers*(p: Pool): IntegersProxy = IntegersProxy()
+template uintegers*(p: Pool): UIntegersProxy = UIntegersProxy()
+
+template `[]`*(x: IntegersProxy; id: IntId): int64 = int64(id)
+template `[]`*(x: UIntegersProxy; id: UIntId): uint64 = uint64(id)
+
+# nifcore stores integers inline: the "id" is the value itself.
+template getOrIncl*(x: IntegersProxy; v: int64): IntId = IntId(v)
+template getOrIncl*(x: UIntegersProxy; v: uint64): UIntId = UIntId(v)
+
+proc intId*(n: NifToken): IntId {.inline.} = IntId(n.soperand)
+proc uintId*(n: NifToken): UIntId {.inline.} = UIntId(uoperand(n))
+proc intId*(c: Cursor): IntId {.inline.} = IntId(intVal(c))
+proc uintId*(c: Cursor): UIntId {.inline.} = UIntId(uintVal(c))
+
+proc addIntLit*(dest: var TokenBuf; id: IntId; info: PackedLineInfo) =
+  addIntLit(dest, int64(id), info)
+
+# Classic single-token constructors with a (dropped) line-info argument.
+proc strToken*(s: StrId; info: PackedLineInfo): NifToken {.inline.} = strLitToken(s)
+proc symToken*(id: SymId; info: PackedLineInfo): NifToken {.inline.} = symToken(id)
+proc identToken*(id: StrId; info: PackedLineInfo): NifToken {.inline.} = identToken(id)
+proc dotToken*(info: PackedLineInfo): NifToken {.inline.} = dotToken()
+proc charToken*(ch: char; info: PackedLineInfo): NifToken {.inline.} = charToken(ch)
+
 # ── Classic interned float literals (ast2nif) ────────────────────────────
 
 type

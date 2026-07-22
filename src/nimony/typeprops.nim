@@ -72,9 +72,9 @@ proc firstOrd*(c: var SemContext; typ: TypeCursor): xint =
       inc firstVal # skip tuple tag
       case firstVal.kind
       of IntLit:
-        result = createXint pool.integers[firstVal.intId]
+        result = createXint firstVal.intVal
       of UIntLit:
-        result = createXint pool.uintegers[firstVal.uintId]
+        result = createXint firstVal.uintVal
       else:
         # enum field with non int/uint value?
         result = createNaN()
@@ -104,9 +104,9 @@ proc firstOrd*(c: var SemContext; typ: TypeCursor): xint =
       skip first # base type
       case first.kind
       of IntLit:
-        result = createXint pool.integers[first.intId]
+        result = createXint first.intVal
       of UIntLit:
-        result = createXint pool.uintegers[first.uintId]
+        result = createXint first.uintVal
       else:
         result = createNaN()
     of InvokeT:
@@ -148,9 +148,9 @@ proc lastOrd*(c: var SemContext; typ: TypeCursor): xint =
       inc lastVal # skip tuple tag
       case lastVal.kind
       of IntLit:
-        result = createXint pool.integers[lastVal.intId]
+        result = createXint lastVal.intVal
       of UIntLit:
-        result = createXint pool.uintegers[lastVal.uintId]
+        result = createXint lastVal.uintVal
       else:
         # enum field with non int/uint value?
         result = createNaN()
@@ -188,9 +188,9 @@ proc lastOrd*(c: var SemContext; typ: TypeCursor): xint =
       skip last # first
       case last.kind
       of IntLit:
-        result = createXint pool.integers[last.intId]
+        result = createXint last.intVal
       of UIntLit:
-        result = createXint pool.uintegers[last.uintId]
+        result = createXint last.uintVal
       else:
         result = createNaN()
     of BoolT:

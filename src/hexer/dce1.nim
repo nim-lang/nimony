@@ -99,9 +99,9 @@ proc readModuleAnalysis*(infile: string): ModuleAnalysis =
   var n = beginRead(buf)
   result = ModuleAnalysis()
   if n.stmtKind == StmtsS:
-    let depTag = pool.tags.getOrIncl(depName)
-    let offerTag = pool.tags.getOrIncl(offerName)
-    let rootTag = pool.tags.getOrIncl(rootName)
+    let depTag = globalTags.registerTag(depName)
+    let offerTag = globalTags.registerTag(offerName)
+    let rootTag = globalTags.registerTag(rootName)
     n.into:                                     # (stmts ...)
       while n.hasMore:
         if not n.isTagLit:

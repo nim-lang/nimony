@@ -774,10 +774,10 @@ proc trLocal(c: var Context; n: var Cursor) =
       trAsgnRhs c, name, n, e
     when defined(debugSigmatch):
       if n.hasMore:
-        let u = unpack(pool.man, n.info)
+        let u = unpack(lineMan, n.info)
         echo "LOCAL LEFTOVER kind=", n.kind,
-          (if n.isTagLit: " tag=" & pool.tags[n.tagId] else: ""),
-          " at ", pool.files[u.file], ":", u.line, ":", u.col
+          (if n.isTagLit: " tag=" & globalTags.tags[n.tagId] else: ""),
+          " at ", pool.filenames[u.file], ":", u.line, ":", u.col
 
 proc trStmtListExpr(c: var Context; n: var Cursor; outerE: Expects) =
   takeInto c.dest, n:

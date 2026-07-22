@@ -228,7 +228,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
         let raw = pool.strings[tok.strId]
         let name = resolveHeaderPath(raw, info.getFile(), c.g.config)
         if name != raw:
-          dest[idx] = strToken(pool.strings.getOrIncl(name), NoLineInfo)
+          dest[idx] = strLitToken(pool.strings.getOrIncl(name))
       crucial.headerFileTok = dest[idx]
     # Finalize expression
     dest.addParRi()
@@ -276,7 +276,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     else:
       buildErr c, dest, n.info, "expected int literal"
     if pk == SizeP and dest[valueStart].kind == IntLit:
-      crucial.size = int(pool.integers[readonlyCursorAt(dest, valueStart).intId])
+      crucial.size = int(readonlyCursorAt(dest, valueStart).intVal)
     dest.addParRi()
   of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP, BorrowP,
      NoSideEffectP, NodestroyP, BycopyP, ByrefP, InlineP, NoinlineP, NoinitP,

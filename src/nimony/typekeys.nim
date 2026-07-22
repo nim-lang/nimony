@@ -20,7 +20,7 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
   ## Mangles the single tree/token at `c` and advances past it.
   case c.kind
   of TagLit:
-    let tag {.cursor.} = pool.tags[c.cursorTagId]
+    let tag {.cursor.} = globalTags.tags[c.cursorTagId]
     if c.substructureKind in {FldU, GfldU}:
       c.into:
         skip c, SkipName # name
@@ -37,10 +37,10 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
           c.into:
             skip c # type is irrelevant, we care about the length
             assert c.isIntLit
-            first = pool.integers[c.intId]
+            first = c.intVal
             inc c
             assert c.isIntLit
-            last = pool.integers[c.intId]
+            last = c.intVal
             inc c
           b.addIntLit(last - first + 1)
         while c.hasMore:
@@ -63,7 +63,7 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
       c.into:
         # normalize bits
         assert c.isIntLit
-        let bits = pool.integers[c.intId]
+        let bits = c.intVal
         if bits < 0 and b.bits >= 0:
           b.addIntLit(b.bits)
         else:
@@ -121,10 +121,10 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
     b.addStrLit(pool.strings[c.strId])
     inc c
   of IntLit:
-    b.addIntLit(pool.integers[c.intId])
+    b.addIntLit(c.intVal)
     inc c
   of UIntLit:
-    b.addUIntLit(pool.uintegers[c.uintId])
+    b.addUIntLit(c.uintVal)
     inc c
   of FloatLit:
     b.addFloatLit(c.floatVal)

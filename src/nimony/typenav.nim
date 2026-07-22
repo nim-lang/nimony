@@ -277,7 +277,7 @@ proc tupatType(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   if tupType.typeKind == TupleT:
     skip n # skip tuple expression
     if n.isIntLit:
-      var idx = pool.integers[n.intId]
+      var idx = n.intVal
       inc tupType # into the tuple type
       while idx > 0:
         skip tupType

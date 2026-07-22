@@ -20,7 +20,7 @@ import copy_propagation, constant_folding, cse, induction_variables_legacy
 import rewriter
 proc isPow2(c: Cursor): bool =
   if c.kind != IntLit: return false
-  let v = pool.integers[c.intId]
+  let v = c.intVal
   v > 0 and (v and (v - 1)) == 0
 genRewriter staticRead("rules/arith.rewrite.nif")
 

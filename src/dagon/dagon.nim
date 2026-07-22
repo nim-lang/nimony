@@ -112,12 +112,12 @@ proc symHref(ctx: RenderCtx; sym: SymId): string =
 
 proc sourcePath(n: Cursor): string =
   if not n.isTagLit: return ""
-  let raw = unpack(pool.man, n.info)
-  if raw.file.isValid: result = pool.files[raw.file]
+  let raw = unpack(lineMan, n.info)
+  if raw.file.isValid: result = pool.filenames[raw.file]
   else: result = ""
 
 proc docOf(info: PackedLineInfo): string =
-  let raw = unpack(pool.man, info)
+  let raw = unpack(lineMan, info)
   if raw.comment != 0'u32: pool.strings[StrId(raw.comment)]
   else: ""
 
@@ -623,7 +623,7 @@ proc readDocIdx(path: string; entries: var seq[IndexEntry];
     if not n.isTagLit:
       inc n
     else:
-      let tag = pool.tags[n.cursorTagId]
+      let tag = globalTags.tags[n.cursorTagId]
       n.into:
         case tag
         of "module":
