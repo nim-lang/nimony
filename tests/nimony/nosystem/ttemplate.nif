@@ -37,7 +37,7 @@
     (tup 0 "typeOfProc"))
    (efld~C,2 :typeOfIter.0. x . TypeOfMode.0.
     (tup 1 "typeOfIter"))))
- (proc@2,A :dollar`.TypeOfMode.0. x . .
+ (func@2,A :dollar`.TypeOfMode.0. x . .
   (params
    (param :e.0 . . TypeOfMode.0. .))string.0.sysvq0asl . .
   (stmts
