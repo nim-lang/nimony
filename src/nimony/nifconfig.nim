@@ -12,7 +12,7 @@ when defined(nimony):
 else:
   import std / sequtils
 
-import ".." / lib / platform
+import ".." / lib / [platform, argsfinder]
 
 include ".." / lib / nifprelude
 
@@ -129,6 +129,13 @@ proc initNifConfig*(baseDir: sink string): NifConfig =
     checkFlags: "br"     # = genFlags(DefaultSettings) (BoundCheck + RangeCheck);
                          # the normal compile path overrides from `--boundchecks` etc.
   )
+  # `isDefined("gcc")` / `isDefined("clang")` etc. key off `ccKey`, which `--cc:`
+  # sets explicitly. The default `cc` is `"gcc"`, so seed `ccKey` from it; otherwise
+  # `when defined(gcc)` in the stdlib (e.g. posix' `-Wno-builtin-declaration-mismatch`
+  # passC) is false even though we compile with GCC — nifler sees host-Nim's
+  # `defined(gcc)` and keeps the branch, but nimsem re-evaluates against an empty
+  # `ccKey` and drops it before it reaches the `.s.deps.nif` / final build file.
+  result.ccKey = extractCCKey(result.cc)
 
 proc setTargetCPU*(config: var NifConfig; symbol: string): bool =
   result = false
