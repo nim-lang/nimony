@@ -12,7 +12,7 @@ when defined(nimony):
 else:
   import std / sequtils
 
-import ".." / lib / [platform, argsfinder]
+import ".." / lib / platform
 
 include ".." / lib / nifprelude
 
@@ -124,7 +124,7 @@ proc initNifConfig*(baseDir: sink string): NifConfig =
     targetCPU: platform.nameToCPU(hostCPU),
     targetOS: platform.nameToOS(hostOS),
     cc: "gcc",
-    ccKey: extractCCKey("gcc"),
+    ccKey: "gcc",
     linker: "",
     appType: appConsole, # console is the default
     checkFlags: "br"     # = genFlags(DefaultSettings) (BoundCheck + RangeCheck);
