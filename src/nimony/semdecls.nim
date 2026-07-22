@@ -22,6 +22,62 @@ proc signaturesMatch(forwardDecl: Cursor; implDecl: Cursor): bool =
     return false
   return true
 
+proc paramTypeForRedef(p: Cursor): Cursor =
+  ## Cursor to the type subtree of a `(param ...)` node; valid until `p`'s
+  ## buffer is mutated.
+  var c = p
+  c.into:
+    skip c, SkipName
+    skip c, SkipExport
+    skip c, SkipPragmas
+    result = c
+    while c.hasMore: skip c
+
+proc sameParamTypesForRedef(a, b: Cursor): bool =
+  ## Compare parameter types exactly; parameter names are irrelevant for
+  ## redefinition checking.
+  if a.substructureKind != ParamsU or b.substructureKind != ParamsU:
+    return sameTrees(a, b)
+  var a = a
+  var b = b
+  var ok = true
+  a.into:
+    b.into:
+      block comparison:
+        while a.hasMore:
+          if not b.hasMore:
+            ok = false
+            break comparison
+          if a.substructureKind != ParamU or b.substructureKind != ParamU:
+            ok = false
+            break comparison
+          if not sameTrees(paramTypeForRedef(a), paramTypeForRedef(b)):
+            ok = false
+            break comparison
+          skip a
+          skip b
+        if ok and b.hasMore:
+          ok = false
+      while a.hasMore: skip a
+      while b.hasMore: skip b
+  ok
+
+proc routineSigsMatch(a, b: Cursor): bool =
+  ## Detect proc redefinitions: like `signaturesMatch` for typevars, but
+  ## parameter types and the return type use exact type comparison so
+  ## distinct instantiations stay valid overloads.
+  if a.kind != ParLe or b.kind != ParLe:
+    return false
+  let ra = asRoutine(a)
+  let rb = asRoutine(b)
+  if not sameTreesButIgnoreSymIds(ra.typevars, rb.typevars):
+    return false
+  if not sameParamTypesForRedef(ra.params, rb.params):
+    return false
+  if not sameTrees(ra.retType, rb.retType):
+    return false
+  true
+
 proc addForwardDecl*(c: var SemContext; symId: SymId) =
   ## Register a forward declaration candidate.
   let lit = symToIdent(symId)
@@ -41,6 +97,33 @@ proc findMatchingForwardDecl*(c: var SemContext; symId: SymId; implDecl: Cursor)
       if signaturesMatch(res.decl, implDecl):
         result = fwdSym
         return
+
+proc checkRoutineRedefinition(c: var SemContext; symId: SymId; kind: SymKind): string =
+  ## Reject a routine declaration whose signature matches an existing overload,
+  ## mirroring Nim's `searchForProc` / `wrongRedefinition` (see procfind.nim).
+  ## Forward declarations with empty bodies are exempt.
+  ## Call only after `publishSignature` so the current decl is in `prog.mem`.
+  result = ""
+  let newLoaded = tryLoadSym(symId)
+  if newLoaded.status != LacksNothing: return
+  let newDecl = newLoaded.decl
+  let lit = symToIdent(symId)
+  var scope = c.currentScope.up
+  let ignoreStyle = IgnoreStyleFeature in c.features
+  while scope != nil:
+    for k in stylesOfScope(scope, lit, ignoreStyle):
+      for sym in scope.tab.getOrDefault(k):
+        if sym.name == symId or sym.kind != kind: continue
+        let loaded = tryLoadSym(sym.name)
+        if loaded.status != LacksNothing: continue
+        if not routineSigsMatch(loaded.decl, newDecl):
+          continue
+        let otherIsForward = asRoutine(loaded.decl, SkipInclBody).body.kind == DotToken
+        if otherIsForward: continue
+        result = "redefinition of '" & pool.strings[lit] &
+          "'; previous declaration here: " & infoToStr(loaded.decl.info)
+        return
+    scope = scope.up
 
 proc processBodyStatements(c: var SemContext; dest: var TokenBuf; it: var Item;
                            lastSonInfo: var PackedLineInfo; beforeLastSon: var int) =
@@ -1064,7 +1147,16 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
           semBodyCheckBody(c, dest, it, kind, crucial, symId,
                            beforeGenericParams, beforeParams, hookName, info)
         of checkSignatures:
-          dest.takeTree it.n
+          let redefMsg = checkRoutineRedefinition(c, symId, kind)
+          if redefMsg.len > 0:
+            dest.addParLe(StmtsS, info)
+            dest.buildTree ErrT, info:
+              dest.add dotToken(info)
+              dest.add strToken(pool.strings.getOrIncl(redefMsg), info)
+            dest.addParRi()
+            skip it.n
+          else:
+            dest.takeTree it.n
           c.closeScope() # close parameter scope
         of checkConceptProc:
           c.closeScope() # close parameter scope
