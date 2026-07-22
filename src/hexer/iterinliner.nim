@@ -198,7 +198,7 @@ proc copyWithMapping(dest: var TokenBuf; c: var Cursor; mapping: Table[SymId, Sy
   ## `transformForStmt`, so that nested for-stmts inside are inlined fresh
   ## (with distinct labels) on every yield expansion of the outer iterator.
   case c.kind
-  of OpenTagKind:
+  of TagLit:
     dest.addParLe(c.tag, c.info)
     c.into:
       while c.hasMore:
@@ -224,7 +224,7 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
     else:
       dest.addSubtree c
     inc c
-  of OpenTagKind:
+  of TagLit:
     case c.stmtKind
     of BreakS:
       transformBreakStmt(e, dest, c)
@@ -319,7 +319,7 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
 proc inlineIteratorBody(e: var EContext; dest: var TokenBuf;
       c: var Cursor; forStmt: ForStmt; yieldType: Cursor) =
   case c.kind
-  of OpenTagKind:
+  of TagLit:
     case c.stmtKind
     of StmtsS:
       dest.addParLe(c.tag, c.info)
@@ -373,7 +373,7 @@ proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations
   of DotToken:
     dest.addSubtree c
     inc c
-  of OpenTagKind:
+  of TagLit:
     case c.stmtKind
     of VarS, LetS, CursorS, PatternvarS:
       takeInto dest, c:
@@ -433,7 +433,7 @@ proc rewriteYieldsAndCopy(e: var EContext; dest: var TokenBuf;
   ## Nested proc/iter/template/macro/type decls are passed through verbatim
   ## (they have their own yield contexts, if any).
   case c.kind
-  of OpenTagKind:
+  of TagLit:
     let sk = c.stmtKind
     if sk == YldS:
       let info = c.info
@@ -812,7 +812,7 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
   of DotToken:
     dest.addSubtree c
     inc c
-  of OpenTagKind:
+  of TagLit:
     case c.stmtKind
     of StmtsS:
       takeInto dest, c:

@@ -146,7 +146,7 @@ proc moduleNameFromPath*(path: string): string =
 
 proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var bool; allowAs: bool) =
   case n.kind
-  of StrLitKind:
+  of StrLit:
     let s = pool.strings[n.litId]
     # string literal could contain a path or .nim extension:
     let name = moduleNameFromPath(s)
@@ -161,7 +161,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
     extractBasename s
     res.add ImportedFilename(path: s, name: s)
     inc n
-  of OpenTagKind:
+  of TagLit:
     case exprKind(n)
     of OchoiceX, CchoiceX:
       n.peekInto:

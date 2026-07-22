@@ -8,7 +8,7 @@ const
   DefaultSetElements* = createXint(1'u64 shl 8)
   MaxSetElements* = createXint(1'u64 shl 16)
 
-proc typebits*(config: NifConfig; n: PackedToken): int =
+proc typebits*(config: NifConfig; n: NifToken): int =
   if n.isIntLit: result = n.soperand.int  # nifcore stores small ints inline
   else: result = 0
 proc isOrdinalTypeKind*(kind: TypeKind): bool {.inline.} =
@@ -35,7 +35,7 @@ proc isOrdinalType*(typ: TypeCursor; allowEnumWithHoles: bool = false): bool =
       result = isOrdinalType(baseType, allowEnumWithHoles)
     else:
       result = isOrdinalType(decl.body, allowEnumWithHoles)
-  of OpenTagKind:
+  of TagLit:
     case typ.typeKind
     of IntT, UIntT, CharT, BoolT, RangetypeT:
       result = true
@@ -85,7 +85,7 @@ proc firstOrd*(c: var SemContext; typ: TypeCursor): xint =
       result = firstOrd(c, baseType)
     else:
       result = firstOrd(c, decl.body)
-  of OpenTagKind:
+  of TagLit:
     case typ.typeKind
     of IntT:
       var bits = typ
@@ -161,7 +161,7 @@ proc lastOrd*(c: var SemContext; typ: TypeCursor): xint =
       result = lastOrd(c, baseType)
     else:
       result = lastOrd(c, decl.body)
-  of OpenTagKind:
+  of TagLit:
     case typ.typeKind
     of IntT:
       var bits = typ
@@ -222,7 +222,7 @@ proc containsGenericParamsAux(n: var TypeCursor): bool =
     if res.status == LacksNothing and res.decl.tagEnum in {TypevarTagId, StaticTypevarTagId}:
       return true
     inc n
-  of OpenTagKind:
+  of TagLit:
     n.loopInto:
       if containsGenericParamsAux(n): return true
   else:
@@ -255,7 +255,7 @@ proc nominalRoot*(t: TypeCursor; allowTypevar = false; skipPtrs = false): SymId 
         return t.symId
       else:
         break
-    of OpenTagKind:
+    of TagLit:
       case t.typeKind
       of MutT, OutT, LentT, SinkT, StaticT, TypedescT:
         inc t
@@ -288,7 +288,7 @@ proc getClass*(t: TypeCursor): SymId =
       else:
         # ignore typevar case
         break
-    of OpenTagKind:
+    of TagLit:
       case t.typeKind
       of MutT, OutT, LentT, SinkT, StaticT, TypedescT:
         inc t
@@ -351,7 +351,7 @@ proc typeImpl*(s: SymId): Cursor =
   assert res.status == LacksNothing
   result = res.decl
   assert result.stmtKind == TypeS
-  inc result # skip OpenTagKind
+  inc result # skip TagLit
   for i in 1..4:
     skip(result) # name, export marker, pragmas, generic parameter
 
@@ -413,7 +413,7 @@ proc hasRtti*(s: SymId): bool =
   assert res.status == LacksNothing
   var n = res.decl
   assert n.stmtKind == TypeS
-  inc n # skip OpenTagKind
+  inc n # skip TagLit
   skip n, SkipName # name
   skip n, SkipExport # export marker
   skip n, SkipGenParams # type vars

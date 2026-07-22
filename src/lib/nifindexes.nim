@@ -7,7 +7,7 @@
 ## Create an index file for a NIF file.
 
 import std / [tables, assertions, hashes, syncio, strutils]
-import bitabs, lineinfos, nifreader, nifstreams, nifcursors, nifchecksums, symparser, vfs, stringviews
+import bitabs, lineinfos, nifreader, nifpools, nifchecksums, symparser, vfs, stringviews
 
 when defined(nimony):
   import std / sha1

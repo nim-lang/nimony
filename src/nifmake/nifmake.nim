@@ -9,7 +9,7 @@
 ## by a .nif file or it can translate this file to a Makefile.
 
 import std/[assertions, os, strutils, sequtils, tables, hashes, times, monotimes, sets, parseopt, syncio, osproc, algorithm, terminal]
-import ".." / lib / [bitabs, lineinfos, nifreader, tooldirs, argsfinder, vfs, nifcursors, nifstreams, nimversion]
+import ".." / lib / [bitabs, lineinfos, nifreader, tooldirs, argsfinder, vfs, nifpools, nimversion]
 
 # Inspired by https://gittup.org/tup/build_system_rules_and_algorithms.pdf
 #[

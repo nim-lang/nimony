@@ -80,7 +80,7 @@ proc addRaiseStmt(dest: var TokenBuf; target: SymId; info: PackedLineInfo) =
 
 proc collectTupleLocals(n: var Cursor; hasRaisesPragma: var bool; res: var HashSet[SymId]) =
   case n.kind
-  of OpenTagKind:
+  of TagLit:
     if n.exprKind == FailedX and n.firstSon.kind == Symbol:
       res.incl n.firstSon.symId
       n.into:
@@ -192,9 +192,9 @@ proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
-  of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StrLitKind, UnknownToken, DotToken, EofToken:
+  of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StrLit, UnknownToken, DotToken, EofToken:
     takeToken dest, n
-  of OpenTagKind:
+  of TagLit:
     let ek = n.exprKind
     case ek
     of CallKinds:

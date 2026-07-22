@@ -13,9 +13,9 @@ export njvl_tags
 
 template tagEnum(c: Cursor): TagEnum = cast[TagEnum](tag(c))
 
-template tagEnum(c: PackedToken): TagEnum = cast[TagEnum](tag(c))
+template tagEnum(c: NifToken): TagEnum = cast[TagEnum](tag(c))
 
-proc njvlKind*(c: PackedToken): NjvlKind {.inline.} =
+proc njvlKind*(c: NifToken): NjvlKind {.inline.} =
   if c.isTagLit and rawTagIsNjvlKind(tagEnum(c)):
     result = cast[NjvlKind](tagEnum(c))
   else:

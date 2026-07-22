@@ -143,7 +143,7 @@ proc exprRoots(a: var ProcAnalysis; n: Cursor): seq[int] =
       result.add a.paramLookup.getOrQuit(n.symId)
     elif a.localRoots.hasKey(n.symId):
       result = a.localRoots.getOrQuit(n.symId)
-  of OpenTagKind:
+  of TagLit:
     case n.exprKind
     of DotC, DerefC, PatC, AtC, AddrC:
       result = exprRoots(a, n.firstSon)
@@ -545,7 +545,7 @@ proc writePragmasWithSummary(dest: var TokenBuf; pragmas: Cursor;
 proc annotateSummaries(dest: var TokenBuf; n: var Cursor;
                        summaries: FunctionSummaryTable) =
   case n.kind
-  of OpenTagKind:
+  of TagLit:
     if n.stmtKind == ProcS:
       let tag = n.tagId
       let info = n.info

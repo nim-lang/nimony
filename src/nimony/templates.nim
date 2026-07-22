@@ -55,9 +55,9 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
     let newDef = newSymId(c, s)
     e.newVars[s] = newDef
     dest.addSymDef(newDef, body.info)
-  of StrLitKind, CharLit, IntLit, UIntLit, FloatLit:
+  of StrLit, CharLit, IntLit, UIntLit, FloatLit:
     dest.addSubtree body
-  of OpenTagKind:
+  of TagLit:
     let forStmt = asForStmt(body)
     if forStmt.kind == ForS and forStmt.iter.exprKind == UnpackX:
       # the loop body is expanded once per matched vararg; the `(for …)`

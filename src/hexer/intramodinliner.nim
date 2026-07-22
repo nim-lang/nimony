@@ -206,9 +206,9 @@ proc scoreArg(a: Cursor): int =
   ## body is likely to expose more optimisation (constant folding,
   ## branch elimination, etc.).
   case a.kind
-  of IntLit, UIntLit, FloatLit, CharLit, StrLitKind: return 100
+  of IntLit, UIntLit, FloatLit, CharLit, StrLit: return 100
   of Symbol: return 50  # treat sym refs as immutable bindings
-  of OpenTagKind:
+  of TagLit:
     case a.exprKind
     of TrueC, FalseC, NilC, InfC, NeginfC, NanC: return 100
     of NegC:
@@ -291,7 +291,7 @@ proc walkInlineWeights(n: var Cursor; params: Table[SymId, int];
     if params.hasKey(n.symId):
       weights[params.getOrQuit(n.symId)] += inherited
     inc n
-  of OpenTagKind:
+  of TagLit:
     let w = max(inherited, weightOfUse(n))
     n.into:
       while n.hasMore:
@@ -381,8 +381,8 @@ proc isSubstitutableArg(c: Cursor): bool =
   ## NOT included: the inliner cannot prove the caller's variable is unmodified
   ## during the body without alias info.)
   case c.kind
-  of IntLit, UIntLit, FloatLit, CharLit, StrLitKind: true
-  of OpenTagKind: c.exprKind in {TrueC, FalseC, NilC, InfC, NeginfC, NanC}
+  of IntLit, UIntLit, FloatLit, CharLit, StrLit: true
+  of TagLit: c.exprKind in {TrueC, FalseC, NilC, InfC, NeginfC, NanC}
   else: false
 
 proc slotRootOf(c: Cursor): SymId =
@@ -398,7 +398,7 @@ proc slotRootOf(c: Cursor): SymId =
   while true:
     case n.kind
     of Symbol: return n.symId
-    of OpenTagKind:
+    of TagLit:
       case n.exprKind
       of DerefC, PatC: return SymId(0)       # through-pointer: pointee, not the slot
       of DotC, AtC: inc n                     # field / index: base is the first child
@@ -458,7 +458,7 @@ proc emitRenamed(dest: var TokenBuf; body: var Cursor;
     else:
       dest.addSubtree body
     inc body
-  of OpenTagKind:
+  of TagLit:
     # `into` bounds `body` to this scope so the child loop terminates at the
     # real-or-virtual `)`; `addParRi` emits a fresh closer (the source `)` is
     # elided under `-d:virtualParRi`).
@@ -523,7 +523,7 @@ proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
     else:
       dest.addSubtree body
     inc body
-  of OpenTagKind:
+  of TagLit:
     # See `emitRenamed`: `into` bounds the scope (the closing `)` may be
     # virtual under `-d:virtualParRi`), `addParRi` emits a fresh closer.
     if body.stmtKind == RetS:
@@ -664,7 +664,7 @@ proc bindingsFor(pSyms: seq[SymId]; argCursors: seq[Cursor];
     let arg = argCursors[i]
     # A read-only param (value-stable per `scanParamUsage`) may be replaced by
     # its argument at every use instead of bound to a fresh `(var)` copy.
-    # Literals are always stable. A bare *local* symbol is stable too: the
+    # Pool are always stable. A bare *local* symbol is stable too: the
     # inlined body only ever assigns fresh-renamed locals, never a caller local,
     # so the substituted symbol's value cannot change across the body. Globals
     # are excluded — a nested call in the body could mutate one between uses,
@@ -685,7 +685,7 @@ proc seedRenameWalk(c: var InlinerCtx; n: var Cursor;
         if not rename.hasKey(n.symId):
           rename[n.symId] = c.freshSym(n.symId)
         inc n
-      of OpenTagKind:
+      of TagLit:
         seedRenameWalk(c, n, rename)
       else:
         inc n
@@ -901,7 +901,7 @@ proc countSymUses(n: Cursor; sym: SymId): int =
       of Symbol:
         if it.symId == sym: inc result
         inc it
-      of OpenTagKind:
+      of TagLit:
         result += countSymUses(it, sym)
         skip it
       else:
@@ -1137,7 +1137,7 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
   ## naturally skipped (their `InlineInfo` defaults to threshold 100, so
   ## `shouldInlineCall` declines).
   case n.kind
-  of OpenTagKind:
+  of TagLit:
     let sk = n.stmtKind
     case sk
     of StmtsS, ScopeS:
@@ -1249,7 +1249,7 @@ proc emitPragmasWithInlineInfo(dest: var TokenBuf; pragmas: Cursor; info: Inline
 proc annotateInlinePragmas(dest: var TokenBuf; n: var Cursor;
                            infos: Table[SymId, InlineInfo]) =
   case n.kind
-  of OpenTagKind:
+  of TagLit:
     if n.stmtKind == ProcS:
       let tag = n.tagId
       let info = n.info

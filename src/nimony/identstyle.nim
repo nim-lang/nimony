@@ -21,7 +21,7 @@
 ##   always matched those case-insensitively all the way down).
 
 import std / tables
-import ".." / lib / [bitabs, nifstreams]
+import ".." / lib / [bitabs, nifpools]
 import ".." / models / [tags, nimony_tags]
 
 var

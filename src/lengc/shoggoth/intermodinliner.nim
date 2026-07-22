@@ -29,7 +29,7 @@
 
 import std / [tables, assertions, os]
 include "../../lib" / nifprelude
-import nifstreams, nifcursors
+import nifpools
 import ".." / leng_model
 import ".." / ".." / hexer / intramodinliner
 import ".." / ".." / lib / symparser

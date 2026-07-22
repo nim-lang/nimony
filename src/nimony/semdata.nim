@@ -71,7 +71,7 @@ type
     hasVarargs*: PackedLineInfo
     flags*: set[PragmaKind]
     raisesType*: TypeCursor  # Type from .raises pragma
-    headerFileTok*: PackedToken
+    headerFileTok*: NifToken
 
   ImportedModule* = object
     path*: string

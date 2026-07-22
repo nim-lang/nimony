@@ -10,7 +10,7 @@
 
 import std/[syncio, os, osproc, tables, hashes, assertions]
 
-import ".." / lib / [nifstreams, nifcursors, lineinfos, bitabs, nifindexes, symparser]
+import ".." / lib / [nifpools, lineinfos, bitabs, nifindexes, symparser]
 import ".." / lib / nifreader
 from ".." / lib / nifcoreparse import parse
 import ".." / models / [tags]
@@ -59,7 +59,7 @@ proc rewriteSymsToIdentsImpl(newBuf: var TokenBuf; n: var Cursor) =
     extractBasename name
     newBuf.addIdent(pool.strings.getOrIncl(name), n.info)
     inc n
-  of OpenTagKind:
+  of TagLit:
     let ek = n.exprKind
     var firstChild = n
     inc firstChild

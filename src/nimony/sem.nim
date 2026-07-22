@@ -307,7 +307,7 @@ proc instToStringRec(b: var Builder; n: var Cursor) =
     b.addUIntLit(pool.uintegers[n.uintId])
     inc n
   of FloatLit:
-    b.addFloatLit(pool.floats[n.floatId])
+    b.addFloatLit(n.floatVal)
     inc n
   of SymbolDef:
     b.addSymbolDef(pool.syms[n.symId])
@@ -315,10 +315,10 @@ proc instToStringRec(b: var Builder; n: var Cursor) =
   of CharLit:
     b.addCharLit char(n.uoperand)
     inc n
-  of StrLitKind:
+  of StrLit:
     b.addStrLit(pool.strings[n.litId])
     inc n
-  of OpenTagKind:
+  of TagLit:
     b.addTree(pool.tags[n.tagId])
     n.into:
       while n.hasMore:
@@ -366,7 +366,7 @@ proc subs(c: var SemContext; dest: var TokenBuf; sc: var SubsContext; body: Curs
   ## SymbolDef (numbering is object-scoped), everything else is renamed.
   var n = body
   case n.kind
-  of UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, StrLitKind, CharLit, IntLit, UIntLit, FloatLit:
+  of UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, StrLit, CharLit, IntLit, UIntLit, FloatLit:
     dest.addSubtree n
   of Symbol:
     let s = n.symId
@@ -392,7 +392,7 @@ proc subs(c: var SemContext; dest: var TokenBuf; sc: var SubsContext; body: Curs
           newSymId(c, s)
       sc.newVars[s] = newDef
       dest.addSymDef(newDef, n.info)
-  of OpenTagKind:
+  of TagLit:
     let fld = n.substructureKind in {FldU, GfldU}
     dest.addParLe(n.tag, n.info)
     n.into:
@@ -1183,7 +1183,7 @@ proc semDot(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[SemF
   # skip optional inheritance depth:
   if it.n.isIntLit:
     inc it.n
-  # optional access-token StrLitKind — `"x"` — certifies this dot expression
+  # optional access-token StrLit — `"x"` — certifies this dot expression
   # was already type-checked with visibility in the field's owner module.
   var innerFlags = flags
   if fieldNameCursor.isSymbol:
@@ -1554,7 +1554,7 @@ proc addVarargsParameter(c: var SemContext; dest: var TokenBuf; paramsAt: int; i
   varargsParam.addParRi()
   if dest[paramsAt].kind == DotToken:
     # build the `(params (param ...))` tree separately and replace the dot
-    # with it — an in-place OpenTagKind assignment plus a trailing-`)` splice
+    # with it — an in-place TagLit assignment plus a trailing-`)` splice
     # would bypass the open-tags bookkeeping:
     var tmp = createTokenBuf(varargsParam.len + 2)
     tmp.addParLe(ParamsU, info)
@@ -1601,7 +1601,7 @@ proc semTypeof(c: var SemContext; dest: var TokenBuf; it: var Item) =
   semConstExpr c, dest, modeArg
   assert dest.len > beforeMode
   let modeTok = dest[beforeMode]
-  if modeTok.isTagLit and modeTok.tagId == nifstreams.ErrT:
+  if modeTok.isTagLit and modeTok.tagId == nifpools.ErrT:
     dest.insert it.n, beforeMode
     skip it.n
     skip it.n
@@ -2890,7 +2890,7 @@ proc isIteratorCall(c: var SemContext; dest: var TokenBuf; beforeCall: int): boo
   result = dest.len > beforeCall+1
   if result:
     let callKind =
-      if dest[beforeCall].kind == OpenTagKind and rawTagIsNimonyExpr(tagEnum(dest[beforeCall])):
+      if dest[beforeCall].kind == TagLit and rawTagIsNimonyExpr(tagEnum(dest[beforeCall])):
         cast[NimonyExpr](tagEnum(dest[beforeCall]))
       else:
         NoExpr
@@ -2912,7 +2912,7 @@ proc isIdentCall(c: var SemContext; dest: var TokenBuf; beforeCall: int): bool {
   result = dest.len > beforeCall+1
   if result:
     let callKind =
-      if dest[beforeCall].kind == OpenTagKind and rawTagIsNimonyExpr(tagEnum(dest[beforeCall])):
+      if dest[beforeCall].kind == TagLit and rawTagIsNimonyExpr(tagEnum(dest[beforeCall])):
         cast[NimonyExpr](tagEnum(dest[beforeCall]))
       else:
         NoExpr
@@ -2951,7 +2951,7 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
   if res.status != LacksNothing or not isRoutine(res.decl.symKind): return
   let routine = asRoutine(res.decl, SkipExclBody)
   let pp = extractPragma(routine.pragmas, PluginP)
-  if cursorIsNil(pp) or pp.kind != StrLitKind: return
+  if cursorIsNil(pp) or pp.kind != StrLit: return
   result = true
 
   # Extract the sem'd call from dest so we can pass the call args to the plugin
@@ -3041,7 +3041,7 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
     discard "already produced an error"
   elif isIteratorCall(c, dest, beforeCall):
     discard "fine"
-  elif dest[beforeCall].kind == OpenTagKind and
+  elif dest[beforeCall].kind == TagLit and
       (dest[beforeCall].tagId == TagId(FieldsTagId) or
        dest[beforeCall].tagId == TagId(FieldpairsTagId) or
        dest[beforeCall].tagId == TagId(InternalFieldPairsTagId)):
@@ -3096,7 +3096,7 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
           isIdentCall(c, dest, beforeCall):
         isMacroLike = true
       else:
-        if dest[beforeCall].kind == OpenTagKind and dest[beforeCall].tagId == nifstreams.ErrT:
+        if dest[beforeCall].kind == TagLit and dest[beforeCall].tagId == nifpools.ErrT:
           # original nim gives `items` overload errors so preserve them
           discard
         else:
@@ -3656,7 +3656,7 @@ proc semSuf(c: var SemContext; dest: var TokenBuf, it: var Item) =
   var num = Item(n: it.n, typ: c.types.autoType)
   semExpr c, dest, num
   it.n = num.n
-  if it.n.kind != StrLitKind:
+  if it.n.kind != StrLit:
     c.buildErr dest, it.n.info, "string literal expected for suf"
     skip it.n
     return
@@ -4507,7 +4507,7 @@ proc collectExplicitInstMatches(c: var SemContext; dest: var TokenBuf; syms: Cur
       lastMatch = m
       # mark if routine is suitable for instantiation:
       instLastMatch = routine.kind notin {TemplateY, MacroY} and not routine.exported.isTagLit
-  of OpenTagKind:
+  of TagLit:
     if syms.exprKind in {CchoiceX, OchoiceX}:
       syms.loopInto:
         collectExplicitInstMatches(c, dest, syms, args, matches, lastMatch,
@@ -4912,7 +4912,7 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
     literal c, dest, it, c.types.uintType
   of FloatLit:
     literal c, dest, it, c.types.floatType
-  of StrLitKind:
+  of StrLit:
     literal c, dest, it, c.types.stringType
   of CharLit:
     literal c, dest, it, c.types.charType
@@ -4926,7 +4926,7 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
     let s = fetchSym(c, it.n.symId)
     takeToken dest, it.n
     semExprSym c, dest, it, s, start, flags
-  of OpenTagKind:
+  of TagLit:
     case exprKind(it.n)
     of QuotedX:
       let start = dest.len

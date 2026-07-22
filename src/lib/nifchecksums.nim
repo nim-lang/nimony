@@ -6,7 +6,7 @@
 
 import std / [formatfloat]
 
-import bitabs, nifreader, nifstreams, nifcursors
+import bitabs, nifreader, nifpools
 
 when defined(nimony):
   import std / sha1
@@ -34,7 +34,7 @@ proc updateAtom(dest: var Sha1State; n: Cursor) =
   elif n.isUIntLit:
     update(dest, " "); update(dest, $pool.uintegers[n.uintId])
   elif n.isFloatLit:
-    update(dest, " "); update(dest, $pool.floats[n.floatId])
+    update(dest, " "); update(dest, $n.floatVal)
   elif n.isStringLit:
     update(dest, " "); update(dest, pool.strings[n.litId])
   elif n.isCharLit:

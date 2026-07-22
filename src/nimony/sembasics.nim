@@ -235,11 +235,11 @@ proc buildErr*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; msg:
   var n = orig
   var hasErr = false
   if n.isTagLit:
-    if n.tagId == nifstreams.ErrT:
+    if n.tagId == nifpools.ErrT:
       hasErr = true
     else:
       n.linearScan:
-        if n.tagId == nifstreams.ErrT:
+        if n.tagId == nifpools.ErrT:
           hasErr = true
           break
   let info = if hasErr: n.info else: info
@@ -380,7 +380,7 @@ proc hasErrorSince*(dest: TokenBuf; start: int): bool =
   var i = start
   result = false
   while i < dest.len:
-    if dest[i].kind == OpenTagKind and dest[i].tagId == errTag:
+    if dest[i].kind == TagLit and dest[i].tagId == errTag:
       result = true
       break
     inc i

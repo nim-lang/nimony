@@ -9,7 +9,7 @@
 
 when not defined(nimony):
   import std/[monotimes, times, syncio, os, strutils]
-import ../lib/[nifcursors, nifstreams]
+import ../lib/[nifpools]
 
 type
   Pass* = object

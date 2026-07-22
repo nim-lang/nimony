@@ -55,7 +55,7 @@ proc collectSelfSymsInType*(typ: Cursor; result: var seq[SymId]) =
     if res.status == LacksNothing and res.decl.symKind == TypevarY:
       if typ.symId notin result:
         result.add typ.symId
-  of OpenTagKind:
+  of TagLit:
     typ.loopInto:
       collectSelfSymsInType(typ, result)
       skip typ

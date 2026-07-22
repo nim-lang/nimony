@@ -32,7 +32,7 @@ type
 proc isComplex(n: Cursor; goal: Goal): bool =
   var n = n
   case n.kind
-  of OpenTagKind:
+  of TagLit:
     if n.stmtKind in {IfS, CaseS, WhileS, AsgnS, LetS, VarS, CursorS, PatternvarS, StmtsS, ResultS, GletS, TletS, GvarS, TvarS}:
       result = true
     elif n.exprKind == ExprX:
@@ -140,19 +140,19 @@ proc hoistDeclsFromExprX(outerDest, transformed: var TokenBuf; n: var Cursor;
   ## cannot see that correlation through the hoist, so the tag tells it to treat
   ## the slot as initialised — used only on the Final-IR (analysis) path, so
   ## codegen still gets the plain zero-initialised slot.
-  if n.kind != OpenTagKind or n.exprKind != ExprX:
+  if n.kind != TagLit or n.exprKind != ExprX:
     transformed.takeTree n
     return
   transformed.addParLe(n.tag, n.info)                    # `(expr`
   n.into:
     while n.hasMore:
-      if n.kind != OpenTagKind or n.stmtKind != StmtsS:
+      if n.kind != TagLit or n.stmtKind != StmtsS:
         transformed.takeTree n         # not the leading stmts — pass through
         continue
       transformed.addParLe(n.tag, n.info)                # `(stmts`
       n.into:
         while n.hasMore:
-          if n.kind != OpenTagKind or n.stmtKind notin {LetS, VarS, CursorS}:
+          if n.kind != TagLit or n.stmtKind notin {LetS, VarS, CursorS}:
             transformed.takeTree n
             continue
           let info = n.info
@@ -166,7 +166,7 @@ proc hoistDeclsFromExprX(outerDest, transformed: var TokenBuf; n: var Cursor;
             outerDest.addParLe(PragmasS, info)
             outerDest.addParLe(NoinitP, info)
             outerDest.addParRi()
-            if local.pragmas.kind == OpenTagKind:  # keep any original pragmas too
+            if local.pragmas.kind == TagLit:  # keep any original pragmas too
               var p = local.pragmas
               p = sub(p) # peek only, never left
               while p.hasMore:
@@ -278,7 +278,7 @@ proc trAggregateValue(c: var Context; dest: var TokenBuf; n: var Cursor; tar: va
   ## non-owning view that goes out of scope without cleanup, which is
   ## exactly what xelim needs here. Surfaced 2026-05-01 by self-host
   ## debugging — see `bug_self_host_nifconfig_destroy.md`.
-  if n.kind != OpenTagKind or n.exprKind notin CallKinds:
+  if n.kind != TagLit or n.exprKind notin CallKinds:
     trExpr c, dest, n, tar
     return
 
@@ -504,7 +504,7 @@ proc trCondOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target
 proc condNodeSafe(n: Cursor): bool =
   var n = n
   case n.kind
-  of OpenTagKind:
+  of TagLit:
     if n.exprKind in CallKinds: return false
     if n.exprKind == ExprX:
       # A single-son `(expr val)` is a transparent wrapper — e.g. the `!=`
@@ -532,7 +532,7 @@ proc condPassthroughSafe(n: Cursor): bool =
   ## shared `(lab)`/`(jmp)` merges (linear). A subtree with a call in a leaf must
   ## instead keep the bool-temp lowering here, because short-circuit evaluation
   ## requires the call to be hoisted *into* the branch, which Cx does not do.
-  if n.kind != OpenTagKind: return false
+  if n.kind != TagLit: return false
   result = condNodeSafe(n)
 
 proc takeStrippingTrivialExpr(dest: var TokenBuf; n: var Cursor) =
@@ -541,7 +541,7 @@ proc takeStrippingTrivialExpr(dest: var TokenBuf; n: var Cursor) =
   ## expand to exactly `(expr (not (== x y)))` etc.; keeping that wrapper leaves
   ## the finalir condition compiler and the contract/nil analysis staring at a
   ## statement-expression instead of the pure `not (== …)` leaf they understand.
-  if n.kind == OpenTagKind and n.exprKind == ExprX:
+  if n.kind == TagLit and n.exprKind == ExprX:
     var probe = n
     probe = sub(probe) # peek only, never left
     skip probe
@@ -549,7 +549,7 @@ proc takeStrippingTrivialExpr(dest: var TokenBuf; n: var Cursor) =
       n.into:                         # drop `(expr` and the matching `)`
         takeStrippingTrivialExpr(dest, n)
       return
-  if n.kind == OpenTagKind:
+  if n.kind == TagLit:
     dest.addParLe(n.tag, n.info)                        # `(tag`
     n.into:
       while n.hasMore:
@@ -1058,9 +1058,9 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   # can have the dangerous `Expr` node which is the whole
   # reason for xelim's existence.
   case n.kind
-  of DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLitKind:
+  of DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLit:
     takeTree tar.t, n
-  of OpenTagKind:
+  of TagLit:
     case n.exprKind
     of ExprX:
       n.into:

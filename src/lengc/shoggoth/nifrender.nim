@@ -15,7 +15,7 @@
 
 import std / assertions
 include "../../lib" / nifprelude
-import nifstreams, nifcursors, nifbuilder
+import nifpools, nifbuilder
 
 proc emit(c: var Cursor; b: var Builder) =
   if c.isTagLit:

@@ -21,7 +21,7 @@ proc lineInfoMatch*(info, toTrack: PackedLineInfo; tokenLen: int): bool =
     if t.col > i.col + tokenLen: return false
   return true
 
-proc foundSymbol(tok: PackedToken; mode: TrackMode) =
+proc foundSymbol(tok: NifToken; mode: TrackMode) =
   discard "idetools --track over a raw NifToken needs the cursor-based rewrite"
 type
   SearchKind = enum skOther, skField, skDot
@@ -159,7 +159,7 @@ proc tr(c: var IdeContext, n: var Cursor) =
 
           inc n
 
-        of OpenTagKind:
+        of TagLit:
           n.loopInto:
             tr(c, n)
 
@@ -171,13 +171,13 @@ proc getParent(n: Cursor): Cursor =
   result = n  # backward paren-counting has no nifcore analogue (no ParRi token)
 proc locateSymImpl(n: var Cursor; buf: TokenBuf; sym: SymId; toTrack: PackedLineInfo;
                    tokenLen: int; parentPos: int; symOffset, parentOffset: var int): bool =
-  ## Positions of the tracked symbol token and its innermost parent OpenTagKind
+  ## Positions of the tracked symbol token and its innermost parent TagLit
   ## in the PARSED buffer. (The caller's stream scan counts the file's
   ## physical ParRi tokens, which are elided in the in-memory buffer under
   ## `-d:virtualParRi`, so its offsets cannot be used here.)
   result = false
   case n.kind
-  of OpenTagKind:
+  of TagLit:
     let myPos = cursorToPosition(buf, n)
     n.into:
       while n.hasMore:

@@ -1067,7 +1067,7 @@ proc escapingLocalsImpl(c: var Context; n: var Cursor; currentState: var int) =
         skip n # symdef
     else:
       case n.kind
-      of OpenTagKind:
+      of TagLit:
         n.loopInto:
           escapingLocalsImpl c, n, currentState
       of Symbol:
@@ -1244,7 +1244,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       inc c.currentProc.labelCounter
     else:
       case n.kind
-      of OpenTagKind:
+      of TagLit:
         case n.stmtKind
         of LocalDecls - {ResultS}:
           let sym = n.firstSon.symId
@@ -1800,7 +1800,7 @@ proc transformCoroutineDecl*(c: var Context; dest: var TokenBuf; n: var Cursor) 
 proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of DotToken, EofToken, Ident, SymbolDef,
-     IntLit, UIntLit, FloatLit, CharLit, StrLitKind:
+     IntLit, UIntLit, FloatLit, CharLit, StrLit:
     takeTree dest, n
   of Symbol:
     if isProc(c, n.symId) and c.hooks.isPassiveProc(c, n.symId):
@@ -1830,7 +1830,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         takeTree dest, n
   of UnknownToken:
     takeTree dest, n
-  of OpenTagKind:
+  of TagLit:
     case n.stmtKind
     of LocalDecls - {ResultS}:
       trLocal c, dest, n

@@ -1,8 +1,11 @@
-## nifcore_compat — the old nifcursors/nifstreams public surface, backed by
-## nifcore, so nimsem/hexer compile against nifcore **without renaming call
-## sites**. Selected by `-d:useNifcore` (see nifcursors.nim / nifstreams.nim,
-## which re-export this module under that switch). Off by default → the classic
-## bundle ships and boot stays byte-identical. Full design: doc/nifcore_shim.md.
+## nifpools — nifcore plus the process-global literal/tag pools and the
+## PackedLineInfo bridge that nimsem/hexer are architected around. This is the
+## module the frontend imports (usually via nifprelude); lengc-style code that
+## manages its own pools imports nifcore/nifcoreparse directly.
+##
+## It also still carries the tail of the old nifcursors/nifstreams compat
+## surface (renames/shims being dissolved at their call sites — anything below
+## marked "compat shim" is scheduled for deletion, not new API).
 ##
 ## Three model bridges do the real work; everything else is a rename:
 ##
@@ -64,7 +67,6 @@ var lineMan*: LineInfoManager
 # — `pool.strings.getOrIncl`, `.len`, `[id]` all work unchanged. Tags live in a
 # separate `TagPool`, and int/float have no pool, so `pool.tags` / `.files` /
 # `.integers` / `.man` are accessors (below, after the proxy types).
-type Literals* = Pool
 var pool*: Pool = newPool()
 nifcore.fallbackPool = pool
 nifcore.fallbackTags = globalTags
@@ -72,19 +74,19 @@ nifcore.fallbackTags = globalTags
 # ── Type aliases ─────────────────────────────────────────────────────────
 
 type
-  PackedToken* = NifToken           ## bare nifcore word
+  PackedToken* = NifToken           ## compat shim: only the Nim compiler side
+                                    ## (ast2nif) still says PackedToken
   IntId*   = distinct int64         ## value carriers (nifcore stores inline)
   UIntId*  = distinct uint64
-  FloatId* = distinct float64
 
   ## Identity proxies: the id already carries the value, `[]` returns it.
+  ## (Floats live in nifstreams.nim: the Nim compiler side needs a REAL
+  ## interning float pool; nimony-internal code reads `floatVal` directly.)
   IntegersProxy*  = object
   UIntegersProxy* = object
-  FloatsProxy*    = object
 
 func `==`*(a, b: IntId): bool {.borrow.}
 func `==`*(a, b: UIntId): bool {.borrow.}
-func `==`*(a, b: FloatId): bool {.borrow.}
 
 # ── Global-pool views (nifstreams `pool.X` compatibility) ────────────────
 
@@ -93,16 +95,13 @@ template tags*(p: Pool): untyped = globalTags.tags
 template man*(p: Pool): untyped = lineMan
 template integers*(p: Pool): IntegersProxy = IntegersProxy()
 template uintegers*(p: Pool): UIntegersProxy = UIntegersProxy()
-template floats*(p: Pool): FloatsProxy = FloatsProxy()
 
 template `[]`*(x: IntegersProxy; id: IntId): int64 = int64(id)
 template `[]`*(x: UIntegersProxy; id: UIntId): uint64 = uint64(id)
-template `[]`*(x: FloatsProxy; id: FloatId): float64 = float64(id)
 
 # nifcore stores integers inline: the "id" is the value itself (identity proxy).
 template getOrIncl*(x: IntegersProxy; v: int64): IntId = IntId(v)
 template getOrIncl*(x: UIntegersProxy; v: uint64): UIntId = UIntId(v)
-template getOrIncl*(x: FloatsProxy; v: float64): FloatId = FloatId(v)
 
 # ── Buffer construction: thread the global pool + tags ───────────────────
 
@@ -168,11 +167,7 @@ proc isCharLit*(c: Cursor): bool {.inline.} = hasMore(c) and load(c).kind == Cha
   ## sem port uses these instead of `n.kind == ParLe/DotToken/…` so one source
   ## compiles under both the classic and the `-d:useNifcore` (nifcore) builds.
 
-const
-  OpenTagKind* = TagLit   ## build-agnostic `case n.kind` label for a tag head
-  StrLitKind* = StrLit     ## build-agnostic `case n.kind` label for a string lit
-  # `UnknownToken` / `EofToken` / `ParLe` / `ParRi` are REAL members of the
-  # unified NifKind now (reader-level lexical kinds); no sentinel aliases.
+# (OpenTagKind/StrLitKind aliases are gone: call sites say TagLit/StrLit.)
 
 # ── Raw-token (NifToken) accessors for the CF-listing / raw index walks ───
 # Best-effort for pool-ref tokens (nifcore may inline short strings/syms; the
@@ -199,7 +194,6 @@ proc symId*(n: NifToken): SymId {.inline.} = SymId(nifcore.uoperand(n) shr 1)
 proc litId*(n: NifToken): StrId {.inline.} = StrId(nifcore.uoperand(n) shr 1)
 proc intId*(n: NifToken): IntId {.inline.} = IntId(n.soperand)
 proc uintId*(n: NifToken): UIntId {.inline.} = UIntId(nifcore.uoperand(n))
-proc floatId*(n: NifToken): FloatId {.inline.} = FloatId(0)
 proc charLit*(n: NifToken): char {.inline.} = char(nifcore.uoperand(n) and 0xFF)
 proc tagId*(n: NifToken): TagId {.inline.} = TagId((uint32(n) shr TagShift) and TagMask)
 
@@ -314,7 +308,6 @@ proc jump*(c: Cursor): uint64 {.inline.} = cursorJump(c)
 
 proc intId*(c: Cursor): IntId {.inline.} = IntId(intVal(c))
 proc uintId*(c: Cursor): UIntId {.inline.} = UIntId(uintVal(c))
-proc floatId*(c: Cursor): FloatId {.inline.} = FloatId(floatVal(c))
 
 # ── Structural navigation ────────────────────────────────────────────────
 

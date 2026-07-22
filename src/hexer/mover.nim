@@ -78,7 +78,7 @@ proc sameTreesIgnoreArrayIndexes*(a, b: Cursor): bool =
   var b = b
   if a.kind != b.kind: return false
   case a.kind
-  of OpenTagKind:
+  of TagLit:
     if a.tagId != b.tagId: return false
     if a.exprKind in {PatX, ArratX}:
       # compare the accessed object only, not the array indexes:
@@ -102,8 +102,8 @@ proc sameTreesIgnoreArrayIndexes*(a, b: Cursor): bool =
   of UIntLit:
     result = a.uintId == b.uintId
   of FloatLit:
-    result = a.floatId == b.floatId
-  of StrLitKind, Ident:
+    result = a.floatVal == b.floatVal
+  of StrLit, Ident:
     result = a.litId == b.litId
   of CharLit:
     result = a.uoperand == b.uoperand
@@ -128,7 +128,7 @@ proc disjointDirectField(tree: Cursor; r: SymId; x: Cursor): bool =
   ## the index literal). OBJ here is required to be the bare root symbol `r`, so
   ## each OBJ is a single token and one `inc` steps tag→OBJ, another OBJ→selector.
   result = false
-  if tree.kind == OpenTagKind and x.kind == OpenTagKind and tree.exprKind == x.exprKind:
+  if tree.kind == TagLit and x.kind == TagLit and tree.exprKind == x.exprKind:
     var treeObj = tree
     inc treeObj                 # tree: accessor tag -> OBJ
     var xObj = x
@@ -164,7 +164,7 @@ proc containsRoot(tree: var Cursor; x: Cursor): bool =
     if tree.symId == r:
       result = true
     inc tree
-  of OpenTagKind:
+  of TagLit:
     if disjointDirectField(tree, r, x):
       # A sibling field/index that cannot alias `x`: skip the whole subtree.
       skip tree
@@ -219,7 +219,7 @@ proc buildFindStartIndex(cf: TokenBuf; srcMap: openArray[int32]): FindStartIndex
   var closeStack: seq[int] = @[]
   for i in 0 ..< cf.len:
     case cf[i].kind
-    of OpenTagKind:
+    of TagLit:
       inc nested
       # nifcore: every TagLit's close is implicit; no MaxJump sentinel.
       closeStack.add(i + span(readonlyCursorAt(cf, i)) - 1)
@@ -281,9 +281,9 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
         # found the definition, so it gets a new value:
         break
       inc pc
-    of Ident, StrLitKind, CharLit, IntLit, UIntLit, FloatLit:
+    of Ident, StrLit, CharLit, IntLit, UIntLit, FloatLit:
       inc pc
-    of OpenTagKind:
+    of TagLit:
       #echo "PC IS: ", pool.tags[pc.tag]
       if pc.cfKind == IteF:
         inc pc

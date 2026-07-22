@@ -223,7 +223,7 @@ proc addErrorMsg*(dest: var string; m: Match) =
 
 proc addErrorMsg*(dest: var TokenBuf; m: Match) =
   assert m.err
-  dest.addParLe nifstreams.ErrT, m.argInfo
+  dest.addParLe nifpools.ErrT, m.argInfo
   dest.addDotToken()
   let str = "For type " & typeToString(m.fn.typ) & " mismatch at position\n" &
     "[" & $(m.pos+1) & "] " & getErrorMsg(m)
@@ -240,7 +240,7 @@ proc isObjectType*(s: SymId): bool =
   assert res.status == LacksNothing
   var n = res.decl
   if n.stmtKind == TypeS:
-    inc n # skip OpenTagKind
+    inc n # skip TagLit
     for i in 1..4:
       skip(n) # name, export marker, pragmas, generic parameter
     if n.typeKind in {RefT, PtrT}:
@@ -498,7 +498,7 @@ proc foldValueExpr(m: var Match; a: Cursor; depth = 0): xint =
     if isStaticTypevar(a.symId) and m.inferred.contains(a.symId):
       let inferred = m.inferred.getOrQuit(a.symId)
       result = foldValueExpr(m, inferred, depth+1)
-  of OpenTagKind:
+  of TagLit:
     case a.exprKind
     of AddX, SubX, MulX:
       let opc = a.exprKind
@@ -538,14 +538,14 @@ proc foldStaticArg(m: var Match; elemType, a: Cursor): Cursor =
   var ec = initEvalContext(m.context, noExecute = true)
   var cur = a
   let folded = eval(ec, cur)
-  if folded.isTagLit and folded.tagId == nifstreams.ErrT:
+  if folded.isTagLit and folded.tagId == nifpools.ErrT:
     return
   # `folded` lives in a temporary buffer; consume it immediately by re-typing
   # it into a fresh buffer before any other evaluation runs.
   var buf = createTokenBuf(16)
   annotateConstantType(buf, elemType, folded)
   let typed = cursorAt(buf, 0)
-  if typed.isTagLit and typed.tagId == nifstreams.ErrT:
+  if typed.isTagLit and typed.tagId == nifpools.ErrT:
     return
   result = typeToCursor(m.context[], buf, 0)
 
@@ -571,7 +571,7 @@ proc staticValueToBind(m: var Match; elemType: Cursor; a: Cursor): Cursor =
     if k == FloatT: result = a
   of CharLit:
     if k == CharT: result = a
-  of StrLitKind:
+  of StrLit:
     if m.context != nil and sameTrees(elemType, m.context.types.stringType):
       result = a
   of Symbol:
@@ -588,7 +588,7 @@ proc staticValueToBind(m: var Match; elemType: Cursor; a: Cursor): Cursor =
       # expreval engine and bind the value it aliases, exactly as if that value
       # had been written in the argument position.
       result = foldStaticArg(m, elemType, a)
-  of OpenTagKind:
+  of TagLit:
     case a.exprKind
     of FalseX, TrueX:
       if k == BoolT: result = a
@@ -1061,7 +1061,7 @@ proc linearMatchTree(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor;
   elif f.kind == a.kind:
     case f.kind
     of UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, SymbolDef,
-        StrLitKind, CharLit, IntLit, UIntLit, FloatLit:
+        StrLit, CharLit, IntLit, UIntLit, FloatLit:
       if f.uoperand != a.uoperand:
         m.error(InvalidMatch, fOrig, aOrig)
       else:
@@ -1073,7 +1073,7 @@ proc linearMatchTree(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor;
       else:
         inc f
         inc a
-    of OpenTagKind:
+    of TagLit:
       # special cases:
       case f.typeKind
       of RoutineTypes:
@@ -1537,7 +1537,7 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
       discard "perfect match"
     else:
       var impl = typeImpl(fs)
-      if impl.isTagLit and impl.tagId == nifstreams.ErrT:
+      if impl.isTagLit and impl.tagId == nifpools.ErrT:
         m.error InvalidMatch, f, a
       else:
         if impl.typeKind == DistinctT:
@@ -1590,7 +1590,7 @@ proc checkFloatLitRange(context: ptr SemContext; f: Cursor; floatLit: Cursor): b
     inc f # skip to size
     let bits = typebits(f.load)
     if bits == 32:
-      let val = pool.floats[floatLit.floatId]
+      let val = floatLit.floatVal
       result = val == val.float32.float64
     else:
       result = true
@@ -1786,7 +1786,7 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
   of Symbol:
     matchSymbol m, f, arg
     inc f
-  of OpenTagKind:
+  of TagLit:
     let fk = f.typeKind
     case fk
     of MutT, OutT, SinkT, LentT:

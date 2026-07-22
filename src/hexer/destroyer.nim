@@ -125,7 +125,7 @@ proc freshVars(n: var Cursor; newVars: var Table[SymId, SymId]; idgen: var int;
     let repl = newVars.getOrDefault(n.symId, n.symId)
     dest.addSymUse(repl, n.info)
     inc n
-  of OpenTagKind:
+  of TagLit:
     let isLocalDecl = n.stmtKind in {VarS, LetS, CursorS, PatternvarS}
     copyInto dest, n:
       if isLocalDecl and n.isSymbolDef:
@@ -136,7 +136,7 @@ proc freshVars(n: var Cursor; newVars: var Table[SymId, SymId]; idgen: var int;
         inc n
       while n.hasMore:
         freshVars(n, newVars, idgen, dest)
-  of UIntLit, StrLitKind, IntLit, FloatLit, CharLit, SymbolDef, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident:
+  of UIntLit, StrLit, IntLit, FloatLit, CharLit, SymbolDef, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident:
     dest.addSubtree n
     inc n
   else:

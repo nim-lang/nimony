@@ -4,7 +4,7 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-import ".." / lib / [bitabs, lineinfos, nifcursors, nifstreams, filelinecache, symparser]
+import ".." / lib / [bitabs, lineinfos, nifpools, filelinecache, symparser]
 import ".." / njvl / njvl_model
 
 import nimony_model, decls
@@ -678,9 +678,9 @@ proc gsufx(g: var SrcGen, n: var Cursor) =
     of "u16": put(g, tkUIntLit, $pool.uintegers[value.uintId] & "'u16")
     of "u32": put(g, tkUIntLit, $pool.uintegers[value.uintId] & "'u32")
     of "u64": put(g, tkUIntLit, $pool.uintegers[value.uintId] & "'u64")
-    of "f": put(g, tkFloatLit, $pool.floats[value.floatId])
-    of "f32": put(g, tkFloatLit, $pool.floats[value.floatId] & "f32")
-    of "f64": put(g, tkFloatLit, $pool.floats[value.floatId] & "f64")
+    of "f": put(g, tkFloatLit, $value.floatVal)
+    of "f32": put(g, tkFloatLit, $value.floatVal & "f32")
+    of "f64": put(g, tkFloatLit, $value.floatVal & "f64")
     of "R", "T": put(g, tkStrLit, toString(value, false))
     of "C": put(g, tkStrLit, "cstring" & toString(value, false))
     else: discard
@@ -740,7 +740,7 @@ proc gconcept(g: var SrcGen, n: var Cursor, c: Context) =
 proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
   if not n.hasMore: return
   case n.kind
-  of OpenTagKind:
+  of TagLit:
     case n.typeKind
     of IT:
       takeNumberType(g, n, "int")
@@ -1252,7 +1252,7 @@ proc isUseSpace(n: Cursor): bool =
 proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopLevel = false) =
   if not n.hasMore: return
   case n.kind
-  of OpenTagKind:
+  of TagLit:
     case n.exprKind
     of NoExpr:
       case n.stmtKind
@@ -1941,9 +1941,9 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     put(g, tkUIntLit, $pool.uintegers[n.uintId])
     inc n
   of FloatLit:
-    put(g, tkFloatLit, $pool.floats[n.floatId])
+    put(g, tkFloatLit, $n.floatVal)
     inc n
-  of StrLitKind:
+  of StrLit:
     put(g, tkStrLit, toString(n, false))
     inc n
   of CharLit:

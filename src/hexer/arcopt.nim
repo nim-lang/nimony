@@ -211,7 +211,7 @@ proc analyse(c: var Con; b: var BasicBlock; n: var Cursor) =
     b.invalidateWasMoved n
     b.symToDel.add n
     inc n
-  of OpenTagKind:
+  of TagLit:
     if n.stmtKind in {ProcS, FuncS, ConverterS, MethodS, IteratorS, MacroS, TemplateS} or
         isDeclarative(n):
       skip n
@@ -334,7 +334,7 @@ proc analyse(c: var Con; b: var BasicBlock; n: var Cursor) =
 
 proc opt(c: Con; n: var Cursor; dest: var TokenBuf) =
   case n.kind
-  of OpenTagKind:
+  of TagLit:
     let pos = cursorToPosition(c.source[], n)
     if c.toDelete.contains(pos):
       dest.addDotToken(n.info)
@@ -379,7 +379,7 @@ proc runArcoptBody(buf: var TokenBuf; moduleSuffix = ""; bits = 0) =
 
 proc runArcoptTree(dest: var TokenBuf; n: var Cursor; moduleSuffix: string; bits: int) =
   case n.kind
-  of OpenTagKind:
+  of TagLit:
     let tag = n.tagId
     let info = n.info
     if n.stmtKind == ProcS:

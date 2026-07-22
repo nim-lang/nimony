@@ -24,7 +24,7 @@ type
 
 proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
   case n.kind
-  of OpenTagKind:
+  of TagLit:
     case n.stmtKind
     of ProcS, TypeS, VarS, ConstS, GvarS, TvarS:
       n.into:
@@ -66,7 +66,7 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
         if not a.uses.hasKey(owner): a.uses[owner] = initHashSet[SymId]()
         a.uses.getOrQuit(owner).incl(n.symId)
     inc n
-  of SymbolDef, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, StrLitKind, CharLit, IntLit, UIntLit, FloatLit: inc n
+  of SymbolDef, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, StrLit, CharLit, IntLit, UIntLit, FloatLit: inc n
   else: raiseAssert "ParRi should not be encountered here" # classic ParRi only
 
 const

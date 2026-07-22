@@ -437,9 +437,9 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       inc n
     else:
       dest.takeToken n
-  of UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, SymbolDef, StrLitKind, CharLit, IntLit, UIntLit, FloatLit:
+  of UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, SymbolDef, StrLit, CharLit, IntLit, UIntLit, FloatLit:
     dest.takeToken n
-  of OpenTagKind:
+  of TagLit:
     case n.exprKind
     of CallKinds:
       bug "call must have been bound to a location"

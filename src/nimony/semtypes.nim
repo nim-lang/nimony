@@ -472,11 +472,11 @@ proc isStaticValue(n: Cursor): bool =
   ## literal, an enum field, or a typed aggregate constructor (array/set/tuple/
   ## object) whose elements are themselves static.
   case n.kind
-  of IntLit, UIntLit, FloatLit, CharLit, StrLitKind:
+  of IntLit, UIntLit, FloatLit, CharLit, StrLit:
     result = true
   of Symbol:
     result = isEnumFieldSym(n)
-  of OpenTagKind:
+  of TagLit:
     case n.exprKind
     of FalseX, TrueX, SufX:
       result = true
@@ -793,7 +793,7 @@ proc stripNilAnnotation(dest: var TokenBuf; minPos: int) =
   let start = lastValueStart(dest)
   if start >= minPos:
     let last = readonlyCursorAt(dest, start)
-    if last.kind == OpenTagKind and jump(last) == 0:
+    if last.kind == TagLit and jump(last) == 0:
       let t = last.substructureKind
       if t in {NotnilU, NilU, UncheckedU}:
         dest.shrink start
@@ -899,19 +899,19 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
         # Slot 0 of `(proctype <NilTag> ...)` is the nilability marker. Set
         # it directly — it's either a placeholder dot inserted by
         # `semLocalTypeImpl` or a marker we now overwrite with `annotation`.
-        let nilTagPos = before + 1 # OpenTagKind `(proctype` is at `before`
+        let nilTagPos = before + 1 # TagLit `(proctype` is at `before`
         if dest[nilTagPos].kind == DotToken:
           # replace dot with `(annotation)`. The tail is re-appended with
           # `addRaw` — it is an already-sealed span whose (elided) closes
           # must not touch the open-tags bookkeeping. The proctype's sealed
           # jump stays valid: an empty pair occupies exactly one token under
           # `-d:virtualParRi`, just like the dot it replaces.
-          var tail = newSeq[PackedToken]()
+          var tail = newSeq[NifToken]()
           for k in (nilTagPos+1) ..< dest.len: tail.add dest[k]
           dest.shrink nilTagPos
           dest.addParPair annotation, info
           for t in tail: dest.addRaw t
-        elif dest[nilTagPos].kind == OpenTagKind and
+        elif dest[nilTagPos].kind == TagLit and
              dest[nilTagPos].substructureKind in {NotnilU, UncheckedU, NilU}:
           dest.retagAt(nilTagPos, annotation, info)
       elif containsGenericParams(nd):
@@ -945,7 +945,7 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     dest.addSubtree n
     inc n
     semTypeSym c, dest, s, info, start, context
-  of OpenTagKind:
+  of TagLit:
     case typeKind(n)
     of NoType:
       let xkind = exprKind(n)
@@ -1096,7 +1096,7 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       dest.takeInto n:
         if n.hasMore:
           semLocalTypeImpl c, dest, n, InLocalDecl
-          if n.hasMore and n.kind != StrLitKind:
+          if n.hasMore and n.kind != StrLit:
             # optional converter
             var it = Item(n: n, typ: c.types.autoType)
             semExpr c, dest, it, {KeepMagics, AllowOverloads}

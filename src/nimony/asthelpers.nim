@@ -9,7 +9,7 @@ proc takeUnquotedAtom(r: var string; c: var Cursor) =
   elif c.isIntLit: r.addInt pool.integers[c.intId]
   elif c.isCharLit: r.add char(c.uoperand)
   elif c.isUIntLit: r.add $pool.uintegers[c.uintId]
-  elif c.isFloatLit: r.addFloat pool.floats[c.floatId]
+  elif c.isFloatLit: r.addFloat c.floatVal
   else: r.add "<unexpected token>"
   inc c
 

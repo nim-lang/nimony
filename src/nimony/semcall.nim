@@ -318,7 +318,7 @@ type
     fn: Item
     fnKind: SymKind
     fnName: StrId
-    callNode: PackedToken
+    callNode: NifToken
     callNodeInfo: PackedLineInfo
     scope: Cursor
       ## the call node's head, captured by `semCall`; every exit path
@@ -795,9 +795,9 @@ proc varargsHasConverter(t: Cursor): bool =
   assert t.typeKind == VarargsT
   inc t
   skip t
-  # Trailing StrLitKind is the openArray mangle hint planted by
+  # Trailing StrLit is the openArray mangle hint planted by
   # `semcompat.compatRewriteParam`, not a converter.
-  result = t.hasMore and t.kind != StrLitKind
+  result = t.hasMore and t.kind != StrLit
 
 proc tryVarargsConverter(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: CallArg): bool =
   result = false
@@ -1190,7 +1190,7 @@ proc findMagicInSyms(syms: Cursor): ExprKind =
         inc n # skip the SymbolDef
         if n.isTagLit:
           result = n.exprKind
-  of OpenTagKind:
+  of TagLit:
     if syms.exprKind in {OchoiceX, CchoiceX}:
       syms.loopInto:
         result = findMagicInSyms(syms)

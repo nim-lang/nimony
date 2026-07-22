@@ -57,7 +57,7 @@ proc initEvalContext*(c: ptr SemContext; noExecute = false): EvalContext =
 
 proc error(c: var EvalContext, msg: string, info: PackedLineInfo): Cursor =
   var buf = createTokenBuf(4)
-  buf.addParLe nifstreams.ErrT, info
+  buf.addParLe nifpools.ErrT, info
   buf.addDotToken()
   buf.addStrLit msg
   buf.addParRi()
@@ -87,7 +87,7 @@ proc getConstOrdinalValue*(val: Cursor): xint =
     result = createXint pool.integers[val.intId]
   of UIntLit:
     result = createXint pool.uintegers[val.uintId]
-  of OpenTagKind:
+  of TagLit:
     case val.exprKind
     of FalseX:
       result = createXint(0'i64)
@@ -98,7 +98,7 @@ proc getConstOrdinalValue*(val: Cursor): xint =
   else:
     result = createNaN()
 
-proc singleToken*(c: var EvalContext; tok: PackedToken): Cursor =
+proc singleToken*(c: var EvalContext; tok: NifToken): Cursor =
   var buf = createTokenBuf(1)
   buf.add tok
   result = cursorAt(buf, 0)
@@ -191,7 +191,7 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
     of "string.&":
       let a = eval(c, args)
       let b = eval(c, args)
-      if a.kind != StrLitKind or b.kind != StrLitKind or args.hasMore:
+      if a.kind != StrLit or b.kind != StrLit or args.hasMore:
         cannotEval(n)
         return
       let val = pool.strings[a.litId] & pool.strings[b.litId]
@@ -199,14 +199,14 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
     of "string.==":
       let a = eval(c, args)
       let b = eval(c, args)
-      if a.kind != StrLitKind or b.kind != StrLitKind or args.hasMore:
+      if a.kind != StrLit or b.kind != StrLit or args.hasMore:
         cannotEval(n)
         return
       let val = pool.strings[a.litId] == pool.strings[b.litId]
       result = boolValue(c, val)
     of "string.len":
       let a = eval(c, args)
-      if a.kind != StrLitKind or args.hasMore:
+      if a.kind != StrLit or args.hasMore:
         cannotEval(n)
         return
       let val = pool.strings[a.litId].len
@@ -281,7 +281,7 @@ template evalFloatBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty
     a = propagateError eval(c, n)
     b = propagateError eval(c, n)
   if a.kind == FloatLit and b.kind == FloatLit:
-    let rf = opr(pool.floats[a.floatId], pool.floats[b.floatId])
+    let rf = opr(a.floatVal, b.floatVal)
     result = floatValue(c, rf, orig.info)
   else:
     cannotEval orig
@@ -295,7 +295,7 @@ template evalCmpOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
       let a = propagateError eval(c, n)
       let b = propagateError eval(c, n)
       if a.kind == FloatLit and b.kind == FloatLit:
-        let rf = opr(pool.floats[a.floatId], pool.floats[b.floatId])
+        let rf = opr(a.floatVal, b.floatVal)
         result = boolValue(c, rf)
       else:
         cannotEval orig
@@ -349,7 +349,7 @@ template evalFloatUnOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.
     skip n, SkipType # type
     a = propagateError eval(c, n)
   if a.kind == FloatLit:
-    let rf = opr(pool.floats[a.floatId])
+    let rf = opr(a.floatVal)
     result = floatValue(c, rf, orig.info)
   else:
     cannotEval orig
@@ -610,9 +610,9 @@ proc evalCast(c: var EvalContext; typ, val, nOrig: Cursor): Cursor =
   elif dtk in {IntT, UIntT}:
     if val.kind == FloatLit:
       if dtk == IntT:
-        result = intValue(c, cast[int64](pool.floats[val.floatId]), nOrig.info)
+        result = intValue(c, cast[int64](val.floatVal), nOrig.info)
       else:
-        result = uintValue(c, cast[uint64](pool.floats[val.floatId]), nOrig.info)
+        result = uintValue(c, cast[uint64](val.floatVal), nOrig.info)
     else:
       let x = getConstOrdinalValue(val)
       if isNaN(x):
@@ -668,7 +668,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
   result = default(Cursor)
   template propagateError(r: Cursor): Cursor =
     let val = r
-    if val.isTagLit and val.tagId == nifstreams.ErrT:
+    if val.isTagLit and val.tagId == nifpools.ErrT:
       return val
     else:
       val
@@ -696,10 +696,10 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         return eval(c, local.val)
       else: discard
     error "cannot evaluate symbol at compile time: " & pool.syms[symId], info
-  of StrLitKind, CharLit, IntLit, UIntLit, FloatLit:
+  of StrLit, CharLit, IntLit, UIntLit, FloatLit:
     result = n
     inc n
-  of OpenTagKind:
+  of TagLit:
     let exprKind = n.exprKind
     case exprKind
     of TrueX, FalseX, NanX, InfX, NeginfX, NilX:
@@ -984,7 +984,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
     of CardX:
       result = evalCardSet(c, n)
     else:
-      if n.tagId == nifstreams.ErrT:
+      if n.tagId == nifpools.ErrT:
         result = n
         skip n
       elif (n.stmtKind == BlockS or n.stmtKind == StmtsS) and
@@ -1147,7 +1147,7 @@ proc findObjectField(objType: Cursor; fieldSym: SymId; typ: var Cursor; exported
   return false
 
 proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
-  if n.isTagLit and n.tagId == nifstreams.ErrT:
+  if n.isTagLit and n.tagId == nifpools.ErrT:
     buf.addSubtree n
     return
   let orig = typ
@@ -1187,7 +1187,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
         buf.addStrLit("f" & $bits, n.info)
         buf.addParRi()
     else: err = true
-  of StrLitKind:
+  of StrLit:
     if not cursorIsNil(symType) and isStringType(symType):
       buf.addSubtree n
     elif typ.typeKind == CstringT:
@@ -1215,7 +1215,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
         # other syms are not valid literals
         err = true
     else: err = true
-  of OpenTagKind:
+  of TagLit:
     let exprKind = n.exprKind
     case exprKind
     of TrueX, FalseX:
@@ -1396,7 +1396,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
     if opened > 0:
       # could also replace with a general shrink to start
       buf.shrink buf.len - opened
-    buf.addParLe nifstreams.ErrT, n.info
+    buf.addParLe nifpools.ErrT, n.info
     buf.addDotToken()
     let msg = "cannot annotate constant " & asNimCode(n) & " with type " & typeToString(orig)
     buf.addStrLit(msg, n.info)

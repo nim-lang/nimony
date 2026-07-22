@@ -158,10 +158,10 @@ proc inlineRoutineBody(c: var InlineContext; dest: var TokenBuf; n: var Cursor) 
       else:
         dest.addSubtree n
     inc n
-  of Ident, IntLit, UIntLit, FloatLit, CharLit, StrLitKind, UnknownToken, DotToken, EofToken:
+  of Ident, IntLit, UIntLit, FloatLit, CharLit, StrLit, UnknownToken, DotToken, EofToken:
     dest.addSubtree n
     inc n
-  of OpenTagKind:
+  of TagLit:
     case n.stmtKind
     of RetS:
       let retVal = n.firstSon
@@ -312,9 +312,9 @@ proc trLocalDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
-  of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StrLitKind, UnknownToken, DotToken, EofToken:
+  of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StrLit, UnknownToken, DotToken, EofToken:
     takeToken dest, n
-  of OpenTagKind:
+  of TagLit:
     case n.stmtKind
     of AsgnS:
       trAsgn c, dest, n

@@ -857,9 +857,9 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
     # (e.g., `proc(x: int)` within `seq[proc(x: int)]` in `@[]`). The NJVL
     # converter passes them through; simply skip them here.
     inc pc
-  of UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, StrLitKind, CharLit, IntLit, UIntLit, FloatLit:
+  of UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, StrLit, CharLit, IntLit, UIntLit, FloatLit:
     inc pc
-  of OpenTagKind:
+  of TagLit:
     case pc.exprKind
     of CallKinds:
       analyseCall c, pc

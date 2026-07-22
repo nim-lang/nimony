@@ -76,7 +76,7 @@ template toLengName(sym: SymId): SymId = sym
 
 proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: ResolveTable) =
   case n.kind
-  of OpenTagKind:
+  of TagLit:
     let stmtKind = n.stmtKind
     case stmtKind
     of TypeS:

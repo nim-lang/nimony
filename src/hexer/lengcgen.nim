@@ -522,7 +522,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
       # type decl that `c.pending` appends to the module's output.
       dest.addSubtree n
       inc n
-  of OpenTagKind:
+  of TagLit:
     case n.typeKind
     of NoType, ErrT, OrT, AndT, NotT, TypedescT, UntypedT, TypedT, TypekindT, OrdinalT:
       error c, "type expected but got: ", n
@@ -1273,7 +1273,7 @@ proc trConv(c: var EContext; dest: var TokenBuf; n: var Cursor) =
 
 proc isSimpleLiteral(nb: var Cursor): bool =
   case nb.kind
-  of IntLit, UIntLit, FloatLit, CharLit, StrLitKind, DotToken:
+  of IntLit, UIntLit, FloatLit, CharLit, StrLit, DotToken:
     result = true
     inc nb
   else:
@@ -1478,7 +1478,7 @@ proc isAddrOfAconstrUarray(n: Cursor): bool =
 
 proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   case n.kind
-  of OpenTagKind:
+  of TagLit:
     case n.exprKind
     of EqX, NeqX, LeX, LtX:
       # `(eq T X X)` in Nimony carries `T`, but NIFC comparisons are `(eq X X)` — see
@@ -1693,7 +1693,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     else:
       dest.addSubtree n
     inc n
-  of StrLitKind:
+  of StrLit:
     genStringLit c, dest, n
     inc n
   of UnknownToken, DotToken, Ident, CharLit, IntLit, UIntLit, FloatLit:
@@ -1940,7 +1940,7 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
   of DotToken:
     dest.addSubtree n
     inc n
-  of OpenTagKind:
+  of TagLit:
     case n.stmtKind
     of NoStmt:
       if n.tagId == TagId(KeepovfTagId):
@@ -2458,7 +2458,7 @@ proc scanInitValue(c: var EContext; n: var Cursor): bool =
   ## references, advancing past it.
   result = false
   case n.kind
-  of OpenTagKind:
+  of TagLit:
     if n.stmtKind in CallKindsS:
       return true
     n.into:

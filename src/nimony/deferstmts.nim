@@ -101,9 +101,9 @@ proc trReturn(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if not n.hasMore: return
   case n.kind
-  of Symbol, SymbolDef, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, StrLitKind, CharLit, IntLit, UIntLit, FloatLit:
+  of Symbol, SymbolDef, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, StrLit, CharLit, IntLit, UIntLit, FloatLit:
     dest.takeToken n
-  of OpenTagKind:
+  of TagLit:
     case n.stmtKind
     of ProcS, FuncS, IteratorS, ConverterS, MethodS, TemplateS, MacroS, TypeS:
       dest.takeTree n

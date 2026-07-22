@@ -221,7 +221,7 @@ proc trNil(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident, SymbolDef,
-     IntLit, UIntLit, FloatLit, CharLit, StrLitKind:
+     IntLit, UIntLit, FloatLit, CharLit, StrLit:
     takeTree dest, n
   of Symbol:
     let loc = c.typeCache.getLocalInfo(n.symId)
@@ -265,7 +265,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeTree dest, n
     else:
       takeTree dest, n
-  of OpenTagKind:
+  of TagLit:
     case n.stmtKind
     of LocalDecls:
       trLocal c, dest, n
@@ -1151,9 +1151,9 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       else:
         takeTree dest, n
   of DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident, SymbolDef,
-     IntLit, UIntLit, FloatLit, CharLit, StrLitKind:
+     IntLit, UIntLit, FloatLit, CharLit, StrLit:
     takeTree dest, n
-  of OpenTagKind:
+  of TagLit:
     case n.stmtKind
     of LocalDecls:
       treLocal c, dest, n

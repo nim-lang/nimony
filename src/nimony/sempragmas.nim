@@ -183,7 +183,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
   of MagicP:
     dest.addParLe(MagicP, n.info)
     toPragmaArgs()
-    if hasParRi and n.hasMore and n.kind in {StrLitKind, Ident}:
+    if hasParRi and n.hasMore and n.kind in {StrLit, Ident}:
       let (magicWord, bits) = magicToTag(pool.strings[n.litId], c.g.config.bits)
       if magicWord == "":
         buildErr c, dest, n.info, "unknown `magic`"
@@ -219,7 +219,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       c.buildErr dest, info, "invalid import/export symbol"
       dest.addParRi()
       return
-    if pk in {ImportcP, ImportcppP, ExportcP} and dest[strPos].kind == StrLitKind:
+    if pk in {ImportcP, ImportcppP, ExportcP} and dest[strPos].kind == StrLit:
       crucial.externName = pool.strings[readonlyCursorAt(dest, strPos).litId]
     # Header pragma extra
     if pk == HeaderP:
@@ -450,7 +450,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
   of SemanticsP:
     dest.addParLe(pk, n.info)
     toPragmaArgs()
-    if hasParRi and n.hasMore and n.kind in {StrLitKind, Ident}:
+    if hasParRi and n.hasMore and n.kind in {StrLit, Ident}:
       takeToken dest, n
     else:
       buildErr c, dest, n.info, "`semantics` pragma takes a string literal"
@@ -566,7 +566,7 @@ proc readPragmaStrings(c: var SemContext; dest: var TokenBuf; it: var Item): seq
   ## at the end of the pragma's scope (the caller closes it).
   result = newSeq[string]()
   while it.n.hasMore:
-    if it.n.kind != StrLitKind:
+    if it.n.kind != StrLit:
       buildErr c, dest, it.n.info, "expected `string` but got: " & asNimCode(it.n)
       skip it.n
     else:

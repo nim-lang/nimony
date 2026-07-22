@@ -296,7 +296,7 @@ proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
       result = local.typ.typeKind notin {MutT, OutT, LentT, SinkT}
     else:
       result = false
-  elif n.kind in {StrLitKind, IntLit, UIntLit, FloatLit, CharLit} or
+  elif n.kind in {StrLit, IntLit, UIntLit, FloatLit, CharLit} or
        n.exprKind in {SufX, OconstrX, NewobjX, AconstrX}:
     result = true
   else:
@@ -381,9 +381,9 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
       checkForDangerousLocations c, n
 
   case n.kind
-  of Symbol, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, SymbolDef, StrLitKind, CharLit, IntLit, UIntLit, FloatLit:
+  of Symbol, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, SymbolDef, StrLit, CharLit, IntLit, UIntLit, FloatLit:
     inc n
-  of OpenTagKind:
+  of TagLit:
     if isDeclarative(n):
       skip n
     elif n.stmtKind == AsgnS:
@@ -1306,14 +1306,14 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         skip n
         return
     trLocation c, n, e
-  of IntLit, UIntLit, FloatLit, CharLit, StrLitKind:
+  of IntLit, UIntLit, FloatLit, CharLit, StrLit:
     if e.wantMutable:
       # Consider `fvar(returnsVar(someLet))`: We must not allow this.
       cannotPassToVar c.dest, n.info, n
       inc n
     else:
       takeToken c, n
-  of OpenTagKind:
+  of TagLit:
     case n.exprKind
     of CallKinds:
       var disallowDangerous = true

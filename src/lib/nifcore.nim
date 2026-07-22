@@ -262,7 +262,7 @@ proc setTag*(n: var NifToken; t: TagId) {.inline.} =
 
 type
   Pool* = ref object
-    ## Literals pool — only categories where dedup genuinely pays:
+    ## Pool pool — only categories where dedup genuinely pays:
     ## strings and symbols. Integers / unsigned integers / floats are
     ## stored entirely inside the token stream (using a chain of
     ## `ExtendedSuffix` tokens to widen the carrier), so there's no
@@ -361,7 +361,7 @@ var
     ## Application-default tag pool, same contract as `fallbackPool`.
 
 proc pool*(c: Cursor): Pool {.inline.} =
-  ## Literals pool the cursor's underlying buffer was built against,
+  ## Pool pool the cursor's underlying buffer was built against,
   ## or `fallbackPool` when the buffer carries none.
   if c.owner != nil and c.owner.pool != nil: c.owner.pool else: fallbackPool
 

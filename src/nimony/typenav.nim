@@ -303,9 +303,9 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       result = c.builtins.charType
     of FloatLit:
       result = c.builtins.floatType
-    of StrLitKind:
+    of StrLit:
       result = c.builtins.stringType
-    of OpenTagKind:
+    of TagLit:
       case stmtKind(n)
       of IfS:
         # Walk all branches and pick the first non-void branch's type. A

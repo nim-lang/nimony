@@ -16,9 +16,9 @@ template tagEnum*(c: Cursor): TagEnum =
   ## (same contract as nifcdecl.tagEnumOf).
   (if c.isTagLit: cast[TagEnum](tag(c)) else: InvalidTagId)
 
-template tagEnum*(c: PackedToken): TagEnum = cast[TagEnum](tag(c))
+template tagEnum*(c: NifToken): TagEnum = cast[TagEnum](tag(c))
 
-proc stmtKind*(c: PackedToken): NimonyStmt {.inline.} =
+proc stmtKind*(c: NifToken): NimonyStmt {.inline.} =
   if c.isTagLit and rawTagIsNimonyStmt(tagEnum(c)):
     result = cast[NimonyStmt](tagEnum(c))
   else:
@@ -48,7 +48,7 @@ proc pragmaKind*(c: Cursor): NimonyPragma {.inline.} =
   else:
     result = NoPragma
 
-proc substructureKind*(c: PackedToken): NimonyOther {.inline.} =
+proc substructureKind*(c: NifToken): NimonyOther {.inline.} =
   if c.isTagLit and rawTagIsNimonyOther(tagEnum(c)):
     result = cast[NimonyOther](tag(c))
   else:
@@ -86,7 +86,7 @@ proc callConvKind*(c: Cursor): CallConv {.inline.} =
   else:
     result = NoCallConv
 
-proc exprKind*(c: PackedToken): NimonyExpr {.inline.} =
+proc exprKind*(c: NifToken): NimonyExpr {.inline.} =
   if c.isTagLit:
     if rawTagIsNimonyExpr(tagEnum(c)):
       result = cast[NimonyExpr](tagEnum(c))

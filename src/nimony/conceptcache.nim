@@ -166,18 +166,18 @@ proc hashTypeCursor(n: Cursor): Hash =
   case n.kind
   of Symbol:
     h = h !& Hash(n.symId.int)
-  of OpenTagKind:
+  of TagLit:
     h = h !& Hash(n.tagId.int)
     var child = sub(n)
     while hasMore(child):
       h = h !& hashTypeCursor(child)
       skip child
-  of Ident, StrLitKind:
+  of Ident, StrLit:
     h = h !& Hash(n.litId.int)
   of IntLit, InlineInt:
     h = h !& Hash(n.intId.int)
   of FloatLit:
-    h = h !& Hash(n.floatId.int)
+    h = h !& Hash(cast[int64](n.floatVal))
   else:
     h = h !& Hash(ord(n.kind))
   result = h
@@ -206,7 +206,7 @@ proc hasOpenTypevarDeep(a: Cursor): bool =
   case a.kind
   of Symbol:
     isOpenTypevar(a)
-  of OpenTagKind:
+  of TagLit:
     var child = sub(a)
     while hasMore(child):
       if hasOpenTypevarDeep(child):

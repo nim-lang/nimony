@@ -464,9 +464,9 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       dest.addSubtree n
     inc n
-  of SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StrLitKind, UnknownToken, DotToken, EofToken:
+  of SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StrLit, UnknownToken, DotToken, EofToken:
     takeToken dest, n
-  of OpenTagKind:
+  of TagLit:
     let ek = n.exprKind
     case ek
     of CallKinds:

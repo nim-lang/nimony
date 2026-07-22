@@ -98,7 +98,7 @@ proc emitTreeAsIdents(buf: var TokenBuf; n: var Cursor; thisMod: string) =
   of Symbol:
     emitSymAsIdent(buf, n.symId, n.info, thisMod)
     inc n
-  of OpenTagKind:
+  of TagLit:
     buf.addParLe(n.tag, n.info)
     n.into:
       while n.hasMore:
@@ -162,7 +162,7 @@ proc rewriteTreeToIdents(newDest: var TokenBuf; n: var Cursor; thisMod: string) 
     extractBasename basename
     newDest.addIdent(pool.strings.getOrIncl(basename), n.info)
     inc n
-  of OpenTagKind:
+  of TagLit:
     if n.exprKind in {OchoiceX, CchoiceX}:
       # eliminate the choice: keep only its first alternative, rewritten
       n.peekInto:

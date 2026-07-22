@@ -115,7 +115,7 @@ proc pruneMatchedForwardDecls(c: var SemContext; dest: var TokenBuf) =
   if c.matchedForwardDecls.len == 0: return
   var i = 0
   while i < dest.len:
-    if readonlyCursorAt(dest, i).kind == OpenTagKind and
+    if readonlyCursorAt(dest, i).kind == TagLit and
         childCursor(readonlyCursorAt(dest, i)).isSymbolDef and
         childCursor(readonlyCursorAt(dest, i)).symId in c.matchedForwardDecls:
       let info = readonlyCursorAt(dest, i).info
@@ -161,13 +161,13 @@ proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
     widenSealed dest, 0, importBuf.len
   when defined(sealCheck):
     for i in 0 ..< dest.len:
-      if dest[i].kind == ParLe and pool.tags[nifstreams.tag(dest[i])] == "aconstr":
+      if dest[i].kind == ParLe and pool.tags[nifpools.tag(dest[i])] == "aconstr":
         for k in max(0,i-3) .. min(dest.len-1, i+12):
           let tk = dest[k]
           if tk.isTagLit:
-            echo "  [", k, "] ParLe ", pool.tags[nifstreams.tag(tk)], " jump=", jump(tk)
+            echo "  [", k, "] ParLe ", pool.tags[nifpools.tag(tk)], " jump=", jump(tk)
           elif tk.kind in {Symbol, SymbolDef}:
-            echo "  [", k, "] ", tk.kind, " ", pool.syms[nifstreams.symId(tk)]
+            echo "  [", k, "] ", tk.kind, " ", pool.syms[nifpools.symId(tk)]
           else:
             echo "  [", k, "] ", tk.kind
         break

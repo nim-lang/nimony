@@ -28,7 +28,7 @@ proc expandNamedFieldBody(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId;
       buf.addParRi()
     else:
       buf.addParLe(n.tag, n.info)
-  of OpenTagKind:
+  of TagLit:
     buf.addParLe(n.tag, n.info)
     n.into:
       while n.hasMore:
@@ -74,7 +74,7 @@ proc expandTupleFieldBody(buf: var TokenBuf; iter: FieldsIter; intId: IntId; nam
       buf.addParRi()
     else:
       buf.addParLe(n.tag, n.info)
-  of OpenTagKind:
+  of TagLit:
     buf.addParLe(n.tag, n.info)
     n.into:
       while n.hasMore:

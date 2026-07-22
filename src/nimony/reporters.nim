@@ -5,7 +5,7 @@
 # distribution, for details about the copyright.
 
 import std / [syncio, strutils, os, assertions, sets, terminal]
-import ".." / lib / [nifcursors, nifstreams, bitabs, lineinfos]
+import ".." / lib / [nifpools, bitabs, lineinfos]
 
 include ".." / lib / compat2
 

@@ -308,7 +308,7 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
       c.addSym dest, delayed
     dest.addParRi(n.endInfo)
 
-  # `setTag` (not `parLeToken` overwrite): the decl's OpenTagKind is sealed by
+  # `setTag` (not `parLeToken` overwrite): the decl's TagLit is sealed by
   # now, retagging must preserve its jump field under `-d:virtualParRi`.
   if kind == LetY:
     if ThreadvarP in crucial.flags:
@@ -354,7 +354,7 @@ proc typeSymsAvailable(c: var SemContext; n: var Cursor): bool =
   ##
   ## This is the atom-visiting analog of the `linearScan` traversal primitive
   ## (nim-lang/nimony#2064): a whole-subtree walk that, unlike `linearScan`
-  ## (which stops at each `OpenTagKind`), must also inspect the leaf `Ident`/`Symbol`
+  ## (which stops at each `TagLit`), must also inspect the leaf `Ident`/`Symbol`
   ## tokens. When that primitive lands on master, fold this onto it.
   case n.kind
   of Ident:
@@ -365,7 +365,7 @@ proc typeSymsAvailable(c: var SemContext; n: var Cursor): bool =
     if res.status != LacksNothing or res.decl.tagEnum == TypevarTagId:
       return false
     inc n
-  of OpenTagKind:
+  of TagLit:
     n.loopInto:
       if not typeSymsAvailable(c, n): return false
   else:
@@ -418,7 +418,7 @@ proc resolveDeferredLocal(c: var SemContext; ident: StrId): bool =
   semLocal(c, scratch, decl, kind)
   c.phase = savedPhase
   var scratchName = default(Cursor)
-  if scratch.len > 1 and readonlyCursorAt(scratch, 0).kind == OpenTagKind:
+  if scratch.len > 1 and readonlyCursorAt(scratch, 0).kind == TagLit:
     scratchName = childCursor(readonlyCursorAt(scratch, 0))
   if not cursorIsNil(scratchName) and scratchName.hasMore and scratchName.kind == SymbolDef:
     c.onDemandResolved[ident] = scratchName.symId
@@ -743,7 +743,7 @@ proc attachConverter(c: var SemContext; dest: var TokenBuf; symId: SymId;
     c.converters.mgetOrPut(root, @[]).add(symId)
     if dest[beforeExportMarker].kind != DotToken:
       # exported
-      if not (dest[beforeGenericParams].kind == OpenTagKind and
+      if not (dest[beforeGenericParams].kind == TagLit and
           pool.tags[dest[beforeGenericParams].tagId] == $InvokeT):
         # don't register instances
         c.converterIndexMap.add((root, symId))
@@ -776,7 +776,7 @@ proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
     dest.insert errBuf, declStart
   else:
     dest.endRead()
-    let methodIsInstance = dest[beforeGenericParams].kind == OpenTagKind and dest[beforeGenericParams].tagId == TagId(InvokeT)
+    let methodIsInstance = dest[beforeGenericParams].kind == TagLit and dest[beforeGenericParams].tagId == TagId(InvokeT)
     var symToRegister = symId
     if methodIsInstance:
       symToRegister = childCursor(readonlyCursorAt(dest, beforeGenericParams)).symId
@@ -847,7 +847,7 @@ proc attachSpecialProc(c: var SemContext; dest: var TokenBuf; kind: SymKind;
     # Their `(magicname)` tag also replaced the export marker, so the
     # `before*` positions can be stale — do not read them here.
     discard
-  elif dest[beforeGenericParams].kind == OpenTagKind and
+  elif dest[beforeGenericParams].kind == TagLit and
       dest[beforeGenericParams].substructureKind == TypevarsU:
     # A generic hook is attached per instantiation (its typevars slot is
     # then an `(invoke ...)`), never as-is.

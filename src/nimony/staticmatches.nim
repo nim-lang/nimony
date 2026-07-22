@@ -38,13 +38,13 @@ proc isStaticValue*(n: Cursor): bool =
   ## constructor (array/set/tuple/object) whose elements are themselves static.
   if not n.hasMore: return false
   case n.kind
-  of IntLit, UIntLit, FloatLit, CharLit, StrLitKind:
+  of IntLit, UIntLit, FloatLit, CharLit, StrLit:
     result = true
   of Symbol:
     let res = tryLoadSym(n.symId)
     result = res.status == LacksNothing and
       res.decl.symKind in {ConstY, EfldY, StaticTypevarY}
-  of OpenTagKind:
+  of TagLit:
     case n.exprKind
     of FalseX, TrueX:
       result = true
@@ -88,7 +88,7 @@ proc staticValueType*(a: Cursor): Cursor =
     let res = tryLoadSym(a.symId)
     if res.status == LacksNothing and isLocal(res.decl.symKind):
       result = asLocal(res.decl).typ
-  of OpenTagKind:
+  of TagLit:
     case a.exprKind
     of AconstrX, SetconstrX, TupconstrX, OconstrX:
       var typ = a

@@ -198,7 +198,7 @@ proc containsSym(n: Cursor; d: SymId): bool =
   case n.kind
   of Symbol:
     result = n.symId == d
-  of OpenTagKind:
+  of TagLit:
     result = false
     n.loopInto:
       if containsSym(n, d): return true
@@ -235,10 +235,10 @@ proc isResultUsage(c: Context; n: Cursor): bool {.inline.} =
 proc isSimpleExpression(n: var Cursor): bool =
   ## expressions that can be returned safely
   case n.kind
-  of Symbol, UIntLit, StrLitKind, IntLit, FloatLit, CharLit, DotToken, Ident:
+  of Symbol, UIntLit, StrLit, IntLit, FloatLit, CharLit, DotToken, Ident:
     result = true
     inc n
-  of OpenTagKind:
+  of TagLit:
     case n.exprKind
     of FalseX, TrueX, InfX, NeginfX, NanX, NilX, SufX:
       result = true
@@ -644,9 +644,9 @@ proc addDataFieldHop(c: var Context; info: PackedLineInfo) =
 proc trOnlyEssentials(c: var Context; n: var Cursor)
     {.ensuresNif: addedAny(c.dest).} =
   case n.kind
-  of Symbol, UIntLit, StrLitKind, IntLit, FloatLit, CharLit, SymbolDef, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident:
+  of Symbol, UIntLit, StrLit, IntLit, FloatLit, CharLit, SymbolDef, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident:
     takeToken c.dest, n
-  of OpenTagKind:
+  of TagLit:
     case n.exprKind
     of DestroyX:
       trExplicitDestroy c, n
@@ -1134,7 +1134,7 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects)
         tr c, n, e
   else:
     let m = "not the last usage of: " & asNimCode(arg)
-    c.dest.buildTree nifstreams.ErrT, info:
+    c.dest.buildTree nifpools.ErrT, info:
       c.dest.addSubtree n
       c.dest.addStrLit(pool.strings.getOrIncl(m), info)
     skip n, SkipFull
@@ -1319,7 +1319,7 @@ proc checkForMoveTypesImpl(n: var Cursor; r: var Reporter): int =
   ## past it.
   result = 0
   case n.kind
-  of OpenTagKind:
+  of TagLit:
     let sk = symKind n
     if isRoutine(sk):
       var probe = n

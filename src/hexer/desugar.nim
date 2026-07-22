@@ -41,9 +41,9 @@ proc needsTemp(n: Cursor): bool =
   # removed) to see the NJ IR that trips the checker.
   result = false
   case n.kind
-  of Symbol, IntLit, UIntLit, FloatLit, CharLit, StrLitKind:
+  of Symbol, IntLit, UIntLit, FloatLit, CharLit, StrLit:
     result = false
-  of OpenTagKind:
+  of TagLit:
     var n = n
     case n.exprKind
     of NilX, FalseX, TrueX, InfX, NeginfX, NanX, SizeofX:
@@ -975,9 +975,9 @@ proc trArrAt(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   case n.kind
-  of DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLitKind:
+  of DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLit:
     takeTree dest, n
-  of OpenTagKind:
+  of TagLit:
     case n.exprKind
     of NoExpr:
       case n.stmtKind

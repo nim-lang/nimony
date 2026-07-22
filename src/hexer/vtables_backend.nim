@@ -601,9 +601,9 @@ proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
-  of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StrLitKind, UnknownToken, DotToken, EofToken:
+  of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StrLit, UnknownToken, DotToken, EofToken:
     takeToken dest, n
-  of OpenTagKind:
+  of TagLit:
     case n.exprKind
     of CallKinds - {ProccallX}:
       trCall c, dest, n, false

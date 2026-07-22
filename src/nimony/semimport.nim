@@ -356,7 +356,7 @@ proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: PackedLin
     registerExportName(c, moduleSym, pool.strings.getOrIncl(basename))
     # Enum types carry their fields as separately-named symbols. Exporting only
     # the type name leaves the field names filtered out at the import site
-    # (e.g. `export NifKind` wouldn't bring `OpenTagKind`/`DotToken` into scope).
+    # (e.g. `export NifKind` wouldn't bring `TagLit`/`DotToken` into scope).
     # Walk the enum body and enroll each field basename in the same filter.
     if res.status == LacksNothing and res.decl.symKind == TypeY:
       let decl = asTypeDecl(res.decl)
@@ -394,7 +394,7 @@ proc semExport*(c: var SemContext; dest: var TokenBuf; it: var Item) =
         c.buildErr dest, info, "undeclared identifier: " & pool.strings[syms.litId]
       of Symbol:
         doExport(c, dest, syms.symId, info)
-      of OpenTagKind:
+      of TagLit:
         case syms.exprKind
         of ErrX:
           dest.add symBuf
@@ -461,7 +461,7 @@ proc semExportExcept*(c: var SemContext; dest: var TokenBuf; it: var Item) =
         c.buildErr dest, info, "undeclared identifier: " & pool.strings[syms.litId]
       of Symbol:
         doExportExcept(c, dest, moduleSym, syms.symId, info)
-      of OpenTagKind:
+      of TagLit:
         case syms.exprKind
         of ErrX:
           dest.add symBuf

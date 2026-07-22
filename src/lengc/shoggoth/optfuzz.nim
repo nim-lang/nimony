@@ -8,7 +8,7 @@
 
 import std / [os, assertions, times, strutils]
 include "../../lib" / nifprelude
-import nifstreams, nifcursors
+import nifpools
 import ".." / leng_model
 import ".." / ".." / models / tags   # `*TagId` enumerators for genRewriter
 import nifrender

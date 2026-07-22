@@ -126,13 +126,13 @@ proc classifyCursor(c: Cursor; preferStmt: bool; inType: bool): ChildKind =
   case c.kind
   of DotToken:
     ckDot
-  of IntLit, UIntLit, FloatLit, CharLit, StrLitKind:
+  of IntLit, UIntLit, FloatLit, CharLit, StrLit:
     ckLit
   of SymbolDef:
     ckD
   of Symbol, Ident:
     ckY
-  of OpenTagKind:
+  of TagLit:
     let raw = tagEnum(c)
     let isExpr = rawTagIsNimonyExpr(raw) or rawTagIsLengExpr(raw)
     let isStmt = rawTagIsNimonyStmt(raw) or rawTagIsLengStmt(raw)

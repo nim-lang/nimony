@@ -38,7 +38,7 @@
 
 import std / [tables, sets, hashes, assertions]
 include "../../lib" / nifprelude
-import nifstreams, nifcursors
+import nifpools
 import ".." / leng_model
 import ".." / ".." / models / tags
 import patchsets_legacy

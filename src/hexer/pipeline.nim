@@ -29,7 +29,7 @@ when defined(verifyArc):
 
 proc publishHooks*(n: var Cursor) =
   case n.kind
-  of OpenTagKind:
+  of TagLit:
     case n.stmtKind
     of ProcS, FuncS, MacroS, MethodS, ConverterS:
       let decl = asRoutine(n)

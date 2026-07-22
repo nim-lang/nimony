@@ -143,7 +143,7 @@ proc getIdentReplaceParams(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor)
   of SymbolDef:
     result = false
     takeToken dest, n
-  of OpenTagKind:
+  of TagLit:
     if n.exprKind == QuotedX:
       dest.addParLe(n.tag, n.info)
       result = false
@@ -444,7 +444,7 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
           dest.shrink start
           dest.addSymUse(firstSym, n.info)
         else:
-          assert dest[start].kind == OpenTagKind
+          assert dest[start].kind == TagLit
           var ctok = dest[start]
           setTag(ctok, TagId(CchoiceX))
           dest[start] = ctok
@@ -460,7 +460,7 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
       else:
         semTemplSymbol(c, dest, n, firstSym, count, start)
     inc n
-  of OpenTagKind:
+  of TagLit:
     case n.exprKind
     of NoExpr:
       case n.stmtKind

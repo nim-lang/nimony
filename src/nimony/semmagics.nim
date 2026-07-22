@@ -66,7 +66,7 @@ proc getDottedIdentAux(n: var Cursor): string =
       result = pool.strings[s]
 
 proc getDottedIdent(n: var Cursor): string =
-  if n.isTagLit and n.tagId == nifstreams.ErrT:
+  if n.isTagLit and n.tagId == nifpools.ErrT:
     n.peekInto:
       result = getDottedIdentAux(n)
   else:
@@ -99,7 +99,7 @@ proc semDeclared*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     info = it.n.info
     orig = it.n
     # XXX maybe always type the argument and check for Symbol/errored Ident instead
-    let isError = it.n.isTagLit and it.n.tagId == nifstreams.ErrT
+    let isError = it.n.isTagLit and it.n.tagId == nifpools.ErrT
     if isError:
       # does not consider module quoted symbols for now
       it.n.peekInto:
@@ -122,7 +122,7 @@ proc hasError(dest: TokenBuf): bool =
   var i = 0
   result = false
   while i < dest.len:
-    if dest[i].kind == OpenTagKind and dest[i].tagId == errTag:
+    if dest[i].kind == TagLit and dest[i].tagId == errTag:
       result = true
       break
     else:
@@ -244,14 +244,14 @@ proc semBindSymName*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     # Second arg: the name string literal.
     info = it.n.info
     orig = it.n
-    if it.n.kind != StrLitKind:
+    if it.n.kind != StrLit:
       c.buildErr dest, info,
         "bindSym expects a string literal as the name, got: " & asNimCode(orig), orig
       while it.n.hasMore: skip it.n
       failed = true
     else:
       nameStr = pool.strings[it.n.litId]
-      skip it.n                           # consume the StrLitKind
+      skip it.n                           # consume the StrLit
 
       # Optional third arg: rule (default brClosed).
       if it.n.hasMore:
@@ -325,7 +325,7 @@ proc semBindSym*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   it.n.into:                              # enter (bindSym
     info = it.n.info
     orig = it.n
-    if it.n.kind != StrLitKind:
+    if it.n.kind != StrLit:
       c.buildErr dest, info,
         "bindSym expects a string literal, got: " & asNimCode(orig), orig
       skip it.n
@@ -333,7 +333,7 @@ proc semBindSym*(c: var SemContext; dest: var TokenBuf; it: var Item) =
       failed = true
     else:
       nameStr = pool.strings[it.n.litId]
-      skip it.n                           # consume the StrLitKind
+      skip it.n                           # consume the StrLit
 
       # Optional second arg: rule (default brClosed).
       if it.n.hasMore:
@@ -467,7 +467,7 @@ proc buildLowValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pac
        DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
        UntypedT, TypedT, CstringT, PointerT, OrdinalT:
       c.buildErr dest, info, "invalid type for low: " & typeToString(typ)
-  of OpenTagKind:
+  of TagLit:
     case typ.typeKind
     of IntT:
       var bitsCursor = typ
@@ -554,7 +554,7 @@ proc buildHighValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pa
        DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
        UntypedT, TypedT, CstringT, PointerT, OrdinalT:
       c.buildErr dest, info, "invalid type for high: " & typeToString(typ)
-  of OpenTagKind:
+  of TagLit:
     case typ.typeKind
     of IntT:
       var bitsCursor = typ
