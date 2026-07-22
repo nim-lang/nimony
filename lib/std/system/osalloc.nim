@@ -203,7 +203,11 @@ elif defined(standalone) or defined(StandaloneHeapSize):
   const StandaloneHeapSize: int = 1024 * PageSize
   var
     theHeap: array[StandaloneHeapSize div sizeof(float64), float64] # 'float64' for alignment
-    bumpPointer = cast[int](addr theHeap)
+    # The allocator above derives chunk headers by masking pointers down to
+    # PageSize boundaries (pageAddr), so the page provider MUST hand out
+    # page-ALIGNED addresses — mmap guarantees that on the hosted targets,
+    # the standalone heap has to round up itself (costs < one page).
+    bumpPointer = (cast[int](addr theHeap) + PageSize - 1) and not (PageSize - 1)
 
   proc osAllocPages(size: int): pointer {.inline.} =
     if size+bumpPointer < cast[int](addr theHeap) + sizeof(theHeap):
