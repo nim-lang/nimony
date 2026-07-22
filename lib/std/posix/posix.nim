@@ -451,9 +451,9 @@ when defined(posix):
   else:
     type Pid* {.importc: "pid_t", header: "<sys/types.h>".} = cint
 
-  # C interop aliases for execve's POSIX parameter types. `distinct` +
-  # `{.importc.}` keeps the symbol opaque through hexer so Leng emits the
-  # importc string verbatim in prototypes (see `lengcgen.trType`).
+  # Use plain C `char` so that `char**` lines up with libc's expectation
+  # (Nimony's `cstring` is `NC8*` / unsigned char*, which triggers
+  # `-Wincompatible-pointer-types` on posix_spawn / execvp / execve).
   type CChar* {.importc: "char", nodecl.} = int8
   type CCharArray* = nil ptr UncheckedArray[nil ptr CChar]
   type CConstCharPtr* {.importc: "const char *", nodecl.} = distinct pointer
@@ -463,8 +463,7 @@ when defined(posix):
     proc pipe*(a: ptr cint): cint {.importc: "pipe", sideEffect.}
     proc dup2*(oldfd, newfd: cint): cint {.importc: "dup2", sideEffect.}
     proc fork*(): Pid {.importc: "fork", sideEffect.}
-    proc execve*(path: CConstCharPtr; argv, env: CCharConstArray): cint {.
-      importc: "execve", sideEffect.}
+    proc execve*(path: CConstCharPtr; argv, env: CCharConstArray): cint {.importc: "execve", sideEffect.}
     # `execvp` is defined below as a native wrapper (it is NOT a syscall — it is
     # libc's PATH-resolving layer over `execve`); see after `posix_environ`.
     # There is no `waitpid` Linux syscall — it is libc sugar for `wait4` with a NULL
@@ -530,8 +529,7 @@ when defined(posix):
         if i == path.len or path[i] == ':':
           let dir = if i > start: path[start ..< i] else: "."
           var candidate = dir & "/" & fileStr
-          discard execve(cast[CConstCharPtr](candidate.toCString),
-                         cast[CCharConstArray](argv), envp)
+          discard execve(cast[CConstCharPtr](candidate.toCString), cast[CCharConstArray](argv), envp)
           start = i + 1
         inc i
       result = -1'i32

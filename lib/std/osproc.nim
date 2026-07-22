@@ -243,8 +243,7 @@ when not defined(windows):
         if poUsePath in options:
           discard execvp(syscmd.toCString, argvC)
         else:
-          discard execve(cast[CConstCharPtr](syscmd.toCString),
-                         cast[CCharConstArray](argvC), cast[CCharConstArray](envpC))
+          discard execve(cast[CConstCharPtr](syscmd.toCString), cast[CCharConstArray](argvC), cast[CCharConstArray](envpC))
         exitnow(127'i32)   # reached only if exec failed
       # --- parent ---
       deallocCStringArray(sysArgs, argsRaw.len)
