@@ -2493,20 +2493,15 @@ proc wasmdiffCmd() =
   ##
   ##   native leg: `nimony n <f>` → static libc-free ELF at
   ##               `<nc>/<hash>/<stem>`; run it, capture stdout + exit.
-  ##   wasm leg:   `nimony c --cpu:wasm32 --os:standalone --bits:32 <f>` — this
-  ##               EXITS NONZERO at the cc step (there is no wasm32 C driver yet;
-  ##               we only want the emitted Leng NIF), so its status is ignored.
-  ##               Then `ithaqua <nc>/<hash>/<hash>.c.nif -o:out.wasm` and
+  ##   wasm leg:   `nimony w --out:<work>/out.wasm <f>` (the real driver path:
+  ##               hexer → dce → ithaqua orchestrated by nifmake), then
   ##               `node tests/ithaqua/run_wasm.js out.wasm`; capture stdout + exit.
   ##
-  ## Isolation is per-leg via a distinct `--nimcache` dir (not a per-leg cwd):
-  ## the fixture is compiled in place from the repo root so the module paths
-  ## nimony bakes into the `.c.nif` stay CANONICAL and short (`lib/std/…`). That
-  ## matters — ithaqua's emitted data-segment offsets currently shift with the
-  ## byte-length of those embedded paths, so compiling from a deep scratch cwd
-  ## (long `../../../..` prefixes) can miscompile string constants. Keeping the
-  ## invocation identical to a normal repo build sidesteps that and makes the
-  ## diff report real backend divergence rather than path-length noise.
+  ## Isolation is per-leg via a distinct `--nimcache` dir. (The historical
+  ## path-length sensitivity that once forced repo-root invocation was the
+  ## standalone-heap page-alignment bug, fixed in osalloc — the harness now
+  ## also runs correctly from scratch cwds, but per-leg nimcache isolation
+  ## is kept: two legs must never share module caches.)
   if not skipBuild:
     buildNimony()
     buildHexer()
@@ -2516,7 +2511,6 @@ proc wasmdiffCmd() =
     buildIthaqua()
   let dir = "tests/ithaqua"
   let nimony = binDir() / "nimony".addFileExt(ExeExt)
-  let ithaqua = binDir() / "ithaqua".addFileExt(ExeExt)
   let runnerJs = dir / "run_wasm.js"
   let nodeExe = findExe("node")
   if nodeExe.len == 0:
@@ -2573,34 +2567,23 @@ proc wasmdiffCmd() =
     if nativeOk:
       let wasmNc = workBase / stem / "wasm-nc"
       createDir wasmNc
-      # cc step fails (no wasm32 C driver) — ignore the status, we only want the
-      # emitted `<hash>.c.nif`.
-      let (wCompOut, _) = execCmdEx(
-        nimony.quoteShell &
-          " c --cpu:wasm32 --os:standalone --bits:32 --nimcache:" &
-          wasmNc.quoteShell & " " & file.quoteShell)
-      let sub = soleNimcacheSubdir(wasmNc)
-      let hash = sub.lastPathPart
-      let cnif = sub / hash.addFileExt(".c.nif")
-      if sub.len == 0 or not fileExists(cnif):
-        failMsg = "wasm leg produced no .c.nif (semcheck error):\n" & wCompOut
+      let outWasm = workBase / stem / "out.wasm"
+      let (wCompOut, wCompEc) = execCmdEx(
+        nimony.quoteShell & " w --nimcache:" & wasmNc.quoteShell &
+          " --out:" & outWasm.quoteShell & " " & file.quoteShell)
+      if wCompEc != 0 or not fileExists(outWasm):
+        failMsg = "wasm compile failed (exit " & $wCompEc & "):\n" & wCompOut
       else:
-        let outWasm = workBase / stem / "out.wasm"
-        let (iOut, iEc) = execCmdEx(
-          ithaqua.quoteShell & " " & cnif.quoteShell & " -o:" & outWasm.quoteShell)
-        if iEc != 0 or not fileExists(outWasm):
-          failMsg = "ithaqua failed (exit " & $iEc & "):\n" & iOut
+        let (o, ec, timedOut) = runFixtureProgram(
+          nodeExe.quoteShell & " " & runnerJs.quoteShell & " " &
+            outWasm.quoteShell, 15)
+        if timedOut:
+          failMsg = "wasm execution timed out (>15s) — likely an infinite " &
+            "loop in miscompiled wasm"
         else:
-          let (o, ec, timedOut) = runFixtureProgram(
-            nodeExe.quoteShell & " " & runnerJs.quoteShell & " " &
-              outWasm.quoteShell, 15)
-          if timedOut:
-            failMsg = "wasm execution timed out (>15s) — likely an infinite " &
-              "loop in miscompiled wasm"
-          else:
-            wasmOut = o
-            wasmEc = ec
-            wasmOk = true
+          wasmOut = o
+          wasmEc = ec
+          wasmOk = true
 
     # --- compare ----------------------------------------------------------
     if failMsg.len == 0 and nativeOk and wasmOk:

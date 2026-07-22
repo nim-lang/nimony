@@ -131,6 +131,13 @@ proc dispatchBasicCommand(key: string; config: var NifConfig): Command =
     config.addDefine "nimNativeAlloc"
     config.addDefine "nimNativeIo"
     FullProject
+  of "w":
+    # Wasm backend: Leng -> ithaqua, producing one whole-program `.wasm`
+    # module (no C compiler, no linker — the JS/wasm host resolves the fixed
+    # env import set). The target is implied after CLI parsing (see the
+    # backendWasm block in handleCmdLine): wasm32/standalone/32 bits.
+    config.backend = backendWasm
+    FullProject
   of "check":
     CheckProject
   of "s":
@@ -333,6 +340,15 @@ proc compileProgram(c: var CmdOptions) =
   # which only sees defines forwarded on its command line (config.defines is the
   # cache key but not enough on its own) — so inject them the same way a user's
   # `-d:` does, and record them in config.defines so the cache key tracks them.
+  if c.config.backend == backendWasm:
+    # The wasm backend has exactly one target; imply it here — after CLI
+    # parsing — so `nimony w x.nim` works bare. Forwarded like user flags
+    # because nimsem sees only its command line (appended last, so it also
+    # wins over a contradictory explicit --cpu/--os).
+    discard c.config.setTargetCPU("wasm32")
+    discard c.config.setTargetOS("standalone")
+    c.config.bits = 32
+    c.commandLineArgs.add " --cpu:wasm32 --os:standalone --bits:32"
   let nativeBackend = c.config.backend == backendNative
   let optOutAll = c.config.isDefined("useLibc")
   if nativeBackend or not (optOutAll or c.config.isDefined("useMimalloc")):
