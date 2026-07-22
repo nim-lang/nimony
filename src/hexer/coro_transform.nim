@@ -1799,7 +1799,7 @@ proc transformCoroutineDecl*(c: var Context; dest: var TokenBuf; n: var Cursor) 
 
 proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
-  of DotToken, EofTokenKind, Ident, SymbolDef,
+  of DotToken, EofToken, Ident, SymbolDef,
      IntLit, UIntLit, FloatLit, CharLit, StrLitKind:
     takeTree dest, n
   of Symbol:
@@ -1828,7 +1828,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         inc n
       else:
         takeTree dest, n
-  of UnknownTokenKind:
+  of UnknownToken:
     takeTree dest, n
   of OpenTagKind:
     case n.stmtKind

@@ -1696,7 +1696,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   of StrLitKind:
     genStringLit c, dest, n
     inc n
-  of UnknownTokenKind, DotToken, Ident, CharLit, IntLit, UIntLit, FloatLit:
+  of UnknownToken, DotToken, Ident, CharLit, IntLit, UIntLit, FloatLit:
     dest.addSubtree n
     inc n
   else:
@@ -1955,7 +1955,7 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
     of StmtsS:
       if mode == TraverseTopLevel:
         n.into:
-          while n.hasMore and n.kind != EofTokenKind:
+          while n.hasMore and n.kind != EofToken:
             trStmt c, dest, n, mode
       else:
         takeInto dest, n:
@@ -1965,7 +1965,7 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
       c.typeCache.openScope()
       if mode == TraverseTopLevel:
         n.into:
-          while n.hasMore and n.kind != EofTokenKind:
+          while n.hasMore and n.kind != EofToken:
             trStmt c, dest, n, mode
       else:
         takeInto dest, n:

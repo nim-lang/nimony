@@ -285,7 +285,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skipParRi n
   else:
     case n.kind
-    of Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLitKind, DotToken, EofTokenKind, UnknownTokenKind, Ident:
+    of Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLitKind, DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident:
       dest.takeToken n
     of OpenTagKind:
       takeInto dest, n:

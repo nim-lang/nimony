@@ -102,6 +102,7 @@ template `[]`*(x: FloatsProxy; id: FloatId): float64 = float64(id)
 # nifcore stores integers inline: the "id" is the value itself (identity proxy).
 template getOrIncl*(x: IntegersProxy; v: int64): IntId = IntId(v)
 template getOrIncl*(x: UIntegersProxy; v: uint64): UIntId = UIntId(v)
+template getOrIncl*(x: FloatsProxy; v: float64): FloatId = FloatId(v)
 
 # ── Buffer construction: thread the global pool + tags ───────────────────
 
@@ -170,12 +171,8 @@ proc isCharLit*(c: Cursor): bool {.inline.} = hasMore(c) and load(c).kind == Cha
 const
   OpenTagKind* = TagLit   ## build-agnostic `case n.kind` label for a tag head
   StrLitKind* = StrLit     ## build-agnostic `case n.kind` label for a string lit
-  # Classic-only sentinels that never occur as a nifcore cursor head; mapped to
-  # nifcore-internal suffix kinds purely so `case n.kind of …` stays exhaustive.
-  # (`ParRi` is not aliased — those branches are dropped, `hasMore` catches the
-  # close in both builds.)
-  UnknownTokenKind* = ExtendedSuffix
-  EofTokenKind* = LineInfoLit
+  # `UnknownToken` / `EofToken` / `ParLe` / `ParRi` are REAL members of the
+  # unified NifKind now (reader-level lexical kinds); no sentinel aliases.
 
 # ── Raw-token (NifToken) accessors for the CF-listing / raw index walks ───
 # Best-effort for pool-ref tokens (nifcore may inline short strings/syms; the
@@ -253,6 +250,12 @@ proc withLineInfo*(n: NifToken; info: PackedLineInfo): NifToken {.inline.} = n
   ## Classic stamped `info` into the token; nifcore keeps line info in a separate
   ## suffix, so an in-place token rewrite cannot carry it — returned unchanged.
 
+proc info*(n: NifToken): PackedLineInfo {.inline.} = NoLineInfo
+  ## Classic tokens carried their line info inline; a bare 4-byte nifcore token
+  ## cannot. Reading it back yields `NoLineInfo` — matching the constructors
+  ## above, which drop the passed info for the same reason. Callers that need
+  ## real positions must use the buffer-level `add*` builders or cursors.
+
 proc span*(c: Cursor): int {.inline.} = subtreeWidth(c)
 proc firstSon*(n: Cursor): Cursor {.inline.} = childCursor(n)
 
@@ -324,8 +327,8 @@ proc addParLe*(dest: var TokenBuf; tag: TagId; info = NoLineInfo) =
 proc addParRi*(dest: var TokenBuf) = closeTag(dest)
 proc addParRi*(dest: var TokenBuf; info: PackedLineInfo) = closeTag(dest)
 
-proc isUnknownToken*(c: Cursor): bool {.inline.} = hasMore(c) and load(c).kind == UnknownTokenKind
-proc isUnknownToken*(n: NifToken): bool {.inline.} = n.kind == UnknownTokenKind
+proc isUnknownToken*(c: Cursor): bool {.inline.} = hasMore(c) and load(c).kind == UnknownToken
+proc isUnknownToken*(n: NifToken): bool {.inline.} = n.kind == UnknownToken
 
 proc addUnstructured*(dest: var TokenBuf; c: Cursor) =
   ## Copy the remaining forest under `c` verbatim, preserving each subtree's

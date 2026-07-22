@@ -33,7 +33,7 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
   ## Expands a single tree/token of the template body into `dest`.
   var body = body
   case body.kind
-  of UnknownTokenKind, EofTokenKind, DotToken, Ident:
+  of UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident:
     dest.addSubtree body
   of Symbol:
     let s = body.symId

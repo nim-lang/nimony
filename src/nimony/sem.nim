@@ -366,7 +366,7 @@ proc subs(c: var SemContext; dest: var TokenBuf; sc: var SubsContext; body: Curs
   ## SymbolDef (numbering is object-scoped), everything else is renamed.
   var n = body
   case n.kind
-  of UnknownTokenKind, EofTokenKind, DotToken, Ident, StrLitKind, CharLit, IntLit, UIntLit, FloatLit:
+  of UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, StrLitKind, CharLit, IntLit, UIntLit, FloatLit:
     dest.addSubtree n
   of Symbol:
     let s = n.symId
@@ -703,7 +703,7 @@ proc requestRoutineInstance*(c: var SemContext; origin: SymId;
     skipToReturnType n
     result = ProcInstance(targetSym: targetSym, procType: res.decl,
       returnType: n)
-  assert result.returnType.kind != UnknownTokenKind
+  assert result.returnType.kind != UnknownToken
 
 type
   DotExprState = enum

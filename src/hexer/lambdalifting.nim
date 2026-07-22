@@ -220,7 +220,7 @@ proc trNil(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
-  of DotToken, UnknownTokenKind, EofTokenKind, Ident, SymbolDef,
+  of DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident, SymbolDef,
      IntLit, UIntLit, FloatLit, CharLit, StrLitKind:
     takeTree dest, n
   of Symbol:
@@ -1150,7 +1150,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         inc n
       else:
         takeTree dest, n
-  of DotToken, UnknownTokenKind, EofTokenKind, Ident, SymbolDef,
+  of DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident, SymbolDef,
      IntLit, UIntLit, FloatLit, CharLit, StrLitKind:
     takeTree dest, n
   of OpenTagKind:

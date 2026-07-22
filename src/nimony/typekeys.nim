@@ -138,10 +138,10 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
   of Ident:
     b.addIdent(pool.strings[c.litId])
     inc c
-  of UnknownTokenKind:
+  of UnknownToken:
     b.addIdent "!unknown!"
     inc c
-  of EofTokenKind:
+  of EofToken:
     b.addIdent "!eof!"
     inc c
   else:

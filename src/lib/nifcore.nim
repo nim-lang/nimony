@@ -69,6 +69,16 @@ type
     TagLit            # opening tag with body-token-count "jump"
     ExtendedSuffix    # supplies 28 extra high bits to the preceding token
     LineInfoLit       # trailing line-info suffix on a head token (file/line/col)
+    # ── reader-level lexical kinds ────────────────────────────────────────
+    # Produced only by the textual NIF reader (nifreader.ExpandedToken.tk);
+    # they never occur in a binary token stream, where parens are implicit
+    # (TagLit + jump) and EOF is `not hasMore`. Sharing ONE enum keeps every
+    # token-kind consumer (including external ones like Nim's ast2nif.nim)
+    # on a single type. The 16 members exactly fill the 4-bit kind field.
+    UnknownToken      # lexical error / unclassified byte sequence
+    EofToken          # end of input
+    ParLe             # textual '('
+    ParRi             # textual ')'
 
   NifToken* = distinct uint32
 
@@ -1313,6 +1323,8 @@ proc addAcrossPools(dest: var TokenBuf; c: var Cursor) =
     dest.add c.load; c.inc              # defensive: not a valid head token
   of ExtendedSuffix:
     assert false, "ExtendedSuffix cannot be a head token"
+  of UnknownToken, EofToken, ParLe, ParRi:
+    assert false, "reader-level lexical kind cannot appear in a token buffer"
 
 proc addSubtree*(dest: var TokenBuf; c: Cursor) =
   ## Copy the subtree rooted at `c` into `dest`. When both pools AND

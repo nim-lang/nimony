@@ -136,7 +136,7 @@ proc freshVars(n: var Cursor; newVars: var Table[SymId, SymId]; idgen: var int;
         inc n
       while n.hasMore:
         freshVars(n, newVars, idgen, dest)
-  of UIntLit, StrLitKind, IntLit, FloatLit, CharLit, SymbolDef, UnknownTokenKind, EofTokenKind, DotToken, Ident:
+  of UIntLit, StrLitKind, IntLit, FloatLit, CharLit, SymbolDef, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident:
     dest.addSubtree n
     inc n
   else:

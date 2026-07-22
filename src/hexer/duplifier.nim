@@ -644,7 +644,7 @@ proc addDataFieldHop(c: var Context; info: PackedLineInfo) =
 proc trOnlyEssentials(c: var Context; n: var Cursor)
     {.ensuresNif: addedAny(c.dest).} =
   case n.kind
-  of Symbol, UIntLit, StrLitKind, IntLit, FloatLit, CharLit, SymbolDef, UnknownTokenKind, EofTokenKind, DotToken, Ident:
+  of Symbol, UIntLit, StrLitKind, IntLit, FloatLit, CharLit, SymbolDef, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident:
     takeToken c.dest, n
   of OpenTagKind:
     case n.exprKind

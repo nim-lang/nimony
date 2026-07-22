@@ -340,7 +340,7 @@ proc sameTreesNC(a, b: Cursor): bool =
   of StrLit, Ident:     result = strId(a) == strId(b)
   of CharLit:           result = charLit(a) == charLit(b)
   of DotToken:          result = true
-  of ExtendedSuffix, LineInfoLit: result = true
+  of ExtendedSuffix, LineInfoLit, UnknownToken, EofToken, ParLe, ParRi: result = true
 
 proc sameTreesIgnoreSymIdsNC(a, b: Cursor): bool =
   let aName = a.hasMore and a.load.kind in {nifcore.Symbol, nifcore.SymbolDef, nifcore.Ident}
@@ -370,7 +370,8 @@ proc sameTreesIgnoreSymIdsNC(a, b: Cursor): bool =
   of StrLit:            result = strId(a) == strId(b)
   of CharLit:           result = charLit(a) == charLit(b)
   of DotToken:          result = true
-  of Symbol, SymbolDef, Ident, ExtendedSuffix, LineInfoLit: result = true
+  of Symbol, SymbolDef, Ident, ExtendedSuffix, LineInfoLit,
+     UnknownToken, EofToken, ParLe, ParRi: result = true
 
 proc sameTrees*(a, b: Cursor): bool =
   return sameTreesNC(a, b)

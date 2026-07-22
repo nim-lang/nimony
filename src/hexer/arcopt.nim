@@ -199,10 +199,10 @@ proc analyse(c: var Con; b: var BasicBlock; n: var Cursor)
 proc analyseChildren(c: var Con; b: var BasicBlock; n: var Cursor) =
   assert n.isTagLit
   n.into:
-    while n.hasMore and n.kind != EofTokenKind:
+    while n.hasMore and n.kind != EofToken:
       let before = cursorToPosition(c.source[], n)
       analyse(c, b, n)
-      if n.hasMore and n.kind != EofTokenKind and cursorToPosition(c.source[], n) == before:
+      if n.hasMore and n.kind != EofToken and cursorToPosition(c.source[], n) == before:
         skip n
 
 proc analyse(c: var Con; b: var BasicBlock; n: var Cursor) =

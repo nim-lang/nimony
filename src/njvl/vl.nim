@@ -115,7 +115,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addIntLit v, info
       dest.addParRi()
     inc n
-  of UnknownTokenKind, EofTokenKind, DotToken, Ident, SymbolDef, StrLitKind, CharLit, IntLit, UIntLit, FloatLit:
+  of UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, SymbolDef, StrLitKind, CharLit, IntLit, UIntLit, FloatLit:
     dest.takeToken n
   of OpenTagKind:
     case n.exprKind
