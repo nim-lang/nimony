@@ -246,8 +246,8 @@ proc execShellCmd*(command: string): int {.tags: [ExecIOEffect].} =
     let pid = fork()
     if pid == Pid(0):
       # child: exec the shell; only reached past here if exec failed.
-      discard execve(sh.toCString, cast[CCharArray](argv),
-                     cast[CCharArray](posix_environ))
+      discard execve(cast[CConstCharPtr](sh.toCString), cast[CCharConstArray](cast[CCharArray](argv)),
+                     cast[CCharConstArray](cast[CCharArray](posix_environ)))
       exitnow(127'i32)
     dealloc(cast[pointer](argv))
     if pid.int < 0:

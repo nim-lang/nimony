@@ -451,20 +451,20 @@ when defined(posix):
   else:
     type Pid* {.importc: "pid_t", header: "<sys/types.h>".} = cint
 
-  # Use plain C `char` so argv/env blocks are `char**`-compatible at call
-  # sites (Nimony's `cstring` is `NC8*` / unsigned char*). For `execve`
-  # itself, emit no local prototype: include `nim_execve.h` instead so the
-  # declaration matches glibc's builtin (`const char*`, `char *const*`).
+  # C interop aliases for execve's POSIX parameter types. `distinct` +
+  # `{.importc.}` keeps the symbol opaque through hexer so Leng emits the
+  # importc string verbatim in prototypes (see `lengcgen.trType`).
   type CChar* {.importc: "char", nodecl.} = int8
   type CCharArray* = nil ptr UncheckedArray[nil ptr CChar]
+  type CConstCharPtr* {.importc: "const char *", nodecl.} = distinct pointer
+  type CCharConstArray* {.importc: "char * const *", nodecl.} = distinct pointer
 
   when defined(nimNativeIo):
-    {.passC: "-Ilib/std/posix".}
     proc pipe*(a: ptr cint): cint {.importc: "pipe", sideEffect.}
     proc dup2*(oldfd, newfd: cint): cint {.importc: "dup2", sideEffect.}
     proc fork*(): Pid {.importc: "fork", sideEffect.}
-    proc execve*(path: cstring; argv, env: CCharArray): cint {.
-      importc: "execve", header: "nim_execve.h", sideEffect.}
+    proc execve*(path: CConstCharPtr; argv, env: CCharConstArray): cint {.
+      importc: "execve", sideEffect.}
     # `execvp` is defined below as a native wrapper (it is NOT a syscall — it is
     # libc's PATH-resolving layer over `execve`); see after `posix_environ`.
     # There is no `waitpid` Linux syscall — it is libc sugar for `wait4` with a NULL
@@ -472,8 +472,9 @@ when defined(posix):
     # `wait4` directly and pass `rusage = nil` ourselves, keeping the 3-arg `waitpid`
     # signature the rest of the code (and the libc path) expects.
     # No `<sys/wait.h>` header (strip it like mkdir/rmdir/unlink above): on Linux it
-    # transitively pulls `<unistd.h>`. The status decoders and `WNOHANG`/`WCONTINUED`
-    # are all self-defined, so the header buys us nothing for wait4.
+    # transitively pulls `<unistd.h>`, whose `execve(const char*, char* const*, ...)`
+    # prototype conflicts with our bare `execve` binding. The status decoders and
+    # `WNOHANG`/`WCONTINUED` are all self-defined, so the header buys us nothing.
     proc wait4(pid: Pid; status: var cint; options: cint;
                rusage: nil pointer): Pid {.importc: "wait4", sideEffect.}
     proc waitpid*(pid: Pid; status: var cint; options: cint): Pid {.inline.} =
@@ -495,14 +496,14 @@ when defined(posix):
       ## (default `/bin:/usr/bin`), reading the environment from `nimEnviron`.
       ## Runs in the forked child of `osproc.startProcess`; on success it never
       ## returns, so the allocations here are reached only on the error path.
-      let envp = cast[CCharArray](posix_environ)
+      let envp = cast[CCharConstArray](cast[CCharArray](posix_environ))
       var hasSlash = false
       var n = 0
       while file[n] != '\0':
         if file[n] == '/': hasSlash = true
         inc n
       if hasSlash:
-        return execve(file, argv, envp)
+        return execve(cast[CConstCharPtr](file), cast[CCharConstArray](argv), envp)
       # Locate PATH in the environment block (raw cstring scan, no allocation).
       var path = "/bin:/usr/bin"
       if posix_environ != nil:
@@ -529,7 +530,8 @@ when defined(posix):
         if i == path.len or path[i] == ':':
           let dir = if i > start: path[start ..< i] else: "."
           var candidate = dir & "/" & fileStr
-          discard execve(candidate.toCString, argv, envp)   # returns only on failure
+          discard execve(cast[CConstCharPtr](candidate.toCString),
+                         cast[CCharConstArray](argv), envp)
           start = i + 1
         inc i
       result = -1'i32
@@ -541,7 +543,7 @@ when defined(posix):
     proc fork*(): Pid {.importc, header: "<unistd.h>", sideEffect.}
     proc execvp*(file: cstring; argv: CCharArray): cint {.
       importc, header: "<unistd.h>", sideEffect.}
-    proc execve*(path: cstring; argv, env: CCharArray): cint {.
+    proc execve*(path: CConstCharPtr; argv, env: CCharConstArray): cint {.
       importc, header: "<unistd.h>", sideEffect.}
     proc waitpid*(pid: Pid; status: var cint; options: cint): Pid {.
       importc, header: "<sys/wait.h>", sideEffect.}
