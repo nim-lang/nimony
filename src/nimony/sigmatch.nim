@@ -10,7 +10,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 
 import nimony_model, decls, programs, semdata, typeprops, xints, builtintypes, renderer, asthelpers,
-  features, symtabs, sigconcepts, expreval, staticmatches
+  features, symtabs, sigconcepts, conceptcache, expreval, staticmatches
 import ".." / lib / symparser
 import ".." / models / tags
 
@@ -759,6 +759,10 @@ proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; rout
     return true
   if isConceptType(a):
     return conceptRequirementInBody(routine, actualBody)
+  let reqSym = conceptRequirementSym(routine)
+  let (hit, cachedImpl) = tryRoutineImplFromCache(m.context, conceptSym, reqSym, a)
+  if hit:
+    return cachedImpl.found
   let selfSyms = conceptSelfSyms(body, routine)
   var savedSelf: seq[(SymId, Cursor)] = @[]
   for selfSym in selfSyms:
@@ -767,7 +771,7 @@ proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; rout
     m.inferred[selfSym] = a
   let basename = conceptRoutineBasename(routine)
   let inferenceBase = m.inferred
-  for cand in conceptRoutineCandidates(m.context, conceptSym, basename):
+  for cand in collectConceptRoutineCandidates(m.context, conceptSym, basename):
     let res = tryLoadSym(cand)
     if res.status != LacksNothing:
       continue
@@ -785,28 +789,35 @@ proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; rout
     m.hasError = oldHasError
     if sigMatch:
       restoreConceptSelfInference(m, selfSyms, savedSelf)
+      storeRoutineImpl(m.context, conceptSym, reqSym, a,
+                       ConceptRoutineImplResult(found: true, impl: cand))
       return true
   restoreConceptSelfInference(m, selfSyms, savedSelf)
+  storeRoutineImpl(m.context, conceptSym, reqSym, a, ConceptRoutineImplResult(found: false))
   false
 
 proc collectMissingConceptRequirements(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): seq[Cursor] =
+  var cachedMissing = default(seq[Cursor])
+  if tryMissingFromBodyCache(m.context, conceptSym, a, cachedMissing):
+    return cachedMissing
   let actualIsConcept = isConceptType(a)
   let actualBody = if actualIsConcept: getTypeSection(a.symId).body else: default(Cursor)
-  let parents = conceptParentsSlot(body)
-  let hasParents = conceptHasParents(parents)
-  if hasParents:
-    for parent in conceptParentSyms(parents):
-      let parentBody = getTypeSection(parent).body
-      let parentMissing = collectMissingConceptRequirements(m, parent, parentBody, a)
-      if parentMissing.len > 0:
-        return parentMissing
-  if not actualIsConcept and not hasParents:
+  let meta = getConceptMetadata(m.context, conceptSym, body)
+  for parent in meta.parents:
+    let parentBody = getTypeSection(parent).body
+    let parentMissing = collectMissingConceptRequirements(m, parent, parentBody, a)
+    if parentMissing.len > 0:
+      storeBodyCheck(m.context, conceptSym, a, bodyResultFromMissing(parentMissing))
+      return parentMissing
+  if not actualIsConcept and meta.parents.len == 0:
     if not conceptTargetNeedsStrictCheck(a):
+      storeBodyCheck(m.context, conceptSym, a, ConceptBodyResult(satisfied: true))
       return @[]
   result = @[]
   for cbody, routine in conceptHierarchyRoutines(body):
     if not conceptRoutineAvailable(m, conceptSym, cbody, routine, a, actualBody):
       result.add routine
+  storeBodyCheck(m.context, conceptSym, a, bodyResultFromMissing(result))
 
 proc collectMissingConceptRequirementsFromConstraint(m: var Match; f: Cursor; a: Cursor): seq[Cursor] =
   var f = f
@@ -846,21 +857,39 @@ proc constraintMismatchMsg*(m: var Match; constraint, arg: Cursor): string =
       result.add asNimCode(routine, {renderNoBody})
 
 proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): bool =
+  let (hit, cached) = tryBodyCheckFromCache(m.context, conceptSym, a)
+  if hit:
+    return cached.satisfied
+  if isOpenTypevar(a):
+    storeBodyCheck(m.context, conceptSym, a, ConceptBodyResult(satisfied: true))
+    return true
   let actualIsConcept = isConceptType(a)
   let actualBody = if actualIsConcept: getTypeSection(a.symId).body else: default(Cursor)
-  let parents = conceptParentsSlot(body)
-  let hasParents = conceptHasParents(parents)
-  if hasParents:
-    for parent in conceptParentSyms(parents):
-      if not matchConceptSym(m, parent, a):
-        return false
-  if not actualIsConcept and not hasParents:
+  let meta = getConceptMetadata(m.context, conceptSym, body)
+  for parent in meta.parents:
+    if not matchConceptSym(m, parent, a):
+      storeBodyCheck(m.context, conceptSym, a, ConceptBodyResult(satisfied: false))
+      return false
+  # Until concrete-type requirement matching is complete, standalone concepts
+  # match any concrete type (legacy stub behaviour). Concept-to-concept
+  # subsumption always checks requirements structurally.
+  if not actualIsConcept and meta.parents.len == 0:
     if not conceptTargetNeedsStrictCheck(a):
-      return a.kind != DotToken
+      # An unconstrained typevar reaches us as an empty (`.`) constraint: it
+      # provably fulfils no requirement, so it must not satisfy the concept
+      # (issue #755). Genuine concrete types stay leniently accepted.
+      let satisfied = a.kind != DotToken
+      storeBodyCheck(m.context, conceptSym, a, ConceptBodyResult(satisfied: satisfied))
+      return satisfied
+  var bodyResult = ConceptBodyResult(satisfied: true)
   for cbody, routine in conceptHierarchyRoutines(body):
     if not conceptRoutineAvailable(m, conceptSym, cbody, routine, a, actualBody):
-      return false
-  true
+      bodyResult.satisfied = false
+      let rs = conceptRequirementSym(routine)
+      if rs != SymId(0):
+        bodyResult.missing.add rs
+  storeBodyCheck(m.context, conceptSym, a, bodyResult)
+  bodyResult.satisfied
 
 proc isTypevar(s: SymId): bool =
   let res = tryLoadSym(s)

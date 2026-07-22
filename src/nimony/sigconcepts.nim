@@ -14,7 +14,7 @@ import std / [sets, tables, assertions]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 
-import nimony_model, decls, programs, semdata, typeprops, features, symtabs
+import nimony_model, decls, programs, semdata, typeprops, features, symtabs, conceptcache
 import ".." / lib / symparser
 
 proc isConceptType*(a: Cursor): bool {.inline.} =
@@ -128,6 +128,15 @@ iterator conceptRoutineCandidates*(c: ptr SemContext; conceptSym: SymId; basenam
     for cand in visibleNamedSyms(c, basename):
       if not seen.containsOrIncl(cand):
         yield cand
+
+proc collectConceptRoutineCandidates*(c: ptr SemContext; conceptSym: SymId; basename: StrId): seq[SymId] =
+  let (hit, cached) = tryCandidatesFromCache(c, conceptSym, basename)
+  if hit:
+    return cached
+  result = default(seq[SymId])
+  for cand in conceptRoutineCandidates(c, conceptSym, basename):
+    result.add cand
+  storeCandidates(c, conceptSym, basename, result)
 
 proc routineHasNoSideEffect*(routine: Cursor): bool {.inline.} =
   let r = asRoutine(routine)
