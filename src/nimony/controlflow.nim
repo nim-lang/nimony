@@ -18,7 +18,9 @@ import nimony_model, programs, builtintypes, typenav, decls
 from typeprops import isOrdinalType
 
 const
-  GotoInstr* = InlineInt
+  GotoInstr* = DotToken
+    ## CF jumps are DotTokens with a nonzero 28-bit payload (see
+    ## `int28Token`); a plain no-op dot has payload 0 — use `isGoto`.
 
 type
   Label = distinct int
@@ -1070,7 +1072,7 @@ proc eliminateDeadInstructions*(c: TokenBuf; start = 0; last = -1): seq[bool] =
     # Handle different instruction types
     if c[pos].kind == GotoInstr:
       let diff = c[pos].getInt28
-      if diff != 0:
+      if diff != 0: # payload 0 = a plain no-op dot, not a jump
         worklist.add(pos + diff)  # Add the target of the jump
         # For forward jumps, everything between the goto and its target is potentially unreachable
         if diff > 0:
@@ -1079,8 +1081,9 @@ proc eliminateDeadInstructions*(c: TokenBuf; start = 0; last = -1): seq[bool] =
     elif cast[TagEnum](c[pos].tag) == IteTagId:
       # For if-then-else, process the condition and both branches
       var p = pos + 1
-      # Skip the condition, marking it as reachable
-      while p <= last and c[p].kind != GotoInstr:
+      # Skip the condition, marking it as reachable. A goto is a DotToken
+      # with a NONZERO payload; plain dots inside the condition don't count.
+      while p <= last and not (c[p].kind == GotoInstr and c[p].getInt28 != 0):
         result[p - start] = true
         inc p
 

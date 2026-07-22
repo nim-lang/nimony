@@ -1,8 +1,6 @@
 import std/[syncio, assertions]
-import "../../../src/lib/nifcursors"
-import "../../../src/lib/nifstreams"
+import "../../../src/lib/nifcore"
 import "../../../src/lib/lineinfos"
-import "../../../src/lib/bitabs"
 
 proc foo(): (TokenBuf, PackedLineInfo) =
   result = (createTokenBuf(8), NoLineInfo)

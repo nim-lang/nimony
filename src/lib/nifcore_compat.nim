@@ -182,15 +182,19 @@ const
 # control-flow buffer uses pool refs). `InlineInt`/`int28Token`/`getInt28`
 # re-encode the CF's 28-bit goto operand onto nifcore's `ExtendedSuffix` kind
 # (the classic CF repurposed `UnknownToken`; nifcore has no such spare atom).
-# NB: an `ExtendedSuffix` in a buffer that is later CURSOR-walked would be read
-# as a suffix of the preceding token — the CF buffer is only raw-index walked,
-# so this is safe there, but revisit if the CF stream ever gets cursor-walked.
 const InlineInt* = ExtendedSuffix
 
 proc int28Token*(operand: int32; info: PackedLineInfo): NifToken {.inline.} =
-  # mask to 28 bits: negative jump diffs set the high bits; `soperand`
-  # sign-extends the payload's top bit on read
-  extendedSuffixToken(cast[uint32](operand) and PayloadMask)
+  ## CF goto/jump carrier: a DotToken with a 28-bit signed inline payload.
+  ## It must NOT be an `ExtendedSuffix`: cursor `tokenWidth` greedily counts
+  ## consecutive suffix tokens, so an ExtendedSuffix goto would be glued to
+  ## whatever token precedes it (or to the previous goto) and every cursor
+  ## walk over the CF stream would misalign. A DotToken is always its own
+  ## one-token value; a REAL DotToken has payload 0, so CF walkers treat a
+  ## zero `getInt28` as the plain no-op dot.
+  ## `soperand` sign-extends the payload's top bit on read.
+  NifToken(((cast[uint32](operand) and PayloadMask) shl KindBits) or
+           uint32(DotToken))
 proc getInt28*(n: NifToken): int32 {.inline.} = n.soperand
 proc getInt28*(c: Cursor): int32 {.inline.} = load(c).soperand
 
@@ -213,7 +217,7 @@ proc isLastSon*(n: Cursor): bool =
   result = not hasMore(c)
 
 proc patchInt28Token*(n: var NifToken; operand: int32) {.inline.} =
-  n = extendedSuffixToken(cast[uint32](operand) and PayloadMask)
+  n = int28Token(operand, NoLineInfo)
 
 proc charToken*(ch: char; info: PackedLineInfo): NifToken {.inline.} = charToken(ch)
   ## Info is dropped (a single nifcore token carries none); prefer `addCharLit`.
@@ -391,13 +395,16 @@ proc parseFromFile*(filename: string; sizeHint = 100): TokenBuf =
   result = createTokenBuf(sizeHint)
   var r = nifreader.open(filename)
   discard nifreader.processDirectives(r)
-  nifcoreparse.parse(r, result)
+  # dense: classic code reads `n.info` on ANY token (import origins, error
+  # positions); sparse change-stream info would come back NoLineInfo there
+  nifcoreparse.parse(r, result, denseLineInfo = true)
   nifreader.close(r)
 
 proc parseFromBuffer*(input: string; thisModule: sink string; sizeHint = 100): TokenBuf =
   ## Parse NIF text into a buffer sharing the global pool/tags (shim invariant).
   nifcoreparse.parseFromBuffer(input, thisModule, sizeHint,
-                               sharedPool = pool, sharedTags = globalTags)
+                               sharedPool = pool, sharedTags = globalTags,
+                               denseLineInfo = true)
 proc toString*(c: Cursor; produceLineInfo = false): string {.inline.} =
   ## Classic `toString(Cursor, produceLineInfo)`; nifcore's is keyword-arg based.
   nifcoreparse.toString(c, includeLineInfo = produceLineInfo)

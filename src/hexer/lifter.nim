@@ -47,6 +47,11 @@ type
     op: AttachedOp
     routineKind: SymKind
     calledErrorHook: PackedLineInfo
+    calledErrorHookSet: bool
+      ## the FLAG for `.error` propagation. `calledErrorHook` only carries
+      ## the position for the message; it may legitimately be `NoLineInfo`
+      ## (an index-jumped decl load cannot resolve its relative line infos),
+      ## so info-validity must not double as the flag.
     info: PackedLineInfo
     requests: seq[GenHookRequest]
     structuralTypeToHook: array[AttachedOp, Table[string, SymId]]
@@ -138,11 +143,13 @@ proc hasHook(c: var LiftingCtx; s: SymId): bool =
     let siblingOp = if c.op == attachedCopy: attachedDup else: attachedCopy
     result = isErrorHook(lookupHookSym(c, siblingOp, s))
 
-proc siblingHookErrorInfo(c: var LiftingCtx; typ: TypeCursor;
-                          siblingOp: AttachedOp): PackedLineInfo =
-  ## Returns the sibling `=copy`/`=dup` hook's `name.info` if it is marked
-  ## `.error` for the (nominal) type `typ`. Otherwise `NoLineInfo`.
-  result = NoLineInfo
+proc siblingHookError(c: var LiftingCtx; typ: TypeCursor;
+                      siblingOp: AttachedOp): (bool, PackedLineInfo) =
+  ## Returns (true, the sibling `=copy`/`=dup` hook's `name.info`) if it is
+  ## marked `.error` for the (nominal) type `typ`. The info may be
+  ## `NoLineInfo` even when the flag is true (index-jumped decl loads have
+  ## no resolvable line infos).
+  result = (false, NoLineInfo)
   if not (typ.isSymbol or typ.isSymbolDef):
     return
   let siblingSym = lookupHookSym(c, siblingOp, typ.symId)
@@ -150,7 +157,7 @@ proc siblingHookErrorInfo(c: var LiftingCtx; typ: TypeCursor;
     return
   let res = tryLoadSym(siblingSym)
   let r = asRoutine(res.decl)
-  result = r.name.info
+  result = (true, r.name.info)
 
 proc getCompilerProc(c: var LiftingCtx; name: string): SymId =
   result = pool.syms.getOrIncl(name & ".0." & SystemModuleSuffix)
@@ -344,6 +351,7 @@ proc maybeCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf; forceS
       let r = asRoutine(res.decl)
       if hasPragma(r.pragmas, ErrorP):
         c.calledErrorHook = r.name.info
+        c.calledErrorHookSet = true
     if c.op == attachedDup:
       copyIntoKind c.dest, AsgnS, c.info:
         copyTree c.dest, paramA
@@ -363,11 +371,12 @@ proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
   # may not exist yet (it's only just been queued), so `maybeCallHook`'s
   # pragma check on the sym would miss it. Look at the sub-type's sibling
   # here and propagate `.error` into the *enclosing* hook now.
-  if c.op in {attachedCopy, attachedDup} and c.calledErrorHook == NoLineInfo:
+  if c.op in {attachedCopy, attachedDup} and not c.calledErrorHookSet:
     let siblingOp = if c.op == attachedCopy: attachedDup else: attachedCopy
-    let info = siblingHookErrorInfo(c, typ, siblingOp)
-    if info != NoLineInfo:
+    let (isErr, info) = siblingHookError(c, typ, siblingOp)
+    if isErr:
       c.calledErrorHook = info
+      c.calledErrorHookSet = true
 
   let orig = typ
   let typ = toTypeImpl typ
@@ -866,11 +875,15 @@ proc publishProc(sym: SymId; dest: TokenBuf; procStart: int) =
 
 proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
   if c.op == attachedCopy:
-    let info = siblingHookErrorInfo(c, typ, attachedDup)
-    if info != NoLineInfo: c.calledErrorHook = info
+    let (isErr, info) = siblingHookError(c, typ, attachedDup)
+    if isErr:
+      c.calledErrorHook = info
+      c.calledErrorHookSet = true
   elif c.op == attachedDup:
-    let info = siblingHookErrorInfo(c, typ, attachedCopy)
-    if info != NoLineInfo: c.calledErrorHook = info
+    let (isErr, info) = siblingHookError(c, typ, attachedCopy)
+    if isErr:
+      c.calledErrorHook = info
+      c.calledErrorHookSet = true
 
   let paramA = pool.syms.getOrIncl("dest.0")
   var paramTreeA = createTokenBuf(4)
@@ -949,7 +962,7 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
     # unreachable. Drop the body we just built so later passes don't see the
     # inner calls — those calls would otherwise be flagged against user line
     # info even though no reachable code path can execute them.
-    if c.calledErrorHook != NoLineInfo:
+    if c.calledErrorHookSet:
       c.dest.shrink bodyStart
       copyIntoKind(c.dest, StmtsS, c.info): discard
   # tell vtables.nim we need dynamic binding here:
@@ -959,7 +972,7 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
     var mtok = c.dest[procStart]
     setTag(mtok, TagId(MethodS))
     c.dest[procStart] = mtok
-  if c.calledErrorHook != NoLineInfo:
+  if c.calledErrorHookSet:
     let before = c.dest.len
     var errBuf = createTokenBuf(2)
     errBuf.addParLe(cast[TagId](uint32(ord(ErrorP))), c.calledErrorHook)
@@ -980,6 +993,7 @@ proc genMissingHooks*(c: var LiftingCtx) =
     for i in 0 ..< reqs.len:
       c.op = reqs[i].op
       c.calledErrorHook = NoLineInfo
+      c.calledErrorHookSet = false
       # For RTTI types (inheritable objects), hooks need to be methods for vtable dispatch
       let t = reqs[i].typ
       if (t.isSymbol or t.isSymbolDef) and hasRtti(t.symId) and reqs[i].op in {attachedDestroy, attachedTrace}:

@@ -185,7 +185,7 @@ proc loadModuleContent*(infile: string; owningBuf: var TokenBuf; paths: openArra
   ## Also registers the module in prog.mods.
   let m = newNifModule(infile)
   owningBuf = createTokenBuf()
-  parse(m.reader, owningBuf)
+  parse(m.reader, owningBuf, denseLineInfo = true)
   result = beginRead(owningBuf)
   let suffix = moduleSuffix(infile, paths)
   prog.mods[suffix] = m
@@ -194,7 +194,7 @@ proc loadModule*(infile: string; owningBuf: var TokenBuf; suffix: string): Curso
   ## Load a module's content and register it under the given suffix.
   let m = newNifModule(infile)
   owningBuf = createTokenBuf()
-  parse(m.reader, owningBuf)
+  parse(m.reader, owningBuf, denseLineInfo = true)
   result = beginRead(owningBuf)
   prog.mods[suffix] = m
 
@@ -335,7 +335,7 @@ proc tryLoadSym*(s: SymId): LoadResult =
       else:
         var buf = createTokenBuf(30)
         m.reader.jumpTo indexEntry.offset
-        parse(m.reader, buf)
+        parse(m.reader, buf, denseLineInfo = true)
         let decl = cursorAt(buf, 0)
         prog.mem[s] = ToplevelEntry(buffer: ensureMove(buf), phase: SemcheckBodies)
         result = LoadResult(status: LacksNothing, decl: decl)
@@ -547,7 +547,7 @@ proc setupProgram*(infile, outfile: string; owningBuf: var TokenBuf; hasIndex=fa
 
   #echo "INPUT IS ", toString(m.buf)
   owningBuf = createTokenBuf()
-  parse(m.reader, owningBuf)
+  parse(m.reader, owningBuf, denseLineInfo = true)
   result = beginRead(owningBuf)
   prog.mods[prog.main.name] = m
   #publishStringType()

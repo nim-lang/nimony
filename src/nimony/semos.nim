@@ -304,7 +304,7 @@ proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string)
 
   var r = rd.open(src)
   result = createTokenBuf()
-  parse(r, result)
+  parse(r, result, denseLineInfo = true)
   rd.close(r)
 proc getFile*(info: PackedLineInfo): string =
   let fid = unpack(pool.man, info).file

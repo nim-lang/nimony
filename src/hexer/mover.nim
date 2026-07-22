@@ -248,12 +248,19 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
   var pc = pc
   let root = rootOf(x)
   while true:
+    if not pc.hasMore:
+      # ran off the end of the CF buffer: the routine ends here, no
+      # further usage on this path (classic had a closing ParRi to stop on)
+      break
     #echo "PC IS: ", pc.kind
     case pc.kind
     of GotoInstr:
+      # GotoInstr == DotToken: a nonzero payload is a jump, zero is the
+      # plain no-op dot.
       let diff = pc.getInt28
-      assert diff != 0
-      if diff < 0:
+      if diff == 0:
+        inc pc
+      elif diff < 0:
         # jump backwards:
         let back = pc +! diff
         if not marks.containsOrIncl(cursorToPosition(cfBase, back)):
@@ -274,7 +281,7 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
         # found the definition, so it gets a new value:
         break
       inc pc
-    of DotToken, Ident, StrLitKind, CharLit, IntLit, UIntLit, FloatLit:
+    of Ident, StrLitKind, CharLit, IntLit, UIntLit, FloatLit:
       inc pc
     of OpenTagKind:
       #echo "PC IS: ", pool.tags[pc.tag]

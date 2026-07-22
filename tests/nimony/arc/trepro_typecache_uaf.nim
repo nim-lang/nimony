@@ -14,8 +14,7 @@
 ## already torn down earlier in the chain.
 
 import std / [tables, syncio, assertions]
-include "../../../src/lib/nifprelude"
-include "../../../src/lib/compat2"
+import "../../../src/lib/nifcore"
 
 type
   SymKind = enum
@@ -66,8 +65,8 @@ proc getLocalInfo(c: var TypeCache; s: SymId): LocalInfo =
 
 proc addTypeBuf(c: var TypeCache; tagName: string): Cursor =
   var buf = createTokenBuf(4)
-  buf.add parLeToken(pool.tags.getOrIncl(tagName), NoLineInfo)
-  buf.addParRi()
+  buf.openTag buf.tags.registerTag(tagName)
+  buf.closeTag()
   c.mem.add ensureMove buf
   result = cursorAt(c.mem[c.mem.len-1], 0)
 
